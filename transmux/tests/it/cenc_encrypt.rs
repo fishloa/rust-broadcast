@@ -954,3 +954,106 @@ fn cbcs_pattern_component_above_15_is_rejected() {
         assert!(media.tracks[0].encryption.is_none());
     }
 }
+
+// ---------------------------------------------------------------------------
+// issue #3664 — an exactly-spaced CTR IV list is valid, one block closer is not
+// ---------------------------------------------------------------------------
+
+fn media_with_samples(samples: Vec<Vec<u8>>) -> Media {
+    let mut media = whole_sample_media(samples[0].clone());
+    media.tracks[0].samples.clear();
+    for data in samples {
+        media.tracks[0].samples.push(
+            transmux::Sample::new(data, Some(0), Some(0), Some(1000), true)
+                .expect("valid timing"),
+        );
+    }
+    media
+}
+
+/// A 16-byte big-endian counter-block IV whose counter value is `value`.
+fn ctr_iv(value: u64) -> Vec<u8> {
+    let mut iv = vec![0u8; 16];
+    iv[8..].copy_from_slice(&value.to_be_bytes());
+    iv
+}
+
+fn cenc_explicit_config(ivs: Vec<Vec<u8>>) -> EncryptConfig {
+    EncryptConfig::new(CencScheme::Cenc, KID_A, SubsamplePolicy::WholeSample).with_iv(IvGen::Explicit(ivs))
+}
+
+/// One length-prefixed AVC NAL unit: 4-byte length prefix, 1-byte header,
+/// `payload` bytes of protected payload.
+fn avc_nal_sample(payload: usize) -> Vec<u8> {
+    let nal_len = 1 + payload;
+    let mut data = Vec::with_capacity(4 + nal_len);
+    data.extend_from_slice(&(nal_len as u32).to_be_bytes());
+    data.extend(std::iter::repeat_n(0x65u8, nal_len));
+    data
+}
+
+/// Under `cenc` a sample consumes one counter block per 16 protected bytes
+/// (`ceil(protected / 16)`, ISO/IEC 23001-7 §10.1), so IV spacing must be at
+/// least the previous sample's block count. Exactly that spacing is valid
+/// (adjacent ranges); one block closer overlaps. Samples of 16, 17 and 32
+/// bytes (1, 2 and 2 blocks) pin the ceiling arithmetic at a non-multiple.
+#[test]
+fn ctr_iv_spacing_must_be_at_least_the_previous_samples_block_count() {
+    let lens = [16usize, 17, 32];
+
+    let mut ok = media_with_samples(lens.iter().map(|&len| vec![0u8; len]).collect());
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut ok, &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1), ctr_iv(3)]))
+        .expect("IVs spaced by exactly the previous sample's protected block count are adjacent, not overlapping");
+
+    let mut overlap = media_with_samples(lens.iter().map(|&len| vec![0u8; len]).collect());
+    let err = CencEncryptor::new(KEY_A)
+        .encrypt(
+            &mut overlap,
+            &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1), ctr_iv(2)]),
+        )
+        .expect_err("IV 2 starts inside the 17-byte sample's range [1, 3)");
+    assert!(matches!(err, transmux::Error::InvalidInput(_)), "got {err:?}");
+}
+
+/// A 17-byte sample consumes two counter blocks (ceil(17/16)), so the next IV
+/// must be two blocks later: one block is an overlap.
+#[test]
+fn ctr_iv_spacing_for_a_17_byte_sample_is_two_blocks() {
+    let mut ok = media_with_samples(vec![vec![0u8; 17], vec![0u8; 17]]);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut ok, &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(2)]))
+        .expect("ceil(17 / 16) == 2 blocks, so spacing 2 is adjacent");
+
+    let mut overlap = media_with_samples(vec![vec![0u8; 17], vec![0u8; 17]]);
+    let err = CencEncryptor::new(KEY_A)
+        .encrypt(&mut overlap, &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1)]))
+        .expect_err("a 17-byte sample covers blocks 0 and 1, so IV 1 overlaps");
+    assert!(matches!(err, transmux::Error::InvalidInput(_)), "got {err:?}");
+}
+
+/// The block count comes from the *protected* bytes of the subsample map, not
+/// the sample length: a single 33-byte AVC NAL (4-byte prefix + 1-byte
+/// header clear) protects 32 bytes = 2 blocks, so spacing 2 is valid and
+/// spacing 1 overlaps even though the sample itself is 37 bytes.
+#[test]
+fn ctr_iv_spacing_counts_subsample_protected_bytes() {
+    let mut ok = media_with_samples(vec![avc_nal_sample(32), avc_nal_sample(32)]);
+    let cfg = cenc_explicit_config(vec![ctr_iv(0), ctr_iv(2)])
+        .with_subsample(SubsamplePolicy::Video);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut ok, &cfg)
+        .expect("32 protected bytes are two counter blocks");
+    let entries = &ok.tracks[0].encryption.as_ref().expect("Some").samples;
+    assert_eq!(entries[0].subsamples.len(), 1, "one subsample per NAL");
+    assert_eq!(entries[0].subsamples[0].bytes_of_clear_data, 5);
+    assert_eq!(entries[0].subsamples[0].bytes_of_protected_data, 32);
+
+    let mut overlap = media_with_samples(vec![avc_nal_sample(32), avc_nal_sample(32)]);
+    let cfg = cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1)])
+        .with_subsample(SubsamplePolicy::Video);
+    let err = CencEncryptor::new(KEY_A)
+        .encrypt(&mut overlap, &cfg)
+        .expect_err("32 protected bytes cover blocks 0 and 1, so IV 1 overlaps");
+    assert!(matches!(err, transmux::Error::InvalidInput(_)), "got {err:?}");
+}
