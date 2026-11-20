@@ -1610,7 +1610,13 @@ mod tests {
         assert_eq!(tag.len(), 25);
         demux.feed(&tag[..4]).expect("4 bytes of a tag header");
         assert_eq!(Stage::demand(&demux).want_bytes, 7, "11 - 4");
-        demux.feed(&tag[4..11 + 3]).expect("header + 3 body bytes");
+        demux.feed(&tag[4..11]).expect("the whole tag header");
+        assert_eq!(
+            Stage::demand(&demux).want_bytes,
+            14,
+            "10 body + 4 prev size"
+        );
+        demux.feed(&tag[11..11 + 3]).expect("3 body bytes");
         assert_eq!(Stage::demand(&demux).want_bytes, 11, "10 + 4 - 3");
         demux.feed(&tag[11 + 3..24]).expect("all but the last byte");
         assert_eq!(Stage::demand(&demux).want_bytes, 1, "one byte left");
