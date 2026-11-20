@@ -922,6 +922,64 @@ fn mdat_overrun_checks_every_trun_range() {
     ));
 }
 
+/// The single-track CMAF fragment warning fires only for two or more `traf`s.
+#[test]
+fn multi_traf_warning_needs_two_trafs() {
+    let samples = video_samples(&fixture());
+
+    // Zero trafs: a moof with only an mfhd.
+    let mut none = Vec::new();
+    none.extend_from_slice(&20u32.to_be_bytes());
+    none.extend_from_slice(b"styp");
+    none.extend_from_slice(b"msdh");
+    none.extend_from_slice(&0u32.to_be_bytes());
+    none.extend_from_slice(b"msdh");
+    none.extend_from_slice(&20u32.to_be_bytes());
+    none.extend_from_slice(b"moof");
+    none.extend_from_slice(&12u32.to_be_bytes());
+    none.extend_from_slice(b"mfhd");
+    none.extend_from_slice(&[0, 0, 0, 0]);
+    none.extend_from_slice(&1u32.to_be_bytes());
+    none.extend_from_slice(&8u32.to_be_bytes());
+    none.extend_from_slice(b"mdat");
+    let issues = validate_media_segment(&none, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.traf.missing"),
+        "an empty moof must report a missing traf: {issues:?}"
+    );
+    assert!(
+        !has_code(&issues, "media.moof.multi-traf"),
+        "zero trafs is not a multi-track fragment: {issues:?}"
+    );
+
+    // One traf: no multi-track warning.
+    let one = clean_media(1, 0, &samples);
+    let issues = validate_media_segment(&one, SegmentOrigin::FromIr);
+    assert!(
+        !has_code(&issues, "media.moof.multi-traf"),
+        "a single-traf fragment must not warn: {issues:?}"
+    );
+
+    // Two trafs: the warning fires exactly once.
+    let two = build_media_segment(
+        1,
+        &[
+            FragmentTrackData::new(TrackId::new(1), 0, &samples),
+            FragmentTrackData::new(TrackId::new(2), 0, &samples),
+        ],
+    )
+    .expect("two-track media segment");
+    let issues = validate_media_segment(&two, SegmentOrigin::FromIr);
+    assert_eq!(
+        issues
+            .iter()
+            .filter(|i| i.code == "media.moof.multi-traf")
+            .count(),
+        1,
+        "a two-traf fragment must warn once: {issues:?}"
+    );
+}
+
 /// Two `trun`s claiming the same `mdat` bytes are rejected; adjacent and
 /// disjoint runs are not.
 #[test]
