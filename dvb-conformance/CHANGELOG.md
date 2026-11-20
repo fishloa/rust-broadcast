@@ -22,6 +22,7 @@
 - The reserved-for-future-use PID range (0x0002..=0x000F) is exempt from Unreferenced_PID, while 0x0020 just past it is flagged once (audit 23 finding 155, #3497).
 - PCR silence on a PID that keeps sending is timed: exactly 100 ms without a PCR is clean, 110 ms trips 2.3a once, and a further packet does not repeat it (audit 23 finding 156, #3498).
 - The PTS check's PES-header guards are pinned: payloads of 0..=7 bytes and one-byte-wrong start codes neither panic nor arm 2.5, while an exactly 8-byte header with `PTS_DTS_flags=0b10` does (audit 23 finding 157, #3499).
+- The public label and event-text tables are asserted literally: every `Priority::name`, every `Indicator::clause`, the PCR discontinuity's 150 ms delta text, and the NIT_other/SDT_other table names with their own clauses (audit 23 finding 158, #3500).
 
 ## [15.1.0] - 2026-11-17
 ### Added

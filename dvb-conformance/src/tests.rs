@@ -17,7 +17,7 @@ use mpeg_ts::ts::{
     AdaptationFieldControl, ContinuityCounter, ScramblingControl, TS_PACKET_SIZE, TsHeader,
 };
 
-use crate::{Config, ConformanceMonitor, Indicator};
+use crate::{Config, ConformanceMonitor, Indicator, Priority};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -4320,6 +4320,165 @@ fn pts_check_rejects_partial_pes_start_codes_without_arming() {
         assert!(
             !has_indicator(&events, Indicator::PtsError),
             "prefix {prefix:02X?} is not a PES start code: {events:#?}"
+        );
+    }
+}
+
+// ── Public label and event-text tables ─────────────────────────────────────
+
+/// The priority labels are published verbatim (TR 101 290 §5.2).
+#[test]
+fn priority_names_are_literal() {
+    assert_eq!(Priority::First.name(), "first priority");
+    assert_eq!(Priority::Second.name(), "second priority");
+    assert_eq!(Priority::Third.name(), "third priority");
+}
+
+/// Every indicator's clause citation is its TR 101 290 table and row.
+#[test]
+fn indicator_clauses_are_literal() {
+    let cases = [
+        (Indicator::TsSyncLoss, "TR 101 290 v1.4.1 Table 5.0a indicator 1.1"),
+        (Indicator::SyncByteError, "TR 101 290 v1.4.1 Table 5.0a indicator 1.2"),
+        (Indicator::PatError2, "TR 101 290 v1.4.1 Table 5.0a indicator 1.3.a"),
+        (
+            Indicator::ContinuityCountError,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.4",
+        ),
+        (Indicator::PmtError2, "TR 101 290 v1.4.1 Table 5.0a indicator 1.5.a"),
+        (Indicator::PidError, "TR 101 290 v1.4.1 Table 5.0a indicator 1.6"),
+        (
+            Indicator::TransportError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.1",
+        ),
+        (Indicator::CrcError, "TR 101 290 v1.4.1 Table 5.0b indicator 2.2"),
+        (
+            Indicator::PcrRepetitionError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.3a",
+        ),
+        (
+            Indicator::PcrDiscontinuityError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.3b",
+        ),
+        (Indicator::PtsError, "TR 101 290 v1.4.1 Table 5.0b indicator 2.5"),
+        (Indicator::CatError, "TR 101 290 v1.4.1 Table 5.0b indicator 2.6"),
+        (Indicator::NitError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.1"),
+        (
+            Indicator::SiRepetitionError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.2",
+        ),
+        (
+            Indicator::UnreferencedPid,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.4",
+        ),
+        (Indicator::SdtError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.5"),
+        (Indicator::EitError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.6"),
+        (Indicator::RstError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.7"),
+        (Indicator::TdtError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.8"),
+        (
+            Indicator::PcrAccuracyError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.4",
+        ),
+        (Indicator::BufferError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.3"),
+        (
+            Indicator::EmptyBufferError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.9",
+        ),
+        (
+            Indicator::DataDelayError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.10",
+        ),
+        (
+            Indicator::EitPfError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.6.c",
+        ),
+        (
+            Indicator::NitOtherError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.1.b",
+        ),
+        (
+            Indicator::SdtOtherError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.5.b",
+        ),
+        (
+            Indicator::EitOtherError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.6.b",
+        ),
+        (
+            Indicator::SiMinGapError,
+            "TR 101 290 v1.4.1 Table 5.0c (25 ms minimum-gap dimension of 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8)",
+        ),
+    ];
+    for (indicator, expected) in cases {
+        assert_eq!(indicator.clause(), expected, "{indicator:?}");
+        assert!(expected.starts_with("TR 101 290 v1.4.1 Table 5.0"));
+    }
+}
+
+/// The PCR discontinuity detail must report the delta in milliseconds; the
+/// 1000/27 000 000 scaling and its operand order are pinned by literal text.
+#[test]
+fn pcr_discontinuity_detail_reports_delta_in_ms() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    monitor.feed(&pcr_only_packet(0x0200, 0, 27_000_000), ms(0));
+    let events = monitor.feed(&pcr_only_packet(0x0200, 1, 27_000_000 + 4_050_000), ms(50));
+    let event = events
+        .iter()
+        .find(|e| e.indicator == Indicator::PcrDiscontinuityError)
+        .expect("a 150 ms PCR step must be a 2.3b error");
+    assert!(
+        event
+            .detail
+            .contains("PCR delta 150 ms exceeds limit 100 ms"),
+        "detail: {}",
+        event.detail
+    );
+}
+
+/// The `_other` repetition details name the table that actually timed out and
+/// its own clause, not the EIT fallback.
+#[test]
+fn other_repetition_details_name_the_table_and_clause() {
+    for (pid, section, indicator, table, clause) in [
+        (
+            0x0010u16,
+            build_nit_other_section(0),
+            Indicator::NitOtherError,
+            "NIT_other (0x41)",
+            "(3.1.b)",
+        ),
+        (
+            0x0011,
+            build_sdt_other_section(0),
+            Indicator::SdtOtherError,
+            "SDT_other (0x46)",
+            "(3.5.b)",
+        ),
+    ] {
+        let mut monitor = ConformanceMonitor::new();
+        acquire_sync(&mut monitor);
+        feed_all(
+            &mut monitor,
+            &packetise_section(pid, &section),
+            ms(5),
+            ms(1),
+        );
+        let events = feed_all(
+            &mut monitor,
+            &packetise_section(pid, &section),
+            secs(15),
+            ms(1),
+        );
+        let event = events
+            .iter()
+            .find(|e| e.indicator == indicator)
+            .expect("a 15 s interval exceeds the 10 s `_other` limit");
+        assert!(
+            event.detail.contains(table) && event.detail.contains(clause),
+            "{indicator:?} detail: {}",
+            event.detail
         );
     }
 }
