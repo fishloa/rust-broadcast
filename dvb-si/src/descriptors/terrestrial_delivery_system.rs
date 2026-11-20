@@ -932,4 +932,20 @@ mod tests {
         assert_eq!(d.reserved_future_use_2.get(), 0x03);
         assert_eq!(d.reserved_future_use_32.get(), 0xFFFF_FFFF);
     }
+
+    #[test]
+    fn set_centre_frequency_hz_accepts_the_32_bit_maximum() {
+        let mut d = TerrestrialDeliverySystemDescriptor::default();
+        let max_hz = u64::from(u32::MAX) * 10;
+        d.set_centre_frequency_hz(max_hz).unwrap();
+        assert_eq!(d.centre_frequency_10hz, u32::MAX);
+        assert_eq!(d.centre_frequency_hz(), max_hz);
+
+        let over = (u64::from(u32::MAX) + 1) * 10;
+        assert!(matches!(
+            d.set_centre_frequency_hz(over),
+            Err(Error::ValueOutOfRange { .. })
+        ));
+        assert_eq!(d.centre_frequency_10hz, u32::MAX);
+    }
 }
