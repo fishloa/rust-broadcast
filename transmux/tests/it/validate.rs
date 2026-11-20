@@ -227,6 +227,36 @@ fn has_code(issues: &[transmux::ConformanceIssue], code: &str) -> bool {
     issues.iter().any(|i| i.code == code)
 }
 
+/// Rebuild `segment` with a leading `styp` carrying the given brands, keeping
+/// every other box byte-identical (`trun.data_offset` is relative to the `moof`,
+/// so the leading box size does not affect resolution).
+fn with_styp(segment: &[u8], major: &[u8; 4], compatible: &[[u8; 4]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let size = 16 + 4 * compatible.len();
+    out.extend_from_slice(&(size as u32).to_be_bytes());
+    out.extend_from_slice(b"styp");
+    out.extend_from_slice(major);
+    out.extend_from_slice(&0u32.to_be_bytes());
+    for brand in compatible {
+        out.extend_from_slice(brand);
+    }
+    let styp_size = top_boxes(segment)
+        .first()
+        .filter(|(_, _, t)| t == b"styp")
+        .map(|(_, s, _)| *s)
+        .expect("the segment begins with styp");
+    out.extend_from_slice(&segment[styp_size..]);
+    out
+}
+
+fn warnings(issues: &[transmux::ConformanceIssue]) -> Vec<&str> {
+    issues
+        .iter()
+        .filter(|i| i.severity == Severity::Warning)
+        .map(|i| i.code)
+        .collect()
+}
+
 fn errors(issues: &[transmux::ConformanceIssue]) -> Vec<&str> {
     issues
         .iter()
@@ -260,6 +290,72 @@ fn clean_media_has_no_errors() {
         errors(&issues).is_empty(),
         "clean media flagged errors: {:?}",
         errors(&issues)
+    );
+}
+
+#[test]
+fn styp_brand_rule_bites() {
+    let data = fixture();
+    let samples = video_samples(&data);
+    let media = clean_media(1, 0, &samples);
+
+    // A good styp (the builder's own msdh/msdh+msix) yields no warnings at all.
+    let clean = validate_media_segment(&media, SegmentOrigin::FromIr);
+    assert_eq!(
+        warnings(&clean),
+        Vec::<&str>::new(),
+        "a clean segment must carry no warning"
+    );
+
+    let validate = |major: &[u8; 4], compat: &[[u8; 4]]| {
+        let seg = with_styp(&media, major, compat);
+        validate_media_segment(&seg, SegmentOrigin::FromIr)
+    };
+
+    // (b)/(c) a DASH segment brand as the major brand is accepted.
+    assert!(
+        !has_code(&validate(b"msdh", &[]), "media.styp.brand"),
+        "msdh must be a recognised segment brand"
+    );
+    assert!(
+        !has_code(&validate(b"msix", &[]), "media.styp.brand"),
+        "msix must be a recognised segment brand"
+    );
+    // (d) any cmf* brand is accepted.
+    assert!(
+        !has_code(&validate(b"cmfc", &[]), "media.styp.brand"),
+        "cmfc must be a recognised segment brand"
+    );
+    // (e) the compatible-brand list alone can carry the segment brand.
+    assert!(
+        !has_code(
+            &validate(b"isom", &[*b"iso6", *b"cmfs"]),
+            "media.styp.brand"
+        ),
+        "a compatible cmf* brand is enough"
+    );
+
+    // (a) a brand set with no segment brand is reported.
+    let bad = validate(b"isom", &[*b"iso6"]);
+    assert!(
+        has_code(&bad, "media.styp.brand"),
+        "isom+iso6 must warn: {:?}",
+        warnings(&bad)
+    );
+    // (f) a near-miss brand is not a segment brand.
+    for major in [*b"xmsd", *b"cmxx"] {
+        assert!(
+            has_code(&validate(&major, &[]), "media.styp.brand"),
+            "a near-miss major brand must warn"
+        );
+    }
+
+    // A segment with no styp at all reports the missing box, and only that.
+    let no_styp = strip_box(&media, b"styp");
+    let issues = validate_media_segment(&no_styp, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.styp.missing"),
+        "no styp must be reported: {issues:?}"
     );
 }
 
