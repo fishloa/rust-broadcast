@@ -4,7 +4,6 @@
 //! Uses two 40-bit shift registers (A, B) with sboxes, CFED chain,
 //! and output table STREAM_OUT.
 use super::tables::{STREAM_CDEF, STREAM_OUT, STREAM_SBOX};
-use crate::zeroize::zeroize;
 
 /// Nibble from shift register at position n (nibble index)
 fn nbget(r: u64, n: u64) -> u64 {
@@ -25,10 +24,10 @@ pub(crate) struct StreamCipher {
 /// Zero every register on drop — see the `zeroize` module.
 impl Drop for StreamCipher {
     fn drop(&mut self) {
-        zeroize(core::slice::from_mut(&mut self.a));
-        zeroize(core::slice::from_mut(&mut self.b));
-        zeroize(core::slice::from_mut(&mut self.pqzyx));
-        zeroize(core::slice::from_mut(&mut self.cfed));
+        crate::zeroize::zeroize(core::slice::from_mut(&mut self.a));
+        crate::zeroize::zeroize(core::slice::from_mut(&mut self.b));
+        crate::zeroize::zeroize(core::slice::from_mut(&mut self.pqzyx));
+        crate::zeroize::zeroize(core::slice::from_mut(&mut self.cfed));
     }
 }
 
@@ -53,6 +52,25 @@ impl StreamCipher {
         }
 
         sc
+    }
+
+    /// The two shift registers and the S-box/feedback words, read back by the
+    /// zeroize-on-drop gate.
+    #[cfg(test)]
+    pub(crate) fn registers(&self) -> [u64; 4] {
+        [self.a, self.b, u64::from(self.pqzyx), u64::from(self.cfed)]
+    }
+
+    /// A cipher with every register set to a non-zero sentinel, so the
+    /// zeroize-on-drop gate can prove each one is cleared.
+    #[cfg(test)]
+    pub(crate) fn with_sentinel_registers() -> Self {
+        Self {
+            a: 0x0123_4567_89ab_cdef,
+            b: 0xfedc_ba98_7654_3210,
+            pqzyx: 0xdead_beef,
+            cfed: 0x1fff_ffff,
+        }
     }
 
     /// XOR the stream cipher's keystream into `data` in-place.

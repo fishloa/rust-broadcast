@@ -58,19 +58,14 @@ fn pcr_signalled_discontinuity_not_flagged() {
 }
 
 // -------------------------------------------------------------------------
-// Issue #1112 review: 2.3a/2.3b against the TR 101 290 definition
+// Issue #1112 review: 2.3b against the TR 101 290 definition
 // -------------------------------------------------------------------------
 
-/// TR 101 290 v1.4.1 Table 5.0b, transcribed at
-/// `private/specs-verified/dvb/dvb-conformance/tr_101_290.md:51-52`:
-///
-/// - **2.3a `PCR_repetition_error`**: "Time interval between two consecutive
-///   PCR values more than 100 ms" (note 2: the 40 ms limitation was removed
-///   in 2005).
-/// - **2.3b `PCR_discontinuity_indicator_error`**: "The difference between
-///   two consecutive PCR values (PCR_(i+1) - PCR_i) is outside the range of
-///   0...100 ms without the discontinuity_indicator set".
-const TR290_PCR_REPETITION_MS: f64 = 100.0;
+/// TR 101 290 v1.4.1 Table 5.0b indicator 2.3b
+/// (`PCR_discontinuity_indicator_error`), transcribed at
+/// `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`: the difference
+/// between two consecutive PCR values is outside `0..100 ms` without the
+/// `discontinuity_indicator`. 2.3a is not emitted in file mode.
 const TR290_PCR_DISCONTINUITY_MS: f64 = 100.0;
 
 /// One PID's PCR measurements, taken by a re-parse that shares no code with
@@ -184,8 +179,7 @@ fn every_ts_fixture() -> Vec<PathBuf> {
 ///
 /// - a `pcr-discontinuity` **Error** exactly when some PID has a forward step
 ///   over 100 ms or any backward step, with no `discontinuity_indicator`;
-/// - a `pcr-repetition` finding exactly when some PID has a forward step over
-///   100 ms (and it is not already the 2.3b case above).
+/// - and no other `pcr-*` rule: 2.3a is not emitted in file mode.
 ///
 /// Per-fixture permission is granted only through [`ALLOWED`], each entry
 /// explained. Everything else must be exactly right, in both directions — a
@@ -225,11 +219,6 @@ fn pcr_indicators_match_the_tr101290_definition_on_every_fixture() {
             !s.discontinuity_indicator_seen
                 && (s.max_forward_ms > TR290_PCR_DISCONTINUITY_MS || s.max_backward_ms > 0.0)
         });
-        let expect_repetition = stats.iter().any(|(_, s)| {
-            !s.discontinuity_indicator_seen
-                && s.max_forward_ms > TR290_PCR_REPETITION_MS
-                && s.max_forward_ms <= TR290_PCR_DISCONTINUITY_MS
-        });
 
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
@@ -237,22 +226,21 @@ fn pcr_indicators_match_the_tr101290_definition_on_every_fixture() {
             .findings()
             .iter()
             .any(|f| f.rule_id == "pcr-discontinuity" && f.severity == Severity::Error);
-        let got_repetition = report
+        // Every pcr rule emitted must be pcr-discontinuity; 2.3a is gone.
+        let other_pcr: Vec<_> = report
             .findings()
             .iter()
-            .any(|f| f.rule_id == "pcr-repetition");
+            .filter(|f| f.rule_id.starts_with("pcr-") && f.rule_id != "pcr-discontinuity")
+            .collect();
 
-        let allowed = ALLOWED.iter().find(|(name, _, _)| *name == rel);
-        let (d_ok, r_ok) = match allowed {
-            Some((_, ad, ar)) => (got_discontinuity == *ad, got_repetition == *ar),
-            None => (
-                got_discontinuity == expect_discontinuity,
-                got_repetition == expect_repetition,
-            ),
+        let allowed = ALLOWED.iter().find(|(name, _)| *name == rel);
+        let d_ok = match allowed {
+            Some((_, ad)) => got_discontinuity == *ad,
+            None => got_discontinuity == expect_discontinuity,
         };
-        if !d_ok || !r_ok {
+        if !d_ok || !other_pcr.is_empty() {
             failures.push(format!(
-                "{rel}: oracle discontinuity={expect_discontinuity} repetition={expect_repetition},                  code discontinuity={got_discontinuity} repetition={got_repetition},                  stats={stats:?}",
+                "{rel}: oracle discontinuity={expect_discontinuity},                  code discontinuity={got_discontinuity}, other pcr rules={other_pcr:?},                  stats={stats:?}",
             ));
         }
     }
@@ -274,16 +262,15 @@ fn pcr_indicators_match_the_tr101290_definition_on_every_fixture() {
 }
 
 /// Fixtures whose `PcrCheck` verdict intentionally differs from the raw
-/// oracle, with the reason. `(relative path, expect discontinuity, expect
-/// repetition)`.
-const ALLOWED: &[(&str, bool, bool)] = &[
+/// oracle, with the reason. `(relative path, expect discontinuity)`.
+const ALLOWED: &[(&str, bool)] = &[
     // `france-pcr-discontinuity.ts` sets `discontinuity_indicator` on the
     // +10 s jump itself, and the oracle only records that *some* packet on
     // the PID set the flag (it is a per-PID summary). The code decides per
     // packet, so the jump is correctly not flagged while the oracle's
     // summary says "seen". Both agree on the substance: a signalled
     // discontinuity is not an error.
-    ("fixtures/ts/france-pcr-discontinuity.ts", false, false),
+    ("fixtures/ts/france-pcr-discontinuity.ts", false),
 ];
 
 // -------------------------------------------------------------------------
@@ -335,13 +322,10 @@ fn real_pcr_value_gap_is_still_reported() {
     );
 }
 
-/// A step the spec assigns to 2.3b must **not** also be reported as 2.3a.
-///
-/// A +600 s jump spliced into a real capture is one discontinuity, not a
-/// repetition fault: reporting it as both inflates the count and
-/// misdescribes it.
+/// A +600 s jump spliced into a real capture is exactly one `pcr-discontinuity`
+/// finding and no other pcr rule (2.3a is not emitted in file mode).
 #[test]
-fn discontinuity_step_is_not_also_reported_as_repetition() {
+fn discontinuity_step_is_one_finding_and_no_other_pcr_rule() {
     const TS_PACKET_SIZE: usize = 188;
     const CLOCK_27MHZ: u64 = 27_000_000;
 
@@ -390,15 +374,13 @@ fn discontinuity_step_is_not_also_reported_as_repetition() {
         "the +600 s step is exactly one 2.3b discontinuity; got {:?}",
         report.findings(),
     );
-    assert!(
-        report
-            .findings()
-            .iter()
-            .all(|f| f.rule_id != "pcr-repetition"),
-        "a step already reported as 2.3b must not also be reported as 2.3a; \
-         got {:?}",
+    assert_eq!(
+        report.findings().len(),
+        1,
+        "one step, one finding and no other pcr rule; got {:?}",
         report.findings(),
     );
+    assert_eq!(report.findings()[0].rule_id, "pcr-discontinuity");
 }
 
 /// A backward PCR step with no `discontinuity_indicator` is 2.3b: the

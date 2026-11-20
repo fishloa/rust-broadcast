@@ -194,4 +194,14 @@ mod tests {
         assert!(q.multi_track());
         assert_eq!(q.to_byte(), 0x09);
     }
+
+    /// Bit 2 (`0x04`) marks a non-streamable file; a missing check would
+    /// report every file as streamable.
+    #[test]
+    fn non_streamable_reads_bit_2() {
+        assert!(Op1aQualifier::from_byte(0x04).non_streamable());
+        assert!(!Op1aQualifier::from_byte(0x00).non_streamable());
+        assert!(!Op1aQualifier::from_byte(0x01).non_streamable());
+        assert!(!Op1aQualifier::from_byte(0x08).non_streamable());
+    }
 }

@@ -65,8 +65,8 @@ mod stream;
 
 use crate::key::ControlWord;
 use crate::zeroize::Zeroizing;
-use block::BitslicedBlock;
-use stream::BitslicedStream;
+pub(crate) use block::BitslicedBlock;
+pub(crate) use stream::BitslicedStream;
 
 /// The machine word the cipher state is sliced across. One bit per lane.
 type Word = u64;

@@ -607,6 +607,8 @@ impl Serialize for LocalSet<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::string::ToString;
 
     #[test]
     fn structural_set_kind_round_trips_every_named_variant() {
@@ -808,5 +810,15 @@ mod tests {
         let mut out = alloc::vec![0u8; parsed.serialized_len()];
         parsed.serialize_into(&mut out).unwrap();
         assert_eq!(out, original);
+    }
+
+    /// §9.3 Table 16's registry designator byte names the two item-length
+    /// forms; both labels are pinned.
+    #[test]
+    fn item_length_mode_labels_are_pinned() {
+        assert_eq!(ItemLengthMode::TwoByte.name(), "2-byte length");
+        assert_eq!(ItemLengthMode::Ber.name(), "BER length");
+        assert_eq!(ItemLengthMode::TwoByte.to_string(), "2-byte length");
+        assert_eq!(ItemLengthMode::Ber.to_string(), "BER length");
     }
 }

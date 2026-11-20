@@ -229,6 +229,25 @@ mod tests {
     }
 
     #[test]
+    fn every_pat_program_needs_its_pmt_before_the_hold_can_end() {
+        let mut declared = DeclaredStreams::new();
+        declared.programs = [1u16, 2].into_iter().collect();
+        declared.seen_pmts = [1u16].into_iter().collect();
+        assert!(!declared.pmts_complete());
+        assert!(!declared.all_resolved(&BTreeSet::new()));
+        assert!(!declared.active_resolved(&BTreeSet::new()));
+        declared.seen_pmts = [1u16, 2].into_iter().collect();
+        assert!(declared.pmts_complete());
+        assert!(declared.all_resolved(&BTreeSet::new()));
+        assert!(declared.active_resolved(&BTreeSet::new()));
+
+        let none = DeclaredStreams::new();
+        assert!(!none.pmts_complete());
+        assert!(!none.all_resolved(&BTreeSet::new()));
+        assert!(!none.active_resolved(&BTreeSet::new()));
+    }
+
+    #[test]
     fn a_missing_wall_or_media_limit_disables_the_hold() {
         assert!(!LIMITS.disabled());
         assert!(

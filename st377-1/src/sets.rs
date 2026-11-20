@@ -334,4 +334,26 @@ mod tests {
             Err(expected)
         );
     }
+
+    /// §9.3: 65535 bytes is the largest value a two-byte local length can
+    /// carry, so only 65536 switches the Set to the BER form.
+    #[test]
+    fn local_length_mode_switches_above_65535() {
+        let mode_for = |len: usize| {
+            let (key, _) = finish_owned_set(
+                StructuralSetKind::Preface,
+                alloc::vec![LocalSetOwnedItem::owned(0x1234, alloc::vec![0xAA; len])],
+                &[],
+            );
+            LocalSet {
+                key,
+                items: alloc::vec::Vec::new(),
+                len_size: Default::default(),
+            }
+            .item_length_mode()
+        };
+        assert_eq!(mode_for(65_534), ItemLengthMode::TwoByte);
+        assert_eq!(mode_for(65_535), ItemLengthMode::TwoByte);
+        assert_eq!(mode_for(65_536), ItemLengthMode::Ber);
+    }
 }

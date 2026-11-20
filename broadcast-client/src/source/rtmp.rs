@@ -511,3 +511,242 @@ impl RtmpSource {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tshttp::Event as TsEvent;
+    use broadcast_common::Unpackage;
+    use transmux::{EventProvenance, FlvDemux, Media};
+
+    fn rtmp_source() -> RtmpSource {
+        let url = Url::parse("rtmp://origin.test/live/cam1").expect("url");
+        RtmpSource::new(&url, &TsConfig::default(), 0).expect("source")
+    }
+
+    fn trailer_spec() -> TrackSpec {
+        let data = test_fixtures::read("flv/av.flv");
+        let media: Media = FlvDemux::new().unpackage(&data[..]).expect("direct demux");
+        media.tracks[0].spec.clone()
+    }
+
+    #[test]
+    fn on_connected_from_another_connection_or_a_repeat_is_ignored() {
+        let mut source = rtmp_source();
+        let conn = source.conn.expect("a connecting socket");
+        source.take_actions();
+        source.on_connected(ConnId::new(conn.0 + 1), 0);
+        assert!(
+            source.take_actions().is_empty(),
+            "another connection must not start a handshake"
+        );
+        source.on_connected(conn, 0);
+        assert!(
+            !source.take_actions().is_empty(),
+            "the connecting socket sends the handshake"
+        );
+        source.on_connected(conn, 0);
+        assert!(
+            source.take_actions().is_empty(),
+            "a repeated on_connected is ignored once the handshake is under way"
+        );
+    }
+
+    #[test]
+    fn on_data_and_on_closed_from_another_connection_are_ignored() {
+        let mut source = rtmp_source();
+        let conn = source.conn.expect("a connecting socket");
+        source.on_connected(conn, 0);
+        source.take_actions();
+        source.on_data(ConnId::new(conn.0 + 1), &[0xFF; 8], 0);
+        assert!(
+            source.take_actions().is_empty(),
+            "another connection's bytes"
+        );
+        assert_eq!(source.conn, Some(conn));
+        source.on_closed(ConnId::new(conn.0 + 1), None, 0);
+        assert_eq!(source.conn, Some(conn), "another connection's close");
+    }
+
+    #[test]
+    fn events_after_the_stream_ended_are_ignored() {
+        let mut source = rtmp_source();
+        let conn = source.conn.expect("a connecting socket");
+        source.ended = true;
+        source.client = None;
+        source.take_actions();
+        source.on_connected(conn, 0);
+        assert!(
+            source.take_actions().is_empty(),
+            "an ended stream starts no handshake"
+        );
+
+        let mut source = rtmp_source();
+        let conn = source.conn.expect("a connecting socket");
+        source.on_connected(conn, 0);
+        source.take_actions();
+        source.ended = true;
+        source.now_us = 0;
+        source.on_data(conn, &[0xFF; 8], 12_345);
+        assert_eq!(source.now_us, 0, "an ended stream ignores bytes");
+
+        let mut source = rtmp_source();
+        let conn = source.conn.expect("a connecting socket");
+        source.ended = true;
+        assert!(!source.on_closed(conn, None, 0));
+        assert_eq!(source.conn, Some(conn), "an ended stream keeps no close");
+    }
+
+    #[test]
+    fn on_closed_reports_established_only_after_a_connection_completed() {
+        let mut source = rtmp_source();
+        let conn = source.conn.expect("a connecting socket");
+        assert!(!source.on_closed(conn, None, 0), "nothing established yet");
+        let mut source = rtmp_source();
+        let conn = source.conn.expect("a connecting socket");
+        source.map_event(TsEvent::Connected);
+        assert!(
+            source.on_closed(conn, None, 0),
+            "a completed connection ended"
+        );
+    }
+
+    #[test]
+    fn a_removed_track_leaves_the_announced_set() {
+        let mut source = rtmp_source();
+        source.take_events();
+        let spec = trailer_spec();
+        let track = spec.track_id;
+        source.tracks.insert(track, spec);
+        source.tracks_dirty = false;
+        source.map_event(TsEvent::Demux(Box::new(DemuxEvent::track_removed(
+            track,
+            EventProvenance::default(),
+        ))));
+        assert!(source.tracks.is_empty(), "the removed track is gone");
+        assert!(source.tracks_dirty, "the set must be re-announced");
+    }
+
+    #[test]
+    fn a_display_size_change_reaches_the_host() {
+        use std::sync::Arc;
+        use transmux::{DisplayChangeSet, DisplayInfo};
+
+        let mut source = rtmp_source();
+        source.take_events();
+        let track = TrackId::new(1);
+        source.map_event(TsEvent::Demux(Box::new(DemuxEvent::display_changed(
+            track,
+            Arc::new(DisplayInfo::new(None)),
+            DisplayChangeSet::default(),
+            None,
+            Some(42),
+            true,
+            EventProvenance::default(),
+        ))));
+        assert!(source.take_events().iter().any(|e| matches!(
+            e,
+            Event::DisplayChanged { track: t, pts: Some(42), .. } if *t == track
+        )));
+    }
+
+    #[test]
+    fn drain_pending_tracks_announces_tracks_learned_just_before_the_end() {
+        let mut source = rtmp_source();
+        source.take_events();
+        source
+            .tracks
+            .insert(trailer_spec().track_id, trailer_spec());
+        source.tracks_dirty = true;
+        source.drain_pending_tracks();
+        let events = source.take_events();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Tracks(specs) if !specs.is_empty())),
+            "the pending tracks are announced"
+        );
+        assert!(!source.tracks_dirty);
+    }
+
+    fn wakes(source: &mut RtmpSource) -> Vec<u64> {
+        source
+            .take_actions()
+            .iter()
+            .filter_map(|a| match a {
+                Action::WakeAt(t) => Some(t.as_micros()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sync_wake_arms_once_and_keeps_the_earlier_deadline() {
+        let mut source = rtmp_source();
+        source.take_actions();
+        let deadline = source
+            .policy
+            .next_deadline()
+            .expect("a deadline")
+            .as_micros();
+        source.wake_pending = None;
+        source.sync_wake(0);
+        assert_eq!(wakes(&mut source), vec![deadline]);
+        source.sync_wake(0);
+        assert!(
+            wakes(&mut source).is_empty(),
+            "an outstanding wake is not re-armed"
+        );
+        source.wake_pending = Some(deadline + 1_000_000);
+        source.sync_wake(0);
+        assert_eq!(
+            wakes(&mut source),
+            vec![deadline],
+            "an earlier deadline replaces the later outstanding one"
+        );
+        source.wake_pending = Some(0);
+        source.sync_wake(0);
+        assert_eq!(
+            wakes(&mut source),
+            vec![deadline],
+            "a wake at the current instant is not outstanding"
+        );
+        source.wake_pending = Some(5);
+        source.sync_wake(10);
+        assert_eq!(
+            wakes(&mut source),
+            vec![deadline],
+            "a wake already in the past is not outstanding"
+        );
+        source.wake_pending = Some(deadline - 1);
+        source.sync_wake(0);
+        assert!(
+            wakes(&mut source).is_empty(),
+            "an outstanding wake before the deadline is not re-armed"
+        );
+    }
+
+    #[test]
+    fn sync_wake_emits_nothing_after_the_source_closed() {
+        let mut source = rtmp_source();
+        source.take_actions();
+        source.closed = true;
+        source.wake_pending = None;
+        source.sync_wake(0);
+        assert!(wakes(&mut source).is_empty(), "a closed source never wakes");
+    }
+
+    #[test]
+    fn an_exhausted_reconnect_budget_is_a_fatal_error() {
+        let mut source = rtmp_source();
+        source.take_events();
+        source.map_event(TsEvent::GaveUp { attempts: 2 });
+        assert!(source.take_events().iter().any(|e| matches!(
+            e,
+            Event::Error {
+                kind: ErrorKind::ReconnectAttemptsExhausted { attempts: 2 },
+                fatal: true,
+            }
+        )));
+    }
+}

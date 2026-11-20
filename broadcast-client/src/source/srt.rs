@@ -495,3 +495,98 @@ impl Link {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::srt::SrtEntropySeed;
+
+    fn first_handshake(seed: [u8; 32]) -> (u32, u32) {
+        let config = SrtCallerConfig {
+            entropy_seed: Some(SrtEntropySeed::new(seed)),
+            ..SrtCallerConfig::default()
+        };
+        let mut caller = SrtCaller::new(&config).expect("caller");
+        caller.on_connected(0);
+        let out = caller.take_out();
+        let first = out.sends.first().expect("the induction handshake");
+        match SrtPacket::parse(first) {
+            Ok(SrtPacket::Control(ControlPacket::Handshake(hs))) => {
+                (hs.srt_socket_id, hs.initial_seq_number)
+            }
+            _ => panic!("the first datagram is an induction handshake"),
+        }
+    }
+
+    #[test]
+    fn the_caller_socket_id_and_initial_sequence_number_are_in_range() {
+        for byte in 0u16..=255 {
+            let seed = [u8::try_from(byte).unwrap(); 32];
+            let (socket_id, isn) = first_handshake(seed);
+            assert!(
+                (1..=MAX_SOCKET_ID).contains(&socket_id),
+                "socket id {socket_id} for seed byte {byte}"
+            );
+            assert!(
+                isn <= SEQ_NUMBER_MASK,
+                "initial sequence number {isn} for seed byte {byte}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_socket_id_and_initial_sequence_number_derive_from_the_seed() {
+        for (seed, socket_id, isn) in [
+            ([0u8; 32], 99_515_047u32, 1_953_798_393u32),
+            ([0xFF; 32], 354_121_992, 1_124_863_867),
+            (
+                [
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                    22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                ],
+                371_226_212,
+                688_821_898,
+            ),
+        ] {
+            assert_eq!(first_handshake(seed), (socket_id, isn), "seed {seed:?}");
+        }
+    }
+
+    #[test]
+    fn a_control_timestamp_is_the_low_32_bits_of_the_clock() {
+        assert_eq!(wire_timestamp(0x1_0000_0005), 5);
+        assert_eq!(wire_timestamp(0x00FF_FFFF_FFFF), 0xFFFF_FFFF);
+    }
+
+    fn link() -> Link {
+        Link {
+            peer_socket_id: 1,
+            epoch_us: 0,
+            receiver: ArqReceiver::new(1, 100, 8192),
+            tsbpd: TsbpdScheduler::new(100, 0, Duration::from_millis(120), 0, false, None),
+            staged: BTreeMap::new(),
+            key: None,
+            last_rx_us: 0,
+            control: VecDeque::new(),
+        }
+    }
+
+    #[test]
+    fn a_drop_request_removes_the_staged_packets_inside_its_range() {
+        let mut link = link();
+        for seq in [101u32, 102, 103, 104, 105] {
+            link.staged
+                .insert(seq, alloc::vec![u8::try_from(seq).unwrap()]);
+        }
+        let req = DropReqPacket {
+            message_number: srt_runtime::packet::MessageNumber::try_new(1).expect("message"),
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(1),
+            first_seq: srt_runtime::packet::SeqNo::try_new(102).expect("first"),
+            last_seq: srt_runtime::packet::SeqNo::try_new(104).expect("last"),
+        };
+        link.drop_request(&req, Timestamp::from_micros(0));
+        let left: Vec<u32> = link.staged.keys().copied().collect();
+        assert_eq!(left, vec![101, 105], "the dropped range is removed");
+    }
+}
