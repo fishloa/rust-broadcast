@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `Session::select_audio_rendition` on a Smooth session returned `Ok(())` and did nothing; it now returns `Error::NotHls`, as its documentation states for any session that is neither HLS nor DASH (audit 23 finding 52, #3303).
+
 ### Tests
 - `Event` equality is compared field by field (samples, display changes, finite lengths, auth/refusal bodies, audio renditions and errors), every public label literal and the `ends_connection` truth table are asserted, `Config::relay` keeps its three overrides, the tracks-hold boundary accepts a max equal to the quiet threshold, the playout gate's resume hysteresis and video-first origin are pinned, and event-queue coalescing, terminal statuses, lane bookkeeping, marker re-discovery and tombstone compaction are asserted (audit 23 findings 20-27).
 - The DASH and HLS sources refuse to issue requests while waiting for credentials, ignore a selection after the end, treat a transport error before the body ends as a failure, fall back from a resumed 416 to one full request and treat a first 416 as a refusal, close in-flight requests on reconnect, flush a captured refusal, map the DASH error kinds, report a damaged fragment once, and strip only credential headers from a `UTCTiming` request (audit 23 findings 28-37).
@@ -19,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The HLS per-track join bookkeeping is pinned: a re-announced video track keeps the join it had, a dropped one is forgotten, and `rejoin` makes the next sample wait for a random access point again (audit 23 finding 40, #3291).
 - The RTSP redirect credential scope, the auth replay cap and stale re-challenge, the stale-connection guards, the starved-data notice, the AVC config gate and the keepalive wake are pinned (audit 23 findings 42-46, #3293-#3297).
 - The RTMP stale-connection and ended-stream guards, the wake dedupe and past-deadline rules, and the pending-track, display-change and give-up event mappings are pinned (audit 23 findings 47-49, #3298-#3300).
-- The Smooth error mapping for an encrypted or oversized fragment, a dropped live manifest and an unresolvable fragment URL, the request inactivity deadline measured from the last byte, the parked-request resume, the stale challenge replay and the 200-then-transport-error retry are pinned; a Smooth session now refuses `select_audio_rendition` with `Error::NotHls`, matching its documentation and `select_variant` (audit 23 findings 50-52, #3301-#3303).
+- The Smooth error mapping for an encrypted or oversized fragment, a dropped live manifest and an unresolvable fragment URL, the request inactivity deadline measured from the last byte, the parked-request resume, the stale challenge replay and the 200-then-transport-error retry are pinned (audit 23 findings 50-52, #3301-#3302).
 - The SRT caller socket id and initial sequence number are pinned to the seed-derived literals and to their specification ranges; a control packet's timestamp is the low 32 bits of the clock, and a DROPREQ removes the staged packets inside its range (audit 23 findings 53-54, #3304-#3305).
 - A manually chosen audio rendition is matched by both name and language in the new variant's group after a variant switch, at whatever index that rendition now has (audit 23 finding 39, #3290).
 - The PAT-listed programs must all have a PMT before the track hold can end (audit 23 finding 55, #3306).
