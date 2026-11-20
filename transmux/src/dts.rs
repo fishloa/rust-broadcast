@@ -775,6 +775,61 @@ mod tests {
     }
 
     #[test]
+    fn sfreq_table_matches_table_5_5() {
+        for (code, hz) in [
+            (0b0001u8, 8_000u32),
+            (0b0010, 16_000),
+            (0b0011, 32_000),
+            (0b0110, 11_025),
+            (0b0111, 22_050),
+            (0b1000, 44_100),
+            (0b1011, 12_000),
+            (0b1100, 24_000),
+            (0b1101, 48_000),
+        ] {
+            assert_eq!(dts_sfreq_hz(code), Some(hz), "SFREQ {code:#06b}");
+        }
+        for code in [0b0000u8, 0b0100, 0b0101, 0b1001, 0b1010, 0b1110, 0b1111] {
+            assert_eq!(dts_sfreq_hz(code), None, "SFREQ {code:#06b} is reserved");
+        }
+    }
+
+    #[test]
+    fn amode_table_matches_table_5_4() {
+        let chs = [1u8, 2, 2, 2, 2, 3, 3, 4, 4, 5, 6, 6, 6, 7, 8, 8];
+        for (amode, &expected) in chs.iter().enumerate() {
+            assert_eq!(
+                dts_amode_channels(amode as u8),
+                Some(expected),
+                "AMODE {amode:#08b}"
+            );
+        }
+        for amode in 0b010000..=0b111111u8 {
+            assert_eq!(
+                dts_amode_channels(amode),
+                None,
+                "AMODE {amode:#08b} is user defined"
+            );
+        }
+    }
+
+    #[test]
+    fn amode_core_layout_matches_table_e_3() {
+        for (amode, layout) in [(0u8, 0u8), (2, 2), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)]
+        {
+            assert_eq!(dts_amode_core_layout(amode), layout, "AMODE {amode:#08b}");
+        }
+        for amode in [1u8, 3, 10, 11, 12, 13, 14, 15, 16, 63] {
+            assert_eq!(
+                dts_amode_core_layout(amode),
+                DTS_CORE_LAYOUT_USE_CHANNEL_LAYOUT,
+                "AMODE {amode:#08b}"
+            );
+        }
+        assert_eq!(DTS_CORE_LAYOUT_USE_CHANNEL_LAYOUT, 31);
+    }
+
+    #[test]
     fn into_ddts_core_only_matches_derivation() {
         let hdr = build_core_header(FX_NBLKS, FX_FSIZE, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
         let info = DtsCoreFrameInfo::from_es(&hdr).unwrap();
