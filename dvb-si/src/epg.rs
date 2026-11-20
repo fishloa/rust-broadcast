@@ -1042,6 +1042,20 @@ mod tests {
     }
 
     #[test]
+    fn rating_minimum_age_is_value_plus_three_for_0x01_to_0x0f() {
+        let rating = |value| Rating {
+            country: "GBR".into(),
+            value,
+        };
+        assert_eq!(rating(0x01).minimum_age(), Some(4));
+        assert_eq!(rating(0x08).minimum_age(), Some(11));
+        assert_eq!(rating(0x0F).minimum_age(), Some(18));
+        assert_eq!(rating(0x00).minimum_age(), None);
+        assert_eq!(rating(0x10).minimum_age(), None);
+        assert_eq!(rating(0xFF).minimum_age(), None);
+    }
+
+    #[test]
     fn feed_empty_is_error() {
         let mut store = EpgStore::new();
         assert!(matches!(
