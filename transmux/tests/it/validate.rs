@@ -360,6 +360,14 @@ fn styp_brand_rule_bites() {
 }
 
 #[test]
+fn severity_labels_are_pinned() {
+    assert_eq!(Severity::Error.name(), "error");
+    assert_eq!(Severity::Warning.name(), "warning");
+    assert_eq!(Severity::Error.to_string(), "error");
+    assert_eq!(Severity::Warning.to_string(), "warning");
+}
+
+#[test]
 fn clean_track_has_no_errors() {
     let data = fixture();
     let samples = video_samples(&data);
