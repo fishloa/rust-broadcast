@@ -9,13 +9,15 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
+use transmux::Error;
 use transmux::TrackId;
 use transmux::{
-    CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox, EditListEntry,
-    GROUPING_TYPE_ROLL, ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox,
-    SbgpEntry, SegmentIndexBox, SgpdEntry, SidxReference, SttsEntry, SubSampleDescriptor,
-    SubSampleInformationBox, SubSampleReferenceTableBox, SubsEntry, SubsampleProperties,
-    TimeToSampleBox,
+    CodecSpecificParameters, CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox,
+    EditListEntry, GROUPING_TYPE_ROLL, ProducerReferenceTimeBox, SampleGroupDescriptionBox,
+    SampleToGroupBox, SbgpEntry, SegmentIndexBox, SgpdEntry, SidxReference, SttsEntry,
+    SubSampleDescriptor, SubSampleInformationBox, SubSampleInformationBoxV2,
+    SubSampleReferenceTableBox, SubsEntry, SubsV2Entry, SubsV2Source, SubsV2Subsample,
+    SubsampleProperties, TimeToSampleBox,
 };
 
 // ---------------------------------------------------------------------------
@@ -980,4 +982,647 @@ fn sidx_serialize_accepts_sub_byte_field_maxima() {
     assert_eq!(&bytes[32..36], &0x8000_0001u32.to_be_bytes());
     assert_eq!(&bytes[40..44], &0xF000_0000u32.to_be_bytes());
     assert_eq!(SegmentIndexBox::parse(&bytes).unwrap(), high);
+}
+// ---------------------------------------------------------------------------
+// sbgp: the minimal empty box and every truncated prefix (#3375)
+// ---------------------------------------------------------------------------
+
+const SBGP_EMPTY_V0: &[u8] = &[
+    0, 0, 0, 20, b's', b'b', b'g', b'p', 0, 0, 0, 0, b'r', b'o', b'l', b'l', 0, 0, 0, 0,
+];
+
+fn assert_buffer_too_short<T: core::fmt::Debug>(
+    r: Result<T, Error>,
+    need: usize,
+    have: usize,
+    what: &str,
+) {
+    match r {
+        Err(Error::BufferTooShort(b)) => {
+            assert_eq!((b.need, b.have, b.what), (need, have, what), "shortfall")
+        }
+        other => panic!("expected BufferTooShort, got {other:?}"),
+    }
+}
+
+#[test]
+fn sbgp_empty_box_parses_and_round_trips() {
+    let parsed = SampleToGroupBox::parse(SBGP_EMPTY_V0).expect("20-byte empty sbgp");
+    assert_eq!(parsed.version, 0);
+    assert_eq!(parsed.grouping_type, GROUPING_TYPE_ROLL);
+    assert!(parsed.entries.is_empty(), "entry_count is zero");
+    assert_eq!(parsed.serialized_len(), 20);
+    assert_eq!(parsed.try_to_bytes().unwrap(), SBGP_EMPTY_V0);
+}
+
+#[test]
+fn sbgp_truncated_bodies_report_the_exact_shortfall() {
+    for cut in 0..12 {
+        assert_buffer_too_short(
+            SampleToGroupBox::parse_body(&[0u8; 12][..cut]),
+            12,
+            cut,
+            "sbgp body",
+        );
+    }
+
+    let mut v1 = vec![1u8, 0, 0, 0];
+    v1.extend_from_slice(b"roll");
+    assert_buffer_too_short(SampleToGroupBox::parse_body(&v1), 12, 8, "sbgp body");
+
+    let mut v1_gtp = v1.clone();
+    v1_gtp.extend_from_slice(&[0x11, 0x12, 0x13, 0x14]);
+    assert_buffer_too_short(
+        SampleToGroupBox::parse_body(&v1_gtp),
+        16,
+        12,
+        "sbgp entry_count",
+    );
+
+    let mut v0_one_entry = vec![0u8, 0, 0, 0];
+    v0_one_entry.extend_from_slice(b"roll");
+    v0_one_entry.extend_from_slice(&[0, 0, 0, 1]);
+    assert_buffer_too_short(
+        SampleToGroupBox::parse_body(&v0_one_entry),
+        20,
+        12,
+        "sbgp entry",
+    );
+    let mut entry_short = v0_one_entry.clone();
+    entry_short.push(0x01);
+    assert_buffer_too_short(
+        SampleToGroupBox::parse_body(&entry_short),
+        20,
+        13,
+        "sbgp entry",
+    );
+
+    let mut v1_one_entry = v1_gtp.clone();
+    v1_one_entry.extend_from_slice(&[0, 0, 0, 1]);
+    assert_buffer_too_short(
+        SampleToGroupBox::parse_body(&v1_one_entry),
+        24,
+        16,
+        "sbgp entry",
+    );
+
+    assert_buffer_too_short(SampleToGroupBox::parse(&[0u8; 12]), 16, 12, "sbgp box");
+}
+
+/// An `entry_count` above 65 535 is read from all four of its bytes: a body
+/// declaring `0x0001_0002` entries but holding two must run out at the third.
+#[test]
+fn sbgp_entry_count_high_bytes_are_read() {
+    let mut body = vec![0u8; 4];
+    body.extend_from_slice(b"roll");
+    body.extend_from_slice(&[0x00, 0x01, 0x00, 0x02]);
+    body.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1]);
+    body.extend_from_slice(&[0, 0, 0, 2, 0, 0, 0, 2]);
+    assert_buffer_too_short(SampleToGroupBox::parse_body(&body), 36, 28, "sbgp entry");
+}
+
+// ---------------------------------------------------------------------------
+// sbgp: every entry field keeps its own bytes (#3376)
+// ---------------------------------------------------------------------------
+
+const SBGP_DISTINCT_V1: &[u8] = &[
+    0, 0, 0, 40, b's', b'b', b'g', b'p', // box header
+    1, 0, 0, 0, // version 1, flags 0
+    b'r', b'o', b'l', b'l', // grouping_type
+    0x11, 0x12, 0x13, 0x14, // grouping_type_parameter
+    0, 0, 0, 2, // entry_count
+    0x01, 0x02, 0x03, 0x04, 0x0A, 0x0B, 0x0C, 0x0D, // entry 0
+    0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, // entry 1
+];
+
+#[test]
+fn sbgp_distinct_field_bytes_round_trip() {
+    let parsed = SampleToGroupBox::parse(SBGP_DISTINCT_V1).expect("v1 sbgp with two entries");
+    assert_eq!(parsed.version, 1);
+    assert_eq!(parsed.grouping_type_parameter, Some(0x1112_1314));
+    assert_eq!(
+        parsed.entries,
+        vec![
+            SbgpEntry {
+                sample_count: 0x0102_0304,
+                group_description_index: 0x0A0B_0C0D,
+            },
+            SbgpEntry {
+                sample_count: 0x0506_0708,
+                group_description_index: 0x090A_0B0C,
+            },
+        ]
+    );
+    assert_eq!(parsed.try_to_bytes().unwrap(), SBGP_DISTINCT_V1);
+}
+
+// ---------------------------------------------------------------------------
+// subs v0/v1: serialized_len, entry wire length and the box size field (#3377)
+// ---------------------------------------------------------------------------
+
+const SUBS_V0_GOLDEN: &[u8] = &[
+    0, 0, 0, 38, b's', b'u', b'b', b's', // box header
+    0, 0, 0, 0, // version 0, flags 0
+    0, 0, 0, 1, // entry_count
+    0x01, 0x02, 0x03, 0x04, // sample_delta
+    0, 2, // subsample_count
+    0x0A, 0x0B, 0x0C, 0x0D, 0xAA, 0xBB, 0xCC, 0xDD, // size, prio, disc, csp
+    0x0E, 0x0F, 0x10, 0x11, 0x12, 0x34, 0x56, 0x78, // size, prio, disc, csp
+];
+
+const SUBS_V1_GOLDEN: &[u8] = &[
+    0, 0, 0, 42, b's', b'u', b'b', b's', // box header
+    1, 0, 0, 0, // version 1, flags 0
+    0, 0, 0, 1, // entry_count
+    0x01, 0x02, 0x03, 0x04, // sample_delta
+    0, 2, // subsample_count
+    0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x11, 0x12, 0x13, 0x14, // subsample 0
+    0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, // subsample 1
+];
+
+fn subs_v0_golden_struct() -> SubSampleInformationBox {
+    SubSampleInformationBox {
+        version: 0,
+        flags: 0,
+        entries: vec![SubsEntry {
+            sample_delta: 0x0102_0304,
+            subsamples: vec![
+                SubSampleDescriptor {
+                    subsample_size: 0x0A0B,
+                    subsample_priority: 0x0C,
+                    discardable: 0x0D,
+                    codec_specific_parameters: 0xAABB_CCDD,
+                },
+                SubSampleDescriptor {
+                    subsample_size: 0x0E0F,
+                    subsample_priority: 0x10,
+                    discardable: 0x11,
+                    codec_specific_parameters: 0x1234_5678,
+                },
+            ],
+        }],
+    }
+}
+
+fn subs_v1_golden_struct() -> SubSampleInformationBox {
+    SubSampleInformationBox {
+        version: 1,
+        flags: 0,
+        entries: vec![SubsEntry {
+            sample_delta: 0x0102_0304,
+            subsamples: vec![
+                SubSampleDescriptor {
+                    subsample_size: 0x0A0B_0C0D,
+                    subsample_priority: 0x0E,
+                    discardable: 0x0F,
+                    codec_specific_parameters: 0x1112_1314,
+                },
+                SubSampleDescriptor {
+                    subsample_size: 0x1516_1718,
+                    subsample_priority: 0x19,
+                    discardable: 0x1A,
+                    codec_specific_parameters: 0x1B1C_1D1E,
+                },
+            ],
+        }],
+    }
+}
+
+#[test]
+fn subs_v0_and_v1_goldens_and_size_field() {
+    for (golden, b) in [
+        (SUBS_V0_GOLDEN, subs_v0_golden_struct()),
+        (SUBS_V1_GOLDEN, subs_v1_golden_struct()),
+    ] {
+        let bytes = b.try_to_bytes().unwrap();
+        assert_eq!(bytes, golden, "serialize must match the hand-built golden");
+        assert_eq!(b.serialized_len(), golden.len());
+        assert_eq!(
+            u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+            bytes.len(),
+            "the box size field must cover the whole box"
+        );
+        let parsed = SubSampleInformationBox::parse(golden).unwrap();
+        assert_eq!(parsed, b);
+        assert_eq!(parsed.try_to_bytes().unwrap(), golden);
+    }
+}
+
+/// A `subs` `entry_count` above 65 535 is read from all four of its bytes: a
+/// body declaring `0x0001_0002` entries but holding two must run out at the
+/// third.
+#[test]
+fn subs_entry_count_high_bytes_are_read() {
+    let mut body = vec![0u8, 0, 0, 0];
+    body.extend_from_slice(&[0x00, 0x01, 0x00, 0x02]);
+    body.extend_from_slice(&[0, 0, 0, 1, 0, 0]);
+    body.extend_from_slice(&[0, 0, 0, 2, 0, 0]);
+    assert_buffer_too_short(
+        SubSampleInformationBox::parse_body(&body),
+        26,
+        20,
+        "subs entry header",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// subs v0/v1: an entry with zero subsamples is legal, and one-byte
+// truncations report the exact shortfall (#3378)
+// ---------------------------------------------------------------------------
+
+const SUBS_V0_BODY: &[u8] = &[
+    0, 0, 0, 0, // version 0, flags 0
+    0, 0, 0, 1, // entry_count
+    0x01, 0x02, 0x03, 0x04, // sample_delta
+    0, 2, // subsample_count
+    0x0A, 0x0B, 0x0C, 0x0D, 0xAA, 0xBB, 0xCC, 0xDD, // subsample 0
+    0x0E, 0x0F, 0x10, 0x11, 0x12, 0x34, 0x56, 0x78, // subsample 1
+];
+
+const SUBS_V1_BODY: &[u8] = &[
+    1, 0, 0, 0, // version 1, flags 0
+    0, 0, 0, 1, // entry_count
+    0x01, 0x02, 0x03, 0x04, // sample_delta
+    0, 2, // subsample_count
+    0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x11, 0x12, 0x13, 0x14, // subsample 0
+    0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, // subsample 1
+];
+
+#[test]
+fn subs_entry_with_zero_subsamples_ending_the_body_round_trips() {
+    for version in [0u8, 1] {
+        let b = SubSampleInformationBox {
+            version,
+            flags: 0,
+            entries: vec![SubsEntry {
+                sample_delta: 0x0102_0304,
+                subsamples: vec![],
+            }],
+        };
+        let bytes = b.try_to_bytes().unwrap();
+        assert_eq!(bytes.len(), 22);
+        let parsed = SubSampleInformationBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.entries.len(), 1);
+        assert!(parsed.entries[0].subsamples.is_empty());
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+}
+
+#[test]
+fn subs_truncated_bodies_report_the_exact_shortfall() {
+    for body in [SUBS_V0_BODY, SUBS_V1_BODY] {
+        assert_buffer_too_short(
+            SubSampleInformationBox::parse_body(&body[..7]),
+            8,
+            7,
+            "subs body",
+        );
+        assert_buffer_too_short(
+            SubSampleInformationBox::parse_body(&body[..13]),
+            14,
+            13,
+            "subs entry header",
+        );
+        let first_subsample_end = 14 + 8 + if body == SUBS_V1_BODY { 2 } else { 0 };
+        assert_buffer_too_short(
+            SubSampleInformationBox::parse_body(&body[..first_subsample_end - 1]),
+            first_subsample_end,
+            first_subsample_end - 1,
+            "subs subsample",
+        );
+        assert_buffer_too_short(
+            SubSampleInformationBox::parse_body(&body[..body.len() - 1]),
+            body.len(),
+            body.len() - 1,
+            "subs subsample",
+        );
+        assert!(SubSampleInformationBox::parse_body(body).is_ok());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// subs: entry_count, sample_delta and v1 subsample_size keep their own
+// bytes (#3379)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn subs_v1_wide_fields_keep_every_byte() {
+    let mut entries = vec![SubsEntry {
+        sample_delta: 0x0102_0304,
+        subsamples: vec![SubSampleDescriptor {
+            subsample_size: 0x0A0B_0C0D,
+            subsample_priority: 0x0E,
+            discardable: 0x0F,
+            codec_specific_parameters: 0x1112_1314,
+        }],
+    }];
+    for i in 1..257u32 {
+        entries.push(SubsEntry {
+            sample_delta: i,
+            subsamples: vec![],
+        });
+    }
+    let b = SubSampleInformationBox {
+        version: 1,
+        flags: 1,
+        entries,
+    };
+    let bytes = b.try_to_bytes().unwrap();
+    let parsed = SubSampleInformationBox::parse(&bytes).expect("257 subs entries");
+    assert_eq!(parsed.entries.len(), 257);
+    assert_eq!(parsed.entries[0].sample_delta, 0x0102_0304);
+    assert_eq!(parsed.entries[0].subsamples[0].subsample_size, 0x0A0B_0C0D);
+    assert_eq!(parsed.entries[0].subsamples[0].subsample_priority, 0x0E);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+}
+
+// ---------------------------------------------------------------------------
+// subs v2 / ssrt: the cursor advances past the codec-specific parameters,
+// and a short property payload is a reported shortfall (#3381)
+// ---------------------------------------------------------------------------
+
+const SUBS_V2_TWO_SUBSAMPLES: &[u8] = &[
+    0, 0, 0, 34, b's', b'u', b'b', b's', // box header
+    2, 0, 0, 0, // version 2, flags 0
+    0, 0, 0, 1,    // entry_count
+    0xC0, // 16-bit size, 7-bit reference
+    0, 0, 0, 1, // sample_delta
+    0, 2, // subsample_count
+    0x00, 0x10, 0x38, 0xAA, 0x11, 0x22, 0x33, // size, flags, prio, csp
+    0x00, 0x20, 0x20, 0xBB, // size, flags, prio
+];
+
+const SSRT_TWO_ENTRIES: &[u8] = &[
+    0, 0, 0, 21, b's', b's', b'r', b't', // box header
+    0, 0, 0, 0, // flags
+    0, 2, // entry_count (15-bit form)
+    0x70, 0xAA, 0x11, 0x22, 0x33, // priority + 3-byte csp
+    0x40, 0xBB, // priority only
+];
+
+#[test]
+fn subs_v2_and_ssrt_advance_past_the_codec_specific_parameters() {
+    let parsed = SubSampleInformationBoxV2::parse(SUBS_V2_TWO_SUBSAMPLES).unwrap();
+    assert_eq!(
+        parsed.entries[0].subsamples,
+        vec![
+            SubsV2Subsample {
+                subsample_size: 0x10,
+                source: SubsV2Source::Explicit(SubsampleProperties {
+                    discardable: false,
+                    subsample_priority: Some(0xAA),
+                    codec_specific_parameters: Some(CodecSpecificParameters {
+                        len: 3,
+                        value: 0x0011_2233,
+                    }),
+                }),
+            },
+            SubsV2Subsample {
+                subsample_size: 0x20,
+                source: SubsV2Source::Explicit(SubsampleProperties {
+                    discardable: false,
+                    subsample_priority: Some(0xBB),
+                    codec_specific_parameters: None,
+                }),
+            },
+        ]
+    );
+    assert_eq!(parsed.try_to_bytes().unwrap(), SUBS_V2_TWO_SUBSAMPLES);
+
+    let ssrt = SubSampleReferenceTableBox::parse(SSRT_TWO_ENTRIES).unwrap();
+    assert_eq!(
+        ssrt.entries,
+        vec![
+            SubsampleProperties {
+                discardable: false,
+                subsample_priority: Some(0xAA),
+                codec_specific_parameters: Some(CodecSpecificParameters {
+                    len: 3,
+                    value: 0x0011_2233,
+                }),
+            },
+            SubsampleProperties {
+                discardable: false,
+                subsample_priority: Some(0xBB),
+                codec_specific_parameters: None,
+            },
+        ]
+    );
+    assert_eq!(ssrt.try_to_bytes().unwrap(), SSRT_TWO_ENTRIES);
+}
+
+#[test]
+fn subs_v2_and_ssrt_property_truncations_report_the_exact_shortfall() {
+    let subs_after_flags: &[u8] = &[
+        0, 0, 0, 26, b's', b'u', b'b', b's', 2, 0, 0, 0, 0, 0, 0, 1, 0xC0, 0, 0, 0, 1, 0, 1, 0,
+        0x10, 0x38,
+    ];
+    assert_buffer_too_short(
+        SubSampleInformationBoxV2::parse(subs_after_flags),
+        19,
+        18,
+        "subsample_priority",
+    );
+
+    let subs_two_csp_bytes: &[u8] = &[
+        0, 0, 0, 28, b's', b'u', b'b', b's', 2, 0, 0, 0, 0, 0, 0, 1, 0xC0, 0, 0, 0, 1, 0, 1, 0,
+        0x10, 0x18, 0x11, 0x22,
+    ];
+    assert_buffer_too_short(
+        SubSampleInformationBoxV2::parse(subs_two_csp_bytes),
+        21,
+        20,
+        "codec_specific_parameters",
+    );
+
+    let ssrt_after_flags: &[u8] = &[0, 0, 0, 15, b's', b's', b'r', b't', 0, 0, 0, 0, 0, 2, 0x70];
+    assert_buffer_too_short(
+        SubSampleReferenceTableBox::parse(ssrt_after_flags),
+        8,
+        7,
+        "subsample_priority",
+    );
+
+    let ssrt_two_csp_bytes: &[u8] = &[
+        0, 0, 0, 17, b's', b's', b'r', b't', 0, 0, 0, 0, 0, 2, 0x30, 0x11, 0x22,
+    ];
+    assert_buffer_too_short(
+        SubSampleReferenceTableBox::parse(ssrt_two_csp_bytes),
+        10,
+        9,
+        "codec_specific_parameters",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// subs v2: the minimal empty box and one-byte truncations in every size and
+// reference form (#3382)
+// ---------------------------------------------------------------------------
+
+const SUBS_V2_EMPTY: &[u8] = &[
+    0, 0, 0, 17, b's', b'u', b'b', b's', 2, 0, 0, 0, 0, 0, 0, 0, 0x00,
+];
+
+const SUBS_V2_SIZE16_SHORT_REF: &[u8] = &[
+    0, 0, 0, 26, b's', b'u', b'b', b's', 2, 0, 0, 0, 0, 0, 0, 1, 0xC0, 0, 0, 0, 0x0A, 0, 1, 0,
+    0x64, 0x85,
+];
+
+const SUBS_V2_SIZE16_LONG_REF: &[u8] = &[
+    0, 0, 0, 27, b's', b'u', b'b', b's', 2, 0, 0, 0, 0, 0, 0, 1, 0x80, 0, 0, 0, 0x0A, 0, 1, 0,
+    0x64, 0x81, 0x05,
+];
+
+const SUBS_V2_SIZE32_SHORT_REF: &[u8] = &[
+    0, 0, 0, 28, b's', b'u', b'b', b's', 2, 0, 0, 0, 0, 0, 0, 1, 0x40, 0, 0, 0, 0x0A, 0, 1, 0, 0,
+    1, 0x2C, 0x07,
+];
+
+const SUBS_V2_SIZE32_LONG_REF: &[u8] = &[
+    0, 0, 0, 29, b's', b'u', b'b', b's', 2, 0, 0, 0, 0, 0, 0, 1, 0x00, 0, 0, 0, 0x0A, 0, 1, 0, 0,
+    1, 0x2C, 0x81, 0x07,
+];
+
+#[test]
+fn subs_v2_empty_box_parses() {
+    let parsed = SubSampleInformationBoxV2::parse(SUBS_V2_EMPTY).expect("17-byte empty subs v2");
+    assert!(parsed.entries.is_empty());
+    assert!(!parsed.is_size_16_bits);
+    assert!(!parsed.is_short_ref);
+    assert_eq!(parsed.try_to_bytes().unwrap(), SUBS_V2_EMPTY);
+}
+
+#[test]
+fn subs_v2_truncated_bodies_report_the_exact_shortfall() {
+    assert_buffer_too_short(
+        SubSampleInformationBoxV2::parse_body(&SUBS_V2_EMPTY[8..16]),
+        9,
+        8,
+        "subs v2 body",
+    );
+    assert_buffer_too_short(
+        SubSampleInformationBoxV2::parse_body(&SUBS_V2_EMPTY[8..15]),
+        9,
+        7,
+        "subs v2 body",
+    );
+
+    let header_short: &[u8] = &[
+        0, 0, 0, 22, b's', b'u', b'b', b's', 2, 0, 0, 0, 0, 0, 0, 1, 0xC0, 0, 0, 0, 0x0A, 0,
+    ];
+    assert_buffer_too_short(
+        SubSampleInformationBoxV2::parse_body(&header_short[8..]),
+        15,
+        14,
+        "subs v2 entry header",
+    );
+
+    for (golden, need, what) in [
+        (SUBS_V2_SIZE16_SHORT_REF, 18usize, "subs v2 subsample"),
+        (SUBS_V2_SIZE16_LONG_REF, 19, "subs v2 reference_idx"),
+        (SUBS_V2_SIZE32_SHORT_REF, 20, "subs v2 subsample"),
+        (SUBS_V2_SIZE32_LONG_REF, 21, "subs v2 reference_idx"),
+    ] {
+        let cut = &golden[..golden.len() - 1];
+        assert_buffer_too_short(
+            SubSampleInformationBoxV2::parse_body(&cut[8..]),
+            need,
+            need - 1,
+            what,
+        );
+    }
+
+    assert_buffer_too_short(
+        SubSampleInformationBoxV2::parse(&[0u8; 12]),
+        16,
+        12,
+        "subs box",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// subs v2: entry_count, sample_delta and subsample_count keep their own
+// bytes (#3383)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn subs_v2_wide_fields_keep_every_byte() {
+    let mut entries = vec![SubsV2Entry {
+        sample_delta: 0x0B0C_0D0E,
+        subsamples: vec![
+            SubsV2Subsample {
+                subsample_size: 0x64,
+                source: SubsV2Source::Reference { reference_idx: 5 },
+            },
+            SubsV2Subsample {
+                subsample_size: 0x65,
+                source: SubsV2Source::Reference { reference_idx: 6 },
+            },
+            SubsV2Subsample {
+                subsample_size: 0x66,
+                source: SubsV2Source::Reference { reference_idx: 7 },
+            },
+        ],
+    }];
+    entries.push(SubsV2Entry {
+        sample_delta: 0x0102_0304,
+        subsamples: (0..258)
+            .map(|_| SubsV2Subsample {
+                subsample_size: 7,
+                source: SubsV2Source::Reference { reference_idx: 1 },
+            })
+            .collect(),
+    });
+    for i in 2..257u32 {
+        entries.push(SubsV2Entry {
+            sample_delta: i,
+            subsamples: vec![],
+        });
+    }
+    let b = SubSampleInformationBoxV2 {
+        flags: 0,
+        is_size_16_bits: true,
+        is_short_ref: true,
+        entries,
+    };
+    let bytes = b.try_to_bytes().unwrap();
+    let parsed = SubSampleInformationBoxV2::parse(&bytes).expect("257 subs v2 entries");
+    assert_eq!(parsed.entries.len(), 257);
+    assert_eq!(parsed.entries[1].sample_delta, 0x0102_0304);
+    assert_eq!(parsed.entries[1].subsamples.len(), 258);
+    assert_eq!(
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize,
+        bytes.len()
+    );
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+}
+
+// ---------------------------------------------------------------------------
+// ssrt: a largesize header leaves only the body guard between the tail and
+// out-of-bounds reads (#3384)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ssrt_largesize_truncations_report_the_exact_shortfall() {
+    for total in 16..=20usize {
+        let mut box_bytes = vec![0, 0, 0, 1, b's', b's', b'r', b't'];
+        box_bytes.extend_from_slice(&(total as u64).to_be_bytes());
+        box_bytes.resize(total, 0);
+        assert_buffer_too_short(
+            SubSampleReferenceTableBox::parse(&box_bytes),
+            5,
+            total - 16,
+            "ssrt body",
+        );
+    }
+    let mut single_body = vec![0, 0, 0, 1, b's', b's', b'r', b't'];
+    single_body.extend_from_slice(&17u64.to_be_bytes());
+    single_body.push(0x00);
+    assert_eq!(single_body.len(), 17);
+    assert_buffer_too_short(
+        SubSampleReferenceTableBox::parse(&single_body),
+        5,
+        1,
+        "ssrt body",
+    );
 }

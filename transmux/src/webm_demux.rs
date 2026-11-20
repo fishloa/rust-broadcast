@@ -1669,6 +1669,45 @@ mod tests {
     }
 
     #[test]
+    fn ebml_lacing_zero_running_size_reaches_the_zero_length_rule() {
+        // Three frames: first size 2, then a signed VINT delta of -2 (one-byte
+        // bias 63: 0xBD = 61 -> 61 - 63 = -2), taking the running size to
+        // exactly 0; the remainder is one byte. Reaching zero is not "went
+        // negative", it is a zero-length frame, which the next rule rejects.
+        let bytes = [
+            0x81u8, 0x00, 0x00, 0x06, 0x02, // track, ts, flags, frame count
+            0x82, 0xBD, // first size 2, then one delta of -2
+            0xAA, 0xBB, 0xCC, // 2-byte frame, empty frame, 1-byte remainder
+        ];
+        let err = parse_block(&bytes, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidInput("webm block: laced frame has zero length")
+            ),
+            "a lace size of exactly 0 must be the zero-length rule, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn ebml_lacing_negative_running_size_is_rejected() {
+        // The same block with a delta of -3 (0xBC = 60 -> -3) takes the running
+        // size to -1, which no frame length can express.
+        let bytes = [
+            0x81u8, 0x00, 0x00, 0x06, 0x02, // track, ts, flags, frame count
+            0x82, 0xBC, // first size 2, then one delta of -3
+        ];
+        let err = parse_block(&bytes, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidInput("webm EBML lace size went negative")
+            ),
+            "a lace size below 0 must be reported as negative, got {err:?}"
+        );
+    }
+
+    #[test]
     fn fixed_lacing_needs_a_whole_multiple() {
         // Frame count minus one = 1 (two frames) but 5 payload bytes is odd.
         let block = [0x81u8, 0x00, 0x00, 0x04, 0x01, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE];
