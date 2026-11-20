@@ -3761,3 +3761,69 @@ fn presence_timers_stay_quiet_on_a_healthy_seven_second_stream() {
         );
     }
 }
+
+// ── Presence errors are latched per absence, not per packet ────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0a 1.5.a: a PMT that stays absent is one
+/// error, not one per packet. Only the PAT had an emit-once test.
+#[test]
+fn pmt_timeout_emits_once_not_per_packet() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+
+    let mut events = Vec::new();
+    for i in 0..20u64 {
+        let pkt = make_ts_packet(0x0300, (i & 0x0F) as u8, false, false, &[], &[0xAB]);
+        events.extend(monitor.feed(&pkt, ms(600 + i * 10)).to_vec());
+    }
+    let pmt_errors: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::PmtError2
+                && e.detail.starts_with("no PMT section on program_map_PID")
+        })
+        .collect();
+    assert_eq!(
+        pmt_errors.len(),
+        1,
+        "20 packets past the PMT timeout raise one 1.5.a: {pmt_errors:#?}"
+    );
+}
+
+/// TR 101 290 v1.4.1 Table 5.0a 1.6: a referenced PID that stays absent is
+/// one error, not one per packet.
+#[test]
+fn pid_timeout_emits_once_not_per_packet() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+    let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(0x0100, &pmt),
+        ms(10),
+        ms(1),
+    );
+
+    let mut events = Vec::new();
+    for i in 0..20u64 {
+        let pkt = make_ts_packet(0x0300, (i & 0x0F) as u8, false, false, &[], &[0xAB]);
+        events.extend(monitor.feed(&pkt, ms(5_100 + i * 10)).to_vec());
+    }
+    let pid_errors: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::PidError && e.pid == Some(Pid::from_wire_masked(0x0200))
+        })
+        .collect();
+    assert_eq!(
+        pid_errors.len(),
+        1,
+        "20 packets past the 5 s PID timeout raise one 1.6: {pid_errors:#?}"
+    );
+}

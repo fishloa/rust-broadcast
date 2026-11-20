@@ -15,6 +15,7 @@
 - Wrong-table_id sections repeated every 200 ms no longer mask 1.3.a/1.5.a: the PAT and PMT presence timeouts are asserted to fire by the first packet past 500 ms from the anchor (audit 23 finding 148, #3490).
 - A PAT is CRC-checked exactly once: a corrupted PAT raises one `CRC_error`, not one from the PAT path and another from the generic SI path, and a valid PAT raises nothing (audit 23 finding 149, #3491).
 - A 7 s healthy stream on an epoch-based clock (plain and PCR-bearing, so the 5 s PID window is crossed) raises no 1.3.a, 1.5.a or 1.6 event, pinning the presence-timer refresh (audit 23 finding 150, #3492).
+- A persistent PMT or referenced-PID absence is reported once: 20 further packets past the timeout raise exactly one 1.5.a and one 1.6 (audit 23 finding 151, #3493).
 
 ## [15.1.0] - 2026-11-17
 ### Added
