@@ -773,7 +773,9 @@ mod tests {
         let bytes = d.try_to_bytes().unwrap();
         assert_eq!(&bytes[4..6], &[0xFF, 0xF8]);
         assert_eq!(
-            DoviVideoStreamDescriptor::parse(&bytes).unwrap().dependency_pid,
+            DoviVideoStreamDescriptor::parse(&bytes)
+                .unwrap()
+                .dependency_pid,
             Some(0x1FFF)
         );
     }

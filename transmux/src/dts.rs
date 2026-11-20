@@ -841,8 +841,16 @@ mod tests {
 
     #[test]
     fn amode_core_layout_matches_table_e_3() {
-        for (amode, layout) in [(0u8, 0u8), (2, 2), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)]
-        {
+        for (amode, layout) in [
+            (0u8, 0u8),
+            (2, 2),
+            (4, 4),
+            (5, 5),
+            (6, 6),
+            (7, 7),
+            (8, 8),
+            (9, 9),
+        ] {
             assert_eq!(dts_amode_core_layout(amode), layout, "AMODE {amode:#08b}");
         }
         for amode in [1u8, 3, 10, 11, 12, 13, 14, 15, 16, 63] {
