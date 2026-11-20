@@ -3688,3 +3688,76 @@ fn pat_sections_are_crc_checked_once() {
     assert!(events.is_empty(), "a valid PAT raises nothing: {events:#?}");
     assert_eq!(clean.stats().events, 0);
 }
+
+// ── Presence timers on a long healthy stream ───────────────────────────────
+
+/// Feed 7 s of a healthy multiplex on an epoch-based clock: PAT and PMT every
+/// 200 ms and the referenced ES PID every 100 ms. `pcr_bearing` makes the ES
+/// packets carry a PCR advancing in step with the clock, so the run also
+/// crosses the 5 s PID window with PCR checks active.
+fn healthy_stream_events(pcr_bearing: bool) -> Vec<crate::ConformanceEvent> {
+    const EPOCH_BASE_NS: u64 = 1_700_000_000_000_000_000;
+    let at = |offset_ms: u64| Duration::from_nanos(EPOCH_BASE_NS + offset_ms * 1_000_000);
+
+    let mut monitor = ConformanceMonitor::new();
+    for i in 0..5u8 {
+        monitor.feed(
+            &make_ts_packet(0x0300, i, false, false, &[], &[]),
+            at(u64::from(i)),
+        );
+    }
+
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    let mut events = Vec::new();
+    let mut cc = 0u8;
+    for t in (5..=7_005u64).step_by(100) {
+        let pkt = if pcr_bearing {
+            pcr_only_packet(0x0200, cc, 2_700_000 + (t - 5) * 27_000)
+        } else {
+            make_ts_packet(0x0200, cc, false, false, &[], &[0xAB])
+        };
+        events.extend(monitor.feed(&pkt, at(t)).to_vec());
+        cc = cc.wrapping_add(1);
+
+        if (t - 5) % 200 == 0 {
+            events.extend(feed_all(
+                &mut monitor,
+                &packetise_section(PID_PAT, &pat),
+                at(t + 10),
+                ms(1),
+            ));
+            events.extend(feed_all(
+                &mut monitor,
+                &packetise_section(0x0100, &pmt),
+                at(t + 20),
+                ms(1),
+            ));
+        }
+    }
+    events
+}
+
+/// A healthy stream repeats its PAT, PMT and ES PID far more often than the
+/// 500 ms / 5 s presence limits. Refreshing the presence timers is what keeps
+/// 1.3.a, 1.5.a and 1.6 quiet; every existing test stops before the limits,
+/// so a no-op refresh shipped green.
+#[test]
+fn presence_timers_stay_quiet_on_a_healthy_seven_second_stream() {
+    for pcr_bearing in [false, true] {
+        let events = healthy_stream_events(pcr_bearing);
+        let flagged: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.indicator,
+                    Indicator::PatError2 | Indicator::PmtError2 | Indicator::PidError
+                )
+            })
+            .collect();
+        assert!(
+            flagged.is_empty(),
+            "a compliant stream over 7 s (PCR bearing: {pcr_bearing}) must raise no presence error: {flagged:#?}"
+        );
+    }
+}
