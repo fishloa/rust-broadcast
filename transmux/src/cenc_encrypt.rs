@@ -574,11 +574,19 @@ impl Encrypt for CencEncryptor {
 
         // Only `IvGen::Counter` consumes `self`'s running index; a
         // successful call using it must never hand out any of these IVs
-        // again, from any future call on `self` (see this type's docs) — the
-        // overflow this could hit was already proven impossible by
-        // `validate_iv_gen` above, using the same starting point.
+        // again, from any future call on `self` (see this type's docs).
+        // `validate_iv_gen` above already proved this exact `checked_add`
+        // succeeds (`next_counter + total_samples` is representable) before a
+        // single sample was ciphered; repeating it here as a checked
+        // operation keeps the advance from wrapping to 0, which would replay
+        // IVs 0.. under the same key (AES-CTR keystream reuse).
         if matches!(cfg.iv, IvGen::Counter) {
-            self.next_counter += total_samples as u64;
+            self.next_counter =
+                self.next_counter
+                    .checked_add(total_samples as u64)
+                    .ok_or(Error::InvalidInput(
+                        "CENC IV counter overflow (next_counter + sample_index)",
+                    ))?;
         }
         Ok(())
     }
@@ -592,8 +600,13 @@ impl CencEncryptor {
     /// of the *whole* `Media` — not per track (ISO/IEC 23001-7 §9.2:
     /// uniqueness is per key, and one key covers every track), (b) that each
     /// IV it will hand the cipher is a valid length, and (c) that no two IVs
-    /// are equal, and — for [`IvGen::Counter`] — that continuing `self`'s
-    /// running index across `total_samples` more samples cannot overflow.
+    /// are equal, and — for [`IvGen::Counter`] — that the counter **after**
+    /// this call (`next_counter + total_samples`) is representable, so both
+    /// every IV handed out and the advance past the last of them fit a
+    /// `u64`. Checking only the last IV (`next_counter + total_samples - 1`)
+    /// is not enough: a final IV of exactly `u64::MAX` is valid yet leaves no
+    /// representable value to advance to, and an unchecked advance wraps to 0
+    /// and replays IVs 0.. under the same key (AES-CTR keystream reuse).
     /// Doing this up-front keeps `encrypt` atomic for the whole class of IV
     /// misconfiguration: a rejected config never leaves a partially-encrypted
     /// `Media` behind.
@@ -609,10 +622,11 @@ impl CencEncryptor {
     fn validate_iv_gen(&self, iv_gen: &IvGen, total_samples: usize) -> Result<()> {
         match iv_gen {
             IvGen::Counter => {
-                // Surface the overflow up-front rather than mid-pass.
-                let last = total_samples.saturating_sub(1) as u64;
+                // Surface the overflow up-front rather than mid-pass, and
+                // prove the counter *after* the call too: the last IV alone
+                // fitting is not enough (see the doc above).
                 self.next_counter
-                    .checked_add(last)
+                    .checked_add(total_samples as u64)
                     .ok_or(Error::InvalidInput(
                         "CENC IV counter overflow (next_counter + sample_index)",
                     ))?;
