@@ -1098,3 +1098,53 @@ pub fn validate_cmaf_track(
 
     issues
 }
+
+#[cfg(test)]
+mod aggregate_tests {
+    use super::*;
+    use crate::pipeline::build_media_segment;
+    use crate::{FragmentTrackData, Sample, TrackId};
+    use core::num::NonZeroU32;
+
+    fn segment(sequence_number: u32, base_decode_time: u64, durations: &[u32]) -> Vec<u8> {
+        let mut dts = 0i64;
+        let samples: Vec<Sample> = durations
+            .iter()
+            .map(|&duration| {
+                let sample =
+                    Sample::timed(alloc::vec![0u8; 4], dts, dts, NonZeroU32::new(duration));
+                dts += i64::from(duration);
+                sample
+            })
+            .collect();
+        build_media_segment(
+            sequence_number,
+            &[FragmentTrackData::new(
+                TrackId::new(1),
+                base_decode_time,
+                &samples,
+            )],
+        )
+        .expect("media segment")
+    }
+
+    /// A track's aggregate `total_duration` across several `moof`s is the sum
+    /// of the fragments' durations, not a product: durations 2+3 then 3+4 must
+    /// read 12, where multiplying would read 35.
+    #[test]
+    fn per_track_total_duration_sums_the_fragments() {
+        let first = segment(1, 0, &[2, 3]);
+        let second = segment(2, 5, &[3, 4]);
+        let mut multi = first;
+        multi.extend_from_slice(&second);
+
+        let mut issues = Vec::new();
+        let info = validate_media_inner(&multi, SegmentOrigin::FromIr, &[], &mut issues)
+            .expect("the concatenation carries two moofs");
+        assert_eq!(info.tracks.len(), 1, "one track across both fragments");
+        assert_eq!(info.tracks[0].track_id, TrackId::new(1));
+        assert_eq!(info.tracks[0].total_duration, 12);
+        assert_eq!(info.tracks[0].first_tfdt, Some(0));
+        assert_eq!(info.tracks[0].last_decode_end, Some(12));
+    }
+}
