@@ -657,6 +657,39 @@ mod tests {
     }
 
     #[test]
+    fn record_serialize_accepts_the_field_maxima() {
+        let mut r = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        r.level = 63;
+        r.bl_signal_compatibility_id = DoviBlSignalCompatibilityId::Reserved(15);
+        let bytes = r.try_to_bytes().unwrap();
+        assert_eq!(&bytes[2..4], &[0x11, 0xFD]);
+        assert_eq!(bytes[4], 0xF0);
+        let back = DoviDecoderConfigurationRecord::parse(&bytes).unwrap();
+        assert_eq!(back.level, 63);
+        assert_eq!(back.bl_signal_compatibility_id.code(), 15);
+    }
+
+    #[test]
+    fn record_serialize_rejects_a_level_above_six_bits() {
+        let mut r = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        r.level = 64;
+        assert!(matches!(
+            r.try_to_bytes(),
+            Err(crate::error::Error::InvalidValue(..))
+        ));
+    }
+
+    #[test]
+    fn record_serialize_rejects_a_compatibility_id_above_four_bits() {
+        let mut r = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        r.bl_signal_compatibility_id = DoviBlSignalCompatibilityId::Reserved(16);
+        assert!(matches!(
+            r.try_to_bytes(),
+            Err(crate::error::Error::InvalidValue(..))
+        ));
+    }
+
+    #[test]
     fn compatibility_id_labels() {
         assert_eq!(DoviBlSignalCompatibilityId::from_code(4).name(), "HLG");
         assert_eq!(DoviBlSignalCompatibilityId::Reserved(9).code(), 9);
