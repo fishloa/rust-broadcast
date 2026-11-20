@@ -11,6 +11,9 @@ use dvb_si::descriptors::announcement_support::{
     AnnouncementEntry, AnnouncementReference, AnnouncementSupportDescriptor, AnnouncementType,
     ReferenceType,
 };
+use dvb_si::descriptors::application_signalling::{
+    ApplicationSignallingDescriptor, ApplicationSignallingEntry,
+};
 use dvb_si::descriptors::carousel_identifier::{CarouselIdentifierDescriptor, FormatSpecifier};
 use dvb_si::descriptors::cell_frequency_link::{
     CellFrequencyLinkDescriptor, CellFrequencyLinkEntry, CellFrequencyLinkSubcell,
@@ -20,7 +23,12 @@ use dvb_si::descriptors::dts::DtsDescriptor;
 use dvb_si::descriptors::iso_639_language::{AudioType, Iso639LanguageDescriptor, LanguageEntry};
 use dvb_si::descriptors::network_name::NetworkNameDescriptor;
 use dvb_si::descriptors::registration::RegistrationDescriptor;
+use dvb_si::descriptors::service_availability::ServiceAvailabilityDescriptor;
+use dvb_si::descriptors::service_identifier::ServiceIdentifierDescriptor;
+use dvb_si::descriptors::stuffing::StuffingDescriptor;
+use dvb_si::descriptors::tva_id::{TvaIdDescriptor, TvaIdEntry, TvaRunningStatus};
 use dvb_si::descriptors::vbi_data::{VbiDataDescriptor, VbiDataEntry, VbiService};
+use dvb_si::tables::ait::ApplicationType;
 use dvb_si::text::{DvbText, LangCode};
 
 fn ser<T: Serialize<Error = dvb_si::error::Error>>(d: &T) -> Result<Vec<u8>, dvb_si::error::Error> {
@@ -297,6 +305,96 @@ fn vbi_data_255_byte_body_is_the_widest_legal() {
             data_service_id: 0x00,
             service_descriptor: VbiService::Reserved(&reserved),
         }],
+    };
+    assert!(matches!(
+        ser(&bad),
+        Err(dvb_si::Error::InvalidDescriptor { .. })
+    ));
+}
+
+#[test]
+fn application_signalling_85_entries_is_the_widest_legal() {
+    let entry = || ApplicationSignallingEntry::new(ApplicationType::HbbTv, 1);
+    // 85 entries * 3 = 255.
+    let ok = ApplicationSignallingDescriptor::new((0..85).map(|_| entry()).collect());
+    let bytes = ser(&ok).unwrap();
+    assert_eq!(bytes[1], 255);
+    assert_eq!(ApplicationSignallingDescriptor::parse(&bytes).unwrap(), ok);
+
+    // 86 entries * 3 = 258.
+    let bad = ApplicationSignallingDescriptor::new((0..86).map(|_| entry()).collect());
+    assert!(matches!(
+        ser(&bad),
+        Err(dvb_si::Error::InvalidDescriptor { .. })
+    ));
+}
+
+#[test]
+fn tva_id_85_entries_is_the_widest_legal() {
+    let entry = |tva_id| TvaIdEntry::new(tva_id, TvaRunningStatus::Running);
+    // 85 entries * 3 = 255.
+    let ok = TvaIdDescriptor::new((0..85u16).map(entry).collect());
+    let bytes = ser(&ok).unwrap();
+    assert_eq!(bytes[1], 255);
+    assert_eq!(TvaIdDescriptor::parse(&bytes).unwrap(), ok);
+
+    // 86 entries * 3 = 258.
+    let bad = TvaIdDescriptor::new((0..86u16).map(entry).collect());
+    assert!(matches!(
+        ser(&bad),
+        Err(dvb_si::Error::InvalidDescriptor { .. })
+    ));
+}
+
+#[test]
+fn service_availability_127_cell_ids_is_the_widest_legal() {
+    // flags(1) + 127*2 = 255.
+    let ok = ServiceAvailabilityDescriptor::new(true, (0..127u16).collect());
+    let bytes = ser(&ok).unwrap();
+    assert_eq!(bytes[1], 255);
+    assert_eq!(ServiceAvailabilityDescriptor::parse(&bytes).unwrap(), ok);
+
+    // flags(1) + 128*2 = 257.
+    let bad = ServiceAvailabilityDescriptor::new(true, (0..128u16).collect());
+    assert!(matches!(
+        ser(&bad),
+        Err(dvb_si::Error::InvalidDescriptor { .. })
+    ));
+}
+
+#[test]
+fn service_identifier_255_byte_identifier_is_the_widest_legal() {
+    let text = vec![b'x'; 255];
+    let ok = ServiceIdentifierDescriptor {
+        textual_service_identifier: DvbText::new(&text),
+    };
+    let bytes = ser(&ok).unwrap();
+    assert_eq!(bytes[1], 255);
+    assert_eq!(ServiceIdentifierDescriptor::parse(&bytes).unwrap(), ok);
+
+    let text = vec![b'x'; 256];
+    let bad = ServiceIdentifierDescriptor {
+        textual_service_identifier: DvbText::new(&text),
+    };
+    assert!(matches!(
+        ser(&bad),
+        Err(dvb_si::Error::InvalidDescriptor { .. })
+    ));
+}
+
+#[test]
+fn stuffing_255_byte_body_is_the_widest_legal() {
+    let data = vec![0x00u8; 255];
+    let ok = StuffingDescriptor {
+        stuffing_bytes: &data,
+    };
+    let bytes = ser(&ok).unwrap();
+    assert_eq!(bytes[1], 255);
+    assert_eq!(StuffingDescriptor::parse(&bytes).unwrap(), ok);
+
+    let data = vec![0x00u8; 256];
+    let bad = StuffingDescriptor {
+        stuffing_bytes: &data,
     };
     assert!(matches!(
         ser(&bad),
