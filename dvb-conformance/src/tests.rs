@@ -3554,3 +3554,37 @@ fn std_buffer_overflow_is_strict_above_capacity() {
         "513 bytes exceeds the 512-byte capacity"
     );
 }
+
+/// H.222.0 §2.4.2.1: CAT (PID 0x0001) and NIT (PID 0x0010) are PSI, so their
+/// payload bytes enter TBsys and can overflow it; the DVB SI PIDs do not.
+#[test]
+fn tbsys_is_fed_by_cat_and_nit_payloads() {
+    for (pid, label) in [(0x0010u16, "NIT"), (0x0001, "CAT")] {
+        let mut monitor = ConformanceMonitor::new();
+        acquire_sync(&mut monitor);
+
+        let payload = [0xABu8; 184];
+        let mut events = Vec::new();
+        for i in 0..6u8 {
+            let pkt = make_ts_packet(pid, i, i == 0, false, &[], &payload);
+            events.extend(monitor.feed(&pkt, ms(10)).to_vec());
+        }
+
+        let overflow: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                e.indicator == Indicator::BufferError && e.pid == Some(Pid::from_wire_masked(pid))
+            })
+            .collect();
+        assert_eq!(
+            overflow.len(),
+            1,
+            "{label} payloads must feed TBsys: {events:#?}"
+        );
+        assert!(
+            overflow[0].detail.starts_with("TBsys overflow"),
+            "detail: {}",
+            overflow[0].detail
+        );
+    }
+}
