@@ -7,7 +7,10 @@ use transmux::WebmDemux;
 use transmux::ir::InputDegradation;
 use transmux::media::Media;
 
+use crate::webm_build::{encode_size_width, read_id, read_size};
+
 const CLUSTER_ID: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
+const SEGMENT_ID: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
 
 fn fixture(rel: &str) -> Vec<u8> {
     let path = test_fixtures::path(rel.trim_start_matches("fixtures/"));
@@ -121,6 +124,76 @@ fn corrupt_block_inside_a_cluster_is_dropped_the_rest_of_the_cluster_survives() 
             samples_of(&damaged, t).last(),
             samples_of(&clean, t).last(),
             "later data still decoded"
+        );
+    }
+}
+
+/// Append `extra` to the Segment's body and grow its size field to match, so
+/// the reader walks the appended bytes as Segment children.
+fn append_to_segment(data: &[u8], extra: &[u8]) -> Vec<u8> {
+    let mut bytes = data.to_vec();
+    let seg = bytes
+        .windows(4)
+        .position(|w| w == SEGMENT_ID)
+        .expect("fixture must contain a Segment");
+    let (_id, id_len) = read_id(&bytes, seg);
+    let (size, size_len) = read_size(&bytes, seg + id_len);
+    let field = seg + id_len;
+    bytes[field..field + size_len]
+        .copy_from_slice(&encode_size_width(size + extra.len() as u64, size_len));
+    bytes.extend_from_slice(extra);
+    bytes
+}
+
+/// A Segment body ending inside an element ID (`1A 45`, a 4-byte ID with two
+/// bytes present) is a truncated element, reported as a damaged unit; it must
+/// not slice four bytes out of a two-byte tail.
+#[test]
+fn truncated_element_id_at_the_segment_end_is_reported_not_panicked() {
+    let clean_bytes = fixture("mkv/h264-aac.mkv");
+    let clean = WebmDemux::new().unpackage(&clean_bytes[..]).unwrap();
+
+    let bytes = append_to_segment(&clean_bytes, &[0x1A, 0x45]);
+    let damaged = WebmDemux::new()
+        .unpackage(&bytes[..])
+        .expect("a truncated trailing element ID must not fail the file");
+    assert_eq!(damaged.degraded.len(), 1, "{:?}", damaged.degraded);
+    assert!(matches!(
+        damaged.degraded[0],
+        InputDegradation::MalformedUnit { .. }
+    ));
+    for t in 0..clean.tracks.len() {
+        assert_eq!(
+            samples_of(&damaged, t),
+            samples_of(&clean, t),
+            "track {t} must be untouched by the trailing damage"
+        );
+    }
+}
+
+/// An element ID with five leading-zero-derived bytes (`0x08` starts a 5-byte
+/// ID, but EBML IDs are 1-4 bytes) is rejected as a damaged unit, not decoded
+/// as an element. A valid empty size byte follows it, so a loosened guard would
+/// accept the bogus element silently.
+#[test]
+fn a_five_byte_element_id_is_reported_not_parsed() {
+    let clean_bytes = fixture("mkv/h264-aac.mkv");
+    let clean = WebmDemux::new().unpackage(&clean_bytes[..]).unwrap();
+
+    let bytes = append_to_segment(&clean_bytes, &[0x08, 0x01, 0x02, 0x03, 0x04, 0x80]);
+    let damaged = WebmDemux::new()
+        .unpackage(&bytes[..])
+        .expect("an over-long element ID must not fail the file");
+    assert_eq!(damaged.degraded.len(), 1, "{:?}", damaged.degraded);
+    assert!(matches!(
+        damaged.degraded[0],
+        InputDegradation::MalformedUnit { .. }
+    ));
+    for t in 0..clean.tracks.len() {
+        assert_eq!(
+            samples_of(&damaged, t),
+            samples_of(&clean, t),
+            "track {t} must be untouched by the bogus element"
         );
     }
 }

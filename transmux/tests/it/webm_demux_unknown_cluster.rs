@@ -243,3 +243,165 @@ fn rebuild_helper_actually_changes_the_size_field() {
         "first Cluster's size field must be the unknown-size marker"
     );
 }
+
+/// `Void` element id (RFC 9559 §27): skipped by size, so it carries the decoy
+/// bytes without the cluster walker trying to decode them.
+const VOID_ID: u8 = 0xEC;
+
+/// Which size the decoy Cluster-id occurrence advertises.
+#[derive(Clone, Copy)]
+enum DecoySize {
+    /// A size that runs past the end of the file: not a boundary.
+    OverLarge,
+    /// The empty body: a structurally valid sibling header.
+    Zero,
+}
+
+/// Re-frame the fixture's single Cluster into two (the first unknown-size, the
+/// second real) with a decoy `Cluster` id + size VINT inserted inside a `Void`
+/// element at a real child boundary of the first Cluster.
+///
+/// The decoy's `fits` test is what decides it: the body start is
+/// `position + id_len + size_len`, so a size chosen as "file length minus
+/// position minus 4" is rejected by the correct arithmetic (it ends 8 bytes
+/// past the buffer) but accepted if either `+` is weakened to a smaller
+/// expression.
+fn split_with_decoy(data: &[u8], decoy_size: DecoySize) -> Vec<u8> {
+    let cluster_pos = data
+        .windows(4)
+        .position(|w| w == CLUSTER_ID)
+        .expect("fixture must contain a Cluster");
+    let (_id, id_len) = read_id(data, cluster_pos);
+    let (cluster_size, size_len) = read_size(data, cluster_pos + id_len);
+    let body_start = cluster_pos + id_len + size_len;
+    let body_end = body_start + cluster_size as usize;
+
+    let mut child_starts = Vec::new();
+    let mut p = body_start;
+    while p < body_end {
+        child_starts.push(p);
+        let (_id, idlen) = read_id(data, p);
+        let (size, sizelen) = read_size(data, p + idlen);
+        p = p + idlen + sizelen + size as usize;
+    }
+    assert!(
+        child_starts.len() >= 3,
+        "need several children to place the decoy, got {}",
+        child_starts.len()
+    );
+    // Cluster B starts at the middle child; the decoy sits earlier, so an
+    // accepted decoy boundary truncates Cluster A before some of its blocks
+    // (which B's later half does not re-supply).
+    let split_index = child_starts.len() / 2;
+    let split_at = child_starts[split_index];
+    let decoy_at = child_starts[split_index / 2];
+
+    let extra_cluster_header = id_len + size_len;
+    let void_len = 2 + 4 + 8; // id + one-byte size + (Cluster id + 8-byte size)
+    let total = data.len() + extra_cluster_header + void_len;
+    // The Void id and its one-byte size sit before the decoy itself.
+    let q = decoy_at + 2;
+    let decoy_value = match decoy_size {
+        DecoySize::OverLarge => (total - q - 4) as u64,
+        DecoySize::Zero => 0,
+    };
+    let mut decoy = CLUSTER_ID.to_vec();
+    decoy.extend_from_slice(&encode_size(decoy_value, 8));
+
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(&data[..cluster_pos]);
+    out.extend_from_slice(&CLUSTER_ID);
+    out.extend_from_slice(&unknown_size(size_len));
+    out.extend_from_slice(&data[body_start..decoy_at]);
+    out.push(VOID_ID);
+    out.push(0x80 | decoy.len() as u8);
+    out.extend_from_slice(&decoy);
+    out.extend_from_slice(&data[decoy_at..split_at]);
+
+    let b_body_len = (body_end - split_at) as u64;
+    out.extend_from_slice(&CLUSTER_ID);
+    out.extend_from_slice(&encode_size(b_body_len, size_len));
+    out.extend_from_slice(&data[split_at..body_end]);
+    out.extend_from_slice(&data[body_end..]);
+
+    let extra = (extra_cluster_header + void_len) as u64;
+    let seg_pos = data
+        .windows(4)
+        .position(|w| w == SEGMENT_ID)
+        .expect("fixture must contain a Segment");
+    let (_seg_id, seg_id_len) = read_id(data, seg_pos);
+    let (seg_size, seg_size_len) = read_size(data, seg_pos + seg_id_len);
+    let field = seg_pos + seg_id_len;
+    out[field..field + seg_size_len].copy_from_slice(&encode_size(seg_size + extra, seg_size_len));
+    out
+}
+
+fn total_samples(media: &Media) -> usize {
+    media.tracks.iter().map(|t| t.samples.len()).sum()
+}
+
+/// A `Cluster` id inside Cluster A's coded payload whose advertised size runs
+/// past the buffer is a false positive, not the sibling boundary: the first
+/// Cluster must keep every block and Cluster B must still be read.
+#[test]
+fn decoy_cluster_id_with_an_over_large_size_is_not_a_boundary() {
+    let original = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
+    let clean = WebmDemux::new().demux(&original).expect("clean fixture");
+    let rebuilt = split_with_decoy(&original, DecoySize::OverLarge);
+
+    let mut d = WebmDemux::new();
+    let media = d
+        .demux(&rebuilt)
+        .expect("a decoy Cluster id must not break the demux");
+    assert_eq!(
+        total_samples(&media),
+        total_samples(&clean),
+        "every block of both Clusters must be recovered"
+    );
+    assert!(
+        media.degraded.is_empty(),
+        "the decoy must be skipped, not reported: {:?}",
+        media.degraded
+    );
+    for t in 0..clean.tracks.len() {
+        assert_eq!(
+            media.tracks[t]
+                .samples
+                .iter()
+                .map(|s| s.data.clone())
+                .collect::<Vec<_>>(),
+            clean.tracks[t]
+                .samples
+                .iter()
+                .map(|s| s.data.clone())
+                .collect::<Vec<_>>(),
+            "track {t} frames must be identical to the clean fixture"
+        );
+    }
+}
+
+/// Control: the same decoy with an empty body is a structurally valid sibling
+/// header, so the boundary scan takes it and the first Cluster is truncated
+/// there. Cluster B still follows, so its frames survive.
+#[test]
+fn decoy_cluster_id_with_a_fitting_size_is_taken_as_the_boundary() {
+    let original = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
+    let clean = WebmDemux::new().demux(&original).expect("clean fixture");
+    let rebuilt = split_with_decoy(&original, DecoySize::Zero);
+
+    let mut d = WebmDemux::new();
+    let media = d.demux(&rebuilt).expect("the rebuilt file still demuxes");
+    assert!(
+        total_samples(&media) < total_samples(&clean),
+        "an accepted boundary truncates the first Cluster ({} vs {})",
+        total_samples(&media),
+        total_samples(&clean)
+    );
+    for t in 0..clean.tracks.len() {
+        assert_eq!(
+            media.tracks[t].samples.last().map(|s| s.data.clone()),
+            clean.tracks[t].samples.last().map(|s| s.data.clone()),
+            "track {t}: Cluster B after the boundary must still be read"
+        );
+    }
+}

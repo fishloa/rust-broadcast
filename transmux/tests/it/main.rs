@@ -226,6 +226,8 @@ mod validate;
 mod visual_ext;
 mod vp8_vorbis;
 mod vvc;
+#[path = "support/webm_build.rs"]
+mod webm_build;
 mod webm_demux;
 mod webm_demux_unknown_cluster;
 mod webm_timestamp_scale;
