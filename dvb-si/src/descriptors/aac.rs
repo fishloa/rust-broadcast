@@ -548,4 +548,31 @@ mod tests {
         assert_eq!(buf[3] & ReservedZero::<RESERVED_ZERO_BITS>::MASK as u8, 0);
         assert_eq!(buf[3], 0x00);
     }
+
+    #[test]
+    fn serialize_accepts_max_255_byte_body() {
+        let info = [0xAAu8; 253];
+        let d = AacDescriptor {
+            profile_and_level: 0x50,
+            extension: Some(AacExtension::new(false, None, &info)),
+        };
+        assert_eq!(d.serialized_len(), HEADER_LEN + 255);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[1], 0xFF);
+    }
+
+    #[test]
+    fn serialize_rejects_256_byte_body() {
+        let info = [0xAAu8; 254];
+        let d = AacDescriptor {
+            profile_and_level: 0x50,
+            extension: Some(AacExtension::new(false, None, &info)),
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
+    }
 }

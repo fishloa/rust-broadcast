@@ -569,6 +569,20 @@ mod tests {
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
     }
 
+    #[test]
+    fn serialize_accepts_max_255_byte_body() {
+        // 253 selector bytes + 2 id bytes = 255, the largest legal body.
+        let sel = vec![0u8; 253];
+        let d = DataBroadcastIdDescriptor {
+            data_broadcast_id: 0x0001,
+            id_selector: &sel,
+        };
+        assert_eq!(d.serialized_len(), HEADER_LEN + 255);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[1], 0xFF);
+    }
+
     #[cfg(feature = "serde")]
     #[test]
     fn serde_serialize_is_stable() {
