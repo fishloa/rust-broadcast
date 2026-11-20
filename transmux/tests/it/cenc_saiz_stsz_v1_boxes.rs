@@ -200,3 +200,97 @@ fn tkhd_v1_matches_mp4box_diso() {
     assert_eq!(n, 104);
     assert_eq!(&out[..n], tkhd_bytes, "v1 tkhd round-trip byte-exact");
 }
+
+/// `saio.offset[0]` is the moof-relative position of the matching `senc`'s
+/// first entry (ISO/IEC 23001-7 §12.3): it has to count every byte written
+/// before that `traf`, a moof-level opaque child and a preceding `traf`
+/// included, or a decryptor reads its aux info from the wrong bytes.
+#[test]
+fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
+    use transmux::cenc::SampleAuxInfoOffsetsBox;
+    use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
+
+    fn boxed(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        b.extend_from_slice(fourcc);
+        b.extend_from_slice(body);
+        b
+    }
+    fn traf(track_id: u32) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&boxed(b"tfhd", &[0, 0, 0, 0, 0, 0, 0, track_id as u8]));
+        body.extend_from_slice(&boxed(b"trun", &[0, 0, 0, 0, 0, 0, 0, 1]));
+        boxed(b"traf", &body)
+    }
+
+    let mut moof_body = Vec::new();
+    moof_body.extend_from_slice(&boxed(b"mfhd", &[0, 0, 0, 0, 0, 0, 0, 1]));
+    // A moof-level opaque child between the `mfhd` and the first `traf`.
+    moof_body.extend_from_slice(&boxed(b"free", &[0xAA; 12]));
+    moof_body.extend_from_slice(&traf(1));
+    moof_body.extend_from_slice(&traf(2));
+    let moof = boxed(b"moof", &moof_body);
+
+    let entries = |iv: u8| {
+        vec![transmux::cenc::SampleEncryptionEntry {
+            initialization_vector: vec![iv; 8],
+            subsamples: Vec::new(),
+        }]
+    };
+    let a = entries(0x11);
+    let b = entries(0x22);
+    let protections = [
+        FragmentProtection {
+            track_id: TrackId::new(1),
+            entries: &a,
+            per_sample_iv_size: 8,
+        },
+        FragmentProtection {
+            track_id: TrackId::new(2),
+            entries: &b,
+            per_sample_iv_size: 8,
+        },
+    ];
+    let out = protect_media_segment(&moof, &protections).expect("protect both trafs");
+    assert_eq!(out[4..8], *b"moof");
+
+    // Walk the rebuilt moof's children by hand so the expected offsets come
+    // from where the bytes actually are, not from the code under test.
+    let body = &out[8..];
+    let mut senc_at = Vec::new();
+    let mut saio = Vec::new();
+    let mut off = 0usize;
+    for step in transmux::box_iter(body) {
+        let (child, consumed) = step.expect("walk the moof");
+        if child.header.box_type.is(b"traf") {
+            let traf_body_at = 8 + off + 8;
+            let mut inner = 0usize;
+            for step in transmux::box_iter(child.body) {
+                let (grandchild, size) = step.expect("walk the traf");
+                if grandchild.header.box_type.is(b"senc") {
+                    senc_at.push(traf_body_at + inner);
+                } else if grandchild.header.box_type.is(b"saio") {
+                    let at = traf_body_at + inner;
+                    saio.push(SampleAuxInfoOffsetsBox::parse_box(&out[at..at + size]).unwrap());
+                }
+                inner += size;
+            }
+        }
+        off += consumed;
+    }
+    assert_eq!(senc_at.len(), 2, "one senc per protected traf");
+    assert_eq!(saio.len(), 2, "one saio per protected traf");
+    for (i, saio) in saio.iter().enumerate() {
+        assert_eq!(saio.offsets.len(), 1);
+        assert_eq!(
+            saio.offsets[0],
+            (senc_at[i] + 16) as u64,
+            "traf {} must anchor its saio at its own senc's first entry",
+            i + 1
+        );
+    }
+    assert!(
+        senc_at[0] > 36,
+        "the mfhd and the moof-level free child precede the first senc"
+    );
+}

@@ -1309,4 +1309,24 @@ mod tests {
         he.reserved_b = ReservedOnes::from_bits(0xFF);
         assert_eq!((he.reserved_a.get(), he.reserved_b.get()), (0x03, 0x03));
     }
+
+    /// An operation point with `constant_frame_rate_info_idc == 0` has no frame
+    /// rate block; a following operation point must still parse intact.
+    #[test]
+    fn operation_point_without_frame_rate_leaves_the_next_intact() {
+        let plain = HevcOperationPointEntry::new(1, vec![], vec![], 3);
+        let mut with_rate = HevcOperationPointEntry::new(2, vec![], vec![], 5);
+        with_rate.frame_rate = Some(HevcOpFrameRate::new(1, 0x0234));
+        with_rate.avg_bit_rate = Some(0x00_1234);
+        let point = HevcOperationPoint::new(vec![], vec![plain, with_rate]);
+        let body = point.write_body().unwrap();
+        let back = HevcOperationPoint::parse_body(&body).unwrap();
+        assert!(back.operation_points[0].frame_rate.is_none());
+        assert_eq!(
+            back.operation_points[1].frame_rate,
+            Some(HevcOpFrameRate::new(1, 0x0234))
+        );
+        assert_eq!(back, point);
+        assert_eq!(back.write_body().unwrap(), body);
+    }
 }

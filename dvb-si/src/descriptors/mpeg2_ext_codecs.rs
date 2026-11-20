@@ -539,6 +539,7 @@ impl MediaServiceKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use alloc::vec;
 
     #[test]
@@ -655,5 +656,46 @@ mod tests {
             &(MediaServiceKind::new(vec![e]).write_body()),
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
+    }
+
+    #[test]
+    fn labels_match_tables_2_146_and_2_149() {
+        assert_eq!(MediaTypeIdc::Unknown.name(), "unknown");
+        assert_eq!(MediaTypeIdc::Video.name(), "video");
+        assert_eq!(MediaTypeIdc::Audio.name(), "audio");
+        assert_eq!(MediaTypeIdc::TextData.name(), "text/data");
+        assert_eq!(MediaTypeIdc::Reserved(9).name(), "reserved");
+
+        assert_eq!(ConfigurationType::Complete.name(), "complete");
+        assert_eq!(ConfigurationType::Partial.name(), "partial");
+        assert_eq!(
+            ConfigurationType::CompleteCombination.name(),
+            "complete combination"
+        );
+        assert_eq!(ConfigurationType::Reserved(9).name(), "reserved");
+        assert_eq!(
+            ConfigurationType::CompleteCombination.to_string(),
+            "complete combination"
+        );
+    }
+
+    /// `lang_len_idc == 2` carries the common 3-byte ISO 639 code and must not
+    /// be treated as reserved.
+    #[test]
+    fn media_service_kind_three_byte_language_code_round_trips() {
+        let lang = MediaServiceLanguage::new(ConfigurationType::Complete, b"eng".to_vec(), vec![1]);
+        assert_eq!(lang.lang_len_idc, 2);
+        let d = MediaServiceKind::new(vec![MediaServiceKindEntry::new(
+            false,
+            MediaTypeIdc::Audio,
+            None,
+            vec![lang],
+        )]);
+        let body = d.write_body().unwrap();
+        let back = MediaServiceKind::parse_body(&body).unwrap();
+        assert_eq!(back, d);
+        assert_eq!(back.entries[0].languages.len(), 1);
+        assert_eq!(back.entries[0].languages[0].lang_len_idc, 2);
+        assert_eq!(back.entries[0].languages[0].language_code, b"eng");
     }
 }

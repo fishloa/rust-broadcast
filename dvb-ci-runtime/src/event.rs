@@ -372,6 +372,20 @@ mod tests {
     }
 
     #[test]
+    fn hot_plug_labels_are_stable() {
+        for (event, label) in [
+            (HotPlug::CamPresent, "cam-present"),
+            (HotPlug::CamRemoved, "cam-removed"),
+            (HotPlug::CardInserted, "card-inserted"),
+            (HotPlug::CardRemoved, "card-removed"),
+            (HotPlug::CardChanged, "card-changed"),
+        ] {
+            assert_eq!(event.name(), label);
+            assert_eq!(event.to_string(), label, "Display delegates to name()");
+        }
+    }
+
+    #[test]
     fn notification_entitlement_construction() {
         let note = Notification::Entitlement {
             program_number: 1234,

@@ -938,6 +938,64 @@ mod tests {
         assert!(h.chain.is_none());
     }
 
+    /// Chains belong to the `_last` tag their `_more` blocks anticipate: an
+    /// abandoned `menu_more` must not be prepended to an interleaved `list`.
+    #[test]
+    fn mmi_keeps_interleaved_chains_apart() {
+        use dvb_ci::objects::mmi_high::{List, Menu, Text};
+        let txt = |s: &'static [u8]| Text {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            more: false,
+            text_chars: s,
+        };
+        let part = |t: ApduTag, b: &[u8]| {
+            let mut v = t.to_bytes().to_vec();
+            let mut l = [0u8; 3];
+            let n = dvb_ci::length::encode_into(b.len(), &mut l).unwrap();
+            v.extend_from_slice(&l[..n]);
+            v.extend_from_slice(b);
+            v
+        };
+        let whole = s(&List(Menu {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            more: false,
+            choice_nb: 1,
+            title: txt(b"Entitlements"),
+            subtitle: txt(b""),
+            bottom: txt(b""),
+            choices: vec![txt(b"ORF AUT")],
+        }));
+        let (len, hdr) = dvb_ci::length::decode(&whole[3..]).unwrap();
+        let body = &whole[3 + hdr..3 + hdr + len];
+
+        let mut h = Mmi::default();
+        // A menu chunk that never gets its menu_last …
+        assert!(
+            h.on_apdu(&part(tag::MENU_MORE, &[0xFF, 0xFF]))
+                .unwrap()
+                .notify
+                .is_empty()
+        );
+        // … then a complete list body, then the list_last.
+        assert!(
+            h.on_apdu(&part(tag::LIST_MORE, body))
+                .unwrap()
+                .notify
+                .is_empty()
+        );
+        assert_eq!(
+            h.on_apdu(&part(tag::LIST_LAST, &[])).unwrap().notify,
+            vec![Notification::Mmi(MmiEvent::List(MmiMenu {
+                title: "Entitlements".to_string(),
+                subtitle: String::new(),
+                bottom: String::new(),
+                choices: vec!["ORF AUT".to_string()],
+            }))],
+            "the abandoned menu chunk must not be part of the list body"
+        );
+        assert!(h.chain.is_none());
+    }
+
     #[test]
     fn mmi_answers_display_control_set_mmi_mode() {
         use dvb_ci::objects::mmi_display::{DisplayControl, DisplayControlCmd, MmiMode};
@@ -962,6 +1020,78 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(out.apdus, vec![s(&ProfileEnq::default())]);
+    }
+
+    /// An APDU for some other resource must not be mistaken for a
+    /// `profile_change`: that would re-enquire and clear the latched handshake,
+    /// firing a second `CamReady` for a module that already completed it.
+    #[test]
+    fn resource_manager_does_not_treat_an_unrelated_apdu_as_profile_change() {
+        use dvb_ci::objects::application_info::{ApplicationInfo, ApplicationType};
+
+        let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
+        rm.on_open().unwrap();
+        rm.on_apdu(&s(&Profile {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            resources: vec![APPLICATION_INFORMATION],
+        }))
+        .unwrap();
+
+        let unrelated = s(&ApplicationInfo {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            application_type: ApplicationType::ConditionalAccess,
+            application_manufacturer: 0x1234,
+            manufacturer_code: 0x5678,
+            menu_string: b"Acme CAM",
+        });
+        assert_eq!(rm.on_apdu(&unrelated).unwrap(), ResourceOut::default());
+        assert_eq!(rm.module_resources(), &[APPLICATION_INFORMATION]);
+
+        // The handshake is still complete: a further profile does not re-ready.
+        let again = rm
+            .on_apdu(&s(&Profile {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                resources: vec![],
+            }))
+            .unwrap();
+        assert!(
+            !again.notify.contains(&Notification::CamReady),
+            "an unrelated APDU must not clear the ready/profile latch"
+        );
+    }
+
+    /// An unrelated APDU must not be parsed as a `ca_pmt_reply` (which would
+    /// surface a spurious protocol error for a perfectly good frame).
+    #[test]
+    fn conditional_access_ignores_an_unrelated_apdu() {
+        let mut h = ConditionalAccess;
+        let profile = s(&Profile {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            resources: vec![],
+        });
+        assert_eq!(h.on_apdu(&profile).unwrap(), ResourceOut::default());
+    }
+
+    /// An unrelated APDU must not be parsed as a `display_control` (that would
+    /// answer the module with a nonsense `display_reply`).
+    #[test]
+    fn mmi_ignores_an_unrelated_apdu() {
+        let mut h = Mmi::default();
+        assert_eq!(
+            h.on_apdu(&tag::CA_INFO.to_bytes()).unwrap(),
+            ResourceOut::default()
+        );
+        assert!(h.chain.is_none());
+    }
+
+    /// An unrelated APDU must not be decoded as an `ask_release` event.
+    #[test]
+    fn host_control_ignores_an_unrelated_apdu() {
+        let mut h = HostControl;
+        assert_eq!(
+            h.on_apdu(&tag::CA_INFO.to_bytes()).unwrap(),
+            ResourceOut::default()
+        );
     }
 
     #[test]
@@ -1232,5 +1362,45 @@ mod tests {
             assert!(DateTime::default().on_apdu(&buf).is_err(), "DT len {len}");
             assert!(HostControl.on_apdu(&buf).is_err(), "HC len {len}");
         }
+    }
+
+    /// A bare 3-byte `apdu_tag` with no body is the shortest legal APDU: each
+    /// resource must accept it (and, where the tag carries no body, answer or
+    /// ignore it), not reject it as short.
+    #[test]
+    fn a_tag_only_apdu_is_accepted_by_every_resource() {
+        let out = ResourceManager::new(vec![RESOURCE_MANAGER])
+            .on_apdu(&tag::PROFILE_ENQ.to_bytes())
+            .unwrap();
+        assert_eq!(out.apdus.len(), 1, "profile_enq is answered");
+        assert_eq!(peek_tag(&out.apdus[0]), Some(tag::PROFILE));
+
+        assert_eq!(
+            ApplicationInformation
+                .on_apdu(&tag::CA_INFO.to_bytes())
+                .unwrap(),
+            ResourceOut::default(),
+            "an unrelated tag-only APDU is ignored, not an error"
+        );
+        assert_eq!(
+            ConditionalAccess
+                .on_apdu(&tag::APPLICATION_INFO.to_bytes())
+                .unwrap(),
+            ResourceOut::default()
+        );
+        assert_eq!(
+            DateTime::default()
+                .on_apdu(&tag::PROFILE_ENQ.to_bytes())
+                .unwrap(),
+            ResourceOut::default()
+        );
+        assert_eq!(
+            Mmi::default().on_apdu(&tag::CA_INFO.to_bytes()).unwrap(),
+            ResourceOut::default()
+        );
+        assert_eq!(
+            HostControl.on_apdu(&tag::CA_INFO.to_bytes()).unwrap(),
+            ResourceOut::default()
+        );
     }
 }

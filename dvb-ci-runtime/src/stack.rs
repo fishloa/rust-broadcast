@@ -819,6 +819,29 @@ mod tests {
         );
     }
 
+    /// An APDU must not be handed to the transport while the connection is not
+    /// `Active`: the transport would drop it silently, so the caller would
+    /// believe a `ca_pmt` reached the CAM when none did.
+    #[test]
+    fn sending_on_an_inactive_transport_reports_instead_of_dropping() {
+        let mut s = stack_with_ca_session();
+        // No public path takes the transport out of `Active` while keeping the
+        // sessions open (`Shutdown` drops both), so put it in `Idle` directly:
+        // the CA session stays bound, the connection does not.
+        s.transport = Transport::new(1);
+        assert_eq!(s.transport.state(), TcState::Idle);
+
+        let pmt = build_pmt();
+        let actions = s.handle(Event::Host(HostRequest::Descramble(&pmt)));
+        assert_eq!(
+            actions,
+            vec![Action::Notify(Notification::Error {
+                detail: "transport connection is not active".to_string(),
+            })],
+            "exactly one error, and nothing written"
+        );
+    }
+
     #[test]
     fn descramble_sends_ok_descrambling_filtered() {
         use dvb_ci::objects::ca_pmt::CaPmtCmdId;

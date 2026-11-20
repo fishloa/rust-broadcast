@@ -1872,4 +1872,151 @@ mod tests {
             "the removed 8-byte skip could not see into a largesize container"
         );
     }
+
+    /// #3656: an `stsd` shorter than its own FullBox + entry_count prefix has
+    /// no sample entry to find. Every such length must answer `None` rather
+    /// than slicing past the end (the `>` guard is what stops the slice).
+    #[test]
+    fn find_sinf_in_stsd_on_a_truncated_stsd_returns_none() {
+        for len in BOX_HEADER_MIN_SIZE..(BOX_HEADER_MIN_SIZE + FULL_HDR + STSD_ENTRY_COUNT) {
+            let mut stsd = vec![0u8; len];
+            stsd[..4].copy_from_slice(&(len as u32).to_be_bytes());
+            stsd[4..8].copy_from_slice(b"stsd");
+            assert_eq!(
+                find_sinf_in_stsd(&stsd),
+                None,
+                "an stsd of {len} bytes has no room for a sample entry"
+            );
+        }
+    }
+
+    /// An `stsd` declaring one sample entry of `entry_type` with
+    /// `entry_body_len` body bytes (0 gives the minimal 24-byte box: 8-byte
+    /// box header + FullBox + entry_count + the entry's own 8-byte header).
+    fn stsd_with_entry(entry_type: &[u8; 4], entry_body_len: usize) -> Vec<u8> {
+        let entry_size = BOX_HEADER_MIN_SIZE + entry_body_len;
+        let mut entries = Vec::new();
+        entries.extend_from_slice(&(entry_size as u32).to_be_bytes());
+        entries.extend_from_slice(entry_type);
+        entries.extend(core::iter::repeat_n(0u8, entry_body_len));
+        full_box(b"stsd", &entries, 1)
+    }
+
+    /// #3657: the label recorded in `Media::skipped` for an unprotected
+    /// track keeps each supported sample entry's identity instead of
+    /// degrading every codec but `mp4a` to `"unknown"`, and a minimal
+    /// 24-byte `stsd` still resolves its entry type.
+    #[test]
+    fn stsd_entry_fourcc_reports_every_supported_sample_entry() {
+        for (entry, want) in [
+            (b"avc1", "avc1"),
+            (b"encv", "avc1"),
+            (b"mp4a", "mp4a"),
+            (b"enca", "mp4a"),
+            (b"hvc1", "hvc1"),
+            (b"hev1", "hvc1"),
+            (b"vp09", "vp09"),
+            (b"av01", "av01"),
+            (b"ac-3", "ac-3"),
+            (b"ec-3", "ec-3"),
+            (b"stpp", "stpp"),
+            (b"wvtt", "wvtt"),
+        ] {
+            let stsd = stsd_with_entry(entry, 0);
+            assert_eq!(stsd.len(), 24, "the minimal stsd is 24 bytes");
+            assert_eq!(
+                stsd_entry_fourcc(&stsd),
+                want,
+                "sample entry {:?}",
+                core::str::from_utf8(entry)
+            );
+        }
+        assert_eq!(
+            stsd_entry_fourcc(&stsd_with_entry(b"zzzz", 0)),
+            "unknown",
+            "an unrecognised sample entry stays unknown"
+        );
+        assert_eq!(
+            stsd_entry_fourcc(&[]),
+            "unknown",
+            "a zero-length stsd has no entry"
+        );
+    }
+
+    /// #3654: a `senc` shorter than its 8-byte box header + 4-byte FullBox
+    /// cannot be parsed. Every prefix must be a typed error rather than a
+    /// panic from indexing the version/flags bytes.
+    #[test]
+    fn parse_senc_box_rejects_every_truncated_prefix() {
+        let full = full_box(b"senc", &0u32.to_be_bytes(), 0);
+        for len in 0..(BOX_HEADER_MIN_SIZE + FULL_HDR + 4) {
+            assert!(
+                parse_senc_box(&full[..len], 8).is_err(),
+                "a {len}-byte senc must be rejected"
+            );
+        }
+        assert!(
+            parse_senc_box(&full, 8).is_ok(),
+            "the complete empty senc parses"
+        );
+    }
+
+    fn header_box(fourcc: &[u8; 4], version: u8, fields: &[u8]) -> Vec<u8> {
+        let mut b = Vec::new();
+        let len = (BOX_HEADER_MIN_SIZE + FULL_HDR + fields.len()) as u32;
+        b.extend_from_slice(&len.to_be_bytes());
+        b.extend_from_slice(fourcc);
+        b.extend_from_slice(&[version, 0, 0, 0]);
+        b.extend_from_slice(fields);
+        b
+    }
+
+    /// #3660: `header_timescale` must read the version-1 layout's timescale
+    /// after two 8-byte time fields (creation, modification), not the
+    /// version-0 offsets.
+    #[test]
+    fn header_timescale_reads_the_version_1_offset() {
+        let mut fields = Vec::new();
+        fields.extend_from_slice(&0x0000_0001_0000_0002u64.to_be_bytes());
+        fields.extend_from_slice(&0x0000_0003_0000_0004u64.to_be_bytes());
+        fields.extend_from_slice(&90_000u32.to_be_bytes());
+        fields.extend_from_slice(&0x0000_0005_0000_0006u64.to_be_bytes());
+        let mdhd = header_box(b"mdhd", 1, &fields);
+        assert_eq!(
+            header_timescale(&mdhd, "mdhd").expect("v1 mdhd").get(),
+            90_000,
+            "version 1: timescale follows two 8-byte time fields"
+        );
+    }
+
+    /// The version-0 layout is unchanged: timescale follows two 4-byte time
+    /// fields.
+    #[test]
+    fn header_timescale_reads_the_version_0_offset() {
+        let mut fields = Vec::new();
+        fields.extend_from_slice(&1u32.to_be_bytes());
+        fields.extend_from_slice(&2u32.to_be_bytes());
+        fields.extend_from_slice(&48_000u32.to_be_bytes());
+        fields.extend_from_slice(&3u32.to_be_bytes());
+        let mvhd = header_box(b"mvhd", 0, &fields);
+        assert_eq!(
+            header_timescale(&mvhd, "mvhd").expect("v0 mvhd").get(),
+            48_000,
+            "version 0: timescale follows two 4-byte time fields"
+        );
+    }
+
+    /// A version-1 header cut before its timescale field is a typed
+    /// `UnexpectedBox`, never a panic or a zero timescale.
+    #[test]
+    fn header_timescale_rejects_a_truncated_version_1_header() {
+        let mut fields = Vec::new();
+        fields.extend_from_slice(&1u64.to_be_bytes());
+        fields.extend_from_slice(&2u64.to_be_bytes());
+        let mdhd = header_box(b"mdhd", 1, &fields);
+        assert!(matches!(
+            header_timescale(&mdhd, "mdhd"),
+            Err(Error::UnexpectedBox { expected: "mdhd" })
+        ));
+    }
 }

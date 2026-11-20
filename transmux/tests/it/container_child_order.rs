@@ -558,6 +558,100 @@ fn traf_size_zero_last_child_round_trips_and_grows_safely() {
     assert_eq!(out, traf, "a size-0 traf child round-trips byte-exactly");
 }
 
+/// The `size == 0` rule one level up: a `moof` whose last child came off the
+/// wire in the "to end of box" form (§4.2) must be re-emitted that way, or a
+/// byte-exact rewrite turns it into an explicit-size box.
+#[test]
+fn moof_size_zero_last_child_round_trips_byte_exact() {
+    let mut body = Vec::new();
+    let mut mfhd = vec![0u8; 16];
+    mfhd[..4].copy_from_slice(&16u32.to_be_bytes());
+    mfhd[4..8].copy_from_slice(b"mfhd");
+    mfhd[12..16].copy_from_slice(&1u32.to_be_bytes());
+    body.extend_from_slice(&mfhd);
+
+    let mut traf_body = Vec::new();
+    let mut tfhd = vec![0u8; 16];
+    tfhd[..4].copy_from_slice(&16u32.to_be_bytes());
+    tfhd[4..8].copy_from_slice(b"tfhd");
+    tfhd[12..16].copy_from_slice(&1u32.to_be_bytes());
+    traf_body.extend_from_slice(&tfhd);
+    body.extend_from_slice(&((8 + traf_body.len()) as u32).to_be_bytes());
+    body.extend_from_slice(b"traf");
+    body.extend_from_slice(&traf_body);
+
+    body.extend_from_slice(&0u32.to_be_bytes());
+    body.extend_from_slice(b"free");
+    body.extend_from_slice(&[0xCC; 12]);
+
+    let mut moof = Vec::new();
+    moof.extend_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+    moof.extend_from_slice(b"moof");
+    moof.extend_from_slice(&body);
+
+    use broadcast_common::Serialize;
+    use transmux::movie_fragment::MovieFragmentBox;
+    let parsed = MovieFragmentBox::parse_body(&moof[8..]).expect("parses");
+    let last = parsed.order.last().expect("children recorded");
+    match last {
+        transmux::movie_fragment::MoofChild::Opaque(o) => {
+            assert_eq!(o.box_type, *b"free");
+            assert!(o.to_end, "the size-0 form is recorded");
+        }
+        other => panic!("expected the trailing free box, got {other:?}"),
+    }
+    assert_eq!(
+        parsed.try_to_bytes().expect("serialize"),
+        moof,
+        "a trailing size-0 moof child round-trips byte-exactly"
+    );
+}
+
+/// A `size == 0` child that is *not* last may not use that form — it would
+/// swallow everything after it — so the writer must state its length.
+#[test]
+fn moof_size_zero_child_written_explicitly_when_not_last() {
+    use broadcast_common::Serialize;
+    use transmux::movie_fragment::{
+        MoofChild, MovieFragmentBox, MovieFragmentHeaderBox, OpaqueChild, TrackFragmentBox,
+        TrackFragmentHeaderBox,
+    };
+
+    let tfhd = TrackFragmentHeaderBox {
+        flags: 0,
+        track_id: TrackId::new(1),
+        base_data_offset: None,
+        sample_description_index: None,
+        default_sample_duration: None,
+        default_sample_size: None,
+        default_sample_flags: None,
+    };
+    let traf = TrackFragmentBox::new(tfhd, None, Vec::new());
+    let mut free = OpaqueChild::new(*b"free", vec![0xDD; 12]);
+    free.to_end = true;
+    let mut moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(1), vec![traf]);
+    moof.order = vec![MoofChild::Mfhd, MoofChild::Opaque(free), MoofChild::Traf(0)];
+
+    let out = moof.try_to_bytes().expect("serialize");
+    let free_at = find_subslice(&out, b"free").expect("free present");
+    assert_eq!(
+        u32::from_be_bytes([
+            out[free_at - 4],
+            out[free_at - 3],
+            out[free_at - 2],
+            out[free_at - 1]
+        ]),
+        20,
+        "a non-last size-0 child must state its own length (8 header + 12 body)"
+    );
+    let traf_at = find_subslice(&out, b"traf").expect("traf present");
+    assert_eq!(
+        &out[traf_at - 4..traf_at],
+        &24u32.to_be_bytes(),
+        "the traf after it keeps its own size"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Audit 23 finding 18 — every AudioSampleEntryV1-eligible entry needs stsd v1
 // ---------------------------------------------------------------------------

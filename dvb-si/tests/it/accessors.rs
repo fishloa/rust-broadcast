@@ -136,11 +136,34 @@ fn pdc_label_components_round_trip() {
         (d.pil_day(), d.pil_month(), d.pil_hour(), d.pil_minute()),
         (15, 6, 20, 30)
     );
-    // day exceeds its 5-bit field.
-    assert!(matches!(
-        d.set_pil(32, 1, 1, 1),
-        Err(dvb_si::Error::ValueOutOfRange { .. })
-    ));
+    // The maxima of every field are legal (day 31, month 15, hour 31,
+    // minute 63) and together form the largest 20-bit label.
+    d.set_pil(31, 15, 31, 63).unwrap();
+    assert_eq!(d.programme_identification_label, 0xFFFFF);
+    assert_eq!(
+        (d.pil_day(), d.pil_month(), d.pil_hour(), d.pil_minute()),
+        (31, 15, 31, 63)
+    );
+    // Each component alone one past its field is rejected, and so is a
+    // larger value.
+    for (day, month, hour, minute) in [
+        (32, 1, 1, 1),
+        (33, 1, 1, 1),
+        (1, 16, 1, 1),
+        (1, 17, 1, 1),
+        (1, 1, 32, 1),
+        (1, 1, 33, 1),
+        (1, 1, 1, 64),
+        (1, 1, 1, 65),
+    ] {
+        assert!(
+            matches!(
+                d.set_pil(day, month, hour, minute),
+                Err(dvb_si::Error::ValueOutOfRange { .. })
+            ),
+            "set_pil({day}, {month}, {hour}, {minute}) must be rejected"
+        );
+    }
 }
 
 #[test]

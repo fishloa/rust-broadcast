@@ -568,3 +568,113 @@ fn the_last_sample_repeats_the_second_to_last_forward_delta() {
         .collect();
     assert_eq!(durations, vec![10, 20, 30, 40, 50, 50]);
 }
+
+// ---------------------------------------------------------------------------
+// The classifier, its labels, and the onMetaData geometry it drives
+// ---------------------------------------------------------------------------
+
+/// Read the `width` and `height` numbers out of an AMF0 `onMetaData` body
+/// (`String` name, then an ECMA Array of properties, AMF0 §2.4/§2.10) —
+/// decoded here, on the wire format, so the assertion does not lean on the
+/// encoder it is checking.
+fn metadata_width_height(body: &[u8]) -> (f64, f64) {
+    assert_eq!(body[0], 0x02, "the name is an AMF0 string");
+    let name_len = usize::from(u16::from_be_bytes([body[1], body[2]]));
+    let mut at = 3 + name_len;
+    assert_eq!(body[at], 0x08, "onMetaData must carry an ECMA Array");
+    at += 1 + 4;
+    let mut found: [Option<f64>; 2] = [None, None];
+    while at + 2 <= body.len() && body[at..at + 2] != [0, 0] {
+        let key_len = usize::from(u16::from_be_bytes([body[at], body[at + 1]]));
+        at += 2;
+        let key = std::str::from_utf8(&body[at..at + key_len]).expect("utf8 key");
+        at += key_len;
+        match body[at] {
+            0x00 => {
+                let raw: [u8; 8] = body[at + 1..at + 9].try_into().expect("8 bytes");
+                let value = f64::from_be_bytes(raw);
+                if key == "width" {
+                    found[0] = Some(value);
+                } else if key == "height" {
+                    found[1] = Some(value);
+                }
+                at += 9;
+            }
+            0x02 => {
+                let len = usize::from(u16::from_be_bytes([body[at + 1], body[at + 2]]));
+                at += 3 + len;
+            }
+            other => panic!("unexpected AMF0 type 0x{other:02X} for {key}"),
+        }
+    }
+    (
+        found[0].expect("onMetaData carries width"),
+        found[1].expect("onMetaData carries height"),
+    )
+}
+
+/// `onMetaData` advertises the AVC track's real geometry, not 0x0.
+#[test]
+fn on_metadata_body_carries_the_avc_track_geometry() {
+    let (config, _, _) = avc_config();
+    let track = Track::new(
+        TrackSpec::new(
+            TrackId::new(1),
+            timescale(1000),
+            CodecConfig::Avc {
+                config,
+                width: 1280,
+                height: 720,
+            },
+        ),
+        Vec::new(),
+    );
+    let media = Media::new(vec![track], timescale(1000));
+    let body = transmux::on_metadata_body(&media, Some(1.0)).expect("metadata body");
+    assert_eq!(metadata_width_height(&body), (1280.0, 720.0));
+}
+
+/// The public classifier decides which tracks an FLV/RTMP writer carries: AVC
+/// is video, AAC is audio, and anything else has no FLV tag.
+#[test]
+fn flv_track_kind_classifies_exactly_the_carryable_codecs() {
+    let (config, width, height) = avc_config();
+    let avc = CodecConfig::Avc {
+        config,
+        width,
+        height,
+    };
+    assert_eq!(
+        transmux::flv_track_kind(&avc),
+        Some(transmux::FlvPayloadKind::Video)
+    );
+
+    let (esds, channel_count, sample_rate) = aac_config();
+    let aac = CodecConfig::Aac {
+        esds,
+        channel_count,
+        sample_rate,
+        sample_size: 16,
+    };
+    assert_eq!(
+        transmux::flv_track_kind(&aac),
+        Some(transmux::FlvPayloadKind::Audio)
+    );
+
+    let data = CodecConfig::Data {
+        stream_type: 0x86,
+        descriptors: Vec::new(),
+        carriage: transmux::ir::DataCarriage::Sections,
+    };
+    assert_eq!(transmux::flv_track_kind(&data), None);
+}
+
+/// The #204 label pair: the spec token, and `Display` equal to it.
+#[test]
+fn flv_payload_kind_labels_are_the_tag_tokens() {
+    use transmux::FlvPayloadKind::{Audio, Video};
+    assert_eq!(Video.name(), "video");
+    assert_eq!(Audio.name(), "audio");
+    assert_eq!(Video.to_string(), "video");
+    assert_eq!(Audio.to_string(), "audio");
+}

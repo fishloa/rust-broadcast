@@ -21,6 +21,7 @@ mod captions;
 mod cea608_in_band_carriage;
 mod cenc;
 mod cenc_decrypt;
+mod cenc_decrypt_frag_synthetic;
 mod cenc_encrypt;
 mod cenc_encrypt_e2e;
 mod cenc_frag_layouts;
@@ -93,6 +94,7 @@ mod hevc_damaged_parameter_sets;
 mod hevc_sps;
 mod hevc_vps_timing;
 mod hls_discontinuity;
+mod hls_packager_playlist;
 mod hub;
 #[path = "support/hub_fixtures.rs"]
 mod hub_fixtures;
