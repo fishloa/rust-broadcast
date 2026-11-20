@@ -1175,13 +1175,14 @@ fn a_sample_at_the_chunk_boundary_starts_the_next_chunk() {
 /// `u32::MAX`, so the tables must be rebuilt with 64-bit entries and carry the
 /// true offset.
 ///
-/// Ignored by default: the first sample is 4 GiB, so the mux allocates ~8 GiB.
-/// Run it with `cargo test -p transmux --all-features --test it -- --ignored`.
+/// Ignored by default: the first sample is `u32::MAX` bytes (the largest a
+/// `stsz` entry can hold), so the mux allocates ~8 GiB. Run it with
+/// `cargo test -p transmux --all-features --test it -- --ignored`.
 #[test]
 #[ignore = "allocates ~8 GiB for a past-u32::MAX mdat; run with --ignored"]
 fn a_chunk_past_u32_max_switches_the_tables_to_co64() {
-    const BIG: usize = u32::MAX as usize + 1;
-    const BIG_U64: u64 = u32::MAX as u64 + 1;
+    const BIG: usize = u32::MAX as usize;
+    const BIG_U64: u64 = u32::MAX as u64;
     let ts = timescale(90_000);
     let samples = vec![
         transmux::pipeline::Sample::timed(vec![0u8; BIG], 0, 0, duration(3_000)),
