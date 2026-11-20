@@ -727,6 +727,91 @@ mod tests {
         assert_eq!(r.codec_string(), None);
     }
 
+    fn descriptor_of(
+        record: DoviDecoderConfigurationRecord,
+        pid: Option<u16>,
+    ) -> DoviVideoStreamDescriptor {
+        DoviVideoStreamDescriptor {
+            record,
+            dependency_pid: pid,
+            dependency_reserved: 0,
+            reserved: 0,
+            extension: Vec::new(),
+        }
+    }
+
+    fn record_without_base_layer() -> DoviDecoderConfigurationRecord {
+        let mut r = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        r.bl_present = false;
+        r
+    }
+
+    #[test]
+    fn descriptor_dependency_pid_accepts_its_13_bit_maximum() {
+        let d = descriptor_of(record_without_base_layer(), Some(0x1FFF));
+        let bytes = d.try_to_bytes().unwrap();
+        assert_eq!(&bytes[4..6], &[0xFF, 0xF8]);
+        assert_eq!(
+            DoviVideoStreamDescriptor::parse(&bytes).unwrap().dependency_pid,
+            Some(0x1FFF)
+        );
+    }
+
+    #[test]
+    fn descriptor_rejects_a_dependency_pid_above_13_bits() {
+        let d = descriptor_of(record_without_base_layer(), Some(0x2000));
+        assert!(matches!(
+            d.try_to_bytes(),
+            Err(crate::error::Error::InvalidValue(..))
+        ));
+    }
+
+    #[test]
+    fn descriptor_serialize_accepts_the_field_maxima() {
+        let mut record = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        record.level = 63;
+        record.profile = 127;
+        record.bl_signal_compatibility_id = DoviBlSignalCompatibilityId::Reserved(15);
+        let d = descriptor_of(record, None);
+        let bytes = d.try_to_bytes().unwrap();
+        assert_eq!(&bytes[2..4], &[0xFF, 0xFD]);
+        assert_eq!(bytes[4], 0xF0);
+        let back = DoviVideoStreamDescriptor::parse(&bytes).unwrap();
+        assert_eq!(back.record.level, 63);
+        assert_eq!(back.record.profile, 127);
+        assert_eq!(back.record.bl_signal_compatibility_id.code(), 15);
+    }
+
+    #[test]
+    fn descriptor_rejects_a_level_above_six_bits() {
+        let mut record = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        record.level = 64;
+        assert!(matches!(
+            descriptor_of(record, None).try_to_bytes(),
+            Err(crate::error::Error::InvalidValue(..))
+        ));
+    }
+
+    #[test]
+    fn descriptor_rejects_a_profile_above_seven_bits() {
+        let mut record = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        record.profile = 128;
+        assert!(matches!(
+            descriptor_of(record, None).try_to_bytes(),
+            Err(crate::error::Error::InvalidValue(..))
+        ));
+    }
+
+    #[test]
+    fn descriptor_rejects_a_compatibility_id_above_four_bits() {
+        let mut record = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
+        record.bl_signal_compatibility_id = DoviBlSignalCompatibilityId::Reserved(16);
+        assert!(matches!(
+            descriptor_of(record, None).try_to_bytes(),
+            Err(crate::error::Error::InvalidValue(..))
+        ));
+    }
+
     #[test]
     fn descriptor_extension_bytes_are_tolerated_and_preserved() {
         let body = [0x01, 0x00, 0x10, 0x1D, 0x10, 0xAA, 0xBB];
