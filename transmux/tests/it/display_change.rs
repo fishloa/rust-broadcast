@@ -30,7 +30,10 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::Unpackage;
-use transmux::ir::{AspectRatioIdc, DisplayChangeSet, TrackId, TrackSpec};
+use transmux::ir::{
+    ActiveFormatDescription, AspectRatioIdc, DisplayChangeSet, DisplayGeometry, DisplayInfo,
+    TrackId, TrackSpec,
+};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
 
 fn read(fixture: &str) -> Option<Vec<u8>> {
@@ -584,4 +587,85 @@ fn file_wide_check(video: &[&Seen], expected: usize) {
         .count();
     assert!(total > 0);
     assert_eq!(tagged, total, "every video sample is tagged");
+}
+
+// ---------------------------------------------------------------------------
+// DisplayChangeSet: initial, any(), names() and the AFD wire code
+// ---------------------------------------------------------------------------
+
+/// The first state for a track is `initial`; `any()` sees it and `names()`
+/// renders exactly that label.
+#[test]
+fn a_first_state_is_initial() {
+    let info = DisplayInfo::new(Some(DisplayGeometry::new(1920, 1080, None)));
+    let changes = info.changes_from(None);
+    assert!(changes.initial, "the first state for a track is initial");
+    assert!(changes.any(), "{changes:?}");
+    assert_eq!(changes.names(), "initial");
+}
+
+/// A re-sent identical state changes nothing: no field set, so `names()` is
+/// empty and `any()` is false.
+#[test]
+fn an_identical_state_changes_nothing() {
+    let geometry = DisplayGeometry::new(1920, 1080, Some(AspectRatioIdc::from_wire(1, None)));
+    let before = DisplayInfo::new(Some(geometry.clone()));
+    let after = DisplayInfo::new(Some(geometry));
+    let changes = after.changes_from(Some(&before));
+    assert!(!changes.initial, "a later state is not initial");
+    assert!(!changes.any(), "{changes:?}");
+    assert_eq!(changes.names(), "");
+}
+
+/// Two changed fields render in `DisplayChangeSet`'s own field order, joined by
+/// exactly one space.
+#[test]
+fn aspect_ratio_and_overscan_changes_are_named_in_field_order() {
+    let mut before = DisplayGeometry::new(1920, 1080, Some(AspectRatioIdc::from_wire(1, None)));
+    before.overscan_appropriate = Some(false);
+    let mut after = before.clone();
+    after.aspect_ratio = Some(AspectRatioIdc::from_wire(2, None));
+    after.overscan_appropriate = Some(true);
+
+    let changes = DisplayInfo::new(Some(after)).changes_from(Some(&DisplayInfo::new(Some(before))));
+    assert!(changes.aspect_ratio);
+    assert!(changes.overscan);
+    assert_eq!(changes.names(), "aspect_ratio overscan");
+}
+
+/// A geometry built from an H.264-shaped (non-MPEG-2) source reports
+/// `is_mpeg2() == false`.
+#[test]
+fn non_mpeg2_geometry_is_not_mpeg2() {
+    assert!(!DisplayGeometry::new(1920, 1080, None).is_mpeg2());
+}
+
+/// Every `ActiveFormatDescription` wire code (H.264 Table E.6 / H.265
+/// Table E.6): the accessor returns the 4-bit value and `from_code`
+/// round-trips it.
+#[test]
+fn active_format_description_codes_round_trip() {
+    let rows: [(ActiveFormatDescription, u8); 11] = [
+        (ActiveFormatDescription::Unknown, 0b0000),
+        (ActiveFormatDescription::Box16x9Top, 0b0010),
+        (ActiveFormatDescription::Box14x9Top, 0b0011),
+        (ActiveFormatDescription::BoxWiderThan16x9Centre, 0b0100),
+        (ActiveFormatDescription::SameAsCodedFrame, 0b1000),
+        (ActiveFormatDescription::Centre4x3, 0b1001),
+        (ActiveFormatDescription::Centre16x9, 0b1010),
+        (ActiveFormatDescription::Centre14x9, 0b1011),
+        (ActiveFormatDescription::Centre4x3ShootProtect14x9, 0b1101),
+        (ActiveFormatDescription::Centre16x9ShootProtect14x9, 0b1110),
+        (ActiveFormatDescription::Centre16x9ShootProtect4x3, 0b1111),
+    ];
+    for (variant, code) in rows {
+        assert_eq!(variant.code(), code);
+        assert_eq!(ActiveFormatDescription::from_code(code), variant);
+    }
+    // The reserved rows keep their lossless wire value.
+    for code in [0b0001u8, 0b0101, 0b0110, 0b0111, 0b1100] {
+        let afd = ActiveFormatDescription::from_code(code);
+        assert_eq!(afd, ActiveFormatDescription::Reserved(code));
+        assert_eq!(afd.code(), code);
+    }
 }
