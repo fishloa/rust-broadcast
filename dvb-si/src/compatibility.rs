@@ -574,10 +574,16 @@ mod tests {
             0x00, 0x0D, 0x00, 0x01, 0x01, 0x09, 0x01, 0x00, 0x15, 0x0A, 0x12, 0x34, 0x00, 0x01,
             0x01,
         ];
-        assert!(matches!(
-            &(CompatibilityDescriptor::parse(bytes)),
-            Err(crate::error::Error::BufferTooShort(..))
-        ));
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(crate::error::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 17,
+                    have: 15,
+                    what: "CompatibilityDescriptor subDescriptor header",
+                }
+            ))
+        );
     }
 
     #[test]

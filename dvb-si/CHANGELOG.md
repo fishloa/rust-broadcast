@@ -66,6 +66,7 @@
 - An entry header that ends exactly at the compatibility body end reports the short-`descriptorLength` `InvalidDescriptor`, not a truncated header (#3547).
 - An entry whose `descriptorLength` runs past the compatibility body asserts `SectionLengthOverflow { declared: 32, available: 2 }` (#3548).
 - A zero-length sub-descriptor ending exactly at its entry end parses with empty data and re-serialises byte-identically (#3549).
+- The truncated sub-descriptor header test destructures `BufferTooShort { need: 17, have: 15 }` instead of matching the variant (#3550).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
