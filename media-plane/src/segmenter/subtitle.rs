@@ -583,6 +583,154 @@ mod tests {
         }
     }
 
+    fn teletext_descriptor(entries: &[(&str, TeletextType, u8, u8)]) -> Vec<u8> {
+        let mut out = vec![dvb_si::descriptors::teletext::TAG, (entries.len() * 5) as u8];
+        for (language, teletext_type, magazine, page) in entries {
+            out.extend_from_slice(language.as_bytes());
+            out.push((teletext_type.to_u8() << 3) | (magazine & 0x07));
+            out.push(*page);
+        }
+        out
+    }
+
+    fn data_track(track_id: TrackId, descriptors: Vec<u8>) -> TrackSpec {
+        let mut spec = TrackSpec::new(
+            track_id,
+            Timescale::try_new(90_000).expect("non-zero timescale"),
+            CodecConfig::Data {
+                stream_type: 0x06,
+                descriptors: Vec::new(),
+                carriage: transmux::pipeline::DataCarriage::Sections,
+            },
+        );
+        spec.es_info_descriptors = descriptors;
+        spec
+    }
+
+    fn video_track(track_id: TrackId) -> TrackSpec {
+        let mut spec = TrackSpec::new(
+            track_id,
+            Timescale::try_new(90_000).expect("non-zero timescale"),
+            CodecConfig::Avc {
+                config: transmux::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==")
+                    .expect("valid sprop"),
+                width: 0,
+                height: 0,
+            },
+        );
+        spec.es_info_descriptors = teletext_descriptor(&[(
+            "eng",
+            TeletextType::SubtitlePage,
+            8,
+            0x88,
+        )]);
+        spec
+    }
+
+    #[test]
+    fn is_subtitle_classifies_only_the_two_subtitle_page_types() {
+        assert_eq!(
+            is_subtitle(&TeletextEntry {
+                language_code: dvb_si::text::LangCode(*b"eng"),
+                teletext_type: TeletextType::SubtitlePage,
+                magazine_number: 8,
+                page_number: 0x88,
+            }),
+            Some(false)
+        );
+        assert_eq!(
+            is_subtitle(&TeletextEntry {
+                language_code: dvb_si::text::LangCode(*b"eng"),
+                teletext_type: TeletextType::HearingImpairedSubtitlePage,
+                magazine_number: 8,
+                page_number: 0x89,
+            }),
+            Some(true)
+        );
+        for non_subtitle in [
+            TeletextType::InitialPage,
+            TeletextType::AdditionalInformationPage,
+            TeletextType::ProgrammeSchedulePage,
+            TeletextType::Reserved(0x1F),
+        ] {
+            assert_eq!(
+                is_subtitle(&TeletextEntry {
+                    language_code: dvb_si::text::LangCode(*b"eng"),
+                    teletext_type: non_subtitle,
+                    magazine_number: 8,
+                    page_number: 0x88,
+                }),
+                None,
+                "{}",
+                non_subtitle.name()
+            );
+        }
+    }
+
+    #[test]
+    fn teletext_page_number_and_identity_are_the_wire_page() {
+        let page = TeletextPage {
+            source_track: TrackId::new(1),
+            language: "en".to_string(),
+            hearing_impaired: false,
+            magazine: 8,
+            page: 0x88,
+        };
+        assert_eq!(page.number(), "888");
+        assert_eq!(page.identity(), "888:en:std");
+        let sdh = TeletextPage {
+            hearing_impaired: true,
+            page: 0x89,
+            ..page
+        };
+        assert_eq!(sdh.number(), "889");
+        assert_eq!(sdh.identity(), "889:en:sdh");
+        assert_ne!(sdh.identity(), "889:en:std");
+    }
+
+    #[test]
+    fn teletext_pages_keeps_the_subtitle_pages_in_descriptor_order() {
+        let descriptors = teletext_descriptor(&[
+            ("eng", TeletextType::SubtitlePage, 8, 0x88),
+            ("fra", TeletextType::HearingImpairedSubtitlePage, 0, 0x89),
+            ("eng", TeletextType::InitialPage, 8, 0x90),
+            ("zzz", TeletextType::SubtitlePage, 8, 0x91),
+            ("eng", TeletextType::SubtitlePage, 8, 0x88),
+        ]);
+        let pages = teletext_pages("route", 8, &[data_track(TrackId::new(1), descriptors)]);
+        assert_eq!(pages.len(), 2, "only the two real subtitle pages");
+        assert_eq!(pages[0].number(), "888");
+        assert_eq!(pages[0].language, "en");
+        assert!(!pages[0].hearing_impaired);
+        assert_eq!(pages[1].number(), "889");
+        assert_eq!(pages[1].language, "fr");
+        assert!(pages[1].hearing_impaired);
+        assert_ne!(pages[0].identity(), pages[1].identity());
+    }
+
+    #[test]
+    fn teletext_pages_caps_at_max_pages_and_ignores_non_data_tracks() {
+        let descriptors = teletext_descriptor(&[
+            ("eng", TeletextType::SubtitlePage, 8, 0x88),
+            ("eng", TeletextType::SubtitlePage, 8, 0x89),
+            ("eng", TeletextType::SubtitlePage, 8, 0x8A),
+        ]);
+        let pages = teletext_pages(
+            "route",
+            2,
+            &[data_track(TrackId::new(1), descriptors)],
+        );
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].number(), "888");
+        assert_eq!(pages[1].number(), "889");
+
+        let video = video_track(TrackId::new(2));
+        assert!(
+            teletext_pages("route", 8, &[video]).is_empty(),
+            "a teletext descriptor on a video track declares no subtitle rendition"
+        );
+    }
+
     fn core() -> Core<Scripted> {
         Core::new(Scripted::default())
     }
