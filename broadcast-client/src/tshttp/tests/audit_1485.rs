@@ -392,6 +392,36 @@ fn validate_rejects_each_inconsistent_field() {
 }
 
 #[test]
+fn config_error_names_are_the_literal_strings() {
+    use crate::tshttp::config::ConfigError;
+    for (error, label) in [
+        (ConfigError::ZeroStartTimeout, "start_timeout is zero"),
+        (ConfigError::ZeroStallNotice, "stall_notice is zero"),
+        (ConfigError::ZeroStallReconnect, "stall_reconnect is zero"),
+        (
+            ConfigError::StallReconnectNotAfterNotice,
+            "stall_reconnect is not greater than stall_notice",
+        ),
+        (ConfigError::EmptyBackoff, "backoff.steps is empty"),
+        (
+            ConfigError::ZeroBackoffEntry,
+            "backoff.steps has a zero entry",
+        ),
+    ] {
+        assert_eq!(error.name(), label);
+        assert_eq!(error.to_string(), label);
+    }
+}
+
+#[test]
+fn the_reconnect_ceiling_builder_keeps_the_ceiling_it_was_given() {
+    let config = Config::default().with_max_reconnect_attempts(Some(3));
+    assert_eq!(config.max_reconnect_attempts, Some(3));
+    let unlimited = Config::default().with_max_reconnect_attempts(None);
+    assert_eq!(unlimited.max_reconnect_attempts, None);
+}
+
+#[test]
 fn clamped_config_always_validates_and_leaves_valid_config_alone() {
     assert_eq!(Config::default().clamped(), Config::default());
     let worst = Config::default()

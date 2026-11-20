@@ -1578,4 +1578,255 @@ mod tests {
         );
         assert_eq!(dropped.name(), "track_dropped");
     }
+
+    #[test]
+    fn event_eq_compares_every_field() {
+        use super::{AuthScheme, BufferEvent, Event, Status};
+        use crate::tshttp::StarveKind;
+        use core::time::Duration;
+        use http::StatusCode;
+        use transmux::{
+            ActiveFormat, ActiveFormatDescription, DisplayInfo, JoinDecision, Sample,
+            UserDataCarriage,
+        };
+        use url::Url;
+
+        let sample = Sample::timed(vec![0u8], 10, 20, None);
+        let sample_event = Event::Sample {
+            track: TrackId::new(1),
+            sample: sample.clone(),
+            join: None,
+        };
+        assert_eq!(sample_event, sample_event.clone());
+        assert_ne!(
+            sample_event,
+            Event::Sample {
+                track: TrackId::new(2),
+                sample: sample.clone(),
+                join: None,
+            }
+        );
+        assert_ne!(
+            sample_event,
+            Event::Sample {
+                track: TrackId::new(1),
+                sample: Sample::timed(vec![1u8], 10, 20, None),
+                join: None,
+            }
+        );
+        assert_ne!(
+            sample_event,
+            Event::Sample {
+                track: TrackId::new(1),
+                sample: sample.clone(),
+                join: Some(JoinDecision::Keep),
+            }
+        );
+
+        let plain = alloc::sync::Arc::new(DisplayInfo::new(None));
+        let with_afd = alloc::sync::Arc::new(DisplayInfo::new(None).with_active_format(Some(
+            ActiveFormat::new(
+                Some(ActiveFormatDescription::Unknown),
+                None,
+                UserDataCarriage::AvcSei,
+            ),
+        )));
+        let display_event = Event::DisplayChanged {
+            track: TrackId::new(1),
+            pts: Some(90),
+            display: plain.clone(),
+        };
+        assert_eq!(display_event, display_event.clone());
+        assert_ne!(
+            display_event,
+            Event::DisplayChanged {
+                track: TrackId::new(2),
+                pts: Some(90),
+                display: plain.clone(),
+            }
+        );
+        assert_ne!(
+            display_event,
+            Event::DisplayChanged {
+                track: TrackId::new(1),
+                pts: Some(91),
+                display: plain.clone(),
+            }
+        );
+        assert_ne!(
+            display_event,
+            Event::DisplayChanged {
+                track: TrackId::new(1),
+                pts: Some(90),
+                display: with_afd,
+            }
+        );
+
+        let finite = Event::Finite { expected_bytes: 1 };
+        assert_eq!(finite, finite.clone());
+        assert_ne!(finite, Event::Finite { expected_bytes: 2 });
+
+        let auth_required = Event::AuthRequired {
+            scheme: AuthScheme::Basic,
+            realm: Some("realm".into()),
+            origin: Url::parse("https://one.example/").unwrap(),
+            resource_metadata: None,
+        };
+        assert_eq!(auth_required, auth_required.clone());
+        assert_ne!(
+            auth_required,
+            Event::AuthRequired {
+                scheme: AuthScheme::Bearer,
+                realm: Some("realm".into()),
+                origin: Url::parse("https://one.example/").unwrap(),
+                resource_metadata: None,
+            }
+        );
+        assert_ne!(
+            auth_required,
+            Event::AuthRequired {
+                scheme: AuthScheme::Basic,
+                realm: Some("other".into()),
+                origin: Url::parse("https://one.example/").unwrap(),
+                resource_metadata: None,
+            }
+        );
+        assert_ne!(
+            auth_required,
+            Event::AuthRequired {
+                scheme: AuthScheme::Basic,
+                realm: Some("realm".into()),
+                origin: Url::parse("https://two.example/").unwrap(),
+                resource_metadata: None,
+            }
+        );
+        assert_ne!(
+            auth_required,
+            Event::AuthRequired {
+                scheme: AuthScheme::Basic,
+                realm: Some("realm".into()),
+                origin: Url::parse("https://one.example/").unwrap(),
+                resource_metadata: Some(Url::parse("https://meta.example/").unwrap()),
+            }
+        );
+
+        let rejected = Event::AuthRejected {
+            status: StatusCode::UNAUTHORIZED,
+        };
+        assert_eq!(rejected, rejected.clone());
+        assert_ne!(
+            rejected,
+            Event::AuthRejected {
+                status: StatusCode::FORBIDDEN,
+            }
+        );
+
+        let forbidden = Event::Forbidden {
+            status: StatusCode::FORBIDDEN,
+        };
+        assert_eq!(forbidden, forbidden.clone());
+        assert_ne!(
+            forbidden,
+            Event::Forbidden {
+                status: StatusCode::UNAUTHORIZED,
+            }
+        );
+
+        let refused = Event::ServerRefused {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            retry_after: Some(Duration::from_secs(1)),
+            reason: Some("slow down".into()),
+        };
+        assert_eq!(refused, refused.clone());
+        assert_ne!(
+            refused,
+            Event::ServerRefused {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                retry_after: Some(Duration::from_secs(1)),
+                reason: Some("slow down".into()),
+            }
+        );
+        assert_ne!(
+            refused,
+            Event::ServerRefused {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                retry_after: None,
+                reason: Some("slow down".into()),
+            }
+        );
+        assert_ne!(
+            refused,
+            Event::ServerRefused {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                retry_after: Some(Duration::from_secs(1)),
+                reason: None,
+            }
+        );
+
+        let rendition = Event::AudioRendition {
+            index: Some(0),
+            name: Some("English".into()),
+            language: Some("en".into()),
+        };
+        assert_eq!(rendition, rendition.clone());
+        assert_ne!(
+            rendition,
+            Event::AudioRendition {
+                index: Some(1),
+                name: Some("English".into()),
+                language: Some("en".into()),
+            }
+        );
+        assert_ne!(
+            rendition,
+            Event::AudioRendition {
+                index: Some(0),
+                name: Some("French".into()),
+                language: Some("en".into()),
+            }
+        );
+        assert_ne!(
+            rendition,
+            Event::AudioRendition {
+                index: Some(0),
+                name: Some("English".into()),
+                language: Some("fr".into()),
+            }
+        );
+
+        let error = Event::Error {
+            kind: ErrorKind::BadKey,
+            fatal: false,
+        };
+        assert_eq!(error, error.clone());
+        assert_ne!(
+            error,
+            Event::Error {
+                kind: ErrorKind::DecryptFailed,
+                fatal: false,
+            }
+        );
+        assert_ne!(
+            error,
+            Event::Error {
+                kind: ErrorKind::BadKey,
+                fatal: true,
+            }
+        );
+
+        let status = Event::Status(Status::Ended);
+        assert_eq!(status, status.clone());
+        assert_ne!(status, Event::Status(Status::Live));
+
+        let starved = Event::Starved(StarveKind::Data);
+        assert_eq!(starved, starved.clone());
+        assert_ne!(starved, Event::Starved(StarveKind::NoData));
+
+        let buffer = Event::Buffer(BufferEvent::Start { at_27mhz: 1 });
+        assert_eq!(buffer, buffer.clone());
+        assert_ne!(buffer, Event::Buffer(BufferEvent::Start { at_27mhz: 2 }));
+
+        assert_ne!(Event::Discontinuity, finite);
+        assert_ne!(sample_event, Event::Discontinuity);
+    }
 }
