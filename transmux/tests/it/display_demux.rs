@@ -415,3 +415,44 @@ fn promotion_restores_the_track_spec_geometry() {
         "the initial event carries the TrackSpec geometry, then the switch"
     );
 }
+
+/// The fixture's own SPS and PPS bytes (its real 320-pixel geometry).
+fn avc_fixture_sets(spec: &TrackSpec) -> Option<(Vec<u8>, Vec<u8>)> {
+    let CodecConfig::Avc { config, .. } = &spec.config else {
+        return None;
+    };
+    let sps = config.config.sps.first()?.0.to_vec();
+    let pps = config.config.pps.first()?.0.to_vec();
+    Some((sps, pps))
+}
+
+/// A slice whose PPS has not arrived holds the state; the access unit that
+/// carries the sets reports the change once, and the picture after it on the
+/// same sets reports nothing.
+#[test]
+fn an_unseen_pps_is_reported_once_when_its_sets_arrive() {
+    let Some(spec) = avc_track_spec() else {
+        return;
+    };
+    let Some((fixture_sps, fixture_pps)) = avc_fixture_sets(&spec) else {
+        return;
+    };
+    let dangling = annexb_access_unit(&[fixture_sps, fixture_pps, avc_idr_slice_nal(1)]);
+    let resolving = annexb_access_unit(&[
+        avc_sps_nal(0, 8, 1),
+        avc_pps_nal(1, 0),
+        avc_idr_slice_nal(1),
+    ]);
+    let settled = annexb_access_unit(&[
+        avc_sps_nal(0, 8, 1),
+        avc_pps_nal(1, 0),
+        avc_idr_slice_nal(1),
+    ]);
+    let ts = avc_ts(spec, &[dangling, resolving, settled]);
+    let changes = display_changes(&ts);
+    assert_eq!(
+        changes,
+        vec![(true, Some(320)), (false, Some(128))],
+        "one change, at the access unit carrying the sets"
+    );
+}

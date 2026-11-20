@@ -932,6 +932,38 @@ mod tests {
     }
 
     #[test]
+    fn the_packed_word_signals_core_lfe_and_stereo_downmix() {
+        let ordered = DtsSpecificBox {
+            dts_sampling_frequency: 48_000,
+            max_bitrate: 768_000,
+            avg_bitrate: 768_000,
+            pcm_sample_depth: 16,
+            frame_duration: 0,
+            stream_construction: DTS_STREAM_CONSTRUCTION_CORE_ONLY,
+            core_lfe_present: true,
+            core_layout: 9,
+            core_size: 1024,
+            stereo_downmix: true,
+            representation_type: 0,
+            channel_layout: 0,
+            multi_asset_flag: false,
+            lbr_duration_mod: false,
+            reserved_box_present: false,
+        };
+        let mut buf = [0u8; DDTS_BODY_LEN];
+        ordered.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[13] & 0x01, 0x01, "CoreLFEPresent is bit 24");
+        assert_eq!(buf[16] & 0x08, 0x08, "StereoDownmix is bit 3");
+        let parsed = DtsSpecificBox::parse(&buf).unwrap();
+        assert!(parsed.core_lfe_present);
+        assert!(parsed.stereo_downmix);
+
+        let hdr = build_core_header(FX_NBLKS, FX_FSIZE, FX_AMODE, FX_SFREQ, FX_RATE, 2);
+        let info = DtsCoreFrameInfo::from_es(&hdr).unwrap();
+        assert!(info.into_ddts().core_lfe_present);
+    }
+
+    #[test]
     fn split_dts_core_frames_stops_at_bad_sync() {
         let mut payload =
             build_padded_frame(FX_NBLKS, FX_FSIZE, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
@@ -952,5 +984,26 @@ mod tests {
     fn split_dts_core_frames_empty_on_no_sync() {
         let payload = [0u8; 32];
         assert!(split_dts_core_frames(&payload).is_empty());
+    }
+
+    #[test]
+    fn split_dts_core_frames_stops_at_a_truncated_tail() {
+        let frame = build_padded_frame(FX_NBLKS, FX_FSIZE, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
+        let mut payload = frame.clone();
+        payload.extend_from_slice(&frame);
+        let mut third = frame.clone();
+        third.truncate(500);
+        payload.extend_from_slice(&third);
+        let frames = split_dts_core_frames(&payload);
+        assert_eq!(frames.len(), 2, "the cut third frame is not emitted");
+        assert_eq!(frames[0].data, frame.as_slice());
+        assert_eq!(frames[1].data, frame.as_slice());
+
+        let mut short = frame.clone();
+        short.truncate(1023);
+        assert!(
+            split_dts_core_frames(&short).is_empty(),
+            "a frame one byte short of its declared FSIZE + 1 is not emitted"
+        );
     }
 }

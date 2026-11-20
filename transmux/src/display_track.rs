@@ -96,11 +96,6 @@ const HEVC_IDR_N_LP: u8 = 20;
 /// base-layer 2-D id and reference counts before the id.
 const BASE_LAYER: u8 = 0;
 
-/// Largest number of remembered dangling references, so a hostile stream
-/// cannot grow the state without bound. Far above the 256 / 64 ids
-/// H.264 §7.4.2.2 / H.265 §7.4.3.3 allow.
-const MAX_UNRESOLVED_PPS: usize = 512;
-
 /// How a slice's parameter sets resolved.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum PpsCoverage {
@@ -254,15 +249,8 @@ enum UnseenPart {
     Sps,
 }
 
-/// An access unit whose slices referenced an unseen PPS/SPS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Unresolved {
-    pps_id: u8,
-    part: UnseenPart,
-}
-
-/// Per-track activation state: parameter sets **by id**, the state in force,
-/// the change waiting for its output position, and the dangling references.
+/// Per-track activation state: parameter sets **by id**, the state in force
+/// and the change waiting for its output position.
 #[derive(Debug, Clone)]
 pub struct SpsTracker {
     codec: TrackCodec,
@@ -271,7 +259,6 @@ pub struct SpsTracker {
     pps: BTreeMap<u8, PpsBinding>,
     /// The state every sample carries until a new change is raised.
     state: Option<Arc<DisplayInfo>>,
-    unresolved: Vec<Unresolved>,
 }
 
 impl SpsTracker {
@@ -283,7 +270,6 @@ impl SpsTracker {
             sps: BTreeMap::new(),
             pps: BTreeMap::new(),
             state: None,
-            unresolved: Vec::new(),
         }
     }
 
@@ -426,7 +412,6 @@ impl SpsTracker {
                         (_, UnseenPart::Sps) => PpsCoverage::SpsUnseen,
                         (_, UnseenPart::Pps) => PpsCoverage::PpsUnseen,
                     };
-                    self.remember(*pps_id, part);
                 }
             }
         }
@@ -438,28 +423,6 @@ impl SpsTracker {
             return Err(UnseenPart::Sps);
         }
         Ok(pps.sps_id)
-    }
-
-    fn remember(&mut self, pps_id: u8, part: UnseenPart) {
-        let entry = Unresolved { pps_id, part };
-        if self.unresolved.contains(&entry) {
-            return;
-        }
-        if self.unresolved.len() >= MAX_UNRESOLVED_PPS {
-            self.unresolved.remove(0);
-        }
-        self.unresolved.push(entry);
-    }
-
-    /// Forget every dangling reference that now resolves: the picture it bound
-    /// was reported, and a later picture on the same sets must not re-raise
-    /// the change.
-    fn forget_resolved(&mut self) {
-        let unresolved = core::mem::take(&mut self.unresolved);
-        self.unresolved = unresolved
-            .into_iter()
-            .filter(|u| self.lookup(u.pps_id).is_err())
-            .collect();
     }
 
     /// Parse AFD / bar data from a single SEI NAL into `activation` (first wins).
@@ -498,7 +461,6 @@ impl SpsTracker {
                 ActivationOutcome::Unseen
             };
         }
-        self.forget_resolved();
         let geometry = self.activated_geometry(&activation.sps_ids);
         let carriage = match self.codec {
             TrackCodec::Avc => UserDataCarriage::AvcSei,
