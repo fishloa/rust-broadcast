@@ -241,6 +241,48 @@ mod tests {
     }
 
     #[test]
+    fn a_trailing_zero_length_descriptor_is_an_entry() {
+        let raw = [0x05u8, 0x00];
+        let entries: Vec<_> = DescriptorLoop::new(&raw)
+            .entries()
+            .map(|e| e.unwrap())
+            .collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tag, 0x05);
+        assert!(entries[0].body.is_empty());
+    }
+
+    #[test]
+    fn from_bytes_keeps_the_loop_and_is_empty_tracks_it() {
+        let raw = [0x01u8, 0x00];
+        let loop_ = DescriptorLoop::from(&raw[..]);
+        assert!(!loop_.is_empty());
+        assert_eq!(loop_.raw(), &raw[..]);
+        assert_eq!(loop_.len(), 2);
+        assert_eq!(loop_.entries().count(), 1);
+        assert!(DescriptorLoop::from(&[][..]).is_empty());
+    }
+
+    #[test]
+    fn a_body_truncated_right_after_its_header_reports_no_body_bytes() {
+        let raw = [0x05u8, 0x03];
+        let err = DescriptorLoop::new(&raw)
+            .entries()
+            .last()
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(
+            err,
+            crate::Error::DescriptorBodyTruncated {
+                offset: 0,
+                tag: 0x05,
+                declared: 3,
+                have: 0,
+            }
+        );
+    }
+
+    #[test]
     fn parse_with_hands_each_entry_its_own_classification() {
         // registration descriptor (tag 0x05, "HDMV") then an unknown tag.
         let raw = [0x05u8, 0x04, b'H', b'D', b'M', b'V', 0xC0, 0x01, 0x7F];

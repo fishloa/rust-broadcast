@@ -837,4 +837,112 @@ mod tests {
     }
 
     const NEGATIVE_SECONDS: i64 = 50_000;
+
+    fn sample_at_ticks(template: &Sample, pts: i64, duration: u32) -> Sample {
+        let mut s = template.clone();
+        let duration = std::num::NonZeroU32::new(duration).expect("a non-zero duration");
+        if let Some(t) = s.timing.as_mut() {
+            *t = t.with_composition(pts, pts).with_duration(duration);
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
+                pts,
+                pts,
+                duration.get(),
+            ));
+        }
+        s
+    }
+
+    #[test]
+    fn the_resume_lead_is_one_tick_past_the_pause_lead_and_wraps_back_to_itself() {
+        assert_eq!(
+            LeadTicks::from(Duration::from_micros(1))
+                .next()
+                .position()
+                .ticks(),
+            28
+        );
+        let at_boundary = LeadTicks(Clock27::from_27mhz_wrapping(PCR_WRAP_27MHZ - 1));
+        assert_eq!(at_boundary.position().ticks(), PCR_WRAP_27MHZ - 1);
+        assert_eq!(at_boundary.next(), at_boundary);
+    }
+
+    #[test]
+    fn a_cover_exactly_at_the_pause_lead_resumes_only_past_it() {
+        let (mut spec, samples) = audio_track();
+        spec.timescale = Timescale::new(27_000_000).expect("a non-zero timescale");
+        let mut p = Playout::new(PlayoutConfig {
+            vod_start_lead: Duration::ZERO,
+            pause_lead: Duration::ZERO,
+            ..PlayoutConfig::default()
+        });
+        p.engage(Source::Vod);
+        p.on_tracks(std::slice::from_ref(&spec));
+        p.on_sample(spec.track_id, &sample_at_ticks(&samples[0], 0, 27), None);
+        assert!(matches!(
+            buffer_events(&mut p).as_slice(),
+            [BufferEvent::Start { at_27mhz: 0 }]
+        ));
+        p.on_position(Some(27));
+        assert_eq!(
+            buffer_events(&mut p),
+            vec![BufferEvent::Pause {
+                hold_at_27mhz: 27,
+                reason: PauseReason::DataArriving,
+                starving_track: Some(spec.track_id.value()),
+            }]
+        );
+        p.on_sample(spec.track_id, &sample_at_ticks(&samples[0], 27, 27), None);
+        assert_eq!(
+            buffer_events(&mut p),
+            vec![],
+            "a cover of 27 ticks is short of the resume lead of 28"
+        );
+        p.on_sample(spec.track_id, &sample_at_ticks(&samples[0], 54, 1), None);
+        assert_eq!(
+            buffer_events(&mut p),
+            vec![BufferEvent::Resume { at_27mhz: 27 }],
+            "a cover of 28 ticks resumes"
+        );
+    }
+
+    #[test]
+    fn samples_before_engage_and_after_the_end_are_not_observed() {
+        let (spec, samples) = audio_track();
+        let first = one_second_sample(&samples[0], &spec, 0);
+        let mut p = Playout::new(PlayoutConfig::default());
+        p.on_sample(spec.track_id, &first, None);
+        assert!(p.obs.is_empty(), "a disengaged gate records nothing");
+        p.engage(Source::Vod);
+        p.on_tracks(std::slice::from_ref(&spec));
+        p.on_ended();
+        p.on_sample(spec.track_id, &first, None);
+        assert!(p.obs.is_empty(), "an ended gate records nothing");
+    }
+
+    #[test]
+    fn the_origin_waits_for_video_until_the_source_ends_then_falls_back_to_audio() {
+        let (audio, samples) = audio_track();
+        let video = video_spec();
+        let mut p = Playout::new(PlayoutConfig::default());
+        p.engage(Source::Vod);
+        p.on_tracks(&[video, audio.clone()]);
+        p.on_sample(
+            audio.track_id,
+            &one_second_sample(&samples[0], &audio, 0),
+            None,
+        );
+        assert_eq!(
+            p.origin(false),
+            None,
+            "audio alone is not an origin while a video track is rendered"
+        );
+        p.on_ended();
+        let audio_first = p
+            .obs
+            .get(&audio.track_id)
+            .expect("audio observed")
+            .first_pts;
+        assert_eq!(p.origin(false), Some(audio_first));
+    }
 }

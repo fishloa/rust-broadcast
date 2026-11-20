@@ -322,4 +322,14 @@ mod tests {
         assert_eq!(Tsi::parse(&[], 0).unwrap(), Tsi::new(0, 0).unwrap());
         assert!(Tsi::parse(&[0, 0, 0], 4).is_err());
     }
+
+    #[test]
+    fn emptiness_tracks_the_wire_width() {
+        assert!(Tsi::new(0, 0).unwrap().is_empty());
+        assert!(!Tsi::new(1, 4).unwrap().is_empty());
+        assert!(Toi::new(0, 0).unwrap().is_empty());
+        assert!(!Toi::new(1, 4).unwrap().is_empty());
+        assert!(FecPayloadId::new(&[]).is_empty());
+        assert!(!FecPayloadId::new(&[0x01]).is_empty());
+    }
 }
