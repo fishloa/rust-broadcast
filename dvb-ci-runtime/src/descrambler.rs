@@ -800,4 +800,112 @@ mod tests {
         d.ci_mut().write(&packet).unwrap();
         assert_eq!(d.ci().written_ts(), packet);
     }
+
+    /// `set_cat` must reach the managed CAS state: the CAT's `CA_descriptor`
+    /// PID becomes an EMM PID once the CAM's advertised CAID matches.
+    #[test]
+    fn set_cat_delegates_to_the_managed_state() {
+        use dvb_ci::objects::ca_info::CaInfo;
+
+        let mut d = driver_with_sessions();
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
+                    ca_system_ids: vec![0x0648],
+                }),
+            ),
+        );
+        d.take_notifications();
+        let mut descrambler = descrambler_with(d, []);
+
+        let mut descriptors = Vec::new();
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::from_const(0x1FF0)));
+        let cat_bytes = build_cat_fixture(&descriptors);
+        let cat = CatSection::parse(&cat_bytes).unwrap();
+        descrambler.set_cat(&cat).unwrap();
+
+        assert_eq!(descrambler.driver().emm_pids(), &[Pid::from_const(0x1FF0)]);
+        assert!(
+            descrambler
+                .required_pids()
+                .contains(&Pid::from_const(0x1FF0)),
+            "the EMM PID must reach the ci0 filter set: {:?}",
+            descrambler.required_pids()
+        );
+    }
+
+    /// `update_service` must send a `ca_pmt` for the tracked programme, and
+    /// still refuse one that is not tracked.
+    #[test]
+    fn update_service_delegates_to_the_driver() {
+        use crate::device::DeviceOp;
+
+        // Module ack (status byte, data available clear): frees the
+        // half-duplex link so the next queued data block flushes (#337).
+        fn ack(d: &mut Driver<MockCaDevice>) {
+            for _ in 0..8 {
+                d.device_mut().inbound.push_back(vec![0x80, 0x02, 0x01, 0x00]);
+                d.pump(Duration::from_millis(10)).unwrap();
+            }
+        }
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        ack(&mut d);
+        let mut descrambler = descrambler_with(d, []);
+
+        let writes = |descrambler: &CaDescrambler<MockCaDevice, MockCiDataDevice>| {
+            descrambler
+                .driver()
+                .device()
+                .ops
+                .iter()
+                .filter(|o| matches!(o, DeviceOp::Write(_)))
+                .count()
+        };
+        let before = writes(&descrambler);
+        descrambler.update_service(&pmt).unwrap();
+        ack(descrambler.driver_mut());
+        assert_eq!(
+            writes(&descrambler),
+            before + 1,
+            "the update's ca_pmt must be written"
+        );
+        assert_eq!(
+            descrambler.driver().descramble_pids(),
+            &[Pid::from_const(0x0100), Pid::from_const(0x0101)]
+        );
+
+        let other_bytes = build_ca_pmt_fixture(1547);
+        let other = PmtSection::parse(&other_bytes).unwrap();
+        assert!(
+            matches!(
+                descrambler.update_service(&other),
+                Err(CaError::NotManaged {
+                    program_number: 1547
+                })
+            ),
+            "an untracked programme must still be refused through the wrapper"
+        );
+    }
+
+    /// `pump` must drive the control-plane device: one frame when the module
+    /// has one queued, nothing when it is idle.
+    #[test]
+    fn pump_delegates_to_the_driver() {
+        let mut descrambler = descrambler_with(driver_with_sessions(), []);
+        assert!(!descrambler.pump(Duration::from_millis(10)).unwrap());
+        descrambler
+            .driver_mut()
+            .device_mut()
+            .inbound
+            .push_back(vec![0x80, 0x02, 0x01, 0x00]);
+        assert!(descrambler.pump(Duration::from_millis(10)).unwrap());
+    }
 }

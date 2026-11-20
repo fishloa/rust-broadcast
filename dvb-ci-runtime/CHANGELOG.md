@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MAX_CA_FRAME` is pinned to 65 541 bytes, so the `Driver` read buffer cannot silently shrink below the largest legal link frame (audit 23 finding 73, #3351).
 - `DeviceOpError`'s errno reporting (per-operation `EINVAL`/`ENODEV` classification), device/operation error text and error source are asserted, as are `RecordingCaDevice`'s zero-length read, slot-change logging and poll forwarding and `MockCaDevice`'s poll (audit 23 findings 74 and 75, #3352/#3353).
 - `PartialWrite`'s diagnostic names the device and the written/requested byte counts (audit 23 finding 76, #3354).
+- `CaDescrambler::set_cat`, `update_service` and `pump` are asserted to reach the driver, so the turnkey wrapper cannot silently no-op a CAT/PMT update or a pump (audit 23 finding 77, #3355).
 
 ## [0.21.1] - 2026-11-17
 ### Added
