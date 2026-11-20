@@ -47,6 +47,7 @@ mod hold_early_release;
 mod hold_transparency;
 mod input_log;
 mod jitter_seed;
+mod labels;
 mod mtls;
 mod no_clock_guard;
 mod opening_burst;

@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `PcrCheck` no longer carries the unreachable TR 101 290 indicator 2.3a (`pcr-repetition`) branch: every forward PCR value step over 100 ms without `discontinuity_indicator` is already reported as 2.3b (`pcr-discontinuity`), so 2.3a can never fire in file mode (#3533).
+
+### Tests
+- Pin the watch PAT/PMT reconciliation, SCTE-35 cue-timing counters and multi-track reference clock; the CC adaptation-only and third-repeat rules; the PTS stream-id gate and short-unit guard; the sync-byte finding PID; the PTS/DTS/PCR half-range boundary; the `FpsCadenceCheck` cadence comparison and `ParamSetsCheck` HEVC/partial-parameter-set paths against cargo-mutants survivors (audit 23).
 
 ## [0.17.0] - 2026-11-17
 ### Fixed

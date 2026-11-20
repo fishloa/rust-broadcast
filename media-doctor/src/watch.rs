@@ -1197,19 +1197,23 @@ pub(crate) mod tests {
     #[test]
     fn scte35_declared_in_pmt_is_reassembled_and_counted() {
         use broadcast_common::Serialize;
+        use broadcast_common::clock33::Clock33;
         use dvb_si::descriptors::DescriptorLoop;
         use dvb_si::tables::pat::{PatEntry, PatSection};
         use dvb_si::tables::pmt::{PmtSection, PmtStream};
         use mpeg_ts::pid::well_known as wk;
         use mpeg_ts::ts::TsHeader;
         use scte35_splice::SpliceInfoSection;
-        use scte35_splice::commands::{AnyCommand, SpliceInsert};
+        use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceInsert, SpliceMode};
         use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
+        use scte35_splice::time::SpliceTime;
 
         const PMT_PID: Pid = Pid::from_const(0x0100);
         const SCTE35_PID: Pid = Pid::from_const(0x0101);
+        const VIDEO_PID: Pid = Pid::from_const(0x0103);
 
-        fn ts_packet(pid: Pid, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
+        /// A section-bearing TS packet with an explicit continuity counter.
+        fn ts_packet(pid: Pid, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             let header = TsHeader {
                 tei: false,
@@ -1217,12 +1221,57 @@ pub(crate) mod tests {
                 pid,
                 scrambling: ScramblingControl::NotScrambled,
                 adaptation_field_control: AdaptationFieldControl::PayloadOnly,
-                continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
+                continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
             pkt[4] = 0x00; // pointer_field
             pkt[5..5 + section.len()].copy_from_slice(section);
             pkt
+        }
+
+        /// A single-packet PES (no pointer_field) at the start of the payload.
+        fn pes_ts_packet(pid: Pid, cc: u8, pes: &[u8]) -> [u8; TS_PACKET_SIZE] {
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            let header = TsHeader {
+                tei: false,
+                pusi: true,
+                pid,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
+            };
+            header.serialize_into(&mut pkt).unwrap();
+            pkt[4..4 + pes.len()].copy_from_slice(pes);
+            pkt
+        }
+
+        /// A PES with one PTS (`pts_dts_flags = 10`) so `feed_es` records a
+        /// decode timestamp for `reference_now`.
+        fn video_pes_with_pts(pts: u64, payload: &[u8]) -> alloc::vec::Vec<u8> {
+            const HDR_LEN: usize = 5;
+            let pes_len = 9 + HDR_LEN + payload.len();
+            let mut pes = alloc::vec![0x00, 0x00, 0x01, 0xE0];
+            pes.extend_from_slice(&((pes_len - 6) as u16).to_be_bytes());
+            pes.push(0x80); // flags1: marker + no special flags
+            pes.push(0x80); // flags2: PTS_DTS_flags = 10
+            pes.push(HDR_LEN as u8);
+            pes.extend_from_slice(&mpeg_pes::Pts::try_new(pts).unwrap().to_field_bytes());
+            pes.extend_from_slice(payload);
+            pes
+        }
+
+        /// A `splice_insert` section with the given event id and splice mode.
+        fn splice_insert_section(event_id: u32, mode: SpliceMode) -> alloc::vec::Vec<u8> {
+            let sis = SpliceInfoSection::new_clear(
+                AnyCommand::SpliceInsert(SpliceInsert {
+                    splice_event_id: event_id,
+                    out_of_network_indicator: true,
+                    mode,
+                    ..SpliceInsert::default()
+                }),
+                SpliceDescriptorLoop::new(&[]),
+            );
+            sis.try_to_bytes().unwrap()
         }
 
         let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);
@@ -1234,27 +1283,35 @@ pub(crate) mod tests {
             dvb_si::tables::SectionVersion::new(0, true, 0, 0),
             wk::NULL,
             DescriptorLoop::new(&[]),
-            alloc::vec![PmtStream::new(
-                StreamType::Scte35,
-                SCTE35_PID,
-                DescriptorLoop::new(&[])
-            )],
+            alloc::vec![
+                PmtStream::new(StreamType::Scte35, SCTE35_PID, DescriptorLoop::new(&[])),
+                PmtStream::new(StreamType::H264, VIDEO_PID, DescriptorLoop::new(&[])),
+            ],
         );
         let mut pmt_bytes = alloc::vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut pmt_bytes).unwrap();
 
-        let splice_out = SpliceInfoSection::new_clear(
-            AnyCommand::SpliceInsert(SpliceInsert {
-                splice_event_id: 42,
-                out_of_network_indicator: true,
-                mode: scte35_splice::commands::SpliceMode::Program(
-                    scte35_splice::commands::ProgramSplice::Immediate,
-                ),
-                ..SpliceInsert::default()
-            }),
-            SpliceDescriptorLoop::new(&[]),
+        // A prior video decode timestamp at 10 s sets the reference "now";
+        // the three cues classify against it: no time -> immediate, +1 s ->
+        // in_future, -1 s -> in_past. `PesAssembler` completes a unit only
+        // when the *next* PUSI arrives, so two video PES packets are fed: the
+        // second flushes the first, whose PTS becomes `prev_decode`.
+        let video_pes = video_pes_with_pts(900_000, &[0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00]);
+        let video_pes_next =
+            video_pes_with_pts(930_000, &[0x00, 0x00, 0x01, 0x41, 0x9A, 0x00, 0x00]);
+        let immediate = splice_insert_section(42, SpliceMode::Program(ProgramSplice::Immediate));
+        let future = splice_insert_section(
+            43,
+            SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
+                Clock33::try_new(1_000_000).expect("within the 33-bit clock"),
+            ))),
         );
-        let out_bytes = splice_out.try_to_bytes().unwrap();
+        let past = splice_insert_section(
+            44,
+            SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
+                Clock33::try_new(800_000).expect("within the 33-bit clock"),
+            ))),
+        );
 
         let mut state = WatchState::new();
         let mut clock = Duration::ZERO;
@@ -1263,15 +1320,18 @@ pub(crate) mod tests {
         // `LOCK_CONFIRMATIONS` (5) consecutive sync bytes at that stride —
         // exactly like a real live probe needs a few clean packets before it
         // starts trusting the byte stream. Two null-PID filler packets after
-        // the three meaningful ones bring the total to 5, so lock is
-        // reached (and all 5 packets, including the PAT/PMT/SCTE-35 ones,
-        // are then emitted together) within this test.
+        // the seven meaningful ones bring the total past 5, so lock is
+        // reached and every packet is emitted within this test.
         for packet in [
-            ts_packet(wk::PAT, &pat_bytes),
-            ts_packet(PMT_PID, &pmt_bytes),
-            ts_packet(SCTE35_PID, &out_bytes),
-            ts_packet(wk::NULL, &[]),
-            ts_packet(wk::NULL, &[]),
+            ts_packet(wk::PAT, 0, &pat_bytes),
+            ts_packet(PMT_PID, 0, &pmt_bytes),
+            pes_ts_packet(VIDEO_PID, 0, &video_pes),
+            pes_ts_packet(VIDEO_PID, 1, &video_pes_next),
+            ts_packet(SCTE35_PID, 0, &immediate),
+            ts_packet(SCTE35_PID, 1, &future),
+            ts_packet(SCTE35_PID, 2, &past),
+            ts_packet(wk::NULL, 0, &[]),
+            ts_packet(wk::NULL, 1, &[]),
         ] {
             state.feed_datagram(&packet, clock);
             clock += Duration::from_millis(1);
@@ -1280,12 +1340,35 @@ pub(crate) mod tests {
         let text = render(&state);
         assert_eq!(
             metric_value(&text, "media_doctor_scte35_events_total"),
-            Some(1.0)
+            Some(3.0)
+        );
+        let immediate_count = labelled_metric_value(
+            &text,
+            "media_doctor_scte35_cues_total",
+            "timing=\"immediate\"",
+        );
+        let future_count = labelled_metric_value(
+            &text,
+            "media_doctor_scte35_cues_total",
+            "timing=\"in_future\"",
+        );
+        let past_count = labelled_metric_value(
+            &text,
+            "media_doctor_scte35_cues_total",
+            "timing=\"in_past\"",
+        );
+        assert_eq!(immediate_count, Some(1.0), "immediate cue counter:\n{text}");
+        assert_eq!(future_count, Some(1.0), "in-future cue counter:\n{text}");
+        assert_eq!(past_count, Some(1.0), "in-past cue counter:\n{text}");
+        assert_eq!(
+            immediate_count.unwrap() + future_count.unwrap() + past_count.unwrap(),
+            3.0,
+            "every cue must land in exactly one timing bucket",
         );
         assert_eq!(
             metric_value(&text, "media_doctor_scte35_open_events"),
-            Some(1.0),
-            "the 'out' has no matching 'in' yet, so it must show as open:\n{text}"
+            Some(3.0),
+            "three unmatched 'out' cues show as open:\n{text}"
         );
     }
 
@@ -1954,27 +2037,58 @@ pub(crate) mod tests {
         };
         lock_stride(&mut state, &mut feed);
 
-        // Generation 0: the PAT lists program 1, whose PMT declares the PID.
-        feed(&mut state, &pat_packet(&[1], 0));
+        // Generation 0: the PAT lists the NIT entry (program 0) plus programs
+        // 1 and 2, whose PMTs declare PIDs A and B. Every listed program must
+        // be kept — only the NIT entry is not a program.
+        feed(&mut state, &pat_packet(&[0, 1, 2], 0));
         feed(
             &mut state,
             &pmt_section_packet_for_program(1, PAT_PMT_PID, 0, SHARED_PID, &[0]),
+        );
+        feed(
+            &mut state,
+            &pmt_section_packet_for_program(2, PAT_PMT_PID, 0, OTHER_PID, &[0]),
         );
         assert!(
             state.es_tracks.contains_key(&SHARED_PID.value()),
             "the PID is declared by program 1 and must be tracked",
         );
+        assert!(
+            state.es_tracks.contains_key(&OTHER_PID.value()),
+            "the PID is declared by program 2 and must be tracked",
+        );
+        assert_eq!(state.pmt_generations.len(), 2);
 
-        // Generation 1: the PAT no longer lists any program.
-        feed(&mut state, &pat_packet(&[], 1));
+        // A repeat of the same program list (a new PAT generation) must keep
+        // both programs' PIDs.
+        feed(&mut state, &pat_packet(&[0, 1, 2], 1));
+        assert!(
+            state.es_tracks.contains_key(&SHARED_PID.value()),
+            "a repeated identical PAT keeps program 1's PID",
+        );
+        assert!(
+            state.es_tracks.contains_key(&OTHER_PID.value()),
+            "a repeated identical PAT keeps program 2's PID",
+        );
+
+        // Generation 2: the PAT keeps program 1 but drops program 2.
+        feed(&mut state, &pat_packet(&[0, 1], 2));
 
         assert!(
-            !state.es_tracks.contains_key(&SHARED_PID.value()),
+            state.es_tracks.contains_key(&SHARED_PID.value()),
+            "a program the PAT still lists must keep its PIDs",
+        );
+        assert!(
+            !state.es_tracks.contains_key(&OTHER_PID.value()),
             "a PAT generation that drops the program must release its PIDs",
         );
         assert!(
-            !state.pmt_generations.contains_key(&1),
-            "and clear its generation entry",
+            state.pmt_generations.contains_key(&1),
+            "the surviving program keeps its generation entry",
+        );
+        assert!(
+            !state.pmt_generations.contains_key(&2),
+            "the dropped program's generation entry is cleared",
         );
     }
 
@@ -2007,11 +2121,13 @@ pub(crate) mod tests {
         null_packet[3] = 0x10;
         let mut state = WatchState::new();
         state.feed_ts_packet(&null_packet, Duration::from_secs(3));
-        let ingest_ticks =
-            u64::try_from(Duration::from_secs(3).as_nanos() / NANOS_PER_TICK).expect("fits u64");
+        // A 3 s ingest clock is ~270 000 ticks of the 90 kHz program clock
+        // (3 * 90 000). Asserted literally so a wrong NANOS_PER_TICK cannot
+        // move both sides of the comparison; the exact figure is 270 002
+        // because the nanosecond-to-tick divisor truncates.
         assert_eq!(
             state.reference_now(),
-            ingest_ticks,
+            270_002,
             "with no decode timestamp yet, the ingest clock stands in"
         );
 
@@ -2025,6 +2141,109 @@ pub(crate) mod tests {
         assert_eq!(state.reference_now(), 90_000);
     }
 
+    /// Build a state holding one video `EsTrack` per `(pid, prev_decode)`.
+    fn state_with_prev_decodes(tracks: &[(u16, u64)]) -> WatchState {
+        let mut state = WatchState::new();
+        for &(pid, prev) in tracks {
+            state.es_tracks.insert(
+                pid,
+                EsTrack {
+                    prev_decode: Some(prev),
+                    ..EsTrack::new(EsKind::Video)
+                },
+            );
+        }
+        state
+    }
+
+    /// The reference "now" is the highest decode timestamp across every
+    /// track, wrap-aware, not the first or the last in `BTreeMap` order.
+    #[test]
+    fn reference_now_takes_the_highest_decode_timestamp_across_tracks() {
+        use broadcast_common::clock33::WRAP_33BIT;
+
+        // 180 000 wins whichever PID it lands on: iteration order must not
+        // decide "now".
+        for tracks in [
+            &[(0x0101u16, 90_000u64), (0x0102, 180_000)][..],
+            &[(0x0101, 180_000), (0x0102, 90_000)][..],
+        ] {
+            let state = state_with_prev_decodes(tracks);
+            assert_eq!(state.reference_now(), 180_000, "tracks {tracks:?}");
+        }
+
+        // A step forward across the 33-bit wrap is forward: the later value
+        // is 5, not `WRAP_33BIT - 10`.
+        for tracks in [
+            &[(0x0101u16, WRAP_33BIT - 10), (0x0102, 5)][..],
+            &[(0x0101, 5), (0x0102, WRAP_33BIT - 10)][..],
+        ] {
+            let state = state_with_prev_decodes(tracks);
+            assert_eq!(state.reference_now(), 5, "tracks {tracks:?}");
+        }
+    }
+
+    /// A forward decode-timestamp step of exactly half the 33-bit range is
+    /// still forward (no anomaly); one tick more is a backward jump.
+    #[test]
+    fn decode_timestamp_half_range_boundary_is_forward() {
+        use broadcast_common::clock33::WRAP_33BIT_HALF;
+        use mpeg_ts::ts::TsHeader;
+
+        const PID: Pid = Pid::from_const(0x0200);
+
+        fn packet_with_pts(pid: Pid, cc: u8, pts: u64) -> [u8; TS_PACKET_SIZE] {
+            const HDR_LEN: usize = 5;
+            let payload = [0x00u8, 0x00, 0x01, 0x65];
+            let pes_len = 9 + HDR_LEN + payload.len();
+            let mut pes = alloc::vec![0x00, 0x00, 0x01, 0xE0];
+            pes.extend_from_slice(&((pes_len - 6) as u16).to_be_bytes());
+            pes.push(0x80); // flags1: marker + no special flags
+            pes.push(0x80); // flags2: PTS_DTS_flags = 10
+            pes.push(HDR_LEN as u8);
+            pes.extend_from_slice(&mpeg_pes::Pts::try_new(pts).unwrap().to_field_bytes());
+            pes.extend_from_slice(&payload);
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            let header = TsHeader {
+                tei: false,
+                pusi: true,
+                pid,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
+            };
+            header.serialize_into(&mut pkt).unwrap();
+            pkt[4..4 + pes.len()].copy_from_slice(&pes);
+            pkt
+        }
+
+        /// Decode-timestamp anomalies after the second unit carries `second`.
+        fn anomalies_after(second: u64) -> u64 {
+            let mut state = WatchState::new();
+            state
+                .es_tracks
+                .insert(PID.value(), EsTrack::new(EsKind::Video));
+            let clock = Duration::ZERO;
+            // PTS 0 starts a unit; the second PUSI flushes it as the first
+            // decode timestamp (no baseline); the third flushes `second`.
+            state.feed_ts_packet(&packet_with_pts(PID, 0, 0), clock);
+            state.feed_ts_packet(&packet_with_pts(PID, 1, second), clock);
+            state.feed_ts_packet(&packet_with_pts(PID, 2, second), clock);
+            state.pts_dts_anomalies_total
+        }
+
+        assert_eq!(
+            anomalies_after(WRAP_33BIT_HALF),
+            0,
+            "exactly half the range is a forward step",
+        );
+        assert_eq!(
+            anomalies_after(WRAP_33BIT_HALF + 1),
+            1,
+            "one tick past half the range is backward",
+        );
+    }
+
     /// Extract the bare numeric value of a metric with no labels from
     /// rendered Prometheus text (test-only helper).
     fn metric_value(text: &str, name: &str) -> Option<f64> {
@@ -2034,6 +2253,18 @@ pub(crate) mod tests {
                 if rest.starts_with('{') {
                     continue;
                 }
+                return rest.trim().parse().ok();
+            }
+        }
+        None
+    }
+
+    /// Extract the numeric value of a labelled metric sample line, matching
+    /// the exact label set `{labels}` (test-only helper).
+    fn labelled_metric_value(text: &str, name: &str, labels: &str) -> Option<f64> {
+        let want = alloc::format!("{name}{{{labels}}}");
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix(want.as_str()) {
                 return rest.trim().parse().ok();
             }
         }

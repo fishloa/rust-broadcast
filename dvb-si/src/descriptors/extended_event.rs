@@ -353,4 +353,67 @@ mod tests {
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
     }
+
+    #[test]
+    fn parse_rejects_four_byte_body_without_indexing_past_it() {
+        let bytes = [TAG, 0x04, 0x00, b'e', b'n', b'g', 0xAA, 0xAA, 0xAA, 0xAA];
+        assert!(matches!(
+            ExtendedEventDescriptor::parse(&bytes).unwrap_err(),
+            Error::BufferTooShort(..)
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_five_byte_body_as_too_short() {
+        let bytes = [TAG, 0x05, 0x00, b'e', b'n', b'g', 0xAA, 0xFF];
+        assert!(matches!(
+            ExtendedEventDescriptor::parse(&bytes).unwrap_err(),
+            Error::BufferTooShort(..)
+        ));
+    }
+
+    #[test]
+    fn parse_reports_item_description_overrun_exactly() {
+        let bytes = [TAG, 0x08, 0x00, b'e', b'n', b'g', 0x02, 0x01, b'X', 0x00];
+        assert!(matches!(
+            ExtendedEventDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "item_description_length runs past items loop",
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_items_ending_at_body_end() {
+        let bytes = [TAG, 0x07, 0x00, b'e', b'n', b'g', 0x02, 0x00, 0x00];
+        assert!(matches!(
+            ExtendedEventDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_description_overrunning_items_loop() {
+        let bytes = [
+            TAG, 0x0A, 0x00, b'e', b'n', b'g', 0x04, 0x04, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert!(matches!(
+            ExtendedEventDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
+    }
+
+    #[test]
+    fn parse_accepts_empty_value_as_last_item() {
+        let items: [(&[u8], &[u8]); 1] = [(b"Dir", b"")];
+        let bytes = build(0, 0, *b"eng", &items, b"");
+        let d = ExtendedEventDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.items.len(), 1);
+        assert_eq!(d.items[0].description.raw(), b"Dir");
+        assert_eq!(d.items[0].value.raw(), b"");
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+    }
 }

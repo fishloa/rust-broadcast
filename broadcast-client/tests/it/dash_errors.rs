@@ -8,12 +8,12 @@ use crate::support::fmp4_split;
 
 use std::time::Duration;
 
-use broadcast_client::{BufferEvent, Config, ErrorKind, Event, Status, TrackId};
+use broadcast_client::{BufferEvent, Config, Error, ErrorKind, Event, Status, TrackId};
 use broadcast_common::stage::Timestamp;
 use dash_common::loopback::Origin;
 use dash_common::synth::{Addressing, MPD_URL, Synth};
 use dash_common::world::{MICROS, World};
-use dash_sim::{Answer, DashSim, Logged, SEC, StaticBackend, WorldBackend};
+use dash_sim::{Answer, Backend, DashSim, Logged, SEC, StaticBackend, WorldBackend};
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -883,5 +883,224 @@ fn live_edge_lost_is_reported_again_after_the_session_recovered() {
     assert_eq!(
         lost, 2,
         "once per run, and a run ends when samples flow again"
+    );
+}
+
+#[test]
+fn an_mpd_violating_a_schema_rule_is_a_parse_error_naming_its_reason() {
+    let mut config = Config::default();
+    config.max_key_failures = 1;
+    let text = manifest_text().replacen("timescale=\"90000\"", "timescale=\"0\"", 1);
+    let sim = finished(text_sim(MANIFEST, text, config));
+    assert_eq!(sim.fatal(), Some(ErrorKind::MpdParse { reason: "invalid" }));
+}
+
+#[test]
+fn an_mpd_over_the_period_limit_is_too_large() {
+    let mut config = Config::default();
+    config.max_key_failures = 1;
+    let mut text = String::from(
+        "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" type=\"static\" \
+         mediaPresentationDuration=\"PT3S\">",
+    );
+    for _ in 0..1_001 {
+        text.push_str("<Period/>");
+    }
+    text.push_str("</MPD>");
+    let sim = finished(text_sim(MANIFEST, text, config));
+    assert_eq!(
+        sim.fatal(),
+        Some(ErrorKind::MpdParse {
+            reason: "too_large"
+        })
+    );
+}
+
+const PLAN_HEAD: &str = "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" type=\"static\" \
+                         mediaPresentationDuration=\"PT3S\"><Period id=\"0\">\
+                         <AdaptationSet contentType=\"video\" mimeType=\"video/mp4\">";
+const PLAN_TAIL: &str = "</AdaptationSet></Period></MPD>";
+
+#[test]
+fn a_representation_dropped_at_segment_time_reports_its_addressing_reason() {
+    let body = format!(
+        "{PLAN_HEAD}<Representation id=\"0\" mimeType=\"video/mp4\" bandwidth=\"1\">\
+         <SegmentTemplate timescale=\"90000\" initialization=\"init-$RepresentationID$.m4s\" \
+         media=\"s-$RepresentationID$-$Number$.m4s\" startNumber=\"1\"><SegmentTimeline>\
+         <S t=\"90000\" d=\"90000\"/><S t=\"0\" d=\"90000\"/></SegmentTimeline>\
+         </SegmentTemplate></Representation>{PLAN_TAIL}"
+    );
+    let sim = finished(text_sim(MANIFEST, body, Config::default()));
+    assert!(
+        sim.errors().iter().any(|(kind, fatal)| !*fatal
+            && matches!(
+                kind,
+                ErrorKind::UnsupportedAddressing {
+                    reason: "timeline_not_increasing"
+                }
+            )),
+        "the dropped Representation reports its addressing reason: {:?}",
+        sim.errors()
+    );
+}
+
+struct DamageFirstTwo {
+    inner: StaticBackend,
+    damaged: usize,
+}
+
+impl Backend for DamageFirstTwo {
+    fn serve(&mut self, at: i64, req: &Logged) -> Answer {
+        let answer = self.inner.serve(at, req);
+        match answer {
+            Answer::Full {
+                status,
+                headers,
+                body,
+            } if req.url.contains("chunk-stream0-")
+                && self.damaged < 2
+                && status == http::StatusCode::OK =>
+            {
+                self.damaged += 1;
+                let mut body = body;
+                let mut pos = 0;
+                while pos + 8 <= body.len() {
+                    let size =
+                        u32::from_be_bytes(body[pos..pos + 4].try_into().expect("a box size"))
+                            as usize;
+                    if &body[pos + 4..pos + 8] == b"moof" {
+                        body[pos..pos + 4].copy_from_slice(&8u32.to_be_bytes());
+                        break;
+                    }
+                    if size < 8 {
+                        break;
+                    }
+                    pos += size;
+                }
+                Answer::Full {
+                    status,
+                    headers,
+                    body,
+                }
+            }
+            other => other,
+        }
+    }
+}
+
+#[test]
+fn two_damaged_fragments_report_one_unsupported_container() {
+    let mut sim = DashSim::new(
+        &url_of(MANIFEST),
+        Config::default(),
+        World::new(AST_US),
+        Box::new(DamageFirstTwo {
+            inner: StaticBackend(Origin::new()),
+            damaged: 0,
+        }),
+    );
+    sim.run_to_terminal(60 * SEC);
+    let reported = sim
+        .errors()
+        .iter()
+        .filter(|(kind, fatal)| {
+            !*fatal
+                && matches!(
+                    kind,
+                    ErrorKind::UnsupportedContainer {
+                        reason: "damaged_fragment"
+                    }
+                )
+        })
+        .count();
+    assert_eq!(
+        reported,
+        1,
+        "{:?} ended={} samples={} requests={}",
+        sim.errors(),
+        sim.ended(),
+        sim.samples().len(),
+        sim.log.len()
+    );
+}
+
+#[test]
+fn selecting_audio_on_an_mpd_without_audio_is_no_such_rendition() {
+    let text = manifest_text();
+    let start = text.find("<AdaptationSet id=\"1\"").expect("audio set");
+    let end = text[start..]
+        .find("</AdaptationSet>")
+        .map(|i| i + start + "</AdaptationSet>".len())
+        .expect("audio set end");
+    let video_only = format!("{}{}", &text[..start], &text[end..]);
+    let mut sim = text_sim(MANIFEST, video_only, Config::default());
+    sim.run_to_terminal(60 * SEC);
+    assert!(matches!(
+        sim.session
+            .select_audio_rendition(ts(sim.world.mono()), None),
+        Err(Error::NoSuchRendition)
+    ));
+}
+
+#[test]
+fn a_selection_after_the_end_is_accepted_and_ignored() {
+    let mut sim = DashSim::static_origin(&url_of(MANIFEST), Config::default());
+    sim.run_to_terminal(60 * SEC);
+    assert!(sim.ended(), "{:?}", sim.errors());
+    let now = ts(sim.world.mono());
+    while sim.session.poll(now).is_some() {}
+    while sim.session.next_event().is_some() {}
+    sim.session
+        .select_variant(now, 0)
+        .expect("the known variant is accepted");
+    sim.session
+        .select_audio_rendition(now, Some(0))
+        .expect("the known rendition is accepted");
+    let events: Vec<Event> = std::iter::from_fn(|| sim.session.next_event()).collect();
+    assert!(
+        events.is_empty(),
+        "an ended session ignores the choice: {events:?}"
+    );
+    assert!(
+        sim.session.poll(now).is_none(),
+        "an ended session emits no action for the choice"
+    );
+}
+
+struct ResetSegments(StaticBackend);
+
+impl Backend for ResetSegments {
+    fn serve(&mut self, at: i64, req: &Logged) -> Answer {
+        match self.0.serve(at, req) {
+            Answer::Full {
+                status: http::StatusCode::OK,
+                headers: _,
+                body,
+            } if req.url.contains(".m4s") => Answer::ResetMid(body),
+            other => other,
+        }
+    }
+}
+
+#[test]
+fn a_transport_error_before_the_body_ends_is_a_failure_not_a_sample() {
+    let mut sim = DashSim::new(
+        &url_of(MANIFEST),
+        Config::default(),
+        World::new(AST_US),
+        Box::new(ResetSegments(StaticBackend(Origin::new()))),
+    );
+    sim.run_to_terminal(60 * SEC);
+    assert!(
+        sim.samples().is_empty(),
+        "a body cut short by a transport error is never delivered"
+    );
+    assert!(
+        sim.errors().iter().any(|(kind, _)| matches!(
+            kind,
+            ErrorKind::SegmentFetchFailed { .. } | ErrorKind::InitFetchFailed { .. }
+        )),
+        "{:?}",
+        sim.errors()
     );
 }

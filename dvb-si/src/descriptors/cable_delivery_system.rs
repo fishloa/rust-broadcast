@@ -655,4 +655,34 @@ mod tests {
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(&buf[6..8], &[0xFF, 0xF1]);
     }
+
+    #[test]
+    fn symbol_rate_sps_uses_the_100_sym_per_s_field_resolution() {
+        let mut d = CableDeliverySystemDescriptor::new(
+            0x03460000,
+            FecOuter::NoOuterFec,
+            Modulation::Qam64,
+            0,
+            FecInner::Rate3_4,
+        );
+        d.set_symbol_rate_sps(6_875_000).unwrap();
+        assert_eq!(d.symbol_rate_bcd, 0x0068750);
+        assert_eq!(d.symbol_rate_sps(), Some(6_875_000));
+        assert!(matches!(
+            d.set_symbol_rate_sps(100_000_000_000),
+            Err(Error::ValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn symbol_rate_sps_rejects_non_decimal_bcd_nibbles() {
+        let d = CableDeliverySystemDescriptor::new(
+            0,
+            FecOuter::NotDefined,
+            Modulation::NotDefined,
+            0x000_00AA,
+            FecInner::NotDefined,
+        );
+        assert_eq!(d.symbol_rate_sps(), None);
+    }
 }

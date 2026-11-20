@@ -319,6 +319,7 @@ impl EventQueue {
 mod tests {
     use super::*;
     use crate::events::{BufferEvent, ErrorKind, Status};
+    use crate::tshttp::StarveKind;
     use broadcast_common::Unpackage;
     use core::time::Duration as StdDuration;
     use transmux::{JoinDecision, RapKind, Sample, TrackId};
@@ -571,5 +572,160 @@ mod tests {
                 .any(|e| matches!(e, Event::Status(Status::Ended)))
         );
         assert!(events.iter().all(|e| pts_of(e).is_none()));
+    }
+
+    #[test]
+    fn starvation_notices_coalesce_to_one_and_stay_bounded() {
+        let mut q = EventQueue::new(TINY_CAP);
+        for n in 0..10_000u64 {
+            let kind = if n % 2 == 0 {
+                StarveKind::Data
+            } else {
+                StarveKind::NoData
+            };
+            q.push_back(Event::Starved(kind));
+        }
+        assert!(q.len() <= TINY_CAP + 1, "len {}", q.len());
+        let events = drain(&mut q);
+        let notices: Vec<&Event> = events
+            .iter()
+            .filter(|e| matches!(e, Event::Starved(_)))
+            .collect();
+        assert!(notices.len() <= TINY_CAP, "{events:?}");
+        assert_eq!(
+            notices.last().copied(),
+            Some(&Event::Starved(StarveKind::NoData)),
+            "the latest notice survives"
+        );
+    }
+
+    #[test]
+    fn terminal_statuses_survive_beside_transient_statuses_and_samples() {
+        let terminal = [
+            Status::Ended,
+            Status::NotFound,
+            Status::WaitingForCredentials,
+        ];
+        for status in terminal {
+            let mut q = EventQueue::new(TINY_CAP);
+            q.push_back(Event::Status(status.clone()));
+            for n in 0..BURST {
+                q.push_back(Event::Status(Status::Live));
+                q.push_back(sample_event(n, None));
+            }
+            let events = drain(&mut q);
+            assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, Event::Status(s) if *s == status)),
+                "{status:?} was shed: {events:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn one_starved_notice_survives_while_samples_are_dropped() {
+        let mut q = EventQueue::new(TINY_CAP);
+        q.push_back(Event::Starved(StarveKind::NoData));
+        for n in 0..BURST {
+            q.push_back(sample_event(n, None));
+        }
+        let events = drain(&mut q);
+        assert!(
+            events.contains(&Event::Starved(StarveKind::NoData)),
+            "the only starved notice was dropped: {events:?}"
+        );
+        assert!(q.dropped() > 0, "samples were dropped");
+    }
+
+    #[test]
+    fn a_fully_drained_queue_leaves_every_lane_empty() {
+        let mut q = EventQueue::new(8);
+        for n in 0..1_000 {
+            q.push_back(sample_event(n, None));
+            q.push_back(Event::Status(Status::Live));
+            q.push_back(Event::Starved(StarveKind::Data));
+            if n % 10 == 0 {
+                q.push_back(Event::Discontinuity);
+                q.push_back(Event::AvSync(transmux::AvSync::Provisional));
+            }
+            while q.pop_front().is_some() {}
+        }
+        assert!(q.lanes.samples.is_empty(), "samples lane not empty");
+        assert!(q.lanes.statuses.is_empty(), "statuses lane not empty");
+        assert!(q.lanes.starved.is_empty(), "starved lane not empty");
+        assert!(q.lanes.keeps.is_empty(), "keeps lane not empty");
+        assert_eq!(q.live, 0);
+        assert_eq!(q.slots.len(), 0);
+    }
+
+    #[test]
+    fn each_burst_of_adjacent_drops_plants_exactly_one_marker() {
+        let mut q = EventQueue::new(TINY_CAP);
+        for n in 0..TINY_CAP as i64 + 1 {
+            q.push_back(sample_event(n, None));
+        }
+        while q.pop_front().is_some() {}
+        for n in 10..16 {
+            q.push_back(sample_event(n, None));
+        }
+        let events = drain(&mut q);
+        assert_eq!(
+            discontinuities(&events),
+            1,
+            "one marker marks the burst: {events:?}"
+        );
+        let pts: Vec<i64> = events.iter().filter_map(pts_of).collect();
+        assert_eq!(pts, vec![13, 14, 15], "the newest samples survive");
+    }
+
+    #[test]
+    fn tombstones_stay_bounded_when_a_stuck_event_blocks_the_front() {
+        let mut q = EventQueue::new(TINY_CAP);
+        q.push_back(Event::Tracks(Vec::new()));
+        for n in 0..10_000 {
+            q.push_back(sample_event(n % BURST, None));
+        }
+        assert!(
+            q.slots.len() <= q.live + MIN_TOMBSTONES_BEFORE_COMPACTION + 1,
+            "slots {} live {}",
+            q.slots.len(),
+            q.live
+        );
+    }
+
+    #[test]
+    fn the_oldest_marker_dropped_by_the_keep_ceiling_is_replaced_by_the_next_gap() {
+        let mut q = EventQueue::new(8);
+        q.push_back(Event::Discontinuity);
+        for _ in 0..KEEP_LANE_CEILING {
+            q.push_back(Event::AvSync(transmux::AvSync::Provisional));
+        }
+        q.push_back(sample_event(1, None));
+        let events = drain(&mut q);
+        assert_eq!(
+            discontinuities(&events),
+            1,
+            "the gap after the dropped marker gets its own marker ({} events)",
+            events.len()
+        );
+    }
+
+    #[test]
+    fn a_younger_live_marker_is_not_duplicated_when_an_older_one_is_dropped() {
+        let mut q = EventQueue::new(8);
+        q.push_back(Event::Discontinuity);
+        for _ in 0..KEEP_LANE_CEILING {
+            q.push_back(Event::AvSync(transmux::AvSync::Provisional));
+        }
+        q.push_back(Event::Discontinuity);
+        q.push_back(sample_event(1, None));
+        let events = drain(&mut q);
+        assert_eq!(
+            discontinuities(&events),
+            1,
+            "the younger live marker already covers the gap ({} events)",
+            events.len()
+        );
     }
 }

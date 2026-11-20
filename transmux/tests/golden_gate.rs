@@ -20,8 +20,12 @@
 //! `ffprobe` availability (and specific demuxers, e.g. `hls`/`dash`) is
 //! probed once and every case skips cleanly — printing why — when the tool a
 //! case needs is absent, so `cargo test` stays green without ffmpeg
-//! installed. A case that *does* run must genuinely assert against parsed
-//! JSON fields; "ffprobe exited 0" alone is not a pass.
+//! installed. CI sets `REQUIRE_FFPROBE=1`, which turns a missing tool into a
+//! failure instead: a gate that skips itself must not report green where the
+//! tool is guaranteed to be installed (the same discipline
+//! `REQUIRE_PRIVATE_FIXTURES` applies to the private fixtures). A case that
+//! *does* run must genuinely assert against parsed JSON fields; "ffprobe
+//! exited 0" alone is not a pass.
 //!
 //! WebVTT is not covered here: transmux's CLI has no WebVTT `OutputFormat`
 //! today (the #568 CEA-608/708→WebVTT work landed in the sibling
@@ -75,11 +79,24 @@ fn ffprobe_has_demuxer(name: &str) -> bool {
     })
 }
 
+/// Whether a missing oracle tool must fail the run instead of skipping it.
+/// CI sets `REQUIRE_FFPROBE=1` on the job that installs ffmpeg, so a broken
+/// output cannot ship behind a silent skip there.
+fn require_ffprobe() -> bool {
+    std::env::var("REQUIRE_FFPROBE").as_deref() == Ok("1")
+}
+
 /// Skip this test cleanly with a printed reason. `cargo test` without ffmpeg
-/// installed must stay green — never a false failure for a missing tool.
+/// installed must stay green — never a false failure for a missing tool —
+/// unless `REQUIRE_FFPROBE=1`, where the tool is a hard requirement.
 macro_rules! skip_unless {
     ($cond:expr, $why:expr) => {
         if !$cond {
+            assert!(
+                !require_ffprobe(),
+                "REQUIRE_FFPROBE=1 but the oracle tool is missing: {}",
+                $why
+            );
             eprintln!("SKIP golden_gate: {}", $why);
             return;
         }

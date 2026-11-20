@@ -608,4 +608,34 @@ mod tests {
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TAG, 2, FLAG_COMPONENT_TYPE, 0x42]);
     }
+
+    #[test]
+    fn channel_mode_codes_four_to_six_decode() {
+        assert_eq!(Ac3ChannelMode::from_u8(4), Ac3ChannelMode::Multichannel);
+        assert_eq!(
+            Ac3ChannelMode::from_u8(5),
+            Ac3ChannelMode::MultichannelAbove51
+        );
+        assert_eq!(
+            Ac3ChannelMode::from_u8(6),
+            Ac3ChannelMode::MultipleSubstreams
+        );
+    }
+
+    #[test]
+    fn descriptor_decodes_component_type() {
+        let d = Ac3Descriptor {
+            component_type: Some(0b0100_0100),
+            ..Ac3Descriptor::default()
+        };
+        assert_eq!(
+            d.decoded_component_type(),
+            Some(Ac3ComponentType {
+                enhanced_ac3: false,
+                full_service: true,
+                service_type: Ac3ServiceType::CompleteMain,
+                channels: Ac3ChannelMode::Multichannel,
+            })
+        );
+    }
 }

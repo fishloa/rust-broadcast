@@ -5,8 +5,9 @@
 //! gather the complete NIT, then walks the transport-stream loop with a
 //! PDS-scoped registry (`PDS_EACEM`, `PDS_NORDIG`). When a transport stream
 //! carries a logical_channel descriptor (tag 0x83) under a recognised PDS, the
-//! test asserts typed `LogicalChannel` variants. If the capture has no such
-//! descriptors, the test **skips** with a clear eprintln.
+//! test asserts typed `LogicalChannel` variants. The capture is fixed, so the
+//! observed counts are pinned: a parser regression that finds nothing fails
+//! rather than passing vacuously.
 //!
 //! When the capture is absent, the test **skips loudly** (private/ not checked out) so the suite passes
 //! without the private fixtures repo.
@@ -87,14 +88,8 @@ fn france_tnt_lcn_descriptors_parse() {
         data.len()
     );
 
-    if lcn_entries == 0 {
-        eprintln!(
-            "downloaded_lcn: SKIPPED — capture carries no logical_channel \
-             descriptors under PDS_EACEM or PDS_NORDIG. This is a valid real-world \
-             outcome (the mux may use a different PDS or no LCN signalling)."
-        );
-        return;
-    }
-
-    assert!(nit_sets > 0);
+    assert_eq!(nit_sets, 1, "{CAPTURE}: NIT sets");
+    assert_eq!(ts_entries, 7, "{CAPTURE}: transport stream entries");
+    assert_eq!(lcn_entries, 7, "{CAPTURE}: logical_channel descriptors");
+    assert_eq!(lcn_channel_count, 59, "{CAPTURE}: logical_channel entries");
 }

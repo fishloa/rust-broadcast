@@ -63,6 +63,53 @@ fn sync_byte_one_bad_packet() {
     assert_eq!(f.rule_id, "sync-byte");
 }
 
+/// A bad sync byte's finding carries the PID read from the packet's own
+/// header bytes and the packet index — including packet 0.
+#[test]
+fn sync_byte_findings_carry_packet_and_pid() {
+    let pid = 0x0100u16;
+    let packet = |sync: u8| {
+        let mut pkt = vec![0x47u8; 188];
+        pkt[0] = sync;
+        pkt[1] = ((pid >> 8) as u8) & 0x1F;
+        pkt[2] = (pid & 0xFF) as u8;
+        pkt[3] = 0x10;
+        pkt
+    };
+    let mut ts = packet(0x46); // packet 0 corrupted
+    ts.extend_from_slice(&packet(0x47));
+    ts.extend_from_slice(&packet(0x47));
+    ts.extend_from_slice(&packet(0x12)); // packet 3 corrupted
+
+    let mut report = Report::new();
+    SyncByteCheck.run(&ts, &mut report);
+    let hits: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| f.rule_id == "sync-byte")
+        .collect();
+    assert_eq!(hits.len(), 2, "{hits:?}");
+    assert_eq!(hits[0].location.packet, 0);
+    assert_eq!(hits[1].location.packet, 3);
+    for f in &hits {
+        assert_eq!(
+            f.location.stream,
+            StreamLocator::Ts(Pid::from_wire_masked(pid)),
+            "the finding must carry the PID from the packet header",
+        );
+    }
+    assert!(
+        hits[0].message.contains("0x46"),
+        "the message must name the byte found: {:?}",
+        hits[0].message
+    );
+    assert!(
+        hits[1].message.contains("0x12"),
+        "the message must name the byte found: {:?}",
+        hits[1].message
+    );
+}
+
 /// Report text rendering produces expected output for empty and populated reports.
 #[test]
 fn report_text_format() {
@@ -877,68 +924,48 @@ fn fixture_pcr(name: &str) -> Vec<u8> {
 }
 
 /// ts/france-tnt-pcr.ts is a clean multi-PCR TS stream. PcrCheck must produce
-/// zero PCR-error findings (Warning or Error severity on PCR rules).
+/// no pcr findings at all.
 #[test]
 fn pcr_check_clean_fixture_no_errors() {
     let ts = fixture_pcr("ts/france-tnt-pcr.ts");
     let mut report = Report::new();
     PcrCheck.run(&ts, &mut report);
 
-    // We allow Info findings but no Warnings or Errors.
-    let pcr_warn_or_err: Vec<_> = report
+    let pcr_findings: Vec<_> = report
         .findings()
         .iter()
-        .filter(|f| {
-            (f.rule_id == "pcr-repetition" || f.rule_id == "pcr-discontinuity")
-                && matches!(f.severity, Severity::Warning | Severity::Error)
-        })
+        .filter(|f| f.rule_id.starts_with("pcr-"))
         .collect();
 
     assert!(
-        pcr_warn_or_err.is_empty(),
-        "clean fixture should produce no PCR warnings/errors, got {}: {:#?}",
-        pcr_warn_or_err.len(),
-        pcr_warn_or_err,
+        pcr_findings.is_empty(),
+        "clean fixture should produce no pcr findings, got {}: {:#?}",
+        pcr_findings.len(),
+        pcr_findings,
     );
 }
 
 /// france-pcr-discontinuity.ts has a +10s PCR jump on PID 0x0208 with
-/// discontinuity_indicator set. PcrCheck must NOT flag that jump.
+/// discontinuity_indicator set. PcrCheck must NOT flag that jump, nor any
+/// other pcr rule on that PID.
 #[test]
 fn pcr_check_discontinuity_not_flagged() {
     let ts = fixture("france-pcr-discontinuity.ts");
     let mut report = Report::new();
     PcrCheck.run(&ts, &mut report);
 
-    // No pcr-discontinuity findings on PID 0x0208 — the signalled jump
-    // is legitimate.
-    let disc_on_0208: Vec<_> = report
+    let pcr_on_0208: Vec<_> = report
         .findings()
         .iter()
         .filter(|f| {
-            f.rule_id == "pcr-discontinuity"
-                && f.location.stream == StreamLocator::Ts(Pid::from_const(0x0208))
+            f.location.stream == StreamLocator::Ts(Pid::from_const(0x0208))
+                && f.rule_id.starts_with("pcr-")
         })
         .collect();
 
     assert!(
-        disc_on_0208.is_empty(),
-        "signalled discontinuity on PID 0x0208 must not be flagged, got {disc_on_0208:?}",
-    );
-
-    // Also check that the discontinuity PID (0x0208) has no repetition errors.
-    let rep_on_0208: Vec<_> = report
-        .findings()
-        .iter()
-        .filter(|f| {
-            f.rule_id == "pcr-repetition"
-                && f.location.stream == StreamLocator::Ts(Pid::from_const(0x0208))
-        })
-        .collect();
-
-    assert!(
-        rep_on_0208.is_empty(),
-        "PCR repetition on PID 0x0208 with signalled discontinuity should be clean: {rep_on_0208:?}",
+        pcr_on_0208.is_empty(),
+        "a signalled discontinuity on PID 0x0208 must produce no pcr findings, got {pcr_on_0208:?}",
     );
 }
 
@@ -983,26 +1010,20 @@ fn pcr_check_corrupted_pcr_produces_finding() {
     let mut report = Report::new();
     PcrCheck.run(&ts, &mut report);
 
-    // The corrupted PCR should produce findings on PID 0x0208.
+    // The corrupted PCR should produce a pcr-discontinuity Error on PID 0x0208.
     let pcr_findings: Vec<_> = report
         .findings()
         .iter()
         .filter(|f| {
             f.location.stream == StreamLocator::Ts(Pid::from_const(0x0208))
-                && (f.rule_id == "pcr-repetition" || f.rule_id == "pcr-discontinuity")
+                && f.rule_id == "pcr-discontinuity"
+                && f.severity == Severity::Error
         })
         .collect();
 
     assert!(
         !pcr_findings.is_empty(),
-        "corrupted PCR on PID 0x0208 without discontinuity_indicator must produce a finding"
-    );
-
-    // At least one should be Error severity.
-    let has_error = pcr_findings.iter().any(|f| f.severity == Severity::Error);
-    assert!(
-        has_error,
-        "corrupted PCR should produce at least one Error: {pcr_findings:?}",
+        "corrupted PCR on PID 0x0208 without discontinuity_indicator must produce a pcr-discontinuity Error"
     );
 }
 
@@ -1030,4 +1051,167 @@ fn cc_anomaly_adaptation_only_packet_with_incremented_cc_is_flagged() {
         .collect();
     assert_eq!(hits.len(), 1, "{hits:?}");
     assert_eq!(hits[0].location.packet, 1);
+}
+
+/// A raw CC-check packet: sync + PID + `afc_cc`, with `af_len`/`af_flags`
+/// written at bytes 4/5 (the adaptation-field length and flags bytes).
+fn cc_raw_packet(pid: u16, afc_cc: u8, af_len: u8, af_flags: u8) -> Vec<u8> {
+    let mut pkt = vec![0u8; 188];
+    pkt[0] = 0x47;
+    pkt[1] = ((pid >> 8) as u8) & 0x1F;
+    pkt[2] = (pid & 0xFF) as u8;
+    pkt[3] = afc_cc;
+    pkt[4] = af_len;
+    pkt[5] = af_flags;
+    pkt
+}
+
+/// A payload-only (AFC 01) CC-check packet with a distinct filler byte so it
+/// is never mistaken for a duplicate of its neighbour.
+fn cc_payload_packet(pid: u16, cc: u8, fill: u8) -> Vec<u8> {
+    let mut pkt = cc_raw_packet(pid, 0x10 | (cc & 0x0F), 0, 0);
+    pkt[4..].fill(fill);
+    pkt
+}
+
+fn cc_hits(report: &Report) -> Vec<&Finding> {
+    report
+        .findings()
+        .iter()
+        .filter(|f| f.rule_id == "cc-anomaly")
+        .collect()
+}
+
+/// An adaptation-only packet (AFC 10) must repeat the PID's previous CC; a
+/// `discontinuity_indicator` legalises any value and re-anchors the baseline,
+/// and `adaptation_field_length == 0` means byte 5 is not a flags byte.
+#[test]
+fn cc_anomaly_adaptation_only_cc_rules() {
+    let pid = 0x0100u16;
+
+    // (a) The unincremented CC is legal: no finding.
+    let mut ts = cc_payload_packet(pid, 0, 0xAA);
+    ts.extend_from_slice(&cc_payload_packet(pid, 1, 0xBB));
+    ts.extend_from_slice(&cc_raw_packet(pid, 0x20 | 1, 0, 0));
+    let mut report = Report::new();
+    CcAnomalyCheck.run(&ts, &mut report);
+    assert!(
+        report.findings().is_empty(),
+        "an adaptation-only packet repeating the previous CC is legal: {:?}",
+        report.findings()
+    );
+
+    // (b) A bumped CC is one adaptation-only finding.
+    let mut ts = cc_payload_packet(pid, 0, 0xAA);
+    ts.extend_from_slice(&cc_payload_packet(pid, 1, 0xBB));
+    ts.extend_from_slice(&cc_raw_packet(pid, 0x20 | 2, 0, 0));
+    let mut report = Report::new();
+    CcAnomalyCheck.run(&ts, &mut report);
+    let hits = cc_hits(&report);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert!(
+        hits[0].message.contains("adaptation-only"),
+        "the finding must name the adaptation-only rule: {:?}",
+        hits[0].message
+    );
+
+    // (c) discontinuity_indicator legalises the jump and re-anchors the
+    // baseline, so the next payload CC 8 continues cleanly.
+    let mut ts = cc_payload_packet(pid, 0, 0xAA);
+    ts.extend_from_slice(&cc_raw_packet(pid, 0x20 | 7, 1, 0x80));
+    ts.extend_from_slice(&cc_payload_packet(pid, 8, 0xCC));
+    let mut report = Report::new();
+    CcAnomalyCheck.run(&ts, &mut report);
+    assert!(
+        report.findings().is_empty(),
+        "a signalled discontinuity re-anchors the CC baseline: {:?}",
+        report.findings()
+    );
+
+    // (d) adaptation_field_length 0: byte 5 is not the flags byte, so a
+    // 0x80 there is not a discontinuity and the CC jump is still flagged.
+    let mut ts = cc_payload_packet(pid, 0, 0xAA);
+    ts.extend_from_slice(&cc_payload_packet(pid, 1, 0xBB));
+    ts.extend_from_slice(&cc_raw_packet(pid, 0x20 | 7, 0, 0x80));
+    let mut report = Report::new();
+    CcAnomalyCheck.run(&ts, &mut report);
+    assert_eq!(
+        cc_hits(&report).len(),
+        1,
+        "a zero-length adaptation field has no flags byte: {:?}",
+        report.findings()
+    );
+
+    // (e) A non-empty adaptation field whose flags byte is 0x40 (the
+    // discontinuity bit clear) is not a discontinuity: the jump is flagged.
+    let mut ts = cc_payload_packet(pid, 0, 0xAA);
+    ts.extend_from_slice(&cc_payload_packet(pid, 1, 0xBB));
+    ts.extend_from_slice(&cc_raw_packet(pid, 0x20 | 7, 1, 0x40));
+    let mut report = Report::new();
+    CcAnomalyCheck.run(&ts, &mut report);
+    assert_eq!(
+        cc_hits(&report).len(),
+        1,
+        "only bit 0x80 of the flags byte is discontinuity_indicator: {:?}",
+        report.findings()
+    );
+}
+
+/// An AFC 11 packet with `adaptation_field_length == 0` has its first payload
+/// byte at offset 5; a `0x80` there must not be read as
+/// `discontinuity_indicator` and silence a real CC error.
+#[test]
+fn cc_anomaly_zero_length_adaptation_field_payload_checked() {
+    let pid = 0x0100u16;
+    let mut ts = cc_payload_packet(pid, 0, 0xAA);
+    let mut pkt = cc_raw_packet(pid, 0x30 | 5, 0, 0);
+    pkt[5] = 0x80; // first payload byte, not a flags byte
+    ts.extend_from_slice(&pkt);
+
+    let mut report = Report::new();
+    CcAnomalyCheck.run(&ts, &mut report);
+    let hits = cc_hits(&report);
+    assert_eq!(
+        hits.len(),
+        1,
+        "CC 5 after CC 0 must be flagged; got {:?}",
+        report.findings()
+    );
+    assert!(
+        hits[0].message.contains("expected CC=1, got CC=5"),
+        "unexpected message: {:?}",
+        hits[0].message
+    );
+}
+
+/// §2.4.3.3 permits "two, and only two" consecutive duplicate packets: the
+/// second is legal, the third is an illegal consecutive repeat.
+#[test]
+fn cc_anomaly_third_consecutive_repeat_flagged() {
+    let pid = 0x0100u16;
+
+    // Two byte-identical packets: the one legal repeat, no finding.
+    let mut ts = cc_payload_packet(pid, 0, 0xAB);
+    ts.extend_from_slice(&cc_payload_packet(pid, 0, 0xAB));
+    let mut report = Report::new();
+    CcAnomalyCheck.run(&ts, &mut report);
+    assert!(
+        report.findings().is_empty(),
+        "a run of two is the one legal duplicate: {:?}",
+        report.findings()
+    );
+
+    // Three byte-identical packets: the third is flagged exactly once.
+    let mut ts = cc_payload_packet(pid, 0, 0xAB);
+    ts.extend_from_slice(&cc_payload_packet(pid, 0, 0xAB));
+    ts.extend_from_slice(&cc_payload_packet(pid, 0, 0xAB));
+    let mut report = Report::new();
+    CcAnomalyCheck.run(&ts, &mut report);
+    let hits = cc_hits(&report);
+    assert_eq!(hits.len(), 1, "the third repeat is one finding: {hits:?}");
+    assert!(
+        hits[0].message.contains("third consecutive repeat"),
+        "unexpected message: {:?}",
+        hits[0].message
+    );
 }

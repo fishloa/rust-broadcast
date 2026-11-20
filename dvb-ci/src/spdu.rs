@@ -670,4 +670,56 @@ mod tests {
         assert_eq!(long.header_len(), 6);
         assert_eq!(long.session_nb, 3);
     }
+
+    /// Every session PDU reports the bytes it actually wrote: the return of
+    /// `serialize_into` equals `serialized_len()`, the produced slice length
+    /// and `try_to_bytes()` (audit 23). The value-2 objects use the one-octet
+    /// long form so `pos + n` and `pos * n` differ there too.
+    #[test]
+    fn serialize_into_return_equals_serialized_len() {
+        let long1 = crate::length::LengthForm::Long { octets: 1 };
+        let mut buf = [0u8; 32];
+        macro_rules! contract {
+            ($value:expr) => {{
+                let value = $value;
+                let n = value.serialize_into(&mut buf).unwrap();
+                assert_eq!(n, value.serialized_len(), "{}", stringify!($value));
+                assert_eq!(&buf[..n], value.try_to_bytes().unwrap().as_slice());
+            }};
+        }
+        contract!(OpenSessionRequest {
+            length_form: crate::length::LengthForm::Minimal,
+            resource: CONDITIONAL_ACCESS_SUPPORT,
+        });
+        contract!(OpenSessionResponse {
+            length_form: crate::length::LengthForm::Minimal,
+            status: SessionStatus::Ok,
+            resource: CONDITIONAL_ACCESS_SUPPORT,
+            session_nb: 0x0102,
+        });
+        contract!(CreateSession {
+            length_form: crate::length::LengthForm::Minimal,
+            resource: CONDITIONAL_ACCESS_SUPPORT,
+            session_nb: 0x0102,
+        });
+        contract!(CreateSessionResponse {
+            length_form: crate::length::LengthForm::Minimal,
+            status: SessionStatus::ResourceBusy,
+            resource: CONDITIONAL_ACCESS_SUPPORT,
+            session_nb: 0x0102,
+        });
+        contract!(CloseSessionRequest {
+            length_form: long1,
+            session_nb: 0x0102,
+        });
+        contract!(CloseSessionResponse {
+            length_form: crate::length::LengthForm::Minimal,
+            status: SessionStatus::Ok,
+            session_nb: 0x0102,
+        });
+        contract!(SessionNumber {
+            length_form: long1,
+            session_nb: 0x0102,
+        });
+    }
 }
