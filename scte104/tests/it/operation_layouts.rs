@@ -205,3 +205,55 @@ fn single_operation_message_size_is_the_header_plus_body() {
     assert_eq!(message.message_size(), 21, "13-byte header + 8-byte time()");
     assert_eq!(message.serialized_len(), message.message_size());
 }
+
+#[test]
+fn truncated_audio_entry_loops_report_the_body_including_the_count_byte() {
+    use scte104::operations::insert_audio_descriptor::InsertAudioDescriptor;
+    use scte104::operations::insert_audio_provisioning::InsertAudioProvisioning;
+
+    // audio_count = 1 with no entry follows: the short body is 1 + 7 bytes.
+    assert_eq!(
+        InsertAudioDescriptor::parse(&[0x01]),
+        Err(scte104::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 8,
+                have: 1,
+                what: "insert_audio_descriptor entries",
+            }
+        ))
+    );
+    // audio_count = 1 with no 2-byte entry follows: 1 + 2 bytes.
+    assert_eq!(
+        InsertAudioProvisioning::parse(&[0x01]),
+        Err(scte104::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 3,
+                have: 1,
+                what: "insert_audio_provisioning entries",
+            }
+        ))
+    );
+}
+
+#[test]
+fn a_component_list_truncated_before_its_data_count_is_rejected() {
+    // service_count, IP, socket, 32-byte name, 0 DPI PIDs, component_mode=1,
+    // then a list with only the video tag and a zero audio count.
+    let mut body = vec![1];
+    body.extend_from_slice(&[0u8; 4]);
+    body.extend_from_slice(&[0u8; 2]);
+    body.extend_from_slice(&[0u8; 32]);
+    body.push(0);
+    body.push(1);
+    body.extend_from_slice(&[0x10, 0x00]);
+    assert_eq!(
+        ProvisioningRequest::parse(&body),
+        Err(scte104::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 3,
+                have: 2,
+                what: "injector_component_list audio_component_tags",
+            }
+        ))
+    );
+}
