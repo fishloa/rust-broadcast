@@ -1056,6 +1056,28 @@ mod tests {
     }
 
     #[test]
+    fn content_nibble_genre_name_uses_both_levels() {
+        use crate::descriptors::content::content_genre_name;
+
+        let general = ContentNibble {
+            level_1: 0x1,
+            level_2: 0x0,
+            user: 0,
+        };
+        assert_eq!(general.genre_name(), content_genre_name(0x1, 0x0));
+        assert_eq!(general.genre_name(), "movie/drama (general)");
+
+        let comedy = ContentNibble {
+            level_1: 0x1,
+            level_2: 0x4,
+            user: 0,
+        };
+        assert_eq!(comedy.genre_name(), content_genre_name(0x1, 0x4));
+        assert_eq!(comedy.genre_name(), "comedy");
+        assert!(!comedy.genre_name().is_empty());
+    }
+
+    #[test]
     fn feed_empty_is_error() {
         let mut store = EpgStore::new();
         assert!(matches!(

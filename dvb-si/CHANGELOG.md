@@ -55,6 +55,7 @@
 - `avs_scope` opens only on AVS private data specifiers and closes on a foreign one, on both iterator types; the extension-registry walk never indexes an empty extension body nor dispatches a non-extension descriptor (#3447, #3448).
 - A text-label reserved run wider than its bits is rejected instead of shifted out (#3449); a DRC plain scope typed 2 or 3 is rejected (#3450); and a non-zero `dependsOnDrcSet` packs into its own bits and parses back (#3451).
 - The EPG `Rating::minimum_age` is pinned at the 0x01..=0x0F range ends (`Some(4)`, `Some(18)`) and for 0x00/0x10/0xFF (`None`) (#3538).
+- `ContentNibble::genre_name` is asserted for both content-nibble levels against the literal EN 300 468 Table 29 names (#3539).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
