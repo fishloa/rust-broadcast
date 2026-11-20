@@ -874,4 +874,17 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn entry_length_overflow_reports_available_bytes() {
+        // descriptorLength=32 but only 2 body bytes follow the entry header.
+        let bytes: &[u8] = &[0x00, 0x06, 0x00, 0x01, 0x01, 0x20, 0xAA, 0xBB];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::SectionLengthOverflow {
+                declared: 32,
+                available: 2,
+            })
+        );
+    }
 }

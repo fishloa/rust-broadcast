@@ -64,6 +64,7 @@
 - The compatibility descriptor's top-level `SectionLengthOverflow { declared, available }` (at two buffer lengths) and its `descriptorCount` `BufferTooShort { need, have }` are asserted exactly (#3545).
 - A truncated *second* compatibility entry header asserts `BufferTooShort { need: 17, have: 16 }`, so the `pos` offset cannot be wrong (#3546).
 - An entry header that ends exactly at the compatibility body end reports the short-`descriptorLength` `InvalidDescriptor`, not a truncated header (#3547).
+- An entry whose `descriptorLength` runs past the compatibility body asserts `SectionLengthOverflow { declared: 32, available: 2 }` (#3548).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
