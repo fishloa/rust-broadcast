@@ -847,7 +847,9 @@ mod tests {
         // half-duplex link so the next queued data block flushes (#337).
         fn ack(d: &mut Driver<MockCaDevice>) {
             for _ in 0..8 {
-                d.device_mut().inbound.push_back(vec![0x80, 0x02, 0x01, 0x00]);
+                d.device_mut()
+                    .inbound
+                    .push_back(vec![0x80, 0x02, 0x01, 0x00]);
                 d.pump(Duration::from_millis(10)).unwrap();
             }
         }

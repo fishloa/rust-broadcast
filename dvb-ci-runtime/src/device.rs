@@ -364,7 +364,9 @@ mod tests {
     #[test]
     fn max_ca_frame_fits_the_widest_link_frame() {
         assert_eq!(MAX_CA_FRAME, 65_541);
-        assert!(MAX_CA_FRAME >= 2 + 1 + 3 + crate::transport::MAX_SPDU_LEN + 1);
+        // The same ceiling expressed from the widest SPDU one T_Data_Last can
+        // carry plus that TPDU's own framing (tag, long-form length, t_c_id).
+        assert_eq!(MAX_CA_FRAME, crate::transport::MAX_SPDU_LEN + 2 + 1 + 3 + 1);
     }
 
     /// A wrapped device failure must keep the errno reachable (it classifies

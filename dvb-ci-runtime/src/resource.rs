@@ -1395,9 +1395,7 @@ mod tests {
             ResourceOut::default()
         );
         assert_eq!(
-            Mmi::default()
-                .on_apdu(&tag::CA_INFO.to_bytes())
-                .unwrap(),
+            Mmi::default().on_apdu(&tag::CA_INFO.to_bytes()).unwrap(),
             ResourceOut::default()
         );
         assert_eq!(
