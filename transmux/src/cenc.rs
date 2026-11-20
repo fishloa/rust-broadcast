@@ -2004,4 +2004,294 @@ mod tests {
         let parsed = SampleAuxInfoOffsetsBox::parse_box(&bytes).unwrap();
         assert_eq!(parsed.offsets, alloc::vec![u64::from(u32::MAX)]);
     }
+
+    // -----------------------------------------------------------------------
+    // Audit 23 findings 24-29 — saio/schm/schi/sinf boundaries and labels
+    // -----------------------------------------------------------------------
+
+    fn full_box(fourcc: &[u8; 4], version: u8, flags: u32, body: &[u8]) -> alloc::vec::Vec<u8> {
+        let mut out = ((body.len() + BOX_HDR + FULL_HDR) as u32)
+            .to_be_bytes()
+            .to_vec();
+        out.extend_from_slice(fourcc);
+        out.push(version);
+        out.extend_from_slice(&flags.to_be_bytes()[1..]);
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn container_box(fourcc: &[u8; 4], body: &[u8]) -> alloc::vec::Vec<u8> {
+        let mut out = ((body.len() + BOX_HDR) as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(fourcc);
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn saio_box_bytes(
+        version: u8,
+        flags: u32,
+        aux: Option<(u32, u32)>,
+        offsets: &[u64],
+    ) -> alloc::vec::Vec<u8> {
+        let mut body = alloc::vec::Vec::new();
+        if let Some((ty, param)) = aux {
+            body.extend_from_slice(&ty.to_be_bytes());
+            body.extend_from_slice(&param.to_be_bytes());
+        }
+        body.extend_from_slice(&(offsets.len() as u32).to_be_bytes());
+        for &off in offsets {
+            if version == 0 {
+                body.extend_from_slice(&(off as u32).to_be_bytes());
+            } else {
+                body.extend_from_slice(&off.to_be_bytes());
+            }
+        }
+        full_box(b"saio", version, flags, &body)
+    }
+
+    fn assert_box_round_trips(parsed: &SampleAuxInfoOffsetsBox, bytes: &[u8]) {
+        assert_eq!(parsed.serialized_len(), bytes.len());
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        let n = parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(n, bytes.len());
+        assert_eq!(out, bytes);
+    }
+
+    /// `saio` version 0 with three 32-bit offsets. With zero or one offset the
+    /// `i * 4` byte indices are indistinguishable from a wrong stride.
+    #[test]
+    fn saio_v0_three_offsets_round_trip() {
+        let bytes = saio_box_bytes(0, 0, None, &[0x0102_0304, 0x0506_0708, 0x090A_0B0C]);
+        let saio = SampleAuxInfoOffsetsBox::parse_box(&bytes).unwrap();
+        assert_eq!(saio.version, 0);
+        assert_eq!(saio.flags, 0);
+        assert_eq!(saio.aux_info_type, None);
+        assert_eq!(
+            saio.offsets,
+            alloc::vec![0x0102_0304u64, 0x0506_0708, 0x090A_0B0C]
+        );
+        assert_box_round_trips(&saio, &bytes);
+    }
+
+    /// `saio` version 1 with two 64-bit offsets, each byte distinct.
+    #[test]
+    fn saio_v1_two_offsets_round_trip() {
+        let bytes = saio_box_bytes(1, 0, None, &[0x0102_0304_0506_0708, 0x1112_1314_1516_1718]);
+        let saio = SampleAuxInfoOffsetsBox::parse_box(&bytes).unwrap();
+        assert_eq!(saio.version, 1);
+        assert_eq!(
+            saio.offsets,
+            alloc::vec![0x0102_0304_0506_0708u64, 0x1112_1314_1516_1718]
+        );
+        assert_box_round_trips(&saio, &bytes);
+    }
+
+    /// `saio` version 1 with the `aux_info_type`/`aux_info_type_parameter`
+    /// pair before the table (flags bit 0).
+    #[test]
+    fn saio_v1_aux_info_type_and_parameter_round_trip() {
+        let bytes = saio_box_bytes(
+            1,
+            1,
+            Some((0x7365_6e63, 9)),
+            &[0x0102_0304_0506_0708, 0x1112_1314_1516_1718],
+        );
+        let saio = SampleAuxInfoOffsetsBox::parse_box(&bytes).unwrap();
+        assert_eq!(saio.flags, 1);
+        assert_eq!(saio.aux_info_type, Some(0x7365_6e63));
+        assert_eq!(saio.aux_info_type_parameter, Some(9));
+        assert_eq!(
+            saio.offsets,
+            alloc::vec![0x0102_0304_0506_0708u64, 0x1112_1314_1516_1718]
+        );
+        assert_box_round_trips(&saio, &bytes);
+    }
+
+    /// A truncated `saio` header, body and a truncated `frma` must be Err, not
+    /// index panics: each guard sits directly in front of a fixed-offset read.
+    #[test]
+    fn saio_and_frma_truncations_are_rejected() {
+        let mut header = 18u32.to_be_bytes().to_vec();
+        header.extend_from_slice(b"saio");
+        header.extend_from_slice(&[0, 0]);
+        assert_eq!(header.len(), 10);
+        let err = SampleAuxInfoOffsetsBox::parse_box(&header)
+            .expect_err("a 10-byte saio header must be rejected");
+        assert!(matches!(err, Error::BufferTooShort(_)), "{err:?}");
+
+        let err = SampleAuxInfoOffsetsBox::parse_body(&[0, 0, 0], 0, 0)
+            .expect_err("a 3-byte saio body lacks entry_count");
+        assert!(matches!(err, Error::BufferTooShort(_)), "{err:?}");
+
+        let mut frma = 18u32.to_be_bytes().to_vec();
+        frma.extend_from_slice(b"frma");
+        frma.extend_from_slice(b"av");
+        assert_eq!(frma.len(), 10);
+        let err = OriginalFormatBox::parse(&frma).expect_err("a 10-byte frma lacks its four-CC");
+        assert!(matches!(err, Error::BufferTooShort(_)), "{err:?}");
+    }
+
+    /// A `schm` with `flags` bit 0 set carries its `scheme_uri`; the serializer
+    /// writes it at the right offset and reports the right length.
+    #[test]
+    fn schm_with_a_scheme_uri_round_trips() {
+        let mut body = b"cenc".to_vec();
+        body.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+        body.extend_from_slice(b"urn:x\0");
+        let schm = SchemeTypeBox::parse_body(&body, 0, 0x000001).unwrap();
+        assert_eq!(&schm.scheme_type, b"cenc");
+        assert_eq!(schm.scheme_version, 0x0001_0000);
+        assert_eq!(schm.scheme_uri, Some(b"urn:x\0".to_vec()));
+
+        let expected = full_box(b"schm", 0, 0x000001, &body);
+        assert_eq!(schm.serialized_len(), expected.len());
+        let mut out = alloc::vec![0u8; schm.serialized_len()];
+        let n = schm.serialize_into(&mut out).unwrap();
+        assert_eq!(n, expected.len());
+        assert_eq!(out, expected);
+    }
+
+    fn schi_with_extra_boxes() -> alloc::vec::Vec<u8> {
+        let tenc = tenc_v1_with_constant_iv();
+        let mut tenc_bytes = alloc::vec![0u8; tenc.serialized_len()];
+        tenc.serialize_into(&mut tenc_bytes).unwrap();
+        let mut body = tenc_bytes;
+        body.extend_from_slice(&container_box(b"free", &[]));
+        body.extend_from_slice(&container_box(b"zzzz", &[0x7E; 292]));
+        // 0x0001_0010 bytes: the size field's first two bytes are 0 and 1, so
+        // a read of the wrong size byte changes the parse.
+        body.extend_from_slice(&container_box(b"big!", &[0x55; 65_544]));
+        container_box(b"schi", &body)
+    }
+
+    /// A `schi` carrying `tenc` plus three vendor boxes keeps them all, sizes
+    /// the box and round-trips. The 300-byte `zzzz` pins the third size byte,
+    /// and the 65 552-byte `big!` pins the second.
+    #[test]
+    fn schi_preserves_extra_boxes() {
+        let bytes = schi_with_extra_boxes();
+        let schi = SchemeInformationBox::parse(&bytes).unwrap();
+        assert!(schi.tenc.is_some(), "tenc still parsed");
+        assert_eq!(schi.extra_boxes.len(), 3);
+        assert_eq!(&schi.extra_boxes[0].box_type, b"free");
+        assert!(schi.extra_boxes[0].data.is_empty());
+        assert_eq!(&schi.extra_boxes[1].box_type, b"zzzz");
+        assert_eq!(schi.extra_boxes[1].data.len(), 292);
+        assert_eq!(&schi.extra_boxes[2].box_type, b"big!");
+        assert_eq!(schi.extra_boxes[2].data.len(), 65_544);
+
+        assert_eq!(schi.serialized_len(), bytes.len());
+        let mut out = alloc::vec![0u8; schi.serialized_len()];
+        let n = schi.serialize_into(&mut out).unwrap();
+        assert_eq!(n, bytes.len());
+        assert_eq!(out, bytes);
+    }
+
+    fn sinf_with_extra_boxes() -> alloc::vec::Vec<u8> {
+        let mut body = container_box(b"frma", b"avc1");
+        let schm = SchemeTypeBox {
+            version: 0,
+            flags: 0,
+            scheme_type: *b"cenc",
+            scheme_version: 0x0001_0000,
+            scheme_uri: None,
+        };
+        let mut schm_bytes = alloc::vec![0u8; schm.serialized_len()];
+        schm.serialize_into(&mut schm_bytes).unwrap();
+        body.extend_from_slice(&schm_bytes);
+        body.extend_from_slice(&schi_with_extra_boxes());
+        body.extend_from_slice(&container_box(b"free", &[]));
+        body.extend_from_slice(&container_box(b"zzzz", &[0x7E; 292]));
+        body.extend_from_slice(&container_box(b"big!", &[0x55; 65_544]));
+        container_box(b"sinf", &body)
+    }
+
+    /// A `sinf` with `frma`/`schm`/`schi` plus three vendor boxes keeps them
+    /// all and round-trips byte-exactly.
+    #[test]
+    fn sinf_preserves_extra_boxes() {
+        let bytes = sinf_with_extra_boxes();
+        let sinf = ProtectionSchemeInfoBox::parse(&bytes).unwrap();
+        assert_eq!(&sinf.original_format.data_format, b"avc1");
+        assert_eq!(
+            sinf.scheme_type.as_ref().map(|s| s.scheme_type),
+            Some(*b"cenc")
+        );
+        assert!(sinf.scheme_info.is_some(), "schi still parsed");
+        assert_eq!(sinf.extra_boxes.len(), 3);
+        assert_eq!(&sinf.extra_boxes[1].box_type, b"zzzz");
+        assert_eq!(sinf.extra_boxes[1].data.len(), 292);
+        assert_eq!(&sinf.extra_boxes[2].box_type, b"big!");
+        assert_eq!(sinf.extra_boxes[2].data.len(), 65_544);
+
+        assert_eq!(sinf.serialized_len(), bytes.len());
+        let mut out = alloc::vec![0u8; sinf.serialized_len()];
+        let n = sinf.serialize_into(&mut out).unwrap();
+        assert_eq!(n, bytes.len());
+        assert_eq!(out, bytes);
+    }
+
+    /// A `sinf` whose only child is the 12-byte `frma` is valid: `schm` and
+    /// `schi` are optional.
+    #[test]
+    fn sinf_with_only_a_frma_child_parses() {
+        let bytes = container_box(b"sinf", &container_box(b"frma", b"avc1"));
+        let sinf = ProtectionSchemeInfoBox::parse(&bytes).unwrap();
+        assert_eq!(&sinf.original_format.data_format, b"avc1");
+        assert!(sinf.scheme_type.is_none());
+        assert!(sinf.scheme_info.is_none());
+        assert!(sinf.extra_boxes.is_empty());
+        assert_eq!(sinf.serialized_len(), bytes.len());
+        let mut out = alloc::vec![0u8; sinf.serialized_len()];
+        let n = sinf.serialize_into(&mut out).unwrap();
+        assert_eq!(n, bytes.len());
+        assert_eq!(out, bytes);
+    }
+
+    /// A `sinf` body shorter than `frma` (12 bytes) reports the exact
+    /// shortfall. A loosened `8 + 4` guard would reach the frma slice and
+    /// report a different `have`.
+    #[test]
+    fn sinf_with_a_short_body_reports_the_exact_shortfall() {
+        let mut body = 12u32.to_be_bytes().to_vec();
+        body.extend_from_slice(b"frma");
+        let bytes = container_box(b"sinf", &body);
+        assert_eq!(bytes.len(), 16);
+        let b = buffer_too_short(ProtectionSchemeInfoBox::parse(&bytes).unwrap_err());
+        assert_eq!((b.need, b.have, b.what), (12, 16, "sinf (frma)"));
+    }
+
+    /// A `schm` declaring 20 bytes but ending after 10 must be rejected, not
+    /// sliced past the end.
+    #[test]
+    fn sinf_with_a_truncated_schm_is_rejected() {
+        let mut body = container_box(b"frma", b"avc1");
+        body.extend_from_slice(&20u32.to_be_bytes());
+        body.extend_from_slice(b"schm");
+        body.extend_from_slice(&[0, 0]);
+        let bytes = container_box(b"sinf", &body);
+        let err =
+            ProtectionSchemeInfoBox::parse(&bytes).expect_err("a truncated schm must be rejected");
+        assert!(matches!(err, Error::BufferTooShort(_)), "{err:?}");
+    }
+
+    /// A `schm` of exactly 12 bytes carries its FullBox fields but no
+    /// `scheme_type`/`scheme_version`; the shortfall comes from the `schm`
+    /// body reader, not the `sinf` container guard.
+    #[test]
+    fn sinf_with_a_four_byte_schm_body_reports_the_schm_shortfall() {
+        let mut body = container_box(b"frma", b"avc1");
+        body.extend_from_slice(&container_box(b"schm", &[0, 0, 0, 0]));
+        let bytes = container_box(b"sinf", &body);
+        let b = buffer_too_short(ProtectionSchemeInfoBox::parse(&bytes).unwrap_err());
+        assert_eq!((b.need, b.have, b.what), (8, 0, "schm body"));
+    }
+
+    #[test]
+    fn constant_iv_senc_labels_are_pinned() {
+        assert_eq!(ConstantIvSenc::Emit.name(), "emit");
+        assert_eq!(ConstantIvSenc::Omit.name(), "omit");
+        assert_eq!(alloc::format!("{}", ConstantIvSenc::Emit), "emit");
+        assert_eq!(alloc::format!("{}", ConstantIvSenc::Omit), "omit");
+    }
 }
