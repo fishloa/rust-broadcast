@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Fixed
 - The file reader's loop pacing maths, demuxer selection and probe-error mapping, and the `FileIngestSession` lifecycle are pinned by tests: the loop frame period is asserted to be the minimum positive PTS gap (not the declared duration or the last gap), `secs_to_duration`/`ticks_to_duration` are asserted at their non-representable and rounding edges, every ISOBMFF layout maps to exactly one demuxer (an undetermined one is refused), `Ambiguous`/`Insufficient` probes map to their own typed errors, a `TrackUpdated` reaches the collected `Media`, and `drained`/`next_due`/the refill baseline/`demand` are asserted (audit 23 findings 91–93, #3385/#3386/#3387).
+- `HealthState` equality, the `IngestDriver`/`ListenDriver` bounds, per-session refusals and trunks, and `AdmittedDriver`'s wrappers, feed delivery, live count and per-session clock retention across a reap are pinned by tests, so a hardcoded bound, a dropped termination, a lost clock origin or an inverted equality cannot ship unnoticed (audit 23 findings 94–96, #3388/#3389/#3390).
+- The publish queue's stalled-pin retry, the TS tracker's held-backlog drop observer and byte/count bounds, mid-stream `ProgramId` allocation, the TS session's surfaced reader errors and silent-PID settle time, and the egress/byte-tap/byte-merge labels, warm default, transmit default and emptiness are pinned by tests (audit 23 findings 97–100, #3391/#3392/#3393/#3394).
 - `MAX_COLD_WINDOW`'s literal value, the exact accept/refuse edges, `RetentionConfigError`'s label and Display text, and `RetentionDriver::pending_len` are pinned by tests (audit 21 findings 49 and 50, #2944/#2945).
 
 ### Fixed
