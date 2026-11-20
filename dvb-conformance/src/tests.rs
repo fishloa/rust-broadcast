@@ -3129,3 +3129,101 @@ fn declares_pcr_pid_follows_the_pmt_and_the_pat() {
         "a program dropped from the PAT must not keep declaring a PCR PID"
     );
 }
+
+// ── 3.9 Empty_buffer_error on per-PID TBn (TR 101 290 Table 5.0c) ───────────
+
+/// Build a payload-free 188-byte packet on `pid` (adaptation-field only), so
+/// only the per-PID TBn model sees it: the SI/TBsys path needs payload.
+fn tbn_packet(pid: u16, cc: u8) -> [u8; TS_PACKET_SIZE] {
+    let af = [0u8; 183];
+    make_ts_packet(pid, cc, false, true, &af, &[])
+}
+
+/// #3483: TBn is created on a PID's first packet, after the model was
+/// anchored at the first in-sync packet, so its empty-interval window must be
+/// armed where the buffer is created. A low leak estimate (idle warm-up)
+/// followed by a flow faster than that estimate leaves TBn occupied across
+/// a full one-second window: indicator 3.9 fires exactly once and latches.
+#[test]
+fn empty_buffer_error_trips_once_for_tbn_that_never_empties() {
+    let pid: u16 = 0x0200;
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..10u64 {
+        events.extend(monitor.feed(&tbn_packet(pid, cc), ms(10 + i)).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    for i in 0..2_000u64 {
+        let t = ms(2_000) + Duration::from_micros(i * 1_000);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+
+    let counted: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::EmptyBufferError && e.pid == Some(Pid::from_wire_masked(pid))
+        })
+        .collect();
+    assert_eq!(
+        counted.len(),
+        1,
+        "TBn 0x{pid:04X} never emptied across a window; expected one 3.9: {counted:#?}"
+    );
+    assert!(
+        counted[0].detail.contains("TBn not empty in the last 1 s on PID 0x0200"),
+        "detail: {}",
+        counted[0].detail
+    );
+    assert!(
+        counted[0].at >= ms(2_000),
+        "the first window (0.01 s..1.01 s) was clean; the failure is the second: {}",
+        counted[0].at.as_millis()
+    );
+
+    let mut later = Vec::new();
+    for i in 0..3_000u64 {
+        let t = ms(4_000) + Duration::from_micros(i * 1_000);
+        later.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    assert!(
+        !has_indicator(&later, Indicator::EmptyBufferError),
+        "3.9 on TBn is latched per PID; later windows must stay quiet: {later:#?}"
+    );
+}
+
+/// #3483: a clean constant-bitrate flow empties TBn between packets, so no
+/// per-PID 3.9 may be raised across three windows.
+#[test]
+fn empty_buffer_error_absent_for_tbn_cbr_that_empties() {
+    let pid: u16 = 0x0201;
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..3_000u64 {
+        let t = ms(10) + Duration::from_micros(i * 1_000);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+
+    let flagged: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.pid == Some(Pid::from_wire_masked(pid))
+                && matches!(
+                    e.indicator,
+                    Indicator::EmptyBufferError | Indicator::DataDelayError
+                )
+        })
+        .collect();
+    assert!(
+        flagged.is_empty(),
+        "a 1.5 Mbit/s CBR flow drains TBn between packets: {flagged:#?}"
+    );
+}
