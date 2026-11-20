@@ -231,10 +231,12 @@ fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
     moof_body.extend_from_slice(&traf(2));
     let moof = boxed(b"moof", &moof_body);
 
-    let entries = |iv: u8| vec![transmux::cenc::SampleEncryptionEntry {
-        initialization_vector: vec![iv; 8],
-        subsamples: Vec::new(),
-    }];
+    let entries = |iv: u8| {
+        vec![transmux::cenc::SampleEncryptionEntry {
+            initialization_vector: vec![iv; 8],
+            subsamples: Vec::new(),
+        }]
+    };
     let a = entries(0x11);
     let b = entries(0x22);
     let protections = [
