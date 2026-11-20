@@ -4,3 +4,5 @@ mod fixture_anc;
 mod fixture_anc_rtp;
 #[cfg(feature = "ts")]
 mod fixture_validate;
+#[cfg(feature = "ts")]
+mod pinned_header;

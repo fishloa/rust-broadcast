@@ -8,7 +8,6 @@
 //! - **Stream cipher seed** (`expand_stream`): produces a nibble-swapped copy
 //!   of the control word for LFSR initialization.
 use super::tables::KPERM;
-use crate::zeroize::zeroize;
 
 /// An 8-byte DVB-CSA control word.
 ///
@@ -50,7 +49,7 @@ impl Eq for ControlWord {}
 /// `compiler_fence`, rather than a plain assignment, are needed here.
 impl Drop for ControlWord {
     fn drop(&mut self) {
-        zeroize(&mut self.0);
+        crate::zeroize::zeroize(&mut self.0);
     }
 }
 

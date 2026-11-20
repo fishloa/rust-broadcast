@@ -747,6 +747,8 @@ fn write_pan_info(w: &mut BitWriter<'_>, info: &PanInfo) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::string::ToString;
 
     fn minimal_pan_info() -> PanInfo {
         PanInfo {
@@ -1035,5 +1037,103 @@ mod tests {
             obj.serialize_into(&mut buf),
             Err(Error::InvalidValue(..))
         ));
+    }
+
+    #[test]
+    fn trailing_bits_after_the_object_definition_are_rejected() {
+        let obj = sample(FrameRate::Fps120);
+        let mut bytes = obj.try_to_bytes().unwrap();
+        bytes.push(0x00);
+        assert!(matches!(
+            ObjectDefinition1::parse_with_frame_rate(&bytes, FrameRate::Fps120),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "ObjectDefinition1",
+                ..
+            }))
+        ));
+    }
+
+    /// The AudioDescription flag byte is the last eleven bytes' anchor: the
+    /// flag itself, the eight text bytes, its NUL and the final reserved byte.
+    /// Truncating exactly at the flag reports the byte it needed.
+    #[test]
+    fn a_missing_audio_description_flag_reports_the_exact_need() {
+        let obj = sample(FrameRate::Fps120);
+        let bytes = obj.try_to_bytes().unwrap();
+        let flag_start = bytes.len() - 11;
+        assert_eq!(
+            ObjectDefinition1::parse_with_frame_rate(&bytes[..flag_start], FrameRate::Fps120),
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: flag_start + 1,
+                    have: flag_start,
+                    what: "ObjectDefinition1.AudioDescription",
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn zone_gain_bits_and_labels_are_pinned() {
+        for (gain, bits, name, display) in [
+            (ZoneGain::GainZero, 0u64, "gain 0.0", "gain 0.0"),
+            (ZoneGain::GainOne, 1, "gain 1.0", "gain 1.0"),
+            (ZoneGain::Reserved(2), 2, "reserved", "reserved(0x02)"),
+            (ZoneGain::Reserved(3), 3, "reserved", "reserved(0x03)"),
+        ] {
+            assert_eq!(gain.to_bits(), bits);
+            assert_eq!(ZoneGain::from_bits(bits), gain);
+            assert_eq!(gain.name(), name);
+            assert_eq!(gain.to_string(), display);
+        }
+    }
+
+    #[test]
+    fn object_enum_labels_are_pinned() {
+        for (zone, label) in [
+            (ZoneId::ScreenLeft, "all screen speakers left of center"),
+            (ZoneId::ScreenCenter, "screen center speakers"),
+            (ZoneId::ScreenRight, "all screen speakers right of center"),
+            (ZoneId::WallLeft, "all speakers on left wall"),
+            (ZoneId::WallRight, "all speakers on right wall"),
+            (ZoneId::RearLeft, "all speakers on left half of rear wall"),
+            (ZoneId::RearRight, "all speakers on right half of rear wall"),
+            (ZoneId::OverheadLeft, "all overhead speakers left of center"),
+            (
+                ZoneId::OverheadRight,
+                "all overhead speakers right of center",
+            ),
+        ] {
+            assert_eq!(zone.name(), label);
+            assert_eq!(zone.to_string(), label);
+        }
+        for (mode, name, display) in [
+            (
+                ObjectSpreadMode::Lowrez,
+                "object spread lowrez",
+                "object spread lowrez",
+            ),
+            (
+                ObjectSpreadMode::OneD,
+                "object spread 1d",
+                "object spread 1d",
+            ),
+            (ObjectSpreadMode::Reserved(1), "reserved", "reserved(0x01)"),
+        ] {
+            assert_eq!(mode.name(), name);
+            assert_eq!(mode.to_string(), display);
+        }
+        for (prefix, label) in [
+            (DecorCoefPrefix::NoDecorrelation, "no decorrelation"),
+            (DecorCoefPrefix::MaxDecorrelation, "maximum decorrelation"),
+            (
+                DecorCoefPrefix::CoefFollows,
+                "decorrelation coefficient follows",
+            ),
+            (DecorCoefPrefix::Reserved, "reserved"),
+        ] {
+            assert_eq!(prefix.name(), label);
+            assert_eq!(prefix.to_string(), label);
+        }
     }
 }
