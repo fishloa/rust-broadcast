@@ -906,4 +906,158 @@ mod tests {
         let out = t.on_frame(&r_tpdu(tags::DATA_LAST, 1, &[9, 9], false));
         assert_eq!(out.spdus, vec![vec![9u8, 9]]);
     }
+
+    /// Both caps are what the link's `length_field` and the defensive
+    /// reassembly bound say they are; a shrunken cap would refuse legal
+    /// objects, an inflated one would not bound memory.
+    #[test]
+    fn link_limits_are_pinned() {
+        assert_eq!(MAX_REASSEMBLY_LEN, 2_097_152);
+        assert_eq!(MAX_SPDU_LEN, 65_534);
+    }
+
+    /// An SPDU of exactly [`MAX_SPDU_LEN`] is still one `T_Data_Last`; only a
+    /// longer one is refused.
+    #[test]
+    fn an_spdu_exactly_at_the_maximum_is_carried() {
+        let mut t = Transport::new(1);
+        t.init();
+        t.on_frame(&[tags::C_T_C_REPLY, 0x01, 0x01]);
+
+        let out = t.send_spdu(&vec![0u8; MAX_SPDU_LEN]);
+        assert_eq!(out.error, None);
+        assert_eq!(out.writes.len(), 1);
+        // tag(1) + long-form length_field(3) + t_c_id(1) + data(65 534).
+        assert_eq!(out.writes[0].len(), 65_539);
+        assert_eq!(t.outbound.len(), 0, "it was sent, not left queued");
+    }
+
+    /// A chained reassembly of exactly [`MAX_REASSEMBLY_LEN`] is still fed up;
+    /// one byte past it is refused and dropped.
+    #[test]
+    fn reassembly_at_the_cap_is_kept_and_one_byte_past_is_refused() {
+        let mut t = Transport::new(1);
+        t.init();
+        t.on_frame(&[tags::C_T_C_REPLY, 0x01, 0x01]);
+
+        let chunk = vec![0xAAu8; MAX_SPDU_LEN];
+        let more = |data: &[u8]| {
+            ResponseTpdu {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                status_length_form: dvb_ci::length::LengthForm::Minimal,
+                tag: tags::DATA_MORE,
+                t_c_id: 1,
+                data,
+                sb_value: SbValue::new(false),
+                block: Some(DataBlock::More),
+            }
+            .try_to_bytes()
+            .unwrap()
+        };
+
+        // 32 * 65 534 = 2 097 088, plus 64 more bytes, is exactly the cap.
+        let full = more(&chunk);
+        for _ in 0..32 {
+            assert_eq!(t.on_frame(&full).error, None);
+        }
+        assert_eq!(t.reassembly.len(), 2_097_088);
+        assert_eq!(t.on_frame(&more(&chunk[..64])).error, None);
+        assert_eq!(
+            t.reassembly.len(),
+            MAX_REASSEMBLY_LEN,
+            "exactly at the cap the chain is still usable"
+        );
+
+        let over = t.on_frame(&more(&chunk[..1]));
+        assert_eq!(over.error, Some(TransportError::ReassemblyOverflow));
+        assert!(t.reassembly.is_empty(), "the over-long chain is dropped");
+    }
+
+    /// Every `Out.timer` is the delay until the driver must tick again: the
+    /// armed timeout while a reply is outstanding, the remaining interval
+    /// while idling, so a lost or wrong deadline cannot stall the poll loop.
+    #[test]
+    fn transport_timers_report_the_exact_next_deadline() {
+        let poll = Duration::from_millis(3);
+        let reply = Duration::from_millis(7);
+        let mut t = Transport::new(1).with_timing(poll, reply);
+
+        assert_eq!(t.init().timer, Some(reply), "Create_T_C arms the reply");
+        assert_eq!(
+            t.tick(Duration::from_millis(2)).timer,
+            Some(reply),
+            "still Creating: the reply timeout is what the driver waits on"
+        );
+
+        assert_eq!(
+            t.on_frame(&[tags::C_T_C_REPLY, 0x01, 0x01]).timer,
+            Some(poll),
+            "a freshly answered connection idles for one poll interval"
+        );
+
+        assert_eq!(
+            t.send_spdu(&[0xAA]).timer,
+            Some(poll),
+            "sending a block restarts the poll cadence"
+        );
+        assert_eq!(
+            t.tick(Duration::from_millis(2)).timer,
+            Some(reply - Duration::from_millis(2)),
+            "while awaiting a reply, the remaining timeout is reported"
+        );
+
+        let timed_out = t.tick(Duration::from_millis(6));
+        assert_eq!(timed_out.error, Some(TransportError::ReplyTimeout));
+        assert_eq!(timed_out.timer, Some(poll));
+
+        assert_eq!(
+            t.tick(Duration::from_millis(2)).timer,
+            Some(poll - Duration::from_millis(2)),
+            "partway through the interval, the remainder is reported"
+        );
+        let polled = t.tick(Duration::from_millis(2));
+        assert_eq!(polled.writes, vec![vec![tags::DATA_LAST, 0x01, 0x01]]);
+        assert_eq!(polled.timer, Some(poll));
+    }
+
+    /// A module `T_C_Error` is the module reporting a failure, not a malformed
+    /// frame.
+    #[test]
+    fn a_module_t_c_error_is_reported_as_a_module_error() {
+        let mut t = Transport::new(1);
+        t.init();
+        t.on_frame(&[tags::C_T_C_REPLY, 0x01, 0x01]);
+        let out = t.on_frame(&[tags::T_C_ERROR, 0x01, 0x01]);
+        assert_eq!(out.error, Some(TransportError::ModuleError));
+        assert!(out.writes.is_empty());
+    }
+
+    /// A status byte naming another connection is not a reply to ours: it must
+    /// not free the half-duplex link and flush our queued block.
+    #[test]
+    fn a_status_byte_for_another_tcid_is_rejected() {
+        let mut t = Transport::new(1);
+        t.init();
+        t.on_frame(&[tags::C_T_C_REPLY, 0x01, 0x01]);
+        assert_eq!(t.send_spdu(&[0xAA]).writes.len(), 1); // in flight
+        assert!(
+            t.send_spdu(&[0xBB]).writes.is_empty(),
+            "held until the module answers"
+        );
+
+        let out = t.on_frame(&[tags::SB, 0x02, 0x09, SbValue::new(false).0]);
+        assert_eq!(
+            out.error,
+            Some(TransportError::WrongTcId {
+                got: 9,
+                expected: 1
+            })
+        );
+        assert!(
+            out.writes.is_empty(),
+            "a foreign status must not flush our queue: {:?}",
+            out.writes
+        );
+        assert_eq!(t.outbound.len(), 1);
+    }
 }
