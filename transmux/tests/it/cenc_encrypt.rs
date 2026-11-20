@@ -37,7 +37,7 @@
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
-use broadcast_common::{Encrypt, Unpackage};
+use broadcast_common::{Encrypt, Serialize, Unpackage};
 use bytes::Bytes;
 use transmux::{
     CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy, Track,
@@ -901,4 +901,56 @@ fn next_counter_reports_samples_consumed_and_resume_continues_from_it() {
         vec![10u64.to_be_bytes().to_vec()],
         "a second call continues at the advanced counter, never 0 or 1"
     );
+}
+
+// ---------------------------------------------------------------------------
+// issue #3663 — cbcs pattern components are 4-bit fields, edges included
+// ---------------------------------------------------------------------------
+
+fn cbcs_pattern_config(pattern: (u8, u8)) -> EncryptConfig {
+    EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::WholeSample)
+        .with_iv(IvGen::Constant([0x11u8; 16]))
+        .with_pattern(pattern)
+}
+
+/// 15 is the largest value a `cbcs` pattern component may take (ISO/IEC
+/// 23001-7 §12.2 packs crypt and skip into one byte, one nibble each), so
+/// `15:15` must be accepted and the `tenc` pattern byte must be the literal
+/// `(15 << 4) | 15 == 0xFF`.
+#[test]
+fn cbcs_pattern_15_15_is_accepted_and_packs_0xff() {
+    let mut media = whole_sample_media(vec![0u8; 32]);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut media, &cbcs_pattern_config((15, 15)))
+        .expect("15:15 is the maximum legal cbcs pattern");
+    let tenc = media.tracks[0]
+        .encryption
+        .as_ref()
+        .expect("track.encryption Some")
+        .tenc
+        .clone();
+    assert_eq!(tenc.default_crypt_byte_block, 15);
+    assert_eq!(tenc.default_skip_byte_block, 15);
+    let mut buf = vec![0u8; tenc.serialized_len()];
+    tenc.serialize_into(&mut buf).expect("serialize tenc");
+    // tenc body: reserved (1) + pattern byte (1) — after the 8-byte box header
+    // and the 4-byte FullBox version/flags.
+    assert_eq!(buf[13], 0xFF, "tenc pattern byte is (15 << 4) | 15");
+}
+
+/// Any component above 15 must be rejected rather than truncated into its low
+/// nibble by `tenc`'s `(crypt << 4) | skip` packing.
+#[test]
+fn cbcs_pattern_component_above_15_is_rejected() {
+    for pattern in [(1u8, 16u8), (1, 200), (16, 1)] {
+        let mut media = whole_sample_media(vec![0u8; 32]);
+        let err = CencEncryptor::new(KEY_A)
+            .encrypt(&mut media, &cbcs_pattern_config(pattern))
+            .expect_err("a cbcs pattern component above 15 must be rejected");
+        assert!(
+            matches!(err, transmux::Error::InvalidInput(_)),
+            "pattern {pattern:?}: expected InvalidInput, got {err:?}"
+        );
+        assert!(media.tracks[0].encryption.is_none());
+    }
 }
