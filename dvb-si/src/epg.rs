@@ -2159,6 +2159,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn collector_capacity_evictions_are_reported_exactly() {
+        let mut store = EpgStore::new().with_collector_max_logical_keys(1);
+        feed_one_event(&mut store, 1, 1, 0, 10);
+        assert_eq!(store.collector_sections_evicted_for_capacity(), 0);
+        feed_one_event(&mut store, 2, 2, 0, 10);
+        assert_eq!(
+            store.collector_sections_evicted_for_capacity(),
+            1,
+            "one extra section-set key at a cap of 1 is exactly one eviction"
+        );
+    }
+
     // ------------------------------------------------------------------
     // serde round-trip
     // ------------------------------------------------------------------

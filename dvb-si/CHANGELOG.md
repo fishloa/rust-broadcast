@@ -57,6 +57,7 @@
 - The EPG `Rating::minimum_age` is pinned at the 0x01..=0x0F range ends (`Some(4)`, `Some(18)`) and for 0x00/0x10/0xFF (`None`) (#3538).
 - `ContentNibble::genre_name` is asserted for both content-nibble levels against the literal EN 300 468 Table 29 names (#3539).
 - `EpgStore::with_collector_max_logical_keys` is shown to apply the cap it sets and to leave `with_max_services` in place: a cap of 1 over 8 distinct services evicts collector keys while the service cache still stops at 7 (#3540).
+- `EpgStore::collector_sections_evicted_for_capacity` is asserted to be 0 before any eviction and exactly 1 for one extra section-set key at a cap of 1 (#3541).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
