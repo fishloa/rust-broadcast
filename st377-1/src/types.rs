@@ -983,10 +983,26 @@ mod tests {
         assert_eq!(batch.items(), items.as_slice());
         assert_eq!(batch.header(), Some(header));
         assert_eq!(
-            UidBatch::with_header(items, None).header(),
+            UidBatch::with_header(items.clone(), None).header(),
             None,
             "a freshly built Batch has no header"
         );
+
+        // A retained header that disagrees with the element count cannot be
+        // written; the error reports the body length (2 x 16 bytes).
+        let mismatched = UidBatch::with_header(items, Some([0, 0, 0, 3, 0, 0, 0, 16]));
+        match mismatched.serialize() {
+            Err(Error::InvalidBatchHeader {
+                count,
+                item_len,
+                buffer_len,
+            }) => {
+                assert_eq!(count, 3);
+                assert_eq!(item_len, 16);
+                assert_eq!(buffer_len, 32);
+            }
+            other => panic!("expected InvalidBatchHeader, got {other:?}"),
+        }
     }
 
     #[cfg(feature = "serde")]

@@ -1053,6 +1053,26 @@ mod tests {
         ));
     }
 
+    /// The AudioDescription flag byte is the last eleven bytes' anchor: the
+    /// flag itself, the eight text bytes, its NUL and the final reserved byte.
+    /// Truncating exactly at the flag reports the byte it needed.
+    #[test]
+    fn a_missing_audio_description_flag_reports_the_exact_need() {
+        let obj = sample(FrameRate::Fps120);
+        let bytes = obj.try_to_bytes().unwrap();
+        let flag_start = bytes.len() - 11;
+        assert_eq!(
+            ObjectDefinition1::parse_with_frame_rate(&bytes[..flag_start], FrameRate::Fps120),
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: flag_start + 1,
+                    have: flag_start,
+                    what: "ObjectDefinition1.AudioDescription",
+                }
+            ))
+        );
+    }
+
     #[test]
     fn zone_gain_bits_and_labels_are_pinned() {
         for (gain, bits, name, display) in [

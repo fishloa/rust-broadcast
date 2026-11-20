@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn serialized_len_matches_the_wire_for_each_channel_count() {
-        for (n, want) in [(0usize, 5usize), (1, 7), (7, 18), (8, 20)] {
+        for (n, want) in [(0usize, 5usize), (1, 7), (5, 15), (6, 17), (7, 18), (8, 20)] {
             let bed = BedDefinition1::new(
                 1,
                 alloc::vec![
