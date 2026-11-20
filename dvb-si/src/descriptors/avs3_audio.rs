@@ -799,4 +799,15 @@ mod tests {
             other => panic!("expected BufferTooShort, got {other:?}"),
         }
     }
+
+    /// `serialized_len` must equal the count `serialize_into` writes.
+    #[test]
+    fn serialized_len_matches_the_bytes_written() {
+        let bytes = [TAG, 9, 0x1F, 0x00, 0xBB, 0x80, 0x1F, 0x02, 0xBF, 0xDE, 0xAD];
+        let d = Avs3AudioDescriptor::parse(&bytes).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        let n = d.serialize_into(&mut out).unwrap();
+        assert_eq!(d.serialized_len(), n);
+        assert_eq!(n, bytes.len());
+    }
 }

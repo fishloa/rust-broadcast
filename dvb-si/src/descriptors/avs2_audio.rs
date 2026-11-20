@@ -442,4 +442,19 @@ mod tests {
             Err(crate::error::Error::FieldOverflow(_))
         ));
     }
+
+    /// `serialized_len` must be exactly the count `serialize_into` writes, so
+    /// a caller that pre-sizes a buffer with it gets a correct length.
+    #[test]
+    fn serialized_len_matches_the_bytes_written() {
+        let bytes = [
+            TAG, 16, 2, 0b1110, 2, 0x00, 0x41, 0x00, 0x42, b'c', b'h', b'i', 0x02, 0x5F, 0x04, 0x00,
+            0x7F, 0xAB,
+        ];
+        let d = Avs2AudioDescriptor::parse(&bytes).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        let n = d.serialize_into(&mut out).unwrap();
+        assert_eq!(d.serialized_len(), n);
+        assert_eq!(n, bytes.len());
+    }
 }
