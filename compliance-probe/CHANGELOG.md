@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+- **The PCR drift/jitter tracker's early-return guard, discontinuity boundary and jitter sign are pinned.** Only a first observation reached the repeat guard, and every other test either ran a 0 ppm stream or read drift only, so a repeated PCR at a later arrival, a new PCR at the same arrival, an exact duplicate, a 20 s PCR-side jump, the exact 10 s guard (exclusive) and `|interval - drift|` versus `interval + drift` were unpinned; each now has a test asserting the literal drift/jitter (audit 23 findings 117-119, #3425/#3426/#3427).
 
 ## [0.10.0] - 2026-11-17
 ### Changed
