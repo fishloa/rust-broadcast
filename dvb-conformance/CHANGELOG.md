@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Fixed
+- Per-PID `TBn` `Empty_buffer_error` (TR 101 290 indicator 3.9) can fire: each PID's transport buffer now arms its empty-interval window at creation, rather than only at the first in-sync packet, when no per-PID buffer exists yet (#3483).
+
+### Tests
+- The per-PID TBn leak-rate estimator and `Data_delay_error` (3.10) are pinned: clean 1.5 and 15 Mbit/s CBR flows raise no T-STD event, a burst after a floor-rate warm-up raises exactly one latched 3.10, and data queued exactly 1.000 s after its first byte is clean (audit 23 finding 142, #3484).
+- The TBn eligibility set is pinned: the burst recipe trips 3.10 on an ES PID and never on PAT, CAT, NIT, SDT/BAT, EIT, RST, TDT/TOT or the null PID (audit 23 finding 143, #3485).
+- The empty-interval window is pinned at its exact deadline: a clean 3.5 s PAT run spans several windows, and `StdBuffer` does not report a first window that saw the buffer empty and does not verdict before the deadline (audit 23 finding 144, #3486).
+- The drain clamp is pinned against a multi-year caller-clock gap on an occupied, over-capacity buffer, so `elapsed_us * leak_rate` can no longer overflow into a bogus occupancy (audit 23 finding 145, #3487).
+- The TBsys strict limits are probed exactly: a 512-byte buffer is full but not overflowed, and TBsys data queued for 1.000 s is clean while 1.001 s trips 3.10 (audit 23 finding 146, #3488).
+- CAT and NIT payloads are proven to feed TBsys: six same-instant packets on either PID raise one `Buffer_error` with the "TBsys overflow" detail (audit 23 finding 147, #3489).
+- Wrong-table_id sections repeated every 200 ms no longer mask 1.3.a/1.5.a: the PAT and PMT presence timeouts are asserted to fire by the first packet past 500 ms from the anchor (audit 23 finding 148, #3490).
+- A PAT is CRC-checked exactly once: a corrupted PAT raises one `CRC_error`, not one from the PAT path and another from the generic SI path, and a valid PAT raises nothing (audit 23 finding 149, #3491).
+- A 7 s healthy stream on an epoch-based clock (plain and PCR-bearing, so the 5 s PID window is crossed) raises no 1.3.a, 1.5.a or 1.6 event, pinning the presence-timer refresh (audit 23 finding 150, #3492).
+- A persistent PMT or referenced-PID absence is reported once: 20 further packets past the timeout raise exactly one 1.5.a and one 1.6 (audit 23 finding 151, #3493).
+- Every strict timing limit is probed at exactly the limit (clean) and one tick past it (error): PAT/PMT 500 ms, PID 5 s, SI repetition 10 s, Unreferenced_PID 500 ms, PCR repetition 100 ms, PCR delta 2 700 000 ticks, PTS 700 ms, `_other` repetition 10 s and EIT P/F pairing 2 s (audit 23 finding 152, #3494).
+- EIT P/F per-section absence (3.6.a) is pinned both ways: an alternating section 0/1 stream is clean, and a section '1' that vanishes while '0' continues is reported exactly once at 2.001 s, never blaming the surviving section (audit 23 finding 153, #3495).
+- Every legal non-`_actual` table_id is proven clean: NIT stuffing, SDT_other, BAT, stuffing on the SDT/EIT PIDs, TOT and stuffing on the TDT PID raise no `*_error` (audit 23 finding 154, #3496).
+- The reserved-for-future-use PID range (0x0002..=0x000F) is exempt from Unreferenced_PID, while 0x0020 just past it is flagged once (audit 23 finding 155, #3497).
+- PCR silence on a PID that keeps sending is timed: exactly 100 ms without a PCR is clean, 110 ms trips 2.3a once, and a further packet does not repeat it (audit 23 finding 156, #3498).
+- The PTS check's PES-header guards are pinned: payloads of 0..=7 bytes and one-byte-wrong start codes neither panic nor arm 2.5, while an exactly 8-byte header with `PTS_DTS_flags=0b10` does (audit 23 finding 157, #3499).
+- The public label and event-text tables are asserted literally: every `Priority::name`, every `Indicator::clause`, the PCR discontinuity's 150 ms delta text, and the NIT_other/SDT_other table names with their own clauses (audit 23 finding 158, #3500).
+
 ## [15.1.0] - 2026-11-17
 ### Added
 - `ConformanceMonitor::declares_pcr_pid`: whether a PID is the `PCR_PID` the latest PMT of a PAT-referenced program declares, so a consumer exporting per-PCR-PID series can restrict them to the PIDs the stream designates.
