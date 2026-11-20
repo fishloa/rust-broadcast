@@ -506,7 +506,11 @@ mod tests {
         let cases = [
             (0x0, ContentGenre::UndefinedContent, "undefined content"),
             (0x1, ContentGenre::MovieDrama, "Movie/Drama"),
-            (0x2, ContentGenre::NewsCurrentAffairs, "News/Current Affairs"),
+            (
+                0x2,
+                ContentGenre::NewsCurrentAffairs,
+                "News/Current Affairs",
+            ),
             (0x3, ContentGenre::ShowGameShow, "Show/Game Show"),
             (0x4, ContentGenre::Sports, "Sports"),
             (0x5, ContentGenre::ChildrenYouth, "Children/Youth"),
@@ -535,8 +539,14 @@ mod tests {
             assert_eq!(got, want, "nibble_1 = 0x{n1:02X}");
             assert_eq!(got.name(), label, "nibble_1 = 0x{n1:02X}");
         }
-        assert_eq!(ContentGenre::from_nibble_1(0xD), ContentGenre::Reserved(0xD));
-        assert_eq!(ContentGenre::from_nibble_1(0xE), ContentGenre::Reserved(0xE));
+        assert_eq!(
+            ContentGenre::from_nibble_1(0xD),
+            ContentGenre::Reserved(0xD)
+        );
+        assert_eq!(
+            ContentGenre::from_nibble_1(0xE),
+            ContentGenre::Reserved(0xE)
+        );
         assert_eq!(
             ContentGenre::from_nibble_1(0xF),
             ContentGenre::UserDefined(0xF)

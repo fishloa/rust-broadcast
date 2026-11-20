@@ -72,11 +72,7 @@ fn linkage_labels_match_the_spec_tables() {
         LinkageType::NativeIpBootstrapMpeStream,
         "Native IP bootstrap MPE stream"
     );
-    check_label!(
-        LinkageType::Reserved(0x22),
-        "reserved",
-        "reserved(0x22)"
-    );
+    check_label!(LinkageType::Reserved(0x22), "reserved", "reserved(0x22)");
 
     check_label!(
         HandOverType::DvbIdenticalNeighbouringCountry,
@@ -203,11 +199,7 @@ fn terrestrial_labels_match_the_spec_tables() {
     check_label!(Constellation::Qpsk, "QPSK");
     check_label!(Constellation::Qam16, "16-QAM");
     check_label!(Constellation::Qam64, "64-QAM");
-    check_label!(
-        Constellation::Reserved(0x3),
-        "reserved",
-        "reserved(0x03)"
-    );
+    check_label!(Constellation::Reserved(0x3), "reserved", "reserved(0x03)");
 
     check_label!(
         Hierarchy::NonHierarchicalNative,
@@ -223,11 +215,7 @@ fn terrestrial_labels_match_the_spec_tables() {
     check_label!(Hierarchy::Alpha1InDepth, "α=1, in-depth interleaver");
     check_label!(Hierarchy::Alpha2InDepth, "α=2, in-depth interleaver");
     check_label!(Hierarchy::Alpha4InDepth, "α=4, in-depth interleaver");
-    check_label!(
-        Hierarchy::Reserved(0x8),
-        "reserved",
-        "reserved(0x08)"
-    );
+    check_label!(Hierarchy::Reserved(0x8), "reserved", "reserved(0x08)");
 
     check_label!(CodeRate::Rate1_2, "1/2");
     check_label!(CodeRate::Rate2_3, "2/3");
@@ -260,10 +248,7 @@ fn aac_component_type_labels_match_table_26() {
         (0x01, "HE-AAC audio, single mono channel"),
         (0x03, "HE-AAC audio, stereo"),
         (0x05, "HE-AAC audio, surround sound"),
-        (
-            0x40,
-            "HE-AAC audio description for the visually impaired",
-        ),
+        (0x40, "HE-AAC audio description for the visually impaired"),
         (0x41, "HE-AAC audio for the hard of hearing"),
         (0x42, "HE-AAC receiver-mix supplementary audio"),
         (0x43, "HE-AAC v2 audio, stereo"),
@@ -298,8 +283,7 @@ fn aac_component_type_labels_match_table_26() {
         assert_eq!(ty.name(), label, "aac_type = 0x{code:02X}");
     }
     assert_eq!(
-        AacExtension::new(false, Some(0xFF), &[])
-            .decoded_component_type(),
+        AacExtension::new(false, Some(0xFF), &[]).decoded_component_type(),
         None
     );
 }
