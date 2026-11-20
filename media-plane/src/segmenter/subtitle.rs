@@ -731,6 +731,87 @@ mod tests {
         );
     }
 
+    fn teletext_fixture() -> Option<Vec<(u64, Vec<u8>)>> {
+        use broadcast_common::mux::Unpackage;
+        let path = test_fixtures::tsduck("input/test-012.ts", "media-plane")?;
+        let bytes = std::fs::read(path).ok()?;
+        let media = transmux::TsDemux::new().unpackage(&bytes).ok()?;
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, CodecConfig::Data { .. }))?;
+        Some(
+            track
+                .samples
+                .iter()
+                .filter_map(|s| {
+                    let pts = u64::try_from(s.timing.and_then(|t| t.pts())?.max(0)).ok()?;
+                    Some((pts, s.data.to_vec()))
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn ticks_duration_scales_at_ninety_kilohertz() {
+        assert_eq!(ticks_duration(90_000), Duration::from_secs(1));
+        assert_eq!(ticks_duration(45_000), Duration::from_millis(500));
+        assert_eq!(ticks_duration(1), Duration::from_nanos(11_111));
+    }
+
+    #[test]
+    fn teletext_adapter_collects_the_fixtures_cues() {
+        let Some(samples) = teletext_fixture() else {
+            return;
+        };
+        let mut core = Core::new(TeletextToWebVtt::new(8, 0x89));
+        for (pts, data) in &samples {
+            core.push_sample(*pts, data);
+        }
+        let end = samples.last().map_or(0, |(pts, _)| *pts + 1);
+        core.decoder.finalize(end);
+        core.closed.extend(core.decoder.take_closed());
+        assert_eq!(
+            core.closed.len(),
+            9,
+            "the fixture carries nine cues on page 889"
+        );
+        assert_eq!(
+            core.closed[0],
+            cue(
+                3_856_831_433,
+                3_857_281_433,
+                "Un train met dix secondes\npour dépasser un point donné."
+            )
+        );
+    }
+
+    #[test]
+    fn teletext_adapter_reports_an_open_cue_only_while_it_is_on_screen() {
+        let Some(samples) = teletext_fixture() else {
+            return;
+        };
+        let mut core = Core::new(TeletextToWebVtt::new(8, 0x89));
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        let mut seen_open = None;
+        for (pts, data) in &samples {
+            core.push_sample(*pts, data);
+            if seen_open.is_none()
+                && let Some(open) = core.open_cue()
+            {
+                seen_open = Some(open);
+            }
+        }
+        assert_eq!(
+            seen_open,
+            Some((
+                3_856_831_433,
+                "Un train met dix secondes\npour dépasser un point donné.".to_string()
+            )),
+            "the open cue carries the fixture's start and text"
+        );
+    }
+
     fn core() -> Core<Scripted> {
         Core::new(Scripted::default())
     }
