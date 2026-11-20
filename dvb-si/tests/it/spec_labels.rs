@@ -330,3 +330,46 @@ fn announcement_and_frequency_labels_match_the_spec_tables() {
     check_label!(CodingType::Cable, "cable");
     check_label!(CodingType::Terrestrial, "terrestrial");
 }
+
+#[test]
+fn content_time_base_and_fta_labels_match_the_spec_tables() {
+    // ISO/IEC 13818-1 Table 2-85 and EN 300 468 Table 58.
+    use dvb_si::descriptors::content_time_base_indicator::ContentTimeBaseIndicator;
+    use dvb_si::descriptors::fta_content_management::ControlRemoteAccess;
+
+    check_label!(ContentTimeBaseIndicator::None, "none");
+    check_label!(ContentTimeBaseIndicator::Stc, "STC");
+    check_label!(ContentTimeBaseIndicator::Npt, "NPT");
+    check_label!(
+        ContentTimeBaseIndicator::Reserved(0x03),
+        "reserved",
+        "reserved(0x03)"
+    );
+    check_label!(
+        ContentTimeBaseIndicator::Private(0x08),
+        "private",
+        "private(0x08)"
+    );
+
+    check_label!(
+        ControlRemoteAccess::Enabled,
+        "redistribution enabled"
+    );
+    check_label!(
+        ControlRemoteAccess::EnabledManagedDomain,
+        "redistribution enabled (managed domain only)"
+    );
+    check_label!(
+        ControlRemoteAccess::EnabledManagedDomainTimeLimited,
+        "redistribution enabled (managed domain, time-limited)"
+    );
+    check_label!(
+        ControlRemoteAccess::NotAllowed,
+        "redistribution not allowed"
+    );
+    check_label!(
+        ControlRemoteAccess::Reserved(0x04),
+        "reserved",
+        "reserved(0x04)"
+    );
+}
