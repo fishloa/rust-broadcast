@@ -30,6 +30,7 @@
 - `AacExtension::decoded_component_type` is asserted for every EN 300 468 Table 26 HE-AAC component_type code (0x01, 0x03, 0x05, 0x40-0x4A, 0xA0) with the full flag set (#3244).
 - The cable delivery descriptor's symbol-rate getter/setter are pinned at the field's 100 sym/s resolution, including the overflow rejection and a non-decimal BCD nibble returning `None` (#3245).
 - The terrestrial delivery descriptor's `set_centre_frequency_hz` accepts the 32-bit field maximum and rejects one unit more without changing the stored value (#3246).
+- The spec-token labels (`name()` and `Display`) of the linkage, cable, satellite, terrestrial and AAC component-type enums are asserted literally for every variant (#3247).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
