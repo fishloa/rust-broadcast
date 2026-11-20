@@ -3827,3 +3827,206 @@ fn pid_timeout_emits_once_not_per_packet() {
         "20 packets past the 5 s PID timeout raise one 1.6: {pid_errors:#?}"
     );
 }
+
+// ── Strict `>` limits are probed exactly at the limit and one ms past it ────
+
+/// A packet on an unrelated PID, at `t`, used to drive every timeout check.
+fn probe(monitor: &mut ConformanceMonitor, t: Duration) -> Vec<crate::ConformanceEvent> {
+    monitor
+        .feed(&make_ts_packet(0x0300, 0, false, false, &[], &[0xAB]), t)
+        .to_vec()
+}
+
+fn pat_presence_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+    has_indicator(&probe(&mut monitor, ms(probe_ms)), Indicator::PatError2)
+}
+
+#[test]
+fn pat_presence_is_strict_at_its_limit() {
+    assert!(!pat_presence_fires(505), "exactly 500 ms is clean");
+    assert!(pat_presence_fires(506), "501 ms exceeds the limit");
+}
+
+fn pmt_presence_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+    let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(0x0100, &pmt),
+        ms(10),
+        ms(1),
+    );
+    has_indicator(&probe(&mut monitor, ms(probe_ms)), Indicator::PmtError2)
+}
+
+#[test]
+fn pmt_presence_is_strict_at_its_limit() {
+    assert!(!pmt_presence_fires(510), "exactly 500 ms is clean");
+    assert!(pmt_presence_fires(511), "501 ms exceeds the limit");
+}
+
+fn pid_absence_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+    let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(0x0100, &pmt),
+        ms(10),
+        ms(1),
+    );
+    has_indicator(&probe(&mut monitor, ms(probe_ms)), Indicator::PidError)
+}
+
+#[test]
+fn pid_absence_is_strict_at_five_seconds() {
+    assert!(!pid_absence_fires(5_010), "exactly 5 s is clean");
+    assert!(pid_absence_fires(5_011), "5.001 s exceeds the period");
+}
+
+fn si_repetition_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let nit = build_nit_actual_section();
+    feed_all(&mut monitor, &packetise_section(PID_NIT, &nit), ms(5), ms(1));
+    has_indicator(
+        &probe(&mut monitor, ms(probe_ms)),
+        Indicator::SiRepetitionError,
+    )
+}
+
+#[test]
+fn si_repetition_is_strict_at_ten_seconds() {
+    assert!(!si_repetition_fires(10_005), "exactly 10 s is clean");
+    assert!(si_repetition_fires(10_006), "10.001 s exceeds the interval");
+}
+
+fn unreferenced_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pkt = make_ts_packet(0x0400, 0, false, false, &[], &[0xAB]);
+    monitor.feed(&pkt, ms(5));
+    probe(&mut monitor, ms(probe_ms)).iter().any(|e| {
+        e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::from_wire_masked(0x0400))
+    })
+}
+
+#[test]
+fn unreferenced_pid_is_strict_at_its_threshold() {
+    assert!(!unreferenced_fires(505), "exactly 500 ms is clean");
+    assert!(unreferenced_fires(506), "501 ms exceeds the threshold");
+}
+
+fn pcr_repetition_fires(gap_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    monitor.feed(&pcr_only_packet(0x0200, 0, 27_000_000), ms(0));
+    has_indicator(
+        &monitor.feed(&pcr_only_packet(0x0200, 1, 29_700_000), ms(gap_ms)),
+        Indicator::PcrRepetitionError,
+    )
+}
+
+#[test]
+fn pcr_repetition_is_strict_at_100_ms() {
+    assert!(!pcr_repetition_fires(100), "exactly 100 ms is clean");
+    assert!(pcr_repetition_fires(101), "101 ms exceeds the limit");
+}
+
+fn pcr_discontinuity_fires(second_ticks: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    monitor.feed(&pcr_only_packet(0x0200, 0, 27_000_000), ms(0));
+    has_indicator(
+        &monitor.feed(&pcr_only_packet(0x0200, 1, second_ticks), ms(50)),
+        Indicator::PcrDiscontinuityError,
+    )
+}
+
+#[test]
+fn pcr_discontinuity_is_strict_at_its_limit() {
+    assert!(
+        !pcr_discontinuity_fires(27_000_000 + 2_700_000),
+        "a delta of exactly 2 700 000 ticks (100 ms) is clean"
+    );
+    assert!(
+        pcr_discontinuity_fires(27_000_000 + 2_700_001),
+        "one tick past the limit is an error"
+    );
+}
+
+fn pts_gap_fires(second_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    let es_pid: u16 = 0x0200;
+    setup_monitor_with_es(&mut monitor, es_pid);
+    let pes = make_pes_header_with_pts(0xE0, 10);
+    monitor.feed(&make_ts_packet(es_pid, 0, true, false, &[], &pes), ms(20));
+    has_indicator(
+        &monitor.feed(&make_ts_packet(es_pid, 1, true, false, &[], &pes), ms(second_ms)),
+        Indicator::PtsError,
+    )
+}
+
+#[test]
+fn pts_repetition_is_strict_at_its_limit() {
+    assert!(!pts_gap_fires(720), "exactly 700 ms is clean");
+    assert!(pts_gap_fires(721), "701 ms exceeds the limit");
+}
+
+fn other_repetition_fires(second_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let section = build_sdt_other_section(0);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_SDT_BAT, &section),
+        ms(5),
+        ms(1),
+    );
+    has_indicator(
+        &feed_all(
+            &mut monitor,
+            &packetise_section(PID_SDT_BAT, &section),
+            ms(second_ms),
+            ms(1),
+        ),
+        Indicator::SdtOtherError,
+    )
+}
+
+#[test]
+fn other_repetition_is_strict_at_ten_seconds() {
+    assert!(!other_repetition_fires(10_005), "exactly 10 s is clean");
+    assert!(
+        other_repetition_fires(10_006),
+        "10.001 s exceeds the interval"
+    );
+}
+
+fn eit_pf_pairing_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let sec0 = build_eit_pf_actual_section_keyed(0, 1, 1, 1);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_EIT, &sec0),
+        ms(5),
+        ms(1),
+    );
+    has_indicator(&probe(&mut monitor, ms(probe_ms)), Indicator::EitPfError)
+}
+
+#[test]
+fn eit_pf_pairing_is_strict_at_its_limit() {
+    assert!(!eit_pf_pairing_fires(2_005), "exactly 2 s is clean");
+    assert!(eit_pf_pairing_fires(2_006), "2.001 s exceeds the interval");
+}

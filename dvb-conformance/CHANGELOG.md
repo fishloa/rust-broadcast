@@ -16,6 +16,7 @@
 - A PAT is CRC-checked exactly once: a corrupted PAT raises one `CRC_error`, not one from the PAT path and another from the generic SI path, and a valid PAT raises nothing (audit 23 finding 149, #3491).
 - A 7 s healthy stream on an epoch-based clock (plain and PCR-bearing, so the 5 s PID window is crossed) raises no 1.3.a, 1.5.a or 1.6 event, pinning the presence-timer refresh (audit 23 finding 150, #3492).
 - A persistent PMT or referenced-PID absence is reported once: 20 further packets past the timeout raise exactly one 1.5.a and one 1.6 (audit 23 finding 151, #3493).
+- Every strict timing limit is probed at exactly the limit (clean) and one tick past it (error): PAT/PMT 500 ms, PID 5 s, SI repetition 10 s, Unreferenced_PID 500 ms, PCR repetition 100 ms, PCR delta 2 700 000 ticks, PTS 700 ms, `_other` repetition 10 s and EIT P/F pairing 2 s (audit 23 finding 152, #3494).
 
 ## [15.1.0] - 2026-11-17
 ### Added
