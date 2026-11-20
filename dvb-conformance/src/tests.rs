@@ -3588,3 +3588,70 @@ fn tbsys_is_fed_by_cat_and_nit_payloads() {
         );
     }
 }
+
+// ── Presence timers ignore wrong-table_id sections ─────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0a 1.3.a/1.5.a count *sections of the monitored
+/// table*. A stream repeating a CRC-valid section with the wrong table_id
+/// every 200 ms never supplies that table, so both presence timeouts must
+/// still fire; a refreshing timer would stay silent forever.
+#[test]
+fn wrong_table_id_sections_do_not_refresh_pat_or_pmt_presence() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut pat = build_pat_section(&[(1, 0x0100)]);
+    pat[0] = 0x03;
+    refresh_crc(&mut pat);
+    let mut pat_presence = None;
+    let mut t = 5u64;
+    while t <= 1_400 {
+        let packets = packetise_section(PID_PAT, &pat);
+        for e in feed_all(&mut monitor, &packets, ms(t), ms(1)) {
+            if e.indicator == Indicator::PatError2 && e.detail.starts_with("no PAT section within")
+            {
+                pat_presence = Some(e.at);
+            }
+        }
+        t += 200;
+    }
+    let pat_presence = pat_presence.expect("1.3.a presence timeout must fire");
+    assert!(
+        pat_presence <= ms(605),
+        "the first packet past 500 ms from the anchor trips 1.3.a: {}",
+        pat_presence.as_millis()
+    );
+
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let good_pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &good_pat),
+        ms(5),
+        ms(1),
+    );
+
+    let mut pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    pmt[0] = 0x03;
+    refresh_crc(&mut pmt);
+    let mut pmt_presence = None;
+    let mut t = 10u64;
+    while t <= 1_400 {
+        let packets = packetise_section(0x0100, &pmt);
+        for e in feed_all(&mut monitor, &packets, ms(t), ms(1)) {
+            if e.indicator == Indicator::PmtError2
+                && e.detail.starts_with("no PMT section on program_map_PID")
+            {
+                pmt_presence = Some(e.at);
+            }
+        }
+        t += 200;
+    }
+    let pmt_presence = pmt_presence.expect("1.5.a presence timeout must fire");
+    assert!(
+        pmt_presence <= ms(610),
+        "the first packet past 500 ms from discovery trips 1.5.a: {}",
+        pmt_presence.as_millis()
+    );
+}

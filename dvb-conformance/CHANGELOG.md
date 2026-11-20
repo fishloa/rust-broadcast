@@ -12,6 +12,7 @@
 - The drain clamp is pinned against a multi-year caller-clock gap on an occupied, over-capacity buffer, so `elapsed_us * leak_rate` can no longer overflow into a bogus occupancy (audit 23 finding 145, #3487).
 - The TBsys strict limits are probed exactly: a 512-byte buffer is full but not overflowed, and TBsys data queued for 1.000 s is clean while 1.001 s trips 3.10 (audit 23 finding 146, #3488).
 - CAT and NIT payloads are proven to feed TBsys: six same-instant packets on either PID raise one `Buffer_error` with the "TBsys overflow" detail (audit 23 finding 147, #3489).
+- Wrong-table_id sections repeated every 200 ms no longer mask 1.3.a/1.5.a: the PAT and PMT presence timeouts are asserted to fire by the first packet past 500 ms from the anchor (audit 23 finding 148, #3490).
 
 ## [15.1.0] - 2026-11-17
 ### Added
