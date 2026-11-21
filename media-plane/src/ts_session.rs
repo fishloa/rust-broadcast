@@ -1622,4 +1622,239 @@ mod tests {
             other => panic!("expected TracksChanged for SPTS, got {other:?}"),
         }
     }
+
+    static BACKLOG_DROPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static BACKLOG_DROP_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn count_backlog_drops(dropped: u64) {
+        BACKLOG_DROP_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        BACKLOG_DROPS.fetch_add(dropped, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn timed_sample(dts: i64) -> Sample {
+        Sample::new(vec![0x65], Some(dts), Some(dts), Some(1), true).expect("valid timing")
+    }
+
+    /// The drop observer fires only when the pre-resolution backlog actually
+    /// evicts: exactly `MAX_HELD_SAMPLES` held samples drop nothing, one more
+    /// drops exactly the oldest.
+    #[test]
+    fn backlog_overflow_calls_the_drop_observer_only_on_eviction() {
+        BACKLOG_DROPS.store(0, std::sync::atomic::Ordering::SeqCst);
+        BACKLOG_DROP_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        let mut tracker = ProgramTracker::new().with_backlog_drop_observer(count_backlog_drops);
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        for i in 0..MAX_HELD_SAMPLES {
+            tracker.handle(DemuxEvent::sample(
+                TrackId::new(1),
+                timed_sample(i64::try_from(i).expect("fits")),
+            ));
+        }
+        assert_eq!(
+            BACKLOG_DROP_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "holding exactly the cap must not even call the observer"
+        );
+        assert_eq!(
+            BACKLOG_DROPS.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "holding exactly the cap evicts nothing"
+        );
+
+        tracker.handle(DemuxEvent::sample(
+            TrackId::new(1),
+            timed_sample(i64::try_from(MAX_HELD_SAMPLES).expect("fits")),
+        ));
+        assert_eq!(
+            BACKLOG_DROP_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "exactly one eviction is reported once"
+        );
+        assert_eq!(
+            BACKLOG_DROPS.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "one sample past the cap drops exactly the oldest"
+        );
+
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let got = flushed_dts(&mut tracker);
+        assert_eq!(got.len(), MAX_HELD_SAMPLES);
+        assert_eq!(got[0], 1, "the oldest held sample was the one dropped");
+        assert_eq!(
+            *got.last().expect("non-empty"),
+            i64::try_from(MAX_HELD_SAMPLES).expect("fits")
+        );
+    }
+
+    /// A sample for a track that was never announced is dropped outright,
+    /// even before resolution: it must not consume the held backlog's room
+    /// and evict genuine media.
+    #[test]
+    fn unannounced_sample_never_consumes_the_backlog_budget() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        for i in 0..MAX_HELD_SAMPLES {
+            tracker.handle(DemuxEvent::sample(
+                TrackId::new(1),
+                timed_sample(i64::try_from(i).expect("fits")),
+            ));
+        }
+        tracker.handle(DemuxEvent::sample(TrackId::new(99), timed_sample(999)));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let got = flushed_dts(&mut tracker);
+        assert_eq!(got.len(), MAX_HELD_SAMPLES);
+        assert_eq!(
+            got[0], 0,
+            "an undeclared track's sample must not evict the real oldest sample"
+        );
+    }
+
+    /// A `TrackAbandoned` for a track that never promoted carries no media:
+    /// it must not emit a sample, a program, or a removal.
+    #[test]
+    fn track_abandoned_emits_nothing() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let _established = tracker.poll();
+        let _new_program = tracker.poll();
+        tracker.handle(DemuxEvent::track_abandoned(
+            None,
+            transmux::AbandonReason::ConfigUnrecoverable,
+            transmux::EventProvenance::default(),
+        ));
+        assert!(
+            tracker.poll().is_none(),
+            "abandoning a never-promoted track emits nothing"
+        );
+    }
+
+    /// A mid-stream `TrackAdded` for a **new** `program_number` mints a fresh
+    /// `ProgramId`; two new numbers get two distinct ones.
+    #[test]
+    fn mid_stream_new_program_numbers_get_distinct_program_ids() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        assert!(matches!(tracker.poll(), Some(SessionEvent::Established)));
+        assert!(matches!(
+            tracker.poll(),
+            Some(SessionEvent::NewProgram {
+                program: ProgramId(0),
+                ..
+            })
+        ));
+
+        let mut second = track_spec(TrackId::new(2));
+        second.program_number = Some(ProgramNumber::new(200));
+        tracker.handle(DemuxEvent::TrackAdded(second));
+        match tracker.poll() {
+            Some(SessionEvent::NewProgram { program, .. }) => {
+                assert_eq!(program, ProgramId(1), "the first new program is id 1")
+            }
+            other => panic!("expected NewProgram for program_number 200, got {other:?}"),
+        }
+
+        let mut third = track_spec(TrackId::new(3));
+        third.program_number = Some(ProgramNumber::new(300));
+        tracker.handle(DemuxEvent::TrackAdded(third));
+        match tracker.poll() {
+            Some(SessionEvent::NewProgram { program, .. }) => {
+                assert_eq!(program, ProgramId(2), "the second new program is id 2")
+            }
+            other => panic!("expected NewProgram for program_number 300, got {other:?}"),
+        }
+    }
+
+    static SESSION_BACKLOG_DROPS: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    fn count_session_backlog_drops(dropped: u64) {
+        SESSION_BACKLOG_DROPS.fetch_add(dropped, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// `TsIngestSession::with_backlog_drop_observer` forwards the observer to
+    /// the tracker it owns.
+    #[test]
+    fn ts_session_forwards_the_backlog_drop_observer() {
+        SESSION_BACKLOG_DROPS.store(0, std::sync::atomic::Ordering::SeqCst);
+        let mut session =
+            TsIngestSession::new().with_backlog_drop_observer(count_session_backlog_drops);
+        session
+            .tracker
+            .handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        for i in 0..MAX_HELD_SAMPLES {
+            session.tracker.handle(DemuxEvent::sample(
+                TrackId::new(1),
+                timed_sample(i64::try_from(i).expect("fits")),
+            ));
+        }
+        assert_eq!(
+            SESSION_BACKLOG_DROPS.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        session.tracker.handle(DemuxEvent::sample(
+            TrackId::new(1),
+            timed_sample(i64::try_from(MAX_HELD_SAMPLES).expect("fits")),
+        ));
+        assert_eq!(
+            SESSION_BACKLOG_DROPS.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the session's tracker must observe the overflow"
+        );
+    }
+
+    /// Stream defects the demuxer reported are surfaced by
+    /// `take_reader_errors` and drained by it.
+    #[test]
+    fn reader_errors_are_surfaced_then_drained() {
+        let mut session = TsIngestSession::new();
+        session.push_demux_error(transmux::Error::LargesizeBufferTooShort { need: 8, have: 0 });
+        let errors = session.take_reader_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            &*errors[0],
+            crate::file_source::FileReaderError::Demux(_)
+        ));
+        assert!(
+            session.take_reader_errors().is_empty(),
+            "taking the errors drains them"
+        );
+    }
+
+    /// The silent-PID release fires exactly at [`SILENT_PID_SETTLE`], never
+    /// on an earlier feed.
+    #[test]
+    fn silent_pid_release_waits_for_the_settle_time() {
+        use test_support::build_ts_bytes;
+        let ts = build_ts_bytes(TrackId::new(1), 0xAB, 4);
+        let mut session = TsIngestSession::new();
+        session.feed(&ts, Timestamp::ZERO).expect("infallible");
+        assert!(
+            !session.silent_heads_released,
+            "nothing is released on the first feed"
+        );
+        session
+            .feed(&ts, Timestamp::from_millis(999))
+            .expect("infallible");
+        assert!(
+            !session.silent_heads_released,
+            "still before the one-second settle bound"
+        );
+        session
+            .feed(&ts, Timestamp::from_millis(1000))
+            .expect("infallible");
+        assert!(
+            session.silent_heads_released,
+            "released exactly at the settle bound"
+        );
+    }
+
+    /// The session's demand is one bounded read, `MAX_TS_READ`.
+    #[test]
+    fn ts_session_demand_is_one_max_read() {
+        let session = TsIngestSession::new();
+        assert_eq!(MAX_TS_READ, 65_536);
+        assert_eq!(session.demand(), Demand::new(MAX_TS_READ));
+    }
 }

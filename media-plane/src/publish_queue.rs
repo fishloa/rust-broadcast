@@ -145,7 +145,7 @@ pub fn drain_publish_queue(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trunk::{Trunk, TrunkConfig};
+    use crate::trunk::{ArchiveOverrun, Trunk, TrunkConfig};
     use broadcast_common::Timestamp;
     use core::num::NonZeroUsize;
     use transmux::SegmentMeta;
@@ -184,5 +184,52 @@ mod tests {
         drain_publish_queue(&mut writer, &mut pending, &mut since);
         assert!(pending.is_empty());
         assert!(since.is_none());
+    }
+
+    /// A queue deeper than [`PENDING_PUBLISH_QUEUE_CAP`] behind a
+    /// `StallIngest` pin returns after force-expiring the pin and draining,
+    /// rather than spinning on the same stalled entry: the depth bound is a
+    /// real upper bound on memory even before the wall-clock deadline elapses.
+    #[test]
+    fn a_deep_queue_behind_a_stalled_pin_expires_it_and_drains() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(1))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let mut writer = trunk.segment_writer().expect("segment writer");
+        let mut pin = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        writer
+            .try_publish_segment(segment(1))
+            .expect("the first segment fits");
+
+        // Deeper than the cap, with the pin never advanced: the first retry
+        // would stall, so only the depth bound can resolve it.
+        let mut pending: VecDeque<PendingPublish> = (2..=PENDING_PUBLISH_QUEUE_CAP as u32 + 2)
+            .map(|seq| PendingPublish::Segment(segment(seq)))
+            .collect();
+        let mut since = None;
+        drain_publish_queue(&mut writer, &mut pending, &mut since);
+
+        assert!(
+            pending.is_empty(),
+            "the stalled pin must be force-expired and the queue drained"
+        );
+        assert!(since.is_none());
+        let mut terminated = false;
+        for _ in 0..8 {
+            match pin.poll() {
+                Some(crate::trunk::SegmentCursorItem::Terminated) => {
+                    terminated = true;
+                    break;
+                }
+                Some(_) => continue,
+                None => break,
+            }
+        }
+        assert!(terminated, "the pin reports Terminated, not silent loss");
     }
 }
