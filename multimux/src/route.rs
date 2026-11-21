@@ -92,6 +92,11 @@
 //! exclusive; a config-declared route could simply pre-select one via the
 //! same query mechanism internally).
 //!
+//! The catch-up output (`crate::output::catchup`) takes option 2 already:
+//! its `program` query parameter selects the program whose own DVR archive
+//! it reads, since every program of a route records into its own archive
+//! (`crate::dvr`, issue #3950).
+//!
 //! # Known gap: `NotYetAnnounced` is derived from "the registry is empty"
 //!
 //! `RouteHandle::resolve_program`'s `ProgramResolution::NotYetAnnounced`

@@ -29,7 +29,8 @@
 //!   range its playlist's `EXT-X-MAP` names.
 //!
 //! Every archive read runs on the blocking pool under the route's scan
-//! semaphore, through the route's own [`dvr_runtime::fs::FsArchive`].
+//! semaphore, through the route's own [`dvr_runtime::fs::FsArchive`] of the
+//! requested program.
 //!
 //! # Selecting a program
 //!
