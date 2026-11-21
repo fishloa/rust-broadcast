@@ -100,7 +100,7 @@ async fn an_srt_listener_route_serves_a_published_stream() {
             sock.send(chunk).await.expect("send TS payload");
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        tokio::time::sleep(GUARD).await;
+        std::future::pending::<()>().await;
     });
 
     let playlist = tokio::time::timeout(

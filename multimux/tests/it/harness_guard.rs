@@ -69,6 +69,10 @@ const SLEEP_ALLOW: &[&str] = &[
     "rtsp_ingest.rs",
     "server_timeouts.rs",
     "smooth_oracle.rs",
+    // Retries a UDP SRT handshake until the route's listener has bound (no
+    // observable bind event on the client side) and paces the publisher's
+    // datagrams; both inside bounded tasks.
+    "srt_ingest_route.rs",
     "ts_hls_oracle.rs",
     // The paced UDP TS sender shared by the oracle tests: a pacing sleep inside a sender
     // task (spaces the datagrams so ingest is not starved by the flood), not a wait.
