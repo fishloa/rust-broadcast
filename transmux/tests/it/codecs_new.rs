@@ -116,6 +116,69 @@ fn av1c_mutation_changes_bytes() {
     );
 }
 
+/// `marker` is a mandatory `1` bit (AV1-ISOBMFF §2.3), not a reserved bit
+/// that happens to be set in the one oracle file.
+#[test]
+fn av1c_marker_bit_clear_is_rejected() {
+    let body = [0x01u8, 0x00, 0x0c, 0x00];
+    let err = Av1ConfigurationBox::parse(&body).expect_err("marker bit 0 must be rejected");
+    assert!(
+        matches!(
+            err,
+            transmux::Error::InvalidValue(InvalidValue {
+                field: "av1C marker",
+                ..
+            })
+        ),
+        "expected the av1C marker error, got {err:?}"
+    );
+}
+
+/// Every fixed byte 2/3 field decoded from a hand-built body that exercises
+/// all of them at once, then re-encoded byte-exactly.
+#[test]
+fn av1c_all_fields_decode_and_round_trip() {
+    // marker=1, version=1; seq_profile=2, seq_level_idx_0=0x1F;
+    // tier=1, high_bitdepth=1, twelve_bit=1, monochrome=1, chroma_x=1,
+    // chroma_y=1, chroma_sample_position=3; ipd_present=1, delay_minus_one=0xA;
+    // two opaque config OBU bytes.
+    let body = [0x81u8, 0x5F, 0xFF, 0x1A, 0x0A, 0x0B];
+    let cfg = Av1ConfigurationBox::parse(&body).expect("parse av1C");
+    assert_eq!(cfg.version, 1);
+    assert_eq!(cfg.seq_profile, 2);
+    assert_eq!(cfg.seq_level_idx_0, 0x1F);
+    assert!(cfg.seq_tier_0, "seq_tier_0");
+    assert!(cfg.high_bitdepth, "high_bitdepth");
+    assert!(cfg.twelve_bit, "twelve_bit");
+    assert!(cfg.monochrome, "monochrome");
+    assert!(cfg.chroma_subsampling_x, "chroma_subsampling_x");
+    assert!(cfg.chroma_subsampling_y, "chroma_subsampling_y");
+    assert_eq!(cfg.chroma_sample_position, 3);
+    assert_eq!(cfg.initial_presentation_delay_minus_one, Some(0x0A));
+    assert_eq!(cfg.bit_depth(), 12);
+    assert_eq!(cfg.rfc6381(), "av01.2.31H.12");
+    assert_eq!(cfg.config_obus, [0x0A, 0x0B]);
+    roundtrip(&cfg, &body);
+}
+
+/// Each byte 2 flag on its own: only that field becomes true, and the byte
+/// re-encodes exactly. Pins every mask/shift in both directions.
+#[test]
+fn av1c_each_flag_bit_individually() {
+    for bit in [0x80u8, 0x40, 0x20, 0x10, 0x08, 0x04] {
+        let body = [0x81u8, 0x00, bit, 0x00];
+        let cfg = Av1ConfigurationBox::parse(&body).expect("parse single-flag av1C");
+        assert_eq!(cfg.seq_tier_0, bit == 0x80);
+        assert_eq!(cfg.high_bitdepth, bit == 0x40);
+        assert_eq!(cfg.twelve_bit, bit == 0x20);
+        assert_eq!(cfg.monochrome, bit == 0x10);
+        assert_eq!(cfg.chroma_subsampling_x, bit == 0x08);
+        assert_eq!(cfg.chroma_subsampling_y, bit == 0x04);
+        assert_eq!(cfg.chroma_sample_position, 0);
+        roundtrip(&cfg, &body);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Opus dOps — fixtures/mp4/opus.mp4 (#437)
 // ---------------------------------------------------------------------------
