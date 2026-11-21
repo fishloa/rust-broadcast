@@ -1026,6 +1026,10 @@ fn non_sync_first_sample_precedence() {
         "tfhd.default_sample_flags = non-sync must warn as the last fallback"
     );
     assert!(
+        !has(&flagged_segment(Some(SYNC), None, None)),
+        "a sync tfhd.default_sample_flags must not warn"
+    );
+    assert!(
         !has(&flagged_segment(Some(SYNC), None, Some(SYNC))),
         "all-sync flags must not warn"
     );
@@ -1274,6 +1278,28 @@ fn unknown_span_is_reported_not_conflated_with_a_zero_one() {
     assert!(
         !codes.contains(&"media.sample.zero-duration"),
         "an unstated span is not a declared zero length: {codes:?}"
+    );
+}
+
+#[test]
+fn untyped_zero_span_counts_every_sample() {
+    // Two samples with no stated span on an untyped track: the aggregate
+    // warning must name both, not a product of the counter (0) or nothing.
+    let samples = vec![
+        Sample::from_raw(vec![0x65, 0x88], Some(0), Some(0), None).expect("timestamps, no span"),
+        Sample::from_raw(vec![0x65, 0x88], Some(1_000), Some(1_000), None)
+            .expect("timestamps, no span"),
+    ];
+    let media = clean_media(1, 0, &samples);
+    let issues = validate_media_segment(&media, SegmentOrigin::FromIr);
+    let timing = issues
+        .iter()
+        .find(|i| i.code == "media.sample.timing")
+        .unwrap_or_else(|| panic!("an untyped zero span must be reported: {issues:?}"));
+    assert!(
+        timing.message.contains("2 sample(s)"),
+        "the warning must name both samples: {}",
+        timing.message
     );
 }
 
