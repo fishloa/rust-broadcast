@@ -2002,3 +2002,71 @@ fn min_step_keeps_the_smallest_positive_step() {
         vec![(5000, 1000), (1000, 1000), (2000, 2000), (4000, 1000)]
     );
 }
+
+// ── audit 23: aggregated AAC group duration split ───────────────────────────
+
+fn aac_1024_track() -> (TrackId, RtpStreamDepacketiser) {
+    let id = TrackId::new(1);
+    let cfg = transmux::rtp_sdp::aac_config_from_asc_bytes(vec![0x11, 0x90]).unwrap();
+    (id, single_track_rtp(id, RtpMediaKind::Aac, cfg, 48_000))
+}
+
+fn durations(samples: &[transmux::pipeline::Sample]) -> Vec<u32> {
+    samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.duration()).expect("duration"))
+        .collect()
+}
+
+/// A group's forward step is the delta even when a smaller step was seen
+/// earlier: 3000 over three AUs is 1000 each, not a share of the 1000-tick
+/// minimum.
+#[test]
+fn aggregated_group_uses_the_forward_step_not_a_smaller_earlier_step() {
+    let (id, mut d) = aac_1024_track();
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1]])).unwrap();
+    d.push(id, &aac_asc_packet(1, 11_000, &[&[2]])).unwrap();
+    d.push(id, &aac_asc_packet(2, 14_000, &[&[3], &[4], &[5]]))
+        .unwrap();
+    d.push(id, &aac_asc_packet(3, 17_000, &[&[6]])).unwrap();
+    let out = d.push(id, &aac_asc_packet(4, 20_000, &[&[7]])).unwrap();
+    assert_eq!(durations(&out), vec![1000, 1000, 1000]);
+}
+
+/// A group delta that does not divide evenly leaves the remainder on the last
+/// AU: 3001 over three AUs is `[1000, 1000, 1001]`.
+#[test]
+fn aggregated_group_gives_the_remainder_to_the_last_au() {
+    let (id, mut d) = aac_1024_track();
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1], &[2], &[3]]))
+        .unwrap();
+    d.push(id, &aac_asc_packet(1, 13_001, &[&[4]])).unwrap();
+    let out = d.push(id, &aac_asc_packet(2, 16_000, &[&[5]])).unwrap();
+    assert_eq!(durations(&out), vec![1000, 1000, 1001]);
+}
+
+/// A repeated/backward timestamp has no forward delta: with no step seen, the
+/// declared frame length times the AU count is split evenly.
+#[test]
+fn aggregated_group_without_a_forward_step_uses_the_declared_length() {
+    let (id, mut d) = aac_1024_track();
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1], &[2]]))
+        .unwrap();
+    d.push(id, &aac_asc_packet(1, 8_000, &[&[3]])).unwrap();
+    let out = d.push(id, &aac_asc_packet(2, 9_000, &[&[4]])).unwrap();
+    assert_eq!(durations(&out), vec![1024, 1024]);
+}
+
+/// With a known smallest step and no forward delta, that step (split over the
+/// group) wins over the declared frame length.
+#[test]
+fn aggregated_group_without_a_forward_step_uses_the_min_step() {
+    let (id, mut d) = aac_1024_track();
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1]])).unwrap();
+    d.push(id, &aac_asc_packet(1, 12_000, &[&[2]])).unwrap();
+    d.push(id, &aac_asc_packet(2, 14_000, &[&[3], &[4]]))
+        .unwrap();
+    d.push(id, &aac_asc_packet(3, 8_000, &[&[5]])).unwrap();
+    let out = d.push(id, &aac_asc_packet(4, 9_000, &[&[6]])).unwrap();
+    assert_eq!(durations(&out), vec![1000, 1000]);
+}
