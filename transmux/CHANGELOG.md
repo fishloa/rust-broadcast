@@ -133,6 +133,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`CaptionDetector::for_config` keeps its HEVC and MPEG-2 carriages.** Deleting either arm returned `None`, silently disabling caption detection for every HEVC or MPEG-2 track; both codecs, a synthetic HEVC prefix-SEI CC1 sample, and a non-video config now pin the selection (audit 23 finding 236, #3744).
 - **An MPEG-2 user-data payload shorter than the four-byte identifier is skipped, not sliced past.** The `payload.len() < 4` guard protected `split_at(4)`; a two-byte user_data before a valid ATSC payload now leaves the detector working and still finds CC1 (audit 23 finding 237, #3745).
 
+- **Every public spec-enum `name()`/`Display` label in these modules is asserted.** No test checked the strings, so a label could be blanked or garbled while CI stayed green; `LibraryDependencyIdc`, `AvsVideoEntryKind`, `AvsVideoConfig`, `Avs3AudioContent`, `Ca3Config`, `DetectedCaption`, `DoviSampleEntryKind` and `Container` now assert each variant's token and its `Display` form (audit 23 finding 232, #3740).
+- **`Container::segment_extension` is pinned to each container's own extension.** A blank or wrong extension would produce unplayable segment/part URLs; `m4s`, `ts` and `vtt` are now asserted alongside the `name()` tokens (audit 23 finding 233, #3741).
+
 ### Removed
 - **BREAKING: `TrackFragmentBox::into_bytes`** (unused; use `Serialize::try_to_bytes`) (#3698).
 

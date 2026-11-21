@@ -717,6 +717,23 @@ mod tests {
     }
 
     #[test]
+    fn sample_entry_kind_labels_are_pinned() {
+        for (kind, label) in [
+            (
+                DoviSampleEntryKind::CompatibleBaseLayer,
+                "compatible base layer",
+            ),
+            (
+                DoviSampleEntryKind::DolbyVisionEntry,
+                "Dolby Vision sample entry",
+            ),
+        ] {
+            assert_eq!(kind.name(), label);
+            assert_eq!(kind.to_string(), label);
+        }
+    }
+
+    #[test]
     fn profile_classification_is_table_1_only() {
         let mut r = DoviDecoderConfigurationRecord::parse(&P81_RECORD).unwrap();
         for (profile, hevc, avc) in [

@@ -68,3 +68,21 @@ impl Default for Container {
         Container::Fmp4
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Container;
+
+    #[test]
+    fn names_and_segment_extensions_are_pinned() {
+        for (container, name, extension) in [
+            (Container::Fmp4, "fmp4", "m4s"),
+            (Container::MpegTs, "mpeg-ts", "ts"),
+            (Container::WebVtt, "webvtt", "vtt"),
+        ] {
+            assert_eq!(container.name(), name);
+            assert_eq!(container.to_string(), name);
+            assert_eq!(container.segment_extension(), extension);
+        }
+    }
+}
