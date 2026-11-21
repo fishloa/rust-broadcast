@@ -136,6 +136,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every public spec-enum `name()`/`Display` label in these modules is asserted.** No test checked the strings, so a label could be blanked or garbled while CI stayed green; `LibraryDependencyIdc`, `AvsVideoEntryKind`, `AvsVideoConfig`, `Avs3AudioContent`, `Ca3Config`, `DetectedCaption`, `DoviSampleEntryKind` and `Container` now assert each variant's token and its `Display` form (audit 23 finding 232, #3740).
 - **`Container::segment_extension` is pinned to each container's own extension.** A blank or wrong extension would produce unplayable segment/part URLs; `m4s`, `ts` and `vtt` are now asserted alongside the `name()` tokens (audit 23 finding 233, #3741).
 
+- **A full 64-bit bit-field read is accepted and its boundary pinned.** The explicit `n > 64` guards could become `>=`/`==`, refusing the valid 64-bit maximum and leaving a 65-bit request to the fallback path; `read_bits_checked` and `BitReader::read_bits` now read exactly 64 bits big-endian, and 65 bits is still refused (audit 23 finding 234, #3742).
+- **`bit_error` keeps the offending value and reason for over-wide and too-many-bits errors.** Deleting either arm fell back to a generic `value: 0, reason: "bit reader error"`, losing the diagnostic; both are now asserted directly (audit 23 finding 235, #3743).
+
 ### Removed
 - **BREAKING: `TrackFragmentBox::into_bytes`** (unused; use `Serialize::try_to_bytes`) (#3698).
 
