@@ -329,6 +329,26 @@ mod tests {
         assert_eq!(sdp_track(&m), None);
     }
 
+    /// Each AAC-hbr header width is required on its own: a stream that deviates
+    /// in exactly one of the 13/3/3 fields is not playable.
+    #[test]
+    fn aac_each_deviating_header_width_is_not_playable() {
+        for fmtp in [
+            "mode=AAC-hbr; config=1190; sizeLength=12; indexLength=3; indexDeltaLength=3",
+            "mode=AAC-hbr; config=1190; sizeLength=13; indexLength=2; indexDeltaLength=3",
+            "mode=AAC-hbr; config=1190; sizeLength=13; indexLength=3; indexDeltaLength=2",
+        ] {
+            let m = media(&format!(
+                "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 mpeg4-generic/48000/2\r\na=fmtp:97 {fmtp}\r\n"
+            ));
+            assert_eq!(sdp_track(&m), None, "{fmtp}");
+        }
+        let standard = media(&format!(
+            "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 mpeg4-generic/48000/2\r\na=fmtp:97 {AAC_FMTP}\r\n"
+        ));
+        assert!(sdp_track(&standard).is_some(), "13/3/3 is playable");
+    }
+
     #[test]
     fn h264_packetization_mode_2_is_not_playable() {
         let m = media(&format!(
