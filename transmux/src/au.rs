@@ -897,7 +897,7 @@ mod tests {
     fn the_open_nal_cap_is_exclusive() {
         let mut s = AccessUnitSplitter::new(NalCodec::Avc);
         s.push(&[0x00, 0x00, 0x00, 0x01]).unwrap();
-        let at_cap = vec![0x55u8; MAX_OPEN_NAL_BYTES - 4];
+        let at_cap = vec![0x55u8; MAX_OPEN_NAL_BYTES.saturating_sub(4)];
         s.push(&at_cap)
             .expect("a NAL exactly at the cap must be accepted");
         let err = s
