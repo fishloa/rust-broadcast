@@ -104,14 +104,41 @@ fn daterange_local_rules_are_typed_errors() {
 /// An `X-` name that is not a legal `AttributeName` is a typed error.
 #[test]
 fn invalid_client_attribute_names_are_typed_errors() {
-    use broadcast_hls::ClientAttrName;
+    use broadcast_hls::{ClientAttrName, ClientAttrNameError};
     assert!(matches!(
         ClientAttrName::new("DVB-SERVICE-ID"),
-        Err(Error::InvalidClientAttrName { .. })
+        Err(Error::InvalidClientAttrName {
+            reason: ClientAttrNameError::MissingPrefix,
+            ..
+        })
     ));
     assert!(matches!(
         ClientAttrName::new("X-lower-case"),
-        Err(Error::InvalidClientAttrName { .. })
+        Err(Error::InvalidClientAttrName {
+            reason: ClientAttrNameError::InvalidCharacter,
+            ..
+        })
+    ));
+    assert!(matches!(
+        ClientAttrName::new("X--"),
+        Err(Error::InvalidClientAttrName {
+            reason: ClientAttrNameError::EmptyName,
+            ..
+        })
+    ));
+    assert!(matches!(
+        ClientAttrName::new("X-"),
+        Err(Error::InvalidClientAttrName {
+            reason: ClientAttrNameError::EmptyName,
+            ..
+        })
+    ));
+    assert!(matches!(
+        ClientAttrName::new("X-DVB-"),
+        Err(Error::InvalidClientAttrName {
+            reason: ClientAttrNameError::TrailingHyphen,
+            ..
+        })
     ));
     assert!(ClientAttrName::new("X-DVB-SERVICE-ID").is_ok());
 }

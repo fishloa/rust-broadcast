@@ -22,8 +22,10 @@ mod options;
 pub mod seq;
 
 pub use custom_tag::{CustomTag, CustomTagName};
-pub use daterange::{ClientAttrName, DateRange};
-pub use error::{Error, Result};
+pub use daterange::{ClientAttrName, Cue, CueTrigger, DateRange};
+pub use error::{
+    AttributeListError, ClientAttrNameError, CustomTagNameError, DateRangeError, Error, Result,
+};
 pub use options::ParseOptions;
 pub use seq::{MediaSequence, PartIndex};
 
