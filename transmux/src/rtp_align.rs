@@ -975,4 +975,31 @@ mod tests {
         }
         assert_eq!(rig.aligner.skew_rejections(), 0, "exactly one hour agrees");
     }
+
+    #[test]
+    fn rtp_info_does_not_overwrite_a_sender_report_target() {
+        let mut aligner = placement_aligner();
+        aligner.anchor = Some((VIDEO, 1_000));
+        aligner.lanes.get_mut(&VIDEO).expect("lane").first_pts = Some(1_000);
+        {
+            let lane = aligner.lanes.get_mut(&OTHER).expect("lane");
+            lane.first_pts = Some(0);
+            lane.target = Some(42);
+        }
+        aligner.rtp_info.insert(VIDEO, 1_000);
+        aligner.rtp_info.insert(OTHER, 5_000);
+        aligner.refresh_from_rtp_info(VIDEO, 1_000);
+        assert_eq!(
+            aligner.lanes.get(&OTHER).expect("lane").target,
+            Some(42),
+            "an RTP-Info arrival must not replace an SR-derived target"
+        );
+    }
+
+    #[test]
+    fn a_small_positive_target_change_snaps_immediately() {
+        let (discontinuity, delta) = placement_step(9_000, 1_000);
+        assert!(!discontinuity, "within the switch tolerance");
+        assert_eq!(delta, 9_000, "a positive correction is applied at once");
+    }
 }

@@ -2749,4 +2749,313 @@ mod tests {
         let wire = RtpPacketWire::parse(&h).unwrap();
         assert_eq!(wire.payload_type, 96);
     }
+
+    fn rtp(seq: u16, ts: u32, marker: bool, payload: &[u8]) -> Vec<u8> {
+        let mut p = alloc::vec![0x80u8, if marker { 0x80 | 96 } else { 96 }];
+        p.extend_from_slice(&seq.to_be_bytes());
+        p.extend_from_slice(&ts.to_be_bytes());
+        p.extend_from_slice(&[0, 0, 0, 0]);
+        p.extend_from_slice(payload);
+        p
+    }
+
+    #[test]
+    fn build_stap_a_carries_forbidden_and_max_nri_and_type_24() {
+        let nals = alloc::vec![alloc::vec![0x27u8, 0xAA], alloc::vec![0x47u8, 0xBB]];
+        let mut seq = SeqCounter::new(0);
+        let pkt = build_stap_a(96, &nals, &mut seq, 0x1234, 0xDEAD_BEEF).expect("STAP-A");
+        assert_eq!(pkt.payload[0], 0x58, "F=0, NRI=max(1,2)=2, type 24");
+
+        let f = alloc::vec![alloc::vec![0x87u8, 0xCC]];
+        let mut seq = SeqCounter::new(0);
+        let pkt = build_stap_a(96, &f, &mut seq, 0, 1).expect("STAP-A");
+        assert_eq!(pkt.payload[0], 0x98, "F=1, NRI=0, type 24");
+        assert_ne!(pkt.payload[0] & 0x80, 0, "the F bit survives");
+    }
+
+    #[test]
+    fn build_stap_a_bounds_the_16_bit_nal_size_prefix() {
+        let at_max = alloc::vec![alloc::vec![0x67u8; 65_535]];
+        let mut seq = SeqCounter::new(0);
+        let pkt = build_stap_a(96, &at_max, &mut seq, 0, 0).expect("65535 fits the u16 prefix");
+        assert_eq!(pkt.payload.len(), 1 + STAP_A_SIZE_LEN + 65_535);
+
+        let over = alloc::vec![alloc::vec![0x67u8; 65_536]];
+        let mut seq = SeqCounter::new(0);
+        match build_stap_a(96, &over, &mut seq, 0, 0) {
+            Err(Error::InvalidValue(e)) => {
+                assert_eq!(e.field, "stap_a_nal_size");
+                assert_eq!(e.value, 65_536);
+            }
+            other => panic!("expected a 16-bit overflow, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fu_a_fills_the_payload_budget_and_rejects_an_empty_one() {
+        let mut raw = alloc::vec![0x65u8];
+        raw.extend((0..499u16).map(|i| i as u8));
+        let data = Bytes::from(raw);
+        let nal = &data[..];
+        let mut out = Vec::new();
+        let mut seq = SeqCounter::new(0);
+        fragment_fu_a(nal, &data, 96, true, 100, &mut seq, 0, 0, &mut out).expect("FU-A");
+        let sizes: Vec<usize> = out.iter().map(|p| p.payload.len()).collect();
+        assert_eq!(
+            sizes,
+            alloc::vec![86, 86, 86, 86, 86, 69],
+            "mtu - 14 per packet"
+        );
+        for pkt in &out {
+            assert!(
+                pkt.header.len() + pkt.payload.len() <= 100,
+                "never over the MTU"
+            );
+        }
+        assert_eq!(out[0].header.len() + out[0].payload.len(), 100);
+
+        let mut out = Vec::new();
+        match fragment_fu_a(nal, &data, 96, true, 14, &mut seq, 0, 0, &mut out) {
+            Err(Error::InvalidInput(m)) => {
+                assert_eq!(m, "MTU too small for FU-A fragmentation");
+            }
+            other => panic!("expected the MTU rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn packetise_klv_requires_one_payload_byte() {
+        let unit = Bytes::from_static(b"abcdef");
+        match packetise_klv(&unit, 96, 0, 0, 0, RTP_HEADER_LEN) {
+            Err(Error::InvalidInput(m)) => assert_eq!(m, "MTU too small for KLV-over-RTP"),
+            other => panic!("expected the MTU rejection, got {other:?}"),
+        }
+        let packets =
+            packetise_klv(&unit, 96, 0, 0, 0, RTP_HEADER_LEN + 1).expect("one byte per packet");
+        assert_eq!(packets.len(), 6);
+        assert!(packets.iter().all(|p| p.payload.len() == 1));
+        assert!(
+            packets
+                .iter()
+                .all(|p| p.header.len() + p.payload.len() <= 13)
+        );
+    }
+
+    #[test]
+    fn rtp_wrap_state_unrolls_across_the_32_bit_modulus() {
+        let mut w = RtpWrapState::default();
+        let base = 0xFFFF_F000u32;
+        let a = w.push(base);
+        assert_eq!(a, i64::from(base));
+        let b = w.push(base.wrapping_add(3000));
+        assert_eq!(b - a, 3000);
+        let c = w.push(base.wrapping_add(6000));
+        assert_eq!(c - b, 3000, "the 2^32 wrap keeps the 3000-tick step");
+    }
+
+    #[test]
+    fn rtp_wrap_state_initialises_on_the_raw_first_timestamp() {
+        let mut w = RtpWrapState::default();
+        assert_eq!(w.push(0x9000_0000), 0x9000_0000i64);
+
+        let mut w = RtpWrapState::default();
+        let a = w.push(0x0001_0000);
+        let b = w.push(0x0001_0000 - 3000);
+        assert_eq!(b - a, -3000, "a small backward step is not a wrap");
+    }
+
+    #[test]
+    fn rtp_wrap_state_splits_the_half_range_boundary() {
+        let mut w = RtpWrapState::default();
+        let a = w.push(0);
+        let b = w.push(0x8000_0000);
+        assert_eq!(b - a, 0x8000_0000, "exactly half the range is forward");
+
+        let mut w = RtpWrapState::default();
+        let a = w.push(0x8000_0000);
+        let b = w.push(0);
+        assert_eq!(b - a, -0x8000_0000, "exactly half the range is backward");
+
+        let mut w = RtpWrapState::default();
+        let a = w.push(1000);
+        let b = w.push(0xFFFF_F000);
+        assert_eq!(b - a, -5096, "a large positive step is a backward wrap");
+
+        let mut w = RtpWrapState::default();
+        let a = w.push(0xFFFF_F000);
+        let b = w.push(1000);
+        assert_eq!(b - a, 5096, "a large negative step is a forward wrap");
+    }
+
+    #[test]
+    fn reassemble_video_flushes_on_a_timestamp_change_without_a_marker() {
+        let packets = alloc::vec![
+            rtp(0, 1, false, &[0x41, 0x11]),
+            rtp(1, 2, true, &[0x41, 0x22]),
+        ];
+        let aus = reassemble_video(&packets).expect("reassemble");
+        assert_eq!(aus.len(), 2, "the timestamp change closes the first AU");
+        assert_eq!(aus[0].timestamp, 1);
+        assert_eq!(aus[1].timestamp, 2);
+    }
+
+    #[test]
+    fn reassemble_video_accepts_a_zero_size_stap_a_and_bounds_its_prefix() {
+        let aus = reassemble_video(&[rtp(0, 1, true, &[0x18, 0x00, 0x00])])
+            .expect("a zero-size aggregate entry is accepted");
+        assert_eq!(aus.len(), 1);
+
+        match reassemble_video(&[rtp(0, 1, true, &[0x18, 0x00])]) {
+            Err(Error::BufferTooShort(e)) => assert_eq!(e.what, "STAP-A size prefix"),
+            _ => panic!("expected the truncated STAP-A prefix"),
+        }
+    }
+
+    #[test]
+    fn reassemble_video_bounds_the_fu_a_header() {
+        let aus = reassemble_video(&[rtp(0, 1, true, &[0x7C, 0xC5])])
+            .expect("a start+end fragment with an empty body is valid");
+        assert_eq!(aus.len(), 1);
+        assert_eq!(aus[0].data, alloc::vec![0, 0, 0, 1, 0x65]);
+
+        match reassemble_video(&[rtp(0, 1, true, &[0x7C])]) {
+            Err(Error::BufferTooShort(e)) => assert_eq!(e.what, "FU-A header"),
+            _ => panic!("expected the missing FU header"),
+        }
+    }
+
+    fn audio_payload(headers_bits: u16, headers: &[u16], body: &[u8]) -> Vec<u8> {
+        let mut p = headers_bits.to_be_bytes().to_vec();
+        for h in headers {
+            p.extend_from_slice(&h.to_be_bytes());
+        }
+        p.extend_from_slice(body);
+        p
+    }
+
+    #[test]
+    fn reassemble_audio_reads_every_au_header() {
+        let payload = audio_payload(
+            48,
+            &[(2u16) << AAC_INDEX_LENGTH; 3],
+            &[0x00, 0x10, 0x21, 0x22, 0x31, 0x32, 0x41, 0x42],
+        );
+        let aus = reassemble_audio(&[rtp(0, 1, true, &payload)]).expect("three AUs");
+        assert_eq!(aus.len(), 3, "48 header bits declare exactly three AUs");
+        assert_eq!(aus[0].data, alloc::vec![0x00, 0x10]);
+        assert_eq!(aus[1].data, alloc::vec![0x21, 0x22]);
+        assert_eq!(aus[2].data, alloc::vec![0x31, 0x32]);
+    }
+
+    #[test]
+    fn reassemble_audio_bounds_the_headers_length_field() {
+        let aus = reassemble_audio(&[rtp(0, 1, true, &[0, 0])])
+            .expect("a headers-length-only packet carries no AU");
+        assert!(aus.is_empty());
+
+        match reassemble_audio(&[rtp(0, 1, true, &[0])]) {
+            Err(Error::BufferTooShort(e)) => assert_eq!(e.what, "AAC AU-headers-length"),
+            _ => panic!("expected the short headers length"),
+        }
+    }
+
+    #[test]
+    fn reassemble_audio_accepts_headers_exactly_filling_the_payload() {
+        let payload = audio_payload(16, &[(2u16) << AAC_INDEX_LENGTH], &[]);
+        assert_eq!(payload.len(), 4);
+        let aus = reassemble_audio(&[rtp(0, 1, true, &payload)])
+            .expect("headers ending exactly at the payload end are valid");
+        assert!(aus.is_empty(), "no AU bytes followed the headers");
+    }
+
+    #[test]
+    fn reassemble_audio_restarts_on_a_size_mismatch() {
+        let first = audio_payload(16, &[(100u16) << AAC_INDEX_LENGTH], &[0xAA; 60]);
+        let second = audio_payload(16, &[(80u16) << AAC_INDEX_LENGTH], &[0xBB; 80]);
+        let aus = reassemble_audio(&[rtp(0, 1, false, &first), rtp(1, 1, true, &second)])
+            .expect("reassemble");
+        assert_eq!(
+            aus.len(),
+            1,
+            "the size-100 AU is dropped, the size-80 one kept"
+        );
+        assert_eq!(aus[0].data, alloc::vec![0xBB; 80]);
+    }
+
+    #[test]
+    fn reassemble_audio_drops_a_partial_au_when_the_timestamp_changes() {
+        let partial = audio_payload(16, &[(4u16) << AAC_INDEX_LENGTH], &[0xAA; 2]);
+        let complete = audio_payload(16, &[(4u16) << AAC_INDEX_LENGTH], &[0xBB; 4]);
+        let aus = reassemble_audio(&[rtp(0, 1, false, &partial), rtp(1, 2, true, &complete)])
+            .expect("reassemble");
+        assert_eq!(aus.len(), 1);
+        assert_eq!(aus[0].timestamp, 2);
+        assert_eq!(aus[0].data, alloc::vec![0xBB; 4]);
+    }
+
+    #[test]
+    fn map_rtp_error_keeps_the_offending_field_and_value() {
+        match map_rtp_error(rtp_packet::Error::BufferTooShort(BufferTooShort {
+            need: 12,
+            have: 10,
+            what: "RTP fixed header",
+        })) {
+            Error::BufferTooShort(e) => {
+                assert_eq!((e.need, e.have), (12, 10));
+                assert_eq!(e.what, "RTP fixed header");
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+        match map_rtp_error(rtp_packet::Error::UnsupportedVersion(
+            broadcast_common::error::UnsupportedVersion {
+                what: "RTP",
+                found: 1,
+            },
+        )) {
+            Error::InvalidValue(e) => {
+                assert_eq!(e.field, "rtp_version");
+                assert_eq!(e.value, 1);
+            }
+            other => panic!("expected the version rejection, got {other:?}"),
+        }
+        match map_rtp_error(rtp_packet::Error::InvalidValue(InvalidValue {
+            field: "csrc",
+            value: 9,
+            reason: "too many",
+        })) {
+            Error::InvalidValue(e) => {
+                assert_eq!(e.field, "csrc");
+                assert_eq!(e.value, 9);
+            }
+            other => panic!("expected InvalidValue, got {other:?}"),
+        }
+        match map_rtp_error(rtp_packet::Error::InvalidPadding {
+            count: 0,
+            reason: "zero",
+        }) {
+            Error::InvalidValue(e) => {
+                assert_eq!(e.field, "rtp_padding");
+                assert_eq!(e.value, 0);
+            }
+            other => panic!("expected the padding rejection, got {other:?}"),
+        }
+        match map_rtp_error(rtp_packet::Error::ExtensionNotWordAligned { data_len: 3 }) {
+            Error::InvalidValue(e) => {
+                assert_eq!(e.field, "rtp_extension_length");
+                assert_eq!(e.value, 3);
+            }
+            other => panic!("expected the extension rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn base64_decode_reports_the_offending_byte() {
+        match base64_decode("@@@") {
+            Err(Error::InvalidValue(e)) => {
+                assert_eq!(e.field, "base64");
+                assert_eq!(e.value, u64::from(b'@'));
+            }
+            other => panic!("expected an invalid-byte rejection, got {other:?}"),
+        }
+    }
 }
