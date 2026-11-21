@@ -402,7 +402,7 @@ fn a_bad_signature_is_reported_with_its_bytes() {
     bytes[..3].copy_from_slice(b"XYZ");
     assert_eq!(
         FlvDemux::new().unpackage(&bytes).unwrap_err(),
-        FlvError::BadSignature([b'X', b'Y', b'Z'])
+        FlvError::BadSignature(*b"XYZ")
     );
 }
 
