@@ -3779,9 +3779,24 @@ fn scan_attribute_list_wire(s: &str) -> Result<Vec<(String, AttrValue)>> {
     Ok(out)
 }
 
-/// A bare attribute value is a hexadecimal-sequence: `0x`/`0X` plus an even,
-/// non-zero count of `[0-9A-F]` digits.
+/// A bare attribute value is a hexadecimal-sequence: `0x`/`0X` plus a
+/// non-zero count of `[0-9A-F]` digits (RFC 8216bis §4.2 sets no length rule).
 fn is_hexadecimal_sequence(value: &str) -> bool {
+    let Some(digits) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    else {
+        return false;
+    };
+    !digits.is_empty()
+        && digits
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
+}
+
+/// An `SCTE35-CMD`/`-OUT`/`-IN` value must be whole bytes, so its digit count
+/// is even in addition to the §4.2 hexadecimal-sequence grammar.
+fn is_scte35_hexadecimal_sequence(value: &str) -> bool {
     let Some(digits) = value
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))

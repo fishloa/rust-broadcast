@@ -584,7 +584,7 @@ impl DateRange {
     /// hexadecimal-sequence (`0x`/`0X` plus an even number of `[0-9A-F]`).
     pub fn set_scte35(&mut self, kind: Scte35Kind, hex: impl Into<String>) -> Result<()> {
         let hex = hex.into();
-        if !super::is_hexadecimal_sequence(&hex) {
+        if !super::is_scte35_hexadecimal_sequence(&hex) {
             return Err(invalid(self.id(), DateRangeError::InvalidScte35Value));
         }
         self.replace_or_append(kind.name(), AttrValue::bare_unchecked(hex));
@@ -716,7 +716,8 @@ impl DateRange {
                     ClientAttrName::new(name)?;
                 }
                 "SCTE35-CMD" | "SCTE35-OUT" | "SCTE35-IN"
-                    if value.is_quoted() || !super::is_hexadecimal_sequence(value.as_str()) =>
+                    if value.is_quoted()
+                        || !super::is_scte35_hexadecimal_sequence(value.as_str()) =>
                 {
                     return Err(invalid(id, DateRangeError::InvalidScte35Value));
                 }
@@ -799,7 +800,7 @@ impl DateRange {
                 return Err(Error::InvalidAttributeName { name });
             }
             if matches!(name.as_str(), "SCTE35-CMD" | "SCTE35-OUT" | "SCTE35-IN")
-                && (value.is_quoted() || !super::is_hexadecimal_sequence(value.as_str()))
+                && (value.is_quoted() || !super::is_scte35_hexadecimal_sequence(value.as_str()))
             {
                 return Err(invalid(id, DateRangeError::InvalidScte35Value));
             }
