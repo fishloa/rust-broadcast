@@ -148,7 +148,9 @@ impl FsRecorder {
         trunk: &Arc<Trunk>,
     ) -> Result<Self, FsError> {
         let overrun = config.overrun;
-        Self::open(root, name, config, trunk, || trunk.pin_segments(overrun))
+        let dir = layout::route_dir(root, &name);
+        let lock = Self::lock(&dir)?;
+        Self::open(dir, lock, config, trunk, || trunk.pin_segments(overrun))
     }
 
     /// As [`Self::new`], but recording from `cursor`, a pinning cursor the
@@ -170,22 +172,42 @@ impl FsRecorder {
         cursor: &mut Option<SegmentCursor>,
     ) -> Result<Self, FsError> {
         let overrun = config.overrun;
-        Self::open(root, name, config, trunk, || {
+        let dir = layout::route_dir(root, &name);
+        let lock = Self::lock(&dir)?;
+        Self::open(dir, lock, config, trunk, || {
             cursor.take().unwrap_or_else(|| trunk.pin_segments(overrun))
         })
     }
 
-    fn open(
-        root: &Path,
-        name: ArchiveName,
+    /// The recorder of a new run on this recorder's archive (a host replacing
+    /// its source, for example after a reconnect), recording from `cursor`
+    /// on `trunk` as [`Self::with_cursor`] does. It takes over this
+    /// recorder's directory lock, which is never released in between: a
+    /// release followed by a fresh [`Self::with_cursor`] can be refused
+    /// while a process the host spawns at that moment briefly shares the
+    /// lock's file description. The archive is re-seeded from disk, so the
+    /// new run opens a new period, as after [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`], except [`FsError::Locked`]; on an error this
+    /// recorder and its lock are dropped.
+    pub fn succeed(
+        self,
         config: ArchiveConfig,
         trunk: &Arc<Trunk>,
-        cursor: impl FnOnce() -> SegmentCursor,
+        cursor: &mut Option<SegmentCursor>,
     ) -> Result<Self, FsError> {
-        let dir = layout::route_dir(root, &name);
-        let container = config.container;
-        fs::create_dir_all(&dir)
-            .map_err(|e| io_error(dir.clone(), crate::writer::StoreOpKind::CreateDir, e))?;
+        let overrun = config.overrun;
+        let Self { dir, _lock, .. } = self;
+        Self::open(dir, _lock, config, trunk, || {
+            cursor.take().unwrap_or_else(|| trunk.pin_segments(overrun))
+        })
+    }
+
+    fn lock(dir: &Path) -> Result<File, FsError> {
+        fs::create_dir_all(dir)
+            .map_err(|e| io_error(dir.to_path_buf(), crate::writer::StoreOpKind::CreateDir, e))?;
         let lock_path = dir.join(layout::LOCK_FILE_NAME);
         let lock = OpenOptions::new()
             .create(true)
@@ -202,6 +224,17 @@ impl FsRecorder {
                 return Err(io_error(lock_path, crate::writer::StoreOpKind::List, e));
             }
         }
+        Ok(lock)
+    }
+
+    fn open(
+        dir: PathBuf,
+        lock: File,
+        config: ArchiveConfig,
+        trunk: &Arc<Trunk>,
+        cursor: impl FnOnce() -> SegmentCursor,
+    ) -> Result<Self, FsError> {
+        let container = config.container;
         let mut existing = Vec::new();
         let mut stale_temps = Vec::new();
         match fs::read_dir(&dir) {

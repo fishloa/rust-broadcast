@@ -13,6 +13,10 @@ All notable changes to this crate are documented here. The format follows
   `FsError::Locked` while the previous recorder of the archive still holds
   its directory), so a host replacing a recorder misses no segment closed in
   between (multimux reconnects, #3929).
+- `FsRecorder::succeed`: the recorder of a new run on the same archive, taking
+  over the previous recorder's directory lock without releasing it, so a
+  process the host spawns at that moment cannot make the new run's create
+  fail with `FsError::Locked`.
 - `FsRecorder::on_programme`: apply a programme change the host detected
   before the recorder existed, with the same retry as `feed_si`.
 

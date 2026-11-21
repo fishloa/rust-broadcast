@@ -744,3 +744,58 @@ fn a_programme_handed_over_by_the_host_is_recorded() {
     assert!(playlist.contains("X-DVB-EVENT-ID=30807"), "{playlist}");
     cleanup(&root);
 }
+
+/// `succeed` hands the directory lock from one run's recorder to the next
+/// without releasing it: a third recorder is refused before, during and after
+/// the hand-over, and the new run records into a new period.
+#[test]
+fn succeed_takes_the_lock_over_without_releasing_it() {
+    let root = temp_dir("succeed");
+    let name = || ArchiveName::new("succ").expect("name");
+    let config = || config(ArchiveContainer::Fmp4, 2, periods(10));
+    let refused = || {
+        let other = trunk();
+        matches!(
+            FsRecorder::new(&root, name(), config(), &other),
+            Err(FsError::Locked { .. })
+        )
+    };
+    let first_trunk = trunk();
+    let first = FsRecorder::new(&root, name(), config(), &first_trunk).expect("first");
+    assert!(refused());
+    let second_trunk = trunk();
+    let writer = second_trunk.segment_writer().expect("writer");
+    let mut cursor = Some(second_trunk.pin_segments(config().overrun));
+    let mut second = first
+        .succeed(config(), &second_trunk, &mut cursor)
+        .expect("succeed");
+    assert!(cursor.is_none(), "the successor took the cursor");
+    assert!(refused(), "the lock was never released");
+    writer
+        .publish_segment(SegmentEntry::new(
+            Bytes::from(vec![0x22u8; 100]),
+            SegmentSeq::new(1),
+            Duration::from_secs(2),
+            Timestamp::ZERO,
+            transmux::SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .expect("publish");
+    second
+        .poll(
+            Timestamp::ZERO,
+            |_| None,
+            &[InitGeneration::new(SegmentSeq::new(0), init())],
+        )
+        .expect("record");
+    let mut archive = FsArchive::open(&root, &name(), ArchiveContainer::Fmp4);
+    let found = archive.find(SegmentSeq::new(1)).expect("archived");
+    assert_eq!(
+        archive.read(&found).expect("read"),
+        Bytes::from(vec![0x22u8; 100])
+    );
+    drop(second);
+    assert!(!refused(), "dropping the successor releases the lock");
+    cleanup(&root);
+}
