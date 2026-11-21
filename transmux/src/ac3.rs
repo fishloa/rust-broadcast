@@ -1648,7 +1648,10 @@ pub(crate) mod tests {
         assert!(!eac3_frame_crc_ok(&AC3_SYNCWORD.to_be_bytes()));
         let frame = first_real_eac3_frame();
         assert_eq!(&frame[..AC3_SYNCWORD_BYTES], &AC3_SYNCWORD.to_be_bytes());
-        assert!(eac3_frame_crc_ok(&frame), "the capture's first frame verifies");
+        assert!(
+            eac3_frame_crc_ok(&frame),
+            "the capture's first frame verifies"
+        );
     }
 
     /// The sample-rate, half-rate, block-count and channel-count lookup tables
@@ -2723,7 +2726,10 @@ pub(crate) mod tests {
     #[test]
     fn dec3_data_rate_counts_the_plus_one_word() {
         let f = Ec3SyncframeInfo::with_fields(0, 0, 766, 0, 6, 7, true, 16, 48000, 48, None, 0);
-        assert_eq!(Ec3SpecificBox::from_syncframes(&[f]).unwrap().data_rate, 384);
+        assert_eq!(
+            Ec3SpecificBox::from_syncframes(&[f]).unwrap().data_rate,
+            384
+        );
     }
 
     /// §F.6.2.13: `chan_loc` collects the additional locations of *every*

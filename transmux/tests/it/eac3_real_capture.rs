@@ -104,7 +104,11 @@ fn a_truncated_last_eac3_frame_is_dropped() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. }))
         .expect("an E-AC-3 track");
-    let es: Vec<u8> = track.samples.iter().flat_map(|s| s.data.iter().copied()).collect();
+    let es: Vec<u8> = track
+        .samples
+        .iter()
+        .flat_map(|s| s.data.iter().copied())
+        .collect();
     let whole = split_eac3_syncframes(&es);
     let ranges = split_eac3_syncframe_ranges(&es);
     assert_eq!(whole.len(), 58);

@@ -95,12 +95,7 @@ fn a_false_sync_is_skipped_only_when_resyncing() {
     let first_two = &clean[..2];
     // fscod 0b11 is reserved (Table 4.1), so this header declares no length.
     let false_sync = [0x0B, 0x77, 0xFF, 0xFF, 0xFF, 0xFF];
-    let payload = [
-        &es[..first_two[1].1],
-        &false_sync,
-        &es[first_two[1].1..],
-    ]
-    .concat();
+    let payload = [&es[..first_two[1].1], &false_sync, &es[first_two[1].1..]].concat();
 
     assert_eq!(
         split_ac3_syncframe_ranges(&payload, false),
