@@ -786,4 +786,104 @@ mod playout_tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
     }
+
+    /// The cap is inclusive: a file exactly `max_file_bytes` long is a valid
+    /// playout asset, and one byte over is refused with its real size.
+    #[tokio::test]
+    async fn a_file_exactly_at_the_size_cap_is_accepted_and_one_byte_over_is_refused() {
+        let path = test_fixtures::path("ts/h264-aac.ts");
+        let len = std::fs::metadata(&path).expect("fixture metadata").len() as usize;
+        assert!(len > 0);
+
+        let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
+        let accepted = FileReader::new(
+            FileReaderConfig::new(path.clone(), false, trunk)
+                .with_pace(false)
+                .with_max_retries(0)
+                .with_max_file_bytes(len),
+        )
+        .run()
+        .await;
+        assert!(
+            accepted.is_ok(),
+            "a file exactly at the cap must load, got {accepted:?}"
+        );
+
+        let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
+        let refused = FileReader::new(
+            FileReaderConfig::new(path, false, trunk)
+                .with_pace(false)
+                .with_max_retries(0)
+                .with_max_file_bytes(len - 1),
+        )
+        .run()
+        .await;
+        match refused {
+            Err(FileReaderError::FileTooLarge { size, max, .. }) => {
+                assert_eq!(size as usize, len, "reports the file's real size");
+                assert_eq!(max, len - 1, "reports the configured cap");
+            }
+            other => panic!("one byte over the cap must be FileTooLarge, got {other:?}"),
+        }
+    }
+
+    /// Pacing sleeps by the sample's own delta from the file's start, so a
+    /// 0 s, 1 s and 3 s sample play at 0 s, 1 s and 3 s from the wall-clock
+    /// start (the third sample's own two-second gap), not all at once and not
+    /// at a duration derived from the absolute presentation time.
+    #[tokio::test(start_paused = true)]
+    async fn pacing_sleeps_by_the_sample_delta_from_the_file_start() {
+        let item = |due_seconds: f64| PublishItem {
+            track_ref: 0,
+            sample: Sample::new(vec![0xAB], None, None, None, false).expect("valid sample"),
+            due_seconds,
+            decode_seconds: due_seconds,
+        };
+        let order = vec![item(10.0), item(11.0), item(13.0)];
+        let specs = vec![media_plane::ts_session::test_support::track_spec(
+            transmux::TrackId::new(1),
+        )];
+        let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
+        let writer = trunk.writer().expect("a fresh trunk has a writer");
+        let begin = tokio::time::Instant::now();
+        let start: std::time::Instant = begin.into();
+        publish_one_pass(&writer, &specs, &order, &[0], Some(start), 10.0)
+            .await
+            .expect("pass");
+        let elapsed = tokio::time::Instant::now() - begin;
+        assert!(
+            elapsed >= std::time::Duration::from_millis(3_900)
+                && elapsed <= std::time::Duration::from_millis(4_100),
+            "the 0/1/3 s samples must sleep 0 + 1 + 3 s, got {elapsed:?}"
+        );
+    }
+
+    /// The route drive loop sleeps until `next_due` rather than polling: a
+    /// looping paced file never idles the runtime, so a bounded timeout still
+    /// fires only if every future due instant is slept on.
+    #[tokio::test(start_paused = true)]
+    async fn the_file_route_sleeps_until_the_next_sample_is_due() {
+        let path = test_fixtures::path("ts/h264-aac.ts");
+        let route = std::sync::Arc::new(crate::route::RouteHandle::new(
+            crate::route::RouteConfig::default()
+                .with_target_duration(std::time::Duration::from_secs(1))
+                .with_part_target(std::time::Duration::from_millis(250))
+                .with_window_segments(8),
+        ));
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            run_file_source(
+                path.to_str().expect("utf8 fixture path"),
+                true,
+                8,
+                media_plane::ts_session::test_support::handshake(),
+                &route,
+            ),
+        )
+        .await;
+        assert!(
+            outcome.is_err(),
+            "a looping paced route sleeps between samples instead of spinning"
+        );
+    }
 }

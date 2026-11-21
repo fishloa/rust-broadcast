@@ -125,6 +125,47 @@ async fn a_body_over_64_kib_is_rejected_413() {
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
+/// The cap is exactly 64 KiB: one byte over is rejected, and a legitimate
+/// multi-candidate offer well below it is accepted.
+#[tokio::test]
+async fn a_body_of_65537_is_rejected_413_even_with_an_empty_body() {
+    let (app, _token) = multimux::test_seam::whep::serve_whep_for_test(None).await;
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/whep")
+                .header("content-type", "application/sdp")
+                .header("content-length", "65537")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn a_valid_16_kib_offer_is_accepted_201() {
+    let (app, _token) = multimux::test_seam::whep::serve_whep_for_test_with_trunk(None).await;
+    let mut body = OFFER.to_string();
+    body.push_str(&format!("a=x-pad:{}\r\n", "x".repeat(16 * 1024)));
+    let len = body.len();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/whep")
+                .header("content-type", "application/sdp")
+                .header("content-length", len)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
 fn basic_verifier(username: &str, password: &str) -> std::sync::Arc<broadcast_auth::Verifier> {
     std::sync::Arc::new(
         broadcast_auth::Verifier::new(
