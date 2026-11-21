@@ -1139,6 +1139,134 @@ async fn reload_leaves_unchanged_route_running_restarts_changed_route() {
     let _ = std::fs::remove_file(&config_path);
 }
 
+/// A reload that fails after it has already stopped the changed routes starts
+/// them again from their old configuration: the registry lists them and their
+/// media is served, exactly as before the attempt.
+#[tokio::test]
+async fn a_failed_reload_restarts_the_routes_it_stopped() {
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
+    let config_path = std::env::temp_dir().join(format!(
+        "multimux-admin-api-test-failed-reload-{}-{}.json",
+        std::process::id(),
+        admin_addr.port()
+    ));
+    let initial = admin_config(
+        media_addr,
+        admin_addr,
+        vec![
+            instant_route("keep"),
+            unreachable_rtsp_route("break-me", "before"),
+        ],
+    );
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&initial_as_json(&initial)).expect("serialize config"),
+    )
+    .expect("write initial config");
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::from_json_file(config_path.clone())
+                .unwrap()
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
+    wait_for_port(admin_addr).await;
+    let client = crate::support::http::client();
+    wait_until_live(&client, media_addr, "keep").await;
+    let keep_before = admin_get(&client, admin_addr, "/admin/routes/keep")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("keep status before the failed reload");
+
+    // Both routes change, and the second now names an input scheme this
+    // server does not have: it is stopped with the first, but cannot start.
+    let mut changed_keep = instant_route("keep");
+    changed_keep.input = InputSpec::Custom {
+        type_tag: "instant".to_string(),
+        params: serde_json::json!({ "changed": true }),
+    };
+    let mut broken = unreachable_rtsp_route("break-me", "after");
+    broken.input = InputSpec::Custom {
+        type_tag: "no-such-input-scheme".to_string(),
+        params: serde_json::Value::Null,
+    };
+    let updated = admin_config(media_addr, admin_addr, vec![changed_keep, broken]);
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&initial_as_json(&updated)).expect("serialize config"),
+    )
+    .expect("rewrite config");
+
+    let reload = admin_json(
+        &client,
+        admin_addr,
+        reqwest::Method::POST,
+        "/admin/reload",
+        Some(ADMIN_TOKEN),
+        None,
+    )
+    .await;
+    assert!(
+        !reload.status().is_success(),
+        "a route that cannot be started must fail the reload, got {}",
+        reload.status()
+    );
+
+    let keep_after = admin_get(&client, admin_addr, "/admin/routes/keep").await;
+    assert_eq!(
+        keep_after.status(),
+        reqwest::StatusCode::OK,
+        "a stopped route was not started again after the failed reload"
+    );
+    let keep_after = keep_after
+        .json::<serde_json::Value>()
+        .await
+        .expect("keep status after the failed reload");
+    assert_ne!(
+        created_at_nanos(&keep_before),
+        created_at_nanos(&keep_after),
+        "the route must run again as a fresh runtime"
+    );
+    let broken_after = admin_get(&client, admin_addr, "/admin/routes/break-me").await;
+    assert_eq!(
+        broken_after.status(),
+        reqwest::StatusCode::OK,
+        "every stopped route comes back, not only the first"
+    );
+    wait_until_live(&client, media_addr, "keep").await;
+
+    server.abort();
+    let _ = std::fs::remove_file(&config_path);
+}
+
+/// Re-publishing a program with the very same `Trunk` is an idempotent
+/// no-op, not a second publisher: the repeated call must not take the
+/// rejection path (which logs the rival-publisher warning).
+#[test]
+fn republishing_the_same_trunk_is_not_a_rival_publisher() {
+    use crate::support::shared_it::{
+        captured_events, clear_captured_events, install_tracing_capture, tracing_lock,
+    };
+    use media_plane::trunk::Trunk;
+
+    let _guard = tracing_lock();
+    install_tracing_capture();
+    let route = RouteHandle::new(multimux::route::RouteConfig::default());
+    let trunk = Arc::new(Trunk::new(TrunkConfig::default()));
+    route.publish_program(ProgramId(0), Arc::clone(&trunk));
+    clear_captured_events();
+    route.publish_program(ProgramId(0), Arc::clone(&trunk));
+    let events = captured_events();
+    assert!(
+        !events.contains("second concurrent publisher"),
+        "the same Trunk must not be treated as a rival publisher: {events}"
+    );
+}
+
 /// A reload that restarts a changed route never leaves its viewers without an answer: while it
 /// runs, a loop requesting the route's media playlist and a viewer following it with LL-HLS
 /// blocking reloads (`_HLS_msn`/`_HLS_part`, parked on the old route when it is replaced) see

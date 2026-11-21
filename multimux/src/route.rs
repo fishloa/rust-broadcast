@@ -3317,6 +3317,61 @@ mod program_registry_tests {
         );
     }
 
+    /// The floor a replacement must continue above is the higher of what this
+    /// route's origin has shown (the open segment's number included) and what
+    /// its archive already held.
+    #[test]
+    fn media_sequence_floor_covers_the_archive_and_the_origin() {
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(4))
+                .with_window_segments(8),
+        )
+        .with_archive_floor(7);
+        assert_eq!(
+            route.media_sequence_floor(),
+            7,
+            "with no program yet, the archive floor is the only floor"
+        );
+        route.publish_program(ProgramId(1), test_trunk());
+        assert_eq!(
+            route.media_sequence_floor(),
+            8,
+            "a route with a program (and no segments) numbers from 1 above the floor"
+        );
+    }
+
+    /// Retiring a route fires the token every parked request waits on, so it
+    /// is woken and served again against the route now registered under the
+    /// name.
+    #[test]
+    fn retiring_a_route_cancels_its_retired_token() {
+        let route = RouteHandle::new(RouteConfig::default());
+        let token = route.retired_token();
+        assert!(!token.is_cancelled());
+        route.retire();
+        assert!(token.is_cancelled());
+        route.retire();
+        assert!(token.is_cancelled(), "retiring twice stays cancelled");
+    }
+
+    /// A second concurrent publisher — a different `Trunk` while the active
+    /// publisher still holds the program — is rejected: the route keeps
+    /// serving the connection it already admitted.
+    #[test]
+    fn a_rival_publisher_does_not_take_over_the_program() {
+        let route = RouteHandle::new(RouteConfig::default());
+        let first = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&first));
+        let rival = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&rival));
+        let serving = route.serving(ProgramId(1)).expect("program published");
+        assert!(
+            Arc::ptr_eq(&serving.trunk(), &first),
+            "the rival publisher took over a program already being received"
+        );
+    }
+
     /// A route that replaces another continues its numbering: its first program's media
     /// sequence number starts above the replaced route's next one, its epoch (DASH start number,
     /// media timeline start) carries on, and the replaced route's own numbering is untouched.

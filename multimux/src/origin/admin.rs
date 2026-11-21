@@ -1777,6 +1777,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The floor a replacement numbers above comes from the route's on-disk
+    /// DVR archive, not a guess: three archived segments mean floor 3, and a
+    /// route without DVR has floor 0 (nothing to continue above).
+    #[tokio::test]
+    async fn archive_floor_of_reads_the_archive_and_is_zero_without_dvr() {
+        use media_plane::ids::SegmentSeq;
+        use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
+
+        let root = std::env::temp_dir().join(format!(
+            "multimux-admin-archive-floor-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp dir");
+        let dvr = DvrConfig {
+            enabled: true,
+            archive_root: root.to_string_lossy().to_string(),
+            retention_periods: 10,
+            retention_bytes: 0,
+            period_duration_secs: 3600,
+            overrun: crate::dvr::ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
+        };
+        let trunk = Trunk::new(TrunkConfig::default());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder =
+            crate::dvr::DvrRecorder::new("cam".to_string(), dvr.clone(), ".m4s", &trunk)
+                .expect("recorder");
+        let init = b"ARCHIVE_INIT";
+        recorder.poll_and_persist(Some(init)).expect("poll init");
+        for (seq, byte) in [(1u32, 0xAAu8), (2, 0xBB), (3, 0xCC)] {
+            writer
+                .publish_segment(SegmentEntry::new(
+                    bytes::Bytes::from(vec![byte; 24]),
+                    SegmentSeq::new(seq),
+                    std::time::Duration::from_secs(3),
+                    broadcast_common::Timestamp::from_nanos(u64::from(seq) * 3_000_000_000),
+                    transmux::SegmentMeta {
+                        discontinuous: false,
+                    },
+                ))
+                .expect("publish");
+        }
+        recorder.poll_and_persist(Some(init)).expect("persist");
+        drop(recorder);
+
+        let mut route = rtsp_route("cam", "rtsp://host/cam");
+        route.dvr = dvr;
+        assert_eq!(archive_floor_of(&route).await.expect("floor"), 3);
+
+        let plain = rtsp_route("cam", "rtsp://host/cam");
+        assert_eq!(archive_floor_of(&plain).await.expect("floor"), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// Removing a route releases its catch-up index cache, whose entries hold
     /// whole parsed segment vectors (audit 20 finding 24). MUTATION VERIFIED:
     /// a no-op `drop_route_cache` leaves the entry resident and this fails.
