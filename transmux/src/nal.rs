@@ -1441,6 +1441,16 @@ mod tests {
     }
 
     #[test]
+    fn sei_messages_reads_a_leading_0x80_as_payload_type_not_trailing_bits() {
+        // payloadType 128 (0x80) size 2, then type 5 size 1, then trailing bits.
+        let body = [0x80u8, 0x02, 0xAA, 0xBB, 0x05, 0x01, 0xCC, 0x80];
+        assert_eq!(
+            sei_messages(&body),
+            alloc::vec![(128, alloc::vec![0xAA, 0xBB]), (5, alloc::vec![0xCC])]
+        );
+    }
+
+    #[test]
     fn sei_parse_path_unescapes_like_sample_aes_for_the_issue_inputs() {
         // Audit #2456: the SEI walk (`sei_messages` -> `EbspBytes` ->
         // `rbsp::unescape`) and Sample-AES must drop the same `03`.
