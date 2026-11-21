@@ -363,7 +363,7 @@ impl RouteRegistry {
     /// hold the route's name lock, not [`Self::mutation_lock`]. A failed scan is
     /// an error: numbering from `0` over an archive that may hold higher
     /// sequences would collide with archived segments.
-    async fn archive_floor(&self, route: &Route) -> crate::Result<u32> {
+    async fn archive_floor(&self, route: &Route) -> crate::Result<crate::dvr::ArchiveFloors> {
         #[cfg(test)]
         self.hooks.wait_floor_gate(&route.name).await;
         let floor = archive_floor_of(route).await?;
@@ -442,13 +442,13 @@ impl RouteRegistry {
     /// rebuild the router — callers do that once they decide to keep the
     /// result.
     ///
-    /// `archive_floor` is the highest sequence number the route's DVR archive
-    /// already holds (`crate::dvr::archive_seq_floor`, computed by the async
-    /// caller since it reads the archive from disk).
+    /// `archive_floors` is the highest sequence number each of the route's DVR
+    /// program archives already holds (`crate::dvr::archive_seq_floors`,
+    /// computed by the async caller since it reads the archives from disk).
     fn spawn_route(
         &self,
         route: &Route,
-        archive_floor: u32,
+        archive_floors: crate::dvr::ArchiveFloors,
         continues: Option<&RouteHandle>,
     ) -> crate::Result<RouteRuntime> {
         crate::config::check_route_paths(&self.ctx.allowed_roots, route)?;
@@ -492,7 +492,7 @@ impl RouteRegistry {
         // admin-API (`POST /admin/routes`/reload) equivalent.
         let store = Arc::new(
             RouteHandle::new(route_config)
-                .with_archive_floor(archive_floor)
+                .with_archive_floors(archive_floors)
                 .with_name(route.name.clone())
                 .with_dvr(route.dvr.clone()),
         );
@@ -779,11 +779,10 @@ impl RouteRegistry {
         for (route, old_store) in changed_routes.iter().zip(&retired_stores) {
             // Above what the old runtime showed as well as above the archive, so a client's
             // `_HLS_msn` for this route keeps its meaning on the replacement.
-            floors.push(
-                self.archive_floor(route)
-                    .await?
-                    .max(old_store.media_sequence_floor()),
-            );
+            floors.push(crate::dvr::merge_floors(
+                self.archive_floor(route).await?,
+                &old_store.media_sequence_floors(),
+            ));
         }
 
         // Build (and spawn) every to-add/to-restart route. Each built runtime is held in a
@@ -944,7 +943,7 @@ impl RouteRegistry {
     async fn restore_retired(&self, routes: &[Route], stores: &[Arc<RouteHandle>]) {
         for (route, store) in routes.iter().zip(stores) {
             let floor = match archive_floor_of(route).await {
-                Ok(floor) => floor.max(store.media_sequence_floor()),
+                Ok(floors) => crate::dvr::merge_floors(floors, &store.media_sequence_floors()),
                 Err(e) => {
                     tracing::error!(
                         route = %route.name,
@@ -1606,22 +1605,19 @@ pub(crate) async fn serve_with_admin(
     Ok(())
 }
 
-/// The highest sequence number `route`'s DVR archive already holds, or `0`
-/// when DVR is off (see `crate::dvr::archive_seq_floor`).
+/// The highest sequence number each of `route`'s DVR program archives already
+/// holds, or none when DVR is off (see `crate::dvr::archive_seq_floors`).
 ///
 /// # Errors
 /// [`crate::MultimuxError::ArchiveScan`] when the archive scan could not run,
 /// [`crate::MultimuxError::ConfigInvalid`] for a route name that cannot name
 /// an archive.
-pub(super) async fn archive_floor_of(route: &Route) -> crate::Result<u32> {
+pub(super) async fn archive_floor_of(route: &Route) -> crate::Result<crate::dvr::ArchiveFloors> {
     if route.dvr.enabled {
-        Ok(
-            crate::dvr::archive_seq_floor(&route.dvr, &route.name, super::route_container(route))
-                .await?
-                .value(),
-        )
+        crate::dvr::archive_seq_floors(&route.dvr, &route.name, super::route_container(route))
+            .await
     } else {
-        Ok(0)
+        Ok(crate::dvr::ArchiveFloors::new())
     }
 }
 
@@ -1710,6 +1706,13 @@ mod tests {
             closed.load(std::sync::atomic::Ordering::SeqCst),
             "the push task must run its close, not be aborted"
         );
+    }
+
+    fn floors(entries: &[(u32, u32)]) -> crate::dvr::ArchiveFloors {
+        entries
+            .iter()
+            .map(|&(program, floor)| (media_plane::ProgramId(program), floor))
+            .collect()
     }
 
     fn rtsp_route(name: &str, url: &str) -> Route {
@@ -1804,10 +1807,10 @@ mod tests {
 
         let mut route = rtsp_route("cam", "rtsp://host/cam");
         route.dvr = dvr;
-        assert_eq!(archive_floor_of(&route).await.expect("floor"), 3);
+        assert_eq!(archive_floor_of(&route).await.expect("floor"), floors(&[(0, 3)]));
 
         let plain = rtsp_route("cam", "rtsp://host/cam");
-        assert_eq!(archive_floor_of(&plain).await.expect("floor"), 0);
+        assert_eq!(archive_floor_of(&plain).await.expect("floor"), floors(&[]));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1830,7 +1833,7 @@ mod tests {
             .with_retention_periods(10);
         let container = transmux::Container::Fmp4;
         crate::testutil::record_archive_run(&root, "cam", container, 0, &[(1, 1), (2, 2)]);
-        let floor = archive_floor_of(&route).await.expect("floor");
+        let floor = archive_floor_of(&route).await.expect("floor")[&crate::route::SPTS_PROGRAM_ID];
         assert_eq!(floor, 2);
         crate::testutil::record_archive_run(
             &root,
@@ -1844,7 +1847,7 @@ mod tests {
         assert!(scan.unreadable.is_empty());
         let seqs: Vec<u32> = scan.segments.iter().map(|s| s.seq.value()).collect();
         assert_eq!(seqs, [1, 2, 3, 4]);
-        assert_eq!(archive_floor_of(&route).await.expect("floor"), 4);
+        assert_eq!(archive_floor_of(&route).await.expect("floor"), floors(&[(0, 4)]));
 
         crate::testutil::record_archive_run(&root, "cam", container, 0, &[(1, 5)]);
         assert_eq!(

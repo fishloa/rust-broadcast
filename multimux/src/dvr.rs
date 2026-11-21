@@ -5,7 +5,19 @@
 //!
 //! # On-disk layout
 //!
-//! `<archive_root>/<route_name>/` holds one media file (`pN.m4s` or `pN.ts`)
+//! Every program of a route records into its own archive. The default
+//! program (the only one of a single-program route) records into
+//! `<archive_root>/<route_name>/`; every other program of a multi-program
+//! (MPTS) route records into the sibling `<archive_root>/<route_name>@<id>/`,
+//! `<id>` its program id in decimal (`news@2`). A route name never contains
+//! `@` (`crate::config::Route::validate_standalone`), so a program archive
+//! can never be another route's archive, and a route with DVR enabled is at
+//! most [`MAX_DVR_ROUTE_NAME_LEN`] bytes so every program's archive name is a
+//! valid [`ArchiveName`]. Each program archive has its own lock, its own
+//! sequence floor and its own retention: the route's `retention_periods` and
+//! `retention_bytes` apply to each program archive separately.
+//!
+//! An archive directory holds one media file (`pN.m4s` or `pN.ts`)
 //! and one HLS media playlist (`pN.m3u8`) per period: the playlist indexes the
 //! media file with `EXT-X-BYTERANGE`, carries the exact Trunk timing of each
 //! segment in a vendor tag, and marks programme boundaries with
@@ -17,7 +29,8 @@
 //!
 //! A new period starts when recording starts, when the open period has been
 //! open for `period_duration_secs`, when the fMP4 init changes, when the
-//! tracked service's EIT present event changes (`dvb_service_id`), when the
+//! tracked service's EIT present event changes (`dvb_service_id`; see
+//! [`DvrConfig::dvb_service_id`] for which service each program tracks), when the
 //! byte budget of `retention_bytes` would be exceeded, and on a sequence gap.
 //! The time-based period stays the hard cap even with `dvb_service_id` set,
 //! so an EPG that never signals a transition cannot produce an unbounded
@@ -52,18 +65,47 @@
 //! `SegmentEntry` values every other cursor reads, and runs on the blocking
 //! pool, never under a lock the live path needs.
 
+use std::collections::BTreeMap;
 use std::num::{NonZeroU64, NonZeroUsize};
-use std::path::Path;
 use std::time::Duration;
 
 use dvr_runtime::fs::FsArchive;
-use dvr_runtime::{ArchiveConfig, ArchiveContainer, ArchiveName, ConfigError, RetentionLimits};
-use media_plane::ids::SegmentSeq;
+use dvr_runtime::{
+    ArchiveConfig, ArchiveContainer, ArchiveName, ConfigError, MAX_ARCHIVE_NAME_LEN,
+    RetentionLimits,
+};
+use media_plane::ProgramId;
 use media_plane::trunk::ArchiveOverrun;
 use serde::Deserialize;
 use transmux::Container;
 
 use crate::error::{ConfigField, MultimuxError};
+use crate::route::SPTS_PROGRAM_ID;
+
+/// Separates the route name from the program id in the archive name of a
+/// non-default program (`news@2`). Never valid in a route name.
+pub(crate) const PROGRAM_ARCHIVE_SEPARATOR: char = '@';
+
+/// Decimal digits of the largest program id.
+const PROGRAM_ID_MAX_DIGITS: usize = (u32::MAX.ilog10() + 1) as usize;
+
+/// The longest name of a route with DVR enabled: every program archive name
+/// (`<route>@<id>`) must still be a valid [`ArchiveName`].
+pub const MAX_DVR_ROUTE_NAME_LEN: usize =
+    MAX_ARCHIVE_NAME_LEN - PROGRAM_ARCHIVE_SEPARATOR.len_utf8() - PROGRAM_ID_MAX_DIGITS;
+
+/// The archived sequence floor of each program archive of a route, keyed by
+/// program; a program without an archive is absent.
+pub(crate) type ArchiveFloors = BTreeMap<ProgramId, u32>;
+
+/// `a` raised, per program, to `b`.
+pub(crate) fn merge_floors(mut a: ArchiveFloors, b: &ArchiveFloors) -> ArchiveFloors {
+    for (program, floor) in b {
+        let entry = a.entry(*program).or_default();
+        *entry = (*entry).max(*floor);
+    }
+    a
+}
 
 /// Default period duration in seconds: **3 hours** (10800 s).
 ///
@@ -107,6 +149,12 @@ pub struct DvrConfig {
     /// boundaries: a new present event rolls the period and is recorded as
     /// an `EXT-X-DATERANGE`. `None` (default) disables programme-aligned
     /// rolling.
+    ///
+    /// On a multi-program route this service is tracked by the default
+    /// program; every other program tracks the service whose `service_id`
+    /// equals its program id (ETSI EN 300 468 §5.2.3: a service's
+    /// `service_id` is its MPEG-2 `program_number`), and a program id above
+    /// `u16::MAX` tracks none.
     #[serde(default)]
     pub dvb_service_id: Option<u16>,
 }
@@ -268,6 +316,20 @@ impl DvrConfig {
         Ok(config)
     }
 
+    /// This config as it applies to `program`'s archive: the tracked
+    /// service of a non-default program is its own (see
+    /// [`Self::dvb_service_id`]).
+    #[must_use]
+    pub(crate) fn for_program(&self, program: ProgramId) -> DvrConfig {
+        let mut config = self.clone();
+        if program != SPTS_PROGRAM_ID {
+            config.dvb_service_id = self
+                .dvb_service_id
+                .and_then(|_| u16::try_from(program.0).ok());
+        }
+        config
+    }
+
     fn retention(&self) -> RetentionLimits {
         let mut retention = RetentionLimits::new();
         if let Some(periods) = NonZeroUsize::new(self.retention_periods) {
@@ -317,6 +379,38 @@ pub(crate) fn archive_name(route_name: &str) -> Result<ArchiveName, MultimuxErro
     ArchiveName::new(route_name).map_err(config_error)
 }
 
+/// The archive name of `program` on route `route_name`: the route's own for
+/// the default program, `<route_name>@<id>` for every other (see
+/// [the module docs](self#on-disk-layout)).
+///
+/// # Errors
+///
+/// As [`archive_name`].
+pub(crate) fn program_archive_name(
+    route_name: &str,
+    program: ProgramId,
+) -> Result<ArchiveName, MultimuxError> {
+    if program == SPTS_PROGRAM_ID {
+        return archive_name(route_name);
+    }
+    archive_name(&format!(
+        "{route_name}{PROGRAM_ARCHIVE_SEPARATOR}{}",
+        program.0
+    ))
+}
+
+/// The program whose archive of route `route_name` is the directory
+/// `dir_name`, if it is a non-default program's (the exact inverse of
+/// [`program_archive_name`]).
+fn program_of_archive(route_name: &str, dir_name: &str) -> Option<ProgramId> {
+    let digits = dir_name
+        .strip_prefix(route_name)?
+        .strip_prefix(PROGRAM_ARCHIVE_SEPARATOR)?;
+    let id: u32 = digits.parse().ok()?;
+    let program = ProgramId(id);
+    (program != SPTS_PROGRAM_ID && id.to_string() == digits).then_some(program)
+}
+
 fn config_error(error: ConfigError) -> MultimuxError {
     let field = match error {
         ConfigError::EmptyName
@@ -333,10 +427,11 @@ fn config_error(error: ConfigError) -> MultimuxError {
     }
 }
 
-/// The highest sequence number the archive of `route_name` holds (`0` for an
-/// empty or missing archive), so a restarted route numbers its segments above
-/// everything already archived and [`FsArchive::scan`] never sees two periods
-/// claim one sequence number. Scanned on the blocking pool.
+/// The highest sequence number each program archive of `route_name` holds
+/// (the default program's always present, `0` for an empty or missing
+/// archive), so a restarted route numbers each program's segments above
+/// everything already in that program's archive and [`FsArchive::scan`] never
+/// sees two periods claim one sequence number. Scanned on the blocking pool.
 ///
 /// # Errors
 ///
@@ -344,23 +439,39 @@ fn config_error(error: ConfigError) -> MultimuxError {
 /// [`MultimuxError::ArchiveScan`] when the blocking scan did not run to
 /// completion: the caller must fail the route rather than number it from `0`
 /// over an archive that may hold higher sequences.
-pub(crate) async fn archive_seq_floor(
+pub(crate) async fn archive_seq_floors(
     config: &DvrConfig,
     route_name: &str,
     container: Container,
-) -> Result<SegmentSeq, MultimuxError> {
+) -> Result<ArchiveFloors, MultimuxError> {
     let name = archive_name(route_name)?;
-    let mut archive = FsArchive::open(
-        Path::new(&config.archive_root),
-        &name,
-        archive_container(container),
-    );
-    floor_from_scan(move || archive.seq_floor()).await
+    let root = std::path::PathBuf::from(&config.archive_root);
+    let route_name = route_name.to_owned();
+    let container = archive_container(container);
+    floor_from_scan(move || {
+        let floor_of =
+            |name: &ArchiveName| FsArchive::open(&root, name, container).seq_floor().value();
+        let mut floors = ArchiveFloors::new();
+        floors.insert(SPTS_PROGRAM_ID, floor_of(&name));
+        let programs = std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| program_of_archive(&route_name, entry.file_name().to_str()?));
+        for program in programs {
+            if let Ok(name) = program_archive_name(&route_name, program) {
+                floors.insert(program, floor_of(&name));
+            }
+        }
+        floors
+    })
+    .await
 }
 
-async fn floor_from_scan<F>(scan: F) -> Result<SegmentSeq, MultimuxError>
+async fn floor_from_scan<F, T>(scan: F) -> Result<T, MultimuxError>
 where
-    F: FnOnce() -> SegmentSeq + Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
 {
     tokio::task::spawn_blocking(scan)
         .await
@@ -370,6 +481,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use media_plane::ids::SegmentSeq;
 
     fn enabled() -> DvrConfig {
         DvrConfig::default()
@@ -390,7 +502,7 @@ mod tests {
     /// renumber from `0` and collide with archived segments.
     #[tokio::test]
     async fn a_failed_scan_is_an_error_not_a_zero_floor() {
-        let result = floor_from_scan(|| panic!("scan failed")).await;
+        let result = floor_from_scan(|| -> SegmentSeq { panic!("scan failed") }).await;
         assert!(matches!(result, Err(MultimuxError::ArchiveScan(_))));
     }
 

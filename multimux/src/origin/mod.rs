@@ -1543,7 +1543,7 @@ async fn serve_with_registry_impl(
         // ran outside this crate's own `with_dvr`-calling unit tests.
         let store = Arc::new(
             RouteHandle::new(route_config)
-                .with_archive_floor(archive_floor)
+                .with_archive_floors(archive_floor)
                 .with_name(route.name.clone())
                 .with_dvr(route.dvr.clone()),
         );

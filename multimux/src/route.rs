@@ -963,6 +963,7 @@ impl ProgramServing {
     /// generation and Period, a different one opens the next of each at this program's first
     /// segment (see [`PeriodCursor`]).
     fn new(
+        program: ProgramId,
         trunk: Arc<Trunk>,
         route: &RouteHandle,
         epoch: ProgramEpoch,
@@ -1072,8 +1073,9 @@ impl ProgramServing {
 
         let pending = dvr_config.filter(|c| c.enabled).and_then(|cfg| {
             PendingRecorder::new(
-                &cfg,
+                &cfg.for_program(program),
                 route_name,
+                program,
                 container,
                 target_duration,
                 media_sequence_offset,
@@ -1878,12 +1880,13 @@ impl PendingRecorder {
     fn new(
         config: &crate::dvr::DvrConfig,
         route_name: &str,
+        program: ProgramId,
         container: Container,
         target_duration: Duration,
         seq_offset: u64,
         trunk: &Arc<Trunk>,
     ) -> Option<Self> {
-        let described = crate::dvr::archive_name(route_name).and_then(|name| {
+        let described = crate::dvr::program_archive_name(route_name, program).and_then(|name| {
             Ok((
                 name,
                 config.to_archive_config(container, target_duration, seq_offset)?,
@@ -1902,6 +1905,7 @@ impl PendingRecorder {
             Err(e) => {
                 tracing::error!(
                     route = %route_name,
+                    ?program,
                     error = %e,
                     "DVR configuration rejected; recording disabled for this program"
                 );
@@ -2237,9 +2241,11 @@ impl RouteConfig {
 pub struct RouteHandle {
     /// This route's catch-up scan permits; built by the first catch-up request.
     catchup_scans: std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
-    /// This route's DVR archive reader and its parsed-playlist cache; built by
-    /// the first catch-up request and released with the route.
-    catchup_archive: std::sync::OnceLock<Option<Arc<Mutex<dvr_runtime::fs::FsArchive>>>>,
+    /// This route's DVR archive reader of each program and its parsed-playlist
+    /// cache; each built by the first catch-up request for its program and
+    /// released with the route. Bounded by the programs the route serves or
+    /// found archived (see [`Self::catchup_archive`]).
+    catchup_archives: Mutex<BTreeMap<ProgramId, Arc<Mutex<dvr_runtime::fs::FsArchive>>>>,
     /// See [`Self::with_max_concurrent_warms`].
     warms: Arc<tokio::sync::Semaphore>,
     /// Fires when this route is replaced or removed; see [`Self::retire`].
@@ -2315,11 +2321,11 @@ pub struct RouteHandle {
     /// Per-route DVR config — `None` when not configured, passed to every
     /// [`ProgramServing::new`] built by [`Self::publish_program`].
     dvr_config: Option<crate::dvr::DvrConfig>,
-    /// The highest sequence number the DVR archive already holds (see
-    /// [`Self::with_archive_floor`]); a new program's Media Sequence Numbers
-    /// start above it, so a process restart does not reuse numbers the
-    /// archive and any CDN already know for other media.
-    archive_floor: u32,
+    /// The highest sequence number each program's DVR archive already holds
+    /// (see [`Self::with_archive_floors`]); a program's Media Sequence
+    /// Numbers start above its own, so a process restart does not reuse
+    /// numbers the archive and any CDN already know for other media.
+    archive_floors: crate::dvr::ArchiveFloors,
     /// Where this route's live HLS playlists get their
     /// `#EXT-X-PROGRAM-DATE-TIME` values from (see
     /// [`Self::with_program_date_time`]). Defaults to
@@ -2395,7 +2401,7 @@ impl RouteHandle {
         } = config;
         RouteHandle {
             catchup_scans: std::sync::OnceLock::new(),
-            catchup_archive: std::sync::OnceLock::new(),
+            catchup_archives: Mutex::new(BTreeMap::new()),
             warms,
             retired: tokio_util::sync::CancellationToken::new(),
             health: Mutex::new(HealthState::Connecting),
@@ -2411,7 +2417,7 @@ impl RouteHandle {
             programs: RwLock::new(BTreeMap::new()),
             name: DEFAULT_ROUTE_NAME.to_string(),
             dvr_config: None,
-            archive_floor: 0,
+            archive_floors: crate::dvr::ArchiveFloors::new(),
             program_date_time,
             hold_cold_playlist,
             declared_bandwidth_bps,
@@ -2489,22 +2495,27 @@ impl RouteHandle {
         *self.predecessor.lock() = continuations;
     }
 
-    /// The sequence number a replacement of this route must number above: the highest media
-    /// sequence number any of its programs has shown (the open segment's included), and what the
-    /// DVR archive already held when it started. A replacement built with
-    /// [`Self::with_archive_floor`] of this value continues the numbering, so a client's
-    /// `_HLS_msn` for this route means the same segment on the replacement.
-    pub(crate) fn media_sequence_floor(&self) -> u32 {
-        let next = self
+    /// The sequence number each program of a replacement of this route must number above: the
+    /// highest media sequence number the program has shown (the open segment's included), and
+    /// what its DVR archive already held when the route started. A replacement built with
+    /// [`Self::with_archive_floors`] of these values continues the numbering, so a client's
+    /// `_HLS_msn` for a program means the same segment on the replacement.
+    pub(crate) fn media_sequence_floors(&self) -> crate::dvr::ArchiveFloors {
+        let shown: crate::dvr::ArchiveFloors = self
             .programs
             .read()
-            .values()
-            .map(|serving| serving.ll_hls.next_media_sequence().value())
-            .max()
-            .unwrap_or(0);
-        u32::try_from(next)
-            .unwrap_or(u32::MAX)
-            .max(self.archive_floor)
+            .iter()
+            .map(|(program, serving)| {
+                let next = serving.ll_hls.next_media_sequence().value();
+                (*program, u32::try_from(next).unwrap_or(u32::MAX))
+            })
+            .collect();
+        crate::dvr::merge_floors(shown, &self.archive_floors)
+    }
+
+    /// The archive floor of `program` (see [`Self::with_archive_floors`]).
+    fn archive_floor(&self, program: ProgramId) -> u32 {
+        self.archive_floors.get(&program).copied().unwrap_or(0)
     }
 
     /// Marks this route as replaced or removed: the admin media service drops every request it
@@ -2587,15 +2598,24 @@ impl RouteHandle {
         self
     }
 
-    /// Start every program's Media Sequence Numbers above `floor`, the highest
-    /// sequence number the route's DVR archive already holds (see
-    /// `crate::dvr::archive_seq_floor`). Without it a process restart
-    /// renumbers from `1` while the archive and any HTTP cache still hold the
-    /// previous process's `1..=N` for different media (audit r07-C5/C2, issue
-    /// #1083). A consuming builder like [`Self::with_dvr`].
+    /// Start the default program's Media Sequence Numbers above `floor`, the
+    /// highest sequence number its DVR archive already holds. A consuming
+    /// builder like [`Self::with_dvr`]; see [`Self::with_archive_floors`].
     #[must_use]
     pub fn with_archive_floor(mut self, floor: u32) -> Self {
-        self.archive_floor = floor;
+        self.archive_floors.insert(SPTS_PROGRAM_ID, floor);
+        self
+    }
+
+    /// Start each program's Media Sequence Numbers above its floor, the
+    /// highest sequence number that program's DVR archive already holds (see
+    /// `crate::dvr::archive_seq_floors`). Without it a process restart
+    /// renumbers from `1` while the archive and any HTTP cache still hold the
+    /// previous process's `1..=N` for different media (audit r07-C5/C2, issue
+    /// #1083). A program with no floor starts above `0`.
+    #[must_use]
+    pub(crate) fn with_archive_floors(mut self, floors: crate::dvr::ArchiveFloors) -> Self {
+        self.archive_floors = floors;
         self
     }
 
@@ -2768,21 +2788,34 @@ impl RouteHandle {
         self.dvr_config.as_ref().filter(|c| c.enabled)
     }
 
-    /// This route's DVR archive reader: `None` when DVR is off or the route
-    /// name cannot name an archive. One per route, so its cache is released
+    /// `program`'s DVR archive reader: `None` when DVR is off, the route
+    /// name cannot name an archive, or `program` is neither the default
+    /// program, one this route serves, nor one whose archive the route found
+    /// when it started. One per program and route, so its cache is released
     /// with the route.
-    pub(crate) fn catchup_archive(&self) -> Option<Arc<Mutex<dvr_runtime::fs::FsArchive>>> {
-        self.catchup_archive
-            .get_or_init(|| {
-                let dvr = self.dvr_config()?;
-                let name = crate::dvr::archive_name(&self.name).ok()?;
-                Some(Arc::new(Mutex::new(dvr_runtime::fs::FsArchive::open(
-                    std::path::Path::new(&dvr.archive_root),
-                    &name,
-                    crate::dvr::archive_container(self.container),
-                ))))
-            })
-            .clone()
+    pub(crate) fn catchup_archive(
+        &self,
+        program: ProgramId,
+    ) -> Option<Arc<Mutex<dvr_runtime::fs::FsArchive>>> {
+        let dvr = self.dvr_config()?;
+        let known = program == SPTS_PROGRAM_ID
+            || self.archive_floors.contains_key(&program)
+            || self.programs.read().contains_key(&program);
+        if !known {
+            return None;
+        }
+        let mut archives = self.catchup_archives.lock();
+        if let Some(archive) = archives.get(&program) {
+            return Some(Arc::clone(archive));
+        }
+        let name = crate::dvr::program_archive_name(&self.name, program).ok()?;
+        let archive = Arc::new(Mutex::new(dvr_runtime::fs::FsArchive::open(
+            std::path::Path::new(&dvr.archive_root),
+            &name,
+            crate::dvr::archive_container(self.container),
+        )));
+        archives.insert(program, Arc::clone(&archive));
+        Some(archive)
     }
 
     /// This route's configured advertised-window depth (see
@@ -2868,7 +2901,7 @@ impl RouteHandle {
             .map_or(0, |previous| previous.next_media_sequence)
             // ...and never at or below what the DVR archive already holds
             // (a previous process's numbers).
-            .max(u64::from(self.archive_floor));
+            .max(u64::from(self.archive_floor(program)));
         let previous_epoch = previous.as_ref().map(|previous| previous.epoch);
         let epoch = ProgramEpoch {
             seq_offset,
@@ -2884,7 +2917,7 @@ impl RouteHandle {
             presentation_origin: previous_epoch
                 .map_or_else(SystemTime::now, |e| e.presentation_origin),
         };
-        let serving = match ProgramServing::new(Arc::clone(&trunk), self, epoch, previous.as_ref())
+        let serving = match ProgramServing::new(program, Arc::clone(&trunk), self, epoch, previous.as_ref())
         {
             Ok(serving) => serving,
             Err(e) => {
@@ -3777,15 +3810,16 @@ mod program_registry_tests {
         )
         .with_archive_floor(7);
         assert_eq!(
-            route.media_sequence_floor(),
-            7,
+            route.media_sequence_floors(),
+            BTreeMap::from([(SPTS_PROGRAM_ID, 7)]),
             "with no program yet, the archive floor is the only floor"
         );
-        route.publish_program(ProgramId(1), test_trunk());
+        route.publish_program(SPTS_PROGRAM_ID, test_trunk());
+        route.publish_program(ProgramId(2), test_trunk());
         assert_eq!(
-            route.media_sequence_floor(),
-            8,
-            "a route with a program (and no segments) numbers from 1 above the floor"
+            route.media_sequence_floors(),
+            BTreeMap::from([(SPTS_PROGRAM_ID, 8), (ProgramId(2), 1)]),
+            "each program (with no segments) numbers from 1 above its own archive floor"
         );
     }
 
