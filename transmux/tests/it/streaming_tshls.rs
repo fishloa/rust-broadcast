@@ -10,11 +10,14 @@
 //! raw-passthrough implementation, since it requires correct keyframe-aligned
 //! cutting *and* correct non-anchor (audio) time-partitioning at each cut.
 
+use crate::hub_fixtures;
 use crate::hub_fixtures::dummy_avc_config;
+use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
 use transmux::media::Media;
+use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::{
     CodecConfig, Sample, StreamingTsHlsSegmenter, TrackSpec, TsDemux, TsHlsPackager, TsSegment,
 };
@@ -432,4 +435,169 @@ fn discontinuity_sequence_is_spec_correct_and_stable_across_window_rollover() {
     assert_eq!(extract_uris(&snapshots[1]), vec!["seg1.ts", "seg2.ts"]);
     assert_eq!(extract_uris(&snapshots[2]), vec!["seg2.ts", "seg3.ts"]);
     assert_eq!(extract_uris(&snapshots[3]), vec!["seg3.ts", "seg4.ts"]);
+}
+
+fn push_duration_only(seg: &mut StreamingTsHlsSegmenter, id: TrackId, duration: u32) {
+    seg.push(
+        id,
+        Sample::new(vec![0u8; 4], None, None, Some(duration), true).expect("valid timing"),
+    )
+    .expect("push");
+}
+
+fn first_sample_dts(segment: &TsSegment) -> i64 {
+    let ir = demux(&segment.bytes);
+    ir.tracks[0]
+        .samples
+        .first()
+        .expect("segment carries a sample")
+        .timing
+        .and_then(|t| t.dts())
+        .expect("sample carries a dts")
+}
+
+fn first_avc_sample_bytes() -> Vec<u8> {
+    let ir = demux(&load_ts());
+    ir.tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("fixture carries AVC video")
+        .samples[0]
+        .data
+        .to_vec()
+}
+
+fn push_avc(seg: &mut StreamingTsHlsSegmenter, id: TrackId, data: &[u8], duration: u32) {
+    seg.push(
+        id,
+        Sample::new(data.to_vec(), None, None, Some(duration), true).expect("valid timing"),
+    )
+    .expect("push");
+}
+
+fn audio_spec_48k() -> TrackSpec {
+    let mut spec = hub_fixtures::audio_track();
+    if let CodecConfig::Aac { esds, .. } = &mut spec.config
+        && let Some(dc) = esds.es_descriptor.decoder_config.as_mut()
+        && let Some(dsi) = dc.decoder_specific_info.as_mut()
+    {
+        dsi.data = vec![0x11, 0x90];
+    }
+    spec
+}
+
+#[test]
+fn set_start_time_moves_a_90_khz_anchor_to_ten_seconds() {
+    let spec = hub_fixtures::video_track();
+    let id = spec.track_id;
+    let data = first_avc_sample_bytes();
+    let mut seg = StreamingTsHlsSegmenter::new(vec![spec], 1, usize::MAX).expect("construct");
+    seg.set_start_time(core::time::Duration::from_secs(10));
+    push_avc(&mut seg, id, &data, 90_000);
+    push_avc(&mut seg, id, &data, 90_000);
+    let cut = seg.take_ready();
+    assert!(!cut.is_empty(), "the second sample must cut a segment");
+    assert_eq!(
+        first_sample_dts(&cut[0]),
+        909_000,
+        "the first PES dts must sit at 10 s in 90 kHz ticks plus the 9000-tick PCR lead"
+    );
+}
+
+#[test]
+fn set_start_time_moves_a_48_khz_audio_anchor_to_ten_seconds() {
+    let spec = audio_spec_48k();
+    let id = spec.track_id;
+    let mut seg = StreamingTsHlsSegmenter::new(vec![spec], 1, usize::MAX).expect("construct");
+    seg.set_start_time(core::time::Duration::from_secs(10));
+    push_duration_only(&mut seg, id, 48_000);
+    push_duration_only(&mut seg, id, 48_000);
+    let cut = seg.take_ready();
+    assert!(!cut.is_empty(), "the second sample must cut a segment");
+    assert_eq!(
+        first_sample_dts(&cut[0]),
+        484_800,
+        "10 s in 48 kHz ticks (480000) plus the 0.1 s PCR lead (4800)"
+    );
+}
+
+#[test]
+fn set_start_time_after_a_push_is_a_no_op() {
+    let spec = hub_fixtures::video_track();
+    let id = spec.track_id;
+    let data = first_avc_sample_bytes();
+    let mut seg = StreamingTsHlsSegmenter::new(vec![spec], 1, usize::MAX).expect("construct");
+    push_avc(&mut seg, id, &data, 90_000);
+    seg.set_start_time(core::time::Duration::from_secs(10));
+    push_avc(&mut seg, id, &data, 90_000);
+    let cut = seg.take_ready();
+    assert!(!cut.is_empty());
+    assert_eq!(
+        first_sample_dts(&cut[0]),
+        9_000,
+        "a start time set after buffering must not move the timeline (only the PCR lead)"
+    );
+}
+
+#[test]
+fn streaming_playlist_pins_extinf_version_and_target_duration() {
+    let spec = hub_fixtures::video_track();
+    let id = spec.track_id;
+    let mut seg = StreamingTsHlsSegmenter::new(vec![spec], 2, usize::MAX).expect("construct");
+    for i in 0..8 {
+        let sync = i == 0 || i == 5 || i == 7;
+        let sample =
+            Sample::new(vec![0u8; 4], None, None, Some(90_000), sync).expect("valid timing");
+        seg.push(id, sample).expect("push");
+    }
+    seg.finish().expect("finish");
+    let playlist = seg.playlist().expect("playlist");
+
+    assert!(playlist.contains("#EXT-X-VERSION:3"), "{playlist}");
+    assert!(playlist.contains("#EXT-X-TARGETDURATION:5"), "{playlist}");
+    assert!(playlist.contains("#EXTINF:5,"), "{playlist}");
+    assert!(playlist.contains("#EXTINF:2,"), "{playlist}");
+    assert!(playlist.contains("#EXTINF:1,"), "{playlist}");
+
+    let target: u32 = playlist
+        .lines()
+        .find_map(|l| l.strip_prefix("#EXT-X-TARGETDURATION:"))
+        .expect("target duration")
+        .trim()
+        .parse()
+        .unwrap();
+    for line in playlist.lines() {
+        if let Some(rest) = line.strip_prefix("#EXTINF:") {
+            let secs: f64 = rest.trim_end_matches(',').parse().unwrap();
+            assert!(
+                target as f64 >= secs.ceil(),
+                "TARGETDURATION {target} must cover EXTINF {secs}"
+            );
+        }
+    }
+}
+
+#[test]
+fn demand_saturates_at_the_pending_sample_bound() {
+    let spec = hub_fixtures::video_track();
+    let id = spec.track_id;
+    let mut seg = StreamingTsHlsSegmenter::new(vec![spec], 1, usize::MAX).expect("construct");
+    assert!(
+        !Stage::demand(&seg).saturated,
+        "a fresh segmenter is not full"
+    );
+
+    let sample = || Sample::new(vec![0u8; 4], None, None, Some(1), false).expect("valid timing");
+    for _ in 0..MAX_PENDING_SAMPLES_PER_TRACK - 1 {
+        Stage::feed(&mut seg, (id, sample()), Timestamp::ZERO).expect("feed");
+    }
+    assert!(
+        !Stage::demand(&seg).saturated,
+        "MAX-1 buffered samples are not full"
+    );
+    Stage::feed(&mut seg, (id, sample()), Timestamp::ZERO).expect("feed");
+    assert!(
+        Stage::demand(&seg).saturated,
+        "MAX buffered samples must report saturated"
+    );
 }

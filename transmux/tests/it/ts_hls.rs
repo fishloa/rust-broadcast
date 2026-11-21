@@ -528,3 +528,18 @@ fn batch_packaging_is_byte_identical_to_the_pre_w33_packager() {
         "segment 1 bytes must be unchanged"
     );
 }
+
+#[test]
+fn configured_media_sequence_is_rendered() {
+    let ir = demux(&load_ts());
+    let mut packager = TsHlsPackager {
+        msn: broadcast_hls::MediaSequence::new(42),
+        ..TsHlsPackager::default()
+    };
+    let out = packager.package(&ir).expect("package classic HLS");
+    assert!(
+        out.playlist.contains("#EXT-X-MEDIA-SEQUENCE:42"),
+        "a non-zero configured msn must reach the playlist: {}",
+        out.playlist
+    );
+}

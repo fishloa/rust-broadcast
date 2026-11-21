@@ -1975,4 +1975,78 @@ mod tests {
              (the pre-fix code re-walked every earlier sample per segment)"
         );
     }
+
+    fn avc_spec(track_id: u32) -> TrackSpec {
+        use crate::nalu_types::{AvcPps, AvcSps};
+        let record = crate::avc_config::AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 0x42,
+            profile_compatibility: 0,
+            level_indication: 0x1E,
+            length_size_minus_one: 3,
+            sps: vec![AvcSps(vec![0x67, 0x42, 0xc0, 0x1e, 0xd9])],
+            pps: vec![AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: vec![],
+        };
+        TrackSpec::new(
+            TrackId::new(track_id),
+            timescale(90_000),
+            CodecConfig::Avc {
+                config: crate::avc_config::AVCConfigurationBox::new(record),
+                width: 320,
+                height: 240,
+            },
+        )
+    }
+
+    fn timed_sample(dts: i64, duration: Option<u32>, sync: bool) -> Sample {
+        Sample::new(vec![0u8; 4], Some(dts), Some(dts), duration, sync).expect("valid timing")
+    }
+
+    #[test]
+    fn timeline_origin_is_the_anchor_first_decode_time() {
+        assert_eq!(timeline_origin_secs(Some(900_000), timescale(90_000)), 10.0);
+        assert_eq!(timeline_origin_secs(None, timescale(90_000)), 0.0);
+        assert_eq!(timeline_origin_secs(Some(-5), timescale(90_000)), 0.0);
+        let s = timed_sample(900_000, None, false);
+        assert_eq!(placement_secs(&s, 0, timescale(90_000), 10.0), 0.0);
+    }
+
+    #[test]
+    fn duration_less_dts_samples_partition_by_their_own_dts() {
+        let video = avc_spec(1);
+        let video_samples: Vec<Sample> = (0..4)
+            .map(|i| timed_sample(900_000 + i * 90_000, Some(90_000), true))
+            .collect();
+        let data = scte35_track(TrackId::new(2));
+        let data_samples: Vec<Sample> = [900_000, 945_000, 990_000, 1_035_000]
+            .iter()
+            .map(|&dts| timed_sample(dts, None, true))
+            .collect();
+        let tracks = vec![
+            Track::new(video, video_samples.clone()),
+            Track::new(data, data_samples),
+        ];
+        let anchor = choose_anchor(tracks.iter().map(|t| &t.spec.config)).expect("anchor");
+        assert_eq!(anchor, 0, "the AVC track is the anchor");
+        let boundaries = anchor_segment_boundaries(&video_samples, 90_000);
+        assert_eq!(boundaries, vec![0, 1, 2, 3]);
+        let segments = partition_tracks(&tracks, anchor, &boundaries);
+        let data_counts: Vec<usize> = segments.iter().map(|s| s.ranges[1].len()).collect();
+        assert_eq!(data_counts, vec![2, 2, 0, 0]);
+    }
+
+    #[test]
+    fn segment_duration_rounds_half_up_and_ceils_seconds() {
+        let (duration, ceil_secs) = segment_duration(5, timescale(90_000));
+        assert_eq!(duration, Duration::from_nanos(55_556));
+        assert_eq!(ceil_secs, 1);
+        assert_eq!(
+            segment_duration(90_000, timescale(90_000)),
+            (Duration::from_secs(1), 1)
+        );
+    }
 }
