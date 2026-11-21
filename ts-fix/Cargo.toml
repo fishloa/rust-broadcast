@@ -16,7 +16,7 @@ mpeg-ts   = { path = "../mpeg-ts",  version = "0.9.0", default-features = false 
 mpeg-pes  = { path = "../mpeg-pes", version = "0.9.0", default-features = false }
 dvb-si    = { path = "../dvb-si",   version = "15.1.0",   default-features = false }
 dvb-conformance = { path = "../dvb-conformance", version = "15.1.0", default-features = false }
-thiserror = { version = "2",        default-features = false }
+thiserror = { version = "2.0.21",        default-features = false }
 # Only the `ts-fix` binary uses clap; the library uses no `std` path at all.
 # Unconditional, it made `#![no_std]` unreachable — the crate root carried the
 # `cfg_attr` but no build could ever satisfy it, because clap dragged in

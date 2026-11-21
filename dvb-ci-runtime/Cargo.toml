@@ -25,9 +25,9 @@ dvb-ci     = { path = "../dvb-ci", version = "0.13.0" }
 dvb-si     = { path = "../dvb-si", version = "15.1.0", default-features = false }
 mpeg-ts    = { path = "../mpeg-ts", version = "0.9.0", default-features = false, features = ["std"] }
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
-thiserror  = { version = "2" }
+thiserror  = { version = "2.0.21" }
 libc       = { version = "0.2.191", optional = true } # `libc::Ioctl` (used in linux.rs) first appears in 0.2.108
-rustix     = { version = "1", default-features = false, features = ["std", "event", "fs"], optional = true } # `rustix::event::poll` replaces `libc::poll` (de-hand-roll SP6.7)
+rustix     = { version = "1.1.6", default-features = false, features = ["std", "event", "fs"], optional = true } # `rustix::event::poll` replaces `libc::poll` (de-hand-roll SP6.7)
 clap       = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]

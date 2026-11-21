@@ -17,12 +17,12 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-rtsp-types = "0.2"
+rtsp-types = "0.2.0"
 broadcast-auth = { path = "../broadcast-auth", version = "0.8.1" }
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false, features = ["url"] }
-thiserror  = "2"
-memchr     = "2"
-serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+thiserror  = "2.0.21"
+memchr     = "2.8.3"
+serde      = { version = "1.0.229", optional = true, default-features = false, features = ["derive", "alloc"] }
 # The session description `sdp::session_description` renders (RFC 4566 §5).
 # `sdp-types` 0.3 is `std`-only (it writes through `std::io::Write`), and this
 # crate is `std`, so it is a plain dependency.
@@ -30,23 +30,23 @@ sdp-types  = { workspace = true }
 # The publish flow derives its control URL with `Url::path_segments_mut`
 # (RFC 2326 Appendix C.1.1), so a trailing slash or an IPv6 host cannot
 # produce a malformed one.
-url        = "2"
+url        = "2.5.9"
 
 # `tokio` adapter (real sockets) — feature-gated; the sans-IO core needs none of it.
-tokio         = { version = "1", optional = true, features = ["net", "io-util", "rt", "macros", "time"] }
-tokio-rustls  = { version = "0.26", optional = true, default-features = false, features = ["ring", "tls12", "logging"] }
-rustls        = { version = "0.23", optional = true, default-features = false, features = ["ring", "std", "tls12"] }
-webpki-roots  = { version = "1.0", optional = true }
+tokio         = { version = "1.54.1", optional = true, features = ["net", "io-util", "rt", "macros", "time"] }
+tokio-rustls  = { version = "0.26.6", optional = true, default-features = false, features = ["ring", "tls12", "logging"] }
+rustls        = { version = "0.23.46", optional = true, default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots  = { version = "1.0.12", optional = true }
 # The OS random source every `Session` id is drawn from (`SessionIdSource`),
 # in the sans-IO core, so it is not feature-gated. Already in the lock.
-getrandom     = "0.4"
+getrandom     = "0.4.3"
 # Typed RTSP/auth header handling replaces hand-rolled scans (W1 SP1/SP2): the
 # stale= scan uses `parse_challenges`, Session/Transport go through rtsp-types.
-http-auth     = { version = "0.1", default-features = false }
+http-auth     = { version = "0.1.10", default-features = false }
 # Framed adapters (SP1.1). `codec` = Decoder/Encoder/Framed.
-tokio-util    = { version = "0.7", optional = true, default-features = false, features = ["codec"] }
+tokio-util    = { version = "0.7.20", optional = true, default-features = false, features = ["codec"] }
 futures-util  = { workspace = true, optional = true, features = ["sink", "std"] }
-bytes         = { version = "1", default-features = false, features = ["std"] }
+bytes         = { version = "1.12.2", default-features = false, features = ["std"] }
 
 [features]
 default = []
@@ -58,7 +58,7 @@ tokio = ["dep:tokio", "dep:tokio-util", "dep:futures-util"]
 tls   = ["tokio", "dep:tokio-rustls", "dep:rustls", "dep:webpki-roots"]
 
 [dev-dependencies]
-tokio     = { version = "1", features = ["net", "io-util", "rt", "rt-multi-thread", "macros", "time", "sync", "test-util"] }
+tokio     = { version = "1.54.1", features = ["net", "io-util", "rt", "rt-multi-thread", "macros", "time", "sync", "test-util"] }
 test-fixtures = { path = "../test-fixtures" }
 workspace-guards = { path = "../workspace-guards" }
 

@@ -30,8 +30,8 @@ container-probe   = { path = "../container-probe", version = "0.5.0", default-fe
 # The TS sync byte and packet size the classic TS-segment detection reads are
 # `mpeg_ts::ts`'s own constants, so HLS cannot drift from the demuxer's framing.
 mpeg-ts           = { path = "../mpeg-ts", version = "0.9.0", default-features = false }
-thiserror         = { version = "2", default-features = false }
-serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+thiserror         = { version = "2.0.21", default-features = false }
+serde             = { version = "1.0.229", optional = true, default-features = false, features = ["derive", "alloc"] }
 # Only pulled in by the `std` feature: `server::engine::HlsOrigin` renders
 # from a `media_plane::Trunk` (plan step 4) — the shared sample/segment/
 # event/live-part ring `Trunk` is itself `std`-only (see its own module doc),
@@ -40,11 +40,11 @@ serde             = { version = "1", optional = true, default-features = false, 
 # `Trunk::part_bytes`/`SegmentEntry::bytes` hand back `bytes::Bytes` this
 # crate's own types carry forward (e.g. `HlsBody::Resource`).
 media-plane       = { path = "../media-plane", version = "0.13.0", optional = true, default-features = false }
-bytes             = { version = "1", optional = true, default-features = false }
+bytes             = { version = "1.12.2", optional = true, default-features = false }
 # RFC 3986 reference resolution (SP3, defect 7) and RFC 3339 dates (SP5): both
 # work in `alloc`-only builds, so the no_std core keeps building for thumbv7em.
-url               = { version = "2", default-features = false }
-jiff              = { version = "0.2", default-features = false, features = ["alloc"] }
+url               = { version = "2.5.9", default-features = false }
+jiff              = { version = "0.2.46", default-features = false, features = ["alloc"] }
 
 [features]
 default = ["std"]
@@ -61,7 +61,7 @@ serde = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "url/serd
 [dev-dependencies]
 # Loopback mock HTTP servers (tokio is
 # already a dependency; these are features only).
-tokio             = { version = "1", features = ["net", "io-util", "rt", "macros", "time", "test-util"] }
+tokio             = { version = "1.54.1", features = ["net", "io-util", "rt", "macros", "time", "test-util"] }
 test-fixtures     = { path = "../test-fixtures" }
 test-harness     = { path = "../test-harness" }
 # `hls-runtime/tests/it/subtitle_renditions.rs` runs the independent `check_hls_playlist`

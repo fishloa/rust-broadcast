@@ -51,27 +51,27 @@ http    = { workspace = true, optional = true }
 # Default build stays lean — consumers of broadcast_common pay for nothing they aren't
 # already paying for downstream.
 # Hex codec backing `hex::hex_encode` (SP5). `alloc` only: the crate stays no_std.
-hex = { version = "0.4", default-features = false, features = ["alloc"] }
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 # ISO 639 code tables (alpha-2/alpha-3 B and T) for canonicalising language codes
 # to BCP 47. Pulled in only by the `lang` feature.
-iso-639 = { version = "0.1", optional = true, default-features = false }
+iso-639 = { version = "0.1.0", optional = true, default-features = false }
 # Base64 codec backing `base64::*`. `alloc` only; no_std compatible.
-base64 = { version = "0.23", optional = true, default-features = false, features = ["alloc"] }
+base64 = { version = "0.23.1", optional = true, default-features = false, features = ["alloc"] }
 # Date/time: the `jiff` feature (UTC time codecs, no_std) and the `http-date`
 # feature (RFC 9110 §5.6.7, std). `std` turns on `jiff/std`.
-jiff = { version = "0.2", default-features = false, optional = true }
+jiff = { version = "0.2.46", default-features = false, optional = true }
 # RFC 3986 reference resolution, behind the `url` feature (no_std + alloc).
-url = { version = "2", optional = true, default-features = false }
+url = { version = "2.5.9", optional = true, default-features = false }
 # Only pulled in by the `serde` feature — see its comment above. Configured
 # `no_std` (`derive` only, no `std`) so it composes with the no_std build.
 quick-xml = { workspace = true, optional = true }
-thiserror = { version = "2", optional = true }
-serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
-erased-serde = { version = "0.4", default-features = false, features = ["alloc"], optional = true }
+thiserror = { version = "2.0.21", optional = true }
+serde = { version = "1.0.229", optional = true, default-features = false, features = ["derive", "alloc"] }
+erased-serde = { version = "0.4.11", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
-jiff = { version = "0.2", default-features = false, features = ["std"] }
+jiff = { version = "0.2.46", default-features = false, features = ["std"] }
 
 [[bench]]
 name    = "crc32"

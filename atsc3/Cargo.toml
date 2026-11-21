@@ -12,11 +12,11 @@ keywords     = ["atsc3", "nextgentv", "lls", "slt", "broadcast"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
-roxmltree        = { version = "0.21", default-features = false }
-thiserror        = { version = "2", default-features = false }
+roxmltree        = { version = "0.21.2", default-features = false }
+thiserror        = { version = "2.0.21", default-features = false }
 
 [dependencies.flate2]
-version  = "1"
+version  = "1.1.11"
 optional = true
 
 [features]
@@ -27,7 +27,7 @@ std     = ["broadcast-common/std", "thiserror/std", "roxmltree/std", "dep:flate2
 serde   = ["dep:serde", "broadcast-common/serde"]
 
 [dependencies.serde]
-version          = "1"
+version          = "1.0.229"
 default-features = false
 features         = ["derive", "alloc"]
 optional         = true

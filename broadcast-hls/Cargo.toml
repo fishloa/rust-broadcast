@@ -23,9 +23,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 # the whole workspace resolves one `broadcast-common`, and 9.2 vs 9.3 is the
 # same caret bucket, so this is not an epoch change.
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
-thiserror  = { version = "2", default-features = false }
-serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
-jiff       = { version = "0.2", default-features = false, features = ["alloc"] }
+thiserror  = { version = "2.0.21", default-features = false }
+serde      = { version = "1.0.229", optional = true, default-features = false, features = ["derive", "alloc"] }
+jiff       = { version = "0.2.46", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

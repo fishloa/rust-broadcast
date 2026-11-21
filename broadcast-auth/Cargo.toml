@@ -25,42 +25,42 @@ ignored = ["md-5"]
 [dependencies]
 # The shared time-unit ratios (`units`).
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
-http-auth = { version = "0.1", default-features = false, features = ["basic-scheme", "digest-scheme"] }
-thiserror = "2"
+http-auth = { version = "0.1.10", default-features = false, features = ["basic-scheme", "digest-scheme"] }
+thiserror = "2.0.21"
 # Server-side (`server::Verifier`) challenge/verify: decoding a client's
 # Basic `Authorization` header (`base64`), recomputing a Digest response
 # (`md-5`) to verify against, and generating a fresh server nonce (`getrandom`).
-base64    = "0.23"
-md-5      = "0.11"
-getrandom = "0.4"
+base64    = "0.23.1"
+md-5      = "0.11.0"
+getrandom = "0.4.3"
 # Signed-URL scheme (`signed_url::SignedUrlKeySet`, issue #747): HMAC-SHA256
 # over the canonical `path\nexp\nip` string. `hmac`/`sha2` are already
 # also used by `srt-runtime`'s `crypto` feature (same RustCrypto generation);
 # `subtle::ConstantTimeEq` is the constant-time signature compare (see
 # the module docs — never a hand-rolled short-circuiting `==`).
-hmac      = { version = "0.13", default-features = false }
-sha2      = { version = "0.11", default-features = false }
-subtle    = { version = "2", default-features = false }
+hmac      = { version = "0.13.0", default-features = false }
+sha2      = { version = "0.11.1", default-features = false }
+subtle    = { version = "2.6.1", default-features = false }
 # Secrets (passwords, bearer tokens, HMAC keys, the nonce-signing key) are wiped
 # when their owner drops (issue #1142).
-zeroize   = { version = "1", default-features = false, features = ["alloc"] }
+zeroize   = { version = "1.9.2", default-features = false, features = ["alloc"] }
 # Typed `Authorization` (Basic/Bearer, token68 schemes `http-auth` cannot parse; SP2.4).
 headers   = { workspace = true }
 # HTTP method/status/header types on the request/response surfaces (`RequestContext`,
 # `AuthState::handle_unauthorized`, `AuthState::receive_cookies`).
 http      = { workspace = true }
 # Digest `username*` (RFC 7616 §3.4.4 / RFC 8187 ext-value) percent-decoding.
-percent-encoding = "2"
+percent-encoding = "2.3.2"
 # Digest `uri` substitution guard (`server::digest_uri_matches`, SP2.4): normalised-spelling check.
-url       = "2"
+url       = "2.5.9"
 # Digest nonce-count table (`server::DigestNonces`): least-recently-used order (SP2.4).
-lru       = "0.19"
+lru       = "0.19.1"
 # Signed-URL query encode/parse (`signed_url`, defect 6): `application/x-www-form-urlencoded`.
-form_urlencoded = "1"
+form_urlencoded = "1.2.3"
 # Digest nonce codec (SP5).
-hex       = { version = "0.4", default-features = false, features = ["alloc"] }
+hex       = { version = "0.4.3", default-features = false, features = ["alloc"] }
 # Cookie jar (moved from broadcast-client): RFC 6265 parsing/storage.
-cookie             = { version = "0.18", default-features = false }
+cookie             = { version = "0.18.2", default-features = false }
 cookie_store       = { version = "~0.22.1", default-features = false }
 
 [dev-dependencies]

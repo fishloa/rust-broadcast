@@ -61,7 +61,7 @@ dvb-si = { path = "../dvb-si", version = "15.1.0", default-features = false }
 # Test-only: `media_plane::ByteTap::record`/`TapItem::Data` are typed on
 # `bytes::Bytes`; tests build these directly rather than going through a real
 # ingest session.
-bytes = "1"
+bytes = "1.12.2"
 
 [[example]]
 name = "fixture_report"

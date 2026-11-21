@@ -40,8 +40,8 @@ broadcast-hls    = { path = "../broadcast-hls", version = "0.8.1", default-featu
 # TS diagnostics. Only the binary needs it, so it is behind `cli`.
 container-probe  = { path = "../container-probe", version = "0.5.0", optional = true, default-features = false }
 clap             = { workspace = true, optional = true, features = ["derive"] }
-serde            = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
-serde_json       = { version = "1.0", default-features = false, features = ["alloc"], optional = true }
+serde            = { version = "1.0.229", default-features = false, features = ["derive", "alloc"], optional = true }
+serde_json       = { version = "1.0.154", default-features = false, features = ["alloc"], optional = true }
 # Prometheus exposition for `watch` (de-hand-roll W1-P, SP2.3): the exporter's
 # recorder + `PrometheusHandle::render()` do the text format (HELP/TYPE,
 # label escaping). `default-features = false`: no listener, no push gateway —
@@ -52,11 +52,11 @@ metrics-exporter-prometheus = { workspace = true, optional = true }
 # `watch` metrics server (de-hand-roll W1-P, SP2.3 / SP1.6): hyper does the HTTP
 # framing; tokio-util owns the connection tasks and the shutdown token;
 # socket2 binds the UDP socket (`udp`).
-tokio                       = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros"], optional = true }
-tokio-util                  = { version = "0.7", default-features = false, features = ["rt"], optional = true }
-hyper                       = { version = "1", default-features = false, features = ["server", "http1"], optional = true }
-hyper-util                  = { version = "0.1", default-features = false, features = ["tokio"], optional = true }
-http-body-util              = { version = "0.1", optional = true }
+tokio                       = { version = "1.54.1", default-features = false, features = ["rt", "net", "time", "sync", "macros"], optional = true }
+tokio-util                  = { version = "0.7.20", default-features = false, features = ["rt"], optional = true }
+hyper                       = { version = "1.12.0", default-features = false, features = ["server", "http1"], optional = true }
+hyper-util                  = { version = "0.1.21", default-features = false, features = ["tokio"], optional = true }
+http-body-util              = { version = "0.1.5", optional = true }
 socket2                     = { workspace = true, optional = true, features = ["all"] }
 
 [features]
@@ -77,7 +77,7 @@ cli     = ["dep:clap", "dep:container-probe", "std", "net", "serde"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
+tokio = { version = "1.54.1", features = ["rt", "net", "time", "io-util", "macros"] }
 test-alloc = { path = "../test-alloc" }
 # `mediastreamvalidator_oracle.rs` (issue #870) renders real TS-HLS/CMAF-HLS
 # output through the `transmux` packager CLI core (`transmux::cli::run_bytes`)

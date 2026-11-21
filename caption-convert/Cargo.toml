@@ -21,12 +21,12 @@ broadcast-common = { path = "../broadcast-common", version = "13.1.0",   default
 timed-metadata    = { path = "../timed-metadata",   version = "0.11.0", default-features = false }
 cc-data           = { path = "../cc-data",          version = "0.10.0", default-features = false, optional = true }
 dvb-vbi           = { path = "../dvb-vbi",          version = "0.8.0", default-features = false, optional = true }
-thiserror         = { version = "2", default-features = false }
-serde             = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+thiserror         = { version = "2.0.21", default-features = false }
+serde             = { version = "1.0.229", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-hex = "0.4"
+hex = "0.4.3"
 transmux = { path = "../transmux", default-features = false }
 mpeg-ts = { path = "../mpeg-ts" }
 mpeg-pes = { path = "../mpeg-pes" }
