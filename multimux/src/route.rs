@@ -1049,9 +1049,16 @@ impl ProgramServing {
             previous.map_or(&[][..], |p| p.window.as_slice()),
         ));
 
-        let dvr = dvr_config
-            .filter(|c| c.enabled)
-            .and_then(|cfg| start_recorder(&cfg, route_name, container, target_duration, media_sequence_offset, &trunk));
+        let dvr = dvr_config.filter(|c| c.enabled).and_then(|cfg| {
+            start_recorder(
+                &cfg,
+                route_name,
+                container,
+                target_duration,
+                media_sequence_offset,
+                &trunk,
+            )
+        });
 
         Ok(Arc::new(ProgramServing {
             mpd_cache: Mutex::new(MpdCache::default()),
@@ -1116,12 +1123,19 @@ impl ProgramServing {
 
     fn set_init_from(&self, bytes: impl Into<Bytes>, first_seq: media_plane::ids::SegmentSeq) {
         let bytes = bytes.into();
-        if self.dvr_recording.load(Ordering::SeqCst)
-            && self.ll_hls.init_bytes().as_ref() != Some(&bytes)
-        {
-            self.init_log
-                .lock()
-                .push(dvr_runtime::InitGeneration::new(first_seq, bytes.clone()));
+        let current = self.ll_hls.init_bytes();
+        if self.dvr_recording.load(Ordering::SeqCst) && current.as_ref() != Some(&bytes) {
+            // The program's first init also covers any segment closed before
+            // it, as the archive cannot record an fMP4 segment without one.
+            let archived_from = if current.is_none() {
+                media_plane::ids::SegmentSeq::new(0)
+            } else {
+                first_seq
+            };
+            self.init_log.lock().push(dvr_runtime::InitGeneration::new(
+                archived_from,
+                bytes.clone(),
+            ));
         }
         self.ll_hls.set_init_from(bytes, first_seq);
     }
@@ -1153,8 +1167,8 @@ impl ProgramServing {
                 .unwrap_or(ended);
             (entry.timeline_position, started)
         });
-        let delta = i128::from(entry.timeline_position.as_nanos())
-            - i128::from(anchor_position.as_nanos());
+        let delta =
+            i128::from(entry.timeline_position.as_nanos()) - i128::from(anchor_position.as_nanos());
         let delta = jiff::SignedDuration::from_nanos(i64::try_from(delta).ok()?);
         anchor_wall.checked_add(delta).ok()
     }
@@ -1707,7 +1721,11 @@ fn log_writer_events(route: &str, recorder: &mut FsRecorder) {
                 tracing::debug!(route, period = period.value(), "DVR period closed");
             }
             WriterEvent::Evicted { period } => {
-                tracing::debug!(route, period = period.value(), "DVR period evicted by retention");
+                tracing::debug!(
+                    route,
+                    period = period.value(),
+                    "DVR period evicted by retention"
+                );
             }
             WriterEvent::EvictionFailed { period } => {
                 tracing::warn!(
@@ -4125,22 +4143,12 @@ mod program_registry_tests {
         count(root)
     }
 
-    /// An init change with no new closed segment is archived at once: `needs_poll` used to
-    /// look only at the latest closed segment, so the period roll waited for the next close.
+    /// An init change with no new closed segment still reaches the recorder
+    /// at once (`needs_poll` looks at the init too), and the next segment
+    /// opens a new period whose media file starts with the new init.
     #[tokio::test]
-    async fn a_dvr_init_change_without_a_new_segment_rolls_the_period_at_once() {
-        let tmp = std::env::temp_dir().join(format!("multimux-dvr-init-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let dvr_cfg = crate::dvr::DvrConfig {
-            enabled: true,
-            archive_root: tmp.to_string_lossy().to_string(),
-            retention_periods: 5,
-            retention_bytes: 0,
-            period_duration_secs: 3600,
-            overrun: crate::dvr::ArchiveOverrunSerde::Gap,
-            dvb_service_id: None,
-        };
+    async fn a_dvr_init_change_rolls_the_period_at_the_next_segment() {
+        let tmp = dvr_test_dir("init-roll");
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(std::time::Duration::from_secs(1))
@@ -4148,7 +4156,7 @@ mod program_registry_tests {
                 .with_window_segments(8),
         )
         .with_name("init-roll")
-        .with_dvr(dvr_cfg);
+        .with_dvr(dvr_config(&tmp, None));
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
         route
@@ -4159,11 +4167,42 @@ mod program_registry_tests {
         assert_eq!(archived_periods(&tmp), 1);
 
         route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        let latest = serving.trunk.last_closed_segment();
+        let new_init = [0xBB_u8; 4];
+        assert!(
+            serving
+                .dvr
+                .lock()
+                .as_ref()
+                .expect("recorder")
+                .needs_poll(latest, Some(&new_init)),
+            "an unarchived init alone asks for a poll"
+        );
         serving.poll_dvr().await;
-        assert_eq!(
-            archived_periods(&tmp),
-            2,
-            "the new init waited for the next segment to roll the period"
+        assert!(
+            !serving
+                .dvr
+                .lock()
+                .as_ref()
+                .expect("recorder")
+                .needs_poll(latest, Some(&new_init)),
+            "the poll handed the new init to the recorder"
+        );
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(2, Duration::from_secs(1)))
+            .unwrap();
+        serving.poll_dvr().await;
+        assert_eq!(archived_periods(&tmp), 2, "the new init rolled the period");
+        let dir = tmp.join("init-roll");
+        assert!(
+            std::fs::read(dir.join("p0.m4s"))
+                .unwrap()
+                .starts_with(&[0xAA; 4])
+        );
+        assert!(
+            std::fs::read(dir.join("p1.m4s"))
+                .unwrap()
+                .starts_with(&new_init)
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -4231,17 +4270,18 @@ mod program_registry_tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// The queued init generations are trimmed to the unpersisted tail after a
-    /// successful persist: the log must not grow without bound, and it must
-    /// keep exactly the newest generation for the next roll.
+    /// A poll hands every queued init generation to the recorder, so the log
+    /// drains to empty and never grows without bound; with nothing queued the
+    /// current init is what the recorder is offered.
     #[tokio::test]
-    async fn a_successful_dvr_persist_keeps_only_the_newest_queued_init() {
+    async fn a_dvr_persist_drains_the_queued_inits_it_handed_over() {
         let tmp = dvr_test_dir("init-drain");
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(Duration::from_secs(1))
                 .with_window_segments(8),
         )
+        .with_name("init-drain")
         .with_dvr(dvr_config(&tmp, None));
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -4249,17 +4289,18 @@ mod program_registry_tests {
             .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
             .expect("add_segment");
         let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        assert_eq!(serving.init_log_len(), 1);
         serving.poll_dvr().await;
         assert_eq!(archived_periods(&tmp), 1);
-        assert_eq!(serving.init_log_len(), 1);
+        assert_eq!(serving.init_log_len(), 0);
 
         route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
-        assert_eq!(serving.init_log_len(), 2);
+        assert_eq!(serving.init_log_len(), 1);
         serving.poll_dvr().await;
         assert_eq!(
             serving.init_log_len(),
-            1,
-            "the persisted generations must be drained, leaving the newest"
+            0,
+            "the handed-over generation is drained"
         );
         assert_eq!(
             serving
@@ -4267,7 +4308,22 @@ mod program_registry_tests {
                 .pop()
                 .map(|generation| generation.init),
             Some(Bytes::from(vec![0xBB; 4])),
-            "the newest init is the one still waiting"
+            "with nothing queued the current init is offered"
+        );
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(2, Duration::from_secs(1)))
+            .expect("add_segment");
+        serving.poll_dvr().await;
+        let scan = crate::testutil::scan_archive(&tmp, "init-drain", Container::Fmp4);
+        let periods: Vec<(u32, u32)> = scan
+            .segments
+            .iter()
+            .map(|s| (s.seq.value(), s.period.value()))
+            .collect();
+        assert_eq!(
+            periods,
+            [(1, 0), (2, 1)],
+            "segment 2 is archived under the new init"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -4503,7 +4559,8 @@ mod program_registry_tests {
                 .lock()
                 .as_ref()
                 .expect("recorder")
-                .current_programme()
+                .writer()
+                .programme()
                 .is_none()
         );
         route.feed_si_ts(&ts_bytes);
@@ -4513,11 +4570,125 @@ mod program_registry_tests {
                 .lock()
                 .as_ref()
                 .expect("recorder")
-                .current_programme()
-                .map(|programme| programme.event_id),
+                .writer()
+                .programme()
+                .map(|programme| programme.event.event_id),
             Some(0x7857)
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The genuine capture's following event re-signalled as running in a
+    /// version-bumped EIT p/f section, as TS packets: a real programme
+    /// transition for `service_id`.
+    fn eit_transition_packets(ts_bytes: &[u8], service_id: u16) -> Vec<u8> {
+        use broadcast_common::Serialize as WireSerialize;
+        use dvb_si::demux::{SiDemux, SiDemuxConfig};
+        use dvb_si::tables::eit::{EitKind, EitSection, PID as EIT_PID};
+        use dvb_si::tables::{AnyTableSection, RunningStatus, SectionVersion};
+
+        let mut demux = SiDemux::new(
+            SiDemuxConfig::default()
+                .with_dvb_si_pids(false)
+                .with_pid(EIT_PID),
+        );
+        let mut sections = Vec::new();
+        for packet in ts_bytes.chunks_exact(mpeg_ts::ts::TS_PACKET_SIZE) {
+            for event in demux.feed(packet) {
+                if let Ok(AnyTableSection::EitSection(section)) = event.table_section()
+                    && section.kind == EitKind::PresentFollowingActual
+                    && section.service_id == service_id
+                {
+                    sections.push(event.bytes().clone());
+                }
+            }
+        }
+        let parsed: Vec<EitSection<'_>> = sections
+            .iter()
+            .map(|b| <EitSection as broadcast_common::Parse>::parse(b).expect("parse"))
+            .collect();
+        let genuine = &parsed[0];
+        let mut following = parsed
+            .iter()
+            .flat_map(|s| s.events.iter())
+            .find(|e| e.running_status != RunningStatus::Running)
+            .cloned()
+            .expect("a following event");
+        following.running_status = RunningStatus::Running;
+        let transitioned = EitSection::new(
+            genuine.kind,
+            genuine.table_id,
+            genuine.service_id,
+            SectionVersion::new((genuine.version_number + 1) % 32, true, 0, 0),
+            genuine.transport_stream_id,
+            genuine.original_network_id,
+            0,
+            genuine.table_id,
+            vec![following],
+        );
+        let mut section = vec![0u8; WireSerialize::serialized_len(&transitioned)];
+        WireSerialize::serialize_into(&transitioned, &mut section).expect("serialize");
+        mpeg_ts::mux::SectionPacketiser::new(EIT_PID)
+            .packetise(&[&section])
+            .iter()
+            .flat_map(|p| p.iter().copied())
+            .collect()
+    }
+
+    /// A programme transition the recorder cannot act on (its period roll
+    /// fails because the archive directory became unusable) is counted in
+    /// `multimux_dvr_si_errors_total`, once per failed attempt.
+    #[tokio::test]
+    async fn a_failing_eit_transition_is_counted() {
+        const TF1_SERVICE_ID: u16 = 0x0601;
+        let ts_bytes = std::fs::read(test_fixtures::path("ts/tnt-5w-12732v-isi6-10s.ts"))
+            .expect("read genuine DVB-T capture");
+        let tmp = dvr_test_dir("si-errors");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name("sierr")
+        .with_dvr(dvr_config(&tmp, Some(TF1_SERVICE_ID)));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route.feed_si_ts(&ts_bytes);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving.poll_dvr().await;
+        let archive = tmp.join("sierr");
+        assert!(archive.join("p0.m3u8").exists(), "period 0 is open");
+
+        std::fs::remove_dir_all(&archive).expect("remove archive");
+        std::fs::write(&archive, b"not a directory").expect("block the archive");
+        let before = si_errors_total("sierr");
+        route.feed_si_ts(&eit_transition_packets(&ts_bytes, TF1_SERVICE_ID));
+        assert_eq!(
+            si_errors_total("sierr"),
+            before + 1.0,
+            "the failure is counted"
+        );
+        route.feed_si_ts(&[]);
+        assert_eq!(
+            si_errors_total("sierr"),
+            before + 2.0,
+            "the retried transition fails, and is counted, again"
+        );
+        let _ = std::fs::remove_file(&archive);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn si_errors_total(route_label: &str) -> f64 {
+        crate::prometheus::install()
+            .render()
+            .lines()
+            .filter(|l| l.starts_with("multimux_dvr_si_errors_total{"))
+            .filter(|l| l.contains(&format!("route=\"{route_label}\"")))
+            .filter_map(|l| l.rsplit(' ').next()?.parse::<f64>().ok())
+            .sum()
     }
 
     /// Read a Prometheus counter value by name+route label (0.0 if absent).

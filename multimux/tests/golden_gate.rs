@@ -654,32 +654,31 @@ async fn non_ll_full_segment_path_also_decodes() {
     );
 }
 
-/// Audit run 7, W10 (DVR durability): the archive a `DvrRecorder` writes —
-/// an fMP4 init prelude followed by the real segment boxes, read back from
+/// Audit run 7, W10 (DVR durability): the period media file the DVR recorder
+/// writes — an fMP4 init followed by the real segment boxes, read back from
 /// disk with no in-memory state — must be independently decodable by
-/// `ffprobe`. This is the replay oracle for the durability fixes (offset
-/// re-sync, index fsync): a desynced `IndexEntry.byte_offset` or a
-/// mis-flushed period shows up here as a container `ffprobe` cannot decode.
+/// `ffprobe`. A desynced byte offset or a mis-flushed period shows up here as
+/// a container `ffprobe` cannot decode.
 #[test]
 fn dvr_period_file_from_real_samples_replays_decodably() {
     skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
-    use multimux::dvr::{ArchiveOverrunSerde, DvrConfig, DvrRecorder};
+    use multimux::dvr::{ArchiveOverrunSerde, DvrConfig};
 
     let src_probe = ffprobe_json(&fixture_path());
     let (spec, samples) = real_video_track_and_samples();
     let track_id = spec.track_id;
 
     let dir = scratch_dir("dvr-replay");
-    let trunk = Trunk::new(
+    let trunk = std::sync::Arc::new(Trunk::new(
         TrunkConfig::default()
             .with_timed_capacity(std::num::NonZeroUsize::new(4096).unwrap())
             .with_sparse_capacity(std::num::NonZeroUsize::new(64).unwrap())
             .with_segment_capacity(std::num::NonZeroUsize::new(64).unwrap())
             .with_event_capacity(std::num::NonZeroUsize::new(64).unwrap())
             .with_part_capacity(std::num::NonZeroUsize::new(64).unwrap()),
-    );
+    ));
     let seg_writer = trunk.segment_writer().expect("segment writer");
 
     let cfg = DvrConfig::default()
@@ -688,9 +687,16 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
         .with_retention_periods(8)
         .with_retention_bytes(0)
         .with_period_duration_secs(3600)
-        .with_overrun(ArchiveOverrunSerde::Gap);
-    let mut recorder =
-        DvrRecorder::new("replay".to_string(), cfg, ".m4s", &trunk).expect("recorder");
+        .with_overrun(ArchiveOverrunSerde::Gap)
+        .to_archive_config(transmux::Container::Fmp4, Duration::from_secs(3600), 0)
+        .expect("archive config");
+    let mut recorder = dvr_runtime::fs::FsRecorder::new(
+        &dir,
+        dvr_runtime::ArchiveName::new("replay").expect("archive name"),
+        cfg,
+        &trunk,
+    )
+    .expect("recorder");
 
     // A real fMP4 init, then a single segment holding every sample.
     let mut seg = LlHlsSegmenter::with_part_target(
@@ -701,9 +707,6 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
     )
     .expect("segmenter builds");
     let init = seg.init_segment().expect("init segment builds");
-    recorder
-        .poll_and_persist(Some(&init))
-        .expect("open the period with the real init");
 
     for sample in samples {
         seg.push(track_id, sample).expect("push");
@@ -722,7 +725,16 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
             ))
             .expect("publish segment");
     }
-    recorder.poll_and_persist(None).expect("persist to disk");
+    recorder
+        .poll(
+            broadcast_common::Timestamp::ZERO,
+            |_| None,
+            &[dvr_runtime::InitGeneration::new(
+                media_plane::ids::SegmentSeq::new(0),
+                init.into(),
+            )],
+        )
+        .expect("persist to disk");
 
     // The on-disk period file (init prelude + segment) must decode.
     let period = dir.join("replay").join("p0.m4s");

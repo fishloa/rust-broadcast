@@ -539,7 +539,7 @@ mod tests {
     use crate::route::RouteConfig;
     use crate::route::SPTS_PROGRAM_ID;
     use crate::testutil::body_string;
-    use std::time::Duration;
+    use std::path::PathBuf;
 
     fn temp_dir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -694,16 +694,16 @@ mod tests {
                 "the segment's bytes must be persisted byte-exact"
             );
 
-            // The index describes exactly that range.
-            let idx = std::fs::read_to_string(tmp.join("w3").join("p0.idx")).expect("index");
-            let entries: Vec<serde_json::Value> = serde_json::from_str(&idx).expect("index JSON");
-            assert_eq!(entries.len(), 1, "one segment must be indexed");
-            assert_eq!(entries[0]["seq"], serde_json::json!(1));
-            assert_eq!(
-                entries[0]["byte_offset"],
-                serde_json::json!(INIT_LEN as u64)
-            );
-            assert_eq!(entries[0]["byte_len"], serde_json::json!(SEG_LEN as u64));
+            // The period playlist describes exactly that range, and the init
+            // range its `EXT-X-MAP` names.
+            let scan = crate::testutil::scan_archive(&tmp, "w3", Container::Fmp4);
+            assert_eq!(scan.segments.len(), 1, "one segment must be indexed");
+            let segment = scan.segments[0];
+            assert_eq!(segment.seq.value(), 1);
+            assert_eq!(segment.span.offset, INIT_LEN as u64);
+            assert_eq!(segment.span.len.get(), SEG_LEN as u64);
+            let init = segment.init.expect("an fMP4 segment names its init");
+            assert_eq!((init.offset, init.len.get()), (0, INIT_LEN as u64));
 
             cleanup(&tmp);
         });
@@ -1108,7 +1108,7 @@ mod tests {
 
         // The latest period has no successor, so it is still growing: no
         // ENDLIST (and it stays EVENT-shaped).
-        let latest = vod_playlist(State(route), Path("p1.m3u8".to_string())).await;
+        let latest = vod_playlist(State(Arc::clone(&route)), Path("p1.m3u8".to_string())).await;
         assert_eq!(latest.status(), StatusCode::OK);
         let body = body_string(latest).await;
         assert!(
@@ -1116,6 +1116,12 @@ mod tests {
             "the latest period has no successor, so it must not be finished: {body}"
         );
         assert!(body.contains("#EXT-X-PLAYLIST-TYPE:EVENT"), "body: {body}");
+
+        for (period, init) in [("init-p0.mp4", [0xAA; 4]), ("init-p1.mp4", [0xBB; 4])] {
+            let resp = catchup_resource(State(Arc::clone(&route)), Path(period.to_string())).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{period}");
+            assert_eq!(body_bytes(resp).await, init, "{period} serves its own init");
+        }
 
         cleanup(&tmp);
     }
@@ -1183,48 +1189,74 @@ mod tests {
         cleanup(&tmp);
     }
 
-    /// A period archived before any init segment (its first segment starts at
-    /// byte offset 0) has no init prelude: the init request is 404, not an
-    /// empty 200.
+    /// An init request names an archived period: a period the archive does
+    /// not hold, or any period of a TS route (whose archive has no init), is
+    /// 404, not an empty 200.
     #[tokio::test]
-    async fn an_archived_period_without_an_init_prelude_is_404() {
+    async fn an_init_request_for_a_period_without_an_init_is_404() {
         let tmp = temp_dir();
-        let dvr = dvr_config(&tmp);
-        let route = Arc::new(
-            RouteHandle::new(
-                RouteConfig::default()
-                    .with_target_duration(std::time::Duration::from_secs(4))
-                    .with_part_target(std::time::Duration::from_millis(500))
-                    .with_window_segments(8),
+        crate::testutil::record_archive_run(&tmp, "no-init", Container::Fmp4, 0, &[(1, 0x11)]);
+        crate::testutil::record_archive_run(&tmp, "ts-init", Container::MpegTs, 0, &[(1, 0x11)]);
+        let route_for = |name: &str, container: Container| {
+            Arc::new(
+                RouteHandle::new(
+                    RouteConfig::default()
+                        .with_target_duration(std::time::Duration::from_secs(4))
+                        .with_part_target(std::time::Duration::from_millis(500))
+                        .with_window_segments(8)
+                        .with_container(container),
+                )
+                .with_name(name)
+                .with_dvr(dvr_config(&tmp)),
             )
-            .with_name("no-init")
-            .with_dvr(dvr.clone()),
-        );
-        // A period whose first segment starts at byte offset 0 has no init
-        // prelude at all: the archive is exactly a segment index over an
-        // empty period file.
-        let dir = crate::catchup::archive_dir(&dvr, "no-init");
-        std::fs::create_dir_all(&dir).expect("archive dir");
-        std::fs::write(dir.join("p0.m4s"), []).expect("empty period file");
-        let index = vec![crate::dvr::IndexEntry {
-            seq: 1,
-            start: broadcast_common::Timestamp::ZERO,
-            byte_offset: 0,
-            byte_len: 0,
-            duration: Duration::from_secs(3),
-            discontinuous: false,
-        }];
-        std::fs::write(
-            dir.join("p0.idx"),
-            serde_json::to_vec(&index).expect("serialize index"),
-        )
-        .expect("write index");
-
-        let resp = catchup_resource(State(route), Path("init-p0.mp4".to_string())).await;
+        };
+        let fmp4 = route_for("no-init", Container::Fmp4);
+        let resp =
+            catchup_resource(State(Arc::clone(&fmp4)), Path("init-p0.mp4".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_bytes(resp).await, b"INIT");
+        let resp = catchup_resource(State(fmp4), Path("init-p1.mp4".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "no period 1");
+        let ts = route_for("ts-init", Container::MpegTs);
+        let resp = catchup_resource(State(ts), Path("init-p0.mp4".to_string())).await;
         assert_eq!(
             resp.status(),
             StatusCode::NOT_FOUND,
-            "no init bytes to serve"
+            "a TS archive has no init"
+        );
+        cleanup(&tmp);
+    }
+
+    /// Each route owns one archive reader, shared by every catch-up request,
+    /// and dropping the route releases it with its parsed-playlist cache (the
+    /// process-global cache this replaces stayed resident).
+    #[test]
+    fn a_dropped_route_releases_its_archive_reader() {
+        let tmp = temp_dir();
+        crate::testutil::record_archive_run(&tmp, "cam", Container::Fmp4, 0, &[(1, 0x11)]);
+        let route = RouteHandle::new(RouteConfig::default())
+            .with_name("cam")
+            .with_dvr(dvr_config(&tmp));
+        let archive = route.catchup_archive().expect("DVR is on");
+        assert!(Arc::ptr_eq(
+            &archive,
+            &route.catchup_archive().expect("DVR is on")
+        ));
+        assert_eq!(archive.lock().scan().segments.len(), 1);
+        assert_eq!(archive.lock().cached_periods(), 1);
+        let released = Arc::downgrade(&archive);
+        drop(archive);
+        drop(route);
+        assert!(
+            released.upgrade().is_none(),
+            "the reader outlived its route"
+        );
+        assert!(
+            RouteHandle::new(RouteConfig::default())
+                .with_name("cam")
+                .catchup_archive()
+                .is_none(),
+            "a route without DVR has no archive"
         );
         cleanup(&tmp);
     }
@@ -1352,11 +1384,11 @@ mod tests {
 
         // Both runs are really in the archive (not just served from the live
         // window): two periods, four indexed segments.
-        let archived = catchup::scan_archive(&tmp.join("c5"));
+        let archived = crate::testutil::scan_archive(&tmp, "c5", Container::Fmp4).segments;
         assert_eq!(
             archived
                 .iter()
-                .map(|s| (s.period_num, s.seq.value()))
+                .map(|s| (s.period.value(), s.seq.value()))
                 .collect::<Vec<_>>(),
             vec![(0, 1), (0, 2), (1, 4), (1, 5)]
         );
@@ -1462,7 +1494,8 @@ mod tests {
                 .expect("add_segment");
         }
         assert_eq!(
-            catchup::scan_archive(&tmp.join("c5-live"))
+            crate::testutil::scan_archive(&tmp, "c5-live", Container::Fmp4)
+                .segments
                 .iter()
                 .map(|s| s.seq.value())
                 .collect::<Vec<_>>(),
@@ -1488,7 +1521,9 @@ mod tests {
             ],
             "{playlist}"
         );
-        // The live tail's init is the live origin's versioned one.
+        // The live tail's init is the live origin's versioned one: the
+        // generation the tail was closed under (the reconnect seeded the
+        // previous init as generation 1, so 0xBB is generation 2).
         let live_init = playlist
             .lines()
             .filter_map(|l| l.strip_prefix("#EXT-X-MAP:URI=\""))
@@ -1496,14 +1531,26 @@ mod tests {
             .next_back()
             .expect("a map");
         assert!(
-            live_init.starts_with("init-1-") && live_init.ends_with("-1.mp4"),
+            live_init.starts_with("init-1-") && live_init.ends_with("-2.mp4"),
             "{live_init}"
         );
-        let init = route
-            .ll_hls(SPTS_PROGRAM_ID)
-            .expect("origin")
-            .init_name(TrackId::new(1), hls_runtime::server::Generation::new(1));
+        let origin = route.ll_hls(SPTS_PROGRAM_ID).expect("origin");
+        let init = origin.init_name(TrackId::new(1), hls_runtime::server::Generation::new(2));
         assert_eq!(live_init, init);
+        let now = Timestamp::from_nanos(0);
+        match origin.resolve(
+            HlsRequest::Resource {
+                name: live_init.to_string(),
+            },
+            now,
+            AwaitPolicy::new(now),
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Resource(bytes),
+                ..
+            } => assert_eq!(&bytes[..], [0xBB; 4], "the tail's own init"),
+            _ => panic!("the live tail's init is not served"),
+        }
 
         // And the tail bytes are the live ones, under the playlist's numbers.
         for (n, expected) in [(4u32, 0x21u8), (5, 0x22)] {
@@ -1659,10 +1706,11 @@ mod tests {
         cleanup(&tmp);
     }
 
-    fn archived_seq_periods(dir: &std::path::Path) -> Vec<(u32, u32)> {
-        catchup::scan_archive(dir)
+    fn archived_seq_periods(root: &std::path::Path, name: &str) -> Vec<(u32, u32)> {
+        crate::testutil::scan_archive(root, name, Container::Fmp4)
+            .segments
             .iter()
-            .map(|s| (s.seq.value(), s.period_num))
+            .map(|s| (s.seq.value(), s.period.value()))
             .collect()
     }
 
@@ -1696,7 +1744,7 @@ mod tests {
         route.drain_dvr().await;
 
         assert_eq!(
-            archived_seq_periods(&root.join("r")),
+            archived_seq_periods(&root, "r"),
             vec![(1, 0), (2, 0), (3, 1)],
             "segment 2 was closed under INIT_A and belongs in the INIT_A period"
         );
@@ -1734,7 +1782,7 @@ mod tests {
             .expect("add");
         route.drain_dvr().await;
 
-        let seqs: Vec<u32> = archived_seq_periods(&root.join("r"))
+        let seqs: Vec<u32> = archived_seq_periods(&root, "r")
             .iter()
             .map(|s| s.0)
             .collect();
@@ -1777,7 +1825,8 @@ mod tests {
             .expect("add");
         route.drain_dvr().await;
 
-        let starts: Vec<u64> = catchup::scan_archive(&root.join("r"))
+        let starts: Vec<u64> = crate::testutil::scan_archive(&root, "r", Container::Fmp4)
+            .segments
             .iter()
             .map(|s| s.start.as_nanos())
             .collect();

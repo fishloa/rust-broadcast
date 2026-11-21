@@ -285,8 +285,8 @@ impl DvrConfig {
         target_duration: Duration,
         seq_offset: u64,
     ) -> ArchiveConfig {
-        let period = (self.period_duration_secs > 0)
-            .then(|| Duration::from_secs(self.period_duration_secs));
+        let period =
+            (self.period_duration_secs > 0).then(|| Duration::from_secs(self.period_duration_secs));
         let config = ArchiveConfig::new(container, target_duration, self.retention())
             .with_period_duration(period)
             .with_overrun(self.overrun.into())
@@ -475,10 +475,15 @@ mod tests {
             ArchiveOverrunSerde::Terminate
         );
         assert_eq!(
-            DvrConfig::default().with_period_duration_secs(5).period_duration_secs,
+            DvrConfig::default()
+                .with_period_duration_secs(5)
+                .period_duration_secs,
             5
         );
-        assert_eq!(DvrConfig::default().with_retention_bytes(9).retention_bytes, 9);
+        assert_eq!(
+            DvrConfig::default().with_retention_bytes(9).retention_bytes,
+            9
+        );
     }
 
     #[test]
