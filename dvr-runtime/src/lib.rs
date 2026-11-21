@@ -295,7 +295,9 @@ pub struct ArchiveConfig {
     /// segment it has not consumed yet.
     pub overrun: media_plane::trunk::ArchiveOverrun,
     /// Added to a segment's Trunk sequence number to get its archive sequence
-    /// number.
+    /// number. A restarted run must set it so its numbers exceed the archive's
+    /// highest (`FsArchive::seq_floor`), or its segments collide with archived
+    /// ones and are hidden from the scan as `SeqConflict`s.
     pub seq_offset: u64,
     /// The service whose EIT present/following event marks programme
     /// boundaries. When set, the host must supply wall time with every

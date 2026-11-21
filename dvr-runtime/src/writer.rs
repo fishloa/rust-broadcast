@@ -335,6 +335,13 @@ pub enum WriterEvent {
         /// How many segments were lost.
         skipped: u64,
     },
+    /// Seeding found and the host removed a stale `.pN.m3u8.tmp` (a crash
+    /// between the temp write and the rename); it never held a committed
+    /// record, but its period number stays consumed.
+    StaleTempPlaylistRemoved {
+        /// The period the temp file belonged to.
+        period: PeriodNum,
+    },
     /// The writer stopped permanently.
     Terminated,
     /// An fMP4 segment arrived before any init was known and was dropped.
@@ -513,6 +520,15 @@ impl ArchiveWriter {
     /// its media file size and is evicted like any other period. The first
     /// segment of this run is marked discontinuous.
     ///
+    /// Seq-floor contract: seeding reads no playlists, so it cannot see the
+    /// archived sequence numbers. The caller must configure
+    /// [`ArchiveConfig::seq_offset`] so this run's archive sequence numbers
+    /// (Trunk sequence plus offset) are above the highest archived one
+    /// (`FsArchive::seq_floor` under the `fs` feature). A run that restarts
+    /// at or below an archived sequence still records, but the reader keeps
+    /// the earlier period's record and reports the later claim as a
+    /// `SeqConflict`.
+    ///
     /// # Errors
     ///
     /// [`ArchiveError::PlanPending`] while a plan is outstanding,
@@ -553,6 +569,33 @@ impl ArchiveWriter {
                 .checked_next()
                 .ok_or(ArchiveError::PeriodNumbersExhausted)?;
             self.starts_run = true;
+        }
+        Ok(())
+    }
+
+    /// Record stale temp playlists the host removed while listing the
+    /// directory: each period number stays consumed (the next period is
+    /// above it) and a [`WriterEvent::StaleTempPlaylistRemoved`] is queued.
+    ///
+    /// # Errors
+    ///
+    /// [`ArchiveError::PlanPending`] while a plan is outstanding,
+    /// [`ArchiveError::PeriodNumbersExhausted`] when a temp file is numbered
+    /// `u32::MAX`.
+    pub fn note_stale_temp_playlists(&mut self, periods: &[PeriodNum]) -> Result<(), ArchiveError> {
+        if self.pending.is_some() {
+            return Err(ArchiveError::PlanPending);
+        }
+        for &period in periods {
+            let next = period
+                .checked_next()
+                .ok_or(ArchiveError::PeriodNumbersExhausted)?;
+            if next > self.next_period {
+                self.next_period = next;
+                self.starts_run = true;
+            }
+            self.events
+                .push_back(WriterEvent::StaleTempPlaylistRemoved { period });
         }
         Ok(())
     }
