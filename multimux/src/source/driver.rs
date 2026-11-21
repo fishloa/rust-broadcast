@@ -906,9 +906,9 @@ mod tests {
                 Bytes::from_static(b"keepalive"),
                 Bytes::from_static(b"TEARDOWN"),
             ])),
-            media_plane::IngestConfig::new(HandshakePolicy::establish_by(
-                Timestamp::from_nanos(u64::MAX),
-            ))
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(Timestamp::from_nanos(
+                u64::MAX,
+            )))
             .with_trunk(
                 TrunkConfig::default()
                     .with_timed_capacity(nz(4))

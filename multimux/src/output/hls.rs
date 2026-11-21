@@ -958,16 +958,14 @@ mod tests {
     }
 
     fn subtitle_gate_route(subtitles: bool, container: transmux::Container) -> Arc<RouteHandle> {
-        Arc::new(
-            RouteHandle::new(
-                RouteConfig::default()
-                    .with_target_duration(std::time::Duration::from_secs(4))
-                    .with_part_target(Duration::from_millis(500))
-                    .with_window_segments(4)
-                    .with_subtitles(subtitles)
-                    .with_container(container),
-            ),
-        )
+        Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(std::time::Duration::from_secs(4))
+                .with_part_target(Duration::from_millis(500))
+                .with_window_segments(4)
+                .with_subtitles(subtitles)
+                .with_container(container),
+        ))
     }
 
     #[tokio::test]

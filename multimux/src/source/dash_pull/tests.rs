@@ -1842,5 +1842,8 @@ fn the_session_queue_is_budgeted_in_bytes() {
 #[test]
 fn the_segment_window_is_half_the_inflight_budget() {
     assert_eq!(super::SEGMENT_WINDOW, 4);
-    assert_eq!(super::SEGMENT_WINDOW * 2, crate::source::MAX_INFLIGHT_FETCHES);
+    assert_eq!(
+        super::SEGMENT_WINDOW * 2,
+        crate::source::MAX_INFLIGHT_FETCHES
+    );
 }

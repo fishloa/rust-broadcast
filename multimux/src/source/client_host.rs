@@ -1224,7 +1224,8 @@ mod tests {
     }
 
     fn open_step(retries: bool) -> SessionStep {
-        let mut labels = SessionLabels::new("test", broadcast_common::timeouts::Timeouts::default());
+        let mut labels =
+            SessionLabels::new("test", broadcast_common::timeouts::Timeouts::default());
         if retries {
             labels = labels.session_retries();
         }
@@ -1447,8 +1448,7 @@ mod tests {
     async fn dropping_the_step_aborts_outstanding_tasks() {
         let mut step = open_step(false);
         let task = tokio::spawn(std::future::pending::<()>());
-        step.requests
-            .insert(ConnId::new(9), task.abort_handle());
+        step.requests.insert(ConnId::new(9), task.abort_handle());
         drop(step);
         let joined = tokio::time::timeout(Duration::from_secs(5), task).await;
         assert!(

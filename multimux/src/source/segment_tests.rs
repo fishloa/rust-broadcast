@@ -1902,11 +1902,19 @@ fn an_idle_route_creates_no_production_counters() {
     let mut segmenters = HashMap::new();
     assert!(!drive_program_segmenters(&driver, &route, &mut segmenters));
     assert!(
-        rendered_total("multimux_parts_produced_total", "segment-idle-metrics-probe").is_none(),
+        rendered_total(
+            "multimux_parts_produced_total",
+            "segment-idle-metrics-probe"
+        )
+        .is_none(),
         "zero parts must not create the parts counter"
     );
     assert!(
-        rendered_total("multimux_segments_produced_total", "segment-idle-metrics-probe").is_none(),
+        rendered_total(
+            "multimux_segments_produced_total",
+            "segment-idle-metrics-probe"
+        )
+        .is_none(),
         "zero segments must not create the segments counter"
     );
 }
@@ -1927,27 +1935,34 @@ fn flushing_a_finished_program_counts_its_parts_and_segments() {
     );
     let mut published = HashSet::new();
     let mut segmenters = HashMap::new();
-    driver.feed(
-        &build_ts_bytes(TrackId::new(1), 0xAB, 30),
-        Timestamp::ZERO,
-    );
+    driver.feed(&build_ts_bytes(TrackId::new(1), 0xAB, 30), Timestamp::ZERO);
     report_driver_progress(&driver, &route, &mut published);
     while drive_program_segmenters(&driver, &route, &mut segmenters) {}
 
-    let parts_before = rendered_total("multimux_parts_produced_total", "segment-flush-metrics-probe")
-        .unwrap_or(0.0);
-    let segments_before =
-        rendered_total("multimux_segments_produced_total", "segment-flush-metrics-probe")
-            .unwrap_or(0.0);
+    let parts_before = rendered_total(
+        "multimux_parts_produced_total",
+        "segment-flush-metrics-probe",
+    )
+    .unwrap_or(0.0);
+    let segments_before = rendered_total(
+        "multimux_segments_produced_total",
+        "segment-flush-metrics-probe",
+    )
+    .unwrap_or(0.0);
 
     driver.finish();
     assert!(!drive_program_segmenters(&driver, &route, &mut segmenters));
 
-    let parts_after = rendered_total("multimux_parts_produced_total", "segment-flush-metrics-probe")
-        .unwrap_or(0.0);
-    let segments_after =
-        rendered_total("multimux_segments_produced_total", "segment-flush-metrics-probe")
-            .unwrap_or(0.0);
+    let parts_after = rendered_total(
+        "multimux_parts_produced_total",
+        "segment-flush-metrics-probe",
+    )
+    .unwrap_or(0.0);
+    let segments_after = rendered_total(
+        "multimux_segments_produced_total",
+        "segment-flush-metrics-probe",
+    )
+    .unwrap_or(0.0);
     assert!(
         parts_after > parts_before,
         "the flushed open part must be counted: before={parts_before} after={parts_after}"
