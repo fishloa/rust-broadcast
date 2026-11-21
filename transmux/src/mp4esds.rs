@@ -2021,4 +2021,349 @@ mod tests {
         let to_eof = EsdsBox::parse_box(&zeroed).expect("size-0 esds parses as rest-of-buffer");
         assert_eq!(to_eof, explicit);
     }
+
+    /// #3791: `upStream` is a real field. Every other `esds` in the suite
+    /// carries 0x15 (streamType 5, upStream 0), so a parser or serializer that
+    /// ignores the bit still round-trips. A streamType byte of 0x17 (type 5,
+    /// upStream 1, reserved 1) must parse to `up_stream == true` and
+    /// re-serialize byte-identically.
+    #[test]
+    fn up_stream_flag_round_trips() {
+        const STREAM_TYPE_AT: usize = 26;
+        let mut bytes = REAL_ESDS_BOX_AAC.to_vec();
+        assert_eq!(bytes[STREAM_TYPE_AT], 0x15, "AudioStream, no upStream");
+        bytes[STREAM_TYPE_AT] = 0x17;
+        let esds = EsdsBox::parse_box(&bytes).expect("parse esds with upStream");
+        let dc = esds
+            .es_descriptor
+            .decoder_config
+            .as_ref()
+            .expect("decoder config");
+        assert!(dc.up_stream, "upStream bit [1] must be set");
+        assert_eq!(dc.stream_type.0, 5, "still AudioStream");
+        let mut out = vec![0u8; esds.serialized_len()];
+        let n = esds.serialize_into(&mut out).expect("serialize");
+        assert_eq!(&out[..n], &bytes[..], "upStream=1 must round-trip");
+
+        let dc = DecoderConfigDescriptor::new(0x40, 5, true, 0, 0, 0, None);
+        let mut buf = vec![0u8; dc.serialized_len()];
+        dc.serialize_into(&mut buf).expect("serialize dc");
+        assert_eq!(buf[0], TAG_DECODER_CONFIG);
+        assert_eq!(
+            buf[1 + VARINT_WIDTH_FIXED + 1],
+            0x17,
+            "body byte 1 = streamType(5)<<2 | upStream(1)<<1 | reserved(1)"
+        );
+    }
+
+    /// #3792: an unmodelled descriptor BEFORE the DSI inside a
+    /// `DecoderConfigDescriptor` is position 0 and must stay there; written
+    /// after the DSI it would change the bytes.
+    #[test]
+    fn unknown_descriptor_before_the_dsi_keeps_position_zero() {
+        #[rustfmt::skip]
+        let bytes: &[u8] = &[
+            0x00, 0x00, 0x00, 0x34, 0x65, 0x73, 0x64, 0x73, // box size 52 + 'esds'
+            0x00, 0x00, 0x00, 0x00,                         // FullBox version/flags
+            0x03, 0x80, 0x80, 0x80, 0x23,                   // ES_DescrTag, size 35
+            0x00, 0x01,                                     // ES_ID = 1
+            0x00,                                           // flags = 0
+            0x04, 0x80, 0x80, 0x80, 0x15,                   // DecoderConfigDescrTag, size 21
+            0x40,                                           // objectTypeIndication
+            0x15,                                           // streamType
+            0x00, 0x00, 0x00,                               // bufferSizeDB
+            0x00, 0x01, 0x80, 0x7d,                         // maxBitrate
+            0x00, 0x01, 0x77, 0x0d,                         // avgBitrate
+            0x14, 0x02,                                     // unmodelled, BEFORE the DSI
+            0x01, 0x02,
+            0x05, 0x02,                                     // DecSpecificInfoTag, size 2
+            0x12, 0x08,
+            0x06, 0x80, 0x80, 0x80, 0x01,                   // SLConfigDescrTag, size 1
+            0x02,
+        ];
+        let esds = EsdsBox::parse_box(bytes).expect("parse esds with leading unknown");
+        let dc = esds.es_descriptor.decoder_config.as_ref().unwrap();
+        assert_eq!(dc.unknown_descriptors.len(), 1);
+        assert_eq!(dc.unknown_descriptors[0].position, 0, "before the DSI");
+        assert_eq!(dc.unknown_descriptors[0].data, vec![0x01, 0x02]);
+        assert_eq!(esds.serialized_len(), bytes.len());
+        let mut out = vec![0u8; esds.serialized_len()];
+        let n = esds.serialize_into(&mut out).unwrap();
+        assert_eq!(n, bytes.len(), "serialize_into reports every byte written");
+        assert_eq!(out, bytes, "a position-0 unknown must stay before the DSI");
+    }
+
+    /// #3792: an unmodelled descriptor AFTER the `SLConfigDescriptor` in an
+    /// `ES_Descriptor` is position 2, distinct from position 1; read as 0 it
+    /// would be written before the decoder config.
+    #[test]
+    fn unknown_es_descriptor_after_the_sl_config_keeps_position_two() {
+        #[rustfmt::skip]
+        let bytes: &[u8] = &[
+            0x00, 0x00, 0x00, 0x34, 0x65, 0x73, 0x64, 0x73, // box size 52 + 'esds'
+            0x00, 0x00, 0x00, 0x00,                         // FullBox version/flags
+            0x03, 0x80, 0x80, 0x80, 0x23,                   // ES_DescrTag, size 35
+            0x00, 0x01,                                     // ES_ID = 1
+            0x00,                                           // flags = 0
+            0x04, 0x80, 0x80, 0x80, 0x11,                   // DecoderConfigDescrTag, size 17
+            0x40, 0x15, 0x00, 0x00, 0x00,                   // OTI, streamType, bufferSizeDB
+            0x00, 0x01, 0x80, 0x7d,                         // maxBitrate
+            0x00, 0x01, 0x77, 0x0d,                         // avgBitrate
+            0x05, 0x02, 0x12, 0x08,                         // DSI, size 2
+            0x06, 0x80, 0x80, 0x80, 0x01, 0x02,             // SLConfigDescrTag, size 1
+            0x0E, 0x02, 0x65, 0x6E,                         // unmodelled, AFTER the SL config
+        ];
+        let esds = EsdsBox::parse_box(bytes).expect("parse esds with trailing unknown");
+        let es = &esds.es_descriptor;
+        assert_eq!(es.unknown_descriptors.len(), 1);
+        assert_eq!(es.unknown_descriptors[0].tag, 0x0E);
+        assert_eq!(es.unknown_descriptors[0].position, 2, "after dc and sl");
+        assert_eq!(esds.serialized_len(), bytes.len());
+        let mut out = vec![0u8; esds.serialized_len()];
+        let n = esds.serialize_into(&mut out).unwrap();
+        assert_eq!(n, bytes.len(), "serialize_into reports every byte written");
+        assert_eq!(out, bytes, "a position-2 unknown must stay after the SL config");
+    }
+
+    /// #3793: every truncation of a `DecoderConfigDescriptor` body is a
+    /// `BufferTooShort` with the exact need/have/what, never a slice panic.
+    #[test]
+    fn decoder_config_truncation_reports_the_field() {
+        #[rustfmt::skip]
+        const BODY: &[u8] = &[
+            0x40,                   // objectTypeIndication
+            0x15,                   // streamType/upStream/reserved
+            0x00, 0x00, 0x00,       // bufferSizeDB
+            0x00, 0x01, 0x80, 0x7d, // maxBitrate
+            0x00, 0x01, 0x77, 0x0d, // avgBitrate
+            0x05, 0x02, 0x12, 0x08, // DecoderSpecificInfo
+        ];
+        let cases: &[(usize, usize, &str)] = &[
+            (0, 1, "objectTypeIndication"),
+            (1, 2, "streamType/upStream"),
+            (2, 5, "bufferSizeDB"),
+            (3, 5, "bufferSizeDB"),
+            (4, 5, "bufferSizeDB"),
+            (5, 9, "maxBitrate"),
+            (6, 9, "maxBitrate"),
+            (7, 9, "maxBitrate"),
+            (8, 9, "maxBitrate"),
+            (9, 13, "avgBitrate"),
+            (10, 13, "avgBitrate"),
+            (11, 13, "avgBitrate"),
+            (12, 13, "avgBitrate"),
+        ];
+        for &(n, need, what) in cases {
+            match DecoderConfigDescriptor::parse(&BODY[..n]) {
+                Err(Error::BufferTooShort(BufferTooShort {
+                    need: got_need,
+                    have,
+                    what: got_what,
+                })) => assert_eq!(
+                    (got_need, have, got_what),
+                    (need, n, what),
+                    "truncated at {n}"
+                ),
+                other => panic!("truncated at {n}: expected BufferTooShort, got {other:?}"),
+            }
+        }
+        assert!(
+            DecoderConfigDescriptor::parse(&BODY[..13]).is_ok(),
+            "the 13 fixed bytes alone are a valid descriptor"
+        );
+    }
+
+    /// #3793: a `DecoderConfigDescriptor` sub-descriptor whose declared size
+    /// runs past the body reports the exact `need`, never underflows.
+    #[test]
+    fn decoder_config_overlong_sub_descriptor_size_errors() {
+        #[rustfmt::skip]
+        let body: &[u8] = &[
+            0x40, 0x15, 0x00, 0x00, 0x00, 0x00, 0x01, 0x80, 0x7d, 0x00, 0x01, 0x77, 0x0d,
+            0x14, 0x7F, 0xAA, 0xBB, // tag, size 127, only 2 body bytes
+        ];
+        let err = DecoderConfigDescriptor::parse(body).expect_err("overlong sub-descriptor");
+        assert!(
+            matches!(
+                err,
+                Error::BufferTooShort(BufferTooShort {
+                    need: 142,
+                    have: 17,
+                    what: "DecoderConfigDescriptor sub_descriptor body",
+                })
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// #3793: an `ES_Descriptor` truncated at each optional field (all three
+    /// flags set) reports the exact need/have/what, never a slice panic.
+    #[test]
+    fn es_descriptor_truncation_reports_the_field() {
+        #[rustfmt::skip]
+        const BODY: &[u8] = &[
+            0x00, 0x01,             // ES_ID
+            0xE0,                   // streamDependence + URL + OCR flags
+            0x00, 0x02,             // dependsOn_ES_ID
+            0x01,                   // URLLength
+            b'u',                   // URLstring
+            0x00, 0x03,             // OCR_ES_Id
+            0x04, 0x0F,             // DecoderConfigDescrTag, size 15
+            0x40, 0x15, 0x00, 0x00, 0x00, 0x00, 0x01, 0x80, 0x7d, 0x00, 0x01, 0x77, 0x0d,
+            0x05, 0x00,             // DecoderSpecificInfo, empty
+        ];
+        let cases: &[(usize, usize, &str)] = &[
+            (0, 2, "ES_ID"),
+            (1, 2, "ES_ID"),
+            (2, 3, "ES flags byte"),
+            (3, 5, "dependsOn_ES_ID"),
+            (4, 5, "dependsOn_ES_ID"),
+            (5, 6, "URLLength"),
+            (6, 7, "URLstring"),
+            (7, 9, "OCR_ES_Id"),
+            (8, 9, "OCR_ES_Id"),
+            (10, 11, "descriptor size varint"),
+            (11, 26, "ES_Descriptor sub-descriptor body"),
+            (12, 26, "ES_Descriptor sub-descriptor body"),
+        ];
+        for &(n, need, what) in cases {
+            let mut framed = vec![TAG_ES_DESCRIPTOR, n as u8];
+            framed.extend_from_slice(&BODY[..n]);
+            match ESDescriptor::parse(&framed) {
+                Err(Error::BufferTooShort(BufferTooShort {
+                    need: got_need,
+                    have,
+                    what: got_what,
+                })) => assert_eq!(
+                    (got_need, have, got_what),
+                    (need, n, what),
+                    "truncated at {n}"
+                ),
+                other => panic!("truncated at {n}: expected BufferTooShort, got {other:?}"),
+            }
+        }
+        let mut framed = vec![TAG_ES_DESCRIPTOR, 9];
+        framed.extend_from_slice(&BODY[..9]);
+        assert!(
+            ESDescriptor::parse(&framed).is_ok(),
+            "all optional fields, no sub-descriptors, is valid"
+        );
+    }
+
+    /// #3793: a `URLstring` with a valid prefix before the bad byte reports
+    /// that byte, not the `URLlength` byte before it.
+    #[test]
+    fn non_utf8_url_reports_the_offending_byte() {
+        #[rustfmt::skip]
+        let framed: &[u8] = &[
+            TAG_ES_DESCRIPTOR, 0x06,
+            0x00, 0x01,             // ES_ID
+            0x40,                   // URL_Flag
+            0x02,                   // URLlength
+            b'A', 0xFF,             // valid prefix, then invalid UTF-8
+        ];
+        let err = ESDescriptor::parse(framed).expect_err("non-UTF-8 URL rejected");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue(InvalidValue {
+                    field: "URLstring",
+                    value: 0xFF,
+                    ..
+                })
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// #3793: an undersized output buffer is `OutputBufferTooSmall`, never a
+    /// slice panic, and a refused write leaves the cursor alone.
+    #[test]
+    fn varint_write_into_an_undersized_buffer_errors() {
+        let mut buf = [0u8; 3];
+        let mut cursor = 0usize;
+        let err = write_varint_width(&mut buf, &mut cursor, 0, 4).unwrap_err();
+        assert!(matches!(err, Error::OutputBufferTooSmall(_)), "{err:?}");
+
+        let mut buf = [0u8; 2];
+        let mut cursor = 1usize;
+        let err = write_varint_width(&mut buf, &mut cursor, 0, 2).unwrap_err();
+        assert!(matches!(err, Error::OutputBufferTooSmall(_)), "{err:?}");
+        assert_eq!(cursor, 1, "a refused write leaves the cursor alone");
+    }
+
+    /// #3793: a varint that runs off the buffer reports the byte it needs.
+    #[test]
+    fn varint_continuation_run_reports_the_next_byte() {
+        let mut cursor = 0usize;
+        let err = parse_varint(&[0x80], &mut cursor).expect_err("continuation without a byte");
+        assert!(
+            matches!(
+                err,
+                Error::BufferTooShort(BufferTooShort {
+                    need: 2,
+                    have: 1,
+                    what: "descriptor size varint",
+                })
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// #3794: every `ObjectTypeIndication`/`StreamType` label is pinned, so a
+    /// blanked, swapped or missing arm cannot ship; `Display` appends the
+    /// exact wire byte.
+    #[test]
+    fn object_type_and_stream_type_labels_are_pinned() {
+        let otis: &[(u8, &str)] = &[
+            (0x20, "MPEG-4 Visual"),
+            (0x21, "AVC / H.264"),
+            (0x22, "AVC parameter sets"),
+            (0x40, "MPEG-4 Audio / AAC"),
+            (0x60, "MPEG-2 Video Simple"),
+            (0x61, "MPEG-2 Video Main"),
+            (0x62, "MPEG-2 Video SNR"),
+            (0x63, "MPEG-2 Video Spatial"),
+            (0x64, "MPEG-2 Video High"),
+            (0x65, "MPEG-2 Video 422"),
+            (0x66, "MPEG-2 AAC LC"),
+            (0x67, "MPEG-2 AAC Main"),
+            (0x68, "MPEG-2 AAC SSR"),
+            (0x69, "MPEG-2 Audio (13818-3)"),
+            (0x6A, "MPEG-1 Visual (11172-2)"),
+            (0x6B, "MPEG-1 Audio (11172-3)"),
+            (0x6C, "JPEG"),
+            (0x6E, "JPEG 2000"),
+            (0xFF, "no object type"),
+            (0x99, "user-private"),
+        ];
+        for &(wire, label) in otis {
+            let oti = ObjectTypeIndication(wire);
+            assert_eq!(oti.name(), label, "OTI 0x{wire:02X}");
+            assert_eq!(oti.to_string(), alloc::format!("{label} (0x{wire:02X})"));
+        }
+
+        let stream_types: &[(u8, &str)] = &[
+            (0x01, "ObjectDescriptorStream"),
+            (0x02, "ClockReferenceStream"),
+            (0x03, "SceneDescriptionStream"),
+            (0x04, "VisualStream"),
+            (0x05, "AudioStream"),
+            (0x06, "MPEG7Stream"),
+            (0x07, "IPMPStream"),
+            (0x08, "ObjectContentInfoStream"),
+            (0x09, "MPEGJStream"),
+            (0x0A, "reserved"),
+            (0x1F, "reserved"),
+            (0x20, "user-private"),
+            (0x3F, "user-private"),
+            (0x00, "forbidden"),
+            (0x40, "forbidden"),
+        ];
+        for &(wire, label) in stream_types {
+            let st = StreamType(wire);
+            assert_eq!(st.name(), label, "StreamType 0x{wire:02X}");
+            assert_eq!(st.to_string(), alloc::format!("{label} (0x{wire:02X})"));
+        }
+    }
 }
