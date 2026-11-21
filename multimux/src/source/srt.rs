@@ -560,9 +560,15 @@ mod tests {
 
         let ts_bytes = build_ts_bytes(TrackId::new(1), 0xBB, 40);
         let server = tokio::spawn(async move {
-            let mut sock = listener.accept().await.expect("listener accept");
+            let mut sock = tokio::time::timeout(Duration::from_secs(30), listener.accept())
+                .await
+                .expect("SRT handshake: server accept must not hang")
+                .expect("listener accept");
             for chunk in ts_bytes.chunks(7 * 188) {
-                sock.send(chunk).await.expect("send TS payload");
+                tokio::time::timeout(Duration::from_secs(30), sock.send(chunk))
+                    .await
+                    .expect("SRT data: send must not hang")
+                    .expect("send TS payload");
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -590,7 +596,9 @@ mod tests {
             ),
         )
         .await;
-        let trunk = route_handle.await_first_trunk().await;
+        let trunk = tokio::time::timeout(Duration::from_secs(30), route_handle.await_first_trunk())
+            .await
+            .expect("caller-mode SRT handshake must publish a Trunk within 30 s");
         let mut cursor = trunk.subscribe_from_backlog();
         let total = drain(&mut cursor);
         assert!(
@@ -616,9 +624,15 @@ mod tests {
 
         let ts_bytes = build_ts_bytes(TrackId::new(1), 0xBB, 40);
         let server = tokio::spawn(async move {
-            let mut sock = listener.accept().await.expect("listener accept");
+            let mut sock = tokio::time::timeout(Duration::from_secs(30), listener.accept())
+                .await
+                .expect("SRT handshake: server accept must not hang")
+                .expect("listener accept");
             for chunk in ts_bytes.chunks(7 * 188) {
-                sock.send(chunk).await.expect("send TS payload");
+                tokio::time::timeout(Duration::from_secs(30), sock.send(chunk))
+                    .await
+                    .expect("SRT data: send must not hang")
+                    .expect("send TS payload");
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -648,7 +662,9 @@ mod tests {
             ),
         )
         .await;
-        let trunk = route_handle.await_first_trunk().await;
+        let trunk = tokio::time::timeout(Duration::from_secs(30), route_handle.await_first_trunk())
+            .await
+            .expect("caller-mode SRT handshake must publish a Trunk within 30 s");
         let mut cursor = trunk.subscribe_from_backlog();
         let total = drain(&mut cursor);
         assert!(

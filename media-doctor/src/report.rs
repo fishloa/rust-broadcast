@@ -331,4 +331,58 @@ mod tests {
         let back: StreamLocator = serde_json::from_value(json).unwrap();
         assert_eq!(back, StreamLocator::Track(track));
     }
+
+    /// The human-readable report is the CLI's default output: its per-severity
+    /// counters, its finding count and the `pid=0x….` field are all asserted
+    /// literally here, because a swapped counter or a wrong `len()` is
+    /// invisible to every structured caller.
+    #[test]
+    fn display_counts_each_severity_and_len_counts_findings() {
+        let mut report = Report::new();
+        for (severity, rule) in [
+            (Severity::Error, "e1"),
+            (Severity::Error, "e2"),
+            (Severity::Warning, "w1"),
+            (Severity::Info, "i1"),
+            (Severity::Info, "i2"),
+            (Severity::Info, "i3"),
+        ] {
+            report.push(Finding::new(severity, Location::new(1), rule, "message"));
+        }
+
+        assert_eq!(report.len(), 6);
+        assert_eq!(
+            alloc::format!("{report}").lines().next(),
+            Some("Findings: 2 error(s), 1 warning(s), 3 info(s)"),
+        );
+        assert_eq!(Report::new().len(), 0);
+        assert_eq!(
+            alloc::format!("{}", Report::new()).lines().next(),
+            Some("No issues found."),
+        );
+    }
+
+    /// `Finding`'s Display prints the finding's stream as a zero-padded
+    /// hexadecimal `pid=0x….` field, and `StreamLocator`'s own `UpperHex`
+    /// carries the number it is given — a no-op `UpperHex` would print
+    /// `pid=0x`.
+    #[test]
+    fn display_renders_findings_with_hex_stream_and_location() {
+        let pid = Pid::try_new(0x0100).unwrap();
+        let finding = Finding::new(
+            Severity::Error,
+            Location::at_pid(7, pid),
+            "sync-byte",
+            "bad sync",
+        );
+        let text = alloc::format!("{finding}");
+        assert!(text.contains("packet=7"), "{text}");
+        assert!(text.contains("pid=0x0100"), "{text}");
+        assert_eq!(alloc::format!("{:04X}", StreamLocator::Ts(pid)), "0100");
+        assert_eq!(
+            alloc::format!("{:04X}", StreamLocator::Track(TrackId::new(0x0064))),
+            "0064",
+        );
+        assert_eq!(alloc::format!("{:04X}", StreamLocator::Unknown), "0000");
+    }
 }
