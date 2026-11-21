@@ -417,6 +417,7 @@ impl ByteMerge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
 
     /// `FirstArrival` must interleave two sources exactly in the order
     /// `feed` was called, regardless of which source each call came from.
@@ -899,5 +900,47 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, MergeConfigError::FailoverOutOfRange { .. }));
+    }
+
+    /// A merge with a queued forwarded message is not empty; draining it
+    /// empties it again.
+    #[test]
+    fn a_merge_is_empty_only_while_its_output_queue_is() {
+        let mut merge = ByteMerge::new(MergePolicy::FirstArrival, 2, 4).unwrap();
+        assert!(merge.is_empty(), "a fresh merge holds nothing");
+        merge
+            .feed(SourceId(0), Bytes::from_static(b"x"), Timestamp::ZERO)
+            .unwrap();
+        assert!(!merge.is_empty(), "a forwarded message is queued");
+        assert_eq!(
+            merge.poll(),
+            Some((Bytes::from_static(b"x"), Timestamp::ZERO))
+        );
+        assert!(merge.is_empty(), "a drained merge holds nothing again");
+    }
+
+    /// Every [`MergeConfigError`] renders a `Display` message naming the
+    /// field it constrains (never an empty string).
+    #[test]
+    fn merge_config_error_display_names_its_field() {
+        assert_eq!(
+            format!("{}", MergeConfigError::ZeroSources),
+            "ByteMerge num_sources must be > 0"
+        );
+        assert_eq!(
+            format!("{}", MergeConfigError::ZeroMaxQueued),
+            "ByteMerge max_queued must be > 0"
+        );
+        let out_of_range = format!(
+            "{}",
+            MergeConfigError::FailoverOutOfRange {
+                primary: SourceId(0),
+                secondary: SourceId(9),
+                num_sources: 2,
+            }
+        );
+        assert!(out_of_range.contains("primary"), "got {out_of_range}");
+        assert!(out_of_range.contains("secondary"), "got {out_of_range}");
+        assert!(out_of_range.contains("2 sources"), "got {out_of_range}");
     }
 }
