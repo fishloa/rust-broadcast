@@ -141,6 +141,50 @@ def _cargo_metadata() -> dict:
     return _cargo_metadata_cache
 
 
+LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
+_RELEASE_TAG = re.compile(r"^(?:(?P<crate>.+)-)?v(?P<version>\d+\.\d+\.\d+\S*)$")
+
+
+def _git_lines(*cmd: str) -> list[str]:
+    try:
+        out = subprocess.run(["git", *cmd], check=True, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return out.stdout.splitlines()
+
+
+def release_tags_at_head() -> set[str]:
+    """Release tags pointing at HEAD: the local ones plus those on `origin`.
+
+    A CI tag checkout holds only the tag that triggered it, so the sibling
+    tags of the same wave are read from the remote (#2895).
+    """
+    head = _git_lines("rev-parse", "HEAD")
+    if not head:
+        return set()
+    tags = set(_git_lines("tag", "--points-at", "HEAD"))
+    for line in _git_lines("ls-remote", "--tags", "origin"):
+        sha, _, ref = line.partition("\t")
+        if sha != head[0] or not ref.startswith("refs/tags/"):
+            continue
+        tags.add(ref[len("refs/tags/"):].removesuffix("^{}"))
+    return tags
+
+
+def crates_released_at_head(members: dict[str, str], tags: set[str]) -> set[str]:
+    """Members whose own release tag, naming their in-tree version, is in `tags`."""
+    released: set[str] = set()
+    for tag in tags:
+        m = _RELEASE_TAG.match(tag)
+        if not m:
+            continue
+        version = m.group("version")
+        crate = m.group("crate")
+        candidates = LOCKSTEP if crate is None else (crate,)
+        released.update(c for c in candidates if members.get(c) == version)
+    return released
+
+
 def workspace_packages() -> dict[str, str]:
     """name -> in-tree version, for every workspace member."""
     data = _cargo_metadata()
@@ -991,6 +1035,7 @@ def main() -> int:
                     blocking.append(detail + " (superseded major)")
 
         # ── Second check: in-tree requirement satisfiability ───────────────
+        released_here = crates_released_at_head(members, release_tags_at_head())
         for (name, sibling), (req, kind) in sorted(in_tree_deps.items()):
             if name not in members or sibling not in members:
                 continue
@@ -1006,6 +1051,15 @@ def main() -> int:
                     f"but no published version satisfies that requirement "
                     f"and the sibling's in-tree version ({sibling_in_tree}) "
                     f"also does not match -- cargo publish will FAIL"
+                )
+                continue
+
+            if sibling in released_here:
+                publish_order.append(
+                    f"{name} ({kind}-dep) requires {sibling} {req} -- "
+                    f"{sibling} {sibling_in_tree} is tagged for release at "
+                    f"this commit and will satisfy it.  Publish {sibling} "
+                    f"before {name}."
                 )
                 continue
 

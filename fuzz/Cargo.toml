@@ -78,7 +78,14 @@ ts-fix         = { path = "../ts-fix" }
 hls-runtime    = { path = "../hls-runtime" }
 dvb-ci-runtime = { path = "../dvb-ci-runtime" }
 bytes         = "1"
+dvr-runtime   = { path = "../dvr-runtime" }
 libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "dvr_playlist"
+path = "fuzz_targets/dvr_playlist.rs"
+test = false
+doc  = false
 
 [[bin]]
 name = "ttml_subtitle"

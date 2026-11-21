@@ -1092,7 +1092,174 @@ mod tests {
         );
         assert!(body.contains("#EXT-X-PLAYLIST-TYPE:VOD"), "body: {body}");
 
+        // The latest period has no successor, so it is still growing: no
+        // ENDLIST (and it stays EVENT-shaped).
+        let latest = vod_playlist(State(route), Path("p1.m3u8".to_string())).await;
+        assert_eq!(latest.status(), StatusCode::OK);
+        let body = body_string(latest).await;
+        assert!(
+            !body.contains("#EXT-X-ENDLIST"),
+            "the latest period has no successor, so it must not be finished: {body}"
+        );
+        assert!(body.contains("#EXT-X-PLAYLIST-TYPE:EVENT"), "body: {body}");
+
         cleanup(&tmp);
+    }
+
+    /// `window_secs` alone decides the EVENT claim when retention removes
+    /// nothing: any positive bound removes leading segments (no claim), and
+    /// `0` means "no bound" (the head only grows, so EVENT is accurate).
+    #[tokio::test]
+    async fn window_secs_without_retention_controls_the_event_claim() {
+        let tmp = temp_dir();
+        let dvr = DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 0,
+            retention_bytes: 0,
+            ..DvrConfig::default()
+        };
+        let route = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(8),
+            )
+            .with_name("window-no-retention")
+            .with_dvr(dvr),
+        );
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        for (seq, byte) in [(1u32, 0x11u8), (2, 0x22), (3, 0x33)] {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
+                .expect("add_segment");
+        }
+        route.drain_dvr().await;
+
+        let bounded = catchup_playlist(
+            State(Arc::clone(&route)),
+            Query(CatchupPlaylistQuery {
+                window_secs: Some(2),
+            }),
+        )
+        .await;
+        assert_eq!(bounded.status(), StatusCode::OK);
+        let body = body_string(bounded).await;
+        assert!(
+            !body.contains("#EXT-X-PLAYLIST-TYPE"),
+            "a positive window removes leading segments: {body}"
+        );
+
+        let unbounded = catchup_playlist(
+            State(route),
+            Query(CatchupPlaylistQuery {
+                window_secs: Some(0),
+            }),
+        )
+        .await;
+        assert_eq!(unbounded.status(), StatusCode::OK);
+        let body = body_string(unbounded).await;
+        assert!(
+            body.contains("#EXT-X-PLAYLIST-TYPE:EVENT"),
+            "window_secs=0 means no bound, so the head only grows: {body}"
+        );
+
+        cleanup(&tmp);
+    }
+
+    /// A period archived before any init segment (its first segment starts at
+    /// byte offset 0) has no init prelude: the init request is 404, not an
+    /// empty 200.
+    #[tokio::test]
+    async fn an_archived_period_without_an_init_prelude_is_404() {
+        let tmp = temp_dir();
+        let dvr = dvr_config(&tmp);
+        let route = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(8),
+            )
+            .with_name("no-init")
+            .with_dvr(dvr.clone()),
+        );
+        // A period whose first segment starts at byte offset 0 has no init
+        // prelude at all: the archive is exactly a segment index over an
+        // empty period file.
+        let dir = crate::catchup::archive_dir(&dvr, "no-init");
+        std::fs::create_dir_all(&dir).expect("archive dir");
+        std::fs::write(dir.join("p0.m4s"), []).expect("empty period file");
+        let index = vec![crate::dvr::IndexEntry {
+            seq: 1,
+            start: broadcast_common::Timestamp::ZERO,
+            byte_offset: 0,
+            byte_len: 0,
+            duration: Duration::from_secs(3),
+            discontinuous: false,
+        }];
+        std::fs::write(
+            dir.join("p0.idx"),
+            serde_json::to_vec(&index).expect("serialize index"),
+        )
+        .expect("write index");
+
+        let resp = catchup_resource(State(route), Path("init-p0.mp4".to_string())).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "no init bytes to serve"
+        );
+        cleanup(&tmp);
+    }
+
+    /// A TS route's catch-up segment URIs carry the `.ts` extension, not the
+    /// fMP4 `.m4s`.
+    #[tokio::test]
+    async fn a_ts_route_advertises_ts_segment_names() {
+        assert_eq!(container_ext(Container::MpegTs), "ts");
+        assert_eq!(container_ext(Container::Fmp4), "m4s");
+
+        let tmp = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(8)
+                    .with_container(Container::MpegTs),
+            )
+            .with_name("ts-catchup")
+            .with_dvr(dvr_config(&tmp)),
+        );
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11))
+            .expect("add_segment");
+        route.drain_dvr().await;
+
+        let resp = catchup_playlist(
+            State(route),
+            Query(CatchupPlaylistQuery { window_secs: None }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_string(resp).await;
+        assert!(body.contains("catchup/seg-1.ts"), "body: {body}");
+        assert!(!body.contains(".m4s"), "body: {body}");
+        cleanup(&tmp);
+    }
+
+    /// `pNNN.m3u8` parses to its own period number, and any other name is
+    /// refused (period 0 would otherwise serve the wrong segments).
+    #[test]
+    fn period_filenames_parse_to_their_own_number() {
+        assert_eq!(parse_period_filename("p7.m3u8"), Some(7));
+        assert_eq!(parse_period_filename("p0.m3u8"), Some(0));
+        assert_eq!(parse_period_filename("x.m3u8"), None);
+        assert_eq!(parse_period_filename("p7.m4s"), None);
     }
 
     #[tokio::test]

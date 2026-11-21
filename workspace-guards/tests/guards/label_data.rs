@@ -409,6 +409,38 @@ pub const TABLE: &[Crate] = &[
         expected: Some(&["ManifestFault"]),
         min_enums: None,
     },
+    // `ConfigError`, `ArchiveError`, `PlaylistError`, `ReadError`, `FsError`:
+    // thiserror errors. `WriterEvent`, `Step`, `StoreOp`, `PlanOutcome`,
+    // `StoreFailure`, `RecoveredBox`, `RecoverError`, `InitRef`, `ArchiveFile`:
+    // data-carrying protocol messages whose payload a static label would drop.
+    Crate {
+        name: "dvr-runtime",
+        scope: Scope::Crate,
+        matcher: Matcher::Loose,
+        skip: &[
+            "ConfigError",
+            "ArchiveError",
+            "PlaylistError",
+            "ReadError",
+            "FsError",
+            "WriterEvent",
+            "Step",
+            "StoreOp",
+            "PlanOutcome",
+            "StoreFailure",
+            "RecoveredBox",
+            "RecoverError",
+            "InitRef",
+            "ArchiveFile",
+        ],
+        expected: Some(&[
+            "ArchiveContainer",
+            "RollReason",
+            "StoreOpKind",
+            "UnsupportedTag",
+        ]),
+        min_enums: None,
+    },
     Crate {
         name: "dash-runtime",
         scope: Scope::Crate,

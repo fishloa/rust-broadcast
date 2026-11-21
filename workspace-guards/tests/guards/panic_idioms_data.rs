@@ -32,4 +32,5 @@ pub const TABLE: &[Crate] = &[
     plain("st377-1"),
     plain("timed-metadata"),
     plain("broadcast-client"),
+    plain("dvr-runtime"),
 ];

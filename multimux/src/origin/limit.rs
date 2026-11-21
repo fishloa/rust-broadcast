@@ -403,6 +403,28 @@ mod tests {
         s.parse().expect("uri")
     }
 
+    /// The metric label of each budget is the literal the dashboards select
+    /// on.
+    #[test]
+    fn budget_labels_are_the_metric_tokens() {
+        assert_eq!(Budget::Exempt.label(), "exempt");
+        assert_eq!(Budget::BlockingReload.label(), "blocking_reload");
+        assert_eq!(Budget::Ordinary.label(), "ordinary");
+    }
+
+    /// The idle-write wrapper forwards the inner body's exact size: hyper
+    /// then emits `Content-Length` for a whole-segment response instead of
+    /// falling back to chunked transfer.
+    #[test]
+    fn the_stall_timeout_body_forwards_the_size_hint() {
+        let inner: Body = vec![0u8; 4096].into();
+        let wrapped = Body::new(StallTimeoutBody::new(
+            inner,
+            std::time::Duration::from_secs(30),
+        ));
+        assert_eq!(wrapped.size_hint().exact(), Some(4096));
+    }
+
     /// Liveness/readiness routes classify as `Exempt`; a stream named `healthz`
     /// is not, and `/metrics` is an ordinary (bounded) request.
     #[test]

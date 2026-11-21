@@ -194,4 +194,22 @@ pub const TABLE: &[Crate] = &[
     // action/value types the caller builds; `WebRtcClientConfig` already
     // carries the attribute.
     runtime("webrtc-runtime", &[], &["HttpRequest", "HttpResponse"]),
+    runtime(
+        "dvr-runtime",
+        &[],
+        &[
+            "ArchiveName",
+            "PeriodNum",
+            "RetentionLimits",
+            "InitGeneration",
+            "WriterCounters",
+            "Plan",
+            "ArchivedSegment",
+            "ArchivedProgramme",
+            "PeriodPlaylist",
+            "CatchupSegment",
+            "LiveSegment",
+            "ArchiveScan",
+        ],
+    ),
 ];
