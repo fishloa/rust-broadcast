@@ -61,7 +61,7 @@ pub const UAS_LS_KEY: UniversalLabel = [
 /// Mask for the low 7 bits of a BER length/OID byte (the payload of the octet).
 const BER_LOW7_MASK: u8 = 0x7F;
 /// BER-OID continuation bit: bit 7 of a multi-byte OID tag byte (more bytes
-/// follow). All current MISB ST 0601 tags fit in one byte (`<= 127`).
+/// follow). MISB ST 0601 tags above 127 (128..=143) take two bytes.
 const BER_OID_CONTINUATION: u8 = 0x80;
 
 /// MISB ST 0601 tag 1 — Checksum, MUST be the last LS item.
@@ -192,6 +192,14 @@ impl LocalSetItem {
     /// Build a Local Set item from a tag and owned value bytes.
     pub fn new(tag: u32, value: Vec<u8>) -> Self {
         Self { tag, value }
+    }
+
+    /// This item's MISB ST 0601 value, decoded and scaled per the tag table
+    /// (e.g. tag 5 `71 C2` -> `Float(159.97...)` degrees); tags ST 0601 does
+    /// not define decode as `Value::Bytes`.
+    #[cfg(feature = "misb")]
+    pub fn st0601_value(&self) -> misb::st0601::Value<'_> {
+        misb::st0601::decode_tag(self.tag, &self.value)
     }
 
     /// Bytes this item occupies inside the Local Set value: OID tag + BER length

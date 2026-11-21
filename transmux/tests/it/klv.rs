@@ -529,3 +529,28 @@ fn klv_timestamp_change_after_an_empty_packet_emits_no_empty_unit() {
     let units = depacketise_klv(&packets).unwrap();
     assert_eq!(units, vec![b"ab".to_vec()], "no empty unit is emitted");
 }
+
+// ---------------------------------------------------------------------------
+// Typed ST 0601 values (feature `misb`)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "misb")]
+#[test]
+fn st0601_values_decode_typed_including_two_byte_tags() {
+    use misb::st0601::Value;
+    // Tag 5 Platform Heading Angle (ST 0601 example `71 C2` = 159.9744 deg) and
+    // tag 131 Take-off Time, whose BER-OID key is two bytes (`81 03`).
+    let set = UasLocalSet::from_items(vec![
+        LocalSetItem::new(TAG_PRECISION_TIMESTAMP, 1_000_000u64.to_be_bytes().to_vec()),
+        LocalSetItem::new(5, vec![0x71, 0xC2]),
+        LocalSetItem::new(131, 42u64.to_be_bytes().to_vec()),
+    ]);
+    let packet = set.serialize_with_checksum().unwrap();
+    let parsed = UasLocalSet::parse(&packet).unwrap();
+    match parsed.items[1].st0601_value() {
+        Value::Float(deg) => assert!((deg - 159.9744).abs() < 1e-3, "{deg}"),
+        other => panic!("tag 5: {other:?}"),
+    }
+    assert_eq!(parsed.items[2].tag, 131);
+    assert_eq!(parsed.items[2].st0601_value(), Value::Time(42));
+}
