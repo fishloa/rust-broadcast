@@ -442,4 +442,117 @@ mod mhas_tests {
         let data = [(word >> 8) as u8, (word & 0xFF) as u8, 0xAA];
         assert!(walk_mhas_packets(&data).is_empty());
     }
+
+    /// Pack an exact MSB-first header bit string (the base-width helper cannot
+    /// author an escaped field).
+    fn mhas_header(bits: &str) -> Vec<u8> {
+        assert_eq!(bits.len() % 8, 0, "header must be byte aligned");
+        let mut out = Vec::with_capacity(bits.len() / 8);
+        for chunk in bits.as_bytes().chunks(8) {
+            let mut byte = 0u8;
+            for &c in chunk {
+                byte = (byte << 1) | u8::from(c == b'1');
+            }
+            out.push(byte);
+        }
+        out
+    }
+
+    /// #3800: an escaped length in its second tier (`v2 != all-ones`) is
+    /// `2047 + v2`; a payload longer than the base 11-bit range is the normal
+    /// case for a large `mpegh3daConfig`.
+    #[test]
+    fn escaped_length_tier_two_frames_the_payload() {
+        // type 1 (3 bits, not escaped), label 0 (2 bits), length 11 ones + a
+        // 24-bit 5 = 2052.
+        let mut bits = alloc::string::String::from("001");
+        bits.push_str("00");
+        bits.push_str("11111111111");
+        bits.push_str("000000000000000000000101");
+        let payload = alloc::vec![0x5Au8; 2052];
+        let mut data = mhas_header(&bits);
+        assert_eq!(data.len(), 5);
+        data.extend_from_slice(&payload);
+        let packets = walk_mhas_packets(&data);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].packet_type, 1);
+        assert_eq!(packets[0].payload, &payload[..]);
+    }
+
+    /// #3800: a length escaped into the third tier is the sum of all three
+    /// fields. A run of all-ones tiers names a length far past the buffer and
+    /// must frame nothing (an accumulator that subtracts instead would frame a
+    /// 2047-byte packet out of the same bytes).
+    #[test]
+    fn escaped_length_tier_three_does_not_underflow() {
+        let mut bits = alloc::string::String::from("001");
+        bits.push_str("00");
+        bits.push_str("11111111111");
+        bits.push_str("111111111111111111111111");
+        bits.push_str("111111111111111111111111");
+        let mut data = mhas_header(&bits);
+        assert_eq!(data.len(), 8);
+        data.extend_from_slice(&alloc::vec![0u8; 2047]);
+        assert!(walk_mhas_packets(&data).is_empty());
+    }
+
+    /// #3800: a third tier of zero must not multiply the accumulator to zero
+    /// and frame an empty packet out of the same bytes.
+    #[test]
+    fn escaped_length_tier_three_zero_frames_nothing() {
+        let mut bits = alloc::string::String::from("001");
+        bits.push_str("00");
+        bits.push_str("11111111111");
+        bits.push_str("111111111111111111111111");
+        bits.push_str("000000000000000000000000");
+        let mut data = mhas_header(&bits);
+        assert_eq!(data.len(), 8);
+        data.push(0xA5);
+        assert!(walk_mhas_packets(&data).is_empty());
+    }
+
+    /// #3800: the peer/third tier of an escaped label is followed correctly;
+    /// reading a tier short would shift the length field into the label's own
+    /// bytes and mis-frame the packet.
+    #[test]
+    fn escaped_label_tier_three_keeps_the_length_aligned() {
+        // type 6 (3 bits, not escaped), label 2 ones + 8 ones + a 32-bit 0,
+        // then length 1 (11 bits).
+        let mut bits = alloc::string::String::from("110");
+        bits.push_str("11");
+        bits.push_str("11111111");
+        bits.push_str("00000000000000000000000000000000");
+        bits.push_str("00000000001");
+        let mut data = mhas_header(&bits);
+        assert_eq!(data.len(), 7);
+        data.push(0xA5);
+        let packets = walk_mhas_packets(&data);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].packet_type, 6);
+        assert_eq!(packets[0].payload, &[0xA5]);
+    }
+
+    /// #3800: an escaped packet type of exactly 255 is legal; one that escapes
+    /// to 256 cannot fit `u8` and must stop the walk.
+    #[test]
+    fn escaped_packet_type_is_bounded_by_u8() {
+        let mut bits = alloc::string::String::from("111");
+        bits.push_str("11111000"); // 248: 7 + 248 = 255
+        bits.push_str("00");
+        bits.push_str("00000000001");
+        let mut data = mhas_header(&bits);
+        data.push(0xA5);
+        let packets = walk_mhas_packets(&data);
+        assert_eq!(packets.len(), 1, "255 fits u8");
+        assert_eq!(packets[0].packet_type, 255);
+        assert_eq!(packets[0].payload, &[0xA5]);
+
+        let mut bits = alloc::string::String::from("111");
+        bits.push_str("11111001"); // 249: 7 + 249 = 256
+        bits.push_str("00");
+        bits.push_str("00000000001");
+        let mut data = mhas_header(&bits);
+        data.push(0xA5);
+        assert!(walk_mhas_packets(&data).is_empty(), "256 does not fit u8");
+    }
 }
