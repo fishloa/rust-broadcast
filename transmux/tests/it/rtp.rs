@@ -20,7 +20,7 @@ use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::{
     Media, NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpPacket,
-    RtpPacketiser, VIDEO_CLOCK_RATE,
+    RtpPacketiser, RtpTimingWarning, VIDEO_CLOCK_RATE,
 };
 
 const MTU: usize = 1400;
@@ -2543,4 +2543,162 @@ fn extract_param(sdp: &str, key: &str) -> String {
     let tail = &sdp[start..];
     let end = tail.find([';', '\r', '\n', ' ']).unwrap_or(tail.len());
     tail[..end].to_string()
+}
+
+/// Depacketise one single-NAL AU per stated wire timestamp, so a test can pin
+/// the derived duration and warning series exactly.
+fn video_ir_from_timestamps(timestamps: &[u32]) -> (Media, Vec<RtpTimingWarning>) {
+    let packets: Vec<Vec<u8>> = timestamps
+        .iter()
+        .enumerate()
+        .map(|(i, &ts)| {
+            let seq = u16::try_from(i).expect("a short timestamp series");
+            nalu_pkt(seq, ts, &[0x41, 0xAA])
+        })
+        .collect();
+    let mut depack = RtpDepacketiser::new();
+    let ir = depack
+        .unpackage(RtpInput {
+            streams: vec![RtpInputStream::new(RtpMediaKind::H264, packets)],
+        })
+        .expect("depacketise video");
+    let mut warnings = Vec::new();
+    while let Some(w) = depack.poll_timing_warning() {
+        warnings.push(w);
+    }
+    (ir, warnings)
+}
+
+fn video_durations(ir: &Media) -> Vec<u32> {
+    ir.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.duration()).expect("timed sample"))
+        .collect()
+}
+
+fn video_dts_pts(ir: &Media) -> (Vec<i64>, Vec<i64>) {
+    let dts: Vec<i64> = ir.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.dts()).expect("dts"))
+        .collect();
+    let pts: Vec<i64> = ir.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.pts()).expect("pts"))
+        .collect();
+    (dts, pts)
+}
+
+#[test]
+fn equal_consecutive_pts_raise_no_reorder_warning_and_keep_the_step() {
+    let (ir, warnings) = video_ir_from_timestamps(&[0, 3000, 3000]);
+    assert!(
+        warnings.is_empty(),
+        "equal consecutive presentation timestamps are not a reorder: {warnings:?}"
+    );
+    assert_eq!(video_durations(&ir), vec![3000, 3000, 3000]);
+}
+
+#[test]
+fn a_zero_first_step_seeds_from_the_first_positive_step() {
+    let (ir, _) = video_ir_from_timestamps(&[0, 0, 3000]);
+    assert_eq!(video_durations(&ir), vec![3000, 3000, 3000]);
+}
+
+#[test]
+fn a_repeated_last_timestamp_reuses_the_previous_step() {
+    let (ir, _) = video_ir_from_timestamps(&[1000, 3000, 3000, 3000]);
+    assert_eq!(video_durations(&ir), vec![2000, 2000, 2000, 2000]);
+}
+
+#[test]
+fn the_most_recent_positive_step_survives_a_varying_grid() {
+    let (ir, _) = video_ir_from_timestamps(&[0, 1000, 3000, 3000, 3000]);
+    assert_eq!(video_durations(&ir), vec![1000, 2000, 2000, 2000, 2000]);
+}
+
+#[test]
+fn exactly_one_warning_names_the_backward_step() {
+    let (_, warnings) = video_ir_from_timestamps(&[3000, 0, 6000]);
+    assert_eq!(warnings.len(), 1, "one backward step is one warning");
+    match warnings[0] {
+        RtpTimingWarning::ReorderedPresentationTimestamps {
+            previous_pts, pts, ..
+        } => {
+            assert_eq!(previous_pts, 3000);
+            assert_eq!(pts, 0);
+        }
+        other => panic!("expected a reorder warning, got {other:?}"),
+    }
+}
+
+#[test]
+fn reordered_wire_timestamps_get_an_increasing_decode_timeline() {
+    let (ir, _) = video_ir_from_timestamps(&[6000, 3000, 0]);
+    let (dts, pts) = video_dts_pts(&ir);
+    assert_eq!(dts, vec![0, 3000, 6000], "decode order is wire order");
+    assert_eq!(
+        pts,
+        vec![12000, 9000, 6000],
+        "presentation order is preserved"
+    );
+}
+
+#[test]
+fn a_non_decreasing_series_keeps_dts_equal_to_pts() {
+    let (ir, warnings) = video_ir_from_timestamps(&[0, 3000, 6000]);
+    assert!(warnings.is_empty());
+    let (dts, pts) = video_dts_pts(&ir);
+    assert_eq!(dts, vec![0, 3000, 6000]);
+    assert_eq!(pts, dts);
+}
+
+#[test]
+fn a_negative_track_origin_does_not_inflate_the_duration_seed() {
+    let reordered: Vec<Vec<u8>> = [6000u32, 3000, 0]
+        .iter()
+        .enumerate()
+        .map(|(i, &ts)| nalu_pkt(i as u16, ts, &[0x41, 0xAA]))
+        .collect();
+    let steady: Vec<Vec<u8>> = [7000u32, 7000, 9000, 9000]
+        .iter()
+        .enumerate()
+        .map(|(i, &ts)| nalu_pkt(i as u16, ts, &[0x41, 0xBB]))
+        .collect();
+    let ir = RtpDepacketiser::new()
+        .unpackage(RtpInput {
+            streams: vec![
+                RtpInputStream::new(RtpMediaKind::H264, reordered),
+                RtpInputStream::new(RtpMediaKind::H264, steady),
+            ],
+        })
+        .expect("depacketise two video streams");
+    let durations: Vec<u32> = ir.tracks[1]
+        .samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.duration()).expect("timed sample"))
+        .collect();
+    assert_eq!(
+        durations,
+        vec![2000, 2000, 2000, 2000],
+        "the seed is the 2000-tick step, not the sum of the two 13000/15000 instants"
+    );
+}
+
+#[test]
+fn depacketising_h264_without_config_uses_a_four_byte_length_prefix() {
+    let packets = vec![nalu_pkt(0, 0, &[0x41, 0xAA])];
+    let ir = RtpDepacketiser::new()
+        .unpackage(RtpInput {
+            streams: vec![RtpInputStream::new(RtpMediaKind::H264, packets)],
+        })
+        .expect("depacketise H.264");
+    match &ir.tracks[0].spec.config {
+        CodecConfig::Avc { config, .. } => {
+            assert_eq!(config.config.length_size_minus_one, 3);
+        }
+        other => panic!("expected an AVC config, got {other:?}"),
+    }
 }

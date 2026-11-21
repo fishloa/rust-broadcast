@@ -415,3 +415,19 @@ fn checksum_covers_every_item_before_it() {
         );
     }
 }
+
+fn raw_rtp(seq: u16, ts: u32, marker: bool, payload: &[u8]) -> Vec<u8> {
+    let mut p = vec![0x80u8, if marker { RTP_MARKER_MASK | 98 } else { 98 }];
+    p.extend_from_slice(&seq.to_be_bytes());
+    p.extend_from_slice(&ts.to_be_bytes());
+    p.extend_from_slice(&[0, 0, 0, 0]);
+    p.extend_from_slice(payload);
+    p
+}
+
+#[test]
+fn klv_timestamp_change_after_an_empty_packet_emits_no_empty_unit() {
+    let packets = vec![raw_rtp(0, 1, false, &[]), raw_rtp(1, 2, true, b"ab")];
+    let units = depacketise_klv(&packets).unwrap();
+    assert_eq!(units, vec![b"ab".to_vec()], "no empty unit is emitted");
+}
