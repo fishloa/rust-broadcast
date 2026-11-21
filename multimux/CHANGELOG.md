@@ -1,7 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `push::drive_push`'s decisions are `media_plane::push_session::PushSession`'s: connect-time negotiation, mid-stream renegotiation, loss accounting, drop-versus-reconnect classification, setup, flush outcome and give-up now come from the sans-IO core, so there is one copy of each decision. The loop keeps only its awaits (connect, setup, the bounded flush, backoff), logging, redaction and `PushMetrics`, which is read from the session's counters plus the transport's written bytes. `push::SendMediaError` implements `media_plane::push_session::PushErrorKind` (mux failure drops the item, transport failure reconnects) (#3930).
+- `PushMetrics::bytes_sent` now reports the payload bytes written over the transport (it was never incremented and always read 0), and `samples_dropped` now also counts samples skipped by cursor lag and samples that arrive while disconnected, not only mux failures (#3930).
 ### Tests
+- `tests/it/push_drive.rs` reads `PushMetrics` back after a scripted `Trunk` run (samples sent/dropped, connects, bytes) and drives a bounded-flush write failure through a reconnect, closing audit 23 finding 204's end-to-end half (#3681).
 - Every external-oracle test (Dolby Vision and HDR10 boxes through ffprobe and GPAC `MP4Box`, Smooth fragments through `MP4Box` and Bento4 `mp4dump`, the TS-HLS and cold-join oracles through ffprobe and ffmpeg) now gates its tool through `test_fixtures::process::require_tool`: with `REQUIRE_EXTERNAL_TOOLS=1` a missing tool is a hard failure instead of a silent skip. A new blocking CI `oracles` job installs the tools and sets that switch, so a skipped oracle can no longer read as green (audit 21 finding 60).
 - The secure-token rejection threshold and alphabet mapping are pinned directly, and a 10 000-symbol sample must use every alphabet symbol (`secure_random`, audit 23 finding 239, #3914).
 - The WHIP/WHEP signalling body cap is pinned at 65 536 bytes in a unit test and in HTTP tests that reject 65 537 and accept a valid 16 KiB offer (audit 23 finding 240, #3915).
