@@ -629,7 +629,9 @@ fn a_stale_temp_playlist_is_removed_reported_and_never_an_archive_file() {
 /// A host that pins its cursor before the previous recorder of the archive
 /// has released the directory keeps the cursor through the `Locked` refusal
 /// and, once it can create the recorder, archives the segment that closed in
-/// between.
+/// between. (A child process another test forks can briefly share the
+/// dropped lock's file description, so the second create retries `Locked`
+/// as a host does.)
 #[test]
 fn a_held_cursor_survives_a_locked_directory_and_records_what_closed_meanwhile() {
     let root = temp_dir("held-cursor");
@@ -656,8 +658,18 @@ fn a_held_cursor_survives_a_locked_directory_and_records_what_closed_meanwhile()
             },
         ))
         .expect("publish");
-    let mut second = FsRecorder::with_cursor(&root, name(), config(), &trunk, &mut cursor)
-        .expect("second recorder");
+    let mut attempts = 0;
+    let mut second = loop {
+        match FsRecorder::with_cursor(&root, name(), config(), &trunk, &mut cursor) {
+            Ok(recorder) => break recorder,
+            Err(FsError::Locked { .. }) if attempts < 100 => {
+                assert!(cursor.is_some(), "a refused create keeps the cursor");
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(other) => panic!("second recorder: {other}"),
+        }
+    };
     assert!(cursor.is_none(), "the recorder took the cursor");
     second
         .poll(

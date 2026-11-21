@@ -43,7 +43,7 @@ Class legend: MET-V verified, MET-U unverified, GAP, PARTIAL, N/A (ENCODER/CONTE
 | 1.23 | Multi-codec streams each provide all bandwidths | N/A ENCODER | | Single variant (F1). |
 | 1.24 | SDR streams MUST be provided | N/A ENCODER | | Origin cannot synthesise an SDR variant; GAP-OPT could warn if the only variant is PQ/HLG (EN:1273-1277 already knows). |
 | 1.25 | Example bitrate ladder | N/A ENCODER | | Origin serves one variant (F1). |
-| 1.26 | VOD avg segment bitrate within 10% of AVERAGE-BANDWIDTH | N/A | multimux/src/catchup.rs:604-612 | VOD/catch-up media playlists are emitted with no master and no BANDWIDTH at all; item concerns authored VOD ladders. |
+| 1.26 | VOD avg segment bitrate within 10% of AVERAGE-BANDWIDTH | N/A | multimux/src/output/catchup.rs:114 | VOD/catch-up media playlists are emitted with no master and no BANDWIDTH at all; item concerns authored VOD ladders. |
 | 1.27 | VOD peak within 10% of BANDWIDTH | N/A | same | As 1.26. |
 | 1.28 | Live avg over ~1 h < 110% of AVERAGE-BANDWIDTH | PARTIAL | EN:742-753, EN:1265-1271; tests hls-runtime/tests/it/avg_bandwidth.rs:87-210 | AVERAGE-BANDWIDTH is the cumulative mean since the origin started (survives eviction, test :111), clamped to BANDWIDTH. It is a moving value, so a client that cached the master earlier can see > 110%; omitted until the first segment closes. |
 | 1.29 | Live peak < 125% of BANDWIDTH | PARTIAL | EN:488-492 (peak = max segment bps ever, rounded up), EN:1258-1262 (`PLACEHOLDER_BANDWIDTH_BPS` 5 000 000 until first segment) | Peak is measured, rounded up, never decreasing (but can rise after the master was fetched). Before any segment closes the master advertises a fixed 5 Mb/s guess (EN:203, 1258), which is unrelated to the content. |

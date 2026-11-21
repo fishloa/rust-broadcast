@@ -1067,7 +1067,7 @@ impl ProgramServing {
         let mut dvr = None;
         match pending.as_mut().map(|p| p.start(route_name, &trunk)) {
             Some(RecorderStart::Started(recorder)) => {
-                dvr = Some(recorder);
+                dvr = Some(*recorder);
                 pending = None;
             }
             Some(RecorderStart::Failed) => pending = None,
@@ -1227,7 +1227,7 @@ impl ProgramServing {
         {
             Some(RecorderStart::Started(recorder)) => {
                 pending.take();
-                *slot = Some(recorder);
+                *slot = Some(*recorder);
             }
             Some(RecorderStart::Failed) => {
                 pending.take();
@@ -1721,7 +1721,7 @@ impl ProgramServing {
 
 /// The outcome of one attempt to create a program's recorder.
 enum RecorderStart {
-    Started(FsRecorder),
+    Started(Box<FsRecorder>),
     /// Another recorder holds the archive directory; retry later.
     Locked,
     /// Recording cannot start (logged).
@@ -1782,7 +1782,7 @@ impl PendingRecorder {
         ) {
             Ok(recorder) => {
                 tracing::info!(route = %route_name, "DVR recording started");
-                RecorderStart::Started(recorder)
+                RecorderStart::Started(Box::new(recorder))
             }
             Err(dvr_runtime::fs::FsError::Locked { .. }) => {
                 tracing::debug!(

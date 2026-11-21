@@ -88,7 +88,7 @@ Non-goals:
 | `impl SegmentEgress for DvrRecorder` 1861-1908 | `impl SegmentEgress for dvr_runtime::fs::FsRecorder` |
 | tests 1910-3927 | section 8.1 |
 
-### 2.2 multimux/src/catchup.rs (1571 lines; code 1-665, tests 666-1571)
+### 2.2 multimux catchup.rs, deleted in PR 5 (1571 lines; code 1-665, tests 666-1571)
 
 | Item | Destination |
 |---|---|
