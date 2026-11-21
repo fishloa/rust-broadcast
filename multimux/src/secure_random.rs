@@ -75,23 +75,44 @@ pub(crate) fn ssrc() -> u32 {
 mod tests {
     use super::*;
 
+    /// A token whose rejection logic collapses spins forever; run the sample
+    /// on its own thread so the test thread can report the failure instead of
+    /// parking the whole suite.
     #[cfg(any(feature = "whip", feature = "whep"))]
-    #[test]
-    fn token_has_requested_length_and_alphabet() {
-        for len in [0, 1, 8, 24, 32, 200] {
-            let t = token(len);
-            assert_eq!(t.len(), len);
-            assert!(t.bytes().all(|b| ALPHABET.contains(&b)));
+    fn within_deadline<F: FnOnce() + Send + 'static>(body: F) {
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+            let _ = done.send(result);
+        });
+        match finished.recv_timeout(std::time::Duration::from_secs(20)) {
+            Ok(Ok(())) => {}
+            Ok(Err(payload)) => std::panic::resume_unwind(payload),
+            Err(_) => panic!("the token sample must terminate"),
         }
     }
 
     #[cfg(any(feature = "whip", feature = "whep"))]
     #[test]
+    fn token_has_requested_length_and_alphabet() {
+        within_deadline(|| {
+            for len in [0, 1, 8, 24, 32, 200] {
+                let t = token(len);
+                assert_eq!(t.len(), len);
+                assert!(t.bytes().all(|b| ALPHABET.contains(&b)));
+            }
+        });
+    }
+
+    #[cfg(any(feature = "whip", feature = "whep"))]
+    #[test]
     fn tokens_do_not_repeat() {
-        let mut seen = std::collections::HashSet::new();
-        for _ in 0..2000 {
-            assert!(seen.insert(token(24)), "a 24-char token repeated");
-        }
+        within_deadline(|| {
+            let mut seen = std::collections::HashSet::new();
+            for _ in 0..2000 {
+                assert!(seen.insert(token(24)), "a 24-char token repeated");
+            }
+        });
     }
 
     #[cfg(any(feature = "whip", feature = "whep"))]
@@ -112,28 +133,30 @@ mod tests {
     #[cfg(any(feature = "whip", feature = "whep"))]
     #[test]
     fn token_uses_every_symbol_of_the_alphabet() {
-        let sample = token(10_000);
-        let mut counts = [0usize; 62];
-        for b in sample.bytes() {
-            let index = ALPHABET
-                .iter()
-                .position(|&a| a == b)
-                .expect("token byte is an alphabet symbol");
-            counts[index] += 1;
-        }
-        let mean = sample.len() / ALPHABET.len();
-        for (index, &count) in counts.iter().enumerate() {
-            assert!(
-                count > 0,
-                "symbol {} never occurred",
-                ALPHABET[index] as char
-            );
-            assert!(
-                count <= 2 * mean,
-                "symbol {} over-represented: {count} vs mean {mean}",
-                ALPHABET[index] as char
-            );
-        }
+        within_deadline(|| {
+            let sample = token(10_000);
+            let mut counts = [0usize; 62];
+            for b in sample.bytes() {
+                let index = ALPHABET
+                    .iter()
+                    .position(|&a| a == b)
+                    .expect("token byte is an alphabet symbol");
+                counts[index] += 1;
+            }
+            let mean = sample.len() / ALPHABET.len();
+            for (index, &count) in counts.iter().enumerate() {
+                assert!(
+                    count > 0,
+                    "symbol {} never occurred",
+                    ALPHABET[index] as char
+                );
+                assert!(
+                    count <= 2 * mean,
+                    "symbol {} over-represented: {count} vs mean {mean}",
+                    ALPHABET[index] as char
+                );
+            }
+        });
     }
 
     #[test]
