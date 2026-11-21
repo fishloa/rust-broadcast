@@ -7,6 +7,7 @@ use broadcast_client::{
     Action, Config, ConnId, Credentials, Error, ErrorKind, Event, Session, SourceKind, Status,
     TransportError,
 };
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use url::Url;
@@ -1574,4 +1575,60 @@ fn status_live_is_emitted_once_across_reloads() {
         1,
         "Live is announced once, not for every sample batch"
     );
+}
+
+const FAR_AHEAD_27MHZ: u64 = 270_000_000;
+
+fn playout_starts(events: &[Event]) -> usize {
+    count(events, |e| {
+        matches!(
+            e,
+            Event::Buffer(broadcast_client::BufferEvent::Start { .. })
+        )
+    })
+}
+
+fn is_fatal(e: &Event) -> bool {
+    matches!(e, Event::Error { fatal: true, .. })
+}
+
+#[test]
+fn a_variant_switch_after_a_fatal_error_still_restarts_the_playout_gate() {
+    let mut h = Host::new(MASTER_URL, hls_config());
+    h.ok(MASTER_URL, two_variant_master_text().into_bytes());
+    h.ok(
+        HIGH_PLAYLIST_URL,
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:2.0,\nindex0.ts\n#EXTINF:1.0,\nindex1.ts\n\
+         #EXTINF:1.0,\nmissing.ts\n#EXT-X-ENDLIST\n"
+            .as_bytes()
+            .to_vec(),
+    );
+    for n in 0..2 {
+        h.ok(
+            &format!("http://origin.test/m/high/index{n}.ts"),
+            ts_segment(n),
+        );
+    }
+    h.run_until(|evs| evs.iter().any(is_fatal), 10_000);
+    assert_eq!(playout_starts(&h.events), 1);
+    assert_eq!(count(&h.events, is_fatal), 1);
+    let origin = h
+        .events
+        .iter()
+        .find_map(|e| match e {
+            Event::Buffer(broadcast_client::BufferEvent::Start { at_27mhz }) => Some(*at_27mhz),
+            _ => None,
+        })
+        .expect("a start");
+    h.session.select_variant(ts(h.now), 0).expect("variant");
+    h.session.on_playback_position(
+        ts(h.now),
+        Clock27::from_27mhz(origin + FAR_AHEAD_27MHZ).ok(),
+    );
+    let buffer_events: Vec<Event> = drain_events(&mut h.session)
+        .into_iter()
+        .filter(|e| matches!(e, Event::Buffer(_)))
+        .collect();
+    assert!(buffer_events.is_empty(), "{buffer_events:?}");
 }
