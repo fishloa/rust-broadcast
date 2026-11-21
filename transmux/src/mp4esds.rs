@@ -2122,7 +2122,10 @@ mod tests {
         let mut out = vec![0u8; esds.serialized_len()];
         let n = esds.serialize_into(&mut out).unwrap();
         assert_eq!(n, bytes.len(), "serialize_into reports every byte written");
-        assert_eq!(out, bytes, "a position-2 unknown must stay after the SL config");
+        assert_eq!(
+            out, bytes,
+            "a position-2 unknown must stay after the SL config"
+        );
     }
 
     /// #3793: every truncation of a `DecoderConfigDescriptor` body is a

@@ -475,7 +475,10 @@ fn geometry_of(au: &[u8]) -> Option<DisplayGeometry> {
 fn seeded_state_suppresses_the_first_access_unit() {
     let au = [sequence(3), picture(1, &[])].concat();
     let geometry = geometry_of(&sequence(3));
-    assert!(geometry.is_some(), "the sequence header resolves a geometry");
+    assert!(
+        geometry.is_some(),
+        "the sequence header resolves a geometry"
+    );
 
     let mut seeded = Mpeg2DisplayTracker::new();
     seeded.seed_state(geometry.clone());
