@@ -944,6 +944,85 @@ mod tests {
         let resp = tower::ServiceExt::oneshot(router, req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     }
+
+    async fn options_status(app: &axum::Router, path: &str) -> StatusCode {
+        let req = axum::http::Request::builder()
+            .method("OPTIONS")
+            .uri(path)
+            .body(axum::body::Body::empty())
+            .expect("request");
+        tower::ServiceExt::oneshot(app.clone(), req)
+            .await
+            .expect("response")
+            .status()
+    }
+
+    fn subtitle_gate_route(subtitles: bool, container: transmux::Container) -> Arc<RouteHandle> {
+        Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(std::time::Duration::from_secs(4))
+                .with_part_target(Duration::from_millis(500))
+                .with_window_segments(4)
+                .with_subtitles(subtitles)
+                .with_container(container),
+        ))
+    }
+
+    #[tokio::test]
+    async fn the_subtitle_slot_routes_are_mounted_only_for_ll_hls_fmp4_with_subtitles() {
+        let mounted = HlsOutput::new(HlsFlavour::LowLatency, DEFAULT_PLAYLIST_NAME)
+            .manifest_routes(subtitle_gate_route(true, transmux::Container::Fmp4));
+        assert_eq!(
+            options_status(&mounted, "/subs-0.m3u8").await,
+            StatusCode::NO_CONTENT,
+            "LL-HLS fMP4 with subtitles mounts the subtitle slots"
+        );
+
+        for (flavour, subtitles, container, why) in [
+            (
+                HlsFlavour::Segmented,
+                true,
+                transmux::Container::Fmp4,
+                "classic HLS has no subtitle playlists",
+            ),
+            (
+                HlsFlavour::LowLatency,
+                true,
+                transmux::Container::MpegTs,
+                "a TS container has no WebVTT renditions",
+            ),
+            (
+                HlsFlavour::LowLatency,
+                false,
+                transmux::Container::Fmp4,
+                "subtitles disabled",
+            ),
+        ] {
+            let app = HlsOutput::new(flavour, DEFAULT_PLAYLIST_NAME)
+                .manifest_routes(subtitle_gate_route(subtitles, container));
+            assert_eq!(
+                options_status(&app, "/subs-0.m3u8").await,
+                StatusCode::NOT_FOUND,
+                "{why}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_v2_skip_directive_maps_to_skip_v2() {
+        let v2 = BlockingQuery::from(BlockingReloadQuery {
+            hls_skip: Some("v2".to_string()),
+            ..BlockingReloadQuery::default()
+        });
+        assert_eq!(v2.hls_skip, Some(SkipDirective::V2));
+        let yes = BlockingQuery::from(BlockingReloadQuery {
+            hls_skip: Some("YES".to_string()),
+            ..BlockingReloadQuery::default()
+        });
+        assert_eq!(yes.hls_skip, Some(SkipDirective::Yes));
+        let none = BlockingQuery::from(BlockingReloadQuery::default());
+        assert_eq!(none.hls_skip, None);
+    }
 }
 #[cfg(test)]
 mod ts_tests {
