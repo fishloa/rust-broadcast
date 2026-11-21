@@ -101,6 +101,26 @@ fn av1c_round_trip_and_fields() {
     roundtrip(&cfg, body);
 }
 
+/// AV1 ISOBMFF binding (`av1C`): a present
+/// `initial_presentation_delay_minus_one` sets bit 4 and carries the delay in
+/// the low nibble, so 3 serializes to `0x13` and 15 to `0x1F`.
+#[test]
+fn av1c_serializes_a_present_initial_presentation_delay() {
+    let data = fixture("mp4/av1.mp4");
+    let body = find_box_body(&data, b"av1C");
+    let mut cfg = Av1ConfigurationBox::parse(body).expect("parse av1C");
+
+    for (delay, byte) in [(3u8, 0x13u8), (15, 0x1F)] {
+        cfg.initial_presentation_delay_minus_one = Some(delay);
+        let mut buf = vec![0u8; cfg.serialized_len()];
+        let n = cfg.serialize_into(&mut buf).expect("serialize av1C");
+        assert_eq!(n, buf.len());
+        assert_eq!(buf[3], byte, "presence bit plus delay {delay}");
+        let back = Av1ConfigurationBox::parse(&buf).expect("parse back");
+        assert_eq!(back.initial_presentation_delay_minus_one, Some(delay));
+    }
+}
+
 #[test]
 fn av1c_mutation_changes_bytes() {
     let data = fixture("mp4/av1.mp4");
