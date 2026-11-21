@@ -679,7 +679,7 @@ impl ArchiveWriter {
                     Commit::Close(_) => usize::MAX,
                 };
                 if at_op >= first_remove {
-                    self.commit(commit, Some(at_op - first_remove));
+                    self.commit(commit, Some((at_op - first_remove) / 2));
                     return Ok(());
                 }
                 self.resync_offsets(&plan.ops, at_op, failure);

@@ -129,3 +129,30 @@ fn read_error_display_names_the_failure() {
     assert!(beyond.to_string().contains("10-14"), "{beyond}");
     assert!(beyond.to_string().contains("12"), "{beyond}");
 }
+
+#[test]
+fn the_layout_names_every_file_and_classifies_it_back() {
+    use dvr_runtime::layout::{ArchiveFile, classify, file_name};
+    for (container, ext) in [
+        (ArchiveContainer::Fmp4, "m4s"),
+        (ArchiveContainer::Ts, "ts"),
+    ] {
+        let media = ArchiveFile::Media(dvr_runtime::PeriodNum::new(7));
+        assert_eq!(file_name(media, container), format!("p7.{ext}"));
+        assert_eq!(classify(&format!("p7.{ext}"), container), Some(media));
+        let playlist = ArchiveFile::Playlist(dvr_runtime::PeriodNum::new(7));
+        assert_eq!(file_name(playlist, container), "p7.m3u8");
+        assert_eq!(classify("p7.m3u8", container), Some(playlist));
+        assert_eq!(classify("p7.m3u8.tmp", container), None);
+        assert_eq!(classify(".p7.m3u8.tmp", container), None);
+        assert_eq!(classify("p7.event.json", container), None);
+    }
+    assert_eq!(classify("p7.m4s", ArchiveContainer::Ts), None);
+    assert_eq!(classify("p7.ts", ArchiveContainer::Fmp4), None);
+    let last = dvr_runtime::PeriodNum::new(u32::MAX);
+    assert_eq!(last.checked_next(), None);
+    assert_eq!(
+        dvr_runtime::PeriodNum::new(1).checked_next(),
+        Some(dvr_runtime::PeriodNum::new(2))
+    );
+}

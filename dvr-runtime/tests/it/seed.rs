@@ -436,3 +436,23 @@ fn boxed(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     bytes.extend_from_slice(payload);
     bytes
 }
+
+#[test]
+fn a_broken_period_is_reported_and_the_others_still_read() {
+    let root = temp_dir("unreadable");
+    let name = ArchiveName::new("broken").expect("name");
+    record_run(&root, "broken", periods(10), 0, &[(0, 1), (1, 2)]);
+    let dir = root.join("broken");
+    std::fs::write(dir.join("p1.m3u8"), b"not a playlist\n").expect("write junk");
+    std::fs::write(dir.join("p1.m4s"), [0u8; 4]).expect("write junk media");
+    let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
+    let scan = archive.scan();
+    assert_eq!(scan.segments.len(), 2);
+    assert_eq!(scan.unreadable.len(), 1);
+    assert_eq!(scan.unreadable[0].0, dvr_runtime::PeriodNum::new(1));
+    assert!(matches!(
+        scan.unreadable[0].1,
+        dvr_runtime::read::PlaylistError::Hls(_)
+    ));
+    cleanup(&root);
+}

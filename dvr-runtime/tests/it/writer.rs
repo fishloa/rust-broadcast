@@ -696,3 +696,108 @@ fn a_later_segment_does_not_restart_the_period_clock() {
         "the period's clock runs from when it opened, not from its last segment"
     );
 }
+
+#[test]
+fn a_failed_removal_keeps_the_period_and_emits_the_failure() {
+    let mut writer = ArchiveWriter::new(
+        config(ArchiveContainer::Fmp4, 3, periods(1))
+            .with_period_duration(Some(Duration::from_secs(1))),
+    )
+    .expect("writer");
+    with_init(&mut writer, 0);
+    step_item(&mut writer, Timestamp::ZERO, None, item(0, 100, 0, false));
+    let close = plan(
+        writer
+            .on_tick(Timestamp::from_nanos(2_000_000_000))
+            .expect("tick"),
+    );
+    writer
+        .complete(close.id, PlanOutcome::Done)
+        .expect("complete");
+    step_item(
+        &mut writer,
+        Timestamp::from_nanos(2_000_000_000),
+        None,
+        item(1, 100, 2_000_000_000, false),
+    );
+    let close = plan(
+        writer
+            .on_tick(Timestamp::from_nanos(4_000_000_000))
+            .expect("tick"),
+    );
+    writer
+        .complete(close.id, PlanOutcome::Done)
+        .expect("complete");
+    let step = writer
+        .on_item(
+            Timestamp::from_nanos(4_000_000_000),
+            None,
+            &item(2, 100, 4_000_000_000, false),
+        )
+        .expect("third period");
+    let plan = plan(step);
+    let first_remove = plan
+        .ops
+        .iter()
+        .position(|op| matches!(op, StoreOp::Remove { .. }))
+        .expect("a removal");
+    writer
+        .complete(
+            plan.id,
+            PlanOutcome::Failed {
+                at_op: first_remove,
+                failure: StoreFailure::Io(std::io::ErrorKind::Other),
+            },
+        )
+        .expect("complete");
+    let log = events(&mut writer);
+    assert!(
+        log.contains(&WriterEvent::EvictionFailed {
+            period: PeriodNum::new(0)
+        }),
+        "{log:?}"
+    );
+    assert!(!evicted(&log).contains(&PeriodNum::new(0)));
+}
+
+#[test]
+fn an_outstanding_plan_blocks_every_input() {
+    let mut writer = fmp4_writer(periods(5));
+    with_init(&mut writer, 0);
+    let pending = plan(
+        writer
+            .on_item(Timestamp::ZERO, None, &item(0, 100, 0, false))
+            .expect("first"),
+    );
+    assert!(matches!(
+        writer.on_item(Timestamp::ZERO, None, &item(1, 100, 2_000_000_000, false)),
+        Err(ArchiveError::PlanPending)
+    ));
+    assert!(matches!(
+        writer.on_tick(Timestamp::ZERO),
+        Err(ArchiveError::PlanPending)
+    ));
+    assert!(matches!(writer.seed(&[]), Err(ArchiveError::PlanPending)));
+    writer
+        .complete(
+            pending.id,
+            PlanOutcome::Failed {
+                at_op: 0,
+                failure: StoreFailure::Io(std::io::ErrorKind::Other),
+            },
+        )
+        .expect("complete");
+    assert!(matches!(
+        writer.complete(pending.id, PlanOutcome::Done),
+        Err(ArchiveError::UnknownPlan { .. })
+    ));
+}
+
+#[test]
+fn roll_reasons_have_stable_labels() {
+    assert_eq!(RollReason::First.name(), "first");
+    assert_eq!(RollReason::InitChanged.name(), "init_changed");
+    assert_eq!(RollReason::PlaylistFull.to_string(), "playlist_full");
+    assert_eq!(ArchiveContainer::Fmp4.name(), "FMP4");
+    assert_eq!(ArchiveContainer::Ts.to_string(), "TS");
+}
