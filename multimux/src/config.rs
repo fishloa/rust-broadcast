@@ -6592,7 +6592,9 @@ mod pinned_limits {
                 "{label}"
             );
         }
-        route_with_outputs(vec![OutputKind::TsHls, OutputKind::Dash]).manifest_paths("media.m3u8");
+        route_with_outputs(vec![OutputKind::TsHls, OutputKind::Dash])
+            .validate_standalone("media.m3u8")
+            .expect("distinct paths");
     }
 
     /// #3670: each `UdpSocketSpec` setter stores its argument.
