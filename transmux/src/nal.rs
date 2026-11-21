@@ -908,6 +908,35 @@ mod tests {
     }
 
     #[test]
+    fn parameter_set_length_boundaries_are_inclusive_and_reject_a_bare_header() {
+        // Exactly the maximum record length, non-zero stop bit: accepted.
+        let max_pps = [&[0x68u8][..], &[0x55; MAX_PARAMETER_SET_LEN - 1][..]].concat();
+        assert_eq!(max_pps.len(), MAX_PARAMETER_SET_LEN);
+        assert!(parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &max_pps
+        ));
+        // A 1-byte "PPS" has no body: rejected.
+        assert!(!parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &[0x68]
+        ));
+        // The smallest real PPS (2 bytes) is accepted; a zero trailing byte is not.
+        assert!(parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &[0x68, 0x01]
+        ));
+        assert!(!parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &[0x68, 0x00]
+        ));
+    }
+
+    #[test]
     fn sei_varint_overflow_is_none_not_a_panic() {
         // 0xFF * (u32::MAX / 255 + 1) exceeds u32::MAX before any terminator.
         let run = (u32::MAX / 255) as usize + 2;
