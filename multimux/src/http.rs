@@ -829,4 +829,93 @@ mod tests {
             "bytes 0-9/10"
         );
     }
+
+    struct MissingEgress;
+
+    impl ServedEgress for MissingEgress {
+        type Request = ();
+        type Body = ();
+
+        fn resolve(&self, (): (), _now: Timestamp, _policy: AwaitPolicy) -> EgressResponse<()> {
+            EgressResponse::NotFound
+        }
+    }
+
+    fn small_trunk() -> Arc<Trunk> {
+        Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(8))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        )
+    }
+
+    /// #3683: a resource that does not exist answers `NotFound` without ever
+    /// waiting, so it is not reported as a timed-out wait.
+    #[tokio::test]
+    async fn an_immediate_not_found_is_not_a_timeout() {
+        let warms = Semaphore::new(WARM_PERMITS);
+        let (resp, timed_out) = tokio::time::timeout(
+            Duration::from_secs(10),
+            resolve_blocking_timed(
+                &small_trunk(),
+                &warms,
+                &Arc::new(MissingEgress),
+                (),
+                BLOCKING_TIMEOUT,
+                || (),
+            ),
+        )
+        .await
+        .expect("bounded");
+        assert!(matches!(resp, EgressResponse::NotFound));
+        assert!(!timed_out);
+    }
+
+    /// #3683: a request that awaited and then hit its deadline is a timed-out wait.
+    #[tokio::test]
+    async fn an_awaited_then_expired_request_is_a_timeout() {
+        let warms = Semaphore::new(WARM_PERMITS);
+        let egress = Arc::new(GatedEgress {
+            ready: AtomicBool::new(false),
+            resolves: AtomicUsize::new(0),
+        });
+        let (resp, timed_out) = tokio::time::timeout(
+            Duration::from_secs(10),
+            resolve_blocking_timed(
+                &small_trunk(),
+                &warms,
+                &egress,
+                (),
+                Duration::from_millis(50),
+                || (),
+            ),
+        )
+        .await
+        .expect("bounded");
+        assert!(matches!(resp, EgressResponse::NotFound));
+        assert!(timed_out);
+    }
+
+    /// #3683: `NotFound` takes the caller's `not_found_status`, `BadRequest` the
+    /// caller's `refused_status`.
+    #[test]
+    fn egress_statuses_follow_the_callers_mapping() {
+        let render = |()| StatusCode::OK.into_response();
+        let status = |resp: EgressResponse<()>| {
+            into_response_with_message(resp, StatusCode::GONE, StatusCode::BAD_GATEWAY, render)
+                .status()
+        };
+        assert_eq!(status(EgressResponse::NotFound), StatusCode::GONE);
+        assert_eq!(
+            status(EgressResponse::BadRequest { reason: "x".into() }),
+            StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            into_response(EgressResponse::NotFound, StatusCode::NOT_FOUND, render).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
 }

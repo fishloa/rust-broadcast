@@ -2370,6 +2370,34 @@ mod tests {
     use broadcast_common::timescale::Timescale;
     use tower::ServiceExt;
 
+    /// #3684: `/healthz` answers `200` with an empty body, without queueing,
+    /// even while the ordinary budget is exhausted.
+    #[tokio::test(start_paused = true)]
+    async fn healthz_is_200_with_an_empty_body_and_never_queues() {
+        let app = limit_budget_test_app(1, Duration::from_millis(50));
+        let held = app
+            .clone()
+            .oneshot(
+                axum::http::Request::get("/cam1/master.m3u8")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                axum::http::Request::get("/healthz")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_string(resp).await, "");
+        drop(held);
+    }
+
     fn make_state() -> Arc<AppState> {
         let store = Arc::new(
             RouteHandle::new(

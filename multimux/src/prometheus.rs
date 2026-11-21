@@ -259,4 +259,28 @@ mod tests {
         }
         task.abort();
     }
+
+    /// #3682: inside a runtime `install()` leaves the upkeep task started and
+    /// `spawn_upkeep` yields a task handle; the guard flag is re-armed first so
+    /// the assertion does not depend on test order.
+    #[tokio::test]
+    async fn install_starts_the_upkeep_task_inside_a_runtime() {
+        UPKEEP_STARTED.store(false, Ordering::SeqCst);
+        let handle = install();
+        assert!(UPKEEP_STARTED.load(Ordering::SeqCst));
+        let task = spawn_upkeep(handle).expect("a runtime is current");
+        task.abort();
+    }
+
+    /// #3682: outside any runtime `spawn_upkeep` has nothing to spawn on and
+    /// `spawn_upkeep_once` leaves the started flag clear so a later in-runtime
+    /// call can still start it.
+    #[test]
+    fn upkeep_is_not_started_outside_a_runtime() {
+        let handle = install();
+        assert!(spawn_upkeep(handle.clone()).is_none());
+        UPKEEP_STARTED.store(false, Ordering::SeqCst);
+        spawn_upkeep_once(handle);
+        assert!(!UPKEEP_STARTED.load(Ordering::SeqCst));
+    }
 }
