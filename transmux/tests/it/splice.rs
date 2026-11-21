@@ -1750,3 +1750,55 @@ fn splice_insert_duration_sum_falls_back_additively() {
         "start_decode_time 1000 + the two 100-tick durations"
     );
 }
+
+/// A split at or past the last sample must read the track's **end decode
+/// time** (last absolute `dts` + duration), not `start_decode_time + Σ
+/// durations`: after a per-fragment `tfdt` reseed the two differ, and the
+/// duration-sum branch also indexes past the sample array for a split beyond
+/// the end. Here the audio track's samples sit at absolute `dts` 0 and 5000
+/// (durations 100), so its end decode time is 5100 while the duration sum is
+/// 200; the video is cut at 6000, past the audio's last sample, and a
+/// section-carried ad audio sample makes the ad-in point fall back to the
+/// boundary decode time.
+#[test]
+fn splice_past_the_end_uses_the_reseeded_end_decode_time() {
+    let base_video = avc_track_from(
+        7,
+        vec![
+            timed(0, 1000, true),
+            timed(1000, 1000, true),
+            timed(6000, 1000, true),
+        ],
+        0,
+    );
+    let mut base_audio = data_track_at(9, 90_000, b'A', 2, 100, 0, DataCarriage::Pes);
+    let last = base_audio.samples.last_mut().expect("two audio samples");
+    last.timing.as_mut().expect("timed").shift(4900);
+    let base = Media::new(vec![base_audio, base_video], timescale(90_000));
+
+    let ad_video = avc_track_from(7, vec![timed(0, 1000, true)], 0);
+    let ad_audio = data_track(9, 90_000, b'B', 1, 100, DataCarriage::Pes, false);
+    let ad = Media::new(vec![ad_audio, ad_video], timescale(90_000));
+
+    let out = splice_insert(&base, &ad, 6000).expect("splice_insert");
+    let point = out
+        .discontinuity_points
+        .iter()
+        .find(|p| p.track_id == TrackId::new(9))
+        .expect("the audio ad-in point");
+    assert_eq!(
+        point.presentation_time, 5100,
+        "the audio track's end decode time (last dts 5000 + 100), not the 200-tick duration sum"
+    );
+    let audio = out
+        .media
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == TrackId::new(9))
+        .expect("audio survives");
+    assert_eq!(
+        audio.samples.len(),
+        3,
+        "two base audio samples plus the one ad sample, no resume"
+    );
+}

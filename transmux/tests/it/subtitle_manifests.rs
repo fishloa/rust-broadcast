@@ -19,7 +19,7 @@ use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::{
     DashPackager, Fmp4Demux, Media, Sample, SmoothPackager, Track, TrackId, TrackSpec,
-    WvttSampleEntry,
+    WvttSampleEntry, XmlSubtitleSampleEntry,
 };
 
 fn timescale(value: u32) -> Timescale {
@@ -182,4 +182,22 @@ fn smooth_rejects_a_subtitle_track_with_no_isobmff_sample_entry() {
         SmoothPackager::default().package(&media),
         Err(transmux::error::Error::InvalidInput(..))
     ));
+}
+
+#[test]
+fn stpp_namespace_without_a_nul_reports_the_missing_terminator_need() {
+    // SampleEntry reserved(6) + data_reference_index(2), then a namespace with
+    // no NUL byte after it.
+    let body = [&[0u8; 8][..], b"urn:x"].concat();
+    let mut bytes = ((8 + body.len()) as u32).to_be_bytes().to_vec();
+    bytes.extend_from_slice(b"stpp");
+    bytes.extend_from_slice(&body);
+    match XmlSubtitleSampleEntry::bare_parse(&bytes) {
+        Err(transmux::error::Error::BufferTooShort(e)) => {
+            assert_eq!(e.need, body.len() + 1, "the NUL byte is part of need");
+            assert_eq!(e.have, body.len());
+            assert_eq!(e.what, "null-terminated string");
+        }
+        other => panic!("expected BufferTooShort for an unterminated namespace, got {other:?}"),
+    }
 }
