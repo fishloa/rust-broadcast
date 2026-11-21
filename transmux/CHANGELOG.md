@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **`rbsp::unescape` only drops a `03` after two zero bytes.** No test fed a non-zero byte between a zero and a `03`, so the second-zero guard could be dropped and `00 05 03` silently rewritten to `00 00`; the non-match, the match, the trailing triplet and a leading `01` are now pinned (audit 23 finding 295, #3811).
 - **A `dOps` body that stops inside the channel-mapping header is a `BufferTooShort`, not a panic.** With a non-zero `ChannelMappingFamily`, 11- and 12-byte bodies now report the missing two-byte header and a 13-byte body with a 2-channel map reports the missing table (audit 23 finding 294, #3810).
 - **`HevcNalArray` reports the sum of its entries and keeps both header bits.** Tests only read `numNalus`, so `serialized_len` could multiply, `array_completeness` could be dropped or `nal_unit_type` forced to `0x3F`; a two-entry array now pins `15`, `0xA1`, `00 02`, and an incomplete array pins `0x21` (audit 23 finding 293, #3809).
 - **`HevcNalUnit::decode_sps` treats a 0/1-byte NAL as headerless but decodes a 2-byte SPS-typed one.** The short-NAL boundary was untested, so an empty NAL could panic on `self.0[0]` or a 2-byte SPS-typed NAL could be skipped; both sides are now pinned (audit 23 finding 292, #3808).
