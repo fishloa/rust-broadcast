@@ -1426,6 +1426,21 @@ mod tests {
     }
 
     #[test]
+    fn hevc_prefix_sei_nal_encodes_multi_byte_payload_types() {
+        let nal = hevc_prefix_sei_nal(&[(300, &[1, 2, 3]), (255, &[]), (4, &[9])]);
+        assert_eq!(nal[2], 0xFF, "payloadType 300 starts with 0xFF");
+        assert_eq!(nal[3], 0x2D, "300 - 255 = 45 = 0x2D");
+        assert_eq!(
+            sei_messages(&nal[2..]),
+            alloc::vec![
+                (300, alloc::vec![1, 2, 3]),
+                (255, alloc::vec![]),
+                (4, alloc::vec![9]),
+            ]
+        );
+    }
+
+    #[test]
     fn sei_parse_path_unescapes_like_sample_aes_for_the_issue_inputs() {
         // Audit #2456: the SEI walk (`sei_messages` -> `EbspBytes` ->
         // `rbsp::unescape`) and Sample-AES must drop the same `03`.
