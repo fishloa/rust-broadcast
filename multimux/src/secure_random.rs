@@ -39,6 +39,13 @@ pub(crate) fn entropy_seed() -> [u8; broadcast_client::srt::ENTROPY_SEED_LEN] {
 }
 
 #[cfg(any(feature = "whip", feature = "whep"))]
+/// The alphabet symbol for a random byte, or `None` when the byte is at or
+/// above [`REJECT_FROM`] and would make some symbols more likely than others.
+fn token_symbol(b: u8) -> Option<char> {
+    (b < REJECT_FROM).then(|| ALPHABET[usize::from(b) % ALPHABET.len()] as char)
+}
+
+#[cfg(any(feature = "whip", feature = "whep"))]
 /// A uniformly random alphanumeric token of `len` characters.
 pub(crate) fn token(len: usize) -> String {
     let mut out = String::with_capacity(len);
@@ -46,8 +53,10 @@ pub(crate) fn token(len: usize) -> String {
     while out.len() < len {
         fill(&mut buf);
         for &b in &buf {
-            if b < REJECT_FROM && out.len() < len {
-                out.push(ALPHABET[usize::from(b) % ALPHABET.len()] as char);
+            if out.len() < len
+                && let Some(c) = token_symbol(b)
+            {
+                out.push(c);
             }
         }
     }
@@ -82,6 +91,48 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for _ in 0..2000 {
             assert!(seen.insert(token(24)), "a 24-char token repeated");
+        }
+    }
+
+    #[cfg(any(feature = "whip", feature = "whep"))]
+    #[test]
+    fn token_rejection_threshold_rejects_the_biased_byte() {
+        assert_eq!(REJECT_FROM, 248, "largest multiple of 62 at or below 256");
+        assert_eq!(REJECT_FROM as usize % ALPHABET.len(), 0);
+        assert_eq!(token_symbol(0), Some('A'));
+        assert_eq!(token_symbol(61), Some('9'), "the last alphabet symbol");
+        assert_eq!(
+            token_symbol(247),
+            Some(ALPHABET[247 % ALPHABET.len()] as char)
+        );
+        assert_eq!(token_symbol(248), None, "248 would bias the alphabet");
+        assert_eq!(token_symbol(255), None);
+    }
+
+    #[cfg(any(feature = "whip", feature = "whep"))]
+    #[test]
+    fn token_uses_every_symbol_of_the_alphabet() {
+        let sample = token(10_000);
+        let mut counts = [0usize; 62];
+        for b in sample.bytes() {
+            let index = ALPHABET
+                .iter()
+                .position(|&a| a == b)
+                .expect("token byte is an alphabet symbol");
+            counts[index] += 1;
+        }
+        let mean = sample.len() / ALPHABET.len();
+        for (index, &count) in counts.iter().enumerate() {
+            assert!(
+                count > 0,
+                "symbol {} never occurred",
+                ALPHABET[index] as char
+            );
+            assert!(
+                count <= 2 * mean,
+                "symbol {} over-represented: {count} vs mean {mean}",
+                ALPHABET[index] as char
+            );
         }
     }
 
