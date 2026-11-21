@@ -226,6 +226,44 @@ fn uas_local_set_checksum_recomputed_on_change() {
     assert_eq!(PRECISION_TIMESTAMP_LEN, 8);
 }
 
+/// `serialized_len`, `serialize_into`'s returned count and the produced bytes
+/// must all agree with `serialize_with_checksum`.
+fn assert_local_set_length(set: &UasLocalSet) {
+    let expected = set.serialize_with_checksum().unwrap();
+    assert_eq!(set.serialized_len(), expected.len(), "serialized_len");
+    assert_eq!(set.try_to_bytes().unwrap().len(), expected.len(), "try_to_bytes");
+    let mut buf = vec![0u8; set.serialized_len()];
+    assert_eq!(
+        set.serialize_into(&mut buf).unwrap(),
+        expected.len(),
+        "serialize_into count"
+    );
+    assert_eq!(buf, expected, "serialize_into bytes");
+}
+
+#[test]
+fn uas_local_set_lengths_cover_empty_short_long_and_checksum_items() {
+    // (a) Empty: only the UL key, the packet length and the tag-1 checksum.
+    assert_local_set_length(&UasLocalSet::new());
+
+    // (b) Small items (one-byte tags and lengths).
+    assert_local_set_length(&UasLocalSet::from_items(vec![
+        LocalSetItem::new(TAG_PRECISION_TIMESTAMP, 0u64.to_be_bytes().to_vec()),
+        LocalSetItem::new(10, vec![0xAB, 0xCD]),
+    ]));
+
+    // (c) A 200-byte value (two-byte BER length) under a 2-byte BER-OID tag.
+    assert_local_set_length(&UasLocalSet::from_items(vec![
+        LocalSetItem::new(200, vec![0x5A; 200]),
+    ]));
+
+    // (d) An existing tag-1 item is replaced, not summed into the length.
+    assert_local_set_length(&UasLocalSet::from_items(vec![
+        LocalSetItem::new(10, vec![0x01]),
+        LocalSetItem::new(TAG_CHECKSUM, vec![0xDE, 0xAD]),
+    ]));
+}
+
 // ---------------------------------------------------------------------------
 // 4. KLV-over-RTP fragmentation (RFC 6597) — bites
 // ---------------------------------------------------------------------------
