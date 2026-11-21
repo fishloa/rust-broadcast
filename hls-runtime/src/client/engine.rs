@@ -1577,7 +1577,10 @@ impl HlsClient {
     /// # Errors
     /// [`Error::UnrequestedKey`] for an unknown id or a key already held;
     /// [`Error::BadKeyLength`] unless `bytes` is exactly 16 octets;
-    /// [`Error::DecryptFailed`] if a waiting segment does not decrypt.
+    /// [`Error::DecryptFailed`] if a waiting segment does not decrypt, and
+    /// [`Error::InitUndecodable`]/[`Error::DecryptFailed`] for a waiting init
+    /// that does not decode; the init's failure never stops the queued
+    /// segments from being decrypted, they wait for the refetched init.
     pub fn on_key(&mut self, id: KeyId, bytes: &[u8]) -> Result<()> {
         if !self.key_urls.contains_key(&id) || self.key_material.contains_key(&id) {
             return Err(Error::UnrequestedKey { id });
@@ -1596,13 +1599,16 @@ impl HlsClient {
             .filter(|(_, slot)| slot.fetch == InitFetch::Arrived)
             .filter_map(|(init, slot)| slot.crypto.filter(|c| c.key_id == id).map(|c| (*init, c)))
             .collect();
+        let mut init_failure = None;
         for (init, crypto) in waiting_inits {
             let cipher = self
                 .inits
                 .get_mut(&init)
                 .and_then(|slot| slot.cipher.take());
-            if let Some(cipher) = cipher {
-                self.complete_encrypted_init(init, crypto, &key, &cipher)?;
+            if let Some(cipher) = cipher
+                && let Err(e) = self.complete_encrypted_init(init, crypto, &key, &cipher)
+            {
+                init_failure.get_or_insert(e);
             }
         }
         let (mut ready, rest): (Vec<_>, Vec<_>) = core::mem::take(&mut self.pending_keyed)
@@ -1626,11 +1632,11 @@ impl HlsClient {
                 self.fulfilled.remove(&rid);
                 self.requested.remove(&rid);
                 self.pending_keyed.extend(ready);
-                return Err(e);
+                return Err(init_failure.unwrap_or(e));
             }
         }
         self.maybe_emit_end_of_stream()?;
-        Ok(())
+        init_failure.map_or(Ok(()), Err)
     }
 
     /// Report that fetching key `id` failed. The next [`Self::on_playlist`]

@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `HlsClient::on_key` keeps decrypting the segments queued behind a key when the encrypted init waiting on that key fails to decrypt or is not an init: the init's error is still returned, but the segments wait for the refetched init instead of being stranded, so a VOD session plays and ends after `retry_init` rather than stalling (#3951).
+
 ### Changed
 - Test-only: the client's part-gap skipping (closed and open segments), its init-slot identity across a reload (a re-signed map URL is adopted, a ready init is not refetched for a new segment), the second delivery of one key id is refused, an abandoned key no longer drops the other pending actions, a damaged `moof` is reported as `FragmentDamaged`, a map's implicit AES-128 IV is its first segment's number, and the `SkipDirective`/`PlaylistRequest`/`TsDemuxState` debug and label surfaces are asserted (audit 22 findings 58 and 59, #3026, #3027).
 - Test-only: the origin's live-edge and state accessors are asserted against a real `Trunk` — `current_live_edge` (open segment, last part, after a close), `render_epoch` advancing once per setter, the init-generation boundary, the media/discontinuity offsets, the part-target override and the sibling hold-back, the audio sibling's window bandwidth/codecs/channels, the audio-description role, `set_subtitle_renditions`, and arrival PDT from a non-zero timeline position (audit 22 finding 56, #3024).
