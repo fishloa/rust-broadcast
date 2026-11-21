@@ -344,6 +344,18 @@ pub struct PartSpec {
     pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
+/// A verbatim segment-scoped tag line of an [`OpenSegment`] that followed at
+/// least one of its parts on the wire — e.g. a key rotation between two
+/// parts, which applies only to the parts after it (RFC 8216bis §4.4.4.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenTag {
+    /// Position of this tag's line in [`OpenSegment::pre_tags`].
+    pub pre_tag_index: usize,
+    /// How many of the open segment's parts precede this line on the wire.
+    /// The line renders after those parts and before the next one.
+    pub parts_before: usize,
+}
+
 /// An in-progress (open) LL-HLS segment: its parts are known and being served,
 /// but the segment is not yet complete, so it carries no `#EXTINF`/URI
 /// (RFC 8216bis §4.4.4.9 — an open segment is represented by its trailing
@@ -364,9 +376,19 @@ pub struct OpenSegment {
     /// counterpart for the open segment): segment-defining tags that appear
     /// after the last closed segment but before the pending one — e.g. a
     /// `#EXT-X-KEY` for the next key period, or a `#EXT-X-PROGRAM-DATE-TIME`
-    /// for the in-progress segment (audit BH-W5, issue #1111). Rendered
-    /// after the open segment's map/parts, in order.
+    /// for the in-progress segment (audit BH-W5, issue #1111), in wire order.
+    /// The lines that appeared before the open segment's first part render
+    /// first, before its discontinuity/map/PDT/parts — the same tag order a
+    /// closed segment's record uses; a line that appeared after a part is
+    /// positioned by [`Self::trailing_tags`] instead, so a key rotation
+    /// between parts stays where it was (issue #3931).
     pub pre_tags: Vec<String>,
+    /// The subset of [`Self::pre_tags`] that appeared after at least one of
+    /// the open segment's parts, each with its `pre_tags` index and the number
+    /// of parts preceding it, so a key rotation between parts applies only to
+    /// the parts after it and the playlist re-renders in its original order
+    /// (issue #3931).
+    pub trailing_tags: Vec<OpenTag>,
     /// `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.6) applying to this
     /// open (in-progress) segment, if any.
     pub program_date_time: Option<ProgramDateTime>,
@@ -384,6 +406,7 @@ impl OpenSegment {
             parts,
             map: None,
             pre_tags: Vec::new(),
+            trailing_tags: Vec::new(),
             program_date_time: None,
             discontinuous: false,
         }
@@ -1992,6 +2015,24 @@ impl MediaPlaylist {
         // into an open segment when lines remain after the last URI, and
         // dropping them there would be the round-trip loss BH-W5 fixes.
         if let Some(open) = &self.open_segment {
+            // `pre_tags` is the full verbatim list; the lines that followed a
+            // part are positioned by `trailing_tags`, so a key rotation stays
+            // between the parts it separates. The rest render first, in the
+            // same tag order a closed segment's record uses
+            // (`render_segment`, issue #3931).
+            let mut positions: Vec<Option<usize>> = Vec::new();
+            positions.resize(open.pre_tags.len(), None);
+            for tag in &open.trailing_tags {
+                if let Some(slot) = positions.get_mut(tag.pre_tag_index) {
+                    *slot = Some(tag.parts_before);
+                }
+            }
+            for (index, tag) in open.pre_tags.iter().enumerate() {
+                if positions[index].is_none() {
+                    s.push_str(tag);
+                    s.push('\n');
+                }
+            }
             if open.discontinuous {
                 s.push_str("#EXT-X-DISCONTINUITY\n");
             }
@@ -2010,15 +2051,31 @@ impl MediaPlaylist {
                 if let Some(pdt) = &open.program_date_time {
                     s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
                 }
-                for part in &open.parts {
+                for (idx, part) in open.parts.iter().enumerate() {
+                    for (index, tag) in open.pre_tags.iter().enumerate() {
+                        if positions[index] == Some(idx) {
+                            s.push_str(tag);
+                            s.push('\n');
+                        }
+                    }
                     push_part_line(&mut s, part)?;
                 }
-            } else if let Some(pdt) = &open.program_date_time {
-                s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
-            }
-            for tag in &open.pre_tags {
-                s.push_str(tag);
-                s.push('\n');
+                for (index, tag) in open.pre_tags.iter().enumerate() {
+                    if positions[index].is_some_and(|at| at >= open.parts.len()) {
+                        s.push_str(tag);
+                        s.push('\n');
+                    }
+                }
+            } else {
+                if let Some(pdt) = &open.program_date_time {
+                    s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
+                }
+                for (index, tag) in open.pre_tags.iter().enumerate() {
+                    if positions[index].is_some() {
+                        s.push_str(tag);
+                        s.push('\n');
+                    }
+                }
             }
         }
 
@@ -2165,6 +2222,10 @@ impl MediaPlaylist {
         // Segment-scoped unmodeled tags accumulated for the next segment
         // (audit BH-W5, issue #1111).
         let mut pending_pre_tags: Vec<String> = Vec::new();
+        // Segment-scoped tags seen after at least one pending part (issue
+        // #3931): position-bearing, so a tag between two parts keeps its
+        // place.
+        let mut pending_trailing_tags: Vec<OpenTag> = Vec::new();
         // Typed `#EXT-X-PROGRAM-DATE-TIME` for the next segment (issue #1423).
         let mut pending_program_date_time: Option<ProgramDateTime> = None;
         let mut diagnostics: Vec<ParseDiagnostic> = Vec::new();
@@ -2448,6 +2509,12 @@ impl MediaPlaylist {
                 // (audit BH-W5, issue #1111).
                 if is_segment_defining_tag(line) || options.is_segment_scoped(tag_name(line)) {
                     pending_pre_tags.push(line.to_string());
+                    if !pending_parts.is_empty() {
+                        pending_trailing_tags.push(OpenTag {
+                            pre_tag_index: pending_pre_tags.len() - 1,
+                            parts_before: pending_parts.len(),
+                        });
+                    }
                 } else {
                     extra_tags.push(line.to_string());
                 }
@@ -2468,6 +2535,10 @@ impl MediaPlaylist {
                         max: limits.max_segments,
                     });
                 }
+                // A closed segment's record has one pre-tag block rendered
+                // before its parts, so the positional records only describe
+                // the still-open segment (issue #3931).
+                pending_trailing_tags.clear();
                 segments.push(MediaSegment {
                     uri: line.to_string(),
                     duration,
@@ -2504,6 +2575,7 @@ impl MediaPlaylist {
         // (RFC 8216bis §4.4.4.9).
         let open_segment = if pending_parts.is_empty()
             && pending_pre_tags.is_empty()
+            && pending_trailing_tags.is_empty()
             && pending_program_date_time.is_none()
             && !pending_discontinuous
         {
@@ -2516,6 +2588,7 @@ impl MediaPlaylist {
             };
             Some(OpenSegment {
                 pre_tags: core::mem::take(&mut pending_pre_tags),
+                trailing_tags: core::mem::take(&mut pending_trailing_tags),
                 program_date_time: pending_program_date_time.take(),
                 discontinuous: core::mem::take(&mut pending_discontinuous),
                 ..open
@@ -6393,6 +6466,136 @@ mod tests {
             "open segment parts must not render without low_latency:\n{out}"
         );
         assert!(!out.contains("#EXT-X-PART:"));
+    }
+
+    /// Issue #3931: one segment carrying a pre-tag, a discontinuity and a PDT
+    /// must emit its tag lines in the same order whether it is rendered as
+    /// the last closed segment or as the open (live-edge) segment. A torn
+    /// record therefore re-renders byte-identically once it closes.
+    #[test]
+    fn open_and_closed_segment_render_tags_in_the_same_order() {
+        let pdt = ProgramDateTime::parse("2024-01-01T00:00:00.000Z").unwrap();
+        const PRE_TAG: &str =
+            "#EXT-X-DATERANGE:ID=\"ad-1\",START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=15.0";
+        let expected = vec![
+            PRE_TAG.to_string(),
+            "#EXT-X-DISCONTINUITY".to_string(),
+            "#EXT-X-PROGRAM-DATE-TIME:2024-01-01T00:00:00.000Z".to_string(),
+        ];
+        let tag_lines = |text: &str| -> Vec<String> {
+            text.lines()
+                .filter(|line| {
+                    line.starts_with("#EXT-X-DATERANGE:")
+                        || *line == "#EXT-X-DISCONTINUITY"
+                        || line.starts_with("#EXT-X-PROGRAM-DATE-TIME:")
+                })
+                .map(str::to_string)
+                .collect()
+        };
+
+        let closed = MediaPlaylist {
+            target_duration: 4,
+            segments: vec![
+                seg("seg-0.m4s", 4.0),
+                MediaSegment {
+                    uri: "seg-1.m4s".into(),
+                    duration: DecimalSeconds::new(4.0).unwrap(),
+                    discontinuous: true,
+                    program_date_time: Some(pdt),
+                    pre_tags: vec![PRE_TAG.into()],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let closed_text = closed.render_segment(1).unwrap();
+        assert_eq!(
+            tag_lines(&closed_text),
+            expected,
+            "closed segment record tag order:\n{closed_text}"
+        );
+
+        let mut open = OpenSegment::new(vec![]);
+        open.pre_tags = vec![PRE_TAG.into()];
+        open.discontinuous = true;
+        open.program_date_time = Some(pdt);
+        let live = MediaPlaylist {
+            target_duration: 4,
+            segments: vec![seg("seg-0.m4s", 4.0)],
+            open_segment: Some(open),
+            ..Default::default()
+        };
+        let open_text = live.render_endlist().unwrap();
+        assert_eq!(
+            tag_lines(&open_text),
+            expected,
+            "open segment tag order must match the closed record:\n{open_text}"
+        );
+    }
+
+    /// Issue #3931: an open segment carrying a pre-tag, a discontinuity and a
+    /// PDT parses back to the same bytes, so a torn record whose tag lines
+    /// landed in the closed-segment order does not reorder on re-render.
+    #[test]
+    fn open_segment_with_pre_tag_discontinuity_and_pdt_round_trips_bytes() {
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:9\n\
+#EXT-X-TARGETDURATION:4\n\
+#EXT-X-MEDIA-SEQUENCE:0\n\
+#EXTINF:4,\n\
+seg-0.m4s\n\
+#EXT-X-DATERANGE:ID=\"ad-1\",START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=15.0\n\
+#EXT-X-DISCONTINUITY\n\
+#EXT-X-PROGRAM-DATE-TIME:2024-01-01T00:00:04.000Z\n";
+        let pl = MediaPlaylist::parse(text).expect("parse must succeed");
+        assert!(
+            pl.open_segment
+                .as_ref()
+                .is_some_and(|o| !o.pre_tags.is_empty() && o.discontinuous),
+            "the trailing tags must land on the open segment"
+        );
+        assert_eq!(
+            pl.to_m3u8().unwrap(),
+            text,
+            "open-segment tag order must survive parse -> render"
+        );
+    }
+
+    /// Issue #3931: a tag before the open segment's first part and one
+    /// between two parts each keep their wire position, so a key rotation
+    /// applies only to the parts after it and the playlist re-renders
+    /// byte-identically.
+    #[test]
+    fn open_segment_tags_before_and_between_parts_round_trip_bytes() {
+        const KEY_A: &str = "#EXT-X-KEY:METHOD=AES-128,URI=\"a.key\"";
+        const KEY_B: &str = "#EXT-X-KEY:METHOD=AES-128,URI=\"b.key\"";
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:9\n\
+#EXT-X-TARGETDURATION:4\n\
+#EXT-X-MEDIA-SEQUENCE:0\n\
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=NO\n\
+#EXTINF:4,\n\
+seg-0.m4s\n\
+#EXT-X-KEY:METHOD=AES-128,URI=\"a.key\"\n\
+#EXT-X-PART:DURATION=1,URI=\"s1.0.m4s\"\n\
+#EXT-X-KEY:METHOD=AES-128,URI=\"b.key\"\n\
+#EXT-X-PART:DURATION=1,URI=\"s1.1.m4s\"\n";
+        let pl = MediaPlaylist::parse(text).expect("parse must succeed");
+        let open = pl.open_segment.as_ref().expect("open segment expected");
+        assert_eq!(open.pre_tags, vec![KEY_A.to_string(), KEY_B.to_string()]);
+        assert_eq!(
+            open.trailing_tags,
+            vec![OpenTag {
+                pre_tag_index: 1,
+                parts_before: 1,
+            }],
+            "a tag after the first part keeps its position"
+        );
+        assert_eq!(
+            pl.to_m3u8().unwrap(),
+            text,
+            "tags before and between parts must survive parse -> render"
+        );
     }
 
     #[test]
