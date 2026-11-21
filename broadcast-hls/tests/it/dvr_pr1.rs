@@ -320,3 +320,56 @@ fn render_segment_out_of_range_is_a_typed_error() {
         Err(Error::SegmentIndexOutOfRange { index: 0, len: 0 })
     ));
 }
+
+/// H5: an `#EXTINF` with no URI line before end of input is reported, not
+/// silently dropped.
+#[test]
+fn dangling_extinf_is_one_diagnostic() {
+    use broadcast_hls::{MediaPlaylist, ParseDiagnosticKind};
+
+    let input = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\n";
+    let playlist = MediaPlaylist::parse(input).expect("must parse");
+    assert!(playlist.segments.is_empty());
+    assert_eq!(playlist.diagnostics.len(), 1, "{:?}", playlist.diagnostics);
+    assert_eq!(
+        playlist.diagnostics[0].kind,
+        ParseDiagnosticKind::DanglingSegmentTags
+    );
+    assert_eq!(playlist.diagnostics[0].line_no, 3);
+    assert_eq!(playlist.diagnostics[0].line, "#EXTINF:2,");
+    assert_eq!(
+        ParseDiagnosticKind::DanglingSegmentTags.to_string(),
+        "dangling_segment_tags"
+    );
+}
+
+/// H5: a dangling `#EXT-X-BYTERANGE` at EOF is reported the same way.
+#[test]
+fn dangling_byterange_is_one_diagnostic() {
+    use broadcast_hls::{MediaPlaylist, ParseDiagnosticKind};
+
+    let input = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\n#EXT-X-BYTERANGE:100@0\n";
+    let playlist = MediaPlaylist::parse(input).expect("must parse");
+    assert!(playlist.segments.is_empty());
+    let dangling: Vec<_> = playlist
+        .diagnostics
+        .iter()
+        .filter(|d| d.kind == ParseDiagnosticKind::DanglingSegmentTags)
+        .collect();
+    assert_eq!(dangling.len(), 2, "EXTINF and BYTERANGE each report: {dangling:?}");
+    assert_eq!(dangling[0].line, "#EXTINF:2,");
+    assert_eq!(dangling[1].line, "#EXT-X-BYTERANGE:100@0");
+
+    let only_range = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-BYTERANGE:100@0\n";
+    let playlist = MediaPlaylist::parse(only_range).expect("must parse");
+    assert_eq!(playlist.diagnostics.len(), 1, "{:?}", playlist.diagnostics);
+    assert_eq!(playlist.diagnostics[0].line, "#EXT-X-BYTERANGE:100@0");
+
+    let complete = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nseg0.ts\n";
+    assert!(
+        MediaPlaylist::parse(complete)
+            .expect("must parse")
+            .diagnostics
+            .is_empty()
+    );
+}

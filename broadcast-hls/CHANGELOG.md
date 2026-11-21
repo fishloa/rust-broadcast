@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `ParseDiagnosticKind::DanglingSegmentTags`: an `#EXTINF` or `#EXT-X-BYTERANGE` with no following URI line before end of input is reported through `MediaPlaylist::diagnostics` instead of being silently dropped, so a reader of a playlist caught mid-write can see the incomplete record (#3925).
 - `MediaPlaylist::render_header`, `render_segment(index)` and `render_endlist`: the playlist split into the three pieces an append-only writer emits, with `to_m3u8` redefined as their concatenation so the incremental and full render can never drift (the invariant is pinned over every committed media-playlist fixture). An out-of-range index is `Error::SegmentIndexOutOfRange` (#3925).
 - `ParseOptions` and `MediaPlaylist::parse_with_options`: a vendor tag named in `ParseOptions::segment_scoped_tags` stays attached to the following segment (in its `pre_tags`) instead of being hoisted to the playlist-level `extra_tags`, so a per-segment tag re-renders in its original position. `parse`/`parse_with` delegate with default options and are unchanged (#3925).
 - `CustomTag` and `CustomTagName`: a vendor tag (`EXT-` prefixed name plus an attribute list) with `parse_tag_line`/`to_tag_line`, validating the name against the §4.1 tag character set and each attribute against §4.2. Attribute order is preserved, so the DVR archive's `EXT-X-RUSTBROADCAST-ARCHIVE`/`-TIMING` tags round-trip byte-identically (#3925).

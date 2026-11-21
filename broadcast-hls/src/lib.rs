@@ -242,6 +242,12 @@ pub enum ParseDiagnosticKind {
     /// a bare date is one): the tag was dropped and its segment has no
     /// [`MediaSegment::program_date_time`].
     InvalidProgramDateTime,
+    /// An `#EXTINF` or `#EXT-X-BYTERANGE` (a tag that needs a following URI
+    /// line to close a Media Segment) appeared with no URI line before the end
+    /// of input: it names no segment, so it is reported rather than silently
+    /// dropped. A trailing incomplete record in a playlist being written
+    /// (crash or open period) is exactly this.
+    DanglingSegmentTags,
 }
 
 impl ParseDiagnosticKind {
@@ -249,6 +255,7 @@ impl ParseDiagnosticKind {
     pub fn name(&self) -> &'static str {
         match self {
             Self::InvalidProgramDateTime => "invalid_program_date_time",
+            Self::DanglingSegmentTags => "dangling_segment_tags",
         }
     }
 }
@@ -2187,8 +2194,10 @@ impl MediaPlaylist {
         let mut current_map: Option<MapTag> = None;
         let mut pending_discontinuous = false;
         let mut pending_byte_range: Option<ByteRange> = None;
+        let mut pending_byte_range_line: Option<(usize, String)> = None;
         let mut pending_parts: Vec<PartSpec> = Vec::new();
         let mut pending_duration: Option<DecimalSeconds> = None;
+        let mut pending_extinf_line: Option<(usize, String)> = None;
         // §4.4.4.7/§4.4.4.8 per-segment state (issue #872): GAP applies only
         // to the next segment; BITRATE carries forward like MAP.
         let mut pending_gap = false;
@@ -2265,6 +2274,7 @@ impl MediaPlaylist {
                 current_bitrate = Some(parse_decimal_int(rest, line_no, line, "EXT-X-BITRATE")?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BYTERANGE:") {
                 pending_byte_range = Some(ByteRange::parse(rest, line_no, line)?);
+                pending_byte_range_line = Some((line_no, line.to_string()));
             } else if let Some(rest) = line.strip_prefix("#EXT-X-MAP:") {
                 let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-MAP")?;
@@ -2289,6 +2299,7 @@ impl MediaPlaylist {
                     line,
                     "EXTINF duration",
                 )?);
+                pending_extinf_line = Some((line_no, line.to_string()));
                 // Audit BH-W11 (issue #1111): the title after the comma
                 // (RFC 8216bis §4.4.4.1) is part of the tag, so keep it —
                 // it used to be split off and thrown away.
@@ -2496,6 +2507,8 @@ impl MediaPlaylist {
                     pre_tags: core::mem::take(&mut pending_pre_tags),
                     program_date_time: pending_program_date_time.take(),
                 });
+                pending_extinf_line = None;
+                pending_byte_range_line = None;
             }
         }
 
@@ -2534,6 +2547,14 @@ impl MediaPlaylist {
                 ..open
             })
         };
+
+        for (line_no, line) in [pending_extinf_line, pending_byte_range_line].into_iter().flatten() {
+            diagnostics.push(ParseDiagnostic {
+                kind: ParseDiagnosticKind::DanglingSegmentTags,
+                line_no,
+                line,
+            });
+        }
 
         if let (Some(start), Some(len)) = (
             preload_hint_byte_range_start,
