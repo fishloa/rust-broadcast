@@ -232,3 +232,56 @@ async fn the_whip_router_uses_one_shared_pool_across_routes() {
 
     hold.abort();
 }
+
+/// A permitted response's body is wrapped in the idle-write timeout; the
+/// wrapper must still forward the body's exact size, so hyper emits
+/// `Content-Length` instead of falling back to chunked transfer (a client
+/// loses the length/progress signal otherwise). Both HTTP/1.1 and h2c.
+#[tokio::test]
+async fn a_whole_body_response_keeps_its_content_length() {
+    for h2 in [false, true] {
+        let app = multimux::origin::limit_budget_test_app(8, Duration::from_millis(50));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let token = tokio_util::sync::CancellationToken::new();
+        let serve = tokio::spawn(multimux::origin::serve_hyper_util_with_timeout(
+            listener,
+            app,
+            token.clone(),
+            Duration::from_secs(10),
+            Duration::from_secs(30),
+        ));
+        test_fixtures::process::wait_for_port(addr).await;
+
+        let client = if h2 {
+            crate::support::http::client_builder()
+                .http2_prior_knowledge()
+                .build()
+                .expect("h2c client")
+        } else {
+            crate::support::http::client()
+        };
+        let resp = client
+            .get(format!("http://{addr}/metrics"))
+            .send()
+            .await
+            .expect("GET /metrics");
+        assert_eq!(resp.status(), StatusCode::OK, "h2={h2}");
+        let length = resp
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .map(|value| value.to_str().unwrap_or_default().to_owned());
+        let body = resp.bytes().await.expect("body");
+        let expected = body.len().to_string();
+        assert_eq!(
+            length.as_deref(),
+            Some(expected.as_str()),
+            "h2={h2}: a wrapped whole body must keep its Content-Length, got {length:?}"
+        );
+
+        token.cancel();
+        let _ = serve.await;
+    }
+}
