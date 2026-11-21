@@ -598,7 +598,7 @@ mod tests {
     // --- W3 (audit run 7): DVR persist through the async advance_route path ---
 
     /// `advance_route`'s DVR drain persists a published segment byte-exact to
-    /// the period file, and the period's `pN.idx` describes exactly that byte
+    /// the period file, and the period's `pN.m3u8` describes exactly that byte
     /// range, through the async path (which dispatches the synchronous
     /// `write_all`/`fs::rename` to the blocking pool).
     ///
@@ -1088,7 +1088,7 @@ mod tests {
             .expect("add_segment");
         route.drain_dvr().await; // opens + writes period 0 with init A
 
-        // Changing the init rolls the period (crate::dvr::DvrRecorder's
+        // Changing the init rolls the period (the DVR writer's
         // mid-stream init-change rollover) — a real, reliable way to force
         // period 1 to open without waiting out `period_duration_secs`.
         route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);

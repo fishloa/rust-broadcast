@@ -1538,7 +1538,7 @@ async fn serve_with_registry_impl(
             .with_subtitles(route.subtitles);
         // Issue #900: without this, `route.dvr` was validated
         // (`Route::validate_dvr`) but never actually reached the
-        // `RouteHandle` that `ProgramServing::new` builds a `DvrRecorder`
+        // `RouteHandle` that `ProgramServing::new` builds a DVR recorder
         // from — DVR recording configured via `Config`/JSON silently never
         // ran outside this crate's own `with_dvr`-calling unit tests.
         let store = Arc::new(

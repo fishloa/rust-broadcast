@@ -2479,7 +2479,7 @@ impl RouteHandle {
     /// (`crate::dvr::DvrConfig::enabled`), never `Some` with `enabled ==
     /// false`, so a caller never needs to check that field itself. Needed
     /// by [`crate::output::catchup::CatchupOutput`] (issue #900) to find
-    /// the on-disk archive root — `crate::dvr::DvrRecorder` itself reads
+    /// the on-disk archive root — the recorder itself reads
     /// `self.dvr_config` directly, not through this accessor, since it is
     /// built once at [`Self::publish_program`] time.
     pub(crate) fn catchup_scans(&self) -> &std::sync::OnceLock<Arc<tokio::sync::Semaphore>> {
@@ -4048,8 +4048,7 @@ mod program_registry_tests {
         assert!(matches!(err, AddSegmentError::ProgramNotPublished));
     }
 
-    /// I1: `DvrRecorder` holds multi-step state (`write_offset`/`index`/
-    /// `periods`/`total_bytes`); a panic during persist can leave it
+    /// I1: the DVR recorder holds multi-step state; a panic during persist can leave it
     /// disagreeing, so recording must FAIL CLOSED (stop, count it) rather than
     /// keep writing a corrupt archive. `parking_lot` releases the guard without
     /// poisoning, so the safety property is kept by `catch_unwind` in

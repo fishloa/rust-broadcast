@@ -33,9 +33,10 @@
 //!   silently read zero for a while, which is worse than being entirely
 //!   absent, before being deleted outright pending this fix).
 //! - `multimux_dvr_si_errors_total` (`DVR_SI_ERRORS_TOTAL`) — counter, labels
-//!   `route`: an EIT section the DVR recorder could not act on and dropped.
+//!   `route`: an EIT programme change the DVR recorder could not act on (the
+//!   recorder retries it on the next feed; each failed attempt counts).
 //! - `multimux_dvr_pin_rearmed_total` (`DVR_PIN_REARMED_TOTAL`) — counter,
-//!   labels `route`: bumped by `crate::dvr::DvrRecorder::handle_terminated`
+//!   labels `route`: bumped on the DVR writer's `WriterEvent::Rearmed`
 //!   each time an `ArchiveOverrun::StallIngest` pin is force-expired by the
 //!   non-blocking safety valve and the recorder re-arms rather than
 //!   stopping for good (only a `Terminate`-policy pin's own intended stop
@@ -100,26 +101,25 @@ pub(crate) const PARTS_PRODUCED_TOTAL: &str = "multimux_parts_produced_total";
 /// (issue #809).
 pub(crate) const SEGMENTS_PRODUCED_TOTAL: &str = "multimux_segments_produced_total";
 
-/// Counter: total times a route's `DvrRecorder` re-armed its pinning
+/// Counter: total times a route's DVR recorder re-armed its pinning
 /// cursor after an `ArchiveOverrun::StallIngest` pin was force-expired by
 /// the non-blocking safety valve (`ProgramSegmenter::drain_pending`'s
 /// `expire_stalled_pins` call) — never a `Terminate`-policy pin's own
 /// intended stop, which does not re-arm. Labels: `route`. Each increment
-/// corresponds to a recording gap (see `DvrRecorder::handle_terminated`)
+/// corresponds to a recording gap (`dvr_runtime::WriterEvent::Rearmed`)
 /// whose size in segments is logged alongside it, not carried on this
 /// counter itself (would need an unbounded-cardinality label or a second
 /// counter this crate has no other use for).
 pub(crate) const DVR_PIN_REARMED_TOTAL: &str = "multimux_dvr_pin_rearmed_total";
 
-/// Counter: SI sections the DVR recorder's EIT reader failed to act on (a
-/// period roll or sidecar write that errored); the section is dropped and the
-/// reader moves on. Labels: `route`.
+/// Counter: EIT programme changes the DVR recorder failed to act on (a period
+/// roll that errored); the recorder keeps the change and retries it on the
+/// next feed, and every failed attempt counts. Labels: `route`.
 pub(crate) const DVR_SI_ERRORS_TOTAL: &str = "multimux_dvr_si_errors_total";
 
 /// Counter: total times a route's DVR recorder was abandoned because a panic
-/// during persist left its multi-step state (offset, index, period records)
-/// suspect — continuing to persist could write an archive whose index does not
-/// match its data. Labels: `route`. Recording stops for that route; this
+/// during persist left its multi-step state suspect — continuing to persist
+/// could write an archive whose playlist does not match its data. Labels: `route`. Recording stops for that route; this
 /// counter is how an operator sees it (issue #1083, D3 / I1).
 pub(crate) const DVR_FAILED_TOTAL: &str = "multimux_dvr_failed_total";
 
