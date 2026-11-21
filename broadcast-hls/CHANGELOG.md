@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING:** `jiff` 0.2 -> 1.0. `ProgramDateTime::from_timestamp` and `ProgramDateTime::timestamp` take and return a jiff 1.x `Timestamp`.
+
 ### Added
 - `OpenTag` and `OpenSegment::trailing_tags`: the segment-scoped tag lines an open (LL-HLS live-edge) segment carries after at least one of its parts, each with its `pre_tags` index and the number of parts preceding it. A key rotation between two parts now applies only to the parts after it, and a torn playlist re-renders byte-identically (#3931).
 - `Scte35Kind` and `DateRange::set_scte35`/`with_scte35`: build an `SCTE35-CMD`/`-OUT`/`-IN` hexadecimal payload on a new DATERANGE through a validated, typed setter (#3925).

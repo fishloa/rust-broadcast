@@ -65,7 +65,7 @@ smooth-runtime = { path = "../smooth-runtime" }
 url            = "2.5.9"
 broadcast-dash = { path = "../broadcast-dash" }
 test-fixtures  = { path = "../test-fixtures" }
-jiff           = { version = "0.2.46", default-features = false, features = ["std"] }
+jiff           = { version = "1.0.2", default-features = false, features = ["std"] }
 ule            = { path = "../ule" }
 caption-convert = { path = "../caption-convert" }
 container-probe = { path = "../container-probe" }

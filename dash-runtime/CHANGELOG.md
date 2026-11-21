@@ -4,6 +4,7 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 ### Changed
+- **BREAKING:** `jiff` 0.2 -> 1.0. The wall-clock API (`DashClient::set_wall_clock`, `DashClient::utc_at`, `PlanOptions::with_horizon` and `PlanOptions::horizon_utc`) takes and returns jiff 1.x `Timestamp`s.
 - Test-only: the ingest size budgets and their setters, the `styp`/`lmsg` brand scan, the per-track state machine's clock and the buffered-sample cap have tests that fail if any is removed or off by one (audit 22 finding 52, #3020).
 - Test-only: the segment-addressing arithmetic (`@endNumber`, the short last segment, a negative `@r` cut at the next `S@t`, `@presentationTimeOffset`, the dynamic availability window, the per-level `@timeShiftBufferDepth`, `sidx` numbering) has tests that fail if an operator or boundary moves (audit 22 finding 51, #3019).
 - Test-only: the live-edge and UTC-timing boundaries, the static-vs-dynamic Period kind, `BaseURL` offset accumulation and the AdaptationSet classification arms have tests that fail if any changes (audit 22 finding 53, #3021).

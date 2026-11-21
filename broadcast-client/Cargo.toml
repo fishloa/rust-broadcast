@@ -39,7 +39,7 @@ zeroize            = { version = "1.9.2", default-features = false, features = [
 url                = "2.5.9"
 http               = "1.5.0"
 headers            = { workspace = true }
-jiff               = { version = "0.2.46", default-features = false, features = ["std"] }
+jiff               = { version = "1.0.2", default-features = false, features = ["std"] }
 thiserror          = "2.0.21"
 serde              = { version = "1.0.229", default-features = false, optional = true, features = ["derive", "alloc", "std"] }
 
@@ -57,7 +57,7 @@ rtsp-runtime = { path = "../rtsp-runtime", version = "0.13.0", default-features 
 sdp-types = { workspace = true }
 rtsp-types = "0.2.0"
 url = "2.5.9"
-jiff = { version = "0.2.46", default-features = false, features = ["std"] }
+jiff = { version = "1.0.2", default-features = false, features = ["std"] }
 serde_json = { workspace = true }
 workspace-guards = { path = "../workspace-guards" }
 tokio = { version = "1.54.1", default-features = false, features = ["rt", "time", "net"] }

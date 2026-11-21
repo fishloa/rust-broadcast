@@ -59,7 +59,7 @@ iso-639 = { version = "0.1.0", optional = true, default-features = false }
 base64 = { version = "0.23.1", optional = true, default-features = false, features = ["alloc"] }
 # Date/time: the `jiff` feature (UTC time codecs, no_std) and the `http-date`
 # feature (RFC 9110 §5.6.7, std). `std` turns on `jiff/std`.
-jiff = { version = "0.2.46", default-features = false, optional = true }
+jiff = { version = "1.0.2", default-features = false, optional = true }
 # RFC 3986 reference resolution, behind the `url` feature (no_std + alloc).
 url = { version = "2.5.9", optional = true, default-features = false }
 # Only pulled in by the `serde` feature — see its comment above. Configured
@@ -71,7 +71,7 @@ erased-serde = { version = "0.4.11", default-features = false, features = ["allo
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
-jiff = { version = "0.2.46", default-features = false, features = ["std"] }
+jiff = { version = "1.0.2", default-features = false, features = ["std"] }
 
 [[bench]]
 name    = "crc32"

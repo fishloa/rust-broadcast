@@ -26,7 +26,7 @@ cc-data       = { path = "../cc-data",       version = "0.10.0", default-feature
 dvb-vbi       = { path = "../dvb-vbi",       version = "0.8.0", default-features = false, optional = true }
 thiserror     = { version = "2.0.21", default-features = false }
 # RFC 3339 formatting for the wall-clock anchor (SP5); `alloc` only so the crate stays no_std (`jiff/std` rides the `std` feature).
-jiff          = { version = "0.2.46", default-features = false, features = ["alloc"] }
+jiff          = { version = "1.0.2", default-features = false, features = ["alloc"] }
 # Hex codec for DATERANGE `SCTE35-*` attributes (SP5); `alloc` only, so the crate stays no_std.
 hex           = { version = "0.4.3", default-features = false, features = ["alloc"] }
 serde         = { version = "1.0.229", default-features = false, features = ["derive", "alloc"], optional = true }

@@ -20,7 +20,7 @@ hex        = { version = "0.4.3", default-features = false, features = ["alloc"]
 # base64 codec for SDP sprop, DRM headers and DASH/Smooth payloads (SP5); `alloc` only.
 base64     = { version = "0.23.1", default-features = false, features = ["alloc"] }
 # Calendar and duration handling (SP5): CLI availabilityStartTime, xs:duration parse/build. `std`-only, so the no_std core is unaffected.
-jiff       = { version = "0.2.46", default-features = false, features = ["std"], optional = true }
+jiff       = { version = "1.0.2", default-features = false, features = ["std"], optional = true }
 # BaseURL / URL-reference resolution (SP3, `base_url`): WHATWG `Url::join`. `std`-only.
 # RTP SDP generation (SP4): `Session::write`. `sdp-types` 0.3 is `std`-only (no `no_std`/`alloc` feature), so SDP generation is `std`-only; tests/it/rtp.rs also uses its parser as an oracle.
 sdp-types  = { workspace = true, optional = true }
