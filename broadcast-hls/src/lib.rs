@@ -2961,10 +2961,16 @@ pub fn render_attribute_list(s: &mut String, attrs: &[(String, AttrValue)]) {
 /// issue #1111).
 const QUOTED_STRING_FORBIDDEN: &[char] = &['"', '\r', '\n'];
 
-/// A C0 control character (U+0000..=U+001F) or DEL (U+007F): RFC 8216bis §4.1
-/// forbids them in a playlist, so no attribute value may carry one.
+/// A control character RFC 8216bis §4.1 forbids in a playlist: C0
+/// (U+0000..=U+001F), DEL (U+007F) or C1 (U+0080..=U+009F).
+///
+/// The new typed paths (DATERANGE and vendor tags) reject these; the general
+/// [`AttrValue`] used by whole-playlist parsing deliberately keeps its
+/// historical tolerance, so an unknown attribute carrying a tab still parses.
 pub(crate) fn has_forbidden_control(value: &str) -> bool {
-    value.chars().any(|c| (c as u32) < 0x20 || c as u32 == 0x7f)
+    value
+        .chars()
+        .any(|c| (c as u32) < 0x20 || (0x7f..=0x9f).contains(&(c as u32)))
 }
 
 /// Reject a value that cannot be rendered as an RFC 8216 §4.2
