@@ -2568,6 +2568,32 @@ pub(crate) mod tests {
         }
     }
 
+    /// §F.6.2.2's `data_rate` is computed from `frmsiz + 1` (the field is one
+    /// less than the syncframe size): at 48 kHz over 6 blocks `frmsiz` 766 is
+    /// 767 * 48000 / (6 * 16 * 1000) = 383.5 → 384 kbit/s, while dropping the
+    /// `+ 1` gives 383.
+    #[test]
+    fn dec3_data_rate_counts_the_plus_one_word() {
+        let f = Ec3SyncframeInfo::with_fields(0, 0, 766, 0, 6, 7, true, 16, 48000, 48, None, 0);
+        assert_eq!(Ec3SpecificBox::from_syncframes(&[f]).unwrap().data_rate, 384);
+    }
+
+    /// §F.6.2.13: `chan_loc` collects the additional locations of *every*
+    /// dependent substream, so two dependents declaring the same location keep
+    /// its bit (merging by XOR would clear it).
+    #[test]
+    fn chan_loc_merges_overlapping_dependent_frames() {
+        let lrs = wire_chanmap(&[6]);
+        let ind = Ec3SyncframeInfo::with_fields(0, 0, 64, 0, 6, 7, true, 16, 48000, 48, None, 0);
+        let dep0 =
+            Ec3SyncframeInfo::with_fields(1, 0, 64, 0, 6, 2, false, 16, 48000, 48, Some(lrs), 0);
+        let dep1 =
+            Ec3SyncframeInfo::with_fields(1, 1, 64, 0, 6, 2, false, 16, 48000, 48, Some(lrs), 0);
+        let bx = Ec3SpecificBox::from_syncframes(&[ind, dep0, dep1]).unwrap();
+        assert_eq!(bx.substreams[0].num_dep_sub, 2);
+        assert_eq!(bx.substreams[0].chan_loc, Some(0b010), "Lrs/Rrs kept");
+    }
+
     /// The chanmap→chan_loc table must move every location §F.6.1 names, and
     /// leave the standard-5.1 locations out (the independent substream already
     /// carries those).
