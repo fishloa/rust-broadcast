@@ -148,6 +148,10 @@ enum ServiceState {
         /// Reassembles CAT sections on PID 0x0001.
         cat_reasm: SectionReassembler,
         keep: BTreeSet<Pid>,
+        /// PIDs the currently resolved PMT itself names (see
+        /// [`pmt_derived_pids`]); excluded when the next PMT version carries
+        /// the previously learned EMM PIDs forward.
+        pmt_derived: BTreeSet<Pid>,
     },
 }
 
@@ -178,6 +182,20 @@ fn ca_pids_in_loop(raw: &[u8]) -> BTreeSet<Pid> {
             pids.insert(ca_pid);
         }
     }
+    pids
+}
+
+/// Every PID a PMT itself names: its `PCR_PID`, each elementary stream, and
+/// each ECM PID from its CA_descriptors. A PID here may be replaced by a
+/// later PMT version, so it is never treated as a CAT-learned EMM PID.
+fn pmt_derived_pids(pmt: &PmtSection<'_>) -> BTreeSet<Pid> {
+    let mut pids = BTreeSet::new();
+    pids.insert(pmt.pcr_pid);
+    for stream in &pmt.streams {
+        pids.insert(stream.elementary_pid);
+        pids.extend(ca_pids_in_loop(stream.es_info.raw()));
+    }
+    pids.extend(ca_pids_in_loop(pmt.program_info.raw()));
     pids
 }
 
@@ -330,6 +348,7 @@ impl PidFilterOp {
                         continue;
                     }
                     let keep = resolve_keep_set(&pmt, pmt_pid, &BTreeSet::new());
+                    let pmt_derived = pmt_derived_pids(&pmt);
                     *state = ServiceState::Resolved {
                         program_number: pn,
                         pmt_pid,
@@ -340,6 +359,7 @@ impl PidFilterOp {
                         pmt_reasm: SectionReassembler::default(),
                         cat_reasm: SectionReassembler::default(),
                         keep,
+                        pmt_derived,
                     };
                     return;
                 }
@@ -355,6 +375,7 @@ impl PidFilterOp {
                 pmt_reasm,
                 cat_reasm,
                 keep,
+                pmt_derived,
             } => {
                 if pid == *pmt_pid {
                     let Some((payload, pusi)) = ts_payload_and_pusi(packet) else {
@@ -375,15 +396,24 @@ impl PidFilterOp {
                             continue;
                         }
                         // PMT version change: re-resolve the keep-set,
-                        // preserving any EMM PIDs already learned from the CAT.
+                        // preserving any EMM PIDs already learned from the
+                        // CAT. A PID the *previous* PMT named (its PCR, ES
+                        // and ECM PIDs) is not an EMM PID — carrying it
+                        // forward would keep a replaced elementary stream in
+                        // the extracted service.
                         *pmt_version = pmt.version_number;
                         let mut emm_pids = BTreeSet::new();
                         for p in keep.iter() {
-                            if *p != PAT_PID && *p != CAT_PID && *p != *pmt_pid {
+                            if *p != PAT_PID
+                                && *p != CAT_PID
+                                && *p != *pmt_pid
+                                && !pmt_derived.contains(p)
+                            {
                                 emm_pids.insert(*p);
                             }
                         }
                         *keep = resolve_keep_set(&pmt, *pmt_pid, &emm_pids);
+                        *pmt_derived = pmt_derived_pids(&pmt);
                     }
                 } else if pid == PAT_PID {
                     let Some((payload, pusi)) = ts_payload_and_pusi(packet) else {
