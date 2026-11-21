@@ -692,4 +692,25 @@ mod tests {
         assert_eq!(prof.serialized_len(), 7);
         assert_eq!(prof.try_to_bytes().unwrap().len(), 7);
     }
+
+    /// A `clap` field's second byte comes from the next wire byte, not a repeat
+    /// of the first. Every other vector has equal high bytes, so an `at + 1`
+    /// mistyped as `at * 1` would read the same value.
+    #[test]
+    fn clap_reads_adjacent_bytes_in_every_field() {
+        let body = [
+            0x01, 0x02, 0x03, 0x04, // widthN = 0x0102_0304
+            0x00, 0x00, 0x00, 0x01, // widthD = 1
+            0x00, 0x00, 0x00, 0x01, // heightN = 1
+            0x00, 0x00, 0x00, 0x01, // heightD = 1
+            0xFF, 0xFE, 0xFD, 0xFD, // horizOffN = -0x0001_0203
+            0x00, 0x00, 0x00, 0x01, // horizOffD = 1
+            0x00, 0x00, 0x00, 0x00, // vertOffN = 0
+            0x00, 0x00, 0x00, 0x01, // vertOffD = 1
+        ];
+        let clap = CleanApertureBox::parse(&body).unwrap();
+        assert_eq!(clap.clean_aperture_width_n, 0x0102_0304);
+        assert_eq!(clap.horiz_off_n, -0x0001_0203);
+        assert_eq!(clap.try_to_bytes().unwrap(), body);
+    }
 }
