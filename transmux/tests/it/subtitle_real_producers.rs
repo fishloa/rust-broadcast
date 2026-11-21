@@ -21,8 +21,8 @@ use std::collections::BTreeSet;
 use broadcast_common::{Package, Serialize, Unpackage};
 use transmux::pipeline::{CodecConfig, SubtitleSampleEntry};
 use transmux::{
-    CmafMux, DashPackager, Fmp4Demux, Media, ProgressiveDemux, SmoothPackager, Track,
-    WvttSampleBox, parse_wvtt_sample,
+    CmafMux, DashPackager, Fmp4Demux, Media, OpaqueBox, ProgressiveDemux, SmoothPackager, Track,
+    WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, parse_wvtt_sample,
 };
 
 const DIR: &str = "subtitles";
@@ -407,4 +407,53 @@ fn dash_mpd_and_smooth_manifest_carry_the_real_tracks() {
             c.label
         );
     }
+}
+
+fn child(ty: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut v = ((8 + body.len()) as u32).to_be_bytes().to_vec();
+    v.extend_from_slice(ty);
+    v.extend_from_slice(body);
+    v
+}
+
+#[test]
+fn wvtt_unknown_sample_box_and_entry_extras_pin_their_lengths() {
+    // A sample of a `vtte` gap plus an unmodelled `abcd` box carrying 5 bytes.
+    let vtte = child(b"vtte", &[]);
+    let abcd = child(b"abcd", &[1, 2, 3, 4, 5]);
+    let sample = [vtte, abcd.clone()].concat();
+    let boxes = parse_wvtt_sample(&sample).expect("parse sample");
+    assert!(matches!(boxes[0], WvttSampleBox::Empty(_)));
+    let other = match &boxes[1] {
+        WvttSampleBox::Other(o) => o,
+        other => panic!("expected an unknown box, got {other:?}"),
+    };
+    assert_eq!(&other.box_type, b"abcd");
+    assert_eq!(other.data, [1, 2, 3, 4, 5]);
+    assert_eq!(boxes[1].serialized_len(), abcd.len());
+    let mut again = Vec::new();
+    for b in &boxes {
+        let mut buf = vec![0u8; b.serialized_len()];
+        let written = b.serialize_into(&mut buf).expect("serialize box");
+        assert_eq!(written, b.serialized_len(), "serializer counts its bytes");
+        again.extend_from_slice(&buf[..written]);
+    }
+    assert_eq!(again, sample, "unknown box round trip");
+
+    // An entry with two extra boxes: the length includes both, and the whole
+    // entry parses back byte-identically.
+    let entry = WvttSampleEntry {
+        data_reference_index: 1,
+        config: WebVttConfigurationBox::new("WEBVTT"),
+        extra_boxes: vec![
+            OpaqueBox::new(*b"vlab", b"label".to_vec()),
+            OpaqueBox::new(*b"btrt", vec![0u8; 12]),
+        ],
+    };
+    let bytes = entry.try_to_bytes().expect("serialize wvtt entry");
+    assert_eq!(bytes.len(), entry.serialized_len());
+    let parsed = WvttSampleEntry::bare_parse(&bytes).expect("parse wvtt entry");
+    assert_eq!(parsed.extra_boxes.len(), 2);
+    assert_eq!(parsed, entry);
+    assert_eq!(parsed.try_to_bytes().expect("re-serialize"), bytes);
 }
