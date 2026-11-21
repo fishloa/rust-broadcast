@@ -399,4 +399,3 @@ fn streaming_mux_sample_by_sample_equals_whole_media() {
     assert_cc_valid(&out);
     assert_eq!(es_packets(&out), es_packets(&whole));
 }
-

@@ -4043,10 +4043,8 @@ mod program_registry_tests {
     }
 
     fn dvr_test_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "multimux-dvr-route-{}-{name}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("multimux-dvr-route-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
         dir
@@ -4075,7 +4073,11 @@ mod program_registry_tests {
             "an identical init must not be queued twice"
         );
         route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
-        assert_eq!(serving.init_log_len(), 2, "a changed init is a new generation");
+        assert_eq!(
+            serving.init_log_len(),
+            2,
+            "a changed init is a new generation"
+        );
 
         let plain = RouteHandle::new(RouteConfig::default());
         plain.publish_new_program(SPTS_PROGRAM_ID);
@@ -4222,10 +4224,7 @@ mod program_registry_tests {
             .ll_hls()
             .master_playlist("media.m3u8")
             .expect("master renders");
-        assert!(
-            !master_before.contains("TYPE=SUBTITLES"),
-            "{master_before}"
-        );
+        assert!(!master_before.contains("TYPE=SUBTITLES"), "{master_before}");
 
         assert!(serving.declare_subtitles(&[], &[]).is_none());
         let too_many: Vec<_> = (0..=MAX_SUBTITLE_RENDITIONS)
@@ -4333,11 +4332,7 @@ mod program_registry_tests {
             );
             let (status, body) = crate::testutil::get_bytes(&app, "/cam/subs-0.m3u8").await;
             let playlist = String::from_utf8(body).expect("utf-8 playlist");
-            assert_eq!(
-                status,
-                axum::http::StatusCode::OK,
-                "{source:?}: {playlist}"
-            );
+            assert_eq!(status, axum::http::StatusCode::OK, "{source:?}: {playlist}");
             assert_eq!(
                 playlist.contains("#EXT-X-PROGRAM-DATE-TIME:"),
                 expect_pdt,

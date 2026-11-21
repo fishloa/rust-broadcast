@@ -1051,7 +1051,10 @@ mod tests {
         let video_only = vec![video_spec(TrackId::new(1))];
         let video_and_second = vec![video_spec(TrackId::new(1)), video_spec(TrackId::new(2))];
         route.set_track_specs(program, video_only.clone());
-        for info in [seg(1, Duration::from_secs(4)), seg(2, Duration::from_secs(4))] {
+        for info in [
+            seg(1, Duration::from_secs(4)),
+            seg(2, Duration::from_secs(4)),
+        ] {
             route.add_segment(program, info).expect("add_segment");
         }
         route.begin_track_specs(
@@ -1059,7 +1062,10 @@ mod tests {
             video_and_second.clone(),
             media_plane::ids::SegmentSeq::new(3),
         );
-        for info in [seg(3, Duration::from_secs(4)), seg(4, Duration::from_secs(4))] {
+        for info in [
+            seg(3, Duration::from_secs(4)),
+            seg(4, Duration::from_secs(4)),
+        ] {
             route.add_segment(program, info).expect("add_segment");
         }
         let log_len = || {

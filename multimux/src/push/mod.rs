@@ -1055,9 +1055,7 @@ mod tests {
                             bytes::Bytes::from(vec![0u8; 8]),
                             media_plane::ids::SegmentSeq::new(seq),
                             Duration::from_millis(5),
-                            broadcast_common::Timestamp::from_nanos(
-                                u64::from(seq) * 5_000_000,
-                            ),
+                            broadcast_common::Timestamp::from_nanos(u64::from(seq) * 5_000_000),
                             transmux::SegmentMeta {
                                 discontinuous: false,
                             },

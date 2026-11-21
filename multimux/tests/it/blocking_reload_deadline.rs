@@ -188,5 +188,8 @@ async fn an_in_progress_segment_at_the_live_edge_streams_its_parts() {
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
         .unwrap();
-    assert!(!body.is_empty(), "the streamed segment must carry its parts");
+    assert!(
+        !body.is_empty(),
+        "the streamed segment must carry its parts"
+    );
 }

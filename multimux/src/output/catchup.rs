@@ -1207,7 +1207,11 @@ mod tests {
         .expect("write index");
 
         let resp = catchup_resource(State(route), Path("init-p0.mp4".to_string())).await;
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "no init bytes to serve");
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "no init bytes to serve"
+        );
         cleanup(&tmp);
     }
 
@@ -1238,9 +1242,7 @@ mod tests {
 
         let resp = catchup_playlist(
             State(route),
-            Query(CatchupPlaylistQuery {
-                window_secs: None,
-            }),
+            Query(CatchupPlaylistQuery { window_secs: None }),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);

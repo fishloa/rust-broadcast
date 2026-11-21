@@ -309,10 +309,7 @@ mod tests {
             "s3://***@[::1/key?x=1"
         );
         // No `@` before the query: nothing to mask, string unchanged.
-        assert_eq!(
-            redact_url("rtsp://[::1/s?x=1"),
-            "rtsp://[::1/s?x=1"
-        );
+        assert_eq!(redact_url("rtsp://[::1/s?x=1"), "rtsp://[::1/s?x=1");
     }
 
     /// Same boundary in the destination fallback, over a URL short enough that

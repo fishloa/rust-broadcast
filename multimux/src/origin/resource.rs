@@ -1958,12 +1958,13 @@ mod tests {
             "everything inside the kept window must still hit"
         );
         assert!(
-            cache.get(
-                SPLICED_SEGMENTS_KEPT as u32 + 1,
-                &sources[SPLICED_SEGMENTS_KEPT],
-                &[]
-            )
-            .is_some(),
+            cache
+                .get(
+                    SPLICED_SEGMENTS_KEPT as u32 + 1,
+                    &sources[SPLICED_SEGMENTS_KEPT],
+                    &[]
+                )
+                .is_some(),
             "the newest entry must hit"
         );
     }

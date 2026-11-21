@@ -2151,7 +2151,10 @@ mod tests {
     #[test]
     fn input_kind_names_are_the_admin_json_tokens() {
         let mut cases = vec![
-            (serde_json::json!({ "type": "rtsp", "url": "rtsp://h/s" }), "rtsp"),
+            (
+                serde_json::json!({ "type": "rtsp", "url": "rtsp://h/s" }),
+                "rtsp",
+            ),
             (
                 serde_json::json!({
                     "type": "rtp", "addr": "127.0.0.1:5000", "sdp": "v=0", "socket": {},
@@ -2196,11 +2199,11 @@ mod tests {
                 serde_json::json!({ "type": "custom", "type_tag": "x" }),
                 "custom",
             ),
-            (
-                serde_json::json!({ "type": "file", "path": "/tmp/x.ts" }),
-                "file",
-            ),
         ];
+        cases.push((
+            serde_json::json!({ "type": "file", "path": "/tmp/x.ts" }),
+            "file",
+        ));
         #[cfg(feature = "whip")]
         cases.push((
             serde_json::json!({ "type": "whip", "listen": "127.0.0.1:8080" }),
@@ -2255,7 +2258,10 @@ mod tests {
         for _ in 0..16 {
             tokio::task::yield_now().await;
         }
-        assert!(handle_probe.is_finished(), "the ingest task must be aborted");
+        assert!(
+            handle_probe.is_finished(),
+            "the ingest task must be aborted"
+        );
         assert!(push_probe.is_finished(), "the push task must be aborted");
     }
 
@@ -2267,21 +2273,16 @@ mod tests {
     async fn a_parked_request_follows_at_most_max_redispatch_replacements() {
         use crate::registry::{InputCtx, InputFactory};
 
-        let dir = std::env::temp_dir().join(format!(
-            "multimux-admin-redispatch-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("multimux-admin-redispatch-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
         let config_path = dir.join("config.json");
         let mut ctx = ctx_for_tests();
         ctx.scheme_registry.register_input(
             "hold",
-            Arc::new(|ctx: InputCtx| {
-                Ok(
-                    tokio::spawn(async move { ctx.cancel.cancelled().await }),
-                )
-            }) as InputFactory,
+            Arc::new(|ctx: InputCtx| Ok(tokio::spawn(async move { ctx.cancel.cancelled().await })))
+                as InputFactory,
         );
         let route = |version: u32| {
             let mut route = rtsp_route("live", "rtsp://host/live");
@@ -2323,7 +2324,13 @@ mod tests {
             .expect("request");
         let call = tokio::spawn(async move { service.call(request).await });
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !registry.hooks.log.lock().iter().any(|line| line == "attempt:1") {
+        while !registry
+            .hooks
+            .log
+            .lock()
+            .iter()
+            .any(|line| line == "attempt:1")
+        {
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "the request never started: {:?}",
@@ -2331,7 +2338,10 @@ mod tests {
             );
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
-        assert!(!call.is_finished(), "the request must be parked, not answered");
+        assert!(
+            !call.is_finished(),
+            "the request must be parked, not answered"
+        );
 
         let cap = MAX_REDISPATCHES + 1;
         let mut reached = false;
