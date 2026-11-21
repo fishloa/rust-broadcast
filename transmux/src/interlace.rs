@@ -499,3 +499,40 @@ pub(crate) fn hevc_facts(sps_nal: &[u8], nals: &[&[u8]]) -> Option<PictureFacts>
         source_scan_type,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pic_struct_codes_match_tables_d1_and_d2() {
+        for code in 0..=8u8 {
+            let h264 = PicStruct::from_code(code, false)
+                .unwrap_or_else(|| panic!("H.264 Table D-1 code {code}"));
+            assert_eq!(h264.code(), code);
+            let h265 = PicStruct::from_code(code, true)
+                .unwrap_or_else(|| panic!("H.265 Table D.2 code {code}"));
+            assert_eq!(h265, h264);
+        }
+        for code in 9..=12u8 {
+            assert_eq!(
+                PicStruct::from_code(code, false),
+                None,
+                "H.264 Table D-1 reserved {code}"
+            );
+            let h265 = PicStruct::from_code(code, true)
+                .unwrap_or_else(|| panic!("H.265 Table D.2 code {code}"));
+            assert_eq!(h265.code(), code);
+        }
+        assert_eq!(PicStruct::from_code(13, false), None);
+        assert_eq!(PicStruct::from_code(13, true), None);
+    }
+
+    #[test]
+    fn source_scan_type_codes_map_per_d33() {
+        assert_eq!(SourceScanType::from_code(0), SourceScanType::Interlaced);
+        assert_eq!(SourceScanType::from_code(1), SourceScanType::Progressive);
+        assert_eq!(SourceScanType::from_code(2), SourceScanType::Unknown);
+        assert_eq!(SourceScanType::from_code(3), SourceScanType::Unknown);
+    }
+}
