@@ -1,7 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `push::drive_push`'s decisions are `media_plane::push_session::PushSession`'s: connect-time negotiation, mid-stream renegotiation, loss accounting, drop-versus-reconnect classification, setup, flush outcome and give-up now come from the sans-IO core, so there is one copy of each decision. The loop keeps only its awaits (connect, setup, the bounded flush, backoff), logging, redaction and `PushMetrics`, which is read from the session's counters plus the transport's written bytes. `push::SendMediaError` implements `media_plane::push_session::PushErrorKind` (mux failure drops the item, transport failure reconnects) (#3930).
 ### Tests
+- `tests/it/push_drive.rs` reads `PushMetrics` back after a scripted `Trunk` run (samples sent/dropped, connects, bytes) and drives a bounded-flush write failure through a reconnect, closing audit 23 finding 204's end-to-end half (#3681).
 - Every external-oracle test (Dolby Vision and HDR10 boxes through ffprobe and GPAC `MP4Box`, Smooth fragments through `MP4Box` and Bento4 `mp4dump`, the TS-HLS and cold-join oracles through ffprobe and ffmpeg) now gates its tool through `test_fixtures::process::require_tool`: with `REQUIRE_EXTERNAL_TOOLS=1` a missing tool is a hard failure instead of a silent skip. A new blocking CI `oracles` job installs the tools and sets that switch, so a skipped oracle can no longer read as green (audit 21 finding 60).
 ### Fixed
 - The SRT push continuity-count tests negotiated the 120 ms minimum TSBPD latency, so a scheduler stall on a loaded machine exceeded the too-late threshold and the receiver skipped payload before the continuity counters were checked. They now negotiate a 3000 ms latency and assert the receiver's `SocketStats` are all zero, so the continuity check again measures the push path rather than SRT's expected too-late drop behaviour (#3552).
