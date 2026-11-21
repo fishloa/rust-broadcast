@@ -638,6 +638,105 @@ fn contains_ascii(haystack: &[u8], needle: &[u8; 4]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// AVC SPS hostile-count and VUI timing bounds (audit 23 #3850, #3851)
+// ---------------------------------------------------------------------------
+
+use crate::sps_builder::{AvcHrd, AvcSps, AvcVui, avc_sps};
+
+#[test]
+fn avc_poc_cycle_count_bound() {
+    let sps = avc_sps(&AvcSps {
+        pic_order_cnt_type: 1,
+        num_ref_cycle: 255,
+        ..AvcSps::default()
+    });
+    let info = transmux::decode_avc_sps(&sps).expect("255 is the legal maximum");
+    assert_eq!((info.width, info.height), (720, 576));
+
+    let sps = avc_sps(&AvcSps {
+        pic_order_cnt_type: 1,
+        num_ref_cycle: 256,
+        ..AvcSps::default()
+    });
+    assert!(
+        matches!(
+            transmux::decode_avc_sps(&sps),
+            Err(transmux::error::Error::InvalidValue(_))
+        ),
+        "256 ref frames in the POC cycle is outside 0..=255"
+    );
+}
+
+fn avc_hrd_sps(cpb_cnt_minus1: u64) -> Vec<u8> {
+    avc_sps(&AvcSps {
+        vui: Some(AvcVui {
+            timing: Some((1001, 60000)),
+            hrd: Some(AvcHrd { cpb_cnt_minus1 }),
+            restriction: Some((2, 3)),
+        }),
+        ..AvcSps::default()
+    })
+}
+
+#[test]
+fn avc_hrd_cpb_cnt_bound() {
+    assert_eq!(
+        decode_avc_reorder_depth(&avc_hrd_sps(31))
+            .expect("decode")
+            .max_num_reorder_frames,
+        Some(2),
+        "cpb_cnt_minus1 31 is the legal maximum, so the VUI continues"
+    );
+    assert_eq!(
+        decode_avc_reorder_depth(&avc_hrd_sps(32))
+            .expect("decode")
+            .max_num_reorder_frames,
+        None,
+        "cpb_cnt_minus1 32 stops the VUI walk before bitstream_restriction"
+    );
+    assert_eq!(
+        decode_avc_reorder_depth(&avc_hrd_sps(40))
+            .expect("decode")
+            .max_num_reorder_frames,
+        None,
+        "cpb_cnt_minus1 40 stops the VUI walk before bitstream_restriction"
+    );
+}
+
+#[test]
+fn avc_vui_timing_frame_rate_and_zero_num_units() {
+    let sps = avc_sps(&AvcSps {
+        vui: Some(AvcVui {
+            timing: Some((1001, 60000)),
+            hrd: None,
+            restriction: None,
+        }),
+        ..AvcSps::default()
+    });
+    let info = transmux::decode_avc_sps(&sps).expect("decode SPS");
+    assert_eq!(info.num_units_in_tick, Some(1001));
+    assert_eq!(info.time_scale, Some(60000));
+    let fps = info.fps.expect("frame rate");
+    assert!(
+        (fps - 29.97).abs() < 1e-3,
+        "AVC fps = time_scale / (2 * num_units_in_tick), got {fps}"
+    );
+
+    let sps = avc_sps(&AvcSps {
+        vui: Some(AvcVui {
+            timing: Some((0, 60000)),
+            hrd: None,
+            restriction: None,
+        }),
+        ..AvcSps::default()
+    });
+    let info = transmux::decode_avc_sps(&sps).expect("decode SPS");
+    assert_eq!(info.num_units_in_tick, Some(0));
+    assert_eq!(info.time_scale, Some(60000));
+    assert_eq!(info.fps, None, "num_units_in_tick 0 yields no frame rate");
+}
+
+// ---------------------------------------------------------------------------
 // H.264 High-profile scaling lists (audit 23 finding 324)
 // ---------------------------------------------------------------------------
 

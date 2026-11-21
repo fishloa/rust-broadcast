@@ -292,3 +292,57 @@ fn cue_payload_box_round_trip() {
     assert_eq!(parsed.cue_text, "Test subtitle text");
     assert_eq!(parsed.try_to_bytes().unwrap().as_slice(), bytes.as_slice());
 }
+
+// ---------------------------------------------------------------------------
+// stpp non-empty fields and extra child boxes (audit 23 #3857)
+// ---------------------------------------------------------------------------
+
+use transmux::OpaqueBox;
+
+#[test]
+fn stpp_nonempty_strings_and_extra_boxes_round_trip() {
+    let mut entry = XmlSubtitleSampleEntry::new("http://www.w3.org/ns/ttml");
+    entry.schema_location = String::from("http://s");
+    entry.auxiliary_mime_types = String::from("image/png");
+    entry.extra_boxes.push(OpaqueBox::new(*b"free", Vec::new()));
+    entry
+        .extra_boxes
+        .push(OpaqueBox::new(*b"abcd", vec![0x5A; 300]));
+    entry
+        .extra_boxes
+        .push(OpaqueBox::new(*b"big!", vec![0xA5; 70_000]));
+    // 308 = 0x00000134 makes the size's third byte nonzero, and 70008 =
+    // 0x00011178 makes the second byte nonzero: the walk must read all four.
+    assert_eq!(entry.extra_boxes[1].data.len(), 300);
+    assert_eq!(entry.extra_boxes[2].data.len(), 70_000);
+
+    let bytes = entry
+        .try_to_bytes()
+        .expect("serialize stpp with fields and children");
+    let parsed = XmlSubtitleSampleEntry::bare_parse(&bytes).expect("parse stpp");
+
+    assert_eq!(parsed.schema_location, "http://s");
+    assert_eq!(parsed.auxiliary_mime_types, "image/png");
+    assert_eq!(parsed.extra_boxes.len(), 3, "every child box kept");
+    assert_eq!(parsed, entry);
+    assert_eq!(
+        parsed.try_to_bytes().expect("re-serialize"),
+        bytes,
+        "byte-identical round trip"
+    );
+}
+
+#[test]
+fn stpp_child_box_size_below_header_stops_the_walk() {
+    let entry = XmlSubtitleSampleEntry::new("http://www.w3.org/ns/ttml");
+    let mut bytes = entry.try_to_bytes().expect("serialize stpp");
+    // A child header declaring size 4 is shorter than the 8-byte box header.
+    bytes.extend_from_slice(&[0, 0, 0, 4, b'j', b'u', b'n', b'k']);
+
+    let parsed = XmlSubtitleSampleEntry::bare_parse(&bytes).expect("parse stpp");
+    assert_eq!(parsed.namespace, entry.namespace);
+    assert!(
+        parsed.extra_boxes.is_empty(),
+        "a size below the header length stops the child walk"
+    );
+}
