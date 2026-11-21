@@ -5608,7 +5608,17 @@ mod program_registry_tests {
         if let Some(retired) = new.settle_archive_predecessors() {
             retired.await.expect("retire");
         }
-        assert!(!archive_is_locked(&tmp, "rg@1538"));
+        // A process another test spawns can briefly inherit a just-released
+        // lock descriptor (see `FsRecorder::succeed`), so the release is
+        // awaited, bounded, rather than sampled once.
+        let released = async {
+            while archive_is_locked(&tmp, "rg@1538") {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(10), released)
+            .await
+            .expect("the gone service's archive lock is released");
         assert!(archive_is_locked(&tmp, "rg"));
         assert_eq!(archived_bytes(&tmp, "rg@1538"), [(1, 0x02), (2, 0x02)]);
         let third = mpts_route(&tmp, "rg", None).with_archive_floors(new.media_sequence_floors());
@@ -5616,7 +5626,18 @@ mod program_registry_tests {
         drop(new);
         publish_services(&third, &services);
         add_service_segment(&third, &services, SERVICE_B, 1);
-        third.drain_dvr().await;
+        let archived = async {
+            loop {
+                third.drain_dvr().await;
+                if archived_bytes(&tmp, "rg@1538").len() == 3 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(40), archived)
+            .await
+            .expect("the returning service records");
         assert_eq!(
             archived_bytes(&tmp, "rg@1538"),
             [(1, 0x02), (2, 0x02), (4, 0x02)],
