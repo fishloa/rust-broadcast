@@ -25,6 +25,11 @@ sys.modules["check_published_dep_consistency"] = dut
 spec.loader.exec_module(dut)
 
 
+@pytest.fixture(autouse=True)
+def _no_git_tag_lookup(monkeypatch):
+    monkeypatch.setattr(dut, "release_tags_at_head", lambda: set())
+
+
 class TestCompareVersions:
     """Tests for compare_versions()."""
 
@@ -954,3 +959,71 @@ class TestHttpGetJsonRetriesTruncatedReads:
     def test_garbled_json_is_retried(self, monkeypatch) -> None:
         failure = ValueError("Expecting value: line 1 column 1 (char 0)")
         assert self._serve(monkeypatch, failure) == {"crate": {"name": "x"}}
+
+
+class TestMidWaveReleaseTags:
+    """#2895: a wave tagged at one commit, checked while only some crates are live.
+
+    `media-plane` (lower) and `hls-runtime` (upper, requiring `^0.13.0`) are
+    both bumped and tagged at the release commit. crates.io already reports
+    `media-plane` 0.13.0 as its max_version, but the version listing the
+    check read does not hold it yet, so no published version satisfies the
+    requirement. That is the 2026-11-17 mid-wave state.
+    """
+
+    MEMBERS = {"media-plane": "0.13.0", "hls-runtime": "0.15.0"}
+    IN_TREE_DEPS = {("hls-runtime", "media-plane"): ("^0.13.0", "normal")}
+    LIVE = {"media-plane": "0.13.0", "hls-runtime": "0.14.0"}
+    LISTED = {"media-plane": ["0.12.0"], "hls-runtime": ["0.14.0"]}
+
+    def _run(self, tags: set[str]) -> int:
+        patches = {
+            "workspace_packages": lambda: dict(self.MEMBERS),
+            "workspace_dependencies": lambda: dict(self.IN_TREE_DEPS),
+            "workspace_normal_dep_map": lambda: {k: set() for k in self.MEMBERS},
+            "workspace_dev_dep_map": lambda: {k: set() for k in self.MEMBERS},
+            "latest_published_version": lambda crate: self.LIVE.get(crate),
+            "published_dependencies": lambda crate, version: [],
+            "_crate_versions": lambda crate: self.LISTED.get(crate, []),
+            "release_tags_at_head": lambda: set(tags),
+            "_check1_bucket_homogeneity": lambda *a, **kw: [],
+            "_check2_bump_class": lambda *a, **kw: [],
+            "_check3_dev_cycles": lambda *a, **kw: [],
+            "_check4_publish_order": lambda *a, **kw: ([], []),
+        }
+        ns = argparse.Namespace(blocking=True, enforce_dev_cycles=False)
+        with (
+            patch.multiple(dut, **patches),
+            patch.object(argparse.ArgumentParser, "parse_args", return_value=ns),
+        ):
+            return dut.main()
+
+    def test_requirement_on_a_crate_tagged_at_this_commit_passes(self) -> None:
+        assert self._run({"media-plane-v0.13.0", "hls-runtime-v0.15.0"}) == 0
+
+    def test_requirement_on_a_crate_not_tagged_at_this_commit_still_fails(self) -> None:
+        assert self._run({"hls-runtime-v0.15.0"}) == 1
+
+    def test_tag_naming_another_version_does_not_count(self) -> None:
+        assert self._run({"media-plane-v0.12.0", "hls-runtime-v0.15.0"}) == 1
+
+
+class TestCratesReleasedAtHead:
+    MEMBERS = {
+        "dvb-si": "15.1.0",
+        "dvb-tools": "15.1.0",
+        "dvb-ci-runtime": "0.21.0",
+        "multimux-cli": "0.3.0",
+    }
+
+    def test_independent_and_lockstep_tags(self) -> None:
+        tags = {"v15.1.0", "dvb-ci-runtime-v0.21.0", "multimux-cli-v0.3.0", "not-a-release"}
+        assert dut.crates_released_at_head(self.MEMBERS, tags) == {
+            "dvb-si",
+            "dvb-tools",
+            "dvb-ci-runtime",
+            "multimux-cli",
+        }
+
+    def test_version_mismatch_excluded(self) -> None:
+        assert dut.crates_released_at_head(self.MEMBERS, {"v15.0.0", "dvb-ci-runtime-v0.20.0"}) == set()
