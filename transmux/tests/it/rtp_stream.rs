@@ -25,7 +25,7 @@ fn timescale(value: u32) -> Timescale {
 
 #[cfg(feature = "std")]
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::{Demand, Package, Stage, Unpackage};
 use std::collections::HashSet;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
@@ -1179,4 +1179,99 @@ fn reorder_window_overflow_reports_every_dropped_au() {
         "oldest AU is dropped first"
     );
     assert_eq!(emitted + dropped.len(), AUS as usize);
+}
+
+// ── audit 23: AU buffer cap, Stage::demand, SSRC change, SR sync ───────────
+
+/// One single-NAL RTP packet of exactly `total` bytes, with an explicit SSRC.
+fn sized_packet(seq: u16, ts: u32, ssrc: u32, marker: bool, total: usize) -> Vec<u8> {
+    assert!(total > 13, "need room for an RTP header and one NAL byte");
+    let mut p = vec![0x80u8, if marker { 0x80 | 96 } else { 96 }];
+    p.extend_from_slice(&seq.to_be_bytes());
+    p.extend_from_slice(&ts.to_be_bytes());
+    p.extend_from_slice(&ssrc.to_be_bytes());
+    p.push(if marker { 0x65 } else { 0x41 });
+    p.resize(total, 0xAA);
+    assert_eq!(p.len(), total);
+    p
+}
+
+/// The in-progress-AU cap is 4 MiB: exactly that much is accepted, one byte
+/// more errors with that cap, `Stage::demand` saturates at the cap and clears
+/// once the buffer is reset, and a 2 MiB AU is well under the cap.
+#[test]
+fn au_buffer_cap_is_four_mebibytes_and_demand_tracks_it() {
+    const CAP: usize = 4 * 1024 * 1024;
+    const CHUNK: usize = 1400;
+    let id = TrackId::new(1);
+    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        timescale(90_000),
+    )]);
+    assert_eq!(Stage::demand(&d), Demand::default());
+
+    let mut seq = 0u16;
+    let mut written = 0usize;
+    while CAP - written > CHUNK {
+        let pkt = sized_packet(seq, 1000, 0, false, CHUNK);
+        assert!(d.push(id, &pkt).unwrap().is_empty());
+        written += pkt.len();
+        seq += 1;
+    }
+    let last = sized_packet(seq, 1000, 0, false, CAP - written);
+    assert!(
+        d.push(id, &last).unwrap().is_empty(),
+        "exactly {CAP} bytes is within the cap"
+    );
+    written += last.len();
+    seq += 1;
+    assert_eq!(written, CAP);
+    assert_eq!(
+        Stage::demand(&d),
+        Demand::saturated(),
+        "the buffer is at the cap"
+    );
+
+    let over = sized_packet(seq, 1000, 0, false, 16);
+    let err = d.push(id, &over).expect_err("one byte over the cap");
+    assert!(
+        matches!(err, transmux::error::Error::BufferCapExceeded { cap, .. } if cap == CAP),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(
+        Stage::demand(&d),
+        Demand::default(),
+        "the overflow reset the in-progress buffer"
+    );
+    seq += 1;
+
+    // The next packet starts a fresh AU.
+    assert!(
+        d.push(id, &wrap_vpkt(seq, 9000, &[0x65, 0xAA]))
+            .unwrap()
+            .is_empty()
+    );
+    let mut s = d
+        .push(id, &wrap_vpkt(seq + 1, 12_000, &[0x41, 0xBB]))
+        .unwrap();
+    s.extend(d.flush(id).unwrap());
+    assert_eq!(s.len(), 2);
+    assert_eq!(s[0].timing.and_then(|t| t.duration()), Some(3000));
+
+    // A 2 MiB access unit is accepted end to end.
+    const HALF: usize = 2 * 1024 * 1024;
+    let mut big = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        timescale(90_000),
+    )]);
+    let pkt = sized_packet(0, 1000, 0, true, HALF);
+    assert!(
+        big.push(id, &pkt).unwrap().is_empty(),
+        "a 2 MiB AU is accepted"
+    );
+    assert_eq!(Stage::demand(&big), Demand::default());
 }
