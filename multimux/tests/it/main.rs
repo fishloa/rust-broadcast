@@ -8,6 +8,7 @@ mod closed_captions;
 mod cold_playlist_hold;
 mod dash_pull_route;
 mod dash_sliding_window;
+mod dashif_ingest_bounds;
 mod dashif_ingest_e2e;
 #[cfg(feature = "test-seams")]
 mod dispatch_ingest;
@@ -72,6 +73,7 @@ mod smooth_output;
 mod soak_load;
 #[cfg(all(feature = "whep", feature = "test-hooks"))]
 mod soak_whep_peers;
+mod source_debug;
 mod spawn_disposition;
 mod spawn_ownership;
 mod split_audio;

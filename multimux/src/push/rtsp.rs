@@ -533,6 +533,58 @@ mod tests {
         }
     }
 
+    fn transport_with_started(started: Instant) -> RtspTransport {
+        RtspTransport {
+            client: None,
+            channel: 0,
+            url: "rtsp://h/push".to_string(),
+            publish_url: url::Url::parse("rtsp://h/push").expect("test URL"),
+            stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
+            wire: RtpWireState { ssrc: 1, started },
+            timestamp: 0,
+            ts_mux: transmux::StreamingTsMux::new(),
+            teardown: None,
+        }
+    }
+
+    /// RFC 2250 §2's 90 kHz RTP clock: the timestamp is elapsed microseconds
+    /// times 90 000 over 1 000 000, so a one-second connection is 90 000
+    /// ticks and a two-second one 180 000 — any constant or swapped
+    /// operator is far outside the tolerance.
+    #[test]
+    fn rtp_timestamp_counts_ninety_kilohertz_from_the_connection_start() {
+        let at = |ago: std::time::Duration| {
+            let started = Instant::now()
+                .checked_sub(ago)
+                .expect("a start in the past");
+            transport_with_started(started).rtp_timestamp()
+        };
+        assert!(at(std::time::Duration::ZERO) < 90_000, "under one second");
+        assert!(
+            (89_100..=90_900).contains(&at(std::time::Duration::from_secs(1))),
+            "one second is 90 000 ticks"
+        );
+        assert!(
+            (179_100..=180_900).contains(&at(std::time::Duration::from_secs(2))),
+            "two seconds is 180 000 ticks"
+        );
+    }
+
+    /// The `test-hooks` builder actually pins the wire state a recording
+    /// relies on.
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    fn with_test_wire_sets_the_ssrc_and_clock_origin() {
+        let started = Instant::now();
+        let cfg = RtspTransportConfig::default().with_test_wire(RtpWireState {
+            ssrc: 0x1234_5678,
+            started,
+        });
+        let wire = cfg.test_wire.expect("the test wire is set");
+        assert_eq!(wire.ssrc, 0x1234_5678);
+        assert_eq!(wire.started, started);
+    }
+
     /// Byte-for-byte golden (SP4.1): the ANNOUNCE SDP body the transport
     /// sends equals `golden/rtsp/rtsp-announce.sdp`, captured from the
     /// pre-`sdp-types` `format!` on `origin/main`. `GOLDEN_BLESS=<dir>`

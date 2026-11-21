@@ -1026,6 +1026,37 @@ mod tests {
         panic!("fixture never reaches ServerEvent::Publish");
     }
 
+    /// Replays `fixture` byte-by-byte through a fresh `ServerSession` and FLV
+    /// demux, returning the offset of the first `DemuxEvent::Sample` after
+    /// both tracks are known. A client that writes only `fixture[..offset]`
+    /// and then stays connected has published real media and is still live —
+    /// it never reaches the capture's own close.
+    fn fixture_offset_after_first_sample_with_both_tracks(fixture: &[u8]) -> usize {
+        let mut session = ServerSession::new(SessionServerConfig::default());
+        let mut demux = StreamingFlvDemux::new();
+        let mut tracks = 0usize;
+        for (i, byte) in fixture.iter().enumerate() {
+            let (_, events) = session
+                .handle_data(std::slice::from_ref(byte))
+                .expect("handle_data must not error while replaying a real capture");
+            for event in events {
+                if let ServerEvent::Media { flv } = event {
+                    demux
+                        .feed(&flv)
+                        .expect("feed must not error on a real capture");
+                }
+            }
+            while let Some(event) = demux.poll_event() {
+                match event {
+                    DemuxEvent::TrackAdded(_) => tracks += 1,
+                    DemuxEvent::Sample { .. } if tracks >= 2 => return i + 1,
+                    _ => {}
+                }
+            }
+        }
+        panic!("fixture never carries a sample after both tracks are known");
+    }
+
     /// Connects to `addr` and writes `bytes`, draining (and discarding)
     /// whatever the server replies with so its writes never block — shared
     /// shape by every test below's client task.
@@ -1816,5 +1847,275 @@ mod tests {
             "a dead pump's infrastructure must not be reused"
         );
         second.cancel.cancel();
+    }
+
+    /// Dropping the route drops its infrastructure, which cancels the accept
+    /// pump and releases the listen socket so the same port can be bound
+    /// again.
+    #[tokio::test]
+    async fn dropping_the_route_releases_its_listen_port() {
+        let addr = reserve_addr().await;
+        let route = RtmpRoute::new("cam-rtmp-drop", addr.to_string());
+        let infra = route.ensure_infra().await.expect("bind");
+        drop(infra);
+        drop(route);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match std::net::TcpListener::bind(addr) {
+                Ok(_) => break,
+                Err(e) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "the route drop must release the listen port: {e}"
+                    );
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
+
+    /// `next_events_for_test` hands a real batch of protocol events back.
+    #[tokio::test]
+    async fn next_events_for_test_reads_a_real_batch() {
+        let fixture = load_fixture();
+        let (mut client, server) = tokio::io::duplex(fixture.len() + 65_536);
+        let conn = RtmpConnection::from_stream(server, RtmpServerConfig::default());
+        let mut session = RtmpIngestSession::new(conn, None);
+        client
+            .write_all(&fixture)
+            .await
+            .expect("write the publish fixture");
+        let drain = tokio::spawn(async move {
+            let mut sink = [0u8; 8192];
+            while matches!(client.read(&mut sink).await, Ok(n) if n > 0) {}
+        });
+        let events = tokio::time::timeout(Duration::from_secs(10), session.next_events_for_test())
+            .await
+            .expect("the read must not hang")
+            .expect("the read must not fail")
+            .expect("the fixture carries events");
+        drain.abort();
+        assert!(!events.is_empty(), "the batch must carry events");
+    }
+
+    /// Every demux event a committed real FLV publish produces.
+    fn real_demux_events() -> Vec<DemuxEvent> {
+        let flv = test_fixtures::read("flv/av.flv");
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(&flv).expect("feed the FLV fixture");
+        std::iter::from_fn(|| demux.poll_event()).collect()
+    }
+
+    /// Establishment is announced exactly once; a track added after it is
+    /// ignored rather than joining the announced set.
+    #[test]
+    fn establishment_is_announced_once_and_late_tracks_are_ignored() {
+        let mut events = FlvEvents::default();
+        events.ingest(real_demux_events());
+        let first: Vec<SessionEvent> = std::iter::from_fn(|| events.pending.pop_front()).collect();
+        assert_eq!(
+            first
+                .iter()
+                .filter(|e| matches!(e, SessionEvent::NewProgram { .. }))
+                .count(),
+            1,
+            "the program is announced once"
+        );
+        assert_eq!(
+            first
+                .iter()
+                .filter(|e| matches!(e, SessionEvent::Established))
+                .count(),
+            1,
+            "the handshake completes once"
+        );
+        assert!(
+            first
+                .iter()
+                .any(|e| matches!(e, SessionEvent::Sample { .. })),
+            "the establishing samples are re-emitted"
+        );
+        let announced = events.specs.len();
+        assert!(announced >= 2, "the fixture resolves both tracks");
+
+        events.ingest(real_demux_events());
+        let later: Vec<SessionEvent> = std::iter::from_fn(|| events.pending.pop_front()).collect();
+        assert!(
+            later.iter().all(|e| !matches!(
+                e,
+                SessionEvent::NewProgram { .. } | SessionEvent::Established
+            )),
+            "a later batch must not re-announce the program"
+        );
+        assert!(
+            later
+                .iter()
+                .any(|e| matches!(e, SessionEvent::Sample { .. })),
+            "a later batch still carries its samples"
+        );
+        assert_eq!(
+            events.specs.len(),
+            announced,
+            "tracks added after establishment do not join the announced set"
+        );
+    }
+
+    /// The RTMP `connect` app must match the configured one exactly.
+    #[tokio::test]
+    async fn a_connected_app_must_match_the_configured_one() {
+        let (_client, server) = tokio::io::duplex(64);
+        let conn = RtmpConnection::from_stream(server, RtmpServerConfig::default());
+        let mut session = RtmpIngestSession::new(conn, Some("live".to_string()));
+        let err = session
+            .feed(
+                &[ServerEvent::Connected {
+                    app: "studio".to_string(),
+                }],
+                Timestamp::ZERO,
+            )
+            .expect_err("a mismatched app must fail the session");
+        assert!(err.to_string().contains("does not match"), "{err}");
+        session
+            .feed(
+                &[ServerEvent::Connected {
+                    app: "live".to_string(),
+                }],
+                Timestamp::ZERO,
+            )
+            .expect("the configured app is accepted");
+    }
+
+    /// A read task ends after one terminal outcome instead of reading a dead
+    /// connection forever.
+    #[tokio::test]
+    async fn a_terminal_read_ends_the_read_session_once() {
+        let (client, server) = tokio::io::duplex(64);
+        let conn = RtmpConnection::from_stream(server, RtmpServerConfig::default());
+        drop(client);
+        let (tx, mut rx) = mpsc::channel(8);
+        let task = tokio::spawn(read_session(
+            SessionId(0),
+            conn,
+            Duration::from_millis(100),
+            tx,
+        ));
+        let outcome = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            .await
+            .expect("one outcome arrives")
+            .expect("the channel stays open");
+        assert!(
+            matches!(
+                outcome.1,
+                ReadOutcome::Eof | ReadOutcome::TransportError(_) | ReadOutcome::TimedOut
+            ),
+            "a closed connection is terminal"
+        );
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .expect("the read task must end")
+            .expect("join");
+    }
+
+    /// A live session stays published across advances; only when it ends is
+    /// its program released.
+    #[tokio::test]
+    async fn a_live_session_stays_published_and_is_released_when_it_ends() {
+        let addr = reserve_addr().await;
+        let route = RtmpRoute::new("cam-rtmp-release", addr.to_string());
+        let route_handle = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_part_target(Duration::from_millis(500))
+                .with_window_segments(8),
+        ));
+        let handle = Arc::clone(&route_handle);
+        let run_task = tokio::spawn(async move {
+            let _ = run_rtmp(&route, trunk_config(), handshake(), &handle).await;
+        });
+        let fixture = load_fixture();
+        let prefix =
+            fixture[..fixture_offset_after_first_sample_with_both_tracks(&fixture)].to_vec();
+        let client = tokio::spawn(async move {
+            let stream = connect_and_write(addr, prefix).await;
+            drain_for(stream, Duration::from_secs(60)).await;
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while crate::http::resolve_route_program(&route_handle).is_err() {
+            assert!(
+                Instant::now() < deadline,
+                "the live program must be published"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            assert_eq!(
+                route_handle.active_publisher_len(),
+                1,
+                "a live session must hold its publisher slot across advances"
+            );
+        }
+        client.abort();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while route_handle.active_publisher_len() != 0 {
+            assert!(
+                Instant::now() < deadline,
+                "an ended session must release its publisher slot"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        run_task.abort();
+    }
+
+    /// The test trunk configuration is the small one, not `Default`.
+    #[cfg(feature = "test-seams")]
+    #[test]
+    fn the_test_trunk_config_is_the_small_one() {
+        let cfg = trunk_config_for_test();
+        assert_eq!(cfg.timed_capacity.get(), 64);
+        assert_eq!(cfg.sparse_capacity.get(), 16);
+        assert_eq!(cfg.segment_capacity.get(), 8);
+        assert_eq!(cfg.event_capacity.get(), 8);
+        assert_eq!(cfg.part_capacity.get(), 8);
+    }
+
+    /// `session_count` is the live admission count and `wait_for_sessions`
+    /// returns it once the requested number is reached (and times out when
+    /// it is not).
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn session_count_and_wait_for_sessions_report_admissions() {
+        let (addr, shared, cancel) = serve_for_test_with_read_load().await;
+        assert_eq!(shared.session_count(), 0, "no session yet");
+        let mut first = None;
+        for _ in 0..200 {
+            match TcpStream::connect(addr).await {
+                Ok(s) => {
+                    first = Some(s);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+        let _first = first.expect("connect the first publisher");
+        let _second = TcpStream::connect(addr).await.expect("connect the second");
+        let admitted = tokio::time::timeout(
+            Duration::from_secs(10),
+            shared.wait_for_sessions(2, Duration::from_secs(5)),
+        )
+        .await
+        .expect("wait_for_sessions must not hang")
+        .expect("two sessions are admitted");
+        assert_eq!(admitted, 2);
+        assert_eq!(shared.session_count(), 2);
+        let timed_out = tokio::time::timeout(
+            Duration::from_secs(10),
+            shared.wait_for_sessions(3, Duration::from_millis(100)),
+        )
+        .await
+        .expect("wait_for_sessions must not hang")
+        .is_err();
+        assert!(timed_out, "a third session is never admitted");
+        cancel.cancel();
     }
 }

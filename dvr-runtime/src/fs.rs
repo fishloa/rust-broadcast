@@ -59,6 +59,12 @@ pub enum FsError {
     /// the same cursor item through [`FsRecorder::poll`].
     #[error("the store did not commit this input; retry it through FsRecorder::poll")]
     RetryRequired,
+    /// Another recorder holds the archive directory's single-writer lock.
+    #[error("archive directory {} is locked by another recorder", path.display())]
+    Locked {
+        /// The lock file that is held.
+        path: PathBuf,
+    },
 }
 
 fn path_of(dir: &Path, op: &StoreOp, container: ArchiveContainer) -> PathBuf {
@@ -85,6 +91,7 @@ pub struct FsRecorder {
     cursor: SegmentCursor,
     trunk: Arc<Trunk>,
     dir: PathBuf,
+    _lock: File,
     tracker: Option<dvb_si::epg::PresentEventTracker>,
     last_now: Timestamp,
     container: ArchiveContainer,
@@ -109,18 +116,31 @@ impl FsRecorder {
     /// periods already on disk, and pin a segment cursor on `trunk` with the
     /// configured overrun policy.
     ///
-    /// Seeding adopts the earlier periods' numbers, not their sequence
-    /// numbers: the host must number a new run above everything archived,
-    /// with [`ArchiveConfig::seq_offset`] at least [`FsArchive::seq_floor`].
-    /// A run that restarts at lower sequence numbers writes segments that
-    /// [`FsArchive::scan`] reports as [`SeqConflict`]s and does not serve.
+    /// The directory is created if absent and guarded by an exclusive advisory
+    /// lock on [`layout::LOCK_FILE_NAME`] (`File::try_lock`), held until the
+    /// recorder drops. The kernel releases it when the process exits or
+    /// crashes, so there is no stale-lock state to reason about. The lock
+    /// file is never an archive file: it is not listed, scanned or evicted.
+    ///
+    /// `config.seq_offset` must put this run's archive sequence numbers
+    /// (Trunk sequence plus offset) above [`FsArchive::seq_floor`] of the
+    /// archive being resumed. A run that restarts at lower numbers collides
+    /// with archived sequences: [`FsArchive::scan`] keeps the earlier period's
+    /// record and reports each later claim in `ArchiveScan::conflicts`, so the
+    /// colliding segments are hidden from readers (never silently lost on
+    /// disk).
+    ///
+    /// Stale `.pN.m3u8.tmp` files from a crash between the temp write and the
+    /// rename are removed and reported as
+    /// [`WriterEvent::StaleTempPlaylistRemoved`].
     ///
     /// # Errors
     ///
     /// [`FsError::Archive`] for an invalid configuration or exhausted period
-    /// numbers; [`FsError::Io`] when the archive directory exists but cannot
-    /// be listed (a permission error is surfaced, never read as an empty
-    /// archive).
+    /// numbers; [`FsError::Locked`] when another recorder holds the
+    /// directory; [`FsError::Io`] when the directory cannot be created,
+    /// locked or listed (a permission error is surfaced, never read as an
+    /// empty archive).
     pub fn new(
         root: &Path,
         name: ArchiveName,
@@ -129,7 +149,26 @@ impl FsRecorder {
     ) -> Result<Self, FsError> {
         let dir = layout::route_dir(root, &name);
         let container = config.container;
+        fs::create_dir_all(&dir)
+            .map_err(|e| io_error(dir.clone(), crate::writer::StoreOpKind::CreateDir, e))?;
+        let lock_path = dir.join(layout::LOCK_FILE_NAME);
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|e| io_error(lock_path.clone(), crate::writer::StoreOpKind::List, e))?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => {
+                return Err(FsError::Locked { path: lock_path });
+            }
+            Err(fs::TryLockError::Error(e)) => {
+                return Err(io_error(lock_path, crate::writer::StoreOpKind::List, e));
+            }
+        }
         let mut existing = Vec::new();
+        let mut stale_temps = Vec::new();
         match fs::read_dir(&dir) {
             Ok(entries) => {
                 for entry in entries {
@@ -139,7 +178,12 @@ impl FsRecorder {
                     let Some(file_name) = file_name.to_str() else {
                         continue;
                     };
-                    if let Some(file) = layout::classify(file_name, container) {
+                    if let Some(period) = layout::classify_playlist_tmp(file_name) {
+                        let path = entry.path();
+                        fs::remove_file(&path)
+                            .map_err(|e| io_error(path, crate::writer::StoreOpKind::Remove, e))?;
+                        stale_temps.push(period);
+                    } else if let Some(file) = layout::classify(file_name, container) {
                         let bytes = entry
                             .metadata()
                             .map_err(|e| {
@@ -157,6 +201,7 @@ impl FsRecorder {
         }
         let mut writer = ArchiveWriter::new(config.clone())?;
         writer.seed(&existing)?;
+        writer.note_stale_temp_playlists(&stale_temps)?;
         let cursor = trunk.pin_segments(config.overrun);
         let tracker = config
             .programme_service
@@ -166,6 +211,7 @@ impl FsRecorder {
             cursor,
             trunk: Arc::clone(trunk),
             dir,
+            _lock: lock,
             tracker,
             last_now: Timestamp::ZERO,
             container,

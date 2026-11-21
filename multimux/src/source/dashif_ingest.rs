@@ -855,6 +855,22 @@ mod tests {
         Arc::new(Semaphore::new(1024))
     }
 
+    /// The tolerant wrapper forwards the inner demand exactly, so a driver
+    /// asking how much input the session wants gets the real answer.
+    #[test]
+    fn a_tolerant_session_forwards_the_inner_demand() {
+        let session = TolerantSession::new(DashifIngestConfig::default());
+        assert_eq!(session.demand(), Demand::new(65_536));
+    }
+
+    /// The inner DASH-IF session has no timer of its own; the wrapper must
+    /// not invent one.
+    #[test]
+    fn a_tolerant_session_has_no_deadline() {
+        let session = TolerantSession::new(DashifIngestConfig::default());
+        assert!(session.next_deadline().is_none());
+    }
+
     fn body_of(frames: Vec<&'static [u8]>) -> axum::body::Body {
         axum::body::Body::from_stream(futures_util::stream::iter(
             frames
