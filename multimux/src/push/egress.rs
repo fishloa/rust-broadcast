@@ -682,7 +682,9 @@ mod tests {
             let mut egress = PushTransportEgress::new(FakeTransport::default());
             egress.negotiate(&[avc_spec(TrackId::new(1))]);
             assert!(
-                egress.send(&SampleCursorItem::Lagged { skipped: 3 }).is_ok(),
+                egress
+                    .send(&SampleCursorItem::Lagged { skipped: 3 })
+                    .is_ok(),
                 "a lag report is not an error"
             );
             assert!(

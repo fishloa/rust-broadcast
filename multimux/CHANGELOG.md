@@ -3,6 +3,12 @@
 ## [Unreleased]
 ### Tests
 - Push egress: the unselected-sample counter's per-drop increment, `renegotiate`'s unchanged-set acceptance versus a mid-session change refusal, and the `Lagged`/`Degraded` loss-report warnings are covered, so a constant counter, a refused identical set or a silently ignored loss report fails a test (audit 23 finding 225, #3895).
+- RTMP push: the app the server sees, the transport `Debug` state, the once-per-connection refused-track warning and its count, the byte total `send_media` reports, and the not-connected refusal after `close` are covered (audit 23 finding 226, #3896).
+- RTSP push: the 90 kHz `rtp_timestamp` scaling at 0/1/2 s, a non-2xx OPTIONS reply failing `connect`, and the transport's own streaming mux continuing its continuity counters across batches are covered (audit 23 finding 227, #3897).
+- SRT push: `with_srt_config` keeps the supplied handshake, `Debug` reports the connection state, the transport's own streaming mux continues its continuity counters, and `close` both refuses further sends and releases the socket are covered (audit 23 finding 228, #3898).
+- Every ingest route type reports its configured stream name and a non-empty `Debug` naming its type, and DASH pull's `allow_cross_origin` extra is pinned (audit 23 finding 229, #3899).
+- DASH-IF ingest: the exact body cap (declared and streamed, cumulative across frames), the path prefix check, the running-health guard, and duplicate segment numbering are covered end-to-end (audit 23 finding 230, #3900).
+- RTMP ingest: route drop releases the listen port, the test read seam returns real events, establishment is announced once and late tracks are ignored, app mismatch, terminal read teardown, `session_count`/`wait_for_sessions`, and the small test trunk config are covered (audit 23 finding 231, #3901).
 - Every external-oracle test (Dolby Vision and HDR10 boxes through ffprobe and GPAC `MP4Box`, Smooth fragments through `MP4Box` and Bento4 `mp4dump`, the TS-HLS and cold-join oracles through ffprobe and ffmpeg) now gates its tool through `test_fixtures::process::require_tool`: with `REQUIRE_EXTERNAL_TOOLS=1` a missing tool is a hard failure instead of a silent skip. A new blocking CI `oracles` job installs the tools and sets that switch, so a skipped oracle can no longer read as green (audit 21 finding 60).
 ### Fixed
 - `HttpLimits::from(&Config)`'s field mapping, the per-IP connection table's pruning, `classify_path`'s ops-route labels and the literal cap values have tests (audit 21 findings 49 and 53, #2944/#2948).
