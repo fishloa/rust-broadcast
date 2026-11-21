@@ -270,6 +270,46 @@ fn bare_ts_and_non_ts_rtp_payloads_are_not_unwrapped() {
     assert!(decode_datagram(&mut d, &junk).is_empty());
 }
 
+/// Each of the three payload-shape conditions rejects a datagram on its own
+/// (audit a23cp #3433): only a payload that is non-empty, a whole number of
+/// 188-byte packets, and starts on a sync byte is an RFC 2250 TS payload.
+#[test]
+fn rtp_payload_shape_is_checked_condition_by_condition() {
+    let mut d = TsDecoder::datagram();
+
+    // Empty payload. Must short-circuit before indexing payload[0].
+    let empty = rtp_header().to_vec();
+    assert!(
+        decode_datagram(&mut d, &empty).is_empty(),
+        "an RTP datagram with no payload carries no TS packet"
+    );
+
+    // A whole number of 188-byte blocks that does not start with 0x47.
+    let mut no_sync = rtp_header().to_vec();
+    no_sync.extend_from_slice(&[0x55u8; 188]);
+    assert!(
+        decode_datagram(&mut d, &no_sync).is_empty(),
+        "a whole-packet payload without a sync byte is not TS"
+    );
+
+    // Starts with the sync byte but is not a whole number of packets: it must
+    // go through the ordinary resync path, not be unwrapped as an RTP payload.
+    // Nothing locks here, so all 212 bytes (the 12-byte header included) are
+    // discarded; an unwrap would peel the header off uncounted and discard
+    // only the 200-byte payload.
+    let mut d = TsDecoder::datagram();
+    let mut partial = rtp_header().to_vec();
+    partial.push(0x47);
+    partial.extend_from_slice(&[0x00; 199]);
+    assert!(decode_datagram(&mut d, &partial).is_empty());
+    assert_eq!(
+        d.resync_stats().bytes_discarded,
+        212,
+        "the 12-byte RTP header must be skipped by the resync, not peeled off \
+         as a validated RTP TS payload"
+    );
+}
+
 fn tags(packets: &[Bytes]) -> Vec<u8> {
     packets.iter().map(|p| p[1]).collect()
 }

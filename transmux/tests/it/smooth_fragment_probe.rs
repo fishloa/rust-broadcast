@@ -209,3 +209,35 @@ fn discover_moof_track_id_errors_not_panics_on_garbage() {
         Err(transmux::error::Error::UnexpectedBox { .. })
     ));
 }
+
+#[test]
+fn a_header_only_free_box_is_a_legal_predecessor_of_a_moof() {
+    let free = box_bytes(*b"free", b"");
+    assert_eq!(free.len(), 8, "size 8 box with no body");
+
+    let mut encrypted = free.clone();
+    encrypted.extend_from_slice(&fragment_with_traf_child(box_bytes(*b"senc", &[0u8; 8])));
+    assert_eq!(
+        fragment_state(&encrypted),
+        FragmentState::Encrypted,
+        "an 8-byte box is a whole box, not a malformed size"
+    );
+
+    let mut clear = free;
+    clear.extend_from_slice(&fragment_with_traf_child(box_bytes(*b"tfhd", &[0u8; 8])));
+    assert_eq!(fragment_state(&clear), FragmentState::Clear);
+}
+
+#[test]
+fn a_size_four_box_takes_the_malformed_path() {
+    let four = [0, 0, 0, 4, b'f', b'r', b'e', b'e'];
+    assert_eq!(fragment_state(&four), FragmentState::Clear);
+
+    let mut after = fragment_with_traf_child(box_bytes(*b"tfhd", &[0u8; 8]));
+    after.extend_from_slice(&four);
+    assert_eq!(
+        fragment_state(&after),
+        FragmentState::Undetermined,
+        "a sub-header size after a moof cannot be proven clear"
+    );
+}

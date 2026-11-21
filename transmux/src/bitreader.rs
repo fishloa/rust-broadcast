@@ -272,6 +272,55 @@ mod tests {
         assert_eq!(pos, 4, "a failed read leaves the cursor unchanged");
     }
 
+    /// A full 64-bit field is legal and reads the first eight bytes big-endian;
+    /// over 64 bits is refused.
+    #[test]
+    fn a_64_bit_field_reads_and_a_65_bit_request_is_refused() {
+        let data = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let expected = u64::from_be_bytes([1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut pos = 0usize;
+        assert_eq!(
+            read_bits_checked(&data, &mut pos, 64, "x").unwrap(),
+            expected
+        );
+        assert_eq!(pos, 64);
+
+        let mut reader = BitReader::from_rbsp(&data, "x").unwrap();
+        assert_eq!(reader.read_bits(64, "x").unwrap(), expected);
+
+        let mut reader = BitReader::from_rbsp(&data, "x").unwrap();
+        assert!(matches!(
+            reader.read_bits(65, "x"),
+            Err(Error::BufferTooShort(..))
+        ));
+    }
+
+    #[test]
+    fn bit_error_carries_the_offending_value_and_reason() {
+        for (err, value, reason) in [
+            (
+                BitError::TooManyBits { requested: 65 },
+                65,
+                "field wider than 64 bits",
+            ),
+            (
+                BitError::ValueTooWide {
+                    value: 300,
+                    bits: 8,
+                },
+                300,
+                "value does not fit the field width",
+            ),
+        ] {
+            let Error::InvalidValue(invalid) = bit_error("vvcC", err) else {
+                panic!("expected InvalidValue");
+            };
+            assert_eq!(invalid.field, "vvcC");
+            assert_eq!(invalid.value, value);
+            assert_eq!(invalid.reason, reason);
+        }
+    }
+
     use super::*;
     use alloc::vec;
 

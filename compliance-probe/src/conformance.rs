@@ -335,4 +335,205 @@ mod tests {
         assert!(steady_sample.unwrap().drift_ppm.abs() < 1.0);
         assert!((fast_sample.unwrap().drift_ppm - 1000.0).abs() < 5.0);
     }
+
+    /// A stuck PCR source repeating the same value at a later arrival time is
+    /// a measurable rate: the value advanced by zero while wall-clock moved
+    /// 100 ms on, so the interval error is exactly -10^6 ppm. Treating the
+    /// repeat as "nothing to compare yet" leaves a stalled encoder clock
+    /// invisible.
+    #[test]
+    fn repeated_pcr_at_a_later_arrival_reports_full_negative_drift() {
+        let mut tracker = PcrTracker::new();
+        let pid = Pid::from_const(0x0100);
+        assert_eq!(tracker.observe(pid, 1_000, Duration::from_millis(1)), None);
+        let sample = tracker
+            .observe(pid, 1_000, Duration::from_millis(101))
+            .expect("a repeated PCR over a 100 ms wall step is a measurable interval");
+        assert!(
+            (sample.drift_ppm + 1_000_000.0).abs() < 1.0,
+            "expected -1000000 ppm drift, got {}",
+            sample.drift_ppm
+        );
+    }
+
+    /// A new PCR value arriving at the same wall-clock instant as the previous
+    /// observation is a zero-length interval: it must not be measured, but it
+    /// must still become the new baseline with the drift EWMA restarted, so
+    /// the next real interval is measured from it (audit a23cp #3425).
+    #[test]
+    fn same_arrival_time_with_new_pcr_rebaselines_without_a_sample() {
+        let mut tracker = PcrTracker::new();
+        let pid = Pid::from_const(0x0100);
+        let mut pcr = 0u64;
+        let mut t = Duration::ZERO;
+        for _ in 0..5 {
+            pcr += PCR_HZ / 10;
+            t += Duration::from_millis(100);
+            tracker.observe(pid, pcr, t);
+        }
+
+        pcr += PCR_HZ / 10;
+        assert_eq!(
+            tracker.observe(pid, pcr, t),
+            None,
+            "a zero-length wall interval must not be measured"
+        );
+
+        pcr += (PCR_HZ + 2_700) / 10;
+        t += Duration::from_millis(100);
+        let sample = tracker.observe(pid, pcr, t).expect("sample");
+        assert!(
+            (sample.drift_ppm - 100.0).abs() < 1.0,
+            "the skipped interval's PCR must be the new baseline: expected \
+             ~100 ppm drift, got {}",
+            sample.drift_ppm
+        );
+        assert!(
+            sample.jitter_ppm.abs() < 1.0,
+            "the EWMA must restart after the skipped interval, got {} ppm",
+            sample.jitter_ppm
+        );
+    }
+
+    /// An exact duplicate observation (same PCR, same arrival time) with drift
+    /// already established must also restart the EWMA rather than being
+    /// absorbed as a normal interval (audit a23cp #3425).
+    #[test]
+    fn exact_duplicate_observation_restarts_the_drift_ewma() {
+        let mut tracker = PcrTracker::new();
+        let pid = Pid::from_const(0x0100);
+        let mut pcr = 0u64;
+        let mut t = Duration::ZERO;
+        for _ in 0..5 {
+            pcr += PCR_HZ / 10;
+            t += Duration::from_millis(100);
+            tracker.observe(pid, pcr, t);
+        }
+
+        assert_eq!(tracker.observe(pid, pcr, t), None, "duplicate observation");
+
+        pcr += (PCR_HZ + 2_700) / 10;
+        t += Duration::from_millis(100);
+        let sample = tracker.observe(pid, pcr, t).expect("sample");
+        assert!(
+            sample.jitter_ppm.abs() < 1.0,
+            "the duplicate must restart the EWMA (jitter 0), got {} ppm",
+            sample.jitter_ppm
+        );
+        assert!(
+            (sample.drift_ppm - 100.0).abs() < 1.0,
+            "expected ~100 ppm drift from the restarted EWMA, got {}",
+            sample.drift_ppm
+        );
+    }
+
+    /// A DIFFERENT PCR at the same arrival instant on a PID with no drift yet
+    /// established must still update the baseline, so the next interval is
+    /// measured from it (audit a23cp #3425).
+    #[test]
+    fn different_pcr_at_the_same_arrival_time_becomes_the_new_baseline() {
+        let mut tracker = PcrTracker::new();
+        let pid = Pid::from_const(0x0100);
+        assert_eq!(tracker.observe(pid, 0, Duration::ZERO), None);
+        assert_eq!(
+            tracker.observe(pid, PCR_HZ / 10, Duration::ZERO),
+            None,
+            "zero wall interval: no sample"
+        );
+        let sample = tracker
+            .observe(pid, PCR_HZ / 5, Duration::from_millis(100))
+            .expect("sample");
+        assert!(
+            sample.drift_ppm.abs() < 1.0,
+            "the same-instant observation must be the new baseline: expected \
+             ~0 ppm drift, got {}",
+            sample.drift_ppm
+        );
+    }
+
+    /// A forward PCR jump of 20 s over normal 100 ms wall spacing is a
+    /// discontinuity by the PCR-side clause of the guard: reporting it would
+    /// be ~2x10^8 ppm of "drift" (audit a23cp #3426).
+    #[test]
+    fn forward_pcr_jump_beyond_the_guard_is_a_discontinuity() {
+        let mut tracker = PcrTracker::new();
+        let pid = Pid::from_const(0x0100);
+        assert_eq!(tracker.observe(pid, 0, Duration::ZERO), None);
+        assert_eq!(
+            tracker.observe(pid, 20 * PCR_HZ, Duration::from_millis(100)),
+            None,
+            "a 20 s PCR jump over a 100 ms wall step is a discontinuity, not drift"
+        );
+    }
+
+    /// An advance of exactly [`DISCONTINUITY_GUARD`] is still measurable: the
+    /// guard is exclusive, and a PCR and wall delta that both sit exactly on
+    /// 10 s must produce a real ~0 ppm sample (audit a23cp #3426).
+    #[test]
+    fn pcr_advance_of_exactly_the_guard_is_still_measured() {
+        let mut tracker = PcrTracker::new();
+        let pid = Pid::from_const(0x0100);
+        assert_eq!(tracker.observe(pid, 0, Duration::from_secs(1)), None);
+        let sample = tracker.observe(pid, 10 * PCR_HZ, Duration::from_secs(11));
+        let sample = sample.expect("a 10 s PCR delta over 10 s of wall time is a rate, not a gap");
+        assert!(
+            sample.drift_ppm.abs() < 1.0,
+            "expected ~0 ppm drift at the exact guard boundary, got {}",
+            sample.drift_ppm
+        );
+    }
+
+    /// One tick past the guard on the PCR side is a discontinuity: the guard
+    /// is `>`, not `==` (audit a23cp #3426).
+    #[test]
+    fn pcr_advance_one_tick_beyond_the_guard_is_a_discontinuity() {
+        let mut tracker = PcrTracker::new();
+        let pid = Pid::from_const(0x0100);
+        assert_eq!(tracker.observe(pid, 0, Duration::from_secs(1)), None);
+        assert_eq!(
+            tracker.observe(pid, 10 * PCR_HZ + 1, Duration::from_secs(11)),
+            None,
+            "a PCR delta above the guard must not be measured as drift"
+        );
+    }
+
+    /// The jitter signal is `|this interval - the smoothed drift|`, so a
+    /// perfectly steady but offset clock has ~0 jitter, and one outlying
+    /// interval shows its true distance from the baseline — not the sum
+    /// (audit a23cp #3427).
+    #[test]
+    fn steady_offset_clock_has_near_zero_jitter_and_an_outlier_shows_its_distance() {
+        let mut tracker = PcrTracker::new();
+        let pid = Pid::from_const(0x0100);
+        let signalled_hz = PCR_HZ + 2_700; // +100 ppm
+        let mut pcr = 0u64;
+        let mut t = Duration::ZERO;
+        let mut last = None;
+        for _ in 0..100 {
+            pcr += signalled_hz / 10;
+            t += Duration::from_millis(100);
+            last = tracker.observe(pid, pcr, t);
+        }
+        let sample = last.unwrap();
+        assert!(
+            (sample.drift_ppm - 100.0).abs() < 1.0,
+            "expected ~100 ppm drift, got {}",
+            sample.drift_ppm
+        );
+        assert!(
+            sample.jitter_ppm.abs() < 1.0,
+            "a steady +100 ppm clock has near-zero interval-to-baseline \
+             deviation, got {} ppm",
+            sample.jitter_ppm
+        );
+
+        pcr += (PCR_HZ + 8_100) / 10; // +300 ppm for this one interval
+        t += Duration::from_millis(100);
+        let outlier = tracker.observe(pid, pcr, t).expect("sample");
+        assert!(
+            (outlier.jitter_ppm - 200.0).abs() < 1.0,
+            "jitter is |300 - 100| = 200 ppm, got {}",
+            outlier.jitter_ppm
+        );
+    }
 }

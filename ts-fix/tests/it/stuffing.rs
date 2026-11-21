@@ -319,3 +319,77 @@ fn pad_to_rejects_rates_that_are_not_finite_or_out_of_range() {
             .is_ok()
     );
 }
+
+/// The null-packet test masks only the 13 PID bits (byte 1 bits [4:0], byte 2)
+/// and ignores the other header flags: a real packet on PID 0x00FF or 0x01FF
+/// (low byte 0xFF) must survive, and a null packet with TEI set must still be
+/// dropped (audit a23cp #3461).
+#[test]
+fn drop_nulls_masks_the_pid_independently_of_the_other_header_bits() {
+    let low_byte_ff = crate::support::dummy_es_packet(Pid::from_const(0x00FF), 0);
+    let high_byte_ff = crate::support::dummy_es_packet(Pid::from_const(0x01FF), 1);
+    let mut tei_null = crate::support::null_packet();
+    tei_null[1] = 0x9F; // transport_error_indicator + PID 0x1FFF
+
+    let mut input = Vec::new();
+    input.extend_from_slice(&low_byte_ff);
+    input.extend_from_slice(&high_byte_ff);
+    input.extend_from_slice(&tei_null);
+
+    let mut engine = ts_fix::TsFix::builder()
+        .stuffing(ts_fix::Stuffing::drop_nulls())
+        .build()
+        .expect("drop_nulls build should not fail");
+    let mut output = Vec::new();
+    for chunk in input.chunks_exact(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .expect("valid 188-byte packet");
+    }
+    engine.finish(|pkt| output.extend_from_slice(pkt));
+
+    assert_eq!(
+        output,
+        [&low_byte_ff[..], &high_byte_ff[..]].concat(),
+        "PIDs 0x00FF and 0x01FF are not null packets and must survive byte-identical"
+    );
+}
+
+/// Inserted null packets carry a per-packet continuity counter that wraps
+/// 0-15 (ISO/IEC 13818-1 §2.4.3.3), like any other payload-bearing packet
+/// (audit a23cp #3462).
+#[test]
+fn pad_to_inserted_null_packets_advance_their_continuity_counter() {
+    let mut input = Vec::new();
+    for cc in 0..20u8 {
+        input.extend_from_slice(&crate::support::dummy_es_packet(
+            Pid::from_const(0x0100),
+            cc,
+        ));
+    }
+
+    let mut engine = ts_fix::TsFix::builder()
+        .stuffing(ts_fix::Stuffing::pad_to(2.0))
+        .build()
+        .expect("pad_to build should not fail");
+    let mut output = Vec::new();
+    for chunk in input.chunks_exact(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .expect("valid 188-byte packet");
+    }
+    engine.finish(|pkt| output.extend_from_slice(pkt));
+
+    let counters: Vec<u8> = output
+        .chunks_exact(188)
+        .filter(|pkt| is_null_packet(pkt))
+        .map(|pkt| pkt[3] & 0x0F)
+        .collect();
+    assert_eq!(
+        counters,
+        vec![
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3
+        ],
+        "one null inserted per input packet, counters starting at 0 and wrapping at 16"
+    );
+}

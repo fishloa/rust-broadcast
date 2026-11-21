@@ -426,4 +426,84 @@ mod tests {
         m2.serialize_into(&mut b).unwrap();
         assert_ne!(a, b);
     }
+
+    #[test]
+    fn mdat_parse_accepts_a_header_only_box() {
+        let bytes = [0, 0, 0, 8, b'm', b'd', b'a', b't'];
+        let m = MediaDataBox::parse_box(&bytes).unwrap();
+        assert!(m.data.is_empty(), "size 8 leaves no payload");
+    }
+
+    #[test]
+    fn mdat_parse_rejects_a_size_below_the_header() {
+        let bytes = [0, 0, 0, 4, b'm', b'd', b'a', b't'];
+        assert!(MediaDataBox::parse_box(&bytes).is_err());
+    }
+
+    #[test]
+    fn mdat_parse_rejects_a_size_past_the_buffer() {
+        let bytes = [0, 0, 0, 12, b'm', b'd', b'a', b't'];
+        assert!(MediaDataBox::parse_box(&bytes).is_err());
+    }
+
+    #[test]
+    fn mdat_parse_rejects_a_largesize_below_sixteen() {
+        let mut bytes = 1u32.to_be_bytes().to_vec();
+        bytes.extend_from_slice(b"mdat");
+        bytes.extend_from_slice(&15u64.to_be_bytes());
+        assert!(MediaDataBox::parse_box(&bytes).is_err());
+    }
+
+    #[test]
+    fn mdat_parse_size_zero_takes_the_rest_of_the_buffer() {
+        let mut bytes = 0u32.to_be_bytes().to_vec();
+        bytes.extend_from_slice(b"mdat");
+        bytes.extend_from_slice(&[1, 2, 3, 4, 5]);
+        let m = MediaDataBox::parse_box(&bytes).unwrap();
+        assert_eq!(m.data, alloc::vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn mdat_parse_compact_size_excludes_trailing_bytes() {
+        let mut bytes = 12u32.to_be_bytes().to_vec();
+        bytes.extend_from_slice(b"mdat");
+        bytes.extend_from_slice(&[0xAA; 12]);
+        assert_eq!(bytes.len(), 20);
+        let m = MediaDataBox::parse_box(&bytes).unwrap();
+        assert_eq!(m.data.len(), 4, "size 12 carries a 4-byte payload");
+        assert_eq!(m.data, alloc::vec![0xAA; 4]);
+    }
+
+    #[test]
+    fn box_body_accepts_a_header_only_box() {
+        let bytes = [0, 0, 0, 8, b's', b't', b'y', b'p'];
+        assert_eq!(box_body(&bytes, &STYP).unwrap(), &[] as &[u8]);
+    }
+
+    #[test]
+    fn box_body_rejects_a_size_below_the_header_or_past_the_buffer() {
+        let below = [0, 0, 0, 7, b's', b't', b'y', b'p'];
+        assert!(box_body(&below, &STYP).is_err());
+        let past = [0, 0, 0, 16, b's', b't', b'y', b'p'];
+        assert!(box_body(&past, &STYP).is_err());
+        assert!(SegmentTypeBox::parse_box(&below).is_err());
+    }
+
+    #[test]
+    fn box_body_excludes_trailing_bytes() {
+        let mut bytes = plain_box(b"styp", 8);
+        bytes.extend_from_slice(&[0xAA; 4]);
+        let body = box_body(&bytes, &STYP).unwrap();
+        assert_eq!(body.len(), 8, "a size 16 box stops at byte 16");
+        assert_eq!(body, &bytes[8..16]);
+    }
+
+    #[test]
+    fn starts_with_helpers_distinguish_box_types() {
+        assert!(starts_with_moof(b"moof...."));
+        assert!(!starts_with_moof(b"mdat...."));
+        assert!(!starts_with_moof(b"moo"));
+        assert!(starts_with_box_type(b"styp..", *b"styp"));
+        assert!(!starts_with_box_type(b"styp..", *b"moof"));
+    }
 }
