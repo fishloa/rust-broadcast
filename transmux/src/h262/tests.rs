@@ -102,6 +102,23 @@ fn forbidden_and_reserved_aspects_are_unspecified() {
     }
 }
 
+/// The §6.3.3 relation has no ratio when either size term is zero, and the
+/// `u16` wire terms bound each reduced component inclusively at 65535.
+#[test]
+fn derived_sar_zero_terms_and_the_u16_bound() {
+    assert_eq!(derived_sar((4, 3), 0, 480), None, "zero width");
+    assert_eq!(derived_sar((4, 3), 480, 0), None, "zero height");
+    assert_eq!(derived_sar((65535, 1), 1, 1), Some((65535, 1)));
+    assert_eq!(derived_sar((1, 65535), 1, 1), Some((1, 65535)));
+    assert_eq!(derived_sar((65536, 1), 1, 1), None, "width over u16");
+    assert_eq!(derived_sar((1, 65536), 1, 1), None, "height over u16");
+    assert_eq!(
+        derived_sar((65536, 65536), 1, 1),
+        Some((1, 1)),
+        "reduced before the bound"
+    );
+}
+
 #[test]
 fn sequence_extension_extends_the_coded_size() {
     let g = geometry(&[sequence_header(111, 222, 1), sequence_extension(1, 2)]);
@@ -110,6 +127,35 @@ fn sequence_extension_extends_the_coded_size() {
         (1 << 12 | 111, 2 << 12 | 222)
     );
     assert_eq!(g.output_rect.width, 1 << 12 | 111);
+}
+
+/// The extension walk steps past each section by its own length, so a
+/// `sequence_display_extension()` after a `sequence_extension()` is reached;
+/// and the first display extension wins over a second one.
+#[test]
+fn first_display_extension_after_a_sequence_extension_wins() {
+    let es: Vec<u8> = [
+        sequence_header(111, 222, 1),
+        sequence_extension(1, 2),
+        sequence_display_extension(1, Some((6, 6, 5)), 704, 480),
+        sequence_display_extension(2, None, 640, 360),
+    ]
+    .concat();
+    let g = parse_sequence_at(&es, 0).expect("geometry");
+    assert_eq!(
+        (g.coded_width, g.coded_height),
+        (1 << 12 | 111, 2 << 12 | 222)
+    );
+    assert_eq!(
+        g.display,
+        Some(SequenceDisplayExtension {
+            video_format: 1,
+            colour_description: Some((6, 6, 5)),
+            display_horizontal_size: 704,
+            display_vertical_size: 480,
+        }),
+        "the first sequence_display_extension() is kept"
+    );
 }
 
 #[test]
@@ -257,4 +303,48 @@ fn codec_config_sequence_header_gives_geometry() {
     let g = DisplayGeometry::from_codec_config(&config).expect("esds sequence header");
     assert!(g.is_mpeg2());
     assert_eq!(g.sample_aspect_ratio(), Some((16, 11)));
+}
+
+/// `extension_and_user_data(2)` user data is returned only after the picture
+/// header, and the sequence-header flag reports a `sequence_header()` in the
+/// access unit (it gates the sequence-level versus picture-level split).
+#[test]
+fn picture_user_data_payloads_reports_the_sequence_header() {
+    let picture: [u8; 8] = [
+        0x00,
+        0x00,
+        0x01,
+        PICTURE_START_CODE_BYTE,
+        0x00,
+        0x08,
+        0x00,
+        0x40,
+    ];
+    let user_data: [u8; 8] = [
+        0x00,
+        0x00,
+        0x01,
+        USER_DATA_START_CODE_BYTE,
+        b'D',
+        b'T',
+        b'G',
+        b'1',
+    ];
+
+    let mut with_header = sequence_header(704, 480, 2);
+    with_header.extend_from_slice(&picture);
+    with_header.extend_from_slice(&user_data);
+    let (has_sequence_header, payloads) = picture_user_data_payloads(&with_header);
+    assert!(has_sequence_header, "a sequence_header() is present");
+    assert_eq!(payloads.len(), 1);
+    assert_eq!(payloads[0], b"DTG1");
+
+    let without_header: Vec<u8> = [picture.to_vec(), user_data.to_vec()].concat();
+    let (has_sequence_header, payloads) = picture_user_data_payloads(&without_header);
+    assert!(
+        !has_sequence_header,
+        "no sequence_header() in the access unit"
+    );
+    assert_eq!(payloads.len(), 1);
+    assert_eq!(payloads[0], b"DTG1");
 }
