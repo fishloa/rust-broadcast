@@ -467,6 +467,177 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
     ));
 }
 
+fn no_lut_metadata() -> Hdr10PlusMetadata {
+    Hdr10PlusMetadata {
+        application_version: 1,
+        targeted_system_display_maximum_luminance: 0,
+        targeted_system_display_actual_peak_luminance: None,
+        primary_window: transform(1),
+        additional_windows: Vec::new(),
+        mastering_display_actual_peak_luminance: None,
+        alignment_padding: 0,
+    }
+}
+
+/// Write `bits` bits of `value` at body bit `from`, counting from the first
+/// payload bit after the 7-byte T.35 header.
+fn set_payload_bits(bytes: &mut [u8], from: usize, bits: usize, value: u64) {
+    for i in 0..bits {
+        let bit_at = from + i;
+        let mask = 1u8 << (7 - (bit_at % 8));
+        let byte = &mut bytes[7 + bit_at / 8];
+        if (value >> (bits - 1 - i)) & 1 == 1 {
+            *byte |= mask;
+        } else {
+            *byte &= !mask;
+        }
+    }
+}
+
+/// ST 2094-40 clause 7.2 bounds a peak-luminance table to 25 rows and 25
+/// columns: one dimension over the bound is rejected, both when writing and
+/// when reading.
+#[test]
+fn a_lut_over_25_in_one_dimension_is_rejected() {
+    for table in [
+        PeakLuminanceTable {
+            rows: 26,
+            columns: 1,
+            values: vec![0; 26],
+        },
+        PeakLuminanceTable {
+            rows: 1,
+            columns: 26,
+            values: vec![0; 26],
+        },
+    ] {
+        let mut meta = no_lut_metadata();
+        meta.mastering_display_actual_peak_luminance = Some(table);
+        assert!(
+            matches!(
+                meta.try_to_bytes(),
+                Err(transmux::error::Error::InvalidValue(InvalidValue {
+                    field: "mastering_display_actual_peak_luminance",
+                    ..
+                }))
+            ),
+            "{meta:?}"
+        );
+    }
+
+    let mut meta = no_lut_metadata();
+    meta.targeted_system_display_actual_peak_luminance = Some(PeakLuminanceTable {
+        rows: 1,
+        columns: 1,
+        values: vec![3],
+    });
+    let good = meta.try_to_bytes().unwrap();
+    // Body bits: num_windows(2), targeted_max_luminance(27), flag(1), rows(5),
+    // columns(5).
+    let mut rows_26 = good.clone();
+    set_payload_bits(&mut rows_26, 30, 5, 26);
+    assert!(
+        matches!(
+            Hdr10PlusMetadata::parse(&rows_26),
+            Err(transmux::error::Error::InvalidValue(InvalidValue {
+                field: "targeted_system_display_actual_peak_luminance",
+                ..
+            }))
+        ),
+        "26 rows must be rejected"
+    );
+    let mut columns_26 = good;
+    set_payload_bits(&mut columns_26, 35, 5, 26);
+    assert!(
+        matches!(
+            Hdr10PlusMetadata::parse(&columns_26),
+            Err(transmux::error::Error::InvalidValue(InvalidValue {
+                field: "targeted_system_display_actual_peak_luminance",
+                ..
+            }))
+        ),
+        "26 columns must be rejected"
+    );
+}
+
+/// The rejections name the field and the offending value, including the
+/// count of trailing bytes after the defined syntax.
+#[test]
+fn parse_errors_name_the_field_and_value() {
+    let mut wrong_app = no_lut_metadata().try_to_bytes().unwrap();
+    wrong_app[5] = 3;
+    assert!(
+        matches!(
+            Hdr10PlusMetadata::parse(&wrong_app),
+            Err(transmux::Error::InvalidValue(InvalidValue {
+                field: "application_identifier",
+                value: 3,
+                ..
+            }))
+        ),
+        "{:?}",
+        Hdr10PlusMetadata::parse(&wrong_app)
+    );
+
+    let mut trailing = no_lut_metadata().try_to_bytes().unwrap();
+    trailing.extend_from_slice(&[0x00, 0x00]);
+    assert!(
+        matches!(
+            Hdr10PlusMetadata::parse(&trailing),
+            Err(transmux::Error::InvalidValue(InvalidValue {
+                field: "HDR10+ payload",
+                value: 2,
+                ..
+            }))
+        ),
+        "{:?}",
+        Hdr10PlusMetadata::parse(&trailing)
+    );
+}
+
+/// A payload whose syntax ends on a byte boundary has no padding bits, so a
+/// non-zero `alignment_padding` is an error rather than dropped bytes.
+#[test]
+fn non_zero_padding_on_a_byte_aligned_payload_is_an_error() {
+    let mut primary = transform(1);
+    primary.tone_mapping = Some(BezierToneMapping {
+        knee_point_x: 0,
+        knee_point_y: 0,
+        anchors: Vec::new(),
+    });
+    let mut second = transform(2);
+    second.tone_mapping = Some(BezierToneMapping {
+        knee_point_x: 0,
+        knee_point_y: 0,
+        anchors: Vec::new(),
+    });
+    let mut meta = Hdr10PlusMetadata {
+        application_version: 1,
+        targeted_system_display_maximum_luminance: 0,
+        targeted_system_display_actual_peak_luminance: None,
+        primary_window: primary,
+        additional_windows: vec![AdditionalWindow {
+            region: region(5),
+            color_volume: second,
+        }],
+        mastering_display_actual_peak_luminance: None,
+        alignment_padding: 1,
+    };
+    assert!(
+        matches!(
+            meta.try_to_bytes(),
+            Err(transmux::Error::InvalidValue(InvalidValue {
+                field: "alignment padding",
+                value: 1,
+                ..
+            }))
+        ),
+        "a byte-aligned payload must carry no padding bits"
+    );
+    meta.alignment_padding = 0;
+    round_trip(&meta);
+}
+
 fn hevc_track(media: &Media) -> &transmux::ir::Track {
     media
         .tracks

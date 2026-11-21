@@ -344,6 +344,22 @@ mod tests {
     }
 
     #[test]
+    fn serializing_into_a_short_buffer_is_an_error() {
+        let m = MasteringDisplayColourVolume::parse(&MDCV_BODY).unwrap();
+        let mut short = [0u8; MDCV_PAYLOAD_LEN - 1];
+        assert!(matches!(
+            m.serialize_into(&mut short),
+            Err(crate::error::Error::OutputBufferTooSmall(..))
+        ));
+        let c = ContentLightLevel::parse(&CLLI_BODY).unwrap();
+        let mut short = [0u8; CLLI_PAYLOAD_LEN - 1];
+        assert!(matches!(
+            c.serialize_into(&mut short),
+            Err(crate::error::Error::OutputBufferTooSmall(..))
+        ));
+    }
+
+    #[test]
     fn sei_nal_with_both_messages_is_absorbed() {
         let mut nal = alloc::vec![HEVC_PREFIX_SEI_NUT << 1, 1];
         nal.push(137);
@@ -402,6 +418,111 @@ mod tests {
                 .to_hevc_declarative_sei_nal()
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn one_message_is_not_empty() {
+        let mdcv_only = HdrStaticMetadata {
+            mastering_display: Some(MasteringDisplayColourVolume::parse(&MDCV_BODY).unwrap()),
+            content_light_level: None,
+        };
+        assert!(!mdcv_only.is_empty(), "only mastering_display present");
+        let clli_only = HdrStaticMetadata {
+            mastering_display: None,
+            content_light_level: Some(ContentLightLevel::parse(&CLLI_BODY).unwrap()),
+        };
+        assert!(!clli_only.is_empty(), "only content_light_level present");
+        assert!(HdrStaticMetadata::default().is_empty());
+    }
+
+    #[test]
+    fn a_single_sample_entry_box_is_read() {
+        let m = HdrStaticMetadata::from_sample_entry_boxes([(&MDCV_FOURCC, &MDCV_BODY[..])])
+            .expect("a single mdcv box");
+        assert_eq!(
+            m.mastering_display.unwrap().try_to_bytes().unwrap(),
+            MDCV_BODY
+        );
+        assert!(m.content_light_level.is_none());
+        let c = HdrStaticMetadata::from_sample_entry_boxes([(&CLLI_FOURCC, &CLLI_BODY[..])])
+            .expect("a single clli box");
+        assert!(c.mastering_display.is_none());
+        assert_eq!(
+            c.content_light_level.unwrap().try_to_bytes().unwrap(),
+            CLLI_BODY
+        );
+    }
+
+    #[test]
+    fn a_suffix_or_short_sei_nal_is_ignored() {
+        // H.265 Table 7-1: `SUFFIX_SEI_NUT`.
+        const HEVC_SUFFIX_SEI_NUT: u8 = 40;
+        let mdcv = [0x11u8; MDCV_PAYLOAD_LEN];
+        let mut suffix = crate::nal::hevc_prefix_sei_nal(&[(
+            SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME,
+            &mdcv,
+        )]);
+        suffix[0] = HEVC_SUFFIX_SEI_NUT << 1;
+        let mut m = HdrStaticMetadata::default();
+        m.absorb_hevc_sei_nal(&suffix);
+        assert!(m.is_empty(), "a suffix SEI NAL carries no prefix message");
+
+        let mut m = HdrStaticMetadata::default();
+        m.absorb_hevc_sei_nal(&[HEVC_PREFIX_SEI_NUT << 1, 1]);
+        assert!(m.is_empty(), "a bare 2-byte NAL has no SEI body");
+    }
+
+    #[test]
+    fn the_first_message_of_each_kind_is_kept() {
+        const MDCV_OTHER: [u8; 24] = [0x22; 24];
+        const CLLI_OTHER: [u8; 4] = [0x00, 0x64, 0x00, 0x32];
+        let first = crate::nal::hevc_prefix_sei_nal(&[
+            (SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &MDCV_BODY),
+            (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &CLLI_BODY),
+        ]);
+        let second = crate::nal::hevc_prefix_sei_nal(&[
+            (SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &MDCV_OTHER),
+            (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &CLLI_OTHER),
+        ]);
+        let mut m = HdrStaticMetadata::default();
+        m.absorb_hevc_sei_nal(&first);
+        m.absorb_hevc_sei_nal(&second);
+        assert_eq!(
+            m.mastering_display.unwrap().try_to_bytes().unwrap(),
+            MDCV_BODY,
+            "the first mdcv message wins"
+        );
+        assert_eq!(
+            m.content_light_level.unwrap().try_to_bytes().unwrap(),
+            CLLI_BODY,
+            "the first clli message wins"
+        );
+
+        let from_boxes = HdrStaticMetadata::from_sample_entry_boxes([
+            (&MDCV_FOURCC, &MDCV_BODY[..]),
+            (&MDCV_FOURCC, &MDCV_OTHER[..]),
+            (&CLLI_FOURCC, &CLLI_BODY[..]),
+            (&CLLI_FOURCC, &CLLI_OTHER[..]),
+        ])
+        .expect("four boxes");
+        assert_eq!(
+            from_boxes
+                .mastering_display
+                .unwrap()
+                .try_to_bytes()
+                .unwrap(),
+            MDCV_BODY,
+            "the first mdcv box wins"
+        );
+        assert_eq!(
+            from_boxes
+                .content_light_level
+                .unwrap()
+                .try_to_bytes()
+                .unwrap(),
+            CLLI_BODY,
+            "the first clli box wins"
         );
     }
 }
