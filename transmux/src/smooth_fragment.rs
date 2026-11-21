@@ -244,3 +244,20 @@ pub fn fragment_tfxd(fragment: &[u8]) -> Option<TfxdBox> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FragmentState;
+
+    #[test]
+    fn fragment_state_labels_are_stable() {
+        for (state, label) in [
+            (FragmentState::Clear, "clear"),
+            (FragmentState::Encrypted, "encrypted"),
+            (FragmentState::Undetermined, "undetermined"),
+        ] {
+            assert_eq!(state.name(), label);
+            assert_eq!(alloc::format!("{state}"), label);
+        }
+    }
+}

@@ -971,6 +971,23 @@ mod tests {
         assert_eq!(encode_vint_size(0x7E), vec![0xFE]);
         assert_eq!(encode_vint_size(0x7F), vec![0x40, 0x7F]);
         assert_eq!(encode_vint_size(2), vec![0x82]);
+        // Three/four/five-byte widths at and either side of their boundaries
+        // (RFC 8794 §4: 2^(7n)-2 largest in n bytes, next width above it).
+        assert_eq!(encode_vint_size(0x1F_FFFE), vec![0x3F, 0xFF, 0xFE]);
+        assert_eq!(encode_vint_size(0x1F_FFFF), vec![0x10, 0x1F, 0xFF, 0xFF]);
+        assert_eq!(encode_vint_size(0x0FFF_FFFE), vec![0x1F, 0xFF, 0xFF, 0xFE]);
+        assert_eq!(
+            encode_vint_size(0x0FFF_FFFF),
+            vec![0x08, 0x0F, 0xFF, 0xFF, 0xFF]
+        );
+        assert_eq!(
+            encode_vint_size(0x07_FFFF_FFFE),
+            vec![0x0F, 0xFF, 0xFF, 0xFF, 0xFE]
+        );
+        assert_eq!(
+            encode_vint_size(0x07_FFFF_FFFF),
+            vec![0x01, 0x00, 0x00, 0x07, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
     }
 
     #[test]

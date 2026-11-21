@@ -60,3 +60,24 @@ pub(crate) fn escape(unescaped: &[u8]) -> Vec<u8> {
     }
     out
 }
+#[cfg(test)]
+mod tests {
+    use super::unescape;
+
+    #[test]
+    fn unescape_only_drops_a_three_byte_after_two_zero_bytes() {
+        assert_eq!(
+            unescape(&[0x00, 0x05, 0x03]).as_slice(),
+            &[0x00, 0x05, 0x03]
+        );
+        assert_eq!(
+            unescape(&[0x00, 0x00, 0x03, 0x01]).as_slice(),
+            &[0x00, 0x00, 0x01]
+        );
+        assert_eq!(unescape(&[0x00, 0x00, 0x03]).as_slice(), &[0x00, 0x00]);
+        assert_eq!(
+            unescape(&[0x01, 0x00, 0x03]).as_slice(),
+            &[0x01, 0x00, 0x03]
+        );
+    }
+}

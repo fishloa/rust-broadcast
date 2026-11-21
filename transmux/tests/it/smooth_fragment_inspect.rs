@@ -3,12 +3,15 @@
 //! `ts/h264-aac.ts` fixture, plus hand-built `moof` structures for the encrypted
 //! and malformed classifications, plus `package_track_fragment`'s own contract.
 
+use broadcast_common::Serialize;
 use broadcast_common::Unpackage;
 use broadcast_common::error::BufferTooShort;
 use transmux::Error;
 use transmux::media::{Media, Track};
-use transmux::smooth::SmoothPackager;
-use transmux::smooth_fragment::{FragmentState, fragment_state, fragment_tfxd, fragment_track_id};
+use transmux::smooth::{SmoothPackager, TfxdBox};
+use transmux::smooth_fragment::{
+    FragmentState, PIFF_SAMPLE_ENCRYPTION_UUID, fragment_state, fragment_tfxd, fragment_track_id,
+};
 use transmux::ts_demux::TsDemux;
 
 fn media() -> Media {
@@ -178,4 +181,31 @@ fn fragment_tfxd_is_none_without_a_tfxd_or_on_unwalkable_input() {
     assert!(fragment_tfxd(&[]).is_none());
     assert!(fragment_tfxd(&moof_with_traf_child(b"tfhd")).is_none());
     assert!(fragment_tfxd(&[0, 0, 0, 3, b'm', b'o', b'o', b'f']).is_none());
+}
+
+/// Build a `uuid` box with `usertype` and `body` (MS-SSTR 2.2.4.4 extended type).
+fn uuid_box(usertype: [u8; 16], body: &[u8]) -> Vec<u8> {
+    let header = transmux::box_types::BoxHeader::new(
+        (transmux::box_types::BOX_HEADER_MIN_SIZE + 16 + body.len()) as u64,
+        transmux::box_types::BoxType::from_bytes(*b"uuid"),
+        Some(usertype),
+    );
+    let mut out = vec![0u8; header.serialized_len() + body.len()];
+    let n = header
+        .serialize_into(&mut out)
+        .expect("serialize uuid header");
+    out[n..].copy_from_slice(body);
+    out
+}
+
+#[test]
+fn fragment_tfxd_skips_a_foreign_uuid_box_before_the_real_one() {
+    // The PIFF sample-encryption uuid normally precedes the tfxd; its body is
+    // not a tfxd body, so stopping there would lose the live timestamp.
+    let decoy = uuid_box(PIFF_SAMPLE_ENCRYPTION_UUID, &[0u8; 4]);
+    let expected = TfxdBox::new(1234, 5678);
+    let real = expected.try_to_bytes().expect("tfxd bytes");
+    let traf = bx(b"traf", &[decoy, real].concat());
+    let fragment = bx(b"moof", &traf);
+    assert_eq!(fragment_tfxd(&fragment), Some(expected));
 }
