@@ -908,6 +908,131 @@ mod tests {
     }
 
     #[test]
+    fn parameter_set_length_boundaries_are_inclusive_and_reject_a_bare_header() {
+        // Exactly the maximum record length, non-zero stop bit: accepted.
+        let max_pps = [&[0x68u8][..], &[0x55; MAX_PARAMETER_SET_LEN - 1][..]].concat();
+        assert_eq!(max_pps.len(), MAX_PARAMETER_SET_LEN);
+        assert!(parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &max_pps
+        ));
+        // A 1-byte "PPS" has no body: rejected.
+        assert!(!parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &[0x68]
+        ));
+        // The smallest real PPS (2 bytes) is accepted; a zero trailing byte is not.
+        assert!(parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &[0x68, 0x01]
+        ));
+        assert!(!parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &[0x68, 0x00]
+        ));
+    }
+
+    /// A Baseline-profile H.264 SPS whose 16x16 picture is cropped by
+    /// `(left, right, top, bottom)` chroma-sample offsets.
+    fn avc_sps_with_crop(crop: (u64, u64, u64, u64)) -> Vec<u8> {
+        let (left, right, top, bottom) = crop;
+        let mut nal = alloc::vec![0x67u8, 66, 0x00, 30];
+        let mut s = crate::test_bits::BitWriter::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(0); // log2_max_frame_num_minus4
+        s.ue(2); // pic_order_cnt_type
+        s.ue(1); // max_num_ref_frames
+        s.bit(false); // gaps_in_frame_num_value_allowed_flag
+        s.ue(0); // pic_width_in_mbs_minus1 -> 16
+        s.ue(0); // pic_height_in_map_units_minus1 -> 16
+        s.bit(true); // frame_mbs_only_flag
+        s.bit(true); // direct_8x8_inference_flag
+        s.bit(true); // frame_cropping_flag
+        s.ue(left);
+        s.ue(right);
+        s.ue(top);
+        s.ue(bottom);
+        s.bit(false); // vui_parameters_present_flag
+        s.bit(true); // rbsp_stop_one_bit
+        nal.extend_from_slice(&crate::rbsp::escape(&s.finish()));
+        nal
+    }
+
+    /// A 4:2:0 HEVC SPS whose 16x16 picture is cropped by
+    /// `(left, right, top, bottom)` chroma-sample offsets.
+    fn hevc_sps_with_conformance_window(window: (u64, u64, u64, u64)) -> Vec<u8> {
+        let (left, right, top, bottom) = window;
+        let mut nal = alloc::vec![0x42u8, 0x01];
+        let mut s = crate::test_bits::BitWriter::new();
+        s.u(4, 0); // sps_video_parameter_set_id
+        s.u(3, 0); // sps_max_sub_layers_minus1
+        s.bit(true); // sps_temporal_id_nesting_flag
+        s.u(2, 0); // general_profile_space
+        s.bit(false); // general_tier_flag
+        s.u(5, 1); // general_profile_idc
+        s.u(32, 0); // general_profile_compatibility_flags
+        s.u(48, 0); // general_constraint_indicator_flags
+        s.u(8, 93); // general_level_idc
+        s.ue(0); // sps_seq_parameter_set_id
+        s.ue(1); // chroma_format_idc
+        s.ue(16); // pic_width_in_luma_samples
+        s.ue(16); // pic_height_in_luma_samples
+        s.bit(true); // conformance_window_flag
+        s.ue(left);
+        s.ue(right);
+        s.ue(top);
+        s.ue(bottom);
+        s.ue(0); // bit_depth_luma_minus8
+        s.ue(0); // bit_depth_chroma_minus8
+        s.ue(3); // log2_max_pic_order_cnt_lsb_minus4
+        s.bit(false); // sps_sub_layer_ordering_info_present_flag
+        s.ue(0); // sps_max_dec_pic_buffering_minus1
+        s.ue(0); // sps_max_num_reorder_pics
+        s.ue(0); // sps_max_latency_increase_plus1
+        s.ue(0); // log2_min_luma_coding_block_size_minus3
+        s.ue(3); // log2_diff_max_min_luma_coding_block_size
+        s.ue(0); // log2_min_luma_transform_block_size_minus2
+        s.ue(3); // log2_diff_max_min_luma_transform_block_size
+        s.ue(1); // max_transform_hierarchy_depth_inter
+        s.ue(1); // max_transform_hierarchy_depth_intra
+        s.bit(false); // scaling_list_enabled_flag
+        s.bit(false); // amp_enabled_flag
+        s.bit(false); // sample_adaptive_offset_enabled_flag
+        s.bit(false); // pcm_enabled_flag
+        s.ue(0); // num_short_term_ref_pic_sets
+        s.bit(false); // long_term_ref_pics_present_flag
+        s.bit(false); // sps_temporal_mvp_enabled_flag
+        s.bit(false); // strong_intra_smoothing_enabled_flag
+        s.bit(false); // vui_parameters_present_flag
+        s.bit(true); // rbsp_stop_one_bit
+        nal.extend_from_slice(&crate::rbsp::escape(&s.finish()));
+        nal
+    }
+
+    #[test]
+    fn parameter_set_that_decodes_to_zero_geometry_is_invalid() {
+        for (crop, geometry) in [((8, 0, 0, 0), (0, 16)), ((0, 0, 8, 0), (16, 0))] {
+            let avc = avc_sps_with_crop(crop);
+            let info = crate::sps::decode_avc_sps(&avc).expect("AVC SPS decodes");
+            assert_eq!((info.width, info.height), geometry);
+            assert!(!parameter_set_is_valid(NalCodec::Avc, ParamKind::Sps, &avc));
+
+            let hevc = hevc_sps_with_conformance_window(crop);
+            let info = crate::sps::decode_hevc_sps(&hevc).expect("HEVC SPS decodes");
+            assert_eq!((info.width, info.height), geometry);
+            assert!(!parameter_set_is_valid(
+                NalCodec::Hevc,
+                ParamKind::Sps,
+                &hevc
+            ));
+        }
+    }
+
+    #[test]
     fn sei_varint_overflow_is_none_not_a_panic() {
         // 0xFF * (u32::MAX / 255 + 1) exceeds u32::MAX before any terminator.
         let run = (u32::MAX / 255) as usize + 2;
@@ -966,6 +1091,18 @@ mod tests {
         assert!(is_keyframe_nal(NalCodec::Vvc, &[0x00, 0x48]));
         // TRAIL = 0 → byte1 = 0x00 is not IRAP.
         assert!(!is_keyframe_nal(NalCodec::Vvc, &[0x00, 0x00]));
+    }
+
+    #[test]
+    fn vvc_idr_detection_covers_types_seven_and_eight_and_excludes_cra() {
+        assert!(is_idr_nal(NalCodec::Vvc, &[0x00, 7 << 3]));
+        assert!(is_idr_nal(NalCodec::Vvc, &[0x00, 8 << 3]));
+        assert!(
+            !is_idr_nal(NalCodec::Vvc, &[0x00, 9 << 3]),
+            "CRA is a keyframe but not an IDR"
+        );
+        assert!(is_keyframe_nal(NalCodec::Vvc, &[0x00, 9 << 3]));
+        assert!(!is_idr_nal(NalCodec::Vvc, &[0x00, 1 << 3]));
     }
 
     #[test]
@@ -1357,6 +1494,118 @@ mod tests {
             let bad_lp = [0x00, 0x00, 0x00, 0x63, 0x06, 0x04];
             let _ = caption_cc_data(codec, &bad_lp, true);
         }
+    }
+
+    /// Concatenate NAL units into the 4-byte big-endian length-prefixed form
+    /// an access unit uses in `mdat`.
+    fn length_prefixed_au(nals: &[&[u8]]) -> Vec<u8> {
+        let mut au = Vec::new();
+        for nal in nals {
+            au.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+            au.extend_from_slice(nal);
+        }
+        au
+    }
+
+    #[test]
+    fn avc_access_unit_scan_reports_the_sps_dimensions_and_parameter_sets() {
+        let pps = [0x68u8, 0xCE, 0x3C, 0x80];
+        let sei = [0x06u8, 0x05, 0x01, 0xAA, 0x80];
+        let idr = [0x65u8, 0x88];
+        let au = length_prefixed_au(&[&sei, REAL_AVC_SPS, &pps, &idr]);
+
+        assert_eq!(
+            avc_access_unit_dimensions(&au),
+            Some((320, 240)),
+            "the in-band SPS's real geometry"
+        );
+        assert_eq!(
+            avc_access_unit_dimensions(&au),
+            avc_sps_dimensions(REAL_AVC_SPS)
+        );
+
+        let (sps, pps_out) = avc_access_unit_parameter_sets(&au);
+        assert_eq!(sps, alloc::vec![crate::AvcSps(REAL_AVC_SPS.to_vec())]);
+        assert_eq!(pps_out, alloc::vec![crate::AvcPps(pps.to_vec())]);
+    }
+
+    #[test]
+    fn avc_access_unit_without_an_sps_has_no_dimensions() {
+        let pps = [0x68u8, 0xCE, 0x3C, 0x80];
+        let idr = [0x65u8, 0x88];
+        let au = length_prefixed_au(&[&pps, &idr]);
+        assert_eq!(avc_access_unit_dimensions(&au), None);
+        let (sps, pps_out) = avc_access_unit_parameter_sets(&au);
+        assert!(sps.is_empty());
+        assert_eq!(pps_out, alloc::vec![crate::AvcPps(pps.to_vec())]);
+    }
+
+    #[test]
+    fn malformed_avc_access_unit_yields_none_and_no_parameter_sets() {
+        // Declares a 99-byte NAL in a 5-byte buffer.
+        let malformed = [0x00u8, 0x00, 0x00, 0x63, 0x67];
+        assert_eq!(avc_access_unit_dimensions(&malformed), None);
+        let (sps, pps) = avc_access_unit_parameter_sets(&malformed);
+        assert!(sps.is_empty());
+        assert!(pps.is_empty());
+    }
+
+    #[test]
+    fn hevc_prefix_sei_nal_encodes_multi_byte_payload_types() {
+        let nal = hevc_prefix_sei_nal(&[(300, &[1, 2, 3]), (255, &[]), (4, &[9])]);
+        assert_eq!(nal[2], 0xFF, "payloadType 300 starts with 0xFF");
+        assert_eq!(nal[3], 0x2D, "300 - 255 = 45 = 0x2D");
+        assert_eq!(
+            sei_messages(&nal[2..]),
+            alloc::vec![
+                (300, alloc::vec![1, 2, 3]),
+                (255, alloc::vec![]),
+                (4, alloc::vec![9]),
+            ]
+        );
+    }
+
+    #[test]
+    fn sei_messages_reads_a_leading_0x80_as_payload_type_not_trailing_bits() {
+        // payloadType 128 (0x80) size 2, then type 5 size 1, then trailing bits.
+        let body = [0x80u8, 0x02, 0xAA, 0xBB, 0x05, 0x01, 0xCC, 0x80];
+        assert_eq!(
+            sei_messages(&body),
+            alloc::vec![(128, alloc::vec![0xAA, 0xBB]), (5, alloc::vec![0xCC])]
+        );
+    }
+
+    #[test]
+    fn append_if_atsc_cc_data_ignores_payloads_below_the_fixed_header() {
+        for payload in [
+            &[][..],
+            &[0xB5, 0x00, 0x31][..],
+            &[0xB5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34][..],
+        ] {
+            let mut out = Vec::new();
+            append_if_atsc_cc_data(payload, &mut out);
+            assert!(out.is_empty(), "no cc_data in a short payload");
+        }
+    }
+
+    #[test]
+    fn append_if_atsc_cc_data_ignores_a_header_without_a_cc_data_header() {
+        let mut out = Vec::new();
+        append_if_atsc_cc_data(&[0xB5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34, 0x03], &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn append_if_atsc_cc_data_appends_a_complete_cc_data_block() {
+        let payload = [
+            0xB5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34, 0x03, // T.35 + GA94 + type
+            0x01, 0x00, // cc_data() header: cc_count = 1
+            0xAA, 0xBB, 0xCC, // one triplet
+            0xDD, // marker
+        ];
+        let mut out = Vec::new();
+        append_if_atsc_cc_data(&payload, &mut out);
+        assert_eq!(out, alloc::vec![0x01, 0x00, 0xAA, 0xBB, 0xCC, 0xDD]);
     }
 
     #[test]

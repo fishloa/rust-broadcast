@@ -131,6 +131,48 @@ fn aes128_full_segment_padded_round_trip() {
     ));
 }
 
+/// Sample-AES §3.1: only NAL type 1 or 5 whose length is strictly greater
+/// than 48 is encryptable. The bound and both type checks are asserted
+/// directly, including the zero-length NAL (which must not be read as type 0
+/// or as a satisfied length bound).
+#[test]
+fn h264_nal_encryptability_boundary() {
+    assert!(
+        !sample_aes::h264_nal_is_encrypted(&[0x65; 48]),
+        "48 bytes is at the bound and stays clear"
+    );
+    assert!(
+        sample_aes::h264_nal_is_encrypted(&[0x65; 49]),
+        "49-byte IDR slice is encryptable"
+    );
+    assert!(
+        !sample_aes::h264_nal_is_encrypted(&[0x65; 10]),
+        "short IDR slice stays clear"
+    );
+    assert!(
+        !sample_aes::h264_nal_is_encrypted(&[0x67; 100]),
+        "an SPS (type 7) is never encrypted, however long"
+    );
+    assert!(!sample_aes::h264_nal_is_encrypted(&[]));
+}
+
+/// The length check is the only producer of the documented length error: a
+/// zero-length or non-block-multiple segment must name the length, not fall
+/// through to the PKCS#7 padding message.
+#[test]
+fn aes128_segment_length_errors_name_the_length() {
+    const EXPECTED: &str = "AES-128 segment ciphertext length not a positive multiple of 16";
+    for bad in [&[][..], &[0u8; 17][..]] {
+        match aes128_decrypt_segment(&KEY, &IV, bad) {
+            Err(transmux::error::Error::InvalidInput(msg)) => assert_eq!(msg, EXPECTED),
+            other => panic!(
+                "expected the length error for {} bytes, got {other:?}",
+                bad.len()
+            ),
+        }
+    }
+}
+
 /// Test 5 — EXT-X-KEY exact tag strings + IV-from-sequence-number formatting.
 #[test]
 fn ext_x_key_exact_strings() {

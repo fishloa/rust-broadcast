@@ -6,7 +6,10 @@
 //! byte-identical output.
 
 use broadcast_common::{Parse, Serialize};
-use transmux::{AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord};
+use transmux::{
+    AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, AvcSpsExt,
+    HEVCDecoderConfigurationRecord,
+};
 
 /// Find the first box of a given type within `body` bytes.
 fn find_box<'a>(body: &'a [u8], four_cc: &[u8; 4]) -> Option<(&'a [u8], usize)> {
@@ -192,6 +195,77 @@ fn test_avcc_mutation_changes_bytes() {
     assert_eq!(mutated[3], 50, "level at offset 3");
 }
 
+/// ISO/IEC 14496-15:2017 §5.3.3.1.2-3: a High-profile record with two SPS
+/// extensions of different lengths serializes each behind its own 16-bit
+/// `sequenceParameterSetExtLength`.
+#[test]
+fn avcc_high_profile_with_two_sps_ext_round_trips() {
+    let record = AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 100,
+        profile_compatibility: 0,
+        level_indication: 31,
+        length_size_minus_one: 3,
+        sps: vec![AvcSps(vec![0x67])],
+        pps: vec![AvcPps(vec![0x68])],
+        chroma_format: Some(1),
+        bit_depth_luma_minus8: Some(0),
+        bit_depth_chroma_minus8: Some(0),
+        sps_ext: vec![
+            AvcSpsExt(vec![0x01, 0x02, 0x03]),
+            AvcSpsExt(vec![0x04, 0x05, 0x06, 0x07, 0x08]),
+        ],
+    };
+    // 6 fixed bytes + (2 + 1) SPS + 1 numPPS + (2 + 1) PPS
+    // + 4 high-profile header + (2 + 3) + (2 + 5) extensions = 29.
+    assert_eq!(record.serialized_len(), 29);
+
+    let expected: [u8; 29] = [
+        0x01, 0x64, 0x00, 0x1F, 0xFF, 0xE1, // header, numSPS = 1
+        0x00, 0x01, 0x67, // SPS
+        0x01, // numPPS
+        0x00, 0x01, 0x68, // PPS
+        0xFD, 0xF8, 0xF8, 0x02, // chroma_format, bit depths, numSPSExt = 2
+        0x00, 0x03, 0x01, 0x02, 0x03, // first extension
+        0x00, 0x05, 0x04, 0x05, 0x06, 0x07, 0x08, // second extension
+    ];
+    let bytes = record.try_to_bytes().unwrap();
+    assert_eq!(bytes, expected);
+    assert_eq!(
+        AVCDecoderConfigurationRecord::parse(&bytes).unwrap(),
+        record
+    );
+}
+
+/// ISO/IEC 14496-15:2017 §5.3.3: the `avcC` box's serializer reports the
+/// bytes it wrote, and the record's `Display` prints every field.
+#[test]
+fn avcc_box_written_length_and_display_are_pinned() {
+    let record = AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 100,
+        profile_compatibility: 0,
+        level_indication: 31,
+        length_size_minus_one: 3,
+        sps: vec![AvcSps(vec![0x67])],
+        pps: vec![AvcPps(vec![0x68])],
+        chroma_format: None,
+        bit_depth_luma_minus8: None,
+        bit_depth_chroma_minus8: None,
+        sps_ext: vec![],
+    };
+    assert_eq!(
+        format!("{record}"),
+        "AVC(profile=100, compat=0x00, level=31, lenSize=4, sps=1, pps=1)"
+    );
+
+    let boxed = AVCConfigurationBox::new(record);
+    let mut buf = vec![0u8; boxed.serialized_len()];
+    let n = boxed.serialize_into(&mut buf).unwrap();
+    assert_eq!(n, boxed.serialized_len());
+    assert_eq!(n, 8 + 13, "box header plus the record body");
+}
+
 // ---------------------------------------------------------------------------
 // HEVC (H.265) fixture tests
 // ---------------------------------------------------------------------------
@@ -253,4 +327,51 @@ fn test_hvcc_mutation_changes_bytes() {
         mutated, original,
         "mutating general_level_idc must change serialized bytes"
     );
+}
+
+#[test]
+fn hvcc_high_tier_profile_space_and_constraint_bytes_round_trip() {
+    // A High-tier, profile-space-2 record with all six constraint bytes set:
+    // the committed hvcC fixtures carry profile space 0, main tier and only
+    // the top constraint byte, so none of these bits is otherwise observed.
+    let record = HEVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        general_profile_space: 2,
+        general_tier_flag: true,
+        general_profile_idc: 2,
+        general_profile_compatibility_flags: 0x6000_0000,
+        general_constraint_indicator_flags: 0x0123_4567_89AB,
+        general_level_idc: 120,
+        min_spatial_segmentation_idc: 0,
+        parallelism_type: 0,
+        chroma_format_idc: 1,
+        bit_depth_luma_minus8: 0,
+        bit_depth_chroma_minus8: 0,
+        avg_frame_rate: 0,
+        constant_frame_rate: 0,
+        num_temporal_layers: 1,
+        temporal_id_nested: true,
+        length_size_minus_one: 3,
+        arrays: Vec::new(),
+    };
+
+    let bytes = record.try_to_bytes().unwrap();
+    // general_profile_space(2)=10, general_tier_flag=1, general_profile_idc=00010.
+    assert_eq!(bytes[1], 0b1010_0010, "profile byte");
+    // general_constraint_indicator_flags occupies bytes [6..12] (after the
+    // version, profile byte and four compatibility bytes).
+    assert_eq!(
+        &bytes[6..12],
+        &[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB],
+        "constraint indicator bytes"
+    );
+
+    assert_eq!(
+        HEVCDecoderConfigurationRecord::parse(&bytes).unwrap(),
+        record,
+        "parsed record equals the original"
+    );
+
+    let codec = record.rfc6381();
+    assert_eq!(codec, "hvc1.B2.6.H120.01.23.45.67.89.AB");
 }

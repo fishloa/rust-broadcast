@@ -4,11 +4,13 @@
 //! UAS Datalink Local Set, RFC 6597 KLV-over-RTP. See
 //! `private/specs-verified/mpeg/transmux/klv/klv-misb0601.md`.
 
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::klv::{KlvItem, UNIVERSAL_LABEL_LEN};
 use broadcast_common::{Parse, Serialize};
+use transmux::Error;
 use transmux::klv::{
     CHECKSUM_LEN, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM, TAG_PRECISION_TIMESTAMP,
-    UAS_LS_KEY, UasLocalSet, checksum_bcc16,
+    UAS_LS_KEY, UasLocalSet, ber_oid, checksum_bcc16, encode_ber_oid,
 };
 use transmux::rtp::{depacketise_klv, packetise_klv};
 
@@ -55,6 +57,44 @@ fn klv_item_indefinite_form_rejected() {
     assert!(matches!(
         KlvItem::parse(&bytes),
         Err(broadcast_common::klv::KlvError::BufferTooShort(..))
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// 1b. BER-OID tags (ISO/IEC 8825-1 §8.19)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ber_oid_u32_max_is_the_largest_accepted_tag() {
+    // 0xFFFFFFFF needs five base-128 digits; the accumulator before the last
+    // digit is exactly `u32::MAX >> 7`, the guard's inclusive boundary.
+    let encoded = encode_ber_oid(u32::MAX);
+    assert_eq!(encoded, vec![0x8F, 0xFF, 0xFF, 0xFF, 0x7F]);
+    assert_eq!(ber_oid(&encoded), Ok((u32::MAX, 5)));
+}
+
+#[test]
+fn ber_oid_rejects_an_over_long_tag_instead_of_wrapping() {
+    // 28 bits before the final digit is past `u32::MAX >> 7`: shifting in one
+    // more 7-bit group would wrap.
+    assert!(matches!(
+        ber_oid(&[0xFF, 0xFF, 0xFF, 0xFF, 0x7F]),
+        Err(Error::InvalidValue(InvalidValue {
+            field: "ber_oid",
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn ber_oid_truncated_reports_the_real_need() {
+    assert!(matches!(
+        ber_oid(&[0x81]),
+        Err(Error::BufferTooShort(BufferTooShort {
+            need: 2,
+            have: 1,
+            ..
+        }))
     ));
 }
 
@@ -184,6 +224,64 @@ fn uas_local_set_checksum_recomputed_on_change() {
     assert!(UasLocalSet::verify_checksum(&b).unwrap());
     // Precision timestamp length is what the spec fixes it at.
     assert_eq!(PRECISION_TIMESTAMP_LEN, 8);
+}
+
+/// `serialized_len`, `serialize_into`'s returned count and the produced bytes
+/// must all agree with `serialize_with_checksum`.
+fn assert_local_set_length(set: &UasLocalSet) {
+    let expected = set.serialize_with_checksum().unwrap();
+    assert_eq!(set.serialized_len(), expected.len(), "serialized_len");
+    assert_eq!(
+        set.try_to_bytes().unwrap().len(),
+        expected.len(),
+        "try_to_bytes"
+    );
+    let mut buf = vec![0u8; set.serialized_len()];
+    assert_eq!(
+        set.serialize_into(&mut buf).unwrap(),
+        expected.len(),
+        "serialize_into count"
+    );
+    assert_eq!(buf, expected, "serialize_into bytes");
+}
+
+#[test]
+fn uas_local_set_lengths_cover_empty_short_long_and_checksum_items() {
+    // (a) Empty: only the UL key, the packet length and the tag-1 checksum.
+    assert_local_set_length(&UasLocalSet::new());
+
+    // (b) Small items (one-byte tags and lengths).
+    assert_local_set_length(&UasLocalSet::from_items(vec![
+        LocalSetItem::new(TAG_PRECISION_TIMESTAMP, 0u64.to_be_bytes().to_vec()),
+        LocalSetItem::new(10, vec![0xAB, 0xCD]),
+    ]));
+
+    // (c) A 200-byte value (two-byte BER length) under a 2-byte BER-OID tag.
+    assert_local_set_length(&UasLocalSet::from_items(vec![LocalSetItem::new(
+        200,
+        vec![0x5A; 200],
+    )]));
+
+    // (d) An existing tag-1 item is replaced, not summed into the length.
+    assert_local_set_length(&UasLocalSet::from_items(vec![
+        LocalSetItem::new(10, vec![0x01]),
+        LocalSetItem::new(TAG_CHECKSUM, vec![0xDE, 0xAD]),
+    ]));
+}
+
+#[test]
+fn verify_checksum_reports_the_minimum_packet_length() {
+    // 16-byte UL key + 1-byte packet length + 2-byte checksum = 19.
+    assert!(matches!(
+        UasLocalSet::verify_checksum(&[0u8; 18]),
+        Err(Error::BufferTooShort(BufferTooShort {
+            need: 19,
+            have: 18,
+            ..
+        }))
+    ));
+    // The minimum itself is long enough to check, not truncated.
+    assert_eq!(UasLocalSet::verify_checksum(&[0u8; 19]), Ok(true));
 }
 
 // ---------------------------------------------------------------------------
@@ -414,4 +512,20 @@ fn checksum_covers_every_item_before_it() {
             "a flipped byte at {i} must fail verification"
         );
     }
+}
+
+fn raw_rtp(seq: u16, ts: u32, marker: bool, payload: &[u8]) -> Vec<u8> {
+    let mut p = vec![0x80u8, if marker { RTP_MARKER_MASK | 98 } else { 98 }];
+    p.extend_from_slice(&seq.to_be_bytes());
+    p.extend_from_slice(&ts.to_be_bytes());
+    p.extend_from_slice(&[0, 0, 0, 0]);
+    p.extend_from_slice(payload);
+    p
+}
+
+#[test]
+fn klv_timestamp_change_after_an_empty_packet_emits_no_empty_unit() {
+    let packets = vec![raw_rtp(0, 1, false, &[]), raw_rtp(1, 2, true, b"ab")];
+    let units = depacketise_klv(&packets).unwrap();
+    assert_eq!(units, vec![b"ab".to_vec()], "no empty unit is emitted");
 }

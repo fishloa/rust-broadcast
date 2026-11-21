@@ -46,11 +46,13 @@
 //! would: by decoding the **raw SPS NAL** the `avcC` actually carries
 //! (`record.sps[0]`), which is unaffected by that gap.
 
+use crate::bit_writer::BitWriter;
 use broadcast_common::{Package, Unpackage};
 use transmux::TsDemux;
 use transmux::media::{CmafMux, Media, Track};
 use transmux::pipeline::CodecConfig;
 use transmux::validate::{Severity, validate_init_segment};
+use transmux::{decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing};
 
 // ---------------------------------------------------------------------------
 // Ground-truth table
@@ -633,4 +635,84 @@ fn hevc_matrix_ts_to_cmaf_init_segment() {
 /// Whether `haystack` contains the 4-byte ASCII tag `needle`.
 fn contains_ascii(haystack: &[u8], needle: &[u8; 4]) -> bool {
     haystack.windows(4).any(|w| w == needle)
+}
+
+// ---------------------------------------------------------------------------
+// H.264 High-profile scaling lists (audit 23 finding 324)
+// ---------------------------------------------------------------------------
+
+/// A High-profile SPS carrying `seq_scaling_matrix_present_flag = 1`. The
+/// scaling-list walk advances `next_scale = (last_scale + delta_scale + 256) %
+/// 256` and stops reading a list once `next_scale == 0` (ITU-T H.264
+/// §7.4.2.1.1.1), so a wrong formula consumes the wrong number of
+/// `delta_scale` values and shifts every later field. List 0 reads `+8` then
+/// `-16` (which lands on zero and ends the list); list 1 reads `-8` (ends after
+/// one value). The dimensions, VUI timing and reorder depth that follow are
+/// asserted literally.
+#[test]
+fn high_profile_scaling_lists_do_not_shift_later_sps_fields() {
+    let mut w = BitWriter::new();
+    w.ue(0); // seq_parameter_set_id
+    w.ue(1); // chroma_format_idc (4:2:0)
+    w.ue(0); // bit_depth_luma_minus8
+    w.ue(0); // bit_depth_chroma_minus8
+    w.u(1, 0); // qpprime_y_zero_transform_bypass_flag
+    w.u(1, 1); // seq_scaling_matrix_present_flag
+    w.u(1, 1); // seq_scaling_list_present_flag[0]
+    w.se(8); // 8 + 8 -> 16
+    w.se(-16); // 16 - 16 -> 0: useDefault, list ends
+    w.u(1, 1); // seq_scaling_list_present_flag[1]
+    w.se(-8); // 8 - 8 -> 0: useDefault, list ends
+    for _ in 0..6 {
+        w.u(1, 0); // seq_scaling_list_present_flag[2..=7]
+    }
+    w.ue(0); // log2_max_frame_num_minus4
+    w.ue(0); // pic_order_cnt_type
+    w.ue(0); // log2_max_pic_order_cnt_lsb_minus4
+    w.ue(1); // max_num_ref_frames
+    w.u(1, 0); // gaps_in_frame_num_value_allowed_flag
+    w.ue(19); // pic_width_in_mbs_minus1 -> 320
+    w.ue(14); // pic_height_in_map_units_minus1 -> 240
+    w.u(1, 1); // frame_mbs_only_flag
+    w.u(1, 1); // direct_8x8_inference_flag
+    w.u(1, 0); // frame_cropping_flag
+    w.u(1, 1); // vui_parameters_present_flag
+    w.u(1, 0); // aspect_ratio_info_present_flag
+    w.u(1, 0); // overscan_info_present_flag
+    w.u(1, 0); // video_signal_type_present_flag
+    w.u(1, 0); // chroma_loc_info_present_flag
+    w.u(1, 1); // timing_info_present_flag
+    w.u(32, 1001); // num_units_in_tick
+    w.u(32, 60000); // time_scale
+    w.u(1, 1); // fixed_frame_rate_flag
+    w.u(1, 0); // nal_hrd_parameters_present_flag
+    w.u(1, 0); // vcl_hrd_parameters_present_flag
+    w.u(1, 0); // pic_struct_present_flag
+    w.u(1, 1); // bitstream_restriction_flag
+    w.u(1, 0); // motion_vectors_over_pic_boundaries_flag
+    w.ue(0); // max_bytes_per_pic_denom
+    w.ue(0); // max_bits_per_mb_denom
+    w.ue(0); // log2_max_mv_length_horizontal
+    w.ue(0); // log2_max_mv_length_vertical
+    w.ue(2); // max_num_reorder_frames
+    w.ue(4); // max_dec_frame_buffering
+
+    let mut sps = vec![0x67, 100, 0, 31];
+    sps.extend(w.trailing());
+
+    let info = decode_avc_sps(&sps).expect("High-profile SPS with scaling lists");
+    assert_eq!(info.profile_idc, 100);
+    assert_eq!(info.chroma_format_idc, 1);
+    assert_eq!((info.width, info.height), (320, 240));
+    assert_eq!(info.num_units_in_tick, Some(1001));
+    assert_eq!(info.time_scale, Some(60000));
+
+    let reorder = decode_avc_reorder_depth(&sps).expect("reorder depth");
+    assert_eq!(reorder.max_num_reorder_frames, Some(2));
+    assert_eq!(reorder.depth(), Some(2));
+
+    let timing = decode_avc_vui_timing(&sps)
+        .expect("VUI timing")
+        .expect("timing_info_present_flag is 1");
+    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1001, 60000));
 }

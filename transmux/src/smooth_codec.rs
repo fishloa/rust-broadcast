@@ -601,14 +601,18 @@ mod tests {
 
     /// Every Table 1.19 channel count synthesises its literal ASC bytes (48 kHz
     /// AAC-LC: `audioObjectType` 2, `samplingFrequencyIndex` 3): 1 → `11 88`,
-    /// 2 → `11 90`, 6 → `11 B0`, 8 → `11 B8`. `Ch7_1` is **eight** channels, so
-    /// a 7-channel level is rejected, not mapped onto it.
+    /// 2 → `11 90`, 3 → `11 98`, 4 → `11 A0`, 5 → `11 A8`, 6 → `11 B0`,
+    /// 8 → `11 B8`. `Ch7_1` is **eight** channels, so a 7-channel level is
+    /// rejected, not mapped onto it.
     #[test]
     fn channel_configurations_synthesise_literal_asc_bytes() {
         let base = QualityLevel::new("AACL".to_string(), 128_000, Vec::new());
         for (channels, expected) in [
             (1u16, [0x11u8, 0x88]),
             (2, [0x11, 0x90]),
+            (3, [0x11, 0x98]),
+            (4, [0x11, 0xA0]),
+            (5, [0x11, 0xA8]),
             (6, [0x11, 0xB0]),
             (8, [0x11, 0xB8]),
         ] {

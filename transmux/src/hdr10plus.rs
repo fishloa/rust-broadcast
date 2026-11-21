@@ -875,3 +875,75 @@ impl Serialize for Hdr10PlusMetadata {
         Ok(need)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// H.265 Table 7-1: `SUFFIX_SEI_NUT`.
+    const HEVC_SUFFIX_SEI_NUT: u8 = 40;
+
+    #[test]
+    fn has_t35_header_rejects_each_wrong_byte() {
+        assert!(
+            Hdr10PlusMetadata::has_t35_header(&T35_HEADER_V1),
+            "the bare 7-byte header is a valid T.35 header"
+        );
+        let mut with_body = T35_HEADER_V1.to_vec();
+        with_body.extend_from_slice(&[0x00, 0x00]);
+        assert!(Hdr10PlusMetadata::has_t35_header(&with_body));
+
+        assert!(!Hdr10PlusMetadata::has_t35_header(&T35_HEADER_V1[..6]));
+
+        let mut wrong_country = T35_HEADER_V1;
+        wrong_country[0] = 0xB4;
+        assert!(!Hdr10PlusMetadata::has_t35_header(&wrong_country));
+
+        let mut wrong_provider = T35_HEADER_V1;
+        wrong_provider[2] = 0x3D;
+        assert!(!Hdr10PlusMetadata::has_t35_header(&wrong_provider));
+
+        let mut future_version = T35_HEADER_V1;
+        future_version[T35_HEADER_LEN - 1] = APPLICATION_VERSION_MAX + 1;
+        assert!(!Hdr10PlusMetadata::has_t35_header(&future_version));
+    }
+
+    #[test]
+    fn hevc_sei_nal_payloads_keeps_only_prefixed_t35_messages() {
+        let prefix = crate::nal::hevc_prefix_sei_nal(&[(
+            SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35,
+            &T35_HEADER_V1,
+        )]);
+        let payloads = Hdr10PlusMetadata::hevc_sei_nal_payloads(&prefix);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0], T35_HEADER_V1);
+
+        let mut suffix = prefix.clone();
+        suffix[0] = HEVC_SUFFIX_SEI_NUT << 1;
+        assert!(
+            Hdr10PlusMetadata::hevc_sei_nal_payloads(&suffix).is_empty(),
+            "a suffix SEI NAL is not a prefix SEI"
+        );
+
+        let other_type = crate::nal::hevc_prefix_sei_nal(&[(6, &[0u8; 4])]);
+        assert!(
+            Hdr10PlusMetadata::hevc_sei_nal_payloads(&other_type).is_empty(),
+            "a non-T.35 payloadType is not HDR10+"
+        );
+
+        let t35_without_header = crate::nal::hevc_prefix_sei_nal(&[(
+            SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35,
+            &[0u8; 4],
+        )]);
+        assert!(
+            Hdr10PlusMetadata::hevc_sei_nal_payloads(&t35_without_header).is_empty(),
+            "a T.35 message without the HDR10+ header is not HDR10+"
+        );
+
+        assert!(
+            Hdr10PlusMetadata::hevc_sei_nal_payloads(&[crate::hdr::HEVC_PREFIX_SEI_NUT << 1, 1])
+                .is_empty(),
+            "a bare 2-byte NAL has no SEI body"
+        );
+    }
+}

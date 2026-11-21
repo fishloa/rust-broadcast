@@ -511,4 +511,139 @@ mod tests {
         assert!(exceeded.is_empty());
         assert_invariants(&out);
     }
+
+    fn sample_with(pts: i64, duration: u32) -> Sample {
+        Sample::new(
+            alloc::vec![0u8; 4],
+            Some(pts),
+            Some(pts),
+            Some(duration),
+            true,
+        )
+        .expect("valid timing")
+    }
+
+    #[test]
+    fn field_coded_depth_is_two_per_frame_plus_one_capped() {
+        assert_eq!(field_coded_depth(0), 1);
+        assert_eq!(field_coded_depth(1), 3);
+        assert_eq!(field_coded_depth(7), 15);
+        assert_eq!(field_coded_depth(8), 16);
+
+        let mut d = DtsDeriver::new(Some(1));
+        d.declare_field_coded();
+        assert_eq!(
+            d.depth,
+            Some(3),
+            "one reorder frame is a field pair plus one"
+        );
+    }
+
+    #[test]
+    fn set_declared_applies_only_before_the_first_sample() {
+        let mut d = DtsDeriver::new(None);
+        d.set_declared(Some(2));
+        assert_eq!(d.depth, Some(2), "a declaration before any sample wins");
+
+        let mut d = DtsDeriver::new(Some(0));
+        let mut out = Vec::new();
+        let mut exceeded = Vec::new();
+        d.feed(sample(0), Some(D), &mut out, &mut exceeded);
+        d.set_declared(Some(5));
+        assert_eq!(
+            d.depth,
+            Some(0),
+            "a declaration after the first sample is ignored"
+        );
+    }
+
+    #[test]
+    fn probe_reports_the_observed_depth_not_duplicate_pts() {
+        let wire = [0i64, 4000, 2000, 1000, 1000, 3000, 5000, 6000];
+        let mut d = DtsDeriver::new(None);
+        let mut out = Vec::new();
+        let mut exceeded = Vec::new();
+        for &p in &wire {
+            d.feed(sample(p), Some(D), &mut out, &mut exceeded);
+        }
+        let dts = dts_of(&out);
+        assert_eq!(dts[0], -2 * D, "the probe sees a reorder depth of two");
+    }
+
+    #[test]
+    fn depth_growth_is_one_step_per_inversion() {
+        let mut d = DtsDeriver::new(Some(0));
+        let mut out = Vec::new();
+        let mut exceeded = Vec::new();
+        for &p in &[0i64, 0, 3000] {
+            d.feed(sample(p), Some(D), &mut out, &mut exceeded);
+        }
+        assert_eq!(exceeded.len(), 2, "two inversions");
+        assert_eq!(exceeded[0].depth, 1);
+        assert_eq!(exceeded[1].depth, 2);
+        let dts = dts_of(&out);
+        assert!(
+            dts.windows(2).all(|w| w[1] > w[0]),
+            "dts stays strictly increasing: {dts:?}"
+        );
+    }
+
+    #[test]
+    fn depth_growth_stops_at_the_cap() {
+        let mut d = DtsDeriver::new(Some(MAX_REORDER_DEPTH));
+        d.anchored = true;
+        d.depth = Some(MAX_REORDER_DEPTH);
+        d.last_dts = Some(0);
+        d.window = alloc::vec![50];
+        let mut out = Vec::new();
+        let mut exceeded = Vec::new();
+        d.run(sample(0), Some(D), &mut out, &mut exceeded);
+        assert_eq!(d.depth, Some(MAX_REORDER_DEPTH));
+        assert_eq!(exceeded.len(), 1);
+        assert_eq!(exceeded[0].depth, MAX_REORDER_DEPTH);
+    }
+
+    #[test]
+    fn anchor_prefers_a_positive_period_then_the_smallest_window_gap() {
+        let mut d = DtsDeriver::new(Some(2));
+        d.depth = Some(2);
+        d.window = alloc::vec![100, 200, 1000];
+        d.held = alloc::vec![sample(100), sample(200), sample(1000)];
+        let mut out = Vec::new();
+        d.anchor(Some(0), false, &mut out);
+        assert_eq!(dts_of(&out), alloc::vec![-100, 0, 100]);
+    }
+
+    #[test]
+    fn anchor_ignores_a_zero_window_gap() {
+        let mut d = DtsDeriver::new(Some(2));
+        d.depth = Some(2);
+        d.window = alloc::vec![100, 100, 200];
+        d.held = alloc::vec![sample(100), sample(100), sample(200)];
+        let mut out = Vec::new();
+        d.anchor(Some(0), false, &mut out);
+        assert_eq!(dts_of(&out), alloc::vec![-100, 0, 100]);
+    }
+
+    #[test]
+    fn anchor_falls_back_to_the_first_positive_held_duration() {
+        let mut d = DtsDeriver::new(Some(1));
+        d.depth = Some(1);
+        d.window = alloc::vec![100, 100];
+        d.held = alloc::vec![sample_with(100, 0), sample_with(100, 40)];
+        let mut out = Vec::new();
+        d.anchor(None, false, &mut out);
+        assert_eq!(dts_of(&out), alloc::vec![60, 100]);
+    }
+
+    #[test]
+    fn anchor_applies_pop_last_only_to_the_last_held_sample() {
+        let mut d = DtsDeriver::new(Some(1));
+        d.depth = Some(1);
+        d.window = alloc::vec![100, 200, 300];
+        d.held = alloc::vec![sample(100), sample(200), sample(300)];
+        let mut out = Vec::new();
+        d.anchor(Some(100), true, &mut out);
+        assert_eq!(dts_of(&out), alloc::vec![0, 100, 100]);
+    }
 }

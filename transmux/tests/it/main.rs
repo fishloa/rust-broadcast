@@ -66,6 +66,7 @@ mod dovi;
 mod drm_pssh;
 mod dts;
 mod dts_ts;
+mod eac3_bsi_walk;
 mod eac3_crc2_real_capture;
 mod eac3_real_capture;
 mod eac3_real_dependent_substreams;
@@ -164,6 +165,7 @@ mod segmenter_progress_bounds;
 mod sei_caption_real_capture;
 mod serializer_length_truncation;
 mod skipped_track_id;
+mod slice_header_pps;
 mod smooth;
 #[cfg(feature = "std")]
 mod smooth_fragment_inspect;

@@ -3481,4 +3481,271 @@ mod tests {
             "the handshake bound must not linger after establishment"
         );
     }
+
+    /// [`HealthState`] equality is structural: states compare by variant, and
+    /// `Failed` by the concrete error — never all-equal and never inverted.
+    #[test]
+    fn health_state_equality_is_structural() {
+        let establishing_a: HealthState<FakeError> = HealthState::Establishing;
+        let establishing_b: HealthState<FakeError> = HealthState::Establishing;
+        let live: HealthState<FakeError> = HealthState::Live;
+        let ended: HealthState<FakeError> = HealthState::Ended;
+        let failed_a: HealthState<FakeError> = HealthState::Failed(FakeError("a"));
+        let failed_a2: HealthState<FakeError> = HealthState::Failed(FakeError("a"));
+        let failed_b: HealthState<FakeError> = HealthState::Failed(FakeError("b"));
+        let timed_out_5: HealthState<FakeError> = HealthState::HandshakeTimedOut {
+            deadline: Timestamp::from_micros(5),
+        };
+        let timed_out_5b: HealthState<FakeError> = HealthState::HandshakeTimedOut {
+            deadline: Timestamp::from_micros(5),
+        };
+        let timed_out_6: HealthState<FakeError> = HealthState::HandshakeTimedOut {
+            deadline: Timestamp::from_micros(6),
+        };
+
+        assert_eq!(establishing_a, establishing_b);
+        assert_eq!(live, HealthState::Live);
+        assert_eq!(ended, HealthState::Ended);
+        assert_eq!(failed_a, failed_a2);
+        assert_eq!(timed_out_5, timed_out_5b);
+
+        assert_ne!(live, ended);
+        assert_ne!(establishing_a, failed_a);
+        assert_ne!(failed_a, failed_b);
+        assert_ne!(timed_out_5, timed_out_6);
+        assert_ne!(live, timed_out_5);
+    }
+
+    /// A listener that hands back one pre-built session per queued entry, then
+    /// idle — so a test can script exactly what each admitted session received.
+    struct ScriptedListener {
+        sessions: VecDeque<ScriptedSession>,
+        max_sessions: usize,
+    }
+
+    impl Listener for ScriptedListener {
+        type Session = ScriptedSession;
+        type Error = FakeError;
+
+        fn max_sessions(&self) -> usize {
+            self.max_sessions
+        }
+
+        fn poll_accept(&mut self) -> Result<Option<ScriptedSession>, FakeError> {
+            Ok(self.sessions.pop_front())
+        }
+    }
+
+    /// The bounds and per-session accessors a `ListenDriver` exposes must
+    /// report what it was built with and what its sessions announced — never a
+    /// hardcoded bound, `None` for a live trunk, or a lost termination.
+    #[test]
+    fn listen_driver_exposes_bounds_refusals_and_trunks() {
+        let announce = |program: u32, track: u32| SessionEvent::NewProgram {
+            program: ProgramId(program),
+            tracks: vec![opaque_track(TrackId::new(track))],
+        };
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
+            announce(0, 1),
+            announce(1, 2),
+            announce(2, 3),
+            announce(3, 4),
+        ])]);
+        let mut driver = run_listen(
+            ScriptedListener {
+                sessions: VecDeque::from(vec![session]),
+                max_sessions: 5,
+            },
+            trunk_config(),
+            handshake(),
+            nz(3),
+        );
+
+        assert_eq!(driver.max_programs(), nz(3));
+        assert_eq!(driver.max_sessions(), 5);
+
+        let AcceptOutcome::Admitted(id) = driver.poll_accept() else {
+            panic!("expected admission");
+        };
+        assert_eq!(
+            driver.refused_program_count(id),
+            Some(0),
+            "nothing refused before the session announces anything"
+        );
+        assert_eq!(
+            driver.refused_program_count(SessionId(9999)),
+            None,
+            "an unknown session has no refusal count"
+        );
+
+        driver.feed(id, b"pat", Timestamp::ZERO);
+        assert_eq!(
+            driver.refused_program_count(id),
+            Some(1),
+            "the fourth program past max_programs=3 is counted as refused"
+        );
+        assert!(
+            driver.trunk(id, ProgramId(0)).is_some(),
+            "an admitted program's Trunk is exposed"
+        );
+        assert!(
+            driver.trunk(id, ProgramId(3)).is_none(),
+            "a refused program gets no Trunk"
+        );
+    }
+
+    /// `ListenDriver::feed` reports a session that went terminal, and reaps
+    /// it; feeding an unknown id afterwards is a no-op.
+    #[test]
+    fn listen_driver_feed_reports_a_terminal_session() {
+        let session = ScriptedSession::new(vec![FeedOutcome::Err(FakeError("boom"))]);
+        let mut driver = run_listen(
+            ScriptedListener {
+                sessions: VecDeque::from(vec![session]),
+                max_sessions: 2,
+            },
+            trunk_config(),
+            handshake(),
+            max_programs(),
+        );
+        let AcceptOutcome::Admitted(id) = driver.poll_accept() else {
+            panic!("expected admission");
+        };
+        let health = driver
+            .feed(id, b"bad", Timestamp::ZERO)
+            .expect("a failed session is reported, not swallowed");
+        assert_eq!(health, HealthState::Failed(FakeError("boom")));
+        assert_eq!(driver.session_count(), 0, "the terminal session was reaped");
+        assert!(
+            driver.feed(id, b"again", Timestamp::ZERO).is_none(),
+            "feeding an unknown id reports nothing"
+        );
+    }
+
+    /// `IngestDriver` reports its configured bound, and `note_activity` is
+    /// what marks a peer heard (`feed` itself cannot inspect a generic
+    /// `Stage::In`, so it clears the flag rather than guess).
+    #[test]
+    fn ingest_driver_reports_its_bound_and_activity() {
+        let mut driver = IngestDriver::new(
+            ScriptedSession::new(vec![]),
+            IngestConfig::new(handshake()).with_max_programs(nz(3)),
+        );
+        assert_eq!(driver.max_programs(), nz(3));
+        assert!(!driver.took_input(), "a fresh driver heard nothing");
+        driver.note_activity();
+        assert!(driver.took_input(), "note_activity marks the peer heard");
+    }
+
+    /// `AdmittedDriver`'s wrappers read the underlying session: progress
+    /// state, drivers, delivered input, the live count, and the per-session
+    /// clock origins — including after one session is reaped.
+    #[test]
+    fn admitted_driver_wrappers_and_reap_clock_retention() {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let at = |secs: u64| start + Duration::from_secs(secs);
+        let session =
+            ScriptedSession::new(vec![FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(0),
+                tracks: vec![opaque_track(TrackId::new(1))],
+            }])]);
+        let mut admitted: AdmittedDriver<ScriptedListener, u32> = AdmittedDriver::new(
+            run_listen(
+                ScriptedListener {
+                    sessions: VecDeque::from(vec![session, ScriptedSession::new(vec![])]),
+                    max_sessions: 4,
+                },
+                trunk_config(),
+                handshake(),
+                max_programs(),
+            ),
+            start,
+        );
+        let active = admitted.active_sessions();
+        assert!(admitted.is_empty());
+        assert_eq!(admitted.len(), 0);
+
+        let ids = admitted.accept().expect("accept");
+        assert_eq!(ids.len(), 2);
+        let (a, b) = (ids[0], ids[1]);
+        admitted.register(a, start);
+        admitted.register(b, at(150));
+        assert_eq!(admitted.len(), 2);
+        assert!(!admitted.is_empty());
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        // The wrapper accessors reach the underlying session.
+        assert!(admitted.driver(a).is_some());
+        assert!(admitted.driver_mut(b).is_some());
+        assert_eq!(
+            admitted.with_session(a, |_driver, progress| {
+                *progress += 1;
+                *progress
+            }),
+            Some(1)
+        );
+        let parts = admitted.session_parts(b);
+        assert!(parts.is_some(), "session_parts exposes the live session");
+        assert!(admitted.with_session(SessionId(9999), |_, _| ()).is_none());
+
+        // `took_input` reads the session's own activity mark.
+        admitted
+            .driver_mut(a)
+            .expect("a is admitted")
+            .note_activity();
+        assert!(admitted.took_input(a));
+        assert!(!admitted.took_input(b), "b heard nothing");
+        assert!(!admitted.took_input(SessionId(9999)));
+
+        // `feed` delivers the session's input (the NewProgram reaches the driver).
+        admitted.feed(a, b"pat", Timestamp::ZERO);
+        assert!(
+            admitted
+                .driver(a)
+                .and_then(|d| d.trunk(ProgramId(0)))
+                .is_some(),
+            "the fed session's announced program has a trunk"
+        );
+
+        // Reaping A frees its slot and its own clock, while B's admission
+        // instant is retained.
+        admitted.finish(a);
+        assert!(admitted.reap(a), "a ended session is reaped");
+        assert_eq!(admitted.len(), 1);
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            admitted.clocks.admit_base(b),
+            at(150),
+            "B's clock origin must survive A's reap"
+        );
+        assert_eq!(
+            admitted.clocks.admit_base(a),
+            start,
+            "a reaped session keeps no clock origin"
+        );
+        assert_eq!(
+            admitted.now(b, at(160)),
+            Timestamp::from_nanos(10_000_000_000)
+        );
+        assert_eq!(
+            admitted.now(a, at(160)),
+            Timestamp::from_nanos(160_000_000_000)
+        );
+
+        // prune_clocks drops only ids that are no longer live.
+        admitted.clocks.admit(SessionId(99), at(5));
+        admitted.prune_clocks();
+        assert_eq!(
+            admitted.now(SessionId(99), at(7)),
+            Timestamp::from_nanos(7_000_000_000),
+            "a non-live id's clock is dropped, falling back to the route start"
+        );
+        assert_eq!(
+            admitted.clocks.admit_base(b),
+            at(150),
+            "prune_clocks keeps a live session's origin"
+        );
+    }
 }

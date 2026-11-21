@@ -92,12 +92,6 @@ pub struct HEVCDecoderConfigurationRecord {
 }
 
 impl HEVCDecoderConfigurationRecord {
-    /// Whether the record has reserved bits that must be all-ones (the fields
-    /// before avgFrameRate use all-ones reserved; the array header uses a zero reserved bit).
-    pub fn is_valid_length_size(v: u8) -> bool {
-        (v == 0) | (v == 1) | (v == 3)
-    }
-
     /// Arrays whose `NAL_unit_type` is not VPS, SPS, PPS, prefix SEI or suffix
     /// SEI. ISO/IEC 14496-15:2017 §8.3.3.1.1 restricts the arrays to those types
     /// and tells readers to ignore the others, so [`Parse`] keeps them (the

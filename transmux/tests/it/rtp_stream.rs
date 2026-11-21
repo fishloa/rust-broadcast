@@ -25,7 +25,7 @@ fn timescale(value: u32) -> Timescale {
 
 #[cfg(feature = "std")]
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::{Demand, Package, Stage, Unpackage};
 use std::collections::HashSet;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
@@ -33,7 +33,7 @@ use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
 use transmux::{
     FragmentTrackData, Media, RtpLossEvent, RtpOutput, RtpPacketiser, RtpStream,
-    RtpStreamDepacketiser, RtpStreamTrack, Severity, TsDemux, build_init_segment,
+    RtpStreamDepacketiser, RtpStreamTrack, Severity, TsDemux, WallSkewExceeded, build_init_segment,
     build_media_segment, validate::SegmentOrigin, validate_init_segment, validate_media_segment,
 };
 
@@ -1179,4 +1179,894 @@ fn reorder_window_overflow_reports_every_dropped_au() {
         "oldest AU is dropped first"
     );
     assert_eq!(emitted + dropped.len(), AUS as usize);
+}
+
+// ── audit 23: AU buffer cap, Stage::demand, SSRC change, SR sync ───────────
+
+/// One single-NAL RTP packet of exactly `total` bytes, with an explicit SSRC.
+fn sized_packet(seq: u16, ts: u32, ssrc: u32, marker: bool, total: usize) -> Vec<u8> {
+    assert!(total > 13, "need room for an RTP header and one NAL byte");
+    let mut p = vec![0x80u8, if marker { 0x80 | 96 } else { 96 }];
+    p.extend_from_slice(&seq.to_be_bytes());
+    p.extend_from_slice(&ts.to_be_bytes());
+    p.extend_from_slice(&ssrc.to_be_bytes());
+    p.push(if marker { 0x65 } else { 0x41 });
+    p.resize(total, 0xAA);
+    assert_eq!(p.len(), total);
+    p
+}
+
+/// The in-progress-AU cap is 4 MiB: exactly that much is accepted, one byte
+/// more errors with that cap, `Stage::demand` saturates at the cap and clears
+/// once the buffer is reset, and a 2 MiB AU is well under the cap.
+#[test]
+fn au_buffer_cap_is_four_mebibytes_and_demand_tracks_it() {
+    const CAP: usize = 4 * 1024 * 1024;
+    const CHUNK: usize = 1400;
+    let id = TrackId::new(1);
+    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        timescale(90_000),
+    )]);
+    assert_eq!(Stage::demand(&d), Demand::default());
+
+    let mut seq = 0u16;
+    let mut written = 0usize;
+    while CAP - written > CHUNK {
+        let pkt = sized_packet(seq, 1000, 0, false, CHUNK);
+        assert!(d.push(id, &pkt).unwrap().is_empty());
+        written += pkt.len();
+        seq += 1;
+    }
+    let last = sized_packet(seq, 1000, 0, false, CAP - written);
+    assert!(
+        d.push(id, &last).unwrap().is_empty(),
+        "exactly {CAP} bytes is within the cap"
+    );
+    written += last.len();
+    seq += 1;
+    assert_eq!(written, CAP);
+    assert_eq!(
+        Stage::demand(&d),
+        Demand::saturated(),
+        "the buffer is at the cap"
+    );
+
+    let over = sized_packet(seq, 1000, 0, false, 16);
+    let err = d.push(id, &over).expect_err("one byte over the cap");
+    assert!(
+        matches!(err, transmux::error::Error::BufferCapExceeded { cap, .. } if cap == CAP),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(
+        Stage::demand(&d),
+        Demand::default(),
+        "the overflow reset the in-progress buffer"
+    );
+    seq += 1;
+
+    // The next packet starts a fresh AU.
+    assert!(
+        d.push(id, &wrap_vpkt(seq, 9000, &[0x65, 0xAA]))
+            .unwrap()
+            .is_empty()
+    );
+    let mut s = d
+        .push(id, &wrap_vpkt(seq + 1, 12_000, &[0x41, 0xBB]))
+        .unwrap();
+    s.extend(d.flush(id).unwrap());
+    assert_eq!(s.len(), 2);
+    assert_eq!(s[0].timing.and_then(|t| t.duration()), Some(3000));
+
+    // A 2 MiB access unit is accepted end to end.
+    const HALF: usize = 2 * 1024 * 1024;
+    let mut big = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        timescale(90_000),
+    )]);
+    let pkt = sized_packet(0, 1000, 0, true, HALF);
+    assert!(
+        big.push(id, &pkt).unwrap().is_empty(),
+        "a 2 MiB AU is accepted"
+    );
+    assert_eq!(Stage::demand(&big), Demand::default());
+}
+
+fn ssrc_packet(seq: u16, ts: u32, ssrc: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
+    let mut p = vec![0x80u8, if marker { 0x80 | 96 } else { 96 }];
+    p.extend_from_slice(&seq.to_be_bytes());
+    p.extend_from_slice(&ts.to_be_bytes());
+    p.extend_from_slice(&ssrc.to_be_bytes());
+    p.extend_from_slice(nal);
+    p
+}
+
+/// A mid-stream SSRC change is a new source (RFC 3550 §8.2): it re-initialises
+/// sequence tracking and delivers the packet, with no gap reported.
+#[test]
+fn ssrc_change_reinitialises_without_a_gap() {
+    let id = TrackId::new(1);
+    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        timescale(90_000),
+    )]);
+    let mut n = 0usize;
+    for (seq, ts, ssrc, nal) in [
+        (10u16, 1000u32, 0x1111u32, [0x65u8, 0xAA]),
+        (11, 4000, 0x1111, [0x41, 0xBB]),
+        (5000, 7000, 0x2222, [0x41, 0xCC]),
+    ] {
+        n += d
+            .push(id, &ssrc_packet(seq, ts, ssrc, true, &nal))
+            .unwrap()
+            .len();
+    }
+    n += d.flush(id).unwrap().len();
+    assert_eq!(n, 3, "the post-SSRC-change packet must be delivered");
+    assert!(d.poll_loss_event().is_none(), "an SSRC change is not loss");
+}
+
+/// A single wild forward jump is discarded (§A.1 arms `bad_seq`) and never
+/// enters the reorder buffer; the live run continues with no gap.
+#[test]
+fn wild_forward_jump_is_discarded_not_held() {
+    const WILD: [u8; 2] = [0x41, 0x77];
+    let id = TrackId::new(1);
+    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        timescale(90_000),
+    )]);
+    for (seq, ts) in [(10u16, 1000u32), (11, 4000), (12, 7000)] {
+        d.push(id, &ssrc_packet(seq, ts, 0x1111, true, &[0x41, seq as u8]))
+            .unwrap();
+    }
+    assert!(
+        d.push(id, &ssrc_packet(30_000, 100_000, 0x1111, true, &WILD))
+            .unwrap()
+            .is_empty(),
+        "the wild packet is discarded"
+    );
+    let mut samples = d
+        .push(id, &ssrc_packet(13, 10_000, 0x1111, true, &[0x41, 13]))
+        .unwrap();
+    samples.extend(d.flush(id).unwrap());
+    assert_eq!(samples.len(), 4, "10, 11, 12 and 13");
+    assert!(
+        samples.iter().all(|s| s.data.as_ref() != WILD),
+        "the wild packet must never be delivered"
+    );
+    let mut loss = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        if matches!(
+            e,
+            RtpLossEvent::SequenceGap { .. } | RtpLossEvent::DamagedAccessUnit { .. }
+        ) {
+            loss.push(e);
+        }
+    }
+    assert!(loss.is_empty(), "the wild jump is not loss: {loss:?}");
+}
+
+use transmux::rtcp::SenderReport;
+
+fn sender_report(rtp_ts: u32, ntp_msw: u32, ntp_lsw: u32) -> SenderReport {
+    SenderReport::new(
+        rtp_packet::Ssrc::new(0),
+        ntp_msw,
+        ntp_lsw,
+        rtp_ts,
+        0,
+        0,
+        Vec::new(),
+    )
+}
+
+fn two_track(clock_a: u32, clock_b: u32) -> RtpStreamDepacketiser {
+    RtpStreamDepacketiser::new(vec![
+        RtpStreamTrack::new(
+            TrackId::new(1),
+            RtpMediaKind::H264,
+            tiny_avc_config(),
+            timescale(clock_a),
+        ),
+        RtpStreamTrack::new(
+            TrackId::new(2),
+            RtpMediaKind::H264,
+            tiny_avc_config(),
+            timescale(clock_b),
+        ),
+    ])
+}
+
+fn feed_first_au(d: &mut RtpStreamDepacketiser, track: u32, ts: u32) {
+    d.push(
+        TrackId::new(track),
+        &ssrc_packet(0, ts, track, true, &[0x65, 0xAA]),
+    )
+    .unwrap();
+}
+
+fn start_for(starts: &[(TrackId, u64)], track: u32) -> u64 {
+    starts
+        .iter()
+        .find(|(id, _)| *id == TrackId::new(track))
+        .map(|(_, s)| *s)
+        .expect("track is anchored")
+}
+
+/// B's first AU is 0.5 s after A's, both anchored by Sender Reports whose RTP
+/// timestamps differ from their first AUs (so the sign of the wallclock
+/// offset matters): A is the origin, B gets exactly half a second in its own
+/// clock.
+#[test]
+fn sr_offset_preserves_the_sign_of_the_wallclock_delta() {
+    let mut d = two_track(90_000, 48_000);
+    feed_first_au(&mut d, 1, 9000);
+    feed_first_au(&mut d, 2, 96_000);
+    d.push_sender_report(TrackId::new(1), sender_report(9000, 1000, 0));
+    d.push_sender_report(TrackId::new(2), sender_report(48_000, 999, 2_147_483_648));
+    let starts = d.try_sync_start_decode_times().unwrap();
+    assert_eq!(start_for(&starts, 1), 0);
+    assert_eq!(start_for(&starts, 2), 24_000);
+}
+
+/// A half-tick offset rounds half up: 0.25 s at a 2 Hz clock is 0.5 ticks.
+#[test]
+fn sr_start_ticks_round_half_up() {
+    let mut d = two_track(90_000, 2);
+    feed_first_au(&mut d, 1, 9000);
+    feed_first_au(&mut d, 2, 9);
+    d.push_sender_report(TrackId::new(1), sender_report(9000, 1000, 0));
+    d.push_sender_report(TrackId::new(2), sender_report(9, 1000, 1_073_741_824));
+    let starts = d.try_sync_start_decode_times().unwrap();
+    assert_eq!(start_for(&starts, 1), 0);
+    assert_eq!(start_for(&starts, 2), 1, "0.5 ticks rounds up");
+}
+
+/// Fewer than two anchored tracks yields the empty "not enough anchors" vec.
+#[test]
+fn fewer_than_two_anchors_returns_empty() {
+    let mut d = two_track(90_000, 48_000);
+    feed_first_au(&mut d, 1, 9000);
+    feed_first_au(&mut d, 2, 96_000);
+    assert!(d.try_sync_start_decode_times().unwrap().is_empty());
+    d.push_sender_report(TrackId::new(1), sender_report(9000, 1000, 0));
+    assert!(
+        d.try_sync_start_decode_times().unwrap().is_empty(),
+        "one anchor is not enough"
+    );
+}
+
+/// A spread over one hour is refused and reports the spread; exactly one
+/// hour is accepted.
+#[test]
+fn sr_skew_over_an_hour_is_refused_with_the_spread() {
+    let mut d = two_track(48_000, 48_000);
+    feed_first_au(&mut d, 1, 4800);
+    feed_first_au(&mut d, 2, 4800);
+    d.push_sender_report(TrackId::new(1), sender_report(4800, 1000, 0));
+    d.push_sender_report(TrackId::new(2), sender_report(4800, 4601, 0));
+    match d.try_sync_start_decode_times() {
+        Err(WallSkewExceeded { skew_seconds }) => assert_eq!(skew_seconds, 3601.0),
+        other => panic!("expected WallSkewExceeded, got {other:?}"),
+    }
+    d.push_sender_report(TrackId::new(2), sender_report(4800, 4600, 0));
+    assert_eq!(d.try_sync_start_decode_times().unwrap().len(), 2);
+}
+
+/// A zero-NTP Sender Report is rejected and counted.
+#[test]
+fn zero_ntp_sender_reports_are_counted() {
+    let mut d = two_track(90_000, 48_000);
+    assert_eq!(d.rejected_sender_reports(), 0);
+    d.push_sender_report(TrackId::new(1), sender_report(9000, 0, 0));
+    assert_eq!(d.rejected_sender_reports(), 1);
+    d.push_sender_report(TrackId::new(2), sender_report(4800, 0, 0));
+    assert_eq!(d.rejected_sender_reports(), 2);
+}
+
+// ── audit 23: declared durations, reorder depth, known_duration precedence ──
+
+use crate::bit_writer::BitWriter;
+use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+
+/// A Main-profile SPS with VUI `timing_info` and an optional
+/// `bitstream_restriction` declaring `max_num_reorder_frames`.
+fn vui_sps(num_units_in_tick: u32, time_scale: u32, reorder: Option<u32>) -> Vec<u8> {
+    let mut w = BitWriter::new();
+    w.u(8, 77); // profile_idc
+    w.u(8, 0); // constraint flags
+    w.u(8, 30); // level_idc
+    w.ue(0); // seq_parameter_set_id
+    w.ue(0); // log2_max_frame_num_minus4 -> 4 bits
+    w.ue(0); // pic_order_cnt_type
+    w.ue(2); // log2_max_pic_order_cnt_lsb_minus4 -> 6 bits
+    w.ue(1); // max_num_ref_frames
+    w.u(1, 0); // gaps_in_frame_num_value_allowed_flag
+    w.ue(19); // pic_width_in_mbs_minus1 -> 320
+    w.ue(14); // pic_height_in_map_units_minus1 -> 240
+    w.u(1, 1); // frame_mbs_only_flag
+    w.u(1, 1); // direct_8x8_inference_flag
+    w.u(1, 0); // frame_cropping_flag
+    w.u(1, 1); // vui_parameters_present_flag
+    w.u(1, 0); // aspect_ratio_info_present_flag
+    w.u(1, 0); // overscan_info_present_flag
+    w.u(1, 0); // video_signal_type_present_flag
+    w.u(1, 0); // chroma_loc_info_present_flag
+    w.u(1, 1); // timing_info_present_flag
+    w.u(32, u64::from(num_units_in_tick));
+    w.u(32, u64::from(time_scale));
+    w.u(1, 1); // fixed_frame_rate_flag
+    w.u(1, 0); // nal_hrd_parameters_present_flag
+    w.u(1, 0); // vcl_hrd_parameters_present_flag
+    w.u(1, 0); // pic_struct_present_flag
+    w.u(1, u64::from(reorder.is_some())); // bitstream_restriction_flag
+    if let Some(reorder) = reorder {
+        w.u(1, 0); // motion_vectors_over_pic_boundaries_flag
+        w.ue(0); // max_bytes_per_pic_denom
+        w.ue(0); // max_bits_per_mb_denom
+        w.ue(0); // log2_max_mv_length_horizontal
+        w.ue(0); // log2_max_mv_length_vertical
+        w.ue(u64::from(reorder)); // max_num_reorder_frames
+        w.ue(u64::from(reorder) + 2); // max_dec_frame_buffering
+    }
+    let mut nal = vec![0x67u8];
+    nal.extend(w.trailing());
+    nal
+}
+
+fn avc_cfg(sps: &[u8]) -> CodecConfig {
+    CodecConfig::Avc {
+        config: AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 77,
+            profile_compatibility: 0,
+            level_indication: 30,
+            length_size_minus_one: 3,
+            sps: vec![transmux::AvcSps(sps.to_vec())],
+            pps: vec![],
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: vec![],
+        }),
+        width: 0,
+        height: 0,
+    }
+}
+
+fn single_track_rtp(
+    id: TrackId,
+    kind: RtpMediaKind,
+    config: CodecConfig,
+    clock: u32,
+) -> RtpStreamDepacketiser {
+    RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        kind,
+        config,
+        timescale(clock),
+    )])
+}
+
+/// SPS VUI `num_units_in_tick` 1001 / `time_scale` 60000 at 90 kHz is
+/// `90000 * 2 * 1001 / 60000 = 3003` ticks per frame.
+#[test]
+fn h264_vui_frame_period_is_the_declared_duration() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1001, 60_000, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 10_000, &[0x65, 0xAA])).unwrap();
+    let out = d.flush(id).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(3003));
+}
+
+/// A VUI with `time_scale` 0 must not divide by zero: the duration falls back
+/// to the observed step.
+#[test]
+fn h264_vui_with_zero_time_scale_falls_back() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1001, 0, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 1000, &[0x65, 0xAA])).unwrap();
+    let mut out = d.push(id, &wrap_vpkt(1, 4000, &[0x41, 0xBB])).unwrap();
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(3000));
+}
+
+/// A frame period that rounds to zero ticks is not a usable declared
+/// duration: nothing is emitted without a real one.
+#[test]
+fn h264_vui_rounding_to_zero_ticks_declares_nothing() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 90_000_000, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 1000, &[0x65, 0xAA])).unwrap();
+    assert!(d.flush(id).unwrap().is_empty());
+}
+
+fn aac_asc_packet(seq: u16, ts: u32, aus: &[&[u8]]) -> Vec<u8> {
+    let mut p = vec![0x80u8, 96];
+    p.extend_from_slice(&seq.to_be_bytes());
+    p.extend_from_slice(&ts.to_be_bytes());
+    p.extend_from_slice(&[0, 0, 0, 0]);
+    let headers_bits = (aus.len() * 16) as u16;
+    p.extend_from_slice(&headers_bits.to_be_bytes());
+    for au in aus {
+        p.extend_from_slice(&((au.len() as u16) << 3).to_be_bytes());
+    }
+    for au in aus {
+        p.extend_from_slice(au);
+    }
+    p
+}
+
+/// AAC-LC 44.1 kHz (1024 samples/frame) on a 90 kHz track is
+/// `(1024 * 90000 + 22050) / 44100 = 2090` ticks.
+#[test]
+fn aac_asc_frame_length_scales_to_the_track_clock() {
+    let id = TrackId::new(1);
+    let cfg = transmux::rtp_sdp::aac_config_from_asc_bytes(vec![0x12, 0x10]).unwrap();
+    let mut d = single_track_rtp(id, RtpMediaKind::Aac, cfg, 90_000);
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1, 2]])).unwrap();
+    let out = d.flush(id).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(2090));
+}
+
+/// An SPS declaring `max_num_reorder_frames = 2` shifts decode time two frame
+/// periods behind presentation time from the first sample, and an in-order
+/// stream never reports `ReorderDepthExceeded`.
+#[test]
+fn declared_reorder_depth_shifts_dts_by_its_frame_periods() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, Some(2))),
+        90_000,
+    );
+    let mut out = Vec::new();
+    for (seq, ts) in [(0u16, 10_000u32), (1, 13_600), (2, 17_200)] {
+        out.extend(
+            d.push(
+                id,
+                &wrap_vpkt(
+                    seq,
+                    ts,
+                    if seq == 0 {
+                        &[0x65, 0xAA]
+                    } else {
+                        &[0x41, 0xBB]
+                    },
+                ),
+            )
+            .unwrap(),
+        );
+    }
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(out.len(), 3);
+    assert_eq!(out[0].timing.and_then(|t| t.pts()), Some(10_000));
+    assert_eq!(
+        out[0].timing.and_then(|t| t.dts()),
+        Some(10_000 - 2 * 3600),
+        "declared depth 2 = two frame periods behind"
+    );
+    assert_eq!(out[1].timing.and_then(|t| t.dts()), Some(10_000 - 3600));
+    assert_eq!(out[2].timing.and_then(|t| t.dts()), Some(10_000));
+    assert!(d.poll_loss_event().is_none());
+}
+
+/// An odd `time_scale` distinguishes the half-denominator term from a
+/// remainder: 90000 * 2 * 1001 / 60001 still rounds to 3003.
+#[test]
+fn h264_vui_odd_time_scale_rounds_to_the_frame_period() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1001, 60_001, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 10_000, &[0x65, 0xAA])).unwrap();
+    assert_eq!(
+        d.flush(id).unwrap()[0].timing.and_then(|t| t.duration()),
+        Some(3003)
+    );
+}
+
+/// An aggregated AAC group whose forward step is smaller than its AU count
+/// is emitted from the declared frame length without setting a last duration;
+/// the following flush still uses the declared duration (AAC prefers it to
+/// the smaller observed step).
+#[test]
+fn aac_declared_duration_wins_over_a_smaller_min_step_at_flush() {
+    let id = TrackId::new(1);
+    let cfg = transmux::rtp_sdp::aac_config_from_asc_bytes(vec![0x11, 0x90]).unwrap();
+    let mut d = single_track_rtp(id, RtpMediaKind::Aac, cfg, 48_000);
+    let group: [&[u8]; 3] = [&[1], &[2], &[3]];
+    assert!(
+        d.push(id, &aac_asc_packet(0, 10_000, &group))
+            .unwrap()
+            .is_empty()
+    );
+    let mut out = d.push(id, &aac_asc_packet(1, 10_002, &[&[4]])).unwrap();
+    out.extend(d.flush(id).unwrap());
+    for s in &out {
+        assert_eq!(s.timing.and_then(|t| t.duration()), Some(1024));
+    }
+}
+
+/// With no declared AAC frame length, the smallest positive step is the only
+/// duration left, so the final pending AU is emitted with it.
+#[test]
+fn aac_without_declared_duration_flushes_with_the_min_step() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::Aac,
+        avc_cfg(&vui_sps(1, 50, None)),
+        48_000,
+    );
+    let group: [&[u8]; 3] = [&[1], &[2], &[3]];
+    assert!(
+        d.push(id, &aac_asc_packet(0, 10_000, &group))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        d.push(id, &aac_asc_packet(1, 10_002, &[&[4]]))
+            .unwrap()
+            .is_empty()
+    );
+    let out = d.flush(id).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(2));
+}
+
+// ── audit 23: flush spacing of several pending AUs ──────────────────────────
+
+/// Three aggregated AAC AUs sharing one timestamp are spaced by the declared
+/// frame length (960 samples at 48 kHz on a 96 kHz track = 1920 ticks).
+#[test]
+fn flush_of_aggregated_aac_aus_spaces_them_by_the_declared_duration() {
+    let id = TrackId::new(1);
+    let cfg = transmux::rtp_sdp::aac_config_from_asc_bytes(vec![0x11, 0x94]).unwrap();
+    let mut d = single_track_rtp(id, RtpMediaKind::Aac, cfg, 96_000);
+    let aus: [&[u8]; 3] = [&[1], &[2], &[3]];
+    d.push(id, &aac_asc_packet(0, 10_000, &aus)).unwrap();
+    let out = d.flush(id).unwrap();
+    let pts: Vec<_> = out.iter().map(|s| s.timing.and_then(|t| t.pts())).collect();
+    assert_eq!(pts, vec![Some(10_000), Some(11_920), Some(13_840)]);
+}
+
+/// A non-reordered H.264 track's final pending AU is emitted with the last
+/// real duration (3000), not the reorder window's declared frame period
+/// (3600).
+#[test]
+fn flush_of_a_non_reordered_h264_pending_au_uses_the_known_duration() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 10_000, &[0x65, 0xAA])).unwrap();
+    let mut out = d.push(id, &wrap_vpkt(1, 13_000, &[0x41, 0xBB])).unwrap();
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[1].timing.and_then(|t| t.duration()), Some(3000));
+}
+
+// ── audit 23: reorder-window release thresholds, pruning, drop bound ────────
+
+/// With a known frame period and a head whose successor is further away than
+/// one period, the window releases only once pending exceeds
+/// `MAX_REORDER_DEPTH` (16).
+#[test]
+fn reorder_release_waits_for_pending_to_exceed_max_reorder_depth() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, Some(0))),
+        90_000,
+    );
+    let mut emitted = 0usize;
+    for k in 0..16u32 {
+        let sal = if k == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
+        emitted += d
+            .push(id, &wrap_vpkt(k as u16, 40_000 - k * 1000, sal))
+            .unwrap()
+            .len();
+    }
+    assert_eq!(emitted, 0, "16 pending is not past the depth bound");
+    emitted += d
+        .push(id, &wrap_vpkt(16, 40_000 - 16 * 1000, &[0x41, 0xBB]))
+        .unwrap()
+        .len();
+    assert_eq!(
+        emitted, 17,
+        "17 pending trips the bound and the whole window resolves"
+    );
+}
+
+/// Resolving the window prunes `seen_pts` only below the oldest pending AU:
+/// the second AU resolved in the same call still finds its successor.
+#[test]
+fn resolving_window_prunes_only_below_the_oldest_pending_au() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, Some(0))),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 10_000, &[0x65, 0xAA])).unwrap();
+    d.push(id, &wrap_vpkt(1, 8_000, &[0x41, 0xBB])).unwrap();
+    let out = d.push(id, &wrap_vpkt(2, 11_000, &[0x41, 0xCC])).unwrap();
+    let got: Vec<_> = out
+        .iter()
+        .map(|s| {
+            (
+                s.timing.and_then(|t| t.pts()),
+                s.timing.and_then(|t| t.duration()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![(Some(10_000), Some(1000)), (Some(8_000), Some(2000))]
+    );
+}
+
+/// Pending AUs are dropped only once the window exceeds 256, oldest first.
+#[test]
+fn reorder_window_drops_only_beyond_max_reorder_window() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(id, RtpMediaKind::H264, tiny_avc_config(), 90_000);
+    let push = |d: &mut RtpStreamDepacketiser, k: u32| {
+        let sal = if k == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
+        d.push(id, &wrap_vpkt(k as u16, 400_000 - k * 1000, sal))
+            .unwrap();
+    };
+    for k in 0..256u32 {
+        push(&mut d, k);
+    }
+    let mut events = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    assert!(dropped_pts(&events).is_empty(), "256 pending is in bounds");
+    push(&mut d, 256);
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    assert_eq!(
+        dropped_pts(&events),
+        vec![400_000],
+        "the oldest AU is dropped past the bound"
+    );
+}
+
+// ── audit 23: non-monotonic events, min step, reorder bookkeeping ───────────
+
+fn pts_and_durations(samples: &[transmux::pipeline::Sample]) -> Vec<(i64, u32)> {
+    samples
+        .iter()
+        .map(|s| {
+            (
+                s.timing.and_then(|t| t.pts()).expect("timed sample"),
+                s.timing.and_then(|t| t.duration()).expect("duration"),
+            )
+        })
+        .collect()
+}
+
+/// A repeated timestamp is not a reorder: no `NonMonotonicTimestamp`, and each
+/// AU keeps the shared frame duration.
+#[test]
+fn repeated_timestamp_is_not_a_non_monotonic_event() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, Some(0))),
+        90_000,
+    );
+    let mut out = Vec::new();
+    let mut per_push = Vec::new();
+    for (seq, ts) in [(0u16, 0u32), (1, 3000), (2, 3000), (3, 6000)] {
+        let sal = if seq == 0 {
+            &[0x65, 0xAA]
+        } else {
+            &[0x41, 0xBB]
+        };
+        let s = d.push(id, &wrap_vpkt(seq, ts, sal)).unwrap();
+        per_push.push(s.len());
+        out.extend(s);
+    }
+    assert_eq!(
+        per_push,
+        vec![0, 1, 1, 1],
+        "an equal timestamp still emits the previous AU immediately"
+    );
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(
+        pts_and_durations(&out),
+        vec![(0, 3000), (3000, 3000), (3000, 3000), (6000, 3000)]
+    );
+    let mut events = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RtpLossEvent::NonMonotonicTimestamp { .. })),
+        "an equal timestamp is not a backward step: {events:?}"
+    );
+}
+
+/// An I P B B wire order reports exactly one backward step and yields the
+/// presentation-ordered durations, with the smallest positive step (1500,
+/// not the first 12000 or 3000) as the final head's duration.
+#[test]
+fn reordered_wire_order_min_step_drives_the_resolved_duration() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(id, RtpMediaKind::H264, tiny_avc_config(), 90_000);
+    let mut out = Vec::new();
+    for (seq, ts) in [
+        (0u16, 0u32),
+        (1, 12_000),
+        (2, 6_000),
+        (3, 9_000),
+        (4, 10_500),
+    ] {
+        let sal = if seq == 0 {
+            &[0x65, 0xAA]
+        } else {
+            &[0x41, 0xBB]
+        };
+        out.extend(d.push(id, &wrap_vpkt(seq, ts, sal)).unwrap());
+    }
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(
+        pts_and_durations(&out),
+        vec![
+            (0, 12_000),
+            (12_000, 1500),
+            (6_000, 3000),
+            (9_000, 1500),
+            (10_500, 1500)
+        ]
+    );
+    let mut events = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    let non_monotonic: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, RtpLossEvent::NonMonotonicTimestamp { .. }))
+        .collect();
+    assert_eq!(
+        non_monotonic,
+        vec![&RtpLossEvent::NonMonotonicTimestamp {
+            track_id: id,
+            previous_pts: 12_000,
+            pts: 6_000,
+        }]
+    );
+}
+
+/// The frame-period estimate is the *smallest* positive step, not the last:
+/// after a 1000 then 2000 step, an unresolved head takes 1000.
+#[test]
+fn min_step_keeps_the_smallest_positive_step() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(id, RtpMediaKind::H264, tiny_avc_config(), 90_000);
+    let mut out = Vec::new();
+    for (seq, ts) in [(0u16, 5000u32), (1, 1000), (2, 2000), (3, 4000)] {
+        let sal = if seq == 0 {
+            &[0x65, 0xAA]
+        } else {
+            &[0x41, 0xBB]
+        };
+        out.extend(d.push(id, &wrap_vpkt(seq, ts, sal)).unwrap());
+    }
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(
+        pts_and_durations(&out),
+        vec![(5000, 1000), (1000, 1000), (2000, 2000), (4000, 1000)]
+    );
+}
+
+// ── audit 23: aggregated AAC group duration split ───────────────────────────
+
+fn aac_1024_track() -> (TrackId, RtpStreamDepacketiser) {
+    let id = TrackId::new(1);
+    let cfg = transmux::rtp_sdp::aac_config_from_asc_bytes(vec![0x11, 0x90]).unwrap();
+    (id, single_track_rtp(id, RtpMediaKind::Aac, cfg, 48_000))
+}
+
+fn durations(samples: &[transmux::pipeline::Sample]) -> Vec<u32> {
+    samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.duration()).expect("duration"))
+        .collect()
+}
+
+/// A group's forward step is the delta even when a smaller step was seen
+/// earlier: 3000 over three AUs is 1000 each, not a share of the 1000-tick
+/// minimum.
+#[test]
+fn aggregated_group_uses_the_forward_step_not_a_smaller_earlier_step() {
+    let (id, mut d) = aac_1024_track();
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1]])).unwrap();
+    d.push(id, &aac_asc_packet(1, 11_000, &[&[2]])).unwrap();
+    d.push(id, &aac_asc_packet(2, 14_000, &[&[3], &[4], &[5]]))
+        .unwrap();
+    d.push(id, &aac_asc_packet(3, 17_000, &[&[6]])).unwrap();
+    let out = d.push(id, &aac_asc_packet(4, 20_000, &[&[7]])).unwrap();
+    assert_eq!(durations(&out), vec![1000, 1000, 1000]);
+}
+
+/// A group delta that does not divide evenly leaves the remainder on the last
+/// AU: 3001 over three AUs is `[1000, 1000, 1001]`.
+#[test]
+fn aggregated_group_gives_the_remainder_to_the_last_au() {
+    let (id, mut d) = aac_1024_track();
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1], &[2], &[3]]))
+        .unwrap();
+    d.push(id, &aac_asc_packet(1, 13_001, &[&[4]])).unwrap();
+    let out = d.push(id, &aac_asc_packet(2, 16_000, &[&[5]])).unwrap();
+    assert_eq!(durations(&out), vec![1000, 1000, 1001]);
+}
+
+/// A repeated/backward timestamp has no forward delta: with no step seen, the
+/// declared frame length times the AU count is split evenly.
+#[test]
+fn aggregated_group_without_a_forward_step_uses_the_declared_length() {
+    let (id, mut d) = aac_1024_track();
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1], &[2]]))
+        .unwrap();
+    d.push(id, &aac_asc_packet(1, 8_000, &[&[3]])).unwrap();
+    let out = d.push(id, &aac_asc_packet(2, 9_000, &[&[4]])).unwrap();
+    assert_eq!(durations(&out), vec![1024, 1024]);
+}
+
+/// With a known smallest step and no forward delta, that step (split over the
+/// group) wins over the declared frame length.
+#[test]
+fn aggregated_group_without_a_forward_step_uses_the_min_step() {
+    let (id, mut d) = aac_1024_track();
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1]])).unwrap();
+    d.push(id, &aac_asc_packet(1, 12_000, &[&[2]])).unwrap();
+    d.push(id, &aac_asc_packet(2, 14_000, &[&[3], &[4]]))
+        .unwrap();
+    d.push(id, &aac_asc_packet(3, 8_000, &[&[5]])).unwrap();
+    let out = d.push(id, &aac_asc_packet(4, 9_000, &[&[6]])).unwrap();
+    assert_eq!(durations(&out), vec![1000, 1000]);
 }

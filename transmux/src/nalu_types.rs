@@ -262,6 +262,31 @@ mod tests {
         );
     }
 
+    /// A 0- or 1-byte NAL is too short to carry even an HEVC header, so it is
+    /// `Ok(None)`; a 2-byte SPS-typed NAL does reach the SPS decoder and its
+    /// failure is an error, not `None`.
+    #[test]
+    fn hevc_nal_unit_decode_sps_distinguishes_short_from_sps_typed() {
+        assert!(matches!(
+            HevcNalUnit::new(alloc::vec![]).decode_sps(),
+            Ok(None)
+        ));
+        assert!(matches!(
+            HevcNalUnit::new(alloc::vec![0x42]).decode_sps(),
+            Ok(None)
+        ));
+        assert!(
+            HevcNalUnit::new(alloc::vec![0x42, 0x01])
+                .decode_sps()
+                .is_err(),
+            "a 2-byte SPS-typed NAL reaches the decoder and fails there"
+        );
+        assert!(matches!(
+            HevcNalUnit::new(alloc::vec![0x40, 0x01, 0x0C]).decode_sps(),
+            Ok(None)
+        ));
+    }
+
     /// The boundary: exactly 65 535 NAL units still round-trips.
     #[test]
     fn hevc_nal_array_max_count_round_trips() {
@@ -272,5 +297,32 @@ mod tests {
         };
         let bytes = arr.try_to_bytes().unwrap();
         assert_eq!(u16::from_be_bytes([bytes[1], bytes[2]]), 65535);
+    }
+
+    #[test]
+    fn hevc_nal_array_serialized_len_sums_the_entries_and_keeps_the_header_bits() {
+        let nalus = alloc::vec![
+            HevcNalUnit(alloc::vec![0x42, 0x01, 0x0C]),
+            HevcNalUnit(alloc::vec![0x42, 0x01, 0x0C, 0xAA, 0xBB]),
+        ];
+        let arr = HevcNalArray {
+            array_completeness: true,
+            nal_unit_type: 33,
+            nalus,
+        };
+        assert_eq!(arr.serialized_len(), 3 + 2 + 3 + 2 + 5);
+        let mut buf = alloc::vec![0u8; arr.serialized_len()];
+        assert_eq!(arr.serialize_into(&mut buf).unwrap(), 15);
+        assert_eq!(buf[0], 0xA1, "array_completeness | NAL_unit_type");
+        assert_eq!(&buf[1..3], &[0x00, 0x02], "numNalus");
+
+        let incomplete = HevcNalArray {
+            array_completeness: false,
+            nal_unit_type: 33,
+            nalus: alloc::vec![HevcNalUnit(alloc::vec![0x42, 0x01, 0x0C])],
+        };
+        let mut buf = alloc::vec![0u8; incomplete.serialized_len()];
+        incomplete.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[0], 0x21, "no array_completeness bit");
     }
 }

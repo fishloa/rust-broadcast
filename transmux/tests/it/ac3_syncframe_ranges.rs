@@ -84,3 +84,32 @@ fn a_truncated_last_frame_is_dropped() {
         );
     }
 }
+
+/// A `0x0B77` whose header does not parse is a false sync *inside* a frame; the
+/// two scan modes must part ways there. Strict stops (the payload is not what
+/// it claims), resync steps one byte on and recovers every later frame.
+#[test]
+fn a_false_sync_is_skipped_only_when_resyncing() {
+    let es = stream();
+    let clean = split_ac3_syncframe_ranges(&es, false);
+    let first_two = &clean[..2];
+    // fscod 0b11 is reserved (Table 4.1), so this header declares no length.
+    let false_sync = [0x0B, 0x77, 0xFF, 0xFF, 0xFF, 0xFF];
+    let payload = [&es[..first_two[1].1], &false_sync, &es[first_two[1].1..]].concat();
+
+    assert_eq!(
+        split_ac3_syncframe_ranges(&payload, false),
+        first_two.to_vec(),
+        "a strict scan stops at the false sync"
+    );
+
+    let mut expected = first_two.to_vec();
+    for &(s, e) in &clean[2..] {
+        expected.push((s + false_sync.len(), e + false_sync.len()));
+    }
+    assert_eq!(
+        split_ac3_syncframe_ranges(&payload, true),
+        expected,
+        "a resyncing scan recovers the frames after the false sync"
+    );
+}

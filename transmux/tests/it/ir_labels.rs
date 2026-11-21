@@ -5,6 +5,8 @@
 //! `impl_spec_display!` macro is label-free: it only delegates to `name()`),
 //! so a blanked or changed label must fail here, not ship silently.
 
+use transmux::hdr10plus::OverlapProcessOption;
+use transmux::interlace::{PicStruct, SourceScanType, VideoScan};
 use transmux::ir::{
     AbandonReason, ActiveFormatDescription, AfdPersistence, AudioRole, AudioType, DataCarriage,
     DiscontinuityKind, EditorialClassification, InputDegradation, MixType, SubtitleFormat,
@@ -83,6 +85,56 @@ fn audio_role_labels() {
     label!(AudioRole::AudioDescription, "audio description");
     label!(AudioRole::HearingImpaired, "hearing impaired");
     label!(AudioRole::Unknown, "unknown");
+}
+
+#[test]
+fn video_scan_labels() {
+    label!(VideoScan::Progressive, "progressive");
+    label!(VideoScan::Paff, "PAFF");
+    label!(VideoScan::Mbaff, "MBAFF");
+    label!(VideoScan::FieldSequence, "field_seq");
+}
+
+#[test]
+fn pic_struct_labels() {
+    label!(PicStruct::Frame, "frame");
+    label!(PicStruct::TopField, "top field");
+    label!(PicStruct::BottomField, "bottom field");
+    label!(PicStruct::TopBottom, "top, bottom");
+    label!(PicStruct::BottomTop, "bottom, top");
+    label!(PicStruct::TopBottomTop, "top, bottom, top repeated");
+    label!(PicStruct::BottomTopBottom, "bottom, top, bottom repeated");
+    label!(PicStruct::FrameDoubling, "frame doubling");
+    label!(PicStruct::FrameTripling, "frame tripling");
+    label!(
+        PicStruct::TopPairedWithPreviousBottom,
+        "top paired with previous bottom"
+    );
+    label!(
+        PicStruct::BottomPairedWithPreviousTop,
+        "bottom paired with previous top"
+    );
+    label!(
+        PicStruct::TopPairedWithNextBottom,
+        "top paired with next bottom"
+    );
+    label!(
+        PicStruct::BottomPairedWithNextTop,
+        "bottom paired with next top"
+    );
+}
+
+#[test]
+fn source_scan_type_labels() {
+    label!(SourceScanType::Interlaced, "interlaced");
+    label!(SourceScanType::Progressive, "progressive");
+    label!(SourceScanType::Unknown, "unknown");
+}
+
+#[test]
+fn overlap_process_option_labels() {
+    label!(OverlapProcessOption::WeightedAverage, "weighted average");
+    label!(OverlapProcessOption::Layering, "layering");
 }
 
 #[test]
