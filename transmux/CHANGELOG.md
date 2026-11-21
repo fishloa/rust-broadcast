@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **An SPS that decodes to zero width or zero height is not a valid parameter set.** The `is_ok_and(width > 0 && height > 0)` guard had no input that decodes to zero geometry, so each operator could invert and let a fully cropped set through; hand-built AVC and HEVC SPS values cropping the whole width (and the whole height) now decode to `0` and are rejected (audit 23 finding 291, #3807).
 - **Parameter-set validity accepts the exact maximum length and the smallest real PPS.** The length boundaries had no test, so the maximum record length could be refused, a 1-byte `[0x68]` accepted as a PPS, or a real 2-byte PPS rejected; all four boundaries are now pinned (audit 23 finding 290, #3806).
 - **A short ATSC caption SEI is ignored instead of panicking.** The fixed-offset reads behind `payload.len() < 8` and `cc.len() < 2` had no short-payload test; a 3-byte, 7-byte and header-only payload now assert no output and no panic, while a complete `cc_data()` block still appends its six bytes (audit 23 finding 289, #3805).
 - **A SEI message whose `payloadType` byte is `0x80` is read, not mistaken for trailing bits.** `more_rbsp_data()` only treats `0x80` as `rbsp_trailing_bits` when it is the last byte, but no test had a message of type 128; a type-128 and a type-5 message in one body now both survive `sei_messages` (audit 23 finding 288, #3804).

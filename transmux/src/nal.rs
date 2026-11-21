@@ -936,6 +936,102 @@ mod tests {
         ));
     }
 
+    /// A Baseline-profile H.264 SPS whose 16x16 picture is cropped by
+    /// `(left, right, top, bottom)` chroma-sample offsets.
+    fn avc_sps_with_crop(crop: (u64, u64, u64, u64)) -> Vec<u8> {
+        let (left, right, top, bottom) = crop;
+        let mut nal = alloc::vec![0x67u8, 66, 0x00, 30];
+        let mut s = crate::test_bits::BitWriter::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(0); // log2_max_frame_num_minus4
+        s.ue(2); // pic_order_cnt_type
+        s.ue(1); // max_num_ref_frames
+        s.bit(false); // gaps_in_frame_num_value_allowed_flag
+        s.ue(0); // pic_width_in_mbs_minus1 -> 16
+        s.ue(0); // pic_height_in_map_units_minus1 -> 16
+        s.bit(true); // frame_mbs_only_flag
+        s.bit(true); // direct_8x8_inference_flag
+        s.bit(true); // frame_cropping_flag
+        s.ue(left);
+        s.ue(right);
+        s.ue(top);
+        s.ue(bottom);
+        s.bit(false); // vui_parameters_present_flag
+        s.bit(true); // rbsp_stop_one_bit
+        nal.extend_from_slice(&crate::rbsp::escape(&s.finish()));
+        nal
+    }
+
+    /// A 4:2:0 HEVC SPS whose 16x16 picture is cropped by
+    /// `(left, right, top, bottom)` chroma-sample offsets.
+    fn hevc_sps_with_conformance_window(window: (u64, u64, u64, u64)) -> Vec<u8> {
+        let (left, right, top, bottom) = window;
+        let mut nal = alloc::vec![0x42u8, 0x01];
+        let mut s = crate::test_bits::BitWriter::new();
+        s.u(4, 0); // sps_video_parameter_set_id
+        s.u(3, 0); // sps_max_sub_layers_minus1
+        s.bit(true); // sps_temporal_id_nesting_flag
+        s.u(2, 0); // general_profile_space
+        s.bit(false); // general_tier_flag
+        s.u(5, 1); // general_profile_idc
+        s.u(32, 0); // general_profile_compatibility_flags
+        s.u(48, 0); // general_constraint_indicator_flags
+        s.u(8, 93); // general_level_idc
+        s.ue(0); // sps_seq_parameter_set_id
+        s.ue(1); // chroma_format_idc
+        s.ue(16); // pic_width_in_luma_samples
+        s.ue(16); // pic_height_in_luma_samples
+        s.bit(true); // conformance_window_flag
+        s.ue(left);
+        s.ue(right);
+        s.ue(top);
+        s.ue(bottom);
+        s.ue(0); // bit_depth_luma_minus8
+        s.ue(0); // bit_depth_chroma_minus8
+        s.ue(3); // log2_max_pic_order_cnt_lsb_minus4
+        s.bit(false); // sps_sub_layer_ordering_info_present_flag
+        s.ue(0); // sps_max_dec_pic_buffering_minus1
+        s.ue(0); // sps_max_num_reorder_pics
+        s.ue(0); // sps_max_latency_increase_plus1
+        s.ue(0); // log2_min_luma_coding_block_size_minus3
+        s.ue(3); // log2_diff_max_min_luma_coding_block_size
+        s.ue(0); // log2_min_luma_transform_block_size_minus2
+        s.ue(3); // log2_diff_max_min_luma_transform_block_size
+        s.ue(1); // max_transform_hierarchy_depth_inter
+        s.ue(1); // max_transform_hierarchy_depth_intra
+        s.bit(false); // scaling_list_enabled_flag
+        s.bit(false); // amp_enabled_flag
+        s.bit(false); // sample_adaptive_offset_enabled_flag
+        s.bit(false); // pcm_enabled_flag
+        s.ue(0); // num_short_term_ref_pic_sets
+        s.bit(false); // long_term_ref_pics_present_flag
+        s.bit(false); // sps_temporal_mvp_enabled_flag
+        s.bit(false); // strong_intra_smoothing_enabled_flag
+        s.bit(false); // vui_parameters_present_flag
+        s.bit(true); // rbsp_stop_one_bit
+        nal.extend_from_slice(&crate::rbsp::escape(&s.finish()));
+        nal
+    }
+
+    #[test]
+    fn parameter_set_that_decodes_to_zero_geometry_is_invalid() {
+        for (crop, geometry) in [((8, 0, 0, 0), (0, 16)), ((0, 0, 8, 0), (16, 0))] {
+            let avc = avc_sps_with_crop(crop);
+            let info = crate::sps::decode_avc_sps(&avc).expect("AVC SPS decodes");
+            assert_eq!((info.width, info.height), geometry);
+            assert!(!parameter_set_is_valid(NalCodec::Avc, ParamKind::Sps, &avc));
+
+            let hevc = hevc_sps_with_conformance_window(crop);
+            let info = crate::sps::decode_hevc_sps(&hevc).expect("HEVC SPS decodes");
+            assert_eq!((info.width, info.height), geometry);
+            assert!(!parameter_set_is_valid(
+                NalCodec::Hevc,
+                ParamKind::Sps,
+                &hevc
+            ));
+        }
+    }
+
     #[test]
     fn sei_varint_overflow_is_none_not_a_panic() {
         // 0xFF * (u32::MAX / 255 + 1) exceeds u32::MAX before any terminator.
