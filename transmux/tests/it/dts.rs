@@ -398,3 +398,44 @@ fn rfc6381_codes() {
     assert_eq!(DtsSpecificBox::rfc6381(b"dtsl"), "dtsl");
     assert_eq!(DtsSpecificBox::rfc6381(b"dtse"), "dtse");
 }
+
+// ---------------------------------------------------------------------------
+// Gate 9: stereo_downmix and the two trailing flag bits are decoded and encoded
+// ---------------------------------------------------------------------------
+
+/// `stereo_downmix` is packed-word bit 3 (byte 16, `0x08`); `lbr_duration_mod`
+/// and `reserved_box_present` are flags-byte bits 6 and 5 (`0x40` / `0x20`).
+/// The oracle has all three clear, so each is flipped on its own.
+#[test]
+fn ddts_stereo_downmix_and_flags_are_decoded_and_encoded() {
+    let mut stereo = spec_vector();
+    stereo.stereo_downmix = true;
+    let mut buf = [0u8; DDTS_BODY_LEN];
+    stereo.serialize_into(&mut buf).unwrap();
+    assert_eq!(buf[16], 0x0B, "stereo_downmix sets packed-word bit 3");
+    assert_eq!(buf[19], 0x00, "no flag bit is set");
+    let parsed = DtsSpecificBox::parse(&buf).unwrap();
+    assert!(parsed.stereo_downmix);
+    assert_eq!(parsed, stereo);
+    let mut again = [0u8; DDTS_BODY_LEN];
+    parsed.serialize_into(&mut again).unwrap();
+    assert_eq!(&again[..], &buf[..]);
+
+    let mut lbr = spec_vector();
+    lbr.lbr_duration_mod = true;
+    lbr.serialize_into(&mut buf).unwrap();
+    assert_eq!(buf[19], 0x40, "lbr_duration_mod is flags-byte bit 6");
+    let parsed = DtsSpecificBox::parse(&buf).unwrap();
+    assert!(parsed.lbr_duration_mod);
+    assert!(!parsed.reserved_box_present && !parsed.multi_asset_flag);
+    assert_eq!(parsed, lbr);
+
+    let mut reserved = spec_vector();
+    reserved.reserved_box_present = true;
+    reserved.serialize_into(&mut buf).unwrap();
+    assert_eq!(buf[19], 0x20, "reserved_box_present is flags-byte bit 5");
+    let parsed = DtsSpecificBox::parse(&buf).unwrap();
+    assert!(parsed.reserved_box_present);
+    assert!(!parsed.lbr_duration_mod && !parsed.multi_asset_flag);
+    assert_eq!(parsed, reserved);
+}

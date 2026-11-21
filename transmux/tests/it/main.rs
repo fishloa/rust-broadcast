@@ -66,6 +66,7 @@ mod dovi;
 mod drm_pssh;
 mod dts;
 mod dts_ts;
+mod eac3_bsi_walk;
 mod eac3_crc2_real_capture;
 mod eac3_real_capture;
 mod eac3_real_dependent_substreams;

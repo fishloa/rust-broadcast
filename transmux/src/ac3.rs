@@ -1638,6 +1638,135 @@ pub(crate) mod tests {
         assert_eq!(b.channels_with_lfe(), 6);
     }
 
+    /// The CRC check must be judged on a payload: a "frame" that is only the
+    /// syncword has an empty checked region, whose CRC is trivially zero, so it
+    /// must not verify (ETSI TS 102 366 §E.2.2 — a syncframe carries a `crc2`
+    /// word, which two bytes cannot hold).
+    #[test]
+    fn crc_check_rejects_a_syncword_only_frame() {
+        assert!(!eac3_frame_crc_ok(&[]));
+        assert!(!eac3_frame_crc_ok(&AC3_SYNCWORD.to_be_bytes()));
+        let frame = first_real_eac3_frame();
+        assert_eq!(&frame[..AC3_SYNCWORD_BYTES], &AC3_SYNCWORD.to_be_bytes());
+        assert!(
+            eac3_frame_crc_ok(&frame),
+            "the capture's first frame verifies"
+        );
+    }
+
+    /// The sample-rate, half-rate, block-count and channel-count lookup tables
+    /// — ETSI TS 102 366 Table 4.3, Annex E and Table 4.5 — every code,
+    /// including the reserved fallbacks and `fscod` 2 (32 kHz), which no
+    /// fixture exercises.
+    #[test]
+    fn lookup_tables_match_the_specification() {
+        assert_eq!(
+            [0u8, 1, 2, 3].map(ac3_sample_rate),
+            [48000, 44100, 32000, 44100]
+        );
+        assert_eq!([0u8, 1, 2, 3].map(ac3_sample_rate_khz), [48, 44, 32, 44]);
+        assert_eq!(
+            [0u8, 1, 2, 3].map(eac3_half_sample_rate),
+            [24000, 22050, 16000, 22050]
+        );
+        assert_eq!(
+            [0u8, 1, 2, 3].map(eac3_half_sample_rate_khz),
+            [24, 22, 16, 22]
+        );
+        assert_eq!([0u8, 1, 2, 3].map(eac3_num_blocks), [1, 2, 3, 6]);
+        assert_eq!(
+            [0u8, 1, 2, 3, 4, 5, 6, 7].map(acmod_channels),
+            [2, 1, 2, 3, 3, 4, 4, 5]
+        );
+    }
+
+    /// A half-rate frame (`fscod` 3, §E.1.2.2) takes `sr_code2` instead of
+    /// `numblkscod` and always carries 6 blocks.
+    #[test]
+    fn half_rate_frame_uses_sr_code2() {
+        let mut w = BitWriter::new();
+        w.u(16, AC3_SYNCWORD as u64);
+        w.u(2, 0); // strmtyp independent
+        w.u(3, 0); // substreamid
+        w.u(11, 64); // frmsiz
+        w.u(2, 3); // fscod 3 -> half rate
+        w.u(2, 0); // sr_code2 0 -> 24 kHz
+        w.u(3, 7); // acmod 3/2
+        w.u(1, 0); // lfeon
+        w.u(5, 16); // bsid
+        w.u(5, 31); // dialnorm
+        w.u(1, 0); // compre
+        w.u(1, 0); // mixmdate
+        w.u(1, 0); // infomdate
+        w.u(16, 0); // padding
+        let info = Ec3SyncframeInfo::from_es(&w.finish()).unwrap();
+        assert_eq!((info.sample_rate, info.sample_rate_khz), (24000, 24));
+        assert_eq!(info.numblks, 6);
+        assert_eq!(info.samples_per_frame(), 1536);
+    }
+
+    /// The first sample of the committed Dolby E-AC-3 capture: a real
+    /// syncframe with a real `crc2`.
+    fn first_real_eac3_frame() -> Vec<u8> {
+        use crate::pipeline::CodecConfig;
+        use broadcast_common::Unpackage;
+        let ts = test_fixtures::read("ts/dolby/eac3.ts");
+        let media = crate::TsDemux::new().unpackage(&ts).unwrap();
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. }))
+            .unwrap();
+        track.samples[0].data.to_vec()
+    }
+
+    /// ETSI TS 102 366 §4.4.2.2: `cmixlev` is carried when `(acmod & 0x1) &&
+    /// (acmod != 0x1)`, `surmixlev` when `(acmod & 0x4)`, `dsurmod` when
+    /// `acmod == 0x2`. A wrong skip moves `lfeon` — and with it the channel
+    /// count and the `dac3` box — for that layout, so every acmod is pinned
+    /// with both `lfeon` values.
+    #[test]
+    fn ac3_optional_bsi_fields_are_skipped_per_acmod() {
+        // Table 4.5 full-bandwidth channel counts, indexed by acmod.
+        const CHANNELS: [u8; 8] = [2, 1, 2, 3, 3, 4, 4, 5];
+        for acmod in 0u64..=7 {
+            for lfeon in [false, true] {
+                let mut w = BitWriter::new();
+                w.u(16, AC3_SYNCWORD as u64);
+                w.u(16, 0xFFFF); // crc1, not checked by the BSI parser
+                w.u(2, 0); // fscod 48 kHz
+                w.u(6, 30); // frmsizecod -> 640 kbit/s
+                w.u(5, 8); // bsid 8 (AC-3)
+                w.u(3, 2); // bsmod
+                w.u(3, acmod);
+                if acmod & 0x1 != 0 && acmod != 0x1 {
+                    w.u(2, 1); // cmixlev
+                }
+                if acmod & 0x4 != 0 {
+                    w.u(2, 2); // surmixlev
+                }
+                if acmod == 0x2 {
+                    w.u(2, 3); // dsurmod
+                }
+                w.u(1, u64::from(lfeon));
+                w.u(7, 0x7F); // trailing bits: a shifted read still lands in the buffer
+                let es = w.finish();
+                let info = Ac3SyncframeInfo::parse_at(&es, 0)
+                    .unwrap_or_else(|e| panic!("acmod {acmod} lfeon {lfeon}: {e}"));
+                assert_eq!(
+                    (info.acmod, info.lfeon),
+                    (acmod as u8, lfeon),
+                    "acmod {acmod}, lfeon {lfeon}"
+                );
+                assert_eq!(
+                    info.channel_count(),
+                    CHANNELS[acmod as usize],
+                    "acmod {acmod}: Table 4.5 channel count"
+                );
+            }
+        }
+    }
+
     // Oracle bytes from dolby-oracle.md (ffmpeg-generated)
     const DAC3_ORACLE: [u8; 3] = [0x50, 0x09, 0x40];
     const DEC3_ORACLE: [u8; 5] = [0x06, 0x00, 0x60, 0x02, 0x00];
@@ -1750,6 +1879,34 @@ pub(crate) mod tests {
             &DEC3_DEP_SUB_ORACLE[..],
             "dec3 dependent-substream round-trip mismatch"
         );
+    }
+
+    /// The `Serialize` contract allows a caller-supplied buffer: every bit —
+    /// including the reserved ones the box writes as 0 — must come from the
+    /// box, never from whatever the buffer already held.
+    #[test]
+    fn dec3_serializes_identically_into_a_dirty_buffer() {
+        let mut two = Ec3SpecificBox::parse(&DEC3_ORACLE).unwrap();
+        two.num_ind_sub = 1;
+        two.substreams[0].num_dep_sub = 1;
+        two.substreams[0].chan_loc = Some(0x1FF);
+        two.substreams.push(Ec3Substream {
+            acmod: 7,
+            lfeon: true,
+            ..two.substreams[0]
+        });
+        for bx in [
+            Ec3SpecificBox::parse(&DEC3_ORACLE).unwrap(),
+            Ec3SpecificBox::parse(&DEC3_DEP_SUB_ORACLE).unwrap(),
+            two,
+        ] {
+            let mut clean = vec![0u8; bx.serialized_len()];
+            let mut dirty = vec![0xFFu8; bx.serialized_len()];
+            bx.serialize_into(&mut clean).unwrap();
+            bx.serialize_into(&mut dirty).unwrap();
+            assert_eq!(dirty, clean, "the dirty buffer leaked into {bx:?}");
+            assert_eq!(Ec3SpecificBox::parse(&dirty).unwrap(), bx);
+        }
     }
 
     #[test]
@@ -2491,6 +2648,104 @@ pub(crate) mod tests {
                 );
             }
         }
+    }
+
+    /// A `dec3` body too short for the substreams it declares reports the byte
+    /// count it needs (2 header + 3 per substream = 5), not a field-level error
+    /// from a read that should never have started.
+    #[test]
+    fn ec3_parse_reports_the_missing_dec3_substream_bytes() {
+        match Ec3SpecificBox::parse(&DEC3_ORACLE[..3]) {
+            Err(Error::BufferTooShort(e)) => {
+                assert_eq!((e.need, e.have, e.what), (5, 3, "dec3 substreams"));
+            }
+            other => panic!("expected a dec3 substreams bound, got {other:?}"),
+        }
+    }
+
+    /// `skip_eac3_bits` bounds the `mixdata` block it skips: cut exactly at the
+    /// last byte of the block it succeeds (the walk then stops on the next
+    /// field), one byte short it reports the byte it needs as the bsi's own
+    /// error.
+    #[test]
+    fn mixdata_skip_reports_the_bytes_it_needs() {
+        let mut w = BitWriter::new();
+        w.u(16, AC3_SYNCWORD as u64);
+        w.u(2, 0); // strmtyp independent
+        w.u(3, 0); // substreamid
+        w.u(11, 64); // frmsiz
+        w.u(2, 0); // fscod 48 kHz
+        w.u(2, 3); // numblkscod 6 blocks
+        w.u(3, 7); // acmod 3/2
+        w.u(1, 0); // lfeon
+        w.u(5, 16); // bsid
+        w.u(5, 31); // dialnorm
+        w.u(1, 0); // compre
+        w.u(1, 1); // mixmdate
+        w.u(2, 0); // dmixmod
+        w.u(3, 0); // ltrtcmixlev
+        w.u(3, 0); // lorocmixlev
+        w.u(3, 0); // ltrtsurmixlev
+        w.u(3, 0); // lorosurmixlev
+        w.u(1, 1); // pgmscle
+        w.u(6, 0); // pgmscl
+        w.u(1, 0); // extpgmscle
+        w.u(2, 3); // mixdef = 0x3
+        w.u(5, 0); // mixdeflen: 8 * (0 + 2) = 16 bits of mixdata
+        w.u(1, 1); // mixdata2e
+        w.u(1, 0); // premixcmpsel
+        w.u(1, 0); // drcsrc
+        w.u(3, 0); // premixcmpscl
+        for _ in 0..7 {
+            w.u(1, 0); // the seven *scle flags
+        }
+        w.u(1, 0); // addche
+        w.u(1, 0); // mixdata3e
+        w.u(16, 0); // mixdata
+        let es = w.finish();
+        assert_eq!(es.len(), 14, "the skip ends at the last byte");
+
+        match Ec3SyncframeInfo::from_es(&es) {
+            Err(Error::BufferTooShort(e)) => {
+                assert_eq!(e.what, "frmmixcfginfoe", "the skip itself succeeded");
+            }
+            other => panic!("expected the walk to stop after the skip, got {other:?}"),
+        }
+        match Ec3SyncframeInfo::from_es(&es[..13]) {
+            Err(Error::BufferTooShort(e)) => {
+                assert_eq!((e.need, e.have, e.what), (14, 13, "E-AC-3 bsi"));
+            }
+            other => panic!("expected the skip to report its shortfall, got {other:?}"),
+        }
+    }
+
+    /// §F.6.2.2's `data_rate` is computed from `frmsiz + 1` (the field is one
+    /// less than the syncframe size): at 48 kHz over 6 blocks `frmsiz` 766 is
+    /// 767 * 48000 / (6 * 16 * 1000) = 383.5 → 384 kbit/s, while dropping the
+    /// `+ 1` gives 383.
+    #[test]
+    fn dec3_data_rate_counts_the_plus_one_word() {
+        let f = Ec3SyncframeInfo::with_fields(0, 0, 766, 0, 6, 7, true, 16, 48000, 48, None, 0);
+        assert_eq!(
+            Ec3SpecificBox::from_syncframes(&[f]).unwrap().data_rate,
+            384
+        );
+    }
+
+    /// §F.6.2.13: `chan_loc` collects the additional locations of *every*
+    /// dependent substream, so two dependents declaring the same location keep
+    /// its bit (merging by XOR would clear it).
+    #[test]
+    fn chan_loc_merges_overlapping_dependent_frames() {
+        let lrs = wire_chanmap(&[6]);
+        let ind = Ec3SyncframeInfo::with_fields(0, 0, 64, 0, 6, 7, true, 16, 48000, 48, None, 0);
+        let dep0 =
+            Ec3SyncframeInfo::with_fields(1, 0, 64, 0, 6, 2, false, 16, 48000, 48, Some(lrs), 0);
+        let dep1 =
+            Ec3SyncframeInfo::with_fields(1, 1, 64, 0, 6, 2, false, 16, 48000, 48, Some(lrs), 0);
+        let bx = Ec3SpecificBox::from_syncframes(&[ind, dep0, dep1]).unwrap();
+        assert_eq!(bx.substreams[0].num_dep_sub, 2);
+        assert_eq!(bx.substreams[0].chan_loc, Some(0b010), "Lrs/Rrs kept");
     }
 
     /// The chanmap→chan_loc table must move every location §F.6.1 names, and
