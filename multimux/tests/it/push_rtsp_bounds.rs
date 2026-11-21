@@ -455,3 +455,69 @@ async fn close_twice_sends_exactly_one_teardown() {
     }
     assert_eq!(teardowns, 1, "close() twice must send exactly one TEARDOWN");
 }
+
+/// A non-success OPTIONS reply is a failed connect, never a live connection:
+/// the status guard picks the rejection arm rather than treating any
+/// response as success.
+#[tokio::test]
+async fn a_non_success_options_reply_fails_connect_with_the_status() {
+    use multimux::push::RtspPushError;
+    use multimux::push::rtsp::RtspProtocolError;
+
+    for status in ["454 Session Not Found", "500 Internal Server Error"] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("rtsp://{}/live/key", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let Some((method, cseq)) = read_request(&mut sock, &mut buf).await else {
+                return;
+            };
+            assert_eq!(method, "OPTIONS", "connect starts with OPTIONS");
+            let response = format!("RTSP/1.0 {status}\r\nCSeq: {cseq}\r\n\r\n");
+            let _ = sock.write_all(response.as_bytes()).await;
+            let mut sink = [0u8; 1024];
+            while matches!(sock.read(&mut sink).await, Ok(n) if n > 0) {}
+        });
+        let err = tokio::time::timeout(GUARD, RtspTransport::connect(&url, &config_with_bounds()))
+            .await
+            .expect("connect must not hang")
+            .expect_err("a non-2xx OPTIONS reply must fail connect");
+        match err {
+            RtspPushError::Protocol(RtspProtocolError::Status { status }) => assert!(
+                status.contains("OPTIONS rejected"),
+                "the error must name the rejected OPTIONS: {status}"
+            ),
+            other => panic!("expected Protocol(Status), got {other:?}"),
+        }
+        server.abort();
+    }
+}
+
+/// The RTSP transport keeps its own long-lived streaming mux: two identical
+/// batches in a row must not be byte-identical, because the second continues
+/// the continuity counters (a fresh one-shot mux would restart them).
+#[tokio::test]
+async fn the_transport_muxes_through_its_own_streaming_mux() {
+    let (url, _, _) = peer(AfterRecord::Drain).await;
+    let mut t = tokio::time::timeout(GUARD, RtspTransport::connect(&url, &config_with_bounds()))
+        .await
+        .expect("connect must not hang")
+        .expect("connect");
+    assert!(
+        t.ts_mux().is_some(),
+        "the RTSP push must expose its own streaming mux"
+    );
+    let ts = test_fixtures::read("ts/h264-aac.ts");
+    let mut media = transmux::TsDemux::new().demux(&ts).expect("demux fixture");
+    for track in &mut media.tracks {
+        track.samples.truncate(2);
+    }
+    let first = t.encode_media(&media).expect("first encode");
+    let second = t.encode_media(&media).expect("second encode");
+    assert!(!first.is_empty(), "the fixture must produce TS bytes");
+    assert_ne!(
+        first, second,
+        "continuity counters must continue across batches, not restart at zero"
+    );
+}

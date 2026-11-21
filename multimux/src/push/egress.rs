@@ -590,6 +590,130 @@ mod tests {
         assert_eq!(egress.unselected_samples(), 1, "the drop is counted");
     }
 
+    /// Every sample dropped for an unselected track advances the counter by
+    /// exactly one, starting from zero — a constant return or a no-op
+    /// increment is observable.
+    #[test]
+    fn the_unselected_sample_counter_counts_every_drop() {
+        let transport = FakeTransport {
+            restrict_to_avc_aac: true,
+            ..Default::default()
+        };
+        let mut egress = PushTransportEgress::new(transport);
+        assert_eq!(egress.unselected_samples(), 0, "no send yet");
+        egress.negotiate(&[avc_spec(TrackId::new(1))]);
+        for expected in [1u64, 2u64] {
+            egress
+                .send(&SampleCursorItem::Timed {
+                    track_id: TrackId::new(2),
+                    sample: sample(),
+                })
+                .expect("must not error");
+            assert_eq!(egress.unselected_samples(), expected, "one per drop");
+        }
+    }
+
+    /// Once committed, `renegotiate` accepts an unchanged carriable set and
+    /// refuses a genuine change with the documented reason; before the first
+    /// commit it accepts whatever is proposed.
+    #[test]
+    fn renegotiate_accepts_an_unchanged_set_and_refuses_a_changed_one() {
+        let mut fresh = PushTransportEgress::new(FakeTransport::default());
+        match fresh.renegotiate(&[avc_spec(TrackId::new(9))]) {
+            NegotiationOutcome::Accepted(sel) => {
+                assert_eq!(sel.track_ids, vec![TrackId::new(9)]);
+            }
+            other => panic!("an uncommitted first renegotiate must accept, got {other:?}"),
+        }
+
+        let mut egress = PushTransportEgress::new(FakeTransport::default());
+        let tracks = [avc_spec(TrackId::new(1)), avc_spec(TrackId::new(2))];
+        egress.negotiate(&tracks);
+        match egress.renegotiate(&tracks) {
+            NegotiationOutcome::Accepted(sel) => {
+                assert_eq!(sel.track_ids, vec![TrackId::new(1), TrackId::new(2)]);
+            }
+            other => panic!("an unchanged set must be accepted, got {other:?}"),
+        }
+        match egress.renegotiate(&[avc_spec(TrackId::new(1))]) {
+            NegotiationOutcome::Refused { reason } => {
+                assert!(reason.contains("already publishing"), "{reason}");
+            }
+            other => panic!("a changed set must be refused, got {other:?}"),
+        }
+        assert_eq!(egress.selected_tracks().len(), 2, "the original set stays");
+    }
+
+    /// A cursor lag/degrade report has no sample to encode, but its loss is
+    /// logged with the `skipped` count rather than falling into the
+    /// `non_exhaustive` catch-all and vanishing.
+    #[test]
+    fn a_cursor_loss_report_is_logged_with_the_skipped_count() {
+        #[derive(Clone, Default)]
+        struct Capture(std::sync::Arc<std::sync::Mutex<String>>);
+
+        impl tracing::Subscriber for Capture {
+            fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+                true
+            }
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+            fn enter(&self, _: &tracing::span::Id) {}
+            fn exit(&self, _: &tracing::span::Id) {}
+            fn event(&self, event: &tracing::Event<'_>) {
+                struct Fields<'a>(&'a mut String);
+                impl tracing::field::Visit for Fields<'_> {
+                    fn record_debug(
+                        &mut self,
+                        field: &tracing::field::Field,
+                        value: &dyn std::fmt::Debug,
+                    ) {
+                        use std::fmt::Write as _;
+                        let _ = write!(self.0, "{}={value:?} ", field.name());
+                    }
+                }
+                let mut line = String::new();
+                event.record(&mut Fields(&mut line));
+                line.push('\n');
+                let mut buffer = self
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                buffer.push_str(&line);
+            }
+        }
+
+        let capture = Capture::default();
+        let buffer = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            let mut egress = PushTransportEgress::new(FakeTransport::default());
+            egress.negotiate(&[avc_spec(TrackId::new(1))]);
+            assert!(
+                egress
+                    .send(&SampleCursorItem::Lagged { skipped: 3 })
+                    .is_ok(),
+                "a lag report is not an error"
+            );
+            assert!(
+                egress
+                    .send(&SampleCursorItem::Degraded { skipped: 2 })
+                    .is_ok(),
+                "a degrade report is not an error"
+            );
+        });
+        let logs = buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        assert!(logs.contains("push egress cursor lagged"), "{logs}");
+        assert!(logs.contains("skipped=3 "), "{logs}");
+        assert!(logs.contains("push egress cursor degraded"), "{logs}");
+        assert!(logs.contains("skipped=2 "), "{logs}");
+    }
+
     /// The real bite: `send` for a selected track queues a real encoded
     /// message, drained via `poll_transmit` and written by
     /// `flush_transmit` — proving the sans-IO `send`/async

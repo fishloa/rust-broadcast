@@ -61,6 +61,7 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
         let mut session = ServerSession::with_defaults();
         let mut flv_bytes: Vec<u8> = Vec::new();
         let mut saw_publish = false;
+        let mut published_app: Option<String> = None;
         let mut buf = vec![0u8; 65536];
         loop {
             let n = match sock.read(&mut buf).await {
@@ -76,19 +77,22 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
             }
             for ev in events {
                 match ev {
-                    ServerEvent::Publish { .. } => saw_publish = true,
+                    ServerEvent::Publish { app, .. } => {
+                        saw_publish = true;
+                        published_app = Some(app);
+                    }
                     ServerEvent::Media { flv } => flv_bytes.extend_from_slice(&flv),
                     _ => {}
                 }
             }
         }
-        (flv_bytes, saw_publish)
+        (flv_bytes, saw_publish, published_app)
     });
 
     // The client side: exactly what `crate::origin::spawn_push_outputs` +
     // `crate::push::drive_push` drive for a configured `rtmp_push` output.
     let cfg = RtmpTransportConfig::default()
-        .with_app("live".to_string())
+        .with_app("studio".to_string())
         .with_stream_key("test".to_string());
     let url = format!("rtmp://{addr}/live/test");
     let mut transport = tokio::time::timeout(GUARD, RtmpTransport::connect(&url, &cfg))
@@ -105,20 +109,40 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
     // One `send_media` call carrying every sample — `drive_push` normally
     // splits this into several smaller batches, but each batch goes through
     // this exact call, so one larger batch exercises the same path.
-    tokio::time::timeout(GUARD, transport.send_media(&media))
+    let encoded = transport.encode_media(&media).expect("encode_media");
+    let expected_total: u64 = encoded.iter().map(|m| m.len() as u64).sum();
+    let total = tokio::time::timeout(GUARD, transport.send_media(&media))
         .await
         .expect("send_media must not hang")
         .expect("send_media");
+    assert!(total > 0, "send_media must report the bytes it wrote");
+    assert_eq!(
+        total, expected_total,
+        "the returned total is the sum of the written messages"
+    );
 
     // Close the client side so the server's `read` sees EOF and returns.
     transport.close();
+    let err = transport
+        .send_media(&media)
+        .await
+        .expect_err("a closed transport must refuse a send");
+    assert!(
+        err.to_string().contains("not connected"),
+        "closed send must be the not-connected error: {err}"
+    );
     drop(transport);
 
-    let (flv_bytes, saw_publish) = tokio::time::timeout(GUARD, server)
+    let (flv_bytes, saw_publish, published_app) = tokio::time::timeout(GUARD, server)
         .await
         .expect("server task must not hang")
         .expect("server task panicked");
     assert!(saw_publish, "server must have accepted the publish");
+    assert_eq!(
+        published_app.as_deref(),
+        Some("studio"),
+        "with_app must set the app the server sees"
+    );
     assert!(!flv_bytes.is_empty(), "server must have received media");
 
     // THE BITE: a real, independent RTMP server decoded what `RtmpTransport`

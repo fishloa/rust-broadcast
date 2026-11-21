@@ -315,4 +315,119 @@ mod tests {
             "downstream SRT listener must receive the pushed bytes"
         );
     }
+
+    fn fixture_media() -> transmux::ir::Media {
+        let ts = test_fixtures::read("ts/h264-aac.ts");
+        let mut media = transmux::TsDemux::new().demux(&ts).expect("demux fixture");
+        for track in &mut media.tracks {
+            track.samples.truncate(2);
+        }
+        media
+    }
+
+    /// The builder keeps the handshake it is given, not the default.
+    #[test]
+    fn with_srt_config_keeps_the_supplied_handshake() {
+        let handshake = HandshakeConfig::default().with_latency(Duration::from_millis(250));
+        let cfg = SrtTransportConfig::default().with_srt_config(handshake.clone());
+        assert_eq!(cfg.srt_config.latency, Duration::from_millis(250));
+        assert_eq!(cfg.srt_config, handshake);
+    }
+
+    /// `Debug` names the type and its connection state.
+    #[test]
+    fn transport_debug_reports_the_connection_state() {
+        let transport = SrtTransport {
+            socket: None,
+            ts_mux: transmux::StreamingTsMux::new(),
+        };
+        let shown = format!("{transport:?}");
+        assert!(shown.contains("SrtTransport"), "{shown}");
+        assert!(shown.contains("connected: false"), "{shown}");
+    }
+
+    /// The transport keeps its own streaming mux: a second identical batch
+    /// continues the continuity counters instead of restarting them.
+    #[test]
+    fn the_transport_muxes_through_its_own_streaming_mux() {
+        let mut transport = SrtTransport {
+            socket: None,
+            ts_mux: transmux::StreamingTsMux::new(),
+        };
+        assert!(
+            transport.ts_mux().is_some(),
+            "the SRT push must expose its own streaming mux"
+        );
+        let media = fixture_media();
+        let first = transport.encode_media(&media).expect("first encode");
+        let second = transport.encode_media(&media).expect("second encode");
+        assert!(!first.is_empty(), "the fixture must produce TS bytes");
+        assert_ne!(
+            first, second,
+            "continuity counters must continue across batches, not restart at zero"
+        );
+    }
+
+    /// `close` drops the socket: a later send is the not-connected error, and
+    /// the listener observes the shutdown.
+    #[tokio::test]
+    async fn close_tears_the_transport_down_and_refuses_further_sends() {
+        let mut listener = SrtListener::bind(
+            "127.0.0.1:0"
+                .parse::<std::net::SocketAddr>()
+                .expect("loopback addr"),
+            SrtSocketConfig::default(),
+        )
+        .await
+        .expect("bind");
+        let bound = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let Ok(Ok(mut sock)) =
+                tokio::time::timeout(Duration::from_secs(30), listener.accept()).await
+            else {
+                return false;
+            };
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+            loop {
+                match tokio::time::timeout_at(deadline, sock.recv()).await {
+                    Ok(Ok(None)) => return true,
+                    Ok(Ok(Some(_))) => continue,
+                    Ok(Err(_)) | Err(_) => return false,
+                }
+            }
+        });
+
+        let mut transport = tokio::time::timeout(
+            Duration::from_secs(30),
+            SrtTransport::connect(
+                &format!("srt://{bound}?mode=caller"),
+                &SrtTransportConfig::default(),
+            ),
+        )
+        .await
+        .expect("connect must not hang")
+        .expect("connect");
+        transport.close();
+        let err = transport
+            .send(&[0x47; 188])
+            .await
+            .expect_err("a closed transport must refuse a send");
+        assert!(
+            matches!(
+                &err,
+                srt_runtime::Error::Io {
+                    kind: std::io::ErrorKind::NotConnected,
+                    ..
+                }
+            ),
+            "closed send must be NotConnected: {err:?}"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(30), server)
+                .await
+                .expect("server must not hang")
+                .expect("join"),
+            "the listener must observe the shutdown"
+        );
+    }
 }
