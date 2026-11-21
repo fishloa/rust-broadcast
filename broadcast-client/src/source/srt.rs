@@ -67,6 +67,7 @@ struct Handshake {
     hs: CallerHandshake,
     started_us: u64,
     next_tick_us: Option<Timestamp>,
+    last_tick_us: u64,
     tick_period_us: u64,
 }
 
@@ -165,6 +166,7 @@ impl SrtCaller {
                     started_us: now_us,
                     next_tick_us: Timestamp::from_micros(now_us)
                         .checked_add(Duration::from_micros(tick_period_us)),
+                    last_tick_us: now_us,
                     tick_period_us,
                 }));
             }
@@ -305,19 +307,23 @@ impl SrtCaller {
                     self.fail_handshake();
                     return;
                 }
-                while h
-                    .next_tick_us
+                if h.next_tick_us
                     .is_some_and(|next| Timestamp::from_micros(now_us) >= next)
                 {
-                    // A tick period that does not fit the clock ends the schedule (past the end
-                    // of the clock there is no later tick to make), so the loop stops here.
-                    let Some(next) = h.next_tick_us.and_then(|tick| {
-                        tick.checked_add(Duration::from_micros(h.tick_period_us.max(1)))
-                    }) else {
-                        break;
-                    };
-                    h.next_tick_us = Some(next);
-                    for output in h.hs.tick(Duration::from_micros(h.tick_period_us.max(1))) {
+                    // Advance by the time that actually passed. A wake delayed
+                    // by a starved runtime is ONE retransmit, not one per
+                    // nominal period it missed — synthesizing the missed ticks
+                    // spent the whole retry budget at once and timed out a
+                    // handshake whose wall-clock budget was still open
+                    // (issue #3847).
+                    let elapsed_us = now_us.saturating_sub(h.last_tick_us).max(1);
+                    h.last_tick_us = now_us;
+                    // A tick period that does not fit the clock ends the
+                    // schedule (past the end of the clock there is no later
+                    // tick to make).
+                    h.next_tick_us = Timestamp::from_micros(now_us)
+                        .checked_add(Duration::from_micros(h.tick_period_us.max(1)));
+                    for output in h.hs.tick(Duration::from_micros(elapsed_us)) {
                         match output {
                             HandshakeOutput::Send(b) => self.out.sends.push(b),
                             HandshakeOutput::TimedOut => {
@@ -500,6 +506,7 @@ impl Link {
 mod tests {
     use super::*;
     use crate::srt::SrtEntropySeed;
+    use srt_runtime::listener::ListenerHandshake;
 
     fn first_handshake(seed: [u8; 32]) -> (u32, u32) {
         let config = SrtCallerConfig {
@@ -556,6 +563,80 @@ mod tests {
     fn a_control_timestamp_is_the_low_32_bits_of_the_clock() {
         assert_eq!(wire_timestamp(0x1_0000_0005), 5);
         assert_eq!(wire_timestamp(0x00FF_FFFF_FFFF), 0xFFFF_FFFF);
+    }
+
+    fn handshake_send(outputs: &[HandshakeOutput]) -> Vec<u8> {
+        outputs
+            .iter()
+            .find_map(|o| match o {
+                HandshakeOutput::Send(bytes) => Some(bytes.clone()),
+                _ => None,
+            })
+            .expect("a handshake datagram")
+    }
+
+    /// A starved runtime can wake the session once, several retransmit
+    /// periods late. That single late poll must count as one retransmit, not
+    /// synthesize one tick per nominal period: doing the latter spends the
+    /// whole 12-retry budget at once and times the handshake out while the
+    /// wall-clock budget is nowhere near spent. The dropped first INDUCTION is
+    /// still resent and the connection still completes (issue #3847).
+    #[test]
+    fn a_late_poll_resends_the_lost_induction_instead_of_timing_out() {
+        const STALL_US: u64 = 3_600_000;
+        let config = SrtCallerConfig {
+            entropy_seed: Some(SrtEntropySeed::new([7u8; 32])),
+            timeouts: broadcast_common::timeouts::Timeouts::default()
+                .with_handshake(Duration::from_secs(10)),
+            ..SrtCallerConfig::default()
+        };
+        let mut caller = SrtCaller::new(&config).expect("caller");
+        caller.on_connected(0);
+        // The very first INDUCTION is lost: the listener never receives it.
+        let _lost = caller.take_out();
+
+        // One wake, 3.6 s late — fourteen nominal 250 ms periods in one step.
+        caller.poll(STALL_US);
+        let late = caller.take_out();
+        assert!(
+            late.notices.is_empty(),
+            "one late poll must not exhaust the handshake retry budget"
+        );
+        assert_eq!(late.sends.len(), 1, "exactly one retransmit, not a burst");
+        let induction = late
+            .sends
+            .into_iter()
+            .next()
+            .expect("retransmitted induction");
+
+        let mut listener =
+            ListenerHandshake::new(0x1234_5678, 0xC0FF_EE00, HandshakeConfig::default());
+        listener.set_elapsed(Duration::from_micros(STALL_US));
+        let response = handshake_send(
+            &listener
+                .feed_bytes(&induction)
+                .expect("listener induction response"),
+        );
+        caller.on_datagram(&response, STALL_US);
+        let out = caller.take_out();
+        assert!(out.notices.is_empty());
+        let conclusion = out.sends.into_iter().next().expect("conclusion");
+
+        listener.set_elapsed(Duration::from_micros(STALL_US));
+        let outputs = listener
+            .feed_bytes(&conclusion)
+            .expect("listener conclusion response");
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, HandshakeOutput::Connected(_))),
+            "the listener completes the handshake"
+        );
+        caller.on_datagram(&handshake_send(&outputs), STALL_US);
+        assert!(
+            matches!(caller.state, State::Connected(_)),
+            "the lost-and-resent induction still connects"
+        );
     }
 
     fn link() -> Link {
