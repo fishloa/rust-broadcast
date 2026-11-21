@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **A truncated MPEG-2 sequence header reports `need: 7`.** 0-2 bytes of the size fields now return `BufferTooShort` and exactly 3 bytes parse (audit 23 finding 281, #3797).
+- **MPEG-2.5 and Layer I frame headers are pinned.** MPEG-2.5 (ID `00`) at 11 025 Hz / 576 samples, and Layer I's `(12*br/sr + pad)*4` length at 32 and 36 bytes (audit 23 finding 282, #3798).
 - **Seeding an MPEG-2 display tracker suppresses the first access unit.** `seed_state`/`seed_full` had no unit test, so a no-op seed shipped and the first access unit raised a spurious `initial` change; a seeded tracker now reports `Unchanged`, and a second seed is ignored (audit 23 finding 279, #3795).
 - **A picture user-data payload shorter than the 4-byte identifier is ignored.** Only a 5-byte payload was tested, so a `<` tightened to `==` indexed a 2-byte payload. A 2-byte and an empty payload now leave the active format unset without panicking (audit 23 finding 280, #3796).
 - **Every `esds` `upStream` bit is parsed and written.** Every `esds` in the suite carried streamType `0x15` (upStream 0), so a parser that ignored the bit or a serializer that dropped it still round-tripped. A real ffmpeg `esds` with the byte set to `0x17` (type 5, upStream 1) now parses to `up_stream == true` and re-serializes byte-identically, and a `DecoderConfigDescriptor` built with `up_stream: true` writes `0x17` (audit 23 finding 275, #3791).
