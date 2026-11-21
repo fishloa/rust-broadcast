@@ -352,12 +352,14 @@ rejects a route naming `"catchup"` without it.
 
 On a multi-program (MPTS) route each program has its own archive (see
 [DVR recording](#dvr-recording)). Every endpoint above takes an optional
-`program` query parameter selecting it (`catchup.m3u8?program=2`); absent or
-`0` is the default program, with the URLs above unchanged. A non-default
-program's playlists carry the parameter on every URI they list, and the init
-of its still-live tail is served as `catchup/init-….mp4?program=N`. A program
-the route neither serves nor found archived answers as a route without an
-archive does.
+`program` query parameter naming a program by its MPEG-2 `program_number`
+(the DVB `service_id`, `catchup.m3u8?program=1538`); absent or `0` is the
+default program, with the URLs above unchanged. A non-default program's
+playlists carry the parameter on every URI they list, and the init of its
+still-live tail is served as `catchup/init-….mp4?program=N`. A program with
+archived segments but no live program (gone after a replace, or not yet
+announced since a restart) is served from its archive alone; a
+`program_number` the route neither serves nor found archived answers `404`.
 
 Shares `output_auth` with every other output — no separate credential or
 auth path for catch-up.
@@ -566,7 +568,8 @@ A route can persist finished segments to disk for catch-up / VOD:
   The default keeps a feature film in one file. Retention quantises to
   the period — a truncation costs up to one period.
 - `retention_periods`: keep at most this many period files (0 = unlimited).
-- `retention_bytes`: keep at most this many total bytes (0 = unlimited).
+- `retention_bytes`: keep at most this many total bytes (0 = unlimited),
+  per program archive on a multi-program route.
   At least one retention axis must be non-zero when DVR is enabled.
 - `overrun` (default `"gap"`): what happens when the live ring evicts a
   segment before the recorder consumes it:
@@ -588,20 +591,30 @@ A route can persist finished segments to disk for catch-up / VOD:
 ├── …
 ```
 
-On a multi-program (MPTS) route every program records into its own archive:
-the default program into `<archive_root>/<route>/` as above, every other
-program into the sibling `<archive_root>/<route>@<id>/` (`<id>` the program
-id in decimal, e.g. `news@2`). A route name cannot contain `@`, so a program
-archive never collides with another route's, and a route with DVR enabled
-is at most 244 bytes long so the longest program archive name still fits
-one 255-byte path component. Each program archive has its own writer lock,
-its own sequence floor (a restarted route numbers each program above what
-its own archive holds), its own retention (`retention_periods` and
-`retention_bytes` apply to each program archive separately) and its own EIT
-tracker: the default program tracks `dvb_service_id`, every other program
-the service whose `service_id` is its program id. Removing or replacing the
-route treats every program archive as it treats the default one; on a
-replace, each program's successor takes over that program's archive.
+On a multi-program (MPTS) route every program records into its own archive.
+The default program (the one the route serves by default: on an MPTS input,
+the program with the lowest `program_number` when the stream was first
+resolved) records into `<archive_root>/<route>/` as above; every other
+program into the sibling `<archive_root>/<route>@<program_number>/`, named by
+its MPEG-2 `program_number` (the DVB `service_id`) in decimal, e.g.
+`news@1538` — never by its position in the PAT, so a service added or
+resolved late never moves another service into a different archive. A
+non-default program without a `program_number` (a non-TS source) is not
+recorded. A route name cannot contain `@`, so a program archive never
+collides with another route's, and a route with DVR enabled is at most 249
+bytes long so the longest program archive name still fits one 255-byte path
+component. Each program archive has its own writer lock, its own sequence
+floor (a restarted route numbers each program above what its own archive
+holds), its own retention and its own EIT tracker: the default program
+tracks `dvb_service_id`, and when that is set every other program tracks
+its own service (`service_id == program_number`). **Retention applies per
+program archive**: `retention_periods` and `retention_bytes` bound each
+program archive separately, so a route can use up to its number of programs
+times `retention_bytes` of disk. Removing or replacing the route treats
+every program archive as it treats the default one; on a replace each
+service's successor takes over that service's archive, and a service
+missing from the successor's announcement is archived to its last segment
+and released.
 
 The archive format is owned by the [`dvr-runtime`](../dvr-runtime) crate;
 multimux records through its `FsRecorder` and serves catch-up through its
