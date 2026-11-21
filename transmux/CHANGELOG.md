@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **The `mhm1.0xNN` codec string is pinned.** Profile levels `0x0B`, `0x1D` and `0x05` now assert `mhm1.0x0B`, `mhm1.0x1D` and `mhm1.0x05` (audit 23 finding 283, #3799).
+- **Escaped MHAS lengths and the 8-bit packet-type bound are pinned.** Only unescaped 16-bit headers were tested, so a second-tier/third-tier length and the `> u8::MAX` guard were unobserved. A 2052-byte payload, an all-ones third tier that frames nothing (and its zero tier), a third-tier label that stays aligned, and packet types 255/256 now pin the walker (audit 23 finding 284, #3800).
 - **A truncated MPEG-2 sequence header reports `need: 7`.** 0-2 bytes of the size fields now return `BufferTooShort` and exactly 3 bytes parse (audit 23 finding 281, #3797).
 - **MPEG-2.5 and Layer I frame headers are pinned.** MPEG-2.5 (ID `00`) at 11 025 Hz / 576 samples, and Layer I's `(12*br/sr + pad)*4` length at 32 and 36 bytes (audit 23 finding 282, #3798).
 - **Seeding an MPEG-2 display tracker suppresses the first access unit.** `seed_state`/`seed_full` had no unit test, so a no-op seed shipped and the first access unit raised a spurious `initial` change; a seeded tracker now reports `Unchanged`, and a second seed is ignored (audit 23 finding 279, #3795).
