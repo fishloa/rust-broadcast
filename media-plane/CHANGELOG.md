@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `push_session::PushSession`, an additive sans-IO decision core for push outputs (feature `std`, issue #3927): it owns the connected `PushEgress` and answers one typed `PushDecision` per drained `SampleCursorItem` or host outcome (`needs setup`, `connected`, `reconnect` with its cause, `backoff`, `stop`), with `PushCounters` for samples sent/dropped and connections. Send errors are classified through the new `PushErrorKind` bound (`PushErrorClass::DropItem` / `Reconnect`), which is required only on this module's impl block, so `PushEgress` and every existing implementation are unchanged. No async, no clock and no I/O: the host keeps the connect/setup/flush awaits and closes every egress handed back in a decision.
+
 ### Fixed
 - `SubtitleFollower` is pinned end to end against the committed TSDuck capture: `try_new` needs a free segment writer (and a track with no subtitle page builds no follower), `set_start_time(2 s)` moves `X-TIMESTAMP-MAP` to `MPEGTS:180000` and the first segment's timeline/discontinuity, a cue at cut+1 s renders at local `00:00:01.000`, and two leader cuts plus `finish` publish two ordered subtitle segments (audit 23 finding 116, #3410).
 - WebVTT segment boundaries are pinned: a cue touching either range edge (equal end or equal start) or zero-length is excluded while an overlapping cue is included, `local_of`/`raw_of_local` round-trip across the 33-bit wrap, closed spans are published once in order with exact offsets/durations and are never re-closed, `finish` publishes the trailing partial segment, and a cue ending exactly at the boundary is consumed (audit 23 finding 115, #3409).

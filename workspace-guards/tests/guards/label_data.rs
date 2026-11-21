@@ -988,6 +988,18 @@ pub const TABLE: &[Crate] = &[
             // Data-carrying event ADT returned by the segmenter (issue #2554);
             // callers match the typed variant rather than a static label.
             "SegmenterEvent",
+            // --- push_session.rs ---
+            // (`PushErrorClass` carries the label pair — not listed here.)
+            // Data-carrying ADT over the egress's error type (`MuxDropped(E::Error)`,
+            // `Reconnect { egress, cause }`, `Stop { egress }`, …); callers match
+            // the typed variant, and a static label would drop the payload.
+            "PushDecision",
+            // Data-carrying ADT over the egress's error type, one variant per
+            // reconnect cause; a static label would drop the error.
+            "ReconnectCause",
+            // Bare enum, but this crate's own flush-outcome vocabulary from the
+            // sans-IO push decision core, not a token from a cited spec.
+            "FlushResult",
         ],
         expected: None,
         min_enums: None,
