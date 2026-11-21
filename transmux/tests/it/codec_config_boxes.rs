@@ -162,8 +162,7 @@ fn hvcc_hevc_main_display_and_box_length() {
     let path = test_fixtures::path("mp4/hevc-main.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let hvcc_body = find_box_body(&data, b"hvcC");
-    let record =
-        HEVCDecoderConfigurationRecord::parse(hvcc_body).expect("should parse hvcC");
+    let record = HEVCDecoderConfigurationRecord::parse(hvcc_body).expect("should parse hvcC");
 
     assert_eq!(
         record.to_string(),

@@ -231,7 +231,11 @@ fn uas_local_set_checksum_recomputed_on_change() {
 fn assert_local_set_length(set: &UasLocalSet) {
     let expected = set.serialize_with_checksum().unwrap();
     assert_eq!(set.serialized_len(), expected.len(), "serialized_len");
-    assert_eq!(set.try_to_bytes().unwrap().len(), expected.len(), "try_to_bytes");
+    assert_eq!(
+        set.try_to_bytes().unwrap().len(),
+        expected.len(),
+        "try_to_bytes"
+    );
     let mut buf = vec![0u8; set.serialized_len()];
     assert_eq!(
         set.serialize_into(&mut buf).unwrap(),
@@ -253,9 +257,10 @@ fn uas_local_set_lengths_cover_empty_short_long_and_checksum_items() {
     ]));
 
     // (c) A 200-byte value (two-byte BER length) under a 2-byte BER-OID tag.
-    assert_local_set_length(&UasLocalSet::from_items(vec![
-        LocalSetItem::new(200, vec![0x5A; 200]),
-    ]));
+    assert_local_set_length(&UasLocalSet::from_items(vec![LocalSetItem::new(
+        200,
+        vec![0x5A; 200],
+    )]));
 
     // (d) An existing tag-1 item is replaced, not summed into the length.
     assert_local_set_length(&UasLocalSet::from_items(vec![

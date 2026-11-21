@@ -663,7 +663,11 @@ mod tests {
             temporal_id_nested: true,
             length_size_minus_one: 3,
             arrays: vec![
-                HevcNalArray::new(true, 32, vec![HevcNalUnit::new(hevc_nal(32, &[0x0C, 0x01]))]),
+                HevcNalArray::new(
+                    true,
+                    32,
+                    vec![HevcNalUnit::new(hevc_nal(32, &[0x0C, 0x01]))],
+                ),
                 HevcNalArray::new(
                     true,
                     33,
