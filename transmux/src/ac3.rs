@@ -1638,6 +1638,81 @@ pub(crate) mod tests {
         assert_eq!(b.channels_with_lfe(), 6);
     }
 
+    /// The CRC check must be judged on a payload: a "frame" that is only the
+    /// syncword has an empty checked region, whose CRC is trivially zero, so it
+    /// must not verify (ETSI TS 102 366 §E.2.2 — a syncframe carries a `crc2`
+    /// word, which two bytes cannot hold).
+    #[test]
+    fn crc_check_rejects_a_syncword_only_frame() {
+        assert!(!eac3_frame_crc_ok(&[]));
+        assert!(!eac3_frame_crc_ok(&AC3_SYNCWORD.to_be_bytes()));
+        let frame = first_real_eac3_frame();
+        assert_eq!(&frame[..AC3_SYNCWORD_BYTES], &AC3_SYNCWORD.to_be_bytes());
+        assert!(eac3_frame_crc_ok(&frame), "the capture's first frame verifies");
+    }
+
+    /// The first sample of the committed Dolby E-AC-3 capture: a real
+    /// syncframe with a real `crc2`.
+    fn first_real_eac3_frame() -> Vec<u8> {
+        use crate::pipeline::CodecConfig;
+        use broadcast_common::Unpackage;
+        let ts = test_fixtures::read("ts/dolby/eac3.ts");
+        let media = crate::TsDemux::new().unpackage(&ts).unwrap();
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. }))
+            .unwrap();
+        track.samples[0].data.to_vec()
+    }
+
+    /// ETSI TS 102 366 §4.4.2.2: `cmixlev` is carried when `(acmod & 0x1) &&
+    /// (acmod != 0x1)`, `surmixlev` when `(acmod & 0x4)`, `dsurmod` when
+    /// `acmod == 0x2`. A wrong skip moves `lfeon` — and with it the channel
+    /// count and the `dac3` box — for that layout, so every acmod is pinned
+    /// with both `lfeon` values.
+    #[test]
+    fn ac3_optional_bsi_fields_are_skipped_per_acmod() {
+        // Table 4.5 full-bandwidth channel counts, indexed by acmod.
+        const CHANNELS: [u8; 8] = [2, 1, 2, 3, 3, 4, 4, 5];
+        for acmod in 0u64..=7 {
+            for lfeon in [false, true] {
+                let mut w = BitWriter::new();
+                w.u(16, AC3_SYNCWORD as u64);
+                w.u(16, 0xFFFF); // crc1, not checked by the BSI parser
+                w.u(2, 0); // fscod 48 kHz
+                w.u(6, 30); // frmsizecod -> 640 kbit/s
+                w.u(5, 8); // bsid 8 (AC-3)
+                w.u(3, 2); // bsmod
+                w.u(3, acmod);
+                if acmod & 0x1 != 0 && acmod != 0x1 {
+                    w.u(2, 1); // cmixlev
+                }
+                if acmod & 0x4 != 0 {
+                    w.u(2, 2); // surmixlev
+                }
+                if acmod == 0x2 {
+                    w.u(2, 3); // dsurmod
+                }
+                w.u(1, u64::from(lfeon));
+                w.u(7, 0x7F); // trailing bits: a shifted read still lands in the buffer
+                let es = w.finish();
+                let info = Ac3SyncframeInfo::parse_at(&es, 0)
+                    .unwrap_or_else(|e| panic!("acmod {acmod} lfeon {lfeon}: {e}"));
+                assert_eq!(
+                    (info.acmod, info.lfeon),
+                    (acmod as u8, lfeon),
+                    "acmod {acmod}, lfeon {lfeon}"
+                );
+                assert_eq!(
+                    info.channel_count(),
+                    CHANNELS[acmod as usize],
+                    "acmod {acmod}: Table 4.5 channel count"
+                );
+            }
+        }
+    }
+
     // Oracle bytes from dolby-oracle.md (ffmpeg-generated)
     const DAC3_ORACLE: [u8; 3] = [0x50, 0x09, 0x40];
     const DEC3_ORACLE: [u8; 5] = [0x06, 0x00, 0x60, 0x02, 0x00];
