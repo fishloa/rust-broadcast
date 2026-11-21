@@ -196,7 +196,7 @@ pub trait PushTransport: Send + 'static {
 
     /// Encode one drained batch into this transport's native wire messages,
     /// performing **no I/O** (issue #942) — the sans-IO half of
-    /// [`send_media`](Self::send_media). [`egress::PushTransportEgress::send`]
+    /// [`send_media`](Self::send_media). [`PushEgress::send`](media_plane::egress::PushEgress::send)
     /// is why this exists as a method a caller can invoke separately from
     /// an actual write: its trait, [`media_plane::PushEgress`], is
     /// deliberately synchronous (mirrors
