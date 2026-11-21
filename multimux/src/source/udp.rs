@@ -309,4 +309,21 @@ mod tests {
             "a name does not pin a family"
         );
     }
+
+    #[test]
+    fn an_ipv6_bind_or_group_is_bracketed_in_the_session_url() {
+        assert_eq!(
+            session_url("udp", "[::1]:5000", None).unwrap(),
+            "udp://[::1]:5000"
+        );
+        assert_eq!(
+            session_url("udp", "127.0.0.1:5000", None).unwrap(),
+            "udp://127.0.0.1:5000"
+        );
+        let group = MulticastJoin::new("ff02::1".parse().expect("a group address"));
+        assert_eq!(
+            session_url("udp", "[::]:5000", Some(&group)).unwrap(),
+            "udp://[ff02::1]:5000"
+        );
+    }
 }

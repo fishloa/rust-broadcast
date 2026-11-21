@@ -1055,4 +1055,36 @@ mod tests {
         );
         server.abort();
     }
+
+    #[tokio::test]
+    async fn the_rtsp_driver_surfaces_an_immediate_session_failure() {
+        use crate::source::pull_target::{PullDrive, PullRoute};
+
+        let route = std::sync::Arc::new(PullRoute::<RtspKind>::new(
+            "rtsp-fail",
+            "rtsp://127.0.0.1:1/live",
+        ));
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_part_target(Duration::from_millis(250))
+                .with_window_segments(8),
+        ));
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            <RtspKind as PullDrive>::drive(
+                route,
+                trunk_config(),
+                handshake(),
+                route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("the drive returns once the connect is refused");
+        assert!(
+            result.is_err(),
+            "a refused RTSP connect must surface from drive"
+        );
+    }
 }

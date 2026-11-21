@@ -722,4 +722,42 @@ mod tests {
         }
         server.abort();
     }
+
+    #[tokio::test]
+    async fn the_smooth_driver_surfaces_an_immediate_session_failure() {
+        use crate::source::pull_target::{PullDrive, PullRoute};
+
+        let route = std::sync::Arc::new(
+            PullRoute::<SmoothPullKind>::new("smooth-fail", "http://127.0.0.1:1/Manifest")
+                .with_timeouts(
+                    broadcast_common::timeouts::Timeouts::default()
+                        .with_connect(Duration::from_millis(200))
+                        .with_read_idle(Duration::from_millis(300)),
+                ),
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(std::time::Duration::from_secs(1))
+                .with_part_target(Duration::from_millis(250))
+                .with_window_segments(8),
+        ));
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            <SmoothPullKind as PullDrive>::drive(
+                route,
+                trunk_config(),
+                media_plane::ingress::HandshakePolicy::establish_by(
+                    broadcast_common::Timestamp::from_nanos(u64::MAX),
+                ),
+                route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("the drive returns once the connect is refused");
+        assert!(
+            result.is_err(),
+            "a refused Smooth manifest request must surface from drive"
+        );
+    }
 }
