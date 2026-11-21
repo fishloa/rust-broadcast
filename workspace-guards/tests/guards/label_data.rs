@@ -1201,7 +1201,6 @@ pub const TABLE: &[Crate] = &[
             "RtmpProtocolError",
             "RtspConnectError",
             "RtspProtocolError",
-            "DvrError",
             "ProtocolFailure",
             "InputSpec",
             "AuthSpec",
