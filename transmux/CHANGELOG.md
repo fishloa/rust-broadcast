@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- **BREAKING:** `HEVCDecoderConfigurationRecord::is_valid_length_size` is removed. It had no caller (the parser validates `lengthSizeMinusOne` against `VALID_LENGTH_SIZES`; the VVC record keeps its own, used copy) and its doc comment described an unrelated reserved-bit rule, so it was a dead, untested duplicate public API (audit 23 finding 268, #3781).
+
 ### Fixed
 - **The `hvcC` record's `Display` and its box serializer's returned length are asserted.** `Display` was never formatted and the box serializer's return was never compared with `serialized_len()`, so a wrong label or a multiplied cursor would have advanced callers' buffers silently. The real `hevc-main.mp4` record now prints `HEVC(tier=main, profile_idc=1, level=60, lenSize=4, arrays=3)` and `serialize_into` returns the box's `serialized_len()` (audit 23 finding 267, #3780).
 - **A High-tier, profile-space-2 `hvcC` keeps its tier flag, profile space and all six constraint bytes.** Every committed fixture carried profile space 0, main tier and only the top constraint byte, so `<<`/`>>` swaps in the profile byte and constraint serialization and a dropped tier flag would have shipped (and corrupted the RFC 6381 string). A record with profile space 2, High tier, profile idc 2 and constraints `0x0123456789AB` now asserts the exact profile byte `0xA2`, the six constraint bytes, a parse round-trip and `hvc1.B2.6.H120.01.23.45.67.89.AB` (audit 23 finding 266, #3779).
