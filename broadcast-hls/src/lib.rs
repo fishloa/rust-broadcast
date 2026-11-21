@@ -2771,6 +2771,24 @@ impl AttrValue {
         })
     }
 
+    /// Build a quoted value this crate formatted itself (a date or a `CUE`
+    /// list), so it cannot contain a forbidden character.
+    pub(crate) fn quoted_unchecked(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            quoted: true,
+        }
+    }
+
+    /// Build a bare value this crate formatted itself (a duration or a
+    /// hexadecimal sequence), so it cannot contain a forbidden character.
+    pub(crate) fn bare_unchecked(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            quoted: false,
+        }
+    }
+
     /// The value's content, with wire quoting (if any) already stripped.
     #[must_use]
     pub fn as_str(&self) -> &str {

@@ -56,23 +56,23 @@ fn daterange_fields_are_typed() {
         .next()
         .expect("fixture line");
     let range = DateRange::parse_tag_line(&line).expect("must parse");
-    assert_eq!(range.id, "2002");
-    assert_eq!(range.class, None);
-    let start = range.start.expect("START-DATE must be typed");
+    assert_eq!(range.id(), "2002");
+    assert_eq!(range.class(), None);
+    let start = range.start().expect("START-DATE must be typed");
     assert_eq!(start.render(), "2018-10-29T10:38:00.000Z");
-    assert_eq!(range.planned_duration.map(|d| d.get()), Some(24.0));
-    assert!(!range.end_on_next);
-    assert_eq!(range.extra_attrs.len(), 1);
-    assert_eq!(range.extra_attrs[0].0, "SCTE35-OUT");
-    assert!(range.extra_attrs[0].1.as_str().starts_with("0xFC3021"));
-    assert!(range.client_attrs.is_empty());
+    assert_eq!(range.planned_duration().map(|d| d.get()), Some(24.0));
+    assert!(!range.end_on_next());
+    assert_eq!(range.extra_attrs().len(), 1);
+    assert_eq!(range.extra_attrs()[0].0, "SCTE35-OUT");
+    assert!(range.extra_attrs()[0].1.as_str().starts_with("0xFC3021"));
+    assert!(range.client_attrs().is_empty());
 
     let design = "#EXT-X-DATERANGE:ID=\"programme-1537-30807\",CLASS=\"io.github.fishloa.rust-broadcast.programme\",START-DATE=\"2024-05-18T18:00:02.000Z\",PLANNED-DURATION=3600,END-ON-NEXT=YES,X-DVB-SERVICE-ID=1537,X-DVB-EVENT-ID=30807,X-SCHEDULED-START=\"2024-05-18T18:00:00Z\",X-TITLE=\"50' inside\"";
     let range = DateRange::parse_tag_line(design).expect("design DATERANGE must parse");
-    assert_eq!(range.client_attrs.len(), 4);
+    assert_eq!(range.client_attrs().len(), 4);
     assert!(
         range
-            .client_attrs
+            .client_attrs()
             .iter()
             .any(|(n, v)| n.as_str() == "X-TITLE" && v.as_str() == "50' inside")
     );
@@ -409,7 +409,7 @@ fn daterange_wire_grammar_is_strict_and_lossless() {
 
     let cue =
         DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",CUE=\"PRE,ONCE\"").expect("valid CUE");
-    let cue = cue.cue.expect("typed cue");
+    let cue = cue.cue().expect("typed cue");
     assert_eq!(cue.triggers.len(), 2);
     assert_eq!(cue.triggers[0].name(), "PRE");
     assert_eq!(cue.triggers[0].to_string(), "PRE");
@@ -425,6 +425,95 @@ fn daterange_wire_grammar_is_strict_and_lossless() {
     assert!(matches!(
         DateRange::new("a").expect("valid id").to_tag_line(),
         Ok(line) if line == "#EXT-X-DATERANGE:ID=\"a\""
+    ));
+}
+
+/// Item 1: setters edit the single ordered attribute list. An existing
+/// attribute keeps its position, a new one is appended, and equality is
+/// semantic (not order or decimal spelling).
+#[test]
+fn daterange_edits_after_parse_are_rendered_in_place() {
+    use broadcast_hls::{AttrValue, ClientAttrName, DecimalSeconds};
+
+    let line = "#EXT-X-DATERANGE:ID=\"a\",START-DATE=\"2024-01-01T00:00:00Z\",CLASS=\"c\"";
+    let mut range = DateRange::parse_tag_line(line).expect("must parse");
+    range.set_id("CHANGED").expect("set id");
+    range.set_class(Some("d")).expect("set class");
+    range
+        .set_client_attr(
+            ClientAttrName::new("X-NEW").expect("valid name"),
+            AttrValue::bare("1").expect("valid value"),
+        )
+        .expect("set client attr");
+    assert_eq!(
+        range.to_tag_line().expect("render"),
+        "#EXT-X-DATERANGE:ID=\"CHANGED\",START-DATE=\"2024-01-01T00:00:00Z\",CLASS=\"d\",X-NEW=1",
+        "edits land in place; the new attribute is appended"
+    );
+
+    let parsed = DateRange::parse_tag_line(
+        "#EXT-X-DATERANGE:START-DATE=\"2024-01-01T00:00:00Z\",ID=\"a\",DURATION=10.0",
+    )
+    .expect("must parse");
+    let built = DateRange::new("a")
+        .expect("valid id")
+        .with_start(parsed.start().expect("start"))
+        .with_duration(DecimalSeconds::new(10.0).expect("valid"));
+    assert_eq!(parsed, built, "equality is semantic, not spelling or order");
+    assert_eq!(
+        built.to_tag_line().expect("render"),
+        "#EXT-X-DATERANGE:ID=\"a\",START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=10"
+    );
+
+    let unchanged = DateRange::parse_tag_line(line).expect("must parse");
+    assert_eq!(unchanged.to_tag_line().expect("render"), line);
+}
+
+/// Item 2: an empty quoted-string is legal for a quoted-string attribute,
+/// while an empty `ID` stays a typed error.
+#[test]
+fn empty_quoted_values_are_accepted_except_the_id() {
+    use broadcast_hls::{CustomTag, DateRangeError};
+
+    daterange_roundtrip("#EXT-X-DATERANGE:ID=\"a\",X-A=\"\"");
+    daterange_roundtrip("#EXT-X-DATERANGE:ID=\"a\",CLASS=\"\"");
+    let tag = CustomTag::parse_tag_line("#EXT-X-FOO:A=\"\"").expect("empty quoted value");
+    assert_eq!(tag.to_tag_line().expect("render"), "#EXT-X-FOO:A=\"\"");
+    assert!(matches!(
+        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"\""),
+        Err(Error::InvalidDateRange {
+            reason: DateRangeError::EmptyId,
+            ..
+        })
+    ));
+}
+
+/// Item 3: an `X-` decimal-floating-point value is unsigned.
+#[test]
+fn client_decimal_values_are_unsigned() {
+    use broadcast_hls::DateRangeError;
+
+    daterange_roundtrip("#EXT-X-DATERANGE:ID=\"a\",X-A=1.5");
+    assert!(matches!(
+        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-A=-1.5"),
+        Err(Error::InvalidDateRange {
+            reason: DateRangeError::InvalidClientAttributeValue,
+            ..
+        })
+    ));
+}
+
+/// Cosmetic: an error whose `ID` is later in the line still names that id.
+#[test]
+fn daterange_errors_report_the_id_when_it_is_known() {
+    use broadcast_hls::DateRangeError;
+
+    assert!(matches!(
+        DateRange::parse_tag_line("#EXT-X-DATERANGE:CUE=\"PRE,POST\",ID=\"real\""),
+        Err(Error::InvalidDateRange {
+            id,
+            reason: DateRangeError::CuePreAndPost,
+        }) if id == "real"
     ));
 }
 
