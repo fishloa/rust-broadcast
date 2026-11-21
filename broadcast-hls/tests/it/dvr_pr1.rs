@@ -234,3 +234,89 @@ fn default_parse_still_hoists_the_timing_tag() {
             .all(|s| s.pre_tags.iter().all(|t| !t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:")))
     );
 }
+
+fn assert_render_split_matches(playlist: &broadcast_hls::MediaPlaylist) {
+    let mut split = playlist.render_header().expect("header");
+    for index in 0..playlist.segments.len() {
+        split.push_str(&playlist.render_segment(index).expect("segment"));
+    }
+    split.push_str(&playlist.render_endlist().expect("endlist"));
+    assert_eq!(
+        split,
+        playlist.to_m3u8().expect("full render"),
+        "header + segments + endlist must equal to_m3u8"
+    );
+}
+
+/// H4: the render split is the full render, over every committed media
+/// playlist fixture (LL-HLS trailing reports included) and generated shapes.
+#[test]
+fn render_split_equals_full_render() {
+    use broadcast_hls::{MediaPlaylist, limits::Limits};
+
+    let fixtures = [
+        "hls/valid.m3u8",
+        "hls/reference-vod.m3u8",
+        "hls/bad-extinf.m3u8",
+        "hls/malformed-daterange.m3u8",
+        "hls/byterange-hls/index.m3u8",
+        "hls/ts-hls/index.m3u8",
+        "hls/handbuilt/daterange-scte35-media.m3u8",
+        "hls/handbuilt/live-vod-gap-bitrate.m3u8",
+        "hls/handbuilt/low-latency-parts-preload-report.m3u8",
+        DESIGN_PLAYLIST,
+        "hls/real/bipbop-fmp4-hevc/a1-audio.m3u8",
+        "hls/real/bipbop-fmp4-hevc/v5-video.m3u8",
+        "hls/real/bipbop-ts/alternate-audio.m3u8",
+        "hls/real/bipbop-ts/gear1-video.m3u8",
+    ];
+    let mut checked = 0usize;
+    for fixture in fixtures {
+        let input = test_fixtures::read_to_string(fixture);
+        let playlist = MediaPlaylist::parse_with_options(&input, &Limits::default(), &segment_scoped_options())
+            .unwrap_or_else(|e| panic!("{fixture} must parse: {e}"));
+        assert_render_split_matches(&playlist);
+        checked += 1;
+    }
+    assert_eq!(checked, fixtures.len());
+
+    // A closed playlist with no segments, an open (endlist-less) one, and a
+    // programmatically built segment record.
+    let empty = MediaPlaylist {
+        target_duration: 2,
+        ..Default::default()
+    };
+    assert_render_split_matches(&empty);
+    assert!(empty.render_endlist().expect("endlist").is_empty());
+
+    let mut open = MediaPlaylist {
+        target_duration: 4,
+        ..Default::default()
+    };
+    open.segments.push(broadcast_hls::MediaSegment {
+        uri: "seg0.m4s".into(),
+        duration: broadcast_hls::DecimalSeconds::new(4.0).expect("valid"),
+        ..Default::default()
+    });
+    assert_render_split_matches(&open);
+    assert!(open.render_endlist().expect("endlist").is_empty());
+
+    let mut closed = open.clone();
+    closed.endlist = true;
+    assert_eq!(closed.render_endlist().expect("endlist"), "#EXT-X-ENDLIST\n");
+    assert_render_split_matches(&closed);
+}
+
+/// H4: an index the playlist does not have is a typed error, not a panic.
+#[test]
+fn render_segment_out_of_range_is_a_typed_error() {
+    use broadcast_hls::MediaPlaylist;
+    let playlist = MediaPlaylist {
+        target_duration: 2,
+        ..Default::default()
+    };
+    assert!(matches!(
+        playlist.render_segment(0),
+        Err(Error::SegmentIndexOutOfRange { index: 0, len: 0 })
+    ));
+}

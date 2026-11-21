@@ -1718,6 +1718,26 @@ impl MediaPlaylist {
     /// fields.
     pub fn to_m3u8(&self) -> Result<String> {
         self.validate_for_render()?;
+        let mut s = self.render_header()?;
+        for index in 0..self.segments.len() {
+            s.push_str(&self.render_segment(index)?);
+        }
+        s.push_str(&self.render_endlist()?);
+        Ok(s)
+    }
+
+    /// Render the header block of this Media Playlist — everything from
+    /// `#EXTM3U` through the playlist-level tags, ending just before the first
+    /// segment. Together with `Σ` [`Self::render_segment`] and
+    /// [`Self::render_endlist`] this is exactly [`Self::to_m3u8`], which is
+    /// implemented in terms of the three so an append-only writer (the DVR
+    /// archive) emits the same bytes a full render would.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::to_m3u8`] for the header's own fields.
+    pub fn render_header(&self) -> Result<String> {
+        validate_tag_body("playlist-level extra tag", &self.extra_tags)?;
         let mut s = String::new();
         s.push_str("#EXTM3U\n");
         if let Some(version) = self.effective_version() {
@@ -1814,7 +1834,31 @@ impl MediaPlaylist {
             s.push('\n');
         }
 
-        for (i, seg) in self.segments.iter().enumerate() {
+        Ok(s)
+    }
+
+    /// Render one Media Segment record — its segment-scoped tags, the
+    /// discontinuity/map/bitrate/PDT tags that apply to it, `#EXTINF`, its
+    /// `#EXT-X-BYTERANGE` and its URI line. This is the unit an append-only
+    /// writer appends; [`Self::to_m3u8`] is the concatenation.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::SegmentIndexOutOfRange`] when the playlist has no segment at
+    /// `index`, plus the field-validation errors of [`Self::to_m3u8`].
+    pub fn render_segment(&self, index: usize) -> Result<String> {
+        let len = self.segments.len();
+        let seg = self
+            .segments
+            .get(index)
+            .ok_or(Error::SegmentIndexOutOfRange { index, len })?;
+        let i = index;
+        validate_tag_body("segment pre-tag", &seg.pre_tags)?;
+        validate_uri(&seg.uri, "segment URI")?;
+        if let Some(title) = &seg.title {
+            validate_quoted_string(title, "EXTINF title")?;
+        }
+        let mut s = String::new();
             // Segment-scoped unmodeled tags (EXT-X-KEY rotation, PDT,
             // DATERANGE, CUE-*) in their original position (audit BH-W5).
             for tag in &seg.pre_tags {
@@ -1887,6 +1931,32 @@ impl MediaPlaylist {
             }
             s.push_str(&seg.uri);
             s.push('\n');
+        Ok(s)
+    }
+
+    /// Render the trailing block of this Media Playlist: the open (live-edge)
+    /// segment if any, the LL-HLS preload hint and rendition reports, and
+    /// `#EXT-X-ENDLIST` when [`Self::endlist`] is set. For a closed, non-LL
+    /// playlist this is just the `#EXT-X-ENDLIST` line, and it is empty when
+    /// there is no endlist; an LL-HLS playlist without an endlist still has
+    /// its trailing hints/reports here, so the
+    /// `header + Σ segment + endlist == to_m3u8` identity holds for it too.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::to_m3u8`] for the trailing block's own fields.
+    pub fn render_endlist(&self) -> Result<String> {
+        let mut s = String::new();
+        if let Some(open) = &self.open_segment {
+            validate_tag_body("open-segment pre-tag", &open.pre_tags)?;
+        }
+        for report in &self.rendition_reports {
+            validate_uri(&report.uri, "EXT-X-RENDITION-REPORT URI")?;
+        }
+        if let Some(ll) = &self.low_latency
+            && let Some(uri) = &ll.preload_hint_part
+        {
+            validate_uri(uri, "EXT-X-PRELOAD-HINT URI")?;
         }
 
         // The in-progress (open) segment at the live edge — its parts are
