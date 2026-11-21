@@ -7,9 +7,11 @@
 //! available (ffmpeg cannot write it), so it is a spec-vector round trip.
 
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::{Package, Serialize, Unpackage};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
-use transmux::{CmafMux, Fmp4Demux, Media, Sample, Track, TrackId, TrackSpec, WvttSampleEntry};
+use transmux::{
+    CmafMux, Fmp4Demux, Media, Sample, Track, TrackId, TrackSpec, VttCueBox, WvttSampleEntry,
+};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -140,4 +142,142 @@ fn entryless_subtitle_is_still_rejected_by_name() {
         matches!(err, transmux::Error::UnmuxableSubtitleTrack { .. }),
         "{err:?}"
     );
+}
+
+fn child(ty: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut v = ((8 + body.len()) as u32).to_be_bytes().to_vec();
+    v.extend_from_slice(ty);
+    v.extend_from_slice(body);
+    v
+}
+
+fn vttc(children: &[Vec<u8>]) -> Vec<u8> {
+    child(b"vttc", &children.concat())
+}
+
+#[test]
+fn vttc_later_children_and_eight_byte_empty_box_round_trip() {
+    let iden = child(b"iden", b"id1");
+    let sttg = child(b"sttg", b"align:end");
+    let payl = child(b"payl", b"text");
+    let vsid = child(b"vsid", &[0, 0, 0, 7]);
+    let ctim = child(b"ctim", b"00:00:01.000");
+    let empty = child(b"empt", &[]);
+    assert_eq!(empty.len(), 8, "an empty child is header-only");
+
+    let mut children = vec![iden, sttg, payl, vsid, ctim];
+    let without_empty = vttc(&children);
+    let cue = VttCueBox::bare_parse(&without_empty).expect("parse vttc");
+    assert_eq!(cue.cue_id.as_ref().expect("iden").cue_id, "id1");
+    assert_eq!(cue.settings.as_ref().expect("sttg").settings, "align:end");
+    assert_eq!(cue.payload.cue_text, "text");
+    assert_eq!(cue.extra_children.len(), 2);
+    assert_eq!(&cue.extra_children[0].box_type, b"vsid");
+    assert_eq!(&cue.extra_children[1].box_type, b"ctim");
+    assert_eq!(cue.try_to_bytes().unwrap(), without_empty);
+
+    // The empty 8-byte child sits exactly at the end of the body: a `<=`
+    // tightened to `<` would leave the loop before reading it.
+    children.push(empty);
+    let with_empty = vttc(&children);
+    let cue = VttCueBox::bare_parse(&with_empty).expect("parse vttc with an empty child");
+    assert_eq!(cue.extra_children.len(), 3);
+    assert_eq!(&cue.extra_children[2].box_type, b"empt");
+    assert!(cue.extra_children[2].data.is_empty());
+    assert_eq!(cue.try_to_bytes().unwrap(), with_empty);
+}
+
+#[test]
+fn vttc_trailing_short_box_stops_the_walk_without_being_written() {
+    let iden = child(b"iden", b"id1");
+    let sttg = child(b"sttg", b"align:end");
+    let payl = child(b"payl", b"text");
+    let vsid = child(b"vsid", &[0, 0, 0, 7]);
+    let ctim = child(b"ctim", b"00:00:01.000");
+    let good = vttc(&[iden, sttg, payl, vsid, ctim]);
+
+    // A final 8-byte slot whose size field is below the header length.
+    let mut garbage = 4u32.to_be_bytes().to_vec();
+    garbage.extend_from_slice(b"junk");
+    let mut wire = good.clone();
+    wire.extend_from_slice(&garbage);
+    let wire_len = wire.len() as u32;
+    wire[0..4].copy_from_slice(&wire_len.to_be_bytes());
+
+    let cue = VttCueBox::bare_parse(&wire).expect("parse vttc with trailing short box");
+    assert_eq!(cue.extra_children.len(), 2);
+    assert_eq!(cue.try_to_bytes().unwrap(), good);
+}
+
+#[test]
+fn vttc_extra_removal_reindexes_without_a_panic() {
+    let iden = child(b"iden", b"id1");
+    let sttg = child(b"sttg", b"align:end");
+    let payl = child(b"payl", b"text");
+    let vsid = child(b"vsid", &[0, 0, 0, 7]);
+    let ctim = child(b"ctim", b"00:00:01.000");
+    let both = vttc(&[iden.clone(), sttg.clone(), payl.clone(), vsid.clone(), ctim]);
+    let only_vsid = vttc(&[iden, sttg, payl, vsid]);
+
+    let mut cue = VttCueBox::bare_parse(&both).expect("parse two extras");
+    cue.extra_children.pop().expect("two extras");
+    assert_eq!(
+        cue.try_to_bytes()
+            .expect("serialize after removing an extra"),
+        only_vsid,
+        "a removed extra must not be indexed by its stale wire slot"
+    );
+}
+
+#[test]
+fn wvtt_entry_extra_boxes_and_eight_byte_empty_box_round_trip() {
+    let vttc = child(b"vttC", b"WEBVTT");
+    let vlab = child(b"vlab", b"label");
+    let btrt = child(b"btrt", &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    let empty = child(b"empt", &[]);
+
+    let entry_body = |extras: &[Vec<u8>]| {
+        let mut body = vec![0u8; 6];
+        body.extend_from_slice(&1u16.to_be_bytes());
+        body.extend_from_slice(&vttc);
+        for e in extras {
+            body.extend_from_slice(e);
+        }
+        child(b"wvtt", &body)
+    };
+
+    let two_extras = entry_body(&[vlab.clone(), btrt.clone()]);
+    let entry = WvttSampleEntry::bare_parse(&two_extras).expect("parse wvtt");
+    assert_eq!(entry.data_reference_index, 1);
+    assert_eq!(entry.config.config, "WEBVTT");
+    assert_eq!(entry.extra_boxes.len(), 2);
+    assert_eq!(&entry.extra_boxes[0].box_type, b"vlab");
+    assert_eq!(&entry.extra_boxes[1].box_type, b"btrt");
+    assert_eq!(entry.try_to_bytes().unwrap(), two_extras);
+
+    let with_empty = entry_body(&[vlab, btrt, empty]);
+    let entry = WvttSampleEntry::bare_parse(&with_empty).expect("parse wvtt with an empty child");
+    assert_eq!(entry.extra_boxes.len(), 3);
+    assert_eq!(&entry.extra_boxes[2].box_type, b"empt");
+    assert!(entry.extra_boxes[2].data.is_empty());
+    assert_eq!(entry.try_to_bytes().unwrap(), with_empty);
+
+    // A final size<8 slot stops the walk instead of slicing a 4-byte child.
+    let vttc = child(b"vttC", b"WEBVTT");
+    let vlab = child(b"vlab", b"label");
+    let mut body = vec![0u8; 6];
+    body.extend_from_slice(&1u16.to_be_bytes());
+    body.extend_from_slice(&vttc);
+    body.extend_from_slice(&vlab);
+    let mut garbage = 4u32.to_be_bytes().to_vec();
+    garbage.extend_from_slice(b"junk");
+    body.extend_from_slice(&garbage);
+    let wire = child(b"wvtt", &body);
+    let entry = WvttSampleEntry::bare_parse(&wire).expect("parse wvtt with trailing short box");
+    assert_eq!(entry.extra_boxes.len(), 1);
+    let mut good_body = vec![0u8; 6];
+    good_body.extend_from_slice(&1u16.to_be_bytes());
+    good_body.extend_from_slice(&vttc);
+    good_body.extend_from_slice(&vlab);
+    assert_eq!(entry.try_to_bytes().unwrap(), child(b"wvtt", &good_body));
 }
