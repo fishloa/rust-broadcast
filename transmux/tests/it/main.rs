@@ -165,6 +165,7 @@ mod segmenter_progress_bounds;
 mod sei_caption_real_capture;
 mod serializer_length_truncation;
 mod skipped_track_id;
+mod slice_header_pps;
 mod smooth;
 #[cfg(feature = "std")]
 mod smooth_fragment_inspect;
