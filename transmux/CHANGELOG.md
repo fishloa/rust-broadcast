@@ -130,6 +130,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The `lrap` entry writes every library sample once and the `a3lg` entry is zero bytes.** With two or more samples the cursor `+= 2` could become `*= 2`, overwriting the wrong offsets, and the empty entry's length could report 1. Three samples now assert the exact seven bytes and round-trip, and `LibrarySampleGroupEntry::serialized_len()` is asserted to be 0 (audit 23 finding 230, #3738).
 - **A lossless `dca3` with long `addition_info` and no explicit frequency serializes correctly.** `8 * len` was only tested where `8 + len` rounded to the same byte, and the `(false, None)` arm was never written; a five-byte addition list and `sampling_frequency_index` 2 now assert the exact 10-byte body and round-trip, and the GeneralHigh path its own 13-byte body (audit 23 finding 231, #3739).
 
+- **`CaptionDetector::for_config` keeps its HEVC and MPEG-2 carriages.** Deleting either arm returned `None`, silently disabling caption detection for every HEVC or MPEG-2 track; both codecs, a synthetic HEVC prefix-SEI CC1 sample, and a non-video config now pin the selection (audit 23 finding 236, #3744).
+- **An MPEG-2 user-data payload shorter than the four-byte identifier is skipped, not sliced past.** The `payload.len() < 4` guard protected `split_at(4)`; a two-byte user_data before a valid ATSC payload now leaves the detector working and still finds CC1 (audit 23 finding 237, #3745).
+
 ### Removed
 - **BREAKING: `TrackFragmentBox::into_bytes`** (unused; use `Serialize::try_to_bytes`) (#3698).
 

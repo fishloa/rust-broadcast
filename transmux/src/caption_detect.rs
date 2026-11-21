@@ -388,4 +388,33 @@ mod tests {
         assert!(!d.observe(&mpeg2_picture(*b"GA94", 0x06, &cc)));
         assert!(d.detected().is_empty());
     }
+
+    #[test]
+    fn mpeg2_short_user_data_is_skipped_without_panicking() {
+        let mut d = mpeg2_detector();
+        let mut au = PICTURE_START.to_vec();
+        au.extend_from_slice(&[0x00, 0x0F, 0xFF, 0xF8]);
+        au.extend_from_slice(&USER_DATA_START);
+        au.extend_from_slice(&[0x00, 0x01]);
+        au.extend_from_slice(&USER_DATA_START);
+        au.extend_from_slice(b"GA94");
+        au.push(MPEG2_ATSC_CC_USER_DATA_TYPE_CODE);
+        au.extend_from_slice(&cc_data(&hi_on(0x14, 0x14, FIELD1)));
+        assert!(d.observe(&au));
+        assert_eq!(
+            d.detected(),
+            vec![DetectedCaption::Cea608(Cea608Channel::Cc1)]
+        );
+    }
+
+    #[test]
+    fn detected_caption_labels_are_pinned() {
+        let cc1 = DetectedCaption::Cea608(Cea608Channel::Cc1);
+        assert_eq!(cc1.name(), "cc1");
+        assert_eq!(cc1.to_string(), "cc1");
+        assert_eq!(DetectedCaption::Cea608(Cea608Channel::Cc3).name(), "cc3");
+        let service = DetectedCaption::Cea708Service(2);
+        assert_eq!(service.name(), "cea708-service");
+        assert_eq!(service.to_string(), "cea708-service");
+    }
 }
