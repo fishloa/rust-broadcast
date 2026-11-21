@@ -211,16 +211,15 @@ impl SubtitleState {
 
     fn record_segment(&mut self, pid: Pid, seg: &AnySegment<'_>) {
         match seg {
-            AnySegment::PageComposition(pcs) => {
+            AnySegment::PageComposition(pcs)
                 // Memory bound only: a hostile capture of endless page
                 // compositions grew this Vec without limit (audit
                 // r14-DEMO-W2). Pages past the cap are NOT considered for the
                 // preview, even if a later page would have resolved against
                 // the final region/CLUT/object maps.
-                if self.pages.len() < MAX_PAGES {
+                if self.pages.len() < MAX_PAGES => {
                     self.pages.push((pid.value(), pcs.clone()));
                 }
-            }
             AnySegment::RegionComposition(rcs) => {
                 self.regions
                     .insert((pid.value(), rcs.region_id), rcs.clone());
@@ -266,9 +265,13 @@ impl SubtitleState {
                     let Some(decoded) = self.objects.get(&(*pid, obj_entry.object_id)) else {
                         continue;
                     };
-                    if let Some(preview) =
-                        render_preview(Pid::from_wire_masked(*pid), page.page_id, region, clut, decoded)
-                    {
+                    if let Some(preview) = render_preview(
+                        Pid::from_wire_masked(*pid),
+                        page.page_id,
+                        region,
+                        clut,
+                        decoded,
+                    ) {
                         return Some(preview);
                     }
                 }
@@ -653,10 +656,18 @@ mod tests {
         // subtitling_descriptor: tag 0x59, len 8, "eng", type 0x10 (DVB
         // subtitles normal), composition_page_id=1, ancillary_page_id=2.
         let raw = [0x59, 8, b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x02];
-        let stream = PmtStream::new(StreamType::from_u8(0x06), Pid::from_const(0x100), DescriptorLoop::new(&raw));
+        let stream = PmtStream::new(
+            StreamType::from_u8(0x06),
+            Pid::from_const(0x100),
+            DescriptorLoop::new(&raw),
+        );
         assert!(stream_is_subtitle(&stream));
 
-        let no_sub = PmtStream::new(StreamType::from_u8(0x06), Pid::from_const(0x101), DescriptorLoop::new(&[]));
+        let no_sub = PmtStream::new(
+            StreamType::from_u8(0x06),
+            Pid::from_const(0x101),
+            DescriptorLoop::new(&[]),
+        );
         assert!(!stream_is_subtitle(&no_sub));
     }
 
