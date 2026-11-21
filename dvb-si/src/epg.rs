@@ -92,7 +92,7 @@
 
 use crate::collect::CollectResult;
 use crate::tables::RunningStatus;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, VecDeque};
 #[cfg(feature = "serde")]
 use alloc::format;
 use alloc::string::String;
@@ -273,6 +273,58 @@ pub struct EpgEvent {
     /// [`ContentIdentifierDescriptor`](crate::descriptors::content_identifier::ContentIdentifierDescriptor).
     #[cfg_attr(feature = "serde", serde(default))]
     pub crids: Vec<Crid>,
+}
+
+impl EpgEvent {
+    /// Decode a wire [`EitEvent`](crate::tables::eit::EitEvent) directly,
+    /// sharing the descriptor decoding of [`event_to_epg`].
+    pub(crate) fn from_eit_event(event: &crate::tables::eit::EitEvent<'_>) -> Self {
+        let descriptors: Vec<crate::Result<crate::descriptors::AnyDescriptor<'_>>> =
+            event.descriptors.iter().collect();
+        Self::from_decoded(
+            event.event_id,
+            event.start_time_utc(),
+            event.duration(),
+            event.running_status,
+            event.free_ca_mode,
+            &descriptors,
+        )
+    }
+
+    fn from_decoded(
+        event_id: u16,
+        start_time: Option<jiff::Timestamp>,
+        duration: Option<core::time::Duration>,
+        running_status: RunningStatus,
+        free_ca_mode: bool,
+        descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
+    ) -> Self {
+        let (event_name, event_text) = extract_short_event(descriptors);
+        let extended_by_language = extract_extended(descriptors);
+        let (extended_text, extended_items) = match extended_by_language.first() {
+            Some(first) => (Some(first.text.clone()), first.items.clone()),
+            None => (None, Vec::new()),
+        };
+        let content_nibbles = extract_content(descriptors);
+        let ratings = extract_ratings(descriptors);
+        let crids = extract_crids(descriptors);
+
+        EpgEvent {
+            event_id,
+            start_time,
+            duration,
+            running_status,
+            free_ca_mode,
+            event_name,
+            event_text,
+            extended_text,
+            extended_items,
+            extended_by_language,
+            content_nibbles,
+            ratings,
+            crids,
+        }
+    }
 }
 
 /// Serialisable service data exposed by [`EpgStore`] serde export.
@@ -747,31 +799,14 @@ fn cmp_event_by_start(a: &EpgEvent, b: &EpgEvent) -> core::cmp::Ordering {
 }
 
 fn event_to_epg(e: &crate::collect::CompleteEitEvent<'_>) -> EpgEvent {
-    let (event_name, event_text) = extract_short_event(e.descriptors.descriptors());
-    let extended_by_language = extract_extended(e.descriptors.descriptors());
-    let (extended_text, extended_items) = match extended_by_language.first() {
-        Some(first) => (Some(first.text.clone()), first.items.clone()),
-        None => (None, Vec::new()),
-    };
-    let content_nibbles = extract_content(e.descriptors.descriptors());
-    let ratings = extract_ratings(e.descriptors.descriptors());
-    let crids = extract_crids(e.descriptors.descriptors());
-
-    EpgEvent {
-        event_id: e.event_id,
-        start_time: e.start_time(),
-        duration: e.duration(),
-        running_status: e.running_status,
-        free_ca_mode: e.free_ca_mode,
-        event_name,
-        event_text,
-        extended_text,
-        extended_items,
-        extended_by_language,
-        content_nibbles,
-        ratings,
-        crids,
-    }
+    EpgEvent::from_decoded(
+        e.event_id,
+        e.start_time(),
+        e.duration(),
+        e.running_status,
+        e.free_ca_mode,
+        e.descriptors.descriptors(),
+    )
 }
 
 fn extract_short_event(
@@ -934,6 +969,191 @@ fn extract_service_name(
         }
     }
     None
+}
+
+/// Maximum number of changes [`PresentEventTracker::feed_ts`] retains for
+/// [`PresentEventTracker::poll_change`] before dropping the oldest.
+pub const PRESENT_CHANGE_QUEUE_CAP: usize = 16;
+
+/// The present event of a tracked service, as signalled by the EIT
+/// present/following table (ETSI EN 300 468 §5.2.4).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresentEvent {
+    /// `service_id` of the EIT section the event came from
+    /// (`table_id_extension`).
+    pub service_id: u16,
+    /// The decoded present event.
+    pub event: EpgEvent,
+}
+
+/// A detected change to a tracked service's present event.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresentEventChange {
+    /// The first present event observed — there is no earlier programme to
+    /// transition from.
+    Baseline(PresentEvent),
+    /// The present event changed to a different `event_id`.
+    Transition {
+        /// `event_id` that was present before this change.
+        previous_event_id: u16,
+        /// The newly present event.
+        current: PresentEvent,
+    },
+}
+
+/// Tracks one service's EIT present event and reports each programme
+/// boundary.
+///
+/// Only present/following **actual** sections (`table_id` `0x4E`) carrying
+/// the tracked `service_id` are considered. The present event is the one with
+/// `running_status == Running` (EN 300 468 Table 6), identified by that field
+/// rather than by position in the event loop. A section naming the same
+/// `event_id` again changes nothing — neither a repeated section nor a
+/// re-versioned copy of the same event is a programme boundary.
+///
+/// Two entry points feed the tracker:
+///
+/// * [`on_section`](Self::on_section) returns the change for a section the
+///   caller already has, without buffering it.
+/// * [`feed_ts`](Self::feed_ts) (feature `ts`) consumes any-aligned MPEG-2 TS
+///   bytes, demuxes the EIT PID, and queues each detected change for
+///   [`poll_change`](Self::poll_change). The queue holds at most
+///   [`PRESENT_CHANGE_QUEUE_CAP`] changes; past that the oldest is dropped and
+///   counted in [`changes_dropped`](Self::changes_dropped).
+///
+/// `SiDemux`'s version gate suppresses repeated sections, so a steady
+/// carousel produces no events after the first.
+pub struct PresentEventTracker {
+    service_id: u16,
+    last_event_id: Option<u16>,
+    current: Option<PresentEvent>,
+    pending: VecDeque<PresentEventChange>,
+    changes_dropped: u64,
+    #[cfg(feature = "ts")]
+    si_demux: crate::demux::SiDemux,
+    #[cfg(feature = "ts")]
+    carry: Vec<u8>,
+}
+
+impl PresentEventTracker {
+    /// Track `service_id` (`table_id_extension` of its EIT p/f table).
+    #[must_use]
+    pub fn new(service_id: u16) -> Self {
+        Self {
+            service_id,
+            last_event_id: None,
+            current: None,
+            pending: VecDeque::new(),
+            changes_dropped: 0,
+            #[cfg(feature = "ts")]
+            si_demux: crate::demux::SiDemux::new(
+                crate::demux::SiDemuxConfig::default()
+                    .with_dvb_si_pids(false)
+                    .with_pid(crate::tables::eit::PID),
+            ),
+            #[cfg(feature = "ts")]
+            carry: Vec::new(),
+        }
+    }
+
+    /// Inspect one complete EIT section, updating the tracked present event.
+    ///
+    /// Returns the change this section established, or `None` when it is not
+    /// a present/following actual section for the tracked service, carries no
+    /// running event, or names the same `event_id` as the current one.
+    pub fn on_section(
+        &mut self,
+        section: &crate::tables::eit::EitSection<'_>,
+    ) -> Option<PresentEventChange> {
+        if section.kind != crate::tables::eit::EitKind::PresentFollowingActual
+            || section.service_id != self.service_id
+        {
+            return None;
+        }
+        let present = section
+            .events
+            .iter()
+            .find(|e| e.running_status == RunningStatus::Running)?;
+        let event_id = present.event_id;
+        if self.last_event_id == Some(event_id) {
+            return None;
+        }
+        let present_event = PresentEvent {
+            service_id: section.service_id,
+            event: EpgEvent::from_eit_event(present),
+        };
+        let change = match self.last_event_id {
+            None => PresentEventChange::Baseline(present_event.clone()),
+            Some(previous_event_id) => PresentEventChange::Transition {
+                previous_event_id,
+                current: present_event.clone(),
+            },
+        };
+        self.last_event_id = Some(event_id);
+        self.current = Some(present_event);
+        Some(change)
+    }
+
+    /// Feed any-aligned MPEG-2 TS bytes, queuing each detected change for
+    /// [`poll_change`](Self::poll_change).
+    ///
+    /// Reads need not be 188-byte aligned across calls: an unconsumed partial
+    /// packet is carried over to the next call.
+    #[cfg(feature = "ts")]
+    pub fn feed_ts(&mut self, ts: &[u8]) {
+        use mpeg_ts::ts::TS_PACKET_SIZE;
+
+        let mut buf = core::mem::take(&mut self.carry);
+        buf.extend_from_slice(ts);
+        let mut offset = 0;
+        while offset + TS_PACKET_SIZE <= buf.len() {
+            let events: Vec<crate::demux::SectionEvent> = self
+                .si_demux
+                .feed(&buf[offset..offset + TS_PACKET_SIZE])
+                .collect();
+            for event in events {
+                if let Ok(crate::tables::AnyTableSection::EitSection(section)) =
+                    event.table_section()
+                    && let Some(change) = self.on_section(&section)
+                {
+                    self.queue(change);
+                }
+            }
+            offset += TS_PACKET_SIZE;
+        }
+        buf.drain(..offset);
+        self.carry = buf;
+    }
+
+    #[cfg(feature = "ts")]
+    fn queue(&mut self, change: PresentEventChange) {
+        if self.pending.len() == PRESENT_CHANGE_QUEUE_CAP {
+            self.pending.pop_front();
+            self.changes_dropped += 1;
+        }
+        self.pending.push_back(change);
+    }
+
+    /// Take the oldest change queued by [`feed_ts`](Self::feed_ts).
+    #[must_use]
+    pub fn poll_change(&mut self) -> Option<PresentEventChange> {
+        self.pending.pop_front()
+    }
+
+    /// Changes dropped because the queue was full
+    /// ([`PRESENT_CHANGE_QUEUE_CAP`]).
+    #[must_use]
+    pub fn changes_dropped(&self) -> u64 {
+        self.changes_dropped
+    }
+
+    /// The most recently observed present event, if any.
+    #[must_use]
+    pub fn current(&self) -> Option<&PresentEvent> {
+        self.current.as_ref()
+    }
 }
 
 #[cfg(test)]
@@ -2281,5 +2501,298 @@ mod tests {
             svc_data["events"][0]["content_nibbles"][0],
             serde_json::json!({"level_1": 1, "level_2": 1, "user": 0})
         );
+    }
+
+    // ------------------------------------------------------------------
+    // PresentEventTracker
+    // ------------------------------------------------------------------
+
+    /// 40-bit EIT `start_time` for 2026-06-10 at `hour`:00:00 UTC (MJD 61201).
+    fn tracker_start_raw(hour: u8) -> [u8; 5] {
+        let mjd = 61201u16.to_be_bytes();
+        let bcd_hour = (hour / 10) * 16 + (hour % 10);
+        [mjd[0], mjd[1], bcd_hour, 0, 0]
+    }
+
+    fn eit_event<'a>(
+        event_id: u16,
+        running: bool,
+        descriptors: &'a [u8],
+    ) -> crate::tables::eit::EitEvent<'a> {
+        crate::tables::eit::EitEvent::new(
+            event_id,
+            tracker_start_raw(20),
+            [0x01, 0x00, 0x00],
+            if running {
+                RunningStatus::Running
+            } else {
+                RunningStatus::NotRunning
+            },
+            false,
+            crate::descriptors::DescriptorLoop::new(descriptors),
+        )
+    }
+
+    fn eit_pf_section<'a>(
+        service_id: u16,
+        version: u8,
+        kind: crate::tables::eit::EitKind,
+        events: Vec<crate::tables::eit::EitEvent<'a>>,
+    ) -> crate::tables::eit::EitSection<'a> {
+        let table_id = match kind {
+            crate::tables::eit::EitKind::PresentFollowingOther => {
+                crate::tables::eit::TABLE_ID_PF_OTHER
+            }
+            _ => crate::tables::eit::TABLE_ID_PF_ACTUAL,
+        };
+        crate::tables::eit::EitSection::new(
+            kind,
+            table_id,
+            service_id,
+            crate::tables::SectionVersion::new(version, true, 0, 0),
+            6,
+            8442,
+            0,
+            table_id,
+            events,
+        )
+    }
+
+    #[test]
+    fn present_tracker_baselines_then_transitions() {
+        let first = short_event_bytes(b"First", b"first text");
+        let second = short_event_bytes(b"Second", b"second text");
+        let kind = crate::tables::eit::EitKind::PresentFollowingActual;
+        let mut tracker = PresentEventTracker::new(0x0601);
+
+        let baseline = tracker
+            .on_section(&eit_pf_section(
+                0x0601,
+                1,
+                kind,
+                vec![eit_event(100, true, &first)],
+            ))
+            .expect("first section is a baseline");
+        match baseline {
+            PresentEventChange::Baseline(present) => {
+                assert_eq!(present.service_id, 0x0601);
+                assert_eq!(present.event.event_id, 100);
+                assert_eq!(present.event.event_name.as_deref(), Some("First"));
+                assert_eq!(present.event.start_time, Some(utc(2026, 6, 10, 20, 0, 0)));
+            }
+            other => panic!("expected Baseline, got {other:?}"),
+        }
+
+        let transition = tracker
+            .on_section(&eit_pf_section(
+                0x0601,
+                2,
+                kind,
+                vec![eit_event(101, true, &second)],
+            ))
+            .expect("a different event_id is a transition");
+        match transition {
+            PresentEventChange::Transition {
+                previous_event_id,
+                current,
+            } => {
+                assert_eq!(previous_event_id, 100);
+                assert_eq!(current.service_id, 0x0601);
+                assert_eq!(current.event.event_id, 101);
+                assert_eq!(current.event.event_name.as_deref(), Some("Second"));
+            }
+            other => panic!("expected Transition, got {other:?}"),
+        }
+        assert_eq!(
+            tracker
+                .current()
+                .expect("a present event is tracked")
+                .event
+                .event_id,
+            101
+        );
+    }
+
+    #[test]
+    fn repeated_section_or_same_event_at_a_new_version_yields_nothing() {
+        let desc = short_event_bytes(b"Same", b"same text");
+        let kind = crate::tables::eit::EitKind::PresentFollowingActual;
+        let mut tracker = PresentEventTracker::new(1);
+
+        assert!(
+            tracker
+                .on_section(&eit_pf_section(
+                    1,
+                    1,
+                    kind,
+                    vec![eit_event(100, true, &desc)]
+                ))
+                .is_some(),
+            "the first sighting establishes the baseline"
+        );
+        assert!(
+            tracker
+                .on_section(&eit_pf_section(
+                    1,
+                    1,
+                    kind,
+                    vec![eit_event(100, true, &desc)]
+                ))
+                .is_none(),
+            "an identical repeated section is not a programme boundary"
+        );
+        assert!(
+            tracker
+                .on_section(&eit_pf_section(
+                    1,
+                    2,
+                    kind,
+                    vec![eit_event(100, true, &desc)]
+                ))
+                .is_none(),
+            "the same event_id at a new version is not a programme boundary (#3677)"
+        );
+        assert_eq!(tracker.current().map(|e| e.event.event_id), Some(100));
+    }
+
+    #[test]
+    fn present_tracker_picks_the_running_event_not_the_first() {
+        let following = short_event_bytes(b"Following", b"");
+        let present = short_event_bytes(b"Present", b"");
+        let change = PresentEventTracker::new(1)
+            .on_section(&eit_pf_section(
+                1,
+                1,
+                crate::tables::eit::EitKind::PresentFollowingActual,
+                vec![
+                    eit_event(200, false, &following),
+                    eit_event(201, true, &present),
+                ],
+            ))
+            .expect("the second event is the running one");
+        match change {
+            PresentEventChange::Baseline(present) => {
+                assert_eq!(present.event.event_id, 201);
+                assert_eq!(present.event.event_name.as_deref(), Some("Present"));
+            }
+            other => panic!("expected Baseline, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn present_tracker_ignores_other_services_and_other_ts_tables() {
+        let desc = short_event_bytes(b"Event", b"");
+        let mut tracker = PresentEventTracker::new(0x0601);
+
+        assert!(
+            tracker
+                .on_section(&eit_pf_section(
+                    0x0602,
+                    1,
+                    crate::tables::eit::EitKind::PresentFollowingActual,
+                    vec![eit_event(300, true, &desc)],
+                ))
+                .is_none(),
+            "a different service_id is not tracked"
+        );
+        assert!(
+            tracker
+                .on_section(&eit_pf_section(
+                    0x0601,
+                    1,
+                    crate::tables::eit::EitKind::PresentFollowingOther,
+                    vec![eit_event(301, true, &desc)],
+                ))
+                .is_none(),
+            "the other-TS present/following table is not tracked"
+        );
+        assert!(tracker.current().is_none());
+    }
+
+    #[cfg(feature = "ts")]
+    fn ts_packet_for_section(section: &[u8], continuity_counter: u8) -> Vec<u8> {
+        const SYNC_BYTE: u8 = 0x47;
+        const PAYLOAD_UNIT_START: u8 = 0x40;
+        const EIT_PID_HIGH: u8 = 0x00;
+        const EIT_PID_LOW: u8 = 0x12;
+        const PAYLOAD_ONLY: u8 = 0x10;
+        const POINTER_FIELD: u8 = 0x00;
+        const STUFFING: u8 = 0xFF;
+        const TS_PACKET_SIZE: usize = 188;
+
+        assert!(5 + section.len() <= TS_PACKET_SIZE);
+        let mut packet = vec![STUFFING; TS_PACKET_SIZE];
+        packet[0] = SYNC_BYTE;
+        packet[1] = PAYLOAD_UNIT_START | EIT_PID_HIGH;
+        packet[2] = EIT_PID_LOW;
+        packet[3] = PAYLOAD_ONLY | (continuity_counter & 0x0F);
+        packet[4] = POINTER_FIELD;
+        packet[5..5 + section.len()].copy_from_slice(section);
+        packet
+    }
+
+    #[cfg(feature = "ts")]
+    #[test]
+    fn feeding_more_changes_than_the_queue_cap_drops_the_oldest() {
+        let desc = short_event_bytes(b"Event", b"");
+        let kind = crate::tables::eit::EitKind::PresentFollowingActual;
+        let mut tracker = PresentEventTracker::new(1);
+
+        let total = PRESENT_CHANGE_QUEUE_CAP + 1;
+        for i in 0..total {
+            let version = u8::try_from(i).expect("version fits");
+            let event_id = 100 + u16::try_from(i).expect("event id fits");
+            let section = eit_pf_section(1, version, kind, vec![eit_event(event_id, true, &desc)]);
+            tracker.feed_ts(&ts_packet_for_section(&serialize_eit(&section), version));
+        }
+
+        assert_eq!(tracker.changes_dropped(), 1);
+        assert_eq!(
+            tracker
+                .current()
+                .expect("a present event is tracked")
+                .event
+                .event_id,
+            116
+        );
+
+        let mut first = None;
+        let mut last = None;
+        let mut drained = 0;
+        for _ in 0..total {
+            let Some(change) = tracker.poll_change() else {
+                break;
+            };
+            if first.is_none() {
+                first = Some(change.clone());
+            }
+            last = Some(change);
+            drained += 1;
+        }
+        assert_eq!(drained, PRESENT_CHANGE_QUEUE_CAP);
+        match first.expect("queued changes") {
+            PresentEventChange::Transition {
+                previous_event_id,
+                current,
+            } => {
+                assert_eq!(
+                    previous_event_id, 100,
+                    "the dropped change was the Baseline for event 100"
+                );
+                assert_eq!(current.event.event_id, 101);
+            }
+            other => panic!("expected the oldest surviving Transition, got {other:?}"),
+        }
+        match last.expect("queued changes") {
+            PresentEventChange::Transition {
+                previous_event_id,
+                current,
+            } => {
+                assert_eq!(previous_event_id, 115);
+                assert_eq!(current.event.event_id, 116);
+            }
+            other => panic!("expected the newest Transition, got {other:?}"),
+        }
+        assert_eq!(tracker.poll_change(), None);
     }
 }

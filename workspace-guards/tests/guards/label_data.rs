@@ -667,6 +667,10 @@ pub const TABLE: &[Crate] = &[
             "AnyTableSection",
             "SatTableId",
             // data-carrying / wrapper / body ADTs
+            // `PresentEventChange` carries a `PresentEvent` (service id + decoded
+            // event) in either variant; callers match the typed variant, a static
+            // label would be lossy.
+            "PresentEventChange",
             "BiopMessage",
             "CarouselObject",
             "TaggedProfile",
