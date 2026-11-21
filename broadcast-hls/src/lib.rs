@@ -2737,7 +2737,7 @@ impl AttrValue {
     /// any of them.
     pub fn quoted(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
-        if value.contains('"') || has_forbidden_control(&value) {
+        if value.contains('"') || value.contains('\r') || value.contains('\n') {
             return Err(Error::InvalidAttrValue {
                 value,
                 kind: "a quoted-string",
@@ -2750,14 +2750,15 @@ impl AttrValue {
     }
 
     /// Build a bare enumerated-string/decimal attribute value. Rejects a
-    /// value containing `,`, `"`, a C0 control character, DEL or whitespace,
-    /// any of which would require quoting.
+    /// value containing `,`, `"`, CR, LF or whitespace, any of which would
+    /// require quoting.
     pub fn bare(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
         if value.contains(',')
             || value.contains('"')
+            || value.contains('\r')
+            || value.contains('\n')
             || value.contains(char::is_whitespace)
-            || has_forbidden_control(&value)
         {
             return Err(Error::InvalidAttrValue {
                 value,
@@ -3734,6 +3735,9 @@ fn scan_attribute_list_wire(s: &str) -> Result<Vec<(String, AttrValue)>> {
             if i < len && bytes[i] != b',' {
                 return Err(invalid(AttributeListError::TrailingCharacters));
             }
+            if has_forbidden_control(value) {
+                return Err(invalid(AttributeListError::ControlCharacter));
+            }
             AttrValue::quoted(value)?
         } else {
             let value_start = i;
@@ -3749,6 +3753,9 @@ fn scan_attribute_list_wire(s: &str) -> Result<Vec<(String, AttrValue)>> {
             let value = &s[value_start..i];
             if value.is_empty() {
                 return Err(invalid(AttributeListError::EmptyValue));
+            }
+            if has_forbidden_control(value) {
+                return Err(invalid(AttributeListError::ControlCharacter));
             }
             AttrValue::bare(value)?
         };

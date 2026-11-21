@@ -249,6 +249,7 @@ impl DateRange {
         if id.is_empty() {
             return Err(invalid("", DateRangeError::EmptyId));
         }
+        reject_control(&id)?;
         Ok(Self {
             attrs: alloc::vec![(String::from("ID"), AttrValue::quoted(id)?)],
         })
@@ -391,6 +392,7 @@ impl DateRange {
         if id.is_empty() {
             return Err(invalid("", DateRangeError::EmptyId));
         }
+        reject_control(&id)?;
         self.replace_or_append("ID", AttrValue::quoted(id)?);
         Ok(())
     }
@@ -405,7 +407,11 @@ impl DateRange {
     /// [`Self::with_class`] inserts it in canonical order.
     pub fn set_class(&mut self, class: Option<impl Into<String>>) -> Result<()> {
         match class {
-            Some(class) => self.replace_or_append("CLASS", AttrValue::quoted(class.into())?),
+            Some(class) => {
+                let class = class.into();
+                reject_control(&class)?;
+                self.replace_or_append("CLASS", AttrValue::quoted(class)?);
+            }
             None => self.remove("CLASS"),
         }
         Ok(())
@@ -547,6 +553,7 @@ impl DateRange {
     ///
     /// [`DateRangeError::InvalidClientAttributeValue`] for any other kind.
     pub fn set_client_attr(&mut self, name: ClientAttrName, value: AttrValue) -> Result<()> {
+        reject_control(value.as_str())?;
         if !client_value_ok(&value) {
             return Err(invalid(
                 self.id(),
@@ -742,6 +749,9 @@ impl DateRange {
     }
 
     fn validate(&self) -> Result<()> {
+        for (_, value) in &self.attrs {
+            reject_control(value.as_str())?;
+        }
         let id = self.id();
         if id.is_empty() {
             return Err(invalid("", DateRangeError::EmptyId));
@@ -803,6 +813,16 @@ fn with_id(error: Error, id: &str) -> Error {
         Error::InvalidDateRange { reason, .. } => invalid(id, reason),
         other => other,
     }
+}
+
+fn reject_control(value: &str) -> Result<()> {
+    if super::has_forbidden_control(value) {
+        return Err(Error::InvalidAttributeList {
+            list: value.to_string(),
+            reason: crate::AttributeListError::ControlCharacter,
+        });
+    }
+    Ok(())
 }
 
 fn invalid(id: &str, reason: DateRangeError) -> Error {

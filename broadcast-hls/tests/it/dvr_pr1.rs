@@ -519,11 +519,116 @@ fn custom_tag_setters_and_control_characters_are_validated() {
         })
     ));
 
-    assert!(AttrValue::quoted("a\tb").is_err());
+    assert!(AttrValue::quoted("a\tb").is_ok());
     assert!(AttrValue::quoted("a\rb").is_err());
-    assert!(AttrValue::bare("a\u{7f}b").is_err());
-    assert!(DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-A=\"a\tb\"").is_err());
-    assert!(CustomTag::parse_tag_line("#EXT-X-FOO:A=\"a\tb\"").is_err());
+    assert!(AttrValue::bare("a\u{7f}b").is_ok());
+    assert!(matches!(
+        tag.set_attr("C", AttrValue::quoted("a\tb").expect("general value")),
+        Err(Error::InvalidAttributeList {
+            reason: AttributeListError::ControlCharacter,
+            ..
+        })
+    ));
+    assert!(matches!(
+        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-A=\"a\tb\""),
+        Err(Error::InvalidAttributeList {
+            reason: AttributeListError::ControlCharacter,
+            ..
+        })
+    ));
+    assert!(matches!(
+        CustomTag::parse_tag_line("#EXT-X-FOO:A=\"a\tb\""),
+        Err(Error::InvalidAttributeList {
+            reason: AttributeListError::ControlCharacter,
+            ..
+        })
+    ));
+    assert!(
+        AttrValue::quoted("a\u{80}b").is_ok(),
+        "general path keeps it"
+    );
+    assert!(matches!(
+        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-A=\"a\u{80}b\""),
+        Err(Error::InvalidAttributeList {
+            reason: AttributeListError::ControlCharacter,
+            ..
+        })
+    ));
+    assert!(matches!(
+        CustomTag::parse_tag_line("#EXT-X-FOO:A=\"a\u{80}b\""),
+        Err(Error::InvalidAttributeList {
+            reason: AttributeListError::ControlCharacter,
+            ..
+        })
+    ));
+    assert!(matches!(
+        DateRange::new("a\u{80}b"),
+        Err(Error::InvalidAttributeList {
+            reason: AttributeListError::ControlCharacter,
+            ..
+        })
+    ));
+    let mut range = DateRange::new("a").expect("valid id");
+    assert!(matches!(
+        range.set_class(Some("a\u{9f}b")),
+        Err(Error::InvalidAttributeList {
+            reason: AttributeListError::ControlCharacter,
+            ..
+        })
+    ));
+}
+
+/// Round 5 item 1: whole-playlist parsing keeps origin/main's tolerance of a
+/// tab in an unknown quoted attribute.
+#[test]
+fn whole_playlist_parsing_keeps_control_tolerance() {
+    use broadcast_hls::{MasterPlaylist, MediaPlaylist};
+
+    let media = MediaPlaylist::parse(
+        "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MAP:URI=\"i.mp4\",X-FOO=\"a\tb\"\n#EXTINF:2,\ns.ts\n",
+    )
+    .expect("whole-playlist parse must keep its historical tolerance");
+    let map = media.segments[0].map.as_ref().expect("map");
+    let value = &map
+        .extra_attrs
+        .iter()
+        .find(|(n, _)| n == "X-FOO")
+        .expect("X-FOO")
+        .1;
+    assert_eq!(value.as_str(), "a\tb");
+
+    let master =
+        MasterPlaylist::parse("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,X-FOO=\"a\tb\"\nv.m3u8\n")
+            .expect("whole-playlist parse must keep its historical tolerance");
+    assert_eq!(master.variants[0].extra_attrs[0].0, "X-FOO");
+    assert_eq!(master.variants[0].extra_attrs[0].1.as_str(), "a\tb");
+}
+
+/// Round 5 item 3: the even-digit rule is SCTE35-only; an `X-` hexadecimal
+/// sequence may have an odd digit count.
+#[test]
+fn hex_length_rule_is_scte35_only() {
+    use broadcast_hls::{DateRangeError, Scte35Kind};
+
+    daterange_roundtrip("#EXT-X-DATERANGE:ID=\"a\",X-A=0xABC");
+    assert!(matches!(
+        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",SCTE35-OUT=0xABC"),
+        Err(Error::InvalidDateRange {
+            reason: DateRangeError::InvalidScte35Value,
+            ..
+        })
+    ));
+    let mut range = DateRange::new("a").expect("valid id");
+    assert!(matches!(
+        range.set_scte35(Scte35Kind::Out, "0xABC"),
+        Err(Error::InvalidDateRange {
+            reason: DateRangeError::InvalidScte35Value,
+            ..
+        })
+    ));
+    range
+        .set_scte35(Scte35Kind::Out, "0xABCD")
+        .expect("whole bytes");
 }
 
 /// Item 4 (round 4): an `SCTE35-*` attribute is built through a validated,
