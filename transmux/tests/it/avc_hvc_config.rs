@@ -7,7 +7,7 @@
 
 use broadcast_common::{Parse, Serialize};
 use transmux::{
-    AVCDecoderConfigurationRecord, AVCConfigurationBox, AvcPps, AvcSps, AvcSpsExt,
+    AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, AvcSpsExt,
     HEVCDecoderConfigurationRecord,
 };
 
@@ -231,7 +231,10 @@ fn avcc_high_profile_with_two_sps_ext_round_trips() {
     ];
     let bytes = record.try_to_bytes().unwrap();
     assert_eq!(bytes, expected);
-    assert_eq!(AVCDecoderConfigurationRecord::parse(&bytes).unwrap(), record);
+    assert_eq!(
+        AVCDecoderConfigurationRecord::parse(&bytes).unwrap(),
+        record
+    );
 }
 
 /// ISO/IEC 14496-15:2017 §5.3.3: the `avcC` box's serializer reports the

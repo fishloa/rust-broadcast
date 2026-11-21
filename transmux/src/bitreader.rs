@@ -304,7 +304,10 @@ mod tests {
                 "field wider than 64 bits",
             ),
             (
-                BitError::ValueTooWide { value: 300, bits: 8 },
+                BitError::ValueTooWide {
+                    value: 300,
+                    bits: 8,
+                },
                 300,
                 "value does not fit the field width",
             ),

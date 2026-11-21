@@ -232,7 +232,9 @@ fn mpeg2_config() -> CodecConfig {
         esds: EsdsBox::new(ESDescriptor::new(
             0,
             0,
-            Some(DecoderConfigDescriptor::new(0x61, 0x04, false, 0, 0, 0, None)),
+            Some(DecoderConfigDescriptor::new(
+                0x61, 0x04, false, 0, 0, 0, None,
+            )),
             Some(SLConfigDescriptor::predefined_two()),
         )),
         width: 720,
@@ -251,11 +253,7 @@ fn mpeg2_audio_config() -> CodecConfig {
 /// An HEVC prefix SEI carrying the A/53 `GA94` caption SEI with one CC1 text
 /// pair, as one 4-byte-length-prefixed NAL of an access unit.
 fn hevc_cc1_sample() -> Vec<u8> {
-    let triplets: [[u8; 3]; 3] = [
-        [0xFC, 0x94, 0x29],
-        [0xFC, 0xC8, 0x49],
-        [0xFC, 0x94, 0x2F],
-    ];
+    let triplets: [[u8; 3]; 3] = [[0xFC, 0x94, 0x29], [0xFC, 0xC8, 0x49], [0xFC, 0x94, 0x2F]];
     let mut payload = vec![0xB5, 0x00, 0x31, b'G', b'A', b'9', b'4', 0x03, 0xC3, 0xFF];
     for triplet in triplets {
         payload.extend_from_slice(&triplet);

@@ -1133,7 +1133,10 @@ mod tests {
         }
         for (v, label) in [
             (
-                AvsVideoConfig::Avs3(Avs3ConfigurationBox::new(vec![], LibraryDependencyIdc::Library)),
+                AvsVideoConfig::Avs3(Avs3ConfigurationBox::new(
+                    vec![],
+                    LibraryDependencyIdc::Library,
+                )),
                 "av3c",
             ),
             (
