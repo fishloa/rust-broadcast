@@ -1215,3 +1215,73 @@ fn cc_anomaly_third_consecutive_repeat_flagged() {
         hits[0].message
     );
 }
+
+// -------------------------------------------------------------------------
+// Sample length-prefix framing (audit 23, finding 164)
+// -------------------------------------------------------------------------
+
+/// Replace the first sample's 4-byte length prefix with `00 00 00 01`: the
+/// next prefix then reads the old NAL payload as a length far past the
+/// sample's end — the shape of an Annex B start code left in place of a
+/// length prefix.
+fn replace_first_sample_prefix(mut bytes: Vec<u8>) -> Vec<u8> {
+    let mdat = bytes
+        .windows(4)
+        .position(|w| w == b"mdat")
+        .expect("mdat box");
+    bytes[mdat + 4..mdat + 8].copy_from_slice(&[0, 0, 0, 1]);
+    bytes
+}
+
+fn length_prefix_findings(bytes: &[u8]) -> Vec<media_doctor::Finding> {
+    let mut report = Report::new();
+    media_doctor::check_container_codec(bytes, &mut report);
+    report
+        .findings()
+        .iter()
+        .filter(|f| f.rule_id == "length-prefix-violation")
+        .cloned()
+        .collect()
+}
+
+/// A mutilated first sample on the AVC video track is one
+/// `length-prefix-violation` Error on that track and none on the AAC track;
+/// the unmodified file has none.
+#[test]
+fn an_annex_b_start_code_in_an_avc_sample_is_a_length_prefix_violation() {
+    let original = std::fs::read(test_fixtures::path("mp4/h264-aac-frag.mp4"))
+        .expect("read h264-aac-frag.mp4");
+    assert!(
+        length_prefix_findings(&original).is_empty(),
+        "precondition: the unmodified file is well formed"
+    );
+
+    let hits = length_prefix_findings(&replace_first_sample_prefix(original));
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].severity, Severity::Error);
+    assert_eq!(
+        hits[0].location.stream,
+        StreamLocator::Track(transmux::TrackId::new(1)),
+        "the finding is on the video track, not the AAC track",
+    );
+}
+
+/// The same check covers HEVC samples (`hvcC`'s lengthSizeMinusOne), which is
+/// what the `nal_length_size` HEVC arm exists for.
+#[test]
+fn an_annex_b_start_code_in_a_hevc_sample_is_a_length_prefix_violation() {
+    let original =
+        std::fs::read(test_fixtures::path("mp4/hevc-frag.mp4")).expect("read hevc-frag.mp4");
+    assert!(
+        length_prefix_findings(&original).is_empty(),
+        "precondition: the unmodified file is well formed"
+    );
+
+    let hits = length_prefix_findings(&replace_first_sample_prefix(original));
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].severity, Severity::Error);
+    assert_eq!(
+        hits[0].location.stream,
+        StreamLocator::Track(transmux::TrackId::new(1)),
+    );
+}
