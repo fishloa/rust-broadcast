@@ -11,10 +11,52 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::{AttrValue, Error, Result, render_attribute_list};
+use crate::{AttrValue, CustomTagNameError, Error, Result, render_attribute_list};
 
-/// A vendor tag name: `EXT-` followed by at least one character from the
-/// RFC 8216bis §4.1 tag set (`[A-Z]`, `[0-9]`, `-`), without the leading `#`.
+/// Standard tags this crate parses itself; a [`CustomTagName`] may not shadow
+/// one.
+const STANDARD_TAGS: &[&str] = &[
+    "EXTM3U",
+    "EXTINF",
+    "EXT-X-VERSION",
+    "EXT-X-TARGETDURATION",
+    "EXT-X-MEDIA-SEQUENCE",
+    "EXT-X-DISCONTINUITY-SEQUENCE",
+    "EXT-X-I-FRAMES-ONLY",
+    "EXT-X-INDEPENDENT-SEGMENTS",
+    "EXT-X-START",
+    "EXT-X-DEFINE",
+    "EXT-X-PLAYLIST-TYPE",
+    "EXT-X-ENDLIST",
+    "EXT-X-DISCONTINUITY",
+    "EXT-X-GAP",
+    "EXT-X-BITRATE",
+    "EXT-X-BYTERANGE",
+    "EXT-X-MAP",
+    "EXT-X-PART-INF",
+    "EXT-X-SERVER-CONTROL",
+    "EXT-X-PART",
+    "EXT-X-PRELOAD-HINT",
+    "EXT-X-RENDITION-REPORT",
+    "EXT-X-SKIP",
+    "EXT-X-PROGRAM-DATE-TIME",
+    "EXT-X-DATERANGE",
+    "EXT-X-KEY",
+    "EXT-X-MEDIA",
+    "EXT-X-STREAM-INF",
+    "EXT-X-I-FRAME-STREAM-INF",
+    "EXT-X-SESSION-DATA",
+    "EXT-X-SESSION-KEY",
+    "EXT-X-CONTENT-STEERING",
+];
+
+fn is_standard_tag(name: &str) -> bool {
+    STANDARD_TAGS.contains(&name) || name.starts_with("EXT-X-CUE-")
+}
+
+/// A vendor tag name: `EXT-` followed by at least one name character from the
+/// RFC 8216bis §4.1 tag set (`[A-Z]`, `[0-9]`, `-`), not ending in `-`, and
+/// not one this crate parses as a standard tag. Without the leading `#`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomTagName(String);
 
@@ -22,26 +64,33 @@ impl CustomTagName {
     /// Validate `name` (the tag name without its leading `#`).
     pub fn new(name: impl Into<String>) -> Result<Self> {
         let name = name.into();
-        if !name.starts_with("EXT-") {
+        let Some(rest) = name.strip_prefix("EXT-") else {
             return Err(Error::InvalidCustomTagName {
                 name,
-                reason: "must start with the EXT- prefix",
+                reason: CustomTagNameError::MissingPrefix,
             });
-        }
-        if name.len() == 4 {
-            return Err(Error::InvalidCustomTagName {
-                name,
-                reason: "must name something after the EXT- prefix",
-            });
-        }
-        if !name
+        };
+        let reason = if rest.is_empty() {
+            Some(CustomTagNameError::EmptyName)
+        } else if !rest
             .bytes()
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'-')
         {
-            return Err(Error::InvalidCustomTagName {
-                name,
-                reason: "characters must be [A-Z], [0-9] or '-'",
-            });
+            Some(CustomTagNameError::InvalidCharacter)
+        } else if !rest
+            .bytes()
+            .any(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        {
+            Some(CustomTagNameError::EmptyName)
+        } else if rest.ends_with('-') {
+            Some(CustomTagNameError::TrailingHyphen)
+        } else if is_standard_tag(&name) {
+            Some(CustomTagNameError::StandardTag)
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Err(Error::InvalidCustomTagName { name, reason });
         }
         Ok(Self(name))
     }
@@ -74,14 +123,24 @@ pub struct CustomTag {
 }
 
 impl CustomTag {
+    /// Start a tag with no attributes.
+    #[must_use]
+    pub fn new(name: CustomTagName) -> Self {
+        Self {
+            name,
+            attrs: Vec::new(),
+        }
+    }
+
     /// Parse a complete `#EXT-...:<attribute-list>` line.
     ///
     /// # Errors
     ///
     /// [`Error::InvalidCustomTagName`] for a name that is not an `EXT-` tag,
-    /// [`Error::InvalidAttributeName`] for an attribute name that is not a
-    /// legal RFC 8216bis §4.2 `AttributeName`, and [`Error::HlsParse`] for a
-    /// line that is not a tag at all.
+    /// [`Error::InvalidAttributeList`] for text outside the §4.2 grammar
+    /// (including an empty list after `:`), [`Error::InvalidAttributeName`]
+    /// for an attribute name that is not a legal §4.2 `AttributeName`, and
+    /// [`Error::HlsParse`] for a line that is not a tag at all.
     pub fn parse_tag_line(line: &str) -> Result<Self> {
         let body = line.strip_prefix('#').ok_or_else(|| Error::HlsParse {
             line_no: 0,
@@ -89,30 +148,19 @@ impl CustomTag {
             reason: "not a tag line".to_string(),
         })?;
         let (name, rest) = match body.split_once(':') {
-            Some((name, rest)) => (name, rest),
-            None => (body, ""),
+            Some((name, rest)) => (name, Some(rest)),
+            None => (body, None),
         };
         let name = CustomTagName::new(name)?;
-        let mut attrs = Vec::new();
-        if !rest.is_empty() {
-            let (values, quoted, order) = super::scan_attribute_list_ordered(rest, true)?;
-            for key in order {
-                if !crate::daterange::is_attribute_name(&key) {
-                    return Err(Error::InvalidAttributeName { name: key });
-                }
-                let value = values.get(&key).cloned().unwrap_or_default();
-                let value = if quoted.contains(&key) {
-                    AttrValue::quoted(value)?
-                } else {
-                    AttrValue::bare(value)?
-                };
-                attrs.push((key, value));
-            }
-        }
+        let attrs = match rest {
+            None => Vec::new(),
+            Some(rest) => super::scan_attribute_list_wire(rest)?,
+        };
         Ok(Self { name, attrs })
     }
 
     /// Render the tag as one `#EXT-...` line, without a trailing newline.
+    /// A parsed tag reproduces its accepted line byte-for-byte.
     ///
     /// # Errors
     ///
@@ -123,12 +171,12 @@ impl CustomTag {
         if self.attrs.is_empty() {
             return Ok(s);
         }
-        s.push(':');
         for (name, _) in &self.attrs {
             if !crate::daterange::is_attribute_name(name) {
                 return Err(Error::InvalidAttributeName { name: name.clone() });
             }
         }
+        s.push(':');
         let mut list = String::new();
         render_attribute_list(&mut list, &self.attrs);
         s.push_str(list.strip_prefix(',').unwrap_or(&list));

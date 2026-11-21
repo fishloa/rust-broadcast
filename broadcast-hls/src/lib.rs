@@ -3567,21 +3567,8 @@ fn scan_attribute_list(
     s: &str,
     strict: bool,
 ) -> Result<(BTreeMap<String, String>, BTreeSet<String>)> {
-    scan_attribute_list_ordered(s, strict).map(|(map, quoted, _)| (map, quoted))
-}
-
-/// An attribute list split into its name→value map, the names written as
-/// quoted-strings, and the names in wire order.
-type OrderedAttributeList = (BTreeMap<String, String>, BTreeSet<String>, Vec<String>);
-
-/// [`scan_attribute_list`] with the attribute names in wire order as well as
-/// the name map, for the two callers that re-render a list in the order it
-/// appeared (`EXT-X-DATERANGE`'s `X-` attributes and a custom tag's attribute
-/// list). The order is the first occurrence of each name.
-fn scan_attribute_list_ordered(s: &str, strict: bool) -> Result<OrderedAttributeList> {
     let mut map = BTreeMap::new();
     let mut quoted_keys = BTreeSet::new();
-    let mut order = Vec::new();
     let bytes = s.as_bytes();
     let len = bytes.len();
     let mut i = 0;
@@ -3629,15 +3616,128 @@ fn scan_attribute_list_ordered(s: &str, strict: bool) -> Result<OrderedAttribute
                 name: key.to_string(),
             });
         }
-        if !map.contains_key(key) {
-            order.push(key.to_string());
-        }
         map.insert(key.to_string(), value.to_string());
         if quoted {
             quoted_keys.insert(key.to_string());
         }
     }
-    Ok((map, quoted_keys, order))
+    Ok((map, quoted_keys))
+}
+
+/// Scan an attribute list under the strict RFC 8216bis §4.2 grammar, keeping
+/// every attribute in wire order and its exact [`AttrValue`] (including
+/// whether it was quoted), so a parsed tag re-renders byte-identically.
+///
+/// Unlike [`parse_attribute_list_strict`], this rejects what a playlist
+/// parser used to tolerate: whitespace outside a quoted-string, a name with
+/// no `=`, an empty or trailing pair, characters after a closing quote, and a
+/// bare value containing `"`.
+fn scan_attribute_list_wire(s: &str) -> Result<Vec<(String, AttrValue)>> {
+    let invalid = |reason| Error::InvalidAttributeList {
+        list: s.to_string(),
+        reason,
+    };
+    if s.is_empty() {
+        return Err(invalid(AttributeListError::Empty));
+    }
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut i = 0;
+    while i < len {
+        let name_start = i;
+        while i < len && bytes[i] != b'=' {
+            if bytes[i] == b',' {
+                return Err(invalid(AttributeListError::MissingEquals));
+            }
+            if bytes[i].is_ascii_whitespace() {
+                return Err(invalid(AttributeListError::Whitespace));
+            }
+            i += 1;
+        }
+        if i >= len {
+            return Err(invalid(AttributeListError::MissingEquals));
+        }
+        let name = &s[name_start..i];
+        if !crate::daterange::is_attribute_name(name) {
+            return Err(invalid(AttributeListError::InvalidName));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(Error::DuplicateAttribute {
+                name: name.to_string(),
+            });
+        }
+        i += 1;
+        if i >= len {
+            return Err(invalid(AttributeListError::EmptyValue));
+        }
+        let value = if bytes[i] == b'"' {
+            i += 1;
+            let value_start = i;
+            while i < len && bytes[i] != b'"' {
+                if bytes[i] == b'\r' || bytes[i] == b'\n' {
+                    return Err(invalid(AttributeListError::UnterminatedQuote));
+                }
+                i += 1;
+            }
+            if i >= len {
+                return Err(invalid(AttributeListError::UnterminatedQuote));
+            }
+            let value = &s[value_start..i];
+            i += 1;
+            if value.is_empty() {
+                return Err(invalid(AttributeListError::EmptyQuotedValue));
+            }
+            if i < len && bytes[i] != b',' {
+                return Err(invalid(AttributeListError::TrailingCharacters));
+            }
+            AttrValue::quoted(value)?
+        } else {
+            let value_start = i;
+            while i < len && bytes[i] != b',' {
+                if bytes[i] == b'"' {
+                    return Err(invalid(AttributeListError::QuoteInBareValue));
+                }
+                if bytes[i].is_ascii_whitespace() {
+                    return Err(invalid(AttributeListError::Whitespace));
+                }
+                i += 1;
+            }
+            let value = &s[value_start..i];
+            if value.is_empty() {
+                return Err(invalid(AttributeListError::EmptyValue));
+            }
+            AttrValue::bare(value)?
+        };
+        out.push((name.to_string(), value));
+        if i < len {
+            i += 1;
+            if i >= len {
+                return Err(invalid(AttributeListError::TrailingComma));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(invalid(AttributeListError::Empty));
+    }
+    Ok(out)
+}
+
+/// A bare attribute value is a hexadecimal-sequence: `0x`/`0X` plus an even,
+/// non-zero count of `[0-9A-F]` digits.
+fn is_hexadecimal_sequence(value: &str) -> bool {
+    let Some(digits) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    else {
+        return false;
+    };
+    !digits.is_empty()
+        && digits.len() % 2 == 0
+        && digits
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
 }
 
 /// From an already-parsed attribute map, collect every attribute whose name
