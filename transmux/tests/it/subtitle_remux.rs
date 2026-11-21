@@ -281,3 +281,35 @@ fn wvtt_entry_extra_boxes_and_eight_byte_empty_box_round_trip() {
     good_body.extend_from_slice(&vlab);
     assert_eq!(entry.try_to_bytes().unwrap(), child(b"wvtt", &good_body));
 }
+
+/// A child size whose first two bytes differ: `0x0100_0008`. The walk reads
+/// the second size byte from `pos + 1`; `pos * 1` would read the first byte
+/// again and swallow the following child.
+#[test]
+fn vttc_and_wvtt_read_the_second_byte_of_a_child_size() {
+    const HUGE: usize = 0x0100_0008;
+    let mut huge = (HUGE as u32).to_be_bytes().to_vec();
+    huge.extend_from_slice(b"huge");
+    huge.extend_from_slice(&vec![0u8; HUGE - 8]);
+    let small = child(b"vide", b"x");
+
+    let payl = child(b"payl", b"text");
+    let body = [payl, huge.clone(), small.clone()].concat();
+    let wire = child(b"vttc", &body);
+    let cue = VttCueBox::bare_parse(&wire).expect("parse vttc with a large child");
+    assert_eq!(cue.extra_children.len(), 2);
+    assert_eq!(&cue.extra_children[0].box_type, b"huge");
+    assert_eq!(&cue.extra_children[1].box_type, b"vide");
+
+    let vttc = child(b"vttC", b"WEBVTT");
+    let mut entry_body = vec![0u8; 6];
+    entry_body.extend_from_slice(&1u16.to_be_bytes());
+    entry_body.extend_from_slice(&vttc);
+    entry_body.extend_from_slice(&huge);
+    entry_body.extend_from_slice(&small);
+    let entry = WvttSampleEntry::bare_parse(&child(b"wvtt", &entry_body))
+        .expect("parse wvtt with a large child");
+    assert_eq!(entry.extra_boxes.len(), 2);
+    assert_eq!(&entry.extra_boxes[0].box_type, b"huge");
+    assert_eq!(&entry.extra_boxes[1].box_type, b"vide");
+}
