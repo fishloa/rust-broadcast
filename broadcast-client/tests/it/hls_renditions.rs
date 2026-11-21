@@ -4,7 +4,8 @@ use url::Url;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use broadcast_client::{
-    AUDIO_TRACK_ID_OFFSET, Config, ConnId, Credentials, Error, Event, Session, SourceKind, Status,
+    AUDIO_TRACK_ID_OFFSET, Config, ConnId, Credentials, Error, ErrorKind, Event, Session,
+    SourceKind, Status,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -1135,5 +1136,102 @@ fn a_manual_audio_rendition_is_matched_by_name_and_language_in_the_new_group() {
             .iter()
             .any(|u| u.starts_with(&format!("{AUDIO_DIR}/")) || u.starts_with(AUDIO2_DIR)),
         "a differently named or languaged rendition is not chosen: {after:?}"
+    );
+}
+
+fn with_discontinuity_before_second_segment(playlist: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8(playlist.to_vec()).unwrap();
+    let second = text.match_indices("#EXTINF").nth(1).unwrap().0;
+    format!(
+        "{}#EXT-X-DISCONTINUITY\n{}",
+        &text[..second],
+        &text[second..]
+    )
+    .into_bytes()
+}
+
+fn discontinuities(events: &[Event]) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e, Event::Discontinuity))
+        .count()
+}
+
+#[test]
+fn a_discontinuity_from_the_other_adapter_at_a_later_instant_reaches_the_host() {
+    let f = fixture();
+    let mut h = host(&f, default_master(), hls_config());
+    h.ok(
+        VIDEO_PLAYLIST_URL,
+        with_discontinuity_before_second_segment(&f.video.playlist),
+    );
+    h.ok(
+        AUDIO_PLAYLIST_URL,
+        with_discontinuity_before_second_segment(&f.audio.playlist),
+    );
+    let (uri, bytes) = &f.audio.segments[1];
+    h.route(
+        &format!("{AUDIO_DIR}/{uri}"),
+        vec![status_only(503), Reply::Ok(bytes.clone())],
+    );
+    h.run_to_end();
+    assert_eq!(discontinuities(&h.events), 2);
+    assert_eq!(ended_count(&h.events), 1);
+}
+
+#[test]
+fn both_adapters_reporting_a_discontinuity_at_one_instant_reach_the_host_once() {
+    let f = fixture();
+    let mut h = host(&f, default_master(), hls_config());
+    h.ok(
+        VIDEO_PLAYLIST_URL,
+        with_discontinuity_before_second_segment(&f.video.playlist),
+    );
+    h.ok(
+        AUDIO_PLAYLIST_URL,
+        with_discontinuity_before_second_segment(&f.audio.playlist),
+    );
+    h.run_to_end();
+    assert_eq!(discontinuities(&h.events), 1);
+}
+
+fn with_key(playlist: &[u8], uri: &str) -> Vec<u8> {
+    let text = String::from_utf8(playlist.to_vec()).unwrap();
+    let first = text.find("#EXTINF").unwrap();
+    format!(
+        "{}#EXT-X-KEY:METHOD=AES-128,URI=\"{uri}\"\n{}",
+        &text[..first],
+        &text[first..]
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_fatal_main_error_drops_the_audio_adapter_error_of_the_same_instant() {
+    const KEY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    let f = fixture();
+    let config = {
+        let mut new_config = hls_config();
+        new_config.max_key_failures = 1;
+        new_config.hls_key_timeout = KEY_TIMEOUT;
+        new_config
+    };
+    let mut h = host(&f, default_master(), config);
+    h.ok(VIDEO_PLAYLIST_URL, with_key(&f.video.playlist, "vkey.bin"));
+    h.ok(AUDIO_PLAYLIST_URL, with_key(&f.audio.playlist, "akey.bin"));
+    h.route(&format!("{VIDEO_DIR}/vkey.bin"), vec![Reply::Hang]);
+    h.route(&format!("{AUDIO_DIR}/akey.bin"), vec![Reply::Hang]);
+    h.run_until(|_| false, 400);
+    let errors: Vec<&Event> = h
+        .events
+        .iter()
+        .filter(|e| matches!(e, Event::Error { .. }))
+        .collect();
+    assert_eq!(
+        errors,
+        vec![&Event::Error {
+            kind: ErrorKind::KeyFetchFailed { status: None },
+            fatal: true,
+        }]
     );
 }
