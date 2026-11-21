@@ -33,7 +33,7 @@ use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
 use transmux::{
     FragmentTrackData, Media, RtpLossEvent, RtpOutput, RtpPacketiser, RtpStream,
-    RtpStreamDepacketiser, RtpStreamTrack, Severity, TsDemux, build_init_segment,
+    RtpStreamDepacketiser, RtpStreamTrack, Severity, TsDemux, WallSkewExceeded, build_init_segment,
     build_media_segment, validate::SegmentOrigin, validate_init_segment, validate_media_segment,
 };
 
@@ -1353,4 +1353,122 @@ fn wild_forward_jump_is_discarded_not_held() {
         }
     }
     assert!(loss.is_empty(), "the wild jump is not loss: {loss:?}");
+}
+
+use transmux::rtcp::SenderReport;
+
+fn sender_report(rtp_ts: u32, ntp_msw: u32, ntp_lsw: u32) -> SenderReport {
+    SenderReport::new(
+        rtp_packet::Ssrc::new(0),
+        ntp_msw,
+        ntp_lsw,
+        rtp_ts,
+        0,
+        0,
+        Vec::new(),
+    )
+}
+
+fn two_track(clock_a: u32, clock_b: u32) -> RtpStreamDepacketiser {
+    RtpStreamDepacketiser::new(vec![
+        RtpStreamTrack::new(
+            TrackId::new(1),
+            RtpMediaKind::H264,
+            tiny_avc_config(),
+            timescale(clock_a),
+        ),
+        RtpStreamTrack::new(
+            TrackId::new(2),
+            RtpMediaKind::H264,
+            tiny_avc_config(),
+            timescale(clock_b),
+        ),
+    ])
+}
+
+fn feed_first_au(d: &mut RtpStreamDepacketiser, track: u32, ts: u32) {
+    d.push(
+        TrackId::new(track),
+        &ssrc_packet(0, ts, track, true, &[0x65, 0xAA]),
+    )
+    .unwrap();
+}
+
+fn start_for(starts: &[(TrackId, u64)], track: u32) -> u64 {
+    starts
+        .iter()
+        .find(|(id, _)| *id == TrackId::new(track))
+        .map(|(_, s)| *s)
+        .expect("track is anchored")
+}
+
+/// B's first AU is 0.5 s after A's, both anchored by Sender Reports whose RTP
+/// timestamps differ from their first AUs (so the sign of the wallclock
+/// offset matters): A is the origin, B gets exactly half a second in its own
+/// clock.
+#[test]
+fn sr_offset_preserves_the_sign_of_the_wallclock_delta() {
+    let mut d = two_track(90_000, 48_000);
+    feed_first_au(&mut d, 1, 9000);
+    feed_first_au(&mut d, 2, 96_000);
+    d.push_sender_report(TrackId::new(1), sender_report(9000, 1000, 0));
+    d.push_sender_report(TrackId::new(2), sender_report(48_000, 999, 2_147_483_648));
+    let starts = d.try_sync_start_decode_times().unwrap();
+    assert_eq!(start_for(&starts, 1), 0);
+    assert_eq!(start_for(&starts, 2), 24_000);
+}
+
+/// A half-tick offset rounds half up: 0.25 s at a 2 Hz clock is 0.5 ticks.
+#[test]
+fn sr_start_ticks_round_half_up() {
+    let mut d = two_track(90_000, 2);
+    feed_first_au(&mut d, 1, 9000);
+    feed_first_au(&mut d, 2, 9);
+    d.push_sender_report(TrackId::new(1), sender_report(9000, 1000, 0));
+    d.push_sender_report(TrackId::new(2), sender_report(9, 1000, 1_073_741_824));
+    let starts = d.try_sync_start_decode_times().unwrap();
+    assert_eq!(start_for(&starts, 1), 0);
+    assert_eq!(start_for(&starts, 2), 1, "0.5 ticks rounds up");
+}
+
+/// Fewer than two anchored tracks yields the empty "not enough anchors" vec.
+#[test]
+fn fewer_than_two_anchors_returns_empty() {
+    let mut d = two_track(90_000, 48_000);
+    feed_first_au(&mut d, 1, 9000);
+    feed_first_au(&mut d, 2, 96_000);
+    assert!(d.try_sync_start_decode_times().unwrap().is_empty());
+    d.push_sender_report(TrackId::new(1), sender_report(9000, 1000, 0));
+    assert!(
+        d.try_sync_start_decode_times().unwrap().is_empty(),
+        "one anchor is not enough"
+    );
+}
+
+/// A spread over one hour is refused and reports the spread; exactly one
+/// hour is accepted.
+#[test]
+fn sr_skew_over_an_hour_is_refused_with_the_spread() {
+    let mut d = two_track(48_000, 48_000);
+    feed_first_au(&mut d, 1, 4800);
+    feed_first_au(&mut d, 2, 4800);
+    d.push_sender_report(TrackId::new(1), sender_report(4800, 1000, 0));
+    d.push_sender_report(TrackId::new(2), sender_report(4800, 4601, 0));
+    match d.try_sync_start_decode_times() {
+        Err(WallSkewExceeded { skew_seconds }) => assert_eq!(skew_seconds, 3601.0),
+        other => panic!("expected WallSkewExceeded, got {other:?}"),
+    }
+    d.push_sender_report(TrackId::new(2), sender_report(4800, 4600, 0));
+    assert_eq!(d.try_sync_start_decode_times().unwrap().len(), 2);
+}
+
+/// A zero-NTP Sender Report is rejected and counted.
+#[test]
+fn zero_ntp_sender_reports_are_counted() {
+    let mut d = two_track(90_000, 48_000);
+    assert_eq!(d.rejected_sender_reports(), 0);
+    d.push_sender_report(TrackId::new(1), sender_report(9000, 0, 0));
+    assert_eq!(d.rejected_sender_reports(), 1);
+    d.push_sender_report(TrackId::new(2), sender_report(4800, 0, 0));
+    assert_eq!(d.rejected_sender_reports(), 2);
 }
