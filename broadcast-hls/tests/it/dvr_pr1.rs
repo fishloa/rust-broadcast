@@ -151,20 +151,332 @@ fn custom_tag_round_trips_wire_order() {
 /// typed error.
 #[test]
 fn invalid_custom_tag_names_are_typed_errors() {
-    use broadcast_hls::{CustomTag, CustomTagName};
+    use broadcast_hls::{CustomTag, CustomTagName, CustomTagNameError};
     assert!(matches!(
         CustomTagName::new("X-RUSTBROADCAST"),
-        Err(Error::InvalidCustomTagName { .. })
+        Err(Error::InvalidCustomTagName {
+            reason: CustomTagNameError::MissingPrefix,
+            ..
+        })
     ));
     assert!(matches!(
         CustomTagName::new("EXT-x-lower"),
-        Err(Error::InvalidCustomTagName { .. })
+        Err(Error::InvalidCustomTagName {
+            reason: CustomTagNameError::InvalidCharacter,
+            ..
+        })
+    ));
+    assert!(matches!(
+        CustomTagName::new("EXT--"),
+        Err(Error::InvalidCustomTagName {
+            reason: CustomTagNameError::EmptyName,
+            ..
+        })
+    ));
+    assert!(matches!(
+        CustomTagName::new("EXT-X-"),
+        Err(Error::InvalidCustomTagName {
+            reason: CustomTagNameError::TrailingHyphen,
+            ..
+        })
+    ));
+    assert!(matches!(
+        CustomTagName::new("EXT-X-MAP"),
+        Err(Error::InvalidCustomTagName {
+            reason: CustomTagNameError::StandardTag,
+            ..
+        })
     ));
     assert!(matches!(
         CustomTag::parse_tag_line("#EXT-X-BAD:lower=1"),
-        Err(Error::InvalidAttributeName { .. })
+        Err(Error::InvalidAttributeList {
+            reason: broadcast_hls::AttributeListError::InvalidName,
+            ..
+        })
     ));
     assert!(CustomTagName::new("EXT-X-RUSTBROADCAST-TIMING").is_ok());
+}
+
+fn daterange_roundtrip(line: &str) {
+    let range =
+        DateRange::parse_tag_line(line).unwrap_or_else(|e| panic!("{line}\n  must parse: {e}"));
+    assert_eq!(
+        range.to_tag_line().expect("render"),
+        line,
+        "byte-identical round trip"
+    );
+}
+
+/// Item 2: wire order, quoting and decimal text survive; anything outside the
+/// §4.2 grammar, or a known attribute with the wrong value kind, is a typed
+/// rejection.
+#[test]
+fn daterange_wire_grammar_is_strict_and_lossless() {
+    use broadcast_hls::{AttributeListError, DateRangeError};
+
+    for line in [
+        // START-DATE before ID keeps its position.
+        "#EXT-X-DATERANGE:START-DATE=\"2024-01-01T00:00:00Z\",ID=\"a\"",
+        // A client attribute between two known ones keeps its position.
+        "#EXT-X-DATERANGE:ID=\"a\",X-A=1,CLASS=\"c\"",
+        // An SCTE35 attribute before a client attribute keeps its position.
+        "#EXT-X-DATERANGE:ID=\"a\",SCTE35-OUT=0xFC,X-A=1",
+        // Decimal text is not normalised.
+        "#EXT-X-DATERANGE:ID=\"a\",DURATION=10.0",
+        "#EXT-X-DATERANGE:ID=\"a\",DURATION=10",
+        "#EXT-X-DATERANGE:ID=\"a\",CUE=\"ONCE,PRE\"",
+        "#EXT-X-DATERANGE:ID=\"a\",X-Q=\"a,b\"",
+        "#EXT-X-DATERANGE:ID=\"a\",START-DATE=\"2024-01-01T00:00:00Z\",END-DATE=\"2024-01-01T00:00:10Z\",DURATION=10",
+    ] {
+        daterange_roundtrip(line);
+    }
+
+    for (line, ok) in [
+        (
+            "#EXT-X-DATERANGE:ID=a",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=a"),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::WrongAttributeKind,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\", START-DATE=\"2024-01-01T00:00:00Z\"",
+            matches!(
+                DateRange::parse_tag_line(
+                    "#EXT-X-DATERANGE:ID=\"a\", START-DATE=\"2024-01-01T00:00:00Z\""
+                ),
+                Err(Error::InvalidAttributeList {
+                    reason: AttributeListError::Whitespace,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",FOO",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",FOO"),
+                Err(Error::InvalidAttributeList {
+                    reason: AttributeListError::MissingEquals,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:"),
+                Err(Error::InvalidAttributeList {
+                    reason: AttributeListError::Empty,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"\"",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"\""),
+                Err(Error::InvalidAttributeList {
+                    reason: AttributeListError::EmptyQuotedValue,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",DURATION=\"10\"",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",DURATION=\"10\""),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::InvalidDurationValue,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",X-Q=foo",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-Q=foo"),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::InvalidClientAttributeValue,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",X-Q=0xZZ",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-Q=0xZZ"),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::InvalidClientAttributeValue,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",SCTE35-OUT=12",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",SCTE35-OUT=12"),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::InvalidScte35Value,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",END-ON-NEXT=NO",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",END-ON-NEXT=NO"),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::EndOnNextNotYes,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",CUE=\"PRE,POST\"",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",CUE=\"PRE,POST\""),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::CuePreAndPost,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",CUE=\"BOGUS\"",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",CUE=\"BOGUS\""),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::InvalidCue,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",CUE=PRE",
+            matches!(
+                DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",CUE=PRE"),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::WrongAttributeKind,
+                    ..
+                })
+            ),
+        ),
+        (
+            "#EXT-X-DATERANGE:ID=\"a\",START-DATE=\"2024-01-01T00:00:00Z\",END-DATE=\"2024-01-01T00:00:09Z\",DURATION=10",
+            matches!(
+                DateRange::parse_tag_line(
+                    "#EXT-X-DATERANGE:ID=\"a\",START-DATE=\"2024-01-01T00:00:00Z\",END-DATE=\"2024-01-01T00:00:09Z\",DURATION=10"
+                ),
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::EndDateDurationMismatch,
+                    ..
+                })
+            ),
+        ),
+    ] {
+        assert!(ok, "wrong rejection for {line}");
+    }
+
+    let cue =
+        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",CUE=\"PRE,ONCE\"").expect("valid CUE");
+    let cue = cue.cue.expect("typed cue");
+    assert_eq!(cue.triggers.len(), 2);
+    assert_eq!(cue.triggers[0].name(), "PRE");
+    assert_eq!(cue.triggers[0].to_string(), "PRE");
+    assert_eq!(cue.render(), "PRE,ONCE");
+
+    assert!(matches!(
+        DateRange::new(""),
+        Err(Error::InvalidDateRange {
+            reason: DateRangeError::EmptyId,
+            ..
+        })
+    ));
+    assert!(matches!(
+        DateRange::new("a").expect("valid id").to_tag_line(),
+        Ok(line) if line == "#EXT-X-DATERANGE:ID=\"a\""
+    ));
+}
+
+/// Item 2: the custom-tag scanner rejects the same grammar violations instead
+/// of silently dropping the attribute list.
+#[test]
+fn custom_tag_wire_grammar_is_strict() {
+    use broadcast_hls::{AttributeListError, CustomTag};
+
+    for line in [
+        "#EXT-X-FOO:A=1,B=\"2\"",
+        "#EXT-X-FOO",
+        "#EXT-X-FOO:A=\"a,b\",B=2",
+    ] {
+        let tag = CustomTag::parse_tag_line(line).expect("must parse");
+        assert_eq!(tag.to_tag_line().expect("render"), line);
+    }
+
+    for (line, reason) in [
+        ("#EXT-X-FOO:", AttributeListError::Empty),
+        ("#EXT-X-FOO:123", AttributeListError::MissingEquals),
+        ("#EXT-X-FOO:A=1,B", AttributeListError::MissingEquals),
+        (
+            "#EXT-X-FOO:A=\"1\"x",
+            AttributeListError::TrailingCharacters,
+        ),
+        ("#EXT-X-FOO:A=1,", AttributeListError::TrailingComma),
+    ] {
+        assert!(
+            matches!(
+                CustomTag::parse_tag_line(line),
+                Err(Error::InvalidAttributeList { reason: got, .. }) if got == reason
+            ),
+            "{line} must be rejected as {reason:?}"
+        );
+    }
+}
+
+/// Item 1: `render_header` validates the fields it emits itself (a `skip` id
+/// cannot inject a line), and `render_segment` the same for its title.
+#[test]
+fn incremental_renderers_validate_what_they_emit() {
+    use broadcast_hls::{MediaPlaylist, MediaSegment, SkipInfo};
+
+    let mut skip = SkipInfo::default();
+    skip.recently_removed_daterange_ids
+        .push("x\"\n#EXT-X-ENDLIST\n#Y".into());
+    let header = MediaPlaylist {
+        target_duration: 2,
+        skip: Some(skip),
+        ..Default::default()
+    };
+    assert!(matches!(
+        header.render_header(),
+        Err(Error::InvalidQuotedString { .. })
+    ));
+    assert!(matches!(
+        header.to_m3u8(),
+        Err(Error::InvalidQuotedString { .. })
+    ));
+
+    let segment = MediaPlaylist {
+        target_duration: 2,
+        segments: vec![MediaSegment {
+            uri: "seg0.ts".into(),
+            duration: broadcast_hls::DecimalSeconds::new(2.0).expect("valid"),
+            title: Some("x\"\n#EXT-X-ENDLIST\n#Y".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert!(matches!(
+        segment.render_segment(0),
+        Err(Error::InvalidQuotedString { .. })
+    ));
+    assert!(matches!(
+        segment.to_m3u8(),
+        Err(Error::InvalidQuotedString { .. })
+    ));
 }
 
 const DESIGN_PLAYLIST: &str = "hls/handbuilt/dvr-runtime-design.m3u8";
