@@ -6,6 +6,171 @@ use thiserror::Error;
 /// Crate-wide result alias.
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// Why a client-defined (`X-`) attribute name was rejected
+/// (RFC 8216bis §4.2, §4.4.5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ClientAttrNameError {
+    /// The name does not start with `X-`.
+    MissingPrefix,
+    /// Nothing follows the `X-` prefix.
+    EmptyName,
+    /// The name ends with `-`.
+    TrailingHyphen,
+    /// A character is outside the §4.2 `AttributeName` set.
+    InvalidCharacter,
+}
+
+impl ClientAttrNameError {
+    /// Stable lowercase label.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::MissingPrefix => "missing_prefix",
+            Self::EmptyName => "empty_name",
+            Self::TrailingHyphen => "trailing_hyphen",
+            Self::InvalidCharacter => "invalid_character",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ClientAttrNameError);
+
+/// Why a [`crate::CustomTagName`] was rejected (RFC 8216bis §4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CustomTagNameError {
+    /// The name does not start with `EXT-`.
+    MissingPrefix,
+    /// Nothing follows the `EXT-` prefix.
+    EmptyName,
+    /// The name ends with `-`.
+    TrailingHyphen,
+    /// A character is outside the §4.1 tag set.
+    InvalidCharacter,
+    /// The name is one this crate parses as a standard tag.
+    StandardTag,
+}
+
+impl CustomTagNameError {
+    /// Stable lowercase label.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::MissingPrefix => "missing_prefix",
+            Self::EmptyName => "empty_name",
+            Self::TrailingHyphen => "trailing_hyphen",
+            Self::InvalidCharacter => "invalid_character",
+            Self::StandardTag => "standard_tag",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(CustomTagNameError);
+
+/// Why an attribute-list text was rejected by the strict wire scanner
+/// (RFC 8216bis §4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AttributeListError {
+    /// The list is empty.
+    Empty,
+    /// A comma has no attribute after it.
+    TrailingComma,
+    /// An attribute has no `=`.
+    MissingEquals,
+    /// The name is empty or not a legal `AttributeName`.
+    InvalidName,
+    /// The value is empty.
+    EmptyValue,
+    /// A quoted-string is not terminated.
+    UnterminatedQuote,
+    /// Characters follow a closing quote.
+    TrailingCharacters,
+    /// Whitespace appears outside a quoted-string.
+    Whitespace,
+    /// A bare value contains a `"`.
+    QuoteInBareValue,
+    /// A value contains a C0 control character or DEL.
+    ControlCharacter,
+}
+
+impl AttributeListError {
+    /// Stable lowercase label.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::TrailingComma => "trailing_comma",
+            Self::MissingEquals => "missing_equals",
+            Self::InvalidName => "invalid_name",
+            Self::EmptyValue => "empty_value",
+            Self::UnterminatedQuote => "unterminated_quote",
+            Self::TrailingCharacters => "trailing_characters",
+            Self::Whitespace => "whitespace",
+            Self::QuoteInBareValue => "quote_in_bare_value",
+            Self::ControlCharacter => "control_character",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(AttributeListError);
+
+/// Why an `EXT-X-DATERANGE` was rejected (RFC 8216bis §4.4.5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DateRangeError {
+    /// `ID` is empty.
+    EmptyId,
+    /// `END-ON-NEXT` is present without `CLASS`.
+    EndOnNextWithoutClass,
+    /// `END-ON-NEXT` is present with `DURATION`.
+    EndOnNextWithDuration,
+    /// `END-ON-NEXT` is present with `END-DATE`.
+    EndOnNextWithEndDate,
+    /// `END-DATE` is before `START-DATE`.
+    EndBeforeStart,
+    /// `END-DATE` is not `START-DATE` plus `DURATION`.
+    EndDateDurationMismatch,
+    /// A known attribute has the wrong RFC 8216bis §4.2 value kind.
+    WrongAttributeKind,
+    /// A `DURATION`/`PLANNED-DURATION` is not a decimal-floating-point.
+    InvalidDurationValue,
+    /// A `CUE` is not a list of `PRE`/`POST`/`ONCE`.
+    InvalidCue,
+    /// A `CUE` names both `PRE` and `POST`.
+    CuePreAndPost,
+    /// A `CUE` repeats a trigger.
+    DuplicateCueTrigger,
+    /// An `X-` attribute value is not one of the three allowed kinds.
+    InvalidClientAttributeValue,
+    /// An `SCTE35-CMD`/`-OUT`/`-IN` value is not a hexadecimal-sequence.
+    InvalidScte35Value,
+    /// `END-ON-NEXT` is not exactly `YES`.
+    EndOnNextNotYes,
+}
+
+impl DateRangeError {
+    /// Stable lowercase label.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::EmptyId => "empty_id",
+            Self::EndOnNextWithoutClass => "end_on_next_without_class",
+            Self::EndOnNextWithDuration => "end_on_next_with_duration",
+            Self::EndOnNextWithEndDate => "end_on_next_with_end_date",
+            Self::EndBeforeStart => "end_before_start",
+            Self::EndDateDurationMismatch => "end_date_duration_mismatch",
+            Self::WrongAttributeKind => "wrong_attribute_kind",
+            Self::InvalidDurationValue => "invalid_duration_value",
+            Self::InvalidCue => "invalid_cue",
+            Self::CuePreAndPost => "cue_pre_and_post",
+            Self::DuplicateCueTrigger => "duplicate_cue_trigger",
+            Self::InvalidClientAttributeValue => "invalid_client_attribute_value",
+            Self::InvalidScte35Value => "invalid_scte35_value",
+            Self::EndOnNextNotYes => "end_on_next_not_yes",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(DateRangeError);
+
 /// Error variants that [`crate::MediaPlaylist::parse`]/[`crate::MasterPlaylist::parse`]
 /// can return.
 ///
@@ -113,6 +278,63 @@ pub enum Error {
         what: String,
         /// The offending line.
         value: String,
+    },
+
+    /// A `ClientAttrName` is not an `X-` prefixed name built from the
+    /// RFC 8216bis §4.2 `AttributeName` character set (`[A-Z]`, `[0-9]`, `-`).
+    #[error("client attribute name {name:?} is invalid: {reason}")]
+    InvalidClientAttrName {
+        /// The offending name.
+        name: String,
+        /// Why it was rejected.
+        reason: ClientAttrNameError,
+    },
+
+    /// A `CustomTagName` is not an `EXT-` prefixed name built from the
+    /// RFC 8216bis §4.1 tag character set (`[A-Z]`, `[0-9]`, `-`).
+    #[error("custom tag name {name:?} is invalid: {reason}")]
+    InvalidCustomTagName {
+        /// The offending name.
+        name: String,
+        /// Why it was rejected.
+        reason: CustomTagNameError,
+    },
+
+    /// An attribute-list text is outside the RFC 8216bis §4.2 grammar.
+    #[error("attribute list {list:?} is invalid: {reason}")]
+    InvalidAttributeList {
+        /// The offending list text.
+        list: String,
+        /// Why it was rejected.
+        reason: AttributeListError,
+    },
+
+    /// An attribute-list name is not built from the RFC 8216bis §4.2
+    /// `AttributeName` character set (`[A-Z]`, `[0-9]`, `-`).
+    #[error("attribute name {name:?} is not a legal RFC 8216bis AttributeName")]
+    InvalidAttributeName {
+        /// The offending name.
+        name: String,
+    },
+
+    /// An `EXT-X-DATERANGE` violates a rule RFC 8216bis §4.4.5.1 states
+    /// locally (one this crate can check without another tag).
+    #[error("EXT-X-DATERANGE {id:?} is invalid: {reason}")]
+    InvalidDateRange {
+        /// The range's `ID`.
+        id: String,
+        /// Why it was rejected.
+        reason: DateRangeError,
+    },
+
+    /// [`crate::MediaPlaylist::render_segment`] was asked for a segment
+    /// index the playlist does not have.
+    #[error("segment index {index} is out of range for a playlist of {len} segments")]
+    SegmentIndexOutOfRange {
+        /// The requested index.
+        index: usize,
+        /// The playlist's segment count.
+        len: usize,
     },
 
     /// An `#EXT-X-KEY` whose `METHOD` is not `NONE` carries no `URI`
