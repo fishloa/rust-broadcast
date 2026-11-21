@@ -370,3 +370,55 @@ fn pcr_matches_the_output_byte_position_when_stuffing_is_combined() {
         );
     }
 }
+
+/// A payload-bearing packet with an adaptation field carrying one PCR on the
+/// 27 MHz clock, so a synthetic PCR series can be fed through an op.
+fn pcr_packet(pid: Pid, pcr_27mhz: u64) -> [u8; PKT] {
+    let mut packet = crate::support::null_packet();
+    packet[1] = ((pid.value() >> 8) as u8) & 0x1F;
+    packet[2] = (pid.value() & 0xFF) as u8;
+    packet[3] = 0x30; // adaptation field + payload
+    packet[4] = 7; // adaptation_field_length: flags + 6-byte PCR
+    packet[5] = 0x10; // PCR_flag
+    set_pcr_27mhz(&mut packet, pcr_27mhz);
+    packet
+}
+
+/// A PCR value repeated on the next PCR packet is not a forward step: it must
+/// be extrapolated from the anchor rate like any other untrustworthy
+/// observation, not echoed through unchanged (audit a23cp #3454).
+#[test]
+fn interpolate_extrapolates_a_duplicated_pcr_instead_of_echoing_it() {
+    const PCR_PID: Pid = Pid::from_const(0x0100);
+    /// 10 ms of 27 MHz ticks between consecutive PCR packets.
+    const STEP: u64 = 270_000;
+    const BASE: u64 = 27_000_000; // one second on the PCR clock
+
+    let mut input = Vec::new();
+    for index in 0u64..40 {
+        let pcr = match index {
+            0 => Some(BASE),
+            10 => Some(BASE + STEP),
+            20 => Some(BASE + STEP),
+            30 => Some(BASE + 3 * STEP),
+            _ => None,
+        };
+        match pcr {
+            Some(pcr) => input.extend_from_slice(&pcr_packet(PCR_PID, pcr)),
+            None => input.extend_from_slice(&crate::support::null_packet()),
+        }
+    }
+
+    let out = run(&input, |b| b.restamp_pcr(PcrRestamp::interpolate()));
+    let pcrs: Vec<u64> = out
+        .chunks_exact(PKT)
+        .filter(|p| pid(p) == PCR_PID)
+        .filter_map(pcr_27mhz)
+        .collect();
+    assert_eq!(
+        pcrs,
+        vec![BASE, BASE + STEP, BASE + 2 * STEP, BASE + 3 * STEP],
+        "the duplicate at index 20 must be extrapolated to BASE+2*STEP, not \
+         passed through as BASE+STEP"
+    );
+}

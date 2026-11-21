@@ -261,6 +261,15 @@ mod tests {
         assert!(unrolled_target_is_in_past(target, now));
     }
 
+    /// The comparison is strict: a cue exactly at the reference time is not
+    /// late, so it must not inflate `compliance_probe_scte35_pts_in_past_total`
+    /// (audit a23cp #3432).
+    #[test]
+    fn target_exactly_at_now_is_not_in_the_past() {
+        assert!(!unrolled_target_is_in_past(5, 5));
+        assert!(unrolled_target_is_in_past(4, 5));
+    }
+
     /// A ByteTap drained through the bridge must actually reach the
     /// conformance monitor: feeding real fixture bytes through a tap must
     /// move `packets` in `Probe::conformance_stats()`.

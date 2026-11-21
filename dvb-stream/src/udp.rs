@@ -40,6 +40,17 @@ use crate::ts_codec::TsDecoder;
 /// socket option or bind failure; any multicast-join failure. A source-specific
 /// IPv6 join is [`io::ErrorKind::Unsupported`].
 pub fn bind_udp(addr: SocketAddr, options: &UdpOptions) -> io::Result<Socket> {
+    bind_udp_with(addr, options, open)
+}
+
+/// [`bind_udp`]'s body with the socket factory as a parameter, so the
+/// receive-buffer fallback is exercised without needing a real kernel to
+/// refuse `SO_RCVBUF`.
+fn bind_udp_with(
+    addr: SocketAddr,
+    options: &UdpOptions,
+    open: impl Fn(SocketAddr, &UdpOptions, Option<NonZeroU32>) -> io::Result<Socket>,
+) -> io::Result<Socket> {
     check_udp(addr, options)?;
     match open(addr, options, options.recv_buffer_bytes) {
         Err(error) if options.recv_buffer_bytes.is_some() => {
@@ -153,5 +164,63 @@ impl Stream for UdpPackets {
         Pin::new(&mut self.0)
             .poll_next(cx)
             .map(|o| o.map(|r| r.map(|(pkt, _src)| pkt)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::net::Ipv4Addr;
+
+    /// A refused `SO_RCVBUF` request must be retried without it: the socket is
+    /// still returned, and the first failure is not propagated (audit a23cp
+    /// #3436).
+    #[test]
+    fn a_refused_recv_buffer_request_is_retried_without_it() {
+        let calls = Cell::new(0u32);
+        let recv_buffer = NonZeroU32::new(64 * 1024).expect("non-zero");
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+        let options = UdpOptions::new().with_recv_buffer_bytes(recv_buffer);
+
+        let result = bind_udp_with(addr, &options, |addr, _options, recv_buffer| {
+            calls.set(calls.get() + 1);
+            if recv_buffer.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SO_RCVBUF refused by the injected factory",
+                ));
+            }
+            std::net::UdpSocket::bind(addr).map(Socket::from)
+        });
+
+        assert!(
+            result.is_ok(),
+            "the bind must be retried without the receive buffer"
+        );
+        assert_eq!(
+            calls.get(),
+            2,
+            "one attempt with the buffer, one without it"
+        );
+    }
+
+    /// Without a receive-buffer request there is nothing to fall back from, so
+    /// a failed bind is reported as-is instead of retried (audit a23cp #3436).
+    #[test]
+    fn a_failed_bind_without_a_recv_buffer_request_is_not_retried() {
+        let calls = Cell::new(0u32);
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+
+        let result = bind_udp_with(addr, &UdpOptions::new(), |_addr, _options, _recv_buffer| {
+            calls.set(calls.get() + 1);
+            Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "injected bind failure",
+            ))
+        });
+
+        assert!(result.is_err(), "the bind failure is reported");
+        assert_eq!(calls.get(), 1, "no retry without an option to drop");
     }
 }
