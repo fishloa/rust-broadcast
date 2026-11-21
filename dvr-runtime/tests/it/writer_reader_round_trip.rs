@@ -45,6 +45,12 @@ fn publish(writer: &SegmentWriter, seq: u32, len: usize, fill: u8, at: u64, disc
     writer.publish_segment(entry).expect("publish");
 }
 
+fn set_readonly(dir: &std::path::Path, readonly: bool) {
+    let mut permissions = std::fs::metadata(dir).expect("meta").permissions();
+    permissions.set_readonly(readonly);
+    std::fs::set_permissions(dir, permissions).expect("permissions");
+}
+
 fn recorder(
     root: &std::path::Path,
     name: &str,
@@ -270,13 +276,19 @@ fn a_failed_roll_leaves_the_next_period_starting_with_the_init() {
     publish(&writer, 0, 100, 0x11, 0, false);
     recorder.poll(Timestamp::ZERO, |_| None, &[]).expect("p0");
 
-    std::fs::create_dir(root.join("r").join("p1.m4s")).expect("blocker");
+    set_readonly(&root.join("r"), true);
     publish(&writer, 1, 100, 0x22, 2_000_000_000, false);
     let error = recorder
         .poll(Timestamp::from_nanos(2_000_000_000), |_| None, &[])
         .expect_err("the roll must fail");
-    assert!(matches!(error, dvr_runtime::fs::FsError::Io { .. }));
-    std::fs::remove_dir(root.join("r").join("p1.m4s")).expect("unblock");
+    set_readonly(&root.join("r"), false);
+    assert!(matches!(
+        error,
+        dvr_runtime::fs::FsError::Io {
+            op: dvr_runtime::writer::StoreOpKind::CreateData,
+            ..
+        }
+    ));
 
     publish(&writer, 2, 100, 0x33, 4_000_000_000, false);
     recorder
@@ -308,7 +320,12 @@ fn retention_removes_the_files_from_disk() {
     for round in 0..4u32 {
         let trunk = self::trunk();
         let writer = trunk.segment_writer().expect("writer");
-        let mut recorder = recorder(&root, "ret", base.clone(), &trunk);
+        let mut recorder = recorder(
+            &root,
+            "ret",
+            base.clone().with_seq_offset(u64::from(round)),
+            &trunk,
+        );
         publish(&writer, 0, 100, 0x10 + round as u8, 0, false);
         recorder
             .poll(Timestamp::ZERO, |_| None, &[])
@@ -335,6 +352,9 @@ fn retention_removes_the_files_from_disk() {
     assert_eq!(scan.segments.len(), 2);
     assert_eq!(scan.segments[0].period.value(), 2);
     assert_eq!(scan.segments[1].period.value(), 3);
+    assert_eq!(scan.segments[0].seq, SegmentSeq::new(2));
+    assert_eq!(scan.segments[1].seq, SegmentSeq::new(3));
+    assert!(scan.conflicts.is_empty());
     cleanup(&root);
 }
 
@@ -385,7 +405,8 @@ fn a_persistently_failing_item_becomes_a_counted_gap() {
     let mut config = config(ArchiveContainer::Ts, 2, periods(10));
     config.period_duration = Some(Duration::from_secs(86400));
     let mut recorder = recorder(&root, "gap", config, &trunk);
-    std::fs::create_dir_all(root.join("gap").join("p0.ts")).expect("blocker directory");
+    std::fs::create_dir_all(root.join("gap")).expect("archive directory");
+    set_readonly(&root.join("gap"), true);
     publish(
         &trunk.segment_writer().expect("writer"),
         0,
@@ -400,6 +421,8 @@ fn a_persistently_failing_item_becomes_a_counted_gap() {
             .expect_err("the blocked create fails");
         assert!(matches!(error, dvr_runtime::fs::FsError::Io { .. }));
     }
+    set_readonly(&root.join("gap"), false);
+    assert!(!root.join("gap").join("p0.ts").exists());
     assert_eq!(recorder.writer().counters().gaps, 1);
     let events: Vec<WriterEvent> = std::iter::from_fn(|| recorder.poll_event()).collect();
     assert!(

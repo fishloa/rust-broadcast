@@ -395,6 +395,31 @@ pub struct ArchiveScan {
     pub segments: Vec<ArchivedSegment>,
     /// Periods that could not be read, with the reason.
     pub unreadable: Vec<(PeriodNum, PlaylistError)>,
+    /// Sequence numbers more than one period claimed. Only the earliest
+    /// period's record is in `segments`; each later claim is reported here.
+    pub conflicts: Vec<SeqConflict>,
+}
+
+/// One sequence number claimed by two periods (a store that reported a
+/// playlist creation failed after it had landed). The earlier period's
+/// record is kept; the later one is dropped from the scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SeqConflict {
+    /// The archive sequence number.
+    pub seq: SegmentSeq,
+    /// The period whose record was kept.
+    pub kept: PeriodNum,
+    /// The period whose record was dropped.
+    pub dropped: PeriodNum,
+}
+
+impl SeqConflict {
+    /// A conflict over `seq` between the `kept` and `dropped` periods.
+    #[must_use]
+    pub fn new(seq: SegmentSeq, kept: PeriodNum, dropped: PeriodNum) -> Self {
+        Self { seq, kept, dropped }
+    }
 }
 
 fn endlist_line() -> Result<String, broadcast_hls::Error> {

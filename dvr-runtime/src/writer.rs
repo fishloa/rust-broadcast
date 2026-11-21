@@ -151,6 +151,20 @@ pub enum StoreOp {
 }
 
 impl StoreOp {
+    /// The period the operation works on, when it names one.
+    #[must_use]
+    pub fn period(&self) -> Option<PeriodNum> {
+        match self {
+            Self::CreateDir => None,
+            Self::CreateData { period }
+            | Self::AppendData { period, .. }
+            | Self::SyncData { period }
+            | Self::CreatePlaylist { period, .. }
+            | Self::AppendPlaylist { period, .. } => Some(*period),
+            Self::Remove { file } => Some(file.period()),
+        }
+    }
+
     /// The operation's kind, for error context.
     #[must_use]
     pub fn kind(&self) -> StoreOpKind {
@@ -220,6 +234,11 @@ pub enum StoreFailure {
     },
     /// An I/O error, by kind.
     Io(std::io::ErrorKind),
+    /// The operation's effect is in place and visible (a playlist renamed
+    /// into place, bytes appended), but making it durable failed. The writer
+    /// counts the operation as done, emits [`WriterEvent::NotDurable`], and
+    /// treats the operations after it as not attempted.
+    NotDurable(std::io::ErrorKind),
 }
 
 /// What the host did with a plan.
@@ -322,6 +341,17 @@ pub enum WriterEvent {
     SkippedBeforeInit {
         /// The dropped segment's Trunk sequence number.
         seq: SegmentSeq,
+    },
+    /// An operation took effect but the store could not make it durable
+    /// ([`StoreFailure::NotDurable`]); the archive is visible but a power
+    /// loss may lose it.
+    NotDurable {
+        /// The operation.
+        op: StoreOpKind,
+        /// The period it worked on, when it names one.
+        period: Option<PeriodNum>,
+        /// The I/O error, by kind.
+        kind: std::io::ErrorKind,
     },
 }
 
@@ -437,6 +467,7 @@ pub struct ArchiveWriter {
     next_plan: u64,
     current_init: Option<Bytes>,
     last_input_consumed: bool,
+    periods_exhausted: bool,
 }
 
 impl ArchiveWriter {
@@ -469,20 +500,23 @@ impl ArchiveWriter {
             next_plan: 0,
             current_init: None,
             last_input_consumed: false,
+            periods_exhausted: false,
         })
     }
 
     /// Adopt the periods an earlier run left on disk: the next period number
-    /// is one past the highest **playlist** already present (a stray media
-    /// file with no playlist is not a period and is ignored, so it can never
-    /// exhaust the number range), and each adopted period's media file size
-    /// counts toward byte retention. The first segment of this run is marked
-    /// discontinuous.
+    /// is one past the highest period number of **any** archive file present
+    /// (a media file with no playlist, left by a crash between creating a
+    /// period's media file and its playlist, still owns its number because
+    /// the store creates files with `create_new`). Every adopted period,
+    /// including such an orphan media file, enters the retention ledger with
+    /// its media file size and is evicted like any other period. The first
+    /// segment of this run is marked discontinuous.
     ///
     /// # Errors
     ///
     /// [`ArchiveError::PlanPending`] while a plan is outstanding,
-    /// [`ArchiveError::PeriodNumbersExhausted`] when a playlist numbered
+    /// [`ArchiveError::PeriodNumbersExhausted`] when an archive file numbered
     /// `u32::MAX` exists.
     pub fn seed(&mut self, existing: &[SeedFile]) -> Result<(), ArchiveError> {
         if self.pending.is_some() {
@@ -502,18 +536,18 @@ impl ArchiveWriter {
                 }
             }
         }
-        let highest = playlists.keys().next_back().copied();
+        let highest = playlists
+            .keys()
+            .next_back()
+            .copied()
+            .max(media.keys().next_back().copied());
+        let mut adopted = media.clone();
         for (period, playlist_bytes) in playlists {
-            if self.closed.iter().any(|closed| closed.period == period) {
-                continue;
-            }
-            let file_bytes = media.get(&period).copied().unwrap_or(playlist_bytes);
-            self.closed.push(ClosedPeriod {
-                period,
-                file_bytes: Some(file_bytes),
-            });
+            adopted.entry(period).or_insert(playlist_bytes);
         }
-        self.closed.sort_by_key(|closed| closed.period);
+        for (period, file_bytes) in adopted {
+            self.adopt(period, Some(file_bytes));
+        }
         if let Some(highest) = highest {
             self.next_period = highest
                 .checked_next()
@@ -681,6 +715,14 @@ impl ArchiveWriter {
     /// the [input consumed](Self::last_input_consumed); a failure before it
     /// does not, and the host must retry that input.
     ///
+    /// A [`StoreFailure::NotDurable`] counts its own operation as done (a
+    /// playlist renamed into place is visible and will be read) and emits
+    /// [`WriterEvent::NotDurable`]; only the operations after it count as not
+    /// attempted. An `AlreadyExists` failure of `CreateData` or
+    /// `CreatePlaylist` consumes that period number, so the retry takes the
+    /// next one. A new period's media file left without its playlist enters
+    /// the retention ledger and is evicted like any period.
+    ///
     /// A failure at a retention `Remove` keeps that period in the ledger and
     /// emits [`WriterEvent::EvictionFailed`]; removals after it were not
     /// attempted and keep their periods too. A `LengthMismatch` resynchronises
@@ -706,62 +748,148 @@ impl ArchiveWriter {
                 self.commit(commit, usize::MAX, None);
                 self.last_input_consumed = true;
             }
-            PlanOutcome::Failed { at_op, failure } => match commit {
-                Commit::Segment(post) => {
-                    let close_old = post.old_close_op.is_some_and(|index| index < at_op);
-                    let consumed_new = post.create_data_op.is_some_and(|index| index < at_op);
-                    let record_committed = post.record_op < at_op;
-                    if record_committed {
-                        let reached = at_op >= post.first_remove_op;
-                        let applied = if reached {
-                            (at_op - post.first_remove_op) / 2
-                        } else {
-                            0
-                        };
-                        let failed_remove = match plan.ops.get(at_op) {
-                            Some(StoreOp::Remove { file }) if reached => Some(file.period()),
-                            _ => None,
-                        };
-                        self.commit_segment(post, applied, failed_remove);
-                        self.last_input_consumed = true;
-                    } else if close_old {
-                        let reason = post.opened_reason;
-                        let consumed = post.new_period;
-                        if let Some(closed) = post.closed_now
-                            && self
-                                .open
-                                .as_ref()
-                                .is_some_and(|open| open.period == closed.period)
-                        {
-                            self.closed.push(closed);
-                            self.emit(WriterEvent::PeriodClosed {
-                                period: closed.period,
-                            });
-                            self.open = None;
-                        }
-                        self.next_reason = Some(reason);
-                        if consumed_new {
-                            self.next_period = consumed.checked_next().unwrap_or(self.next_period);
-                        }
-                    } else {
-                        self.resync_offsets(&plan.ops, at_op, failure);
-                        if consumed_new {
-                            self.next_period =
-                                post.new_period.checked_next().unwrap_or(self.next_period);
-                        }
-                    }
-                }
-                Commit::Close(post) => {
-                    if at_op > 0 {
-                        self.commit_close(post);
-                        self.last_input_consumed = true;
-                    } else {
-                        self.resync_offsets(&plan.ops, at_op, failure);
-                    }
-                }
-            },
+            PlanOutcome::Failed { at_op, failure } => {
+                self.failed(&plan, commit, at_op, failure);
+            }
         }
         Ok(())
+    }
+
+    fn failed(&mut self, plan: &Plan, commit: Commit, at_op: usize, failure: StoreFailure) {
+        let failed_op = plan.ops.get(at_op);
+        let done = match failure {
+            StoreFailure::NotDurable(kind) => {
+                if let Some(op) = failed_op {
+                    self.emit(WriterEvent::NotDurable {
+                        op: op.kind(),
+                        period: op.period(),
+                        kind,
+                    });
+                }
+                at_op.saturating_add(1)
+            }
+            _ => at_op,
+        };
+        let create_exists = failure == StoreFailure::Io(std::io::ErrorKind::AlreadyExists)
+            && matches!(
+                failed_op,
+                Some(StoreOp::CreateData { .. } | StoreOp::CreatePlaylist { .. })
+            );
+        match commit {
+            Commit::Segment(post) => {
+                let close_old = post.old_close_op.is_some_and(|index| index < done);
+                let created_new = post.create_data_op.is_some_and(|index| index < done);
+                let foreign_new = create_exists && post.create_data_op == Some(at_op);
+                let record_committed = post.record_op < done;
+                if record_committed {
+                    let reached = done >= post.first_remove_op;
+                    let applied = if reached {
+                        (done - post.first_remove_op) / 2
+                    } else {
+                        0
+                    };
+                    let failed_remove = match failed_op {
+                        Some(StoreOp::Remove { file }) if reached && done == at_op => {
+                            Some(file.period())
+                        }
+                        _ => None,
+                    };
+                    self.commit_segment(post, applied, failed_remove);
+                    self.last_input_consumed = true;
+                } else if close_old {
+                    let reason = post.opened_reason;
+                    let consumed = post.new_period;
+                    if let Some(closed) = post.closed_now
+                        && self
+                            .open
+                            .as_ref()
+                            .is_some_and(|open| open.period == closed.period)
+                    {
+                        self.closed.push(closed);
+                        self.emit(WriterEvent::PeriodClosed {
+                            period: closed.period,
+                        });
+                        self.open = None;
+                    }
+                    self.next_reason = Some(reason);
+                    self.consume_new(&plan.ops, done, failure, consumed, created_new, foreign_new);
+                } else {
+                    self.resync_offsets(&plan.ops, done, failure);
+                    self.consume_new(
+                        &plan.ops,
+                        done,
+                        failure,
+                        post.new_period,
+                        created_new,
+                        foreign_new,
+                    );
+                }
+            }
+            Commit::Close(post) => {
+                if done > 0 {
+                    self.commit_close(post);
+                    self.last_input_consumed = true;
+                } else {
+                    self.resync_offsets(&plan.ops, done, failure);
+                }
+            }
+        }
+    }
+
+    /// A new period's number is consumed once its media file was created by
+    /// this plan, or found to exist already (`create_new` refused it). The
+    /// media file is then an orphan with no playlist this writer will ever
+    /// write, and enters the retention ledger with the bytes the plan
+    /// appended to it (unknown for a file this writer did not create).
+    fn consume_new(
+        &mut self,
+        ops: &[StoreOp],
+        done: usize,
+        failure: StoreFailure,
+        period: PeriodNum,
+        created: bool,
+        foreign: bool,
+    ) {
+        if created {
+            let mut len = 0u64;
+            for op in ops.iter().take(done) {
+                if let StoreOp::AppendData {
+                    period: target,
+                    expect_len,
+                    bytes,
+                } = op
+                    && *target == period
+                {
+                    len = expect_len.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+                }
+            }
+            if let (
+                StoreFailure::LengthMismatch { actual },
+                Some(StoreOp::AppendData { period: target, .. }),
+            ) = (failure, ops.get(done))
+                && *target == period
+            {
+                len = actual;
+            }
+            self.adopt(period, Some(len));
+        } else if foreign {
+            self.adopt(period, None);
+        } else {
+            return;
+        }
+        match period.checked_next() {
+            Some(next) if next > self.next_period => self.next_period = next,
+            Some(_) => {}
+            None => self.periods_exhausted = true,
+        }
+    }
+
+    fn adopt(&mut self, period: PeriodNum, file_bytes: Option<u64>) {
+        if self.closed.iter().any(|closed| closed.period == period) {
+            return;
+        }
+        self.closed.push(ClosedPeriod { period, file_bytes });
+        self.closed.sort_by_key(|closed| closed.period);
     }
 
     /// Whether the input behind the most recently completed plan is durable.
@@ -1177,6 +1305,9 @@ impl ArchiveWriter {
                 }
             };
         let rolled = !matches!((&self.open, roll), (Some(_), None));
+        if rolled && self.periods_exhausted {
+            return Err(ArchiveError::PeriodNumbersExhausted);
+        }
         let target_duration = match (&self.open, roll) {
             (Some(open), None) => open.target_duration,
             _ => ceil_secs(self.config.target_duration).max(rounded),

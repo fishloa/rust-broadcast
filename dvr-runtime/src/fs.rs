@@ -21,8 +21,8 @@ use media_plane::trunk::{SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk};
 
 use crate::layout::{self, ArchiveFile, SeedFile};
 use crate::read::{
-    ArchiveScan, ArchivedSegment, PeriodPlaylist, PlaylistError, ReadError, checked_range,
-    parse_period_playlist,
+    ArchiveScan, ArchivedSegment, PeriodPlaylist, PlaylistError, ReadError, SeqConflict,
+    checked_range, parse_period_playlist,
 };
 use crate::recover::{RecoveredBox, scan_fmp4_data};
 use crate::writer::{
@@ -338,8 +338,8 @@ impl FsRecorder {
         let mut outcome = PlanOutcome::Done;
         let mut error = None;
         for (at_op, op) in plan.ops.iter().enumerate() {
-            if let Err(failure) = self.store_op(op) {
-                if let StoreFailure::Io(kind) = failure {
+            if let Err(failure) = store_op(&self.dir, self.container, op) {
+                if let StoreFailure::Io(kind) | StoreFailure::NotDurable(kind) = failure {
                     error = Some(io_error(
                         path_of(&self.dir, op, self.container),
                         op.kind(),
@@ -362,81 +362,66 @@ impl FsRecorder {
     }
 }
 
-impl FsRecorder {
-    fn store_op(&self, op: &StoreOp) -> Result<(), StoreFailure> {
-        match op {
-            StoreOp::CreateDir => {
-                fs::create_dir_all(&self.dir).map_err(|e| StoreFailure::Io(e.kind()))
+fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(), StoreFailure> {
+    match op {
+        StoreOp::CreateDir => fs::create_dir_all(dir).map_err(|e| StoreFailure::Io(e.kind())),
+        StoreOp::CreateData { period } => {
+            let path = dir.join(layout::media_file_name(*period, container));
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map(|_| ())
+                .map_err(|e| StoreFailure::Io(e.kind()))
+        }
+        StoreOp::AppendData {
+            period,
+            expect_len,
+            bytes,
+        } => {
+            let path = dir.join(layout::media_file_name(*period, container));
+            append_at(&path, *expect_len, bytes)
+        }
+        StoreOp::SyncData { period } => {
+            let media = dir.join(layout::media_file_name(*period, container));
+            sync_file(&media)?;
+            let playlist = dir.join(layout::playlist_file_name(*period));
+            match sync_file(&playlist) {
+                Err(StoreFailure::Io(std::io::ErrorKind::NotFound)) | Ok(()) => Ok(()),
+                Err(failure) => Err(failure),
             }
-            StoreOp::CreateData { period } => {
-                let path = self
-                    .dir
-                    .join(layout::media_file_name(*period, self.container));
-                OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(path)
-                    .map(|_| ())
-                    .map_err(|e| StoreFailure::Io(e.kind()))
-            }
-            StoreOp::AppendData {
-                period,
-                expect_len,
-                bytes,
-            } => {
-                let path = self
-                    .dir
-                    .join(layout::media_file_name(*period, self.container));
-                append_at(&path, *expect_len, bytes)
-            }
-            StoreOp::SyncData { period } => {
-                let media = self
-                    .dir
-                    .join(layout::media_file_name(*period, self.container));
-                let mut failed = sync_file(&media).is_err();
-                let playlist = self.dir.join(layout::playlist_file_name(*period));
-                match sync_file(&playlist) {
-                    Err(StoreFailure::Io(std::io::ErrorKind::NotFound)) => {}
-                    Err(_) => failed = true,
-                    Ok(()) => {}
+        }
+        StoreOp::CreatePlaylist { period, text } => {
+            let tmp = dir.join(layout::playlist_tmp_name(*period));
+            let path = dir.join(layout::playlist_file_name(*period));
+            let write = || -> std::io::Result<()> {
+                if path.exists() {
+                    return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
                 }
-                if failed {
-                    eprintln!(
-                        "dvr-runtime: syncing period {period} failed; durability is not guaranteed"
-                    );
-                }
-                Ok(())
-            }
-            StoreOp::CreatePlaylist { period, text } => {
-                let tmp = self.dir.join(layout::playlist_tmp_name(*period));
-                let path = self.dir.join(layout::playlist_file_name(*period));
-                let write = || -> std::io::Result<()> {
-                    if path.exists() {
-                        return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
-                    }
-                    let mut file = File::create(&tmp)?;
-                    file.write_all(text.as_bytes())?;
-                    file.sync_all()?;
-                    fs::rename(&tmp, &path)?;
-                    File::open(&self.dir)?.sync_all()
-                };
-                write().map_err(|e| StoreFailure::Io(e.kind()))
-            }
-            StoreOp::AppendPlaylist {
-                period,
-                expect_len,
-                text,
-            } => {
-                let path = self.dir.join(layout::playlist_file_name(*period));
-                append_at(&path, *expect_len, text.as_bytes())
-            }
-            StoreOp::Remove { file } => {
-                let path = self.dir.join(layout::file_name(*file, self.container));
-                match fs::remove_file(path) {
-                    Ok(()) => Ok(()),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    Err(e) => Err(StoreFailure::Io(e.kind())),
-                }
+                let mut file = File::create(&tmp)?;
+                file.write_all(text.as_bytes())?;
+                file.sync_all()?;
+                fs::rename(&tmp, &path)
+            };
+            write().map_err(|e| StoreFailure::Io(e.kind()))?;
+            File::open(dir)
+                .and_then(|handle| handle.sync_all())
+                .map_err(|e| StoreFailure::NotDurable(e.kind()))
+        }
+        StoreOp::AppendPlaylist {
+            period,
+            expect_len,
+            text,
+        } => {
+            let path = dir.join(layout::playlist_file_name(*period));
+            append_at(&path, *expect_len, text.as_bytes())
+        }
+        StoreOp::Remove { file } => {
+            let path = dir.join(layout::file_name(*file, container));
+            match fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(StoreFailure::Io(e.kind())),
             }
         }
     }
@@ -549,12 +534,27 @@ impl FsArchive {
     /// could not be read.
     pub fn scan(&mut self) -> ArchiveScan {
         let mut scan = ArchiveScan::default();
+        let mut owner: BTreeMap<SegmentSeq, PeriodNum> = BTreeMap::new();
         for period in self.periods() {
             match self.playlist(period) {
-                Ok(playlist) => scan.segments.extend(playlist.segments.iter().copied()),
+                Ok(playlist) => {
+                    for segment in &playlist.segments {
+                        match owner.get(&segment.seq) {
+                            Some(kept) => {
+                                scan.conflicts
+                                    .push(SeqConflict::new(segment.seq, *kept, period))
+                            }
+                            None => {
+                                owner.insert(segment.seq, period);
+                                scan.segments.push(*segment);
+                            }
+                        }
+                    }
+                }
                 Err(error) => scan.unreadable.push((period, error)),
             }
         }
+        scan.segments.sort_by_key(|segment| segment.seq);
         self.prune();
         scan
     }
@@ -769,6 +769,54 @@ mod tests {
             playlist: playlist(segments),
             last_used,
         }
+    }
+
+    #[test]
+    fn a_failed_media_sync_is_reported_not_swallowed() {
+        let dir = std::env::temp_dir().join(format!("dvr-sync-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("dir");
+        let media = dir.join(layout::media_file_name(
+            PeriodNum::new(0),
+            ArchiveContainer::Ts,
+        ));
+        fs::write(&media, b"bytes").expect("media");
+        let mut permissions = fs::metadata(&media).expect("meta").permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&media, permissions).expect("readonly");
+        let result = store_op(
+            &dir,
+            ArchiveContainer::Ts,
+            &StoreOp::SyncData {
+                period: PeriodNum::new(0),
+            },
+        );
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            result,
+            Err(StoreFailure::Io(std::io::ErrorKind::PermissionDenied))
+        );
+    }
+
+    #[test]
+    fn a_missing_playlist_is_not_a_sync_failure() {
+        let dir = std::env::temp_dir().join(format!("dvr-sync-ok-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("dir");
+        let media = dir.join(layout::media_file_name(
+            PeriodNum::new(0),
+            ArchiveContainer::Ts,
+        ));
+        fs::write(&media, b"bytes").expect("media");
+        let result = store_op(
+            &dir,
+            ArchiveContainer::Ts,
+            &StoreOp::SyncData {
+                period: PeriodNum::new(0),
+            },
+        );
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(result, Ok(()));
     }
 
     fn archive(tag: &str) -> FsArchive {

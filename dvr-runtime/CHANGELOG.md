@@ -13,6 +13,20 @@ All notable changes to this crate are documented here. The format follows
   (the EIT present/following tracker). The manifest floors stay at the
   currently published 0.8.1 / 15.1.0 until the release wave bumps them.
 
+### Fixed
+
+- A crash between creating a period's media file and its playlist no longer
+  wedges the next run: `seed` numbers past every archive file, and an
+  `AlreadyExists` create consumes the number instead of retrying it forever.
+- A media file left without a playlist enters the retention ledger with its
+  size and is evicted like any period.
+- A playlist renamed into place whose directory sync failed counts as created
+  (`StoreFailure::NotDurable`, `WriterEvent::NotDurable`), so its segment is
+  never archived twice; `FsArchive::scan` reports a sequence number claimed by
+  two periods as a `SeqConflict` and keeps the earlier record.
+- A failed `sync_data` is a store failure, retried before the record is
+  appended, instead of being logged to stderr and ignored.
+
 ## [0.1.0]
 
 ### Added

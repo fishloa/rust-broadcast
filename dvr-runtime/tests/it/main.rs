@@ -1,6 +1,7 @@
 mod support;
 
 mod config;
+mod crash_recovery;
 mod golden;
 mod plan_store;
 mod read;

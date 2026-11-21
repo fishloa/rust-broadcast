@@ -661,9 +661,13 @@ fn seeding_the_last_period_number_exhausts_the_range() {
         dvr_runtime::layout::ArchiveFile::Media(PeriodNum::new(u32::MAX)),
         10,
     )];
-    writer
-        .seed(&media_only)
-        .expect("a stray media file with no playlist is not a period");
+    assert!(
+        matches!(
+            writer.seed(&media_only),
+            Err(ArchiveError::PeriodNumbersExhausted)
+        ),
+        "a media file with no playlist still owns its period number"
+    );
     let playlist = [dvr_runtime::layout::SeedFile::new(
         dvr_runtime::layout::ArchiveFile::Playlist(PeriodNum::new(u32::MAX)),
         10,
