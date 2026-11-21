@@ -3317,6 +3317,17 @@ mod program_registry_tests {
         );
     }
 
+    /// The health label is the admin JSON and metric literal an operator
+    /// selects on.
+    #[test]
+    fn health_state_names_are_the_admin_tokens() {
+        assert_eq!(HealthState::Connecting.name(), "connecting");
+        assert_eq!(HealthState::Live.name(), "live");
+        assert_eq!(HealthState::Reconnecting.name(), "reconnecting");
+        assert_eq!(HealthState::Failed.name(), "failed");
+        assert_eq!(HealthState::Ended.name(), "ended");
+    }
+
     /// The floor a replacement must continue above is the higher of what this
     /// route's origin has shown (the open segment's number included) and what
     /// its archive already held.

@@ -2146,6 +2146,91 @@ mod tests {
         );
     }
 
+    /// The admin JSON `kind` of every input variant is the literal an API
+    /// client selects on.
+    #[test]
+    fn input_kind_names_are_the_admin_json_tokens() {
+        let mut cases = vec![
+            (serde_json::json!({ "type": "rtsp", "url": "rtsp://h/s" }), "rtsp"),
+            (
+                serde_json::json!({
+                    "type": "rtp", "addr": "127.0.0.1:5000", "sdp": "v=0", "socket": {},
+                }),
+                "rtp",
+            ),
+            (
+                serde_json::json!({
+                    "type": "ts_udp", "addr": "127.0.0.1:5000", "socket": {},
+                }),
+                "ts_udp",
+            ),
+            (
+                serde_json::json!({ "type": "ts_http", "url": "http://h/x" }),
+                "ts_http",
+            ),
+            (
+                serde_json::json!({ "type": "hls_pull", "url": "http://h/x.m3u8" }),
+                "hls_pull",
+            ),
+            (
+                serde_json::json!({ "type": "dash_pull", "url": "http://h/x.mpd" }),
+                "dash_pull",
+            ),
+            (
+                serde_json::json!({ "type": "smooth_pull", "url": "http://h/x" }),
+                "smooth_pull",
+            ),
+            (
+                serde_json::json!({ "type": "rtmp", "listen": "127.0.0.1:1935" }),
+                "rtmp",
+            ),
+            (
+                serde_json::json!({ "type": "dashif_ingest", "listen": "127.0.0.1:8081" }),
+                "dashif_ingest",
+            ),
+            (
+                serde_json::json!({ "type": "srt", "listen": "127.0.0.1:9000" }),
+                "srt",
+            ),
+            (
+                serde_json::json!({ "type": "custom", "type_tag": "x" }),
+                "custom",
+            ),
+            (
+                serde_json::json!({ "type": "file", "path": "/tmp/x.ts" }),
+                "file",
+            ),
+        ];
+        #[cfg(feature = "whip")]
+        cases.push((
+            serde_json::json!({ "type": "whip", "listen": "127.0.0.1:8080" }),
+            "whip",
+        ));
+        for (json, expected) in cases {
+            let input: InputSpec = serde_json::from_value(json.clone())
+                .unwrap_or_else(|error| panic!("{json}: {error}"));
+            assert_eq!(input_kind_name(&input), expected, "{json}");
+        }
+    }
+
+    /// The runtime's `Debug` names the route and nothing credential-bearing.
+    #[tokio::test]
+    async fn route_runtime_debug_names_the_route_without_credentials() {
+        let runtime = RouteRuntime {
+            generation: 0,
+            route: rtsp_route("cam", "rtsp://user:hunter2@host/s"),
+            store: Arc::new(RouteHandle::new(RouteConfig::default())),
+            outputs: Vec::new(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            handle: tokio::spawn(async {}),
+            push_handles: Vec::new(),
+        };
+        let debug = format!("{runtime:?}");
+        assert!(debug.contains("cam"), "{debug}");
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(!debug.contains("user:"), "{debug}");
+    }
+
     /// A `PendingRuntime` that is dropped without being disarmed cancels its
     /// route's token and aborts every task it spawned: a failed add/reload
     /// must not leave a half-built route running.

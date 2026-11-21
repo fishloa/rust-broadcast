@@ -403,6 +403,15 @@ mod tests {
         s.parse().expect("uri")
     }
 
+    /// The metric label of each budget is the literal the dashboards select
+    /// on.
+    #[test]
+    fn budget_labels_are_the_metric_tokens() {
+        assert_eq!(Budget::Exempt.label(), "exempt");
+        assert_eq!(Budget::BlockingReload.label(), "blocking_reload");
+        assert_eq!(Budget::Ordinary.label(), "ordinary");
+    }
+
     /// Liveness/readiness routes classify as `Exempt`; a stream named `healthz`
     /// is not, and `/metrics` is an ordinary (bounded) request.
     #[test]
