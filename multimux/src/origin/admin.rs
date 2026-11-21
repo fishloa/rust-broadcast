@@ -1707,10 +1707,16 @@ mod tests {
         );
     }
 
-    fn floors(entries: &[(u32, u32)]) -> crate::dvr::ArchiveFloors {
+    fn floors(entries: &[(u16, u32)]) -> crate::dvr::ArchiveFloors {
         entries
             .iter()
-            .map(|&(program, floor)| (media_plane::ProgramId(program), floor))
+            .map(|&(program_number, floor)| {
+                let archive = match program_number {
+                    0 => crate::dvr::ProgramArchive::Default,
+                    n => crate::dvr::ProgramArchive::Program(n),
+                };
+                (archive, floor)
+            })
             .collect()
     }
 
@@ -1833,12 +1839,12 @@ mod tests {
         crate::testutil::record_archive_run(&root, "cam", container, 0, &[(1, 1), (2, 2)]);
         crate::testutil::record_archive_run(
             &root,
-            "cam@2",
+            "cam@1538",
             container,
             0,
             &[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)],
         );
-        for other in ["cam@02", "cam@x", "camera@3", "cam@0"] {
+        for other in ["cam@01538", "cam@x", "camera@3", "cam@0"] {
             crate::testutil::record_archive_run(&root, other, container, 0, &[(1, 9)]);
         }
         let mut route = rtsp_route("cam", "rtsp://host/cam");
@@ -1847,14 +1853,13 @@ mod tests {
             .with_archive_root(root.to_string_lossy().to_string())
             .with_retention_periods(10);
         let floors_read = archive_floor_of(&route).await.expect("floors");
-        assert_eq!(floors_read, floors(&[(0, 2), (2, 5)]));
+        assert_eq!(floors_read, floors(&[(0, 2), (1538, 5)]));
 
         let store = RouteHandle::new(RouteConfig::default())
             .with_name("cam")
             .with_archive_floors(floors_read);
-        for program in [0, 2] {
-            store.publish_new_program(media_plane::ProgramId(program));
-        }
+        store.publish_new_service(media_plane::ProgramId(0), 0x0601);
+        store.publish_new_service(media_plane::ProgramId(1), 1538);
         let offset = |program| {
             store
                 .serving(media_plane::ProgramId(program))
@@ -1863,7 +1868,44 @@ mod tests {
                 .media_sequence_offset()
         };
         assert_eq!(offset(0), 2);
-        assert_eq!(offset(2), 5);
+        assert_eq!(offset(1), 5);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// #3950: on a case-insensitive filesystem a route renamed only in case
+    /// (`cam` -> `Cam`) writes into the same program archives, so it must read
+    /// their floors too: each archive is opened under the route's own
+    /// spelling, never matched case-sensitively against the listing.
+    #[tokio::test]
+    async fn a_case_only_rename_reads_the_program_archive_floor() {
+        let root =
+            std::env::temp_dir().join(format!("multimux-admin-case-floors-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("probe")).expect("temp dir");
+        if !root.join("PROBE").exists() {
+            eprintln!(
+                "SKIP a_case_only_rename_reads_the_program_archive_floor: case-sensitive filesystem"
+            );
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let container = transmux::Container::Fmp4;
+        crate::testutil::record_archive_run(
+            &root,
+            "cam@1538",
+            container,
+            0,
+            &[(1, 1), (2, 2), (3, 3)],
+        );
+        let mut route = rtsp_route("Cam", "rtsp://host/cam");
+        route.dvr = DvrConfig::default()
+            .with_enabled(true)
+            .with_archive_root(root.to_string_lossy().to_string())
+            .with_retention_periods(10);
+        assert_eq!(
+            archive_floor_of(&route).await.expect("floors"),
+            floors(&[(0, 0), (1538, 3)])
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1886,7 +1928,8 @@ mod tests {
             .with_retention_periods(10);
         let container = transmux::Container::Fmp4;
         crate::testutil::record_archive_run(&root, "cam", container, 0, &[(1, 1), (2, 2)]);
-        let floor = archive_floor_of(&route).await.expect("floor")[&crate::route::SPTS_PROGRAM_ID];
+        let floor =
+            archive_floor_of(&route).await.expect("floor")[&crate::dvr::ProgramArchive::Default];
         assert_eq!(floor, 2);
         crate::testutil::record_archive_run(
             &root,
