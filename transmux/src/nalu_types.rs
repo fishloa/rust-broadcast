@@ -262,6 +262,31 @@ mod tests {
         );
     }
 
+    /// A 0- or 1-byte NAL is too short to carry even an HEVC header, so it is
+    /// `Ok(None)`; a 2-byte SPS-typed NAL does reach the SPS decoder and its
+    /// failure is an error, not `None`.
+    #[test]
+    fn hevc_nal_unit_decode_sps_distinguishes_short_from_sps_typed() {
+        assert!(matches!(
+            HevcNalUnit::new(alloc::vec![]).decode_sps(),
+            Ok(None)
+        ));
+        assert!(matches!(
+            HevcNalUnit::new(alloc::vec![0x42]).decode_sps(),
+            Ok(None)
+        ));
+        assert!(
+            HevcNalUnit::new(alloc::vec![0x42, 0x01])
+                .decode_sps()
+                .is_err(),
+            "a 2-byte SPS-typed NAL reaches the decoder and fails there"
+        );
+        assert!(matches!(
+            HevcNalUnit::new(alloc::vec![0x40, 0x01, 0x0C]).decode_sps(),
+            Ok(None)
+        ));
+    }
+
     /// The boundary: exactly 65 535 NAL units still round-trips.
     #[test]
     fn hevc_nal_array_max_count_round_trips() {
