@@ -933,4 +933,32 @@ mod tests {
         );
         check(&WvttSampleEntry::new("WEBVTT"), "wvtt");
     }
+
+    /// `PartialEq` compares every field that reaches the wire: a cue whose
+    /// payload, settings, id or extras differ is not equal. The remembered wire
+    /// order is deliberately excluded.
+    #[test]
+    fn vtt_cue_equality_observes_each_field_but_not_wire_order() {
+        let base = VttCueBox::new("text");
+        let mut with_settings = base.clone();
+        with_settings.settings = Some(CueSettingsBox::new("align:end"));
+        let mut with_id = base.clone();
+        with_id.cue_id = Some(CueIdBox::new("id1"));
+        let mut with_extra = base.clone();
+        with_extra.extra_children = alloc::vec![crate::init_segment::OpaqueBox::new(
+            *b"vsid",
+            alloc::vec![0, 0, 0, 7],
+        )];
+        let mut other_payload = base.clone();
+        other_payload.payload = CuePayloadBox::new("other");
+
+        assert_ne!(base, with_settings);
+        assert_ne!(base, with_id);
+        assert_ne!(base, with_extra);
+        assert_ne!(base, other_payload);
+
+        let mut same_content_other_order = base.clone();
+        same_content_other_order.child_order = alloc::vec![CueChild::Payl];
+        assert_eq!(base, same_content_other_order);
+    }
 }
