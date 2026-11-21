@@ -107,3 +107,48 @@ fn invalid_client_attribute_names_are_typed_errors() {
     ));
     assert!(ClientAttrName::new("X-DVB-SERVICE-ID").is_ok());
 }
+
+/// The two vendor tags the DVR archive writes round-trip through
+/// `CustomTag`, attribute order included.
+#[test]
+fn custom_tag_round_trips_wire_order() {
+    use broadcast_hls::CustomTag;
+    let archive = "#EXT-X-RUSTBROADCAST-ARCHIVE:VERSION=1,CONTAINER=FMP4,PERIOD=4";
+    let tag = CustomTag::parse_tag_line(archive).expect("must parse");
+    assert_eq!(tag.name.as_str(), "EXT-X-RUSTBROADCAST-ARCHIVE");
+    assert_eq!(
+        tag.attrs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+        ["VERSION", "CONTAINER", "PERIOD"],
+        "wire order must survive"
+    );
+    assert_eq!(tag.to_tag_line().expect("render"), archive);
+
+    let timing =
+        "#EXT-X-RUSTBROADCAST-TIMING:SEQ=121,DTS=242000000000,DUR=2000000000,TIMESCALE=1000000000";
+    let tag = CustomTag::parse_tag_line(timing).expect("must parse");
+    assert_eq!(tag.to_tag_line().expect("render"), timing);
+
+    let bare = CustomTag::parse_tag_line("#EXT-X-RUSTBROADCAST-ARCHIVE").expect("must parse");
+    assert!(bare.attrs.is_empty());
+    assert_eq!(bare.to_tag_line().expect("render"), "#EXT-X-RUSTBROADCAST-ARCHIVE");
+}
+
+/// A tag name that is not `EXT-` (or is not from the tag character set) is a
+/// typed error.
+#[test]
+fn invalid_custom_tag_names_are_typed_errors() {
+    use broadcast_hls::{CustomTag, CustomTagName};
+    assert!(matches!(
+        CustomTagName::new("X-RUSTBROADCAST"),
+        Err(Error::InvalidCustomTagName { .. })
+    ));
+    assert!(matches!(
+        CustomTagName::new("EXT-x-lower"),
+        Err(Error::InvalidCustomTagName { .. })
+    ));
+    assert!(matches!(
+        CustomTag::parse_tag_line("#EXT-X-BAD:lower=1"),
+        Err(Error::InvalidAttributeName { .. })
+    ));
+    assert!(CustomTagName::new("EXT-X-RUSTBROADCAST-TIMING").is_ok());
+}

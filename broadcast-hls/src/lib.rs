@@ -14,11 +14,13 @@
 
 extern crate alloc;
 
+mod custom_tag;
 mod daterange;
 mod error;
 pub mod limits;
 pub mod seq;
 
+pub use custom_tag::{CustomTag, CustomTagName};
 pub use daterange::{ClientAttrName, DateRange};
 pub use error::{Error, Result};
 pub use seq::{MediaSequence, PartIndex};
