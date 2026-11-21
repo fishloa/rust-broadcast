@@ -4255,6 +4255,10 @@ mod segmenter_tests {
             segmenter.start_gate_dropped, 0,
             "once open, the gate must not gate later samples"
         );
+        assert!(
+            segmenter.start_gate_opened_logged,
+            "the gate-open transition is recorded exactly once"
+        );
     }
 
     #[test]

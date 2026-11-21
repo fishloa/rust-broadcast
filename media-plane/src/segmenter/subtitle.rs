@@ -782,6 +782,40 @@ mod tests {
     }
 
     #[test]
+    fn teletext_adapter_finalize_closes_the_cue_that_is_still_open() {
+        let Some(samples) = teletext_fixture() else {
+            return;
+        };
+        let mut core = Core::new(TeletextToWebVtt::new(8, 0x89));
+        let mut open_at = None;
+        for (pts, data) in &samples {
+            core.push_sample(*pts, data);
+            if core.decoder.open().is_some() {
+                open_at = Some(*pts);
+                break;
+            }
+        }
+        let open_at = open_at.expect("the fixture opens a cue");
+        CueDecoder::finalize(&mut core.decoder, open_at + 1);
+        let cues = core.decoder.take_closed();
+        assert_eq!(
+            cues.len(),
+            1,
+            "finalize closes the one cue left open by the last sample"
+        );
+        assert_eq!(cues[0].start, MediaTime(3_856_831_433));
+        assert_eq!(
+            cues[0].text,
+            "Un train met dix secondes\npour dépasser un point donné."
+        );
+        assert_eq!(
+            cues[0].end,
+            MediaTime(open_at + 1),
+            "the final cue ends where finalize says the stream ended"
+        );
+    }
+
+    #[test]
     fn teletext_adapter_reports_an_open_cue_only_while_it_is_on_screen() {
         let Some(samples) = teletext_fixture() else {
             return;
@@ -1066,10 +1100,11 @@ mod tests {
         let leaders: LeaderDurations = [(1u32, TARGET_SECS), (2, TARGET_SECS)]
             .into_iter()
             .collect();
-        follower.on_part_cuts(&[part(MediaSequence::new(1), 0, CUT_START)], &leaders);
+        let none = LeaderDurations::new();
+        follower.on_part_cuts(&[part(MediaSequence::new(1), 0, CUT_START)], &none);
         follower.on_part_cuts(
             &[part(MediaSequence::new(2), 0, CUT_START + SEG_TICKS)],
-            &leaders,
+            &none,
         );
         follower.finish(&leaders);
 
