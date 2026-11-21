@@ -969,6 +969,18 @@ mod tests {
     }
 
     #[test]
+    fn vvc_idr_detection_covers_types_seven_and_eight_and_excludes_cra() {
+        assert!(is_idr_nal(NalCodec::Vvc, &[0x00, 7 << 3]));
+        assert!(is_idr_nal(NalCodec::Vvc, &[0x00, 8 << 3]));
+        assert!(
+            !is_idr_nal(NalCodec::Vvc, &[0x00, 9 << 3]),
+            "CRA is a keyframe but not an IDR"
+        );
+        assert!(is_keyframe_nal(NalCodec::Vvc, &[0x00, 9 << 3]));
+        assert!(!is_idr_nal(NalCodec::Vvc, &[0x00, 1 << 3]));
+    }
+
+    #[test]
     fn access_unit_annexb_and_length_prefixed_agree() {
         // Annex B AU: SPS (67) + non-IDR slice (41) → no keyframe.
         let non_kf = [0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x00, 0x01, 0x41, 0x9a];
