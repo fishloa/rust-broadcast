@@ -264,6 +264,21 @@ fn uas_local_set_lengths_cover_empty_short_long_and_checksum_items() {
     ]));
 }
 
+#[test]
+fn verify_checksum_reports_the_minimum_packet_length() {
+    // 16-byte UL key + 1-byte packet length + 2-byte checksum = 19.
+    assert!(matches!(
+        UasLocalSet::verify_checksum(&[0u8; 18]),
+        Err(Error::BufferTooShort(BufferTooShort {
+            need: 19,
+            have: 18,
+            ..
+        }))
+    ));
+    // The minimum itself is long enough to check, not truncated.
+    assert_eq!(UasLocalSet::verify_checksum(&[0u8; 19]), Ok(true));
+}
+
 // ---------------------------------------------------------------------------
 // 4. KLV-over-RTP fragmentation (RFC 6597) — bites
 // ---------------------------------------------------------------------------
