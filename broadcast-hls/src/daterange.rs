@@ -560,6 +560,28 @@ impl DateRange {
     pub fn remove_client_attr(&mut self, name: &ClientAttrName) {
         self.remove(name.as_str());
     }
+
+    /// Set an `SCTE35-CMD`/`-OUT`/`-IN` hexadecimal payload. A new attribute is
+    /// appended at the end.
+    ///
+    /// # Errors
+    ///
+    /// [`DateRangeError::InvalidScte35Value`] unless `hex` is a
+    /// hexadecimal-sequence (`0x`/`0X` plus an even number of `[0-9A-F]`).
+    pub fn set_scte35(&mut self, kind: Scte35Kind, hex: impl Into<String>) -> Result<()> {
+        let hex = hex.into();
+        if !super::is_hexadecimal_sequence(&hex) {
+            return Err(invalid(self.id(), DateRangeError::InvalidScte35Value));
+        }
+        self.replace_or_append(kind.name(), AttrValue::bare_unchecked(hex));
+        Ok(())
+    }
+
+    /// Builder form of [`Self::set_scte35`], appended at the end.
+    pub fn with_scte35(mut self, kind: Scte35Kind, hex: impl Into<String>) -> Result<Self> {
+        self.set_scte35(kind, hex)?;
+        Ok(self)
+    }
 }
 
 impl PartialEq for DateRange {
