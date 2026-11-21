@@ -44,6 +44,7 @@ mod origin_iframe;
 mod origin_llhls;
 mod origin_pdt;
 mod public_surface;
+mod push_drive;
 mod push_log_redaction;
 mod push_negotiate;
 mod push_rtmp;
