@@ -246,23 +246,45 @@ fn default_parse_still_hoists_the_timing_tag() {
     }));
 }
 
-fn assert_render_split_matches(playlist: &broadcast_hls::MediaPlaylist) {
-    let mut split = playlist.render_header().expect("header");
-    for index in 0..playlist.segments.len() {
-        split.push_str(&playlist.render_segment(index).expect("segment"));
-    }
-    split.push_str(&playlist.render_endlist().expect("endlist"));
-    assert_eq!(
-        split,
-        playlist.to_m3u8().expect("full render"),
-        "header + segments + endlist must equal to_m3u8"
-    );
+fn pinned_version(playlist: &broadcast_hls::MediaPlaylist) -> u8 {
+    playlist
+        .version
+        .max(playlist.computed_version().unwrap_or(0))
 }
 
-/// H4: the render split is the full render, over every committed media
-/// playlist fixture (LL-HLS trailing reports included) and generated shapes.
+/// The real append property: with `version` pinned, the header and every
+/// already-written segment record are unchanged by appending more segments.
+fn assert_append_prefix(playlist: &broadcast_hls::MediaPlaylist) {
+    let mut full = playlist.clone();
+    full.version = pinned_version(playlist);
+    let header = full.render_header().expect("full header");
+    let segments: Vec<String> = (0..full.segments.len())
+        .map(|i| full.render_segment(i).expect("full segment"))
+        .collect();
+
+    for k in 0..=full.segments.len() {
+        let mut prefix = full.clone();
+        prefix.segments.truncate(k);
+        assert_eq!(
+            prefix.render_header().expect("prefix header"),
+            header,
+            "header changed after truncating to {k} segments"
+        );
+        for (i, expected) in segments.iter().enumerate().take(k) {
+            assert_eq!(
+                &prefix.render_segment(i).expect("prefix segment"),
+                expected,
+                "segment {i} changed after truncating to {k} segments"
+            );
+        }
+    }
+}
+
+/// H4: the append property over every committed media playlist and generated
+/// shapes. A field other than `version` that makes the header depend on later
+/// segments fails here.
 #[test]
-fn render_split_equals_full_render() {
+fn render_prefix_is_stable_as_segments_are_appended() {
     use broadcast_hls::{MediaPlaylist, limits::Limits};
 
     let fixtures = [
@@ -281,7 +303,6 @@ fn render_split_equals_full_render() {
         "hls/real/bipbop-ts/alternate-audio.m3u8",
         "hls/real/bipbop-ts/gear1-video.m3u8",
     ];
-    let mut checked = 0usize;
     for fixture in fixtures {
         let input = test_fixtures::read_to_string(fixture);
         let playlist = MediaPlaylist::parse_with_options(
@@ -290,39 +311,38 @@ fn render_split_equals_full_render() {
             &segment_scoped_options(),
         )
         .unwrap_or_else(|e| panic!("{fixture} must parse: {e}"));
-        assert_render_split_matches(&playlist);
-        checked += 1;
+        assert_append_prefix(&playlist);
     }
-    assert_eq!(checked, fixtures.len());
 
-    // A closed playlist with no segments, an open (endlist-less) one, and a
-    // programmatically built segment record.
     let empty = MediaPlaylist {
         target_duration: 2,
         ..Default::default()
     };
-    assert_render_split_matches(&empty);
+    assert_append_prefix(&empty);
     assert!(empty.render_endlist().expect("endlist").is_empty());
 
-    let mut open = MediaPlaylist {
+    let mut generated = MediaPlaylist {
         target_duration: 4,
         ..Default::default()
     };
-    open.segments.push(broadcast_hls::MediaSegment {
-        uri: "seg0.m4s".into(),
-        duration: broadcast_hls::DecimalSeconds::new(4.0).expect("valid"),
-        ..Default::default()
-    });
-    assert_render_split_matches(&open);
-    assert!(open.render_endlist().expect("endlist").is_empty());
-
-    let mut closed = open.clone();
-    closed.endlist = true;
+    for i in 0..3 {
+        generated.segments.push(broadcast_hls::MediaSegment {
+            uri: format!("seg{i}.m4s"),
+            duration: broadcast_hls::DecimalSeconds::new(4.0).expect("valid"),
+            discontinuous: i == 2,
+            byte_range: Some(broadcast_hls::ByteRange {
+                length: 100,
+                offset: Some(812 + i * 100),
+            }),
+            ..Default::default()
+        });
+    }
+    generated.endlist = true;
+    assert_append_prefix(&generated);
     assert_eq!(
-        closed.render_endlist().expect("endlist"),
+        generated.render_endlist().expect("endlist"),
         "#EXT-X-ENDLIST\n"
     );
-    assert_render_split_matches(&closed);
 }
 
 /// H4: an index the playlist does not have is a typed error, not a panic.

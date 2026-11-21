@@ -1735,9 +1735,15 @@ impl MediaPlaylist {
     /// Render the header block of this Media Playlist — everything from
     /// `#EXTM3U` through the playlist-level tags, ending just before the first
     /// segment. Together with `Σ` [`Self::render_segment`] and
-    /// [`Self::render_endlist`] this is exactly [`Self::to_m3u8`], which is
-    /// implemented in terms of the three so an append-only writer (the DVR
-    /// archive) emits the same bytes a full render would.
+    /// [`Self::render_endlist`] this is exactly [`Self::to_m3u8`].
+    ///
+    /// An append-only writer must **pin [`Self::version`]** to the value the
+    /// finished playlist will declare (or, equivalently, to at least
+    /// [`Self::computed_version`] over the whole playlist). The effective
+    /// version is derived from every segment, so leaving `version` at `0`
+    /// lets a later segment that triggers a §8 row change the header a writer
+    /// already emitted. With `version` pinned, the header and each
+    /// `render_segment(i)` are stable as segments are appended.
     ///
     /// # Errors
     ///
