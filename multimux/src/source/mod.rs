@@ -844,4 +844,73 @@ mod metric_tests {
             before + 5.0
         );
     }
+
+    /// The pull-queue limits are the documented sizes: a multiplicative
+    /// expression turned additive would shrink the effective bound to a few
+    /// KiB and stall storage pulls, or (for a body cap) remove the OOM guard.
+    #[test]
+    fn pull_queue_limits_are_the_documented_sizes() {
+        assert_eq!(MAX_HTTP_BODY_BYTES, 64 * 1024 * 1024);
+        assert_eq!(LIVE_EVENT_QUEUE_BYTES, 32 * 1024 * 1024);
+        assert_eq!(SEGMENTED_EVENT_QUEUE_BYTES, 128 * 1024 * 1024);
+    }
+
+    /// Only a live driver promotes the route: a driver still establishing
+    /// leaves a route's failure state alone instead of forcing it back to
+    /// `Live` on every tick.
+    #[test]
+    fn driver_progress_promotes_only_from_a_live_driver() {
+        use media_plane::ingress::{HandshakePolicy, IngestDriver};
+        use media_plane::ts_session::TsIngestSession;
+
+        let config = || {
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(
+                broadcast_common::Timestamp::from_nanos(u64::MAX),
+            ))
+            .with_trunk(pull_trunk_config(8))
+        };
+        let establishing = IngestDriver::new(TsIngestSession::new(), config());
+        assert!(
+            !matches!(
+                establishing.health(),
+                media_plane::ingress::HealthState::Live
+            ),
+            "a driver that has seen no bytes is not live"
+        );
+
+        let route = crate::route::RouteHandle::new(crate::route::RouteConfig::default());
+        let mut published = std::collections::HashSet::new();
+        for state in [
+            crate::route::HealthState::Ended,
+            crate::route::HealthState::Reconnecting,
+            crate::route::HealthState::Failed,
+        ] {
+            route.set_health(state);
+            report_driver_progress(&establishing, &route, &mut published);
+            assert_eq!(
+                route.health(),
+                state,
+                "an establishing driver must not force {state:?} to Live"
+            );
+        }
+
+        let mut live = IngestDriver::new(TsIngestSession::new(), config());
+        let ts_bytes = media_plane::ts_session::test_support::build_ts_bytes_with_gop(
+            transmux::TrackId::new(1),
+            0xAB,
+            30,
+            30,
+        );
+        live.feed(&ts_bytes, broadcast_common::Timestamp::ZERO);
+        assert!(
+            matches!(live.health(), media_plane::ingress::HealthState::Live),
+            "the fixture establishes the session: {:?}",
+            live.health()
+        );
+        route.set_health(crate::route::HealthState::Connecting);
+        report_driver_progress(&live, &route, &mut published);
+        assert_eq!(route.health(), crate::route::HealthState::Live);
+        report_driver_progress(&live, &route, &mut published);
+        assert_eq!(route.health(), crate::route::HealthState::Live);
+    }
 }
