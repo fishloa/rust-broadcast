@@ -30,9 +30,9 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "13.0.0"
+version = "13.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a4fb79cf9d7a8b9c1c4efc37b5b7fba7f921f42d1a6ca99a9fed86f5274314c"
+checksum = "b05c9fe16aee9e072862b432200ad4a2db576e8856692307b26eec8c901ac039"
 dependencies = [
  "base64",
  "erased-serde",
@@ -45,9 +45,9 @@ dependencies = [
 
 [[package]]
 name = "broadcast-dash"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af0e1783cd3f0dc1a09469bc8a8d677e1a443b8432fac030fd2c94631d0aef0"
+checksum = "6a9d5172b137047dc1a82b8d8717830622c05a8db6a41f3a0e986dee42e7c56c"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -57,9 +57,9 @@ dependencies = [
 
 [[package]]
 name = "broadcast-hls"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cb22a7264a29a63cb483474e302b283d947b950737cf1617d2973550c9957f0"
+checksum = "058fcc012c656c1971456e27e005366230edbe1277d9b8d4752a33bd51e74008"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -69,27 +69,27 @@ dependencies = [
 
 [[package]]
 name = "broadcast-smooth"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1340f45ef6f344d7580014418fafef2b94522b429e1b3a9bf72e9fd82fd2c50f"
+checksum = "b73c825548d92acf993bed049c31b2a6969b42ac81df8d9a661a24363daa38f3"
 dependencies = [
  "broadcast-common",
 ]
 
 [[package]]
 name = "bstr"
-version = "1.13.1"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f"
+checksum = "a680398c10c7bc0488067c4612226ea905a85f607134b69f3068d505d58c4214"
 dependencies = [
  "memchr",
 ]
 
 [[package]]
 name = "bytes"
-version = "1.12.1"
+version = "1.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
 name = "cbc"
@@ -157,9 +157,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "15.0.0"
+version = "15.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f9491cf238de659b5a16618541e414628a763472e0a61d19dab1a04fa03229"
+checksum = "9794183a3fda2cfff7fcc3bf6181f92875f935efa286c49b23e810c41d1b1287"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -247,9 +247,9 @@ checksum = "ad7d3f647f560b2e5c7d7da6d9326223893247feb3e086a388a14654683aa2f2"
 
 [[package]]
 name = "jiff"
-version = "0.2.43"
+version = "0.2.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26699905cc795a23e3949585cc7ba3ee8ade090872a27e4316304a777297894a"
+checksum = "175dc66334db3b9ab9985bf8b61cfed50dc16d20964bb47f9e479adcae984a7f"
 dependencies = [
  "jiff-core",
  "jiff-static",
@@ -261,18 +261,18 @@ dependencies = [
 
 [[package]]
 name = "jiff-core"
-version = "0.1.5"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffe6854081f5ac0a3046a9b223729ccd7a20b1e0e8277e44dc0660eedf67dfe2"
+checksum = "e599b80292e597019b8b3e392de3f4bea2959ddfb8c7dff60e035e9e311a2c1b"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "jiff-static"
-version = "0.2.43"
+version = "0.2.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b4ff49b2887190c760b86207b55cdcaabbdecaf7a0660d68aa2ed6f652abf0a"
+checksum = "c7b1af7547d47354bc438d797e3854601bde8f8d185780c5ba4ab27afa54f1ba"
 dependencies = [
  "jiff-core",
  "proc-macro2",
@@ -482,9 +482,9 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7850e7c0d8919e6eedd75083522e2c5c1e19414da071d44512a979ef9d712a0a"
+checksum = "6f57ba710da621465494f1c3859dbe3268f6055b742c2fdfb910bb3e174abc5b"
 dependencies = [
  "broadcast-common",
  "subtle",
@@ -615,9 +615,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.25.19+spec-1.1.0"
+version = "0.25.20+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd43688c4858d7264ae1cf9a9f874a67c3feb74a883b1cd7bebd6a4ea8307218"
+checksum = "e76360e201d6dbd6583e17795ba71a88f47365a9139c8450a7979c32303b8e73"
 dependencies = [
  "indexmap",
  "toml_datetime",
@@ -627,18 +627,18 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.1.5+spec-1.1.0"
+version = "1.1.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
+checksum = "e6769c452d71ba30696c6b37770c439a9cc9110f47f7d5cdbeda79840ef5ea31"
 dependencies = [
  "winnow",
 ]
 
 [[package]]
 name = "transmux"
-version = "0.32.0"
+version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cef484f8dfddde1a6bf741022e90a6689792948811f34cd851355b7d5acf8645"
+checksum = "26263260a00745a143451a6e6092058c057633fbdf3f9f7cf7b4f53dfaf0d2f3"
 dependencies = [
  "aes",
  "base64",
@@ -706,6 +706,6 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.9.1"
+version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
+checksum = "85ccff8a4805aba1eaa4cd4afcd49f7557dd2cf5fd79ffc37f8959466effc5aa"
