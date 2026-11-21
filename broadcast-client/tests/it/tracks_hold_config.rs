@@ -230,3 +230,39 @@ fn a_disabled_hold_does_not_start_while_a_stream_is_still_unresolved() {
         "a disabled hold announces the first resolved stream at once: {sets:?} at {now}"
     );
 }
+
+#[test]
+fn the_first_sample_does_not_restart_a_hold_a_display_change_started() {
+    const PACKET_STEP_US: u64 = 1_000;
+    let bytes = test_fixtures::read("ts/france2.ts");
+    let (mut s, c) = open_live(Config::default());
+    let mut now = 0;
+    let mut display_at = None;
+    let mut first_sample_at = None;
+    let mut tracks_at = None;
+    for packet in bytes.chunks(TS_PACKET) {
+        now += PACKET_STEP_US;
+        s.on_data(c, packet, ts(now));
+        while s.poll(ts(now)).is_some() {}
+        for e in drain(&mut s) {
+            match e {
+                Event::DisplayChanged { .. } => {
+                    display_at.get_or_insert(now);
+                }
+                Event::Sample { .. } => {
+                    first_sample_at.get_or_insert(now);
+                }
+                Event::Tracks(_) => {
+                    tracks_at.get_or_insert(now);
+                }
+                _ => {}
+            }
+        }
+        if tracks_at.is_some() {
+            break;
+        }
+    }
+    assert_eq!(tracks_at, Some(1_589_000));
+    assert_eq!(display_at, Some(1_589_000));
+    assert_eq!(first_sample_at, Some(1_589_000));
+}

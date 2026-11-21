@@ -867,3 +867,68 @@ fn error_kind_names_are_stable() {
         assert_eq!(kind.to_string(), name);
     }
 }
+
+#[test]
+fn a_wrong_key_for_a_segment_that_arrived_first_retries_the_segment_not_the_playlist() {
+    let mut h = encrypted_host(
+        hls_config(),
+        vec![status_only(500), Reply::Ok(KEY_WRONG.to_vec())],
+    );
+    run_until_fatal(&mut h);
+    assert_eq!(
+        errors(&h.events),
+        vec![
+            (key_failed(Some(500)), false),
+            (ErrorKind::DecryptFailed, false),
+            (ErrorKind::DecryptFailed, true)
+        ]
+    );
+    assert_eq!(h.hits(TS_PLAYLIST_URL), 2);
+    let seg0_at: Vec<u64> = h.requests_to(TS_SEG0_URL).iter().map(|s| s.at_us).collect();
+    assert_eq!(seg0_at[..3], [0, 4_000_000, 7_333_334]);
+}
+
+#[test]
+fn a_decoded_segment_resets_the_key_failure_count() {
+    const MAX: u32 = 3;
+    let config = {
+        let mut new_config = hls_config();
+        new_config.max_key_failures = MAX;
+        new_config
+    };
+    let iv0 = iv_seq(0x30);
+    let iv1 = iv_seq(0x70);
+    let entries = vec![
+        entry(key_tag(KEY_URL, Some(&iv0)), "index0.ts"),
+        entry(key_tag(KEY2_URL, Some(&iv1)), "index1.ts"),
+    ];
+    let mut h = Host::new(TS_PLAYLIST_URL, config);
+    h.ok(TS_PLAYLIST_URL, playlist(0, &entries, true));
+    h.ok(
+        TS_SEG0_URL,
+        aes128_encrypt_segment(&KEY_A, &iv0, &plain_seg(0)),
+    );
+    h.ok(
+        TS_SEG1_URL,
+        aes128_encrypt_segment(&KEY_B, &iv1, &plain_seg(1)),
+    );
+    h.route(KEY_URL, vec![status_only(500), Reply::Ok(KEY_A.to_vec())]);
+    h.route(
+        KEY2_URL,
+        vec![
+            status_only(500),
+            status_only(500),
+            Reply::Ok(KEY_B.to_vec()),
+        ],
+    );
+    h.run_until(|e| e.iter().any(is_ended) || has_fatal(e), 20_000);
+    assert_eq!(
+        errors(&h.events),
+        vec![
+            (key_failed(Some(500)), false),
+            (key_failed(Some(500)), false)
+        ]
+    );
+    assert!(h.events.iter().any(is_ended));
+    assert_eq!(data_events(&h.events), baseline());
+}

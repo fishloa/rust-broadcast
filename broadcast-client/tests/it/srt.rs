@@ -830,3 +830,31 @@ fn a_rejection_is_reported_from_the_callback_without_a_poll() {
     }
     panic!("no rejection surfaced");
 }
+
+const PEER_CLOCK_START_US: u64 = 5 * SECOND_US;
+const LINK_ROUND_TRIP_US: u32 = 4_000;
+
+#[test]
+fn a_peer_clock_far_from_zero_still_releases_its_first_packet_after_the_latency() {
+    let ts = small();
+    let mut sim = SrtSim::open(
+        URL,
+        cfg(|_| {}),
+        SrtPeer::new(Cipher::Clear, None, LATENCY_MS).with_clock_start(PEER_CLOCK_START_US),
+    );
+    sim.connect();
+    stream(&mut sim, &ts, 7);
+    sim.advance_by(SECOND_US);
+    let first_sample_at = sim
+        .events
+        .iter()
+        .find(|t| matches!(t.event, Event::Sample { .. }))
+        .map(|t| t.at_us);
+    assert_eq!(first_sample_at, Some(242_000));
+}
+
+#[test]
+fn an_ackack_brings_the_advertised_rtt_down_to_the_link_round_trip() {
+    let sim = play(clear_sim(), &small());
+    assert_eq!(sim.peers[0].last_ack_rtt_us, Some(LINK_ROUND_TRIP_US));
+}

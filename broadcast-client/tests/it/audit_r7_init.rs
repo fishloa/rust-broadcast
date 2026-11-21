@@ -6,6 +6,7 @@ use crate::support;
 use broadcast_client::{ErrorKind, Event, events::DEFAULT_MAX_KEY_FAILURES};
 use support::fmp4_split::{group, split};
 use support::hls_host::{Host, Reply, hls_config, is_ended, status_only};
+use transmux::sample_aes::aes128_encrypt_segment;
 
 const BASE: &str = "http://origin.test/v";
 const PL: &str = "http://origin.test/v/index.m3u8";
@@ -431,5 +432,162 @@ fn a_transient_live_init_failure_recovers() {
         let t = tally(&h);
         assert!(t.fatals.is_empty(), "{why}: {t:?}");
         assert!(t.samples > 0 && t.tracks == 1, "{why}: {t:?}");
+    }
+}
+
+const KEY: [u8; 16] = [0x11; 16];
+const IV: [u8; 16] = [0x42; 16];
+
+fn encrypted_vod_host(key_replies: Vec<Reply>, first_init: Vec<u8>) -> Host {
+    let (init, segs) = parts();
+    let iv_hex: String = IV.iter().map(|b| format!("{b:02X}")).collect();
+    let p = format!(
+        "{VOD_HEAD}#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x{iv_hex}\n\
+         #EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:1.0,\ns0.m4s\n#EXT-X-ENDLIST\n"
+    );
+    let mut h = Host::new(PL, hls_config());
+    h.ok(PL, p.into_bytes());
+    h.route(&format!("{BASE}/key.bin"), key_replies);
+    h.route(
+        &format!("{BASE}/init.mp4"),
+        vec![
+            Reply::Ok(first_init),
+            Reply::Ok(aes128_encrypt_segment(&KEY, &IV, &init)),
+        ],
+    );
+    h.ok(
+        &format!("{BASE}/s0.m4s"),
+        aes128_encrypt_segment(&KEY, &IV, &segs[0]),
+    );
+    h
+}
+
+fn assert_recovers(mut h: Host, non_fatals: Vec<ErrorKind>) {
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    let t = tally(&h);
+    assert!(t.ended, "{t:?}");
+    assert!(t.fatals.is_empty(), "{t:?}");
+    assert_eq!(t.non_fatals, non_fatals);
+    assert_eq!(t.tracks, 1);
+    assert_eq!(t.samples, 66);
+    assert_eq!(h.hits(&format!("{BASE}/init.mp4")), 2);
+}
+
+fn assert_init_refetched(mut h: Host, non_fatals: Vec<ErrorKind>) {
+    h.run_until(stop_on_end_or_fatal, STEPS);
+    let t = tally(&h);
+    assert!(t.fatals.is_empty(), "{t:?}");
+    assert_eq!(t.non_fatals, non_fatals);
+    assert_eq!(h.hits(&format!("{BASE}/init.mp4")), 2);
+}
+
+const NOT_A_CIPHER_BLOCK_MULTIPLE: usize = 17;
+
+#[test]
+fn an_encrypted_vod_init_that_fails_to_decrypt_is_fetched_again() {
+    let h = encrypted_vod_host(
+        vec![Reply::Ok(KEY.to_vec())],
+        vec![0; NOT_A_CIPHER_BLOCK_MULTIPLE],
+    );
+    assert_recovers(h, vec![ErrorKind::DecryptFailed]);
+}
+
+#[test]
+fn an_encrypted_vod_init_that_fails_to_decrypt_when_its_key_arrives_is_fetched_again() {
+    let h = encrypted_vod_host(
+        vec![status_only(500), Reply::Ok(KEY.to_vec())],
+        vec![0; NOT_A_CIPHER_BLOCK_MULTIPLE],
+    );
+    assert_init_refetched(
+        h,
+        vec![
+            ErrorKind::KeyFetchFailed {
+                status: Some(crate::support::status(500)),
+            },
+            ErrorKind::DecryptFailed,
+        ],
+    );
+}
+
+#[test]
+fn an_encrypted_vod_init_that_is_not_an_init_when_its_key_arrives_is_fetched_again() {
+    let h = encrypted_vod_host(
+        vec![status_only(500), Reply::Ok(KEY.to_vec())],
+        aes128_encrypt_segment(&KEY, &IV, GARBAGE),
+    );
+    assert_init_refetched(
+        h,
+        vec![
+            ErrorKind::KeyFetchFailed {
+                status: Some(crate::support::status(500)),
+            },
+            ErrorKind::InitDecodeFailed,
+        ],
+    );
+}
+
+#[test]
+fn a_live_init_failure_while_the_playlist_reloads_adds_no_playlist_fetch() {
+    let (init, segs) = parts();
+    let mut pl = vec![];
+    for r in 0..2usize {
+        pl.push(Reply::Ok(
+            format!(
+                "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{r}\n\
+                 #EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:1.0,\ns{r}.m4s\n"
+            )
+            .into_bytes(),
+        ));
+    }
+    let mut h = Host::new(PL, hls_config());
+    h.route(PL, pl);
+    h.route(
+        &format!("{BASE}/init.mp4"),
+        vec![status_only(503), Reply::Ok(init)],
+    );
+    for (i, s) in segs.iter().enumerate() {
+        h.ok(&format!("{BASE}/s{i}.m4s"), s.clone());
+    }
+    h.run_until(|_| false, 40);
+    let until_retry: Vec<(&str, u64)> = h
+        .seen
+        .iter()
+        .filter(|s| s.at_us <= 2_000_000)
+        .map(|s| (s.url.rsplit('/').next().unwrap(), s.at_us))
+        .collect();
+    assert_eq!(
+        until_retry,
+        vec![
+            ("index.m3u8", 0),
+            ("s0.m4s", 0),
+            ("init.mp4", 0),
+            ("index.m3u8", 0),
+            ("s1.m4s", 2_000_000),
+            ("init.mp4", 2_000_000),
+            ("index.m3u8", 2_000_000),
+        ]
+    );
+}
+
+#[test]
+fn the_first_poll_at_the_retry_wake_refetches_a_failed_init() {
+    const RETRY_AT_US: u64 = 2_000_000;
+    let mut h = vod_host(
+        &["i1.mp4"],
+        &[("i1.mp4", vec![status_only(503), Reply::Ok(parts().0)])],
+    );
+    h.run_until(
+        |e| e.iter().any(|x| matches!(x, Event::Error { .. })),
+        STEPS,
+    );
+    assert_eq!(h.wakes.iter().next(), Some(&RETRY_AT_US));
+    let first = h
+        .session
+        .poll(broadcast_common::stage::Timestamp::from_micros(RETRY_AT_US));
+    match first {
+        Some(broadcast_client::Action::HttpRequest { url, .. }) => {
+            assert_eq!(url.as_str(), format!("{BASE}/i1.mp4"));
+        }
+        other => panic!("expected the init request, got {other:?}"),
     }
 }
