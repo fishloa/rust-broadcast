@@ -1165,6 +1165,21 @@ fn raw_section_packet(pid: Pid, section: &[u8]) -> [u8; 188] {
     pkt
 }
 
+/// Hand-framed PUSI packet carrying `tail` (the last bytes of the previous
+/// section) and then a complete `section`, with `pointer_field` set to the
+/// tail's length (ISO/IEC 13818-1 §2.4.4.2).
+fn raw_section_packet_after_tail(pid: Pid, tail: &[u8], section: &[u8]) -> [u8; 188] {
+    let mut pkt = [0xFFu8; 188];
+    pkt[0] = 0x47;
+    pkt[1] = 0x40 | ((pid.value() >> 8) as u8);
+    pkt[2] = pid.value() as u8;
+    pkt[3] = 0x10;
+    pkt[4] = u8::try_from(tail.len()).expect("tail fits the pointer_field");
+    pkt[5..5 + tail.len()].copy_from_slice(tail);
+    pkt[5 + tail.len()..5 + tail.len() + section.len()].copy_from_slice(section);
+    pkt
+}
+
 fn pmt1_packets() -> Vec<[u8; 188]> {
     let pmt1 = PmtSection::new(
         1,
@@ -1355,5 +1370,108 @@ fn regen_pat_version_number_wraps_modulo_32_and_holds_when_unchanged() {
                 .windows(2)
                 .any(|w| w[0].version_number == 31 && w[1].version_number == 0),
         "the 31 -> 0 wrap must occur"
+    );
+}
+
+/// A PUSI packet whose pointer_field is non-zero (the tail of the previous
+/// section, then a new PMT) must still be classified by the new section's
+/// table_id, so its program is discovered exactly as with a pointer_field of
+/// 0 (audit a23cp #3459).
+#[test]
+fn regen_discovers_a_pmt_after_a_nonzero_pointer_field() {
+    const TAIL: [u8; 3] = [0xAA, 0xBB, 0xCC];
+    let pmt1 = PmtSection::new(
+        1,
+        dvb_si::tables::SectionVersion::new(0, true, 0, 0),
+        P1_PCR_PID,
+        DescriptorLoop::new(&[]),
+        vec![PmtStream::new(
+            StreamType::Mpeg2Video,
+            P1_VIDEO_PID,
+            DescriptorLoop::new(&[]),
+        )],
+    );
+    let packet = raw_section_packet_after_tail(PMT1_PID, &TAIL, &serialize_pmt(&pmt1));
+
+    let output = run(&packet, |b| b.regen_psi());
+    let pat_packet =
+        find_pat_packet(&output).expect("the PMT must be discovered, so a PAT is regenerated");
+    let pat = parse_pat_from_packet(pat_packet).expect("regenerated PAT parses");
+    assert_eq!(pat.entries.len(), 1, "one program is discovered");
+    assert_eq!(pat.entries[0].program_number, 1);
+    assert_eq!(pat.entries[0].pid, PMT1_PID);
+}
+
+/// A PAT slot that never parsed, with no PMT at all, leaves nothing
+/// trustworthy to generate: a program-less PAT with an unknown
+/// `transport_stream_id` must never be emitted (audit a23cp #3460).
+#[test]
+fn regen_never_emits_a_programless_pat_with_an_unknown_transport_stream_id() {
+    let garbage_pat = raw_section_packet(PAT_PID, &[0x00, 0x00, 0x00]);
+    let output = run(&garbage_pat, |b| b.regen_psi());
+    assert!(
+        find_pat_packet(&output).is_none(),
+        "a program-less PAT with transport_stream_id 0 must not be invented; \
+         output has {} packets",
+        output.len() / 188
+    );
+}
+
+/// A flushed packet must pass through every LATER op exactly once and never
+/// be re-fed into the flushing op itself: with three ops, `regen_psi`'s
+/// flushed PAT keeps the packetiser's first continuity counter, follows every
+/// pre-flush packet, and is then padded by the trailing stuffing op
+/// (audit a23cp #3453).
+#[test]
+fn regen_psi_flush_output_passes_through_every_later_op_once() {
+    let ts = build_patless_p1_ts();
+    let input_packets = ts.len() / 188;
+    let mut engine = TsFix::builder()
+        .regen_psi()
+        .repair_continuity()
+        .stuffing(Stuffing::pad_to(2.0))
+        .build()
+        .expect("build");
+    let mut output = Vec::new();
+    for chunk in ts.chunks_exact(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .expect("valid packet");
+    }
+    engine.finish(|pkt| output.extend_from_slice(pkt));
+
+    let pids: Vec<Pid> = output
+        .chunks_exact(188)
+        .map(|p| Pid::from_wire_masked((((p[1] & 0x1F) as u16) << 8) | p[2] as u16))
+        .collect();
+    assert_eq!(
+        pids.iter().filter(|&&pid| pid == PAT_PID).count(),
+        1,
+        "the flushed PAT is emitted exactly once, never re-ingested"
+    );
+    let pat_at = pids
+        .iter()
+        .position(|&pid| pid == PAT_PID)
+        .expect("the regenerated PAT is present");
+    assert_eq!(
+        pat_at,
+        input_packets * 2,
+        "the flushed PAT follows every pre-flush packet (each padded once)"
+    );
+    let pat_packet = &output[pat_at * 188..pat_at * 188 + 188];
+    assert_eq!(
+        pat_packet[3] & 0x0F,
+        0,
+        "the flushed PAT keeps the packetiser's first continuity counter"
+    );
+    assert_eq!(
+        pids.len(),
+        input_packets * 2 + 2,
+        "the flushed PAT is followed by the one null the stuffing op inserts"
+    );
+    assert_eq!(
+        pids.last().copied(),
+        Some(NULL_PID),
+        "the trailing stuffing op pads the flushed PAT"
     );
 }

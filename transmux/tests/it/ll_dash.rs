@@ -11,11 +11,14 @@
 use std::path::PathBuf;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::timescale::Timescale;
+use broadcast_common::{Package, Stage, Unpackage};
 use std::time::Duration;
+use transmux::Sample;
 use transmux::ll_dash::{Chunk, LlSegmenter};
-use transmux::media::{Fmp4Demux, Media};
+use transmux::media::{Fmp4Demux, Media, Track};
 use transmux::pipeline::{FragmentTrackData, TrackSpec};
+use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::ts_demux::TsDemux;
 
 // ---------------------------------------------------------------------------
@@ -757,4 +760,270 @@ fn ll_mpd_emits_each_registered_utc_timing_scheme() {
         assert_eq!(utc.attr("schemeIdUri"), Some(uri));
         assert_eq!(utc.attr("value"), Some("time.example"));
     }
+}
+
+// ===========================================================================
+// take_span: the sample that lands exactly on the chunk target is included
+// ===========================================================================
+
+fn ninety_k(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
+fn two_video_specs() -> Vec<TrackSpec> {
+    let mut second = crate::hub_fixtures::video_track();
+    second.track_id = TrackId::new(3);
+    vec![crate::hub_fixtures::video_track(), second]
+}
+
+fn av_sample(byte: u8, duration: u32) -> Sample {
+    Sample::new(vec![byte; 16], None, None, Some(duration), true).expect("valid timing")
+}
+
+/// `(track_id, sample_count)` for every `traf` in a chunk's `moof`.
+fn chunk_traf_counts(chunk: &[u8]) -> Vec<(u32, usize)> {
+    let moof = {
+        let boxes = top_boxes(chunk);
+        let (_, r) = boxes.iter().find(|(t, _)| t == b"moof").expect("moof");
+        &chunk[r.clone()]
+    };
+    let mut out = Vec::new();
+    for traf in child_boxes(&moof[8..], b"traf") {
+        let mut track_id = None;
+        if let Some(tfhd) = child_boxes(&traf[8..], b"tfhd").into_iter().next() {
+            track_id = Some(u32::from_be_bytes(
+                tfhd[12..16].try_into().expect("tfhd track id"),
+            ));
+        }
+        let mut samples = 0usize;
+        for trun in child_boxes(&traf[8..], b"trun") {
+            samples +=
+                u32::from_be_bytes(trun[12..16].try_into().expect("trun sample count")) as usize;
+        }
+        if let Some(id) = track_id {
+            out.push((id, samples));
+        }
+    }
+    out
+}
+
+fn samples_for(chunk: &[u8], track: u32) -> usize {
+    chunk_traf_counts(chunk)
+        .into_iter()
+        .find(|(id, _)| *id == track)
+        .map_or(0, |(_, n)| n)
+}
+
+#[test]
+fn chunk_takes_the_sample_that_lands_exactly_on_its_target() {
+    // 25 fps (3600 ticks), two anchor samples per chunk: the chunk span is
+    // exactly 7200 ticks. The second track's sample is 3600 ticks, so a chunk
+    // that takes 2 anchor samples must take 2 of its samples, not 1.
+    let mut seg = LlSegmenter::new(
+        two_video_specs(),
+        ninety_k(1000),
+        Duration::from_secs(10),
+        2,
+    )
+    .expect("LlSegmenter constructor");
+
+    let video = TrackId::new(1);
+    let other = TrackId::new(3);
+    seg.push(video, av_sample(0, 3600)).unwrap();
+    seg.push(other, av_sample(10, 3600)).unwrap();
+    seg.push(other, av_sample(11, 3600)).unwrap();
+    seg.push(video, av_sample(1, 3600)).unwrap();
+    let first = seg.take_ready();
+    assert_eq!(first.len(), 1, "one chunk after the second anchor sample");
+    assert_eq!(
+        samples_for(&first[0].data, 3),
+        2,
+        "exact-fit chunk must carry both 3600-tick samples"
+    );
+
+    // Three pending samples, only two fit: the crossing one stays behind.
+    seg.push(video, av_sample(2, 3600)).unwrap();
+    seg.push(other, av_sample(12, 3600)).unwrap();
+    seg.push(other, av_sample(13, 3600)).unwrap();
+    seg.push(other, av_sample(14, 3600)).unwrap();
+    seg.push(video, av_sample(3, 3600)).unwrap();
+    let second = seg.take_ready();
+    assert_eq!(
+        second.len(),
+        1,
+        "one chunk after the next second anchor sample"
+    );
+    assert_eq!(
+        samples_for(&second[0].data, 3),
+        2,
+        "a chunk over three pending samples must keep the crossing sample for the next chunk"
+    );
+}
+
+#[test]
+fn chunk_target_one_tick_past_the_fit_still_takes_two_samples() {
+    let mut seg = LlSegmenter::new(
+        two_video_specs(),
+        ninety_k(1000),
+        Duration::from_secs(10),
+        2,
+    )
+    .expect("LlSegmenter constructor");
+    let video = TrackId::new(1);
+    let other = TrackId::new(3);
+    // Anchor span 3600 + 3601 = 7201 ticks; the 3600-tick sample still fits.
+    seg.push(video, av_sample(0, 3600)).unwrap();
+    seg.push(other, av_sample(10, 3600)).unwrap();
+    seg.push(other, av_sample(11, 3600)).unwrap();
+    seg.push(video, av_sample(1, 3601)).unwrap();
+    let chunks = seg.take_ready();
+    assert_eq!(samples_for(&chunks[0].data, 3), 2);
+}
+
+#[test]
+fn chunk_target_one_tick_short_of_the_fit_takes_one_sample() {
+    let mut seg = LlSegmenter::new(
+        two_video_specs(),
+        ninety_k(1000),
+        Duration::from_secs(10),
+        2,
+    )
+    .expect("LlSegmenter constructor");
+    let video = TrackId::new(1);
+    let other = TrackId::new(3);
+    // Anchor span 3600 + 3599 = 7199 ticks; the 3600-tick sample crosses it.
+    seg.push(video, av_sample(0, 3600)).unwrap();
+    seg.push(other, av_sample(10, 3600)).unwrap();
+    seg.push(other, av_sample(11, 3600)).unwrap();
+    seg.push(video, av_sample(1, 3599)).unwrap();
+    let chunks = seg.take_ready();
+    assert_eq!(samples_for(&chunks[0].data, 3), 1);
+}
+
+// ===========================================================================
+// LlSegmenter::demand — saturated exactly at the pending bound
+// ===========================================================================
+
+#[test]
+fn ll_dash_demand_is_saturated_exactly_at_the_pending_bound() {
+    let mut seg = LlSegmenter::new(
+        two_video_specs(),
+        ninety_k(90_000),
+        Duration::from_secs(3600),
+        usize::MAX,
+    )
+    .expect("LlSegmenter constructor");
+    let video = TrackId::new(1);
+    for i in 0..MAX_PENDING_SAMPLES_PER_TRACK - 1 {
+        seg.push(
+            video,
+            Sample::new(
+                vec![0u8; 16],
+                Some(i as i64 * 3600),
+                None,
+                Some(3600),
+                i == 0,
+            )
+            .expect("valid timing"),
+        )
+        .unwrap();
+    }
+    assert!(
+        !Stage::demand(&seg).saturated,
+        "one sample below the bound is not saturated"
+    );
+    seg.push(
+        video,
+        Sample::new(
+            vec![0u8; 16],
+            Some((MAX_PENDING_SAMPLES_PER_TRACK - 1) as i64 * 3600),
+            None,
+            Some(3600),
+            false,
+        )
+        .expect("valid timing"),
+    )
+    .unwrap();
+    assert!(
+        Stage::demand(&seg).saturated,
+        "saturated exactly at MAX_PENDING_SAMPLES_PER_TRACK"
+    );
+    let err = seg
+        .push(
+            video,
+            Sample::new(vec![0u8; 16], Some(0), None, Some(3600), false).expect("valid timing"),
+        )
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("MAX_PENDING_SAMPLES_PER_TRACK"),
+        "the push past the bound is the named stall error: {err}"
+    );
+}
+
+// ===========================================================================
+// Package::package — equal decode time merges the non-anchor track first
+// ===========================================================================
+
+fn merge_media(order: [TrackId; 2]) -> Media {
+    let video = Track::new(
+        crate::hub_fixtures::video_track(),
+        (0..6).map(|i| av_sample(i as u8, 3600)).collect::<Vec<_>>(),
+    );
+    let audio = Track::new(
+        crate::hub_fixtures::audio_track(),
+        (0..6)
+            .map(|i| {
+                Sample::new(vec![100 + i as u8; 8], None, None, Some(1920), true)
+                    .expect("valid timing")
+            })
+            .collect::<Vec<_>>(),
+    );
+    let tracks = order
+        .into_iter()
+        .map(|id| {
+            if id == TrackId::new(1) {
+                video.clone()
+            } else {
+                audio.clone()
+            }
+        })
+        .collect();
+    Media::new(tracks, ninety_k(1000))
+}
+
+fn first_chunk_counts(order: [TrackId; 2]) -> Vec<(u32, usize)> {
+    let media = merge_media(order);
+    let mut seg = LlSegmenter::new(
+        vec![
+            crate::hub_fixtures::video_track(),
+            crate::hub_fixtures::audio_track(),
+        ],
+        ninety_k(1000),
+        Duration::from_secs(2),
+        1,
+    )
+    .expect("LlSegmenter constructor");
+    let chunks = seg.package(&media).expect("package");
+    chunk_traf_counts(&chunks[0].data)
+}
+
+#[test]
+fn equal_decode_times_merge_audio_before_video() {
+    // Video listed first in the media: the tie-break still pushes the audio
+    // sample before the video one, so the first chunk carries both.
+    let counts = first_chunk_counts([TrackId::new(1), TrackId::new(2)]);
+    assert_eq!(
+        counts.iter().find(|(id, _)| *id == 2).map(|(_, n)| *n),
+        Some(1),
+        "the audio sample at the shared dts rides the first chunk: {counts:?}"
+    );
+
+    // Audio listed first: the earlier cursor must still win, so the merge does
+    // not depend on declaration order.
+    let counts = first_chunk_counts([TrackId::new(2), TrackId::new(1)]);
+    assert_eq!(
+        counts.iter().find(|(id, _)| *id == 2).map(|(_, n)| *n),
+        Some(1),
+        "equal decode times merge audio first regardless of track order: {counts:?}"
+    );
 }

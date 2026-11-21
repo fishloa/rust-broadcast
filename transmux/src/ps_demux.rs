@@ -1270,6 +1270,198 @@ mod wrap_tests {
         assert_eq!(out[2].0, Some(WRAP - 45_000));
         assert_eq!(out[1].1, Some(WRAP + 90_000));
     }
+
+    /// When a second PES stamp falls in the same access unit only the first
+    /// applies. A PTS-only first stamp makes the `&&` visible: the second
+    /// stamp's PTS must not replace it just because the DTS is still unknown.
+    #[test]
+    fn assign_stamps_keeps_the_first_stamp_of_an_access_unit() {
+        let ranges = [(0usize, 10usize), (10, 20)];
+        let stamps = [
+            Stamp {
+                offset: 0,
+                pts: Some(180_000),
+                dts: None,
+            },
+            Stamp {
+                offset: 0,
+                pts: Some(270_000),
+                dts: Some(270_000),
+            },
+        ];
+        let out = assign_stamps(&ranges, &stamps);
+        assert_eq!(
+            out[0],
+            (Some(180_000), None),
+            "the first stamp of the access unit wins"
+        );
+
+        let stamps = [
+            Stamp {
+                offset: 0,
+                pts: Some(1_000),
+                dts: Some(900),
+            },
+            Stamp {
+                offset: 0,
+                pts: Some(2_000),
+                dts: Some(1_900),
+            },
+        ];
+        assert_eq!(
+            assign_stamps(&ranges, &stamps)[0],
+            (Some(1_000), Some(900)),
+            "a fully stamped access unit keeps its first stamp"
+        );
+    }
+}
+
+#[cfg(test)]
+mod h264_config_tests {
+    use super::*;
+    use broadcast_common::Unpackage;
+
+    fn annexb(nals: &[&[u8]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for nal in nals {
+            out.extend_from_slice(&[0, 0, 1]);
+            out.extend_from_slice(nal);
+        }
+        out
+    }
+
+    /// The real SPS, PPS and first coded slice of the committed PS fixture.
+    fn fixture_parts() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let data = test_fixtures::read("ps/h264-ac3.ps");
+        let media = PsDemux::new()
+            .unpackage(&data[..])
+            .expect("the real PS fixture demuxes");
+        let track = &media.tracks[0];
+        let CodecConfig::Avc { config, .. } = &track.spec.config else {
+            panic!("track 0 must be AVC");
+        };
+        let sps = config.config.sps[0].0.clone();
+        let pps = config.config.pps[0].0.clone();
+
+        let sample = &track.samples[0].data;
+        let mut off = 0usize;
+        let mut slice = Vec::new();
+        while off + 4 <= sample.len() {
+            let n = u32::from_be_bytes([
+                sample[off],
+                sample[off + 1],
+                sample[off + 2],
+                sample[off + 3],
+            ]) as usize;
+            off += 4;
+            if off + n > sample.len() {
+                break;
+            }
+            let nal = &sample[off..off + n];
+            off += n;
+            let nal_type = nal[0] & H264_NAL_TYPE_MASK;
+            if nal_type == 1 || nal_type == 5 {
+                slice = nal.to_vec();
+                break;
+            }
+        }
+        assert!(
+            !slice.is_empty(),
+            "the fixture's first sample carries a coded slice"
+        );
+        (sps, pps, slice)
+    }
+
+    fn h264_es(nals: &[&[u8]]) -> ElementaryStream {
+        ElementaryStream {
+            codec: Codec::Video,
+            es_bytes: annexb(nals),
+            stamps: alloc::vec![Stamp {
+                offset: 0,
+                pts: Some(90_000),
+                dts: Some(90_000),
+            }],
+        }
+    }
+
+    fn built_config(es: &ElementaryStream) -> Option<(Vec<u8>, Vec<u8>)> {
+        let track = build_h264_track(es, TrackId::new(1)).expect("no resource-limit error")?;
+        let CodecConfig::Avc { config, .. } = track.spec.config else {
+            panic!("a built track must be AVC");
+        };
+        Some((
+            config.config.sps[0].0.clone(),
+            config.config.pps[0].0.clone(),
+        ))
+    }
+
+    /// A damaged parameter set (a set `forbidden_zero_bit`) must never reach
+    /// the `avcC`, in either position, and a stream with only damaged sets is
+    /// declined rather than built from garbage (issue #1171).
+    #[test]
+    fn damaged_parameter_sets_are_skipped() {
+        let (sps, pps, slice) = fixture_parts();
+        let garbage_sps = [0xE7u8, 0x01, 0x02, 0x03, 0xFF];
+        let garbage_pps = [0xE8u8, 0x01, 0x02, 0x03, 0xFF];
+
+        let es = h264_es(&[&garbage_sps, &sps, &garbage_pps, &pps, &slice]);
+        let (got_sps, got_pps) = built_config(&es).expect("the real SPS/PPS are present");
+        assert_eq!(
+            got_sps, sps,
+            "the damaged SPS before the real one is skipped"
+        );
+        assert_eq!(
+            got_pps, pps,
+            "the damaged PPS before the real one is skipped"
+        );
+        assert_eq!(got_sps[0], 0x67, "the real SPS NAL header");
+
+        let es = h264_es(&[&sps, &garbage_sps, &pps, &garbage_pps, &slice]);
+        let (got_sps, got_pps) = built_config(&es).expect("the real SPS/PPS are present");
+        assert_eq!(
+            got_sps, sps,
+            "a damaged SPS after the real one must not replace it"
+        );
+        assert_eq!(
+            got_pps, pps,
+            "a damaged PPS after the real one must not replace it"
+        );
+
+        let es = h264_es(&[&garbage_sps, &garbage_pps, &slice]);
+        assert!(
+            built_config(&es).is_none(),
+            "a stream with only damaged parameter sets must not build a track"
+        );
+    }
+
+    /// The first valid SPS/PPS is kept: a later valid set must not replace it.
+    #[test]
+    fn the_first_valid_parameter_set_wins() {
+        let (sps, pps, slice) = fixture_parts();
+
+        let mut other_sps = sps.clone();
+        other_sps[3] = if sps[3] == 0x1E { 0x1F } else { 0x1E };
+        let mut other_pps = pps.clone();
+        let last = other_pps.len() - 1;
+        other_pps[last] = if other_pps[last] == 0x7F { 0x7E } else { 0x7F };
+        assert!(parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Sps,
+            &other_sps
+        ));
+        assert!(parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &other_pps
+        ));
+        assert_ne!(other_sps, sps);
+        assert_ne!(other_pps, pps);
+
+        let es = h264_es(&[&sps, &other_sps, &pps, &other_pps, &slice]);
+        let (got_sps, got_pps) = built_config(&es).expect("a valid SPS/PPS is present");
+        assert_eq!(got_sps, sps, "the first valid SPS is kept");
+        assert_eq!(got_pps, pps, "the first valid PPS is kept");
+    }
 }
 
 #[cfg(test)]

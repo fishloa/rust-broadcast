@@ -1272,3 +1272,646 @@ fn start_time_moves_every_tfdt_and_nothing_else() {
         assert_eq!(*b, *a + 5 * 1000 * 90, "tfdt moved by the start time");
     }
 }
+
+// ===========================================================================
+// Sequence numbering, deferral, follower guards and tfdt continuity
+// ===========================================================================
+
+fn mfhd_seq(bytes: &[u8]) -> u32 {
+    let body = find_box_body(bytes, b"moof").expect("fragment has a moof");
+    MovieFragmentBox::parse_body(body)
+        .expect("moof parses")
+        .mfhd
+        .sequence_number
+}
+
+fn timed_video(dts: i64, duration: u32, sync: bool) -> Sample {
+    Sample::new(vec![0u8; 16], Some(dts), Some(dts), Some(duration), sync).expect("valid timing")
+}
+
+fn video_600ms_segmenter() -> LlHlsSegmenter {
+    LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(90_000),
+        Duration::from_millis(600),
+        Duration::from_millis(200),
+    )
+    .expect("LL-HLS segmenter")
+}
+
+fn two_three_part_plans() -> [transmux::ll_hls::CutPlan; 2] {
+    let cut = |seq: u32, base: i64| {
+        transmux::ll_hls::CutPlan::new(
+            seq,
+            base,
+            90_000,
+            vec![
+                transmux::ll_hls::PartCut::new(broadcast_hls::PartIndex::new(0), base, None),
+                transmux::ll_hls::PartCut::new(
+                    broadcast_hls::PartIndex::new(1),
+                    base + 18_000,
+                    None,
+                ),
+                transmux::ll_hls::PartCut::new(
+                    broadcast_hls::PartIndex::new(2),
+                    base + 36_000,
+                    None,
+                ),
+            ],
+        )
+        .expect("cut plan")
+    };
+    [cut(1, 0), cut(2, 54_000)]
+}
+
+#[test]
+fn next_sequence_numbers_resume_strict_monotonic_numbering() {
+    let mut seg = video_600ms_segmenter();
+    assert_eq!(seg.next_sequence_numbers(), (1, 1));
+
+    for i in 0..30u8 {
+        seg.push(
+            TrackId::new(1),
+            timed_video(i as i64 * 3600, 3600, i % 15 == 0),
+        )
+        .unwrap();
+    }
+    seg.flush().unwrap();
+    let parts = seg.take_ready_parts();
+    let segments = seg.take_ready_segments();
+    assert_eq!(parts.len(), 6, "two segments of three parts");
+    assert_eq!(segments.len(), 2);
+
+    let last_seq = parts
+        .iter()
+        .map(|p| mfhd_seq(&p.bytes))
+        .chain(segments.iter().map(|s| mfhd_seq(&s.bytes)))
+        .max()
+        .expect("emitted sequence numbers");
+    let (next_seq, current_segment) = seg.next_sequence_numbers();
+    assert_eq!(
+        next_seq,
+        last_seq + 1,
+        "next_seq continues past the last moof"
+    );
+    assert_eq!(
+        current_segment,
+        segments.last().unwrap().segment_seq + 1,
+        "current_segment is the segment after the last emitted one"
+    );
+    assert_eq!((next_seq, current_segment), (9, 3));
+
+    let mut resumed = LlHlsSegmenter::with_part_target_at(
+        vec![video_track()],
+        timescale(90_000),
+        Duration::from_millis(600),
+        Duration::from_millis(200),
+        next_seq,
+        current_segment,
+    )
+    .expect("resumed segmenter");
+    for i in 0..8u8 {
+        resumed
+            .push(TrackId::new(1), timed_video(i as i64 * 3600, 3600, i == 0))
+            .unwrap();
+    }
+    let resumed_parts = resumed.take_ready_parts();
+    assert_eq!(resumed_parts.len(), 1);
+    assert_eq!(
+        mfhd_seq(&resumed_parts[0].bytes),
+        next_seq,
+        "the rebuilt segmenter's first part continues the sequence"
+    );
+}
+
+#[test]
+fn deferred_part_is_emitted_only_on_the_next_anchor_sample() {
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track(), audio_track()],
+        timescale(90_000),
+        Duration::from_secs(2),
+        Duration::from_millis(200),
+    )
+    .expect("LL-HLS segmenter");
+    let video = TrackId::new(1);
+    let audio = TrackId::new(2);
+
+    for i in 0..49u8 {
+        seg.push(video, timed_video(i as i64 * 3600, 3600, i == 0))
+            .unwrap();
+    }
+    let _ = seg.take_ready_parts();
+    // The 50th frame reaches the 2 s segment target exactly and its part
+    // boundary would drain every anchor sample, so the part is held back.
+    seg.push(video, timed_video(49 * 3600, 3600, false))
+        .unwrap();
+    assert!(
+        seg.take_ready_parts().is_empty(),
+        "a part that would leave an empty anchor tail is deferred"
+    );
+
+    seg.push(
+        audio,
+        Sample::new(vec![7u8; 8], None, None, Some(1920), true).expect("valid timing"),
+    )
+    .unwrap();
+    assert!(
+        seg.take_ready_parts().is_empty(),
+        "an audio sample must not release the deferred part"
+    );
+
+    seg.push(video, timed_video(50 * 3600, 3600, false))
+        .unwrap();
+    let parts = seg.take_ready_parts();
+    assert_eq!(parts.len(), 1, "the next anchor sample releases the part");
+    assert_eq!(
+        part_sample_count(&parts[0].bytes, 1),
+        5,
+        "the deferred part carries the five video AUs before the boundary"
+    );
+}
+
+fn already_cut_error(err: transmux::Error) -> bool {
+    matches!(&err, transmux::Error::InvalidInput(msg) if msg.contains("already cut on its own"))
+}
+
+#[test]
+fn follow_refuses_each_already_cut_condition() {
+    let new = || {
+        LlHlsSegmenter::with_part_target(
+            vec![video_track()],
+            timescale(90_000),
+            Duration::from_secs(1),
+            Duration::from_millis(200),
+        )
+        .expect("LL-HLS segmenter")
+    };
+    let plan = || transmux::ll_hls::CutPlan::new(1, 0, 90_000, Vec::new()).expect("cut plan");
+
+    // (a) a finished segment is still queued in `ready`.
+    let mut ready = new();
+    for i in 0..26u8 {
+        ready
+            .push(
+                TrackId::new(1),
+                timed_video(i as i64 * 3600, 3600, i % 25 == 0),
+            )
+            .unwrap();
+    }
+    assert!(already_cut_error(ready.follow(plan()).unwrap_err()));
+
+    // (b) a part was emitted and the queue drained: `part_start > 0`.
+    let mut part = new();
+    for i in 0..8u8 {
+        part.push(TrackId::new(1), timed_video(i as i64 * 3600, 3600, i == 0))
+            .unwrap();
+    }
+    let _ = part.take_ready_parts();
+    assert!(already_cut_error(part.follow(plan()).unwrap_err()));
+
+    // (c) a segment closed and was drained: `seg_base_decode > 0`.
+    let mut closed = new();
+    for i in 0..26u8 {
+        closed
+            .push(
+                TrackId::new(1),
+                timed_video(i as i64 * 3600, 3600, i % 25 == 0),
+            )
+            .unwrap();
+    }
+    let _ = closed.take_ready_parts();
+    let _ = closed.take_ready_segments();
+    assert!(already_cut_error(closed.follow(plan()).unwrap_err()));
+
+    // Control: a fresh segmenter accepts the plan.
+    assert!(new().follow(plan()).is_ok());
+}
+
+#[test]
+fn parts_and_segments_never_carry_a_traf_for_a_sample_less_track() {
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track(), audio_track()],
+        timescale(90_000),
+        Duration::from_secs(10),
+        Duration::from_millis(200),
+    )
+    .expect("LL-HLS segmenter");
+    for i in 0..8u8 {
+        seg.push(TrackId::new(1), timed_video(i as i64 * 3600, 3600, i == 0))
+            .unwrap();
+    }
+    let parts = seg.take_ready_parts();
+    assert!(!parts.is_empty());
+    assert_eq!(
+        traf_count(&parts[0].bytes),
+        1,
+        "an audio track with no sample before the part boundary must not get an empty traf"
+    );
+    seg.flush().unwrap();
+    let segments = seg.take_ready_segments();
+    assert_eq!(
+        traf_count(&segments[0].bytes),
+        1,
+        "an audio track with no sample in the segment must not get an empty traf"
+    );
+}
+
+#[test]
+fn mfhd_sequence_numbers_increase_by_one_along_every_path() {
+    let expected_parts = [1u32, 2, 3, 5, 6, 7];
+    let expected_segments = [4u32, 8];
+
+    // Leader via push/flush.
+    let mut leader = video_600ms_segmenter();
+    let frames: Vec<Sample> = (0..30)
+        .map(|i| timed_video(i * 3600, 3600, i % 15 == 0))
+        .collect();
+    for s in &frames {
+        leader.push(TrackId::new(1), s.clone()).unwrap();
+    }
+    leader.flush().unwrap();
+    let leader_parts = leader.take_ready_parts();
+    let leader_segments = leader.take_ready_segments();
+    assert_eq!(
+        leader_parts
+            .iter()
+            .map(|p| mfhd_seq(&p.bytes))
+            .collect::<Vec<_>>(),
+        expected_parts
+    );
+    assert_eq!(
+        leader_segments
+            .iter()
+            .map(|s| mfhd_seq(&s.bytes))
+            .collect::<Vec<_>>(),
+        expected_segments
+    );
+
+    // Follower via whole-segment plans.
+    let plans = two_three_part_plans();
+    let mut follow = video_600ms_segmenter();
+    follow.follow(plans[0].clone()).unwrap();
+    for s in &frames[..15] {
+        follow.push(TrackId::new(1), s.clone()).unwrap();
+    }
+    follow.follow(plans[1].clone()).unwrap();
+    for s in &frames[15..] {
+        follow.push(TrackId::new(1), s.clone()).unwrap();
+    }
+    follow.flush().unwrap();
+    assert_eq!(
+        follow
+            .take_ready_parts()
+            .iter()
+            .map(|p| mfhd_seq(&p.bytes))
+            .collect::<Vec<_>>(),
+        expected_parts
+    );
+    assert_eq!(
+        follow
+            .take_ready_segments()
+            .iter()
+            .map(|s| mfhd_seq(&s.bytes))
+            .collect::<Vec<_>>(),
+        expected_segments
+    );
+
+    // Follower via incremental part cuts.
+    let mut increment = video_600ms_segmenter();
+    let cuts = [
+        (1u64, 0usize, 0i64),
+        (1, 1, 18_000),
+        (1, 2, 36_000),
+        (2, 0, 54_000),
+        (2, 1, 72_000),
+        (2, 2, 90_000),
+    ];
+    let mut next = 0usize;
+    for (msn, index, start) in cuts {
+        while next < frames.len() && frames[next].timing.and_then(|t| t.dts()).unwrap() < start {
+            increment
+                .push(TrackId::new(1), frames[next].clone())
+                .unwrap();
+            next += 1;
+        }
+        increment
+            .follow_part(
+                broadcast_hls::MediaSequence::new(msn),
+                broadcast_hls::PartIndex::new(index as u32),
+                start,
+                timescale(90_000),
+            )
+            .unwrap();
+    }
+    for s in &frames[next..] {
+        increment.push(TrackId::new(1), s.clone()).unwrap();
+    }
+    increment.flush().unwrap();
+    assert_eq!(
+        increment
+            .take_ready_parts()
+            .iter()
+            .map(|p| mfhd_seq(&p.bytes))
+            .collect::<Vec<_>>(),
+        expected_parts
+    );
+    assert_eq!(
+        increment
+            .take_ready_segments()
+            .iter()
+            .map(|s| mfhd_seq(&s.bytes))
+            .collect::<Vec<_>>(),
+        expected_segments
+    );
+}
+
+#[test]
+fn leader_tfdt_continues_across_segments_and_parts() {
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(90_000),
+        Duration::from_secs(1),
+        Duration::from_millis(200),
+    )
+    .expect("LL-HLS segmenter");
+    for i in 0..100i64 {
+        seg.push(TrackId::new(1), timed_video(i * 3600, 3600, i % 25 == 0))
+            .unwrap();
+    }
+    seg.flush().unwrap();
+    let parts = seg.take_ready_parts();
+    let segments = seg.take_ready_segments();
+    assert_eq!(segments.len(), 4);
+
+    for (k, segment) in segments.iter().enumerate() {
+        let segment_start = k as u64 * 90_000;
+        assert_eq!(
+            part_tfdt_for(&segment.bytes, 1),
+            Some(segment_start),
+            "segment {k} must open at its own timeline position"
+        );
+        let seg_parts: Vec<_> = parts
+            .iter()
+            .filter(|p| p.segment_seq == segment.segment_seq)
+            .collect();
+        assert_eq!(seg_parts.len(), 5, "segment {k} has five parts");
+        for (j, part) in seg_parts.iter().enumerate() {
+            assert_eq!(
+                part_tfdt_for(&part.bytes, 1),
+                Some(segment_start + j as u64 * 18_000),
+                "segment {k} part {j} continues the part timeline"
+            );
+        }
+    }
+}
+
+// ===========================================================================
+// observe_frame: 85% band, trigger retuning and the retune give-up
+// ===========================================================================
+
+fn jittered_segmenter(part_target: Duration) -> LlHlsSegmenter {
+    LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(90_000),
+        Duration::from_secs(60),
+        part_target,
+    )
+    .expect("LL-HLS segmenter")
+}
+
+fn push_durations(seg: &mut LlHlsSegmenter, durations: &[u32]) {
+    for (i, d) in durations.iter().enumerate() {
+        let sample =
+            Sample::new(vec![0u8; 16], None, None, Some(*d), i == 0).expect("valid timing");
+        seg.push(TrackId::new(1), sample).unwrap();
+    }
+}
+
+#[test]
+fn a_grid_below_the_85_percent_band_keeps_the_configured_target() {
+    let durations: Vec<u32> = (0..40)
+        .map(|i| if i % 2 == 0 { 3000 } else { 4000 })
+        .collect();
+    let mut seg = jittered_segmenter(Duration::from_millis(200));
+    push_durations(&mut seg, &durations);
+    assert_eq!(seg.part_target(), Duration::from_millis(200));
+    for part in seg.take_ready_parts() {
+        assert!(part.duration <= Duration::from_millis(200));
+    }
+}
+
+#[test]
+fn the_85_percent_band_edge_accepts_the_grid() {
+    let durations: Vec<u32> = (0..40)
+        .map(|i| if i % 2 == 0 { 1800 } else { 1900 })
+        .collect();
+    let mut seg = jittered_segmenter(Duration::from_millis(120));
+    push_durations(&mut seg, &durations);
+    assert_eq!(
+        seg.part_target(),
+        Duration::from_millis(134),
+        "lo*100 == hi*85 is inside the band, so the target is retuned to whole frames"
+    );
+}
+
+#[test]
+fn a_grid_just_below_the_85_percent_band_keeps_the_configured_target() {
+    let durations: Vec<u32> = (0..40)
+        .map(|i| if i % 2 == 0 { 1800 } else { 1901 })
+        .collect();
+    let mut seg = jittered_segmenter(Duration::from_millis(120));
+    push_durations(&mut seg, &durations);
+    assert_eq!(seg.part_target(), Duration::from_millis(120));
+}
+
+#[test]
+fn sixty_fps_parts_are_cut_on_their_eleventh_frame() {
+    let durations = frame_ticks(60_000, 1001, 240);
+    let mut seg = jittered_segmenter(Duration::from_millis(200));
+    let mut cut_at = Vec::new();
+    for (i, d) in durations.iter().enumerate() {
+        let sample =
+            Sample::new(vec![0u8; 16], None, None, Some(*d), i == 0).expect("valid timing");
+        seg.push(TrackId::new(1), sample).unwrap();
+        if !seg.take_ready_parts().is_empty() {
+            cut_at.push(i);
+        }
+    }
+    assert_eq!(seg.part_target(), Duration::from_millis(200));
+    assert!(cut_at.len() > 10, "expected many parts, got {cut_at:?}");
+    assert!(
+        cut_at.iter().all(|i| i % 11 == 10),
+        "59.94 fps parts must be cut on their eleventh frame: {cut_at:?}"
+    );
+}
+
+#[test]
+fn a_wide_band_grid_does_not_lower_the_trigger() {
+    let durations: Vec<u32> = (0..80)
+        .map(|i| if i % 2 == 0 { 20_000 } else { 19_000 })
+        .collect();
+    let mut seg = jittered_segmenter(Duration::from_millis(1640));
+    let mut cut_at = Vec::new();
+    for (i, d) in durations.iter().enumerate() {
+        let sample =
+            Sample::new(vec![0u8; 16], None, None, Some(*d), i == 0).expect("valid timing");
+        seg.push(TrackId::new(1), sample).unwrap();
+        if !seg.take_ready_parts().is_empty() {
+            cut_at.push(i);
+        }
+    }
+    assert_eq!(seg.part_target(), Duration::from_millis(1640));
+    assert_eq!(
+        &cut_at[..2],
+        &[7, 14],
+        "the worst-case floor does not fit the band, so the trigger stays at the target"
+    );
+}
+
+#[test]
+fn the_retune_gives_up_when_the_grid_is_too_loose() {
+    let durations: Vec<u32> = (0..40)
+        .map(|i| if i % 2 == 0 { 1800 } else { 1900 })
+        .collect();
+    let mut seg = jittered_segmenter(Duration::from_millis(144));
+    push_durations(&mut seg, &durations);
+    assert_eq!(
+        seg.part_target(),
+        Duration::from_millis(144),
+        "a grid where the floor's worst case already spans frames*lo must not be retuned"
+    );
+}
+
+#[test]
+fn a_part_that_leaves_a_remainder_is_emitted_at_once() {
+    let durations: Vec<u32> = (0..8)
+        .map(|i| if i % 2 == 0 { 3000 } else { 4000 })
+        .collect();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(90_000),
+        Duration::from_millis(100),
+        Duration::from_millis(200),
+    )
+    .expect("LL-HLS segmenter");
+    push_durations(&mut seg, &durations);
+    assert!(
+        !seg.take_ready_parts().is_empty(),
+        "the part leaves one sample for the segment tail, so it is not deferred"
+    );
+}
+
+#[test]
+fn a_first_sample_longer_than_the_part_target_is_its_own_part() {
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(90_000),
+        Duration::from_secs(60),
+        Duration::from_millis(200),
+    )
+    .expect("LL-HLS segmenter");
+    let durations = [2250u32, 45_000, 2250, 2250, 2250, 2250, 2250, 2250];
+    push_durations(&mut seg, &durations);
+    let _ = seg.take_ready_parts();
+    push_durations(&mut seg, &[2250]);
+    let parts = seg.take_ready_parts();
+    assert_eq!(
+        parts.len(),
+        1,
+        "the 500 ms sample is carried as its own part, not dropped"
+    );
+    assert_eq!(
+        parts[0].duration,
+        Duration::from_millis(500),
+        "the part is the long sample's own span"
+    );
+}
+
+#[test]
+fn a_probe_that_gives_up_cuts_parts_without_waiting_for_eight_frames() {
+    let mut seg = jittered_segmenter(Duration::from_millis(200));
+    let mut dts = 0i64;
+    let mut first_cut = None;
+    // Sixteen samples carry only three positive dts deltas: the probe gives up.
+    for i in 0..16u8 {
+        if i >= 13 {
+            dts += 3600;
+        }
+        seg.push(
+            TrackId::new(1),
+            Sample::new(vec![0u8; 16], Some(dts), None, None, false).expect("valid timing"),
+        )
+        .unwrap();
+        if !seg.take_ready_parts().is_empty() {
+            first_cut = Some(i);
+        }
+    }
+    assert!(
+        first_cut.is_none(),
+        "no part cuts while the probe is measuring"
+    );
+    let mut regular = 16u8;
+    loop {
+        dts += 3600;
+        seg.push(
+            TrackId::new(1),
+            Sample::new(vec![0u8; 16], Some(dts), None, None, false).expect("valid timing"),
+        )
+        .unwrap();
+        if !seg.take_ready_parts().is_empty() {
+            first_cut = Some(regular);
+            break;
+        }
+        regular += 1;
+        assert!(regular < 40, "the probe never gave up");
+    }
+    assert_eq!(
+        first_cut,
+        Some(17),
+        "after give-up the part is cut when the accumulated span reaches 200 ms"
+    );
+}
+
+#[test]
+fn dts_only_samples_still_retune_the_part_target() {
+    let durations = frame_ticks(24_000, 1001, 120);
+    let mut seg = jittered_segmenter(Duration::from_millis(200));
+    let mut dts = 0i64;
+    for &d in &durations {
+        seg.push(
+            TrackId::new(1),
+            Sample::new(vec![0u8; 16], Some(dts), None, None, false).expect("valid timing"),
+        )
+        .unwrap();
+        dts += i64::from(d);
+    }
+    assert_eq!(
+        seg.part_target(),
+        Duration::from_millis(209),
+        "a zero elapsed first sample must not be counted as the shortest frame"
+    );
+}
+
+#[test]
+fn cut_plan_starts_come_from_accumulated_durations_without_a_dts() {
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(90_000),
+        Duration::from_secs(1),
+        Duration::from_millis(200),
+    )
+    .expect("LL-HLS segmenter");
+    seg.record_cuts();
+    for i in 0..100u8 {
+        let sample =
+            Sample::new(vec![0u8; 16], None, None, Some(3600), i % 25 == 0).expect("valid timing");
+        seg.push(TrackId::new(1), sample).unwrap();
+    }
+    seg.flush().unwrap();
+    let plans = seg.take_ready_cut_plans();
+    assert_eq!(plans.len(), 4);
+    assert_eq!(
+        plans.iter().map(|p| p.segment_start).collect::<Vec<_>>(),
+        vec![0, 90_000, 180_000, 270_000]
+    );
+}

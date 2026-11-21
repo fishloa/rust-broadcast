@@ -332,3 +332,43 @@ async fn t2mi_stream_partial_packet_split_across_two_reads_is_carried_over() {
     assert_eq!(stream.resync_stats().bytes_discarded, 0, "nothing dropped");
     assert_eq!(stream.resync_stats().desyncs, 0);
 }
+
+/// `resync_stats` must report what the framer actually discarded, not just
+/// `Default`: a few junk bytes ahead of the real capture's first packet are
+/// skipped hunting for the sync byte (audit a23cp #3435).
+#[tokio::test]
+async fn t2mi_stream_resync_stats_count_leading_junk() {
+    const JUNK: usize = 5;
+    let data = std::fs::read(test_fixtures::path(t2mi_fixture_path()))
+        .expect("colombia-capital-t2mi.ts fixture not found");
+    const T2MI_PID: Pid = Pid::from_const(0x0040);
+
+    let mut fed = vec![0u8; JUNK];
+    fed.extend_from_slice(&data);
+    let mut stream = T2miEventStream::new(std::io::Cursor::new(fed), T2MI_PID);
+
+    let events = tokio::time::timeout(Duration::from_secs(60), async {
+        let mut events = Vec::new();
+        while let Some(ev) = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await {
+            events.push(ev);
+        }
+        events
+    })
+    .await
+    .expect("hang guard (issue #807) fired");
+
+    assert!(
+        !events.is_empty(),
+        "the fixture's T2-MI packets must still be delivered after the junk"
+    );
+    let stats = stream.resync_stats();
+    assert_eq!(
+        stats.bytes_discarded, JUNK as u64,
+        "exactly the leading junk bytes were discarded"
+    );
+    assert!(
+        stats.resyncs >= 1,
+        "the initial hunt for sync is one resync, got {}",
+        stats.resyncs
+    );
+}

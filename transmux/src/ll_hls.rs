@@ -1775,3 +1775,26 @@ fn span_duration(track: &TrackState, from: usize, to: usize) -> Duration {
     let ticks: u64 = track.pending[from..to].iter().map(|s| clock.tick(s)).sum();
     ticks_duration(ticks, track.spec.timescale)
 }
+
+#[cfg(test)]
+mod ticks_tests {
+    use super::*;
+
+    #[test]
+    fn ticks_duration_rounds_to_the_nearest_nanosecond() {
+        assert_eq!(
+            ticks_duration(5, Timescale::try_new(90_000).expect("non-zero timescale")),
+            Duration::from_nanos(55_556)
+        );
+        assert_eq!(
+            ticks_duration(2, Timescale::try_new(3).expect("non-zero timescale")),
+            Duration::from_nanos(666_666_667)
+        );
+    }
+
+    #[test]
+    fn ticks_to_i64_saturates_at_the_i64_bound() {
+        assert_eq!(ticks_to_i64(u64::MAX), i64::MAX);
+        assert_eq!(ticks_to_i64(42), 42);
+    }
+}

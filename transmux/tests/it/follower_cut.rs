@@ -12,8 +12,10 @@
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use core::time::Duration;
+use transmux::TrackId;
 use transmux::ll_hls::{CutPlan, LlHlsSegmenter, PartCut, PartInfo, SegmentInfo};
 use transmux::media::{Media, Track};
+use transmux::pipeline::TrackSpec;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::{
     CodecConfig, Error, Sample, Severity, TsDemux, validate::SegmentOrigin, validate_init_segment,
@@ -940,4 +942,461 @@ fn follow_part_buffer_overflow_is_a_typed_error() {
         }
     }
     assert!(matches!(result, Err(Error::InvalidInput(_))));
+}
+
+fn traf_count(bytes: &[u8]) -> usize {
+    let top = boxes(bytes);
+    let moof = top
+        .iter()
+        .find(|b| &b.kind == b"moof")
+        .expect("fragment has a moof");
+    boxes(moof.payload)
+        .iter()
+        .filter(|b| &b.kind == b"traf")
+        .count()
+}
+
+fn traf_tfdt_for(bytes: &[u8], want_track: u32) -> Option<u64> {
+    let top = boxes(bytes);
+    let moof = top.iter().find(|b| &b.kind == b"moof")?;
+    for traf in boxes(moof.payload) {
+        if &traf.kind != b"traf" {
+            continue;
+        }
+        let mut track_id = None;
+        let mut tfdt = None;
+        for child in boxes(traf.payload) {
+            match &child.kind {
+                b"tfhd" => {
+                    track_id = Some(u32::from_be_bytes(child.payload[4..8].try_into().ok()?));
+                }
+                b"tfdt" => {
+                    let version = child.payload[0];
+                    let base = if version == 1 {
+                        u64::from_be_bytes(child.payload[4..12].try_into().ok()?)
+                    } else {
+                        u64::from(u32::from_be_bytes(child.payload[4..8].try_into().ok()?))
+                    };
+                    tfdt = Some(base);
+                }
+                _ => {}
+            }
+        }
+        if track_id == Some(want_track) {
+            return tfdt;
+        }
+    }
+    None
+}
+
+fn already_cut_part_error(err: Error) -> bool {
+    matches!(&err, Error::InvalidInput(msg) if msg.contains("already cut on its own"))
+}
+
+fn push_until_z_segment(f: &mut LlHlsSegmenter, id: TrackId, frames: i64) {
+    for n in 0..frames {
+        f.push(id, frame(n)).unwrap();
+    }
+}
+
+#[test]
+fn follow_part_refuses_each_already_cut_condition() {
+    let (audio, _) = audio_template();
+    let id = audio.spec.track_id;
+    let new = || part_follower();
+    let first_part = || {
+        (
+            broadcast_hls::MediaSequence::new(1),
+            broadcast_hls::PartIndex::new(0),
+            0,
+            LEADER_SCALE,
+        )
+    };
+
+    // (a) a finished segment is still queued.
+    let mut ready = new();
+    push_until_z_segment(&mut ready, id, 94);
+    let (msn, index, start, ts) = first_part();
+    assert!(already_cut_part_error(
+        ready.follow_part(msn, index, start, ts).unwrap_err()
+    ));
+
+    // (b) a part was emitted and drained: `part_start > 0`.
+    let mut part = new();
+    push_until_z_segment(&mut part, id, 20);
+    let _ = part.take_ready_parts();
+    let (msn, index, start, ts) = first_part();
+    assert!(already_cut_part_error(
+        part.follow_part(msn, index, start, ts).unwrap_err()
+    ));
+
+    // (c) a segment closed and was drained: `seg_base_decode > 0`.
+    let mut closed = new();
+    push_until_z_segment(&mut closed, id, 95);
+    let _ = closed.take_ready_parts();
+    let _ = closed.take_ready_segments();
+    let (msn, index, start, ts) = first_part();
+    assert!(already_cut_part_error(
+        closed.follow_part(msn, index, start, ts).unwrap_err()
+    ));
+
+    // Control: a fresh segmenter accepts the first boundary.
+    let (msn, index, start, ts) = first_part();
+    assert!(new().follow_part(msn, index, start, ts).is_ok());
+}
+
+#[test]
+fn follow_part_refuses_whole_segment_followers_and_keeps_incremental_ones() {
+    let (mut f, _) = {
+        let (audio, movie_ts) = audio_template();
+        (
+            LlHlsSegmenter::with_part_target(
+                vec![audio.spec.clone()],
+                movie_ts,
+                SEGMENT_TARGET,
+                PART_TARGET,
+            )
+            .unwrap(),
+            audio,
+        )
+    };
+    f.follow(plan(1, 0)).unwrap();
+    assert_eq!(
+        f.follow_part(
+            broadcast_hls::MediaSequence::new(2),
+            broadcast_hls::PartIndex::new(0),
+            leader_ticks(10 * 1024),
+            LEADER_SCALE,
+        )
+        .unwrap_err(),
+        Error::InvalidInput("follow_part: segmenter is following whole-segment plans")
+    );
+
+    let mut incremental = part_follower();
+    incremental
+        .follow_part(
+            broadcast_hls::MediaSequence::new(1),
+            broadcast_hls::PartIndex::new(0),
+            0,
+            LEADER_SCALE,
+        )
+        .unwrap();
+    incremental
+        .follow_part(
+            broadcast_hls::MediaSequence::new(1),
+            broadcast_hls::PartIndex::new(1),
+            leader_ticks(4 * 1024),
+            LEADER_SCALE,
+        )
+        .unwrap();
+}
+
+#[test]
+fn follower_part_omits_a_track_with_no_sample_before_the_boundary() {
+    let (audio, movie_ts) = audio_template();
+    let id = audio.spec.track_id;
+    let mut second = audio.spec.clone();
+    second.track_id = TrackId::new(99);
+    let mut f = LlHlsSegmenter::with_part_target(
+        vec![audio.spec.clone(), second],
+        movie_ts,
+        SEGMENT_TARGET,
+        PART_TARGET,
+    )
+    .unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(1),
+        broadcast_hls::PartIndex::new(0),
+        0,
+        LEADER_SCALE,
+    )
+    .unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(1),
+        broadcast_hls::PartIndex::new(1),
+        leader_ticks(4 * 1024),
+        LEADER_SCALE,
+    )
+    .unwrap();
+    push_until_z_segment(&mut f, id, 4);
+    assert!(f.take_ready_parts().is_empty());
+    f.push(id, frame(4)).unwrap();
+    let parts = f.take_ready_parts();
+    assert_eq!(parts.len(), 1);
+    assert_eq!(
+        traf_count(&parts[0].bytes),
+        1,
+        "a track with no sample before the boundary gets no empty traf"
+    );
+}
+
+#[test]
+fn follower_emits_no_part_when_no_sample_starts_in_the_slot() {
+    let mut f = part_follower();
+    let id = audio_template().0.spec.track_id;
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(1),
+        broadcast_hls::PartIndex::new(0),
+        0,
+        LEADER_SCALE,
+    )
+    .unwrap();
+    f.follow_part(
+        broadcast_hls::MediaSequence::new(1),
+        broadcast_hls::PartIndex::new(1),
+        leader_ticks(4 * 1024),
+        LEADER_SCALE,
+    )
+    .unwrap();
+    f.push(id, frame(5)).unwrap();
+    assert!(
+        f.take_ready_parts().is_empty(),
+        "no track holds a sample for that part slot, so no part is emitted"
+    );
+}
+
+#[test]
+fn start_time_adds_to_the_origin_relative_first_tfdt() {
+    let (audio, _) = audio_template();
+    let track = audio.spec.track_id;
+    let mut f = follower_with_origin(2);
+    f.follow(plan(1, 2 * 1024)).unwrap();
+    f.set_start_time(Duration::from_secs(5));
+    for n in 5..12 {
+        f.push(track, frame(n)).unwrap();
+    }
+    f.flush().unwrap();
+    let segs = f.take_ready_segments();
+    assert_eq!(segs.len(), 1);
+    assert_eq!(first_tfdt(&segs[0].bytes), 3 * 1024 + 5 * 48_000);
+}
+
+#[test]
+fn a_track_with_no_samples_never_enters_the_origin_anchor() {
+    let (audio, movie_ts) = audio_template();
+    let track = audio.spec.track_id;
+    let mut silent = audio.spec.clone();
+    silent.track_id = TrackId::new(99);
+    let mut f = LlHlsSegmenter::with_part_target(
+        vec![audio.spec.clone(), silent],
+        movie_ts,
+        SEGMENT_TARGET,
+        PART_TARGET,
+    )
+    .unwrap();
+    f.set_timeline_origin(0, LEADER_SCALE);
+    f.follow(plan(1, 0)).unwrap();
+    for n in 0..10 {
+        f.push(track, frame(n)).unwrap();
+    }
+    f.flush().unwrap();
+    let segs = f.take_ready_segments();
+    assert_eq!(segs.len(), 1);
+    assert_eq!(traf_count(&segs[0].bytes), 1);
+}
+
+#[test]
+fn a_silent_segment_reanchors_the_next_tracks_tfdt() {
+    let (audio, movie_ts) = audio_template();
+    let track = audio.spec.track_id;
+    let second = TrackSpec::new(
+        TrackId::new(99),
+        Timescale::try_new(24_000).expect("non-zero timescale"),
+        audio.spec.config.clone(),
+    );
+    let second_id = second.track_id;
+    let mut f = LlHlsSegmenter::with_part_target(
+        vec![audio.spec.clone(), second],
+        movie_ts,
+        SEGMENT_TARGET,
+        PART_TARGET,
+    )
+    .unwrap();
+    f.set_timeline_origin(0, LEADER_SCALE);
+    f.follow(plan(1, 0)).unwrap();
+    for n in 0..15 {
+        f.push(track, frame(n)).unwrap();
+    }
+    for k in 0..5i64 {
+        f.push(
+            second_id,
+            Sample::new(
+                vec![k as u8; 4],
+                Some(7680 + k * 512),
+                Some(7680 + k * 512),
+                Some(512),
+                true,
+            )
+            .expect("valid timing"),
+        )
+        .unwrap();
+    }
+    f.follow(plan(2, 15 * 1024)).unwrap();
+    for n in 15..30 {
+        f.push(track, frame(n)).unwrap();
+    }
+    f.flush().unwrap();
+    let segs = f.take_ready_segments();
+    assert_eq!(segs.len(), 2);
+    assert_eq!(traf_count(&segs[0].bytes), 1);
+    assert_eq!(traf_count(&segs[1].bytes), 2);
+    assert_eq!(
+        traf_tfdt_for(&segs[1].bytes, second_id.value()),
+        Some(7680),
+        "the track silent in segment 1 re-anchors to its first dts minus the origin"
+    );
+}
+
+#[test]
+fn follower_segment_tfdt_accumulates_sample_durations_not_dts_steps() {
+    let (audio, movie_ts) = audio_template();
+    let track = audio.spec.track_id;
+    let mut f = LlHlsSegmenter::with_part_target(
+        vec![audio.spec.clone()],
+        movie_ts,
+        SEGMENT_TARGET,
+        PART_TARGET,
+    )
+    .unwrap();
+    f.set_timeline_origin(0, LEADER_SCALE);
+    let sample = |n: i64| {
+        Sample::new(
+            vec![n as u8; 4],
+            Some(n * 1024),
+            Some(n * 1024),
+            Some(1000),
+            true,
+        )
+        .expect("valid timing")
+    };
+    let plans = [plan(1, 0), plan(2, 10 * 1024), plan(3, 20 * 1024)];
+    f.follow(plans[0].clone()).unwrap();
+    for n in 0..10 {
+        f.push(track, sample(n)).unwrap();
+    }
+    f.follow(plans[1].clone()).unwrap();
+    for n in 10..20 {
+        f.push(track, sample(n)).unwrap();
+    }
+    f.follow(plans[2].clone()).unwrap();
+    for n in 20..30 {
+        f.push(track, sample(n)).unwrap();
+    }
+    f.flush().unwrap();
+    let segs = f.take_ready_segments();
+    assert_eq!(segs.len(), 3);
+    assert_eq!(first_tfdt(&segs[0].bytes), 0);
+    assert_eq!(first_tfdt(&segs[1].bytes), 10 * 1000);
+    assert_eq!(first_tfdt(&segs[2].bytes), 20 * 1000);
+}
+
+#[test]
+fn flush_with_nothing_buffered_and_no_plan_is_ok() {
+    let (audio, movie_ts) = audio_template();
+    let track = audio.spec.track_id;
+    let mut f = LlHlsSegmenter::with_part_target(
+        vec![audio.spec.clone()],
+        movie_ts,
+        SEGMENT_TARGET,
+        PART_TARGET,
+    )
+    .unwrap();
+    f.follow(plan(1, 0)).unwrap();
+    for n in 0..4 {
+        f.push(track, frame(n)).unwrap();
+    }
+    f.follow(plan(2, 100 * 1024)).unwrap();
+    let _ = f.take_ready_parts();
+    assert_eq!(f.take_ready_segments().len(), 1);
+    assert!(f.flush().is_ok());
+    assert!(f.flush().is_ok());
+    assert!(f.take_ready_parts().is_empty());
+    assert!(f.take_ready_segments().is_empty());
+
+    let (audio, movie_ts) = audio_template();
+    let mut fresh =
+        LlHlsSegmenter::with_part_target(vec![audio.spec], movie_ts, SEGMENT_TARGET, PART_TARGET)
+            .unwrap();
+    assert!(fresh.flush().is_ok());
+}
+
+#[test]
+fn follower_parts_and_segments_report_real_durations() {
+    let cuts = vec![
+        PartCut::new(broadcast_hls::PartIndex::new(0), 0, None),
+        PartCut::new(
+            broadcast_hls::PartIndex::new(1),
+            leader_ticks(5 * 1024),
+            None,
+        ),
+    ];
+    let plans = [
+        CutPlan::new(1, 0, LEADER_TS, cuts).expect("plan"),
+        plan(2, 10 * 1024),
+    ];
+    let (parts, segs) = synthetic(frames(0..10), &plans);
+    assert_eq!(parts.len(), 2);
+    for (i, part) in parts.iter().enumerate() {
+        assert_eq!(
+            part.duration,
+            Duration::from_nanos(106_666_667),
+            "part {i}: five 1024-tick AAC frames at 48 kHz"
+        );
+    }
+    assert_eq!(segs.len(), 1);
+    assert_eq!(segs[0].duration, Duration::from_nanos(213_333_333));
+    let sum: Duration = parts.iter().map(|p| p.duration).sum();
+    assert!(
+        sum.abs_diff(segs[0].duration) <= Duration::from_nanos(1),
+        "part durations add up to the segment duration"
+    );
+}
+
+#[test]
+fn follower_part_tfdt_tracks_the_cumulative_durations() {
+    let three_parts = |seq: u32, start: i64| {
+        CutPlan::new(
+            seq,
+            leader_ticks(start),
+            LEADER_TS,
+            vec![
+                PartCut::new(broadcast_hls::PartIndex::new(0), leader_ticks(start), None),
+                PartCut::new(
+                    broadcast_hls::PartIndex::new(1),
+                    leader_ticks(start + 5 * 1024),
+                    None,
+                ),
+                PartCut::new(
+                    broadcast_hls::PartIndex::new(2),
+                    leader_ticks(start + 10 * 1024),
+                    None,
+                ),
+            ],
+        )
+        .expect("plan")
+    };
+    let plans = [
+        three_parts(1, 0),
+        three_parts(2, 15 * 1024),
+        three_parts(3, 30 * 1024),
+    ];
+    let (parts, segs) = synthetic(frames(0..45), &plans);
+    assert_eq!(segs.len(), 3);
+    let track = audio_template().0.spec.track_id.value();
+    for seg in &segs {
+        let base = u64::from(seg.segment_seq - 1) * 15 * 1024;
+        let seg_parts: Vec<&PartInfo> = parts
+            .iter()
+            .filter(|p| p.segment_seq == seg.segment_seq)
+            .collect();
+        assert_eq!(seg_parts.len(), 3, "segment {} parts", seg.segment_seq);
+        for (j, part) in seg_parts.iter().enumerate() {
+            assert_eq!(
+                traf_tfdt_for(&part.bytes, track),
+                Some(base + j as u64 * 5 * 1024),
+                "segment {} part {j} tfdt is the segment start plus the earlier frames",
+                seg.segment_seq
+            );
+        }
+    }
 }
