@@ -2917,8 +2917,13 @@ impl RouteHandle {
             presentation_origin: previous_epoch
                 .map_or_else(SystemTime::now, |e| e.presentation_origin),
         };
-        let serving = match ProgramServing::new(program, Arc::clone(&trunk), self, epoch, previous.as_ref())
-        {
+        let serving = match ProgramServing::new(
+            program,
+            Arc::clone(&trunk),
+            self,
+            epoch,
+            previous.as_ref(),
+        ) {
             Ok(serving) => serving,
             Err(e) => {
                 // An unservable configuration (e.g. a NaN target duration
@@ -3867,9 +3872,9 @@ mod program_registry_tests {
         )
         .with_archive_floor(41);
         let trunk = test_trunk();
-        old.publish_program(ProgramId(1), Arc::clone(&trunk));
+        old.publish_program(SPTS_PROGRAM_ID, Arc::clone(&trunk));
         let old_next = old
-            .ll_hls(ProgramId(1))
+            .ll_hls(SPTS_PROGRAM_ID)
             .expect("origin")
             .next_media_sequence()
             .value();
@@ -3882,13 +3887,13 @@ mod program_registry_tests {
                 .with_window_segments(4),
         );
         successor.continue_from(&old);
-        successor.publish_program(ProgramId(1), test_trunk());
-        let origin = successor.ll_hls(ProgramId(1)).expect("origin");
+        successor.publish_program(SPTS_PROGRAM_ID, test_trunk());
+        let origin = successor.ll_hls(SPTS_PROGRAM_ID).expect("origin");
         assert_eq!(origin.media_sequence_offset(), old_next);
         assert_eq!(origin.next_media_sequence().value(), old_next + 1);
         let (old_epoch, epoch) = (
-            old.epoch(ProgramId(1)).expect("old epoch"),
-            successor.epoch(ProgramId(1)).expect("epoch"),
+            old.epoch(SPTS_PROGRAM_ID).expect("old epoch"),
+            successor.epoch(SPTS_PROGRAM_ID).expect("epoch"),
         );
         assert_eq!(epoch.first_number, old_epoch.first_number);
         assert_eq!(epoch.presentation_origin, old_epoch.presentation_origin);
@@ -3903,10 +3908,10 @@ mod program_registry_tests {
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
-        unrelated.publish_program(ProgramId(1), test_trunk());
+        unrelated.publish_program(SPTS_PROGRAM_ID, test_trunk());
         assert_eq!(
             unrelated
-                .ll_hls(ProgramId(1))
+                .ll_hls(SPTS_PROGRAM_ID)
                 .expect("origin")
                 .media_sequence_offset(),
             0,
@@ -3928,17 +3933,17 @@ mod program_registry_tests {
         )
         .with_archive_floor(41);
         let first = test_trunk();
-        route.publish_program(ProgramId(1), Arc::clone(&first));
-        let origin = route.ll_hls(ProgramId(1)).expect("origin");
+        route.publish_program(SPTS_PROGRAM_ID, Arc::clone(&first));
+        let origin = route.ll_hls(SPTS_PROGRAM_ID).expect("origin");
         // No segment yet: the next one is shown as floor + 1.
         assert_eq!(origin.next_media_sequence().value(), 42);
         assert_eq!(origin.media_sequence_offset(), 41);
 
         // A reconnect over a fresh Trunk keeps climbing, skipping the old
         // origin's open segment number (42).
-        route.release_program(ProgramId(1), &first);
-        route.publish_program(ProgramId(1), test_trunk());
-        let replacement = route.ll_hls(ProgramId(1)).expect("origin");
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        route.publish_program(SPTS_PROGRAM_ID, test_trunk());
+        let replacement = route.ll_hls(SPTS_PROGRAM_ID).expect("origin");
         assert_eq!(replacement.next_media_sequence().value(), 43);
     }
 
@@ -5091,6 +5096,177 @@ mod program_registry_tests {
     #[tokio::test]
     async fn a_replaced_route_with_dash_requests_records_every_segment() {
         replaced_route_records(true).await;
+    }
+
+    const SECOND_PROGRAM: ProgramId = ProgramId(2);
+
+    fn program_seg(seq: u32, byte: u8) -> transmux::ll_hls::SegmentInfo {
+        transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(1), seq)
+            .with_part_count(1)
+    }
+
+    fn archived_bytes(root: &std::path::Path, name: &str) -> Vec<(u32, Vec<u8>)> {
+        let mut archive = dvr_runtime::fs::FsArchive::open(
+            root,
+            &crate::dvr::archive_name(name).expect("archive name"),
+            dvr_runtime::ArchiveContainer::Fmp4,
+        );
+        let scan = archive.scan();
+        assert!(scan.conflicts.is_empty(), "{:?}", scan.conflicts);
+        scan.segments
+            .iter()
+            .map(|s| {
+                let bytes = archive.read(s).expect("read");
+                (s.seq.value(), bytes.to_vec())
+            })
+            .collect()
+    }
+
+    fn archive_dirs(root: &std::path::Path) -> Vec<String> {
+        let mut dirs: Vec<String> = std::fs::read_dir(root)
+            .expect("archive root")
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .collect();
+        dirs.sort();
+        dirs
+    }
+
+    fn two_program_route(root: &std::path::Path, name: &str) -> RouteHandle {
+        RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name(name)
+        .with_dvr(dvr_config(root, None))
+    }
+
+    /// #3950: each program of a multi-program route records into its own
+    /// archive, the default program's still at `<root>/<route>/`. Before, both
+    /// recorders shared the route's directory and the second stayed `Locked`
+    /// for good, so `mpts@2` never existed.
+    #[tokio::test]
+    async fn each_program_records_into_its_own_archive() {
+        let tmp = dvr_test_dir("mpts-own");
+        let route = two_program_route(&tmp, "mpts");
+        for program in [SPTS_PROGRAM_ID, SECOND_PROGRAM] {
+            route.publish_new_program(program);
+            route.set_init(program, vec![0xAA; 4]);
+        }
+        for n in 1..=2 {
+            route
+                .add_segment(SPTS_PROGRAM_ID, program_seg(n, 0x10))
+                .expect("add_segment");
+        }
+        for n in 1..=3 {
+            route
+                .add_segment(SECOND_PROGRAM, program_seg(n, 0x20))
+                .expect("add_segment");
+        }
+        route.drain_dvr().await;
+        assert_eq!(archive_dirs(&tmp), ["mpts", "mpts@2"]);
+        assert_eq!(
+            archived_bytes(&tmp, "mpts"),
+            [(1, vec![0x10; 8]), (2, vec![0x10; 8])]
+        );
+        assert_eq!(
+            archived_bytes(&tmp, "mpts@2"),
+            [(1, vec![0x20; 8]), (2, vec![0x20; 8]), (3, vec![0x20; 8])]
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// #3950: a replaced multi-program route keeps recording every program,
+    /// each successor taking over its own program archive's lock, with no gap.
+    #[tokio::test]
+    async fn a_replaced_multi_program_route_records_every_program() {
+        let tmp = dvr_test_dir("mpts-replace");
+        let old = two_program_route(&tmp, "mptsr");
+        for program in [SPTS_PROGRAM_ID, SECOND_PROGRAM] {
+            old.publish_new_program(program);
+            old.set_init(program, vec![0xAA; 4]);
+            old.add_segment(program, program_seg(1, 0x01))
+                .expect("add_segment");
+        }
+        old.drain_dvr().await;
+        for program in [SPTS_PROGRAM_ID, SECOND_PROGRAM] {
+            old.add_segment(program, program_seg(2, 0x02))
+                .expect("add_segment");
+        }
+
+        let new = two_program_route(&tmp, "mptsr");
+        new.continue_from(&old);
+        drop(old);
+        for program in [SPTS_PROGRAM_ID, SECOND_PROGRAM] {
+            new.publish_new_program(program);
+            new.set_init(program, vec![0xAA; 4]);
+        }
+        for n in 1..=2 {
+            for program in [SPTS_PROGRAM_ID, SECOND_PROGRAM] {
+                new.add_segment(program, program_seg(n, 0x03))
+                    .expect("add_segment");
+            }
+            new.drain_dvr().await;
+        }
+        for name in ["mptsr", "mptsr@2"] {
+            let seqs: Vec<u32> = archived_bytes(&tmp, name)
+                .into_iter()
+                .map(|(seq, _)| seq)
+                .collect();
+            assert_eq!(seqs, [1, 2, 4, 5], "{name}: every segment, old and new");
+        }
+        for program in [SPTS_PROGRAM_ID, SECOND_PROGRAM] {
+            let serving = new.serving(program).expect("published");
+            assert!(serving.dvr.lock().is_some(), "{program:?} records");
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// #3950: retention applies to each program archive on its own: the
+    /// second program's three periods evict its own oldest, never the
+    /// default program's.
+    #[tokio::test]
+    async fn retention_applies_per_program_archive() {
+        let tmp = dvr_test_dir("mpts-retention");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name("mptsk")
+        .with_dvr(crate::dvr::DvrConfig {
+            retention_periods: 1,
+            ..dvr_config(&tmp, None)
+        });
+        for program in [SPTS_PROGRAM_ID, SECOND_PROGRAM] {
+            route.publish_new_program(program);
+        }
+        route.set_init(SPTS_PROGRAM_ID, vec![0xA0; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, program_seg(1, 0x10))
+            .expect("add_segment");
+        route.drain_dvr().await;
+        route.set_init(SPTS_PROGRAM_ID, vec![0xA1; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, program_seg(2, 0x11))
+            .expect("add_segment");
+        route.drain_dvr().await;
+        for (n, init) in [(1, 0xB0), (2, 0xB1), (3, 0xB2)] {
+            route.set_init(SECOND_PROGRAM, vec![init; 4]);
+            route
+                .add_segment(SECOND_PROGRAM, program_seg(n, 0x20))
+                .expect("add_segment");
+            route.drain_dvr().await;
+        }
+        let seqs = |name| -> Vec<u32> {
+            archived_bytes(&tmp, name)
+                .into_iter()
+                .map(|(seq, _)| seq)
+                .collect()
+        };
+        assert_eq!(seqs("mptsk"), [1, 2], "one closed period and the open one");
+        assert_eq!(seqs("mptsk@2"), [2, 3], "its own oldest period evicted");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// Two reconnects before the middle program's first poll: every program's

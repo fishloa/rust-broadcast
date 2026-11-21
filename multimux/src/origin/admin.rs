@@ -1614,8 +1614,7 @@ pub(crate) async fn serve_with_admin(
 /// an archive.
 pub(super) async fn archive_floor_of(route: &Route) -> crate::Result<crate::dvr::ArchiveFloors> {
     if route.dvr.enabled {
-        crate::dvr::archive_seq_floors(&route.dvr, &route.name, super::route_container(route))
-            .await
+        crate::dvr::archive_seq_floors(&route.dvr, &route.name, super::route_container(route)).await
     } else {
         Ok(crate::dvr::ArchiveFloors::new())
     }
@@ -1807,10 +1806,64 @@ mod tests {
 
         let mut route = rtsp_route("cam", "rtsp://host/cam");
         route.dvr = dvr;
-        assert_eq!(archive_floor_of(&route).await.expect("floor"), floors(&[(0, 3)]));
+        assert_eq!(
+            archive_floor_of(&route).await.expect("floor"),
+            floors(&[(0, 3)])
+        );
 
         let plain = rtsp_route("cam", "rtsp://host/cam");
         assert_eq!(archive_floor_of(&plain).await.expect("floor"), floors(&[]));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// #3950: every program archive of a route has its own floor, and a
+    /// restarted route numbers each program above its own: the second
+    /// program's archive (`cam@2`, at 5) never lifts the default program's
+    /// (at 2), and a directory that is not one of this route's program
+    /// archives is ignored.
+    #[tokio::test]
+    async fn each_program_archive_has_its_own_floor_across_a_restart() {
+        let root = std::env::temp_dir().join(format!(
+            "multimux-admin-program-floors-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp dir");
+        let container = transmux::Container::Fmp4;
+        crate::testutil::record_archive_run(&root, "cam", container, 0, &[(1, 1), (2, 2)]);
+        crate::testutil::record_archive_run(
+            &root,
+            "cam@2",
+            container,
+            0,
+            &[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)],
+        );
+        for other in ["cam@02", "cam@x", "camera@3", "cam@0"] {
+            crate::testutil::record_archive_run(&root, other, container, 0, &[(1, 9)]);
+        }
+        let mut route = rtsp_route("cam", "rtsp://host/cam");
+        route.dvr = DvrConfig::default()
+            .with_enabled(true)
+            .with_archive_root(root.to_string_lossy().to_string())
+            .with_retention_periods(10);
+        let floors_read = archive_floor_of(&route).await.expect("floors");
+        assert_eq!(floors_read, floors(&[(0, 2), (2, 5)]));
+
+        let store = RouteHandle::new(RouteConfig::default())
+            .with_name("cam")
+            .with_archive_floors(floors_read);
+        for program in [0, 2] {
+            store.publish_new_program(media_plane::ProgramId(program));
+        }
+        let offset = |program| {
+            store
+                .serving(media_plane::ProgramId(program))
+                .expect("published")
+                .ll_hls()
+                .media_sequence_offset()
+        };
+        assert_eq!(offset(0), 2);
+        assert_eq!(offset(2), 5);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1847,7 +1900,10 @@ mod tests {
         assert!(scan.unreadable.is_empty());
         let seqs: Vec<u32> = scan.segments.iter().map(|s| s.seq.value()).collect();
         assert_eq!(seqs, [1, 2, 3, 4]);
-        assert_eq!(archive_floor_of(&route).await.expect("floor"), floors(&[(0, 4)]));
+        assert_eq!(
+            archive_floor_of(&route).await.expect("floor"),
+            floors(&[(0, 4)])
+        );
 
         crate::testutil::record_archive_run(&root, "cam", container, 0, &[(1, 5)]);
         assert_eq!(

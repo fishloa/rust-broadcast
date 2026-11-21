@@ -663,6 +663,40 @@ mod tests {
     }
 
     #[test]
+    fn program_archive_names_round_trip_and_reject_lookalikes() {
+        assert_eq!(
+            program_archive_name("cam", SPTS_PROGRAM_ID)
+                .expect("default")
+                .as_str(),
+            "cam"
+        );
+        assert_eq!(
+            program_archive_name("cam", ProgramId(17))
+                .expect("program")
+                .as_str(),
+            "cam@17"
+        );
+        assert_eq!(program_of_archive("cam", "cam@17"), Some(ProgramId(17)));
+        for other in [
+            "cam", "cam@", "cam@0", "cam@017", "cam@x", "cama@1", "cam@1@2",
+        ] {
+            assert_eq!(program_of_archive("cam", other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn a_non_default_program_tracks_its_own_service() {
+        let config = enabled().with_dvb_service_id(0x0601);
+        assert_eq!(
+            config.for_program(SPTS_PROGRAM_ID).dvb_service_id,
+            Some(0x0601)
+        );
+        assert_eq!(config.for_program(ProgramId(7)).dvb_service_id, Some(7));
+        assert_eq!(config.for_program(ProgramId(70_000)).dvb_service_id, None);
+        assert_eq!(enabled().for_program(ProgramId(7)).dvb_service_id, None);
+    }
+
+    #[test]
     fn an_unsafe_route_name_is_a_route_name_error() {
         for name in ["", "..", "a/b", "a\0b"] {
             assert!(

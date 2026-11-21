@@ -900,11 +900,19 @@ mod tests {
         );
         must_wait!(
             "vod_playlist",
-            vod_playlist(State(Arc::clone(&route)), Path("p0.m3u8".into()), Query(ProgramSelector::default()))
+            vod_playlist(
+                State(Arc::clone(&route)),
+                Path("p0.m3u8".into()),
+                Query(ProgramSelector::default())
+            )
         );
         must_wait!(
             "catchup_resource",
-            catchup_resource(State(Arc::clone(&route)), Path("seg-1.m4s".into()), Query(ProgramSelector::default()))
+            catchup_resource(
+                State(Arc::clone(&route)),
+                Path("seg-1.m4s".into()),
+                Query(ProgramSelector::default())
+            )
         );
 
         // Release — a path can now proceed and return a response.
@@ -915,6 +923,157 @@ mod tests {
             "with a permit free the playlist path must complete, got {}",
             resp.status()
         );
+        cleanup(&tmp);
+    }
+
+    fn map_uris(body: &str) -> Vec<String> {
+        body.lines()
+            .filter_map(|l| l.strip_prefix("#EXT-X-MAP:URI=\""))
+            .filter_map(|l| l.split('"').next())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn program(id: u32) -> Query<ProgramSelector> {
+        Query(ProgramSelector { program: Some(id) })
+    }
+
+    /// #3950: a non-default program's archive is read through `?program=N`,
+    /// every URI its playlists list carries the parameter (the live tail's
+    /// init included, served under `catchup/`), and the default program's
+    /// URIs stay exactly as on a single-program route.
+    #[tokio::test]
+    async fn a_second_program_is_read_through_the_program_query() {
+        let tmp = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(8),
+            )
+            .with_name("mpts")
+            .with_dvr(dvr_config(&tmp)),
+        );
+        let second = ProgramId(2);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.publish_new_program(second);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route.set_init(second, vec![0xBB; 4]);
+        for seq in 1..=2 {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, 0x10))
+                .expect("add_segment");
+            route
+                .add_segment(second, seg_bytes(seq, 0x20))
+                .expect("add_segment");
+        }
+        route.drain_dvr().await;
+        route
+            .add_segment(second, seg_bytes(3, 0x23))
+            .expect("add_segment");
+
+        let resp = catchup_playlist(
+            State(Arc::clone(&route)),
+            Query(CatchupPlaylistQuery {
+                window_secs: None,
+                program: Some(2),
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_string(resp).await;
+        let segments: Vec<&str> = body
+            .lines()
+            .filter(|l| l.starts_with("catchup/seg-"))
+            .collect();
+        assert_eq!(
+            segments,
+            [
+                "catchup/seg-1.m4s?program=2",
+                "catchup/seg-2.m4s?program=2",
+                "catchup/seg-3.m4s?program=2"
+            ],
+            "{body}"
+        );
+        let maps = map_uris(&body);
+        assert_eq!(maps.len(), 2, "{body}");
+        assert_eq!(maps[0], "catchup/init-p0.mp4?program=2");
+        let live_init = maps[1]
+            .strip_prefix("catchup/")
+            .and_then(|m| m.strip_suffix("?program=2"))
+            .expect("the live init is served under catchup/ for program 2");
+
+        for (seq, byte) in [(1, 0x20u8), (2, 0x20), (3, 0x23)] {
+            let resp = catchup_resource(
+                State(Arc::clone(&route)),
+                Path(format!("seg-{seq}.m4s")),
+                program(2),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::OK, "seg-{seq}");
+            assert_eq!(body_bytes(resp).await, vec![byte; 24], "seg-{seq}");
+        }
+        for (file, init) in [
+            ("init-p0.mp4".to_string(), 0xBB),
+            (live_init.to_string(), 0xBB),
+        ] {
+            let resp =
+                catchup_resource(State(Arc::clone(&route)), Path(file.clone()), program(2)).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{file}");
+            assert_eq!(body_bytes(resp).await, vec![init; 4], "{file}");
+        }
+        let vod = vod_playlist(
+            State(Arc::clone(&route)),
+            Path("p0.m3u8".to_string()),
+            program(2),
+        )
+        .await;
+        assert_eq!(vod.status(), StatusCode::OK);
+        assert!(
+            body_string(vod)
+                .await
+                .contains("catchup/seg-1.m4s?program=2")
+        );
+
+        let default = body_string(
+            catchup_playlist(
+                State(Arc::clone(&route)),
+                Query(CatchupPlaylistQuery::default()),
+            )
+            .await,
+        )
+        .await;
+        let segments: Vec<&str> = default
+            .lines()
+            .filter(|l| l.starts_with("catchup/seg-"))
+            .collect();
+        assert_eq!(segments, ["catchup/seg-1.m4s", "catchup/seg-2.m4s"]);
+        assert_eq!(map_uris(&default), ["catchup/init-p0.mp4"]);
+        let resp = catchup_resource(
+            State(Arc::clone(&route)),
+            Path("seg-2.m4s".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
+        assert_eq!(body_bytes(resp).await, vec![0x10; 24]);
+
+        let unknown = catchup_playlist(
+            State(Arc::clone(&route)),
+            Query(CatchupPlaylistQuery {
+                window_secs: None,
+                program: Some(7),
+            }),
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let unknown = vod_playlist(
+            State(Arc::clone(&route)),
+            Path("p0.m3u8".into()),
+            program(7),
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
         cleanup(&tmp);
     }
 
@@ -979,8 +1138,12 @@ mod tests {
         );
 
         // Archived segment: served straight from disk.
-        let archived_resp =
-            catchup_resource(State(route.clone()), Path("seg-2.m4s".to_string()), Query(ProgramSelector::default())).await;
+        let archived_resp = catchup_resource(
+            State(route.clone()),
+            Path("seg-2.m4s".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(archived_resp.status(), StatusCode::OK);
         // Apple HLS authoring spec 10.4: an fMP4 `.m4s` segment is
         // `video/iso.segment`, from the archive AND from the live window.
@@ -992,7 +1155,12 @@ mod tests {
 
         // Live-only segment: served through the SAME endpoint, resolved
         // via the live HlsOrigin.
-        let live_resp = catchup_resource(State(route), Path("seg-4.m4s".to_string()), Query(ProgramSelector::default())).await;
+        let live_resp = catchup_resource(
+            State(route),
+            Path("seg-4.m4s".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(live_resp.status(), StatusCode::OK);
         assert_eq!(
             live_resp.headers().get(header::CONTENT_TYPE).unwrap(),
@@ -1047,7 +1215,10 @@ mod tests {
         // excludes segment 2 (starts at 3s) and keeps only segment 3.
         let resp = catchup_playlist(
             State(route),
-            Query(CatchupPlaylistQuery { window_secs: Some(2), program: None }),
+            Query(CatchupPlaylistQuery {
+                window_secs: Some(2),
+                program: None,
+            }),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1168,7 +1339,12 @@ mod tests {
             .expect("add_segment");
         route.drain_dvr().await;
 
-        let resp = vod_playlist(State(route.clone()), Path("p0.m3u8".to_string()), Query(ProgramSelector::default())).await;
+        let resp = vod_playlist(
+            State(route.clone()),
+            Path("p0.m3u8".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_string(resp).await;
         assert!(
@@ -1179,7 +1355,12 @@ mod tests {
 
         // The latest period has no successor, so it is still growing: no
         // ENDLIST (and it stays EVENT-shaped).
-        let latest = vod_playlist(State(Arc::clone(&route)), Path("p1.m3u8".to_string()), Query(ProgramSelector::default())).await;
+        let latest = vod_playlist(
+            State(Arc::clone(&route)),
+            Path("p1.m3u8".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(latest.status(), StatusCode::OK);
         let body = body_string(latest).await;
         assert!(
@@ -1189,7 +1370,12 @@ mod tests {
         assert!(body.contains("#EXT-X-PLAYLIST-TYPE:EVENT"), "body: {body}");
 
         for (period, init) in [("init-p0.mp4", [0xAA; 4]), ("init-p1.mp4", [0xBB; 4])] {
-            let resp = catchup_resource(State(Arc::clone(&route)), Path(period.to_string()), Query(ProgramSelector::default())).await;
+            let resp = catchup_resource(
+                State(Arc::clone(&route)),
+                Path(period.to_string()),
+                Query(ProgramSelector::default()),
+            )
+            .await;
             assert_eq!(resp.status(), StatusCode::OK, "{period}");
             assert_eq!(body_bytes(resp).await, init, "{period} serves its own init");
         }
@@ -1231,7 +1417,10 @@ mod tests {
 
         let bounded = catchup_playlist(
             State(Arc::clone(&route)),
-            Query(CatchupPlaylistQuery { window_secs: Some(2), program: None }),
+            Query(CatchupPlaylistQuery {
+                window_secs: Some(2),
+                program: None,
+            }),
         )
         .await;
         assert_eq!(bounded.status(), StatusCode::OK);
@@ -1243,7 +1432,10 @@ mod tests {
 
         let unbounded = catchup_playlist(
             State(route),
-            Query(CatchupPlaylistQuery { window_secs: Some(0), program: None }),
+            Query(CatchupPlaylistQuery {
+                window_secs: Some(0),
+                program: None,
+            }),
         )
         .await;
         assert_eq!(unbounded.status(), StatusCode::OK);
@@ -1278,14 +1470,28 @@ mod tests {
             )
         };
         let fmp4 = route_for("no-init", Container::Fmp4);
-        let resp =
-            catchup_resource(State(Arc::clone(&fmp4)), Path("init-p0.mp4".to_string()), Query(ProgramSelector::default())).await;
+        let resp = catchup_resource(
+            State(Arc::clone(&fmp4)),
+            Path("init-p0.mp4".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_bytes(resp).await, b"INIT");
-        let resp = catchup_resource(State(fmp4), Path("init-p1.mp4".to_string()), Query(ProgramSelector::default())).await;
+        let resp = catchup_resource(
+            State(fmp4),
+            Path("init-p1.mp4".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND, "no period 1");
         let ts = route_for("ts-init", Container::MpegTs);
-        let resp = catchup_resource(State(ts), Path("init-p0.mp4".to_string()), Query(ProgramSelector::default())).await;
+        let resp = catchup_resource(
+            State(ts),
+            Path("init-p0.mp4".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(
             resp.status(),
             StatusCode::NOT_FOUND,
@@ -1355,7 +1561,10 @@ mod tests {
 
         let resp = catchup_playlist(
             State(route),
-            Query(CatchupPlaylistQuery { window_secs: None, program: None }),
+            Query(CatchupPlaylistQuery {
+                window_secs: None,
+                program: None,
+            }),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1389,7 +1598,12 @@ mod tests {
             .with_dvr(dvr_config(&tmp)),
         );
         route.publish_new_program(SPTS_PROGRAM_ID);
-        let resp = vod_playlist(State(route), Path("p99.m3u8".to_string()), Query(ProgramSelector::default())).await;
+        let resp = vod_playlist(
+            State(route),
+            Path("p99.m3u8".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         cleanup(&tmp);
     }
@@ -1405,7 +1619,12 @@ mod tests {
             )
             .with_name("bad-name"),
         );
-        let resp = catchup_resource(State(route), Path("not-a-segment.txt".to_string()), Query(ProgramSelector::default())).await;
+        let resp = catchup_resource(
+            State(route),
+            Path("not-a-segment.txt".to_string()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -1502,17 +1721,31 @@ mod tests {
             "{playlist}"
         );
         for (period, init) in [(0u32, 0xAAu8), (1, 0xBB)] {
-            let resp =
-                catchup_resource(State(route.clone()), Path(format!("init-p{period}.mp4")), Query(ProgramSelector::default())).await;
+            let resp = catchup_resource(
+                State(route.clone()),
+                Path(format!("init-p{period}.mp4")),
+                Query(ProgramSelector::default()),
+            )
+            .await;
             assert_eq!(resp.status(), StatusCode::OK, "init-p{period}");
             assert_eq!(body_bytes(resp).await, vec![init; 4], "init-p{period}");
         }
-        let missing = catchup_resource(State(route.clone()), Path("init-p9.mp4".into()), Query(ProgramSelector::default())).await;
+        let missing = catchup_resource(
+            State(route.clone()),
+            Path("init-p9.mp4".into()),
+            Query(ProgramSelector::default()),
+        )
+        .await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 
         // Number 3 is the old run's open segment: skipped, never reissued.
         for (n, expected) in [(1u32, 0x11u8), (2, 0x12), (4, 0x21), (5, 0x22)] {
-            let resp = catchup_resource(State(route.clone()), Path(format!("seg-{n}.m4s")), Query(ProgramSelector::default())).await;
+            let resp = catchup_resource(
+                State(route.clone()),
+                Path(format!("seg-{n}.m4s")),
+                Query(ProgramSelector::default()),
+            )
+            .await;
             assert_eq!(resp.status(), StatusCode::OK, "seg-{n}");
             let bytes = body_bytes(resp).await;
             assert!(
@@ -1621,7 +1854,12 @@ mod tests {
 
         // And the tail bytes are the live ones, under the playlist's numbers.
         for (n, expected) in [(4u32, 0x21u8), (5, 0x22)] {
-            let resp = catchup_resource(State(route.clone()), Path(format!("seg-{n}.m4s")), Query(ProgramSelector::default())).await;
+            let resp = catchup_resource(
+                State(route.clone()),
+                Path(format!("seg-{n}.m4s")),
+                Query(ProgramSelector::default()),
+            )
+            .await;
             assert_eq!(resp.status(), StatusCode::OK, "seg-{n}");
             assert!(
                 body_bytes(resp).await.iter().all(|&b| b == expected),
@@ -1755,7 +1993,12 @@ mod tests {
             "seg-3.m4s",
             "seg-4.m4s",
         ] {
-            let resp = catchup_resource(State(route.clone()), Path(name.to_string()), Query(ProgramSelector::default())).await;
+            let resp = catchup_resource(
+                State(route.clone()),
+                Path(name.to_string()),
+                Query(ProgramSelector::default()),
+            )
+            .await;
             assert_eq!(resp.status(), StatusCode::OK, "{name}");
             let bytes = body_bytes(resp).await;
             if name.starts_with("init-") {
