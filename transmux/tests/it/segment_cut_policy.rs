@@ -637,3 +637,196 @@ fn idr_wait_trips_at_its_bound_not_before() {
         "the trip is reported exactly once"
     );
 }
+
+#[test]
+fn with_cut_policy_returns_the_configured_policy() {
+    let v = require_video("ts/france2.ts");
+    let seg = StreamingTsHlsSegmenter::new(vec![v.spec.clone()], TARGET_SECS, usize::MAX)
+        .expect("segmenter")
+        .with_cut_policy(SegmentCutPolicy::IdrOnly);
+    assert_eq!(seg.cut_policy(), SegmentCutPolicy::IdrOnly);
+}
+
+#[test]
+fn fall_back_to_any_rap_opens_the_next_sync_sample() {
+    // gulli-opengop carries RAPs but zero IDRs, so without the fall-back the
+    // IdrOnly wait never opens a segment.
+    let g = require_video("ts/gulli-opengop.ts");
+    let stream = looped_to_seconds(&g);
+    let mut seg = StreamingTsHlsSegmenter::new(vec![g.spec.clone()], TARGET_SECS, usize::MAX)
+        .expect("segmenter")
+        .with_cut_policy(SegmentCutPolicy::IdrOnly);
+
+    let mut idx = 0;
+    while idx < stream.len() && seg.dropped_leading_aus() == 0 {
+        seg.push(g.spec.track_id, stream[idx].clone())
+            .expect("push");
+        idx += 1;
+    }
+    assert!(
+        seg.dropped_leading_aus() > 0,
+        "the opengop stream must start without an IDR"
+    );
+    seg.fall_back_to_any_rap();
+    assert!(seg.idr_fallback_active(), "fall-back must be reported");
+
+    let mut cuts = seg.take_ready();
+    for sample in &stream[idx..] {
+        seg.push(g.spec.track_id, sample.clone()).expect("push");
+        cuts.extend(seg.take_ready());
+    }
+    seg.finish().expect("finish");
+    cuts.extend(seg.take_ready());
+    assert!(
+        !cuts.is_empty(),
+        "a sync sample must open a segment once the fall-back accepts any RAP"
+    );
+}
+
+#[test]
+fn with_cut_policy_does_not_rearm_after_samples_are_buffered() {
+    let v = require_video("ts/france2.ts");
+    // A non-sync sample only: nothing buffered can be cut, but the buffer is
+    // no longer untouched, so switching to IdrOnly must not arm the wait.
+    let non_sync = v
+        .samples
+        .iter()
+        .find(|s| !s.flags.is_sync)
+        .expect("france2 carries a non-sync sample")
+        .clone();
+
+    let mut seg = StreamingTsHlsSegmenter::new(vec![v.spec.clone()], u32::MAX, usize::MAX)
+        .expect("segmenter");
+    seg.push(v.spec.track_id, non_sync).expect("push");
+    let mut seg = seg.with_cut_policy(SegmentCutPolicy::IdrOnly);
+    assert_eq!(seg.cut_policy(), SegmentCutPolicy::IdrOnly);
+
+    // Sample 20 is a sync sample that is not an IDR; it must not be dropped.
+    seg.push(v.spec.track_id, v.samples[20].clone())
+        .expect("push");
+    assert_eq!(
+        seg.dropped_leading_aus(),
+        0,
+        "re-arming the IDR wait after buffering would drop this sample"
+    );
+}
+
+fn vvc_spec() -> Option<TrackSpec> {
+    let bytes = test_fixtures::read("mp4/frag/vvc.frag.mp4");
+    let media = transmux::media::Fmp4Demux::new()
+        .unpackage(&bytes)
+        .expect("demux vvc fixture");
+    media
+        .tracks
+        .into_iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Vvc { .. }))
+        .map(|t| t.spec)
+}
+
+fn vvc_au(nal_type: u8) -> Vec<u8> {
+    let mut au = 2u32.to_be_bytes().to_vec();
+    au.push(0x00);
+    au.push(nal_type << 3);
+    au
+}
+
+#[test]
+fn vvc_idr_opens_the_first_segment_under_idr_only() {
+    let Some(spec) = vvc_spec() else {
+        eprintln!("SKIP: mp4/frag/vvc.frag.mp4 missing");
+        return;
+    };
+    let id = spec.track_id;
+    let cra = vvc_au(9);
+    let idr = vvc_au(7);
+    let mut seg = StreamingTsHlsSegmenter::new(vec![spec], TARGET_SECS, usize::MAX)
+        .expect("segmenter")
+        .with_cut_policy(SegmentCutPolicy::IdrOnly);
+
+    seg.push(
+        id,
+        Sample::new(cra.clone(), None, None, Some(90_000), true).expect("valid timing"),
+    )
+    .expect("push CRA");
+    assert_eq!(
+        seg.dropped_leading_aus(),
+        1,
+        "a VVC CRA is a RAP but not an IDR"
+    );
+
+    seg.push(
+        id,
+        Sample::new(idr.clone(), None, None, Some(90_000), true).expect("valid timing"),
+    )
+    .expect("push IDR");
+    assert_eq!(
+        seg.dropped_leading_aus(),
+        1,
+        "the IDR opens the stream; the CRA stays dropped"
+    );
+    // Already open: a following non-IDR sync sample is buffered, not dropped.
+    seg.push(
+        id,
+        Sample::new(cra, None, None, Some(90_000), true).expect("valid timing"),
+    )
+    .expect("push CRA");
+    assert_eq!(
+        seg.dropped_leading_aus(),
+        1,
+        "once the IDR opens the stream, no further access unit is dropped"
+    );
+}
+
+#[test]
+fn a_marked_discontinuity_before_any_cut_does_not_flag_the_first_segment() {
+    let v = require_video("ts/france2.ts");
+    let stream = looped(&v.samples, 4);
+    let mut seg = StreamingTsHlsSegmenter::new(vec![v.spec.clone()], TARGET_SECS, usize::MAX)
+        .expect("segmenter")
+        .with_cut_policy(SegmentCutPolicy::IdrOnly);
+    seg.mark_discontinuity();
+
+    let mut cuts = Vec::new();
+    let mut cut_idx = 0;
+    for (i, sample) in stream.iter().enumerate() {
+        seg.push(v.spec.track_id, sample.clone()).expect("push");
+        cuts.extend(seg.take_ready());
+        if !cuts.is_empty() {
+            cut_idx = i;
+            break;
+        }
+    }
+    assert!(!cuts.is_empty());
+    assert!(
+        !cuts[0].discontinuous,
+        "a discontinuity signalled before any output is not a timeline break at the start"
+    );
+    assert!(
+        !seg.playlist()
+            .expect("playlist")
+            .contains("#EXT-X-DISCONTINUITY"),
+        "the first segment must not render the tag"
+    );
+
+    seg.mark_discontinuity();
+    let mut second = Vec::new();
+    for sample in &stream[cut_idx + 1..] {
+        seg.push(v.spec.track_id, sample.clone()).expect("push");
+        second.extend(seg.take_ready());
+        if second.len() >= 2 {
+            break;
+        }
+    }
+    assert!(
+        second.len() >= 2,
+        "a pre-gap tail and then a fresh segment must be cut"
+    );
+    assert!(
+        !second[0].discontinuous,
+        "the pre-gap tail closed at the resync IDR is continuous"
+    );
+    assert!(
+        second[1].discontinuous,
+        "after one segment, a marked discontinuity flags the next"
+    );
+}
