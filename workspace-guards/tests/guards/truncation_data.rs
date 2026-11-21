@@ -251,4 +251,8 @@ pub const TABLE: &[Crate] = &[
             ),
         ],
     },
+    Crate {
+        name: "dvr-runtime",
+        allowlist: &[],
+    },
 ];

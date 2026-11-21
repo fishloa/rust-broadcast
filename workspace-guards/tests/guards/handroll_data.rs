@@ -224,6 +224,11 @@ pub const NEEDLE_CRATES: &[Needles] = &[
         allow: &[],
     },
     Needles {
+        name: "dvr-runtime",
+        extra: &["#EXT"],
+        allow: &[],
+    },
+    Needles {
         name: "dvb-stream",
         extra: RTSP_RTMP_NEEDLES,
         allow: &[],

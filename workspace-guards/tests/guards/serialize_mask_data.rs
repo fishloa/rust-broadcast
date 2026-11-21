@@ -74,4 +74,9 @@ pub const TABLE: &[Crate] = &[
             ),
         ],
     },
+    Crate {
+        name: "dvr-runtime",
+        min_files: 7,
+        allow: &[],
+    },
 ];
