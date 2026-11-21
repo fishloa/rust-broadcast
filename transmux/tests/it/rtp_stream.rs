@@ -1275,3 +1275,82 @@ fn au_buffer_cap_is_four_mebibytes_and_demand_tracks_it() {
     );
     assert_eq!(Stage::demand(&big), Demand::default());
 }
+
+fn ssrc_packet(seq: u16, ts: u32, ssrc: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
+    let mut p = vec![0x80u8, if marker { 0x80 | 96 } else { 96 }];
+    p.extend_from_slice(&seq.to_be_bytes());
+    p.extend_from_slice(&ts.to_be_bytes());
+    p.extend_from_slice(&ssrc.to_be_bytes());
+    p.extend_from_slice(nal);
+    p
+}
+
+/// A mid-stream SSRC change is a new source (RFC 3550 §8.2): it re-initialises
+/// sequence tracking and delivers the packet, with no gap reported.
+#[test]
+fn ssrc_change_reinitialises_without_a_gap() {
+    let id = TrackId::new(1);
+    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        timescale(90_000),
+    )]);
+    let mut n = 0usize;
+    for (seq, ts, ssrc, nal) in [
+        (10u16, 1000u32, 0x1111u32, [0x65u8, 0xAA]),
+        (11, 4000, 0x1111, [0x41, 0xBB]),
+        (5000, 7000, 0x2222, [0x41, 0xCC]),
+    ] {
+        n += d
+            .push(id, &ssrc_packet(seq, ts, ssrc, true, &nal))
+            .unwrap()
+            .len();
+    }
+    n += d.flush(id).unwrap().len();
+    assert_eq!(n, 3, "the post-SSRC-change packet must be delivered");
+    assert!(d.poll_loss_event().is_none(), "an SSRC change is not loss");
+}
+
+/// A single wild forward jump is discarded (§A.1 arms `bad_seq`) and never
+/// enters the reorder buffer; the live run continues with no gap.
+#[test]
+fn wild_forward_jump_is_discarded_not_held() {
+    const WILD: [u8; 2] = [0x41, 0x77];
+    let id = TrackId::new(1);
+    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        RtpMediaKind::H264,
+        tiny_avc_config(),
+        timescale(90_000),
+    )]);
+    for (seq, ts) in [(10u16, 1000u32), (11, 4000), (12, 7000)] {
+        d.push(id, &ssrc_packet(seq, ts, 0x1111, true, &[0x41, seq as u8]))
+            .unwrap();
+    }
+    assert!(
+        d.push(id, &ssrc_packet(30_000, 100_000, 0x1111, true, &WILD))
+            .unwrap()
+            .is_empty(),
+        "the wild packet is discarded"
+    );
+    let mut samples = d
+        .push(id, &ssrc_packet(13, 10_000, 0x1111, true, &[0x41, 13]))
+        .unwrap();
+    samples.extend(d.flush(id).unwrap());
+    assert_eq!(samples.len(), 4, "10, 11, 12 and 13");
+    assert!(
+        samples.iter().all(|s| s.data.as_ref() != WILD),
+        "the wild packet must never be delivered"
+    );
+    let mut loss = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        if matches!(
+            e,
+            RtpLossEvent::SequenceGap { .. } | RtpLossEvent::DamagedAccessUnit { .. }
+        ) {
+            loss.push(e);
+        }
+    }
+    assert!(loss.is_empty(), "the wild jump is not loss: {loss:?}");
+}
