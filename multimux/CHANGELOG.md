@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Tests
+- DASH output numbering and track selection are pinned: `startNumber` is the epoch's first number (6 for an archive floor of 5, not a constant), and an opaque teletext-shaped track is not representable while a video track is (audit 23 finding 223, #3887).
 - Catch-up playlist shapes are pinned: a TS route advertises `.ts` segment names, `window_secs=0` means no bound (EVENT is claimed) while a positive window omits the claim even without retention, a finished period carries `ENDLIST` but the latest does not, `pNNN.m3u8` parses to its own number, and an archived period with no init prelude answers 404 (audit 23 finding 222, #3886).
 - The spliced-segment cache key is pinned to the whole identity (sequence number, source address and length, event set), its oldest entry is evicted at capacity, the over-32-bit `emsg` id fold stays unique, `latest_progress` names the open segment with its part count, and a whole-segment request at the live edge still streams (audit 23 finding 221, #3885).
 - The idle-write-timeout body wrapper forwards its inner body's exact size (a 4 KiB body reports `Some(4096)`), and a whole-body response served over HTTP/1.1 and h2c still carries `Content-Length` instead of falling back to chunked (audit 23 finding 220, #3884).

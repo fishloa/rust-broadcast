@@ -1809,6 +1809,40 @@ mod tests {
 
     // --- issue #776: a leading opaque track must not 503 the whole route ---
 
+    /// An opaque track (teletext/DSM-CC/SCTE-35) has no derivable RFC 6381
+    /// codec string, so it is not representable; a video track is. The
+    /// predicate must actually trial-package, not assume.
+    #[test]
+    fn an_opaque_track_is_not_representable() {
+        assert!(!track_is_representable(&teletext_spec(TrackId::new(1))));
+        assert!(track_is_representable(&video_spec(TrackId::new(2))));
+    }
+
+    /// `startNumber` is the epoch's first number, not a constant: a route
+    /// whose numbering begins above 1 (an archive floor, a replacement)
+    /// advertises its own first number.
+    #[test]
+    fn start_number_is_the_epoch_first_number() {
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(4))
+                .with_window_segments(4),
+        )
+        .with_archive_floor(5);
+        route.publish_program(
+            crate::route::SPTS_PROGRAM_ID,
+            media_plane::trunk::Trunk::new(media_plane::trunk::TrunkConfig::default()),
+        );
+        assert_eq!(start_number(&route), 6);
+        assert_eq!(
+            route
+                .epoch(crate::route::SPTS_PROGRAM_ID)
+                .expect("epoch")
+                .first_number,
+            6
+        );
+    }
+
     #[test]
     fn select_representable_track_skips_leading_opaque_track() {
         let specs = vec![teletext_spec(TrackId::new(1)), video_spec(TrackId::new(2))];
