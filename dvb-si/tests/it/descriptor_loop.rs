@@ -136,3 +136,130 @@ fn name_maps_variant_to_descriptordef_name() {
     assert_eq!(items[0].as_ref().unwrap().name(), "STUFFING");
     assert_eq!(items[1].as_ref().unwrap().name(), "UNKNOWN");
 }
+
+/// `avs_scope` opens only on an AVS private_data_specifier, on both iterator
+/// types, and closes again on a foreign specifier.
+#[test]
+fn avs_scope_tracks_the_opening_private_data_specifier() {
+    use dvb_si::descriptors::extension::registry::ExtensionRegistry;
+    use dvb_si::descriptors::private_data_specifier::{PDS_AVSA, PDS_AVSV, TAG as PDS_TAG};
+    use dvb_si::descriptors::{DescriptorLoop, DescriptorRegistry};
+
+    #[rustfmt::skip]
+    let bytes = [
+        PDS_TAG, 4, 0x41, 0x56, 0x53, 0x41, // 'AVSA'
+        PDS_TAG, 4, 0x41, 0x56, 0x53, 0x56, // 'AVSV'
+        PDS_TAG, 4, 0x00, 0x00, 0x00, 0x28, // foreign
+    ];
+    let desc_reg = DescriptorRegistry::new();
+    let ext_reg = ExtensionRegistry::new();
+    let loop_ = DescriptorLoop::new(&bytes);
+
+    let mut it = loop_.iter_with(&desc_reg);
+    assert_eq!(it.avs_scope(), None);
+    it.next().unwrap().unwrap();
+    assert_eq!(it.avs_scope(), Some(PDS_AVSA));
+    it.next().unwrap().unwrap();
+    assert_eq!(it.avs_scope(), Some(PDS_AVSV));
+    it.next().unwrap().unwrap();
+    assert_eq!(it.avs_scope(), None);
+    assert!(it.next().is_none());
+
+    let mut it = loop_.iter_with_extensions(&desc_reg, &ext_reg);
+    assert_eq!(it.avs_scope(), None);
+    it.next().unwrap().unwrap();
+    assert_eq!(it.avs_scope(), Some(PDS_AVSA));
+    it.next().unwrap().unwrap();
+    assert_eq!(it.avs_scope(), Some(PDS_AVSV));
+    it.next().unwrap().unwrap();
+    assert_eq!(it.avs_scope(), None);
+
+    // A loop with no private_data_specifier never opens a scope.
+    let plain = [0x42u8, 0x01, 0xFF];
+    let plain_loop = DescriptorLoop::new(&plain);
+    let mut it = plain_loop.iter_with(&desc_reg);
+    assert_eq!(it.avs_scope(), None);
+    it.next().unwrap().unwrap();
+    assert_eq!(it.avs_scope(), None);
+    let mut it = plain_loop.iter_with_extensions(&desc_reg, &ext_reg);
+    assert_eq!(it.avs_scope(), None);
+    it.next().unwrap().unwrap();
+    assert_eq!(it.avs_scope(), None);
+}
+
+/// The extension registry walk must not index past an empty
+/// extension_descriptor body and must not dispatch a non-extension descriptor's
+/// first body byte as a tag extension.
+#[test]
+fn ext_registry_iter_guards_empty_and_non_extension_bodies() {
+    use dvb_si::descriptors::extension::registry::ExtensionRegistry;
+    use dvb_si::descriptors::extension::{ExtensionBodyDef, TAG as EXT_TAG};
+    use dvb_si::descriptors::registry::ExtIterItem;
+    use dvb_si::descriptors::{DescriptorLoop, DescriptorRegistry};
+
+    const TEST_EXT: u8 = 0x30;
+
+    #[derive(Debug)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    struct TestExt {
+        payload: Vec<u8>,
+    }
+    impl ExtensionBodyDef<'_> for TestExt {
+        const TAG_EXTENSION: u8 = TEST_EXT;
+        const NAME: &'static str = "TEST_EXT";
+    }
+    impl<'a> broadcast_common::Parse<'a> for TestExt {
+        type Error = dvb_si::error::Error;
+        fn parse(sel: &'a [u8]) -> Result<Self, Self::Error> {
+            Ok(Self {
+                payload: sel.to_vec(),
+            })
+        }
+    }
+
+    let desc_reg = DescriptorRegistry::new();
+    let mut ext_reg = ExtensionRegistry::new();
+    ext_reg.register::<TestExt>();
+
+    // Empty extension_descriptor body: one item, never a custom extension.
+    let empty = [EXT_TAG, 0x00];
+    let items: Vec<_> = DescriptorLoop::new(&empty)
+        .iter_with_extensions(&desc_reg, &ext_reg)
+        .collect();
+    assert_eq!(items.len(), 1);
+    assert!(!matches!(
+        &items[0],
+        Ok(ExtIterItem::CustomExtension { .. })
+    ));
+
+    // A non-extension descriptor whose first body byte is a registered tag
+    // extension must stay an ordinary descriptor.
+    let not_extension = [0x40u8, 0x01, TEST_EXT];
+    let items: Vec<_> = DescriptorLoop::new(&not_extension)
+        .iter_with_extensions(&desc_reg, &ext_reg)
+        .collect();
+    assert_eq!(items.len(), 1);
+    assert!(matches!(&items[0], Ok(ExtIterItem::Descriptor(_))));
+    assert!(!matches!(
+        &items[0],
+        Ok(ExtIterItem::CustomExtension { .. })
+    ));
+
+    // A one-byte extension body still reaches the custom parser.
+    let one_byte = [EXT_TAG, 0x01, TEST_EXT];
+    let items: Vec<_> = DescriptorLoop::new(&one_byte)
+        .iter_with_extensions(&desc_reg, &ext_reg)
+        .collect();
+    assert_eq!(items.len(), 1);
+    match &items[0] {
+        Ok(ExtIterItem::CustomExtension {
+            tag_extension,
+            value,
+        }) => {
+            assert_eq!(*tag_extension, TEST_EXT);
+            let concrete = value.downcast_ref::<TestExt>().expect("downcast");
+            assert!(concrete.payload.is_empty());
+        }
+        other => panic!("expected CustomExtension, got {other:?}"),
+    }
+}

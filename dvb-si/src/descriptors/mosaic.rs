@@ -632,6 +632,84 @@ mod tests {
         assert_eq!(p, d);
     }
 
+    /// Service, Event and OtherMosaic linkages each followed by another cell:
+    /// the payload length must advance the cursor by exactly its own size.
+    #[test]
+    fn service_event_and_mosaic_cells_round_trip_in_a_row() {
+        let d = MosaicDescriptor::new(
+            true,
+            1,
+            1,
+            vec![
+                MosaicLogicalCell::new(
+                    1,
+                    1,
+                    vec![ElementaryCell::new(3)],
+                    CellLinkage::Service {
+                        original_network_id: 0x0001,
+                        transport_stream_id: 0x0002,
+                        service_id: 0x0003,
+                    },
+                ),
+                MosaicLogicalCell::new(
+                    2,
+                    2,
+                    vec![ElementaryCell::new(4)],
+                    CellLinkage::Event {
+                        original_network_id: 0x0004,
+                        transport_stream_id: 0x0005,
+                        service_id: 0x0006,
+                        event_id: 0x0007,
+                    },
+                ),
+                MosaicLogicalCell::new(
+                    3,
+                    3,
+                    vec![ElementaryCell::new(5)],
+                    CellLinkage::OtherMosaic {
+                        original_network_id: 0x0007,
+                        transport_stream_id: 0x0008,
+                        service_id: 0x0009,
+                    },
+                ),
+            ],
+        );
+        #[rustfmt::skip]
+        let expected: &[u8] = &[
+            TAG, 36, 0x99,                         // grid header: entry point + 1x1 + reserved
+            0x07, 0xF9, 0x01, 0xC3, 0x02,          // cell 1: Service header + 1 elem cell
+            0x00, 0x01, 0x00, 0x02, 0x00, 0x03,    //   onid/tsid/sid
+            0x0B, 0xFA, 0x01, 0xC4, 0x04,          // cell 2: Event header + 1 elem cell
+            0x00, 0x04, 0x00, 0x05, 0x00, 0x06, 0x00, 0x07, //   onid/tsid/sid/event
+            0x0F, 0xFB, 0x01, 0xC5, 0x03,          // cell 3: OtherMosaic header + 1 elem cell
+            0x00, 0x07, 0x00, 0x08, 0x00, 0x09,    //   onid/tsid/sid
+        ];
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, expected);
+        assert_eq!(MosaicDescriptor::parse(&buf).unwrap(), d);
+    }
+
+    /// A linkage payload cut short is an `InvalidDescriptor`, not a panic and
+    /// not a `BufferTooShort` from the following read.
+    #[test]
+    fn parse_rejects_truncated_linkage_payloads() {
+        // grid header + empty cell header + linkage info + too few payload bytes.
+        for (info, payload) in [(0x01u8, 1usize), (0x02, 5), (0x03, 5), (0x04, 7)] {
+            let mut body = vec![0x00u8, 0x07, 0xF9, 0x00, info];
+            body.extend(core::iter::repeat_n(0x00u8, payload));
+            let mut bytes = vec![TAG, body.len() as u8];
+            bytes.extend_from_slice(&body);
+            assert!(
+                matches!(
+                    MosaicDescriptor::parse(&bytes).unwrap_err(),
+                    Error::InvalidDescriptor { .. }
+                ),
+                "linkage {info:#04x} with {payload} payload bytes"
+            );
+        }
+    }
+
     #[test]
     fn parse_rejects_wrong_tag() {
         assert!(matches!(

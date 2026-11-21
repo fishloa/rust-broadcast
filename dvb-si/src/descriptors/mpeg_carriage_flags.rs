@@ -57,6 +57,7 @@ broadcast_common::impl_spec_display!(MpegCarriageFlags);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn round_trip_values() {
@@ -64,5 +65,17 @@ mod tests {
             let cf = MpegCarriageFlags::from_u8(v);
             assert_eq!(cf.to_u8(), v, "value {v} round-trip mismatch");
         }
+    }
+
+    #[test]
+    fn labels_match_table_2_88() {
+        assert_eq!(MpegCarriageFlags::SameTs.name(), "same TS");
+        assert_eq!(MpegCarriageFlags::DifferentTs.name(), "different TS");
+        assert_eq!(MpegCarriageFlags::ProgramStream.name(), "program stream");
+        assert_eq!(MpegCarriageFlags::None.name(), "none");
+        assert_eq!(
+            MpegCarriageFlags::ProgramStream.to_string(),
+            "program stream"
+        );
     }
 }

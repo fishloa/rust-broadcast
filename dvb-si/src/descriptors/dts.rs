@@ -276,6 +276,35 @@ mod tests {
         };
         assert_eq!(rate(0x00), None);
         assert_eq!(rate(0x04), None);
+        let table = [
+            (0x05, 128_000),
+            (0x06, 192_000),
+            (0x07, 224_000),
+            (0x08, 256_000),
+            (0x09, 320_000),
+            (0x0A, 384_000),
+            (0x0B, 448_000),
+            (0x0C, 512_000),
+            (0x0D, 576_000),
+            (0x0E, 640_000),
+            (0x0F, 768_000),
+            (0x10, 960_000),
+            (0x11, 1_024_000),
+            (0x12, 1_152_000),
+            (0x13, 1_280_000),
+            (0x14, 1_344_000),
+            (0x15, 1_408_000),
+            (0x16, 1_411_200),
+            (0x17, 1_472_000),
+            (0x18, 1_536_000),
+            (0x19, 1_920_000),
+            (0x1A, 2_048_000),
+            (0x1B, 3_072_000),
+            (0x1C, 3_840_000),
+        ];
+        for (code, bps) in table {
+            assert_eq!(rate(code), Some(bps), "bit_rate_code {code:#04x}");
+        }
         assert_eq!(rate(0x05), Some(128_000));
         assert_eq!(rate(0x0A), Some(384_000));
         assert_eq!(rate(0x10), Some(960_000));
@@ -287,6 +316,46 @@ mod tests {
         }
         for code in 0x05..=0x1C {
             assert_eq!(rate(code), rate(code | 0x20), "code {code:#04x}");
+        }
+    }
+
+    /// EN 300 468 Annex G Table G.2: every defined `sample_rate_code` decodes
+    /// to its tabulated rate, and code 0x00 is invalid.
+    #[test]
+    fn sample_rate_hz_follows_table_g2() {
+        let rate = |code: u8| {
+            DtsDescriptor {
+                sample_rate_code: code,
+                bit_rate_code: 0,
+                nblks: 5,
+                fsize: 95,
+                surround_mode: 0,
+                lfe_flag: false,
+                extended_surround_flag: 0,
+                additional_info: &[],
+            }
+            .sample_rate_hz()
+        };
+        let table = [
+            (0x00, None),
+            (0x01, Some(8_000)),
+            (0x02, Some(16_000)),
+            (0x03, Some(32_000)),
+            (0x04, Some(64_000)),
+            (0x05, Some(128_000)),
+            (0x06, Some(11_025)),
+            (0x07, Some(22_050)),
+            (0x08, Some(44_100)),
+            (0x09, Some(88_200)),
+            (0x0A, Some(176_400)),
+            (0x0B, Some(12_000)),
+            (0x0C, Some(24_000)),
+            (0x0D, Some(48_000)),
+            (0x0E, Some(96_000)),
+            (0x0F, Some(192_000)),
+        ];
+        for (code, hz) in table {
+            assert_eq!(rate(code), hz, "sample_rate_code {code:#04x}");
         }
     }
 

@@ -125,7 +125,8 @@ const PT_APP: u8 = 204;
 pub(crate) const MAX_RANGE_ENTRIES: usize = 16;
 
 /// Minimum GenericNack packet length: header(4) + SSRC sender(4) +
-/// SSRC media(4) = 12 bytes. At least one FCI is required.
+/// SSRC media(4) = 12 bytes. The FCI list may be empty: a zero-entry NACK is
+/// accepted and re-serialized as one, so the count round-trips.
 const GENERIC_NACK_MIN_LEN: usize = RTCP_HEADER_LEN + WORD_LEN + WORD_LEN;
 /// Size of one Generic NACK FCI entry: PID(2) + BLP(2) = 4 bytes.
 const NACK_FCI_LEN: usize = 4;

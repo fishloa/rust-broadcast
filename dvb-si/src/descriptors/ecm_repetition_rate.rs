@@ -155,4 +155,34 @@ mod tests {
             Error::OutputBufferTooSmall(..)
         ));
     }
+
+    #[test]
+    fn serialize_accepts_the_255_byte_body_and_rejects_the_rest() {
+        // FIXED_LEN(4) + 251 private bytes = 255.
+        let private = vec![0x11u8; 251];
+        let ok = EcmRepetitionRateDescriptor {
+            ca_system_id: 0x1000,
+            ecm_repetition_rate: 100,
+            private_data: &private,
+        };
+        let mut out = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut out).unwrap();
+        assert_eq!(out[1], 255);
+        assert_eq!(EcmRepetitionRateDescriptor::parse(&out).unwrap(), ok);
+
+        // 256 and 257 both overrun the 8-bit length.
+        for len in [252usize, 253] {
+            let private = vec![0x11u8; len];
+            let bad = EcmRepetitionRateDescriptor {
+                ca_system_id: 0x1000,
+                ecm_repetition_rate: 100,
+                private_data: &private,
+            };
+            let mut out = vec![0u8; bad.serialized_len()];
+            assert!(matches!(
+                bad.serialize_into(&mut out),
+                Err(Error::InvalidDescriptor { tag: TAG, .. })
+            ));
+        }
+    }
 }

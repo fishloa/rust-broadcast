@@ -52,3 +52,18 @@ impl HdrWcgIdc {
     }
 }
 broadcast_common::impl_spec_display!(HdrWcgIdc);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::ToString;
+
+    #[test]
+    fn labels_match_table_2_114() {
+        assert_eq!(HdrWcgIdc::Sdr.name(), "SDR");
+        assert_eq!(HdrWcgIdc::WcgOnly.name(), "WCG only");
+        assert_eq!(HdrWcgIdc::HdrAndWcg.name(), "HDR and WCG");
+        assert_eq!(HdrWcgIdc::NoIndication.name(), "no indication");
+        assert_eq!(HdrWcgIdc::HdrAndWcg.to_string(), "HDR and WCG");
+    }
+}

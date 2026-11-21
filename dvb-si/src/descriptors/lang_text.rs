@@ -136,4 +136,48 @@ mod tests {
         let mut r = EntryReader::new(&[1, b'a'], 0, 0x5C);
         assert_eq!(r.text("overrun", 0).unwrap().raw(), b"a");
     }
+
+    /// An entry header that is exactly the last four bytes (3-byte language +
+    /// a zero text_length) is valid, and a 3-byte body is not a header.
+    #[test]
+    fn lang_accepts_the_exact_fit_and_rejects_a_missing_length_byte() {
+        let mut r = EntryReader::new(b"eng\x00", 0, 0x5C);
+        assert_eq!(r.lang().unwrap(), LangCode(*b"eng"));
+        assert!(r.text("overrun", 0).unwrap().raw().is_empty());
+        assert!(!r.has_more());
+
+        let mut r = EntryReader::new(b"eng", 0, 0x5C);
+        assert!(matches!(
+            r.lang(),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+    }
+
+    /// A second entry starts at pos 5; the header bound must still measure from
+    /// there (a `pos * LANG_LEN` bound rejects it).
+    #[test]
+    fn two_short_entries_parse_and_truncation_is_rejected() {
+        let body = b"eng\x01afra\x01b";
+        assert_eq!(body.len(), 10);
+        let mut r = EntryReader::new(body, 0, 0x5C);
+        assert_eq!(r.lang().unwrap(), LangCode(*b"eng"));
+        assert_eq!(r.text("overrun", 0).unwrap().raw(), b"a");
+        assert_eq!(r.lang().unwrap(), LangCode(*b"fra"));
+        assert_eq!(r.text("overrun", 0).unwrap().raw(), b"b");
+        assert!(!r.has_more());
+
+        for keep in 7..10 {
+            let mut r = EntryReader::new(&body[..keep], 0, 0x5C);
+            assert_eq!(r.lang().unwrap(), LangCode(*b"eng"));
+            assert_eq!(r.text("overrun", 0).unwrap().raw(), b"a");
+            let truncated = r.lang().and_then(|l| {
+                assert_eq!(l, LangCode(*b"fra"));
+                r.text("overrun", 0)
+            });
+            assert!(
+                truncated.is_err(),
+                "body truncated to {keep} bytes must be rejected"
+            );
+        }
+    }
 }
