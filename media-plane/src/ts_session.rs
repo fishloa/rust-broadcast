@@ -1624,8 +1624,10 @@ mod tests {
     }
 
     static BACKLOG_DROPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static BACKLOG_DROP_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     fn count_backlog_drops(dropped: u64) {
+        BACKLOG_DROP_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         BACKLOG_DROPS.fetch_add(dropped, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -1639,6 +1641,7 @@ mod tests {
     #[test]
     fn backlog_overflow_calls_the_drop_observer_only_on_eviction() {
         BACKLOG_DROPS.store(0, std::sync::atomic::Ordering::SeqCst);
+        BACKLOG_DROP_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
         let mut tracker = ProgramTracker::new().with_backlog_drop_observer(count_backlog_drops);
         tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
         for i in 0..MAX_HELD_SAMPLES {
@@ -1647,6 +1650,11 @@ mod tests {
                 timed_sample(i64::try_from(i).expect("fits")),
             ));
         }
+        assert_eq!(
+            BACKLOG_DROP_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "holding exactly the cap must not even call the observer"
+        );
         assert_eq!(
             BACKLOG_DROPS.load(std::sync::atomic::Ordering::SeqCst),
             0,
@@ -1657,6 +1665,11 @@ mod tests {
             TrackId::new(1),
             timed_sample(i64::try_from(MAX_HELD_SAMPLES).expect("fits")),
         ));
+        assert_eq!(
+            BACKLOG_DROP_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "exactly one eviction is reported once"
+        );
         assert_eq!(
             BACKLOG_DROPS.load(std::sync::atomic::Ordering::SeqCst),
             1,
