@@ -14,10 +14,12 @@
 
 extern crate alloc;
 
+mod daterange;
 mod error;
 pub mod limits;
 pub mod seq;
 
+pub use daterange::{ClientAttrName, DateRange};
 pub use error::{Error, Result};
 pub use seq::{MediaSequence, PartIndex};
 
@@ -3496,8 +3498,20 @@ fn scan_attribute_list(
     s: &str,
     strict: bool,
 ) -> Result<(BTreeMap<String, String>, BTreeSet<String>)> {
+    scan_attribute_list_ordered(s, strict).map(|(map, quoted, _)| (map, quoted))
+}
+
+/// [`scan_attribute_list`] with the attribute names in wire order as well as
+/// the name map, for the two callers that re-render a list in the order it
+/// appeared (`EXT-X-DATERANGE`'s `X-` attributes and a custom tag's attribute
+/// list). The order is the first occurrence of each name.
+fn scan_attribute_list_ordered(
+    s: &str,
+    strict: bool,
+) -> Result<(BTreeMap<String, String>, BTreeSet<String>, Vec<String>)> {
     let mut map = BTreeMap::new();
     let mut quoted_keys = BTreeSet::new();
+    let mut order = Vec::new();
     let bytes = s.as_bytes();
     let len = bytes.len();
     let mut i = 0;
@@ -3545,12 +3559,15 @@ fn scan_attribute_list(
                 name: key.to_string(),
             });
         }
+        if !map.contains_key(key) {
+            order.push(key.to_string());
+        }
         map.insert(key.to_string(), value.to_string());
         if quoted {
             quoted_keys.insert(key.to_string());
         }
     }
-    Ok((map, quoted_keys))
+    Ok((map, quoted_keys, order))
 }
 
 /// From an already-parsed attribute map, collect every attribute whose name

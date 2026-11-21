@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `DateRange` and `ClientAttrName`: a typed `#EXT-X-DATERANGE` (RFC 8216bis §4.4.5.1) with `parse_tag_line`/`to_tag_line`, the `ID`/`CLASS`/`START-DATE`/`END-DATE`/`DURATION`/`PLANNED-DURATION`/`END-ON-NEXT`/`CUE` fields, `X-` client attributes and lossless unmodeled attributes (`SCTE35-OUT`/`IN`/`CMD`). `ClientAttrName` validates the `X-` prefix and §4.2 `AttributeName` characters; the locally checkable §4.4.5.1 rules (`END-ON-NEXT` requires `CLASS` and excludes `DURATION`/`END-DATE`, `END-DATE` not before `START-DATE`) are typed `Error::InvalidDateRange` errors. The retained wire spelling of both dates keeps a parse/render byte-identical (#3925).
+
 ### Fixed
 - `MediaPlaylist::parse_with`/`MasterPlaylist::parse_with` and the `limits` defaults are now pinned at their inclusive boundaries: a playlist of exactly `max_playlist_bytes` parses, `+ 1` fails reporting that observed length, and `MAX_PLAYLIST_BYTES`/`MAX_SEGMENT_BYTES`/`MAX_SEGMENTS` are asserted by literal value (audit 21 finding 40, #2935).
 - `parse_iv` is pinned against a wrong-length hex `IV`: 31 or 33 digits and a 32-character non-hex value are a typed `Error::InvalidIv` (never the slice-overrun panic an `||`-joined validator would cause), the open-segment key and the `EXT-X-SESSION-KEY METHOD=NONE` refusal are asserted, and the `EXT-X-MAP`/preload-hint `TYPE=MAP`/`SESSION-DATA FORMAT=RAW`/`VIDEO`/`CLOSED-CAPTIONS` parse arms and the segment-scoped tag routing each have a test that fails if the arm is deleted (audit 21 finding 41, #2936).

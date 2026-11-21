@@ -1,5 +1,6 @@
 mod audit_1485;
 mod audit_prerelease;
+mod dvr_pr1;
 mod ext_x_media;
 mod hls_fixture_corpus;
 mod hls_playlist;

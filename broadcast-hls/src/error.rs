@@ -115,6 +115,54 @@ pub enum Error {
         value: String,
     },
 
+    /// A `ClientAttrName` is not an `X-` prefixed name built from the
+    /// RFC 8216bis §4.2 `AttributeName` character set (`[A-Z]`, `[0-9]`, `-`).
+    #[error("client attribute name {name:?} is invalid: {reason}")]
+    InvalidClientAttrName {
+        /// The offending name.
+        name: String,
+        /// Why it was rejected.
+        reason: &'static str,
+    },
+
+    /// A `CustomTagName` is not an `EXT-` prefixed name built from the
+    /// RFC 8216bis §4.1 tag character set (`[A-Z]`, `[0-9]`, `-`).
+    #[error("custom tag name {name:?} is invalid: {reason}")]
+    InvalidCustomTagName {
+        /// The offending name.
+        name: String,
+        /// Why it was rejected.
+        reason: &'static str,
+    },
+
+    /// An attribute-list name is not built from the RFC 8216bis §4.2
+    /// `AttributeName` character set (`[A-Z]`, `[0-9]`, `-`).
+    #[error("attribute name {name:?} is not a legal RFC 8216bis AttributeName")]
+    InvalidAttributeName {
+        /// The offending name.
+        name: String,
+    },
+
+    /// An `EXT-X-DATERANGE` violates a rule RFC 8216bis §4.4.5.1 states
+    /// locally (one this crate can check without another tag).
+    #[error("EXT-X-DATERANGE {id:?} is invalid: {reason}")]
+    InvalidDateRange {
+        /// The range's `ID`.
+        id: String,
+        /// Why it was rejected.
+        reason: &'static str,
+    },
+
+    /// [`crate::MediaPlaylist::render_segment`] was asked for a segment
+    /// index the playlist does not have.
+    #[error("segment index {index} is out of range for a playlist of {len} segments")]
+    SegmentIndexOutOfRange {
+        /// The requested index.
+        index: usize,
+        /// The playlist's segment count.
+        len: usize,
+    },
+
     /// An `#EXT-X-KEY` whose `METHOD` is not `NONE` carries no `URI`
     /// (RFC 8216 §4.3.2.4: `URI` is REQUIRED unless `METHOD` is `NONE`).
     #[error("EXT-X-KEY with METHOD={method} has no URI")]
