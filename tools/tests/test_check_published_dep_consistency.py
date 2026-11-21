@@ -920,3 +920,37 @@ class TestNewCrateFirstRelease:
             sibling_max_version="error",
             sibling_in_tree="0.1.0",
         ) == "unpublishable"
+
+
+class TestHttpGetJsonRetriesTruncatedReads:
+    """A truncated or garbled crates.io body is retried, not fatal (#3911)."""
+
+    def _serve(self, monkeypatch, failure: Exception) -> dict:
+        reads = {"n": 0}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                reads["n"] += 1
+                if reads["n"] == 1:
+                    raise failure
+                return b'{"crate": {"name": "x"}}'
+
+        monkeypatch.setattr(dut.urllib.request, "urlopen", lambda req, timeout=0: Response())
+        monkeypatch.setattr(dut.time, "sleep", lambda *_: None)
+        result = dut.http_get_json("https://crates.io/api/v1/crates/x")
+        assert reads["n"] == 2
+        return result
+
+    def test_incomplete_read_is_retried(self, monkeypatch) -> None:
+        failure = dut.http.client.IncompleteRead(b"partial", 14220)
+        assert self._serve(monkeypatch, failure) == {"crate": {"name": "x"}}
+
+    def test_garbled_json_is_retried(self, monkeypatch) -> None:
+        failure = ValueError("Expecting value: line 1 column 1 (char 0)")
+        assert self._serve(monkeypatch, failure) == {"crate": {"name": "x"}}
