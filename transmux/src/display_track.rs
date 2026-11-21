@@ -72,9 +72,6 @@ const AVC_PPS: u8 = 8;
 /// Low five bits of the H.264 NAL header byte (`forbidden_zero_bit |
 /// nal_ref_idc | nal_unit_type`).
 const AVC_NAL_TYPE_MASK: u8 = 0x1F;
-/// `nal_unit_type` of a temporal-scalability prefix NAL, whose body is itself
-/// a complete NAL unit (H.264 §7.3.1.1, Table 7-1).
-const AVC_PREFIX_NAL: u8 = 14;
 /// Bytes of a slice NAL whose RBSP prefix is walked: the slice-header prefix
 /// is a handful of Exp-Golomb codes, and a multi-megabyte I slice must not be
 /// unescaped and copied per access unit (the bound `slice_header.rs` uses).
@@ -98,11 +95,6 @@ const HEVC_IDR_N_LP: u8 = 20;
 /// `u(3)` `sps_max_sub_layers_minus1`, the nesting flag and (for a slice) the
 /// base-layer 2-D id and reference counts before the id.
 const BASE_LAYER: u8 = 0;
-
-/// Largest number of remembered dangling references, so a hostile stream
-/// cannot grow the state without bound. Far above the 256 / 64 ids
-/// H.264 §7.4.2.2 / H.265 §7.4.3.3 allow.
-const MAX_UNRESOLVED_PPS: usize = 512;
 
 /// How a slice's parameter sets resolved.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -257,15 +249,8 @@ enum UnseenPart {
     Sps,
 }
 
-/// An access unit whose slices referenced an unseen PPS/SPS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Unresolved {
-    pps_id: u8,
-    part: UnseenPart,
-}
-
-/// Per-track activation state: parameter sets **by id**, the state in force,
-/// the change waiting for its output position, and the dangling references.
+/// Per-track activation state: parameter sets **by id**, the state in force
+/// and the change waiting for its output position.
 #[derive(Debug, Clone)]
 pub struct SpsTracker {
     codec: TrackCodec,
@@ -274,7 +259,6 @@ pub struct SpsTracker {
     pps: BTreeMap<u8, PpsBinding>,
     /// The state every sample carries until a new change is raised.
     state: Option<Arc<DisplayInfo>>,
-    unresolved: Vec<Unresolved>,
 }
 
 impl SpsTracker {
@@ -286,7 +270,6 @@ impl SpsTracker {
             sps: BTreeMap::new(),
             pps: BTreeMap::new(),
             state: None,
-            unresolved: Vec::new(),
         }
     }
 
@@ -369,12 +352,6 @@ impl SpsTracker {
             6 => {
                 Self::parse_sei_afd(NalCodec::Avc, nal, activation);
             }
-            // A prefix NAL (§7.3.1.1) whose body is itself an SPS/PPS/slice.
-            AVC_PREFIX_NAL => {
-                if let Some(inner) = nal.get(1..) {
-                    self.observe_avc_nal(inner, slice_pps, activation);
-                }
-            }
             _ => {}
         }
     }
@@ -435,7 +412,6 @@ impl SpsTracker {
                         (_, UnseenPart::Sps) => PpsCoverage::SpsUnseen,
                         (_, UnseenPart::Pps) => PpsCoverage::PpsUnseen,
                     };
-                    self.remember(*pps_id, part);
                 }
             }
         }
@@ -447,28 +423,6 @@ impl SpsTracker {
             return Err(UnseenPart::Sps);
         }
         Ok(pps.sps_id)
-    }
-
-    fn remember(&mut self, pps_id: u8, part: UnseenPart) {
-        let entry = Unresolved { pps_id, part };
-        if self.unresolved.contains(&entry) {
-            return;
-        }
-        if self.unresolved.len() >= MAX_UNRESOLVED_PPS {
-            self.unresolved.remove(0);
-        }
-        self.unresolved.push(entry);
-    }
-
-    /// Forget every dangling reference that now resolves: the picture it bound
-    /// was reported, and a later picture on the same sets must not re-raise
-    /// the change.
-    fn forget_resolved(&mut self) {
-        let unresolved = core::mem::take(&mut self.unresolved);
-        self.unresolved = unresolved
-            .into_iter()
-            .filter(|u| self.lookup(u.pps_id).is_err())
-            .collect();
     }
 
     /// Parse AFD / bar data from a single SEI NAL into `activation` (first wins).
@@ -507,7 +461,6 @@ impl SpsTracker {
                 ActivationOutcome::Unseen
             };
         }
-        self.forget_resolved();
         let geometry = self.activated_geometry(&activation.sps_ids);
         let carriage = match self.codec {
             TrackCodec::Avc => UserDataCarriage::AvcSei,
@@ -667,6 +620,53 @@ mod tests {
         v
     }
 
+    /// An H.265 base-layer SPS carrying only the fields the geometry needs
+    /// (`sps_seq_parameter_set_id`, chroma format, picture size); the walk past
+    /// `bit_depth_chroma_minus8` is error-swallowing, so the RBSP ends there.
+    fn hevc_sps_nal(sps_id: u32, width: u32, height: u32) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.u(4, 0); // sps_video_parameter_set_id
+        w.u(3, 0); // sps_max_sub_layers_minus1
+        w.bit(true); // sps_temporal_id_nesting_flag
+        w.u(2, 0); // general_profile_space
+        w.bit(false); // general_tier_flag
+        w.u(5, 1); // general_profile_idc
+        w.u(32, 0); // general_profile_compatibility_flags
+        w.u(48, 0); // general_constraint_indicator_flags
+        w.u(8, 93); // general_level_idc
+        w.ue(u64::from(sps_id)); // sps_seq_parameter_set_id
+        w.ue(1); // chroma_format_idc
+        w.ue(u64::from(width)); // pic_width_in_luma_samples
+        w.ue(u64::from(height)); // pic_height_in_luma_samples
+        w.bit(false); // conformance_window_flag
+        w.ue(0); // bit_depth_luma_minus8
+        w.ue(0); // bit_depth_chroma_minus8
+        let mut v = vec![0x42u8, 0x01];
+        v.extend(w.trailing());
+        v
+    }
+
+    fn hevc_pps_nal(pps_id: u32, sps_id: u32) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.ue(u64::from(pps_id)); // pps_pic_parameter_set_id
+        w.ue(u64::from(sps_id)); // pps_seq_parameter_set_id
+        let mut v = vec![0x44u8, 0x01];
+        v.extend(w.trailing());
+        v
+    }
+
+    fn hevc_slice_nal(nal_type: u8, pps_id: u32) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.bit(true); // first_slice_segment_in_pic_flag
+        if (HEVC_FIRST_IRAP..=HEVC_LAST_VCL).contains(&nal_type) {
+            w.bit(false); // no_output_of_prior_pics_flag
+        }
+        w.ue(u64::from(pps_id)); // slice_pic_parameter_set_id
+        let mut v = vec![nal_type << 1, 0x01];
+        v.extend(w.trailing());
+        v
+    }
+
     fn annexb(nals: &[Vec<u8>]) -> Vec<u8> {
         let mut out = Vec::new();
         for n in nals {
@@ -729,6 +729,43 @@ mod tests {
             t.observe(&annexb(&[p_slice_nal(0)])),
             ActivationOutcome::Unchanged
         ));
+    }
+
+    /// An H.264 SVC/MVC prefix NAL (`nal_unit_type` 14, H.264 Table 7-1): its
+    /// payload is a 3-byte SVC extension followed by `prefix_nal_unit_rbsp()`
+    /// (§7.3.2.12.2), never a nested SPS, PPS or slice.
+    fn prefix_nal(payload: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x6Eu8];
+        v.extend_from_slice(payload);
+        v
+    }
+
+    #[test]
+    fn a_prefix_nal_carries_no_parameter_set() {
+        let plain = base_au();
+        let mut t = tracker();
+        let without = t.observe(&plain);
+
+        // The prefix NAL's bytes after its header happen to spell a complete
+        // SPS with a different geometry and the same id; reading them as one
+        // would replace the geometry the slices activate.
+        let mut nested = tracker();
+        let with_nested = nested.observe(&annexb(&[
+            sps_nal(0, 8, 4, None, 30),
+            prefix_nal(&sps_nal(0, 16, 1, None, 30)),
+            pps_nal(0, 0),
+            idr_slice_nal(0),
+        ]));
+        assert_eq!(with_nested, without);
+
+        let mut leading = tracker();
+        let with_leading = leading.observe(&annexb(&[
+            prefix_nal(&sps_nal(1, 16, 1, None, 30)),
+            sps_nal(0, 8, 4, None, 30),
+            pps_nal(0, 0),
+            idr_slice_nal(0),
+        ]));
+        assert_eq!(with_leading, without);
     }
 
     #[test]
@@ -859,6 +896,36 @@ mod tests {
         );
     }
 
+    fn geometry_state(width: u32) -> Option<Arc<DisplayInfo>> {
+        DisplayInfo::from_geometry(Some(DisplayGeometry::new(width, width, None))).map(Arc::new)
+    }
+
+    fn state_width(t: &SpsTracker) -> Option<u32> {
+        t.state()
+            .and_then(|s| s.geometry.as_ref())
+            .map(|g| g.coded_width)
+    }
+
+    #[test]
+    fn seed_full_only_fills_an_empty_state() {
+        let mut t = tracker();
+        t.seed_full(geometry_state(8));
+        assert_eq!(state_width(&t), Some(8));
+        t.seed_full(geometry_state(16));
+        assert_eq!(state_width(&t), Some(8), "the first state is kept");
+    }
+
+    #[test]
+    fn set_state_replaces_the_state_unconditionally() {
+        let mut t = tracker();
+        t.set_state(geometry_state(8));
+        assert_eq!(state_width(&t), Some(8));
+        t.set_state(geometry_state(16));
+        assert_eq!(state_width(&t), Some(16));
+        t.set_state(None);
+        assert_eq!(state_width(&t), None);
+    }
+
     #[test]
     fn a_non_video_access_unit_resolves_nothing() {
         let mut t = tracker();
@@ -866,5 +933,64 @@ mod tests {
             t.observe(&[0x00, 0x00, 0x01, 0xb3]),
             ActivationOutcome::Unknown
         ));
+    }
+
+    #[test]
+    fn hevc_ids_beyond_zero_resolve_to_their_own_sps() {
+        let mut t = SpsTracker::new(TrackCodec::Hevc);
+        let first = t.observe(&annexb(&[
+            hevc_sps_nal(0, 64, 64),
+            hevc_pps_nal(0, 0),
+            hevc_slice_nal(HEVC_IDR_W_RADL, 0),
+        ]));
+        let ActivationOutcome::Changed {
+            display,
+            random_access,
+            ..
+        } = &first
+        else {
+            panic!("expected the initial change, got {first:?}");
+        };
+        assert!(*random_access, "IDR_W_RADL is a random-access picture");
+        let g = display.geometry.as_ref().expect("geometry");
+        assert_eq!((g.coded_width, g.coded_height), (64, 64));
+
+        // SPS 1 (a different picture size) reached through PPS 2.
+        let second = t.observe(&annexb(&[
+            hevc_sps_nal(1, 128, 96),
+            hevc_pps_nal(2, 1),
+            hevc_slice_nal(HEVC_IDR_W_RADL, 2),
+        ]));
+        let ActivationOutcome::Changed {
+            display,
+            random_access,
+            ..
+        } = &second
+        else {
+            panic!("expected the change to SPS 1, got {second:?}");
+        };
+        assert!(*random_access);
+        let g = display.geometry.as_ref().expect("geometry");
+        assert_eq!((g.coded_width, g.coded_height), (128, 96));
+
+        // A CRA picture (H.265 Table 7-1, `CRA_NUT` 21) is not claimed as a
+        // coded-video-sequence start by this tracker.
+        const HEVC_CRA_NUT: u8 = 21;
+        let third = t.observe(&annexb(&[
+            hevc_sps_nal(3, 192, 108),
+            hevc_pps_nal(4, 3),
+            hevc_slice_nal(HEVC_CRA_NUT, 4),
+        ]));
+        let ActivationOutcome::Changed {
+            display,
+            random_access,
+            ..
+        } = &third
+        else {
+            panic!("expected the change to SPS 3, got {third:?}");
+        };
+        assert!(!*random_access, "a CRA does not begin a CVS here");
+        let g = display.geometry.as_ref().expect("geometry");
+        assert_eq!((g.coded_width, g.coded_height), (192, 108));
     }
 }
