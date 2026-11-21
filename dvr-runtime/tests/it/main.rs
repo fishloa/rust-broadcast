@@ -1,12 +1,18 @@
 mod support;
 
 mod config;
-mod fmp4;
-mod fs_seed;
 mod golden;
-mod hls_oracle;
 mod read;
-mod real_dvbt;
 mod recover;
-mod round_trip;
 mod writer;
+
+#[cfg(feature = "fs")]
+mod fmp4;
+#[cfg(feature = "fs")]
+mod hls_oracle;
+#[cfg(feature = "fs")]
+mod real_dvbt;
+#[cfg(feature = "fs")]
+mod seed;
+#[cfg(feature = "fs")]
+mod writer_reader_round_trip;

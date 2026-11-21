@@ -27,6 +27,7 @@ UNRELEASED: set[str] = {
     "broadcast-dash",
     "broadcast-smooth",
     "smooth-runtime",
+    "dvr-runtime",
 }  # lanes staged ahead of owner sign-off; leaves this set when a pairs file plans them
 
 
@@ -89,7 +90,7 @@ def _planned():
 
 
 def test_lane_set_is_not_vacuous():
-    assert len(LANES) == 55, [p.name for p in LANES]
+    assert len(LANES) == 56, [p.name for p in LANES]
 
 
 REUSABLE = WF / "publish-crate.yml"

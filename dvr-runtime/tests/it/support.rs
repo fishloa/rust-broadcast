@@ -1,4 +1,6 @@
+#[cfg(feature = "fs")]
 use std::path::{Path, PathBuf};
+#[cfg(feature = "fs")]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -12,6 +14,7 @@ use dvb_si::tables::eit::{EitEvent, EitKind, EitSection};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::SegmentEntry;
 
+#[cfg(feature = "fs")]
 pub fn temp_dir(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -23,6 +26,7 @@ pub fn temp_dir(tag: &str) -> PathBuf {
     dir
 }
 
+#[cfg(feature = "fs")]
 pub fn cleanup(dir: &Path) {
     let _ = std::fs::remove_dir_all(dir);
 }
