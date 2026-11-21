@@ -979,6 +979,84 @@ async fn unauthenticated_admin_request_is_unauthorized_and_no_mutation() {
     server.abort();
 }
 
+/// A malformed `Authorization` header is a bad request (the challenge cannot
+/// answer it), not merely unauthorized: answering 401 would tell a broken
+/// client to retry credentials that were never parseable.
+#[tokio::test]
+async fn malformed_basic_authorization_is_bad_request() {
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
+    let mut config = admin_config(media_addr, admin_addr, vec![instant_route("keep")]);
+    config.admin = Some(AdminSpec::new(
+        admin_addr.to_string(),
+        OutputAuthSpec::Basic {
+            username: "admin".to_string(),
+            password: "secret".to_string(),
+        },
+    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
+    wait_for_port(admin_addr).await;
+    let client = crate::support::http::client();
+    let url = format!("http://{admin_addr}/admin/routes");
+
+    let malformed = client
+        .get(&url)
+        .header(reqwest::header::AUTHORIZATION, "Basic YWRtaW46c2VjcmV0")
+        .header(reqwest::header::AUTHORIZATION, "Basic YWRtaW46c2VjcmV0")
+        .send()
+        .await
+        .expect("admin request");
+    assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let missing = client.get(&url).send().await.expect("admin request");
+    assert_eq!(missing.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    server.abort();
+}
+
+/// A case-only variant of a live route's name collides: both would share one
+/// archive directory on a case-insensitive filesystem.
+#[tokio::test]
+async fn adding_a_case_variant_route_name_is_conflict() {
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
+    let config = admin_config(media_addr, admin_addr, vec![instant_route("cam")]);
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(instant_registry())
+                .with_prebound_listeners(media_listener, admin_listener),
+        )
+        .serve(),
+    );
+    wait_for_port(admin_addr).await;
+    let client = crate::support::http::client();
+    let resp = admin_json(
+        &client,
+        admin_addr,
+        reqwest::Method::POST,
+        "/admin/routes",
+        Some(ADMIN_TOKEN),
+        Some(route_json(&instant_route("Cam"))),
+    )
+    .await;
+    assert_eq!(resp.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        admin_get(&client, admin_addr, "/admin/routes/Cam")
+            .await
+            .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+    server.abort();
+}
+
 /// Test 6 (the other one that matters most): reload converges added/
 /// removed/changed routes, and a THIRD, unchanged route is never restarted.
 #[tokio::test]
