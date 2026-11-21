@@ -1148,12 +1148,12 @@ mod tests {
     }
 
     /// The loop frame period is the track's **minimum positive PTS gap**, not
-    /// its last gap and not the declared sample duration: with gaps
-    /// `[3000, 6000, 6000]` the frame is `3000`, so a loop pass abuts the
+    /// its first or last gap and not the declared sample duration: with gaps
+    /// `[6000, 3000, 6000]` the frame is `3000`, so a loop pass abuts the
     /// previous one instead of overlapping or leaving a hole.
     #[test]
     fn frame_period_is_the_minimum_positive_pts_gap() {
-        let parsed = one_track_file(&[0, 3000, 9000, 15000]);
+        let parsed = one_track_file(&[0, 6000, 9000, 15000]);
         let (_, _, ranges) = parsed.build_playout();
         assert_eq!(
             ranges[0].frame_ticks, 3000,
@@ -1703,6 +1703,33 @@ mod tests {
         assert!(matches!(sess.poll(), Some(SessionEvent::NewProgram { .. })));
         assert!(sess.poll().is_none());
         assert_eq!(sess.next_due(), None);
+    }
+
+    /// Paced sample times are measured from the file's **earliest** PTS, not
+    /// from zero: a file starting at 0.1 s is due at the pass baseline, and
+    /// its second sample one frame later (33 ms), never 233 ms in.
+    #[test]
+    fn paced_sample_times_are_measured_from_the_file_start() {
+        // 90 kHz: PTS 9000 and 12000 -> the file starts at 0.1 s and the
+        // second sample is 3000 ticks (1/30 s) after the first.
+        let mut sess =
+            FileIngestSession::new(one_track_file(&[9000, 12000]), ProgramId(0), false, true)
+                .expect("playable samples");
+        let _ = sess.feed((), broadcast_common::Timestamp::ZERO);
+        assert!(matches!(sess.poll(), Some(SessionEvent::Established)));
+        assert!(matches!(sess.poll(), Some(SessionEvent::NewProgram { .. })));
+        assert!(sess.poll().is_none());
+        let base = sess.pass_wall_start.expect("a paced pass has a baseline");
+        assert_eq!(
+            sess.next_due(),
+            Some(base),
+            "the file-start sample is due at the baseline, not 0.1 s into it"
+        );
+        assert!(matches!(sess.poll(), Some(SessionEvent::Sample { .. })));
+        assert!(
+            sess.poll().is_none(),
+            "the second sample is one frame (33 ms) away, not 233 ms"
+        );
     }
 
     /// A loop pass advances the wall-clock baseline by exactly one pass
