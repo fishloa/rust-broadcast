@@ -125,17 +125,48 @@ impl CueTrigger {
 
 broadcast_common::impl_spec_display!(CueTrigger);
 
+/// Which `SCTE35-*` attribute carries the splice payload (RFC 8216bis
+/// §4.4.5.1.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Scte35Kind {
+    /// `SCTE35-CMD` — a splice command other than an out/in pair.
+    Cmd,
+    /// `SCTE35-OUT` — the start of a break.
+    Out,
+    /// `SCTE35-IN` — the return from a break.
+    In,
+}
+
+impl Scte35Kind {
+    /// The attribute name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Cmd => "SCTE35-CMD",
+            Self::Out => "SCTE35-OUT",
+            Self::In => "SCTE35-IN",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(Scte35Kind);
+
 /// The `CUE` attribute's set of Trigger Identifiers (RFC 8216bis §4.4.5.1),
 /// in wire order. `PRE` and `POST` are mutually exclusive and a trigger may
 /// not repeat.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Cue {
-    /// The triggers, in wire order.
-    pub triggers: Vec<CueTrigger>,
+    triggers: Vec<CueTrigger>,
 }
 
 impl Cue {
+    /// The validated triggers, in wire order.
+    #[must_use]
+    pub fn triggers(&self) -> &[CueTrigger] {
+        &self.triggers
+    }
+
     /// Validate and build a trigger set.
     ///
     /// # Errors

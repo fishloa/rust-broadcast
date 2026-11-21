@@ -410,9 +410,9 @@ fn daterange_wire_grammar_is_strict_and_lossless() {
     let cue =
         DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",CUE=\"PRE,ONCE\"").expect("valid CUE");
     let cue = cue.cue().expect("typed cue");
-    assert_eq!(cue.triggers.len(), 2);
-    assert_eq!(cue.triggers[0].name(), "PRE");
-    assert_eq!(cue.triggers[0].to_string(), "PRE");
+    assert_eq!(cue.triggers().len(), 2);
+    assert_eq!(cue.triggers()[0].name(), "PRE");
+    assert_eq!(cue.triggers()[0].to_string(), "PRE");
     assert_eq!(cue.render(), "PRE,ONCE");
 
     assert!(matches!(
