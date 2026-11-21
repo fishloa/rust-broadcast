@@ -285,16 +285,16 @@ A non-archive file named `pN.m3u8` fails at step 3 or 5 with a typed error. Ther
 ### 3.7 Format tests
 
 - `format::tests::period_playlist_golden`: the writer's ops for a fixed input (fMP4, one init, one
-  discontinuity, one DATERANGE with a hex title) concatenate to the committed `dvr-runtime/tests/golden/p4.m3u8`
+  discontinuity, one DATERANGE with a hex title) concatenate to the committed new golden `p4.m3u8` under the dvr-runtime golden fixtures topic
   byte-for-byte; `parse_period_playlist` reproduces every input value; `MediaPlaylist::parse(golden).to_m3u8()` equals
   the golden (header + appended records == one full render).
-- `tests/it/writer_reader_round_trip.rs::fs_recorder_output_reads_back_exactly`: `FsRecorder` writes several periods;
+- new integration test `writer_reader_round_trip::fs_recorder_output_reads_back_exactly`: `FsRecorder` writes several periods;
   `FsArchive::scan` returns each segment's seq/start/duration/discontinuity/init span, and `FsArchive::read` returns
   the exact `SegmentEntry::bytes`.
 - `torn_tail_every_byte`: truncate the golden at every byte and append NULs; the reader returns exactly the complete
   records before the cut and never errors.
 - `a_playlist_without_the_archive_marker_is_not_an_archive`.
-- `tests/it/hls_oracle.rs::archive_playlists_pass_mediastreamvalidator`: a closed TS period and a closed fMP4 period
+- new integration test `hls_oracle::archive_playlists_pass_mediastreamvalidator`: a closed TS period and a closed fMP4 period
   recorded from real segments (8.3) validate with Apple `mediastreamvalidator` through `test_fixtures::process::msv`;
   zero errors required; the vendor tags may only appear as unknown-tag warnings, which the test lists explicitly.
   Skips loudly when the tool is absent (macOS-only, as `media-doctor`'s oracle test).
@@ -709,7 +709,7 @@ init URL; `two_runs_with_different_inits_validate_with_mediastreamvalidator` (13
 catch-up playlist.
 
 push: `ReconnectEngine` tests (856-960) and `drive_push_yields_when_no_listener_slot_is_free` (804) stay. New
-`media-plane/src/push_session.rs` units cover every decision-table row with a scripted `PushEgress` mock.
+the new `media_plane::push_session` module's unit tests cover every decision-table row with a scripted `PushEgress` mock.
 
 ### 8.2 Audit-23 findings (#3666-#3686)
 
@@ -726,22 +726,22 @@ push: `ReconnectEngine` tests (856-960) and `drive_push_yields_when_no_listener_
 | #3677 repeated present event id | dvb-si tracker unit + dvr-runtime `on_programme` (no roll, no second DATERANGE) |
 | #3678 `seed_from_disk` swallows non-NotFound | dvr-runtime fs it (`chmod 000`, skipped as root) |
 | #3679, #3680 | multimux |
-| #3681 drive_push decisions and metrics | decision rows: media-plane `PushSession` units; `PushMetrics` read-back and flush failure end to end: multimux `tests/it/push_drive.rs` |
+| #3681 drive_push decisions and metrics | decision rows: media-plane `PushSession` units; `PushMetrics` read-back and flush failure end to end: multimux new integration test `push_drive` |
 | #3682, #3683, #3684 | multimux |
 | #3685 cache bounds and pruning | dvr-runtime `FsArchive` (exact `MAX_ENTRIES` boundary, two dirs) |
 | #3686 dead API | `needs_poll` deleted in the dvr-runtime move; `TsHlsIdrFallback::falls_back` in multimux |
 
 ### 8.3 Real-fixture tests
 
-- dvr-runtime `tests/it/real_dvbt.rs::france_tnt_dvbt_records_and_reads_back`: feed the public
-  `fixtures/ts/france-tnt-dvbt-20s.ts` (via `test_fixtures::path`) through `media_plane::ts_session` into a `Trunk`
+- dvr-runtime integration test `real_dvbt::dvb_capture_records_and_reads_back`: feed the public
+  `fixtures/ts/tnt-5w-12732v-isi6-10s.ts` (via `test_fixtures::path`) through `media_plane::ts_session` into a `Trunk`
   and an `FsRecorder` (TS container). Assert: every `pN.m3u8` parses with `broadcast_hls::MediaPlaylist::parse` and
   with `read::parse_period_playlist`; `FsArchive::read` of every segment equals the bytes the Trunk closed,
   byte-exact; re-demuxing the archived bytes finds the same 5 services as the live path. No skip branch.
 - The same recording, closed, is one of the two inputs to `archive_playlists_pass_mediastreamvalidator` (3.7); the
   fMP4 input comes from `fixtures/ts/h264-aac.ts` through the fMP4 segmenter with a forced track change, so the
   recording rolls to a second period; each period playlist carries exactly one `EXT-X-MAP` and validates on its own.
-- dvb-si `tests/epg_present_tracker.rs`: `fixtures/ts/tnt-5w-12732v-isi6-10s.ts` through `feed_ts`: one `Baseline`
+- new dvb-si integration test `epg_present_tracker`: `fixtures/ts/tnt-5w-12732v-isi6-10s.ts` through `feed_ts`: one `Baseline`
   for service `0x0601`, event `0x7857`, title from the capture; the captured following event `0x7858` re-signalled
   with `running_status = Running` and version + 1 (as dvr.rs:3448) gives exactly one `Transition`; the same bytes
   again give none. Expected values cross-checked with `dvb-tools epg --json`.
@@ -761,7 +761,7 @@ push: `ReconnectEngine` tests (856-960) and `drive_push_yields_when_no_listener_
 5. **multimux DVR/catch-up onto dvr-runtime**: delete `dvr.rs` except config, delete `catchup.rs` (move
    `render_playlist`), route wiring, `FsArchive` on `RouteHandle`, error and metric mapping, init URL, the multimux
    halves of #3666/#3667/#3672. CHANGELOG: archive format replaced; older archives are not readable.
-6. **multimux `drive_push` onto PushSession** + `tests/it/push_drive.rs` (#3681).
+6. **multimux `drive_push` onto PushSession** + new integration test `push_drive` (#3681).
 7. **Release**: broadcast-hls, dvb-si lockstep 15.2.0, media-plane; then dvr-runtime 0.1.0; then multimux 0.21.0 and
    multimux-cli 0.19.0, per RELEASE-AUDIT.
 
