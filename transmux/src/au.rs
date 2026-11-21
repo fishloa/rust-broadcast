@@ -482,6 +482,16 @@ mod tests {
     fn avc_p_cont() -> Vec<u8> {
         vec![0x00, 0x00, 0x01, 0x41, 0x00, 0x11]
     }
+    /// HEVC NAL: byte 0 = `type << 1`, byte 1 = layer/tid `0x01`, then the
+    /// first RBSP byte carrying `first_slice_segment_in_pic_flag`.
+    fn hevc_nal(t: u8, first_slice: bool) -> Vec<u8> {
+        let rbsp = if first_slice { 0x80 } else { 0x00 };
+        vec![0x00, 0x00, 0x00, 0x01, t << 1, 0x01, rbsp]
+    }
+    /// VVC NAL: `nal_unit_type` is `byte1[7:3]`; byte 0 carries layer id 0.
+    fn vvc_nal(t: u8) -> Vec<u8> {
+        vec![0x00, 0x00, 0x00, 0x01, 0x00, t << 3, 0x00]
+    }
 
     fn concat(parts: &[Vec<u8>]) -> Vec<u8> {
         let mut v = Vec::new();
@@ -632,23 +642,54 @@ mod tests {
         let fd = vec![0x00u8, 0x00, 0x00, 0x01, 0x4c, 0x01, 0xff];
         // PREFIX_SEI_NUT = 39 → 0x4e; still starts the next AU.
         let prefix_sei = vec![0x00u8, 0x00, 0x00, 0x01, 0x4e, 0x01, 0xbb];
-        let stream = concat(&[aud.clone(), idr, suffix_sei, fd, prefix_sei, p, aud]);
+        // RSV_NVCL45 = 45 → 0x5a and RSV_NVCL47 = 47 → 0x5e are suffix-classified.
+        let rsv45 = vec![0x00u8, 0x00, 0x00, 0x01, 0x5a, 0x01, 0x45];
+        let rsv47 = vec![0x00u8, 0x00, 0x00, 0x01, 0x5e, 0x01, 0x47];
+        // UNSPEC56 = 56 → 0x70 and UNSPEC63 = 63 → 0x7e likewise trail a picture.
+        let unspec56 = vec![0x00u8, 0x00, 0x00, 0x01, 0x70, 0x01, 0x56];
+        let unspec63 = vec![0x00u8, 0x00, 0x00, 0x01, 0x7e, 0x01, 0x63];
+        // RSV_NVCL41 = 41 → 0x52 is prefix-class: it starts the next AU.
+        let rsv41 = vec![0x00u8, 0x00, 0x00, 0x01, 0x52, 0x01, 0x41];
+        let stream = concat(&[
+            aud.clone(),
+            idr,
+            suffix_sei,
+            fd,
+            rsv45,
+            rsv47,
+            unspec56,
+            unspec63,
+            rsv41,
+            prefix_sei,
+            p,
+            aud,
+        ]);
         let aus = split_access_units(NalCodec::Hevc, &stream);
-        // AU 1 = picture + its suffix SEI/FD; AU 2 = the prefix SEI and the next
-        // slice; AU 3 = the trailing AUD alone (an AUD always opens an AU).
-        assert_eq!(aus.len(), 3, "only the prefix SEI starts the second AU");
+        // AU 1 = picture + every suffix NAL; AU 2 = the prefix-class NALs and
+        // the next slice; AU 3 = the trailing AUD alone.
+        assert_eq!(
+            aus.len(),
+            3,
+            "only the prefix-class NALs start the second AU"
+        );
         assert_eq!(concat(&aus), stream);
-        // The first AU ends with the suffix SEI + filler data (in stream order).
+        // The first AU ends with the reserved/unspecified suffix NALs.
         let first = &aus[0];
         assert_eq!(
-            &first[first.len() - 14..],
+            &first[first.len() - 28..],
             &[
-                0x00, 0x00, 0x00, 0x01, 0x50, 0x01, 0xaa, // SUFFIX_SEI_NUT
-                0x00, 0x00, 0x00, 0x01, 0x4c, 0x01, 0xff, // FD_NUT
+                0x00, 0x00, 0x00, 0x01, 0x5a, 0x01, 0x45, // RSV_NVCL45
+                0x00, 0x00, 0x00, 0x01, 0x5e, 0x01, 0x47, // RSV_NVCL47
+                0x00, 0x00, 0x00, 0x01, 0x70, 0x01, 0x56, // UNSPEC56
+                0x00, 0x00, 0x00, 0x01, 0x7e, 0x01, 0x63, // UNSPEC63
             ][..]
         );
-        assert!(contains_nal_type(first, NalCodec::Hevc, &[38, 40]));
-        assert!(contains_nal_type(&aus[1], NalCodec::Hevc, &[2, 39]));
+        assert!(contains_nal_type(
+            first,
+            NalCodec::Hevc,
+            &[38, 40, 45, 47, 56, 63]
+        ));
+        assert!(contains_nal_type(&aus[1], NalCodec::Hevc, &[2, 39, 41]));
     }
 
     /// Whether `annexb` holds a NAL whose type is one of `types`.
@@ -831,5 +872,141 @@ mod tests {
             n += 1;
         }
         assert_eq!(n, 64);
+    }
+
+    /// A real 4K IDR can exceed 1 MiB; the cap must be 64 MiB, not ~1 MiB.
+    #[test]
+    fn a_four_mib_nal_is_accepted_as_one_access_unit() {
+        let mut stream = avc_idr_first();
+        stream.extend_from_slice(&vec![0x55u8; 4 * 1024 * 1024]);
+        stream.extend_from_slice(&avc_p_first());
+        let aus = split_access_units(NalCodec::Avc, &stream);
+        assert_eq!(aus.len(), 2, "a 4 MiB IDR must be accepted");
+        assert_eq!(concat(&aus), stream);
+        assert!(aus[0].len() > 4 * 1024 * 1024);
+    }
+
+    /// The bound is a literal 64 MiB, not an accidental ~1 MiB.
+    #[test]
+    fn max_open_nal_bytes_is_sixty_four_mib() {
+        assert_eq!(MAX_OPEN_NAL_BYTES, 64 * 1024 * 1024);
+    }
+
+    /// Exactly the cap is accepted; one byte more is rejected.
+    #[test]
+    fn the_open_nal_cap_is_exclusive() {
+        let mut s = AccessUnitSplitter::new(NalCodec::Avc);
+        s.push(&[0x00, 0x00, 0x00, 0x01]).unwrap();
+        let at_cap = vec![0x55u8; MAX_OPEN_NAL_BYTES - 4];
+        s.push(&at_cap)
+            .expect("a NAL exactly at the cap must be accepted");
+        let err = s
+            .push(&[0x55])
+            .expect_err("one byte past the cap must be rejected");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue(InvalidValue {
+                    field: "Annex B NAL",
+                    ..
+                })
+            ),
+            "expected the buffered-NAL cap error, got {err:?}"
+        );
+    }
+
+    /// HEVC `first_slice_segment_in_pic_flag` is the first RBSP bit at byte 2
+    /// (after the 2-byte NAL header); reading byte 1 makes every slice look
+    /// like a continuation and collapses an AUD-less stream into one AU.
+    #[test]
+    fn hevc_first_slice_splits_without_aud() {
+        let stream = concat(&[
+            hevc_nal(32, false), // VPS
+            hevc_nal(33, false), // SPS
+            hevc_nal(34, false), // PPS
+            hevc_nal(19, true),  // IDR first slice
+            hevc_nal(1, true),   // TRAIL_R first slice → AU 2
+            hevc_nal(1, true),   // TRAIL_R first slice → AU 3
+            hevc_nal(1, false),  // continuation slice stays in AU 3
+        ]);
+        let aus = split_access_units(NalCodec::Hevc, &stream);
+        assert_eq!(aus.len(), 3, "each first-slice flag opens an AU");
+        assert_eq!(concat(&aus), stream);
+        assert!(contains_nal_type(&aus[0], NalCodec::Hevc, &[19, 32]));
+        assert_eq!(aus[2].len(), 2 * 7, "the continuation slice stays in AU 3");
+        assert!(contains_nal_type(&aus[2], NalCodec::Hevc, &[1]));
+    }
+
+    /// VVC `AUD_NUT` is type 20 and its VCL types are 0..=11 (H.266 Table 5).
+    #[test]
+    fn vvc_splits_on_aud() {
+        let stream = concat(&[
+            vvc_nal(20), // AUD
+            vvc_nal(15), // SPS
+            vvc_nal(16), // PPS
+            vvc_nal(7),  // IDR_W_RADL
+            vvc_nal(20), // AUD
+            vvc_nal(7),  // IDR_W_RADL
+        ]);
+        let aus = split_access_units(NalCodec::Vvc, &stream);
+        assert_eq!(aus.len(), 2, "VVC splits on its AUD type 20");
+        assert_eq!(concat(&aus), stream);
+        assert!(contains_nal_type(&aus[0], NalCodec::Vvc, &[7, 15, 16, 20]));
+        assert!(contains_nal_type(&aus[1], NalCodec::Vvc, &[7, 20]));
+    }
+
+    /// VVC prefix APS/SEI start an AU; suffix APS/SEI, EOS/EOB and FD trail.
+    #[test]
+    fn vvc_prefix_nals_start_and_suffix_nals_trail() {
+        let stream = concat(&[
+            vvc_nal(20), // AUD
+            vvc_nal(7),  // IDR_W_RADL
+            vvc_nal(24), // SUFFIX_SEI_NUT trails
+            vvc_nal(21), // EOS_NUT trails
+            vvc_nal(25), // FD_NUT trails
+            vvc_nal(23), // PREFIX_SEI_NUT starts AU 2
+            vvc_nal(17), // PREFIX_APS_NUT stays in AU 2
+            vvc_nal(7),  // IDR_W_RADL
+        ]);
+        let aus = split_access_units(NalCodec::Vvc, &stream);
+        assert_eq!(aus.len(), 2, "the prefix SEI opens the second AU");
+        assert_eq!(concat(&aus), stream);
+        assert!(contains_nal_type(&aus[0], NalCodec::Vvc, &[7, 21, 24, 25]));
+        assert!(contains_nal_type(&aus[1], NalCodec::Vvc, &[7, 17, 23]));
+    }
+
+    /// An AUD after a parameter-set-only AU closes it even though no VCL was
+    /// seen (the stream begins AUD SPS AUD IDR …).
+    #[test]
+    fn an_aud_closes_a_config_only_access_unit() {
+        let avc = concat(&[avc_aud(), avc_sps(), avc_aud(), avc_idr_first()]);
+        let avc_aus = split_access_units(NalCodec::Avc, &avc);
+        assert_eq!(avc_aus.len(), 2, "the second AUD closes the SPS-only AU");
+        assert_eq!(concat(&avc_aus), avc);
+        assert!(contains_nal_type(&avc_aus[0], NalCodec::Avc, &[7, 9]));
+        assert!(contains_nal_type(&avc_aus[1], NalCodec::Avc, &[5]));
+
+        let hevc = concat(&[
+            hevc_nal(35, false), // AUD
+            hevc_nal(32, false), // VPS
+            hevc_nal(35, false), // AUD
+            hevc_nal(19, true),  // IDR
+        ]);
+        let hevc_aus = split_access_units(NalCodec::Hevc, &hevc);
+        assert_eq!(hevc_aus.len(), 2, "the second AUD closes the VPS-only AU");
+        assert_eq!(concat(&hevc_aus), hevc);
+        assert!(contains_nal_type(&hevc_aus[0], NalCodec::Hevc, &[32, 35]));
+        assert!(contains_nal_type(&hevc_aus[1], NalCodec::Hevc, &[19]));
+    }
+
+    /// A stream that never contained a start code has no access unit at all;
+    /// flushing the leading junk would emit a bogus one.
+    #[test]
+    fn finish_on_an_unprimed_stream_emits_nothing() {
+        let mut s = AccessUnitSplitter::new(NalCodec::Avc);
+        s.push(&[0xAA, 0xBB, 0xCC]).unwrap();
+        s.finish();
+        assert!(s.pop().is_none(), "leading junk must not become an AU");
+        assert!(split_access_units(NalCodec::Avc, &[1, 2, 3, 4, 5]).is_empty());
     }
 }
