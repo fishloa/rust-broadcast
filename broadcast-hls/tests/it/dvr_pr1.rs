@@ -773,6 +773,37 @@ fn render_prefix_is_stable_as_segments_are_appended() {
     );
 }
 
+/// Item 4: without pinning `version`, appending one fractional-duration
+/// segment changes the header, so a writer must pin it.
+#[test]
+fn unpinned_version_changes_an_already_written_header() {
+    use broadcast_hls::{MediaPlaylist, MediaSegment};
+
+    let mut playlist = MediaPlaylist {
+        target_duration: 3,
+        segments: vec![MediaSegment {
+            uri: "seg0.ts".into(),
+            duration: broadcast_hls::DecimalSeconds::new(2.0).expect("valid"),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        playlist.render_header().expect("header"),
+        "#EXTM3U\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n"
+    );
+    playlist.segments.push(MediaSegment {
+        uri: "seg1.ts".into(),
+        duration: broadcast_hls::DecimalSeconds::new(2.5).expect("valid"),
+        ..Default::default()
+    });
+    assert_eq!(
+        playlist.render_header().expect("header"),
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n",
+        "the fractional segment triggers §8 row 3 after the header was written"
+    );
+}
+
 /// H4: an index the playlist does not have is a typed error, not a panic.
 #[test]
 fn render_segment_out_of_range_is_a_typed_error() {
