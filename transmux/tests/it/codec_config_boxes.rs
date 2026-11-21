@@ -7,7 +7,9 @@
 //! Fixtures: `fixtures/mp4/h264-high.mp4` (avcC), `fixtures/mp4/hevc-main.mp4` (hvcC).
 
 use broadcast_common::{Parse, Serialize};
-use transmux::{AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord};
+use transmux::{
+    AVCDecoderConfigurationRecord, HEVCConfigurationBox, HEVCDecoderConfigurationRecord,
+};
 
 /// Linear-scan for a box four-CC and return the box body (bytes after the 8-byte header).
 fn find_box_body<'a>(data: &'a [u8], four_cc: &[u8; 4]) -> &'a [u8] {
@@ -153,4 +155,24 @@ fn hvcc_hevc_main_mutation_changes_bytes() {
     // Level is byte 12 (0-indexed) in the body: configVersion(1) + profile_byte(1)
     // + compat_flags(4) + constraint_flags(6) = 12
     assert_eq!(mutated[12], 80, "mutated level appears at byte offset 12");
+}
+
+#[test]
+fn hvcc_hevc_main_display_and_box_length() {
+    let path = test_fixtures::path("mp4/hevc-main.mp4");
+    let data = std::fs::read(path).expect("fixture file must exist");
+    let hvcc_body = find_box_body(&data, b"hvcC");
+    let record =
+        HEVCDecoderConfigurationRecord::parse(hvcc_body).expect("should parse hvcC");
+
+    assert_eq!(
+        record.to_string(),
+        "HEVC(tier=main, profile_idc=1, level=60, lenSize=4, arrays=3)"
+    );
+
+    let config = HEVCConfigurationBox::new(record);
+    let mut buf = vec![0u8; config.serialized_len()];
+    let written = config.serialize_into(&mut buf).unwrap();
+    assert_eq!(written, config.serialized_len());
+    assert_eq!(written, 8 + hvcc_body.len());
 }
