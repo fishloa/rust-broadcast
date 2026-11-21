@@ -1472,3 +1472,275 @@ fn zero_ntp_sender_reports_are_counted() {
     d.push_sender_report(TrackId::new(2), sender_report(4800, 0, 0));
     assert_eq!(d.rejected_sender_reports(), 2);
 }
+
+// ── audit 23: declared durations, reorder depth, known_duration precedence ──
+
+use crate::bit_writer::BitWriter;
+use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+
+/// A Main-profile SPS with VUI `timing_info` and an optional
+/// `bitstream_restriction` declaring `max_num_reorder_frames`.
+fn vui_sps(num_units_in_tick: u32, time_scale: u32, reorder: Option<u32>) -> Vec<u8> {
+    let mut w = BitWriter::new();
+    w.u(8, 77); // profile_idc
+    w.u(8, 0); // constraint flags
+    w.u(8, 30); // level_idc
+    w.ue(0); // seq_parameter_set_id
+    w.ue(0); // log2_max_frame_num_minus4 -> 4 bits
+    w.ue(0); // pic_order_cnt_type
+    w.ue(2); // log2_max_pic_order_cnt_lsb_minus4 -> 6 bits
+    w.ue(1); // max_num_ref_frames
+    w.u(1, 0); // gaps_in_frame_num_value_allowed_flag
+    w.ue(19); // pic_width_in_mbs_minus1 -> 320
+    w.ue(14); // pic_height_in_map_units_minus1 -> 240
+    w.u(1, 1); // frame_mbs_only_flag
+    w.u(1, 1); // direct_8x8_inference_flag
+    w.u(1, 0); // frame_cropping_flag
+    w.u(1, 1); // vui_parameters_present_flag
+    w.u(1, 0); // aspect_ratio_info_present_flag
+    w.u(1, 0); // overscan_info_present_flag
+    w.u(1, 0); // video_signal_type_present_flag
+    w.u(1, 0); // chroma_loc_info_present_flag
+    w.u(1, 1); // timing_info_present_flag
+    w.u(32, u64::from(num_units_in_tick));
+    w.u(32, u64::from(time_scale));
+    w.u(1, 1); // fixed_frame_rate_flag
+    w.u(1, 0); // nal_hrd_parameters_present_flag
+    w.u(1, 0); // vcl_hrd_parameters_present_flag
+    w.u(1, 0); // pic_struct_present_flag
+    w.u(1, u64::from(reorder.is_some())); // bitstream_restriction_flag
+    if let Some(reorder) = reorder {
+        w.u(1, 0); // motion_vectors_over_pic_boundaries_flag
+        w.ue(0); // max_bytes_per_pic_denom
+        w.ue(0); // max_bits_per_mb_denom
+        w.ue(0); // log2_max_mv_length_horizontal
+        w.ue(0); // log2_max_mv_length_vertical
+        w.ue(u64::from(reorder)); // max_num_reorder_frames
+        w.ue(u64::from(reorder) + 2); // max_dec_frame_buffering
+    }
+    let mut nal = vec![0x67u8];
+    nal.extend(w.trailing());
+    nal
+}
+
+fn avc_cfg(sps: &[u8]) -> CodecConfig {
+    CodecConfig::Avc {
+        config: AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 77,
+            profile_compatibility: 0,
+            level_indication: 30,
+            length_size_minus_one: 3,
+            sps: vec![transmux::AvcSps(sps.to_vec())],
+            pps: vec![],
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: vec![],
+        }),
+        width: 0,
+        height: 0,
+    }
+}
+
+fn single_track_rtp(
+    id: TrackId,
+    kind: RtpMediaKind,
+    config: CodecConfig,
+    clock: u32,
+) -> RtpStreamDepacketiser {
+    RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        id,
+        kind,
+        config,
+        timescale(clock),
+    )])
+}
+
+/// SPS VUI `num_units_in_tick` 1001 / `time_scale` 60000 at 90 kHz is
+/// `90000 * 2 * 1001 / 60000 = 3003` ticks per frame.
+#[test]
+fn h264_vui_frame_period_is_the_declared_duration() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1001, 60_000, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 10_000, &[0x65, 0xAA])).unwrap();
+    let out = d.flush(id).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(3003));
+}
+
+/// A VUI with `time_scale` 0 must not divide by zero: the duration falls back
+/// to the observed step.
+#[test]
+fn h264_vui_with_zero_time_scale_falls_back() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1001, 0, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 1000, &[0x65, 0xAA])).unwrap();
+    let mut out = d.push(id, &wrap_vpkt(1, 4000, &[0x41, 0xBB])).unwrap();
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(3000));
+}
+
+/// A frame period that rounds to zero ticks is not a usable declared
+/// duration: nothing is emitted without a real one.
+#[test]
+fn h264_vui_rounding_to_zero_ticks_declares_nothing() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 90_000_000, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 1000, &[0x65, 0xAA])).unwrap();
+    assert!(d.flush(id).unwrap().is_empty());
+}
+
+fn aac_asc_packet(seq: u16, ts: u32, aus: &[&[u8]]) -> Vec<u8> {
+    let mut p = vec![0x80u8, 96];
+    p.extend_from_slice(&seq.to_be_bytes());
+    p.extend_from_slice(&ts.to_be_bytes());
+    p.extend_from_slice(&[0, 0, 0, 0]);
+    let headers_bits = (aus.len() * 16) as u16;
+    p.extend_from_slice(&headers_bits.to_be_bytes());
+    for au in aus {
+        p.extend_from_slice(&((au.len() as u16) << 3).to_be_bytes());
+    }
+    for au in aus {
+        p.extend_from_slice(au);
+    }
+    p
+}
+
+/// AAC-LC 44.1 kHz (1024 samples/frame) on a 90 kHz track is
+/// `(1024 * 90000 + 22050) / 44100 = 2090` ticks.
+#[test]
+fn aac_asc_frame_length_scales_to_the_track_clock() {
+    let id = TrackId::new(1);
+    let cfg = transmux::rtp_sdp::aac_config_from_asc_bytes(vec![0x12, 0x10]).unwrap();
+    let mut d = single_track_rtp(id, RtpMediaKind::Aac, cfg, 90_000);
+    d.push(id, &aac_asc_packet(0, 10_000, &[&[1, 2]])).unwrap();
+    let out = d.flush(id).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(2090));
+}
+
+/// An SPS declaring `max_num_reorder_frames = 2` shifts decode time two frame
+/// periods behind presentation time from the first sample, and an in-order
+/// stream never reports `ReorderDepthExceeded`.
+#[test]
+fn declared_reorder_depth_shifts_dts_by_its_frame_periods() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, Some(2))),
+        90_000,
+    );
+    let mut out = Vec::new();
+    for (seq, ts) in [(0u16, 10_000u32), (1, 13_600), (2, 17_200)] {
+        out.extend(
+            d.push(
+                id,
+                &wrap_vpkt(
+                    seq,
+                    ts,
+                    if seq == 0 {
+                        &[0x65, 0xAA]
+                    } else {
+                        &[0x41, 0xBB]
+                    },
+                ),
+            )
+            .unwrap(),
+        );
+    }
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(out.len(), 3);
+    assert_eq!(out[0].timing.and_then(|t| t.pts()), Some(10_000));
+    assert_eq!(
+        out[0].timing.and_then(|t| t.dts()),
+        Some(10_000 - 2 * 3600),
+        "declared depth 2 = two frame periods behind"
+    );
+    assert_eq!(out[1].timing.and_then(|t| t.dts()), Some(10_000 - 3600));
+    assert_eq!(out[2].timing.and_then(|t| t.dts()), Some(10_000));
+    assert!(d.poll_loss_event().is_none());
+}
+
+/// An odd `time_scale` distinguishes the half-denominator term from a
+/// remainder: 90000 * 2 * 1001 / 60001 still rounds to 3003.
+#[test]
+fn h264_vui_odd_time_scale_rounds_to_the_frame_period() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1001, 60_001, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 10_000, &[0x65, 0xAA])).unwrap();
+    assert_eq!(
+        d.flush(id).unwrap()[0].timing.and_then(|t| t.duration()),
+        Some(3003)
+    );
+}
+
+/// An aggregated AAC group whose forward step is smaller than its AU count
+/// is emitted from the declared frame length without setting a last duration;
+/// the following flush still uses the declared duration (AAC prefers it to
+/// the smaller observed step).
+#[test]
+fn aac_declared_duration_wins_over_a_smaller_min_step_at_flush() {
+    let id = TrackId::new(1);
+    let cfg = transmux::rtp_sdp::aac_config_from_asc_bytes(vec![0x11, 0x90]).unwrap();
+    let mut d = single_track_rtp(id, RtpMediaKind::Aac, cfg, 48_000);
+    let group: [&[u8]; 3] = [&[1], &[2], &[3]];
+    assert!(
+        d.push(id, &aac_asc_packet(0, 10_000, &group))
+            .unwrap()
+            .is_empty()
+    );
+    let mut out = d.push(id, &aac_asc_packet(1, 10_002, &[&[4]])).unwrap();
+    out.extend(d.flush(id).unwrap());
+    for s in &out {
+        assert_eq!(s.timing.and_then(|t| t.duration()), Some(1024));
+    }
+}
+
+/// With no declared AAC frame length, the smallest positive step is the only
+/// duration left, so the final pending AU is emitted with it.
+#[test]
+fn aac_without_declared_duration_flushes_with_the_min_step() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::Aac,
+        avc_cfg(&vui_sps(1, 50, None)),
+        48_000,
+    );
+    let group: [&[u8]; 3] = [&[1], &[2], &[3]];
+    assert!(
+        d.push(id, &aac_asc_packet(0, 10_000, &group))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        d.push(id, &aac_asc_packet(1, 10_002, &[&[4]]))
+            .unwrap()
+            .is_empty()
+    );
+    let out = d.flush(id).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(2));
+}
