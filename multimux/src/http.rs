@@ -910,7 +910,7 @@ mod tests {
         };
         assert_eq!(status(EgressResponse::NotFound), StatusCode::GONE);
         assert_eq!(
-            status(EgressResponse::BadRequest { reason: "x".into() }),
+            status(EgressResponse::BadRequest { reason: "x" }),
             StatusCode::BAD_GATEWAY
         );
         assert_eq!(

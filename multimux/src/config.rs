@@ -6711,7 +6711,9 @@ mod pinned_limits {
             hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT
         );
         assert!(cfg.hold_cold_playlist);
-        assert!(hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT);
+        assert!(std::hint::black_box(
+            hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT
+        ));
     }
 
     /// #3672: label strings are exact.
