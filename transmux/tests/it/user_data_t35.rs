@@ -165,6 +165,16 @@ fn bar_data_accepts_the_minimum_nine_byte_payload() {
     assert_eq!(bar_data_from_t35_payload(&payload), Some(empty_bar_data()));
     // One byte shorter has no flags field.
     assert_eq!(bar_data_from_t35_payload(&bar_payload(&[0x06])), None);
+    // A payload shorter than the T.35 header plus type and flags is rejected
+    // even when the tail alone would look like a bar-data message.
+    assert_eq!(
+        bar_data_from_t35_payload(&[0xB5, 0x00, 0x31, 0x06, 0x00]),
+        None
+    );
+    assert_eq!(
+        bar_data_from_t35_payload(&[0xB5, 0x00, 0x31, 0x06, 0x80, 0x00, 0x01]),
+        None
+    );
 }
 
 #[test]
