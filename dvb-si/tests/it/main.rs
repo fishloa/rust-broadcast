@@ -19,6 +19,7 @@ mod downloaded_mhp;
 mod downloaded_mpegh;
 mod downloaded_streams;
 mod epg_capture;
+mod epg_present_tracker;
 mod error_payloads;
 mod error_variants;
 mod fixture_byte_identity;
