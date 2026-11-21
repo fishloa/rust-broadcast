@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **`HevcNalArray` reports the sum of its entries and keeps both header bits.** Tests only read `numNalus`, so `serialized_len` could multiply, `array_completeness` could be dropped or `nal_unit_type` forced to `0x3F`; a two-entry array now pins `15`, `0xA1`, `00 02`, and an incomplete array pins `0x21` (audit 23 finding 293, #3809).
 - **`HevcNalUnit::decode_sps` treats a 0/1-byte NAL as headerless but decodes a 2-byte SPS-typed one.** The short-NAL boundary was untested, so an empty NAL could panic on `self.0[0]` or a 2-byte SPS-typed NAL could be skipped; both sides are now pinned (audit 23 finding 292, #3808).
 - **An SPS that decodes to zero width or zero height is not a valid parameter set.** The `is_ok_and(width > 0 && height > 0)` guard had no input that decodes to zero geometry, so each operator could invert and let a fully cropped set through; hand-built AVC and HEVC SPS values cropping the whole width (and the whole height) now decode to `0` and are rejected (audit 23 finding 291, #3807).
 - **Parameter-set validity accepts the exact maximum length and the smallest real PPS.** The length boundaries had no test, so the maximum record length could be refused, a 1-byte `[0x68]` accepted as a PPS, or a real 2-byte PPS rejected; all four boundaries are now pinned (audit 23 finding 290, #3806).

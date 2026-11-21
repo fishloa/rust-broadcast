@@ -298,4 +298,31 @@ mod tests {
         let bytes = arr.try_to_bytes().unwrap();
         assert_eq!(u16::from_be_bytes([bytes[1], bytes[2]]), 65535);
     }
+
+    #[test]
+    fn hevc_nal_array_serialized_len_sums_the_entries_and_keeps_the_header_bits() {
+        let nalus = alloc::vec![
+            HevcNalUnit(alloc::vec![0x42, 0x01, 0x0C]),
+            HevcNalUnit(alloc::vec![0x42, 0x01, 0x0C, 0xAA, 0xBB]),
+        ];
+        let arr = HevcNalArray {
+            array_completeness: true,
+            nal_unit_type: 33,
+            nalus,
+        };
+        assert_eq!(arr.serialized_len(), 3 + 2 + 3 + 2 + 5);
+        let mut buf = alloc::vec![0u8; arr.serialized_len()];
+        assert_eq!(arr.serialize_into(&mut buf).unwrap(), 15);
+        assert_eq!(buf[0], 0xA1, "array_completeness | NAL_unit_type");
+        assert_eq!(&buf[1..3], &[0x00, 0x02], "numNalus");
+
+        let incomplete = HevcNalArray {
+            array_completeness: false,
+            nal_unit_type: 33,
+            nalus: alloc::vec![HevcNalUnit(alloc::vec![0x42, 0x01, 0x0C])],
+        };
+        let mut buf = alloc::vec![0u8; incomplete.serialized_len()];
+        incomplete.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[0], 0x21, "no array_completeness bit");
+    }
 }
