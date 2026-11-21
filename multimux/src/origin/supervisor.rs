@@ -500,6 +500,24 @@ mod tests {
         assert_eq!(bl.delay_for_attempt(0), Duration::from_millis(500));
     }
 
+    /// Routes opened together must not reconnect in lockstep: every
+    /// [`Backoff::new`] draws its own OS-entropy seed, which the jittered
+    /// series (attempt 1 onward; attempt 0 is the floor by contract) exposes.
+    #[test]
+    fn fresh_backoffs_do_not_share_a_jitter_sequence() {
+        let mut second_steps = std::collections::HashSet::new();
+        for _ in 0..8 {
+            let mut b =
+                Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0).unwrap();
+            assert_eq!(b.next_delay(), Duration::from_millis(500));
+            second_steps.insert(b.next_delay());
+        }
+        assert!(
+            second_steps.len() > 1,
+            "eight fresh backoffs all stepped identically: {second_steps:?}"
+        );
+    }
+
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Tiny backoff for tests: keeps the whole suite fast regardless of how

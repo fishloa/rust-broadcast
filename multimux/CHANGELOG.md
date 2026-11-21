@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Tests
+- The OS-entropy helpers are pinned: two SRT entropy seeds differ and are never all-zero/all-one, `seed_entropy` never returns 0 or 1, 256 RTP SSRC draws all have the forced low bit set, and eight fresh `Backoff`s step differently, so a constant seed can no longer ship a predictable secret or a lockstep reconnect storm (audit 23 finding 211, #3875).
 - The unparseable-URL redaction fallbacks pin their `://` boundary arithmetic: a credential-bearing RTSP URL the parser rejects (and a two-character-scheme S3 one) is masked to `***@`, and a destination URL collapses host plus tail to `<redacted>`, so an off-by-N cannot leak userinfo or an RTMP stream key (audit 23 finding 210, #3874).
 - Every external-oracle test (Dolby Vision and HDR10 boxes through ffprobe and GPAC `MP4Box`, Smooth fragments through `MP4Box` and Bento4 `mp4dump`, the TS-HLS and cold-join oracles through ffprobe and ffmpeg) now gates its tool through `test_fixtures::process::require_tool`: with `REQUIRE_EXTERNAL_TOOLS=1` a missing tool is a hard failure instead of a silent skip. A new blocking CI `oracles` job installs the tools and sets that switch, so a skipped oracle can no longer read as green (audit 21 finding 60).
 ### Fixed
