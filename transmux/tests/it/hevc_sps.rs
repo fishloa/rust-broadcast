@@ -263,7 +263,7 @@ fn hevc_vui_timing_frame_rate_and_zero_num_units() {
 #[test]
 fn hevc_hrd_walk_reads_sub_layer_hrd_and_reports_last_fixed_rate() {
     let nal = hevc_sps(&HevcSps {
-        max_sub_layers_minus1: 1,
+        max_sub_layers_minus1: 2,
         sub_layer_profile_present: vec![false, false],
         sub_layer_level_present: vec![false, false],
         vui: Some(HevcVui {
@@ -276,6 +276,13 @@ fn hevc_hrd_walk_reads_sub_layer_hrd_and_reports_last_fixed_rate() {
                 vcl: false,
                 sub_pic: true,
                 layers: vec![
+                    HevcHrdLayer {
+                        general: false,
+                        within: false,
+                        low_delay: true,
+                        cpb_minus1: 0,
+                        elemental: 0,
+                    },
                     HevcHrdLayer {
                         general: false,
                         within: false,
