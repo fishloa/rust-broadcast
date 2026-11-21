@@ -459,6 +459,7 @@ mod part_target_tests {
 #[cfg(test)]
 mod follower_tests {
     use super::*;
+    use crate::ids::PartIndex;
     use crate::trunk::TrunkConfig;
     use crate::ts_session::test_support::{track_spec, trunk_config};
 
@@ -490,6 +491,335 @@ mod follower_tests {
                 Duration::from_millis(500)
             )
             .is_none()
+        );
+    }
+
+    fn ts_90k() -> broadcast_common::timescale::Timescale {
+        broadcast_common::timescale::Timescale::try_new(90_000).expect("non-zero timescale")
+    }
+
+    fn frame(dts: i64) -> Sample {
+        Sample::new(vec![0u8; 8], Some(dts), Some(dts), Some(3_000), false).expect("valid timing")
+    }
+
+    fn cut_part(msn: u64, part: u32, start_dts: i64) -> PartCutReady {
+        PartCutReady {
+            msn: broadcast_hls::MediaSequence::new(msn),
+            part_index: broadcast_hls::PartIndex::new(part),
+            start_dts,
+            timescale: ts_90k(),
+        }
+    }
+
+    fn cut(msn: u64, start_dts: i64) -> PartCutReady {
+        cut_part(msn, 0, start_dts)
+    }
+
+    fn follower() -> (Arc<Trunk>, AudioFollower) {
+        let trunk = trunk();
+        let follower = AudioFollower::try_new(
+            &track_spec(TrackId::new(2)),
+            &trunk,
+            Duration::from_secs(1),
+            Duration::from_millis(250),
+        )
+        .expect("follower");
+        (trunk, follower)
+    }
+
+    #[test]
+    fn rendition_tag_round_trips() {
+        let (_trunk, follower) = follower();
+        assert_eq!(follower.rendition(), None);
+        assert_eq!(follower.with_rendition(3).rendition(), Some(3));
+    }
+
+    #[test]
+    fn part_target_is_sized_once_from_the_first_sample() {
+        let (_trunk, mut follower) = follower();
+        assert!(follower.take_part_target().is_none());
+        follower.push(frame(0), &LeaderDurations::new());
+        let target = follower.take_part_target().expect("sized target");
+        assert_ne!(target, Duration::ZERO);
+        assert!(follower.take_part_target().is_none(), "handed out once");
+    }
+
+    #[test]
+    fn precedes_origin_compares_against_the_shared_origin() {
+        let (_trunk, mut follower) = follower();
+        follower.timescale = ts_90k();
+        follower.origin = Some((48_000, ts_90k()));
+        assert!(follower.precedes_origin(&frame(45_000)));
+        assert!(!follower.precedes_origin(&frame(48_000)));
+        follower.origin = None;
+        assert!(!follower.precedes_origin(&frame(0)));
+    }
+
+    #[test]
+    fn held_buffer_evicts_the_oldest_at_the_sample_cap() {
+        let (_trunk, mut follower) = follower();
+        let leaders = LeaderDurations::new();
+        for i in 0..MAX_HELD_SAMPLES {
+            follower.push(frame(i64::try_from(i).unwrap() * 3_000), &leaders);
+        }
+        assert_eq!(follower.held.len(), MAX_HELD_SAMPLES);
+        assert_eq!(
+            follower
+                .held
+                .front()
+                .and_then(|s| s.timing.and_then(|t| t.dts())),
+            Some(0)
+        );
+        follower.push(
+            frame(i64::try_from(MAX_HELD_SAMPLES).unwrap() * 3_000),
+            &leaders,
+        );
+        assert_eq!(follower.held.len(), MAX_HELD_SAMPLES);
+        assert_eq!(
+            follower
+                .held
+                .front()
+                .and_then(|s| s.timing.and_then(|t| t.dts())),
+            Some(3_000),
+            "the oldest sample is dropped first"
+        );
+    }
+
+    #[test]
+    fn caught_up_compares_the_newest_audio_time_to_the_cut() {
+        let (_trunk, mut follower) = follower();
+        follower.timescale = ts_90k();
+        follower.newest_dts = Some(48_000);
+        assert!(follower.caught_up(&cut(1, 48_000)));
+        assert!(!follower.caught_up(&cut(1, 96_000)));
+    }
+
+    #[test]
+    fn release_cuts_waits_for_the_audio_then_follows() {
+        let (_trunk, mut follower) = follower();
+        follower.timescale = ts_90k();
+        follower.origin = Some((0, ts_90k()));
+        follower.newest_dts = Some(0);
+        let leaders = LeaderDurations::new();
+        follower.on_part_cuts(vec![cut(1, 90_000)], &leaders);
+        assert_eq!(follower.cuts.len(), 1, "the audio has not reached the cut");
+
+        follower.push(frame(90_000), &leaders);
+        assert!(
+            follower.cuts.is_empty(),
+            "catching up releases the held boundary"
+        );
+    }
+
+    #[test]
+    fn release_cuts_forces_past_the_queue_cap() {
+        let (_trunk, mut follower) = follower();
+        follower.timescale = ts_90k();
+        follower.origin = Some((0, ts_90k()));
+        follower.newest_dts = Some(0);
+        let leaders = LeaderDurations::new();
+        for msn in 1..=u64::try_from(MAX_QUEUED_CUTS).unwrap() {
+            follower.on_part_cuts(vec![cut(msn, 1_000_000)], &leaders);
+        }
+        assert_eq!(
+            follower.cuts.len(),
+            MAX_QUEUED_CUTS,
+            "at the cap the boundaries are still held"
+        );
+        follower.on_part_cuts(
+            vec![cut(u64::try_from(MAX_QUEUED_CUTS).unwrap() + 1, 1_000_000)],
+            &leaders,
+        );
+        assert_eq!(
+            follower.cuts.len(),
+            MAX_QUEUED_CUTS,
+            "one past the cap forces one boundary out"
+        );
+    }
+
+    #[test]
+    fn set_start_time_offsets_and_marks_the_first_published_segment() {
+        let (trunk, mut follower) = follower();
+        let mut cursor = trunk.subscribe_segments();
+        follower.set_start_time(Duration::from_secs(5));
+        follower.queue_segment(vec![0u8; 4], 1, Duration::from_secs(1));
+        follower.drain();
+
+        let entry = loop {
+            match cursor.poll() {
+                Some(crate::trunk::SegmentCursorItem::Segment(entry)) => break entry,
+                Some(_) => continue,
+                None => panic!("the queued segment was published"),
+            }
+        };
+        assert_eq!(entry.timeline_position.as_nanos(), 5_000_000_000);
+        assert!(entry.meta.discontinuous, "a resumed run is discontinuous");
+    }
+
+    #[test]
+    fn finish_flushes_the_tail_and_fills_gaps_to_the_leaders_last() {
+        let (trunk, mut follower) = follower();
+        follower.timescale = ts_90k();
+        let leaders: LeaderDurations = (5..=7u32)
+            .map(|seq| (seq, Duration::from_secs(1)))
+            .collect();
+        let mut cursor = trunk.subscribe_segments();
+
+        follower.push(frame(0), &leaders);
+        follower.on_part_cuts(vec![cut(5, 0)], &leaders);
+        assert_eq!(follower.next_seq, 5, "following adopts the leader's number");
+        follower.push(frame(90_000), &leaders);
+        follower.finish(&leaders);
+
+        let mut entries = Vec::new();
+        while let Some(item) = cursor.poll() {
+            if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
+                entries.push((
+                    entry.sequence_number.value(),
+                    entry.bytes.len(),
+                    entry.duration,
+                ));
+            }
+        }
+        assert_eq!(
+            entries.iter().map(|(seq, _, _)| *seq).collect::<Vec<_>>(),
+            vec![5, 6, 7],
+            "the real tail segment then gaps to the leader's last"
+        );
+        assert_ne!(entries[0].1, 0, "the tail segment carries audio");
+        assert!(entries[1..].iter().all(|(_, len, _)| *len == 0));
+        assert!(
+            entries[1..]
+                .iter()
+                .all(|(_, _, duration)| *duration == Duration::from_secs(1))
+        );
+    }
+
+    /// The follower writes into the trunk it was given, whatever capacities the
+    /// host chose for it.
+    #[test]
+    fn publish_ready_queues_the_closed_segments_own_parts() {
+        let (trunk, mut follower) = follower();
+        follower.timescale = ts_90k();
+        let leaders = LeaderDurations::new();
+
+        follower.push(frame(0), &leaders);
+        follower.push(frame(90_000), &leaders);
+        follower.on_part_cuts(vec![cut_part(5, 0, 0), cut_part(5, 1, 30_000)], &leaders);
+        follower.finish(&leaders);
+
+        assert!(
+            trunk
+                .part_bytes(SegmentSeq::new(5), PartIndex::new(0))
+                .is_some(),
+            "the segment's own part (seq == segment) must be published, got {:?}",
+            trunk.parts_in_segment(SegmentSeq::new(5))
+        );
+    }
+
+    fn aac_spec(track_id: TrackId) -> TrackSpec {
+        use broadcast_common::mux::Unpackage;
+        let bytes = test_fixtures::read("ts/h264-aac.ts");
+        let media = transmux::TsDemux::new()
+            .unpackage(&bytes)
+            .expect("demux the fixture");
+        let mut spec = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, transmux::pipeline::CodecConfig::Aac { .. }))
+            .expect("the fixture carries AAC")
+            .spec
+            .clone();
+        spec.track_id = track_id;
+        spec
+    }
+
+    fn selectors(items: &[AudioTrackSelector]) -> Vec<AudioTrackSelector> {
+        items.to_vec()
+    }
+
+    #[test]
+    fn resolve_sources_maps_each_declared_rendition_to_its_own_track() {
+        let tracks = vec![
+            aac_spec(TrackId::new(2)),
+            aac_spec(TrackId::new(3)),
+            track_spec(TrackId::new(1)),
+        ];
+        let mapped = resolve_sources(
+            "route",
+            &selectors(&[AudioTrackSelector::Index(0), AudioTrackSelector::Index(1)]),
+            &tracks,
+        );
+        assert_eq!(
+            mapped
+                .iter()
+                .map(|(rendition, spec)| (*rendition, spec.track_id))
+                .collect::<Vec<_>>(),
+            vec![(0, TrackId::new(2)), (1, TrackId::new(3))]
+        );
+    }
+
+    #[test]
+    fn resolve_sources_ignores_a_track_another_rendition_already_uses() {
+        let tracks = vec![aac_spec(TrackId::new(2)), aac_spec(TrackId::new(3))];
+        let mapped = resolve_sources(
+            "route",
+            &selectors(&[AudioTrackSelector::Index(0), AudioTrackSelector::TrackId(2)]),
+            &tracks,
+        );
+        assert_eq!(mapped.len(), 1, "the duplicate second selector is ignored");
+        assert_eq!(mapped[0].1.track_id, TrackId::new(2));
+    }
+
+    #[test]
+    fn resolve_sources_skips_an_out_of_range_index_and_keeps_the_last() {
+        let tracks = vec![aac_spec(TrackId::new(2)), aac_spec(TrackId::new(3))];
+        assert!(
+            resolve_sources(
+                "route",
+                &selectors(&[AudioTrackSelector::Index(2)]),
+                &tracks
+            )
+            .is_empty(),
+            "index == len matches nothing"
+        );
+        let last = resolve_sources(
+            "route",
+            &selectors(&[AudioTrackSelector::Index(1)]),
+            &tracks,
+        );
+        assert_eq!(last.len(), 1);
+        assert_eq!(last[0].1.track_id, TrackId::new(3));
+    }
+
+    #[test]
+    fn resolve_sources_refuses_to_leave_the_leader_nothing() {
+        let tracks = vec![aac_spec(TrackId::new(2)), aac_spec(TrackId::new(3))];
+        assert!(
+            resolve_sources(
+                "route",
+                &selectors(&[AudioTrackSelector::Index(0), AudioTrackSelector::Index(1),]),
+                &tracks,
+            )
+            .is_empty(),
+            "mapping every muxable track leaves the primary playlist nothing"
+        );
+    }
+
+    #[test]
+    fn leader_tracks_keep_everything_except_the_mapped_rendition() {
+        let tracks = vec![
+            track_spec(TrackId::new(1)),
+            aac_spec(TrackId::new(2)),
+            aac_spec(TrackId::new(3)),
+        ];
+        let mapped = vec![(0, aac_spec(TrackId::new(2)))];
+        assert_eq!(
+            leader_tracks(&tracks, &mapped)
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![TrackId::new(1), TrackId::new(3)]
         );
     }
 
