@@ -803,4 +803,136 @@ mod tests {
             "{result:?}"
         );
     }
+
+    #[test]
+    fn handshake_config_carries_the_routes_stream_id_and_latency() {
+        let route = SrtRoute::new_caller("cam", "127.0.0.1:1")
+            .with_stream_id(Some("live/cam".to_string()))
+            .with_latency(Some(Duration::from_millis(250)));
+        let config = route.handshake_config();
+        assert_eq!(config.stream_id.as_deref(), Some("live/cam"));
+        assert_eq!(config.latency, Duration::from_millis(250));
+
+        let plain = SrtRoute::new_caller("cam", "127.0.0.1:1").handshake_config();
+        assert_eq!(plain.stream_id, None);
+        assert_ne!(plain.latency, Duration::from_millis(250));
+    }
+
+    fn srt_route_handle() -> Arc<crate::route::RouteHandle> {
+        Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_part_target(Duration::from_millis(500))
+                .with_window_segments(4),
+        ))
+    }
+
+    async fn accepted_pair() -> (SrtSocket, SrtSocket) {
+        let mut listener = SrtListener::bind(
+            "127.0.0.1:0",
+            SrtSocketConfig::new(HandshakeConfig::default()),
+        )
+        .await
+        .expect("listener");
+        let addr = listener.local_addr().expect("addr");
+        let caller = tokio::spawn(async move {
+            SrtSocket::connect(addr, SrtSocketConfig::new(HandshakeConfig::default())).await
+        });
+        let accepted = listener.accept().await.expect("accepted");
+        let caller = caller
+            .await
+            .expect("join")
+            .expect("the caller completes its handshake");
+        (accepted, caller)
+    }
+
+    /// A clean peer shutdown is the pre-migration `Ok(())`, not a failure the
+    /// supervisor would reconnect on.
+    #[tokio::test]
+    async fn a_clean_srt_peer_shutdown_ends_drive_socket_with_ok() {
+        let (sock, caller) = accepted_pair().await;
+        drop(caller);
+        let route_handle = srt_route_handle();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            drive_socket(
+                sock,
+                Duration::from_secs(2),
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                |_| {},
+            ),
+        )
+        .await
+        .expect("the drive loop ends at the peer's shutdown");
+        assert!(result.is_ok(), "a clean shutdown is Ok, got {result:?}");
+    }
+
+    /// A peer that stays silent past the read timeout is a genuine failure,
+    /// never a clean shutdown.
+    #[tokio::test]
+    async fn a_silent_srt_peer_fails_drive_socket() {
+        let (sock, _caller) = accepted_pair().await;
+        let route_handle = srt_route_handle();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            drive_socket(
+                sock,
+                Duration::from_millis(200),
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                |_| {},
+            ),
+        )
+        .await
+        .expect("the drive loop ends at the read timeout");
+        assert!(
+            matches!(result, Err(MultimuxError::Connect { .. })),
+            "a read timeout is not a clean shutdown: {result:?}"
+        );
+    }
+
+    /// Caller mode maps the same clean shutdown to `Ok(())`.
+    #[tokio::test]
+    async fn a_clean_srt_listener_shutdown_ends_run_srt_caller_with_ok() {
+        let listener = SrtListener::bind(
+            "127.0.0.1:0",
+            SrtSocketConfig::new(HandshakeConfig::default()),
+        )
+        .await
+        .expect("listener");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let mut listener = listener;
+            let mut sock = listener.accept().await.expect("accepted");
+            for chunk in build_ts_bytes(TrackId::new(1), 0xAA, 40).chunks(7 * 188) {
+                sock.send(chunk).await.expect("send media");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            drop(sock);
+        });
+        let route = SrtRoute::new_caller("cam", addr.to_string()).with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Duration::from_secs(2))
+                .with_read_idle(Duration::from_secs(2)),
+        );
+        let route_handle = srt_route_handle();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            run_srt_caller(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("the caller ends at the listener's shutdown");
+        assert!(result.is_ok(), "a clean shutdown is Ok, got {result:?}");
+        let _ = server.await;
+    }
 }

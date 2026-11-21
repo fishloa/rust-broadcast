@@ -4,6 +4,7 @@
 ### Tests
 - The pull host's track-change detection, finite-end handling, retry/permanent failure classification, connection-failure reason, dropped-task abort and TLS handshake failure are pinned by tests (audit 23 finding 232, #3902).
 - The file reader's inclusive size cap, PTS-delta pacing arithmetic and the route loop's sleep-until-due branch are pinned by tests (audit 23 finding 233, #3903).
+- SRT's clean peer shutdown maps to `Ok(())` while a silent peer fails, in both listener and caller modes, and the route's stream id and latency reach the handshake config (audit 23 finding 234, #3904).
 - Every external-oracle test (Dolby Vision and HDR10 boxes through ffprobe and GPAC `MP4Box`, Smooth fragments through `MP4Box` and Bento4 `mp4dump`, the TS-HLS and cold-join oracles through ffprobe and ffmpeg) now gates its tool through `test_fixtures::process::require_tool`: with `REQUIRE_EXTERNAL_TOOLS=1` a missing tool is a hard failure instead of a silent skip. A new blocking CI `oracles` job installs the tools and sets that switch, so a skipped oracle can no longer read as green (audit 21 finding 60).
 ### Fixed
 - `HttpLimits::from(&Config)`'s field mapping, the per-IP connection table's pruning, `classify_path`'s ops-route labels and the literal cap values have tests (audit 21 findings 49 and 53, #2944/#2948).
