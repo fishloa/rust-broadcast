@@ -2737,7 +2737,7 @@ impl AttrValue {
     /// any of them.
     pub fn quoted(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
-        if value.contains('"') || value.contains('\r') || value.contains('\n') {
+        if value.contains('"') || has_forbidden_control(&value) {
             return Err(Error::InvalidAttrValue {
                 value,
                 kind: "a quoted-string",
@@ -2750,15 +2750,14 @@ impl AttrValue {
     }
 
     /// Build a bare enumerated-string/decimal attribute value. Rejects a
-    /// value containing `,`, `"`, CR, LF or whitespace, any of which would
-    /// require quoting.
+    /// value containing `,`, `"`, a C0 control character, DEL or whitespace,
+    /// any of which would require quoting.
     pub fn bare(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
         if value.contains(',')
             || value.contains('"')
-            || value.contains('\r')
-            || value.contains('\n')
             || value.contains(char::is_whitespace)
+            || has_forbidden_control(&value)
         {
             return Err(Error::InvalidAttrValue {
                 value,
@@ -2960,6 +2959,12 @@ pub fn render_attribute_list(s: &mut String, attrs: &[(String, AttrValue)]) {
 /// embedded `"` can never break out of the attribute list (audit BH-W7,
 /// issue #1111).
 const QUOTED_STRING_FORBIDDEN: &[char] = &['"', '\r', '\n'];
+
+/// A C0 control character (U+0000..=U+001F) or DEL (U+007F): RFC 8216bis §4.1
+/// forbids them in a playlist, so no attribute value may carry one.
+pub(crate) fn has_forbidden_control(value: &str) -> bool {
+    value.chars().any(|c| (c as u32) < 0x20 || c as u32 == 0x7f)
+}
 
 /// Reject a value that cannot be rendered as an RFC 8216 §4.2
 /// quoted-string (see [`QUOTED_STRING_FORBIDDEN`]).

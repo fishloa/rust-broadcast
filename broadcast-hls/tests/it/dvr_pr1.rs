@@ -152,7 +152,7 @@ fn custom_tag_round_trips_wire_order() {
     let tag = CustomTag::parse_tag_line(archive).expect("must parse");
     assert_eq!(tag.name.as_str(), "EXT-X-RUSTBROADCAST-ARCHIVE");
     assert_eq!(
-        tag.attrs
+        tag.attrs()
             .iter()
             .map(|(n, _)| n.as_str())
             .collect::<Vec<_>>(),
@@ -167,7 +167,7 @@ fn custom_tag_round_trips_wire_order() {
     assert_eq!(tag.to_tag_line().expect("render"), timing);
 
     let bare = CustomTag::parse_tag_line("#EXT-X-RUSTBROADCAST-ARCHIVE").expect("must parse");
-    assert!(bare.attrs.is_empty());
+    assert!(bare.attrs().is_empty());
     assert_eq!(
         bare.to_tag_line().expect("render"),
         "#EXT-X-RUSTBROADCAST-ARCHIVE"
@@ -467,6 +467,91 @@ fn daterange_edits_after_parse_are_rendered_in_place() {
 
     let unchanged = DateRange::parse_tag_line(line).expect("must parse");
     assert_eq!(unchanged.to_tag_line().expect("render"), line);
+}
+
+/// Item 1 (round 4): `Cue` is only constructible through its validator.
+#[test]
+fn cue_triggers_are_private_and_validated() {
+    use broadcast_hls::{Cue, CueTrigger};
+
+    assert!(Cue::new(Vec::new()).is_err());
+    assert!(Cue::new(vec![CueTrigger::Pre, CueTrigger::Post]).is_err());
+    assert!(Cue::new(vec![CueTrigger::Pre, CueTrigger::Pre]).is_err());
+    let cue = Cue::new(vec![CueTrigger::Once]).expect("valid");
+    assert_eq!(cue.triggers().len(), 1);
+    assert_eq!(cue.triggers()[0], CueTrigger::Once);
+}
+
+/// Item 2 (round 4): a `CustomTag` setter enforces the wire rules, and
+/// control characters are rejected everywhere a value is accepted.
+#[test]
+fn custom_tag_setters_and_control_characters_are_validated() {
+    use broadcast_hls::{AttrValue, AttributeListError, CustomTag, CustomTagName};
+
+    let mut tag = CustomTag::new(CustomTagName::new("EXT-X-FOO").expect("valid"));
+    tag.set_attr("A", AttrValue::bare("1").expect("valid"))
+        .expect("set");
+    tag.set_attr("A", AttrValue::bare("2").expect("valid"))
+        .expect("replace");
+    assert_eq!(tag.attrs().len(), 1, "a repeated name replaces");
+    assert_eq!(tag.to_tag_line().expect("render"), "#EXT-X-FOO:A=2");
+
+    assert!(matches!(
+        tag.set_attr("B", AttrValue::bare("").expect("empty bare value")),
+        Err(Error::InvalidAttributeList {
+            reason: AttributeListError::EmptyValue,
+            ..
+        })
+    ));
+    assert!(matches!(
+        tag.set_attr("lower", AttrValue::quoted("x").expect("valid")),
+        Err(Error::InvalidAttributeName { .. })
+    ));
+    assert!(matches!(
+        CustomTag::parse_tag_line("#EXT-X-FOO:A=1,A=2"),
+        Err(Error::DuplicateAttribute { .. })
+    ));
+    assert!(matches!(
+        CustomTag::parse_tag_line("#EXT-X-FOO:A="),
+        Err(Error::InvalidAttributeList {
+            reason: AttributeListError::EmptyValue,
+            ..
+        })
+    ));
+
+    assert!(AttrValue::quoted("a\tb").is_err());
+    assert!(AttrValue::quoted("a\rb").is_err());
+    assert!(AttrValue::bare("a\u{7f}b").is_err());
+    assert!(DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-A=\"a\tb\"").is_err());
+    assert!(CustomTag::parse_tag_line("#EXT-X-FOO:A=\"a\tb\"").is_err());
+}
+
+/// Item 4 (round 4): an `SCTE35-*` attribute is built through a validated,
+/// typed setter.
+#[test]
+fn set_scte35_builds_a_valid_splice_attribute() {
+    use broadcast_hls::{DateRangeError, Scte35Kind};
+
+    let mut range = DateRange::new("a").expect("valid id");
+    range
+        .set_scte35(Scte35Kind::Out, "0xFCFF")
+        .expect("valid hex");
+    assert_eq!(
+        range.to_tag_line().expect("render"),
+        "#EXT-X-DATERANGE:ID=\"a\",SCTE35-OUT=0xFCFF"
+    );
+    let parsed = DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",SCTE35-OUT=0xFCFF")
+        .expect("must parse");
+    assert_eq!(parsed, range);
+    assert!(matches!(
+        range.set_scte35(Scte35Kind::Cmd, "FCFF"),
+        Err(Error::InvalidDateRange {
+            reason: DateRangeError::InvalidScte35Value,
+            ..
+        })
+    ));
+    assert_eq!(Scte35Kind::In.name(), "SCTE35-IN");
+    assert_eq!(Scte35Kind::In.to_string(), "SCTE35-IN");
 }
 
 /// Item 2: an empty quoted-string is legal for a quoted-string attribute,

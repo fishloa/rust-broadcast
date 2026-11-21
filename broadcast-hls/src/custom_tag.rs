@@ -118,8 +118,7 @@ impl core::fmt::Display for CustomTagName {
 pub struct CustomTag {
     /// The tag name, without the leading `#`.
     pub name: CustomTagName,
-    /// The attribute list, in wire order.
-    pub attrs: Vec<(String, AttrValue)>,
+    attrs: Vec<(String, AttrValue)>,
 }
 
 impl CustomTag {
@@ -130,6 +129,43 @@ impl CustomTag {
             name,
             attrs: Vec::new(),
         }
+    }
+
+    /// The attribute list, in wire order.
+    #[must_use]
+    pub fn attrs(&self) -> &[(String, AttrValue)] {
+        &self.attrs
+    }
+
+    /// Set an attribute, replacing an existing name in place or appending a
+    /// new one. Enforces the wire scanner's rules: a legal uppercase
+    /// `AttributeName`, no empty bare value and no control characters.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidAttributeName`] for an illegal name,
+    /// [`Error::InvalidAttributeList`] for an empty bare value or a control
+    /// character.
+    pub fn set_attr(&mut self, name: impl Into<String>, value: AttrValue) -> Result<()> {
+        let name = name.into();
+        validate_attr(&name, &value)?;
+        if let Some((_, existing)) = self.attrs.iter_mut().find(|(n, _)| *n == name) {
+            *existing = value;
+        } else {
+            self.attrs.push((name, value));
+        }
+        Ok(())
+    }
+
+    /// Builder form of [`Self::set_attr`].
+    pub fn with_attr(mut self, name: impl Into<String>, value: AttrValue) -> Result<Self> {
+        self.set_attr(name, value)?;
+        Ok(self)
+    }
+
+    /// Remove an attribute by name.
+    pub fn remove_attr(&mut self, name: &str) {
+        self.attrs.retain(|(n, _)| n != name);
     }
 
     /// Parse a complete `#EXT-...:<attribute-list>` line.
@@ -171,9 +207,11 @@ impl CustomTag {
         if self.attrs.is_empty() {
             return Ok(s);
         }
-        for (name, _) in &self.attrs {
-            if !crate::daterange::is_attribute_name(name) {
-                return Err(Error::InvalidAttributeName { name: name.clone() });
+        let mut seen = alloc::collections::BTreeSet::new();
+        for (name, value) in &self.attrs {
+            validate_attr(name, value)?;
+            if !seen.insert(name.as_str()) {
+                return Err(Error::DuplicateAttribute { name: name.clone() });
             }
         }
         s.push(':');
@@ -182,4 +220,25 @@ impl CustomTag {
         s.push_str(list.strip_prefix(',').unwrap_or(&list));
         Ok(s)
     }
+}
+
+fn validate_attr(name: &str, value: &AttrValue) -> Result<()> {
+    if !crate::daterange::is_attribute_name(name) {
+        return Err(Error::InvalidAttributeName {
+            name: name.to_string(),
+        });
+    }
+    if !value.is_quoted() && value.as_str().is_empty() {
+        return Err(Error::InvalidAttributeList {
+            list: String::from(name),
+            reason: crate::AttributeListError::EmptyValue,
+        });
+    }
+    if super::has_forbidden_control(value.as_str()) {
+        return Err(Error::InvalidAttributeList {
+            list: String::from(name),
+            reason: crate::AttributeListError::ControlCharacter,
+        });
+    }
+    Ok(())
 }

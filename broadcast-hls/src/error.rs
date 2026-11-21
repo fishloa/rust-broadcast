@@ -89,6 +89,8 @@ pub enum AttributeListError {
     Whitespace,
     /// A bare value contains a `"`.
     QuoteInBareValue,
+    /// A value contains a C0 control character or DEL.
+    ControlCharacter,
 }
 
 impl AttributeListError {
@@ -104,6 +106,7 @@ impl AttributeListError {
             Self::TrailingCharacters => "trailing_characters",
             Self::Whitespace => "whitespace",
             Self::QuoteInBareValue => "quote_in_bare_value",
+            Self::ControlCharacter => "control_character",
         }
     }
 }
