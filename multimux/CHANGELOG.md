@@ -3,6 +3,17 @@
 ## [Unreleased]
 ### Tests
 - Every external-oracle test (Dolby Vision and HDR10 boxes through ffprobe and GPAC `MP4Box`, Smooth fragments through `MP4Box` and Bento4 `mp4dump`, the TS-HLS and cold-join oracles through ffprobe and ffmpeg) now gates its tool through `test_fixtures::process::require_tool`: with `REQUIRE_EXTERNAL_TOOLS=1` a missing tool is a hard failure instead of a silent skip. A new blocking CI `oracles` job installs the tools and sets that switch, so a skipped oracle can no longer read as green (audit 21 finding 60).
+- The secure-token rejection threshold and alphabet mapping are pinned directly, and a 10 000-symbol sample must use every alphabet symbol (`secure_random`, audit 23 finding 239, #3914).
+- The WHIP/WHEP signalling body cap is pinned at 65 536 bytes in a unit test and in HTTP tests that reject 65 537 and accept a valid 16 KiB offer (audit 23 finding 240, #3915).
+- `content_type_is` rejects a second `Content-Type` header and ignores media-type parameters (audit 23 finding 241, #3916).
+- The `IceFragment` debug test now checks the visible `ufrag` and the redaction marker, not just the absence of the password (audit 23 finding 242, #3917).
+- A Trickle ICE fragment keeps the first `ice-ufrag`/`ice-pwd` when a later media section duplicates them (audit 23 finding 243, #3918).
+- `patch_error_status` maps 412/428/409/400 in a direct unit test (audit 23 finding 244, #3919).
+- `candidate_lines` content is compared exactly, and both offer parsers assert the committed offer's candidate body (audit 23 finding 245, #3920).
+- The pending ICE-op queue accepts exactly its cap, counts a second batch cumulatively, and `commit_restart` is all-or-nothing (audit 23 finding 246, #3921).
+- The transport timer helpers have direct unit tests, and the sleep tests are bounded so a regression fails instead of hanging (audit 23 finding 247, #3922).
+- `validate_trickle`, `validate_restart` and `apply_ice_ops` have unit pins for the candidate/end-marker branches, the reused-ufrag branch, and the applied counters (audit 23 finding 248, #3923).
+- The WHIP/WHEP mutation lane must enable `test-hooks`; without it the HTTP and session-resource integration tests are compiled out and 29 survivors are artifacts of a lane that never ran them (audit 23 finding 238, #3913).
 ### Fixed
 - The SRT push continuity-count tests negotiated the 120 ms minimum TSBPD latency, so a scheduler stall on a loaded machine exceeded the too-late threshold and the receiver skipped payload before the continuity counters were checked. They now negotiate a 3000 ms latency and assert the receiver's `SocketStats` are all zero, so the continuity check again measures the push path rather than SRT's expected too-late drop behaviour (#3552).
 - The two SRT caller loopback tests bound every wait (server accept, server send, and the first `Trunk`) at 30 s and name the stalled stage, so a caller handshake that never completes now fails the test instead of leaving it parked forever on `await_first_trunk` (#3847). The `broadcast-client` SRT caller fix behind it is in that crate's changelog.

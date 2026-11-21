@@ -2433,7 +2433,10 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             parsed.remote_fingerprint
         );
         assert_eq!(parsed.mid, "0");
-        assert_eq!(parsed.candidates.len(), 1);
+        assert_eq!(
+            parsed.candidates,
+            ["1 1 udp 2130706431 10.0.0.5 54321 typ host"]
+        );
     }
 
     /// RFC 5764 §5 / RFC 8122 §5: an offer with no `a=fingerprint` gives
