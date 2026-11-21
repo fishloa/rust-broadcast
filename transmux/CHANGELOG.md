@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **An AAC-hbr fragment plus its headers fills, but never exceeds, the MTU.** No test bounded the packet size, so the payload budget could be wrong and fragment a real AU into oversized or needlessly tiny packets. A 500-byte AU at MTU 100 now fragments as `84x5 + 80`, every packet is at most 100 bytes, a 17-byte MTU yields one-byte fragments, and a 16-byte MTU is refused (audit 23 finding 298, #3814).
 - **The dynamic payload-type allocator hands out 127 and only then reports exhaustion.** The upper boundary had no test, so a valid type 127 could be refused or an invalid 128 handed out; the full 31-type run (96..=127 minus the KLV type) and the following `None` are now pinned (audit 23 finding 297, #3813).
 - **Every `RtmpFlvError` variant renders its diagnostic text.** `Display` was never asserted, so it could return an empty string for all variants; the truncation message is now exact and the chunk-size, message-size and field-overflow messages carry their numbers (audit 23 finding 296, #3812).
 - **`rbsp::unescape` only drops a `03` after two zero bytes.** No test fed a non-zero byte between a zero and a `03`, so the second-zero guard could be dropped and `00 05 03` silently rewritten to `00 00`; the non-match, the match, the trailing triplet and a leading `01` are now pinned (audit 23 finding 295, #3811).
