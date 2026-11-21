@@ -236,15 +236,9 @@ impl DateRange {
     pub fn to_tag_line(&self) -> Result<String> {
         self.validate()?;
         let mut attrs = Vec::new();
-        attrs.push((
-            String::from("ID"),
-            AttrValue::quoted(self.id.clone())?,
-        ));
+        attrs.push((String::from("ID"), AttrValue::quoted(self.id.clone())?));
         if let Some(class) = &self.class {
-            attrs.push((
-                String::from("CLASS"),
-                AttrValue::quoted(class.clone())?,
-            ));
+            attrs.push((String::from("CLASS"), AttrValue::quoted(class.clone())?));
         }
         if let Some(attr) = date_attr("START-DATE", &self.start, &self.start_date_text)? {
             attrs.push(attr);
@@ -336,15 +330,8 @@ fn date_attr(
         return Ok(None);
     };
     let rendered = match text {
-        Some(text)
-            if ProgramDateTime::parse(text).ok().as_ref() == Some(timestamp) =>
-        {
-            text.clone()
-        }
+        Some(text) if ProgramDateTime::parse(text).ok().as_ref() == Some(timestamp) => text.clone(),
         _ => timestamp.render(),
     };
-    Ok(Some((
-        name.to_string(),
-        AttrValue::quoted(rendered)?,
-    )))
+    Ok(Some((name.to_string(), AttrValue::quoted(rendered)?)))
 }

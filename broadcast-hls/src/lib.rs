@@ -1866,78 +1866,78 @@ impl MediaPlaylist {
             validate_quoted_string(title, "EXTINF title")?;
         }
         let mut s = String::new();
-            // Segment-scoped unmodeled tags (EXT-X-KEY rotation, PDT,
-            // DATERANGE, CUE-*) in their original position (audit BH-W5).
-            for tag in &seg.pre_tags {
-                s.push_str(tag);
-                s.push('\n');
-            }
-            if seg.discontinuous {
-                s.push_str("#EXT-X-DISCONTINUITY\n");
-            }
-            // #EXT-X-MAP (RFC 8216bis §4.4.4.5) — emitted only when it
-            // changes from the previous segment's map, since the tag
-            // applies "until the next EXT-X-MAP or the end of the Playlist".
-            let prev_map = if i == 0 {
-                None
-            } else {
-                self.segments[i - 1].map.as_ref()
-            };
-            if seg.map.as_ref() != prev_map
-                && let Some(map) = &seg.map
-            {
-                push_map_line(&mut s, map)?;
-            }
-            // #EXT-X-BITRATE (RFC 8216bis §4.4.4.8, issue #872) — same
-            // carry-forward + dedup-render rule as #EXT-X-MAP above.
-            let prev_bitrate = if i == 0 {
-                None
-            } else {
-                self.segments[i - 1].bitrate
-            };
-            if seg.bitrate != prev_bitrate
-                && let Some(kbps) = seg.bitrate
-            {
-                s.push_str(&format!("#EXT-X-BITRATE:{kbps}\n"));
-            }
-            // #EXT-X-PROGRAM-DATE-TIME (§4.4.4.6) applies to this segment and
-            // MUST precede its first #EXT-X-PART (§4.4.4.9); it follows
-            // DISCONTINUITY/MAP/BITRATE, the conventional order.
-            if let Some(pdt) = &seg.program_date_time {
-                s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
-            }
-            // LL-HLS partial segments precede the parent's #EXTINF
-            // (RFC 8216bis §4.4.4.9), rendered only for a low-latency playlist.
-            if self.low_latency.is_some() {
-                for part in &seg.parts {
-                    push_part_line(&mut s, part)?;
-                }
-            }
-            // #EXT-X-GAP (RFC 8216bis §4.4.4.7, issue #872) — applies to
-            // exactly this segment; rendered immediately before its #EXTINF.
-            if seg.gap {
-                s.push_str("#EXT-X-GAP\n");
-            }
-            // Format with exactly 3 decimal places per RFC 8216 examples.
-            match &seg.title {
-                Some(title) => {
-                    validate_quoted_string(title, "EXTINF title")?;
-                    s.push_str(&format!(
-                        "#EXTINF:{},{title}\n",
-                        format_extinf(seg.duration)
-                    ));
-                }
-                None => {
-                    s.push_str(&format!("#EXTINF:{},\n", format_extinf(seg.duration)));
-                }
-            }
-            // #EXT-X-BYTERANGE (RFC 8216bis §4.4.4.2) — after EXTINF, before
-            // the URI it applies to.
-            if let Some(br) = &seg.byte_range {
-                s.push_str(&format!("#EXT-X-BYTERANGE:{}\n", br.render()));
-            }
-            s.push_str(&seg.uri);
+        // Segment-scoped unmodeled tags (EXT-X-KEY rotation, PDT,
+        // DATERANGE, CUE-*) in their original position (audit BH-W5).
+        for tag in &seg.pre_tags {
+            s.push_str(tag);
             s.push('\n');
+        }
+        if seg.discontinuous {
+            s.push_str("#EXT-X-DISCONTINUITY\n");
+        }
+        // #EXT-X-MAP (RFC 8216bis §4.4.4.5) — emitted only when it
+        // changes from the previous segment's map, since the tag
+        // applies "until the next EXT-X-MAP or the end of the Playlist".
+        let prev_map = if i == 0 {
+            None
+        } else {
+            self.segments[i - 1].map.as_ref()
+        };
+        if seg.map.as_ref() != prev_map
+            && let Some(map) = &seg.map
+        {
+            push_map_line(&mut s, map)?;
+        }
+        // #EXT-X-BITRATE (RFC 8216bis §4.4.4.8, issue #872) — same
+        // carry-forward + dedup-render rule as #EXT-X-MAP above.
+        let prev_bitrate = if i == 0 {
+            None
+        } else {
+            self.segments[i - 1].bitrate
+        };
+        if seg.bitrate != prev_bitrate
+            && let Some(kbps) = seg.bitrate
+        {
+            s.push_str(&format!("#EXT-X-BITRATE:{kbps}\n"));
+        }
+        // #EXT-X-PROGRAM-DATE-TIME (§4.4.4.6) applies to this segment and
+        // MUST precede its first #EXT-X-PART (§4.4.4.9); it follows
+        // DISCONTINUITY/MAP/BITRATE, the conventional order.
+        if let Some(pdt) = &seg.program_date_time {
+            s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
+        }
+        // LL-HLS partial segments precede the parent's #EXTINF
+        // (RFC 8216bis §4.4.4.9), rendered only for a low-latency playlist.
+        if self.low_latency.is_some() {
+            for part in &seg.parts {
+                push_part_line(&mut s, part)?;
+            }
+        }
+        // #EXT-X-GAP (RFC 8216bis §4.4.4.7, issue #872) — applies to
+        // exactly this segment; rendered immediately before its #EXTINF.
+        if seg.gap {
+            s.push_str("#EXT-X-GAP\n");
+        }
+        // Format with exactly 3 decimal places per RFC 8216 examples.
+        match &seg.title {
+            Some(title) => {
+                validate_quoted_string(title, "EXTINF title")?;
+                s.push_str(&format!(
+                    "#EXTINF:{},{title}\n",
+                    format_extinf(seg.duration)
+                ));
+            }
+            None => {
+                s.push_str(&format!("#EXTINF:{},\n", format_extinf(seg.duration)));
+            }
+        }
+        // #EXT-X-BYTERANGE (RFC 8216bis §4.4.4.2) — after EXTINF, before
+        // the URI it applies to.
+        if let Some(br) = &seg.byte_range {
+            s.push_str(&format!("#EXT-X-BYTERANGE:{}\n", br.render()));
+        }
+        s.push_str(&seg.uri);
+        s.push('\n');
         Ok(s)
     }
 
@@ -2548,7 +2548,10 @@ impl MediaPlaylist {
             })
         };
 
-        for (line_no, line) in [pending_extinf_line, pending_byte_range_line].into_iter().flatten() {
+        for (line_no, line) in [pending_extinf_line, pending_byte_range_line]
+            .into_iter()
+            .flatten()
+        {
             diagnostics.push(ParseDiagnostic {
                 kind: ParseDiagnosticKind::DanglingSegmentTags,
                 line_no,

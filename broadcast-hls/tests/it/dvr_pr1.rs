@@ -41,7 +41,10 @@ fn committed_daterange_lines_round_trip_byte_identically() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 8, "the committed fixtures carry eight DATERANGE lines");
+    assert_eq!(
+        seen, 8,
+        "the committed fixtures carry eight DATERANGE lines"
+    );
 }
 
 /// The typed fields are actually populated, not just swept into `extra_attrs`
@@ -67,7 +70,12 @@ fn daterange_fields_are_typed() {
     let design = "#EXT-X-DATERANGE:ID=\"programme-1537-30807\",CLASS=\"io.github.fishloa.rust-broadcast.programme\",START-DATE=\"2024-05-18T18:00:02.000Z\",PLANNED-DURATION=3600,END-ON-NEXT=YES,X-DVB-SERVICE-ID=1537,X-DVB-EVENT-ID=30807,X-SCHEDULED-START=\"2024-05-18T18:00:00Z\",X-TITLE=\"50' inside\"";
     let range = DateRange::parse_tag_line(design).expect("design DATERANGE must parse");
     assert_eq!(range.client_attrs.len(), 4);
-    assert!(range.client_attrs.iter().any(|(n, v)| n.as_str() == "X-TITLE" && v.as_str() == "50' inside"));
+    assert!(
+        range
+            .client_attrs
+            .iter()
+            .any(|(n, v)| n.as_str() == "X-TITLE" && v.as_str() == "50' inside")
+    );
     assert_eq!(range.to_tag_line().expect("render"), design);
 }
 
@@ -117,7 +125,10 @@ fn custom_tag_round_trips_wire_order() {
     let tag = CustomTag::parse_tag_line(archive).expect("must parse");
     assert_eq!(tag.name.as_str(), "EXT-X-RUSTBROADCAST-ARCHIVE");
     assert_eq!(
-        tag.attrs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+        tag.attrs
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .collect::<Vec<_>>(),
         ["VERSION", "CONTAINER", "PERIOD"],
         "wire order must survive"
     );
@@ -130,7 +141,10 @@ fn custom_tag_round_trips_wire_order() {
 
     let bare = CustomTag::parse_tag_line("#EXT-X-RUSTBROADCAST-ARCHIVE").expect("must parse");
     assert!(bare.attrs.is_empty());
-    assert_eq!(bare.to_tag_line().expect("render"), "#EXT-X-RUSTBROADCAST-ARCHIVE");
+    assert_eq!(
+        bare.to_tag_line().expect("render"),
+        "#EXT-X-RUSTBROADCAST-ARCHIVE"
+    );
 }
 
 /// A tag name that is not `EXT-` (or is not from the tag character set) is a
@@ -175,8 +189,7 @@ fn design_playlist_round_trips_byte_identically_with_segment_scoped_timing() {
 
     assert_eq!(playlist.segments.len(), 2);
     assert_eq!(
-        playlist
-            .segments[0]
+        playlist.segments[0]
             .pre_tags
             .iter()
             .filter(|t| t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:"))
@@ -185,8 +198,7 @@ fn design_playlist_round_trips_byte_identically_with_segment_scoped_timing() {
         "first segment carries its timing tag"
     );
     assert_eq!(
-        playlist
-            .segments[1]
+        playlist.segments[1]
             .pre_tags
             .iter()
             .filter(|t| t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:"))
@@ -227,12 +239,11 @@ fn default_parse_still_hoists_the_timing_tag() {
             .any(|t| t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:")),
         "without the option an unknown tag is playlist-level"
     );
-    assert!(
-        playlist
-            .segments
+    assert!(playlist.segments.iter().all(|s| {
+        s.pre_tags
             .iter()
-            .all(|s| s.pre_tags.iter().all(|t| !t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:")))
-    );
+            .all(|t| !t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:"))
+    }));
 }
 
 fn assert_render_split_matches(playlist: &broadcast_hls::MediaPlaylist) {
@@ -273,8 +284,12 @@ fn render_split_equals_full_render() {
     let mut checked = 0usize;
     for fixture in fixtures {
         let input = test_fixtures::read_to_string(fixture);
-        let playlist = MediaPlaylist::parse_with_options(&input, &Limits::default(), &segment_scoped_options())
-            .unwrap_or_else(|e| panic!("{fixture} must parse: {e}"));
+        let playlist = MediaPlaylist::parse_with_options(
+            &input,
+            &Limits::default(),
+            &segment_scoped_options(),
+        )
+        .unwrap_or_else(|e| panic!("{fixture} must parse: {e}"));
         assert_render_split_matches(&playlist);
         checked += 1;
     }
@@ -303,7 +318,10 @@ fn render_split_equals_full_render() {
 
     let mut closed = open.clone();
     closed.endlist = true;
-    assert_eq!(closed.render_endlist().expect("endlist"), "#EXT-X-ENDLIST\n");
+    assert_eq!(
+        closed.render_endlist().expect("endlist"),
+        "#EXT-X-ENDLIST\n"
+    );
     assert_render_split_matches(&closed);
 }
 
@@ -356,7 +374,11 @@ fn dangling_byterange_is_one_diagnostic() {
         .iter()
         .filter(|d| d.kind == ParseDiagnosticKind::DanglingSegmentTags)
         .collect();
-    assert_eq!(dangling.len(), 2, "EXTINF and BYTERANGE each report: {dangling:?}");
+    assert_eq!(
+        dangling.len(),
+        2,
+        "EXTINF and BYTERANGE each report: {dangling:?}"
+    );
     assert_eq!(dangling[0].line, "#EXTINF:2,");
     assert_eq!(dangling[1].line, "#EXT-X-BYTERANGE:100@0");
 
