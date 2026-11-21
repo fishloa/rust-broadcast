@@ -12,6 +12,7 @@
 //! capture's non-video packets).
 
 use broadcast_common::Unpackage;
+use transmux::ac3::{split_eac3_syncframe_ranges, split_eac3_syncframes};
 use transmux::pipeline::CodecConfig;
 use transmux::{Ec3SyncframeInfo, TsDemux};
 
@@ -88,6 +89,45 @@ fn committed_real_eac3_captures_unchanged() {
         check("gulli-opengop.ts", &committed("gulli-opengop.ts")),
         [(230, 0)]
     );
+}
+
+/// A PES payload routinely ends mid-frame (a lost packet truncates the tail),
+/// so the E-AC-3 walkers must drop the incomplete frame rather than index past
+/// the buffer — both the access-unit split and the syncframe ranges.
+#[test]
+fn a_truncated_last_eac3_frame_is_dropped() {
+    let media = TsDemux::new()
+        .unpackage(&committed("dolby/eac3.ts"))
+        .expect("demux");
+    let track = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. }))
+        .expect("an E-AC-3 track");
+    let es: Vec<u8> = track.samples.iter().flat_map(|s| s.data.iter().copied()).collect();
+    let whole = split_eac3_syncframes(&es);
+    let ranges = split_eac3_syncframe_ranges(&es);
+    assert_eq!(whole.len(), 58);
+    assert_eq!(ranges.len(), whole.len());
+    assert_eq!(ranges.last().unwrap().1, es.len());
+
+    let cut = &es[..es.len() - 1];
+    assert_eq!(
+        split_eac3_syncframes(cut).len(),
+        whole.len() - 1,
+        "only the complete frames are access units"
+    );
+    let cut_ranges = split_eac3_syncframe_ranges(cut);
+    assert_eq!(cut_ranges.len(), whole.len() - 1);
+    assert!(
+        cut_ranges.iter().all(|&(_, end)| end <= cut.len()),
+        "no range may end past the payload"
+    );
+
+    let first_len = ranges[0].1 - ranges[0].0;
+    let one_plus_two = &es[..first_len + 2];
+    assert_eq!(split_eac3_syncframes(one_plus_two).len(), 1);
+    assert_eq!(split_eac3_syncframe_ranges(one_plus_two), [(0, first_len)]);
 }
 
 #[test]
