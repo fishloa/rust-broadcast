@@ -164,3 +164,29 @@ async fn blocking_reload_past_three_target_durations_is_503() {
         "gave up after {waited:?}, before three Target Durations"
     );
 }
+
+/// A whole-segment request for the segment still being produced streams its
+/// parts: the future-segment abuse bound must not reject a segment at (or
+/// inside) the live edge.
+#[tokio::test(start_paused = true)]
+async fn an_in_progress_segment_at_the_live_edge_streams_its_parts() {
+    let mut feeder = Feeder::new();
+    feeder.frames(0..FRAMES_PER_SEGMENT * 2 + FRAMES_PER_SEGMENT / 2);
+    let app = app(&feeder.store);
+    let open = open_segment_msn(&app).await;
+
+    let resp = app
+        .clone()
+        .oneshot(get(&format!("/cam/seg-1-{open}.m4s")))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "the open segment must stream, not be refused as too far ahead"
+    );
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(!body.is_empty(), "the streamed segment must carry its parts");
+}

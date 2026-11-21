@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Tests
+- The spliced-segment cache key is pinned to the whole identity (sequence number, source address and length, event set), its oldest entry is evicted at capacity, the over-32-bit `emsg` id fold stays unique, `latest_progress` names the open segment with its part count, and a whole-segment request at the live edge still streams (audit 23 finding 221, #3885).
 - The idle-write-timeout body wrapper forwards its inner body's exact size (a 4 KiB body reports `Some(4096)`), and a whole-body response served over HTTP/1.1 and h2c still carries `Content-Length` instead of falling back to chunked (audit 23 finding 220, #3884).
 - The pull-queue limits (`MAX_HTTP_BODY_BYTES`, `LIVE_EVENT_QUEUE_BYTES`, `SEGMENTED_EVENT_QUEUE_BYTES`) are asserted as their literal sizes, and `report_driver_progress` promotes the route only when the driver is actually live (an establishing driver leaves a failed/reconnecting route alone) (audit 23 finding 219, #3883).
 - The three metrics wired but previously unread are pinned through the Prometheus recorder: dropped TS backlog samples increment `multimux_ts_backlog_dropped_total` by their count, reconnects increment `multimux_source_reconnects_total{route}`, and a blocking-wait guard raises and restores `multimux_active_blocking_requests` (audit 23 finding 218, #3882).

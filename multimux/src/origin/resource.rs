@@ -376,8 +376,8 @@ fn unique_emsg_id(
     // already), truncating into the id space, and walk upward past any
     // collision with a value emitted earlier in this segment.
     let base = u32::try_from(media_time_90k).unwrap_or_else(|_| {
-        // The 90 kHz clock is 33-bit; anything wider cannot occur, but if it
-        // ever did, fold it rather than panic.
+        // A 33-bit 90 kHz PTS exceeds `u32::MAX` after about 13.2 hours, so
+        // this fold is reachable; wrap the value rather than panic.
         u32::try_from(media_time_90k % u64::from(u32::MAX)).unwrap_or(u32::MAX)
     });
     let mut id = base;
@@ -1890,5 +1890,93 @@ mod tests {
             returned,
             "the gauge never returned to its pre-wait value (the guard leaked)"
         );
+    }
+
+    /// `latest_progress` names the open segment (the one with parts), not the
+    /// last closed one, and counts its parts: the in-progress abuse bound is
+    /// measured from it.
+    #[test]
+    fn latest_progress_is_the_open_segment_with_its_parts() {
+        let route = make_route();
+        let serving = route
+            .serving(crate::route::SPTS_PROGRAM_ID)
+            .expect("program published");
+        assert_eq!(
+            serving.latest_progress(),
+            (media_plane::ids::SegmentSeq::new(2), 2)
+        );
+    }
+
+    /// A spliced-segment cache hit needs the whole identity: sequence number,
+    /// the source bytes' address and length, and the event set. A hit on
+    /// fewer of those serves bytes spliced for different media.
+    #[test]
+    fn the_spliced_cache_key_is_the_whole_segment_identity() {
+        let cache = SplicedSegments::default();
+        let source = bytes::Bytes::from(vec![1u8, 2, 3, 4]);
+        let events = vec![9u8, 9];
+        let result = bytes::Bytes::from(vec![7u8, 7]);
+        cache.insert(4, source.clone(), events.clone(), result.clone());
+        assert_eq!(cache.get(4, &source, &events), Some(result));
+        assert_eq!(
+            cache.get(4, &bytes::Bytes::from(vec![1u8, 2, 3, 4]), &events),
+            None,
+            "a different allocation of the same bytes is a different source"
+        );
+        assert_eq!(
+            cache.get(4, &source.slice(0..2), &events),
+            None,
+            "a different length at the same address is a different source"
+        );
+        assert_eq!(cache.get(4, &source, &[0u8]), None, "different events");
+        assert_eq!(cache.get(5, &source, &events), None, "different segment");
+    }
+
+    /// The cache keeps at most `SPLICED_SEGMENTS_KEPT` entries, evicting the
+    /// oldest: it must not grow without bound.
+    #[test]
+    fn the_spliced_cache_evicts_its_oldest_entry_at_capacity() {
+        let cache = SplicedSegments::default();
+        let sources: Vec<bytes::Bytes> = (1..=SPLICED_SEGMENTS_KEPT as u32 + 1)
+            .map(|seq| bytes::Bytes::from(vec![seq as u8; 8]))
+            .collect();
+        for (index, source) in sources.iter().enumerate() {
+            cache.insert(
+                index as u32 + 1,
+                source.clone(),
+                Vec::new(),
+                bytes::Bytes::from(vec![0u8; 2]),
+            );
+        }
+        assert_eq!(
+            cache.get(1, &sources[0], &[]),
+            None,
+            "the oldest entry must be evicted"
+        );
+        assert!(
+            cache.get(2, &sources[1], &[]).is_some(),
+            "everything inside the kept window must still hit"
+        );
+        assert!(
+            cache.get(
+                SPLICED_SEGMENTS_KEPT as u32 + 1,
+                &sources[SPLICED_SEGMENTS_KEPT],
+                &[]
+            )
+            .is_some(),
+            "the newest entry must hit"
+        );
+    }
+
+    /// A media time past the 32-bit id space folds into it instead of
+    /// panicking, and the derived id stays unique within the segment.
+    #[test]
+    fn an_over_32_bit_media_time_folds_into_the_id_space() {
+        let mut used = std::collections::HashSet::new();
+        let media_time = u64::from(u32::MAX) * 2;
+        let first = unique_emsg_id(None, media_time, &mut used);
+        assert_eq!(first, 0);
+        let second = unique_emsg_id(None, media_time, &mut used);
+        assert_eq!(second, 1, "the walk moves past an id already emitted");
     }
 }
