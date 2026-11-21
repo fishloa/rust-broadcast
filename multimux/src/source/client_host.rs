@@ -235,6 +235,10 @@ pub(crate) struct SessionStep {
     stalled_seen: bool,
     finite: bool,
     transport_error: Option<String>,
+    #[cfg(all(feature = "test-seams", test))]
+    injected_events: std::collections::VecDeque<Event>,
+    #[cfg(all(feature = "test-seams", test))]
+    events_drained: usize,
 }
 
 impl SessionStep {
@@ -298,6 +302,10 @@ impl SessionStep {
             stalled_seen: false,
             finite: false,
             transport_error: None,
+            #[cfg(all(feature = "test-seams", test))]
+            injected_events: std::collections::VecDeque::new(),
+            #[cfg(all(feature = "test-seams", test))]
+            events_drained: 0,
         };
         step.anchor_wall_clock();
         Ok(step)
@@ -528,12 +536,29 @@ impl SessionStep {
         }
     }
 
+    fn next_event(&mut self) -> Option<Event> {
+        #[cfg(all(feature = "test-seams", test))]
+        if let Some(event) = self.injected_events.pop_front() {
+            return Some(event);
+        }
+        self.session.next_event()
+    }
+
+    #[cfg(all(feature = "test-seams", test))]
+    pub(crate) fn inject_events(&mut self, events: impl IntoIterator<Item = Event>) {
+        self.injected_events.extend(events);
+    }
+
     async fn drain_events(&mut self, driver: &mut IngestDriver<EventIngest>) -> Verdict {
         let now = ts(self.start, Instant::now());
         let mut verdict = Verdict::Continue;
         let mut drained = 0usize;
-        while let Some(event) = self.session.next_event() {
+        while let Some(event) = self.next_event() {
             drained += 1;
+            #[cfg(all(feature = "test-seams", test))]
+            {
+                self.events_drained = drained;
+            }
             if drained.is_multiple_of(EVENT_DRAIN_YIELD_EVERY) {
                 tokio::task::yield_now().await;
             }
@@ -1109,5 +1134,548 @@ mod tests {
             ran.load(std::sync::atomic::Ordering::SeqCst),
             "draining a large burst must yield to the runtime"
         );
+    }
+
+    fn events(ingest: &mut EventIngest) -> Vec<SessionEvent> {
+        std::iter::from_fn(|| Stage::poll(ingest)).collect()
+    }
+
+    fn spec(track: u32, changed: bool) -> TrackSpec {
+        let mut spec = media_plane::ts_session::test_support::track_spec(TrackId::new(track));
+        if changed {
+            spec.es_info_descriptors = vec![0x00];
+        }
+        spec
+    }
+
+    #[test]
+    fn a_track_set_change_is_reported_once_and_a_removed_track_dropped() {
+        let mut ingest = EventIngest::new();
+        ingest
+            .feed(
+                Event::Tracks(vec![spec(1, false), spec(2, false)]),
+                Timestamp::ZERO,
+            )
+            .expect("feed");
+        let first = events(&mut ingest);
+        assert_eq!(first.len(), 2, "Established then NewProgram");
+        assert!(matches!(&first[0], SessionEvent::Established));
+        assert!(matches!(
+            &first[1],
+            SessionEvent::NewProgram { tracks, .. } if tracks.len() == 2
+        ));
+
+        ingest
+            .feed(Event::Tracks(vec![spec(1, false)]), Timestamp::ZERO)
+            .expect("feed");
+        let removed = events(&mut ingest);
+        assert_eq!(removed.len(), 1, "a removed track changes the set");
+        match &removed[0] {
+            SessionEvent::TracksChanged { tracks, .. } => {
+                assert_eq!(tracks.len(), 1, "only track 1 remains");
+                assert_eq!(tracks[0].track_id, TrackId::new(1));
+            }
+            other => panic!("expected TracksChanged, got {other:?}"),
+        }
+
+        ingest
+            .feed(Event::Tracks(vec![spec(1, false)]), Timestamp::ZERO)
+            .expect("feed");
+        assert!(
+            events(&mut ingest).is_empty(),
+            "an unchanged track set is not a change"
+        );
+
+        ingest
+            .feed(Event::Tracks(vec![spec(1, true)]), Timestamp::ZERO)
+            .expect("feed");
+        let updated = events(&mut ingest);
+        assert_eq!(updated.len(), 1, "a changed spec is announced once");
+        match &updated[0] {
+            SessionEvent::TracksChanged { tracks, .. } => {
+                assert_eq!(tracks.len(), 1);
+                assert_eq!(tracks[0].es_info_descriptors, vec![0x00]);
+            }
+            other => panic!("expected TracksChanged, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn event_ingest_demands_another_event() {
+        let ingest = EventIngest::new();
+        assert_eq!(Stage::demand(&ingest), Demand::new(1));
+    }
+
+    fn test_route() -> std::sync::Arc<crate::route::RouteHandle> {
+        std::sync::Arc::new(crate::route::RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(std::time::Duration::from_secs(1))
+                .with_part_target(Duration::from_millis(250))
+                .with_window_segments(8),
+        ))
+    }
+
+    fn test_driver() -> IngestDriver<EventIngest> {
+        IngestDriver::new(
+            EventIngest::new(),
+            media_plane::IngestConfig::new(media_plane::ts_session::test_support::handshake())
+                .with_trunk(media_plane::trunk::TrunkConfig::default()),
+        )
+    }
+
+    fn open_step(retries: bool) -> SessionStep {
+        let mut labels =
+            SessionLabels::new("test", broadcast_common::timeouts::Timeouts::default());
+        if retries {
+            labels = labels.session_retries();
+        }
+        SessionStep::open(
+            "http://127.0.0.1:1/test.ts",
+            Config::relay(),
+            None,
+            labels,
+            test_route(),
+            false,
+        )
+        .expect("open")
+    }
+
+    fn connect_reason(verdict: &Verdict) -> Option<&str> {
+        match verdict {
+            Verdict::Failed(MultimuxError::Connect { reason }) => Some(reason),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn a_truncated_finite_body_ending_the_connection_is_a_failure() {
+        let mut step = open_step(false);
+        let mut driver = test_driver();
+        step.inject_events([
+            Event::Tracks(vec![spec(1, false)]),
+            Event::Finite { expected_bytes: 10 },
+            Event::Status(Status::Reconnecting { attempt: 1 }),
+        ]);
+        let verdict = step.drain_events(&mut driver).await;
+        assert!(
+            connect_reason(&verdict).is_some_and(|r| r.contains("truncated transfer")),
+            "a finite body that ended early is a truncated transfer"
+        );
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn a_reconnect_is_terminal_without_session_retries_and_retried_with_them() {
+        let mut driver = test_driver();
+        let mut plain = open_step(false);
+        plain.inject_events([
+            Event::Tracks(vec![spec(1, false)]),
+            Event::Status(Status::Stalled {
+                stalled: Duration::from_millis(1),
+            }),
+            Event::Status(Status::Reconnecting { attempt: 1 }),
+        ]);
+        assert!(
+            connect_reason(&plain.drain_events(&mut driver).await).is_some(),
+            "a route that owns reconnection fails the attempt"
+        );
+
+        let mut driver = test_driver();
+        let mut retrying = open_step(true);
+        retrying.inject_events([
+            Event::Tracks(vec![spec(1, false)]),
+            Event::Status(Status::Reconnecting { attempt: 1 }),
+        ]);
+        assert!(
+            !matches!(retrying.drain_events(&mut driver).await, Verdict::Failed(_)),
+            "a segmented source retries the reconnect itself"
+        );
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn a_not_found_answer_is_terminal_without_session_retries_only() {
+        let mut driver = test_driver();
+        let mut plain = open_step(false);
+        plain.inject_events([Event::Status(Status::NotFound)]);
+        assert!(matches!(
+            plain.drain_events(&mut driver).await,
+            Verdict::Failed(_)
+        ));
+
+        let mut driver = test_driver();
+        let mut retrying = open_step(true);
+        retrying.inject_events([Event::Status(Status::NotFound)]);
+        assert!(
+            !matches!(retrying.drain_events(&mut driver).await, Verdict::Failed(_)),
+            "a segmented source treats a missing resource as its own retry"
+        );
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn a_forbidden_answer_is_auth_with_retries_and_connect_without() {
+        let mut driver = test_driver();
+        let mut retrying = open_step(true);
+        retrying.inject_events([Event::Forbidden {
+            status: http::StatusCode::FORBIDDEN,
+        }]);
+        assert!(matches!(
+            retrying.drain_events(&mut driver).await,
+            Verdict::Failed(MultimuxError::Auth(_))
+        ));
+
+        let mut driver = test_driver();
+        let mut plain = open_step(false);
+        plain.inject_events([Event::Forbidden {
+            status: http::StatusCode::FORBIDDEN,
+        }]);
+        assert!(matches!(
+            plain.drain_events(&mut driver).await,
+            Verdict::Failed(MultimuxError::Connect { .. })
+        ));
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn a_server_refusal_is_terminal_without_session_retries_only() {
+        let mut driver = test_driver();
+        let mut plain = open_step(false);
+        plain.inject_events([Event::ServerRefused {
+            status: http::StatusCode::SERVICE_UNAVAILABLE,
+            retry_after: None,
+            reason: None,
+        }]);
+        assert!(matches!(
+            plain.drain_events(&mut driver).await,
+            Verdict::Failed(_)
+        ));
+
+        let mut driver = test_driver();
+        let mut retrying = open_step(true);
+        retrying.inject_events([Event::ServerRefused {
+            status: http::StatusCode::SERVICE_UNAVAILABLE,
+            retry_after: None,
+            reason: None,
+        }]);
+        assert!(
+            !matches!(retrying.drain_events(&mut driver).await, Verdict::Failed(_)),
+            "the session applies the retry delay itself"
+        );
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn a_connection_ending_error_fails_the_attempt_and_a_recoverable_one_does_not() {
+        let mut driver = test_driver();
+        let mut plain = open_step(false);
+        plain.inject_events([Event::Error {
+            kind: ErrorKind::SrtPeerIdle,
+            fatal: false,
+        }]);
+        assert!(
+            connect_reason(&plain.drain_events(&mut driver).await).is_some(),
+            "an error that ended the connection is a failed attempt"
+        );
+
+        let mut driver = test_driver();
+        let mut plain = open_step(false);
+        plain.inject_events([Event::Error {
+            kind: ErrorKind::BadKey,
+            fatal: false,
+        }]);
+        assert!(
+            !matches!(plain.drain_events(&mut driver).await, Verdict::Failed(_)),
+            "a recoverable error does not end the attempt"
+        );
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn a_permanent_error_fails_a_retrying_attempt_and_a_recoverable_one_does_not() {
+        let mut driver = test_driver();
+        let mut retrying = open_step(true);
+        retrying.inject_events([Event::Error {
+            kind: ErrorKind::DecryptFailed,
+            fatal: false,
+        }]);
+        assert!(matches!(
+            retrying.drain_events(&mut driver).await,
+            Verdict::Failed(MultimuxError::Session { .. })
+        ));
+
+        let mut driver = test_driver();
+        let mut retrying = open_step(true);
+        retrying.inject_events([Event::Error {
+            kind: ErrorKind::BadKey,
+            fatal: false,
+        }]);
+        assert!(
+            !matches!(retrying.drain_events(&mut driver).await, Verdict::Failed(_)),
+            "a retryable error is left to the session"
+        );
+
+        let mut driver = test_driver();
+        let mut plain = open_step(false);
+        plain.inject_events([Event::Error {
+            kind: ErrorKind::DecryptFailed,
+            fatal: false,
+        }]);
+        assert!(
+            !matches!(plain.drain_events(&mut driver).await, Verdict::Failed(_)),
+            "a route that owns reconnection does not pre-empt the session's permanent classification"
+        );
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn the_drain_counter_counts_every_event() {
+        let mut step = open_step(false);
+        let mut driver = test_driver();
+        step.inject_events([
+            Event::Status(Status::Stalled {
+                stalled: Duration::from_millis(1),
+            }),
+            Event::Status(Status::Ended),
+            Event::Discontinuity,
+        ]);
+        let _ = step.drain_events(&mut driver).await;
+        assert_eq!(step.events_drained, 3);
+    }
+
+    #[tokio::test]
+    async fn dropping_the_step_aborts_outstanding_tasks() {
+        let mut step = open_step(false);
+        let task = tokio::spawn(std::future::pending::<()>());
+        step.requests.insert(ConnId::new(9), task.abort_handle());
+        drop(step);
+        let joined = tokio::time::timeout(Duration::from_secs(5), task).await;
+        assert!(
+            matches!(joined, Ok(Err(e)) if e.is_cancelled()),
+            "dropping the host must abort the connection tasks it owns"
+        );
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn a_failed_connection_records_the_transport_error_the_reconnect_reports() {
+        let mut step = open_step(false);
+        step.fail_connection(ConnId::new(1), "boom".to_string());
+        let mut driver = test_driver();
+        step.inject_events([
+            Event::Tracks(vec![spec(1, false)]),
+            Event::Status(Status::Reconnecting { attempt: 1 }),
+        ]);
+        let verdict = step.drain_events(&mut driver).await;
+        assert!(
+            connect_reason(&verdict).is_some_and(|r| r.contains("boom")),
+            "the recorded transport error is the reconnect's reason"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_reports_whether_the_payload_advanced() {
+        let mut step = open_step(false);
+        let conn = loop {
+            match step.session.poll(Timestamp::ZERO) {
+                Some(Action::HttpRequest { conn, .. }) => break conn,
+                Some(_) => {}
+                None => panic!("the session issued no request"),
+            }
+        };
+        assert!(
+            !step.apply(Message::Response {
+                conn,
+                status: http::StatusCode::OK,
+                headers: http::HeaderMap::new(),
+            }),
+            "a response head is not payload"
+        );
+        assert!(
+            !step.apply(Message::Data {
+                conn: ConnId::new(4242),
+                bytes: vec![0x47; 10],
+            }),
+            "data for a connection the session does not know advances nothing"
+        );
+        assert!(
+            step.apply(Message::Data {
+                conn,
+                bytes: vec![0x47; 10],
+            }),
+            "accepted body bytes advance the payload counter"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_session_socket_options_are_ored_onto_the_route_options() {
+        let mut config = Config::relay();
+        config.kind = broadcast_client::SourceKind::Udp;
+        config.udp.options.reuse_address = false;
+        config.udp.options.reuse_port = false;
+        let step = SessionStep::open(
+            "udp://127.0.0.1:58000",
+            config,
+            None,
+            SessionLabels::new("udp", broadcast_common::timeouts::Timeouts::default()),
+            test_route(),
+            false,
+        )
+        .expect("open");
+        let mut step = step.with_udp(UdpHost {
+            prebound: None,
+            options: broadcast_common::net::UdpOptions::new()
+                .with_reuse_address(true)
+                .with_reuse_port(true),
+        });
+        step.perform_actions().await.expect("bind");
+        let socket = step.sockets.values().next().expect("a bound socket");
+        let sock = socket2::SockRef::from(socket.as_ref());
+        assert!(
+            sock.reuse_address().expect("reuse_address"),
+            "the route's SO_REUSEADDR must survive a session that left it unset"
+        );
+        assert!(
+            sock.reuse_port().expect("reuse_port"),
+            "the route's SO_REUSEPORT must survive a session that left it unset"
+        );
+    }
+
+    struct ManualClock(std::sync::atomic::AtomicU64);
+
+    impl ManualClock {
+        fn new(us: u64) -> Self {
+            Self(std::sync::atomic::AtomicU64::new(us))
+        }
+        fn set(&self, us: u64) {
+            self.0.store(us, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl HostClock for ManualClock {
+        fn mono_us(&self) -> u64 {
+            self.0.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn unix_us(&self) -> u64 {
+            0
+        }
+    }
+
+    #[tokio::test]
+    async fn the_wall_clock_is_re_read_only_when_the_resync_is_due() {
+        let clock = std::sync::Arc::new(ManualClock::new(1_000));
+        let mut step = open_step(false)
+            .with_clock(clock.clone())
+            .with_clock_resync(Some(Duration::from_micros(5_000)));
+        assert_eq!(step.next_anchor_us, 6_000);
+        let mut driver = test_driver();
+
+        clock.set(3_000);
+        let _ = step.step(&mut driver, Duration::ZERO).await;
+        assert_eq!(step.next_anchor_us, 6_000, "not due yet");
+
+        clock.set(6_000);
+        let _ = step.step(&mut driver, Duration::ZERO).await;
+        assert_eq!(step.next_anchor_us, 11_000, "due at the deadline");
+    }
+
+    #[tokio::test]
+    async fn a_response_yields_idle_and_advanced_payload_yields_received() {
+        let mut step = open_step(false);
+        let mut driver = test_driver();
+        step.perform_actions().await.expect("request");
+        let conn = *step.requests.keys().next().expect("a pending request");
+
+        step.tx
+            .send(Message::Response {
+                conn,
+                status: http::StatusCode::OK,
+                headers: http::HeaderMap::new(),
+            })
+            .await
+            .expect("queue a response");
+        let outcome = step.step(&mut driver, Duration::from_millis(5)).await;
+        assert!(
+            matches!(outcome, StepOutcome::Idle),
+            "a message that advanced no payload is idle"
+        );
+
+        step.tx
+            .send(Message::Data {
+                conn,
+                bytes: vec![0x47; 10],
+            })
+            .await
+            .expect("queue data");
+        let outcome = step.step(&mut driver, Duration::from_millis(5)).await;
+        assert!(
+            matches!(outcome, StepOutcome::Received),
+            "accepted body bytes are received"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_large_read_is_delivered_whole() {
+        use tokio::io::AsyncWriteExt as _;
+
+        let (client, mut server) = tokio::io::duplex(8192);
+        let (tx, mut rx) = mpsc::channel(4);
+        let task = tokio::spawn(read_stream(Box::new(client), ConnId::new(1), tx));
+        let payload = vec![0xAB; 2_000];
+        server.write_all(&payload).await.expect("write");
+        match rx.recv().await.expect("a message") {
+            Message::Data { bytes, .. } => {
+                assert_eq!(bytes.len(), 2_000, "the read buffer must hold a whole read")
+            }
+            _ => panic!("expected data"),
+        }
+        drop(server);
+        let _ = rx.recv().await;
+        let _ = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the read loop ends at EOF");
+    }
+
+    #[tokio::test]
+    async fn a_closed_read_stops_the_loop() {
+        let (client, server) = tokio::io::duplex(64);
+        drop(server);
+        let (tx, mut rx) = mpsc::channel(1);
+        let task = tokio::spawn(read_stream(Box::new(client), ConnId::new(1), tx));
+        assert!(matches!(
+            rx.recv().await.expect("a message"),
+            Message::Closed { error: None, .. }
+        ));
+        let finished = tokio::time::timeout(Duration::from_secs(5), task).await;
+        assert!(
+            finished.is_ok(),
+            "the read loop must return after delivering the close"
+        );
+    }
+
+    #[cfg(feature = "tls")]
+    #[tokio::test]
+    async fn a_failed_tls_handshake_is_an_error() {
+        use tokio::io::AsyncWriteExt as _;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("addr").port();
+        let server = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(b"not a tls server\r\n").await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        let result = TlsHost::default()
+            .connect("127.0.0.1", port, true, Duration::from_secs(5))
+            .await;
+        assert!(
+            result.is_err(),
+            "a peer that does not speak TLS must fail the handshake"
+        );
+        let _ = server.await;
     }
 }

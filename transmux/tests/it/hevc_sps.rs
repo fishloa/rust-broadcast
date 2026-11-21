@@ -194,3 +194,391 @@ fn hevc_sps_too_short_returns_error() {
         "one-byte input must return Err (need at least 2 bytes for HEVC NAL header)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Synthetic SPS bounds (audit 23 #3849, #3851, #3852, #3853, #3854, #3855, #3856)
+// ---------------------------------------------------------------------------
+
+use crate::sps_builder::{HevcHrd, HevcHrdLayer, HevcRps, HevcSps, HevcVui, hevc_sps};
+use transmux::sps::decode_hevc_interlace_sps;
+
+const PROGRESSIVE_SOURCE: u64 = 1 << 47;
+const INTERLACED_SOURCE: u64 = 1 << 46;
+
+#[test]
+fn hevc_frame_field_info_inferred_only_when_both_source_flags_set() {
+    for (flags, expected) in [
+        (0, false),
+        (PROGRESSIVE_SOURCE, false),
+        (INTERLACED_SOURCE, false),
+        (PROGRESSIVE_SOURCE | INTERLACED_SOURCE, true),
+    ] {
+        let nal = hevc_sps(&HevcSps {
+            constraint_flags: flags,
+            ..HevcSps::default()
+        });
+        let interlace = decode_hevc_interlace_sps(&nal).expect("decode interlace facts");
+        assert_eq!(
+            interlace.frame_field_info_present, expected,
+            "constraint flags {flags:#x}: inference requires both source flags"
+        );
+    }
+}
+
+fn timing_vui(n: u32, ts: u32) -> HevcVui {
+    HevcVui {
+        field_seq: false,
+        frame_field_info_present: false,
+        default_display: None,
+        timing: Some((n, ts)),
+        hrd: None,
+    }
+}
+
+#[test]
+fn hevc_vui_timing_frame_rate_and_zero_num_units() {
+    let nal = hevc_sps(&HevcSps {
+        vui: Some(timing_vui(1001, 60000)),
+        ..HevcSps::default()
+    });
+    let info = transmux::decode_hevc_sps(&nal).expect("decode SPS");
+    assert_eq!(info.num_units_in_tick, Some(1001));
+    assert_eq!(info.time_scale, Some(60000));
+    let fps = info.fps.expect("frame rate");
+    assert!(
+        (fps - 59.94).abs() < 1e-3,
+        "HEVC fps = time_scale / num_units_in_tick, got {fps}"
+    );
+
+    let nal = hevc_sps(&HevcSps {
+        vui: Some(timing_vui(0, 60000)),
+        ..HevcSps::default()
+    });
+    let info = transmux::decode_hevc_sps(&nal).expect("decode SPS");
+    assert_eq!(info.num_units_in_tick, Some(0));
+    assert_eq!(info.time_scale, Some(60000));
+    assert_eq!(info.fps, None, "num_units_in_tick 0 yields no frame rate");
+}
+
+#[test]
+fn hevc_hrd_walk_reads_sub_layer_hrd_and_reports_last_fixed_rate() {
+    let nal = hevc_sps(&HevcSps {
+        max_sub_layers_minus1: 2,
+        sub_layer_profile_present: vec![false, false],
+        sub_layer_level_present: vec![false, false],
+        vui: Some(HevcVui {
+            field_seq: false,
+            frame_field_info_present: false,
+            default_display: None,
+            timing: Some((1, 50)),
+            hrd: Some(HevcHrd {
+                nal: true,
+                vcl: false,
+                sub_pic: true,
+                layers: vec![
+                    HevcHrdLayer {
+                        general: false,
+                        within: false,
+                        low_delay: true,
+                        cpb_minus1: 0,
+                        elemental: 0,
+                    },
+                    HevcHrdLayer {
+                        general: false,
+                        within: false,
+                        low_delay: false,
+                        cpb_minus1: 2,
+                        elemental: 0,
+                    },
+                    HevcHrdLayer {
+                        general: true,
+                        within: true,
+                        low_delay: false,
+                        cpb_minus1: 0,
+                        elemental: 4,
+                    },
+                ],
+            }),
+        }),
+        ..HevcSps::default()
+    });
+    let timing = transmux::decode_hevc_vui_timing(&nal)
+        .expect("decode")
+        .expect("timing present");
+    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+    assert_eq!(
+        timing.hrd_fixed_pic_rate,
+        Some(5),
+        "HighestTid elemental_duration_in_tc_minus1 + 1"
+    );
+}
+
+fn hrd_cpb_sps(cpb_minus1: u64) -> Vec<u8> {
+    hevc_sps(&HevcSps {
+        vui: Some(HevcVui {
+            field_seq: false,
+            frame_field_info_present: false,
+            default_display: None,
+            timing: Some((1, 50)),
+            hrd: Some(HevcHrd {
+                nal: true,
+                vcl: false,
+                sub_pic: true,
+                layers: vec![HevcHrdLayer {
+                    general: false,
+                    within: false,
+                    low_delay: false,
+                    cpb_minus1,
+                    elemental: 0,
+                }],
+            }),
+        }),
+        ..HevcSps::default()
+    })
+}
+
+#[test]
+fn hevc_hrd_cpb_cnt_bound() {
+    let timing = transmux::decode_hevc_vui_timing(&hrd_cpb_sps(31))
+        .expect("decode")
+        .expect("31 is the legal maximum");
+    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+
+    assert!(
+        transmux::decode_hevc_vui_timing(&hrd_cpb_sps(32))
+            .expect("decode")
+            .is_none(),
+        "cpb_cnt_minus1 32 is outside 0..=31, so the walk stops before timing"
+    );
+}
+
+#[test]
+fn hevc_scaling_list_data_walk_reaches_vui_timing() {
+    let mut modes = Vec::new();
+    for size_id in 0..4u32 {
+        let count = if size_id == 3 { 2 } else { 6 };
+        for m in 0..count {
+            modes.push(m % 2 == 1);
+        }
+    }
+    let nal = hevc_sps(&HevcSps {
+        scaling_list: Some(modes),
+        vui: Some(timing_vui(1, 50)),
+        ..HevcSps::default()
+    });
+    let timing = transmux::decode_hevc_vui_timing(&nal)
+        .expect("decode")
+        .expect("timing after scaling_list_data");
+    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+}
+
+fn explicit_zero_pairs(count: usize) -> Vec<HevcRps> {
+    (0..count)
+        .map(|_| HevcRps::explicit(Vec::new(), Vec::new()))
+        .collect()
+}
+
+#[test]
+fn hevc_num_short_term_ref_pic_sets_bound() {
+    let nal = hevc_sps(&HevcSps {
+        rps: explicit_zero_pairs(64),
+        vui: Some(timing_vui(1, 50)),
+        ..HevcSps::default()
+    });
+    assert_eq!(
+        transmux::decode_hevc_vui_timing(&nal)
+            .expect("decode")
+            .map(|t| (t.num_units_in_tick, t.time_scale)),
+        Some((1, 50)),
+        "64 short-term RPS is the legal maximum"
+    );
+
+    let nal = hevc_sps(&HevcSps {
+        rps: explicit_zero_pairs(65),
+        vui: Some(timing_vui(1, 50)),
+        ..HevcSps::default()
+    });
+    assert!(
+        transmux::decode_hevc_vui_timing(&nal)
+            .expect("decode")
+            .is_none(),
+        "65 short-term RPS is outside 0..=64"
+    );
+}
+
+fn predicted(
+    delta_rps_sign: bool,
+    abs_delta_rps_minus1: u64,
+    used: Vec<bool>,
+    use_delta: Vec<bool>,
+) -> HevcRps {
+    HevcRps {
+        inter: true,
+        deltas_neg: Vec::new(),
+        deltas_pos: Vec::new(),
+        delta_rps_sign,
+        abs_delta_rps_minus1,
+        used,
+        use_delta,
+    }
+}
+
+#[test]
+fn hevc_inter_rps_derivation_reaches_vui_timing() {
+    let rps = vec![
+        HevcRps::explicit(vec![0, 1], vec![0]),
+        predicted(false, 2, vec![true, true, true, true], vec![false; 4]),
+        predicted(
+            true,
+            1,
+            vec![true, true, false, true],
+            vec![false, false, false, false],
+        ),
+        predicted(false, 0, vec![true, true, false], vec![false, false, false]),
+        predicted(false, 0, vec![true, true, true], vec![false, false, false]),
+    ];
+    let nal = hevc_sps(&HevcSps {
+        rps,
+        vui: Some(timing_vui(1, 50)),
+        ..HevcSps::default()
+    });
+    let timing = transmux::decode_hevc_vui_timing(&nal)
+        .expect("decode")
+        .expect("timing after inter-RPS derivation");
+    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+}
+
+#[test]
+fn hevc_explicit_rps_picture_count_bound() {
+    let ok = |rps: Vec<HevcRps>| {
+        hevc_sps(&HevcSps {
+            rps,
+            vui: Some(timing_vui(1, 50)),
+            ..HevcSps::default()
+        })
+    };
+    let decodes = |nal: &[u8]| {
+        transmux::decode_hevc_vui_timing(nal)
+            .expect("decode")
+            .map(|t| (t.num_units_in_tick, t.time_scale))
+    };
+
+    assert_eq!(
+        decodes(&ok(vec![HevcRps::explicit(vec![0; 16], Vec::new())])),
+        Some((1, 50)),
+        "16 negative pictures is inside the bound"
+    );
+    assert_eq!(
+        decodes(&ok(vec![HevcRps::explicit(Vec::new(), vec![0; 16])])),
+        Some((1, 50)),
+        "16 positive pictures is inside the bound"
+    );
+    assert_eq!(
+        decodes(&ok(vec![HevcRps::explicit(vec![0; 17], Vec::new())])),
+        None,
+        "17 negative pictures is outside 0..=16"
+    );
+    assert_eq!(
+        decodes(&ok(vec![HevcRps::explicit(Vec::new(), vec![0; 17])])),
+        None,
+        "17 positive pictures is outside 0..=16"
+    );
+}
+
+#[test]
+fn hevc_derived_rps_growing_past_sixteen_is_rejected() {
+    let nal = hevc_sps(&HevcSps {
+        rps: vec![
+            HevcRps::explicit(vec![0; 8], vec![0; 8]),
+            predicted(false, 9, vec![true; 17], vec![false; 17]),
+        ],
+        vui: Some(timing_vui(1, 50)),
+        ..HevcSps::default()
+    });
+    assert!(
+        transmux::decode_hevc_vui_timing(&nal)
+            .expect("decode")
+            .is_none(),
+        "a derived set with 17 entries stops the walk before timing"
+    );
+}
+
+#[test]
+fn hevc_explicit_rps_delta_accumulation_feeds_prediction() {
+    let nal = hevc_sps(&HevcSps {
+        rps: vec![
+            HevcRps::explicit(Vec::new(), vec![1, 1]),
+            predicted(true, 1, vec![true, true, true], vec![false; 3]),
+            predicted(false, 0, vec![true, true, true], vec![false; 3]),
+            predicted(false, 0, vec![true, true, true, true], vec![false; 4]),
+        ],
+        vui: Some(timing_vui(1, 50)),
+        ..HevcSps::default()
+    });
+    let timing = transmux::decode_hevc_vui_timing(&nal)
+        .expect("decode")
+        .expect("timing after prediction from the accumulated positive POCs");
+    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+}
+
+#[test]
+fn hevc_long_term_ref_poc_width_follows_log2_max_poc_lsb() {
+    let nal = hevc_sps(&HevcSps {
+        log2_max_poc_lsb_minus4: 4,
+        long_term_ref_pics: Some(2),
+        vui: Some(timing_vui(1, 50)),
+        ..HevcSps::default()
+    });
+    let timing = transmux::decode_hevc_vui_timing(&nal)
+        .expect("decode")
+        .expect("timing after long-term ref entries");
+    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+}
+
+#[test]
+fn rfc6381_hvc1_emits_each_constraint_byte() {
+    let nal = hevc_sps(&HevcSps {
+        constraint_flags: 0x91_A2_B3_C4_D5_E6,
+        ..HevcSps::default()
+    });
+    let info = transmux::decode_hevc_sps(&nal).expect("decode SPS");
+    assert_eq!(info.general_constraint_indicator_flags, 0x91_A2_B3_C4_D5_E6);
+    assert_eq!(
+        rfc6381_hvc1(&info),
+        "hvc1.1.0.L93.91.A2.B3.C4.D5.E6",
+        "every nonzero constraint byte is emitted in order"
+    );
+}
+
+#[test]
+fn hevc_multi_sub_layer_ptl_reserved_padding_is_skipped() {
+    let nal = hevc_sps(&HevcSps {
+        max_sub_layers_minus1: 2,
+        sub_layer_profile_present: vec![true, false],
+        sub_layer_level_present: vec![false, true],
+        width: 640,
+        height: 360,
+        ..HevcSps::default()
+    });
+    let info = transmux::decode_hevc_sps(&nal).expect("decode SPS");
+    assert_eq!(info.width, 640);
+    assert_eq!(info.height, 360);
+    assert_eq!(info.general_profile_idc, 1);
+    assert_eq!(info.general_level_idc, 93);
+}
+
+#[test]
+fn hevc_inter_rps_negative_offsets_from_an_empty_negative_set() {
+    let nal = hevc_sps(&HevcSps {
+        rps: vec![
+            HevcRps::explicit(Vec::new(), vec![0, 0]),
+            predicted(true, 6, vec![true, true, true], vec![false; 3]),
+        ],
+        vui: Some(timing_vui(1, 50)),
+        ..HevcSps::default()
+    });
+    let timing = transmux::decode_hevc_vui_timing(&nal)
+        .expect("decode")
+        .expect("timing after (7-61) over a non-empty positive set");
+    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+}

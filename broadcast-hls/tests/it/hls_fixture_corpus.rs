@@ -362,6 +362,16 @@ const HANDBUILT_CASES: &[Case] = &[
         kind: Kind::Media,
         expect: Expect::Ok,
     },
+    // The dvr-runtime design's §3.3 period playlist: programme DATERANGE with
+    // X- client attributes, the two RUSTBROADCAST vendor tags (the per-segment
+    // timing tag declared segment-scoped by `parse_with_options`), an
+    // EXT-X-MAP with a byte range, a discontinuity and an endlist. See
+    // fixtures/hls/PROVENANCE.md.
+    Case {
+        path: "handbuilt/dvr-runtime-design.m3u8",
+        kind: Kind::Media,
+        expect: Expect::Ok,
+    },
 ];
 
 #[test]

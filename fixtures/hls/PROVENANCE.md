@@ -193,6 +193,7 @@ Licence: project licence (MIT OR Apache-2.0), same as all in-repo source.
 | `live-vod-gap-bitrate.m3u8` | Media | `EXT-X-PLAYLIST-TYPE:VOD`, `EXT-X-GAP`, `EXT-X-BITRATE` (carry-forward across a segment, then a change), `EXT-X-START` (positive offset, `PRECISE` absent), `EXT-X-DEFINE:IMPORT` + `{$base}` variable substitution, `EXT-X-INDEPENDENT-SEGMENTS` | ✅ |
 | `daterange-scte35-media.m3u8` | Media | `EXT-X-DATERANGE` with `SCTE35-OUT` and `SCTE35-IN` (unmodeled tags, preserved in `extra_tags`) — derived from §9.10's abridged example by supplying the Media Segments the spec elides with its `...` markers | ✅ |
 | `low-latency-parts-preload-report.m3u8` | Media | `EXT-X-PART`, `EXT-X-PRELOAD-HINT`, `EXT-X-RENDITION-REPORT`, `EXT-X-DISCONTINUITY`, `EXT-X-MAP`, `EXT-X-SERVER-CONTROL`, `EXT-X-PART-INF` — derived from §9.11's abridged example by replacing its leading `...` with a real LL-HLS header block | ✅ |
+| `dvr-runtime-design.m3u8` | Media | Hand-built from the dvr-runtime design's §3.3 period-playlist example (issue #3925, dvr-runtime PR 1): programme `EXT-X-DATERANGE` with `X-` client attributes, the `EXT-X-RUSTBROADCAST-ARCHIVE` playlist marker and per-segment `EXT-X-RUSTBROADCAST-TIMING` tag (declared segment-scoped by `MediaPlaylist::parse_with_options`), `EXT-X-MAP` with `BYTERANGE`, `EXT-X-DISCONTINUITY`, `EXT-X-PROGRAM-DATE-TIME`, `EXT-X-BYTERANGE`, `EXT-X-PLAYLIST-TYPE:EVENT`, `EXT-X-ENDLIST`. Not a spec vector; it pins the broadcast-hls API the DVR writer calls. | ✅ |
 
 ### Relationship to §9.8 (`session-data-multivariant.m3u8`)
 

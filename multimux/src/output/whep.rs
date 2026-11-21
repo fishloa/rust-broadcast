@@ -1822,7 +1822,10 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             parsed.remote_fingerprint
         );
         assert_eq!(parsed.mid, "0");
-        assert_eq!(parsed.candidates.len(), 1);
+        assert_eq!(
+            parsed.candidates,
+            ["1 1 udp 2130706431 10.0.0.5 54321 typ host"]
+        );
         assert_eq!(parsed.setup.as_deref(), Some("actpass"));
     }
 

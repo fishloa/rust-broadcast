@@ -2368,33 +2368,41 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         // Drive many consecutive "overdue" deadlines and confirm each wait
         // advances the paused clock by at least MIN_TIMER_INTERVAL.
         let clock_start = Instant::now();
-        for _ in 0..128 {
-            let before = tokio::time::Instant::now();
-            {
-                let media = MediaTransport::new(
-                    MediaTransportConfig::new(
-                        "127.0.0.1:0".parse().unwrap(),
-                        crate::secure_random::token(8),
-                        crate::secure_random::token(24),
-                        crate::secure_random::token(8),
-                        crate::secure_random::token(24),
-                        SetupRole::Passive,
-                        OFFER_FINGERPRINT.into(),
-                    ),
-                    Timestamp::ZERO,
-                )
-                .expect("a transport for the timer floor");
-                let now = Timestamp::from_instant(clock_start, clock_instant());
-                crate::webrtc_session::sleep_until_timer(&media, Some(clock_instant()), Some(now))
+        tokio::time::timeout(Duration::from_secs(30), async {
+            for _ in 0..128 {
+                let before = tokio::time::Instant::now();
+                {
+                    let media = MediaTransport::new(
+                        MediaTransportConfig::new(
+                            "127.0.0.1:0".parse().unwrap(),
+                            crate::secure_random::token(8),
+                            crate::secure_random::token(24),
+                            crate::secure_random::token(8),
+                            crate::secure_random::token(24),
+                            SetupRole::Passive,
+                            OFFER_FINGERPRINT.into(),
+                        ),
+                        Timestamp::ZERO,
+                    )
+                    .expect("a transport for the timer floor");
+                    let now = Timestamp::from_instant(clock_start, clock_instant());
+                    crate::webrtc_session::sleep_until_timer(
+                        &media,
+                        Some(clock_instant()),
+                        Some(now),
+                    )
                     .await;
+                }
+                let elapsed = before.elapsed();
+                assert!(
+                    elapsed >= crate::webrtc_session::MIN_TIMER_INTERVAL,
+                    "an overdue deadline must still be floored to MIN_TIMER_INTERVAL, \
+                     but only {elapsed:?} elapsed"
+                );
             }
-            let elapsed = before.elapsed();
-            assert!(
-                elapsed >= crate::webrtc_session::MIN_TIMER_INTERVAL,
-                "an overdue deadline must still be floored to MIN_TIMER_INTERVAL, \
-                 but only {elapsed:?} elapsed"
-            );
-        }
+        })
+        .await
+        .expect("the timer floor must advance every wait");
     }
 
     /// Finding N3: a `MediaEvent::TimerError` is surfaced (not silently
@@ -2433,7 +2441,10 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             parsed.remote_fingerprint
         );
         assert_eq!(parsed.mid, "0");
-        assert_eq!(parsed.candidates.len(), 1);
+        assert_eq!(
+            parsed.candidates,
+            ["1 1 udp 2130706431 10.0.0.5 54321 typ host"]
+        );
     }
 
     /// RFC 5764 §5 / RFC 8122 §5: an offer with no `a=fingerprint` gives
@@ -3014,44 +3025,82 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
     /// A session that hears nothing ends on its own deadline, measured from
     /// its admission, and reports it over the channel.
-    #[tokio::test(start_paused = true)]
-    async fn an_idle_session_times_out_on_its_own_deadline() {
+    #[test]
+    fn an_idle_session_times_out_on_its_own_deadline() {
         const IDLE: Duration = Duration::from_secs(5);
-        let (tx, mut outcomes) = mpsc::channel(OUTCOMES_PER_SESSION);
-        let task = spawn_silent_session(1, IDLE, &tx);
-        tokio::time::sleep(IDLE - Duration::from_secs(1)).await;
-        assert!(
-            outcomes.try_recv().is_err(),
-            "the session ended before its idle deadline"
-        );
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let (id, outcome) = outcomes.recv().await.expect("the timed-out outcome");
-        assert_eq!(id, SessionId(1));
-        assert!(matches!(outcome, ReadOutcome::TimedOut), "{outcome:?}");
-        task.await
-            .expect("the session task ends after a terminal outcome");
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .start_paused(true)
+                .build()
+                .expect("a paused runtime");
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                runtime.block_on(async {
+                    let (tx, mut outcomes) = mpsc::channel(OUTCOMES_PER_SESSION);
+                    let task = spawn_silent_session(1, IDLE, &tx);
+                    tokio::time::sleep(IDLE - Duration::from_secs(1)).await;
+                    assert!(
+                        outcomes.try_recv().is_err(),
+                        "the session ended before its idle deadline"
+                    );
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    let (id, outcome) = outcomes.recv().await.expect("the timed-out outcome");
+                    assert_eq!(id, SessionId(1));
+                    assert!(matches!(outcome, ReadOutcome::TimedOut), "{outcome:?}");
+                    task.await
+                        .expect("the session task ends after a terminal outcome");
+                });
+            }));
+            let _ = done.send(());
+            if let Err(payload) = result {
+                std::panic::resume_unwind(payload);
+            }
+        });
+        finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the idle session must end on its own deadline");
     }
 
     /// Two sessions of one route run independently: one that times out
     /// delivers its outcome while the other is still silent, and the
     /// route's publisher need not be receiving for either to progress.
-    #[tokio::test(start_paused = true)]
-    async fn a_stalled_session_does_not_hold_up_another() {
+    #[test]
+    fn a_stalled_session_does_not_hold_up_another() {
         const SHORT: Duration = Duration::from_secs(5);
         const LONG: Duration = Duration::from_secs(3600);
-        let (tx, mut outcomes) = mpsc::channel(OUTCOMES_PER_SESSION);
-        let stalled = spawn_silent_session(1, LONG, &tx);
-        let other = spawn_silent_session(2, SHORT, &tx);
-        tokio::time::sleep(SHORT + Duration::from_secs(1)).await;
-        other.await.expect("the short session ended on its own");
-        let (id, outcome) = outcomes.try_recv().expect("the short session reported");
-        assert_eq!(id, SessionId(2));
-        assert!(matches!(outcome, ReadOutcome::TimedOut), "{outcome:?}");
-        assert!(
-            outcomes.try_recv().is_err(),
-            "the stalled session is still waiting"
-        );
-        assert!(!stalled.is_finished());
-        stalled.abort();
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .start_paused(true)
+                .build()
+                .expect("a paused runtime");
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                runtime.block_on(async {
+                    let (tx, mut outcomes) = mpsc::channel(OUTCOMES_PER_SESSION);
+                    let stalled = spawn_silent_session(1, LONG, &tx);
+                    let other = spawn_silent_session(2, SHORT, &tx);
+                    tokio::time::sleep(SHORT + Duration::from_secs(1)).await;
+                    other.await.expect("the short session ended on its own");
+                    let (id, outcome) = outcomes.try_recv().expect("the short session reported");
+                    assert_eq!(id, SessionId(2));
+                    assert!(matches!(outcome, ReadOutcome::TimedOut), "{outcome:?}");
+                    assert!(
+                        outcomes.try_recv().is_err(),
+                        "the stalled session is still waiting"
+                    );
+                    assert!(!stalled.is_finished());
+                    stalled.abort();
+                });
+            }));
+            let _ = done.send(());
+            if let Err(payload) = result {
+                std::panic::resume_unwind(payload);
+            }
+        });
+        finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("a short session must not be held up by a stalled one");
     }
 }

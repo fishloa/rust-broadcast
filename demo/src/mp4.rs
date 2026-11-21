@@ -416,18 +416,16 @@ pub fn analyze_mp4_impl(bytes: &[u8]) -> Mp4Report {
         .filter(|s| s.fourcc == "encv" || s.fourcc == "enca")
         .count();
     let mut protected_scheme: Option<&'static str> = None;
-    if encv_or_enca_skips == 1 {
-        if let Ok(decryptor) = transmux::CencDecryptor::from_fmp4(bytes) {
-            if let Ok(mut protected) = decryptor.demux() {
-                if protected.tracks.len() == 1 {
-                    media
-                        .skipped
-                        .retain(|s| s.fourcc != "encv" && s.fourcc != "enca");
-                    protected_scheme = decryptor.scheme().map(|s| s.name());
-                    media.tracks.push(protected.tracks.remove(0));
-                }
-            }
-        }
+    if encv_or_enca_skips == 1
+        && let Ok(decryptor) = transmux::CencDecryptor::from_fmp4(bytes)
+        && let Ok(mut protected) = decryptor.demux()
+        && protected.tracks.len() == 1
+    {
+        media
+            .skipped
+            .retain(|s| s.fourcc != "encv" && s.fourcc != "enca");
+        protected_scheme = decryptor.scheme().map(|s| s.name());
+        media.tracks.push(protected.tracks.remove(0));
     }
 
     let protected_track_id = protected_scheme

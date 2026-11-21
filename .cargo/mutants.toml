@@ -6,3 +6,9 @@
 # mutates them, reporting survivors that no assertion can kill by design.
 # Exclude just that test module; every production function stays in scope.
 exclude_re = ["tests::gate_edge"]
+#
+# The `multimux` WHIP/WHEP lane must enable `test-hooks` (or use
+# `--all-features`): the HTTP and session-resource integration tests are
+# `#![cfg(... feature = "test-hooks")]`, so a lane that passes only
+# `--features whip,whep` skips them and reports survivors that the tests
+# would kill (audit 23 finding 238).

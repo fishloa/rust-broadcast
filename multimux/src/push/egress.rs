@@ -113,6 +113,9 @@ pub struct PushTransportEgress<T: PushTransport> {
     /// Samples offered for a track outside the negotiated selection, dropped
     /// by [`PushEgress::send`].
     unselected_samples: u64,
+    /// Payload bytes [`Self::flush_transmit`] has written successfully over
+    /// the transport, for [`crate::push::PushMetrics::bytes_sent`].
+    bytes_sent: u64,
 }
 
 ///How a [`PushTransportEgress::flush_transmit_bounded`] ended.
@@ -140,6 +143,7 @@ impl<T: PushTransport> PushTransportEgress<T> {
             outbound: VecDeque::new(),
             awaiting_sync: false,
             unselected_samples: 0,
+            bytes_sent: 0,
         }
     }
 
@@ -147,6 +151,11 @@ impl<T: PushTransport> PushTransportEgress<T> {
     /// not in the negotiated selection.
     pub fn unselected_samples(&self) -> u64 {
         self.unselected_samples
+    }
+
+    /// Payload bytes this adapter has written over its transport.
+    pub fn bytes_sent(&self) -> u64 {
+        self.bytes_sent
     }
 
     /// The [`TrackSpec`]s currently selected (the last `Accepted` outcome) —
@@ -180,6 +189,7 @@ impl<T: PushTransport> PushTransportEgress<T> {
                 .write_message(&message)
                 .await
                 .map_err(|e| SendMediaError::Transport(Box::new(e)))?;
+            self.bytes_sent = self.bytes_sent.saturating_add(message.len() as u64);
         }
         Ok(())
     }

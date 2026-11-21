@@ -307,3 +307,23 @@ fn timescale_str(value: u64, timescale: Timescale) -> alloc::string::String {
         alloc::format!("{value} ({secs:.3}s)")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A unit timescale is already seconds, so the value is printed bare; any
+    /// other timescale prints the tick count and the seconds it represents.
+    #[test]
+    fn timescale_str_prints_seconds_only_for_a_non_unit_timescale() {
+        assert_eq!(timescale_str(5, broadcast_common::timescale!(1)), "5");
+        assert_eq!(
+            timescale_str(90_000, broadcast_common::timescale!(90_000)),
+            "90000 (1.000s)",
+        );
+        assert_eq!(
+            timescale_str(45_000, broadcast_common::timescale!(90_000)),
+            "45000 (0.500s)",
+        );
+    }
+}

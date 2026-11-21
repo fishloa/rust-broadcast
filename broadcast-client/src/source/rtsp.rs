@@ -710,9 +710,6 @@ impl RtspSource {
                 self.events.extend(events.into_iter().map(Event::from));
                 self.phase = Phase::WaitingAuth(req);
             }
-            AuthDecision::Replay if !self.send(req) => {
-                self.fail_connection(now);
-            }
             AuthDecision::ReplayStale => {
                 self.stale_replayed = true;
                 if !self.send(req) {
@@ -1437,6 +1434,33 @@ mod tests {
             source.take_actions().is_empty(),
             "a second stale challenge is not replayed"
         );
+    }
+
+    #[test]
+    fn a_401_with_credentials_does_not_replay() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = rtsp_source(&url);
+        source.conn = Some(ConnId::new(1));
+        source.phase = Phase::Awaiting(Req::Describe);
+        source.challenge = Some("Digest realm=\"cam\", nonce=\"n1\", qop=\"auth\"".to_string());
+        source.take_actions();
+        let mut auth = AuthState::new(url.clone(), Vec::new());
+        auth.set_credentials(broadcast_auth::Credentials::new("admin", "s3cret"));
+        source.on_unauthorized(
+            STATUS_UNAUTHORIZED,
+            Req::Describe,
+            Timestamp::ZERO,
+            &mut auth,
+        );
+        assert!(
+            source.take_actions().is_empty(),
+            "credentials the server already rejected are not replayed"
+        );
+        assert!(!source.stale_replayed);
+        assert!(source.take_events().iter().any(|e| matches!(
+            e,
+            Event::AuthRejected { status } if *status == http::StatusCode::UNAUTHORIZED
+        )));
     }
 
     #[test]
