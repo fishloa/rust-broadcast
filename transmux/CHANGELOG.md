@@ -123,6 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An `avcC` with SPS extensions gets the right length and writes each extension once.** Every test record had `sps_ext: vec![]`, so the `2 + len` length term and the cursor advance were unexercised: a High-profile record with two extensions would report a wrong length or have the second overwrite the first. Two extensions of 3 and 5 bytes now assert the exact 29-byte body and parse back (audit 23 finding 225, #3733).
 - **The `avcC` box's `serialize_into` return value and the record's `Display` are pinned.** Callers use `serialized_len`, so the serializer could return `8 * config_len` unnoticed, and the `Display` could print nothing. A known record now asserts the written length equals `serialized_len` and the exact `AVC(profile=100, ...)` string (audit 23 finding 226, #3734).
 
+- **`declares_no_parameter_sets` requires both arrays empty.** Only the both-empty and both-full cases were tested, so an `avcp` entry with an SPS but no PPS (or the reverse) could be accepted as declaring none, hiding the §5.4.3.1 violation. Both mixed shapes now report the sets present (audit 23 finding 227, #3735).
+
 ### Removed
 - **BREAKING: `TrackFragmentBox::into_bytes`** (unused; use `Serialize::try_to_bytes`) (#3698).
 
