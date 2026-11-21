@@ -81,7 +81,7 @@ builds (see the table above against the in-tree versions below).
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**64 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**65 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -125,6 +125,7 @@ builds (see the table above against the in-tree versions below).
 | [`rtsp-runtime`](#rtsp-runtime) | Live transport protocols | 0.13.0 | [![crates.io](https://img.shields.io/crates/v/rtsp-runtime.svg)](https://crates.io/crates/rtsp-runtime) | no | 2 | on crates.io |
 | [`webrtc-runtime`](#webrtc-runtime) | Live transport protocols | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/webrtc-runtime.svg)](https://crates.io/crates/webrtc-runtime) | no | 2 | on crates.io |
 | [`dash-runtime`](#dash-runtime) | Live transport protocols | 0.6.0 | — | no | 6 | not on crates.io |
+| [`dvr-runtime`](#dvr-runtime) | Live transport protocols | 0.1.0 | — | no | 6 | not on crates.io |
 | [`hls-runtime`](#hls-runtime) | Live transport protocols | 0.15.0 | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) | yes | 6 | on crates.io |
 | [`smooth-runtime`](#smooth-runtime) | Live transport protocols | 0.3.0 | — | no | 6 | not on crates.io |
 | [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.7.0 | — | no | 7 | not on crates.io |
@@ -164,7 +165,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 13.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 58 workspace crates
+- **Used by (workspace):** 59 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 #### broadcast-auth
@@ -249,7 +250,7 @@ The largest crate: parse and build every allocated EN 300 468 table and descript
 - **Cargo description:** ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included.
 - **Version (in-tree):** 15.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`mpeg-ts`](#mpeg-ts)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dvb-ci`](#dvb-ci), [`dvb-ci-runtime`](#dvb-ci-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-stream`](#dvb-stream), [`dvb-tools`](#dvb-tools), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dvb-ci`](#dvb-ci), [`dvb-ci-runtime`](#dvb-ci-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-stream`](#dvb-stream), [`dvb-tools`](#dvb-tools), [`dvr-runtime`](#dvr-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
 - **Links:** [README](../dvb-si/README.md) · [CHANGELOG](../dvb-si/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-si) · [docs.rs](https://docs.rs/dvb-si)
 
 #### dvb-t2mi
@@ -452,7 +453,7 @@ Parses and serializes HLS playlists, including Low-Latency HLS (parts, preload h
 - **Cargo description:** HLS (M3U8) playlist syntax (RFC 8216 / RFC 8216bis) — Media/Master Playlist parse + serialize, no_std.
 - **Version (in-tree):** 0.8.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`ssai-runtime`](#ssai-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`ssai-runtime`](#ssai-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Links:** [README](../broadcast-hls/README.md) · [CHANGELOG](../broadcast-hls/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-hls) · [docs.rs](https://docs.rs/broadcast-hls)
 
 #### broadcast-smooth
@@ -485,7 +486,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
 - **Version (in-tree):** 0.32.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`test-harness`](#test-harness)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`test-harness`](#test-harness)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
 ### Live transport protocols
@@ -602,6 +603,17 @@ The player on top of `broadcast-dash` (the MPD model and parser live there): a l
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`test-harness`](#test-harness)
 - **Links:** [README](../dash-runtime/README.md) · [CHANGELOG](../dash-runtime/CHANGELOG.md) · [docs + spec pointer](../dash-runtime/docs/)
 
+#### dvr-runtime
+
+The one owner of the DVR on-disk format. A period is a media file (`pN.m4s`/`pN.ts`, fMP4 init at its head) plus an HLS Media Playlist (`pN.m3u8`, `EVENT`, one append per segment, closed with `ENDLIST`), with a playlist-level archive marker and a per-segment timing tag; every line is rendered and parsed by `broadcast-hls`. `ArchiveWriter` is sans-IO: it returns a plan of storage operations and commits only when the host reports success, so a failed roll changes nothing. The `read` module parses one period (torn-line rule, sequence/uri/range/map validation) and plans catch-up over the archive plus the live tail. `recover` rescans an fMP4 period's init and fragments. Feature `fs` adds the blocking `FsRecorder` and `FsArchive` (with its own bounded parsed-playlist cache). No clock reads, no serde, no JSON. Unpublished until its release lane runs.
+
+- **Standards:** RFC 8216 / RFC 8216bis (HLS Media Playlist, DATERANGE, vendor tags); ETSI EN 300 468 (EIT present/following, via dvb-si)
+- **Cargo description:** Sans-IO DVR archive: the on-disk period format (an append-only HLS media playlist per period plus one media file), the writer's roll and retention state machine that returns a plan of storage operations, catch-up read planning, and typeless recovery. No I/O unless the `fs` feature is on, no clock reads.
+- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`dvb-si`](#dvb-si), [`media-plane`](#media-plane), [`transmux`](#transmux)
+- **Used by (workspace):** none
+- **Links:** [README](../dvr-runtime/README.md) · [CHANGELOG](../dvr-runtime/CHANGELOG.md)
+
 #### hls-runtime
 
 A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 demux output) and a sans-IO origin (`server`, feature `std`) that renders playlists and serves init/segment/part bytes straight from a `media-plane` `Trunk`.
@@ -702,7 +714,7 @@ Four layers (`Dialer`/`Listener` -> byte stages -> `IngestSession` -> IR transfo
 - **Cargo description:** The ingress/egress spine for a live media origin: Dialer/Listener -> byte stages -> IngestSession -> Trunk (bounded sample/segment/event/part rings with cursor subscribers), three egress shapes (served/push/segment), and tiered retention with DVR pinning. Built on broadcast_common::Stage. no_std + alloc byte layer; Trunk and above require std.
 - **Version (in-tree):** 0.13.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 5
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`caption-convert`](#caption-convert), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
-- **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime)
+- **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime)
 - **Links:** [README](../media-plane/README.md) · [CHANGELOG](../media-plane/CHANGELOG.md) · [crates.io](https://crates.io/crates/media-plane) · [docs.rs](https://docs.rs/media-plane)
 
 #### compliance-probe
@@ -915,7 +927,7 @@ layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, rtsp-run
 layer 3: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
 layer 4: caption-convert, dvb-ci-runtime, media-doctor, ts-fix
 layer 5: media-plane
-layer 6: compliance-probe, dash-runtime, hls-runtime, smooth-runtime
+layer 6: compliance-probe, dash-runtime, dvr-runtime, hls-runtime, smooth-runtime
 layer 7: broadcast-client, test-harness
 layer 8: multimux
 layer 9: multimux-cli
@@ -993,6 +1005,7 @@ flowchart BT
   subgraph L6["layer 6"]
     compliance_probe["compliance-probe"]
     dash_runtime["dash-runtime"]
+    dvr_runtime["dvr-runtime"]
     hls_runtime["hls-runtime"]
     smooth_runtime["smooth-runtime"]
   end
@@ -1042,6 +1055,7 @@ flowchart BT
   dvb_tools --> dvb_si
   dvb_tools --> dvb_t2mi
   dvb_vbi --> broadcast_common
+  dvr_runtime --> media_plane
   hls_runtime --> media_plane
   media_doctor --> dvb_conformance
   media_doctor --> dvb_stream

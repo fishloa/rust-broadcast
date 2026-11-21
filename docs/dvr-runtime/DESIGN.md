@@ -171,7 +171,7 @@ Produced entirely by `broadcast-hls` rendering a `MediaPlaylist` (3.8 adds the i
 
 ```
 #EXTM3U
-#EXT-X-VERSION:7
+#EXT-X-VERSION:6
 #EXT-X-TARGETDURATION:3
 #EXT-X-MEDIA-SEQUENCE:120
 #EXT-X-PLAYLIST-TYPE:EVENT

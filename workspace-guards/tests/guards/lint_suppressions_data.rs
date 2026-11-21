@@ -99,4 +99,5 @@ pub const TABLE: &[Crate] = &[
     plain("test-harness"),
     plain("broadcast-smooth"),
     plain("smooth-runtime"),
+    plain("dvr-runtime"),
 ];

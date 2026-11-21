@@ -1314,6 +1314,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvr-runtime"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "broadcast-hls",
+ "bytes",
+ "dvb-si",
+ "jiff",
+ "media-plane",
+ "mpeg-ts",
+ "test-fixtures",
+ "thiserror 2.0.21",
+ "transmux",
+]
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
