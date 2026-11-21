@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `SocketStats::too_late_dropped` counts the sequence numbers the TSBPD scheduler gave up on (too-late arrivals and gaps skipped as unrecoverable, §4.6). A live receiver under a starved runtime can drop payload this way, and until now the only outward sign was a hole in the delivered stream (#3552).
 ### Tests
 - Pin the reliability and wire rules with tests that kill the surviving mutants: the rule 22 `NAKInterval` formula and 20 ms floor, the sender's per-NAK work budget and `seq_geq`, DROPREQ skip coalescing/subtraction and `uncovered_runs`, NAK datagram chunking at the exact MTU fill, `feed_data`'s 31-bit boundaries and ACKACK retention, the Key Material field widths and offset arithmetic, the handshake extension offsets, the reserved control fields, `peek_dest_socket_id`, and the typed numbers' circular ordering, `MessageNumber` wrap and every literal label/`Display` (#2927, #2928, #2929, #2930, #2931).
 - Pin the audit-22 survivors: exact FileCC Step 5/6 periods and DecRandom reference draws, the SYN cookie's source-address and time binding, the connected socket's peer-address filter, ACKACK/DROPREQ/keep-alive driver paths, the Listener's encryption refusal and CONCLUSION replay TTL, rendezvous recovery/retransmit/KM-echo and the negotiated-flag intersection, the Listener ISN boundary, the TSBPD too-late-drop boundary, and the spec label/accessor conventions (#2977, #2978, #2979, #2980, #2981, #2982, #2983, #2984, #2985, #2986, #2987, #2988).
