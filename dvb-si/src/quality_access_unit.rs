@@ -389,4 +389,32 @@ mod tests {
             Err(crate::error::Error::FieldOverflow(_))
         ));
     }
+
+    fn assert_short(actual: Result<QualityAccessUnit<'_>>, need: usize, have: usize) {
+        match actual {
+            Err(Error::BufferTooShort(shortfall)) => {
+                assert_eq!(shortfall.need, need);
+                assert_eq!(shortfall.have, have);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn truncated_metric_header_reports_exact_shortfall() {
+        // field_size_bytes=1, metric_count=1, then 3 of the 5 metric-header
+        // bytes; the whole input is 5 bytes long.
+        let bytes: &[u8] = &[0x01, 0x01, 0x00, 0x00, 0x00];
+        assert_short(QualityAccessUnit::parse(bytes), 10, 5);
+    }
+
+    #[test]
+    fn truncated_sample_reports_exact_shortfall() {
+        // field_size_bytes=2 => sample_len 7; one sample announced but only
+        // 5 bytes follow the metric header (bytes 12, rest 5).
+        let bytes: &[u8] = &[
+            0x02, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert_short(QualityAccessUnit::parse(bytes), 14, 12);
+    }
 }

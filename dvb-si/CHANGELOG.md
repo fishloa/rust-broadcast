@@ -54,6 +54,21 @@
 - An HEVC operation point without a frame-rate block leaves the next operation point intact (#3446).
 - `avs_scope` opens only on AVS private data specifiers and closes on a foreign one, on both iterator types; the extension-registry walk never indexes an empty extension body nor dispatches a non-extension descriptor (#3447, #3448).
 - A text-label reserved run wider than its bits is rejected instead of shifted out (#3449); a DRC plain scope typed 2 or 3 is rejected (#3450); and a non-zero `dependsOnDrcSet` packs into its own bits and parses back (#3451).
+- The EPG `Rating::minimum_age` is pinned at the 0x01..=0x0F range ends (`Some(4)`, `Some(18)`) and for 0x00/0x10/0xFF (`None`) (#3538).
+- `ContentNibble::genre_name` is asserted for both content-nibble levels against the literal EN 300 468 Table 29 names (#3539).
+- `EpgStore::with_collector_max_logical_keys` is shown to apply the cap it sets and to leave `with_max_services` in place: a cap of 1 over 8 distinct services evicts collector keys while the service cache still stops at 7 (#3540).
+- `EpgStore::collector_sections_evicted_for_capacity` is asserted to be 0 before any eviction and exactly 1 for one extra section-set key at a cap of 1 (#3541).
+- The EPG service and event eviction counters are 0 on a fresh store, 2 after three services at a cap of 1 and 2 after three event_ids at a per-service cap of 1 (#3542).
+- `EpgStore::schedule`'s half-open `[from, to)` bound is pinned with an event starting exactly at `to` (excluded) and one exactly at `from` (included) (#3543).
+- The `name()` and `Display` labels of every `DescriptorType`, `SpecifierType` and `SubDescriptorType` variant, including each reserved/unknown arm, are asserted literally (#3544).
+- The compatibility descriptor's top-level `SectionLengthOverflow { declared, available }` (at two buffer lengths) and its `descriptorCount` `BufferTooShort { need, have }` are asserted exactly (#3545).
+- A truncated *second* compatibility entry header asserts `BufferTooShort { need: 17, have: 16 }`, so the `pos` offset cannot be wrong (#3546).
+- An entry header that ends exactly at the compatibility body end reports the short-`descriptorLength` `InvalidDescriptor`, not a truncated header (#3547).
+- An entry whose `descriptorLength` runs past the compatibility body asserts `SectionLengthOverflow { declared: 32, available: 2 }` (#3548).
+- A zero-length sub-descriptor ending exactly at its entry end parses with empty data and re-serialises byte-identically (#3549).
+- The truncated sub-descriptor header test destructures `BufferTooShort { need: 17, have: 15 }` instead of matching the variant (#3550).
+- A sub-descriptor whose declared length exceeds its entry asserts `SectionLengthOverflow { declared, available }` at two remaining-room sizes (1 and 0 bytes) instead of being accepted or panicking (#3551).
+- The `Quality_Access_Unit` metric-header and sample truncation paths assert the exact `BufferTooShort { need, have }` they report, so the read-more sizing cannot be wrong (#3553).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed

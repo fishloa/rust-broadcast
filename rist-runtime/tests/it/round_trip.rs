@@ -1,9 +1,10 @@
 //! Round-trip tests for RIST wire types: parse -> serialize -> byte-identical,
 //! and construct -> serialize -> parse -> equal.
 
+use broadcast_common::error::OutputBufferTooSmall;
 use broadcast_common::{Parse, Serialize};
 use rist_runtime::{
-    GenericNack, NackFci, PacketRange, RangeNack, ReportPart, RistReceiverCompound,
+    Error, GenericNack, NackFci, PacketRange, RangeNack, ReportPart, RistReceiverCompound,
     RistSenderCompound, RttEcho, RttEchoKind,
 };
 use rtp_packet::rtcp::{ReceiverReport, ReportBlock, SenderReport};
@@ -120,6 +121,68 @@ fn range_nack_multiple_ranges_round_trip() {
     assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
+/// Neither NACK format requires an entry: an empty list rounds-trips as an
+/// empty FCI/ranges list (the serializer emits exactly that), padded or not.
+#[test]
+fn zero_entry_nacks_round_trip() {
+    let nack = GenericNack {
+        ssrc_sender: 0x0102_0304,
+        ssrc_media: 0x0506_0708,
+        nacks: vec![],
+        padding: Vec::new(),
+    };
+    let bytes = nack.try_to_bytes().unwrap();
+    assert_eq!(bytes.len(), 12);
+    assert_eq!(bytes[0..4], [0x81, 205, 0, 2]);
+    assert_eq!(GenericNack::parse(&bytes).unwrap(), nack);
+    assert_eq!(
+        GenericNack::parse(&bytes).unwrap().try_to_bytes().unwrap(),
+        bytes
+    );
+
+    let padded_nack = GenericNack {
+        padding: vec![0, 0, 0],
+        ..nack
+    };
+    let bytes = padded_nack.try_to_bytes().unwrap();
+    assert_eq!(bytes.len(), 16);
+    assert_eq!(bytes[2..4], [0, 3], "length field counts the padding word");
+    assert_eq!(*bytes.last().unwrap(), 4, "count byte covers itself");
+    assert_eq!(GenericNack::parse(&bytes).unwrap(), padded_nack);
+    assert_eq!(
+        GenericNack::parse(&bytes).unwrap().try_to_bytes().unwrap(),
+        bytes
+    );
+
+    let range_nack = RangeNack {
+        ssrc_media: 0x0506_0708,
+        ranges: vec![],
+        padding: Vec::new(),
+    };
+    let bytes = range_nack.try_to_bytes().unwrap();
+    assert_eq!(bytes.len(), 12);
+    assert_eq!(bytes[0..4], [0x80, 204, 0, 2]);
+    assert_eq!(RangeNack::parse(&bytes).unwrap(), range_nack);
+    assert_eq!(
+        RangeNack::parse(&bytes).unwrap().try_to_bytes().unwrap(),
+        bytes
+    );
+
+    let padded_range_nack = RangeNack {
+        padding: vec![0, 0, 0],
+        ..range_nack
+    };
+    let bytes = padded_range_nack.try_to_bytes().unwrap();
+    assert_eq!(bytes.len(), 16);
+    assert_eq!(bytes[2..4], [0, 3]);
+    assert_eq!(*bytes.last().unwrap(), 4);
+    assert_eq!(RangeNack::parse(&bytes).unwrap(), padded_range_nack);
+    assert_eq!(
+        RangeNack::parse(&bytes).unwrap().try_to_bytes().unwrap(),
+        bytes
+    );
+}
+
 #[test]
 fn range_nack_max_entries_round_trip() {
     let rn = RangeNack {
@@ -141,6 +204,23 @@ fn range_nack_max_entries_round_trip() {
 // ---------------------------------------------------------------------------
 // RttEcho round-trips
 // ---------------------------------------------------------------------------
+
+/// TR-06-1 §5.2.6 padding is an opaque path-MTU probe field, so it must be
+/// written even into a caller's dirty output buffer.
+#[test]
+fn rtt_echo_padding_reaches_a_dirty_output_buffer() {
+    let echo = RttEcho {
+        kind: RttEchoKind::Response,
+        ssrc_media: 0x1234_5678,
+        timestamp: 0xDEAD_BEEF_CAFE_BABE,
+        processing_delay_us: 1_500,
+        padding: vec![0xA5; 8],
+    };
+    let mut out = vec![0xFFu8; echo.serialized_len()];
+    assert_eq!(echo.serialize_into(&mut out).unwrap(), 32);
+    assert_eq!(out[24..32], [0xA5; 8]);
+    assert_eq!(RttEcho::parse(&out).unwrap(), echo);
+}
 
 #[test]
 fn rtt_echo_request_round_trip() {
@@ -404,10 +484,112 @@ fn receiver_compound_full_round_trip() {
     assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
+/// `serialized_len()` must be exactly the number of bytes `serialize_into`
+/// writes: a caller sizing a datagram from it sends a right-length packet,
+/// and a buffer one byte shorter is rejected with the exact need/have pair.
+fn assert_serialized_len_matches<T: Serialize<Error = rist_runtime::Error>>(
+    value: &T,
+    bytes: &[u8],
+) {
+    let len = value.serialized_len();
+    assert_eq!(len, bytes.len());
+    let mut buf = vec![0u8; len];
+    assert_eq!(value.serialize_into(&mut buf).unwrap(), len);
+    assert_eq!(&buf[..len], bytes);
+
+    let mut short = vec![0u8; len - 1];
+    assert_eq!(
+        value.serialize_into(&mut short).unwrap_err(),
+        Error::OutputBufferTooSmall(OutputBufferTooSmall {
+            need: len,
+            have: len - 1,
+        })
+    );
+}
+
+#[test]
+fn compound_serialized_len_is_the_bytes_actually_written() {
+    let sender = RistSenderCompound {
+        report: ReportPart::Sr(SenderReport::new(
+            Ssrc::new(0x1122_3344),
+            0xE0E1_E2E3,
+            0x1020_3040,
+            0x0009_0000,
+            100,
+            50_000,
+            vec![],
+        )),
+        report_padding: vec![],
+        cname: "s@e.com".to_string(),
+        rtt_echo: Some(RttEcho {
+            kind: RttEchoKind::Request,
+            ssrc_media: 0x1122_3344,
+            timestamp: 12345,
+            processing_delay_us: 0,
+            padding: vec![],
+        }),
+        unknown: vec![],
+    };
+    let bytes = sender.try_to_bytes().unwrap();
+    // SR 28 + SDES 20 + RTT Echo 24.
+    assert_eq!(bytes.len(), 72);
+    assert_serialized_len_matches(&sender, &bytes);
+
+    let sender_with_report_padding = RistSenderCompound {
+        report: ReportPart::Rr(ReceiverReport::new(Ssrc::new(0x1122_3344), vec![])),
+        report_padding: vec![0, 0, 0],
+        ..sender.clone()
+    };
+    let bytes = sender_with_report_padding.try_to_bytes().unwrap();
+    // RR 8 + 4-byte padding region + SDES 20 + RTT Echo 24.
+    assert_eq!(bytes.len(), 56);
+    assert_serialized_len_matches(&sender_with_report_padding, &bytes);
+
+    let receiver = RistReceiverCompound {
+        report: ReportPart::Rr(ReceiverReport::new(
+            Ssrc::new(0xAAAA_BBBB),
+            vec![ReportBlock {
+                ssrc: Ssrc::new(0xCCCC_DDDD),
+                fraction_lost: 10,
+                cumulative_lost: 5,
+                ext_highest_seq: ExtendedSeqNo::new(0x0000_1000),
+                jitter: 100,
+                lsr: 0,
+                dlsr: 0,
+            }],
+        )),
+        report_padding: vec![],
+        cname: "receiver@example.com".to_string(),
+        nacks: vec![GenericNack {
+            ssrc_sender: 0xAAAA_BBBB,
+            ssrc_media: 0xCCCC_DDDD,
+            nacks: vec![NackFci { pid: 500, blp: 0 }],
+            padding: Vec::new(),
+        }],
+        range_nacks: vec![RangeNack {
+            ssrc_media: 0xCCCC_DDDD,
+            ranges: vec![PacketRange {
+                start: 100,
+                additional: 3,
+            }],
+            padding: Vec::new(),
+        }],
+        rtt_echo: Some(RttEcho {
+            kind: RttEchoKind::Response,
+            ssrc_media: 0xCCCC_DDDD,
+            timestamp: 0xDEAD_BEEF_CAFE_BABE,
+            processing_delay_us: 1_234,
+            padding: vec![0u8; 4],
+        }),
+        unknown: vec![],
+    };
+    let bytes = receiver.try_to_bytes().unwrap();
+    assert_serialized_len_matches(&receiver, &bytes);
+}
+
 // ---------------------------------------------------------------------------
 // Mutation tests — verify parsers actually decode each field
 // ---------------------------------------------------------------------------
-
 #[test]
 fn generic_nack_mutation_bites_pid() {
     let nack = GenericNack {
