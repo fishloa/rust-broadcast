@@ -8,12 +8,21 @@
 
 use crate::box_walk::find_box_range;
 use broadcast_common::Parse;
+use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
+use transmux::movie_fragment::{
+    TFHD_DEFAULT_BASE_IS_MOOF, TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT, TRUN_DATA_OFFSET_PRESENT,
+    TRUN_FIRST_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_DURATION_PRESENT, TRUN_SAMPLE_FLAGS_PRESENT,
+    TRUN_SAMPLE_SIZE_PRESENT,
+};
+use transmux::segments::{MediaDataBox, SegmentTypeBox};
 use transmux::{
-    CodecConfig, FragmentTrackData, MovieBox, MovieFragmentBox, Sample, SampleEntryVariant,
-    Severity, StblChild, TrackSpec, build_init_segment, build_media_segment,
-    validate::SegmentOrigin, validate_cmaf_track, validate_init_segment, validate_media_segment,
+    CodecConfig, EsdsBox, FragmentTrackData, MovieBox, MovieFragmentBox, MovieFragmentHeaderBox,
+    Sample, SampleEntryVariant, Severity, StblChild, TrackFragmentBaseMediaDecodeTimeBox,
+    TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrackSpec, TrunSample,
+    build_init_segment, build_media_segment, validate::SegmentOrigin, validate_cmaf_track,
+    validate_init_segment, validate_media_segment,
 };
 
 // ---------------------------------------------------------------------------
@@ -90,6 +99,34 @@ fn video_spec(moov: &MovieBox) -> TrackSpec {
             config: avc.config.clone(),
             width: avc.visual.width,
             height: avc.visual.height,
+        },
+    )
+}
+
+/// Build a single-audio-track spec from the fixture's real esds.
+fn audio_spec(moov: &MovieBox) -> TrackSpec {
+    let mp4a = match track_stsd_entry(moov, 1) {
+        SampleEntryVariant::Mp4a(m) => m,
+        _ => panic!("expected mp4a"),
+    };
+    let esds_body = mp4a
+        .config_boxes
+        .iter()
+        .find(|b| &b.box_type == b"esds")
+        .expect("mp4a must carry esds");
+    let mut esds_full = Vec::with_capacity(8 + esds_body.data.len());
+    esds_full.extend_from_slice(&((8 + esds_body.data.len()) as u32).to_be_bytes());
+    esds_full.extend_from_slice(b"esds");
+    esds_full.extend_from_slice(&esds_body.data);
+    let esds = EsdsBox::parse_box(&esds_full).expect("esds must parse");
+    TrackSpec::new(
+        TrackId::new(2),
+        track_timescale(moov, 1),
+        CodecConfig::Aac {
+            esds,
+            channel_count: mp4a.channelcount,
+            sample_rate: mp4a.samplerate >> 16,
+            sample_size: mp4a.samplesize,
         },
     )
 }
@@ -223,8 +260,55 @@ fn rename_box(data: &[u8], from: &[u8; 4], to: &[u8; 4]) -> Vec<u8> {
     out
 }
 
+/// The byte range of the `n`th (0-based) `trun` in `data`.
+fn nth_trun(data: &[u8], n: usize) -> (usize, usize) {
+    let mut found = find_box_range(data, 0, data.len(), b"trun", CONTAINERS).expect("trun present");
+    for _ in 0..n {
+        found = find_box_range(data, found.0 + found.1, data.len(), b"trun", CONTAINERS)
+            .expect("trun present");
+    }
+    found
+}
+
+/// Overwrite the `data_offset` of the `trun` starting at `trun_start`.
+fn set_trun_data_offset(data: &mut [u8], trun_start: usize, offset: i32) {
+    // FullBox word, sample_count, then data_offset.
+    let at = trun_start + 16;
+    data[at..at + 4].copy_from_slice(&offset.to_be_bytes());
+}
+
 fn has_code(issues: &[transmux::ConformanceIssue], code: &str) -> bool {
     issues.iter().any(|i| i.code == code)
+}
+
+/// Rebuild `segment` with a leading `styp` carrying the given brands, keeping
+/// every other box byte-identical (`trun.data_offset` is relative to the `moof`,
+/// so the leading box size does not affect resolution).
+fn with_styp(segment: &[u8], major: &[u8; 4], compatible: &[[u8; 4]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let size = 16 + 4 * compatible.len();
+    out.extend_from_slice(&(size as u32).to_be_bytes());
+    out.extend_from_slice(b"styp");
+    out.extend_from_slice(major);
+    out.extend_from_slice(&0u32.to_be_bytes());
+    for brand in compatible {
+        out.extend_from_slice(brand);
+    }
+    let styp_size = top_boxes(segment)
+        .first()
+        .filter(|(_, _, t)| t == b"styp")
+        .map(|(_, s, _)| *s)
+        .expect("the segment begins with styp");
+    out.extend_from_slice(&segment[styp_size..]);
+    out
+}
+
+fn warnings(issues: &[transmux::ConformanceIssue]) -> Vec<&str> {
+    issues
+        .iter()
+        .filter(|i| i.severity == Severity::Warning)
+        .map(|i| i.code)
+        .collect()
 }
 
 fn errors(issues: &[transmux::ConformanceIssue]) -> Vec<&str> {
@@ -261,6 +345,80 @@ fn clean_media_has_no_errors() {
         "clean media flagged errors: {:?}",
         errors(&issues)
     );
+}
+
+#[test]
+fn styp_brand_rule_bites() {
+    let data = fixture();
+    let samples = video_samples(&data);
+    let media = clean_media(1, 0, &samples);
+
+    // A good styp (the builder's own msdh/msdh+msix) yields no warnings at all.
+    let clean = validate_media_segment(&media, SegmentOrigin::FromIr);
+    assert_eq!(
+        warnings(&clean),
+        Vec::<&str>::new(),
+        "a clean segment must carry no warning"
+    );
+
+    let validate = |major: &[u8; 4], compat: &[[u8; 4]]| {
+        let seg = with_styp(&media, major, compat);
+        validate_media_segment(&seg, SegmentOrigin::FromIr)
+    };
+
+    // (b)/(c) a DASH segment brand as the major brand is accepted.
+    assert!(
+        !has_code(&validate(b"msdh", &[]), "media.styp.brand"),
+        "msdh must be a recognised segment brand"
+    );
+    assert!(
+        !has_code(&validate(b"msix", &[]), "media.styp.brand"),
+        "msix must be a recognised segment brand"
+    );
+    // (d) any cmf* brand is accepted.
+    assert!(
+        !has_code(&validate(b"cmfc", &[]), "media.styp.brand"),
+        "cmfc must be a recognised segment brand"
+    );
+    // (e) the compatible-brand list alone can carry the segment brand.
+    assert!(
+        !has_code(
+            &validate(b"isom", &[*b"iso6", *b"cmfs"]),
+            "media.styp.brand"
+        ),
+        "a compatible cmf* brand is enough"
+    );
+
+    // (a) a brand set with no segment brand is reported.
+    let bad = validate(b"isom", &[*b"iso6"]);
+    assert!(
+        has_code(&bad, "media.styp.brand"),
+        "isom+iso6 must warn: {:?}",
+        warnings(&bad)
+    );
+    // (f) a near-miss brand is not a segment brand.
+    for major in [*b"xmsd", *b"cmxx"] {
+        assert!(
+            has_code(&validate(&major, &[]), "media.styp.brand"),
+            "a near-miss major brand must warn"
+        );
+    }
+
+    // A segment with no styp at all reports the missing box, and only that.
+    let no_styp = strip_box(&media, b"styp");
+    let issues = validate_media_segment(&no_styp, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.styp.missing"),
+        "no styp must be reported: {issues:?}"
+    );
+}
+
+#[test]
+fn severity_labels_are_pinned() {
+    assert_eq!(Severity::Error.name(), "error");
+    assert_eq!(Severity::Warning.name(), "warning");
+    assert_eq!(Severity::Error.to_string(), "error");
+    assert_eq!(Severity::Warning.to_string(), "warning");
 }
 
 #[test]
@@ -416,6 +574,39 @@ fn moof_without_mdat_bites() {
 }
 
 #[test]
+fn moof_followed_by_a_non_mdat_box_bites() {
+    let data = fixture();
+    let samples = video_samples(&data);
+    let media = clean_media(1, 0, &samples);
+
+    // A same-size `free` where the mdat was: the moof's next box exists, but it
+    // is not an mdat.
+    let renamed = rename_box(&media, b"mdat", b"free");
+    let issues = validate_media_segment(&renamed, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.mdat.missing"),
+        "a moof followed by free must report a missing mdat, got {:?}",
+        errors(&issues)
+    );
+
+    // A free box between the moof and the mdat.
+    let (mdat_off, _, _) = *top_boxes(&media)
+        .iter()
+        .find(|(_, _, t)| t == b"mdat")
+        .expect("mdat present");
+    let mut separated = media[..mdat_off].to_vec();
+    separated.extend_from_slice(&8u32.to_be_bytes());
+    separated.extend_from_slice(b"free");
+    separated.extend_from_slice(&media[mdat_off..]);
+    let issues = validate_media_segment(&separated, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.mdat.missing"),
+        "a box between moof and mdat must report a missing mdat, got {:?}",
+        errors(&issues)
+    );
+}
+
+#[test]
 fn mdat_orphan_bites() {
     // A bare mdat with no preceding moof.
     let mut buf = Vec::new();
@@ -507,6 +698,73 @@ fn zero_duration_sample_bites() {
     assert!(
         has_code(&issues, "media.sample.zero-duration"),
         "expected media.sample.zero-duration, got {issues:?}"
+    );
+}
+
+#[test]
+fn ir_video_zero_span_with_init_is_a_warning_not_an_error() {
+    let data = fixture();
+    let (_, moov_bytes) = find_top_box(&data, b"moov");
+    let moov = MovieBox::parse(&moov_bytes).expect("fixture moov");
+    // Audio track first, video second: the handler, not the trak position,
+    // decides which track is video.
+    let init = build_init_segment(&[audio_spec(&moov), video_spec(&moov)], timescale(1000))
+        .expect("init with audio first, video second");
+
+    // A video IR sample with no stated span is written as a zero duration.
+    let mut video: Vec<Sample> = video_samples(&data).into_iter().take(3).collect();
+    for sample in &mut video {
+        let timing = sample.timing.expect("timed sample");
+        sample.timing = Some(transmux::ir::SampleTiming::timed(
+            timing.dts().expect("dts"),
+            timing.pts().expect("pts"),
+        ));
+    }
+    let video_seg = clean_media(1, 0, &video);
+    let issues = validate_cmaf_track(&init, &[&video_seg], SegmentOrigin::FromIr);
+    let timing = issues
+        .iter()
+        .find(|i| i.code == "media.sample.timing")
+        .unwrap_or_else(|| panic!("video zero span must be an unstated span: {issues:?}"));
+    assert!(
+        timing.message.contains("3 sample(s)"),
+        "the warning must name the three samples: {}",
+        timing.message
+    );
+    assert!(
+        !has_code(&issues, "media.sample.zero-duration"),
+        "a video track's zero span is unstated, not a declared zero: {issues:?}"
+    );
+
+    // The same zero span on a track the init types as audio states a zero
+    // length, which is an error.
+    let audio: Vec<Sample> = (0..3)
+        .map(|i| Sample::timed(vec![0u8; 8], i * 1024, i * 1024, None))
+        .collect();
+    let audio_seg = build_media_segment(1, &[FragmentTrackData::new(TrackId::new(2), 0, &audio)])
+        .expect("audio media segment");
+    let issues = validate_cmaf_track(&init, &[&audio_seg], SegmentOrigin::FromIr);
+    let zero = issues
+        .iter()
+        .find(|i| i.code == "media.sample.zero-duration")
+        .unwrap_or_else(|| panic!("an audio zero span is a declared zero: {issues:?}"));
+    assert!(
+        zero.message.contains("3 sample(s)"),
+        "the error must name the three samples: {}",
+        zero.message
+    );
+    assert!(
+        !has_code(&issues, "media.sample.timing"),
+        "an audio zero is not an unstated video span: {issues:?}"
+    );
+
+    // A clean init + segment pair carries no warning at all.
+    let clean = clean_media(1, 0, &video_samples(&data));
+    let issues = validate_cmaf_track(&init, &[&clean], SegmentOrigin::FromIr);
+    assert_eq!(
+        warnings(&issues),
+        Vec::<&str>::new(),
+        "a clean track must carry no warning: {issues:?}"
     );
 }
 
@@ -673,6 +931,264 @@ fn mdat_overrun_checks_every_trun_range() {
     ));
 }
 
+/// One `moof`/`mdat` media segment with the given fragment-wide and per-run
+/// sample flags (ISO/IEC 14496-12:2026 §8.8.7/§8.8.8).
+fn flagged_segment(
+    tfhd_default: Option<u32>,
+    first_sample: Option<u32>,
+    sample_flags: Option<u32>,
+) -> Vec<u8> {
+    let sample = TrunSample {
+        sample_duration: Some(1000),
+        sample_size: Some(1),
+        sample_flags,
+        sample_composition_time_offset: None,
+    };
+    let mut tr_flags =
+        TRUN_DATA_OFFSET_PRESENT | TRUN_SAMPLE_DURATION_PRESENT | TRUN_SAMPLE_SIZE_PRESENT;
+    if sample_flags.is_some() {
+        tr_flags |= TRUN_SAMPLE_FLAGS_PRESENT;
+    }
+    if first_sample.is_some() {
+        tr_flags |= TRUN_FIRST_SAMPLE_FLAGS_PRESENT;
+    }
+    let run = TrackFragmentRunBox {
+        version: 0,
+        tr_flags,
+        data_offset: Some(0),
+        first_sample_flags: first_sample,
+        samples: vec![sample, sample],
+    };
+    let mut tfhd_flags = TFHD_DEFAULT_BASE_IS_MOOF;
+    if tfhd_default.is_some() {
+        tfhd_flags |= TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT;
+    }
+    let tfhd = TrackFragmentHeaderBox {
+        flags: tfhd_flags,
+        track_id: TrackId::new(1),
+        base_data_offset: None,
+        sample_description_index: None,
+        default_sample_duration: None,
+        default_sample_size: None,
+        default_sample_flags: tfhd_default,
+    };
+    let traf = TrackFragmentBox::new(
+        tfhd,
+        Some(TrackFragmentBaseMediaDecodeTimeBox::new_v1(0)),
+        vec![run],
+    );
+    let mut moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(1), vec![traf]);
+    moof.traf[0].trun[0].data_offset =
+        Some(i32::try_from(moof.serialized_len() + 8).expect("small moof"));
+    let styp = SegmentTypeBox {
+        major_brand: *b"msdh",
+        minor_version: 0,
+        compatible_brands: vec![*b"msdh", *b"msix"],
+    };
+    let mdat = MediaDataBox { data: vec![0u8, 0] };
+    let mut out = vec![0u8; styp.serialized_len() + moof.serialized_len() + mdat.serialized_len()];
+    let mut c = 0;
+    c += styp.serialize_into(&mut out[c..]).expect("styp");
+    c += moof.serialize_into(&mut out[c..]).expect("moof");
+    c += mdat.serialize_into(&mut out[c..]).expect("mdat");
+    out.truncate(c);
+    out
+}
+
+/// The three-level sample-flag precedence decides whether a fragment begins at
+/// a sync sample (§8.8.8.1).
+#[test]
+fn non_sync_first_sample_precedence() {
+    /// `sample_is_non_sync_sample`: bit `[16]` (§8.8.3.1).
+    const NON_SYNC: u32 = 0x0001_0000;
+    const SYNC: u32 = 0x0200_0000;
+    let has = |segment: &[u8]| {
+        has_code(
+            &validate_media_segment(segment, SegmentOrigin::FromIr),
+            "media.sample.non-sync-first",
+        )
+    };
+
+    assert!(
+        has(&flagged_segment(None, Some(NON_SYNC), None)),
+        "first_sample_flags = non-sync must warn"
+    );
+    assert!(
+        !has(&flagged_segment(None, Some(SYNC), Some(NON_SYNC))),
+        "first_sample_flags wins over sample_flags"
+    );
+    assert!(
+        has(&flagged_segment(None, None, Some(NON_SYNC))),
+        "sample_flags = non-sync must warn when first_sample_flags is absent"
+    );
+    assert!(
+        has(&flagged_segment(Some(NON_SYNC), None, None)),
+        "tfhd.default_sample_flags = non-sync must warn as the last fallback"
+    );
+    assert!(
+        !has(&flagged_segment(Some(SYNC), None, None)),
+        "a sync tfhd.default_sample_flags must not warn"
+    );
+    assert!(
+        !has(&flagged_segment(Some(SYNC), None, Some(SYNC))),
+        "all-sync flags must not warn"
+    );
+
+    // Only bit 16 marks a non-sync sample: the neighbouring bits do not.
+    assert!(!has(&flagged_segment(None, Some(0x0002_0000), None)));
+    assert!(!has(&flagged_segment(None, Some(0x0000_8000), None)));
+    assert!(!has(&flagged_segment(None, Some(0x0000_0100), None)));
+}
+
+/// CMAF requires `tfhd.default-base-is-moof`.
+#[test]
+fn default_base_is_moof_flag_bites() {
+    let samples = video_samples(&fixture());
+    let media = clean_media(1, 0, &samples);
+    let clean = validate_media_segment(&media, SegmentOrigin::FromIr);
+    assert!(
+        !has_code(&clean, "media.tfhd.default-base-is-moof"),
+        "the builder sets the flag: {clean:?}"
+    );
+
+    let (tfhd, _) =
+        find_box_range(&media, 0, media.len(), b"tfhd", CONTAINERS).expect("tfhd present");
+    let mut broken = media.clone();
+    // Box header, then the FullBox version byte (0) and its three flag bytes.
+    broken[tfhd + 9] = 0;
+    broken[tfhd + 10] = 0;
+    broken[tfhd + 11] = 0;
+    let issues = validate_media_segment(&broken, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.tfhd.default-base-is-moof"),
+        "a tfhd without default-base-is-moof must be an error: {issues:?}"
+    );
+}
+
+/// The single-track CMAF fragment warning fires only for two or more `traf`s.
+#[test]
+fn multi_traf_warning_needs_two_trafs() {
+    let samples = video_samples(&fixture());
+
+    // Zero trafs: a moof with only an mfhd.
+    let mut none = Vec::new();
+    none.extend_from_slice(&20u32.to_be_bytes());
+    none.extend_from_slice(b"styp");
+    none.extend_from_slice(b"msdh");
+    none.extend_from_slice(&0u32.to_be_bytes());
+    none.extend_from_slice(b"msdh");
+    none.extend_from_slice(&20u32.to_be_bytes());
+    none.extend_from_slice(b"moof");
+    none.extend_from_slice(&12u32.to_be_bytes());
+    none.extend_from_slice(b"mfhd");
+    none.extend_from_slice(&[0, 0, 0, 0]);
+    none.extend_from_slice(&1u32.to_be_bytes());
+    none.extend_from_slice(&8u32.to_be_bytes());
+    none.extend_from_slice(b"mdat");
+    let issues = validate_media_segment(&none, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.traf.missing"),
+        "an empty moof must report a missing traf: {issues:?}"
+    );
+    assert!(
+        !has_code(&issues, "media.moof.multi-traf"),
+        "zero trafs is not a multi-track fragment: {issues:?}"
+    );
+
+    // One traf: no multi-track warning.
+    let one = clean_media(1, 0, &samples);
+    let issues = validate_media_segment(&one, SegmentOrigin::FromIr);
+    assert!(
+        !has_code(&issues, "media.moof.multi-traf"),
+        "a single-traf fragment must not warn: {issues:?}"
+    );
+
+    // Two trafs: the warning fires exactly once.
+    let two = build_media_segment(
+        1,
+        &[
+            FragmentTrackData::new(TrackId::new(1), 0, &samples),
+            FragmentTrackData::new(TrackId::new(2), 0, &samples),
+        ],
+    )
+    .expect("two-track media segment");
+    let issues = validate_media_segment(&two, SegmentOrigin::FromIr);
+    assert_eq!(
+        issues
+            .iter()
+            .filter(|i| i.code == "media.moof.multi-traf")
+            .count(),
+        1,
+        "a two-traf fragment must warn once: {issues:?}"
+    );
+}
+
+/// Two `trun`s claiming the same `mdat` bytes are rejected; adjacent and
+/// disjoint runs are not.
+#[test]
+fn overlapping_trun_ranges_bite() {
+    let data = fixture();
+    let samples = video_samples(&data);
+    let media = build_media_segment(
+        1,
+        &[
+            FragmentTrackData::new(TrackId::new(1), 0, &samples),
+            FragmentTrackData::new(TrackId::new(2), 0, &samples),
+        ],
+    )
+    .expect("two-track media segment");
+
+    // The builder lays the second run immediately after the first: adjacent
+    // ranges (b_lo == a_hi) must not overlap.
+    let clean = validate_media_segment(&media, SegmentOrigin::FromIr);
+    assert!(
+        !has_code(&clean, "media.mdat.overlap"),
+        "adjacent runs must not overlap: {clean:?}"
+    );
+
+    let (second, _) = nth_trun(&media, 1);
+    let second_off = i32::from_be_bytes([
+        media[second + 16],
+        media[second + 17],
+        media[second + 18],
+        media[second + 19],
+    ]);
+
+    // One byte of overlap.
+    let mut overlap = media.clone();
+    set_trun_data_offset(&mut overlap, second, second_off - 1);
+    let issues = validate_media_segment(&overlap, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.mdat.overlap"),
+        "a one-byte overlap must be reported: {issues:?}"
+    );
+
+    // A gap in the mdat is not an overlap; grow the mdat so it still holds the
+    // shifted run.
+    let gap = 8usize;
+    let (mdat_off, mdat_size, _) = *top_boxes(&media)
+        .iter()
+        .find(|(_, _, t)| t == b"mdat")
+        .expect("mdat present");
+    let mut disjoint = media.clone();
+    disjoint[mdat_off..mdat_off + 4].copy_from_slice(
+        &u32::try_from(mdat_size + gap)
+            .expect("small mdat")
+            .to_be_bytes(),
+    );
+    disjoint.extend_from_slice(&vec![0u8; gap]);
+    set_trun_data_offset(&mut disjoint, second, second_off + gap as i32);
+    let issues = validate_media_segment(&disjoint, SegmentOrigin::FromIr);
+    assert!(
+        !has_code(&issues, "media.mdat.overlap"),
+        "disjoint runs must not overlap: {issues:?}"
+    );
+    assert!(
+        !has_code(&issues, "media.mdat.overrun"),
+        "the widened mdat must hold the shifted run: {issues:?}"
+    );
+}
+
 /// (b) A segment holding **two** `moof`s must not report a false
 /// `track.tfdt.discontinuity`: the cross-segment check must use the segment's
 /// last fragment end, not its first tfdt.
@@ -762,6 +1278,28 @@ fn unknown_span_is_reported_not_conflated_with_a_zero_one() {
     assert!(
         !codes.contains(&"media.sample.zero-duration"),
         "an unstated span is not a declared zero length: {codes:?}"
+    );
+}
+
+#[test]
+fn untyped_zero_span_counts_every_sample() {
+    // Two samples with no stated span on an untyped track: the aggregate
+    // warning must name both, not a product of the counter (0) or nothing.
+    let samples = vec![
+        Sample::from_raw(vec![0x65, 0x88], Some(0), Some(0), None).expect("timestamps, no span"),
+        Sample::from_raw(vec![0x65, 0x88], Some(1_000), Some(1_000), None)
+            .expect("timestamps, no span"),
+    ];
+    let media = clean_media(1, 0, &samples);
+    let issues = validate_media_segment(&media, SegmentOrigin::FromIr);
+    let timing = issues
+        .iter()
+        .find(|i| i.code == "media.sample.timing")
+        .unwrap_or_else(|| panic!("an untyped zero span must be reported: {issues:?}"));
+    assert!(
+        timing.message.contains("2 sample(s)"),
+        "the warning must name both samples: {}",
+        timing.message
     );
 }
 

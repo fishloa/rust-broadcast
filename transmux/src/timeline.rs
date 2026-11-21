@@ -419,4 +419,174 @@ mod tests {
         only_audio.record(audio, &at(&f, 0), None, T0);
         assert!(only_audio.is_jump(audio, &at(&f, 100 * rate), None, T0));
     }
+
+    #[test]
+    fn the_builders_set_the_thresholds_they_are_given() {
+        let config = TimelineJumpConfig::default()
+            .with_backward(core::time::Duration::from_millis(250))
+            .with_forward_slack(core::time::Duration::from_secs(9));
+        assert_eq!(config.backward, core::time::Duration::from_millis(250));
+        assert_eq!(config.forward_slack, core::time::Duration::from_secs(9));
+
+        let f = fixture();
+        let mut d = detector(&f, config);
+        // -300 ms is past the configured 250 ms backward threshold.
+        assert!(jump_after(&mut d, &f, T0, -27_000, T0));
+        // +8 s is inside the configured 9 s slack.
+        assert!(!jump_after(&mut d, &f, T0, 720_000, T0));
+    }
+
+    #[test]
+    fn stale_tracks_are_screened_against_the_jumped_reference() {
+        let f = fixture();
+        let mut d = detector(&f, TimelineJumpConfig::default());
+        let video = f.video.track_id;
+        let audio = f.audio.track_id;
+        let rate = i64::from(f.audio.timescale.get());
+        let at_audio = |seconds: i64| at(&f, seconds * rate);
+        let epoch = |d: &mut JumpDetector| {
+            d.record(audio, &at_audio(0), None, T0);
+            d.begin_epoch(video, &at(&f, 1_000 * VIDEO_TS));
+        };
+
+        // Before an epoch every sample passes.
+        assert!(d.screen(audio, &at_audio(0)));
+
+        d.record(video, &at(&f, 0), Some(JoinDecision::Keep), T0);
+        d.record(audio, &at_audio(0), None, T0);
+        d.begin_epoch(video, &at(&f, 1_000 * VIDEO_TS));
+        // Old-timeline audio is far from the new reference and is dropped.
+        assert!(!d.screen(audio, &at_audio(0)));
+        // A sample within the slack joins the new timeline and leaves `stale`,
+        // so a following far sample passes again.
+        assert!(d.screen(audio, &at_audio(1_003)));
+        assert!(d.screen(audio, &at_audio(0)));
+        // The jumped track and an untracked one are never screened.
+        assert!(d.screen(video, &at(&f, 0)));
+        assert!(d.screen(TrackId::new(99), &at(&f, 0)));
+
+        // Exactly `forward_slack` above the reference passes; one second past
+        // it does not.
+        epoch(&mut d);
+        assert!(d.screen(audio, &at_audio(1_005)));
+        epoch(&mut d);
+        assert!(!d.screen(audio, &at_audio(1_006)));
+        // The same below the reference: the boundary passes, one second past
+        // it does not.
+        epoch(&mut d);
+        assert!(d.screen(audio, &at_audio(995)));
+        epoch(&mut d);
+        assert!(!d.screen(audio, &at_audio(994)));
+
+        // With no config an epoch is a no-op: nothing is ever screened.
+        let mut disabled = JumpDetector::new(None);
+        disabled.on_tracks(&[f.video.clone(), f.audio.clone()]);
+        disabled.record(audio, &at_audio(0), None, T0);
+        disabled.begin_epoch(video, &at(&f, 1_000 * VIDEO_TS));
+        assert!(disabled.screen(audio, &at_audio(0)));
+    }
+
+    #[test]
+    fn clear_resets_the_detector() {
+        let f = fixture();
+        let mut d = detector(&f, TimelineJumpConfig::default());
+        let video = f.video.track_id;
+        d.record(video, &at(&f, 0), Some(JoinDecision::Keep), T0);
+        d.note_reset();
+        assert!(d.is_jump(video, &at(&f, 100 * VIDEO_TS), Some(JoinDecision::Keep), T0));
+
+        d.clear();
+        assert!(
+            !d.already_handled(),
+            "clear re-arms the discontinuity latch"
+        );
+        assert!(
+            !d.is_jump(video, &at(&f, 100 * VIDEO_TS), Some(JoinDecision::Keep), T0),
+            "clear forgets the previous sample"
+        );
+    }
+
+    #[test]
+    fn the_handled_latch_rearms_only_on_a_continued_track() {
+        let f = fixture();
+        let mut d = detector(&f, TimelineJumpConfig::default());
+        let video = f.video.track_id;
+        assert!(!d.already_handled());
+        d.record(video, &at(&f, 0), Some(JoinDecision::Keep), T0);
+        d.note_reset();
+        assert!(d.already_handled());
+        d.record(video, &at(&f, 1), Some(JoinDecision::Keep), T0);
+        assert!(
+            d.already_handled(),
+            "the first post-reset record of a known track keeps the latch"
+        );
+        d.record(video, &at(&f, 2), Some(JoinDecision::Keep), T0);
+        assert!(!d.already_handled(), "the second post-reset record re-arms");
+    }
+
+    #[test]
+    fn the_rendered_audio_track_selects_which_audio_is_watched() {
+        let f = fixture();
+        let mut second = f.audio.clone();
+        second.track_id = TrackId::new(5);
+        let first_id = f.audio.track_id;
+        let second_id = second.track_id;
+        let rate = i64::from(f.audio.timescale.get());
+        let mut d = JumpDetector::new(Some(TimelineJumpConfig::default()));
+        d.on_tracks(&[f.audio.clone(), second]);
+
+        d.record(first_id, &at(&f, 0), None, T0);
+        assert!(
+            d.is_jump(first_id, &at(&f, 100 * rate), None, T0),
+            "the first audio track is watched by default"
+        );
+        assert!(
+            !d.is_jump(second_id, &at(&f, 100 * rate), None, T0),
+            "the second is not watched by default"
+        );
+
+        d.set_rendered(Some(&[second_id]));
+        d.record(second_id, &at(&f, 0), None, T0);
+        assert!(
+            d.is_jump(second_id, &at(&f, 100 * rate), None, T0),
+            "the rendered second track is watched"
+        );
+        assert!(
+            !d.is_jump(first_id, &at(&f, 200 * rate), None, T0),
+            "the first is no longer watched"
+        );
+
+        d.set_rendered(None);
+        d.record(first_id, &at(&f, 0), None, T0);
+        assert!(
+            d.is_jump(first_id, &at(&f, 300 * rate), None, T0),
+            "clearing the selection restores the first track"
+        );
+    }
+
+    #[test]
+    fn a_non_zero_previous_pts_is_subtracted() {
+        let f = fixture();
+        let mut d = detector(&f, TimelineJumpConfig::default());
+        let video = f.video.track_id;
+        d.clear();
+        d.record(video, &at(&f, 10 * VIDEO_TS), Some(JoinDecision::Keep), T0);
+        assert!(
+            !d.is_jump(video, &at(&f, 10 * VIDEO_TS), Some(JoinDecision::Keep), T0),
+            "the same pts is not a jump"
+        );
+        assert!(
+            !d.is_jump(video, &at(&f, 9 * VIDEO_TS), Some(JoinDecision::Keep), T0),
+            "one second back is within the backward threshold"
+        );
+        assert!(
+            d.is_jump(
+                video,
+                &at(&f, 15 * VIDEO_TS + 1),
+                Some(JoinDecision::Keep),
+                T0
+            ),
+            "one tick past five seconds is a jump"
+        );
+    }
 }
