@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Tests
+- Subtitle rendition declarations are pinned: an empty set, one past `MAX_SUBTITLE_RENDITIONS`, and an identity-count mismatch are all refused (the cap itself is accepted), the master gains `TYPE=SUBTITLES` only for a valid set, the route's accessor reports every declaration, and the sibling playlist carries `#EXT-X-PROGRAM-DATE-TIME` exactly when the route asks for arrival dates (audit 23 finding 214, #3878).
 - Route DVR wiring is pinned: an unchanged init is not queued twice (and a route without DVR queues none), a successful persist drains the queue to the newest generation, an idle poll does not re-enter the recorder, the audio rendition init lands on its own origin, and feeding a genuine DVB-T capture through the route sets the recorder's EIT present event (audit 23 finding 213, #3877).
 - Per-segment DASH track-spec history is pinned: a mid-stream track-set change describes only the segments at or after its first segment, a revision naming an earlier start replaces the pending entry, and the superseded entry is retired exactly when the window's oldest listed segment reaches its boundary (audit 23 finding 212, #3876).
 - The OS-entropy helpers are pinned: two SRT entropy seeds differ and are never all-zero/all-one, `seed_entropy` never returns 0 or 1, 256 RTP SSRC draws all have the forced low bit set, and eight fresh `Backoff`s step differently, so a constant seed can no longer ship a predictable secret or a lockstep reconnect storm (audit 23 finding 211, #3875).

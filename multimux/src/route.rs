@@ -4134,6 +4134,152 @@ mod program_registry_tests {
         );
     }
 
+    fn subtitle_decl(name: &str, uri: &str) -> hls_runtime::server::SubtitleRenditionDecl {
+        hls_runtime::server::SubtitleRenditionDecl::new(name, "en", uri)
+    }
+
+    /// A subtitle declaration set that would publish a malformed master is
+    /// refused: none at all, more than the cap, or an identity count that does
+    /// not match the declarations. A valid set is served, and the route's own
+    /// accessor reports every one of them.
+    #[test]
+    fn subtitle_declarations_are_validated_before_the_master_is_published() {
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(4))
+                .with_window_segments(8)
+                .with_declared_bandwidth_bps(Some(7_000_000u64)),
+        ));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        let master_before = serving
+            .ll_hls()
+            .master_playlist("media.m3u8")
+            .expect("master renders");
+        assert!(
+            !master_before.contains("TYPE=SUBTITLES"),
+            "{master_before}"
+        );
+
+        assert!(serving.declare_subtitles(&[], &[]).is_none());
+        let too_many: Vec<_> = (0..=MAX_SUBTITLE_RENDITIONS)
+            .map(|slot| subtitle_decl(&format!("s{slot}"), &format!("subs-{slot}.m3u8")))
+            .collect();
+        let identities: Vec<String> = (0..=MAX_SUBTITLE_RENDITIONS)
+            .map(|slot| format!("page:{slot}"))
+            .collect();
+        assert!(
+            serving.declare_subtitles(&too_many, &identities).is_none(),
+            "a set past MAX_SUBTITLE_RENDITIONS must be refused"
+        );
+        let two = vec![
+            subtitle_decl("English", "subs-0.m3u8"),
+            subtitle_decl("Deutsch", "subs-1.m3u8"),
+        ];
+        assert!(
+            serving
+                .declare_subtitles(&two, &["page:888".to_string()])
+                .is_none(),
+            "one identity for two declarations must be refused"
+        );
+
+        let declared = serving
+            .declare_subtitles(&two, &["page:888".to_string(), "page:777".to_string()])
+            .expect("a valid set is accepted");
+        assert_eq!(declared.len(), 2);
+        assert_eq!(route.subtitle_servings(SPTS_PROGRAM_ID).len(), 2);
+        let master = serving
+            .ll_hls()
+            .master_playlist("media.m3u8")
+            .expect("master renders");
+        assert!(master.contains("TYPE=SUBTITLES"), "{master}");
+
+        // The cap itself is a valid set: exactly MAX_SUBTITLE_RENDITIONS is
+        // accepted, only one past it is refused.
+        let capped = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(4))
+                .with_window_segments(8)
+                .with_declared_bandwidth_bps(Some(7_000_000u64)),
+        );
+        capped.publish_new_program(SPTS_PROGRAM_ID);
+        let at_cap: Vec<_> = (0..MAX_SUBTITLE_RENDITIONS)
+            .map(|slot| subtitle_decl(&format!("s{slot}"), &format!("subs-{slot}.m3u8")))
+            .collect();
+        let at_cap_ids: Vec<String> = (0..MAX_SUBTITLE_RENDITIONS)
+            .map(|slot| format!("page:{slot}"))
+            .collect();
+        assert_eq!(
+            capped
+                .serving(SPTS_PROGRAM_ID)
+                .expect("program published")
+                .declare_subtitles(&at_cap, &at_cap_ids)
+                .map(|servings| servings.len()),
+            Some(MAX_SUBTITLE_RENDITIONS)
+        );
+    }
+
+    /// The subtitle sibling carries `#EXT-X-PROGRAM-DATE-TIME` exactly when the
+    /// route asked for arrival-time dates: the sibling origin is built from the
+    /// same source setting as the primary, not a fixed one.
+    #[tokio::test]
+    async fn a_subtitle_playlist_gets_arrival_pdt_only_when_the_route_asks() {
+        for (source, expect_pdt) in [
+            (crate::config::ProgramDateTimeSource::Arrival, true),
+            (crate::config::ProgramDateTimeSource::Off, false),
+        ] {
+            let route = Arc::new(
+                RouteHandle::new(
+                    RouteConfig::default()
+                        .with_target_duration(Duration::from_secs(4))
+                        .with_part_target(Duration::from_millis(500))
+                        .with_window_segments(8),
+                )
+                .with_program_date_time(source),
+            );
+            route.publish_new_program(SPTS_PROGRAM_ID);
+            let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+            let decls = vec![subtitle_decl("English", "subs-0.m3u8")];
+            assert!(
+                serving
+                    .declare_subtitles(&decls, &["page:888".to_string()])
+                    .is_some()
+            );
+            let subtitle = serving.subtitle_servings()[0].clone();
+            subtitle
+                .trunk
+                .segment_writer()
+                .expect("segment writer")
+                .publish_segment(media_plane::trunk::SegmentEntry::new(
+                    Bytes::from(vec![0xAB; 8]),
+                    media_plane::ids::SegmentSeq::new(1),
+                    Duration::from_secs(4),
+                    Timestamp::ZERO,
+                    transmux::SegmentMeta {
+                        discontinuous: false,
+                    },
+                ))
+                .expect("publish subtitle segment");
+
+            let app = crate::testutil::app_with(
+                &route,
+                Arc::new(crate::output::hls::HlsOutput::default()),
+            );
+            let (status, body) = crate::testutil::get_bytes(&app, "/cam/subs-0.m3u8").await;
+            let playlist = String::from_utf8(body).expect("utf-8 playlist");
+            assert_eq!(
+                status,
+                axum::http::StatusCode::OK,
+                "{source:?}: {playlist}"
+            );
+            assert_eq!(
+                playlist.contains("#EXT-X-PROGRAM-DATE-TIME:"),
+                expect_pdt,
+                "{source:?}: {playlist}"
+            );
+        }
+    }
+
     /// The route feeds the EIT present event of the bytes it ingests to its
     /// DVR recorder: without that, an EIT-aligned period roll never happens.
     /// The genuine capture's present event is pinned in the fixture's
