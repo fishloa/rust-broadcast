@@ -233,6 +233,31 @@ fn dfla_mutation_changes_bytes() {
     );
 }
 
+/// A `dfLa` whose blocks never set `last` ends at the box end, not at the
+/// block loop's next-header probe; 1-3 stray trailing bytes are not a header.
+#[test]
+fn dfla_without_a_last_block_and_with_a_short_tail_parses() {
+    // FullBox version/flags, then a non-last STREAMINFO block of 34 bytes.
+    let mut body = vec![0u8; 4];
+    body.push(0x00);
+    body.extend_from_slice(&[0x00, 0x00, 34]);
+    body.extend_from_slice(&[0x5A; 34]);
+
+    let cfg = FlacSpecificBox::parse(&body).expect("no last block still parses");
+    assert_eq!(cfg.blocks.len(), 1);
+    assert!(!cfg.blocks[0].last, "the block's last flag stays clear");
+    assert_eq!(cfg.blocks[0].data.len(), 34);
+
+    for tail in 1..=3usize {
+        let mut padded = body.clone();
+        padded.extend(core::iter::repeat_n(0u8, tail));
+        let cfg = FlacSpecificBox::parse(&padded)
+            .unwrap_or_else(|e| panic!("{tail} stray trailing bytes must parse, got {e}"));
+        assert_eq!(cfg.blocks.len(), 1, "{tail} trailing bytes");
+        assert!(!cfg.blocks[0].last, "{tail} trailing bytes");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // VP9 vpcC — fixtures/mp4/vp9.mp4 (#437)
 // ---------------------------------------------------------------------------
