@@ -727,3 +727,35 @@ fn dangling_byterange_is_one_diagnostic() {
             .is_empty()
     );
 }
+
+/// Item 6: a pending `#EXTINF`/`#EXT-X-BYTERANGE` overwritten before its URI
+/// line is reported too, not just one left dangling at EOF.
+#[test]
+fn overwritten_segment_tags_are_each_reported() {
+    use broadcast_hls::{MediaPlaylist, ParseDiagnosticKind};
+
+    let input = "#EXTM3U\n#EXT-X-TARGETDURATION:3\n#EXTINF:2,\n#EXTINF:3,\nb.ts\n";
+    let playlist = MediaPlaylist::parse(input).expect("must parse");
+    assert_eq!(playlist.segments.len(), 1);
+    assert_eq!(playlist.segments[0].duration.get(), 3.0);
+    assert_eq!(playlist.diagnostics.len(), 1, "{:?}", playlist.diagnostics);
+    assert_eq!(
+        playlist.diagnostics[0].kind,
+        ParseDiagnosticKind::DanglingSegmentTags
+    );
+    assert_eq!(playlist.diagnostics[0].line, "#EXTINF:2,");
+
+    let input = "#EXTM3U\n#EXT-X-TARGETDURATION:3\n#EXTINF:3,\n#EXT-X-BYTERANGE:10@0\n#EXT-X-BYTERANGE:20@10\nb.ts\n";
+    let playlist = MediaPlaylist::parse(input).expect("must parse");
+    assert_eq!(playlist.segments.len(), 1);
+    assert_eq!(
+        playlist.segments[0].byte_range.expect("byte range").length,
+        20
+    );
+    assert_eq!(playlist.diagnostics.len(), 1, "{:?}", playlist.diagnostics);
+    assert_eq!(
+        playlist.diagnostics[0].kind,
+        ParseDiagnosticKind::DanglingSegmentTags
+    );
+    assert_eq!(playlist.diagnostics[0].line, "#EXT-X-BYTERANGE:10@0");
+}

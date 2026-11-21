@@ -2231,6 +2231,13 @@ impl MediaPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BITRATE:") {
                 current_bitrate = Some(parse_decimal_int(rest, line_no, line, "EXT-X-BITRATE")?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BYTERANGE:") {
+                if let Some((line_no, line)) = pending_byte_range_line.take() {
+                    diagnostics.push(ParseDiagnostic {
+                        kind: ParseDiagnosticKind::DanglingSegmentTags,
+                        line_no,
+                        line,
+                    });
+                }
                 pending_byte_range = Some(ByteRange::parse(rest, line_no, line)?);
                 pending_byte_range_line = Some((line_no, line.to_string()));
             } else if let Some(rest) = line.strip_prefix("#EXT-X-MAP:") {
@@ -2247,6 +2254,13 @@ impl MediaPlaylist {
                     extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXTINF:") {
+                if let Some((line_no, line)) = pending_extinf_line.take() {
+                    diagnostics.push(ParseDiagnostic {
+                        kind: ParseDiagnosticKind::DanglingSegmentTags,
+                        line_no,
+                        line,
+                    });
+                }
                 let (dur_str, title) = match rest.split_once(',') {
                     Some((dur, title)) => (dur, title),
                     None => (rest, ""),
