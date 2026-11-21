@@ -1590,6 +1590,28 @@ mod tests {
     }
 
     #[test]
+    fn nominal_duration_skips_a_zero_frame_pair() {
+        let timeline = [
+            BlockSpan {
+                pts_ticks: 0,
+                first_frame: 0,
+                frame_count: 1,
+            },
+            BlockSpan {
+                pts_ticks: 10,
+                first_frame: 0,
+                frame_count: 0,
+            },
+            BlockSpan {
+                pts_ticks: 30,
+                first_frame: 1,
+                frame_count: 2,
+            },
+        ];
+        assert_eq!(derive_nominal_frame_duration(&timeline), 20);
+    }
+
+    #[test]
     fn vint_one_byte() {
         // 0x81 = 1000_0001 → width 1, value 1 (not the all-ones "unknown" value).
         assert_eq!(read_vint(&[0x81]), Some((1, 1, false)));

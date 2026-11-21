@@ -165,6 +165,7 @@ mod segmenter_progress_bounds;
 mod sei_caption_real_capture;
 mod serializer_length_truncation;
 mod skipped_track_id;
+mod slice_header_pps;
 mod smooth;
 #[cfg(feature = "std")]
 mod smooth_fragment_inspect;
@@ -173,6 +174,8 @@ mod smooth_fragment_probe;
 #[cfg(feature = "std")]
 mod smooth_text_roundtrip;
 mod splice;
+#[path = "support/sps_builder.rs"]
+mod sps_builder;
 mod sps_profile_matrix;
 mod ssai_ad_stitch;
 mod stage;

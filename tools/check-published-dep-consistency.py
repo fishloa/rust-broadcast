@@ -90,6 +90,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import http.client
 import itertools
 import json
 import os
@@ -250,7 +251,7 @@ def http_get_json(url: str) -> dict | None:
             if e.code == 429:
                 time.sleep(RETRY_BACKOFF_SECONDS * (2 ** attempt))
             last_err = e
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError) as e:
             last_err = e
         if attempt < RETRIES:
             time.sleep(RETRY_BACKOFF_SECONDS * attempt)

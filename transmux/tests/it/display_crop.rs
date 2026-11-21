@@ -382,3 +382,153 @@ fn hevc_default_display_window_flag_zero_is_none() {
     let g = DisplayGeometry::from_hevc_sps(&sps).expect("parse");
     assert!(g.default_display_rect.is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Crop/conformance-window bounds (audit 23 #3848)
+//
+// `total > coded` takes the "fall back to the coded rectangle" branch and only
+// grows to `>=`; equality keeps the (possibly zero-size) cropped rectangle, and
+// an oversize on one axis alone must still fall back.
+// ---------------------------------------------------------------------------
+
+use crate::sps_builder::{AvcSps, HevcSps, HevcVui, avc_sps, hevc_sps};
+
+#[test]
+fn avc_crop_at_equality_keeps_zero_size_rect() {
+    let width_at_equality = avc_sps(&AvcSps {
+        crop: (0, 360, 0, 0),
+        ..AvcSps::default()
+    });
+    let g = DisplayGeometry::from_avc_sps(&width_at_equality).expect("parse");
+    assert_eq!(
+        g.output_rect,
+        PictureRect::new(0, 0, 0, 576),
+        "total_h == coded_width keeps the cropped rect (zero width)"
+    );
+
+    let height_at_equality = avc_sps(&AvcSps {
+        crop: (0, 0, 0, 288),
+        ..AvcSps::default()
+    });
+    let g = DisplayGeometry::from_avc_sps(&height_at_equality).expect("parse");
+    assert_eq!(
+        g.output_rect,
+        PictureRect::new(0, 0, 720, 0),
+        "total_v == coded_height keeps the cropped rect (zero height)"
+    );
+}
+
+#[test]
+fn avc_one_axis_oversize_falls_back_to_coded_rect() {
+    let wide = avc_sps(&AvcSps {
+        crop: (0, 361, 0, 0),
+        ..AvcSps::default()
+    });
+    let g = DisplayGeometry::from_avc_sps(&wide).expect("parse");
+    assert_eq!(
+        g.output_rect,
+        PictureRect::new(0, 0, 720, 576),
+        "crop wider than the picture falls back on the width axis alone"
+    );
+
+    let tall = avc_sps(&AvcSps {
+        crop: (0, 0, 0, 289),
+        ..AvcSps::default()
+    });
+    let g = DisplayGeometry::from_avc_sps(&tall).expect("parse");
+    assert_eq!(
+        g.output_rect,
+        PictureRect::new(0, 0, 720, 576),
+        "crop taller than the picture falls back on the height axis alone"
+    );
+}
+
+fn hevc_conf(conf: (u64, u64, u64, u64)) -> Vec<u8> {
+    hevc_sps(&HevcSps {
+        width: 32,
+        height: 32,
+        conformance: Some(conf),
+        ..HevcSps::default()
+    })
+}
+
+#[test]
+fn hevc_conformance_window_at_equality_keeps_zero_size_rect() {
+    let g = DisplayGeometry::from_hevc_sps(&hevc_conf((0, 16, 0, 0))).expect("parse");
+    assert_eq!(
+        g.output_rect,
+        PictureRect::new(0, 0, 0, 32),
+        "total_h == coded_width keeps the cropped rect (zero width)"
+    );
+
+    let g = DisplayGeometry::from_hevc_sps(&hevc_conf((0, 0, 0, 16))).expect("parse");
+    assert_eq!(
+        g.output_rect,
+        PictureRect::new(0, 0, 32, 0),
+        "total_v == coded_height keeps the cropped rect (zero height)"
+    );
+}
+
+#[test]
+fn hevc_one_axis_oversize_conformance_falls_back() {
+    let g = DisplayGeometry::from_hevc_sps(&hevc_conf((0, 17, 0, 0))).expect("parse");
+    assert_eq!(
+        g.output_rect,
+        PictureRect::new(0, 0, 32, 32),
+        "conformance window wider than the picture falls back on that axis alone"
+    );
+
+    let g = DisplayGeometry::from_hevc_sps(&hevc_conf((0, 0, 0, 17))).expect("parse");
+    assert_eq!(
+        g.output_rect,
+        PictureRect::new(0, 0, 32, 32),
+        "conformance window taller than the picture falls back on that axis alone"
+    );
+}
+
+fn hevc_ddw(def: (u64, u64, u64, u64)) -> Vec<u8> {
+    hevc_sps(&HevcSps {
+        width: 32,
+        height: 32,
+        vui: Some(HevcVui {
+            field_seq: false,
+            frame_field_info_present: false,
+            default_display: Some(def),
+            timing: None,
+            hrd: None,
+        }),
+        ..HevcSps::default()
+    })
+}
+
+#[test]
+fn hevc_default_display_window_at_equality_is_zero_size() {
+    let g = DisplayGeometry::from_hevc_sps(&hevc_ddw((0, 16, 0, 0))).expect("parse");
+    assert_eq!(
+        g.default_display_rect,
+        Some(PictureRect::new(0, 0, 0, 32)),
+        "default display width equal to coded width stays a rect"
+    );
+
+    let g = DisplayGeometry::from_hevc_sps(&hevc_ddw((0, 0, 0, 16))).expect("parse");
+    assert_eq!(
+        g.default_display_rect,
+        Some(PictureRect::new(0, 0, 32, 0)),
+        "default display height equal to coded height stays a rect"
+    );
+}
+
+#[test]
+fn hevc_one_axis_oversize_default_display_is_none() {
+    let g = DisplayGeometry::from_hevc_sps(&hevc_ddw((0, 17, 0, 0))).expect("parse");
+    assert_eq!(
+        g.default_display_rect, None,
+        "default display wider than the picture is dropped on that axis alone"
+    );
+
+    let g = DisplayGeometry::from_hevc_sps(&hevc_ddw((0, 0, 0, 17))).expect("parse");
+    assert_eq!(
+        g.default_display_rect, None,
+        "default display taller than the picture is dropped on that axis alone"
+    );
+}

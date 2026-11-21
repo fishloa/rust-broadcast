@@ -246,3 +246,19 @@ fn clap_spec_vector_round_trip() {
         "mutation must change bytes"
     );
 }
+
+#[test]
+fn colour_type_labels_and_display_are_pinned() {
+    use transmux::visual_ext::ColourType;
+    assert_eq!(ColourType::Nclx.name(), "nclx");
+    assert_eq!(ColourType::RIcc.name(), "rICC");
+    assert_eq!(ColourType::Prof.name(), "prof");
+    assert_eq!(ColourType::Unknown(*b"abcd").name(), "reserved");
+    assert_eq!(ColourType::Nclx.to_string(), "nclx");
+    assert_eq!(ColourType::RIcc.to_string(), "rICC");
+    assert_eq!(ColourType::Prof.to_string(), "prof");
+    assert_eq!(
+        ColourType::Unknown(*b"abcd").to_string(),
+        "reserved(0x61626364)"
+    );
+}

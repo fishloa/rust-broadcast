@@ -14,11 +14,19 @@
 
 extern crate alloc;
 
+mod custom_tag;
+mod daterange;
 mod error;
 pub mod limits;
+mod options;
 pub mod seq;
 
-pub use error::{Error, Result};
+pub use custom_tag::{CustomTag, CustomTagName};
+pub use daterange::{ClientAttrName, Cue, CueTrigger, DateRange, Scte35Kind};
+pub use error::{
+    AttributeListError, ClientAttrNameError, CustomTagNameError, DateRangeError, Error, Result,
+};
+pub use options::ParseOptions;
 pub use seq::{MediaSequence, PartIndex};
 
 use alloc::collections::BTreeMap;
@@ -236,6 +244,12 @@ pub enum ParseDiagnosticKind {
     /// a bare date is one): the tag was dropped and its segment has no
     /// [`MediaSegment::program_date_time`].
     InvalidProgramDateTime,
+    /// An `#EXTINF` or `#EXT-X-BYTERANGE` (a tag that needs a following URI
+    /// line to close a Media Segment) appeared with no URI line before the end
+    /// of input: it names no segment, so it is reported rather than silently
+    /// dropped. A trailing incomplete record in a playlist being written
+    /// (crash or open period) is exactly this.
+    DanglingSegmentTags,
 }
 
 impl ParseDiagnosticKind {
@@ -243,6 +257,7 @@ impl ParseDiagnosticKind {
     pub fn name(&self) -> &'static str {
         match self {
             Self::InvalidProgramDateTime => "invalid_program_date_time",
+            Self::DanglingSegmentTags => "dangling_segment_tags",
         }
     }
 }
@@ -1711,7 +1726,32 @@ impl MediaPlaylist {
     /// already wire-valid) or was assembled by hand through the public
     /// fields.
     pub fn to_m3u8(&self) -> Result<String> {
-        self.validate_for_render()?;
+        let mut s = self.render_header()?;
+        for index in 0..self.segments.len() {
+            s.push_str(&self.render_segment(index)?);
+        }
+        s.push_str(&self.render_endlist()?);
+        Ok(s)
+    }
+
+    /// Render the header block of this Media Playlist — everything from
+    /// `#EXTM3U` through the playlist-level tags, ending just before the first
+    /// segment. Together with `Σ` [`Self::render_segment`] and
+    /// [`Self::render_endlist`] this is exactly [`Self::to_m3u8`].
+    ///
+    /// An append-only writer must **pin [`Self::version`]** to the value the
+    /// finished playlist will declare (or, equivalently, to at least
+    /// [`Self::computed_version`] over the whole playlist). The effective
+    /// version is derived from every segment, so leaving `version` at `0`
+    /// lets a later segment that triggers a §8 row change the header a writer
+    /// already emitted. With `version` pinned, the header and each
+    /// `render_segment(i)` are stable as segments are appended.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::to_m3u8`] for the header's own fields.
+    pub fn render_header(&self) -> Result<String> {
+        validate_tag_body("playlist-level extra tag", &self.extra_tags)?;
         let mut s = String::new();
         s.push_str("#EXTM3U\n");
         if let Some(version) = self.effective_version() {
@@ -1789,6 +1829,16 @@ impl MediaPlaylist {
         // #EXT-X-SKIP (RFC 8216bis §4.4.5.2) — a Playlist Delta Update marker
         // standing in for the segments/tags before the Skip Boundary.
         if let Some(skip) = &self.skip {
+            for id in &skip.recently_removed_daterange_ids {
+                validate_quoted_string(id, "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id")?;
+                if id.contains('\t') {
+                    return Err(Error::InvalidQuotedString {
+                        what: "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id".to_string(),
+                        bad_char: '\t',
+                        value: id.clone(),
+                    });
+                }
+            }
             s.push_str(&format!(
                 "#EXT-X-SKIP:SKIPPED-SEGMENTS={}",
                 skip.skipped_segments
@@ -1808,79 +1858,129 @@ impl MediaPlaylist {
             s.push('\n');
         }
 
-        for (i, seg) in self.segments.iter().enumerate() {
-            // Segment-scoped unmodeled tags (EXT-X-KEY rotation, PDT,
-            // DATERANGE, CUE-*) in their original position (audit BH-W5).
-            for tag in &seg.pre_tags {
-                s.push_str(tag);
-                s.push('\n');
-            }
-            if seg.discontinuous {
-                s.push_str("#EXT-X-DISCONTINUITY\n");
-            }
-            // #EXT-X-MAP (RFC 8216bis §4.4.4.5) — emitted only when it
-            // changes from the previous segment's map, since the tag
-            // applies "until the next EXT-X-MAP or the end of the Playlist".
-            let prev_map = if i == 0 {
-                None
-            } else {
-                self.segments[i - 1].map.as_ref()
-            };
-            if seg.map.as_ref() != prev_map
-                && let Some(map) = &seg.map
-            {
-                push_map_line(&mut s, map)?;
-            }
-            // #EXT-X-BITRATE (RFC 8216bis §4.4.4.8, issue #872) — same
-            // carry-forward + dedup-render rule as #EXT-X-MAP above.
-            let prev_bitrate = if i == 0 {
-                None
-            } else {
-                self.segments[i - 1].bitrate
-            };
-            if seg.bitrate != prev_bitrate
-                && let Some(kbps) = seg.bitrate
-            {
-                s.push_str(&format!("#EXT-X-BITRATE:{kbps}\n"));
-            }
-            // #EXT-X-PROGRAM-DATE-TIME (§4.4.4.6) applies to this segment and
-            // MUST precede its first #EXT-X-PART (§4.4.4.9); it follows
-            // DISCONTINUITY/MAP/BITRATE, the conventional order.
-            if let Some(pdt) = &seg.program_date_time {
-                s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
-            }
-            // LL-HLS partial segments precede the parent's #EXTINF
-            // (RFC 8216bis §4.4.4.9), rendered only for a low-latency playlist.
-            if self.low_latency.is_some() {
-                for part in &seg.parts {
-                    push_part_line(&mut s, part)?;
-                }
-            }
-            // #EXT-X-GAP (RFC 8216bis §4.4.4.7, issue #872) — applies to
-            // exactly this segment; rendered immediately before its #EXTINF.
-            if seg.gap {
-                s.push_str("#EXT-X-GAP\n");
-            }
-            // Format with exactly 3 decimal places per RFC 8216 examples.
-            match &seg.title {
-                Some(title) => {
-                    validate_quoted_string(title, "EXTINF title")?;
-                    s.push_str(&format!(
-                        "#EXTINF:{},{title}\n",
-                        format_extinf(seg.duration)
-                    ));
-                }
-                None => {
-                    s.push_str(&format!("#EXTINF:{},\n", format_extinf(seg.duration)));
-                }
-            }
-            // #EXT-X-BYTERANGE (RFC 8216bis §4.4.4.2) — after EXTINF, before
-            // the URI it applies to.
-            if let Some(br) = &seg.byte_range {
-                s.push_str(&format!("#EXT-X-BYTERANGE:{}\n", br.render()));
-            }
-            s.push_str(&seg.uri);
+        Ok(s)
+    }
+
+    /// Render one Media Segment record — its segment-scoped tags, the
+    /// discontinuity/map/bitrate/PDT tags that apply to it, `#EXTINF`, its
+    /// `#EXT-X-BYTERANGE` and its URI line. This is the unit an append-only
+    /// writer appends; [`Self::to_m3u8`] is the concatenation.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::SegmentIndexOutOfRange`] when the playlist has no segment at
+    /// `index`, plus the field-validation errors of [`Self::to_m3u8`].
+    pub fn render_segment(&self, index: usize) -> Result<String> {
+        let len = self.segments.len();
+        let seg = self
+            .segments
+            .get(index)
+            .ok_or(Error::SegmentIndexOutOfRange { index, len })?;
+        let i = index;
+        validate_tag_body("segment pre-tag", &seg.pre_tags)?;
+        validate_uri(&seg.uri, "segment URI")?;
+        if let Some(title) = &seg.title {
+            validate_quoted_string(title, "EXTINF title")?;
+        }
+        let mut s = String::new();
+        // Segment-scoped unmodeled tags (EXT-X-KEY rotation, PDT,
+        // DATERANGE, CUE-*) in their original position (audit BH-W5).
+        for tag in &seg.pre_tags {
+            s.push_str(tag);
             s.push('\n');
+        }
+        if seg.discontinuous {
+            s.push_str("#EXT-X-DISCONTINUITY\n");
+        }
+        // #EXT-X-MAP (RFC 8216bis §4.4.4.5) — emitted only when it
+        // changes from the previous segment's map, since the tag
+        // applies "until the next EXT-X-MAP or the end of the Playlist".
+        let prev_map = if i == 0 {
+            None
+        } else {
+            self.segments[i - 1].map.as_ref()
+        };
+        if seg.map.as_ref() != prev_map
+            && let Some(map) = &seg.map
+        {
+            push_map_line(&mut s, map)?;
+        }
+        // #EXT-X-BITRATE (RFC 8216bis §4.4.4.8, issue #872) — same
+        // carry-forward + dedup-render rule as #EXT-X-MAP above.
+        let prev_bitrate = if i == 0 {
+            None
+        } else {
+            self.segments[i - 1].bitrate
+        };
+        if seg.bitrate != prev_bitrate
+            && let Some(kbps) = seg.bitrate
+        {
+            s.push_str(&format!("#EXT-X-BITRATE:{kbps}\n"));
+        }
+        // #EXT-X-PROGRAM-DATE-TIME (§4.4.4.6) applies to this segment and
+        // MUST precede its first #EXT-X-PART (§4.4.4.9); it follows
+        // DISCONTINUITY/MAP/BITRATE, the conventional order.
+        if let Some(pdt) = &seg.program_date_time {
+            s.push_str(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n"));
+        }
+        // LL-HLS partial segments precede the parent's #EXTINF
+        // (RFC 8216bis §4.4.4.9), rendered only for a low-latency playlist.
+        if self.low_latency.is_some() {
+            for part in &seg.parts {
+                push_part_line(&mut s, part)?;
+            }
+        }
+        // #EXT-X-GAP (RFC 8216bis §4.4.4.7, issue #872) — applies to
+        // exactly this segment; rendered immediately before its #EXTINF.
+        if seg.gap {
+            s.push_str("#EXT-X-GAP\n");
+        }
+        // Format with exactly 3 decimal places per RFC 8216 examples.
+        match &seg.title {
+            Some(title) => {
+                validate_quoted_string(title, "EXTINF title")?;
+                s.push_str(&format!(
+                    "#EXTINF:{},{title}\n",
+                    format_extinf(seg.duration)
+                ));
+            }
+            None => {
+                s.push_str(&format!("#EXTINF:{},\n", format_extinf(seg.duration)));
+            }
+        }
+        // #EXT-X-BYTERANGE (RFC 8216bis §4.4.4.2) — after EXTINF, before
+        // the URI it applies to.
+        if let Some(br) = &seg.byte_range {
+            s.push_str(&format!("#EXT-X-BYTERANGE:{}\n", br.render()));
+        }
+        s.push_str(&seg.uri);
+        s.push('\n');
+        Ok(s)
+    }
+
+    /// Render the trailing block of this Media Playlist: the open (live-edge)
+    /// segment if any, the LL-HLS preload hint and rendition reports, and
+    /// `#EXT-X-ENDLIST` when [`Self::endlist`] is set. For a closed, non-LL
+    /// playlist this is just the `#EXT-X-ENDLIST` line, and it is empty when
+    /// there is no endlist; an LL-HLS playlist without an endlist still has
+    /// its trailing hints/reports here, so the
+    /// `header + Σ segment + endlist == to_m3u8` identity holds for it too.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::to_m3u8`] for the trailing block's own fields.
+    pub fn render_endlist(&self) -> Result<String> {
+        let mut s = String::new();
+        if let Some(open) = &self.open_segment {
+            validate_tag_body("open-segment pre-tag", &open.pre_tags)?;
+        }
+        for report in &self.rendition_reports {
+            validate_uri(&report.uri, "EXT-X-RENDITION-REPORT URI")?;
+        }
+        if let Some(ll) = &self.low_latency
+            && let Some(uri) = &ll.preload_hint_part
+        {
+            validate_uri(uri, "EXT-X-PRELOAD-HINT URI")?;
         }
 
         // The in-progress (open) segment at the live edge — its parts are
@@ -1961,63 +2061,6 @@ impl MediaPlaylist {
         Ok(s)
     }
 
-    /// Reject any field that would be rendered inside an RFC 8216 §4.2
-    /// quoted-string or as a URI but contains `"`, CR or LF (audit BH-W7,
-    /// issue #1111) — a tag/attribute-list injection vector for a playlist
-    /// assembled from external data. Covers every field [`Self::to_m3u8`]
-    /// emits; the per-tag renderers re-check the same values, so a caller
-    /// that bypasses this method still cannot emit a malformed line.
-    fn validate_for_render(&self) -> Result<()> {
-        // Opaque verbatim lines: not a quoted-string, but a newline would
-        // still split the line into two.
-        validate_tag_body("playlist-level extra tag", &self.extra_tags)?;
-        for seg in &self.segments {
-            validate_uri(&seg.uri, "segment URI")?;
-            if let Some(title) = &seg.title {
-                validate_quoted_string(title, "EXTINF title")?;
-            }
-            validate_tag_body("segment pre-tag", &seg.pre_tags)?;
-            for part in &seg.parts {
-                validate_uri(&part.uri, "EXT-X-PART URI")?;
-            }
-            if let Some(map) = &seg.map {
-                validate_uri(&map.uri, "EXT-X-MAP URI")?;
-            }
-        }
-        if let Some(open) = &self.open_segment {
-            validate_tag_body("open-segment pre-tag", &open.pre_tags)?;
-            for part in &open.parts {
-                validate_uri(&part.uri, "EXT-X-PART URI")?;
-            }
-            if let Some(map) = &open.map {
-                validate_uri(&map.uri, "EXT-X-MAP URI")?;
-            }
-        }
-        if let Some(ll) = &self.low_latency
-            && let Some(uri) = &ll.preload_hint_part
-        {
-            validate_uri(uri, "EXT-X-PRELOAD-HINT URI")?;
-        }
-        for report in &self.rendition_reports {
-            validate_uri(&report.uri, "EXT-X-RENDITION-REPORT URI")?;
-        }
-        if let Some(skip) = &self.skip {
-            // RFC 8216bis §4.4.5.2: the ids are one quoted-string, tab (0x9)
-            // delimited — so a tab inside an id would split it into two ids.
-            for id in &skip.recently_removed_daterange_ids {
-                validate_quoted_string(id, "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id")?;
-                if id.contains('\t') {
-                    return Err(Error::InvalidQuotedString {
-                        what: "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id".to_string(),
-                        bad_char: '\t',
-                        value: id.clone(),
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Parse an RFC 8216bis `#EXTM3U` Media Playlist — the symmetric inverse
     /// of [`Self::to_m3u8`]. See the module docs for the recognized-tag list
     /// and the documented modeling gaps.
@@ -2037,6 +2080,25 @@ impl MediaPlaylist {
     /// As [`Self::parse`], plus [`crate::Error::TooLarge`] when the input or
     /// its segment count exceeds a bound.
     pub fn parse_with(input: &str, limits: &crate::limits::Limits) -> Result<Self> {
+        Self::parse_with_options(input, limits, &ParseOptions::default())
+    }
+
+    /// Parse a Media Playlist under `limits`, with [`ParseOptions`] naming
+    /// vendor tags that apply to one segment instead of the whole playlist.
+    ///
+    /// A tag named in [`ParseOptions::segment_scoped_tags`] is attached to the
+    /// following segment's [`MediaSegment::pre_tags`] (the same treatment
+    /// `#EXT-X-KEY` and `#EXT-X-DATERANGE` get), so it re-renders in that
+    /// segment's position. With default options this is exactly
+    /// [`Self::parse_with`].
+    ///
+    /// # Errors
+    /// As [`Self::parse_with`].
+    pub fn parse_with_options(
+        input: &str,
+        limits: &crate::limits::Limits,
+        options: &ParseOptions,
+    ) -> Result<Self> {
         if input.len() > limits.max_playlist_bytes {
             return Err(Error::TooLarge {
                 what: "playlist bytes",
@@ -2092,8 +2154,10 @@ impl MediaPlaylist {
         let mut current_map: Option<MapTag> = None;
         let mut pending_discontinuous = false;
         let mut pending_byte_range: Option<ByteRange> = None;
+        let mut pending_byte_range_line: Option<(usize, String)> = None;
         let mut pending_parts: Vec<PartSpec> = Vec::new();
         let mut pending_duration: Option<DecimalSeconds> = None;
+        let mut pending_extinf_line: Option<(usize, String)> = None;
         // §4.4.4.7/§4.4.4.8 per-segment state (issue #872): GAP applies only
         // to the next segment; BITRATE carries forward like MAP.
         let mut pending_gap = false;
@@ -2169,7 +2233,15 @@ impl MediaPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BITRATE:") {
                 current_bitrate = Some(parse_decimal_int(rest, line_no, line, "EXT-X-BITRATE")?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BYTERANGE:") {
+                if let Some((line_no, line)) = pending_byte_range_line.take() {
+                    diagnostics.push(ParseDiagnostic {
+                        kind: ParseDiagnosticKind::DanglingSegmentTags,
+                        line_no,
+                        line,
+                    });
+                }
                 pending_byte_range = Some(ByteRange::parse(rest, line_no, line)?);
+                pending_byte_range_line = Some((line_no, line.to_string()));
             } else if let Some(rest) = line.strip_prefix("#EXT-X-MAP:") {
                 let (attrs, quoted) = parse_attribute_list_strict(rest)?;
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-MAP")?;
@@ -2184,6 +2256,13 @@ impl MediaPlaylist {
                     extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXTINF:") {
+                if let Some((line_no, line)) = pending_extinf_line.take() {
+                    diagnostics.push(ParseDiagnostic {
+                        kind: ParseDiagnosticKind::DanglingSegmentTags,
+                        line_no,
+                        line,
+                    });
+                }
                 let (dur_str, title) = match rest.split_once(',') {
                     Some((dur, title)) => (dur, title),
                     None => (rest, ""),
@@ -2194,6 +2273,7 @@ impl MediaPlaylist {
                     line,
                     "EXTINF duration",
                 )?);
+                pending_extinf_line = Some((line_no, line.to_string()));
                 // Audit BH-W11 (issue #1111): the title after the comma
                 // (RFC 8216bis §4.4.4.1) is part of the tag, so keep it —
                 // it used to be split off and thrown away.
@@ -2366,7 +2446,7 @@ impl MediaPlaylist {
                 // *following* segment so it re-renders in place; everything
                 // else is playlist-level and goes in the header block
                 // (audit BH-W5, issue #1111).
-                if is_segment_defining_tag(line) {
+                if is_segment_defining_tag(line) || options.is_segment_scoped(tag_name(line)) {
                     pending_pre_tags.push(line.to_string());
                 } else {
                     extra_tags.push(line.to_string());
@@ -2401,6 +2481,8 @@ impl MediaPlaylist {
                     pre_tags: core::mem::take(&mut pending_pre_tags),
                     program_date_time: pending_program_date_time.take(),
                 });
+                pending_extinf_line = None;
+                pending_byte_range_line = None;
             }
         }
 
@@ -2439,6 +2521,17 @@ impl MediaPlaylist {
                 ..open
             })
         };
+
+        for (line_no, line) in [pending_extinf_line, pending_byte_range_line]
+            .into_iter()
+            .flatten()
+        {
+            diagnostics.push(ParseDiagnostic {
+                kind: ParseDiagnosticKind::DanglingSegmentTags,
+                line_no,
+                line,
+            });
+        }
 
         if let (Some(start), Some(len)) = (
             preload_hint_byte_range_start,
@@ -2678,6 +2771,24 @@ impl AttrValue {
         })
     }
 
+    /// Build a quoted value this crate formatted itself (a date or a `CUE`
+    /// list), so it cannot contain a forbidden character.
+    pub(crate) fn quoted_unchecked(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            quoted: true,
+        }
+    }
+
+    /// Build a bare value this crate formatted itself (a duration or a
+    /// hexadecimal sequence), so it cannot contain a forbidden character.
+    pub(crate) fn bare_unchecked(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            quoted: false,
+        }
+    }
+
     /// The value's content, with wire quoting (if any) already stripped.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -2849,6 +2960,18 @@ pub fn render_attribute_list(s: &mut String, attrs: &[(String, AttrValue)]) {
 /// embedded `"` can never break out of the attribute list (audit BH-W7,
 /// issue #1111).
 const QUOTED_STRING_FORBIDDEN: &[char] = &['"', '\r', '\n'];
+
+/// A control character RFC 8216bis §4.1 forbids in a playlist: C0
+/// (U+0000..=U+001F), DEL (U+007F) or C1 (U+0080..=U+009F).
+///
+/// The new typed paths (DATERANGE and vendor tags) reject these; the general
+/// [`AttrValue`] used by whole-playlist parsing deliberately keeps its
+/// historical tolerance, so an unknown attribute carrying a tab still parses.
+pub(crate) fn has_forbidden_control(value: &str) -> bool {
+    value
+        .chars()
+        .any(|c| (c as u32) < 0x20 || (0x7f..=0x9f).contains(&(c as u32)))
+}
 
 /// Reject a value that cannot be rendered as an RFC 8216 §4.2
 /// quoted-string (see [`QUOTED_STRING_FORBIDDEN`]).
@@ -3553,6 +3676,140 @@ fn scan_attribute_list(
     Ok((map, quoted_keys))
 }
 
+/// Scan an attribute list under the strict RFC 8216bis §4.2 grammar, keeping
+/// every attribute in wire order and its exact [`AttrValue`] (including
+/// whether it was quoted), so a parsed tag re-renders byte-identically.
+///
+/// Unlike [`parse_attribute_list_strict`], this rejects what a playlist
+/// parser used to tolerate: whitespace outside a quoted-string, a name with
+/// no `=`, an empty or trailing pair, characters after a closing quote, and a
+/// bare value containing `"`.
+fn scan_attribute_list_wire(s: &str) -> Result<Vec<(String, AttrValue)>> {
+    let invalid = |reason| Error::InvalidAttributeList {
+        list: s.to_string(),
+        reason,
+    };
+    if s.is_empty() {
+        return Err(invalid(AttributeListError::Empty));
+    }
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut i = 0;
+    while i < len {
+        let name_start = i;
+        while i < len && bytes[i] != b'=' {
+            if bytes[i] == b',' {
+                return Err(invalid(AttributeListError::MissingEquals));
+            }
+            if bytes[i].is_ascii_whitespace() {
+                return Err(invalid(AttributeListError::Whitespace));
+            }
+            i += 1;
+        }
+        if i >= len {
+            return Err(invalid(AttributeListError::MissingEquals));
+        }
+        let name = &s[name_start..i];
+        if !crate::daterange::is_attribute_name(name) {
+            return Err(invalid(AttributeListError::InvalidName));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(Error::DuplicateAttribute {
+                name: name.to_string(),
+            });
+        }
+        i += 1;
+        if i >= len {
+            return Err(invalid(AttributeListError::EmptyValue));
+        }
+        let value = if bytes[i] == b'"' {
+            i += 1;
+            let value_start = i;
+            while i < len && bytes[i] != b'"' {
+                if bytes[i] == b'\r' || bytes[i] == b'\n' {
+                    return Err(invalid(AttributeListError::UnterminatedQuote));
+                }
+                i += 1;
+            }
+            if i >= len {
+                return Err(invalid(AttributeListError::UnterminatedQuote));
+            }
+            let value = &s[value_start..i];
+            i += 1;
+            if i < len && bytes[i] != b',' {
+                return Err(invalid(AttributeListError::TrailingCharacters));
+            }
+            if has_forbidden_control(value) {
+                return Err(invalid(AttributeListError::ControlCharacter));
+            }
+            AttrValue::quoted(value)?
+        } else {
+            let value_start = i;
+            while i < len && bytes[i] != b',' {
+                if bytes[i] == b'"' {
+                    return Err(invalid(AttributeListError::QuoteInBareValue));
+                }
+                if bytes[i].is_ascii_whitespace() {
+                    return Err(invalid(AttributeListError::Whitespace));
+                }
+                i += 1;
+            }
+            let value = &s[value_start..i];
+            if value.is_empty() {
+                return Err(invalid(AttributeListError::EmptyValue));
+            }
+            if has_forbidden_control(value) {
+                return Err(invalid(AttributeListError::ControlCharacter));
+            }
+            AttrValue::bare(value)?
+        };
+        out.push((name.to_string(), value));
+        if i < len {
+            i += 1;
+            if i >= len {
+                return Err(invalid(AttributeListError::TrailingComma));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(invalid(AttributeListError::Empty));
+    }
+    Ok(out)
+}
+
+/// A bare attribute value is a hexadecimal-sequence: `0x`/`0X` plus a
+/// non-zero count of `[0-9A-F]` digits (RFC 8216bis §4.2 sets no length rule).
+fn is_hexadecimal_sequence(value: &str) -> bool {
+    let Some(digits) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    else {
+        return false;
+    };
+    !digits.is_empty()
+        && digits
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
+}
+
+/// An `SCTE35-CMD`/`-OUT`/`-IN` value must be whole bytes, so its digit count
+/// is even in addition to the §4.2 hexadecimal-sequence grammar.
+fn is_scte35_hexadecimal_sequence(value: &str) -> bool {
+    let Some(digits) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    else {
+        return false;
+    };
+    !digits.is_empty()
+        && digits.len() % 2 == 0
+        && digits
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
+}
+
 /// From an already-parsed attribute map, collect every attribute whose name
 /// is not in `known` into a `Vec<(name, AttrValue)>`, sorted by name for
 /// deterministic serialization. `quoted` (from [`parse_attribute_list`]) decides
@@ -3597,6 +3854,13 @@ fn filter_extra_attrs(
 fn is_segment_defining_tag(line: &str) -> bool {
     const SEGMENT_SCOPED: &[&str] = &["#EXT-X-KEY:", "#EXT-X-DATERANGE:", "#EXT-X-CUE-"];
     SEGMENT_SCOPED.iter().any(|prefix| line.starts_with(prefix))
+}
+
+/// The tag name of a `#EXT...` line, without the leading `#` and the
+/// attribute list (RFC 8216bis §4.1).
+fn tag_name(line: &str) -> &str {
+    let body = line.strip_prefix('#').unwrap_or(line);
+    body.split_once(':').map_or(body, |(name, _)| name)
 }
 
 /// Fetch a required attribute from an already-parsed attribute map, or

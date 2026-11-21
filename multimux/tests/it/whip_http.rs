@@ -94,6 +94,37 @@ async fn a_body_over_64_kib_is_rejected_413_before_reading() {
     assert!(resp.starts_with("HTTP/1.1 413"), "{resp}");
 }
 
+/// The cap is exactly 64 KiB: one byte over is rejected, and a legitimate
+/// multi-candidate offer well below it is accepted.
+#[tokio::test]
+async fn a_body_of_65537_is_rejected_413_even_with_an_empty_body() {
+    let (addr, _shared, _token) = multimux::test_seam::serve_whip_for_test().await;
+    let resp = raw(
+        addr,
+        "POST /whip HTTP/1.1\nHost: x\nContent-Type: application/sdp\n\
+         Content-Length: 65537\nConnection: close\n\n",
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 413"), "{resp}");
+}
+
+#[tokio::test]
+async fn a_valid_16_kib_offer_is_accepted() {
+    let (addr, _shared, _token) = multimux::test_seam::serve_whip_for_test().await;
+    let mut body = OFFER.to_string();
+    body.push_str(&format!("a=x-pad:{}\r\n", "x".repeat(16 * 1024)));
+    let resp = raw(
+        addr,
+        &format!(
+            "POST /whip HTTP/1.1\nHost: x\nContent-Type: application/sdp\n\
+             Content-Length: {}\nConnection: close\n\n{body}",
+            body.len()
+        ),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 201"), "{resp}");
+}
+
 #[tokio::test]
 async fn a_chunked_request_body_is_accepted() {
     let (addr, _shared, _token) = multimux::test_seam::serve_whip_for_test().await;

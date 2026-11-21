@@ -1013,6 +1013,10 @@ mod tests {
         };
         let text = format!("{fragment:?}");
         assert!(!text.contains("pwd-secret"), "{text}");
+        assert!(
+            text.contains("uf") && text.contains("<redacted>"),
+            "the redacted fragment must still name its visible fields: {text}"
+        );
     }
 
     /// The applied-restart record names the new ufrags but never a password.
@@ -1059,6 +1063,177 @@ mod tests {
         assert!(validate_restart(&frag("new", ""), "old").is_err());
         assert!(validate_restart(&frag("new", pwd), "old").is_ok());
         const { assert!(ICE_UFRAG_LEN * 8 >= 24 && ICE_PWD_LEN * 8 >= 128) };
+        assert!(
+            validate_restart(&frag("old", pwd), "old").is_err(),
+            "reusing the current ufrag restarts nothing"
+        );
+    }
+
+    /// The `Content-Type` gate needs exactly one matching header (RFC 9110
+    /// section 8.3.1): two values must not pass on the first one.
+    #[test]
+    fn content_type_is_requires_exactly_one_matching_header() {
+        use axum::http::{HeaderMap, HeaderValue, header};
+        let expected = "application/trickle-ice-sdpfrag";
+        let empty = HeaderMap::new();
+        assert!(
+            !content_type_is(&empty, expected),
+            "no Content-Type is not a match"
+        );
+        let mut one = HeaderMap::new();
+        one.insert(header::CONTENT_TYPE, HeaderValue::from_static(expected));
+        assert!(content_type_is(&one, expected));
+        let mut with_parameters = HeaderMap::new();
+        with_parameters.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/trickle-ice-sdpfrag; charset=utf-8"),
+        );
+        assert!(
+            content_type_is(&with_parameters, expected),
+            "parameters are ignored"
+        );
+        let mut other = HeaderMap::new();
+        other.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/sdp"),
+        );
+        assert!(!content_type_is(&other, expected));
+        let mut two = HeaderMap::new();
+        two.append(header::CONTENT_TYPE, HeaderValue::from_static(expected));
+        two.append(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/sdp"),
+        );
+        assert!(
+            !content_type_is(&two, expected),
+            "a second Content-Type must fail the exactly-one rule"
+        );
+    }
+
+    /// The signalling body cap is 64 KiB (RFC 9725 section 4.1's SDP offer):
+    /// a smaller cap would reject a legitimate multi-candidate offer.
+    #[test]
+    fn the_signalling_body_cap_is_64_kib() {
+        assert_eq!(MAX_HTTP_BODY_BYTES, 65_536);
+    }
+
+    /// The PATCH error mapping: 412/428/409/400 (RFC 9110, RFC 6585, RFC 9725
+    /// section 4.3.1/4.3.3).
+    #[test]
+    fn patch_error_status_maps_every_state_machine_error() {
+        use webrtc_runtime::Error;
+        let etag = Error::ETagMismatch {
+            expected: "\"a\"".to_string(),
+            got: "\"b\"".to_string(),
+        };
+        let precondition = Error::PreconditionRequired { operation: "PATCH" };
+        let wrong_state = Error::WrongState {
+            operation: "PATCH",
+            state: "closed",
+        };
+        let other = Error::InvalidSdpFragment {
+            reason: "x".to_string(),
+        };
+        assert_eq!(patch_error_status(&etag).as_u16(), 412);
+        assert_eq!(patch_error_status(&precondition).as_u16(), 428);
+        assert_eq!(patch_error_status(&wrong_state).as_u16(), 409);
+        assert_eq!(patch_error_status(&other).as_u16(), 400);
+    }
+
+    /// The offer's candidate bodies reach the transport verbatim, in order;
+    /// no other attribute may be mistaken for a candidate.
+    #[test]
+    fn candidate_lines_returns_every_candidate_body_in_order() {
+        let media = sdp_types::Media {
+            media: "video".to_string(),
+            port: 9,
+            num_ports: None,
+            proto: "UDP/TLS/RTP/SAVPF".to_string(),
+            fmt: "96".to_string(),
+            media_title: None,
+            connections: Vec::new(),
+            bandwidths: Vec::new(),
+            key: None,
+            attributes: vec![
+                sdp_types::Attribute::with_value(
+                    "candidate",
+                    "2 1 udp 1694498815 198.51.100.7 6000 typ srflx raddr 192.0.2.1 rport 5000",
+                ),
+                sdp_types::Attribute::with_value("rtpmap", "96 H264/90000"),
+                sdp_types::Attribute::with_value(
+                    "candidate",
+                    "1 1 udp 2130706431 192.0.2.1 5000 typ host",
+                ),
+            ],
+        };
+        assert_eq!(
+            candidate_lines(&media),
+            [
+                "2 1 udp 1694498815 198.51.100.7 6000 typ srflx raddr 192.0.2.1 rport 5000",
+                "1 1 udp 2130706431 192.0.2.1 5000 typ host",
+            ]
+        );
+    }
+
+    /// The pending queue accepts exactly its cap and judges a later batch
+    /// against what is already queued.
+    #[test]
+    fn pending_candidates_accept_exactly_the_cap() {
+        let control = SessionControl::new();
+        assert!(control.push_candidates(vec![String::new(); MAX_PENDING_CANDIDATES]));
+        assert!(
+            !control.push_candidates(vec![String::new(); 1]),
+            "one over the cap is refused"
+        );
+        assert_eq!(control.take().ops.len(), MAX_PENDING_CANDIDATES);
+
+        let control = SessionControl::new();
+        assert!(control.push_candidates(vec![String::new(); MAX_PENDING_CANDIDATES - 2]));
+        assert!(
+            !control.push_candidates(vec![String::new(); 3]),
+            "the second batch is counted with the queued one"
+        );
+        assert_eq!(control.take().ops.len(), MAX_PENDING_CANDIDATES - 2);
+    }
+
+    fn restart_plan(fragment: &[u8], current_ufrag: &str) -> RestartPlan {
+        plan_restart(fragment, current_ufrag, &[], |len| "k".repeat(len))
+            .expect("a valid restart fragment")
+    }
+
+    /// A full queue refuses the restart and leaves the recorded generation
+    /// unchanged; a queued one installs the new generation.
+    #[test]
+    fn commit_restart_is_all_or_nothing() {
+        let fragment = b"a=ice-ufrag:newufrag\r\na=ice-pwd:newpwd0123456789abcdefghijk\r\n";
+        let resource = Resource::<()> {
+            machine: parking_lot::Mutex::new(()),
+            control: SessionControl::new(),
+            remote_ufrag: parking_lot::Mutex::new("oldufrag".to_string()),
+            local_candidates: Vec::new(),
+        };
+        let plan = restart_plan(fragment, "oldufrag");
+        assert!(commit_restart(&resource, plan));
+        assert_eq!(*resource.remote_ufrag.lock(), "newufrag");
+        assert_eq!(resource.control.take().ops.len(), 1);
+
+        let next = b"a=ice-ufrag:thirdufrag\r\na=ice-pwd:thirdpwd0123456789abcdefghi\r\n";
+        let plan = restart_plan(next, "newufrag");
+        assert!(
+            resource
+                .control
+                .push_candidates(vec![String::new(); MAX_PENDING_CANDIDATES])
+        );
+        assert!(
+            !commit_restart(&resource, plan),
+            "a full queue refuses the restart"
+        );
+        assert_eq!(
+            *resource.remote_ufrag.lock(),
+            "newufrag",
+            "the recorded generation is unchanged"
+        );
+        assert_eq!(resource.control.take().ops.len(), MAX_PENDING_CANDIDATES);
     }
 
     #[test]
@@ -1125,6 +1300,79 @@ mod tests {
         assert!(parse_ice_fragment(&[0xff, 0xfe]).is_err(), "not UTF-8");
     }
 
+    /// Session-level credentials come first; a later media-level duplicate
+    /// must not replace them (RFC 8840 section 4.4: the first generation wins).
+    #[test]
+    fn a_fragment_keeps_the_first_ice_credentials() {
+        let fragment = b"a=ice-ufrag:first\r\na=ice-pwd:firstpwd\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=ice-ufrag:second\r\na=ice-pwd:secondpwd\r\n";
+        let parsed = parse_ice_fragment(fragment).expect("fragment");
+        assert_eq!(parsed.ufrag.as_deref(), Some("first"));
+        assert_eq!(parsed.pwd.as_deref(), Some("firstpwd"));
+    }
+
+    /// A trickle fragment needs a candidate or an end-of-candidates marker,
+    /// and either alone is a valid update (RFC 8840 section 4.4).
+    #[test]
+    fn validate_trickle_accepts_a_candidate_or_an_end_marker() {
+        let candidate = IceFragment {
+            candidates: vec!["1 1 udp 2130706431 192.0.2.1 5000 typ host".to_string()],
+            ..Default::default()
+        };
+        assert!(
+            validate_trickle(&candidate, "gen").is_ok(),
+            "a candidate alone is enough"
+        );
+        let end = IceFragment {
+            end_of_candidates: true,
+            ..Default::default()
+        };
+        assert!(
+            validate_trickle(&end, "gen").is_ok(),
+            "an end marker alone is enough"
+        );
+        assert!(
+            validate_trickle(&IceFragment::default(), "gen").is_err(),
+            "neither is rejected"
+        );
+    }
+
+    /// Applied ICE changes are counted only when the transport accepts them.
+    #[tokio::test]
+    async fn apply_ice_ops_counts_only_applied_changes() {
+        let start = std_now();
+        let mut media = test_transport(start);
+        let now = media.stamp_of(start);
+        let good = "1 1 udp 2130706431 127.0.0.1 5000 typ host".to_string();
+        let done = apply_ice_ops(
+            &mut media,
+            vec![
+                IceOp::Candidate(good),
+                IceOp::Candidate("not a candidate".to_string()),
+            ],
+            now,
+        );
+        assert_eq!(done.candidates, 1);
+        assert_eq!(done.restarts, 0);
+        assert!(done.restart_credentials.is_empty());
+
+        let restart = IceRestart {
+            local_ufrag: "localu".to_string(),
+            local_pwd: "localpwd0123456789abcdefg".to_string(),
+            remote_ufrag: "remoteu".to_string(),
+            remote_pwd: "remotepwd0123456789abcde".to_string(),
+        };
+        let done = apply_ice_ops(&mut media, vec![IceOp::Restart(restart)], now);
+        assert_eq!(done.candidates, 0);
+        assert_eq!(done.restarts, 1);
+        assert_eq!(
+            done.restart_credentials,
+            [(
+                "localu".to_string(),
+                "localpwd0123456789abcdefg".to_string()
+            )]
+        );
+    }
+
     #[test]
     fn control_termination_is_sticky_and_candidates_drain_once() {
         let c = SessionControl::new();
@@ -1159,6 +1407,7 @@ mod tests {
             },
         );
         assert!(table.get("id").is_some());
+        assert_eq!(table.len(), 1, "the live resource is counted");
         drop(guard);
         assert!(table.get("id").is_none());
         assert_eq!(table.len(), 0);
@@ -1167,6 +1416,67 @@ mod tests {
     use std::time::Duration;
 
     use broadcast_common::stage::Timestamp;
+
+    /// Without a deadline there is nothing to fire; with one, the converter
+    /// names exactly that instant.
+    #[tokio::test(start_paused = true)]
+    async fn a_timer_without_a_deadline_never_fires() {
+        let media = test_transport(std_now());
+        assert!(timer_fire_at(&media, None, None).is_none());
+        let now = std_now();
+        let deadline = now + Duration::from_millis(10);
+        assert_eq!(
+            timer_fire_at(&media, Some(deadline), None),
+            Some(tokio::time::Instant::from_std(deadline))
+        );
+    }
+
+    /// The due predicate follows the deadline and the floor after a fire.
+    #[cfg(feature = "whip")]
+    #[tokio::test(start_paused = true)]
+    async fn timer_due_follows_the_deadline_and_the_minimum_interval() {
+        let media = test_transport(std_now());
+        let now = std_now();
+        assert!(
+            !timer_due(
+                &media,
+                Some(now + Duration::from_secs(1)),
+                None,
+                media.stamp_of(now)
+            ),
+            "a future deadline is not due"
+        );
+        assert!(
+            timer_due(
+                &media,
+                Some(now - Duration::from_millis(1)),
+                None,
+                media.stamp_of(now)
+            ),
+            "an overdue deadline is due"
+        );
+        assert!(
+            !timer_due(&media, None, None, media.stamp_of(now)),
+            "no deadline is never due"
+        );
+        let overdue = now - Duration::from_secs(1);
+        let last_fire = media.stamp_of(now);
+        let fire_at = timer_fire_at(&media, Some(overdue), Some(last_fire)).expect("a deadline");
+        assert!(
+            !timer_due(&media, Some(overdue), Some(last_fire), last_fire),
+            "the floor after the last fire has not elapsed"
+        );
+        let after_floor = fire_at.into_std();
+        assert!(
+            timer_due(
+                &media,
+                Some(overdue),
+                Some(last_fire),
+                media.stamp_of(after_floor)
+            ),
+            "the overdue timer is due once the floor elapses"
+        );
+    }
 
     /// A transport whose epoch is `start`, the instant the tests' `std_now` counts from.
     fn test_transport(start: std::time::Instant) -> webrtc_runtime::media::MediaTransport {
@@ -1196,12 +1506,16 @@ mod tests {
         let start = tokio::time::Instant::now();
         let media = test_transport(std_now());
         let last_fire = Some(media.stamp_of(std_now() - Duration::from_secs(10)));
-        sleep_until_timer(
-            &media,
-            Some(std_now() + Duration::from_millis(500)),
-            last_fire,
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            sleep_until_timer(
+                &media,
+                Some(std_now() + Duration::from_millis(500)),
+                last_fire,
+            ),
         )
-        .await;
+        .await
+        .expect("the timer must fire");
         assert_eq!(start.elapsed(), Duration::from_millis(500));
     }
 
@@ -1215,13 +1529,17 @@ mod tests {
         let deadline = std_now() + Duration::from_millis(500);
         let mut datagrams = tokio::time::interval(Duration::from_millis(10));
         datagrams.tick().await;
-        loop {
-            tokio::select! {
-                _ = datagrams.tick() => {}
-                () = sleep_until_timer(&media, Some(deadline), last_fire) => break,
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                tokio::select! {
+                    _ = datagrams.tick() => {}
+                    () = sleep_until_timer(&media, Some(deadline), last_fire) => break,
+                }
+                assert!(start.elapsed() < Duration::from_secs(2), "timer starved");
             }
-            assert!(start.elapsed() < Duration::from_secs(2), "timer starved");
-        }
+        })
+        .await
+        .expect("the timer must not be starved");
         assert_eq!(start.elapsed(), Duration::from_millis(500));
     }
 
@@ -1240,7 +1558,12 @@ mod tests {
             tokio::time::Instant::from_std(media.now_at(fired_at) + MIN_TIMER_INTERVAL)
         );
         let start = tokio::time::Instant::now();
-        sleep_until_timer(&media, Some(now), Some(fired_at)).await;
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            sleep_until_timer(&media, Some(now), Some(fired_at)),
+        )
+        .await
+        .expect("the floored timer must fire");
         assert!(start.elapsed() >= MIN_TIMER_INTERVAL);
     }
 }

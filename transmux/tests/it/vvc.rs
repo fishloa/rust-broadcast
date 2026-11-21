@@ -9,7 +9,9 @@ use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use transmux::media::{CmafMux, Fmp4Demux};
 use transmux::pipeline::CodecConfig;
-use transmux::vvc_config::{VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalUnitType};
+use transmux::vvc_config::{
+    VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,
+};
 
 const FIXTURE: &str = "mp4/frag/vvc.frag.mp4";
 
@@ -248,4 +250,205 @@ fn vvc_rfc6381_smoke() {
     let s = record.rfc6381();
     eprintln!("RFC6381 = {s}");
     assert!(s.starts_with("vvc1."), "got {s}");
+}
+
+fn record_with_arrays(
+    length_size_minus_one: u8,
+    arrays: Vec<VvcNalArray>,
+) -> VvcDecoderConfigurationRecord {
+    VvcDecoderConfigurationRecord {
+        length_size_minus_one,
+        ptl_present: false,
+        ols_idx: 0,
+        num_sublayers: 0,
+        constant_frame_rate: 0,
+        chroma_format_idc: 0,
+        bit_depth_minus8: 0,
+        ptl: None,
+        max_picture_width: 0,
+        max_picture_height: 0,
+        avg_frame_rate: 0,
+        arrays,
+    }
+}
+
+fn ptl_with_sub_profiles(sub_profiles: Vec<u32>) -> VvcPtlRecord {
+    VvcPtlRecord {
+        num_bytes_constraint_info: 0,
+        general_profile_idc: 1,
+        general_tier_flag: false,
+        general_level_idc: 51,
+        ptl_frame_only_constraint_flag: true,
+        ptl_multilayer_enabled_flag: false,
+        general_constraint_info: Vec::new(),
+        sublayer_level_present: Vec::new(),
+        sublayer_level_idc: Vec::new(),
+        sub_profile_idc: sub_profiles,
+    }
+}
+
+#[test]
+fn vvc_nal_unit_type_codes_round_trip_and_labels_are_pinned() {
+    let types = [
+        (VvcNalUnitType::OPI, VvcNalUnitType::Opi, "OPI_NUT"),
+        (VvcNalUnitType::DCI, VvcNalUnitType::Dci, "DCI_NUT"),
+        (VvcNalUnitType::VPS, VvcNalUnitType::Vps, "VPS_NUT"),
+        (VvcNalUnitType::SPS, VvcNalUnitType::Sps, "SPS_NUT"),
+        (VvcNalUnitType::PPS, VvcNalUnitType::Pps, "PPS_NUT"),
+        (
+            VvcNalUnitType::PREFIX_APS,
+            VvcNalUnitType::PrefixAps,
+            "PREFIX_APS_NUT",
+        ),
+    ];
+    for (code, kind, name) in types {
+        assert_eq!(kind.to_u8(), code);
+        assert_eq!(VvcNalUnitType::from_u8(code), kind);
+        assert_eq!(kind.name(), name);
+        assert_eq!(kind.to_string(), name);
+    }
+    assert_eq!(VvcNalUnitType::from_u8(20), VvcNalUnitType::Other(20));
+    assert_eq!(VvcNalUnitType::Other(20).to_u8(), 20);
+    assert_eq!(VvcNalUnitType::Other(20).name(), "reserved");
+    assert_eq!(VvcNalUnitType::Other(20).to_string(), "reserved(0x14)");
+
+    assert!(!VvcNalUnitType::Dci.has_num_nalus_field());
+    assert!(!VvcNalUnitType::Opi.has_num_nalus_field());
+    assert!(VvcNalUnitType::Vps.has_num_nalus_field());
+}
+
+#[test]
+fn vvc_dci_and_opi_arrays_omit_the_num_nalus_field() {
+    let record = record_with_arrays(
+        3,
+        vec![
+            VvcNalArray::new(true, VvcNalUnitType::Dci.to_u8(), vec![vec![0x71, 0x01]]),
+            VvcNalArray::new(true, VvcNalUnitType::Opi.to_u8(), vec![vec![0x61, 0x02]]),
+        ],
+    );
+    // reserved(5) '11111' + LengthSizeMinusOne(2) '11' + ptl_present(1) '0'
+    // = 0xFE, then num_of_arrays = 2. Each array is completeness+reserved+
+    // type, then (no num_nalus for DCI/OPI) a 16-bit nalUnitLength + the NAL.
+    let expected = [
+        0xFE, 0x02, // record prefix + num_of_arrays
+        0x8D, 0x00, 0x02, 0x71, 0x01, // DCI array
+        0x8C, 0x00, 0x02, 0x61, 0x02, // OPI array
+    ];
+    let bytes = record.try_to_bytes().expect("serialize DCI/OPI record");
+    assert_eq!(bytes[..], expected);
+    assert_eq!(bytes.len(), record.serialized_len());
+    let parsed = VvcDecoderConfigurationRecord::parse(&bytes).expect("parse DCI/OPI record");
+    assert_eq!(parsed, record);
+    assert_eq!(parsed.arrays[0].nalus, vec![vec![0x71, 0x01]]);
+    assert_eq!(parsed.arrays[1].nalus, vec![vec![0x61, 0x02]]);
+}
+
+#[test]
+fn vvc_rejects_length_size_minus_one_two() {
+    // reserved(5) '11111' + LengthSizeMinusOne(2) '10' + ptl_present(1) '0',
+    // then num_of_arrays = 0.
+    match VvcDecoderConfigurationRecord::parse(&[0xFC, 0x00]) {
+        Err(transmux::error::Error::InvalidValue(e)) => {
+            assert_eq!(e.field, "LengthSizeMinusOne");
+            assert_eq!(e.value, 2);
+        }
+        other => panic!("expected InvalidValue for LengthSizeMinusOne = 2, got {other:?}"),
+    }
+}
+
+#[test]
+fn vvc_length_size_zero_and_one_round_trip() {
+    for length_size_minus_one in [0u8, 1] {
+        let record = record_with_arrays(length_size_minus_one, Vec::new());
+        let bytes = record.try_to_bytes().expect("serialize record");
+        assert_eq!(bytes.len(), record.serialized_len());
+        let parsed = VvcDecoderConfigurationRecord::parse(&bytes).expect("parse record");
+        assert_eq!(parsed.length_size_minus_one, length_size_minus_one);
+        assert_eq!(parsed, record);
+    }
+}
+
+#[test]
+fn vvc_configuration_box_reports_the_bytes_it_writes() {
+    let record = record_with_arrays(
+        3,
+        vec![VvcNalArray::new(
+            true,
+            VvcNalUnitType::Sps.to_u8(),
+            vec![vec![0x00, 0x01]],
+        )],
+    );
+    let boxed = VvcConfigurationBox::new(record);
+    let need = boxed.serialized_len();
+    let bytes = boxed.try_to_bytes().expect("serialize vvcC box");
+    assert_eq!(bytes.len(), need);
+    let mut buf = vec![0u8; need];
+    assert_eq!(
+        boxed
+            .serialize_into(&mut buf)
+            .expect("serialize into buffer"),
+        need,
+        "serialize_into must return the box length, not a product"
+    );
+    assert_eq!(buf, bytes);
+}
+
+#[test]
+fn vvc_record_display_is_pinned() {
+    let no_ptl = record_with_arrays(0, Vec::new());
+    assert_eq!(no_ptl.to_string(), "VVC(no PTL, lenSize=1, arrays=0)");
+
+    let mut with_ptl = record_with_arrays(3, Vec::new());
+    with_ptl.ptl_present = true;
+    with_ptl.num_sublayers = 1;
+    with_ptl.ptl = Some(ptl_with_sub_profiles(Vec::new()));
+    assert_eq!(
+        with_ptl.to_string(),
+        "VVC(profile_idc=1, tier=main, level=51, lenSize=4, arrays=0)"
+    );
+}
+
+#[test]
+fn vvc_ptl_with_zero_and_two_sub_profiles_round_trips() {
+    for count in [0u32, 2] {
+        let profiles: Vec<u32> = (0..count).map(|i| 0x0100_0000 + i).collect();
+        let mut record = record_with_arrays(3, Vec::new());
+        record.ptl_present = true;
+        record.num_sublayers = 1;
+        record.ptl = Some(ptl_with_sub_profiles(profiles.clone()));
+        let bytes = record.try_to_bytes().expect("serialize PTL record");
+        assert_eq!(bytes.len(), record.serialized_len(), "count {count}");
+        let parsed = VvcDecoderConfigurationRecord::parse(&bytes).expect("parse PTL record");
+        assert_eq!(
+            parsed.ptl.as_ref().expect("PTL present").sub_profile_idc,
+            profiles
+        );
+        assert_eq!(parsed, record);
+    }
+}
+
+/// `sublayer_level_present` is caller-supplied, and the writer emits one flag
+/// per entry plus padding to a byte. The announced length must count each
+/// written flag, not a fixed one byte's worth.
+#[test]
+fn vvc_ptl_length_counts_every_written_sublayer_flag() {
+    let mut record = record_with_arrays(3, Vec::new());
+    record.ptl_present = true;
+    record.num_sublayers = 7;
+    record.ptl = Some(VvcPtlRecord {
+        num_bytes_constraint_info: 0,
+        general_profile_idc: 1,
+        general_tier_flag: false,
+        general_level_idc: 51,
+        ptl_frame_only_constraint_flag: true,
+        ptl_multilayer_enabled_flag: false,
+        general_constraint_info: Vec::new(),
+        sublayer_level_present: vec![true; 9],
+        sublayer_level_idc: vec![51; 9],
+        sub_profile_idc: Vec::new(),
+    });
+    let bytes = record
+        .try_to_bytes()
+        .expect("serialize a record with two bytes of sublayer flags");
+    assert_eq!(bytes.len(), record.serialized_len());
 }

@@ -151,9 +151,59 @@ pub fn apply_overrides(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::{CodecConfig, DataCarriage};
+    use crate::mpeg_legacy::MpegAudioLayer;
+    use crate::{
+        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+    };
+    use broadcast_common::timescale::Timescale;
 
     fn ids(ids: &[u32]) -> impl Iterator<Item = TrackId> + '_ {
         ids.iter().map(|&i| TrackId::new(i))
+    }
+
+    fn timescale() -> Timescale {
+        Timescale::try_new(44_100).expect("a non-zero timescale")
+    }
+
+    fn esds_with_asc(object_type_indication: u8, asc: &[u8]) -> EsdsBox {
+        EsdsBox::new(ESDescriptor::new(
+            2,
+            0,
+            Some(DecoderConfigDescriptor::new(
+                object_type_indication,
+                5,
+                false,
+                0,
+                0,
+                0,
+                Some(DecoderSpecificInfo::new(asc.to_vec())),
+            )),
+            Some(SLConfigDescriptor::predefined_two()),
+        ))
+    }
+
+    fn aac_lc(track_id: u32) -> TrackSpec {
+        TrackSpec::new(
+            TrackId::new(track_id),
+            timescale(),
+            CodecConfig::Aac {
+                esds: esds_with_asc(0x40, &[0x12, 0x10]),
+                channel_count: 2,
+                sample_rate: 44_100,
+                sample_size: 16,
+            },
+        )
+    }
+
+    fn codec_string(track: &TrackSpec) -> alloc::string::String {
+        match &track.config {
+            CodecConfig::Aac { esds, .. } => esds
+                .audio_specific_config()
+                .expect("AAC-LC config")
+                .rfc6381(),
+            other => panic!("expected AAC, got {}", other.name()),
+        }
     }
 
     /// An index picks by ordinal, a track id by identity, and a miss is `None`.
@@ -200,5 +250,93 @@ mod tests {
             assert_eq!(value.name(), name);
             assert_eq!(alloc::format!("{value}"), name);
         }
+    }
+
+    fn video() -> TrackSpec {
+        TrackSpec::new(
+            TrackId::new(256),
+            timescale(),
+            CodecConfig::Vp8 {
+                width: 1920,
+                height: 1080,
+            },
+        )
+    }
+
+    fn opaque_data() -> TrackSpec {
+        TrackSpec::new(
+            TrackId::new(259),
+            timescale(),
+            CodecConfig::Data {
+                stream_type: 0x06,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Pes,
+            },
+        )
+    }
+
+    /// `Index` counts only the fMP4-muxable audio tracks: a video track at
+    /// ordinal 0 must not be targeted, and a non-muxable data track is not
+    /// audio at all.
+    #[test]
+    fn overrides_target_muxable_audio_tracks_only() {
+        let tracks = || vec![video(), aac_lc(258), opaque_data()];
+        let declared = AudioProfileOverride {
+            track: AudioTrackSelector::Index(0),
+            audio_profile: AudioProfile::HeAac,
+        };
+        let applied = apply_overrides(&[declared], tracks());
+        assert!(applied.unmatched.is_empty());
+        assert!(applied.refused.is_empty());
+        assert_eq!(applied.tracks[0], video(), "video track untouched");
+        assert_eq!(applied.tracks[2], opaque_data(), "data track untouched");
+        assert_eq!(codec_string(&applied.tracks[1]), "mp4a.40.5");
+
+        let by_id = AudioProfileOverride {
+            track: AudioTrackSelector::TrackId(258),
+            audio_profile: AudioProfile::HeAac,
+        };
+        let applied = apply_overrides(&[by_id], tracks());
+        assert!(applied.unmatched.is_empty());
+        assert_eq!(applied.tracks[0], video());
+        assert_eq!(codec_string(&applied.tracks[1]), "mp4a.40.5");
+
+        let second = AudioProfileOverride {
+            track: AudioTrackSelector::Index(1),
+            audio_profile: AudioProfile::HeAac,
+        };
+        let applied = apply_overrides(&[second], tracks());
+        assert_eq!(
+            applied.unmatched,
+            [second],
+            "there is only one muxable audio track"
+        );
+        assert!(applied.refused.is_empty());
+    }
+
+    /// A declaration on a muxable audio track that is not AAC-LC is refused,
+    /// never silently retargeted at another track.
+    #[test]
+    fn an_override_on_a_non_aac_audio_track_is_refused() {
+        let mpeg = TrackSpec::new(
+            TrackId::new(260),
+            timescale(),
+            CodecConfig::MpegAudio {
+                esds: esds_with_asc(0x69, &[]),
+                layer: MpegAudioLayer::LayerII,
+                channel_count: 2,
+                sample_rate: 48_000,
+                sample_size: 16,
+            },
+        );
+        let declared = AudioProfileOverride {
+            track: AudioTrackSelector::Index(0),
+            audio_profile: AudioProfile::HeAac,
+        };
+        let applied = apply_overrides(&[declared], vec![mpeg.clone()]);
+        assert!(applied.unmatched.is_empty());
+        assert_eq!(applied.refused.len(), 1, "non-AAC audio is refused");
+        assert_eq!(applied.refused[0].0, declared);
+        assert_eq!(applied.tracks[0], mpeg, "config unchanged");
     }
 }
