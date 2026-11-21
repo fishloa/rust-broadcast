@@ -109,6 +109,12 @@ impl FsRecorder {
     /// periods already on disk, and pin a segment cursor on `trunk` with the
     /// configured overrun policy.
     ///
+    /// Seeding adopts the earlier periods' numbers, not their sequence
+    /// numbers: the host must number a new run above everything archived,
+    /// with [`ArchiveConfig::seq_offset`] at least [`FsArchive::seq_floor`].
+    /// A run that restarts at lower sequence numbers writes segments that
+    /// [`FsArchive::scan`] reports as [`SeqConflict`]s and does not serve.
+    ///
     /// # Errors
     ///
     /// [`FsError::Archive`] for an invalid configuration or exhausted period

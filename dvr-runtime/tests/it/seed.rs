@@ -154,6 +154,43 @@ fn archive_floor_is_the_highest_archived_sequence() {
     cleanup(&root);
 }
 
+/// The seeding contract (#3941): a restarted run numbered from the archive's
+/// floor never collides with an earlier run, while one that restarts at the
+/// same numbers has every colliding segment reported as a conflict.
+#[test]
+fn a_restarted_run_numbered_above_the_floor_never_conflicts() {
+    let root = temp_dir("floor-restart");
+    let name = ArchiveName::new("restart").expect("name");
+    let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
+    record_run(&root, "restart", periods(10), 0, &[(1, 1), (2, 2)]);
+    let floor = archive.seq_floor();
+    assert_eq!(floor, SegmentSeq::new(2));
+    record_run(
+        &root,
+        "restart",
+        periods(10),
+        u64::from(floor.value()),
+        &[(1, 3), (2, 4)],
+    );
+    let scan = archive.scan();
+    assert!(scan.conflicts.is_empty(), "{:?}", scan.conflicts);
+    assert_eq!(
+        scan.segments
+            .iter()
+            .map(|s| (s.seq.value(), s.period.value()))
+            .collect::<Vec<_>>(),
+        vec![(1, 0), (2, 0), (3, 1), (4, 1)]
+    );
+
+    record_run(&root, "restart", periods(10), 0, &[(1, 5)]);
+    let scan = archive.scan();
+    assert_eq!(scan.conflicts.len(), 1, "a run below the floor collides");
+    assert_eq!(scan.conflicts[0].seq, SegmentSeq::new(1));
+    assert_eq!(scan.conflicts[0].kept.value(), 0);
+    assert_eq!(scan.conflicts[0].dropped.value(), 2);
+    cleanup(&root);
+}
+
 #[test]
 fn a_non_not_found_listing_error_is_surfaced() {
     if std::process::Command::new("id")
