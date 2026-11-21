@@ -371,4 +371,49 @@ mod tests {
     fn display_labels() {
         assert_eq!(MpegAudioLayer::LayerII.to_string(), "Layer II");
     }
+
+    /// #3797: a sequence header ending inside its 3 size bytes is
+    /// `BufferTooShort { need: 7 }`, never a slice panic.
+    #[test]
+    fn seq_header_truncated_size_fields_report_the_need() {
+        use broadcast_common::error::BufferTooShort;
+        let base = [0x00, 0x00, 0x01, 0xB3];
+        let size = [0x28, 0x01, 0xE0];
+        for extra in 0..3usize {
+            let mut es = base.to_vec();
+            es.extend_from_slice(&size[..extra]);
+            match Mpeg2SeqHeader::find(&es) {
+                Err(crate::error::Error::BufferTooShort(BufferTooShort { need, have, .. })) => {
+                    assert_eq!((need, have), (7, 4 + extra), "extra {extra}");
+                }
+                other => panic!("extra {extra}: expected BufferTooShort, got {other:?}"),
+            }
+        }
+        let ok = Mpeg2SeqHeader::find(&[0x00, 0x00, 0x01, 0xB3, 0x28, 0x01, 0xE0]).unwrap();
+        assert_eq!((ok.width, ok.height), (640, 480));
+    }
+
+    /// #3798: `ID = 00` is MPEG-2.5, not a reserved version.
+    #[test]
+    fn mpeg25_layer3_frame_header() {
+        let h = MpegAudioFrameHeader::parse(&[0xFF, 0xE3, 0x90, 0xC4]).unwrap();
+        assert_eq!(h.layer, MpegAudioLayer::LayerIII);
+        assert_eq!(h.sample_rate, 11025, "MPEG-2.5 quarters the base rate");
+        assert_eq!(h.samples_per_frame, 576);
+        assert_eq!(h.channels, 1);
+    }
+
+    /// #3798: Layer I has its own frame-length granule, `(12 * br / sr + pad) * 4`.
+    #[test]
+    fn layer1_frame_length_uses_the_4_byte_granule() {
+        let h = MpegAudioFrameHeader::parse(&[0xFF, 0xFF, 0x10, 0xC4]).unwrap();
+        assert_eq!(h.layer, MpegAudioLayer::LayerI);
+        assert_eq!(h.bitrate_bps, 32_000);
+        assert_eq!(h.sample_rate, 44100);
+        assert_eq!(h.samples_per_frame, 384);
+        assert_eq!(h.frame_length, 32, "(12 * 32000 / 44100 + 0) * 4");
+
+        let padded = MpegAudioFrameHeader::parse(&[0xFF, 0xFF, 0x12, 0xC4]).unwrap();
+        assert_eq!(padded.frame_length, 36, "one pad slot adds 4 bytes");
+    }
 }

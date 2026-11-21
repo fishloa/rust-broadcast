@@ -460,3 +460,79 @@ fn mid_gop_afd_change_through_the_demuxer() {
     assert_eq!(sample_dts, dts, "with that sample's own DTS");
     assert_eq!(*sample_afd, *afd);
 }
+
+/// The geometry `sequence_header()` resolves to, via the same parser the
+/// tracker uses.
+fn geometry_of(au: &[u8]) -> Option<DisplayGeometry> {
+    let start = find_sequence_header(au)?;
+    Some(parse_sequence_at(au, start).ok()?.to_display_geometry())
+}
+
+/// #3795: `seed_state` is the level-triggered start — an access unit that
+/// resolves to the seeded state emits nothing, rather than a spurious
+/// `initial` `Changed`. A no-op seed would emit one.
+#[test]
+fn seeded_state_suppresses_the_first_access_unit() {
+    let au = [sequence(3), picture(1, &[])].concat();
+    let geometry = geometry_of(&sequence(3));
+    assert!(
+        geometry.is_some(),
+        "the sequence header resolves a geometry"
+    );
+
+    let mut seeded = Mpeg2DisplayTracker::new();
+    seeded.seed_state(geometry.clone());
+    assert!(seeded.state().is_some(), "seed_state fills the state");
+    assert_eq!(seeded.observe(&au), Mpeg2Outcome::Unchanged);
+
+    let mut full = Mpeg2DisplayTracker::new();
+    let display = Arc::new(DisplayInfo::from_geometry(geometry).expect("display"));
+    full.seed_full(Some(display));
+    assert!(full.state().is_some(), "seed_full fills the state");
+    assert_eq!(full.observe(&au), Mpeg2Outcome::Unchanged);
+}
+
+/// #3795: a second seed is ignored — the first state in force is kept, so a
+/// later `TrackAdded` cannot move the state under the samples.
+#[test]
+fn a_second_seed_is_ignored() {
+    let geometry = geometry_of(&sequence(3));
+
+    let mut t = Mpeg2DisplayTracker::new();
+    t.seed_state(geometry.clone());
+    let first = Arc::clone(t.state().expect("seeded"));
+    t.seed_state(geometry_of(&sequence(2)));
+    assert!(
+        Arc::ptr_eq(&first, t.state().expect("kept")),
+        "seed_state keeps the first state"
+    );
+
+    let mut t = Mpeg2DisplayTracker::new();
+    t.seed_full(Some(Arc::new(
+        DisplayInfo::from_geometry(geometry).expect("display"),
+    )));
+    let first = Arc::clone(t.state().expect("seeded"));
+    t.seed_full(Some(Arc::new(DisplayInfo::new(None))));
+    assert!(
+        Arc::ptr_eq(&first, t.state().expect("kept")),
+        "seed_full keeps the first state"
+    );
+}
+
+/// #3796: a picture user-data payload shorter than the 4-byte identifier is
+/// ignored, not indexed `[0..3]` on the wire.
+#[test]
+fn user_data_shorter_than_the_identifier_is_ignored() {
+    let mut t = Mpeg2DisplayTracker::new();
+    let two_byte = vec![0x00, 0x00, 0x01, 0xB2, 0x44, 0x54];
+    let empty = vec![0x00, 0x00, 0x01, 0xB2];
+    let au = [sequence(3), picture(1, &[two_byte, empty])].concat();
+    let Mpeg2Outcome::Changed { display, .. } = t.observe(&au) else {
+        panic!("first")
+    };
+    assert_eq!(
+        display.active_format.as_ref().map(|a| a.afd),
+        None,
+        "a 2-byte and an empty payload carry no identifier"
+    );
+}
