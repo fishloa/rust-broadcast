@@ -236,6 +236,26 @@ pub struct RetentionLimits {
 }
 
 impl RetentionLimits {
+    /// Bounds with no axis set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Keep at most `periods` closed periods.
+    #[must_use]
+    pub fn with_periods(mut self, periods: NonZeroUsize) -> Self {
+        self.periods = Some(periods);
+        self
+    }
+
+    /// Keep at most `bytes` bytes across the media files.
+    #[must_use]
+    pub fn with_bytes(mut self, bytes: NonZeroU64) -> Self {
+        self.bytes = Some(bytes);
+        self
+    }
+
     /// Whether either axis is set.
     #[must_use]
     pub fn is_active(&self) -> bool {
@@ -245,8 +265,7 @@ impl RetentionLimits {
     /// The most bytes one period's media file may hold: `bytes / (periods +
     /// 1)`, at least one. The `+ 1` reserves room for the open period, so
     /// `periods` closed periods plus the one being written fit inside the
-    /// cap; with `periods` unset this is `bytes / 2`, leaving headroom to
-    /// roll rather than thrash.
+    /// cap; with `periods` unset this is the whole cap.
     #[must_use]
     pub fn per_period_byte_budget(&self) -> Option<NonZeroU64> {
         let bytes = self.bytes?;

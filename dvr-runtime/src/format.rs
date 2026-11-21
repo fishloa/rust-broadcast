@@ -10,7 +10,7 @@
 //! prefix that could collide with another vendor or a future standard tag.
 //! Their values use the §4.2 attribute-list syntax.
 
-use broadcast_common::hex::hex_encode;
+use broadcast_common::hex::hex_encode_upper;
 use broadcast_hls::{
     AttrValue, ClientAttrName, CustomTag, CustomTagName, DateRange, DecimalSeconds, ProgramDateTime,
 };
@@ -170,8 +170,11 @@ pub fn programme_date_range(
     let id = format!("programme-{}-{}", programme.service_id, event.event_id);
     let mut range = DateRange::new(id)?
         .with_class(PROGRAMME_CLASS)?
-        .with_start(start)
-        .with_end_on_next(true);
+        .with_start(start);
+    if let Some(duration) = event.duration {
+        range = range.with_planned_duration(DecimalSeconds::from_duration(duration));
+    }
+    range = range.with_end_on_next(true);
     range.set_client_attr(
         ClientAttrName::new("X-DVB-SERVICE-ID")?,
         bare(decimal(u64::from(programme.service_id)))?,
@@ -180,9 +183,6 @@ pub fn programme_date_range(
         ClientAttrName::new("X-DVB-EVENT-ID")?,
         bare(decimal(u64::from(event.event_id)))?,
     )?;
-    if let Some(duration) = event.duration {
-        range.set_planned_duration(Some(DecimalSeconds::from_duration(duration)));
-    }
     if let Some(scheduled) = event.start_time {
         let value = scheduled.strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
         range.set_client_attr(
@@ -197,7 +197,7 @@ pub fn programme_date_range(
                 AttrValue::quoted(title.clone())?,
             )?;
         } else {
-            let hex = format!("0x{}", hex_encode(title.as_bytes()));
+            let hex = format!("0x{}", hex_encode_upper(title.as_bytes()));
             range.set_client_attr(ClientAttrName::new("X-TITLE-UTF8")?, bare(hex)?)?;
         }
     }

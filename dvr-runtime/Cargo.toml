@@ -26,6 +26,14 @@ bytes            = "1"
 jiff             = "0.2"
 thiserror        = "2"
 
+[[example]]
+name = "record_ts_file"
+required-features = ["fs"]
+
+[[example]]
+name = "list_programmes"
+required-features = ["fs"]
+
 [dev-dependencies]
 test-fixtures    = { path = "../test-fixtures" }
 mpeg-ts          = { path = "../mpeg-ts", version = "0.9.0" }

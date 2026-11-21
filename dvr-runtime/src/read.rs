@@ -229,6 +229,50 @@ pub enum ReadError {
     },
 }
 
+impl ArchivedSegment {
+    /// A segment with a continuous timeline, no init and no wall time.
+    #[must_use]
+    pub fn new(
+        seq: SegmentSeq,
+        start: Timestamp,
+        duration: Duration,
+        period: PeriodNum,
+        span: ByteSpan,
+    ) -> Self {
+        Self {
+            seq,
+            start,
+            duration,
+            discontinuous: false,
+            period,
+            span,
+            init: None,
+            wall: None,
+        }
+    }
+
+    /// Set whether a discontinuity precedes the segment.
+    #[must_use]
+    pub fn with_discontinuous(mut self, discontinuous: bool) -> Self {
+        self.discontinuous = discontinuous;
+        self
+    }
+
+    /// Set the period's init span (fMP4).
+    #[must_use]
+    pub fn with_init(mut self, init: Option<ByteSpan>) -> Self {
+        self.init = init;
+        self
+    }
+
+    /// Set the wall-clock time the segment was recorded with.
+    #[must_use]
+    pub fn with_wall(mut self, wall: Option<jiff::Timestamp>) -> Self {
+        self.wall = wall;
+        self
+    }
+}
+
 /// One archived segment, or a live Tail segment, in a catch-up playlist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -243,6 +287,34 @@ pub struct CatchupSegment<G> {
     pub discontinuous: bool,
     /// The init that decodes it.
     pub init: Option<InitRef<G>>,
+}
+
+impl<G> CatchupSegment<G> {
+    /// A catch-up segment with a continuous timeline and no init.
+    #[must_use]
+    pub fn new(seq: SegmentSeq, start: Timestamp, duration: Duration) -> Self {
+        Self {
+            seq,
+            start,
+            duration,
+            discontinuous: false,
+            init: None,
+        }
+    }
+
+    /// Set whether a discontinuity precedes the segment.
+    #[must_use]
+    pub fn with_discontinuous(mut self, discontinuous: bool) -> Self {
+        self.discontinuous = discontinuous;
+        self
+    }
+
+    /// Set the init reference.
+    #[must_use]
+    pub fn with_init(mut self, init: Option<InitRef<G>>) -> Self {
+        self.init = init;
+        self
+    }
 }
 
 /// Where a catch-up segment's init comes from.
@@ -277,6 +349,27 @@ pub struct LiveSegment<G> {
     pub init: G,
 }
 
+impl<G> LiveSegment<G> {
+    /// A live tail segment with a continuous timeline.
+    #[must_use]
+    pub fn new(seq: SegmentSeq, start: Timestamp, duration: Duration, init: G) -> Self {
+        Self {
+            seq,
+            start,
+            duration,
+            discontinuous: false,
+            init,
+        }
+    }
+
+    /// Set whether a discontinuity precedes the segment.
+    #[must_use]
+    pub fn with_discontinuous(mut self, discontinuous: bool) -> Self {
+        self.discontinuous = discontinuous;
+        self
+    }
+}
+
 /// The result of reading an archive directory.
 #[derive(Debug, Default)]
 #[non_exhaustive]
@@ -285,6 +378,11 @@ pub struct ArchiveScan {
     pub segments: Vec<ArchivedSegment>,
     /// Periods that could not be read, with the reason.
     pub unreadable: Vec<(PeriodNum, PlaylistError)>,
+}
+
+fn is_key_tag(tag: &str) -> bool {
+    tag.strip_prefix('#')
+        .is_some_and(|name| name.starts_with("EXT-X-KEY:"))
 }
 
 /// Convert `ticks` at `timescale` to whole nanoseconds.
@@ -372,11 +470,7 @@ pub fn parse_period_playlist(
     {
         torn_records = 1;
     }
-    if playlist
-        .extra_tags
-        .iter()
-        .any(|tag| tag.starts_with("#EXT-X-KEY:"))
-    {
+    if playlist.extra_tags.iter().any(|tag| is_key_tag(tag)) {
         return Err(PlaylistError::Unsupported {
             index: 0,
             tag: UnsupportedTag::Key,
@@ -409,11 +503,7 @@ pub fn parse_period_playlist(
                 tag: UnsupportedTag::Parts,
             });
         }
-        if segment
-            .pre_tags
-            .iter()
-            .any(|tag| tag.starts_with("#EXT-X-KEY:"))
-        {
+        if segment.pre_tags.iter().any(|tag| is_key_tag(tag)) {
             return Err(PlaylistError::Unsupported {
                 index,
                 tag: UnsupportedTag::Key,

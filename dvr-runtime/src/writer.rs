@@ -48,11 +48,20 @@ use crate::{ArchiveConfig, ArchiveContainer, ArchiveError, PeriodNum};
 /// own, and a generation that differs from the open period's init rolls the
 /// period (one init per period).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct InitGeneration {
     /// The first segment closed under this init.
     pub first_seq: SegmentSeq,
     /// The init bytes.
     pub init: Bytes,
+}
+
+impl InitGeneration {
+    /// An init generation and the first segment closed under it.
+    #[must_use]
+    pub fn new(first_seq: SegmentSeq, init: Bytes) -> Self {
+        Self { first_seq, init }
+    }
 }
 
 /// A plan's identity, unique for the life of one writer.
@@ -381,6 +390,7 @@ struct SegmentPost {
     attached_programme: bool,
     next_period: PeriodNum,
     clear_next_reason: bool,
+    rolled: bool,
 }
 
 struct ClosePost {
@@ -1002,15 +1012,18 @@ impl ArchiveWriter {
         if self.config.programme_service.is_some() && wall.is_none() {
             return Err(ArchiveError::WallClockRequired);
         }
-        let init = self.is_fmp4().then(|| self.init_for(entry.sequence_number));
-        let init = match init {
-            Some(value) => value,
-            None => {
-                self.emit(WriterEvent::SkippedBeforeInit {
-                    seq: entry.sequence_number,
-                });
-                return Ok(Step::Idle);
+        let init = if self.is_fmp4() {
+            match self.init_for(entry.sequence_number) {
+                Some(value) => Some(value),
+                None => {
+                    self.emit(WriterEvent::SkippedBeforeInit {
+                        seq: entry.sequence_number,
+                    });
+                    return Ok(Step::Idle);
+                }
             }
+        } else {
+            None
         };
         let rounded = ceil_secs(entry.duration);
         let mut roll = None;
@@ -1170,12 +1183,16 @@ impl ArchiveWriter {
         if let Some(id) = new_id {
             daterange_ids.push(id);
         }
+        let opened_at = match (&self.open, roll) {
+            (Some(open), None) => open.opened_at,
+            _ => now,
+        };
         let opened = OpenPeriod {
             period,
             media_len,
             playlist_len,
             target_duration,
-            opened_at: now,
+            opened_at,
             init: if self.is_fmp4() { init.clone() } else { None },
             segments: if rolled {
                 1
@@ -1197,6 +1214,7 @@ impl ArchiveWriter {
             attached_programme: attached,
             next_period,
             clear_next_reason: self.open.is_none() && self.next_reason.is_some(),
+            rolled,
         };
         let id = self.next_plan_id();
         let plan = Plan { id, ops };
@@ -1235,10 +1253,12 @@ impl ArchiveWriter {
                 });
             }
         }
-        self.emit(WriterEvent::PeriodOpened {
-            period: post.opened.period,
-            reason: post.opened_reason,
-        });
+        if post.rolled {
+            self.emit(WriterEvent::PeriodOpened {
+                period: post.opened.period,
+                reason: post.opened_reason,
+            });
+        }
         self.open = Some(post.opened);
         self.next_period = post.next_period;
         self.last_archive_seq = Some(post.seq_archive);

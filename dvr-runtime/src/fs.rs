@@ -83,6 +83,7 @@ pub struct FsRecorder {
     tracker: Option<dvb_si::epg::PresentEventTracker>,
     last_now: Timestamp,
     container: ArchiveContainer,
+    retry: Option<SegmentCursorItem>,
 }
 
 impl FsRecorder {
@@ -138,6 +139,7 @@ impl FsRecorder {
             tracker,
             last_now: Timestamp::ZERO,
             container,
+            retry: None,
         })
     }
 
@@ -174,7 +176,20 @@ impl FsRecorder {
             .set_latest_closed(self.trunk.last_closed_segment());
         self.writer.on_inits(inits)?;
         let tick = self.writer.on_tick(now)?;
-        self.handle_step(tick)?;
+        if !self.handle_step(tick)? {
+            return Ok(());
+        }
+        if let Some(item) = self.retry.take() {
+            let wall_time = match &item {
+                SegmentCursorItem::Segment(entry) => wall(entry),
+                _ => None,
+            };
+            let step = self.writer.on_item(now, wall_time, &item)?;
+            if !self.handle_step(step)? {
+                self.retry = Some(item);
+                return Ok(());
+            }
+        }
         loop {
             let Some(item) = self.cursor.poll() else {
                 break;
@@ -184,7 +199,10 @@ impl FsRecorder {
                 _ => None,
             };
             let step = self.writer.on_item(now, wall_time, &item)?;
-            self.handle_step(step)?;
+            if !self.handle_step(step)? {
+                self.retry = Some(item);
+                break;
+            }
         }
         Ok(())
     }
@@ -206,7 +224,7 @@ impl FsRecorder {
         self.tracker = Some(tracker);
         for change in changes {
             let step = self.writer.on_programme(change)?;
-            self.handle_step(step)?;
+            let _ = self.handle_step(step)?;
         }
         Ok(())
     }
@@ -222,30 +240,35 @@ impl FsRecorder {
         &self.writer
     }
 
-    fn handle_step(&mut self, step: Step) -> Result<(), FsError> {
+    fn handle_step(&mut self, step: Step) -> Result<bool, FsError> {
         match step {
-            Step::Idle | Step::Stopped => Ok(()),
+            Step::Idle | Step::Stopped => Ok(true),
             Step::Rearm { .. } => {
                 self.cursor = self.trunk.pin_segments(self.writer.overrun());
-                Ok(())
+                Ok(true)
             }
             Step::Execute(plan) => self.execute(plan),
         }
     }
 
-    fn execute(&mut self, plan: Plan) -> Result<(), FsError> {
+    /// `Ok(false)` means the plan's record phase failed and the input must be
+    /// retried once the writer has resynchronised its offsets.
+    fn execute(&mut self, plan: Plan) -> Result<bool, FsError> {
         let mut outcome = PlanOutcome::Done;
         let mut error = None;
+        let mut retry = false;
         for (at_op, op) in plan.ops.iter().enumerate() {
             if let Err(failure) = self.store_op(op) {
-                error = match failure {
-                    StoreFailure::Io(kind) => Some(io_error(
-                        path_of(&self.dir, op, self.container),
-                        op.kind(),
-                        std::io::Error::from(kind),
-                    )),
-                    StoreFailure::LengthMismatch { .. } => None,
-                };
+                match failure {
+                    StoreFailure::Io(kind) => {
+                        error = Some(io_error(
+                            path_of(&self.dir, op, self.container),
+                            op.kind(),
+                            std::io::Error::from(kind),
+                        ));
+                    }
+                    StoreFailure::LengthMismatch { .. } => retry = true,
+                }
                 outcome = PlanOutcome::Failed { at_op, failure };
                 break;
             }
@@ -253,7 +276,7 @@ impl FsRecorder {
         self.writer.complete(plan.id, outcome)?;
         match error {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => Ok(!retry),
         }
     }
 }
@@ -372,7 +395,8 @@ impl SegmentEgress for FsRecorder {
     fn on_segment(&mut self, item: &SegmentCursorItem) -> Result<(), Self::Error> {
         let now = self.last_now;
         let step = self.writer.on_item(now, None, item)?;
-        self.handle_step(step)
+        let _ = self.handle_step(step)?;
+        Ok(())
     }
 }
 
@@ -604,5 +628,110 @@ fn io_read_error(period: PeriodNum, error: std::io::Error) -> ReadError {
         ReadError::Gone { period }
     } else {
         ReadError::Io { kind: error.kind() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::read::ArchivedSegment;
+
+    fn playlist(segments: usize) -> Arc<PeriodPlaylist> {
+        let one = ArchivedSegment::new(
+            SegmentSeq::new(0),
+            Timestamp::ZERO,
+            std::time::Duration::from_secs(2),
+            PeriodNum::new(0),
+            ByteSpan::new(0, std::num::NonZeroU64::new(1).expect("nonzero")),
+        );
+        Arc::new(PeriodPlaylist {
+            segments: vec![one; segments],
+            programmes: Vec::new(),
+            closed: true,
+            torn_bytes: 0,
+            torn_records: 0,
+        })
+    }
+
+    fn entry(segments: usize, last_used: u64) -> CacheEntry {
+        CacheEntry {
+            stamp: Stamp {
+                mtime: None,
+                len: 0,
+                inode: 0,
+            },
+            playlist: playlist(segments),
+            last_used,
+        }
+    }
+
+    fn archive(tag: &str) -> FsArchive {
+        FsArchive::open(
+            Path::new(tag),
+            &ArchiveName::new("a").expect("name"),
+            ArchiveContainer::Fmp4,
+        )
+    }
+
+    #[test]
+    fn the_cache_evicts_only_the_least_recently_used_entry_at_the_exact_bound() {
+        let mut archive = archive("first");
+        for tick in 0..INDEX_CACHE_MAX_ENTRIES as u64 {
+            archive.cache.insert(
+                PeriodNum::new(u32::try_from(tick).expect("tick")),
+                entry(1, tick),
+            );
+        }
+        archive.enforce_bounds();
+        assert_eq!(archive.cached_periods(), INDEX_CACHE_MAX_ENTRIES);
+        archive.cache.insert(
+            PeriodNum::new(u32::try_from(INDEX_CACHE_MAX_ENTRIES).expect("period")),
+            entry(1, INDEX_CACHE_MAX_ENTRIES as u64),
+        );
+        archive.enforce_bounds();
+        assert_eq!(archive.cached_periods(), INDEX_CACHE_MAX_ENTRIES);
+        assert!(!archive.cache.contains_key(&PeriodNum::new(0)));
+        assert!(
+            archive
+                .cache
+                .contains_key(&PeriodNum::new(INDEX_CACHE_MAX_ENTRIES as u32))
+        );
+    }
+
+    #[test]
+    fn two_archives_bound_their_caches_independently() {
+        let mut first = archive("first");
+        let mut second = archive("second");
+        first.cache.insert(PeriodNum::new(0), entry(1, 0));
+        second.cache.insert(PeriodNum::new(0), entry(1, 0));
+        second.cache.insert(PeriodNum::new(1), entry(1, 1));
+        first.enforce_bounds();
+        second.enforce_bounds();
+        assert_eq!(first.cached_periods(), 1);
+        assert_eq!(second.cached_periods(), 2);
+    }
+
+    #[test]
+    fn the_cache_is_bounded_by_total_segments() {
+        let per_entry = INDEX_CACHE_MAX_SEGMENTS / 4 + 1;
+        let mut archive = archive("first");
+        for tick in 0..4u64 {
+            archive.cache.insert(
+                PeriodNum::new(u32::try_from(tick).expect("tick")),
+                entry(per_entry, tick),
+            );
+        }
+        archive.enforce_bounds();
+        let total: usize = archive
+            .cache
+            .values()
+            .map(|entry| entry.playlist.segments.len())
+            .sum();
+        assert!(total <= INDEX_CACHE_MAX_SEGMENTS, "total segments {total}");
+        assert!(
+            archive.cached_periods() < 4,
+            "the oldest entries were evicted"
+        );
+        assert!(archive.cache.contains_key(&PeriodNum::new(3)));
     }
 }
