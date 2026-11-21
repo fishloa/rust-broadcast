@@ -426,3 +426,29 @@ fn vvc_ptl_with_zero_and_two_sub_profiles_round_trips() {
         assert_eq!(parsed, record);
     }
 }
+
+/// `sublayer_level_present` is caller-supplied, and the writer emits one flag
+/// per entry plus padding to a byte. The announced length must count each
+/// written flag, not a fixed one byte's worth.
+#[test]
+fn vvc_ptl_length_counts_every_written_sublayer_flag() {
+    let mut record = record_with_arrays(3, Vec::new());
+    record.ptl_present = true;
+    record.num_sublayers = 7;
+    record.ptl = Some(VvcPtlRecord {
+        num_bytes_constraint_info: 0,
+        general_profile_idc: 1,
+        general_tier_flag: false,
+        general_level_idc: 51,
+        ptl_frame_only_constraint_flag: true,
+        ptl_multilayer_enabled_flag: false,
+        general_constraint_info: Vec::new(),
+        sublayer_level_present: vec![true; 9],
+        sublayer_level_idc: vec![51; 9],
+        sub_profile_idc: Vec::new(),
+    });
+    let bytes = record
+        .try_to_bytes()
+        .expect("serialize a record with two bytes of sublayer flags");
+    assert_eq!(bytes.len(), record.serialized_len());
+}
