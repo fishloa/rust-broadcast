@@ -26,7 +26,7 @@ use media_plane::segmenter::ProgramSegmenter;
 
 use crate::route::{RouteConfig, RouteHandle};
 use crate::source::report_driver_progress;
-use crate::source::segment::drive_program_segmenters;
+use crate::source::segment::{apply_segmenter_events, drive_program_segmenters};
 
 /// Render `route`'s current LL-HLS media playlist synchronously — the exact
 /// production call every LL-HLS request resolves through, so a passing
@@ -1847,5 +1847,113 @@ fn removal_and_update_degrade_without_panicking() {
     assert!(
         tracker.poll().is_none(),
         "TrackUpdated for a removed track emits no event"
+    );
+}
+
+fn rendered_total(metric: &str, route_label: &str) -> Option<f64> {
+    crate::prometheus::install()
+        .render()
+        .lines()
+        .find(|l| l.starts_with(metric) && l.contains(route_label))
+        .and_then(|l| l.rsplit(' ').next())
+        .and_then(|v| v.parse::<f64>().ok())
+}
+
+#[test]
+fn an_init_from_event_publishes_the_init_on_the_route() {
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration(Duration::from_secs(1))
+            .with_part_target(Duration::from_millis(250))
+            .with_window_segments(4),
+    );
+    route.publish_new_program(ProgramId(0));
+    let init = b"init-from-event".to_vec();
+    apply_segmenter_events(
+        &route,
+        ProgramId(0),
+        vec![media_plane::segmenter::program::SegmenterEvent::InitFrom {
+            init: init.clone(),
+            first_segment: media_plane::ids::SegmentSeq::new(4),
+        }],
+    );
+    let origin = route.ll_hls(ProgramId(0)).expect("program published");
+    assert_eq!(
+        origin.init_bytes(),
+        Some(bytes::Bytes::from(init)),
+        "InitFrom must publish the init bytes"
+    );
+}
+
+#[test]
+fn an_idle_route_creates_no_production_counters() {
+    crate::prometheus::install();
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration(Duration::from_secs(1))
+            .with_part_target(Duration::from_millis(250))
+            .with_window_segments(4),
+    )
+    .with_name("segment-idle-metrics-probe");
+    let driver = IngestDriver::new(
+        TsIngestSession::new(),
+        media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+    );
+    let mut segmenters = HashMap::new();
+    assert!(!drive_program_segmenters(&driver, &route, &mut segmenters));
+    assert!(
+        rendered_total("multimux_parts_produced_total", "segment-idle-metrics-probe").is_none(),
+        "zero parts must not create the parts counter"
+    );
+    assert!(
+        rendered_total("multimux_segments_produced_total", "segment-idle-metrics-probe").is_none(),
+        "zero segments must not create the segments counter"
+    );
+}
+
+#[test]
+fn flushing_a_finished_program_counts_its_parts_and_segments() {
+    crate::prometheus::install();
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration(Duration::from_secs(1))
+            .with_part_target(Duration::from_millis(250))
+            .with_window_segments(4),
+    )
+    .with_name("segment-flush-metrics-probe");
+    let mut driver = IngestDriver::new(
+        TsIngestSession::new(),
+        media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+    );
+    let mut published = HashSet::new();
+    let mut segmenters = HashMap::new();
+    driver.feed(
+        &build_ts_bytes(TrackId::new(1), 0xAB, 30),
+        Timestamp::ZERO,
+    );
+    report_driver_progress(&driver, &route, &mut published);
+    while drive_program_segmenters(&driver, &route, &mut segmenters) {}
+
+    let parts_before = rendered_total("multimux_parts_produced_total", "segment-flush-metrics-probe")
+        .unwrap_or(0.0);
+    let segments_before =
+        rendered_total("multimux_segments_produced_total", "segment-flush-metrics-probe")
+            .unwrap_or(0.0);
+
+    driver.finish();
+    assert!(!drive_program_segmenters(&driver, &route, &mut segmenters));
+
+    let parts_after = rendered_total("multimux_parts_produced_total", "segment-flush-metrics-probe")
+        .unwrap_or(0.0);
+    let segments_after =
+        rendered_total("multimux_segments_produced_total", "segment-flush-metrics-probe")
+            .unwrap_or(0.0);
+    assert!(
+        parts_after > parts_before,
+        "the flushed open part must be counted: before={parts_before} after={parts_after}"
+    );
+    assert!(
+        segments_after > segments_before,
+        "the flushed segment must be counted: before={segments_before} after={segments_after}"
     );
 }

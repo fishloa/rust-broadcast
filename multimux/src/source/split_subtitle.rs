@@ -322,4 +322,39 @@ mod tests {
         assert!(!decls[1].autoselect);
         assert!(decls[2].autoselect);
     }
+
+    #[test]
+    fn a_follower_binds_the_page_to_its_own_source_track() {
+        let Some(base) = teletext_track() else {
+            return;
+        };
+        let entries = fixture_entries(&base);
+        let (route, trunk) = rig();
+        let followers = build_followers(&route, &trunk, &[with_entries(&base, entries)]);
+        assert_eq!(followers.len(), 2, "both fixture pages yield followers");
+        for follower in &followers {
+            assert_eq!(
+                follower.source_track_id, base.track_id,
+                "every follower must read the page's own track"
+            );
+        }
+    }
+
+    #[test]
+    fn the_borrowed_route_handle_still_builds_subtitle_followers() {
+        use media_plane::segmenter::program::SiblingTrunks;
+
+        let Some(base) = teletext_track() else {
+            return;
+        };
+        let entries = fixture_entries(&base);
+        let (route, trunk) = rig();
+        let tracks = vec![with_entries(&base, entries)];
+        let followers = (&route).build_subtitle_followers(&trunk, &tracks);
+        assert_eq!(
+            followers.len(),
+            2,
+            "the borrowed handle must not drop the renditions"
+        );
+    }
 }
