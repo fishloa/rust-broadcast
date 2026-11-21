@@ -149,6 +149,19 @@ fn the_layout_names_every_file_and_classifies_it_back() {
     }
     assert_eq!(classify("p7.m4s", ArchiveContainer::Ts), None);
     assert_eq!(classify("p7.ts", ArchiveContainer::Fmp4), None);
+    assert_eq!(classify("p+1.ts", ArchiveContainer::Ts), None);
+    assert_eq!(classify("p01.m3u8", ArchiveContainer::Ts), None);
+    assert_eq!(classify("p-1.ts", ArchiveContainer::Ts), None);
+    assert_eq!(classify("p.ts", ArchiveContainer::Ts), None);
+    assert_eq!(
+        classify("p0.ts", ArchiveContainer::Ts),
+        Some(ArchiveFile::Media(dvr_runtime::PeriodNum::new(0)))
+    );
+    assert_eq!(
+        classify("p4294967295.ts", ArchiveContainer::Ts),
+        Some(ArchiveFile::Media(dvr_runtime::PeriodNum::new(u32::MAX)))
+    );
+    assert_eq!(classify("p4294967296.ts", ArchiveContainer::Ts), None);
     let last = dvr_runtime::PeriodNum::new(u32::MAX);
     assert_eq!(last.checked_next(), None);
     assert_eq!(

@@ -118,15 +118,6 @@ pub fn plan(step: Step) -> dvr_runtime::writer::Plan {
     }
 }
 
-pub fn run(writer: &mut ArchiveWriter, step: Step) -> Vec<StoreOp> {
-    let plan = plan(step);
-    let ops = plan.ops.clone();
-    writer
-        .complete(plan.id, PlanOutcome::Done)
-        .expect("complete");
-    ops
-}
-
 pub fn events(writer: &mut ArchiveWriter) -> Vec<WriterEvent> {
     std::iter::from_fn(|| writer.poll_event()).collect()
 }

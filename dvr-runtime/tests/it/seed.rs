@@ -11,7 +11,7 @@ use dvr_runtime::fs::{FsArchive, FsError, FsRecorder};
 use dvr_runtime::read::ReadError;
 use dvr_runtime::recover::RecoveredBox;
 use dvr_runtime::writer::InitGeneration;
-use dvr_runtime::{ArchiveContainer, ArchiveName, RetentionLimits};
+use dvr_runtime::{ArchiveConfig, ArchiveContainer, ArchiveName, RetentionLimits};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
 
@@ -454,5 +454,55 @@ fn a_broken_period_is_reported_and_the_others_still_read() {
         scan.unreadable[0].1,
         dvr_runtime::read::PlaylistError::Hls(_)
     ));
+    cleanup(&root);
+}
+
+#[test]
+fn a_restart_counts_each_seeded_periods_real_size() {
+    let root = temp_dir("seed-bytes");
+    let name = ArchiveName::new("sized").expect("name");
+    let cfg = ArchiveConfig::new(
+        ArchiveContainer::Ts,
+        Duration::from_secs(2),
+        dvr_runtime::RetentionLimits::new()
+            .with_bytes(std::num::NonZeroU64::new(2000).expect("nonzero")),
+    )
+    .with_period_duration(Some(Duration::from_secs(3600)));
+    for fill in [0x11u8, 0x22] {
+        let trunk = trunk();
+        let writer = trunk.segment_writer().expect("writer");
+        let mut recorder = FsRecorder::new(
+            &root,
+            ArchiveName::new("sized").expect("name"),
+            cfg.clone(),
+            &trunk,
+        )
+        .expect("recorder");
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(vec![fill; 1500]),
+                SegmentSeq::new(0),
+                Duration::from_secs(2),
+                Timestamp::ZERO,
+                transmux::SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .expect("publish");
+        recorder
+            .poll(Timestamp::ZERO, |_| None, &[])
+            .expect("record");
+    }
+    let dir = root.join("sized");
+    assert!(
+        !dir.join("p0.ts").exists(),
+        "the seeded period's real size must count toward the cap"
+    );
+    assert!(!dir.join("p0.m3u8").exists());
+    assert!(dir.join("p1.ts").exists());
+    let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Ts);
+    let scan = archive.scan();
+    assert_eq!(scan.segments.len(), 1);
+    assert_eq!(scan.segments[0].period.value(), 1);
     cleanup(&root);
 }

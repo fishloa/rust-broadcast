@@ -301,3 +301,56 @@ fn a_period_playlist_exposes_its_programmes_and_wall_times() {
     let _ = ArchiveScan::default();
     let _ = segment_at(0, 1, 0, false);
 }
+
+fn ts_playlist(records: &str) -> String {
+    format!(
+        "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-RUSTBROADCAST-ARCHIVE:VERSION=1,CONTAINER=TS,PERIOD=0\n{records}"
+    )
+}
+
+fn ts_record(seq: u32, offset: u64) -> String {
+    format!(
+        "#EXT-X-RUSTBROADCAST-TIMING:SEQ={seq},DTS={},DUR=2000000000,TIMESCALE=1000000000\n#EXTINF:2,\n#EXT-X-BYTERANGE:100@{offset}\np0.ts\n",
+        u64::from(seq) * 2_000_000_000
+    )
+}
+
+#[test]
+fn a_record_after_endlist_is_rejected() {
+    let text = ts_playlist(&format!(
+        "{}#EXT-X-ENDLIST\n{}",
+        ts_record(0, 0),
+        ts_record(1, 100)
+    ));
+    assert!(matches!(
+        parse_period_playlist(PeriodNum::new(0), ArchiveContainer::Ts, text.as_bytes()),
+        Err(PlaylistError::RecordAfterEndlist)
+    ));
+}
+
+#[test]
+fn two_endlists_are_rejected() {
+    let text = ts_playlist(&format!(
+        "{}#EXT-X-ENDLIST\n#EXT-X-ENDLIST\n",
+        ts_record(0, 0)
+    ));
+    assert!(matches!(
+        parse_period_playlist(PeriodNum::new(0), ArchiveContainer::Ts, text.as_bytes()),
+        Err(PlaylistError::DuplicateEndlist)
+    ));
+}
+
+#[test]
+fn a_key_is_rejected_through_the_typed_decoder() {
+    let text = ts_playlist(&format!(
+        "#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n{}",
+        ts_record(0, 0)
+    ));
+    assert!(matches!(
+        parse_period_playlist(PeriodNum::new(0), ArchiveContainer::Ts, text.as_bytes()),
+        Err(PlaylistError::Unsupported {
+            index: 0,
+            tag: UnsupportedTag::Key
+        })
+    ));
+}

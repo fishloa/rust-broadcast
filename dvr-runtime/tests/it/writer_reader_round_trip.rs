@@ -15,7 +15,7 @@ use dvr_runtime::{ArchiveConfig, ArchiveContainer, ArchiveName, RetentionLimits}
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 
-use crate::support::{cleanup, config, periods, temp_dir};
+use crate::support::{cleanup, config, periods, segment_at, temp_dir};
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("nonzero")
@@ -284,7 +284,13 @@ fn a_failed_roll_leaves_the_next_period_starting_with_the_init() {
         .expect("the retried roll works");
     let p1 = std::fs::read(root.join("r").join("p1.m4s")).expect("p1");
     assert!(p1.starts_with(&init), "p1 must start with the init");
-    assert_eq!(&p1[init.len()..], vec![0x33u8; 100].as_slice());
+    let mut tail = vec![0x22u8; 100];
+    tail.extend_from_slice(&[0x33u8; 100]);
+    assert_eq!(
+        &p1[init.len()..],
+        tail.as_slice(),
+        "the failed item is retried before the next one"
+    );
     assert!(
         !root.join("r").join("p2.m4s").exists(),
         "the failed roll consumed no period"
@@ -329,5 +335,79 @@ fn retention_removes_the_files_from_disk() {
     assert_eq!(scan.segments.len(), 2);
     assert_eq!(scan.segments[0].period.value(), 2);
     assert_eq!(scan.segments[1].period.value(), 3);
+    cleanup(&root);
+}
+
+#[test]
+fn segment_egress_rejects_a_programme_service_writer() {
+    use media_plane::egress::SegmentEgress;
+    let root = temp_dir("egress-programme");
+    let trunk = trunk();
+    let mut config = config(ArchiveContainer::Ts, 2, periods(10));
+    config.period_duration = Some(Duration::from_secs(86400));
+    config.programme_service = Some(0x0601);
+    let mut recorder = recorder(&root, "eg", config, &trunk);
+    let item = media_plane::trunk::SegmentCursorItem::Segment(segment_at(0, 100, 0, false));
+    let error = recorder
+        .on_segment(&item)
+        .expect_err("no wall clock source");
+    assert!(matches!(
+        error,
+        dvr_runtime::fs::FsError::Archive(dvr_runtime::ArchiveError::WallClockRequired)
+    ));
+    cleanup(&root);
+}
+
+#[test]
+fn segment_egress_records_without_programme_tracking() {
+    use media_plane::egress::SegmentEgress;
+    let root = temp_dir("egress-plain");
+    let trunk = trunk();
+    let mut config = config(ArchiveContainer::Ts, 2, periods(10));
+    config.period_duration = Some(Duration::from_secs(86400));
+    let mut recorder = recorder(&root, "eg", config, &trunk);
+    let item = media_plane::trunk::SegmentCursorItem::Segment(segment_at(0, 100, 0, false));
+    recorder.on_segment(&item).expect("recorded");
+    let mut archive = FsArchive::open(
+        &root,
+        &ArchiveName::new("eg").expect("name"),
+        ArchiveContainer::Ts,
+    );
+    assert_eq!(archive.scan().segments.len(), 1);
+    cleanup(&root);
+}
+
+#[test]
+fn a_persistently_failing_item_becomes_a_counted_gap() {
+    use dvr_runtime::writer::WriterEvent;
+    let root = temp_dir("retry-budget");
+    let trunk = trunk();
+    let mut config = config(ArchiveContainer::Ts, 2, periods(10));
+    config.period_duration = Some(Duration::from_secs(86400));
+    let mut recorder = recorder(&root, "gap", config, &trunk);
+    std::fs::create_dir_all(root.join("gap").join("p0.ts")).expect("blocker directory");
+    publish(
+        &trunk.segment_writer().expect("writer"),
+        0,
+        100,
+        0x47,
+        0,
+        false,
+    );
+    for _ in 0..4 {
+        let error = recorder
+            .poll(Timestamp::ZERO, |_| None, &[])
+            .expect_err("the blocked create fails");
+        assert!(matches!(error, dvr_runtime::fs::FsError::Io { .. }));
+    }
+    assert_eq!(recorder.writer().counters().gaps, 1);
+    let events: Vec<WriterEvent> = std::iter::from_fn(|| recorder.poll_event()).collect();
+    assert!(
+        events.contains(&WriterEvent::Gap { skipped: 1 }),
+        "{events:?}"
+    );
+    recorder
+        .poll(Timestamp::ZERO, |_| None, &[])
+        .expect("nothing left");
     cleanup(&root);
 }

@@ -19,7 +19,7 @@ use media_plane::egress::SegmentEgress;
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk};
 
-use crate::layout::{self, ArchiveFile};
+use crate::layout::{self, ArchiveFile, SeedFile};
 use crate::read::{
     ArchiveScan, ArchivedSegment, PeriodPlaylist, PlaylistError, ReadError, checked_range,
     parse_period_playlist,
@@ -54,6 +54,11 @@ pub enum FsError {
         #[source]
         source: std::io::Error,
     },
+    /// The store could not commit this input. The
+    /// [`SegmentEgress`] adapter cannot queue it, so the caller must drive
+    /// the same cursor item through [`FsRecorder::poll`].
+    #[error("the store did not commit this input; retry it through FsRecorder::poll")]
+    RetryRequired,
 }
 
 fn path_of(dir: &Path, op: &StoreOp, container: ArchiveContainer) -> PathBuf {
@@ -83,7 +88,20 @@ pub struct FsRecorder {
     tracker: Option<dvb_si::epg::PresentEventTracker>,
     last_now: Timestamp,
     container: ArchiveContainer,
-    retry: Option<SegmentCursorItem>,
+    retry: Option<(SegmentCursorItem, u8)>,
+    programme_retry: Option<dvb_si::epg::PresentEventChange>,
+}
+
+/// How many times one cursor item is retried after a store failure before it
+/// becomes a counted gap.
+const MAX_RETRIES: u8 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Execution {
+    /// The input is durable (or produced no plan); never retry it.
+    Consumed,
+    /// The plan failed before its record landed; the input must be retried.
+    Retry,
 }
 
 impl FsRecorder {
@@ -116,7 +134,13 @@ impl FsRecorder {
                         continue;
                     };
                     if let Some(file) = layout::classify(file_name, container) {
-                        existing.push(file);
+                        let bytes = entry
+                            .metadata()
+                            .map_err(|e| {
+                                io_error(dir.clone(), crate::writer::StoreOpKind::List, e)
+                            })?
+                            .len();
+                        existing.push(SeedFile::new(file, bytes));
                     }
                 }
             }
@@ -140,6 +164,7 @@ impl FsRecorder {
             last_now: Timestamp::ZERO,
             container,
             retry: None,
+            programme_retry: None,
         })
     }
 
@@ -160,11 +185,17 @@ impl FsRecorder {
     /// `EXT-X-PROGRAM-DATE-TIME`), and `inits` the fMP4 init generations
     /// closed since the last poll. Blocking.
     ///
+    /// A store failure that leaves its record uncommitted keeps that item and
+    /// retries it on the next poll (`MAX_RETRIES` times); after the budget it
+    /// is dropped as a counted gap and a [`WriterEvent::Gap`] is emitted. An
+    /// I/O error is still returned once so the caller can log it; the item
+    /// stays queued. A failure after the record landed consumes the input and
+    /// is not retried.
+    ///
     /// # Errors
     ///
-    /// [`FsError::Archive`] when the writer rejects an input;
-    /// [`FsError::Io`] when a storage operation failed (the writer has
-    /// already resynchronised its state and will retry on the next poll).
+    /// [`FsError::Archive`] when the writer rejects an input; [`FsError::Io`]
+    /// for a store failure (the input is retained for the next poll).
     pub fn poll(
         &mut self,
         now: Timestamp,
@@ -176,32 +207,34 @@ impl FsRecorder {
             .set_latest_closed(self.trunk.last_closed_segment());
         self.writer.on_inits(inits)?;
         let tick = self.writer.on_tick(now)?;
-        if !self.handle_step(tick)? {
-            return Ok(());
-        }
-        if let Some(item) = self.retry.take() {
-            let wall_time = match &item {
-                SegmentCursorItem::Segment(entry) => wall(entry),
-                _ => None,
-            };
-            let step = self.writer.on_item(now, wall_time, &item)?;
-            if !self.handle_step(step)? {
-                self.retry = Some(item);
-                return Ok(());
+        let _ = self.handle_step(tick)?;
+        if let Some((item, attempts)) = self.retry.take() {
+            match self.process(&item, now, &wall) {
+                Ok(Execution::Consumed) => {}
+                Ok(Execution::Retry) => {
+                    self.schedule_retry(item, attempts.saturating_add(1), now);
+                    return Ok(());
+                }
+                Err(error) => {
+                    self.schedule_retry(item, attempts.saturating_add(1), now);
+                    return Err(error);
+                }
             }
         }
         loop {
             let Some(item) = self.cursor.poll() else {
                 break;
             };
-            let wall_time = match &item {
-                SegmentCursorItem::Segment(entry) => wall(entry),
-                _ => None,
-            };
-            let step = self.writer.on_item(now, wall_time, &item)?;
-            if !self.handle_step(step)? {
-                self.retry = Some(item);
-                break;
+            match self.process(&item, now, &wall) {
+                Ok(Execution::Consumed) => {}
+                Ok(Execution::Retry) => {
+                    self.schedule_retry(item, 1, now);
+                    break;
+                }
+                Err(error) => {
+                    self.schedule_retry(item, 1, now);
+                    return Err(error);
+                }
             }
         }
         Ok(())
@@ -210,6 +243,9 @@ impl FsRecorder {
     /// Feed raw MPEG-2 TS bytes for EIT present/following tracking. A no-op
     /// unless the configuration names a programme service. Blocking (a
     /// transition rolls the period).
+    ///
+    /// A transition whose close plan fails is kept and retried by the next
+    /// call rather than discarded.
     ///
     /// # Errors
     ///
@@ -222,9 +258,24 @@ impl FsRecorder {
         let changes: Vec<dvb_si::epg::PresentEventChange> =
             std::iter::from_fn(|| tracker.poll_change()).collect();
         self.tracker = Some(tracker);
-        for change in changes {
-            let step = self.writer.on_programme(change)?;
-            let _ = self.handle_step(step)?;
+        let mut queue = Vec::new();
+        if let Some(change) = self.programme_retry.take() {
+            queue.push(change);
+        }
+        queue.extend(changes);
+        for change in queue {
+            let retry = change.clone();
+            match self.apply_programme(change) {
+                Ok(Execution::Consumed) => {}
+                Ok(Execution::Retry) => {
+                    self.programme_retry = Some(retry);
+                    break;
+                }
+                Err(error) => {
+                    self.programme_retry = Some(retry);
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }
@@ -240,43 +291,73 @@ impl FsRecorder {
         &self.writer
     }
 
-    fn handle_step(&mut self, step: Step) -> Result<bool, FsError> {
+    fn process(
+        &mut self,
+        item: &SegmentCursorItem,
+        now: Timestamp,
+        wall: &impl Fn(&SegmentEntry) -> Option<jiff::Timestamp>,
+    ) -> Result<Execution, FsError> {
+        let wall_time = match item {
+            SegmentCursorItem::Segment(entry) => wall(entry),
+            _ => None,
+        };
+        let step = self.writer.on_item(now, wall_time, item)?;
+        self.handle_step(step)
+    }
+
+    fn apply_programme(
+        &mut self,
+        change: dvb_si::epg::PresentEventChange,
+    ) -> Result<Execution, FsError> {
+        let step = self.writer.on_programme(change)?;
+        self.handle_step(step)
+    }
+
+    fn schedule_retry(&mut self, item: SegmentCursorItem, attempts: u8, now: Timestamp) {
+        if attempts > MAX_RETRIES {
+            let _ = self
+                .writer
+                .on_item(now, None, &SegmentCursorItem::Gap { skipped: 1 });
+        } else {
+            self.retry = Some((item, attempts));
+        }
+    }
+
+    fn handle_step(&mut self, step: Step) -> Result<Execution, FsError> {
         match step {
-            Step::Idle | Step::Stopped => Ok(true),
+            Step::Idle | Step::Stopped => Ok(Execution::Consumed),
             Step::Rearm { .. } => {
                 self.cursor = self.trunk.pin_segments(self.writer.overrun());
-                Ok(true)
+                Ok(Execution::Consumed)
             }
             Step::Execute(plan) => self.execute(plan),
         }
     }
 
-    /// `Ok(false)` means the plan's record phase failed and the input must be
-    /// retried once the writer has resynchronised its offsets.
-    fn execute(&mut self, plan: Plan) -> Result<bool, FsError> {
+    fn execute(&mut self, plan: Plan) -> Result<Execution, FsError> {
         let mut outcome = PlanOutcome::Done;
         let mut error = None;
-        let mut retry = false;
         for (at_op, op) in plan.ops.iter().enumerate() {
             if let Err(failure) = self.store_op(op) {
-                match failure {
-                    StoreFailure::Io(kind) => {
-                        error = Some(io_error(
-                            path_of(&self.dir, op, self.container),
-                            op.kind(),
-                            std::io::Error::from(kind),
-                        ));
-                    }
-                    StoreFailure::LengthMismatch { .. } => retry = true,
+                if let StoreFailure::Io(kind) = failure {
+                    error = Some(io_error(
+                        path_of(&self.dir, op, self.container),
+                        op.kind(),
+                        std::io::Error::from(kind),
+                    ));
                 }
                 outcome = PlanOutcome::Failed { at_op, failure };
                 break;
             }
         }
         self.writer.complete(plan.id, outcome)?;
-        match error {
-            Some(error) => Err(error),
-            None => Ok(!retry),
+        if self.writer.last_input_consumed() {
+            Ok(Execution::Consumed)
+        } else {
+            match error {
+                Some(error) => Err(error),
+                None => Ok(Execution::Retry),
+            }
         }
     }
 }
@@ -293,8 +374,7 @@ impl FsRecorder {
                     .join(layout::media_file_name(*period, self.container));
                 OpenOptions::new()
                     .write(true)
-                    .create(true)
-                    .truncate(true)
+                    .create_new(true)
                     .open(path)
                     .map(|_| ())
                     .map_err(|e| StoreFailure::Io(e.kind()))
@@ -313,17 +393,27 @@ impl FsRecorder {
                 let media = self
                     .dir
                     .join(layout::media_file_name(*period, self.container));
-                sync_file(&media)?;
+                let mut failed = sync_file(&media).is_err();
                 let playlist = self.dir.join(layout::playlist_file_name(*period));
                 match sync_file(&playlist) {
-                    Err(StoreFailure::Io(std::io::ErrorKind::NotFound)) => Ok(()),
-                    other => other,
+                    Err(StoreFailure::Io(std::io::ErrorKind::NotFound)) => {}
+                    Err(_) => failed = true,
+                    Ok(()) => {}
                 }
+                if failed {
+                    eprintln!(
+                        "dvr-runtime: syncing period {period} failed; durability is not guaranteed"
+                    );
+                }
+                Ok(())
             }
             StoreOp::CreatePlaylist { period, text } => {
                 let tmp = self.dir.join(layout::playlist_tmp_name(*period));
                 let path = self.dir.join(layout::playlist_file_name(*period));
                 let write = || -> std::io::Result<()> {
+                    if path.exists() {
+                        return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
+                    }
                     let mut file = File::create(&tmp)?;
                     file.write_all(text.as_bytes())?;
                     file.sync_all()?;
@@ -389,14 +479,22 @@ fn append_at(path: &Path, expect_len: u64, bytes: &[u8]) -> Result<(), StoreFail
     Ok(())
 }
 
+/// The egress adapter drives the writer without a wall-clock source, so a
+/// writer configured with a programme service is rejected up front rather
+/// than failing every segment with `WallClockRequired`; use
+/// [`FsRecorder::poll`] for that configuration.
 impl SegmentEgress for FsRecorder {
     type Error = FsError;
 
     fn on_segment(&mut self, item: &SegmentCursorItem) -> Result<(), Self::Error> {
-        let now = self.last_now;
-        let step = self.writer.on_item(now, None, item)?;
-        let _ = self.handle_step(step)?;
-        Ok(())
+        if self.tracker.is_some() {
+            return Err(ArchiveError::WallClockRequired.into());
+        }
+        let step = self.writer.on_item(self.last_now, None, item)?;
+        match self.handle_step(step)? {
+            Execution::Consumed => Ok(()),
+            Execution::Retry => Err(FsError::RetryRequired),
+        }
     }
 }
 
@@ -546,7 +644,7 @@ impl FsArchive {
 
     fn playlist(&mut self, period: PeriodNum) -> Result<Arc<PeriodPlaylist>, PlaylistError> {
         let path = self.dir.join(layout::playlist_file_name(period));
-        let metadata = fs::metadata(&path).map_err(|_| PlaylistError::NotAnArchive)?;
+        let metadata = fs::metadata(&path).map_err(io_playlist_error)?;
         let stamp = Stamp {
             mtime: metadata.modified().ok(),
             len: metadata.len(),
@@ -563,7 +661,7 @@ impl FsArchive {
             self.tick = self.tick.wrapping_add(1);
             return Ok(playlist);
         }
-        let data = fs::read(&path).map_err(|_| PlaylistError::NotAnArchive)?;
+        let data = fs::read(&path).map_err(io_playlist_error)?;
         let parsed = Arc::new(parse_period_playlist(period, self.container, &data)?);
         let tick = self.tick;
         self.tick = self.tick.wrapping_add(1);
@@ -623,6 +721,14 @@ impl FsArchive {
     }
 }
 
+fn io_playlist_error(error: std::io::Error) -> PlaylistError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        PlaylistError::NotFound
+    } else {
+        PlaylistError::Io { kind: error.kind() }
+    }
+}
+
 fn io_read_error(period: PeriodNum, error: std::io::Error) -> ReadError {
     if error.kind() == std::io::ErrorKind::NotFound {
         ReadError::Gone { period }
@@ -671,6 +777,55 @@ mod tests {
             &ArchiveName::new("a").expect("name"),
             ArchiveContainer::Fmp4,
         )
+    }
+
+    #[test]
+    fn a_vanished_playlist_is_not_found_and_an_unreadable_one_is_io() {
+        let root = PathBuf::from("target/dvr-runtime-tests/typed-errors");
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("a");
+        std::fs::create_dir_all(&dir).expect("dir");
+        let name = ArchiveName::new("a").expect("name");
+        let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Ts);
+        let playlist = dir.join("p0.m3u8");
+        std::fs::write(&playlist, b"#EXTM3U\n").expect("write");
+        assert!(matches!(
+            archive.playlist(PeriodNum::new(0)),
+            Err(PlaylistError::Hls(_))
+        ));
+        std::fs::remove_file(&playlist).expect("remove");
+        assert!(matches!(
+            archive.playlist(PeriodNum::new(0)),
+            Err(PlaylistError::NotFound)
+        ));
+        std::fs::write(&playlist, b"#EXTM3U\n").expect("write");
+        let mut perms = std::fs::metadata(&playlist).expect("meta").permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o000);
+            std::fs::set_permissions(&playlist, perms).expect("chmod");
+            let result = archive.playlist(PeriodNum::new(0));
+            let mut restore = std::fs::metadata(&playlist).expect("meta").permissions();
+            restore.set_mode(0o644);
+            std::fs::set_permissions(&playlist, restore).expect("restore");
+            if !running_as_root() {
+                assert!(
+                    matches!(result, Err(PlaylistError::Io { .. })),
+                    "expected an I/O error, got {result:?}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn running_as_root() -> bool {
+        std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .is_some_and(|uid| uid.trim() == "0")
     }
 
     #[test]

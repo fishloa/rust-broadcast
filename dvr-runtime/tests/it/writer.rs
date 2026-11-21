@@ -14,7 +14,7 @@ use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem};
 
 use crate::support::{
     append_playlist_index, bytes_limit, config, events, evicted, opened_events, periods, plan,
-    playlist_text, present_event, run, segment_at, step_item, step_item_fail, ts_at,
+    playlist_text, present_event, segment_at, step_item, step_item_fail, ts_at,
 };
 
 const INIT: [u8; 4] = *b"INIT";
@@ -634,10 +634,14 @@ fn seed_moves_the_next_period_past_every_existing_one() {
     let mut writer = fmp4_writer(periods(5));
     let mut existing = Vec::new();
     for n in [0u32, 1, 2] {
-        existing.push(dvr_runtime::layout::ArchiveFile::Media(PeriodNum::new(n)));
-        existing.push(dvr_runtime::layout::ArchiveFile::Playlist(PeriodNum::new(
-            n,
-        )));
+        existing.push(dvr_runtime::layout::SeedFile::new(
+            dvr_runtime::layout::ArchiveFile::Media(PeriodNum::new(n)),
+            1000,
+        ));
+        existing.push(dvr_runtime::layout::SeedFile::new(
+            dvr_runtime::layout::ArchiveFile::Playlist(PeriodNum::new(n)),
+            200,
+        ));
     }
     writer.seed(&existing).expect("seed");
     with_init(&mut writer, 0);
@@ -653,24 +657,31 @@ fn seed_moves_the_next_period_past_every_existing_one() {
 #[test]
 fn seeding_the_last_period_number_exhausts_the_range() {
     let mut writer = fmp4_writer(periods(5));
-    let existing = [dvr_runtime::layout::ArchiveFile::Media(PeriodNum::new(
-        u32::MAX,
-    ))];
+    let media_only = [dvr_runtime::layout::SeedFile::new(
+        dvr_runtime::layout::ArchiveFile::Media(PeriodNum::new(u32::MAX)),
+        10,
+    )];
+    writer
+        .seed(&media_only)
+        .expect("a stray media file with no playlist is not a period");
+    let playlist = [dvr_runtime::layout::SeedFile::new(
+        dvr_runtime::layout::ArchiveFile::Playlist(PeriodNum::new(u32::MAX)),
+        10,
+    )];
+    let mut writer = fmp4_writer(periods(5));
     assert!(matches!(
-        writer.seed(&existing),
+        writer.seed(&playlist),
         Err(ArchiveError::PeriodNumbersExhausted)
     ));
 }
 
 #[test]
-fn a_two_argument_needs_poll_is_the_only_gate() {
-    let mut writer = fmp4_writer(periods(5));
+fn an_idle_writer_never_asks_to_be_polled() {
+    let writer = fmp4_writer(periods(5));
     assert!(
         !writer.needs_poll(None, None),
-        "nothing to do is false, not a busy loop"
+        "nothing new must be false, never a busy loop"
     );
-    let _ = &mut writer;
-    let _ = run;
 }
 
 #[test]

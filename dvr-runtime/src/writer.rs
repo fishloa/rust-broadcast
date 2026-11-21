@@ -38,7 +38,7 @@ use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, SegmentEntry};
 
 use crate::format;
-use crate::layout::{self, ArchiveFile};
+use crate::layout::{self, ArchiveFile, SeedFile};
 use crate::{ArchiveConfig, ArchiveContainer, ArchiveError, PeriodNum};
 
 /// One fMP4 init segment and the first Trunk segment number closed under it.
@@ -99,7 +99,10 @@ pub struct Plan {
 pub enum StoreOp {
     /// Create the archive directory (and any parent).
     CreateDir,
-    /// Create (or truncate to empty) the period's media file.
+    /// Create the period's media file, failing if it already exists
+    /// (`create_new`). A store must never truncate an existing file: an
+    /// earlier run, or an earlier failed plan of this run, may own those
+    /// bytes.
     CreateData {
         /// The period whose media file this is.
         period: PeriodNum,
@@ -120,7 +123,9 @@ pub enum StoreOp {
         period: PeriodNum,
     },
     /// Atomically create the period's playlist with `text` (the header plus
-    /// its first segment record).
+    /// its first segment record), failing if it already exists. The store
+    /// writes a temporary file, syncs it, refuses a rename over an existing
+    /// playlist, renames, and syncs the directory.
     CreatePlaylist {
         /// The period whose playlist this is.
         period: PeriodNum,
@@ -391,12 +396,17 @@ struct SegmentPost {
     next_period: PeriodNum,
     clear_next_reason: bool,
     rolled: bool,
+    new_period: PeriodNum,
+    old_close_op: Option<usize>,
+    create_data_op: Option<usize>,
+    record_op: usize,
 }
 
 struct ClosePost {
     closed_now: ClosedPeriod,
     next_period: PeriodNum,
     next_reason: Option<RollReason>,
+    next_programme: Option<dvb_si::epg::PresentEvent>,
 }
 
 struct Pending {
@@ -425,6 +435,8 @@ pub struct ArchiveWriter {
     stopped: bool,
     starts_run: bool,
     next_plan: u64,
+    current_init: Option<Bytes>,
+    last_input_consumed: bool,
 }
 
 impl ArchiveWriter {
@@ -455,40 +467,53 @@ impl ArchiveWriter {
             stopped: false,
             starts_run: false,
             next_plan: 0,
+            current_init: None,
+            last_input_consumed: false,
         })
     }
 
     /// Adopt the periods an earlier run left on disk: the next period number
-    /// is one past the highest, so a later run never appends to or re-indexes
-    /// an existing period, and the first segment of this run is marked
-    /// discontinuous. A seeded media file's size is unknown to the writer
-    /// (the layout only names files), so it counts as zero toward the byte
-    /// cap: byte retention evicts such a period once every measured period is
-    /// gone, never keeps the archive over the cap on their account.
+    /// is one past the highest **playlist** already present (a stray media
+    /// file with no playlist is not a period and is ignored, so it can never
+    /// exhaust the number range), and each adopted period's media file size
+    /// counts toward byte retention. The first segment of this run is marked
+    /// discontinuous.
     ///
     /// # Errors
     ///
     /// [`ArchiveError::PlanPending`] while a plan is outstanding,
-    /// [`ArchiveError::PeriodNumbersExhausted`] when `u32::MAX` is taken.
-    pub fn seed(&mut self, existing: &[ArchiveFile]) -> Result<(), ArchiveError> {
+    /// [`ArchiveError::PeriodNumbersExhausted`] when a playlist numbered
+    /// `u32::MAX` exists.
+    pub fn seed(&mut self, existing: &[SeedFile]) -> Result<(), ArchiveError> {
         if self.pending.is_some() {
             return Err(ArchiveError::PlanPending);
         }
-        let mut highest: Option<PeriodNum> = None;
-        for file in existing {
-            let period = file.period();
-            highest = Some(match highest {
-                Some(h) if h >= period => h,
-                _ => period,
-            });
-            if !self.closed.iter().any(|c| c.period == period) {
-                self.closed.push(ClosedPeriod {
-                    period,
-                    file_bytes: None,
-                });
+        let mut media: std::collections::BTreeMap<PeriodNum, u64> =
+            std::collections::BTreeMap::new();
+        let mut playlists: std::collections::BTreeMap<PeriodNum, u64> =
+            std::collections::BTreeMap::new();
+        for seeded in existing {
+            match seeded.file {
+                ArchiveFile::Media(period) => {
+                    media.insert(period, seeded.bytes);
+                }
+                ArchiveFile::Playlist(period) => {
+                    playlists.insert(period, seeded.bytes);
+                }
             }
         }
-        self.closed.sort_by_key(|c| c.period);
+        let highest = playlists.keys().next_back().copied();
+        for (period, playlist_bytes) in playlists {
+            if self.closed.iter().any(|closed| closed.period == period) {
+                continue;
+            }
+            let file_bytes = media.get(&period).copied().unwrap_or(playlist_bytes);
+            self.closed.push(ClosedPeriod {
+                period,
+                file_bytes: Some(file_bytes),
+            });
+        }
+        self.closed.sort_by_key(|closed| closed.period);
         if let Some(highest) = highest {
             self.next_period = highest
                 .checked_next()
@@ -562,7 +587,7 @@ impl ArchiveWriter {
             return Ok(Step::Idle);
         };
         if now.saturating_sub(open.opened_at) >= limit {
-            return self.close_plan(RollReason::Duration);
+            return self.close_plan(RollReason::Duration, None);
         }
         Ok(Step::Idle)
     }
@@ -636,23 +661,30 @@ impl ArchiveWriter {
         {
             return Ok(Step::Idle);
         }
+        if transition && self.open.is_some() {
+            return self.close_plan(RollReason::Programme, Some(current.clone()));
+        }
         self.programme = Some(current.clone());
         self.attach_programme = true;
-        if transition && self.open.is_some() {
-            return self.close_plan(RollReason::Programme);
-        }
         Ok(Step::Idle)
     }
 
     /// Report what the host did with `plan`.
     ///
-    /// A [`PlanOutcome::Done`] commits every decision the plan represented. A
-    /// failure in the record phase commits nothing (the open period's byte
-    /// offsets are resynchronised from what the store reports, and the next
-    /// value it reports is adopted verbatim); a failure at a retention
-    /// `Remove` keeps its period in the ledger and emits
-    /// [`WriterEvent::EvictionFailed`]. A failed plan never consumes a period
-    /// number.
+    /// Every operation **before** the reported failure index is a durable
+    /// fact, and the writer applies it even when the plan as a whole failed:
+    /// a completed `#EXT-X-ENDLIST` append closes that period (it is never
+    /// appended to again and never closed twice), a completed create for
+    /// period `N` consumes `N` (the writer never targets it again, because
+    /// the store creates files with `create_new`), and a completed record
+    /// append commits the segment. A failure inside a record therefore keeps
+    /// the [input consumed](Self::last_input_consumed); a failure before it
+    /// does not, and the host must retry that input.
+    ///
+    /// A failure at a retention `Remove` keeps that period in the ledger and
+    /// emits [`WriterEvent::EvictionFailed`]; removals after it were not
+    /// attempted and keep their periods too. A `LengthMismatch` resynchronises
+    /// the open period's offset to the length the store reports.
     ///
     /// # Errors
     ///
@@ -668,24 +700,79 @@ impl ArchiveWriter {
             .pending
             .take()
             .ok_or(ArchiveError::UnknownPlan { id })?;
+        self.last_input_consumed = false;
         match outcome {
             PlanOutcome::Done => {
-                self.commit(commit, None);
-                Ok(())
+                self.commit(commit, usize::MAX, None);
+                self.last_input_consumed = true;
             }
-            PlanOutcome::Failed { at_op, failure } => {
-                let first_remove = match &commit {
-                    Commit::Segment(post) => post.first_remove_op,
-                    Commit::Close(_) => usize::MAX,
-                };
-                if at_op >= first_remove {
-                    self.commit(commit, Some((at_op - first_remove) / 2));
-                    return Ok(());
+            PlanOutcome::Failed { at_op, failure } => match commit {
+                Commit::Segment(post) => {
+                    let close_old = post.old_close_op.is_some_and(|index| index < at_op);
+                    let consumed_new = post.create_data_op.is_some_and(|index| index < at_op);
+                    let record_committed = post.record_op < at_op;
+                    if record_committed {
+                        let reached = at_op >= post.first_remove_op;
+                        let applied = if reached {
+                            (at_op - post.first_remove_op) / 2
+                        } else {
+                            0
+                        };
+                        let failed_remove = match plan.ops.get(at_op) {
+                            Some(StoreOp::Remove { file }) if reached => Some(file.period()),
+                            _ => None,
+                        };
+                        self.commit_segment(post, applied, failed_remove);
+                        self.last_input_consumed = true;
+                    } else if close_old {
+                        let reason = post.opened_reason;
+                        let consumed = post.new_period;
+                        if let Some(closed) = post.closed_now
+                            && self
+                                .open
+                                .as_ref()
+                                .is_some_and(|open| open.period == closed.period)
+                        {
+                            self.closed.push(closed);
+                            self.emit(WriterEvent::PeriodClosed {
+                                period: closed.period,
+                            });
+                            self.open = None;
+                        }
+                        self.next_reason = Some(reason);
+                        if consumed_new {
+                            self.next_period = consumed.checked_next().unwrap_or(self.next_period);
+                        }
+                    } else {
+                        self.resync_offsets(&plan.ops, at_op, failure);
+                        if consumed_new {
+                            self.next_period =
+                                post.new_period.checked_next().unwrap_or(self.next_period);
+                        }
+                    }
                 }
-                self.resync_offsets(&plan.ops, at_op, failure);
-                Ok(())
-            }
+                Commit::Close(post) => {
+                    if at_op > 0 {
+                        self.commit_close(post);
+                        self.last_input_consumed = true;
+                    } else {
+                        self.resync_offsets(&plan.ops, at_op, failure);
+                    }
+                }
+            },
         }
+        Ok(())
+    }
+
+    /// Whether the input behind the most recently completed plan is durable.
+    ///
+    /// `true` after [`PlanOutcome::Done`], and after a failed plan whose
+    /// record (or `#EXT-X-ENDLIST`) had already landed; `false` when the host
+    /// must retry the same input. A host that executes plans uses this to tell
+    /// a retryable I/O failure from one that already committed its segment.
+    #[must_use]
+    pub fn last_input_consumed(&self) -> bool {
+        self.last_input_consumed
     }
 
     /// The next queued event, if any.
@@ -765,7 +852,11 @@ impl ArchiveWriter {
         Ok(playlist.render_endlist()?)
     }
 
-    fn close_plan(&mut self, reason: RollReason) -> Result<Step, ArchiveError> {
+    fn close_plan(
+        &mut self,
+        reason: RollReason,
+        next_programme: Option<dvb_si::epg::PresentEvent>,
+    ) -> Result<Step, ArchiveError> {
         let Some(open) = &self.open else {
             return Ok(Step::Idle);
         };
@@ -798,6 +889,7 @@ impl ArchiveWriter {
                 },
                 next_period,
                 next_reason: Some(reason),
+                next_programme,
             }),
         });
         Ok(Step::Execute(plan))
@@ -810,12 +902,15 @@ impl ArchiveWriter {
                 chosen = Some(generation.init.clone());
             }
         }
-        if chosen.is_none() && self.pending_inits.is_empty() {
+        if chosen.is_none() {
             chosen = self
                 .open
                 .as_ref()
                 .and_then(|o| o.init.clone())
-                .or_else(|| self.last_known_init.clone());
+                .or_else(|| self.current_init.clone());
+        }
+        if chosen.is_none() && self.pending_inits.is_empty() {
+            chosen = self.last_known_init.clone();
         }
         chosen
     }
@@ -868,12 +963,7 @@ impl ArchiveWriter {
                 "programme-{}-{}",
                 programme.service_id, programme.event.event_id
             );
-            let seen = daterange_ids.iter().filter(|id| **id == base).count();
-            let id = if seen == 0 {
-                base.clone()
-            } else {
-                format!("{base}-{}", seen + 1)
-            };
+            let id = unique_daterange_id(&base, daterange_ids);
             let range =
                 format::programme_date_range(programme, ProgramDateTime::from_timestamp(wall))?;
             let range = range.with_id(id.clone())?;
@@ -1026,6 +1116,7 @@ impl ArchiveWriter {
             None
         };
         let rounded = ceil_secs(entry.duration);
+        let discontinuous = entry.meta.discontinuous || self.starts_run;
         let mut roll = None;
         if let Some(open) = &self.open
             && open.segments > 0
@@ -1047,7 +1138,7 @@ impl ArchiveWriter {
                     dur_nanos,
                     entry,
                     wall,
-                    false,
+                    discontinuous,
                     &open.daterange_ids,
                 )?;
                 let endlist = self.endlist_text()?;
@@ -1090,7 +1181,6 @@ impl ArchiveWriter {
             (Some(open), None) => open.target_duration,
             _ => ceil_secs(self.config.target_duration).max(rounded),
         };
-        let discontinuous = entry.meta.discontinuous || self.starts_run;
         let (segment, record, attached, new_id) = self.record(
             period,
             media_offset,
@@ -1105,8 +1195,24 @@ impl ArchiveWriter {
         let byte_len = u64::try_from(entry.bytes.len()).unwrap_or(u64::MAX);
         let media_len = media_offset.saturating_add(byte_len);
         let mut ops = Vec::new();
+        let mut old_close_op = None;
+        let mut create_data_op = None;
+        let record_op;
         let playlist_len = if rolled {
+            if let Some(open) = &self.open {
+                let endlist = self.endlist_text()?;
+                old_close_op = Some(ops.len());
+                ops.push(StoreOp::AppendPlaylist {
+                    period: open.period,
+                    expect_len: open.playlist_len,
+                    text: endlist,
+                });
+                ops.push(StoreOp::SyncData {
+                    period: open.period,
+                });
+            }
             ops.push(StoreOp::CreateDir);
+            create_data_op = Some(ops.len());
             ops.push(StoreOp::CreateData { period });
             let init_bytes = init.clone().unwrap_or_default();
             if !init_bytes.is_empty() {
@@ -1125,19 +1231,9 @@ impl ArchiveWriter {
             let text =
                 self.create_playlist_text(period, target_duration, archive_seq_u64, segment)?;
             let playlist_len = u64::try_from(text.len()).unwrap_or(u64::MAX);
+            record_op = ops.len();
             ops.push(StoreOp::CreatePlaylist { period, text });
             ops.push(StoreOp::SyncData { period });
-            if let Some(open) = &self.open {
-                let endlist = self.endlist_text()?;
-                ops.push(StoreOp::AppendPlaylist {
-                    period: open.period,
-                    expect_len: open.playlist_len,
-                    text: endlist,
-                });
-                ops.push(StoreOp::SyncData {
-                    period: open.period,
-                });
-            }
             playlist_len
         } else {
             ops.push(StoreOp::AppendData {
@@ -1153,6 +1249,7 @@ impl ArchiveWriter {
             let playlist_len = open
                 .playlist_len
                 .saturating_add(u64::try_from(record.len()).unwrap_or(u64::MAX));
+            record_op = ops.len();
             ops.push(StoreOp::AppendPlaylist {
                 period,
                 expect_len: open.playlist_len,
@@ -1215,6 +1312,10 @@ impl ArchiveWriter {
             next_period,
             clear_next_reason: self.open.is_none() && self.next_reason.is_some(),
             rolled,
+            new_period: period,
+            old_close_op,
+            create_data_op,
+            record_op,
         };
         let id = self.next_plan_id();
         let plan = Plan { id, ops };
@@ -1226,28 +1327,37 @@ impl ArchiveWriter {
         Ok(Step::Execute(plan))
     }
 
-    fn commit(&mut self, commit: Commit, applied_removals: Option<usize>) {
+    fn commit(
+        &mut self,
+        commit: Commit,
+        applied_removals: usize,
+        failed_remove: Option<PeriodNum>,
+    ) {
         match commit {
-            Commit::Segment(post) => self.commit_segment(post, applied_removals),
+            Commit::Segment(post) => self.commit_segment(post, applied_removals, failed_remove),
             Commit::Close(post) => self.commit_close(post),
         }
     }
 
-    fn commit_segment(&mut self, post: SegmentPost, applied_removals: Option<usize>) {
+    fn commit_segment(
+        &mut self,
+        post: SegmentPost,
+        applied_removals: usize,
+        failed_remove: Option<PeriodNum>,
+    ) {
         if let Some(closed) = post.closed_now {
             self.closed.push(closed);
             self.emit(WriterEvent::PeriodClosed {
                 period: closed.period,
             });
         }
-        for (i, evicted) in post.evicted.iter().enumerate() {
-            let applied = applied_removals.is_none_or(|applied| i < applied);
-            if applied {
+        for (index, evicted) in post.evicted.iter().enumerate() {
+            if index < applied_removals {
                 self.closed.retain(|c| c.period != evicted.period);
                 self.emit(WriterEvent::Evicted {
                     period: evicted.period,
                 });
-            } else {
+            } else if failed_remove == Some(evicted.period) {
                 self.emit(WriterEvent::EvictionFailed {
                     period: evicted.period,
                 });
@@ -1259,6 +1369,7 @@ impl ArchiveWriter {
                 reason: post.opened_reason,
             });
         }
+        self.current_init = post.opened.init.clone();
         self.open = Some(post.opened);
         self.next_period = post.next_period;
         self.last_archive_seq = Some(post.seq_archive);
@@ -1287,7 +1398,12 @@ impl ArchiveWriter {
         self.open = None;
         self.next_period = post.next_period;
         self.next_reason = post.next_reason;
-        self.attach_programme = self.attach_programme || self.programme.is_some();
+        if let Some(programme) = post.next_programme {
+            self.programme = Some(programme);
+            self.attach_programme = true;
+        } else {
+            self.attach_programme = self.attach_programme || self.programme.is_some();
+        }
     }
 
     fn resync_offsets(&mut self, ops: &[StoreOp], at_op: usize, failure: StoreFailure) {
@@ -1329,6 +1445,22 @@ impl ArchiveWriter {
     }
 }
 
+/// The first id not already `used`: `base`, then `base-2`, `base-3`, ... so a
+/// repeated programme in one playlist always gets a distinct id.
+fn unique_daterange_id(base: &str, used: &[String]) -> String {
+    if !used.iter().any(|id| id == base) {
+        return base.to_owned();
+    }
+    let mut suffix = 2u64;
+    loop {
+        let candidate = format!("{base}-{suffix}");
+        if !used.contains(&candidate) {
+            return candidate;
+        }
+        suffix = suffix.saturating_add(1);
+    }
+}
+
 /// `duration` rounded up to whole seconds, saturating at `u32::MAX`.
 fn ceil_secs(duration: Duration) -> u32 {
     let secs = duration
@@ -1347,5 +1479,108 @@ impl std::fmt::Debug for ArchiveWriter {
             .field("pending", &self.pending.is_some())
             .field("stopped", &self.stopped)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RetentionLimits;
+    use crate::layout::ArchiveFile;
+
+    fn config() -> ArchiveConfig {
+        ArchiveConfig::new(
+            ArchiveContainer::Ts,
+            Duration::from_secs(2),
+            RetentionLimits::new().with_periods(std::num::NonZeroUsize::new(10).expect("nonzero")),
+        )
+        .with_period_duration(Some(Duration::from_secs(3600)))
+    }
+
+    fn entry(seq: u32, len: usize, discontinuous: bool) -> SegmentEntry {
+        SegmentEntry::new(
+            Bytes::from(vec![0xAB; len]),
+            SegmentSeq::new(seq),
+            Duration::from_secs(2),
+            Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
+            transmux::SegmentMeta { discontinuous },
+        )
+    }
+
+    fn open_one(writer: &mut ArchiveWriter) {
+        let step = writer
+            .on_item(
+                Timestamp::ZERO,
+                None,
+                &SegmentCursorItem::Segment(entry(0, 100, false)),
+            )
+            .expect("first");
+        let Step::Execute(plan) = step else {
+            panic!("expected a plan");
+        };
+        writer
+            .complete(plan.id, PlanOutcome::Done)
+            .expect("complete");
+    }
+
+    #[test]
+    fn playlist_full_counts_the_discontinuity_line() {
+        let mut writer = ArchiveWriter::new(config()).expect("writer");
+        open_one(&mut writer);
+        let open = writer.open.as_ref().expect("open");
+        let period = open.period;
+        let media_len = open.media_len;
+        let (_, record, _, _) = writer
+            .record(
+                period,
+                media_len,
+                0,
+                1,
+                2_000_000_000,
+                &entry(1, 100, true),
+                None,
+                true,
+                &open.daterange_ids,
+            )
+            .expect("record");
+        let endlist = writer.endlist_text().expect("endlist").len() as u64;
+        let boundary = u64::try_from(broadcast_hls::limits::MAX_PLAYLIST_BYTES).expect("limit")
+            - endlist
+            - u64::try_from(record.len()).expect("len")
+            + 1;
+        writer.open.as_mut().expect("open").playlist_len = boundary;
+        let step = writer
+            .on_item(
+                Timestamp::ZERO,
+                None,
+                &SegmentCursorItem::Segment(entry(1, 100, true)),
+            )
+            .expect("next");
+        let Step::Execute(plan) = step else {
+            panic!("expected a plan");
+        };
+        assert!(
+            matches!(plan.ops[0], StoreOp::AppendPlaylist { .. }),
+            "a record that would exceed MAX_PLAYLIST_BYTES must roll first, got {:?}",
+            plan.ops.iter().map(StoreOp::kind).collect::<Vec<_>>()
+        );
+        writer
+            .complete(plan.id, PlanOutcome::Done)
+            .expect("complete");
+    }
+
+    #[test]
+    fn repeated_programmes_get_distinct_ids() {
+        let mut used: Vec<String> = Vec::new();
+        let first = unique_daterange_id("programme-1-7", &used);
+        assert_eq!(first, "programme-1-7");
+        used.push(first);
+        let second = unique_daterange_id("programme-1-7", &used);
+        assert_eq!(second, "programme-1-7-2");
+        used.push(second);
+        let third = unique_daterange_id("programme-1-7", &used);
+        assert_eq!(third, "programme-1-7-3");
+        assert!(!used.contains(&third));
+        let _ = ArchiveFile::Media(PeriodNum::new(0));
     }
 }

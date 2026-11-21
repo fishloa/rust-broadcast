@@ -6,6 +6,13 @@ All notable changes to this crate are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The release requires `broadcast-hls` 0.8.2 (typed `DateRange`/`CustomTag`,
+  segment-scoped parse options and incremental renderers) and `dvb-si` 15.2.0
+  (the EIT present/following tracker). The manifest floors stay at the
+  currently published 0.8.1 / 15.1.0 until the release wave bumps them.
+
 ## [0.1.0]
 
 ### Added

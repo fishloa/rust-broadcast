@@ -2,6 +2,7 @@ mod support;
 
 mod config;
 mod golden;
+mod plan_store;
 mod read;
 mod recover;
 mod writer;

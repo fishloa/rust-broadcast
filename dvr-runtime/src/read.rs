@@ -195,6 +195,23 @@ pub enum PlaylistError {
         /// The tag.
         tag: UnsupportedTag,
     },
+    /// A media segment follows `#EXT-X-ENDLIST` (RFC 8216 §4.3.3.4 closes the
+    /// playlist).
+    #[error("a media segment follows EXT-X-ENDLIST")]
+    RecordAfterEndlist,
+    /// `#EXT-X-ENDLIST` appears more than once (RFC 8216 §4.3.3.4).
+    #[error("EXT-X-ENDLIST appears more than once")]
+    DuplicateEndlist,
+    /// The playlist file disappeared between listing and reading (a racing
+    /// eviction), distinct from corruption.
+    #[error("period playlist not found")]
+    NotFound,
+    /// Reading the playlist failed with an I/O error.
+    #[error("io: {kind}")]
+    Io {
+        /// The error kind.
+        kind: std::io::ErrorKind,
+    },
 }
 
 /// Why reading an archived segment's bytes failed.
@@ -380,9 +397,28 @@ pub struct ArchiveScan {
     pub unreadable: Vec<(PeriodNum, PlaylistError)>,
 }
 
-fn is_key_tag(tag: &str) -> bool {
-    tag.strip_prefix('#')
-        .is_some_and(|name| name.starts_with("EXT-X-KEY:"))
+fn endlist_line() -> Result<String, broadcast_hls::Error> {
+    let rendered = MediaPlaylist {
+        endlist: true,
+        ..MediaPlaylist::default()
+    }
+    .render_endlist()?;
+    Ok(rendered.trim_end_matches('\n').to_owned())
+}
+
+fn endlist_violation(text: &str, endlist: &str) -> Option<PlaylistError> {
+    let mut ended = false;
+    for line in text.lines() {
+        if line == endlist {
+            if ended {
+                return Some(PlaylistError::DuplicateEndlist);
+            }
+            ended = true;
+        } else if ended && !line.trim().is_empty() && !line.starts_with('#') {
+            return Some(PlaylistError::RecordAfterEndlist);
+        }
+    }
+    None
 }
 
 /// Convert `ticks` at `timescale` to whole nanoseconds.
@@ -434,6 +470,9 @@ pub fn parse_period_playlist(
     };
     let torn_bytes = trimmed_nuls + torn_line;
     let text = std::str::from_utf8(complete).map_err(|_| PlaylistError::NotAnArchive)?;
+    if let Some(violation) = endlist_violation(text, &endlist_line()?) {
+        return Err(violation);
+    }
     let options = ParseOptions::default()
         .with_segment_scoped_tag(broadcast_hls::CustomTagName::new(format::TIMING_TAG_NAME)?);
     let playlist = MediaPlaylist::parse_with_options(
@@ -470,7 +509,8 @@ pub fn parse_period_playlist(
     {
         torn_records = 1;
     }
-    if playlist.extra_tags.iter().any(|tag| is_key_tag(tag)) {
+    let keys = playlist.segment_keys()?;
+    if keys.iter().flatten().next().is_some() {
         return Err(PlaylistError::Unsupported {
             index: 0,
             tag: UnsupportedTag::Key,
@@ -501,12 +541,6 @@ pub fn parse_period_playlist(
             return Err(PlaylistError::Unsupported {
                 index,
                 tag: UnsupportedTag::Parts,
-            });
-        }
-        if segment.pre_tags.iter().any(|tag| is_key_tag(tag)) {
-            return Err(PlaylistError::Unsupported {
-                index,
-                tag: UnsupportedTag::Key,
             });
         }
         let byte_range = segment
