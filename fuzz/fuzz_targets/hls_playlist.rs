@@ -19,20 +19,45 @@ fuzz_target!(|data: &[u8]| {
             s,
             &broadcast_hls::limits::Limits::default(),
             &options,
-        ) {
-            let _ = playlist.to_m3u8();
+        ) && let Ok(rendered) = playlist.to_m3u8()
+        {
+            let reparsed = broadcast_hls::MediaPlaylist::parse_with_options(
+                &rendered,
+                &broadcast_hls::limits::Limits::default(),
+                &options,
+            )
+            .expect("a rendered playlist must parse");
+            assert_eq!(
+                reparsed.to_m3u8().expect("re-render"),
+                rendered,
+                "render(parse(render(x))) must equal render(x)"
+            );
         }
 
         for line in s.lines() {
             if let Ok(range) = broadcast_hls::DateRange::parse_tag_line(line)
                 && let Ok(rendered) = range.to_tag_line()
             {
-                assert!(broadcast_hls::DateRange::parse_tag_line(&rendered).is_ok());
+                let reparsed = broadcast_hls::DateRange::parse_tag_line(&rendered)
+                    .expect("a rendered DATERANGE must parse");
+                assert_eq!(reparsed, range, "parse(render(x)) must equal x");
+                assert_eq!(
+                    reparsed.to_tag_line().expect("re-render"),
+                    rendered,
+                    "render(parse(render(x))) must equal render(x)"
+                );
             }
             if let Ok(tag) = broadcast_hls::CustomTag::parse_tag_line(line)
                 && let Ok(rendered) = tag.to_tag_line()
             {
-                assert!(broadcast_hls::CustomTag::parse_tag_line(&rendered).is_ok());
+                let reparsed = broadcast_hls::CustomTag::parse_tag_line(&rendered)
+                    .expect("a rendered custom tag must parse");
+                assert_eq!(reparsed, tag, "parse(render(x)) must equal x");
+                assert_eq!(
+                    reparsed.to_tag_line().expect("re-render"),
+                    rendered,
+                    "render(parse(render(x))) must equal render(x)"
+                );
             }
         }
     }
