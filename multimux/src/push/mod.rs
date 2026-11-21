@@ -19,9 +19,11 @@
 //! - [`PushMetrics`] — the counters a push task keeps (samples sent/dropped,
 //!   bytes sent, reconnects) for observability.
 //! - [`drive_push`] — the async main loop: subscribe to a [`Trunk`]'s sample
-//!   ring, negotiate/renegotiate and feed each drained item to a
-//!   [`egress::PushTransportEgress`], flushing its queued wire messages out
-//!   over the real transport every iteration, reconnecting on failure with
+//!   ring and hand every drained item, connect/setup outcome and flush result
+//!   to a [`media_plane::push_session::PushSession`], which owns every
+//!   decision; `drive_push` performs the awaits (connect, setup, the bounded
+//!   flush, backoff), pushes the queued wire messages out over the real
+//!   transport every iteration, and reconnects on failure with
 //!   [`ReconnectPolicy`](crate::config::ReconnectPolicy) backoff.
 //!
 //! This is the *reverse* of the ingest path: instead of demuxing inbound media
@@ -49,8 +51,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use media_plane::egress::{NegotiationOutcome, PushEgress, TrackSelection};
-use media_plane::trunk::{SampleCursorItem, Trunk};
+use media_plane::push_session::{
+    FlushResult, PushDecision, PushErrorClass, PushErrorKind, PushSession, ReconnectCause,
+};
+use media_plane::trunk::Trunk;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
@@ -87,6 +91,15 @@ pub enum SendMediaError {
     /// The transport's own send/protocol call failed.
     #[error("push send failed: {0}")]
     Transport(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl PushErrorKind for SendMediaError {
+    fn kind(&self) -> PushErrorClass {
+        match self {
+            SendMediaError::Mux(_) => PushErrorClass::DropItem,
+            SendMediaError::Transport(_) => PushErrorClass::Reconnect,
+        }
+    }
 }
 
 /// Why muxing a batch failed: the muxer's own error, or the batch that cannot go on this
@@ -435,22 +448,64 @@ impl PushMetrics {
 }
 
 /// Logs the "some tracks excluded" fact a `negotiate`/`renegotiate`
-/// [`NegotiationOutcome::Accepted`] carries whenever its [`TrackSelection`]
+/// `NegotiationOutcome::Accepted` carries whenever its `TrackSelection`
 /// names fewer tracks than were proposed — the structured replacement for
 /// `push::rtmp::RtmpTransport`'s old `warned_refused_tracks` flag (issue
 /// #942): the selection itself is the "which tracks, and how many were
 /// excluded" fact, so there is nothing left to track privately inside the
 /// transport.
-fn log_partial_selection(url: &str, proposed: usize, selection: &TrackSelection) {
-    if selection.track_ids.len() < proposed {
+fn log_partial_selection(url: &str, carried: usize, proposed: usize) {
+    if carried < proposed {
         tracing::warn!(
             url = %url,
-            carried = selection.track_ids.len(),
+            carried,
             proposed,
             "push output cannot carry every track in this program; excluded tracks are \
              dropped from this push"
         );
     }
+}
+
+fn close_connected<T: PushTransport>(session: &mut PushSession<PushTransportEgress<T>>) {
+    if let Some(egress) = session.egress_mut() {
+        egress.transport_mut().close();
+    }
+}
+
+fn retire_egress<T: PushTransport>(mut egress: PushTransportEgress<T>, written: &mut u64) {
+    *written = written.saturating_add(egress.bytes_sent());
+    egress.transport_mut().close();
+}
+
+fn flush_result(outcome: &FlushOutcome) -> FlushResult {
+    match outcome {
+        FlushOutcome::Flushed => FlushResult::Flushed,
+        FlushOutcome::Cancelled => FlushResult::Cancelled,
+        FlushOutcome::TimedOut => FlushResult::TimedOut,
+        FlushOutcome::Failed(_) => FlushResult::Failed,
+    }
+}
+
+fn publish_metrics<T: PushTransport>(
+    metrics: PushMetrics,
+    session: &mut PushSession<PushTransportEgress<T>>,
+    written: u64,
+) -> PushMetrics {
+    let counters = session.counters();
+    metrics
+        .samples_sent
+        .store(counters.samples_sent, Ordering::Relaxed);
+    metrics
+        .samples_dropped
+        .store(counters.samples_dropped, Ordering::Relaxed);
+    metrics
+        .reconnect_count
+        .store(counters.connects, Ordering::Relaxed);
+    let connected = session.egress_mut().map_or(0, |egress| egress.bytes_sent());
+    metrics
+        .bytes_sent
+        .store(written.saturating_add(connected), Ordering::Relaxed);
+    metrics
 }
 
 /// The main push loop: subscribe to `trunk`'s sample ring and push its
@@ -459,10 +514,9 @@ fn log_partial_selection(url: &str, proposed: usize, selection: &TrackSelection)
 ///
 /// Issue #942: routes every sample through a [`PushTransportEgress<T>`]
 /// (`media_plane::PushEgress` over `T`) rather than muxing/sending directly.
-/// `negotiate` runs once per connection (replacing `RtmpTransport::setup`'s
-/// old ad-hoc all-or-nothing codec check); `renegotiate` runs whenever
-/// [`Trunk::track_generation`] changes mid-connection (issue #781's shape,
-/// on the push side — nothing before issue #942 detected this at all).
+/// Every decision is the [`PushSession`]'s (`media_plane::push_session`): this
+/// loop only performs the awaits it cannot — connect, setup, the bounded
+/// flush, backoff — and logs/redacts/measures what the decisions report.
 ///
 /// Returns the [`PushMetrics`] accumulated for the lifetime of this task.
 /// Cancellation is cooperative via `cancel` — the loop checks it between
@@ -491,13 +545,12 @@ pub async fn drive_push<T: PushTransport>(
     const PUSH_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
 
     let metrics = PushMetrics::default();
-    let mut egress: Option<PushTransportEgress<T>> = None;
+    let mut session: PushSession<PushTransportEgress<T>> = PushSession::new();
     let mut engine = ReconnectEngine::new(reconnect);
     let mut cursor = trunk.subscribe();
-    // The `Trunk::track_generation` last negotiated/renegotiated against —
-    // `None` until the first successful `negotiate`, so the very first
-    // connection always renegotiates-on-connect rather than skipping it.
-    let mut negotiated_generation: Option<u64> = None;
+    // Bytes egresses the session has handed back wrote before they were
+    // closed; the connected egress's own count is added on top.
+    let mut written_bytes = 0u64;
     // `Trunk` samples are already `transmux::Sample`s; the track set we mux
     // against comes straight from the trunk. `_format` is unused here — it
     // only ever selects TS (the only implemented `PushFormat`); `Mp4`/`Mkv`
@@ -508,10 +561,8 @@ pub async fn drive_push<T: PushTransport>(
 
     loop {
         if cancel.is_cancelled() {
-            if let Some(e) = egress.as_mut() {
-                e.transport_mut().close();
-            }
-            return metrics;
+            close_connected(&mut session);
+            return publish_metrics(metrics, &mut session, written_bytes);
         }
 
         // Wait for samples, or a bounded wake-up, before draining — the
@@ -521,10 +572,8 @@ pub async fn drive_push<T: PushTransport>(
         // promptly rather than after the next tick (defect 5).
         tokio::select! {
             () = cancel.cancelled() => {
-                if let Some(e) = egress.as_mut() {
-                    e.transport_mut().close();
-                }
-                return metrics;
+                close_connected(&mut session);
+                return publish_metrics(metrics, &mut session, written_bytes);
             }
             () = async {
                 match trunk.listen() {
@@ -547,140 +596,108 @@ pub async fn drive_push<T: PushTransport>(
             } => {}
         }
 
-        let mut dropped_while_disconnected = 0u64;
         while let Some(item) = cursor.poll() {
-            if let SampleCursorItem::TracksChanged { generation, tracks }
-            | SampleCursorItem::TracksLagged {
-                generation, tracks, ..
-            } = &item
-            {
-                if let SampleCursorItem::TracksLagged { skipped, .. } = &item {
-                    metrics
-                        .samples_dropped
-                        .fetch_add(*skipped, Ordering::Relaxed);
+            match session.on_item(&item) {
+                PushDecision::Continue => {}
+                PushDecision::Renegotiated { carried, proposed } => {
+                    log_partial_selection(&log_url, carried, proposed);
                 }
-                if let Some(e) = egress.as_mut()
-                    && negotiated_generation.is_none_or(|negotiated| *generation > negotiated)
-                {
-                    match e.renegotiate(tracks) {
-                        NegotiationOutcome::Accepted(sel) => {
-                            log_partial_selection(&log_url, tracks.len(), &sel);
-                            negotiated_generation = Some(*generation);
+                PushDecision::RenegotiateRefused { reason } => {
+                    tracing::warn!(
+                        url = %log_url,
+                        reason,
+                        "push renegotiate refused; continuing on the previous track \
+                         selection"
+                    );
+                }
+                PushDecision::MuxDropped(error) => {
+                    tracing::error!(error = %error, "push mux failed; dropping sample");
+                }
+                PushDecision::Reconnect { egress, cause } => {
+                    match &cause {
+                        ReconnectCause::Send(err) => {
+                            tracing::warn!(url = %log_url, error = %scrub(err), "push send failed; reconnecting");
                         }
-                        NegotiationOutcome::Refused { reason } => {
-                            tracing::warn!(
-                                url = %log_url,
-                                reason,
-                                "push renegotiate refused; continuing on the previous track \
-                                 selection"
-                            );
-                            negotiated_generation = Some(*generation);
-                        }
-                        NegotiationOutcome::Error(err) => {
-                            tracing::warn!(url = %log_url, error = %scrub(&err), "push renegotiate failed; closing");
-                            e.transport_mut().close();
-                            egress = None;
-                            negotiated_generation = None;
-                            engine.on_disconnect();
+                        ReconnectCause::Renegotiate(err) => {
+                            tracing::warn!(url = %log_url, error = %scrub(err), "push renegotiate failed; closing");
                         }
                         _ => {}
                     }
-                }
-                continue;
-            }
-            if let SampleCursorItem::Lagged { skipped } | SampleCursorItem::Degraded { skipped } =
-                &item
-            {
-                metrics
-                    .samples_dropped
-                    .fetch_add(*skipped, Ordering::Relaxed);
-            }
-            let Some(e) = egress.as_mut() else {
-                if matches!(
-                    item,
-                    SampleCursorItem::Timed { .. } | SampleCursorItem::Sparse { .. }
-                ) {
-                    dropped_while_disconnected += 1;
-                }
-                continue;
-            };
-            match e.send(&item) {
-                Ok(()) => {
-                    if matches!(
-                        item,
-                        SampleCursorItem::Timed { .. } | SampleCursorItem::Sparse { .. }
-                    ) {
-                        metrics.samples_sent.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                Err(SendMediaError::Mux(msg)) => {
-                    tracing::error!(error = %msg, "push mux failed; dropping sample");
-                    metrics.samples_dropped.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(SendMediaError::Transport(err)) => {
-                    tracing::warn!(url = %log_url, error = %scrub(&err), "push send failed; reconnecting");
-                    e.transport_mut().close();
-                    egress = None;
-                    negotiated_generation = None;
+                    retire_egress(egress, &mut written_bytes);
                     engine.on_disconnect();
                 }
+                _ => {}
             }
-        }
-        if dropped_while_disconnected > 0 {
-            metrics
-                .samples_dropped
-                .fetch_add(dropped_while_disconnected, Ordering::Relaxed);
         }
 
         if engine.is_failed() {
             // Drained the cursor above; give up permanently.
-            return metrics;
+            if let PushDecision::Stop { egress } = session.on_give_up()
+                && let Some(egress) = egress
+            {
+                retire_egress(egress, &mut written_bytes);
+            }
+            return publish_metrics(metrics, &mut session, written_bytes);
         }
 
         // Connect / reconnect when due and not already connected.
-        if engine.should_connect() && egress.is_none() {
+        if engine.should_connect()
+            && !session.is_connected()
+            && session.pending_setup_mut().is_none()
+        {
             let connect_result = tokio::select! {
                 () = cancel.cancelled() => {
                     // Cancelled mid-connect (defect 5): do not wait out a
                     // transport connect that may block for its own timeout.
-                    if let Some(e) = egress.as_mut() {
-                        e.transport_mut().close();
-                    }
-                    return metrics;
+                    close_connected(&mut session);
+                    return publish_metrics(metrics, &mut session, written_bytes);
                 }
                 result = T::connect(&url, &config) => result,
             };
             match connect_result {
                 Ok(conn) => {
-                    let mut e = PushTransportEgress::new(conn);
                     let (generation, tracks_now) = trunk.tracks_with_generation();
-                    match e.negotiate(&tracks_now) {
-                        NegotiationOutcome::Accepted(sel) => {
-                            log_partial_selection(&log_url, tracks_now.len(), &sel);
-                            let selected = e.selected_tracks().to_vec();
-                            if let Err(err) = e.transport_mut().setup(&selected).await {
-                                tracing::warn!(url = %log_url, error = %scrub(&err), "push setup failed; closing");
-                                e.transport_mut().close();
-                                engine.on_disconnect();
-                            } else {
-                                engine.on_connect();
-                                metrics.reconnect_count.fetch_add(1, Ordering::Relaxed);
-                                negotiated_generation = Some(generation);
-                                egress = Some(e);
+                    match session.on_connected(
+                        PushTransportEgress::new(conn),
+                        generation,
+                        &tracks_now,
+                    ) {
+                        PushDecision::NeedsSetup => {
+                            let setup = match session.pending_setup_mut() {
+                                Some(pending) => {
+                                    let selected = pending.selected_tracks().to_vec();
+                                    Some(pending.transport_mut().setup(&selected).await)
+                                }
+                                None => None,
+                            };
+                            match setup {
+                                Some(Ok(())) => {
+                                    if let PushDecision::Connected { carried, proposed } =
+                                        session.on_setup(true)
+                                    {
+                                        log_partial_selection(&log_url, carried, proposed);
+                                        engine.on_connect();
+                                    }
+                                }
+                                Some(Err(err)) => {
+                                    tracing::warn!(url = %log_url, error = %scrub(&err), "push setup failed; closing");
+                                    if let PushDecision::Reconnect { egress, .. } =
+                                        session.on_setup(false)
+                                    {
+                                        retire_egress(egress, &mut written_bytes);
+                                        engine.on_disconnect();
+                                    }
+                                }
+                                None => {}
                             }
                         }
-                        NegotiationOutcome::Error(err) => {
-                            tracing::warn!(url = %log_url, error = %scrub(&err), "push negotiate failed; backing off");
+                        PushDecision::Backoff { cause } => {
+                            if let Some(err) = cause {
+                                tracing::warn!(url = %log_url, error = %scrub(&err), "push negotiate failed; backing off");
+                            }
                             engine.on_disconnect();
                         }
-                        // `NegotiationOutcome` is `#[non_exhaustive]`; a
-                        // first `negotiate` never returns `Refused` today
-                        // (there is no prior selection yet to fall back on
-                        // — see the trait's own doc), so a future variant
-                        // here is treated the same as a hard failure.
-                        _ => {
-                            engine.on_disconnect();
-                        }
+                        _ => {}
                     }
                 }
                 Err(e) => {
@@ -693,27 +710,31 @@ pub async fn drive_push<T: PushTransport>(
         // Flush whatever `send` queued this iteration (the async half —
         // see `PushTransportEgress::flush_transmit`'s own doc); otherwise
         // sleep out the backoff (cancellation-aware).
-        if let Some(e) = egress.as_mut() {
-            match e.flush_transmit_bounded(&cancel, PUSH_FLUSH_TIMEOUT).await {
-                FlushOutcome::Flushed => {}
-                FlushOutcome::Cancelled => {
-                    e.transport_mut().close();
-                    return metrics;
+        if let Some(egress) = session.egress_mut() {
+            let outcome = egress
+                .flush_transmit_bounded(&cancel, PUSH_FLUSH_TIMEOUT)
+                .await;
+            match &outcome {
+                FlushOutcome::Failed(err) => {
+                    tracing::warn!(url = %log_url, error = %scrub(err), "push send failed while flushing; reconnecting");
                 }
-                outcome @ (FlushOutcome::TimedOut | FlushOutcome::Failed(_)) => {
-                    match &outcome {
-                        FlushOutcome::Failed(err) => {
-                            tracing::warn!(url = %log_url, error = %scrub(err), "push send failed while flushing; reconnecting");
-                        }
-                        _ => {
-                            tracing::warn!(url = %log_url, timeout = ?PUSH_FLUSH_TIMEOUT, "push send stalled; reconnecting");
-                        }
-                    }
-                    e.transport_mut().close();
-                    egress = None;
-                    negotiated_generation = None;
+                FlushOutcome::TimedOut => {
+                    tracing::warn!(url = %log_url, timeout = ?PUSH_FLUSH_TIMEOUT, "push send stalled; reconnecting");
+                }
+                _ => {}
+            }
+            match session.on_flush(flush_result(&outcome)) {
+                PushDecision::Reconnect { egress, .. } => {
+                    retire_egress(egress, &mut written_bytes);
                     engine.on_disconnect();
                 }
+                PushDecision::Stop { egress } => {
+                    if let Some(egress) = egress {
+                        retire_egress(egress, &mut written_bytes);
+                    }
+                    return publish_metrics(metrics, &mut session, written_bytes);
+                }
+                _ => {}
             }
         } else {
             let wait = engine.time_until_retry();
@@ -722,10 +743,8 @@ pub async fn drive_push<T: PushTransport>(
                 // must return promptly, not sit out the whole retry interval.
                 tokio::select! {
                     () = cancel.cancelled() => {
-                        if let Some(e) = egress.as_mut() {
-                            e.transport_mut().close();
-                        }
-                        return metrics;
+                        close_connected(&mut session);
+                        return publish_metrics(metrics, &mut session, written_bytes);
                     }
                     () = sleep(wait) => {}
                 }
