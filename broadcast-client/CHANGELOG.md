@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - An RTSP 401 with credentials configured is treated as a rejection: the unreachable replay arm is gone, so the source waits for host-supplied credentials and reconnects instead of replaying a request whose credentials the server already refused (#3634).
 ### Fixed
+- An HLS VOD whose encrypted init fails to decrypt when its key arrives now plays and ends after the init refetch: the segments queued behind that key are decrypted (via `hls-runtime`'s `on_key` fix) instead of the session stalling (#3951).
 - A starved runtime that wakes the SRT caller once, several retransmit periods late, now counts that wake as one retransmit instead of synthesizing one per missed 250 ms period. A single late poll used to spend the whole 12-retry budget at once and time out a handshake whose wall-clock budget was still open, leaving the connection without ever publishing a `Trunk` (#3847).
 - An AES-128 encrypted HLS init segment that failed to decrypt (or decrypted to something that is not an init) was never fetched again: the VOD session stalled with neither `Status::Ended` nor a fatal error. It is now retried on the init's own schedule, whether the key was already held or arrived after the init (audit 23 finding 38, #3289).
 - `Session::select_audio_rendition` on a Smooth session returned `Ok(())` and did nothing; it now returns `Error::NotHls`, as its documentation states for any session that is neither HLS nor DASH (audit 23 finding 52, #3303).

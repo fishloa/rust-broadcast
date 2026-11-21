@@ -17,6 +17,7 @@ mod golden_client;
 mod hls_skip_delta;
 mod iframe_master;
 mod iframe_playlist;
+mod key_after_init;
 mod map_runs;
 mod master_bandwidth;
 mod master_playlist;
