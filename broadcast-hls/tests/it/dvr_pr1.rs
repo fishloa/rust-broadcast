@@ -305,8 +305,8 @@ fn daterange_wire_grammar_is_strict_and_lossless() {
             "#EXT-X-DATERANGE:ID=\"\"",
             matches!(
                 DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"\""),
-                Err(Error::InvalidAttributeList {
-                    reason: AttributeListError::EmptyQuotedValue,
+                Err(Error::InvalidDateRange {
+                    reason: DateRangeError::EmptyId,
                     ..
                 })
             ),

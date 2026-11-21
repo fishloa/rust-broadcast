@@ -81,8 +81,6 @@ pub enum AttributeListError {
     InvalidName,
     /// The value is empty.
     EmptyValue,
-    /// A quoted-string value is empty.
-    EmptyQuotedValue,
     /// A quoted-string is not terminated.
     UnterminatedQuote,
     /// Characters follow a closing quote.
@@ -102,7 +100,6 @@ impl AttributeListError {
             Self::MissingEquals => "missing_equals",
             Self::InvalidName => "invalid_name",
             Self::EmptyValue => "empty_value",
-            Self::EmptyQuotedValue => "empty_quoted_value",
             Self::UnterminatedQuote => "unterminated_quote",
             Self::TrailingCharacters => "trailing_characters",
             Self::Whitespace => "whitespace",

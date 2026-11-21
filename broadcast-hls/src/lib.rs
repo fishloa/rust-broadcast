@@ -3726,9 +3726,6 @@ fn scan_attribute_list_wire(s: &str) -> Result<Vec<(String, AttrValue)>> {
             }
             let value = &s[value_start..i];
             i += 1;
-            if value.is_empty() {
-                return Err(invalid(AttributeListError::EmptyQuotedValue));
-            }
             if i < len && bytes[i] != b',' {
                 return Err(invalid(AttributeListError::TrailingCharacters));
             }
