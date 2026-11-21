@@ -1255,4 +1255,146 @@ mod tests {
         let smoothed = r.rtt_estimate().unwrap();
         assert!(smoothed > Duration::from_millis(20) && smoothed < Duration::from_millis(100));
     }
+
+    /// A duplicated RIST leg re-delivers the newest packet; that must be a
+    /// no-op, never a forward "gap 0" walk over the whole sequence space
+    /// (which would fabricate ~65 535 missing entries and a NACK storm).
+    #[test]
+    fn a_duplicate_of_the_newest_sequence_is_a_no_op() {
+        let mut r = Receiver::new(cfg());
+        assert_eq!(r.feed(10, Duration::ZERO).delivered, alloc::vec![10]);
+        assert_eq!(r.feed(11, Duration::ZERO).delivered, alloc::vec![11]);
+
+        let duplicate = r.feed(11, Duration::ZERO);
+        assert!(
+            duplicate.delivered.is_empty(),
+            "a duplicate delivers nothing"
+        );
+        assert_eq!(r.missing_count(), 0);
+        assert_eq!(r.next_expected(), Some(12));
+
+        let after_reorder = cfg().reorder_section + Duration::from_millis(1);
+        assert!(
+            r.tick(after_reorder).due.is_empty(),
+            "a duplicate must not create anything to request"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_of_the_newest_sequence_across_the_wrap_is_a_no_op() {
+        let mut r = Receiver::new(cfg());
+        assert_eq!(
+            r.feed(0xFFFF, Duration::ZERO).delivered,
+            alloc::vec![0xFFFF]
+        );
+        assert_eq!(r.feed(0, Duration::ZERO).delivered, alloc::vec![0]);
+
+        assert!(r.feed(0, Duration::ZERO).delivered.is_empty());
+        assert_eq!(r.missing_count(), 0);
+        assert_eq!(r.next_expected(), Some(1));
+    }
+
+    /// A packet exactly `max_gap` behind the highest is a late duplicate; one
+    /// further behind is only a resync candidate.
+    #[test]
+    fn a_late_arrival_exactly_max_gap_behind_is_not_a_resync_candidate() {
+        let mut r = Receiver::new(cfg());
+        feed_rtp(&mut r, 5000, 1_000_000);
+        assert_eq!(r.next_expected(), Some(5001));
+
+        let at_boundary = 5000 - r.max_gap;
+        let out = feed_rtp(&mut r, at_boundary, 900_000);
+        assert!(out.delivered.is_empty());
+        assert_eq!(r.next_expected(), Some(5001));
+        assert!(
+            r.pending_resync.is_none(),
+            "a duplicate exactly max_gap behind must not open a candidate"
+        );
+
+        let one_past = at_boundary - 1;
+        let out = feed_rtp(&mut r, one_past, 899_000);
+        assert!(out.delivered.is_empty());
+        let pending = r
+            .pending_resync
+            .expect("one past max_gap opens a resync candidate");
+        assert_eq!(pending.base, one_past);
+        assert_eq!(pending.count, 1);
+    }
+
+    /// A candidate run is continued only by the *next* sequence number; a
+    /// skipped number restarts the candidate from scratch.
+    #[test]
+    fn a_resync_candidate_run_restarts_when_the_sequence_does_not_continue() {
+        let mut r = Receiver::new(cfg());
+        feed_rtp(&mut r, 40_000, 1_000_000);
+
+        let base = 20_000u16;
+        feed_rtp(&mut r, base, 500_000);
+        feed_rtp(&mut r, base + 1, 503_000);
+        let pending = r.pending_resync.expect("two consecutive numbers");
+        assert_eq!(pending.count, 2);
+        assert_eq!(pending.base, base);
+
+        // A consistent 3000-step timestamp, but `base + 2` never arrived.
+        let out = feed_rtp(&mut r, base + 3, 506_000);
+        assert!(out.delivered.is_empty());
+        let pending = r
+            .pending_resync
+            .expect("the skipped number restarts a fresh candidate");
+        assert_eq!(pending.base, base + 3);
+        assert_eq!(pending.count, 1);
+
+        assert!(feed_rtp(&mut r, base + 4, 509_000).delivered.is_empty());
+        let confirmed = feed_rtp(&mut r, base + 5, 512_000);
+        assert_eq!(
+            confirmed.delivered,
+            alloc::vec![base + 3, base + 4, base + 5]
+        );
+        assert_eq!(r.next_expected(), Some(base + 6));
+    }
+
+    /// With no established stream SSRC, a run whose SSRC changes mid-way is
+    /// not one candidate run: the change restarts it.
+    #[test]
+    fn a_resync_candidate_run_is_not_continued_by_a_different_ssrc() {
+        const OTHER: u32 = 0x0BAD_F00D;
+        let mut r = Receiver::new(cfg());
+        r.feed(40_000, Duration::ZERO); // no RTP identity: no established SSRC
+
+        let base = 20_000u16;
+        let first = rtp(base, SSRC, 500_000);
+        assert!(r.feed_rtp(&first, Duration::ZERO).delivered.is_empty());
+        let second = rtp(base + 1, OTHER, 503_000);
+        assert!(r.feed_rtp(&second, Duration::ZERO).delivered.is_empty());
+
+        let pending = r.pending_resync.expect("a fresh candidate");
+        assert_eq!(pending.base, base + 1);
+        assert_eq!(pending.ssrc, OTHER);
+        assert_eq!(pending.count, 1);
+    }
+
+    /// Half the 32-bit timestamp space is the ambiguous direction, so a step
+    /// of exactly that is not forward progress; one byte less is.
+    #[test]
+    fn a_resync_candidate_rejects_the_ambiguous_half_space_timestamp_step() {
+        let mut r = Receiver::new(cfg());
+        feed_rtp(&mut r, 40_000, 1_000_000);
+
+        let base = 20_000u16;
+        feed_rtp(&mut r, base, 500_000);
+        feed_rtp(&mut r, base + 1, 500_000 + TIMESTAMP_HALF_SPACE);
+        assert!(
+            r.pending_resync.is_none(),
+            "a half-space timestamp step is not forward progress"
+        );
+        assert_eq!(r.next_expected(), Some(40_001));
+
+        feed_rtp(&mut r, base + 2, 700_000);
+        feed_rtp(&mut r, base + 3, 700_000 + TIMESTAMP_HALF_SPACE - 1);
+        let pending = r
+            .pending_resync
+            .expect("a sub-half-space step continues the run");
+        assert_eq!(pending.base, base + 2);
+        assert_eq!(pending.count, 2);
+    }
 }

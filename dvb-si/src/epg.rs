@@ -1042,6 +1042,42 @@ mod tests {
     }
 
     #[test]
+    fn rating_minimum_age_is_value_plus_three_for_0x01_to_0x0f() {
+        let rating = |value| Rating {
+            country: "GBR".into(),
+            value,
+        };
+        assert_eq!(rating(0x01).minimum_age(), Some(4));
+        assert_eq!(rating(0x08).minimum_age(), Some(11));
+        assert_eq!(rating(0x0F).minimum_age(), Some(18));
+        assert_eq!(rating(0x00).minimum_age(), None);
+        assert_eq!(rating(0x10).minimum_age(), None);
+        assert_eq!(rating(0xFF).minimum_age(), None);
+    }
+
+    #[test]
+    fn content_nibble_genre_name_uses_both_levels() {
+        use crate::descriptors::content::content_genre_name;
+
+        let general = ContentNibble {
+            level_1: 0x1,
+            level_2: 0x0,
+            user: 0,
+        };
+        assert_eq!(general.genre_name(), content_genre_name(0x1, 0x0));
+        assert_eq!(general.genre_name(), "movie/drama (general)");
+
+        let comedy = ContentNibble {
+            level_1: 0x1,
+            level_2: 0x4,
+            user: 0,
+        };
+        assert_eq!(comedy.genre_name(), content_genre_name(0x1, 0x4));
+        assert_eq!(comedy.genre_name(), "comedy");
+        assert!(!comedy.genre_name().is_empty());
+    }
+
+    #[test]
     fn feed_empty_is_error() {
         let mut store = EpgStore::new();
         assert!(matches!(
@@ -1803,6 +1839,36 @@ mod tests {
         assert!(events.is_empty());
     }
 
+    #[test]
+    fn schedule_end_bound_is_exclusive() {
+        let t1000 = utc(2026, 6, 10, 10, 0, 0);
+        let t1100 = utc(2026, 6, 10, 11, 0, 0);
+        let t1200 = utc(2026, 6, 10, 12, 0, 0);
+        let sec = core::time::Duration::from_secs(3600);
+
+        let mut store = EpgStore::new();
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        let svc = store.cache.entry(key).or_default();
+        for (id, t) in [(1, t1000), (2, t1100), (3, t1200)] {
+            svc.events.insert(id, empty_event(id, Some(t), Some(sec)));
+        }
+
+        // [10:00, 12:00) excludes the event starting exactly at 12:00.
+        let events = store.schedule(key, t1000, t1200).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_id, 1);
+        assert_eq!(events[1].event_id, 2);
+
+        // [11:00, 12:00) includes the event starting exactly at 11:00.
+        let events = store.schedule(key, t1100, t1200).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, 2);
+    }
+
     // ------------------------------------------------------------------
     // Cap enforcement: max_services bounds service-count growth
     // ------------------------------------------------------------------
@@ -2070,6 +2136,101 @@ mod tests {
             Some("Test"),
             "existing event updated"
         );
+    }
+
+    /// Feed one present/following EIT section carrying `event_id` for
+    /// `service_id`.
+    fn feed_one_event(
+        store: &mut EpgStore,
+        service_id: u16,
+        event_id: u16,
+        version: u8,
+        hour: u32,
+    ) {
+        let desc = short_event_bytes(b"E", b"");
+        let sr = start_raw(2026, 6, 10, hour);
+        let eit = serialize_eit(&crate::tables::eit::EitSection::new(
+            crate::tables::eit::EitKind::PresentFollowingActual,
+            0x4Eu8,
+            service_id,
+            crate::tables::SectionVersion::new(version, true, 0, 0),
+            1,
+            1,
+            0u8,
+            0x5Fu8,
+            vec![crate::tables::eit::EitEvent::new(
+                event_id,
+                sr,
+                [1, 0, 0],
+                crate::tables::RunningStatus::Undefined,
+                false,
+                crate::descriptors::DescriptorLoop::new(&desc),
+            )],
+        ));
+        store.feed(&eit).unwrap();
+    }
+
+    #[test]
+    fn collector_logical_key_cap_is_applied() {
+        let mut store = EpgStore::new()
+            .with_max_services(7)
+            .with_collector_max_logical_keys(1);
+        for service_id in 1..=8u16 {
+            feed_one_event(&mut store, service_id, service_id, 0, 10);
+        }
+        assert_eq!(
+            store.service_count(),
+            7,
+            "with_max_services must survive with_collector_max_logical_keys"
+        );
+        assert!(
+            store.collector_sections_evicted_for_capacity() >= 1,
+            "a collector cap of 1 cannot hold 8 distinct section-set keys"
+        );
+    }
+
+    #[test]
+    fn collector_capacity_evictions_are_reported_exactly() {
+        let mut store = EpgStore::new().with_collector_max_logical_keys(1);
+        feed_one_event(&mut store, 1, 1, 0, 10);
+        assert_eq!(store.collector_sections_evicted_for_capacity(), 0);
+        feed_one_event(&mut store, 2, 2, 0, 10);
+        assert_eq!(
+            store.collector_sections_evicted_for_capacity(),
+            1,
+            "one extra section-set key at a cap of 1 is exactly one eviction"
+        );
+    }
+
+    #[test]
+    fn eviction_counters_start_at_zero_and_count_every_eviction() {
+        let fresh = EpgStore::new();
+        assert_eq!(fresh.services_evicted_for_capacity(), 0);
+        assert_eq!(fresh.events_evicted_for_capacity(), 0);
+
+        let mut services = EpgStore::new().with_max_services(1);
+        for service_id in [100u16, 200, 300] {
+            feed_one_event(&mut services, service_id, 1, 0, 10);
+        }
+        assert_eq!(services.service_count(), 1);
+        assert_eq!(
+            services.services_evicted_for_capacity(),
+            2,
+            "three services at a cap of 1 evict twice"
+        );
+        assert_eq!(services.events_evicted_for_capacity(), 0);
+
+        let mut events = EpgStore::new().with_max_events_per_service(1);
+        for (version, (event_id, hour)) in [(10u16, 10u32), (20, 11), (30, 12)].iter().enumerate() {
+            feed_one_event(&mut events, 100, *event_id, version as u8, *hour);
+        }
+        assert_eq!(events.event_count(), 1);
+        assert_eq!(
+            events.events_evicted_for_capacity(),
+            2,
+            "three event_ids at a cap of 1 evict twice"
+        );
+        assert_eq!(events.services_evicted_for_capacity(), 0);
     }
 
     // ------------------------------------------------------------------

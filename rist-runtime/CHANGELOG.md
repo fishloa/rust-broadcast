@@ -3,6 +3,13 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+- A compound packet whose SDES carries RFC 3550 §6.4.1 P-bit padding no longer fails the whole parse with `BufferTooShort`: the SDES parser is handed the full claimed sub-packet (its own length field covers the padding) and the region is preserved verbatim alongside the sub-packet instead of being taken as the CNAME (#3334).
+
+### Tests
+- Compound-packet padding, ordering and length contracts are pinned: a padded SR, a non-zero padding fill (rejected with the exact count/body), a longer zero fill, unmodelled packets keeping non-zero padding in a dirty output buffer, wire-position order for unknown packets between modelled slots, per-direction preservation of unmodelled RTT feedback and NACKs, a padded sole SDES and a padded second SDES, a header-only 4-byte sub-packet, trailing bytes below a common header, `serialized_len()` equal to the bytes written, and `RistPadding`'s accessors (audit 23 #3330, #3331, #3332, #3333, #3334, #3335, #3336, #3341).
+- Standalone NACK / RTT Echo parsing is pinned against hostile and empty bodies: every truncation is a `BufferTooShort` (never a panic), the exact `need`/`have` for a header-only, 8-byte and 4-byte packet, a padding count that eats the SSRCs, trailing bytes past the length field, the `InvalidPaddingCount` `count`/`body` payload on parse and on serialize, caller-set padding that is misaligned or exceeds the count byte, and empty FCI/range lists round-tripping with and without padding (audit 23 #3337, #3338, #3339, #3340).
+- The ARQ engines are pinned at their boundaries: a duplicate of the newest sequence number (also across the wrap) is a no-op with nothing to request, a packet exactly `max_gap` behind is a late duplicate while one further behind opens a resync candidate, a candidate run is continued only by the next sequence number and the same SSRC, the ambiguous half-space RTP timestamp step is rejected, `expand_fci` expands only its set BLP bits (with wraparound), and `seq_leq`/`seq_geq` have their false cases (audit 23 #3342, #3343, #3344, #3345, #3346).
 
 ## [0.8.0] - 2026-11-17
 ### Added

@@ -466,6 +466,70 @@ fn c2_infinite_gop_is_bounded_in_ll_hls() {
 }
 
 #[test]
+fn ll_dash_demand_flips_at_the_pending_bound_not_before() {
+    let mut seg = LlSegmenter::new(
+        vec![avc_track(1)],
+        TS_TIMESCALE,
+        Duration::from_secs(3600),
+        usize::MAX,
+    )
+    .expect("construct");
+    for i in 0..MAX_PENDING_SAMPLES_PER_TRACK - 1 {
+        seg.push(TrackId::new(1), au(i as i64 * FRAME_TICKS, i == 0))
+            .unwrap();
+    }
+    assert!(
+        !Stage::demand(&seg).saturated,
+        "one sample below the bound must not report saturated"
+    );
+    seg.push(
+        TrackId::new(1),
+        au(
+            (MAX_PENDING_SAMPLES_PER_TRACK - 1) as i64 * FRAME_TICKS,
+            false,
+        ),
+    )
+    .unwrap();
+    assert!(
+        Stage::demand(&seg).saturated,
+        "saturated exactly at MAX_PENDING_SAMPLES_PER_TRACK"
+    );
+    assert!(seg.push(TrackId::new(1), au(0, false)).is_err());
+}
+
+#[test]
+fn ll_hls_demand_flips_at_the_pending_bound_not_before() {
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![avc_track(1)],
+        TS_TIMESCALE,
+        Duration::from_secs(3600),
+        Duration::from_secs(3600),
+    )
+    .expect("construct");
+    for i in 0..MAX_PENDING_SAMPLES_PER_TRACK - 1 {
+        seg.push(TrackId::new(1), au(i as i64 * FRAME_TICKS, i == 0))
+            .unwrap();
+    }
+    assert!(
+        !Stage::demand(&seg).saturated,
+        "one sample below the bound must not report saturated"
+    );
+    seg.push(
+        TrackId::new(1),
+        au(
+            (MAX_PENDING_SAMPLES_PER_TRACK - 1) as i64 * FRAME_TICKS,
+            false,
+        ),
+    )
+    .unwrap();
+    assert!(
+        Stage::demand(&seg).saturated,
+        "saturated exactly at MAX_PENDING_SAMPLES_PER_TRACK"
+    );
+    assert!(seg.push(TrackId::new(1), au(0, false)).is_err());
+}
+
+#[test]
 fn c2_infinite_gop_is_bounded_in_streaming_ts_hls() {
     let samples = infinite_gop_stream();
     let mut seg =

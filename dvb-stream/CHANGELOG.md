@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- **The RTP payload shape, the UDP T2-MI stream and the T2-MI resync counters are pinned.** Each `rtp_ts_payload` condition is now exercised in isolation (an empty payload cannot index it, a whole-packet payload without a sync byte is not unwrapped, and a sync byte at a non-multiple length is left to the resync path), `UdpT2miStream` is constructed and drained over loopback with real T2-MI packets carrying a junk prefix, and `T2miEventStream::resync_stats` is asserted against a dirty input instead of only a clean one (audit 23 findings 125-127, #3433/#3434/#3435).
+- **The receive-buffer fallback and `check_udp`'s refusals are pinned.** A refused `SO_RCVBUF` request is now exercised through an injected socket factory (the bind is retried without it and returns the second result, not the first error), and `check_udp` is asserted to accept a matching-family multicast join, refuse a cross-family IPv6 group and refuse a join its own options reject (audit 23 findings 128-129, #3436/#3437).
 
 ## [0.10.0] - 2026-11-15
 ### Changed

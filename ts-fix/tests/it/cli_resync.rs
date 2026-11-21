@@ -172,3 +172,47 @@ fn cli_emits_a_stream_shorter_than_the_lock_window() {
     );
     assert!(output.chunks(TS_PACKET_SIZE).all(|p| p[0] == SYNC_BYTE));
 }
+
+/// Bytes the resynchroniser skipped must be reported on stderr: a silent
+/// resync hides real input loss from an operator (audit a23cp #3452).
+#[test]
+fn cli_reports_input_resynchronisation_when_bytes_are_dropped() {
+    let fixture = fs::read(fixture_path()).expect("fixture");
+    let mut input = Vec::with_capacity(fixture.len() + 7);
+    input.extend_from_slice(&[0xAB; 7]);
+    input.extend_from_slice(&fixture);
+
+    let (input_path, output_path) = temp_paths("resync-report");
+    fs::write(&input_path, &input).expect("write input");
+    let (ok, stderr_text) = run_cli(&input_path, &output_path);
+    assert!(ok, "CLI must not abort: {stderr_text}");
+    assert!(
+        stderr_text.contains("input resynchronised"),
+        "dropped input bytes must be reported, got: {stderr_text}"
+    );
+    let _ = fs::remove_file(&input_path);
+    let _ = fs::remove_file(&output_path);
+}
+
+/// A clean, aligned capture drops nothing, so the same diagnostic must stay
+/// silent rather than crying loss on every run (audit a23cp #3452).
+#[test]
+fn cli_does_not_report_resynchronisation_on_a_clean_capture() {
+    let fixture = fs::read(fixture_path()).expect("fixture");
+    assert_eq!(fixture.len() % TS_PACKET_SIZE, 0, "fixture is aligned");
+    assert!(
+        fixture.chunks(TS_PACKET_SIZE).all(|p| p[0] == SYNC_BYTE),
+        "fixture is a clean capture"
+    );
+
+    let (input_path, output_path) = temp_paths("clean-report");
+    fs::write(&input_path, &fixture).expect("write input");
+    let (ok, stderr_text) = run_cli(&input_path, &output_path);
+    assert!(ok, "CLI must accept a clean capture: {stderr_text}");
+    assert!(
+        !stderr_text.contains("input resynchronised"),
+        "a clean capture drops no bytes and must not report a resync, got: {stderr_text}"
+    );
+    let _ = fs::remove_file(&input_path);
+    let _ = fs::remove_file(&output_path);
+}

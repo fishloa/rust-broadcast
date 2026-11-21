@@ -583,6 +583,564 @@ mod tests {
         }
     }
 
+    fn teletext_descriptor(entries: &[(&str, TeletextType, u8, u8)]) -> Vec<u8> {
+        let mut out = vec![
+            dvb_si::descriptors::teletext::TAG,
+            (entries.len() * 5) as u8,
+        ];
+        for (language, teletext_type, magazine, page) in entries {
+            out.extend_from_slice(language.as_bytes());
+            out.push((teletext_type.to_u8() << 3) | (magazine & 0x07));
+            out.push(*page);
+        }
+        out
+    }
+
+    fn data_track(track_id: TrackId, descriptors: Vec<u8>) -> TrackSpec {
+        let mut spec = TrackSpec::new(
+            track_id,
+            Timescale::try_new(90_000).expect("non-zero timescale"),
+            CodecConfig::Data {
+                stream_type: 0x06,
+                descriptors: Vec::new(),
+                carriage: transmux::pipeline::DataCarriage::Sections,
+            },
+        );
+        spec.es_info_descriptors = descriptors;
+        spec
+    }
+
+    fn video_track(track_id: TrackId) -> TrackSpec {
+        let mut spec = TrackSpec::new(
+            track_id,
+            Timescale::try_new(90_000).expect("non-zero timescale"),
+            CodecConfig::Avc {
+                config: transmux::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==")
+                    .expect("valid sprop"),
+                width: 0,
+                height: 0,
+            },
+        );
+        spec.es_info_descriptors =
+            teletext_descriptor(&[("eng", TeletextType::SubtitlePage, 8, 0x88)]);
+        spec
+    }
+
+    #[test]
+    fn is_subtitle_classifies_only_the_two_subtitle_page_types() {
+        assert_eq!(
+            is_subtitle(&TeletextEntry {
+                language_code: dvb_si::text::LangCode(*b"eng"),
+                teletext_type: TeletextType::SubtitlePage,
+                magazine_number: 8,
+                page_number: 0x88,
+            }),
+            Some(false)
+        );
+        assert_eq!(
+            is_subtitle(&TeletextEntry {
+                language_code: dvb_si::text::LangCode(*b"eng"),
+                teletext_type: TeletextType::HearingImpairedSubtitlePage,
+                magazine_number: 8,
+                page_number: 0x89,
+            }),
+            Some(true)
+        );
+        for non_subtitle in [
+            TeletextType::InitialPage,
+            TeletextType::AdditionalInformationPage,
+            TeletextType::ProgrammeSchedulePage,
+            TeletextType::Reserved(0x1F),
+        ] {
+            assert_eq!(
+                is_subtitle(&TeletextEntry {
+                    language_code: dvb_si::text::LangCode(*b"eng"),
+                    teletext_type: non_subtitle,
+                    magazine_number: 8,
+                    page_number: 0x88,
+                }),
+                None,
+                "{}",
+                non_subtitle.name()
+            );
+        }
+    }
+
+    #[test]
+    fn teletext_page_number_and_identity_are_the_wire_page() {
+        let page = TeletextPage {
+            source_track: TrackId::new(1),
+            language: "en".to_string(),
+            hearing_impaired: false,
+            magazine: 8,
+            page: 0x88,
+        };
+        assert_eq!(page.number(), "888");
+        assert_eq!(page.identity(), "888:en:std");
+        let sdh = TeletextPage {
+            hearing_impaired: true,
+            page: 0x89,
+            ..page
+        };
+        assert_eq!(sdh.number(), "889");
+        assert_eq!(sdh.identity(), "889:en:sdh");
+        assert_ne!(sdh.identity(), "889:en:std");
+    }
+
+    #[test]
+    fn teletext_pages_keeps_the_subtitle_pages_in_descriptor_order() {
+        let descriptors = teletext_descriptor(&[
+            ("eng", TeletextType::SubtitlePage, 8, 0x88),
+            ("fra", TeletextType::HearingImpairedSubtitlePage, 0, 0x89),
+            ("eng", TeletextType::InitialPage, 8, 0x90),
+            ("zzz", TeletextType::SubtitlePage, 8, 0x91),
+            ("eng", TeletextType::SubtitlePage, 8, 0x88),
+        ]);
+        let pages = teletext_pages("route", 8, &[data_track(TrackId::new(1), descriptors)]);
+        assert_eq!(pages.len(), 2, "only the two real subtitle pages");
+        assert_eq!(pages[0].number(), "888");
+        assert_eq!(pages[0].language, "en");
+        assert!(!pages[0].hearing_impaired);
+        assert_eq!(pages[1].number(), "889");
+        assert_eq!(pages[1].language, "fr");
+        assert!(pages[1].hearing_impaired);
+        assert_ne!(pages[0].identity(), pages[1].identity());
+    }
+
+    #[test]
+    fn teletext_pages_caps_at_max_pages_and_ignores_non_data_tracks() {
+        let descriptors = teletext_descriptor(&[
+            ("eng", TeletextType::SubtitlePage, 8, 0x88),
+            ("eng", TeletextType::SubtitlePage, 8, 0x89),
+            ("eng", TeletextType::SubtitlePage, 8, 0x8A),
+        ]);
+        let pages = teletext_pages("route", 2, &[data_track(TrackId::new(1), descriptors)]);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].number(), "888");
+        assert_eq!(pages[1].number(), "889");
+
+        let video = video_track(TrackId::new(2));
+        assert!(
+            teletext_pages("route", 8, &[video]).is_empty(),
+            "a teletext descriptor on a video track declares no subtitle rendition"
+        );
+    }
+
+    fn teletext_fixture() -> Option<Vec<(u64, Vec<u8>)>> {
+        use broadcast_common::mux::Unpackage;
+        let path = test_fixtures::tsduck("input/test-012.ts", "media-plane")?;
+        let bytes = std::fs::read(path).ok()?;
+        let media = transmux::TsDemux::new().unpackage(&bytes).ok()?;
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, CodecConfig::Data { .. }))?;
+        Some(
+            track
+                .samples
+                .iter()
+                .filter_map(|s| {
+                    let pts = u64::try_from(s.timing.and_then(|t| t.pts())?.max(0)).ok()?;
+                    Some((pts, s.data.to_vec()))
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn ticks_duration_scales_at_ninety_kilohertz() {
+        assert_eq!(ticks_duration(90_000), Duration::from_secs(1));
+        assert_eq!(ticks_duration(45_000), Duration::from_millis(500));
+        assert_eq!(ticks_duration(1), Duration::from_nanos(11_111));
+    }
+
+    #[test]
+    fn teletext_adapter_collects_the_fixtures_cues() {
+        let Some(samples) = teletext_fixture() else {
+            return;
+        };
+        let mut core = Core::new(TeletextToWebVtt::new(8, 0x89));
+        for (pts, data) in &samples {
+            core.push_sample(*pts, data);
+        }
+        let end = samples.last().map_or(0, |(pts, _)| *pts + 1);
+        core.decoder.finalize(end);
+        core.closed.extend(core.decoder.take_closed());
+        assert_eq!(
+            core.closed.len(),
+            9,
+            "the fixture carries nine cues on page 889"
+        );
+        assert_eq!(
+            core.closed[0],
+            cue(
+                3_856_831_433,
+                3_857_281_433,
+                "Un train met dix secondes\npour dépasser un point donné."
+            )
+        );
+    }
+
+    #[test]
+    fn teletext_adapter_finalize_closes_the_cue_that_is_still_open() {
+        let Some(samples) = teletext_fixture() else {
+            return;
+        };
+        let mut core = Core::new(TeletextToWebVtt::new(8, 0x89));
+        let mut open_at = None;
+        for (pts, data) in &samples {
+            core.push_sample(*pts, data);
+            if core.decoder.open().is_some() {
+                open_at = Some(*pts);
+                break;
+            }
+        }
+        let open_at = open_at.expect("the fixture opens a cue");
+        CueDecoder::finalize(&mut core.decoder, open_at + 1);
+        let cues = core.decoder.take_closed();
+        assert_eq!(
+            cues.len(),
+            1,
+            "finalize closes the one cue left open by the last sample"
+        );
+        assert_eq!(cues[0].start, MediaTime(3_856_831_433));
+        assert_eq!(
+            cues[0].text,
+            "Un train met dix secondes\npour dépasser un point donné."
+        );
+        assert_eq!(
+            cues[0].end,
+            MediaTime(open_at + 1),
+            "the final cue ends where finalize says the stream ended"
+        );
+    }
+
+    #[test]
+    fn teletext_adapter_reports_an_open_cue_only_while_it_is_on_screen() {
+        let Some(samples) = teletext_fixture() else {
+            return;
+        };
+        let mut core = Core::new(TeletextToWebVtt::new(8, 0x89));
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        let mut seen_open = None;
+        for (pts, data) in &samples {
+            core.push_sample(*pts, data);
+            if seen_open.is_none()
+                && let Some(open) = core.open_cue()
+            {
+                seen_open = Some(open);
+            }
+        }
+        assert_eq!(
+            seen_open,
+            Some((
+                3_856_831_433,
+                "Un train met dix secondes\npour dépasser un point donné.".to_string()
+            )),
+            "the open cue carries the fixture's start and text"
+        );
+    }
+
+    #[test]
+    fn render_excludes_cues_touching_either_range_edge() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.closed.push(cue(0, 180_000, "ends_at_start"));
+        core.closed.push(cue(180_000, 270_000, "starts_at_end"));
+        core.closed.push(cue(90_000, 90_000, "zero_length"));
+
+        let first = core.render(0, 180_000);
+        assert!(first.contains("ends_at_start"), "{first}");
+        assert!(!first.contains("starts_at_end"), "{first}");
+        assert!(!first.contains("zero_length"), "{first}");
+
+        let second = core.render(180_000, 360_000);
+        assert!(!second.contains("ends_at_start"), "{second}");
+        assert!(second.contains("starts_at_end"), "{second}");
+        assert!(!second.contains("zero_length"), "{second}");
+    }
+
+    #[test]
+    fn local_and_raw_round_trip_across_the_wrap() {
+        let mut core = core();
+        core.origin_raw = Some(clock33::WRAP_33BIT - 45_000);
+        core.edge = 0;
+        assert_eq!(core.local_of(15_000), 60_000);
+        assert_eq!(core.raw_of_local(60_000), 15_000);
+
+        core.edge = 180_000;
+        assert_eq!(core.local_of(45_000), 90_000);
+        let local = core.local_of(9_000);
+        assert_eq!(core.local_of(core.raw_of_local(local)), local);
+    }
+
+    #[test]
+    fn publish_segments_emits_each_closed_span_once_in_order() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        core.note_cut(&part(MediaSequence::new(3), 0, 360_000).cut);
+        let leaders: LeaderDurations = [(3u32, TARGET_SECS)].into_iter().collect();
+        core.close_spans(&leaders);
+        let mut ready = Vec::new();
+        core.publish_segments(None, &leaders, &mut ready);
+        let segments = segments(&ready);
+        assert_eq!(
+            segments.iter().map(|s| s.msn).collect::<Vec<_>>(),
+            [
+                MediaSequence::new(1),
+                MediaSequence::new(2),
+                MediaSequence::new(3)
+            ]
+        );
+        for segment in segments {
+            assert_eq!(
+                segment.duration, TARGET_SECS,
+                "each 2 s span keeps its exact duration"
+            );
+        }
+
+        core.note_cut(&part(MediaSequence::new(4), 0, 540_000).cut);
+        core.note_cut(&part(MediaSequence::new(5), 0, 720_000).cut);
+        let mut ready = Vec::new();
+        core.publish_segments(Some(MediaSequence::new(5)), &leaders, &mut ready);
+        assert_eq!(
+            msns(&ready),
+            [MediaSequence::new(4)],
+            "a segment strictly before the boundary is published"
+        );
+        let mut ready = Vec::new();
+        core.publish_segments(Some(MediaSequence::new(5)), &leaders, &mut ready);
+        assert!(ready.is_empty(), "nothing is left at the boundary");
+    }
+
+    #[test]
+    fn a_segment_at_the_boundary_is_not_published_early() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        core.note_cut(&part(MediaSequence::new(3), 0, 360_000).cut);
+        let mut ready = Vec::new();
+        core.publish_segments(
+            Some(MediaSequence::new(2)),
+            &LeaderDurations::new(),
+            &mut ready,
+        );
+        assert_eq!(msns(&ready), [MediaSequence::new(1)]);
+        let mut ready = Vec::new();
+        core.publish_segments(
+            Some(MediaSequence::new(2)),
+            &LeaderDurations::new(),
+            &mut ready,
+        );
+        assert!(
+            ready.is_empty(),
+            "the segment at the boundary belongs with the next part"
+        );
+    }
+
+    #[test]
+    fn finish_publishes_the_final_partial_segment() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        let leaders: LeaderDurations = [(2u32, TARGET_SECS)].into_iter().collect();
+        let ready = core.finish(&leaders);
+        assert_eq!(
+            msns(&ready),
+            [MediaSequence::new(1), MediaSequence::new(2)],
+            "finish closes and publishes the trailing partial segment"
+        );
+    }
+
+    #[test]
+    fn close_spans_never_moves_an_already_closed_end() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        let two: LeaderDurations = [(1u32, TARGET_SECS)].into_iter().collect();
+        core.close_spans(&two);
+        let one: LeaderDurations = [(1u32, Duration::from_secs(1))].into_iter().collect();
+        core.close_spans(&one);
+        let mut ready = Vec::new();
+        core.publish_segments(None, &LeaderDurations::new(), &mut ready);
+        assert_eq!(segments(&ready)[0].duration, TARGET_SECS);
+    }
+
+    #[test]
+    fn note_cut_closes_the_previous_span_only_for_part_zero() {
+        let mut nonzero = core();
+        nonzero.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        nonzero.note_cut(&part(MediaSequence::new(2), 1, 180_000).cut);
+        let mut ready = Vec::new();
+        nonzero.publish_segments(None, &LeaderDurations::new(), &mut ready);
+        assert!(
+            ready.is_empty(),
+            "a non-zero part does not close the previous segment"
+        );
+
+        let mut z = core();
+        z.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        z.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        let mut ready = Vec::new();
+        z.publish_segments(None, &LeaderDurations::new(), &mut ready);
+        assert_eq!(msns(&ready), [MediaSequence::new(1)]);
+
+        let mut closed = core();
+        closed.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        let two: LeaderDurations = [(1u32, TARGET_SECS)].into_iter().collect();
+        closed.close_spans(&two);
+        closed.note_cut(&part(MediaSequence::new(2), 0, 270_000).cut);
+        let mut ready = Vec::new();
+        closed.publish_segments(None, &LeaderDurations::new(), &mut ready);
+        assert_eq!(
+            segments(&ready)[0].duration,
+            TARGET_SECS,
+            "a later part must not overwrite a closed span's end"
+        );
+    }
+
+    #[test]
+    fn a_closed_cue_ending_at_the_boundary_is_not_retained() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        core.closed.push(cue(90_000, 180_000, "ends_at_boundary"));
+        let mut ready = Vec::new();
+        core.publish_segments(
+            Some(MediaSequence::new(2)),
+            &LeaderDurations::new(),
+            &mut ready,
+        );
+        assert_eq!(msns(&ready), [MediaSequence::new(1)]);
+        assert!(
+            core.closed.is_empty(),
+            "a cue that ended at the segment boundary belongs to that segment only"
+        );
+    }
+
+    #[test]
+    fn render_rejects_an_open_cue_that_ends_at_the_range_end() {
+        let mut core = core();
+        core.origin_raw = Some(90_000);
+        core.decoder.open = Some((0, "early".into()));
+        assert!(
+            !core.render(-90_000, 0).contains("early"),
+            "a cue whose clamped end is the range end is not on screen in it"
+        );
+    }
+
+    fn page() -> TeletextPage {
+        TeletextPage {
+            source_track: TrackId::new(2),
+            language: "en".to_string(),
+            hearing_impaired: false,
+            magazine: 8,
+            page: 0x89,
+        }
+    }
+
+    fn subtitle_trunk() -> Arc<Trunk> {
+        Trunk::new(
+            crate::trunk::TrunkConfig::default()
+                .with_timed_capacity(std::num::NonZeroUsize::MIN.saturating_add(63))
+                .with_sparse_capacity(std::num::NonZeroUsize::MIN.saturating_add(15))
+                .with_segment_capacity(std::num::NonZeroUsize::MIN.saturating_add(15))
+                .with_event_capacity(std::num::NonZeroUsize::MIN.saturating_add(7))
+                .with_part_capacity(std::num::NonZeroUsize::MIN.saturating_add(63)),
+        )
+    }
+
+    #[test]
+    fn subtitle_follower_try_new_needs_a_free_segment_writer() {
+        let trunk = subtitle_trunk();
+        let follower = SubtitleFollower::try_new(
+            &page(),
+            Timescale::try_new(90_000).expect("non-zero timescale"),
+            &trunk,
+        );
+        assert!(follower.is_some());
+        assert!(
+            SubtitleFollower::try_new(
+                &page(),
+                Timescale::try_new(90_000).expect("non-zero timescale"),
+                &trunk,
+            )
+            .is_none(),
+            "a second follower cannot share the trunk's segment writer"
+        );
+        let video = video_track(TrackId::new(3));
+        assert!(
+            teletext_pages("route", 4, &[video]).is_empty(),
+            "a track with no subtitle page yields no follower to build"
+        );
+    }
+
+    #[test]
+    fn subtitle_follower_maps_a_cue_to_one_local_second_and_follows_leader_cuts() {
+        let Some(samples) = teletext_fixture() else {
+            return;
+        };
+        let trunk = subtitle_trunk();
+        let mut follower = SubtitleFollower::try_new(
+            &page(),
+            Timescale::try_new(90_000).expect("non-zero timescale"),
+            &trunk,
+        )
+        .expect("follower");
+        let mut cursor = trunk.subscribe_segments();
+
+        follower.set_start_time(Duration::from_secs(2));
+        for (pts, data) in &samples {
+            let pts = i64::try_from(*pts).expect("pts fits");
+            let sample =
+                Sample::new(data.clone(), Some(pts), Some(pts), None, false).expect("valid timing");
+            follower.push(&sample);
+        }
+        const CUT_START: i64 = 3_856_741_433;
+        let leaders: LeaderDurations = [(1u32, TARGET_SECS), (2, TARGET_SECS)]
+            .into_iter()
+            .collect();
+        let none = LeaderDurations::new();
+        follower.on_part_cuts(&[part(MediaSequence::new(1), 0, CUT_START)], &none);
+        follower.on_part_cuts(
+            &[part(MediaSequence::new(2), 0, CUT_START + SEG_TICKS)],
+            &none,
+        );
+        follower.finish(&leaders);
+
+        let mut entries = Vec::new();
+        while let Some(item) = cursor.poll() {
+            if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
+                entries.push(entry);
+            }
+        }
+        assert_eq!(
+            entries
+                .iter()
+                .map(|e| e.sequence_number.value())
+                .collect::<Vec<_>>(),
+            vec![1, 2],
+            "two leader segments produce two subtitle segments"
+        );
+        let first = String::from_utf8_lossy(&entries[0].bytes);
+        assert!(
+            first.contains("MPEGTS:180000"),
+            "set_start_time(2 s) moved X-TIMESTAMP-MAP: {first}"
+        );
+        assert!(
+            first.contains("00:00:01.000"),
+            "the cue at CUT_START + 1 s is local t=1 s: {first}"
+        );
+        assert!(first.contains("Un train met dix secondes"), "{first}");
+        assert_eq!(entries[0].timeline_position.as_nanos(), 2_000_000_000);
+        assert!(entries[0].meta.discontinuous);
+        assert_eq!(
+            entries[1].timeline_position.as_nanos(),
+            4_000_000_000,
+            "segment 1 is 2 s long, so segment 2 starts at 2 s + 2 s"
+        );
+    }
+
     fn core() -> Core<Scripted> {
         Core::new(Scripted::default())
     }

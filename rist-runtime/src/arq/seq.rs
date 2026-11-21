@@ -86,6 +86,16 @@ mod tests {
         assert!(seq_geq(20, 10));
         assert!(!seq_lt(20, 10));
         assert!(!seq_gt(10, 20));
+        assert!(!seq_leq(20, 10));
+        assert!(!seq_geq(10, 20));
+    }
+
+    #[test]
+    fn non_strict_ordering_is_false_across_the_wrap() {
+        assert!(seq_leq(0xFFFF, 0));
+        assert!(!seq_leq(0, 0xFFFF));
+        assert!(seq_geq(0, 0xFFFF));
+        assert!(!seq_geq(0xFFFF, 0));
     }
 
     #[test]
