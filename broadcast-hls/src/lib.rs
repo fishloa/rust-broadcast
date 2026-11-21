@@ -18,11 +18,13 @@ mod custom_tag;
 mod daterange;
 mod error;
 pub mod limits;
+mod options;
 pub mod seq;
 
 pub use custom_tag::{CustomTag, CustomTagName};
 pub use daterange::{ClientAttrName, DateRange};
 pub use error::{Error, Result};
+pub use options::ParseOptions;
 pub use seq::{MediaSequence, PartIndex};
 
 use alloc::collections::BTreeMap;
@@ -2041,6 +2043,25 @@ impl MediaPlaylist {
     /// As [`Self::parse`], plus [`crate::Error::TooLarge`] when the input or
     /// its segment count exceeds a bound.
     pub fn parse_with(input: &str, limits: &crate::limits::Limits) -> Result<Self> {
+        Self::parse_with_options(input, limits, &ParseOptions::default())
+    }
+
+    /// Parse a Media Playlist under `limits`, with [`ParseOptions`] naming
+    /// vendor tags that apply to one segment instead of the whole playlist.
+    ///
+    /// A tag named in [`ParseOptions::segment_scoped_tags`] is attached to the
+    /// following segment's [`MediaSegment::pre_tags`] (the same treatment
+    /// `#EXT-X-KEY` and `#EXT-X-DATERANGE` get), so it re-renders in that
+    /// segment's position. With default options this is exactly
+    /// [`Self::parse_with`].
+    ///
+    /// # Errors
+    /// As [`Self::parse_with`].
+    pub fn parse_with_options(
+        input: &str,
+        limits: &crate::limits::Limits,
+        options: &ParseOptions,
+    ) -> Result<Self> {
         if input.len() > limits.max_playlist_bytes {
             return Err(Error::TooLarge {
                 what: "playlist bytes",
@@ -2370,7 +2391,7 @@ impl MediaPlaylist {
                 // *following* segment so it re-renders in place; everything
                 // else is playlist-level and goes in the header block
                 // (audit BH-W5, issue #1111).
-                if is_segment_defining_tag(line) {
+                if is_segment_defining_tag(line) || options.is_segment_scoped(tag_name(line)) {
                     pending_pre_tags.push(line.to_string());
                 } else {
                     extra_tags.push(line.to_string());
@@ -3616,6 +3637,13 @@ fn filter_extra_attrs(
 fn is_segment_defining_tag(line: &str) -> bool {
     const SEGMENT_SCOPED: &[&str] = &["#EXT-X-KEY:", "#EXT-X-DATERANGE:", "#EXT-X-CUE-"];
     SEGMENT_SCOPED.iter().any(|prefix| line.starts_with(prefix))
+}
+
+/// The tag name of a `#EXT...` line, without the leading `#` and the
+/// attribute list (RFC 8216bis §4.1).
+fn tag_name(line: &str) -> &str {
+    let body = line.strip_prefix('#').unwrap_or(line);
+    body.split_once(':').map_or(body, |(name, _)| name)
 }
 
 /// Fetch a required attribute from an already-parsed attribute map, or

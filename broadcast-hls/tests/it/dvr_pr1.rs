@@ -152,3 +152,85 @@ fn invalid_custom_tag_names_are_typed_errors() {
     ));
     assert!(CustomTagName::new("EXT-X-RUSTBROADCAST-TIMING").is_ok());
 }
+
+const DESIGN_PLAYLIST: &str = "hls/handbuilt/dvr-runtime-design.m3u8";
+
+fn segment_scoped_options() -> broadcast_hls::ParseOptions {
+    use broadcast_hls::CustomTagName;
+    broadcast_hls::ParseOptions::default().with_segment_scoped_tag(
+        CustomTagName::new("EXT-X-RUSTBROADCAST-TIMING").expect("valid tag name"),
+    )
+}
+
+/// The design's §3.3 period playlist parses with options and re-renders
+/// byte-identically, with the per-segment timing tag still on its segment.
+#[test]
+fn design_playlist_round_trips_byte_identically_with_segment_scoped_timing() {
+    use broadcast_hls::{MediaPlaylist, limits::Limits};
+
+    let input = test_fixtures::read_to_string(DESIGN_PLAYLIST);
+    let options = segment_scoped_options();
+    let playlist = MediaPlaylist::parse_with_options(&input, &Limits::default(), &options)
+        .unwrap_or_else(|e| panic!("design playlist must parse: {e}"));
+
+    assert_eq!(playlist.segments.len(), 2);
+    assert_eq!(
+        playlist
+            .segments[0]
+            .pre_tags
+            .iter()
+            .filter(|t| t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:"))
+            .count(),
+        1,
+        "first segment carries its timing tag"
+    );
+    assert_eq!(
+        playlist
+            .segments[1]
+            .pre_tags
+            .iter()
+            .filter(|t| t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:"))
+            .count(),
+        1,
+        "second segment carries its own timing tag"
+    );
+    assert!(
+        playlist
+            .extra_tags
+            .iter()
+            .all(|t| !t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:")),
+        "a declared segment-scoped tag must not land at playlist level"
+    );
+    assert!(
+        playlist
+            .extra_tags
+            .iter()
+            .any(|t| t == "#EXT-X-RUSTBROADCAST-ARCHIVE:VERSION=1,CONTAINER=FMP4,PERIOD=4"),
+        "the playlist-level archive marker stays in the header"
+    );
+
+    assert_eq!(playlist.to_m3u8().expect("render"), input);
+}
+
+/// Bite for H3: `parse` (default options) puts the timing tag at playlist
+/// level instead, so the option is what keeps it with its segment.
+#[test]
+fn default_parse_still_hoists_the_timing_tag() {
+    use broadcast_hls::MediaPlaylist;
+
+    let input = test_fixtures::read_to_string(DESIGN_PLAYLIST);
+    let playlist = MediaPlaylist::parse(&input).expect("must parse");
+    assert!(
+        playlist
+            .extra_tags
+            .iter()
+            .any(|t| t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:")),
+        "without the option an unknown tag is playlist-level"
+    );
+    assert!(
+        playlist
+            .segments
+            .iter()
+            .all(|s| s.pre_tags.iter().all(|t| !t.starts_with("#EXT-X-RUSTBROADCAST-TIMING:")))
+    );
+}

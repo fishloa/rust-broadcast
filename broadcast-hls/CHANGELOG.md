@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `ParseOptions` and `MediaPlaylist::parse_with_options`: a vendor tag named in `ParseOptions::segment_scoped_tags` stays attached to the following segment (in its `pre_tags`) instead of being hoisted to the playlist-level `extra_tags`, so a per-segment tag re-renders in its original position. `parse`/`parse_with` delegate with default options and are unchanged (#3925).
 - `CustomTag` and `CustomTagName`: a vendor tag (`EXT-` prefixed name plus an attribute list) with `parse_tag_line`/`to_tag_line`, validating the name against the §4.1 tag character set and each attribute against §4.2. Attribute order is preserved, so the DVR archive's `EXT-X-RUSTBROADCAST-ARCHIVE`/`-TIMING` tags round-trip byte-identically (#3925).
 - `DateRange` and `ClientAttrName`: a typed `#EXT-X-DATERANGE` (RFC 8216bis §4.4.5.1) with `parse_tag_line`/`to_tag_line`, the `ID`/`CLASS`/`START-DATE`/`END-DATE`/`DURATION`/`PLANNED-DURATION`/`END-ON-NEXT`/`CUE` fields, `X-` client attributes and lossless unmodeled attributes (`SCTE35-OUT`/`IN`/`CMD`). `ClientAttrName` validates the `X-` prefix and §4.2 `AttributeName` characters; the locally checkable §4.4.5.1 rules (`END-ON-NEXT` requires `CLASS` and excludes `DURATION`/`END-DATE`, `END-DATE` not before `START-DATE`) are typed `Error::InvalidDateRange` errors. The retained wire spelling of both dates keeps a parse/render byte-identical (#3925).
 
