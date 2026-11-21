@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- An RTSP 401 with credentials configured is treated as a rejection: the unreachable replay arm is gone, so the source waits for host-supplied credentials and reconnects instead of replaying a request whose credentials the server already refused (#3634).
 ### Fixed
+- A starved runtime that wakes the SRT caller once, several retransmit periods late, now counts that wake as one retransmit instead of synthesizing one per missed 250 ms period. A single late poll used to spend the whole 12-retry budget at once and time out a handshake whose wall-clock budget was still open, leaving the connection without ever publishing a `Trunk` (#3847).
 - `Session::select_audio_rendition` on a Smooth session returned `Ok(())` and did nothing; it now returns `Error::NotHls`, as its documentation states for any session that is neither HLS nor DASH (audit 23 finding 52, #3303).
 
 ### Tests

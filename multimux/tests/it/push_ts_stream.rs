@@ -27,7 +27,7 @@ use media_plane::SampleCursorItem;
 use mpeg_ts::ts::TsPacket;
 use multimux::push::{PushTransport, SrtTransport, SrtTransportConfig};
 use srt_runtime::HandshakeConfig;
-use srt_runtime::io::{SrtListener, SrtSocketConfig};
+use srt_runtime::io::{SocketStats, SrtListener, SrtSocketConfig};
 use transmux::{Media, Sample, StreamingTsMux, Track, TsDemux, TsMux};
 
 use broadcast_common::{Package, Unpackage};
@@ -36,8 +36,14 @@ const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;
 const PMT_PID: u16 = 0x1000;
 const TS_HZ: i128 = 90_000;
-/// Receiver idle time that ends a capture (the sender is finished by then).
-const IDLE: Duration = Duration::from_millis(1500);
+/// Negotiated TSBPD latency: long enough that a scheduler stall on a loaded
+/// machine delays a packet far less than the too-late drop threshold
+/// (1.25 x latency), so a starved runtime cannot drop payload behind the
+/// continuity-count check.
+const LATENCY_MS: u64 = 3000;
+/// Receiver idle time that ends a capture (the sender is finished by then):
+/// longer than the latency, so the tail released after it is not cut off.
+const IDLE: Duration = Duration::from_secs(5);
 const GUARD: Duration = Duration::from_secs(60);
 /// The PSI interval the default muxer promises, plus one sample of slack.
 const PSI_BOUND_TICKS: u64 = 500 * 90;
@@ -176,7 +182,7 @@ fn es_packets(ts: &[u8]) -> BTreeMap<u16, Vec<Vec<u8>>> {
 
 /// Push `samples` through the real SRT push egress into a loopback listener
 /// and return every byte the listener received.
-async fn push_over_srt(media: &Media, samples: &[(usize, Sample)]) -> Vec<u8> {
+async fn push_over_srt(media: &Media, samples: &[(usize, Sample)]) -> (Vec<u8>, SocketStats) {
     let mut listener = SrtListener::bind(
         "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
         SrtSocketConfig::new(HandshakeConfig::default()),
@@ -198,10 +204,11 @@ async fn push_over_srt(media: &Media, samples: &[(usize, Sample)]) -> Vec<u8> {
                 Ok(Err(e)) => panic!("recv failed: {e}"),
             }
         }
-        got
+        let stats = sock.stats();
+        (got, stats)
     });
 
-    let url = format!("srt://{bound}?latency=120");
+    let url = format!("srt://{bound}?latency={LATENCY_MS}");
     let transport = tokio::time::timeout(
         GUARD,
         SrtTransport::connect(&url, &SrtTransportConfig::default()),
@@ -260,8 +267,18 @@ async fn check_fixture(rel: &str) {
     let media = demux(rel);
     assert!(media.tracks.len() >= 2, "{rel}: want video+audio");
     let samples = interleaved(&media);
-    let got = push_over_srt(&media, &samples).await;
+    let (got, stats) = push_over_srt(&media, &samples).await;
     assert!(!got.is_empty(), "{rel}: nothing received");
+    // TSBPD silently skips packets that arrive past their play time by more
+    // than the too-late threshold, which under a starved runtime is expected
+    // live SRT behaviour, not push-path loss. The large negotiated latency
+    // above exists so that cannot happen here: a non-zero counter would make
+    // the continuity-count assertion below fail for the wrong reason.
+    assert_eq!(
+        stats,
+        SocketStats::default(),
+        "{rel}: the receiver dropped payload, so the CC check cannot judge the push path"
+    );
 
     // 1. Continuity counters valid on every PID across the whole push.
     assert_cc_valid(&got);

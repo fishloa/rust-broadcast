@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `push::drive_push`'s decisions are `media_plane::push_session::PushSession`'s: connect-time negotiation, mid-stream renegotiation, loss accounting, drop-versus-reconnect classification, setup, flush outcome and give-up now come from the sans-IO core, so there is one copy of each decision. The loop keeps only its awaits (connect, setup, the bounded flush, backoff), logging, redaction and `PushMetrics`, which is read from the session's counters plus the transport's written bytes. `push::SendMediaError` implements `media_plane::push_session::PushErrorKind` (mux failure drops the item, transport failure reconnects) (#3930).
+- `PushMetrics::bytes_sent` now reports the payload bytes written over the transport (it was never incremented and always read 0), and `samples_dropped` now also counts samples skipped by cursor lag and samples that arrive while disconnected, not only mux failures (#3930).
 ### Tests
 - The pull host's track-change detection, finite-end handling, retry/permanent failure classification, connection-failure reason, dropped-task abort and TLS handshake failure are pinned by tests (audit 23 finding 232, #3902).
 - The file reader's inclusive size cap, PTS-delta pacing arithmetic and the route loop's sleep-until-due branch are pinned by tests (audit 23 finding 233, #3903).
@@ -8,8 +11,11 @@
 - An IPv6 UDP bind or multicast group is bracketed in the session URL, with the IPv4 and IPv6 cases asserted separately (audit 23 finding 235, #3905).
 - The segmenter glue's `InitFrom` init publication, flush part/segment counters, zero-production counter suppression, and the subtitle follower's source-track pairing (including the borrowed-handle path) are pinned by tests (audit 23 finding 236, #3906).
 - The LL-HLS subtitle-slot mount gate, `_HLS_skip=v2` parsing, the DASH-pull segment window, the RTSP/Smooth drive error path, the scaffold clock helper and the farewell's multi-message write are pinned by tests (audit 23 finding 237, #3907).
+- `tests/it/push_drive.rs` reads `PushMetrics` back after a scripted `Trunk` run (samples sent/dropped, connects, bytes) and drives a bounded-flush write failure through a reconnect, closing audit 23 finding 204's end-to-end half (#3681).
 - Every external-oracle test (Dolby Vision and HDR10 boxes through ffprobe and GPAC `MP4Box`, Smooth fragments through `MP4Box` and Bento4 `mp4dump`, the TS-HLS and cold-join oracles through ffprobe and ffmpeg) now gates its tool through `test_fixtures::process::require_tool`: with `REQUIRE_EXTERNAL_TOOLS=1` a missing tool is a hard failure instead of a silent skip. A new blocking CI `oracles` job installs the tools and sets that switch, so a skipped oracle can no longer read as green (audit 21 finding 60).
 ### Fixed
+- The SRT push continuity-count tests negotiated the 120 ms minimum TSBPD latency, so a scheduler stall on a loaded machine exceeded the too-late threshold and the receiver skipped payload before the continuity counters were checked. They now negotiate a 3000 ms latency and assert the receiver's `SocketStats` are all zero, so the continuity check again measures the push path rather than SRT's expected too-late drop behaviour (#3552).
+- The two SRT caller loopback tests bound every wait (server accept, server send, and the first `Trunk`) at 30 s and name the stalled stage, so a caller handshake that never completes now fails the test instead of leaving it parked forever on `await_first_trunk` (#3847). The `broadcast-client` SRT caller fix behind it is in that crate's changelog.
 - `HttpLimits::from(&Config)`'s field mapping, the per-IP connection table's pruning, `classify_path`'s ops-route labels and the literal cap values have tests (audit 21 findings 49 and 53, #2944/#2948).
 
 ## [0.20.0] - 2026-11-17
