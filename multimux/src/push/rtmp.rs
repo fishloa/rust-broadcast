@@ -523,4 +523,105 @@ mod tests {
             "opaque PES data must not be RTMP-carriable"
         );
     }
+
+    fn timescale() -> broadcast_common::timescale::Timescale {
+        broadcast_common::timescale::Timescale::try_new(90_000).expect("a non-zero timescale")
+    }
+
+    fn spec(track_id: u32, config: CodecConfig) -> TrackSpec {
+        TrackSpec::new(TrackId::new(track_id), timescale(), config)
+    }
+
+    /// The `Debug` body names the type and its connection state.
+    #[test]
+    fn transport_debug_reports_the_connection_state() {
+        let transport = RtmpTransport {
+            client: None,
+            warned_refused_tracks: false,
+        };
+        let shown = format!("{transport:?}");
+        assert!(shown.contains("RtmpTransport"), "{shown}");
+        assert!(shown.contains("connected: false"), "{shown}");
+    }
+
+    /// The refused-track warning fires once per connection with the exact
+    /// count of tracks FLV cannot carry, and never when every track is
+    /// carriable.
+    #[test]
+    fn refused_tracks_are_warned_once_with_the_right_count() {
+        #[derive(Clone, Default)]
+        struct Capture(std::sync::Arc<std::sync::Mutex<String>>);
+
+        impl tracing::Subscriber for Capture {
+            fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+                true
+            }
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+            fn enter(&self, _: &tracing::span::Id) {}
+            fn exit(&self, _: &tracing::span::Id) {}
+            fn event(&self, event: &tracing::Event<'_>) {
+                struct Fields<'a>(&'a mut String);
+                impl tracing::field::Visit for Fields<'_> {
+                    fn record_debug(
+                        &mut self,
+                        field: &tracing::field::Field,
+                        value: &dyn std::fmt::Debug,
+                    ) {
+                        use std::fmt::Write as _;
+                        let _ = write!(self.0, "{}={value:?} ", field.name());
+                    }
+                }
+                let mut line = String::new();
+                event.record(&mut Fields(&mut line));
+                line.push('\n');
+                let mut buffer = self
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                buffer.push_str(&line);
+            }
+        }
+
+        let capture = Capture::default();
+        let buffer = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            let mut transport = RtmpTransport {
+                client: None,
+                warned_refused_tracks: false,
+            };
+            let mixed = Media::new(
+                vec![
+                    Track::new(spec(1, avc_config()), Vec::new()),
+                    Track::new(spec(2, opaque_config()), Vec::new()),
+                    Track::new(spec(3, opaque_config()), Vec::new()),
+                    Track::new(spec(4, opaque_config()), Vec::new()),
+                ],
+                transmux::VIDEO_CLOCK_TIMESCALE,
+            );
+            let all_carriable = Media::new(
+                vec![Track::new(spec(1, avc_config()), Vec::new())],
+                transmux::VIDEO_CLOCK_TIMESCALE,
+            );
+            // An all-carriable batch first: `refused == 0` must not warn at
+            // all (a `>= 0` boundary would).
+            let _ = transport.encode_media(&all_carriable);
+            let _ = transport.encode_media(&mixed);
+            let _ = transport.encode_media(&mixed);
+        });
+        let logs = buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        assert_eq!(
+            logs.matches("RTMP push cannot carry these tracks").count(),
+            1,
+            "the refusal is reported once per connection: {logs}"
+        );
+        assert!(logs.contains("refused=3 "), "{logs}");
+        assert!(logs.contains("carried=1 "), "{logs}");
+    }
 }
