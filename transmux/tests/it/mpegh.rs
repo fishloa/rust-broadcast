@@ -300,3 +300,18 @@ fn record_parse_serialize_symmetry_and_mutation_bites() {
         "mutating mpegh3daConfig must change the serialized bytes"
     );
 }
+
+/// #3799: the `mhm1.0xNN` codec string is the DASH/HLS signalling value, so
+/// the format (lowercase `mhm1.0x`, uppercase two-digit hex) is pinned.
+#[test]
+fn rfc6381_uses_uppercase_two_digit_hex() {
+    let cases: &[(u8, &str)] = &[
+        (0x0B, "mhm1.0x0B"),
+        (0x1D, "mhm1.0x1D"),
+        (0x05, "mhm1.0x05"),
+    ];
+    for &(level, expected) in cases {
+        let rec = MHADecoderConfigurationRecord::new(level, 2, Vec::new());
+        assert_eq!(rec.rfc6381(), expected, "profile level 0x{level:02X}");
+    }
+}
