@@ -2568,6 +2568,75 @@ pub(crate) mod tests {
         }
     }
 
+    /// A `dec3` body too short for the substreams it declares reports the byte
+    /// count it needs (2 header + 3 per substream = 5), not a field-level error
+    /// from a read that should never have started.
+    #[test]
+    fn ec3_parse_reports_the_missing_dec3_substream_bytes() {
+        match Ec3SpecificBox::parse(&DEC3_ORACLE[..3]) {
+            Err(Error::BufferTooShort(e)) => {
+                assert_eq!((e.need, e.have, e.what), (5, 3, "dec3 substreams"));
+            }
+            other => panic!("expected a dec3 substreams bound, got {other:?}"),
+        }
+    }
+
+    /// `skip_eac3_bits` bounds the `mixdata` block it skips: cut exactly at the
+    /// last byte of the block it succeeds (the walk then stops on the next
+    /// field), one byte short it reports the byte it needs as the bsi's own
+    /// error.
+    #[test]
+    fn mixdata_skip_reports_the_bytes_it_needs() {
+        let mut w = BitWriter::new();
+        w.u(16, AC3_SYNCWORD as u64);
+        w.u(2, 0); // strmtyp independent
+        w.u(3, 0); // substreamid
+        w.u(11, 64); // frmsiz
+        w.u(2, 0); // fscod 48 kHz
+        w.u(2, 3); // numblkscod 6 blocks
+        w.u(3, 7); // acmod 3/2
+        w.u(1, 0); // lfeon
+        w.u(5, 16); // bsid
+        w.u(5, 31); // dialnorm
+        w.u(1, 0); // compre
+        w.u(1, 1); // mixmdate
+        w.u(2, 0); // dmixmod
+        w.u(3, 0); // ltrtcmixlev
+        w.u(3, 0); // lorocmixlev
+        w.u(3, 0); // ltrtsurmixlev
+        w.u(3, 0); // lorosurmixlev
+        w.u(1, 1); // pgmscle
+        w.u(6, 0); // pgmscl
+        w.u(1, 0); // extpgmscle
+        w.u(2, 3); // mixdef = 0x3
+        w.u(5, 0); // mixdeflen: 8 * (0 + 2) = 16 bits of mixdata
+        w.u(1, 1); // mixdata2e
+        w.u(1, 0); // premixcmpsel
+        w.u(1, 0); // drcsrc
+        w.u(3, 0); // premixcmpscl
+        for _ in 0..7 {
+            w.u(1, 0); // the seven *scle flags
+        }
+        w.u(1, 0); // addche
+        w.u(1, 0); // mixdata3e
+        w.u(16, 0); // mixdata
+        let es = w.finish();
+        assert_eq!(es.len(), 14, "the skip ends at the last byte");
+
+        match Ec3SyncframeInfo::from_es(&es) {
+            Err(Error::BufferTooShort(e)) => {
+                assert_eq!(e.what, "frmmixcfginfoe", "the skip itself succeeded");
+            }
+            other => panic!("expected the walk to stop after the skip, got {other:?}"),
+        }
+        match Ec3SyncframeInfo::from_es(&es[..13]) {
+            Err(Error::BufferTooShort(e)) => {
+                assert_eq!((e.need, e.have, e.what), (14, 13, "E-AC-3 bsi"));
+            }
+            other => panic!("expected the skip to report its shortfall, got {other:?}"),
+        }
+    }
+
     /// §F.6.2.2's `data_rate` is computed from `frmsiz + 1` (the field is one
     /// less than the syncframe size): at 48 kHz over 6 blocks `frmsiz` 766 is
     /// 767 * 48000 / (6 * 16 * 1000) = 383.5 → 384 kbit/s, while dropping the
