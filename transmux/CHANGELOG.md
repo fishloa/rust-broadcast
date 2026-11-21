@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **A short ATSC caption SEI is ignored instead of panicking.** The fixed-offset reads behind `payload.len() < 8` and `cc.len() < 2` had no short-payload test; a 3-byte, 7-byte and header-only payload now assert no output and no panic, while a complete `cc_data()` block still appends its six bytes (audit 23 finding 289, #3805).
 - **A SEI message whose `payloadType` byte is `0x80` is read, not mistaken for trailing bits.** `more_rbsp_data()` only treats `0x80` as `rbsp_trailing_bits` when it is the last byte, but no test had a message of type 128; a type-128 and a type-5 message in one body now both survive `sei_messages` (audit 23 finding 288, #3804).
 - **An HEVC SEI `payloadType` at or above 255 is encoded as its `0xFF` run and read back exactly.** Every tested type was below 255, so the `payloadType` escape loop's decrement was unobserved; type 300 now asserts the `FF 2D` run and a three-message round trip through `sei_messages` (audit 23 finding 287, #3803).
 - **The AVC access-unit scan reports the real SPS geometry and both in-band parameter sets.** Nothing called `avc_access_unit_dimensions` or `avc_access_unit_parameter_sets`, so a fixed size, a dropped SPS/PPS arm or a wrong NAL filter shipped unnoticed; a 4-byte length-prefixed AU with SEI, the real SPS, PPS and IDR now pins `320x240` and exactly one SPS plus one PPS, and an SPS-less or malformed AU pins the empty results (audit 23 finding 285, #3801).

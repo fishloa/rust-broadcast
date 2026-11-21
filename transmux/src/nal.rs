@@ -1451,6 +1451,39 @@ mod tests {
     }
 
     #[test]
+    fn append_if_atsc_cc_data_ignores_payloads_below_the_fixed_header() {
+        for payload in [
+            &[][..],
+            &[0xB5, 0x00, 0x31][..],
+            &[0xB5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34][..],
+        ] {
+            let mut out = Vec::new();
+            append_if_atsc_cc_data(payload, &mut out);
+            assert!(out.is_empty(), "no cc_data in a short payload");
+        }
+    }
+
+    #[test]
+    fn append_if_atsc_cc_data_ignores_a_header_without_a_cc_data_header() {
+        let mut out = Vec::new();
+        append_if_atsc_cc_data(&[0xB5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34, 0x03], &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn append_if_atsc_cc_data_appends_a_complete_cc_data_block() {
+        let payload = [
+            0xB5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34, 0x03, // T.35 + GA94 + type
+            0x01, 0x00, // cc_data() header: cc_count = 1
+            0xAA, 0xBB, 0xCC, // one triplet
+            0xDD, // marker
+        ];
+        let mut out = Vec::new();
+        append_if_atsc_cc_data(&payload, &mut out);
+        assert_eq!(out, alloc::vec![0x01, 0x00, 0xAA, 0xBB, 0xCC, 0xDD]);
+    }
+
+    #[test]
     fn sei_parse_path_unescapes_like_sample_aes_for_the_issue_inputs() {
         // Audit #2456: the SEI walk (`sei_messages` -> `EbspBytes` ->
         // `rbsp::unescape`) and Sample-AES must drop the same `03`.
