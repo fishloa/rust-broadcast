@@ -514,6 +514,13 @@ impl HlsSource {
                 self.drain_outputs();
             }
             Err(CoreError::UnrequestedKey { .. }) => {}
+            Err(CoreError::InitUndecodable) => {
+                self.pump_core();
+                self.drain_outputs();
+                if !self.report(ErrorKind::InitDecodeFailed) {
+                    self.retry_init_later(now);
+                }
+            }
             Err(e) => {
                 self.pump_core();
                 self.drain_outputs();
@@ -529,6 +536,16 @@ impl HlsSource {
                     return;
                 }
                 if self.core_error(&e) {
+                    return;
+                }
+                if matches!(
+                    e,
+                    CoreError::DecryptFailed {
+                        id: ResourceId::Init,
+                        ..
+                    }
+                ) {
+                    self.retry_init_later(now);
                     return;
                 }
                 self.fail_purpose(Purpose::Key(id), None, now, None);
@@ -608,6 +625,10 @@ impl HlsSource {
             if let Err(e) = &result
                 && self.core_error(e)
             {
+                return;
+            }
+            if purpose == Purpose::Resource(ResourceId::Init) {
+                self.retry_init_later(now);
                 return;
             }
             self.fail_purpose(purpose, retry_url, now, None);
