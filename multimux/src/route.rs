@@ -2605,7 +2605,7 @@ impl RouteHandle {
 
     /// Start the default program's Media Sequence Numbers above `floor`, the
     /// highest sequence number its DVR archive already holds. A consuming
-    /// builder like [`Self::with_dvr`]; see [`Self::with_archive_floors`].
+    /// builder like [`Self::with_dvr`]; every other program numbers above its own archive floor.
     #[must_use]
     pub fn with_archive_floor(mut self, floor: u32) -> Self {
         self.archive_floors.insert(SPTS_PROGRAM_ID, floor);
@@ -5224,6 +5224,52 @@ mod program_registry_tests {
             let serving = new.serving(program).expect("published");
             assert!(serving.dvr.lock().is_some(), "{program:?} records");
         }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn archive_is_locked(root: &std::path::Path, name: &str) -> bool {
+        let config = dvr_config(root, None)
+            .to_archive_config(Container::Fmp4, Duration::from_secs(1), 0)
+            .expect("archive config");
+        matches!(
+            FsRecorder::new(
+                root,
+                crate::dvr::archive_name(name).expect("archive name"),
+                config,
+                &test_trunk(),
+            ),
+            Err(dvr_runtime::fs::FsError::Locked { .. })
+        )
+    }
+
+    /// #3950: a program that does not come back after a replace keeps its
+    /// archive's lock with the successor route only, so it continues that
+    /// archive if it reappears there, and the lock is released when the
+    /// successor route goes, exactly as the default program's is.
+    #[tokio::test]
+    async fn a_program_gone_after_a_replace_releases_its_archive_with_the_route() {
+        let tmp = dvr_test_dir("mpts-gone");
+        let old = two_program_route(&tmp, "mptsg");
+        for program in [SPTS_PROGRAM_ID, SECOND_PROGRAM] {
+            old.publish_new_program(program);
+            old.set_init(program, vec![0xAA; 4]);
+            old.add_segment(program, program_seg(1, 0x01))
+                .expect("add_segment");
+        }
+        old.drain_dvr().await;
+        let new = two_program_route(&tmp, "mptsg");
+        new.continue_from(&old);
+        drop(old);
+        new.publish_new_program(SPTS_PROGRAM_ID);
+        new.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        new.add_segment(SPTS_PROGRAM_ID, program_seg(1, 0x02))
+            .expect("add_segment");
+        new.drain_dvr().await;
+        assert!(archive_is_locked(&tmp, "mptsg"));
+        assert!(archive_is_locked(&tmp, "mptsg@2"));
+        drop(new);
+        assert!(!archive_is_locked(&tmp, "mptsg"));
+        assert!(!archive_is_locked(&tmp, "mptsg@2"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
