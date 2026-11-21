@@ -1870,3 +1870,135 @@ fn reorder_window_drops_only_beyond_max_reorder_window() {
         "the oldest AU is dropped past the bound"
     );
 }
+
+// ── audit 23: non-monotonic events, min step, reorder bookkeeping ───────────
+
+fn pts_and_durations(samples: &[transmux::pipeline::Sample]) -> Vec<(i64, u32)> {
+    samples
+        .iter()
+        .map(|s| {
+            (
+                s.timing.and_then(|t| t.pts()).expect("timed sample"),
+                s.timing.and_then(|t| t.duration()).expect("duration"),
+            )
+        })
+        .collect()
+}
+
+/// A repeated timestamp is not a reorder: no `NonMonotonicTimestamp`, and each
+/// AU keeps the shared frame duration.
+#[test]
+fn repeated_timestamp_is_not_a_non_monotonic_event() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, Some(0))),
+        90_000,
+    );
+    let mut out = Vec::new();
+    let mut per_push = Vec::new();
+    for (seq, ts) in [(0u16, 0u32), (1, 3000), (2, 3000), (3, 6000)] {
+        let sal = if seq == 0 {
+            &[0x65, 0xAA]
+        } else {
+            &[0x41, 0xBB]
+        };
+        let s = d.push(id, &wrap_vpkt(seq, ts, sal)).unwrap();
+        per_push.push(s.len());
+        out.extend(s);
+    }
+    assert_eq!(
+        per_push,
+        vec![0, 1, 1, 1],
+        "an equal timestamp still emits the previous AU immediately"
+    );
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(
+        pts_and_durations(&out),
+        vec![(0, 3000), (3000, 3000), (3000, 3000), (6000, 3000)]
+    );
+    let mut events = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, RtpLossEvent::NonMonotonicTimestamp { .. })),
+        "an equal timestamp is not a backward step: {events:?}"
+    );
+}
+
+/// An I P B B wire order reports exactly one backward step and yields the
+/// presentation-ordered durations, with the smallest positive step (1500,
+/// not the first 12000 or 3000) as the final head's duration.
+#[test]
+fn reordered_wire_order_min_step_drives_the_resolved_duration() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(id, RtpMediaKind::H264, tiny_avc_config(), 90_000);
+    let mut out = Vec::new();
+    for (seq, ts) in [
+        (0u16, 0u32),
+        (1, 12_000),
+        (2, 6_000),
+        (3, 9_000),
+        (4, 10_500),
+    ] {
+        let sal = if seq == 0 {
+            &[0x65, 0xAA]
+        } else {
+            &[0x41, 0xBB]
+        };
+        out.extend(d.push(id, &wrap_vpkt(seq, ts, sal)).unwrap());
+    }
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(
+        pts_and_durations(&out),
+        vec![
+            (0, 12_000),
+            (12_000, 1500),
+            (6_000, 3000),
+            (9_000, 1500),
+            (10_500, 1500)
+        ]
+    );
+    let mut events = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    let non_monotonic: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, RtpLossEvent::NonMonotonicTimestamp { .. }))
+        .collect();
+    assert_eq!(
+        non_monotonic,
+        vec![&RtpLossEvent::NonMonotonicTimestamp {
+            track_id: id,
+            previous_pts: 12_000,
+            pts: 6_000,
+        }]
+    );
+}
+
+/// The frame-period estimate is the *smallest* positive step, not the last:
+/// after a 1000 then 2000 step, an unresolved head takes 1000.
+#[test]
+fn min_step_keeps_the_smallest_positive_step() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(id, RtpMediaKind::H264, tiny_avc_config(), 90_000);
+    let mut out = Vec::new();
+    for (seq, ts) in [(0u16, 5000u32), (1, 1000), (2, 2000), (3, 4000)] {
+        let sal = if seq == 0 {
+            &[0x65, 0xAA]
+        } else {
+            &[0x41, 0xBB]
+        };
+        out.extend(d.push(id, &wrap_vpkt(seq, ts, sal)).unwrap());
+    }
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(
+        pts_and_durations(&out),
+        vec![(5000, 1000), (1000, 1000), (2000, 2000), (4000, 1000)]
+    );
+}
