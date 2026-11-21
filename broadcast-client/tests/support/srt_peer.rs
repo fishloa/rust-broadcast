@@ -42,6 +42,8 @@ pub struct SrtPeer {
     pub acks_received: u32,
     pub retransmits: u32,
     pub max_acked: Option<u32>,
+    pub last_ack_rtt_us: Option<u32>,
+    clock_start_us: u64,
 }
 
 impl SrtPeer {
@@ -81,12 +83,20 @@ impl SrtPeer {
             acks_received: 0,
             retransmits: 0,
             max_acked: None,
+            last_ack_rtt_us: None,
+            clock_start_us: 0,
         }
+    }
+
+    pub fn with_clock_start(mut self, clock_start_us: u64) -> Self {
+        self.clock_start_us = clock_start_us;
+        self
     }
 
     fn ts(&self, now_us: u64) -> u32 {
         let epoch = self.epoch_us.unwrap_or(now_us);
-        u32::try_from(now_us.saturating_sub(epoch) & u64::from(u32::MAX)).unwrap()
+        u32::try_from((now_us.saturating_sub(epoch) + self.clock_start_us) & u64::from(u32::MAX))
+            .unwrap()
     }
 
     pub fn on_datagram(&mut self, bytes: &[u8], now_us: u64) -> Vec<Vec<u8>> {
@@ -94,6 +104,8 @@ impl SrtPeer {
         match SrtPacket::parse(bytes) {
             Ok(SrtPacket::Control(ControlPacket::Handshake(_))) => {
                 self.handshakes_seen += 1;
+                self.hs
+                    .set_elapsed(std::time::Duration::from_micros(u64::from(self.ts(now_us))));
                 let Ok(outputs) = self.hs.feed_bytes(bytes) else {
                     return replies;
                 };
@@ -117,6 +129,9 @@ impl SrtPeer {
             }
             Ok(SrtPacket::Control(ControlPacket::Ack(ack))) => {
                 self.acks_received += 1;
+                if let srt_runtime::packet::AckCif::Full { rtt_us, .. } = ack.cif {
+                    self.last_ack_rtt_us = Some(rtt_us);
+                }
                 let acked = match ack.cif {
                     srt_runtime::packet::AckCif::Full { last_ack_seq, .. }
                     | srt_runtime::packet::AckCif::Small { last_ack_seq, .. }
