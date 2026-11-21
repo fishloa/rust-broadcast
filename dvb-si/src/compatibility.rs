@@ -574,10 +574,16 @@ mod tests {
             0x00, 0x0D, 0x00, 0x01, 0x01, 0x09, 0x01, 0x00, 0x15, 0x0A, 0x12, 0x34, 0x00, 0x01,
             0x01,
         ];
-        assert!(matches!(
-            &(CompatibilityDescriptor::parse(bytes)),
-            Err(crate::error::Error::BufferTooShort(..))
-        ));
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(crate::error::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 17,
+                    have: 15,
+                    what: "CompatibilityDescriptor subDescriptor header",
+                }
+            ))
+        );
     }
 
     #[test]
@@ -758,5 +764,186 @@ mod tests {
             cd.serialize_into(&mut [0u8; 1]).unwrap_err(),
             Error::OutputBufferTooSmall(..)
         ));
+    }
+
+    #[test]
+    fn type_labels_match_the_spec_tokens() {
+        use alloc::string::ToString;
+
+        for (value, name, display) in [
+            (DescriptorType::Pad, "Pad", "Pad"),
+            (
+                DescriptorType::SystemHardware,
+                "System Hardware",
+                "System Hardware",
+            ),
+            (
+                DescriptorType::SystemSoftware,
+                "System Software",
+                "System Software",
+            ),
+            (
+                DescriptorType::IsoReserved(0x03),
+                "ISO Reserved",
+                "ISO Reserved(0x03)",
+            ),
+            (
+                DescriptorType::DvbReserved(0x40),
+                "DVB Reserved",
+                "DVB Reserved(0x40)",
+            ),
+            (
+                DescriptorType::UserDefined(0xFF),
+                "User Defined",
+                "User Defined(0xFF)",
+            ),
+        ] {
+            assert_eq!(value.name(), name);
+            assert_eq!(value.to_string(), display);
+        }
+
+        for (value, name, display) in [
+            (SpecifierType::IeeeOui, "IEEE OUI", "IEEE OUI"),
+            (
+                SpecifierType::Unallocated(0x02),
+                "Unallocated",
+                "Unallocated(0x02)",
+            ),
+        ] {
+            assert_eq!(value.name(), name);
+            assert_eq!(value.to_string(), display);
+        }
+
+        let sub = SubDescriptorType::Unallocated(0x05);
+        assert_eq!(sub.name(), "Unallocated");
+        assert_eq!(sub.to_string(), "Unallocated(0x05)");
+    }
+
+    #[test]
+    fn top_level_framing_errors_report_exact_payloads() {
+        assert_eq!(
+            CompatibilityDescriptor::parse(&[0x00, 0x05, 0x00, 0x01]),
+            Err(Error::SectionLengthOverflow {
+                declared: 5,
+                available: 2,
+            })
+        );
+        assert_eq!(
+            CompatibilityDescriptor::parse(&[0x00, 0x08, 0x00, 0x00, 0x00, 0x00]),
+            Err(Error::SectionLengthOverflow {
+                declared: 8,
+                available: 4,
+            })
+        );
+        assert_eq!(
+            CompatibilityDescriptor::parse(&[0x00, 0x01, 0xAA]),
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 4,
+                    have: 3,
+                    what: "CompatibilityDescriptor descriptorCount",
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn truncated_second_entry_header_reports_offsets() {
+        // descriptorCount=2; the first entry is a complete 11-byte header,
+        // then one stray byte where the second entry's header should start.
+        let bytes: &[u8] = &[
+            0x00, 0x0E, 0x00, 0x02, 0x01, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0xFF,
+        ];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 17,
+                    have: 16,
+                    what: "CompatibilityDescriptor entry header",
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn entry_header_exactly_filling_body_is_an_invalid_descriptor() {
+        // descriptorLength=0, and its 2-byte header ends exactly at the body
+        // end: that is a too-short length, not a truncated header.
+        let bytes: &[u8] = &[0x00, 0x04, 0x00, 0x01, 0x01, 0x00];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::InvalidDescriptor {
+                tag: 0x01,
+                reason: "descriptorLength shorter than fixed fields",
+            })
+        );
+    }
+
+    #[test]
+    fn entry_length_overflow_reports_available_bytes() {
+        // descriptorLength=32 but only 2 body bytes follow the entry header.
+        let bytes: &[u8] = &[0x00, 0x06, 0x00, 0x01, 0x01, 0x20, 0xAA, 0xBB];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::SectionLengthOverflow {
+                declared: 32,
+                available: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn zero_length_sub_descriptor_at_the_entry_end_round_trips() {
+        // descriptorLength=11; subDescriptorCount=1; subDescriptorType=0x05
+        // with subDescriptorLength=0, ending exactly at the entry end.
+        let bytes: &[u8] = &[
+            0x00, 0x0F, 0x00, 0x01, 0x01, 0x0B, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x05, 0x00,
+        ];
+        let cd = CompatibilityDescriptor::parse(bytes).unwrap();
+        assert_eq!(cd.descriptors.len(), 1);
+        assert_eq!(cd.descriptors[0].sub_descriptors.len(), 1);
+        let sub = &cd.descriptors[0].sub_descriptors[0];
+        assert_eq!(
+            sub.sub_descriptor_type,
+            SubDescriptorType::Unallocated(0x05)
+        );
+        assert!(sub.data.is_empty());
+        let mut buf = vec![0u8; cd.serialized_len()];
+        cd.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+    }
+
+    #[test]
+    fn sub_descriptor_length_overflow_is_rejected() {
+        // descriptorLength=12; one sub-descriptor declaring length 5 with a
+        // single data byte inside the entry.
+        let bytes: &[u8] = &[
+            0x00, 0x10, 0x00, 0x01, 0x01, 0x0C, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x05, 0x05, 0xAA,
+        ];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::SectionLengthOverflow {
+                declared: 5,
+                available: 1,
+            })
+        );
+
+        // descriptorLength=11; the sub-descriptor declares one byte at the
+        // very end of the entry, leaving no room at all.
+        let bytes: &[u8] = &[
+            0x00, 0x0F, 0x00, 0x01, 0x01, 0x0B, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x05, 0x01,
+        ];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::SectionLengthOverflow {
+                declared: 1,
+                available: 0,
+            })
+        );
     }
 }
