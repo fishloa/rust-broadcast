@@ -4,11 +4,13 @@
 //! UAS Datalink Local Set, RFC 6597 KLV-over-RTP. See
 //! `private/specs-verified/mpeg/transmux/klv/klv-misb0601.md`.
 
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::klv::{KlvItem, UNIVERSAL_LABEL_LEN};
 use broadcast_common::{Parse, Serialize};
+use transmux::Error;
 use transmux::klv::{
     CHECKSUM_LEN, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM, TAG_PRECISION_TIMESTAMP,
-    UAS_LS_KEY, UasLocalSet, checksum_bcc16,
+    UAS_LS_KEY, UasLocalSet, ber_oid, checksum_bcc16, encode_ber_oid,
 };
 use transmux::rtp::{depacketise_klv, packetise_klv};
 
@@ -55,6 +57,44 @@ fn klv_item_indefinite_form_rejected() {
     assert!(matches!(
         KlvItem::parse(&bytes),
         Err(broadcast_common::klv::KlvError::BufferTooShort(..))
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// 1b. BER-OID tags (ISO/IEC 8825-1 §8.19)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ber_oid_u32_max_is_the_largest_accepted_tag() {
+    // 0xFFFFFFFF needs five base-128 digits; the accumulator before the last
+    // digit is exactly `u32::MAX >> 7`, the guard's inclusive boundary.
+    let encoded = encode_ber_oid(u32::MAX);
+    assert_eq!(encoded, vec![0x8F, 0xFF, 0xFF, 0xFF, 0x7F]);
+    assert_eq!(ber_oid(&encoded), Ok((u32::MAX, 5)));
+}
+
+#[test]
+fn ber_oid_rejects_an_over_long_tag_instead_of_wrapping() {
+    // 28 bits before the final digit is past `u32::MAX >> 7`: shifting in one
+    // more 7-bit group would wrap.
+    assert!(matches!(
+        ber_oid(&[0xFF, 0xFF, 0xFF, 0xFF, 0x7F]),
+        Err(Error::InvalidValue(InvalidValue {
+            field: "ber_oid",
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn ber_oid_truncated_reports_the_real_need() {
+    assert!(matches!(
+        ber_oid(&[0x81]),
+        Err(Error::BufferTooShort(BufferTooShort {
+            need: 2,
+            have: 1,
+            ..
+        }))
     ));
 }
 
