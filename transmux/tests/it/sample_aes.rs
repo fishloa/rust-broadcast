@@ -165,7 +165,10 @@ fn aes128_segment_length_errors_name_the_length() {
     for bad in [&[][..], &[0u8; 17][..]] {
         match aes128_decrypt_segment(&KEY, &IV, bad) {
             Err(transmux::error::Error::InvalidInput(msg)) => assert_eq!(msg, EXPECTED),
-            other => panic!("expected the length error for {} bytes, got {other:?}", bad.len()),
+            other => panic!(
+                "expected the length error for {} bytes, got {other:?}",
+                bad.len()
+            ),
         }
     }
 }
