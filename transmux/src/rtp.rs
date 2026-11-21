@@ -2272,6 +2272,29 @@ mod tests {
     }
 
     #[test]
+    fn pt_allocator_hands_out_127_as_the_last_type_and_then_exhausts() {
+        let mut allocator = PtAllocator::new(DYNAMIC_PT_MIN);
+        let mut pts = alloc::vec::Vec::new();
+        for _ in 0..40 {
+            match allocator.allocate() {
+                Some(pt) => pts.push(pt),
+                None => break,
+            }
+        }
+        assert_eq!(pts.len(), 31, "96..=127 minus the bound KLV type");
+        assert_eq!(pts[0], 96);
+        assert_eq!(pts.last(), Some(&127), "127 is still allocatable");
+        assert!(!pts.contains(&DEFAULT_KLV_PT));
+        assert!(pts.iter().all(|&pt| (96..=127).contains(&pt)));
+
+        let mut allocator = PtAllocator::new(DYNAMIC_PT_MIN);
+        for _ in 0..31 {
+            assert!(allocator.allocate().is_some());
+        }
+        assert_eq!(allocator.allocate(), None);
+    }
+
+    #[test]
     fn mp2t_packs_seven_ts_packets_into_one_rtp_packet() {
         let mut packetiser = Mp2tPacketiser::new(0xDEAD_BEEF, 0x1234);
         let ts = ts_packets(MP2T_TS_PACKETS_PER_PACKET);

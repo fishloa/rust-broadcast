@@ -1,6 +1,38 @@
+use broadcast_common::error::FieldOverflow;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::{FlvDemux, FlvError, Media, MkvMux, RtmpFlvError, RtmpMux, TsDemux};
+
+#[test]
+fn rtmp_flv_error_display_names_the_failure_and_its_numbers() {
+    assert_eq!(
+        RtmpFlvError::Truncated {
+            what: "x",
+            need: 5,
+            have: 2
+        }
+        .to_string(),
+        "RTMP truncated while parsing x: need 5, have 2"
+    );
+
+    let chunk = RtmpFlvError::ChunkSizeTooLarge { size: usize::MAX }.to_string();
+    assert!(chunk.contains("chunk size"), "{chunk}");
+    assert!(chunk.contains(&usize::MAX.to_string()), "{chunk}");
+
+    let message = RtmpFlvError::MessageTooLarge { len: 10, max: 4 }.to_string();
+    assert!(message.contains("10"), "{message}");
+    assert!(message.contains('4'), "{message}");
+
+    let overflow = RtmpFlvError::FieldOverflow(FieldOverflow {
+        field: "chunkSize",
+        value: 7,
+        max: 3,
+    })
+    .to_string();
+    assert!(overflow.contains("chunkSize"), "{overflow}");
+    assert!(overflow.contains('7'), "{overflow}");
+    assert!(overflow.contains('3'), "{overflow}");
+}
 
 #[test]
 fn an_rtmp_chunk_size_beyond_the_u32_field_is_reported_not_wrapped() {

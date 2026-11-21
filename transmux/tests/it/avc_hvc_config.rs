@@ -328,3 +328,50 @@ fn test_hvcc_mutation_changes_bytes() {
         "mutating general_level_idc must change serialized bytes"
     );
 }
+
+#[test]
+fn hvcc_high_tier_profile_space_and_constraint_bytes_round_trip() {
+    // A High-tier, profile-space-2 record with all six constraint bytes set:
+    // the committed hvcC fixtures carry profile space 0, main tier and only
+    // the top constraint byte, so none of these bits is otherwise observed.
+    let record = HEVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        general_profile_space: 2,
+        general_tier_flag: true,
+        general_profile_idc: 2,
+        general_profile_compatibility_flags: 0x6000_0000,
+        general_constraint_indicator_flags: 0x0123_4567_89AB,
+        general_level_idc: 120,
+        min_spatial_segmentation_idc: 0,
+        parallelism_type: 0,
+        chroma_format_idc: 1,
+        bit_depth_luma_minus8: 0,
+        bit_depth_chroma_minus8: 0,
+        avg_frame_rate: 0,
+        constant_frame_rate: 0,
+        num_temporal_layers: 1,
+        temporal_id_nested: true,
+        length_size_minus_one: 3,
+        arrays: Vec::new(),
+    };
+
+    let bytes = record.try_to_bytes().unwrap();
+    // general_profile_space(2)=10, general_tier_flag=1, general_profile_idc=00010.
+    assert_eq!(bytes[1], 0b1010_0010, "profile byte");
+    // general_constraint_indicator_flags occupies bytes [6..12] (after the
+    // version, profile byte and four compatibility bytes).
+    assert_eq!(
+        &bytes[6..12],
+        &[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB],
+        "constraint indicator bytes"
+    );
+
+    assert_eq!(
+        HEVCDecoderConfigurationRecord::parse(&bytes).unwrap(),
+        record,
+        "parsed record equals the original"
+    );
+
+    let codec = record.rfc6381();
+    assert_eq!(codec, "hvc1.B2.6.H120.01.23.45.67.89.AB");
+}

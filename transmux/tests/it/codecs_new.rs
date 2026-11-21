@@ -215,6 +215,62 @@ fn dops_truncated_channel_mapping_errors() {
     roundtrip(&cfg, &full);
 }
 
+/// A non-zero `ChannelMappingFamily` promises a two-byte table header. An
+/// 11- or 12-byte body must report a shortage, never index past the body.
+#[test]
+fn dops_truncated_channel_mapping_header_errors() {
+    let eleven: &[u8] = &[
+        0x00, 0x06, // Version, OutputChannelCount
+        0x01, 0x38, // PreSkip
+        0x00, 0x00, 0xBB, 0x80, // InputSampleRate 48000
+        0x00, 0x00, // OutputGain
+        0x01, // ChannelMappingFamily
+    ];
+    let err = OpusSpecificBox::parse(eleven).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            transmux::Error::BufferTooShort(BufferTooShort {
+                need: 13,
+                have: 11,
+                what: "dOps channel mapping"
+            })
+        ),
+        "expected the channel-mapping header shortage, got {err:?}"
+    );
+
+    let mut twelve = eleven.to_vec();
+    twelve.push(0x02); // StreamCount only
+    let err = OpusSpecificBox::parse(&twelve).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            transmux::Error::BufferTooShort(BufferTooShort {
+                need: 13,
+                have: 12,
+                what: "dOps channel mapping"
+            })
+        ),
+        "expected the second header byte, got {err:?}"
+    );
+
+    let mut thirteen = twelve;
+    thirteen.push(0x01); // CoupledCount, no mapping table
+    thirteen[1] = 0x02; // OutputChannelCount = 2
+    let err = OpusSpecificBox::parse(&thirteen).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            transmux::Error::BufferTooShort(BufferTooShort {
+                need: 15,
+                have: 13,
+                what: "dOps ChannelMapping"
+            })
+        ),
+        "expected the mapping-table shortage, got {err:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // FLAC dfLa — fixtures/mp4/flac.mp4 (#437)
 // ---------------------------------------------------------------------------

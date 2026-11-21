@@ -960,6 +960,78 @@ fn fua_continuation_without_start_does_not_fail_the_stream() {
     );
 }
 
+/// The AAC-hbr payload budget must subtract the RTP fixed header (12), the
+/// AU-headers-length word (2) and the AU-header (2), so a fragment plus its
+/// headers never exceeds the MTU.
+#[test]
+fn aac_hbr_fragments_fill_the_mtu_without_exceeding_it() {
+    let media = demux_fixture();
+    let ir_with = |len: usize| {
+        let mut track = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+            .expect("audio track")
+            .clone();
+        track.samples = vec![transmux::ir::Sample::timed(vec![0u8; len], 0, 0, None)];
+        Media::new(vec![track], media.movie_timescale)
+    };
+
+    let mut packetiser = RtpPacketiser {
+        mtu: 100,
+        ssrc: SSRC,
+        ..RtpPacketiser::default()
+    };
+    let out = packetiser.package(&ir_with(500)).expect("packetise");
+    let stream = out
+        .streams
+        .iter()
+        .find(|s| s.kind == RtpMediaKind::Aac)
+        .expect("audio stream");
+    let payloads: Vec<usize> = stream.packets.iter().map(|p| p.payload.len()).collect();
+    assert_eq!(payloads, vec![84, 84, 84, 84, 84, 80]);
+    assert_eq!(
+        stream
+            .packets
+            .iter()
+            .filter(|p| p.as_contiguous().len() == 100)
+            .count(),
+        5,
+        "every full fragment plus its 16 header bytes is exactly the MTU"
+    );
+    for packet in &stream.packets {
+        assert!(packet.as_contiguous().len() <= 100);
+    }
+
+    let mut packetiser = RtpPacketiser {
+        mtu: 17,
+        ssrc: SSRC,
+        ..RtpPacketiser::default()
+    };
+    let out = packetiser.package(&ir_with(3)).expect("packetise");
+    let stream = out
+        .streams
+        .iter()
+        .find(|s| s.kind == RtpMediaKind::Aac)
+        .expect("audio stream");
+    assert_eq!(stream.packets.len(), 3);
+    for packet in &stream.packets {
+        assert_eq!(packet.payload.len(), 1);
+        assert_eq!(packet.as_contiguous().len(), 17);
+    }
+
+    let err = RtpPacketiser {
+        mtu: 16,
+        ..RtpPacketiser::default()
+    }
+    .package(&ir_with(1))
+    .expect_err("no room for an AAC-hbr header");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(m) if m.contains("MTU too small")),
+        "{err:?}"
+    );
+}
+
 /// An AAC access unit larger than the payload budget must be fragmented on
 /// packetise (RFC 3640 §3.2.3.1) and reassembled on depacketise, byte for
 /// byte.
