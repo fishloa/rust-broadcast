@@ -143,6 +143,15 @@ fn synthetic_cuts_are_exact_and_lossless() {
         // Every segment must carry an styp + a parseable moof + an mdat.
         assert!(find_box_body(s, b"styp").is_some(), "seg {si} has styp");
         assert!(find_box_body(s, b"mdat").is_some(), "seg {si} has mdat");
+        // The mfhd sequence number increments once per cut, starting at 1
+        // (ISO/IEC 14496-12:2026 §8.8.2): [1, 2, 3] for the three segments.
+        let moof = find_box_body(s, b"moof").expect("moof body");
+        let mf = MovieFragmentBox::parse_body(moof).expect("moof parses");
+        assert_eq!(
+            mf.mfhd.sequence_number,
+            u32::try_from(si).unwrap() + 1,
+            "seg {si} mfhd.sequence_number must increment per segment"
+        );
         for (track_id, base, count, first_flags) in moof_summary(s) {
             match track_id.value() {
                 1 => {

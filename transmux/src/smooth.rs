@@ -999,4 +999,185 @@ mod tests {
             10_000_000
         );
     }
+
+    fn data_spec(track_id: u32, rate: u32) -> crate::pipeline::TrackSpec {
+        crate::pipeline::TrackSpec::new(
+            TrackId::new(track_id),
+            timescale(rate),
+            CodecConfig::Data {
+                stream_type: 0x86,
+                descriptors: alloc::vec![],
+                carriage: crate::pipeline::DataCarriage::Sections,
+            },
+        )
+    }
+
+    fn timed_track(track_id: u32, rate: u32, samples: &[(i64, u32)]) -> Track {
+        let samples = samples
+            .iter()
+            .map(|&(dts, duration)| {
+                Sample::new(
+                    alloc::vec![0u8; 4],
+                    Some(dts),
+                    Some(dts),
+                    Some(duration),
+                    true,
+                )
+                .expect("valid timing")
+            })
+            .collect();
+        Track::new(data_spec(track_id, rate), samples)
+    }
+
+    #[test]
+    fn tfxd_serialize_reports_the_full_box_length() {
+        let t = TfxdBox::new(0x0011_2233_4455_6677, 0x0089_ABCD);
+        let mut buf = alloc::vec![0u8; t.serialized_len()];
+        let n = t.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, t.serialized_len(), "returned count must match the box");
+        assert_eq!(n, 44, "8 hdr + 16 usertype + 4 fullbox + 16 times");
+    }
+
+    #[test]
+    fn splice_tfxd_rejects_a_non_moof_buffer() {
+        let tfxd = TfxdBox::new(1, 2);
+        let mdat = MediaDataBox {
+            data: alloc::vec![0u8; 4],
+        }
+        .try_to_bytes()
+        .unwrap();
+        assert!(matches!(
+            splice_tfxd_into_traf(&mdat, &tfxd),
+            Err(Error::UnexpectedBox { expected: "moof" })
+        ));
+    }
+
+    #[test]
+    fn quality_level_audio_attributes_only_on_audio_streams() {
+        let video = StreamInfo {
+            stream_type: SmoothStreamType::Video,
+            fourcc: FOURCC_H264,
+            codec_private_data: alloc::vec![1, 2],
+            bitrate: 1_000_000,
+            width: Some(640),
+            height: Some(360),
+            sampling_rate: Some(48_000),
+            channels: Some(2),
+            qualities: 1,
+            fragments: alloc::vec![],
+            total_duration: 0,
+        };
+        let level = quality_level(&video);
+        assert_eq!(level.width, Some(640));
+        assert_eq!(level.height, Some(360));
+        assert_eq!(level.sampling_rate, None, "video carries no SamplingRate");
+        assert_eq!(level.channels, None, "video carries no Channels");
+        assert_eq!(level.bits_per_sample, None);
+        assert_eq!(level.audio_tag, None);
+    }
+
+    #[test]
+    fn smooth_timeline_uses_the_gap_to_the_next_sample() {
+        // 90 kHz, dts steps 3003 but declared durations 3000: a plain
+        // duration sum would drift from the timeline the manifest describes.
+        let track = timed_track(1, 90_000, &[(0, 3000), (3003, 3000), (6006, 3000)]);
+        let origin = TimelineOrigin::of([&track]);
+        let times = smooth_timeline(&track, &origin, timescale(90_000)).expect("timeline");
+        let durations: Vec<u32> = times.iter().map(|t| t.duration).collect();
+        assert_eq!(durations, alloc::vec![333_667, 333_666, 333_334]);
+        let sum: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
+        assert_eq!(sum, 1_000_667, "trun durations sum to the timeline span");
+        assert_eq!(
+            sum,
+            times[2].start + u64::from(times[2].duration) - times[0].start
+        );
+    }
+
+    #[test]
+    fn smooth_timeline_falls_back_to_own_duration_when_dts_goes_backwards() {
+        let origin_track = timed_track(2, 1000, &[(0, 1000)]);
+        let track = timed_track(1, 1000, &[(1000, 1000), (500, 1000)]);
+        let origin = TimelineOrigin::of([&origin_track, &track]);
+        let times = smooth_timeline(&track, &origin, timescale(1000)).expect("timeline");
+        let durations: Vec<u32> = times.iter().map(|t| t.duration).collect();
+        assert_eq!(durations, alloc::vec![10_000_000, 10_000_000]);
+    }
+
+    #[test]
+    fn smooth_timeline_reports_the_true_over_range_duration() {
+        let origin_track = timed_track(2, 1000, &[(0, 1000)]);
+        // 500 s at 1 kHz = 5e9 ticks in the 10 MHz Smooth timescale (> u32::MAX).
+        let track = timed_track(1, 1000, &[(1000, 500_000)]);
+        let origin = TimelineOrigin::of([&origin_track, &track]);
+        match smooth_timeline(&track, &origin, timescale(1000)) {
+            Err(Error::InvalidValue(v)) => {
+                assert_eq!(v.field, "trun sample_duration");
+                assert_eq!(v.value, 5_000_000_000);
+            }
+            other => panic!("expected InvalidValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn splice_tfxd_reads_the_whole_32_bit_traf_size_above_64_kib() {
+        // 6000 samples at 12 bytes each: the traf is 72 032 bytes, so its size
+        // needs the second byte (`0x01` in 0x0001_1960).
+        const COUNT: usize = 6000;
+        let samples: Vec<Sample> = (0..COUNT)
+            .map(|i| {
+                Sample::new(alloc::vec![0xAB; 4], None, None, Some(1), i == 0)
+                    .expect("valid timing")
+            })
+            .collect();
+        let times: Vec<SmoothSampleTime> = (0..COUNT)
+            .map(|i| SmoothSampleTime {
+                start: i as u64 * 10_000,
+                duration: 10_000,
+                composition_offset: 0,
+            })
+            .collect();
+        let frag = build_smooth_fragment(
+            TrackId::new(1),
+            1,
+            0,
+            COUNT as u64 * 10_000,
+            &samples,
+            &times,
+        )
+        .expect("build fragment");
+
+        let styp_len = SegmentTypeBox {
+            major_brand: STYP_MAJOR_BRAND,
+            minor_version: 0,
+            compatible_brands: alloc::vec![STYP_MAJOR_BRAND, *b"msix"],
+        }
+        .serialized_len();
+        let moof_size =
+            u32::from_be_bytes(frag[styp_len..styp_len + 4].try_into().expect("moof size"))
+                as usize;
+        MovieFragmentBox::parse_body(&frag[styp_len + 8..styp_len + moof_size])
+            .expect("patched moof parses");
+        let mfhd_size = u32::from_be_bytes(
+            frag[styp_len + 8..styp_len + 12]
+                .try_into()
+                .expect("mfhd size"),
+        ) as usize;
+        let traf_off = styp_len + 8 + mfhd_size;
+        let traf_size =
+            u32::from_be_bytes(frag[traf_off..traf_off + 4].try_into().expect("traf size"))
+                as usize;
+        assert_eq!(
+            traf_size,
+            moof_size - 8 - mfhd_size,
+            "the traf is the last moof child and spans the rest of it"
+        );
+        assert!(
+            traf_size > 65_536,
+            "the fixture must exceed 64 KiB: {traf_size}"
+        );
+        assert_eq!(
+            crate::smooth_fragment::fragment_tfxd(&frag),
+            Some(TfxdBox::new(0, COUNT as u64 * 10_000))
+        );
+    }
 }
