@@ -137,3 +137,71 @@ fn bar_data_rejects_foreign_short_or_wrong_type_payloads() {
     wrong_provider[1] = 0x01;
     assert_eq!(bar_data_from_t35_payload(&wrong_provider), None);
 }
+
+fn empty_bar_data() -> BarData {
+    BarData {
+        top_bar_end_line: None,
+        bottom_bar_start_line: None,
+        left_bar_end_pixel: None,
+        right_bar_start_pixel: None,
+    }
+}
+
+#[test]
+fn afd_signal_labels_and_display_are_pinned() {
+    let no_format = AfdSignal::NoFormat;
+    assert_eq!(no_format.name(), "no_format");
+    assert_eq!(no_format.to_string(), "no_format");
+    let format = AfdSignal::Format(ActiveFormatDescription::SameAsCodedFrame);
+    assert_eq!(format.name(), "format");
+    assert_eq!(format.to_string(), "format");
+}
+
+#[test]
+fn bar_data_accepts_the_minimum_nine_byte_payload() {
+    // T.35 header (7) + user_data_type_code (1) + flags (1), no flags set.
+    let payload = bar_payload(&[0x06, 0x00]);
+    assert_eq!(payload.len(), 9);
+    assert_eq!(bar_data_from_t35_payload(&payload), Some(empty_bar_data()));
+    // One byte shorter has no flags field.
+    assert_eq!(bar_data_from_t35_payload(&bar_payload(&[0x06])), None);
+}
+
+#[test]
+fn each_bar_flag_reads_only_its_own_value() {
+    // Four 14-bit values, one per flag, each distinct after masking.
+    let values = [0xC0, 0x01, 0xC0, 0x02, 0xC0, 0x03, 0xC0, 0x04];
+    let case = |flags: u8| {
+        let rest = [&[0x06u8, flags][..], &values[..]].concat();
+        bar_data_from_ga94_payload(&rest)
+    };
+    assert_eq!(
+        case(0x80),
+        Some(BarData {
+            top_bar_end_line: Some(1),
+            ..empty_bar_data()
+        })
+    );
+    assert_eq!(
+        case(0x40),
+        Some(BarData {
+            bottom_bar_start_line: Some(1),
+            ..empty_bar_data()
+        })
+    );
+    assert_eq!(
+        case(0x20),
+        Some(BarData {
+            left_bar_end_pixel: Some(1),
+            ..empty_bar_data()
+        })
+    );
+    assert_eq!(
+        case(0x10),
+        Some(BarData {
+            right_bar_start_pixel: Some(1),
+            ..empty_bar_data()
+        })
+    );
+    assert_eq!(case(0x00), Some(empty_bar_data()));
+}
