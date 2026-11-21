@@ -354,6 +354,11 @@ impl RouteRegistry {
         held
     }
 
+    #[cfg(test)]
+    fn name_lock_count(&self) -> usize {
+        self.name_locks.lock().len()
+    }
+
     /// The highest sequence number `route`'s DVR archive already holds. Callers
     /// hold the route's name lock, not [`Self::mutation_lock`]. A failed scan is
     /// an error: numbering from `0` over an archive that may hold higher
@@ -1429,6 +1434,8 @@ where
                 let live = registry.live_router();
                 let mut router = live.router.clone();
                 attempts += 1;
+                #[cfg(test)]
+                registry.hooks.log(format!("attempt:{attempts}"));
                 let token = match (&replay, attempts <= MAX_REDISPATCHES) {
                     (Some(_), true) => live.retire.get(&name).cloned(),
                     _ => None,
@@ -1777,6 +1784,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The floor a replacement numbers above comes from the route's on-disk
+    /// DVR archive, not a guess: three archived segments mean floor 3, and a
+    /// route without DVR has floor 0 (nothing to continue above).
+    #[tokio::test]
+    async fn archive_floor_of_reads_the_archive_and_is_zero_without_dvr() {
+        use media_plane::ids::SegmentSeq;
+        use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
+
+        let root = std::env::temp_dir().join(format!(
+            "multimux-admin-archive-floor-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp dir");
+        let dvr = DvrConfig {
+            enabled: true,
+            archive_root: root.to_string_lossy().to_string(),
+            retention_periods: 10,
+            retention_bytes: 0,
+            period_duration_secs: 3600,
+            overrun: crate::dvr::ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
+        };
+        let trunk = Trunk::new(TrunkConfig::default());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder =
+            crate::dvr::DvrRecorder::new("cam".to_string(), dvr.clone(), ".m4s", &trunk)
+                .expect("recorder");
+        let init = b"ARCHIVE_INIT";
+        recorder.poll_and_persist(Some(init)).expect("poll init");
+        for (seq, byte) in [(1u32, 0xAAu8), (2, 0xBB), (3, 0xCC)] {
+            writer
+                .publish_segment(SegmentEntry::new(
+                    bytes::Bytes::from(vec![byte; 24]),
+                    SegmentSeq::new(seq),
+                    std::time::Duration::from_secs(3),
+                    broadcast_common::Timestamp::from_nanos(u64::from(seq) * 3_000_000_000),
+                    transmux::SegmentMeta {
+                        discontinuous: false,
+                    },
+                ))
+                .expect("publish");
+        }
+        recorder.poll_and_persist(Some(init)).expect("persist");
+        drop(recorder);
+
+        let mut route = rtsp_route("cam", "rtsp://host/cam");
+        route.dvr = dvr;
+        assert_eq!(archive_floor_of(&route).await.expect("floor"), 3);
+
+        let plain = rtsp_route("cam", "rtsp://host/cam");
+        assert_eq!(archive_floor_of(&plain).await.expect("floor"), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// Removing a route releases its catch-up index cache, whose entries hold
     /// whole parsed segment vectors (audit 20 finding 24). MUTATION VERIFIED:
     /// a no-op `drop_route_cache` leaves the entry resident and this fails.
@@ -2000,6 +2062,313 @@ mod tests {
             .await
             .expect_err("unknown route must 404-map");
         assert!(matches!(err, crate::MultimuxError::RouteNotFound { name } if name == "nope"));
+    }
+
+    /// Two names differing only in case share one archive directory on a
+    /// case-insensitive filesystem, so the case-insensitive collision is
+    /// rejected just like an exact one.
+    #[tokio::test]
+    async fn add_case_variant_name_is_conflict() {
+        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        registry
+            .add_route(rtsp_route("cam", "rtsp://host/a"))
+            .await
+            .expect("add cam");
+        let err = registry
+            .add_route(rtsp_route("Cam", "rtsp://host/b"))
+            .await
+            .expect_err("a case-only variant must collide");
+        assert!(matches!(err, crate::MultimuxError::RouteExists { name } if name == "Cam"));
+        assert!(registry.get_route("Cam").is_none());
+    }
+
+    /// A per-name lock is pruned once nobody holds it, so the lock table does
+    /// not grow with one entry per name ever used; a held lock is kept and
+    /// still excludes a second holder.
+    #[tokio::test]
+    async fn name_locks_are_pruned_only_once_nobody_holds_them() {
+        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        drop(registry.lock_names(["a"]).await);
+        drop(registry.lock_names(["b"]).await);
+        assert_eq!(
+            registry.name_lock_count(),
+            1,
+            "the unreferenced name's lock must be pruned"
+        );
+
+        let held = registry.lock_names(["c"]).await;
+        let mut second = Box::pin(registry.lock_names(["c"]));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut second)
+                .await
+                .is_err(),
+            "a held name lock must exclude a second holder"
+        );
+        drop(held);
+        tokio::time::timeout(std::time::Duration::from_secs(10), &mut second)
+            .await
+            .expect("the lock is released")
+            .clear();
+    }
+
+    /// A push output is not a serving `Output`: it is started by the push
+    /// layer, and filtering it out of the serving set must leave the route
+    /// addable (building it as a serving output errors).
+    #[tokio::test]
+    async fn a_route_with_a_push_output_is_added() {
+        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        let mut route = rtsp_route("pushy", "rtsp://host/pushy");
+        route.outputs.push(OutputKind::RtmpPush {
+            url: "rtmp://127.0.0.1:1/live/x".to_string(),
+            format: None,
+            reconnect: None,
+        });
+        registry
+            .add_route(route)
+            .await
+            .expect("a push output must not be built as a serving output");
+        assert!(registry.get_route("pushy").is_some());
+        registry.remove_route("pushy").await.expect("remove");
+    }
+
+    /// Shutting the registry down stops and unregisters every route.
+    #[tokio::test]
+    async fn shutdown_all_stops_every_route() {
+        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        registry
+            .add_route(rtsp_route("cam", "rtsp://127.0.0.1:1/cam"))
+            .await
+            .expect("add");
+        registry.shutdown_all().await;
+        assert!(
+            registry.list_routes().is_empty(),
+            "a shut-down registry must hold no routes"
+        );
+    }
+
+    /// The admin JSON `kind` of every input variant is the literal an API
+    /// client selects on.
+    #[test]
+    fn input_kind_names_are_the_admin_json_tokens() {
+        let mut cases = vec![
+            (
+                serde_json::json!({ "type": "rtsp", "url": "rtsp://h/s" }),
+                "rtsp",
+            ),
+            (
+                serde_json::json!({
+                    "type": "rtp", "addr": "127.0.0.1:5000", "sdp": "v=0", "socket": {},
+                }),
+                "rtp",
+            ),
+            (
+                serde_json::json!({
+                    "type": "ts_udp", "addr": "127.0.0.1:5000", "socket": {},
+                }),
+                "ts_udp",
+            ),
+            (
+                serde_json::json!({ "type": "ts_http", "url": "http://h/x" }),
+                "ts_http",
+            ),
+            (
+                serde_json::json!({ "type": "hls_pull", "url": "http://h/x.m3u8" }),
+                "hls_pull",
+            ),
+            (
+                serde_json::json!({ "type": "dash_pull", "url": "http://h/x.mpd" }),
+                "dash_pull",
+            ),
+            (
+                serde_json::json!({ "type": "smooth_pull", "url": "http://h/x" }),
+                "smooth_pull",
+            ),
+            (
+                serde_json::json!({ "type": "rtmp", "listen": "127.0.0.1:1935" }),
+                "rtmp",
+            ),
+            (
+                serde_json::json!({ "type": "dashif_ingest", "listen": "127.0.0.1:8081" }),
+                "dashif_ingest",
+            ),
+            (
+                serde_json::json!({ "type": "srt", "listen": "127.0.0.1:9000" }),
+                "srt",
+            ),
+            (
+                serde_json::json!({ "type": "custom", "type_tag": "x" }),
+                "custom",
+            ),
+        ];
+        cases.push((
+            serde_json::json!({ "type": "file", "path": "/tmp/x.ts" }),
+            "file",
+        ));
+        #[cfg(feature = "whip")]
+        cases.push((
+            serde_json::json!({ "type": "whip", "listen": "127.0.0.1:8080" }),
+            "whip",
+        ));
+        for (json, expected) in cases {
+            let input: InputSpec = serde_json::from_value(json.clone())
+                .unwrap_or_else(|error| panic!("{json}: {error}"));
+            assert_eq!(input_kind_name(&input), expected, "{json}");
+        }
+    }
+
+    /// The runtime's `Debug` names the route and nothing credential-bearing.
+    #[tokio::test]
+    async fn route_runtime_debug_names_the_route_without_credentials() {
+        let runtime = RouteRuntime {
+            generation: 0,
+            route: rtsp_route("cam", "rtsp://user:hunter2@host/s"),
+            store: Arc::new(RouteHandle::new(RouteConfig::default())),
+            outputs: Vec::new(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            handle: tokio::spawn(async {}),
+            push_handles: Vec::new(),
+        };
+        let debug = format!("{runtime:?}");
+        assert!(debug.contains("cam"), "{debug}");
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(!debug.contains("user:"), "{debug}");
+    }
+
+    /// A `PendingRuntime` that is dropped without being disarmed cancels its
+    /// route's token and aborts every task it spawned: a failed add/reload
+    /// must not leave a half-built route running.
+    #[tokio::test]
+    async fn dropping_a_pending_runtime_tears_down_its_tasks() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let handle = tokio::spawn(std::future::pending::<()>());
+        let handle_probe = handle.abort_handle();
+        let push = tokio::spawn(std::future::pending::<()>());
+        let push_probe = push.abort_handle();
+        let runtime = RouteRuntime {
+            generation: 0,
+            route: rtsp_route("x", "rtsp://host/x"),
+            store: Arc::new(RouteHandle::new(RouteConfig::default())),
+            outputs: Vec::new(),
+            cancel: cancel.clone(),
+            handle,
+            push_handles: vec![push],
+        };
+        drop(PendingRuntime::new(runtime));
+        assert!(cancel.is_cancelled(), "the route token must be cancelled");
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            handle_probe.is_finished(),
+            "the ingest task must be aborted"
+        );
+        assert!(push_probe.is_finished(), "the push task must be aborted");
+    }
+
+    /// A parked request follows its route's retire token at most
+    /// `MAX_REDISPATCHES` times, then is served by whatever router is live:
+    /// without the bound a replacement storm would keep one request chasing
+    /// tokens forever instead of answering.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_parked_request_follows_at_most_max_redispatch_replacements() {
+        use crate::registry::{InputCtx, InputFactory};
+
+        let dir =
+            std::env::temp_dir().join(format!("multimux-admin-redispatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let config_path = dir.join("config.json");
+        let mut ctx = ctx_for_tests();
+        ctx.scheme_registry.register_input(
+            "hold",
+            Arc::new(|ctx: InputCtx| Ok(tokio::spawn(async move { ctx.cancel.cancelled().await })))
+                as InputFactory,
+        );
+        let route = |version: u32| {
+            let mut route = rtsp_route("live", "rtsp://host/live");
+            route.input = InputSpec::Custom {
+                type_tag: "hold".to_string(),
+                params: serde_json::json!({ "version": version }),
+            };
+            route
+        };
+        let write = |version: u32| {
+            let config = serde_json::json!({
+                "routes": [{
+                    "name": "live",
+                    "input": {
+                        "type": "custom",
+                        "type_tag": "hold",
+                        "params": { "version": version },
+                    },
+                    "outputs": ["llhls"],
+                }],
+            });
+            std::fs::write(
+                &config_path,
+                serde_json::to_vec_pretty(&config).expect("serialize config"),
+            )
+            .expect("write config");
+        };
+        write(0);
+        let registry = RouteRegistry::new(ctx, Some(config_path.clone()));
+        registry.add_route(route(0)).await.expect("first add");
+
+        let mut service = DynamicMediaService {
+            registry: Arc::clone(&registry),
+            remote_addr: "127.0.0.1:12345".parse().expect("addr"),
+        };
+        let request = Request::builder()
+            .uri("/live/media.m3u8?_HLS_msn=5&_HLS_part=0")
+            .body(Body::empty())
+            .expect("request");
+        let call = tokio::spawn(async move { service.call(request).await });
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !registry
+            .hooks
+            .log
+            .lock()
+            .iter()
+            .any(|line| line == "attempt:1")
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the request never started: {:?}",
+                registry.hooks.log.lock()
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(
+            !call.is_finished(),
+            "the request must be parked, not answered"
+        );
+
+        let cap = MAX_REDISPATCHES + 1;
+        let mut reached = false;
+        for version in 1..=(MAX_REDISPATCHES as u32 + 4) {
+            write(version);
+            registry.reload().await.expect("reload");
+            settle().await;
+            if registry
+                .hooks
+                .log
+                .lock()
+                .contains(&format!("attempt:{cap}"))
+            {
+                reached = true;
+            }
+        }
+        let log = registry.hooks.log.lock().clone();
+        assert!(
+            reached,
+            "the request never reached the redispatch cap: {log:?}"
+        );
+        assert!(
+            !log.contains(&format!("attempt:{}", cap + 1)),
+            "a replacement past the cap was followed again: {log:?}"
+        );
+        call.abort();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// MUTATION VERIFIED: changing `add_route`'s validation call from

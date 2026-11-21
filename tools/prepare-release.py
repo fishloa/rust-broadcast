@@ -585,6 +585,14 @@ def refresh_side_lock(manifest_dir: str, apply: bool, fatal_offline: bool) -> in
     return 0
 
 
+def refresh_side_locks(apply: bool) -> int:
+    """Refresh every side lock, even after one fails: an early return left
+    tools/differential-sweep/Cargo.lock stale whenever demo/'s refresh was
+    refused (issue #2892)."""
+    failed = [d for d, fatal in SIDE_WORKSPACES if refresh_side_lock(d, apply, fatal) != 0]
+    return 1 if failed else 0
+
+
 def verify(pairs: list[tuple[str, str]]) -> int:
     args = [f"{c}={v}" for c, v in pairs]
     return subprocess.call([sys.executable, str(ROOT / "tools" / "crates-io.py"), "check", *args])
@@ -817,9 +825,8 @@ def main(argv: list[str]) -> int:
             return 1
         if apply and verify_resolution() != 0:
             return 1
-        for manifest_dir, fatal_offline in SIDE_WORKSPACES:
-            if refresh_side_lock(manifest_dir, apply, fatal_offline) != 0:
-                return 1
+        if refresh_side_locks(apply) != 0:
+            return 1
     else:
         print("  skipped (--no-lock): refresh and commit Cargo.lock yourself, or every release lane's --locked build fails")
 

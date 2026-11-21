@@ -500,6 +500,24 @@ mod tests {
         assert_eq!(bl.delay_for_attempt(0), Duration::from_millis(500));
     }
 
+    /// Routes opened together must not reconnect in lockstep: every
+    /// [`Backoff::new`] draws its own OS-entropy seed, which the jittered
+    /// series (attempt 1 onward; attempt 0 is the floor by contract) exposes.
+    #[test]
+    fn fresh_backoffs_do_not_share_a_jitter_sequence() {
+        let mut second_steps = std::collections::HashSet::new();
+        for _ in 0..8 {
+            let mut b =
+                Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0).unwrap();
+            assert_eq!(b.next_delay(), Duration::from_millis(500));
+            second_steps.insert(b.next_delay());
+        }
+        assert!(
+            second_steps.len() > 1,
+            "eight fresh backoffs all stepped identically: {second_steps:?}"
+        );
+    }
+
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Tiny backoff for tests: keeps the whole suite fast regardless of how
@@ -1344,6 +1362,29 @@ mod tests {
         assert!(
             Arc::ptr_eq(&serving.trunk(), trunks.last().unwrap()),
             "the latest attempt's trunk must be the one served"
+        );
+    }
+
+    /// Every reconnect bumps `multimux_source_reconnects_total{route}`, so an
+    /// operator can see a source flapping.
+    #[test]
+    fn a_reconnect_bumps_the_route_counter() {
+        let route = format!("metric-reconnect-{}", std::process::id());
+        crate::prometheus::install();
+        record_reconnect(&route);
+        record_reconnect(&route);
+        let rendered = crate::prometheus::install().render();
+        let line = rendered
+            .lines()
+            .find(|line| {
+                line.starts_with(crate::prometheus::SOURCE_RECONNECTS_TOTAL)
+                    && line.contains(&format!("route=\"{route}\""))
+            })
+            .unwrap_or_else(|| panic!("no reconnect series for {route} in {rendered}"));
+        assert_eq!(
+            line.rsplit(' ').next().and_then(|v| v.parse::<f64>().ok()),
+            Some(2.0),
+            "{line}"
         );
     }
 }

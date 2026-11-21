@@ -6,8 +6,10 @@ import fnmatch
 import importlib.util
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 import yaml
@@ -64,6 +66,55 @@ def test_side_workspace_dry_run_names_the_manifest(capsys):
         assert "would run: cargo metadata" in out
         assert f"--manifest-path {manifest_dir}/Cargo.toml" in out
         assert f"refreshes {manifest_dir}/Cargo.lock" in out
+
+
+SCRATCH = (REPO.parents[1] if REPO.parent.name == ".worktrees" else REPO) / ".delegate" / "scratch"
+
+
+def _write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def _side_workspace(root, name, member_dep):
+    _write(
+        root / name / "Cargo.toml",
+        f'[package]\nname = "{name.rsplit("/", 1)[-1]}"\nversion = "0.0.0"\nedition = "2021"\n\n'
+        f'[workspace]\n\n[dependencies]\n{member_dep} = {{ path = "{"../" * (name.count("/") + 1)}{member_dep}" }}\n',
+    )
+    _write(root / name / "src" / "main.rs", "fn main() {}\n")
+
+
+def test_bump_refreshes_the_sweep_lock_even_when_another_side_lock_fails(monkeypatch, request):
+    """Issue #2892: the 2026-11-17 prep left tools/differential-sweep/Cargo.lock naming
+    the old versions because demo/'s lock had drifted, its guarded refresh failed, and
+    that aborted the loop before the sweep lock was touched."""
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    root = pathlib.Path(tempfile.mkdtemp(prefix="side-lock-", dir=SCRATCH))
+    request.addfinalizer(lambda: shutil.rmtree(root, ignore_errors=True))
+    _write(root / "Cargo.toml", '[workspace]\nmembers = ["alpha"]\nresolver = "2"\n')
+    _write(root / "alpha" / "Cargo.toml", '[package]\nname = "alpha"\nversion = "1.0.0"\nedition = "2021"\n')
+    _write(root / "alpha" / "src" / "lib.rs", "")
+    _side_workspace(root, "demo", "alpha")
+    _side_workspace(root, "tools/differential-sweep", "alpha")
+    for d in (".", "demo", "tools/differential-sweep"):
+        subprocess.run(
+            ["cargo", "metadata", "--offline", "--format-version", "1"],
+            cwd=root / d, capture_output=True, check=True,
+        )
+    demo_lock = root / "demo" / "Cargo.lock"
+    demo_lock.write_text(demo_lock.read_text() + '\n[[package]]\nname = "stale-only-in-demo"\nversion = "0.1.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n'
+        'checksum = "0000000000000000000000000000000000000000000000000000000000000000"\n')
+
+    mod = _pr()
+    monkeypatch.setattr(mod, "ROOT", root)
+    mod.bump_version("alpha", "1.1.0", True)
+    assert mod.refresh_lock(True) == 0
+    assert mod.refresh_side_locks(True) == 1
+
+    sweep = (root / "tools" / "differential-sweep" / "Cargo.lock").read_text()
+    assert re.search(r'name = "alpha"\nversion = "1.1.0"', sweep), sweep
+    assert "stale-only-in-demo" in demo_lock.read_text()
 
 
 def _glob(path):

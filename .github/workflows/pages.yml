@@ -55,6 +55,12 @@ jobs:
         with:
           tool: wasm-pack@0.13.1
 
+      - name: Test demo (host target)
+        working-directory: demo
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo test --locked
+
       - name: Build demo (wasm-pack)
         # --out-dir is resolved relative to the crate path (demo/), so `pkg`
         # lands at demo/pkg (NOT demo/demo/pkg, which `demo/pkg` would give).

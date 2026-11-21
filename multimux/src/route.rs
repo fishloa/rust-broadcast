@@ -606,6 +606,11 @@ impl DashState {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
+    fn track_spec_log_len(&self) -> usize {
+        self.track_specs.lock().len()
+    }
+
     fn retire_track_specs_before(&self, oldest: media_plane::ids::SegmentSeq) {
         let mut log = self.track_specs.lock();
         while log.len() > 1 && log[1].0 <= oldest.value() {
@@ -1153,6 +1158,11 @@ impl ProgramServing {
             .collect()
     }
 
+    #[cfg(test)]
+    fn init_log_len(&self) -> usize {
+        self.init_log.lock().len()
+    }
+
     fn flush_predecessor(&self) {
         let predecessor = self.predecessor.lock().take();
         if let Some(predecessor) = predecessor {
@@ -1321,6 +1331,11 @@ impl ProgramServing {
 
     pub(crate) fn track_specs_at(&self, segment: media_plane::ids::SegmentSeq) -> Vec<TrackSpec> {
         self.dash.track_specs_at(segment)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn track_spec_log_len(&self) -> usize {
+        self.dash.track_spec_log_len()
     }
 
     fn set_tracks_active(&self, active: bool) {
@@ -3302,6 +3317,72 @@ mod program_registry_tests {
         );
     }
 
+    /// The health label is the admin JSON and metric literal an operator
+    /// selects on.
+    #[test]
+    fn health_state_names_are_the_admin_tokens() {
+        assert_eq!(HealthState::Connecting.name(), "connecting");
+        assert_eq!(HealthState::Live.name(), "live");
+        assert_eq!(HealthState::Reconnecting.name(), "reconnecting");
+        assert_eq!(HealthState::Failed.name(), "failed");
+        assert_eq!(HealthState::Ended.name(), "ended");
+    }
+
+    /// The floor a replacement must continue above is the higher of what this
+    /// route's origin has shown (the open segment's number included) and what
+    /// its archive already held.
+    #[test]
+    fn media_sequence_floor_covers_the_archive_and_the_origin() {
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(4))
+                .with_window_segments(8),
+        )
+        .with_archive_floor(7);
+        assert_eq!(
+            route.media_sequence_floor(),
+            7,
+            "with no program yet, the archive floor is the only floor"
+        );
+        route.publish_program(ProgramId(1), test_trunk());
+        assert_eq!(
+            route.media_sequence_floor(),
+            8,
+            "a route with a program (and no segments) numbers from 1 above the floor"
+        );
+    }
+
+    /// Retiring a route fires the token every parked request waits on, so it
+    /// is woken and served again against the route now registered under the
+    /// name.
+    #[test]
+    fn retiring_a_route_cancels_its_retired_token() {
+        let route = RouteHandle::new(RouteConfig::default());
+        let token = route.retired_token();
+        assert!(!token.is_cancelled());
+        route.retire();
+        assert!(token.is_cancelled());
+        route.retire();
+        assert!(token.is_cancelled(), "retiring twice stays cancelled");
+    }
+
+    /// A second concurrent publisher — a different `Trunk` while the active
+    /// publisher still holds the program — is rejected: the route keeps
+    /// serving the connection it already admitted.
+    #[test]
+    fn a_rival_publisher_does_not_take_over_the_program() {
+        let route = RouteHandle::new(RouteConfig::default());
+        let first = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&first));
+        let rival = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&rival));
+        let serving = route.serving(ProgramId(1)).expect("program published");
+        assert!(
+            Arc::ptr_eq(&serving.trunk(), &first),
+            "the rival publisher took over a program already being received"
+        );
+    }
+
     /// A route that replaces another continues its numbering: its first program's media
     /// sequence number starts above the replaced route's next one, its epoch (DASH start number,
     /// media timeline start) carries on, and the replaced route's own numbering is untouched.
@@ -3945,6 +4026,358 @@ mod program_registry_tests {
             archived_periods(&tmp),
             2,
             "the new init waited for the next segment to roll the period"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn dvr_config(root: &std::path::Path, service_id: Option<u16>) -> crate::dvr::DvrConfig {
+        crate::dvr::DvrConfig {
+            enabled: true,
+            archive_root: root.to_string_lossy().to_string(),
+            retention_periods: 5,
+            retention_bytes: 0,
+            period_duration_secs: 3600,
+            overrun: crate::dvr::ArchiveOverrunSerde::Gap,
+            dvb_service_id: service_id,
+        }
+    }
+
+    fn dvr_test_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("multimux-dvr-route-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// An init generation is queued for the archive only while recording AND
+    /// only when the bytes actually changed: re-declaring the same init must
+    /// not append a generation for every declaration, and a route without DVR
+    /// queues none at all.
+    #[test]
+    fn a_dvr_route_logs_only_changed_init_generations() {
+        let tmp = dvr_test_dir("init-log");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_dvr(dvr_config(&tmp, None));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        assert_eq!(
+            serving.init_log_len(),
+            1,
+            "an identical init must not be queued twice"
+        );
+        route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        assert_eq!(
+            serving.init_log_len(),
+            2,
+            "a changed init is a new generation"
+        );
+
+        let plain = RouteHandle::new(RouteConfig::default());
+        plain.publish_new_program(SPTS_PROGRAM_ID);
+        plain.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        assert_eq!(
+            plain
+                .serving(SPTS_PROGRAM_ID)
+                .expect("program published")
+                .init_log_len(),
+            0,
+            "a route with DVR off has nothing to archive"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The queued init generations are trimmed to the unpersisted tail after a
+    /// successful persist: the log must not grow without bound, and it must
+    /// keep exactly the newest generation for the next roll.
+    #[tokio::test]
+    async fn a_successful_dvr_persist_keeps_only_the_newest_queued_init() {
+        let tmp = dvr_test_dir("init-drain");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_dvr(dvr_config(&tmp, None));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving.poll_dvr().await;
+        assert_eq!(archived_periods(&tmp), 1);
+        assert_eq!(serving.init_log_len(), 1);
+
+        route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        assert_eq!(serving.init_log_len(), 2);
+        serving.poll_dvr().await;
+        assert_eq!(
+            serving.init_log_len(),
+            1,
+            "the persisted generations must be drained, leaving the newest"
+        );
+        assert_eq!(
+            serving
+                .init_generations()
+                .pop()
+                .map(|generation| generation.init),
+            Some(Bytes::from(vec![0xBB; 4])),
+            "the newest init is the one still waiting"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A poll with nothing new must return before the persist step: an
+    /// unnecessary poll would re-enter the recorder on every ingest tick.
+    /// The injected panic is the observation — reaching it abandons the
+    /// recorder, so a recorder still present proves the persist never ran.
+    #[tokio::test]
+    async fn a_dvr_poll_with_nothing_new_does_not_touch_the_recorder() {
+        let tmp = dvr_test_dir("idle-poll");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name("idle-poll")
+        .with_dvr(dvr_config(&tmp, None));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving.poll_dvr().await;
+        assert!(serving.dvr.lock().is_some());
+
+        serving.panic_on_persist.store(true, Ordering::SeqCst);
+        serving.poll_dvr().await;
+        assert!(
+            serving.dvr.lock().is_some(),
+            "a poll with nothing new reached the persist step"
+        );
+        assert!(
+            serving.panic_on_persist.load(Ordering::SeqCst),
+            "the injected panic never ran, so the recorder was not re-entered"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The audio renditions each own an `HlsOrigin`; writing an audio init
+    /// through the route must land on that origin, or a viewer switching to
+    /// the rendition has no map segment to start from.
+    #[test]
+    fn an_audio_rendition_init_is_recorded_on_its_own_origin() {
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(4))
+                .with_window_segments(8)
+                .with_audio_renditions(vec![hls_runtime::server::AudioRenditionDecl {
+                    group_id: "aac".into(),
+                    name: "English".into(),
+                    language: "en".into(),
+                    default: true,
+                    autoselect: true,
+                    channels: Some("2".into()),
+                    uri: "audio/en.m3u8".into(),
+                    characteristics: Vec::new(),
+                }])
+                .with_audio_rendition_sources(vec![
+                    transmux::audio_profile::AudioTrackSelector::Index(0),
+                ]),
+        );
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_audio_init(SPTS_PROGRAM_ID, 0, vec![0xAB; 6]);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        assert_eq!(
+            serving.audio_servings()[0].origin.init_bytes(),
+            Some(Bytes::from(vec![0xAB; 6]))
+        );
+    }
+
+    fn subtitle_decl(name: &str, uri: &str) -> hls_runtime::server::SubtitleRenditionDecl {
+        hls_runtime::server::SubtitleRenditionDecl::new(name, "en", uri)
+    }
+
+    /// A subtitle declaration set that would publish a malformed master is
+    /// refused: none at all, more than the cap, or an identity count that does
+    /// not match the declarations. A valid set is served, and the route's own
+    /// accessor reports every one of them.
+    #[test]
+    fn subtitle_declarations_are_validated_before_the_master_is_published() {
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(4))
+                .with_window_segments(8)
+                .with_declared_bandwidth_bps(Some(7_000_000u64)),
+        ));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        let master_before = serving
+            .ll_hls()
+            .master_playlist("media.m3u8")
+            .expect("master renders");
+        assert!(!master_before.contains("TYPE=SUBTITLES"), "{master_before}");
+
+        assert!(serving.declare_subtitles(&[], &[]).is_none());
+        let too_many: Vec<_> = (0..=MAX_SUBTITLE_RENDITIONS)
+            .map(|slot| subtitle_decl(&format!("s{slot}"), &format!("subs-{slot}.m3u8")))
+            .collect();
+        let identities: Vec<String> = (0..=MAX_SUBTITLE_RENDITIONS)
+            .map(|slot| format!("page:{slot}"))
+            .collect();
+        assert!(
+            serving.declare_subtitles(&too_many, &identities).is_none(),
+            "a set past MAX_SUBTITLE_RENDITIONS must be refused"
+        );
+        let two = vec![
+            subtitle_decl("English", "subs-0.m3u8"),
+            subtitle_decl("Deutsch", "subs-1.m3u8"),
+        ];
+        assert!(
+            serving
+                .declare_subtitles(&two, &["page:888".to_string()])
+                .is_none(),
+            "one identity for two declarations must be refused"
+        );
+
+        let declared = serving
+            .declare_subtitles(&two, &["page:888".to_string(), "page:777".to_string()])
+            .expect("a valid set is accepted");
+        assert_eq!(declared.len(), 2);
+        assert_eq!(route.subtitle_servings(SPTS_PROGRAM_ID).len(), 2);
+        let master = serving
+            .ll_hls()
+            .master_playlist("media.m3u8")
+            .expect("master renders");
+        assert!(master.contains("TYPE=SUBTITLES"), "{master}");
+
+        // The cap itself is a valid set: exactly MAX_SUBTITLE_RENDITIONS is
+        // accepted, only one past it is refused.
+        let capped = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(4))
+                .with_window_segments(8)
+                .with_declared_bandwidth_bps(Some(7_000_000u64)),
+        );
+        capped.publish_new_program(SPTS_PROGRAM_ID);
+        let at_cap: Vec<_> = (0..MAX_SUBTITLE_RENDITIONS)
+            .map(|slot| subtitle_decl(&format!("s{slot}"), &format!("subs-{slot}.m3u8")))
+            .collect();
+        let at_cap_ids: Vec<String> = (0..MAX_SUBTITLE_RENDITIONS)
+            .map(|slot| format!("page:{slot}"))
+            .collect();
+        assert_eq!(
+            capped
+                .serving(SPTS_PROGRAM_ID)
+                .expect("program published")
+                .declare_subtitles(&at_cap, &at_cap_ids)
+                .map(|servings| servings.len()),
+            Some(MAX_SUBTITLE_RENDITIONS)
+        );
+    }
+
+    /// The subtitle sibling carries `#EXT-X-PROGRAM-DATE-TIME` exactly when the
+    /// route asked for arrival-time dates: the sibling origin is built from the
+    /// same source setting as the primary, not a fixed one.
+    #[tokio::test]
+    async fn a_subtitle_playlist_gets_arrival_pdt_only_when_the_route_asks() {
+        for (source, expect_pdt) in [
+            (crate::config::ProgramDateTimeSource::Arrival, true),
+            (crate::config::ProgramDateTimeSource::Off, false),
+        ] {
+            let route = Arc::new(
+                RouteHandle::new(
+                    RouteConfig::default()
+                        .with_target_duration(Duration::from_secs(4))
+                        .with_part_target(Duration::from_millis(500))
+                        .with_window_segments(8),
+                )
+                .with_program_date_time(source),
+            );
+            route.publish_new_program(SPTS_PROGRAM_ID);
+            let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+            let decls = vec![subtitle_decl("English", "subs-0.m3u8")];
+            assert!(
+                serving
+                    .declare_subtitles(&decls, &["page:888".to_string()])
+                    .is_some()
+            );
+            let subtitle = serving.subtitle_servings()[0].clone();
+            subtitle
+                .trunk
+                .segment_writer()
+                .expect("segment writer")
+                .publish_segment(media_plane::trunk::SegmentEntry::new(
+                    Bytes::from(vec![0xAB; 8]),
+                    media_plane::ids::SegmentSeq::new(1),
+                    Duration::from_secs(4),
+                    Timestamp::ZERO,
+                    transmux::SegmentMeta {
+                        discontinuous: false,
+                    },
+                ))
+                .expect("publish subtitle segment");
+
+            let app = crate::testutil::app_with(
+                &route,
+                Arc::new(crate::output::hls::HlsOutput::default()),
+            );
+            let (status, body) = crate::testutil::get_bytes(&app, "/cam/subs-0.m3u8").await;
+            let playlist = String::from_utf8(body).expect("utf-8 playlist");
+            assert_eq!(status, axum::http::StatusCode::OK, "{source:?}: {playlist}");
+            assert_eq!(
+                playlist.contains("#EXT-X-PROGRAM-DATE-TIME:"),
+                expect_pdt,
+                "{source:?}: {playlist}"
+            );
+        }
+    }
+
+    /// The route feeds the EIT present event of the bytes it ingests to its
+    /// DVR recorder: without that, an EIT-aligned period roll never happens.
+    /// The genuine capture's present event is pinned in the fixture's
+    /// PROVENANCE (TF1, event 0x7857).
+    #[tokio::test]
+    async fn a_dvr_route_feeds_eit_into_its_recorder() {
+        const TF1_SERVICE_ID: u16 = 0x0601;
+        let ts_bytes = std::fs::read(test_fixtures::path("ts/tnt-5w-12732v-isi6-10s.ts"))
+            .expect("read genuine DVB-T capture");
+        let tmp = dvr_test_dir("eit-feed");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_dvr(dvr_config(&tmp, Some(TF1_SERVICE_ID)));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        assert!(
+            serving
+                .dvr
+                .lock()
+                .as_ref()
+                .expect("recorder")
+                .current_programme()
+                .is_none()
+        );
+        route.feed_si_ts(&ts_bytes);
+        assert_eq!(
+            serving
+                .dvr
+                .lock()
+                .as_ref()
+                .expect("recorder")
+                .current_programme()
+                .map(|programme| programme.event_id),
+            Some(0x7857)
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }

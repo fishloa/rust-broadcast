@@ -168,5 +168,38 @@ mod tests {
             seen.insert(s);
         }
         assert!(seen.len() > 190);
+        for _ in 0..256 {
+            assert_eq!(
+                ssrc() & 1,
+                1,
+                "the low bit is forced so a random draw never yields an even SSRC"
+            );
+        }
+    }
+
+    #[test]
+    fn entropy_seeds_are_random_and_never_a_constant() {
+        let a = entropy_seed();
+        let b = entropy_seed();
+        assert_ne!(a, b, "two SRT sessions must not derive the same secret");
+        for seed in [a, b] {
+            assert_ne!(seed, [0u8; broadcast_client::srt::ENTROPY_SEED_LEN]);
+            assert_ne!(seed, [1u8; broadcast_client::srt::ENTROPY_SEED_LEN]);
+        }
+        assert_eq!(a.len(), broadcast_client::srt::ENTROPY_SEED_LEN);
+    }
+
+    #[test]
+    fn seed_entropy_varies_and_is_not_a_degenerate_constant() {
+        let mut varied = false;
+        for _ in 0..3 {
+            let (a, b) = (seed_entropy(), seed_entropy());
+            assert_ne!(a, 0);
+            assert_ne!(a, 1);
+            assert_ne!(b, 0);
+            assert_ne!(b, 1);
+            varied |= a != b;
+        }
+        assert!(varied, "three entropy pairs all repeated");
     }
 }
