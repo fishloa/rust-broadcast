@@ -248,3 +248,60 @@ fn isobmff_still_routes_to_the_container_path() {
         "an ISOBMFF file must not be read as a TS packet lattice; got:\n{stdout}",
     );
 }
+
+/// A probe tie that includes a TS candidate must still get the TS
+/// diagnostics: sending it to the container path printed "No issues found."
+/// for a stream with a continuity error.
+///
+/// The input is three 188-byte packets (three sync confirmations → TS
+/// `LATTICE_WEAK`), with MPEG-1 Layer III frame headers planted at a 96-byte
+/// stride inside the payloads (six chained frames → MP3 `LATTICE_WEAK`) and a
+/// continuity-counter jump from 0 to 2 on packet 1.
+#[test]
+fn an_ambiguous_probe_tie_with_a_ts_candidate_runs_the_ts_diagnostics() {
+    const PACKETS: usize = 3;
+    const MP3_FRAME_LEN: usize = 96;
+    // MPEG-1 Layer III, 32 kbps at 48 kHz → 144 * 32000 / 48000 = 96 bytes.
+    const MP3_HEADER: [u8; 4] = [0xFF, 0xFB, 0x14, 0x00];
+
+    let mut bytes = vec![0u8; PACKETS * TS_PACKET_SIZE];
+    for (packet, cc) in [0u8, 2, 3].into_iter().enumerate() {
+        let offset = packet * TS_PACKET_SIZE;
+        // sync=0x47, PID 0x0100, payload present, the packet's own CC.
+        bytes[offset] = 0x47;
+        bytes[offset + 1] = 0x01;
+        bytes[offset + 2] = 0x00;
+        bytes[offset + 3] = 0x10 | cc;
+    }
+    let mut frame = 4;
+    while frame + MP3_HEADER.len() <= bytes.len() {
+        bytes[frame..frame + MP3_HEADER.len()].copy_from_slice(&MP3_HEADER);
+        frame += MP3_FRAME_LEN;
+    }
+
+    match container_probe::probe(&bytes) {
+        container_probe::Probe::Ambiguous { candidates, .. } => assert!(
+            candidates
+                .iter()
+                .any(|c| matches!(c.detail, container_probe::Detail::Ts { .. })),
+            "precondition: the tie includes a TS candidate: {candidates:?}",
+        ),
+        other => panic!("precondition: this buffer must probe Ambiguous, got {other:?}"),
+    }
+
+    let stdout = run_check(&scratch("ambiguous-ts.mp3.mp4", &bytes));
+    assert!(
+        !stdout.contains("No issues found"),
+        "the TS diagnostics must run on a TS candidate tie; got:\n{stdout}",
+    );
+    assert_eq!(
+        rule_counts(&stdout).get("cc-anomaly").copied(),
+        Some(1),
+        "the continuity jump is reported by the TS path; got:\n{stdout}",
+    );
+    assert_eq!(
+        rule_counts(&stdout).get("sync-byte"),
+        None,
+        "no sync-byte finding: the TS path realigned the packets; got:\n{stdout}",
+    );
+}

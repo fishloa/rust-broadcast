@@ -1,5 +1,7 @@
 mod broadcast_hls_oracle;
 #[cfg(feature = "cli")]
+mod cli_check_hls_dash;
+#[cfg(feature = "cli")]
 mod cli_routing;
 mod codec_v2_real_captures;
 mod dash_validator_fixture;

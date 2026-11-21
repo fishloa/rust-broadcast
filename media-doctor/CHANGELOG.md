@@ -6,6 +6,7 @@
 
 ### Tests
 - Pin the watch PAT/PMT reconciliation, SCTE-35 cue-timing counters and multi-track reference clock; the CC adaptation-only and third-repeat rules; the PTS stream-id gate and short-unit guard; the sync-byte finding PID; the PTS/DTS/PCR half-range boundary; the `FpsCadenceCheck` cadence comparison and `ParamSetsCheck` HEVC/partial-parameter-set paths against cargo-mutants survivors (audit 23).
+- Pin the `check-hls`/`check-dash` subcommands and their `--json` output, an Ambiguous probe tie that includes a TS candidate, the `SO_RCVBUF` shortfall warning, the `avcC`/`hvcC` profile/level/chroma/geometry cross-checks, interlaced AVC, NAL length-prefix framing, the DASH relaxed parse bounds and element positions, duplicate-`@id` severity, timeline/pacing text, HLS master classification, parse-error and finding line numbers, `EXTINF` rounding, part-duration exemptions, and the rendered report counters (audit 23).
 
 ## [0.17.0] - 2026-11-17
 ### Fixed

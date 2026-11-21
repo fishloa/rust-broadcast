@@ -624,3 +624,296 @@ seg0.m4s
         report.findings()
     );
 }
+
+// -------------------------------------------------------------------------
+// Playlist classification, positions and duration rounding (audit 23)
+// -------------------------------------------------------------------------
+
+/// A valid Multivariant Playlist identified only by `EXT-X-STREAM-INF` is
+/// validated as such — classifying it Unknown reported every valid master as
+/// `hls-unsupported-playlist`.
+#[test]
+fn a_stream_inf_only_master_playlist_is_clean() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:4
+#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.4d400d,mp4a.40.2\"
+v1.m3u8
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    assert!(
+        report.is_empty(),
+        "a valid Multivariant Playlist must be clean, got {:?}",
+        report.findings()
+    );
+}
+
+/// `EXT-X-I-FRAME-STREAM-INF` alone also identifies a Multivariant Playlist
+/// (RFC 8216bis §4.4.6.5).
+#[test]
+fn an_i_frame_stream_inf_only_master_playlist_is_clean() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:4
+#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.4d400d\",URI=\"iframe.m3u8\"
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    assert!(
+        report.is_empty(),
+        "a valid I-frame Multivariant Playlist must be clean, got {:?}",
+        report.findings()
+    );
+}
+
+/// A Multivariant Playlist parse failure is reported at the parser's own line,
+/// not always line 1.
+#[test]
+fn a_master_parse_error_names_the_offending_tag_line() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:4
+#EXT-X-STREAM-INF:BANDWIDTH=1000000
+#EXT-X-STREAM-INF:BANDWIDTH=not-a-number
+v2.m3u8
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    let hits = findings(&report, "hls-parse-error");
+    assert_eq!(hits.len(), 1, "{:?}", report.findings());
+    assert_eq!(hits[0].location.packet, 4, "the bad tag is on line 4");
+}
+
+/// A Media Playlist parse failure is reported at the parser's own line too.
+#[test]
+fn a_media_parse_error_names_the_offending_tag_line() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-PART-INF:PART-TARGET=4
+#EXT-X-PART:DURATION=abc,URI=\"p.m4s\"
+#EXTINF:4.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    let hits = findings(&report, "hls-parse-error");
+    assert_eq!(hits.len(), 1, "{:?}", report.findings());
+    assert_eq!(hits[0].location.packet, 5, "the bad tag is on line 5");
+}
+
+/// A part over `PART-TARGET` in the third parent segment is reported against
+/// that segment's 1-based position.
+#[test]
+fn part_over_target_names_the_third_segment() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.333,URI=\"s0p0.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+#EXT-X-PART:DURATION=0.333,URI=\"s1p0.m4s\"
+#EXTINF:1.0,
+seg1.m4s
+#EXT-X-PART:DURATION=0.900,URI=\"s2p0.m4s\"
+#EXTINF:1.0,
+seg2.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    let hits = findings(&report, "hls-part-duration-range");
+    assert_eq!(hits.len(), 1, "{:?}", report.findings());
+    assert_eq!(
+        hits[0].location.packet, 3,
+        "the third segment is position 3"
+    );
+}
+
+/// A part over `PART-TARGET` in the open segment is reported at
+/// `closed_segments + 1` — the position the segment will take once closed.
+#[test]
+fn open_segment_part_names_the_position_after_the_closed_segments() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.333,URI=\"s0p0.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+#EXT-X-PART:DURATION=0.333,URI=\"s1p0.m4s\"
+#EXTINF:1.0,
+seg1.m4s
+#EXT-X-PART:DURATION=0.900,URI=\"open0.m4s\"
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    let hits = findings(&report, "hls-part-duration-range");
+    assert_eq!(hits.len(), 1, "{:?}", report.findings());
+    assert_eq!(
+        hits[0].location.packet, 3,
+        "two closed segments, so the open one is position 3"
+    );
+}
+
+/// A malformed `EXT-X-DATERANGE` is reported at its file line.
+#[test]
+fn malformed_daterange_names_its_file_line() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:9.0,
+seg0.ts
+#EXT-X-DATERANGE:START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=5.0
+#EXTINF:9.0,
+seg1.ts
+#EXT-X-ENDLIST
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    let hits = findings(&report, "hls-malformed-daterange");
+    assert_eq!(hits.len(), 1, "{:?}", report.findings());
+    assert_eq!(hits[0].location.packet, 7, "the DATERANGE is on line 7");
+}
+
+/// An `EXTINF` over `TARGETDURATION` is reported at its file line.
+#[test]
+fn extinf_over_target_names_its_file_line() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:9.0,
+seg0.ts
+#EXTINF:9.0,
+seg1.ts
+#EXTINF:15.0,
+seg2.ts
+#EXT-X-ENDLIST
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    let hits = findings(&report, "hls-extinf-exceeds-target");
+    assert_eq!(hits.len(), 1, "{:?}", report.findings());
+    assert_eq!(hits[0].location.packet, 9, "the EXTINF is on line 9");
+}
+
+// -------------------------------------------------------------------------
+// EXTINF rounding and part-duration edge cases (audit 23)
+// -------------------------------------------------------------------------
+
+/// RFC 8216bis §4.3.3.1 compares the *rounded* `EXTINF` duration.
+fn extinf_over_target(duration: &str) -> bool {
+    let text = format!(
+        "#EXTM3U\n\
+         #EXT-X-VERSION:3\n\
+         #EXT-X-TARGETDURATION:10\n\
+         #EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXTINF:{duration},\n\
+         seg0.ts\n\
+         #EXT-X-ENDLIST\n",
+    );
+    let mut report = Report::new();
+    check_hls_playlist(&text, &mut report);
+    !findings(&report, "hls-extinf-exceeds-target").is_empty()
+}
+
+/// 10.4 rounds to 10, 10.5 and 11.4 round to 11 (over the target), and 9.6
+/// rounds to 10.
+#[test]
+fn extinf_is_compared_after_rounding_to_the_nearest_second() {
+    assert!(!extinf_over_target("10.4"));
+    assert!(extinf_over_target("10.5"));
+    assert!(extinf_over_target("11.4"));
+    assert!(!extinf_over_target("9.6"));
+}
+
+/// `PART-TARGET:0` disables the part-duration bounds instead of flagging
+/// every part as "<= 0.000".
+#[test]
+fn zero_part_target_disables_the_part_duration_bounds() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0
+#EXT-X-PART:DURATION=0.5,URI=\"p0.m4s\"
+#EXT-X-PART:DURATION=0.5,URI=\"p1.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    assert!(
+        findings(&report, "hls-part-duration-range").is_empty(),
+        "a zero PART-TARGET must not bound the parts, got {:?}",
+        report.findings()
+    );
+}
+
+/// The exemption note belongs only to an over-target part that actually is
+/// exempt from the 85% floor.
+#[test]
+fn over_target_part_that_is_not_exempt_gets_no_exemption_note() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.500,URI=\"p0.m4s\"
+#EXT-X-PART:DURATION=0.333,URI=\"p1.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    let hits = findings(&report, "hls-part-duration-range");
+    assert_eq!(hits.len(), 1, "{:?}", report.findings());
+    assert!(
+        !hits[0].message.contains("exemptions relax only"),
+        "a non-exempt part carries no exemption note: {:?}",
+        hits[0].message
+    );
+}
+
+/// An over-target `INDEPENDENT=YES` part is exempt from the floor only, and
+/// the message says exactly that.
+#[test]
+fn over_target_independent_part_gets_the_exemption_note() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.500,URI=\"p0.m4s\",INDEPENDENT=YES
+#EXT-X-PART:DURATION=0.333,URI=\"p1.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    let hits = findings(&report, "hls-part-duration-range");
+    assert_eq!(hits.len(), 1, "{:?}", report.findings());
+    assert!(
+        hits[0].message.contains("exemptions relax only"),
+        "an exempt part carries the note: {:?}",
+        hits[0].message
+    );
+}

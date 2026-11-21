@@ -24,8 +24,22 @@ use test_fixtures::process::KillOnDrop;
 const TS_PACKET_SIZE: usize = 188;
 const DATAGRAM_PACKETS: usize = 7;
 
-/// Spawn `watch` on port 0 for both sockets and return the addresses it printed.
-fn spawn_watch(extra: &[&str]) -> (KillOnDrop, SocketAddr, SocketAddr) {
+/// The kernel's `SO_RCVBUF` grant for a freshly bound loopback UDP socket that
+/// asked for `requested` bytes, so a test can decide whether `watch` should
+/// warn without assuming this host's limits.
+fn kernel_grant(requested: u32) -> usize {
+    let want = std::num::NonZeroU32::new(requested).expect("non-zero request");
+    let socket = media_doctor::udp::bind_udp(
+        "127.0.0.1:0".parse().expect("address"),
+        &media_doctor::udp::udp_options(Some(want), false, None),
+    )
+    .expect("bind a probe socket");
+    media_doctor::udp::recv_buffer_size(&socket).expect("read back SO_RCVBUF")
+}
+
+/// Spawn `watch` on port 0 for both sockets and return the addresses it printed
+/// together with any warning lines it emitted before its start-up line.
+fn spawn_watch(extra: &[&str]) -> (KillOnDrop, SocketAddr, SocketAddr, Vec<String>) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_media-doctor"))
         .args([
             "watch",
@@ -41,26 +55,36 @@ fn spawn_watch(extra: &[&str]) -> (KillOnDrop, SocketAddr, SocketAddr) {
         .expect("spawn watch");
     let stderr = child.stderr.take().unwrap();
     let guard = KillOnDrop(child);
-    let mut line = String::new();
-    BufReader::new(stderr)
-        .read_line(&mut line)
-        .expect("start-up line");
-    // "media-doctor watch: ingesting UDP 127.0.0.1:PORT, metrics on http://127.0.0.1:PORT/metrics"
-    let udp = line
-        .split("UDP ")
-        .nth(1)
-        .and_then(|s| s.split(',').next())
-        .expect(&line)
-        .parse()
-        .expect(&line);
-    let http = line
-        .split("http://")
-        .nth(1)
-        .and_then(|s| s.split("/metrics").next())
-        .expect(&line)
-        .parse()
-        .expect(&line);
-    (guard, udp, http)
+    let mut reader = BufReader::new(stderr);
+    let mut warnings = Vec::new();
+    loop {
+        let mut line = String::new();
+        let read = reader.read_line(&mut line).expect("start-up line");
+        assert!(
+            read > 0,
+            "watch exited before its start-up line; warnings: {warnings:?}",
+        );
+        if !line.contains("ingesting UDP") {
+            warnings.push(line.trim_end().to_owned());
+            continue;
+        }
+        // "media-doctor watch: ingesting UDP 127.0.0.1:PORT, metrics on http://127.0.0.1:PORT/metrics"
+        let udp = line
+            .split("UDP ")
+            .nth(1)
+            .and_then(|s| s.split(',').next())
+            .expect(&line)
+            .parse()
+            .expect(&line);
+        let http = line
+            .split("http://")
+            .nth(1)
+            .and_then(|s| s.split("/metrics").next())
+            .expect(&line)
+            .parse()
+            .expect(&line);
+        return (guard, udp, http, warnings);
+    }
 }
 
 fn scrape(addr: SocketAddr) -> String {
@@ -80,7 +104,7 @@ fn metric(text: &str, name: &str) -> Option<f64> {
 
 #[test]
 fn first_scrape_already_lists_every_family() {
-    let (_g, _udp, http) = spawn_watch(&[]);
+    let (_g, _udp, http, _warnings) = spawn_watch(&[]);
     let body = scrape(http);
     assert!(body.starts_with("HTTP/1.1 200 OK"), "{body}");
     assert_eq!(
@@ -94,7 +118,7 @@ fn first_scrape_already_lists_every_family() {
 /// (the binary flushes when its socket read times out).
 #[test]
 fn final_datagrams_become_visible_after_the_feed_stops() {
-    let (_g, udp, http) = spawn_watch(&[]);
+    let (_g, udp, http, _warnings) = spawn_watch(&[]);
     let bytes = std::fs::read(test_fixtures::path("ts/m6-single.ts")).unwrap();
     let packets = bytes.len() / TS_PACKET_SIZE;
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -212,7 +236,7 @@ fn zero_metrics_io_timeout_is_rejected() {
 /// connection is dropped by the deadline, so the final request fails.)
 #[test]
 fn metrics_max_conns_flag_is_the_cap() {
-    let (_g, _udp, http) = spawn_watch(&[
+    let (_g, _udp, http, _warnings) = spawn_watch(&[
         "--metrics-max-conns",
         "1",
         "--metrics-io-timeout-ms",
@@ -245,7 +269,7 @@ fn metrics_max_conns_flag_is_the_cap() {
 #[test]
 fn metrics_io_timeout_flag_is_the_deadline() {
     const TIMEOUT_MS: u64 = 400;
-    let (_g, _udp, http) =
+    let (_g, _udp, http, _warnings) =
         spawn_watch(&["--metrics-max-conns", "8", "--metrics-io-timeout-ms", "400"]);
     // Warm up: the metrics thread's runtime starts after the start-up line, so
     // the first connection would otherwise include that start-up latency.
@@ -266,4 +290,46 @@ fn metrics_io_timeout_flag_is_the_deadline() {
         elapsed < Duration::from_millis(TIMEOUT_MS * 5),
         "dropped far too late (flag ignored?): {elapsed:?}"
     );
+}
+
+/// A request the kernel cannot grant produces the "kernel granted less than
+/// requested" warning. Host-dependent, so the expectation is derived from the
+/// kernel's own grant to an identically configured probe socket.
+#[test]
+fn an_ungranted_so_rcvbuf_request_warns_before_the_start_up_line() {
+    const REQUESTED: u32 = 2_147_483_647;
+    let granted = kernel_grant(REQUESTED);
+    let (_g, _udp, _http, warnings) = spawn_watch(&["--udp-rcvbuf", "2147483647"]);
+    let text = warnings.join("\n");
+    if granted < REQUESTED as usize {
+        assert!(
+            text.contains("SO_RCVBUF requested 2147483647 bytes"),
+            "a short grant must warn; grant {granted}, warnings {text:?}",
+        );
+    } else {
+        assert!(
+            !text.contains("SO_RCVBUF requested"),
+            "a fully granted request must not warn; warnings {text:?}",
+        );
+    }
+}
+
+/// A grant that meets the request is not a shortfall and must stay quiet.
+#[test]
+fn a_granted_so_rcvbuf_request_does_not_warn() {
+    const REQUESTED: u32 = 4096;
+    let granted = kernel_grant(REQUESTED);
+    let (_g, _udp, _http, warnings) = spawn_watch(&["--udp-rcvbuf", "4096"]);
+    let text = warnings.join("\n");
+    if granted >= REQUESTED as usize {
+        assert!(
+            !text.contains("SO_RCVBUF requested"),
+            "a granted request must not warn; warnings {text:?}",
+        );
+    } else {
+        assert!(
+            text.contains("SO_RCVBUF requested 4096 bytes"),
+            "a short grant must warn; grant {granted}, warnings {text:?}",
+        );
+    }
 }
