@@ -288,6 +288,48 @@ mod tests {
         assert!(!redacted.contains("user"));
     }
 
+    /// The fallback's `scheme_end + 3` boundary: the credential mask starts
+    /// exactly after `://`. A short userinfo keeps the last `@` early in the
+    /// string, so a wrong offset either skips it (returning the raw URL, with
+    /// the credentials intact) or folds the userinfo back into the host half.
+    #[test]
+    fn unparseable_url_masks_userinfo_at_the_scheme_boundary() {
+        // Rejected by the `url` crate (port out of range), so this exercises
+        // the fallback rather than the parser.
+        assert_eq!(redact_url("rtsp://u@h:99999/s"), "rtsp://***@h:99999/s");
+        assert_eq!(
+            redact_url("rtsp://user:p@ss@[::1/s?x=1"),
+            "rtsp://***@[::1/s?x=1"
+        );
+        assert!(!redact_url("rtsp://user:p@ss@[::1/s?x=1").contains("p@ss"));
+        // A two-character scheme leaves no room to step back from the `://`;
+        // stepping past the authority instead must land on it exactly.
+        assert_eq!(
+            redact_url("s3://user:p@ss@[::1/key?x=1"),
+            "s3://***@[::1/key?x=1"
+        );
+        // No `@` before the query: nothing to mask, string unchanged.
+        assert_eq!(
+            redact_url("rtsp://[::1/s?x=1"),
+            "rtsp://[::1/s?x=1"
+        );
+    }
+
+    /// Same boundary in the destination fallback, over a URL short enough that
+    /// a too-large offset runs past the end of the string.
+    #[test]
+    fn unparseable_destination_keeps_the_scheme_and_hides_the_tail() {
+        let dest = redact_destination("rtmp://[bad/app/KEY?k=v");
+        assert!(dest.starts_with("rtmp://"), "{dest}");
+        assert!(!dest.contains("KEY"), "{dest}");
+        assert!(!dest.contains("k=v"), "{dest}");
+        assert_eq!(dest, "rtmp://<redacted>/<redacted>");
+        assert_eq!(
+            redact_destination("rtmp://[h/K"),
+            "rtmp://<redacted>/<redacted>"
+        );
+    }
+
     /// Guard (I4): the two masking-only fallbacks must not reconstruct a
     /// secret from the raw text. Asserted by BEHAVIOUR, not by a source-string
     /// match: a respelling of the host extraction (e.g. `rfind('@')` rather
