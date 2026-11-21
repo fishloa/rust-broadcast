@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-pub(crate) mod catchup;
 pub(crate) mod clock;
 pub mod config;
 pub mod dvr;

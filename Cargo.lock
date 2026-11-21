@@ -2458,6 +2458,7 @@ dependencies = [
  "dvb-conformance",
  "dvb-si",
  "dvb-stream",
+ "dvr-runtime",
  "flate2",
  "futures-util",
  "getrandom 0.4.3",

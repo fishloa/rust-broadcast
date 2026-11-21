@@ -189,13 +189,14 @@ pub enum MultimuxError {
         /// The output kind's name.
         kind: String,
     },
-    /// A route's DVR archive could not be read or scanned, so its segment
-    /// numbering cannot continue above what the archive already holds.
-    #[error("dvr: {0}")]
-    Dvr(
-        /// Why the archive read failed.
+    /// A route's DVR archive scan did not run to completion (runtime
+    /// shutdown, or the scan panicked), so its segment numbering cannot
+    /// continue above what the archive already holds.
+    #[error("archive scan: {0}")]
+    ArchiveScan(
+        /// Why the scan task ended.
         #[source]
-        crate::dvr::DvrError,
+        tokio::task::JoinError,
     ),
 }
 

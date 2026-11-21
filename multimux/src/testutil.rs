@@ -342,3 +342,67 @@ pub(crate) async fn assert_dash_continues_across_a_reconnect(
         "the MPD advertises the new run's last segment, not {newest}"
     );
 }
+
+/// Record `segments` (Trunk sequence number, fill byte) as one run of the
+/// archive `name` under `root`, numbered `offset` above the Trunk, the way a
+/// route's recorder would; an fMP4 archive gets the init `INIT` first.
+pub(crate) fn record_archive_run(
+    root: &std::path::Path,
+    name: &str,
+    container: transmux::Container,
+    offset: u64,
+    segments: &[(u32, u8)],
+) {
+    use media_plane::ids::SegmentSeq;
+    use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
+
+    let config = crate::dvr::DvrConfig::default()
+        .with_enabled(true)
+        .with_archive_root(root.to_string_lossy().into_owned())
+        .with_retention_periods(16)
+        .to_archive_config(container, std::time::Duration::from_secs(3), offset)
+        .expect("archive config");
+    let trunk = Arc::new(Trunk::new(TrunkConfig::default()));
+    let writer = trunk.segment_writer().expect("segment writer");
+    let mut recorder = dvr_runtime::fs::FsRecorder::new(
+        root,
+        crate::dvr::archive_name(name).expect("archive name"),
+        config,
+        &trunk,
+    )
+    .expect("recorder");
+    for &(seq, byte) in segments {
+        writer
+            .publish_segment(SegmentEntry::new(
+                bytes::Bytes::from(vec![byte; 24]),
+                SegmentSeq::new(seq),
+                std::time::Duration::from_secs(3),
+                broadcast_common::Timestamp::from_nanos(u64::from(seq) * 3_000_000_000),
+                transmux::SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .expect("publish");
+    }
+    let inits = [dvr_runtime::InitGeneration::new(
+        SegmentSeq::new(0),
+        bytes::Bytes::from_static(b"INIT"),
+    )];
+    recorder
+        .poll(broadcast_common::Timestamp::ZERO, |_| None, &inits)
+        .expect("persist");
+}
+
+/// Every readable segment of the archive `name` under `root`.
+pub(crate) fn scan_archive(
+    root: &std::path::Path,
+    name: &str,
+    container: transmux::Container,
+) -> dvr_runtime::read::ArchiveScan {
+    dvr_runtime::fs::FsArchive::open(
+        root,
+        &crate::dvr::archive_name(name).expect("archive name"),
+        crate::dvr::archive_container(container),
+    )
+    .scan()
+}

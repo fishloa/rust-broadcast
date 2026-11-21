@@ -366,9 +366,7 @@ impl RouteRegistry {
     async fn archive_floor(&self, route: &Route) -> crate::Result<u32> {
         #[cfg(test)]
         self.hooks.wait_floor_gate(&route.name).await;
-        let floor = archive_floor_of(route)
-            .await
-            .map_err(crate::MultimuxError::Dvr)?;
+        let floor = archive_floor_of(route).await?;
         #[cfg(test)]
         self.hooks.log(format!("floor:{}", route.name));
         Ok(floor)
@@ -1087,14 +1085,6 @@ async fn drain_route(runtime: RouteRuntime) {
             abort_handle.abort();
         }
     }
-    // Release the route's catch-up index cache: nothing reads it any more,
-    // and each entry owns its whole parsed segment vector (audit 20 finding
-    // 24). A reload that keeps the route re-scans on the next request, which
-    // is what a missing cache already means.
-    if let Some(dvr) = runtime.store.dvr_config() {
-        let dir = crate::catchup::archive_dir(dvr, runtime.store.name());
-        crate::catchup::drop_route_cache(&dir);
-    }
 }
 
 /// One route's admin-visible status — `GET /admin/routes`/`GET
@@ -1620,12 +1610,16 @@ pub(crate) async fn serve_with_admin(
 /// when DVR is off (see `crate::dvr::archive_seq_floor`).
 ///
 /// # Errors
-/// [`crate::dvr::DvrError::ArchiveScan`] when the archive scan could not run.
-pub(super) async fn archive_floor_of(route: &Route) -> Result<u32, crate::dvr::DvrError> {
+/// [`crate::MultimuxError::ArchiveScan`] when the archive scan could not run,
+/// [`crate::MultimuxError::ConfigInvalid`] for a route name that cannot name
+/// an archive.
+pub(super) async fn archive_floor_of(route: &Route) -> crate::Result<u32> {
     if route.dvr.enabled {
-        Ok(crate::dvr::archive_seq_floor(&route.dvr, &route.name)
-            .await?
-            .value())
+        Ok(
+            crate::dvr::archive_seq_floor(&route.dvr, &route.name, super::route_container(route))
+                .await?
+                .value(),
+        )
     } else {
         Ok(0)
     }
@@ -1789,46 +1783,24 @@ mod tests {
     /// route without DVR has floor 0 (nothing to continue above).
     #[tokio::test]
     async fn archive_floor_of_reads_the_archive_and_is_zero_without_dvr() {
-        use media_plane::ids::SegmentSeq;
-        use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
-
         let root = std::env::temp_dir().join(format!(
             "multimux-admin-archive-floor-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("temp dir");
-        let dvr = DvrConfig {
-            enabled: true,
-            archive_root: root.to_string_lossy().to_string(),
-            retention_periods: 10,
-            retention_bytes: 0,
-            period_duration_secs: 3600,
-            overrun: crate::dvr::ArchiveOverrunSerde::Gap,
-            dvb_service_id: None,
-        };
-        let trunk = Trunk::new(TrunkConfig::default());
-        let writer = trunk.segment_writer().expect("segment writer");
-        let mut recorder =
-            crate::dvr::DvrRecorder::new("cam".to_string(), dvr.clone(), ".m4s", &trunk)
-                .expect("recorder");
-        let init = b"ARCHIVE_INIT";
-        recorder.poll_and_persist(Some(init)).expect("poll init");
-        for (seq, byte) in [(1u32, 0xAAu8), (2, 0xBB), (3, 0xCC)] {
-            writer
-                .publish_segment(SegmentEntry::new(
-                    bytes::Bytes::from(vec![byte; 24]),
-                    SegmentSeq::new(seq),
-                    std::time::Duration::from_secs(3),
-                    broadcast_common::Timestamp::from_nanos(u64::from(seq) * 3_000_000_000),
-                    transmux::SegmentMeta {
-                        discontinuous: false,
-                    },
-                ))
-                .expect("publish");
-        }
-        recorder.poll_and_persist(Some(init)).expect("persist");
-        drop(recorder);
+        let dvr = DvrConfig::default()
+            .with_enabled(true)
+            .with_archive_root(root.to_string_lossy().to_string())
+            .with_retention_periods(10)
+            .with_period_duration_secs(3600);
+        crate::testutil::record_archive_run(
+            &root,
+            "cam",
+            transmux::Container::Fmp4,
+            0,
+            &[(1, 0xAA), (2, 0xBB), (3, 0xCC)],
+        );
 
         let mut route = rtsp_route("cam", "rtsp://host/cam");
         route.dvr = dvr;
@@ -1839,40 +1811,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// Removing a route releases its catch-up index cache, whose entries hold
-    /// whole parsed segment vectors (audit 20 finding 24). MUTATION VERIFIED:
-    /// a no-op `drop_route_cache` leaves the entry resident and this fails.
+    /// A restarted route numbers above its archive floor, so the archive never
+    /// holds two periods claiming one sequence number (#3941): without the
+    /// floor the second run would number from 1 again and `FsArchive::scan`
+    /// would report every one of its segments as a conflict.
     #[tokio::test]
-    async fn removing_a_route_releases_its_catchup_index_cache() {
+    async fn a_restarted_route_numbers_above_its_floor_and_never_conflicts() {
         let root = std::env::temp_dir().join(format!(
-            "multimux-admin-catchup-cache-{}",
+            "multimux-admin-restart-floor-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        let dir = root.join("cam");
-        std::fs::create_dir_all(&dir).expect("archive dir");
-        std::fs::write(dir.join("p0.idx"), b"[]").expect("period index");
-
-        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        std::fs::create_dir_all(&root).expect("temp dir");
         let mut route = rtsp_route("cam", "rtsp://host/cam");
-        route.dvr = DvrConfig {
-            enabled: true,
-            archive_root: root.to_string_lossy().into_owned(),
-            ..DvrConfig::default()
-        };
-        registry.add_route(route).await.expect("add");
-        let _ = crate::catchup::read_period_segments(&dir, 0);
-        assert_eq!(
-            crate::catchup::cached_index_entries(&dir),
-            1,
-            "the read populated the route's index cache"
+        route.dvr = DvrConfig::default()
+            .with_enabled(true)
+            .with_archive_root(root.to_string_lossy().to_string())
+            .with_retention_periods(10);
+        let container = transmux::Container::Fmp4;
+        crate::testutil::record_archive_run(&root, "cam", container, 0, &[(1, 1), (2, 2)]);
+        let floor = archive_floor_of(&route).await.expect("floor");
+        assert_eq!(floor, 2);
+        crate::testutil::record_archive_run(
+            &root,
+            "cam",
+            container,
+            u64::from(floor),
+            &[(1, 3), (2, 4)],
         );
+        let scan = crate::testutil::scan_archive(&root, "cam", container);
+        assert!(scan.conflicts.is_empty(), "{:?}", scan.conflicts);
+        assert!(scan.unreadable.is_empty());
+        let seqs: Vec<u32> = scan.segments.iter().map(|s| s.seq.value()).collect();
+        assert_eq!(seqs, [1, 2, 3, 4]);
+        assert_eq!(archive_floor_of(&route).await.expect("floor"), 4);
 
-        registry.remove_route("cam").await.expect("remove");
+        crate::testutil::record_archive_run(&root, "cam", container, 0, &[(1, 5)]);
         assert_eq!(
-            crate::catchup::cached_index_entries(&dir),
-            0,
-            "a removed route's cache must not stay resident"
+            crate::testutil::scan_archive(&root, "cam", container)
+                .conflicts
+                .len(),
+            1,
+            "a run without the floor does conflict, so the check above bites"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
