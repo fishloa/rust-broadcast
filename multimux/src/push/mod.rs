@@ -467,6 +467,9 @@ fn log_partial_selection(url: &str, proposed: usize, selection: &TrackSelection)
 /// Returns the [`PushMetrics`] accumulated for the lifetime of this task.
 /// Cancellation is cooperative via `cancel` — the loop checks it between
 /// drain steps (never mid-`send`).
+#[cfg(test)]
+static DRIVE_PUSH_TURNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub async fn drive_push<T: PushTransport>(
     trunk: Arc<Trunk>,
     url: String,
@@ -507,6 +510,8 @@ pub async fn drive_push<T: PushTransport>(
     let _ = _format;
 
     loop {
+        #[cfg(test)]
+        DRIVE_PUSH_TURNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if cancel.is_cancelled() {
             if let Some(e) = egress.as_mut() {
                 e.transport_mut().close();
@@ -966,5 +971,140 @@ mod tests {
         assert!(!eng.should_connect() || eng.time_until_retry().is_zero());
         // Never failed.
         assert!(!eng.is_failed());
+    }
+
+    /// A destination that refuses every dial is re-dialled only after the
+    /// backoff has been slept out: with a live sample stream keeping every
+    /// loop wake-up immediate, the loop turns over a handful of times
+    /// between two dials instead of spinning for the whole backoff (the
+    /// engine still refuses to *dial* early, so dial spacing alone cannot
+    /// see the difference).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failing_push_sleeps_out_its_backoff() {
+        use std::sync::Mutex;
+        use std::sync::atomic::Ordering;
+
+        static DIALS: Mutex<Vec<(std::time::Instant, u64)>> = Mutex::new(Vec::new());
+
+        struct CountingFailsTransport;
+
+        #[derive(Debug, thiserror::Error)]
+        #[error("connect always fails")]
+        struct CountingFailsError;
+
+        #[async_trait::async_trait]
+        impl PushTransport for CountingFailsTransport {
+            type Config = ();
+            type Error = CountingFailsError;
+
+            async fn connect(_url: &str, _config: &Self::Config) -> Result<Self, Self::Error> {
+                DIALS
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((
+                        std::time::Instant::now(),
+                        DRIVE_PUSH_TURNS.load(Ordering::Relaxed),
+                    ));
+                Err(CountingFailsError)
+            }
+
+            async fn send(&mut self, _data: &[u8]) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn close(&mut self) {}
+        }
+
+        DIALS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        DRIVE_PUSH_TURNS.store(0, Ordering::Relaxed);
+        let trunk = Trunk::new(TrunkConfig::default().with_segment_capacity(nz(64)));
+        // A live sample stream: every `trunk.listen()` resolves at once, so
+        // the loop's own 250 ms wake-up cap is not what paces it.
+        let publish_cancel = CancellationToken::new();
+        let publisher = {
+            let trunk = Arc::clone(&trunk);
+            let publish_cancel = publish_cancel.clone();
+            tokio::spawn(async move {
+                let writer = trunk.segment_writer().expect("segment writer");
+                let mut seq = 1u32;
+                while !publish_cancel.is_cancelled() {
+                    if writer
+                        .publish_segment(media_plane::trunk::SegmentEntry::new(
+                            bytes::Bytes::from(vec![0u8; 8]),
+                            media_plane::ids::SegmentSeq::new(seq),
+                            Duration::from_millis(5),
+                            broadcast_common::Timestamp::from_nanos(
+                                u64::from(seq) * 5_000_000,
+                            ),
+                            transmux::SegmentMeta {
+                                discontinuous: false,
+                            },
+                        ))
+                        .is_err()
+                    {
+                        break;
+                    }
+                    seq = seq.saturating_add(1);
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+        };
+
+        let cancel = CancellationToken::new();
+        let reconnect =
+            ReconnectPolicy::doubling(Duration::from_millis(300), Duration::from_secs(30));
+        let run = tokio::spawn(drive_push::<CountingFailsTransport>(
+            Arc::clone(&trunk),
+            "srt://127.0.0.1:1/live".to_string(),
+            (),
+            PushFormat::Ts,
+            reconnect,
+            cancel.clone(),
+        ));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let dials = DIALS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len();
+            if dials >= 2 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the push engine did not re-dial within the guard"
+            );
+            tokio::task::yield_now().await;
+        }
+        let (gap, turns) = {
+            let dials = DIALS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                dials[1].0.duration_since(dials[0].0),
+                dials[1].1.saturating_sub(dials[0].1),
+            )
+        };
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_millis(100), run)
+            .await
+            .expect("a cancel during the backoff must return promptly")
+            .expect("driver task");
+        publish_cancel.cancel();
+        publisher.abort();
+
+        assert!(
+            gap >= Duration::from_millis(250),
+            "the two dials were {gap:?} apart, inside the 300 ms backoff floor"
+        );
+        assert!(
+            turns <= 10,
+            "the loop turned {turns} times between two dials while sleeping out a 300 ms \
+             backoff (a skipped wait spins instead of sleeping)"
+        );
     }
 }
