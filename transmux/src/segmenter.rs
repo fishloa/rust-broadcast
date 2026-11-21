@@ -641,3 +641,25 @@ impl Stage for Segmenter {
         )
     }
 }
+
+#[cfg(test)]
+mod last_dts_tests {
+    use super::*;
+
+    fn dts_only(dts: i64) -> Sample {
+        Sample::new(Vec::new(), Some(dts), None, None, false).expect("valid timing")
+    }
+
+    #[test]
+    fn tick_records_the_dts_for_the_next_window() {
+        let mut clock = MediaClock::new();
+        assert_eq!(clock.tick(&dts_only(100)), 0);
+        assert_eq!(clock.last_dts(), Some(100));
+    }
+
+    #[test]
+    fn resumed_clock_measures_from_the_previous_sample() {
+        let mut clock = MediaClock::resumed_at(Some(100));
+        assert_eq!(clock.tick(&dts_only(140)), 40);
+    }
+}
