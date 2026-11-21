@@ -120,6 +120,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **AV1 `initial_presentation_delay_minus_one` serializes its presence bit and delay.** The only `av1C` fixture carried `None`, so a present delay could be ORed/XORed into the wrong nibble, writing 3 as `0x1F` (wrong delay, presence bit intact). Delays 3 and 15 now assert `0x13`/`0x1F` and parse back (audit 23 finding 224, #3732).
 
+- **An `avcC` with SPS extensions gets the right length and writes each extension once.** Every test record had `sps_ext: vec![]`, so the `2 + len` length term and the cursor advance were unexercised: a High-profile record with two extensions would report a wrong length or have the second overwrite the first. Two extensions of 3 and 5 bytes now assert the exact 29-byte body and parse back (audit 23 finding 225, #3733).
+- **The `avcC` box's `serialize_into` return value and the record's `Display` are pinned.** Callers use `serialized_len`, so the serializer could return `8 * config_len` unnoticed, and the `Display` could print nothing. A known record now asserts the written length equals `serialized_len` and the exact `AVC(profile=100, ...)` string (audit 23 finding 226, #3734).
+
 ### Removed
 - **BREAKING: `TrackFragmentBox::into_bytes`** (unused; use `Serialize::try_to_bytes`) (#3698).
 
