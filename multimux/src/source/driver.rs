@@ -863,4 +863,64 @@ mod tests {
         peer.read_to_end(&mut received).await.unwrap();
         assert_eq!(received, b"TEARDOWN");
     }
+
+    #[test]
+    fn ts_counts_from_the_scaffolds_clock_origin() {
+        let start = tokio::time::Instant::now();
+        assert_eq!(
+            ts(start, start + Duration::from_millis(250)),
+            Timestamp::from_millis(250)
+        );
+    }
+
+    struct QueuedWrites(std::collections::VecDeque<Bytes>);
+
+    impl Stage for QueuedWrites {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = Infallible;
+        fn feed(&mut self, _i: &[u8], _n: Timestamp) -> Result<(), Infallible> {
+            Ok(())
+        }
+        fn poll(&mut self) -> Option<SessionEvent> {
+            None
+        }
+        fn finish(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for QueuedWrites {
+        type Request = Bytes;
+        fn poll_transmit(&mut self) -> Option<Bytes> {
+            self.0.pop_front()
+        }
+    }
+
+    /// The farewell writes every queued message, not just the first: a
+    /// `TEARDOWN` after a keepalive must reach the peer.
+    #[tokio::test]
+    async fn farewell_writes_every_queued_message() {
+        let mut driver = IngestDriver::new(
+            QueuedWrites(std::collections::VecDeque::from([
+                Bytes::from_static(b"keepalive"),
+                Bytes::from_static(b"TEARDOWN"),
+            ])),
+            media_plane::IngestConfig::new(HandshakePolicy::establish_by(
+                Timestamp::from_nanos(u64::MAX),
+            ))
+            .with_trunk(
+                TrunkConfig::default()
+                    .with_timed_capacity(nz(4))
+                    .with_sparse_capacity(nz(4))
+                    .with_segment_capacity(nz(4))
+                    .with_event_capacity(nz(4))
+                    .with_part_capacity(nz(4)),
+            )
+            .with_max_programs(nz(4)),
+        );
+        let mut out: Vec<u8> = Vec::new();
+        send_farewell(&mut driver, &mut out, Duration::from_secs(1)).await;
+        assert_eq!(out, b"keepaliveTEARDOWN");
+    }
 }
