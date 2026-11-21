@@ -464,6 +464,7 @@ struct Counters {
     rx_dropped: AtomicU64,
     deliver_dropped: AtomicU64,
     late_dropped: AtomicU64,
+    too_late_dropped: AtomicU64,
     rx_oversize: AtomicU64,
 }
 
@@ -484,6 +485,12 @@ pub struct SocketStats {
     /// cursor: duplicates, retransmissions of what was already delivered or
     /// given up on, and stale sequence numbers (never staged).
     pub late_dropped: u64,
+    /// Sequence numbers the TSBPD scheduler gave up on: packets that arrived
+    /// after their play time by more than the too-late threshold, and gaps
+    /// skipped as unrecoverable when the next buffered packet reached its
+    /// play time (§4.6, too-late packet drop). Each one is a delivered
+    /// stream's payload that no retransmission can recover.
+    pub too_late_dropped: u64,
     /// Datagrams larger than [`IoConfig::max_datagram`], dropped rather than
     /// truncated.
     pub rx_oversize: u64,
@@ -1069,6 +1076,7 @@ impl SrtSocket {
             rx_dropped: self.stats.rx_dropped.load(Ordering::Relaxed),
             deliver_dropped: self.stats.deliver_dropped.load(Ordering::Relaxed),
             late_dropped: self.stats.late_dropped.load(Ordering::Relaxed),
+            too_late_dropped: self.stats.too_late_dropped.load(Ordering::Relaxed),
             rx_oversize: self.stats.rx_oversize.load(Ordering::Relaxed),
         }
     }
@@ -2000,6 +2008,7 @@ impl Driver {
         }
         for &seq in &outcome.dropped {
             self.staged.remove(&seq);
+            self.stats.too_late_dropped.fetch_add(1, Ordering::Relaxed);
         }
         for (first, last) in contiguous_runs(&outcome.dropped) {
             self.receiver.skip_range(first, last);
@@ -4408,6 +4417,11 @@ mod adapter_tests {
             drain_deliveries(&mut rx).len(),
             3,
             "0, 2, 3 delivered once the gap is skipped"
+        );
+        assert_eq!(
+            driver.stats.too_late_dropped.load(Ordering::Relaxed),
+            1,
+            "the skipped sequence number is reported as dropped"
         );
         assert_eq!(
             driver.receiver.ack_point(),
