@@ -401,7 +401,8 @@ impl DateRange {
         Ok(self)
     }
 
-    /// Set or clear `CLASS`.
+    /// Set or clear `CLASS`. A new attribute is appended at the end;
+    /// [`Self::with_class`] inserts it in canonical order.
     pub fn set_class(&mut self, class: Option<impl Into<String>>) -> Result<()> {
         match class {
             Some(class) => self.replace_or_append("CLASS", AttrValue::quoted(class.into())?),
@@ -416,7 +417,8 @@ impl DateRange {
         Ok(self)
     }
 
-    /// Set or clear `START-DATE`.
+    /// Set or clear `START-DATE`. A new attribute is appended at the end;
+    /// [`Self::with_start`] inserts it in canonical order.
     pub fn set_start(&mut self, start: Option<ProgramDateTime>) {
         match start {
             Some(start) => {
@@ -433,7 +435,8 @@ impl DateRange {
         self
     }
 
-    /// Set or clear `END-DATE`.
+    /// Set or clear `END-DATE`. A new attribute is appended at the end;
+    /// [`Self::with_end`] inserts it in canonical order.
     pub fn set_end(&mut self, end: Option<ProgramDateTime>) {
         match end {
             Some(end) => {
@@ -450,7 +453,8 @@ impl DateRange {
         self
     }
 
-    /// Set or clear `DURATION`.
+    /// Set or clear `DURATION`. A new attribute is appended at the end;
+    /// [`Self::with_duration`] inserts it in canonical order.
     pub fn set_duration(&mut self, duration: Option<crate::DecimalSeconds>) {
         match duration {
             Some(duration) => {
@@ -473,7 +477,8 @@ impl DateRange {
         self
     }
 
-    /// Set or clear `PLANNED-DURATION`.
+    /// Set or clear `PLANNED-DURATION`. A new attribute is appended at the
+    /// end; [`Self::with_planned_duration`] inserts it in canonical order.
     pub fn set_planned_duration(&mut self, planned: Option<crate::DecimalSeconds>) {
         match planned {
             Some(planned) => {
@@ -497,7 +502,8 @@ impl DateRange {
         self
     }
 
-    /// Set `END-ON-NEXT`.
+    /// Set `END-ON-NEXT`. A new attribute is appended at the end;
+    /// [`Self::with_end_on_next`] inserts it in canonical order.
     pub fn set_end_on_next(&mut self, end_on_next: bool) {
         if end_on_next {
             self.replace_or_append("END-ON-NEXT", AttrValue::bare_unchecked("YES"));
@@ -515,7 +521,8 @@ impl DateRange {
         self
     }
 
-    /// Set or clear `CUE`.
+    /// Set or clear `CUE`. A new attribute is appended at the end;
+    /// [`Self::with_cue`] inserts it in canonical order.
     pub fn set_cue(&mut self, cue: Option<Cue>) {
         match cue {
             Some(cue) => {
