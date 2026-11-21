@@ -506,3 +506,122 @@ fn a_restart_counts_each_seeded_periods_real_size() {
     assert_eq!(scan.segments[0].period.value(), 1);
     cleanup(&root);
 }
+
+fn recorder_for(root: &std::path::Path, name: &str) -> Result<FsRecorder, FsError> {
+    FsRecorder::new(
+        root,
+        ArchiveName::new(name).expect("name"),
+        config(ArchiveContainer::Fmp4, 2, periods(10)),
+        &trunk(),
+    )
+}
+
+#[test]
+fn a_second_recorder_on_one_directory_is_refused() {
+    let root = temp_dir("lock");
+    let first = recorder_for(&root, "route").expect("first");
+    match recorder_for(&root, "route") {
+        Err(FsError::Locked { path }) => assert!(path.ends_with(".lock")),
+        other => panic!("expected Locked, got {:?}", other.map(|_| ())),
+    }
+    drop(first);
+    cleanup(&root);
+}
+
+#[test]
+fn dropping_the_recorder_releases_the_lock() {
+    let root = temp_dir("lock-release");
+    drop(recorder_for(&root, "route").expect("first"));
+    drop(recorder_for(&root, "route").expect("second after drop"));
+    cleanup(&root);
+}
+
+#[test]
+fn the_lock_file_is_never_scanned_listed_or_evicted() {
+    let root = temp_dir("lock-ignored");
+    let dir = root.join("route");
+    record_run(&root, "route", periods(1), 0, &[(0, 1)]);
+    record_run(&root, "route", periods(1), 1, &[(0, 2)]);
+    record_run(&root, "route", periods(1), 2, &[(0, 3)]);
+    assert!(dir.join(".lock").exists(), "retention never removes it");
+    assert!(!dir.join("p0.m4s").exists(), "retention still evicts");
+    let mut archive = FsArchive::open(
+        &root,
+        &ArchiveName::new("route").expect("name"),
+        ArchiveContainer::Fmp4,
+    );
+    let scan = archive.scan();
+    assert!(scan.unreadable.is_empty());
+    assert!(scan.conflicts.is_empty());
+    assert!(dvr_runtime::layout::classify(".lock", ArchiveContainer::Fmp4).is_none());
+    cleanup(&root);
+}
+
+#[test]
+fn a_restart_given_the_seq_floor_produces_no_conflicts() {
+    let root = temp_dir("floor-ok");
+    record_run(&root, "route", periods(10), 0, &[(0, 1), (1, 2), (2, 3)]);
+    let name = ArchiveName::new("route").expect("name");
+    let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
+    let offset = u64::from(archive.seq_floor().value()) + 1;
+    record_run(&root, "route", periods(10), offset, &[(0, 4), (1, 5)]);
+    let scan = archive.scan();
+    assert!(scan.conflicts.is_empty());
+    assert_eq!(
+        scan.segments
+            .iter()
+            .map(|s| s.seq.value())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4]
+    );
+    cleanup(&root);
+}
+
+#[test]
+fn a_restart_without_the_seq_floor_reports_the_conflict() {
+    let root = temp_dir("floor-missing");
+    record_run(&root, "route", periods(10), 0, &[(0, 1), (1, 2), (2, 3)]);
+    record_run(&root, "route", periods(10), 0, &[(0, 4), (1, 5)]);
+    let name = ArchiveName::new("route").expect("name");
+    let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
+    let scan = archive.scan();
+    assert_eq!(scan.segments.len(), 3, "the later run is hidden");
+    let conflicts: Vec<u32> = scan.conflicts.iter().map(|c| c.seq.value()).collect();
+    assert_eq!(conflicts, vec![0, 1]);
+    assert!(
+        scan.conflicts
+            .iter()
+            .all(|c| c.dropped.value() > c.kept.value())
+    );
+    cleanup(&root);
+}
+
+#[test]
+fn a_stale_temp_playlist_is_removed_reported_and_never_an_archive_file() {
+    use dvr_runtime::PeriodNum;
+    use dvr_runtime::writer::WriterEvent;
+
+    let root = temp_dir("stale-tmp");
+    let dir = root.join("route");
+    record_run(&root, "route", periods(10), 0, &[(0, 1)]);
+    std::fs::write(dir.join(".p5.m3u8.tmp"), b"#EXTM3U\n").expect("tmp");
+    assert!(dvr_runtime::layout::classify(".p5.m3u8.tmp", ArchiveContainer::Fmp4).is_none());
+    let mut recorder = recorder_for(&root, "route").expect("recorder");
+    assert!(!dir.join(".p5.m3u8.tmp").exists());
+    assert_eq!(
+        recorder.poll_event(),
+        Some(WriterEvent::StaleTempPlaylistRemoved {
+            period: PeriodNum::new(5)
+        })
+    );
+    drop(recorder);
+    let mut archive = FsArchive::open(
+        &root,
+        &ArchiveName::new("route").expect("name"),
+        ArchiveContainer::Fmp4,
+    );
+    let scan = archive.scan();
+    assert!(scan.unreadable.is_empty());
+    assert_eq!(scan.segments.len(), 1);
+    cleanup(&root);
+}

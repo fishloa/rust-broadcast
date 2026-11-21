@@ -12,6 +12,10 @@ use std::path::{Path, PathBuf};
 
 use crate::{ArchiveContainer, ArchiveName, PeriodNum};
 
+/// The advisory lock file one recorder holds on the archive directory. It is
+/// not an archive file: [`classify`] never matches it.
+pub const LOCK_FILE_NAME: &str = ".lock";
+
 /// One file the archive holds. Period numbers are decimal and unpadded, so a
 /// name classifies back to exactly one kind and period.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -90,6 +94,14 @@ pub fn classify(name: &str, container: ArchiveContainer) -> Option<ArchiveFile> 
     }
     let digits = rest.strip_suffix(container.ext())?;
     period_digits(digits).map(ArchiveFile::Media)
+}
+
+/// The period a transient `.pN.m3u8.tmp` belongs to, if `name` is one. It
+/// never holds a committed record, so it is not an [`ArchiveFile`].
+#[must_use]
+pub fn classify_playlist_tmp(name: &str) -> Option<PeriodNum> {
+    let digits = name.strip_prefix(".p")?.strip_suffix(".m3u8.tmp")?;
+    period_digits(digits)
 }
 
 /// One file an earlier run left on disk, with the size the filesystem
