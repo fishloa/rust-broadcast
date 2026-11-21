@@ -990,6 +990,166 @@ mod tests {
         }
     }
 
+    fn child_box(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut b = vec![0u8; 8 + body.len()];
+        b[..4].copy_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+        b[4..8].copy_from_slice(&fourcc);
+        b[8..].copy_from_slice(body);
+        b
+    }
+
+    fn layers_body(layers: &LAvsConfigurationBox) -> Vec<u8> {
+        let mut body = vec![0u8; layers.serialized_len()];
+        layers.serialize_into(&mut body).unwrap();
+        body
+    }
+
+    /// A.3.3.1 b): a `lavc` second configuration box is decoded from the
+    /// `avs3` entry's children, and an unrelated child (`btrt`) before it is
+    /// not mistaken for one.
+    #[test]
+    fn secondary_layer_config_selects_the_layers_fourcc_and_ignores_others() {
+        let lavc = LAvsConfigurationBox::new(vec![TemporalLayerInfo::new(
+            0,
+            AvsFrameRateCode::Fps25,
+            100,
+            0,
+        )]);
+        let btrt = child_box(*b"btrt", &[0u8; 12]);
+        let entry = AvsVideoSampleEntry {
+            kind: AvsVideoEntryKind::Avs3,
+            visual: visual(),
+            config: AvsVideoConfig::Avs3(Avs3ConfigurationBox::new(
+                vec![0, 0, 1, 0xB0],
+                LibraryDependencyIdc::MainWithoutLibrary,
+            )),
+            children: vec![
+                SampleEntryChild::Config,
+                SampleEntryChild::Other(btrt.clone()),
+                SampleEntryChild::Other(child_box(LAVC_FOURCC, &layers_body(&lavc))),
+            ],
+        };
+        assert_eq!(entry.secondary_layer_config().unwrap().unwrap(), lavc);
+
+        let only_other = AvsVideoSampleEntry {
+            kind: AvsVideoEntryKind::Avs3,
+            visual: visual(),
+            config: AvsVideoConfig::Avs3(Avs3ConfigurationBox::new(
+                vec![],
+                LibraryDependencyIdc::Library,
+            )),
+            children: vec![SampleEntryChild::Config, SampleEntryChild::Other(btrt)],
+        };
+        assert!(only_other.secondary_layer_config().is_none());
+    }
+
+    /// A.2.3.1 b): an `avst` entry's second configuration box is `la2c`.
+    #[test]
+    fn avst_entry_decodes_its_la2c_secondary_layer_config() {
+        let layers = LAvsConfigurationBox::new(vec![TemporalLayerInfo::new(
+            1,
+            AvsFrameRateCode::Fps50,
+            5,
+            0,
+        )]);
+        let entry = AvsVideoSampleEntry {
+            kind: AvsVideoEntryKind::Avs2,
+            visual: visual(),
+            config: AvsVideoConfig::Avs2(crate::avs2::Avs2ConfigurationBox::new(vec![
+                0, 0, 1, 0xB0,
+            ])),
+            children: vec![
+                SampleEntryChild::Config,
+                SampleEntryChild::Other(child_box(crate::avs2::LA2C_FOURCC, &layers_body(&layers))),
+            ],
+        };
+        assert_eq!(entry.secondary_layer_config().unwrap().unwrap(), layers);
+    }
+
+    /// A.3.2.2: version(8) + sequence_header_length(16) with a zero-length
+    /// sequence header (no `av2c` trailing byte) is exactly three bytes.
+    #[test]
+    fn sequence_header_record_accepts_an_exactly_three_byte_av2c() {
+        assert_eq!(
+            parse_sequence_header_record(&[1, 0, 0], "av2c", 0).unwrap(),
+            (1u8, Vec::<u8>::new())
+        );
+        match parse_sequence_header_record(&[1, 0], "av2c", 0) {
+            Err(Error::BufferTooShort(short)) => {
+                assert_eq!((short.need, short.have), (3, 2));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// A.3.4.1: every `entry_count` library sample is written once at its own
+    /// offset, and the empty `a3lg` entry is zero bytes.
+    #[test]
+    fn visual_lrap_entry_writes_all_library_samples_and_a3lg_is_empty() {
+        let entry = VisualLrapEntry::new(
+            2,
+            vec![
+                LibrarySampleRef::new(1),
+                LibrarySampleRef::new(300),
+                LibrarySampleRef::new(7),
+            ],
+        );
+        let mut buf = vec![0u8; entry.serialized_len()];
+        let n = entry.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, 7);
+        assert_eq!(buf, [0x4C, 0x00, 0x80, 0x96, 0x00, 0x03, 0x80]);
+        assert_eq!(VisualLrapEntry::parse(&buf).unwrap(), entry);
+        assert_eq!(LibrarySampleGroupEntry.serialized_len(), 0);
+    }
+
+    #[test]
+    fn spec_enum_labels_are_pinned() {
+        for (v, label) in [
+            (
+                LibraryDependencyIdc::MainWithoutLibrary,
+                "main stream, no library references",
+            ),
+            (
+                LibraryDependencyIdc::MainWithLibrary,
+                "main stream referencing library pictures",
+            ),
+            (LibraryDependencyIdc::Library, "library stream"),
+            (
+                LibraryDependencyIdc::MainAndLibrary,
+                "main and library stream in one track",
+            ),
+        ] {
+            assert_eq!(v.name(), label);
+            assert_eq!(v.to_string(), label);
+        }
+        for (v, label) in [
+            (AvsVideoEntryKind::Avs3, "AVS3 sample entry (avs3)"),
+            (AvsVideoEntryKind::LAvs3, "LAVS3 sample entry (lav3)"),
+            (AvsVideoEntryKind::Avs2, "AVS2 sample entry (avst)"),
+            (AvsVideoEntryKind::LAvs2, "LAVS2 sample entry (lav2)"),
+        ] {
+            assert_eq!(v.name(), label);
+            assert_eq!(v.to_string(), label);
+        }
+        for (v, label) in [
+            (
+                AvsVideoConfig::Avs3(Avs3ConfigurationBox::new(vec![], LibraryDependencyIdc::Library)),
+                "av3c",
+            ),
+            (
+                AvsVideoConfig::Avs2(crate::avs2::Avs2ConfigurationBox::new(vec![])),
+                "av2c",
+            ),
+            (
+                AvsVideoConfig::Layers(LAvsConfigurationBox::new(vec![])),
+                "lavc/la2c",
+            ),
+        ] {
+            assert_eq!(v.name(), label);
+            assert_eq!(v.to_string(), label);
+        }
+    }
+
     /// An `avs3` sample entry with `av3c`, a `lavc` second config box and a
     /// `pasp` box in wire order, round-trips byte-exact; the secondary layer
     /// configuration is decodable.

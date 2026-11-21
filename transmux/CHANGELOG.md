@@ -125,6 +125,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`declares_no_parameter_sets` requires both arrays empty.** Only the both-empty and both-full cases were tested, so an `avcp` entry with an SPS but no PPS (or the reverse) could be accepted as declaring none, hiding the §5.4.3.1 violation. Both mixed shapes now report the sets present (audit 23 finding 227, #3735).
 
+- **AVS secondary layer configurations are selected by their own FourCC.** An `avst` entry's `la2c` box could return `None` (the arm deleted), and an `avs3` entry's first unrelated child (`btrt`) could be decoded as `lavc` (the FourCC guard forced true). A `la2c` child now decodes for `avst`, a `btrt` before a `lavc` is skipped, and a `btrt`-only entry yields `None` (audit 23 finding 228, #3736).
+- **A three-byte `av2c` sequence-header record is accepted.** The `bytes.len() < 3` boundary was never hit, so the exact minimum (version + zero length, no trailing byte) could be rejected as short; both the acceptance and the two-byte `BufferTooShort { need: 3, have: 2 }` are now asserted (audit 23 finding 229, #3737).
+- **The `lrap` entry writes every library sample once and the `a3lg` entry is zero bytes.** With two or more samples the cursor `+= 2` could become `*= 2`, overwriting the wrong offsets, and the empty entry's length could report 1. Three samples now assert the exact seven bytes and round-trip, and `LibrarySampleGroupEntry::serialized_len()` is asserted to be 0 (audit 23 finding 230, #3738).
+- **A lossless `dca3` with long `addition_info` and no explicit frequency serializes correctly.** `8 * len` was only tested where `8 + len` rounded to the same byte, and the `(false, None)` arm was never written; a five-byte addition list and `sampling_frequency_index` 2 now assert the exact 10-byte body and round-trip, and the GeneralHigh path its own 13-byte body (audit 23 finding 231, #3739).
+
 ### Removed
 - **BREAKING: `TrackFragmentBox::into_bytes`** (unused; use `Serialize::try_to_bytes`) (#3698).
 

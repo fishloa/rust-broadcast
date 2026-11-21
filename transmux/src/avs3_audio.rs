@@ -571,6 +571,7 @@ mod tests {
 
     fn round_trip(bytes: &[u8]) -> Ca3SpecificBox {
         let b = Ca3SpecificBox::parse(bytes).unwrap();
+        assert_eq!(b.serialized_len(), bytes.len(), "length matches the wire");
         let mut out = vec![0u8; b.serialized_len()];
         let n = b.serialize_into(&mut out).unwrap();
         assert_eq!(&out[..n], bytes, "byte-exact round trip");
@@ -760,5 +761,114 @@ mod tests {
             b.serialize_into(&mut [0u8; 16]),
             Err(crate::error::Error::InvalidInput(..))
         ));
+    }
+
+    /// A.4.2.2 lossless with `sampling_frequency_index` 2 (48 kHz), no explicit
+    /// `sampling_frequency`, and five `addition_info` bytes: 80 bits = 10 bytes.
+    #[test]
+    fn dca3_lossless_non_explicit_frequency_with_long_addition_info() {
+        let b = Ca3SpecificBox {
+            config: Ca3Config::Lossless(Avs3AudioLlConfig {
+                sampling_frequency_index: 2,
+                sampling_frequency: None,
+                anc_data_index: false,
+                coding_profile: 0,
+                channel_number: 2,
+                resolution: 2,
+                addition_info: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01],
+                reserved: 0,
+            }),
+        };
+        assert_eq!(b.serialized_len(), 5 + 5);
+        let mut out = vec![0u8; b.serialized_len()];
+        let n = b.serialize_into(&mut out).unwrap();
+        assert_eq!(n, 10);
+        assert_eq!(
+            &out[..n],
+            &[0x12, 0x00, 0x28, 0x00, 0x17, 0x7A, 0xB6, 0xFB, 0xBC, 0x04][..]
+        );
+        assert_eq!(Ca3SpecificBox::parse(&out[..n]).unwrap(), b);
+    }
+
+    /// T/AI 109.7-2024 5.1.2.2 with five `addition_info` bytes:
+    /// 4+4+1+3+1+7+4+16+2+16+40+6 = 104 bits = 13 bytes.
+    #[test]
+    fn dca3_general_high_with_long_addition_info() {
+        let b = Ca3SpecificBox {
+            config: Ca3Config::GeneralHigh(Avs3AudioGhConfig {
+                sampling_frequency_index: 2,
+                anc_data_index: false,
+                coding_profile: 0,
+                bitstream_type: true,
+                channel_number_index: 2,
+                bitrate_index: 3,
+                raw_frame_length: 0x0400,
+                resolution: 2,
+                addition_info: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01],
+                reserved: 0,
+            }),
+        };
+        assert_eq!(b.serialized_len(), 8 + 5);
+        let mut out = vec![0u8; b.serialized_len()];
+        let n = b.serialize_into(&mut out).unwrap();
+        assert_eq!(n, 13);
+        assert_eq!(
+            &out[..n],
+            &[0x02, 0x08, 0x23, 0x04, 0x00, 0x80, 0x01, 0x77, 0xAB, 0x6F, 0xBB, 0xC0, 0x40][..]
+        );
+        assert_eq!(Ca3SpecificBox::parse(&out[..n]).unwrap(), b);
+    }
+
+    #[test]
+    fn spec_enum_labels_are_pinned() {
+        for (v, label) in [
+            (
+                Avs3AudioContent::Channel {
+                    channel_number_index: 2,
+                    reserved: 0,
+                },
+                "channel signal",
+            ),
+            (
+                Avs3AudioContent::Object {
+                    number_objects: 3,
+                    reserved: 0,
+                },
+                "object signal",
+            ),
+            (
+                Avs3AudioContent::ChannelAndObject {
+                    channel_number_index: 2,
+                    reserved_channel: 0,
+                    number_objects: 3,
+                    reserved_object: 0,
+                },
+                "channel and object signal",
+            ),
+            (Avs3AudioContent::Hoa { hoa_order: 3 }, "HOA signal"),
+            (Avs3AudioContent::Reserved(4), "reserved"),
+        ] {
+            assert_eq!(v.name(), label);
+        }
+        assert_eq!(Avs3AudioContent::Reserved(4).to_string(), "reserved(0x04)");
+        for (bytes, label) in [
+            (
+                &[0x22, 0x20, 0x04, 0x01, 0x40, 0x80][..],
+                "general full-rate (audio_codec_id 2)",
+            ),
+            (
+                &[0x1F, 0x01, 0x77, 0x00, 0x00, 0x28, 0x00, 0x0B, 0x7A, 0xB4][..],
+                "lossless (audio_codec_id 1)",
+            ),
+            (
+                &[0x02, 0x08, 0x23, 0x04, 0x00, 0x80, 0x00, 0x00][..],
+                "general high-rate (audio_codec_id 0)",
+            ),
+            (&[0x70, 0xAB, 0xCD][..], "reserved audio_codec_id"),
+        ] {
+            let boxed = round_trip(bytes);
+            assert_eq!(boxed.config.name(), label);
+            assert_eq!(boxed.config.to_string(), label);
+        }
     }
 }
