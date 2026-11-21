@@ -310,17 +310,9 @@ impl SrtCaller {
                 if h.next_tick_us
                     .is_some_and(|next| Timestamp::from_micros(now_us) >= next)
                 {
-                    // Advance by the time that actually passed. A wake delayed
-                    // by a starved runtime is ONE retransmit, not one per
-                    // nominal period it missed — synthesizing the missed ticks
-                    // spent the whole retry budget at once and timed out a
-                    // handshake whose wall-clock budget was still open
-                    // (issue #3847).
+                    // A late wake is one retransmit, not one per missed period (#3847).
                     let elapsed_us = now_us.saturating_sub(h.last_tick_us).max(1);
                     h.last_tick_us = now_us;
-                    // A tick period that does not fit the clock ends the
-                    // schedule (past the end of the clock there is no later
-                    // tick to make).
                     h.next_tick_us = Timestamp::from_micros(now_us)
                         .checked_add(Duration::from_micros(h.tick_period_us.max(1)));
                     for output in h.hs.tick(Duration::from_micros(elapsed_us)) {
