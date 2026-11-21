@@ -1744,3 +1744,38 @@ fn aac_without_declared_duration_flushes_with_the_min_step() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].timing.and_then(|t| t.duration()), Some(2));
 }
+
+// ── audit 23: flush spacing of several pending AUs ──────────────────────────
+
+/// Three aggregated AAC AUs sharing one timestamp are spaced by the declared
+/// frame length (960 samples at 48 kHz on a 96 kHz track = 1920 ticks).
+#[test]
+fn flush_of_aggregated_aac_aus_spaces_them_by_the_declared_duration() {
+    let id = TrackId::new(1);
+    let cfg = transmux::rtp_sdp::aac_config_from_asc_bytes(vec![0x11, 0x94]).unwrap();
+    let mut d = single_track_rtp(id, RtpMediaKind::Aac, cfg, 96_000);
+    let aus: [&[u8]; 3] = [&[1], &[2], &[3]];
+    d.push(id, &aac_asc_packet(0, 10_000, &aus)).unwrap();
+    let out = d.flush(id).unwrap();
+    let pts: Vec<_> = out.iter().map(|s| s.timing.and_then(|t| t.pts())).collect();
+    assert_eq!(pts, vec![Some(10_000), Some(11_920), Some(13_840)]);
+}
+
+/// A non-reordered H.264 track's final pending AU is emitted with the last
+/// real duration (3000), not the reorder window's declared frame period
+/// (3600).
+#[test]
+fn flush_of_a_non_reordered_h264_pending_au_uses_the_known_duration() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, None)),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 10_000, &[0x65, 0xAA])).unwrap();
+    let mut out = d.push(id, &wrap_vpkt(1, 13_000, &[0x41, 0xBB])).unwrap();
+    out.extend(d.flush(id).unwrap());
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[1].timing.and_then(|t| t.duration()), Some(3000));
+}
