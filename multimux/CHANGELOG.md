@@ -4,6 +4,8 @@
 ### Tests
 - Every external-oracle test (Dolby Vision and HDR10 boxes through ffprobe and GPAC `MP4Box`, Smooth fragments through `MP4Box` and Bento4 `mp4dump`, the TS-HLS and cold-join oracles through ffprobe and ffmpeg) now gates its tool through `test_fixtures::process::require_tool`: with `REQUIRE_EXTERNAL_TOOLS=1` a missing tool is a hard failure instead of a silent skip. A new blocking CI `oracles` job installs the tools and sets that switch, so a skipped oracle can no longer read as green (audit 21 finding 60).
 ### Fixed
+- The SRT push continuity-count tests negotiated the 120 ms minimum TSBPD latency, so a scheduler stall on a loaded machine exceeded the too-late threshold and the receiver skipped payload before the continuity counters were checked. They now negotiate a 3000 ms latency and assert the receiver's `SocketStats` are all zero, so the continuity check again measures the push path rather than SRT's expected too-late drop behaviour (#3552).
+- The two SRT caller loopback tests bound every wait (server accept, server send, and the first `Trunk`) at 30 s and name the stalled stage, so a caller handshake that never completes now fails the test instead of leaving it parked forever on `await_first_trunk` (#3847). The `broadcast-client` SRT caller fix behind it is in that crate's changelog.
 - `HttpLimits::from(&Config)`'s field mapping, the per-IP connection table's pruning, `classify_path`'s ops-route labels and the literal cap values have tests (audit 21 findings 49 and 53, #2944/#2948).
 
 ## [0.20.0] - 2026-11-17
