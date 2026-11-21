@@ -3618,14 +3618,15 @@ fn scan_attribute_list(
     scan_attribute_list_ordered(s, strict).map(|(map, quoted, _)| (map, quoted))
 }
 
+/// An attribute list split into its name→value map, the names written as
+/// quoted-strings, and the names in wire order.
+type OrderedAttributeList = (BTreeMap<String, String>, BTreeSet<String>, Vec<String>);
+
 /// [`scan_attribute_list`] with the attribute names in wire order as well as
 /// the name map, for the two callers that re-render a list in the order it
 /// appeared (`EXT-X-DATERANGE`'s `X-` attributes and a custom tag's attribute
 /// list). The order is the first occurrence of each name.
-fn scan_attribute_list_ordered(
-    s: &str,
-    strict: bool,
-) -> Result<(BTreeMap<String, String>, BTreeSet<String>, Vec<String>)> {
+fn scan_attribute_list_ordered(s: &str, strict: bool) -> Result<OrderedAttributeList> {
     let mut map = BTreeMap::new();
     let mut quoted_keys = BTreeSet::new();
     let mut order = Vec::new();
