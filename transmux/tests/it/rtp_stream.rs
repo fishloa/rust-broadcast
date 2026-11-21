@@ -1779,3 +1779,94 @@ fn flush_of_a_non_reordered_h264_pending_au_uses_the_known_duration() {
     assert_eq!(out.len(), 2);
     assert_eq!(out[1].timing.and_then(|t| t.duration()), Some(3000));
 }
+
+// ── audit 23: reorder-window release thresholds, pruning, drop bound ────────
+
+/// With a known frame period and a head whose successor is further away than
+/// one period, the window releases only once pending exceeds
+/// `MAX_REORDER_DEPTH` (16).
+#[test]
+fn reorder_release_waits_for_pending_to_exceed_max_reorder_depth() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, Some(0))),
+        90_000,
+    );
+    let mut emitted = 0usize;
+    for k in 0..16u32 {
+        let sal = if k == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
+        emitted += d
+            .push(id, &wrap_vpkt(k as u16, 40_000 - k * 1000, sal))
+            .unwrap()
+            .len();
+    }
+    assert_eq!(emitted, 0, "16 pending is not past the depth bound");
+    emitted += d
+        .push(id, &wrap_vpkt(16, 40_000 - 16 * 1000, &[0x41, 0xBB]))
+        .unwrap()
+        .len();
+    assert_eq!(
+        emitted, 17,
+        "17 pending trips the bound and the whole window resolves"
+    );
+}
+
+/// Resolving the window prunes `seen_pts` only below the oldest pending AU:
+/// the second AU resolved in the same call still finds its successor.
+#[test]
+fn resolving_window_prunes_only_below_the_oldest_pending_au() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(
+        id,
+        RtpMediaKind::H264,
+        avc_cfg(&vui_sps(1, 50, Some(0))),
+        90_000,
+    );
+    d.push(id, &wrap_vpkt(0, 10_000, &[0x65, 0xAA])).unwrap();
+    d.push(id, &wrap_vpkt(1, 8_000, &[0x41, 0xBB])).unwrap();
+    let out = d.push(id, &wrap_vpkt(2, 11_000, &[0x41, 0xCC])).unwrap();
+    let got: Vec<_> = out
+        .iter()
+        .map(|s| {
+            (
+                s.timing.and_then(|t| t.pts()),
+                s.timing.and_then(|t| t.duration()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![(Some(10_000), Some(1000)), (Some(8_000), Some(2000))]
+    );
+}
+
+/// Pending AUs are dropped only once the window exceeds 256, oldest first.
+#[test]
+fn reorder_window_drops_only_beyond_max_reorder_window() {
+    let id = TrackId::new(1);
+    let mut d = single_track_rtp(id, RtpMediaKind::H264, tiny_avc_config(), 90_000);
+    let push = |d: &mut RtpStreamDepacketiser, k: u32| {
+        let sal = if k == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
+        d.push(id, &wrap_vpkt(k as u16, 400_000 - k * 1000, sal))
+            .unwrap();
+    };
+    for k in 0..256u32 {
+        push(&mut d, k);
+    }
+    let mut events = Vec::new();
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    assert!(dropped_pts(&events).is_empty(), "256 pending is in bounds");
+    push(&mut d, 256);
+    while let Some(e) = d.poll_loss_event() {
+        events.push(e);
+    }
+    assert_eq!(
+        dropped_pts(&events),
+        vec![400_000],
+        "the oldest AU is dropped past the bound"
+    );
+}
