@@ -345,6 +345,25 @@ impl FsRecorder {
         let changes: Vec<dvb_si::epg::PresentEventChange> =
             std::iter::from_fn(|| tracker.poll_change()).collect();
         self.tracker = Some(tracker);
+        self.apply_changes(changes)
+    }
+
+    /// Apply a programme change detected outside this recorder, for example
+    /// by a host that tracked the EIT before the recorder could be created.
+    /// It is applied, kept and retried exactly like a change [`Self::feed_si`]
+    /// detects; the same event again changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::poll`].
+    pub fn on_programme(&mut self, change: dvb_si::epg::PresentEventChange) -> Result<(), FsError> {
+        self.apply_changes(vec![change])
+    }
+
+    fn apply_changes(
+        &mut self,
+        changes: Vec<dvb_si::epg::PresentEventChange>,
+    ) -> Result<(), FsError> {
         let mut queue = Vec::new();
         if let Some(change) = self.programme_retry.take() {
             queue.push(change);

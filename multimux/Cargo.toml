@@ -186,11 +186,13 @@ rtp-packet        = { path = "../rtp-packet", version = "0.8.0", default-feature
 # planning) and its blocking `fs` adapter: `route` records through
 # `FsRecorder`, `output::catchup` reads through `FsArchive`.
 dvr-runtime       = { path = "../dvr-runtime", version = "0.1.0", features = ["fs"] }
-# The EIT event names `dvr-runtime` records into the archive's
-# `EXT-X-DATERANGE` titles: `legacy-charsets` keeps KS X 1001 / GB-2312 / Big5
-# names decoding (dvr-runtime itself does not enable it). Also used by the
+# The EIT present/following tracker (`epg`, behind `jiff`) a program runs
+# while its DVR recorder waits to be created, and the EIT event names
+# `dvr-runtime` records into the archive's `EXT-X-DATERANGE` titles:
+# `legacy-charsets` keeps KS X 1001 / GB-2312 / Big5 names decoding
+# (dvr-runtime itself does not enable it). Also used by the
 # `source::split_subtitle` and `source::segment` tests.
-dvb-si            = { path = "../dvb-si", version = "15.1.0", default-features = false, features = ["std", "ts", "legacy-charsets"] }
+dvb-si            = { path = "../dvb-si", version = "15.1.0", default-features = false, features = ["std", "ts", "jiff", "legacy-charsets"] }
 # TS packet framing: the datagram and packet sizes the push transports and the
 # TS-carrying sources chunk by.
 mpeg-ts           = { path = "../mpeg-ts", version = "0.9.0" }

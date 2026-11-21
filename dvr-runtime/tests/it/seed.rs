@@ -686,3 +686,61 @@ fn a_held_cursor_survives_a_locked_directory_and_records_what_closed_meanwhile()
     );
     cleanup(&root);
 }
+
+/// A programme change the host detected before the recorder existed, handed
+/// over through `on_programme`, is recorded as the next segment's
+/// `EXT-X-DATERANGE`; the same event again changes nothing.
+#[test]
+fn a_programme_handed_over_by_the_host_is_recorded() {
+    let root = temp_dir("on-programme");
+    let trunk = trunk();
+    let writer = trunk.segment_writer().expect("writer");
+    let mut recorder = FsRecorder::new(
+        &root,
+        ArchiveName::new("prog").expect("name"),
+        config(ArchiveContainer::Fmp4, 2, periods(10)).with_programme_service(0x0601),
+        &trunk,
+    )
+    .expect("recorder");
+    let mut tracker = dvb_si::epg::PresentEventTracker::new(0x0601);
+    let change = crate::support::present_event(
+        &mut tracker,
+        0x0601,
+        0x7857,
+        "News",
+        crate::support::ts_at(1_700_000_000),
+        Duration::from_secs(1800),
+    );
+    recorder.on_programme(change.clone()).expect("apply");
+    recorder.on_programme(change).expect("apply again");
+    assert_eq!(
+        recorder.writer().programme().map(|p| p.event.event_id),
+        Some(0x7857)
+    );
+    writer
+        .publish_segment(SegmentEntry::new(
+            Bytes::from(vec![0x11u8; 100]),
+            SegmentSeq::new(1),
+            Duration::from_secs(2),
+            Timestamp::ZERO,
+            transmux::SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .expect("publish");
+    recorder
+        .poll(
+            Timestamp::ZERO,
+            |_| Some(crate::support::ts_at(1_700_000_010)),
+            &[InitGeneration::new(SegmentSeq::new(0), init())],
+        )
+        .expect("record");
+    let playlist = std::fs::read_to_string(root.join("prog").join("p0.m3u8")).expect("playlist");
+    assert_eq!(
+        playlist.matches("#EXT-X-DATERANGE").count(),
+        1,
+        "{playlist}"
+    );
+    assert!(playlist.contains("X-DVB-EVENT-ID=30807"), "{playlist}");
+    cleanup(&root);
+}

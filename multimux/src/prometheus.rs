@@ -35,6 +35,13 @@
 //! - `multimux_dvr_si_errors_total` (`DVR_SI_ERRORS_TOTAL`) — counter, labels
 //!   `route`: an EIT programme change the DVR recorder could not act on (the
 //!   recorder retries it on the next feed; each failed attempt counts).
+//! - `multimux_dvr_archive_locked_total` (`DVR_ARCHIVE_LOCKED_TOTAL`),
+//!   `multimux_dvr_gap_segments_total` (`DVR_GAP_SEGMENTS_TOTAL`) and
+//!   `multimux_dvr_predecessor_flush_failed_total`
+//!   (`DVR_PREDECESSOR_FLUSH_FAILED_TOTAL`) — counters, labels `route`: a
+//!   recorder create refused by another holder of the archive lock, segments
+//!   lost before the recorder consumed them, and a replaced program whose
+//!   last segments could not be archived.
 //! - `multimux_dvr_pin_rearmed_total` (`DVR_PIN_REARMED_TOTAL`) — counter,
 //!   labels `route`: bumped on the DVR writer's `WriterEvent::Rearmed`
 //!   each time an `ArchiveOverrun::StallIngest` pin is force-expired by the
@@ -122,6 +129,20 @@ pub(crate) const DVR_SI_ERRORS_TOTAL: &str = "multimux_dvr_si_errors_total";
 /// could write an archive whose playlist does not match its data. Labels: `route`. Recording stops for that route; this
 /// counter is how an operator sees it (issue #1083, D3 / I1).
 pub(crate) const DVR_FAILED_TOTAL: &str = "multimux_dvr_failed_total";
+
+/// Counter: create attempts of a route's DVR recorder refused because another
+/// recorder holds the archive directory's lock. Retried on a bounded backoff.
+/// Labels: `route`.
+pub(crate) const DVR_ARCHIVE_LOCKED_TOTAL: &str = "multimux_dvr_archive_locked_total";
+
+/// Counter: segments the live ring evicted before the DVR recorder consumed
+/// them (each a hole in the archive). Labels: `route`.
+pub(crate) const DVR_GAP_SEGMENTS_TOTAL: &str = "multimux_dvr_gap_segments_total";
+
+/// Counter: replaced programs whose last segments the DVR recorder could not
+/// archive after a retry (they are lost). Labels: `route`.
+pub(crate) const DVR_PREDECESSOR_FLUSH_FAILED_TOTAL: &str =
+    "multimux_dvr_predecessor_flush_failed_total";
 
 /// Counter: total TS samples dropped (oldest first) because the demux
 /// replayed more pre-`TracksResolved` backlog than the ingest session's
