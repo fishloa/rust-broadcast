@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- An RTSP 401 with credentials configured is treated as a rejection: the unreachable replay arm is gone, so the source waits for host-supplied credentials and reconnects instead of replaying a request whose credentials the server already refused (#3634).
 ### Fixed
 - `Session::select_audio_rendition` on a Smooth session returned `Ok(())` and did nothing; it now returns `Error::NotHls`, as its documentation states for any session that is neither HLS nor DASH (audit 23 finding 52, #3303).
 
