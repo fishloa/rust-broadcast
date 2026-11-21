@@ -1107,13 +1107,12 @@ impl PresentEventTracker {
 
         let mut buf = core::mem::take(&mut self.carry);
         buf.extend_from_slice(ts);
+        let mut events = Vec::new();
         let mut offset = 0;
         while offset + TS_PACKET_SIZE <= buf.len() {
-            let events: Vec<crate::demux::SectionEvent> = self
-                .si_demux
-                .feed(&buf[offset..offset + TS_PACKET_SIZE])
-                .collect();
-            for event in events {
+            events.clear();
+            events.extend(self.si_demux.feed(&buf[offset..offset + TS_PACKET_SIZE]));
+            for event in &events {
                 if let Ok(crate::tables::AnyTableSection::EitSection(section)) =
                     event.table_section()
                     && let Some(change) = self.on_section(&section)
