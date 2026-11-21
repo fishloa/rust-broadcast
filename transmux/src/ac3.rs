@@ -1651,6 +1651,57 @@ pub(crate) mod tests {
         assert!(eac3_frame_crc_ok(&frame), "the capture's first frame verifies");
     }
 
+    /// The sample-rate, half-rate, block-count and channel-count lookup tables
+    /// — ETSI TS 102 366 Table 4.3, Annex E and Table 4.5 — every code,
+    /// including the reserved fallbacks and `fscod` 2 (32 kHz), which no
+    /// fixture exercises.
+    #[test]
+    fn lookup_tables_match_the_specification() {
+        assert_eq!(
+            [0u8, 1, 2, 3].map(ac3_sample_rate),
+            [48000, 44100, 32000, 44100]
+        );
+        assert_eq!([0u8, 1, 2, 3].map(ac3_sample_rate_khz), [48, 44, 32, 44]);
+        assert_eq!(
+            [0u8, 1, 2, 3].map(eac3_half_sample_rate),
+            [24000, 22050, 16000, 22050]
+        );
+        assert_eq!(
+            [0u8, 1, 2, 3].map(eac3_half_sample_rate_khz),
+            [24, 22, 16, 22]
+        );
+        assert_eq!([0u8, 1, 2, 3].map(eac3_num_blocks), [1, 2, 3, 6]);
+        assert_eq!(
+            [0u8, 1, 2, 3, 4, 5, 6, 7].map(acmod_channels),
+            [2, 1, 2, 3, 3, 4, 4, 5]
+        );
+    }
+
+    /// A half-rate frame (`fscod` 3, §E.1.2.2) takes `sr_code2` instead of
+    /// `numblkscod` and always carries 6 blocks.
+    #[test]
+    fn half_rate_frame_uses_sr_code2() {
+        let mut w = BitWriter::new();
+        w.u(16, AC3_SYNCWORD as u64);
+        w.u(2, 0); // strmtyp independent
+        w.u(3, 0); // substreamid
+        w.u(11, 64); // frmsiz
+        w.u(2, 3); // fscod 3 -> half rate
+        w.u(2, 0); // sr_code2 0 -> 24 kHz
+        w.u(3, 7); // acmod 3/2
+        w.u(1, 0); // lfeon
+        w.u(5, 16); // bsid
+        w.u(5, 31); // dialnorm
+        w.u(1, 0); // compre
+        w.u(1, 0); // mixmdate
+        w.u(1, 0); // infomdate
+        w.u(16, 0); // padding
+        let info = Ec3SyncframeInfo::from_es(&w.finish()).unwrap();
+        assert_eq!((info.sample_rate, info.sample_rate_khz), (24000, 24));
+        assert_eq!(info.numblks, 6);
+        assert_eq!(info.samples_per_frame(), 1536);
+    }
+
     /// The first sample of the committed Dolby E-AC-3 capture: a real
     /// syncframe with a real `crc2`.
     fn first_real_eac3_frame() -> Vec<u8> {
@@ -1825,6 +1876,34 @@ pub(crate) mod tests {
             &DEC3_DEP_SUB_ORACLE[..],
             "dec3 dependent-substream round-trip mismatch"
         );
+    }
+
+    /// The `Serialize` contract allows a caller-supplied buffer: every bit —
+    /// including the reserved ones the box writes as 0 — must come from the
+    /// box, never from whatever the buffer already held.
+    #[test]
+    fn dec3_serializes_identically_into_a_dirty_buffer() {
+        let mut two = Ec3SpecificBox::parse(&DEC3_ORACLE).unwrap();
+        two.num_ind_sub = 1;
+        two.substreams[0].num_dep_sub = 1;
+        two.substreams[0].chan_loc = Some(0x1FF);
+        two.substreams.push(Ec3Substream {
+            acmod: 7,
+            lfeon: true,
+            ..two.substreams[0]
+        });
+        for bx in [
+            Ec3SpecificBox::parse(&DEC3_ORACLE).unwrap(),
+            Ec3SpecificBox::parse(&DEC3_DEP_SUB_ORACLE).unwrap(),
+            two,
+        ] {
+            let mut clean = vec![0u8; bx.serialized_len()];
+            let mut dirty = vec![0xFFu8; bx.serialized_len()];
+            bx.serialize_into(&mut clean).unwrap();
+            bx.serialize_into(&mut dirty).unwrap();
+            assert_eq!(dirty, clean, "the dirty buffer leaked into {bx:?}");
+            assert_eq!(Ec3SpecificBox::parse(&dirty).unwrap(), bx);
+        }
     }
 
     #[test]

@@ -141,8 +141,9 @@ fn mixdef_variants_walk_to_bsmod() {
                     }
                     w.u(1, 1); // addche
                     w.u(1, 1); // extpgmaux1scle
-                    w.u(4, 0b1100); // extpgmaux1scl
-                    w.u(1, 0); // extpgmaux2scle
+                    w.u(4, 0b0101); // extpgmaux1scl
+                    w.u(1, 1); // extpgmaux2scle
+                    w.u(4, 0b1010); // extpgmaux2scl
                     w.u(1, 1); // mixdata3e
                     w.u(5, 0b01011); // spchdat
                     w.u(1, 0); // addspchdate
