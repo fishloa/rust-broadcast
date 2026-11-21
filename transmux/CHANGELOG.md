@@ -274,6 +274,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The VVC NAL-unit type codes, DCI/OPI array shape and labels are pinned.** `to_u8`, the absent `num_nalus` field for DCI/OPI and `name()` were unobserved; 12..=17 plus `Other(20)` round-trip, a DCI+OPI record matches exact bytes without a count field, and every label is asserted (audit 23 finding 343, #3866).
 - **The VVC record rejects `LengthSizeMinusOne = 2`, writes length sizes 0/1 and reports its real box length.** `is_valid_length_size`, the 2-bit mask, `Display` and `VvcConfigurationBox::serialize_into`'s return were unasserted; each is now pinned, with 0- and 2-sub-profile PTLs round-tripping at the announced length (audit 23 finding 344, #3867).
 - **Each AAC-hbr header width is required on its own.** A `||` could become `&&` and accept a stream deviating in only `sizeLength`, `indexLength` or `indexDeltaLength`; each single deviation is now unplayable and 13/3/3 is playable (audit 23 finding 345, #3868).
+- **`derive_nominal_frame_duration` skips a pair with no intervening frames.** Without `-D warnings` the `frames > 0` guard is testable, and a `>=` mutant divides by zero; a zero-frame block followed by a two-frame block now asserts the 20-tick step from the first positive pair (audit 23 re-judged mutant, #3788).
 
 ### Removed
 - **BREAKING: `TrackFragmentBox::into_bytes`** (unused; use `Serialize::try_to_bytes`) (#3698).
