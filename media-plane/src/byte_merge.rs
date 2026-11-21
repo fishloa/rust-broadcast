@@ -417,6 +417,7 @@ impl ByteMerge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
 
     /// `FirstArrival` must interleave two sources exactly in the order
     /// `feed` was called, regardless of which source each call came from.

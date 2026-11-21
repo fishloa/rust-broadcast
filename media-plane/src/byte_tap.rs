@@ -241,6 +241,7 @@ impl ByteTap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
     use alloc::vec::Vec;
 
     /// A tap must yield bytes a demuxer would reject — bad sync byte, TEI
