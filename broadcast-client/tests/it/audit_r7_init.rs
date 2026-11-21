@@ -473,14 +473,6 @@ fn assert_recovers(mut h: Host, non_fatals: Vec<ErrorKind>) {
     assert_eq!(h.hits(&format!("{BASE}/init.mp4")), 2);
 }
 
-fn assert_init_refetched(mut h: Host, non_fatals: Vec<ErrorKind>) {
-    h.run_until(stop_on_end_or_fatal, STEPS);
-    let t = tally(&h);
-    assert!(t.fatals.is_empty(), "{t:?}");
-    assert_eq!(t.non_fatals, non_fatals);
-    assert_eq!(h.hits(&format!("{BASE}/init.mp4")), 2);
-}
-
 const NOT_A_CIPHER_BLOCK_MULTIPLE: usize = 17;
 
 #[test]
@@ -498,7 +490,7 @@ fn an_encrypted_vod_init_that_fails_to_decrypt_when_its_key_arrives_is_fetched_a
         vec![status_only(500), Reply::Ok(KEY.to_vec())],
         vec![0; NOT_A_CIPHER_BLOCK_MULTIPLE],
     );
-    assert_init_refetched(
+    assert_recovers(
         h,
         vec![
             ErrorKind::KeyFetchFailed {
@@ -515,7 +507,7 @@ fn an_encrypted_vod_init_that_is_not_an_init_when_its_key_arrives_is_fetched_aga
         vec![status_only(500), Reply::Ok(KEY.to_vec())],
         aes128_encrypt_segment(&KEY, &IV, GARBAGE),
     );
-    assert_init_refetched(
+    assert_recovers(
         h,
         vec![
             ErrorKind::KeyFetchFailed {
