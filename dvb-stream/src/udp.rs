@@ -204,4 +204,23 @@ mod tests {
             "one attempt with the buffer, one without it"
         );
     }
+
+    /// Without a receive-buffer request there is nothing to fall back from, so
+    /// a failed bind is reported as-is instead of retried (audit a23cp #3436).
+    #[test]
+    fn a_failed_bind_without_a_recv_buffer_request_is_not_retried() {
+        let calls = Cell::new(0u32);
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+
+        let result = bind_udp_with(addr, &UdpOptions::new(), |_addr, _options, _recv_buffer| {
+            calls.set(calls.get() + 1);
+            Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "injected bind failure",
+            ))
+        });
+
+        assert!(result.is_err(), "the bind failure is reported");
+        assert_eq!(calls.get(), 1, "no retry without an option to drop");
+    }
 }
