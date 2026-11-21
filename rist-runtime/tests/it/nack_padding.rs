@@ -4,7 +4,9 @@
 //! padding and re-serialized with P cleared).
 
 use broadcast_common::{Parse, Serialize};
-use rist_runtime::{Error, GenericNack, RangeNack, RistReceiverCompound, RttEcho};
+use rist_runtime::{
+    Error, GenericNack, NackFci, PacketRange, RangeNack, RistReceiverCompound, RttEcho,
+};
 
 const SSRC: u32 = 0xD561_5604;
 const PT_RTPFB: u8 = 205;
@@ -95,4 +97,120 @@ fn padded_nack_in_compound_round_trips() {
     // wire position; it must not be dropped or misparsed.
     assert_eq!(parsed.nacks.len() + parsed.unknown.len(), 1);
     assert_eq!(parsed.try_to_bytes().unwrap(), c);
+}
+
+/// A caller-set padding region must keep the packet word-aligned and fit the
+/// 8-bit count byte (RFC 3550 §6.4.1 counts itself), or the emitted length
+/// field and trailing count byte disagree.
+#[test]
+fn caller_set_padding_must_be_word_aligned_and_fit_the_count_byte() {
+    // count byte = padding.len() + 1; 2 and 256/260 are the rejected values.
+    for (padding_len, expected_count) in [(1usize, 2usize), (255, 256), (259, 260)] {
+        let nack = GenericNack {
+            ssrc_sender: SSRC,
+            ssrc_media: SSRC,
+            nacks: vec![NackFci { pid: 100, blp: 0 }],
+            padding: vec![0; padding_len],
+        };
+        let mut buf = vec![0u8; nack.serialized_len()];
+        assert_eq!(
+            nack.serialize_into(&mut buf).unwrap_err(),
+            Error::InvalidPaddingCount {
+                count: expected_count,
+                body: 12,
+            },
+            "Generic NACK padding len {padding_len}"
+        );
+
+        let range_nack = RangeNack {
+            ssrc_media: SSRC,
+            ranges: vec![PacketRange {
+                start: 100,
+                additional: 0,
+            }],
+            padding: vec![0; padding_len],
+        };
+        let mut buf = vec![0u8; range_nack.serialized_len()];
+        assert_eq!(
+            range_nack.serialize_into(&mut buf).unwrap_err(),
+            Error::InvalidPaddingCount {
+                count: expected_count,
+                body: 12,
+            },
+            "Range NACK padding len {padding_len}"
+        );
+    }
+
+    // A three-byte region (count 4) and a 251-byte one (count 252) are both
+    // aligned and fit, so they serialize and round-trip.
+    for padding_len in [3usize, 251] {
+        let nack = GenericNack {
+            ssrc_sender: SSRC,
+            ssrc_media: SSRC,
+            nacks: vec![NackFci { pid: 100, blp: 0 }],
+            padding: vec![0; padding_len],
+        };
+        let bytes = nack.try_to_bytes().unwrap();
+        assert_eq!(bytes.len(), 16 + padding_len + 1);
+        assert_eq!(bytes[0] & 0x20, 0x20, "P bit set");
+        assert_eq!(*bytes.last().unwrap() as usize, padding_len + 1);
+        assert_eq!(GenericNack::parse(&bytes).unwrap(), nack);
+    }
+}
+
+/// The `InvalidPaddingCount` payload carries the real count byte and the
+/// unpadded body length (what a caller logs when diagnosing a hostile NACK).
+#[test]
+fn a_partial_entry_behind_the_padding_reports_the_count_and_body() {
+    // 5 words (20 bytes): count byte 5 leaves the unpadded end at 15, which
+    // is three bytes past the last whole FCI entry.
+    let mut b = vec![(2 << 6) | 0x20 | 1, PT_RTPFB, 0, 4];
+    b.extend_from_slice(&SSRC.to_be_bytes());
+    b.extend_from_slice(&SSRC.to_be_bytes());
+    b.extend_from_slice(&[0, 100, 0, 0, 0, 0, 0, 5]);
+    assert_eq!(b.len(), 20);
+    assert_eq!(
+        GenericNack::parse(&b).unwrap_err(),
+        Error::InvalidPaddingCount { count: 5, body: 16 }
+    );
+
+    let mut b = vec![(2 << 6) | 0x20, PT_APP, 0, 4];
+    b.extend_from_slice(&SSRC.to_be_bytes());
+    b.extend_from_slice(b"RIST");
+    b.extend_from_slice(&[0, 100, 0, 0, 0, 0, 0, 5]);
+    assert_eq!(
+        RangeNack::parse(&b).unwrap_err(),
+        Error::InvalidPaddingCount { count: 5, body: 16 }
+    );
+}
+
+/// On serialize the same payload reports the count the caller forced and the
+/// unpadded body length, not the padded one.
+#[test]
+fn serialize_reports_the_unpadded_body_length_in_invalid_padding_count() {
+    let nack = GenericNack {
+        ssrc_sender: SSRC,
+        ssrc_media: SSRC,
+        nacks: vec![],
+        padding: vec![0; 1],
+    };
+    let mut buf = vec![0u8; nack.serialized_len()];
+    assert_eq!(
+        nack.serialize_into(&mut buf).unwrap_err(),
+        Error::InvalidPaddingCount { count: 2, body: 8 }
+    );
+
+    let range_nack = RangeNack {
+        ssrc_media: SSRC,
+        ranges: vec![PacketRange {
+            start: 100,
+            additional: 0,
+        }],
+        padding: vec![0; 1],
+    };
+    let mut buf = vec![0u8; range_nack.serialized_len()];
+    assert_eq!(
+        range_nack.serialize_into(&mut buf).unwrap_err(),
+        Error::InvalidPaddingCount { count: 2, body: 12 }
+    );
 }

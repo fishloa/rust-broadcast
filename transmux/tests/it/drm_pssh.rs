@@ -6,7 +6,8 @@
 use broadcast_common::base64::base64_decode_lenient as base64_decode;
 use transmux::cenc::ProtectionSystemSpecificHeaderBox;
 use transmux::drm::{
-    PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID, cenc_kid_to_playready, playready_kid_to_cenc,
+    FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID, cenc_kid_to_playready,
+    fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc, playready_kid_value_decode,
     playready_pro, playready_pssh, playready_wrmheader, widevine_pssh, widevine_pssh_data,
 };
 
@@ -242,4 +243,48 @@ fn playready_pssh_box_round_trip() {
     assert_eq!(parsed.system_id, PLAYREADY_SYSTEM_ID);
     assert_eq!(parsed.data, pssh.data);
     assert_eq!(parsed, pssh);
+}
+// ---------------------------------------------------------------------------
+// Test 5 — FairPlay `skd://` data and the PlayReady KID VALUE decode.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fairplay_pssh_data_is_the_skd_uri_bytes() {
+    assert_eq!(fairplay_pssh_data("skd://abc"), b"skd://abc");
+    let pssh = fairplay_pssh("skd://asset-42");
+    assert_eq!(pssh.system_id, FAIRPLAY_SYSTEM_ID);
+    assert_eq!(pssh.data, b"skd://asset-42");
+}
+
+#[test]
+fn playready_kid_value_decode_returns_the_decoded_kid() {
+    // base64 of KID_A's LE-GUID (the bytes the WRMHEADER `VALUE` carries).
+    assert_eq!(
+        playready_kid_value_decode("BAMCAQYFCAcJCgsMDQ4PEA=="),
+        Ok(KID_A_PLAYREADY)
+    );
+    // A second, different KID: base64 of KID_B's LE-GUID.
+    assert_eq!(
+        playready_kid_value_decode("FBMSERYVGBcZGhscHR4fIA=="),
+        Ok(cenc_kid_to_playready(KID_B))
+    );
+    assert_ne!(
+        cenc_kid_to_playready(KID_B),
+        KID_A_PLAYREADY,
+        "the two vectors must differ"
+    );
+}
+
+#[test]
+fn playready_kid_value_decode_rejects_a_wrong_length() {
+    let short = broadcast_common::base64::base64_encode(&[0xAA; 15]);
+    assert!(matches!(
+        playready_kid_value_decode(&short),
+        Err(transmux::Error::InvalidValue(..))
+    ));
+    let long = broadcast_common::base64::base64_encode(&[0xAA; 17]);
+    assert!(matches!(
+        playready_kid_value_decode(&long),
+        Err(transmux::Error::InvalidValue(..))
+    ));
 }

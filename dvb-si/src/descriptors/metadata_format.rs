@@ -71,6 +71,7 @@ broadcast_common::impl_spec_display!(MetadataFormat, Reserved0, Reserved1, Priva
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn round_trip_values() {
@@ -79,5 +80,21 @@ mod tests {
             let mf = MetadataFormat::from_u8(v);
             assert_eq!(mf.to_u8(), v, "value 0x{v:02X} round-trip mismatch");
         }
+    }
+
+    #[test]
+    fn labels_match_table_2_87() {
+        assert_eq!(MetadataFormat::Reserved0(0x00).name(), "reserved");
+        assert_eq!(MetadataFormat::TeM.name(), "TeM");
+        assert_eq!(MetadataFormat::BiM.name(), "BiM");
+        assert_eq!(MetadataFormat::Reserved1(0x20).name(), "reserved");
+        assert_eq!(MetadataFormat::AppFormat.name(), "app format");
+        assert_eq!(MetadataFormat::Private(0x80).name(), "private");
+        assert_eq!(MetadataFormat::Identifier.name(), "identifier");
+        assert_eq!(
+            MetadataFormat::Reserved1(0x20).to_string(),
+            "reserved(0x20)"
+        );
+        assert_eq!(MetadataFormat::Private(0x80).to_string(), "private(0x80)");
     }
 }

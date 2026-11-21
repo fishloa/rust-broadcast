@@ -727,11 +727,17 @@ fn next_sub_packet(
     // Parse body: the sub-packet minus any P-bit padding, so a modelled
     // parser never sees padding bytes. RTT Echo is the exception — its
     // padding is its own opaque TR-06-1 §5.2.6 field, not RFC 3550 padding.
-    // (`GenericNack`/`RangeNack` strip the P-bit padding themselves, so they
-    // are handed the whole sub-packet; SDES gets the trimmed body.)
-    let body = &full_sub[..head.unpadded_end()];
+    // (`GenericNack`/`RangeNack` strip the P-bit padding themselves, and the
+    // underlying SDES parser requires the whole claimed sub-packet, so all
+    // three are handed the full sub-packet.)
     let value = match head.packet_type {
-        PT_SOURCE_DESCRIPTION => TrailingValue::Sdes(parse_body::<SourceDescription>(body)?),
+        PT_SOURCE_DESCRIPTION => {
+            let mut sdes = parse_body::<SourceDescription>(full_sub)?;
+            // The SDES padding is owned by this slot so the region survives
+            // verbatim; clear the parser's own copy to keep one owner.
+            sdes.padding = None;
+            TrailingValue::Sdes(sdes)
+        }
         PT_RTPFB => {
             if head.count != FMT_GENERIC_NACK {
                 return Err(Error::InvalidFmt {
@@ -1116,5 +1122,27 @@ impl<'a> Parse<'a> for RistReceiverCompound {
             rtt_echo,
             unknown,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RistPadding;
+
+    /// The preserved region is exposed as-is: the count byte is re-derived
+    /// from its length, so callers never see it here.
+    #[test]
+    fn rist_padding_exposes_the_region_without_the_count_byte() {
+        let padding = RistPadding::new(&[1, 2, 3]);
+        assert_eq!(padding.bytes(), [1, 2, 3]);
+        assert!(!padding.is_empty());
+    }
+
+    /// An empty region means the P bit is clear on the wire.
+    #[test]
+    fn an_empty_rist_padding_reports_itself_empty() {
+        let padding = RistPadding::new(&[]);
+        assert!(padding.bytes().is_empty());
+        assert!(padding.is_empty());
     }
 }

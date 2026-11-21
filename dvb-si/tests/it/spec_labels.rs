@@ -287,3 +287,90 @@ fn aac_component_type_labels_match_table_26() {
         None
     );
 }
+
+#[test]
+fn announcement_and_frequency_labels_match_the_spec_tables() {
+    // EN 300 468 Tables 19, 20 and 31.
+    use dvb_si::descriptors::announcement_support::{AnnouncementType, ReferenceType};
+    use dvb_si::descriptors::frequency_list::CodingType;
+
+    check_label!(AnnouncementType::EmergencyAlarm, "Emergency alarm");
+    check_label!(AnnouncementType::RoadTrafficFlash, "Road Traffic flash");
+    check_label!(
+        AnnouncementType::PublicTransportFlash,
+        "Public Transport flash"
+    );
+    check_label!(AnnouncementType::WarningMessage, "Warning message");
+    check_label!(AnnouncementType::NewsFlash, "News flash");
+    check_label!(AnnouncementType::WeatherFlash, "Weather flash");
+    check_label!(AnnouncementType::EventAnnouncement, "Event announcement");
+    check_label!(AnnouncementType::PersonalCall, "Personal call");
+    check_label!(
+        AnnouncementType::Reserved(0x0F),
+        "reserved",
+        "reserved(0x0F)"
+    );
+
+    check_label!(
+        ReferenceType::UsualAudioStream,
+        "broadcast in the usual audio stream of the service"
+    );
+    check_label!(
+        ReferenceType::SeparateAudioStream,
+        "broadcast in a separate audio stream that is part of the service"
+    );
+    check_label!(
+        ReferenceType::DifferentServiceSameTs,
+        "broadcast by a different service within the same DVB transport stream"
+    );
+    check_label!(
+        ReferenceType::DifferentServiceDifferentTs,
+        "broadcast by a different service within a different DVB transport stream"
+    );
+    check_label!(ReferenceType::Reserved(0x05), "reserved", "reserved(0x05)");
+
+    check_label!(CodingType::Undefined, "not defined");
+    check_label!(CodingType::Satellite, "satellite");
+    check_label!(CodingType::Cable, "cable");
+    check_label!(CodingType::Terrestrial, "terrestrial");
+}
+
+#[test]
+fn content_time_base_and_fta_labels_match_the_spec_tables() {
+    // ISO/IEC 13818-1 Table 2-85 and EN 300 468 Table 58.
+    use dvb_si::descriptors::content_time_base_indicator::ContentTimeBaseIndicator;
+    use dvb_si::descriptors::fta_content_management::ControlRemoteAccess;
+
+    check_label!(ContentTimeBaseIndicator::None, "none");
+    check_label!(ContentTimeBaseIndicator::Stc, "STC");
+    check_label!(ContentTimeBaseIndicator::Npt, "NPT");
+    check_label!(
+        ContentTimeBaseIndicator::Reserved(0x03),
+        "reserved",
+        "reserved(0x03)"
+    );
+    check_label!(
+        ContentTimeBaseIndicator::Private(0x08),
+        "private",
+        "private(0x08)"
+    );
+
+    check_label!(ControlRemoteAccess::Enabled, "redistribution enabled");
+    check_label!(
+        ControlRemoteAccess::EnabledManagedDomain,
+        "redistribution enabled (managed domain only)"
+    );
+    check_label!(
+        ControlRemoteAccess::EnabledManagedDomainTimeLimited,
+        "redistribution enabled (managed domain, time-limited)"
+    );
+    check_label!(
+        ControlRemoteAccess::NotAllowed,
+        "redistribution not allowed"
+    );
+    check_label!(
+        ControlRemoteAccess::Reserved(0x04),
+        "reserved",
+        "reserved(0x04)"
+    );
+}

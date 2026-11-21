@@ -194,4 +194,32 @@ mod tests {
         assert!(json.contains("\"dvb_reserved\""));
         assert!(json.contains("202"));
     }
+
+    #[test]
+    fn serialize_accepts_the_255_byte_body() {
+        // FIXED_LEN(1) + 254 DVB_reserved bytes = 255.
+        let tail = vec![0xAAu8; 254];
+        let ok = ShortSmoothingBufferDescriptor {
+            sb_size: 1,
+            sb_leak_rate: 0x3F,
+            dvb_reserved: &tail,
+        };
+        let mut out = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut out).unwrap();
+        assert_eq!(out[1], 255);
+        assert_eq!(ShortSmoothingBufferDescriptor::parse(&out).unwrap(), ok);
+
+        // One more byte is 256 and must be rejected.
+        let tail = vec![0xAAu8; 255];
+        let bad = ShortSmoothingBufferDescriptor {
+            sb_size: 1,
+            sb_leak_rate: 0x3F,
+            dvb_reserved: &tail,
+        };
+        let mut out = vec![0u8; bad.serialized_len()];
+        assert!(matches!(
+            bad.serialize_into(&mut out),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+    }
 }

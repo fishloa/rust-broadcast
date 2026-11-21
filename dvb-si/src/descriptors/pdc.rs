@@ -259,6 +259,17 @@ mod tests {
         ));
     }
 
+    /// The largest 20-bit label is a legal value and round-trips.
+    #[test]
+    fn serialize_accepts_the_maximum_label() {
+        let d = PdcDescriptor::new(0x0F_FFFF);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 3, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(PdcDescriptor::parse(&buf).unwrap(), d);
+        assert_eq!(d.programme_identification_label, 0xFFFFF);
+    }
+
     /// The field is 4 bits wide, so a wider value is unrepresentable and cannot
     /// spill into the 20-bit PIL below it.
     #[test]

@@ -248,6 +248,33 @@ mod tests {
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
     }
 
+    /// The 22-bit maxima are legal (0x3FFFFF means "undefined" per Table 165);
+    /// one or two past them is rejected rather than silently masked.
+    #[test]
+    fn serialize_accepts_the_22_bit_maxima() {
+        let ok = PartialTransportStreamDescriptor::new(MAX_22, MAX_22, MAX_14);
+        assert_eq!(
+            (ok.peak_rate, ok.minimum_overall_smoothing_rate),
+            (0x3F_FFFF, 0x3F_FFFF)
+        );
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
+        assert_eq!(
+            buf,
+            [TAG, 8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
+        assert_eq!(PartialTransportStreamDescriptor::parse(&buf).unwrap(), ok);
+
+        for (peak, min) in [(MAX_22 + 1, 0), (0, MAX_22 + 1), (0, MAX_22 + 2)] {
+            let d = PartialTransportStreamDescriptor::new(peak, min, 0);
+            let mut buf = vec![0u8; d.serialized_len()];
+            assert!(matches!(
+                d.serialize_into(&mut buf),
+                Err(Error::InvalidDescriptor { tag: TAG, .. })
+            ));
+        }
+    }
+
     #[test]
     fn descriptor_length_matches_payload() {
         let d = PartialTransportStreamDescriptor::new(0, 0, 0);
