@@ -1359,6 +1359,60 @@ mod tests {
         }
     }
 
+    /// Concatenate NAL units into the 4-byte big-endian length-prefixed form
+    /// an access unit uses in `mdat`.
+    fn length_prefixed_au(nals: &[&[u8]]) -> Vec<u8> {
+        let mut au = Vec::new();
+        for nal in nals {
+            au.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+            au.extend_from_slice(nal);
+        }
+        au
+    }
+
+    #[test]
+    fn avc_access_unit_scan_reports_the_sps_dimensions_and_parameter_sets() {
+        let pps = [0x68u8, 0xCE, 0x3C, 0x80];
+        let sei = [0x06u8, 0x05, 0x01, 0xAA, 0x80];
+        let idr = [0x65u8, 0x88];
+        let au = length_prefixed_au(&[&sei, REAL_AVC_SPS, &pps, &idr]);
+
+        assert_eq!(
+            avc_access_unit_dimensions(&au),
+            Some((320, 240)),
+            "the in-band SPS's real geometry"
+        );
+        assert_eq!(
+            avc_access_unit_dimensions(&au),
+            avc_sps_dimensions(REAL_AVC_SPS)
+        );
+
+        let (sps, pps_out) = avc_access_unit_parameter_sets(&au);
+        assert_eq!(sps, alloc::vec![crate::AvcSps(REAL_AVC_SPS.to_vec())]);
+        assert_eq!(pps_out, alloc::vec![crate::AvcPps(pps.to_vec())]);
+    }
+
+    #[test]
+    fn avc_access_unit_without_an_sps_has_no_dimensions() {
+        let pps = [0x68u8, 0xCE, 0x3C, 0x80];
+        let idr = [0x65u8, 0x88];
+        let au = length_prefixed_au(&[&pps, &idr]);
+        assert_eq!(avc_access_unit_dimensions(&au), None);
+        let (sps, pps_out) = avc_access_unit_parameter_sets(&au);
+        assert!(sps.is_empty());
+        assert_eq!(pps_out, alloc::vec![crate::AvcPps(pps.to_vec())]);
+    }
+
+    #[test]
+    fn malformed_avc_access_unit_yields_none_and_no_parameter_sets() {
+        // Declares a 99-byte NAL in a 5-byte buffer.
+        let malformed = [0x00u8, 0x00, 0x00, 0x63, 0x67];
+        assert_eq!(avc_access_unit_dimensions(&malformed), None);
+        let (sps, pps) = avc_access_unit_parameter_sets(&malformed);
+        assert!(sps.is_empty());
+        assert!(pps.is_empty());
+    }
+
     #[test]
     fn sei_parse_path_unescapes_like_sample_aes_for_the_issue_inputs() {
         // Audit #2456: the SEI walk (`sei_messages` -> `EbspBytes` ->
