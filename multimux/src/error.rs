@@ -409,3 +409,18 @@ impl From<&str> for SdpError {
 
 /// multimux result alias.
 pub type Result<T> = core::result::Result<T, MultimuxError>;
+
+#[cfg(test)]
+mod phase_tests {
+    use super::*;
+
+    #[test]
+    fn phase_labels_are_exact() {
+        assert_eq!(Phase::Describe.name(), "DESCRIBE");
+        assert_eq!(Phase::Setup.name(), "SETUP");
+        assert_eq!(Phase::Play.name(), "PLAY");
+        assert_eq!(Phase::Recv.name(), "recv");
+        assert_eq!(Phase::Other("x").name(), "x");
+        assert_eq!(Phase::Play.to_string(), "PLAY");
+    }
+}

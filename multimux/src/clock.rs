@@ -118,4 +118,10 @@ mod tests {
         const YEAR_2020_US: u64 = 1_577_836_800 * 1_000_000;
         assert!(SystemHostClock::new().unix_us() > YEAR_2020_US);
     }
+
+    #[test]
+    fn a_real_speed_clock_returns_the_session_duration_unchanged() {
+        let d = std::time::Duration::from_secs(3);
+        assert_eq!(SystemHostClock::new().real_duration(d), d);
+    }
 }

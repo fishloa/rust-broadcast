@@ -1766,13 +1766,8 @@ pub enum TsHlsIdrFallback {
 }
 
 impl TsHlsIdrFallback {
-    /// Whether the output may cut on a non-IDR random-access point.
-    pub fn falls_back(&self) -> bool {
-        !matches!(self, TsHlsIdrFallback::Never)
-    }
-
     /// How much IDR-less media the output tolerates before it reports (and,
-    /// unless [`Self::falls_back`] is `false`, falls back).
+    /// unless the setting is `never`, falls back).
     pub fn bound(&self, target_duration: Duration) -> std::time::Duration {
         match self {
             TsHlsIdrFallback::Targets(n) => target_duration.saturating_mul(*n),
@@ -6323,5 +6318,418 @@ mod tests {
             }
             other => panic!("not a ConfigInvalid: {other}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod pinned_limits {
+    use super::*;
+
+    fn route_named(name: &str) -> Route {
+        Route {
+            name: name.into(),
+            input: InputSpec::Rtsp {
+                url: "rtsp://a".into(),
+                auth: None,
+            },
+            outputs: default_outputs(),
+            dvr: DvrConfig::default(),
+            ts_hls_cut: Default::default(),
+            ts_hls_idr_fallback: Default::default(),
+            declared_bandwidth_bps: None,
+            audio_renditions: Vec::new(),
+            audio_rendition_sources: Vec::new(),
+            closed_caption_overrides: Vec::new(),
+            audio_profiles: Vec::new(),
+            subtitles: true,
+        }
+    }
+
+    fn route_with_outputs(outputs: Vec<OutputKind>) -> Route {
+        Route {
+            outputs,
+            ..route_named("cam")
+        }
+    }
+
+    fn valid_config() -> Config {
+        Config {
+            routes: vec![route_named("cam")],
+            ..Config::default()
+        }
+    }
+
+    fn is_invalid(result: Result<()>, expected: ConfigField) -> bool {
+        matches!(result, Err(MultimuxError::ConfigInvalid { field, .. }) if field == expected)
+    }
+
+    fn enabled_dvr(root: &str) -> DvrConfig {
+        DvrConfig::default()
+            .with_enabled(true)
+            .with_archive_root(root.into())
+            .with_retention_periods(2)
+    }
+
+    /// #3666: an enabled DVR with no archive root is a route config error naming
+    /// `routes.dvr`; a fully specified one validates.
+    #[test]
+    fn validate_dvr_rejects_an_enabled_dvr_without_an_archive_root() {
+        let mut route = route_named("cam");
+        route.dvr = enabled_dvr("");
+        assert!(is_invalid(route.validate_dvr(), ConfigField::RoutesDvr));
+        route.dvr = enabled_dvr("/var/archive");
+        route.validate_dvr().expect("valid enabled dvr");
+        route.dvr = DvrConfig::default();
+        route.validate_dvr().expect("disabled dvr");
+    }
+
+    /// #3667: a route name of exactly `MAX_ROUTE_NAME_LEN` bytes is accepted,
+    /// one byte more is refused.
+    #[test]
+    fn route_name_length_boundary() {
+        route_named(&"a".repeat(MAX_ROUTE_NAME_LEN))
+            .validate_standalone("media.m3u8")
+            .expect("at the limit");
+        assert!(is_invalid(
+            route_named(&"a".repeat(MAX_ROUTE_NAME_LEN + 1)).validate_standalone("media.m3u8"),
+            ConfigField::RoutesName
+        ));
+        assert_eq!(MAX_ROUTE_NAME_LEN, 255);
+    }
+
+    /// #3667: `declared_bandwidth_bps` accepts 1..=u32::MAX only.
+    #[test]
+    fn declared_bandwidth_boundaries() {
+        let check = |bps| {
+            let mut r = route_named("cam");
+            r.declared_bandwidth_bps = bps;
+            r.validate_standalone("media.m3u8")
+        };
+        check(None).expect("unset");
+        assert!(is_invalid(
+            check(Some(0)),
+            ConfigField::RoutesDeclaredBandwidthBps
+        ));
+        check(Some(1)).expect("1");
+        check(Some(u64::from(u32::MAX))).expect("u32::MAX");
+        assert!(is_invalid(
+            check(Some(u64::from(u32::MAX) + 1)),
+            ConfigField::RoutesDeclaredBandwidthBps
+        ));
+    }
+
+    /// #3667: ingest timeouts and the concurrency queue accept exactly
+    /// `max_timeout()` and refuse a nanosecond more; zero is refused.
+    #[test]
+    fn timeout_boundaries() {
+        assert_eq!(MAX_TIMEOUT_SECS, 86_400.0);
+        let over = max_timeout() + Duration::from_nanos(1);
+
+        let mut cfg = valid_config();
+        cfg.ingest_connect_timeout = max_timeout();
+        cfg.validate().expect("connect timeout at the limit");
+        cfg.ingest_connect_timeout = over;
+        assert!(is_invalid(
+            cfg.validate(),
+            ConfigField::IngestConnectTimeoutSecs
+        ));
+        cfg.ingest_connect_timeout = Duration::ZERO;
+        assert!(is_invalid(
+            cfg.validate(),
+            ConfigField::IngestConnectTimeoutSecs
+        ));
+
+        let mut cfg = valid_config();
+        cfg.ingest_read_timeout = max_timeout();
+        cfg.validate().expect("read timeout at the limit");
+        cfg.ingest_read_timeout = over;
+        assert!(is_invalid(
+            cfg.validate(),
+            ConfigField::IngestReadTimeoutSecs
+        ));
+
+        let mut cfg = valid_config();
+        cfg.concurrency_queue = max_timeout();
+        cfg.validate().expect("queue timeout at the limit");
+        cfg.concurrency_queue = over;
+        assert!(is_invalid(
+            cfg.validate(),
+            ConfigField::ConcurrencyQueueTimeoutSecs
+        ));
+        cfg.concurrency_queue = Duration::ZERO;
+        assert!(is_invalid(
+            cfg.validate(),
+            ConfigField::ConcurrencyQueueTimeoutSecs
+        ));
+    }
+
+    /// #3667: a push reconnect backoff cap of exactly 86_400 s is accepted,
+    /// 86_401 s is refused.
+    #[test]
+    fn reconnect_backoff_cap_boundary() {
+        let policy = |cap_secs| {
+            ReconnectPolicy::doubling(Duration::from_secs(1), Duration::from_secs(cap_secs))
+        };
+        validate_push_reconnect(&policy(86_400)).expect("24 h");
+        assert!(is_invalid(
+            validate_push_reconnect(&policy(86_401)),
+            ConfigField::RoutesOutputsReconnectBackoffCap
+        ));
+    }
+
+    fn rendition(uri: &str) -> hls_runtime::server::AudioRenditionDecl {
+        hls_runtime::server::AudioRenditionDecl {
+            group_id: "aac".into(),
+            name: uri.into(),
+            language: "en".into(),
+            default: false,
+            autoselect: true,
+            channels: Some("2".into()),
+            uri: uri.into(),
+            characteristics: Vec::new(),
+        }
+    }
+
+    fn split_audio_route(uris: &[&str]) -> Route {
+        let mut r = route_named("cam");
+        r.audio_renditions = uris.iter().map(|u| rendition(u)).collect();
+        r.audio_rendition_sources = (0..uris.len() as u32)
+            .map(transmux::audio_profile::AudioTrackSelector::Index)
+            .collect();
+        r
+    }
+
+    /// #3668: every unsafe or reserved audio rendition uri is refused with the
+    /// split-audio field; a plain relative path is accepted.
+    #[test]
+    fn audio_rendition_uri_safety() {
+        let check = |uris: &[&str]| split_audio_route(uris).validate_standalone("media.m3u8");
+        check(&["en/audio.m3u8"]).expect("plain relative uri");
+        check(&["en/audio.m3u8", "de/audio.m3u8"]).expect("two unique uris");
+        for bad in [
+            "/abs",
+            "../x",
+            "a/../b",
+            "a//b",
+            "./a",
+            "master.m3u8",
+            "iframe.m3u8",
+            "media.m3u8",
+        ] {
+            assert!(
+                is_invalid(check(&[bad]), ConfigField::AudioRenditionSources),
+                "{bad:?}"
+            );
+        }
+        assert!(is_invalid(
+            check(&["a.m3u8", "a.m3u8"]),
+            ConfigField::AudioRenditionSources
+        ));
+    }
+
+    /// #3668: a selector count differing from the rendition count, a non-llhls
+    /// output and a repeated selector are each refused.
+    #[test]
+    fn audio_rendition_selector_shape() {
+        let mut r = split_audio_route(&["a.m3u8", "b.m3u8"]);
+        r.audio_rendition_sources.pop();
+        assert!(is_invalid(
+            r.validate_standalone("media.m3u8"),
+            ConfigField::AudioRenditionSources
+        ));
+
+        let mut r = split_audio_route(&["a.m3u8"]);
+        r.outputs = vec![OutputKind::LlHls, OutputKind::Dash];
+        assert!(is_invalid(
+            r.validate_standalone("media.m3u8"),
+            ConfigField::AudioRenditionSources
+        ));
+
+        let mut r = split_audio_route(&["a.m3u8", "b.m3u8"]);
+        r.audio_rendition_sources = vec![
+            transmux::audio_profile::AudioTrackSelector::Index(0),
+            transmux::audio_profile::AudioTrackSelector::Index(0),
+        ];
+        assert!(is_invalid(
+            r.validate_standalone("media.m3u8"),
+            ConfigField::AudioRenditionSources
+        ));
+    }
+
+    /// #3669: each output kind mounts exactly its expected manifest paths and
+    /// two outputs that mount the same path are refused.
+    #[test]
+    fn manifest_paths_and_collisions() {
+        let paths = |kind| route_with_outputs(vec![kind]).manifest_paths("media.m3u8");
+        assert_eq!(
+            paths(OutputKind::LlHls),
+            ["/master.m3u8", "/media.m3u8", "/iframe.m3u8"]
+        );
+        assert_eq!(paths(OutputKind::TsHls), ["/master.m3u8", "/media.m3u8"]);
+        assert_eq!(paths(OutputKind::Dash), ["/manifest.mpd"]);
+        assert_eq!(
+            paths(OutputKind::LlDash),
+            [format!(
+                "/{}",
+                crate::output::ll_dash::LL_DASH_MANIFEST_NAME
+            )]
+        );
+        assert_eq!(paths(OutputKind::Smooth), ["/Manifest"]);
+        assert_eq!(paths(OutputKind::Catchup), ["/catchup.m3u8"]);
+
+        for outputs in [
+            vec![OutputKind::LlHls, OutputKind::TsHls],
+            vec![OutputKind::TsHls, OutputKind::TsHls],
+            vec![OutputKind::LlDash, OutputKind::LlDash],
+            vec![OutputKind::Smooth, OutputKind::Smooth],
+        ] {
+            let label = format!("{outputs:?}");
+            assert!(
+                is_invalid(
+                    route_with_outputs(outputs).validate_standalone("media.m3u8"),
+                    ConfigField::RoutesOutputs
+                ),
+                "{label}"
+            );
+        }
+        route_with_outputs(vec![OutputKind::TsHls, OutputKind::Dash]).manifest_paths("media.m3u8");
+    }
+
+    /// #3670: each `UdpSocketSpec` setter stores its argument.
+    #[test]
+    fn udp_socket_spec_setters_store_their_argument() {
+        let spec = UdpSocketSpec::default()
+            .with_recv_buffer_bytes(4096)
+            .with_reuse_address(true)
+            .with_reuse_port(true);
+        assert_eq!(spec.recv_buffer_bytes, Some(4096));
+        assert!(spec.reuse_address);
+        assert!(spec.reuse_port);
+        let off = spec.with_reuse_address(false).with_reuse_port(false);
+        assert!(!off.reuse_address);
+        assert!(!off.reuse_port);
+        assert_eq!(off.recv_buffer_bytes, Some(4096));
+    }
+
+    /// #3670: each `Config` setter stores its argument and leaves the rest alone.
+    #[test]
+    fn config_setters_store_their_argument() {
+        let base = Config::default();
+        let cfg = Config::default()
+            .with_bind("127.0.0.1:1".into())
+            .with_request_timeout(Duration::from_secs(41))
+            .with_max_concurrent_requests(42)
+            .with_max_blocking_reloads_per_route(43)
+            .with_whep_media_sockets_per_ip(44)
+            .with_max_request_body_bytes(45)
+            .with_concurrency_queue_timeout(Duration::from_secs(46))
+            .with_ingest_connect_timeout(Duration::from_secs(47))
+            .with_ingest_read_timeout(Duration::from_secs(48))
+            .with_playlist_name("x.m3u8".into())
+            .with_program_date_time(ProgramDateTimeSource::Off)
+            .with_output_auth(OutputAuthSpec::Bearer { token: "t".into() })
+            .with_allow_open_ingest(true);
+        assert_eq!(cfg.bind, "127.0.0.1:1");
+        assert_eq!(cfg.request_timeout, Duration::from_secs(41));
+        assert_eq!(cfg.max_concurrent_requests, 42);
+        assert_eq!(cfg.max_blocking_reloads_per_route, 43);
+        assert_eq!(cfg.whep_media_sockets_per_ip, 44);
+        assert_eq!(cfg.max_request_body_bytes, 45);
+        assert_eq!(cfg.concurrency_queue, Duration::from_secs(46));
+        assert_eq!(cfg.ingest_connect_timeout, Duration::from_secs(47));
+        assert_eq!(cfg.ingest_read_timeout, Duration::from_secs(48));
+        assert_eq!(cfg.playlist_name, "x.m3u8");
+        assert_eq!(cfg.program_date_time, ProgramDateTimeSource::Off);
+        assert!(matches!(
+            cfg.output_auth,
+            Some(OutputAuthSpec::Bearer { ref token }) if token == "t"
+        ));
+        assert!(cfg.allow_open_ingest);
+        assert_eq!(cfg.target_duration, base.target_duration);
+        assert_eq!(cfg.window_segments, base.window_segments);
+        assert!(cfg.routes.is_empty());
+    }
+
+    /// #3670: `PreboundBinds::with_udp` registers the socket under its key and
+    /// a take consumes it.
+    #[cfg(feature = "test-seams")]
+    #[tokio::test]
+    async fn prebound_with_udp_registers_one_takeable_socket() {
+        let sock = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let mut binds = PreboundBinds::default();
+        binds.with_udp("k", sock);
+        assert!(binds.take_udp("other").is_none());
+        assert!(binds.take_udp("k").is_some());
+        assert!(binds.take_udp("k").is_none());
+    }
+
+    fn route_json(input: &str) -> Route {
+        serde_json::from_str(&format!(r#"{{"name":"r","input":{input}}}"#)).unwrap()
+    }
+
+    /// #3671: an SRT input's `latency` is read as whole milliseconds, `null` and
+    /// absence leave it unset, and a value past `u16` is a parse error.
+    #[test]
+    fn srt_latency_deserialises_as_milliseconds() {
+        let latency = |input: &str| match route_json(input).input {
+            InputSpec::Srt { latency, .. } => latency,
+            other => panic!("not srt: {other:?}"),
+        };
+        assert_eq!(
+            latency(r#"{"type":"srt","remote":"h:1","latency":200}"#),
+            Some(Duration::from_millis(200))
+        );
+        assert_eq!(
+            latency(r#"{"type":"srt","remote":"h:1","latency":null}"#),
+            None
+        );
+        assert_eq!(latency(r#"{"type":"srt","remote":"h:1"}"#), None);
+        assert!(
+            serde_json::from_str::<Route>(
+                r#"{"name":"r","input":{"type":"srt","remote":"h:1","latency":65536}}"#
+            )
+            .is_err()
+        );
+    }
+
+    /// #3671: omitted `subtitles` is on, omitted `hold_cold_playlist` is the
+    /// engine default, and both literals are pinned.
+    #[test]
+    fn serde_defaults_are_pinned() {
+        let route = route_json(r#"{"type":"rtsp","url":"rtsp://a"}"#);
+        assert!(route.subtitles);
+        let cfg: Config = serde_json::from_str(r#"{"routes":[]}"#).unwrap();
+        assert_eq!(
+            cfg.hold_cold_playlist,
+            hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT
+        );
+        assert!(cfg.hold_cold_playlist);
+        assert!(hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT);
+    }
+
+    /// #3672: label strings are exact.
+    #[test]
+    fn config_labels_are_exact() {
+        assert_eq!(TsHlsIdrFallback::Auto.name(), "auto");
+        assert_eq!(TsHlsIdrFallback::Targets(2).name(), "targets");
+        assert_eq!(TsHlsIdrFallback::Never.name(), "never");
+        assert_eq!(TsHlsIdrFallback::Never.to_string(), "never");
+        assert_eq!(ProgramDateTimeSource::Arrival.name(), "arrival");
+        assert_eq!(ProgramDateTimeSource::Off.name(), "off");
+        assert_eq!(ProgramDateTimeSource::Off.to_string(), "off");
+    }
+
+    /// #3672: `SignedUrlKeySpec`'s `Debug` shows the key id and never the secret.
+    #[test]
+    fn signed_url_key_debug_redacts_the_secret() {
+        let key = SignedUrlKeySpec::new("kid-7".into(), "s3cr3t".into());
+        let rendered = format!("{key:?}");
+        assert!(rendered.contains("kid-7"), "{rendered}");
+        assert!(rendered.contains("***"), "{rendered}");
+        assert!(!rendered.contains("s3cr3t"), "{rendered}");
+        assert_eq!(
+            rendered,
+            r#"SignedUrlKeySpec { kid: "kid-7", secret: "***" }"#
+        );
     }
 }
