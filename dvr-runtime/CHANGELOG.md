@@ -6,6 +6,14 @@ All notable changes to this crate are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `FsRecorder::with_cursor`: create a recorder from a pinning cursor the host
+  took earlier, keeping the cursor when the create is refused (for example
+  `FsError::Locked` while the previous recorder of the archive still holds
+  its directory), so a host replacing a recorder misses no segment closed in
+  between (multimux reconnects, #3929).
+
 ### Changed
 
 - The release requires `broadcast-hls` 0.8.2 (typed `DateRange`/`CustomTag`,

@@ -625,3 +625,52 @@ fn a_stale_temp_playlist_is_removed_reported_and_never_an_archive_file() {
     assert_eq!(scan.segments.len(), 1);
     cleanup(&root);
 }
+
+/// A host that pins its cursor before the previous recorder of the archive
+/// has released the directory keeps the cursor through the `Locked` refusal
+/// and, once it can create the recorder, archives the segment that closed in
+/// between.
+#[test]
+fn a_held_cursor_survives_a_locked_directory_and_records_what_closed_meanwhile() {
+    let root = temp_dir("held-cursor");
+    let name = || ArchiveName::new("held").expect("name");
+    let config = || config(ArchiveContainer::Fmp4, 2, periods(10));
+    let trunk = trunk();
+    let writer = trunk.segment_writer().expect("writer");
+    let first = FsRecorder::new(&root, name(), config(), &trunk).expect("first recorder");
+    let mut cursor = Some(trunk.pin_segments(config().overrun));
+    assert!(matches!(
+        FsRecorder::with_cursor(&root, name(), config(), &trunk, &mut cursor),
+        Err(FsError::Locked { .. })
+    ));
+    assert!(cursor.is_some(), "a refused create keeps the cursor");
+    drop(first);
+    writer
+        .publish_segment(SegmentEntry::new(
+            Bytes::from(vec![0x5Au8; 100]),
+            SegmentSeq::new(1),
+            Duration::from_secs(2),
+            Timestamp::ZERO,
+            transmux::SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .expect("publish");
+    let mut second = FsRecorder::with_cursor(&root, name(), config(), &trunk, &mut cursor)
+        .expect("second recorder");
+    assert!(cursor.is_none(), "the recorder took the cursor");
+    second
+        .poll(
+            Timestamp::ZERO,
+            |_| None,
+            &[InitGeneration::new(SegmentSeq::new(0), init())],
+        )
+        .expect("record");
+    let mut archive = FsArchive::open(&root, &name(), ArchiveContainer::Fmp4);
+    let found = archive.find(SegmentSeq::new(1)).expect("seq 1 archived");
+    assert_eq!(
+        archive.read(&found).expect("read"),
+        Bytes::from(vec![0x5Au8; 100])
+    );
+    cleanup(&root);
+}

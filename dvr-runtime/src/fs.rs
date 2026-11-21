@@ -147,6 +147,41 @@ impl FsRecorder {
         config: ArchiveConfig,
         trunk: &Arc<Trunk>,
     ) -> Result<Self, FsError> {
+        let overrun = config.overrun;
+        Self::open(root, name, config, trunk, || trunk.pin_segments(overrun))
+    }
+
+    /// As [`Self::new`], but recording from `cursor`, a pinning cursor the
+    /// host took on `trunk` earlier (with the configured overrun policy), so
+    /// no segment closed since then is missed. The cursor is taken out of
+    /// `cursor` only when the recorder is created; on an error it stays, so
+    /// the host can retry, for example once the recorder holding the
+    /// directory's lock has been dropped ([`FsError::Locked`]). With `None`
+    /// a fresh cursor is pinned, as [`Self::new`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn with_cursor(
+        root: &Path,
+        name: ArchiveName,
+        config: ArchiveConfig,
+        trunk: &Arc<Trunk>,
+        cursor: &mut Option<SegmentCursor>,
+    ) -> Result<Self, FsError> {
+        let overrun = config.overrun;
+        Self::open(root, name, config, trunk, || {
+            cursor.take().unwrap_or_else(|| trunk.pin_segments(overrun))
+        })
+    }
+
+    fn open(
+        root: &Path,
+        name: ArchiveName,
+        config: ArchiveConfig,
+        trunk: &Arc<Trunk>,
+        cursor: impl FnOnce() -> SegmentCursor,
+    ) -> Result<Self, FsError> {
         let dir = layout::route_dir(root, &name);
         let container = config.container;
         fs::create_dir_all(&dir)
@@ -202,7 +237,7 @@ impl FsRecorder {
         let mut writer = ArchiveWriter::new(config.clone())?;
         writer.seed(&existing)?;
         writer.note_stale_temp_playlists(&stale_temps)?;
-        let cursor = trunk.pin_segments(config.overrun);
+        let cursor = cursor();
         let tracker = config
             .programme_service
             .map(dvb_si::epg::PresentEventTracker::new);

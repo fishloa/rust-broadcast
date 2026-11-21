@@ -758,6 +758,11 @@ pub(crate) struct ProgramServing {
     /// does not have DVR enabled. Owns a pinning `SegmentCursor`, drained
     /// by [`Self::poll_dvr`].
     dvr: Mutex<Option<FsRecorder>>,
+    /// A recorder that could not be created yet because the previous
+    /// recorder of the same archive still holds its directory (a reconnect,
+    /// before the predecessor's last poll): its cursor is pinned already, so
+    /// nothing closed meanwhile is missed.
+    dvr_pending: Mutex<Option<PendingRecorder>>,
     /// The monotonic clock the recorder's period age is measured on.
     dvr_clock: crate::clock::SystemHostClock,
     /// The first archived segment's timeline position and estimated wall
@@ -1049,8 +1054,8 @@ impl ProgramServing {
             previous.map_or(&[][..], |p| p.window.as_slice()),
         ));
 
-        let dvr = dvr_config.filter(|c| c.enabled).and_then(|cfg| {
-            start_recorder(
+        let mut pending = dvr_config.filter(|c| c.enabled).and_then(|cfg| {
+            PendingRecorder::new(
                 &cfg,
                 route_name,
                 container,
@@ -1059,6 +1064,15 @@ impl ProgramServing {
                 &trunk,
             )
         });
+        let mut dvr = None;
+        match pending.as_mut().map(|p| p.start(route_name, &trunk)) {
+            Some(RecorderStart::Started(recorder)) => {
+                dvr = Some(recorder);
+                pending = None;
+            }
+            Some(RecorderStart::Failed) => pending = None,
+            Some(RecorderStart::Locked) | None => {}
+        }
 
         Ok(Arc::new(ProgramServing {
             mpd_cache: Mutex::new(MpdCache::default()),
@@ -1074,7 +1088,8 @@ impl ProgramServing {
             route_name: route_name.to_string(),
             #[cfg(test)]
             panic_on_persist: std::sync::atomic::AtomicBool::new(false),
-            dvr_recording: std::sync::atomic::AtomicBool::new(dvr.is_some()),
+            dvr_recording: std::sync::atomic::AtomicBool::new(dvr.is_some() || pending.is_some()),
+            dvr_pending: Mutex::new(pending),
             dvr: Mutex::new(dvr),
             dvr_clock: crate::clock::SystemHostClock::new(),
             wall_anchor: Mutex::new(None),
@@ -1186,10 +1201,40 @@ impl ProgramServing {
         self.init_log.lock().len()
     }
 
+    /// Archive what the predecessor closed but had not archived, then release
+    /// its recorder (and with it the archive directory's lock), so this
+    /// program's recorder can be created.
     fn flush_predecessor(&self) {
         let predecessor = self.predecessor.lock().take();
         if let Some(predecessor) = predecessor {
             predecessor.poll_dvr_blocking();
+            predecessor.dvr.lock().take();
+            predecessor.dvr_pending.lock().take();
+            predecessor.dvr_recording.store(false, Ordering::SeqCst);
+        }
+    }
+
+    /// Create the recorder still pending, if any; a recorder that still
+    /// cannot be created because the directory is locked stays pending.
+    fn start_pending_recorder(&self, slot: &mut Option<FsRecorder>) {
+        if slot.is_some() {
+            return;
+        }
+        let mut pending = self.dvr_pending.lock();
+        match pending
+            .as_mut()
+            .map(|p| p.start(&self.route_name, &self.trunk))
+        {
+            Some(RecorderStart::Started(recorder)) => {
+                pending.take();
+                *slot = Some(recorder);
+            }
+            Some(RecorderStart::Failed) => {
+                pending.take();
+                self.dvr_recording.store(false, Ordering::SeqCst);
+                self.init_log.lock().clear();
+            }
+            Some(RecorderStart::Locked) | None => {}
         }
     }
 
@@ -1565,6 +1610,7 @@ impl ProgramServing {
                 return;
             };
             match guard.as_ref() {
+                None if self.dvr_pending.lock().is_some() => {}
                 None => return,
                 Some(recorder) if !recorder.needs_poll(latest, latest_init.as_deref()) => {
                     return;
@@ -1592,6 +1638,7 @@ impl ProgramServing {
 
         self.flush_predecessor();
         let mut dvr_guard = self.dvr.lock();
+        self.start_pending_recorder(&mut dvr_guard);
         let Some(recorder) = dvr_guard.as_mut() else {
             return;
         };
@@ -1672,39 +1719,86 @@ impl ProgramServing {
     }
 }
 
-/// Create the DVR recorder of one program, or log why recording is off for
-/// it.
-fn start_recorder(
-    config: &crate::dvr::DvrConfig,
-    route_name: &str,
-    container: Container,
-    target_duration: Duration,
-    seq_offset: u64,
-    trunk: &Arc<Trunk>,
-) -> Option<FsRecorder> {
-    let start = || -> Result<FsRecorder, Box<dyn std::error::Error + Send + Sync>> {
-        let name = crate::dvr::archive_name(route_name)?;
-        let archive = config.to_archive_config(container, target_duration, seq_offset)?;
-        Ok(FsRecorder::new(
-            std::path::Path::new(&config.archive_root),
-            name,
-            archive,
-            trunk,
-        )?)
-    };
-    let started = start();
-    match started {
-        Ok(recorder) => {
-            tracing::info!(route = %route_name, "DVR recording started");
-            Some(recorder)
+/// The outcome of one attempt to create a program's recorder.
+enum RecorderStart {
+    Started(FsRecorder),
+    /// Another recorder holds the archive directory; retry later.
+    Locked,
+    /// Recording cannot start (logged).
+    Failed,
+}
+
+/// What one program's DVR recorder is created from, with its pinning cursor
+/// taken as the program is built.
+struct PendingRecorder {
+    root: std::path::PathBuf,
+    name: dvr_runtime::ArchiveName,
+    config: dvr_runtime::ArchiveConfig,
+    cursor: Option<media_plane::trunk::SegmentCursor>,
+}
+
+impl PendingRecorder {
+    /// `None`, logged, when the configuration cannot name or describe an
+    /// archive.
+    fn new(
+        config: &crate::dvr::DvrConfig,
+        route_name: &str,
+        container: Container,
+        target_duration: Duration,
+        seq_offset: u64,
+        trunk: &Arc<Trunk>,
+    ) -> Option<Self> {
+        let described = crate::dvr::archive_name(route_name).and_then(|name| {
+            Ok((
+                name,
+                config.to_archive_config(container, target_duration, seq_offset)?,
+            ))
+        });
+        match described {
+            Ok((name, archive)) => Some(Self {
+                root: std::path::PathBuf::from(&config.archive_root),
+                cursor: Some(trunk.pin_segments(archive.overrun)),
+                name,
+                config: archive,
+            }),
+            Err(e) => {
+                tracing::error!(
+                    route = %route_name,
+                    error = %e,
+                    "DVR configuration rejected; recording disabled for this program"
+                );
+                None
+            }
         }
-        Err(e) => {
-            tracing::error!(
-                route = %route_name,
-                error = %e,
-                "DVR recorder creation failed; recording disabled for this program"
-            );
-            None
+    }
+
+    fn start(&mut self, route_name: &str, trunk: &Arc<Trunk>) -> RecorderStart {
+        match FsRecorder::with_cursor(
+            &self.root,
+            self.name.clone(),
+            self.config.clone(),
+            trunk,
+            &mut self.cursor,
+        ) {
+            Ok(recorder) => {
+                tracing::info!(route = %route_name, "DVR recording started");
+                RecorderStart::Started(recorder)
+            }
+            Err(dvr_runtime::fs::FsError::Locked { .. }) => {
+                tracing::debug!(
+                    route = %route_name,
+                    "DVR archive still held by the previous recorder; retried on the next poll"
+                );
+                RecorderStart::Locked
+            }
+            Err(e) => {
+                tracing::error!(
+                    route = %route_name,
+                    error = %e,
+                    "DVR recorder creation failed; recording disabled for this program"
+                );
+                RecorderStart::Failed
+            }
         }
     }
 }
