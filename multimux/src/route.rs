@@ -1158,6 +1158,11 @@ impl ProgramServing {
             .collect()
     }
 
+    #[cfg(test)]
+    fn init_log_len(&self) -> usize {
+        self.init_log.lock().len()
+    }
+
     fn flush_predecessor(&self) {
         let predecessor = self.predecessor.lock().take();
         if let Some(predecessor) = predecessor {
@@ -3955,6 +3960,217 @@ mod program_registry_tests {
             archived_periods(&tmp),
             2,
             "the new init waited for the next segment to roll the period"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn dvr_config(root: &std::path::Path, service_id: Option<u16>) -> crate::dvr::DvrConfig {
+        crate::dvr::DvrConfig {
+            enabled: true,
+            archive_root: root.to_string_lossy().to_string(),
+            retention_periods: 5,
+            retention_bytes: 0,
+            period_duration_secs: 3600,
+            overrun: crate::dvr::ArchiveOverrunSerde::Gap,
+            dvb_service_id: service_id,
+        }
+    }
+
+    fn dvr_test_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "multimux-dvr-route-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// An init generation is queued for the archive only while recording AND
+    /// only when the bytes actually changed: re-declaring the same init must
+    /// not append a generation for every declaration, and a route without DVR
+    /// queues none at all.
+    #[test]
+    fn a_dvr_route_logs_only_changed_init_generations() {
+        let tmp = dvr_test_dir("init-log");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_dvr(dvr_config(&tmp, None));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        assert_eq!(
+            serving.init_log_len(),
+            1,
+            "an identical init must not be queued twice"
+        );
+        route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        assert_eq!(serving.init_log_len(), 2, "a changed init is a new generation");
+
+        let plain = RouteHandle::new(RouteConfig::default());
+        plain.publish_new_program(SPTS_PROGRAM_ID);
+        plain.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        assert_eq!(
+            plain
+                .serving(SPTS_PROGRAM_ID)
+                .expect("program published")
+                .init_log_len(),
+            0,
+            "a route with DVR off has nothing to archive"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The queued init generations are trimmed to the unpersisted tail after a
+    /// successful persist: the log must not grow without bound, and it must
+    /// keep exactly the newest generation for the next roll.
+    #[tokio::test]
+    async fn a_successful_dvr_persist_keeps_only_the_newest_queued_init() {
+        let tmp = dvr_test_dir("init-drain");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_dvr(dvr_config(&tmp, None));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving.poll_dvr().await;
+        assert_eq!(archived_periods(&tmp), 1);
+        assert_eq!(serving.init_log_len(), 1);
+
+        route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        assert_eq!(serving.init_log_len(), 2);
+        serving.poll_dvr().await;
+        assert_eq!(
+            serving.init_log_len(),
+            1,
+            "the persisted generations must be drained, leaving the newest"
+        );
+        assert_eq!(
+            serving
+                .init_generations()
+                .pop()
+                .map(|generation| generation.init),
+            Some(Bytes::from(vec![0xBB; 4])),
+            "the newest init is the one still waiting"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A poll with nothing new must return before the persist step: an
+    /// unnecessary poll would re-enter the recorder on every ingest tick.
+    /// The injected panic is the observation — reaching it abandons the
+    /// recorder, so a recorder still present proves the persist never ran.
+    #[tokio::test]
+    async fn a_dvr_poll_with_nothing_new_does_not_touch_the_recorder() {
+        let tmp = dvr_test_dir("idle-poll");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name("idle-poll")
+        .with_dvr(dvr_config(&tmp, None));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving.poll_dvr().await;
+        assert!(serving.dvr.lock().is_some());
+
+        serving.panic_on_persist.store(true, Ordering::SeqCst);
+        serving.poll_dvr().await;
+        assert!(
+            serving.dvr.lock().is_some(),
+            "a poll with nothing new reached the persist step"
+        );
+        assert!(
+            serving.panic_on_persist.load(Ordering::SeqCst),
+            "the injected panic never ran, so the recorder was not re-entered"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The audio renditions each own an `HlsOrigin`; writing an audio init
+    /// through the route must land on that origin, or a viewer switching to
+    /// the rendition has no map segment to start from.
+    #[test]
+    fn an_audio_rendition_init_is_recorded_on_its_own_origin() {
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(4))
+                .with_window_segments(8)
+                .with_audio_renditions(vec![hls_runtime::server::AudioRenditionDecl {
+                    group_id: "aac".into(),
+                    name: "English".into(),
+                    language: "en".into(),
+                    default: true,
+                    autoselect: true,
+                    channels: Some("2".into()),
+                    uri: "audio/en.m3u8".into(),
+                    characteristics: Vec::new(),
+                }])
+                .with_audio_rendition_sources(vec![
+                    transmux::audio_profile::AudioTrackSelector::Index(0),
+                ]),
+        );
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_audio_init(SPTS_PROGRAM_ID, 0, vec![0xAB; 6]);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        assert_eq!(
+            serving.audio_servings()[0].origin.init_bytes(),
+            Some(Bytes::from(vec![0xAB; 6]))
+        );
+    }
+
+    /// The route feeds the EIT present event of the bytes it ingests to its
+    /// DVR recorder: without that, an EIT-aligned period roll never happens.
+    /// The genuine capture's present event is pinned in the fixture's
+    /// PROVENANCE (TF1, event 0x7857).
+    #[tokio::test]
+    async fn a_dvr_route_feeds_eit_into_its_recorder() {
+        const TF1_SERVICE_ID: u16 = 0x0601;
+        let ts_bytes = std::fs::read(test_fixtures::path("ts/tnt-5w-12732v-isi6-10s.ts"))
+            .expect("read genuine DVB-T capture");
+        let tmp = dvr_test_dir("eit-feed");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_dvr(dvr_config(&tmp, Some(TF1_SERVICE_ID)));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        assert!(
+            serving
+                .dvr
+                .lock()
+                .as_ref()
+                .expect("recorder")
+                .current_programme()
+                .is_none()
+        );
+        route.feed_si_ts(&ts_bytes);
+        assert_eq!(
+            serving
+                .dvr
+                .lock()
+                .as_ref()
+                .expect("recorder")
+                .current_programme()
+                .map(|programme| programme.event_id),
+            Some(0x7857)
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
