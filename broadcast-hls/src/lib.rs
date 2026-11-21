@@ -1724,7 +1724,6 @@ impl MediaPlaylist {
     /// already wire-valid) or was assembled by hand through the public
     /// fields.
     pub fn to_m3u8(&self) -> Result<String> {
-        self.validate_for_render()?;
         let mut s = self.render_header()?;
         for index in 0..self.segments.len() {
             s.push_str(&self.render_segment(index)?);
@@ -1822,6 +1821,16 @@ impl MediaPlaylist {
         // #EXT-X-SKIP (RFC 8216bis §4.4.5.2) — a Playlist Delta Update marker
         // standing in for the segments/tags before the Skip Boundary.
         if let Some(skip) = &self.skip {
+            for id in &skip.recently_removed_daterange_ids {
+                validate_quoted_string(id, "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id")?;
+                if id.contains('\t') {
+                    return Err(Error::InvalidQuotedString {
+                        what: "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id".to_string(),
+                        bad_char: '\t',
+                        value: id.clone(),
+                    });
+                }
+            }
             s.push_str(&format!(
                 "#EXT-X-SKIP:SKIPPED-SEGMENTS={}",
                 skip.skipped_segments
@@ -2042,63 +2051,6 @@ impl MediaPlaylist {
         }
 
         Ok(s)
-    }
-
-    /// Reject any field that would be rendered inside an RFC 8216 §4.2
-    /// quoted-string or as a URI but contains `"`, CR or LF (audit BH-W7,
-    /// issue #1111) — a tag/attribute-list injection vector for a playlist
-    /// assembled from external data. Covers every field [`Self::to_m3u8`]
-    /// emits; the per-tag renderers re-check the same values, so a caller
-    /// that bypasses this method still cannot emit a malformed line.
-    fn validate_for_render(&self) -> Result<()> {
-        // Opaque verbatim lines: not a quoted-string, but a newline would
-        // still split the line into two.
-        validate_tag_body("playlist-level extra tag", &self.extra_tags)?;
-        for seg in &self.segments {
-            validate_uri(&seg.uri, "segment URI")?;
-            if let Some(title) = &seg.title {
-                validate_quoted_string(title, "EXTINF title")?;
-            }
-            validate_tag_body("segment pre-tag", &seg.pre_tags)?;
-            for part in &seg.parts {
-                validate_uri(&part.uri, "EXT-X-PART URI")?;
-            }
-            if let Some(map) = &seg.map {
-                validate_uri(&map.uri, "EXT-X-MAP URI")?;
-            }
-        }
-        if let Some(open) = &self.open_segment {
-            validate_tag_body("open-segment pre-tag", &open.pre_tags)?;
-            for part in &open.parts {
-                validate_uri(&part.uri, "EXT-X-PART URI")?;
-            }
-            if let Some(map) = &open.map {
-                validate_uri(&map.uri, "EXT-X-MAP URI")?;
-            }
-        }
-        if let Some(ll) = &self.low_latency
-            && let Some(uri) = &ll.preload_hint_part
-        {
-            validate_uri(uri, "EXT-X-PRELOAD-HINT URI")?;
-        }
-        for report in &self.rendition_reports {
-            validate_uri(&report.uri, "EXT-X-RENDITION-REPORT URI")?;
-        }
-        if let Some(skip) = &self.skip {
-            // RFC 8216bis §4.4.5.2: the ids are one quoted-string, tab (0x9)
-            // delimited — so a tab inside an id would split it into two ids.
-            for id in &skip.recently_removed_daterange_ids {
-                validate_quoted_string(id, "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id")?;
-                if id.contains('\t') {
-                    return Err(Error::InvalidQuotedString {
-                        what: "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id".to_string(),
-                        bad_char: '\t',
-                        value: id.clone(),
-                    });
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Parse an RFC 8216bis `#EXTM3U` Media Playlist — the symmetric inverse
