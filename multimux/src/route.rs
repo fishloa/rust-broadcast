@@ -128,7 +128,7 @@ use media_plane::{ProgramId, Trunk};
 use transmux::Container;
 use transmux::TrackSpec;
 
-use crate::dvr::DvrRecorder;
+use dvr_runtime::fs::FsRecorder;
 
 /// Ring capacities [`ProgramServing::new`] gives each program's `Trunk`,
 /// beyond [`crate::config::Config::window_segments`] (which becomes the
@@ -754,10 +754,37 @@ pub(crate) struct ProgramServing {
     /// so the fail-closed path can be exercised without a real DVR bug.
     #[cfg(test)]
     panic_on_persist: std::sync::atomic::AtomicBool,
+    /// Test-only: runs once inside the next `poll_dvr_blocking`, right after
+    /// it read the queued init generations, to interleave a `set_init_from`.
+    #[cfg(test)]
+    after_init_snapshot: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// Test-only: how many of the next polls fail before touching the
+    /// recorder, as a failed store would.
+    #[cfg(test)]
+    fail_next_polls: std::sync::atomic::AtomicU32,
+    /// Test-only: how many of the next recorder creates are refused as if the
+    /// archive directory were locked.
+    #[cfg(test)]
+    refuse_next_starts: std::sync::atomic::AtomicU32,
     /// DVR durable segment archive (issue #746) — `None` when this route
     /// does not have DVR enabled. Owns a pinning `SegmentCursor`, drained
     /// by [`Self::poll_dvr`].
-    dvr: Mutex<Option<DvrRecorder>>,
+    dvr: Mutex<Option<FsRecorder>>,
+    /// A recorder that could not be created yet because the previous
+    /// recorder of the same archive still holds its directory (a reconnect,
+    /// before the predecessor's last poll): its cursor is pinned already, so
+    /// nothing closed meanwhile is missed.
+    dvr_pending: Mutex<Option<PendingRecorder>>,
+    /// The program's one EIT present/following tracker: it runs from the
+    /// program's first TS bytes, before the recorder exists, and hands every
+    /// change to the recorder once it does.
+    eit_tracker: Mutex<Option<dvb_si::epg::PresentEventTracker>>,
+    /// The monotonic clock the recorder's period age is measured on.
+    dvr_clock: crate::clock::SystemHostClock,
+    /// The first archived segment's timeline position and estimated wall
+    /// time, from which every later segment's `EXT-X-PROGRAM-DATE-TIME` in
+    /// the archive is derived.
+    wall_anchor: Mutex<Option<(broadcast_common::Timestamp, jiff::Timestamp)>>,
     /// Whether `dvr` still holds a recorder; cleared when a persist panic
     /// drops it, so [`Self::set_init`] stops logging init changes nobody
     /// will archive.
@@ -765,7 +792,7 @@ pub(crate) struct ProgramServing {
     /// Every init change since the recorder last archived under it, with the
     /// segment it starts at, so the recorder archives each pending segment
     /// under the init it was closed under.
-    init_log: Mutex<Vec<crate::dvr::InitGeneration>>,
+    init_log: Mutex<Vec<dvr_runtime::InitGeneration>>,
     /// The program this one replaced on a reconnect, until the first persist
     /// of this program's recorder has flushed the segments it had closed but
     /// not yet archived (see [`Self::flush_predecessor`]).
@@ -1043,32 +1070,20 @@ impl ProgramServing {
             previous.map_or(&[][..], |p| p.window.as_slice()),
         ));
 
-        let ext = match container {
-            Container::Fmp4 => ".m4s",
-            Container::MpegTs => ".ts",
-            _ => ".m4s",
-        };
-        let dvr = dvr_config.filter(|c| c.enabled).and_then(|cfg| {
-            match DvrRecorder::new(route_name.to_string(), cfg, ext, &trunk) {
-                Ok(recorder) => {
-                    // Index under the same numbers the origin shows.
-                    let recorder = recorder.with_seq_offset(media_sequence_offset);
-                    tracing::info!(
-                        route = %route_name,
-                        "DVR recording started"
-                    );
-                    Some(recorder)
-                }
-                Err(e) => {
-                    tracing::error!(
-                        route = %route_name,
-                        error = %e,
-                        "DVR recorder creation failed; recording disabled for this program"
-                    );
-                    None
-                }
-            }
+        let pending = dvr_config.filter(|c| c.enabled).and_then(|cfg| {
+            PendingRecorder::new(
+                &cfg,
+                route_name,
+                container,
+                target_duration,
+                media_sequence_offset,
+                &trunk,
+            )
         });
+        let eit_tracker = pending
+            .as_ref()
+            .and_then(|p| p.config.programme_service)
+            .map(dvb_si::epg::PresentEventTracker::new);
 
         Ok(Arc::new(ProgramServing {
             mpd_cache: Mutex::new(MpdCache::default()),
@@ -1084,8 +1099,18 @@ impl ProgramServing {
             route_name: route_name.to_string(),
             #[cfg(test)]
             panic_on_persist: std::sync::atomic::AtomicBool::new(false),
-            dvr_recording: std::sync::atomic::AtomicBool::new(dvr.is_some()),
-            dvr: Mutex::new(dvr),
+            #[cfg(test)]
+            after_init_snapshot: Mutex::new(None),
+            #[cfg(test)]
+            fail_next_polls: std::sync::atomic::AtomicU32::new(0),
+            #[cfg(test)]
+            refuse_next_starts: std::sync::atomic::AtomicU32::new(0),
+            dvr_recording: std::sync::atomic::AtomicBool::new(pending.is_some()),
+            dvr_pending: Mutex::new(pending),
+            eit_tracker: Mutex::new(eit_tracker),
+            dvr: Mutex::new(None),
+            dvr_clock: crate::clock::SystemHostClock::new(),
+            wall_anchor: Mutex::new(None),
             init_log: Mutex::new(Vec::new()),
             predecessor: Mutex::new(None),
             retained: Mutex::new(previous.map(|p| p.servings.clone()).unwrap_or_default()),
@@ -1131,31 +1156,62 @@ impl ProgramServing {
 
     fn set_init_from(&self, bytes: impl Into<Bytes>, first_seq: media_plane::ids::SegmentSeq) {
         let bytes = bytes.into();
-        if self.dvr_recording.load(Ordering::SeqCst)
-            && self.ll_hls.init_bytes().as_ref() != Some(&bytes)
-        {
-            self.init_log.lock().push(crate::dvr::InitGeneration {
-                first_seq,
-                init: bytes.clone(),
-            });
+        let current = self.ll_hls.init_bytes();
+        if self.dvr_recording.load(Ordering::SeqCst) && current.as_ref() != Some(&bytes) {
+            // The program's first init also covers any segment closed before
+            // it, as the archive cannot record an fMP4 segment without one.
+            let archived_from = if current.is_none() {
+                media_plane::ids::SegmentSeq::new(0)
+            } else {
+                first_seq
+            };
+            self.init_log.lock().push(dvr_runtime::InitGeneration::new(
+                archived_from,
+                bytes.clone(),
+            ));
         }
         self.ll_hls.set_init_from(bytes, first_seq);
     }
 
     /// The init changes the recorder has yet to archive under, oldest first;
     /// with none logged, the current init applies to every pending segment.
-    fn init_generations(&self) -> Vec<crate::dvr::InitGeneration> {
+    fn init_generations(&self) -> Vec<dvr_runtime::InitGeneration> {
         let logged = self.init_log.lock().clone();
         if !logged.is_empty() {
             return logged;
         }
         self.init_bytes()
-            .map(|init| crate::dvr::InitGeneration {
-                first_seq: media_plane::ids::SegmentSeq::new(0),
-                init,
+            .map(|init| {
+                dvr_runtime::InitGeneration::new(media_plane::ids::SegmentSeq::new(0), init)
             })
             .into_iter()
             .collect()
+    }
+
+    /// The wall-clock time of `entry`: the first segment the recorder sees is
+    /// taken to have ended now, and every later one is placed by its distance
+    /// on the Trunk timeline from that one.
+    fn wall_of(&self, entry: &SegmentEntry) -> Option<jiff::Timestamp> {
+        let (anchor_position, anchor_wall) = *self.wall_anchor.lock().get_or_insert_with(|| {
+            let ended = jiff::Timestamp::now();
+            let started = jiff::SignedDuration::try_from(entry.duration)
+                .ok()
+                .and_then(|d| ended.checked_sub(d).ok())
+                .unwrap_or(ended);
+            (entry.timeline_position, started)
+        });
+        let delta =
+            i128::from(entry.timeline_position.as_nanos()) - i128::from(anchor_position.as_nanos());
+        let delta = jiff::SignedDuration::from_nanos(i64::try_from(delta).ok()?);
+        anchor_wall.checked_add(delta).ok()
+    }
+
+    fn dvr_now(&self) -> broadcast_common::Timestamp {
+        use crate::clock::HostClock;
+        let elapsed = std::time::Duration::from_micros(self.dvr_clock.mono_us());
+        broadcast_common::Timestamp::from_nanos(
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX),
+        )
     }
 
     #[cfg(test)]
@@ -1163,11 +1219,109 @@ impl ProgramServing {
         self.init_log.lock().len()
     }
 
+    /// Archive what the predecessor closed but had not archived (its recorder
+    /// is started even while its retry backs off), then take its recorder
+    /// over: the archive directory's lock passes straight to this program's
+    /// recorder ([`FsRecorder::succeed`]) and is never released in between. A
+    /// final poll that fails is retried once; a second failure is logged and
+    /// counted, and what it left unarchived is lost.
     fn flush_predecessor(&self) {
         let predecessor = self.predecessor.lock().take();
-        if let Some(predecessor) = predecessor {
-            predecessor.poll_dvr_blocking();
+        let Some(predecessor) = predecessor else {
+            return;
+        };
+        if !predecessor.poll_dvr_blocking(true) && !predecessor.poll_dvr_blocking(true) {
+            tracing::error!(
+                route = %self.route_name,
+                "DVR could not archive the replaced program's last segments; they are lost"
+            );
+            metrics::counter!(
+                crate::prometheus::DVR_PREDECESSOR_FLUSH_FAILED_TOTAL,
+                "route" => self.route_name.clone(),
+            )
+            .increment(1);
         }
+        let held = predecessor.release_recorder();
+        if let Some(pending) = self.dvr_pending.lock().as_mut()
+            && held.is_some()
+        {
+            pending.inherited = held;
+        }
+    }
+
+    /// Drop this program's pending recorder and EIT tracker and hand back its
+    /// recorder (or the one its pending recorder was to take over), which
+    /// holds the archive directory's lock.
+    fn release_recorder(&self) -> Option<FsRecorder> {
+        let recorder = self.dvr.lock().take();
+        let pending = self.dvr_pending.lock().take();
+        self.eit_tracker.lock().take();
+        self.dvr_recording.store(false, Ordering::SeqCst);
+        recorder.or_else(|| pending.and_then(|p| p.inherited))
+    }
+
+    /// Create the recorder still pending, if any and if its retry is due (or
+    /// `force`); one that cannot be created because the directory is locked
+    /// stays pending until its backoff elapses.
+    fn start_pending_recorder(&self, slot: &mut Option<FsRecorder>, force: bool) {
+        if slot.is_some() {
+            return;
+        }
+        let now = self.dvr_now();
+        let mut pending = self.dvr_pending.lock();
+        let Some(due) = pending.as_mut().filter(|p| force || p.is_due(now)) else {
+            return;
+        };
+        #[cfg(test)]
+        if self
+            .refuse_next_starts
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            due.refused(&self.route_name, std::path::Path::new("test"), now);
+            return;
+        }
+        match due.start(&self.route_name, &self.trunk, now) {
+            RecorderStart::Started(recorder) => {
+                pending.take();
+                let mut recorder = *recorder;
+                let known = self
+                    .eit_tracker
+                    .lock()
+                    .as_ref()
+                    .and_then(|tracker| tracker.current().cloned());
+                if let Some(event) = known
+                    && let Err(e) =
+                        recorder.on_programme(dvb_si::epg::PresentEventChange::Baseline(event))
+                {
+                    tracing::warn!(
+                        route = %self.route_name,
+                        error = %e,
+                        "DVR could not record the programme known before recording started"
+                    );
+                }
+                *slot = Some(recorder);
+            }
+            RecorderStart::Failed => {
+                pending.take();
+                self.eit_tracker.lock().take();
+                self.dvr_recording.store(false, Ordering::SeqCst);
+                self.init_log.lock().clear();
+            }
+            RecorderStart::Locked => {}
+        }
+    }
+
+    /// The queued init generations and how many of them were queued, read
+    /// under one guard so a generation queued meanwhile is neither handed
+    /// over nor drained; with none queued, the current init.
+    fn init_snapshot(&self) -> (Vec<dvr_runtime::InitGeneration>, usize) {
+        let log = self.init_log.lock();
+        if !log.is_empty() {
+            return (log.clone(), log.len());
+        }
+        drop(log);
+        (self.init_generations(), 0)
     }
 
     pub(crate) fn set_audio_init(&self, index: usize, bytes: impl Into<Bytes>) {
@@ -1542,43 +1696,56 @@ impl ProgramServing {
                 return;
             };
             match guard.as_ref() {
+                None if self
+                    .dvr_pending
+                    .lock()
+                    .as_ref()
+                    .is_some_and(|p| p.is_due(self.dvr_now())) => {}
                 None => return,
-                Some(recorder) if !recorder.needs_poll_for_init(latest, latest_init.as_deref()) => {
+                Some(recorder) if !recorder.needs_poll(latest, latest_init.as_deref()) => {
                     return;
                 }
                 Some(_) => {}
             }
         }
         let this = Arc::clone(self);
-        if let Err(e) = tokio::task::spawn_blocking(move || this.poll_dvr_blocking()).await {
+        if let Err(e) = tokio::task::spawn_blocking(move || this.poll_dvr_blocking(false)).await {
             tracing::error!("DVR persist task failed: {e}; recording may be incomplete");
         }
     }
 
     /// The synchronous body of [`Self::poll_dvr`], run on the blocking pool.
     ///
-    /// **Fail closed on a panic (I1).** `DvrRecorder` holds multi-step state
-    /// (`write_offset`/`index`/`periods`/`total_bytes`); a panic inside
-    /// `poll_and_persist` (mid-`append_segment`, between the file write and the
-    /// index push, say) can leave them disagreeing, so continuing to persist
-    /// would write an archive whose index does not match its data (audit run 7,
-    /// D3 / #1083). `parking_lot` guards release without poisoning, so without
-    /// this wrap the next poll would keep writing to the half-updated recorder.
-    /// The persist step is therefore caught with `catch_unwind`; on a panic the
+    /// **Fail closed on a panic (I1).** The recorder holds multi-step state;
+    /// `parking_lot` guards release without poisoning, so a panic inside the
+    /// poll would otherwise leave the next poll writing through a half-updated
+    /// recorder. The poll is caught with `catch_unwind`; on a panic the
     /// recorder is dropped (recording stops for this program for good), the
     /// `multimux_dvr_failed_total` counter is incremented and an error is
-    /// logged — the same safety property the deleted poison-recovery wrapper
-    /// provided, without relying on poisoning.
-    fn poll_dvr_blocking(&self) {
+    /// logged.
+    fn poll_dvr_blocking(&self, force_start: bool) -> bool {
         use std::panic::{AssertUnwindSafe, catch_unwind};
 
         self.flush_predecessor();
         let mut dvr_guard = self.dvr.lock();
+        self.start_pending_recorder(&mut dvr_guard, force_start);
         let Some(recorder) = dvr_guard.as_mut() else {
-            return;
+            return self.dvr_pending.lock().is_none();
         };
-        let inits = self.init_generations();
-        let logged = self.init_log.lock().len();
+        #[cfg(test)]
+        if self
+            .fail_next_polls
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            return false;
+        }
+        let (inits, logged) = self.init_snapshot();
+        #[cfg(test)]
+        if let Some(hook) = self.after_init_snapshot.lock().take() {
+            hook();
+        }
+        let now = self.dvr_now();
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             #[cfg(test)]
             if self
@@ -1587,25 +1754,26 @@ impl ProgramServing {
             {
                 panic!("injected DVR persist panic (test)");
             }
-            recorder.poll_and_persist_inits(&inits)
+            let result = recorder.poll(now, |entry| self.wall_of(entry), &inits);
+            log_writer_events(&self.route_name, recorder);
+            result
         }));
         match outcome {
-            Ok(Ok(())) => {
-                let mut log = self.init_log.lock();
-                if logged > 1 {
-                    log.drain(..logged - 1);
+            Ok(result) => {
+                self.init_log.lock().drain(..logged);
+                match result {
+                    Ok(()) => true,
+                    Err(e) => {
+                        tracing::error!(
+                            route = %self.route_name,
+                            error = %e,
+                            "DVR poll failed; the segment is retried on the next poll"
+                        );
+                        false
+                    }
                 }
             }
-            Ok(Err(e)) => {
-                tracing::error!(
-                    "DVR poll_and_persist failed: {e}; \
-                     recording may be incomplete"
-                );
-            }
             Err(payload) => {
-                // A panic mid-persist: the recorder's multi-step state is
-                // suspect, so stop recording rather than persist a corrupt
-                // archive (fail closed).
                 let _ = payload;
                 *dvr_guard = None;
                 self.dvr_recording.store(false, Ordering::SeqCst);
@@ -1620,29 +1788,274 @@ impl ProgramServing {
                     "route" => self.route_name.clone(),
                 )
                 .increment(1);
+                false
             }
         }
     }
 
     /// Feed raw TS bytes to this program's DVR recorder for EIT p/f
     /// tracking (issue #903) — a no-op when DVR is disabled, or when
-    /// `DvrConfig::dvb_service_id` was never set. See
-    /// [`crate::dvr::DvrRecorder::feed_si`].
+    /// `DvrConfig::dvb_service_id` was never set. A failure (a programme
+    /// transition whose period roll could not be written) is counted in
+    /// `multimux_dvr_si_errors_total`; the recorder retries the transition on
+    /// the next feed.
     pub(crate) fn feed_si(&self, ts_bytes: &[u8]) {
-        // Called from an async ingest loop (the TS-carrying sources), so this
-        // must NOT block a runtime worker waiting for the DVR mutex while
-        // `poll_dvr_blocking` holds it across a disk write (audit run 7, I).
-        // EIT feeding is best-effort: if the lock is held, skip this chunk —
-        // the next one (a few packets later) will feed it.
-        // `parking_lot`: `try_lock` is a plain `Option` (`None` = contended,
-        // skip this chunk — best-effort) and there is no poison arm.
+        // Called from an async ingest loop: never block a runtime worker on
+        // the DVR mutex while `poll_dvr_blocking` holds it across a disk
+        // write. EIT feeding is best-effort; the next chunk feeds it.
         let Some(mut dvr_guard) = self.dvr.try_lock() else {
             return;
         };
-        if let Some(ref mut recorder) = *dvr_guard
-            && let Err(e) = recorder.feed_si(ts_bytes)
-        {
-            tracing::error!("DVR feed_si failed: {e}; EIT-aligned rolling may be incomplete");
+        let changes: Vec<dvb_si::epg::PresentEventChange> = {
+            let mut tracker = self.eit_tracker.lock();
+            let Some(tracker) = tracker.as_mut() else {
+                return;
+            };
+            tracker.feed_ts(ts_bytes);
+            std::iter::from_fn(|| tracker.poll_change()).collect()
+        };
+        let Some(recorder) = dvr_guard.as_mut() else {
+            return;
+        };
+        let applied = if changes.is_empty() {
+            recorder.feed_si(&[])
+        } else {
+            changes
+                .into_iter()
+                .try_for_each(|change| recorder.on_programme(change))
+        };
+        if let Err(e) = applied {
+            metrics::counter!(
+                crate::prometheus::DVR_SI_ERRORS_TOTAL,
+                "route" => self.route_name.clone(),
+            )
+            .increment(1);
+            tracing::warn!(
+                route = %self.route_name,
+                error = %e,
+                "DVR could not act on an EIT programme change; retried on the next feed"
+            );
+        }
+        log_writer_events(&self.route_name, recorder);
+    }
+}
+
+/// The outcome of one attempt to create a program's recorder.
+enum RecorderStart {
+    Started(Box<FsRecorder>),
+    /// Another recorder holds the archive directory; retry later.
+    Locked,
+    /// Recording cannot start (logged).
+    Failed,
+}
+
+/// What one program's DVR recorder is created from, with its pinning cursor
+/// taken as the program is built.
+struct PendingRecorder {
+    root: std::path::PathBuf,
+    name: dvr_runtime::ArchiveName,
+    config: dvr_runtime::ArchiveConfig,
+    cursor: Option<media_plane::trunk::SegmentCursor>,
+    /// When the next create may be attempted, on the program's monotonic
+    /// clock.
+    retry_at: broadcast_common::Timestamp,
+    /// The wait after the next `Locked` refusal.
+    backoff: Duration,
+    /// The predecessor's recorder, whose directory lock this one takes over.
+    inherited: Option<FsRecorder>,
+}
+
+/// The first wait after a create refused because another recorder holds the
+/// archive directory; doubled per refusal up to [`LOCKED_RETRY_MAX`].
+const LOCKED_RETRY_MIN: Duration = Duration::from_millis(250);
+
+/// The longest wait between two create attempts on a locked archive.
+const LOCKED_RETRY_MAX: Duration = Duration::from_secs(30);
+
+impl PendingRecorder {
+    /// `None`, logged, when the configuration cannot name or describe an
+    /// archive.
+    fn new(
+        config: &crate::dvr::DvrConfig,
+        route_name: &str,
+        container: Container,
+        target_duration: Duration,
+        seq_offset: u64,
+        trunk: &Arc<Trunk>,
+    ) -> Option<Self> {
+        let described = crate::dvr::archive_name(route_name).and_then(|name| {
+            Ok((
+                name,
+                config.to_archive_config(container, target_duration, seq_offset)?,
+            ))
+        });
+        match described {
+            Ok((name, archive)) => Some(Self {
+                root: std::path::PathBuf::from(&config.archive_root),
+                cursor: Some(trunk.pin_segments(archive.overrun)),
+                name,
+                config: archive,
+                retry_at: broadcast_common::Timestamp::ZERO,
+                backoff: LOCKED_RETRY_MIN,
+                inherited: None,
+            }),
+            Err(e) => {
+                tracing::error!(
+                    route = %route_name,
+                    error = %e,
+                    "DVR configuration rejected; recording disabled for this program"
+                );
+                None
+            }
+        }
+    }
+
+    fn is_due(&self, now: broadcast_common::Timestamp) -> bool {
+        now >= self.retry_at
+    }
+
+    fn start(
+        &mut self,
+        route_name: &str,
+        trunk: &Arc<Trunk>,
+        now: broadcast_common::Timestamp,
+    ) -> RecorderStart {
+        let created = match self.inherited.take() {
+            Some(previous) => previous.succeed(self.config.clone(), trunk, &mut self.cursor),
+            None => FsRecorder::with_cursor(
+                &self.root,
+                self.name.clone(),
+                self.config.clone(),
+                trunk,
+                &mut self.cursor,
+            ),
+        };
+        match created {
+            Ok(recorder) => {
+                tracing::info!(route = %route_name, "DVR recording started");
+                RecorderStart::Started(Box::new(recorder))
+            }
+            Err(dvr_runtime::fs::FsError::Locked { path }) => {
+                self.refused(route_name, &path, now);
+                RecorderStart::Locked
+            }
+            Err(e) => {
+                tracing::error!(
+                    route = %route_name,
+                    error = %e,
+                    "DVR recorder creation failed; recording disabled for this program"
+                );
+                RecorderStart::Failed
+            }
+        }
+    }
+
+    /// Count and log a create refused because another recorder holds the
+    /// archive directory's lock, and back the next attempt off.
+    fn refused(
+        &mut self,
+        route_name: &str,
+        lock: &std::path::Path,
+        now: broadcast_common::Timestamp,
+    ) {
+        metrics::counter!(
+            crate::prometheus::DVR_ARCHIVE_LOCKED_TOTAL,
+            "route" => route_name.to_string(),
+        )
+        .increment(1);
+        tracing::warn!(
+            route = %route_name,
+            lock = %lock.display(),
+            retry_in = ?self.backoff,
+            "DVR archive is locked by another recorder; recording waits for it"
+        );
+        self.retry_at =
+            now.saturating_add_nanos(u64::try_from(self.backoff.as_nanos()).unwrap_or(u64::MAX));
+        self.backoff = self.backoff.saturating_mul(2).min(LOCKED_RETRY_MAX);
+    }
+}
+
+/// Log, and count where a metric exists, every decision the recorder queued.
+fn log_writer_events(route: &str, recorder: &mut FsRecorder) {
+    use dvr_runtime::WriterEvent;
+    while let Some(event) = recorder.poll_event() {
+        match event {
+            WriterEvent::PeriodOpened { period, reason } => {
+                tracing::info!(route, period = period.value(), %reason, "DVR period opened");
+            }
+            WriterEvent::PeriodClosed { period } => {
+                tracing::debug!(route, period = period.value(), "DVR period closed");
+            }
+            WriterEvent::Evicted { period } => {
+                tracing::debug!(
+                    route,
+                    period = period.value(),
+                    "DVR period evicted by retention"
+                );
+            }
+            WriterEvent::EvictionFailed { period } => {
+                tracing::warn!(
+                    route,
+                    period = period.value(),
+                    "DVR retention could not remove a period; it is kept and retried"
+                );
+            }
+            WriterEvent::Gap { skipped } => {
+                metrics::counter!(
+                    crate::prometheus::DVR_GAP_SEGMENTS_TOTAL,
+                    "route" => route.to_string(),
+                )
+                .increment(skipped);
+                tracing::warn!(
+                    route,
+                    skipped,
+                    "DVR gap: segments were lost before the recorder consumed them"
+                );
+            }
+            WriterEvent::Rearmed { skipped } => {
+                metrics::counter!(
+                    crate::prometheus::DVR_PIN_REARMED_TOTAL,
+                    "route" => route.to_string(),
+                )
+                .increment(1);
+                tracing::warn!(
+                    route,
+                    policy = "stall",
+                    skipped_segments = skipped,
+                    "DVR StallIngest pin force-expired by the non-blocking safety valve \
+                     (ingest stalled past the bound) — re-arming at the live edge; \
+                     segments produced while unpinned are lost"
+                );
+            }
+            WriterEvent::StaleTempPlaylistRemoved { period } => {
+                tracing::warn!(
+                    route,
+                    period = period.value(),
+                    "DVR removed a temporary playlist a crash left behind"
+                );
+            }
+            WriterEvent::Terminated => {
+                tracing::info!(route, policy = "terminate", "DVR recording terminated");
+            }
+            WriterEvent::SkippedBeforeInit { seq } => {
+                tracing::debug!(
+                    route,
+                    seq = seq.value(),
+                    "DVR skipped a segment closed before any init"
+                );
+            }
+            WriterEvent::NotDurable { op, period, kind } => {
+                tracing::warn!(
+                    route,
+                    %op,
+                    period = period.map(dvr_runtime::PeriodNum::value),
+                    ?kind,
+                    "DVR archive write took effect but could not be made durable"
+                );
+            }
+            other => {
+                tracing::debug!(route, ?other, "DVR writer event");
+            }
         }
     }
 }
@@ -1824,6 +2237,9 @@ impl RouteConfig {
 pub struct RouteHandle {
     /// This route's catch-up scan permits; built by the first catch-up request.
     catchup_scans: std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
+    /// This route's DVR archive reader and its parsed-playlist cache; built by
+    /// the first catch-up request and released with the route.
+    catchup_archive: std::sync::OnceLock<Option<Arc<Mutex<dvr_runtime::fs::FsArchive>>>>,
     /// See [`Self::with_max_concurrent_warms`].
     warms: Arc<tokio::sync::Semaphore>,
     /// Fires when this route is replaced or removed; see [`Self::retire`].
@@ -1979,6 +2395,7 @@ impl RouteHandle {
         } = config;
         RouteHandle {
             catchup_scans: std::sync::OnceLock::new(),
+            catchup_archive: std::sync::OnceLock::new(),
             warms,
             retired: tokio_util::sync::CancellationToken::new(),
             health: Mutex::new(HealthState::Connecting),
@@ -2340,7 +2757,7 @@ impl RouteHandle {
     /// (`crate::dvr::DvrConfig::enabled`), never `Some` with `enabled ==
     /// false`, so a caller never needs to check that field itself. Needed
     /// by [`crate::output::catchup::CatchupOutput`] (issue #900) to find
-    /// the on-disk archive root — `crate::dvr::DvrRecorder` itself reads
+    /// the on-disk archive root — the recorder itself reads
     /// `self.dvr_config` directly, not through this accessor, since it is
     /// built once at [`Self::publish_program`] time.
     pub(crate) fn catchup_scans(&self) -> &std::sync::OnceLock<Arc<tokio::sync::Semaphore>> {
@@ -2349,6 +2766,23 @@ impl RouteHandle {
 
     pub(crate) fn dvr_config(&self) -> Option<&crate::dvr::DvrConfig> {
         self.dvr_config.as_ref().filter(|c| c.enabled)
+    }
+
+    /// This route's DVR archive reader: `None` when DVR is off or the route
+    /// name cannot name an archive. One per route, so its cache is released
+    /// with the route.
+    pub(crate) fn catchup_archive(&self) -> Option<Arc<Mutex<dvr_runtime::fs::FsArchive>>> {
+        self.catchup_archive
+            .get_or_init(|| {
+                let dvr = self.dvr_config()?;
+                let name = crate::dvr::archive_name(&self.name).ok()?;
+                Some(Arc::new(Mutex::new(dvr_runtime::fs::FsArchive::open(
+                    std::path::Path::new(&dvr.archive_root),
+                    &name,
+                    crate::dvr::archive_container(self.container),
+                ))))
+            })
+            .clone()
     }
 
     /// This route's configured advertised-window depth (see
@@ -2470,9 +2904,12 @@ impl RouteHandle {
                 return;
             }
         };
-        if let Some(previous) = programs.get(&program)
+        // The program this one continues (a reconnect, or the replaced
+        // route's) holds the archive directory's lock until this program's
+        // first poll archives its tail and releases it.
+        if serving.dvr_recording.load(Ordering::SeqCst)
+            && let Some(previous) = previous.as_ref().and_then(|p| p.servings.last())
             && previous.dvr_recording.load(Ordering::SeqCst)
-            && serving.dvr_recording.load(Ordering::SeqCst)
         {
             *serving.predecessor.lock() = Some(Arc::clone(previous));
         }
@@ -3892,8 +4329,7 @@ mod program_registry_tests {
         assert!(matches!(err, AddSegmentError::ProgramNotPublished));
     }
 
-    /// I1: `DvrRecorder` holds multi-step state (`write_offset`/`index`/
-    /// `periods`/`total_bytes`); a panic during persist can leave it
+    /// I1: the DVR recorder holds multi-step state; a panic during persist can leave it
     /// disagreeing, so recording must FAIL CLOSED (stop, count it) rather than
     /// keep writing a corrupt archive. `parking_lot` releases the guard without
     /// poisoning, so the safety property is kept by `catch_unwind` in
@@ -3987,22 +4423,12 @@ mod program_registry_tests {
         count(root)
     }
 
-    /// An init change with no new closed segment is archived at once: `needs_poll` used to
-    /// look only at the latest closed segment, so the period roll waited for the next close.
+    /// An init change with no new closed segment still reaches the recorder
+    /// at once (`needs_poll` looks at the init too), and the next segment
+    /// opens a new period whose media file starts with the new init.
     #[tokio::test]
-    async fn a_dvr_init_change_without_a_new_segment_rolls_the_period_at_once() {
-        let tmp = std::env::temp_dir().join(format!("multimux-dvr-init-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let dvr_cfg = crate::dvr::DvrConfig {
-            enabled: true,
-            archive_root: tmp.to_string_lossy().to_string(),
-            retention_periods: 5,
-            retention_bytes: 0,
-            period_duration_secs: 3600,
-            overrun: crate::dvr::ArchiveOverrunSerde::Gap,
-            dvb_service_id: None,
-        };
+    async fn a_dvr_init_change_rolls_the_period_at_the_next_segment() {
+        let tmp = dvr_test_dir("init-roll");
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(std::time::Duration::from_secs(1))
@@ -4010,7 +4436,7 @@ mod program_registry_tests {
                 .with_window_segments(8),
         )
         .with_name("init-roll")
-        .with_dvr(dvr_cfg);
+        .with_dvr(dvr_config(&tmp, None));
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
         route
@@ -4021,11 +4447,42 @@ mod program_registry_tests {
         assert_eq!(archived_periods(&tmp), 1);
 
         route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        let latest = serving.trunk.last_closed_segment();
+        let new_init = [0xBB_u8; 4];
+        assert!(
+            serving
+                .dvr
+                .lock()
+                .as_ref()
+                .expect("recorder")
+                .needs_poll(latest, Some(&new_init)),
+            "an unarchived init alone asks for a poll"
+        );
         serving.poll_dvr().await;
-        assert_eq!(
-            archived_periods(&tmp),
-            2,
-            "the new init waited for the next segment to roll the period"
+        assert!(
+            !serving
+                .dvr
+                .lock()
+                .as_ref()
+                .expect("recorder")
+                .needs_poll(latest, Some(&new_init)),
+            "the poll handed the new init to the recorder"
+        );
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(2, Duration::from_secs(1)))
+            .unwrap();
+        serving.poll_dvr().await;
+        assert_eq!(archived_periods(&tmp), 2, "the new init rolled the period");
+        let dir = tmp.join("init-roll");
+        assert!(
+            std::fs::read(dir.join("p0.m4s"))
+                .unwrap()
+                .starts_with(&[0xAA; 4])
+        );
+        assert!(
+            std::fs::read(dir.join("p1.m4s"))
+                .unwrap()
+                .starts_with(&new_init)
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -4093,17 +4550,18 @@ mod program_registry_tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// The queued init generations are trimmed to the unpersisted tail after a
-    /// successful persist: the log must not grow without bound, and it must
-    /// keep exactly the newest generation for the next roll.
+    /// A poll hands every queued init generation to the recorder, so the log
+    /// drains to empty and never grows without bound; with nothing queued the
+    /// current init is what the recorder is offered.
     #[tokio::test]
-    async fn a_successful_dvr_persist_keeps_only_the_newest_queued_init() {
+    async fn a_dvr_persist_drains_the_queued_inits_it_handed_over() {
         let tmp = dvr_test_dir("init-drain");
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(Duration::from_secs(1))
                 .with_window_segments(8),
         )
+        .with_name("init-drain")
         .with_dvr(dvr_config(&tmp, None));
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -4111,17 +4569,18 @@ mod program_registry_tests {
             .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
             .expect("add_segment");
         let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        assert_eq!(serving.init_log_len(), 1);
         serving.poll_dvr().await;
         assert_eq!(archived_periods(&tmp), 1);
-        assert_eq!(serving.init_log_len(), 1);
+        assert_eq!(serving.init_log_len(), 0);
 
         route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
-        assert_eq!(serving.init_log_len(), 2);
+        assert_eq!(serving.init_log_len(), 1);
         serving.poll_dvr().await;
         assert_eq!(
             serving.init_log_len(),
-            1,
-            "the persisted generations must be drained, leaving the newest"
+            0,
+            "the handed-over generation is drained"
         );
         assert_eq!(
             serving
@@ -4129,7 +4588,22 @@ mod program_registry_tests {
                 .pop()
                 .map(|generation| generation.init),
             Some(Bytes::from(vec![0xBB; 4])),
-            "the newest init is the one still waiting"
+            "with nothing queued the current init is offered"
+        );
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(2, Duration::from_secs(1)))
+            .expect("add_segment");
+        serving.poll_dvr().await;
+        let scan = crate::testutil::scan_archive(&tmp, "init-drain", Container::Fmp4);
+        let periods: Vec<(u32, u32)> = scan
+            .segments
+            .iter()
+            .map(|s| (s.seq.value(), s.period.value()))
+            .collect();
+        assert_eq!(
+            periods,
+            [(1, 0), (2, 1)],
+            "segment 2 is archived under the new init"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -4359,13 +4833,15 @@ mod program_registry_tests {
         .with_dvr(dvr_config(&tmp, Some(TF1_SERVICE_ID)));
         route.publish_new_program(SPTS_PROGRAM_ID);
         let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving.poll_dvr().await;
         assert!(
             serving
                 .dvr
                 .lock()
                 .as_ref()
                 .expect("recorder")
-                .current_programme()
+                .writer()
+                .programme()
                 .is_none()
         );
         route.feed_si_ts(&ts_bytes);
@@ -4375,11 +4851,612 @@ mod program_registry_tests {
                 .lock()
                 .as_ref()
                 .expect("recorder")
-                .current_programme()
-                .map(|programme| programme.event_id),
+                .writer()
+                .programme()
+                .map(|programme| programme.event.event_id),
             Some(0x7857)
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The genuine capture's following event re-signalled as running in a
+    /// version-bumped EIT p/f section, as TS packets: a real programme
+    /// transition for `service_id`.
+    fn eit_transition_packets(ts_bytes: &[u8], service_id: u16) -> Vec<u8> {
+        use broadcast_common::Serialize as WireSerialize;
+        use dvb_si::demux::{SiDemux, SiDemuxConfig};
+        use dvb_si::tables::eit::{EitKind, EitSection, PID as EIT_PID};
+        use dvb_si::tables::{AnyTableSection, RunningStatus, SectionVersion};
+
+        let mut demux = SiDemux::new(
+            SiDemuxConfig::default()
+                .with_dvb_si_pids(false)
+                .with_pid(EIT_PID),
+        );
+        let mut sections = Vec::new();
+        for packet in ts_bytes.chunks_exact(mpeg_ts::ts::TS_PACKET_SIZE) {
+            for event in demux.feed(packet) {
+                if let Ok(AnyTableSection::EitSection(section)) = event.table_section()
+                    && section.kind == EitKind::PresentFollowingActual
+                    && section.service_id == service_id
+                {
+                    sections.push(event.bytes().clone());
+                }
+            }
+        }
+        let parsed: Vec<EitSection<'_>> = sections
+            .iter()
+            .map(|b| <EitSection as broadcast_common::Parse>::parse(b).expect("parse"))
+            .collect();
+        let genuine = &parsed[0];
+        let mut following = parsed
+            .iter()
+            .flat_map(|s| s.events.iter())
+            .find(|e| e.running_status != RunningStatus::Running)
+            .cloned()
+            .expect("a following event");
+        following.running_status = RunningStatus::Running;
+        let transitioned = EitSection::new(
+            genuine.kind,
+            genuine.table_id,
+            genuine.service_id,
+            SectionVersion::new((genuine.version_number + 1) % 32, true, 0, 0),
+            genuine.transport_stream_id,
+            genuine.original_network_id,
+            0,
+            genuine.table_id,
+            vec![following],
+        );
+        let mut section = vec![0u8; WireSerialize::serialized_len(&transitioned)];
+        WireSerialize::serialize_into(&transitioned, &mut section).expect("serialize");
+        mpeg_ts::mux::SectionPacketiser::new(EIT_PID)
+            .packetise(&[&section])
+            .iter()
+            .flat_map(|p| p.iter().copied())
+            .collect()
+    }
+
+    /// A programme transition the recorder cannot act on (its period roll
+    /// fails because the archive directory became unusable) is counted in
+    /// `multimux_dvr_si_errors_total`, once per failed attempt.
+    #[tokio::test]
+    async fn a_failing_eit_transition_is_counted() {
+        const TF1_SERVICE_ID: u16 = 0x0601;
+        let ts_bytes = std::fs::read(test_fixtures::path("ts/tnt-5w-12732v-isi6-10s.ts"))
+            .expect("read genuine DVB-T capture");
+        let tmp = dvr_test_dir("si-errors");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name("sierr")
+        .with_dvr(dvr_config(&tmp, Some(TF1_SERVICE_ID)));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route.feed_si_ts(&ts_bytes);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving.poll_dvr().await;
+        let archive = tmp.join("sierr");
+        assert!(archive.join("p0.m3u8").exists(), "period 0 is open");
+
+        std::fs::remove_dir_all(&archive).expect("remove archive");
+        std::fs::write(&archive, b"not a directory").expect("block the archive");
+        let before = si_errors_total("sierr");
+        route.feed_si_ts(&eit_transition_packets(&ts_bytes, TF1_SERVICE_ID));
+        assert_eq!(
+            si_errors_total("sierr"),
+            before + 1.0,
+            "the failure is counted"
+        );
+        route.feed_si_ts(&[]);
+        assert_eq!(
+            si_errors_total("sierr"),
+            before + 2.0,
+            "the retried transition fails, and is counted, again"
+        );
+        let _ = std::fs::remove_file(&archive);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn si_errors_total(route_label: &str) -> f64 {
+        crate::prometheus::install()
+            .render()
+            .lines()
+            .filter(|l| l.starts_with("multimux_dvr_si_errors_total{"))
+            .filter(|l| l.contains(&format!("route=\"{route_label}\"")))
+            .filter_map(|l| l.rsplit(' ').next()?.parse::<f64>().ok())
+            .sum()
+    }
+
+    fn counter_total(metric: &str, route_label: &str) -> f64 {
+        crate::prometheus::install()
+            .render()
+            .lines()
+            .filter(|l| l.starts_with(&format!("{metric}{{")))
+            .filter(|l| l.contains(&format!("route=\"{route_label}\"")))
+            .filter_map(|l| l.rsplit(' ').next()?.parse::<f64>().ok())
+            .sum()
+    }
+
+    fn archived_seqs(root: &std::path::Path, name: &str) -> Vec<u32> {
+        let scan = crate::testutil::scan_archive(root, name, Container::Fmp4);
+        assert!(scan.conflicts.is_empty(), "{:?}", scan.conflicts);
+        scan.segments.iter().map(|s| s.seq.value()).collect()
+    }
+
+    async fn replaced_route_records(with_dash_requests: bool) {
+        let tmp = dvr_test_dir(if with_dash_requests {
+            "replace-dash"
+        } else {
+            "replace"
+        });
+        let config = || {
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8)
+        };
+        let old = RouteHandle::new(config())
+            .with_name("replaced")
+            .with_dvr(dvr_config(&tmp, None));
+        old.publish_new_program(SPTS_PROGRAM_ID);
+        old.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        old.add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        old.drain_dvr().await;
+        assert_eq!(archived_seqs(&tmp, "replaced"), [1]);
+
+        let new = RouteHandle::new(config())
+            .with_name("replaced")
+            .with_dvr(dvr_config(&tmp, None));
+        new.continue_from(&old);
+        drop(old);
+        new.publish_new_program(SPTS_PROGRAM_ID);
+        new.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        let serving = new.serving(SPTS_PROGRAM_ID).expect("program published");
+        for n in 1..=4 {
+            new.add_segment(SPTS_PROGRAM_ID, seg(n, Duration::from_secs(1)))
+                .expect("add_segment");
+            if with_dash_requests {
+                let _ = serving.dash_window_segments();
+            }
+            serving.poll_dvr().await;
+        }
+        new.drain_dvr().await;
+        let seqs = archived_seqs(&tmp, "replaced");
+        assert_eq!(
+            seqs.len(),
+            5,
+            "the replacement recorded every segment: {seqs:?}"
+        );
+        assert!(seqs[0] < seqs[1], "{seqs:?}");
+        assert!(
+            seqs[1..].windows(2).all(|w| w[1] == w[0] + 1),
+            "the replacement's four segments are contiguous: {seqs:?}"
+        );
+        assert!(
+            serving.dvr.lock().is_some(),
+            "the replacement holds the recorder"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A replaced route's successor records from its first segment: the old
+    /// route's program is still retained (for the DASH window) and used to
+    /// keep its recorder, and with it the archive directory's lock, so the
+    /// successor stayed `Locked` forever.
+    #[tokio::test]
+    async fn a_replaced_route_records_every_segment() {
+        replaced_route_records(false).await;
+    }
+
+    /// As above, with DASH window requests between the segments.
+    #[tokio::test]
+    async fn a_replaced_route_with_dash_requests_records_every_segment() {
+        replaced_route_records(true).await;
+    }
+
+    /// Two reconnects before the middle program's first poll: every program's
+    /// segment is archived, in order, with no gap.
+    #[tokio::test]
+    async fn a_reconnect_before_the_first_poll_records_every_run() {
+        let tmp = dvr_test_dir("early-reconnect");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name("early")
+        .with_dvr(dvr_config(&tmp, None));
+        let first = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        route.drain_dvr().await;
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        let second = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        route.release_program(SPTS_PROGRAM_ID, &second);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        route.drain_dvr().await;
+        let seqs = archived_seqs(&tmp, "early");
+        assert_eq!(seqs.len(), 3, "{seqs:?}");
+        assert!(seqs.windows(2).all(|w| w[1] > w[0]), "{seqs:?}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Building a program touches no file: the recorder is created on the
+    /// blocking pool by the first poll, not under the programs lock.
+    #[tokio::test]
+    async fn publishing_a_program_does_no_archive_io() {
+        let tmp = dvr_test_dir("lazy-create");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name("lazy")
+        .with_dvr(dvr_config(&tmp, None));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        assert!(
+            !tmp.join("lazy").exists(),
+            "publish_program created the archive directory"
+        );
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        route.drain_dvr().await;
+        assert_eq!(archived_seqs(&tmp, "lazy"), [1]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// An init change landing between the poll's read of the queued init
+    /// generations and its drain is not lost: it is handed over on the next
+    /// poll, so the segment closed before it keeps the old init and the
+    /// period rolls at the segment the new init names.
+    #[tokio::test]
+    async fn an_init_queued_during_a_poll_is_handed_over_on_the_next() {
+        let tmp = dvr_test_dir("init-race");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name("race")
+        .with_dvr(dvr_config(&tmp, None));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        let weak = Arc::downgrade(&serving);
+        *serving.after_init_snapshot.lock() = Some(Box::new(move || {
+            if let Some(serving) = weak.upgrade() {
+                serving.set_init_from(vec![0xBB; 4], media_plane::ids::SegmentSeq::new(2));
+            }
+        }));
+        serving.poll_dvr().await;
+        for n in 1..=2 {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg(n, Duration::from_secs(1)))
+                .expect("add_segment");
+        }
+        serving.poll_dvr().await;
+        let scan = crate::testutil::scan_archive(&tmp, "race", Container::Fmp4);
+        let periods: Vec<(u32, u32)> = scan
+            .segments
+            .iter()
+            .map(|s| (s.seq.value(), s.period.value()))
+            .collect();
+        assert_eq!(periods, [(1, 0), (2, 1)], "the roll lands on segment 2");
+        let dir = tmp.join("race");
+        assert!(
+            std::fs::read(dir.join("p0.m4s"))
+                .unwrap()
+                .starts_with(&[0xAA; 4])
+        );
+        assert!(
+            std::fs::read(dir.join("p1.m4s"))
+                .unwrap()
+                .starts_with(&[0xBB; 4])
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Segments the live ring evicted before the recorder consumed them are
+    /// counted in `multimux_dvr_gap_segments_total`.
+    #[tokio::test]
+    async fn a_dvr_gap_is_counted() {
+        let tmp = dvr_test_dir("gap");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(2),
+        )
+        .with_name("gapped")
+        .with_dvr(dvr_config(&tmp, None));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        serving.poll_dvr().await;
+        let before = counter_total("multimux_dvr_gap_segments_total", "gapped");
+        for n in 2..=40 {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg(n, Duration::from_secs(1)))
+                .expect("add_segment");
+        }
+        serving.poll_dvr().await;
+        let skipped = counter_total("multimux_dvr_gap_segments_total", "gapped") - before;
+        let archived = archived_seqs(&tmp, "gapped").len();
+        assert!(skipped > 0.0, "the gap is counted");
+        assert_eq!(
+            skipped as usize + archived,
+            40,
+            "every segment is either archived or counted"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A recorder held off by a foreign holder of the archive lock warns and
+    /// counts `multimux_dvr_archive_locked_total`, retries on a bounded
+    /// backoff rather than on every poll, and once the lock is free records
+    /// what closed meanwhile and the EIT programme fed while it waited.
+    #[tokio::test]
+    async fn a_foreign_lock_holder_is_counted_and_retried_on_a_backoff() {
+        const TF1_SERVICE_ID: u16 = 0x0601;
+        let ts_bytes = std::fs::read(test_fixtures::path("ts/tnt-5w-12732v-isi6-10s.ts"))
+            .expect("read genuine DVB-T capture");
+        let tmp = dvr_test_dir("foreign-lock");
+        let foreign_trunk = Arc::new(Trunk::new(TrunkConfig::default()));
+        let foreign = FsRecorder::new(
+            &tmp,
+            crate::dvr::archive_name("held").expect("name"),
+            dvr_config(&tmp, None)
+                .to_archive_config(Container::Fmp4, Duration::from_secs(1), 0)
+                .expect("config"),
+            &foreign_trunk,
+        )
+        .expect("foreign recorder");
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name("held")
+        .with_dvr(dvr_config(&tmp, Some(TF1_SERVICE_ID)));
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        let before = counter_total("multimux_dvr_archive_locked_total", "held");
+        for n in 1..=5 {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg(n, Duration::from_secs(1)))
+                .expect("add_segment");
+            serving.poll_dvr().await;
+        }
+        assert_eq!(
+            counter_total("multimux_dvr_archive_locked_total", "held") - before,
+            1.0,
+            "five quick polls make one attempt"
+        );
+        route.feed_si_ts(&ts_bytes);
+        drop(foreign);
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        route.drain_dvr().await;
+        assert_eq!(archived_seqs(&tmp, "held"), [1, 2, 3, 4, 5]);
+        assert_eq!(
+            serving
+                .dvr
+                .lock()
+                .as_ref()
+                .expect("recorder")
+                .writer()
+                .programme()
+                .map(|programme| programme.event.event_id),
+            Some(0x7857),
+            "the EIT fed while the recorder waited reached it"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    async fn flush_after_failed_polls(name: &str, failures: u32) -> (Vec<u32>, f64) {
+        let tmp = dvr_test_dir(name);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name(name)
+        .with_dvr(dvr_config(&tmp, None));
+        let first = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        route.drain_dvr().await;
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(2, Duration::from_secs(1)))
+            .expect("add_segment");
+        route
+            .serving(SPTS_PROGRAM_ID)
+            .expect("program published")
+            .fail_next_polls
+            .store(failures, Ordering::SeqCst);
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        let before = counter_total("multimux_dvr_predecessor_flush_failed_total", name);
+        route.drain_dvr().await;
+        let seqs = archived_seqs(&tmp, name);
+        let counted = counter_total("multimux_dvr_predecessor_flush_failed_total", name) - before;
+        let _ = std::fs::remove_dir_all(&tmp);
+        (seqs, counted)
+    }
+
+    /// A predecessor whose final poll fails once is polled again, so its last
+    /// segment is still archived.
+    #[tokio::test]
+    async fn a_failed_predecessor_flush_is_retried_once() {
+        let (seqs, counted) = flush_after_failed_polls("flush-retry", 1).await;
+        assert_eq!(
+            seqs.len(),
+            3,
+            "the predecessor's segment 2 is archived: {seqs:?}"
+        );
+        assert_eq!(counted, 0.0);
+    }
+
+    /// A predecessor whose final poll fails twice is counted in
+    /// `multimux_dvr_predecessor_flush_failed_total`, and the successor still
+    /// records.
+    #[tokio::test]
+    async fn a_predecessor_flush_failing_twice_is_counted() {
+        let (seqs, counted) = flush_after_failed_polls("flush-lost", 2).await;
+        assert_eq!(
+            seqs.len(),
+            2,
+            "segment 2 is lost, the successor records: {seqs:?}"
+        );
+        assert_eq!(counted, 1.0);
+    }
+
+    /// A -> B -> C, with B's recorder create refused `refusals` times (as if
+    /// the archive were locked) from B's own first poll on: returns the
+    /// archived sequence numbers and how many flush failures were counted.
+    async fn refused_middle_program(name: &str, refusals: u32) -> (Vec<u32>, f64) {
+        let tmp = dvr_test_dir(name);
+        let route = RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_window_segments(8),
+        )
+        .with_name(name)
+        .with_dvr(dvr_config(&tmp, None));
+        let a = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        route.drain_dvr().await;
+        route.release_program(SPTS_PROGRAM_ID, &a);
+        let b = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .serving(SPTS_PROGRAM_ID)
+            .expect("program published")
+            .refuse_next_starts
+            .store(refusals, Ordering::SeqCst);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        route.drain_dvr().await;
+        route.release_program(SPTS_PROGRAM_ID, &b);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .expect("add_segment");
+        let before = counter_total("multimux_dvr_predecessor_flush_failed_total", name);
+        route.drain_dvr().await;
+        let seqs = archived_seqs(&tmp, name);
+        let counted = counter_total("multimux_dvr_predecessor_flush_failed_total", name) - before;
+        let _ = std::fs::remove_dir_all(&tmp);
+        (seqs, counted)
+    }
+
+    /// A middle program whose create was refused and is still backing off when
+    /// the next reconnect replaces it is started anyway by the flush, so its
+    /// segment is archived.
+    #[tokio::test]
+    async fn a_refused_middle_program_is_started_by_the_flush() {
+        let (seqs, counted) = refused_middle_program("refused-once", 1).await;
+        assert_eq!(
+            seqs.len(),
+            3,
+            "A, B and C each archive their segment: {seqs:?}"
+        );
+        assert_eq!(counted, 0.0);
+    }
+
+    /// A middle program that still cannot start after the flush's retry loses
+    /// its segment, and the loss is counted, not silent; the successor still
+    /// records.
+    #[tokio::test]
+    async fn a_middle_program_that_never_starts_is_counted() {
+        let (seqs, counted) = refused_middle_program("refused-always", 3).await;
+        assert_eq!(
+            seqs.len(),
+            2,
+            "A and C archive, B's segment is lost: {seqs:?}"
+        );
+        assert_eq!(counted, 1.0);
+    }
+
+    /// A reconnect while another thread spawns processes still records both
+    /// runs. A process spawn duplicates the descriptor table before closing
+    /// the close-on-exec descriptors, so a lock file the predecessor's
+    /// recorder had just closed could still be held for a moment and the
+    /// successor's fresh create was refused (15 of 300 reconnects here);
+    /// the successor now takes the predecessor's lock over instead.
+    #[tokio::test]
+    async fn reconnects_record_every_run_while_processes_are_spawned() {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let spawner = {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let _ = std::process::Command::new("/usr/bin/true").status();
+                }
+            })
+        };
+        let mut missed = Vec::new();
+        for i in 0..150 {
+            let tmp = dvr_test_dir(&format!("spawn-race-{i}"));
+            let route = RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(Duration::from_secs(1))
+                    .with_window_segments(8),
+            )
+            .with_name("spawn-race")
+            .with_dvr(dvr_config(&tmp, None));
+            let first = route.publish_new_program(SPTS_PROGRAM_ID);
+            route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+                .expect("add_segment");
+            route.drain_dvr().await;
+            route.release_program(SPTS_PROGRAM_ID, &first);
+            route.publish_new_program(SPTS_PROGRAM_ID);
+            route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+                .expect("add_segment");
+            route.drain_dvr().await;
+            let archived = archived_seqs(&tmp, "spawn-race").len();
+            if archived != 2 {
+                missed.push((i, archived));
+            }
+            let _ = std::fs::remove_dir_all(&tmp);
+        }
+        stop.store(true, Ordering::SeqCst);
+        spawner.join().expect("spawner");
+        assert!(missed.is_empty(), "reconnects that lost a run: {missed:?}");
     }
 
     /// Read a Prometheus counter value by name+route label (0.0 if absent).

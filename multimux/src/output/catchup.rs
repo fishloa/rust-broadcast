@@ -1,52 +1,42 @@
 //! `CatchupOutput`: the HTTP surface for catch-up / time-shift /
-//! VOD-from-live serving over the DVR durable archive (issue #900) — a
-//! thin axum adapter over `crate::catchup`'s pure archive-scan/merge/
-//! render logic, mounted and gated exactly like every other
-//! [`crate::output::Output`] (so it shares the same output auth — Basic/
-//! Digest/Bearer/Forwarded — every other output gets from
-//! `crate::origin::router`'s `output_auth_gate`, rather than inventing a
-//! second HTTP surface with its own auth path).
+//! VOD-from-live serving over the DVR archive (issue #900), a thin axum
+//! adapter over [`dvr_runtime`]'s archive reading and merge planning,
+//! mounted and gated exactly like every other [`crate::output::Output`] (so
+//! it shares the output auth every other output gets from
+//! `crate::origin::router`'s `output_auth_gate`).
 //!
 //! Requires the route's DVR archive to be enabled
 //! (`crate::config::Route::dvr.enabled`) — `crate::config::Route::validate_standalone`
-//! rejects a `"catchup"` output configured without it, so a mounted
-//! `CatchupOutput` in a validated config always has an archive to read.
-//! The handlers below still check defensively (`RouteHandle::dvr_config`
-//! returning `None`), in case that invariant is ever bypassed (e.g. the
-//! runtime admin API adding a route from an unvalidated source).
+//! rejects a `"catchup"` output configured without it. The handlers still
+//! check defensively (`RouteHandle::catchup_archive` returning `None`), in
+//! case that invariant is ever bypassed.
 //!
 //! # Three routes, one archive
 //!
 //! - `GET /catchup.m3u8[?window_secs=N]` — a live-continuing playlist
-//!   spanning the archive plus whatever the live `Trunk` has closed since
-//!   the archive was last polled (the straddle boundary — see
-//!   `crate::catchup`'s own module doc). `window_secs` bounds it to the
-//!   trailing N seconds (the "catch-up window"); omitted, the whole
-//!   archive plus live tail (RFC 8216 §4.3.3.5 `EVENT` semantics — segments
-//!   only ever get appended, never removed, since nothing here evicts
-//!   archived history the way a live rolling window does).
+//!   spanning the archive plus whatever the live `Trunk` has closed since the
+//!   archive was last polled ([`dvr_runtime::read::merge`]). `window_secs`
+//!   bounds it to the trailing N seconds.
 //! - `GET /vod/p{N}.m3u8` — exactly one archived period's segments,
 //!   `#EXT-X-ENDLIST` and `PLAYLIST-TYPE:VOD` once that period is
-//!   definitively finished (a later period exists on disk); otherwise the
-//!   same still-growing shape as `catchup.m3u8`, restricted to that one
-//!   period. This is "VOD-from-live": a finished recorded programme served
-//!   as a complete, immutable asset.
+//!   definitively finished (a later period holds segments); otherwise the
+//!   same still-growing shape, restricted to that one period.
 //! - `GET /catchup/seg-{seq}.{ext}` — the resource route both playlists
-//!   above reference: archived bytes read straight off disk when `seq` is
-//!   in the archive, or (the still-unarchived tail) the same
-//!   `hls_runtime::server::HlsOrigin` every other output resolves against,
-//!   when it is not. One endpoint serves both sources — the client never
-//!   needs to know which one held a given segment.
+//!   reference: archived bytes read off disk when `seq` is in the archive,
+//!   or the still-unarchived tail from the same
+//!   `hls_runtime::server::HlsOrigin` every other output resolves against.
+//!   `GET /catchup/init-p{N}.mp4` serves an archived period's init, the byte
+//!   range its playlist's `EXT-X-MAP` names.
+//!
+//! Every archive read runs on the blocking pool under the route's scan
+//! semaphore, through the route's own [`dvr_runtime::fs::FsArchive`].
 //!
 //! Mounted under `/catchup*`/`/vod/*` (two-segment paths), never at the
 //! same single-segment `/:file` shape `crate::origin::resource`'s shared
-//! catch-all owns — axum's router cannot have two routes claim the exact
-//! same wildcard segment, so this module deliberately nests one level
-//! deeper instead of teaching the shared resource route a new filename
-//! grammar.
+//! catch-all owns.
 
-use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 #[cfg(test)]
 use transmux::TrackId;
 
@@ -57,12 +47,15 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use broadcast_common::Timestamp;
 use broadcast_hls::PlaylistType;
-use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
+use dvr_runtime::PeriodNum;
+use dvr_runtime::fs::FsArchive;
+use dvr_runtime::read::{ArchiveScan, CatchupSegment, InitRef, LiveSegment, ReadError};
+use hls_runtime::server::{DEFAULT_TRACK_ID, Generation, HlsBody, HlsRequest};
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
+use parking_lot::Mutex;
 use serde::Deserialize;
 use transmux::Container;
 
-use crate::catchup;
 use crate::http;
 use crate::origin::resource::cors_preflight;
 use crate::output::{Output, OutputKind};
@@ -80,7 +73,7 @@ impl Output for CatchupOutput {
     /// Routes (relative — mounted by the origin under `/{stream}/`):
     /// - `GET /catchup.m3u8`
     /// - `GET /vod/{period}` (`period` is `p{N}.m3u8`)
-    /// - `GET /catchup/{file}` (`file` is `seg-{seq}.{ext}`)
+    /// - `GET /catchup/{file}` (`file` is `seg-{seq}.{ext}` or `init-p{N}.mp4`)
     fn manifest_routes(&self, route: Arc<RouteHandle>) -> Router {
         Router::new()
             .route(
@@ -96,30 +89,102 @@ impl Output for CatchupOutput {
     }
 }
 
+/// Minimum `#EXT-X-TARGETDURATION` (RFC 8216 §4.3.3.1: a positive integer
+/// number of seconds), used when `segments` is empty or every duration
+/// rounds to zero.
+const MIN_TARGET_DURATION_SECS: u32 = 1;
+
+/// The `#EXT-X-MEDIA-SEQUENCE` of an empty playlist (RFC 8216 §4.3.3.2: the
+/// first segment's number is 0 when the tag is absent).
+const DEFAULT_MEDIA_SEQUENCE: u64 = 0;
+
+/// Render `segments` (already ordered and windowed) into a Media Playlist
+/// whose segment URIs are `catchup/seg-{seq}.{ext}`, relative to where both
+/// playlist endpoints are served.
+///
+/// `init_uri` maps a segment's [`InitRef`] to the `#EXT-X-MAP` URI to
+/// advertise (RFC 8216bis §4.4.4.5, required for fMP4); `None` for the
+/// `MpegTs` container. Every segment carries its own run's map:
+/// `broadcast-hls` renders it where it changes, so an archived run is never
+/// decoded with a later run's init.
+///
+/// `playlist_type` is `None` for a playlist that may lose leading segments:
+/// RFC 8216 §6.2.2 forbids `EXT-X-PLAYLIST-TYPE` on a playlist that removes
+/// segments.
+fn render_playlist(
+    segments: &[CatchupSegment<Generation>],
+    ext: &str,
+    init_uri: Option<&dyn Fn(InitRef<Generation>) -> String>,
+    playlist_type: Option<PlaylistType>,
+    endlist: bool,
+) -> Result<String, broadcast_hls::Error> {
+    let target_duration = segments
+        .iter()
+        .map(|s| s.duration.as_secs_f64())
+        .fold(0.0_f64, f64::max)
+        .ceil()
+        .clamp(f64::from(MIN_TARGET_DURATION_SECS), f64::from(u32::MAX))
+        as u32;
+    let media_sequence = segments
+        .first()
+        .map(|s| u64::from(s.seq.value()))
+        .unwrap_or(DEFAULT_MEDIA_SEQUENCE);
+    let mut hls_segments: Vec<broadcast_hls::MediaSegment> = segments
+        .iter()
+        .map(|s| broadcast_hls::MediaSegment {
+            uri: format!("catchup/seg-{}.{ext}", s.seq),
+            duration: broadcast_hls::DecimalSeconds::from_duration(s.duration),
+            discontinuous: s.discontinuous,
+            ..Default::default()
+        })
+        .collect();
+    if let Some(init_uri) = init_uri {
+        for (hls, seg) in hls_segments.iter_mut().zip(segments) {
+            if let Some(init) = seg.init {
+                hls.map = Some(broadcast_hls::MapTag {
+                    uri: init_uri(init),
+                    byte_range: None,
+                    extra_attrs: Vec::new(),
+                });
+            }
+        }
+    }
+    let playlist = broadcast_hls::MediaPlaylist {
+        target_duration,
+        msn: broadcast_hls::MediaSequence::new(media_sequence),
+        segments: hls_segments,
+        endlist,
+        playlist_type,
+        ..Default::default()
+    };
+    playlist.to_m3u8()
+}
+
 /// The dynamic-filename extension (without the leading `.`) for `route`'s
-/// configured container — mirrors `crate::route::ProgramServing::new`'s own
-/// mapping (`Container` is `#[non_exhaustive]`, hence the catch-all).
+/// configured container.
 fn container_ext(container: Container) -> &'static str {
     match container {
         Container::MpegTs => "ts",
-        Container::Fmp4 => "m4s",
         _ => "m4s",
     }
 }
 
-/// The `#EXT-X-MAP` URI of an [`catchup::InitRef`], relative to the catch-up
+/// The `#EXT-X-MAP` URI of an [`InitRef`], relative to the catch-up
 /// playlists (which sit at `/{stream}/`): an archived period's init is served
-/// by this module's own resource route (`catchup/init-p{N}.mp4`, the bytes at
-/// the head of that period's file — the init of the run that wrote it), a
-/// segment still in the live origin names the origin's versioned init
-/// resource (`HlsOrigin::init_name`).
-fn init_uri_of(ll_hls: Option<&hls_runtime::server::HlsOrigin>, init: catchup::InitRef) -> String {
+/// by this module's own resource route (`catchup/init-p{N}.mp4`), a segment
+/// still in the live origin names the origin's versioned init resource
+/// (`HlsOrigin::init_name`).
+fn init_uri_of(
+    ll_hls: Option<&hls_runtime::server::HlsOrigin>,
+    init: InitRef<Generation>,
+) -> String {
     match init {
-        catchup::InitRef::Archived(period) => format!("catchup/init-p{period}.mp4"),
-        catchup::InitRef::Live(generation) => ll_hls.map_or_else(
+        InitRef::Live(generation) => ll_hls.map_or_else(
             || format!("init-{DEFAULT_TRACK_ID}.mp4"),
             |o| o.init_name(DEFAULT_TRACK_ID, generation),
         ),
+        InitRef::Archived { period, .. } => format!("catchup/init-p{period}.mp4"),
+        _ => format!("init-{DEFAULT_TRACK_ID}.mp4"),
     }
 }
 
@@ -133,11 +198,41 @@ fn parse_init_filename(file: &str) -> Option<u32> {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct CatchupPlaylistQuery {
-    /// Bound the catch-up window to this many trailing seconds of
-    /// `crate::dvr::IndexEntry::start` — see
-    /// `crate::catchup::apply_window`. Omitted or `0`: the whole archive
+    /// Bound the catch-up window to this many trailing seconds (see
+    /// [`dvr_runtime::read::window`]). Omitted or `0`: the whole archive
     /// plus the live tail.
     window_secs: Option<u64>,
+}
+
+/// Log what a scan could not read; the readable periods are still served.
+fn report_scan(route: &RouteHandle, scan: &ArchiveScan) {
+    for (period, error) in &scan.unreadable {
+        tracing::warn!(
+            route = %route.name(),
+            period = period.value(),
+            %error,
+            "catch-up: skipping an unreadable archive period"
+        );
+    }
+    for conflict in &scan.conflicts {
+        tracing::warn!(
+            route = %route.name(),
+            seq = conflict.seq.value(),
+            kept = conflict.kept.value(),
+            dropped = conflict.dropped.value(),
+            "catch-up: two archive periods claim one sequence number; serving the earlier"
+        );
+    }
+}
+
+/// Scan the route's archive on the blocking pool under a scan permit.
+async fn scan_archive(
+    route: &RouteHandle,
+    archive: Arc<Mutex<FsArchive>>,
+) -> Result<ArchiveScan, ScanError> {
+    let scan = run_scan(route, move || archive.lock().scan()).await?;
+    report_scan(route, &scan);
+    Ok(scan)
 }
 
 /// `GET /catchup.m3u8` — see the module docs.
@@ -149,59 +244,42 @@ async fn catchup_playlist(
         Ok(serving) => serving,
         Err(resp) => return *resp,
     };
-    let Some(dvr) = route.dvr_config() else {
+    let (Some(dvr), Some(archive)) = (route.dvr_config(), route.catchup_archive()) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let ext = container_ext(route.container());
-    let dir = catchup::archive_dir(dvr, route.name());
-    // Audit run 7, W3: `scan_archive` reads and JSON-parses every `pN.idx`
-    // on this route's archive — real, synchronous filesystem I/O. Run it on
-    // the blocking pool so a catch-up request can never pin a runtime worker
-    // (which would stall ingest for every route), and answer 500 if the pool
-    // is gone (shutdown) rather than panicking.
-    let scan_dir = dir.clone();
-    // Bound concurrent archive scans (issue #1083, F): the blocking pool is
-    // shared with the DVR persist, so an unauthenticated catch-up flood must
-    // not be able to occupy every blocking thread and delay a route's
-    // recording (whose `StallIngest` pin would then force-expire at 30 s).
-    let archived = match run_scan(&route, move || catchup::scan_archive(&scan_dir)).await {
-        Ok(a) => a,
+    let archived = match scan_archive(&route, archive).await {
+        Ok(scan) => scan.segments,
         Err(e) => {
             tracing::error!(error = %e, "catch-up: archive scan task failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    // The live tail in the numbers the origin's playlist and resource names
-    // use (its Media Sequence Number = offset + the `Trunk`'s number), the
-    // same numbers the archive indexes under (audit r07-C5, #1083): without
-    // the offset a reconnect's restarted `Trunk` numbers collide with the
-    // archive's, and the live tail is filtered out of the merge.
+    // The live tail in the numbers the origin's playlist and the archive use
+    // (the origin's offset plus the `Trunk`'s number, audit r07-C5, #1083).
     let ll_hls = serving.ll_hls();
     let offset = ll_hls.media_sequence_offset();
-    let live: Vec<_> = ll_hls
+    let live: Vec<LiveSegment<Generation>> = ll_hls
         .closed_segments()
         .into_iter()
         .filter_map(|s| {
             let public =
                 u32::try_from(offset.checked_add(u64::from(s.sequence_number.value()))?).ok()?;
-            Some(hls_runtime::server::ClosedSegment::new(
-                media_plane::ids::SegmentSeq::new(public),
-                s.start,
-                s.duration,
-                s.discontinuous,
-            ))
+            Some(
+                LiveSegment::new(
+                    media_plane::ids::SegmentSeq::new(public),
+                    Timestamp::from_nanos(s.start.0),
+                    s.duration,
+                    s.init_generation,
+                )
+                .with_discontinuous(s.discontinuous),
+            )
         })
         .collect();
-    let combined = catchup::merge_segments(&archived, &live);
-    let windowed = catchup::apply_window(&combined, q.window_secs);
-    // Audit run 7, W11: this playlist is `EVENT`-shaped only when nothing
-    // can remove its leading segments — a `window_secs` bound
-    // (`apply_window`) or DVR retention (which evicts whole leading
-    // periods) both do, and RFC 8216 §6.2.2 forbids PLAYLIST-TYPE on a
-    // playlist that may remove segments ("no value of that tag allows
-    // Media Segments to be removed"). With neither active the head only
-    // ever grows, so `EVENT` is accurate and worth advertising (it lets a
-    // player stop reloading once `#EXT-X-ENDLIST` cannot appear).
+    let combined = dvr_runtime::read::merge(&archived, &live);
+    let windowed = dvr_runtime::read::window(&combined, q.window_secs.map(Duration::from_secs));
+    // Audit run 7, W11: `EVENT` only when nothing can remove the playlist's
+    // leading segments (RFC 8216 §6.2.2).
     let removes_leading = q.window_secs.filter(|&w| w > 0).is_some() || dvr.retention_active();
     let playlist_type = if removes_leading {
         None
@@ -209,16 +287,13 @@ async fn catchup_playlist(
         Some(PlaylistType::Event)
     };
     let init_of = |init| init_uri_of(Some(&ll_hls), init);
-    let Ok(body) = catchup::render_playlist(
+    let Ok(body) = render_playlist(
         &windowed,
         ext,
         matches!(route.container(), Container::Fmp4).then_some(&init_of as &dyn Fn(_) -> _),
         playlist_type,
         false,
     ) else {
-        // A field the renderer would have to quote carries a character
-        // forbidden there (audit BH-W7, issue #1111) — unreachable for
-        // this route's own generated URIs, but never silently mangled.
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     (
@@ -233,61 +308,48 @@ async fn vod_playlist(
     State(route): State<Arc<RouteHandle>>,
     Path(period_file): Path<String>,
 ) -> Response {
-    let Some(dvr) = route.dvr_config() else {
+    let Some(archive) = route.catchup_archive() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(period_num) = parse_period_filename(&period_file) else {
+    let Some(period) = parse_period_filename(&period_file).map(PeriodNum::new) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let ext = container_ext(route.container());
-    let dir = catchup::archive_dir(dvr, route.name());
-    // Audit run 7, W3: the index read/parse and the directory listing are
-    // synchronous filesystem I/O — off the runtime worker, and bounded by the
-    // same scan semaphore as the archive-wide scan (item 4).
-    let read_dir = dir.clone();
-    let (segments, period_nums) = match run_scan(&route, move || {
-        (
-            catchup::read_period_segments(&read_dir, period_num),
-            catchup::list_period_nums(&read_dir),
-        )
-    })
-    .await
-    {
-        Ok(v) => v,
+    let scan = match scan_archive(&route, archive).await {
+        Ok(scan) => scan,
         Err(e) => {
             tracing::error!(error = %e, "catch-up: period read task failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    let segments: Vec<CatchupSegment<Generation>> = scan
+        .segments
+        .iter()
+        .filter(|s| s.period == period)
+        .map(|s| {
+            CatchupSegment::new(s.seq, s.start, s.duration)
+                .with_discontinuous(s.discontinuous)
+                .with_init(s.init.map(|span| InitRef::Archived {
+                    period: s.period,
+                    span,
+                }))
+        })
+        .collect();
     if segments.is_empty() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    // Definitively finished iff a later period exists on disk —
-    // `crate::dvr::DvrRecorder::start_period` never opens period N+1 until
-    // period N is closed, so this is exact, not a guess.
-    let finished = period_nums.iter().any(|&n| n > period_num);
-    let combined: Vec<catchup::CatchupSegment> = segments
-        .iter()
-        .map(|s| catchup::CatchupSegment {
-            seq: s.seq,
-            start: s.start,
-            duration: s.duration,
-            discontinuous: s.discontinuous,
-            init: Some(catchup::InitRef::Archived(s.period_num)),
-        })
-        .collect();
-    // One period's segments only ever grow within the period (retention
-    // evicts whole periods, which a request for a still-listed period
-    // cannot observe), so the live branch is a genuine EVENT playlist and
-    // the tag is accurate — see `catchup::render_playlist`'s own doc.
+    // A period is never appended to once a later period holds a segment: the
+    // writer closes it with `EXT-X-ENDLIST` in the same plan that writes the
+    // later period's first segment.
+    let finished = scan.segments.iter().any(|s| s.period > period);
     let playlist_type = if finished {
         PlaylistType::Vod
     } else {
         PlaylistType::Event
     };
     let init_of = |init| init_uri_of(None, init);
-    let Ok(body) = catchup::render_playlist(
-        &combined,
+    let Ok(body) = render_playlist(
+        &segments,
         ext,
         matches!(route.container(), Container::Fmp4).then_some(&init_of as &dyn Fn(_) -> _),
         Some(playlist_type),
@@ -302,13 +364,9 @@ async fn vod_playlist(
         .into_response()
 }
 
-/// Bounds how many archive *scans* of one route run on the blocking pool at once — held
-/// by all three catch-up paths (`catchup_playlist`'s `scan_archive`,
-/// `vod_playlist`'s period read, and `catchup_resource`'s
-/// `find_archived_segment`), each of which reads every `pN.idx` until it
-/// finds what it wants. Sized well below the blocking pool's own ceiling so
-/// ordinary DVR persists always find a thread.
-/// Conservative ceiling: the DVR persist must always be able to run.
+/// Bounds how many archive reads of one route run on the blocking pool at
+/// once, held by all three catch-up paths. Sized well below the blocking
+/// pool's own ceiling so the DVR recorder's polls always find a thread.
 const MAX_CONCURRENT_SCANS: usize = 4;
 
 /// The route's own scan pool, so one route's slow archive never holds the
@@ -356,86 +414,65 @@ fn parse_period_filename(file: &str) -> Option<u32> {
     file.strip_prefix('p')?.strip_suffix(".m3u8")?.parse().ok()
 }
 
-/// `GET /catchup/seg-{seq}.{ext}` — archived bytes read straight from disk
-/// when `seq` is archived; otherwise the live `Trunk`'s still-unarchived
-/// tail, resolved through the exact same `HlsOrigin` the shared resource
-/// route (`crate::origin::resource`) uses for `seg-{track}-{seq}.{ext}`.
-/// This dispatch — not a second cache of anything — is what makes the
-/// straddle boundary invisible to the client: one filename grammar, either
-/// source.
+/// Answer an archive read: the bytes, `404` for an evicted period, `500`
+/// otherwise.
+fn archive_read_response(
+    route: &RouteHandle,
+    name: &str,
+    read: Result<Option<Result<bytes::Bytes, ReadError>>, ScanError>,
+) -> Response {
+    match read {
+        Ok(Some(Ok(bytes))) => (
+            [(
+                header::CONTENT_TYPE,
+                crate::origin::resource::resource_content_type(route.container(), name),
+            )],
+            bytes,
+        )
+            .into_response(),
+        Ok(None | Some(Err(ReadError::Gone { .. }))) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Some(Err(e))) => {
+            tracing::error!(error = %e, name, "catch-up: failed reading archived bytes");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, name, "catch-up: archive read task failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// `GET /catchup/seg-{seq}.{ext}` — archived bytes read from disk when `seq`
+/// is archived; otherwise the live `Trunk`'s still-unarchived tail, resolved
+/// through the same `HlsOrigin` the shared resource route uses for
+/// `seg-{track}-{seq}.{ext}`. One filename grammar, either source.
 async fn catchup_resource(
     State(route): State<Arc<RouteHandle>>,
     Path(file): Path<String>,
 ) -> Response {
     let ext = container_ext(route.container());
     if let Some(period) = parse_init_filename(&file) {
-        return catchup_init(&route, ext, period).await;
+        return catchup_init(&route, PeriodNum::new(period)).await;
     }
     let Some(seq) = parse_seg_filename(&file, ext) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(dvr) = route.dvr_config() else {
+    let Some(archive) = route.catchup_archive() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let dir: PathBuf = catchup::archive_dir(dvr, route.name());
-    // Audit run 7, W3: locating the segment reads every period index until a
-    // match, then `read_archived_bytes` reads the whole segment — both
-    // synchronous disk I/O, so both run on the blocking pool, bounded by the
-    // same scan semaphore (item 4).
-    let find_dir = dir.clone();
-    let found = match run_scan(&route, move || {
-        catchup::find_archived_segment(&find_dir, media_plane::ids::SegmentSeq::new(seq))
+    let found = run_scan(&route, move || {
+        let mut archive = archive.lock();
+        archive
+            .find(media_plane::ids::SegmentSeq::new(seq))
+            .map(|segment| archive.read(&segment))
     })
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, seq, "catch-up: archive lookup task failed");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
-    if let Some(seg) = found {
-        let read_dir = dir.clone();
-        let read = run_scan(&route, move || {
-            catchup::read_archived_bytes(
-                &read_dir,
-                ext,
-                seg.period_num,
-                seg.byte_offset,
-                seg.byte_len,
-            )
-        })
-        .await;
-        return match read {
-            Ok(Ok(bytes)) => (
-                [(
-                    header::CONTENT_TYPE,
-                    crate::origin::resource::resource_content_type(route.container(), &file),
-                )],
-                bytes,
-            )
-                .into_response(),
-            Ok(Err(catchup::ReadArchivedError::Gone)) => {
-                // The period was evicted between the index read and the
-                // open (a race with retention) — not found, not an error
-                // (issue #1083, item 3).
-                StatusCode::NOT_FOUND.into_response()
-            }
-            Ok(Err(e)) => {
-                tracing::error!(error = %e, seq, "catch-up: failed reading archived segment bytes");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
-            }
-            Err(e) => {
-                tracing::error!(error = %e, seq, "catch-up: segment read task failed");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
-            }
-        };
+    .await;
+    if !matches!(found, Ok(None)) {
+        return archive_read_response(&route, &file, found);
     }
 
-    // Not archived (yet) — the still-live tail. A one-shot, non-blocking
-    // resolve (deadline == now): the client only ever requests a segment a
-    // playlist just told it exists, so there is nothing to wait for here —
-    // unlike the live playlist's own blocking-reload semantics.
+    // Not archived (yet): the still-live tail. A one-shot, non-blocking
+    // resolve: the client only requests a segment a playlist just listed.
     let serving = match http::resolve_route_program(&route) {
         Ok(serving) => serving,
         Err(resp) => return *resp,
@@ -443,8 +480,9 @@ async fn catchup_resource(
     let ll_hls = serving.ll_hls();
     let now = Timestamp::from_nanos(0);
     let policy = AwaitPolicy::new(now);
+    let live_name = format!("seg-{DEFAULT_TRACK_ID}-{seq}.{ext}");
     let request = HlsRequest::Resource {
-        name: format!("seg-{DEFAULT_TRACK_ID}-{seq}.{ext}"),
+        name: live_name.clone(),
     };
     match ll_hls.resolve(request, now, policy) {
         EgressResponse::Ready {
@@ -453,10 +491,7 @@ async fn catchup_resource(
         } => (
             [(
                 header::CONTENT_TYPE,
-                crate::origin::resource::resource_content_type(
-                    route.container(),
-                    &format!("seg-{DEFAULT_TRACK_ID}-{seq}.{ext}"),
-                ),
+                crate::origin::resource::resource_content_type(route.container(), &live_name),
             )],
             bytes,
         )
@@ -465,49 +500,28 @@ async fn catchup_resource(
     }
 }
 
-/// `GET /catchup/init-p{N}.mp4`: the init segment of the run that wrote
-/// archive period `N` — the bytes at the head of `pN.m4s`, up to the first
-/// indexed segment. `404` for a TS route, an unknown/evicted period or one
-/// with no segment yet.
-async fn catchup_init(route: &RouteHandle, ext: &'static str, period: u32) -> Response {
-    let Some(dvr) = route.dvr_config() else {
+/// `GET /catchup/init-p{N}.mp4`: the init of archive period `N`, the byte
+/// range its playlist's `EXT-X-MAP` names. `404` for a TS route, an unknown
+/// or evicted period, or one with no segment yet.
+async fn catchup_init(route: &RouteHandle, period: PeriodNum) -> Response {
+    if crate::dvr::archive_container(route.container()) != dvr_runtime::ArchiveContainer::Fmp4 {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(archive) = route.catchup_archive() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if ext != "m4s" {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let dir: PathBuf = catchup::archive_dir(dvr, route.name());
     let read = run_scan(route, move || {
-        let init_len = catchup::read_period_segments(&dir, period)
-            .first()
-            .map(|s| s.byte_offset)?;
-        Some(catchup::read_archived_bytes(&dir, ext, period, 0, init_len))
+        let mut archive = archive.lock();
+        let span = archive
+            .scan()
+            .segments
+            .iter()
+            .find(|s| s.period == period)
+            .and_then(|s| s.init)?;
+        Some(archive.read_init(period, span))
     })
     .await;
-    match read {
-        Ok(Some(Ok(bytes))) if !bytes.is_empty() => (
-            [(
-                header::CONTENT_TYPE,
-                crate::origin::resource::resource_content_type(
-                    route.container(),
-                    &format!("init-p{period}.mp4"),
-                ),
-            )],
-            bytes,
-        )
-            .into_response(),
-        Ok(None | Some(Ok(_)) | Some(Err(catchup::ReadArchivedError::Gone))) => {
-            StatusCode::NOT_FOUND.into_response()
-        }
-        Ok(Some(Err(e))) => {
-            tracing::error!(error = %e, period, "catch-up: failed reading an archived init");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-        Err(e) => {
-            tracing::error!(error = %e, period, "catch-up: init read task failed");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    archive_read_response(route, &format!("init-p{period}.mp4"), read)
 }
 
 fn parse_seg_filename(file: &str, ext: &str) -> Option<u32> {
@@ -525,7 +539,7 @@ mod tests {
     use crate::route::RouteConfig;
     use crate::route::SPTS_PROGRAM_ID;
     use crate::testutil::body_string;
-    use std::time::Duration;
+    use std::path::PathBuf;
 
     fn temp_dir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -584,7 +598,7 @@ mod tests {
     // --- W3 (audit run 7): DVR persist through the async advance_route path ---
 
     /// `advance_route`'s DVR drain persists a published segment byte-exact to
-    /// the period file, and the period's `pN.idx` describes exactly that byte
+    /// the period file, and the period's `pN.m3u8` describes exactly that byte
     /// range, through the async path (which dispatches the synchronous
     /// `write_all`/`fs::rename` to the blocking pool).
     ///
@@ -680,16 +694,16 @@ mod tests {
                 "the segment's bytes must be persisted byte-exact"
             );
 
-            // The index describes exactly that range.
-            let idx = std::fs::read_to_string(tmp.join("w3").join("p0.idx")).expect("index");
-            let entries: Vec<serde_json::Value> = serde_json::from_str(&idx).expect("index JSON");
-            assert_eq!(entries.len(), 1, "one segment must be indexed");
-            assert_eq!(entries[0]["seq"], serde_json::json!(1));
-            assert_eq!(
-                entries[0]["byte_offset"],
-                serde_json::json!(INIT_LEN as u64)
-            );
-            assert_eq!(entries[0]["byte_len"], serde_json::json!(SEG_LEN as u64));
+            // The period playlist describes exactly that range, and the init
+            // range its `EXT-X-MAP` names.
+            let scan = crate::testutil::scan_archive(&tmp, "w3", Container::Fmp4);
+            assert_eq!(scan.segments.len(), 1, "one segment must be indexed");
+            let segment = scan.segments[0];
+            assert_eq!(segment.seq.value(), 1);
+            assert_eq!(segment.span.offset, INIT_LEN as u64);
+            assert_eq!(segment.span.len.get(), SEG_LEN as u64);
+            let init = segment.init.expect("an fMP4 segment names its init");
+            assert_eq!((init.offset, init.len.get()), (0, INIT_LEN as u64));
 
             cleanup(&tmp);
         });
@@ -1074,7 +1088,7 @@ mod tests {
             .expect("add_segment");
         route.drain_dvr().await; // opens + writes period 0 with init A
 
-        // Changing the init rolls the period (crate::dvr::DvrRecorder's
+        // Changing the init rolls the period (the DVR writer's
         // mid-stream init-change rollover) — a real, reliable way to force
         // period 1 to open without waiting out `period_duration_secs`.
         route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
@@ -1094,7 +1108,7 @@ mod tests {
 
         // The latest period has no successor, so it is still growing: no
         // ENDLIST (and it stays EVENT-shaped).
-        let latest = vod_playlist(State(route), Path("p1.m3u8".to_string())).await;
+        let latest = vod_playlist(State(Arc::clone(&route)), Path("p1.m3u8".to_string())).await;
         assert_eq!(latest.status(), StatusCode::OK);
         let body = body_string(latest).await;
         assert!(
@@ -1102,6 +1116,12 @@ mod tests {
             "the latest period has no successor, so it must not be finished: {body}"
         );
         assert!(body.contains("#EXT-X-PLAYLIST-TYPE:EVENT"), "body: {body}");
+
+        for (period, init) in [("init-p0.mp4", [0xAA; 4]), ("init-p1.mp4", [0xBB; 4])] {
+            let resp = catchup_resource(State(Arc::clone(&route)), Path(period.to_string())).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{period}");
+            assert_eq!(body_bytes(resp).await, init, "{period} serves its own init");
+        }
 
         cleanup(&tmp);
     }
@@ -1169,48 +1189,74 @@ mod tests {
         cleanup(&tmp);
     }
 
-    /// A period archived before any init segment (its first segment starts at
-    /// byte offset 0) has no init prelude: the init request is 404, not an
-    /// empty 200.
+    /// An init request names an archived period: a period the archive does
+    /// not hold, or any period of a TS route (whose archive has no init), is
+    /// 404, not an empty 200.
     #[tokio::test]
-    async fn an_archived_period_without_an_init_prelude_is_404() {
+    async fn an_init_request_for_a_period_without_an_init_is_404() {
         let tmp = temp_dir();
-        let dvr = dvr_config(&tmp);
-        let route = Arc::new(
-            RouteHandle::new(
-                RouteConfig::default()
-                    .with_target_duration(std::time::Duration::from_secs(4))
-                    .with_part_target(std::time::Duration::from_millis(500))
-                    .with_window_segments(8),
+        crate::testutil::record_archive_run(&tmp, "no-init", Container::Fmp4, 0, &[(1, 0x11)]);
+        crate::testutil::record_archive_run(&tmp, "ts-init", Container::MpegTs, 0, &[(1, 0x11)]);
+        let route_for = |name: &str, container: Container| {
+            Arc::new(
+                RouteHandle::new(
+                    RouteConfig::default()
+                        .with_target_duration(std::time::Duration::from_secs(4))
+                        .with_part_target(std::time::Duration::from_millis(500))
+                        .with_window_segments(8)
+                        .with_container(container),
+                )
+                .with_name(name)
+                .with_dvr(dvr_config(&tmp)),
             )
-            .with_name("no-init")
-            .with_dvr(dvr.clone()),
-        );
-        // A period whose first segment starts at byte offset 0 has no init
-        // prelude at all: the archive is exactly a segment index over an
-        // empty period file.
-        let dir = crate::catchup::archive_dir(&dvr, "no-init");
-        std::fs::create_dir_all(&dir).expect("archive dir");
-        std::fs::write(dir.join("p0.m4s"), []).expect("empty period file");
-        let index = vec![crate::dvr::IndexEntry {
-            seq: 1,
-            start: broadcast_common::Timestamp::ZERO,
-            byte_offset: 0,
-            byte_len: 0,
-            duration: Duration::from_secs(3),
-            discontinuous: false,
-        }];
-        std::fs::write(
-            dir.join("p0.idx"),
-            serde_json::to_vec(&index).expect("serialize index"),
-        )
-        .expect("write index");
-
-        let resp = catchup_resource(State(route), Path("init-p0.mp4".to_string())).await;
+        };
+        let fmp4 = route_for("no-init", Container::Fmp4);
+        let resp =
+            catchup_resource(State(Arc::clone(&fmp4)), Path("init-p0.mp4".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_bytes(resp).await, b"INIT");
+        let resp = catchup_resource(State(fmp4), Path("init-p1.mp4".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "no period 1");
+        let ts = route_for("ts-init", Container::MpegTs);
+        let resp = catchup_resource(State(ts), Path("init-p0.mp4".to_string())).await;
         assert_eq!(
             resp.status(),
             StatusCode::NOT_FOUND,
-            "no init bytes to serve"
+            "a TS archive has no init"
+        );
+        cleanup(&tmp);
+    }
+
+    /// Each route owns one archive reader, shared by every catch-up request,
+    /// and dropping the route releases it with its parsed-playlist cache (the
+    /// process-global cache this replaces stayed resident).
+    #[test]
+    fn a_dropped_route_releases_its_archive_reader() {
+        let tmp = temp_dir();
+        crate::testutil::record_archive_run(&tmp, "cam", Container::Fmp4, 0, &[(1, 0x11)]);
+        let route = RouteHandle::new(RouteConfig::default())
+            .with_name("cam")
+            .with_dvr(dvr_config(&tmp));
+        let archive = route.catchup_archive().expect("DVR is on");
+        assert!(Arc::ptr_eq(
+            &archive,
+            &route.catchup_archive().expect("DVR is on")
+        ));
+        assert_eq!(archive.lock().scan().segments.len(), 1);
+        assert_eq!(archive.lock().cached_periods(), 1);
+        let released = Arc::downgrade(&archive);
+        drop(archive);
+        drop(route);
+        assert!(
+            released.upgrade().is_none(),
+            "the reader outlived its route"
+        );
+        assert!(
+            RouteHandle::new(RouteConfig::default())
+                .with_name("cam")
+                .catchup_archive()
+                .is_none(),
+            "a route without DVR has no archive"
         );
         cleanup(&tmp);
     }
@@ -1338,11 +1384,11 @@ mod tests {
 
         // Both runs are really in the archive (not just served from the live
         // window): two periods, four indexed segments.
-        let archived = catchup::scan_archive(&tmp.join("c5"));
+        let archived = crate::testutil::scan_archive(&tmp, "c5", Container::Fmp4).segments;
         assert_eq!(
             archived
                 .iter()
-                .map(|s| (s.period_num, s.seq.value()))
+                .map(|s| (s.period.value(), s.seq.value()))
                 .collect::<Vec<_>>(),
             vec![(0, 1), (0, 2), (1, 4), (1, 5)]
         );
@@ -1448,7 +1494,8 @@ mod tests {
                 .expect("add_segment");
         }
         assert_eq!(
-            catchup::scan_archive(&tmp.join("c5-live"))
+            crate::testutil::scan_archive(&tmp, "c5-live", Container::Fmp4)
+                .segments
                 .iter()
                 .map(|s| s.seq.value())
                 .collect::<Vec<_>>(),
@@ -1474,7 +1521,9 @@ mod tests {
             ],
             "{playlist}"
         );
-        // The live tail's init is the live origin's versioned one.
+        // The live tail's init is the live origin's versioned one: the
+        // generation the tail was closed under (the reconnect seeded the
+        // previous init as generation 1, so 0xBB is generation 2).
         let live_init = playlist
             .lines()
             .filter_map(|l| l.strip_prefix("#EXT-X-MAP:URI=\""))
@@ -1482,14 +1531,26 @@ mod tests {
             .next_back()
             .expect("a map");
         assert!(
-            live_init.starts_with("init-1-") && live_init.ends_with("-1.mp4"),
+            live_init.starts_with("init-1-") && live_init.ends_with("-2.mp4"),
             "{live_init}"
         );
-        let init = route
-            .ll_hls(SPTS_PROGRAM_ID)
-            .expect("origin")
-            .init_name(TrackId::new(1), hls_runtime::server::Generation::new(1));
+        let origin = route.ll_hls(SPTS_PROGRAM_ID).expect("origin");
+        let init = origin.init_name(TrackId::new(1), hls_runtime::server::Generation::new(2));
         assert_eq!(live_init, init);
+        let now = Timestamp::from_nanos(0);
+        match origin.resolve(
+            HlsRequest::Resource {
+                name: live_init.to_string(),
+            },
+            now,
+            AwaitPolicy::new(now),
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Resource(bytes),
+                ..
+            } => assert_eq!(&bytes[..], [0xBB; 4], "the tail's own init"),
+            _ => panic!("the live tail's init is not served"),
+        }
 
         // And the tail bytes are the live ones, under the playlist's numbers.
         for (n, expected) in [(4u32, 0x21u8), (5, 0x22)] {
@@ -1645,10 +1706,11 @@ mod tests {
         cleanup(&tmp);
     }
 
-    fn archived_seq_periods(dir: &std::path::Path) -> Vec<(u32, u32)> {
-        catchup::scan_archive(dir)
+    fn archived_seq_periods(root: &std::path::Path, name: &str) -> Vec<(u32, u32)> {
+        crate::testutil::scan_archive(root, name, Container::Fmp4)
+            .segments
             .iter()
-            .map(|s| (s.seq.value(), s.period_num))
+            .map(|s| (s.seq.value(), s.period.value()))
             .collect()
     }
 
@@ -1682,7 +1744,7 @@ mod tests {
         route.drain_dvr().await;
 
         assert_eq!(
-            archived_seq_periods(&root.join("r")),
+            archived_seq_periods(&root, "r"),
             vec![(1, 0), (2, 0), (3, 1)],
             "segment 2 was closed under INIT_A and belongs in the INIT_A period"
         );
@@ -1720,7 +1782,7 @@ mod tests {
             .expect("add");
         route.drain_dvr().await;
 
-        let seqs: Vec<u32> = archived_seq_periods(&root.join("r"))
+        let seqs: Vec<u32> = archived_seq_periods(&root, "r")
             .iter()
             .map(|s| s.0)
             .collect();
@@ -1763,7 +1825,8 @@ mod tests {
             .expect("add");
         route.drain_dvr().await;
 
-        let starts: Vec<u64> = catchup::scan_archive(&root.join("r"))
+        let starts: Vec<u64> = crate::testutil::scan_archive(&root, "r", Container::Fmp4)
+            .segments
             .iter()
             .map(|s| s.start.as_nanos())
             .collect();

@@ -348,6 +348,7 @@ rejects a route naming `"catchup"` without it.
 | `GET /{stream}/catchup.m3u8[?window_secs=N]` | A live-continuing playlist spanning the archive plus whatever the live `Trunk` has closed since the archive was last written — one continuous, gap-free sequence across that boundary, never two disjoint playlists. `window_secs` bounds it to the trailing N seconds; omitted, the whole archive plus the live tail. |
 | `GET /{stream}/vod/p{N}.m3u8` | One archived period's segments as a standalone playlist — `#EXT-X-ENDLIST` + `PLAYLIST-TYPE:VOD` once that period is definitively finished (a later period exists on disk), otherwise the same still-growing shape as `catchup.m3u8` restricted to that period. |
 | `GET /{stream}/catchup/seg-{seq}.{ext}` | The segment bytes either playlist above references — read straight off disk when archived, or resolved through the same live `HlsOrigin` every other output shares when not (the still-unarchived tail). |
+| `GET /{stream}/catchup/init-p{N}.mp4` | An archived fMP4 period's init segment — the byte range that period's playlist names in its `EXT-X-MAP`; every archived segment in the catch-up playlists maps to its own period's init. `404` for a TS route or an unknown period. |
 
 Shares `output_auth` with every other output — no separate credential or
 auth path for catch-up.
@@ -570,29 +571,33 @@ A route can persist finished segments to disk for catch-up / VOD:
 
 ```text
 <archive_root>/<route>/
-├── p0.m4s          ← period 0 container file (init at head, then fragments)
-├── p0.idx          ← JSON byte-range index: (seq, pts_ns, offset, len)
+├── p0.m4s          ← period 0 media file (init at head, then fragments)
+├── p0.m3u8         ← period 0 index: an HLS media playlist with EXT-X-BYTERANGE
 ├── p1.m4s
-├── p1.idx
+├── p1.m3u8
 ├── …
 ```
 
-For **fMP4**, the init segment is written at the head of each period file
-and media fragments are appended — the file is a valid CMAF track (init +
-concatenated fragments). For **TS**, segments are natively concatenable
-188-byte packets and the file is directly playable with no init needed.
+The archive format is owned by the [`dvr-runtime`](../dvr-runtime) crate;
+multimux records through its `FsRecorder` and serves catch-up through its
+`FsArchive`. For **fMP4**, each period holds exactly one init, written at the
+head of the media file and named by one `EXT-X-MAP` with a byte range, so a
+raw period file stays playable (init + concatenated fragments). For **TS**,
+segments are natively concatenable 188-byte packets.
 
-The index sidecar (`pN.idx`) maps every segment to a byte range
-(`seq`, `start_pts_ns`, `byte_offset`, `byte_len`) — issue #900 will serve
-`EXT-X-BYTERANGE` directly from these offsets. The index is flush-as-you-go
-and can be **rebuilt by rescanning** the period file (crash recovery).
+Each period playlist is a standard `PLAYLIST-TYPE:EVENT` media playlist,
+appended one segment record at a time and closed with `#EXT-X-ENDLIST`; any
+HLS tool can read it. A vendor tag carries each segment's exact Trunk timing,
+and an EIT programme boundary (`dvb_service_id`) is an `EXT-X-DATERANGE`.
+Archives written by multimux 0.20 and earlier (`pN.idx` JSON sidecars) are
+not readable.
 
-A new period is rolled on either duration expiry OR when the fMP4 init
-segment changes mid-recording (mid-stream track addition — issue #781).
+A new period is rolled on duration expiry, an fMP4 init change, an EIT
+programme transition, the byte budget, or a sequence gap.
 
-Recording is a `media_plane::egress::SegmentEgress` implementation draining
-its own pinning `SegmentCursor` — it never holds a lock the live-serving
-path needs and never perturbs live output.
+Recording drains its own pinning `SegmentCursor` on the blocking pool — it
+never holds a lock the live-serving path needs and never perturbs live
+output.
 
 ### 40-camera scenario
 
@@ -666,7 +671,7 @@ complete, runnable example.
 - Blocking playlist reloads wait three published Target Durations (never less than 5 s) before answering `503`, instead of a fixed 5 s (issue #1651).
 - Closed captions: `CLOSED-CAPTIONS` renditions take `LANGUAGE` from the ATSC `caption_service_descriptor` in the video's PMT loop (issue #1428); `closed_caption_overrides` still win, and after 10 s of video with no caption found a route declares `CLOSED-CAPTIONS=NONE` on every variant.
 
-One ingest architecture for every input: `media-plane`'s `Dialer` (the inputs that dial out) or `Listener` (RTMP, WHIP push accept) driven by `IngestDriver` / `ListenDriver`, publishing into a per-program `Trunk` that every egress serves from, so there is no second path a sample can take from socket to segment. HTTP outputs resolve through `hls-runtime`'s `HlsOrigin` and the `ServedEgress` trait; the DVR recorder is a `SegmentEgress` over its own pinning cursor, so it never perturbs live output. Errors are structured (`MultimuxError`), secrets are redacted everywhere, and the config schema is guarded by `multimux/tests/it/example_configs.rs` so the example configs cannot drift. The design documents are `docs/superpowers/specs/2026-07-18-multimux-hub-design.md` and (for the original RTSP-only v1) `2026-07-14-multimux-design.md` in the workspace.
+One ingest architecture for every input: `media-plane`'s `Dialer` (the inputs that dial out) or `Listener` (RTMP, WHIP push accept) driven by `IngestDriver` / `ListenDriver`, publishing into a per-program `Trunk` that every egress serves from, so there is no second path a sample can take from socket to segment. HTTP outputs resolve through `hls-runtime`'s `HlsOrigin` and the `ServedEgress` trait; the DVR recorder (`dvr-runtime`) drains its own pinning cursor, so it never perturbs live output. Errors are structured (`MultimuxError`), secrets are redacted everywhere, and the config schema is guarded by `multimux/tests/it/example_configs.rs` so the example configs cannot drift. The design documents are `docs/superpowers/specs/2026-07-18-multimux-hub-design.md` and (for the original RTSP-only v1) `2026-07-14-multimux-design.md` in the workspace.
 
 ## Related crates
 

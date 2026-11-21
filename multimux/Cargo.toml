@@ -50,7 +50,7 @@ srt-runtime       = { path = "../srt-runtime",   version = "0.11.0", features = 
 # (`source::hls_pull`, issue #663 P3c) drives `hls_runtime::client`'s
 # sans-IO `HlsClient` itself (no `tokio` client feature), doing the GETs the
 # engine asks for rather than re-implementing LL-HLS playback.
-# Floor is 0.6, not 0.5: `catchup.rs` uses `server::ClosedSegment` and
+# Floor is 0.6, not 0.5: `output::catchup` uses `server::ClosedSegment` and
 # `HlsOrigin::closed_segments()`, which do not exist in the published
 # 0.5.0 (verified: 0 hits at the hls-runtime-v0.5.0 tag). hls-runtime
 # must publish 0.6.0 before multimux can publish.
@@ -182,21 +182,19 @@ webrtc-runtime    = { path = "../webrtc-runtime", version = "0.9.0", optional = 
 # feature-gated, so this dependency is unconditional; it is a small,
 # `no_std`-capable crate with no `rtc-dtls` tree behind it.
 rtp-packet        = { path = "../rtp-packet", version = "0.8.0", default-features = false }
-# DVB SI EIT present/following (issue #903, `dvr`): `dvb_si::demux::SiDemux`
-# reassembles EIT p/f sections from raw TS packets so `DvrRecorder` can roll
-# the archive period on the programme boundary rather than only on the
-# clock. `default-features = false` — only `std` (this crate always links
-# std) + `ts` (the section reassembler `SiDemux` needs); `jiff`/`serde`
-# are not needed since `dvr::EitProgramme` decodes MJD+BCD itself.
-# `legacy-charsets` keeps KS X 1001 / GB-2312 / Big5 event names decoding.
-dvb-si            = { path = "../dvb-si", version = "15.1.0", default-features = false, features = ["std", "ts", "legacy-charsets"] }
-# TS packet/PSI-section framing. Two uses: `mpeg_ts::pid::Pid`, which
-# `dvr::DvrRecorder::new` wraps the EIT PID (`dvb_si::tables::eit::PID`) in
-# to pass to `SiDemux::builder().pid(..)`; and
-# `mpeg_ts::mux::SectionPacketiser`, which `dvr`'s own tests use to wrap the
-# genuine-bytes transition section back into TS packets. Also still used by
-# `source::segment`'s MPTS test (issue #887). Promoted from
-# `[dev-dependencies]` because production code (`dvr.rs`) now needs it too.
+# The DVR archive (format, writer roll/retention state machine, catch-up read
+# planning) and its blocking `fs` adapter: `route` records through
+# `FsRecorder`, `output::catchup` reads through `FsArchive`.
+dvr-runtime       = { path = "../dvr-runtime", version = "0.1.0", features = ["fs"] }
+# The EIT present/following tracker (`epg`, behind `jiff`) a program runs
+# while its DVR recorder waits to be created, and the EIT event names
+# `dvr-runtime` records into the archive's `EXT-X-DATERANGE` titles:
+# `legacy-charsets` keeps KS X 1001 / GB-2312 / Big5 names decoding
+# (dvr-runtime itself does not enable it). Also used by the
+# `source::split_subtitle` and `source::segment` tests.
+dvb-si            = { path = "../dvb-si", version = "15.1.0", default-features = false, features = ["std", "ts", "jiff", "legacy-charsets"] }
+# TS packet framing: the datagram and packet sizes the push transports and the
+# TS-carrying sources chunk by.
 mpeg-ts           = { path = "../mpeg-ts", version = "0.9.0" }
 # Canonical timed-metadata event types (issue #969): `source::scte35` /
 # `route` ingest `timed_metadata::TimedEvent` values into the trunk's event

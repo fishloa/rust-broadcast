@@ -147,10 +147,67 @@ impl FsRecorder {
         config: ArchiveConfig,
         trunk: &Arc<Trunk>,
     ) -> Result<Self, FsError> {
+        let overrun = config.overrun;
         let dir = layout::route_dir(root, &name);
-        let container = config.container;
-        fs::create_dir_all(&dir)
-            .map_err(|e| io_error(dir.clone(), crate::writer::StoreOpKind::CreateDir, e))?;
+        let lock = Self::lock(&dir)?;
+        Self::open(dir, lock, config, trunk, || trunk.pin_segments(overrun))
+    }
+
+    /// As [`Self::new`], but recording from `cursor`, a pinning cursor the
+    /// host took on `trunk` earlier (with the configured overrun policy), so
+    /// no segment closed since then is missed. The cursor is taken out of
+    /// `cursor` only when the recorder is created; on an error it stays, so
+    /// the host can retry, for example once the recorder holding the
+    /// directory's lock has been dropped ([`FsError::Locked`]). With `None`
+    /// a fresh cursor is pinned, as [`Self::new`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn with_cursor(
+        root: &Path,
+        name: ArchiveName,
+        config: ArchiveConfig,
+        trunk: &Arc<Trunk>,
+        cursor: &mut Option<SegmentCursor>,
+    ) -> Result<Self, FsError> {
+        let overrun = config.overrun;
+        let dir = layout::route_dir(root, &name);
+        let lock = Self::lock(&dir)?;
+        Self::open(dir, lock, config, trunk, || {
+            cursor.take().unwrap_or_else(|| trunk.pin_segments(overrun))
+        })
+    }
+
+    /// The recorder of a new run on this recorder's archive (a host replacing
+    /// its source, for example after a reconnect), recording from `cursor`
+    /// on `trunk` as [`Self::with_cursor`] does. It takes over this
+    /// recorder's directory lock, which is never released in between: a
+    /// release followed by a fresh [`Self::with_cursor`] can be refused
+    /// while a process the host spawns at that moment briefly shares the
+    /// lock's file description. The archive is re-seeded from disk, so the
+    /// new run opens a new period, as after [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`], except [`FsError::Locked`]; on an error this
+    /// recorder and its lock are dropped.
+    pub fn succeed(
+        self,
+        config: ArchiveConfig,
+        trunk: &Arc<Trunk>,
+        cursor: &mut Option<SegmentCursor>,
+    ) -> Result<Self, FsError> {
+        let overrun = config.overrun;
+        let Self { dir, _lock, .. } = self;
+        Self::open(dir, _lock, config, trunk, || {
+            cursor.take().unwrap_or_else(|| trunk.pin_segments(overrun))
+        })
+    }
+
+    fn lock(dir: &Path) -> Result<File, FsError> {
+        fs::create_dir_all(dir)
+            .map_err(|e| io_error(dir.to_path_buf(), crate::writer::StoreOpKind::CreateDir, e))?;
         let lock_path = dir.join(layout::LOCK_FILE_NAME);
         let lock = OpenOptions::new()
             .create(true)
@@ -167,6 +224,17 @@ impl FsRecorder {
                 return Err(io_error(lock_path, crate::writer::StoreOpKind::List, e));
             }
         }
+        Ok(lock)
+    }
+
+    fn open(
+        dir: PathBuf,
+        lock: File,
+        config: ArchiveConfig,
+        trunk: &Arc<Trunk>,
+        cursor: impl FnOnce() -> SegmentCursor,
+    ) -> Result<Self, FsError> {
+        let container = config.container;
         let mut existing = Vec::new();
         let mut stale_temps = Vec::new();
         match fs::read_dir(&dir) {
@@ -202,7 +270,7 @@ impl FsRecorder {
         let mut writer = ArchiveWriter::new(config.clone())?;
         writer.seed(&existing)?;
         writer.note_stale_temp_playlists(&stale_temps)?;
-        let cursor = trunk.pin_segments(config.overrun);
+        let cursor = cursor();
         let tracker = config
             .programme_service
             .map(dvb_si::epg::PresentEventTracker::new);
@@ -310,6 +378,25 @@ impl FsRecorder {
         let changes: Vec<dvb_si::epg::PresentEventChange> =
             std::iter::from_fn(|| tracker.poll_change()).collect();
         self.tracker = Some(tracker);
+        self.apply_changes(changes)
+    }
+
+    /// Apply a programme change detected outside this recorder, for example
+    /// by a host that tracked the EIT before the recorder could be created.
+    /// It is applied, kept and retried exactly like a change [`Self::feed_si`]
+    /// detects; the same event again changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::poll`].
+    pub fn on_programme(&mut self, change: dvb_si::epg::PresentEventChange) -> Result<(), FsError> {
+        self.apply_changes(vec![change])
+    }
+
+    fn apply_changes(
+        &mut self,
+        changes: Vec<dvb_si::epg::PresentEventChange>,
+    ) -> Result<(), FsError> {
         let mut queue = Vec::new();
         if let Some(change) = self.programme_retry.take() {
             queue.push(change);

@@ -189,13 +189,14 @@ pub enum MultimuxError {
         /// The output kind's name.
         kind: String,
     },
-    /// A route's DVR archive could not be read or scanned, so its segment
-    /// numbering cannot continue above what the archive already holds.
-    #[error("dvr: {0}")]
-    Dvr(
-        /// Why the archive read failed.
+    /// A route's DVR archive scan did not run to completion (runtime
+    /// shutdown, or the scan panicked), so its segment numbering cannot
+    /// continue above what the archive already holds.
+    #[error("archive scan: {0}")]
+    ArchiveScan(
+        /// Why the scan task ended.
         #[source]
-        crate::dvr::DvrError,
+        tokio::task::JoinError,
     ),
 }
 
@@ -408,3 +409,18 @@ impl From<&str> for SdpError {
 
 /// multimux result alias.
 pub type Result<T> = core::result::Result<T, MultimuxError>;
+
+#[cfg(test)]
+mod phase_tests {
+    use super::*;
+
+    #[test]
+    fn phase_labels_are_exact() {
+        assert_eq!(Phase::Describe.name(), "DESCRIBE");
+        assert_eq!(Phase::Setup.name(), "SETUP");
+        assert_eq!(Phase::Play.name(), "PLAY");
+        assert_eq!(Phase::Recv.name(), "recv");
+        assert_eq!(Phase::Other("x").name(), "x");
+        assert_eq!(Phase::Play.to_string(), "PLAY");
+    }
+}

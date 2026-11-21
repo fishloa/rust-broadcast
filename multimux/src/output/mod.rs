@@ -350,6 +350,37 @@ mod tests {
     use super::*;
     use crate::route::RouteConfig;
 
+    /// #3679: only the three push kinds are push outputs.
+    #[test]
+    fn is_push_is_true_for_exactly_the_push_kinds() {
+        let push = |kind: fn(String) -> OutputKind| kind("x://h".to_string()).is_push();
+        assert!(push(|url| OutputKind::SrtPush {
+            url,
+            format: None,
+            reconnect: None
+        }));
+        assert!(push(|url| OutputKind::RtmpPush {
+            url,
+            format: None,
+            reconnect: None
+        }));
+        assert!(push(|url| OutputKind::RtspPush {
+            url,
+            format: None,
+            reconnect: None
+        }));
+        for http in [
+            OutputKind::LlHls,
+            OutputKind::TsHls,
+            OutputKind::Dash,
+            OutputKind::LlDash,
+            OutputKind::Smooth,
+            OutputKind::Catchup,
+        ] {
+            assert!(!http.is_push(), "{http:?}");
+        }
+    }
+
     /// Audit T14 (#1142): `Debug` of a push output must not print its
     /// credentials or stream key, nor a custom output's opaque params.
     #[test]

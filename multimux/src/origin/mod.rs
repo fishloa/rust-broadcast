@@ -1519,9 +1519,7 @@ async fn serve_with_registry_impl(
         // Segment numbers must stay above what the DVR archive already holds
         // (a previous process's), or the archive and any HTTP cache would
         // see numbers reused for different media (audit r07-C5, #1083).
-        let archive_floor = admin::archive_floor_of(route)
-            .await
-            .map_err(crate::MultimuxError::Dvr)?;
+        let archive_floor = admin::archive_floor_of(route).await?;
         let route_config = RouteConfig::default()
             .with_target_duration(target_duration)
             .with_part_target(part_target)
@@ -1540,7 +1538,7 @@ async fn serve_with_registry_impl(
             .with_subtitles(route.subtitles);
         // Issue #900: without this, `route.dvr` was validated
         // (`Route::validate_dvr`) but never actually reached the
-        // `RouteHandle` that `ProgramServing::new` builds a `DvrRecorder`
+        // `RouteHandle` that `ProgramServing::new` builds a DVR recorder
         // from — DVR recording configured via `Config`/JSON silently never
         // ran outside this crate's own `with_dvr`-calling unit tests.
         let store = Arc::new(
@@ -2371,6 +2369,34 @@ mod tests {
     use crate::testutil::body_string;
     use broadcast_common::timescale::Timescale;
     use tower::ServiceExt;
+
+    /// #3684: `/healthz` answers `200` with an empty body, without queueing,
+    /// even while the ordinary budget is exhausted.
+    #[tokio::test(start_paused = true)]
+    async fn healthz_is_200_with_an_empty_body_and_never_queues() {
+        let app = limit_budget_test_app(1, Duration::from_millis(50));
+        let held = app
+            .clone()
+            .oneshot(
+                axum::http::Request::get("/cam1/master.m3u8")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                axum::http::Request::get("/healthz")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_string(resp).await, "");
+        drop(held);
+    }
 
     fn make_state() -> Arc<AppState> {
         let store = Arc::new(

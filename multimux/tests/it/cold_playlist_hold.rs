@@ -124,7 +124,7 @@ async fn cold_hold_that_outlasts_the_blocking_timeout_is_503() {
     let started = Instant::now();
     let resp = app.clone().oneshot(get("/cam/media.m3u8")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!(resp.headers().contains_key(header::RETRY_AFTER));
+    assert_eq!(resp.headers().get(header::RETRY_AFTER).unwrap(), "1");
     assert!(
         started.elapsed() >= MIN_BLOCKING_TIMEOUT - Duration::from_millis(100),
         "gave up after {:?}",
@@ -248,7 +248,7 @@ async fn a_request_for_a_program_that_never_appears_is_503_with_retry_after() {
     let started = Instant::now();
     let resp = app.clone().oneshot(get("/cam/media.m3u8")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!(resp.headers().contains_key(header::RETRY_AFTER));
+    assert_eq!(resp.headers().get(header::RETRY_AFTER).unwrap(), "1");
     assert!(
         started.elapsed() >= MIN_BLOCKING_TIMEOUT - Duration::from_millis(100),
         "gave up after {:?}",
@@ -272,6 +272,7 @@ async fn with_the_hold_off_a_request_before_the_program_is_an_immediate_503() {
     let started = Instant::now();
     let resp = app.clone().oneshot(get("/cam/media.m3u8")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!resp.headers().contains_key(header::RETRY_AFTER));
     assert_eq!(started.elapsed(), Duration::ZERO);
 }
 

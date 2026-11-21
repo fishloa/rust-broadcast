@@ -54,6 +54,7 @@ mod push_rtsp;
 mod push_rtsp_bounds;
 #[cfg(feature = "test-hooks")]
 mod push_rtsp_wire;
+mod push_serve;
 mod push_ts_stream;
 mod push_wire_goldens;
 mod reconnect_policy;
@@ -76,6 +77,7 @@ mod source_debug;
 mod spawn_disposition;
 mod spawn_ownership;
 mod split_audio;
+mod srt_ingest_route;
 #[cfg(feature = "test-seams")]
 mod srt_url_golden;
 mod subtitle_webvtt;

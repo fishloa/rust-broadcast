@@ -33,9 +33,17 @@
 //!   silently read zero for a while, which is worse than being entirely
 //!   absent, before being deleted outright pending this fix).
 //! - `multimux_dvr_si_errors_total` (`DVR_SI_ERRORS_TOTAL`) — counter, labels
-//!   `route`: an EIT section the DVR recorder could not act on and dropped.
+//!   `route`: an EIT programme change the DVR recorder could not act on (the
+//!   recorder retries it on the next feed; each failed attempt counts).
+//! - `multimux_dvr_archive_locked_total` (`DVR_ARCHIVE_LOCKED_TOTAL`),
+//!   `multimux_dvr_gap_segments_total` (`DVR_GAP_SEGMENTS_TOTAL`) and
+//!   `multimux_dvr_predecessor_flush_failed_total`
+//!   (`DVR_PREDECESSOR_FLUSH_FAILED_TOTAL`) — counters, labels `route`: a
+//!   recorder create refused by another holder of the archive lock, segments
+//!   lost before the recorder consumed them, and a replaced program whose
+//!   last segments could not be archived.
 //! - `multimux_dvr_pin_rearmed_total` (`DVR_PIN_REARMED_TOTAL`) — counter,
-//!   labels `route`: bumped by `crate::dvr::DvrRecorder::handle_terminated`
+//!   labels `route`: bumped on the DVR writer's `WriterEvent::Rearmed`
 //!   each time an `ArchiveOverrun::StallIngest` pin is force-expired by the
 //!   non-blocking safety valve and the recorder re-arms rather than
 //!   stopping for good (only a `Terminate`-policy pin's own intended stop
@@ -100,28 +108,41 @@ pub(crate) const PARTS_PRODUCED_TOTAL: &str = "multimux_parts_produced_total";
 /// (issue #809).
 pub(crate) const SEGMENTS_PRODUCED_TOTAL: &str = "multimux_segments_produced_total";
 
-/// Counter: total times a route's `DvrRecorder` re-armed its pinning
+/// Counter: total times a route's DVR recorder re-armed its pinning
 /// cursor after an `ArchiveOverrun::StallIngest` pin was force-expired by
 /// the non-blocking safety valve (`ProgramSegmenter::drain_pending`'s
 /// `expire_stalled_pins` call) — never a `Terminate`-policy pin's own
 /// intended stop, which does not re-arm. Labels: `route`. Each increment
-/// corresponds to a recording gap (see `DvrRecorder::handle_terminated`)
+/// corresponds to a recording gap (`dvr_runtime::WriterEvent::Rearmed`)
 /// whose size in segments is logged alongside it, not carried on this
 /// counter itself (would need an unbounded-cardinality label or a second
 /// counter this crate has no other use for).
 pub(crate) const DVR_PIN_REARMED_TOTAL: &str = "multimux_dvr_pin_rearmed_total";
 
-/// Counter: SI sections the DVR recorder's EIT reader failed to act on (a
-/// period roll or sidecar write that errored); the section is dropped and the
-/// reader moves on. Labels: `route`.
+/// Counter: EIT programme changes the DVR recorder failed to act on (a period
+/// roll that errored); the recorder keeps the change and retries it on the
+/// next feed, and every failed attempt counts. Labels: `route`.
 pub(crate) const DVR_SI_ERRORS_TOTAL: &str = "multimux_dvr_si_errors_total";
 
 /// Counter: total times a route's DVR recorder was abandoned because a panic
-/// during persist left its multi-step state (offset, index, period records)
-/// suspect — continuing to persist could write an archive whose index does not
-/// match its data. Labels: `route`. Recording stops for that route; this
+/// during persist left its multi-step state suspect — continuing to persist
+/// could write an archive whose playlist does not match its data. Labels: `route`. Recording stops for that route; this
 /// counter is how an operator sees it (issue #1083, D3 / I1).
 pub(crate) const DVR_FAILED_TOTAL: &str = "multimux_dvr_failed_total";
+
+/// Counter: create attempts of a route's DVR recorder refused because another
+/// recorder holds the archive directory's lock. Retried on a bounded backoff.
+/// Labels: `route`.
+pub(crate) const DVR_ARCHIVE_LOCKED_TOTAL: &str = "multimux_dvr_archive_locked_total";
+
+/// Counter: segments the live ring evicted before the DVR recorder consumed
+/// them (each a hole in the archive). Labels: `route`.
+pub(crate) const DVR_GAP_SEGMENTS_TOTAL: &str = "multimux_dvr_gap_segments_total";
+
+/// Counter: replaced programs whose last segments the DVR recorder could not
+/// archive after a retry (they are lost). Labels: `route`.
+pub(crate) const DVR_PREDECESSOR_FLUSH_FAILED_TOTAL: &str =
+    "multimux_dvr_predecessor_flush_failed_total";
 
 /// Counter: total TS samples dropped (oldest first) because the demux
 /// replayed more pre-`TracksResolved` backlog than the ingest session's
@@ -258,5 +279,29 @@ mod tests {
             tokio::time::sleep(INTERVAL).await;
         }
         task.abort();
+    }
+
+    /// #3682: inside a runtime `install()` leaves the upkeep task started and
+    /// `spawn_upkeep` yields a task handle; the guard flag is re-armed first so
+    /// the assertion does not depend on test order.
+    #[tokio::test]
+    async fn install_starts_the_upkeep_task_inside_a_runtime() {
+        UPKEEP_STARTED.store(false, Ordering::SeqCst);
+        let handle = install();
+        assert!(UPKEEP_STARTED.load(Ordering::SeqCst));
+        let task = spawn_upkeep(handle).expect("a runtime is current");
+        task.abort();
+    }
+
+    /// #3682: outside any runtime `spawn_upkeep` has nothing to spawn on and
+    /// `spawn_upkeep_once` leaves the started flag clear so a later in-runtime
+    /// call can still start it.
+    #[test]
+    fn upkeep_is_not_started_outside_a_runtime() {
+        let handle = install();
+        assert!(spawn_upkeep(handle.clone()).is_none());
+        UPKEEP_STARTED.store(false, Ordering::SeqCst);
+        spawn_upkeep_once(handle);
+        assert!(!UPKEEP_STARTED.load(Ordering::SeqCst));
     }
 }

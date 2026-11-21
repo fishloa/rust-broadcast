@@ -625,3 +625,177 @@ fn a_stale_temp_playlist_is_removed_reported_and_never_an_archive_file() {
     assert_eq!(scan.segments.len(), 1);
     cleanup(&root);
 }
+
+/// A host that pins its cursor before the previous recorder of the archive
+/// has released the directory keeps the cursor through the `Locked` refusal
+/// and, once it can create the recorder, archives the segment that closed in
+/// between. (A child process another test forks can briefly share the
+/// dropped lock's file description, so the second create retries `Locked`
+/// as a host does.)
+#[test]
+fn a_held_cursor_survives_a_locked_directory_and_records_what_closed_meanwhile() {
+    let root = temp_dir("held-cursor");
+    let name = || ArchiveName::new("held").expect("name");
+    let config = || config(ArchiveContainer::Fmp4, 2, periods(10));
+    let trunk = trunk();
+    let writer = trunk.segment_writer().expect("writer");
+    let first = FsRecorder::new(&root, name(), config(), &trunk).expect("first recorder");
+    let mut cursor = Some(trunk.pin_segments(config().overrun));
+    assert!(matches!(
+        FsRecorder::with_cursor(&root, name(), config(), &trunk, &mut cursor),
+        Err(FsError::Locked { .. })
+    ));
+    assert!(cursor.is_some(), "a refused create keeps the cursor");
+    drop(first);
+    writer
+        .publish_segment(SegmentEntry::new(
+            Bytes::from(vec![0x5Au8; 100]),
+            SegmentSeq::new(1),
+            Duration::from_secs(2),
+            Timestamp::ZERO,
+            transmux::SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .expect("publish");
+    let mut attempts = 0;
+    let mut second = loop {
+        match FsRecorder::with_cursor(&root, name(), config(), &trunk, &mut cursor) {
+            Ok(recorder) => break recorder,
+            Err(FsError::Locked { .. }) if attempts < 100 => {
+                assert!(cursor.is_some(), "a refused create keeps the cursor");
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(other) => panic!("second recorder: {other}"),
+        }
+    };
+    assert!(cursor.is_none(), "the recorder took the cursor");
+    second
+        .poll(
+            Timestamp::ZERO,
+            |_| None,
+            &[InitGeneration::new(SegmentSeq::new(0), init())],
+        )
+        .expect("record");
+    let mut archive = FsArchive::open(&root, &name(), ArchiveContainer::Fmp4);
+    let found = archive.find(SegmentSeq::new(1)).expect("seq 1 archived");
+    assert_eq!(
+        archive.read(&found).expect("read"),
+        Bytes::from(vec![0x5Au8; 100])
+    );
+    cleanup(&root);
+}
+
+/// A programme change the host detected before the recorder existed, handed
+/// over through `on_programme`, is recorded as the next segment's
+/// `EXT-X-DATERANGE`; the same event again changes nothing.
+#[test]
+fn a_programme_handed_over_by_the_host_is_recorded() {
+    let root = temp_dir("on-programme");
+    let trunk = trunk();
+    let writer = trunk.segment_writer().expect("writer");
+    let mut recorder = FsRecorder::new(
+        &root,
+        ArchiveName::new("prog").expect("name"),
+        config(ArchiveContainer::Fmp4, 2, periods(10)).with_programme_service(0x0601),
+        &trunk,
+    )
+    .expect("recorder");
+    let mut tracker = dvb_si::epg::PresentEventTracker::new(0x0601);
+    let change = crate::support::present_event(
+        &mut tracker,
+        0x0601,
+        0x7857,
+        "News",
+        crate::support::ts_at(1_700_000_000),
+        Duration::from_secs(1800),
+    );
+    recorder.on_programme(change.clone()).expect("apply");
+    recorder.on_programme(change).expect("apply again");
+    assert_eq!(
+        recorder.writer().programme().map(|p| p.event.event_id),
+        Some(0x7857)
+    );
+    writer
+        .publish_segment(SegmentEntry::new(
+            Bytes::from(vec![0x11u8; 100]),
+            SegmentSeq::new(1),
+            Duration::from_secs(2),
+            Timestamp::ZERO,
+            transmux::SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .expect("publish");
+    recorder
+        .poll(
+            Timestamp::ZERO,
+            |_| Some(crate::support::ts_at(1_700_000_010)),
+            &[InitGeneration::new(SegmentSeq::new(0), init())],
+        )
+        .expect("record");
+    let playlist = std::fs::read_to_string(root.join("prog").join("p0.m3u8")).expect("playlist");
+    assert_eq!(
+        playlist.matches("#EXT-X-DATERANGE").count(),
+        1,
+        "{playlist}"
+    );
+    assert!(playlist.contains("X-DVB-EVENT-ID=30807"), "{playlist}");
+    cleanup(&root);
+}
+
+/// `succeed` hands the directory lock from one run's recorder to the next
+/// without releasing it: a third recorder is refused before, during and after
+/// the hand-over, and the new run records into a new period.
+#[test]
+fn succeed_takes_the_lock_over_without_releasing_it() {
+    let root = temp_dir("succeed");
+    let name = || ArchiveName::new("succ").expect("name");
+    let config = || config(ArchiveContainer::Fmp4, 2, periods(10));
+    let refused = || {
+        let other = trunk();
+        matches!(
+            FsRecorder::new(&root, name(), config(), &other),
+            Err(FsError::Locked { .. })
+        )
+    };
+    let first_trunk = trunk();
+    let first = FsRecorder::new(&root, name(), config(), &first_trunk).expect("first");
+    assert!(refused());
+    let second_trunk = trunk();
+    let writer = second_trunk.segment_writer().expect("writer");
+    let mut cursor = Some(second_trunk.pin_segments(config().overrun));
+    let mut second = first
+        .succeed(config(), &second_trunk, &mut cursor)
+        .expect("succeed");
+    assert!(cursor.is_none(), "the successor took the cursor");
+    assert!(refused(), "the lock was never released");
+    writer
+        .publish_segment(SegmentEntry::new(
+            Bytes::from(vec![0x22u8; 100]),
+            SegmentSeq::new(1),
+            Duration::from_secs(2),
+            Timestamp::ZERO,
+            transmux::SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .expect("publish");
+    second
+        .poll(
+            Timestamp::ZERO,
+            |_| None,
+            &[InitGeneration::new(SegmentSeq::new(0), init())],
+        )
+        .expect("record");
+    let mut archive = FsArchive::open(&root, &name(), ArchiveContainer::Fmp4);
+    let found = archive.find(SegmentSeq::new(1)).expect("archived");
+    assert_eq!(
+        archive.read(&found).expect("read"),
+        Bytes::from(vec![0x22u8; 100])
+    );
+    drop(second);
+    assert!(!refused(), "dropping the successor releases the lock");
+    cleanup(&root);
+}
