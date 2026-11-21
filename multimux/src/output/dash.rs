@@ -1039,6 +1039,123 @@ mod tests {
         assert!(mpd.contains("startNumber=\"4\""), "{mpd}");
     }
 
+    /// A segment is described by the track set it was published under: a
+    /// change that starts at a later segment must not retroactively re-describe
+    /// the earlier ones, and a revision that names an earlier start while it is
+    /// still the newest change replaces it instead of appending out of order.
+    #[test]
+    fn track_specs_describe_the_segments_of_the_generation_that_set_them() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let route = RouteHandle::new(RouteConfig::default().with_window_segments(8));
+        route.publish_new_program(program);
+        let video_only = vec![video_spec(TrackId::new(1))];
+        let video_and_second = vec![video_spec(TrackId::new(1)), video_spec(TrackId::new(2))];
+        route.set_track_specs(program, video_only.clone());
+        for info in [seg(1, Duration::from_secs(4)), seg(2, Duration::from_secs(4))] {
+            route.add_segment(program, info).expect("add_segment");
+        }
+        route.begin_track_specs(
+            program,
+            video_and_second.clone(),
+            media_plane::ids::SegmentSeq::new(3),
+        );
+        for info in [seg(3, Duration::from_secs(4)), seg(4, Duration::from_secs(4))] {
+            route.add_segment(program, info).expect("add_segment");
+        }
+        let log_len = || {
+            route
+                .serving(program)
+                .expect("program published")
+                .track_spec_log_len()
+        };
+        let ids = |segment| {
+            route
+                .track_specs_at(program, media_plane::ids::SegmentSeq::new(segment))
+                .iter()
+                .map(|spec| spec.track_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(1), vec![TrackId::new(1)]);
+        assert_eq!(ids(2), vec![TrackId::new(1)]);
+        assert_eq!(ids(3), vec![TrackId::new(1), TrackId::new(2)]);
+        assert_eq!(ids(4), vec![TrackId::new(1), TrackId::new(2)]);
+
+        // A further change at 5 leaves segment 4 on the set that described it.
+        route.begin_track_specs(
+            program,
+            vec![video_spec(TrackId::new(2))],
+            media_plane::ids::SegmentSeq::new(5),
+        );
+        assert_eq!(ids(4), vec![TrackId::new(1), TrackId::new(2)]);
+        assert_eq!(log_len(), 3);
+
+        // A revision naming an earlier start is the same pending change, so it
+        // replaces the newest entry rather than appending a later one.
+        route.begin_track_specs(
+            program,
+            vec![video_spec(TrackId::new(2))],
+            media_plane::ids::SegmentSeq::new(2),
+        );
+        assert_eq!(log_len(), 3);
+        assert_eq!(ids(2), vec![TrackId::new(1)]);
+        assert_eq!(ids(5), vec![TrackId::new(2)]);
+    }
+
+    /// The history is retired as the DASH window slides: an entry stops
+    /// describing anything once the oldest segment this program still lists is
+    /// at or past its start, and never before (the segments inside the window
+    /// must keep their own set).
+    #[test]
+    fn track_spec_history_is_retired_only_once_the_window_passes_it() {
+        let program = crate::route::SPTS_PROGRAM_ID;
+        let route = RouteHandle::new(RouteConfig::default().with_window_segments(4));
+        route.publish_new_program(program);
+        route.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
+        for seq in 1..=2 {
+            route
+                .add_segment(program, seg(seq, Duration::from_secs(4)))
+                .expect("add_segment");
+        }
+        route.begin_track_specs(
+            program,
+            vec![video_spec(TrackId::new(2))],
+            media_plane::ids::SegmentSeq::new(3),
+        );
+        for seq in 3..=5 {
+            route
+                .add_segment(program, seg(seq, Duration::from_secs(4)))
+                .expect("add_segment");
+        }
+        // Window [2, 3, 4, 5]: segment 2 is still inside it and still needs the
+        // set it was published under.
+        let log_len = || {
+            route
+                .serving(program)
+                .expect("program published")
+                .track_spec_log_len()
+        };
+        let _ = route.dash_window_segments(program);
+        assert_eq!(log_len(), 2);
+        assert_eq!(
+            route.track_specs_at(program, media_plane::ids::SegmentSeq::new(2))[0].track_id,
+            TrackId::new(1)
+        );
+
+        // Window [4, 5, 6, 7]: the change's boundary is behind the oldest
+        // listed segment, so the superseded entry is dropped.
+        for seq in 6..=7 {
+            route
+                .add_segment(program, seg(seq, Duration::from_secs(4)))
+                .expect("add_segment");
+        }
+        let _ = route.dash_window_segments(program);
+        assert_eq!(log_len(), 1);
+        assert_eq!(
+            route.track_specs_at(program, media_plane::ids::SegmentSeq::new(4))[0].track_id,
+            TrackId::new(2)
+        );
+    }
+
     #[test]
     fn a_window_of_only_gap_placeholders_renders_no_mpd() {
         let program = crate::route::SPTS_PROGRAM_ID;

@@ -606,6 +606,11 @@ impl DashState {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
+    fn track_spec_log_len(&self) -> usize {
+        self.track_specs.lock().len()
+    }
+
     fn retire_track_specs_before(&self, oldest: media_plane::ids::SegmentSeq) {
         let mut log = self.track_specs.lock();
         while log.len() > 1 && log[1].0 <= oldest.value() {
@@ -1321,6 +1326,11 @@ impl ProgramServing {
 
     pub(crate) fn track_specs_at(&self, segment: media_plane::ids::SegmentSeq) -> Vec<TrackSpec> {
         self.dash.track_specs_at(segment)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn track_spec_log_len(&self) -> usize {
+        self.dash.track_spec_log_len()
     }
 
     fn set_tracks_active(&self, active: bool) {
