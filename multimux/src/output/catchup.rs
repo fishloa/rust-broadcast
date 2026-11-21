@@ -802,7 +802,7 @@ mod tests {
                 .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
                 .expect("add_segment");
         }
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         // Exhaust the pool.
         let held = scan_permit_wait_all(&route).await;
@@ -879,7 +879,7 @@ mod tests {
                 .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
                 .expect("add_segment");
         }
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         // Segment 4: published, but NEVER drained -- lives only in the
         // live Trunk/HlsOrigin window.
@@ -967,7 +967,7 @@ mod tests {
                 .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
                 .expect("add_segment");
         }
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         // Segments start at 0s, 3s, 6s (each 3s long); the live edge is
         // segment 3's start (6s). A 2s window reaches back to 4s, which
@@ -1023,7 +1023,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11))
             .expect("add_segment");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         let resp = catchup_playlist(State(route), Query(CatchupPlaylistQuery::default())).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1055,7 +1055,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11))
             .expect("add_segment");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         let resp = catchup_playlist(State(route), Query(CatchupPlaylistQuery::default())).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1086,7 +1086,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11))
             .expect("add_segment");
-        route.drain_dvr().await; // opens + writes period 0 with init A
+        route.drain_dvr_settled().await; // opens + writes period 0 with init A
 
         // Changing the init rolls the period (the DVR writer's
         // mid-stream init-change rollover) — a real, reliable way to force
@@ -1095,7 +1095,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0x22))
             .expect("add_segment");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         let resp = vod_playlist(State(route.clone()), Path("p0.m3u8".to_string())).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1156,7 +1156,7 @@ mod tests {
                 .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
                 .expect("add_segment");
         }
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         let bounded = catchup_playlist(
             State(Arc::clone(&route)),
@@ -1284,7 +1284,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11))
             .expect("add_segment");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         let resp = catchup_playlist(
             State(route),
@@ -1369,7 +1369,7 @@ mod tests {
                 .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
                 .expect("add_segment");
         }
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         // The source reconnects: a fresh Trunk, numbering from 1 again.
         route.release_program(SPTS_PROGRAM_ID, &first);
@@ -1380,7 +1380,7 @@ mod tests {
                 .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
                 .expect("add_segment");
         }
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         // Both runs are really in the archive (not just served from the live
         // window): two periods, four indexed segments.
@@ -1482,7 +1482,7 @@ mod tests {
                 .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
                 .expect("add_segment");
         }
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         // Reconnect; the new run's segments are NOT drained into the archive.
         route.release_program(SPTS_PROGRAM_ID, &first);
@@ -1648,7 +1648,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, info(1, "index0.m4s"))
             .unwrap();
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
         route.release_program(SPTS_PROGRAM_ID, &first);
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, init_b.clone());
@@ -1658,7 +1658,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, info(2, "index2.m4s"))
             .unwrap();
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         let playlist = body_string(
             catchup_playlist(State(route.clone()), Query(CatchupPlaylistQuery::default())).await,
@@ -1732,7 +1732,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xA1))
             .expect("add");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0xA2))
@@ -1741,7 +1741,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(3, 0xB3))
             .expect("add");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         assert_eq!(
             archived_seq_periods(&root, "r"),
@@ -1769,7 +1769,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xA1))
             .expect("add");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0xA2))
             .expect("add");
@@ -1780,7 +1780,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xB1))
             .expect("add");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         let seqs: Vec<u32> = archived_seq_periods(&root, "r")
             .iter()
@@ -1815,7 +1815,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0xA2))
             .expect("add");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         route.release_program(SPTS_PROGRAM_ID, &first);
         route.publish_new_program(SPTS_PROGRAM_ID);
@@ -1823,7 +1823,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xB1))
             .expect("add");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
 
         let starts: Vec<u64> = crate::testutil::scan_archive(&root, "r", Container::Fmp4)
             .segments

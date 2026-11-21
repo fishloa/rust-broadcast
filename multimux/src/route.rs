@@ -3378,6 +3378,27 @@ impl RouteHandle {
         }
     }
 
+    /// Test-only: [`Self::drain_dvr`], then drain again while a program's
+    /// recorder is still waiting for the archive lock (a child process forked
+    /// by a concurrent test can briefly share a just-released lock), until
+    /// every recorder exists or two seconds pass.
+    #[cfg(test)]
+    pub(crate) async fn drain_dvr_settled(&self) {
+        self.drain_dvr().await;
+        for _ in 0..20 {
+            let waiting = self
+                .programs
+                .read()
+                .values()
+                .any(|serving| serving.dvr_pending.lock().is_some());
+            if !waiting {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            self.drain_dvr().await;
+        }
+    }
+
     /// Feed raw TS bytes to every published program's DVR recorder for EIT
     /// p/f tracking (issue #903) — called by the TS-carrying ingest
     /// sources (`source::ts_udp`/`source::ts_http`/`source::srt`) with
@@ -4966,7 +4987,7 @@ mod program_registry_tests {
         old.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
         old.add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
             .expect("add_segment");
-        old.drain_dvr().await;
+        old.drain_dvr_settled().await;
         assert_eq!(archived_seqs(&tmp, "replaced"), [1]);
 
         let new = RouteHandle::new(config())
@@ -4985,6 +5006,7 @@ mod program_registry_tests {
             }
             serving.poll_dvr().await;
         }
+        new.drain_dvr_settled().await;
         let seqs = archived_seqs(&tmp, "replaced");
         assert_eq!(
             seqs.len(),
@@ -5035,7 +5057,7 @@ mod program_registry_tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
             .expect("add_segment");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
         route.release_program(SPTS_PROGRAM_ID, &first);
         let second = route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
@@ -5048,7 +5070,7 @@ mod program_registry_tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
             .expect("add_segment");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
         let seqs = archived_seqs(&tmp, "early");
         assert_eq!(seqs.len(), 3, "{seqs:?}");
         assert!(seqs.windows(2).all(|w| w[1] > w[0]), "{seqs:?}");
@@ -5076,7 +5098,7 @@ mod program_registry_tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
             .expect("add_segment");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
         assert_eq!(archived_seqs(&tmp, "lazy"), [1]);
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -5214,7 +5236,7 @@ mod program_registry_tests {
         route.feed_si_ts(&ts_bytes);
         drop(foreign);
         tokio::time::sleep(Duration::from_secs(3)).await;
-        serving.poll_dvr().await;
+        route.drain_dvr_settled().await;
         assert_eq!(archived_seqs(&tmp, "held"), [1, 2, 3, 4, 5]);
         assert_eq!(
             serving
@@ -5245,7 +5267,7 @@ mod program_registry_tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
             .expect("add_segment");
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
         route
             .add_segment(SPTS_PROGRAM_ID, seg(2, Duration::from_secs(1)))
             .expect("add_segment");
@@ -5261,7 +5283,7 @@ mod program_registry_tests {
             .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
             .expect("add_segment");
         let before = counter_total("multimux_dvr_predecessor_flush_failed_total", name);
-        route.drain_dvr().await;
+        route.drain_dvr_settled().await;
         let seqs = archived_seqs(&tmp, name);
         let counted = counter_total("multimux_dvr_predecessor_flush_failed_total", name) - before;
         let _ = std::fs::remove_dir_all(&tmp);
