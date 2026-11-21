@@ -818,3 +818,30 @@ pub trait Source {
     /// Human-readable stream name (e.g. the RTSP URL or config-file key).
     fn stream_name(&self) -> &str;
 }
+
+#[cfg(test)]
+mod metric_tests {
+    use super::*;
+
+    fn metric_value(name: &str) -> f64 {
+        crate::prometheus::install()
+            .render()
+            .lines()
+            .find(|line| line.starts_with(name) && !line.starts_with('#'))
+            .and_then(|line| line.rsplit(' ').next())
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0.0)
+    }
+
+    /// Every sample the TS pre-resolution backlog drops is counted, so an
+    /// operator can see a source overrunning the backlog.
+    #[test]
+    fn dropped_ts_backlog_samples_are_counted() {
+        let before = metric_value(crate::prometheus::TS_BACKLOG_DROPPED_TOTAL);
+        count_ts_backlog_dropped(5);
+        assert_eq!(
+            metric_value(crate::prometheus::TS_BACKLOG_DROPPED_TOTAL),
+            before + 5.0
+        );
+    }
+}

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Tests
+- The three metrics wired but previously unread are pinned through the Prometheus recorder: dropped TS backlog samples increment `multimux_ts_backlog_dropped_total` by their count, reconnects increment `multimux_source_reconnects_total{route}`, and a blocking-wait guard raises and restores `multimux_active_blocking_requests` (audit 23 finding 218, #3882).
 - The admin/metric label literals are pinned: every `HealthState` name, every `Budget` label and every input `kind` token is asserted verbatim, and `RouteRuntime`'s `Debug` names the route without its credentials (audit 23 finding 217, #3881).
 - The admin registry is pinned: a case-only name variant collides, a name lock is pruned only once unreferenced (and still excludes a second holder), a push output does not become a serving output, shutdown drains every route, a dropped half-built runtime cancels and aborts its tasks, a duplicate `Authorization` header is a 400, and a parked request follows at most `MAX_REDISPATCHES` replacements (audit 23 finding 216, #3880).
 - Route replacement continuity is pinned: the sequence floor is the higher of the archive and the origin's next number, retiring a route cancels its token, a rival publisher cannot take over a program the route is already receiving (while re-publishing the same trunk logs no warning), a failed reload restarts every route it stopped, and the DVR archive floor is read from disk (and is 0 without DVR) (audit 23 finding 215, #3879).

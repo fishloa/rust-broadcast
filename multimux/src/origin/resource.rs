@@ -1857,4 +1857,38 @@ mod tests {
             );
         }
     }
+
+    /// The gauge of genuine blocking waits rises while one is in flight and
+    /// returns when the wait ends: a guard that never decrements leaks upward
+    /// for the life of the process.
+    #[test]
+    fn the_blocking_request_gauge_tracks_its_guard() {
+        let gauge = || {
+            crate::prometheus::install()
+                .render()
+                .lines()
+                .find(|line| {
+                    line.starts_with(crate::prometheus::ACTIVE_BLOCKING_REQUESTS)
+                        && !line.starts_with('#')
+                })
+                .and_then(|line| line.rsplit(' ').next())
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.0)
+        };
+        let mut returned = false;
+        for _ in 0..3 {
+            let before = gauge();
+            let guard = BlockingRequestGuard::new();
+            assert!(gauge() >= before + 1.0, "the guard must raise the gauge");
+            drop(guard);
+            if gauge() == before {
+                returned = true;
+                break;
+            }
+        }
+        assert!(
+            returned,
+            "the gauge never returned to its pre-wait value (the guard leaked)"
+        );
+    }
 }

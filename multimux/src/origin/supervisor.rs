@@ -1364,4 +1364,27 @@ mod tests {
             "the latest attempt's trunk must be the one served"
         );
     }
+
+    /// Every reconnect bumps `multimux_source_reconnects_total{route}`, so an
+    /// operator can see a source flapping.
+    #[test]
+    fn a_reconnect_bumps_the_route_counter() {
+        let route = format!("metric-reconnect-{}", std::process::id());
+        crate::prometheus::install();
+        record_reconnect(&route);
+        record_reconnect(&route);
+        let rendered = crate::prometheus::install().render();
+        let line = rendered
+            .lines()
+            .find(|line| {
+                line.starts_with(crate::prometheus::SOURCE_RECONNECTS_TOTAL)
+                    && line.contains(&format!("route=\"{route}\""))
+            })
+            .unwrap_or_else(|| panic!("no reconnect series for {route} in {rendered}"));
+        assert_eq!(
+            line.rsplit(' ').next().and_then(|v| v.parse::<f64>().ok()),
+            Some(2.0),
+            "{line}"
+        );
+    }
 }
