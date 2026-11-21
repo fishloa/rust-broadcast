@@ -642,6 +642,72 @@ mod tests {
         );
     }
 
+    /// The allowance is inclusive: a run copying exactly the budget is
+    /// accepted, and the same run one byte over the budget is refused.
+    #[test]
+    fn sample_byte_budget_boundary_is_inclusive() {
+        const SAMPLE: usize = 64;
+        const RUNS: usize = 16;
+        let mdat_body: Vec<u8> = alloc::vec![0x5A; SAMPLE];
+        let mut probe_kids = alloc::vec![tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None)];
+        for _ in 0..RUNS {
+            probe_kids.push(trun(&[SAMPLE as u32], Some(0)));
+        }
+        let (pf, moof_off) = file_with(&[container(b"traf", &probe_kids)], &mdat_body);
+        let off = mdat_rel(&pf, moof_off, mdat_body.len());
+        let mut kids = alloc::vec![tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None)];
+        for _ in 0..RUNS {
+            kids.push(trun(&[SAMPLE as u32], Some(off)));
+        }
+        let traf = container(b"traf", &kids);
+        let (base_file, moof_off) = file_with(&[traf], &mdat_body);
+        let moof = parse_moof(&base_file, moof_off);
+        let total = RUNS * SAMPLE;
+
+        // A trailing `free` box pads the input so `sample_bytes_budget` lands
+        // on a chosen byte count (the box header itself counts).
+        let padded = |budget: usize| {
+            let pad = budget
+                .checked_sub(base_file.len() + 8)
+                .expect("the sample total must exceed the unpadded file");
+            let mut file = base_file.clone();
+            file.extend_from_slice(&box_bytes(b"free", &alloc::vec![0u8; pad]));
+            assert_eq!(sample_bytes_budget(file.len()), budget);
+            file
+        };
+
+        let file = padded(total);
+        let mut copied_bytes = 0usize;
+        let ranges = sample_ranges_in_run(
+            &file,
+            &mdat_ranges(&file),
+            moof_off,
+            &moof,
+            TrackId::new(1),
+            &mut copied_bytes,
+        )
+        .expect("a run copying exactly the budget is accepted");
+        assert_eq!(ranges.len(), RUNS);
+        assert_eq!(copied_bytes, total);
+
+        let file = padded(total - 1);
+        let mut copied_bytes = 0usize;
+        let err = sample_ranges_in_run(
+            &file,
+            &mdat_ranges(&file),
+            moof_off,
+            &moof,
+            TrackId::new(1),
+            &mut copied_bytes,
+        )
+        .expect_err("a run one byte over the budget is refused");
+        assert!(
+            matches!(err, Error::SampleDataBudgetExceeded { limit } if limit == total - 1),
+            "expected the {}-byte limit, got {err:?}",
+            total - 1
+        );
+    }
+
     /// A `tfdt` above `i64::MAX` is rejected, not wrapped.
     #[test]
     fn hostile_tfdt_is_rejected() {

@@ -125,6 +125,21 @@ fn an_avcp_entry_with_parameter_sets_parses_but_is_flagged() {
     assert_eq!(avcp.try_to_bytes().unwrap(), bytes);
 }
 
+/// ISO/IEC 14496-15:2017 §5.4.3.1: an `avcp` record declares *no* SPS and
+/// *no* PPS, so either set present already violates the rule.
+#[test]
+fn declares_no_parameter_sets_needs_both_arrays_empty() {
+    let mut sps_only = avc1_entry();
+    sps_only.config.config.pps.clear();
+    assert!(!sps_only.config.config.sps.is_empty());
+    assert!(!AVCParameterSampleEntry { entry: sps_only }.declares_no_parameter_sets());
+
+    let mut pps_only = avc1_entry();
+    pps_only.config.config.sps.clear();
+    assert!(!pps_only.config.config.pps.is_empty());
+    assert!(!AVCParameterSampleEntry { entry: pps_only }.declares_no_parameter_sets());
+}
+
 #[test]
 fn bare_parse_refuses_an_entry_that_is_not_avcp() {
     let bytes = avc1_entry().try_to_bytes().unwrap();

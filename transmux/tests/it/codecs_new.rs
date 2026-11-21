@@ -101,6 +101,26 @@ fn av1c_round_trip_and_fields() {
     roundtrip(&cfg, body);
 }
 
+/// AV1 ISOBMFF binding (`av1C`): a present
+/// `initial_presentation_delay_minus_one` sets bit 4 and carries the delay in
+/// the low nibble, so 3 serializes to `0x13` and 15 to `0x1F`.
+#[test]
+fn av1c_serializes_a_present_initial_presentation_delay() {
+    let data = fixture("mp4/av1.mp4");
+    let body = find_box_body(&data, b"av1C");
+    let mut cfg = Av1ConfigurationBox::parse(body).expect("parse av1C");
+
+    for (delay, byte) in [(3u8, 0x13u8), (15, 0x1F)] {
+        cfg.initial_presentation_delay_minus_one = Some(delay);
+        let mut buf = vec![0u8; cfg.serialized_len()];
+        let n = cfg.serialize_into(&mut buf).expect("serialize av1C");
+        assert_eq!(n, buf.len());
+        assert_eq!(buf[3], byte, "presence bit plus delay {delay}");
+        let back = Av1ConfigurationBox::parse(&buf).expect("parse back");
+        assert_eq!(back.initial_presentation_delay_minus_one, Some(delay));
+    }
+}
+
 #[test]
 fn av1c_mutation_changes_bytes() {
     let data = fixture("mp4/av1.mp4");
@@ -231,6 +251,31 @@ fn dfla_mutation_changes_bytes() {
         body,
         "mutating STREAMINFO must change bytes"
     );
+}
+
+/// A `dfLa` whose blocks never set `last` ends at the box end, not at the
+/// block loop's next-header probe; 1-3 stray trailing bytes are not a header.
+#[test]
+fn dfla_without_a_last_block_and_with_a_short_tail_parses() {
+    // FullBox version/flags, then a non-last STREAMINFO block of 34 bytes.
+    let mut body = vec![0u8; 4];
+    body.push(0x00);
+    body.extend_from_slice(&[0x00, 0x00, 34]);
+    body.extend_from_slice(&[0x5A; 34]);
+
+    let cfg = FlacSpecificBox::parse(&body).expect("no last block still parses");
+    assert_eq!(cfg.blocks.len(), 1);
+    assert!(!cfg.blocks[0].last, "the block's last flag stays clear");
+    assert_eq!(cfg.blocks[0].data.len(), 34);
+
+    for tail in 1..=3usize {
+        let mut padded = body.clone();
+        padded.extend(core::iter::repeat_n(0u8, tail));
+        let cfg = FlacSpecificBox::parse(&padded)
+            .unwrap_or_else(|e| panic!("{tail} stray trailing bytes must parse, got {e}"));
+        assert_eq!(cfg.blocks.len(), 1, "{tail} trailing bytes");
+        assert!(!cfg.blocks[0].last, "{tail} trailing bytes");
+    }
 }
 
 // ---------------------------------------------------------------------------
