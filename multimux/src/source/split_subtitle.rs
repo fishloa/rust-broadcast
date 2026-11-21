@@ -350,7 +350,11 @@ mod tests {
         let entries = fixture_entries(&base);
         let (route, trunk) = rig();
         let tracks = vec![with_entries(&base, entries)];
-        let followers = (&route).build_subtitle_followers(&trunk, &tracks);
+        let followers = <&RouteHandle as SiblingTrunks>::build_subtitle_followers(
+            &&route,
+            &trunk,
+            &tracks,
+        );
         assert_eq!(
             followers.len(),
             2,
