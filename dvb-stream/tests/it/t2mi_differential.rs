@@ -363,8 +363,7 @@ async fn t2mi_stream_resync_stats_count_leading_junk() {
     );
     let stats = stream.resync_stats();
     assert_eq!(
-        stats.bytes_discarded,
-        JUNK as u64,
+        stats.bytes_discarded, JUNK as u64,
         "exactly the leading junk bytes were discarded"
     );
     assert!(
@@ -373,4 +372,3 @@ async fn t2mi_stream_resync_stats_count_leading_junk() {
         stats.resyncs
     );
 }
-
