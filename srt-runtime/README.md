@@ -7,13 +7,13 @@ SRT (Secure Reliable Transport): packet codecs plus sans-IO handshake, ARQ, deli
 
 ```toml
 [dependencies]
-srt-runtime = "0.11"
+srt-runtime = "0.12"
 # srt-runtime = { version = "0.9", features = ["tokio", "crypto"] }
 ```
 
 ## What it does / what it does not
 
-**Does:** parse and serialize every SRT packet type byte-exactly; run the HSv5 Caller/Listener and Rendezvous handshakes as state machines; run the ARQ reliability engine (loss detection, NAK, ACK/ACKACK, RTT), the TSBPD delivery scheduler (timestamp-based ordered release and too-late drop), LiveCC pacing and FileCC window congestion control; and, behind features, do the AES-CTR payload crypto with key wrap and KM refresh, and drive all of it over real UDP sockets. The core is `no_std` + `alloc` and reads no clock: you call `tick()` and pass time in.
+**Does:** parse and serialize every SRT packet type byte-exactly; run the HSv5 Caller/Listener and Rendezvous handshakes as state machines; run the ARQ reliability engine (loss detection, NAK, ACK/ACKACK, RTT), the TSBPD delivery scheduler (timestamp-based ordered release and too-late drop, with `SocketStats::too_late_dropped` counting the sequence numbers it gave up on), LiveCC pacing and FileCC window congestion control; and, behind features, do the AES-CTR payload crypto with key wrap and KM refresh, and drive all of it over real UDP sockets. The core is `no_std` + `alloc` and reads no clock: you call `tick()` and pass time in.
 
 **Does not:** wrap an MPEG-TS stream or choose a payload for you, implement the legacy Version-4 Rendezvous path (permanently out of scope), or implement CUBIC/BBR file-transfer congestion control. The sans-IO congestion controllers are not wired into `arq::Sender` (it has no CC hook), and the tokio adapter now encrypts and decrypts in its data path (AES-CTR per draft section 6, with KM refresh), accepting a `HandshakeConfig` with `crypto` set for AES-128/192/256 on the Caller, Listener and Rendezvous paths. Encryption is negotiated end-to-end and verified against a real libsrt peer, including in Rendezvous mode.
 

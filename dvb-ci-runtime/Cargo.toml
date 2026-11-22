@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-ci-runtime"
-version = "0.21.1"
+version = "0.22.0"
 edition = "2024"
 description = "Pure-Rust EN 50221 DVB Common Interface driver runtime — device I/O, TPDU/SPDU poll loop, resource state machines, and CAM/card hot-plug notifications over the dvb-ci codecs."
 license      = "MIT OR Apache-2.0"
@@ -21,10 +21,10 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-ci     = { path = "../dvb-ci", version = "0.13.0" }
-dvb-si     = { path = "../dvb-si", version = "15.1.0", default-features = false }
-mpeg-ts    = { path = "../mpeg-ts", version = "0.9.0", default-features = false, features = ["std"] }
-broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
+dvb-ci     = { path = "../dvb-ci", version = "0.14.0" }
+dvb-si     = { path = "../dvb-si", version = "16.0.0", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts", version = "0.10.0", default-features = false, features = ["std"] }
+broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
 thiserror  = { version = "2" }
 rustix     = { version = "1", default-features = false, features = ["std", "event", "fs"], optional = true } # `rustix::event::poll` replaces `libc::poll` (de-hand-roll SP6.7)
 clap       = { workspace = true, optional = true, features = ["derive"] }

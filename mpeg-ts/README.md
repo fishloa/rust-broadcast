@@ -40,6 +40,7 @@ stream conformance (see `dvb-conformance`), or do any I/O.
 | ETSI EN 300 468 | V1.19.1 (the edition vendored; a V1.20.1 copy is also present) | §5.1.1 generic section header, §5.1.3 Table 1 well-known PIDs, CRC_32 placement | Partial: framing and PID constants only | Table bodies and descriptors live in `dvb-si`. The TOT's CRC is not handled by the short-form path (use `dvb-si`). |
 | ISO/IEC 23009-1 | not pinned by this crate | §5.10.3.3.5 PUSI-delimited `emsg` carriage on PID `0x0004` | Partial: generic PUSI reassembly only | The `emsg` box itself is parsed by `mp4-emsg`. |
 | 204-byte RS-coded packets (188 + 16 parity) | n/a | Stride detection in `TsResync` | Partial | Parity bytes are stripped, never checked. |
+| 192-byte M2TS/BDAV packets (188 + 4 `TP_extra_header`) | n/a | Stride detection in `TsResync` (`PacketStride::M2ts192`, `M2TS_PACKET_SIZE`, `M2TS_EXTRA_HEADER_LEN`) | Full | The 4-byte extra header is stripped; a packet is emitted as soon as its 188 bytes arrive. |
 
 ## Feature flags
 
@@ -51,7 +52,7 @@ stream conformance (see `dvb-conformance`), or do any I/O.
 `serde` is opt-in and off by default; enable it explicitly:
 
 ```toml
-mpeg-ts = { version = "0.9", features = ["serde"] }
+mpeg-ts = { version = "0.10", features = ["serde"] }
 ```
 
 The crate is `#![no_std]` + `alloc` and `#![forbid(unsafe_code)]`;
@@ -59,7 +60,7 @@ The crate is `#![no_std]` + `alloc` and `#![forbid(unsafe_code)]`;
 
 ```toml
 [dependencies]
-mpeg-ts = "0.9"
+mpeg-ts = "0.10"
 # embedded:
 # mpeg-ts = { version = "0.8", default-features = false }
 ```

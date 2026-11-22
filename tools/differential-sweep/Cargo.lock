@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "13.1.0"
+version = "14.0.0"
 dependencies = [
  "base64 0.23.1",
  "erased-serde",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-dash"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-hls"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -138,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-smooth"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "thiserror",
@@ -161,7 +161,7 @@ checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
 name = "caption-convert"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "cc-data",
@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -260,7 +260,7 @@ checksum = "be95d4a884358a21a199689323c29e9256b4a1b315e22f183d155422041d3a9a"
 
 [[package]]
 name = "container-probe"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
 ]
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "dash-runtime"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "broadcast-dash",
@@ -393,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-bbframe"
-version = "15.1.0"
+version = "16.0.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -402,7 +402,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "15.1.0"
+version = "16.0.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "15.1.0"
+version = "16.0.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "15.1.0"
+version = "16.0.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -438,7 +438,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-vbi"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -761,7 +761,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "media-doctor"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "broadcast-common",
  "broadcast-dash",
@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "media-plane"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -809,7 +809,7 @@ checksum = "d5848f5a9e8117cf94f2f90faac24a87ff81600ff8628c1e3deaab572e76bfa1"
 
 [[package]]
 name = "mp4-emsg"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -818,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -827,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -837,7 +837,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "broadcast-common",
  "subtle",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "rtp-packet"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -995,7 +995,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scte35-splice"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "broadcast-common",
  "mpeg-ts",
@@ -1094,7 +1094,7 @@ checksum = "3244542535d5de959d90ec55d1b5ff0fd2bb7b1310223907d5f11932847f7b59"
 
 [[package]]
 name = "st291"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -1176,7 +1176,7 @@ dependencies = [
 
 [[package]]
 name = "timed-metadata"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -1232,7 +1232,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.32.1"
+version = "0.33.0"
 dependencies = [
  "aes",
  "broadcast-common",

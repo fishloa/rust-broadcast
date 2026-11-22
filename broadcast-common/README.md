@@ -46,13 +46,13 @@ the specification each primitive follows.
 | `serde` | no | `serde::Serialize` on the shared spec types (currently `cenc::CencScheme`). |
 | `xml` | no | `xml` (the bounded quick-xml tree reader: depth, attribute, size limits; DOCTYPE refused) and `xml_chars` (XML 1.0 character data with the typed `XmlCharError`, `XmlLimits`/`XmlBudget`, `XmlWriter`, whose write helpers refuse a character outside the `Char` production with `WriteRefusal::InvalidChar`). Implies `std`. |
 | `lang` | no | `lang`: ISO 639 -> BCP 47 canonicalisation (`bcp47_language`, also at the crate root) and `language_matches`. Implies `std`. |
-| `base64` | no | `base64`: `base64_encode`, `base64_decode_strict`, `base64_decode_lenient` (RFC 4648), `base64_url_encode_nopad`/`base64_url_decode_nopad` (URL-safe alphabet, no padding), `DecodeError`. `no_std` + `alloc`. |
+| `base64` | no | `base64`: `base64_encode`, `base64_decode_strict`, `base64_decode_lenient` (RFC 4648), `base64_url_encode_nopad`/`base64_url_decode_nopad` (URL-safe alphabet, no padding), `Base64DecodeError`. `no_std` + `alloc`. |
 | `http-date` | no | `http_date`: `parse_http_date` (RFC 9110 §5.6.7) for `Date` and `Retry-After`. Implies `std`. |
 | `url` | no | `url_ref`: guarded RFC 3986 reference resolution (`resolve`, `resolve_str`, `first_forbidden_char`) over `url::Url::join`, plus `resolve_http`, which additionally requires an `http`/`https` result reached without an `https`->`http` downgrade. |
 
 ```toml
 [dependencies]
-broadcast-common = "13"
+broadcast-common = "14"
 # embedded (no_std + alloc):
 # broadcast-common = { version = "12", default-features = false }
 ```
@@ -120,7 +120,7 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 | `len` | `FieldOverflow`, `fit_bits`, `fit_mask`, `fit_u8`, `fit_u16`, `fit_u24`, `fit_u32`: checked width narrowing for serializers |
 | `pusi` | `PusiAccumulator` (size-capped, `DEFAULT_MAX_UNIT_SIZE` 16 MiB): the unit splitter wrapped by `mpeg-ts` and `mpeg-pes` |
 | `parity` | `has_odd_parity`, `set_odd_parity`, `strip_parity` |
-| `hex` | `hex_encode`, `hex_encode_upper`, `hex_decode` (even-length hex of either case, else `None`), `hex_decode_into` (exactly `2 * out.len()` digits into a fixed slice); callers keep their own error types |
+| `hex` | `hex_encode`, `hex_encode_upper`, `hex_decode` (even-length hex of either case, else `None`), `hex_decode_into` (exactly `2 * out.len()` digits into a fixed slice, typed `HexDecodeError`) |
 | `seq` | `SeqSpace` (`add`, `diff`, `lt`/`leq`/`gt`/`geq`, `in_closed_range`), `MAX_SEQ_BITS` |
 | `cenc` | `CencScheme` (`from_four_cc`, `name`), `SCHEME_CENC`, `SCHEME_CBCS` |
 | `mux` | `Unpackage`, `Package` (batch container demux/mux), `Decrypt`, `Encrypt` (in-place sample protection); inverse pairs, generic over `Input`/`Output`/`Media`/`Config`/`Keys`/`Error` |

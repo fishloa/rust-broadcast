@@ -1,6 +1,6 @@
 [package]
 name         = "compliance-probe"
-version      = "0.10.0"
+version      = "0.11.0"
 edition      = "2024"
 rust-version.workspace = true
 license      = "MIT OR Apache-2.0"
@@ -16,13 +16,13 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "13.1.0",     default-features = false }
-dvb-conformance  = { path = "../dvb-conformance",  version = "15.1.0",     default-features = false }
-mpeg-ts          = { path = "../mpeg-ts",          version = "0.9.0", default-features = false }
-scte35-splice    = { path = "../scte35-splice",    version = "7.0.0",     default-features = false }
-timed-metadata   = { path = "../timed-metadata",   version = "0.11.0", default-features = false }
-media-doctor     = { path = "../media-doctor",     version = "0.17.0",   default-features = false }
-media-plane      = { path = "../media-plane",      version = "0.13.0",   default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "14.0.0",     default-features = false }
+dvb-conformance  = { path = "../dvb-conformance",  version = "16.0.0",     default-features = false }
+mpeg-ts          = { path = "../mpeg-ts",          version = "0.10.0", default-features = false }
+scte35-splice    = { path = "../scte35-splice",    version = "8.0.0",     default-features = false }
+timed-metadata   = { path = "../timed-metadata",   version = "0.12.0", default-features = false }
+media-doctor     = { path = "../media-doctor",     version = "0.18.0",   default-features = false }
+media-plane      = { path = "../media-plane",      version = "0.14.0",   default-features = false }
 # Optional, enabled only by this crate's own `std` feature: the `metrics`
 # facade macros (`counter!`/`gauge!`) expand to code that needs `std` (they
 # are not no_std-compatible), so every call site in this crate is itself
@@ -57,7 +57,7 @@ test-fixtures = { path = "../test-fixtures" }
 metrics-exporter-prometheus = { workspace = true }
 # Test-only: builds the PAT/PMT sections a stream must carry before a PCR PID
 # is declared, rather than hand-assembling table bytes and their CRC.
-dvb-si = { path = "../dvb-si", version = "15.1.0", default-features = false }
+dvb-si = { path = "../dvb-si", version = "16.0.0", default-features = false }
 # Test-only: `media_plane::ByteTap::record`/`TapItem::Data` are typed on
 # `bytes::Bytes`; tests build these directly rather than going through a real
 # ingest session.

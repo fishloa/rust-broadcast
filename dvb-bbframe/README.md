@@ -43,7 +43,7 @@ on real DVB-S2 streams, so check that counter before assuming full coverage.
 
 ```toml
 [dependencies]
-dvb-bbframe = "15"
+dvb-bbframe = "16"
 ```
 
 ## Quick start

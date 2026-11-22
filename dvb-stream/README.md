@@ -51,7 +51,7 @@ lockstep (0.x), because tokio's MSRV moves faster than the workspace pin.
 
 ```toml
 [dependencies]
-dvb-stream = "0.10"
+dvb-stream = "0.11"
 ```
 
 ## Quick start
