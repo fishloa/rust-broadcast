@@ -5,6 +5,8 @@ mod clock33_data;
 mod common;
 mod deadlines;
 mod deadlines_data;
+mod dep_policy;
+mod dep_policy_data;
 mod fixtures_one_home;
 mod handroll_data;
 mod handroll_dehandroll;
