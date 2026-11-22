@@ -358,6 +358,28 @@ impl<D: CaDevice> CaDevice for RecordingCaDevice<D> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn device_op_error_displays_and_chains_its_source() {
+        let wrapped = DeviceOpError::wrap(
+            "write (17 bytes)",
+            "/dev/dvb/adapter3/ca0",
+            io::Error::from_raw_os_error(22),
+        );
+        let inner = wrapped
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<DeviceOpError>())
+            .expect("wrapped");
+        assert_eq!(
+            inner.to_string(),
+            format!(
+                "/dev/dvb/adapter3/ca0: write (17 bytes) failed: {}",
+                io::Error::from_raw_os_error(22)
+            )
+        );
+        let source = std::error::Error::source(inner).expect("source");
+        assert_eq!(source.to_string(), io::Error::from_raw_os_error(22).to_string());
+    }
+
     /// The read buffer must fit the largest frame the link can encode: the
     /// 2-byte link header, the 1-byte `tpdu_tag`, the widest `length_field`
     /// (3 bytes) and that field's own maximum (65535) of `t_c_id` + data.

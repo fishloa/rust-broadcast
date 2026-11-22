@@ -154,6 +154,20 @@ impl CiDataDevice for MockCiDataDevice {
 mod tests {
     use super::*;
 
+    #[test]
+    fn partial_write_displays_progress_in_bytes_and_packets() {
+        let e = PartialWrite {
+            written: 376,
+            requested: 564,
+            device: "/dev/dvb/adapter0/sec0".to_string(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "/dev/dvb/adapter0/sec0: device buffer full, 376 of 564 bytes (2 packets) written"
+        );
+        assert!(std::error::Error::source(&e).is_none());
+    }
+
     fn packet(fill: u8) -> Vec<u8> {
         let mut p = vec![fill; TS_PACKET_LEN];
         p[0] = 0x47; // sync byte
