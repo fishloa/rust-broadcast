@@ -1141,8 +1141,8 @@ impl RouteStatus {
             created_at_unix_nanos: rt
                 .store
                 .created_at()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
+                .as_nanosecond()
+                .try_into()
                 .unwrap_or(0),
         }
     }

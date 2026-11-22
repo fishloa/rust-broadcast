@@ -1274,7 +1274,7 @@ impl GapRig {
     }
 
     fn snapshot(&self, stage: &str, out: &mut String) {
-        let origin = std::time::UNIX_EPOCH + Duration::from_secs(GAP_PRESENTATION_ORIGIN_SECS);
+        let origin = jiff::Timestamp::from_second(i64::try_from(GAP_PRESENTATION_ORIGIN_SECS).expect("fits")).expect("in range");
         out.push_str(&format!("==== {stage}: HLS media playlist ====\n"));
         let instance = self
             .route
@@ -1325,7 +1325,7 @@ fn live_route_through_an_empty_track_set_and_back_matches_golden() {
     assert!(gap_playlist.contains("#EXT-X-GAP"), "{gap_playlist}");
     let gap_mpd = crate::output::dash::render_mpd_at(
         &rig.route,
-        std::time::UNIX_EPOCH + Duration::from_secs(GAP_PRESENTATION_ORIGIN_SECS),
+        jiff::Timestamp::from_second(i64::try_from(GAP_PRESENTATION_ORIGIN_SECS).expect("fits")).expect("in range"),
     )
     .expect("the segments before the gap still render");
     assert_eq!(gap_mpd.matches("<Period ").count(), 1, "{gap_mpd}");

@@ -1831,7 +1831,7 @@ mod tests {
             format!("initialization=\"init-$RepresentationID$-{instance}-{generation}.mp4\"")
         };
 
-        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let now = jiff::Timestamp::from_second(1_700_000_000).expect("in range");
         let mpd = crate::output::dash::render_mpd_at(&route, now).expect("renders");
         assert_eq!(mpd.matches("<Period ").count(), 2, "{mpd}");
         let (first, second) = mpd

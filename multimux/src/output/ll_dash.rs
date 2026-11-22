@@ -6,7 +6,7 @@
 #[cfg(test)]
 use hls_runtime::server::DEFAULT_TRACK_ID;
 use std::sync::Arc;
-use std::time::SystemTime;
+use jiff::Timestamp;
 #[cfg(test)]
 use transmux::TrackId;
 
@@ -62,7 +62,7 @@ fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
 /// Render the LL-DASH MPD for `route` with an explicit `origin` for
 /// `availabilityStartTime`, so a test can freeze the wall-clock value.
 #[doc(hidden)]
-pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> {
+pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: Timestamp) -> Option<String> {
     crate::output::dash::render_ll_dash_mpd_at(route, origin)
 }
 
@@ -191,7 +191,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![video_spec(TrackId::new(1))],
         );
-        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let now = Timestamp::from_second(1_700_000_000).expect("in range");
         route
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
@@ -409,7 +409,7 @@ mod tests {
                 seg(2, Duration::from_secs(4)),
             )
             .expect("add_segment");
-        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let now = Timestamp::from_second(1_700_000_000).expect("in range");
         let instance = route
             .serving(crate::route::SPTS_PROGRAM_ID)
             .unwrap()
@@ -547,7 +547,7 @@ mod tests {
                 .expect("add_segment");
         }
 
-        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let now = Timestamp::from_second(1_700_000_000).expect("in range");
         let standard =
             crate::output::dash::render_mpd_at(&route, now).expect("standard flavour renders");
         let low_latency = render_ll_dash_mpd_at(&route, now).expect("low-latency flavour renders");

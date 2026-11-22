@@ -12,7 +12,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Path as AxumPath, State};
@@ -59,13 +59,7 @@ fn fixture(rel: &str) -> PathBuf {
 }
 
 fn now_unix_us() -> i64 {
-    i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock after the epoch")
-            .as_micros(),
-    )
-    .expect("fits")
+    i64::try_from(jiff::Timestamp::now().as_microsecond()).expect("fits")
 }
 
 fn xs_datetime(unix_us: i64) -> String {
