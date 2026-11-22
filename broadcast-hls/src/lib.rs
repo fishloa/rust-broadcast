@@ -357,12 +357,24 @@ pub struct PartSpec {
 /// least one of its parts on the wire — e.g. a key rotation between two
 /// parts, which applies only to the parts after it (RFC 8216bis §4.4.4.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct OpenTag {
     /// Position of this tag's line in [`OpenSegment::pre_tags`].
     pub pre_tag_index: usize,
     /// How many of the open segment's parts precede this line on the wire.
     /// The line renders after those parts and before the next one.
     pub parts_before: usize,
+}
+
+impl OpenTag {
+    /// The line at `pre_tag_index` in [`OpenSegment::pre_tags`], rendered
+    /// after the first `parts_before` parts.
+    pub fn new(pre_tag_index: usize, parts_before: usize) -> Self {
+        Self {
+            pre_tag_index,
+            parts_before,
+        }
+    }
 }
 
 /// An in-progress (open) LL-HLS segment: its parts are known and being served,

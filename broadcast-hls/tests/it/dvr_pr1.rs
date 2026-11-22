@@ -1153,3 +1153,12 @@ fn daterange_without_start_date_is_a_playlist_diagnostic() {
         playlist.segments[0].pre_tags
     );
 }
+
+/// `OpenTag` is `#[non_exhaustive]`, so a caller outside the crate builds one
+/// through `new`.
+#[test]
+fn open_tag_is_built_through_new() {
+    let tag = broadcast_hls::OpenTag::new(2, 1);
+    assert_eq!(tag.pre_tag_index, 2);
+    assert_eq!(tag.parts_before, 1);
+}
