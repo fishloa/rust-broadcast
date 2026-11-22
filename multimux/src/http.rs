@@ -58,13 +58,21 @@ pub(crate) const BLOCKING_RELOAD_TIMEOUT: Duration = hls_runtime::server::BLOCKI
 pub(crate) fn resolve_route_program(
     route: &crate::route::RouteHandle,
 ) -> core::result::Result<Arc<ProgramServing>, Box<Response>> {
+    resolution_response(route.resolve_program(crate::route::SPTS_PROGRAM_ID))
+}
+
+/// The bundle of a [`crate::route::ProgramResolution`], or the status
+/// [`resolve_route_program`] answers for it.
+pub(crate) fn resolution_response(
+    resolution: crate::route::ProgramResolution,
+) -> core::result::Result<Arc<ProgramServing>, Box<Response>> {
     // `Box<Response>`, not a bare `Response`: an `axum::Response` is >=128
     // bytes, so returning it unboxed makes every `Result` in this signature
     // that large on the success path too (clippy::result_large_err, which
     // the newer-stable canary enforces). The error path here is the rare one
     // -- a route mid-connect or a bad program id -- so one allocation there
     // is strictly better than widening the common case.
-    match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
+    match resolution {
         crate::route::ProgramResolution::Found(serving) => Ok(serving),
         crate::route::ProgramResolution::NotYetAnnounced => {
             Err(Box::new(StatusCode::SERVICE_UNAVAILABLE.into_response()))

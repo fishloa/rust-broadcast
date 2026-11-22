@@ -1920,7 +1920,9 @@ impl Route {
     /// route is checked exactly the same way) and by the runtime admin API
     /// (`crate::origin::admin`, issue #749) for a `POST /admin/routes` body
     /// and every route a `POST /admin/reload` would add or restart —
-    /// validated before any of them touch the live registry.
+    /// validated before any of them touch the live registry. Includes
+    /// [`Self::validate_dvr`], so a route added at runtime meets the same
+    /// DVR rules as one in the startup config.
     pub(crate) fn validate_standalone(&self, playlist_name: &str) -> Result<()> {
         self.validate_audio_rendition_sources(playlist_name)?;
         self.validate_audio_profiles()?;
@@ -2158,6 +2160,7 @@ impl Route {
                 });
             }
         }
+        self.validate_dvr()?;
         self.input.validate()
     }
 
@@ -2199,12 +2202,25 @@ impl Route {
     }
 
     /// Validate any DVR config on this route — separate so the admin API can
-    /// call it independently.
+    /// call it independently. A route with DVR enabled is at most
+    /// [`crate::dvr::MAX_DVR_ROUTE_NAME_LEN`] bytes, so the archive name of
+    /// each of its programs (`<name>@<id>`, see `crate::dvr`) is valid.
     pub(crate) fn validate_dvr(&self) -> Result<()> {
         if let Err(reason) = self.dvr.validate() {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::RoutesDvr,
                 reason: reason.to_string(),
+            });
+        }
+        if self.dvr.enabled && self.name.len() > crate::dvr::MAX_DVR_ROUTE_NAME_LEN {
+            return Err(MultimuxError::ConfigInvalid {
+                field: ConfigField::RoutesName,
+                reason: format!(
+                    "must be at most {} bytes when DVR is enabled (each program's archive is \
+                     named `<route>@<program_number>`), got {}",
+                    crate::dvr::MAX_DVR_ROUTE_NAME_LEN,
+                    self.name.len()
+                ),
             });
         }
         Ok(())
@@ -6381,6 +6397,37 @@ mod pinned_limits {
         route.validate_dvr().expect("valid enabled dvr");
         route.dvr = DvrConfig::default();
         route.validate_dvr().expect("disabled dvr");
+    }
+
+    /// #3950: a non-default program archives into `<route>@<program_number>`.
+    /// `@` is not a route-name character, so no route can be named like
+    /// another route's program archive, and a DVR route name leaves room for
+    /// the longest `program_number`.
+    #[test]
+    fn a_program_archive_name_can_never_be_a_route_name() {
+        let derived =
+            crate::dvr::program_archive_name("news", crate::dvr::ProgramArchive::Program(1538))
+                .expect("program archive name");
+        assert_eq!(derived.as_str(), "news@1538");
+        let err = route_named("news@1538")
+            .validate_standalone("media.m3u8")
+            .expect_err("a route named like a program archive");
+        assert!(is_invalid(Err(err), ConfigField::RoutesName));
+
+        assert_eq!(crate::dvr::MAX_DVR_ROUTE_NAME_LEN, 249);
+        let mut route = route_named(&"a".repeat(crate::dvr::MAX_DVR_ROUTE_NAME_LEN));
+        route.dvr = enabled_dvr("/var/archive");
+        route.validate_dvr().expect("at the DVR limit");
+        let longest = crate::dvr::program_archive_name(
+            &route.name,
+            crate::dvr::ProgramArchive::Program(u16::MAX),
+        )
+        .expect("the longest program archive name is valid");
+        assert_eq!(longest.as_str().len(), 255);
+        route.name.push('a');
+        assert!(is_invalid(route.validate_dvr(), ConfigField::RoutesName));
+        route.dvr = DvrConfig::default();
+        route.validate_dvr().expect("no DVR, no archive name limit");
     }
 
     /// #3667: a route name of exactly `MAX_ROUTE_NAME_LEN` bytes is accepted,
