@@ -3,7 +3,9 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
-### Fixed
+
+### Tests
+
 - **`SessionStore::is_empty` is checked while the store is populated.** It was only asserted empty, so a constant answer could make a host discard a populated store (audit 22 finding 48, #3016).
 
 ## [0.7.0] - 2026-11-15

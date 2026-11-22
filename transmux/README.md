@@ -33,7 +33,7 @@ Editions: where a spec is vendored in `private/specs/` the edition is verified a
 | ITU-T H.264, H.265, H.266, H.262 | As cited (H.26x vendored) | SPS/PPS/VPS decode, `avcC`/`hvcC`/`vvcC`, NAL classification, keyframe detection | Config headers only | No slice or bitstream decode |
 | ETSI TS 102 366 AC-3/E-AC-3, TS 103 190 AC-4, TS 102 114 DTS, ETSI TS 101 154 | TS 102 366 v1.4.1, TS 103 190-1 v1.4.1, TS 102 114 v1.6.1, TS 101 154 v2.10.1 (vendored) | `dac3`/`dec3`/`dac4`/`ddts`, BSI parse, E-AC-3 dependent substreams | Config headers only | |
 | GY/T 420-2025 Annex A (AVS3 video and Audio Vivid), AVS2 | As cited | `av3c`, `lavc`/`la2c`, `av2c`, `dca3`, sample groups `telg`/`lrap`/`a3lg` | Partial | `lidx`, `av3l` and the `av3a` init-segment wiring are not modelled |
-| SMPTE ST 336 / MISB ST 0601 | ST 336:2017 (vendored) | `UasLocalSet`, KLV over RTP, the shared `broadcast_common::klv::KlvItem` (re-exported here) | Full for the listed items | |
+| SMPTE ST 336 / MISB ST 0601 | ST 336:2017 (vendored) | `UasLocalSet`, typed ST 0601 item values (`St0601Value`, feature `misb`), KLV over RTP, the shared `broadcast_common::klv::KlvItem` (re-exported here) | Full for the listed items | |
 | ITU-T H.265 Annex D (SEI 137/144), SMPTE ST 2086, SMPTE ST 2094-40 (HDR10+), Dolby Vision | As cited (H.265 vendored; ST 2094-40 and Dolby specs not vendored) | HDR10 static metadata (`HdrStaticMetadata`, `colr`/`mdcv`/`clli` boxes), HDR10+ dynamic metadata (`Hdr10PlusMetadata`), Dolby Vision `dvcC`/`dvvC` records and the TS `DOVI_video_stream_descriptor`, with the RFC 6381 `dvh1`/`dvhe` strings | Partial | Signalling and carriage only; no tone mapping, and Dolby Vision RPU payloads stay opaque |
 | ETSI EN 300 743 / EN 300 706 DVB subtitles and teletext | Vendored | Recovered as opaque `Data` tracks on TS demux | Typed-opaque | Interpretation is in `dvb-subtitle` and `dvb-si` |
 
@@ -91,6 +91,7 @@ Header parse and the container box only; no encode or decode.
 | `serde` | no | `Serialize` on box types and IR types. |
 | `cenc` | yes | CENC and CBCS crypto (`aes`, `ctr`, `cbc`, with `zeroize` and constant-time key compare). DRM signalling does not need it. |
 | `sample-aes` | no | HLS Sample-AES and whole-segment AES-128; implies `cenc`. |
+| `misb` | no | Typed MISB ST 0601 values: `LocalSetItem::st0601_value` decodes an item to `St0601Value` (scaled `Number`, `Unsigned`, `Signed`, `Text`, `Time(jiff::Timestamp)`, `Nested` with its `NestedSet`, `Bytes`, or `OutOfRange`/`Invalid` when the tag cannot be decoded) using the external `misb` crate's ST 0601 tag table; pulls in `jiff`. |
 | `cli` | no | The `transmux` binary (`clap`, `container-probe`; implies `std`). |
 
 `serde` is opt-in and off by default; enable it explicitly:

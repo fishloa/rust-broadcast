@@ -651,7 +651,8 @@ impl<E: PushEgress> PushSession<E> where E::Error: PushErrorKind {
     NeedsSetup,
     Connected { carried: usize, proposed: usize },
     Reconnect { egress: E, cause: ReconnectCause<E::Error> },   // egress handed back so the caller closes it
-    Backoff { cause: Option<E::Error> },
+    Backoff { egress: E, cause: Option<E::Error> },          // the failed egress, handed back
+    Redundant { egress: E },                                 // on_connected while connected or pending
     Stop { egress: Option<E> },
 }
 #[non_exhaustive] pub enum ReconnectCause<Er> { Send(Er), Renegotiate(Er), Flush, FlushTimeout, Setup }
@@ -673,7 +674,8 @@ Decision table (today's `drive_push`, push/mod.rs:535-718):
 |  | connected | `Err(e)`, `DropItem` | dropped += 1 | `MuxDropped(e)` |
 |  | connected | `Err(e)`, `Reconnect` | negotiated = None | `Reconnect{Send(e)}` |
 | `on_connected(egress, g, tracks)` | not connected | `negotiate` → `Accepted` | | `NeedsSetup` (egress held pending) |
-|  |  | `Error(e)` / other | | `Backoff{Some(e)}` / `Backoff{None}` |
+|  |  | `Error(e)` / other | handed back | `Backoff{egress, Some(e)}` / `Backoff{egress, None}` |
+| `on_connected(egress, ..)` | connected or pending | handed back | | `Redundant{egress}` |
 | `on_setup(true)` | pending | becomes connected | connects += 1, negotiated = g | `Connected{carried, proposed}` |
 | `on_setup(false)` | pending | handed back | | `Reconnect{Setup}` |
 | `on_flush(Flushed)` | connected | | | `Continue` |

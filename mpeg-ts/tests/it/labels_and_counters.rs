@@ -97,6 +97,8 @@ fn packet_stride_and_duplicate_verdict_labels() {
     assert_eq!(PacketStride::Ts188.to_string(), "ts_188");
     assert_eq!(PacketStride::Rs204.name(), "rs_204");
     assert_eq!(PacketStride::Rs204.to_string(), "rs_204");
+    assert_eq!(PacketStride::M2ts192.name(), "m2ts_192");
+    assert_eq!(PacketStride::M2ts192.to_string(), "m2ts_192");
 
     assert_eq!(DuplicateVerdict::NotDuplicate.name(), "not duplicate");
     assert_eq!(DuplicateVerdict::NotDuplicate.to_string(), "not duplicate");

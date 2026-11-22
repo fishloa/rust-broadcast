@@ -1838,7 +1838,7 @@ mod tests {
                 .with_target_duration(Duration::from_secs(4))
                 .with_window_segments(4),
         )
-        .with_archive_floor(5);
+        .with_archive_floor(broadcast_hls::MediaSequence::new(5));
         route.publish_program(
             crate::route::SPTS_PROGRAM_ID,
             media_plane::trunk::Trunk::new(media_plane::trunk::TrunkConfig::default()),

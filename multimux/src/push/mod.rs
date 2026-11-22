@@ -696,11 +696,15 @@ pub async fn drive_push<T: PushTransport>(
                                 None => {}
                             }
                         }
-                        PushDecision::Backoff { cause } => {
+                        PushDecision::Backoff { egress, cause } => {
                             if let Some(err) = cause {
                                 tracing::warn!(url = %log_url, error = %scrub(&err), "push negotiate failed; backing off");
                             }
+                            retire_egress(egress, &mut written_bytes);
                             engine.on_disconnect();
+                        }
+                        PushDecision::Redundant { egress } => {
+                            retire_egress(egress, &mut written_bytes);
                         }
                         _ => {}
                     }
@@ -1122,6 +1126,74 @@ mod tests {
             turns <= 10,
             "the loop turned {turns} times between two dials while sleeping out a 300 ms \
              backoff (a skipped wait spins instead of sleeping)"
+        );
+    }
+
+    /// A connection whose connect-time negotiation fails (a trunk with no
+    /// carriable track) is closed before the backoff, not dropped unclosed:
+    /// the session hands the egress back in `PushDecision::Backoff`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_negotiation_closes_the_connection() {
+        static DIALS: AtomicU64 = AtomicU64::new(0);
+        static CLOSES: AtomicU64 = AtomicU64::new(0);
+
+        struct ConnectsTransport;
+
+        #[derive(Debug, thiserror::Error)]
+        #[error("never fails")]
+        struct NeverFails;
+
+        #[async_trait::async_trait]
+        impl PushTransport for ConnectsTransport {
+            type Config = ();
+            type Error = NeverFails;
+
+            async fn connect(_url: &str, _config: &Self::Config) -> Result<Self, Self::Error> {
+                DIALS.fetch_add(1, Ordering::Relaxed);
+                Ok(ConnectsTransport)
+            }
+
+            async fn send(&mut self, _data: &[u8]) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn close(&mut self) {
+                CLOSES.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let trunk = Trunk::new(TrunkConfig::default());
+        let cancel = CancellationToken::new();
+        let reconnect =
+            ReconnectPolicy::doubling(Duration::from_millis(10), Duration::from_millis(10));
+        let run = tokio::spawn(drive_push::<ConnectsTransport>(
+            trunk,
+            "srt://127.0.0.1:1/live".to_string(),
+            (),
+            PushFormat::Ts,
+            reconnect,
+            cancel.clone(),
+        ));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while DIALS.load(Ordering::Relaxed) < 3 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the push did not re-dial within the guard"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(2), run)
+            .await
+            .expect("cancel returns promptly")
+            .expect("driver task");
+
+        assert!(
+            CLOSES.load(Ordering::Relaxed) >= 2,
+            "{} dials but {} closes: a connection that failed negotiation was dropped unclosed",
+            DIALS.load(Ordering::Relaxed),
+            CLOSES.load(Ordering::Relaxed)
         );
     }
 }
