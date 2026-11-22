@@ -1017,6 +1017,11 @@ pub enum PresentEventChange {
 /// included — is not tracked, so a service that never marks an event
 /// `running` produces no change at all rather than a guess by position.
 ///
+/// EIT layout: ETSI EN 300 468 §5.2.4 Table 7
+/// (`private/specs-verified/dvb/dvb-si/tables/en_300_468/7-event-information-section.md`);
+/// `running_status`: Table 6
+/// (`private/specs-verified/dvb/dvb-si/enums/en_300_468/running_status.md`).
+///
 /// Two entry points feed the tracker:
 ///
 /// * [`on_section`](Self::on_section) returns the change for a section the

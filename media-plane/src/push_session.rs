@@ -11,9 +11,14 @@
 //! Every [`PushEgress`] handed to the session comes back inside a decision
 //! (`Reconnect`, `Backoff`, `Redundant` or `Stop`) or stays held by the
 //! session until one does; each returned egress is the caller's to close,
-//! the session itself never closes one. The session tracks four things: the connected egress, an
-//! egress whose transport setup the host is still awaiting, the track
-//! generation last negotiated, and the counters.
+//! the session itself never closes one. The host closes it with its
+//! transport's own shutdown procedure — SRT's shutdown handshake
+//! (`private/specs-verified/ietf/specs/ietf_draft_sharabayko_srt_01.txt`
+//! §3.2.7) or RTSP `TEARDOWN`
+//! (`private/specs-verified/rtp/rtsp-runtime/methods-and-status.md`). The
+//! session tracks four things: the connected egress, an egress whose
+//! transport setup the host is still awaiting, the track generation last
+//! negotiated, and the counters.
 //!
 //! The decisions mirror, row for row, the table in
 //! `docs/dvr-runtime/DESIGN.md` §6 (today's `drive_push`):
@@ -220,7 +225,9 @@ where
             PushDecision::Redundant { egress } => {
                 f.debug_struct("Redundant").field("egress", egress).finish()
             }
-            PushDecision::Stop { egress } => f.debug_struct("Stop").field("egress", egress).finish(),
+            PushDecision::Stop { egress } => {
+                f.debug_struct("Stop").field("egress", egress).finish()
+            }
         }
     }
 }
