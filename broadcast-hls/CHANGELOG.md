@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `EXT-X-KEY` `IV` parsing decodes through `broadcast_common::hex::hex_decode_into`, replacing a hand-rolled hex loop that carried an `.expect`. Accepted and rejected inputs are unchanged (#3957).
+- README and crate-root documentation corrected: `EXT-X-DATERANGE` is typed (`DateRange`/`Cue`/`Scte35Kind`), and `CustomTag`/`CustomTagName`, `ParseOptions`, the append-only renderers and the dangling-segment-tag diagnostic are documented (#4010).
 
 ### Added
 
