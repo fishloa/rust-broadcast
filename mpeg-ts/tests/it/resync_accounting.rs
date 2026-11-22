@@ -6,8 +6,8 @@
 //! M2TS strides, the end-of-input truncated tail, and `feed_into`'s return count.
 
 use mpeg_ts::resync::{
-    LOCK_CONFIRMATIONS, M2TS_EXTRA_HEADER_LEN, M2TS_PACKET_SIZE, PacketStride, RS_PACKET_SIZE, RS_PARITY_LEN, ResyncLoss, TsResync, resync,
-    resync_confirmed, unconfirmed_candidate,
+    LOCK_CONFIRMATIONS, M2TS_EXTRA_HEADER_LEN, M2TS_PACKET_SIZE, PacketStride, RS_PACKET_SIZE,
+    RS_PARITY_LEN, ResyncLoss, TsResync, resync, resync_confirmed, unconfirmed_candidate,
 };
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
