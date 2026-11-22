@@ -236,6 +236,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn timestamp_out_of_range_displays_the_wire_limit() {
+        extern crate alloc;
+        use alloc::string::ToString;
+        assert_eq!(
+            TimestampOutOfRange.to_string(),
+            "RTMP timestamp does not fit the 32-bit wire field (max 2^32-1 ms)"
+        );
+    }
+
+    #[test]
     fn chunk_stream_ids_mark_which_are_encodable() {
         assert!(!ChunkStreamId::new(1).basic_header_encodable());
         assert!(ChunkStreamId::new(MIN_CHUNK_STREAM_ID).basic_header_encodable());

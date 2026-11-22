@@ -399,6 +399,14 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tower::Service as _;
 
+    #[test]
+    fn write_stalled_displays_the_idle_timeout_message() {
+        assert_eq!(
+            WriteStalled.to_string(),
+            "response body made no progress within the idle write timeout"
+        );
+    }
+
     fn uri(s: &str) -> Uri {
         s.parse().expect("uri")
     }
