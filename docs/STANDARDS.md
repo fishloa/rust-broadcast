@@ -123,7 +123,8 @@ paths; every one of them is private-only now.
 | EBU Tech 3342 | Loudness range | November 2023 | `broadcast-loudness` | Full | `private/specs-verified/loudness/broadcast-loudness/tech3342-lra.md` | |
 | VSF TR-06-1 | RIST Simple Profile | 2020 | `rist-runtime` | Partial | `private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md` | RTCP messages and ARQ engine; no socket layer. |
 | VSF TR-06-2 | RIST Main Profile | 2024 | — | Not implemented | `private/specs-verified/vsf/rist-runtime/tr-06-2-main-profile-timing.md` | Transcription only. |
-| MISB ST 0601 | UAS datalink local set | edition unverified | `transmux` | Partial | `private/specs-verified/mpeg/transmux/klv/klv-misb0601.md` | |
+| MISB ST 0601 | UAS datalink local set | 0601.19 (02 March 2023) | `transmux` | Partial | `private/specs-verified/misc/misb/st0601-tag-table.md` | §7 Table 1 + §8 items 1–143; typed item values behind the `misb` feature, nested sets/packs/lists stay raw (#4041). |
+| MISB ST 1201 | Floating point to integer mapping | 1201.5 (24 June 2021) | `transmux` | Partial | `private/specs-verified/misc/misb/st1201-imapb.md` | §7 IMAPB only — the mapping ST 0601's `IMAPB(...)` items delegate to. |
 
 ## IETF
 
