@@ -69,15 +69,28 @@ pub type ManifestWriteError = WriteRefusal;
 // Error
 // ---------------------------------------------------------------------------
 
+struct FoundElement<'a>(&'a str);
+
+impl fmt::Display for FoundElement<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            f.write_str("none")
+        } else {
+            write!(f, "<{}>", self.0)
+        }
+    }
+}
+
 /// Errors returned while parsing an MS-SSTR client Manifest.
 ///
 /// The parser never panics on malformed or truncated input — every failure
 /// path returns one of these variants instead.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum SmoothParseError {
     /// The root element (or an expected child) was not the element name the
     /// grammar requires at that position.
+    #[error("expected element <{expected}>, found {}", FoundElement(.found))]
     UnexpectedElement {
         /// The element name required at this position.
         expected: &'static str,
@@ -85,6 +98,7 @@ pub enum SmoothParseError {
         found: String,
     },
     /// A required attribute was absent from an element.
+    #[error("<{element}> is missing required attribute @{attr}")]
     MissingAttribute {
         /// The element's name.
         element: &'static str,
@@ -93,6 +107,7 @@ pub enum SmoothParseError {
     },
     /// An attribute's value could not be parsed as the type it must carry
     /// (or, for `StreamIndex@Type`, was not one of the known tokens).
+    #[error("<{element}>@{attr} has invalid value {value:?}")]
     InvalidAttributeValue {
         /// The element's name.
         element: &'static str,
@@ -104,12 +119,14 @@ pub enum SmoothParseError {
     /// A `c@r` repeat run would exceed the cap on total expanded chunks
     /// (remote alloc-DoS defense — an untrusted Manifest specifying an
     /// unbounded `<c r="...">`).
+    #[error("c@r repeat run exceeded max chunk count ({count_hint} > {MAX_CHUNK_RUN})")]
     ChunkRunTooLong {
         /// The chunk count (or a hint of it) that breached the cap.
         count_hint: u64,
     },
     /// A `c@r` repeat count of zero, which would stand for zero fragments
     /// (MS-SSTR §2.2.2.6: `r` is one-based).
+    #[error("<c>@r has invalid value {r} (must be >= 1)")]
     InvalidRepeatCount {
         /// The offending value.
         r: u32,
@@ -117,12 +134,14 @@ pub enum SmoothParseError {
     /// A `c` entry whose duration cannot be derived: no explicit `@d`, no
     /// following `c` carrying an explicit `@t`, and no manifest `Duration`
     /// to take it from (MS-SSTR §2.2.2.6 start-time coding).
+    #[error("<c> at index {index} duration cannot be derived")]
     MissingDuration {
         /// Index of the offending `c` entry.
         index: usize,
     },
     /// A `c` entry whose derived duration would be negative: the following
     /// entry's `@t` is not after this entry's `t` (MS-SSTR §2.2.2.6).
+    #[error("<c> at index {index} has non-monotonic time")]
     NonMonotonicTime {
         /// Index of the offending `c` entry.
         index: usize,
@@ -130,6 +149,7 @@ pub enum SmoothParseError {
     /// A `c` entry with no `@d` and `@r > 1` whose span to the next entry's
     /// `@t` is not a whole multiple of `r` ticks, so its `r` fragments cannot
     /// share one duration (MS-SSTR §2.2.2.6).
+    #[error("<c> at index {index} run does not divide evenly")]
     IndivisibleRun {
         /// Index of the offending `c` entry.
         index: usize,
@@ -137,12 +157,14 @@ pub enum SmoothParseError {
     /// A `QualityLevel@CodecPrivateData` hex string exceeded
     /// [`MAX_CODEC_PRIVATE_DATA_HEX_LEN`] (remote alloc-DoS defense), checked
     /// before any decode allocation.
+    #[error("CodecPrivateData hex length {len} exceeds max {MAX_CODEC_PRIVATE_DATA_HEX_LEN}")]
     CodecPrivateDataTooLong {
         /// The hex string's length in bytes.
         len: usize,
     },
     /// A `CodecPrivateData` value was not valid hex (odd length, or a
     /// non-hex-digit byte).
+    #[error("invalid CodecPrivateData hex {value:?}")]
     InvalidHex {
         /// The offending raw value.
         value: String,
@@ -151,6 +173,7 @@ pub enum SmoothParseError {
     /// ([`broadcast_common::xml_chars::XmlLimits`] defaults: 4 MiB, depth 32,
     /// 100 000 elements, 8 KiB per attribute value, 256 attributes per
     /// element).
+    #[error("manifest exceeds the {limit} limit of {max}")]
     TooLarge {
         /// The bound that was exceeded.
         limit: XmlLimit,
@@ -160,6 +183,7 @@ pub enum SmoothParseError {
     /// Any other XML well-formedness error reported by `quick-xml` (bad
     /// entity or character reference, mismatched nesting detected by the
     /// reader, invalid encoding, …).
+    #[error("XML error at byte offset {pos}: {message}")]
     Xml {
         /// Byte offset (into the input) where the reader stopped.
         pos: usize,
@@ -167,66 +191,6 @@ pub enum SmoothParseError {
         message: String,
     },
 }
-
-impl fmt::Display for SmoothParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SmoothParseError::UnexpectedElement { expected, found } => {
-                if found.is_empty() {
-                    write!(f, "expected element <{expected}>, found none")
-                } else {
-                    write!(f, "expected element <{expected}>, found <{found}>")
-                }
-            }
-            SmoothParseError::MissingAttribute { element, attr } => {
-                write!(f, "<{element}> is missing required attribute @{attr}")
-            }
-            SmoothParseError::InvalidAttributeValue {
-                element,
-                attr,
-                value,
-            } => write!(f, "<{element}>@{attr} has invalid value {value:?}"),
-            SmoothParseError::InvalidRepeatCount { r } => {
-                write!(f, "<c>@r has invalid value {r} (must be >= 1)")
-            }
-            SmoothParseError::MissingDuration { index } => {
-                write!(f, "<c> at index {index} duration cannot be derived")
-            }
-            SmoothParseError::IndivisibleRun { index } => {
-                write!(f, "<c> at index {index} run does not divide evenly")
-            }
-            SmoothParseError::NonMonotonicTime { index } => {
-                write!(f, "<c> at index {index} has non-monotonic time")
-            }
-            SmoothParseError::ChunkRunTooLong { count_hint } => {
-                write!(
-                    f,
-                    "c@r repeat run exceeded max chunk count ({count_hint} > {})",
-                    MAX_CHUNK_RUN
-                )
-            }
-            SmoothParseError::CodecPrivateDataTooLong { len } => {
-                write!(
-                    f,
-                    "CodecPrivateData hex length {len} exceeds max {}",
-                    MAX_CODEC_PRIVATE_DATA_HEX_LEN
-                )
-            }
-            SmoothParseError::InvalidHex { value } => {
-                write!(f, "invalid CodecPrivateData hex {value:?}")
-            }
-            SmoothParseError::TooLarge { limit, max } => {
-                write!(f, "manifest exceeds the {limit} limit of {max}")
-            }
-            SmoothParseError::Xml { pos, message } => {
-                write!(f, "XML error at byte offset {pos}: {message}")
-            }
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for SmoothParseError {}
 
 /// Crate-local result alias for this module.
 type Result<T> = core::result::Result<T, SmoothParseError>;
