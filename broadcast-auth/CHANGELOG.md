@@ -5,10 +5,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Changed
+
+### Breaking
+
 - **BREAKING:** `Verifier::with_clock` takes `impl Fn() -> jiff::Timestamp` (was `Fn() -> std::time::SystemTime`), the same wall-clock type the signed-URL expiry gate now reads; a caller returning `UNIX_EPOCH + Duration` builds `jiff::Timestamp::from_second` instead (#3957).
+
+### Changed
+
 - Hex and base64 go through `broadcast_common::{hex, base64}` and `form_urlencoded` through `url::form_urlencoded`; the direct `hex`, `base64` and `form_urlencoded` dependencies are gone. Output is byte-identical, pinned by an independent HMAC vector for `SignedUrlKeySet::sign` (#3957).
+
 ### Tests
+
 - The wire golden's `GOLDEN_BLESS` switch refuses to write when `CI` is set, with a regression test, and `fixtures/golden/http/PROVENANCE.md` names the `http-auth` round-trip as its independent oracle (audit 21 finding 62).
 - `AuthState`'s 401/407 decision table is exercised inside this crate: no-credential `AuthRequired`, the first `Replay` and the following `AuthRejected`, the `stale=true` `ReplayStale` once per lineage (including `Stale`/`TRUE` spellings), `stale=false`, the proxy vs origin challenge header and answer header, `carries_credentials`, and the stored-challenge/accessor behaviour (audit 22 #2989).
 - The cookie jar is tested through `AuthState`/`CookieWatch`: `Secure` and `__Secure-`/`__Host-` rules, origin/domain/path matching, the 4096-byte cookie, 1024-byte path, 50-cookie and 16 KiB header caps (boundary-inclusive), same-name-different-path coexistence and longest-path-first ordering, `Max-Age=0` leaving siblings, the seeded-prefix skip, and redacted `Debug` (audit 22 #2990).
