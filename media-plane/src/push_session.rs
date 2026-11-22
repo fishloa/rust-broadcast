@@ -8,9 +8,10 @@
 //! the `select!`s, logging and metrics. This module has no clock, no `async`,
 //! no tokio and no `tracing`.
 //!
-//! Every [`PushEgress`] returned inside a decision (`Reconnect`, `Stop`,
-//! never any other variant) is the caller's to close; the session itself
-//! never closes one. The session tracks four things: the connected egress, an
+//! Every [`PushEgress`] handed to the session comes back inside a decision
+//! (`Reconnect`, `Backoff`, `Redundant` or `Stop`) or stays held by the
+//! session until one does; each returned egress is the caller's to close,
+//! the session itself never closes one. The session tracks four things: the connected egress, an
 //! egress whose transport setup the host is still awaiting, the track
 //! generation last negotiated, and the counters.
 //!
@@ -158,10 +159,21 @@ pub enum PushDecision<E: PushEgress> {
         /// Why the reconnect is needed.
         cause: ReconnectCause<E::Error>,
     },
-    /// Connect or negotiation failed; back off before dialling again.
+    /// Connect-time negotiation failed or was refused; close the egress and
+    /// back off before dialling again.
     Backoff {
+        /// The egress that failed to negotiate, handed back for the caller to
+        /// close.
+        egress: E,
         /// The failure, when there was one to report.
         cause: Option<E::Error>,
+    },
+    /// [`PushSession::on_connected`] was called while an egress was already
+    /// connected or pending setup; the session is unchanged and the
+    /// redundant egress is handed back for the caller to close.
+    Redundant {
+        /// The redundant egress.
+        egress: E,
     },
     /// Stop the push permanently; close the egress if one is handed back.
     Stop {
@@ -169,6 +181,48 @@ pub enum PushDecision<E: PushEgress> {
         /// close.
         egress: Option<E>,
     },
+}
+
+impl<E> core::fmt::Debug for PushDecision<E>
+where
+    E: PushEgress + core::fmt::Debug,
+    E::Error: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PushDecision::Continue => f.write_str("Continue"),
+            PushDecision::Renegotiated { carried, proposed } => f
+                .debug_struct("Renegotiated")
+                .field("carried", carried)
+                .field("proposed", proposed)
+                .finish(),
+            PushDecision::RenegotiateRefused { reason } => f
+                .debug_struct("RenegotiateRefused")
+                .field("reason", reason)
+                .finish(),
+            PushDecision::MuxDropped(error) => f.debug_tuple("MuxDropped").field(error).finish(),
+            PushDecision::NeedsSetup => f.write_str("NeedsSetup"),
+            PushDecision::Connected { carried, proposed } => f
+                .debug_struct("Connected")
+                .field("carried", carried)
+                .field("proposed", proposed)
+                .finish(),
+            PushDecision::Reconnect { egress, cause } => f
+                .debug_struct("Reconnect")
+                .field("egress", egress)
+                .field("cause", cause)
+                .finish(),
+            PushDecision::Backoff { egress, cause } => f
+                .debug_struct("Backoff")
+                .field("egress", egress)
+                .field("cause", cause)
+                .finish(),
+            PushDecision::Redundant { egress } => {
+                f.debug_struct("Redundant").field("egress", egress).finish()
+            }
+            PushDecision::Stop { egress } => f.debug_struct("Stop").field("egress", egress).finish(),
+        }
+    }
 }
 
 struct PendingSetup<E> {
@@ -268,7 +322,9 @@ where
     /// A call while an egress is already connected or pending setup is a
     /// caller error (gate on [`is_connected`](Self::is_connected) and
     /// [`pending_setup_mut`](Self::pending_setup_mut)); the redundant egress
-    /// is dropped and the session continues unchanged.
+    /// comes back in [`PushDecision::Redundant`] and the session continues
+    /// unchanged. A failed or refused negotiation hands the egress back in
+    /// [`PushDecision::Backoff`].
     pub fn on_connected(
         &mut self,
         mut egress: E,
@@ -276,7 +332,7 @@ where
         tracks: &[TrackSpec],
     ) -> PushDecision<E> {
         if self.connected.is_some() || self.pending.is_some() {
-            return PushDecision::Continue;
+            return PushDecision::Redundant { egress };
         }
         match egress.negotiate(tracks) {
             NegotiationOutcome::Accepted(selection) => {
@@ -288,8 +344,14 @@ where
                 });
                 PushDecision::NeedsSetup
             }
-            NegotiationOutcome::Error(error) => PushDecision::Backoff { cause: Some(error) },
-            _ => PushDecision::Backoff { cause: None },
+            NegotiationOutcome::Error(error) => PushDecision::Backoff {
+                egress,
+                cause: Some(error),
+            },
+            _ => PushDecision::Backoff {
+                egress,
+                cause: None,
+            },
         }
     }
 
@@ -444,6 +506,7 @@ mod tests {
         Send,
     }
 
+    #[derive(Debug)]
     struct MockEgress {
         id: u8,
         calls: Vec<Call>,
@@ -937,8 +1000,9 @@ mod tests {
 
         match session.on_connected(egress, 7, &tracks) {
             PushDecision::Backoff {
+                egress,
                 cause: Some(MockError::Mux),
-            } => {}
+            } => assert_eq!(egress.id, 4),
             _ => panic!("expected Backoff with the negotiation error"),
         }
         assert!(session.pending_setup_mut().is_none());
@@ -955,7 +1019,10 @@ mod tests {
         });
 
         match session.on_connected(egress, 7, &tracks) {
-            PushDecision::Backoff { cause: None } => {}
+            PushDecision::Backoff {
+                egress,
+                cause: None,
+            } => assert_eq!(egress.id, 4),
             _ => panic!("expected Backoff without an error"),
         }
         assert!(session.pending_setup_mut().is_none());
@@ -1030,15 +1097,18 @@ mod tests {
     }
 
     #[test]
-    fn a_redundant_connected_egress_is_ignored() {
+    fn a_redundant_connected_egress_is_handed_back() {
         let mut session: PushSession<MockEgress> = PushSession::new();
         connect(&mut session, 7);
 
         let tracks = track_list(2);
-        assert!(matches!(
-            session.on_connected(MockEgress::new(2), 8, &tracks),
-            PushDecision::Continue
-        ));
+        match session.on_connected(MockEgress::new(2), 8, &tracks) {
+            PushDecision::Redundant { egress } => {
+                assert_eq!(egress.id, 2);
+                assert!(egress.calls.is_empty());
+            }
+            _ => panic!("expected the redundant egress back"),
+        }
         assert!(session.is_connected());
         assert!(session.pending_setup_mut().is_none());
         assert_eq!(
@@ -1056,6 +1126,41 @@ mod tests {
                 connects: 1,
             }
         );
+    }
+
+    #[test]
+    fn a_redundant_egress_while_setup_is_pending_is_handed_back() {
+        let mut session: PushSession<MockEgress> = PushSession::new();
+        let tracks = track_list(2);
+        assert!(matches!(
+            session.on_connected(MockEgress::new(1), 7, &tracks),
+            PushDecision::NeedsSetup
+        ));
+        match session.on_connected(MockEgress::new(3), 8, &tracks) {
+            PushDecision::Redundant { egress } => assert_eq!(egress.id, 3),
+            _ => panic!("expected the redundant egress back"),
+        }
+        assert_eq!(
+            session
+                .pending_setup_mut()
+                .map(|egress| egress.id)
+                .unwrap_or_default(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_decision_is_debug_printable() {
+        let mut session: PushSession<MockEgress> = PushSession::new();
+        let tracks = track_list(2);
+        let mut egress = MockEgress::new(5);
+        egress
+            .negotiate
+            .push_back(NegotiationOutcome::Error(MockError::Transport));
+        let rendered = format!("{:?}", session.on_connected(egress, 7, &tracks));
+        assert!(rendered.starts_with("Backoff"), "{rendered}");
+        assert!(rendered.contains("id: 5"), "{rendered}");
+        assert!(rendered.contains("Some(Transport)"), "{rendered}");
     }
 
     #[test]
