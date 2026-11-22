@@ -83,3 +83,6 @@ catch-up read planner and the blocking `fs` adapter.
   programme-tracking period, so `EXT-X-PROGRAM-DATE-TIME` and the
   `EXT-X-DATERANGE` line (including the UTF-8 title) are checked by Apple's
   validator and not only by this crate's own parser (#3983).
+- The `dvr_playlist` fuzz target takes its container and period from the
+  first input byte, so the TS branch is reachable, and `fuzz/seed-corpus.py`
+  seeds it with the fMP4 golden and the same period written as TS (#3984).
