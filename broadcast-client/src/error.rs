@@ -305,6 +305,23 @@ mod tests {
             "tls: bad cert"
         );
         assert_eq!(TransportError::Refused.reason(), None);
+        assert_eq!(TransportError::Refused.to_string(), "refused");
+        assert_eq!(TransportError::TimedOut.to_string(), "timed out");
+        assert_eq!(TransportError::Eof.to_string(), "eof");
+        assert_eq!(
+            TransportError::Dns {
+                host: "cam.test".into()
+            }
+            .to_string(),
+            "dns: cam.test"
+        );
+        assert_eq!(
+            TransportError::Other {
+                reason: "boom".into()
+            }
+            .to_string(),
+            "other: boom"
+        );
         assert_eq!(
             TransportError::from("connection reset by peer"),
             TransportError::Other {
