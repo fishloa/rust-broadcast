@@ -141,6 +141,7 @@ name = "broadcast-smooth"
 version = "0.2.1"
 dependencies = [
  "broadcast-common",
+ "thiserror",
 ]
 
 [[package]]

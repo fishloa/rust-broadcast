@@ -54,6 +54,7 @@ dependencies = [
  "jiff",
  "quick-xml",
  "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -81,6 +82,7 @@ name = "broadcast-smooth"
 version = "0.2.1"
 dependencies = [
  "broadcast-common",
+ "thiserror",
 ]
 
 [[package]]
@@ -820,7 +822,6 @@ name = "transmux"
 version = "0.32.1"
 dependencies = [
  "aes",
- "base64 0.23.1",
  "broadcast-common",
  "broadcast-dash",
  "broadcast-hls",
@@ -830,7 +831,6 @@ dependencies = [
  "cc-data",
  "ctr",
  "dvb-si",
- "hex",
  "jiff",
  "memchr",
  "mp4-emsg",
