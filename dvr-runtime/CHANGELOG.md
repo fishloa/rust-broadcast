@@ -101,3 +101,6 @@ catch-up read planner and the blocking `fs` adapter.
 - The test suite's scratch directories live under `CARGO_TARGET_DIR` when it
   is set, so a run with a separate target directory writes nothing into the
   worktree's `target/` (#4040).
+- `docs/dvr-runtime/DESIGN.md` is the shipped design: the crates it depends on, the `fs` signatures (fallible
+  scans, `Option` floor, the `.lock` file), the writer's local amendments and the removals are the ones in this
+  release (#4037).
