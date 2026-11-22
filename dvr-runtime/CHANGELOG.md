@@ -54,7 +54,8 @@ catch-up read planner and the blocking `fs` adapter.
   so a restarted route never numbers over an archive it could not list
   (#3979). Period playlists are read at most `MAX_PLAYLIST_BYTES + 1` bytes
   (#4032). A failed store operation surfaces the OS error it saw as the
-  `FsError::Io` source, with its errno intact (#4033).
+  `FsError::Io` source, with its errno intact (#4033), and a lock-file open or
+  lock failure names the new `StoreOpKind::Lock` instead of `List` (#4034).
 - `FsRecorder::with_cursor`: create a recorder from a pinning cursor the host
   took earlier, keeping the cursor when the create is refused (for example
   `FsError::Locked` while the previous recorder of the archive still holds

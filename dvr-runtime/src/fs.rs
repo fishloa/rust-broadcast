@@ -219,14 +219,14 @@ impl FsRecorder {
             .truncate(false)
             .write(true)
             .open(&lock_path)
-            .map_err(|e| io_error(lock_path.clone(), crate::writer::StoreOpKind::List, e))?;
+            .map_err(|e| io_error(lock_path.clone(), crate::writer::StoreOpKind::Lock, e))?;
         match lock.try_lock() {
             Ok(()) => {}
             Err(fs::TryLockError::WouldBlock) => {
                 return Err(FsError::Locked { path: lock_path });
             }
             Err(fs::TryLockError::Error(e)) => {
-                return Err(io_error(lock_path, crate::writer::StoreOpKind::List, e));
+                return Err(io_error(lock_path, crate::writer::StoreOpKind::Lock, e));
             }
         }
         Ok(lock)

@@ -281,7 +281,7 @@ fn a_non_not_found_listing_error_is_surfaced() {
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
     std::fs::set_permissions(&dir, perms).expect("restore");
     match result {
-        Err(FsError::Io { .. }) => {}
+        Err(FsError::Io { op, .. }) => assert_eq!(op, dvr_runtime::writer::StoreOpKind::Lock),
         Err(other) => panic!("expected an I/O error, got {other}"),
         Ok(_) => panic!("a 000 directory must not read as an empty archive"),
     }

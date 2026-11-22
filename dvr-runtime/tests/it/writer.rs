@@ -6,7 +6,7 @@ use broadcast_common::Timestamp;
 use bytes::Bytes;
 use dvb_si::epg::PresentEventTracker;
 use dvr_runtime::writer::{
-    InitGeneration, PlanOutcome, RollReason, Step, StoreFailure, StoreOp, WriterEvent,
+    InitGeneration, PlanOutcome, RollReason, Step, StoreFailure, StoreOp, StoreOpKind, WriterEvent,
 };
 use dvr_runtime::{ArchiveContainer, ArchiveError, ArchiveWriter, PeriodNum};
 use media_plane::ids::SegmentSeq;
@@ -815,4 +815,5 @@ fn roll_reasons_have_stable_labels() {
     assert_eq!(RollReason::PlaylistFull.to_string(), "playlist_full");
     assert_eq!(ArchiveContainer::Fmp4.name(), "FMP4");
     assert_eq!(ArchiveContainer::Ts.to_string(), "TS");
+    assert_eq!(StoreOpKind::Lock.name(), "lock");
 }

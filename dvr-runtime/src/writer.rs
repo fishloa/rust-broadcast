@@ -200,6 +200,8 @@ pub enum StoreOpKind {
     Remove,
     /// Listing the archive directory while seeding.
     List,
+    /// Opening or locking the archive directory's lock file.
+    Lock,
 }
 
 impl StoreOpKind {
@@ -215,6 +217,7 @@ impl StoreOpKind {
             Self::AppendPlaylist => "append_playlist",
             Self::Remove => "remove",
             Self::List => "list",
+            Self::Lock => "lock",
         }
     }
 }
