@@ -1,7 +1,13 @@
 # Changelog
 
 ## [Unreleased]
-- **Fixed: a PMT version change no longer carries the replaced PMT's PIDs into a service extract.** The keep-set rebuild treated every non-PSI PID as an EMM PID learned from the CAT, so the old elementary-stream, PCR and ECM PIDs stayed in the keep-set and a replaced stream leaked into the extracted service; the PMT's own PIDs are now tracked separately, so only the CAT-learned EMM PIDs survive the change.
+
+### Fixed
+
+- **A PMT version change no longer carries the replaced PMT's PIDs into a service extract.** The keep-set rebuild treated every non-PSI PID as an EMM PID learned from the CAT, so the old elementary-stream, PCR and ECM PIDs stayed in the keep-set and a replaced stream leaked into the extracted service; the PMT's own PIDs are now tracked separately, so only the CAT-learned EMM PIDs survive the change.
+
+### Tests
+
 - **The service-extract keep-set is pinned from every side.** A clear (non-CA) service now proves it carries neither the CAT nor a CAT-advertised EMM PID, while a CA-signalling PMT keeps the CAT even with an empty CAT; no packet but the PAT may lead the output before the PAT is parsed; and a CAT version change is parsed (a new EMM PID is kept only after it) while a repeat is ignored (audit 23 findings 133-136, #3455/#3456/#3457/#3458).
 - **PSI regeneration is pinned at the pointer_field, the flush chain and the unknown-`transport_stream_id` fallback.** A PMT discovered behind a non-zero `pointer_field` is now proven to be classified by its own `table_id`, a flushed PAT is proven to pass through every later op exactly once (three ops), and a program-less PAT with an unknown `transport_stream_id` is proven never to be emitted (audit 23 findings 137-139, #3459/#3460/#3453).
 - **The null-packet mask, the inserted-null continuity counters, the interpolated duplicate PCR and the CLI resync diagnostic are pinned.** PIDs 0x00FF/0x01FF are no longer a plausible null packet, inserted nulls now assert the 0-15 wrap, an Interpolate restart from a duplicated PCR is asserted to extrapolate, and the "input resynchronised" line is asserted present only when bytes were dropped (audit 23 findings 130/132/140/141, #3452/#3454/#3461/#3462).
