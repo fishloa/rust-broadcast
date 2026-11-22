@@ -51,7 +51,7 @@ const STANDARD_TAGS: &[&str] = &[
 ];
 
 fn is_standard_tag(name: &str) -> bool {
-    STANDARD_TAGS.contains(&name) || name.starts_with("EXT-X-CUE-")
+    STANDARD_TAGS.contains(&name)
 }
 
 /// A vendor tag name: `EXT-` followed by at least one name character from the

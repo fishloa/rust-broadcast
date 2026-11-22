@@ -1162,3 +1162,15 @@ fn open_tag_is_built_through_new() {
     assert_eq!(tag.pre_tag_index, 2);
     assert_eq!(tag.parts_before, 1);
 }
+
+/// No RFC 8216bis tag starts `EXT-X-CUE-`: the SCTE/Adobe cue tags are vendor
+/// tags this crate keeps verbatim, so a `CustomTag` may build one.
+#[test]
+fn cue_tags_are_vendor_tags() {
+    use broadcast_hls::{CustomTag, CustomTagName};
+
+    CustomTagName::new("EXT-X-CUE-OUT").expect("EXT-X-CUE-OUT is not an RFC 8216bis tag");
+    let line = "#EXT-X-CUE-OUT:DURATION=30";
+    let tag = CustomTag::parse_tag_line(line).expect("parse");
+    assert_eq!(tag.to_tag_line().expect("render"), line);
+}
