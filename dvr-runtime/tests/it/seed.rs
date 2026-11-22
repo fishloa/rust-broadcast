@@ -36,6 +36,34 @@ fn init() -> Bytes {
     Bytes::from(vec![0x49u8; 812])
 }
 
+/// Open a recorder on a directory a previous run used, retrying a `Locked`
+/// refusal for a bounded window: a released lock file can still be shared for
+/// a moment by a process the host spawned (`FsRecorder::succeed` documents
+/// the same window), so a host that restarts a route retries rather than
+/// failing. `Locked` stays an error past the window.
+fn recorder_of(
+    root: &std::path::Path,
+    name: &str,
+    config: ArchiveConfig,
+    trunk: &Arc<Trunk>,
+) -> FsRecorder {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match FsRecorder::new(
+            root,
+            ArchiveName::new(name).expect("name"),
+            config.clone(),
+            trunk,
+        ) {
+            Ok(recorder) => return recorder,
+            Err(FsError::Locked { .. }) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(other) => panic!("recorder: {other}"),
+        }
+    }
+}
+
 fn record_run(
     root: &std::path::Path,
     name: &str,
@@ -46,8 +74,7 @@ fn record_run(
     let trunk = trunk();
     let writer = trunk.segment_writer().expect("writer");
     let config = config(ArchiveContainer::Fmp4, 2, retention).with_seq_offset(offset);
-    let mut recorder = FsRecorder::new(root, ArchiveName::new(name).expect("name"), config, &trunk)
-        .expect("recorder");
+    let mut recorder = recorder_of(root, name, config, &trunk);
     recorder
         .poll(
             Timestamp::ZERO,
@@ -608,8 +635,10 @@ fn a_second_recorder_on_one_directory_is_refused() {
 #[test]
 fn dropping_the_recorder_releases_the_lock() {
     let root = temp_dir("lock-release");
-    drop(recorder_for(&root, "route").expect("first"));
-    drop(recorder_for(&root, "route").expect("second after drop"));
+    let config = config(ArchiveContainer::Fmp4, 2, periods(10));
+    let trunk = trunk();
+    drop(recorder_of(&root, "route", config.clone(), &trunk));
+    drop(recorder_of(&root, "route", config, &trunk));
     cleanup(&root);
 }
 
