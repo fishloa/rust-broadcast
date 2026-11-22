@@ -91,7 +91,7 @@ Header parse and the container box only; no encode or decode.
 | `serde` | no | `Serialize` on box types and IR types. |
 | `cenc` | yes | CENC and CBCS crypto (`aes`, `ctr`, `cbc`, with `zeroize` and constant-time key compare). DRM signalling does not need it. |
 | `sample-aes` | no | HLS Sample-AES and whole-segment AES-128; implies `cenc`. |
-| `misb` | no | Typed MISB ST 0601 values: `LocalSetItem::st0601_value` decodes an item to `St0601Value` (scaled `Number`, `Unsigned`, `Signed`, `Text`, `Time(jiff::Timestamp)`, `Nested`, `Bytes`) using the external `misb` crate's ST 0601 tag table; pulls in `jiff`. |
+| `misb` | no | Typed MISB ST 0601 values: `LocalSetItem::st0601_value` decodes an item to `St0601Value` (scaled `Number`, `Unsigned`, `Signed`, `Text`, `Time(jiff::Timestamp)`, `Nested` with its `NestedSet`, `Bytes`, or `OutOfRange`/`Invalid` when the tag cannot be decoded) using the external `misb` crate's ST 0601 tag table; pulls in `jiff`. |
 | `cli` | no | The `transmux` binary (`clap`, `container-probe`; implies `std`). |
 
 `serde` is opt-in and off by default; enable it explicitly:
