@@ -29,7 +29,7 @@ Typical users: IP-camera ingest (`multimux`'s RTSP input), RTSP push to a media 
 | IETF RFC 7617 / RFC 7616 / RFC 6750 (Basic, Digest, Bearer) | not vendored, unverified here | Client side via `broadcast-auth` | Full | Server side has no authentication |
 | IETF RFC 8866 (SDP) | RFC 8866 (vendored) | Bodies carried opaque | Typed-opaque | Parse with `sdp-types` |
 | IETF RFC 3550 (RTP/RTCP) | RFC 3550 | Interleaved payload is carried as bytes | Typed-opaque | Decode with `rtp-packet` (`rtp_packet::rtcp` for RTCP) |
-| `rtsps://` (RTSP over TLS, default port 322) | n/a | Client `connect_tls`, server `accept_tls` | Full, behind `tls` | `webpki-roots` trust by default or a custom `rustls::ClientConfig` |
+| `rtsps://` (RTSP over TLS, default port 322) | n/a | Client `connect_tls`, server `accept_tls` | Full, behind `tls` | the OS trust store (`rustls-platform-verifier`, ring provider) by default or a custom `rustls::ClientConfig` |
 
 | Method | Client builds | Server session handles | State effect |
 |---|---|---|---|
