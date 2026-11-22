@@ -1,4 +1,6 @@
-//! Typed `#EXT-X-DATERANGE` (RFC 8216bis §4.4.5.1).
+//! Typed `#EXT-X-DATERANGE` (RFC 8216bis §4.4.5.1,
+//! `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`; full text
+//! `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`).
 //!
 //! The playlist parser keeps a DATERANGE verbatim in
 //! [`crate::MediaSegment::pre_tags`] (it is segment-scoped and applies until

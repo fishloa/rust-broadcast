@@ -1007,8 +1007,11 @@ pub enum PresentEventChange {
 /// boundary.
 ///
 /// Only present/following **actual** sections (`table_id` `0x4E`) carrying
-/// the tracked `service_id` are considered. The present event is the one with
-/// `running_status == Running` (EN 300 468 Table 6), identified by that field
+/// the tracked `service_id` are considered (EN 300 468 §5.2.4,
+/// `private/specs-verified/dvb/dvb-si/tables/en_300_468/7-event-information-section.md`).
+/// The present event is the one with `running_status == Running`
+/// (EN 300 468 Table 6,
+/// `private/specs-verified/dvb/dvb-si/enums/en_300_468/running_status.md`), identified by that field
 /// rather than by position in the event loop. A section naming the same
 /// `event_id` again changes nothing — neither a repeated section nor a
 /// re-versioned copy of the same event is a programme boundary.

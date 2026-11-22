@@ -1,4 +1,6 @@
-//! A vendor tag built and read by broadcast-hls (RFC 8216bis §4.1, §6.3.1).
+//! A vendor tag built and read by broadcast-hls (RFC 8216bis §4.1, §4.2:
+//! `private/specs-verified/hls/ietf/rfc8216bis-playlists.md`; §6.3.1:
+//! `private/specs-verified/hls/ietf/rfc8216bis-client-requirements.md`).
 //!
 //! RFC 8216bis defines no registry for vendor tags. It requires every line
 //! beginning `#EXT` to be a tag and requires clients to ignore tags they do

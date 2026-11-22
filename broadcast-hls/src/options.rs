@@ -5,7 +5,8 @@
 //! before the first segment. A vendor tag that describes one segment instead
 //! (the DVR archive's per-segment timing tag) has to stay in that segment's
 //! position — RFC 8216bis §4.4.1 makes a tag's position relative to segments
-//! load-bearing — so the caller names it here and parsing attaches it to the
+//! load-bearing, `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`
+//! — so the caller names it here and parsing attaches it to the
 //! following segment's [`crate::MediaSegment::pre_tags`].
 
 use alloc::vec::Vec;
