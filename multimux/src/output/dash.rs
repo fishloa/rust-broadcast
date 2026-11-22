@@ -1193,6 +1193,14 @@ mod tests {
     }
 
     #[test]
+    fn iso8601_and_publish_time_wire_strings_are_pinned() {
+        let origin = UNIX_EPOCH + Duration::new(1_700_000_000, 900_000_000);
+        assert_eq!(format_iso8601(origin), "2023-11-14T22:13:20Z");
+        assert_eq!(format_iso8601(UNIX_EPOCH), "1970-01-01T00:00:00Z");
+        assert_eq!(publish_time(origin, &[]), "2023-11-14T22:13:20Z");
+    }
+
+    #[test]
     fn format_iso8601_renders_utc_z_suffix() {
         let t = UNIX_EPOCH + Duration::from_secs(0);
         assert_eq!(format_iso8601(t), "1970-01-01T00:00:00Z");
