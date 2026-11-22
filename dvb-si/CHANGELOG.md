@@ -10,6 +10,7 @@
 ### Changed
 
 - Internal: the H.222 descriptor bit writer is an adapter over `broadcast_common::bits::BitBuf` instead of its own bit cursor; output bytes and errors are unchanged (#3961).
+- README names `epg::PresentEventTracker` in the task recipes and in the `jiff` feature row (#4014).
 
 ### Added
 
