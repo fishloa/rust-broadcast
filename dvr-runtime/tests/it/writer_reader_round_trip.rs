@@ -395,3 +395,37 @@ fn a_persistently_failing_item_becomes_a_counted_gap() {
         .expect("nothing left");
     cleanup(&root);
 }
+
+#[test]
+fn a_store_failure_keeps_the_os_error_it_saw() {
+    let root = temp_dir("io-source");
+    let trunk = trunk();
+    let mut config = config(ArchiveContainer::Ts, 2, periods(10));
+    config.period_duration = Some(Duration::from_secs(86400));
+    let mut recorder = recorder(&root, "src", config, &trunk);
+    std::fs::create_dir_all(root.join("src")).expect("archive directory");
+    set_readonly(&root.join("src"), true);
+    publish(
+        &trunk.segment_writer().expect("writer"),
+        0,
+        100,
+        0x47,
+        0,
+        false,
+    );
+    let error = recorder
+        .poll(Timestamp::ZERO, |_| None, &[])
+        .expect_err("the blocked create fails");
+    set_readonly(&root.join("src"), false);
+    match error {
+        dvr_runtime::fs::FsError::Io { source, .. } => {
+            assert!(
+                source.raw_os_error().is_some(),
+                "the OS error is carried, not rebuilt from its kind: {source:?}"
+            );
+            assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+        }
+        other => panic!("expected an I/O error, got {other:?}"),
+    }
+    cleanup(&root);
+}

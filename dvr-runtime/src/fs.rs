@@ -480,15 +480,18 @@ impl FsRecorder {
         let mut outcome = PlanOutcome::Done;
         let mut error = None;
         for (at_op, op) in plan.ops.iter().enumerate() {
-            if let Err(failure) = store_op(&self.dir, self.container, op) {
-                if let StoreFailure::Io(kind) | StoreFailure::NotDurable(kind) = failure {
+            if let Err(failed) = store_op(&self.dir, self.container, op) {
+                if let Some(source) = failed.source {
                     error = Some(io_error(
                         path_of(&self.dir, op, self.container),
                         op.kind(),
-                        std::io::Error::from(kind),
+                        source,
                     ));
                 }
-                outcome = PlanOutcome::Failed { at_op, failure };
+                outcome = PlanOutcome::Failed {
+                    at_op,
+                    failure: failed.failure,
+                };
                 break;
             }
         }
@@ -504,9 +507,40 @@ impl FsRecorder {
     }
 }
 
-fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(), StoreFailure> {
+/// A failed store operation: the typed failure the writer records, plus the
+/// OS error it came from (which `StoreFailure` keeps only as a kind).
+#[derive(Debug)]
+struct StoreOpFailure {
+    failure: StoreFailure,
+    source: Option<std::io::Error>,
+}
+
+impl StoreOpFailure {
+    fn io(error: std::io::Error) -> Self {
+        Self {
+            failure: StoreFailure::Io(error.kind()),
+            source: Some(error),
+        }
+    }
+
+    fn not_durable(error: std::io::Error) -> Self {
+        Self {
+            failure: StoreFailure::NotDurable(error.kind()),
+            source: Some(error),
+        }
+    }
+
+    fn bare(failure: StoreFailure) -> Self {
+        Self {
+            failure,
+            source: None,
+        }
+    }
+}
+
+fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(), StoreOpFailure> {
     match op {
-        StoreOp::CreateDir => fs::create_dir_all(dir).map_err(|e| StoreFailure::Io(e.kind())),
+        StoreOp::CreateDir => fs::create_dir_all(dir).map_err(StoreOpFailure::io),
         StoreOp::CreateData { period } => {
             let path = dir.join(layout::media_file_name(*period, container));
             OpenOptions::new()
@@ -514,7 +548,7 @@ fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(),
                 .create_new(true)
                 .open(path)
                 .map(|_| ())
-                .map_err(|e| StoreFailure::Io(e.kind()))
+                .map_err(StoreOpFailure::io)
         }
         StoreOp::AppendData {
             period,
@@ -529,8 +563,11 @@ fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(),
             sync_file(&media)?;
             let playlist = dir.join(layout::playlist_file_name(*period));
             match sync_file(&playlist) {
-                Err(StoreFailure::Io(std::io::ErrorKind::NotFound)) | Ok(()) => Ok(()),
-                Err(failure) => Err(failure),
+                Ok(()) => Ok(()),
+                Err(failed) if failed.failure == StoreFailure::Io(std::io::ErrorKind::NotFound) => {
+                    Ok(())
+                }
+                Err(failed) => Err(failed),
             }
         }
         StoreOp::CreatePlaylist { period, text } => {
@@ -545,10 +582,10 @@ fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(),
                 file.sync_all()?;
                 fs::rename(&tmp, &path)
             };
-            write().map_err(|e| StoreFailure::Io(e.kind()))?;
+            write().map_err(StoreOpFailure::io)?;
             File::open(dir)
                 .and_then(|handle| handle.sync_all())
-                .map_err(|e| StoreFailure::NotDurable(e.kind()))
+                .map_err(StoreOpFailure::not_durable)
         }
         StoreOp::AppendPlaylist {
             period,
@@ -563,45 +600,43 @@ fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(),
             match fs::remove_file(path) {
                 Ok(()) => Ok(()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(StoreFailure::Io(e.kind())),
+                Err(e) => Err(StoreOpFailure::io(e)),
             }
         }
     }
 }
 
-fn sync_file(path: &Path) -> Result<(), StoreFailure> {
+fn sync_file(path: &Path) -> Result<(), StoreOpFailure> {
     OpenOptions::new()
         .append(true)
         .open(path)
         .and_then(|file| file.sync_data())
-        .map_err(|e| StoreFailure::Io(e.kind()))
+        .map_err(StoreOpFailure::io)
 }
 
-fn append_at(path: &Path, expect_len: u64, bytes: &[u8]) -> Result<(), StoreFailure> {
+fn append_at(path: &Path, expect_len: u64, bytes: &[u8]) -> Result<(), StoreOpFailure> {
     let mut file = OpenOptions::new()
         .write(true)
         .open(path)
-        .map_err(|e| StoreFailure::Io(e.kind()))?;
-    let actual = file
-        .metadata()
-        .map_err(|e| StoreFailure::Io(e.kind()))?
-        .len();
+        .map_err(StoreOpFailure::io)?;
+    let actual = file.metadata().map_err(StoreOpFailure::io)?.len();
     if actual != expect_len {
         let settled = if actual > expect_len {
-            file.set_len(expect_len)
-                .map_err(|e| StoreFailure::Io(e.kind()))?;
+            file.set_len(expect_len).map_err(StoreOpFailure::io)?;
             expect_len
         } else {
             actual
         };
-        return Err(StoreFailure::LengthMismatch { actual: settled });
+        return Err(StoreOpFailure::bare(StoreFailure::LengthMismatch {
+            actual: settled,
+        }));
     }
     let result = file
         .seek(SeekFrom::End(0))
         .and_then(|_| file.write_all(bytes));
     if let Err(e) = result {
         let _ = file.set_len(expect_len);
-        return Err(StoreFailure::Io(e.kind()));
+        return Err(StoreOpFailure::io(e));
     }
     Ok(())
 }
@@ -945,7 +980,7 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
-            result,
+            result.map_err(|failed| failed.failure),
             Err(StoreFailure::Io(std::io::ErrorKind::PermissionDenied))
         );
     }
@@ -968,7 +1003,7 @@ mod tests {
             },
         );
         let _ = fs::remove_dir_all(&dir);
-        assert_eq!(result, Ok(()));
+        assert_eq!(result.map_err(|failed| failed.failure), Ok(()));
     }
 
     fn archive(tag: &str) -> FsArchive {
