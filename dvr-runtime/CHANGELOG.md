@@ -98,3 +98,6 @@ catch-up read planner and the blocking `fs` adapter.
 - The `dvr_playlist` fuzz target takes its container and period from the
   first input byte, so the TS branch is reachable, and `fuzz/seed-corpus.py`
   seeds it with the fMP4 golden and the same period written as TS (#3984).
+- The test suite's scratch directories live under `CARGO_TARGET_DIR` when it
+  is set, so a run with a separate target directory writes nothing into the
+  worktree's `target/` (#4040).
