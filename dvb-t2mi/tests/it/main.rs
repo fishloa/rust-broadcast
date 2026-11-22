@@ -12,3 +12,4 @@ mod pump_raw_resync;
 mod real_capture;
 mod serde_round_trip;
 mod spec_drift;
+mod wire_enum_conversions;

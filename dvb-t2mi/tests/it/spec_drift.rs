@@ -49,7 +49,7 @@ fn packet_type_toml_matches_enum() {
     let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
-    // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
+    // byte sweep: TryFrom — skip bytes that don't map to a variant
     let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();
     for b in 0u8..=255 {
         if let Ok(pt) = PacketType::try_from(b) {
@@ -83,7 +83,7 @@ fn addressing_function_tag_toml_matches_enum() {
     let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
-    // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
+    // byte sweep: TryFrom — skip bytes that don't map to a variant
     let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();
     for b in 0u8..=255 {
         if let Ok(tag) = AddressingFunctionTag::try_from(b) {
@@ -117,7 +117,7 @@ fn bandwidth_toml_matches_enum() {
     let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
-    // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
+    // byte sweep: TryFrom — skip bytes that don't map to a variant
     let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();
     for b in 0u8..=255 {
         if let Ok(bw) = Bandwidth::try_from(b) {
@@ -151,7 +151,7 @@ fn frequency_source_toml_matches_enum() {
     let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
-    // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
+    // byte sweep: TryFrom — skip bytes that don't map to a variant
     let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();
     for b in 0u8..=255 {
         if let Ok(fs) = FrequencySource::try_from(b) {
@@ -185,7 +185,7 @@ fn s1_field_toml_matches_enum() {
     let toml = toml.as_str();
     let toml_set = toml_set_u8(toml);
 
-    // byte sweep: S1Field is exhaustive over 3-bit domain; TryFromPrimitive
+    // byte sweep: S1Field is exhaustive over 3-bit domain; TryFrom
     // accepts 0..=7, rejects 8..=255
     let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();
     for b in 0u8..=255 {
@@ -221,7 +221,7 @@ fn subpart_variety_toml_matches_enum() {
     let toml_set = toml_set_u16(toml);
 
     // u16 sweep over 0..=255 (all defined values fit in this range);
-    // SubpartVariety is TryFromPrimitive on u16; values 4..=0xFFFF return Err.
+    // SubpartVariety is TryFrom on u16; values 4..=0xFFFF return Err.
     let mut code_set: BTreeSet<(u16, String)> = BTreeSet::new();
     for b in 0u16..=255 {
         if let Ok(sv) = SubpartVariety::try_from(b) {

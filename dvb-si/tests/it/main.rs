@@ -58,4 +58,5 @@ mod truncation_no_panic;
 mod tsduck_decompile_oracle;
 mod tsduck_interop;
 mod typed_pid;
+mod wire_enum_conversions;
 mod yoke;

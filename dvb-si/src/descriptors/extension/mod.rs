@@ -18,7 +18,7 @@
 //! [`ExtensionBody::Raw`] fall-through. [`ExtensionTag`] names the known
 //! discriminant constants but is deliberately NOT used as the stored field type
 //! — unknown tags must survive a parse→serialize round-trip, which a
-//! `TryFromPrimitive` enum could not guarantee.
+//! closed `TryFrom<u8>` enum could not guarantee.
 //!
 //! # Typed vs. raw bodies
 //!

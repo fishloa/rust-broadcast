@@ -11,41 +11,31 @@
 use broadcast_common::len::need_out;
 use core::fmt;
 
-use num_enum::TryFromPrimitive;
+use crate::wire_enum::wire_enum;
 
 use broadcast_common::{Parse, Serialize};
 
-/// Sub-part variety per §5.2.12 Table 13.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u16)]
-#[non_exhaustive]
-pub enum SubpartVariety {
-    /// Null — `reserved_for_future_use(32)` = 0.
-    Null = 0x0000,
-    /// IQ — `reserved_for_future_use(32)` + `iq_data`.
-    Iq = 0x0001,
-    /// PRBS — `prbs_type(8)` + `reserved_for_future_use(96)`.
-    Prbs = 0x0002,
-    /// TX-SIG FEF — `reserved_for_future_use(32)`.
-    TxSigFef = 0x0003,
-}
-
-impl From<SubpartVariety> for u16 {
-    fn from(sv: SubpartVariety) -> Self {
-        sv as u16
-    }
-}
-
-impl From<num_enum::TryFromPrimitiveError<SubpartVariety>> for crate::error::Error {
-    fn from(e: num_enum::TryFromPrimitiveError<SubpartVariety>) -> Self {
-        // subpart_variety is a 16-bit field — casting the offending value to u8
-        // would truncate it, and InvalidPacketType is the wrong category anyway.
-        crate::error::Error::InvalidValue(broadcast_common::error::InvalidValue {
+wire_enum! {
+    /// Sub-part variety per §5.2.12 Table 13.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum SubpartVariety: u16, invalid(value) => crate::error::Error::InvalidValue(
+        broadcast_common::error::InvalidValue {
             field: "subpart_variety",
-            value: u64::from(e.number),
+            value: u64::from(value),
             reason: "must be 0x0000..=0x0003 (Table 13)",
-        })
+        },
+    ),
+    {
+        /// Null — `reserved_for_future_use(32)` = 0.
+        Null = 0x0000,
+        /// IQ — `reserved_for_future_use(32)` + `iq_data`.
+        Iq = 0x0001,
+        /// PRBS — `prbs_type(8)` + `reserved_for_future_use(96)`.
+        Prbs = 0x0002,
+        /// TX-SIG FEF — `reserved_for_future_use(32)`.
+        TxSigFef = 0x0003,
     }
 }
 
@@ -63,19 +53,21 @@ impl SubpartVariety {
 }
 broadcast_common::impl_spec_display!(SubpartVariety);
 
-/// PRBS type for SubpartVariety::Prbs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
-#[non_exhaustive]
-pub enum PrbsType {
-    /// User-defined test/measurement.
-    UserDefined = 0x00,
-}
-
-impl From<PrbsType> for u8 {
-    fn from(pt: PrbsType) -> Self {
-        pt as u8
+wire_enum! {
+    /// PRBS type for SubpartVariety::Prbs.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum PrbsType: u8, invalid(value) => crate::error::Error::InvalidValue(
+        broadcast_common::error::InvalidValue {
+            field: "prbs_type",
+            value: u64::from(value),
+            reason: "must be 0x00 (user-defined, §5.2.12)",
+        },
+    ),
+    {
+        /// User-defined test/measurement.
+        UserDefined = 0x00,
     }
 }
 
@@ -391,11 +383,26 @@ mod tests {
 
     #[test]
     fn subpart_variety_try_from_reserved() {
-        assert_eq!((SubpartVariety::try_from(0x0004)).unwrap_err().number, 4);
-        assert_eq!(
-            (SubpartVariety::try_from(0xFFFF)).unwrap_err().number,
-            65535
-        );
+        assert!(matches!(
+            SubpartVariety::try_from(0x0004),
+            Err(crate::error::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "subpart_variety",
+                    value: 4,
+                    ..
+                }
+            ))
+        ));
+        assert!(matches!(
+            SubpartVariety::try_from(0xFFFF),
+            Err(crate::error::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "subpart_variety",
+                    value: 65535,
+                    ..
+                }
+            ))
+        ));
     }
 
     #[test]

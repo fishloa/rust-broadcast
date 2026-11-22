@@ -5,11 +5,11 @@
 
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
-use num_enum::TryFromPrimitive;
 
 use crate::crc::crc8;
 use crate::error::Error;
 use crate::issy::{Issy, decode_issy_long, decode_issy_short};
+use crate::wire_enum::wire_enum;
 
 /// Total bytes in a BBHEADER.
 pub const BBHEADER_LEN: usize = 10;
@@ -21,31 +21,21 @@ pub const BBHEADER_LEN: usize = 10;
 /// S2/S2X/T2 frame.
 pub const DFL_MAX_BITS: u16 = 64800;
 
-/// Input stream format as described by the TS/GS field (MATYPE-1 bits `[7:6]`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
-#[non_exhaustive]
-pub enum TsGs {
-    /// Generic Packetized Stream.
-    Gfps = 0b00,
-    /// Transport Stream (MPEG-2 TS, 188-byte packets).
-    Ts = 0b11,
-    /// Generic Continuous Stream.
-    Gcs = 0b01,
-    /// Generic Encapsulated Stream.
-    Gse = 0b10,
-}
-
-impl From<TsGs> for u8 {
-    fn from(t: TsGs) -> Self {
-        t as u8
-    }
-}
-
-impl From<num_enum::TryFromPrimitiveError<TsGs>> for Error {
-    fn from(e: num_enum::TryFromPrimitiveError<TsGs>) -> Self {
-        Error::UnsupportedTsGs { ts_gs: e.number }
+wire_enum! {
+    /// Input stream format as described by the TS/GS field (MATYPE-1 bits `[7:6]`).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum TsGs: u8, invalid(ts_gs) => Error::UnsupportedTsGs { ts_gs },
+    {
+        /// Generic Packetized Stream.
+        Gfps = 0b00,
+        /// Transport Stream (MPEG-2 TS, 188-byte packets).
+        Ts = 0b11,
+        /// Generic Continuous Stream.
+        Gcs = 0b01,
+        /// Generic Encapsulated Stream.
+        Gse = 0b10,
     }
 }
 
@@ -64,21 +54,17 @@ impl TsGs {
 
 broadcast_common::impl_spec_display!(TsGs);
 
-/// Operating mode: Normal or High Efficiency.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
-#[non_exhaustive]
-pub enum Mode {
-    /// Normal Mode — UPL/SYNC/SYNCD present, CRC-8 per UP.
-    Normal = 0,
-    /// High Efficiency Mode — ISSY replaces UPL/SYNC, no per-UP CRC-8.
-    HighEfficiency = 1,
-}
-
-impl From<num_enum::TryFromPrimitiveError<Mode>> for Error {
-    fn from(e: num_enum::TryFromPrimitiveError<Mode>) -> Self {
-        Error::InvalidMode { mode: e.number }
+wire_enum! {
+    /// Operating mode: Normal or High Efficiency.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum Mode: u8, invalid(mode) => Error::InvalidMode { mode },
+    {
+        /// Normal Mode — UPL/SYNC/SYNCD present, CRC-8 per UP.
+        Normal = 0,
+        /// High Efficiency Mode — ISSY replaces UPL/SYNC, no per-UP CRC-8.
+        HighEfficiency = 1,
     }
 }
 
@@ -471,6 +457,29 @@ impl Bbheader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ts_gs_try_from_round_trips_every_value() {
+        for (byte, v) in [
+            (0b00u8, TsGs::Gfps),
+            (0b01, TsGs::Gcs),
+            (0b10, TsGs::Gse),
+            (0b11, TsGs::Ts),
+        ] {
+            assert_eq!(TsGs::try_from(byte), Ok(v));
+            assert_eq!(u8::from(v), byte);
+        }
+        assert_eq!(TsGs::try_from(4), Err(Error::UnsupportedTsGs { ts_gs: 4 }));
+    }
+
+    #[test]
+    fn mode_try_from_round_trips_every_value() {
+        for (byte, v) in [(0u8, Mode::Normal), (1, Mode::HighEfficiency)] {
+            assert_eq!(Mode::try_from(byte), Ok(v));
+            assert_eq!(u8::from(v), byte);
+        }
+        assert_eq!(Mode::try_from(2), Err(Error::InvalidMode { mode: 2 }));
+    }
 
     #[test]
     fn roll_off_decodes_and_encodes_the_two_ext_bits() {
