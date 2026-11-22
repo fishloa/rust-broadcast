@@ -32,7 +32,7 @@ pub struct TsUdpRoute {
     /// the live address, and hands the socket in, so `bind` uses it directly
     /// and never races reserve-then-rebind. `None` (the production shape)
     /// makes `bind` bind `addr` itself.
-    prebound: std::sync::Arc<std::sync::Mutex<Option<UdpSocket>>>,
+    prebound: std::sync::Arc<parking_lot::Mutex<Option<UdpSocket>>>,
 }
 
 impl std::fmt::Debug for TsUdpRoute {
@@ -53,7 +53,7 @@ impl TsUdpRoute {
             addr: addr.into(),
             socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
-            prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            prebound: std::sync::Arc::new(parking_lot::Mutex::new(None)),
         }
     }
 
@@ -76,7 +76,7 @@ impl TsUdpRoute {
             addr,
             socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
-            prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
+            prebound: std::sync::Arc::new(parking_lot::Mutex::new(Some(socket))),
         }
     }
 
@@ -321,18 +321,6 @@ mod tests {
             ),
             "got {error:?}"
         );
-    }
-
-    #[test]
-    fn a_poisoned_prebound_lock_does_not_panic() {
-        let route = TsUdpRoute::new("cam-ts", "127.0.0.1:0");
-        let prebound = std::sync::Arc::clone(&route.prebound);
-        let _ = std::thread::spawn(move || {
-            let _guard = prebound.lock().expect("lock");
-            panic!("poison the prebound lock");
-        })
-        .join();
-        assert!(route.take_prebound().is_none());
     }
 
     #[test]

@@ -364,7 +364,6 @@ async fn admin_added_route_starts_its_whep_listener() {
         prebound_observer
             .tcp
             .lock()
-            .expect("prebound tcp lock")
             .contains_key(&whep_addr.to_string()),
         "nothing may have consumed the WHEP listener before the route is added"
     );
@@ -396,7 +395,6 @@ async fn admin_added_route_starts_its_whep_listener() {
             let consumed = !prebound_observer
                 .tcp
                 .lock()
-                .expect("prebound tcp lock")
                 .contains_key(&whep_addr.to_string());
             if consumed && tokio::net::TcpStream::connect(whep_addr).await.is_ok() {
                 break;
