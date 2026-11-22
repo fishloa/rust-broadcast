@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Breaking
+- `RouteHandle::with_archive_floor` takes a `broadcast_hls::MediaSequence`, not a bare `u32`, so a Media Sequence Number keeps its type at the API boundary; a value past the `u32` sequence domain clamps to `u32::MAX` rather than wrapping (#3991).
 ### Tests
 - Tests encode Basic credentials through `broadcast_common::base64`, the `base64` dev-dependency is removed, and the digest-expiry test drives `Verifier::with_clock` with a `jiff::Timestamp` (#3957).
 ### Changed
@@ -17,6 +19,7 @@
 - `push::drive_push`'s decisions are `media_plane::push_session::PushSession`'s: connect-time negotiation, mid-stream renegotiation, loss accounting, drop-versus-reconnect classification, setup, flush outcome and give-up now come from the sans-IO core, so there is one copy of each decision. The loop keeps only its awaits (connect, setup, the bounded flush, backoff), logging, redaction and `PushMetrics`, which is read from the session's counters plus the transport's written bytes. `push::SendMediaError` implements `media_plane::push_session::PushErrorKind` (mux failure drops the item, transport failure reconnects) (#3930). A connection whose connect-time negotiation fails or is refused is closed before the backoff, instead of being dropped unclosed.
 - `PushMetrics::bytes_sent` now reports the payload bytes written over the transport (it was never incremented and always read 0), and `samples_dropped` now also counts samples skipped by cursor lag and samples that arrive while disconnected, not only mux failures (#3930).
 ### Tests
+- The archive floor keeps its Media Sequence Number type: `with_archive_floor` of `7` sets the floor to 7 and a floor past the `u32` domain clamps to `u32::MAX` instead of wrapping (#3991).
 - DVR configuration is pinned: `DvrConfig::validate` names `ArchiveRoot`, `Retention` and `PeriodDurationSecs` for each failing rule, `Route::validate_dvr` reports `RoutesDvr`, the default period is 10800 s, `retention_active`, `with_dvb_service_id` and every `ArchiveOverrunSerde` token and policy are asserted (#3666).
 - A restarted route numbers above its archive floor and its archive scans with no sequence conflict, while a run without the floor does conflict (#3941); a failing EIT programme transition is counted in `multimux_dvr_si_errors_total` per attempt; an init change reaches the recorder without a new segment and the next segment opens a period that starts with the new init; a dropped route releases its archive reader; `catchup/init-p{N}.mp4` serves each period's own init and is 404 for a TS archive or an unknown period.
 - Config validation boundaries (route name length, `declared_bandwidth_bps`, timeouts, reconnect backoff cap), audio rendition URI safety and selector shape, `manifest_paths` per output kind and the overlapping-path collisions, every `Config`/`UdpSocketSpec`/`PreboundBinds` setter, the SRT `latency` millisecond deserialiser and the serde defaults, the `Phase`/`TsHlsIdrFallback`/`ProgramDateTimeSource` labels and `SignedUrlKeySpec`'s redacted `Debug`, and `HostClock::real_duration` are pinned (#3667, #3668, #3669, #3670, #3671, #3672, #3673).
