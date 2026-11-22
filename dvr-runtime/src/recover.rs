@@ -9,7 +9,22 @@
 use std::num::NonZeroU64;
 
 use broadcast_common::range::ByteSpan;
-use transmux::segments::{FTYP, MDAT, MOOF};
+use transmux::segments::{FTYP, MDAT, MOOF, STYP};
+
+/// Four-CC of the Movie Box: the init's box when there is no `ftyp`.
+const MOOV: [u8; 4] = *b"moov";
+/// Four-CC of the Event Message Box, which a CMAF segment may lead with
+/// (ISO/IEC 23009-1 §5.3.9.7).
+const EMSG: [u8; 4] = *b"emsg";
+/// Four-CC of the Producer Reference Time Box, which a CMAF segment may lead
+/// with (ISO/IEC 14496-12:2026 §8.16.5).
+const PRFT: [u8; 4] = *b"prft";
+
+/// Whether a top-level box belongs to the segment a following `moof` opens
+/// rather than to the init.
+fn leads_a_fragment(kind: &[u8; 4]) -> bool {
+    kind == &STYP || kind == &EMSG || kind == &PRFT
+}
 
 /// One recovered span within the period's media file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,8 +32,9 @@ use transmux::segments::{FTYP, MDAT, MOOF};
 pub enum RecoveredBox {
     /// The period's single init, from byte 0.
     Init(ByteSpan),
-    /// One fragment: its `moof` plus the `mdat` that immediately follows, or
-    /// the `moof` alone when no `mdat` does.
+    /// One segment: the `moof` plus the `mdat` that immediately follows (or
+    /// the `moof` alone when no `mdat` does) and any `styp`/`emsg`/`prft` run
+    /// directly before it.
     Fragment(ByteSpan),
 }
 
@@ -47,6 +63,11 @@ fn span(offset: usize, len: usize) -> Option<ByteSpan> {
 /// function does not fail. A `moof` with no following `mdat` is reported as a
 /// fragment by itself.
 ///
+/// A fragment begins at the `styp`/`emsg`/`prft` run directly before its
+/// `moof`, so a CMAF segment's span is recovered whole. A segment an LL-HLS
+/// packager split into several `moof` runs is still reported as one fragment
+/// per `moof`.
+///
 /// # Errors
 ///
 /// [`RecoverError::NotIsoBmff`] when the data does not start with a complete
@@ -58,6 +79,7 @@ pub fn scan_fmp4_data(data: &[u8]) -> Result<Vec<RecoveredBox>, RecoverError> {
     }
     let mut offset = 0usize;
     let mut init_end: Option<usize> = None;
+    let mut lead: Option<usize> = None;
     let mut saw_init = false;
     let mut fragments = Vec::new();
     let mut first = true;
@@ -74,8 +96,9 @@ pub fn scan_fmp4_data(data: &[u8]) -> Result<Vec<RecoveredBox>, RecoverError> {
         first = false;
         let kind = &box_ref.header.box_type;
         if kind.is(&MOOF) {
+            let start = lead.take().unwrap_or(offset);
             if init_end.is_none() {
-                init_end = Some(offset);
+                init_end = Some(start);
             }
             let mut total = consumed;
             if let Some(next) = offset.checked_add(consumed)
@@ -85,14 +108,22 @@ pub fn scan_fmp4_data(data: &[u8]) -> Result<Vec<RecoveredBox>, RecoverError> {
             {
                 total = total.saturating_add(next_len);
             }
-            if let Some(span) = span(offset, total) {
+            let end = offset.saturating_add(total);
+            if let Some(span) = span(start, end.saturating_sub(start)) {
                 fragments.push(RecoveredBox::Fragment(span));
             }
-            offset = offset.saturating_add(total);
+            offset = end;
             continue;
         }
-        if init_end.is_none() && (kind.is(&FTYP) || kind.is(b"moov")) {
-            saw_init = true;
+        if leads_a_fragment(&kind.0) {
+            if lead.is_none() {
+                lead = Some(offset);
+            }
+        } else {
+            lead = None;
+            if init_end.is_none() && (kind.is(&FTYP) || kind.is(&MOOV)) {
+                saw_init = true;
+            }
         }
         offset = offset.saturating_add(consumed);
     }

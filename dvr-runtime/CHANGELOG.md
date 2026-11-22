@@ -35,7 +35,10 @@ catch-up read planner and the blocking `fs` adapter.
   (`EXT-X-GAP`, `EXT-X-KEY`, `EXT-X-PART`) (#4028), and a key at the index of
   the first segment it covers rather than always at `0` (#4029).
 - `recover::scan_fmp4_data`: init and `moof`+`mdat` span recovery from an fMP4
-  period file.
+  period file. A fragment begins at the `styp`/`emsg`/`prft` run before its
+  `moof`, so a recorded CMAF segment's span comes back whole; an LL-HLS
+  segment split into several `moof` runs is still one fragment per `moof`
+  (#4030).
 - Feature `fs`: `FsRecorder` (blocking plan execution, retry on a partial
   write, `poll` as the only driver) and `FsArchive` (scan/find/read/recover
   plus a bounded per-archive parsed-playlist cache). `FsRecorder` is not a
