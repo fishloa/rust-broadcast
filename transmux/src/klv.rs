@@ -141,7 +141,6 @@ mod st0601 {
             Value::Bytes(_) => St0601Value::Bytes(raw),
             Value::OutOfRange => St0601Value::OutOfRange,
             Value::Invalid => St0601Value::Invalid,
-            _ => St0601Value::Invalid,
         }
     }
 }
