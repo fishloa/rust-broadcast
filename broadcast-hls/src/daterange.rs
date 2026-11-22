@@ -547,7 +547,8 @@ impl DateRange {
 
     /// Set a client (`X-`) attribute, replacing an existing value in place or
     /// appending a new one. The value must be a quoted-string,
-    /// hexadecimal-sequence or unsigned decimal-floating-point.
+    /// hexadecimal-sequence or signed-decimal-floating-point (RFC 8216bis
+    /// §4.4.5.1).
     ///
     /// # Errors
     ///
@@ -865,7 +866,7 @@ fn decode_duration(value: &str) -> Option<crate::DecimalSeconds> {
 fn client_value_ok(value: &AttrValue) -> bool {
     value.is_quoted()
         || super::is_hexadecimal_sequence(value.as_str())
-        || super::is_valid_decimal_token(value.as_str(), false)
+        || super::is_valid_decimal_token(value.as_str(), true)
 }
 
 /// RFC 8216bis §4.2: an `AttributeName` contains only `[A-Z]`, `[0-9]` and `-`.

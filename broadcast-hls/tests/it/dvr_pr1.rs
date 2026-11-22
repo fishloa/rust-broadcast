@@ -678,18 +678,32 @@ fn empty_quoted_values_are_accepted_except_the_id() {
     ));
 }
 
-/// Item 3: an `X-` decimal-floating-point value is unsigned.
+/// RFC 8216bis §4.4.5.1: an `X-` value may be a signed-decimal-floating-point,
+/// so a negative decimal parses, round-trips byte-identically and is accepted
+/// by the setter; a lone `-` is still not a decimal.
 #[test]
-fn client_decimal_values_are_unsigned() {
-    use broadcast_hls::DateRangeError;
+fn client_decimal_values_may_be_signed() {
+    use broadcast_hls::{AttrValue, ClientAttrName, DateRangeError};
 
     daterange_roundtrip("#EXT-X-DATERANGE:ID=\"a\",X-A=1.5");
+    daterange_roundtrip("#EXT-X-DATERANGE:ID=\"a\",X-A=-1.5");
+    let mut range = DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\"").expect("parse");
+    range
+        .set_client_attr(
+            ClientAttrName::new("X-B").expect("name"),
+            AttrValue::bare("-2").expect("bare"),
+        )
+        .expect("a signed decimal is a legal X- value");
+    assert_eq!(
+        range.to_tag_line().expect("render"),
+        "#EXT-X-DATERANGE:ID=\"a\",X-B=-2"
+    );
     assert!(matches!(
-        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-A=-1.5"),
+        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-A=-"),
         Err(Error::InvalidDateRange {
             reason: DateRangeError::InvalidClientAttributeValue,
             ..
-        })
+        }) | Err(Error::InvalidAttributeList { .. })
     ));
 }
 
