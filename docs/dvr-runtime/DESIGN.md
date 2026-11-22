@@ -333,7 +333,7 @@ media-plane      = { path = "../media-plane",      version = "0.13.0", default-f
 dvb-si           = { path = "../dvb-si",           version = "15.2.0", default-features = false, features = ["std", "jiff", "ts"] }
 transmux         = { path = "../transmux",         version = "0.32.1", default-features = false, features = ["std"] }  # parse_box for recover
 bytes            = "1"
-jiff             = "0.2"
+jiff             = "1"
 thiserror        = "2"
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
