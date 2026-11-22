@@ -15,7 +15,6 @@ use std::time::SystemTime;
 use broadcast_common::Timestamp;
 use broadcast_common::range::ByteSpan;
 use bytes::Bytes;
-use media_plane::egress::SegmentEgress;
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk};
 
@@ -54,11 +53,6 @@ pub enum FsError {
         #[source]
         source: std::io::Error,
     },
-    /// The store could not commit this input. The
-    /// [`SegmentEgress`] adapter cannot queue it, so the caller must drive
-    /// the same cursor item through [`FsRecorder::poll`].
-    #[error("the store did not commit this input; retry it through FsRecorder::poll")]
-    RetryRequired,
     /// Another recorder holds the archive directory's single-writer lock.
     #[error("archive directory {} is locked by another recorder", path.display())]
     Locked {
@@ -86,6 +80,18 @@ fn io_error(path: PathBuf, op: crate::writer::StoreOpKind, source: std::io::Erro
 
 /// The blocking archive recorder: one [`ArchiveWriter`], one pinning
 /// [`SegmentCursor`] on the Trunk, and the archive's directory.
+///
+/// [`Self::poll`] is the only driver. `FsRecorder` does not implement
+/// `media_plane::egress::SegmentEgress`: that trait hands over one cursor
+/// item with no monotonic time, no wall time and no fMP4 init generations,
+/// so a period could never roll on `period_duration` (and periods-only
+/// retention would never evict) and an fMP4 archive would drop every segment
+/// as arriving before its init.
+///
+/// ```compile_fail
+/// fn egress<E: media_plane::egress::SegmentEgress>() {}
+/// egress::<dvr_runtime::fs::FsRecorder>();
+/// ```
 pub struct FsRecorder {
     writer: ArchiveWriter,
     cursor: SegmentCursor,
@@ -93,7 +99,6 @@ pub struct FsRecorder {
     dir: PathBuf,
     _lock: File,
     tracker: Option<dvb_si::epg::PresentEventTracker>,
-    last_now: Timestamp,
     container: ArchiveContainer,
     retry: Option<(SegmentCursorItem, u8)>,
     programme_retry: Option<dvb_si::epg::PresentEventChange>,
@@ -281,7 +286,6 @@ impl FsRecorder {
             dir,
             _lock: lock,
             tracker,
-            last_now: Timestamp::ZERO,
             container,
             retry: None,
             programme_retry: None,
@@ -322,7 +326,6 @@ impl FsRecorder {
         wall: impl Fn(&SegmentEntry) -> Option<jiff::Timestamp>,
         inits: &[InitGeneration],
     ) -> Result<(), FsError> {
-        self.last_now = now;
         self.writer
             .set_latest_closed(self.trunk.last_closed_segment());
         self.writer.on_inits(inits)?;
@@ -601,25 +604,6 @@ fn append_at(path: &Path, expect_len: u64, bytes: &[u8]) -> Result<(), StoreFail
         return Err(StoreFailure::Io(e.kind()));
     }
     Ok(())
-}
-
-/// The egress adapter drives the writer without a wall-clock source, so a
-/// writer configured with a programme service is rejected up front rather
-/// than failing every segment with `WallClockRequired`; use
-/// [`FsRecorder::poll`] for that configuration.
-impl SegmentEgress for FsRecorder {
-    type Error = FsError;
-
-    fn on_segment(&mut self, item: &SegmentCursorItem) -> Result<(), Self::Error> {
-        if self.tracker.is_some() {
-            return Err(ArchiveError::WallClockRequired.into());
-        }
-        let step = self.writer.on_item(self.last_now, None, item)?;
-        match self.handle_step(step)? {
-            Execution::Consumed => Ok(()),
-            Execution::Retry => Err(FsError::RetryRequired),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

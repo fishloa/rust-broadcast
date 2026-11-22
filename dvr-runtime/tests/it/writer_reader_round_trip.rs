@@ -15,7 +15,7 @@ use dvr_runtime::{ArchiveConfig, ArchiveContainer, ArchiveName, RetentionLimits}
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 
-use crate::support::{cleanup, config, periods, segment_at, temp_dir};
+use crate::support::{cleanup, config, periods, temp_dir};
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("nonzero")
@@ -355,45 +355,6 @@ fn retention_removes_the_files_from_disk() {
     assert_eq!(scan.segments[0].seq, SegmentSeq::new(2));
     assert_eq!(scan.segments[1].seq, SegmentSeq::new(3));
     assert!(scan.conflicts.is_empty());
-    cleanup(&root);
-}
-
-#[test]
-fn segment_egress_rejects_a_programme_service_writer() {
-    use media_plane::egress::SegmentEgress;
-    let root = temp_dir("egress-programme");
-    let trunk = trunk();
-    let mut config = config(ArchiveContainer::Ts, 2, periods(10));
-    config.period_duration = Some(Duration::from_secs(86400));
-    config.programme_service = Some(0x0601);
-    let mut recorder = recorder(&root, "eg", config, &trunk);
-    let item = media_plane::trunk::SegmentCursorItem::Segment(segment_at(0, 100, 0, false));
-    let error = recorder
-        .on_segment(&item)
-        .expect_err("no wall clock source");
-    assert!(matches!(
-        error,
-        dvr_runtime::fs::FsError::Archive(dvr_runtime::ArchiveError::WallClockRequired)
-    ));
-    cleanup(&root);
-}
-
-#[test]
-fn segment_egress_records_without_programme_tracking() {
-    use media_plane::egress::SegmentEgress;
-    let root = temp_dir("egress-plain");
-    let trunk = trunk();
-    let mut config = config(ArchiveContainer::Ts, 2, periods(10));
-    config.period_duration = Some(Duration::from_secs(86400));
-    let mut recorder = recorder(&root, "eg", config, &trunk);
-    let item = media_plane::trunk::SegmentCursorItem::Segment(segment_at(0, 100, 0, false));
-    recorder.on_segment(&item).expect("recorded");
-    let mut archive = FsArchive::open(
-        &root,
-        &ArchiveName::new("eg").expect("name"),
-        ArchiveContainer::Ts,
-    );
-    assert_eq!(archive.scan().expect("scan").segments.len(), 1);
     cleanup(&root);
 }
 

@@ -36,7 +36,11 @@ catch-up read planner and the blocking `fs` adapter.
   period file.
 - Feature `fs`: `FsRecorder` (blocking plan execution, retry on a partial
   write, `poll` as the only driver) and `FsArchive` (scan/find/read/recover
-  plus a bounded per-archive parsed-playlist cache).
+  plus a bounded per-archive parsed-playlist cache). `FsRecorder` is not a
+  `media_plane::egress::SegmentEgress`: that trait hands over one cursor item
+  with no monotonic time, wall time or init generations, so a period could
+  never roll on `period_duration` and an fMP4 archive would drop every
+  segment as arriving before its init (#3980).
 - `FsArchive::scan`/`find` report a directory or period playlist that exists
   but cannot be read as a typed `ReadError` instead of an empty archive, and
   `seq_floor` returns `Option<SegmentSeq>` and fails on an unreadable period,
