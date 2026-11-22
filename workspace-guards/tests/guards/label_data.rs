@@ -178,6 +178,7 @@ pub const TABLE: &[Crate] = &[
             // input; `name()` is the reason without it.
             "InterfaceError",
             "HexDecodeError",
+            "Base64DecodeError",
         ],
         expected: None,
         min_enums: None,
