@@ -2863,7 +2863,6 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
         prebound
             .tcp
             .lock()
-            .expect("prebound tcp lock")
             .contains_key(&whep_addr.to_string()),
         "the failed route consumed the pre-bound WHEP listener -- its egress          started for a route that was never installed (leaked task)"
     );

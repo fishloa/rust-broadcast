@@ -12,7 +12,9 @@
 //! `test-seams` only: it exists for tests, never for a served route.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::ingress::{
@@ -137,9 +139,7 @@ impl<S: IngestSession> Stage for RecordingSession<S> {
 
     fn poll(&mut self) -> Option<SessionEvent> {
         let event = self.inner.poll()?;
-        if let Ok(mut log) = self.log.lock() {
-            log.push(Recorded::of(&event));
-        }
+        self.log.lock().push(Recorded::of(&event));
         Some(event)
     }
 
@@ -150,9 +150,7 @@ impl<S: IngestSession> Stage for RecordingSession<S> {
     fn finish(&mut self) -> Result<(), Self::Error> {
         let result = self.inner.finish();
         while let Some(event) = self.inner.poll() {
-            if let Ok(mut log) = self.log.lock() {
-                log.push(Recorded::of(&event));
-            }
+            self.log.lock().push(Recorded::of(&event));
         }
         result
     }
@@ -229,19 +227,13 @@ pub struct Recorder {
 impl Recorder {
     /// Every event recorded so far, in order, as one rendered line each.
     pub fn lines(&self) -> Vec<String> {
-        let log = self
-            .log
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let log = self.log.lock();
         log.iter().map(|r| r.event.clone()).collect()
     }
 
     /// How many events have been recorded.
     pub fn len(&self) -> usize {
-        let log = self
-            .log
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let log = self.log.lock();
         log.len()
     }
 
