@@ -21,7 +21,7 @@ need one of those primitives.
 It deliberately has no shared error enum (each crate owns a domain `Error`,
 reached through `type Error` on the traits), no CRC-8 (only `dvb-bbframe` needs
 it), no concrete media or codec types, and no heavy dependencies (`jiff`,
-`serde` are optional; `hex` is the only unconditional one).
+`serde` are optional; `hex` and `thiserror` are the only unconditional dependencies, both `no_std`).
 
 ## Standards supported
 
@@ -46,7 +46,7 @@ the specification each primitive follows.
 | `serde` | no | `serde::Serialize` on the shared spec types (currently `cenc::CencScheme`). |
 | `xml` | no | `xml` (the bounded quick-xml tree reader: depth, attribute, size limits; DOCTYPE refused) and `xml_chars` (XML 1.0 character data with the typed `XmlCharError`, `XmlLimits`/`XmlBudget`, `XmlWriter`, whose write helpers refuse a character outside the `Char` production with `WriteRefusal::InvalidChar`). Implies `std`. |
 | `lang` | no | `lang`: ISO 639 -> BCP 47 canonicalisation (`bcp47_language`, also at the crate root) and `language_matches`. Implies `std`. |
-| `base64` | no | `base64`: `base64_encode`, `base64_decode_strict`, `base64_decode_lenient` (RFC 4648). `no_std` + `alloc`. |
+| `base64` | no | `base64`: `base64_encode`, `base64_decode_strict`, `base64_decode_lenient` (RFC 4648), `base64_url_encode_nopad`/`base64_url_decode_nopad` (URL-safe alphabet, no padding), `DecodeError`. `no_std` + `alloc`. |
 | `http-date` | no | `http_date`: `parse_http_date` (RFC 9110 §5.6.7) for `Date` and `Retry-After`. Implies `std`. |
 | `url` | no | `url_ref`: guarded RFC 3986 reference resolution (`resolve`, `resolve_str`, `first_forbidden_char`) over `url::Url::join`, plus `resolve_http`, which additionally requires an `http`/`https` result reached without an `https`->`http` downgrade. |
 
@@ -114,13 +114,13 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 | `crc32_mpeg2` | `compute` (poly `0x04C1_1DB7`, init `0xFFFF_FFFF`, MSB-first, no reflection, no final XOR; table built at compile time) |
 | `bcd` | `from_bcd_byte`, `to_bcd_byte` and wider helpers; `None` on out-of-range input, never garbage |
 | `time` | `MjdBcdDateTime`, `decode_mjd_bcd`/`encode_mjd_bcd`, `decode_bcd_duration`/`encode_bcd_duration`, `mjd_to_ymd`/`ymd_to_mjd`; with `jiff`: `decode_mjd_bcd_utc`/`encode_mjd_bcd_utc`, `decode_seconds_since_2000_utc`/`encode_seconds_since_2000_utc` (`jiff::Timestamp`). The encoder rejects impossible days (31 Feb) |; `MonoUtc` (monotonic-to-UTC anchor mapping)
-| `bits` | `BitReader`, `BitWriter` (MSB-first, up to 64 bits per field, spans bytes), `BitError` |
+| `bits` | `BitReader`, `BitWriter` (MSB-first, up to 64 bits per field, spans bytes; `new` or `starting_at` a bit offset), `BitBuf` (growable owning writer: `write_bits`, `write_bytes`, `align_to_byte`, `as_bytes`, `into_vec`), `BitError` |
 | `clock33` | `Clock33` (validated 33-bit 90 kHz sample: `try_new`, `ZERO`, `wrapping_add`, `wrapping_add_signed`, `signed_distance_to`) and `Clock27` (`base * 300 + ext` 27 MHz value: strict `from_parts`/`from_27mhz`, lossless `from_wire_parts`, checked `to_clock27`/`is_valid`, `ticks`, `signed_distance_to`), the workspace's one PTS/DTS and PCR/ESCR/SCR representation, with `ClockOutOfRange`; `WRAP_33BIT`, `unwrap_delta`, `wrapping_forward_distance`, `add`, `add_signed`, `signed_distance`; PCR: `PTS_HZ`, `PCR_HZ`, `PCR_EXT_MODULUS`, `PCR_WRAP_27MHZ`, `pcr_from_parts`, `pcr_split`, `pcr_forward_distance`, `pcr_signed_distance`; marker-bit timestamp field: `Marked`, `MARKERS_ALL_SET`, `unpack_marked`, `pack_marked`, `pack_marked_with` |
 | `error` | The shared failure kinds (`BufferTooShort`, `OutputBufferTooSmall`, `FieldOverflow`, `CrcMismatch`, `InvalidSync`, `ReservedBits`, `InvalidValue`, `InvalidField`, `UnsupportedVersion`, `LengthMismatch`) that crate error enums wrap with `#[error(transparent)]` + `#[from]` |
 | `len` | `FieldOverflow`, `fit_bits`, `fit_mask`, `fit_u8`, `fit_u16`, `fit_u24`, `fit_u32`: checked width narrowing for serializers |
 | `pusi` | `PusiAccumulator` (size-capped, `DEFAULT_MAX_UNIT_SIZE` 16 MiB): the unit splitter wrapped by `mpeg-ts` and `mpeg-pes` |
 | `parity` | `has_odd_parity`, `set_odd_parity`, `strip_parity` |
-| `hex` | `hex_encode`, `hex_encode_upper` (decoders stay with callers, whose validation policies differ) |
+| `hex` | `hex_encode`, `hex_encode_upper`, `hex_decode` (even-length hex of either case, else `None`), `hex_decode_into` (exactly `2 * out.len()` digits into a fixed slice); callers keep their own error types |
 | `seq` | `SeqSpace` (`add`, `diff`, `lt`/`leq`/`gt`/`geq`, `in_closed_range`), `MAX_SEQ_BITS` |
 | `cenc` | `CencScheme` (`from_four_cc`, `name`), `SCHEME_CENC`, `SCHEME_CBCS` |
 | `mux` | `Unpackage`, `Package` (batch container demux/mux), `Decrypt`, `Encrypt` (in-place sample protection); inverse pairs, generic over `Input`/`Output`/`Media`/`Config`/`Keys`/`Error` |

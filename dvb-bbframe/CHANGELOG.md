@@ -2,8 +2,12 @@
 
 ## [Unreleased]
 
-### Changed
+### Breaking
+
 - **BREAKING:** `num_enum` is no longer a dependency (#3963). `TsGs` and `Mode` implement a hand-written `TryFrom<u8>` whose error is the crate's own `Error` (`Error::UnsupportedTsGs { ts_gs }` / `Error::InvalidMode { mode }`) instead of `num_enum::TryFromPrimitiveError<TsGs>` / `<Mode>`; the `From<num_enum::TryFromPrimitiveError<_>> for Error` impls are removed. `Mode` gains `From<Mode> for u8`.
+
+### Tests
+
 - Tests pin the framing arithmetic and diagnostics that survived mutation: the cross-frame `CarryOverExtractor` carry (a user packet split across BBFrames, `SYNCD=0xFFFF` continuation, a mismatched `SYNCD` discarding the partial), `BbframePump` per-PLP counter aggregation and PLP carry discard, the `DFL` ceiling on parse and serialize, `nm_stride_bytes` rejecting a non-byte-aligned `UPL`, the roll-off decode and `Matype::roll_off`, field-enum labels, and `HemTsIter`/`UpIter` `size_hint`. No functional change.
 
 ## [15.1.0] - 2026-11-17

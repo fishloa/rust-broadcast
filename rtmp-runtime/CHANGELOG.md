@@ -5,6 +5,10 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
+
 ### Fixed
 - `chunk::ChunkAssembler::swap_pending` returns the previous pending buffer's unconsumed bytes (`previous[consumed..]`, not its tail) and resets the read cursor for the replacement buffer, so a caller swapping in the unparsed tail does not have its next parse start at a stale offset.
 

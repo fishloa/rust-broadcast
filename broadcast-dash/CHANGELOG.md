@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Breaking
+
+- **BREAKING:** `jiff` 0.2 -> 1.0. The `Mpd` availability and publish times and the `xs_datetime` readers and writers take and return jiff 1.x `Timestamp`s.
+
 ### Tests
+
 - `mpd-parse.golden` refuses to re-record under `CI=true` (`REGENERATE_MPD_PARSE_GOLDEN`), with a regression test, and `fixtures/golden/dash/PROVENANCE.md` names the `xmllint --schema` validation of the same corpus as its independent oracle (audit 21 finding 62).
 - The 15 Table 34 role tokens and their round trip through `Role::name`, `descriptors::find`'s match/absence/first-of-equal rules, and every error enum's label and `Display` are pinned (audit 22 findings 25, 26).
 - The `SegmentTemplate` identifier grammar, format-tag and width bounds, media/initialization rules, `$Bandwidth$` substitution, and the inverse `match_url` (longest-first id choice, width agreement, repeated-identifier uniqueness, `None` on ambiguity) are tabled, with a substitution/matching value grid (audit 22 findings 27, 28).
@@ -15,10 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Attribute edges are pinned: a non-finite `xs:double`, an inverted byte range, the resolve-to-zero xlink, and which namespace+name a `pssh`/`UrlQueryInfo` child must carry; the inheritance helpers are asserted field by field across Period/AdaptationSet/Representation (audit 22 findings 33, 34).
 
 ### Changed
-- **BREAKING:** `jiff` 0.2 -> 1.0. The `Mpd` availability and publish times and the `xs_datetime` readers and writers take and return jiff 1.x `Timestamp`s.
+
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - **Behaviour change:** `MpdFeatures::xlink_resolve_to_zero` and `MpdFeatures::inband_event_stream` are derived from what the model keeps, not from any element anywhere in the tree: `xlink_resolve_to_zero` no longer means "a Period or AdaptationSet was removed by resolve-to-zero"; it now reports an xlink the model carries (a `SegmentList`, `EventStream` or `RequestParam`), not the Period or AdaptationSet that the xlink removes, and the `InbandEventStream` flag reports only a stream on a retained AdaptationSet, Representation or Preselection. Content the parser drops no longer raises a flag the writer cannot reproduce, so `parse -> to_xml -> parse` is an identity for both (#3139).
 
 ### Fixed
+
 - `MpdFeatures::service_description` is derived from the `ServiceDescription` elements the model keeps (MPD, Period, `Event`), not from any element named `ServiceDescription` anywhere in the tree, so an element the model drops no longer raises a flag the writer cannot reproduce and `parse -> to_xml -> parse` is an identity (#3138).
 - `xs_duration`'s doc claimed a hand-rolled `PT{secs}S` spelling while the function delegates to `jiff`'s ISO 8601 duration printer; the doc now states the printed form, the exact output for the common shapes is asserted, and three dead `let _` statements (here and in the MPD reader) are removed (audit 22 finding 69).
 

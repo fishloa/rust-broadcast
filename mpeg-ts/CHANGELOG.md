@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 ### Added
 - `TsResync` locks onto 192-byte M2TS (BDAV) source packets as well as 188- and 204-byte ones and strips each 4-byte `TP_extra_header`: new `PacketStride::M2ts192`, `PacketStride::packet_len`, `M2TS_PACKET_SIZE` and `M2TS_EXTRA_HEADER_LEN`. An M2TS packet is emitted as soon as its 188 bytes arrive, not when the next packet's header does (#3988).
 ### Tests

@@ -6,16 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Changed
+
+### Breaking
+
 - **BREAKING:** `jiff` 0.2 -> 1.0. `Session::set_wall_clock` takes a jiff 1.x `Timestamp`.
+
+### Changed
+
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - An RTSP 401 with credentials configured is treated as a rejection: the unreachable replay arm is gone, so the source waits for host-supplied credentials and reconnects instead of replaying a request whose credentials the server already refused (#3634).
+
 ### Fixed
+
 - An HLS VOD whose encrypted init fails to decrypt when its key arrives now plays and ends after the init refetch: the segments queued behind that key are decrypted (via `hls-runtime`'s `on_key` fix) instead of the session stalling (#3951).
 - A starved runtime that wakes the SRT caller once, several retransmit periods late, now counts that wake as one retransmit instead of synthesizing one per missed 250 ms period. A single late poll used to spend the whole 12-retry budget at once and time out a handshake whose wall-clock budget was still open, leaving the connection without ever publishing a `Trunk` (#3847).
 - An AES-128 encrypted HLS init segment that failed to decrypt (or decrypted to something that is not an init) was never fetched again: the VOD session stalled with neither `Status::Ended` nor a fatal error. It is now retried on the init's own schedule, whether the key was already held or arrived after the init (audit 23 finding 38, #3289).
 - `Session::select_audio_rendition` on a Smooth session returned `Ok(())` and did nothing; it now returns `Error::NotHls`, as its documentation states for any session that is neither HLS nor DASH (audit 23 finding 52, #3303).
 
 ### Tests
+
 - `Event` equality is compared field by field (samples, display changes, finite lengths, auth/refusal bodies, audio renditions and errors), every public label literal and the `ends_connection` truth table are asserted, `Config::relay` keeps its three overrides, the tracks-hold boundary accepts a max equal to the quiet threshold, the playout gate's resume hysteresis and video-first origin are pinned, and event-queue coalescing, terminal statuses, lane bookkeeping, marker re-discovery and tombstone compaction are asserted (audit 23 findings 20-27).
 - The DASH and HLS sources refuse to issue requests while waiting for credentials, ignore a selection after the end, treat a transport error before the body ends as a failure, fall back from a resumed 416 to one full request and treat a first 416 as a refusal, close in-flight requests on reconnect, flush a captured refusal, map the DASH error kinds, report a damaged fragment once, and strip only credential headers from a `UTCTiming` request (audit 23 findings 28-37).
 - The DER client-certificate boundary, every spec label, the secret `Debug` redaction, the UDP reorder defaults and largest window, the `Last-Modified` resume validator, the parked-prefix byte budget, the restart-time clears, the refused-reason truncation, the retry jitter seed, the non-HTTP `on_response` guard, the dead `live_conn`, the UDP/SDP and malformed-RTP counters, the replay/seed/stall accessors, the HLS adaptive switch/render/discontinuity paths and the https default-port identity are pinned (audit 23 findings 2-18).
