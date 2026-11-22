@@ -44,7 +44,7 @@ bytes             = { version = "1", optional = true, default-features = false }
 # RFC 3986 reference resolution (SP3, defect 7) and RFC 3339 dates (SP5): both
 # work in `alloc`-only builds, so the no_std core keeps building for thumbv7em.
 url               = { version = "2", default-features = false }
-jiff              = { version = "1.0.2", default-features = false, features = ["alloc"] }
+jiff              = { version = "1", default-features = false, features = ["alloc"] }
 
 [features]
 default = ["std"]
