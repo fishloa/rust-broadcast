@@ -20,7 +20,7 @@ fn timescale(value: u32) -> Timescale {
 fn main() {
     // Real Unified Streaming splice: ID 2002, out-of-network, break_duration 24 s.
     let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
-    let raw = hex::decode(hex).unwrap();
+    let raw = broadcast_common::hex::hex_decode(hex).unwrap();
 
     let anchor = TimeAnchor {
         pts_90k: 0,

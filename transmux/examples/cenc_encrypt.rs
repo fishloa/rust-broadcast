@@ -112,7 +112,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "encrypted: scheme={} kid={}",
         encryption.scheme.name(),
-        hex::encode(encryption.tenc.default_kid)
+        broadcast_common::hex::hex_encode(&encryption.tenc.default_kid)
     );
 
     // 4. Mux the encrypted IR (unchanged CmafMux — encryption is orthogonal

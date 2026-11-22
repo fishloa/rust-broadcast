@@ -51,6 +51,22 @@ pub fn hex_decode(text: &str) -> Option<alloc::vec::Vec<u8>> {
     ::hex::decode(text).ok()
 }
 
+/// Hex-decode `text` (either case) into exactly `out.len()` bytes, or `None`
+/// when `text` is not `2 * out.len()` hex digits.
+///
+/// ```
+/// use broadcast_common::hex::hex_decode_into;
+///
+/// let mut out = [0u8; 2];
+/// assert_eq!(hex_decode_into("00Ff", &mut out), Some(()));
+/// assert_eq!(out, [0x00, 0xff]);
+/// assert_eq!(hex_decode_into("00", &mut out), None);
+/// ```
+#[must_use]
+pub fn hex_decode_into(text: &str, out: &mut [u8]) -> Option<()> {
+    ::hex::decode_to_slice(text, out).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,6 +84,17 @@ mod tests {
         assert_eq!(hex_encode(&[0xDE, 0xAD, 0xBE, 0xEF]), "deadbeef");
         // A byte below 0x10 must still occupy two characters.
         assert_eq!(hex_encode(&[0x00, 0x01, 0x0A]), "00010a");
+    }
+
+    #[test]
+    fn decode_into_requires_the_exact_length_and_hex_digits() {
+        let mut out = [0u8; 3];
+        assert_eq!(hex_decode_into("00Ff12", &mut out), Some(()));
+        assert_eq!(out, [0x00, 0xff, 0x12]);
+        assert_eq!(hex_decode_into("00ff", &mut out), None);
+        assert_eq!(hex_decode_into("00ff1234", &mut out), None);
+        assert_eq!(hex_decode_into("00ff1g", &mut out), None);
+        assert_eq!(hex_decode_into("", &mut []), Some(()));
     }
 
     #[test]

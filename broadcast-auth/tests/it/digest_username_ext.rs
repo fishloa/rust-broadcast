@@ -8,7 +8,7 @@ const RFC_EXT: &str = "UTF-8''J%C3%A4s%20Sch%C3%B6n";
 const RFC_USER: &str = "Jäs Schön";
 
 fn md5_hex(s: &str) -> String {
-    hex::encode(Md5::digest(s.as_bytes()))
+    broadcast_common::hex::hex_encode(&Md5::digest(s.as_bytes()))
 }
 
 fn verifier(user: &str) -> Verifier {

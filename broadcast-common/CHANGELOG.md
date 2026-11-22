@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `bits::BitReader::starting_at` / `bits::BitWriter::starting_at` (resume at a bit offset) and `bits::BitBuf`, a growable owning MSB-first bit writer built on `BitWriter`, so callers with their own bit cursors (`dvb-si`, `transmux`) use the one implementation (#3961).
+- `hex::hex_decode_into` (exact-length hex decode into a caller buffer), `base64::{base64_url_encode_nopad, base64_url_decode_nopad}` (RFC 4648 §5, no padding) and a `base64::DecodeError` re-export, so consumers route hex and base64 through this crate instead of depending on the codec crates directly (#3957).
 ### Changed
 - **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff::Timestamp` faces of the `jiff` and `http-date` features (`time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `encode_seconds_since_2000_utc`, `MonoUtc`, `http_date::parse_http_date`, `date_to_epoch_us`) are now jiff 1.x types.
 ### Fixed

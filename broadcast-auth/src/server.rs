@@ -99,13 +99,13 @@
 //! nonce was issued no later than a dropped live one is answered as stale, so
 //! a dropped pair can never be replayed.
 //!
-//! The verifier's clock defaults to [`SystemTime::now`] and can be replaced
+//! The verifier's clock defaults to [`jiff::Timestamp::now`] and can be replaced
 //! with [`Verifier::with_clock`]; a clock that steps backwards is clamped to
 //! the latest nonce issue time seen.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use headers::authorization::{Basic, Bearer, Credentials as HeaderCredentials};
 use headers::{Authorization, Header, HeaderValue};
@@ -197,7 +197,7 @@ pub struct Verifier {
 }
 
 /// The time source a [`Verifier`] reads nonce ages from.
-type Clock = Box<dyn Fn() -> SystemTime + Send + Sync>;
+type Clock = Box<dyn Fn() -> jiff::Timestamp + Send + Sync>;
 
 /// How long an issued Digest nonce is accepted, measured from issue (RFC 7616
 /// §5.4 leaves the lifetime to the server). An older nonce is refused, and
@@ -388,7 +388,7 @@ impl DigestNonces {
             .finalize()
             .into_bytes();
         raw[NONCE_TIME_LEN + NONCE_SEQ_LEN..].copy_from_slice(&tag);
-        hex::encode(raw)
+        broadcast_common::hex::hex_encode(&raw)
     }
 
     /// The issue stamp of `nonce` if this verifier minted it, else `None`.
@@ -454,12 +454,12 @@ impl DigestNonces {
     }
 }
 
-fn unix_secs(t: SystemTime) -> u64 {
-    t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+pub(crate) fn unix_secs(t: jiff::Timestamp) -> u64 {
+    u64::try_from(t.as_second()).unwrap_or(0)
 }
 
 fn default_clock() -> Clock {
-    Box::new(SystemTime::now)
+    Box::new(jiff::Timestamp::now)
 }
 
 impl Verifier {
@@ -507,8 +507,11 @@ impl Verifier {
     }
 
     /// Replaces the clock Digest nonce ages are measured against (default
-    /// [`SystemTime::now`]) — for sans-IO drivers and tests.
-    pub fn with_clock(mut self, clock: impl Fn() -> SystemTime + Send + Sync + 'static) -> Self {
+    /// [`jiff::Timestamp::now`]) — for sans-IO drivers and tests.
+    pub fn with_clock(
+        mut self,
+        clock: impl Fn() -> jiff::Timestamp + Send + Sync + 'static,
+    ) -> Self {
         self.clock = Box::new(clock);
         self
     }
@@ -1040,13 +1043,13 @@ fn verify_forwarded(
 fn md5_hex(input: String) -> String {
     let mut hasher = Md5::new();
     hasher.update(input.as_bytes());
-    hex::encode(hasher.finalize())
+    broadcast_common::hex::hex_encode(&hasher.finalize())
 }
 
 /// Decodes exactly `N` bytes of hex, or `None`.
 fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
     let mut out = [0u8; N];
-    hex::decode_to_slice(text, &mut out).ok()?; // exact length, hex digits only
+    broadcast_common::hex::hex_decode_into(text, &mut out)?;
     Some(out)
 }
 
@@ -1811,7 +1814,10 @@ mod tests {
         )
         .expect("OS random source")
         .with_clock(move || {
-            UNIX_EPOCH + Duration::from_secs(now.load(std::sync::atomic::Ordering::SeqCst))
+            jiff::Timestamp::from_second(
+                i64::try_from(now.load(std::sync::atomic::Ordering::SeqCst)).unwrap_or(0),
+            )
+            .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
         })
     }
 
@@ -2258,12 +2264,10 @@ mod tests {
     /// RFC 7617 §2 example: pins Basic base64 encode/decode incl. padding.
     #[test]
     fn basic_credentials_base64_matches_rfc7617_example() {
-        use base64::Engine as _;
-        let enc = base64::engine::general_purpose::STANDARD.encode(b"Aladdin:open sesame");
+        use broadcast_common::base64::{base64_decode_strict, base64_encode};
+        let enc = base64_encode(b"Aladdin:open sesame");
         assert_eq!(enc, "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
-        let dec = base64::engine::general_purpose::STANDARD
-            .decode("QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
-            .unwrap();
+        let dec = base64_decode_strict("QWxhZGRpbjpvcGVuIHNlc2FtZQ==").unwrap();
         assert_eq!(dec, b"Aladdin:open sesame");
     }
 

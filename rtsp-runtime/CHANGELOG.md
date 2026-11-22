@@ -8,6 +8,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - `client::MAX_INBOUND_BYTES` (1 MiB) is public: the bound on the client's inbound buffer.
 
+### Changed
+- Behaviour change: `rtsps://` (`default_tls_client_config`) now trusts the OS trust store through `rustls-platform-verifier` (ring provider); a private CA installed in the OS now works and the bundled Mozilla root list (`webpki-roots`) is gone (#3960).
+
 ### Fixed
 - The inbound cap, the `public_methods`/`session_timeout`/`negotiated_transport` accessors, the PLAY/DESCRIBE capture conditions and the auth-retry bound each have a test pinning the literal value and both edges, so a changed constant, a loosened `&&`, or an accessor returning a constant fails the suite (audit 21 findings 49 and 50, #2944/#2945).
 - The whole RFC 2326 Appendix A state table is exercised transition by transition for both roles, and a server test drives SETUP, PLAY, a second PLAY (a seek) and a SETUP while Playing, so a valid transition can no longer degrade into a 455 (audit 22 finding 27, #2995).

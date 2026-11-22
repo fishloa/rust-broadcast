@@ -7,7 +7,7 @@
 //! unboundedly"; parse -> serialize of whatever still parses must not panic
 //! either.
 
-use base64::{Engine, engine::general_purpose::STANDARD};
+use broadcast_common::base64::base64_decode_strict;
 use broadcast_common::{Parse, Serialize, crc32_mpeg2};
 use scte35_splice::SpliceInfoSection;
 
@@ -43,7 +43,7 @@ fn exercise(bytes: &[u8]) {
 fn truncation_and_crc_repaired_mutation_never_panic() {
     let mut parsed_after_mutation = 0usize;
     for seed in SEEDS {
-        let bytes = STANDARD.decode(seed).unwrap();
+        let bytes = base64_decode_strict(seed).unwrap();
         assert!(SpliceInfoSection::parse(&bytes).is_ok(), "seed must parse");
         // every prefix, with and without a repaired CRC
         for n in 0..=bytes.len() {

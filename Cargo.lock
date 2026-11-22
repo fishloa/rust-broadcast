@@ -373,17 +373,15 @@ dependencies = [
 name = "broadcast-auth"
 version = "0.8.1"
 dependencies = [
- "base64 0.23.1",
  "broadcast-common",
  "cookie",
  "cookie_store",
- "form_urlencoded",
  "getrandom 0.4.3",
  "headers",
- "hex",
  "hmac 0.13.0",
  "http",
  "http-auth",
+ "jiff",
  "lru",
  "md-5 0.11.0",
  "percent-encoding",
@@ -2445,7 +2443,6 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "axum",
- "base64 0.23.1",
  "broadcast-auth",
  "broadcast-client",
  "broadcast-common",
@@ -3418,6 +3415,7 @@ dependencies = [
  "memchr",
  "rtsp-types",
  "rustls",
+ "rustls-platform-verifier",
  "sdp-types",
  "serde",
  "test-fixtures",
@@ -3426,7 +3424,6 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "url",
- "webpki-roots",
  "workspace-guards",
 ]
 
@@ -3610,7 +3607,6 @@ dependencies = [
 name = "scte35-splice"
 version = "7.0.0"
 dependencies = [
- "base64 0.23.1",
  "broadcast-common",
  "dvb-t2mi",
  "mpeg-ts",
@@ -4150,7 +4146,6 @@ dependencies = [
  "broadcast-hls",
  "cc-data",
  "dvb-vbi",
- "hex",
  "jiff",
  "mp4-emsg",
  "scte35-splice",
@@ -4402,7 +4397,6 @@ name = "transmux"
 version = "0.32.1"
 dependencies = [
  "aes 0.9.4",
- "base64 0.23.1",
  "broadcast-common",
  "broadcast-dash",
  "broadcast-hls",
@@ -4417,7 +4411,6 @@ dependencies = [
  "dvb-conformance",
  "dvb-si",
  "dvb-vbi",
- "hex",
  "jiff",
  "memchr",
  "mp4-emsg",
@@ -4691,15 +4684,6 @@ name = "webpki-root-certs"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "293198dcebfb821155b5092ab94b5a82ff180eddd7241df3bd6e66a4ffd1a585"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "1.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7265c9301c16a8711c992c2d8da90ee77ef54b1ed51482d6dfeb00dc756b1297"
 dependencies = [
  "rustls-pki-types",
 ]

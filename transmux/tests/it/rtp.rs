@@ -605,7 +605,8 @@ fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
         std::sync::LazyLock::new(|| test_fixtures::read_to_string("rtp/high-ffmpeg.sdp"));
     static AVCC_HEX: std::sync::LazyLock<String> =
         std::sync::LazyLock::new(|| test_fixtures::read_to_string("rtp/high-ffmpeg.avcc.txt"));
-    let oracle = hex::decode(AVCC_HEX.as_str().trim()).expect("ffmpeg avcC hex");
+    let oracle =
+        broadcast_common::hex::hex_decode(AVCC_HEX.as_str().trim()).expect("ffmpeg avcC hex");
     // Strip the 8-byte box header (`size` + `avcC`), leaving the record.
     let record = &oracle[8..];
 
@@ -2602,7 +2603,11 @@ fn sdp_matches_demuxed_config() {
 
     // config= hex-decodes to the demuxed ASC.
     let cfg = extract_param(sdp, "config=");
-    assert_eq!(hex::decode(&cfg).unwrap(), asc, "config == demuxed ASC");
+    assert_eq!(
+        broadcast_common::hex::hex_decode(&cfg).unwrap(),
+        asc,
+        "config == demuxed ASC"
+    );
 }
 
 /// Extract a `key=value` fmtp parameter value (up to `;`, whitespace, or EOL).

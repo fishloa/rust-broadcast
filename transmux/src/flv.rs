@@ -1940,27 +1940,6 @@ mod tests {
         );
     }
 
-    struct BitWriter {
-        bits: Vec<bool>,
-    }
-
-    impl BitWriter {
-        fn bit(&mut self, value: bool) {
-            self.bits.push(value);
-        }
-
-        fn ue(&mut self, value: u64) {
-            let code = value + 1;
-            let len = (u64::BITS - code.leading_zeros()) as usize;
-            for _ in 0..len - 1 {
-                self.bit(false);
-            }
-            for shift in (0..len).rev() {
-                self.bit((code >> shift) & 1 == 1);
-            }
-        }
-    }
-
     /// One H.264 SPS (ITU-T H.264 §7.3.2.1.1) with the given coded size and
     /// frame cropping, for the dimension-overflow boundary.
     fn avc_sps(
@@ -1972,7 +1951,7 @@ mod tests {
         crop_left: u64,
         crop_bottom: u64,
     ) -> Vec<u8> {
-        let mut w = BitWriter { bits: Vec::new() };
+        let mut w = crate::test_bits::BitWriter::new();
         w.ue(0); // seq_parameter_set_id
         if high_profile {
             w.ue(chroma_format_idc);
@@ -2002,18 +1981,7 @@ mod tests {
             w.ue(crop_bottom);
         }
         w.bit(false); // vui_parameters_present_flag
-        w.bit(true); // rbsp_stop_one_bit
-        while !w.bits.len().is_multiple_of(8) {
-            w.bit(false);
-        }
-        let mut rbsp = Vec::new();
-        for chunk in w.bits.chunks(8) {
-            let mut byte = 0u8;
-            for &bit in chunk {
-                byte = (byte << 1) | u8::from(bit);
-            }
-            rbsp.push(byte);
-        }
+        let rbsp = w.trailing(); // rbsp_stop_one_bit + alignment
         let mut out = alloc::vec![0x67, if high_profile { 0x64 } else { 0x42 }, 0x00, 0x1F];
         let mut zeros = 0u8;
         for byte in rbsp {

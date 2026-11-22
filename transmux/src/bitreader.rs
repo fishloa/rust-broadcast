@@ -24,8 +24,7 @@ use broadcast_common::error::{BufferTooShort, InvalidValue};
 /// or fewer than `n` bits remain; `*bit_pos` is then left unchanged.
 pub(crate) fn read_bits_at(data: &[u8], bit_pos: &mut usize, n: usize) -> Option<u64> {
     let n_u32 = u32::try_from(n).ok().filter(|&n| n <= u64::BITS)?;
-    let mut br = broadcast_common::bits::BitReader::new(data);
-    br.skip_bits(*bit_pos).ok()?;
+    let mut br = broadcast_common::bits::BitReader::starting_at(data, *bit_pos).ok()?;
     let val = br.read_bits(n_u32).ok()?;
     *bit_pos += n;
     Some(val)
@@ -153,10 +152,10 @@ impl BitReader {
 
     /// Read `n` bits as an unsigned integer (`u(n)` / `f(n)`).
     ///
-    /// Extraction delegates to the shared `read_bits_at` cursor. This type
-    /// stays an owning wrapper (it owns the unescaped RBSP `Vec<u8>`; a
-    /// borrowing reader cannot live in the same struct without a
-    /// self-referential lifetime).
+    /// Extraction is [`broadcast_common::bits::BitReader`] resumed at this
+    /// reader's position. This type stays an owning wrapper (it owns the
+    /// unescaped RBSP `Vec<u8>`; a borrowing reader cannot live in the same
+    /// struct without a self-referential lifetime).
     pub fn read_bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
         if n > 64 || !self.has_bits(n) {
             return Err(self.short(n, what));
@@ -164,9 +163,12 @@ impl BitReader {
         if n == 0 {
             return Ok(0);
         }
-        let mut pos = self.bit_pos;
-        let val = read_bits_at(&self.data, &mut pos, n).ok_or_else(|| self.short(n, what))?;
-        self.bit_pos = pos;
+        let mut reader = broadcast_common::bits::BitReader::starting_at(&self.data, self.bit_pos)
+            .map_err(|_| self.short(n, what))?;
+        let val = reader
+            .read_bits(u32::try_from(n).map_err(|_| self.short(n, what))?)
+            .map_err(|_| self.short(n, what))?;
+        self.bit_pos = reader.bits_read();
         Ok(val)
     }
 
@@ -339,6 +341,41 @@ mod tests {
             "the read starts at the end of the one-byte buffer and spans two more"
         );
         assert_eq!(short.have, 1, "one byte is present");
+    }
+
+    #[test]
+    fn exp_golomb_across_byte_boundaries_and_the_32_zero_bound() {
+        // ue: 1 | 010 | 011 | 00100 | 00101 | 00110 | 00111, se: -1 as 011
+        let mut r =
+            BitReader::from_rbsp(&[0b1010_0110, 0b0100_0010, 0b1001_1000, 0b1110_0000], "t")
+                .unwrap();
+        for expected in [0, 1, 2, 3, 4, 5, 6] {
+            assert_eq!(r.read_ue("t").unwrap(), expected);
+        }
+        let mut r = BitReader::from_rbsp(&[0b0110_0100, 0b0000_0000], "t").unwrap();
+        assert_eq!(r.read_se("t").unwrap(), -1);
+        assert_eq!(r.read_se("t").unwrap(), 2);
+        let mut r = BitReader::from_rbsp(&[0, 0, 0, 0, 0x80], "t").unwrap();
+        assert_eq!(
+            r.read_ue("t").unwrap_err(),
+            Error::BufferTooShort(BufferTooShort {
+                need: 9,
+                have: 5,
+                what: "t",
+            })
+        );
+        let mut r = BitReader::from_rbsp(&[0x00, 0x00, 0x00, 0x00, 0x80, 0, 0, 0, 0], "t").unwrap();
+        assert_eq!(r.read_ue("t").unwrap(), u64::from(u32::MAX));
+    }
+
+    #[test]
+    fn a_read_straddling_the_end_fails_and_keeps_the_cursor() {
+        let mut r = BitReader::from_rbsp(&[0xF0, 0x0F], "t").unwrap();
+        assert_eq!(r.read_bits(4, "t").unwrap(), 0xF);
+        assert!(r.read_bits(13, "t").is_err());
+        assert_eq!(r.read_bits(12, "t").unwrap(), 0x00F);
+        assert!(r.read_flag("t").is_err());
+        r.align_to_byte("t").unwrap();
     }
 
     #[test]
