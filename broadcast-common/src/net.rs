@@ -242,11 +242,13 @@ impl MulticastInterface {
 
 /// Why [`MulticastInterface::parse`] could not read its text.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum InterfaceError {
     /// The text looked like an IPv4 address but is not one.
+    #[error("not an IPv4 address (and not an interface name or index): {0}")]
     Address(alloc::string::String),
     /// The text was a number too large for an interface index.
+    #[error("not an interface index (above the u32 range): {0}")]
     Index(alloc::string::String),
 }
 
@@ -260,19 +262,6 @@ impl InterfaceError {
         }
     }
 }
-
-impl core::fmt::Display for InterfaceError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(self.name())?;
-        f.write_str(": ")?;
-        match self {
-            Self::Address(text) | Self::Index(text) => f.write_str(text),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for InterfaceError {}
 
 /// Why a [`UdpOptions`] multicast join cannot be performed for its group.
 #[non_exhaustive]

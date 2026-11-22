@@ -102,11 +102,12 @@ const MAX_FLOOR_SECS: u64 = u64::MAX / NANOS_PER_SEC;
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 /// Why [`RetrySchedule::new`] refused its bounds.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum InvalidBackoff {
     /// The cap is under the floor: no attempt may wait longer than the cap and
     /// the first waits exactly the floor.
+    #[error("retry cap {cap:?} is below the first retry's {floor:?}")]
     CapBelowFloor {
         /// The first retry's delay.
         floor: Duration,
@@ -115,6 +116,7 @@ pub enum InvalidBackoff {
     },
     /// The floor is above [`MAX_FLOOR`], where the series' own visits overflow
     /// their representation.
+    #[error("retry floor {floor:?} is above the largest accepted {ceiling:?}")]
     FloorAboveCeiling {
         /// The first retry's delay (or a step table's cap).
         floor: Duration,
@@ -123,30 +125,12 @@ pub enum InvalidBackoff {
     },
     /// The growth factor is below one or NaN, so the series would shrink or
     /// re-roll into a shorter one.
+    #[error("retry growth factor {factor}")]
     GrowthFactor {
         /// The requested factor; NaN or under one.
         factor: GrowthFactor,
     },
 }
-
-impl fmt::Display for InvalidBackoff {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CapBelowFloor { floor, cap } => {
-                write!(f, "retry cap {cap:?} is below the first retry's {floor:?}")
-            }
-            Self::FloorAboveCeiling { floor, ceiling } => {
-                write!(
-                    f,
-                    "retry floor {floor:?} is above the largest accepted {ceiling:?}"
-                )
-            }
-            Self::GrowthFactor { factor } => write!(f, "retry growth factor {factor}"),
-        }
-    }
-}
-
-impl core::error::Error for InvalidBackoff {}
 
 /// A growth factor [`RetrySchedule::new`] refused, kept so that the error
 /// compares equal to its own copy: `f64`'s NaN is not equal to itself.

@@ -26,7 +26,6 @@
 //! ```
 
 use alloc::vec::Vec;
-use core::fmt;
 
 use crate::error::BufferTooShort;
 
@@ -34,10 +33,11 @@ use crate::error::BufferTooShort;
 const BITS_PER_BYTE: usize = 8;
 
 /// Error from a [`BitReader`] / [`BitWriter`] operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum BitError {
     /// Asked to read/write past the end of the backing buffer.
+    #[error("bit buffer out of bounds: need {needed_bits} bit(s), {remaining_bits} remaining")]
     OutOfBounds {
         /// Bits the operation needed.
         needed_bits: usize,
@@ -45,11 +45,13 @@ pub enum BitError {
         remaining_bits: usize,
     },
     /// Requested a field wider than the 64-bit carrier.
+    #[error("requested {requested} bits exceeds the 64-bit carrier")]
     TooManyBits {
         /// The over-wide width requested.
         requested: u32,
     },
     /// A value passed to [`BitWriter::write_bits`] does not fit in `bits` bits.
+    #[error("value {value:#x} does not fit in {bits} bit(s)")]
     ValueTooWide {
         /// The offending value.
         value: u64,
@@ -57,28 +59,6 @@ pub enum BitError {
         bits: u32,
     },
 }
-
-impl fmt::Display for BitError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BitError::OutOfBounds {
-                needed_bits,
-                remaining_bits,
-            } => write!(
-                f,
-                "bit buffer out of bounds: need {needed_bits} bit(s), {remaining_bits} remaining"
-            ),
-            BitError::TooManyBits { requested } => {
-                write!(f, "requested {requested} bits exceeds the 64-bit carrier")
-            }
-            BitError::ValueTooWide { value, bits } => {
-                write!(f, "value {value:#x} does not fit in {bits} bit(s)")
-            }
-        }
-    }
-}
-
-impl core::error::Error for BitError {}
 
 impl From<BitError> for BufferTooShort {
     /// The one conversion from a bit-level failure to the workspace's
