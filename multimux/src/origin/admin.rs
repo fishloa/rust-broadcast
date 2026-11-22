@@ -40,7 +40,7 @@
 //!
 //! # Concurrency
 //!
-//! `RouteRegistry` holds every live route behind a `std::sync::RwLock`,
+//! `RouteRegistry` holds every live route behind a `parking_lot::RwLock`,
 //! mirroring [`crate::route::RouteHandle`]'s own `RwLock<HashMap<..>>`
 //! program registry: many concurrent readers (every HTTP request against a
 //! route that ISN'T being mutated) must never block on an admin operation
