@@ -1290,10 +1290,11 @@ impl ProgramServing {
         let from = predecessor.archive();
         let held = predecessor.release_recorder();
         if let Some(held) = held
+            && let Some(from) = from
             && let Some(pending) = self.dvr_pending.lock().as_mut()
-            && from == Some(pending.archive)
+            && from == pending.archive
         {
-            pending.inherited = Some((pending.archive, held));
+            pending.inherited = Some((from, held));
         }
     }
 
