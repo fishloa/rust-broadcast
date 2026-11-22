@@ -7,11 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- `EXT-X-KEY` `IV` parsing decodes through `broadcast_common::hex::hex_decode_into`, replacing a hand-rolled hex loop that carried an `.expect`. Accepted and rejected inputs are unchanged (#3957).
+### Breaking
+
 - **BREAKING:** `jiff` 0.2 -> 1.0. `ProgramDateTime::from_timestamp` and `ProgramDateTime::timestamp` take and return a jiff 1.x `Timestamp`.
 
+### Changed
+
+- `EXT-X-KEY` `IV` parsing decodes through `broadcast_common::hex::hex_decode_into`, replacing a hand-rolled hex loop that carried an `.expect`. Accepted and rejected inputs are unchanged (#3957).
+
 ### Added
+
 - `OpenTag` and `OpenSegment::trailing_tags`: the segment-scoped tag lines an open (LL-HLS live-edge) segment carries after at least one of its parts, each with its `pre_tags` index and the number of parts preceding it. A key rotation between two parts now applies only to the parts after it, and a torn playlist re-renders byte-identically (#3931).
 - `Scte35Kind` and `DateRange::set_scte35`/`with_scte35`: build an `SCTE35-CMD`/`-OUT`/`-IN` hexadecimal payload on a new DATERANGE through a validated, typed setter (#3925).
 - `ParseDiagnosticKind::DanglingSegmentTags`: an `#EXTINF` or `#EXT-X-BYTERANGE` with no following URI line before end of input, or one overwritten by another such tag before its URI, is reported through `MediaPlaylist::diagnostics` instead of being silently dropped, so a reader of a playlist caught mid-write can see the incomplete record (#3925).
@@ -21,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DateRange`, `ClientAttrName`, `Cue`, `CueTrigger`, `DateRangeError` and `ClientAttrNameError`: a typed `#EXT-X-DATERANGE` (RFC 8216bis §4.4.5.1) with `new`/`parse_tag_line`/`to_tag_line`, typed getters, and setters/builders (`set_id`/`with_id`, `set_class`/`with_class`, the date, duration, `END-ON-NEXT`, `CUE` and client-attribute pairs). The single ordered attribute list is the only storage: an untouched parsed tag round-trips byte-for-byte (order, quoting and decimal text included), a setter replaces its entry in place or appends a new one, and `PartialEq` compares the decoded values rather than spelling or order. Known attributes with the wrong value kind and every local §4.4.5.1 rule are typed errors, including `END-ON-NEXT`'s `CLASS`/`DURATION`/`END-DATE` constraints, date order, `END-DATE = START-DATE + DURATION`, the three allowed `X-` value kinds (decimal-floating-point unsigned), hexadecimal `SCTE35-*`, typed `CUE` triggers (`PRE`/`POST`/`ONCE`, `PRE`+`POST` rejected), and a non-empty `ID` (#3925).
 
 ### Fixed
+
 - `MediaPlaylist::render_endlist` now renders an open (LL-HLS live-edge) segment's tag lines in their wire positions: its segment-scoped pre-tags that precede the first `#EXT-X-PART` come before its `#EXT-X-DISCONTINUITY`/`#EXT-X-MAP`/`#EXT-X-PROGRAM-DATE-TIME`/parts (matching `render_segment`'s closed-segment order), while a tag that followed a part stays after that part. A segment therefore renders with the same tag order before and after it closes, and a key rotation between parts is not moved ahead of the parts it does not cover (#3931).
 - The new typed DATERANGE/vendor-tag paths reject C0, DEL and C1 control characters in attribute values; the general `AttrValue` and whole-playlist parser keep their prior tolerance of a tab in an unknown attribute, so existing callers see no patch-release regression. `Cue`'s trigger list is private behind `triggers()`, so only the validating constructor can make a `CUE` value. A hexadecimal-sequence may have an odd digit count (so `X-A=0xABC` round-trips); only `SCTE35-*` keeps the whole-byte even-length rule (#3925).
 - An empty quoted-string is accepted where the attribute is a quoted-string (`CLASS=""`, `X-A=""`, a vendor attribute), matching RFC 8216bis §4.2; only a value with its own non-empty rule (`ID`) is rejected. A negative `X-` decimal is rejected, since the allowed kinds are unsigned decimal-floating-point, hexadecimal-sequence or quoted-string (#3925).
