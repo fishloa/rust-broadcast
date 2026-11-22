@@ -156,8 +156,19 @@ impl BitReader {
     /// reader's position. This type stays an owning wrapper (it owns the
     /// unescaped RBSP `Vec<u8>`; a borrowing reader cannot live in the same
     /// struct without a self-referential lifetime).
+    ///
+    /// An over-wide field (`n > 64`) is [`Error::InvalidValue`], the same
+    /// class the crate's `BitError` conversion gives `BitError::TooManyBits`;
+    /// only a genuinely short buffer is [`Error::BufferTooShort`].
     pub fn read_bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
-        if n > 64 || !self.has_bits(n) {
+        if n > 64 {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: what,
+                value: n as u64,
+                reason: "field wider than 64 bits",
+            }));
+        }
+        if !self.has_bits(n) {
             return Err(self.short(n, what));
         }
         if n == 0 {
@@ -291,10 +302,14 @@ mod tests {
         assert_eq!(reader.read_bits(64, "x").unwrap(), expected);
 
         let mut reader = BitReader::from_rbsp(&data, "x").unwrap();
-        assert!(matches!(
-            reader.read_bits(65, "x"),
-            Err(Error::BufferTooShort(..))
-        ));
+        let refused = reader.read_bits(65, "x").unwrap_err();
+        let Error::InvalidValue(invalid) = refused else {
+            panic!("an over-wide field is InvalidValue, not a short buffer: {refused:?}");
+        };
+        assert_eq!(invalid.field, "x");
+        assert_eq!(invalid.value, 65);
+        assert_eq!(invalid.reason, "field wider than 64 bits");
+        assert_eq!(reader.bit_pos, 0, "a refused read leaves the cursor alone");
     }
 
     #[test]

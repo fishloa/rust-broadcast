@@ -2833,12 +2833,16 @@ impl RouteHandle {
 
     /// Start the default program's Media Sequence Numbers above `floor`, the
     /// highest sequence number its DVR archive already holds. A consuming
-    /// builder like [`Self::with_dvr`]; every other program numbers above its own archive floor.
+    /// builder like [`Self::with_dvr`]; every other program numbers above its
+    /// own archive floor. The floor is an RFC 8216 §4.3.3.2
+    /// [`MediaSequence`](broadcast_hls::MediaSequence), clamped to the
+    /// `u32` sequence-number domain every consumer uses.
     #[must_use]
-    pub fn with_archive_floor(mut self, floor: u32) -> Self {
-        self.archive_floors
-            .get_mut()
-            .insert(crate::dvr::ProgramArchive::Default, floor);
+    pub fn with_archive_floor(mut self, floor: broadcast_hls::MediaSequence) -> Self {
+        self.archive_floors.get_mut().insert(
+            crate::dvr::ProgramArchive::Default,
+            u32::try_from(floor.value()).unwrap_or(u32::MAX),
+        );
         self
     }
 
@@ -3899,6 +3903,25 @@ mod program_registry_tests {
         )
     }
 
+    /// The archive floor is a Media Sequence Number, and a floor past the
+    /// `u32` sequence domain clamps instead of wrapping.
+    #[test]
+    fn an_archive_floor_is_a_media_sequence_number() {
+        let floored = RouteHandle::new(RouteConfig::default())
+            .with_archive_floor(broadcast_hls::MediaSequence::new(7));
+        assert_eq!(
+            floored.media_sequence_floors()[&crate::dvr::ProgramArchive::Default],
+            7
+        );
+
+        let clamped = RouteHandle::new(RouteConfig::default())
+            .with_archive_floor(broadcast_hls::MediaSequence::new(u64::MAX));
+        assert_eq!(
+            clamped.media_sequence_floors()[&crate::dvr::ProgramArchive::Default],
+            u32::MAX
+        );
+    }
+
     /// MUTATION VERIFIED: changing `publish_program` to insert a
     /// freshly-constructed one-slot-per-ring `Trunk` (every `TrunkConfig` capacity set to
     /// `nz(1)`)-backed bundle instead of the `trunk` argument it was
@@ -4185,7 +4208,7 @@ mod program_registry_tests {
                 .with_window_segments(8),
         )
         .with_dvr(dvr_config(&dvr_test_dir("floor-cover"), Some(0x0601)))
-        .with_archive_floor(7);
+        .with_archive_floor(broadcast_hls::MediaSequence::new(7));
         assert_eq!(
             route.media_sequence_floors(),
             BTreeMap::from([(crate::dvr::ProgramArchive::Default, 7)]),
@@ -4245,7 +4268,7 @@ mod program_registry_tests {
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
-        .with_archive_floor(41);
+        .with_archive_floor(broadcast_hls::MediaSequence::new(41));
         let trunk = test_trunk();
         old.publish_program(SPTS_PROGRAM_ID, Arc::clone(&trunk));
         let old_next = old
@@ -4306,7 +4329,7 @@ mod program_registry_tests {
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
-        .with_archive_floor(41);
+        .with_archive_floor(broadcast_hls::MediaSequence::new(41));
         let first = test_trunk();
         route.publish_program(SPTS_PROGRAM_ID, Arc::clone(&first));
         let origin = route.ll_hls(SPTS_PROGRAM_ID).expect("origin");

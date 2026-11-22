@@ -8,10 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Breaking
-
 - **BREAKING:** `HEVCDecoderConfigurationRecord::is_valid_length_size` is removed. It had no caller (the parser validates `lengthSizeMinusOne` against `VALID_LENGTH_SIZES`; the VVC record keeps its own, used copy) and its doc comment described an unrelated reserved-bit rule, so it was a dead, untested duplicate public API (audit 23 finding 268, #3781).
 - **BREAKING:** `TrackFragmentBox::into_bytes` is removed (unused; use `Serialize::try_to_bytes`) (#3698).
-
+- `BitReader::read_bits` reports an over-wide field (`n > 64`) as `Error::InvalidValue`, the class `VvcBitReader::bits` and `bit_error` already use, instead of `Error::BufferTooShort`; a caller matching the short-buffer variant for that input sees the new class (#3998).
 ### Added
 
 - Optional `misb` feature and `LocalSetItem::st0601_value()` returning the transmux-owned `St0601Value` (with `NestedSet`): MISB ST 0601 Local Set items decoded and scaled per the tag table, times as `jiff::Timestamp`, nested ST 0102/ST 0903 sets left as their raw bytes. No `misb` type is part of the public API (contributed by Matthew Busel, #3955).
@@ -27,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The BER-OID documentation no longer claims every ST 0601 tag fits one byte: tags 128..=143 take two-byte keys (contributed by Matthew Busel, #3955).
+- An over-wide `BitReader::read_bits` request is `InvalidValue` with its field, width and reason, and leaves the cursor where it was (#3998).
+- The `vvcC` record reader no longer swallows an error from its byte skip or advances its cursor unchecked over `ptl_reserved_zero_bit` padding: the skip's error is propagated, a length that would overflow the byte cursor is a typed `BufferTooShort` instead of a panic, and alignment reads its padding bits (#3999).
+- 192-byte M2TS source packets demux: the resynchroniser now locks at the 192-byte stride and strips the 4-byte `TP_extra_header`, so `TsDemux` yields the tracks `fixtures/ts/m2ts-192.m2ts` really carries instead of nothing (#3988).
 - **`av1C` byte-2/3 flags, the mandatory marker bit and the presentation-delay field are pinned.** The only oracle record had profile 0, tier 0, 8-bit, chroma 1/1 and no delay, so a flipped mask or shift on any of those bits (or a missing marker check) shipped. Hand-built records now decode each flag on its own and together, reject a clear marker, assert `bit_depth()`/`rfc6381()` and re-encode byte-exactly (audit 23 finding 216, #3721).
 - **The buffered-NAL cap is a literal 64 MiB and its boundary is exact.** The old cap test derived its loop count from the constant, so a `*` become `+` (~1 MiB) still passed and would have rejected a real 4 MiB IDR. A 4 MiB NAL is now accepted as one access unit, the constant is asserted, and exactly the cap is accepted while one byte more is the typed error (audit 23 finding 217, #3722).
 - **HEVC access units split on `first_slice_segment_in_pic_flag` without an AUD.** The flag sits after the 2-byte NAL header, but nothing exercised an AUD-less HEVC stream, so reading the second header byte collapsed every slice into one AU. VPS/SPS/PPS, an IDR and three TRAIL slices now yield three AUs with the continuation slice in the third (audit 23 finding 218, #3723).

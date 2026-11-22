@@ -3,8 +3,9 @@
 //! Recovers 188-byte MPEG-TS packet alignment from an arbitrary byte stream
 //! (file reads, UDP payloads) that may start mid-packet or contain leading
 //! garbage.  Also detects 204-byte Reed-Solomon-coded packets (DVB RS-coded
-//! outer forward-error-correction layer) and strips the 16 parity bytes,
-//! yielding standard 188-byte TS packets in both cases.
+//! outer forward-error-correction layer) and strips the 16 parity bytes, and
+//! 192-byte M2TS (BDAV) source packets and strips their 4-byte
+//! `TP_extra_header`, yielding standard 188-byte TS packets in every case.
 //!
 //! # Feature gate
 //!
@@ -33,6 +34,14 @@ pub const RS_PACKET_SIZE: usize = 204;
 /// Number of Reed-Solomon parity bytes appended to a 204-byte packet.
 pub const RS_PARITY_LEN: usize = RS_PACKET_SIZE - TS_PACKET_SIZE;
 
+/// M2TS (BDAV) source packet size: a 4-byte `TP_extra_header`
+/// (copy-permission indicator + arrival time stamp) followed by a 188-byte TS
+/// packet.
+pub const M2TS_PACKET_SIZE: usize = 192;
+
+/// Length of the `TP_extra_header` that precedes each TS packet in M2TS.
+pub const M2TS_EXTRA_HEADER_LEN: usize = M2TS_PACKET_SIZE - TS_PACKET_SIZE;
+
 /// Consecutive sync bytes at the candidate stride required to declare lock.
 pub const LOCK_CONFIRMATIONS: usize = 5;
 
@@ -45,6 +54,9 @@ pub enum PacketStride {
     Ts188,
     /// 204-byte packets (188-byte TS + 16 Reed-Solomon parity bytes).
     Rs204,
+    /// 192-byte M2TS (BDAV) source packets (4-byte `TP_extra_header` +
+    /// 188-byte TS).
+    M2ts192,
 }
 
 impl PacketStride {
@@ -53,6 +65,16 @@ impl PacketStride {
         match self {
             PacketStride::Ts188 => "ts_188",
             PacketStride::Rs204 => "rs_204",
+            PacketStride::M2ts192 => "m2ts_192",
+        }
+    }
+
+    /// Bytes from one sync byte to the next at this stride.
+    pub fn packet_len(&self) -> usize {
+        match self {
+            PacketStride::Ts188 => TS_PACKET_SIZE,
+            PacketStride::Rs204 => RS_PACKET_SIZE,
+            PacketStride::M2ts192 => M2TS_PACKET_SIZE,
         }
     }
 }
@@ -99,14 +121,15 @@ pub struct ResyncLoss {
 ///
 /// Recovers 188-byte MPEG-TS packet alignment from an arbitrary byte stream
 /// that may start mid-packet or contain junk, and detects 204-byte
-/// Reed-Solomon-coded packets (stripping the 16 parity bytes).
+/// Reed-Solomon-coded packets (stripping the 16 parity bytes) and 192-byte
+/// M2TS source packets (stripping the 4-byte `TP_extra_header`).
 ///
 /// Feed raw bytes with [`feed`](Self::feed); each call returns a `Vec` of
 /// aligned 188-byte TS packets.  Bytes are buffered across calls so that
 /// packet boundaries may span call boundaries freely.
 ///
 /// Lock is declared after [`LOCK_CONFIRMATIONS`] consecutive sync bytes are
-/// found at the candidate stride (188 or 204).  On sync loss the resynchroniser
+/// found at the candidate stride (188, 192 or 204).  On sync loss the resynchroniser
 /// re-scans from the byte after the lost position.
 ///
 /// Every discarded byte is reported as a [`ResyncLoss`], including the bytes
@@ -133,6 +156,10 @@ pub struct TsResync {
     /// Aligned packets recovered by [`finish`](Self::finish), not yet drained
     /// by [`take_tail_packets`](Self::take_tail_packets).
     tail: Vec<[u8; TS_PACKET_SIZE]>,
+    /// Bytes of the current stride still to skip after a packet emitted
+    /// before its stride's trailing bytes arrived (M2TS: the next packet's
+    /// `TP_extra_header`).
+    skip: usize,
 }
 
 impl TsResync {
@@ -143,8 +170,9 @@ impl TsResync {
 
     /// Feed `data` and emit every newly-aligned 188-byte TS packet.
     ///
-    /// For a 204-byte stream the 16 Reed-Solomon parity bytes are stripped;
-    /// only the 188-byte TS payload is returned.  Bytes that cannot yet form
+    /// For a 204-byte stream the 16 Reed-Solomon parity bytes are stripped,
+    /// and for a 192-byte M2TS stream the 4-byte `TP_extra_header`; only the
+    /// 188-byte TS packet is returned.  Bytes that cannot yet form
     /// a complete packet (or fall before lock) are buffered for the next call.
     ///
     /// **Drain [`take_losses`](Self::take_losses).** Every span discarded after
@@ -187,12 +215,19 @@ impl TsResync {
                     }
                 }
                 Some(stride) => {
-                    let s = match stride {
-                        PacketStride::Ts188 => TS_PACKET_SIZE,
-                        PacketStride::Rs204 => RS_PACKET_SIZE,
-                    };
+                    let s = stride.packet_len();
                     let tail_len = self.buf.len() - self.head;
-                    if tail_len < s {
+                    if self.skip > 0 {
+                        let n = self.skip.min(tail_len);
+                        self.head += n;
+                        self.skip -= n;
+                        if self.skip > 0 {
+                            self.compact();
+                            return emitted.len() - before;
+                        }
+                        continue;
+                    }
+                    if tail_len < emit_len(stride) {
                         self.compact();
                         return emitted.len() - before;
                     }
@@ -200,7 +235,9 @@ impl TsResync {
                         let mut packet = [0u8; TS_PACKET_SIZE];
                         packet.copy_from_slice(&self.buf[self.head..self.head + TS_PACKET_SIZE]);
                         emitted.push(packet);
-                        self.head += s;
+                        let advance = s.min(tail_len);
+                        self.head += advance;
+                        self.skip = s - advance;
                         self.stats.packets += 1;
                     } else {
                         // Sync byte missing — record the loss and re-scan.
@@ -314,7 +351,7 @@ impl TsResync {
 }
 
 /// Scan `buf` for the smallest offset `o` such that stride `S` (tried 188
-/// first, then 204) yields [`LOCK_CONFIRMATIONS`] consecutive sync bytes at
+/// first, then 192, then 204) yields [`LOCK_CONFIRMATIONS`] consecutive sync bytes at
 /// positions `o + k*S` for `k = 0 .. LOCK_CONFIRMATIONS`.
 ///
 /// Returns `(offset, stride)` on success, or `None` if no lock is found.
@@ -323,38 +360,53 @@ fn find_sync(buf: &[u8]) -> Option<(usize, PacketStride)> {
         if buf[o] != TS_SYNC_BYTE {
             continue;
         }
-        if try_stride(buf, o, TS_PACKET_SIZE) {
-            return Some((o, PacketStride::Ts188));
-        }
-        if try_stride(buf, o, RS_PACKET_SIZE) {
-            return Some((o, PacketStride::Rs204));
+        if let Some(stride) = STRIDES
+            .into_iter()
+            .find(|stride| try_stride(buf, o, stride.packet_len()))
+        {
+            return Some((o, stride));
         }
     }
     None
 }
 
+/// The strides [`find_sync`] and [`find_tail_sync`] try, in order.
+const STRIDES: [PacketStride; 3] = [
+    PacketStride::Ts188,
+    PacketStride::M2ts192,
+    PacketStride::Rs204,
+];
+
 /// End-of-input counterpart of [`find_sync`]: the smallest offset whose
-/// stride (188 first, then 204) holds a sync byte at every packet boundary
+/// stride (188 first, then 192, then 204) holds a sync byte at every packet boundary
 /// the buffer still covers, with at least one whole packet.
 fn find_tail_sync(buf: &[u8]) -> Option<(usize, PacketStride)> {
-    let chain = |o: usize, s: usize| {
-        o + s <= buf.len()
+    let chain = |o: usize, stride: PacketStride| {
+        let need = emit_len(stride);
+        o + need <= buf.len()
             && (o..buf.len())
-                .step_by(s)
-                .take_while(|pos| pos + s <= buf.len())
+                .step_by(stride.packet_len())
+                .take_while(|pos| pos + need <= buf.len())
                 .all(|pos| buf[pos] == TS_SYNC_BYTE)
     };
     (0..buf.len())
         .filter(|&o| buf[o] == TS_SYNC_BYTE)
         .find_map(|o| {
-            if chain(o, TS_PACKET_SIZE) {
-                Some((o, PacketStride::Ts188))
-            } else if chain(o, RS_PACKET_SIZE) {
-                Some((o, PacketStride::Rs204))
-            } else {
-                None
-            }
+            STRIDES
+                .into_iter()
+                .find(|&stride| chain(o, stride))
+                .map(|stride| (o, stride))
         })
+}
+
+/// Bytes from a sync byte that complete one packet at `stride`: the 204-byte
+/// stride's parity trails its packet, while the 4 bytes after an M2TS packet
+/// belong to the next one.
+fn emit_len(stride: PacketStride) -> usize {
+    match stride {
+        PacketStride::Rs204 => RS_PACKET_SIZE,
+        PacketStride::Ts188 | PacketStride::M2ts192 => TS_PACKET_SIZE,
+    }
 }
 
 /// Return `true` if `LOCK_CONFIRMATIONS` consecutive sync bytes exist at
