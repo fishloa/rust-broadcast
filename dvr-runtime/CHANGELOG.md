@@ -22,6 +22,7 @@ All notable changes to this crate are documented here. The format follows
 
 ### Changed
 
+- Builds against `jiff` 1.0: the recording and read-side wall-clock times are jiff 1.x `Timestamp`s.
 - The release requires `broadcast-hls` 0.8.2 (typed `DateRange`/`CustomTag`,
   segment-scoped parse options and incremental renderers) and `dvb-si` 15.2.0
   (the EIT present/following tracker). The manifest floors stay at the

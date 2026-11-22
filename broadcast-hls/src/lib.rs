@@ -735,7 +735,7 @@ impl ProgramDateTime {
         } else if trimmed.contains(':')
             && let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>()
         {
-            dt.to_zoned(jiff::tz::TimeZone::UTC)
+            dt.to_zoned_datetime(jiff::tz::TimeZone::UTC)
                 .map_err(|_| crate::Error::HlsParse {
                     line_no: 0,
                     line: trimmed.to_string(),

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- **BREAKING:** `jiff` 0.2 -> 1.0. `Session::set_wall_clock` takes a jiff 1.x `Timestamp`.
 - An RTSP 401 with credentials configured is treated as a rejection: the unreachable replay arm is gone, so the source waits for host-supplied credentials and reconnects instead of replaying a request whose credentials the server already refused (#3634).
 ### Fixed
 - An HLS VOD whose encrypted init fails to decrypt when its key arrives now plays and ends after the init refetch: the segments queued behind that key are decrypted (via `hls-runtime`'s `on_key` fix) instead of the session stalling (#3951).

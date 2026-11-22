@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff::Timestamp` faces of the `jiff` and `http-date` features (`time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `encode_seconds_since_2000_utc`, `MonoUtc`, `http_date::parse_http_date`, `date_to_epoch_us`) are now jiff 1.x types.
 ### Fixed
 - `backoff::RetrySchedule` applies the drawn jitter term itself, not that term raised to the attempt index. Raising it collapsed every retry from the fifth attempt on to exactly `5/6` of the raw delay (only a term of exactly one escaped), so during the long outage the cap exists for, a fleet of clients retried on one shared instant: the lockstep the schedule and its `with_offset` are meant to prevent. The delay now stays inside `[raw * 5/6, raw]` with the sequence's own spread at every attempt (#2920).
 ### Tests

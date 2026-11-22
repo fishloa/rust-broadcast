@@ -204,6 +204,8 @@ struct RtmpInfra {
     /// Set by the accept pump as it ends, so the next [`RtmpRoute::ensure_infra`]
     /// rebinds instead of reusing a listener whose pump is gone.
     dead: Arc<AtomicBool>,
+    #[cfg(test)]
+    local_addr: std::net::SocketAddr,
 }
 
 impl Drop for RtmpInfra {
@@ -324,6 +326,10 @@ impl RtmpRoute {
                     reason: format!("rtmp: bind {}: {e}", self.listen),
                 })?,
         );
+        #[cfg(test)]
+        let local_addr = server.local_addr().map_err(|e| MultimuxError::Connect {
+            reason: format!("rtmp: local address of {}: {e}", self.listen),
+        })?;
         let (tx, rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
         // Defect 3: the accept pump is TRACKED and cancel-aware, so dropping
         // the route stops it and releases the listen socket.
@@ -354,6 +360,8 @@ impl RtmpRoute {
             tracker,
             cancel,
             dead,
+            #[cfg(test)]
+            local_addr,
         });
         *slot = Some(Arc::clone(&infra));
         Ok(infra)
@@ -1854,9 +1862,9 @@ mod tests {
     /// again.
     #[tokio::test]
     async fn dropping_the_route_releases_its_listen_port() {
-        let addr = reserve_addr().await;
-        let route = RtmpRoute::new("cam-rtmp-drop", addr.to_string());
+        let route = RtmpRoute::new("cam-rtmp-drop", "127.0.0.1:0");
         let infra = route.ensure_infra().await.expect("bind");
+        let addr = infra.local_addr;
         drop(infra);
         drop(route);
         let deadline = Instant::now() + Duration::from_secs(10);

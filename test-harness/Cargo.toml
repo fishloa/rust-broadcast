@@ -13,7 +13,7 @@ broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-f
 dash-runtime = { path = "../dash-runtime", version = "0.6.0" }
 rtmp-runtime = { path = "../rtmp-runtime", version = "0.11.1", features = ["target"] }
 test-fixtures = { path = "../test-fixtures" }
-jiff = { version = "0.2", default-features = false, features = ["std"] }
+jiff = { version = "1", default-features = false, features = ["std"] }
 url = "2"
 headers = { workspace = true }
 transmux = { path = "../transmux", version = "0.32.1" }

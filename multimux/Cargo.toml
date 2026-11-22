@@ -130,7 +130,7 @@ getrandom         = "0.4"
 # than the hand-rolled `civil_from_days` / manual ISO-8601 parsing this crate
 # used before (SP5). `jiff` is already in the workspace lock (transmux,
 # timed-metadata), so this adds no new version.
-jiff              = "0.2"
+jiff              = "1"
 tracing           = "0.1"
 # Push output driver (`push`, issue #744): `#[async_trait]` drives the
 # `PushTransport` trait's async methods over the sans-IO `SrtSocket` handle.

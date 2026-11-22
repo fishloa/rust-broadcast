@@ -58,7 +58,7 @@ skip = [
     { crate = "rand_core@0.9.5", reason = "rand 0.9.5 (metrics-util 0.20.4) is on rand_core 0.9; metrics-util must move to rand 0.10" },
     { crate = "sha1@0.10.7", reason = "headers 0.4.2 and rtc-crypto 0.21.1 are on sha1 0.10; both must move to 0.11" },
     { crate = "sha2@0.10.9", reason = "http-auth 0.1.10 is on sha2 0.10; it must move to 0.11" },
-    { crate = "syn@2.0.119", reason = "thiserror-impl 1.0.69 (rtc-dtls 0.21.1), asn1-rs-derive 0.5.1, synstructure 0.13.2, munge_macro 0.4.7, num_enum_derive 0.7.6, zerocopy-derive 0.8.63, tracing-attributes 0.1.31, jiff-static, jni-macros and windows-implement 0.100 are on syn 2; they must move to syn 3" },
+    { crate = "syn@2.0.119", reason = "thiserror-impl 1.0.69 (rtc-dtls 0.21.1), asn1-rs-derive 0.5.1, synstructure 0.13.2, munge_macro 0.4.7, num_enum_derive 0.7.6, zerocopy-derive 0.8.64, tracing-attributes 0.1.31, jiff-static, jni-macros and windows-implement 0.100 are on syn 2; they must move to syn 3" },
     { crate = "synstructure@0.13.2", reason = "asn1-rs-derive 0.5.1 (asn1-rs 0.6.2 via rtc-dtls 0.21.1) is on synstructure 0.13; it must move to 0.14" },
     { crate = "thiserror@1.0.69", reason = "asn1-rs 0.6.2 and x509-parser 0.16.0 (rtc-dtls 0.21.1) are on thiserror 1; they must move to 2" },
     { crate = "thiserror-impl@1.0.69", reason = "thiserror 1.0.69 (asn1-rs 0.6.2 and x509-parser 0.16.0 via rtc-dtls 0.21.1) is on thiserror-impl 1; they must move to 2" },
