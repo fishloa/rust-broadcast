@@ -2,11 +2,16 @@
 
 ## [Unreleased]
 
+## [16.0.0] - 2026-11-22
 ### Breaking
 
 - **BREAKING:** `num_enum` is no longer a dependency (#3963). `PacketType`, `FrequencySource`, `S1Field`, `Bandwidth`, `SubpartVariety`, `PrbsType` and `AddressingFunctionTag` implement a hand-written `TryFrom<u8>` (`TryFrom<u16>` for `SubpartVariety`) whose error is the crate's own `Error` (`Error::InvalidPacketType { found }` for `PacketType`, `Error::InvalidValue` naming the field and the rejected value for the others) instead of `num_enum::TryFromPrimitiveError<T>`; the `From<num_enum::TryFromPrimitiveError<T>> for Error` impls are removed.
-- Internal: the `wire_enum!` macro now comes from `broadcast_common` (passing this crate's `Error` as its error type) instead of a crate-local copy; the generated enums and conversions are unchanged (#3989).
 - **BREAKING:** `jiff` 0.2 -> 1.0. `T2TimestampPayload::emission_time_utc` returns a jiff 1.x `Timestamp`.
+- **BREAKING:** builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `dvb-bbframe` 15 -> 16, `mpeg-ts` 0.9 -> 0.10). A caret-epoch change is major-class under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever this crate's own API diff, so this release is a lockstep major; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
+### Changed
+
+- Internal: the `wire_enum!` macro now comes from `broadcast_common` (passing this crate's `Error` as its error type) instead of a crate-local copy; the generated enums and conversions are unchanged (#3989).
 
 ### Tests
 

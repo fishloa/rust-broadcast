@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `mp4-emsg` 0.8 -> 0.9). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and the `Timestamp`/`ByteSpan`/`emsg` values it takes are those versions' types.
+
 ### Changed
 
 - Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).

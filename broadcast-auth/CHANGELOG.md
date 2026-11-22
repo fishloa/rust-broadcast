@@ -6,9 +6,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-22
 ### Breaking
 
 - **BREAKING:** `Verifier::with_clock` takes `impl Fn() -> jiff::Timestamp` (was `Fn() -> std::time::SystemTime`), the same wall-clock type the signed-URL expiry gate now reads; a caller returning `UNIX_EPOCH + Duration` builds `jiff::Timestamp::from_second` instead (#3957).
+- **BREAKING:** builds against `broadcast-common` 14 (the `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single `broadcast-common` 14 and a single `jiff` 1.x.
 
 ### Changed
 

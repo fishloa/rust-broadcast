@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `dvb-conformance` 15 -> 16, `dvb-si` 15 -> 16, `media-doctor` 0.17 -> 0.18, `media-plane` 0.13 -> 0.14, `mpeg-ts` 0.9 -> 0.10, `scte35-splice` 7 -> 8, `timed-metadata` 0.11 -> 0.12). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each, and the `Trunk`/indicator/`splice_insert` types it takes are those versions' types.
+
 ### Tests
 
 - **The PCR drift/jitter tracker's early-return guard, discontinuity boundary and jitter sign are pinned.** Only a first observation reached the repeat guard, and every other test either ran a 0 ppm stream or read drift only, so a repeated PCR at a later arrival, a new PCR at the same arrival, an exact duplicate, a 20 s PCR-side jump, the exact 10 s guard (exclusive) and `|interval - drift|` versus `interval + drift` were unpinned; each now has a test asserting the literal drift/jitter (audit 23 findings 117-119, #3425/#3426/#3427).

@@ -5,6 +5,12 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.12.0] - 2026-11-22
+### Breaking
+
+- Builds against `broadcast-common` 14 (its `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; a consumer must resolve a single `broadcast-common` 14, and any `jiff` instant it shares with this crate is a jiff 1.x type.
+
 ### Changed
 
 - Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).

@@ -3,6 +3,12 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-auth` 0.8 -> 0.9, `broadcast-common` 13 -> 14, `rtp-packet` 0.8 -> 0.9). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
 ### Fixed
 - `media::gather` now closes its server-reflexive gather when the STUN Binding transaction exhausts its retransmissions (RFC 8489 §6.2.1): `handle_timeout` drains the terminal event, so a STUN server that never answers settles the gather instead of leaving `MediaTransport` to schedule it forever (audit 22 finding 37).
 

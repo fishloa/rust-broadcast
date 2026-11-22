@@ -7,6 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `broadcast-hls` 0.8 -> 0.9, `container-probe` 0.5 -> 0.6, `media-plane` 0.13 -> 0.14, `mpeg-ts` 0.9 -> 0.10, `timed-metadata` 0.11 -> 0.12, `transmux` 0.32 -> 0.33). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and the `InstreamId`/`MediaSequence`/`PartIndex` values this crate exposes are the 0.9 ones.
+
 ### Fixed
 
 - `HlsClient::on_key` keeps decrypting the segments queued behind a key when the encrypted init waiting on that key fails to decrypt or is not an init: the init's error is still returned, but the segments wait for the refetched init instead of being stranded, so a VOD session plays and ends after `retry_init` rather than stalling (#3951).

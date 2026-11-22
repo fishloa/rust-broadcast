@@ -3,6 +3,12 @@
 All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-11-22
+### Breaking
+
+- Builds against `broadcast-common` 14 (its `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; a consumer must resolve a single `broadcast-common` 14, and any `jiff` instant it shares with this crate is a jiff 1.x type.
+
 ### Tests
 - Every `StructureError`, `ServiceComponentIdentifier` and `BaselineNamespace` variant's `name()`/`Display` label is asserted against its documented token (audit 22 #3047).
 - The "first singleton child wins, unknown or reordered siblings are skipped" guards are pinned for `ForwardErrorCorrectionParameters`, `EndpointAddress`, `MulticastTransportSession`, each gateway transport-session child, and the `xsi:type` component selector (which must ignore a plain `type` and any other `xsi:*` attribute) (audit 22 #3046).

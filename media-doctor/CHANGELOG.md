@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.18.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `broadcast-dash` 0.2 -> 0.3, `broadcast-hls` 0.8 -> 0.9, `container-probe` 0.5 -> 0.6, `dvb-conformance` 15 -> 16, `dvb-si` 15 -> 16, `dvb-stream` 0.10 -> 0.11, `mpeg-pes` 0.9 -> 0.10, `mpeg-ts` 0.9 -> 0.10, `scte35-splice` 7 -> 8, `timed-metadata` 0.11 -> 0.12, `transmux` 0.32 -> 0.33). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
 ### Fixed
 - `PcrCheck` no longer carries the unreachable TR 101 290 indicator 2.3a (`pcr-repetition`) branch: every forward PCR value step over 100 ms without `discontinuity_indicator` is already reported as 2.3b (`pcr-discontinuity`), so 2.3a can never fire in file mode (#3533).
 

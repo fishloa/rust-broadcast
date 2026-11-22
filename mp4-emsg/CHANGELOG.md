@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-22
+### Breaking
+
+- Builds against `broadcast-common` 14 (its `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; a consumer must resolve a single `broadcast-common` 14, and any `jiff` instant it shares with this crate is a jiff 1.x type.
+
 ### Tests
 - `EmsgBox::parse`'s declared-size guard is pinned at every boundary: a size of 8..=11 is `InvalidSize`, a size of exactly 12 is a valid empty FullBox whose body parse fails (not a size error), and a version-1 body of 0..=19 bytes is `BufferTooShort { need: 20 }` at each length (#3032).
 - `PresentationTime::name()` and its `Display` form are asserted literally against the DASH-IF Part 10 Table 6-2 tokens (#3033).

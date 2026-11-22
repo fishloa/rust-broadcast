@@ -3,6 +3,12 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `cc-data` 0.10 -> 0.11, `dvb-vbi` 0.8 -> 0.9, `timed-metadata` 0.11 -> 0.12). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and the `cc_data()`/timed-metadata types it takes are those versions' types.
+
 ### Tests
 - A WebVTT timing line with only trailing whitespace is not cue settings (the document stays lossless), and the malformed-timing error names the offending line literally (#3036).
 - An Inverted Teletext (`0xC0`) data unit carrying a valid subtitle page yields no cues, while the same bytes as EBU Teletext subtitle (`0x03`) do (#3035).

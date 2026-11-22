@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-22
 ### Breaking
 - **BREAKING:** `HEVCDecoderConfigurationRecord::is_valid_length_size` is removed. It had no caller (the parser validates `lengthSizeMinusOne` against `VALID_LENGTH_SIZES`; the VVC record keeps its own, used copy) and its doc comment described an unrelated reserved-bit rule, so it was a dead, untested duplicate public API (audit 23 finding 268, #3781).
 - **BREAKING:** `TrackFragmentBox::into_bytes` is removed (unused; use `Serialize::try_to_bytes`) (#3698).
 - `BitReader::read_bits` reports an over-wide field (`n > 64`) as `Error::InvalidValue`, the class `VvcBitReader::bits` and `bit_error` already use, instead of `Error::BufferTooShort`; a caller matching the short-buffer variant for that input sees the new class (#3998).
+- **BREAKING:** builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `broadcast-dash` 0.2 -> 0.3, `broadcast-hls` 0.8 -> 0.9, `broadcast-smooth` 0.2 -> 0.3, `cc-data` 0.10 -> 0.11, `container-probe` 0.5 -> 0.6, `dvb-si` 15 -> 16, `mp4-emsg` 0.8 -> 0.9, `mpeg-pes` 0.9 -> 0.10, `mpeg-ps` 0.9 -> 0.10, `mpeg-ts` 0.9 -> 0.10, `rtmp-runtime` 0.11 -> 0.12, `rtp-packet` 0.8 -> 0.9, `scte35-splice` 7 -> 8). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
 ### Added
 
 - Optional `misb` feature and `LocalSetItem::st0601_value()` returning the transmux-owned `St0601Value` (with `NestedSet`): MISB ST 0601 Local Set items decoded and scaled per the tag table, times as `jiff::Timestamp`, nested ST 0102/ST 0903 sets left as their raw bytes. No `misb` type is part of the public API (contributed by Matthew Busel, #3955).

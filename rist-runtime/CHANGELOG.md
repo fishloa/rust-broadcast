@@ -3,6 +3,12 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `rtp-packet` 0.8 -> 0.9). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and the RTCP packets it returns are `rtp-packet` 0.9 ones.
+
 ### Fixed
 - A compound packet whose SDES carries RFC 3550 §6.4.1 P-bit padding no longer fails the whole parse with `BufferTooShort`: the SDES parser is handed the full claimed sub-packet (its own length field covers the padding) and the region is preserved verbatim alongside the sub-packet instead of being taken as the CNAME (#3334).
 

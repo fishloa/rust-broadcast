@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `mpeg-pes` 0.9 -> 0.10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
 ### Tests
 - The 2-, 4- and 8-bit pixel-data run-length decoders are pinned to every code branch of EN 300 743 Tables 22-26 (single pixels, run-of-N in colour 0, runs with a pixel code including the 284/280/127 ceilings), the scanner's exact byte consumption including stuffing bits, the sub-block dispatch with all map-table sizes, and top/bottom field offsets plus stuffing validation (#3223).
 - Alternative CLUT 8-/10-bit entries are hand-computed byte vectors with distinct component values, and the disparity signalling segment is byte-anchored with two regions, positioned subregions, page and per-subregion update sequences, negative/positive disparities, the 4-subregion ceiling and the position-mismatch rejection (#3224).

@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-11-22
+### Breaking
+
+- Builds against `broadcast-common` 14 (its `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; a consumer must resolve a single `broadcast-common` 14, and any `jiff` instant it shares with this crate is a jiff 1.x type.
+
 ### Tests
 - Pin LCT CCI/TSI/TOI and `HDR_LEN` validation plus the close flags, EXT_TIME lengths with several values, NORM `serialize_into` return values and truncation guards, and the ALC SPI, partition accessors, emptiness and ack labels (#3182, #3183, #3184, #3185).
 

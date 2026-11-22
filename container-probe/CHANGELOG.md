@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `mpeg-ps` 0.9 -> 0.10, `mpeg-ts` 0.9 -> 0.10, `st377-1` 0.8 -> 0.9). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
 ### Fixed
 - MP3 probing with a leading ID3v2 tag whose declared length ends exactly at the region boundary now reports `Insufficient` (the first frame has not been examined) instead of `Unknown`, so a streaming caller is told to read more (#3069).
 

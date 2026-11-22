@@ -4,9 +4,11 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-22
 ### Breaking
 
 - **BREAKING:** `jiff` 0.2 -> 1.0. The wall-clock API (`DashClient::set_wall_clock`, `DashClient::utc_at`, `PlanOptions::with_horizon` and `PlanOptions::horizon_utc`) takes and returns jiff 1.x `Timestamp`s.
+- **BREAKING:** builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `broadcast-dash` 0.2 -> 0.3, `container-probe` 0.5 -> 0.6, `media-plane` 0.13 -> 0.14, `transmux` 0.32 -> 0.33). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each and a single `jiff` 1.x.
 
 ### Tests
 

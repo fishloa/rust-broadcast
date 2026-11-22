@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-11-22
+### Breaking
+
+- Builds against `broadcast-common` 14 (its `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; a consumer must resolve a single `broadcast-common` 14, and any `jiff` instant it shares with this crate is a jiff 1.x type.
+
 ### Tests
 - The label accessors (`State`/`Reason`/`Input`/`SampleOutcome`), `EventQueue::clear`, `MinWindow::is_empty` and the input-log error text arms are pinned by literal-value tests, so an empty or placeholder label, a no-op `clear` or a dropped field/error detail fails the suite (audit 22 finding 62).
 - The jitter estimator's exact PDV sequence, its discontinuity and outlier boundaries, the minimum-window overflow count, the anchored stall memory, the forgetting histogram's weights/quantile/interval count and the per-track liveness and step rules are pinned by value tests, so an off-by-one comparison, a wrong weight or a dead track that stays live fails the suite (audit 22 finding 61).

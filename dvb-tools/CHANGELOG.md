@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [16.0.0] - 2026-11-22
+### Breaking
+
+- Lockstep release with `dvb-si`, `dvb-t2mi`, `dvb-bbframe` and `dvb-conformance` 16.0.0, which build against `broadcast-common` 14 (the `jiff` 1.0 epoch) and `mpeg-ts` 0.10. A caret-epoch change is major-class under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever this crate's own diff, so the CLI moves a major with the family; its commands, flags and output are unchanged.
+
 ## [15.1.0] - 2026-11-17
 
 ### Changed
