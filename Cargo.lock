@@ -1167,7 +1167,6 @@ dependencies = [
  "clap",
  "dvb-ci",
  "dvb-si",
- "libc",
  "mpeg-ts",
  "rustix",
  "test-alloc",
@@ -1191,7 +1190,6 @@ version = "0.8.0"
 dependencies = [
  "criterion",
  "mpeg-ts",
- "rand 0.10.4",
  "subtle",
  "test-fixtures",
  "thiserror 2.0.21",

@@ -16,8 +16,32 @@
 
 use dvb_csa::bitsliced::{LANES, descramble_batch, scramble_batch};
 use dvb_csa::{ControlWord, descramble, scramble};
-use rand::rngs::StdRng;
-use rand::{RngExt, SeedableRng};
+
+struct StdRng(u64);
+
+impl StdRng {
+    fn seed_from_u64(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn fill(&mut self, buf: &mut [u8]) {
+        for b in buf {
+            *b = self.next_u64().to_le_bytes()[0];
+        }
+    }
+
+    fn random_range(&mut self, r: std::ops::Range<usize>) -> usize {
+        r.start + (self.next_u64() % (r.end - r.start) as u64) as usize
+    }
+}
 
 /// Payload lengths worth mixing into a batch.
 ///
