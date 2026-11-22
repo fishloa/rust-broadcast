@@ -69,9 +69,9 @@ pub type ManifestWriteError = WriteRefusal;
 // Error
 // ---------------------------------------------------------------------------
 
-struct FoundElement<'a>(&'a str);
+struct FoundName<'a>(&'a str);
 
-impl fmt::Display for FoundElement<'_> {
+impl fmt::Display for FoundName<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.0.is_empty() {
             f.write_str("none")
@@ -90,7 +90,7 @@ impl fmt::Display for FoundElement<'_> {
 pub enum SmoothParseError {
     /// The root element (or an expected child) was not the element name the
     /// grammar requires at that position.
-    #[error("expected element <{expected}>, found {}", FoundElement(.found))]
+    #[error("expected element <{expected}>, found {}", FoundName(.found))]
     UnexpectedElement {
         /// The element name required at this position.
         expected: &'static str,

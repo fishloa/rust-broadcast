@@ -409,19 +409,27 @@ pub enum CliError {
     #[error("transmux error: {0}")]
     Transmux(crate::Error),
     /// The input container could not be recognised from its leading bytes.
-    #[error("unknown input container: leading bytes match no supported format (MPEG-TS, MP4/CMAF, MPEG-PS, WebM, FLV)")]
+    #[error(
+        "unknown input container: leading bytes match no supported format (MPEG-TS, MP4/CMAF, MPEG-PS, WebM, FLV)"
+    )]
     UnknownContainer,
     /// The prober identified a container this CLI has no demuxer for.
-    #[error("unsupported input container {0}: this CLI demuxes MPEG-TS, MP4/CMAF, MPEG-PS, WebM/Matroska and FLV")]
+    #[error(
+        "unsupported input container {0}: this CLI demuxes MPEG-TS, MP4/CMAF, MPEG-PS, WebM/Matroska and FLV"
+    )]
     UnsupportedContainer(&'static str),
     /// `--utc-timing-url` was given without `--ll`. `MPD/UTCTiming` is modelled
     /// only on the low-latency packager, so the flag would otherwise be dropped
     /// silently.
-    #[error("--utc-timing-url needs --ll (MPD/UTCTiming is emitted only for the low-latency DASH profile)")]
+    #[error(
+        "--utc-timing-url needs --ll (MPD/UTCTiming is emitted only for the low-latency DASH profile)"
+    )]
     UtcTimingNeedsLl,
     /// No `-f/--format` was given and none could be inferred from the output
     /// path extension.
-    #[error("output format not given and not inferable from the output extension; pass -f/--format")]
+    #[error(
+        "output format not given and not inferable from the output extension; pass -f/--format"
+    )]
     UndeterminedFormat,
     /// The requested track-ID selection left no tracks.
     #[error("the --tracks selection matched no tracks in the input")]

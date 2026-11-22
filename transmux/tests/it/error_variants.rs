@@ -116,7 +116,9 @@ fn flv_error_display_is_exact_for_every_variant() {
             "FLV tag timestamp went backwards: None follows Some(90)",
         ),
         (
-            FlvError::SampleDurationTooLarge { ticks: 5_000_000_000 },
+            FlvError::SampleDurationTooLarge {
+                ticks: 5_000_000_000,
+            },
             "FLV sample span 5000000000 ticks exceeds a 32-bit duration",
         ),
         (

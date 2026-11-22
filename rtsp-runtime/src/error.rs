@@ -532,7 +532,10 @@ mod tests {
             "invalid mode method \"P LAY\""
         );
         assert_eq!(TransportParseError::Lex("lex".into()).to_string(), "lex");
-        assert_eq!(TransportParseError::Other("other".into()).to_string(), "other");
+        assert_eq!(
+            TransportParseError::Other("other".into()).to_string(),
+            "other"
+        );
         assert_eq!(HeaderSerializeError::Other("o".into()).to_string(), "o");
         assert_eq!(SessionParseError::Lex("l".into()).to_string(), "l");
         assert_eq!(SessionParseError::Other("o".into()).to_string(), "o");

@@ -1,8 +1,8 @@
 //! Protection child selection, malformed-document reporting and the
 //! user-facing error text (MS-SSTR §2.2.2.2).
 
-use broadcast_smooth::{SmoothManifest, SmoothParseError};
 use broadcast_common::xml_chars::XmlLimit;
+use broadcast_smooth::{SmoothManifest, SmoothParseError};
 
 #[test]
 fn the_first_protection_element_wins() {
@@ -120,7 +120,10 @@ fn parse_error_display_pins_every_remaining_variant() {
         "<c> at index 5 has non-monotonic time"
     );
     assert_eq!(
-        SmoothParseError::ChunkRunTooLong { count_hint: 100_001 }.to_string(),
+        SmoothParseError::ChunkRunTooLong {
+            count_hint: 100_001
+        }
+        .to_string(),
         "c@r repeat run exceeded max chunk count (100001 > 100000)"
     );
     assert_eq!(

@@ -173,7 +173,9 @@ pub enum MergeConfigError {
     #[error("ByteMerge max_queued must be > 0")]
     ZeroMaxQueued,
     /// A `Failover` source is outside `0..num_sources`.
-    #[error("failover source out of range: primary {primary:?}, secondary {secondary:?} for {num_sources} sources")]
+    #[error(
+        "failover source out of range: primary {primary:?}, secondary {secondary:?} for {num_sources} sources"
+    )]
     FailoverOutOfRange {
         /// The configured primary.
         primary: SourceId,

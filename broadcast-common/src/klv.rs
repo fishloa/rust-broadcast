@@ -12,7 +12,6 @@
 //! Zero-copy: [`KlvItem`] borrows its `value` from the input buffer, so walking
 //! a (potentially huge, essence-carrying) file never copies sample bytes.
 
-
 use alloc::vec::Vec;
 
 pub use crate::ber::{

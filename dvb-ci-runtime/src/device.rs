@@ -366,7 +366,10 @@ mod tests {
             )
         );
         let source = std::error::Error::source(inner).expect("source");
-        assert_eq!(source.to_string(), io::Error::from_raw_os_error(22).to_string());
+        assert_eq!(
+            source.to_string(),
+            io::Error::from_raw_os_error(22).to_string()
+        );
     }
 
     /// The read buffer must fit the largest frame the link can encode: the
