@@ -799,10 +799,9 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
         resync_dropped_bytes = stats.dropped_bytes;
         // Bytes the resynchroniser buffered but never emitted as a packet: a
         // trailing partial packet. Count it like the fixed-chunk path does.
-        let stride = match resync.stride() {
-            Some(mpeg_ts::resync::PacketStride::Rs204) => mpeg_ts::resync::RS_PACKET_SIZE,
-            _ => TS_PACKET_SIZE,
-        };
+        let stride = resync
+            .stride()
+            .map_or(TS_PACKET_SIZE, |stride| stride.packet_len());
         let consumed = stats
             .packets
             .saturating_mul(stride as u64)
