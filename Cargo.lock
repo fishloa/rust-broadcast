@@ -2389,6 +2389,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "misb"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11212607254d323818fff9905f8ff8762134e3eb5306e703204a026177cae4f4"
+
+[[package]]
 name = "mp4-emsg"
 version = "0.8.0"
 dependencies = [
@@ -4348,6 +4354,7 @@ dependencies = [
  "dvb-vbi",
  "jiff",
  "memchr",
+ "misb",
  "mp4-emsg",
  "mpeg-pes",
  "mpeg-ps",

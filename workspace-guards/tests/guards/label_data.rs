@@ -1739,6 +1739,10 @@ pub const TABLE: &[Crate] = &[
             // `rtp_align::AlignOut` (#2380): a data-carrying ADT (`Sample(TrackId, Sample)`),
             // the result of placing one sample, not a spec code.
             "AlignOut",
+            // `klv::St0601Value`: a data-carrying ADT of decoded ST 0601 item values
+            // (`Number(f64)`, `Time(Timestamp)`, ...), not a spec code; its leaf
+            // enum `NestedSet` carries `name()` + `impl_spec_display!`.
+            "St0601Value",
             // `init_segment::DataEntry` (#1908): dispatch enum over the `dref` entry
             // boxes (`url `, `urn `, `imdt`, `snim`), each variant wrapping a full
             // structured box, not a flat spec code.
