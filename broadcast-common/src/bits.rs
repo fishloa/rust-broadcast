@@ -25,6 +25,7 @@
 //! assert_eq!(r.read_bits(9).unwrap(), 0x1FF);
 //! ```
 
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::error::BufferTooShort;
@@ -127,6 +128,16 @@ impl<'a> BitReader<'a> {
     #[must_use]
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, bit_pos: 0 }
+    }
+
+    /// Create a reader positioned `bit_pos` bits into `data`.
+    ///
+    /// # Errors
+    /// [`BitError::OutOfBounds`] if `bit_pos` is past the end of `data`.
+    pub fn starting_at(data: &'a [u8], bit_pos: usize) -> Result<Self, BitError> {
+        let mut reader = Self::new(data);
+        reader.skip_bits(bit_pos)?;
+        Ok(reader)
     }
 
     /// Total bits in the backing buffer.
@@ -238,6 +249,21 @@ impl<'a> BitWriter<'a> {
         Self { data, bit_pos: 0 }
     }
 
+    /// Create a writer positioned `bit_pos` bits into `data`.
+    ///
+    /// # Errors
+    /// [`BitError::OutOfBounds`] if `bit_pos` is past the end of `data`.
+    pub fn starting_at(data: &'a mut [u8], bit_pos: usize) -> Result<Self, BitError> {
+        let capacity = data.len() * BITS_PER_BYTE;
+        if bit_pos > capacity {
+            return Err(BitError::OutOfBounds {
+                needed_bits: bit_pos,
+                remaining_bits: capacity,
+            });
+        }
+        Ok(Self { data, bit_pos })
+    }
+
     /// Total bits the backing buffer can hold.
     #[must_use]
     pub fn capacity_bits(&self) -> usize {
@@ -315,6 +341,103 @@ impl<'a> BitWriter<'a> {
             self.write_bits(0, (8 - rem) as u32)?;
         }
         Ok(())
+    }
+}
+
+/// A growable MSB-first bit writer that owns its bytes.
+///
+/// The write side of [`BitWriter`] for callers that do not know the output
+/// size up front: every field goes through [`BitWriter::write_bits`] over the
+/// bytes written so far plus room for the new field, so range and width
+/// checks, and bit order, are the slice writer's own.
+#[derive(Debug, Clone, Default)]
+pub struct BitBuf {
+    data: Vec<u8>,
+    bit_len: usize,
+}
+
+impl BitBuf {
+    /// An empty buffer.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Bits written so far.
+    #[must_use]
+    pub fn bits_written(&self) -> usize {
+        self.bit_len
+    }
+
+    /// `true` if the cursor sits on a byte boundary.
+    #[must_use]
+    pub fn is_byte_aligned(&self) -> bool {
+        self.bit_len.is_multiple_of(BITS_PER_BYTE)
+    }
+
+    /// Append the low `n` bits (`0..=64`) of `value`, MSB-first.
+    ///
+    /// # Errors
+    /// [`BitError::TooManyBits`] if `n > 64`; [`BitError::ValueTooWide`] if
+    /// `value` has bits set above bit `n-1`. The buffer is unchanged on error.
+    pub fn write_bits(&mut self, value: u64, n: u32) -> Result<(), BitError> {
+        if n > 64 {
+            return Err(BitError::TooManyBits { requested: n });
+        }
+        let grown = (self.bit_len + n as usize).div_ceil(BITS_PER_BYTE);
+        let previous = self.data.len();
+        self.data.resize(grown, 0);
+        let written = BitWriter::starting_at(&mut self.data, self.bit_len)
+            .and_then(|mut writer| writer.write_bits(value, n));
+        if written.is_err() {
+            self.data.truncate(previous);
+            return written;
+        }
+        self.bit_len += n as usize;
+        Ok(())
+    }
+
+    /// Append a single bit from a `bool`.
+    ///
+    /// # Errors
+    /// Never fails in practice; the signature matches [`BitWriter::write_bool`].
+    pub fn write_bool(&mut self, value: bool) -> Result<(), BitError> {
+        self.write_bits(u64::from(value), 1)
+    }
+
+    /// Pad with zero bits up to the next byte boundary (no-op if aligned).
+    pub fn align_to_byte(&mut self) {
+        self.bit_len = self.data.len() * BITS_PER_BYTE;
+    }
+
+    /// Append whole bytes at a byte boundary.
+    ///
+    /// # Errors
+    /// [`BitError::OutOfBounds`] if the cursor is not byte aligned (`needed_bits`
+    /// is the bits to the next boundary, `remaining_bits` is `0`); nothing is
+    /// written.
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), BitError> {
+        if !self.is_byte_aligned() {
+            return Err(BitError::OutOfBounds {
+                needed_bits: BITS_PER_BYTE - self.bit_len % BITS_PER_BYTE,
+                remaining_bits: 0,
+            });
+        }
+        self.data.extend_from_slice(bytes);
+        self.bit_len += bytes.len() * BITS_PER_BYTE;
+        Ok(())
+    }
+
+    /// The bytes written so far, a final partial byte zero-padded.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Consume the buffer into its bytes, a final partial byte zero-padded.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<u8> {
+        self.data
     }
 }
 
@@ -591,5 +714,95 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn starting_at_resumes_mid_byte() {
+        let buf = [0b1010_1100u8, 0b1111_0000];
+        let mut r = BitReader::starting_at(&buf, 6).unwrap();
+        assert_eq!(r.read_bits(6).unwrap(), 0b00_1111);
+        assert_eq!(
+            BitReader::starting_at(&buf, 16).unwrap().bits_remaining(),
+            0
+        );
+        assert_eq!(
+            BitReader::starting_at(&buf, 17).unwrap_err(),
+            BitError::OutOfBounds {
+                needed_bits: 17,
+                remaining_bits: 16,
+            }
+        );
+
+        let mut out = [0xFFu8; 2];
+        let mut w = BitWriter::starting_at(&mut out, 4).unwrap();
+        w.write_bits(0, 8).unwrap();
+        assert_eq!(out, [0xF0, 0x0F]);
+        let mut out = [0u8; 1];
+        assert_eq!(
+            BitWriter::starting_at(&mut out, 9).unwrap_err(),
+            BitError::OutOfBounds {
+                needed_bits: 9,
+                remaining_bits: 8,
+            }
+        );
+    }
+
+    #[test]
+    fn bit_buf_matches_the_slice_writer() {
+        let fields = [
+            (0b101u64, 3u32),
+            (0x1FF, 9),
+            (0, 1),
+            (0xDEAD_BEEF, 32),
+            (1, 1),
+        ];
+        let mut buf = BitBuf::new();
+        let mut reference = [0u8; 8];
+        let mut w = BitWriter::new(&mut reference);
+        for (value, n) in fields {
+            buf.write_bits(value, n).unwrap();
+            w.write_bits(value, n).unwrap();
+        }
+        assert_eq!(buf.bits_written(), 46);
+        assert_eq!(buf.as_bytes(), &reference[..6]);
+        assert_eq!(buf.as_bytes(), [0xbf, 0xf6, 0xf5, 0x6d, 0xf7, 0x7c]);
+    }
+
+    #[test]
+    fn bit_buf_edges() {
+        let mut buf = BitBuf::new();
+        assert_eq!(
+            buf.write_bits(0b100, 2),
+            Err(BitError::ValueTooWide {
+                value: 0b100,
+                bits: 2
+            })
+        );
+        assert_eq!(
+            buf.write_bits(0, 65),
+            Err(BitError::TooManyBits { requested: 65 })
+        );
+        assert_eq!(buf.bits_written(), 0);
+        assert!(buf.as_bytes().is_empty());
+
+        buf.write_bits(u64::MAX, 64).unwrap();
+        assert_eq!(buf.as_bytes(), [0xFF; 8]);
+        buf.write_bool(true).unwrap();
+        assert!(!buf.is_byte_aligned());
+        assert_eq!(
+            buf.write_bytes(&[1]),
+            Err(BitError::OutOfBounds {
+                needed_bits: 7,
+                remaining_bits: 0,
+            })
+        );
+        buf.align_to_byte();
+        assert!(buf.is_byte_aligned());
+        buf.write_bytes(&[0xAA]).unwrap();
+        assert_eq!(buf.bits_written(), 80);
+        assert_eq!(
+            buf.into_vec(),
+            [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x80, 0xAA]
+        );
     }
 }
