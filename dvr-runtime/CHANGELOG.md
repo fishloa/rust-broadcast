@@ -104,3 +104,6 @@ catch-up read planner and the blocking `fs` adapter.
 - `docs/dvr-runtime/DESIGN.md` is the shipped design: the crates it depends on, the `fs` signatures (fallible
   scans, `Option` floor, the `.lock` file), the writer's local amendments and the removals are the ones in this
   release (#4037).
+- The README covers the catch-up planner (`merge`/`window`/`ArchiveScan`/`SeqConflict`), recovery, the
+  `complete`/`last_input_consumed` contract and the recorder handover, and its quick start runs a plan/complete loop
+  instead of stopping at a config (#4039).
