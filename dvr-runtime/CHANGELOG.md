@@ -79,3 +79,7 @@ catch-up read planner and the blocking `fs` adapter.
 
 - The crate-root examples are the commands that run, with the `fs` feature
   and a real input file (#3982).
+- The independent `mediastreamvalidator` oracle also reads a closed
+  programme-tracking period, so `EXT-X-PROGRAM-DATE-TIME` and the
+  `EXT-X-DATERANGE` line (including the UTF-8 title) are checked by Apple's
+  validator and not only by this crate's own parser (#3983).
