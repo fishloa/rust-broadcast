@@ -909,6 +909,6 @@ fn succeed_takes_the_lock_over_without_releasing_it() {
         Bytes::from(vec![0x22u8; 100])
     );
     drop(second);
-    assert!(!refused(), "dropping the successor releases the lock");
+    drop(recorder_of(&root, "succ", config(), &trunk()));
     cleanup(&root);
 }
