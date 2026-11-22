@@ -98,16 +98,9 @@ pub enum Error {
 }
 
 /// Underlying error returned by the `http-auth` crate (a diagnostic string).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
 pub struct HttpAuthError(pub String);
-
-impl core::fmt::Display for HttpAuthError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl core::error::Error for HttpAuthError {}
 
 /// Why a trusted-proxy entry is not an IP address or CIDR block.
 #[non_exhaustive]
