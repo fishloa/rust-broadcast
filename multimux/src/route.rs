@@ -1265,8 +1265,10 @@ impl ProgramServing {
 
     /// Archive what the predecessor closed but had not archived (its recorder
     /// is started even while its retry backs off), then take its recorder
-    /// over: the archive directory's lock passes straight to this program's
-    /// recorder ([`FsRecorder::succeed`]) and is never released in between. A
+    /// over when it recorded the same archive: the archive directory's lock
+    /// passes straight to this program's recorder ([`FsRecorder::succeed`])
+    /// and is never released in between. A predecessor of another archive
+    /// (this program moved away from the default archive) is released. A
     /// final poll that fails is retried once; a second failure is logged and
     /// counted, and what it left unarchived is lost.
     fn flush_predecessor(&self) {
@@ -1285,11 +1287,13 @@ impl ProgramServing {
             )
             .increment(1);
         }
+        let from = predecessor.archive();
         let held = predecessor.release_recorder();
-        if let Some(pending) = self.dvr_pending.lock().as_mut()
-            && held.is_some()
+        if let Some(held) = held
+            && let Some(pending) = self.dvr_pending.lock().as_mut()
+            && from == Some(pending.archive)
         {
-            pending.inherited = held;
+            pending.inherited = Some((pending.archive, held));
         }
     }
 
@@ -1302,7 +1306,7 @@ impl ProgramServing {
         self.dvr_moving.lock().take();
         self.eit_tracker.lock().take();
         self.dvr_recording.store(false, Ordering::SeqCst);
-        recorder.or_else(|| pending.and_then(|p| p.inherited))
+        recorder.or_else(|| pending.and_then(|p| p.inherited).map(|(_, held)| held))
     }
 
     /// Whether the route's shared resource route (which serves the default
@@ -1833,6 +1837,7 @@ impl ProgramServing {
         let Some(next) = self.dvr_moving.lock().take() else {
             return self.poll_recorder_blocking(force_start);
         };
+        let mut next = next;
         let started = self.dvr.lock().is_some();
         if started && !self.poll_recorder_blocking(false) {
             tracing::warn!(
@@ -1842,6 +1847,17 @@ impl ProgramServing {
         }
         let previous = self.dvr.lock().take();
         drop(previous);
+        // A recorder that never started has recorded nothing: the moved one
+        // starts from its cursor, so the segments closed before the move are
+        // recorded too.
+        if let Some(cursor) = self
+            .dvr_pending
+            .lock()
+            .take()
+            .and_then(|mut unstarted| unstarted.cursor.take())
+        {
+            next.cursor = Some(cursor);
+        }
         *self.dvr_pending.lock() = Some(next);
         self.poll_recorder_blocking(true)
     }
@@ -1986,8 +2002,21 @@ struct PendingRecorder {
     retry_at: broadcast_common::Timestamp,
     /// The wait after the next `Locked` refusal.
     backoff: Duration,
-    /// The predecessor's recorder, whose directory lock this one takes over.
-    inherited: Option<FsRecorder>,
+    /// The archive this recorder records.
+    archive: crate::dvr::ProgramArchive,
+    /// The predecessor's recorder and the archive it records, whose
+    /// directory lock this one takes over.
+    inherited: Option<(crate::dvr::ProgramArchive, FsRecorder)>,
+}
+
+/// A recorder may take over ([`FsRecorder::succeed`]) only the recorder of
+/// its own archive: succeeding across archives would keep writing the
+/// predecessor's directory.
+#[derive(Debug, thiserror::Error)]
+#[error("a recorder of archive {to:?} cannot take over the recorder of archive {from:?}")]
+struct ArchiveMismatch {
+    from: crate::dvr::ProgramArchive,
+    to: crate::dvr::ProgramArchive,
 }
 
 /// The first wait after a create refused because another recorder holds the
@@ -2009,6 +2038,7 @@ impl PendingRecorder {
         seq_offset: u64,
         trunk: &Arc<Trunk>,
     ) -> Option<Self> {
+        let archive_id = archive;
         let described = crate::dvr::program_archive_name(route_name, archive).and_then(|name| {
             Ok((
                 name,
@@ -2023,6 +2053,7 @@ impl PendingRecorder {
                 config: archive,
                 retry_at: broadcast_common::Timestamp::ZERO,
                 backoff: LOCKED_RETRY_MIN,
+                archive: archive_id,
                 inherited: None,
             }),
             Err(e) => {
@@ -2047,8 +2078,20 @@ impl PendingRecorder {
         trunk: &Arc<Trunk>,
         now: broadcast_common::Timestamp,
     ) -> RecorderStart {
-        let created = match self.inherited.take() {
-            Some(previous) => previous.succeed(self.config.clone(), trunk, &mut self.cursor),
+        let inherited = match self.inherited.take() {
+            Some((from, previous)) if from != self.archive => {
+                let refused = ArchiveMismatch {
+                    from,
+                    to: self.archive,
+                };
+                tracing::error!(route = %route_name, error = %refused, "DVR handover refused");
+                drop(previous);
+                None
+            }
+            other => other,
+        };
+        let created = match inherited {
+            Some((_, previous)) => previous.succeed(self.config.clone(), trunk, &mut self.cursor),
             None => FsRecorder::with_cursor(
                 &self.root,
                 self.name.clone(),
@@ -5683,6 +5726,91 @@ mod program_registry_tests {
         assert_eq!(archive_dirs(&tmp), ["rl", "rl@1538", "rl@1539"]);
         assert_eq!(archived_bytes(&tmp, "rl@1538"), [(1, 0x02)]);
         assert_eq!(archived_bytes(&tmp, "rl@1539"), [(1, 0x03)]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// #3950 (probe P3): a replaced SPTS route without `dvb_service_id` whose
+    /// successor announces a second program before its first poll moves the
+    /// first service to `pm@1538`. The predecessor's recorder (of `pm/`) is
+    /// archived and released, never succeeded across archives: before, the
+    /// moved program took it over and kept writing `pm/`.
+    #[tokio::test]
+    async fn a_move_never_takes_over_the_predecessor_of_another_archive() {
+        let tmp = dvr_test_dir("move-replace");
+        let old = mpts_route(&tmp, "pm", None);
+        publish_services(&old, &[SERVICE_B]);
+        for seq in 1..=2 {
+            add_service_segment(&old, &[SERVICE_B], SERVICE_B, seq);
+        }
+        old.drain_dvr().await;
+        let new = mpts_route(&tmp, "pm", None);
+        new.continue_from(&old);
+        drop(old);
+        let services = [SERVICE_B, SERVICE_C];
+        publish_services(&new, &services);
+        assert_eq!(
+            new.serving(ProgramId(0)).expect("published").archive(),
+            Some(crate::dvr::ProgramArchive::Program(SERVICE_B))
+        );
+        for seq in 1..=2 {
+            add_service_segment(&new, &services, SERVICE_B, seq);
+        }
+        new.drain_dvr().await;
+        assert_eq!(archived_bytes(&tmp, "pm"), [(1, 0x02), (2, 0x02)]);
+        assert_eq!(archived_bytes(&tmp, "pm@1538"), [(4, 0x02), (5, 0x02)]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// #3950 (probe P6): a program moved before its recorder ever started
+    /// records from its first segment: the moved recorder starts from the
+    /// unstarted one's cursor. Before, it pinned a new cursor at the move and
+    /// segments 1-3 were recorded nowhere.
+    #[tokio::test]
+    async fn a_move_before_the_first_poll_records_every_segment() {
+        let tmp = dvr_test_dir("move-unpolled");
+        let route = mpts_route(&tmp, "pc", None);
+        publish_services(&route, &[SERVICE_B]);
+        for seq in 1..=3 {
+            add_service_segment(&route, &[SERVICE_B], SERVICE_B, seq);
+        }
+        let services = [SERVICE_B, SERVICE_C];
+        route.publish_new_service(ProgramId(1), SERVICE_C);
+        add_service_segment(&route, &services, SERVICE_B, 4);
+        route.drain_dvr().await;
+        assert_eq!(
+            archived_bytes(&tmp, "pc@1538"),
+            [(1, 0x02), (2, 0x02), (3, 0x02), (4, 0x02)]
+        );
+        assert_eq!(archive_dirs(&tmp), ["pc@1538", "pc@1539"]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// #3950 (probe P4): a program whose default-archive recorder waits on a
+    /// lock another recorder holds, moved meanwhile, records into its own
+    /// archive from its first segment. Before, segment 1 was lost.
+    #[tokio::test]
+    async fn a_move_while_the_default_archive_is_locked_records_every_segment() {
+        let tmp = dvr_test_dir("move-locked");
+        let config = dvr_config(&tmp, None)
+            .to_archive_config(Container::Fmp4, Duration::from_secs(1), 0)
+            .expect("archive config");
+        let foreign = FsRecorder::new(
+            &tmp,
+            crate::dvr::archive_name("pf").expect("archive name"),
+            config,
+            &test_trunk(),
+        )
+        .expect("the foreign recorder holds pf/");
+        let route = mpts_route(&tmp, "pf", None);
+        publish_services(&route, &[SERVICE_B]);
+        add_service_segment(&route, &[SERVICE_B], SERVICE_B, 1);
+        route.drain_dvr().await;
+        let services = [SERVICE_B, SERVICE_C];
+        route.publish_new_service(ProgramId(1), SERVICE_C);
+        add_service_segment(&route, &services, SERVICE_B, 2);
+        route.drain_dvr().await;
+        assert_eq!(archived_bytes(&tmp, "pf@1538"), [(1, 0x02), (2, 0x02)]);
+        drop(foreign);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
