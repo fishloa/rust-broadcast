@@ -10,11 +10,11 @@ All notable changes to dash-runtime will be documented in this file.
 
 ### Tests
 
-- the ingest size budgets and their setters, the `styp`/`lmsg` brand scan, the per-track state machine's clock and the buffered-sample cap have tests that fail if any is removed or off by one (audit 22 finding 52, #3020).
-- the segment-addressing arithmetic (`@endNumber`, the short last segment, a negative `@r` cut at the next `S@t`, `@presentationTimeOffset`, the dynamic availability window, the per-level `@timeShiftBufferDepth`, `sidx` numbering) has tests that fail if an operator or boundary moves (audit 22 finding 51, #3019).
-- the live-edge and UTC-timing boundaries, the static-vs-dynamic Period kind, `BaseURL` offset accumulation and the AdaptationSet classification arms have tests that fail if any changes (audit 22 finding 53, #3021).
-- every `name()` label of the client's event vocabulary and the representation/`UTCTiming` ids are pinned to their exact strings (audit 22 finding 54, #3022).
-- the client engine's fault labels, the rounded `@maxSegmentDuration`, the bookkeeping accessors, the MPD retry gate, the addressing causes surfaced as a fatal, the single-segment tail rule and the `BaseURL` candidate rotation have tests that fail if any changes (audit 22 finding 50, #3018).
+- The ingest size budgets and their setters, the `styp`/`lmsg` brand scan, the per-track state machine's clock and the buffered-sample cap have tests that fail if any is removed or off by one (audit 22 finding 52, #3020).
+- The segment-addressing arithmetic (`@endNumber`, the short last segment, a negative `@r` cut at the next `S@t`, `@presentationTimeOffset`, the dynamic availability window, the per-level `@timeShiftBufferDepth`, `sidx` numbering) has tests that fail if an operator or boundary moves (audit 22 finding 51, #3019).
+- The live-edge and UTC-timing boundaries, the static-vs-dynamic Period kind, `BaseURL` offset accumulation and the AdaptationSet classification arms have tests that fail if any changes (audit 22 finding 53, #3021).
+- Every `name()` label of the client's event vocabulary and the representation/`UTCTiming` ids are pinned to their exact strings (audit 22 finding 54, #3022).
+- The client engine's fault labels, the rounded `@maxSegmentDuration`, the bookkeeping accessors, the MPD retry gate, the addressing causes surfaced as a fatal, the single-segment tail rule and the `BaseURL` candidate rotation have tests that fail if any changes (audit 22 finding 50, #3018).
 
 ## [0.6.0] - 2026-11-17
 ### Changed
