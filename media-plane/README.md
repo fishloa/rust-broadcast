@@ -18,7 +18,7 @@ Dialer|Listener ──► [ByteStage]* ──► IngestSession ──► [IrTran
                                                                   │ segment + part log    │
                                                                   │ EVENT log (90 kHz)    │
                                                                   └───────────────────────┘
-                         subscribe() ─► SampleCursor  ─► PushEgress    (defined shape, no in-tree impl)
+                         subscribe() ─► SampleCursor  ─► PushEgress    (driven by push_session::PushSession)
                          subscribe() ─► SegmentCursor ─► SegmentEgress (DVR, MABR, ROUTE, Smooth)
                          resolve()   ─────────────────► ServedEgress   (LL-HLS, DASH, catch-up)
 ```
@@ -111,7 +111,8 @@ The full ingress to `Trunk` to cursor pipeline, driven by `IngestDriver` against
 - **Typed ids (`ids`):** `SegmentSeq` and `PartIndex` newtypes with checked arithmetic (`checked_next`, `checked_add`, `checked_sub`, `checked_distance_from`), explicit `wrapping_next` and `saturating_next`, and no overflowing operators. Tracks are `transmux::TrackId`. A swapped segment/part argument is a compile error.
 - **`ingress`:** `Dialer`, `Listener`, `IngestSession`, `IngestDriver`, `ListenDriver`, `DialSupervisor`, `ReconnectPolicy`, `HandshakePolicy`, `HealthState`, with a `max_programs` bound on how many trunks one session may mint.
 - **`ingress` drivers:** `IngestDriver::new(session, IngestConfig)` / `ListenDriver::new(listener, IngestConfig)`, and `AdmittedDriver` for concurrently admitting push ingest (one plain session per admitted peer, per-session clocks, a live admitted-session counter). `TrunkConfig::default()` plus `with_*` setters sizes every ring.
-- **`egress`:** `ServedEgress` (request/response with bounded `Await`; production implementors in `hls-runtime` and `multimux`), `SegmentEgress` (production implementors in `multimux`), `PushEgress` (a defined shape; its only impls are test doubles, `multimux`'s push path drives its own transport off a sample cursor).
+- **`egress`:** `ServedEgress` (request/response with bounded `Await`; production implementors in `hls-runtime` and `multimux`), `SegmentEgress` (production implementors in `multimux`), `PushEgress` (connection-oriented push of samples; `multimux`'s SRT/RTMP/RTSP push outputs implement it and are driven through `push_session`).
+- **`push_session`:** `PushSession`, the sans-IO decision core for a push output. It owns the connected `PushEgress` and answers one `PushDecision` per host input (track renegotiation by generation, lag and degrade accounting, drop-or-reconnect via `PushErrorKind`/`PushErrorClass`, `ReconnectCause`, `FlushResult`, `PushCounters`). It has no clock, no async and no I/O; the host keeps every await, backoff and metric.
 - **`retention`:** `Retention::HotOnly` and `Tiered`, `RetentionDriver` draining a pinning segment cursor into a caller-supplied sans-IO `SegmentSink`, and `locate` for catch-up against an evicted segment.
 - **`ts_session` (feature `std`):** `TsIngestSession`, the shared MPEG-2 TS ingest session every TS-carrying source of a host feeds (program tracking, held-sample and silent-PID bounds).
 - **`file_source` (feature `std`):** the sans-IO file playout core: `select_demuxer`/`probe_and_demux`, `ParsedFile`, `PublishItem`, `FileIngestSession` (paced, looping replay with monotonic offsets).
