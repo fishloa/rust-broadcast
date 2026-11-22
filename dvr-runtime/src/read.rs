@@ -535,9 +535,9 @@ pub fn parse_period_playlist(
         torn_records = 1;
     }
     let keys = playlist.segment_keys()?;
-    if keys.iter().flatten().next().is_some() {
+    if let Some(index) = keys.iter().position(Option::is_some) {
         return Err(PlaylistError::Unsupported {
-            index: 0,
+            index,
             tag: UnsupportedTag::Key,
         });
     }

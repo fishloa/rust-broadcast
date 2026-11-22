@@ -246,6 +246,23 @@ fn a_sequence_mismatch_and_a_foreign_uri_are_typed() {
 }
 
 #[test]
+fn a_key_is_reported_at_the_first_keyed_segment() {
+    let text = ts_playlist(&format!(
+        "{}{}#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n{}",
+        ts_record(0, 0),
+        ts_record(1, 100),
+        ts_record(2, 200)
+    ));
+    assert!(matches!(
+        parse_period_playlist(PeriodNum::new(0), ArchiveContainer::Ts, text.as_bytes()),
+        Err(PlaylistError::Unsupported {
+            index: 2,
+            tag: UnsupportedTag::Key
+        })
+    ));
+}
+
+#[test]
 fn unsupported_tags_are_labelled_by_their_spec_token() {
     assert_eq!(UnsupportedTag::Gap.name(), "EXT-X-GAP");
     assert_eq!(UnsupportedTag::Key.name(), "EXT-X-KEY");
