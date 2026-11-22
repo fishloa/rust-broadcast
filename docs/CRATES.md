@@ -149,8 +149,8 @@ builds (see the table above against the in-tree versions below).
 | [`atsc3-route`](#atsc3-route) | IP and multicast delivery over broadcast | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/atsc3-route.svg)](https://crates.io/crates/atsc3-route) | yes | 2 | archived, on crates.io |
 | [`broadcast-loudness`](#broadcast-loudness) | Measurement | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) | yes | 1 | on crates.io |
 | [`test-alloc`](#test-alloc) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
-| [`test-fixtures`](#test-fixtures) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 | [`workspace-guards`](#workspace-guards) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
+| [`test-fixtures`](#test-fixtures) | Internal test helpers (never published) | 0.1.0 | — | no | 1 | internal, `publish = false` |
 | [`test-harness`](#test-harness) | Internal test helpers (never published) | 0.1.0 | — | no | 7 | internal, `publish = false` |
 
 ### Foundation
@@ -165,7 +165,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 13.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 59 workspace crates
+- **Used by (workspace):** 60 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 #### broadcast-auth
@@ -886,16 +886,6 @@ The single audited copy of the counting and capping allocators used by allocatio
 - **Depends on (workspace):** none
 - **Used by (workspace):** none
 
-#### test-fixtures
-
-Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong. Module `process` holds `output_bounded` (run an external tool with stdout/stderr redirected to files and a hard deadline, so a grandchild holding a pipe cannot hang the test), `KillOnDrop`, `tool_available`, free-port helpers and the `mediastreamvalidator` runner.
-
-- **Standards:** n/a
-- **Cargo description:** Workspace fixture loader shared by test suites (unpublished).
-- **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
-- **Depends on (workspace):** none
-- **Used by (workspace):** [`test-harness`](#test-harness)
-
 #### workspace-guards
 
 One test binary that walks every crate named in each guard's data table (`non_exhaustive`, `label`, `truncation`, `clock33`, the de-hand-roll tripwires, `secret_debug`), with each crate's SKIP list or allowlist and its reasons carried verbatim; a new crate adds a table line instead of copying a test file.
@@ -905,6 +895,16 @@ One test binary that walks every crate named in each guard's data table (`non_ex
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
 - **Used by (workspace):** none
+
+#### test-fixtures
+
+Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong. Module `process` holds `output_bounded` (run an external tool with stdout/stderr redirected to files and a hard deadline, so a grandchild holding a pipe cannot hang the test), `KillOnDrop`, `tool_available`, free-port helpers and the `mediastreamvalidator` runner.
+
+- **Standards:** n/a
+- **Cargo description:** Workspace fixture loader shared by test suites (unpublished).
+- **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 1
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
+- **Used by (workspace):** [`test-harness`](#test-harness)
 
 #### test-harness
 
@@ -921,8 +921,8 @@ One copy of the DASH loopback simulator (world/synth/capture/loopback), the RTMP
 Layer 0 has no workspace dependencies; every other crate sits one layer above its deepest workspace dependency. Normal dependencies only (dev-dependencies are excluded, so the test helpers appear at layer 0 with no edges).
 
 ```text
-layer 0: broadcast-common, test-alloc, test-fixtures, workspace-guards
-layer 1: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
+layer 0: broadcast-common, test-alloc, workspace-guards
+layer 1: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, scte104, srt-runtime, st12-1, st2022, st337, st377-1, test-fixtures, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 3: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
 layer 4: caption-convert, dvb-ci-runtime, media-doctor, ts-fix
@@ -1091,6 +1091,7 @@ flowchart BT
   st291 --> rtp_packet
   st337 --> broadcast_common
   st377_1 --> broadcast_common
+  test_fixtures --> broadcast_common
   test_harness --> dash_runtime
   test_harness --> test_fixtures
   timed_metadata --> broadcast_hls
