@@ -25,16 +25,9 @@ const MS_PER_MIN: u64 = 60_000;
 const MS_PER_SEC: u64 = 1_000;
 
 /// A cue timestamp did not match `(hh:)?mm:ss<sep>ttt` (or overflowed).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("invalid cue timestamp (expected (hh:)?mm:ss<sep>ttt)")]
 pub struct TimestampError;
-
-impl core::fmt::Display for TimestampError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("invalid cue timestamp (expected (hh:)?mm:ss<sep>ttt)")
-    }
-}
-
-impl core::error::Error for TimestampError {}
 
 /// Split a [`MediaTime`] into `(hours, minutes, seconds, milliseconds)`.
 #[must_use]
