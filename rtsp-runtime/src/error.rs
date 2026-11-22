@@ -507,6 +507,38 @@ mod tests {
             "bad sdp"
         );
     }
+
+    #[test]
+    fn the_remaining_parse_error_variants_render_their_text() {
+        assert_eq!(
+            TransportParseError::NotTransportSpec {
+                detail: "no slash".into()
+            }
+            .to_string(),
+            "no slash"
+        );
+        assert_eq!(
+            TransportParseError::UnexpectedValue {
+                param: "unicast".into()
+            }
+            .to_string(),
+            "unicast takes no value"
+        );
+        assert_eq!(
+            TransportParseError::InvalidModeMethod {
+                method: "P LAY".into()
+            }
+            .to_string(),
+            "invalid mode method \"P LAY\""
+        );
+        assert_eq!(TransportParseError::Lex("lex".into()).to_string(), "lex");
+        assert_eq!(TransportParseError::Other("other".into()).to_string(), "other");
+        assert_eq!(HeaderSerializeError::Other("o".into()).to_string(), "o");
+        assert_eq!(SessionParseError::Lex("l".into()).to_string(), "l");
+        assert_eq!(SessionParseError::Other("o".into()).to_string(), "o");
+        assert_eq!(FrameError::Other("f".into()).to_string(), "f");
+        assert_eq!(SdpParseError::Other("s".into()).to_string(), "s");
+    }
 }
 
 /// Reason a `Transport` header value could not be parsed (RFC 2326 §12.39).
