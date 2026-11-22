@@ -31,7 +31,7 @@ fn answer(v: &Verifier, user: &str, pw: &str, method: &str, uri: &str) -> String
 }
 
 fn md5_hex(s: &str) -> String {
-    hex::encode(Md5::digest(s.as_bytes()))
+    broadcast_common::hex::hex_encode(&Md5::digest(s.as_bytes()))
 }
 
 /// A hand-built, correctly-hashed `qop=auth`/MD5 header with `user` spelled

@@ -27,8 +27,6 @@ dvb-vbi       = { path = "../dvb-vbi",       version = "0.8.0", default-features
 thiserror     = { version = "2", default-features = false }
 # RFC 3339 formatting for the wall-clock anchor (SP5); `alloc` only so the crate stays no_std (`jiff/std` rides the `std` feature).
 jiff          = { version = "1", default-features = false, features = ["alloc"] }
-# Hex codec for DATERANGE `SCTE35-*` attributes (SP5); `alloc` only, so the crate stays no_std.
-hex           = { version = "0.4", default-features = false, features = ["alloc"] }
 serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]

@@ -2133,7 +2133,6 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     /// `HTTP/1.1 409`, the empty-trunk "no track yet" response, not `401`).
     #[tokio::test]
     async fn whep_output_auth_rejects_unauthenticated_and_accepts_authenticated() {
-        use base64::Engine as _;
         use tower::ServiceExt as _;
 
         let verifier = basic_verifier("alice", "s3cret");
@@ -2152,7 +2151,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         // Correctly authenticated request: must get past the auth gate (the
         // empty trunk then answers 409 "no track yet" — the point under
         // test is that it is *not* 401).
-        let credential = base64::engine::general_purpose::STANDARD.encode("alice:s3cret");
+        let credential = broadcast_common::base64::base64_encode(b"alice:s3cret");
         let (app, _active, _rx) = test_router(None, Some(verifier), 64);
         let resp = app
             .oneshot(

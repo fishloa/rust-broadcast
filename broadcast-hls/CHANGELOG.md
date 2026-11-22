@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `EXT-X-KEY` `IV` parsing decodes through `broadcast_common::hex::hex_decode_into`, replacing a hand-rolled hex loop that carried an `.expect`. Accepted and rejected inputs are unchanged (#3957).
 - **BREAKING:** `jiff` 0.2 -> 1.0. `ProgramDateTime::from_timestamp` and `ProgramDateTime::timestamp` take and return a jiff 1.x `Timestamp`.
 
 ### Added

@@ -506,7 +506,7 @@ broadcast_common::impl_spec_display!(HlsEncryptionMethod);
 /// Format a 16-byte IV as the `0x`-prefixed 32-hex-digit `EXT-X-KEY` `IV`
 /// attribute value (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §9).
 pub fn format_iv(iv: &[u8; BLOCK_LEN]) -> String {
-    format!("0x{}", ::hex::encode(iv))
+    format!("0x{}", broadcast_common::hex::hex_encode(iv))
 }
 
 /// Derive the implicit IV from the media sequence number: the sequence number
@@ -599,6 +599,14 @@ impl ExtXKey {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn format_iv_is_lowercase_zero_padded_hex() {
+        let mut iv = [0u8; BLOCK_LEN];
+        iv[0] = 0x0a;
+        iv[BLOCK_LEN - 1] = 0xff;
+        assert_eq!(format_iv(&iv), "0x0a0000000000000000000000000000ff");
+    }
+
     use super::*;
 
     use test_fixtures::vectors::{

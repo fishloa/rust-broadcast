@@ -373,17 +373,15 @@ dependencies = [
 name = "broadcast-auth"
 version = "0.8.1"
 dependencies = [
- "base64 0.23.1",
  "broadcast-common",
  "cookie",
  "cookie_store",
- "form_urlencoded",
  "getrandom 0.4.3",
  "headers",
- "hex",
  "hmac 0.13.0",
  "http",
  "http-auth",
+ "jiff",
  "lru",
  "md-5 0.11.0",
  "percent-encoding",
@@ -2443,7 +2441,6 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "axum",
- "base64 0.23.1",
  "broadcast-auth",
  "broadcast-client",
  "broadcast-common",
@@ -3608,7 +3605,6 @@ dependencies = [
 name = "scte35-splice"
 version = "7.0.0"
 dependencies = [
- "base64 0.23.1",
  "broadcast-common",
  "dvb-t2mi",
  "mpeg-ts",
@@ -4148,7 +4144,6 @@ dependencies = [
  "broadcast-hls",
  "cc-data",
  "dvb-vbi",
- "hex",
  "jiff",
  "mp4-emsg",
  "scte35-splice",
@@ -4400,7 +4395,6 @@ name = "transmux"
 version = "0.32.1"
 dependencies = [
  "aes 0.9.4",
- "base64 0.23.1",
  "broadcast-common",
  "broadcast-dash",
  "broadcast-hls",
@@ -4415,7 +4409,6 @@ dependencies = [
  "dvb-conformance",
  "dvb-si",
  "dvb-vbi",
- "hex",
  "jiff",
  "memchr",
  "mp4-emsg",

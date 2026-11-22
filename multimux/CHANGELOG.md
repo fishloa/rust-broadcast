@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Tests
+- Tests encode Basic credentials through `broadcast_common::base64`, the `base64` dev-dependency is removed, and the digest-expiry test drives `Verifier::with_clock` with a `jiff::Timestamp` (#3957).
 ### Changed
 - BREAKING: the DVR archive format is replaced by `dvr-runtime`'s (#3929, part of #3687). Each period is a media file (`pN.m4s`/`pN.ts`) plus an HLS media playlist `pN.m3u8` that indexes it with `EXT-X-BYTERANGE`, carries each segment's exact Trunk timing in `#EXT-X-RUSTBROADCAST-TIMING`, names the period's one fMP4 init with `EXT-X-MAP` and marks EIT programme boundaries with `EXT-X-DATERANGE`. The `pN.idx` JSON sidecar and the `pN.event.json` programme sidecar are gone. Archives written by multimux 0.20 and earlier are not readable and there is no migration: a route over such an archive scans it as empty. A period now also rolls on a sequence gap, on a segment longer than the playlist's target duration and before the playlist would exceed the HLS size limit.
 - BREAKING: removed from the public API: `dvr::DvrRecorder`, `dvr::DvrError`, `dvr::IndexEntry`, `dvr::EitProgramme`, `dvr::InitGeneration` (use `dvr_runtime::InitGeneration`) and `DvrRecorder::needs_poll`/`needs_poll_for_init`/`poll_and_persist`/`poll_and_persist_inits`/`feed_si`/`with_seq_offset`/`rebuild_index`/`current_programme`/`overrun_policy`. `dvr` keeps only `DvrConfig` and `ArchiveOverrunSerde`; a consumer that needs archive types depends on `dvr-runtime`.

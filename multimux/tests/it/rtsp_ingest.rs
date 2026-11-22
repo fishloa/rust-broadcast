@@ -152,8 +152,7 @@ fn header_value<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 /// comparing against the `Authorization` header value the client under test
 /// actually sends.
 fn basic_credentials(user: &str, pass: &str) -> String {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"))
+    broadcast_common::base64::base64_encode(format!("{user}:{pass}").as_bytes())
 }
 
 /// One running pull: the route's registry handle (resolved tracks, published `Trunk`), the cancel

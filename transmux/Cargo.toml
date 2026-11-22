@@ -15,10 +15,6 @@ readme       = "README.md"
 # crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false, features = ["base64"] }
 thiserror  = { version = "2", default-features = false }
-# Hex codec for every hex site (SP5); `alloc` only, so the core stays no_std.
-hex        = { version = "0.4", default-features = false, features = ["alloc"] }
-# base64 codec for SDP sprop, DRM headers and DASH/Smooth payloads (SP5); `alloc` only.
-base64     = { version = "0.23", default-features = false, features = ["alloc"] }
 # Calendar and duration handling (SP5): CLI availabilityStartTime, xs:duration parse/build. `std`-only, so the no_std core is unaffected.
 jiff       = { version = "1", default-features = false, features = ["std"], optional = true }
 # BaseURL / URL-reference resolution (SP3, `base_url`): WHATWG `Url::join`. `std`-only.
