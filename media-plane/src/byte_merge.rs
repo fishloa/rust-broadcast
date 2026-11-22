@@ -163,14 +163,17 @@ pub enum MergeError {
 }
 
 /// Reason a [`ByteMerge`] configuration is invalid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum MergeConfigError {
     /// `num_sources == 0`: a merge with no source can never produce output.
+    #[error("ByteMerge num_sources must be > 0")]
     ZeroSources,
     /// `max_queued == 0`: a zero-length output queue rejects every message.
+    #[error("ByteMerge max_queued must be > 0")]
     ZeroMaxQueued,
     /// A `Failover` source is outside `0..num_sources`.
+    #[error("failover source out of range: primary {primary:?}, secondary {secondary:?} for {num_sources} sources")]
     FailoverOutOfRange {
         /// The configured primary.
         primary: SourceId,
@@ -192,25 +195,6 @@ impl MergeConfigError {
         }
     }
 }
-
-impl core::fmt::Display for MergeConfigError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::ZeroSources => f.write_str("ByteMerge num_sources must be > 0"),
-            Self::ZeroMaxQueued => f.write_str("ByteMerge max_queued must be > 0"),
-            Self::FailoverOutOfRange {
-                primary,
-                secondary,
-                num_sources,
-            } => write!(
-                f,
-                "failover source out of range: primary {primary:?}, secondary {secondary:?} for {num_sources} sources"
-            ),
-        }
-    }
-}
-
-impl core::error::Error for MergeConfigError {}
 
 /// The one bounded multi-input primitive in the byte layer: `N` byte sources
 /// reduced to one output stream. See the [module docs](self).
