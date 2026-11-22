@@ -293,24 +293,13 @@ impl core::fmt::Display for ContinuityCounter {
 
 /// A value that does not fit the 4-bit `continuity_counter` field
 /// (ISO/IEC 13818-1 §2.4.3.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("continuity_counter {value} exceeds the 4-bit range 0..=15")]
 #[non_exhaustive]
 pub struct ContinuityCounterOutOfRange {
     /// The rejected value.
     pub value: u8,
 }
-
-impl core::fmt::Display for ContinuityCounterOutOfRange {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "continuity_counter {} exceeds the 4-bit range 0..=15",
-            self.value
-        )
-    }
-}
-
-impl core::error::Error for ContinuityCounterOutOfRange {}
 
 /// Parsed TS header — the 4-byte transport header fields.
 #[derive(Clone, Debug, PartialEq, Eq)]
