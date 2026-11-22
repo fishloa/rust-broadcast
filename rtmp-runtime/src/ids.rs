@@ -220,16 +220,9 @@ impl core::fmt::Display for Timestamp {
 
 /// A `Timestamp` the 32-bit wire field cannot hold (a span of 2^32 ms or more,
 /// §5.3.1.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("RTMP timestamp does not fit the 32-bit wire field (max 2^32-1 ms)")]
 pub struct TimestampOutOfRange;
-
-impl core::fmt::Display for TimestampOutOfRange {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("RTMP timestamp does not fit the 32-bit wire field (max 2^32-1 ms)")
-    }
-}
-
-impl core::error::Error for TimestampOutOfRange {}
 
 #[cfg(test)]
 mod tests {
