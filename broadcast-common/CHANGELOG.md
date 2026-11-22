@@ -14,6 +14,7 @@
 ### Changed
 
 - Internal: the shared error kinds and `BitError`, `KlvError`, `InvalidBackoff`, `InterfaceError`, `ClockOutOfRange`, `InvalidSeqSpace` and `XmlCharError` derive `thiserror::Error` (messages unchanged); `thiserror` is now a non-optional `no_std` dependency, and `InterfaceError` implements `core::error::Error` without `std` (#3962).
+- README corrected: `thiserror` is named as an unconditional dependency, and the `bits`, `hex` and `base64` rows list `BitBuf`/`starting_at`, `hex_decode`/`hex_decode_into` and the URL-safe base64 helpers with `DecodeError` (#4013).
 
 ### Fixed
 

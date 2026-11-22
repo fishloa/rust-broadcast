@@ -120,7 +120,7 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 | `len` | `FieldOverflow`, `fit_bits`, `fit_mask`, `fit_u8`, `fit_u16`, `fit_u24`, `fit_u32`: checked width narrowing for serializers |
 | `pusi` | `PusiAccumulator` (size-capped, `DEFAULT_MAX_UNIT_SIZE` 16 MiB): the unit splitter wrapped by `mpeg-ts` and `mpeg-pes` |
 | `parity` | `has_odd_parity`, `set_odd_parity`, `strip_parity` |
-| `hex` | `hex_encode`, `hex_encode_upper` `hex_decode` (even-length hex of either case, else `None`), `hex_decode_into` (exactly `2 * out.len()` digits into a fixed slice); callers keep their own error types |
+| `hex` | `hex_encode`, `hex_encode_upper`, `hex_decode` (even-length hex of either case, else `None`), `hex_decode_into` (exactly `2 * out.len()` digits into a fixed slice); callers keep their own error types |
 | `seq` | `SeqSpace` (`add`, `diff`, `lt`/`leq`/`gt`/`geq`, `in_closed_range`), `MAX_SEQ_BITS` |
 | `cenc` | `CencScheme` (`from_four_cc`, `name`), `SCHEME_CENC`, `SCHEME_CBCS` |
 | `mux` | `Unpackage`, `Package` (batch container demux/mux), `Decrypt`, `Encrypt` (in-place sample protection); inverse pairs, generic over `Input`/`Output`/`Media`/`Config`/`Keys`/`Error` |
