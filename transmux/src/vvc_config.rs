@@ -66,7 +66,7 @@
 //! predates the final H.266 assignments; the values here follow the published
 //! ITU-T H.266 Table 5 and are validated against the committed real fixture.)
 
-use crate::bitreader::{bit_error, read_bits_checked, write_bits_checked};
+use crate::bitreader::{bit_error, bytes_needed, write_bits_checked};
 use crate::error::{Error, Result};
 use crate::nalu_types::VALID_LENGTH_SIZES;
 use crate::sps::rfc6381_vvc1;
@@ -664,7 +664,7 @@ fn parse_ptl(r: &mut VvcBitReader, num_sublayers: u8) -> Result<VvcPtlRecord> {
             sublayer_level_present.push(r.flag("ptl_sublayer_level_present_flag[i]")?);
         }
         // ptl_reserved_zero_bit padding to a byte boundary (§11.3.2.1).
-        r.align("ptl_reserved_zero_bit")?;
+        r.align();
         for &present in &sublayer_level_present {
             if present {
                 sublayer_level_idc.push(r.bits(8, "sublayer_level_idc[i]")? as u8);
@@ -755,19 +755,38 @@ fn ptl_serialized_len(ptl: &VvcPtlRecord) -> usize {
 // Bit reader / writer (MSB-first, over the raw record bytes — no RBSP unescape)
 // ---------------------------------------------------------------------------
 
-/// MSB-first bit reader over the `vvcC` record bytes.
+/// MSB-first bit reader over the `vvcC` record bytes: the shared
+/// [`broadcast_common::bits::BitReader`] with this crate's typed errors.
 struct VvcBitReader<'a> {
     data: &'a [u8],
-    bit_pos: usize,
+    inner: broadcast_common::bits::BitReader<'a>,
 }
 
 impl<'a> VvcBitReader<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Self { data, bit_pos: 0 }
+        Self {
+            data,
+            inner: broadcast_common::bits::BitReader::new(data),
+        }
     }
 
     fn bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
-        read_bits_checked(self.data, &mut self.bit_pos, n, what)
+        let width = u32::try_from(n).ok().filter(|&n| n <= u64::BITS);
+        let Some(width) = width else {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: what,
+                value: n as u64,
+                reason: "bit count > 64",
+            }));
+        };
+        let need = bytes_needed(self.inner.bits_read(), n);
+        self.inner.read_bits(width).map_err(|_| {
+            Error::BufferTooShort(BufferTooShort {
+                need,
+                have: self.data.len(),
+                what,
+            })
+        })
     }
 
     fn flag(&mut self, what: &'static str) -> Result<bool> {
@@ -789,18 +808,17 @@ impl<'a> VvcBitReader<'a> {
     }
 
     /// Consume padding bits up to the next byte boundary.
-    fn align(&mut self, what: &'static str) -> Result<()> {
-        let rem = self.bit_pos % 8;
-        if rem != 0 {
-            self.bits(8 - rem, what)?;
-        }
-        Ok(())
+    fn align(&mut self) {
+        self.inner.align_to_byte();
     }
 
     /// Take `len` whole bytes (the reader is byte-aligned at NAL-unit reads).
     fn take_bytes(&mut self, len: usize, what: &'static str) -> Result<Vec<u8>> {
-        debug_assert_eq!(self.bit_pos % 8, 0, "take_bytes requires byte alignment");
-        let start = self.bit_pos / 8;
+        debug_assert!(
+            self.inner.is_byte_aligned(),
+            "take_bytes requires byte alignment"
+        );
+        let start = self.inner.bits_read() / 8;
         let end = start + len;
         if end > self.data.len() {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -809,7 +827,7 @@ impl<'a> VvcBitReader<'a> {
                 what,
             }));
         }
-        self.bit_pos += len * 8;
+        let _ = self.inner.skip_bits(len * 8);
         Ok(self.data[start..end].to_vec())
     }
 }
@@ -887,6 +905,53 @@ mod tests {
     use broadcast_common::error::{BufferTooShort, InvalidValue};
 
     use super::*;
+
+    #[test]
+    fn the_record_bit_reader_keeps_its_cursor_and_typed_errors() {
+        let data = [0xA5u8, 0x5A, 0xFF];
+        let mut r = VvcBitReader::new(&data);
+        assert_eq!(r.bits(4, "x").unwrap(), 0xA);
+        assert_eq!(r.bits(0, "x").unwrap(), 0);
+        assert!(matches!(
+            r.bits(65, "x"),
+            Err(Error::InvalidValue(InvalidValue {
+                field: "x",
+                value: 65,
+                ..
+            }))
+        ));
+        assert_eq!(r.bits(12, "x").unwrap(), 0x55A);
+        assert!(r.flag("x").unwrap());
+        assert_eq!(r.inner.bits_read(), 17);
+        r.align();
+        assert_eq!(r.inner.bits_read(), 24);
+        assert_eq!(
+            r.bits(1, "tail").unwrap_err(),
+            Error::BufferTooShort(BufferTooShort {
+                need: 4,
+                have: 3,
+                what: "tail",
+            })
+        );
+        assert_eq!(
+            r.inner.bits_read(),
+            24,
+            "a failed read does not move the cursor"
+        );
+
+        let mut r = VvcBitReader::new(&data);
+        assert_eq!(r.bits_bytes(12, "x").unwrap(), [0xA5, 0x50]);
+        r.align();
+        assert_eq!(r.take_bytes(1, "x").unwrap(), [0xFF]);
+        assert_eq!(
+            r.take_bytes(1, "bytes").unwrap_err(),
+            Error::BufferTooShort(BufferTooShort {
+                need: 4,
+                have: 3,
+                what: "bytes",
+            })
+        );
+    }
     use broadcast_common::{Parse, Serialize};
 
     // The vvcC record body walked out of the committed real fixture
@@ -986,7 +1051,11 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         }
         let mut r = VvcBitReader::new(&buf);
         let parsed = parse_ptl(&mut r, num_sublayers).expect("parse written PTL");
-        assert_eq!(r.bit_pos, len * 8, "reader must consume the whole record");
+        assert_eq!(
+            r.inner.bits_read(),
+            len * 8,
+            "reader must consume the whole record"
+        );
         parsed
     }
 

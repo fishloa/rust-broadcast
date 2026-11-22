@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `bits::BitReader::starting_at` / `bits::BitWriter::starting_at` (resume at a bit offset) and `bits::BitBuf`, a growable owning MSB-first bit writer built on `BitWriter`, so callers with their own bit cursors (`dvb-si`, `transmux`) use the one implementation (#3961).
 ### Changed
 - **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff::Timestamp` faces of the `jiff` and `http-date` features (`time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `encode_seconds_since_2000_utc`, `MonoUtc`, `http_date::parse_http_date`, `date_to_epoch_us`) are now jiff 1.x types.
 ### Fixed

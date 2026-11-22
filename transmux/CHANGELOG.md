@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Internal: the public `bitreader::BitReader` (Exp-Golomb `ue`/`se`, RBSP unescape) stays a thin wrapper, now resuming `broadcast_common::bits::BitReader` at its position for each read; the `vvcC` record reader holds a shared `BitReader`; the FLV and `test_bits` test bit writers use `broadcast_common::bits::BitBuf`. No private bit cursor remains; public API, results and errors are unchanged (#3961).
 ### Removed
 - **BREAKING:** `HEVCDecoderConfigurationRecord::is_valid_length_size` is removed. It had no caller (the parser validates `lengthSizeMinusOne` against `VALID_LENGTH_SIZES`; the VVC record keeps its own, used copy) and its doc comment described an unrelated reserved-bit rule, so it was a dead, untested duplicate public API (audit 23 finding 268, #3781).
 

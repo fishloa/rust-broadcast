@@ -9,7 +9,8 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::fit_bits;
+use broadcast_common::bits::BitBuf;
+use broadcast_common::len::{FieldOverflow, fit_bits};
 
 const BITS_PER_BYTE: usize = 8;
 const MISALIGNED_BYTES: &str = "whole-byte access at a non-byte-aligned bit position";
@@ -99,12 +100,11 @@ impl<'a> BitReader<'a> {
     }
 }
 
-/// MSB-first bit writer; every field is range-checked.
+/// MSB-first bit writer; every field is range-checked. A thin error-mapping
+/// adapter over [`broadcast_common::bits::BitBuf`].
 #[derive(Default)]
 pub(crate) struct BitWriter {
-    buf: Vec<u8>,
-    /// Bits used in the last byte of `buf` (0 = byte aligned).
-    used: usize,
+    inner: BitBuf,
 }
 
 impl BitWriter {
@@ -116,17 +116,13 @@ impl BitWriter {
     pub(crate) fn put(&mut self, value: u64, n: usize, field: &'static str) -> Result<()> {
         let n32 = u32::try_from(n).unwrap_or(u32::MAX);
         let v = fit_bits(value, n32, field)?;
-        for i in (0..n).rev() {
-            let bit = (v >> i) & 1 == 1;
-            if self.used == 0 {
-                self.buf.push(0);
-            }
-            if bit && let Some(last) = self.buf.last_mut() {
-                *last |= 1 << (BITS_PER_BYTE - 1 - self.used);
-            }
-            self.used = (self.used + 1) % BITS_PER_BYTE;
-        }
-        Ok(())
+        self.inner.write_bits(v, n32).map_err(|_| {
+            Error::FieldOverflow(FieldOverflow {
+                field,
+                value,
+                max: 0,
+            })
+        })
     }
 
     pub(crate) fn flag(&mut self, v: bool, field: &'static str) -> Result<()> {
@@ -136,18 +132,16 @@ impl BitWriter {
     /// Append whole bytes. Errors (in release builds too) when the writer is
     /// not byte aligned, instead of emitting shifted data.
     pub(crate) fn bytes(&mut self, b: &[u8]) -> Result<()> {
-        if self.used != 0 {
-            return Err(Error::ValueOutOfRange {
+        self.inner
+            .write_bytes(b)
+            .map_err(|_| Error::ValueOutOfRange {
                 field: "byte run",
                 reason: MISALIGNED_BYTES,
-            });
-        }
-        self.buf.extend_from_slice(b);
-        Ok(())
+            })
     }
 
     pub(crate) fn into_vec(self) -> Vec<u8> {
-        self.buf
+        self.inner.into_vec()
     }
 }
 
@@ -244,5 +238,24 @@ mod tests {
         w.put(0xAB, 8, "x").unwrap();
         w.bytes(&[1]).unwrap();
         assert_eq!(w.into_vec(), [0xAB, 1]);
+    }
+
+    #[test]
+    fn writer_and_reader_agree_across_byte_boundaries() {
+        let mut w = BitWriter::new();
+        w.put(0b101, 3, "a").unwrap();
+        w.put(0x1FF, 9, "b").unwrap();
+        w.put(0xDEAD_BEEF, 32, "c").unwrap();
+        w.flag(true, "d").unwrap();
+        assert!(matches!(w.put(4, 2, "e"), Err(Error::FieldOverflow(_))));
+        let bytes = w.into_vec();
+        assert_eq!(bytes, [0xBF, 0xFD, 0xEA, 0xDB, 0xEE, 0xF8]);
+        let mut r = BitReader::new(&bytes, "t");
+        assert_eq!(r.bits(3).unwrap(), 0b101);
+        assert_eq!(r.bits(9).unwrap(), 0x1FF);
+        assert_eq!(r.bits64(32).unwrap(), 0xDEAD_BEEF);
+        assert!(r.flag().unwrap());
+        assert_eq!(r.remaining_bits(), 3);
+        assert!(matches!(r.bits(4).unwrap_err(), Error::BufferTooShort(_)));
     }
 }
