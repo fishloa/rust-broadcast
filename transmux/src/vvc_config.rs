@@ -664,7 +664,7 @@ fn parse_ptl(r: &mut VvcBitReader, num_sublayers: u8) -> Result<VvcPtlRecord> {
             sublayer_level_present.push(r.flag("ptl_sublayer_level_present_flag[i]")?);
         }
         // ptl_reserved_zero_bit padding to a byte boundary (§11.3.2.1).
-        r.align();
+        r.align()?;
         for &present in &sublayer_level_present {
             if present {
                 sublayer_level_idc.push(r.bits(8, "sublayer_level_idc[i]")? as u8);
@@ -807,9 +807,13 @@ impl<'a> VvcBitReader<'a> {
         Ok(out)
     }
 
-    /// Consume padding bits up to the next byte boundary.
-    fn align(&mut self) {
-        self.inner.align_to_byte();
+    /// Consume padding bits up to the next byte boundary, reading them so a
+    /// record that ends mid-byte without its padding is a short buffer.
+    fn align(&mut self) -> Result<()> {
+        while !self.inner.is_byte_aligned() {
+            self.bits(1, "ptl_reserved_zero_bit")?;
+        }
+        Ok(())
     }
 
     /// Take `len` whole bytes (the reader is byte-aligned at NAL-unit reads).
@@ -819,7 +823,7 @@ impl<'a> VvcBitReader<'a> {
             "take_bytes requires byte alignment"
         );
         let start = self.inner.bits_read() / 8;
-        let end = start + len;
+        let end = start.saturating_add(len);
         if end > self.data.len() {
             return Err(Error::BufferTooShort(BufferTooShort {
                 need: end,
@@ -827,7 +831,9 @@ impl<'a> VvcBitReader<'a> {
                 what,
             }));
         }
-        let _ = self.inner.skip_bits(len * 8);
+        self.inner
+            .skip_bits(len * 8)
+            .map_err(|e| bit_error(what, e))?;
         Ok(self.data[start..end].to_vec())
     }
 }
@@ -923,7 +929,7 @@ mod tests {
         assert_eq!(r.bits(12, "x").unwrap(), 0x55A);
         assert!(r.flag("x").unwrap());
         assert_eq!(r.inner.bits_read(), 17);
-        r.align();
+        r.align().unwrap();
         assert_eq!(r.inner.bits_read(), 24);
         assert_eq!(
             r.bits(1, "tail").unwrap_err(),
@@ -941,7 +947,7 @@ mod tests {
 
         let mut r = VvcBitReader::new(&data);
         assert_eq!(r.bits_bytes(12, "x").unwrap(), [0xA5, 0x50]);
-        r.align();
+        r.align().unwrap();
         assert_eq!(r.take_bytes(1, "x").unwrap(), [0xFF]);
         assert_eq!(
             r.take_bytes(1, "bytes").unwrap_err(),
@@ -951,6 +957,17 @@ mod tests {
                 what: "bytes",
             })
         );
+
+        let mut r = VvcBitReader::new(&data);
+        assert_eq!(
+            r.take_bytes(usize::MAX, "bytes").unwrap_err(),
+            Error::BufferTooShort(BufferTooShort {
+                need: usize::MAX,
+                have: 3,
+                what: "bytes",
+            })
+        );
+        assert_eq!(r.inner.bits_read(), 0, "a refused take moves no cursor");
     }
     use broadcast_common::{Parse, Serialize};
 
