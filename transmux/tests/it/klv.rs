@@ -530,27 +530,116 @@ fn klv_timestamp_change_after_an_empty_packet_emits_no_empty_unit() {
     assert_eq!(units, vec![b"ab".to_vec()], "no empty unit is emitted");
 }
 
-// ---------------------------------------------------------------------------
-// Typed ST 0601 values (feature `misb`)
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "misb")]
 #[test]
-fn st0601_values_decode_typed_including_two_byte_tags() {
-    use misb::st0601::Value;
-    // Tag 5 Platform Heading Angle (ST 0601 example `71 C2` = 159.9744 deg) and
-    // tag 131 Take-off Time, whose BER-OID key is two bytes (`81 03`).
+fn two_byte_ber_oid_tag_round_trips_in_a_local_set() {
     let set = UasLocalSet::from_items(vec![
         LocalSetItem::new(TAG_PRECISION_TIMESTAMP, 1_000_000u64.to_be_bytes().to_vec()),
-        LocalSetItem::new(5, vec![0x71, 0xC2]),
         LocalSetItem::new(131, 42u64.to_be_bytes().to_vec()),
     ]);
     let packet = set.serialize_with_checksum().unwrap();
     let parsed = UasLocalSet::parse(&packet).unwrap();
-    match parsed.items[1].st0601_value() {
-        Value::Float(deg) => assert!((deg - 159.9744).abs() < 1e-3, "{deg}"),
-        other => panic!("tag 5: {other:?}"),
+    assert_eq!(parsed.items[1].tag, 131);
+    assert_eq!(parsed.items[1].value, 42u64.to_be_bytes().to_vec());
+    assert_eq!(encode_ber_oid(131), vec![0x81, 0x03]);
+}
+
+#[cfg(feature = "misb")]
+mod st0601 {
+    use super::*;
+    use transmux::klv::{NestedSet, St0601Value};
+
+    fn item(tag: u32, value: &[u8]) -> LocalSetItem {
+        LocalSetItem::new(tag, value.to_vec())
     }
-    assert_eq!(parsed.items[2].tag, 131);
-    assert_eq!(parsed.items[2].st0601_value(), Value::Time(42));
+
+    #[test]
+    fn scaled_number() {
+        match item(5, &[0x71, 0xC2]).st0601_value() {
+            St0601Value::Number(deg) => assert!((deg - 159.9744).abs() < 1e-3, "{deg}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn precision_time_is_a_timestamp() {
+        let micros = 1_700_000_000_123_456u64;
+        let expected = "2023-11-14T22:13:20.123456Z"
+            .parse::<jiff::Timestamp>()
+            .unwrap();
+        assert_eq!(
+            item(TAG_PRECISION_TIMESTAMP, &micros.to_be_bytes()).st0601_value(),
+            St0601Value::Time(expected)
+        );
+    }
+
+    #[test]
+    fn time_beyond_the_timestamp_range_is_invalid() {
+        assert_eq!(
+            item(TAG_PRECISION_TIMESTAMP, &u64::MAX.to_be_bytes()).st0601_value(),
+            St0601Value::Invalid
+        );
+    }
+
+    #[test]
+    fn two_byte_tag_decodes_as_time() {
+        let parsed = UasLocalSet::parse(
+            &UasLocalSet::from_items(vec![
+                item(TAG_PRECISION_TIMESTAMP, &1_000_000u64.to_be_bytes()),
+                item(131, &42u64.to_be_bytes()),
+            ])
+            .serialize_with_checksum()
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.items[1].st0601_value(),
+            St0601Value::Time(jiff::Timestamp::from_microsecond(42).unwrap())
+        );
+    }
+
+    #[test]
+    fn undefined_tag_is_bytes() {
+        assert_eq!(
+            item(200, &[1, 2]).st0601_value(),
+            St0601Value::Bytes(&[1, 2])
+        );
+    }
+
+    #[test]
+    fn sentinel_is_out_of_range() {
+        assert_eq!(
+            item(6, &[0x80, 0x00]).st0601_value(),
+            St0601Value::OutOfRange
+        );
+    }
+
+    #[test]
+    fn wrong_length_precision_time_is_invalid() {
+        assert_eq!(
+            item(TAG_PRECISION_TIMESTAMP, &[0]).st0601_value(),
+            St0601Value::Invalid
+        );
+    }
+
+    #[test]
+    fn nested_security_set_keeps_its_bytes() {
+        let value = [0x01, 0x01, 0x01];
+        let it = item(48, &value);
+        match it.st0601_value() {
+            St0601Value::Nested { standard, bytes } => {
+                assert_eq!(standard, NestedSet::Security);
+                assert_eq!(bytes, &value);
+                assert_eq!(standard.to_string(), "ST 0102");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_vmti_set_is_tagged_vmti() {
+        match item(74, &[0x01, 0x01, 0x01]).st0601_value() {
+            St0601Value::Nested { standard, .. } => assert_eq!(standard, NestedSet::Vmti),
+            other => panic!("{other:?}"),
+        }
+    }
 }

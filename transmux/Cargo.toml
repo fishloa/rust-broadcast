@@ -100,7 +100,7 @@ sample-aes = ["cenc", "cbc/alloc", "cbc/block-padding"]
 # itself stays `no_std`; only this feature/binary pulls `clap` and `std`.
 cli    = ["dep:clap", "dep:container-probe", "std"]
 # `misb` decodes ST 0601 Local Set item values into typed values.
-misb   = ["dep:misb"]
+misb   = ["dep:misb", "dep:jiff"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
