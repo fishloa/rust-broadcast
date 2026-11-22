@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974).
 - Internal: the public `bitreader::BitReader` (Exp-Golomb `ue`/`se`, RBSP unescape) stays a thin wrapper, now resuming `broadcast_common::bits::BitReader` at its position for each read; the `vvcC` record reader holds a shared `BitReader`; the FLV and `test_bits` test bit writers use `broadcast_common::bits::BitBuf`. No private bit cursor remains; public API, results and errors are unchanged (#3961).
 - Hex and base64 go through `broadcast_common::{hex, base64}`; the direct `hex` and `base64` dependencies are removed. Output is unchanged (#3957).
 
