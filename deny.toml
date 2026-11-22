@@ -24,7 +24,6 @@ allow = [
     "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
-    "MIT-0",
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
@@ -67,6 +66,27 @@ skip = [
     { crate = "windows-sys@0.52.0", reason = "ring 0.17.14 is on windows-sys 0.52; ring must move to 0.61" },
 ]
 skip-tree = []
+# Mirrors the `dep_policy` workspace guard's banned list for crates that must
+# not enter the graph at all, transitively included: one crate per purpose,
+# so jiff is the only date/time crate a member may name. `time` is allowed
+# only under the upstream crates that already bring it in.
+deny = [
+    { crate = "chrono", reason = "jiff is the workspace date/time crate" },
+    { crate = "anyhow", reason = "typed thiserror errors only" },
+    { crate = "eyre", reason = "typed thiserror errors only" },
+    { crate = "openssl", reason = "rustls with the ring provider is the only TLS stack" },
+    { crate = "native-tls", reason = "rustls with the ring provider is the only TLS stack" },
+    { crate = "xml-rs", reason = "quick-xml is the workspace XML crate" },
+    { crate = "time", reason = "jiff is the workspace date/time crate; time is tolerated only under these upstream parents", wrappers = [
+        "asn1-rs",
+        "cookie",
+        "cookie_store",
+        "rcgen",
+        "rtsp-types",
+        "x509-parser",
+        "yasna",
+    ] },
+]
 
 [sources]
 unknown-registry = "deny"

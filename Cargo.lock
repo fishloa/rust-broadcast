@@ -3418,6 +3418,7 @@ dependencies = [
  "memchr",
  "rtsp-types",
  "rustls",
+ "rustls-platform-verifier",
  "sdp-types",
  "serde",
  "test-fixtures",
@@ -3426,7 +3427,6 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "url",
- "webpki-roots",
  "workspace-guards",
 ]
 
@@ -4696,15 +4696,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "webpki-roots"
-version = "1.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7265c9301c16a8711c992c2d8da90ee77ef54b1ed51482d6dfeb00dc756b1297"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
 name = "webrtc-runtime"
 version = "0.9.0"
 dependencies = [
@@ -4932,6 +4923,9 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 [[package]]
 name = "workspace-guards"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "writeable"
