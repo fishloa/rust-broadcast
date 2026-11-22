@@ -670,11 +670,16 @@ impl FsArchive {
     }
 
     /// Every readable segment across every period, plus the periods that
-    /// could not be read.
-    pub fn scan(&mut self) -> ArchiveScan {
+    /// could not be read. A missing archive directory is an empty archive.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadError::Io`] when the archive directory exists but cannot be
+    /// listed: an unlistable archive is never reported as an empty one.
+    pub fn scan(&mut self) -> Result<ArchiveScan, ReadError> {
         let mut scan = ArchiveScan::default();
         let mut owner: BTreeMap<SegmentSeq, PeriodNum> = BTreeMap::new();
-        for period in self.periods() {
+        for period in self.periods()? {
             match self.playlist(period) {
                 Ok(playlist) => {
                     for segment in &playlist.segments {
@@ -695,19 +700,23 @@ impl FsArchive {
         }
         scan.segments.sort_by_key(|segment| segment.seq);
         self.prune();
-        scan
+        Ok(scan)
     }
 
     /// The archived segment numbered `seq`, if any.
-    pub fn find(&mut self, seq: SegmentSeq) -> Option<ArchivedSegment> {
-        for period in self.periods() {
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::scan`].
+    pub fn find(&mut self, seq: SegmentSeq) -> Result<Option<ArchivedSegment>, ReadError> {
+        for period in self.periods()? {
             if let Ok(playlist) = self.playlist(period)
                 && let Some(segment) = playlist.segments.iter().find(|s| s.seq == seq)
             {
-                return Some(*segment);
+                return Ok(Some(*segment));
             }
         }
-        None
+        Ok(None)
     }
 
     /// Read one archived segment's exact bytes.
@@ -730,15 +739,24 @@ impl FsArchive {
         self.read_span(period, span)
     }
 
-    /// The highest archived sequence number (`0` for an empty archive), for a
-    /// restarted route to number above.
-    pub fn seq_floor(&mut self) -> SegmentSeq {
-        self.scan()
-            .segments
-            .iter()
-            .map(|s| s.seq)
-            .max()
-            .unwrap_or_else(|| SegmentSeq::new(0))
+    /// The highest archived sequence number, or `None` for an archive that
+    /// holds no segment, for a restarted route to number above.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::scan`], and [`ReadError::Playlist`] with
+    /// [`PlaylistError::Io`] when a period playlist exists but cannot be
+    /// read: its sequence numbers are unknown, so any floor could be too low.
+    pub fn seq_floor(&mut self) -> Result<Option<SegmentSeq>, ReadError> {
+        let scan = self.scan()?;
+        if let Some((_, error)) = scan
+            .unreadable
+            .into_iter()
+            .find(|(_, error)| matches!(error, PlaylistError::Io { .. }))
+        {
+            return Err(error.into());
+        }
+        Ok(scan.segments.iter().map(|s| s.seq).max())
     }
 
     /// Recover a period's init and fragment spans from its media file.
@@ -762,23 +780,25 @@ impl FsArchive {
         self.cache.len()
     }
 
-    fn periods(&self) -> Vec<PeriodNum> {
-        let Ok(entries) = fs::read_dir(&self.dir) else {
-            return Vec::new();
+    fn periods(&self) -> Result<Vec<PeriodNum>, ReadError> {
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(ReadError::Io { kind: e.kind() }),
         };
-        let mut periods: Vec<PeriodNum> = entries
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let name = e.file_name();
-                let name = name.to_str()?;
-                match layout::classify(name, self.container)? {
-                    ArchiveFile::Playlist(period) => Some(period),
-                    ArchiveFile::Media(_) => None,
-                }
-            })
-            .collect();
+        let mut periods = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| ReadError::Io { kind: e.kind() })?;
+            let name = entry.file_name();
+            if let Some(ArchiveFile::Playlist(period)) = name
+                .to_str()
+                .and_then(|name| layout::classify(name, self.container))
+            {
+                periods.push(period);
+            }
+        }
         periods.sort_unstable();
-        periods
+        Ok(periods)
     }
 
     fn playlist(&mut self, period: PeriodNum) -> Result<Arc<PeriodPlaylist>, PlaylistError> {
@@ -800,7 +820,7 @@ impl FsArchive {
             self.tick = self.tick.wrapping_add(1);
             return Ok(playlist);
         }
-        let data = fs::read(&path).map_err(io_playlist_error)?;
+        let data = read_bounded_playlist(&path).map_err(io_playlist_error)?;
         let parsed = Arc::new(parse_period_playlist(period, self.container, &data)?);
         let tick = self.tick;
         self.tick = self.tick.wrapping_add(1);
@@ -858,6 +878,15 @@ impl FsArchive {
             .map_err(|e| ReadError::Io { kind: e.kind() })?;
         Ok(Bytes::from(buf))
     }
+}
+
+fn read_bounded_playlist(path: &Path) -> std::io::Result<Vec<u8>> {
+    let limit = u64::try_from(broadcast_hls::limits::MAX_PLAYLIST_BYTES)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut data = Vec::new();
+    File::open(path)?.take(limit).read_to_end(&mut data)?;
+    Ok(data)
 }
 
 fn io_playlist_error(error: std::io::Error) -> PlaylistError {

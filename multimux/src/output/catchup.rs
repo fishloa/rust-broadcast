@@ -302,7 +302,7 @@ async fn scan_archive(
     route: &RouteHandle,
     archive: Arc<Mutex<FsArchive>>,
 ) -> Result<ArchiveScan, ScanError> {
-    let scan = run_scan(route, move || archive.lock().scan()).await?;
+    let scan = run_scan(route, move || archive.lock().scan()).await??;
     report_scan(route, &scan);
     Ok(scan)
 }
@@ -327,7 +327,7 @@ async fn catchup_playlist(
     let archived = match scan_archive(&route, archive).await {
         Ok(scan) => scan.segments,
         Err(e) => {
-            tracing::error!(error = %e, "catch-up: archive scan task failed");
+            tracing::error!(error = %e, "catch-up: archive scan failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
@@ -472,6 +472,8 @@ enum ScanError {
     Closed,
     #[error(transparent)]
     Task(#[from] tokio::task::JoinError),
+    #[error("archive cannot be read: {0}")]
+    Read(#[from] ReadError),
 }
 
 /// Run `scan` on the blocking pool under a scan permit. The permit moves into
@@ -555,9 +557,10 @@ async fn catchup_resource(
     };
     let found = run_scan(&route, move || {
         let mut archive = archive.lock();
-        archive
-            .find(media_plane::ids::SegmentSeq::new(seq))
-            .map(|segment| archive.read(&segment))
+        match archive.find(media_plane::ids::SegmentSeq::new(seq)) {
+            Ok(found) => found.map(|segment| archive.read(&segment)),
+            Err(error) => Some(Err(error)),
+        }
     })
     .await;
     if !matches!(found, Ok(None)) {
@@ -618,8 +621,11 @@ async fn catchup_init(route: &RouteHandle, program: ProgramArchive, period: Peri
     };
     let read = run_scan(route, move || {
         let mut archive = archive.lock();
-        let span = archive
-            .scan()
+        let scan = match archive.scan() {
+            Ok(scan) => scan,
+            Err(error) => return Some(Err(error)),
+        };
+        let span = scan
             .segments
             .iter()
             .find(|s| s.period == period)
@@ -1641,7 +1647,7 @@ mod tests {
                 .catchup_archive(ProgramArchive::Default)
                 .expect("DVR is on")
         ));
-        assert_eq!(archive.lock().scan().segments.len(), 1);
+        assert_eq!(archive.lock().scan().expect("scan").segments.len(), 1);
         assert_eq!(archive.lock().cached_periods(), 1);
         let released = Arc::downgrade(&archive);
         drop(archive);

@@ -5488,7 +5488,7 @@ mod program_registry_tests {
             &crate::dvr::archive_name(name).expect("archive name"),
             dvr_runtime::ArchiveContainer::Fmp4,
         );
-        let scan = archive.scan();
+        let scan = archive.scan().expect("scan");
         assert!(scan.conflicts.is_empty(), "{name}: {:?}", scan.conflicts);
         scan.segments
             .iter()

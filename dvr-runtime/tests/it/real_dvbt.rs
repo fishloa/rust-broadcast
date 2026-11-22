@@ -135,7 +135,7 @@ pub fn record_into(root: std::path::PathBuf) -> Recording {
         &ArchiveName::new("cam").expect("name"),
         ArchiveContainer::Ts,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     Recording {
         root,
         scan,

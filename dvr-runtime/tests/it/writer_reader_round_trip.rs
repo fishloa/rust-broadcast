@@ -96,7 +96,7 @@ fn fs_recorder_output_reads_back_exactly() {
         &ArchiveName::new("cam").expect("name"),
         ArchiveContainer::Fmp4,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert!(scan.unreadable.is_empty(), "{:?}", scan.unreadable);
     assert_eq!(scan.segments.len(), 3);
     let expected: [(u32, u32, u64, u64, u8, bool); 3] = [
@@ -162,7 +162,7 @@ fn fs_recorder_ts_periods_read_back_exactly() {
         &ArchiveName::new("ts").expect("name"),
         ArchiveContainer::Ts,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 2);
     assert!(scan.segments.iter().all(|s| s.init.is_none()));
     assert_eq!(archive.read(&scan.segments[0]).expect("read").len(), 188);
@@ -209,7 +209,7 @@ fn a_stale_offset_resyncs_and_the_segment_retries() {
         &ArchiveName::new("stale").expect("name"),
         ArchiveContainer::Ts,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 2);
     let bytes = archive.read(&scan.segments[1]).expect("read");
     assert_eq!(bytes, Bytes::from(vec![0x22u8; 100]));
@@ -251,7 +251,7 @@ fn a_partial_playlist_append_truncates_and_retries() {
         &ArchiveName::new("pl").expect("name"),
         ArchiveContainer::Ts,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 2);
     assert_eq!(scan.segments[1].seq, SegmentSeq::new(1));
     cleanup(&root);
@@ -348,7 +348,7 @@ fn retention_removes_the_files_from_disk() {
     assert!(root.join("ret").join("p3.ts").exists());
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Ts);
     assert_eq!(archive.cached_periods(), 0);
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 2);
     assert_eq!(scan.segments[0].period.value(), 2);
     assert_eq!(scan.segments[1].period.value(), 3);
@@ -393,7 +393,7 @@ fn segment_egress_records_without_programme_tracking() {
         &ArchiveName::new("eg").expect("name"),
         ArchiveContainer::Ts,
     );
-    assert_eq!(archive.scan().segments.len(), 1);
+    assert_eq!(archive.scan().expect("scan").segments.len(), 1);
     cleanup(&root);
 }
 

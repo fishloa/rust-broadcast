@@ -499,7 +499,9 @@ fn config_error(error: ConfigError) -> MultimuxError {
 ///
 /// [`MultimuxError::ConfigInvalid`] for an unsafe route name,
 /// [`MultimuxError::ArchiveList`] when the archive root exists but cannot be
-/// listed, and [`MultimuxError::ArchiveScan`] when the blocking scan did not
+/// listed, [`MultimuxError::ArchiveRead`] when a program archive or one of
+/// its period playlists exists but cannot be read, and
+/// [`MultimuxError::ArchiveScan`] when the blocking scan did not
 /// run to completion: the caller must fail the route rather than number it
 /// from `0` over an archive that may hold higher sequences.
 pub(crate) async fn archive_seq_floors(
@@ -517,7 +519,13 @@ pub(crate) async fn archive_seq_floors(
         let mut floors = ArchiveFloors::new();
         for archive in archives {
             let name = program_archive_name(&route_name, archive)?;
-            let floor = FsArchive::open(&root, &name, container).seq_floor().value();
+            let floor = FsArchive::open(&root, &name, container)
+                .seq_floor()
+                .map_err(|source| MultimuxError::ArchiveRead {
+                    archive: name.as_str().to_owned(),
+                    source,
+                })?
+                .map_or(0, |seq| seq.value());
             floors.insert(archive, floor);
         }
         Ok(floors)
@@ -870,6 +878,26 @@ mod tests {
             "{result:?}"
         );
         let _ = std::fs::remove_file(&root);
+    }
+
+    /// A program archive that exists but cannot be listed fails the floor
+    /// scan instead of reading as an empty archive (floor `0`).
+    #[tokio::test]
+    async fn an_unreadable_program_archive_is_an_error_not_a_zero_floor() {
+        let root = std::env::temp_dir().join(format!(
+            "multimux-dvr-unreadable-archive-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::write(root.join("cam"), b"not a directory").expect("file");
+        let config = enabled().with_archive_root(root.to_string_lossy().into_owned());
+        let result = archive_seq_floors(&config, "cam", Container::Fmp4).await;
+        assert!(
+            matches!(result, Err(MultimuxError::ArchiveRead { ref archive, .. }) if archive == "cam"),
+            "{result:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
