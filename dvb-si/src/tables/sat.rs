@@ -12,6 +12,7 @@
 //! private bit-level reader/writer handles the extraction and emission.
 
 use crate::error::{Error, Result};
+use crate::wire_enum::wire_enum;
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
@@ -154,23 +155,31 @@ impl<'a> BitWriter<'a> {
 
 // ── SatTableId discriminant ─────────────────────────────────────────────────
 
-/// `satellite_table_id` discriminant — selects the SAT body structure
-/// (§5.2.11.1, Table 11b).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, num_enum::TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
-#[non_exhaustive]
-pub enum SatTableId {
-    /// `satellite_position_v2_info` — TLE/SGP4 orbital elements (§5.2.11.2).
-    PositionV2 = 0,
-    /// `cell_fragment_info` — earth-surface cell coverage areas (§5.2.11.3).
-    CellFragment = 1,
-    /// `time_association_info` — NCR↔UTC time association (§5.2.11.4).
-    TimeAssociation = 2,
-    /// `beamhopping_time_plan_info` — beam illumination schedule (§5.2.11.5).
-    BeamhoppingTimePlan = 3,
-    /// `satellite_position_v3_info` — ephemeris state vectors (§5.2.11.6).
-    PositionV3 = 4,
+wire_enum! {
+    /// `satellite_table_id` discriminant — selects the SAT body structure
+    /// (§5.2.11.1, Table 11b).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum SatTableId: u8, invalid(value) => crate::error::Error::InvalidValue(
+        broadcast_common::error::InvalidValue {
+            field: "satellite_table_id",
+            value: u64::from(value),
+            reason: "reserved (EN 300 468 §5.2.11.1 Table 11b)",
+        },
+    ),
+    {
+        /// `satellite_position_v2_info` — TLE/SGP4 orbital elements (§5.2.11.2).
+        PositionV2 = 0,
+        /// `cell_fragment_info` — earth-surface cell coverage areas (§5.2.11.3).
+        CellFragment = 1,
+        /// `time_association_info` — NCR↔UTC time association (§5.2.11.4).
+        TimeAssociation = 2,
+        /// `beamhopping_time_plan_info` — beam illumination schedule (§5.2.11.5).
+        BeamhoppingTimePlan = 3,
+        /// `satellite_position_v3_info` — ephemeris state vectors (§5.2.11.6).
+        PositionV3 = 4,
+    }
 }
 
 // ── Position V2 (Table 11c) ─────────────────────────────────────────────────
