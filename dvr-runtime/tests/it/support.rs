@@ -57,8 +57,7 @@ fn the_scratch_root_follows_the_configured_target_directory() {
     let relative = scratch_root(Some(std::ffi::OsStr::new("elsewhere")));
     assert_eq!(
         relative,
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../elsewhere/dvr-runtime-tests")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../elsewhere/dvr-runtime-tests")
     );
     let default = scratch_root(None);
     assert_eq!(
