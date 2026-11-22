@@ -48,7 +48,7 @@
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use axum::Router;
 use axum::response::IntoResponse;
@@ -125,13 +125,8 @@ fn video_track() -> TrackSpec {
 }
 
 fn now_ns() -> u64 {
-    u64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock is after the epoch")
-            .as_nanos(),
-    )
-    .expect("a wall-clock reading fits in u64 nanoseconds")
+    u64::try_from(jiff::Timestamp::now().as_nanosecond())
+        .expect("a wall-clock reading fits in u64 nanoseconds")
 }
 
 /// Build a sample whose payload's first 8 bytes are `now()` (nanoseconds

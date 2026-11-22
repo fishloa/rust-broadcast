@@ -68,12 +68,9 @@ pub(crate) fn apply_socket_options(
     Ok(())
 }
 
-/// Takes the caller-supplied pre-bound socket out of its slot, tolerating a poisoned lock.
-pub(crate) fn take_prebound(slot: &std::sync::Mutex<Option<UdpSocket>>) -> Option<UdpSocket> {
-    match slot.lock() {
-        Ok(mut slot) => slot.take(),
-        Err(poisoned) => poisoned.into_inner().take(),
-    }
+/// Takes the caller-supplied pre-bound socket out of its slot.
+pub(crate) fn take_prebound(slot: &parking_lot::Mutex<Option<UdpSocket>>) -> Option<UdpSocket> {
+    slot.lock().take()
 }
 
 /// The receive-buffer size requested when a caller does not set one (4 MiB):

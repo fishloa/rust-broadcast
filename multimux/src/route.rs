@@ -119,7 +119,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 #[cfg(test)]
 use transmux::TrackId;
 
@@ -502,7 +502,7 @@ pub struct ProgramEpoch {
     /// The route's first presentation start: DASH `availabilityStartTime`,
     /// which an update of a dynamic MPD must not change
     /// (`private/specs-verified/dash/etsi-ts-103-285/ch04-dash-constraints-http-sync.md` 4.8.3).
-    pub(crate) presentation_origin: SystemTime,
+    pub(crate) presentation_origin: jiff::Timestamp,
 }
 
 /// What a program's successor needs of it to continue its numbering and timeline: the next media
@@ -545,7 +545,7 @@ pub(crate) struct DashState {
     /// anchor for the MPD in wall-clock time", the time from which every
     /// segment's availability is measured, §5.3.9.5.3) — NOT the route's
     /// construction time, which precedes ingest (#1187).
-    presentation_origin: SystemTime,
+    presentation_origin: jiff::Timestamp,
     epoch: ProgramEpoch,
     period: Mutex<PeriodCursor>,
     /// [`HlsOrigin::instance`] of this program's origin.
@@ -1652,7 +1652,7 @@ impl ProgramServing {
             .first_period(self.ll_hls.current_init_generation())
     }
 
-    fn presentation_origin(&self) -> SystemTime {
+    fn presentation_origin(&self) -> jiff::Timestamp {
         self.dash.presentation_origin
     }
 
@@ -2444,7 +2444,7 @@ pub struct RouteHandle {
     /// Display text of the typed error that failed this route's output (see
     /// [`Self::fail_output`]); `None` while the output is healthy.
     output_error: Mutex<Option<String>>,
-    created_at: SystemTime,
+    created_at: jiff::Timestamp,
     /// Egress-resolvable `ProgramId -> Arc<ProgramServing>` registry:
     /// `media_plane::IngestDriver` mints one `Trunk` per program the instant
     /// it observes `media_plane::SessionEvent::NewProgram`, while this
@@ -2591,7 +2591,7 @@ impl RouteHandle {
             ts_idr_fallback,
             ts_idr_status: Mutex::new(None),
             output_error: Mutex::new(None),
-            created_at: SystemTime::now(),
+            created_at: jiff::Timestamp::now(),
             programs: RwLock::new(BTreeMap::new()),
             name: DEFAULT_ROUTE_NAME.to_string(),
             dvr_config: None,
@@ -3211,7 +3211,7 @@ impl RouteHandle {
                 .map_or(0, |p| p.discontinuity_sequence_after),
             first_number: previous_epoch.map_or(seq_offset.saturating_add(1), |e| e.first_number),
             presentation_origin: previous_epoch
-                .map_or_else(SystemTime::now, |e| e.presentation_origin),
+                .map_or_else(jiff::Timestamp::now, |e| e.presentation_origin),
         };
         let serving = match ProgramServing::new(
             program,
@@ -3779,7 +3779,7 @@ impl RouteHandle {
     /// (`crate::output::dash`/`crate::output::ll_dash`, ISO/IEC 23009-1
     /// §5.3.1.2). `None` if `program` is not registered. Unlike
     /// [`Self::created_at`] it starts with ingest, not with the route.
-    pub fn presentation_origin(&self, program: ProgramId) -> Option<SystemTime> {
+    pub fn presentation_origin(&self, program: ProgramId) -> Option<jiff::Timestamp> {
         self.serving(program).map(|s| s.presentation_origin())
     }
 
@@ -3789,7 +3789,7 @@ impl RouteHandle {
 
     /// When this route was constructed (admin status only; NOT the DASH
     /// `availabilityStartTime` — see [`Self::presentation_origin`]).
-    pub fn created_at(&self) -> SystemTime {
+    pub fn created_at(&self) -> jiff::Timestamp {
         self.created_at
     }
 

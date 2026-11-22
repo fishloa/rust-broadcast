@@ -2,10 +2,10 @@
 //!
 //! A sans-IO core takes every instant as an argument; the drive loop that owns
 //! it asks a [`HostClock`] for them. Keeping the reads behind this trait means
-//! a source's own module never calls `Instant::now`/`SystemTime::now`, and a
+//! a source's own module never calls `Instant::now`/`Timestamp::now`, and a
 //! test can hand it a clock with a known skew.
 
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 /// A pair of clocks sampled back to back: a monotonic one that counts from the
 /// moment the source opened, and the host's UTC clock.
@@ -37,9 +37,7 @@ impl SystemHostClock {
     /// The host's wall clock read once, for a caller that needs a single
     /// instant and owns no clock of its own.
     pub(crate) fn now_us() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
+        u64::try_from(jiff::Timestamp::now().as_microsecond()).unwrap_or(0)
     }
 }
 

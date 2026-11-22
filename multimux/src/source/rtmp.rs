@@ -131,9 +131,11 @@
 use crate::route::RouteConfig;
 use std::collections::{BTreeSet, VecDeque};
 use std::convert::Infallible;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
 use transmux::TrackId;
 
 use broadcast_common::{Demand, Stage, Timestamp};
@@ -179,11 +181,11 @@ const OUTCOMES_PER_SESSION: usize = 4;
 /// module doc's "Bind once" note.
 struct RtmpInfra {
     /// Shared with every `run_rtmp` attempt via `Arc`; guarded by a
-    /// synchronous [`StdMutex`] (never held across an `.await`) so
+    /// synchronous [`Mutex`] (never held across an `.await`) so
     /// [`RtmpListener::poll_accept`] — which [`Listener::poll_accept`]
     /// requires to be non-blocking — can `try_recv()` without an executor
     /// bridge.
-    accept_rx: Arc<StdMutex<mpsc::Receiver<AcceptedRtmpConnection>>>,
+    accept_rx: Arc<Mutex<mpsc::Receiver<AcceptedRtmpConnection>>>,
     /// Fired whenever the accept pump has queued a connection, so the drive
     /// loop admits it immediately instead of waiting out a fixed poll
     /// interval (defect 2: a steady read load starved the sleep-poll arm).
@@ -352,7 +354,7 @@ impl RtmpRoute {
             Arc::clone(&dead),
         ));
         let infra = Arc::new(RtmpInfra {
-            accept_rx: Arc::new(StdMutex::new(rx)),
+            accept_rx: Arc::new(Mutex::new(rx)),
             admit_notify,
             session_count: Arc::new(AtomicUsize::new(0)),
             admitted_total: Arc::new(AtomicUsize::new(0)),
@@ -429,7 +431,7 @@ impl Source for RtmpRoute {
 /// The non-blocking [`Listener`] bridge over the accept-pump's channel — see
 /// the module doc.
 struct RtmpListener {
-    accept_rx: Arc<StdMutex<mpsc::Receiver<AcceptedRtmpConnection>>>,
+    accept_rx: Arc<Mutex<mpsc::Receiver<AcceptedRtmpConnection>>>,
     app: Option<String>,
     max_sessions: usize,
 }
@@ -443,10 +445,7 @@ impl Listener for RtmpListener {
     }
 
     fn poll_accept(&mut self) -> Result<Option<RtmpIngestSession>> {
-        let mut rx = self
-            .accept_rx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut rx = self.accept_rx.lock();
         match rx.try_recv() {
             Ok(conn) => Ok(Some(RtmpIngestSession::new(
                 conn.into_connection(),
@@ -467,7 +466,7 @@ impl Listener for RtmpListener {
 pub struct RtmpIngestSession {
     /// In a `Mutex` only so the session is `Sync` (`RtmpConnection` is not);
     /// it is never locked, only reached through `&mut self`.
-    conn: StdMutex<Option<RtmpConnection>>,
+    conn: Mutex<Option<RtmpConnection>>,
     app: Option<String>,
     demux: StreamingFlvDemux,
     /// The [`DemuxEvent`] -> [`SessionEvent`] translation state.
@@ -495,15 +494,12 @@ impl RtmpIngestSession {
     /// session's, entirely outside this sans-IO [`Stage`] impl. See the
     /// module doc. `None` after the first call.
     fn take_connection(&mut self) -> Option<RtmpConnection> {
-        self.conn
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
+        self.conn.get_mut().take()
     }
 
     fn new(conn: RtmpConnection, app: Option<String>) -> Self {
         RtmpIngestSession {
-            conn: StdMutex::new(Some(conn)),
+            conn: Mutex::new(Some(conn)),
             app,
             demux: StreamingFlvDemux::new(),
             events: FlvEvents::default(),
@@ -528,12 +524,7 @@ impl RtmpIngestSession {
     /// session one protocol read at a time.
     #[cfg(any(test, feature = "test-seams"))]
     pub async fn next_events_for_test(&mut self) -> std::io::Result<Option<Vec<ServerEvent>>> {
-        match self
-            .conn
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_mut()
-        {
+        match self.conn.get_mut().as_mut() {
             Some(conn) => conn.next_events().await,
             None => Ok(None),
         }

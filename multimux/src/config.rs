@@ -2462,43 +2462,37 @@ pub struct Config {
 pub struct PreboundBinds {
     /// TCP listeners keyed by the route's `listen` string (`Whip`/`Whep`).
     pub tcp: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<String, tokio::net::TcpListener>>,
+        parking_lot::Mutex<std::collections::HashMap<String, tokio::net::TcpListener>>,
     >,
     /// UDP sockets keyed by the route's `addr` string (`TsUdp`).
-    pub udp:
-        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::net::UdpSocket>>>,
+    pub udp: std::sync::Arc<
+        parking_lot::Mutex<std::collections::HashMap<String, tokio::net::UdpSocket>>,
+    >,
 }
 
 #[cfg(feature = "test-seams")]
 impl PreboundBinds {
-    /// Lock `m`, recovering the guard from a poisoned mutex (a caller panicking
-    /// while holding one of these slots must not take the route's egress down,
-    /// and these slots hold no invariant a panic could tear).
-    fn lock<'a, T>(m: &'a std::sync::Mutex<T>) -> std::sync::MutexGuard<'a, T> {
-        m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     /// Insert a pre-bound TCP listener under the route `listen` string that
     /// would otherwise be re-bound; returns `&mut Self` so calls chain.
     pub fn with_tcp(&mut self, listen: impl Into<String>, l: tokio::net::TcpListener) -> &mut Self {
-        Self::lock(&self.tcp).insert(listen.into(), l);
+        self.tcp.lock().insert(listen.into(), l);
         self
     }
 
     /// Insert a pre-bound UDP socket under the route `addr` string.
     pub fn with_udp(&mut self, addr: impl Into<String>, s: tokio::net::UdpSocket) -> &mut Self {
-        Self::lock(&self.udp).insert(addr.into(), s);
+        self.udp.lock().insert(addr.into(), s);
         self
     }
 
     /// Take the TCP listener registered for `listen`, if any.
     pub fn take_tcp(&self, listen: &str) -> Option<tokio::net::TcpListener> {
-        Self::lock(&self.tcp).remove(listen)
+        self.tcp.lock().remove(listen)
     }
 
     /// Take the UDP socket registered for `addr`, if any.
     pub fn take_udp(&self, addr: &str) -> Option<tokio::net::UdpSocket> {
-        Self::lock(&self.udp).remove(addr)
+        self.udp.lock().remove(addr)
     }
 }
 
@@ -3094,34 +3088,6 @@ mod tests {
         assert!(!Config::default().allow_open_ingest);
         let cfg: Config = serde_json::from_str(r#"{ "routes": [] }"#).unwrap();
         assert!(!cfg.allow_open_ingest);
-    }
-
-    /// `PreboundBinds`' accessors must recover from a poisoned mutex rather
-    /// than panic a route's egress: the slots hold no invariant a panic could
-    /// tear. PRE-FIX every accessor `.expect`ed the lock, so a poisoned lock
-    /// panicked `Config::prebound_tcp`/`take_tcp` on the next route bind.
-    #[cfg(feature = "test-seams")]
-    #[test]
-    fn prebound_binds_recover_from_a_poisoned_lock() {
-        let binds = PreboundBinds::default();
-        // Poison the TCP mutex.
-        let tcp = std::sync::Arc::clone(&binds.tcp);
-        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = tcp.lock().expect("lock for poisoning");
-            panic!("poison the prebound tcp lock");
-        }));
-        assert!(poisoned.is_err());
-        // The accessors must not panic, and must still operate.
-        assert!(binds.take_tcp("127.0.0.1:1").is_none());
-
-        // Poison the UDP mutex too.
-        let udp = std::sync::Arc::clone(&binds.udp);
-        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = udp.lock().expect("lock for poisoning");
-            panic!("poison the prebound udp lock");
-        }));
-        assert!(poisoned.is_err());
-        assert!(binds.take_udp("127.0.0.1:1").is_none());
     }
 
     // --- W5 (audit run 7): route-name safety and router-build panics ---

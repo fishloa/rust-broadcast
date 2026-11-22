@@ -75,11 +75,12 @@
 //! `RtmpIngestSession::feed` (sans-IO translation).
 
 use crate::route::RouteConfig;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use transmux::TrackId;
 
@@ -180,7 +181,7 @@ struct WhipTrack {
 /// Bind-once, reuse-forever infrastructure — see [`WhipRoute::ensure_infra`]
 /// and `crate::source::rtmp::RtmpInfra`'s identical shape.
 struct WhipInfra {
-    accept_rx: Arc<StdMutex<mpsc::Receiver<AdmittedWhip>>>,
+    accept_rx: Arc<Mutex<mpsc::Receiver<AdmittedWhip>>>,
     /// The live session resources (`/whip/session/<id>`), shared with the
     /// signalling handlers.
     resources: Arc<ResourceTable<WhipSession>>,
@@ -224,7 +225,7 @@ struct WhipInfra {
     /// (finding N3's session-end test seam — a real ICE/DTLS timer failure is
     /// not stageable through the public API). Consumed once by `run_whip`.
     #[cfg(feature = "test-hooks")]
-    force_timer_error: Arc<StdMutex<Option<String>>>,
+    force_timer_error: Arc<Mutex<Option<String>>>,
 }
 
 impl Drop for WhipInfra {
@@ -241,7 +242,7 @@ pub struct WhipRoute {
     listen: String,
     /// A caller-supplied, already-bound listener (tests that must know the
     /// port before the route starts). `None` binds `listen` on first use.
-    prebound: StdMutex<Option<TcpListener>>,
+    prebound: Mutex<Option<TcpListener>>,
     timeouts: Timeouts,
     max_sessions: usize,
     infra: OnceCell<Arc<WhipInfra>>,
@@ -266,7 +267,7 @@ impl WhipRoute {
         WhipRoute {
             name: name.into(),
             listen: listen.into(),
-            prebound: StdMutex::new(None),
+            prebound: Mutex::new(None),
             timeouts: Timeouts::default(),
             max_sessions: DEFAULT_WHIP_MAX_SESSIONS,
             infra: OnceCell::new(),
@@ -288,7 +289,7 @@ impl WhipRoute {
         WhipRoute {
             name: name.into(),
             listen,
-            prebound: StdMutex::new(Some(listener)),
+            prebound: Mutex::new(Some(listener)),
             timeouts: Timeouts::default(),
             max_sessions,
             infra: OnceCell::new(),
@@ -317,12 +318,7 @@ impl WhipRoute {
         let infra = self
             .infra
             .get_or_try_init(|| async {
-                // Recover the slot even from a poisoned lock (a `with_listener`
-                // caller panicking while holding it must not abort startup).
-                let prebound = match self.prebound.lock() {
-                    Ok(mut slot) => slot.take(),
-                    Err(poisoned) => poisoned.into_inner().take(),
-                };
+                let prebound = self.prebound.lock().take();
                 let listener = match prebound {
                     Some(listener) => listener,
                     None => TcpListener::bind(&self.listen).await.map_err(|e| {
@@ -358,7 +354,7 @@ impl WhipRoute {
                     }
                 });
                 Ok::<Arc<WhipInfra>, MultimuxError>(Arc::new(WhipInfra {
-                    accept_rx: Arc::new(StdMutex::new(rx)),
+                    accept_rx: Arc::new(Mutex::new(rx)),
                     resources,
                     trickled_candidates: Arc::new(AtomicU64::new(0)),
                     ice_restarts: Arc::new(AtomicU64::new(0)),
@@ -372,7 +368,7 @@ impl WhipRoute {
                     admitted_total: Arc::new(AtomicUsize::new(0)),
                     admit_count_notify: Arc::new(Notify::new()),
                     #[cfg(feature = "test-hooks")]
-                    force_timer_error: Arc::new(StdMutex::new(None)),
+                    force_timer_error: Arc::new(Mutex::new(None)),
                 }))
             })
             .await?;
@@ -476,11 +472,7 @@ impl WhipRouteShared {
     /// session is admitted, ending that session on its next timer drive.
     #[cfg(feature = "test-hooks")]
     pub fn force_next_timer_error(&self, err: impl Into<String>) {
-        *self
-            .infra
-            .force_timer_error
-            .lock()
-            .expect("force_timer_error") = Some(err.into());
+        *self.infra.force_timer_error.lock() = Some(err.into());
     }
 }
 
@@ -1113,7 +1105,7 @@ crate::webrtc_session::impl_signalling_machine!(
 /// The non-blocking [`Listener`] bridge over the accept-pump's channel — see
 /// the module doc and `crate::source::rtmp::RtmpListener`'s identical shape.
 struct WhipListener {
-    accept_rx: Arc<StdMutex<mpsc::Receiver<AdmittedWhip>>>,
+    accept_rx: Arc<Mutex<mpsc::Receiver<AdmittedWhip>>>,
     max_sessions: usize,
 }
 
@@ -1126,10 +1118,7 @@ impl Listener for WhipListener {
     }
 
     fn poll_accept(&mut self) -> Result<Option<WhipIngestSession>> {
-        let mut rx = self
-            .accept_rx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut rx = self.accept_rx.lock();
         match rx.try_recv() {
             Ok(admitted) => Ok(Some(WhipIngestSession::new(admitted))),
             Err(mpsc::error::TryRecvError::Empty) => Ok(None),
@@ -1295,7 +1284,7 @@ impl WhipIngestSession {
 
     /// Hands the owned [`MediaTransport`] to the read loop (SP6.3): the
     /// session task OWNS it outright, so the loop takes it by value and holds
-    /// no lock across `send_to().await`. The `std::sync::Mutex` is held only
+    /// no lock across `send_to().await`. The `parking_lot::Mutex` is held only
     /// for the synchronous `take`, never across an await. A
     /// `parking_lot::Mutex` is used so a panic elsewhere cannot poison it.
     /// Returns `None` if the transport was already taken (it is handed out
@@ -2010,12 +1999,7 @@ pub(crate) async fn run_whip_with_clock(
             let mut media = media;
             #[cfg(feature = "test-hooks")]
             {
-                if let Some(err) = infra
-                    .force_timer_error
-                    .lock()
-                    .expect("force_timer_error")
-                    .take()
-                {
+                if let Some(err) = infra.force_timer_error.lock().take() {
                     media.force_next_timer_error(err);
                 }
             }
@@ -2127,40 +2111,6 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             local_bind_ip(None, peer_v6),
             std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
         );
-    }
-
-    /// A poisoned pre-bound lock must NOT abort WHIP startup: `ensure_infra`
-    /// recovers the inner slot and serves on the route's own bound listener.
-    /// PRE-FIX the production `.expect("prebound lock")` panicked on the
-    /// poisoned lock (the poisoning thread's panic propagated through the join
-    /// here, so `ensure_infra` panicked rather than returning `Ok`).
-    #[tokio::test]
-    async fn ensure_infra_recovers_from_a_poisoned_prebound_lock() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        let route = WhipRoute::with_listener("cam", listener, DEFAULT_WHIP_MAX_SESSIONS);
-
-        // Poison `route.prebound`: hold the lock across a panic (caught so the
-        // test itself survives to observe the recovery).
-        // The caught panic still prints via the default hook; harmless, and
-        // avoiding a global `set_hook` keeps this test safe under the parallel
-        // test runner.
-        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = route.prebound.lock().expect("lock for poisoning");
-            panic!("poison the whip prebound lock");
-        }));
-        assert!(poisoned.is_err(), "the poisoning panic must be caught");
-
-        let infra = route
-            .ensure_infra()
-            .await
-            .expect("ensure_infra must recover from a poisoned pre-bound lock");
-        let token = infra.cancel.clone();
-        // The caller-bound address must actually accept a connection.
-        tokio::net::TcpStream::connect(addr)
-            .await
-            .expect("the route must still serve on its own address after a poisoned lock");
-        token.cancel();
     }
 
     /// Defect 1 (structural): a transport with a pending timer (here a STUN
