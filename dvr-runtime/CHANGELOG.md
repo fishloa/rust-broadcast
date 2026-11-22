@@ -74,3 +74,8 @@ catch-up read planner and the blocking `fs` adapter.
   jiff 1.x `Timestamp`s.
 - Requires broadcast-hls 0.9, dvb-si 16, broadcast-common 14, media-plane 0.14
   and transmux 0.33 (#4007).
+
+### Documentation
+
+- The crate-root examples are the commands that run, with the `fs` feature
+  and a real input file (#3982).
