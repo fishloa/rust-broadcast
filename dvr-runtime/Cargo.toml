@@ -22,9 +22,9 @@ broadcast-hls    = { path = "../broadcast-hls",    version = "0.8.1",  default-f
 media-plane      = { path = "../media-plane",      version = "0.13.0", default-features = false, features = ["std"] }
 dvb-si           = { path = "../dvb-si",           version = "15.1.0", default-features = false, features = ["std", "jiff", "ts"] }
 transmux         = { path = "../transmux",         version = "0.32.1", default-features = false, features = ["std"] }
-bytes            = "1.12.2"
+bytes            = "1"
 jiff             = "1.0.2"
-thiserror        = "2.0.21"
+thiserror        = "2"
 
 [[example]]
 name = "record_ts_file"

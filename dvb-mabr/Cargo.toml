@@ -21,7 +21,7 @@ broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-f
 # XML codec: the only XML dependency of the crates that read or write XML (transmux,
 # dvb-mabr, ttml-subtitle, multimux). std-only (quick-xml needs std).
 quick-xml         = { workspace = true, optional = true }
-thiserror         = { version = "2.0.21", default-features = false }
+thiserror         = { version = "2", default-features = false }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

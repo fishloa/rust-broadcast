@@ -18,8 +18,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
-thiserror        = { version = "2.0.21", default-features = false }
-serde            = { version = "1.0.229", default-features = false, optional = true, features = ["derive", "alloc"] }
+thiserror        = { version = "2", default-features = false }
+serde            = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

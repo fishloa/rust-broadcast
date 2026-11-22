@@ -24,8 +24,8 @@ broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-f
 ssai-runtime     = { path = "../ssai-runtime",     version = "0.7.0", default-features = false }
 # Builds + serializes the splice_insert() a transition implies.
 scte35-splice    = { path = "../scte35-splice",    version = "7.0.0",   default-features = false }
-thiserror        = { version = "2.0.21", default-features = false }
-serde            = { version = "1.0.229", optional = true, default-features = false, features = ["derive", "alloc"] }
+thiserror        = { version = "2", default-features = false }
+serde            = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

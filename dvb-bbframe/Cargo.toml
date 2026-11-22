@@ -17,9 +17,9 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
-thiserror = { version = "2.0.21", default-features = false }
+thiserror = { version = "2", default-features = false }
 num_enum = { workspace = true }
-serde      = { version = "1.0.229", default-features = false, optional = true, features = ["derive", "alloc"] }
+serde      = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 yoke       = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]

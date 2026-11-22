@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
 rtp-packet        = { path = "../rtp-packet",       version = "0.8.0", default-features = false }
-thiserror        = { version = "2.0.21", default-features = false }
+thiserror        = { version = "2", default-features = false }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

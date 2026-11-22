@@ -20,7 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false, features = ["std", "xml"] }
 jiff             = { version = "1.0.2", default-features = false, features = ["std"] }
 quick-xml        = { workspace = true }
-thiserror        = "2.0.21"
+thiserror        = "2"
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

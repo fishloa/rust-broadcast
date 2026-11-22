@@ -33,20 +33,20 @@ sdp-types          = { workspace = true }
 rtp-packet         = { path = "../rtp-packet", version = "0.8.0", default-features = false, features = ["std"] }
 srt-runtime        = { path = "../srt-runtime", version = "0.11.0", default-features = false, features = ["std", "crypto"] }
 rtmp-runtime       = { path = "../rtmp-runtime", version = "0.11.1", default-features = false, features = ["target"] }
-sha2               = { version = "0.11.1", default-features = false }
-rustls-pki-types  = { version = "1.16.0", default-features = false, features = ["alloc"] }
-zeroize            = { version = "1.9.2", default-features = false, features = ["alloc"] }
-url                = "2.5.9"
-http               = "1.5.0"
+sha2               = { version = "0.11", default-features = false }
+rustls-pki-types  = { version = "1", default-features = false, features = ["alloc"] }
+zeroize            = { version = "1", default-features = false, features = ["alloc"] }
+url                = "2"
+http               = "1"
 headers            = { workspace = true }
 jiff               = { version = "1.0.2", default-features = false, features = ["std"] }
-thiserror          = "2.0.21"
-serde              = { version = "1.0.229", default-features = false, optional = true, features = ["derive", "alloc", "std"] }
+thiserror          = "2"
+serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc", "std"] }
 
 [dev-dependencies]
 broadcast-dash     = { path = "../broadcast-dash", version = "0.2.1" }
-rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
-rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 srt-runtime = { path = "../srt-runtime", version = "0.11.0", features = ["tokio", "crypto"] }
 test-fixtures = { path = "../test-fixtures" }
 test-harness = { path = "../test-harness" }
@@ -55,13 +55,13 @@ transmux = { path = "../transmux", version = "0.32.1" }
 broadcast-auth = { path = "../broadcast-auth", version = "0.8.1" }
 rtsp-runtime = { path = "../rtsp-runtime", version = "0.13.0", default-features = false }
 sdp-types = { workspace = true }
-rtsp-types = "0.2.0"
-url = "2.5.9"
+rtsp-types = "0.2"
+url = "2"
 jiff = { version = "1.0.2", default-features = false, features = ["std"] }
 serde_json = { workspace = true }
 workspace-guards = { path = "../workspace-guards" }
-tokio = { version = "1.54.1", default-features = false, features = ["rt", "time", "net"] }
-reqwest = { version = "0.13.5", default-features = false, features = ["blocking"] }
+tokio = { version = "1", default-features = false, features = ["rt", "time", "net"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking"] }
 
 [features]
 serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "buffering-runtime/serde"]

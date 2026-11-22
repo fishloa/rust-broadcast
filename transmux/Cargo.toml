@@ -14,17 +14,17 @@ readme       = "README.md"
 # Floored at 9.2: `cenc::CencScheme` and `hex::hex_encode` (the definitions this
 # crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
 broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false, features = ["base64"] }
-thiserror  = { version = "2.0.21", default-features = false }
+thiserror  = { version = "2", default-features = false }
 # Hex codec for every hex site (SP5); `alloc` only, so the core stays no_std.
-hex        = { version = "0.4.3", default-features = false, features = ["alloc"] }
+hex        = { version = "0.4", default-features = false, features = ["alloc"] }
 # base64 codec for SDP sprop, DRM headers and DASH/Smooth payloads (SP5); `alloc` only.
-base64     = { version = "0.23.1", default-features = false, features = ["alloc"] }
+base64     = { version = "0.23", default-features = false, features = ["alloc"] }
 # Calendar and duration handling (SP5): CLI availabilityStartTime, xs:duration parse/build. `std`-only, so the no_std core is unaffected.
 jiff       = { version = "1.0.2", default-features = false, features = ["std"], optional = true }
 # BaseURL / URL-reference resolution (SP3, `base_url`): WHATWG `Url::join`. `std`-only.
 # RTP SDP generation (SP4): `Session::write`. `sdp-types` 0.3 is `std`-only (no `no_std`/`alloc` feature), so SDP generation is `std`-only; tests/it/rtp.rs also uses its parser as an oracle.
 sdp-types  = { workspace = true, optional = true }
-serde      = { version = "1.0.229", default-features = false, features = ["derive", "alloc"], optional = true }
+serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
 # produce `broadcast_hls::MediaPlaylist`/`MediaSegment` values; the playlist
 # syntax itself no longer lives in this crate.
@@ -35,7 +35,7 @@ mpeg-ts    = { path = "../mpeg-ts",  version = "0.9.0", default-features = false
 mpeg-pes   = { path = "../mpeg-pes", version = "0.9.0", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.9.0", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.8.0", default-features = false }
-bytes      = { version = "1.12.2", default-features = false }
+bytes      = { version = "1", default-features = false }
 # Caption presence detection (`caption_detect`): `cc_data()` triplets and the 708 service decoder.
 cc-data    = { path = "../cc-data", version = "0.10.0", default-features = false, features = ["decode"] }
 # Typed PMT ES_info audio metadata (issue #1162 R1): `TrackSpec::audio_metadata`
@@ -45,7 +45,7 @@ cc-data    = { path = "../cc-data", version = "0.10.0", default-features = false
 dvb-si     = { path = "../dvb-si", version = "15.1.0", default-features = false }
 # Start-code scan (`annexb::find_start_code_prefix`): find each `01` byte
 # instead of testing every offset. no_std without its `std` feature.
-memchr     = { version = "2.8.3", default-features = false }
+memchr     = { version = "2", default-features = false }
 # XML codec for the DASH MPD / Smooth Streaming / PlayReady WRMHEADER paths: the
 # only XML dependency of the crates that read or write XML (transmux,
 # dvb-mabr, ttml-subtitle, multimux). std-only (quick-xml needs std).
@@ -55,13 +55,13 @@ quick-xml  = { workspace = true, optional = true }
 # not depend on transmux (no cycle). Optional because the manifest path is an
 # XML path: this crate stays `no_std` without `std`, and `std` turns it on.
 broadcast-smooth = { path = "../broadcast-smooth", version = "0.2.1", optional = true, default-features = false }
-aes        = { version = "0.9.4", default-features = false, optional = true }
-ctr        = { version = "0.10.1", default-features = false, optional = true }
-cbc        = { version = "0.2.1", default-features = false, optional = true }
+aes        = { version = "0.9", default-features = false, optional = true }
+ctr        = { version = "0.10", default-features = false, optional = true }
+cbc        = { version = "0.2", default-features = false, optional = true }
 # Content-key hygiene (issue #1142): `KeyMap`/`CencEncryptor` wipe their keys on
 # drop and compare keys in constant time. Both are already in the workspace lock.
-zeroize    = { version = "1.9.2", default-features = false, features = ["alloc"], optional = true }
-subtle     = { version = "2.6.1", default-features = false, optional = true }
+zeroize    = { version = "1", default-features = false, features = ["alloc"], optional = true }
+subtle     = { version = "2", default-features = false, optional = true }
 clap       = { workspace = true, optional = true, features = ["derive"] }
 # RTMP wire layer (`rtmp.rs` is only the FLV-carrying container spoke): the
 # handshake, chunk stream, protocol control messages and AMF0 commands live in
@@ -140,8 +140,8 @@ dvb-conformance = { path = "../dvb-conformance", default-features = false, featu
 # prints the digests it would write. Dev-dependency only: the crate itself
 # never hashes. Already in the workspace lock (broadcast-auth, broadcast-client,
 # webrtc-runtime), so this adds no crate to the tree.
-sha2         = { version = "0.11.1", default-features = false }
-criterion    = { version = "0.8.2", features = ["html_reports"] }
+sha2         = { version = "0.11", default-features = false }
+criterion    = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name    = "annexb_scan"

@@ -20,8 +20,8 @@ dvb-si     = { path = "../dvb-si" }
 
 [dependencies]
 broadcast-common   = { path = "../broadcast-common" }
-http               = "1.5.0"
-headers            = "0.4.2"
+http               = "1"
+headers            = "0.4"
 dvb-si       = { path = "../dvb-si",       features = ["ts", "serde"] }
 dvb-t2mi     = { path = "../dvb-t2mi",     features = ["ts"] }
 dvb-bbframe  = { path = "../dvb-bbframe" }
@@ -46,7 +46,7 @@ media-doctor  = { path = "../media-doctor" }
 broadcast-auth = { path = "../broadcast-auth" }
 rtmp-runtime  = { path = "../rtmp-runtime" }
 rtsp-runtime  = { path = "../rtsp-runtime" }
-sdp-types     = "0.3.2"
+sdp-types     = "0.3"
 media-plane   = { path = "../media-plane" }
 ttml-subtitle = { path = "../ttml-subtitle" }
 broadcast-loudness = { path = "../broadcast-loudness" }
@@ -62,7 +62,7 @@ atsc3-route    = { path = "../atsc3-route" }
 rmt-flute      = { path = "../rmt-flute" }
 dash-runtime   = { path = "../dash-runtime" }
 smooth-runtime = { path = "../smooth-runtime" }
-url            = "2.5.9"
+url            = "2"
 broadcast-dash = { path = "../broadcast-dash" }
 test-fixtures  = { path = "../test-fixtures" }
 jiff           = { version = "1.0.2", default-features = false, features = ["std"] }
@@ -77,9 +77,9 @@ timed-metadata = { path = "../timed-metadata" }
 ts-fix         = { path = "../ts-fix" }
 hls-runtime    = { path = "../hls-runtime" }
 dvb-ci-runtime = { path = "../dvb-ci-runtime" }
-bytes         = "1.12.2"
+bytes         = "1"
 dvr-runtime   = { path = "../dvr-runtime" }
-libfuzzer-sys = "0.4.13"
+libfuzzer-sys = "0.4"
 
 [[bin]]
 name = "dvr_playlist"

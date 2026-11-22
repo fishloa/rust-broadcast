@@ -81,7 +81,7 @@ broadcast-common  = { path = "../broadcast-common", version = "13.1.0", features
 # 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
 # the `Trunk` every ported session publishes into.
 media-plane       = { path = "../media-plane", version = "0.13.0", features = ["std"] }
-bytes             = "1.12.2"
+bytes             = "1"
 # Shared Basic/Digest/Bearer auth model + challenge/response helper
 # (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`
 # and `hls_runtime::client::tokio_client` use.
@@ -91,53 +91,53 @@ bytes             = "1.12.2"
 # fails to compile against a lock that pins 0.2.0.
 broadcast-auth    = { path = "../broadcast-auth", version = "0.8.1" }
 sdp-types         = { workspace = true }
-tokio             = { version = "1.54.1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
+tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 axum              = { workspace = true }
 # Every multimux HTTP listener is served through hyper-util's auto server
 # builder (`origin::serve_hyper_util`) rather than `axum::serve`, so it can
 # set a header-read timeout, a connection cap, and graceful drain on shutdown
 # (W2a SP2.1) — `axum::serve` sets none of them. The auto builder accepts
 # both HTTP/1.1 and h2c prior-knowledge on one listener.
-hyper             = { version = "1.12.0", features = ["server", "http1", "http2"] }
-hyper-util        = { version = "0.1.21", features = ["server", "http1", "http2", "server-auto", "server-graceful", "tokio", "service"] }
+hyper             = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util        = { version = "0.1", features = ["server", "http1", "http2", "server-auto", "server-graceful", "tokio", "service"] }
 # HTTP-layer resource limits (issue #663 P5, audit-concurrency #3): request
 # timeout + request-body size cap (`tower-http`) and a concurrency bound
 # (`tower::limit`) — see `origin::HttpLimits`/`origin::router`. `util` is
 # needed for `tower::ServiceExt::oneshot` in this crate's own axum-router
 # tests. `cors` is for the WHIP/WHEP signalling routers (W2a SP2.1).
-tower-http        = { version = "0.7.1", default-features = false, features = ["timeout", "limit", "cors", "compression-gzip", "decompression-gzip"] }
-tower             = { version = "0.5.3", default-features = false, features = ["limit", "util"] }
+tower-http        = { version = "0.7", default-features = false, features = ["timeout", "limit", "cors", "compression-gzip", "decompression-gzip"] }
+tower             = { version = "0.5", default-features = false, features = ["limit", "util"] }
 # `http_body::{Frame, SizeHint}` for `origin::limit::PermitBody` (the response
 # body that owns a concurrency permit): `axum::body` re-exports only
 # `HttpBody`/`Body`/`Bytes`, not these. Already in the lock at 1.1.0.
-http-body        = "1.1.0"
+http-body        = "1"
 # Typed response headers (`CacheControl`, `AccessControlAllow*`, `Vary`) in
 # `origin::add_response_headers` (W2a Task 3) instead of hand-built constants.
 headers          = { workspace = true }
-http             = "1.5.0"
+http             = "1"
 # `ArcSwap<Router>` for the admin media router (W2a Task 3) so a per-request
 # read never takes a write lock on the rebuild path.
-arc-swap         = "1.9.5"
-serde             = { version = "1.0.229", features = ["derive"] }
+arc-swap         = "1"
+serde             = { version = "1", features = ["derive"] }
 serde_json        = { workspace = true }
-thiserror         = "2.0.21"
-url               = "2.5.9"
+thiserror         = "2"
+url               = "2"
 # OS CSPRNG for ICE credentials, resource ids and SSRCs (issue #1142); 0.2 is
 # already in the workspace lock.
-getrandom         = "0.4.3"
+getrandom         = "0.4"
 # Dates and durations (DASH `availabilityStartTime`, `@duration`,
 # `EXT-X-PROGRAM-DATE-TIME`, DASH-pull `parse_iso8601_utc`) via `jiff` rather
 # than the hand-rolled `civil_from_days` / manual ISO-8601 parsing this crate
 # used before (SP5). `jiff` is already in the workspace lock (transmux,
 # timed-metadata), so this adds no new version.
 jiff              = "1.0.2"
-tracing           = "0.1.44"
+tracing           = "0.1"
 # Push output driver (`push`, issue #744): `#[async_trait]` drives the
 # `PushTransport` trait's async methods over the sans-IO `SrtSocket` handle.
-async-trait       = "0.1.92"
+async-trait       = "0.1"
 # `tokio_util::sync::CancellationToken` for cooperative cancellation of the
 # push loop (`drive_push`).
-tokio-util        = { version = "0.7.20", features = ["rt"] }
+tokio-util        = { version = "0.7", features = ["rt"] }
 # The workspace's one reconnect-backoff implementation (SP1.5): every retry
 # site (supervisor, push `ReconnectEngine`, `file_reader`, `hls_pull`) goes
 # through `reconnect::ReconnectSchedule` rather than a hand-rolled `powi`
@@ -145,24 +145,24 @@ tokio-util        = { version = "0.7.20", features = ["rt"] }
 # caller applies the delay itself) so this does not pull a second `tokio`.
 # Locks without poisoning (SP6.6): a panicking holder's guard drops and the
 # next acquire succeeds.
-parking_lot       = "0.13.0"
+parking_lot       = "0.13"
 metrics           = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-tokio-rustls      = { version = "0.26.6", optional = true, default-features = false, features = ["ring", "tls12", "logging"] }
+tokio-rustls      = { version = "0.26", optional = true, default-features = false, features = ["ring", "tls12", "logging"] }
 # `rustls::pki_types::ServerName` for SNI, plus the loopback TLS test server
 # (`source::rtsp`'s `rtsps://` connect, issue #804) — pinned to the same
 # "0.23" line as `rtsp-runtime`'s own optional `rustls` dep, already resolved
 # at that version transitively (via `reqwest`/`hyper-rustls`), so this adds no
 # new version to the lock.
-rustls            = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls            = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # The ring-backed verifier reqwest's own default would have built (platform
 # roots), handed to reqwest through `use_preconfigured_tls`.
-rustls-platform-verifier = "0.7.1"
+rustls-platform-verifier = "0.7"
 # TS-over-HTTP ingest (`source::ts_http`, issue #663 P3c): a streaming GET
 # fed straight into `StreamingTsDemux`. `rustls-no-provider` so no aws-lc-rs
 # provider is linked; the client is built from a ring `ClientConfig`
 # (`source::client_host::http_client`). `stream` for `Response::bytes_stream()`.
-reqwest           = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "stream"] }
+reqwest           = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 # `.next()` on `reqwest::Response::bytes_stream()` (a bare `Stream`, no
 # extension methods of its own).
 futures-util      = { workspace = true, features = ["std"] }
@@ -272,19 +272,19 @@ transmux = { path = "../transmux", version = "0.32.1", features = ["sample-aes"]
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).
 webrtc-runtime   = { path = "../webrtc-runtime", version = "0.9.0", default-features = false, features = ["test-seams"] }
 # Builds the STUN connectivity checks the WHEP shared-socket tests send.
-rtc-stun         = "0.21.1"
+rtc-stun         = "0.21"
 # `test-util`: the paused, manually advanced clock the push-flush tests use
 # instead of sleeping (feature-only; no new version in the lock).
-tokio            = { version = "1.54.1", features = ["test-util"] }
-base64           = "0.23.1"
+tokio            = { version = "1", features = ["test-util"] }
+base64           = "0.23"
 # gzip decompression for origin_gzip tests; already in the lock via
 # tower-http/compression-gzip (async-compression -> flate2), so no new entry.
-flate2            = "1.1.11"
+flate2            = "1"
 # Adds `reqwest`'s `json` feature (`Response::json`/`RequestBuilder::json`)
 # for test-only use (`tests/it/admin_api.rs`, issue #749) — Cargo unifies this
 # into the one `reqwest` dependency only for test builds, never for the
 # library target itself.
-reqwest          = { version = "0.13.5", default-features = false, features = ["json", "http2"] }
+reqwest          = { version = "0.13", default-features = false, features = ["json", "http2"] }
 # An INDEPENDENT SCTE-35 parser (no shared code with `timed-metadata`) so
 # `tests/it/emsg_mp4box.rs` can decode the `message_data` of an emitted DASH
 # `emsg` back to the source section and prove the bytes are the source's own
@@ -299,7 +299,7 @@ rtp-packet       = { path = "../rtp-packet", version = "0.8.0", default-features
 # certificate (and so signal its genuine fingerprint in the offer before
 # construction). Already a transitive dep via `webrtc-runtime/media` at the
 # locked version, so this adds no new lock entry.
-rtc-dtls         = "0.21.1"
+rtc-dtls         = "0.21"
 # The independent ETSI TR 101 290 monitor `multimux/tests/it/push_ts_stream.rs` runs over
 # the TS a push output actually delivers (#1024). Dev-only; dvb-conformance
 # depends on neither multimux nor transmux, so there is no cycle.
@@ -328,7 +328,7 @@ socket2          = { workspace = true, features = ["all"] }
 media-plane         = { path = "../media-plane", version = "0.13.0", default-features = false, features = ["std", "test-support"] }
 # `parking_lot::Mutex` so a test can prove the no-poison
 # property directly (the library uses it internally but does not re-export it).
-parking_lot      = "0.13.0"
+parking_lot      = "0.13"
 
 [lints]
 workspace = true
