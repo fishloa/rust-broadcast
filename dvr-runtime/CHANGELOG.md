@@ -68,3 +68,5 @@ catch-up read planner and the blocking `fs` adapter.
 
 - Builds against `jiff` 1.0: the recording and read-side wall-clock times are
   jiff 1.x `Timestamp`s.
+- Requires broadcast-hls 0.9, dvb-si 16, broadcast-common 14, media-plane 0.14
+  and transmux 0.33 (#4007).
