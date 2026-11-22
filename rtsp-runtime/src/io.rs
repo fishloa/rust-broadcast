@@ -708,23 +708,25 @@ where
     Ok(AsyncRtspClient::from_stream(stream, config))
 }
 
-/// Builds a [`rustls::ClientConfig`] trusting the `webpki-roots` public-CA
-/// bundle (the default trust store for `rtsps://` to a well-known server).
+/// Builds a ring-backed [`rustls::ClientConfig`] that verifies server
+/// certificates against the operating system trust store through
+/// `rustls-platform-verifier` (the default for `rtsps://` to a well-known
+/// server; a private CA installed in the OS is trusted).
 ///
 /// For a self-signed camera cert, construct the config directly with a root
 /// store containing that cert and pass it to
 /// [`AsyncRtspClient::connect_tls`].
 #[cfg(feature = "tls")]
 pub fn default_tls_client_config() -> crate::Result<rustls::ClientConfig> {
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    use rustls_platform_verifier::BuilderVerifierExt;
     Ok(
         rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .map_err(Error::TlsConfig)?
-        .with_root_certificates(roots)
+        .with_platform_verifier()
+        .map_err(Error::TlsConfig)?
         .with_no_client_auth(),
     )
 }
