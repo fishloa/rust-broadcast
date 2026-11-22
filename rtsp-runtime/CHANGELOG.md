@@ -5,14 +5,18 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Added
+
 - `client::MAX_INBOUND_BYTES` (1 MiB) is public: the bound on the client's inbound buffer.
 
 ### Changed
+
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974).
 - Behaviour change: `rtsps://` (`default_tls_client_config`) now trusts the OS trust store through `rustls-platform-verifier` (ring provider); a private CA installed in the OS now works and the bundled Mozilla root list (`webpki-roots`) is gone (#3960).
 
-### Fixed
-- The inbound cap, the `public_methods`/`session_timeout`/`negotiated_transport` accessors, the PLAY/DESCRIBE capture conditions and the auth-retry bound each have a test pinning the literal value and both edges, so a changed constant, a loosened `&&`, or an accessor returning a constant fails the suite (audit 21 findings 49 and 50, #2944/#2945).
+### Tests
+
 - The whole RFC 2326 Appendix A state table is exercised transition by transition for both roles, and a server test drives SETUP, PLAY, a second PLAY (a seek) and a SETUP while Playing, so a valid transition can no longer degrade into a 455 (audit 22 finding 27, #2995).
 - A server that hands out several sessions over its lifetime is tested to give each one a distinct `Session` id, so the allocation counter cannot silently stay at zero (audit 22 finding 28, #2996).
 - `sdp::session_description` is asserted line by line for a video + audio session (and parses back through `sdp-types`), and `sdp::resolve_control` is tested at both default ports (`rtsp` 554, `rtsps` 322), so a builder returning a constant and a wrong per-scheme default cannot pass (audit 22 finding 30, #2998).
@@ -20,6 +24,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `InterleavedFrame::serialized_len` is asserted against the bytes it writes, the configured initial `CSeq` is checked on the wire, and `PlayPlan::channels` is tested per setup (offered pair, server-chosen pair, and past the end) (audit 22 finding 32, #3000).
 - The async client is tested to refuse a `PLAY` answered 454/455, to drop a stale response carrying another `CSeq`, and to bound its pending-media queue by dropping the oldest frame on both the exchange and the push-drain paths; the client session and the server's session-id/timeout accessors are asserted against the wire (audit 22 finding 29, #2997).
 - The parse-error `Display` impls, the `SessionState`/`LowerTransport`/`Delivery`/`TransportMode` labels and `Display`s, the `ServerSession`/`SessionId` `Debug` output, and the TLS handshake bound are each pinned, so an empty message or a default timeout cannot pass (audit 22 finding 33, #3001).
+- The inbound cap, the `public_methods`/`session_timeout`/`negotiated_transport` accessors, the PLAY/DESCRIBE capture conditions and the auth-retry bound each have a test pinning the literal value and both edges, so a changed constant, a loosened `&&`, or an accessor returning a constant fails the suite (audit 21 findings 49 and 50, #2944/#2945).
 
 ## [0.13.0] - 2026-11-17
 ### Added
