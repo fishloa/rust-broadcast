@@ -19,7 +19,6 @@ pub mod error;
 pub mod packet;
 pub mod payload;
 pub mod traits;
-mod wire_enum;
 
 #[cfg(feature = "ts")]
 pub mod pump;

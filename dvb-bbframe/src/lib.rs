@@ -20,6 +20,5 @@ pub mod header;
 pub mod issy;
 pub mod packet;
 pub mod pump;
-mod wire_enum;
 
 pub use error::{Error, Result};

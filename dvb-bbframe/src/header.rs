@@ -9,7 +9,7 @@ use broadcast_common::{Parse, Serialize};
 use crate::crc::crc8;
 use crate::error::Error;
 use crate::issy::{Issy, decode_issy_long, decode_issy_short};
-use crate::wire_enum::wire_enum;
+use broadcast_common::wire_enum;
 
 /// Total bytes in a BBHEADER.
 pub const BBHEADER_LEN: usize = 10;
@@ -26,7 +26,7 @@ wire_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
-    pub enum TsGs: u8, invalid(ts_gs) => Error::UnsupportedTsGs { ts_gs },
+    pub enum TsGs: u8, error(Error), invalid(ts_gs) => Error::UnsupportedTsGs { ts_gs },
     {
         /// Generic Packetized Stream.
         Gfps = 0b00,
@@ -59,7 +59,7 @@ wire_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
-    pub enum Mode: u8, invalid(mode) => Error::InvalidMode { mode },
+    pub enum Mode: u8, error(Error), invalid(mode) => Error::InvalidMode { mode },
     {
         /// Normal Mode — UPL/SYNC/SYNCD present, CRC-8 per UP.
         Normal = 0,

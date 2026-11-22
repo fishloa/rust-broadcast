@@ -6,7 +6,7 @@
 //! Phase-1 of the crate populates this enum incrementally as descriptors land.
 //! The enum is intentionally non-exhaustive so adding variants is a minor bump.
 
-use crate::wire_enum::wire_enum;
+use broadcast_common::wire_enum;
 
 wire_enum! {
     /// Typed descriptor tag.
@@ -18,7 +18,7 @@ wire_enum! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
     #[rustfmt::skip] // deliberate column-aligned discriminants
-    pub enum DescriptorTag: u8, invalid(value) => crate::error::Error::InvalidValue(
+    pub enum DescriptorTag: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
         broadcast_common::error::InvalidValue {
             field: "descriptor_tag",
             value: u64::from(value),

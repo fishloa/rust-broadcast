@@ -35,8 +35,8 @@
 //! - **Null timestamp**: all 80 data bits (seconds + subseconds + utco) are 1.
 //! - **Relative timestamp**: `seconds_since_2000 == 0` (and not null).
 
-use crate::wire_enum::wire_enum;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire_enum;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -45,7 +45,7 @@ wire_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
-    pub enum Bandwidth: u8, invalid(value) => crate::error::Error::InvalidValue(
+    pub enum Bandwidth: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
         broadcast_common::error::InvalidValue {
             field: "bw",
             value: u64::from(value),

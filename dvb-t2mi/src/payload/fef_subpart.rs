@@ -11,7 +11,7 @@
 use broadcast_common::len::need_out;
 use core::fmt;
 
-use crate::wire_enum::wire_enum;
+use broadcast_common::wire_enum;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -20,7 +20,7 @@ wire_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
-    pub enum SubpartVariety: u16, invalid(value) => crate::error::Error::InvalidValue(
+    pub enum SubpartVariety: u16, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
         broadcast_common::error::InvalidValue {
             field: "subpart_variety",
             value: u64::from(value),
@@ -58,7 +58,7 @@ wire_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
-    pub enum PrbsType: u8, invalid(value) => crate::error::Error::InvalidValue(
+    pub enum PrbsType: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
         broadcast_common::error::InvalidValue {
             field: "prbs_type",
             value: u64::from(value),
