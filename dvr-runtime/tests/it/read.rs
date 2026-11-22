@@ -246,6 +246,14 @@ fn a_sequence_mismatch_and_a_foreign_uri_are_typed() {
 }
 
 #[test]
+fn unsupported_tags_are_labelled_by_their_spec_token() {
+    assert_eq!(UnsupportedTag::Gap.name(), "EXT-X-GAP");
+    assert_eq!(UnsupportedTag::Key.name(), "EXT-X-KEY");
+    assert_eq!(UnsupportedTag::Parts.name(), "EXT-X-PART");
+    assert_eq!(UnsupportedTag::Gap.to_string(), "EXT-X-GAP");
+}
+
+#[test]
 fn torn_tail_every_byte_keeps_exactly_the_complete_records() {
     let golden = test_fixtures::read_to_string("golden/dvr-runtime/p4.m3u8");
     let header_end = golden.find("#EXT-X-DATERANGE:").expect("first record");

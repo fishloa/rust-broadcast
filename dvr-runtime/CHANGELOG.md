@@ -31,7 +31,8 @@ catch-up read planner and the blocking `fs` adapter.
 - `read::parse_period_playlist` with the torn-line rule, typed validation and
   programme decoding; `read::merge`/`read::window`/`read::checked_range` for
   catch-up planning; `read::ArchiveScan` and `read::SeqConflict` for one scan
-  of every period.
+  of every period. A tag the archive refuses is named by its spec token
+  (`EXT-X-GAP`, `EXT-X-KEY`, `EXT-X-PART`) (#4028).
 - `recover::scan_fmp4_data`: init and `moof`+`mdat` span recovery from an fMP4
   period file.
 - Feature `fs`: `FsRecorder` (blocking plan execution, retry on a partial

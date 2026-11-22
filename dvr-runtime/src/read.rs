@@ -104,13 +104,13 @@ pub enum UnsupportedTag {
 }
 
 impl UnsupportedTag {
-    /// A stable label.
+    /// The spec token of the tag.
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Gap => "gap",
-            Self::Key => "key",
-            Self::Parts => "parts",
+            Self::Gap => "EXT-X-GAP",
+            Self::Key => "EXT-X-KEY",
+            Self::Parts => "EXT-X-PART",
         }
     }
 }
