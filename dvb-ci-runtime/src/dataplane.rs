@@ -50,7 +50,8 @@ pub trait CiDataDevice {
 /// Payload of the [`io::ErrorKind::WouldBlock`] error a [`CiDataDevice::write`]
 /// returns when the device buffer filled before all of the TS was accepted.
 /// Read it back with [`partial_write_progress`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{device}: device buffer full, {written} of {requested} bytes ({} packets) written", .written / TS_PACKET_LEN)]
 pub struct PartialWrite {
     /// Bytes the device accepted — always a whole number of
     /// [`TS_PACKET_LEN`]-byte packets (never a torn packet).
@@ -60,21 +61,6 @@ pub struct PartialWrite {
     /// The device, for the error message.
     pub device: String,
 }
-
-impl std::fmt::Display for PartialWrite {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}: device buffer full, {} of {} bytes ({} packets) written",
-            self.device,
-            self.written,
-            self.requested,
-            self.written / TS_PACKET_LEN
-        )
-    }
-}
-
-impl std::error::Error for PartialWrite {}
 
 /// The whole-packet byte count a [`CiDataDevice::write`] error accepted before
 /// the device filled, or `None` when `err` is not a [`PartialWrite`].
@@ -153,6 +139,20 @@ impl CiDataDevice for MockCiDataDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_write_displays_progress_in_bytes_and_packets() {
+        let e = PartialWrite {
+            written: 376,
+            requested: 564,
+            device: "/dev/dvb/adapter0/sec0".to_string(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "/dev/dvb/adapter0/sec0: device buffer full, 376 of 564 bytes (2 packets) written"
+        );
+        assert!(std::error::Error::source(&e).is_none());
+    }
 
     fn packet(fill: u8) -> Vec<u8> {
         let mut p = vec![fill; TS_PACKET_LEN];

@@ -89,6 +89,57 @@ fn availability_start_time(unix_secs: i64) -> String {
 }
 
 #[cfg(test)]
+mod cli_error_display_tests {
+    use super::CliError;
+    use std::error::Error as _;
+
+    #[test]
+    fn every_variant_renders_its_text_and_chains_no_source() {
+        let cases = [
+            (
+                CliError::Io(std::io::Error::other("disk gone")),
+                "i/o error: disk gone",
+            ),
+            (
+                CliError::Transmux(crate::Error::BoxSizeUnderflow {
+                    size: 4,
+                    header_size: 8,
+                }),
+                "transmux error: box size 4 is smaller than header (8 bytes)",
+            ),
+            (
+                CliError::UnknownContainer,
+                "unknown input container: leading bytes match no supported format (MPEG-TS, MP4/CMAF, MPEG-PS, WebM, FLV)",
+            ),
+            (
+                CliError::UnsupportedContainer("MXF"),
+                "unsupported input container MXF: this CLI demuxes MPEG-TS, MP4/CMAF, MPEG-PS, WebM/Matroska and FLV",
+            ),
+            (
+                CliError::UtcTimingNeedsLl,
+                "--utc-timing-url needs --ll (MPD/UTCTiming is emitted only for the low-latency DASH profile)",
+            ),
+            (
+                CliError::UndeterminedFormat,
+                "output format not given and not inferable from the output extension; pass -f/--format",
+            ),
+            (
+                CliError::NoTracksSelected,
+                "the --tracks selection matched no tracks in the input",
+            ),
+            (
+                CliError::BadKey("k".to_string()),
+                "invalid --key (k): expected <32-hex-KID>:<32-hex-key>",
+            ),
+        ];
+        for (error, text) in cases {
+            assert_eq!(error.to_string(), text);
+            assert!(error.source().is_none(), "{text}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod availability_start_time_tests {
     use super::availability_start_time;
 
@@ -348,67 +399,47 @@ impl From<FormatArg> for OutputFormat {
 /// Errors surfaced by the CLI front-end. Wraps I/O, the library
 /// [`Error`](crate::Error), and CLI-specific conditions (unknown container,
 /// missing format, bad key). Never panics on bad input — always returns `Err`.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CliError {
     /// Reading the input or writing the output failed.
+    #[error("i/o error: {0}")]
     Io(std::io::Error),
     /// A demux or mux spoke rejected the media.
+    #[error("transmux error: {0}")]
     Transmux(crate::Error),
     /// The input container could not be recognised from its leading bytes.
+    #[error(
+        "unknown input container: leading bytes match no supported format (MPEG-TS, MP4/CMAF, MPEG-PS, WebM, FLV)"
+    )]
     UnknownContainer,
     /// The prober identified a container this CLI has no demuxer for.
+    #[error(
+        "unsupported input container {0}: this CLI demuxes MPEG-TS, MP4/CMAF, MPEG-PS, WebM/Matroska and FLV"
+    )]
     UnsupportedContainer(&'static str),
     /// `--utc-timing-url` was given without `--ll`. `MPD/UTCTiming` is modelled
     /// only on the low-latency packager, so the flag would otherwise be dropped
     /// silently.
+    #[error(
+        "--utc-timing-url needs --ll (MPD/UTCTiming is emitted only for the low-latency DASH profile)"
+    )]
     UtcTimingNeedsLl,
     /// No `-f/--format` was given and none could be inferred from the output
     /// path extension.
+    #[error(
+        "output format not given and not inferable from the output extension; pass -f/--format"
+    )]
     UndeterminedFormat,
     /// The requested track-ID selection left no tracks.
+    #[error("the --tracks selection matched no tracks in the input")]
     NoTracksSelected,
     /// A `--key` argument was malformed. Carries `redact_key_spec`'s
     /// output, never the raw argument — the key half must never reach an
     /// error message, `Display`, or (this enum derives `Debug`) a `dbg!`.
+    #[error("invalid --key ({0}): expected <32-hex-KID>:<32-hex-key>")]
     BadKey(String),
 }
-
-impl fmt::Display for CliError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CliError::Io(e) => write!(f, "i/o error: {e}"),
-            CliError::Transmux(e) => write!(f, "transmux error: {e}"),
-            CliError::UnknownContainer => write!(
-                f,
-                "unknown input container: leading bytes match no supported format \
-                 (MPEG-TS, MP4/CMAF, MPEG-PS, WebM, FLV)"
-            ),
-            CliError::UnsupportedContainer(name) => write!(
-                f,
-                "unsupported input container {name}: this CLI demuxes MPEG-TS, \
-                 MP4/CMAF, MPEG-PS, WebM/Matroska and FLV"
-            ),
-            CliError::UtcTimingNeedsLl => write!(
-                f,
-                "--utc-timing-url needs --ll (MPD/UTCTiming is emitted only for the low-latency DASH profile)"
-            ),
-            CliError::UndeterminedFormat => write!(
-                f,
-                "output format not given and not inferable from the output extension; \
-                 pass -f/--format"
-            ),
-            CliError::NoTracksSelected => {
-                write!(f, "the --tracks selection matched no tracks in the input")
-            }
-            CliError::BadKey(s) => {
-                write!(f, "invalid --key ({s}): expected <32-hex-KID>:<32-hex-key>")
-            }
-        }
-    }
-}
-
-impl std::error::Error for CliError {}
 
 impl From<std::io::Error> for CliError {
     fn from(e: std::io::Error) -> Self {

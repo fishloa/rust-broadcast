@@ -191,27 +191,34 @@ broadcast_common::impl_spec_display!(ConfigField);
 /// can tell a TLS failure from a reset without matching on text. The session
 /// itself does not branch on the kind (any error is a close); a host can.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TransportError {
     /// The peer or the network refused the connection (ECONNREFUSED, a proxy 502).
+    #[error("refused")]
     Refused,
     /// The peer reset or aborted the connection mid-stream.
+    #[error("reset")]
     Reset,
     /// A read or connect deadline expired.
+    #[error("timed out")]
     TimedOut,
     /// Name resolution failed.
+    #[error("dns: {host}")]
     Dns {
         /// The host name that did not resolve.
         host: String,
     },
     /// The TLS handshake or the TLS layer failed.
+    #[error("tls: {reason}")]
     Tls {
         /// What the TLS stack reported.
         reason: String,
     },
     /// The peer closed cleanly, before the body or stream was complete.
+    #[error("eof")]
     Eof,
     /// Anything the host cannot classify better, kept as its own description.
+    #[error("other: {reason}")]
     Other {
         /// The host's description.
         reason: String,
@@ -243,18 +250,6 @@ impl TransportError {
         }
     }
 }
-
-impl core::fmt::Display for TransportError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(self.name())?;
-        if let Some(reason) = self.reason() {
-            write!(f, ": {reason}")?;
-        }
-        Ok(())
-    }
-}
-
-impl core::error::Error for TransportError {}
 
 impl From<&str> for TransportError {
     fn from(reason: &str) -> Self {
@@ -305,6 +300,23 @@ mod tests {
             "tls: bad cert"
         );
         assert_eq!(TransportError::Refused.reason(), None);
+        assert_eq!(TransportError::Refused.to_string(), "refused");
+        assert_eq!(TransportError::TimedOut.to_string(), "timed out");
+        assert_eq!(TransportError::Eof.to_string(), "eof");
+        assert_eq!(
+            TransportError::Dns {
+                host: "cam.test".into()
+            }
+            .to_string(),
+            "dns: cam.test"
+        );
+        assert_eq!(
+            TransportError::Other {
+                reason: "boom".into()
+            }
+            .to_string(),
+            "other: boom"
+        );
         assert_eq!(
             TransportError::from("connection reset by peer"),
             TransportError::Other {

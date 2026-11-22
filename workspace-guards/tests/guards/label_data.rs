@@ -126,7 +126,14 @@ pub const TABLE: &[Crate] = &[
         name: "broadcast-client",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        skip: &["Action", "Event", "Error", "AuthDecision"],
+        skip: &[
+            "Action",
+            "Event",
+            "Error",
+            "AuthDecision",
+            // `thiserror` error: `#[error]` text carries the host's reason.
+            "TransportError",
+        ],
         expected: None,
         min_enums: None,
     },
@@ -167,6 +174,9 @@ pub const TABLE: &[Crate] = &[
             "MulticastInterface",
             "JoinMismatch",
             "InvalidBackoff",
+            // `thiserror` error whose `#[error]` text carries the offending
+            // input; `name()` is the reason without it.
+            "InterfaceError",
         ],
         expected: None,
         min_enums: None,
@@ -950,6 +960,10 @@ pub const TABLE: &[Crate] = &[
             "MergeError",
             // Reason enum for ByteMerge construction-time config errors.
             "MergeConfigError",
+            // Structured `thiserror` error for retention windows.
+            "RetentionConfigError",
+            // Structured `thiserror` error for tap construction.
+            "TapError",
             // --- publish_queue.rs ---
             // Data-carrying ADT: each variant holds the entry it queues.
             "PendingPublish",

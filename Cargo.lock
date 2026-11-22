@@ -492,6 +492,7 @@ version = "0.2.1"
 dependencies = [
  "broadcast-common",
  "test-fixtures",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

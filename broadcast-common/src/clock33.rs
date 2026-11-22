@@ -278,7 +278,8 @@ pub fn pack_marked(timestamp: u64, prefix: u8) -> [u8; 5] {
 /// A clock reading that does not fit the field it is carried in: a 33-bit
 /// PTS/DTS/`pts_time` sample, or a 27 MHz PCR/ESCR/SCR base (beyond the
 /// `2^33 * 300` wrap) or extension (`>= 300`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{field} value {value} is out of range")]
 #[non_exhaustive]
 pub struct ClockOutOfRange {
     /// Which field was rejected: `"33-bit ticks"`, `"27 MHz base"`,
@@ -287,14 +288,6 @@ pub struct ClockOutOfRange {
     /// The rejected value, widened to `u64` for reporting.
     pub value: u64,
 }
-
-impl core::fmt::Display for ClockOutOfRange {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} value {} is out of range", self.field, self.value)
-    }
-}
-
-impl core::error::Error for ClockOutOfRange {}
 
 impl ClockOutOfRange {
     /// A rejected 27 MHz base: a value at or above the 33-bit wire width.

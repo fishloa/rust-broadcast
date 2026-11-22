@@ -12,8 +12,6 @@
 //! Zero-copy: [`KlvItem`] borrows its `value` from the input buffer, so walking
 //! a (potentially huge, essence-carrying) file never copies sample bytes.
 
-use core::fmt;
-
 use alloc::vec::Vec;
 
 pub use crate::ber::{
@@ -43,24 +41,29 @@ fn universal_label_from_prefix(bytes: &[u8]) -> UniversalLabel {
 
 /// An error from the KLV triplet / BER length codec (SMPTE ST 336,
 /// ISO/IEC 8825-1 §8.1.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum KlvError {
     /// The input buffer was shorter than the triplet being parsed.
+    #[error(transparent)]
     BufferTooShort(BufferTooShort),
     /// The caller's output buffer was smaller than the serialized triplet.
+    #[error(transparent)]
     OutputBufferTooSmall(OutputBufferTooSmall),
     /// A BER length token used the reserved "unspecified length" form (a
     /// long-form first byte claiming zero following bytes).
+    #[error("BER length used the reserved indefinite-length token (0x80)")]
     BerIndefiniteLength,
     /// A BER long-form length used more following bytes than an unsigned
     /// 64-bit length could need, or than the 9-byte token cap allows.
+    #[error("BER long-form length has {bytes} following bytes, exceeding the 8-byte cap")]
     BerLengthTooLong {
         /// Following-byte count found (or requested on serialize).
         bytes: usize,
     },
     /// [`BerLength::Fixed`] requested a specific on-wire token width too small
     /// to represent the length being serialized.
+    #[error("length {len} does not fit in the fixed BER width of {width} byte(s)")]
     FixedBerLengthTooSmall {
         /// The length that needed encoding.
         len: u64,
@@ -69,31 +72,9 @@ pub enum KlvError {
     },
     /// A BER length field was structurally invalid (a value the spec does not
     /// allow, carrying the reason).
+    #[error(transparent)]
     InvalidLength(InvalidValue),
 }
-
-impl fmt::Display for KlvError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BufferTooShort(e) => write!(f, "{e}"),
-            Self::OutputBufferTooSmall(e) => write!(f, "{e}"),
-            Self::BerIndefiniteLength => {
-                f.write_str("BER length used the reserved indefinite-length token (0x80)")
-            }
-            Self::BerLengthTooLong { bytes } => write!(
-                f,
-                "BER long-form length has {bytes} following bytes, exceeding the 8-byte cap"
-            ),
-            Self::FixedBerLengthTooSmall { len, width } => write!(
-                f,
-                "length {len} does not fit in the fixed BER width of {width} byte(s)"
-            ),
-            Self::InvalidLength(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl core::error::Error for KlvError {}
 
 impl From<BufferTooShort> for KlvError {
     fn from(e: BufferTooShort) -> Self {

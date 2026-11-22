@@ -29,7 +29,6 @@
 //! `no_std` + `alloc`.
 
 use alloc::vec::Vec;
-use core::fmt;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use rtmp_runtime::RtmpError;
@@ -60,10 +59,11 @@ const CSID_DATA: u32 = 6;
 /// Errors specific to RTMP transport framing (Adobe RTMP 1.0).
 // No longer `Eq` (only `PartialEq`): `RtmpFlvError::Flv` wraps `FlvError`,
 // which lost `Eq` for the same reason (issue #1140 T12 cascade).
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum RtmpFlvError {
     /// A buffer ended before a field could be read.
+    #[error("RTMP truncated while parsing {what}: need {need}, have {have}")]
     Truncated {
         /// What was being parsed when the buffer ran out.
         what: &'static str,
@@ -73,16 +73,19 @@ pub enum RtmpFlvError {
         have: usize,
     },
     /// FLV routing of the reassembled A/V bodies failed.
+    #[error("RTMP FLV routing: {0}")]
     Flv(FlvError),
     /// A [`RtmpMux::chunk_size`] was 0 or above `rtmp_runtime::chunk::MAX_CHUNK_SIZE`:
     /// the muxer would otherwise announce a size it does not frame at (the
     /// chunk writer clamps it).
+    #[error("RTMP chunk size {size} is not in 1..={MAX_CHUNK_SIZE}")]
     ChunkSizeTooLarge {
         /// The requested chunk size.
         size: usize,
     },
     /// A tag body exceeded `rtmp_runtime::chunk::MAX_MESSAGE_LEN`; the message
     /// would be rejected by [`RtmpDemux`] on the other end.
+    #[error("RTMP message body {len} bytes exceeds the {max}-byte message limit")]
     MessageTooLarge {
         /// The tag body length.
         len: usize,
@@ -90,36 +93,12 @@ pub enum RtmpFlvError {
         max: usize,
     },
     /// The RTMP wire layer (chunk stream assembly / chunking) failed.
+    #[error("RTMP wire: {0}")]
     Rtmp(rtmp_runtime::RtmpError),
     /// A length did not fit the wire field it is written to (#1129).
+    #[error("RTMP {0}")]
     FieldOverflow(broadcast_common::len::FieldOverflow),
 }
-
-impl fmt::Display for RtmpFlvError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RtmpFlvError::Truncated { what, need, have } => {
-                write!(
-                    f,
-                    "RTMP truncated while parsing {what}: need {need}, have {have}"
-                )
-            }
-            RtmpFlvError::Flv(e) => write!(f, "RTMP FLV routing: {e}"),
-            RtmpFlvError::ChunkSizeTooLarge { size } => {
-                write!(f, "RTMP chunk size {size} is not in 1..={MAX_CHUNK_SIZE}")
-            }
-            RtmpFlvError::MessageTooLarge { len, max } => write!(
-                f,
-                "RTMP message body {len} bytes exceeds the {max}-byte message limit"
-            ),
-            RtmpFlvError::Rtmp(e) => write!(f, "RTMP wire: {e}"),
-            RtmpFlvError::FieldOverflow(e) => write!(f, "RTMP {e}"),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for RtmpFlvError {}
 
 impl From<FlvError> for RtmpFlvError {
     fn from(e: FlvError) -> Self {
