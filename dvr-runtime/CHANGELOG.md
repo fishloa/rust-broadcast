@@ -27,7 +27,10 @@ catch-up read planner and the blocking `fs` adapter.
 - A period opened by any of those rolls repeats the current programme's
   `EXT-X-DATERANGE` on its first segment, so a byte-capped or untimed route
   keeps the programme identity on every period of that programme, and the
-  first segment after lost ring entries is marked discontinuous (#3978).
+  first segment after lost ring entries is marked discontinuous (#3978). A
+  stall-terminated run that recorded nothing counts no skipped segment, so
+  its gap and rearm counts describe what it missed and not the Trunk's whole
+  history (#4036).
   `read::merge` marks every sequence jump discontinuous, inside the archive as
   well as at the archive-to-live boundary (#4035).
 - `read::parse_period_playlist` with the torn-line rule, typed validation and

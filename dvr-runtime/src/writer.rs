@@ -999,7 +999,6 @@ impl ArchiveWriter {
                 (Some(last), Some(newest)) => {
                     u64::from(newest.checked_distance_from(last).unwrap_or(0))
                 }
-                (None, Some(newest)) => u64::from(newest.value()),
                 _ => 0,
             };
             self.counters.gaps = self.counters.gaps.saturating_add(skipped);

@@ -519,6 +519,21 @@ fn stall_termination_rearms_with_the_exact_skip() {
 }
 
 #[test]
+fn stall_termination_before_the_first_segment_skips_nothing() {
+    let mut writer = ArchiveWriter::new(
+        config(ArchiveContainer::Ts, 2, periods(5)).with_overrun(ArchiveOverrun::StallIngest),
+    )
+    .expect("writer");
+    writer.set_latest_closed(Some(SegmentSeq::new(400)));
+    let step = writer
+        .on_item(Timestamp::ZERO, None, &SegmentCursorItem::Terminated)
+        .expect("terminated");
+    assert!(matches!(step, Step::Rearm { skipped: 0 }));
+    assert_eq!(writer.counters().gaps, 0, "this run recorded nothing");
+    assert!(events(&mut writer).contains(&WriterEvent::Rearmed { skipped: 0 }));
+}
+
+#[test]
 fn a_repeated_present_event_rolls_nothing_and_adds_no_second_daterange() {
     let mut writer = ArchiveWriter::new(
         config(ArchiveContainer::Fmp4, 3, periods(5)).with_programme_service(1537),
