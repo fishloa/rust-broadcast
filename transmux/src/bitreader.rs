@@ -158,8 +158,8 @@ impl BitReader {
     /// struct without a self-referential lifetime).
     ///
     /// An over-wide field (`n > 64`) is [`Error::InvalidValue`], the same
-    /// class [`bit_error`] maps `BitError::TooManyBits` to; only a genuinely
-    /// short buffer is [`Error::BufferTooShort`].
+    /// class the crate's `BitError` conversion gives `BitError::TooManyBits`;
+    /// only a genuinely short buffer is [`Error::BufferTooShort`].
     pub fn read_bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
         if n > 64 {
             return Err(Error::InvalidValue(InvalidValue {
