@@ -1168,6 +1168,18 @@ mod tests {
         assert!(rendered.starts_with("Backoff"), "{rendered}");
         assert!(rendered.contains("id: 5"), "{rendered}");
         assert!(rendered.contains("Some(Transport)"), "{rendered}");
+
+        let mut redundant: PushSession<MockEgress> = PushSession::new();
+        assert!(matches!(
+            redundant.on_connected(MockEgress::new(9), 7, &tracks),
+            PushDecision::NeedsSetup
+        ));
+        let rendered = format!(
+            "{:?}",
+            redundant.on_connected(MockEgress::new(10), 8, &tracks)
+        );
+        assert!(rendered.starts_with("Redundant"), "{rendered}");
+        assert!(rendered.contains("id: 10"), "{rendered}");
     }
 
     #[test]
