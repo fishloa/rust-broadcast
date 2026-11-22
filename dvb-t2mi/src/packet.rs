@@ -1,7 +1,7 @@
 //! T2-MI packet header and type parsing — ETSI TS 102 773 §5.1, Table 1.
 
+use crate::wire_enum::wire_enum;
 use broadcast_common::len::need_out;
-use num_enum::TryFromPrimitive;
 
 /// T2-MI packet header size (ETSI TS 102 773 §5.1).
 const HEADER_LEN: usize = 6;
@@ -13,49 +13,39 @@ pub(crate) const BYTE2_RFU_MASK: u8 = 0x08;
 /// Byte 2 bits `[2:0]` — `t2mi_stream_id` (§5.1).
 const T2MI_STREAM_ID_MASK: u8 = 0x07;
 
-/// Packet types per ETSI TS 102 773 Table 1.
-///
-/// All other values are reserved for future use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
-#[non_exhaustive]
-pub enum PacketType {
-    /// Baseband Frame (BBFRAME) — §5.2.1
-    BasebandFrame = 0x00,
-    /// Auxiliary stream I/Q data — §5.2.2
-    AuxiliaryIqData = 0x01,
-    /// Arbitrary cell insertion — §5.2.3
-    ArbitraryCellInsertion = 0x02,
-    /// L1-current signalling — §5.2.4
-    L1Current = 0x10,
-    /// L1-future signalling — §5.2.5
-    L1Future = 0x11,
-    /// P2 bias balancing cells — §5.2.6
-    P2BiasBalancing = 0x12,
-    /// DVB-T2 timestamp — §5.2.7
-    Timestamp = 0x20,
-    /// Individual addressing — §5.2.8
-    IndividualAddressing = 0x21,
-    /// FEF part: Null — §5.2.9
-    FefPartNull = 0x30,
-    /// FEF part: I/Q data — §5.2.10
-    FefPartIqData = 0x31,
-    /// FEF part: composite — §5.2.11
-    FefPartComposite = 0x32,
-    /// FEF sub-part — §5.2.12
-    FefSubPart = 0x33,
-}
-
-impl From<PacketType> for u8 {
-    fn from(pt: PacketType) -> Self {
-        pt as u8
-    }
-}
-
-impl From<num_enum::TryFromPrimitiveError<PacketType>> for crate::error::Error {
-    fn from(e: num_enum::TryFromPrimitiveError<PacketType>) -> Self {
-        crate::error::Error::InvalidPacketType { found: e.number }
+wire_enum! {
+    /// Packet types per ETSI TS 102 773 Table 1.
+    ///
+    /// All other values are reserved for future use.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum PacketType: u8, invalid(found) => crate::error::Error::InvalidPacketType { found },
+    {
+        /// Baseband Frame (BBFRAME) — §5.2.1
+        BasebandFrame = 0x00,
+        /// Auxiliary stream I/Q data — §5.2.2
+        AuxiliaryIqData = 0x01,
+        /// Arbitrary cell insertion — §5.2.3
+        ArbitraryCellInsertion = 0x02,
+        /// L1-current signalling — §5.2.4
+        L1Current = 0x10,
+        /// L1-future signalling — §5.2.5
+        L1Future = 0x11,
+        /// P2 bias balancing cells — §5.2.6
+        P2BiasBalancing = 0x12,
+        /// DVB-T2 timestamp — §5.2.7
+        Timestamp = 0x20,
+        /// Individual addressing — §5.2.8
+        IndividualAddressing = 0x21,
+        /// FEF part: Null — §5.2.9
+        FefPartNull = 0x30,
+        /// FEF part: I/Q data — §5.2.10
+        FefPartIqData = 0x31,
+        /// FEF part: composite — §5.2.11
+        FefPartComposite = 0x32,
+        /// FEF sub-part — §5.2.12
+        FefSubPart = 0x33,
     }
 }
 
@@ -303,15 +293,15 @@ mod tests {
         // 0x22..=0x2F and 0x34..=0xFF are RFU
         for v in 0x22..=0x2F {
             assert_eq!(
-                PacketType::try_from(v).unwrap_err().number,
-                v,
+                PacketType::try_from(v),
+                Err(crate::error::Error::InvalidPacketType { found: v }),
                 "0x{v:02x} should be rejected"
             );
         }
         for v in 0x34..=0xFF {
             assert_eq!(
-                PacketType::try_from(v).unwrap_err().number,
-                v,
+                PacketType::try_from(v),
+                Err(crate::error::Error::InvalidPacketType { found: v }),
                 "0x{v:02x} should be rejected"
             );
         }

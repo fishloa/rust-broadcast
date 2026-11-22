@@ -35,44 +35,36 @@
 //! - **Null timestamp**: all 80 data bits (seconds + subseconds + utco) are 1.
 //! - **Relative timestamp**: `seconds_since_2000 == 0` (and not null).
 
+use crate::wire_enum::wire_enum;
 use broadcast_common::len::{need_in, need_out};
-use num_enum::TryFromPrimitive;
 
 use broadcast_common::{Parse, Serialize};
 
-/// Bandwidth per §5.2.7 Table 3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
-#[non_exhaustive]
-pub enum Bandwidth {
-    /// 1.7 MHz bandwidth.
-    Mhz1_7 = 0,
-    /// 5 MHz bandwidth.
-    Mhz5 = 1,
-    /// 6 MHz bandwidth.
-    Mhz6 = 2,
-    /// 7 MHz bandwidth.
-    Mhz7 = 3,
-    /// 8 MHz bandwidth.
-    Mhz8 = 4,
-    /// 10 MHz bandwidth.
-    Mhz10 = 5,
-}
-
-impl From<Bandwidth> for u8 {
-    fn from(bw: Bandwidth) -> Self {
-        bw as u8
-    }
-}
-
-impl From<num_enum::TryFromPrimitiveError<Bandwidth>> for crate::error::Error {
-    fn from(e: num_enum::TryFromPrimitiveError<Bandwidth>) -> Self {
-        crate::error::Error::InvalidValue(broadcast_common::error::InvalidValue {
+wire_enum! {
+    /// Bandwidth per §5.2.7 Table 3.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum Bandwidth: u8, invalid(value) => crate::error::Error::InvalidValue(
+        broadcast_common::error::InvalidValue {
             field: "bw",
-            value: u64::from(e.number),
+            value: u64::from(value),
             reason: "must be 0..=5 (Table 3)",
-        })
+        },
+    ),
+    {
+        /// 1.7 MHz bandwidth.
+        Mhz1_7 = 0,
+        /// 5 MHz bandwidth.
+        Mhz5 = 1,
+        /// 6 MHz bandwidth.
+        Mhz6 = 2,
+        /// 7 MHz bandwidth.
+        Mhz7 = 3,
+        /// 8 MHz bandwidth.
+        Mhz8 = 4,
+        /// 10 MHz bandwidth.
+        Mhz10 = 5,
     }
 }
 
@@ -454,7 +446,16 @@ mod tests {
 
     #[test]
     fn bandwidth_try_from_rejects_6() {
-        assert_eq!((Bandwidth::try_from(6)).unwrap_err().number, 6);
+        assert!(matches!(
+            Bandwidth::try_from(6),
+            Err(crate::error::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "bw",
+                    value: 6,
+                    ..
+                }
+            ))
+        ));
     }
 
     #[test]

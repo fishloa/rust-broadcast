@@ -1277,7 +1277,6 @@ dependencies = [
  "dvb-si",
  "jiff",
  "mpeg-ts",
- "num_enum",
  "serde",
  "serde_json",
  "test-fixtures",

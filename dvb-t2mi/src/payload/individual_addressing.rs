@@ -38,49 +38,51 @@ use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use core::fmt;
 
-use num_enum::TryFromPrimitive;
+use crate::wire_enum::wire_enum;
 
 use broadcast_common::{Parse, Serialize};
 
-/// Function tags per §5.2.8.2 Tables 5 & 6.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
-#[non_exhaustive]
-pub enum AddressingFunctionTag {
-    /// Transmitter time offset.
-    TimeOffset = 0x00,
-    /// Transmitter frequency offset.
-    FrequencyOffset = 0x01,
-    /// Transmitter power.
-    Power = 0x02,
-    /// Private data.
-    PrivateData = 0x03,
-    /// Cell ID.
-    CellId = 0x04,
-    /// Enable.
-    Enable = 0x05,
-    /// Bandwidth (not applicable for T2).
-    Bandwidth = 0x06,
-    /// ACE-PAPR reduction (T2-specific).
-    AcePapr = 0x10,
-    /// MISO group (T2-specific).
-    MisoGroup = 0x11,
-    /// TR-PAPR reduction (T2-specific).
-    TrPapr = 0x12,
-    /// L1-ACE-PAPR (T2-specific).
-    L1AcePapr = 0x13,
-    /// TX-SIG FEF sequence number (T2-specific).
-    TxSigFefSeqNum = 0x15,
-    /// TX-SIG auxiliary stream TX ID (T2-specific).
-    TxSigAuxStreamTxId = 0x16,
-    /// Frequency (T2-specific).
-    Frequency = 0x17,
-}
-
-impl From<AddressingFunctionTag> for u8 {
-    fn from(tag: AddressingFunctionTag) -> Self {
-        tag as u8
+wire_enum! {
+    /// Function tags per §5.2.8.2 Tables 5 & 6.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum AddressingFunctionTag: u8, invalid(value) => crate::error::Error::InvalidValue(
+        broadcast_common::error::InvalidValue {
+            field: "function_tag",
+            value: u64::from(value),
+            reason: "reserved function tag (§5.2.8.2 Tables 5 & 6)",
+        },
+    ),
+    {
+        /// Transmitter time offset.
+        TimeOffset = 0x00,
+        /// Transmitter frequency offset.
+        FrequencyOffset = 0x01,
+        /// Transmitter power.
+        Power = 0x02,
+        /// Private data.
+        PrivateData = 0x03,
+        /// Cell ID.
+        CellId = 0x04,
+        /// Enable.
+        Enable = 0x05,
+        /// Bandwidth (not applicable for T2).
+        Bandwidth = 0x06,
+        /// ACE-PAPR reduction (T2-specific).
+        AcePapr = 0x10,
+        /// MISO group (T2-specific).
+        MisoGroup = 0x11,
+        /// TR-PAPR reduction (T2-specific).
+        TrPapr = 0x12,
+        /// L1-ACE-PAPR (T2-specific).
+        L1AcePapr = 0x13,
+        /// TX-SIG FEF sequence number (T2-specific).
+        TxSigFefSeqNum = 0x15,
+        /// TX-SIG auxiliary stream TX ID (T2-specific).
+        TxSigAuxStreamTxId = 0x16,
+        /// Frequency (T2-specific).
+        Frequency = 0x17,
     }
 }
 
@@ -1346,14 +1348,26 @@ mod tests {
 
     #[test]
     fn addressing_function_tag_try_from_rejects_unknown() {
-        assert_eq!(
-            (AddressingFunctionTag::try_from(0x14)).unwrap_err().number,
-            20
-        );
-        assert_eq!(
-            (AddressingFunctionTag::try_from(0xFF)).unwrap_err().number,
-            255
-        );
+        assert!(matches!(
+            AddressingFunctionTag::try_from(0x14),
+            Err(crate::error::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "function_tag",
+                    value: 20,
+                    ..
+                }
+            ))
+        ));
+        assert!(matches!(
+            AddressingFunctionTag::try_from(0xFF),
+            Err(crate::error::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "function_tag",
+                    value: 255,
+                    ..
+                }
+            ))
+        ));
     }
 
     #[test]
