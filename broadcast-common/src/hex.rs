@@ -171,7 +171,11 @@ mod tests {
         );
         assert_eq!(hex_decode_into("", &mut []), Ok(()));
         assert_eq!(
-            HexDecodeError::InvalidDigit { offset: 5, byte: b'g' }.to_string(),
+            HexDecodeError::InvalidDigit {
+                offset: 5,
+                byte: b'g'
+            }
+            .to_string(),
             "byte 0x67 at offset 5 is not a hex digit"
         );
         assert_eq!(

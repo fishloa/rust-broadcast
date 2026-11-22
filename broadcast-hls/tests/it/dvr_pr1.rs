@@ -1126,7 +1126,11 @@ fn daterange_without_start_date_is_a_playlist_diagnostic() {
         #EXT-X-DATERANGE:ID=\"a\",DURATION=4\n\
         #EXTINF:2,\ns1.ts\n";
     let playlist = MediaPlaylist::parse(augmenting).expect("must parse");
-    assert!(playlist.diagnostics.is_empty(), "{:?}", playlist.diagnostics);
+    assert!(
+        playlist.diagnostics.is_empty(),
+        "{:?}",
+        playlist.diagnostics
+    );
 
     let orphan = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n\
         #EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00Z\n\
