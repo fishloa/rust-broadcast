@@ -1110,3 +1110,46 @@ fn overwritten_segment_tags_are_each_reported() {
     );
     assert_eq!(playlist.diagnostics[0].line, "#EXT-X-BYTERANGE:10@0");
 }
+
+/// RFC 8216bis §4.4.5.1: `START-DATE` is REQUIRED unless an earlier
+/// `EXT-X-DATERANGE` with the same `ID` in the same playlist carries one. A
+/// single tag cannot see that earlier tag, so the playlist parser reports the
+/// violation; the tag itself is kept and re-renders unchanged.
+#[test]
+fn daterange_without_start_date_is_a_playlist_diagnostic() {
+    use broadcast_hls::{MediaPlaylist, ParseDiagnosticKind};
+
+    let augmenting = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n\
+        #EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00Z\n\
+        #EXT-X-DATERANGE:ID=\"a\",START-DATE=\"2026-01-01T00:00:00Z\"\n\
+        #EXTINF:2,\ns0.ts\n\
+        #EXT-X-DATERANGE:ID=\"a\",DURATION=4\n\
+        #EXTINF:2,\ns1.ts\n";
+    let playlist = MediaPlaylist::parse(augmenting).expect("must parse");
+    assert!(playlist.diagnostics.is_empty(), "{:?}", playlist.diagnostics);
+
+    let orphan = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n\
+        #EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00Z\n\
+        #EXT-X-DATERANGE:ID=\"b\",DURATION=4\n\
+        #EXTINF:2,\ns0.ts\n\
+        #EXT-X-DATERANGE:ID=\"b\",START-DATE=\"2026-01-01T00:00:00Z\"\n\
+        #EXTINF:2,\ns1.ts\n";
+    let playlist = MediaPlaylist::parse(orphan).expect("must parse");
+    assert_eq!(playlist.diagnostics.len(), 1, "{:?}", playlist.diagnostics);
+    let diag = &playlist.diagnostics[0];
+    assert_eq!(diag.kind, ParseDiagnosticKind::DateRangeWithoutStartDate);
+    assert_eq!(diag.line_no, 4);
+    assert_eq!(diag.line, "#EXT-X-DATERANGE:ID=\"b\",DURATION=4");
+    assert_eq!(
+        ParseDiagnosticKind::DateRangeWithoutStartDate.to_string(),
+        "date_range_without_start_date"
+    );
+    assert!(
+        playlist.segments[0]
+            .pre_tags
+            .iter()
+            .any(|t| t == "#EXT-X-DATERANGE:ID=\"b\",DURATION=4"),
+        "the reported tag is kept: {:?}",
+        playlist.segments[0].pre_tags
+    );
+}

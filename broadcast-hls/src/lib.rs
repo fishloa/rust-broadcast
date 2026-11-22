@@ -250,6 +250,13 @@ pub enum ParseDiagnosticKind {
     /// dropped. A trailing incomplete record in a playlist being written
     /// (crash or open period) is exactly this.
     DanglingSegmentTags,
+    /// An `#EXT-X-DATERANGE` without `START-DATE` that no earlier
+    /// `EXT-X-DATERANGE` with the same `ID` and a `START-DATE` precedes
+    /// (RFC 8216bis §4.4.5.1,
+    /// `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`).
+    /// The tag is kept in place, since a client consolidates it with others of
+    /// the same `ID`.
+    DateRangeWithoutStartDate,
 }
 
 impl ParseDiagnosticKind {
@@ -258,22 +265,24 @@ impl ParseDiagnosticKind {
         match self {
             Self::InvalidProgramDateTime => "invalid_program_date_time",
             Self::DanglingSegmentTags => "dangling_segment_tags",
+            Self::DateRangeWithoutStartDate => "date_range_without_start_date",
         }
     }
 }
 
 broadcast_common::impl_spec_display!(ParseDiagnosticKind);
 
-/// A defect [`MediaPlaylist::parse`] tolerated instead of failing the playlist: the offending
-/// tag was dropped and parsing went on. Read from [`MediaPlaylist::diagnostics`].
+/// A defect [`MediaPlaylist::parse`] tolerated instead of failing the playlist: parsing went on,
+/// and the offending tag was dropped unless its [`ParseDiagnosticKind`] says it is kept. Read
+/// from [`MediaPlaylist::diagnostics`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ParseDiagnostic {
     /// What was wrong.
     pub kind: ParseDiagnosticKind,
-    /// 1-based line number of the dropped tag.
+    /// 1-based line number of the reported tag.
     pub line_no: usize,
-    /// The dropped line, verbatim.
+    /// The reported line, verbatim.
     pub line: String,
 }
 
@@ -2229,6 +2238,7 @@ impl MediaPlaylist {
         // Typed `#EXT-X-PROGRAM-DATE-TIME` for the next segment (issue #1423).
         let mut pending_program_date_time: Option<ProgramDateTime> = None;
         let mut diagnostics: Vec<ParseDiagnostic> = Vec::new();
+        let mut started_date_ranges: BTreeSet<String> = BTreeSet::new();
 
         for (idx, raw_line) in input.lines().enumerate() {
             let line_no = idx + 1;
@@ -2239,6 +2249,18 @@ impl MediaPlaylist {
             let line = line.trim();
             if line.is_empty() {
                 continue;
+            }
+
+            if let Ok(range) = DateRange::parse_tag_line(line) {
+                if range.start().is_some() {
+                    started_date_ranges.insert(range.id().to_string());
+                } else if !started_date_ranges.contains(range.id()) {
+                    diagnostics.push(ParseDiagnostic {
+                        kind: ParseDiagnosticKind::DateRangeWithoutStartDate,
+                        line_no,
+                        line: line.to_string(),
+                    });
+                }
             }
 
             if line == "#EXTM3U" {

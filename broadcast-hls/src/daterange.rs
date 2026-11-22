@@ -232,6 +232,12 @@ impl Cue {
 /// typed accessors decode it. `PartialEq` compares those decoded values, so a
 /// parsed tag and one built with the same values are equal even when their
 /// attribute order or a decimal's spelling differs.
+///
+/// `START-DATE` is optional here: §4.4.5.1 lets a tag omit it when an earlier
+/// tag with the same `ID` in the same playlist carries one, which a single tag
+/// cannot see. [`crate::MediaPlaylist::parse`] checks that rule across the
+/// playlist and reports a violation as
+/// [`crate::ParseDiagnosticKind::DateRangeWithoutStartDate`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct DateRange {

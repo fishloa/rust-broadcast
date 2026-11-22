@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `jiff` 0.2 -> 1.0. `ProgramDateTime::from_timestamp` and `ProgramDateTime::timestamp` take and return a jiff 1.x `Timestamp`.
 
 ### Added
+- `ParseDiagnosticKind::DateRangeWithoutStartDate`: `MediaPlaylist::parse` reports an `#EXT-X-DATERANGE` with no `START-DATE` that no earlier tag with the same `ID` and a `START-DATE` precedes (RFC 8216bis §4.4.5.1 makes `START-DATE` REQUIRED except for that case). The tag is kept in place. `ParseDiagnostic`'s docs no longer say every reported tag is dropped.
 - `OpenTag` and `OpenSegment::trailing_tags`: the segment-scoped tag lines an open (LL-HLS live-edge) segment carries after at least one of its parts, each with its `pre_tags` index and the number of parts preceding it. A key rotation between two parts now applies only to the parts after it, and a torn playlist re-renders byte-identically (#3931).
 - `Scte35Kind` and `DateRange::set_scte35`/`with_scte35`: build an `SCTE35-CMD`/`-OUT`/`-IN` hexadecimal payload on a new DATERANGE through a validated, typed setter (#3925).
 - `ParseDiagnosticKind::DanglingSegmentTags`: an `#EXTINF` or `#EXT-X-BYTERANGE` with no following URI line before end of input, or one overwritten by another such tag before its URI, is reported through `MediaPlaylist::diagnostics` instead of being silently dropped, so a reader of a playlist caught mid-write can see the incomplete record (#3925).
