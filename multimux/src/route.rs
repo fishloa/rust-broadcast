@@ -5659,7 +5659,22 @@ mod program_registry_tests {
             let route = mpts_route(&tmp, "rs", None).with_archive_floors(floors);
             publish_services(&route, &[SERVICE_A]);
             add_service_segment(&route, &[SERVICE_A], SERVICE_A, 1);
-            route.drain_dvr().await;
+            // The previous run's just-released lock can be held a moment
+            // longer by a process another test spawns (see
+            // `FsRecorder::succeed`), so the recording is awaited, bounded.
+            let expected = usize::try_from(run + 1).expect("count");
+            let recorded = async {
+                loop {
+                    route.drain_dvr().await;
+                    if archived_bytes(&tmp, "rs").len() == expected {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(40), recorded)
+                .await
+                .expect("the run records");
             assert_eq!(
                 archive_dirs(&tmp),
                 ["rs"],
