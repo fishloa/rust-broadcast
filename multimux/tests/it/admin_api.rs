@@ -860,6 +860,25 @@ async fn malformed_route_body_is_bad_request_and_state_unchanged() {
         reqwest::StatusCode::BAD_REQUEST
     );
 
+    // #3950: a DVR route one byte over `MAX_DVR_ROUTE_NAME_LEN` (249) is
+    // refused at runtime as at startup: its program archives
+    // (`<route>@<program_number>`) would not fit one path component.
+    let dvr_name_too_long = admin_json(
+        &client,
+        admin_addr,
+        reqwest::Method::POST,
+        "/admin/routes",
+        Some(ADMIN_TOKEN),
+        Some(serde_json::json!({
+            "name": "a".repeat(250),
+            "input": { "type": "rtsp", "url": "rtsp://127.0.0.1:1/x" },
+            "outputs": ["llhls"],
+            "dvr": { "enabled": true, "archive_root": "/nonexistent-archive", "retention_periods": 2 }
+        })),
+    )
+    .await;
+    assert_eq!(dvr_name_too_long.status(), reqwest::StatusCode::BAD_REQUEST);
+
     let after = admin_get(&client, admin_addr, "/admin/routes")
         .await
         .json::<serde_json::Value>()
@@ -867,7 +886,7 @@ async fn malformed_route_body_is_bad_request_and_state_unchanged() {
         .expect("route list after");
     assert_eq!(
         before, after,
-        "route list must be byte-for-byte identical after two rejected POSTs"
+        "route list must be byte-for-byte identical after three rejected POSTs"
     );
 
     server.abort();
@@ -2841,11 +2860,7 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
     // its detached task kept the socket, i.e. the entry was taken and never
     // released). Untouched == the WHEP egress never started for this route.
     assert!(
-        prebound
-            .tcp
-            .lock()
-            .expect("prebound tcp lock")
-            .contains_key(&whep_addr.to_string()),
+        prebound.tcp.lock().contains_key(&whep_addr.to_string()),
         "the failed route consumed the pre-bound WHEP listener -- its egress          started for a route that was never installed (leaked task)"
     );
 

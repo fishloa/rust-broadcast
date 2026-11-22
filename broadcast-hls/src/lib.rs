@@ -735,7 +735,7 @@ impl ProgramDateTime {
         } else if trimmed.contains(':')
             && let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>()
         {
-            dt.to_zoned(jiff::tz::TimeZone::UTC)
+            dt.to_zoned_datetime(jiff::tz::TimeZone::UTC)
                 .map_err(|_| crate::Error::HlsParse {
                     line_no: 0,
                     line: trimmed.to_string(),
@@ -3296,24 +3296,15 @@ fn parse_key_attributes(
 
 /// Parse a `0x`-prefixed hexadecimal-sequence attribute value into
 /// exactly 16 bytes — the 128-bit IV of `#EXT-X-KEY`/`#EXT-X-SESSION-KEY`
-/// (RFC 8216bis §4.4.4.4). Only the *encoder* half of hex lives in
-/// `broadcast_common::hex` (see that module's doc comment); each consumer's
-/// decode error type differs, so the decoder is local to this crate.
-const IV_HEX_DIGITS: usize = 32;
-
+/// (RFC 8216bis §4.4.4.4).
 fn parse_iv(s: &str) -> Result<[u8; 16]> {
-    let hex = s
-        .strip_prefix("0x")
+    let mut out = [0u8; 16];
+    s.strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
-        .filter(|h| h.len() == IV_HEX_DIGITS && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        .and_then(|hex| broadcast_common::hex::hex_decode_into(hex, &mut out))
         .ok_or_else(|| Error::InvalidIv {
             value: s.to_string(),
         })?;
-    let mut out = [0u8; 16];
-    for i in 0..16 {
-        // Safe: length and hex-digit-ness were just validated above.
-        out[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("validated hex digits");
-    }
     Ok(out)
 }
 
@@ -5497,6 +5488,31 @@ pub fn mark_init_discontinuities(entries: &mut [(&[u8], &mut MediaSegment)]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_iv_decodes_exactly_sixteen_bytes_in_either_case() {
+        let want = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0xef, 0xff,
+        ];
+        assert_eq!(
+            parse_iv("0x000102030405060708090a0b0c0defff").unwrap(),
+            want
+        );
+        assert_eq!(
+            parse_iv("0X000102030405060708090A0B0C0DEFFF").unwrap(),
+            want
+        );
+        for bad in [
+            "000102030405060708090a0b0c0defff",
+            "0x000102030405060708090a0b0c0def",
+            "0x000102030405060708090a0b0c0defff00",
+            "0x000102030405060708090a0b0c0defgf",
+            "0x+00102030405060708090a0b0c0defff",
+        ] {
+            assert!(matches!(parse_iv(bad), Err(Error::InvalidIv { value }) if value == bad));
+        }
+    }
+
     /// RFC 8216 §4.3.2.6: `EXT-X-PROGRAM-DATE-TIME` is an ISO 8601 date-time. A zone-less
     /// date-time is accepted (taken as UTC), a bare date is not a date-time.
     #[test]

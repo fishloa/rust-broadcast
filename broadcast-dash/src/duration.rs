@@ -14,7 +14,6 @@
 //! a magnitude beyond `jiff`'s span limits — is a structured error, never a
 //! panic.
 
-use std::fmt;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -22,28 +21,17 @@ use std::time::Duration;
 // ---------------------------------------------------------------------------
 
 /// The error [`parse_iso8601_duration`] returns for a value it cannot read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum DashParseError {
     /// An `xs:duration` string (W3C XML Schema Part 2 §3.2.6) could not be
     /// parsed as a [`Duration`].
+    #[error("invalid xs:duration {value:?}")]
     InvalidDuration {
         /// The raw (unparsable) value.
         value: String,
     },
 }
-
-impl fmt::Display for DashParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DashParseError::InvalidDuration { value } => {
-                write!(f, "invalid xs:duration {value:?}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for DashParseError {}
 
 // ---------------------------------------------------------------------------
 // xs:duration

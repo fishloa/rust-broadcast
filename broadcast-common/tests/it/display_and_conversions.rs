@@ -204,3 +204,44 @@ fn a_klv_error_renders_each_condition() {
         "BER long-form length has 9 following bytes, exceeding the 8-byte cap"
     );
 }
+
+#[test]
+fn a_klv_error_wrapping_a_shared_kind_renders_it_without_a_source() {
+    use broadcast_common::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
+    use core::error::Error as _;
+
+    let short = KlvError::BufferTooShort(BufferTooShort {
+        need: 4,
+        have: 1,
+        what: "KLV",
+    });
+    assert_eq!(
+        short.to_string(),
+        "buffer too short: need 4 bytes, have 1 (while parsing KLV)"
+    );
+    assert!(short.source().is_none());
+    let small = KlvError::OutputBufferTooSmall(OutputBufferTooSmall { need: 4, have: 1 });
+    assert_eq!(small.to_string(), "output buffer too small: need 4, have 1");
+    assert!(small.source().is_none());
+    let invalid = KlvError::InvalidLength(InvalidValue {
+        field: "length",
+        value: 7,
+        reason: "bad",
+    });
+    assert_eq!(invalid.to_string(), "field length value 7 invalid: bad");
+    assert!(invalid.source().is_none());
+}
+
+#[cfg(feature = "xml")]
+#[test]
+fn an_xml_reader_error_renders_the_readers_message() {
+    use broadcast_common::xml_chars::XmlCharError;
+
+    assert_eq!(
+        XmlCharError::Reader {
+            message: "bad markup".to_string()
+        }
+        .to_string(),
+        "bad markup"
+    );
+}

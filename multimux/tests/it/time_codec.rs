@@ -3,11 +3,12 @@
 //! `format_iso8601_for_test`/`parse_iso8601_utc_for_test` (the duration spelling is `broadcast_dash::duration::xs_duration`)
 //! exercise the same code the DASH renderers and the DASH-pull client use.
 
-use std::time::{Duration, UNIX_EPOCH};
+use jiff::Timestamp;
+use std::time::Duration;
 
 #[test]
 fn availability_start_time_is_jiff_and_matches_the_pre_jiff_spelling() {
-    let t = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let t = Timestamp::from_second(1_700_000_000).expect("in range");
     assert_eq!(
         multimux::output::dash::format_iso8601_for_test(t),
         "2023-11-14T22:13:20Z"

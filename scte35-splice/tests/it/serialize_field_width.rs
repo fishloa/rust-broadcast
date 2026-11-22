@@ -3,7 +3,7 @@
 //! class). The widest legal value must still round-trip, so rejecting
 //! everything cannot satisfy the test.
 
-use base64::{Engine, engine::general_purpose::STANDARD};
+use broadcast_common::base64::base64_decode_strict;
 use broadcast_common::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::descriptors::audio::{AudioComponent, AudioDescriptor};
@@ -13,7 +13,7 @@ const SECTION: &str = "/DAvAAAAAAAA///wFAVIAACPf+/+c2nALv4AUsz1AAAAAAAKAAhDVUVJA
 
 #[test]
 fn splice_info_section_sap_type_and_encryption_algorithm_widths() {
-    let bytes = STANDARD.decode(SECTION).unwrap();
+    let bytes = base64_decode_strict(SECTION).unwrap();
     let ok = SpliceInfoSection::parse(&bytes).unwrap();
     assert_eq!(ok.try_to_bytes().unwrap(), bytes);
 

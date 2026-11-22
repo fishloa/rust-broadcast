@@ -1,7 +1,8 @@
 use broadcast_common::error::FieldOverflow;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
-use transmux::{FlvDemux, FlvError, Media, MkvMux, RtmpFlvError, RtmpMux, TsDemux};
+use rtmp_runtime::RtmpError;
+use transmux::{Error, FlvDemux, FlvError, Media, MkvMux, RtmpFlvError, RtmpMux, TsDemux};
 
 #[test]
 fn rtmp_flv_error_display_names_the_failure_and_its_numbers() {
@@ -65,5 +66,108 @@ fn a_codec_matroska_cannot_carry_is_named_in_the_error() {
     match MkvMux::new().package(&media).unwrap_err() {
         transmux::Error::UnsupportedMkvCodec { codec } => assert_eq!(codec, "MPEG-2 Video"),
         other => panic!("expected UnsupportedMkvCodec, got {other:?}"),
+    }
+}
+
+#[test]
+fn flv_error_display_is_exact_for_every_variant() {
+    use std::error::Error as _;
+
+    let cases = [
+        (
+            FlvError::BadSignature(*b"ABC"),
+            "bad FLV signature: [41, 42, 43] (expected \"FLV\")",
+        ),
+        (
+            FlvError::TagOverrun {
+                offset: 13,
+                need: 20,
+                have: 4,
+            },
+            "FLV tag at offset 13 overruns buffer: need 20, have 4",
+        ),
+        (
+            FlvError::NoSupportedTrack,
+            "FLV carried no supported track (need AVC video or AAC audio)",
+        ),
+        (
+            FlvError::HeaderTooLarge {
+                declared: 99,
+                max: 64,
+            },
+            "FLV header DataOffset 99 exceeds the maximum accepted 64 bytes",
+        ),
+        (
+            FlvError::UnsupportedCodec { codec: "HEVC" },
+            "codec HEVC has no FLV carriage in this crate (only AVC + AAC)",
+        ),
+        (
+            FlvError::Codec(Error::BoxSizeUnderflow {
+                size: 4,
+                header_size: 8,
+            }),
+            "FLV codec config: box size 4 is smaller than header (8 bytes)",
+        ),
+        (
+            FlvError::TimestampBackwards {
+                previous: Some(90),
+                next: None,
+            },
+            "FLV tag timestamp went backwards: None follows Some(90)",
+        ),
+        (
+            FlvError::SampleDurationTooLarge {
+                ticks: 5_000_000_000,
+            },
+            "FLV sample span 5000000000 ticks exceeds a 32-bit duration",
+        ),
+        (
+            FlvError::Header(RtmpError::Malformed { what: "header" }),
+            "FLV header: malformed header",
+        ),
+        (
+            FlvError::Tag(RtmpError::Malformed { what: "tag" }),
+            "FLV tag: malformed tag",
+        ),
+    ];
+    for (error, text) in cases {
+        assert_eq!(error.to_string(), text);
+        assert!(error.source().is_none(), "{text}");
+    }
+}
+
+#[test]
+fn rtmp_flv_error_display_is_exact_for_every_variant() {
+    use std::error::Error as _;
+
+    let cases = [
+        (
+            RtmpFlvError::Flv(FlvError::NoSupportedTrack),
+            "RTMP FLV routing: FLV carried no supported track (need AVC video or AAC audio)",
+        ),
+        (
+            RtmpFlvError::ChunkSizeTooLarge { size: 0 },
+            "RTMP chunk size 0 is not in 1..=16777216",
+        ),
+        (
+            RtmpFlvError::MessageTooLarge { len: 10, max: 4 },
+            "RTMP message body 10 bytes exceeds the 4-byte message limit",
+        ),
+        (
+            RtmpFlvError::Rtmp(RtmpError::Malformed { what: "chunk" }),
+            "RTMP wire: malformed chunk",
+        ),
+        (
+            RtmpFlvError::FieldOverflow(FieldOverflow {
+                field: "chunkSize",
+                value: 7,
+                max: 3,
+            }),
+            "RTMP chunkSize = 7 exceeds the field maximum 3",
+        ),
+    ];
+    for (error, text) in cases {
+        assert_eq!(error.to_string(), text);
+        assert!(error.source().is_none(), "{text}");
     }
 }

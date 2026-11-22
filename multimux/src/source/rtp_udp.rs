@@ -32,7 +32,7 @@ pub struct RtpUdpRoute {
     timeouts: Timeouts,
     /// A socket bound by the caller: used once by the first attempt, so a test can own the exact
     /// port without a reserve-then-rebind race. `None` (the production shape) binds `addr`.
-    prebound: std::sync::Arc<std::sync::Mutex<Option<UdpSocket>>>,
+    prebound: std::sync::Arc<parking_lot::Mutex<Option<UdpSocket>>>,
 }
 
 impl std::fmt::Debug for RtpUdpRoute {
@@ -57,7 +57,7 @@ impl RtpUdpRoute {
             sdp: sdp.into(),
             socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
-            prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            prebound: std::sync::Arc::new(parking_lot::Mutex::new(None)),
         }
     }
 
@@ -75,7 +75,7 @@ impl RtpUdpRoute {
             sdp: sdp.into(),
             socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
-            prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
+            prebound: std::sync::Arc::new(parking_lot::Mutex::new(Some(socket))),
         }
     }
 

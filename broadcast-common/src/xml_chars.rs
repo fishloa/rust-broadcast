@@ -10,7 +10,6 @@
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::fmt;
 
 use quick_xml::NsReader;
 use quick_xml::Writer;
@@ -27,43 +26,34 @@ pub const BAD_CHAR: &str = "character not allowed in XML 1.0 (Char production, �
 ///
 /// A caller matches the failure kind instead of parsing the description the
 /// pull parsers put in their own error.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum XmlCharError {
     /// A character outside the XML 1.0 §2.2 `Char` production.
+    #[error("{}", BAD_CHAR)]
     BadChar,
     /// A reference to an entity that is neither predefined nor declared (no
     /// document may declare one: DOCTYPE is refused).
+    #[error("undefined entity reference &{name};")]
     UndefinedEntity {
         /// The entity name, without the `&` and `;`.
         name: String,
     },
     /// An element or attribute name with a namespace prefix that is never
     /// declared.
+    #[error("unknown namespace prefix '{prefix}'")]
     UnknownPrefix {
         /// The prefix, without the `:`.
         prefix: String,
     },
     /// quick-xml's own lexer refused the bytes (malformed markup, an invalid
     /// character reference, an encoding error).
+    #[error("{message}")]
     Reader {
         /// The reader's description of the fault.
         message: String,
     },
 }
-
-impl fmt::Display for XmlCharError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BadChar => f.write_str(BAD_CHAR),
-            Self::UndefinedEntity { name } => write!(f, "undefined entity reference &{name};"),
-            Self::UnknownPrefix { prefix } => write!(f, "unknown namespace prefix '{prefix}'"),
-            Self::Reader { message } => f.write_str(message),
-        }
-    }
-}
-
-impl core::error::Error for XmlCharError {}
 
 /// XML 1.0 §2.2 `Char` production: the only characters a document may
 /// contain, whether written literally or through a character reference.

@@ -271,16 +271,9 @@ impl PermitBody {
 
 /// The body of [`WriteStalled`]: a response body that produced no frame for
 /// the whole idle-write timeout.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("response body made no progress within the idle write timeout")]
 pub struct WriteStalled;
-
-impl std::fmt::Display for WriteStalled {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("response body made no progress within the idle write timeout")
-    }
-}
-
-impl std::error::Error for WriteStalled {}
 
 /// A response body that fails once it has made no progress — yielded no frame
 /// — for `idle`. Each frame restarts the window; the body's own end stream is
@@ -398,6 +391,14 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tower::Service as _;
+
+    #[test]
+    fn write_stalled_displays_the_idle_timeout_message() {
+        assert_eq!(
+            WriteStalled.to_string(),
+            "response body made no progress within the idle write timeout"
+        );
+    }
 
     fn uri(s: &str) -> Uri {
         s.parse().expect("uri")

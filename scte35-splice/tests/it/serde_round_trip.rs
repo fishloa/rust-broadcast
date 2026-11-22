@@ -4,15 +4,16 @@
 
 #![cfg(feature = "serde")]
 
-use base64::{Engine, engine::general_purpose::STANDARD};
 use broadcast_common::Parse;
+use broadcast_common::base64::base64_decode_strict;
 use scte35_splice::SpliceInfoSection;
 
 #[test]
 fn splice_insert_section_serializes_to_json() {
-    let bytes = STANDARD
-        .decode("/DAvAAAAAAAA///wFAVIAACPf+/+c2nALv4AUsz1AAAAAAAKAAhDVUVJAAABNWLbowo=")
-        .unwrap();
+    let bytes = base64_decode_strict(
+        "/DAvAAAAAAAA///wFAVIAACPf+/+c2nALv4AUsz1AAAAAAAKAAhDVUVJAAABNWLbowo=",
+    )
+    .unwrap();
     let s = SpliceInfoSection::parse(&bytes).unwrap();
     let v = serde_json::to_value(&s).unwrap();
 
@@ -30,9 +31,10 @@ fn splice_insert_section_serializes_to_json() {
 fn segmentation_section_serializes_descriptors() {
     // ANSI/SCTE 35 2023r1 §14.1 — time_signal + segmentation_descriptor
     // (Placement Opportunity Start). Base64 verbatim from the spec; CRC validates.
-    let bytes = STANDARD
-        .decode("/DA0AAAAAAAA///wBQb+cr0AUAAeAhxDVUVJSAAAjn/PAAGlmbAICAAAAAAsoKGKNAIAmsnRfg==")
-        .unwrap();
+    let bytes = base64_decode_strict(
+        "/DA0AAAAAAAA///wBQb+cr0AUAAeAhxDVUVJSAAAjn/PAAGlmbAICAAAAAAsoKGKNAIAmsnRfg==",
+    )
+    .unwrap();
     let s = SpliceInfoSection::parse(&bytes).unwrap();
 
     // The section itself serializes (time_signal command).

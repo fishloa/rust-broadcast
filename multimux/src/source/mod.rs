@@ -279,12 +279,17 @@ pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
     {
         route_handle.set_health(crate::route::HealthState::Live);
     }
+    let mut announced = false;
     for program in driver.programs() {
         if published.insert(program)
             && let Some(trunk) = driver.trunk(program)
         {
             route_handle.publish_program(program, std::sync::Arc::clone(trunk));
+            announced = true;
         }
+    }
+    if announced {
+        drop(route_handle.settle_archive_predecessors());
     }
 }
 

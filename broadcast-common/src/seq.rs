@@ -17,23 +17,12 @@ pub const MAX_SEQ_BITS: u32 = 31;
 /// No signed distance fits a space of 32 bits or more (two numbers could be
 /// more than `i32::MAX` apart), and a space of no bits has no number in it at
 /// all. Reported by [`SeqSpace::try_new`]; there is no panicking constructor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("sequence space of {bits} bits is outside 1..={MAX_SEQ_BITS}")]
 pub struct InvalidSeqSpace {
     /// The width that was asked for.
     pub bits: u32,
 }
-
-impl core::fmt::Display for InvalidSeqSpace {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "sequence space of {} bits is outside 1..={}",
-            self.bits, MAX_SEQ_BITS
-        )
-    }
-}
-
-impl core::error::Error for InvalidSeqSpace {}
 
 /// A sequence space of a literal width the compiler can prove in range.
 ///

@@ -128,7 +128,10 @@ impl DateRange {
             // text, so `bare` cannot fail.
             attrs.push((
                 String::from(s.cue.attr_key()),
-                AttrValue::bare(format!("0x{}", ::hex::encode_upper(&s.raw)))?,
+                AttrValue::bare(format!(
+                    "0x{}",
+                    broadcast_common::hex::hex_encode_upper(&s.raw)
+                ))?,
             ));
         }
         // Unknown attributes preserved from parse (or set programmatically)
@@ -274,15 +277,32 @@ fn parse_hex(v: &str) -> Result<Vec<u8>> {
         .strip_prefix("0x")
         .or_else(|| v.strip_prefix("0X"))
         .unwrap_or(v);
-    ::hex::decode(digits).map_err(|e| match e {
-        ::hex::FromHexError::OddLength => Error::AttrParse("odd-length hex".to_string()),
-        _ => Error::AttrParse("bad hex".to_string()),
+    broadcast_common::hex::hex_decode(digits).ok_or_else(|| {
+        if !digits.len().is_multiple_of(2) {
+            Error::AttrParse("odd-length hex".to_string())
+        } else {
+            Error::AttrParse("bad hex".to_string())
+        }
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_hex_distinguishes_odd_length_from_bad_digits() {
+        assert_eq!(parse_hex("0xAbCd").unwrap(), [0xab, 0xcd]);
+        assert_eq!(parse_hex("00").unwrap(), [0x00]);
+        assert_eq!(
+            parse_hex("0xabc"),
+            Err(Error::AttrParse("odd-length hex".to_string()))
+        );
+        assert_eq!(
+            parse_hex("0xzz"),
+            Err(Error::AttrParse("bad hex".to_string()))
+        );
+    }
     use alloc::{string::ToString, vec};
 
     fn sample() -> DateRange {

@@ -29,7 +29,7 @@ fn kid_with_reserved_characters_round_trips() {
         .sign(NASTY_KID, "/s/m.m3u8", far_future(), None)
         .unwrap();
     // Exactly three parameters: the kid cannot smuggle extra ones.
-    let pairs: Vec<(String, String)> = form_urlencoded::parse(query.as_bytes())
+    let pairs: Vec<(String, String)> = url::form_urlencoded::parse(query.as_bytes())
         .into_owned()
         .collect();
     assert_eq!(pairs.len(), 3, "{query}");
@@ -45,7 +45,7 @@ fn kid_with_reserved_characters_round_trips() {
 fn kid_cannot_inject_an_ip_binding_or_expiry() {
     let kid = "k&ip=198.51.100.9&exp=1";
     let query = keys(kid).sign(kid, "/p", far_future(), None).unwrap();
-    let pairs: Vec<_> = form_urlencoded::parse(query.as_bytes()).collect();
+    let pairs: Vec<_> = url::form_urlencoded::parse(query.as_bytes()).collect();
     assert_eq!(
         pairs.iter().filter(|(k, _)| k == "ip").count(),
         0,

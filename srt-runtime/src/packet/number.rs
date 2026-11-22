@@ -136,24 +136,13 @@ impl SeqNo {
 
 /// A sequence number that does not fit the 31-bit field
 /// (`draft-sharabayko-srt-01` §3.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("sequence number {value:#010X} exceeds the 31-bit range")]
 #[non_exhaustive]
 pub struct SeqOutOfRange {
     /// The rejected value.
     pub value: u32,
 }
-
-impl core::fmt::Display for SeqOutOfRange {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "sequence number {:#010X} exceeds the 31-bit range",
-            self.value
-        )
-    }
-}
-
-impl core::error::Error for SeqOutOfRange {}
 
 impl TryFrom<u32> for SeqNo {
     type Error = SeqOutOfRange;
@@ -351,24 +340,13 @@ impl MessageNumber {
 
 /// A message number that does not fit the 26-bit field
 /// (`draft-sharabayko-srt-01` §3.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("message number {value:#010X} exceeds the 26-bit range")]
 #[non_exhaustive]
 pub struct MessageNumberOutOfRange {
     /// The rejected value.
     pub value: u32,
 }
-
-impl core::fmt::Display for MessageNumberOutOfRange {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "message number {:#010X} exceeds the 26-bit range",
-            self.value
-        )
-    }
-}
-
-impl core::error::Error for MessageNumberOutOfRange {}
 
 impl TryFrom<u32> for MessageNumber {
     type Error = MessageNumberOutOfRange;

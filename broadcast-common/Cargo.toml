@@ -39,7 +39,7 @@ base64 = ["dep:base64"]
 
 # HTTP-date parsing and the typed-Date instant (`http_date` module,
 # RFC 9110 §5.6.7), for HTTP clients reading `Date` and `Retry-After`.
-http-date = ["std", "dep:jiff", "dep:thiserror", "dep:headers", "dep:http"]
+http-date = ["std", "dep:jiff", "dep:headers", "dep:http"]
 # RFC 3986 reference resolution (guarded): wraps the `url` crate's `Url::join`,
 # rejecting ASCII control characters before joining (issue #2458).
 url = ["dep:url"]
@@ -59,19 +59,19 @@ iso-639 = { version = "0.1", optional = true, default-features = false }
 base64 = { version = "0.23", optional = true, default-features = false, features = ["alloc"] }
 # Date/time: the `jiff` feature (UTC time codecs, no_std) and the `http-date`
 # feature (RFC 9110 §5.6.7, std). `std` turns on `jiff/std`.
-jiff = { version = "0.2", default-features = false, optional = true }
+jiff = { version = "1", default-features = false, optional = true }
 # RFC 3986 reference resolution, behind the `url` feature (no_std + alloc).
 url = { version = "2", optional = true, default-features = false }
 # Only pulled in by the `serde` feature — see its comment above. Configured
 # `no_std` (`derive` only, no `std`) so it composes with the no_std build.
 quick-xml = { workspace = true, optional = true }
-thiserror = { version = "2", optional = true }
+thiserror = { version = "2", default-features = false }
 serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 erased-serde = { version = "0.4", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
-jiff = { version = "0.2", default-features = false, features = ["std"] }
+jiff = { version = "1", default-features = false, features = ["std"] }
 
 [[bench]]
 name    = "crc32"

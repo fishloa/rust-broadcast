@@ -237,7 +237,8 @@ pub const TOT_MAX_INTERVAL: SectionInterval = SectionInterval::from_const(Durati
 pub struct SectionInterval(Duration);
 
 /// A repetition interval below the EN 300 468 §5.1.4.1 floor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("section interval {interval:?} is below the {min:?} minimum (EN 300 468 §5.1.4.1)")]
 #[non_exhaustive]
 pub struct SectionIntervalTooShort {
     /// The rejected interval.
@@ -245,18 +246,6 @@ pub struct SectionIntervalTooShort {
     /// The floor it must reach ([`MIN_SECTION_INTERVAL`]).
     pub min: Duration,
 }
-
-impl core::fmt::Display for SectionIntervalTooShort {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "section interval {:?} is below the {:?} minimum (EN 300 468 §5.1.4.1)",
-            self.interval, self.min
-        )
-    }
-}
-
-impl core::error::Error for SectionIntervalTooShort {}
 
 impl SectionInterval {
     /// Validate `interval` against the EN 300 468 §5.1.4.1 25 ms floor.

@@ -46,7 +46,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::need_in;
-use core::fmt;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
 use rtmp_runtime::RtmpError;
@@ -231,12 +230,14 @@ pub(crate) fn aac_channel_count(config: &AudioSpecificConfig) -> u16 {
 // own `Error`, which is no longer `Eq` since gaining `Error::HlsAttrValue`
 // (issue #1140 T12 — wraps `broadcast_hls::Error`, which carries a
 // non-`Eq` `f64`).
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum FlvError {
     /// The 3-byte signature was not `"FLV"` (§E.2).
+    #[error("bad FLV signature: {0:02X?} (expected \"FLV\")")]
     BadSignature([u8; 3]),
     /// A tag's declared `DataSize` ran past the end of the buffer (§E.4.1).
+    #[error("FLV tag at offset {offset} overruns buffer: need {need}, have {have}")]
     TagOverrun {
         /// Byte offset of the tag header.
         offset: usize,
@@ -246,11 +247,13 @@ pub enum FlvError {
         have: usize,
     },
     /// The stream carried no supported track (no AVC video and no AAC audio).
+    #[error("FLV carried no supported track (need AVC video or AAC audio)")]
     NoSupportedTrack,
     /// The FLV header's `DataOffset` (§E.2) exceeded this crate's maximum
     /// accepted header size — rejected before buffering to bound
     /// [`StreamingFlvDemux`](crate::flv_stream::StreamingFlvDemux)'s
     /// pre-header buffer (#738 T11a review, Important).
+    #[error("FLV header DataOffset {declared} exceeds the maximum accepted {max} bytes")]
     HeaderTooLarge {
         /// The declared `DataOffset`.
         declared: u32,
@@ -258,23 +261,28 @@ pub enum FlvError {
         max: usize,
     },
     /// A [`Media`] track used a codec FLV cannot carry (only AVC + AAC).
+    #[error("codec {codec} has no FLV carriage in this crate (only AVC + AAC)")]
     UnsupportedCodec {
         /// The codec name.
         codec: &'static str,
     },
     /// The signature is `"FLV"` but the rest of the header was rejected
     /// (§E.2) — currently a `DataOffset` below the 9-byte header itself.
+    #[error("FLV header: {0}")]
     Header(RtmpError),
     /// A tag's trailing `PreviousTagSize` did not match `11 + DataSize`
     /// (§E.4.1), or another structural tag-header error.
+    #[error("FLV tag: {0}")]
     Tag(RtmpError),
     /// Underlying parse/serialize error from a reused codec-config builder.
+    #[error("FLV codec config: {0}")]
     Codec(Error),
     /// A tag's timestamp stepped backwards on its track, so the previous
     /// sample's duration (a forward delta) is not a tick count. The FLV clock
     /// only unrolls the 32-bit millisecond wrap (Annex E §E.4.1), so a
     /// publisher that rewinds its own clock hits this instead of having a
     /// zero-length span fabricated for the sample.
+    #[error("FLV tag timestamp went backwards: {next:?} follows {previous:?}")]
     TimestampBackwards {
         /// The previous sample's DTS, when it had one.
         previous: Option<i64>,
@@ -283,54 +291,12 @@ pub enum FlvError {
     },
     /// A tag's forward delta was too large to be a sample span: a duration is
     /// a `u32` tick count.
+    #[error("FLV sample span {ticks} ticks exceeds a 32-bit duration")]
     SampleDurationTooLarge {
         /// The forward delta, in media-timescale ticks.
         ticks: i64,
     },
 }
-
-impl fmt::Display for FlvError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FlvError::BadSignature(sig) => {
-                write!(f, "bad FLV signature: {sig:02X?} (expected \"FLV\")")
-            }
-            FlvError::TagOverrun { offset, need, have } => write!(
-                f,
-                "FLV tag at offset {offset} overruns buffer: need {need}, have {have}"
-            ),
-            FlvError::NoSupportedTrack => {
-                write!(
-                    f,
-                    "FLV carried no supported track (need AVC video or AAC audio)"
-                )
-            }
-            FlvError::HeaderTooLarge { declared, max } => write!(
-                f,
-                "FLV header DataOffset {declared} exceeds the maximum accepted {max} bytes"
-            ),
-            FlvError::UnsupportedCodec { codec } => {
-                write!(
-                    f,
-                    "codec {codec} has no FLV carriage in this crate (only AVC + AAC)"
-                )
-            }
-            FlvError::Codec(e) => write!(f, "FLV codec config: {e}"),
-            FlvError::TimestampBackwards { previous, next } => write!(
-                f,
-                "FLV tag timestamp went backwards: {next:?} follows {previous:?}"
-            ),
-            FlvError::SampleDurationTooLarge { ticks } => {
-                write!(f, "FLV sample span {ticks} ticks exceeds a 32-bit duration")
-            }
-            FlvError::Header(e) => write!(f, "FLV header: {e}"),
-            FlvError::Tag(e) => write!(f, "FLV tag: {e}"),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for FlvError {}
 
 impl From<Error> for FlvError {
     fn from(e: Error) -> Self {
@@ -1940,27 +1906,6 @@ mod tests {
         );
     }
 
-    struct BitWriter {
-        bits: Vec<bool>,
-    }
-
-    impl BitWriter {
-        fn bit(&mut self, value: bool) {
-            self.bits.push(value);
-        }
-
-        fn ue(&mut self, value: u64) {
-            let code = value + 1;
-            let len = (u64::BITS - code.leading_zeros()) as usize;
-            for _ in 0..len - 1 {
-                self.bit(false);
-            }
-            for shift in (0..len).rev() {
-                self.bit((code >> shift) & 1 == 1);
-            }
-        }
-    }
-
     /// One H.264 SPS (ITU-T H.264 §7.3.2.1.1) with the given coded size and
     /// frame cropping, for the dimension-overflow boundary.
     fn avc_sps(
@@ -1972,7 +1917,7 @@ mod tests {
         crop_left: u64,
         crop_bottom: u64,
     ) -> Vec<u8> {
-        let mut w = BitWriter { bits: Vec::new() };
+        let mut w = crate::test_bits::BitWriter::new();
         w.ue(0); // seq_parameter_set_id
         if high_profile {
             w.ue(chroma_format_idc);
@@ -2002,18 +1947,7 @@ mod tests {
             w.ue(crop_bottom);
         }
         w.bit(false); // vui_parameters_present_flag
-        w.bit(true); // rbsp_stop_one_bit
-        while !w.bits.len().is_multiple_of(8) {
-            w.bit(false);
-        }
-        let mut rbsp = Vec::new();
-        for chunk in w.bits.chunks(8) {
-            let mut byte = 0u8;
-            for &bit in chunk {
-                byte = (byte << 1) | u8::from(bit);
-            }
-            rbsp.push(byte);
-        }
+        let rbsp = w.trailing(); // rbsp_stop_one_bit + alignment
         let mut out = alloc::vec![0x67, if high_profile { 0x64 } else { 0x42 }, 0x00, 0x1F];
         let mut zeros = 0u8;
         for byte in rbsp {

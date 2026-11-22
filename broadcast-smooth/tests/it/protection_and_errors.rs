@@ -1,6 +1,7 @@
 //! Protection child selection, malformed-document reporting and the
 //! user-facing error text (MS-SSTR §2.2.2.2).
 
+use broadcast_common::xml_chars::XmlLimit;
 use broadcast_smooth::{SmoothManifest, SmoothParseError};
 
 #[test]
@@ -80,5 +81,61 @@ fn parse_error_display_is_exact() {
         }
         .to_string(),
         "XML error at byte offset 7: boom"
+    );
+}
+
+#[test]
+fn parse_error_display_pins_every_remaining_variant() {
+    assert_eq!(
+        SmoothParseError::MissingAttribute {
+            element: "QualityLevel",
+            attr: "Bitrate",
+        }
+        .to_string(),
+        "<QualityLevel> is missing required attribute @Bitrate"
+    );
+    assert_eq!(
+        SmoothParseError::InvalidAttributeValue {
+            element: "StreamIndex",
+            attr: "Type",
+            value: "x".into(),
+        }
+        .to_string(),
+        "<StreamIndex>@Type has invalid value \"x\""
+    );
+    assert_eq!(
+        SmoothParseError::InvalidRepeatCount { r: 0 }.to_string(),
+        "<c>@r has invalid value 0 (must be >= 1)"
+    );
+    assert_eq!(
+        SmoothParseError::MissingDuration { index: 3 }.to_string(),
+        "<c> at index 3 duration cannot be derived"
+    );
+    assert_eq!(
+        SmoothParseError::IndivisibleRun { index: 4 }.to_string(),
+        "<c> at index 4 run does not divide evenly"
+    );
+    assert_eq!(
+        SmoothParseError::NonMonotonicTime { index: 5 }.to_string(),
+        "<c> at index 5 has non-monotonic time"
+    );
+    assert_eq!(
+        SmoothParseError::ChunkRunTooLong {
+            count_hint: 100_001
+        }
+        .to_string(),
+        "c@r repeat run exceeded max chunk count (100001 > 100000)"
+    );
+    assert_eq!(
+        SmoothParseError::CodecPrivateDataTooLong { len: 70_000 }.to_string(),
+        "CodecPrivateData hex length 70000 exceeds max 65536"
+    );
+    assert_eq!(
+        SmoothParseError::TooLarge {
+            limit: XmlLimit::Depth,
+            max: 32,
+        }
+        .to_string(),
+        "manifest exceeds the depth limit of 32"
     );
 }

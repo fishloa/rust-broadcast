@@ -64,7 +64,8 @@ pub struct SlotInfo {
 /// unchanged; the errno stays reachable through [`errno`](Self::errno) /
 /// [`DeviceOpError::errno_of`] (a wrapped error no longer answers
 /// `raw_os_error()` itself).
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{device}: {op} failed: {source}")]
 pub struct DeviceOpError {
     /// The operation that failed, e.g. `"write (17 bytes)"`.
     pub op: String,
@@ -104,18 +105,6 @@ impl DeviceOpError {
                 .and_then(|inner| inner.downcast_ref::<DeviceOpError>())
                 .and_then(DeviceOpError::errno)
         })
-    }
-}
-
-impl std::fmt::Display for DeviceOpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {} failed: {}", self.device, self.op, self.source)
-    }
-}
-
-impl std::error::Error for DeviceOpError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 
@@ -357,6 +346,31 @@ impl<D: CaDevice> CaDevice for RecordingCaDevice<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_op_error_displays_and_chains_its_source() {
+        let wrapped = DeviceOpError::wrap(
+            "write (17 bytes)",
+            "/dev/dvb/adapter3/ca0",
+            io::Error::from_raw_os_error(22),
+        );
+        let inner = wrapped
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<DeviceOpError>())
+            .expect("wrapped");
+        assert_eq!(
+            inner.to_string(),
+            format!(
+                "/dev/dvb/adapter3/ca0: write (17 bytes) failed: {}",
+                io::Error::from_raw_os_error(22)
+            )
+        );
+        let source = std::error::Error::source(inner).expect("source");
+        assert_eq!(
+            source.to_string(),
+            io::Error::from_raw_os_error(22).to_string()
+        );
+    }
 
     /// The read buffer must fit the largest frame the link can encode: the
     /// 2-byte link header, the 1-byte `tpdu_tag`, the widest `length_field`

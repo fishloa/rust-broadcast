@@ -146,7 +146,7 @@ fn try_new_rejects_out_of_range_and_from_wire_masked_masks() {
     }
     assert_eq!(u16::from(Pid::try_new(0x0100).unwrap()), 0x0100);
     let msg = Pid::try_new(0x2000).unwrap_err().to_string();
-    assert!(msg.contains("0x2000"), "{msg}");
+    assert_eq!(msg, "PID 0x2000 exceeds the 13-bit range 0x0000..=0x1FFF");
     // Display / hex formatting stay `0x%04X`-compatible with the old u16 prints.
     let pid = Pid::try_new(0x01F0).unwrap();
     assert_eq!(format!("{pid}"), "0x01F0");

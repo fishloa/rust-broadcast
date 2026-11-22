@@ -163,7 +163,7 @@ pub struct WhepRoute {
     /// no port and never races reserve-then-rebind. Taken on the first
     /// `run_whep`; `None` (the production shape) makes `run_whep` bind
     /// `listen` itself.
-    prebound: std::sync::Arc<std::sync::Mutex<Option<tokio::net::TcpListener>>>,
+    prebound: std::sync::Arc<parking_lot::Mutex<Option<tokio::net::TcpListener>>>,
 }
 
 impl WhepRoute {
@@ -176,7 +176,7 @@ impl WhepRoute {
             listen: listen.into(),
             max_sessions: DEFAULT_WHEP_MAX_SESSIONS,
             media_sockets_per_ip: crate::config::DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP,
-            prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            prebound: std::sync::Arc::new(parking_lot::Mutex::new(None)),
         }
     }
 
@@ -198,7 +198,7 @@ impl WhepRoute {
             listen,
             max_sessions,
             media_sockets_per_ip: crate::config::DEFAULT_WHEP_MEDIA_SOCKETS_PER_IP,
-            prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(listener))),
+            prebound: std::sync::Arc::new(parking_lot::Mutex::new(Some(listener))),
         }
     }
 
@@ -1572,13 +1572,7 @@ pub async fn run_whep_with_tracker(
     output_auth: Option<Arc<Verifier>>,
     sessions: tokio_util::task::TaskTracker,
 ) {
-    // Recover the slot even from a poisoned lock (a test `with_listener`
-    // caller panicking while holding it must not take the egress down); `.take()`
-    // on the recovered guard still hands back the caller's listener.
-    let prebound = match route.prebound.lock() {
-        Ok(mut slot) => slot.take(),
-        Err(poisoned) => poisoned.into_inner().take(),
-    };
+    let prebound = route.prebound.lock().take();
     let listener = match prebound {
         Some(listener) => listener,
         None => match TcpListener::bind(&route.listen).await {
@@ -2079,52 +2073,6 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
     }
 
-    /// A poisoned pre-bound lock must NOT take the WHEP egress down:
-    /// `run_whep_with_tracker` recovers the inner slot and binds the route's own
-    /// address. PRE-FIX the production `.expect("whep prebound lock")` panicked
-    /// the task on the poisoned lock (the poisoning thread's panic propagated
-    /// through the join here, and the egress task would abort).
-    #[tokio::test]
-    async fn run_whep_recovers_from_a_poisoned_prebound_lock() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        let route = WhepRoute::with_listener("t", listener, 4);
-
-        // Poison `route.prebound`: hold the lock across a panic.
-        let prebound = Arc::clone(&route.prebound);
-        let _ = tokio::task::spawn_blocking(move || {
-            let _guard = prebound.lock().unwrap_or_else(|p| p.into_inner());
-            panic!("poison the whep prebound lock");
-        })
-        .await;
-
-        // The route must bind its own (caller-bound) address without panicking.
-        let trunk = trunk_with_avc_track();
-        let cancel = CancellationToken::new();
-        let sessions = tokio_util::task::TaskTracker::new();
-        let run_cancel = cancel.clone();
-        let run_sessions = sessions.clone();
-        let handle = tokio::spawn(async move {
-            run_whep_with_tracker(&route, trunk, run_cancel, None, run_sessions).await;
-        });
-        let mut stream = tokio::net::TcpStream::connect(addr)
-            .await
-            .expect("the route must still serve on its own address after a poisoned lock");
-        use tokio::io::AsyncWriteExt as _;
-        stream
-            .write_all(b"GET /whep HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
-            .await
-            .ok();
-        cancel.cancel();
-        let joined = tokio::time::timeout(Duration::from_secs(2), handle).await;
-        assert!(
-            joined.is_ok(),
-            "the egress must return (bind its own addr) despite the poisoned lock"
-        );
-    }
-
     /// PRE-FIX FAILURE OBSERVED: `run_whep`/`handle_whep_connection` had no
     /// `output_auth` parameter at all — an unauthenticated `POST` reached
     /// the offer parser unconditionally (the same response an authenticated
@@ -2133,7 +2081,6 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     /// `HTTP/1.1 409`, the empty-trunk "no track yet" response, not `401`).
     #[tokio::test]
     async fn whep_output_auth_rejects_unauthenticated_and_accepts_authenticated() {
-        use base64::Engine as _;
         use tower::ServiceExt as _;
 
         let verifier = basic_verifier("alice", "s3cret");
@@ -2152,7 +2099,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         // Correctly authenticated request: must get past the auth gate (the
         // empty trunk then answers 409 "no track yet" — the point under
         // test is that it is *not* 401).
-        let credential = base64::engine::general_purpose::STANDARD.encode("alice:s3cret");
+        let credential = broadcast_common::base64::base64_encode(b"alice:s3cret");
         let (app, _active, _rx) = test_router(None, Some(verifier), 64);
         let resp = app
             .oneshot(

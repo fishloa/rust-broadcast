@@ -507,44 +507,88 @@ mod tests {
             "bad sdp"
         );
     }
+
+    #[test]
+    fn the_remaining_parse_error_variants_render_their_text() {
+        assert_eq!(
+            TransportParseError::NotTransportSpec {
+                detail: "no slash".into()
+            }
+            .to_string(),
+            "no slash"
+        );
+        assert_eq!(
+            TransportParseError::UnexpectedValue {
+                param: "unicast".into()
+            }
+            .to_string(),
+            "unicast takes no value"
+        );
+        assert_eq!(
+            TransportParseError::InvalidModeMethod {
+                method: "P LAY".into()
+            }
+            .to_string(),
+            "invalid mode method \"P LAY\""
+        );
+        assert_eq!(TransportParseError::Lex("lex".into()).to_string(), "lex");
+        assert_eq!(
+            TransportParseError::Other("other".into()).to_string(),
+            "other"
+        );
+        assert_eq!(HeaderSerializeError::Other("o".into()).to_string(), "o");
+        assert_eq!(SessionParseError::Lex("l".into()).to_string(), "l");
+        assert_eq!(SessionParseError::Other("o".into()).to_string(), "o");
+        assert_eq!(FrameError::Other("f".into()).to_string(), "f");
+        assert_eq!(SdpParseError::Other("s".into()).to_string(), "s");
+    }
 }
 
 /// Reason a `Transport` header value could not be parsed (RFC 2326 §12.39).
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TransportParseError {
     /// The transport-spec did not have the form `transport/profile[/lower]`.
+    #[error("{detail}")]
     NotTransportSpec {
         /// Diagnostic detail.
         detail: String,
     },
     /// The transport protocol was not `RTP`.
+    #[error("unsupported transport protocol (only RTP)")]
     UnsupportedProtocol,
     /// The profile was not `AVP`.
+    #[error("unsupported profile (only AVP)")]
     UnknownProfile,
     /// The lower-transport token was not `TCP`/`UDP`.
+    #[error("unknown lower-transport {value:?}")]
     UnknownLowerTransport {
         /// The rejected token.
         value: String,
     },
     /// A parameter that requires a value was given none.
+    #[error("{param} requires a value")]
     MissingValue {
         /// The parameter name.
         param: String,
     },
     /// A flag parameter was given a value.
+    #[error("{param} takes no value")]
     UnexpectedValue {
         /// The parameter name.
         param: String,
     },
     /// `ttl` was given a range instead of a single value.
+    #[error("ttl is a single value")]
     TtlNotSingle,
     /// A `mode` method token was not a valid token.
+    #[error("invalid mode method {method:?}")]
     InvalidModeMethod {
         /// The rejected token.
         method: String,
     },
     /// A port/channel/ttl range failed its range check.
+    #[error("{param}: {reason}")]
     BadPortRange {
         /// The parameter name.
         param: String,
@@ -552,140 +596,84 @@ pub enum TransportParseError {
         reason: String,
     },
     /// The header contained no transport-specs.
+    #[error("no transport-specs")]
     NoSpecs,
     /// A lexer error not otherwise classified.
+    #[error("{0}")]
     Lex(String),
     /// Any other parse failure.
+    #[error("{0}")]
     Other(String),
 }
 
-impl core::fmt::Display for TransportParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::NotTransportSpec { detail } => write!(f, "{detail}"),
-            Self::UnsupportedProtocol => f.write_str("unsupported transport protocol (only RTP)"),
-            Self::UnknownProfile => f.write_str("unsupported profile (only AVP)"),
-            Self::UnknownLowerTransport { value } => write!(f, "unknown lower-transport {value:?}"),
-            Self::MissingValue { param } => write!(f, "{param} requires a value"),
-            Self::UnexpectedValue { param } => write!(f, "{param} takes no value"),
-            Self::TtlNotSingle => f.write_str("ttl is a single value"),
-            Self::InvalidModeMethod { method } => write!(f, "invalid mode method {method:?}"),
-            Self::BadPortRange { param, reason } => write!(f, "{param}: {reason}"),
-            Self::NoSpecs => f.write_str("no transport-specs"),
-            Self::Lex(s) => f.write_str(s),
-            Self::Other(s) => f.write_str(s),
-        }
-    }
-}
-
-impl core::error::Error for TransportParseError {}
-
 /// Reason a header value could not be serialized safely.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HeaderSerializeError {
     /// A control character in a value.
+    #[error("{0}")]
     ControlChar(String),
     /// A name that is not an RFC 2326 §15.1 token.
+    #[error("{value:?} is not a token")]
     NotToken {
         /// The rejected value.
         value: String,
     },
     /// Any other serialization failure.
+    #[error("{0}")]
     Other(String),
 }
-
-impl core::fmt::Display for HeaderSerializeError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::ControlChar(s) => f.write_str(s),
-            Self::NotToken { value } => write!(f, "{value:?} is not a token"),
-            Self::Other(s) => f.write_str(s),
-        }
-    }
-}
-
-impl core::error::Error for HeaderSerializeError {}
 
 /// Reason a `Session` header value could not be parsed (RFC 2326 §12.37).
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SessionParseError {
     /// The session id was empty.
+    #[error("empty session id")]
     Empty,
     /// A malformed value.
+    #[error("{0}")]
     Malformed(String),
     /// A lexer error.
+    #[error("{0}")]
     Lex(String),
     /// Any other parse failure.
+    #[error("{0}")]
     Other(String),
 }
 
-impl core::fmt::Display for SessionParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Empty => f.write_str("empty session id"),
-            Self::Malformed(s) => f.write_str(s),
-            Self::Lex(s) => f.write_str(s),
-            Self::Other(s) => f.write_str(s),
-        }
-    }
-}
-
-impl core::error::Error for SessionParseError {}
-
 /// Reason an interleaved `$` frame was malformed (RFC 2326 §10.12).
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FrameError {
     /// The leading byte was not the `$` magic.
+    #[error("expected '$' (0x24), found 0x{found:02X}")]
     BadMagic {
         /// The byte that was found.
         found: u8,
     },
     /// The payload exceeded the 16-bit length field.
+    #[error("payload of {len} bytes exceeds 16-bit length field")]
     TooLong {
         /// The payload length.
         len: usize,
     },
     /// Any other framing failure.
+    #[error("{0}")]
     Other(String),
 }
-
-impl core::fmt::Display for FrameError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::BadMagic { found } => write!(f, "expected '$' (0x24), found 0x{found:02X}"),
-            Self::TooLong { len } => {
-                write!(f, "payload of {len} bytes exceeds 16-bit length field")
-            }
-            Self::Other(s) => f.write_str(s),
-        }
-    }
-}
-
-impl core::error::Error for FrameError {}
 
 /// Reason an SDP body could not be parsed.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SdpParseError {
     /// The body was not valid UTF-8.
+    #[error("{0}")]
     Utf8(String),
     /// The SDP parser rejected the body.
+    #[error("{0}")]
     Parse(String),
     /// Any other failure.
+    #[error("{0}")]
     Other(String),
 }
-
-impl core::fmt::Display for SdpParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Utf8(s) => f.write_str(s),
-            Self::Parse(s) => f.write_str(s),
-            Self::Other(s) => f.write_str(s),
-        }
-    }
-}
-
-impl core::error::Error for SdpParseError {}

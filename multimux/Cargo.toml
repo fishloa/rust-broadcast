@@ -76,7 +76,7 @@ dvb-stream        = { path = "../dvb-stream",     version = "0.10.0", features =
 # resolving 9.0/9.1 fails to compile it today. The pin below is 9.3, above
 # that floor, tracking the current published line; same caret bucket, so it
 # is not an epoch change.
-broadcast-common  = { path = "../broadcast-common", version = "13.1.0", features = ["lang"] }
+broadcast-common  = { path = "../broadcast-common", version = "13.1.0", features = ["lang", "base64"] }
 # The media-plane ingress traits this crate's sources port onto (plan step
 # 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
 # the `Trunk` every ported session publishes into.
@@ -130,7 +130,7 @@ getrandom         = "0.4"
 # than the hand-rolled `civil_from_days` / manual ISO-8601 parsing this crate
 # used before (SP5). `jiff` is already in the workspace lock (transmux,
 # timed-metadata), so this adds no new version.
-jiff              = "0.2"
+jiff              = "1"
 tracing           = "0.1"
 # Push output driver (`push`, issue #744): `#[async_trait]` drives the
 # `PushTransport` trait's async methods over the sans-IO `SrtSocket` handle.
@@ -276,7 +276,6 @@ rtc-stun         = "0.21"
 # `test-util`: the paused, manually advanced clock the push-flush tests use
 # instead of sleeping (feature-only; no new version in the lock).
 tokio            = { version = "1", features = ["test-util"] }
-base64           = "0.23"
 # gzip decompression for origin_gzip tests; already in the lock via
 # tower-http/compression-gzip (async-compression -> flate2), so no new entry.
 flate2            = "1"

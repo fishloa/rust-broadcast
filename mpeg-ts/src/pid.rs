@@ -80,24 +80,13 @@ impl Pid {
 }
 
 /// A value that does not fit the 13-bit PID field (ISO/IEC 13818-1 §2.4.3.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("PID 0x{value:04X} exceeds the 13-bit range 0x0000..=0x1FFF")]
 #[non_exhaustive]
 pub struct PidOutOfRange {
     /// The rejected value.
     pub value: u16,
 }
-
-impl core::fmt::Display for PidOutOfRange {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "PID 0x{:04X} exceeds the 13-bit range 0x0000..=0x1FFF",
-            self.value
-        )
-    }
-}
-
-impl core::error::Error for PidOutOfRange {}
 
 impl TryFrom<u16> for Pid {
     type Error = PidOutOfRange;

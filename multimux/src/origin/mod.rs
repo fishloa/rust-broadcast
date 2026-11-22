@@ -1543,7 +1543,7 @@ async fn serve_with_registry_impl(
         // ran outside this crate's own `with_dvr`-calling unit tests.
         let store = Arc::new(
             RouteHandle::new(route_config)
-                .with_archive_floor(archive_floor)
+                .with_archive_floors(archive_floor)
                 .with_name(route.name.clone())
                 .with_dvr(route.dvr.clone()),
         );
@@ -3736,10 +3736,9 @@ mod tests {
     }
 
     fn basic_header(username: &str, password: &str) -> String {
-        use base64::Engine as _;
         format!(
             "Basic {}",
-            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"))
+            broadcast_common::base64::base64_encode(format!("{username}:{password}").as_bytes())
         )
     }
 
@@ -3923,7 +3922,7 @@ mod tests {
     #[tokio::test]
     async fn output_auth_digest_expired_nonce_gets_stale_challenge() {
         use std::sync::atomic::{AtomicU64, Ordering};
-        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        use std::time::{SystemTime, UNIX_EPOCH};
 
         let now = Arc::new(AtomicU64::new(
             SystemTime::now()
@@ -3940,7 +3939,10 @@ mod tests {
             OUTPUT_AUTH_REALM,
         )
         .expect("OS random source")
-        .with_clock(move || UNIX_EPOCH + Duration::from_secs(clock_now.load(Ordering::SeqCst)));
+        .with_clock(move || {
+            jiff::Timestamp::from_second(i64::try_from(clock_now.load(Ordering::SeqCst)).unwrap())
+                .unwrap()
+        });
 
         let challenge = verifier.challenge();
         let authorization = respond(

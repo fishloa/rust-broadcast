@@ -44,6 +44,12 @@ const DISPOSITION: &[(&str, &str, u32, &str)] = &[
         "spawn_blocking DVR persist; awaited inline",
     ),
     (
+        "route.rs",
+        "settle_archive_predecessors",
+        1,
+        "spawn_blocking final archive flush and recorder release of programs gone after a replace; bounded (two polls per program), detached by the ingest loop, the handle returned to tests",
+    ),
+    (
         "http.rs",
         "ensure_warm",
         1,

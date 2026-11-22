@@ -5,7 +5,7 @@
 //! rejects a bad CRC), so an intact, genuine message is structurally proven;
 //! these tests add the *semantic* assertions on top.
 
-use base64::{Engine, engine::general_purpose::STANDARD};
+use broadcast_common::base64::base64_decode_strict;
 use broadcast_common::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceMode};
@@ -14,7 +14,7 @@ use scte35_splice::descriptors::{
 };
 
 fn b64(s: &str) -> Vec<u8> {
-    STANDARD.decode(s).unwrap()
+    base64_decode_strict(s).unwrap()
 }
 
 /// Provenance: this is the canonical `splice_insert()` example reproduced in

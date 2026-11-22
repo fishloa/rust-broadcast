@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Internal: the H.222 descriptor bit writer is an adapter over `broadcast_common::bits::BitBuf` instead of its own bit cursor; output bytes and errors are unchanged (#3961).
+- **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff` feature's decoded times and durations (`jiff::Timestamp`, `jiff::SignedDuration`, the `epg` module) are jiff 1.x types.
 ### Added
 - `epg::PresentEventTracker` follows one service's EIT present/following present event (ETSI EN 300 468 §5.2.4, Table 6) and reports each programme boundary as a `PresentEventChange::Baseline` or `::Transition`: only present/following actual sections for the tracked `service_id` count, the present event is the one with `running_status == Running` (not the first in the loop), and a section naming the same `event_id` again changes nothing — so neither a repeated section nor a re-versioned copy of the same event rolls a programme (#3677). `feed_ts` accepts any-aligned TS bytes and queues up to `PRESENT_CHANGE_QUEUE_CAP` (16) changes for `poll_change`, counting older drops in `changes_dropped`; `on_section` reports a section's change directly. Additive; `epg::EpgEvent` gains a crate-private constructor over `tables::eit::EitEvent` sharing the existing descriptor decoding. (#3926)
 ### Tests

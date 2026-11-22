@@ -1,4 +1,3 @@
-use base64::Engine as _;
 use broadcast_auth::{
     AuthResult, Authenticator, Credentials, Error, RequestContext, Verifier, respond,
 };
@@ -20,7 +19,7 @@ fn basic_verifier() -> Verifier {
 }
 
 fn b64(s: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(s)
+    broadcast_common::base64::base64_encode(s)
 }
 
 /// Defect: header injection through the client's Bearer value.

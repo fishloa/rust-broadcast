@@ -18,6 +18,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use rustix::event::{Nsecs, PollFd, PollFlags, Timespec};
+use rustix::fs::OFlags;
+use rustix::io::Errno;
+
+const O_NONBLOCK: i32 = OFlags::NONBLOCK.bits() as i32;
 
 use crate::dataplane::{CiDataDevice, PartialWrite, TS_PACKET_LEN};
 use crate::device::{CaDevice, DeviceOpError, MAX_CA_FRAME, SlotInfo};
@@ -341,8 +345,8 @@ impl CaDevice for LinuxCaDevice {
             // instead, so assume present+ready. Any OTHER error (EIO,
             // ENODEV, EBADF, …) is a real fault and must be propagated, not
             // masked as "the module is present and ready".
-            return match err.raw_os_error() {
-                Some(libc::EINVAL) | Some(libc::ENOTTY) => Ok(SlotInfo {
+            return match err.raw_os_error().map(Errno::from_raw_os_error) {
+                Some(Errno::INVAL) | Some(Errno::NOTTY) => Ok(SlotInfo {
                     num: self.slot,
                     module_ready: true,
                     module_present: true,
@@ -418,7 +422,7 @@ impl LinuxCiDataDevice {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(libc::O_NONBLOCK)
+            .custom_flags(O_NONBLOCK)
             .open(path)
             .map_err(|e| DeviceOpError::wrap("open (O_RDWR|O_NONBLOCK)", &path_label(path), e))?;
         Ok(Self {
@@ -438,7 +442,7 @@ impl LinuxCiDataDevice {
         let label = path_label(path);
         let read = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NONBLOCK)
+            .custom_flags(O_NONBLOCK)
             .open(path)
             .map_err(|e| DeviceOpError::wrap("open (O_RDONLY|O_NONBLOCK)", &label, e))?;
         let write = OpenOptions::new()
@@ -460,7 +464,7 @@ impl LinuxCiDataDevice {
     ) -> io::Result<Self> {
         match open_duplex(path) {
             Ok(dev) => Ok(dev),
-            Err(e) if DeviceOpError::errno_of(&e) == Some(libc::EINVAL) => {
+            Err(e) if DeviceOpError::errno_of(&e) == Some(Errno::INVAL.raw_os_error()) => {
                 Self::open_split_path(path)
             }
             Err(e) => Err(e),
@@ -642,7 +646,7 @@ mod tests {
     /// its own test-defined `CiDataDevice` impl, which never calls the
     /// production `open`/`read` at all.
     ///
-    /// Removing `.custom_flags(libc::O_NONBLOCK)` from `open_path` makes the
+    /// Removing `.custom_flags(O_NONBLOCK)` from `open_path` makes the
     /// first `recv_timeout` below time out. Verified by hand: with that line
     /// removed, `cargo test -p dvb-ci-runtime --all-features --locked
     /// --target x86_64-unknown-linux-gnu` cannot be *run* on macOS at all
@@ -853,7 +857,7 @@ mod tests {
     fn open_falls_back_to_split_on_einval_only() {
         let path = make_fifo();
         let mut dev = LinuxCiDataDevice::open_with(&path, |_| {
-            Err(io::Error::from_raw_os_error(libc::EINVAL))
+            Err(io::Error::from_raw_os_error(Errno::INVAL.raw_os_error()))
         })
         .expect("EINVAL on O_RDWR must fall back to the split open");
         assert!(matches!(dev.io, CiEndpoints::Split { .. }));
@@ -867,14 +871,19 @@ mod tests {
             Err(DeviceOpError::wrap(
                 "open (O_RDWR|O_NONBLOCK)",
                 &path_label(p),
-                io::Error::from_raw_os_error(libc::EINVAL),
+                io::Error::from_raw_os_error(Errno::INVAL.raw_os_error()),
             ))
         })
         .expect("wrapped EINVAL must fall back too");
         assert!(matches!(wrapped.io, CiEndpoints::Split { .. }));
 
         // Any other error is NOT papered over with a split open.
-        for errno in [libc::ENOENT, libc::EACCES, libc::EBUSY, libc::ENODEV] {
+        for errno in [
+            Errno::NOENT.raw_os_error(),
+            Errno::ACCESS.raw_os_error(),
+            Errno::BUSY.raw_os_error(),
+            Errno::NODEV.raw_os_error(),
+        ] {
             let err =
                 LinuxCiDataDevice::open_with(&path, |_| Err(io::Error::from_raw_os_error(errno)))
                     .expect_err("a non-EINVAL open error must propagate");
@@ -922,8 +931,14 @@ mod tests {
         );
         assert!(text.contains("CA device (slot 2, from_file)"), "{text}");
         assert!(text.contains("os error"), "{text}");
-        assert_eq!(DeviceOpError::errno_of(&err), Some(libc::EBADF));
-        assert_eq!(err.kind(), io::Error::from_raw_os_error(libc::EBADF).kind());
+        assert_eq!(
+            DeviceOpError::errno_of(&err),
+            Some(Errno::BADF.raw_os_error())
+        );
+        assert_eq!(
+            err.kind(),
+            io::Error::from_raw_os_error(Errno::BADF.raw_os_error()).kind()
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1002,7 +1017,7 @@ mod tests {
         let mut dev = LinuxCiDataDevice::open_path(&path).expect("open_path");
         let mut reader = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NONBLOCK)
+            .custom_flags(O_NONBLOCK)
             .open(&path)
             .expect("second reader");
         let burst: Vec<u8> = (0..400).flat_map(|i| packet(i as u8)).collect();
@@ -1159,7 +1174,7 @@ mod tests {
         let path = make_fifo();
         let reader = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NONBLOCK)
+            .custom_flags(O_NONBLOCK)
             .open(&path)
             .expect("read-only O_NONBLOCK open");
         let writer = OpenOptions::new().write(true).open(&path).expect("writer");

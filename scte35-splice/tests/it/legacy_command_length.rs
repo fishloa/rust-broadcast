@@ -6,7 +6,7 @@
 //! TSDuck capture exercising the same path is in `real_capture.rs`
 //! (`test-091.ts`, private fixtures only).
 
-use base64::{Engine, engine::general_purpose::STANDARD};
+use broadcast_common::base64::base64_decode_strict;
 use broadcast_common::{Parse, Serialize, crc32_mpeg2};
 use scte35_splice::SpliceInfoSection;
 
@@ -32,7 +32,7 @@ fn with_sentinel(mut b: Vec<u8>) -> Vec<u8> {
 fn sentinel_sections_parse_like_the_real_length_and_round_trip() {
     let mut checked = 0;
     for seed in SEEDS {
-        let bytes = STANDARD.decode(seed).unwrap();
+        let bytes = base64_decode_strict(seed).unwrap();
         let plain = SpliceInfoSection::parse(&bytes).expect("seed parses");
         let ignored = with_sentinel(bytes.clone());
         let s = SpliceInfoSection::parse(&ignored)
@@ -59,7 +59,7 @@ fn a_sentinel_with_alignment_stuffing_is_an_error_not_a_guess() {
     // keeps the stuffing; with the 0xFFF sentinel the command extent cannot be
     // derived exactly (the descriptor loop no longer ends at the CRC), so it
     // is rejected rather than guessed.
-    let seed = STANDARD.decode(SEEDS[1]).unwrap();
+    let seed = base64_decode_strict(SEEDS[1]).unwrap();
     let mut b = seed[..seed.len() - 4].to_vec();
     b.extend_from_slice(&[0xFF, 0xFF]);
     let section_length = (((u16::from(b[1] & 0x0F) << 8) | u16::from(b[2])) + 2).to_be_bytes();

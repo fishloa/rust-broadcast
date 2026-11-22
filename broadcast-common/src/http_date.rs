@@ -54,7 +54,7 @@ pub fn parse_http_date(text: &str) -> Result<jiff::Timestamp, HttpDateError> {
         .find_map(|format| {
             jiff::fmt::strtime::parse(format, text)
                 .and_then(|broken| broken.to_datetime())
-                .and_then(|datetime| datetime.to_zoned(jiff::tz::TimeZone::UTC))
+                .and_then(|datetime| datetime.to_zoned_datetime(jiff::tz::TimeZone::UTC))
                 .ok()
         })
         .map(|zoned| zoned.timestamp())

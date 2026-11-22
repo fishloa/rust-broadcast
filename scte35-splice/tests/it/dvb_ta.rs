@@ -111,11 +111,9 @@ fn stream_event_wraps_section_and_base64_inflates_by_4_3() {
     // base-64 (RFC 4648) inflates 3 bytes → 4 chars.
     let b64 = base64_encode(&bin);
     assert_eq!(b64.len(), bin.len().div_ceil(3) * 4);
-    // Output is valid base-64 (cross-check against the `base64` dev-dep).
-    use base64::Engine;
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(&b64)
-        .unwrap();
+    let decoded =
+        broadcast_common::base64::base64_decode_strict(core::str::from_utf8(&b64).unwrap())
+            .unwrap();
     assert_eq!(decoded, bin);
 }
 

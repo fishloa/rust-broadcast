@@ -1920,7 +1920,9 @@ impl Route {
     /// route is checked exactly the same way) and by the runtime admin API
     /// (`crate::origin::admin`, issue #749) for a `POST /admin/routes` body
     /// and every route a `POST /admin/reload` would add or restart —
-    /// validated before any of them touch the live registry.
+    /// validated before any of them touch the live registry. Includes
+    /// [`Self::validate_dvr`], so a route added at runtime meets the same
+    /// DVR rules as one in the startup config.
     pub(crate) fn validate_standalone(&self, playlist_name: &str) -> Result<()> {
         self.validate_audio_rendition_sources(playlist_name)?;
         self.validate_audio_profiles()?;
@@ -2158,6 +2160,7 @@ impl Route {
                 });
             }
         }
+        self.validate_dvr()?;
         self.input.validate()
     }
 
@@ -2199,12 +2202,25 @@ impl Route {
     }
 
     /// Validate any DVR config on this route — separate so the admin API can
-    /// call it independently.
+    /// call it independently. A route with DVR enabled is at most
+    /// [`crate::dvr::MAX_DVR_ROUTE_NAME_LEN`] bytes, so the archive name of
+    /// each of its programs (`<name>@<id>`, see `crate::dvr`) is valid.
     pub(crate) fn validate_dvr(&self) -> Result<()> {
         if let Err(reason) = self.dvr.validate() {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::RoutesDvr,
                 reason: reason.to_string(),
+            });
+        }
+        if self.dvr.enabled && self.name.len() > crate::dvr::MAX_DVR_ROUTE_NAME_LEN {
+            return Err(MultimuxError::ConfigInvalid {
+                field: ConfigField::RoutesName,
+                reason: format!(
+                    "must be at most {} bytes when DVR is enabled (each program's archive is \
+                     named `<route>@<program_number>`), got {}",
+                    crate::dvr::MAX_DVR_ROUTE_NAME_LEN,
+                    self.name.len()
+                ),
             });
         }
         Ok(())
@@ -2446,43 +2462,37 @@ pub struct Config {
 pub struct PreboundBinds {
     /// TCP listeners keyed by the route's `listen` string (`Whip`/`Whep`).
     pub tcp: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<String, tokio::net::TcpListener>>,
+        parking_lot::Mutex<std::collections::HashMap<String, tokio::net::TcpListener>>,
     >,
     /// UDP sockets keyed by the route's `addr` string (`TsUdp`).
-    pub udp:
-        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::net::UdpSocket>>>,
+    pub udp: std::sync::Arc<
+        parking_lot::Mutex<std::collections::HashMap<String, tokio::net::UdpSocket>>,
+    >,
 }
 
 #[cfg(feature = "test-seams")]
 impl PreboundBinds {
-    /// Lock `m`, recovering the guard from a poisoned mutex (a caller panicking
-    /// while holding one of these slots must not take the route's egress down,
-    /// and these slots hold no invariant a panic could tear).
-    fn lock<'a, T>(m: &'a std::sync::Mutex<T>) -> std::sync::MutexGuard<'a, T> {
-        m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     /// Insert a pre-bound TCP listener under the route `listen` string that
     /// would otherwise be re-bound; returns `&mut Self` so calls chain.
     pub fn with_tcp(&mut self, listen: impl Into<String>, l: tokio::net::TcpListener) -> &mut Self {
-        Self::lock(&self.tcp).insert(listen.into(), l);
+        self.tcp.lock().insert(listen.into(), l);
         self
     }
 
     /// Insert a pre-bound UDP socket under the route `addr` string.
     pub fn with_udp(&mut self, addr: impl Into<String>, s: tokio::net::UdpSocket) -> &mut Self {
-        Self::lock(&self.udp).insert(addr.into(), s);
+        self.udp.lock().insert(addr.into(), s);
         self
     }
 
     /// Take the TCP listener registered for `listen`, if any.
     pub fn take_tcp(&self, listen: &str) -> Option<tokio::net::TcpListener> {
-        Self::lock(&self.tcp).remove(listen)
+        self.tcp.lock().remove(listen)
     }
 
     /// Take the UDP socket registered for `addr`, if any.
     pub fn take_udp(&self, addr: &str) -> Option<tokio::net::UdpSocket> {
-        Self::lock(&self.udp).remove(addr)
+        self.udp.lock().remove(addr)
     }
 }
 
@@ -3078,34 +3088,6 @@ mod tests {
         assert!(!Config::default().allow_open_ingest);
         let cfg: Config = serde_json::from_str(r#"{ "routes": [] }"#).unwrap();
         assert!(!cfg.allow_open_ingest);
-    }
-
-    /// `PreboundBinds`' accessors must recover from a poisoned mutex rather
-    /// than panic a route's egress: the slots hold no invariant a panic could
-    /// tear. PRE-FIX every accessor `.expect`ed the lock, so a poisoned lock
-    /// panicked `Config::prebound_tcp`/`take_tcp` on the next route bind.
-    #[cfg(feature = "test-seams")]
-    #[test]
-    fn prebound_binds_recover_from_a_poisoned_lock() {
-        let binds = PreboundBinds::default();
-        // Poison the TCP mutex.
-        let tcp = std::sync::Arc::clone(&binds.tcp);
-        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = tcp.lock().expect("lock for poisoning");
-            panic!("poison the prebound tcp lock");
-        }));
-        assert!(poisoned.is_err());
-        // The accessors must not panic, and must still operate.
-        assert!(binds.take_tcp("127.0.0.1:1").is_none());
-
-        // Poison the UDP mutex too.
-        let udp = std::sync::Arc::clone(&binds.udp);
-        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = udp.lock().expect("lock for poisoning");
-            panic!("poison the prebound udp lock");
-        }));
-        assert!(poisoned.is_err());
-        assert!(binds.take_udp("127.0.0.1:1").is_none());
     }
 
     // --- W5 (audit run 7): route-name safety and router-build panics ---
@@ -6381,6 +6363,37 @@ mod pinned_limits {
         route.validate_dvr().expect("valid enabled dvr");
         route.dvr = DvrConfig::default();
         route.validate_dvr().expect("disabled dvr");
+    }
+
+    /// #3950: a non-default program archives into `<route>@<program_number>`.
+    /// `@` is not a route-name character, so no route can be named like
+    /// another route's program archive, and a DVR route name leaves room for
+    /// the longest `program_number`.
+    #[test]
+    fn a_program_archive_name_can_never_be_a_route_name() {
+        let derived =
+            crate::dvr::program_archive_name("news", crate::dvr::ProgramArchive::Program(1538))
+                .expect("program archive name");
+        assert_eq!(derived.as_str(), "news@1538");
+        let err = route_named("news@1538")
+            .validate_standalone("media.m3u8")
+            .expect_err("a route named like a program archive");
+        assert!(is_invalid(Err(err), ConfigField::RoutesName));
+
+        assert_eq!(crate::dvr::MAX_DVR_ROUTE_NAME_LEN, 249);
+        let mut route = route_named(&"a".repeat(crate::dvr::MAX_DVR_ROUTE_NAME_LEN));
+        route.dvr = enabled_dvr("/var/archive");
+        route.validate_dvr().expect("at the DVR limit");
+        let longest = crate::dvr::program_archive_name(
+            &route.name,
+            crate::dvr::ProgramArchive::Program(u16::MAX),
+        )
+        .expect("the longest program archive name is valid");
+        assert_eq!(longest.as_str().len(), 255);
+        route.name.push('a');
+        assert!(is_invalid(route.validate_dvr(), ConfigField::RoutesName));
+        route.dvr = DvrConfig::default();
+        route.validate_dvr().expect("no DVR, no archive name limit");
     }
 
     /// #3667: a route name of exactly `MAX_ROUTE_NAME_LEN` bytes is accepted,

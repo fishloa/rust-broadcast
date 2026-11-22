@@ -131,12 +131,13 @@ pub struct ByteTap {
 }
 
 /// Why a [`ByteTap`] could not be built.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum TapError {
     /// `capacity` is zero: every recorded item would be evicted on arrival,
     /// so the tap could never report a single byte — a construction mistake,
     /// reported rather than panicked on.
+    #[error("ByteTap capacity must be > 0")]
     ZeroCapacity,
 }
 
@@ -149,16 +150,6 @@ impl TapError {
         }
     }
 }
-
-impl core::fmt::Display for TapError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::ZeroCapacity => f.write_str("ByteTap capacity must be > 0"),
-        }
-    }
-}
-
-impl core::error::Error for TapError {}
 
 impl ByteTap {
     /// Create a tap at `point` with a ring bounded to `capacity` items.

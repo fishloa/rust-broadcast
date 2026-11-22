@@ -198,6 +198,16 @@ pub enum MultimuxError {
         #[source]
         tokio::task::JoinError,
     ),
+    /// A route's DVR archive root exists but could not be listed, so the
+    /// sequence floors of its program archives are unknown.
+    #[error("archive root {root} cannot be listed: {source}")]
+    ArchiveList {
+        /// The archive root.
+        root: String,
+        /// Why the listing failed.
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Which config field failed validation.

@@ -245,7 +245,7 @@ pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<jiff::Timestamp, DateTimeErro
     let prime_epoch = Date::new(1900, 1, 1)
         .map_err(|_| DateTimeError::Ntp)?
         .at(0, 0, 0, 0)
-        .to_zoned(TimeZone::UTC)
+        .to_zoned_datetime(TimeZone::UTC)
         .map_err(|_| DateTimeError::Ntp)?
         .timestamp()
         .as_second();
