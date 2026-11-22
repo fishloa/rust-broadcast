@@ -6,10 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Added
+
 - `push_session::PushSession`, an additive sans-IO decision core for push outputs (feature `std`, issue #3927): it owns the connected `PushEgress` and answers one typed `PushDecision` per drained `SampleCursorItem` or host outcome (`needs setup`, `connected`, `reconnect` with its cause, `backoff`, `stop`), with `PushCounters` for samples sent/dropped and connections. Send errors are classified through the new `PushErrorKind` bound (`PushErrorClass::DropItem` / `Reconnect`), which is required only on this module's impl block, so `PushEgress` and every existing implementation are unchanged. No async, no clock and no I/O: the host keeps the connect/setup/flush awaits and closes every egress handed back in a decision.
 
 ### Fixed
+
 - `SubtitleFollower` is pinned end to end against the committed TSDuck capture: `try_new` needs a free segment writer (and a track with no subtitle page builds no follower), `set_start_time(2 s)` moves `X-TIMESTAMP-MAP` to `MPEGTS:180000` and the first segment's timeline/discontinuity, a cue at cut+1 s renders at local `00:00:01.000`, and two leader cuts plus `finish` publish two ordered subtitle segments (audit 23 finding 116, #3410).
 - WebVTT segment boundaries are pinned: a cue touching either range edge (equal end or equal start) or zero-length is excluded while an overlapping cue is included, `local_of`/`raw_of_local` round-trip across the 33-bit wrap, closed spans are published once in order with exact offsets/durations and are never re-closed, `finish` publishes the trailing partial segment, and a cue ending exactly at the boundary is consumed (audit 23 finding 115, #3409).
 - The teletext-to-WebVTT adapter is pinned against the committed TSDuck `test-012.ts` capture: `ticks_duration` scales 90000 ticks to 1 s, the whole page 889 decodes to its nine cues with the first cue's exact start/end/text, and an in-progress cue is reported by `open()` with its real start and text (audit 23 finding 114, #3408).
@@ -29,8 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `HealthState` equality, the `IngestDriver`/`ListenDriver` bounds, per-session refusals and trunks, and `AdmittedDriver`'s wrappers, feed delivery, live count and per-session clock retention across a reap are pinned by tests, so a hardcoded bound, a dropped termination, a lost clock origin or an inverted equality cannot ship unnoticed (audit 23 findings 94–96, #3388/#3389/#3390).
 - The publish queue's stalled-pin retry, the TS tracker's held-backlog drop observer and byte/count bounds, mid-stream `ProgramId` allocation, the TS session's surfaced reader errors and silent-PID settle time, and the egress/byte-tap/byte-merge labels, warm default, transmit default and emptiness are pinned by tests (audit 23 findings 97–100, #3391/#3392/#3393/#3394).
 - `MAX_COLD_WINDOW`'s literal value, the exact accept/refuse edges, `RetentionConfigError`'s label and Display text, and `RetentionDriver::pending_len` are pinned by tests (audit 21 findings 49 and 50, #2944/#2945).
-
-### Fixed
 - **A slow `Trunk` cursor's loss report is checked against its own position, and a pin's release is observed.** The `Lagged`/`Degraded`/`HandoversLagged` `skipped` counts, the `StallIngest` expiry predicate and `Drop for SegmentCursor` were only exercised from a cursor that had read nothing, where `base - consumed` and `base + consumed` agree and a leaked or wrongly-terminated pin is invisible: a cursor that had read part of a ring could report a nonsense skip count (or jump past live data), `expire_stalled_pins` could terminate a pin that had already caught up (or leave the blocking one), and a dropped pinning cursor could hold retention forever, with every test green. The trunk tests now lag a cursor that has already consumed part of each ring, terminate exactly the blocking `StallIngest` pin of three, observe the pin table emptying on `Drop`, and assert `generation()` advances and a pre-registered `listen()` wakes exactly once (audit 21 finding 58, #2953).
 
 ## [0.13.0] - 2026-11-17
