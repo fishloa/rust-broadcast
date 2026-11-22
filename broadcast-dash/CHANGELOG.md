@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974).
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - **Behaviour change:** `MpdFeatures::xlink_resolve_to_zero` and `MpdFeatures::inband_event_stream` are derived from what the model keeps, not from any element anywhere in the tree: `xlink_resolve_to_zero` no longer means "a Period or AdaptationSet was removed by resolve-to-zero"; it now reports an xlink the model carries (a `SegmentList`, `EventStream` or `RequestParam`), not the Period or AdaptationSet that the xlink removes, and the `InbandEventStream` flag reports only a stream on a retained AdaptationSet, Representation or Preselection. Content the parser drops no longer raises a flag the writer cannot reproduce, so `parse -> to_xml -> parse` is an identity for both (#3139).
 
 ### Fixed

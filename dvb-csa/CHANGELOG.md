@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Internal: the `rand` dev-dependency is dropped (#3972); no consumer-visible change.
+- Internal: the `rand` dev-dependency is dropped (#3972, #4025); no consumer-visible change.
 
 ### Tests
 - Pin the zeroize-on-drop guarantee for all five key-bearing types (round-key schedules, control word, both stream ciphers), so a removed `Drop` no longer passes the suite (#3206).

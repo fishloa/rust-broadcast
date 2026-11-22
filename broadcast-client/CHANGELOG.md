@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974).
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - An RTSP 401 with credentials configured is treated as a rejection: the unreachable replay arm is gone, so the source waits for host-supplied credentials and reconnects instead of replaying a request whose credentials the server already refused (#3634).
 
 ### Fixed

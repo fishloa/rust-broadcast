@@ -7,7 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 ### Changed
 
-- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974).
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 
 ### Added
 - `SocketStats::too_late_dropped` counts the sequence numbers the TSBPD scheduler gave up on (too-late arrivals and gaps skipped as unrecoverable, §4.6). A live receiver under a starved runtime can drop payload this way, and until now the only outward sign was a hole in the delivered stream (#3552).

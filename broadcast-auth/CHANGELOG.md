@@ -12,7 +12,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974).
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - Hex and base64 go through `broadcast_common::{hex, base64}` and `form_urlencoded` through `url::form_urlencoded`; the direct `hex`, `base64` and `form_urlencoded` dependencies are gone. Output is byte-identical, pinned by an independent HMAC vector for `SignedUrlKeySet::sign` (#3957).
 
 ### Tests

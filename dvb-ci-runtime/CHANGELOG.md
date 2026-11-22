@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974).
-- The `linux` feature no longer depends on `libc`: the CA-device ioctls, errno values and `O_NONBLOCK` go through `rustix` (#3972). No public API change.
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
+- The `linux` feature no longer depends on `libc`: the CA-device ioctls, errno values and `O_NONBLOCK` go through `rustix` (#3972, #4019). No public API change.
 
 ### Tests
 

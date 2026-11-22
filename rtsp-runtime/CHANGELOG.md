@@ -12,7 +12,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974).
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - Behaviour change: `rtsps://` (`default_tls_client_config`) now trusts the OS trust store through `rustls-platform-verifier` (ring provider); a private CA installed in the OS now works and the bundled Mozilla root list (`webpki-roots`) is gone (#3960).
 
 ### Tests
