@@ -110,6 +110,7 @@ pub fn base64_url_decode_nopad(s: &str) -> Result<Vec<u8>, Base64DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn decode_errors_are_broadcast_commons_own_type() {

@@ -128,6 +128,7 @@ pub fn hex_decode_into(text: &str, out: &mut [u8]) -> Result<(), HexDecodeError>
 mod tests {
     use super::*;
     use alloc::format;
+    use alloc::string::ToString;
     use alloc::vec::Vec;
 
     #[test]
