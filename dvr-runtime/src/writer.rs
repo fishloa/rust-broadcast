@@ -1299,7 +1299,10 @@ impl ArchiveWriter {
             } else if self.over_budget(open, entry) {
                 roll = Some(RollReason::ByteBudget);
             } else {
-                let init_len = open.init.as_ref().map_or(0, |b| b.len() as u64);
+                let init_len = open
+                    .init
+                    .as_ref()
+                    .map_or(0, |b| u64::try_from(b.len()).unwrap_or(u64::MAX));
                 let (_, probe, _, _) = self.record(
                     open.period,
                     open.media_len,
@@ -1316,7 +1319,7 @@ impl ArchiveWriter {
                 if open
                     .playlist_len
                     .saturating_add(u64::try_from(probe.len()).unwrap_or(u64::MAX))
-                    + u64::try_from(endlist.len()).unwrap_or(u64::MAX)
+                    .saturating_add(u64::try_from(endlist.len()).unwrap_or(u64::MAX))
                     > u64::try_from(broadcast_hls::limits::MAX_PLAYLIST_BYTES).unwrap_or(u64::MAX)
                 {
                     roll = Some(RollReason::PlaylistFull);
@@ -1329,15 +1332,22 @@ impl ArchiveWriter {
             match (&self.open, roll) {
                 (None, _) => {
                     let reason = self.next_reason.unwrap_or(RollReason::First);
-                    let len = init.as_ref().map_or(0, |b| b.len() as u64);
+                    let len = init
+                        .as_ref()
+                        .map_or(0, |b| u64::try_from(b.len()).unwrap_or(u64::MAX));
                     (self.next_period, len, len, Vec::new(), reason)
                 }
                 (Some(_), Some(reason)) => {
-                    let len = init.as_ref().map_or(0, |b| b.len() as u64);
+                    let len = init
+                        .as_ref()
+                        .map_or(0, |b| u64::try_from(b.len()).unwrap_or(u64::MAX));
                     (self.next_period, len, len, Vec::new(), reason)
                 }
                 (Some(open), None) => {
-                    let len = open.init.as_ref().map_or(0, |b| b.len() as u64);
+                    let len = open
+                        .init
+                        .as_ref()
+                        .map_or(0, |b| u64::try_from(b.len()).unwrap_or(u64::MAX));
                     (
                         open.period,
                         open.media_len,

@@ -21,7 +21,9 @@ catch-up read planner and the blocking `fs` adapter.
 - `ArchiveWriter`: a sans-IO roll/retention state machine returning an ordered
   `Plan` of `StoreOp`s, committing state only on `complete(PlanOutcome::Done)`.
   Rolls on first segment, sequence gap, target-duration overflow, byte budget,
-  playlist size, init change, period duration and programme transition.
+  playlist size, init change, period duration and programme transition. Every
+  length it converts is checked with `u64::try_from` and its playlist-size
+  total saturates, so no over-range media size can wrap (#4031).
 - A period opened by any of those rolls repeats the current programme's
   `EXT-X-DATERANGE` on its first segment, so a byte-capped or untimed route
   keeps the programme identity on every period of that programme, and the
