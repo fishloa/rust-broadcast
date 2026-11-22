@@ -3,12 +3,11 @@
 //! (ITU-T H.264 §9.1), and RBSP trailing bits (§7.3.2.11).
 
 use alloc::vec::Vec;
+use broadcast_common::bits::BitBuf;
 
 #[derive(Default)]
 pub(crate) struct BitWriter {
-    out: Vec<u8>,
-    cur: u8,
-    n: u8,
+    buf: BitBuf,
 }
 
 impl BitWriter {
@@ -17,14 +16,7 @@ impl BitWriter {
     }
 
     pub(crate) fn bit(&mut self, b: bool) -> &mut Self {
-        self.cur = (self.cur << 1) | u8::from(b);
-        self.n += 1;
-        if self.n == 8 {
-            self.out.push(self.cur);
-            self.cur = 0;
-            self.n = 0;
-        }
-        self
+        self.u(1, u64::from(b))
     }
 
     /// `bits` bits of `v`, most significant first.
@@ -32,10 +24,9 @@ impl BitWriter {
     /// # Panics
     /// If `v` does not fit in `bits` bits.
     pub(crate) fn u(&mut self, bits: u32, v: u64) -> &mut Self {
-        assert!(bits == 64 || v >> bits == 0, "{v} wider than {bits} bits");
-        for i in (0..bits).rev() {
-            self.bit((v >> i) & 1 == 1);
-        }
+        self.buf
+            .write_bits(v, bits)
+            .unwrap_or_else(|e| panic!("{v} in {bits} bits: {e}"));
         self
     }
 
@@ -55,25 +46,53 @@ impl BitWriter {
     }
 
     pub(crate) fn aligned(&self) -> bool {
-        self.n == 0
+        self.buf.is_byte_aligned()
     }
 
     pub(crate) fn align_zero(&mut self) -> &mut Self {
-        while self.n != 0 {
-            self.bit(false);
-        }
+        self.buf.align_to_byte();
         self
     }
 
     /// The bytes so far, the last partial byte zero-padded.
-    pub(crate) fn finish(mut self) -> Vec<u8> {
-        self.align_zero();
-        self.out
+    pub(crate) fn finish(self) -> Vec<u8> {
+        self.buf.into_vec()
     }
 
     /// `rbsp_trailing_bits()`: a one bit, then zeros to the byte boundary.
     pub(crate) fn trailing(mut self) -> Vec<u8> {
         self.bit(true);
         self.finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exp_golomb_and_trailing_bits_have_the_h264_layout() {
+        let mut w = BitWriter::new();
+        w.ue(0).ue(1).ue(2).ue(3).se(1).se(-1);
+        assert!(!w.aligned());
+        // 1 010 011 00100 010 011 + stop bit + zero pad
+        assert_eq!(w.trailing(), [0b1010_0110, 0b0100_0100, 0b1110_0000]);
+    }
+
+    #[test]
+    fn a_wide_value_and_a_64_bit_field() {
+        let mut w = BitWriter::new();
+        w.u(64, u64::MAX).u(3, 0b101).align_zero();
+        assert!(w.aligned());
+        assert_eq!(
+            w.finish(),
+            [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0b1010_0000]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "does not fit")]
+    fn a_value_wider_than_its_field_panics() {
+        BitWriter::new().u(2, 4);
     }
 }
