@@ -131,8 +131,8 @@
 use crate::route::RouteConfig;
 use std::collections::{BTreeSet, VecDeque};
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -445,8 +445,7 @@ impl Listener for RtmpListener {
     }
 
     fn poll_accept(&mut self) -> Result<Option<RtmpIngestSession>> {
-        let mut rx = self
-            .accept_rx.lock();
+        let mut rx = self.accept_rx.lock();
         match rx.try_recv() {
             Ok(conn) => Ok(Some(RtmpIngestSession::new(
                 conn.into_connection(),
@@ -495,9 +494,7 @@ impl RtmpIngestSession {
     /// session's, entirely outside this sans-IO [`Stage`] impl. See the
     /// module doc. `None` after the first call.
     fn take_connection(&mut self) -> Option<RtmpConnection> {
-        self.conn
-            .get_mut()
-            .take()
+        self.conn.get_mut().take()
     }
 
     fn new(conn: RtmpConnection, app: Option<String>) -> Self {
@@ -527,11 +524,7 @@ impl RtmpIngestSession {
     /// session one protocol read at a time.
     #[cfg(any(test, feature = "test-seams"))]
     pub async fn next_events_for_test(&mut self) -> std::io::Result<Option<Vec<ServerEvent>>> {
-        match self
-            .conn
-            .get_mut()
-            .as_mut()
-        {
+        match self.conn.get_mut().as_mut() {
             Some(conn) => conn.next_events().await,
             None => Ok(None),
         }

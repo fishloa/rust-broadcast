@@ -2465,8 +2465,9 @@ pub struct PreboundBinds {
         parking_lot::Mutex<std::collections::HashMap<String, tokio::net::TcpListener>>,
     >,
     /// UDP sockets keyed by the route's `addr` string (`TsUdp`).
-    pub udp:
-        std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<String, tokio::net::UdpSocket>>>,
+    pub udp: std::sync::Arc<
+        parking_lot::Mutex<std::collections::HashMap<String, tokio::net::UdpSocket>>,
+    >,
 }
 
 #[cfg(feature = "test-seams")]

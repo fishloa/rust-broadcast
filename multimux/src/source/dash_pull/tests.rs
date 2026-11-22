@@ -59,7 +59,7 @@ fn fixture(rel: &str) -> PathBuf {
 }
 
 fn now_unix_us() -> i64 {
-    i64::try_from(jiff::Timestamp::now().as_microsecond()).expect("fits")
+    jiff::Timestamp::now().as_microsecond()
 }
 
 fn xs_datetime(unix_us: i64) -> String {

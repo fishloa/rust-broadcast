@@ -75,12 +75,12 @@
 //! `RtmpIngestSession::feed` (sans-IO translation).
 
 use crate::route::RouteConfig;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use parking_lot::Mutex;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use transmux::TrackId;
 
@@ -472,10 +472,7 @@ impl WhipRouteShared {
     /// session is admitted, ending that session on its next timer drive.
     #[cfg(feature = "test-hooks")]
     pub fn force_next_timer_error(&self, err: impl Into<String>) {
-        *self
-            .infra
-            .force_timer_error
-            .lock() = Some(err.into());
+        *self.infra.force_timer_error.lock() = Some(err.into());
     }
 }
 
@@ -1121,8 +1118,7 @@ impl Listener for WhipListener {
     }
 
     fn poll_accept(&mut self) -> Result<Option<WhipIngestSession>> {
-        let mut rx = self
-            .accept_rx.lock();
+        let mut rx = self.accept_rx.lock();
         match rx.try_recv() {
             Ok(admitted) => Ok(Some(WhipIngestSession::new(admitted))),
             Err(mpsc::error::TryRecvError::Empty) => Ok(None),
@@ -2003,11 +1999,7 @@ pub(crate) async fn run_whip_with_clock(
             let mut media = media;
             #[cfg(feature = "test-hooks")]
             {
-                if let Some(err) = infra
-                    .force_timer_error
-                    .lock()
-                    .take()
-                {
+                if let Some(err) = infra.force_timer_error.lock().take() {
                     media.force_next_timer_error(err);
                 }
             }

@@ -5,8 +5,8 @@
 
 #[cfg(test)]
 use hls_runtime::server::DEFAULT_TRACK_ID;
-use std::sync::Arc;
 use jiff::Timestamp;
+use std::sync::Arc;
 #[cfg(test)]
 use transmux::TrackId;
 

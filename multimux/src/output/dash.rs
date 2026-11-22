@@ -60,8 +60,8 @@
 //! mounted by [`crate::output::ll_dash`], issue #663 P4.2 / #721 / #2448).
 
 use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_MILLI};
-use std::sync::Arc;
 use jiff::Timestamp;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(test)]
@@ -1189,7 +1189,10 @@ mod tests {
     fn iso8601_and_publish_time_wire_strings_are_pinned() {
         let origin = Timestamp::new(1_700_000_000, 900_000_000).expect("in range");
         assert_eq!(format_iso8601(origin), "2023-11-14T22:13:20Z");
-        assert_eq!(format_iso8601(Timestamp::UNIX_EPOCH), "1970-01-01T00:00:00Z");
+        assert_eq!(
+            format_iso8601(Timestamp::UNIX_EPOCH),
+            "1970-01-01T00:00:00Z"
+        );
         assert_eq!(publish_time(origin, &[]), "2023-11-14T22:13:20Z");
     }
 
@@ -2097,7 +2100,8 @@ mod tests {
     #[test]
     fn a_replacement_with_a_different_init_opens_a_new_period_at_its_first_segment() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits")).expect("in range");
+        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits"))
+            .expect("in range");
         let (old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
         let before = period_facts(&render_mpd_at(&old, now).expect("old MPD"));
         assert_eq!(before.len(), 1);
@@ -2159,7 +2163,8 @@ mod tests {
     #[test]
     fn before_its_first_segment_a_changed_replacement_already_lists_the_new_period() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits")).expect("in range");
+        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits"))
+            .expect("in range");
         let (_old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
         let empty = period_facts(&render_mpd_at(&new, now).expect("MPD before a segment"));
         new.add_segment(program, seg(1, Duration::from_secs(4)))
@@ -2173,7 +2178,8 @@ mod tests {
     #[test]
     fn a_reload_period_keeps_its_identity_as_the_window_slides() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits")).expect("in range");
+        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits"))
+            .expect("in range");
         let (_old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
         new.add_segment(program, seg(1, Duration::from_secs(4)))
             .expect("add_segment");
@@ -2210,7 +2216,8 @@ mod tests {
     #[test]
     fn an_init_change_period_keeps_its_identity_once_the_earlier_period_slid_out() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits")).expect("in range");
+        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits"))
+            .expect("in range");
         let route = reload_route();
         route.publish_new_program(program);
         route.set_init(program, vec![0xA1; 8]);
@@ -2251,7 +2258,8 @@ mod tests {
     #[test]
     fn a_replacement_with_an_identical_init_stays_in_the_same_period() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits")).expect("in range");
+        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits"))
+            .expect("in range");
         let (old, new) = replaced(vec![0xA1; 8], vec![0xA1; 8]);
         let before = period_facts(&render_mpd_at(&old, now).expect("old MPD"));
         new.add_segment(program, seg(1, Duration::from_secs(4)))
@@ -2299,7 +2307,8 @@ mod tests {
     #[test]
     fn a_period_opened_by_an_init_change_signals_no_continuity_connectivity_or_asset() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits")).expect("in range");
+        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits"))
+            .expect("in range");
         let (_old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
         new.add_segment(program, seg(1, Duration::from_secs(4)))
             .expect("add_segment");
@@ -2319,7 +2328,8 @@ mod tests {
     #[test]
     fn a_reload_keeps_the_mpd_level_timing() {
         let program = crate::route::SPTS_PROGRAM_ID;
-        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits")).expect("in range");
+        let now = Timestamp::from_second(i64::try_from(RELOAD_NOW_SECS).expect("fits"))
+            .expect("in range");
         let (old, new) = replaced(vec![0xA1; 8], vec![0xB2; 8]);
         let before = broadcast_dash::Mpd::parse(render_mpd_at(&old, now).expect("old").as_bytes())
             .expect("parses");

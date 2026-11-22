@@ -11,8 +11,8 @@
 //!
 //! `test-seams` only: it exists for tests, never for a served route.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
 
