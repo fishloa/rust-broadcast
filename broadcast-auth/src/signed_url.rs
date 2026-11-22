@@ -76,10 +76,10 @@
 use core::net::IpAddr;
 use std::borrow::Cow;
 
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use broadcast_common::base64::{base64_url_decode_nopad, base64_url_encode_nopad};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
+use url::form_urlencoded;
 
 use crate::constant_time_eq;
 use crate::error::{Error, Result};
@@ -159,7 +159,7 @@ impl SignedUrlKeySet {
             .ok_or_else(|| Error::UnknownSignedUrlKeyId {
                 kid: kid.to_string(),
             })?;
-        let sig = URL_SAFE_NO_PAD.encode(hmac_sha256(secret, &canonical_string(path, exp, ip)));
+        let sig = base64_url_encode_nopad(&hmac_sha256(secret, &canonical_string(path, exp, ip)));
         let mut query = form_urlencoded::Serializer::new(String::new());
         query.append_pair("exp", &exp.to_string());
         query.append_pair("kid", kid);
@@ -243,10 +243,7 @@ fn query_get<'q>(query: &'q str, key: &str) -> Option<Cow<'q, str>> {
 /// security-relevant fallback: it can only make [`verify`] *stricter*
 /// (`0` fails every non-zero `exp` as already expired), never laxer.
 fn current_unix_time() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::server::unix_secs(jiff::Timestamp::now())
 }
 
 /// Verifies a signed-URL token carried in `ctx.uri`'s query string against
@@ -282,7 +279,7 @@ pub(crate) fn verify(ctx: &RequestContext<'_>, keys: &SignedUrlKeySet) -> bool {
         },
         None => None,
     };
-    let Ok(decoded_sig) = URL_SAFE_NO_PAD.decode(sig.as_bytes()) else {
+    let Ok(decoded_sig) = base64_url_decode_nopad(&sig) else {
         return false;
     };
 
@@ -321,6 +318,22 @@ mod tests {
 
     fn ctx_for(uri: &str) -> RequestContext<'_> {
         RequestContext::new("GET", uri)
+    }
+
+    #[test]
+    fn sign_output_matches_an_independent_hmac_vector() {
+        let ks = keyset();
+        assert_eq!(
+            ks.sign("key-a", "/stream/media.m3u8", 1_893_456_000, None)
+                .unwrap(),
+            "exp=1893456000&kid=key-a&sig=7fduxHEd1kPQf7irK6eLs8A68JEm0DLjrxjFflADs1U"
+        );
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert_eq!(
+            ks.sign("key-a", "/stream/media.m3u8", 1_893_456_000, Some(ip))
+                .unwrap(),
+            "exp=1893456000&kid=key-a&sig=PR940lVeo8pwQ0Q6nQMeGrLauRB9mJzFxml2NgDqDoU&ip=10.0.0.1"
+        );
     }
 
     // --- construction ---

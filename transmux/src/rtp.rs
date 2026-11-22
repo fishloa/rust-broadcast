@@ -2207,11 +2207,13 @@ impl Mp2tPacketiser {
 /// trailing bits are tolerated; any other invalid input is an error.
 pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>> {
     broadcast_common::base64::base64_decode_lenient(s).map_err(|e| match e {
-        base64::DecodeError::InvalidByte(_, byte) => Error::InvalidValue(InvalidValue {
-            field: "base64",
-            value: u64::from(byte),
-            reason: "not a base64 character",
-        }),
+        broadcast_common::base64::DecodeError::InvalidByte(_, byte) => {
+            Error::InvalidValue(InvalidValue {
+                field: "base64",
+                value: u64::from(byte),
+                reason: "not a base64 character",
+            })
+        }
         _ => Error::InvalidValue(InvalidValue {
             field: "base64",
             value: s.len() as u64,
@@ -2237,27 +2239,42 @@ use broadcast_common::hex::hex_encode;
 
 /// Hex-decode a string; rejects odd lengths and invalid nibbles.
 pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>> {
-    ::hex::decode(s).map_err(|e| match e {
-        ::hex::FromHexError::OddLength => Error::InvalidValue(InvalidValue {
-            field: "hex",
-            value: s.len() as u64,
-            reason: "odd-length hex string",
-        }),
-        ::hex::FromHexError::InvalidHexCharacter { c, .. } => Error::InvalidValue(InvalidValue {
-            field: "hex",
-            value: u64::from(c),
-            reason: "not a hex digit",
-        }),
-        ::hex::FromHexError::InvalidStringLength => Error::InvalidValue(InvalidValue {
-            field: "hex",
-            value: s.len() as u64,
-            reason: "invalid hex string length",
-        }),
+    broadcast_common::hex::hex_decode(s).ok_or_else(|| {
+        if !s.len().is_multiple_of(2) {
+            return Error::InvalidValue(InvalidValue {
+                field: "hex",
+                value: s.len() as u64,
+                reason: "odd-length hex string",
+            });
+        }
+        match s.bytes().find(|b| !b.is_ascii_hexdigit()) {
+            Some(b) => Error::InvalidValue(InvalidValue {
+                field: "hex",
+                value: u64::from(b),
+                reason: "not a hex digit",
+            }),
+            None => Error::InvalidValue(InvalidValue {
+                field: "hex",
+                value: s.len() as u64,
+                reason: "invalid hex string length",
+            }),
+        }
     })
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hex_decode_reports_each_failure_class_as_before() {
+        assert_eq!(hex_decode("00Ff").unwrap(), [0x00, 0xff]);
+        let reason = |s: &str| match hex_decode(s) {
+            Err(Error::InvalidValue(v)) => (v.value, v.reason),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(reason("abc"), (3, "odd-length hex string"));
+        assert_eq!(reason("0g"), (u64::from(b'g'), "not a hex digit"));
+    }
+
     use super::*;
 
     /// `n` whole TS packets, each led by its own sync byte and numbered so a

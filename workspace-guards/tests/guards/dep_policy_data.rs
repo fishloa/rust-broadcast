@@ -209,5 +209,4 @@ pub const EXEMPT: &[Exempt] = &[
     exempt("dvb-t2mi", "num_enum", "#3963"),
     exempt("dvb-bbframe", "num_enum", "#3963"),
     exempt("dvb-csa", "rand", "#3958 (dev-dependency)"),
-    exempt("broadcast-auth", "form_urlencoded", "#3957"),
 ];

@@ -1237,7 +1237,6 @@ dependencies = [
  "broadcast-hls",
  "cc-data",
  "dvb-vbi",
- "hex",
  "jiff",
  "mp4-emsg",
  "scte35-splice",
@@ -1321,7 +1320,6 @@ name = "transmux"
 version = "0.32.1"
 dependencies = [
  "aes",
- "base64 0.23.1",
  "broadcast-common",
  "broadcast-dash",
  "broadcast-hls",
@@ -1333,7 +1331,6 @@ dependencies = [
  "container-probe",
  "ctr",
  "dvb-si",
- "hex",
  "jiff",
  "memchr",
  "mp4-emsg",

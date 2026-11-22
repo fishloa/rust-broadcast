@@ -1376,7 +1376,7 @@ fn parse_span(field: &'static str, value: &str) -> Result<Duration> {
 /// Format a 16-byte key ID as the canonical dashed-hex UUID form
 /// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, ISO/IEC 23001-7 `cenc:default_KID`).
 fn format_kid(kid: &[u8; 16]) -> String {
-    let hex = ::hex::encode(kid);
+    let hex = broadcast_common::hex::hex_encode(kid);
     format!(
         "{}-{}-{}-{}-{}",
         &hex[0..8],
@@ -1420,7 +1420,17 @@ fn segment_timeline(durations: &[u64]) -> SegmentTimeline {
 
 #[cfg(test)]
 mod par_tests {
+    use super::format_kid;
     use super::{agreed, par_of};
+
+    #[test]
+    fn format_kid_is_lowercase_dashed_uuid() {
+        let kid = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ];
+        assert_eq!(format_kid(&kid), "00112233-4455-6677-8899-aabbccddeeff");
+    }
 
     #[test]
     fn par_is_width_sar_over_height_sar_reduced() {
