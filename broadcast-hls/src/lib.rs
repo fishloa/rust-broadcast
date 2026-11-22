@@ -250,6 +250,13 @@ pub enum ParseDiagnosticKind {
     /// dropped. A trailing incomplete record in a playlist being written
     /// (crash or open period) is exactly this.
     DanglingSegmentTags,
+    /// An `#EXT-X-DATERANGE` without `START-DATE` that no earlier
+    /// `EXT-X-DATERANGE` with the same `ID` and a `START-DATE` precedes
+    /// (RFC 8216bis §4.4.5.1,
+    /// `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`).
+    /// The tag is kept in place, since a client consolidates it with others of
+    /// the same `ID`.
+    DateRangeWithoutStartDate,
 }
 
 impl ParseDiagnosticKind {
@@ -258,22 +265,24 @@ impl ParseDiagnosticKind {
         match self {
             Self::InvalidProgramDateTime => "invalid_program_date_time",
             Self::DanglingSegmentTags => "dangling_segment_tags",
+            Self::DateRangeWithoutStartDate => "date_range_without_start_date",
         }
     }
 }
 
 broadcast_common::impl_spec_display!(ParseDiagnosticKind);
 
-/// A defect [`MediaPlaylist::parse`] tolerated instead of failing the playlist: the offending
-/// tag was dropped and parsing went on. Read from [`MediaPlaylist::diagnostics`].
+/// A defect [`MediaPlaylist::parse`] tolerated instead of failing the playlist: parsing went on,
+/// and the offending tag was dropped unless its [`ParseDiagnosticKind`] says it is kept. Read
+/// from [`MediaPlaylist::diagnostics`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ParseDiagnostic {
     /// What was wrong.
     pub kind: ParseDiagnosticKind,
-    /// 1-based line number of the dropped tag.
+    /// 1-based line number of the reported tag.
     pub line_no: usize,
-    /// The dropped line, verbatim.
+    /// The reported line, verbatim.
     pub line: String,
 }
 
@@ -348,12 +357,24 @@ pub struct PartSpec {
 /// least one of its parts on the wire — e.g. a key rotation between two
 /// parts, which applies only to the parts after it (RFC 8216bis §4.4.4.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct OpenTag {
     /// Position of this tag's line in [`OpenSegment::pre_tags`].
     pub pre_tag_index: usize,
     /// How many of the open segment's parts precede this line on the wire.
     /// The line renders after those parts and before the next one.
     pub parts_before: usize,
+}
+
+impl OpenTag {
+    /// The line at `pre_tag_index` in [`OpenSegment::pre_tags`], rendered
+    /// after the first `parts_before` parts.
+    pub fn new(pre_tag_index: usize, parts_before: usize) -> Self {
+        Self {
+            pre_tag_index,
+            parts_before,
+        }
+    }
 }
 
 /// An in-progress (open) LL-HLS segment: its parts are known and being served,
@@ -2229,6 +2250,7 @@ impl MediaPlaylist {
         // Typed `#EXT-X-PROGRAM-DATE-TIME` for the next segment (issue #1423).
         let mut pending_program_date_time: Option<ProgramDateTime> = None;
         let mut diagnostics: Vec<ParseDiagnostic> = Vec::new();
+        let mut started_date_ranges: BTreeSet<String> = BTreeSet::new();
 
         for (idx, raw_line) in input.lines().enumerate() {
             let line_no = idx + 1;
@@ -2239,6 +2261,18 @@ impl MediaPlaylist {
             let line = line.trim();
             if line.is_empty() {
                 continue;
+            }
+
+            if let Ok(range) = DateRange::parse_tag_line(line) {
+                if range.start().is_some() {
+                    started_date_ranges.insert(range.id().to_string());
+                } else if !started_date_ranges.contains(range.id()) {
+                    diagnostics.push(ParseDiagnostic {
+                        kind: ParseDiagnosticKind::DateRangeWithoutStartDate,
+                        line_no,
+                        line: line.to_string(),
+                    });
+                }
             }
 
             if line == "#EXTM3U" {
@@ -3301,7 +3335,7 @@ fn parse_iv(s: &str) -> Result<[u8; 16]> {
     let mut out = [0u8; 16];
     s.strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
-        .and_then(|hex| broadcast_common::hex::hex_decode_into(hex, &mut out))
+        .and_then(|hex| broadcast_common::hex::hex_decode_into(hex, &mut out).ok())
         .ok_or_else(|| Error::InvalidIv {
             value: s.to_string(),
         })?;

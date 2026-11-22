@@ -11,4 +11,5 @@ mod pusi_accumulator;
 mod review_mjd_after_2100;
 mod seq_space;
 mod time_edges;
+mod wire_enum;
 mod xml_limits;

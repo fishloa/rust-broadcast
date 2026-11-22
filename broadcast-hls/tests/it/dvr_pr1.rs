@@ -678,18 +678,32 @@ fn empty_quoted_values_are_accepted_except_the_id() {
     ));
 }
 
-/// Item 3: an `X-` decimal-floating-point value is unsigned.
+/// RFC 8216bis §4.4.5.1: an `X-` value may be a signed-decimal-floating-point,
+/// so a negative decimal parses, round-trips byte-identically and is accepted
+/// by the setter; a lone `-` is still not a decimal.
 #[test]
-fn client_decimal_values_are_unsigned() {
-    use broadcast_hls::DateRangeError;
+fn client_decimal_values_may_be_signed() {
+    use broadcast_hls::{AttrValue, ClientAttrName, DateRangeError};
 
     daterange_roundtrip("#EXT-X-DATERANGE:ID=\"a\",X-A=1.5");
+    daterange_roundtrip("#EXT-X-DATERANGE:ID=\"a\",X-A=-1.5");
+    let mut range = DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\"").expect("parse");
+    range
+        .set_client_attr(
+            ClientAttrName::new("X-B").expect("name"),
+            AttrValue::bare("-2").expect("bare"),
+        )
+        .expect("a signed decimal is a legal X- value");
+    assert_eq!(
+        range.to_tag_line().expect("render"),
+        "#EXT-X-DATERANGE:ID=\"a\",X-B=-2"
+    );
     assert!(matches!(
-        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-A=-1.5"),
+        DateRange::parse_tag_line("#EXT-X-DATERANGE:ID=\"a\",X-A=-"),
         Err(Error::InvalidDateRange {
             reason: DateRangeError::InvalidClientAttributeValue,
             ..
-        })
+        }) | Err(Error::InvalidAttributeList { .. })
     ));
 }
 
@@ -1095,4 +1109,72 @@ fn overwritten_segment_tags_are_each_reported() {
         ParseDiagnosticKind::DanglingSegmentTags
     );
     assert_eq!(playlist.diagnostics[0].line, "#EXT-X-BYTERANGE:10@0");
+}
+
+/// RFC 8216bis §4.4.5.1: `START-DATE` is REQUIRED unless an earlier
+/// `EXT-X-DATERANGE` with the same `ID` in the same playlist carries one. A
+/// single tag cannot see that earlier tag, so the playlist parser reports the
+/// violation; the tag itself is kept and re-renders unchanged.
+#[test]
+fn daterange_without_start_date_is_a_playlist_diagnostic() {
+    use broadcast_hls::{MediaPlaylist, ParseDiagnosticKind};
+
+    let augmenting = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n\
+        #EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00Z\n\
+        #EXT-X-DATERANGE:ID=\"a\",START-DATE=\"2026-01-01T00:00:00Z\"\n\
+        #EXTINF:2,\ns0.ts\n\
+        #EXT-X-DATERANGE:ID=\"a\",DURATION=4\n\
+        #EXTINF:2,\ns1.ts\n";
+    let playlist = MediaPlaylist::parse(augmenting).expect("must parse");
+    assert!(
+        playlist.diagnostics.is_empty(),
+        "{:?}",
+        playlist.diagnostics
+    );
+
+    let orphan = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n\
+        #EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00Z\n\
+        #EXT-X-DATERANGE:ID=\"b\",DURATION=4\n\
+        #EXTINF:2,\ns0.ts\n\
+        #EXT-X-DATERANGE:ID=\"b\",START-DATE=\"2026-01-01T00:00:00Z\"\n\
+        #EXTINF:2,\ns1.ts\n";
+    let playlist = MediaPlaylist::parse(orphan).expect("must parse");
+    assert_eq!(playlist.diagnostics.len(), 1, "{:?}", playlist.diagnostics);
+    let diag = &playlist.diagnostics[0];
+    assert_eq!(diag.kind, ParseDiagnosticKind::DateRangeWithoutStartDate);
+    assert_eq!(diag.line_no, 4);
+    assert_eq!(diag.line, "#EXT-X-DATERANGE:ID=\"b\",DURATION=4");
+    assert_eq!(
+        ParseDiagnosticKind::DateRangeWithoutStartDate.to_string(),
+        "date_range_without_start_date"
+    );
+    assert!(
+        playlist.segments[0]
+            .pre_tags
+            .iter()
+            .any(|t| t == "#EXT-X-DATERANGE:ID=\"b\",DURATION=4"),
+        "the reported tag is kept: {:?}",
+        playlist.segments[0].pre_tags
+    );
+}
+
+/// `OpenTag` is `#[non_exhaustive]`, so a caller outside the crate builds one
+/// through `new`.
+#[test]
+fn open_tag_is_built_through_new() {
+    let tag = broadcast_hls::OpenTag::new(2, 1);
+    assert_eq!(tag.pre_tag_index, 2);
+    assert_eq!(tag.parts_before, 1);
+}
+
+/// No RFC 8216bis tag starts `EXT-X-CUE-`: the SCTE/Adobe cue tags are vendor
+/// tags this crate keeps verbatim, so a `CustomTag` may build one.
+#[test]
+fn cue_tags_are_vendor_tags() {
+    use broadcast_hls::{CustomTag, CustomTagName};
+
+    CustomTagName::new("EXT-X-CUE-OUT").expect("EXT-X-CUE-OUT is not an RFC 8216bis tag");
+    let line = "#EXT-X-CUE-OUT:DURATION=30";
+    let tag = CustomTag::parse_tag_line(line).expect("parse");
+    assert_eq!(tag.to_tag_line().expect("render"), line);
 }

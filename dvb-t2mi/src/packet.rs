@@ -1,7 +1,7 @@
 //! T2-MI packet header and type parsing — ETSI TS 102 773 §5.1, Table 1.
 
-use crate::wire_enum::wire_enum;
 use broadcast_common::len::need_out;
+use broadcast_common::wire_enum;
 
 /// T2-MI packet header size (ETSI TS 102 773 §5.1).
 const HEADER_LEN: usize = 6;
@@ -20,7 +20,7 @@ wire_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
-    pub enum PacketType: u8, invalid(found) => crate::error::Error::InvalidPacketType { found },
+    pub enum PacketType: u8, error(crate::error::Error), invalid(found) => crate::error::Error::InvalidPacketType { found },
     {
         /// Baseband Frame (BBFRAME) — §5.2.1
         BasebandFrame = 0x00,

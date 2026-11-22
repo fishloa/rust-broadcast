@@ -355,7 +355,6 @@ pub mod tables;
 pub mod text;
 pub mod traits;
 pub(crate) mod wire;
-mod wire_enum;
 
 #[cfg(feature = "yoke")]
 pub mod owned;

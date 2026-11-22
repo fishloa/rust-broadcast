@@ -1357,7 +1357,7 @@ fn parse_key(spec: &str) -> CliResult<([u8; 16], [u8; 16])> {
 #[cfg(feature = "cenc")]
 fn parse_hex16(s: &str) -> Option<[u8; 16]> {
     let mut out = [0u8; 16];
-    broadcast_common::hex::hex_decode_into(s.trim(), &mut out)?;
+    broadcast_common::hex::hex_decode_into(s.trim(), &mut out).ok()?;
     Some(out)
 }
 

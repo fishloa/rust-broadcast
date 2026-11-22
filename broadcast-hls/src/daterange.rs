@@ -1,4 +1,6 @@
-//! Typed `#EXT-X-DATERANGE` (RFC 8216bis §4.4.5.1).
+//! Typed `#EXT-X-DATERANGE` (RFC 8216bis §4.4.5.1,
+//! `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`; full text
+//! `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`).
 //!
 //! The playlist parser keeps a DATERANGE verbatim in
 //! [`crate::MediaSegment::pre_tags`] (it is segment-scoped and applies until
@@ -232,6 +234,12 @@ impl Cue {
 /// typed accessors decode it. `PartialEq` compares those decoded values, so a
 /// parsed tag and one built with the same values are equal even when their
 /// attribute order or a decimal's spelling differs.
+///
+/// `START-DATE` is optional here: §4.4.5.1 lets a tag omit it when an earlier
+/// tag with the same `ID` in the same playlist carries one, which a single tag
+/// cannot see. [`crate::MediaPlaylist::parse`] checks that rule across the
+/// playlist and reports a violation as
+/// [`crate::ParseDiagnosticKind::DateRangeWithoutStartDate`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct DateRange {
@@ -547,7 +555,8 @@ impl DateRange {
 
     /// Set a client (`X-`) attribute, replacing an existing value in place or
     /// appending a new one. The value must be a quoted-string,
-    /// hexadecimal-sequence or unsigned decimal-floating-point.
+    /// hexadecimal-sequence or signed-decimal-floating-point (RFC 8216bis
+    /// §4.4.5.1).
     ///
     /// # Errors
     ///
@@ -865,7 +874,7 @@ fn decode_duration(value: &str) -> Option<crate::DecimalSeconds> {
 fn client_value_ok(value: &AttrValue) -> bool {
     value.is_quoted()
         || super::is_hexadecimal_sequence(value.as_str())
-        || super::is_valid_decimal_token(value.as_str(), false)
+        || super::is_valid_decimal_token(value.as_str(), true)
 }
 
 /// RFC 8216bis §4.2: an `AttributeName` contains only `[A-Z]`, `[0-9]` and `-`.

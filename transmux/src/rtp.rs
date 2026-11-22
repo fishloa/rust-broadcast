@@ -2207,7 +2207,7 @@ impl Mp2tPacketiser {
 /// trailing bits are tolerated; any other invalid input is an error.
 pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>> {
     broadcast_common::base64::base64_decode_lenient(s).map_err(|e| match e {
-        broadcast_common::base64::DecodeError::InvalidByte(_, byte) => {
+        broadcast_common::base64::Base64DecodeError::InvalidByte { byte, .. } => {
             Error::InvalidValue(InvalidValue {
                 field: "base64",
                 value: u64::from(byte),

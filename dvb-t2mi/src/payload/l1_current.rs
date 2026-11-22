@@ -3,8 +3,8 @@
 //! L1-current carries the complete L1 signalling for the current T2 frame:
 //! L1PRE + L1CONF + L1DYN_CURR + optionally L1EXT.
 
-use crate::wire_enum::wire_enum;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire_enum;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -17,7 +17,7 @@ wire_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
-    pub enum FrequencySource: u8, invalid(value) => crate::error::Error::InvalidValue(
+    pub enum FrequencySource: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
         broadcast_common::error::InvalidValue {
             field: "freq_source",
             value: u64::from(value),

@@ -2,7 +2,7 @@
 //!
 //! Source: ETSI EN 300 468 §5.1.3 Table 2 plus ISO/IEC 13818-1 for MPEG tables.
 
-use crate::wire_enum::wire_enum;
+use broadcast_common::wire_enum;
 
 wire_enum! {
     /// Typed `table_id` enumeration.
@@ -18,7 +18,7 @@ wire_enum! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
     #[rustfmt::skip] // deliberate column-aligned discriminants
-    pub enum TableId: u8, invalid(value) => crate::error::Error::InvalidValue(
+    pub enum TableId: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
         broadcast_common::error::InvalidValue {
             field: "table_id",
             value: u64::from(value),

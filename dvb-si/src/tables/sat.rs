@@ -12,12 +12,12 @@
 //! private bit-level reader/writer handles the extraction and emission.
 
 use crate::error::{Error, Result};
-use crate::wire_enum::wire_enum;
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::reserved::ReservedZero;
+use broadcast_common::wire_enum;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the Satellite Access Table.
@@ -161,7 +161,7 @@ wire_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
-    pub enum SatTableId: u8, invalid(value) => crate::error::Error::InvalidValue(
+    pub enum SatTableId: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
         broadcast_common::error::InvalidValue {
             field: "satellite_table_id",
             value: u64::from(value),

@@ -5,6 +5,9 @@
 ### Breaking
 
 - **BREAKING:** `num_enum` is no longer a dependency (#3963). `TableId`, `DescriptorTag` and `tables::sat::SatTableId` implement a hand-written `TryFrom<u8>` whose error is the crate's own `Error::InvalidValue` (naming `table_id` / `descriptor_tag` / `satellite_table_id` and the rejected value) instead of `num_enum::TryFromPrimitiveError<T>`. `TableId` and `SatTableId` gain `From<_> for u8`.
+- Internal: the H.222 descriptor bit writer is an adapter over `broadcast_common::bits::BitBuf` instead of its own bit cursor; output bytes and errors are unchanged (#3961).
+- Internal: the `wire_enum!` macro now comes from `broadcast_common` (passing this crate's `Error` as its error type) instead of a crate-local copy; the generated enums and conversions are unchanged (#3989).
+- Internal: the `epg::PresentEventTracker` docs cite the private EN 300 468 §5.2.4 and Table 6 transcription paths (#3997).
 - **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff` feature's decoded times and durations (`jiff::Timestamp`, `jiff::SignedDuration`, the `epg` module) are jiff 1.x types.
 
 ### Changed
