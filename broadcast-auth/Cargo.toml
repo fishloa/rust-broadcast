@@ -24,13 +24,13 @@ ignored = ["md-5"]
 
 [dependencies]
 # The shared time-unit ratios (`units`).
-broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false, features = ["base64"] }
+# Wall-clock type of `Verifier::with_clock` and the signed-URL expiry gate.
+jiff = { version = "1", default-features = false, features = ["std"] }
 http-auth = { version = "0.1", default-features = false, features = ["basic-scheme", "digest-scheme"] }
 thiserror = "2"
-# Server-side (`server::Verifier`) challenge/verify: decoding a client's
-# Basic `Authorization` header (`base64`), recomputing a Digest response
+# Server-side (`server::Verifier`) challenge/verify: recomputing a Digest response
 # (`md-5`) to verify against, and generating a fresh server nonce (`getrandom`).
-base64    = "0.23"
 md-5      = "0.11"
 getrandom = "0.4"
 # Signed-URL scheme (`signed_url::SignedUrlKeySet`, issue #747): HMAC-SHA256
@@ -55,10 +55,6 @@ percent-encoding = "2"
 url       = "2"
 # Digest nonce-count table (`server::DigestNonces`): least-recently-used order (SP2.4).
 lru       = "0.19"
-# Signed-URL query encode/parse (`signed_url`, defect 6): `application/x-www-form-urlencoded`.
-form_urlencoded = "1"
-# Digest nonce codec (SP5).
-hex       = { version = "0.4", default-features = false, features = ["alloc"] }
 # Cookie jar (moved from broadcast-client): RFC 6265 parsing/storage.
 cookie             = { version = "0.18", default-features = false }
 cookie_store       = { version = "~0.22.1", default-features = false }

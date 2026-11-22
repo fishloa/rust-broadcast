@@ -8,7 +8,7 @@
 //! byte-for-byte (the CRC is recomputed on serialize). This is the strongest
 //! authoritative-vector coverage available: the spec's own messages.
 
-use base64::{Engine, engine::general_purpose::STANDARD};
+use broadcast_common::base64::base64_decode_strict;
 use broadcast_common::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 
@@ -51,9 +51,8 @@ const SAMPLES: &[(&str, &str)] = &[
 #[test]
 fn all_section14_samples_parse_and_round_trip() {
     for (label, b64) in SAMPLES {
-        let bytes = STANDARD
-            .decode(b64)
-            .unwrap_or_else(|e| panic!("{label}: base64 decode: {e}"));
+        let bytes =
+            base64_decode_strict(b64).unwrap_or_else(|e| panic!("{label}: base64 decode: {e}"));
         // parse validates the CRC_32 (a wrong CRC is rejected).
         let section = SpliceInfoSection::parse(&bytes)
             .unwrap_or_else(|e| panic!("{label}: parse/CRC failed: {e:?}"));
@@ -71,7 +70,7 @@ fn all_section14_samples_parse_and_round_trip() {
 #[test]
 fn all_section14_samples_reparse_equal() {
     for (label, b64) in SAMPLES {
-        let bytes = STANDARD.decode(b64).unwrap();
+        let bytes = base64_decode_strict(b64).unwrap();
         let a = SpliceInfoSection::parse(&bytes).unwrap_or_else(|e| panic!("{label}: {e:?}"));
         let reser = a.try_to_bytes().unwrap();
         let b =
