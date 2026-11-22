@@ -74,6 +74,30 @@ fn braced<'a>(src: &'a str, marker: &str) -> &'a str {
     let at = src
         .find(marker)
         .unwrap_or_else(|| panic!("anchor not found: {marker}"));
+    braced_at(src, at, marker)
+}
+
+/// The variant block of enum `name`, declared either as a plain
+/// `pub enum Name { .. }` or through a crate's `wire_enum!` macro
+/// (`pub enum Name: repr, invalid(v) => <error expr>, { .. }`), where the
+/// variant block is the first `{` after the error expression's closing `),`.
+fn enum_body<'a>(src: &'a str, name: &str) -> &'a str {
+    let marker = format!("pub enum {name}");
+    let at = src
+        .find(&marker)
+        .unwrap_or_else(|| panic!("anchor not found: {marker}"));
+    if src[at + marker.len()..].trim_start().starts_with(':') {
+        let close = at
+            + src[at..]
+                .find("),\n")
+                .unwrap_or_else(|| panic!("{marker}: no `),` closing the error expression"));
+        braced_at(src, close, &marker)
+    } else {
+        braced_at(src, at, &marker)
+    }
+}
+
+fn braced_at<'a>(src: &'a str, at: usize, marker: &str) -> &'a str {
     let open = at + src[at..].find('{').expect("no {");
     let mut depth = 0usize;
     for (i, c) in src[open..].char_indices() {
@@ -112,7 +136,7 @@ fn strictly_ascending(what: &str, vals: &[(usize, u64)]) {
 /// `Ident = <lit>` discriminants of `pub enum <name>`.
 fn enum_discriminants(root: &Path, rel: &str, name: &str) {
     let src = read(root, rel);
-    let body = braced(&src, &format!("pub enum {name}"));
+    let body = enum_body(&src, name);
     let vals: Vec<_> = body
         .lines()
         .enumerate()
@@ -189,7 +213,7 @@ fn arm_idents(src: &str, impl_marker: &str, func: &str) -> Vec<String> {
 }
 
 fn enum_variant_idents(src: &str, name: &str) -> Vec<String> {
-    let body = braced(src, &format!("pub enum {name}"));
+    let body = enum_body(src, name);
     let mut depth = 0i32;
     let mut out = Vec::new();
     for l in body.lines() {
@@ -285,7 +309,7 @@ fn lit_at_start(t: &str) -> Option<u64> {
 /// `/// 0xNN` doc rows of an enum, ascending (ranges use their start).
 fn enum_doc_rows(root: &Path, rel: &str, name: &str) {
     let src = read(root, rel);
-    let body = braced(&src, &format!("pub enum {name}"));
+    let body = enum_body(&src, name);
     let vals: Vec<_> = body
         .lines()
         .enumerate()

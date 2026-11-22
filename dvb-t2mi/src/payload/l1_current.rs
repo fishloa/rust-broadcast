@@ -3,8 +3,8 @@
 //! L1-current carries the complete L1 signalling for the current T2 frame:
 //! L1PRE + L1CONF + L1DYN_CURR + optionally L1EXT.
 
+use crate::wire_enum::wire_enum;
 use broadcast_common::len::{need_in, need_out};
-use num_enum::TryFromPrimitive;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -12,33 +12,25 @@ use super::l1::post::parse_l1_post_from_framed;
 use super::l1::pre::L1PRE_BYTES;
 use super::l1::{L1Post, L1Pre};
 
-/// Frequency source per §5.2.4 Table 2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
-#[non_exhaustive]
-pub enum FrequencySource {
-    /// Use L1-current data field.
-    UseL1CurrentData = 0b00,
-    /// Use individual addressing frequency function.
-    UseIndividualAddressing = 0b01,
-    /// Manually set per modulator.
-    ManualPerModulator = 0b10,
-}
-
-impl From<FrequencySource> for u8 {
-    fn from(fs: FrequencySource) -> Self {
-        fs as u8
-    }
-}
-
-impl From<num_enum::TryFromPrimitiveError<FrequencySource>> for crate::error::Error {
-    fn from(e: num_enum::TryFromPrimitiveError<FrequencySource>) -> Self {
-        crate::error::Error::InvalidValue(broadcast_common::error::InvalidValue {
+wire_enum! {
+    /// Frequency source per §5.2.4 Table 2.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum FrequencySource: u8, invalid(value) => crate::error::Error::InvalidValue(
+        broadcast_common::error::InvalidValue {
             field: "freq_source",
-            value: u64::from(e.number),
+            value: u64::from(value),
             reason: "must be 0b00, 0b01 or 0b10",
-        })
+        },
+    ),
+    {
+        /// Use L1-current data field.
+        UseL1CurrentData = 0b00,
+        /// Use individual addressing frequency function.
+        UseIndividualAddressing = 0b01,
+        /// Manually set per modulator.
+        ManualPerModulator = 0b10,
     }
 }
 
@@ -187,7 +179,16 @@ mod tests {
 
     #[test]
     fn frequency_source_try_from_rejects_11() {
-        assert_eq!((FrequencySource::try_from(0b11)).unwrap_err().number, 3);
+        assert!(matches!(
+            FrequencySource::try_from(0b11),
+            Err(crate::error::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "freq_source",
+                    value: 3,
+                    ..
+                }
+            ))
+        ));
     }
 
     #[test]

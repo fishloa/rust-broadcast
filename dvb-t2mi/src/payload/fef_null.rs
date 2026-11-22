@@ -5,47 +5,39 @@
 use broadcast_common::len::{need_in, need_out};
 use core::fmt;
 
-use num_enum::TryFromPrimitive;
+use crate::wire_enum::wire_enum;
 
 use broadcast_common::{Parse, Serialize};
 
-/// S1 field (3 bits) per EN 302 755 §7.2.1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
-#[non_exhaustive]
-pub enum S1Field {
-    /// S1 value V0 (000 = T2_SISO).
-    V0 = 0,
-    /// S1 value V1 (001 = T2_MISO).
-    V1 = 1,
-    /// S1 value V2 (010 = Non-T2).
-    V2 = 2,
-    /// S1 value V3 (011 = T2_LITE_SISO).
-    V3 = 3,
-    /// S1 value V4 (100 = T2_LITE_MISO).
-    V4 = 4,
-    /// S1 value V5 (101 = reserved).
-    V5 = 5,
-    /// S1 value V6 (110 = reserved).
-    V6 = 6,
-    /// S1 value V7 (111 = reserved).
-    V7 = 7,
-}
-
-impl From<S1Field> for u8 {
-    fn from(s: S1Field) -> Self {
-        s as u8
-    }
-}
-
-impl From<num_enum::TryFromPrimitiveError<S1Field>> for crate::error::Error {
-    fn from(e: num_enum::TryFromPrimitiveError<S1Field>) -> Self {
-        crate::error::Error::InvalidValue(broadcast_common::error::InvalidValue {
+wire_enum! {
+    /// S1 field (3 bits) per EN 302 755 §7.2.1.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum S1Field: u8, invalid(value) => crate::error::Error::InvalidValue(
+        broadcast_common::error::InvalidValue {
             field: "s1_field",
-            value: u64::from(e.number),
+            value: u64::from(value),
             reason: "must be 0..=7",
-        })
+        },
+    ),
+    {
+        /// S1 value V0 (000 = T2_SISO).
+        V0 = 0,
+        /// S1 value V1 (001 = T2_MISO).
+        V1 = 1,
+        /// S1 value V2 (010 = Non-T2).
+        V2 = 2,
+        /// S1 value V3 (011 = T2_LITE_SISO).
+        V3 = 3,
+        /// S1 value V4 (100 = T2_LITE_MISO).
+        V4 = 4,
+        /// S1 value V5 (101 = reserved).
+        V5 = 5,
+        /// S1 value V6 (110 = reserved).
+        V6 = 6,
+        /// S1 value V7 (111 = reserved).
+        V7 = 7,
     }
 }
 
