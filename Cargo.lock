@@ -4039,6 +4039,7 @@ version = "0.1.0"
 name = "test-fixtures"
 version = "0.1.0"
 dependencies = [
+ "broadcast-common",
  "headers",
  "hex",
  "http",

@@ -1,8 +1,8 @@
 //! Hand-built PSI sections and TS packets: a deliberately independent oracle.
 //!
 //! Every byte is laid out here from the section syntax (ISO/IEC 13818-1
-//! Table 2-30/2-33), including a bitwise CRC-32/MPEG-2, so a demux test that
-//! feeds these never trusts the production serializer or CRC it is checking.
+//! Table 2-30/2-33), with the CRC from `broadcast_common`, so a demux test that
+//! feeds these never trusts the production section serializer it is checking.
 
 const TS_PACKET_SIZE: usize = 188;
 const SYNC_BYTE: u8 = 0x47;
@@ -19,29 +19,12 @@ const PID_RESERVED: u8 = 0xE0;
 const PROGRAM_INFO_LEN_HI: u8 = 0xF0;
 const LONG_FORM_EXTRA: usize = 5;
 const CRC_LEN: usize = 4;
-const CRC_POLY: u32 = 0x04C1_1DB7;
-const CRC_INIT: u32 = 0xFFFF_FFFF;
 const PAT_TABLE_ID: u8 = 0x00;
 const PMT_TABLE_ID: u8 = 0x02;
 const STREAM_TYPE_MPEG2_VIDEO: u8 = 0x02;
 const PAT_PID: u16 = 0;
 
-/// Bitwise CRC-32/MPEG-2 (poly `0x04C11DB7`, init all ones, no reflection, no xorout).
-#[must_use]
-pub fn crc32_mpeg2(bytes: &[u8]) -> u32 {
-    let mut crc = CRC_INIT;
-    for &b in bytes {
-        crc ^= u32::from(b) << 24;
-        for _ in 0..8 {
-            crc = if crc & 0x8000_0000 != 0 {
-                (crc << 1) ^ CRC_POLY
-            } else {
-                crc << 1
-            };
-        }
-    }
-    crc
-}
+pub use broadcast_common::crc32_mpeg2::compute as crc32_mpeg2;
 
 /// A section header (`table_id`, syntax indicator, length) followed by
 /// `body_after_length` verbatim: no extension header and no CRC.

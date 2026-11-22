@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 hex = "0.4"
+broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
 wait-timeout = "0.2"
 tokio = { version = "1", default-features = false, features = ["rt", "time", "net"] }
 serde_json = { workspace = true }
