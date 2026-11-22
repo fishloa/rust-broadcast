@@ -1137,7 +1137,6 @@ version = "15.1.0"
 dependencies = [
  "broadcast-common",
  "criterion",
- "num_enum",
  "serde",
  "serde_json",
  "test-fixtures",
