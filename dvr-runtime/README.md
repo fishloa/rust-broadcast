@@ -42,13 +42,45 @@ assembles tag text by hand.
 `ArchiveWriter` turns each decision into an ordered `Plan` of `StoreOp`s. The
 host executes it and calls `complete(PlanOutcome)`; only a `Done` commits
 state. A failed roll therefore leaves the recorder unchanged, and a partial
-write resynchronises its offset from the length the store reports. The whole
-roll/retention state machine is testable without a disk.
+write resynchronises its offset from the length the store reports, and
+`last_input_consumed` tells the host whether the failed input still needs
+retrying or was repaired in place. The whole roll/retention state machine is
+testable without a disk.
 
 A period rolls on: the first segment; a sequence gap; a segment longer than
 the playlist's target duration; the per-period byte budget; a playlist that
 would exceed the HLS size bound; an fMP4 init change; the configured period
-duration on the caller's monotonic clock; and a programme transition.
+duration on the caller's monotonic clock; and a programme transition. A
+period opened by any of those rolls repeats the current programme's
+`EXT-X-DATERANGE` on its first segment, so the programme is findable on every
+period it covers.
+
+## The reader plans catch-up
+
+`read::parse_period_playlist` reads one period with the torn-line rule and
+typed validation, and `read::merge` combines the archive with the live
+window's still-unarchived tail into one ascending sequence, marking every
+sequence jump discontinuous; `read::window` cuts that to the trailing DVR
+window and `read::checked_range` verifies a recorded byte range against the
+media file. `read::ArchiveScan` is one pass over every period: its
+`unreadable` periods, and its `SeqConflict`s where a restarted run claimed an
+archived sequence (the earlier period's record wins). `recover` rescans an
+fMP4 period's init and fragment spans when a playlist is lost.
+
+Periods that cannot be read are a typed error, never an empty archive: a
+route that cannot list its archive or cannot read a period playlist must not
+number itself from `0` over it.
+
+## The `fs` adapter
+
+`fs::FsRecorder` executes the writer's plans on `std::fs` and is the only
+driver of the writer: `poll` passes monotonic time, the wall clock and the
+fMP4 init generations, which one `media_plane` cursor item does not carry. It
+holds an exclusive `.lock` on its directory, taken by `new`, moved to the next
+run by `succeed` and kept by `with_cursor` when the lock still refuses the
+create, so a host that reconnects misses no segment; `on_programme` applies a
+programme change the host detected before the recorder existed.
+`fs::FsArchive` is the read half with its own bounded parsed-playlist cache.
 
 ## Features
 
@@ -66,16 +98,42 @@ JSON, and no clock reads: every instant is an argument.
 dvr-runtime = { version = "0.1", features = ["fs"] }
 ```
 
+The core has no I/O and no clock: the host supplies the instant, the wall
+clock and the cursor items its `media_plane::Trunk` publishes, and executes
+the plan.
+
 ```rust
 use std::time::Duration;
-use dvr_runtime::{ArchiveConfig, ArchiveContainer, ArchiveName, RetentionLimits};
+use dvr_runtime::{
+    ArchiveConfig, ArchiveContainer, ArchiveName, ArchiveWriter, PlanOutcome, RetentionLimits, Step,
+};
+use media_plane::trunk::SegmentCursorItem;
 
 let retention = RetentionLimits::new()
     .with_periods(std::num::NonZeroUsize::new(8).unwrap());
 let config = ArchiveConfig::new(ArchiveContainer::Ts, Duration::from_secs(2), retention)
     .with_period_duration(Some(Duration::from_secs(3600)));
 let _name = ArchiveName::new("cam-1").unwrap();
+let mut writer = ArchiveWriter::new(config).unwrap();
+
+// The host loop: hand over one cursor item, execute the plan it returns, report.
+loop {
+    let Some(item) = cursor.poll() else { break };
+    let step = writer.on_item(now, wall, &item).unwrap();
+    let Step::Execute(plan) = step else { continue };
+    for op in &plan.ops {
+        store.execute(op)?;                  // create_new data file, append, sync, ...
+    }
+    let outcome = store.outcome(&plan);      // Done, or Failed { at_op, failure }
+    writer.complete(plan.id, outcome).unwrap();
+    if !writer.last_input_consumed() {
+        // keep `item` and retry it, or record a `SegmentCursorItem::Gap { skipped: 1 }`
+    }
+}
 ```
+
+With the `fs` feature the loop is `FsRecorder::poll(now, wall, &inits)`, which
+builds and executes the plan for you.
 
 ## Examples
 

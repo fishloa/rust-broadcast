@@ -1,6 +1,8 @@
 # dvr-runtime: sans-IO DVR archive, EIT programme tracker, PushSession (design)
 
-Status: owner-approved decisions folded in 2026-11-21; final owner read pending (issue #3687). No code. Line numbers are `origin/main` at 5ed0c087d. RFC citations
+Status: owner-approved decisions folded in 2026-11-21; final owner read pending (issue #3687). Shipped in
+`dvr-runtime` 0.1.0: section 4 is the shipped API (its later amendments are listed at the end of section 4). Line
+numbers are `origin/main` at 5ed0c087d. RFC citations
 are section numbers only; spec text lives in `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`
 (cited as "8216bis") and is not quoted here.
 
@@ -69,7 +71,7 @@ Non-goals:
 | `validate_route_dir_name` 751-793 | `dvr_runtime::ArchiveName::new` |
 | `DvrRecorder::new` 799-856 | `FsRecorder::new` + `ArchiveWriter::new` |
 | `with_seq_offset` 868 | `ArchiveConfig::with_seq_offset` |
-| `seed_from_disk` 883-938 | `ArchiveWriter::seed(&[ArchiveFile])` (decision) + `fs` listing (I/O) |
+| `seed_from_disk` 883-938 | `ArchiveWriter::seed(&[SeedFile])` (decision) + `fs` listing (I/O) |
 | `overrun_policy` 941, `current_programme` 947 | `ArchiveWriter::overrun()`, `ArchiveWriter::programme()` |
 | `feed_si` 960-998 | carry buffer + SiDemux: `dvb_si::epg::PresentEventTracker::feed_ts`; glue: `FsRecorder::feed_si` |
 | `handle_si_event` 1002-1054 | detection to dvb-si; roll and DATERANGE decision to `ArchiveWriter::on_programme` |
@@ -137,6 +139,7 @@ Stays. Changes: reads through `FsArchive` inside `run_scan` (340-353, unchanged)
   pN.m4s | pN.ts       period media file (N = period number, decimal u32, no padding)
   pN.m3u8              period playlist (the index)
   .pN.m3u8.tmp         transient, during playlist creation only
+  .lock                the recorder's single-writer lock; never an archive file
 ```
 
 Kept from today: one media file per period; period numbers increase for the life of the directory; a new run never
@@ -324,16 +327,16 @@ All five are additive. Follow-up (separate issue, not blocking): `timed-metadata
 - `std` only (no `no_std` claim): the writer reuses `media_plane::{SegmentEntry, SegmentCursorItem, ArchiveOverrun}`
   and `media_plane::ids::SegmentSeq`, which are `std`-gated. The core does no I/O.
 - Feature `fs` (off by default): `fs::{FsRecorder, FsArchive, FsError}` over `std::fs`; blocking.
-- Dependencies (workspace versions at 5ed0c087d; bumped ones marked):
+- Dependencies (the release wave's versions; all five siblings move an epoch in it):
 
 ```toml
-broadcast-common = { path = "../broadcast-common", version = "13.1.0", features = ["std"] }
-broadcast-hls    = { path = "../broadcast-hls",    version = "0.8.2",  features = ["std"] }   # H1-H5
-media-plane      = { path = "../media-plane",      version = "0.13.0", default-features = false, features = ["std"] }
-dvb-si           = { path = "../dvb-si",           version = "15.2.0", default-features = false, features = ["std", "jiff", "ts"] }
-transmux         = { path = "../transmux",         version = "0.32.1", default-features = false, features = ["std"] }  # parse_box for recover
+broadcast-common = { path = "../broadcast-common", version = "14.0.0", features = ["std"] }
+broadcast-hls    = { path = "../broadcast-hls",    version = "0.9.0",  features = ["std"] }   # H1-H5
+media-plane      = { path = "../media-plane",      version = "0.14.0", default-features = false, features = ["std"] }
+dvb-si           = { path = "../dvb-si",           version = "16.0.0", default-features = false, features = ["std", "jiff", "ts"] }
+transmux         = { path = "../transmux",         version = "0.33.0", default-features = false, features = ["std"] }  # parse_box for recover
 bytes            = "1"
-jiff             = "0.2"
+jiff             = "1"
 thiserror        = "2"
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
@@ -396,7 +399,8 @@ pub struct ArchiveWriter { /* closed periods, open period, offsets, init generat
 
 impl ArchiveWriter {
     pub fn new(config: ArchiveConfig) -> Result<Self, ConfigError>;
-    pub fn seed(&mut self, existing: &[ArchiveFile]) -> Result<(), ArchiveError>;   // once, before the first plan
+    pub fn seed(&mut self, existing: &[SeedFile]) -> Result<(), ArchiveError>;      // once, before the first plan
+    pub fn note_stale_temp_playlists(&mut self, periods: &[PeriodNum]) -> Result<(), ArchiveError>;
     pub fn needs_poll(&self, latest_closed: Option<SegmentSeq>, latest_init: Option<&[u8]>) -> bool;
     pub fn on_inits(&mut self, inits: &[InitGeneration]) -> Result<(), ArchiveError>;   // queues; no I/O by itself
     pub fn on_tick(&mut self, now: Timestamp) -> Result<Step, ArchiveError>;               // time roll
@@ -405,6 +409,7 @@ impl ArchiveWriter {
     pub fn on_programme(&mut self, change: PresentEventChange) -> Result<Step, ArchiveError>;
     pub fn set_latest_closed(&mut self, latest: Option<SegmentSeq>);                    // for the re-arm gap size
     pub fn complete(&mut self, plan: PlanId, outcome: PlanOutcome) -> Result<(), ArchiveError>;
+    pub fn last_input_consumed(&self) -> bool;      // false: the last input needs retrying
     pub fn poll_event(&mut self) -> Option<WriterEvent>;
     pub fn overrun(&self) -> ArchiveOverrun;
     pub fn programme(&self) -> Option<&PresentEvent>;
@@ -423,7 +428,11 @@ pub struct Plan { pub id: PlanId, pub ops: Vec<StoreOp> }
     Remove { file: ArchiveFile },                                       // NotFound counts as done
 }
 #[non_exhaustive] pub enum PlanOutcome { Done, Failed { at_op: usize, failure: StoreFailure } }
-#[non_exhaustive] pub enum StoreFailure { LengthMismatch { actual: u64 }, Io(std::io::ErrorKind) }
+#[non_exhaustive] pub enum StoreFailure {
+    LengthMismatch { actual: u64 },
+    Io(std::io::ErrorKind),
+    NotDurable(std::io::ErrorKind),              // effect in place, durability failed: counts as done
+}
 ```
 
 Every `text` is produced by broadcast-hls (`render_header`/`render_segment`/`render_endlist`). Contract: while a plan
@@ -477,12 +486,16 @@ pub mod read {
     pub fn merge<G: Copy>(archived: &[ArchivedSegment], live: &[LiveSegment<G>]) -> Vec<CatchupSegment<G>>;
     pub fn window<G: Copy>(segments: &[CatchupSegment<G>], window: Option<Duration>) -> Vec<CatchupSegment<G>>;
     pub fn checked_range(span: ByteSpan, file_len: u64) -> Result<ByteSpan, ReadError>;
-    pub struct ArchiveScan { pub segments: Vec<ArchivedSegment>, pub unreadable: Vec<(PeriodNum, PlaylistError)> }
+    pub struct ArchiveScan { pub segments: Vec<ArchivedSegment>, pub unreadable: Vec<(PeriodNum, PlaylistError)>,
+                             pub conflicts: Vec<SeqConflict> }
+    pub struct SeqConflict { pub seq: SegmentSeq, pub kept: PeriodNum, pub dropped: PeriodNum }
 }
 pub mod layout {
     pub enum ArchiveFile { Media(PeriodNum), Playlist(PeriodNum) }
+    pub struct SeedFile { /* ArchiveFile + the bytes it occupies, for retention */ }
     pub fn classify(name: &str, container: ArchiveContainer) -> Option<ArchiveFile>;
     pub fn file_name(file: ArchiveFile, container: ArchiveContainer) -> String;
+    pub const LOCK_FILE_NAME: &str;
 }
 pub mod recover {
     pub enum RecoveredBox { Init(ByteSpan), Fragment(ByteSpan) }
@@ -490,36 +503,55 @@ pub mod recover {
 }
 ```
 
-`ArchiveScan::unreadable` replaces "log and skip" (catchup.rs:179-199); multimux logs and counts it.
-`ArchivedProgramme` gives catch-up a per-programme listing for free (not wired to HTTP in this work).
+`ArchiveScan::unreadable` replaces "log and skip" (catchup.rs:179-199); multimux logs and counts it. A sequence
+number two periods claim is reported in `conflicts` and the earlier period's record is kept, so a run that restarted
+at too low an offset is visible instead of silently hiding segments. `ArchivedProgramme` gives catch-up a
+per-programme listing for free (not wired to HTTP in this work). `merge` marks every sequence jump discontinuous,
+inside the archive as well as at the archive-to-live boundary.
 
 ### 4.5 `fs` feature
 
 ```rust
-pub struct FsRecorder { /* ArchiveWriter, SegmentCursor, Arc<Trunk>, dir, Option<PresentEventTracker> */ }
+pub struct FsRecorder { /* ArchiveWriter, SegmentCursor, Arc<Trunk>, dir, lock file, Option<PresentEventTracker> */ }
 impl FsRecorder {
-    pub fn new(root: &Path, name: ArchiveName, config: ArchiveConfig, trunk: &Arc<Trunk>) -> Result<Self, ArchiveError>;
+    pub fn new(root: &Path, name: ArchiveName, config: ArchiveConfig, trunk: &Arc<Trunk>) -> Result<Self, FsError>;
+    pub fn with_cursor(root: &Path, name: ArchiveName, config: ArchiveConfig, trunk: &Arc<Trunk>,
+                       cursor: &mut Option<SegmentCursor>) -> Result<Self, FsError>;
+    pub fn succeed(self, config: ArchiveConfig, trunk: &Arc<Trunk>,
+                   cursor: &mut Option<SegmentCursor>) -> Result<Self, FsError>;
     pub fn needs_poll(&self, latest_closed: Option<SegmentSeq>, latest_init: Option<&[u8]>) -> bool;
     pub fn poll(&mut self, now: Timestamp, wall: impl Fn(&SegmentEntry) -> Option<jiff::Timestamp>,
                 inits: &[InitGeneration]) -> Result<(), FsError>;           // blocking
     pub fn feed_si(&mut self, ts: &[u8]) -> Result<(), FsError>;             // blocking (may roll)
+    pub fn on_programme(&mut self, change: PresentEventChange) -> Result<(), FsError>;
     pub fn poll_event(&mut self) -> Option<WriterEvent>;
     pub fn writer(&self) -> &ArchiveWriter;
 }
-impl SegmentEgress for FsRecorder { type Error = FsError; }                   // executes plans synchronously
 
 pub struct FsArchive { /* dir, container, owned LRU cache keyed by (mtime, len, inode) */ }
 impl FsArchive {
     pub fn open(root: &Path, name: &ArchiveName, container: ArchiveContainer) -> Self;
-    pub fn scan(&mut self) -> ArchiveScan;
-    pub fn find(&mut self, seq: SegmentSeq) -> Option<ArchivedSegment>;
+    pub fn scan(&mut self) -> Result<ArchiveScan, ReadError>;
+    pub fn find(&mut self, seq: SegmentSeq) -> Result<Option<ArchivedSegment>, ReadError>;
     pub fn read(&self, segment: &ArchivedSegment) -> Result<Bytes, ReadError>;
     pub fn read_init(&self, period: PeriodNum, span: ByteSpan) -> Result<Bytes, ReadError>;
-    pub fn seq_floor(&mut self) -> SegmentSeq;
+    pub fn seq_floor(&mut self) -> Result<Option<SegmentSeq>, ReadError>;
     pub fn recover_spans(&self, period: PeriodNum) -> Result<Vec<RecoveredBox>, ReadError>;
     pub fn cached_periods(&self) -> usize;
 }
 ```
+
+The directory is guarded by an exclusive advisory lock on `.lock` (`File::try_lock`), taken by `new` and held until
+the recorder drops; `succeed` moves it to the successor run without releasing it, and `with_cursor` keeps the host's
+cursor when the lock refuses the create. `poll` is the only driver: `FsRecorder` deliberately does not implement
+`media_plane::egress::SegmentEgress`, because one cursor item carries no monotonic time, wall time or init
+generation, so a period could never roll on `period_duration` and an fMP4 archive would drop every segment as
+arriving before its init.
+
+A listing or a period playlist that exists but cannot be read is a typed `ReadError`, never an empty archive or a
+zero floor: a restarted route that could not list its archive must not number over it. `seq_floor` is `None` for an
+archive with no segment, and fails when a period playlist could not be read. Period playlists are read at most
+`MAX_PLAYLIST_BYTES + 1` bytes.
 
 multimux holds one `FsArchive` per route in a `parking_lot::Mutex` on `RouteHandle` and locks it inside `run_scan`'s
 blocking closure. `wall` is how multimux supplies PDT (its existing `ProgramDateTimeSource`).
@@ -536,16 +568,31 @@ pub enum ArchiveError { Config(#[from] ConfigError), PlanPending, UnknownPlan { 
                         Render(#[from] broadcast_hls::Error) }
 pub enum PlaylistError { Hls(#[from] broadcast_hls::Error), NotAnArchive, UnsupportedVersion { found: u64 },
                          ContainerMismatch, PeriodMismatch { tag: u32, file: u32 },
-                         MissingTiming { index: usize }, SequenceMismatch { index: usize },
-                         ForeignUri { index: usize }, MissingOffset { index: usize },
-                         Overlap { index: usize }, MissingMap { index: usize }, Unsupported { index: usize, tag: UnsupportedTag } }
+                         MissingTiming { index: usize }, MalformedTiming { index: usize },
+                         SequenceMismatch { index: usize }, ForeignUri { index: usize },
+                         MissingOffset { index: usize }, Overlap { index: usize }, MissingMap { index: usize },
+                         Unsupported { index: usize, tag: UnsupportedTag }, RecordAfterEndlist, DuplicateEndlist,
+                         NotFound, Io { kind: std::io::ErrorKind } }
 pub enum ReadError { Gone { period: PeriodNum }, RangeBeyondFile { span: ByteSpan, file_len: u64 },
-                     Playlist(#[from] PlaylistError), Io { kind: std::io::ErrorKind } }
+                     Playlist(#[from] PlaylistError), Recover(#[from] RecoverError), Io { kind: std::io::ErrorKind } }
 // fs feature:
-pub enum FsError { Archive(#[from] ArchiveError), Io { op: StoreOpKind, path: PathBuf, #[source] source: std::io::Error } }
+pub enum FsError { Archive(#[from] ArchiveError), Io { op: StoreOpKind, path: PathBuf, #[source] source: std::io::Error },
+                   Locked { path: PathBuf } }
 ```
 
 No `String` reasons (today's `DvrError::Config { reason: String }` at dvr.rs:222-227 goes).
+
+### 4.7 Amendments made while shipping 0.1.0
+
+| # | Amendment | Reason |
+|---|---|---|
+| A1 | `WriterEvent::{NotDurable, StaleTempPlaylistRemoved}`, `StoreFailure::NotDurable` and `ArchiveError::StaleTempPlaylist` | a playlist renamed into place whose directory sync failed is in place: counting it as failed would archive the segment twice, and a `.pN.m3u8.tmp` left by a crash is removed and reported before its period number is reused |
+| A2 | `ArchiveWriter::last_input_consumed` | a store failure can be repaired in place (a `LengthMismatch` truncation), so the recorder learns from the writer whether the input still needs retrying instead of guessing |
+| A3 | `FsRecorder::{with_cursor, succeed}` and `on_programme` | a host that replaces a recorder (a reconnect) must not miss a segment closed in between, and must hand the directory lock over without a release window; a programme change detected before the recorder existed applies the same way as a fed EIT section |
+| A4 | `FsRecorder` is not a `SegmentEgress` | see 4.5: one cursor item carries no clock and no init generation, so the adapter could never time-roll and would drop every fMP4 segment |
+| A5 | `ArchiveScan::conflicts` / `SeqConflict` | a run that restarted below `seq_floor` collided with archived sequences; the collision is reported instead of hiding segments |
+| A6 | `PlaylistError::{MalformedTiming, RecordAfterEndlist, DuplicateEndlist, NotFound, Io}`, `ReadError::Recover`, `FsError::Locked` | naming each failure the reader can meet: a timing tag that does not decode, RFC 8216bis §4.3.3.4's endlist rule, a playlist evicted between listing and reading, a recovery scan that refused the file, and a second recorder refused the directory |
+| A7 | the `.lock` file (3.1) | one writer per archive directory; the kernel releases it on exit, so there is no stale-lock state |
 
 ## 5. dvb-si EIT programme tracker (`dvb_si::epg`, feature `jiff`; `feed_ts` also needs `ts`)
 
@@ -604,7 +651,8 @@ impl<E: PushEgress> PushSession<E> where E::Error: PushErrorKind {
     NeedsSetup,
     Connected { carried: usize, proposed: usize },
     Reconnect { egress: E, cause: ReconnectCause<E::Error> },   // egress handed back so the caller closes it
-    Backoff { cause: Option<E::Error> },
+    Backoff { egress: E, cause: Option<E::Error> },          // the failed egress, handed back
+    Redundant { egress: E },                                 // on_connected while connected or pending
     Stop { egress: Option<E> },
 }
 #[non_exhaustive] pub enum ReconnectCause<Er> { Send(Er), Renegotiate(Er), Flush, FlushTimeout, Setup }
@@ -626,7 +674,8 @@ Decision table (today's `drive_push`, push/mod.rs:535-718):
 |  | connected | `Err(e)`, `DropItem` | dropped += 1 | `MuxDropped(e)` |
 |  | connected | `Err(e)`, `Reconnect` | negotiated = None | `Reconnect{Send(e)}` |
 | `on_connected(egress, g, tracks)` | not connected | `negotiate` → `Accepted` | | `NeedsSetup` (egress held pending) |
-|  |  | `Error(e)` / other | | `Backoff{Some(e)}` / `Backoff{None}` |
+|  |  | `Error(e)` / other | handed back | `Backoff{egress, Some(e)}` / `Backoff{egress, None}` |
+| `on_connected(egress, ..)` | connected or pending | handed back | | `Redundant{egress}` |
 | `on_setup(true)` | pending | becomes connected | connects += 1, negotiated = g | `Connected{carried, proposed}` |
 | `on_setup(false)` | pending | handed back | | `Reconnect{Setup}` |
 | `on_flush(Flushed)` | connected | | | `Continue` |
@@ -655,16 +704,17 @@ dvr-runtime. Removed from multimux's public API: `DvrRecorder`, `IndexEntry`, `E
 
 | Crate | Change | Semver class | Version |
 |---|---|---|---|
-| broadcast-hls | H1-H5, additive | 0.x additive | 0.8.2 |
-| dvb-si | additive tracker | minor (lockstep) | 15.2.0, with dvb-t2mi, dvb-bbframe, dvb-conformance, dvb-tools |
-| media-plane | additive `push_session`, `PushErrorKind`, `PushErrorClass` | 0.x additive | 0.13.1 |
+| broadcast-hls | H1-H5, additive | 0.x additive | 0.9.0 |
+| dvb-si | additive tracker | minor (lockstep) | 16.0.0, with dvb-t2mi, dvb-bbframe, dvb-conformance, dvb-tools |
+| media-plane | additive `push_session`, `PushErrorKind`, `PushErrorClass` | 0.x additive | 0.14.0 |
 | dvr-runtime | new | first release | 0.1.0 |
 | multimux | public items removed; archive format changed; catch-up init URL changed; new dep dvr-runtime 0.1 | 0.x breaking | 0.21.0 |
 | multimux-cli | its `multimux` caret epoch moves 0.20 → 0.21 | major-class (0.x: minor) | 0.19.0 |
 
-No caret bucket spans two epochs while broadcast-hls and media-plane stay in `^0.8`/`^0.13` and dvb-si in `^15`.
-Publish order: broadcast-hls, dvb-si lockstep `v15.2.0`, media-plane; then dvr-runtime; then multimux; then
-multimux-cli.
+No caret bucket spans two epochs: the jiff 0.2 → 1 wave moves `broadcast-common` (14.0.0), `broadcast-hls`,
+`dvb-si`, `transmux` and `media-plane` together, and dvr-runtime builds against that wave.
+Publish order: broadcast-common, broadcast-hls, dvb-si lockstep `v16.0.0`, transmux, media-plane; then dvr-runtime;
+then multimux; then multimux-cli.
 
 ## 8. Test plan
 
@@ -762,16 +812,16 @@ the new `media_plane::push_session` module's unit tests cover every decision-tab
    `render_playlist`), route wiring, `FsArchive` on `RouteHandle`, error and metric mapping, init URL, the multimux
    halves of #3666/#3667/#3672. CHANGELOG: archive format replaced; older archives are not readable.
 6. **multimux `drive_push` onto PushSession** + new integration test `push_drive` (#3681).
-7. **Release**: broadcast-hls, dvb-si lockstep 15.2.0, media-plane; then dvr-runtime 0.1.0; then multimux 0.21.0 and
-   multimux-cli 0.19.0, per RELEASE-AUDIT.
+7. **Release**: broadcast-common, broadcast-hls, dvb-si lockstep 16.0.0, transmux, media-plane; then dvr-runtime
+   0.1.0; then multimux 0.21.0 and multimux-cli 0.19.0, per RELEASE-AUDIT.
 
 PRs 1, 2 and 3 are independent and can land in any order; 4 needs 1 and 2; 5 needs 4; 6 needs 3.
 
 ## 10. Owner decisions (2026-11-21)
 
 1. `std` only for 0.1.0, no `no_std` claim; the core reuses media-plane's `std`-gated input types.
-2. broadcast-hls (H1-H5) and media-plane (`PushSession`) ship as additive patch releases: broadcast-hls 0.8.2,
-   media-plane 0.13.1.
+2. broadcast-hls (H1-H5) and media-plane (`PushSession`) ship in the jiff 1 wave: broadcast-hls 0.9.0,
+   media-plane 0.14.0.
 3. An fMP4 init change rolls the period, as multimux does today (`roll_to_init`); each period has one init and one
    `EXT-X-MAP`, and every raw `pN.m4s` stays playable as a plain file. This reverses the earlier draft of D7/F5.
 4. A sequence gap keeps rolling the period (F8 as written).

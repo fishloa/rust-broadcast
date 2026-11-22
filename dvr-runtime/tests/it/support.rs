@@ -14,12 +14,30 @@ use dvb_si::tables::eit::{EitEvent, EitKind, EitSection};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::SegmentEntry;
 
+/// Where the test scratch directories live: under the build's target
+/// directory, so a run with `CARGO_TARGET_DIR` set writes there rather than
+/// into the worktree's own `target/`.
+///
+/// Cargo resolves a relative `CARGO_TARGET_DIR` against the directory it was
+/// invoked from, which for this workspace is its root: the crate directory's
+/// parent.
+#[cfg(feature = "fs")]
+fn scratch_root(target_dir: Option<&std::ffi::OsStr>) -> PathBuf {
+    let base = match target_dir {
+        Some(dir) if Path::new(dir).is_absolute() => PathBuf::from(dir),
+        Some(dir) => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(dir),
+        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target"),
+    };
+    base.join("dvr-runtime-tests")
+}
+
 #[cfg(feature = "fs")]
 pub fn temp_dir(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/dvr-runtime-tests")
+    let dir = scratch_root(std::env::var_os("CARGO_TARGET_DIR").as_deref())
         .join(format!("{tag}-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create scratch dir");
@@ -29,6 +47,23 @@ pub fn temp_dir(tag: &str) -> PathBuf {
 #[cfg(feature = "fs")]
 pub fn cleanup(dir: &Path) {
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[cfg(feature = "fs")]
+#[test]
+fn the_scratch_root_follows_the_configured_target_directory() {
+    let absolute = scratch_root(Some(std::ffi::OsStr::new("/scratch/build")));
+    assert_eq!(absolute, PathBuf::from("/scratch/build/dvr-runtime-tests"));
+    let relative = scratch_root(Some(std::ffi::OsStr::new("elsewhere")));
+    assert_eq!(
+        relative,
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../elsewhere/dvr-runtime-tests")
+    );
+    let default = scratch_root(None);
+    assert_eq!(
+        default,
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/dvr-runtime-tests")
+    );
 }
 
 fn short_event(name: &str) -> Vec<u8> {

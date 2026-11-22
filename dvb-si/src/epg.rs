@@ -1016,15 +1016,25 @@ pub enum PresentEventChange {
 /// `event_id` again changes nothing — neither a repeated section nor a
 /// re-versioned copy of the same event is a programme boundary.
 ///
+/// An event signalled with any other `running_status` — `undefined` (value 0)
+/// included — is not tracked, so a service that never marks an event
+/// `running` produces no change at all rather than a guess by position.
+///
+/// EIT layout: ETSI EN 300 468 §5.2.4 Table 7
+/// (`private/specs-verified/dvb/dvb-si/tables/en_300_468/7-event-information-section.md`);
+/// `running_status`: Table 6
+/// (`private/specs-verified/dvb/dvb-si/enums/en_300_468/running_status.md`).
+///
 /// Two entry points feed the tracker:
 ///
 /// * [`on_section`](Self::on_section) returns the change for a section the
 ///   caller already has, without buffering it.
-/// * [`feed_ts`](Self::feed_ts) (feature `ts`) consumes any-aligned MPEG-2 TS
-///   bytes, demuxes the EIT PID, and queues each detected change for
-///   [`poll_change`](Self::poll_change). The queue holds at most
-///   [`PRESENT_CHANGE_QUEUE_CAP`] changes; past that the oldest is dropped and
-///   counted in [`changes_dropped`](Self::changes_dropped).
+/// * [`feed_ts`](Self::feed_ts) (feature `ts`) consumes MPEG-2 TS bytes at
+///   any alignment and in 188-byte, 192-byte M2TS or 204-byte framing
+///   (`mpeg_ts::resync::TsResync`), demuxes the EIT PID, and queues each
+///   detected change for [`poll_change`](Self::poll_change). The queue holds
+///   at most [`PRESENT_CHANGE_QUEUE_CAP`] changes; past that the oldest is
+///   dropped and counted in [`changes_dropped`](Self::changes_dropped).
 ///
 /// `SiDemux`'s version gate suppresses repeated sections, so a steady
 /// carousel produces no events after the first.
@@ -1037,7 +1047,21 @@ pub struct PresentEventTracker {
     #[cfg(feature = "ts")]
     si_demux: crate::demux::SiDemux,
     #[cfg(feature = "ts")]
-    carry: Vec<u8>,
+    resync: mpeg_ts::resync::TsResync,
+    #[cfg(feature = "ts")]
+    packets: Vec<[u8; mpeg_ts::ts::TS_PACKET_SIZE]>,
+}
+
+impl core::fmt::Debug for PresentEventTracker {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PresentEventTracker")
+            .field("service_id", &self.service_id)
+            .field("last_event_id", &self.last_event_id)
+            .field("current", &self.current)
+            .field("pending", &self.pending)
+            .field("changes_dropped", &self.changes_dropped)
+            .finish()
+    }
 }
 
 impl PresentEventTracker {
@@ -1057,7 +1081,9 @@ impl PresentEventTracker {
                     .with_pid(crate::tables::eit::PID),
             ),
             #[cfg(feature = "ts")]
-            carry: Vec::new(),
+            resync: mpeg_ts::resync::TsResync::new(),
+            #[cfg(feature = "ts")]
+            packets: Vec::new(),
         }
     }
 
@@ -1099,22 +1125,24 @@ impl PresentEventTracker {
         Some(change)
     }
 
-    /// Feed any-aligned MPEG-2 TS bytes, queuing each detected change for
+    /// Feed MPEG-2 TS bytes, queuing each detected change for
     /// [`poll_change`](Self::poll_change).
     ///
-    /// Reads need not be 188-byte aligned across calls: an unconsumed partial
-    /// packet is carried over to the next call.
+    /// Packet alignment is recovered by `mpeg_ts::resync::TsResync`: the
+    /// stream may start mid-packet or after junk, use 188-byte, 192-byte M2TS
+    /// or 204-byte framing, and split packets anywhere across calls. Bytes
+    /// the resynchroniser discards carry no recoverable section and are not
+    /// reported.
     #[cfg(feature = "ts")]
     pub fn feed_ts(&mut self, ts: &[u8]) {
-        use mpeg_ts::ts::TS_PACKET_SIZE;
-
-        let mut buf = core::mem::take(&mut self.carry);
-        buf.extend_from_slice(ts);
+        let mut packets = core::mem::take(&mut self.packets);
+        packets.clear();
+        self.resync.feed_into(ts, &mut packets);
+        drop(self.resync.take_losses());
         let mut events = Vec::new();
-        let mut offset = 0;
-        while offset + TS_PACKET_SIZE <= buf.len() {
+        for packet in &packets {
             events.clear();
-            events.extend(self.si_demux.feed(&buf[offset..offset + TS_PACKET_SIZE]));
+            events.extend(self.si_demux.feed(packet));
             for event in &events {
                 if let Ok(crate::tables::AnyTableSection::EitSection(section)) =
                     event.table_section()
@@ -1123,10 +1151,8 @@ impl PresentEventTracker {
                     self.queue(change);
                 }
             }
-            offset += TS_PACKET_SIZE;
         }
-        buf.drain(..offset);
-        self.carry = buf;
+        self.packets = packets;
     }
 
     #[cfg(feature = "ts")]

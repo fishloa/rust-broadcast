@@ -154,7 +154,7 @@ pub fn record_into(root: std::path::PathBuf) -> Fmp4Recording {
         &ArchiveName::new("cam").expect("name"),
         ArchiveContainer::Fmp4,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert!(scan.unreadable.is_empty(), "{:?}", scan.unreadable);
     let mut periods = Vec::new();
     for segment in &scan.segments {
@@ -177,7 +177,7 @@ fn a_forced_track_change_rolls_to_a_second_period() {
         "the init change must roll to another period, got {:?}",
         recording.periods
     );
-    let scan = recording.archive.scan();
+    let scan = recording.archive.scan().expect("scan");
     for period in &recording.periods {
         let path = recording.root.join("cam").join(format!("p{period}.m3u8"));
         let text = std::fs::read_to_string(&path).expect("playlist");

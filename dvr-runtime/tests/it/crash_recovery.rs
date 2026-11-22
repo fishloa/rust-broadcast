@@ -499,7 +499,7 @@ fn a_sequence_claimed_by_two_periods_is_scanned_once_from_the_earlier_period() {
         std::fs::write(dir.join(file), text).expect("playlist");
     }
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Ts);
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     let listed: Vec<(u32, u32)> = scan
         .segments
         .iter()

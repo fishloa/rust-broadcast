@@ -4,12 +4,19 @@ use libfuzzer_sys::fuzz_target;
 use broadcast_hls::{CustomTagName, MediaPlaylist, ParseOptions};
 use dvr_runtime::{ArchiveContainer, PeriodNum};
 
+// The first byte selects the container (bit 0: 0 = fMP4, 1 = TS) and the period
+// (bits 1-7); the rest is the playlist. Both must match the marker line, so
+// fixing them would leave the TS arm and every period but one unreachable.
 fuzz_target!(|data: &[u8]| {
-    let Ok(playlist) = dvr_runtime::read::parse_period_playlist(
-        PeriodNum::new(4),
-        ArchiveContainer::Fmp4,
-        data,
-    ) else {
+    let Some((selector, data)) = data.split_first() else {
+        return;
+    };
+    let container = match selector & 1 {
+        0 => ArchiveContainer::Fmp4,
+        _ => ArchiveContainer::Ts,
+    };
+    let period = PeriodNum::new(u32::from(selector >> 1));
+    let Ok(playlist) = dvr_runtime::read::parse_period_playlist(period, container, data) else {
         return;
     };
     let mut end = data.len();
@@ -37,12 +44,8 @@ fuzz_target!(|data: &[u8]| {
     let Ok(rendered) = parsed.to_m3u8() else {
         return;
     };
-    let again = dvr_runtime::read::parse_period_playlist(
-        PeriodNum::new(4),
-        ArchiveContainer::Fmp4,
-        rendered.as_bytes(),
-    )
-    .expect("a rendered archive playlist parses back");
+    let again = dvr_runtime::read::parse_period_playlist(period, container, rendered.as_bytes())
+        .expect("a rendered archive playlist parses back");
     assert_eq!(again.segments, playlist.segments);
     assert_eq!(again.programmes, playlist.programmes);
     assert_eq!(again.closed, playlist.closed);

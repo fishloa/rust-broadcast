@@ -76,6 +76,45 @@ fn three_moof_mdat_pairs_recover_exact_spans() {
 }
 
 #[test]
+fn a_segment_type_box_before_a_moof_belongs_to_that_fragment() {
+    let init = init();
+    let styp = boxed(b"styp", b"msdh0000");
+    let first = pair(0xAA);
+    let mut data = init.clone();
+    data.extend_from_slice(&styp);
+    data.extend_from_slice(&first);
+    data.extend_from_slice(&styp);
+    data.extend_from_slice(&pair(0xBB));
+    let recovered = scan_fmp4_data(&data).expect("recovers");
+    let init_len = init.len() as u64;
+    let segment_len = (styp.len() + first.len()) as u64;
+    assert_eq!(
+        spans(&recovered),
+        vec![
+            (0, init_len),
+            (init_len, segment_len),
+            (init_len + segment_len, segment_len),
+        ],
+        "a CMAF segment starts at its styp, not at its moof"
+    );
+}
+
+#[test]
+fn a_producer_reference_time_box_before_a_moof_belongs_to_that_fragment() {
+    let init = init();
+    let prft = boxed(b"prft", &[0x44; 12]);
+    let first = pair(0xAA);
+    let mut data = init.clone();
+    data.extend_from_slice(&prft);
+    data.extend_from_slice(&first);
+    let recovered = scan_fmp4_data(&data).expect("recovers");
+    assert_eq!(
+        spans(&recovered)[1],
+        (init.len() as u64, (prft.len() + first.len()) as u64)
+    );
+}
+
+#[test]
 fn a_moof_followed_by_free_is_a_fragment_by_itself() {
     let init = init();
     let moof = boxed(b"moof", &[0x22; 8]);

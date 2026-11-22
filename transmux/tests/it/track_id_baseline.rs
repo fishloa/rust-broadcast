@@ -31,6 +31,7 @@
 //!   `payload_unit_start` after a packet that filled its whole payload marks an unbounded PES
 //!   that lost its tail, and the truncated access unit is now dropped instead of emitted.
 //! - `private/fixtures/ts/france-tnt-uhf32-si-audio.ts` track 6 `6x569` -> `6x108` (issue #1950): track 6 is the H.264 video track in an excerpt made by deleting video packets, so the old 569 "samples" were mostly truncated fragments; PR #1760 drops a video unit whose tail was lost instead of delivering it truncated (lost-tail rule), so the golden value was what was wrong.
+//! - `fixtures/ts/m2ts-192.m2ts` `(none)` -> `1x25 2x4` (#3988). The file is 192-byte M2TS, a 4-byte `TP_extra_header` before every 188-byte TS packet (its PROVENANCE records the verified 192/phase-4 lattice), which the resynchroniser could not lock onto, so the fixture demuxed to no track at all. `mpeg_ts::resync::TsResync` now locks at 192 and strips the header; `ffprobe` agrees the file carries H.264 video and AAC audio.
 //!
 //! Regenerate (only for an intentional behaviour change):
 //! `RUST_BROADCAST_SOAK=1 TRACK_ID_BLESS=1 cargo test -p transmux --all-features --test track_id_baseline`

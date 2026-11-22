@@ -48,6 +48,7 @@ The only directories permitted directly under either tier (the guard
 | `captions` | CEA-608/708 caption data |
 | `subtitles` | Teletext, DVB, TTML, WebVTT, SRT subtitle material |
 | `crypto` | Encryption material: SAMPLE-AES, CSA, keys |
+| `misb` | MISB Local Set KLV packets: ST 0601 UAS Datalink and its nested sets |
 | `tls` | Certificates and keys |
 | `logs` | Recorded traces and measurement logs |
 | `suites` | Third-party test suites kept under their own names |

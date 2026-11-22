@@ -208,6 +208,16 @@ pub enum MultimuxError {
         #[source]
         source: std::io::Error,
     },
+    /// A program archive, or one of its period playlists, exists but could
+    /// not be read, so its sequence floor is unknown.
+    #[error("archive {archive} cannot be read: {source}")]
+    ArchiveRead {
+        /// The program archive's directory name.
+        archive: String,
+        /// Why the read failed.
+        #[source]
+        source: dvr_runtime::read::ReadError,
+    },
 }
 
 /// Which config field failed validation.

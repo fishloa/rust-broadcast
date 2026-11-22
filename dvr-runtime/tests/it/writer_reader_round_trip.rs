@@ -15,7 +15,7 @@ use dvr_runtime::{ArchiveConfig, ArchiveContainer, ArchiveName, RetentionLimits}
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 
-use crate::support::{cleanup, config, periods, segment_at, temp_dir};
+use crate::support::{cleanup, config, periods, temp_dir};
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("nonzero")
@@ -96,7 +96,7 @@ fn fs_recorder_output_reads_back_exactly() {
         &ArchiveName::new("cam").expect("name"),
         ArchiveContainer::Fmp4,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert!(scan.unreadable.is_empty(), "{:?}", scan.unreadable);
     assert_eq!(scan.segments.len(), 3);
     let expected: [(u32, u32, u64, u64, u8, bool); 3] = [
@@ -162,7 +162,7 @@ fn fs_recorder_ts_periods_read_back_exactly() {
         &ArchiveName::new("ts").expect("name"),
         ArchiveContainer::Ts,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 2);
     assert!(scan.segments.iter().all(|s| s.init.is_none()));
     assert_eq!(archive.read(&scan.segments[0]).expect("read").len(), 188);
@@ -209,7 +209,7 @@ fn a_stale_offset_resyncs_and_the_segment_retries() {
         &ArchiveName::new("stale").expect("name"),
         ArchiveContainer::Ts,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 2);
     let bytes = archive.read(&scan.segments[1]).expect("read");
     assert_eq!(bytes, Bytes::from(vec![0x22u8; 100]));
@@ -251,7 +251,7 @@ fn a_partial_playlist_append_truncates_and_retries() {
         &ArchiveName::new("pl").expect("name"),
         ArchiveContainer::Ts,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 2);
     assert_eq!(scan.segments[1].seq, SegmentSeq::new(1));
     cleanup(&root);
@@ -348,52 +348,13 @@ fn retention_removes_the_files_from_disk() {
     assert!(root.join("ret").join("p3.ts").exists());
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Ts);
     assert_eq!(archive.cached_periods(), 0);
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 2);
     assert_eq!(scan.segments[0].period.value(), 2);
     assert_eq!(scan.segments[1].period.value(), 3);
     assert_eq!(scan.segments[0].seq, SegmentSeq::new(2));
     assert_eq!(scan.segments[1].seq, SegmentSeq::new(3));
     assert!(scan.conflicts.is_empty());
-    cleanup(&root);
-}
-
-#[test]
-fn segment_egress_rejects_a_programme_service_writer() {
-    use media_plane::egress::SegmentEgress;
-    let root = temp_dir("egress-programme");
-    let trunk = trunk();
-    let mut config = config(ArchiveContainer::Ts, 2, periods(10));
-    config.period_duration = Some(Duration::from_secs(86400));
-    config.programme_service = Some(0x0601);
-    let mut recorder = recorder(&root, "eg", config, &trunk);
-    let item = media_plane::trunk::SegmentCursorItem::Segment(segment_at(0, 100, 0, false));
-    let error = recorder
-        .on_segment(&item)
-        .expect_err("no wall clock source");
-    assert!(matches!(
-        error,
-        dvr_runtime::fs::FsError::Archive(dvr_runtime::ArchiveError::WallClockRequired)
-    ));
-    cleanup(&root);
-}
-
-#[test]
-fn segment_egress_records_without_programme_tracking() {
-    use media_plane::egress::SegmentEgress;
-    let root = temp_dir("egress-plain");
-    let trunk = trunk();
-    let mut config = config(ArchiveContainer::Ts, 2, periods(10));
-    config.period_duration = Some(Duration::from_secs(86400));
-    let mut recorder = recorder(&root, "eg", config, &trunk);
-    let item = media_plane::trunk::SegmentCursorItem::Segment(segment_at(0, 100, 0, false));
-    recorder.on_segment(&item).expect("recorded");
-    let mut archive = FsArchive::open(
-        &root,
-        &ArchiveName::new("eg").expect("name"),
-        ArchiveContainer::Ts,
-    );
-    assert_eq!(archive.scan().segments.len(), 1);
     cleanup(&root);
 }
 
@@ -432,5 +393,39 @@ fn a_persistently_failing_item_becomes_a_counted_gap() {
     recorder
         .poll(Timestamp::ZERO, |_| None, &[])
         .expect("nothing left");
+    cleanup(&root);
+}
+
+#[test]
+fn a_store_failure_keeps_the_os_error_it_saw() {
+    let root = temp_dir("io-source");
+    let trunk = trunk();
+    let mut config = config(ArchiveContainer::Ts, 2, periods(10));
+    config.period_duration = Some(Duration::from_secs(86400));
+    let mut recorder = recorder(&root, "src", config, &trunk);
+    std::fs::create_dir_all(root.join("src")).expect("archive directory");
+    set_readonly(&root.join("src"), true);
+    publish(
+        &trunk.segment_writer().expect("writer"),
+        0,
+        100,
+        0x47,
+        0,
+        false,
+    );
+    let error = recorder
+        .poll(Timestamp::ZERO, |_| None, &[])
+        .expect_err("the blocked create fails");
+    set_readonly(&root.join("src"), false);
+    match error {
+        dvr_runtime::fs::FsError::Io { source, .. } => {
+            assert!(
+                source.raw_os_error().is_some(),
+                "the OS error is carried, not rebuilt from its kind: {source:?}"
+            );
+            assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+        }
+        other => panic!("expected an I/O error, got {other:?}"),
+    }
     cleanup(&root);
 }

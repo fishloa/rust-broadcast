@@ -1,18 +1,31 @@
 # Changelog
 
 ## [Unreleased]
+
+### Breaking
+
+- **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff::Timestamp` faces of the `jiff` and `http-date` features (`time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `encode_seconds_since_2000_utc`, `MonoUtc`, `http_date::parse_http_date`, `date_to_epoch_us`) are now jiff 1.x types.
+
 ### Added
+
 - `bits::BitReader::starting_at` / `bits::BitWriter::starting_at` (resume at a bit offset) and `bits::BitBuf`, a growable owning MSB-first bit writer built on `BitWriter`, so callers with their own bit cursors (`dvb-si`, `transmux`) use the one implementation (#3961).
+- `hex::hex_decode_into` (exact-length hex decode into a caller buffer), `base64::{base64_url_encode_nopad, base64_url_decode_nopad}` (RFC 4648 §5, no padding) and a `base64::DecodeError` re-export, so consumers route hex and base64 through this crate instead of depending on the codec crates directly (#3957).
+
 - `hex::hex_decode_into` (exact-length hex decode into a caller buffer; a typed `hex::HexDecodeError` naming the length mismatch or the first non-digit's offset, and `text` is validated in full first so `out` is never left partly written, #3994), `base64::{base64_url_encode_nopad, base64_url_decode_nopad}` (RFC 4648 §5, no padding) so consumers route hex and base64 through this crate instead of depending on the codec crates directly (#3957).
 - `wire_enum!` (exported macro): a `#[repr]` spec enum declared together with its checked `TryFrom<repr>` and `From<Self> for repr` from one variant table, taking the consumer's own error type, so `dvb-si`, `dvb-t2mi` and `dvb-bbframe` no longer keep three copies of the macro (#3989).
 ### Breaking
 - `base64::base64_decode_strict`, `base64_decode_lenient` and `base64_url_decode_nopad` return broadcast-common's own `base64::Base64DecodeError` (`thiserror`, with `name()`) instead of the `base64` crate's `DecodeError`, so a `base64` major bump no longer breaks this crate's public API; nothing public names the `base64` crate (#3993).
 ### Changed
-- **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff::Timestamp` faces of the `jiff` and `http-date` features (`time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `encode_seconds_since_2000_utc`, `MonoUtc`, `http_date::parse_http_date`, `date_to_epoch_us`) are now jiff 1.x types.
+
 - Internal: the shared error kinds and `BitError`, `KlvError`, `InvalidBackoff`, `InterfaceError`, `ClockOutOfRange`, `InvalidSeqSpace` and `XmlCharError` derive `thiserror::Error` (messages unchanged); `thiserror` is now a non-optional `no_std` dependency, and `InterfaceError` implements `core::error::Error` without `std` (#3962).
+- README corrected: `thiserror` is named as an unconditional dependency, and the `bits`, `hex` and `base64` rows list `BitBuf`/`starting_at`, `hex_decode`/`hex_decode_into` and the URL-safe base64 helpers with `DecodeError` (#4013).
+
 ### Fixed
+
 - `backoff::RetrySchedule` applies the drawn jitter term itself, not that term raised to the attempt index. Raising it collapsed every retry from the fifth attempt on to exactly `5/6` of the raw delay (only a term of exactly one escaped), so during the long outage the cap exists for, a fleet of clients retried on one shared instant: the lockstep the schedule and its `with_offset` are meant to prevent. The delay now stays inside `[raw * 5/6, raw]` with the sequence's own spread at every attempt (#2920).
+
 ### Tests
+
 - Audit 21 (#2921): `decode_mjd_bcd` refuses a BCD time of day past its field (12:60:00, 12:30:60, 24:00:00) and accepts 23:59:59, the calendar gate keeps refusing 31 February, month 13 and day 0, the whole representable `jiff::Timestamp` range encodes through `encode_seconds_since_2000_utc`, and `MonoUtc::utc_at` moves by exactly the elapsed read and saturates at `jiff::Timestamp::MIN`/`MAX`.
 - Audit 21 (#2922): `SeqSpace`'s `lt`/`leq`/`gt`/`geq` and `is_tie` at equal values, exactly half the space apart (all four answers false, both orders) and across the wrap, plus `in_closed_range` over a one-element range, a `last` that precedes `first` and a range that wraps.
 - Audit 21 (#2923): `read_tree` enforces the attribute-count and attribute-value-size bounds at exactly the configured cap (the cap is allowed, one past it is `XmlError::Limit`), `Elem`'s `child`/`children_named`/`has_child`/`attr_in` match on namespace and name together, and `xml_chars::read_attributes` resolves each prefix, skips the namespace declarations and reports a value outside the `Char` production.

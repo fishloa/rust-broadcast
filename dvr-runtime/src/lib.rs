@@ -70,8 +70,8 @@
 //! `fs` adapter:
 //!
 //! ```text
-//! cargo run -p dvr-runtime --example record_ts_file -- --help
-//! cargo run -p dvr-runtime --example list_programmes <archive-dir>
+//! cargo run -p dvr-runtime --example record_ts_file --all-features -- fixtures/ts/h264-aac.ts
+//! cargo run -p dvr-runtime --example list_programmes --all-features -- fixtures/ts/tnt-5w-12732v-isi6-10s.ts
 //! ```
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]

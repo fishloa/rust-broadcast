@@ -34,6 +34,20 @@ fn validate(dir: &std::path::Path, playlist: &str) {
     }
 }
 
+/// Validate one closed archive playlist against Apple's validator, skipping
+/// loudly when the tool is absent, so a recording another test makes meets the
+/// independent oracle too.
+pub fn validate_if_available(dir: &std::path::Path, playlist: &str) {
+    if !test_fixtures::process::msv::available() {
+        eprintln!(
+            "SKIP hls_oracle: `mediastreamvalidator` not on PATH (macOS-only Apple HLS \
+             conformance tool). This is a no-op result on this host, not real coverage."
+        );
+        return;
+    }
+    validate(dir, playlist);
+}
+
 #[test]
 fn archive_playlists_pass_mediastreamvalidator() {
     if !test_fixtures::process::msv::available() {

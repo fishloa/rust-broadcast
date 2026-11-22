@@ -6,8 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Fixed
-- The module-chosen session cap, the OPEN/CLOSE response arms, `create_session`'s SPDU bytes and the empty-body `session_number` edge have tests; likewise `descramble`/`descramble_programs`/`add_program`/`enter_menu`/`mmi_cancel` writing their APDUs, `ca_pids`, `next_timer`, the `send_ca_pmt_checked` overflow arithmetic, the post-reset settle boundaries and `infer_card`'s edges (audit 21 findings 51 and 52, #2946/#2947).
+
+### Changed
+
+- Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
+- The `linux` feature no longer depends on `libc`: the CA-device ioctls, errno values and `O_NONBLOCK` go through `rustix` (#3972, #4019). No public API change.
+
+### Tests
+
 - `MAX_CA_FRAME` is pinned to 65 541 bytes, so the `Driver` read buffer cannot silently shrink below the largest legal link frame (audit 23 finding 73, #3351).
 - `DeviceOpError`'s errno reporting (per-operation `EINVAL`/`ENODEV` classification), device/operation error text and error source are asserted, as are `RecordingCaDevice`'s zero-length read, slot-change logging and poll forwarding and `MockCaDevice`'s poll (audit 23 findings 74 and 75, #3352/#3353).
 - `PartialWrite`'s diagnostic names the device and the written/requested byte counts (audit 23 finding 76, #3354).
@@ -19,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Link-trace decoding is pinned tag by tag: every TPDU and SPDU label, the exact minimum SPDU length each session-management label needs (one byte less must fall back without panicking), and the SPDU/poll boundary that keeps an appended status byte out of the SPDU (audit 23 findings 84-86, #3362/#3363/#3364).
 - The transport's caps are pinned (`MAX_REASSEMBLY_LEN` 2 097 152, `MAX_SPDU_LEN` 65 534) and their boundaries asserted: an SPDU of exactly `MAX_SPDU_LEN` and a reassembly of exactly `MAX_REASSEMBLY_LEN` are accepted, one byte more is refused (audit 23 findings 87 and 88, #3365/#3366).
 - Every `Out.timer` is asserted to be the exact next deadline (reply timeout while a C_TPDU is in flight, remaining poll interval while idling), and a module `T_C_Error` and a status byte for a foreign `t_c_id` are asserted to be reported instead of accepted as our poll's answer (audit 23 findings 89 and 90, #3367/#3368).
+- The module-chosen session cap, the OPEN/CLOSE response arms, `create_session`'s SPDU bytes and the empty-body `session_number` edge have tests; likewise `descramble`/`descramble_programs`/`add_program`/`enter_menu`/`mmi_cancel` writing their APDUs, `ca_pids`, `next_timer`, the `send_ca_pmt_checked` overflow arithmetic, the post-reset settle boundaries and `infer_card`'s edges (audit 21 findings 51 and 52, #2946/#2947).
 
 ## [0.21.1] - 2026-11-17
 ### Added
