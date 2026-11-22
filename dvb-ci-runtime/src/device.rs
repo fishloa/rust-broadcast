@@ -64,7 +64,8 @@ pub struct SlotInfo {
 /// unchanged; the errno stays reachable through [`errno`](Self::errno) /
 /// [`DeviceOpError::errno_of`] (a wrapped error no longer answers
 /// `raw_os_error()` itself).
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{device}: {op} failed: {source}")]
 pub struct DeviceOpError {
     /// The operation that failed, e.g. `"write (17 bytes)"`.
     pub op: String,
@@ -104,18 +105,6 @@ impl DeviceOpError {
                 .and_then(|inner| inner.downcast_ref::<DeviceOpError>())
                 .and_then(DeviceOpError::errno)
         })
-    }
-}
-
-impl std::fmt::Display for DeviceOpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {} failed: {}", self.device, self.op, self.source)
-    }
-}
-
-impl std::error::Error for DeviceOpError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 
