@@ -89,6 +89,57 @@ fn availability_start_time(unix_secs: i64) -> String {
 }
 
 #[cfg(test)]
+mod cli_error_display_tests {
+    use super::CliError;
+    use std::error::Error as _;
+
+    #[test]
+    fn every_variant_renders_its_text_and_chains_no_source() {
+        let cases = [
+            (
+                CliError::Io(std::io::Error::other("disk gone")),
+                "i/o error: disk gone",
+            ),
+            (
+                CliError::Transmux(crate::Error::BoxSizeUnderflow {
+                    size: 4,
+                    header_size: 8,
+                }),
+                "transmux error: box size 4 is smaller than header (8 bytes)",
+            ),
+            (
+                CliError::UnknownContainer,
+                "unknown input container: leading bytes match no supported format (MPEG-TS, MP4/CMAF, MPEG-PS, WebM, FLV)",
+            ),
+            (
+                CliError::UnsupportedContainer("MXF"),
+                "unsupported input container MXF: this CLI demuxes MPEG-TS, MP4/CMAF, MPEG-PS, WebM/Matroska and FLV",
+            ),
+            (
+                CliError::UtcTimingNeedsLl,
+                "--utc-timing-url needs --ll (MPD/UTCTiming is emitted only for the low-latency DASH profile)",
+            ),
+            (
+                CliError::UndeterminedFormat,
+                "output format not given and not inferable from the output extension; pass -f/--format",
+            ),
+            (
+                CliError::NoTracksSelected,
+                "the --tracks selection matched no tracks in the input",
+            ),
+            (
+                CliError::BadKey("k".to_string()),
+                "invalid --key (k): expected <32-hex-KID>:<32-hex-key>",
+            ),
+        ];
+        for (error, text) in cases {
+            assert_eq!(error.to_string(), text);
+            assert!(error.source().is_none(), "{text}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod availability_start_time_tests {
     use super::availability_start_time;
 
