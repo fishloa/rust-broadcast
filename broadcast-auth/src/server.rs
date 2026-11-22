@@ -1049,7 +1049,7 @@ fn md5_hex(input: String) -> String {
 /// Decodes exactly `N` bytes of hex, or `None`.
 fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
     let mut out = [0u8; N];
-    broadcast_common::hex::hex_decode_into(text, &mut out)?;
+    broadcast_common::hex::hex_decode_into(text, &mut out).ok()?;
     Some(out)
 }
 

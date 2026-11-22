@@ -177,6 +177,7 @@ pub const TABLE: &[Crate] = &[
             // `thiserror` error whose `#[error]` text carries the offending
             // input; `name()` is the reason without it.
             "InterfaceError",
+            "HexDecodeError",
         ],
         expected: None,
         min_enums: None,

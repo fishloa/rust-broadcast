@@ -3335,7 +3335,7 @@ fn parse_iv(s: &str) -> Result<[u8; 16]> {
     let mut out = [0u8; 16];
     s.strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
-        .and_then(|hex| broadcast_common::hex::hex_decode_into(hex, &mut out))
+        .and_then(|hex| broadcast_common::hex::hex_decode_into(hex, &mut out).ok())
         .ok_or_else(|| Error::InvalidIv {
             value: s.to_string(),
         })?;

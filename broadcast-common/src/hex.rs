@@ -51,20 +51,77 @@ pub fn hex_decode(text: &str) -> Option<alloc::vec::Vec<u8>> {
     ::hex::decode(text).ok()
 }
 
-/// Hex-decode `text` (either case) into exactly `out.len()` bytes, or `None`
-/// when `text` is not `2 * out.len()` hex digits.
+/// Why [`hex_decode_into`] refused its input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum HexDecodeError {
+    /// `text` is not exactly two digits per output byte.
+    #[error("hex text has {actual} digit(s), expected {expected}")]
+    InvalidLength {
+        /// Digits needed to fill the output.
+        expected: usize,
+        /// Digits supplied.
+        actual: usize,
+    },
+    /// A byte of `text` is not an ASCII hex digit.
+    #[error("byte {byte:#04x} at offset {offset} is not a hex digit")]
+    InvalidDigit {
+        /// Byte offset of the first non-digit in `text`.
+        offset: usize,
+        /// That byte.
+        byte: u8,
+    },
+}
+
+impl HexDecodeError {
+    /// The reason's stable label, without the offending input.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::InvalidLength { .. } => "invalid_length",
+            Self::InvalidDigit { .. } => "invalid_digit",
+        }
+    }
+}
+
+/// Hex-decode `text` (either case) into exactly `out.len()` bytes.
+///
+/// `text` is validated in full before anything is written, so on an error
+/// `out` is unchanged.
 ///
 /// ```
-/// use broadcast_common::hex::hex_decode_into;
+/// use broadcast_common::hex::{HexDecodeError, hex_decode_into};
 ///
 /// let mut out = [0u8; 2];
-/// assert_eq!(hex_decode_into("00Ff", &mut out), Some(()));
+/// assert_eq!(hex_decode_into("00Ff", &mut out), Ok(()));
 /// assert_eq!(out, [0x00, 0xff]);
-/// assert_eq!(hex_decode_into("00", &mut out), None);
+/// assert_eq!(
+///     hex_decode_into("00", &mut out),
+///     Err(HexDecodeError::InvalidLength { expected: 4, actual: 2 })
+/// );
 /// ```
-#[must_use]
-pub fn hex_decode_into(text: &str, out: &mut [u8]) -> Option<()> {
-    ::hex::decode_to_slice(text, out).ok()
+///
+/// # Errors
+///
+/// [`HexDecodeError::InvalidLength`] unless `text` has `2 * out.len()`
+/// bytes; [`HexDecodeError::InvalidDigit`] for the first byte that is not an
+/// ASCII hex digit.
+pub fn hex_decode_into(text: &str, out: &mut [u8]) -> Result<(), HexDecodeError> {
+    let expected = out.len().saturating_mul(2);
+    let length_error = HexDecodeError::InvalidLength {
+        expected,
+        actual: text.len(),
+    };
+    if text.len() != expected {
+        return Err(length_error);
+    }
+    if let Some((offset, byte)) = text
+        .bytes()
+        .enumerate()
+        .find(|(_, b)| !b.is_ascii_hexdigit())
+    {
+        return Err(HexDecodeError::InvalidDigit { offset, byte });
+    }
+    ::hex::decode_to_slice(text, out).map_err(|_| length_error)
 }
 
 #[cfg(test)]
@@ -89,12 +146,55 @@ mod tests {
     #[test]
     fn decode_into_requires_the_exact_length_and_hex_digits() {
         let mut out = [0u8; 3];
-        assert_eq!(hex_decode_into("00Ff12", &mut out), Some(()));
+        assert_eq!(hex_decode_into("00Ff12", &mut out), Ok(()));
         assert_eq!(out, [0x00, 0xff, 0x12]);
-        assert_eq!(hex_decode_into("00ff", &mut out), None);
-        assert_eq!(hex_decode_into("00ff1234", &mut out), None);
-        assert_eq!(hex_decode_into("00ff1g", &mut out), None);
-        assert_eq!(hex_decode_into("", &mut []), Some(()));
+        assert_eq!(
+            hex_decode_into("00ff", &mut out),
+            Err(HexDecodeError::InvalidLength {
+                expected: 6,
+                actual: 4
+            })
+        );
+        assert_eq!(
+            hex_decode_into("00ff1234", &mut out),
+            Err(HexDecodeError::InvalidLength {
+                expected: 6,
+                actual: 8
+            })
+        );
+        assert_eq!(
+            hex_decode_into("00ff1g", &mut out),
+            Err(HexDecodeError::InvalidDigit {
+                offset: 5,
+                byte: b'g'
+            })
+        );
+        assert_eq!(hex_decode_into("", &mut []), Ok(()));
+        assert_eq!(
+            HexDecodeError::InvalidDigit { offset: 5, byte: b'g' }.to_string(),
+            "byte 0x67 at offset 5 is not a hex digit"
+        );
+        assert_eq!(
+            HexDecodeError::InvalidLength {
+                expected: 6,
+                actual: 4
+            }
+            .name(),
+            "invalid_length"
+        );
+    }
+
+    #[test]
+    fn decode_into_leaves_out_untouched_on_a_bad_digit() {
+        let mut out = [0xAAu8; 3];
+        assert_eq!(
+            hex_decode_into("0011zz", &mut out),
+            Err(HexDecodeError::InvalidDigit {
+                offset: 4,
+                byte: b'z'
+            })
+        );
+        assert_eq!(out, [0xAA; 3]);
     }
 
     #[test]
