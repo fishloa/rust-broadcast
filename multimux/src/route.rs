@@ -780,10 +780,20 @@ pub(crate) struct ProgramServing {
     /// archive directory were locked.
     #[cfg(test)]
     refuse_next_starts: std::sync::atomic::AtomicU32,
+    /// The id the route registers this program under.
+    program: ProgramId,
+    /// The MPEG-2 `program_number` this program's tracks were declared
+    /// under; `None` on a non-TS source.
+    program_number: Option<u16>,
     /// Which archive of the route this program records into (issue #3950):
-    /// `None` for a non-default program without a `program_number`, which
-    /// is not recorded.
-    archive: Option<crate::dvr::ProgramArchive>,
+    /// `None` for a program that is not recorded. Changes once, from the
+    /// default archive to `<route>@<program_number>`, when an input without
+    /// `dvb_service_id` turns out to carry several programs
+    /// ([`Self::move_archive`]).
+    archive: Mutex<Option<crate::dvr::ProgramArchive>>,
+    /// The recorder of the archive this program moves to, taken over at its
+    /// next archive poll.
+    dvr_moving: Mutex<Option<PendingRecorder>>,
     /// DVR durable segment archive (issue #746) — `None` when this route
     /// does not have DVR enabled. Owns a pinning `SegmentCursor`, drained
     /// by [`Self::poll_dvr`].
@@ -982,6 +992,7 @@ impl ProgramServing {
     /// segment (see [`PeriodCursor`]).
     fn new(
         program: ProgramId,
+        program_number: Option<u16>,
         archive: Option<crate::dvr::ProgramArchive>,
         trunk: Arc<Trunk>,
         route: &RouteHandle,
@@ -1126,7 +1137,10 @@ impl ProgramServing {
             smooth: std::sync::OnceLock::new(),
             tracks_active: std::sync::atomic::AtomicBool::new(true),
             route_name: route_name.to_string(),
-            archive,
+            program,
+            program_number,
+            archive: Mutex::new(archive),
+            dvr_moving: Mutex::new(None),
             #[cfg(test)]
             panic_on_persist: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
@@ -1285,9 +1299,50 @@ impl ProgramServing {
     fn release_recorder(&self) -> Option<FsRecorder> {
         let recorder = self.dvr.lock().take();
         let pending = self.dvr_pending.lock().take();
+        self.dvr_moving.lock().take();
         self.eit_tracker.lock().take();
         self.dvr_recording.store(false, Ordering::SeqCst);
         recorder.or_else(|| pending.and_then(|p| p.inherited))
+    }
+
+    /// Whether the route's shared resource route (which serves the default
+    /// program id) serves this program's live resources.
+    pub(crate) fn is_default_program(&self) -> bool {
+        self.program == SPTS_PROGRAM_ID
+    }
+
+    /// The archive this program records into, if any.
+    pub(crate) fn archive(&self) -> Option<crate::dvr::ProgramArchive> {
+        *self.archive.lock()
+    }
+
+    /// Move this recording program from the default archive to `to`: the
+    /// recorder of `to` pins its cursor now and takes over at the next
+    /// archive poll, after a final poll of the current recorder; what was
+    /// recorded in the default archive stays there.
+    fn move_archive(
+        &self,
+        to: crate::dvr::ProgramArchive,
+        config: &crate::dvr::DvrConfig,
+        container: Container,
+    ) {
+        let mut archive = self.archive.lock();
+        if *archive == Some(to) || !self.dvr_recording.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(pending) = PendingRecorder::new(
+            &config.for_program(to),
+            &self.route_name,
+            to,
+            container,
+            self.sibling_params.target_duration,
+            self.ll_hls.media_sequence_offset(),
+            &self.trunk,
+        ) else {
+            return;
+        };
+        *self.dvr_moving.lock() = Some(pending);
+        *archive = Some(to);
     }
 
     /// Archive what this program closed but had not archived and release its
@@ -1297,7 +1352,7 @@ impl ProgramServing {
         if !self.poll_dvr_blocking(true) && !self.poll_dvr_blocking(true) {
             tracing::error!(
                 route = %self.route_name,
-                archive = ?self.archive,
+                archive = ?self.archive(),
                 "DVR could not archive a program gone after a replace; its last segments are lost"
             );
             metrics::counter!(
@@ -1744,7 +1799,9 @@ impl ProgramServing {
             let Some(guard) = self.dvr.try_lock() else {
                 return;
             };
+            let moving = self.dvr_moving.lock().is_some();
             match guard.as_ref() {
+                _ if moving => {}
                 None if self
                     .dvr_pending
                     .lock()
@@ -1773,6 +1830,25 @@ impl ProgramServing {
     /// `multimux_dvr_failed_total` counter is incremented and an error is
     /// logged.
     fn poll_dvr_blocking(&self, force_start: bool) -> bool {
+        let Some(next) = self.dvr_moving.lock().take() else {
+            return self.poll_recorder_blocking(force_start);
+        };
+        let started = self.dvr.lock().is_some();
+        if started && !self.poll_recorder_blocking(false) {
+            tracing::warn!(
+                route = %self.route_name,
+                "DVR could not archive the last segments before moving this program's archive"
+            );
+        }
+        let previous = self.dvr.lock().take();
+        drop(previous);
+        *self.dvr_pending.lock() = Some(next);
+        self.poll_recorder_blocking(true)
+    }
+
+    /// One archive poll of this program's current recorder (see
+    /// [`Self::poll_dvr_blocking`]).
+    fn poll_recorder_blocking(&self, force_start: bool) -> bool {
         use std::panic::{AssertUnwindSafe, catch_unwind};
 
         self.flush_predecessor();
@@ -2379,6 +2455,11 @@ pub struct RouteHandle {
     /// program of the same archive takes their recorder over or
     /// [`Self::settle_archive_predecessors`] retires them.
     archive_predecessors: Mutex<BTreeMap<crate::dvr::ProgramArchive, Arc<ProgramServing>>>,
+    /// Whether this route's input has carried more than one numbered program
+    /// (or the route found per-program archives at start, or replaced a route
+    /// that had): without `dvb_service_id`, every numbered program then
+    /// records into `<route>@<program_number>` ([`crate::dvr::ProgramArchive::of`]).
+    multi_program: std::sync::atomic::AtomicBool,
     /// Where this route's live HLS playlists get their
     /// `#EXT-X-PROGRAM-DATE-TIME` values from (see
     /// [`Self::with_program_date_time`]). Defaults to
@@ -2472,6 +2553,7 @@ impl RouteHandle {
             dvr_config: None,
             archive_floors: Mutex::new(crate::dvr::ArchiveFloors::new()),
             archive_predecessors: Mutex::new(BTreeMap::new()),
+            multi_program: std::sync::atomic::AtomicBool::new(false),
             program_date_time,
             hold_cold_playlist,
             declared_bandwidth_bps,
@@ -2549,13 +2631,16 @@ impl RouteHandle {
         *self.predecessor.lock() = continuations;
         let mut parked = std::mem::take(&mut *old.archive_predecessors.lock());
         for serving in old.programs.read().values() {
-            if let Some(archive) = serving.archive
+            if let Some(archive) = serving.archive()
                 && serving.dvr_recording.load(Ordering::SeqCst)
             {
                 parked.insert(archive, Arc::clone(serving));
             }
         }
         *self.archive_predecessors.lock() = parked;
+        if old.multi_program.load(Ordering::SeqCst) {
+            self.multi_program.store(true, Ordering::SeqCst);
+        }
     }
 
     /// Retire every parked archive predecessor ([`Self::continue_from`], or
@@ -2605,7 +2690,7 @@ impl RouteHandle {
             self.archive_predecessors.lock().values().cloned().collect();
         let mut shown = crate::dvr::ArchiveFloors::new();
         for serving in self.programs.read().values().chain(parked.iter()) {
-            if let Some(archive) = serving.archive {
+            if let Some(archive) = serving.archive() {
                 let next =
                     u32::try_from(serving.ll_hls.next_media_sequence().value()).unwrap_or(u32::MAX);
                 let floor = shown.entry(archive).or_default();
@@ -2721,6 +2806,12 @@ impl RouteHandle {
     /// #1083). A program with no floor starts above `0`.
     #[must_use]
     pub(crate) fn with_archive_floors(mut self, floors: crate::dvr::ArchiveFloors) -> Self {
+        if floors
+            .keys()
+            .any(|archive| matches!(archive, crate::dvr::ProgramArchive::Program(_)))
+        {
+            *self.multi_program.get_mut() = true;
+        }
         *self.archive_floors.get_mut() = floors;
         self
     }
@@ -2912,7 +3003,7 @@ impl RouteHandle {
                 .programs
                 .read()
                 .values()
-                .any(|serving| serving.archive == Some(archive));
+                .any(|serving| serving.archive() == Some(archive));
         if !known {
             return None;
         }
@@ -2939,14 +3030,12 @@ impl RouteHandle {
     /// The live program recording into `archive`, resolved as
     /// [`Self::resolve_program`] resolves a program id.
     pub(crate) fn resolve_archive(&self, archive: crate::dvr::ProgramArchive) -> ProgramResolution {
-        if archive == crate::dvr::ProgramArchive::Default {
-            return self.resolve_program(SPTS_PROGRAM_ID);
-        }
         let programs = self.programs.read();
-        match programs.iter().find(|(program, serving)| {
-            **program != SPTS_PROGRAM_ID && serving.archive == Some(archive)
-        }) {
-            Some((_, serving)) => ProgramResolution::Found(Arc::clone(serving)),
+        match programs
+            .values()
+            .find(|serving| serving.archive() == Some(archive))
+        {
+            Some(serving) => ProgramResolution::Found(Arc::clone(serving)),
             None if programs.is_empty() => ProgramResolution::NotYetAnnounced,
             None => ProgramResolution::NotFound,
         }
@@ -3030,7 +3119,22 @@ impl RouteHandle {
             .get(&program)
             .map(|previous| previous.continuation())
             .or_else(|| self.predecessor.lock().get(&program).cloned());
-        let archive = crate::dvr::ProgramArchive::of(program, program_number_of(&trunk));
+        let program_number = program_number_of(&trunk);
+        let dvb_service_id = self.dvr_config().and_then(|config| config.dvb_service_id);
+        if dvb_service_id.is_none() && program_number.is_some() {
+            let others = programs.iter().any(|(id, serving)| {
+                *id != program
+                    && serving
+                        .program_number
+                        .is_some_and(|n| Some(n) != program_number)
+            });
+            if others {
+                self.multi_program.store(true, Ordering::SeqCst);
+            }
+        }
+        let multi_program = self.multi_program.load(Ordering::SeqCst);
+        let archive =
+            crate::dvr::ProgramArchive::of(program, program_number, dvb_service_id, multi_program);
         let archive_predecessor = self.take_archive_predecessor(&programs, program, archive);
         let seq_offset = previous
             .as_ref()
@@ -3043,8 +3147,13 @@ impl RouteHandle {
                     .map_or(0, |p| p.ll_hls.next_media_sequence().value()),
             )
             // ...and never at or below what the DVR archive already holds
-            // (a previous process's numbers).
-            .max(u64::from(self.archive_floor(archive)));
+            // (a previous process's numbers), nor what the program's own
+            // `<route>@<program_number>` archive holds, which a program in
+            // the default archive may move to.
+            .max(u64::from(self.archive_floor(archive)))
+            .max(u64::from(self.archive_floor(
+                program_number.map(crate::dvr::ProgramArchive::Program),
+            )));
         let previous_epoch = previous.as_ref().map(|previous| previous.epoch);
         let epoch = ProgramEpoch {
             seq_offset,
@@ -3062,6 +3171,7 @@ impl RouteHandle {
         };
         let serving = match ProgramServing::new(
             program,
+            program_number,
             archive,
             Arc::clone(&trunk),
             self,
@@ -3094,8 +3204,25 @@ impl RouteHandle {
         {
             *serving.predecessor.lock() = Some(previous);
         }
+        if multi_program
+            && dvb_service_id.is_none()
+            && let Some(config) = self.dvr_config()
+        {
+            for (id, other) in programs.iter() {
+                if *id != program
+                    && other.archive() == Some(crate::dvr::ProgramArchive::Default)
+                    && let Some(program_number) = other.program_number
+                {
+                    other.move_archive(
+                        crate::dvr::ProgramArchive::Program(program_number),
+                        config,
+                        self.container,
+                    );
+                }
+            }
+        }
         if let Some(displaced) = programs.insert(program, serving)
-            && let Some(displaced_archive) = displaced.archive
+            && let Some(displaced_archive) = displaced.archive()
             && archive != Some(displaced_archive)
             && displaced.dvr_recording.load(Ordering::SeqCst)
         {
@@ -3119,7 +3246,7 @@ impl RouteHandle {
     ) -> Option<Arc<ProgramServing>> {
         let archive = archive?;
         let recording = |serving: &&Arc<ProgramServing>| {
-            serving.archive == Some(archive) && serving.dvr_recording.load(Ordering::SeqCst)
+            serving.archive() == Some(archive) && serving.dvr_recording.load(Ordering::SeqCst)
         };
         programs
             .get(&program)
@@ -4013,13 +4140,14 @@ mod program_registry_tests {
                 .with_target_duration(Duration::from_secs(4))
                 .with_window_segments(8),
         )
+        .with_dvr(dvr_config(&dvr_test_dir("floor-cover"), Some(0x0601)))
         .with_archive_floor(7);
         assert_eq!(
             route.media_sequence_floors(),
             BTreeMap::from([(crate::dvr::ProgramArchive::Default, 7)]),
             "with no program yet, the archive floor is the only floor"
         );
-        route.publish_program(SPTS_PROGRAM_ID, test_trunk());
+        route.publish_new_service(SPTS_PROGRAM_ID, 0x0601);
         route.publish_new_service(ProgramId(2), 1538);
         assert_eq!(
             route.media_sequence_floors(),
@@ -5373,7 +5501,7 @@ mod program_registry_tests {
     #[tokio::test]
     async fn each_service_records_into_its_program_number_archive() {
         let tmp = dvr_test_dir("mpts-own");
-        let route = mpts_route(&tmp, "r", None);
+        let route = mpts_route(&tmp, "r", Some(SERVICE_A));
         let services = [SERVICE_A, SERVICE_B, SERVICE_C];
         publish_services(&route, &services);
         for service in services {
@@ -5429,50 +5557,108 @@ mod program_registry_tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// #3950: a restart where a service with a lower `program_number` than an
-    /// existing one appears (0x0602 between 0x0601 and 0x0603) renumbers the
-    /// program ids, but every service keeps recording into its own archive,
-    /// numbered above what that archive already holds.
+    /// #3950: the default archive holds the `dvb_service_id` service only,
+    /// whatever its position: a restart where a lower `program_number`
+    /// (0x0601) appears ahead of it makes 0x0601 program id 0, yet `pl/`
+    /// keeps 0x0602 alone and 0x0601 gets its own `pl@1537`. Before, program
+    /// id 0 always recorded into `pl/`, so 0x0601 was appended to 0x0602's
+    /// recording.
     #[tokio::test]
     async fn a_restart_with_a_new_lower_program_number_keeps_each_service_in_its_archive() {
         let tmp = dvr_test_dir("mpts-restart");
-        let first_run = [SERVICE_A, SERVICE_C];
+        let first_run = [SERVICE_B, SERVICE_C];
         {
-            let route = mpts_route(&tmp, "rr", None);
+            let route = mpts_route(&tmp, "pl", Some(SERVICE_B));
             publish_services(&route, &first_run);
             for service in first_run {
-                for seq in 1..=3 {
+                for seq in 1..=2 {
                     add_service_segment(&route, &first_run, service, seq);
                 }
             }
             route.drain_dvr().await;
         }
-        let floors = crate::dvr::archive_seq_floors(&dvr_config(&tmp, None), "rr", Container::Fmp4)
-            .await
-            .expect("floors");
-        assert_eq!(
-            floors,
-            BTreeMap::from([
-                (crate::dvr::ProgramArchive::Default, 3),
-                (crate::dvr::ProgramArchive::Program(SERVICE_C), 3),
-            ])
-        );
+        let floors = crate::dvr::archive_seq_floors(
+            &dvr_config(&tmp, Some(SERVICE_B)),
+            "pl",
+            Container::Fmp4,
+        )
+        .await
+        .expect("floors");
         let second_run = [SERVICE_A, SERVICE_B, SERVICE_C];
-        let route = mpts_route(&tmp, "rr", None).with_archive_floors(floors);
+        let route = mpts_route(&tmp, "pl", Some(SERVICE_B)).with_archive_floors(floors);
         publish_services(&route, &second_run);
         for service in second_run {
             add_service_segment(&route, &second_run, service, 1);
         }
         route.drain_dvr().await;
         assert_eq!(
-            archived_bytes(&tmp, "rr@1539"),
-            [(1, 0x03), (2, 0x03), (3, 0x03), (4, 0x03)]
+            archived_bytes(&tmp, "pl"),
+            [(1, 0x02), (2, 0x02), (3, 0x02)]
         );
-        assert_eq!(archived_bytes(&tmp, "rr@1538"), [(1, 0x02)]);
+        assert_eq!(archived_bytes(&tmp, "pl@1537"), [(1, 0x01)]);
         assert_eq!(
-            archived_bytes(&tmp, "rr"),
-            [(1, 0x01), (2, 0x01), (3, 0x01), (4, 0x01)]
+            archived_bytes(&tmp, "pl@1539"),
+            [(1, 0x03), (2, 0x03), (3, 0x03)]
         );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// #3950: an SPTS input without `dvb_service_id` stays in `<route>/`
+    /// across a restart: its archive alone gives no reason to split.
+    #[tokio::test]
+    async fn an_spts_without_a_service_id_stays_in_the_default_archive() {
+        let tmp = dvr_test_dir("spts-stays");
+        for run in 0..2u32 {
+            let floors =
+                crate::dvr::archive_seq_floors(&dvr_config(&tmp, None), "rs", Container::Fmp4)
+                    .await
+                    .expect("floors");
+            let route = mpts_route(&tmp, "rs", None).with_archive_floors(floors);
+            publish_services(&route, &[SERVICE_A]);
+            add_service_segment(&route, &[SERVICE_A], SERVICE_A, 1);
+            route.drain_dvr().await;
+            assert_eq!(
+                archive_dirs(&tmp),
+                ["rs"],
+                "run {run}: no per-program archive"
+            );
+        }
+        assert_eq!(archived_bytes(&tmp, "rs"), [(1, 0x01), (2, 0x01)]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// #3950: without `dvb_service_id`, an input that turns out to carry a
+    /// second program moves every numbered program to its own archive: the
+    /// first service's earlier recording stays in `rt/`, which never holds
+    /// the second service.
+    #[tokio::test]
+    async fn an_spts_turning_mpts_without_a_service_id_moves_every_program() {
+        let tmp = dvr_test_dir("spts-mpts");
+        let route = mpts_route(&tmp, "rt", None);
+        publish_services(&route, &[SERVICE_A]);
+        for seq in 1..=2 {
+            add_service_segment(&route, &[SERVICE_A], SERVICE_A, seq);
+        }
+        route.drain_dvr().await;
+        let services = [SERVICE_A, SERVICE_B];
+        route.publish_new_service(ProgramId(1), SERVICE_B);
+        route.set_init(ProgramId(1), vec![0xAA; 4]);
+        for seq in 3..=4 {
+            add_service_segment(&route, &services, SERVICE_A, seq);
+        }
+        add_service_segment(&route, &services, SERVICE_B, 1);
+        route.drain_dvr().await;
+        add_service_segment(&route, &services, SERVICE_A, 5);
+        route.drain_dvr().await;
+        assert_eq!(archive_dirs(&tmp), ["rt", "rt@1537", "rt@1538"]);
+        let default = archived_bytes(&tmp, "rt");
+        assert!(default.iter().all(|(_, b)| *b == 0x01), "{default:?}");
+        assert_eq!(&default[..2], [(1, 0x01), (2, 0x01)]);
+        assert_eq!(
+            archived_bytes(&tmp, "rt@1537"),
+            [(3, 0x01), (4, 0x01), (5, 0x01)]
+        );
+        assert_eq!(archived_bytes(&tmp, "rt@1538"), [(1, 0x02)]);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -5481,7 +5667,7 @@ mod program_registry_tests {
     #[tokio::test]
     async fn a_late_pmt_records_into_its_own_program_number_archive() {
         let tmp = dvr_test_dir("mpts-late");
-        let route = mpts_route(&tmp, "rl", None);
+        let route = mpts_route(&tmp, "rl", Some(SERVICE_A));
         let early = [SERVICE_A, SERVICE_C];
         publish_services(&route, &early);
         for service in early {
@@ -5500,14 +5686,15 @@ mod program_registry_tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// #3950: a reconnect whose PAT renumbers the program ids (program id 1
-    /// was 0x0603 and is now 0x0602) hands each service's recorder to the
-    /// same service, so no archive ever holds another service's segments.
+    /// #3950: a reconnect whose PAT renumbers the program ids (0x0601 now
+    /// ahead of the `dvb_service_id` service 0x0602) hands each service's
+    /// recorder to the same service: `pr/` stays 0x0602 alone. Before, the
+    /// default archive's recorder went to whatever was now program id 0.
     #[tokio::test]
     async fn a_reconnect_that_renumbers_programs_keeps_each_service_in_its_archive() {
         let tmp = dvr_test_dir("mpts-renumber");
-        let route = mpts_route(&tmp, "rn", None);
-        let before = [SERVICE_A, SERVICE_C];
+        let route = mpts_route(&tmp, "pr", Some(SERVICE_B));
+        let before = [SERVICE_B, SERVICE_C];
         publish_services(&route, &before);
         for service in before {
             add_service_segment(&route, &before, service, 1);
@@ -5525,14 +5712,16 @@ mod program_registry_tests {
         }
         route.drain_dvr().await;
         route.drain_dvr().await;
-        assert_eq!(
-            archived_bytes(&tmp, "rn@1538"),
-            [(3, 0x02)],
-            "program id 1's numbering continues; its archive is 0x0602's own"
-        );
-        let c = archived_bytes(&tmp, "rn@1539");
-        assert_eq!(c.len(), 2, "{c:?}");
-        assert!(c.iter().all(|(_, b)| *b == 0x03), "{c:?}");
+        for (name, byte) in [("pr", 0x02u8), ("pr@1537", 0x01), ("pr@1539", 0x03)] {
+            let archived = archived_bytes(&tmp, name);
+            assert!(!archived.is_empty(), "{name}");
+            assert!(
+                archived.iter().all(|(_, b)| *b == byte),
+                "{name}: {archived:?}"
+            );
+        }
+        assert_eq!(archived_bytes(&tmp, "pr").len(), 2);
+        assert_eq!(archived_bytes(&tmp, "pr@1539").len(), 2);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -5542,7 +5731,7 @@ mod program_registry_tests {
     async fn a_replaced_multi_program_route_records_every_program() {
         let tmp = dvr_test_dir("mpts-replace");
         let services = [SERVICE_A, SERVICE_B];
-        let old = mpts_route(&tmp, "rp", None);
+        let old = mpts_route(&tmp, "rp", Some(SERVICE_A));
         publish_services(&old, &services);
         for service in services {
             add_service_segment(&old, &services, service, 1);
@@ -5551,7 +5740,7 @@ mod program_registry_tests {
         for service in services {
             add_service_segment(&old, &services, service, 2);
         }
-        let new = mpts_route(&tmp, "rp", None);
+        let new = mpts_route(&tmp, "rp", Some(SERVICE_A));
         new.continue_from(&old);
         drop(old);
         publish_services(&new, &services);
@@ -5594,14 +5783,14 @@ mod program_registry_tests {
     async fn a_service_gone_after_a_replace_is_flushed_and_released() {
         let tmp = dvr_test_dir("mpts-gone");
         let services = [SERVICE_A, SERVICE_B];
-        let old = mpts_route(&tmp, "rg", None);
+        let old = mpts_route(&tmp, "rg", Some(SERVICE_A));
         publish_services(&old, &services);
         for service in services {
             add_service_segment(&old, &services, service, 1);
         }
         old.drain_dvr().await;
         add_service_segment(&old, &services, SERVICE_B, 2);
-        let new = mpts_route(&tmp, "rg", None);
+        let new = mpts_route(&tmp, "rg", Some(SERVICE_A));
         new.continue_from(&old);
         drop(old);
         publish_services(&new, &[SERVICE_A]);
@@ -5621,7 +5810,8 @@ mod program_registry_tests {
             .expect("the gone service's archive lock is released");
         assert!(archive_is_locked(&tmp, "rg"));
         assert_eq!(archived_bytes(&tmp, "rg@1538"), [(1, 0x02), (2, 0x02)]);
-        let third = mpts_route(&tmp, "rg", None).with_archive_floors(new.media_sequence_floors());
+        let third = mpts_route(&tmp, "rg", Some(SERVICE_A))
+            .with_archive_floors(new.media_sequence_floors());
         third.continue_from(&new);
         drop(new);
         publish_services(&third, &services);
@@ -5680,7 +5870,7 @@ mod program_registry_tests {
         .with_name("rk")
         .with_dvr(crate::dvr::DvrConfig {
             retention_periods: 1,
-            ..dvr_config(&tmp, None)
+            ..dvr_config(&tmp, Some(SERVICE_A))
         });
         let services = [SERVICE_A, SERVICE_B];
         publish_services(&route, &services);

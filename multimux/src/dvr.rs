@@ -5,17 +5,27 @@
 //!
 //! # On-disk layout
 //!
-//! Every program of a route records into its own archive. The default
-//! program (the only one of a single-program route; on a multi-program
-//! (MPTS) input, the program the route serves by default, the one with the
-//! lowest `program_number` when the stream was first resolved) records into
-//! `<archive_root>/<route_name>/`; every other program of an MPTS route
-//! records into the sibling `<archive_root>/<route_name>@<program_number>/`,
-//! its MPEG-2 `program_number` (the DVB `service_id`) in canonical decimal
-//! (`news@1538`). The archive is named by the `program_number`, never by the
-//! program's position in the stream, so a program added to or resolved late
-//! in the PAT never moves another service into a different archive. A
-//! non-default program with no `program_number` (a non-TS source) is not
+//! Every program of a route records into its own archive, and each archive
+//! holds exactly one service, chosen by service, never by the program's
+//! position in the stream. The default archive `<archive_root>/<route_name>/`
+//! holds:
+//!
+//! - on a non-TS source (no `program_number`), its single program;
+//! - on a TS input with `dvb_service_id` set, only the program whose
+//!   `program_number` is that service id, wherever it sits in the PAT;
+//! - on a TS input without `dvb_service_id`, its program only while the
+//!   input carries exactly one program. Once the route has announced more
+//!   than one (or found per-program archives on disk at start), every
+//!   numbered program records into its own archive, the one that was in
+//!   the default archive included (its earlier recording stays there),
+//!   from its next archive poll. Set `dvb_service_id` on an MPTS input to
+//!   choose the service the default catch-up URL (no `program` parameter)
+//!   serves.
+//!
+//! Every other program records into the sibling
+//! `<archive_root>/<route_name>@<program_number>/`, its MPEG-2
+//! `program_number` (the DVB `service_id`) in canonical decimal
+//! (`news@1538`). A non-default program with no `program_number` is not
 //! recorded. A route name never contains `@`
 //! (`crate::config::Route::validate_standalone`), so a program archive can
 //! never be another route's archive, and a route with DVR enabled is at most
@@ -113,17 +123,35 @@ pub(crate) enum ProgramArchive {
 
 impl ProgramArchive {
     /// The archive of the program the route registers as `program`, whose
-    /// tracks carry `program_number`: `None` for a non-default program
-    /// without one, which is not recorded.
+    /// tracks carry `program_number`, chosen by service, never by the
+    /// program's position in the stream (see
+    /// [the module docs](self#on-disk-layout)):
+    ///
+    /// - no `program_number` (a non-TS source): the default archive for the
+    ///   route's single program, none (not recorded) for any other;
+    /// - `dvb_service_id` set: the default archive only for the program whose
+    ///   `program_number` it is, `<route>@<program_number>` for every other;
+    /// - otherwise the default archive while the input carries one program
+    ///   (`multi_program` false), `<route>@<program_number>` once it has
+    ///   announced more than one.
     pub(crate) fn of(
         program: media_plane::ProgramId,
         program_number: Option<u16>,
+        dvb_service_id: Option<u16>,
+        multi_program: bool,
     ) -> Option<ProgramArchive> {
-        if program == crate::route::SPTS_PROGRAM_ID {
-            Some(ProgramArchive::Default)
+        let Some(program_number) = program_number else {
+            return (program == crate::route::SPTS_PROGRAM_ID).then_some(ProgramArchive::Default);
+        };
+        let default = match dvb_service_id {
+            Some(service) => service == program_number,
+            None => !multi_program,
+        };
+        Some(if default {
+            ProgramArchive::Default
         } else {
-            program_number.map(ProgramArchive::Program)
-        }
+            ProgramArchive::Program(program_number)
+        })
     }
 }
 
@@ -183,10 +211,12 @@ pub struct DvrConfig {
     /// an `EXT-X-DATERANGE`. `None` (default) disables programme-aligned
     /// rolling.
     ///
-    /// On a multi-program route this service is tracked by the default
-    /// program; when it is set, every other program tracks its own service,
-    /// the one whose `service_id` is its `program_number` (ETSI EN 300 468
-    /// §5.2.3: a service's `service_id` is its MPEG-2 `program_number`).
+    /// On a multi-program (MPTS) input this also selects which service the
+    /// default archive (`<route>/`) records: the program whose
+    /// `program_number` is this `service_id` (ETSI EN 300 468 §5.2.3: a
+    /// service's `service_id` is its MPEG-2 `program_number`), and every
+    /// other program, recording into `<route>@<program_number>/`, tracks its
+    /// own service. See [the module docs](self#on-disk-layout).
     #[serde(default)]
     pub dvb_service_id: Option<u16>,
 }
@@ -750,18 +780,57 @@ mod tests {
     }
 
     #[test]
-    fn the_archive_of_a_program_is_keyed_by_its_program_number() {
+    fn the_default_archive_is_chosen_by_service_never_by_position() {
         use crate::route::SPTS_PROGRAM_ID;
+        use ProgramArchive::{Default, Program};
         use media_plane::ProgramId;
-        assert_eq!(
-            ProgramArchive::of(SPTS_PROGRAM_ID, Some(0x0601)),
-            Some(ProgramArchive::Default)
-        );
-        assert_eq!(
-            ProgramArchive::of(ProgramId(1), Some(0x0602)),
-            Some(ProgramArchive::Program(0x0602))
-        );
-        assert_eq!(ProgramArchive::of(ProgramId(1), None), None);
+        let cases = [
+            (SPTS_PROGRAM_ID, None, None, false, Some(Default)),
+            (ProgramId(1), None, None, true, None),
+            (
+                SPTS_PROGRAM_ID,
+                Some(0x0601),
+                Some(0x0602),
+                true,
+                Some(Program(0x0601)),
+            ),
+            (
+                ProgramId(1),
+                Some(0x0602),
+                Some(0x0602),
+                true,
+                Some(Default),
+            ),
+            (
+                ProgramId(2),
+                Some(0x0602),
+                Some(0x0602),
+                false,
+                Some(Default),
+            ),
+            (SPTS_PROGRAM_ID, Some(0x0601), None, false, Some(Default)),
+            (
+                SPTS_PROGRAM_ID,
+                Some(0x0601),
+                None,
+                true,
+                Some(Program(0x0601)),
+            ),
+            (
+                ProgramId(1),
+                Some(0x0602),
+                None,
+                true,
+                Some(Program(0x0602)),
+            ),
+        ];
+        for (program, program_number, service, multi, expected) in cases {
+            assert_eq!(
+                ProgramArchive::of(program, program_number, service, multi),
+                expected,
+                "{program:?} {program_number:?} {service:?} {multi}"
+            );
+        }
     }
 
     #[test]

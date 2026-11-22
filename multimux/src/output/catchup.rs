@@ -193,14 +193,19 @@ fn container_ext(container: Container) -> &'static str {
 /// by this module's own resource route (`catchup/init-p{N}.mp4`), a segment
 /// still in the live origin names the origin's versioned init resource
 /// (`HlsOrigin::init_name`).
+///
+/// `shared` says whether the route's shared resource route serves the live
+/// program (it serves the default program id only): when it does not, a live
+/// init is named under `catchup/` with the program's query.
 fn init_uri_of(
     ll_hls: Option<&hls_runtime::server::HlsOrigin>,
+    shared: bool,
     program: ProgramSelector,
     init: InitRef<Generation>,
 ) -> String {
     let query = program.uri_query();
     let live = |name: String| {
-        if program.is_default() {
+        if shared {
             name
         } else {
             format!("catchup/{name}{query}")
@@ -225,23 +230,31 @@ pub struct ProgramSelector {
 }
 
 impl ProgramSelector {
-    fn archive(self) -> ProgramArchive {
-        match self.program {
-            None | Some(0) => ProgramArchive::Default,
+    /// The `program_number` named, if any (`0` names none).
+    fn program_number(self) -> Option<u16> {
+        self.program.filter(|&n| n != 0)
+    }
+
+    /// The archive this request reads on `route`: the default one with no
+    /// program, or for the route's `dvb_service_id` (an alias of the
+    /// default), `<route>@<program_number>` otherwise.
+    fn archive(self, route: &RouteHandle) -> ProgramArchive {
+        let service = route.dvr_config().and_then(|config| config.dvb_service_id);
+        match self.program_number() {
+            None => ProgramArchive::Default,
+            Some(program_number) if Some(program_number) == service => ProgramArchive::Default,
             Some(program_number) => ProgramArchive::Program(program_number),
         }
     }
 
     fn is_default(self) -> bool {
-        self.archive() == ProgramArchive::Default
+        self.program_number().is_none()
     }
 
     /// The query string every URI of this program's playlists carries.
     fn uri_query(self) -> String {
-        match self.archive() {
-            ProgramArchive::Default => String::new(),
-            ProgramArchive::Program(program_number) => format!("?program={program_number}"),
-        }
+        self.program_number()
+            .map_or_else(String::new, |n| format!("?program={n}"))
     }
 }
 
@@ -300,9 +313,11 @@ async fn catchup_playlist(
     Query(q): Query<CatchupPlaylistQuery>,
 ) -> Response {
     let program = ProgramSelector { program: q.program };
-    let live_serving = http::resolution_response(route.resolve_archive(program.archive()));
-    let (Some(dvr), Some(archive)) = (route.dvr_config(), route.catchup_archive(program.archive()))
-    else {
+    let live_serving = http::resolution_response(route.resolve_archive(program.archive(&route)));
+    let (Some(dvr), Some(archive)) = (
+        route.dvr_config(),
+        route.catchup_archive(program.archive(&route)),
+    ) else {
         return match live_serving {
             Ok(_) => StatusCode::NOT_FOUND.into_response(),
             Err(resp) => *resp,
@@ -356,7 +371,8 @@ async fn catchup_playlist(
     } else {
         Some(PlaylistType::Event)
     };
-    let init_of = |init| init_uri_of(ll_hls.as_deref(), program, init);
+    let shared = program.is_default() && serving.as_ref().is_some_and(|s| s.is_default_program());
+    let init_of = |init| init_uri_of(ll_hls.as_deref(), shared, program, init);
     let Ok(body) = render_playlist(
         &windowed,
         ext,
@@ -380,7 +396,7 @@ async fn vod_playlist(
     Path(period_file): Path<String>,
     Query(program): Query<ProgramSelector>,
 ) -> Response {
-    let Some(archive) = route.catchup_archive(program.archive()) else {
+    let Some(archive) = route.catchup_archive(program.archive(&route)) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let Some(period) = parse_period_filename(&period_file).map(PeriodNum::new) else {
@@ -419,7 +435,7 @@ async fn vod_playlist(
     } else {
         PlaylistType::Event
     };
-    let init_of = |init| init_uri_of(None, program, init);
+    let init_of = |init| init_uri_of(None, false, program, init);
     let Ok(body) = render_playlist(
         &segments,
         ext,
@@ -526,15 +542,15 @@ async fn catchup_resource(
 ) -> Response {
     let ext = container_ext(route.container());
     if let Some(period) = parse_init_filename(&file) {
-        return catchup_init(&route, program.archive(), PeriodNum::new(period)).await;
+        return catchup_init(&route, program.archive(&route), PeriodNum::new(period)).await;
     }
-    if !program.is_default() && file.starts_with(LIVE_INIT_PREFIX) {
-        return live_resource(&route, program.archive(), file);
+    if file.starts_with(LIVE_INIT_PREFIX) {
+        return live_resource(&route, program.archive(&route), file);
     }
     let Some(seq) = parse_seg_filename(&file, ext) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(archive) = route.catchup_archive(program.archive()) else {
+    let Some(archive) = route.catchup_archive(program.archive(&route)) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let found = run_scan(&route, move || {
@@ -551,13 +567,14 @@ async fn catchup_resource(
     // Not archived (yet): the still-live tail.
     live_resource(
         &route,
-        program.archive(),
+        program.archive(&route),
         format!("seg-{DEFAULT_TRACK_ID}-{seq}.{ext}"),
     )
 }
 
-/// The prefix of the live origin's init resource names a non-default
-/// program's catch-up playlist lists under `catchup/`.
+/// The prefix of the live origin's init resource names a catch-up playlist
+/// lists under `catchup/` when the shared resource route does not serve its
+/// program.
 const LIVE_INIT_PREFIX: &str = "init-";
 
 /// `live_name` from `program`'s live origin. A one-shot, non-blocking
@@ -971,7 +988,10 @@ mod tests {
                 .with_window_segments(8),
         )
         .with_name(name)
-        .with_dvr(dvr_config(tmp))
+        .with_dvr(DvrConfig {
+            dvb_service_id: Some(0x0601),
+            ..dvr_config(tmp)
+        })
     }
 
     /// #3950: a non-default program's archive is read through
@@ -1073,6 +1093,29 @@ mod tests {
             State(Arc::clone(&route)),
             Path("seg-2.m4s".to_string()),
             Query(ProgramSelector::default()),
+        )
+        .await;
+        assert_eq!(body_bytes(resp).await, vec![0x10; 24]);
+
+        // `?program=<dvb_service_id>` aliases the default archive.
+        let alias =
+            body_string(catchup_playlist(State(Arc::clone(&route)), playlist_query(1537)).await)
+                .await;
+        let segments: Vec<&str> = alias
+            .lines()
+            .filter(|l| l.starts_with("catchup/seg-"))
+            .collect();
+        assert_eq!(
+            segments,
+            [
+                "catchup/seg-1.m4s?program=1537",
+                "catchup/seg-2.m4s?program=1537"
+            ]
+        );
+        let resp = catchup_resource(
+            State(Arc::clone(&route)),
+            Path("seg-2.m4s".to_string()),
+            program(1537),
         )
         .await;
         assert_eq!(body_bytes(resp).await, vec![0x10; 24]);

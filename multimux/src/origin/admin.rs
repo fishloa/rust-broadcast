@@ -1857,6 +1857,7 @@ mod tests {
 
         let store = RouteHandle::new(RouteConfig::default())
             .with_name("cam")
+            .with_dvr(route.dvr.clone().with_dvb_service_id(0x0601))
             .with_archive_floors(floors_read);
         store.publish_new_service(media_plane::ProgramId(0), 0x0601);
         store.publish_new_service(media_plane::ProgramId(1), 1538);
