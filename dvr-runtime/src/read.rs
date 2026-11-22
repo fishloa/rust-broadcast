@@ -645,9 +645,12 @@ pub fn parse_period_playlist(
 }
 
 /// Merge the archive with the live Trunk's still-unarchived closed tail into
-/// one ascending, continuous sequence. `live` is filtered to sequence numbers
-/// strictly greater than the archive's highest, so a segment the live window
-/// still holds and the archive already wrote never appears twice.
+/// one ascending sequence. `live` is filtered to sequence numbers strictly
+/// greater than the archive's highest, so a segment the live window still
+/// holds and the archive already wrote never appears twice. Every segment
+/// whose sequence number does not follow its predecessor's (lost ring
+/// entries, an evicted period, the archive-to-live boundary) is marked
+/// discontinuous.
 pub fn merge<G: Copy>(
     archived: &[ArchivedSegment],
     live: &[LiveSegment<G>],
@@ -676,11 +679,12 @@ pub fn merge<G: Copy>(
             init: Some(InitRef::Live(s.init)),
         })
     }));
-    if let Some(max) = archive_max
-        && let Some(first_tail) = combined.get_mut(archived.len())
-        && first_tail.seq != max.saturating_next()
-    {
-        first_tail.discontinuous = true;
+    let mut previous: Option<SegmentSeq> = None;
+    for segment in &mut combined {
+        if previous.is_some_and(|prev| segment.seq != prev.saturating_next()) {
+            segment.discontinuous = true;
+        }
+        previous = Some(segment.seq);
     }
     combined
 }

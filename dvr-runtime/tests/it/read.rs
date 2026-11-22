@@ -100,6 +100,19 @@ fn merge_marks_a_gap_between_archive_and_live_tail() {
 }
 
 #[test]
+fn merge_marks_a_sequence_jump_inside_the_archive() {
+    let archived = [
+        archived(0, 0, 2, false, 0),
+        archived(7, 2_000_000_000, 2, false, 1),
+        archived(8, 4_000_000_000, 2, false, 1),
+    ];
+    let combined = merge::<u8>(&archived, &[]);
+    assert!(!combined[0].discontinuous);
+    assert!(combined[1].discontinuous, "archived 0 -> 7 skips 1..=6");
+    assert!(!combined[2].discontinuous);
+}
+
+#[test]
 fn merge_empty_archive_uses_every_live_segment() {
     let combined = merge(
         &[],

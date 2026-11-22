@@ -1123,13 +1123,12 @@ impl ArchiveWriter {
         wall: Option<jiff::Timestamp>,
         discontinuous: bool,
         daterange_ids: &[String],
+        attach: bool,
     ) -> Result<(MediaSegment, String, bool, Option<String>), ArchiveError> {
         let mut pre_tags = Vec::new();
         let mut attached = false;
         let mut new_id = None;
-        if self.attach_programme
-            && let (Some(programme), Some(wall)) = (&self.programme, wall)
-        {
+        if attach && let (Some(programme), Some(wall)) = (&self.programme, wall) {
             let base = format!(
                 "programme-{}-{}",
                 programme.service_id, programme.event.event_id
@@ -1311,6 +1310,7 @@ impl ArchiveWriter {
                     wall,
                     discontinuous,
                     &open.daterange_ids,
+                    self.attach_programme,
                 )?;
                 let endlist = self.endlist_text()?;
                 if open
@@ -1351,6 +1351,8 @@ impl ArchiveWriter {
         if rolled && self.periods_exhausted {
             return Err(ArchiveError::PeriodNumbersExhausted);
         }
+        let attach = self.attach_programme || (rolled && self.programme.is_some());
+        let discontinuous = discontinuous || roll == Some(RollReason::SequenceGap);
         let target_duration = match (&self.open, roll) {
             (Some(open), None) => open.target_duration,
             _ => ceil_secs(self.config.target_duration).max(rounded),
@@ -1365,6 +1367,7 @@ impl ArchiveWriter {
             wall,
             discontinuous,
             &daterange_ids,
+            attach,
         )?;
         let byte_len = u64::try_from(entry.bytes.len()).unwrap_or(u64::MAX);
         let media_len = media_offset.saturating_add(byte_len);
@@ -1715,6 +1718,7 @@ mod tests {
                 None,
                 true,
                 &open.daterange_ids,
+                false,
             )
             .expect("record");
         let endlist = writer.endlist_text().expect("endlist").len() as u64;
@@ -1741,6 +1745,213 @@ mod tests {
         writer
             .complete(plan.id, PlanOutcome::Done)
             .expect("complete");
+    }
+
+    const SERVICE: u16 = 1537;
+    const EVENT: u16 = 30807;
+
+    fn baseline() -> dvb_si::epg::PresentEventChange {
+        use dvb_si::descriptors::DescriptorLoop;
+        use dvb_si::tables::eit::{EitEvent, EitKind, EitSection};
+        use dvb_si::tables::{RunningStatus, SectionVersion};
+        let title = b"Title";
+        let mut descriptors = vec![0x4D, 3 + 1 + 5 + 1];
+        descriptors.extend_from_slice(b"eng");
+        descriptors.push(5);
+        descriptors.extend_from_slice(title);
+        descriptors.push(0);
+        let mut event = EitEvent::new(
+            EVENT,
+            [0; 5],
+            [0; 3],
+            RunningStatus::Running,
+            false,
+            DescriptorLoop::new(&descriptors),
+        );
+        event.set_start_time(wall(0)).expect("start");
+        event
+            .set_duration(Duration::from_secs(3600))
+            .expect("duration");
+        let section = EitSection::new(
+            EitKind::PresentFollowingActual,
+            0x4E,
+            SERVICE,
+            SectionVersion::new(0, true, 0, 0),
+            1,
+            1,
+            0,
+            0x4E,
+            vec![event],
+        );
+        dvb_si::epg::PresentEventTracker::new(SERVICE)
+            .on_section(&section)
+            .expect("a present event")
+    }
+
+    fn wall(secs: i64) -> jiff::Timestamp {
+        jiff::Timestamp::from_second(1_716_055_200 + secs).expect("timestamp")
+    }
+
+    fn run(writer: &mut ArchiveWriter, entry: SegmentEntry, secs: i64) -> Plan {
+        let step = writer
+            .on_item(
+                Timestamp::ZERO,
+                Some(wall(secs)),
+                &SegmentCursorItem::Segment(entry),
+            )
+            .expect("item");
+        let Step::Execute(plan) = step else {
+            panic!("expected a plan");
+        };
+        writer
+            .complete(plan.id, PlanOutcome::Done)
+            .expect("complete");
+        plan
+    }
+
+    fn programmed(config: ArchiveConfig) -> ArchiveWriter {
+        let mut writer =
+            ArchiveWriter::new(config.with_programme_service(SERVICE)).expect("writer");
+        if writer.is_fmp4() {
+            writer
+                .on_inits(&[InitGeneration::new(
+                    SegmentSeq::new(0),
+                    Bytes::from_static(b"INIT"),
+                )])
+                .expect("inits");
+        }
+        writer.on_programme(baseline()).expect("baseline");
+        let first = run(&mut writer, entry(0, 100, false), 0);
+        assert_eq!(
+            created_playlist(&first)
+                .matches("#EXT-X-DATERANGE:")
+                .count(),
+            1
+        );
+        writer
+    }
+
+    fn created_playlist(plan: &Plan) -> String {
+        plan.ops
+            .iter()
+            .find_map(|op| match op {
+                StoreOp::CreatePlaylist { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .expect("a new period")
+    }
+
+    fn assert_rolled_with_programme(
+        writer: &mut ArchiveWriter,
+        plan: &Plan,
+        reason: RollReason,
+        next_seq: u32,
+    ) {
+        let text = created_playlist(plan);
+        assert_eq!(text.matches("#EXT-X-DATERANGE:").count(), 1, "{text}");
+        assert_eq!(
+            text.matches(&format!("X-DVB-EVENT-ID={EVENT}")).count(),
+            1,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches(&format!("ID=\"programme-{SERVICE}-{EVENT}\""))
+                .count(),
+            1,
+            "{text}"
+        );
+        let opened: Vec<RollReason> = std::iter::from_fn(|| writer.poll_event())
+            .filter_map(|event| match event {
+                WriterEvent::PeriodOpened { reason, .. } => Some(reason),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(opened.last().copied(), Some(reason));
+        let next = run(writer, entry(next_seq, 10, false), 30);
+        assert!(
+            !next
+                .ops
+                .iter()
+                .any(|op| matches!(op, StoreOp::CreatePlaylist { .. })),
+            "the follow-up record must append to the same period"
+        );
+        let tail = playlist_text_of(&next);
+        assert!(!tail.contains("#EXT-X-DATERANGE:"), "{tail}");
+    }
+
+    fn playlist_text_of(plan: &Plan) -> String {
+        plan.ops
+            .iter()
+            .filter_map(|op| match op {
+                StoreOp::AppendPlaylist { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_sequence_gap_roll_repeats_the_programme() {
+        let mut writer = programmed(config());
+        let plan = run(&mut writer, entry(5, 100, false), 10);
+        assert_eq!(
+            created_playlist(&plan)
+                .matches("#EXT-X-DISCONTINUITY\n")
+                .count(),
+            1,
+            "the first segment after lost ring entries is discontinuous"
+        );
+        assert_rolled_with_programme(&mut writer, &plan, RollReason::SequenceGap, 6);
+    }
+
+    #[test]
+    fn a_target_duration_roll_repeats_the_programme() {
+        let mut writer = programmed(config());
+        let mut long = entry(1, 100, false);
+        long.duration = Duration::from_secs(9);
+        let plan = run(&mut writer, long, 2);
+        assert_rolled_with_programme(&mut writer, &plan, RollReason::TargetDuration, 2);
+    }
+
+    #[test]
+    fn a_byte_budget_roll_repeats_the_programme() {
+        let config = ArchiveConfig::new(
+            ArchiveContainer::Ts,
+            Duration::from_secs(2),
+            RetentionLimits::new()
+                .with_bytes(std::num::NonZeroU64::new(1650).expect("nonzero"))
+                .with_periods(std::num::NonZeroUsize::new(10).expect("nonzero")),
+        );
+        let mut writer = programmed(config);
+        let plan = run(&mut writer, entry(1, 100, false), 2);
+        assert_rolled_with_programme(&mut writer, &plan, RollReason::ByteBudget, 2);
+    }
+
+    #[test]
+    fn a_playlist_full_roll_repeats_the_programme() {
+        let mut writer = programmed(config());
+        writer.open.as_mut().expect("open").playlist_len =
+            u64::try_from(broadcast_hls::limits::MAX_PLAYLIST_BYTES).expect("limit");
+        let plan = run(&mut writer, entry(1, 100, false), 2);
+        assert_rolled_with_programme(&mut writer, &plan, RollReason::PlaylistFull, 2);
+    }
+
+    #[test]
+    fn an_init_change_roll_repeats_the_programme() {
+        let config = ArchiveConfig::new(
+            ArchiveContainer::Fmp4,
+            Duration::from_secs(2),
+            RetentionLimits::new().with_periods(std::num::NonZeroUsize::new(10).expect("nonzero")),
+        )
+        .with_period_duration(Some(Duration::from_secs(3600)));
+        let mut writer = programmed(config);
+        writer
+            .on_inits(&[InitGeneration::new(
+                SegmentSeq::new(1),
+                Bytes::from_static(b"INIT2"),
+            )])
+            .expect("inits");
+        let plan = run(&mut writer, entry(1, 100, false), 2);
+        assert_rolled_with_programme(&mut writer, &plan, RollReason::InitChanged, 2);
     }
 
     #[test]
