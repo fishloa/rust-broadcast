@@ -204,7 +204,4 @@ pub const EXEMPT: &[Exempt] = &[
         "roxmltree",
         "atsc3 is abandoned and permanently unpublished (owner decision)",
     ),
-    exempt("dvb-si", "num_enum", "#3963"),
-    exempt("dvb-t2mi", "num_enum", "#3963"),
-    exempt("dvb-bbframe", "num_enum", "#3963"),
 ];
