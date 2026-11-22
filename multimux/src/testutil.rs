@@ -405,4 +405,5 @@ pub(crate) fn scan_archive(
         crate::dvr::archive_container(container),
     )
     .scan()
+    .expect("scan")
 }

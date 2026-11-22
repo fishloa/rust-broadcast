@@ -36,6 +36,34 @@ fn init() -> Bytes {
     Bytes::from(vec![0x49u8; 812])
 }
 
+/// Open a recorder on a directory a previous run used, retrying a `Locked`
+/// refusal for a bounded window: a released lock file can still be shared for
+/// a moment by a process the host spawned (`FsRecorder::succeed` documents
+/// the same window), so a host that restarts a route retries rather than
+/// failing. `Locked` stays an error past the window.
+fn recorder_of(
+    root: &std::path::Path,
+    name: &str,
+    config: ArchiveConfig,
+    trunk: &Arc<Trunk>,
+) -> FsRecorder {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match FsRecorder::new(
+            root,
+            ArchiveName::new(name).expect("name"),
+            config.clone(),
+            trunk,
+        ) {
+            Ok(recorder) => return recorder,
+            Err(FsError::Locked { .. }) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(other) => panic!("recorder: {other}"),
+        }
+    }
+}
+
 fn record_run(
     root: &std::path::Path,
     name: &str,
@@ -46,8 +74,7 @@ fn record_run(
     let trunk = trunk();
     let writer = trunk.segment_writer().expect("writer");
     let config = config(ArchiveContainer::Fmp4, 2, retention).with_seq_offset(offset);
-    let mut recorder = FsRecorder::new(root, ArchiveName::new(name).expect("name"), config, &trunk)
-        .expect("recorder");
+    let mut recorder = recorder_of(root, name, config, &trunk);
     recorder
         .poll(
             Timestamp::ZERO,
@@ -106,7 +133,7 @@ fn a_later_recorder_leaves_earlier_periods_untouched() {
         &ArchiveName::new("run").expect("name"),
         ArchiveContainer::Fmp4,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert!(scan.unreadable.is_empty());
     assert_eq!(
         scan.segments
@@ -120,7 +147,10 @@ fn a_later_recorder_leaves_earlier_periods_untouched() {
         "a new run does not continue the timeline"
     );
     assert!(!scan.segments[4].discontinuous);
-    let found = archive.find(SegmentSeq::new(3)).expect("seq 3");
+    let found = archive
+        .find(SegmentSeq::new(3))
+        .expect("listing")
+        .expect("seq 3");
     assert_eq!(found.period.value(), 1);
     assert_eq!(
         archive.read(&found).expect("read"),
@@ -147,23 +177,91 @@ fn archive_floor_is_the_highest_archived_sequence() {
     let root = temp_dir("floor");
     let name = ArchiveName::new("floor").expect("name");
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
-    assert_eq!(archive.seq_floor(), SegmentSeq::new(0), "no archive yet");
+    assert_eq!(archive.seq_floor().expect("floor"), None, "no archive yet");
     record_run(&root, "floor", periods(10), 0, &[(0, 1), (1, 2), (2, 3)]);
     record_run(&root, "floor", periods(10), 3, &[(0, 4), (1, 5)]);
-    assert_eq!(archive.seq_floor(), SegmentSeq::new(4));
+    assert_eq!(
+        archive.seq_floor().expect("floor"),
+        Some(SegmentSeq::new(4))
+    );
+    cleanup(&root);
+}
+
+fn running_as_root() -> bool {
+    let root = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .is_some_and(|uid| uid.trim() == "0");
+    if root {
+        eprintln!("SKIP: running as root, so a 000 path is still readable");
+    }
+    root
+}
+
+fn set_mode(path: &std::path::Path, mode: u32) {
+    let mut perms = std::fs::metadata(path).expect("meta").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, mode);
+    std::fs::set_permissions(path, perms).expect("chmod");
+}
+
+#[test]
+fn an_unlistable_archive_is_an_error_not_an_empty_floor() {
+    if running_as_root() {
+        return;
+    }
+    let root = temp_dir("floor-chmod");
+    record_run(&root, "route", periods(10), 0, &[(0, 1), (1, 2), (2, 3)]);
+    let name = ArchiveName::new("route").expect("name");
+    let dir = root.join("route");
+    let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
+    assert_eq!(
+        archive.seq_floor().expect("floor"),
+        Some(SegmentSeq::new(2))
+    );
+    set_mode(&dir, 0o000);
+    let floor = archive.seq_floor();
+    let scan = archive.scan();
+    let find = archive.find(SegmentSeq::new(0));
+    set_mode(&dir, 0o755);
+    assert!(
+        matches!(floor, Err(ReadError::Io { .. })),
+        "seq_floor: {floor:?}"
+    );
+    assert!(matches!(scan, Err(ReadError::Io { .. })), "scan: {scan:?}");
+    assert!(matches!(find, Err(ReadError::Io { .. })), "find: {find:?}");
+    cleanup(&root);
+}
+
+#[test]
+fn an_unreadable_period_playlist_fails_the_floor() {
+    if running_as_root() {
+        return;
+    }
+    let root = temp_dir("floor-playlist-chmod");
+    record_run(&root, "route", periods(10), 0, &[(0, 1), (1, 2), (2, 3)]);
+    let name = ArchiveName::new("route").expect("name");
+    let playlist = root.join("route").join("p0.m3u8");
+    let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
+    set_mode(&playlist, 0o000);
+    let floor = archive.seq_floor();
+    set_mode(&playlist, 0o644);
+    assert!(
+        matches!(
+            floor,
+            Err(ReadError::Playlist(
+                dvr_runtime::read::PlaylistError::Io { .. }
+            ))
+        ),
+        "{floor:?}"
+    );
     cleanup(&root);
 }
 
 #[test]
 fn a_non_not_found_listing_error_is_surfaced() {
-    if std::process::Command::new("id")
-        .arg("-u")
-        .output()
-        .ok()
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .is_some_and(|uid| uid.trim() == "0")
-    {
-        eprintln!("SKIP: running as root, so a 000 directory is still readable");
+    if running_as_root() {
         return;
     }
     let root = temp_dir("chmod");
@@ -183,7 +281,7 @@ fn a_non_not_found_listing_error_is_surfaced() {
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
     std::fs::set_permissions(&dir, perms).expect("restore");
     match result {
-        Err(FsError::Io { .. }) => {}
+        Err(FsError::Io { op, .. }) => assert_eq!(op, dvr_runtime::writer::StoreOpKind::Lock),
         Err(other) => panic!("expected an I/O error, got {other}"),
         Ok(_) => panic!("a 000 directory must not read as an empty archive"),
     }
@@ -228,7 +326,10 @@ fn the_cache_is_invalidated_when_a_playlist_changes() {
         recorder
             .poll(Timestamp::ZERO, |_| None, &[])
             .expect("record");
-        assert_eq!(archive.scan().segments.len(), seq as usize + 1);
+        assert_eq!(
+            archive.scan().expect("scan").segments.len(),
+            seq as usize + 1
+        );
         assert_eq!(archive.cached_periods(), 1);
     }
     cleanup(&root);
@@ -274,7 +375,7 @@ fn the_cache_invalidates_a_same_length_rewrite_with_a_new_inode() {
     let playlist = root.join("cache").join("p0.m3u8");
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
     assert_eq!(
-        archive.scan().segments[0].start,
+        archive.scan().expect("scan").segments[0].start,
         Timestamp::from_nanos(2_000_000_000)
     );
     let before = std::fs::read_to_string(&playlist).expect("playlist");
@@ -298,7 +399,7 @@ fn the_cache_invalidates_a_same_length_rewrite_with_a_new_inode() {
     file.set_modified(mtime).expect("restore mtime");
     drop(file);
     assert_eq!(
-        archive.scan().segments[0].start,
+        archive.scan().expect("scan").segments[0].start,
         Timestamp::from_nanos(2_000_001_000),
         "a same-length rewrite with the same mtime is caught by the inode"
     );
@@ -321,14 +422,14 @@ fn each_archive_has_its_own_cache() {
         &ArchiveName::new("b").expect("name"),
         ArchiveContainer::Fmp4,
     );
-    assert_eq!(a.scan().segments.len(), 1);
+    assert_eq!(a.scan().expect("scan").segments.len(), 1);
     assert_eq!(a.cached_periods(), 1);
     assert_eq!(
         b.cached_periods(),
         0,
         "one archive's cache never covers another"
     );
-    assert_eq!(b.scan().segments.len(), 1);
+    assert_eq!(b.scan().expect("scan").segments.len(), 1);
     assert_eq!(b.cached_periods(), 1);
     assert_eq!(a.cached_periods(), 1);
     drop(a);
@@ -352,7 +453,10 @@ fn reading_a_gone_or_short_period_is_typed() {
     let name = ArchiveName::new("gone").expect("name");
     record_run(&root, "gone", periods(10), 0, &[(0, 1)]);
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
-    let segment = archive.find(SegmentSeq::new(0)).expect("segment");
+    let segment = archive
+        .find(SegmentSeq::new(0))
+        .expect("listing")
+        .expect("segment");
     std::fs::remove_file(root.join("gone").join("p0.m4s")).expect("remove media");
     assert!(matches!(
         archive.read(&segment),
@@ -446,7 +550,7 @@ fn a_broken_period_is_reported_and_the_others_still_read() {
     std::fs::write(dir.join("p1.m3u8"), b"not a playlist\n").expect("write junk");
     std::fs::write(dir.join("p1.m4s"), [0u8; 4]).expect("write junk media");
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 2);
     assert_eq!(scan.unreadable.len(), 1);
     assert_eq!(scan.unreadable[0].0, dvr_runtime::PeriodNum::new(1));
@@ -501,7 +605,7 @@ fn a_restart_counts_each_seeded_periods_real_size() {
     assert!(!dir.join("p0.m3u8").exists());
     assert!(dir.join("p1.ts").exists());
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Ts);
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 1);
     assert_eq!(scan.segments[0].period.value(), 1);
     cleanup(&root);
@@ -531,8 +635,10 @@ fn a_second_recorder_on_one_directory_is_refused() {
 #[test]
 fn dropping_the_recorder_releases_the_lock() {
     let root = temp_dir("lock-release");
-    drop(recorder_for(&root, "route").expect("first"));
-    drop(recorder_for(&root, "route").expect("second after drop"));
+    let config = config(ArchiveContainer::Fmp4, 2, periods(10));
+    let trunk = trunk();
+    drop(recorder_of(&root, "route", config.clone(), &trunk));
+    drop(recorder_of(&root, "route", config, &trunk));
     cleanup(&root);
 }
 
@@ -550,7 +656,7 @@ fn the_lock_file_is_never_scanned_listed_or_evicted() {
         &ArchiveName::new("route").expect("name"),
         ArchiveContainer::Fmp4,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert!(scan.unreadable.is_empty());
     assert!(scan.conflicts.is_empty());
     assert!(dvr_runtime::layout::classify(".lock", ArchiveContainer::Fmp4).is_none());
@@ -563,9 +669,10 @@ fn a_restart_given_the_seq_floor_produces_no_conflicts() {
     record_run(&root, "route", periods(10), 0, &[(0, 1), (1, 2), (2, 3)]);
     let name = ArchiveName::new("route").expect("name");
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
-    let offset = u64::from(archive.seq_floor().value()) + 1;
+    let floor = archive.seq_floor().expect("floor").expect("archived");
+    let offset = u64::from(floor.value()) + 1;
     record_run(&root, "route", periods(10), offset, &[(0, 4), (1, 5)]);
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert!(scan.conflicts.is_empty());
     assert_eq!(
         scan.segments
@@ -584,7 +691,7 @@ fn a_restart_without_the_seq_floor_reports_the_conflict() {
     record_run(&root, "route", periods(10), 0, &[(0, 4), (1, 5)]);
     let name = ArchiveName::new("route").expect("name");
     let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Fmp4);
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert_eq!(scan.segments.len(), 3, "the later run is hidden");
     let conflicts: Vec<u32> = scan.conflicts.iter().map(|c| c.seq.value()).collect();
     assert_eq!(conflicts, vec![0, 1]);
@@ -620,7 +727,7 @@ fn a_stale_temp_playlist_is_removed_reported_and_never_an_archive_file() {
         &ArchiveName::new("route").expect("name"),
         ArchiveContainer::Fmp4,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     assert!(scan.unreadable.is_empty());
     assert_eq!(scan.segments.len(), 1);
     cleanup(&root);
@@ -679,7 +786,10 @@ fn a_held_cursor_survives_a_locked_directory_and_records_what_closed_meanwhile()
         )
         .expect("record");
     let mut archive = FsArchive::open(&root, &name(), ArchiveContainer::Fmp4);
-    let found = archive.find(SegmentSeq::new(1)).expect("seq 1 archived");
+    let found = archive
+        .find(SegmentSeq::new(1))
+        .expect("listing")
+        .expect("seq 1 archived");
     assert_eq!(
         archive.read(&found).expect("read"),
         Bytes::from(vec![0x5Au8; 100])
@@ -790,12 +900,15 @@ fn succeed_takes_the_lock_over_without_releasing_it() {
         )
         .expect("record");
     let mut archive = FsArchive::open(&root, &name(), ArchiveContainer::Fmp4);
-    let found = archive.find(SegmentSeq::new(1)).expect("archived");
+    let found = archive
+        .find(SegmentSeq::new(1))
+        .expect("listing")
+        .expect("archived");
     assert_eq!(
         archive.read(&found).expect("read"),
         Bytes::from(vec![0x22u8; 100])
     );
     drop(second);
-    assert!(!refused(), "dropping the successor releases the lock");
+    drop(recorder_of(&root, "succ", config(), &trunk()));
     cleanup(&root);
 }

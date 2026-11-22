@@ -15,7 +15,6 @@ use std::time::SystemTime;
 use broadcast_common::Timestamp;
 use broadcast_common::range::ByteSpan;
 use bytes::Bytes;
-use media_plane::egress::SegmentEgress;
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk};
 
@@ -54,11 +53,6 @@ pub enum FsError {
         #[source]
         source: std::io::Error,
     },
-    /// The store could not commit this input. The
-    /// [`SegmentEgress`] adapter cannot queue it, so the caller must drive
-    /// the same cursor item through [`FsRecorder::poll`].
-    #[error("the store did not commit this input; retry it through FsRecorder::poll")]
-    RetryRequired,
     /// Another recorder holds the archive directory's single-writer lock.
     #[error("archive directory {} is locked by another recorder", path.display())]
     Locked {
@@ -86,6 +80,18 @@ fn io_error(path: PathBuf, op: crate::writer::StoreOpKind, source: std::io::Erro
 
 /// The blocking archive recorder: one [`ArchiveWriter`], one pinning
 /// [`SegmentCursor`] on the Trunk, and the archive's directory.
+///
+/// [`Self::poll`] is the only driver. `FsRecorder` does not implement
+/// `media_plane::egress::SegmentEgress`: that trait hands over one cursor
+/// item with no monotonic time, no wall time and no fMP4 init generations,
+/// so a period could never roll on `period_duration` (and periods-only
+/// retention would never evict) and an fMP4 archive would drop every segment
+/// as arriving before its init.
+///
+/// ```compile_fail
+/// fn egress<E: media_plane::egress::SegmentEgress>() {}
+/// egress::<dvr_runtime::fs::FsRecorder>();
+/// ```
 pub struct FsRecorder {
     writer: ArchiveWriter,
     cursor: SegmentCursor,
@@ -93,7 +99,6 @@ pub struct FsRecorder {
     dir: PathBuf,
     _lock: File,
     tracker: Option<dvb_si::epg::PresentEventTracker>,
-    last_now: Timestamp,
     container: ArchiveContainer,
     retry: Option<(SegmentCursorItem, u8)>,
     programme_retry: Option<dvb_si::epg::PresentEventChange>,
@@ -214,14 +219,14 @@ impl FsRecorder {
             .truncate(false)
             .write(true)
             .open(&lock_path)
-            .map_err(|e| io_error(lock_path.clone(), crate::writer::StoreOpKind::List, e))?;
+            .map_err(|e| io_error(lock_path.clone(), crate::writer::StoreOpKind::Lock, e))?;
         match lock.try_lock() {
             Ok(()) => {}
             Err(fs::TryLockError::WouldBlock) => {
                 return Err(FsError::Locked { path: lock_path });
             }
             Err(fs::TryLockError::Error(e)) => {
-                return Err(io_error(lock_path, crate::writer::StoreOpKind::List, e));
+                return Err(io_error(lock_path, crate::writer::StoreOpKind::Lock, e));
             }
         }
         Ok(lock)
@@ -281,7 +286,6 @@ impl FsRecorder {
             dir,
             _lock: lock,
             tracker,
-            last_now: Timestamp::ZERO,
             container,
             retry: None,
             programme_retry: None,
@@ -322,7 +326,6 @@ impl FsRecorder {
         wall: impl Fn(&SegmentEntry) -> Option<jiff::Timestamp>,
         inits: &[InitGeneration],
     ) -> Result<(), FsError> {
-        self.last_now = now;
         self.writer
             .set_latest_closed(self.trunk.last_closed_segment());
         self.writer.on_inits(inits)?;
@@ -477,15 +480,18 @@ impl FsRecorder {
         let mut outcome = PlanOutcome::Done;
         let mut error = None;
         for (at_op, op) in plan.ops.iter().enumerate() {
-            if let Err(failure) = store_op(&self.dir, self.container, op) {
-                if let StoreFailure::Io(kind) | StoreFailure::NotDurable(kind) = failure {
+            if let Err(failed) = store_op(&self.dir, self.container, op) {
+                if let Some(source) = failed.source {
                     error = Some(io_error(
                         path_of(&self.dir, op, self.container),
                         op.kind(),
-                        std::io::Error::from(kind),
+                        source,
                     ));
                 }
-                outcome = PlanOutcome::Failed { at_op, failure };
+                outcome = PlanOutcome::Failed {
+                    at_op,
+                    failure: failed.failure,
+                };
                 break;
             }
         }
@@ -501,9 +507,40 @@ impl FsRecorder {
     }
 }
 
-fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(), StoreFailure> {
+/// A failed store operation: the typed failure the writer records, plus the
+/// OS error it came from (which `StoreFailure` keeps only as a kind).
+#[derive(Debug)]
+struct StoreOpFailure {
+    failure: StoreFailure,
+    source: Option<std::io::Error>,
+}
+
+impl StoreOpFailure {
+    fn io(error: std::io::Error) -> Self {
+        Self {
+            failure: StoreFailure::Io(error.kind()),
+            source: Some(error),
+        }
+    }
+
+    fn not_durable(error: std::io::Error) -> Self {
+        Self {
+            failure: StoreFailure::NotDurable(error.kind()),
+            source: Some(error),
+        }
+    }
+
+    fn bare(failure: StoreFailure) -> Self {
+        Self {
+            failure,
+            source: None,
+        }
+    }
+}
+
+fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(), StoreOpFailure> {
     match op {
-        StoreOp::CreateDir => fs::create_dir_all(dir).map_err(|e| StoreFailure::Io(e.kind())),
+        StoreOp::CreateDir => fs::create_dir_all(dir).map_err(StoreOpFailure::io),
         StoreOp::CreateData { period } => {
             let path = dir.join(layout::media_file_name(*period, container));
             OpenOptions::new()
@@ -511,7 +548,7 @@ fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(),
                 .create_new(true)
                 .open(path)
                 .map(|_| ())
-                .map_err(|e| StoreFailure::Io(e.kind()))
+                .map_err(StoreOpFailure::io)
         }
         StoreOp::AppendData {
             period,
@@ -526,8 +563,11 @@ fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(),
             sync_file(&media)?;
             let playlist = dir.join(layout::playlist_file_name(*period));
             match sync_file(&playlist) {
-                Err(StoreFailure::Io(std::io::ErrorKind::NotFound)) | Ok(()) => Ok(()),
-                Err(failure) => Err(failure),
+                Ok(()) => Ok(()),
+                Err(failed) if failed.failure == StoreFailure::Io(std::io::ErrorKind::NotFound) => {
+                    Ok(())
+                }
+                Err(failed) => Err(failed),
             }
         }
         StoreOp::CreatePlaylist { period, text } => {
@@ -542,10 +582,10 @@ fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(),
                 file.sync_all()?;
                 fs::rename(&tmp, &path)
             };
-            write().map_err(|e| StoreFailure::Io(e.kind()))?;
+            write().map_err(StoreOpFailure::io)?;
             File::open(dir)
                 .and_then(|handle| handle.sync_all())
-                .map_err(|e| StoreFailure::NotDurable(e.kind()))
+                .map_err(StoreOpFailure::not_durable)
         }
         StoreOp::AppendPlaylist {
             period,
@@ -560,66 +600,45 @@ fn store_op(dir: &Path, container: ArchiveContainer, op: &StoreOp) -> Result<(),
             match fs::remove_file(path) {
                 Ok(()) => Ok(()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(StoreFailure::Io(e.kind())),
+                Err(e) => Err(StoreOpFailure::io(e)),
             }
         }
     }
 }
 
-fn sync_file(path: &Path) -> Result<(), StoreFailure> {
+fn sync_file(path: &Path) -> Result<(), StoreOpFailure> {
     OpenOptions::new()
         .append(true)
         .open(path)
         .and_then(|file| file.sync_data())
-        .map_err(|e| StoreFailure::Io(e.kind()))
+        .map_err(StoreOpFailure::io)
 }
 
-fn append_at(path: &Path, expect_len: u64, bytes: &[u8]) -> Result<(), StoreFailure> {
+fn append_at(path: &Path, expect_len: u64, bytes: &[u8]) -> Result<(), StoreOpFailure> {
     let mut file = OpenOptions::new()
         .write(true)
         .open(path)
-        .map_err(|e| StoreFailure::Io(e.kind()))?;
-    let actual = file
-        .metadata()
-        .map_err(|e| StoreFailure::Io(e.kind()))?
-        .len();
+        .map_err(StoreOpFailure::io)?;
+    let actual = file.metadata().map_err(StoreOpFailure::io)?.len();
     if actual != expect_len {
         let settled = if actual > expect_len {
-            file.set_len(expect_len)
-                .map_err(|e| StoreFailure::Io(e.kind()))?;
+            file.set_len(expect_len).map_err(StoreOpFailure::io)?;
             expect_len
         } else {
             actual
         };
-        return Err(StoreFailure::LengthMismatch { actual: settled });
+        return Err(StoreOpFailure::bare(StoreFailure::LengthMismatch {
+            actual: settled,
+        }));
     }
     let result = file
         .seek(SeekFrom::End(0))
         .and_then(|_| file.write_all(bytes));
     if let Err(e) = result {
         let _ = file.set_len(expect_len);
-        return Err(StoreFailure::Io(e.kind()));
+        return Err(StoreOpFailure::io(e));
     }
     Ok(())
-}
-
-/// The egress adapter drives the writer without a wall-clock source, so a
-/// writer configured with a programme service is rejected up front rather
-/// than failing every segment with `WallClockRequired`; use
-/// [`FsRecorder::poll`] for that configuration.
-impl SegmentEgress for FsRecorder {
-    type Error = FsError;
-
-    fn on_segment(&mut self, item: &SegmentCursorItem) -> Result<(), Self::Error> {
-        if self.tracker.is_some() {
-            return Err(ArchiveError::WallClockRequired.into());
-        }
-        let step = self.writer.on_item(self.last_now, None, item)?;
-        match self.handle_step(step)? {
-            Execution::Consumed => Ok(()),
-            Execution::Retry => Err(FsError::RetryRequired),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -670,11 +689,16 @@ impl FsArchive {
     }
 
     /// Every readable segment across every period, plus the periods that
-    /// could not be read.
-    pub fn scan(&mut self) -> ArchiveScan {
+    /// could not be read. A missing archive directory is an empty archive.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadError::Io`] when the archive directory exists but cannot be
+    /// listed: an unlistable archive is never reported as an empty one.
+    pub fn scan(&mut self) -> Result<ArchiveScan, ReadError> {
         let mut scan = ArchiveScan::default();
         let mut owner: BTreeMap<SegmentSeq, PeriodNum> = BTreeMap::new();
-        for period in self.periods() {
+        for period in self.periods()? {
             match self.playlist(period) {
                 Ok(playlist) => {
                     for segment in &playlist.segments {
@@ -695,19 +719,23 @@ impl FsArchive {
         }
         scan.segments.sort_by_key(|segment| segment.seq);
         self.prune();
-        scan
+        Ok(scan)
     }
 
     /// The archived segment numbered `seq`, if any.
-    pub fn find(&mut self, seq: SegmentSeq) -> Option<ArchivedSegment> {
-        for period in self.periods() {
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::scan`].
+    pub fn find(&mut self, seq: SegmentSeq) -> Result<Option<ArchivedSegment>, ReadError> {
+        for period in self.periods()? {
             if let Ok(playlist) = self.playlist(period)
                 && let Some(segment) = playlist.segments.iter().find(|s| s.seq == seq)
             {
-                return Some(*segment);
+                return Ok(Some(*segment));
             }
         }
-        None
+        Ok(None)
     }
 
     /// Read one archived segment's exact bytes.
@@ -730,15 +758,24 @@ impl FsArchive {
         self.read_span(period, span)
     }
 
-    /// The highest archived sequence number (`0` for an empty archive), for a
-    /// restarted route to number above.
-    pub fn seq_floor(&mut self) -> SegmentSeq {
-        self.scan()
-            .segments
-            .iter()
-            .map(|s| s.seq)
-            .max()
-            .unwrap_or_else(|| SegmentSeq::new(0))
+    /// The highest archived sequence number, or `None` for an archive that
+    /// holds no segment, for a restarted route to number above.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::scan`], and [`ReadError::Playlist`] with
+    /// [`PlaylistError::Io`] when a period playlist exists but cannot be
+    /// read: its sequence numbers are unknown, so any floor could be too low.
+    pub fn seq_floor(&mut self) -> Result<Option<SegmentSeq>, ReadError> {
+        let scan = self.scan()?;
+        if let Some((_, error)) = scan
+            .unreadable
+            .into_iter()
+            .find(|(_, error)| matches!(error, PlaylistError::Io { .. }))
+        {
+            return Err(error.into());
+        }
+        Ok(scan.segments.iter().map(|s| s.seq).max())
     }
 
     /// Recover a period's init and fragment spans from its media file.
@@ -762,23 +799,25 @@ impl FsArchive {
         self.cache.len()
     }
 
-    fn periods(&self) -> Vec<PeriodNum> {
-        let Ok(entries) = fs::read_dir(&self.dir) else {
-            return Vec::new();
+    fn periods(&self) -> Result<Vec<PeriodNum>, ReadError> {
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(ReadError::Io { kind: e.kind() }),
         };
-        let mut periods: Vec<PeriodNum> = entries
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let name = e.file_name();
-                let name = name.to_str()?;
-                match layout::classify(name, self.container)? {
-                    ArchiveFile::Playlist(period) => Some(period),
-                    ArchiveFile::Media(_) => None,
-                }
-            })
-            .collect();
+        let mut periods = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| ReadError::Io { kind: e.kind() })?;
+            let name = entry.file_name();
+            if let Some(ArchiveFile::Playlist(period)) = name
+                .to_str()
+                .and_then(|name| layout::classify(name, self.container))
+            {
+                periods.push(period);
+            }
+        }
         periods.sort_unstable();
-        periods
+        Ok(periods)
     }
 
     fn playlist(&mut self, period: PeriodNum) -> Result<Arc<PeriodPlaylist>, PlaylistError> {
@@ -800,7 +839,7 @@ impl FsArchive {
             self.tick = self.tick.wrapping_add(1);
             return Ok(playlist);
         }
-        let data = fs::read(&path).map_err(io_playlist_error)?;
+        let data = read_bounded_playlist(&path).map_err(io_playlist_error)?;
         let parsed = Arc::new(parse_period_playlist(period, self.container, &data)?);
         let tick = self.tick;
         self.tick = self.tick.wrapping_add(1);
@@ -858,6 +897,15 @@ impl FsArchive {
             .map_err(|e| ReadError::Io { kind: e.kind() })?;
         Ok(Bytes::from(buf))
     }
+}
+
+fn read_bounded_playlist(path: &Path) -> std::io::Result<Vec<u8>> {
+    let limit = u64::try_from(broadcast_hls::limits::MAX_PLAYLIST_BYTES)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut data = Vec::new();
+    File::open(path)?.take(limit).read_to_end(&mut data)?;
+    Ok(data)
 }
 
 fn io_playlist_error(error: std::io::Error) -> PlaylistError {
@@ -932,7 +980,7 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
-            result,
+            result.map_err(|failed| failed.failure),
             Err(StoreFailure::Io(std::io::ErrorKind::PermissionDenied))
         );
     }
@@ -955,7 +1003,7 @@ mod tests {
             },
         );
         let _ = fs::remove_dir_all(&dir);
-        assert_eq!(result, Ok(()));
+        assert_eq!(result.map_err(|failed| failed.failure), Ok(()));
     }
 
     fn archive(tag: &str) -> FsArchive {

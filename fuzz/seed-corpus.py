@@ -230,6 +230,39 @@ def seed_ts_fix(check_only: bool) -> int:
     return TS_FIX_MODES
 
 
+# `dvr_playlist`: one selector byte (bit 0: 0 = fMP4, 1 = TS; bits 1-7: the period number) then
+# the playlist bytes. The container and period must match the playlist's own marker line, so
+# without a seed the fuzzer has to synthesise a whole `#EXTM3U` header and marker before any
+# parse succeeds, and a hard-coded container would leave the TS arm unreachable. Both seeds are
+# period 4 of the writer's golden: the TS arm is that same period with the TS marker and URI and
+# no `EXT-X-MAP`, which is what the TS container writes.
+DVR_PLAYLIST_GOLDEN = "fixtures/golden/dvr-runtime/p4.m3u8"
+DVR_PLAYLIST_PERIOD = 4
+
+
+def seed_dvr_playlist(check_only: bool) -> tuple[int, list[str]]:
+    source = REPO / DVR_PLAYLIST_GOLDEN
+    if not source.exists():
+        return 0, [DVR_PLAYLIST_GOLDEN]
+    if check_only:
+        return 0, []
+    text = source.read_text()
+    selector = DVR_PLAYLIST_PERIOD << 1
+    ts_text = "".join(
+        line for line in text.splitlines(keepends=True) if not line.startswith("#EXT-X-MAP:")
+    )
+    ts_text = ts_text.replace("CONTAINER=FMP4", "CONTAINER=TS").replace("p4.m4s", "p4.ts")
+    out = REPO / "fuzz" / "corpus" / "dvr_playlist"
+    out.mkdir(parents=True, exist_ok=True)
+    seeds = {
+        "p4_fmp4": bytes([selector]) + text.encode(),
+        "p4_ts": bytes([selector | 1]) + ts_text.encode(),
+    }
+    for name, blob in seeds.items():
+        (out / name).write_bytes(blob)
+    return len(seeds), []
+
+
 def seed_dash_client(check_only: bool) -> int:
     if check_only:
         return 0
@@ -378,6 +411,12 @@ def main() -> int:
     ts_fix = seed_ts_fix(args.check)
     if not args.check:
         print(f"ts_fix: {ts_fix} seeds")
+    dvr_playlist, dvr_missing = seed_dvr_playlist(args.check)
+    all_missing += dvr_missing
+    if not args.check:
+        print(f"dvr_playlist: {dvr_playlist} seeds")
+    for m in dvr_missing:
+        print(f"  warning: fixture not present, skipped: {m}", file=sys.stderr)
     dash_client = seed_dash_client(args.check)
     if not args.check:
         print(f"dash_client_static: {dash_client} scripted scenario seeds")

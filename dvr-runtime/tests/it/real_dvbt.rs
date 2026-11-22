@@ -135,7 +135,7 @@ pub fn record_into(root: std::path::PathBuf) -> Recording {
         &ArchiveName::new("cam").expect("name"),
         ArchiveContainer::Ts,
     );
-    let scan = archive.scan();
+    let scan = archive.scan().expect("scan");
     Recording {
         root,
         scan,
@@ -339,6 +339,11 @@ fn the_eit_transition_closes_p0_and_opens_p1_with_the_new_event() {
         !root.join("tf1").join("p1.m3u8").exists(),
         "p1 waits for its first segment"
     );
+    assert!(
+        p0.contains("#EXT-X-PROGRAM-DATE-TIME:"),
+        "the EIT recording carries wall times: {p0}"
+    );
+    crate::hls_oracle::validate_if_available(&root.join("tf1"), "p0.m3u8");
 
     publish(2, &ts_bytes[slice..2 * slice], 2_000_000_000);
     recorder
