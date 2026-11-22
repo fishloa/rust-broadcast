@@ -547,6 +547,18 @@ mod tests {
     use std::thread;
     use transmux::SegmentMeta;
 
+    #[test]
+    fn retention_config_error_displays_the_window_and_cap() {
+        let e = RetentionConfigError::ColdWindowTooLong {
+            cold_window: Duration::from_secs(90),
+            max: Duration::from_secs(60),
+        };
+        assert_eq!(
+            e.to_string(),
+            "retention cold_window 90s is past the 60s cap"
+        );
+    }
+
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
     }

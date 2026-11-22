@@ -939,8 +939,9 @@ mod tests {
                 num_sources: 2,
             }
         );
-        assert!(out_of_range.contains("primary"), "got {out_of_range}");
-        assert!(out_of_range.contains("secondary"), "got {out_of_range}");
-        assert!(out_of_range.contains("2 sources"), "got {out_of_range}");
+        assert_eq!(
+            out_of_range,
+            "failover source out of range: primary SourceId(0), secondary SourceId(9) for 2 sources"
+        );
     }
 }
