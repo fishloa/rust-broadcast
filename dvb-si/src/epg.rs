@@ -1013,6 +1013,10 @@ pub enum PresentEventChange {
 /// `event_id` again changes nothing — neither a repeated section nor a
 /// re-versioned copy of the same event is a programme boundary.
 ///
+/// An event signalled with any other `running_status` — `undefined` (value 0)
+/// included — is not tracked, so a service that never marks an event
+/// `running` produces no change at all rather than a guess by position.
+///
 /// Two entry points feed the tracker:
 ///
 /// * [`on_section`](Self::on_section) returns the change for a section the
@@ -1038,6 +1042,18 @@ pub struct PresentEventTracker {
     resync: mpeg_ts::resync::TsResync,
     #[cfg(feature = "ts")]
     packets: Vec<[u8; mpeg_ts::ts::TS_PACKET_SIZE]>,
+}
+
+impl core::fmt::Debug for PresentEventTracker {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PresentEventTracker")
+            .field("service_id", &self.service_id)
+            .field("last_event_id", &self.last_event_id)
+            .field("current", &self.current)
+            .field("pending", &self.pending)
+            .field("changes_dropped", &self.changes_dropped)
+            .finish()
+    }
 }
 
 impl PresentEventTracker {
