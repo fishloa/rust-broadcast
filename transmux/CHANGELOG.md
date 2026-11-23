@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The BER-OID documentation no longer claims every ST 0601 tag fits one byte: tags 128..=143 take two-byte keys (contributed by Matthew Busel, #3955).
+- The BER-OID documentation no longer claims every ST 0601 tag fits one byte: tags 128..=143 take two-byte keys (contributed by Matt Busel, #3955).
 - An over-wide `BitReader::read_bits` request is `InvalidValue` with its field, width and reason, and leaves the cursor where it was (#3998).
 - The `vvcC` record reader no longer swallows an error from its byte skip or advances its cursor unchecked over `ptl_reserved_zero_bit` padding: the skip's error is propagated, a length that would overflow the byte cursor is a typed `BufferTooShort` instead of a panic, and alignment reads its padding bits (#3999).
 - 192-byte M2TS source packets demux: the resynchroniser now locks at the 192-byte stride and strips the 4-byte `TP_extra_header`, so `TsDemux` yields the tracks `fixtures/ts/m2ts-192.m2ts` really carries instead of nothing (#3988).
