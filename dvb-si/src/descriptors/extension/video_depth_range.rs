@@ -101,8 +101,8 @@ pub struct VideoDepthRange<'a> {
 
 /// Sign-extend a 12-bit two's-complement value to `i16` (bit 11 is the sign).
 fn sext12(v: u16) -> i16 {
-    if v & 0x800 != 0 {
-        (v | 0xF000) as i16
+    if v & DISPARITY_SIGN_BIT != 0 {
+        (v | DISPARITY_SIGN_EXTEND) as i16
     } else {
         v as i16
     }
@@ -137,9 +137,15 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
                     // Two 12-bit tcimsbf values packed into 3 bytes (b0..b2):
                     let b0 = sel[pos];
                     let b1 = sel[pos + 1];
-                    let b2 = sel[pos + 2];
-                    let max = sext12((u16::from(b0) << 4) | (u16::from(b1) >> 4));
-                    let min = sext12(((u16::from(b1) & 0x0F) << 8) | u16::from(b2));
+                    let b2 = sel[pos + VD_HINT_THIRD_OFFSET];
+                    let max = sext12(
+                        (u16::from(b0) << DISPARITY_HIGH_SHIFT)
+                            | (u16::from(b1) >> DISPARITY_HIGH_SHIFT),
+                    );
+                    let min = sext12(
+                        ((u16::from(b1) & DISPARITY_NIBBLE_MASK) << DISPARITY_LOW_SHIFT)
+                            | u16::from(b2),
+                    );
                     if range_length == VD_DISPARITY_LEN {
                         DepthRangeBody::ProductionDisparityHint { max, min }
                     } else {
@@ -170,6 +176,22 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
 /// 12-bit two's-complement bounds for disparity hints.
 const DISPARITY_MIN: i16 = 2048;
 const DISPARITY_MAX: i16 = 2047;
+/// Sign bit of a 12-bit two's-complement value.
+const DISPARITY_SIGN_BIT: u16 = 0x0800;
+/// Sign extension for a negative 12-bit two's-complement value.
+const DISPARITY_SIGN_EXTEND: u16 = 0xF000;
+/// Mask of the 12-bit disparity field.
+const DISPARITY_FIELD_MASK: u16 = 0x0FFF;
+/// Offset of the third disparity-hint byte after `range_type`/`range_length`.
+const VD_HINT_SECOND_OFFSET: usize = VD_RANGE_HDR_LEN + 1;
+/// Offset of the third disparity-hint byte.
+const VD_HINT_THIRD_OFFSET: usize = VD_RANGE_HDR_LEN + 2;
+/// Shift of the max value's high byte.
+const DISPARITY_HIGH_SHIFT: u16 = 4;
+/// Mask of a 4-bit nibble.
+const DISPARITY_NIBBLE_MASK: u16 = 0x000F;
+/// Shift of the min value's high nibble.
+const DISPARITY_LOW_SHIFT: u16 = 8;
 
 /// Check a 12-bit two's-complement disparity value fits its field.
 fn disparity_bits(value: i16, field: &'static str) -> Result<u16> {
@@ -179,7 +201,7 @@ fn disparity_bits(value: i16, field: &'static str) -> Result<u16> {
             reason: "outside 12-bit two's-complement range -2048..=2047",
         });
     }
-    Ok(value as u16 & 0x0FFF)
+    Ok(value as u16 & DISPARITY_FIELD_MASK)
 }
 
 impl Serialize for VideoDepthRange<'_> {
@@ -212,9 +234,12 @@ impl Serialize for VideoDepthRange<'_> {
                     // (r03-W3).
                     let max_bits = disparity_bits(*max, "max_tcimsbf")?;
                     let min_bits = disparity_bits(*min, "min_tcimsbf")?;
-                    buf[p + 2] = (max_bits >> 4) as u8;
-                    buf[p + 3] = (((max_bits & 0x0F) << 4) | ((min_bits >> 8) & 0x0F)) as u8;
-                    buf[p + 4] = min_bits as u8;
+                    buf[p + VD_RANGE_HDR_LEN] = (max_bits >> DISPARITY_HIGH_SHIFT) as u8;
+                    buf[p + VD_HINT_SECOND_OFFSET] = (((max_bits & DISPARITY_NIBBLE_MASK)
+                        << DISPARITY_HIGH_SHIFT)
+                        | ((min_bits >> DISPARITY_LOW_SHIFT) & DISPARITY_NIBBLE_MASK))
+                        as u8;
+                    buf[p + VD_HINT_THIRD_OFFSET] = min_bits as u8;
                     p += VD_RANGE_HDR_LEN + VD_DISPARITY_LEN;
                 }
                 DepthRangeBody::MultiRegionSei => {
@@ -223,7 +248,8 @@ impl Serialize for VideoDepthRange<'_> {
                 }
                 DepthRangeBody::Other(s) => {
                     buf[p + 1] = broadcast_common::len::fit_u8(s.len(), "depth_range_length")?;
-                    buf[p + 2..p + 2 + s.len()].copy_from_slice(s);
+                    buf[p + VD_RANGE_HDR_LEN..p + VD_RANGE_HDR_LEN + s.len()]
+                        .copy_from_slice(s);
                     p += VD_RANGE_HDR_LEN + s.len();
                 }
             }
