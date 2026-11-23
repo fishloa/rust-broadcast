@@ -33,8 +33,6 @@ const TAIL_HI_MASK: u8 = 0x03;
 const TABLE_BOUNDARY_SHIFT: u32 = 3;
 const FRAME_BOUNDARY_SHIFT: u32 = 2;
 
-/// Byte offsets of the block tail bytes.
-
 /// The shared 32-bit bit layout behind both tables' `RealTimeParameters`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RealTimeParametersBits {

@@ -100,17 +100,8 @@ impl<'a> SdtService<'a> {
 /// Shift of `reserved_future_use(6)` in the EIT-flags byte.
 const EIT_FLAGS_RESERVED_SHIFT: u32 = 2;
 
-/// Width of the `reserved` extension fields.
-
-/// Width of `descriptors_loop_length`.
-const DESC_LOOP_LEN_BITS: u32 = 12;
-
 /// Byte offsets in the SDT section header.
-const TRANSPORT_STREAM_ID_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
-const ORIGINAL_NETWORK_ID_OFFSET: usize = 8;
+const SDT_ORIGINAL_NETWORK_ID_OFFSET: usize = 8;
 const RESERVED_FUTURE_USE_OFFSET: usize = 10;
 
 /// Byte offsets inside one service record.
@@ -201,12 +192,14 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let transport_stream_id = crate::wire::be_u16(bytes, TRANSPORT_STREAM_ID_OFFSET, "sdt")?;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
-        let original_network_id = crate::wire::be_u16(bytes, ORIGINAL_NETWORK_ID_OFFSET, "sdt")?;
+        let transport_stream_id =
+            crate::wire::be_u16(bytes, super::TABLE_ID_EXTENSION_OFFSET, "sdt")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
+        let original_network_id =
+            crate::wire::be_u16(bytes, SDT_ORIGINAL_NETWORK_ID_OFFSET, "sdt")?;
 
         let services_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         let services_end = total - CRC_LEN;
@@ -274,7 +267,7 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             last_section_number,
             original_network_id,
             services,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
             reserved_future_use: ReservedOnes::from_bits(u64::from(
                 bytes[RESERVED_FUTURE_USE_OFFSET],
             )),
@@ -302,14 +295,14 @@ impl Serialize for SdtSection<'_> {
         };
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[TRANSPORT_STREAM_ID_OFFSET..VERSION_OFFSET]
+        buf[super::TABLE_ID_EXTENSION_OFFSET..super::VERSION_FLAGS_OFFSET]
             .copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[VERSION_OFFSET] = self
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
-        buf[ORIGINAL_NETWORK_ID_OFFSET..RESERVED_FUTURE_USE_OFFSET]
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[SDT_ORIGINAL_NETWORK_ID_OFFSET..RESERVED_FUTURE_USE_OFFSET]
             .copy_from_slice(&self.original_network_id.to_be_bytes());
         buf[RESERVED_FUTURE_USE_OFFSET] = self.reserved_future_use.get() as u8;
 
@@ -322,7 +315,7 @@ impl Serialize for SdtSection<'_> {
             buf[pos + SERVICE_FLAGS_OFFSET] = flags;
             let dll = broadcast_common::len::fit_bits(
                 svc.descriptors.len() as u64,
-                DESC_LOOP_LEN_BITS,
+                super::DESC_LOOP_LEN_BITS,
                 "descriptors_loop_length",
             )?;
             buf[pos + SERVICE_STATUS_OFFSET] = super::status_byte(

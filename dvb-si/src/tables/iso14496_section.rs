@@ -30,12 +30,6 @@ const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
-/// Byte offsets in the section header.
-const TABLE_ID_EXTENSION_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
-
 /// `ISO_IEC_14496_section()` — Table 2-153.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -108,13 +102,17 @@ impl<'a> Parse<'a> for Iso14496Section<'a> {
         )?;
         Ok(Self {
             table_id: bytes[0],
-            table_id_extension: crate::wire::be_u16(bytes, TABLE_ID_EXTENSION_OFFSET, "iso14496")?,
-            version_number: super::version_number_of(bytes[VERSION_OFFSET]),
-            current_next_indicator: super::current_next_of(bytes[VERSION_OFFSET]),
-            section_number: bytes[SECTION_NUMBER_OFFSET],
-            last_section_number: bytes[LAST_SECTION_NUMBER_OFFSET],
+            table_id_extension: crate::wire::be_u16(
+                bytes,
+                super::TABLE_ID_EXTENSION_OFFSET,
+                "iso14496",
+            )?,
+            version_number: super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]),
+            current_next_indicator: super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]),
+            section_number: bytes[super::SECTION_NUMBER_OFFSET],
+            last_section_number: bytes[super::LAST_SECTION_NUMBER_OFFSET],
             payload: &bytes[MIN_HEADER_LEN + EXTENSION_HEADER_LEN..total - CRC_LEN],
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
         })
     }
 }
@@ -140,11 +138,11 @@ impl Serialize for Iso14496Section<'_> {
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
-        buf[VERSION_OFFSET] = self
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         let start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         buf[start..start + self.payload.len()].copy_from_slice(self.payload);
         super::write_crc(buf, len - CRC_LEN);

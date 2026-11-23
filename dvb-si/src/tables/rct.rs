@@ -117,7 +117,6 @@ const ITEM_COUNT_MASK: u8 = 0x3F;
 /// Bit widths passed to the bit-field helpers.
 const ITEM_COUNT_BITS: u32 = 6;
 const LOCATOR_TRIPLET_ID_BITS: u32 = 10;
-const DESC_LOOP_LEN_BITS: u32 = 12;
 const ICON_DESC_LEN_BITS: u32 = 12;
 
 /// Wire masks for the code enums and packed fields.
@@ -163,10 +162,6 @@ const TERM_ID_LO_OFFSET: usize = 2;
 const GROUP_ID_OFFSET: usize = 3;
 
 /// Byte offsets in the RCT section header.
-const SERVICE_ID_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 const YEAR_OFFSET_OFFSET: usize = 8;
 const LINK_COUNT_OFFSET: usize = 10;
 
@@ -1157,11 +1152,11 @@ impl<'a> Parse<'a> for RctSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let service_id = crate::wire::be_u16(bytes, SERVICE_ID_OFFSET, "rct")?;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let service_id = crate::wire::be_u16(bytes, super::TABLE_ID_EXTENSION_OFFSET, "rct")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
         let year_offset = crate::wire::be_u16(bytes, YEAR_OFFSET_OFFSET, "rct")?;
         let link_count = bytes[LINK_COUNT_OFFSET];
 
@@ -1242,7 +1237,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
             descriptors,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
             reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
-                bytes[VERSION_OFFSET],
+                bytes[super::VERSION_FLAGS_OFFSET],
             ))),
             reserved_descriptor_loop_length: ReservedOnes::from_bits(u64::from(
                 super::len_reserved_of(bytes[pos]),
@@ -1280,14 +1275,15 @@ impl Serialize for RctSection<'_> {
         )?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
-        buf[SERVICE_ID_OFFSET..VERSION_OFFSET].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[VERSION_OFFSET] = super::b5_of(
+        buf[super::TABLE_ID_EXTENSION_OFFSET..super::VERSION_FLAGS_OFFSET]
+            .copy_from_slice(&self.service_id.to_be_bytes());
+        buf[super::VERSION_FLAGS_OFFSET] = super::b5_of(
             self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         buf[YEAR_OFFSET_OFFSET..LINK_COUNT_OFFSET].copy_from_slice(&self.year_offset.to_be_bytes());
         let link_count = broadcast_common::len::fit_u8(self.links.len(), "number_of_links")?;
         buf[LINK_COUNT_OFFSET] = link_count;
@@ -1296,7 +1292,7 @@ impl Serialize for RctSection<'_> {
         for li in &self.links {
             let li_body_len = broadcast_common::len::fit_bits(
                 link_info_serialized_len(li) as u64,
-                DESC_LOOP_LEN_BITS,
+                super::DESC_LOOP_LEN_BITS,
                 "link_info_length",
             )?;
             super::write_desc_loop_len_r(
@@ -1310,7 +1306,7 @@ impl Serialize for RctSection<'_> {
 
         let dll = broadcast_common::len::fit_bits(
             self.descriptors.len() as u64,
-            DESC_LOOP_LEN_BITS,
+            super::DESC_LOOP_LEN_BITS,
             "descriptors_length",
         )?;
         super::write_desc_loop_len_r(

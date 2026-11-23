@@ -65,16 +65,9 @@ const MPE_IFEC_RESERVED_BITS: u32 = 2;
 /// Minimum total encoded length: header + extension + RTP + CRC.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + RTP_LEN + CRC_LEN;
 
-/// Width of the `reserved` header fields.
-
 /// Byte offsets in the MPE-IFEC extension header.
 const BURST_NUMBER_OFFSET: usize = 3;
 const IFEC_BURST_SIZE_OFFSET: usize = 4;
-const FLAGS_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
-
-/// Byte offsets of `real_time_parameters` bytes 2 and 3.
 
 /// Time-slicing / MPE-IFEC real-time parameters (TS 102 772 §5.3, Table 3).
 ///
@@ -208,10 +201,10 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
         let burst_number = bytes[BURST_NUMBER_OFFSET];
         let ifec_burst_size = bytes[IFEC_BURST_SIZE_OFFSET];
         // byte 5: reserved(2) | version(5) | current_next_indicator(1)
-        let version = super::version_number_of(bytes[FLAGS_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[FLAGS_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let version = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let rtp_start = HEADER_LEN + EXTENSION_HEADER_LEN;
         let mut rtp = [0u8; RTP_LEN];
@@ -235,7 +228,7 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
             ifec_data,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
             reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
-                bytes[FLAGS_OFFSET],
+                bytes[super::VERSION_FLAGS_OFFSET],
             ))),
         })
     }
@@ -267,13 +260,13 @@ impl Serialize for MpeIfecSection<'_> {
         buf[BURST_NUMBER_OFFSET] = self.burst_number;
         buf[IFEC_BURST_SIZE_OFFSET] = self.ifec_burst_size;
         // reserved(2)=11 | version(5) | current_next_indicator(1)
-        buf[FLAGS_OFFSET] = super::b5_of(
+        buf[super::VERSION_FLAGS_OFFSET] = super::b5_of(
             self.reserved_b5.get() as u8,
             self.version,
             self.current_next_indicator,
         )?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         // real_time_parameters.
         let rtp_start = HEADER_LEN + EXTENSION_HEADER_LEN;

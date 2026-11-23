@@ -102,13 +102,8 @@ const OFFSET_COMMON_DESC_LEN: usize = HEADER_LEN + FIXED_BODY_LEN;
 const PLATFORM_LOOP_LEN_FIELD: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 
-/// Width of the `reserved_common_descriptor_loop_length` field.
-
 /// Width of the OUI and descriptor loop lengths.
 const OUI_BITS: u32 = 24;
-const DESC_LOOP_LEN_BITS: u32 = 12;
-
-/// Shifts used to assemble the 24-bit OUI.
 
 /// A target/operational descriptor-loop pair in the UNT platform loop (Table 11),
 /// in the UNT descriptor namespace (ETSI TS 102 006 Table 19).
@@ -462,7 +457,7 @@ impl Serialize for UntSection<'_> {
 
         let cdl = broadcast_common::len::fit_bits(
             self.common_descriptors.len() as u64,
-            DESC_LOOP_LEN_BITS,
+            super::DESC_LOOP_LEN_BITS,
             "common_descriptors_length",
         )?;
         super::write_desc_loop_len_r(
@@ -496,7 +491,7 @@ impl Serialize for UntSection<'_> {
                 let operational_descriptors = &pair.operational_descriptors;
                 let tl = broadcast_common::len::fit_bits(
                     target_descriptors.len() as u64,
-                    DESC_LOOP_LEN_BITS,
+                    super::DESC_LOOP_LEN_BITS,
                     "target_descriptors_length",
                 )?;
                 super::write_desc_loop_len_r(
@@ -510,7 +505,7 @@ impl Serialize for UntSection<'_> {
 
                 let ol = broadcast_common::len::fit_bits(
                     operational_descriptors.len() as u64,
-                    DESC_LOOP_LEN_BITS,
+                    super::DESC_LOOP_LEN_BITS,
                     "operational_descriptors_length",
                 )?;
                 super::write_desc_loop_len_r(

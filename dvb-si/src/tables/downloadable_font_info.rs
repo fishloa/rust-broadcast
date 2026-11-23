@@ -79,10 +79,6 @@ const WEIGHT_MASK: u8 = 0x0F;
 /// `format(4)` field mask of a FileUri font-info type byte.
 const FORMAT_MASK: u8 = 0x0F;
 /// `reserved_zero_future_use(1)` mask in the StyleWeight byte (bit 0).
-/// Shift of the `reserved_zero_future_use(4)` above `font_file_format(4)`.
-
-/// Width of the four-bit `reserved_zero_future_use` field.
-
 /// `font_id_extension(9) | font_id(7)` split.
 const FONT_ID_EXTENSION_MASK: u16 = 0x01FF;
 const FONT_ID_MASK: u16 = 0x7F;
@@ -93,9 +89,6 @@ const STYLE_SHIFT: u8 = 5;
 
 /// Byte offsets in the section header.
 const ID_WORD_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 
 /// Fixed byte lengths of the `font_info` bodies, excluding the type byte.
 const FONT_INFO_TYPE_LEN: usize = 1;
@@ -251,10 +244,10 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
         let id_word = crate::wire::be_u16(bytes, ID_WORD_OFFSET, "downloadable_font_info")?;
         let font_id_extension = id_word >> FONT_ID_EXTENSION_SHIFT;
         let font_id = (id_word & FONT_ID_MASK) as u8;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let loop_end = total - CRC_LEN;
         let mut font_info = Vec::new();
@@ -371,7 +364,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
             section_number,
             last_section_number,
             font_info,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
         })
     }
 }
@@ -404,13 +397,13 @@ impl Serialize for DownloadableFontInfoSection<'_> {
             "font_id_extension",
         )? << FONT_ID_EXTENSION_SHIFT)
             | broadcast_common::len::fit_mask(self.font_id as u16, FONT_ID_MASK, "font_id")?;
-        buf[ID_WORD_OFFSET..VERSION_OFFSET].copy_from_slice(&id_word.to_be_bytes());
+        buf[ID_WORD_OFFSET..super::VERSION_FLAGS_OFFSET].copy_from_slice(&id_word.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
-        buf[VERSION_OFFSET] = self
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         // 8-bit length prefixes error on over-range payloads rather than
         // silently truncating (the crate's strict serialize idiom).

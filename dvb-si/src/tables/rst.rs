@@ -77,8 +77,6 @@ impl RstEntry {
 /// Shift of `reserved_future_use(5)` above `running_status(3)`.
 const RESERVED_SHIFT: u32 = 3;
 
-/// Width of the `reserved_future_use` entry field.
-
 /// Byte offsets inside one RST entry.
 const RST_ORIGINAL_NETWORK_ID_OFFSET: usize = 2;
 const RST_SERVICE_ID_OFFSET: usize = 4;

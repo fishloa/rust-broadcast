@@ -29,8 +29,6 @@ pub const DESCRIPTOR_TAG_BOUQUET_NAME: u8 = 0x47;
 /// Two-byte descriptor header (tag + length).
 const DESC_HEADER_LEN: usize = 2;
 
-/// Width of the `reserved` length fields.
-
 /// Bouquet Association Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

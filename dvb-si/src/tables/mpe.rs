@@ -109,17 +109,10 @@ const RESERVED_FIELD_BITS: u32 = 2;
 /// Wire byte offsets of the extension fields (ETSI EN 301 192 Figure 1).
 const MAC_6_OFFSET: usize = 3;
 const MAC_5_OFFSET: usize = 4;
-const FLAGS_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 const MAC_4_OFFSET: usize = 8;
 const MAC_3_OFFSET: usize = 9;
 const MAC_2_OFFSET: usize = 10;
 const MAC_1_OFFSET: usize = 11;
-
-/// Index of each MAC octet in network order.
-
-/// Offsets of the last two checksum bytes after `trailer_start`.
 
 /// Packed-field masks and shifts in the flags byte.
 const SCRAMBLING_CONTROL_MASK: u8 = 0x03;
@@ -262,15 +255,17 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
         let mac_5 = bytes[MAC_5_OFFSET];
 
         // Byte 5: reserved(2) | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
-        let payload_scrambling_control =
-            (bytes[FLAGS_OFFSET] >> PAYLOAD_SCRAMBLING_SHIFT) & SCRAMBLING_CONTROL_MASK;
-        let address_scrambling_control =
-            (bytes[FLAGS_OFFSET] >> ADDRESS_SCRAMBLING_SHIFT) & SCRAMBLING_CONTROL_MASK;
-        let llc_snap_flag = (bytes[FLAGS_OFFSET] & LLC_SNAP_FLAG) != 0;
-        let current_next_indicator = super::current_next_of(bytes[FLAGS_OFFSET]);
+        let payload_scrambling_control = (bytes[super::VERSION_FLAGS_OFFSET]
+            >> PAYLOAD_SCRAMBLING_SHIFT)
+            & SCRAMBLING_CONTROL_MASK;
+        let address_scrambling_control = (bytes[super::VERSION_FLAGS_OFFSET]
+            >> ADDRESS_SCRAMBLING_SHIFT)
+            & SCRAMBLING_CONTROL_MASK;
+        let llc_snap_flag = (bytes[super::VERSION_FLAGS_OFFSET] & LLC_SNAP_FLAG) != 0;
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
 
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let mac_4 = bytes[MAC_4_OFFSET];
         let mac_3 = bytes[MAC_3_OFFSET];
@@ -300,7 +295,7 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
             checksum,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
             reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
-                bytes[FLAGS_OFFSET],
+                bytes[super::VERSION_FLAGS_OFFSET],
             ))),
         })
     }
@@ -349,7 +344,7 @@ impl Serialize for MpeDatagramSection<'_> {
         buf[MAC_5_OFFSET] = mac_5;
 
         // Byte 5: reserved(2)=11 | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
-        buf[FLAGS_OFFSET] = ((self.reserved_b5.get() as u8) << RESERVED_B5_SHIFT)
+        buf[super::VERSION_FLAGS_OFFSET] = ((self.reserved_b5.get() as u8) << RESERVED_B5_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.payload_scrambling_control,
                 SCRAMBLING_CONTROL_MASK,
@@ -363,8 +358,8 @@ impl Serialize for MpeDatagramSection<'_> {
             | (u8::from(self.llc_snap_flag) << 1)
             | u8::from(self.current_next_indicator);
 
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         // bytes 8-11 = MAC_4, MAC_3, MAC_2, MAC_1.
         buf[MAC_4_OFFSET] = mac_4;

@@ -490,6 +490,21 @@ pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 /// Width of the 12-bit section_length and descriptor-loop length fields.
 pub(crate) const SECTION_LENGTH_BITS: u32 = 12;
 
+/// Byte offsets of the common long-form section-header layout
+/// (ISO/IEC 13818-1 §2.4.4.10, ETSI EN 300 468 §5.2).
+pub(crate) const TABLE_ID_EXTENSION_OFFSET: usize = 3;
+/// Extension-header byte carrying `reserved`, `version_number` and
+/// `current_next_indicator`.
+pub(crate) const VERSION_FLAGS_OFFSET: usize = 5;
+pub(crate) const SECTION_NUMBER_OFFSET: usize = 6;
+pub(crate) const LAST_SECTION_NUMBER_OFFSET: usize = 7;
+/// Byte offset of `transport_stream_id` in the EIT/CIT extension header.
+pub(crate) const TRANSPORT_STREAM_ID_OFFSET: usize = 8;
+/// Byte offset of `original_network_id` in the EIT/CIT extension header.
+pub(crate) const ORIGINAL_NETWORK_ID_OFFSET: usize = 10;
+/// Width of the 12-bit descriptor-loop length fields.
+pub(crate) const DESC_LOOP_LEN_BITS: u32 = 12;
+
 /// Byte offset of the low `section_length` byte (byte 2).
 pub(crate) const SECTION_LENGTH_LO_OFFSET: usize = 2;
 

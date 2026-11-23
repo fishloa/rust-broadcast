@@ -29,9 +29,6 @@ use super::CRC_LEN;
 const TOT_RESERVED_BITS: u32 = 4;
 const MIN_SECTION_LEN: usize = HEADER_LEN + UTC_TIME_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
-/// Width of the `reserved` and 12-bit length fields.
-const DESC_LOOP_LEN_BITS: u32 = 12;
-
 /// Byte offset of the descriptor-loop length field.
 const DESC_LOOP_LEN_OFFSET: usize = HEADER_LEN + UTC_TIME_LEN;
 
@@ -184,7 +181,7 @@ impl Serialize for TotSection<'_> {
         buf[HEADER_LEN..HEADER_LEN + UTC_TIME_LEN].copy_from_slice(&self.utc_time_raw);
         let dl = broadcast_common::len::fit_bits(
             self.descriptors.len() as u64,
-            DESC_LOOP_LEN_BITS,
+            super::DESC_LOOP_LEN_BITS,
             "descriptors_loop_length",
         )?;
         super::write_desc_loop_len_r(

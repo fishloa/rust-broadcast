@@ -45,15 +45,10 @@ const SATELLITE_TABLE_ID_OFFSET: usize = 3;
 /// Low `table_count` bits (byte 4).
 const TABLE_COUNT_LO_OFFSET: usize = 4;
 /// `version_number` / `current_next_indicator` byte.
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 /// Trailing `reserved_zero_future_use(8)` header byte.
 const RESERVED_TRAILER_OFFSET: usize = 8;
 /// Low byte of `section_length`.
 const SECTION_LENGTH_LO_OFFSET: usize = 2;
-
-/// Bit-field widths used by the SAT layouts (EN 300 468 §5.2.11).
 
 /// Wire masks for the SAT code enums (Tables 11f, 11g, 11i).
 const ASSOCIATION_TYPE_MASK: u8 = 0x0F;
@@ -2199,10 +2194,10 @@ impl<'a> Parse<'a> for SatSection {
         let table_count = (((bytes[SATELLITE_TABLE_ID_OFFSET] & TABLE_COUNT_HI_MASK) as u16)
             << YEAR_BITS)
             | bytes[TABLE_COUNT_LO_OFFSET] as u16;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
         let body_data = &bytes[HEADER_LEN..total - CRC_LEN];
         let body = sat_body_parse(satellite_table_id, body_data)?;
         Ok(SatSection {
@@ -2217,7 +2212,7 @@ impl<'a> Parse<'a> for SatSection {
             body,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
             reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
-                bytes[VERSION_OFFSET],
+                bytes[super::VERSION_FLAGS_OFFSET],
             ))),
             reserved_zero_future_use: ReservedZero::from_bits(u64::from(
                 bytes[RESERVED_TRAILER_OFFSET],
@@ -2271,13 +2266,13 @@ impl Serialize for SatSection {
         )? << SATELLITE_TABLE_ID_SHIFT)
             | ((self.table_count >> YEAR_BITS) as u8 & TABLE_COUNT_HI_MASK);
         buf[TABLE_COUNT_LO_OFFSET] = (self.table_count & u16::from(u8::MAX)) as u8;
-        buf[VERSION_OFFSET] = super::b5_of(
+        buf[super::VERSION_FLAGS_OFFSET] = super::b5_of(
             self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         buf[RESERVED_TRAILER_OFFSET] = self.reserved_zero_future_use.get() as u8;
         let body_start = HEADER_LEN;
         match &self.body {

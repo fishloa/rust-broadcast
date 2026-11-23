@@ -57,13 +57,8 @@ const CONTAINER_RESERVED_BITS: u32 = 2;
 /// Minimum total encoded length: header + extension + CRC.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
-/// Width of the `reserved` header fields.
-
 /// Byte offsets in the container section header.
 const CONTAINER_ID_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 
 /// Container table section parser (ETSI TS 102 323 v1.4.1 §7.3.1.4).
 ///
@@ -153,10 +148,10 @@ impl<'a> Parse<'a> for ContainerSection<'a> {
         // Extension header (bytes 3..8).
         let container_id = crate::wire::be_u16(bytes, CONTAINER_ID_OFFSET, "container")?;
         // byte 5: reserved(2) | version_number(5) | current_next_indicator(1)
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         // container_data: from end of extension header up to (not including) CRC.
         let data_start = HEADER_LEN + EXTENSION_HEADER_LEN;
@@ -174,7 +169,7 @@ impl<'a> Parse<'a> for ContainerSection<'a> {
             container_data,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
             reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
-                bytes[VERSION_OFFSET],
+                bytes[super::VERSION_FLAGS_OFFSET],
             ))),
         })
     }
@@ -205,13 +200,13 @@ impl Serialize for ContainerSection<'_> {
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.container_id.to_be_bytes());
-        buf[VERSION_OFFSET] = super::b5_of(
+        buf[super::VERSION_FLAGS_OFFSET] = super::b5_of(
             self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         // container_data.
         let data_start = HEADER_LEN + EXTENSION_HEADER_LEN;

@@ -44,10 +44,8 @@ const RESERVED_FUTURE_USE_7: u8 = 0x7F;
 /// `transition_flag` mask in the body byte (bit 7).
 const TRANSITION_FLAG: u8 = 0x80;
 
-/// Width of the `reserved_future_use` field.
-
 /// Byte offset of the transition-flag / reserved byte.
-const FLAGS_OFFSET: usize = 3;
+const DIT_FLAGS_OFFSET: usize = 3;
 
 impl DitSection {
     /// Construct a DIT with the spec `reserved` fill.
@@ -82,11 +80,11 @@ impl<'a> Parse<'a> for DitSection {
             });
         }
         // transition_flag is the top bit of the body byte; rest is reserved.
-        let transition_flag = bytes[FLAGS_OFFSET] & TRANSITION_FLAG != 0;
+        let transition_flag = bytes[DIT_FLAGS_OFFSET] & TRANSITION_FLAG != 0;
         Ok(DitSection {
             transition_flag,
             reserved_future_use: ReservedOnes::from_bits(u64::from(
-                bytes[FLAGS_OFFSET] & RESERVED_FUTURE_USE_7,
+                bytes[DIT_FLAGS_OFFSET] & RESERVED_FUTURE_USE_7,
             )),
             bits: super::SectionBits::parse(bytes[1], None),
         })
@@ -109,7 +107,7 @@ impl Serialize for DitSection {
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, BODY_LEN)?;
         // transition_flag in bit 7; remaining 7 bits reserved (set to 1).
-        buf[FLAGS_OFFSET] = (u8::from(self.transition_flag) * TRANSITION_FLAG)
+        buf[DIT_FLAGS_OFFSET] = (u8::from(self.transition_flag) * TRANSITION_FLAG)
             | broadcast_common::len::fit_mask(
                 self.reserved_future_use.get() as u8,
                 RESERVED_FUTURE_USE_7,

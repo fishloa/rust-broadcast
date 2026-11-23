@@ -38,14 +38,9 @@ const B1_DECODER_CONFIG: u8 = 0x10;
 const FRAGMENT_SHIFT: u32 = 6;
 const FRAGMENT_MASK: u8 = 0x03;
 
-/// Width of the `reserved` header field.
-
 /// Byte offsets in the metadata section header.
 const METADATA_SERVICE_ID_OFFSET: usize = 3;
 const RESERVED_OFFSET: usize = 4;
-const FLAGS_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 
 /// `section_fragment_indication` (Table 2-159).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,12 +182,12 @@ impl<'a> Parse<'a> for MetadataSection<'a> {
             metadata_service_id: bytes[METADATA_SERVICE_ID_OFFSET],
             reserved: ReservedOnes::from_bits(u64::from(bytes[RESERVED_OFFSET])),
             section_fragment_indication: SectionFragmentIndication::from_u8(
-                bytes[FLAGS_OFFSET] >> FRAGMENT_SHIFT,
+                bytes[super::VERSION_FLAGS_OFFSET] >> FRAGMENT_SHIFT,
             ),
-            version_number: super::version_number_of(bytes[FLAGS_OFFSET]),
-            current_next_indicator: super::current_next_of(bytes[FLAGS_OFFSET]),
-            section_number: bytes[SECTION_NUMBER_OFFSET],
-            last_section_number: bytes[LAST_SECTION_NUMBER_OFFSET],
+            version_number: super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]),
+            current_next_indicator: super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]),
+            section_number: bytes[super::SECTION_NUMBER_OFFSET],
+            last_section_number: bytes[super::LAST_SECTION_NUMBER_OFFSET],
             metadata_bytes: &bytes[MIN_HEADER_LEN + EXTENSION_HEADER_LEN..total - CRC_LEN],
         })
     }
@@ -218,13 +213,13 @@ impl Serialize for MetadataSection<'_> {
         buf[RESERVED_OFFSET] = self.reserved.get() as u8;
         // version_number(5) | current_next_indicator(1), with the 2-bit
         // fragment indication in the reserved(2) position of the shared helper.
-        buf[FLAGS_OFFSET] = super::b5_of(
+        buf[super::VERSION_FLAGS_OFFSET] = super::b5_of(
             self.section_fragment_indication.to_u8(),
             self.version_number,
             self.current_next_indicator,
         )?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         let start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         buf[start..start + self.metadata_bytes.len()].copy_from_slice(self.metadata_bytes);
         super::write_crc(buf, len - CRC_LEN);

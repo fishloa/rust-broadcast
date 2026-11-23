@@ -126,12 +126,6 @@ const REFERENCE_TYPE_MASK: u8 = 0x0F;
 const REFERENCE_TYPE_SHIFT: u8 = 4;
 const CERTIFICATE_COUNT_SHIFT: u8 = 4;
 
-/// Byte offsets in the partial-section header.
-const TABLE_ID_EXTENSION_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
-
 /// Byte offsets inside the authentication-message body.
 const SIGNATURE_ALGORITHM_OFFSET: usize = 2;
 const SECTION_HASHES_LOOP_LEN_OFFSET: usize = 3;
@@ -284,12 +278,15 @@ impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
             HEADER_LEN + CRC_LEN,
         )?;
 
-        let table_id_extension =
-            crate::wire::be_u16(bytes, TABLE_ID_EXTENSION_OFFSET, "protection_message")?;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let table_id_extension = crate::wire::be_u16(
+            bytes,
+            super::TABLE_ID_EXTENSION_OFFSET,
+            "protection_message",
+        )?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let body_bytes = &bytes[HEADER_LEN..total - CRC_LEN];
         let body = match table_id_extension {
@@ -305,7 +302,7 @@ impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
             section_number,
             last_section_number,
             body,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
         })
     }
 }
@@ -320,7 +317,7 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     let section_hash_algorithm_identifier = body[0];
     let section_hash_length = body[1];
     let signature_algorithm_identifier = body[SIGNATURE_ALGORITHM_OFFSET];
-    // bytes[TABLE_ID_EXTENSION_OFFSET] high nibble = reserved; section_hashes_loop_length is 12 bits.
+    // bytes[super::TABLE_ID_EXTENSION_OFFSET] high nibble = reserved; section_hashes_loop_length is 12 bits.
     let section_hashes_loop_length = super::desc_loop_len_of(
         body[SECTION_HASHES_LOOP_LEN_OFFSET],
         body[SECTION_HASHES_LOOP_LEN_LO_OFFSET],
@@ -541,7 +538,7 @@ impl ProtectionMessageBody<'_> {
                 }
                 // reserved(4) emitted 1s | section_hashes_loop_length(12).
                 super::write_desc_loop_len_r(
-                    &mut buf[TABLE_ID_EXTENSION_OFFSET..VERSION_OFFSET],
+                    &mut buf[super::TABLE_ID_EXTENSION_OFFSET..super::VERSION_FLAGS_OFFSET],
                     loop_bytes,
                     reserved_section_hashes_loop_length.get() as u8,
                 )?;
@@ -656,14 +653,14 @@ impl Serialize for ProtectionMessageSection<'_> {
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
-        buf[TABLE_ID_EXTENSION_OFFSET..VERSION_OFFSET]
+        buf[super::TABLE_ID_EXTENSION_OFFSET..super::VERSION_FLAGS_OFFSET]
             .copy_from_slice(&self.table_id_extension.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
-        buf[VERSION_OFFSET] = self
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         let body_written = self.body.write_into(&mut buf[HEADER_LEN..])?;
         let body_end = HEADER_LEN + body_written;
         super::write_crc(buf, body_end);

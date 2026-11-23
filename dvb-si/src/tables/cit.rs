@@ -36,15 +36,7 @@ const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 const CRID_REF_LEN: usize = 2;
 const CRID_ENTRY_FIXED_LEN: usize = CRID_REF_LEN + 1 + 1;
 
-/// Width of the `reserved` header fields.
-
 /// Byte offsets in the CIT section header.
-const SERVICE_ID_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
-const TRANSPORT_STREAM_ID_OFFSET: usize = 8;
-const ORIGINAL_NETWORK_ID_OFFSET: usize = 10;
 const PREPEND_STRINGS_LENGTH_OFFSET: usize = 12;
 
 /// Byte offsets inside one CRID entry.
@@ -192,13 +184,15 @@ impl<'a> Parse<'a> for CitSection<'a> {
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
         let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
-        let service_id = crate::wire::be_u16(bytes, SERVICE_ID_OFFSET, "cit")?;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
-        let transport_stream_id = crate::wire::be_u16(bytes, TRANSPORT_STREAM_ID_OFFSET, "cit")?;
-        let original_network_id = crate::wire::be_u16(bytes, ORIGINAL_NETWORK_ID_OFFSET, "cit")?;
+        let service_id = crate::wire::be_u16(bytes, super::TABLE_ID_EXTENSION_OFFSET, "cit")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
+        let transport_stream_id =
+            crate::wire::be_u16(bytes, super::TRANSPORT_STREAM_ID_OFFSET, "cit")?;
+        let original_network_id =
+            crate::wire::be_u16(bytes, super::ORIGINAL_NETWORK_ID_OFFSET, "cit")?;
         let prepend_strings_length = bytes[PREPEND_STRINGS_LENGTH_OFFSET];
 
         let ps_start = HEADER_LEN + EXTENSION_LEN;
@@ -270,7 +264,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
             crid_entries,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
             reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
-                bytes[VERSION_OFFSET],
+                bytes[super::VERSION_FLAGS_OFFSET],
             ))),
         })
     }
@@ -306,13 +300,13 @@ impl Serialize for CitSection<'_> {
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[VERSION_OFFSET] = super::b5_of(
+        buf[super::VERSION_FLAGS_OFFSET] = super::b5_of(
             self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[10..12].copy_from_slice(&self.original_network_id.to_be_bytes());
         buf[PREPEND_STRINGS_LENGTH_OFFSET] = prepend_strings_len;

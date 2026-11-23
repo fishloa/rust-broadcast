@@ -44,17 +44,12 @@ const CRID_POLICY_MASK: u8 = 0x03;
 /// bits `[7:6]` of the CRID_authority header byte (TS 102 323 §5.2.2).
 const CRID_POLICY_RESERVED_SHIFT: u32 = 6;
 
-/// Width of the `reserved` header fields.
-
 /// Width of the packed length fields and the CRID policy nibble.
 const LOOP_LEN_BITS: u32 = 12;
 const CRID_POLICY_SHIFT: u8 = 4;
 
 /// Byte offsets in the RNT section header.
 const CONTEXT_ID_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 const CONTEXT_ID_TYPE_OFFSET: usize = 8;
 
 /// CRID authority policy — ETSI TS 102 323 §5.2.2 Table 3.
@@ -329,10 +324,10 @@ impl<'a> Parse<'a> for RntSection<'a> {
         let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
         let context_id = crate::wire::be_u16(bytes, CONTEXT_ID_OFFSET, "rnt")?;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
         let context_id_type = ContextIdType::from_u8(bytes[CONTEXT_ID_TYPE_OFFSET]);
 
         let common_desc_len_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
@@ -495,7 +490,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
             context_id_type,
             common_descriptors,
             resolution_providers,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
             reserved_common_descriptors_length: ReservedOnes::from_bits(u64::from(
                 super::len_reserved_of(bytes[common_desc_len_pos]),
             )),
@@ -527,12 +522,13 @@ impl Serialize for RntSection<'_> {
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
-        buf[CONTEXT_ID_OFFSET..VERSION_OFFSET].copy_from_slice(&self.context_id.to_be_bytes());
-        buf[VERSION_OFFSET] = self
+        buf[CONTEXT_ID_OFFSET..super::VERSION_FLAGS_OFFSET]
+            .copy_from_slice(&self.context_id.to_be_bytes());
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         buf[CONTEXT_ID_TYPE_OFFSET] = self.context_id_type.to_u8();
 
         let cdl = broadcast_common::len::fit_bits(

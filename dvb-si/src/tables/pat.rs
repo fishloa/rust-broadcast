@@ -27,14 +27,6 @@ const PAT_RESERVED_BITS: u32 = 3;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 const ENTRY_LEN: usize = 4;
 
-/// Width of the `reserved` header field.
-
-/// Byte offsets in the PAT section header.
-const TRANSPORT_STREAM_ID_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
-
 /// Byte length of the entry `program_number`, before the PID field.
 const ENTRY_PROGRAM_NUMBER_LEN: usize = 2;
 
@@ -142,11 +134,12 @@ impl<'a> Parse<'a> for PatSection {
             MIN_SECTION_LEN,
         )?;
 
-        let transport_stream_id = crate::wire::be_u16(bytes, TRANSPORT_STREAM_ID_OFFSET, "pat")?;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let transport_stream_id =
+            crate::wire::be_u16(bytes, super::TABLE_ID_EXTENSION_OFFSET, "pat")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let end = total - CRC_LEN;
         let mut entries = Vec::new();
@@ -184,7 +177,7 @@ impl<'a> Parse<'a> for PatSection {
             section_number,
             last_section_number,
             entries,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
         })
     }
 }
@@ -204,13 +197,13 @@ impl Serialize for PatSection {
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, section_length)?;
-        buf[TRANSPORT_STREAM_ID_OFFSET..VERSION_OFFSET]
+        buf[super::TABLE_ID_EXTENSION_OFFSET..super::VERSION_FLAGS_OFFSET]
             .copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[VERSION_OFFSET] = self
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         for entry in &self.entries {

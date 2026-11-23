@@ -43,18 +43,9 @@ const RESERVED_SHIFT: u32 = 7;
 /// Width of the `reserved_transmission_info_loop_length` field.
 const FOUR_BITS: u32 = 4;
 
-/// Width of the descriptor loop lengths.
-const DESC_LOOP_LEN_BITS: u32 = 12;
-
 /// `running_status(3)` mask and shift in the service flags byte.
 const RUNNING_STATUS_MASK: u8 = 0x07;
 const RUNNING_STATUS_SHIFT: u32 = 4;
-
-/// Byte offsets in the SIT section header.
-const TABLE_ID_EXTENSION_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 
 /// Byte offsets inside one service record.
 const SERVICE_ID_LEN: usize = 2;
@@ -177,11 +168,12 @@ impl<'a> Parse<'a> for SitSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let table_id_extension = crate::wire::be_u16(bytes, TABLE_ID_EXTENSION_OFFSET, "sit")?;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let table_id_extension =
+            crate::wire::be_u16(bytes, super::TABLE_ID_EXTENSION_OFFSET, "sit")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let dl_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         let ti_len = super::desc_loop_len_of(bytes[dl_pos], bytes[dl_pos + 1]);
@@ -255,7 +247,7 @@ impl<'a> Parse<'a> for SitSection<'a> {
             last_section_number,
             transmission_info_descriptors: DescriptorLoop::new(&bytes[ti_start..ti_end]),
             services,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
             reserved_transmission_info_loop_length: ReservedOnes::from_bits(u64::from(
                 super::len_reserved_of(bytes[dl_pos]),
             )),
@@ -287,16 +279,16 @@ impl Serialize for SitSection<'_> {
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
-        buf[VERSION_OFFSET] = self
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         let dl_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         let ti_len = broadcast_common::len::fit_bits(
             self.transmission_info_descriptors.len() as u64,
-            DESC_LOOP_LEN_BITS,
+            super::DESC_LOOP_LEN_BITS,
             "transmission_info_loop_length",
         )?;
         super::write_desc_loop_len_r(
@@ -315,7 +307,7 @@ impl Serialize for SitSection<'_> {
             // MAX_SERVICE_DESC_LEN below).
             let dll = broadcast_common::len::fit_bits(
                 svc.descriptors.len() as u64,
-                DESC_LOOP_LEN_BITS,
+                super::DESC_LOOP_LEN_BITS,
                 "service_descriptors_length",
             )?;
             // reserved_future_use(1) | running_status(3) | len_hi(4)

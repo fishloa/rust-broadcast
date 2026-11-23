@@ -96,8 +96,6 @@ impl<'a> NitSection<'a> {
     }
 }
 
-/// Width of the `reserved` length fields.
-
 const LABELS: Labels = Labels {
     section: "NitSection",
     loop_header: "NitSection transport_stream_loop",

@@ -21,14 +21,8 @@ pub(super) const MIN_SECTION_LEN: usize =
 pub(super) const TS_HEADER_LEN: usize = 6;
 pub(super) const LOOP_LENGTH_FIELD_LEN: usize = 2;
 
-/// Width of the `reserved_future_use` field and the loop lengths.
-const DESC_LOOP_LEN_BITS: u32 = 12;
-
 /// Byte offsets in the section header.
 const ID_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 const DESC_LENGTH_OFFSET: usize = 8;
 
 /// Byte offsets inside one transport-stream entry.
@@ -183,13 +177,13 @@ pub(super) fn parse<'a>(bytes: &'a [u8], labels: &Labels) -> Result<Parsed<'a>> 
 
     Ok(Parsed {
         id,
-        version_number: super::version_number_of(bytes[VERSION_OFFSET]),
-        current_next_indicator: super::current_next_of(bytes[VERSION_OFFSET]),
-        section_number: bytes[SECTION_NUMBER_OFFSET],
-        last_section_number: bytes[LAST_SECTION_NUMBER_OFFSET],
+        version_number: super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]),
+        current_next_indicator: super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]),
+        section_number: bytes[super::SECTION_NUMBER_OFFSET],
+        last_section_number: bytes[super::LAST_SECTION_NUMBER_OFFSET],
         descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
         transport_streams,
-        bits: SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+        bits: SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
         reserved_descriptors_length: super::len_reserved_of(bytes[DESC_LENGTH_OFFSET]),
         reserved_transport_stream_loop_length: super::len_reserved_of(bytes[ts_loop_start]),
     })
@@ -219,16 +213,16 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
     buf[0] = table_id;
     buf[1] = view.bits.b1()?;
     super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-    buf[ID_OFFSET..VERSION_OFFSET].copy_from_slice(&view.id.to_be_bytes());
-    buf[VERSION_OFFSET] = view
+    buf[ID_OFFSET..super::VERSION_FLAGS_OFFSET].copy_from_slice(&view.id.to_be_bytes());
+    buf[super::VERSION_FLAGS_OFFSET] = view
         .bits
         .b5(view.version_number, view.current_next_indicator)?;
-    buf[SECTION_NUMBER_OFFSET] = view.section_number;
-    buf[LAST_SECTION_NUMBER_OFFSET] = view.last_section_number;
+    buf[super::SECTION_NUMBER_OFFSET] = view.section_number;
+    buf[super::LAST_SECTION_NUMBER_OFFSET] = view.last_section_number;
 
     let desc_length = broadcast_common::len::fit_bits(
         view.descriptors.len() as u64,
-        DESC_LOOP_LEN_BITS,
+        super::DESC_LOOP_LEN_BITS,
         view.descriptors_length_what,
     )?;
     super::write_desc_loop_len_r(
@@ -242,7 +236,7 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
     let ts_loop_start = desc_start + view.descriptors.len();
     let ts_loop_length = broadcast_common::len::fit_bits(
         (len - ts_loop_start - LOOP_LENGTH_FIELD_LEN - CRC_LEN) as u64,
-        DESC_LOOP_LEN_BITS,
+        super::DESC_LOOP_LEN_BITS,
         "transport_stream_loop_length",
     )?;
     super::write_desc_loop_len_r(
@@ -258,7 +252,7 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
             .copy_from_slice(&ts.original_network_id.to_be_bytes());
         let ts_desc_length = broadcast_common::len::fit_bits(
             ts.descriptors.len() as u64,
-            DESC_LOOP_LEN_BITS,
+            super::DESC_LOOP_LEN_BITS,
             "transport_descriptors_length",
         )?;
         super::write_desc_loop_len_r(

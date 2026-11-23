@@ -81,8 +81,6 @@ impl<'a, L: ScopedDescriptorLoop<'a>> TargetOperationalLoop<'a, L> {
 /// Wire width of the 12-bit descriptor-loop length field.
 pub(crate) const DESC_LOOP_LEN_FIELD: usize = 2;
 
-/// Width of the `reserved` length fields.
-
 #[cfg(test)]
 mod tests {
     use super::*;

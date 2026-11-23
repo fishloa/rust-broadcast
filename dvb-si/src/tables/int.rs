@@ -90,9 +90,6 @@ const OFF_PLATFORM_DESC_LEN: usize = 12;
 
 const OFF_PLATFORM_ID_LAST: usize = OFF_PLATFORM_ID + 2;
 
-/// Width of the `reserved` and 12-bit length fields.
-const DESC_LOOP_LEN_BITS: u32 = 12;
-
 /// Width and shifts of the 24-bit platform_id.
 const PLATFORM_ID_BITS: u32 = 24;
 
@@ -339,7 +336,7 @@ impl Serialize for IntSection<'_> {
 
         let pdl = broadcast_common::len::fit_bits(
             self.platform_descriptors.len() as u64,
-            DESC_LOOP_LEN_BITS,
+            super::DESC_LOOP_LEN_BITS,
             "platform_descriptors_loop_length",
         )?;
         super::write_desc_loop_len_r(
@@ -356,7 +353,7 @@ impl Serialize for IntSection<'_> {
         for entry in &self.loops {
             let tl = broadcast_common::len::fit_bits(
                 entry.target_descriptors.len() as u64,
-                DESC_LOOP_LEN_BITS,
+                super::DESC_LOOP_LEN_BITS,
                 "target_descriptor_loop_length",
             )?;
             super::write_desc_loop_len_r(
@@ -371,7 +368,7 @@ impl Serialize for IntSection<'_> {
 
             let ol = broadcast_common::len::fit_bits(
                 entry.operational_descriptors.len() as u64,
-                DESC_LOOP_LEN_BITS,
+                super::DESC_LOOP_LEN_BITS,
                 "operational_descriptor_loop_length",
             )?;
             super::write_desc_loop_len_r(

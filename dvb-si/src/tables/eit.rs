@@ -43,12 +43,6 @@ const START_TIME_LEN: usize = 5;
 const DURATION_LEN: usize = 3;
 
 /// Byte offsets in the EIT section header.
-const SERVICE_ID_OFFSET: usize = 3;
-const VERSION_OFFSET: usize = 5;
-const SECTION_NUMBER_OFFSET: usize = 6;
-const LAST_SECTION_NUMBER_OFFSET: usize = 7;
-const TRANSPORT_STREAM_ID_OFFSET: usize = 8;
-const ORIGINAL_NETWORK_ID_OFFSET: usize = 10;
 const SEGMENT_LAST_SECTION_NUMBER_OFFSET: usize = 12;
 const LAST_TABLE_ID_OFFSET: usize = 13;
 
@@ -211,14 +205,16 @@ impl<'a> Parse<'a> for EitSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let service_id = crate::wire::be_u16(bytes, SERVICE_ID_OFFSET, "eit")?;
-        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
-        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
-        let section_number = bytes[SECTION_NUMBER_OFFSET];
-        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let service_id = crate::wire::be_u16(bytes, super::TABLE_ID_EXTENSION_OFFSET, "eit")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
-        let transport_stream_id = crate::wire::be_u16(bytes, TRANSPORT_STREAM_ID_OFFSET, "eit")?;
-        let original_network_id = crate::wire::be_u16(bytes, ORIGINAL_NETWORK_ID_OFFSET, "eit")?;
+        let transport_stream_id =
+            crate::wire::be_u16(bytes, super::TRANSPORT_STREAM_ID_OFFSET, "eit")?;
+        let original_network_id =
+            crate::wire::be_u16(bytes, super::ORIGINAL_NETWORK_ID_OFFSET, "eit")?;
         let segment_last_section_number = bytes[SEGMENT_LAST_SECTION_NUMBER_OFFSET];
         let last_table_id = bytes[LAST_TABLE_ID_OFFSET];
 
@@ -293,7 +289,7 @@ impl<'a> Parse<'a> for EitSection<'a> {
             segment_last_section_number,
             last_table_id,
             events,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
         })
     }
 }
@@ -315,15 +311,16 @@ impl Serialize for EitSection<'_> {
         buf[0] = self.table_id;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[SERVICE_ID_OFFSET..VERSION_OFFSET].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[VERSION_OFFSET] = self
+        buf[super::TABLE_ID_EXTENSION_OFFSET..super::VERSION_FLAGS_OFFSET]
+            .copy_from_slice(&self.service_id.to_be_bytes());
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
-        buf[TRANSPORT_STREAM_ID_OFFSET..ORIGINAL_NETWORK_ID_OFFSET]
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[super::TRANSPORT_STREAM_ID_OFFSET..super::ORIGINAL_NETWORK_ID_OFFSET]
             .copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[ORIGINAL_NETWORK_ID_OFFSET..SEGMENT_LAST_SECTION_NUMBER_OFFSET]
+        buf[super::ORIGINAL_NETWORK_ID_OFFSET..SEGMENT_LAST_SECTION_NUMBER_OFFSET]
             .copy_from_slice(&self.original_network_id.to_be_bytes());
         buf[SEGMENT_LAST_SECTION_NUMBER_OFFSET] = self.segment_last_section_number;
         buf[LAST_TABLE_ID_OFFSET] = self.last_table_id;
