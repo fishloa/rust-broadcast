@@ -228,3 +228,34 @@ pub fn step_item_fail(
         .expect("complete");
     (plan, ops)
 }
+
+/// Open a recorder on a directory a previous run used, retrying a `Locked`
+/// refusal for a bounded window: a released lock file can still be shared for
+/// a moment by a process the host spawned (`FsRecorder::succeed` documents
+/// the same window), so a host that restarts a route retries rather than
+/// failing. `Locked` stays an error past the window.
+#[cfg(feature = "fs")]
+pub fn recorder_of(
+    root: &std::path::Path,
+    name: &str,
+    config: dvr_runtime::ArchiveConfig,
+    trunk: &std::sync::Arc<media_plane::trunk::Trunk>,
+) -> dvr_runtime::fs::FsRecorder {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match dvr_runtime::fs::FsRecorder::new(
+            root,
+            dvr_runtime::ArchiveName::new(name).expect("name"),
+            config.clone(),
+            trunk,
+        ) {
+            Ok(recorder) => return recorder,
+            Err(dvr_runtime::fs::FsError::Locked { .. })
+                if std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(other) => panic!("recorder: {other}"),
+        }
+    }
+}
