@@ -11,17 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `HEVCDecoderConfigurationRecord::is_valid_length_size` is removed. It had no caller (the parser validates `lengthSizeMinusOne` against `VALID_LENGTH_SIZES`; the VVC record keeps its own, used copy) and its doc comment described an unrelated reserved-bit rule, so it was a dead, untested duplicate public API (audit 23 finding 268, #3781).
 - **BREAKING:** `TrackFragmentBox::into_bytes` is removed (unused; use `Serialize::try_to_bytes`) (#3698).
 - `BitReader::read_bits` reports an over-wide field (`n > 64`) as `Error::InvalidValue`, the class `VvcBitReader::bits` and `bit_error` already use, instead of `Error::BufferTooShort`; a caller matching the short-buffer variant for that input sees the new class (#3998).
-### Added
-
-- Optional `misb` feature and `LocalSetItem::st0601_value()` returning the transmux-owned `St0601Value` (with `NestedSet`): MISB ST 0601 Local Set items decoded and scaled per the tag table, times as `jiff::Timestamp`, nested ST 0102/ST 0903 sets left as their raw bytes. No `misb` type is part of the public API (contributed by Matthew Busel, #3955).
-
 ### Changed
-- Internal: the MISB ST 0601.19 item table (§7 Table 1 + §8 items 1–143) and the ST 1201.5 IMAPB algorithm are transcribed into the private submodule, and `tests/it/klv.rs` now checks every tag's decoded kind, and the linear/IMAPB scaling at each item's minimum, maximum and midpoint, against them, plus two real UAS Datalink LS packets demuxed from a `stream_type` `0x15` metadata PES. The module cites the transcription, and `St0601Value`'s nested/pack raw faces are documented and tracked by #4041 (#3990).
-
 - Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - Internal: the public `bitreader::BitReader` (Exp-Golomb `ue`/`se`, RBSP unescape) stays a thin wrapper, now resuming `broadcast_common::bits::BitReader` at its position for each read; the `vvcC` record reader holds a shared `BitReader`; the FLV and `test_bits` test bit writers use `broadcast_common::bits::BitBuf`. No private bit cursor remains; public API, results and errors are unchanged (#3961).
 - Hex and base64 go through `broadcast_common::{hex, base64}`; the direct `hex` and `base64` dependencies are removed. Output is unchanged (#3957).
-- README lists the optional `misb` feature and the typed ST 0601 item values it adds (#4015).
 
 ### Fixed
 
