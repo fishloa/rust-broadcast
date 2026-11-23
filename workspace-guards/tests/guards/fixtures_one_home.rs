@@ -51,6 +51,7 @@ const TOPIC_DIRS: &[&str] = &[
     "captions",
     "subtitles",
     "crypto",
+    "misb",
     "tls",
     "logs",
     "suites",

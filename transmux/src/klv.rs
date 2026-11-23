@@ -58,93 +58,6 @@ pub const UAS_LS_KEY: UniversalLabel = [
     0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0x00,
 ];
 
-#[cfg(feature = "misb")]
-pub use st0601::{NestedSet, St0601Value};
-
-#[cfg(feature = "misb")]
-mod st0601 {
-    use broadcast_common::impl_spec_display;
-
-    /// Which standard a nested ST 0601 Local Set item carries.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    #[non_exhaustive]
-    pub enum NestedSet {
-        /// MISB ST 0102 Security Local Set.
-        Security,
-        /// MISB ST 0903 VMTI Local Set.
-        Vmti,
-    }
-
-    impl NestedSet {
-        /// The standard's designation.
-        pub fn name(&self) -> &'static str {
-            match self {
-                Self::Security => "ST 0102",
-                Self::Vmti => "ST 0903",
-            }
-        }
-    }
-
-    impl_spec_display!(NestedSet);
-
-    /// A decoded MISB ST 0601 Local Set item value.
-    #[derive(Debug, Clone, PartialEq)]
-    #[non_exhaustive]
-    pub enum St0601Value<'a> {
-        /// A scaled real number in the tag's unit.
-        Number(f64),
-        /// An unsigned integer.
-        Unsigned(u64),
-        /// A signed integer.
-        Signed(i64),
-        /// UTF-8 text.
-        Text(&'a str),
-        /// A UTC instant.
-        Time(jiff::Timestamp),
-        /// A nested Local Set, left undecoded: `bytes` is the item's own value.
-        Nested {
-            /// The standard the nested set follows.
-            standard: NestedSet,
-            /// The nested set's bytes.
-            bytes: &'a [u8],
-        },
-        /// Raw bytes (packs, uninterpreted and unknown tags).
-        Bytes(&'a [u8]),
-        /// The sender marked the value as out of range or not available.
-        OutOfRange,
-        /// The value does not fit its tag (wrong length, not text, time out of range).
-        Invalid,
-    }
-
-    pub(super) fn convert<'a>(value: misb::st0601::Value<'_>, raw: &'a [u8]) -> St0601Value<'a> {
-        use misb::st0601::Value;
-        match value {
-            Value::Float(v) => St0601Value::Number(v),
-            Value::Uint(v) => St0601Value::Unsigned(v),
-            Value::Int(v) => St0601Value::Signed(v),
-            Value::Text(_) => core::str::from_utf8(raw)
-                .map(St0601Value::Text)
-                .unwrap_or(St0601Value::Invalid),
-            Value::Time(micros) => i64::try_from(micros)
-                .ok()
-                .and_then(|m| jiff::Timestamp::from_microsecond(m).ok())
-                .map(St0601Value::Time)
-                .unwrap_or(St0601Value::Invalid),
-            Value::Security(_) => St0601Value::Nested {
-                standard: NestedSet::Security,
-                bytes: raw,
-            },
-            Value::Vmti(_) => St0601Value::Nested {
-                standard: NestedSet::Vmti,
-                bytes: raw,
-            },
-            Value::Bytes(_) => St0601Value::Bytes(raw),
-            Value::OutOfRange => St0601Value::OutOfRange,
-            Value::Invalid => St0601Value::Invalid,
-        }
-    }
-}
-
 /// Mask for the low 7 bits of a BER length/OID byte (the payload of the octet).
 const BER_LOW7_MASK: u8 = 0x7F;
 /// BER-OID continuation bit: bit 7 of a multi-byte OID tag byte (more bytes
@@ -279,14 +192,6 @@ impl LocalSetItem {
     /// Build a Local Set item from a tag and owned value bytes.
     pub fn new(tag: u32, value: Vec<u8>) -> Self {
         Self { tag, value }
-    }
-
-    /// This item's MISB ST 0601 value, decoded and scaled per the tag table
-    /// (e.g. tag 5 `71 C2` -> `Number(159.97...)` degrees); tags ST 0601 does
-    /// not define decode as [`St0601Value::Bytes`].
-    #[cfg(feature = "misb")]
-    pub fn st0601_value(&self) -> St0601Value<'_> {
-        st0601::convert(misb::st0601::decode_tag(self.tag, &self.value), &self.value)
     }
 
     /// Bytes this item occupies inside the Local Set value: OID tag + BER length
