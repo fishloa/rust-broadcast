@@ -47,7 +47,6 @@ None (first release). Sibling floors: `broadcast-common` 14, `broadcast-hls` 0.9
 
 - TS recovery (`recover` is fMP4-only); a recovered fragment begins at its `styp`/`emsg`/`prft` run before the `moof`.
 - `FsRecorder::poll` is the only driver: the crate no longer ships the incomplete `SegmentEgress` adapter, because that trait hands over one cursor item with no monotonic time, wall time or init generations.
-- The `misb`/nested KLV faces are not involved here; see `transmux` 0.33 for the ST 0601 gap tracked by #4041.
 
 ## Pre-release audit
 

@@ -69,9 +69,6 @@ rtmp-runtime = { path = "../rtmp-runtime", version = "0.12.0", default-features 
 # stride) and mid-packet captures; `container-probe` is the crate built to
 # replace exactly that. Optional so the `no_std` library build stays free of it.
 container-probe = { path = "../container-probe", version = "0.6.0", default-features = false, optional = true }
-# Typed MISB ST 0601 values (`LocalSetItem::st0601_value`): the full ST 0601.19
-# tag table with its scalings. no_std, no dependencies.
-misb       = { version = "0.2.0", default-features = false, optional = true }
 
 [[bin]]
 name = "transmux"
@@ -99,8 +96,6 @@ sample-aes = ["cenc", "cbc/alloc", "cbc/block-padding"]
 # `cli` builds the `transmux` command-line packager (std + clap). The library
 # itself stays `no_std`; only this feature/binary pulls `clap` and `std`.
 cli    = ["dep:clap", "dep:container-probe", "std"]
-# `misb` decodes ST 0601 Local Set item values into typed values.
-misb   = ["dep:misb", "dep:jiff"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

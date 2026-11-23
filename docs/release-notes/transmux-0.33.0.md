@@ -2,7 +2,7 @@
 
 _Released 2026-11-22._
 
-Minor for a 0.x crate, and breaking: two dead public items are removed, one error class changes, and the crate builds against the `broadcast-common` 14 / jiff 1.0 epoch. The headline feature is the opt-in `misb` feature (typed MISB ST 0601 Local Set values, contributed by Matthew Busel). The rest of the release is the audit-23 test-hardening pass over the container and RTP paths.
+Minor for a 0.x crate, and breaking: two dead public items are removed, one error class changes, and the crate builds against the `broadcast-common` 14 / jiff 1.0 epoch. The headline feature is the opt-in `motion-imagery-metadata` feature: typed MISB ST 0601 Local Set values from the new, separately released `motion-imagery-metadata` crate, built on Matt Busel's `misb` crate. The rest of the release is the audit-23 test-hardening pass over the container and RTP paths.
 
 ## Breaking changes
 
@@ -13,21 +13,20 @@ Minor for a 0.x crate, and breaking: two dead public items are removed, one erro
 
 ## Added
 
-- Optional `misb` feature and `LocalSetItem::st0601_value()` returning the transmux-owned `St0601Value` (with `NestedSet`): MISB ST 0601 Local Set items decoded and scaled per the tag table, times as `jiff::Timestamp`, nested ST 0102/ST 0903 sets left as their raw bytes. No `misb` type is part of the public API (contributed by Matthew Busel, #3955).
+- Optional `motion-imagery-metadata` feature: `LocalSetItem::value_typed()` returns `motion_imagery_metadata::St0601Value`, the item decoded and scaled per the MISB ST 0601 tag table (times as `jiff::Timestamp`, nested ST 0102 Security and ST 0903 VMTI sets typed, other nested sets and packs kept with their standard and raw bytes). Enable with `transmux = { version = "0.33", features = ["motion-imagery-metadata"] }`. The decoding lives in [`motion-imagery-metadata`](https://github.com/fishloa/motion-imagery-metadata) 0.1.0, which wraps the [`misb`](https://crates.io/crates/misb) crate by Matt Busel (#3955); transmux itself keeps only the KLV framing.
 
 ## Fixed
 
-- The BER-OID documentation no longer claims every ST 0601 tag fits one byte: tags 128..=143 take two-byte keys (contributed by Matthew Busel, #3955).
+- The BER-OID documentation no longer claims every ST 0601 tag fits one byte: tags 128..=143 take two-byte keys (contributed by Matt Busel, #3955).
 - The `vvcC` record reader no longer swallows an error from its byte skip or advances its cursor unchecked over `ptl_reserved_zero_bit` padding: the skip's error is propagated, a length that would overflow the byte cursor is a typed `BufferTooShort` instead of a panic, and alignment reads its padding bits (#3999).
 - 192-byte M2TS source packets demux: the resynchroniser locks at the 192-byte stride and strips the 4-byte `TP_extra_header`, so `TsDemux` yields the tracks an M2TS file really carries instead of nothing (#3988).
 
 ## Changed
 
-- Internal: the MISB ST 0601.19 item table and the ST 1201.5 IMAPB algorithm are transcribed into the private submodule; `tests/it/klv.rs` checks every tag's decoded kind and each item's linear/IMAPB scaling at its minimum, maximum and midpoint, plus two real UAS Datalink LS packets demuxed from a `stream_type` `0x15` metadata PES. The module cites the transcription, and `St0601Value`'s nested/pack raw faces are documented and tracked by #4041 (#3990).
 - Internal: error types derive `thiserror::Error` (messages unchanged) (#3974, #4020).
 - Internal: the public `bitreader::BitReader` (Exp-Golomb, RBSP unescape) is a thin wrapper that resumes `broadcast_common::bits::BitReader` per read; public API, results and errors are unchanged (#3961).
 - Hex and base64 go through `broadcast_common::{hex, base64}`; output is unchanged (#3957).
-- README lists the optional `misb` feature and the typed ST 0601 item values it adds (#4015).
+- README lists the optional `motion-imagery-metadata` feature (#4015).
 
 ## Tests
 
