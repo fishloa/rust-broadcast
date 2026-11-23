@@ -47,8 +47,12 @@ use broadcast_common::{Parse, Serialize};
 
 /// `field_size_bytes` + `metric_count`.
 const HEADER_LEN: usize = 2;
+/// The 32-bit `metric_code`.
+const METRIC_CODE_LEN: usize = core::mem::size_of::<u32>();
+/// `sample_count` follows the `metric_code`.
+const SAMPLE_COUNT_OFFSET: usize = METRIC_CODE_LEN;
 /// `metric_code` (32) + `sample_count` (8).
-const METRIC_HEADER_LEN: usize = 5;
+const METRIC_HEADER_LEN: usize = SAMPLE_COUNT_OFFSET + 1;
 /// One 5-byte marker-bit `media_DTS`.
 const DTS_FIELD_LEN: usize = 5;
 /// The literal `'0010'` ahead of `media_DTS[32..30]`.
@@ -92,7 +96,7 @@ impl<'a> QualitySample<'a> {
         if high.iter().any(|b| *b != 0) {
             return None;
         }
-        Some(low.iter().fold(0u64, |v, b| (v << 8) | u64::from(*b)))
+        Some(low.iter().fold(0u64, |v, b| (v << u8::BITS) | u64::from(*b)))
     }
 }
 
@@ -169,8 +173,8 @@ impl<'a> Parse<'a> for QualityAccessUnit<'a> {
             let (mh, tail) = rest
                 .split_first_chunk::<METRIC_HEADER_LEN>()
                 .ok_or_else(|| short(bytes.len() + METRIC_HEADER_LEN, bytes.len()))?;
-            let metric_code = u32::from_be_bytes([mh[0], mh[1], mh[2], mh[3]]);
-            let sample_count = usize::from(mh[4]);
+            let metric_code = crate::wire::be_u32(mh, 0, "metric_code")?;
+            let sample_count = usize::from(mh[SAMPLE_COUNT_OFFSET]);
             rest = tail;
             let mut samples = Vec::new();
             for _ in 0..sample_count {
@@ -239,8 +243,9 @@ impl Serialize for QualityAccessUnit<'_> {
         buf[1] = broadcast_common::len::fit_u8(self.metrics.len(), "metric_count")?;
         let mut pos = HEADER_LEN;
         for m in &self.metrics {
-            buf[pos..pos + 4].copy_from_slice(&m.metric_code.to_be_bytes());
-            buf[pos + 4] = broadcast_common::len::fit_u8(m.samples.len(), "sample_count")?;
+            buf[pos..pos + METRIC_CODE_LEN].copy_from_slice(&m.metric_code.to_be_bytes());
+            buf[pos + SAMPLE_COUNT_OFFSET] =
+                broadcast_common::len::fit_u8(m.samples.len(), "sample_count")?;
             pos += METRIC_HEADER_LEN;
             for s in &m.samples {
                 if s.quality_metric_sample.len() != usize::from(self.field_size_bytes) {
