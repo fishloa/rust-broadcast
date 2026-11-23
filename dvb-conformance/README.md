@@ -43,12 +43,12 @@ models only part of the T-STD (see below).
 `serde` is opt-in and off by default; enable it explicitly:
 
 ```toml
-dvb-conformance = { version = "15", features = ["serde"] }
+dvb-conformance = { version = "16", features = ["serde"] }
 ```
 
 ```toml
 [dependencies]
-dvb-conformance = "15"
+dvb-conformance = "16"
 ```
 
 ## Quick start

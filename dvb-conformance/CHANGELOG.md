@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [16.0.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `dvb-si` 15 -> 16, `mpeg-ts` 0.9 -> 0.10). A caret-epoch change is major-class under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever this crate's own API diff, so this release is a lockstep major; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
 ### Fixed
 - Per-PID `TBn` `Empty_buffer_error` (TR 101 290 indicator 3.9) can fire: each PID's transport buffer now arms its empty-interval window at creation, rather than only at the first in-sync packet, when no per-PID buffer exists yet (#3483).
 

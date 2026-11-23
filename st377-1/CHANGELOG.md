@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-22
+### Breaking
+
+- Builds against `broadcast-common` 14 (its `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; a consumer must resolve a single `broadcast-common` 14, and any `jiff` instant it shares with this crate is a jiff 1.x type.
+
 ### Tests
 - Pin equality sensitivity for every hand-written `PartialEq` (10 types): a value differing in one field must compare unequal, so an `eq -> true` or `&& -> ||` replacement cannot pass the suite (#3214).
 - Pin the Partition Pack key segments, fixed-field offsets, truncation safety, serialized length and parsed-batch reuse rule (#3215).

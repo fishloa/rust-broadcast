@@ -55,7 +55,7 @@ once (pinned by `tests/alloc_bound.rs`).
 
 ```toml
 [dependencies]
-container-probe = "0.5"
+container-probe = "0.6"
 ```
 
 ## Quick start

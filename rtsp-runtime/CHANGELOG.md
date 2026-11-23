@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-auth` 0.8 -> 0.9, `broadcast-common` 13 -> 14). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and `broadcast-auth`'s `Verifier`/`Credentials` it takes are 0.9 ones.
+
 ### Added
 
 - `client::MAX_INBOUND_BYTES` (1 MiB) is public: the bound on the client's inbound buffer.

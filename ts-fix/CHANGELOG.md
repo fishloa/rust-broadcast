@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `dvb-conformance` 15 -> 16, `dvb-si` 15 -> 16, `mpeg-pes` 0.9 -> 0.10, `mpeg-ts` 0.9 -> 0.10, `scte35-splice` 7 -> 8). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
 ### Fixed
 
 - **A PMT version change no longer carries the replaced PMT's PIDs into a service extract.** The keep-set rebuild treated every non-PSI PID as an EMM PID learned from the CAT, so the old elementary-stream, PCR and ECM PIDs stayed in the keep-set and a replaced stream leaked into the extracted service; the PMT's own PIDs are now tracked separately, so only the CAT-learned EMM PIDs survive the change.

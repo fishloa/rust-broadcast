@@ -7,14 +7,14 @@ Sans-IO RTSP 1.0 (RFC 2326) session engine: a driveable client and a server stat
 
 ```toml
 [dependencies]
-rtsp-runtime = "0.13"                                       # sans-IO core
-rtsp-runtime = { version = "0.13", features = ["tokio"] }   # + real sockets
-rtsp-runtime = { version = "0.13", features = ["tls"] }     # + rtsps:// (TLS)
+rtsp-runtime = "0.14"                                       # sans-IO core
+rtsp-runtime = { version = "0.14", features = ["tokio"] }   # + real sockets
+rtsp-runtime = { version = "0.14", features = ["tls"] }     # + rtsps:// (TLS)
 ```
 
 ## What it does / what it does not
 
-**Does:** run the RFC 2326 Appendix A session state machines (`Init`, `Ready`, `Playing`, `Recording`) on both sides; build outbound requests (OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, ANNOUNCE, RECORD, GET_PARAMETER) with an incrementing `CSeq` and match responses back to them; parse and serialize the `Transport` (§12.39) and `Session` (§12.37) headers; frame and de-frame `$`-channel interleaved RTP/RTCP (§10.12); answer `401` challenges with Basic, Digest or Bearer credentials, including `stale=true` nonce refresh; and manage the keepalive timeout. The server rejects a method that is illegal in the current state with `455`, allocates a `Session` id on SETUP (from a caller-supplied CSPRNG), and echoes the first offered transport.
+**Does:** run the RFC 2326 Appendix A session state machines (`Init`, `Ready`, `Playing`, `Recording`) on both sides; build outbound requests (OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, ANNOUNCE, RECORD, GET_PARAMETER) with an incrementing `CSeq` and match responses back to them; parse and serialize the `Transport` (§12.39) and `Session` (§12.37) headers; frame and de-frame `$`-channel interleaved RTP/RTCP (§10.12); answer `401` challenges with Basic, Digest or Bearer credentials, including `stale=true` nonce refresh; and manage the keepalive timeout. The client's inbound buffer is bounded by the public `client::MAX_INBOUND_BYTES` (1 MiB). The server rejects a method that is illegal in the current state with `455`, allocates a `Session` id on SETUP (from a caller-supplied CSPRNG), and echoes the first offered transport.
 
 **Does not:** open sockets in the core (feed bytes in, get bytes and events out), parse RTP or RTCP payloads (use `rtp-packet`, which also holds the `rtcp` module), parse SDP (use `sdp-types`), generate DESCRIBE SDP or challenge clients on the server side (the server session has no authentication; put a `broadcast-auth` `Verifier` in your own layer), or speak RTSP 2.0 (RFC 7826 is vendored but not implemented). The client has no SET_PARAMETER builder, and server-initiated REDIRECT is not modelled.
 

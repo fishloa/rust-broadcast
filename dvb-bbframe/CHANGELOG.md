@@ -2,9 +2,11 @@
 
 ## [Unreleased]
 
+## [16.0.0] - 2026-11-22
 ### Breaking
 
 - **BREAKING:** `num_enum` is no longer a dependency (#3963). `TsGs` and `Mode` implement a hand-written `TryFrom<u8>` whose error is the crate's own `Error` (`Error::UnsupportedTsGs { ts_gs }` / `Error::InvalidMode { mode }`) instead of `num_enum::TryFromPrimitiveError<TsGs>` / `<Mode>`; the `From<num_enum::TryFromPrimitiveError<_>> for Error` impls are removed. `Mode` gains `From<Mode> for u8`.
+- **BREAKING:** builds against `broadcast-common` 14 (the `jiff` 1.0 epoch). A caret-epoch change is major-class under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever this crate's own API diff, so this release is a lockstep major; consumers must resolve a single `broadcast-common` 14.
 
 ### Tests
 - Internal: the `wire_enum!` macro now comes from `broadcast_common` (passing this crate's `Error` as its error type) instead of a crate-local copy; the generated enums and conversions are unchanged (#3989).

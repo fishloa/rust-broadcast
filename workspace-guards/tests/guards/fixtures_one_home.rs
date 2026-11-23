@@ -57,6 +57,7 @@ const TOPIC_DIRS: &[&str] = &[
     "suites",
     "candidates",
     "golden",
+    "misb",
 ];
 
 fn skip_dir(name: &str) -> bool {

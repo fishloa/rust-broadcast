@@ -4,6 +4,11 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `mp4-emsg` 0.8 -> 0.9, `scte35-splice` 7 -> 8, `ssai-runtime` 0.7 -> 0.8). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and the `splice_insert()` sections it emits are 8.0 ones.
+
 ### Tests
 
 - **`Schedule::is_empty` is checked while the schedule is populated.** It was only asserted empty, so a constant answer could make a host skip a populated schedule (audit 22 finding 48, #3016).

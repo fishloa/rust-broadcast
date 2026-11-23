@@ -3,6 +3,12 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
+## [0.12.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `broadcast-hls` 0.8 -> 0.9, `cc-data` 0.10 -> 0.11, `dvb-vbi` 0.8 -> 0.9, `mp4-emsg` 0.8 -> 0.9, `scte35-splice` 7 -> 8). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and the splice/`DateRange`/`emsg` values it converts are those versions' types.
+
 ### Changed
 - Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - Hex goes through `broadcast_common::hex`; the direct `hex` dependency is removed. `DATERANGE` `SCTE35-*` encoding and decode errors are unchanged (#3957).

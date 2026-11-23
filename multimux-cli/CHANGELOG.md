@@ -4,6 +4,11 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-22
+### Breaking
+
+- Builds against `multimux` 0.21. A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own diff, so the CLI moves a minor with it; its flags, config schema and output are unchanged.
+
 ## [0.18.0] - 2026-11-17
 
 ### Changed

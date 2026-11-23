@@ -57,7 +57,7 @@ fn recorder(
     config: ArchiveConfig,
     trunk: &Arc<Trunk>,
 ) -> FsRecorder {
-    FsRecorder::new(root, ArchiveName::new(name).expect("name"), config, trunk).expect("recorder")
+    crate::support::recorder_of(root, name, config, trunk)
 }
 
 #[test]

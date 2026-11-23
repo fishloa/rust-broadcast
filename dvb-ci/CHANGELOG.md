@@ -5,6 +5,12 @@ All notable changes to `dvb-ci` are documented here. The format follows
 versioning.
 
 ## [Unreleased]
+
+## [0.14.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `dvb-si` 15 -> 16, `mpeg-ts` 0.9 -> 0.10). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and the `dvb-si` sections it takes are the 16 ones.
+
 ### Tests
 - Pin the EN 50221 and TS 101 699/TS 103 205 APDU labels, serialize-length returns, 12-bit length fields, 255/4095 ceilings and truncation boundaries against cargo-mutants survivors (audit 23).
 

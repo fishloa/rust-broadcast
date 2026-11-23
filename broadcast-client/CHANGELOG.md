@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-22
 ### Breaking
 
 - **BREAKING:** `jiff` 0.2 -> 1.0. `Session::set_wall_clock` takes a jiff 1.x `Timestamp`.
+- **BREAKING:** builds against new caret epochs of workspace siblings (`broadcast-auth` 0.8 -> 0.9, `broadcast-common` 13 -> 14, `broadcast-dash` 0.2 -> 0.3, `broadcast-hls` 0.8 -> 0.9, `buffering-runtime` 0.4 -> 0.5, `dash-runtime` 0.6 -> 0.7, `dvb-si` 15 -> 16, `hls-runtime` 0.15 -> 0.16, `mpeg-ts` 0.9 -> 0.10, `rtmp-runtime` 0.11 -> 0.12, `rtp-packet` 0.8 -> 0.9, `rtsp-runtime` 0.13 -> 0.14, `smooth-runtime` 0.3 -> 0.4, `srt-runtime` 0.11 -> 0.12, `transmux` 0.32 -> 0.33). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
 
 ### Changed
 

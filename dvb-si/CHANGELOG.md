@@ -2,24 +2,26 @@
 
 ## [Unreleased]
 
+## [16.0.0] - 2026-11-22
 ### Breaking
 
 - **BREAKING:** `num_enum` is no longer a dependency (#3963). `TableId`, `DescriptorTag` and `tables::sat::SatTableId` implement a hand-written `TryFrom<u8>` whose error is the crate's own `Error::InvalidValue` (naming `table_id` / `descriptor_tag` / `satellite_table_id` and the rejected value) instead of `num_enum::TryFromPrimitiveError<T>`. `TableId` and `SatTableId` gain `From<_> for u8`.
-- Internal: the H.222 descriptor bit writer is an adapter over `broadcast_common::bits::BitBuf` instead of its own bit cursor; output bytes and errors are unchanged (#3961).
-- Internal: the `wire_enum!` macro now comes from `broadcast_common` (passing this crate's `Error` as its error type) instead of a crate-local copy; the generated enums and conversions are unchanged (#3989).
-- Internal: the `epg::PresentEventTracker` docs cite the private EN 300 468 §5.2.4 and Table 6 transcription paths (#3997).
 - **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff` feature's decoded times and durations (`jiff::Timestamp`, `jiff::SignedDuration`, the `epg` module) are jiff 1.x types.
+- Builds against new caret epochs of the crates this one exposes types from (`broadcast-common` 13 -> 14, `mpeg-ts` 0.9 -> 0.10). A caret-epoch change is major-class under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever this crate's own API diff, so consumers must resolve a single copy of each, at the jiff 1.0 epoch.
 
 ### Changed
 
+- Internal: the `epg::PresentEventTracker` docs cite the private EN 300 468 §5.2.4 and Table 6 transcription paths (#3997).
+- Internal: the `wire_enum!` macro now comes from `broadcast_common` (passing this crate's `Error` as its error type) instead of a crate-local copy; the generated enums and conversions are unchanged (#3989).
 - Internal: the H.222 descriptor bit writer is an adapter over `broadcast_common::bits::BitBuf` instead of its own bit cursor; output bytes and errors are unchanged (#3961).
 - README names `epg::PresentEventTracker` in the task recipes and in the `jiff` feature row (#4014).
 
 ### Added
 
 - `epg::PresentEventTracker` follows one service's EIT present/following present event (ETSI EN 300 468 §5.2.4, Table 6) and reports each programme boundary as a `PresentEventChange::Baseline` or `::Transition`: only present/following actual sections for the tracked `service_id` count, the present event is the one with `running_status == Running` (not the first in the loop), and a section naming the same `event_id` again changes nothing — so neither a repeated section nor a re-versioned copy of the same event rolls a programme (#3677). `feed_ts` accepts any-aligned TS bytes and queues up to `PRESENT_CHANGE_QUEUE_CAP` (16) changes for `poll_change`, counting older drops in `changes_dropped`; `on_section` reports a section's change directly. Additive; `epg::EpgEvent` gains a crate-private constructor over `tables::eit::EitEvent` sharing the existing descriptor decoding. (#3926)
+
 ### Tests
-- `epg::PresentEventTracker` follows one service's EIT present/following present event (ETSI EN 300 468 §5.2.4, Table 6) and reports each programme boundary as a `PresentEventChange::Baseline` or `::Transition`: only present/following actual sections for the tracked `service_id` count, the present event is the one with `running_status == Running` (not the first in the loop), and a section naming the same `event_id` again changes nothing — so neither a repeated section nor a re-versioned copy of the same event rolls a programme (#3677). `feed_ts` accepts TS bytes at any alignment and in 188-byte, 192-byte M2TS or 204-byte framing and queues up to `PRESENT_CHANGE_QUEUE_CAP` (16) changes for `poll_change`, counting older drops in `changes_dropped`; `on_section` reports a section's change directly. Additive; `epg::EpgEvent` gains a crate-private constructor over `tables::eit::EitEvent` sharing the existing descriptor decoding. (#3926)
+- The tracker's Baseline/Transition rules are pinned on synthetic sections (a repeated section and a re-versioned copy of the same event both change nothing) and on the 10 s DVB-T capture, which reports its own present event as the one `Baseline` (#3926).
 ### Fixed
 - `epg::PresentEventTracker::feed_ts` recovers packet alignment through `mpeg_ts::resync::TsResync` instead of cutting 188-byte packets from the first byte it ever saw, so a stream that starts mid-packet or uses 192-byte M2TS or 204-byte Reed-Solomon framing tracks its EIT sections instead of mis-framing every packet and reporting nothing (#3988).
 - The `epg::PresentEventTracker` docs cite the EIT layout and `running_status` transcriptions under `private/specs-verified/dvb/dvb-si/` (#3997).

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `dvb-si` 15 -> 16, `dvb-t2mi` 15 -> 16, `mpeg-ts` 0.9 -> 0.10, `rtp-packet` 0.8 -> 0.9). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and the `rtp_packet`/section types this crate takes are those versions' types.
+
 ### Tests
 
 - **The RTP payload shape, the UDP T2-MI stream and the T2-MI resync counters are pinned.** Each `rtp_ts_payload` condition is now exercised in isolation (an empty payload cannot index it, a whole-packet payload without a sync byte is not unwrapped, and a sync byte at a non-multiple length is left to the resync path), `UdpT2miStream` is constructed and drained over loopback with real T2-MI packets carrying a junk prefix, and `T2miEventStream::resync_stats` is asserted against a dirty input instead of only a clean one (audit 23 findings 125-127, #3433/#3434/#3435).

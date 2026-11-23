@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-22
 ### Breaking
 
 - **BREAKING:** `jiff` 0.2 -> 1.0. The `Mpd` availability and publish times and the `xs_datetime` readers and writers take and return jiff 1.x `Timestamp`s.
+- **BREAKING:** builds against `broadcast-common` 14 (the `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single `broadcast-common` 14.
 
 ### Tests
 

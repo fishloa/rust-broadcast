@@ -7,7 +7,7 @@ Microsoft Smooth Streaming (MS-SSTR) client Manifest syntax: a typed model with 
 
 ```toml
 [dependencies]
-broadcast-smooth = "0.2"
+broadcast-smooth = "0.3"
 ```
 
 ## What it does / what it does not

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-22
+### Breaking
+
+- Builds against `broadcast-common` 14 (its `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; a consumer must resolve a single `broadcast-common` 14, and any `jiff` instant it shares with this crate is a jiff 1.x type.
+
 ### Tests
 - Pin the true-peak polyphase FIR table against the BS.1770-5 Annex 2 transcription (plus phase symmetry), the lone-impulse tail flush, both resets and the non-finite error indices (#3233).
 - Pin meter resets, frame/duration accounting on every entry point, the 30-sub-block short-term boundary, the Tech 3342 percentile ranks in both histogram modes, the straddling-bin cut and the empty-measurement result (#3234).

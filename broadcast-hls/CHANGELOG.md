@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-22
 ### Breaking
 
 - **BREAKING:** `jiff` 0.2 -> 1.0. `ProgramDateTime::from_timestamp` and `ProgramDateTime::timestamp` take and return a jiff 1.x `Timestamp`.
-- The `daterange`, `custom_tag` and `options` module docs now cite the private RFC 8216bis transcription paths alongside the clause numbers (#3997).
+- **BREAKING:** builds against `broadcast-common` 14 (the `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single `broadcast-common` 14.
 
 ### Changed
+
+- The `daterange`, `custom_tag` and `options` module docs now cite the private RFC 8216bis transcription paths alongside the clause numbers (#3997).
 
 - `EXT-X-KEY` `IV` parsing decodes through `broadcast_common::hex::hex_decode_into`, replacing a hand-rolled hex loop that carried an `.expect`. Accepted and rejected inputs are unchanged (#3957).
 - README and crate-root documentation corrected: `EXT-X-DATERANGE` is typed (`DateRange`/`Cue`/`Scte35Kind`), and `CustomTag`/`CustomTagName`, `ParseOptions`, the append-only renderers and the dangling-segment-tag diagnostic are documented (#4010).

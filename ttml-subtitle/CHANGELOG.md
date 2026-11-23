@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-22
+### Breaking
+
+- Builds against `broadcast-common` 14 (its `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; a consumer must resolve a single `broadcast-common` 14, and any `jiff` instant it shares with this crate is a jiff 1.x type.
+
 ### Fixed
 - Namespace preservation no longer rewrites an outer-scope foreign attribute or element to an inner-scope `xmlns:` override URI; each item keeps its recorded prefix only while that prefix still resolves to its namespace, otherwise a fallback prefix is emitted. A foreign namespace bound to a core prefix (`tt`, `ttp`, `tts`, `ttm`, or the default namespace) now gets a fallback binding instead of silently changing the core declaration's meaning.
 

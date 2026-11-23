@@ -1,6 +1,6 @@
 [package]
 name         = "media-plane"
-version      = "0.13.0"
+version      = "0.14.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -11,11 +11,11 @@ categories   = ["multimedia", "no-std"]
 readme       = "README.md"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
 bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
-transmux         = { path = "../transmux", version = "0.32.1", default-features = false, optional = true }
-timed-metadata   = { path = "../timed-metadata", version = "0.11.0", default-features = false, optional = true }
+transmux         = { path = "../transmux", version = "0.33.0", default-features = false, optional = true }
+timed-metadata   = { path = "../timed-metadata", version = "0.12.0", default-features = false, optional = true }
 # Only pulled in by the `std` feature: `Trunk`'s reader-wake primitive
 # (step 3b-iv) needs a runtime-agnostic wakeup a `ServedEgress` can wait on
 # without busy-polling — NOT `tokio::sync::watch`, so it works under any
@@ -29,10 +29,10 @@ event-listener   = { version = "5", default-features = false, features = ["std"]
 # `Condvar::wait_until(&mut guard, Instant)`.
 parking_lot      = { version = "0.13", optional = true }
 tracing          = { version = "0.1", optional = true }
-caption-convert  = { path = "../caption-convert", version = "0.7.0", optional = true, default-features = false, features = ["std", "teletext"] }
-dvb-si           = { path = "../dvb-si", version = "15.1.0", optional = true, default-features = false, features = ["std"] }
-container-probe  = { path = "../container-probe", version = "0.5.0", optional = true }
-broadcast-hls     = { path = "../broadcast-hls", version = "0.8.1", optional = true, default-features = false }
+caption-convert  = { path = "../caption-convert", version = "0.8.0", optional = true, default-features = false, features = ["std", "teletext"] }
+dvb-si           = { path = "../dvb-si", version = "16.0.0", optional = true, default-features = false, features = ["std"] }
+container-probe  = { path = "../container-probe", version = "0.6.0", optional = true }
+broadcast-hls     = { path = "../broadcast-hls", version = "0.9.0", optional = true, default-features = false }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
@@ -40,7 +40,7 @@ test-fixtures = { path = "../test-fixtures" }
 # fixtures in-test, to drive `timed_metadata::Timeline`'s 33-bit PTS
 # wrap-unroll across a genuine wrap boundary — see the event-log wrap test in
 # `src/trunk.rs`. Test-only: the library itself depends only on `timed-metadata`.
-scte35-splice = { path = "../scte35-splice", version = "7.0.0", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "8.0.0", default-features = false }
 criterion     = { workspace = true, features = ["html_reports"] }
 
 [features]

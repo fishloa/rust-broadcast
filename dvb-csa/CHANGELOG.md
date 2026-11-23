@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-22
+### Breaking
+
+- Builds against `mpeg-ts` 0.10 (transitively `broadcast-common` 14, the `jiff` 1.0 epoch). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
 ### Changed
 
 - Internal: the `rand` dev-dependency is dropped (#3972, #4025); no consumer-visible change.

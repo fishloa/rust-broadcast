@@ -15,7 +15,7 @@ use dvr_runtime::{ArchiveConfig, ArchiveContainer, ArchiveName, RetentionLimits}
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
 
-use crate::support::{cleanup, config, periods, temp_dir};
+use crate::support::{cleanup, config, periods, recorder_of, temp_dir};
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("nonzero")
@@ -34,34 +34,6 @@ fn trunk() -> Arc<Trunk> {
 
 fn init() -> Bytes {
     Bytes::from(vec![0x49u8; 812])
-}
-
-/// Open a recorder on a directory a previous run used, retrying a `Locked`
-/// refusal for a bounded window: a released lock file can still be shared for
-/// a moment by a process the host spawned (`FsRecorder::succeed` documents
-/// the same window), so a host that restarts a route retries rather than
-/// failing. `Locked` stays an error past the window.
-fn recorder_of(
-    root: &std::path::Path,
-    name: &str,
-    config: ArchiveConfig,
-    trunk: &Arc<Trunk>,
-) -> FsRecorder {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match FsRecorder::new(
-            root,
-            ArchiveName::new(name).expect("name"),
-            config.clone(),
-            trunk,
-        ) {
-            Ok(recorder) => return recorder,
-            Err(FsError::Locked { .. }) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Err(other) => panic!("recorder: {other}"),
-        }
-    }
 }
 
 fn record_run(

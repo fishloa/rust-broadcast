@@ -105,7 +105,7 @@ anything that needs to reason about a broadcast stream's signalling.
 
 ```toml
 [dependencies]
-dvb-si = "15"
+dvb-si = "16"
 ```
 
 ### Parse one section, walk it, serialize it back
@@ -259,11 +259,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `serde` is opt-in and off by default; enable it explicitly:
 
 ```toml
-dvb-si = { version = "15", features = ["serde"] }
+dvb-si = { version = "16", features = ["serde"] }
 ```
 
 ```toml
-dvb-si = { version = "15", default-features = false }   # no_std + alloc, bring your own sections
+dvb-si = { version = "16", default-features = false }   # no_std + alloc, bring your own sections
 ```
 
 ## Detailed coverage

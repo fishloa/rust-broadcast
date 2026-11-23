@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-22
+### Breaking
+
+- Builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `broadcast-hls` 0.8 -> 0.9, `caption-convert` 0.7 -> 0.8, `container-probe` 0.5 -> 0.6, `dvb-si` 15 -> 16, `scte35-splice` 7 -> 8, `timed-metadata` 0.11 -> 0.12, `transmux` 0.32 -> 0.33). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch, and the `Trunk`/`SegmentEntry` types it hands out carry those versions' sample types.
+
 ### Changed
 
 - Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).

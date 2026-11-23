@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-22
 ### Breaking
 - **BREAKING:** `HEVCDecoderConfigurationRecord::is_valid_length_size` is removed. It had no caller (the parser validates `lengthSizeMinusOne` against `VALID_LENGTH_SIZES`; the VVC record keeps its own, used copy) and its doc comment described an unrelated reserved-bit rule, so it was a dead, untested duplicate public API (audit 23 finding 268, #3781).
 - **BREAKING:** `TrackFragmentBox::into_bytes` is removed (unused; use `Serialize::try_to_bytes`) (#3698).
 - `BitReader::read_bits` reports an over-wide field (`n > 64`) as `Error::InvalidValue`, the class `VvcBitReader::bits` and `bit_error` already use, instead of `Error::BufferTooShort`; a caller matching the short-buffer variant for that input sees the new class (#3998).
+- **BREAKING:** builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `broadcast-dash` 0.2 -> 0.3, `broadcast-hls` 0.8 -> 0.9, `broadcast-smooth` 0.2 -> 0.3, `cc-data` 0.10 -> 0.11, `container-probe` 0.5 -> 0.6, `dvb-si` 15 -> 16, `mp4-emsg` 0.8 -> 0.9, `mpeg-pes` 0.9 -> 0.10, `mpeg-ps` 0.9 -> 0.10, `mpeg-ts` 0.9 -> 0.10, `rtmp-runtime` 0.11 -> 0.12, `rtp-packet` 0.8 -> 0.9, `scte35-splice` 7 -> 8). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
+
 ### Changed
 - Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - Internal: the public `bitreader::BitReader` (Exp-Golomb `ue`/`se`, RBSP unescape) stays a thin wrapper, now resuming `broadcast_common::bits::BitReader` at its position for each read; the `vvcC` record reader holds a shared `BitReader`; the FLV and `test_bits` test bit writers use `broadcast_common::bits::BitBuf`. No private bit cursor remains; public API, results and errors are unchanged (#3961).
@@ -18,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The BER-OID documentation no longer claims every ST 0601 tag fits one byte: tags 128..=143 take two-byte keys (contributed by Matthew Busel, #3955).
+- The BER-OID documentation no longer claims every ST 0601 tag fits one byte: tags 128..=143 take two-byte keys (contributed by Matt Busel, #3955).
 - An over-wide `BitReader::read_bits` request is `InvalidValue` with its field, width and reason, and leaves the cursor where it was (#3998).
 - The `vvcC` record reader no longer swallows an error from its byte skip or advances its cursor unchecked over `ptl_reserved_zero_bit` padding: the skip's error is propagated, a length that would overflow the byte cursor is a typed `BufferTooShort` instead of a panic, and alignment reads its padding bits (#3999).
 - 192-byte M2TS source packets demux: the resynchroniser now locks at the 192-byte stride and strips the 4-byte `TP_extra_header`, so `TsDemux` yields the tracks `fixtures/ts/m2ts-192.m2ts` really carries instead of nothing (#3988).

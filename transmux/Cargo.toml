@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.32.1"
+version      = "0.33.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -13,7 +13,7 @@ readme       = "README.md"
 [dependencies]
 # Floored at 9.2: `cenc::CencScheme` and `hex::hex_encode` (the definitions this
 # crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
-broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false, features = ["base64"] }
+broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["base64"] }
 thiserror  = { version = "2", default-features = false }
 # Calendar and duration handling (SP5): CLI availabilityStartTime, xs:duration parse/build. `std`-only, so the no_std core is unaffected.
 jiff       = { version = "1", default-features = false, features = ["std"], optional = true }
@@ -24,21 +24,21 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
 # produce `broadcast_hls::MediaPlaylist`/`MediaSegment` values; the playlist
 # syntax itself no longer lives in this crate.
-broadcast-hls = { path = "../broadcast-hls", version = "0.8.1", default-features = false }
-broadcast-dash = { path = "../broadcast-dash", version = "0.2.1", optional = true, default-features = false }
-mp4-emsg   = { path = "../mp4-emsg",  version = "0.8.0", default-features = false }
-mpeg-ts    = { path = "../mpeg-ts",  version = "0.9.0", default-features = false }
-mpeg-pes   = { path = "../mpeg-pes", version = "0.9.0", default-features = false }
-mpeg-ps    = { path = "../mpeg-ps",  version = "0.9.0", default-features = false }
-rtp-packet = { path = "../rtp-packet", version = "0.8.0", default-features = false }
+broadcast-hls = { path = "../broadcast-hls", version = "0.9.0", default-features = false }
+broadcast-dash = { path = "../broadcast-dash", version = "0.3.0", optional = true, default-features = false }
+mp4-emsg   = { path = "../mp4-emsg",  version = "0.9.0", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts",  version = "0.10.0", default-features = false }
+mpeg-pes   = { path = "../mpeg-pes", version = "0.10.0", default-features = false }
+mpeg-ps    = { path = "../mpeg-ps",  version = "0.10.0", default-features = false }
+rtp-packet = { path = "../rtp-packet", version = "0.9.0", default-features = false }
 bytes      = { version = "1", default-features = false }
 # Caption presence detection (`caption_detect`): `cc_data()` triplets and the 708 service decoder.
-cc-data    = { path = "../cc-data", version = "0.10.0", default-features = false, features = ["decode"] }
+cc-data    = { path = "../cc-data", version = "0.11.0", default-features = false, features = ["decode"] }
 # Typed PMT ES_info audio metadata (issue #1162 R1): `TrackSpec::audio_metadata`
 # reuses dvb-si's `iso_639_language_descriptor` + `supplementary_audio_descriptor`
 # parsers instead of re-parsing. dvb-si does not depend on transmux (no cycle);
 # `no_std`+`alloc` with default features off.
-dvb-si     = { path = "../dvb-si", version = "15.1.0", default-features = false }
+dvb-si     = { path = "../dvb-si", version = "16.0.0", default-features = false }
 # Start-code scan (`annexb::find_start_code_prefix`): find each `01` byte
 # instead of testing every offset. no_std without its `std` feature.
 memchr     = { version = "2", default-features = false }
@@ -50,7 +50,7 @@ quick-xml  = { workspace = true, optional = true }
 # manifest syntax sits below the container hub, as broadcast-hls does. It does
 # not depend on transmux (no cycle). Optional because the manifest path is an
 # XML path: this crate stays `no_std` without `std`, and `std` turns it on.
-broadcast-smooth = { path = "../broadcast-smooth", version = "0.2.1", optional = true, default-features = false }
+broadcast-smooth = { path = "../broadcast-smooth", version = "0.3.0", optional = true, default-features = false }
 aes        = { version = "0.9", default-features = false, optional = true }
 ctr        = { version = "0.10", default-features = false, optional = true }
 cbc        = { version = "0.2", default-features = false, optional = true }
@@ -63,12 +63,12 @@ clap       = { workspace = true, optional = true, features = ["derive"] }
 # handshake, chunk stream, protocol control messages and AMF0 commands live in
 # rtmp-runtime, whose core is no_std + alloc. rtmp-runtime does not depend on
 # transmux, so there is no cycle.
-rtmp-runtime = { path = "../rtmp-runtime", version = "0.11.1", default-features = false }
+rtmp-runtime = { path = "../rtmp-runtime", version = "0.12.0", default-features = false }
 # `cli` container detection (issue #960 / audit r05-W29): the CLI's
 # `detect_container` used a fixed-offset TS check that missed M2TS (192-byte
 # stride) and mid-packet captures; `container-probe` is the crate built to
 # replace exactly that. Optional so the `no_std` library build stays free of it.
-container-probe = { path = "../container-probe", version = "0.5.0", default-features = false, optional = true }
+container-probe = { path = "../container-probe", version = "0.6.0", default-features = false, optional = true }
 
 [[bin]]
 name = "transmux"
@@ -100,7 +100,7 @@ cli    = ["dep:clap", "dep:container-probe", "std"]
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
 test-harness = { path = "../test-harness" }
-container-probe = { path = "../container-probe", version = "0.5.0" }
+container-probe = { path = "../container-probe", version = "0.6.0" }
 # `tests/it/rtp.rs` / `golden_wire.rs` render the session description over
 # `RtpOutput::medias` with the one workspace builder (`rtsp-runtime::sdp`).
 # Dev-only: transmux itself never depends on the RTSP crate.
@@ -119,7 +119,7 @@ serde_json   = { workspace = true }
 # dependency (see `splice.rs`'s module docs, "Follow-up") — selecting splice
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
-scte35-splice  = { path = "../scte35-splice", version = "7.0.0", default-features = false, features = ["std"] }
+scte35-splice  = { path = "../scte35-splice", version = "8.0.0", default-features = false, features = ["std"] }
 timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std", "cc-data", "teletext"] }
 # timed_metadata_sei_caption_fixture.rs / timed_metadata_teletext_tsduck_oracle.rs
 # feed timed-metadata's cue extractors from transmux's own SEI unwrap and TS

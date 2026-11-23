@@ -2,23 +2,22 @@
 
 ## [Unreleased]
 
+## [14.0.0] - 2026-11-22
 ### Breaking
 
-- **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff::Timestamp` faces of the `jiff` and `http-date` features (`time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `encode_seconds_since_2000_utc`, `MonoUtc`, `http_date::parse_http_date`, `date_to_epoch_us`) are now jiff 1.x types.
+- **BREAKING:** `jiff` 0.2 -> 1.0. The `jiff::Timestamp` faces of the `jiff` and `http-date` features (`time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `encode_seconds_since_2000_utc`, `MonoUtc`, `http_date::parse_http_date`, `date_to_epoch_us`) are now jiff 1.x types. Migration: depend on `jiff` 1.x, which spells what these values carry the same way (`jiff::Timestamp::from_second`, `as_microsecond`, `jiff::SignedDuration::from_secs`); a `jiff` 0.2 item no longer unifies, so every crate at this epoch moves together.
+- `base64::base64_decode_strict`, `base64_decode_lenient` and `base64_url_decode_nopad` return broadcast-common's own `base64::Base64DecodeError` (`thiserror`, with `name()`) instead of the `base64` crate's `DecodeError`, so a `base64` major bump no longer breaks this crate's public API; nothing public names the `base64` crate (#3993).
 
 ### Added
 
 - `bits::BitReader::starting_at` / `bits::BitWriter::starting_at` (resume at a bit offset) and `bits::BitBuf`, a growable owning MSB-first bit writer built on `BitWriter`, so callers with their own bit cursors (`dvb-si`, `transmux`) use the one implementation (#3961).
-- `hex::hex_decode_into` (exact-length hex decode into a caller buffer), `base64::{base64_url_encode_nopad, base64_url_decode_nopad}` (RFC 4648 §5, no padding) and a `base64::DecodeError` re-export, so consumers route hex and base64 through this crate instead of depending on the codec crates directly (#3957).
-
 - `hex::hex_decode_into` (exact-length hex decode into a caller buffer; a typed `hex::HexDecodeError` naming the length mismatch or the first non-digit's offset, and `text` is validated in full first so `out` is never left partly written, #3994), `base64::{base64_url_encode_nopad, base64_url_decode_nopad}` (RFC 4648 §5, no padding) so consumers route hex and base64 through this crate instead of depending on the codec crates directly (#3957).
 - `wire_enum!` (exported macro): a `#[repr]` spec enum declared together with its checked `TryFrom<repr>` and `From<Self> for repr` from one variant table, taking the consumer's own error type, so `dvb-si`, `dvb-t2mi` and `dvb-bbframe` no longer keep three copies of the macro (#3989).
-### Breaking
-- `base64::base64_decode_strict`, `base64_decode_lenient` and `base64_url_decode_nopad` return broadcast-common's own `base64::Base64DecodeError` (`thiserror`, with `name()`) instead of the `base64` crate's `DecodeError`, so a `base64` major bump no longer breaks this crate's public API; nothing public names the `base64` crate (#3993).
+
 ### Changed
 
 - Internal: the shared error kinds and `BitError`, `KlvError`, `InvalidBackoff`, `InterfaceError`, `ClockOutOfRange`, `InvalidSeqSpace` and `XmlCharError` derive `thiserror::Error` (messages unchanged); `thiserror` is now a non-optional `no_std` dependency, and `InterfaceError` implements `core::error::Error` without `std` (#3962).
-- README corrected: `thiserror` is named as an unconditional dependency, and the `bits`, `hex` and `base64` rows list `BitBuf`/`starting_at`, `hex_decode`/`hex_decode_into` and the URL-safe base64 helpers with `DecodeError` (#4013).
+- README corrected: `thiserror` is named as an unconditional dependency, and the `bits`, `hex` and `base64` rows list `BitBuf`/`starting_at`, `hex_decode_into` with `HexDecodeError`, and the URL-safe base64 helpers with `Base64DecodeError` (#4013).
 
 ### Fixed
 
