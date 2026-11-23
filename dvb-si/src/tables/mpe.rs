@@ -46,12 +46,12 @@ pub const TABLE_ID: u8 = 0x3E;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct MacAddress(pub [u8; 6]);
+pub struct MacAddress(pub [u8; MAC_ADDRESS_LEN]);
 
 impl MacAddress {
     /// Network-order bytes (MSB first).
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8; 6] {
+    pub fn as_bytes(&self) -> &[u8; MAC_ADDRESS_LEN] {
         &self.0
     }
 }
@@ -61,13 +61,18 @@ impl core::fmt::Display for MacAddress {
         write!(
             f,
             "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5]
+            self.0[MAC_1_INDEX],
+            self.0[MAC_2_INDEX],
+            self.0[MAC_3_INDEX],
+            self.0[MAC_4_INDEX],
+            self.0[MAC_5_INDEX],
+            self.0[MAC_6_INDEX]
         )
     }
 }
 
-impl AsRef<[u8; 6]> for MacAddress {
-    fn as_ref(&self) -> &[u8; 6] {
+impl AsRef<[u8; MAC_ADDRESS_LEN]> for MacAddress {
+    fn as_ref(&self) -> &[u8; MAC_ADDRESS_LEN] {
         &self.0
     }
 }
@@ -76,18 +81,18 @@ impl AsRef<[u8; 6]> for MacAddress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct Checksum(pub [u8; 4]);
+pub struct Checksum(pub [u8; CHECKSUM_LEN]);
 
 impl Checksum {
     /// Raw checksum bytes.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8; 4] {
+    pub fn as_bytes(&self) -> &[u8; CHECKSUM_LEN] {
         &self.0
     }
 }
 
-impl AsRef<[u8; 4]> for Checksum {
-    fn as_ref(&self) -> &[u8; 4] {
+impl AsRef<[u8; CHECKSUM_LEN]> for Checksum {
+    fn as_ref(&self) -> &[u8; CHECKSUM_LEN] {
         &self.0
     }
 }
@@ -98,6 +103,42 @@ const HEADER_LEN: usize = 3;
 /// Bytes 3-11: MAC_6(1) + MAC_5(1) + flags(1) + section_number(1)
 /// + last_section_number(1) + MAC_4(1) + MAC_3(1) + MAC_2(1) + MAC_1(1).
 const EXTENSION_LEN: usize = 9;
+
+/// MAC address and checksum field sizes.
+const MAC_ADDRESS_LEN: usize = 6;
+const CHECKSUM_LEN: usize = 4;
+/// Width of the two `reserved` header fields.
+const RESERVED_FIELD_BITS: u32 = 2;
+
+/// Wire byte offsets of the extension fields (ETSI EN 301 192 Figure 1).
+const MAC_6_OFFSET: usize = 3;
+const MAC_5_OFFSET: usize = 4;
+const FLAGS_OFFSET: usize = 5;
+const SECTION_NUMBER_OFFSET: usize = 6;
+const LAST_SECTION_NUMBER_OFFSET: usize = 7;
+const MAC_4_OFFSET: usize = 8;
+const MAC_3_OFFSET: usize = 9;
+const MAC_2_OFFSET: usize = 10;
+const MAC_1_OFFSET: usize = 11;
+
+/// Index of each MAC octet in network order.
+const MAC_1_INDEX: usize = 0;
+const MAC_2_INDEX: usize = 1;
+const MAC_3_INDEX: usize = 2;
+const MAC_4_INDEX: usize = 3;
+const MAC_5_INDEX: usize = 4;
+const MAC_6_INDEX: usize = 5;
+
+/// Offsets of the last two checksum bytes after `trailer_start`.
+const CHECKSUM_BYTE_2_OFFSET: usize = 2;
+const CHECKSUM_BYTE_3_OFFSET: usize = 3;
+
+/// Packed-field masks and shifts in the flags byte.
+const SCRAMBLING_CONTROL_MASK: u8 = 0x03;
+const PAYLOAD_SCRAMBLING_SHIFT: u8 = 4;
+const ADDRESS_SCRAMBLING_SHIFT: u8 = 2;
+const LLC_SNAP_FLAG: u8 = 0x02;
+const RESERVED_B5_SHIFT: u8 = 6;
 
 use super::CRC_LEN;
 
@@ -171,11 +212,11 @@ pub struct MpeDatagramSection<'a> {
 
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<2>,
+    pub reserved_b1: ReservedOnes<RESERVED_FIELD_BITS>,
 
     /// `reserved(2)` in byte 5 bits `[7:6]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<2>,
+    pub reserved_b5: ReservedOnes<RESERVED_FIELD_BITS>,
 }
 
 impl<'a> MpeDatagramSection<'a> {
@@ -199,7 +240,7 @@ impl<'a> MpeDatagramSection<'a> {
             section_number,
             last_section_number,
             payload,
-            checksum: Checksum([0; 4]),
+            checksum: Checksum([0; CHECKSUM_LEN]),
             reserved_b1: ReservedOnes::FILL,
             reserved_b5: ReservedOnes::FILL,
         }
@@ -229,22 +270,24 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
 
         // MAC scatter: byte 3 = MAC_6 (LSB), byte 4 = MAC_5,
         // bytes 8-11 = MAC_4, MAC_3, MAC_2, MAC_1 (MSB). Reassemble MSB-first.
-        let mac_6 = bytes[3];
-        let mac_5 = bytes[4];
+        let mac_6 = bytes[MAC_6_OFFSET];
+        let mac_5 = bytes[MAC_5_OFFSET];
 
         // Byte 5: reserved(2) | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
-        let payload_scrambling_control = (bytes[5] >> 4) & 0x03;
-        let address_scrambling_control = (bytes[5] >> 2) & 0x03;
-        let llc_snap_flag = (bytes[5] & 0x02) != 0;
-        let current_next_indicator = super::current_next_of(bytes[5]);
+        let payload_scrambling_control =
+            (bytes[FLAGS_OFFSET] >> PAYLOAD_SCRAMBLING_SHIFT) & SCRAMBLING_CONTROL_MASK;
+        let address_scrambling_control =
+            (bytes[FLAGS_OFFSET] >> ADDRESS_SCRAMBLING_SHIFT) & SCRAMBLING_CONTROL_MASK;
+        let llc_snap_flag = (bytes[FLAGS_OFFSET] & LLC_SNAP_FLAG) != 0;
+        let current_next_indicator = super::current_next_of(bytes[FLAGS_OFFSET]);
 
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let section_number = bytes[SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
 
-        let mac_4 = bytes[8];
-        let mac_3 = bytes[9];
-        let mac_2 = bytes[10];
-        let mac_1 = bytes[11];
+        let mac_4 = bytes[MAC_4_OFFSET];
+        let mac_3 = bytes[MAC_3_OFFSET];
+        let mac_2 = bytes[MAC_2_OFFSET];
+        let mac_1 = bytes[MAC_1_OFFSET];
         let mac_address = MacAddress([mac_1, mac_2, mac_3, mac_4, mac_5, mac_6]);
 
         let payload_start = HEADER_LEN + EXTENSION_LEN;
@@ -253,8 +296,8 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
         let checksum = Checksum([
             bytes[trailer_start],
             bytes[trailer_start + 1],
-            bytes[trailer_start + 2],
-            bytes[trailer_start + 3],
+            bytes[trailer_start + CHECKSUM_BYTE_2_OFFSET],
+            bytes[trailer_start + CHECKSUM_BYTE_3_OFFSET],
         ]);
 
         Ok(MpeDatagramSection {
@@ -270,7 +313,9 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
             payload,
             checksum,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
-            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
+                bytes[FLAGS_OFFSET],
+            ))),
         })
     }
 }
@@ -288,18 +333,18 @@ impl Serialize for MpeDatagramSection<'_> {
 
         // 2-bit scrambling fields must fit; reject over-range values rather
         // than silently truncating (mirrors cit/sdt guarding derived fields).
-        if self.payload_scrambling_control > 0x03 {
+        if self.payload_scrambling_control > SCRAMBLING_CONTROL_MASK {
             return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "payload_scrambling_control",
                 value: u64::from(self.payload_scrambling_control),
-                max: 0x03,
+                max: u64::from(SCRAMBLING_CONTROL_MASK),
             }));
         }
-        if self.address_scrambling_control > 0x03 {
+        if self.address_scrambling_control > SCRAMBLING_CONTROL_MASK {
             return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "address_scrambling_control",
                 value: u64::from(self.address_scrambling_control),
-                max: 0x03,
+                max: u64::from(SCRAMBLING_CONTROL_MASK),
             }));
         }
 
@@ -313,32 +358,32 @@ impl Serialize for MpeDatagramSection<'_> {
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // MAC scatter: byte 3 = MAC_6 (mac_address[5]), byte 4 = MAC_5.
-        buf[3] = self.mac_address.0[5];
-        buf[4] = self.mac_address.0[4];
+        buf[MAC_6_OFFSET] = self.mac_address.0[MAC_6_INDEX];
+        buf[MAC_5_OFFSET] = self.mac_address.0[MAC_5_INDEX];
 
         // Byte 5: reserved(2)=11 | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
-        buf[5] = ((self.reserved_b5.get() as u8) << 6)
+        buf[FLAGS_OFFSET] = ((self.reserved_b5.get() as u8) << RESERVED_B5_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.payload_scrambling_control,
-                0x03,
+                SCRAMBLING_CONTROL_MASK,
                 "payload_scrambling_control",
-            )? << 4)
+            )? << PAYLOAD_SCRAMBLING_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.address_scrambling_control,
-                0x03,
+                SCRAMBLING_CONTROL_MASK,
                 "address_scrambling_control",
-            )? << 2)
+            )? << ADDRESS_SCRAMBLING_SHIFT)
             | (u8::from(self.llc_snap_flag) << 1)
             | u8::from(self.current_next_indicator);
 
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         // bytes 8-11 = MAC_4, MAC_3, MAC_2, MAC_1.
-        buf[8] = self.mac_address.0[3];
-        buf[9] = self.mac_address.0[2];
-        buf[10] = self.mac_address.0[1];
-        buf[11] = self.mac_address.0[0];
+        buf[MAC_4_OFFSET] = self.mac_address.0[MAC_4_INDEX];
+        buf[MAC_3_OFFSET] = self.mac_address.0[MAC_3_INDEX];
+        buf[MAC_2_OFFSET] = self.mac_address.0[MAC_2_INDEX];
+        buf[MAC_1_OFFSET] = self.mac_address.0[MAC_1_INDEX];
 
         let payload_start = HEADER_LEN + EXTENSION_LEN;
         let trailer_start = payload_start + self.payload.len();
