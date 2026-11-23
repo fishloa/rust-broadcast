@@ -8,7 +8,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::crc::crc8;
 use crate::error::Error;
-use crate::issy::{ISSY_LONG_LEN, Issy, decode_issy_long, decode_issy_short};
+use crate::issy::{ISSY_LONG_LEN, ISSY_LONG_LSB_OFFSET, Issy, decode_issy_long, decode_issy_short};
 use broadcast_common::wire_enum;
 
 /// Total bytes in a BBHEADER.
@@ -28,7 +28,6 @@ const SYNCD_HI_OFFSET: usize = 7;
 const SYNCD_LO_OFFSET: usize = 8;
 const CRC_OFFSET: usize = 9;
 /// Index of ISSY_1LSB within the 3-byte ISSY field — EN 302 755 §5.1.7.
-const ISSY_LSB_INDEX: usize = ISSY_LONG_LEN - 1;
 /// Loosest valid DFL upper bound in bits across the standards this crate parses.
 ///
 /// DVB-S2 normal FECFRAME caps the data field near 64800 bits; DVB-T2 is tighter
@@ -415,7 +414,7 @@ impl Serialize for Bbheader {
                     let dfl = self.dfl.to_be_bytes();
                     buf[DFL_HI_OFFSET] = dfl[0];
                     buf[DFL_LO_OFFSET] = dfl[1];
-                    buf[SYNC_OFFSET] = issy[ISSY_LSB_INDEX];
+                    buf[SYNC_OFFSET] = issy[ISSY_LONG_LSB_OFFSET];
                     let syncd = self.syncd.to_be_bytes();
                     buf[SYNCD_HI_OFFSET] = syncd[0];
                     buf[SYNCD_LO_OFFSET] = syncd[1];

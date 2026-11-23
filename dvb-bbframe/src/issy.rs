@@ -26,7 +26,7 @@ pub(crate) const ISSY_LONG_LEN: usize = 3;
 const ISSY_MSB_OFFSET: usize = 0;
 const ISSY_LONG_MID_OFFSET: usize = ISSY_LONG_LEN - 2;
 const ISSY_SHORT_LSB_OFFSET: usize = ISSY_SHORT_LEN - 1;
-const ISSY_LONG_LSB_OFFSET: usize = ISSY_LONG_LEN - 1;
+pub(crate) const ISSY_LONG_LSB_OFFSET: usize = ISSY_LONG_LEN - 1;
 
 const SIGNALLING_KIND_SHIFT: u32 = 20;
 const SIGNALLING_KIND_MASK: u32 = 0x03;

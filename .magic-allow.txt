@@ -1,4 +1,0 @@
-# Literals below are inside an error-message string naming the spec clauses
-# (EN 302 307-1 §5.1.4, EN 302 755 Table 2), not magic numbers.
-dvb-bbframe/src/error.rs:"DFL={dfl} bits exceeds maximum {max} bits (EN 302 307-1 §5.1.4 S2 normal frame; \ # spec clause reference in a string literal
-dvb-bbframe/src/error.rs:DVB-T2 tighter per EN 302 755 Table 2)" # spec clause reference in a string literal
