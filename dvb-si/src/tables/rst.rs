@@ -47,7 +47,7 @@ pub struct RstEntry {
     /// `reserved_future_use(5)` before `running_status` (`11111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<5>,
+    pub reserved_future_use: ReservedOnes<FIVE_BITS>,
 }
 
 impl RstEntry {
@@ -73,6 +73,15 @@ impl RstEntry {
 
 /// Shift of `reserved_future_use(5)` above `running_status(3)`.
 const RESERVED_SHIFT: u32 = 3;
+
+/// Width of the `reserved_future_use` entry field.
+const FIVE_BITS: u32 = 5;
+
+/// Byte offsets inside one RST entry.
+const RST_ORIGINAL_NETWORK_ID_OFFSET: usize = 2;
+const RST_SERVICE_ID_OFFSET: usize = 4;
+const RST_EVENT_ID_OFFSET: usize = 6;
+const RST_RUNNING_STATUS_OFFSET: usize = 8;
 
 /// Running Status Table (§5.2.7, Table 10).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,11 +143,19 @@ impl<'a> Parse<'a> for RstSection {
             let entry = &bytes[off..off + ENTRY_LEN];
             entries.push(RstEntry {
                 transport_stream_id: crate::wire::be_u16(entry, 0, "rst")?,
-                original_network_id: crate::wire::be_u16(entry, 2, "rst")?,
-                service_id: crate::wire::be_u16(entry, 4, "rst")?,
-                event_id: crate::wire::be_u16(entry, 6, "rst")?,
-                running_status: RunningStatus::from_u8(entry[8] & super::RUNNING_STATUS_MASK),
-                reserved_future_use: ReservedOnes::from_bits(u64::from(entry[8] >> RESERVED_SHIFT)),
+                original_network_id: crate::wire::be_u16(
+                    entry,
+                    RST_ORIGINAL_NETWORK_ID_OFFSET,
+                    "rst",
+                )?,
+                service_id: crate::wire::be_u16(entry, RST_SERVICE_ID_OFFSET, "rst")?,
+                event_id: crate::wire::be_u16(entry, RST_EVENT_ID_OFFSET, "rst")?,
+                running_status: RunningStatus::from_u8(
+                    entry[RST_RUNNING_STATUS_OFFSET] & super::RUNNING_STATUS_MASK,
+                ),
+                reserved_future_use: ReservedOnes::from_bits(u64::from(
+                    entry[RST_RUNNING_STATUS_OFFSET] >> RESERVED_SHIFT,
+                )),
             });
             off += ENTRY_LEN;
         }
@@ -166,12 +183,16 @@ impl Serialize for RstSection {
         super::write_section_length(buf, len - HEADER_LEN)?;
         let mut off = HEADER_LEN;
         for e in &self.entries {
-            buf[off..off + 2].copy_from_slice(&e.transport_stream_id.to_be_bytes());
-            buf[off + 2..off + 4].copy_from_slice(&e.original_network_id.to_be_bytes());
-            buf[off + 4..off + 6].copy_from_slice(&e.service_id.to_be_bytes());
-            buf[off + 6..off + 8].copy_from_slice(&e.event_id.to_be_bytes());
+            buf[off..off + RST_ORIGINAL_NETWORK_ID_OFFSET]
+                .copy_from_slice(&e.transport_stream_id.to_be_bytes());
+            buf[off + RST_ORIGINAL_NETWORK_ID_OFFSET..off + RST_SERVICE_ID_OFFSET]
+                .copy_from_slice(&e.original_network_id.to_be_bytes());
+            buf[off + RST_SERVICE_ID_OFFSET..off + RST_EVENT_ID_OFFSET]
+                .copy_from_slice(&e.service_id.to_be_bytes());
+            buf[off + RST_EVENT_ID_OFFSET..off + RST_RUNNING_STATUS_OFFSET]
+                .copy_from_slice(&e.event_id.to_be_bytes());
             // reserved_future_use(5)=1, running_status(3).
-            buf[off + 8] =
+            buf[off + RST_RUNNING_STATUS_OFFSET] =
                 ((e.reserved_future_use.get() as u8) << RESERVED_SHIFT) | e.running_status.to_u8();
             off += ENTRY_LEN;
         }

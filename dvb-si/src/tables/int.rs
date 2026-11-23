@@ -81,6 +81,17 @@ const OFF_PLATFORM_ID: usize = 8;
 const OFF_PROCESSING_ORDER: usize = 11;
 const OFF_PLATFORM_DESC_LEN: usize = 12;
 
+const OFF_PLATFORM_ID_LAST: usize = OFF_PLATFORM_ID + 2;
+
+/// Width of the `reserved` and 12-bit length fields.
+const FOUR_BITS: u32 = 4;
+const DESC_LOOP_LEN_BITS: u32 = 12;
+
+/// Width and shifts of the 24-bit platform_id.
+const PLATFORM_ID_BITS: u32 = 24;
+const PLATFORM_ID_SHIFT_16: u32 = 16;
+const PLATFORM_ID_SHIFT_8: u32 = 8;
+
 /// A target/operational descriptor-loop pair in the INT body loop
 /// (Tables 17/18, §8.4.4.1).
 ///
@@ -125,7 +136,7 @@ pub struct IntSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `platform_descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_platform_descriptor_loop_length: ReservedOnes<4>,
+    pub reserved_platform_descriptor_loop_length: ReservedOnes<FOUR_BITS>,
 }
 
 impl<'a> IntSection<'a> {
@@ -185,9 +196,9 @@ impl<'a> Parse<'a> for IntSection<'a> {
         let current_next_indicator = super::current_next_of(version_byte);
         let section_number = bytes[OFF_SECTION_NUMBER];
         let last_section_number = bytes[OFF_LAST_SECTION_NUMBER];
-        let platform_id = ((bytes[OFF_PLATFORM_ID] as u32) << 16)
-            | ((bytes[OFF_PLATFORM_ID + 1] as u32) << 8)
-            | bytes[OFF_PLATFORM_ID + 2] as u32;
+        let platform_id = ((bytes[OFF_PLATFORM_ID] as u32) << PLATFORM_ID_SHIFT_16)
+            | ((bytes[OFF_PLATFORM_ID + 1] as u32) << PLATFORM_ID_SHIFT_8)
+            | bytes[OFF_PLATFORM_ID_LAST] as u32;
         let processing_order = bytes[OFF_PROCESSING_ORDER];
 
         let plat_desc_len = super::desc_loop_len_of(
@@ -299,7 +310,11 @@ impl Serialize for IntSection<'_> {
 
         // 24-bit field: the top byte of a wider value used to be dropped
         // silently (audit r03-W3 class).
-        broadcast_common::len::fit_bits(u64::from(self.platform_id), 24, "platform_id")?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.platform_id),
+            PLATFORM_ID_BITS,
+            "platform_id",
+        )?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - OUTER_HEADER_LEN)?;
@@ -311,18 +326,20 @@ impl Serialize for IntSection<'_> {
             .b5(self.version_number, self.current_next_indicator)?;
         buf[OFF_SECTION_NUMBER] = self.section_number;
         buf[OFF_LAST_SECTION_NUMBER] = self.last_section_number;
-        buf[OFF_PLATFORM_ID] = ((self.platform_id >> 16) & 0xFF) as u8;
-        buf[OFF_PLATFORM_ID + 1] = ((self.platform_id >> 8) & 0xFF) as u8;
-        buf[OFF_PLATFORM_ID + 2] = (self.platform_id & 0xFF) as u8;
+        buf[OFF_PLATFORM_ID] =
+            ((self.platform_id >> PLATFORM_ID_SHIFT_16) & u32::from(u8::MAX)) as u8;
+        buf[OFF_PLATFORM_ID + 1] =
+            ((self.platform_id >> PLATFORM_ID_SHIFT_8) & u32::from(u8::MAX)) as u8;
+        buf[OFF_PLATFORM_ID_LAST] = (self.platform_id & u32::from(u8::MAX)) as u8;
         buf[OFF_PROCESSING_ORDER] = self.processing_order;
 
         let pdl = broadcast_common::len::fit_bits(
             self.platform_descriptors.len() as u64,
-            12,
+            DESC_LOOP_LEN_BITS,
             "platform_descriptors_loop_length",
         )?;
         super::write_desc_loop_len_r(
-            &mut buf[OFF_PLATFORM_DESC_LEN..OFF_PLATFORM_DESC_LEN + 2],
+            &mut buf[OFF_PLATFORM_DESC_LEN..OFF_PLATFORM_DESC_LEN + LOOP_LEN_FIELD],
             pdl as usize,
             self.reserved_platform_descriptor_loop_length.get() as u8,
         )?;
@@ -335,11 +352,11 @@ impl Serialize for IntSection<'_> {
         for entry in &self.loops {
             let tl = broadcast_common::len::fit_bits(
                 entry.target_descriptors.len() as u64,
-                12,
+                DESC_LOOP_LEN_BITS,
                 "target_descriptor_loop_length",
             )?;
             super::write_desc_loop_len_r(
-                &mut buf[pos..pos + 2],
+                &mut buf[pos..pos + LOOP_LEN_FIELD],
                 tl as usize,
                 entry.reserved_target_length.get() as u8,
             )?;
@@ -350,11 +367,11 @@ impl Serialize for IntSection<'_> {
 
             let ol = broadcast_common::len::fit_bits(
                 entry.operational_descriptors.len() as u64,
-                12,
+                DESC_LOOP_LEN_BITS,
                 "operational_descriptor_loop_length",
             )?;
             super::write_desc_loop_len_r(
-                &mut buf[pos..pos + 2],
+                &mut buf[pos..pos + LOOP_LEN_FIELD],
                 ol as usize,
                 entry.reserved_operational_length.get() as u8,
             )?;

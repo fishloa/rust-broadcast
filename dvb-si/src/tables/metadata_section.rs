@@ -25,7 +25,7 @@ const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 /// Default of the 8-bit `reserved` (all ones, H.222.0 clause 2.1).
-pub const RESERVED_DEFAULT: ReservedOnes<8> = ReservedOnes::<8>::FILL;
+pub const RESERVED_DEFAULT: ReservedOnes<EIGHT_BITS> = ReservedOnes::<EIGHT_BITS>::FILL;
 
 const B1_SSI: u8 = 0x80;
 const B1_PRIVATE: u8 = 0x40;
@@ -33,6 +33,16 @@ const B1_RANDOM_ACCESS: u8 = 0x20;
 const B1_DECODER_CONFIG: u8 = 0x10;
 const FRAGMENT_SHIFT: u32 = 6;
 const FRAGMENT_MASK: u8 = 0x03;
+
+/// Width of the `reserved` header field.
+const EIGHT_BITS: u32 = 8;
+
+/// Byte offsets in the metadata section header.
+const METADATA_SERVICE_ID_OFFSET: usize = 3;
+const RESERVED_OFFSET: usize = 4;
+const FLAGS_OFFSET: usize = 5;
+const SECTION_NUMBER_OFFSET: usize = 6;
+const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 
 /// `section_fragment_indication` (Table 2-159).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +113,7 @@ pub struct MetadataSection<'a> {
     pub metadata_service_id: u8,
     /// `reserved(8)`; re-emitted verbatim, default `0xFF`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<8>,
+    pub reserved: ReservedOnes<EIGHT_BITS>,
     /// `section_fragment_indication` (Table 2-159).
     pub section_fragment_indication: SectionFragmentIndication,
     /// `version_number` (5 bits).
@@ -171,15 +181,15 @@ impl<'a> Parse<'a> for MetadataSection<'a> {
             private_indicator: b1 & B1_PRIVATE != 0,
             random_access_indicator: b1 & B1_RANDOM_ACCESS != 0,
             decoder_config_flag: b1 & B1_DECODER_CONFIG != 0,
-            metadata_service_id: bytes[3],
-            reserved: ReservedOnes::from_bits(u64::from(bytes[4])),
+            metadata_service_id: bytes[METADATA_SERVICE_ID_OFFSET],
+            reserved: ReservedOnes::from_bits(u64::from(bytes[RESERVED_OFFSET])),
             section_fragment_indication: SectionFragmentIndication::from_u8(
-                bytes[5] >> FRAGMENT_SHIFT,
+                bytes[FLAGS_OFFSET] >> FRAGMENT_SHIFT,
             ),
-            version_number: super::version_number_of(bytes[5]),
-            current_next_indicator: super::current_next_of(bytes[5]),
-            section_number: bytes[6],
-            last_section_number: bytes[7],
+            version_number: super::version_number_of(bytes[FLAGS_OFFSET]),
+            current_next_indicator: super::current_next_of(bytes[FLAGS_OFFSET]),
+            section_number: bytes[SECTION_NUMBER_OFFSET],
+            last_section_number: bytes[LAST_SECTION_NUMBER_OFFSET],
             metadata_bytes: &bytes[MIN_HEADER_LEN + EXTENSION_HEADER_LEN..total - CRC_LEN],
         })
     }
@@ -201,17 +211,17 @@ impl Serialize for MetadataSection<'_> {
             | (u8::from(self.random_access_indicator) * B1_RANDOM_ACCESS)
             | (u8::from(self.decoder_config_flag) * B1_DECODER_CONFIG);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[3] = self.metadata_service_id;
-        buf[4] = self.reserved.get() as u8;
+        buf[METADATA_SERVICE_ID_OFFSET] = self.metadata_service_id;
+        buf[RESERVED_OFFSET] = self.reserved.get() as u8;
         // version_number(5) | current_next_indicator(1), with the 2-bit
         // fragment indication in the reserved(2) position of the shared helper.
-        buf[5] = super::b5_of(
+        buf[FLAGS_OFFSET] = super::b5_of(
             self.section_fragment_indication.to_u8(),
             self.version_number,
             self.current_next_indicator,
         )?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         let start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         buf[start..start + self.metadata_bytes.len()].copy_from_slice(self.metadata_bytes);
         super::write_crc(buf, len - CRC_LEN);
