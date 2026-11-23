@@ -38,6 +38,30 @@ use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
 const EVENT_HEADER_LEN: usize = 12;
 
+/// Raw BCD field sizes.
+const START_TIME_LEN: usize = 5;
+const DURATION_LEN: usize = 3;
+
+/// Byte offsets in the EIT section header.
+const SERVICE_ID_OFFSET: usize = 3;
+const VERSION_OFFSET: usize = 5;
+const SECTION_NUMBER_OFFSET: usize = 6;
+const LAST_SECTION_NUMBER_OFFSET: usize = 7;
+const TRANSPORT_STREAM_ID_OFFSET: usize = 8;
+const ORIGINAL_NETWORK_ID_OFFSET: usize = 10;
+const SEGMENT_LAST_SECTION_NUMBER_OFFSET: usize = 12;
+const LAST_TABLE_ID_OFFSET: usize = 13;
+
+/// Byte offsets inside one event record.
+const EVENT_ID_LEN: usize = 2;
+const EVENT_START_TIME_OFFSET: usize = 2;
+const EVENT_DURATION_OFFSET: usize = EVENT_START_TIME_OFFSET + START_TIME_LEN;
+const EVENT_STATUS_OFFSET: usize = EVENT_DURATION_OFFSET + DURATION_LEN;
+const EVENT_DLL_OFFSET: usize = EVENT_STATUS_OFFSET + 1;
+
+/// Width of `descriptors_loop_length`.
+const DESCRIPTORS_LOOP_LEN_BITS: u32 = 12;
+
 /// EIT variant distinguished by table_id range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -80,10 +104,10 @@ pub struct EitEvent<'a> {
     pub event_id: u16,
     /// 40-bit start_time: 16-bit MJD followed by 24-bit BCD UTC (HHMMSS).
     /// Private — use [`start_time`](Self::start_time) for decoded access.
-    pub(crate) start_time_raw: [u8; 5],
+    pub(crate) start_time_raw: [u8; START_TIME_LEN],
     /// 24-bit BCD duration HHMMSS.
     /// Private — use [`duration`](Self::duration) for decoded access.
-    pub(crate) duration_raw: [u8; 3],
+    pub(crate) duration_raw: [u8; DURATION_LEN],
     /// 3-bit running_status (EN 300 468 Table 6).
     pub running_status: RunningStatus,
     /// free_CA_mode flag.
@@ -187,16 +211,16 @@ impl<'a> Parse<'a> for EitSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let service_id = crate::wire::be_u16(bytes, 3, "eit")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let service_id = crate::wire::be_u16(bytes, SERVICE_ID_OFFSET, "eit")?;
+        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
+        let section_number = bytes[SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
 
-        let transport_stream_id = crate::wire::be_u16(bytes, 8, "eit")?;
-        let original_network_id = crate::wire::be_u16(bytes, 10, "eit")?;
-        let segment_last_section_number = bytes[12];
-        let last_table_id = bytes[13];
+        let transport_stream_id = crate::wire::be_u16(bytes, TRANSPORT_STREAM_ID_OFFSET, "eit")?;
+        let original_network_id = crate::wire::be_u16(bytes, ORIGINAL_NETWORK_ID_OFFSET, "eit")?;
+        let segment_last_section_number = bytes[SEGMENT_LAST_SECTION_NUMBER_OFFSET];
+        let last_table_id = bytes[LAST_TABLE_ID_OFFSET];
 
         let events_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         let events_end = total - CRC_LEN;
@@ -205,29 +229,28 @@ impl<'a> Parse<'a> for EitSection<'a> {
         while pos + EVENT_HEADER_LEN <= events_end {
             let (b2, _) = bytes
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<EVENT_ID_LEN>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: pos + 2,
+                        need: pos + EVENT_ID_LEN,
                         have: events_end,
                         what: "EitSection event_id",
                     },
                 ))?;
             let event_id = u16::from_be_bytes(*b2);
-            let start_time_raw = [
-                bytes[pos + 2],
-                bytes[pos + 3],
-                bytes[pos + 4],
-                bytes[pos + 5],
-                bytes[pos + 6],
-            ];
-            let duration_raw = [bytes[pos + 7], bytes[pos + 8], bytes[pos + 9]];
-            let status_and_len_hi = bytes[pos + 10];
+            let mut start_time_raw = [0u8; START_TIME_LEN];
+            start_time_raw.copy_from_slice(
+                &bytes[pos + EVENT_START_TIME_OFFSET..pos + EVENT_DURATION_OFFSET],
+            );
+            let mut duration_raw = [0u8; DURATION_LEN];
+            duration_raw
+                .copy_from_slice(&bytes[pos + EVENT_DURATION_OFFSET..pos + EVENT_STATUS_OFFSET]);
+            let status_and_len_hi = bytes[pos + EVENT_STATUS_OFFSET];
             let running_status =
                 RunningStatus::from_u8(super::running_status_of(status_and_len_hi));
             let free_ca_mode = super::free_ca_mode_of(status_and_len_hi);
             let descriptors_loop_length =
-                super::dll_from_status(status_and_len_hi, bytes[pos + 11]);
+                super::dll_from_status(status_and_len_hi, bytes[pos + EVENT_DLL_OFFSET]);
             let desc_start = pos + EVENT_HEADER_LEN;
             let desc_end = desc_start + descriptors_loop_length;
             if desc_end > events_end {
@@ -270,7 +293,7 @@ impl<'a> Parse<'a> for EitSection<'a> {
             segment_last_section_number,
             last_table_id,
             events,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
         })
     }
 }
@@ -292,30 +315,37 @@ impl Serialize for EitSection<'_> {
         buf[0] = self.table_id;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = self
+        buf[SERVICE_ID_OFFSET..VERSION_OFFSET].copy_from_slice(&self.service_id.to_be_bytes());
+        buf[VERSION_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
-        buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[10..12].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[12] = self.segment_last_section_number;
-        buf[13] = self.last_table_id;
+        buf[SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[TRANSPORT_STREAM_ID_OFFSET..ORIGINAL_NETWORK_ID_OFFSET]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        buf[ORIGINAL_NETWORK_ID_OFFSET..SEGMENT_LAST_SECTION_NUMBER_OFFSET]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
+        buf[SEGMENT_LAST_SECTION_NUMBER_OFFSET] = self.segment_last_section_number;
+        buf[LAST_TABLE_ID_OFFSET] = self.last_table_id;
 
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         for ev in &self.events {
-            buf[pos..pos + 2].copy_from_slice(&ev.event_id.to_be_bytes());
-            buf[pos + 2..pos + 7].copy_from_slice(&ev.start_time_raw);
-            buf[pos + 7..pos + 10].copy_from_slice(&ev.duration_raw);
+            buf[pos..pos + EVENT_ID_LEN].copy_from_slice(&ev.event_id.to_be_bytes());
+            buf[pos + EVENT_START_TIME_OFFSET..pos + EVENT_DURATION_OFFSET]
+                .copy_from_slice(&ev.start_time_raw);
+            buf[pos + EVENT_DURATION_OFFSET..pos + EVENT_STATUS_OFFSET]
+                .copy_from_slice(&ev.duration_raw);
             let dll = broadcast_common::len::fit_bits(
                 ev.descriptors.len() as u64,
-                12,
+                DESCRIPTORS_LOOP_LEN_BITS,
                 "descriptors_loop_length",
             )?;
-            buf[pos + 10] =
-                super::status_byte(ev.running_status.to_u8(), ev.free_ca_mode, (dll >> 8) as u8);
-            buf[pos + 11] = dll as u8;
+            buf[pos + EVENT_STATUS_OFFSET] = super::status_byte(
+                ev.running_status.to_u8(),
+                ev.free_ca_mode,
+                (dll >> u8::BITS) as u8,
+            );
+            buf[pos + EVENT_DLL_OFFSET] = dll as u8;
             let desc_start = pos + EVENT_HEADER_LEN;
             buf[desc_start..desc_start + ev.descriptors.len()]
                 .copy_from_slice(ev.descriptors.raw());
@@ -388,13 +418,13 @@ impl<'a> EitEvent<'a> {
 
     /// Raw 5-byte start_time field (for serialization and round-trip).
     #[must_use]
-    pub fn start_time_raw(&self) -> [u8; 5] {
+    pub fn start_time_raw(&self) -> [u8; START_TIME_LEN] {
         self.start_time_raw
     }
 
     /// Raw 3-byte duration field (for serialization and round-trip).
     #[must_use]
-    pub fn duration_raw(&self) -> [u8; 3] {
+    pub fn duration_raw(&self) -> [u8; DURATION_LEN] {
         self.duration_raw
     }
 
@@ -406,8 +436,8 @@ impl<'a> EitEvent<'a> {
     #[must_use]
     pub fn new(
         event_id: u16,
-        start_time_raw: [u8; 5],
-        duration_raw: [u8; 3],
+        start_time_raw: [u8; START_TIME_LEN],
+        duration_raw: [u8; DURATION_LEN],
         running_status: RunningStatus,
         free_ca_mode: bool,
         descriptors: DescriptorLoop<'a>,
