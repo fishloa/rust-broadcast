@@ -21,6 +21,13 @@ use crate::ts::{
 /// (ISO/IEC 13818-1 §2.4.3.3, Table 2-3).
 const NULL_PID: Pid = crate::pid::well_known::NULL;
 
+/// Byte offset of `adaptation_field_length`, right after the 4-byte transport
+/// header (ISO/IEC 13818-1 §2.4.3.4).
+const AF_LEN_BYTE: usize = TsHeader::serialized_len();
+/// Byte offset of the header byte carrying `adaptation_field_control` and
+/// `continuity_counter` (ISO/IEC 13818-1 §2.4.3.3).
+const SCRAMBLING_AFC_CC_OFFSET: usize = 3;
+
 /// Owned 188-byte TS packet with pre-parsed header fields.
 ///
 /// The raw bytes are stored privately; the parsed flags (`pid`, `pusi`, etc.)
@@ -197,10 +204,10 @@ impl OwnedTsPacket {
     /// `1 + af_len` bytes.
     #[inline]
     fn payload_offset(&self) -> usize {
-        let mut offset = 4;
+        let mut offset = TsHeader::serialized_len();
         if self.has_adaptation {
             // raw[4] is the adaptation_field_length byte
-            let af_len = self.raw[4] as usize;
+            let af_len = self.raw[AF_LEN_BYTE] as usize;
             offset += 1 + af_len;
         }
         offset
@@ -306,7 +313,8 @@ impl OwnedTsPacket {
     /// ```
     pub fn set_continuity_counter(packet: &mut [u8; TS_PACKET_SIZE], cc: ContinuityCounter) {
         // Byte 3 bits [3:0] = continuity_counter (ISO/IEC 13818-1 §2.4.3.3).
-        packet[3] = (packet[3] & !CC_MASK) | cc.value();
+        packet[SCRAMBLING_AFC_CC_OFFSET] =
+            (packet[SCRAMBLING_AFC_CC_OFFSET] & !CC_MASK) | cc.value();
     }
 
     /// Overwrite the PCR value in an existing adaptation field in `packet`.

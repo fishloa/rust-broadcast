@@ -159,11 +159,11 @@ impl SectionPacketiser {
                 adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: self.continuity_counter,
             };
-            pkt[..4].copy_from_slice(&header.to_bytes());
+            pkt[..TsHeader::serialized_len()].copy_from_slice(&header.to_bytes());
 
             self.continuity_counter = self.continuity_counter.next();
 
-            let mut write_pos = 4usize;
+            let mut write_pos = TsHeader::serialized_len();
 
             if pusi {
                 pkt[write_pos] = pointer_field;

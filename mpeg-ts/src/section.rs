@@ -71,6 +71,34 @@ const BYTE5_RESERVED_SHIFT: u32 = 6;
 /// `current_next_indicator` — byte 5 bit 0 of the long-form extension header.
 const CURRENT_NEXT_MASK: u8 = 0x01;
 
+/// Byte offsets of the 3-byte common section header (ISO/IEC 13818-1 §2.4.4.1).
+const TABLE_ID_OFFSET: usize = 0;
+const BYTE1_OFFSET: usize = TABLE_ID_OFFSET + 1;
+/// Byte offset of the 16-bit `table_id_extension` field, the first byte of the
+/// long-form extension header (ISO/IEC 13818-1 §2.4.4.1).
+const EXTENSION_ID_OFFSET: usize = MIN_HEADER_LEN;
+/// Byte offset of the `version_number`/`current_next_indicator` byte.
+const VERSION_BYTE_OFFSET: usize = EXTENSION_ID_OFFSET + core::mem::size_of::<u16>();
+/// Byte offset of `section_number`.
+const SECTION_NUMBER_OFFSET: usize = VERSION_BYTE_OFFSET + 1;
+/// Byte offset of `last_section_number`.
+const LAST_SECTION_NUMBER_OFFSET: usize = SECTION_NUMBER_OFFSET + 1;
+/// Bit shift of `section_syntax_indicator` within byte 1.
+const SSI_SHIFT: u32 = 7;
+/// Bit shift of `private_indicator` within byte 1.
+const PRIVATE_INDICATOR_SHIFT: u32 = 6;
+/// Bit shift of `version_number` within its byte.
+const VERSION_NUMBER_SHIFT: u32 = 1;
+/// Bit shift that places a 16-bit field's high byte in position.
+const HIGH_BYTE_SHIFT: u32 = 8;
+
+/// Read the big-endian CRC_32 at `off` (ISO/IEC 13818-1 §2.4.4.1).
+fn read_crc32(bytes: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; CRC_LEN];
+    raw.copy_from_slice(&bytes[off..off + CRC_LEN]);
+    u32::from_be_bytes(raw)
+}
+
 /// A parsed PSI/SI section header, borrowing the raw input buffer for payload.
 ///
 /// Created via `Section::parse(bytes)`. Does **not** validate the CRC on
@@ -147,7 +175,7 @@ pub fn validate_crc(raw: &[u8]) -> Result<()> {
     }
     let computed = crc::compute(&raw[..raw.len() - CRC_LEN]);
     let tail = &raw[raw.len() - CRC_LEN..];
-    let expected = u32::from_be_bytes([tail[0], tail[1], tail[2], tail[3]]);
+    let expected = read_crc32(tail, 0);
     if computed != expected {
         return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
             what: "section",
@@ -222,10 +250,10 @@ impl<'a> Section<'a> {
         )? as u16;
         Ok([
             self.table_id,
-            (u8::from(self.section_syntax_indicator) << 7)
-                | (u8::from(self.private_indicator) << 6)
+            (u8::from(self.section_syntax_indicator) << SSI_SHIFT)
+                | (u8::from(self.private_indicator) << PRIVATE_INDICATOR_SHIFT)
                 | self.byte1_reserved
-                | ((length >> 8) as u8 & crate::ts::SECTION_LENGTH_HI_MASK),
+                | ((length >> HIGH_BYTE_SHIFT) as u8 & crate::ts::SECTION_LENGTH_HI_MASK),
             length.to_be_bytes()[1],
         ])
     }
@@ -237,11 +265,11 @@ impl<'a> Section<'a> {
             "version_number",
         )? as u8;
         Ok([
-            (self.extension_id >> 8) as u8,
-            (self.extension_id & 0xFF) as u8,
+            (self.extension_id >> HIGH_BYTE_SHIFT) as u8,
+            self.extension_id.to_be_bytes()[1],
             fit_u8(
                 usize::from(self.byte5_reserved) << BYTE5_RESERVED_SHIFT
-                    | usize::from(version) << 1
+                    | usize::from(version) << VERSION_NUMBER_SHIFT
                     | usize::from(self.current_next_indicator),
                 "section byte 5",
             )?,
@@ -295,10 +323,11 @@ impl<'a> Parse<'a> for Section<'a> {
         // ── 3-byte common header ────────────────────────────────────────────
         need_in(bytes, MIN_HEADER_LEN, "section header")?;
 
-        let table_id = bytes[0];
-        let section_syntax_indicator = (bytes[1] & SSI_MASK) != 0;
-        let private_indicator = (bytes[1] & PRIVATE_INDICATOR_MASK) != 0;
-        let byte1_reserved = (bytes[1] & BYTE1_RESERVED_BITS) & !crate::ts::SECTION_LENGTH_HI_MASK;
+        let table_id = bytes[TABLE_ID_OFFSET];
+        let section_syntax_indicator = (bytes[BYTE1_OFFSET] & SSI_MASK) != 0;
+        let private_indicator = (bytes[BYTE1_OFFSET] & PRIVATE_INDICATOR_MASK) != 0;
+        let byte1_reserved =
+            (bytes[BYTE1_OFFSET] & BYTE1_RESERVED_BITS) & !crate::ts::SECTION_LENGTH_HI_MASK;
 
         // Total section size is section_length + 3 (the 3-byte header itself
         // is not counted by section_length). W14 (#1074): shared with the
@@ -359,12 +388,15 @@ impl<'a> Parse<'a> for Section<'a> {
             "long-form section extension header + CRC",
         )?;
 
-        let extension_id = ((bytes[3] as u16) << 8) | (bytes[4] as u16);
-        let byte5_reserved = (bytes[5] & BYTE5_RESERVED_BITS) >> BYTE5_RESERVED_SHIFT;
-        let version_number = (bytes[5] >> 1) & VERSION_NUMBER_MASK;
-        let current_next_indicator = (bytes[5] & CURRENT_NEXT_MASK) != 0;
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let extension_id =
+            u16::from_be_bytes([bytes[EXTENSION_ID_OFFSET], bytes[EXTENSION_ID_OFFSET + 1]]);
+        let byte5_reserved =
+            (bytes[VERSION_BYTE_OFFSET] & BYTE5_RESERVED_BITS) >> BYTE5_RESERVED_SHIFT;
+        let version_number =
+            (bytes[VERSION_BYTE_OFFSET] >> VERSION_NUMBER_SHIFT) & VERSION_NUMBER_MASK;
+        let current_next_indicator = (bytes[VERSION_BYTE_OFFSET] & CURRENT_NEXT_MASK) != 0;
+        let section_number = bytes[SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
 
         // Payload: bytes[8 .. total-4]  (excludes 5-byte extension header
         // counting from offset 3, and the 4-byte CRC at the end).
@@ -373,12 +405,7 @@ impl<'a> Parse<'a> for Section<'a> {
         let payload = &section_bytes[payload_start..payload_end];
 
         let crc_offset = total - CRC_LEN;
-        let parsed_crc32 = Some(
-            ((section_bytes[crc_offset] as u32) << 24)
-                | ((section_bytes[crc_offset + 1] as u32) << 16)
-                | ((section_bytes[crc_offset + 2] as u32) << 8)
-                | (section_bytes[crc_offset + 3] as u32),
-        );
+        let parsed_crc32 = Some(read_crc32(section_bytes, crc_offset));
 
         Ok(Section {
             table_id,
