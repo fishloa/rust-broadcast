@@ -69,6 +69,22 @@ pub const AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<AC4_CONFIG_RESERVED
 const AC4_FLAGS_RESERVED_BITS: u32 = 6;
 /// Width of the config-byte `reserved_zero_future_use` (5 bits).
 const AC4_CONFIG_RESERVED_BITS: u32 = 5;
+/// Mask of `ac4_config_flag` in the first byte.
+const AC4_CONFIG_FLAG_MASK: u8 = 0x80;
+/// Shift of `ac4_config_flag`.
+const AC4_CONFIG_FLAG_SHIFT: u32 = 7;
+/// Mask of `ac4_toc_flag` in the first byte.
+const AC4_TOC_FLAG_MASK: u8 = 0x40;
+/// Shift of `ac4_toc_flag`.
+const AC4_TOC_FLAG_SHIFT: u32 = 6;
+/// Mask of `ac4_dialog_enhancement_enabled` in the config byte.
+const AC4_DIALOG_ENHANCEMENT_MASK: u8 = 0x80;
+/// Shift of `ac4_dialog_enhancement_enabled`.
+const AC4_DIALOG_ENHANCEMENT_SHIFT: u32 = 7;
+/// Mask of `ac4_channel_mode` in the config byte.
+const AC4_CHANNEL_MODE_MASK: u8 = 0x03;
+/// Shift of `ac4_channel_mode`.
+const AC4_CHANNEL_MODE_SHIFT: u32 = 5;
 
 /// AC-4 body (annex D). `toc` + `additional_info` are raw.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,8 +161,8 @@ impl<'a> Parse<'a> for Ac4<'a> {
             ));
         }
         let flags = sel[0];
-        let ac4_config_flag = (flags & 0x80) != 0;
-        let ac4_toc_flag = (flags & 0x40) != 0;
+        let ac4_config_flag = (flags & AC4_CONFIG_FLAG_MASK) != 0;
+        let ac4_toc_flag = (flags & AC4_TOC_FLAG_MASK) != 0;
         let mut pos = 1;
         let (ac4_dialog_enhancement_enabled, ac4_channel_mode, reserved_zero_future_use_5) =
             if ac4_config_flag {
@@ -154,8 +170,10 @@ impl<'a> Parse<'a> for Ac4<'a> {
                 let c = sel[pos];
                 pos += 1;
                 (
-                    Some((c & 0x80) != 0),
-                    Some(Ac4ChannelMode::from_u8((c >> 5) & 0x03)),
+                    Some((c & AC4_DIALOG_ENHANCEMENT_MASK) != 0),
+                    Some(Ac4ChannelMode::from_u8(
+                        (c >> AC4_CHANNEL_MODE_SHIFT) & AC4_CHANNEL_MODE_MASK,
+                    )),
                     Some(ReservedZero::from_bits(u64::from(c))),
                 )
             } else {
@@ -195,8 +213,8 @@ impl Serialize for Ac4<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = (u8::from(self.ac4_config_flag) << 7)
-            | (u8::from(self.ac4_toc_flag) << 6)
+        buf[0] = (u8::from(self.ac4_config_flag) << AC4_CONFIG_FLAG_SHIFT)
+            | (u8::from(self.ac4_toc_flag) << AC4_TOC_FLAG_SHIFT)
             | self.reserved_zero_future_use_6.get() as u8;
         let mut p = 1;
         if self.ac4_config_flag {
@@ -215,11 +233,13 @@ impl Serialize for Ac4<'_> {
                     reason: "required when ac4_config_flag is set",
                 })?
                 .to_u8();
-            let cm = broadcast_common::len::fit_mask(cm, 0x03, "ac4_channel_mode")?;
+            let cm = broadcast_common::len::fit_mask(cm, AC4_CHANNEL_MODE_MASK, "ac4_channel_mode")?;
             let rz = self
                 .reserved_zero_future_use_5
                 .unwrap_or(AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT);
-            buf[p] = (u8::from(de) << 7) | (cm << 5) | rz.get() as u8;
+            buf[p] = (u8::from(de) << AC4_DIALOG_ENHANCEMENT_SHIFT)
+                | (cm << AC4_CHANNEL_MODE_SHIFT)
+                | rz.get() as u8;
             p += 1;
         }
         if let Some(t) = self.toc {

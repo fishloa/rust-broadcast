@@ -6,6 +6,11 @@ impl ExtensionBodyDef<'_> for ServiceRelocated {
     const TAG_EXTENSION: u8 = 0x0B;
     const NAME: &'static str = "SERVICE_RELOCATED";
 }
+/// Offset of `old_transport_stream_id`.
+const OLD_TRANSPORT_STREAM_ID_OFFSET: usize = 2;
+/// Offset of `old_service_id`.
+const OLD_SERVICE_ID_OFFSET: usize = 4;
+
 /// service_relocated body (Table 152) — fully typed, fixed 6 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -40,9 +45,21 @@ impl<'a> Parse<'a> for ServiceRelocated {
             });
         }
         Ok(ServiceRelocated {
-            old_original_network_id: u16::from_be_bytes([hdr[0], hdr[1]]),
-            old_transport_stream_id: u16::from_be_bytes([hdr[2], hdr[3]]),
-            old_service_id: u16::from_be_bytes([hdr[4], hdr[5]]),
+            old_original_network_id: crate::wire::be_u16(
+                hdr,
+                0,
+                "old_original_network_id",
+            )?,
+            old_transport_stream_id: crate::wire::be_u16(
+                hdr,
+                OLD_TRANSPORT_STREAM_ID_OFFSET,
+                "old_transport_stream_id",
+            )?,
+            old_service_id: crate::wire::be_u16(
+                hdr,
+                OLD_SERVICE_ID_OFFSET,
+                "old_service_id",
+            )?,
         })
     }
 }
