@@ -18,6 +18,16 @@ const ISCR_SHORT_PAYLOAD_MASK: u8 = 0x7F;
 const ISCR_LONG_PAYLOAD_MASK: u8 = 0x3F;
 const ISSY_SIGNALLING_BIT: u8 = 0x40;
 
+/// Short-form ISSY length in bytes — EN 302 755 §5.1.7.
+pub(crate) const ISSY_SHORT_LEN: usize = 2;
+/// Long-form ISSY length in bytes — EN 302 755 §5.1.7.
+pub(crate) const ISSY_LONG_LEN: usize = 3;
+/// ISSY byte positions, MSB first.
+const ISSY_MSB_OFFSET: usize = 0;
+const ISSY_LONG_MID_OFFSET: usize = ISSY_LONG_LEN - 2;
+const ISSY_SHORT_LSB_OFFSET: usize = ISSY_SHORT_LEN - 1;
+pub(crate) const ISSY_LONG_LSB_OFFSET: usize = ISSY_LONG_LEN - 1;
+
 const SIGNALLING_KIND_SHIFT: u32 = 20;
 const SIGNALLING_KIND_MASK: u32 = 0x03;
 const BUFS_UNIT_SHIFT: u32 = 18;
@@ -284,13 +294,16 @@ broadcast_common::impl_spec_display!(Issy);
 /// Returns `Ok(Issy::IscrShort)` when the short-form bit (`[7]` of byte 0) is
 /// `0`; `Err` otherwise (a `1` prefix means a long-form field, which is 3 bytes
 /// and must be decoded with [`decode_issy_long`]).
-pub fn decode_issy_short(bytes: [u8; 2]) -> crate::Result<Issy> {
-    if bytes[0] & ISSY_LONG_FORM_BIT != 0 {
+pub fn decode_issy_short(bytes: [u8; ISSY_SHORT_LEN]) -> crate::Result<Issy> {
+    if bytes[ISSY_MSB_OFFSET] & ISSY_LONG_FORM_BIT != 0 {
         return Err(Error::InvalidIssyForm {
             reason: "bit [7] is 1 (long form); use decode_issy_long for 3-byte ISSY",
         });
     }
-    let iscr = u16::from_be_bytes([bytes[0] & ISCR_SHORT_PAYLOAD_MASK, bytes[1]]);
+    let iscr = u16::from_be_bytes([
+        bytes[ISSY_MSB_OFFSET] & ISCR_SHORT_PAYLOAD_MASK,
+        bytes[ISSY_SHORT_LSB_OFFSET],
+    ]);
     Ok(Issy::IscrShort(iscr))
 }
 
@@ -299,14 +312,19 @@ pub fn decode_issy_short(bytes: [u8; 2]) -> crate::Result<Issy> {
 /// Byte 0 bit `[7]` must be `1` (long form). Byte 0 bit `[6]` then selects: `0` → 22-bit
 /// ISCR long; `1` → BUFS/TTO signalling. Returns `Err` if bit `[7]` is `0` (that is
 /// a short-form field — use [`decode_issy_short`]).
-pub fn decode_issy_long(bytes: [u8; 3]) -> crate::Result<Issy> {
-    if bytes[0] & ISSY_LONG_FORM_BIT == 0 {
+pub fn decode_issy_long(bytes: [u8; ISSY_LONG_LEN]) -> crate::Result<Issy> {
+    if bytes[ISSY_MSB_OFFSET] & ISSY_LONG_FORM_BIT == 0 {
         return Err(Error::InvalidIssyForm {
             reason: "bit [7] is 0 (short form); use decode_issy_short for 2-byte ISSY",
         });
     }
-    let payload = u32::from_be_bytes([0, bytes[0] & ISCR_LONG_PAYLOAD_MASK, bytes[1], bytes[2]]);
-    if bytes[0] & ISSY_SIGNALLING_BIT == 0 {
+    let payload = u32::from_be_bytes([
+        0,
+        bytes[ISSY_MSB_OFFSET] & ISCR_LONG_PAYLOAD_MASK,
+        bytes[ISSY_LONG_MID_OFFSET],
+        bytes[ISSY_LONG_LSB_OFFSET],
+    ]);
+    if bytes[ISSY_MSB_OFFSET] & ISSY_SIGNALLING_BIT == 0 {
         Ok(Issy::IscrLong(payload))
     } else {
         Ok(Issy::Signalling(decode_signalling(payload)))

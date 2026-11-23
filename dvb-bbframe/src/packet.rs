@@ -40,6 +40,7 @@ use alloc::vec::Vec;
 use crate::crc::crc8;
 use crate::error::{Error, Result};
 use crate::header::{BBHEADER_LEN, Bbheader, Mode};
+use crate::issy::{ISSY_LONG_LEN, ISSY_SHORT_LEN};
 
 /// User packet size in Normal Mode (188 bytes = full MPEG-2 TS packet).
 pub const NM_UP_SIZE: usize = 188;
@@ -51,7 +52,7 @@ const TS_TEI_BIT: u8 = 0x80;
 pub const HEM_UP_SIZE: usize = 187;
 
 /// Longest ISSY field (long form / BUFS-TTO signalling, EN 302 755 Annex C).
-const NM_ISSY_MAX_LEN: usize = 3;
+const NM_ISSY_MAX_LEN: usize = ISSY_LONG_LEN;
 
 /// DNP counter length when NPD is active (EN 302 755 §5.1.5/§5.1.8).
 const NM_DNP_LEN: usize = 1;
@@ -94,7 +95,7 @@ pub fn nm_stride_bytes(hdr: &Bbheader) -> Option<usize> {
     let dnp_len = usize::from(hdr.matype.npd);
     let issy_len = extra.checked_sub(dnp_len)?;
     let issy_ok = if hdr.matype.issyi {
-        issy_len == 2 || issy_len == 3
+        issy_len == ISSY_SHORT_LEN || issy_len == ISSY_LONG_LEN
     } else {
         issy_len == 0
     };
