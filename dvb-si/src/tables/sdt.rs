@@ -66,7 +66,7 @@ pub struct SdtService<'a> {
     /// `reserved_future_use(6)` before `EIT_schedule_flag` (EN 300 468
     /// §5.2.3, `111111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<6>,
+    pub reserved_future_use: ReservedOnes<SIX_BITS>,
 }
 
 impl<'a> SdtService<'a> {
@@ -94,6 +94,27 @@ impl<'a> SdtService<'a> {
 
 /// Shift of `reserved_future_use(6)` in the EIT-flags byte.
 const EIT_FLAGS_RESERVED_SHIFT: u32 = 2;
+
+/// Width of the `reserved` extension fields.
+const SIX_BITS: u32 = 6;
+const EIGHT_BITS: u32 = 8;
+
+/// Width of `descriptors_loop_length`.
+const DESC_LOOP_LEN_BITS: u32 = 12;
+
+/// Byte offsets in the SDT section header.
+const TRANSPORT_STREAM_ID_OFFSET: usize = 3;
+const VERSION_OFFSET: usize = 5;
+const SECTION_NUMBER_OFFSET: usize = 6;
+const LAST_SECTION_NUMBER_OFFSET: usize = 7;
+const ORIGINAL_NETWORK_ID_OFFSET: usize = 8;
+const RESERVED_FUTURE_USE_OFFSET: usize = 10;
+
+/// Byte offsets inside one service record.
+const SERVICE_ID_LEN: usize = 2;
+const SERVICE_FLAGS_OFFSET: usize = 2;
+const SERVICE_STATUS_OFFSET: usize = 3;
+const SERVICE_DLL_OFFSET: usize = 4;
 
 /// Service Description Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,7 +144,7 @@ pub struct SdtSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(8)` after `original_network_id` (`0xFF`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<8>,
+    pub reserved_future_use: ReservedOnes<EIGHT_BITS>,
 }
 
 impl<'a> SdtSection<'a> {
@@ -177,12 +198,12 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let transport_stream_id = crate::wire::be_u16(bytes, 3, "sdt")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
-        let original_network_id = crate::wire::be_u16(bytes, 8, "sdt")?;
+        let transport_stream_id = crate::wire::be_u16(bytes, TRANSPORT_STREAM_ID_OFFSET, "sdt")?;
+        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
+        let section_number = bytes[SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let original_network_id = crate::wire::be_u16(bytes, ORIGINAL_NETWORK_ID_OFFSET, "sdt")?;
 
         let services_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         let services_end = total - CRC_LEN;
@@ -191,23 +212,24 @@ impl<'a> Parse<'a> for SdtSection<'a> {
         while pos + SERVICE_HEADER_LEN <= services_end {
             let (b2, _) = bytes
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<SERVICE_ID_LEN>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: pos + 2,
+                        need: pos + SERVICE_ID_LEN,
                         have: services_end,
                         what: "SdtSection service_id",
                     },
                 ))?;
             let service_id = u16::from_be_bytes(*b2);
-            let flags = bytes[pos + 2];
+            let flags = bytes[pos + SERVICE_FLAGS_OFFSET];
             let eit_schedule_flag = (flags & EIT_SCHEDULE_FLAG) != 0;
             let eit_present_following_flag = (flags & EIT_PRESENT_FOLLOWING_FLAG) != 0;
-            let status_and_len_hi = bytes[pos + 3];
+            let status_and_len_hi = bytes[pos + SERVICE_STATUS_OFFSET];
             let running_status =
                 RunningStatus::from_u8(super::running_status_of(status_and_len_hi));
             let free_ca_mode = super::free_ca_mode_of(status_and_len_hi);
-            let descriptors_loop_length = super::dll_from_status(status_and_len_hi, bytes[pos + 4]);
+            let descriptors_loop_length =
+                super::dll_from_status(status_and_len_hi, bytes[pos + SERVICE_DLL_OFFSET]);
             let desc_start = pos + SERVICE_HEADER_LEN;
             let desc_end = desc_start + descriptors_loop_length;
             if desc_end > services_end {
@@ -249,8 +271,10 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             last_section_number,
             original_network_id,
             services,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
-            reserved_future_use: ReservedOnes::from_bits(u64::from(bytes[10])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
+            reserved_future_use: ReservedOnes::from_bits(u64::from(
+                bytes[RESERVED_FUTURE_USE_OFFSET],
+            )),
         })
     }
 }
@@ -275,33 +299,35 @@ impl Serialize for SdtSection<'_> {
         };
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[5] = self
+        buf[TRANSPORT_STREAM_ID_OFFSET..VERSION_OFFSET]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        buf[VERSION_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
-        buf[8..10].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[10] = self.reserved_future_use.get() as u8;
+        buf[SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[ORIGINAL_NETWORK_ID_OFFSET..RESERVED_FUTURE_USE_OFFSET]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
+        buf[RESERVED_FUTURE_USE_OFFSET] = self.reserved_future_use.get() as u8;
 
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         for svc in &self.services {
-            buf[pos..pos + 2].copy_from_slice(&svc.service_id.to_be_bytes());
+            buf[pos..pos + SERVICE_ID_LEN].copy_from_slice(&svc.service_id.to_be_bytes());
             let flags = ((svc.reserved_future_use.get() as u8) << EIT_FLAGS_RESERVED_SHIFT)
                 | (u8::from(svc.eit_schedule_flag) << 1)
                 | u8::from(svc.eit_present_following_flag);
-            buf[pos + 2] = flags;
+            buf[pos + SERVICE_FLAGS_OFFSET] = flags;
             let dll = broadcast_common::len::fit_bits(
                 svc.descriptors.len() as u64,
-                12,
+                DESC_LOOP_LEN_BITS,
                 "descriptors_loop_length",
             )?;
-            buf[pos + 3] = super::status_byte(
+            buf[pos + SERVICE_STATUS_OFFSET] = super::status_byte(
                 svc.running_status.to_u8(),
                 svc.free_ca_mode,
-                (dll >> 8) as u8,
+                (dll >> u8::BITS) as u8,
             );
-            buf[pos + 4] = dll as u8;
+            buf[pos + SERVICE_DLL_OFFSET] = dll as u8;
             let desc_start = pos + SERVICE_HEADER_LEN;
             buf[desc_start..desc_start + svc.descriptors.len()]
                 .copy_from_slice(svc.descriptors.raw());

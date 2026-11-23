@@ -33,6 +33,22 @@ const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 const CRID_REF_LEN: usize = 2;
 const CRID_ENTRY_FIXED_LEN: usize = CRID_REF_LEN + 1 + 1;
 
+/// Width of the `reserved` header fields.
+const TWO_BITS: u32 = 2;
+
+/// Byte offsets in the CIT section header.
+const SERVICE_ID_OFFSET: usize = 3;
+const VERSION_OFFSET: usize = 5;
+const SECTION_NUMBER_OFFSET: usize = 6;
+const LAST_SECTION_NUMBER_OFFSET: usize = 7;
+const TRANSPORT_STREAM_ID_OFFSET: usize = 8;
+const ORIGINAL_NETWORK_ID_OFFSET: usize = 10;
+const PREPEND_STRINGS_LENGTH_OFFSET: usize = 12;
+
+/// Byte offsets inside one CRID entry.
+const PREPEND_STRING_INDEX_OFFSET: usize = CRID_REF_LEN;
+const UNIQUE_STRING_LENGTH_OFFSET: usize = PREPEND_STRING_INDEX_OFFSET + 1;
+
 /// A single CRID entry in the CIT loop (Table 119, §12.2).
 ///
 /// Wire layout: `crid_ref(16) | prepend_string_index(8) | unique_string_length(8)
@@ -87,10 +103,10 @@ pub struct CitSection<'a> {
     pub crid_entries: Vec<CridEntry<'a>>,
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<2>,
+    pub reserved_b1: ReservedOnes<TWO_BITS>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<2>,
+    pub reserved_b5: ReservedOnes<TWO_BITS>,
 }
 
 impl<'a> CitSection<'a> {
@@ -174,14 +190,14 @@ impl<'a> Parse<'a> for CitSection<'a> {
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
         let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
-        let service_id = crate::wire::be_u16(bytes, 3, "cit")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
-        let transport_stream_id = crate::wire::be_u16(bytes, 8, "cit")?;
-        let original_network_id = crate::wire::be_u16(bytes, 10, "cit")?;
-        let prepend_strings_length = bytes[12];
+        let service_id = crate::wire::be_u16(bytes, SERVICE_ID_OFFSET, "cit")?;
+        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
+        let section_number = bytes[SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let transport_stream_id = crate::wire::be_u16(bytes, TRANSPORT_STREAM_ID_OFFSET, "cit")?;
+        let original_network_id = crate::wire::be_u16(bytes, ORIGINAL_NETWORK_ID_OFFSET, "cit")?;
+        let prepend_strings_length = bytes[PREPEND_STRINGS_LENGTH_OFFSET];
 
         let ps_start = HEADER_LEN + EXTENSION_LEN;
         let ps_end = ps_start + prepend_strings_length as usize;
@@ -208,7 +224,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
             }
             let (b2, _) = bytes
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<CRID_REF_LEN>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
                         need: pos + CRID_ENTRY_FIXED_LEN,
@@ -217,8 +233,8 @@ impl<'a> Parse<'a> for CitSection<'a> {
                     },
                 ))?;
             let crid_ref = u16::from_be_bytes(*b2);
-            let prepend_string_index = bytes[pos + 2];
-            let unique_string_length = bytes[pos + 3] as usize;
+            let prepend_string_index = bytes[pos + PREPEND_STRING_INDEX_OFFSET];
+            let unique_string_length = bytes[pos + UNIQUE_STRING_LENGTH_OFFSET] as usize;
             pos += CRID_ENTRY_FIXED_LEN;
             if pos + unique_string_length > payload_end {
                 return Err(Error::BufferTooShort(
@@ -251,7 +267,9 @@ impl<'a> Parse<'a> for CitSection<'a> {
             prepend_strings,
             crid_entries,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
-            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
+                bytes[VERSION_OFFSET],
+            ))),
         })
     }
 }
@@ -286,16 +304,16 @@ impl Serialize for CitSection<'_> {
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = super::b5_of(
+        buf[VERSION_OFFSET] = super::b5_of(
             self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[10..12].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[12] = prepend_strings_len;
+        buf[PREPEND_STRINGS_LENGTH_OFFSET] = prepend_strings_len;
 
         let ps_start = HEADER_LEN + EXTENSION_LEN;
         let ps_end = ps_start + self.prepend_strings.len();
@@ -305,9 +323,9 @@ impl Serialize for CitSection<'_> {
         for entry in &self.crid_entries {
             let unique_string_len =
                 broadcast_common::len::fit_u8(entry.unique_string.len(), "unique_string_length")?;
-            buf[pos..pos + 2].copy_from_slice(&entry.crid_ref.to_be_bytes());
-            buf[pos + 2] = entry.prepend_string_index;
-            buf[pos + 3] = unique_string_len;
+            buf[pos..pos + CRID_REF_LEN].copy_from_slice(&entry.crid_ref.to_be_bytes());
+            buf[pos + PREPEND_STRING_INDEX_OFFSET] = entry.prepend_string_index;
+            buf[pos + UNIQUE_STRING_LENGTH_OFFSET] = unique_string_len;
             pos += CRID_ENTRY_FIXED_LEN;
             buf[pos..pos + entry.unique_string.len()].copy_from_slice(&entry.unique_string);
             pos += entry.unique_string.len();
