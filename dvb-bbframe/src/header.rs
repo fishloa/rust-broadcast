@@ -8,11 +8,27 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::crc::crc8;
 use crate::error::Error;
-use crate::issy::{Issy, decode_issy_long, decode_issy_short};
+use crate::issy::{ISSY_LONG_LEN, Issy, decode_issy_long, decode_issy_short};
 use broadcast_common::wire_enum;
 
 /// Total bytes in a BBHEADER.
 pub const BBHEADER_LEN: usize = 10;
+
+/// MATYPE field length in bytes — EN 302 755 Table 1.
+const MATYPE_LEN: usize = 2;
+/// BBHEADER byte offsets — EN 302 755 §5.1.7.
+const MATYPE_1_OFFSET: usize = 0;
+const MATYPE_2_OFFSET: usize = 1;
+const UPL_HI_OFFSET: usize = 2;
+const UPL_LO_OFFSET: usize = 3;
+const DFL_HI_OFFSET: usize = 4;
+const DFL_LO_OFFSET: usize = 5;
+const SYNC_OFFSET: usize = 6;
+const SYNCD_HI_OFFSET: usize = 7;
+const SYNCD_LO_OFFSET: usize = 8;
+const CRC_OFFSET: usize = 9;
+/// Index of ISSY_1LSB within the 3-byte ISSY field — EN 302 755 §5.1.7.
+const ISSY_LSB_INDEX: usize = ISSY_LONG_LEN - 1;
 /// Loosest valid DFL upper bound in bits across the standards this crate parses.
 ///
 /// DVB-S2 normal FECFRAME caps the data field near 64800 bits; DVB-T2 is tighter
@@ -112,6 +128,8 @@ impl Matype {
     const MASK_ISSYI: u8 = 0x08;
     const MASK_NPD: u8 = 0x04;
     const MASK_EXT: u8 = 0x03;
+    /// Low bit position of the 2-bit TS/GS field in MATYPE-1.
+    const TS_GS_SHIFT: u8 = 6;
 }
 
 /// Roll-off factor encoded in MATYPE-1 EXT bits `[1:0]` (DVB-S2/S2X context).
@@ -188,14 +206,14 @@ impl Matype {
     }
 }
 
-impl TryFrom<[u8; 2]> for Matype {
+impl TryFrom<[u8; MATYPE_LEN]> for Matype {
     type Error = Error;
 
-    fn try_from(bytes: [u8; 2]) -> Result<Self, Self::Error> {
-        let matype1 = bytes[0];
-        let matype2 = bytes[1];
+    fn try_from(bytes: [u8; MATYPE_LEN]) -> Result<Self, Self::Error> {
+        let matype1 = bytes[MATYPE_1_OFFSET];
+        let matype2 = bytes[MATYPE_2_OFFSET];
 
-        let ts_gs = TsGs::try_from((matype1 & Matype::MASK_TS_GS) >> 6)?;
+        let ts_gs = TsGs::try_from((matype1 & Matype::MASK_TS_GS) >> Matype::TS_GS_SHIFT)?;
         let sis = matype1 & Matype::MASK_SIS != 0;
         let ccm = matype1 & Matype::MASK_CCM != 0;
         let issyi = matype1 & Matype::MASK_ISSYI != 0;
@@ -214,13 +232,13 @@ impl TryFrom<[u8; 2]> for Matype {
     }
 }
 
-impl From<Matype> for [u8; 2] {
+impl From<Matype> for [u8; MATYPE_LEN] {
     fn from(m: Matype) -> Self {
         // MATYPE-1 layout per EN 302 755 Table 1:
         //   bits 7..6 TS/GS, bit 5 SIS/MIS, bit 4 CCM/ACM,
         //   bit 3 ISSYI, bit 2 NPD, bits 1..0 EXT.
         let mut matype1: u8 = 0;
-        matype1 |= (u8::from(m.ts_gs) << 6) & Matype::MASK_TS_GS;
+        matype1 |= (u8::from(m.ts_gs) << Matype::TS_GS_SHIFT) & Matype::MASK_TS_GS;
         if m.sis {
             matype1 |= Matype::MASK_SIS;
         }
@@ -262,7 +280,7 @@ pub struct Bbheader {
     /// Detected mode (NM vs HEM).
     pub mode: Mode,
     /// 3-byte ISSY from header bytes (HEM only; None in NM).
-    pub issy_in_header: Option<[u8; 3]>,
+    pub issy_in_header: Option<[u8; ISSY_LONG_LEN]>,
 }
 
 impl<'a> Parse<'a> for Bbheader {
@@ -279,11 +297,11 @@ impl<'a> Parse<'a> for Bbheader {
                 },
             ))?;
 
-        let matype_bytes = [hdr[0], hdr[1]];
+        let matype_bytes = [hdr[MATYPE_1_OFFSET], hdr[MATYPE_2_OFFSET]];
         let matype = Matype::try_from(matype_bytes)?;
-        let dfl = u16::from_be_bytes([hdr[4], hdr[5]]);
-        let syncd = u16::from_be_bytes([hdr[7], hdr[8]]);
-        let crc_stored = hdr[9];
+        let dfl = u16::from_be_bytes([hdr[DFL_HI_OFFSET], hdr[DFL_LO_OFFSET]]);
+        let syncd = u16::from_be_bytes([hdr[SYNCD_HI_OFFSET], hdr[SYNCD_LO_OFFSET]]);
+        let crc_stored = hdr[CRC_OFFSET];
 
         if dfl > DFL_MAX_BITS {
             return Err(Error::DflOutOfRange {
@@ -298,16 +316,24 @@ impl<'a> Parse<'a> for Bbheader {
         // outside {0, 1} is rejected by `Mode::try_from` as InvalidMode; a
         // residual flip into the other valid mode is undetectable by design
         // of the spec's scheme (there is no separate "HEM CRC init").
-        let computed_crc = crc8(&hdr[..9]);
+        let computed_crc = crc8(&hdr[..CRC_OFFSET]);
         let mode_val = computed_crc ^ crc_stored;
         let mode = Mode::try_from(mode_val)?;
 
         let (upl, sync, issy_in_header) = match mode {
-            Mode::Normal => (u16::from_be_bytes([hdr[2], hdr[3]]), hdr[6], None),
+            Mode::Normal => (
+                u16::from_be_bytes([hdr[UPL_HI_OFFSET], hdr[UPL_LO_OFFSET]]),
+                hdr[SYNC_OFFSET],
+                None,
+            ),
             Mode::HighEfficiency => {
                 // In HEM, bytes[2..4] are ISSY_2MSB, byte[6] is ISSY_1LSB —
                 // UPL and SYNC are repurposed for ISSY.
-                (0, 0, Some([hdr[2], hdr[3], hdr[6]]))
+                (
+                    0,
+                    0,
+                    Some([hdr[UPL_HI_OFFSET], hdr[UPL_LO_OFFSET], hdr[SYNC_OFFSET]]),
+                )
             }
         };
 
@@ -365,55 +391,55 @@ impl Serialize for Bbheader {
             }
         }
 
-        let ma = <[u8; 2]>::from(self.matype);
-        buf[0] = ma[0];
-        buf[1] = ma[1];
+        let ma = <[u8; MATYPE_LEN]>::from(self.matype);
+        buf[MATYPE_1_OFFSET] = ma[0];
+        buf[MATYPE_2_OFFSET] = ma[1];
 
         match self.mode {
             Mode::Normal => {
                 let upl = self.upl.to_be_bytes();
-                buf[2] = upl[0];
-                buf[3] = upl[1];
+                buf[UPL_HI_OFFSET] = upl[0];
+                buf[UPL_LO_OFFSET] = upl[1];
                 let dfl = self.dfl.to_be_bytes();
-                buf[4] = dfl[0];
-                buf[5] = dfl[1];
-                buf[6] = self.sync;
+                buf[DFL_HI_OFFSET] = dfl[0];
+                buf[DFL_LO_OFFSET] = dfl[1];
+                buf[SYNC_OFFSET] = self.sync;
                 let syncd = self.syncd.to_be_bytes();
-                buf[7] = syncd[0];
-                buf[8] = syncd[1];
+                buf[SYNCD_HI_OFFSET] = syncd[0];
+                buf[SYNCD_LO_OFFSET] = syncd[1];
             }
             Mode::HighEfficiency => {
                 if let Some(issy) = self.issy_in_header {
-                    buf[2] = issy[0];
-                    buf[3] = issy[1];
+                    buf[UPL_HI_OFFSET] = issy[0];
+                    buf[UPL_LO_OFFSET] = issy[1];
                     let dfl = self.dfl.to_be_bytes();
-                    buf[4] = dfl[0];
-                    buf[5] = dfl[1];
-                    buf[6] = issy[2];
+                    buf[DFL_HI_OFFSET] = dfl[0];
+                    buf[DFL_LO_OFFSET] = dfl[1];
+                    buf[SYNC_OFFSET] = issy[ISSY_LSB_INDEX];
                     let syncd = self.syncd.to_be_bytes();
-                    buf[7] = syncd[0];
-                    buf[8] = syncd[1];
+                    buf[SYNCD_HI_OFFSET] = syncd[0];
+                    buf[SYNCD_LO_OFFSET] = syncd[1];
                 } else {
                     // No ISSY in header: explicitly zero the three ISSY positions
                     // so serialize_into is fully deterministic regardless of whether
                     // the caller's buffer was zero-initialised or not. Without this,
-                    // stale bytes at buf[2], buf[3], buf[6] corrupt the CRC-8.
-                    buf[2] = 0;
-                    buf[3] = 0;
+                    // stale bytes at the repurposed UPL/SYNC positions corrupt the CRC-8.
+                    buf[UPL_HI_OFFSET] = 0;
+                    buf[UPL_LO_OFFSET] = 0;
                     let dfl = self.dfl.to_be_bytes();
-                    buf[4] = dfl[0];
-                    buf[5] = dfl[1];
-                    buf[6] = 0;
+                    buf[DFL_HI_OFFSET] = dfl[0];
+                    buf[DFL_LO_OFFSET] = dfl[1];
+                    buf[SYNC_OFFSET] = 0;
                     let syncd = self.syncd.to_be_bytes();
-                    buf[7] = syncd[0];
-                    buf[8] = syncd[1];
+                    buf[SYNCD_HI_OFFSET] = syncd[0];
+                    buf[SYNCD_LO_OFFSET] = syncd[1];
                 }
             }
         }
 
         // CRC-8 = crc8(bytes[0..9], init=0x00) XOR MODE
-        let computed = crc8(&buf[..9]);
-        buf[9] = computed ^ (self.mode as u8);
+        let computed = crc8(&buf[..CRC_OFFSET]);
+        buf[CRC_OFFSET] = computed ^ (self.mode as u8);
 
         Ok(BBHEADER_LEN)
     }
