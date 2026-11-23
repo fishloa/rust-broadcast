@@ -1,0 +1,1 @@
+# No exceptions: every literal in dvb-si/src/tables/ is named.
