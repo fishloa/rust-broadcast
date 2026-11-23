@@ -133,20 +133,37 @@ pub struct MpeFecSection<'a> {
     pub rs_data: &'a [u8],
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<2>,
+    pub reserved_b1: ReservedOnes<TWO_BITS>,
     /// `reserved_for_future_use(8)` at byte 4 (`0xFF`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use_8: ReservedOnes<8>,
+    pub reserved_future_use_8: ReservedOnes<EIGHT_BITS>,
     /// `reserved(2)` in byte 5 bits `[7:6]` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<2>,
+    pub reserved_b5: ReservedOnes<TWO_BITS>,
     /// `reserved_for_future_use(5)` in byte 5 bits `[5:1]` (`11111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use_5: ReservedOnes<5>,
+    pub reserved_future_use_5: ReservedOnes<FIVE_BITS>,
 }
 
 /// All-ones `reserved_for_future_use(5)` in byte 5.
 const RESERVED_FUTURE_USE_5: u8 = super::RESERVED_5;
+
+/// Widths of the `reserved` extension fields.
+const TWO_BITS: u32 = 2;
+const FIVE_BITS: u32 = 5;
+const EIGHT_BITS: u32 = 8;
+
+/// Byte offsets in the MPE-FEC extension header.
+const PADDING_COLUMNS_OFFSET: usize = 3;
+const RESERVED_FUTURE_USE_8_OFFSET: usize = 4;
+const FLAGS_OFFSET: usize = 5;
+const SECTION_NUMBER_OFFSET: usize = 6;
+const LAST_SECTION_NUMBER_OFFSET: usize = 7;
+
+/// Byte offsets of `real_time_parameters` bytes 2 and 3.
+const RTP_BYTE_2_OFFSET: usize = 2;
+const RTP_BYTE_3_OFFSET: usize = 3;
+const RESERVED_B5_SHIFT: u8 = 6;
 
 impl<'a> MpeFecSection<'a> {
     /// Construct an MPE-FEC section with the spec `reserved` fill.
@@ -195,19 +212,19 @@ impl<'a> Parse<'a> for MpeFecSection<'a> {
         let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
         let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
-        let padding_columns = bytes[3];
-        // bytes[4] = reserved_for_future_use(8) — ignored on parse.
-        // bytes[5] = reserved(2) | reserved_for_future_use(5) | current_next_indicator(1)
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let padding_columns = bytes[PADDING_COLUMNS_OFFSET];
+        // bytes[RESERVED_FUTURE_USE_8_OFFSET] = reserved_for_future_use(8) — ignored on parse.
+        // bytes[FLAGS_OFFSET] = reserved(2) | reserved_for_future_use(5) | current_next_indicator(1)
+        let current_next_indicator = super::current_next_of(bytes[FLAGS_OFFSET]);
+        let section_number = bytes[SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
 
         let rtp_start = HEADER_LEN + EXTENSION_HEADER_LEN;
         let real_time_parameters = RealTimeParameters::from_bytes([
             bytes[rtp_start],
             bytes[rtp_start + 1],
-            bytes[rtp_start + 2],
-            bytes[rtp_start + 3],
+            bytes[rtp_start + RTP_BYTE_2_OFFSET],
+            bytes[rtp_start + RTP_BYTE_3_OFFSET],
         ]);
 
         let data_start = rtp_start + RTP_LEN;
@@ -224,10 +241,14 @@ impl<'a> Parse<'a> for MpeFecSection<'a> {
             real_time_parameters,
             rs_data,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
-            reserved_future_use_8: ReservedOnes::from_bits(u64::from(bytes[4])),
-            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
+            reserved_future_use_8: ReservedOnes::from_bits(u64::from(
+                bytes[RESERVED_FUTURE_USE_8_OFFSET],
+            )),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
+                bytes[FLAGS_OFFSET],
+            ))),
             reserved_future_use_5: ReservedOnes::from_bits(u64::from(
-                (bytes[5] >> 1) & RESERVED_FUTURE_USE_5,
+                (bytes[FLAGS_OFFSET] >> 1) & RESERVED_FUTURE_USE_5,
             )),
         })
     }
@@ -256,14 +277,14 @@ impl Serialize for MpeFecSection<'_> {
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.
-        buf[3] = self.padding_columns;
-        buf[4] = self.reserved_future_use_8.get() as u8;
+        buf[PADDING_COLUMNS_OFFSET] = self.padding_columns;
+        buf[RESERVED_FUTURE_USE_8_OFFSET] = self.reserved_future_use_8.get() as u8;
         // reserved(2)=11 | reserved_for_future_use(5)=11111 | current_next_indicator(1)
-        buf[5] = ((self.reserved_b5.get() as u8) << 6)
+        buf[FLAGS_OFFSET] = ((self.reserved_b5.get() as u8) << RESERVED_B5_SHIFT)
             | ((self.reserved_future_use_5.get() as u8) << 1)
             | u8::from(self.current_next_indicator);
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         // real_time_parameters.
         let rtp_start = HEADER_LEN + EXTENSION_HEADER_LEN;
