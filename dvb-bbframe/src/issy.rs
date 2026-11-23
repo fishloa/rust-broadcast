@@ -31,6 +31,12 @@ const TTO_E_LSB_MASK: u32 = 0x01;
 const TTO_M_SHIFT: u32 = 8;
 const TTO_M_MASK: u32 = 0x7F;
 const RESERVED_PAYLOAD_MASK: u32 = 0x0F_FFFF;
+const TTO_L_MASK: u32 = 0xFF;
+/// `TTO_L` is the fractional part of `TTO` in units of T/256.
+const TTO_L_SCALE: u64 = 256;
+const SIGNALLING_KIND_BUFS: u32 = 0b00;
+const SIGNALLING_KIND_TTO: u32 = 0b01;
+const SIGNALLING_KIND_BUFSTAT: u32 = 0b10;
 
 /// BUFS unit selector — EN 302 755 Annex C, Table C.1 (2-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,7 +196,7 @@ impl SignallingKind {
     /// See EN 302 755 Annex C Table C.1 + §BUFS/TTO semantics
     /// (`private/specs-verified/dvb/dvb-bbframe/enums/en_302_755/bufs_unit.md`).
     pub fn bufs_bytes(&self) -> Option<u64> {
-        self.bufs_bits().map(|b| b / 8)
+        self.bufs_bits().map(|b| b / u64::from(u8::BITS))
     }
 
     #[must_use]
@@ -224,7 +230,7 @@ impl SignallingKind {
                 tto_e,
                 tto_m,
                 tto_l,
-            } => Some((u64::from(*tto_m) * 256 + u64::from(*tto_l)) << tto_e),
+            } => Some((u64::from(*tto_m) * TTO_L_SCALE + u64::from(*tto_l)) << tto_e),
             _ => None,
         }
     }
@@ -284,7 +290,7 @@ pub fn decode_issy_short(bytes: [u8; 2]) -> crate::Result<Issy> {
             reason: "bit [7] is 1 (long form); use decode_issy_long for 3-byte ISSY",
         });
     }
-    let iscr = ((bytes[0] as u16 & ISCR_SHORT_PAYLOAD_MASK as u16) << 8) | bytes[1] as u16;
+    let iscr = u16::from_be_bytes([bytes[0] & ISCR_SHORT_PAYLOAD_MASK, bytes[1]]);
     Ok(Issy::IscrShort(iscr))
 }
 
@@ -299,9 +305,7 @@ pub fn decode_issy_long(bytes: [u8; 3]) -> crate::Result<Issy> {
             reason: "bit [7] is 0 (short form); use decode_issy_short for 2-byte ISSY",
         });
     }
-    let payload = ((bytes[0] as u32 & ISCR_LONG_PAYLOAD_MASK as u32) << 16)
-        | (bytes[1] as u32) << 8
-        | bytes[2] as u32;
+    let payload = u32::from_be_bytes([0, bytes[0] & ISCR_LONG_PAYLOAD_MASK, bytes[1], bytes[2]]);
     if bytes[0] & ISSY_SIGNALLING_BIT == 0 {
         Ok(Issy::IscrLong(payload))
     } else {
@@ -322,23 +326,23 @@ pub fn decode_issy_long(bytes: [u8; 3]) -> crate::Result<Issy> {
 fn decode_signalling(payload: u32) -> SignallingKind {
     let kind = (payload >> SIGNALLING_KIND_SHIFT) & SIGNALLING_KIND_MASK;
     match kind {
-        0 => {
+        SIGNALLING_KIND_BUFS => {
             let units = BufsUnit::from_u8(((payload >> BUFS_UNIT_SHIFT) & BUFS_UNIT_MASK) as u8);
             let bufs = ((payload >> BUFS_VALUE_SHIFT) & BUFS_VALUE_MASK) as u16;
             SignallingKind::Bufs { bufs, units }
         }
-        1 => {
+        SIGNALLING_KIND_TTO => {
             let tto_e = (((payload >> TTO_E_MSB_SHIFT) & TTO_E_MSB_MASK) << 1
                 | ((payload >> TTO_E_LSB_SHIFT) & TTO_E_LSB_MASK)) as u8;
             let tto_m = ((payload >> TTO_M_SHIFT) & TTO_M_MASK) as u8;
-            let tto_l = (payload & 0xFF) as u8;
+            let tto_l = (payload & TTO_L_MASK) as u8;
             SignallingKind::Tto {
                 tto_e,
                 tto_m,
                 tto_l,
             }
         }
-        2 => {
+        SIGNALLING_KIND_BUFSTAT => {
             // BUFSTAT (DVB-S2, EN 302 307-1 Annex D Table D.1) — same layout as BUFS.
             let units = BufsUnit::from_u8(((payload >> BUFS_UNIT_SHIFT) & BUFS_UNIT_MASK) as u8);
             let bufstat = ((payload >> BUFS_VALUE_SHIFT) & BUFS_VALUE_MASK) as u16;

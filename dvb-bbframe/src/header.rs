@@ -134,14 +134,19 @@ pub enum RollOff {
 }
 
 impl RollOff {
+    const CODE_035: u8 = 0b00;
+    const CODE_025: u8 = 0b01;
+    const CODE_020: u8 = 0b10;
+    const CODE_RESERVED: u8 = 0b11;
+
     /// Decode from 2-bit EXT field.
     /// Decode from 2-bit EXT field.
     #[must_use]
     pub fn from_bits(bits: u8) -> Self {
-        match bits & 0x03 {
-            0 => Self::Alpha035,
-            1 => Self::Alpha025,
-            2 => Self::Alpha020,
+        match bits & Matype::MASK_EXT {
+            Self::CODE_035 => Self::Alpha035,
+            Self::CODE_025 => Self::Alpha025,
+            Self::CODE_020 => Self::Alpha020,
             _ => Self::Reserved,
         }
     }
@@ -151,10 +156,10 @@ impl RollOff {
     #[must_use]
     pub fn to_bits(self) -> u8 {
         match self {
-            Self::Alpha035 => 0,
-            Self::Alpha025 => 1,
-            Self::Alpha020 => 2,
-            Self::Reserved => 3,
+            Self::Alpha035 => Self::CODE_035,
+            Self::Alpha025 => Self::CODE_025,
+            Self::Alpha020 => Self::CODE_020,
+            Self::Reserved => Self::CODE_RESERVED,
         }
     }
 
@@ -179,7 +184,7 @@ impl Matype {
     /// Meaningful in DVB-S2/S2X context; reserved in DVB-T2.
     #[must_use]
     pub fn roll_off(&self) -> RollOff {
-        RollOff::from_bits(self.ext & 0x03)
+        RollOff::from_bits(self.ext & Self::MASK_EXT)
     }
 }
 
