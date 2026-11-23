@@ -80,8 +80,6 @@ const RESERVED_ZERO_4_SHIFT: u32 = 4;
 const RESERVED_ZERO_4_BITS: u32 = 4;
 
 /// `font_id_extension(9) | font_id(7)` split.
-const FONT_ID_EXTENSION_BITS: u32 = 9;
-const FONT_ID_BITS: u32 = 7;
 const FONT_ID_EXTENSION_MASK: u16 = 0x01FF;
 const FONT_ID_MASK: u16 = 0x7F;
 const FONT_ID_EXTENSION_SHIFT: u16 = 7;
