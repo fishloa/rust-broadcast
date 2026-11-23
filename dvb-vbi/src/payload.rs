@@ -27,7 +27,9 @@ use broadcast_common::len::{need_in, need_out};
 
 use crate::data_unit_id::DataUnitId;
 use crate::error::{Error, Result};
-use crate::line_header::{LINE_HEADER_LEN, LineHeader};
+use crate::line_header::{
+    LINE_HEADER_LEN, LINE_OFFSET_BITS, LineHeader, RESERVED_BITS as RESERVED_FUTURE_USE_BITS,
+};
 
 /// Size in bytes of the EBU/Inverted Teletext `txt_data_block` (336 bits, §4.5).
 pub const TXT_DATA_BLOCK_LEN: usize = 42;
@@ -57,10 +59,26 @@ pub const WSS_DATA_BLOCK_MASK: u16 = 0x3FFF;
 const WSS_BYTE2_DATA_MASK: u8 = 0x3F;
 /// The trailing 2-bit `reserved_future_use` (`11`) of a WSS data field (§4.7.1).
 pub const WSS_RESERVED_TAIL: u8 = 0b11;
+/// Byte offset of the WSS field byte carrying `wss_data_block` bits `[13:6]`
+/// (§4.7.1).
+const WSS_DATA_BLOCK_HI_OFFSET: usize = LINE_HEADER_LEN;
+/// Byte offset of the WSS field byte carrying `wss_data_block` bits `[5:0]`
+/// (§4.7.1).
+const WSS_DATA_BLOCK_LO_OFFSET: usize = LINE_HEADER_LEN + 1;
+/// Left shift moving the WSS high byte into `wss_data_block` bits `[13:6]`.
+const WSS_DATA_BLOCK_HI_SHIFT: u32 = 6;
+/// Right shift moving the WSS low byte down to `wss_data_block` bits `[5:0]`.
+const WSS_DATA_BLOCK_LO_SHIFT: u32 = 2;
+/// Bit width of `wss_data_block` (§4.7.1).
+const WSS_DATA_BLOCK_BITS: u32 = 14;
 
 /// Size in bytes of a Closed Captioning data field (header + 16 CC bits = 3
 /// bytes, §4.8).
 pub const CC_FIELD_LEN: usize = LINE_HEADER_LEN + 2;
+/// Byte offset of the high byte of `closed_captioning_data_block` (§4.8.1).
+const CC_DATA_BLOCK_HI_OFFSET: usize = LINE_HEADER_LEN;
+/// Byte offset of the low byte of `closed_captioning_data_block` (§4.8.1).
+const CC_DATA_BLOCK_LO_OFFSET: usize = LINE_HEADER_LEN + 1;
 
 /// Size in bytes of the monochrome fixed header preceding the `Y_value` samples:
 /// first byte (flags + parity + line_offset) + 16-bit first_pixel_position +
@@ -75,6 +93,16 @@ const MONO_LAST_SEGMENT: u8 = 0b0100_0000;
 const MONO_FIELD_PARITY: u8 = 0b0010_0000;
 /// `line_offset` mask (`[4:0]`) of the monochrome first byte (§4.9.1).
 const MONO_LINE_OFFSET: u8 = 0b0001_1111;
+/// Byte offset of the high byte of `first_pixel_position` (§4.9.1, Table 12).
+const MONO_FIRST_PIXEL_HI_OFFSET: usize = 1;
+/// Byte offset of the low byte of `first_pixel_position` (§4.9.1, Table 12).
+const MONO_FIRST_PIXEL_LO_OFFSET: usize = 2;
+/// Byte offset of `n_pixels` (§4.9.1, Table 12).
+const MONO_N_PIXELS_OFFSET: usize = 3;
+
+/// Size in bytes of a data-unit header: `data_unit_id` + `data_unit_length`
+/// (§4.4.1, Table 3).
+const DATA_UNIT_HEADER_LEN: usize = 2;
 
 /// EBU / Inverted Teletext data field — ETSI EN 301 775 §4.5.1, Table 4
 /// (`data_unit_id` `0x02`, `0x03`, `0xC0`).
@@ -294,12 +322,13 @@ impl WssDataField {
         need_in(data, WSS_FIELD_LEN, "wss_data_field")?;
         let header = LineHeader::from_byte(data[0]);
         // wss bits [13:6] in byte1, [5:0] in the high 6 bits of byte2.
-        let wss_data_block =
-            (((data[1] as u16) << 6) | ((data[2] as u16) >> 2)) & WSS_DATA_BLOCK_MASK;
+        let wss_data_block = (((data[WSS_DATA_BLOCK_HI_OFFSET] as u16) << WSS_DATA_BLOCK_HI_SHIFT)
+            | ((data[WSS_DATA_BLOCK_LO_OFFSET] as u16) >> WSS_DATA_BLOCK_LO_SHIFT))
+            & WSS_DATA_BLOCK_MASK;
         Ok(WssDataField {
             header,
             wss_data_block,
-            reserved_tail: data[2] & WSS_RESERVED_TAIL,
+            reserved_tail: data[WSS_DATA_BLOCK_LO_OFFSET] & WSS_RESERVED_TAIL,
         })
     }
 
@@ -307,11 +336,21 @@ impl WssDataField {
     /// `wss_data_block` is range-checked and the preserved RFU tail is emitted.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         need_out(out, WSS_FIELD_LEN)?;
-        broadcast_common::len::fit_bits(self.wss_data_block as u64, 14, "wss_data_block")?;
+        broadcast_common::len::fit_bits(
+            self.wss_data_block as u64,
+            WSS_DATA_BLOCK_BITS,
+            "wss_data_block",
+        )?;
         out[0] = self.header.to_byte()?;
-        out[1] = (self.wss_data_block >> 6) as u8;
-        broadcast_common::len::fit_bits(self.reserved_tail as u64, 2, "reserved_future_use")?;
-        out[2] = (((self.wss_data_block as u8) & WSS_BYTE2_DATA_MASK) << 2) | self.reserved_tail;
+        out[WSS_DATA_BLOCK_HI_OFFSET] = (self.wss_data_block >> WSS_DATA_BLOCK_HI_SHIFT) as u8;
+        broadcast_common::len::fit_bits(
+            self.reserved_tail as u64,
+            RESERVED_FUTURE_USE_BITS,
+            "reserved_future_use",
+        )?;
+        out[WSS_DATA_BLOCK_LO_OFFSET] = (((self.wss_data_block as u8) & WSS_BYTE2_DATA_MASK)
+            << WSS_DATA_BLOCK_LO_SHIFT)
+            | self.reserved_tail;
         Ok(WSS_FIELD_LEN)
     }
 }
@@ -364,7 +403,8 @@ impl ClosedCaptioningDataField {
     pub fn parse(data: &[u8]) -> Result<Self> {
         need_in(data, CC_FIELD_LEN, "closed_captioning_data_field")?;
         let header = LineHeader::from_byte(data[0]);
-        let closed_captioning_data_block = u16::from_be_bytes([data[1], data[2]]);
+        let closed_captioning_data_block =
+            u16::from_be_bytes([data[CC_DATA_BLOCK_HI_OFFSET], data[CC_DATA_BLOCK_LO_OFFSET]]);
         Ok(ClosedCaptioningDataField {
             header,
             closed_captioning_data_block,
@@ -442,8 +482,11 @@ impl<'a> MonochromeDataField<'a> {
         let last_segment = (b0 & MONO_LAST_SEGMENT) != 0;
         let field_parity = (b0 & MONO_FIELD_PARITY) != 0;
         let line_offset = b0 & MONO_LINE_OFFSET;
-        let first_pixel_position = u16::from_be_bytes([data[1], data[2]]);
-        let n_pixels = data[3] as usize;
+        let first_pixel_position = u16::from_be_bytes([
+            data[MONO_FIRST_PIXEL_HI_OFFSET],
+            data[MONO_FIRST_PIXEL_LO_OFFSET],
+        ]);
+        let n_pixels = data[MONO_N_PIXELS_OFFSET] as usize;
         // §4.9.2 mandates n_pixels > 0; a zero-n_pixels unit is non-conformant.
         if n_pixels == 0 {
             return Err(Error::InvalidField(broadcast_common::error::InvalidField {
@@ -472,8 +515,8 @@ impl<'a> MonochromeDataField<'a> {
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
         need_out(out, total)?;
-        broadcast_common::len::fit_bits(self.line_offset as u64, 5, "line_offset")?;
-        broadcast_common::len::fit_bits(self.samples.len() as u64, 8, "n_pixels")?;
+        broadcast_common::len::fit_bits(self.line_offset as u64, LINE_OFFSET_BITS, "line_offset")?;
+        broadcast_common::len::fit_bits(self.samples.len() as u64, u8::BITS, "n_pixels")?;
         let mut b0 = self.line_offset;
         if self.first_segment {
             b0 |= MONO_FIRST_SEGMENT;
@@ -485,8 +528,9 @@ impl<'a> MonochromeDataField<'a> {
             b0 |= MONO_FIELD_PARITY;
         }
         out[0] = b0;
-        out[1..3].copy_from_slice(&self.first_pixel_position.to_be_bytes());
-        out[3] = self.samples.len() as u8;
+        out[MONO_FIRST_PIXEL_HI_OFFSET..MONO_N_PIXELS_OFFSET]
+            .copy_from_slice(&self.first_pixel_position.to_be_bytes());
+        out[MONO_N_PIXELS_OFFSET] = self.samples.len() as u8;
         out[MONO_HEADER_LEN..total].copy_from_slice(self.samples);
         Ok(total)
     }
@@ -750,7 +794,7 @@ impl<'a> DataUnit<'a> {
 
     /// Total wire size: `data_unit_id` (1) + `data_unit_length` (1) + body.
     pub fn serialized_len(&self) -> usize {
-        2 + self.data_unit_length()
+        DATA_UNIT_HEADER_LEN + self.data_unit_length()
     }
 
     /// Build a Teletext data unit (EBU non-subtitle by default tag — supply the
@@ -811,12 +855,12 @@ impl<'a> DataUnit<'a> {
     /// Parse a single data unit from the start of `data`, returning it and the
     /// number of bytes consumed.
     pub fn parse(data: &'a [u8]) -> Result<(Self, usize)> {
-        need_in(data, 2, "data_unit header (id + length)")?;
+        need_in(data, DATA_UNIT_HEADER_LEN, "data_unit header (id + length)")?;
         let id = DataUnitId::from_u8(data[0]);
-        let length = data[1] as usize;
-        let body_end = 2 + length;
+        let length = data[LINE_HEADER_LEN] as usize;
+        let body_end = DATA_UNIT_HEADER_LEN + length;
         need_in(data, body_end, "data_unit body")?;
-        let body = &data[2..body_end];
+        let body = &data[DATA_UNIT_HEADER_LEN..body_end];
         let payload = DataUnitPayload::parse(id, body)?;
         // Spec fidelity: the typed payload must fit in data_unit_length; any
         // bytes after it are the Table 1 `stuffing_byte`s (all 0xFF), kept as a
@@ -857,11 +901,13 @@ impl<'a> DataUnit<'a> {
         let total = self.serialized_len();
         need_out(out, total)?;
         let length = self.data_unit_length();
-        broadcast_common::len::fit_bits(length as u64, 8, "data_unit_length")?;
+        broadcast_common::len::fit_bits(length as u64, u8::BITS, "data_unit_length")?;
         out[0] = self.id.to_u8();
-        out[1] = length as u8;
-        let written = self.payload.serialize_into(&mut out[2..total])?;
-        for b in &mut out[2 + written..total] {
+        out[LINE_HEADER_LEN] = length as u8;
+        let written = self
+            .payload
+            .serialize_into(&mut out[DATA_UNIT_HEADER_LEN..total])?;
+        for b in &mut out[DATA_UNIT_HEADER_LEN + written..total] {
             *b = crate::data_unit_id::ID_STUFFING;
         }
         debug_assert_eq!(written + usize::from(self.stuffing), length);
