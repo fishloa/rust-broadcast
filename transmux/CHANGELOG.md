@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BitReader::read_bits` reports an over-wide field (`n > 64`) as `Error::InvalidValue`, the class `VvcBitReader::bits` and `bit_error` already use, instead of `Error::BufferTooShort`; a caller matching the short-buffer variant for that input sees the new class (#3998).
 - **BREAKING:** builds against new caret epochs of workspace siblings (`broadcast-common` 13 -> 14, `broadcast-dash` 0.2 -> 0.3, `broadcast-hls` 0.8 -> 0.9, `broadcast-smooth` 0.2 -> 0.3, `cc-data` 0.10 -> 0.11, `container-probe` 0.5 -> 0.6, `dvb-si` 15 -> 16, `mp4-emsg` 0.8 -> 0.9, `mpeg-pes` 0.9 -> 0.10, `mpeg-ps` 0.9 -> 0.10, `mpeg-ts` 0.9 -> 0.10, `rtmp-runtime` 0.11 -> 0.12, `rtp-packet` 0.8 -> 0.9, `scte35-splice` 7 -> 8). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2) whatever its own API diff, so this release is a major-class bump; consumers must resolve a single copy of each at the jiff 1.0 epoch.
 
+### Added
+
+- Optional `motion-imagery-metadata` feature: `LocalSetItem::value_typed()` returns `motion_imagery_metadata::St0601Value`, the item value decoded per the MISB ST 0601 tag table by the separately released `motion-imagery-metadata` crate (built on the `misb` crate by Matt Busel, #3955). transmux keeps only the KLV framing.
+
 ### Changed
 - Internal: error types derive `thiserror::Error` in place of hand-written `Display`/`Error` impls (messages unchanged) (#3974, #4020).
 - Internal: the public `bitreader::BitReader` (Exp-Golomb `ue`/`se`, RBSP unescape) stays a thin wrapper, now resuming `broadcast_common::bits::BitReader` at its position for each read; the `vvcC` record reader holds a shared `BitReader`; the FLV and `test_bits` test bit writers use `broadcast_common::bits::BitBuf`. No private bit cursor remains; public API, results and errors are unchanged (#3961).

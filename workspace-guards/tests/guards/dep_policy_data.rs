@@ -45,7 +45,7 @@ const fn family(name: &'static str, crates: &'static [&'static str]) -> Purpose 
 pub const PURPOSES: &[Purpose] = &[
     one("date/time", &["jiff"]),
     one("XML", &["quick-xml"]),
-    one("MISB ST 0601 value decoding", &["misb"]),
+    one("MISB ST 0601 value decoding", &["motion-imagery-metadata"]),
     one("error derive", &["thiserror"]),
     one("logging/tracing", &["tracing"]),
     one("tracing subscriber", &["tracing-subscriber"]),
