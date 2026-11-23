@@ -23,6 +23,12 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0011);
 /// bouquet_name_descriptor tag (ETSI EN 300 468 §6.2.4).
 pub const DESCRIPTOR_TAG_BOUQUET_NAME: u8 = 0x47;
 
+/// Two-byte descriptor header (tag + length).
+const DESC_HEADER_LEN: usize = 2;
+
+/// Width of the `reserved` length fields.
+const FOUR_BITS: u32 = 4;
+
 /// Bouquet Association Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -51,10 +57,10 @@ pub struct BatSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `bouquet_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_bouquet_descriptors_length: ReservedOnes<4>,
+    pub reserved_bouquet_descriptors_length: ReservedOnes<FOUR_BITS>,
     /// `reserved_future_use(4)` before `transport_stream_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_transport_stream_loop_length: ReservedOnes<4>,
+    pub reserved_transport_stream_loop_length: ReservedOnes<FOUR_BITS>,
 }
 
 impl<'a> BatSection<'a> {
@@ -89,15 +95,15 @@ impl BatSection<'_> {
     /// (tag 0x47). Returns the decoded UTF-8 name, or `None` if not present.
     pub fn bouquet_name(&self) -> Option<String> {
         let mut pos = 0usize;
-        while pos + 2 <= self.bouquet_descriptors.len() {
+        while pos + DESC_HEADER_LEN <= self.bouquet_descriptors.len() {
             let tag = self.bouquet_descriptors[pos];
             let len = self.bouquet_descriptors[pos + 1] as usize;
-            let next = pos + 2 + len;
+            let next = pos + DESC_HEADER_LEN + len;
             if next > self.bouquet_descriptors.len() {
                 break;
             }
             if tag == DESCRIPTOR_TAG_BOUQUET_NAME {
-                let name_bytes = &self.bouquet_descriptors[pos + 2..next];
+                let name_bytes = &self.bouquet_descriptors[pos + DESC_HEADER_LEN..next];
                 return Some(crate::text::decode(name_bytes).into_owned());
             }
             pos = next;

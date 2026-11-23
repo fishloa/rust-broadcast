@@ -28,11 +28,11 @@ pub struct TargetOperationalLoop<'a, L: ScopedDescriptorLoop<'a>> {
     /// `reserved(4)` before `target_descriptor_loop_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_target_length: ReservedOnes<4>,
+    pub reserved_target_length: ReservedOnes<FOUR_BITS>,
     /// `reserved(4)` before `operational_descriptor_loop_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_operational_length: ReservedOnes<4>,
+    pub reserved_operational_length: ReservedOnes<FOUR_BITS>,
     #[cfg_attr(feature = "serde", serde(skip))]
     _lt: core::marker::PhantomData<&'a ()>,
 }
@@ -54,8 +54,8 @@ impl<'a, L: ScopedDescriptorLoop<'a>> TargetOperationalLoop<'a, L> {
     pub(crate) fn from_parts(
         target_descriptors: L,
         operational_descriptors: L,
-        reserved_target_length: ReservedOnes<4>,
-        reserved_operational_length: ReservedOnes<4>,
+        reserved_target_length: ReservedOnes<FOUR_BITS>,
+        reserved_operational_length: ReservedOnes<FOUR_BITS>,
     ) -> Self {
         Self {
             target_descriptors,
@@ -77,6 +77,9 @@ impl<'a, L: ScopedDescriptorLoop<'a>> TargetOperationalLoop<'a, L> {
 
 /// Wire width of the 12-bit descriptor-loop length field.
 pub(crate) const DESC_LOOP_LEN_FIELD: usize = 2;
+
+/// Width of the `reserved` length fields.
+const FOUR_BITS: u32 = 4;
 
 #[cfg(test)]
 mod tests {

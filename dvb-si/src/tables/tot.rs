@@ -26,6 +26,13 @@ const DESC_LOOP_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = HEADER_LEN + UTC_TIME_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
+/// Width of the `reserved` and 12-bit length fields.
+const FOUR_BITS: u32 = 4;
+const DESC_LOOP_LEN_BITS: u32 = 12;
+
+/// Byte offset of the descriptor-loop length field.
+const DESC_LOOP_LEN_OFFSET: usize = HEADER_LEN + UTC_TIME_LEN;
+
 /// Time Offset Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -34,7 +41,7 @@ pub struct TotSection<'a> {
     /// Raw 5-byte UTC time (16-bit MJD + 24-bit BCD HHMMSS).
     /// Private — use [`utc_time_decoded`](Self::utc_time_decoded) for
     /// decoded access.
-    pub(crate) utc_time_raw: [u8; 5],
+    pub(crate) utc_time_raw: [u8; UTC_TIME_LEN],
     /// Raw descriptor bytes (typically local_time_offset_descriptor tag 0x58).
     /// Descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
@@ -46,7 +53,7 @@ pub struct TotSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `descriptors_loop_length` (`1111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_descriptors_loop_length: ReservedOnes<4>,
+    pub reserved_descriptors_loop_length: ReservedOnes<FOUR_BITS>,
 }
 
 impl<'a> TotSection<'a> {
@@ -79,13 +86,13 @@ impl<'a> TotSection<'a> {
 
     /// Raw 5-byte UTC time field (for round-trip / serialization).
     #[must_use]
-    pub fn utc_time_raw(&self) -> [u8; 5] {
+    pub fn utc_time_raw(&self) -> [u8; UTC_TIME_LEN] {
         self.utc_time_raw
     }
 
     /// Construct a `TotSection` from raw wire fields.
     #[must_use]
-    pub fn new(utc_time_raw: [u8; 5], descriptors: DescriptorLoop<'a>) -> Self {
+    pub fn new(utc_time_raw: [u8; UTC_TIME_LEN], descriptors: DescriptorLoop<'a>) -> Self {
         Self {
             utc_time_raw,
             descriptors,
@@ -136,7 +143,8 @@ impl<'a> Parse<'a> for TotSection<'a> {
         let section_length = super::section_length_of(bytes);
         let total =
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
-        let utc_time_raw = [bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
+        let mut utc_time_raw = [0u8; UTC_TIME_LEN];
+        utc_time_raw.copy_from_slice(&bytes[HEADER_LEN..HEADER_LEN + UTC_TIME_LEN]);
         let dl_pos = HEADER_LEN + UTC_TIME_LEN;
         let dl = super::desc_loop_len_of(bytes[dl_pos], bytes[dl_pos + 1]);
         let d_start = dl_pos + DESC_LOOP_LEN_FIELD;
@@ -171,19 +179,20 @@ impl Serialize for TotSection<'_> {
         // trailing CRC_32). 0x70 = SSI(0) | reserved_future_use(1) | reserved(11).
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - HEADER_LEN)?;
-        buf[3..8].copy_from_slice(&self.utc_time_raw);
+        buf[HEADER_LEN..HEADER_LEN + UTC_TIME_LEN].copy_from_slice(&self.utc_time_raw);
         let dl = broadcast_common::len::fit_bits(
             self.descriptors.len() as u64,
-            12,
+            DESC_LOOP_LEN_BITS,
             "descriptors_loop_length",
         )?;
         super::write_desc_loop_len_r(
-            &mut buf[8..10],
+            &mut buf[DESC_LOOP_LEN_OFFSET..DESC_LOOP_LEN_OFFSET + DESC_LOOP_LEN_FIELD],
             dl as usize,
             self.reserved_descriptors_loop_length.get() as u8,
         )?;
-        let d_end = 10 + self.descriptors.len();
-        buf[10..d_end].copy_from_slice(self.descriptors.raw());
+        let d_end = DESC_LOOP_LEN_OFFSET + DESC_LOOP_LEN_FIELD + self.descriptors.len();
+        buf[DESC_LOOP_LEN_OFFSET + DESC_LOOP_LEN_FIELD..d_end]
+            .copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
         super::write_crc(buf, crc_pos);
         Ok(len)

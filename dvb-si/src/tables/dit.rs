@@ -28,7 +28,7 @@ pub struct DitSection {
     /// `reserved_future_use(7)` after `transition_flag` (`1111111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<7>,
+    pub reserved_future_use: ReservedOnes<SEVEN_BITS>,
     /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
     /// (default [`SectionBits::dvb`](super::SectionBits::dvb)); `reserved_b5`
     /// is unused (short-form section).
@@ -40,6 +40,12 @@ pub struct DitSection {
 const RESERVED_FUTURE_USE_7: u8 = 0x7F;
 /// `transition_flag` mask in the body byte (bit 7).
 const TRANSITION_FLAG: u8 = 0x80;
+
+/// Width of the `reserved_future_use` field.
+const SEVEN_BITS: u32 = 7;
+
+/// Byte offset of the transition-flag / reserved byte.
+const FLAGS_OFFSET: usize = 3;
 
 impl DitSection {
     /// Construct a DIT with the spec `reserved` fill.
@@ -74,11 +80,11 @@ impl<'a> Parse<'a> for DitSection {
             });
         }
         // transition_flag is the top bit of the body byte; rest is reserved.
-        let transition_flag = bytes[3] & TRANSITION_FLAG != 0;
+        let transition_flag = bytes[FLAGS_OFFSET] & TRANSITION_FLAG != 0;
         Ok(DitSection {
             transition_flag,
             reserved_future_use: ReservedOnes::from_bits(u64::from(
-                bytes[3] & RESERVED_FUTURE_USE_7,
+                bytes[FLAGS_OFFSET] & RESERVED_FUTURE_USE_7,
             )),
             bits: super::SectionBits::parse(bytes[1], None),
         })
@@ -101,7 +107,7 @@ impl Serialize for DitSection {
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, BODY_LEN)?;
         // transition_flag in bit 7; remaining 7 bits reserved (set to 1).
-        buf[3] = (u8::from(self.transition_flag) * TRANSITION_FLAG)
+        buf[FLAGS_OFFSET] = (u8::from(self.transition_flag) * TRANSITION_FLAG)
             | broadcast_common::len::fit_mask(
                 self.reserved_future_use.get() as u8,
                 RESERVED_FUTURE_USE_7,

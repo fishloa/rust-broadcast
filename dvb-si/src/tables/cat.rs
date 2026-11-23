@@ -21,6 +21,9 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0001);
 /// The 16 reserved bits in place of `table_id_extension` (all ones).
 const RESERVED_EXTENSION: u16 = 0xFFFF;
 
+/// Two-byte descriptor header (tag + length).
+const DESC_HEADER_LEN: usize = 2;
+
 /// One CA descriptor entry from the CAT, in owned form so it
 /// outlives the source section bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,10 +103,10 @@ impl CatSection<'_> {
     pub fn ca_descriptors(&self) -> Result<Vec<CatCaEntry>> {
         let mut out = Vec::new();
         let mut pos = 0;
-        while pos + 2 <= self.descriptors.len() {
+        while pos + DESC_HEADER_LEN <= self.descriptors.len() {
             let tag = self.descriptors[pos];
             let length = self.descriptors[pos + 1] as usize;
-            let end = pos + 2 + length;
+            let end = pos + DESC_HEADER_LEN + length;
             if end > self.descriptors.len() {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {

@@ -61,10 +61,10 @@ pub struct NitSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `network_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_network_descriptors_length: ReservedOnes<4>,
+    pub reserved_network_descriptors_length: ReservedOnes<FOUR_BITS>,
     /// `reserved_future_use(4)` before `transport_stream_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_transport_stream_loop_length: ReservedOnes<4>,
+    pub reserved_transport_stream_loop_length: ReservedOnes<FOUR_BITS>,
 }
 
 impl<'a> NitSection<'a> {
@@ -92,6 +92,9 @@ impl<'a> NitSection<'a> {
         }
     }
 }
+
+/// Width of the `reserved` length fields.
+const FOUR_BITS: u32 = 4;
 
 const LABELS: Labels = Labels {
     section: "NitSection",
