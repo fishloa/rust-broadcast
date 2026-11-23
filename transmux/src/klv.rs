@@ -194,6 +194,13 @@ impl LocalSetItem {
         Self { tag, value }
     }
 
+    /// The item value decoded per the MISB ST 0601 tag table by the
+    /// `motion-imagery-metadata` crate.
+    #[cfg(feature = "motion-imagery-metadata")]
+    pub fn value_typed(&self) -> motion_imagery_metadata::St0601Value<'_> {
+        motion_imagery_metadata::decode(self.tag, &self.value)
+    }
+
     /// Bytes this item occupies inside the Local Set value: OID tag + BER length
     /// + value.
     fn encoded_len(&self) -> Result<usize> {

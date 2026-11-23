@@ -69,6 +69,9 @@ rtmp-runtime = { path = "../rtmp-runtime", version = "0.12.0", default-features 
 # stride) and mid-packet captures; `container-probe` is the crate built to
 # replace exactly that. Optional so the `no_std` library build stays free of it.
 container-probe = { path = "../container-probe", version = "0.6.0", default-features = false, optional = true }
+# Typed MISB ST 0601 item values (`LocalSetItem::value_typed`). The value
+# semantics live in that crate; transmux keeps only the KLV framing.
+motion-imagery-metadata = { version = "0.1", default-features = false, optional = true }
 
 [[bin]]
 name = "transmux"
@@ -96,6 +99,9 @@ sample-aes = ["cenc", "cbc/alloc", "cbc/block-padding"]
 # `cli` builds the `transmux` command-line packager (std + clap). The library
 # itself stays `no_std`; only this feature/binary pulls `clap` and `std`.
 cli    = ["dep:clap", "dep:container-probe", "std"]
+# `motion-imagery-metadata` adds `LocalSetItem::value_typed()`, the item value
+# decoded by the `motion-imagery-metadata` crate.
+motion-imagery-metadata = ["dep:motion-imagery-metadata"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

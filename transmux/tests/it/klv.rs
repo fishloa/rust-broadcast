@@ -542,3 +542,16 @@ fn two_byte_ber_oid_tag_round_trips_in_a_local_set() {
     assert_eq!(parsed.items[1].value, 42u64.to_be_bytes().to_vec());
     assert_eq!(encode_ber_oid(131), vec![0x81, 0x03]);
 }
+
+#[cfg(feature = "motion-imagery-metadata")]
+#[test]
+fn value_typed_delegates_to_motion_imagery_metadata() {
+    let micros: u64 = 1_245_257_585_099_653;
+    let item = LocalSetItem::new(TAG_PRECISION_TIMESTAMP, micros.to_be_bytes().to_vec());
+    match item.value_typed() {
+        motion_imagery_metadata::St0601Value::Time(ts) => {
+            assert_eq!(ts.as_microsecond(), 1_245_257_585_099_653);
+        }
+        other => panic!("tag 2 decoded as {other:?}"),
+    }
+}
