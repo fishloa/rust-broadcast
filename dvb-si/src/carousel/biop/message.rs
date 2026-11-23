@@ -81,8 +81,20 @@ broadcast_common::impl_spec_display!(BindingType, Reserved);
 
 // ── Message header constants ──────────────────────────────────────────────────
 
+/// `magic` offset in the BIOP message header.
+const BIOP_MAGIC_OFFSET: usize = 0;
+/// `biop_version.major` offset in the BIOP message header.
+const BIOP_VERSION_MAJOR_OFFSET: usize = 4;
+/// `biop_version.minor` offset in the BIOP message header.
+const BIOP_VERSION_MINOR_OFFSET: usize = 5;
+/// `byte_order` offset in the BIOP message header.
+const BIOP_BYTE_ORDER_OFFSET: usize = 6;
+/// `message_type` offset in the BIOP message header.
+const BIOP_MESSAGE_TYPE_OFFSET: usize = 7;
+/// `message_size` offset in the BIOP message header.
+const BIOP_MESSAGE_SIZE_OFFSET: usize = 8;
 /// BIOP message header: magic(4)+major(1)+minor(1)+byte_order(1)+message_type(1)+message_size(4) = 12.
-const BIOP_HEADER_LEN: usize = 12;
+const BIOP_HEADER_LEN: usize = BIOP_MESSAGE_SIZE_OFFSET + core::mem::size_of::<u32>();
 /// `objectKey_length` (1 byte) field size.
 const OBJECT_KEY_LEN_FIELD: usize = 1;
 /// `objectKind_length` (4 bytes) field size.
@@ -93,8 +105,17 @@ const OBJECT_KIND_DATA_LEN: usize = 4;
 const OBJECT_INFO_LEN_FIELD: usize = 2;
 /// `serviceContextList_count` (1 byte) field size.
 const SERVICE_CONTEXT_COUNT_FIELD: usize = 1;
+/// `context_id` offset in a service context entry.
+const SERVICE_CONTEXT_ID_OFFSET: usize = 0;
+/// `context_id` width.
+const SERVICE_CONTEXT_ID_LEN: usize = core::mem::size_of::<u32>();
+/// `context_data_length` offset in a service context entry.
+const SERVICE_CONTEXT_DATA_LEN_OFFSET: usize = SERVICE_CONTEXT_ID_OFFSET + SERVICE_CONTEXT_ID_LEN;
+/// `context_data_length` width.
+const SERVICE_CONTEXT_DATA_LEN_LEN: usize = core::mem::size_of::<u16>();
 /// Per service context: context_id(4) + context_data_length(2).
-const SERVICE_CONTEXT_FIXED: usize = 6;
+const SERVICE_CONTEXT_FIXED: usize =
+    SERVICE_CONTEXT_DATA_LEN_OFFSET + SERVICE_CONTEXT_DATA_LEN_LEN;
 /// `messageBody_length` (4 bytes) field size.
 const MESSAGE_BODY_LEN_FIELD: usize = 4;
 /// `bindings_count` (2 bytes) field size.
@@ -111,8 +132,22 @@ const FILE_CONTENT_LEN_FIELD: usize = 4;
 const FILE_CONTENT_SIZE_LEN: usize = 8;
 /// StreamMessage: `aDescription_length` field (1 byte).
 const STREAM_ADESC_LEN_FIELD: usize = 1;
+/// `duration.aSeconds` offset in the Info_T block.
+const STREAM_SECONDS_OFFSET: usize = 0;
+/// `duration.aSeconds` width.
+const STREAM_SECONDS_LEN: usize = core::mem::size_of::<i32>();
+/// `duration.aMicroSeconds` offset in the Info_T block.
+const STREAM_MICROS_OFFSET: usize = STREAM_SECONDS_OFFSET + STREAM_SECONDS_LEN;
+/// `duration.aMicroSeconds` width.
+const STREAM_MICROS_LEN: usize = core::mem::size_of::<u16>();
+/// `audio` offset in the Info_T block.
+const STREAM_AUDIO_OFFSET: usize = STREAM_MICROS_OFFSET + STREAM_MICROS_LEN;
+/// `video` offset in the Info_T block.
+const STREAM_VIDEO_OFFSET: usize = STREAM_AUDIO_OFFSET + 1;
+/// `data` offset in the Info_T block.
+const STREAM_DATA_OFFSET: usize = STREAM_VIDEO_OFFSET + 1;
 /// StreamMessage: `duration.aSeconds`(4) + `duration.aMicroSeconds`(2) + `audio`(1) + `video`(1) + `data`(1) = 9.
-const STREAM_INFO_FIXED: usize = 9;
+const STREAM_INFO_FIXED: usize = STREAM_DATA_OFFSET + 1;
 /// StreamMessage/StreamEventMessage: `taps_count` field (1 byte) in the message body.
 const STREAM_TAPS_COUNT_FIELD: usize = 1;
 /// StreamEventMessage: `eventNames_count` field (2 bytes).
@@ -123,8 +158,18 @@ const STREAM_EVENT_NAME_LEN_FIELD: usize = 1;
 const STREAM_EVENT_IDS_COUNT_FIELD: usize = 1;
 /// StreamEventMessage: each `eventId` (2 bytes).
 const STREAM_EVENT_ID_LEN: usize = 2;
+/// `ModuleTimeOut` offset in ModuleInfo.
+const MODULE_TIMEOUT_OFFSET: usize = 0;
+/// `ModuleTimeOut` width.
+const MODULE_TIMEOUT_LEN: usize = core::mem::size_of::<u32>();
+/// `BlockTimeOut` offset in ModuleInfo.
+const MODULE_BLOCK_TIMEOUT_OFFSET: usize = MODULE_TIMEOUT_OFFSET + MODULE_TIMEOUT_LEN;
+/// `MinBlockTime` offset in ModuleInfo.
+const MODULE_MIN_BLOCK_TIME_OFFSET: usize = MODULE_BLOCK_TIMEOUT_OFFSET + MODULE_TIMEOUT_LEN;
+/// `taps_count` offset in ModuleInfo.
+const MODULE_TAPS_COUNT_OFFSET: usize = MODULE_MIN_BLOCK_TIME_OFFSET + MODULE_TIMEOUT_LEN;
 /// ModuleInfo: ModuleTimeOut(4)+BlockTimeOut(4)+MinBlockTime(4) = 12.
-const MODULE_INFO_FIXED: usize = 12;
+const MODULE_INFO_FIXED: usize = MODULE_TAPS_COUNT_OFFSET;
 /// ModuleInfo: taps_count (1 byte).
 const MODULE_TAPS_COUNT_FIELD: usize = 1;
 /// ModuleInfo: UserInfoLength (1 byte) — note: 8-bit, not 16-bit.
@@ -133,6 +178,16 @@ const MODULE_USER_INFO_LEN_FIELD: usize = 1;
 const SGI_DOWNLOAD_TAPS_COUNT_FIELD: usize = 1;
 /// SGI: userInfoLength (2 bytes).
 const SGI_USER_INFO_LEN_FIELD: usize = 2;
+/// Cap on preallocation from a binding name count.
+const MAX_NAME_PREALLOC: usize = 4;
+/// Cap on preallocation from a service-context or tap count.
+const MAX_ENTRIES_PREALLOC: usize = 16;
+/// Cap on preallocation from a bindings count.
+const MAX_BINDINGS_PREALLOC: usize = 256;
+/// Cap on preallocation from an event-name or event-id count.
+const MAX_EVENT_PREALLOC: usize = 64;
+/// Cap on preallocation from a ModuleInfo tap count.
+const MAX_MODULE_TAPS_PREALLOC: usize = 8;
 
 // ── Binding ───────────────────────────────────────────────────────────────────
 
@@ -167,7 +222,7 @@ impl<'a> Binding<'a> {
         }
         let name_count = bytes[pos] as usize;
         let mut cur = pos + BINDING_NAME_COUNT_FIELD;
-        let mut name = Vec::with_capacity(name_count.min(4));
+        let mut name = Vec::with_capacity(name_count.min(MAX_NAME_PREALLOC));
         for _ in 0..name_count {
             let (nc, next) = NameComponent::parse_8bit(bytes, cur, end)?;
             name.push(nc);
@@ -198,7 +253,7 @@ impl<'a> Binding<'a> {
 
         // objectInfo_length (2 bytes)
         let (boi, _) = bytes[cur..end]
-            .split_first_chunk::<2>()
+            .split_first_chunk::<{ BINDING_OBJ_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + BINDING_OBJ_INFO_LEN_FIELD,
@@ -257,7 +312,7 @@ impl<'a> Binding<'a> {
         pos += BINDING_TYPE_FIELD;
         let written = self.ior.serialize_into(&mut buf[pos..])?;
         pos += written;
-        buf[pos..pos + 2].copy_from_slice(
+        buf[pos..pos + BINDING_OBJ_INFO_LEN_FIELD].copy_from_slice(
             &broadcast_common::len::fit_u16(self.object_info.len(), "self.object_info")?
                 .to_be_bytes(),
         );
@@ -287,7 +342,7 @@ pub struct ServiceContext<'a> {
 /// Parse the common BIOP message header (magic, version, byte_order, message_type,
 /// message_size, objectKey, objectKind).
 /// Returns (object_key, object_kind_bytes, message_size, end_of_header_pos).
-fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
+fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; OBJECT_KIND_DATA_LEN], usize, usize)> {
     let total = bytes.len();
     let (bhdr, _) = bytes
         .split_first_chunk::<BIOP_HEADER_LEN>()
@@ -298,7 +353,7 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
                 what: "BIOP message header",
             },
         ))?;
-    let magic = u32::from_be_bytes([bhdr[0], bhdr[1], bhdr[2], bhdr[3]]);
+    let magic = crate::wire::be_u32(bhdr, BIOP_MAGIC_OFFSET, "BIOP magic")?;
     if magic != BIOP_MAGIC {
         return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
             what: "BIOP magic",
@@ -306,22 +361,29 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
             found: magic,
         }));
     }
-    if bhdr[4] != BIOP_VERSION_MAJOR || bhdr[5] != BIOP_VERSION_MINOR {
+    if bhdr[BIOP_VERSION_MAJOR_OFFSET] != BIOP_VERSION_MAJOR
+        || bhdr[BIOP_VERSION_MINOR_OFFSET] != BIOP_VERSION_MINOR
+    {
         return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "biop_version",
-            value: u64::from(u16::from_be_bytes([bhdr[4], bhdr[5]])),
+            value: u64::from(crate::wire::be_u16(
+                bhdr,
+                BIOP_VERSION_MAJOR_OFFSET,
+                "biop_version",
+            )?),
             reason: "must be 1.0 (0x0100)",
         }));
     }
-    if bhdr[6] != BYTE_ORDER_BIG_ENDIAN {
+    if bhdr[BIOP_BYTE_ORDER_OFFSET] != BYTE_ORDER_BIG_ENDIAN {
         return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "byte_order",
-            value: u64::from(bhdr[6]),
+            value: u64::from(bhdr[BIOP_BYTE_ORDER_OFFSET]),
             reason: "must be 0x00 (big-endian)",
         }));
     }
     // bhdr[7] = message_type (must be 0x00 per DVB)
-    let message_size_wire = u32::from_be_bytes([bhdr[8], bhdr[9], bhdr[10], bhdr[11]]);
+    let message_size_wire =
+        crate::wire::be_u32(bhdr, BIOP_MESSAGE_SIZE_OFFSET, "message_size")?;
     let end = super::span(BIOP_HEADER_LEN, message_size_wire, total)?.end;
     let message_size = message_size_wire as usize;
     let mut pos = BIOP_HEADER_LEN;
@@ -349,7 +411,7 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
 
     // objectKind_length (4 bytes) + objectKind_data (4 bytes)
     let (bkl, _) = bytes[pos..end]
-        .split_first_chunk::<4>()
+        .split_first_chunk::<{ OBJECT_KIND_LEN_FIELD }>()
         .ok_or(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
                 need: pos + OBJECT_KIND_LEN_FIELD,
@@ -371,8 +433,8 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
             available: end - pos,
         });
     }
-    let mut kind_bytes = [0u8; 4];
-    kind_bytes.copy_from_slice(&bytes[pos..pos + 4]);
+    let mut kind_bytes = [0u8; OBJECT_KIND_DATA_LEN];
+    kind_bytes.copy_from_slice(&bytes[pos..pos + OBJECT_KIND_DATA_LEN]);
     pos += OBJECT_KIND_DATA_LEN;
 
     Ok((object_key, kind_bytes, message_size, pos))
@@ -396,7 +458,7 @@ fn parse_service_context_list(
     }
     let count = bytes[pos] as usize;
     let mut cur = pos + SERVICE_CONTEXT_COUNT_FIELD;
-    let mut list = Vec::with_capacity(count.min(16));
+    let mut list = Vec::with_capacity(count.min(MAX_ENTRIES_PREALLOC));
     for _ in 0..count {
         let (sch, _) = bytes[cur..end]
             .split_first_chunk::<SERVICE_CONTEXT_FIXED>()
@@ -407,8 +469,11 @@ fn parse_service_context_list(
                     what: "serviceContext entry",
                 },
             ))?;
-        let context_id = u32::from_be_bytes([sch[0], sch[1], sch[2], sch[3]]);
-        let ctx_data_len = u16::from_be_bytes([sch[4], sch[5]]) as usize;
+        let context_id =
+            crate::wire::be_u32(sch, SERVICE_CONTEXT_ID_OFFSET, "context_id")?;
+        let ctx_data_len =
+            crate::wire::be_u16(sch, SERVICE_CONTEXT_DATA_LEN_OFFSET, "context_data_length")?
+                as usize;
         cur += SERVICE_CONTEXT_FIXED;
         if cur + ctx_data_len > end {
             return Err(Error::SectionLengthOverflow {
@@ -449,10 +514,12 @@ fn write_service_context_list(buf: &mut [u8], list: &[ServiceContext]) -> Result
                 available: u16::MAX as usize,
             });
         }
-        buf[pos..pos + 4].copy_from_slice(&entry.context_id.to_be_bytes());
-        buf[pos + 4..pos + 6].copy_from_slice(
-            &broadcast_common::len::fit_u16(entry.data.len(), "entry.data")?.to_be_bytes(),
-        );
+        buf[pos..pos + SERVICE_CONTEXT_ID_LEN].copy_from_slice(&entry.context_id.to_be_bytes());
+        buf[pos + SERVICE_CONTEXT_DATA_LEN_OFFSET
+            ..pos + SERVICE_CONTEXT_DATA_LEN_OFFSET + SERVICE_CONTEXT_DATA_LEN_LEN]
+            .copy_from_slice(
+                &broadcast_common::len::fit_u16(entry.data.len(), "entry.data")?.to_be_bytes(),
+            );
         pos += SERVICE_CONTEXT_FIXED;
         buf[pos..pos + entry.data.len()].copy_from_slice(entry.data);
         pos += entry.data.len();
@@ -462,12 +529,13 @@ fn write_service_context_list(buf: &mut [u8], list: &[ServiceContext]) -> Result
 
 /// Write the 12-byte BIOP message header to `buf` at position 0.
 fn write_biop_header(buf: &mut [u8], message_size: u32) {
-    buf[0..4].copy_from_slice(&BIOP_MAGIC.to_be_bytes());
-    buf[4] = BIOP_VERSION_MAJOR;
-    buf[5] = BIOP_VERSION_MINOR;
-    buf[6] = BYTE_ORDER_BIG_ENDIAN;
-    buf[7] = 0x00; // message_type
-    buf[8..12].copy_from_slice(&message_size.to_be_bytes());
+    buf[BIOP_MAGIC_OFFSET..BIOP_VERSION_MAJOR_OFFSET]
+        .copy_from_slice(&BIOP_MAGIC.to_be_bytes());
+    buf[BIOP_VERSION_MAJOR_OFFSET] = BIOP_VERSION_MAJOR;
+    buf[BIOP_VERSION_MINOR_OFFSET] = BIOP_VERSION_MINOR;
+    buf[BIOP_BYTE_ORDER_OFFSET] = BYTE_ORDER_BIG_ENDIAN;
+    buf[BIOP_MESSAGE_TYPE_OFFSET] = 0; // message_type
+    buf[BIOP_MESSAGE_SIZE_OFFSET..BIOP_HEADER_LEN].copy_from_slice(&message_size.to_be_bytes());
 }
 
 // ── DirectoryMessage ──────────────────────────────────────────────────────────
@@ -478,7 +546,7 @@ fn write_biop_header(buf: &mut [u8], message_size: u32) {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DirectoryMessage<'a> {
     /// Object kind (`"dir\0"` or `"srg\0"`).
-    pub object_kind: [u8; 4],
+    pub object_kind: [u8; OBJECT_KIND_DATA_LEN],
     /// `objectKey_data`.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub object_key: &'a [u8],
@@ -501,7 +569,7 @@ impl<'a> DirectoryMessage<'a> {
     fn parse_from(
         bytes: &'a [u8],
         object_key: &'a [u8],
-        object_kind: [u8; 4],
+        object_kind: [u8; OBJECT_KIND_DATA_LEN],
         pos: usize,
         end: usize,
     ) -> Result<Self> {
@@ -509,7 +577,7 @@ impl<'a> DirectoryMessage<'a> {
 
         // objectInfo_length (2 bytes) + objectInfo_data
         let (bdoi, _) = bytes[cur..end]
-            .split_first_chunk::<2>()
+            .split_first_chunk::<{ OBJECT_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + OBJECT_INFO_LEN_FIELD,
@@ -534,7 +602,7 @@ impl<'a> DirectoryMessage<'a> {
 
         // messageBody_length (4 bytes)
         let (bbl, _) = bytes[cur..end]
-            .split_first_chunk::<4>()
+            .split_first_chunk::<{ MESSAGE_BODY_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + MESSAGE_BODY_LEN_FIELD,
@@ -549,7 +617,7 @@ impl<'a> DirectoryMessage<'a> {
         // bindings_count (2 bytes)
         let (bbc, _) =
             bytes[cur..body_end]
-                .split_first_chunk::<2>()
+                .split_first_chunk::<{ BINDINGS_COUNT_FIELD }>()
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
                         need: cur + BINDINGS_COUNT_FIELD,
@@ -560,7 +628,7 @@ impl<'a> DirectoryMessage<'a> {
         let bindings_count = u16::from_be_bytes(*bbc) as usize;
         cur += BINDINGS_COUNT_FIELD;
 
-        let mut bindings = Vec::with_capacity(bindings_count.min(256));
+        let mut bindings = Vec::with_capacity(bindings_count.min(MAX_BINDINGS_PREALLOC));
         for _ in 0..bindings_count {
             let (binding, next) = Binding::parse_from(bytes, cur, body_end)?;
             bindings.push(binding);
@@ -615,9 +683,10 @@ impl<'a> DirectoryMessage<'a> {
         pos += self.object_key.len();
 
         // objectKind
-        buf[pos..pos + 4].copy_from_slice(&(OBJECT_KIND_DATA_LEN as u32).to_be_bytes());
+        buf[pos..pos + OBJECT_KIND_LEN_FIELD]
+            .copy_from_slice(&(OBJECT_KIND_DATA_LEN as u32).to_be_bytes());
         pos += OBJECT_KIND_LEN_FIELD;
-        buf[pos..pos + 4].copy_from_slice(&self.object_kind);
+        buf[pos..pos + OBJECT_KIND_DATA_LEN].copy_from_slice(&self.object_kind);
         pos += OBJECT_KIND_DATA_LEN;
 
         // objectInfo
@@ -627,7 +696,7 @@ impl<'a> DirectoryMessage<'a> {
                 available: u16::MAX as usize,
             });
         }
-        buf[pos..pos + 2].copy_from_slice(
+        buf[pos..pos + OBJECT_INFO_LEN_FIELD].copy_from_slice(
             &broadcast_common::len::fit_u16(self.object_info.len(), "self.object_info")?
                 .to_be_bytes(),
         );
@@ -641,11 +710,11 @@ impl<'a> DirectoryMessage<'a> {
         // messageBody
         let body_len = self.body_len();
         let body_len = broadcast_common::len::fit_u32(body_len, "messageBody_length")?;
-        buf[pos..pos + 4].copy_from_slice(&body_len.to_be_bytes());
+        buf[pos..pos + MESSAGE_BODY_LEN_FIELD].copy_from_slice(&body_len.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
 
         // bindings_count
-        buf[pos..pos + 2].copy_from_slice(
+        buf[pos..pos + BINDINGS_COUNT_FIELD].copy_from_slice(
             &broadcast_common::len::fit_u16(self.bindings.len(), "self.bindings")?.to_be_bytes(),
         );
         pos += BINDINGS_COUNT_FIELD;
@@ -690,7 +759,7 @@ impl<'a> FileMessage<'a> {
 
         // objectInfo_length (2 bytes)
         let (bfoi, _) = bytes[cur..end]
-            .split_first_chunk::<2>()
+            .split_first_chunk::<{ OBJECT_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + OBJECT_INFO_LEN_FIELD,
@@ -714,7 +783,7 @@ impl<'a> FileMessage<'a> {
         }
         let (bcs, _) =
             bytes[cur..end]
-                .split_first_chunk::<8>()
+                .split_first_chunk::<{ FILE_CONTENT_SIZE_LEN }>()
                 .ok_or(Error::SectionLengthOverflow {
                     declared: obj_info_len,
                     available: end - cur,
@@ -729,7 +798,7 @@ impl<'a> FileMessage<'a> {
 
         // messageBody_length (4 bytes)
         let (bfbl, _) = bytes[cur..end]
-            .split_first_chunk::<4>()
+            .split_first_chunk::<{ MESSAGE_BODY_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + MESSAGE_BODY_LEN_FIELD,
@@ -744,7 +813,7 @@ impl<'a> FileMessage<'a> {
         // content_length (4 bytes) + content_data
         let (bfcl, _) =
             bytes[cur..body_end]
-                .split_first_chunk::<4>()
+                .split_first_chunk::<{ FILE_CONTENT_LEN_FIELD }>()
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
                         need: cur + FILE_CONTENT_LEN_FIELD,
@@ -801,17 +870,18 @@ impl<'a> FileMessage<'a> {
         pos += self.object_key.len();
 
         // objectKind = "fil\0"
-        buf[pos..pos + 4].copy_from_slice(&(OBJECT_KIND_DATA_LEN as u32).to_be_bytes());
+        buf[pos..pos + OBJECT_KIND_LEN_FIELD]
+            .copy_from_slice(&(OBJECT_KIND_DATA_LEN as u32).to_be_bytes());
         pos += OBJECT_KIND_LEN_FIELD;
-        buf[pos..pos + 4].copy_from_slice(b"fil\0");
+        buf[pos..pos + OBJECT_KIND_DATA_LEN].copy_from_slice(b"fil\0");
         pos += OBJECT_KIND_DATA_LEN;
 
         // objectInfo: ContentSize(8) + extra
         let obj_info_total = FILE_CONTENT_SIZE_LEN + self.object_info_extra.len();
         let obj_info_total = broadcast_common::len::fit_u16(obj_info_total, "objectInfo_length")?;
-        buf[pos..pos + 2].copy_from_slice(&obj_info_total.to_be_bytes());
+        buf[pos..pos + OBJECT_INFO_LEN_FIELD].copy_from_slice(&obj_info_total.to_be_bytes());
         pos += OBJECT_INFO_LEN_FIELD;
-        buf[pos..pos + 8].copy_from_slice(&self.content_size.to_be_bytes());
+        buf[pos..pos + FILE_CONTENT_SIZE_LEN].copy_from_slice(&self.content_size.to_be_bytes());
         pos += FILE_CONTENT_SIZE_LEN;
         buf[pos..pos + self.object_info_extra.len()].copy_from_slice(self.object_info_extra);
         pos += self.object_info_extra.len();
@@ -822,11 +892,11 @@ impl<'a> FileMessage<'a> {
         // messageBody
         let body_len = FILE_CONTENT_LEN_FIELD + self.content.len();
         let body_len = broadcast_common::len::fit_u32(body_len, "messageBody_length")?;
-        buf[pos..pos + 4].copy_from_slice(&body_len.to_be_bytes());
+        buf[pos..pos + MESSAGE_BODY_LEN_FIELD].copy_from_slice(&body_len.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
         let content_len =
             broadcast_common::len::fit_u32(self.content.len(), "File_content_length")?;
-        buf[pos..pos + 4].copy_from_slice(&content_len.to_be_bytes());
+        buf[pos..pos + FILE_CONTENT_LEN_FIELD].copy_from_slice(&content_len.to_be_bytes());
         pos += FILE_CONTENT_LEN_FIELD;
         buf[pos..pos + self.content.len()].copy_from_slice(self.content);
 
@@ -898,11 +968,14 @@ impl<'a> DsmStreamInfo<'a> {
                     what: "DsmStreamInfo fixed fields",
                 },
             ))?;
-        let duration_seconds = i32::from_be_bytes([sif[0], sif[1], sif[2], sif[3]]);
-        let duration_microseconds = u16::from_be_bytes([sif[4], sif[5]]);
-        let audio = sif[6];
-        let video = sif[7];
-        let data = sif[8];
+        let mut seconds = [0u8; STREAM_SECONDS_LEN];
+        seconds.copy_from_slice(&sif[STREAM_SECONDS_OFFSET..STREAM_SECONDS_OFFSET + STREAM_SECONDS_LEN]);
+        let duration_seconds = i32::from_be_bytes(seconds);
+        let duration_microseconds =
+            crate::wire::be_u16(sif, STREAM_MICROS_OFFSET, "aMicroSeconds")?;
+        let audio = sif[STREAM_AUDIO_OFFSET];
+        let video = sif[STREAM_VIDEO_OFFSET];
+        let data = sif[STREAM_DATA_OFFSET];
         cur += STREAM_INFO_FIXED;
 
         Ok((
@@ -931,10 +1004,11 @@ impl<'a> DsmStreamInfo<'a> {
         let mut pos = STREAM_ADESC_LEN_FIELD;
         buf[pos..pos + self.description.len()].copy_from_slice(self.description);
         pos += self.description.len();
-        buf[pos..pos + 4].copy_from_slice(&self.duration_seconds.to_be_bytes());
-        pos += 4;
-        buf[pos..pos + 2].copy_from_slice(&self.duration_microseconds.to_be_bytes());
-        pos += 2;
+        buf[pos..pos + STREAM_SECONDS_LEN].copy_from_slice(&self.duration_seconds.to_be_bytes());
+        pos += STREAM_SECONDS_LEN;
+        buf[pos..pos + STREAM_MICROS_LEN]
+            .copy_from_slice(&self.duration_microseconds.to_be_bytes());
+        pos += STREAM_MICROS_LEN;
         buf[pos] = self.audio;
         pos += 1;
         buf[pos] = self.video;
@@ -973,7 +1047,7 @@ impl<'a> StreamMessage<'a> {
 
         // objectInfo_length (2 bytes)
         let (bsmoi, _) = bytes[cur..end]
-            .split_first_chunk::<2>()
+            .split_first_chunk::<{ OBJECT_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + OBJECT_INFO_LEN_FIELD,
@@ -1010,7 +1084,7 @@ impl<'a> StreamMessage<'a> {
 
         // messageBody_length (4 bytes)
         let (bsmbl, _) = bytes[cur..end]
-            .split_first_chunk::<4>()
+            .split_first_chunk::<{ MESSAGE_BODY_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + MESSAGE_BODY_LEN_FIELD,
@@ -1035,7 +1109,7 @@ impl<'a> StreamMessage<'a> {
         let taps_count = bytes[cur] as usize;
         cur += STREAM_TAPS_COUNT_FIELD;
 
-        let mut taps = Vec::with_capacity(taps_count.min(16));
+        let mut taps = Vec::with_capacity(taps_count.min(MAX_ENTRIES_PREALLOC));
         for _ in 0..taps_count {
             let (tap, next) = super::ior::Tap::parse_from(bytes, cur, body_end)?;
             taps.push(tap);
@@ -1094,14 +1168,15 @@ impl<'a> StreamMessage<'a> {
         pos += self.object_key.len();
 
         // objectKind = "str\0"
-        buf[pos..pos + 4].copy_from_slice(&(OBJECT_KIND_DATA_LEN as u32).to_be_bytes());
+        buf[pos..pos + OBJECT_KIND_LEN_FIELD]
+            .copy_from_slice(&(OBJECT_KIND_DATA_LEN as u32).to_be_bytes());
         pos += OBJECT_KIND_LEN_FIELD;
-        buf[pos..pos + 4].copy_from_slice(b"str\0");
+        buf[pos..pos + OBJECT_KIND_DATA_LEN].copy_from_slice(b"str\0");
         pos += OBJECT_KIND_DATA_LEN;
 
         // objectInfo_length
         let oi_len = broadcast_common::len::fit_u16(self.obj_info_len(), "objectInfo_length")?;
-        buf[pos..pos + 2].copy_from_slice(&oi_len.to_be_bytes());
+        buf[pos..pos + OBJECT_INFO_LEN_FIELD].copy_from_slice(&oi_len.to_be_bytes());
         pos += OBJECT_INFO_LEN_FIELD;
 
         // Info_T
@@ -1117,7 +1192,7 @@ impl<'a> StreamMessage<'a> {
 
         // messageBody_length
         let bl = broadcast_common::len::fit_u32(self.body_len(), "messageBody_length")?;
-        buf[pos..pos + 4].copy_from_slice(&bl.to_be_bytes());
+        buf[pos..pos + MESSAGE_BODY_LEN_FIELD].copy_from_slice(&bl.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
 
         // taps_count
@@ -1171,7 +1246,7 @@ impl<'a> StreamEventMessage<'a> {
 
         // objectInfo_length (2 bytes)
         let (bseoi, _) = bytes[cur..end]
-            .split_first_chunk::<2>()
+            .split_first_chunk::<{ OBJECT_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + OBJECT_INFO_LEN_FIELD,
@@ -1196,7 +1271,7 @@ impl<'a> StreamEventMessage<'a> {
         // DSM::Event::EventList_T: eventNames_count (2 bytes)
         let (benc, _) =
             bytes[cur..obj_info_end]
-                .split_first_chunk::<2>()
+                .split_first_chunk::<{ STREAM_EVENT_NAMES_COUNT_FIELD }>()
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
                         need: cur + STREAM_EVENT_NAMES_COUNT_FIELD,
@@ -1207,7 +1282,7 @@ impl<'a> StreamEventMessage<'a> {
         let event_names_count = u16::from_be_bytes(*benc) as usize;
         cur += STREAM_EVENT_NAMES_COUNT_FIELD;
 
-        let mut event_names = Vec::with_capacity(event_names_count.min(64));
+        let mut event_names = Vec::with_capacity(event_names_count.min(MAX_EVENT_PREALLOC));
         for _ in 0..event_names_count {
             if cur + STREAM_EVENT_NAME_LEN_FIELD > obj_info_end {
                 return Err(Error::BufferTooShort(
@@ -1240,7 +1315,7 @@ impl<'a> StreamEventMessage<'a> {
 
         // messageBody_length (4 bytes)
         let (bsebl, _) = bytes[cur..end]
-            .split_first_chunk::<4>()
+            .split_first_chunk::<{ MESSAGE_BODY_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + MESSAGE_BODY_LEN_FIELD,
@@ -1265,7 +1340,7 @@ impl<'a> StreamEventMessage<'a> {
         let taps_count = bytes[cur] as usize;
         cur += STREAM_TAPS_COUNT_FIELD;
 
-        let mut taps = Vec::with_capacity(taps_count.min(16));
+        let mut taps = Vec::with_capacity(taps_count.min(MAX_ENTRIES_PREALLOC));
         for _ in 0..taps_count {
             let (tap, next) = super::ior::Tap::parse_from(bytes, cur, body_end)?;
             taps.push(tap);
@@ -1291,11 +1366,11 @@ impl<'a> StreamEventMessage<'a> {
             });
         }
 
-        let mut event_ids = Vec::with_capacity(event_ids_count.min(64));
+        let mut event_ids = Vec::with_capacity(event_ids_count.min(MAX_EVENT_PREALLOC));
         for _ in 0..event_ids_count {
             let (bei, _) =
                 bytes[cur..body_end]
-                    .split_first_chunk::<2>()
+                    .split_first_chunk::<{ STREAM_EVENT_ID_LEN }>()
                     .ok_or(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
                             need: cur + STREAM_EVENT_ID_LEN,
@@ -1377,14 +1452,15 @@ impl<'a> StreamEventMessage<'a> {
         pos += self.object_key.len();
 
         // objectKind = "ste\0"
-        buf[pos..pos + 4].copy_from_slice(&(OBJECT_KIND_DATA_LEN as u32).to_be_bytes());
+        buf[pos..pos + OBJECT_KIND_LEN_FIELD]
+            .copy_from_slice(&(OBJECT_KIND_DATA_LEN as u32).to_be_bytes());
         pos += OBJECT_KIND_LEN_FIELD;
-        buf[pos..pos + 4].copy_from_slice(b"ste\0");
+        buf[pos..pos + OBJECT_KIND_DATA_LEN].copy_from_slice(b"ste\0");
         pos += OBJECT_KIND_DATA_LEN;
 
         // objectInfo_length
         let oi_len = broadcast_common::len::fit_u16(self.obj_info_len(), "objectInfo_length")?;
-        buf[pos..pos + 2].copy_from_slice(&oi_len.to_be_bytes());
+        buf[pos..pos + OBJECT_INFO_LEN_FIELD].copy_from_slice(&oi_len.to_be_bytes());
         pos += OBJECT_INFO_LEN_FIELD;
 
         // Info_T
@@ -1398,7 +1474,7 @@ impl<'a> StreamEventMessage<'a> {
                 available: u16::MAX as usize,
             });
         }
-        buf[pos..pos + 2].copy_from_slice(
+        buf[pos..pos + STREAM_EVENT_NAMES_COUNT_FIELD].copy_from_slice(
             &broadcast_common::len::fit_u16(self.event_names.len(), "self.event_names")?
                 .to_be_bytes(),
         );
@@ -1425,7 +1501,7 @@ impl<'a> StreamEventMessage<'a> {
 
         // messageBody_length
         let bl = broadcast_common::len::fit_u32(self.body_len(), "messageBody_length")?;
-        buf[pos..pos + 4].copy_from_slice(&bl.to_be_bytes());
+        buf[pos..pos + MESSAGE_BODY_LEN_FIELD].copy_from_slice(&bl.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
 
         // taps_count
@@ -1452,7 +1528,7 @@ impl<'a> StreamEventMessage<'a> {
         buf[pos] = broadcast_common::len::fit_u8(self.event_ids.len(), "self.event_ids")?;
         pos += STREAM_EVENT_IDS_COUNT_FIELD;
         for &id in &self.event_ids {
-            buf[pos..pos + 2].copy_from_slice(&id.to_be_bytes());
+            buf[pos..pos + STREAM_EVENT_ID_LEN].copy_from_slice(&id.to_be_bytes());
             pos += STREAM_EVENT_ID_LEN;
         }
 
@@ -1616,7 +1692,7 @@ impl<'a> Parse<'a> for ModuleInfo<'a> {
         let end = bytes.len();
         let mi_fixed_len = MODULE_INFO_FIXED + MODULE_TAPS_COUNT_FIELD;
         let (mi_hdr, _) = bytes
-            .split_first_chunk::<13>()
+            .split_first_chunk::<{ MODULE_INFO_FIXED + MODULE_TAPS_COUNT_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: mi_fixed_len,
@@ -1624,13 +1700,16 @@ impl<'a> Parse<'a> for ModuleInfo<'a> {
                     what: "ModuleInfo fixed fields",
                 },
             ))?;
-        let module_timeout = u32::from_be_bytes([mi_hdr[0], mi_hdr[1], mi_hdr[2], mi_hdr[3]]);
-        let block_timeout = u32::from_be_bytes([mi_hdr[4], mi_hdr[5], mi_hdr[6], mi_hdr[7]]);
-        let min_block_time = u32::from_be_bytes([mi_hdr[8], mi_hdr[9], mi_hdr[10], mi_hdr[11]]);
-        let taps_count = mi_hdr[12] as usize;
+        let module_timeout =
+            crate::wire::be_u32(mi_hdr, MODULE_TIMEOUT_OFFSET, "ModuleTimeOut")?;
+        let block_timeout =
+            crate::wire::be_u32(mi_hdr, MODULE_BLOCK_TIMEOUT_OFFSET, "BlockTimeOut")?;
+        let min_block_time =
+            crate::wire::be_u32(mi_hdr, MODULE_MIN_BLOCK_TIME_OFFSET, "MinBlockTime")?;
+        let taps_count = mi_hdr[MODULE_TAPS_COUNT_OFFSET] as usize;
         let mut pos = MODULE_INFO_FIXED + MODULE_TAPS_COUNT_FIELD;
 
-        let mut taps = Vec::with_capacity(taps_count.min(8));
+        let mut taps = Vec::with_capacity(taps_count.min(MAX_MODULE_TAPS_PREALLOC));
         for _ in 0..taps_count {
             let (tap, next) = super::ior::Tap::parse_from(bytes, pos, end)?;
             taps.push(tap);
@@ -1690,7 +1769,7 @@ impl Serialize for ModuleInfo<'_> {
                 available: u8::MAX as usize,
             });
         }
-        buf[12] = broadcast_common::len::fit_u8(self.taps.len(), "self.taps")?;
+        buf[MODULE_TAPS_COUNT_OFFSET] = broadcast_common::len::fit_u8(self.taps.len(), "self.taps")?;
         let mut pos = MODULE_INFO_FIXED + MODULE_TAPS_COUNT_FIELD;
         for tap in &self.taps {
             let written = tap.serialize_into_buf(&mut buf[pos..])?;
@@ -1825,7 +1904,7 @@ impl<'a> ServiceGatewayInfo<'a> {
 
         // userInfoLength (2 bytes, 16-bit) + userInfo_data
         let (buil, _) = bytes[pos..end]
-            .split_first_chunk::<2>()
+            .split_first_chunk::<{ SGI_USER_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: pos + SGI_USER_INFO_LEN_FIELD,
@@ -1896,7 +1975,7 @@ impl<'a> Serialize for ServiceGatewayInfo<'a> {
             self.user_info.len(),
             "ServiceGatewayInfo userInfo length",
         )?;
-        buf[pos..pos + 2].copy_from_slice(&user_info_len.to_be_bytes());
+        buf[pos..pos + SGI_USER_INFO_LEN_FIELD].copy_from_slice(&user_info_len.to_be_bytes());
         pos += SGI_USER_INFO_LEN_FIELD;
         buf[pos..pos + self.user_info.len()].copy_from_slice(self.user_info);
         pos += self.user_info.len();
