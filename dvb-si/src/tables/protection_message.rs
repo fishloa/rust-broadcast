@@ -60,7 +60,7 @@ impl ReferenceType {
     #[must_use]
     /// Decode from the wire value.  Every value maps (lossless).
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x0F {
+        match v & REFERENCE_TYPE_MASK {
             0x0 => Self::Reserved,
             0x1 => Self::SameEs,
             0x2 => Self::ComponentTagEs,
@@ -114,6 +114,30 @@ const NIBBLE_MAX: usize = 0x0F;
 /// (low nibble of the field's first wire byte).
 const LOOP_LEN_HI_MASK: u8 = 0x0F;
 
+/// Width of the `reserved` header fields and of the packed nibbles.
+const FOUR_BITS: u32 = 4;
+const REFERENCE_TYPE_BITS: u32 = 4;
+const CERTIFICATE_COUNT_BITS: u32 = 4;
+
+/// Wire masks and shifts of the packed nibbles.
+const REFERENCE_TYPE_MASK: u8 = 0x0F;
+const REFERENCE_TYPE_SHIFT: u8 = 4;
+const CERTIFICATE_COUNT_SHIFT: u8 = 4;
+
+/// Byte offsets in the partial-section header.
+const TABLE_ID_EXTENSION_OFFSET: usize = 3;
+const VERSION_OFFSET: usize = 5;
+const SECTION_NUMBER_OFFSET: usize = 6;
+const LAST_SECTION_NUMBER_OFFSET: usize = 7;
+
+/// Byte offsets inside the authentication-message body.
+const SIGNATURE_ALGORITHM_OFFSET: usize = 2;
+const SECTION_HASHES_LOOP_LEN_OFFSET: usize = 3;
+const SECTION_HASHES_LOOP_LEN_LO_OFFSET: usize = 4;
+
+/// Two-byte `certificate_length` field.
+const CERTIFICATE_LENGTH_FIELD_LEN: usize = 2;
+
 /// One entry in the authentication message section-hash loop (§9.4.3 Table 42).
 ///
 /// Each entry pairs a reference (locating the payload section the hash covers)
@@ -155,7 +179,7 @@ pub enum ProtectionMessageBody<'a> {
         /// `reserved(4)` before `section_hashes_loop_length` (`1111`);
         /// preserved from the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_section_hashes_loop_length: ReservedOnes<4>,
+        reserved_section_hashes_loop_length: ReservedOnes<FOUR_BITS>,
     },
     /// Certificate collection message (extension `0x0100`; §9.5.4.9 Table 51).
     CertificateCollection {
@@ -164,12 +188,12 @@ pub enum ProtectionMessageBody<'a> {
         /// `reserved(4)` before `certificate_count` (`1111`); preserved from
         /// the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_certificate_count: ReservedOnes<4>,
+        reserved_certificate_count: ReservedOnes<FOUR_BITS>,
         /// `reserved(4)` before each `certificate_length` (`1111`), parallel
         /// to `certificates`; entries missing from the vector default to
         /// all-ones on serialize. Preserved from the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_certificate_lengths: Vec<ReservedOnes<4>>,
+        reserved_certificate_lengths: Vec<ReservedOnes<FOUR_BITS>>,
     },
     /// Reserved extension (`0x0101..=0xFFFF`) — body preserved verbatim.
     Raw(&'a [u8]),
@@ -258,11 +282,12 @@ impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
             HEADER_LEN + CRC_LEN,
         )?;
 
-        let table_id_extension = crate::wire::be_u16(bytes, 3, "protection_message")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let table_id_extension =
+            crate::wire::be_u16(bytes, TABLE_ID_EXTENSION_OFFSET, "protection_message")?;
+        let version_number = super::version_number_of(bytes[VERSION_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[VERSION_OFFSET]);
+        let section_number = bytes[SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
 
         let body_bytes = &bytes[HEADER_LEN..total - CRC_LEN];
         let body = match table_id_extension {
@@ -278,7 +303,7 @@ impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
             section_number,
             last_section_number,
             body,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[VERSION_OFFSET])),
         })
     }
 }
@@ -292,9 +317,12 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     )?;
     let section_hash_algorithm_identifier = body[0];
     let section_hash_length = body[1];
-    let signature_algorithm_identifier = body[2];
-    // bytes[3] high nibble = reserved; section_hashes_loop_length is 12 bits.
-    let section_hashes_loop_length = super::desc_loop_len_of(body[3], body[4]);
+    let signature_algorithm_identifier = body[SIGNATURE_ALGORITHM_OFFSET];
+    // bytes[TABLE_ID_EXTENSION_OFFSET] high nibble = reserved; section_hashes_loop_length is 12 bits.
+    let section_hashes_loop_length = super::desc_loop_len_of(
+        body[SECTION_HASHES_LOOP_LEN_OFFSET],
+        body[SECTION_HASHES_LOOP_LEN_LO_OFFSET],
+    );
 
     let loop_start = AUTH_FIXED_PREFIX;
     let loop_end = loop_start + section_hashes_loop_length;
@@ -311,7 +339,7 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     while pos < loop_end {
         // reference_type(4) | reference_length(4)
         let lead = body[pos];
-        let reference_type = ReferenceType::from_u8(lead >> 4);
+        let reference_type = ReferenceType::from_u8(lead >> REFERENCE_TYPE_SHIFT);
         let reference_length = (lead & LOOP_LEN_HI_MASK) as usize;
         let ref_start = pos + 1;
         let ref_end = ref_start + reference_length;
@@ -382,7 +410,7 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
         signature_key_identifier: &body[key_start..key_end],
         signature,
         reserved_section_hashes_loop_length: ReservedOnes::from_bits(u64::from(
-            super::len_reserved_of(body[3]),
+            super::len_reserved_of(body[SECTION_HASHES_LOOP_LEN_OFFSET]),
         )),
     })
 }
@@ -398,12 +426,12 @@ fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     for _ in 0..certificate_count {
         need_in(
             body,
-            pos + 2,
+            pos + CERTIFICATE_LENGTH_FIELD_LEN,
             "ProtectionMessageSection::certificate_length",
         )?;
         // reserved(4) | certificate_length(12)
         let certificate_length = super::desc_loop_len_of(body[pos], body[pos + 1]);
-        let cert_start = pos + 2;
+        let cert_start = pos + CERTIFICATE_LENGTH_FIELD_LEN;
         let cert_end = cert_start + certificate_length;
         if cert_end > body.len() {
             return Err(Error::SectionLengthOverflow {
@@ -462,7 +490,10 @@ impl ProtectionMessageBody<'_> {
                     + signature.len()
             }
             ProtectionMessageBody::CertificateCollection { certificates, .. } => {
-                1 + certificates.iter().map(|c| 2 + c.len()).sum::<usize>()
+                1 + certificates
+                    .iter()
+                    .map(|c| CERTIFICATE_LENGTH_FIELD_LEN + c.len())
+                    .sum::<usize>()
             }
             ProtectionMessageBody::Raw(raw) => raw.len(),
         }
@@ -483,7 +514,7 @@ impl ProtectionMessageBody<'_> {
             } => {
                 buf[0] = *section_hash_algorithm_identifier;
                 buf[1] = *section_hash_length;
-                buf[2] = *signature_algorithm_identifier;
+                buf[SIGNATURE_ALGORITHM_OFFSET] = *signature_algorithm_identifier;
                 let loop_bytes: usize = hashes
                     .iter()
                     .map(|h| 1 + h.reference.len() + h.hash.len())
@@ -508,7 +539,7 @@ impl ProtectionMessageBody<'_> {
                 }
                 // reserved(4) emitted 1s | section_hashes_loop_length(12).
                 super::write_desc_loop_len_r(
-                    &mut buf[3..5],
+                    &mut buf[TABLE_ID_EXTENSION_OFFSET..VERSION_OFFSET],
                     loop_bytes,
                     reserved_section_hashes_loop_length.get() as u8,
                 )?;
@@ -532,12 +563,12 @@ impl ProtectionMessageBody<'_> {
                     }
                     buf[pos] = (broadcast_common::len::fit_mask(
                         h.reference_type.to_u8(),
-                        0x0F,
+                        REFERENCE_TYPE_MASK,
                         "reference_type",
-                    )? << 4)
+                    )? << REFERENCE_TYPE_SHIFT)
                         | broadcast_common::len::fit_bits(
                             h.reference.len() as u64,
-                            4,
+                            REFERENCE_TYPE_BITS,
                             "h.reference",
                         )? as u8;
                     pos += 1;
@@ -574,9 +605,12 @@ impl ProtectionMessageBody<'_> {
                     });
                 }
                 // reserved(4) emitted 1s | certificate_count(4).
-                buf[0] = (((*reserved_certificate_count).get() as u8) << 4)
-                    | broadcast_common::len::fit_bits(certificates.len() as u64, 4, "certificates")?
-                        as u8;
+                buf[0] = (((*reserved_certificate_count).get() as u8) << CERTIFICATE_COUNT_SHIFT)
+                    | broadcast_common::len::fit_bits(
+                        certificates.len() as u64,
+                        CERTIFICATE_COUNT_BITS,
+                        "certificates",
+                    )? as u8;
                 let mut pos = 1;
                 for (i, c) in certificates.iter().enumerate() {
                     if c.len() > LOOP_LEN_MAX {
@@ -587,7 +621,7 @@ impl ProtectionMessageBody<'_> {
                     }
                     // reserved(4) emitted 1s | certificate_length(12).
                     super::write_desc_loop_len_r(
-                        &mut buf[pos..pos + 2],
+                        &mut buf[pos..pos + CERTIFICATE_LENGTH_FIELD_LEN],
                         c.len(),
                         reserved_certificate_lengths
                             .get(i)
@@ -595,7 +629,7 @@ impl ProtectionMessageBody<'_> {
                             .unwrap_or(ReservedOnes::FILL)
                             .get() as u8,
                     )?;
-                    pos += 2;
+                    pos += CERTIFICATE_LENGTH_FIELD_LEN;
                     buf[pos..pos + c.len()].copy_from_slice(c);
                     pos += c.len();
                 }
@@ -620,13 +654,14 @@ impl Serialize for ProtectionMessageSection<'_> {
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
-        buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
+        buf[TABLE_ID_EXTENSION_OFFSET..VERSION_OFFSET]
+            .copy_from_slice(&self.table_id_extension.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
-        buf[5] = self
+        buf[VERSION_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         let body_written = self.body.write_into(&mut buf[HEADER_LEN..])?;
         let body_end = HEADER_LEN + body_written;
         super::write_crc(buf, body_end);
