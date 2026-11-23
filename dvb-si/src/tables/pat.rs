@@ -21,11 +21,13 @@ pub const PROGRAM_NUMBER_NIT: u16 = 0x0000;
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
+
+/// Width of the `reserved` above the entry PID.
+const PAT_RESERVED_BITS: u32 = 3;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 const ENTRY_LEN: usize = 4;
 
 /// Width of the `reserved` header field.
-const THREE_BITS: u32 = 3;
 
 /// Byte offsets in the PAT section header.
 const TRANSPORT_STREAM_ID_OFFSET: usize = 3;
@@ -48,7 +50,7 @@ pub struct PatEntry {
     /// `reserved(3)` before the PID (ISO/IEC 13818-1 §2.4.4.4, `111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<THREE_BITS>,
+    pub reserved: ReservedOnes<PAT_RESERVED_BITS>,
 }
 
 impl PatEntry {

@@ -23,9 +23,13 @@ pub const TABLE_ID: u8 = 0x06;
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
+
+/// Width of the `reserved` header byte.
+const METADATA_RESERVED_BITS: u32 = 8;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 /// Default of the 8-bit `reserved` (all ones, H.222.0 clause 2.1).
-pub const RESERVED_DEFAULT: ReservedOnes<EIGHT_BITS> = ReservedOnes::<EIGHT_BITS>::FILL;
+pub const RESERVED_DEFAULT: ReservedOnes<METADATA_RESERVED_BITS> =
+    ReservedOnes::<METADATA_RESERVED_BITS>::FILL;
 
 const B1_SSI: u8 = 0x80;
 const B1_PRIVATE: u8 = 0x40;
@@ -35,7 +39,6 @@ const FRAGMENT_SHIFT: u32 = 6;
 const FRAGMENT_MASK: u8 = 0x03;
 
 /// Width of the `reserved` header field.
-const EIGHT_BITS: u32 = 8;
 
 /// Byte offsets in the metadata section header.
 const METADATA_SERVICE_ID_OFFSET: usize = 3;
@@ -113,7 +116,7 @@ pub struct MetadataSection<'a> {
     pub metadata_service_id: u8,
     /// `reserved(8)`; re-emitted verbatim, default `0xFF`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<EIGHT_BITS>,
+    pub reserved: ReservedOnes<METADATA_RESERVED_BITS>,
     /// `section_fragment_indication` (Table 2-159).
     pub section_fragment_indication: SectionFragmentIndication,
     /// `version_number` (5 bits).

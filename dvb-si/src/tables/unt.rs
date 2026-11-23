@@ -80,6 +80,13 @@ const HEADER_LEN: usize = 3;
 const FIXED_BODY_LEN: usize = 9;
 const COMMON_DESC_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
+
+/// Width of the `reserved_common_descriptor_loop_length` field.
+const UNT_RESERVED_BITS: u32 = 4;
+/// Shift of the high `OUI` byte.
+const OUI_HIGH_SHIFT: u32 = 16;
+/// Shift of the middle `OUI` byte.
+const OUI_MID_SHIFT: u32 = 8;
 const MIN_SECTION_LEN: usize = HEADER_LEN + FIXED_BODY_LEN + COMMON_DESC_LEN_FIELD + CRC_LEN;
 
 const OFFSET_ACTION_TYPE: usize = HEADER_LEN;
@@ -96,15 +103,12 @@ const PLATFORM_LOOP_LEN_FIELD: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 
 /// Width of the `reserved_common_descriptor_loop_length` field.
-const FOUR_BITS: u32 = 4;
 
 /// Width of the OUI and descriptor loop lengths.
 const OUI_BITS: u32 = 24;
 const DESC_LOOP_LEN_BITS: u32 = 12;
 
 /// Shifts used to assemble the 24-bit OUI.
-const OUI_SHIFT_16: u32 = 16;
-const OUI_SHIFT_8: u32 = 8;
 
 /// A target/operational descriptor-loop pair in the UNT platform loop (Table 11),
 /// in the UNT descriptor namespace (ETSI TS 102 006 Table 19).
@@ -190,7 +194,7 @@ pub struct UntSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `common_descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_common_descriptor_loop_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_common_descriptor_loop_length: ReservedOnes<UNT_RESERVED_BITS>,
 }
 
 impl<'a> UntSection<'a> {
@@ -246,8 +250,8 @@ impl<'a> Parse<'a> for UntSection<'a> {
         let current_next_indicator = super::current_next_of(flags_byte);
         let section_number = bytes[OFFSET_SECTION_NUMBER];
         let last_section_number = bytes[OFFSET_LAST_SECTION_NUMBER];
-        let oui = ((bytes[OFFSET_OUI] as u32) << OUI_SHIFT_16)
-            | ((bytes[OFFSET_OUI + 1] as u32) << OUI_SHIFT_8)
+        let oui = ((bytes[OFFSET_OUI] as u32) << OUI_HIGH_SHIFT)
+            | ((bytes[OFFSET_OUI + 1] as u32) << OUI_MID_SHIFT)
             | (bytes[OFFSET_OUI_LAST] as u32);
         let processing_order = bytes[OFFSET_PROCESSING_ORDER];
 
@@ -451,8 +455,8 @@ impl Serialize for UntSection<'_> {
             .b5(self.version_number, self.current_next_indicator)?;
         buf[OFFSET_SECTION_NUMBER] = self.section_number;
         buf[OFFSET_LAST_SECTION_NUMBER] = self.last_section_number;
-        buf[OFFSET_OUI] = ((self.oui >> OUI_SHIFT_16) & u32::from(u8::MAX)) as u8;
-        buf[OFFSET_OUI + 1] = ((self.oui >> OUI_SHIFT_8) & u32::from(u8::MAX)) as u8;
+        buf[OFFSET_OUI] = ((self.oui >> OUI_HIGH_SHIFT) & u32::from(u8::MAX)) as u8;
+        buf[OFFSET_OUI + 1] = ((self.oui >> OUI_MID_SHIFT) & u32::from(u8::MAX)) as u8;
         buf[OFFSET_OUI_LAST] = (self.oui & u32::from(u8::MAX)) as u8;
         buf[OFFSET_PROCESSING_ORDER] = self.processing_order;
 

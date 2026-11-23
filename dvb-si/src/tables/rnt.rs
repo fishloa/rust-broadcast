@@ -23,6 +23,11 @@ const HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 6;
 const COMMON_DESC_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
+
+/// Width of the `reserved` header field.
+const RNT_RESERVED_BITS: u32 = 2;
+/// Width of the `reserved` above a 12-bit length.
+const RNT_RESERVED_LENGTH_BITS: u32 = 4;
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_FIELD + CRC_LEN;
 
 const RP_INFO_LEN_FIELD: usize = 2;
@@ -40,8 +45,6 @@ const CRID_POLICY_MASK: u8 = 0x03;
 const CRID_POLICY_RESERVED_SHIFT: u32 = 6;
 
 /// Width of the `reserved` header fields.
-const TWO_BITS: u32 = 2;
-const FOUR_BITS: u32 = 4;
 
 /// Width of the packed length fields and the CRID policy nibble.
 const LOOP_LEN_BITS: u32 = 12;
@@ -174,7 +177,7 @@ pub struct CridAuthority<'a> {
     pub descriptors: RntDescriptorLoop<'a>,
     /// `reserved(2)` above `CRID_authority_policy` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<TWO_BITS>,
+    pub reserved: ReservedOnes<RNT_RESERVED_BITS>,
 }
 
 impl<'a> CridAuthority<'a> {
@@ -208,11 +211,11 @@ pub struct ResolutionProvider<'a> {
     /// `reserved(4)` before `resolution_provider_info_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_info_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_info_length: ReservedOnes<RNT_RESERVED_LENGTH_BITS>,
     /// `reserved(4)` before `resolution_provider_descriptors_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_descriptors_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_descriptors_length: ReservedOnes<RNT_RESERVED_LENGTH_BITS>,
 }
 
 impl<'a> ResolutionProvider<'a> {
@@ -281,7 +284,7 @@ pub struct RntSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `common_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_common_descriptors_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_common_descriptors_length: ReservedOnes<RNT_RESERVED_LENGTH_BITS>,
 }
 
 impl<'a> RntSection<'a> {

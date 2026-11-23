@@ -51,11 +51,13 @@ const EXTENSION_HEADER_LEN: usize = 5;
 
 use super::CRC_LEN;
 
+/// Width of the `reserved` header fields.
+const CONTAINER_RESERVED_BITS: u32 = 2;
+
 /// Minimum total encoded length: header + extension + CRC.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
 /// Width of the `reserved` header fields.
-const TWO_BITS: u32 = 2;
 
 /// Byte offsets in the container section header.
 const CONTAINER_ID_OFFSET: usize = 3;
@@ -93,10 +95,10 @@ pub struct ContainerSection<'a> {
     pub container_data: &'a [u8],
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<TWO_BITS>,
+    pub reserved_b1: ReservedOnes<CONTAINER_RESERVED_BITS>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<TWO_BITS>,
+    pub reserved_b5: ReservedOnes<CONTAINER_RESERVED_BITS>,
 }
 
 impl<'a> ContainerSection<'a> {

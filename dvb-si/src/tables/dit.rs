@@ -9,6 +9,9 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
+/// Width of the `reserved_future_use` body field.
+const DIT_RESERVED_BITS: u32 = 7;
+
 /// table_id for the Discontinuity Information Table.
 pub const TABLE_ID: u8 = 0x7E;
 /// Well-known PID on which the DIT is carried.
@@ -28,7 +31,7 @@ pub struct DitSection {
     /// `reserved_future_use(7)` after `transition_flag` (`1111111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<SEVEN_BITS>,
+    pub reserved_future_use: ReservedOnes<DIT_RESERVED_BITS>,
     /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
     /// (default [`SectionBits::dvb`](super::SectionBits::dvb)); `reserved_b5`
     /// is unused (short-form section).
@@ -42,7 +45,6 @@ const RESERVED_FUTURE_USE_7: u8 = 0x7F;
 const TRANSITION_FLAG: u8 = 0x80;
 
 /// Width of the `reserved_future_use` field.
-const SEVEN_BITS: u32 = 7;
 
 /// Byte offset of the transition-flag / reserved byte.
 const FLAGS_OFFSET: usize = 3;

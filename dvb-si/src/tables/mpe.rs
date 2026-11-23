@@ -58,15 +58,11 @@ impl MacAddress {
 
 impl core::fmt::Display for MacAddress {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let [mac_1, mac_2, mac_3, mac_4, mac_5, mac_6] = self.0;
         write!(
             f,
             "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-            self.0[MAC_1_INDEX],
-            self.0[MAC_2_INDEX],
-            self.0[MAC_3_INDEX],
-            self.0[MAC_4_INDEX],
-            self.0[MAC_5_INDEX],
-            self.0[MAC_6_INDEX]
+            mac_1, mac_2, mac_3, mac_4, mac_5, mac_6
         )
     }
 }
@@ -122,16 +118,8 @@ const MAC_2_OFFSET: usize = 10;
 const MAC_1_OFFSET: usize = 11;
 
 /// Index of each MAC octet in network order.
-const MAC_1_INDEX: usize = 0;
-const MAC_2_INDEX: usize = 1;
-const MAC_3_INDEX: usize = 2;
-const MAC_4_INDEX: usize = 3;
-const MAC_5_INDEX: usize = 4;
-const MAC_6_INDEX: usize = 5;
 
 /// Offsets of the last two checksum bytes after `trailer_start`.
-const CHECKSUM_BYTE_2_OFFSET: usize = 2;
-const CHECKSUM_BYTE_3_OFFSET: usize = 3;
 
 /// Packed-field masks and shifts in the flags byte.
 const SCRAMBLING_CONTROL_MASK: u8 = 0x03;
@@ -293,12 +281,10 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
         let payload_start = HEADER_LEN + EXTENSION_LEN;
         let trailer_start = total - CRC_LEN;
         let payload = &bytes[payload_start..trailer_start];
-        let checksum = Checksum([
-            bytes[trailer_start],
-            bytes[trailer_start + 1],
-            bytes[trailer_start + CHECKSUM_BYTE_2_OFFSET],
-            bytes[trailer_start + CHECKSUM_BYTE_3_OFFSET],
-        ]);
+        let mut checksum = Checksum([0; CHECKSUM_LEN]);
+        checksum
+            .0
+            .copy_from_slice(&bytes[trailer_start..trailer_start + CHECKSUM_LEN]);
 
         Ok(MpeDatagramSection {
             section_syntax_indicator,
@@ -358,8 +344,9 @@ impl Serialize for MpeDatagramSection<'_> {
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // MAC scatter: byte 3 = MAC_6 (mac_address[5]), byte 4 = MAC_5.
-        buf[MAC_6_OFFSET] = self.mac_address.0[MAC_6_INDEX];
-        buf[MAC_5_OFFSET] = self.mac_address.0[MAC_5_INDEX];
+        let [mac_1, mac_2, mac_3, mac_4, mac_5, mac_6] = self.mac_address.0;
+        buf[MAC_6_OFFSET] = mac_6;
+        buf[MAC_5_OFFSET] = mac_5;
 
         // Byte 5: reserved(2)=11 | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
         buf[FLAGS_OFFSET] = ((self.reserved_b5.get() as u8) << RESERVED_B5_SHIFT)
@@ -380,10 +367,10 @@ impl Serialize for MpeDatagramSection<'_> {
         buf[LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         // bytes 8-11 = MAC_4, MAC_3, MAC_2, MAC_1.
-        buf[MAC_4_OFFSET] = self.mac_address.0[MAC_4_INDEX];
-        buf[MAC_3_OFFSET] = self.mac_address.0[MAC_3_INDEX];
-        buf[MAC_2_OFFSET] = self.mac_address.0[MAC_2_INDEX];
-        buf[MAC_1_OFFSET] = self.mac_address.0[MAC_1_INDEX];
+        buf[MAC_4_OFFSET] = mac_4;
+        buf[MAC_3_OFFSET] = mac_3;
+        buf[MAC_2_OFFSET] = mac_2;
+        buf[MAC_1_OFFSET] = mac_1;
 
         let payload_start = HEADER_LEN + EXTENSION_LEN;
         let trailer_start = payload_start + self.payload.len();

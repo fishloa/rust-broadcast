@@ -10,6 +10,9 @@ use alloc::vec::Vec;
 use broadcast_common::len::need_out;
 use broadcast_common::reserved::ReservedOnes;
 
+/// Width of the `reserved_future_use` length fields.
+const TS_LOOP_RESERVED_BITS: u32 = 4;
+
 pub(super) const MIN_HEADER_LEN: usize = 3;
 pub(super) const EXTENSION_HEADER_LEN: usize = 5;
 pub(super) const POST_EXTENSION_LEN: usize = 2;
@@ -19,7 +22,6 @@ pub(super) const TS_HEADER_LEN: usize = 6;
 pub(super) const LOOP_LENGTH_FIELD_LEN: usize = 2;
 
 /// Width of the `reserved_future_use` field and the loop lengths.
-const FOUR_BITS: u32 = 4;
 const DESC_LOOP_LEN_BITS: u32 = 12;
 
 /// Byte offsets in the section header.
@@ -49,7 +51,7 @@ pub struct TransportStreamEntry<'a> {
     /// `reserved_future_use(4)` before `transport_descriptors_length`
     /// (EN 300 468 §5.2.1 / §5.2.2, `1111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<FOUR_BITS>,
+    pub reserved_future_use: ReservedOnes<TS_LOOP_RESERVED_BITS>,
 }
 
 impl<'a> TransportStreamEntry<'a> {

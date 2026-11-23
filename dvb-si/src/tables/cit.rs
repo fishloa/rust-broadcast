@@ -28,13 +28,15 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0012);
 const HEADER_LEN: usize = 3;
 const EXTENSION_LEN: usize = 10;
 use super::CRC_LEN;
+
+/// Width of the `reserved` header fields.
+const CIT_RESERVED_BITS: u32 = 2;
 const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 
 const CRID_REF_LEN: usize = 2;
 const CRID_ENTRY_FIXED_LEN: usize = CRID_REF_LEN + 1 + 1;
 
 /// Width of the `reserved` header fields.
-const TWO_BITS: u32 = 2;
 
 /// Byte offsets in the CIT section header.
 const SERVICE_ID_OFFSET: usize = 3;
@@ -103,10 +105,10 @@ pub struct CitSection<'a> {
     pub crid_entries: Vec<CridEntry<'a>>,
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<TWO_BITS>,
+    pub reserved_b1: ReservedOnes<CIT_RESERVED_BITS>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<TWO_BITS>,
+    pub reserved_b5: ReservedOnes<CIT_RESERVED_BITS>,
 }
 
 impl<'a> CitSection<'a> {

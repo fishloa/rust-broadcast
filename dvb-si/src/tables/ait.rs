@@ -26,10 +26,12 @@ const TEST_APPLICATION_FLAG_SHIFT: u8 = 7;
 /// Low 7 bits of byte 3: the high bits of the 15-bit `application_type`.
 const APPLICATION_TYPE_HI_MASK: u8 = 0x7F;
 use super::CRC_LEN;
+
+/// Width of the `reserved_future_use` fields (16-bit applications_control).
+const AIT_RESERVED_BITS: u32 = 4;
 const APP_HEADER_LEN: usize = 9;
 
 /// Width of the `reserved` length fields and application_type.
-const FOUR_BITS: u32 = 4;
 const APPLICATION_TYPE_BITS: u32 = 15;
 const DESC_LOOP_LEN_BITS: u32 = 12;
 
@@ -229,7 +231,7 @@ pub struct AitApplication<'a> {
     /// `reserved_future_use(4)` before `application_descriptors_loop_length`
     /// (TS 102 809 §5.3.4, `1111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<FOUR_BITS>,
+    pub reserved_future_use: ReservedOnes<AIT_RESERVED_BITS>,
 }
 
 impl<'a> AitApplication<'a> {
@@ -288,10 +290,10 @@ pub struct AitSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `common_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_common_descriptors_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_common_descriptors_length: ReservedOnes<AIT_RESERVED_BITS>,
     /// `reserved_future_use(4)` before `application_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_application_loop_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_application_loop_length: ReservedOnes<AIT_RESERVED_BITS>,
 }
 
 impl<'a> AitSection<'a> {

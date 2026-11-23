@@ -85,6 +85,11 @@ const POST_EXT_FIXED_LEN: usize = 3;
 const LINK_ENTRY_HEADER_LEN: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
+
+/// Width of the `reserved` header fields.
+const RCT_RESERVED_BITS: u32 = 2;
+/// Width of the `reserved_future_use` entry fields.
+const RCT_RESERVED_FUTURE_USE_BITS: u32 = 4;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
@@ -110,8 +115,6 @@ const ITEM_RFU_SHIFT: u32 = 6;
 const ITEM_COUNT_MASK: u8 = 0x3F;
 
 /// Bit widths passed to the bit-field helpers.
-const TWO_BITS: u32 = 2;
-const FOUR_BITS: u32 = 4;
 const ITEM_COUNT_BITS: u32 = 6;
 const LOCATOR_TRIPLET_ID_BITS: u32 = 10;
 const DESC_LOOP_LEN_BITS: u32 = 12;
@@ -399,7 +402,7 @@ pub struct DvbBinaryLocator {
     /// `inline_service == 1` (`11`); preserved from the wire, written only for
     /// [`DvbLocatorService::Full`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_inline_service: ReservedOnes<TWO_BITS>,
+    pub reserved_inline_service: ReservedOnes<RCT_RESERVED_BITS>,
 }
 
 impl DvbBinaryLocator {
@@ -493,14 +496,14 @@ pub struct LinkInfo<'a> {
     pub descriptors: DescriptorLoop<'a>,
     /// `reserved_future_use(4)` before `link_info_length` (`1111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_link_info_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_link_info_length: ReservedOnes<RCT_RESERVED_FUTURE_USE_BITS>,
     /// `reserved_future_use(2)` between `link_type` and
     /// `how_related_classification_scheme_id` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_link_type: ReservedOnes<TWO_BITS>,
+    pub reserved_link_type: ReservedOnes<RCT_RESERVED_BITS>,
     /// `reserved_future_use(2)` before `number_items` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_number_items: ReservedOnes<TWO_BITS>,
+    pub reserved_number_items: ReservedOnes<RCT_RESERVED_BITS>,
 }
 
 impl<'a> LinkInfo<'a> {
@@ -584,13 +587,13 @@ pub struct RctSection<'a> {
     pub descriptors: DescriptorLoop<'a>,
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<TWO_BITS>,
+    pub reserved_b1: ReservedOnes<RCT_RESERVED_BITS>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<TWO_BITS>,
+    pub reserved_b5: ReservedOnes<RCT_RESERVED_BITS>,
     /// `reserved_future_use(4)` before `descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_descriptor_loop_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_descriptor_loop_length: ReservedOnes<RCT_RESERVED_FUTURE_USE_BITS>,
 }
 
 impl<'a> RctSection<'a> {

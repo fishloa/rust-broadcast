@@ -24,10 +24,12 @@ const HEADER_LEN: usize = 3;
 const UTC_TIME_LEN: usize = 5;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
+
+/// Width of the `reserved_descriptors_loop_length` field.
+const TOT_RESERVED_BITS: u32 = 4;
 const MIN_SECTION_LEN: usize = HEADER_LEN + UTC_TIME_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
 /// Width of the `reserved` and 12-bit length fields.
-const FOUR_BITS: u32 = 4;
 const DESC_LOOP_LEN_BITS: u32 = 12;
 
 /// Byte offset of the descriptor-loop length field.
@@ -53,7 +55,7 @@ pub struct TotSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `descriptors_loop_length` (`1111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_descriptors_loop_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_descriptors_loop_length: ReservedOnes<TOT_RESERVED_BITS>,
 }
 
 impl<'a> TotSection<'a> {

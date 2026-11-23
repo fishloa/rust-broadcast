@@ -26,11 +26,13 @@ pub const TABLE_ID_LAST: u8 = 0x3F;
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
+
+/// Width of the `reserved` header fields.
+const DSMCC_RESERVED_BITS: u32 = 2;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
 /// Trailer checksum length and reserved header-field width.
 const CHECKSUM_LEN: usize = 4;
-const TWO_BITS: u32 = 2;
 
 /// Byte offsets in the DSM-CC section header.
 const EXTENSION_ID_OFFSET: usize = 3;
@@ -39,8 +41,6 @@ const SECTION_NUMBER_OFFSET: usize = 6;
 const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 
 /// Offsets of the last two trailer bytes after `trailer_start`.
-const TRAILER_BYTE_2_OFFSET: usize = 2;
-const TRAILER_BYTE_3_OFFSET: usize = 3;
 
 /// A DSM-CC section — minimal wrapper that validates header framing
 /// and carries the raw payload.
@@ -75,10 +75,10 @@ pub struct DsmccSection<'a> {
     pub checksum: [u8; CHECKSUM_LEN],
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<TWO_BITS>,
+    pub reserved_b1: ReservedOnes<DSMCC_RESERVED_BITS>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<TWO_BITS>,
+    pub reserved_b5: ReservedOnes<DSMCC_RESERVED_BITS>,
 }
 
 impl<'a> DsmccSection<'a> {
@@ -164,12 +164,8 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
         let payload = &bytes[payload_start..payload_end];
 
         let trailer_start = total - CRC_LEN;
-        let checksum = [
-            bytes[trailer_start],
-            bytes[trailer_start + 1],
-            bytes[trailer_start + TRAILER_BYTE_2_OFFSET],
-            bytes[trailer_start + TRAILER_BYTE_3_OFFSET],
-        ];
+        let mut checksum = [0u8; CHECKSUM_LEN];
+        checksum.copy_from_slice(&bytes[trailer_start..trailer_start + CHECKSUM_LEN]);
 
         Ok(DsmccSection {
             table_id,

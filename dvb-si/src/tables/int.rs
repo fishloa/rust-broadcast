@@ -70,6 +70,13 @@ const OUTER_HEADER_LEN: usize = 3;
 const INT_FIXED_LEN: usize = 9;
 const LOOP_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
+
+/// Width of the `reserved_platform_descriptor_loop_length` field.
+const INT_RESERVED_BITS: u32 = 4;
+/// Shift of the high `platform_id` byte.
+const PLATFORM_ID_HIGH_SHIFT: u32 = 16;
+/// Shift of the middle `platform_id` byte.
+const PLATFORM_ID_MID_SHIFT: u32 = 8;
 const MIN_SECTION_LEN: usize = OUTER_HEADER_LEN + INT_FIXED_LEN + LOOP_LEN_FIELD + CRC_LEN;
 
 const OFF_ACTION_TYPE: usize = 3;
@@ -84,13 +91,10 @@ const OFF_PLATFORM_DESC_LEN: usize = 12;
 const OFF_PLATFORM_ID_LAST: usize = OFF_PLATFORM_ID + 2;
 
 /// Width of the `reserved` and 12-bit length fields.
-const FOUR_BITS: u32 = 4;
 const DESC_LOOP_LEN_BITS: u32 = 12;
 
 /// Width and shifts of the 24-bit platform_id.
 const PLATFORM_ID_BITS: u32 = 24;
-const PLATFORM_ID_SHIFT_16: u32 = 16;
-const PLATFORM_ID_SHIFT_8: u32 = 8;
 
 /// A target/operational descriptor-loop pair in the INT body loop
 /// (Tables 17/18, §8.4.4.1).
@@ -136,7 +140,7 @@ pub struct IntSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `platform_descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_platform_descriptor_loop_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_platform_descriptor_loop_length: ReservedOnes<INT_RESERVED_BITS>,
 }
 
 impl<'a> IntSection<'a> {
@@ -196,8 +200,8 @@ impl<'a> Parse<'a> for IntSection<'a> {
         let current_next_indicator = super::current_next_of(version_byte);
         let section_number = bytes[OFF_SECTION_NUMBER];
         let last_section_number = bytes[OFF_LAST_SECTION_NUMBER];
-        let platform_id = ((bytes[OFF_PLATFORM_ID] as u32) << PLATFORM_ID_SHIFT_16)
-            | ((bytes[OFF_PLATFORM_ID + 1] as u32) << PLATFORM_ID_SHIFT_8)
+        let platform_id = ((bytes[OFF_PLATFORM_ID] as u32) << PLATFORM_ID_HIGH_SHIFT)
+            | ((bytes[OFF_PLATFORM_ID + 1] as u32) << PLATFORM_ID_MID_SHIFT)
             | bytes[OFF_PLATFORM_ID_LAST] as u32;
         let processing_order = bytes[OFF_PROCESSING_ORDER];
 
@@ -327,9 +331,9 @@ impl Serialize for IntSection<'_> {
         buf[OFF_SECTION_NUMBER] = self.section_number;
         buf[OFF_LAST_SECTION_NUMBER] = self.last_section_number;
         buf[OFF_PLATFORM_ID] =
-            ((self.platform_id >> PLATFORM_ID_SHIFT_16) & u32::from(u8::MAX)) as u8;
+            ((self.platform_id >> PLATFORM_ID_HIGH_SHIFT) & u32::from(u8::MAX)) as u8;
         buf[OFF_PLATFORM_ID + 1] =
-            ((self.platform_id >> PLATFORM_ID_SHIFT_8) & u32::from(u8::MAX)) as u8;
+            ((self.platform_id >> PLATFORM_ID_MID_SHIFT) & u32::from(u8::MAX)) as u8;
         buf[OFF_PLATFORM_ID_LAST] = (self.platform_id & u32::from(u8::MAX)) as u8;
         buf[OFF_PROCESSING_ORDER] = self.processing_order;
 

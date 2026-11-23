@@ -7,6 +7,10 @@
 //! `mpe_boundary`/`prev_burst_size`). The bit packing lived twice; it lives
 //! here once, and both tables' public structs keep their spec-named fields.
 
+/// Byte offset of the middle `tail` byte.
+const RTP_TAIL_MID_OFFSET: usize = 2;
+/// Byte offset of the low `tail` byte.
+const RTP_TAIL_LO_OFFSET: usize = 3;
 /// Wire width of the `real_time_parameters` block.
 pub(crate) const RTP_LEN: usize = 4;
 
@@ -30,8 +34,6 @@ const TABLE_BOUNDARY_SHIFT: u32 = 3;
 const FRAME_BOUNDARY_SHIFT: u32 = 2;
 
 /// Byte offsets of the block tail bytes.
-const RTP_BYTE_2_OFFSET: usize = 2;
-const RTP_BYTE_3_OFFSET: usize = 3;
 
 /// The shared 32-bit bit layout behind both tables' `RealTimeParameters`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,8 +57,8 @@ impl RealTimeParametersBits {
         let frame_boundary = (b[1] & FRAME_BOUNDARY_BIT) != 0;
         // tail(18) = bottom 2 bits of b[1] | b[2] | b[3]
         let tail = ((u32::from(b[1] & TAIL_HI_MASK)) << TAIL_HI_SHIFT)
-            | (u32::from(b[RTP_BYTE_2_OFFSET]) << u8::BITS)
-            | u32::from(b[RTP_BYTE_3_OFFSET]);
+            | (u32::from(b[RTP_TAIL_MID_OFFSET]) << u8::BITS)
+            | u32::from(b[RTP_TAIL_LO_OFFSET]);
         RealTimeParametersBits {
             delta_t,
             boundary,

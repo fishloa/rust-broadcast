@@ -64,6 +64,13 @@ const HEADER_LEN: usize = 8;
 const SECTION_LENGTH_PREFIX: usize = 3;
 use super::CRC_LEN;
 
+/// Width of the `reserved_zero_future_use` above `font_file_format`.
+const FORMAT_RESERVED_BITS: u32 = 4;
+/// Shift of the `reserved_zero_future_use` above `font_file_format`.
+const FORMAT_RESERVED_SHIFT: u32 = 4;
+/// `reserved_zero_future_use` bit after `font_weight`.
+const WEIGHT_RESERVED_MASK: u8 = 0x01;
+
 /// `style(3)` field mask inside a StyleWeight style/weight byte: bits `[7:5]`
 /// (ETSI TS 103 283 §5.3.2.3.1 Table 22).
 const STYLE_MASK: u8 = 0x07;
@@ -72,12 +79,9 @@ const WEIGHT_MASK: u8 = 0x0F;
 /// `format(4)` field mask of a FileUri font-info type byte.
 const FORMAT_MASK: u8 = 0x0F;
 /// `reserved_zero_future_use(1)` mask in the StyleWeight byte (bit 0).
-const RESERVED_ZERO_1: u8 = 0x01;
 /// Shift of the `reserved_zero_future_use(4)` above `font_file_format(4)`.
-const RESERVED_ZERO_4_SHIFT: u32 = 4;
 
 /// Width of the four-bit `reserved_zero_future_use` field.
-const RESERVED_ZERO_4_BITS: u32 = 4;
 
 /// `font_id_extension(9) | font_id(7)` split.
 const FONT_ID_EXTENSION_MASK: u16 = 0x01FF;
@@ -131,7 +135,7 @@ pub enum FontInfo<'a> {
         /// `reserved_zero_future_use(4)` before `font_file_format` (`0000`);
         /// preserved from the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_zero_future_use: ReservedZero<RESERVED_ZERO_4_BITS>,
+        reserved_zero_future_use: ReservedZero<FORMAT_RESERVED_BITS>,
     },
     /// `font_info_type == 0x02`: font_size(16) followed by the length-delimited block.
     FontSize {
@@ -272,7 +276,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                         style: b >> STYLE_SHIFT,
                         weight: (b >> 1) & WEIGHT_MASK,
                         reserved_zero_future_use: ReservedZero::from_bits(u64::from(
-                            b & RESERVED_ZERO_1,
+                            b & WEIGHT_RESERVED_MASK,
                         )),
                     });
                 }
@@ -285,7 +289,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                     }
                     let format = bytes[pos] & FORMAT_MASK;
                     let reserved_zero_future_use =
-                        ReservedZero::from_bits(u64::from(bytes[pos] >> RESERVED_ZERO_4_SHIFT));
+                        ReservedZero::from_bits(u64::from(bytes[pos] >> FORMAT_RESERVED_SHIFT));
                     let uri_length = bytes[pos + 1] as usize;
                     let uri_start = pos + FILE_URI_BODY_LEN;
                     let uri_end = uri_start + uri_length;
@@ -445,7 +449,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     buf[pos] = FONT_INFO_TYPE_FILE_URI;
                     // reserved_zero_future_use(4) | font_file_format(4).
                     buf[pos + 1] = (((*reserved_zero_future_use).get() as u8)
-                        << RESERVED_ZERO_4_SHIFT)
+                        << FORMAT_RESERVED_SHIFT)
                         | broadcast_common::len::fit_mask(*format, FORMAT_MASK, "format")?;
                     buf[pos + FILE_URI_BODY_LEN] = broadcast_common::len::fit_u8(uri.len(), "uri")?;
                     let s = pos + FILE_URI_ENTRY_LEN;

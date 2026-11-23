@@ -99,6 +99,9 @@ const HEADER_LEN: usize = 8;
 const SECTION_LENGTH_PREFIX: usize = 3;
 use super::CRC_LEN;
 
+/// Width of the `reserved` header fields.
+const PROTECTION_RESERVED_BITS: u32 = 4;
+
 /// Authentication-message fixed body bytes after the common header, before the
 /// hash loop: section_hash_algorithm_identifier(1) + section_hash_length(1)
 /// + signature_algorithm_identifier(1) + reserved(4)|section_hashes_loop_length(12)(2).
@@ -115,7 +118,6 @@ const NIBBLE_MAX: usize = 0x0F;
 const LOOP_LEN_HI_MASK: u8 = 0x0F;
 
 /// Width of the `reserved` header fields and of the packed nibbles.
-const FOUR_BITS: u32 = 4;
 const REFERENCE_TYPE_BITS: u32 = 4;
 const CERTIFICATE_COUNT_BITS: u32 = 4;
 
@@ -179,7 +181,7 @@ pub enum ProtectionMessageBody<'a> {
         /// `reserved(4)` before `section_hashes_loop_length` (`1111`);
         /// preserved from the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_section_hashes_loop_length: ReservedOnes<FOUR_BITS>,
+        reserved_section_hashes_loop_length: ReservedOnes<PROTECTION_RESERVED_BITS>,
     },
     /// Certificate collection message (extension `0x0100`; §9.5.4.9 Table 51).
     CertificateCollection {
@@ -188,12 +190,12 @@ pub enum ProtectionMessageBody<'a> {
         /// `reserved(4)` before `certificate_count` (`1111`); preserved from
         /// the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_certificate_count: ReservedOnes<FOUR_BITS>,
+        reserved_certificate_count: ReservedOnes<PROTECTION_RESERVED_BITS>,
         /// `reserved(4)` before each `certificate_length` (`1111`), parallel
         /// to `certificates`; entries missing from the vector default to
         /// all-ones on serialize. Preserved from the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_certificate_lengths: Vec<ReservedOnes<FOUR_BITS>>,
+        reserved_certificate_lengths: Vec<ReservedOnes<PROTECTION_RESERVED_BITS>>,
     },
     /// Reserved extension (`0x0101..=0xFFFF`) — body preserved verbatim.
     Raw(&'a [u8]),

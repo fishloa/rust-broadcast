@@ -59,11 +59,13 @@ const EXTENSION_HEADER_LEN: usize = 5;
 
 use super::CRC_LEN;
 
+/// Width of the `reserved` header fields.
+const MPE_IFEC_RESERVED_BITS: u32 = 2;
+
 /// Minimum total encoded length: header + extension + RTP + CRC.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + RTP_LEN + CRC_LEN;
 
 /// Width of the `reserved` header fields.
-const TWO_BITS: u32 = 2;
 
 /// Byte offsets in the MPE-IFEC extension header.
 const BURST_NUMBER_OFFSET: usize = 3;
@@ -73,8 +75,6 @@ const SECTION_NUMBER_OFFSET: usize = 6;
 const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 
 /// Byte offsets of `real_time_parameters` bytes 2 and 3.
-const RTP_BYTE_2_OFFSET: usize = 2;
-const RTP_BYTE_3_OFFSET: usize = 3;
 
 /// Time-slicing / MPE-IFEC real-time parameters (TS 102 772 §5.3, Table 3).
 ///
@@ -153,10 +153,10 @@ pub struct MpeIfecSection<'a> {
     pub ifec_data: &'a [u8],
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<TWO_BITS>,
+    pub reserved_b1: ReservedOnes<MPE_IFEC_RESERVED_BITS>,
     /// `reserved(2)` in front of `version` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<TWO_BITS>,
+    pub reserved_b5: ReservedOnes<MPE_IFEC_RESERVED_BITS>,
 }
 
 impl<'a> MpeIfecSection<'a> {
@@ -214,12 +214,9 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
         let last_section_number = bytes[LAST_SECTION_NUMBER_OFFSET];
 
         let rtp_start = HEADER_LEN + EXTENSION_HEADER_LEN;
-        let real_time_parameters = RealTimeParameters::from_bytes([
-            bytes[rtp_start],
-            bytes[rtp_start + 1],
-            bytes[rtp_start + RTP_BYTE_2_OFFSET],
-            bytes[rtp_start + RTP_BYTE_3_OFFSET],
-        ]);
+        let mut rtp = [0u8; RTP_LEN];
+        rtp.copy_from_slice(&bytes[rtp_start..rtp_start + RTP_LEN]);
+        let real_time_parameters = RealTimeParameters::from_bytes(rtp);
 
         let data_start = rtp_start + RTP_LEN;
         let data_end = total - CRC_LEN;

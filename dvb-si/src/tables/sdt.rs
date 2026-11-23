@@ -30,6 +30,11 @@ const EIT_SCHEDULE_FLAG: u8 = 0x02;
 /// `EIT_present_following_flag` in a service's flags byte (§5.2.3).
 const EIT_PRESENT_FOLLOWING_FLAG: u8 = 0x01;
 use super::CRC_LEN;
+
+/// Width of the `reserved_future_use` in a service entry.
+const SDT_SERVICE_RESERVED_BITS: u32 = 6;
+/// Width of the `reserved_future_use` after the extension header.
+const SDT_EXTENSION_RESERVED_BITS: u32 = 8;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
 const SERVICE_HEADER_LEN: usize = 5;
 
@@ -66,7 +71,7 @@ pub struct SdtService<'a> {
     /// `reserved_future_use(6)` before `EIT_schedule_flag` (EN 300 468
     /// §5.2.3, `111111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<SIX_BITS>,
+    pub reserved_future_use: ReservedOnes<SDT_SERVICE_RESERVED_BITS>,
 }
 
 impl<'a> SdtService<'a> {
@@ -96,8 +101,6 @@ impl<'a> SdtService<'a> {
 const EIT_FLAGS_RESERVED_SHIFT: u32 = 2;
 
 /// Width of the `reserved` extension fields.
-const SIX_BITS: u32 = 6;
-const EIGHT_BITS: u32 = 8;
 
 /// Width of `descriptors_loop_length`.
 const DESC_LOOP_LEN_BITS: u32 = 12;
@@ -144,7 +147,7 @@ pub struct SdtSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(8)` after `original_network_id` (`0xFF`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<EIGHT_BITS>,
+    pub reserved_future_use: ReservedOnes<SDT_EXTENSION_RESERVED_BITS>,
 }
 
 impl<'a> SdtSection<'a> {

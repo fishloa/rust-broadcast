@@ -16,6 +16,9 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
+/// Width of the `reserved_future_use` entry field.
+const RST_RESERVED_BITS: u32 = 5;
+
 /// table_id for the Running Status Table.
 pub const TABLE_ID: u8 = 0x71;
 /// Well-known PID on which the RST is carried.
@@ -47,7 +50,7 @@ pub struct RstEntry {
     /// `reserved_future_use(5)` before `running_status` (`11111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<FIVE_BITS>,
+    pub reserved_future_use: ReservedOnes<RST_RESERVED_BITS>,
 }
 
 impl RstEntry {
@@ -75,7 +78,6 @@ impl RstEntry {
 const RESERVED_SHIFT: u32 = 3;
 
 /// Width of the `reserved_future_use` entry field.
-const FIVE_BITS: u32 = 5;
 
 /// Byte offsets inside one RST entry.
 const RST_ORIGINAL_NETWORK_ID_OFFSET: usize = 2;

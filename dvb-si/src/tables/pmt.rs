@@ -26,13 +26,16 @@ const EXTENSION_HEADER_LEN: usize = 5;
 const PCR_PID_LEN: usize = 2;
 const PROG_INFO_LEN_BYTES: usize = 2;
 use super::CRC_LEN;
+
+/// Width of the `reserved` above a PID.
+const PMT_RESERVED_PID_BITS: u32 = 3;
+/// Width of the `reserved` above a 12-bit length.
+const PMT_RESERVED_LENGTH_BITS: u32 = 4;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES + CRC_LEN;
 const STREAM_HEADER_LEN: usize = 5;
 
 /// Width of the `reserved` PID and length fields.
-const THREE_BITS: u32 = 3;
-const FOUR_BITS: u32 = 4;
 
 /// Width of the program_info and es_info length fields.
 const DESC_LOOP_LEN_BITS: u32 = 12;
@@ -611,10 +614,10 @@ pub struct PmtStream<'a> {
     /// `reserved(3)` before `elementary_PID` (ISO/IEC 13818-1 §2.4.4.9,
     /// `111` in every edition); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pid: ReservedOnes<THREE_BITS>,
+    pub reserved_pid: ReservedOnes<PMT_RESERVED_PID_BITS>,
     /// `reserved(4)` before `ES_info_length` (`1111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_es_info_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_es_info_length: ReservedOnes<PMT_RESERVED_LENGTH_BITS>,
 }
 
 impl<'a> PmtStream<'a> {
@@ -663,10 +666,10 @@ pub struct PmtSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(3)` before `PCR_PID` (`111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pcr_pid: ReservedOnes<THREE_BITS>,
+    pub reserved_pcr_pid: ReservedOnes<PMT_RESERVED_PID_BITS>,
     /// `reserved(4)` before `program_info_length` (`1111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_program_info_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_program_info_length: ReservedOnes<PMT_RESERVED_LENGTH_BITS>,
 }
 
 impl<'a> PmtSection<'a> {

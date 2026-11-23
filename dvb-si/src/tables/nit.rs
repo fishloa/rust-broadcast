@@ -13,6 +13,9 @@ use broadcast_common::len::need_in;
 use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
+/// Width of the `reserved` length fields.
+const NIT_RESERVED_BITS: u32 = 4;
+
 /// table_id value for NIT actual (current TS).
 pub const TABLE_ID_ACTUAL: u8 = 0x40;
 /// table_id value for NIT other (other TSes in the network).
@@ -61,10 +64,10 @@ pub struct NitSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `network_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_network_descriptors_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_network_descriptors_length: ReservedOnes<NIT_RESERVED_BITS>,
     /// `reserved_future_use(4)` before `transport_stream_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_transport_stream_loop_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_transport_stream_loop_length: ReservedOnes<NIT_RESERVED_BITS>,
 }
 
 impl<'a> NitSection<'a> {
@@ -94,7 +97,6 @@ impl<'a> NitSection<'a> {
 }
 
 /// Width of the `reserved` length fields.
-const FOUR_BITS: u32 = 4;
 
 const LABELS: Labels = Labels {
     section: "NitSection",
