@@ -65,6 +65,9 @@ pub const FULLBOX_EXTRA_SIZE: usize = 4;
 /// Size of a box type / four-CC field in bytes (§4.2).
 pub const BOX_TYPE_SIZE: usize = 4;
 
+/// Width of a CENC key ID (KID) in bytes (AES-128, ISO/IEC 23001-7).
+pub const KEY_ID_LEN: usize = 16;
+
 /// Size of the widest fixed header: `size` + `type` + 64-bit `largesize`.
 pub const BOX_HEADER_LARGESIZE_SIZE: usize = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
 

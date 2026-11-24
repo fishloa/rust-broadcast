@@ -63,6 +63,10 @@ use crate::pipeline::CodecConfig;
 /// Size of a KID / content key / AES-128 key **or block**, in bytes (AES-128's
 /// key length and block length coincide).
 const KEY_LEN: usize = 16;
+/// Length of a constant `cbcs` IV: one AES block.
+const CONSTANT_IV_LEN: usize = 16;
+/// Adjacent range count for the overlap check between consecutive ranges.
+const ADJACENT_RANGES: usize = 2;
 
 /// Per-sample IV size (bytes) for [`IvGen::Counter`] (every counter IV is an
 /// 8-byte big-endian value) and the fallback for an empty [`IvGen::Explicit`]
@@ -648,11 +652,11 @@ impl CencEncryptor {
                         ));
                     }
                     if !seen.insert(iv.as_slice()) {
-                        return Err(Error::InvalidInput(
-                            "duplicate IvGen::Explicit per-sample IV: an IV must be unique per \
-                             content key (ISO/IEC 23001-7 §9.2) — reusing one under cenc (AES-CTR) \
-                             reuses its keystream (two-time pad)",
-                        ));
+                        return Err(Error::InvalidInput(concat!(
+                            "duplicate IvGen::Explicit per-sample IV: an IV must be unique per ",
+                            "content key (ISO/IEC 23001-7 §9.2) — reusing one under cenc ",
+                            "(AES-CTR) reuses its keystream (two-time pad)",
+                        )));
                     }
                 }
                 Ok(())
@@ -832,11 +836,11 @@ fn assert_ivs_unique(
                 continue;
             }
             if !seen.insert(iv.as_slice()) {
-                return Err(Error::InvalidInput(
-                    "duplicate CENC per-sample IV planned across the Media's tracks: an IV must \
-                     be unique per content key (ISO/IEC 23001-7 §9.2), and one CencEncryptor key \
-                     covers every track — reuse under cenc (AES-CTR) is a two-time pad",
-                ));
+                return Err(Error::InvalidInput(concat!(
+                    "duplicate CENC per-sample IV planned across the Media's tracks: an IV must ",
+                    "be unique per content key (ISO/IEC 23001-7 §9.2), and one CencEncryptor ",
+                    "key covers every track — reuse under cenc (AES-CTR) is a two-time pad",
+                )));
             }
         }
     }
@@ -939,15 +943,16 @@ fn assert_ctr_ranges_disjoint(
     // Sort by start, then reject any overlap with the previous end. Sorting
     // keeps this O(n log n) for a whole-Media plan rather than O(n²).
     ranges.sort_unstable_by_key(|r| r.start);
-    for pair in ranges.windows(2) {
+    for pair in ranges.windows(ADJACENT_RANGES) {
         if pair[1].start < pair[0].end {
-            return Err(Error::InvalidInput(
-                "overlapping CENC AES-CTR counter-block ranges: under cenc the per-sample IV is \
-                 the 128-bit counter block and the counter advances once per 16-byte protected \
-                 block (ISO/IEC 23001-7 §10.1), so a sequential IV list such as base+i reuses \
-                 sample i's later keystream blocks as sample i+1's first (a two-time pad). Space \
-                 the IVs by at least the previous sample's protected block count",
-            ));
+            return Err(Error::InvalidInput(concat!(
+                "overlapping CENC AES-CTR counter-block ranges: under cenc the per-sample ",
+                "IV is the 128-bit counter block and the counter advances once per 16-byte ",
+                "protected block (ISO/IEC 23001-7 §10.1), so a sequential IV list such as ",
+                "base+i reuses sample i's later keystream blocks as sample i+1's first (a ",
+                "two-time pad). Space the IVs by at least the previous sample's protected ",
+                "block count",
+            )));
         }
     }
     Ok(())
@@ -1033,7 +1038,7 @@ fn tenc_iv_fields(
 ) -> Result<(u8, Option<Vec<u8>>)> {
     match iv_gen {
         IvGen::Constant(iv) => match constant_iv_senc {
-            ConstantIvSenc::Emit => Ok((16, Some(iv.to_vec()))),
+            ConstantIvSenc::Emit => Ok((CONSTANT_IV_LEN as u8, Some(iv.to_vec()))),
             ConstantIvSenc::Omit => Ok((0, Some(iv.to_vec()))),
         },
         IvGen::Counter => Ok((CencEncryptor::counter_iv_size(scheme) as u8, None)),

@@ -86,8 +86,8 @@ use alloc::vec::Vec;
 use broadcast_common::{Decrypt, Parse};
 
 use crate::box_types::{
-    BOX_HEADER_MIN_SIZE, box_slices, child_boxes, descend_boxes, find_child_box, find_top_box,
-    parse_box,
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, box_slices, child_boxes, descend_boxes, find_child_box,
+    find_top_box, parse_box,
 };
 // Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
 // resolving for existing callers even though the type now lives in
@@ -196,7 +196,7 @@ struct TrackCrypto {
     /// the pattern's `crypt`:`skip` block counts and optional constant IV).
     tenc: TrackEncryptionBox,
     /// The original (unprotected) codec four-CC from `frma`.
-    original_format: [u8; 4],
+    original_format: [u8; BOX_TYPE_SIZE],
     /// The protection scheme from `schm`.
     scheme: CencScheme,
     /// Per-sample encryption info (IV + subsample map), in decode order.
@@ -271,7 +271,7 @@ impl CencDecryptor {
 
     /// The original (unprotected) codec four-CC of the first protected track,
     /// from its `frma` box (e.g. `*b"avc1"`).
-    pub fn original_format(&self) -> [u8; 4] {
+    pub fn original_format(&self) -> [u8; BOX_TYPE_SIZE] {
         self.tracks
             .first()
             .map(|t| t.original_format)
@@ -467,6 +467,14 @@ impl Decrypt for CencDecryptor {
 
 /// Full-box header size (`version` + `flags`).
 const FULL_HDR: usize = 4;
+/// Offset of the three `flags` bytes inside a FullBox extension.
+const FULLBOX_FLAGS_OFFSET: usize = 1;
+/// `creation_time` and `modification_time` precede `timescale` in `mdhd`
+/// (ISO/IEC 14496-12:2026 §8.4.2).
+const MDHD_TIMES_BEFORE_TIMESCALE: usize = 2;
+/// Fixed part of an `AudioSampleEntry` before its child boxes
+/// (ISO/IEC 14496-12:2026 §12.2.3).
+const AUDIO_SAMPLE_ENTRY_HDR: usize = 28;
 /// `stsd` fixed header after the FullBox: `entry_count`.
 const STSD_ENTRY_COUNT: usize = 4;
 /// A `VisualSampleEntry` fixed body length before its child boxes
@@ -577,12 +585,11 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
 fn parse_senc_box(senc: &[u8], per_sample_iv_size: u8) -> Result<crate::cenc::SampleEncryptionBox> {
     need_in(senc, BOX_HEADER_MIN_SIZE + FULL_HDR, "senc header")?;
     let version = senc[BOX_HEADER_MIN_SIZE];
-    let flags = u32::from_be_bytes([
-        0,
-        senc[BOX_HEADER_MIN_SIZE + 1],
-        senc[BOX_HEADER_MIN_SIZE + 2],
-        senc[BOX_HEADER_MIN_SIZE + 3],
-    ]);
+    let mut flag_word = [0u8; BOX_TYPE_SIZE];
+    flag_word[FULLBOX_FLAGS_OFFSET..].copy_from_slice(
+        &senc[BOX_HEADER_MIN_SIZE + FULLBOX_FLAGS_OFFSET..BOX_HEADER_MIN_SIZE + FULL_HDR],
+    );
+    let flags = u32::from_be_bytes(flag_word);
     crate::cenc::SampleEncryptionBox::parse_body(
         &senc[BOX_HEADER_MIN_SIZE + FULL_HDR..],
         version,
@@ -710,7 +717,7 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
                 // enca: 8 reserved + 2 channelcount + 2 samplesize + 4 predefined
                 // + 2 reserved + 2 timescale-hi... just scan from a safe minimum
                 // (AudioSampleEntry fixed part is 28 bytes past the box header).
-                BOX_HEADER_MIN_SIZE + 28
+                BOX_HEADER_MIN_SIZE + AUDIO_SAMPLE_ENTRY_HDR
             };
             if child_start <= entry.len() {
                 // The child boxes start directly at `child_start` (no container
@@ -1063,14 +1070,15 @@ fn header_timescale(header: &[u8], expected: &'static str) -> Result<Timescale> 
     // version 0: after FullBox(4): creation(4) modification(4) timescale(4)
     // version 1: after FullBox(4): creation(8) modification(8) timescale(4)
     let ts_off = if *version == 1 {
-        BOX_HEADER_MIN_SIZE + FULL_HDR + 16
+        BOX_HEADER_MIN_SIZE + FULL_HDR + MDHD_TIMES_BEFORE_TIMESCALE * core::mem::size_of::<u64>()
     } else {
-        BOX_HEADER_MIN_SIZE + FULL_HDR + 8
+        BOX_HEADER_MIN_SIZE + FULL_HDR + MDHD_TIMES_BEFORE_TIMESCALE * core::mem::size_of::<u32>()
     };
-    let bytes = header.get(ts_off..ts_off + 4).ok_or_else(truncated)?;
-    Ok(Timescale::try_new(u32::from_be_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3],
-    ]))?)
+    let bytes = header
+        .get(ts_off..ts_off + core::mem::size_of::<u32>())
+        .ok_or_else(truncated)?;
+    let word: [u8; core::mem::size_of::<u32>()] = bytes.try_into().map_err(|_| truncated())?;
+    Ok(Timescale::try_new(u32::from_be_bytes(word))?)
 }
 
 /// Each sample's `(absolute_file_offset, size)` from a progressive `stbl`.

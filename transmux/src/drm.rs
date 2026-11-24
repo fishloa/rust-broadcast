@@ -25,6 +25,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
 
+use crate::box_types::{BOX_TYPE_SIZE, KEY_ID_LEN};
 use crate::cenc::ProtectionSystemSpecificHeaderBox;
 use crate::error::{Error, Result};
 use crate::rtp::base64_decode;
@@ -44,28 +45,28 @@ use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 /// Widevine DRM system ID: `edef8ba9-79d6-4ace-a3c8-27dcd51d21ed`.
 ///
 /// private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §1.
-pub const WIDEVINE_SYSTEM_ID: [u8; 16] = [
+pub const WIDEVINE_SYSTEM_ID: [u8; KEY_ID_LEN] = [
     0xED, 0xEF, 0x8B, 0xA9, 0x79, 0xD6, 0x4A, 0xCE, 0xA3, 0xC8, 0x27, 0xDC, 0xD5, 0x1D, 0x21, 0xED,
 ];
 
 /// PlayReady DRM system ID: `9a04f079-9840-4286-ab92-e65be0885f95`.
 ///
 /// private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §1.
-pub const PLAYREADY_SYSTEM_ID: [u8; 16] = [
+pub const PLAYREADY_SYSTEM_ID: [u8; KEY_ID_LEN] = [
     0x9A, 0x04, 0xF0, 0x79, 0x98, 0x40, 0x42, 0x86, 0xAB, 0x92, 0xE6, 0x5B, 0xE0, 0x88, 0x5F, 0x95,
 ];
 
 /// FairPlay (Apple) DRM system ID: `94ce86fb-07ff-4f43-adb8-93d2fa968ca2`.
 ///
 /// private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §1.
-pub const FAIRPLAY_SYSTEM_ID: [u8; 16] = [
+pub const FAIRPLAY_SYSTEM_ID: [u8; KEY_ID_LEN] = [
     0x94, 0xCE, 0x86, 0xFB, 0x07, 0xFF, 0x4F, 0x43, 0xAD, 0xB8, 0x93, 0xD2, 0xFA, 0x96, 0x8C, 0xA2,
 ];
 
 /// W3C Common / ClearKey (`pssh` box) system ID: `1077efec-c0b2-4d02-ace3-3c1e52e2fb4b`.
 ///
 /// private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §1.
-pub const COMMON_SYSTEM_ID: [u8; 16] = [
+pub const COMMON_SYSTEM_ID: [u8; KEY_ID_LEN] = [
     0x10, 0x77, 0xEF, 0xEC, 0xC0, 0xB2, 0x4D, 0x02, 0xAC, 0xE3, 0x3C, 0x1E, 0x52, 0xE2, 0xFB, 0x4B,
 ];
 
@@ -81,7 +82,7 @@ pub const COMMON_SYSTEM_ID: [u8; 16] = [
 /// reverse `[0:4]`, reverse `[4:6]`, reverse `[6:8]`, keep `[8:16]`.
 ///
 /// This transform is its own inverse composed with [`playready_kid_to_cenc`].
-pub const fn cenc_kid_to_playready(uuid: [u8; 16]) -> [u8; 16] {
+pub const fn cenc_kid_to_playready(uuid: [u8; KEY_ID_LEN]) -> [u8; KEY_ID_LEN] {
     [
         uuid[3], uuid[2], uuid[1], uuid[0], // Data1 (DWORD) reversed
         uuid[5], uuid[4], // Data2 (WORD) reversed
@@ -94,7 +95,7 @@ pub const fn cenc_kid_to_playready(uuid: [u8; 16]) -> [u8; 16] {
 ///
 /// The swap pattern is symmetric (reverse `[0:4]`, `[4:6]`, `[6:8]`; keep
 /// `[8:16]`), so this is the same permutation applied again.
-pub const fn playready_kid_to_cenc(guid: [u8; 16]) -> [u8; 16] {
+pub const fn playready_kid_to_cenc(guid: [u8; KEY_ID_LEN]) -> [u8; KEY_ID_LEN] {
     [
         guid[3], guid[2], guid[1], guid[0], guid[5], guid[4], guid[7], guid[6], guid[8], guid[9],
         guid[10], guid[11], guid[12], guid[13], guid[14], guid[15],
@@ -118,6 +119,19 @@ const PLAYREADY_ALGID_AESCTR: &str = "AESCTR";
 /// PlayReady Object Record type: PlayReady Header (PRH), holding the WRMHEADER
 /// XML (private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §3.1).
 const PRO_RECORD_TYPE_HEADER: u16 = 0x0001;
+/// Width of the UTF-16LE code unit `WRMHEADER` values are encoded in.
+const UTF16_CODE_UNIT_LEN: usize = 2;
+/// `fits_u16` fields in a PlayReady Object header: record count, record type,
+/// and record value length.
+const PRO_HEADER_U16_FIELDS: usize = 3;
+/// Left shift of a protobuf field number in its tag byte.
+const PROTOBUF_FIELD_SHIFT: u32 = 3;
+/// Bits per base-128 varint group.
+const PROTOBUF_VARINT_GROUP_SHIFT: u32 = 7;
+/// Mask of a base-128 varint group.
+const PROTOBUF_VARINT_GROUP_MASK: u8 = 0x7F;
+/// Continuation bit of a base-128 varint byte.
+const PROTOBUF_VARINT_CONTINUATION: u8 = 0x80;
 
 #[cfg(feature = "std")]
 /// Build a WRMHEADER v4.2.0.0 XML string (private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §3.2).
@@ -133,7 +147,7 @@ const PRO_RECORD_TYPE_HEADER: u16 = 0x0001;
 /// # Errors
 /// [`Error::Wrmheader`] if the XML writer refuses an event (an in-memory
 /// writer has no such failure in practice).
-pub fn playready_wrmheader(kids: &[[u8; 16]], la_url: Option<&str>) -> Result<String> {
+pub fn playready_wrmheader(kids: &[[u8; KEY_ID_LEN]], la_url: Option<&str>) -> Result<String> {
     let version = "4.2.0.0";
     let mut w = Writer::new(Vec::new());
     let mut root = BytesStart::new("WRMHEADER");
@@ -185,7 +199,7 @@ fn wrm_event(w: &mut Writer<Vec<u8>>, event: Event<'_>) -> Result<()> {
 /// Encode a `&str` as UTF-16LE bytes (no BOM), as required for the WRMHEADER
 /// record value (private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §3.2).
 fn utf16le_bytes(s: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len() * 2);
+    let mut out = Vec::with_capacity(s.len() * UTF16_CODE_UNIT_LEN);
     for unit in s.encode_utf16() {
         out.extend_from_slice(&unit.to_le_bytes());
     }
@@ -205,12 +219,14 @@ fn utf16le_bytes(s: &str) -> Vec<u8> {
 /// # Errors
 /// Returns [`Error::FieldOverflow`] if the encoded WRMHEADER value is 64 KiB
 /// (2^16) or larger — the record's `value length` is a 16-bit field (#1129).
-pub fn playready_pro(kids: &[[u8; 16]], la_url: Option<&str>) -> Result<Vec<u8>> {
+pub fn playready_pro(kids: &[[u8; KEY_ID_LEN]], la_url: Option<&str>) -> Result<Vec<u8>> {
     let wrm = playready_wrmheader(kids, la_url)?;
     let value = utf16le_bytes(&wrm);
     let record_count: u16 = 1;
-    // total = 4 (length) + 2 (count) + 2 (type) + 2 (value length) + value
-    let total_len = 4 + 2 + 2 + 2 + value.len();
+    // total = length + (count, type, value length) + value
+    let total_len = core::mem::size_of::<u32>()
+        + PRO_HEADER_U16_FIELDS * core::mem::size_of::<u16>()
+        + value.len();
     let value_len = broadcast_common::len::fit_u16(value.len(), "PRO record value length")?;
     let mut out = Vec::with_capacity(total_len);
     out.extend_from_slice(&(total_len as u32).to_le_bytes());
@@ -230,7 +246,7 @@ pub fn playready_pro(kids: &[[u8; 16]], la_url: Option<&str>) -> Result<Vec<u8>>
 /// # Errors
 /// See [`playready_pro`].
 pub fn playready_pssh(
-    kids: &[[u8; 16]],
+    kids: &[[u8; KEY_ID_LEN]],
     la_url: Option<&str>,
 ) -> Result<ProtectionSystemSpecificHeaderBox> {
     Ok(ProtectionSystemSpecificHeaderBox {
@@ -262,16 +278,16 @@ const WV_FIELD_PROTECTION_SCHEME: u8 = 9;
 /// Compute a protobuf field tag byte: `(field_number << 3) | wire_type`
 /// (private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §4).
 const fn pb_tag(field: u8, wire_type: u8) -> u8 {
-    (field << 3) | wire_type
+    (field << PROTOBUF_FIELD_SHIFT) | wire_type
 }
 
 /// Append a base-128 varint (protobuf, little-endian groups).
 fn pb_put_varint(out: &mut Vec<u8>, mut value: u64) {
     loop {
-        let mut byte = (value & 0x7F) as u8;
-        value >>= 7;
+        let mut byte = (value & u64::from(PROTOBUF_VARINT_GROUP_MASK)) as u8;
+        value >>= PROTOBUF_VARINT_GROUP_SHIFT;
         if value != 0 {
-            byte |= 0x80;
+            byte |= PROTOBUF_VARINT_CONTINUATION;
         }
         out.push(byte);
         if value == 0 {
@@ -297,9 +313,9 @@ fn pb_put_len_delimited(out: &mut Vec<u8>, field: u8, bytes: &[u8]) {
 /// The protobuf is hand-encoded; fields are emitted in ascending field-number
 /// order (2, 3, 4, 9).
 pub fn widevine_pssh_data(
-    key_ids: &[[u8; 16]],
+    key_ids: &[[u8; KEY_ID_LEN]],
     provider: Option<&str>,
-    protection_scheme: Option<[u8; 4]>,
+    protection_scheme: Option<[u8; BOX_TYPE_SIZE]>,
 ) -> Vec<u8> {
     let mut out = Vec::new();
     for kid in key_ids {
@@ -323,7 +339,7 @@ pub fn widevine_pssh_data(
 /// `kids` are CENC big-endian UUID key-ids; the `Data` payload is the
 /// `WidevineCencHeader` protobuf from [`widevine_pssh_data`]. private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §2, §4.
 pub fn widevine_pssh(
-    kids: &[[u8; 16]],
+    kids: &[[u8; KEY_ID_LEN]],
     provider: Option<&str>,
 ) -> ProtectionSystemSpecificHeaderBox {
     ProtectionSystemSpecificHeaderBox {
@@ -366,16 +382,16 @@ pub fn fairplay_pssh(skd_uri: &str) -> ProtectionSystemSpecificHeaderBox {
 /// Base64-decode the WRMHEADER `<KID>` `VALUE`/element content back to the
 /// 16-byte PlayReady LE-GUID key-id (private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §3.2). Errors on invalid
 /// base64 or a length other than 16 bytes.
-pub fn playready_kid_value_decode(value: &str) -> Result<[u8; 16]> {
+pub fn playready_kid_value_decode(value: &str) -> Result<[u8; KEY_ID_LEN]> {
     let bytes = base64_decode(value)?;
-    if bytes.len() != 16 {
+    if bytes.len() != KEY_ID_LEN {
         return Err(Error::InvalidValue(InvalidValue {
             field: "playready KID VALUE",
             value: bytes.len() as u64,
             reason: "expected 16 decoded bytes",
         }));
     }
-    let mut out = [0u8; 16];
+    let mut out = [0u8; KEY_ID_LEN];
     out.copy_from_slice(&bytes);
     Ok(out)
 }
