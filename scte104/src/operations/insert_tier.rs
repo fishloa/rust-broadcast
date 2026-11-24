@@ -2,6 +2,7 @@
 //!
 //! Supplemental usage. Sets the tier field in the resulting SCTE 35 section.
 
+use super::{U16_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -26,7 +27,7 @@ impl<'a> Parse<'a> for InsertTier {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, LEN, "insert_tier_data")?;
         Ok(Self {
-            tier_data: u16::from_be_bytes([bytes[0], bytes[1]]),
+            tier_data: u16::from_be_bytes(be::<U16_LEN>(bytes, 0)?),
         })
     }
 }

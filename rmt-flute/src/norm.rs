@@ -42,6 +42,73 @@ pub const HET_EXT_FTI: u8 = 64;
 /// HET for NORM EXT_RATE (fixed-length) — RFC 5740 §4.2.3.
 pub const HET_EXT_RATE: u8 = 128;
 
+/// Bit widths of the packed header fields (RFC 5740 §4.2).
+const VERSION_BITS: u32 = 4;
+const TYPE_BITS: u32 = 4;
+const BACKOFF_BITS: u32 = 4;
+const GSIZE_BITS: u32 = 4;
+/// Bit shift of `version` within the version/type byte.
+const VERSION_SHIFT: u32 = 4;
+/// Mask of the low nibble of a byte.
+const NIBBLE_MASK: u8 = 0x0F;
+/// Bit shift of `backoff` within the backoff/gsize byte.
+const BACKOFF_SHIFT: u32 = 4;
+/// Bit shift of `ack_type` within `ack_or_reserved`.
+const ACK_TYPE_SHIFT: u32 = 8;
+
+/// Byte offsets within the NORM common header (RFC 5740 §4.2).
+const COMMON_VERSION_OFFSET: usize = 0;
+const COMMON_HDR_LEN_OFFSET: usize = COMMON_VERSION_OFFSET + 1;
+const COMMON_SEQUENCE_OFFSET: usize = COMMON_HDR_LEN_OFFSET + 1;
+const COMMON_SOURCE_ID_OFFSET: usize = COMMON_SEQUENCE_OFFSET + core::mem::size_of::<u16>();
+
+/// Byte offsets within the sender word (RFC 5740 §4.2).
+const SENDER_INSTANCE_OFFSET: usize = 0;
+const SENDER_GRTT_OFFSET: usize = SENDER_INSTANCE_OFFSET + core::mem::size_of::<u16>();
+const SENDER_BACKOFF_OFFSET: usize = SENDER_GRTT_OFFSET + 1;
+
+/// Byte offsets within the NORM_INFO / NORM_DATA flags word.
+const PACKET_FLAGS_OFFSET: usize = 0;
+const PACKET_FEC_ID_OFFSET: usize = PACKET_FLAGS_OFFSET + 1;
+const PACKET_OBJECT_TRANSPORT_ID_OFFSET: usize = PACKET_FEC_ID_OFFSET + 1;
+
+/// Byte offsets within the NORM_CMD sub-type word (RFC 5740 §4.2.3): the
+/// `sub-type` byte followed by three sub-type-specific bytes, of which the
+/// trailing `SUBTYPE_TRAILING_LEN` are reserved for most sub-types.
+const SUBTYPE_OFFSET: usize = 0;
+const SUBTYPE_AUX1_OFFSET: usize = SUBTYPE_OFFSET + 1;
+const SUBTYPE_AUX2_OFFSET: usize = SUBTYPE_AUX1_OFFSET + 1;
+const SUBTYPE_AUX3_OFFSET: usize = SUBTYPE_AUX2_OFFSET + 1;
+/// Width in bytes of the reserved trailing bytes of a NORM_CMD sub-type word
+/// (RFC 5740 §4.2.3).
+pub const SUBTYPE_TRAILING_LEN: usize = SUBTYPE_AUX3_OFFSET - SUBTYPE_OFFSET;
+/// NORM_CMD(CC) `send_time_sec` + `send_time_usec`.
+const SEND_TIME_FIELD_LEN: usize = core::mem::size_of::<u32>();
+const CC_SEND_TIME_LEN: usize = SEND_TIME_FIELD_LEN * 2;
+
+/// Byte offsets within the NORM feedback fixed body, relative to
+/// `COMMON_HEADER_LEN` (RFC 5740 §4.2.4).
+const FB_SERVER_ID_OFFSET: usize = 0;
+const FB_INSTANCE_ID_OFFSET: usize = FB_SERVER_ID_OFFSET + core::mem::size_of::<u32>();
+const FB_ACK_OFFSET: usize = FB_INSTANCE_ID_OFFSET + core::mem::size_of::<u16>();
+const FB_GRTT_SEC_OFFSET: usize = FB_ACK_OFFSET + core::mem::size_of::<u16>();
+const FB_GRTT_USEC_OFFSET: usize = FB_GRTT_SEC_OFFSET + core::mem::size_of::<u32>();
+const FB_BODY_FIXED_LEN: usize = FB_GRTT_USEC_OFFSET + core::mem::size_of::<u32>();
+
+/// Read the big-endian `u16` at `off`.
+fn read_u16_at(data: &[u8], off: usize) -> u16 {
+    let mut raw = [0_u8; core::mem::size_of::<u16>()];
+    raw.copy_from_slice(&data[off..off + core::mem::size_of::<u16>()]);
+    u16::from_be_bytes(raw)
+}
+
+/// Read the big-endian `u32` at `off`.
+fn read_u32_at(data: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; core::mem::size_of::<u32>()];
+    raw.copy_from_slice(&data[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(raw)
+}
+
 /// NORM message `type` (RFC 5740 §4.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -149,11 +216,11 @@ impl NormCommonHeader {
     /// value (in 32-bit words) read from the wire.
     pub fn parse(data: &[u8]) -> Result<(Self, u8)> {
         need_in(data, COMMON_HEADER_LEN, "NORM common header")?;
-        let version = data[0] >> 4;
-        let message_type = NormMessageType::from_u8(data[0] & 0x0F);
-        let hdr_len = data[1];
-        let sequence = u16::from_be_bytes([data[2], data[3]]);
-        let source_id = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+        let version = data[COMMON_VERSION_OFFSET] >> VERSION_SHIFT;
+        let message_type = NormMessageType::from_u8(data[COMMON_VERSION_OFFSET] & NIBBLE_MASK);
+        let hdr_len = data[COMMON_HDR_LEN_OFFSET];
+        let sequence = read_u16_at(data, COMMON_SEQUENCE_OFFSET);
+        let source_id = read_u32_at(data, COMMON_SOURCE_ID_OFFSET);
         Ok((
             NormCommonHeader {
                 version,
@@ -169,13 +236,15 @@ impl NormCommonHeader {
     /// (caller computes it from the message body). Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8], hdr_len: u8) -> Result<usize> {
         need_out(out, COMMON_HEADER_LEN)?;
-        broadcast_common::len::fit_bits(self.version as u64, 4, "version")?;
+        broadcast_common::len::fit_bits(self.version as u64, VERSION_BITS, "version")?;
         let ty = self.message_type.to_u8();
-        broadcast_common::len::fit_bits(ty as u64, 4, "type")?;
-        out[0] = (self.version << 4) | (ty & 0x0F);
-        out[1] = hdr_len;
-        out[2..4].copy_from_slice(&self.sequence.to_be_bytes());
-        out[4..8].copy_from_slice(&self.source_id.to_be_bytes());
+        broadcast_common::len::fit_bits(ty as u64, TYPE_BITS, "type")?;
+        out[COMMON_VERSION_OFFSET] = (self.version << VERSION_SHIFT) | (ty & NIBBLE_MASK);
+        out[COMMON_HDR_LEN_OFFSET] = hdr_len;
+        out[COMMON_SEQUENCE_OFFSET..COMMON_SOURCE_ID_OFFSET]
+            .copy_from_slice(&self.sequence.to_be_bytes());
+        out[COMMON_SOURCE_ID_OFFSET..COMMON_HEADER_LEN]
+            .copy_from_slice(&self.source_id.to_be_bytes());
         Ok(COMMON_HEADER_LEN)
     }
 }
@@ -200,21 +269,22 @@ impl SenderWord {
     pub fn parse(data: &[u8]) -> Result<Self> {
         need_in(data, SENDER_WORD_LEN, "NORM sender word")?;
         Ok(SenderWord {
-            instance_id: u16::from_be_bytes([data[0], data[1]]),
-            grtt: data[2],
-            backoff: data[3] >> 4,
-            gsize: data[3] & 0x0F,
+            instance_id: read_u16_at(data, SENDER_INSTANCE_OFFSET),
+            grtt: data[SENDER_GRTT_OFFSET],
+            backoff: data[SENDER_BACKOFF_OFFSET] >> BACKOFF_SHIFT,
+            gsize: data[SENDER_BACKOFF_OFFSET] & NIBBLE_MASK,
         })
     }
 
     /// Serialize the 4-byte sender word into `out`.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         need_out(out, SENDER_WORD_LEN)?;
-        broadcast_common::len::fit_bits(self.backoff as u64, 4, "backoff")?;
-        broadcast_common::len::fit_bits(self.gsize as u64, 4, "gsize")?;
-        out[0..2].copy_from_slice(&self.instance_id.to_be_bytes());
-        out[2] = self.grtt;
-        out[3] = (self.backoff << 4) | (self.gsize & 0x0F);
+        broadcast_common::len::fit_bits(self.backoff as u64, BACKOFF_BITS, "backoff")?;
+        broadcast_common::len::fit_bits(self.gsize as u64, GSIZE_BITS, "gsize")?;
+        out[SENDER_INSTANCE_OFFSET..SENDER_GRTT_OFFSET]
+            .copy_from_slice(&self.instance_id.to_be_bytes());
+        out[SENDER_GRTT_OFFSET] = self.grtt;
+        out[SENDER_BACKOFF_OFFSET] = (self.backoff << BACKOFF_SHIFT) | (self.gsize & NIBBLE_MASK);
         Ok(SENDER_WORD_LEN)
     }
 }
@@ -300,9 +370,9 @@ impl<'a> NormInfo<'a> {
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
         need_in(data, off + WORD, "NORM_INFO flags word")?;
-        let flags = data[off];
-        let fec_id = data[off + 1];
-        let object_transport_id = u16::from_be_bytes([data[off + 2], data[off + 3]]);
+        let flags = data[off + PACKET_FLAGS_OFFSET];
+        let fec_id = data[off + PACKET_FEC_ID_OFFSET];
+        let object_transport_id = read_u16_at(data, off + PACKET_OBJECT_TRANSPORT_ID_OFFSET);
 
         // hdr_len bounds the header (incl. extensions); payload starts after.
         let header_end = hdr_len as usize * WORD;
@@ -334,9 +404,10 @@ impl<'a> NormInfo<'a> {
         let words = hdr_len_words(self.header_bytes(), "NORM_INFO hdr_len")?;
         let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
-        out[off] = self.flags;
-        out[off + 1] = self.fec_id;
-        out[off + 2..off + 4].copy_from_slice(&self.object_transport_id.to_be_bytes());
+        out[off + PACKET_FLAGS_OFFSET] = self.flags;
+        out[off + PACKET_FEC_ID_OFFSET] = self.fec_id;
+        out[off + PACKET_OBJECT_TRANSPORT_ID_OFFSET..off + WORD]
+            .copy_from_slice(&self.object_transport_id.to_be_bytes());
         off += WORD;
         off += ext::serialize_chain(&self.extensions, &mut out[off..])?;
         out[off..off + self.payload.len()].copy_from_slice(self.payload);
@@ -442,9 +513,9 @@ impl<'a> NormData<'a> {
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let mut off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
         need_in(data, off + WORD, "NORM_DATA flags word")?;
-        let flags = data[off];
-        let fec_id = data[off + 1];
-        let object_transport_id = u16::from_be_bytes([data[off + 2], data[off + 3]]);
+        let flags = data[off + PACKET_FLAGS_OFFSET];
+        let fec_id = data[off + PACKET_FEC_ID_OFFSET];
+        let object_transport_id = read_u16_at(data, off + PACKET_OBJECT_TRANSPORT_ID_OFFSET);
         off += WORD;
 
         let fec_payload_id = FecPayloadId::parse(&data[off..], fec_payload_id_len)?;
@@ -482,9 +553,10 @@ impl<'a> NormData<'a> {
         let words = hdr_len_words(self.header_bytes(), "NORM_DATA hdr_len")?;
         let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
-        out[off] = self.flags;
-        out[off + 1] = self.fec_id;
-        out[off + 2..off + 4].copy_from_slice(&self.object_transport_id.to_be_bytes());
+        out[off + PACKET_FLAGS_OFFSET] = self.flags;
+        out[off + PACKET_FEC_ID_OFFSET] = self.fec_id;
+        out[off + PACKET_OBJECT_TRANSPORT_ID_OFFSET..off + WORD]
+            .copy_from_slice(&self.object_transport_id.to_be_bytes());
         off += WORD;
         off += self.fec_payload_id.serialize_into(&mut out[off..])?;
         off += ext::serialize_chain(&self.extensions, &mut out[off..])?;
@@ -691,7 +763,7 @@ pub enum NormCmdBody {
     /// An unrecognized sub-type: the 3 raw bytes that followed it. Layout
     /// unknown, so (unlike the defined sub-types above) no further fixed body
     /// is assumed to precede the extension chain.
-    Other([u8; 3]),
+    Other([u8; SUBTYPE_TRAILING_LEN]),
 }
 
 impl NormCmdBody {
@@ -702,14 +774,14 @@ impl NormCmdBody {
         match self {
             NormCmdBody::Flush { fec_payload_id, .. }
             | NormCmdBody::Squelch { fec_payload_id, .. } => fec_payload_id.len(),
-            NormCmdBody::Cc { .. } => 8,
+            NormCmdBody::Cc { .. } => CC_SEND_TIME_LEN,
             _ => 0,
         }
     }
 
     /// The sub-type word's trailing 3 bytes; bytes this variant leaves
     /// reserved come from `reserved`, the rest from the typed fields.
-    fn head_bytes(&self, reserved: [u8; 3]) -> [u8; 3] {
+    fn head_bytes(&self, reserved: [u8; SUBTYPE_TRAILING_LEN]) -> [u8; SUBTYPE_TRAILING_LEN] {
         match self {
             NormCmdBody::Flush {
                 fec_id,
@@ -729,7 +801,9 @@ impl NormCmdBody {
                 let seq = cc_sequence.to_be_bytes();
                 [reserved[0], seq[0], seq[1]]
             }
-            NormCmdBody::RepairAdv { flags } => [*flags, reserved[1], reserved[2]],
+            NormCmdBody::RepairAdv { flags } => {
+                [*flags, reserved[1], reserved[SUBTYPE_TRAILING_LEN - 1]]
+            }
             NormCmdBody::AckReq { ack_type, ack_id } => [reserved[0], ack_type.to_u8(), *ack_id],
             NormCmdBody::Other(b) => *b,
         }
@@ -755,7 +829,7 @@ pub struct NormCmd<'a> {
     /// for CC and ACK_REQ, bytes 1-2 for REPAIR_ADV; ignored for the other
     /// sub-types. Kept so a message with them set re-serializes byte-exact;
     /// senders write 0.
-    pub reserved: [u8; 3],
+    pub reserved: [u8; SUBTYPE_TRAILING_LEN],
     /// The sub-type-specific fixed body (RFC 5740 §4.2.3, Figures 10-16).
     pub body: NormCmdBody,
     /// Header-extension chain (e.g. EXT_RATE in CC, EXT_CC in REPAIR_ADV).
@@ -799,11 +873,15 @@ impl<'a> NormCmd<'a> {
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let mut off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
         need_in(data, off + WORD, "NORM_CMD sub-type word")?;
-        let sub_type = NormCmdType::from_u8(data[off]);
-        let (b1, b2, b3) = (data[off + 1], data[off + 2], data[off + 3]);
+        let sub_type = NormCmdType::from_u8(data[off + SUBTYPE_OFFSET]);
+        let (b1, b2, b3) = (
+            data[off + SUBTYPE_AUX1_OFFSET],
+            data[off + SUBTYPE_AUX2_OFFSET],
+            data[off + SUBTYPE_AUX3_OFFSET],
+        );
         off += WORD;
 
-        let mut reserved = [0u8; 3];
+        let mut reserved = [0u8; SUBTYPE_TRAILING_LEN];
         let body = match sub_type {
             NormCmdType::Flush | NormCmdType::Squelch => {
                 let fec_id = b1;
@@ -830,18 +908,16 @@ impl<'a> NormCmd<'a> {
             }
             NormCmdType::Cc => {
                 reserved[0] = b1;
-                need_in(data, off + 8, "NORM_CMD(CC) send_time_sec/send_time_usec")?;
+                need_in(
+                    data,
+                    off + CC_SEND_TIME_LEN,
+                    "NORM_CMD(CC) send_time_sec/send_time_usec",
+                )?;
                 let cc_sequence = u16::from_be_bytes([b2, b3]);
-                // `need_in` guarantees eight bytes from `off` are present.
-                let send_time_sec =
-                    u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
-                let send_time_usec = u32::from_be_bytes([
-                    data[off + 4],
-                    data[off + 5],
-                    data[off + 6],
-                    data[off + 7],
-                ]);
-                off += 8;
+                // `need_in` guarantees the send-time fields from `off` are present.
+                let send_time_sec = read_u32_at(data, off);
+                let send_time_usec = read_u32_at(data, off + SEND_TIME_FIELD_LEN);
+                off += CC_SEND_TIME_LEN;
                 NormCmdBody::Cc {
                     cc_sequence,
                     send_time_sec,
@@ -894,8 +970,9 @@ impl<'a> NormCmd<'a> {
         let words = hdr_len_words(self.header_bytes(), "NORM_CMD hdr_len")?;
         let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
-        out[off] = self.sub_type.to_u8();
-        out[off + 1..off + 4].copy_from_slice(&self.body.head_bytes(self.reserved));
+        out[off + SUBTYPE_OFFSET] = self.sub_type.to_u8();
+        out[off + SUBTYPE_AUX1_OFFSET..off + WORD]
+            .copy_from_slice(&self.body.head_bytes(self.reserved));
         off += WORD;
         match &self.body {
             NormCmdBody::Flush { fec_payload_id, .. }
@@ -907,9 +984,10 @@ impl<'a> NormCmd<'a> {
                 send_time_usec,
                 ..
             } => {
-                out[off..off + 4].copy_from_slice(&send_time_sec.to_be_bytes());
-                out[off + 4..off + 8].copy_from_slice(&send_time_usec.to_be_bytes());
-                off += 8;
+                out[off..off + SEND_TIME_FIELD_LEN].copy_from_slice(&send_time_sec.to_be_bytes());
+                out[off + SEND_TIME_FIELD_LEN..off + CC_SEND_TIME_LEN]
+                    .copy_from_slice(&send_time_usec.to_be_bytes());
+                off += CC_SEND_TIME_LEN;
             }
             _ => {}
         }
@@ -965,7 +1043,7 @@ pub const FEEDBACK_FIXED_LEN: usize = COMMON_HEADER_LEN + 4 + 4 + 8;
 impl<'a> NormFeedback<'a> {
     /// The 8-bit `ack_type` (NORM_ACK): the high byte of `ack_or_reserved`.
     pub fn ack_type(&self) -> NormAckType {
-        NormAckType::from_u8((self.ack_or_reserved >> 8) as u8)
+        NormAckType::from_u8((self.ack_or_reserved >> ACK_TYPE_SHIFT) as u8)
     }
     /// The 8-bit `ack_id` (NORM_ACK): the low byte of `ack_or_reserved`.
     pub fn ack_id(&self) -> u8 {
@@ -1000,11 +1078,11 @@ impl<'a> NormFeedback<'a> {
             }));
         }
         need_in(data, FEEDBACK_FIXED_LEN, "NORM feedback fixed header")?;
-        let server_id = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
-        let instance_id = u16::from_be_bytes([data[12], data[13]]);
-        let ack_or_reserved = u16::from_be_bytes([data[14], data[15]]);
-        let grtt_response_sec = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
-        let grtt_response_usec = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+        let server_id = read_u32_at(data, COMMON_HEADER_LEN + FB_SERVER_ID_OFFSET);
+        let instance_id = read_u16_at(data, COMMON_HEADER_LEN + FB_INSTANCE_ID_OFFSET);
+        let ack_or_reserved = read_u16_at(data, COMMON_HEADER_LEN + FB_ACK_OFFSET);
+        let grtt_response_sec = read_u32_at(data, COMMON_HEADER_LEN + FB_GRTT_SEC_OFFSET);
+        let grtt_response_usec = read_u32_at(data, COMMON_HEADER_LEN + FB_GRTT_USEC_OFFSET);
 
         let header_end = hdr_len as usize * WORD;
         if header_end < FEEDBACK_FIXED_LEN {
@@ -1034,12 +1112,17 @@ impl<'a> NormFeedback<'a> {
         need_out(out, total)?;
         let words = hdr_len_words(self.header_bytes(), "NORM feedback hdr_len")?;
         let mut off = self.common.serialize_into(out, words)?;
-        out[off..off + 4].copy_from_slice(&self.server_id.to_be_bytes());
-        out[off + 4..off + 6].copy_from_slice(&self.instance_id.to_be_bytes());
-        out[off + 6..off + 8].copy_from_slice(&self.ack_or_reserved.to_be_bytes());
-        out[off + 8..off + 12].copy_from_slice(&self.grtt_response_sec.to_be_bytes());
-        out[off + 12..off + 16].copy_from_slice(&self.grtt_response_usec.to_be_bytes());
-        off += 16;
+        out[off + FB_SERVER_ID_OFFSET..off + FB_INSTANCE_ID_OFFSET]
+            .copy_from_slice(&self.server_id.to_be_bytes());
+        out[off + FB_INSTANCE_ID_OFFSET..off + FB_ACK_OFFSET]
+            .copy_from_slice(&self.instance_id.to_be_bytes());
+        out[off + FB_ACK_OFFSET..off + FB_GRTT_SEC_OFFSET]
+            .copy_from_slice(&self.ack_or_reserved.to_be_bytes());
+        out[off + FB_GRTT_SEC_OFFSET..off + FB_GRTT_USEC_OFFSET]
+            .copy_from_slice(&self.grtt_response_sec.to_be_bytes());
+        out[off + FB_GRTT_USEC_OFFSET..off + FB_BODY_FIXED_LEN]
+            .copy_from_slice(&self.grtt_response_usec.to_be_bytes());
+        off += FB_BODY_FIXED_LEN;
         off += ext::serialize_chain(&self.extensions, &mut out[off..])?;
         out[off..off + self.payload.len()].copy_from_slice(self.payload);
         off += self.payload.len();

@@ -31,8 +31,8 @@ pub use error::{Error, Result};
 pub use ext::{FIXED_HET_MIN, HeaderExtension, WORD, chain_len, parse_chain, serialize_chain};
 pub use fec::SourceBlockPartition;
 pub use flute::{
-    CencAlgorithm, ExtCenc, ExtFdt, FDT_INSTANCE_ID_MAX, FLUTE_VERSION, HET_EXT_CENC, HET_EXT_FDT,
-    TOI_FDT,
+    CencAlgorithm, EXT_CONTENT_LEN, ExtCenc, ExtFdt, FDT_INSTANCE_ID_MAX, FLUTE_VERSION,
+    HET_EXT_CENC, HET_EXT_FDT, TOI_FDT,
 };
 pub use id::{FecPayloadId, ID_MAX_LEN, Toi, Tsi};
 pub use lct::{FIXED_HEADER_LEN, LCT_VERSION, LctHeader};
@@ -46,5 +46,5 @@ pub use norm::{
     NORM_FLAG_INFO, NORM_FLAG_REPAIR, NORM_FLAG_STREAM, NORM_FLAG_UNRELIABLE, NORM_INFO_FIXED_LEN,
     NORM_NODE_ANY, NORM_NODE_NONE, NORM_VERSION, NormAckType, NormCmd, NormCmdBody, NormCmdType,
     NormCommonHeader, NormData, NormFeedback, NormInfo, NormMessageType, SENDER_WORD_LEN,
-    SenderWord,
+    SUBTYPE_TRAILING_LEN, SenderWord,
 };

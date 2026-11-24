@@ -1,6 +1,9 @@
 //! Page Composition Segment — ETSI EN 300 743 §7.2.2, Table 9 (segment_type 0x10).
 
 use crate::error::{Error, Result};
+use crate::segments::{
+    PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -12,6 +15,27 @@ pub const HEADER_LEN: usize = 6;
 pub const FIXED_LEN: usize = 2;
 /// Each region entry: region_id(1) + reserved(1) + region_horizontal_address(2) + region_vertical_address(2) = 6 bytes.
 pub const REGION_ENTRY_LEN: usize = 6;
+
+/// Offset of `page_time_out` within the segment body.
+const PAGE_TIME_OUT_OFFSET: usize = 0;
+/// Offset of the version/state/reserved byte within the segment body.
+const PAGE_STATE_OFFSET: usize = 1;
+/// Shift placing `page_version_number` at the top of its byte.
+const PAGE_VERSION_SHIFT: u32 = 4;
+/// Mask of `page_version_number`.
+const PAGE_VERSION_MASK: u8 = 0x0F;
+/// Shift placing `page_state` below the version nibble.
+const PAGE_STATE_SHIFT: u32 = 2;
+/// Mask of `page_state`.
+const PAGE_STATE_MASK: u8 = 0x03;
+/// Mask of the reserved bits beside `page_state`.
+const RESERVED_MASK: u8 = 0x03;
+
+/// Offsets within a page region entry.
+const REGION_ID_OFFSET: usize = 0;
+const REGION_RESERVED_OFFSET: usize = 1;
+const REGION_HORIZONTAL_OFFSET: usize = 2;
+const REGION_VERTICAL_OFFSET: usize = 4;
 
 /// Page state as defined in Table 10.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,20 +93,28 @@ pub struct PageRegionEntry {
 
 impl PageRegionEntry {
     fn serialize_into(&self, buf: &mut [u8]) {
-        buf[0] = self.region_id;
-        buf[1] = self.reserved;
-        buf[2..4].copy_from_slice(&self.region_horizontal_address.to_be_bytes());
-        buf[4..6].copy_from_slice(&self.region_vertical_address.to_be_bytes());
+        buf[REGION_ID_OFFSET] = self.region_id;
+        buf[REGION_RESERVED_OFFSET] = self.reserved;
+        buf[REGION_HORIZONTAL_OFFSET..REGION_VERTICAL_OFFSET]
+            .copy_from_slice(&self.region_horizontal_address.to_be_bytes());
+        buf[REGION_VERTICAL_OFFSET..REGION_ENTRY_LEN]
+            .copy_from_slice(&self.region_vertical_address.to_be_bytes());
     }
 
     fn parse(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, REGION_ENTRY_LEN, "page_region_entry")?;
-        let reserved = bytes[1];
+        let reserved = bytes[REGION_RESERVED_OFFSET];
         Ok(PageRegionEntry {
-            region_id: bytes[0],
+            region_id: bytes[REGION_ID_OFFSET],
             reserved,
-            region_horizontal_address: u16::from_be_bytes([bytes[2], bytes[3]]),
-            region_vertical_address: u16::from_be_bytes([bytes[4], bytes[5]]),
+            region_horizontal_address: u16::from_be_bytes([
+                bytes[REGION_HORIZONTAL_OFFSET],
+                bytes[REGION_HORIZONTAL_OFFSET + 1],
+            ]),
+            region_vertical_address: u16::from_be_bytes([
+                bytes[REGION_VERTICAL_OFFSET],
+                bytes[REGION_VERTICAL_OFFSET + 1],
+            ]),
         })
     }
 }
@@ -117,19 +149,22 @@ impl<'a> Parse<'a> for PageCompositionSegment {
                 found: u32::from(bytes[0]),
             }));
         }
-        if bytes[1] != SEGMENT_TYPE {
-            return Err(Error::UnknownSegmentType(bytes[1]));
+        if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
+            return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
+        let segment_length = u16::from_be_bytes([
+            bytes[SEGMENT_LENGTH_OFFSET],
+            bytes[SEGMENT_LENGTH_OFFSET + 1],
+        ]) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "page_composition_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
         need_in(body, FIXED_LEN, "page_composition_segment body")?;
-        let page_time_out = body[0];
-        let page_version_number = body[1] >> 4;
-        let page_state_bits = (body[1] >> 2) & 0x03;
-        let reserved = body[1] & 0x03;
+        let page_time_out = body[PAGE_TIME_OUT_OFFSET];
+        let page_version_number = body[PAGE_STATE_OFFSET] >> PAGE_VERSION_SHIFT;
+        let page_state_bits = (body[PAGE_STATE_OFFSET] >> PAGE_STATE_SHIFT) & PAGE_STATE_MASK;
+        let reserved = body[PAGE_STATE_OFFSET] & RESERVED_MASK;
         let page_state = match page_state_bits {
             0x00 => PageState::Normal,
             0x01 => PageState::Acquisition,
@@ -181,21 +216,26 @@ impl Serialize for PageCompositionSegment {
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = 0x0F;
-        buf[1] = SEGMENT_TYPE;
-        buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
+        buf[0] = crate::pes_data_field::SYNC_BYTE;
+        buf[SEGMENT_TYPE_OFFSET] = SEGMENT_TYPE;
+        buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]
+            .copy_from_slice(&self.page_id.to_be_bytes());
         let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
-        buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
+        buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
+            .copy_from_slice(&seg_len.to_be_bytes());
 
-        buf[6] = self.page_time_out;
-        buf[7] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + PAGE_TIME_OUT_OFFSET] = self.page_time_out;
+        buf[HEADER_LEN + PAGE_STATE_OFFSET] = (broadcast_common::len::fit_mask(
             self.page_version_number,
-            0x0F,
+            PAGE_VERSION_MASK,
             "page_version_number",
-        )? << 4)
-            | (broadcast_common::len::fit_mask(self.page_state.to_bits(), 0x03, "page_state")?
-                << 2)
-            | broadcast_common::len::fit_mask(self.reserved, 0x03, "reserved")?;
+        )? << PAGE_VERSION_SHIFT)
+            | (broadcast_common::len::fit_mask(
+                self.page_state.to_bits(),
+                PAGE_STATE_MASK,
+                "page_state",
+            )? << PAGE_STATE_SHIFT)
+            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
 
         for (i, region) in self.regions.iter().enumerate() {
             let off = HEADER_LEN + FIXED_LEN + i * REGION_ENTRY_LEN;

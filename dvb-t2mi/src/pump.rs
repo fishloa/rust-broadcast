@@ -444,7 +444,7 @@ impl T2miPump {
                     // reassembler sees pointer=0 and treats the rest as the start
                     // of a new T2-MI packet.
                     let mut buf = Vec::with_capacity(1 + data.len());
-                    buf.push(0x00); // pointer_field = 0
+                    buf.push(0); // pointer_field = 0
                     buf.extend_from_slice(data);
                     self.reasm.feed(&buf, true);
                     self.raw_started = true;
@@ -551,7 +551,7 @@ impl T2miPump {
                 self.reasm.drop_buffered();
                 if tail_len > 0 {
                     let mut init = Vec::with_capacity(1 + tail_len);
-                    init.push(0x00); // pointer_field = 0
+                    init.push(0); // pointer_field = 0
                     init.extend_from_slice(&self.raw_hunt_buf);
                     self.reasm.feed(&init, true);
                     // The scan judged this tail undecided, but the
@@ -602,7 +602,7 @@ impl T2miPump {
                 self.reasm.drop_buffered();
                 if straddle_len > 0 {
                     let mut init = Vec::with_capacity(1 + straddle_len);
-                    init.push(0x00); // pointer_field = 0
+                    init.push(0); // pointer_field = 0
                     init.extend_from_slice(&straddler);
                     self.reasm.feed(&init, true);
                 }

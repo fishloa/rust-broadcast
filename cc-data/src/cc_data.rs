@@ -24,6 +24,23 @@ const CC_COUNT_MASK: u8 = 0x1F;
 /// (TS 101 154 Table B.9); also the value they must hold.
 const TRIPLET_FIXED_MASK: u8 = 0xF8;
 
+/// Byte offsets of the cc_data() header (Table B.9).
+const PROCESSING_BYTE_OFFSET: usize = 0;
+const RESERVED_BYTE_OFFSET: usize = PROCESSING_BYTE_OFFSET + 1;
+/// Byte length of the cc_data() header and of its trailing `marker_bits` byte.
+const HEADER_LEN: usize = 2;
+const MARKER_LEN: usize = 1;
+/// Triplet layout: flags(1) + `cc_data_1`(1) + `cc_data_2`(1).
+const TRIPLET_LEN: usize = 3;
+const TRIPLET_FLAGS_OFFSET: usize = 0;
+const CC_DATA_1_OFFSET: usize = TRIPLET_FLAGS_OFFSET + 1;
+const CC_DATA_2_OFFSET: usize = CC_DATA_1_OFFSET + 1;
+/// Bit shift and mask of `cc_valid` within a triplet's flags byte.
+const CC_VALID_SHIFT: u32 = 2;
+const CC_VALID_MASK: u8 = 0x01;
+/// Mask of the 2-bit `cc_type` field.
+const CC_TYPE_MASK: u8 = 0x03;
+
 /// `cc_type` — the type of the caption data byte pair (TS 101 154 Table B.9 /
 /// CEA-708-E). 2-bit field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +61,7 @@ impl CcType {
     /// From the 2-bit wire value.
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x03 {
+        match v & CC_TYPE_MASK {
             0 => Self::Ntsc608Field1,
             1 => Self::Ntsc608Field2,
             2 => Self::Dtvcc708Data,
@@ -158,19 +175,19 @@ impl<'a> Parse<'a> for CcData {
     fn parse(b: &'a [u8]) -> Result<Self> {
         // byte0: reserved(1) | process_cc_data_flag(1) | zero_bit(1) | cc_count(5)
         // byte1: reserved 0xFF
-        need_in(b, 2, "cc_data header")?;
+        need_in(b, HEADER_LEN, "cc_data header")?;
         // byte0 bits 7 and 5 are reserved/zero in Table B.9 but carry
         // `process_em_data_flag` / `additional_data_flag` in real A/53
         // streams: accept either value and keep it (reserved-bit policy).
-        let process_em_data_flag = b[0] & PROCESS_EM_DATA_FLAG_BIT != 0;
-        let process_cc_data_flag = b[0] & PROCESS_CC_DATA_FLAG_BIT != 0;
-        let additional_data_flag = b[0] & ADDITIONAL_DATA_FLAG_BIT != 0;
-        let cc_count = usize::from(b[0] & CC_COUNT_MASK);
-        let reserved_byte1 = b[1];
-        let total = 2 + cc_count * 3 + 1; // header + triplets + marker
+        let process_em_data_flag = b[PROCESSING_BYTE_OFFSET] & PROCESS_EM_DATA_FLAG_BIT != 0;
+        let process_cc_data_flag = b[PROCESSING_BYTE_OFFSET] & PROCESS_CC_DATA_FLAG_BIT != 0;
+        let additional_data_flag = b[PROCESSING_BYTE_OFFSET] & ADDITIONAL_DATA_FLAG_BIT != 0;
+        let cc_count = usize::from(b[PROCESSING_BYTE_OFFSET] & CC_COUNT_MASK);
+        let reserved_byte1 = b[RESERVED_BYTE_OFFSET];
+        let total = HEADER_LEN + cc_count * TRIPLET_LEN + MARKER_LEN;
         need_in(b, total, "cc_data triplets")?;
         let mut triplets = Vec::with_capacity(cc_count);
-        let mut pos = 2;
+        let mut pos = HEADER_LEN;
         for _ in 0..cc_count {
             let flags = b[pos];
             // one_bit(1) | reserved(4, set to "1111") | cc_valid(1) | cc_type(2)
@@ -182,12 +199,12 @@ impl<'a> Parse<'a> for CcData {
                 }));
             }
             triplets.push(CcTriplet {
-                cc_valid: (flags >> 2) & 0x01 != 0,
+                cc_valid: (flags >> CC_VALID_SHIFT) & CC_VALID_MASK != 0,
                 cc_type: CcType::from_bits(flags),
-                cc_data_1: b[pos + 1],
-                cc_data_2: b[pos + 2],
+                cc_data_1: b[pos + CC_DATA_1_OFFSET],
+                cc_data_2: b[pos + CC_DATA_2_OFFSET],
             });
-            pos += 3;
+            pos += TRIPLET_LEN;
         }
         if b[pos] != FF {
             return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
@@ -209,7 +226,7 @@ impl<'a> Parse<'a> for CcData {
 impl Serialize for CcData {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        2 + self.triplets.len() * 3 + 1
+        HEADER_LEN + self.triplets.len() * TRIPLET_LEN + MARKER_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.triplets.len() > MAX_CC_COUNT {
@@ -225,13 +242,14 @@ impl Serialize for CcData {
             | (u8::from(self.additional_data_flag) * ADDITIONAL_DATA_FLAG_BIT)
             | cc_count;
         buf[1] = self.reserved_byte1;
-        let mut pos = 2;
+        let mut pos = HEADER_LEN;
         for t in &self.triplets {
             // one_bit=1, reserved=1111, cc_valid, cc_type
-            buf[pos] = TRIPLET_FIXED_MASK | (u8::from(t.cc_valid) << 2) | t.cc_type.to_bits();
-            buf[pos + 1] = t.cc_data_1;
-            buf[pos + 2] = t.cc_data_2;
-            pos += 3;
+            buf[pos + TRIPLET_FLAGS_OFFSET] =
+                TRIPLET_FIXED_MASK | (u8::from(t.cc_valid) << CC_VALID_SHIFT) | t.cc_type.to_bits();
+            buf[pos + CC_DATA_1_OFFSET] = t.cc_data_1;
+            buf[pos + CC_DATA_2_OFFSET] = t.cc_data_2;
+            pos += TRIPLET_LEN;
         }
         buf[pos] = FF; // marker_bits
         Ok(len)

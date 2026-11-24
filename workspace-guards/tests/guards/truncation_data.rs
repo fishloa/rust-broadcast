@@ -70,29 +70,9 @@ pub const TABLE: &[Crate] = &[
                 "write_apdu_header runs first and length::encode_with rejects any APDU body > 0xFFFF (LengthTooLarge), so loc.len() + 2 <= 0xFFFF.",
             ),
             (
-                "src/ci_plus/cicam_player.rs",
-                "buf[pos..pos + 2].copy_from_slice(&(self.component_types.len() as u16).to_be_bytes());",
-                "write_apdu_header rejects body > 0xFFFF first; count * 2 + 2 <= 0xFFFF.",
-            ),
-            (
-                "src/ci_plus/cicam_player.rs",
-                "buf[pos + 5..pos + 7].copy_from_slice(&(self.pmt.len() as u16).to_be_bytes());",
-                "write_apdu_header rejects body > 0xFFFF first; pmt.len() + 7 <= 0xFFFF.",
-            ),
-            (
-                "src/ci_plus/cicam_player.rs",
-                "buf[pos + 1..pos + 3].copy_from_slice(&(self.pmt.len() as u16).to_be_bytes());",
-                "write_apdu_header rejects body > 0xFFFF first; pmt.len() + 3 <= 0xFFFF.",
-            ),
-            (
                 "src/builder.rs",
                 "out.push(body.len() as u8);",
                 "body comes from DescriptorLoop::raw_tags, which already validated it fits the declared 8-bit descriptor_length.",
-            ),
-            (
-                "src/ci_plus/low_speed_comms_v4.rs",
-                "buf[p + 3] = self.source_addresses.len() as u8;",
-                "bounded by write_descriptor_header just above, which rejects descriptor_length > 255 (count * 17 + fixed <= 255).",
             ),
             (
                 "src/ci_plus/sample_decryption.rs",

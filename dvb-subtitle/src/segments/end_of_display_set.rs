@@ -1,6 +1,9 @@
 //! End of Display Set Segment — ETSI EN 300 743 §7.2.6, Table 28 (segment_type 0x80).
 
 use crate::error::{Error, Result};
+use crate::segments::{
+    PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -29,11 +32,14 @@ impl<'a> Parse<'a> for EndOfDisplaySetSegment {
                 found: u32::from(bytes[0]),
             }));
         }
-        if bytes[1] != SEGMENT_TYPE {
-            return Err(Error::UnknownSegmentType(bytes[1]));
+        if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
+            return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]);
+        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
+        let segment_length = u16::from_be_bytes([
+            bytes[SEGMENT_LENGTH_OFFSET],
+            bytes[SEGMENT_LENGTH_OFFSET + 1],
+        ]);
         if segment_length != 0 {
             return Err(Error::SegmentTooLarge);
         }
@@ -51,10 +57,12 @@ impl Serialize for EndOfDisplaySetSegment {
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = 0x0F;
-        buf[1] = SEGMENT_TYPE;
-        buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
-        buf[4..6].copy_from_slice(&0u16.to_be_bytes()); // segment_length = 0
+        buf[0] = crate::pes_data_field::SYNC_BYTE;
+        buf[SEGMENT_TYPE_OFFSET] = SEGMENT_TYPE;
+        buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]
+            .copy_from_slice(&self.page_id.to_be_bytes());
+        buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
+            .copy_from_slice(&0u16.to_be_bytes()); // segment_length = 0
         Ok(len)
     }
 }

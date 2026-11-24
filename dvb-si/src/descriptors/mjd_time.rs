@@ -12,6 +12,10 @@ use crate::error::{Error, Result};
 /// Wire width of the field in bytes (16-bit MJD + 24-bit BCD `HHMMSS`).
 pub const MJD_BCD_LEN: usize = 5;
 
+/// Number of struct fields written by the serde implementation.
+#[cfg(feature = "serde")]
+const MJD_BCD_TIME_SERDE_FIELDS: usize = 4;
+
 /// A 40-bit MJD + BCD UTC timestamp, kept as received.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MjdBcdTime([u8; MJD_BCD_LEN]);
@@ -91,7 +95,7 @@ impl serde::Serialize for MjdBcdTime {
     fn serialize<S: serde::Serializer>(&self, s: S) -> core::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let (mjd, hour, minute, second) = self.parts();
-        let mut st = s.serialize_struct("MjdBcdTime", 4)?;
+        let mut st = s.serialize_struct("MjdBcdTime", MJD_BCD_TIME_SERDE_FIELDS)?;
         st.serialize_field("mjd", &mjd)?;
         st.serialize_field("hour", &hour)?;
         st.serialize_field("minute", &minute)?;

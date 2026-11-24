@@ -181,7 +181,9 @@ const SPLITMIX_SHIFT_B: u32 = 27;
 const SPLITMIX_SHIFT_C: u32 = 31;
 
 /// The bit forced into a seeded xorshift state so it is never all zero.
-const NON_ZERO_STATE_BIT: u64 = 1;
+const SEED_STATE_BIT: u64 = 1;
+/// Multiplier applied to the delay on each doubling step.
+const DOUBLING_FACTOR: u32 = 2;
 
 /// A capped, jittered retry schedule.
 ///
@@ -488,7 +490,7 @@ impl ReconnectPolicy {
         };
         while step < max {
             steps.push(step);
-            step = step.saturating_mul(2);
+            step = step.saturating_mul(DOUBLING_FACTOR);
         }
         Self::new(BackoffSteps {
             steps,
@@ -506,18 +508,19 @@ impl ReconnectPolicy {
     }
 }
 
+/// Default reconnect-backoff schedule: 1 s, 2 s, 4 s, 8 s, 16 s.
+const DEFAULT_BACKOFF_STEPS_SECS: [u64; 5] = [1, 2, 4, 8, 16];
+/// Default reconnect-backoff cap.
+const DEFAULT_BACKOFF_CAP_SECS: u64 = 30;
+
 impl Default for ReconnectPolicy {
     fn default() -> Self {
-        let second = Duration::from_secs(1);
         Self::new(BackoffSteps {
-            steps: alloc::vec![
-                second,
-                second.saturating_mul(2),
-                second.saturating_mul(4),
-                second.saturating_mul(8),
-                second.saturating_mul(16),
-            ],
-            cap: Duration::from_secs(30),
+            steps: DEFAULT_BACKOFF_STEPS_SECS
+                .iter()
+                .map(|secs| Duration::from_secs(*secs))
+                .collect(),
+            cap: Duration::from_secs(DEFAULT_BACKOFF_CAP_SECS),
         })
     }
 }
@@ -607,7 +610,7 @@ fn avalanche(value: u64) -> u64 {
     let mut z = value;
     z = (z ^ (z >> SPLITMIX_SHIFT_A)).wrapping_mul(SPLITMIX_MUL_A);
     z = (z ^ (z >> SPLITMIX_SHIFT_B)).wrapping_mul(SPLITMIX_MUL_B);
-    (z ^ (z >> SPLITMIX_SHIFT_C)) | NON_ZERO_STATE_BIT
+    (z ^ (z >> SPLITMIX_SHIFT_C)) | SEED_STATE_BIT
 }
 
 /// Mixes the caller's own entropy into a seed for [`RetrySchedule::new`].

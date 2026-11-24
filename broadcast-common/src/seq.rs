@@ -120,7 +120,7 @@ impl SeqSpace {
     #[must_use]
     pub const fn diff(self, a: u32, b: u32) -> i32 {
         let modulus = self.modulus() as i64;
-        let half = modulus / 2;
+        let half = modulus >> 1;
         let raw = ((a & self.mask()) as i64 - (b & self.mask()) as i64).rem_euclid(modulus);
         // Either branch lands in `(-2^30, 2^30]` (bits <= 31), which fits an `i32`.
         (if raw > half { raw - modulus } else { raw }) as i32

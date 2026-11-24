@@ -14,6 +14,10 @@ const MB_BUFFER_BITS: u32 = 24;
 const TB_LEAK_BITS: u32 = 24;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 6;
+/// Wire width of one 24-bit field.
+const FIELD_LEN: usize = 3;
+/// Offset of `TB_leak_rate` in the body.
+const TB_LEAK_RATE_OFFSET: usize = FIELD_LEN;
 
 /// MultiplexBuffer Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +27,13 @@ pub struct MultiplexBufferDescriptor {
     pub mb_buffer_size: u32,
     /// TB_leak_rate, 24-bit uimsbf, in units of 400 bits/s.
     pub tb_leak_rate: u32,
+}
+
+/// Decode a 24-bit big-endian field from its three wire bytes.
+fn read_u24(bytes: &[u8]) -> u32 {
+    let mut raw = [0u8; size_of::<u32>()];
+    raw[1..].copy_from_slice(bytes);
+    u32::from_be_bytes(raw)
 }
 
 impl<'a> Parse<'a> for MultiplexBufferDescriptor {
@@ -41,8 +52,8 @@ impl<'a> Parse<'a> for MultiplexBufferDescriptor {
                 reason: "MultiplexBuffer_descriptor length must equal 6",
             });
         }
-        let mb_buffer_size = u32::from_be_bytes([0, body[0], body[1], body[2]]);
-        let tb_leak_rate = u32::from_be_bytes([0, body[3], body[4], body[5]]);
+        let mb_buffer_size = read_u24(&body[..FIELD_LEN]);
+        let tb_leak_rate = read_u24(&body[TB_LEAK_RATE_OFFSET..TB_LEAK_RATE_OFFSET + FIELD_LEN]);
         Ok(Self {
             mb_buffer_size,
             tb_leak_rate,
@@ -72,8 +83,9 @@ impl Serialize for MultiplexBufferDescriptor {
         )?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN..HEADER_LEN + 3].copy_from_slice(&(mb as u32).to_be_bytes()[1..]);
-        buf[HEADER_LEN + 3..HEADER_LEN + 6].copy_from_slice(&(tb as u32).to_be_bytes()[1..]);
+        buf[HEADER_LEN..HEADER_LEN + FIELD_LEN].copy_from_slice(&(mb as u32).to_be_bytes()[1..]);
+        buf[HEADER_LEN + TB_LEAK_RATE_OFFSET..HEADER_LEN + TB_LEAK_RATE_OFFSET + FIELD_LEN]
+            .copy_from_slice(&(tb as u32).to_be_bytes()[1..]);
         Ok(len)
     }
 }

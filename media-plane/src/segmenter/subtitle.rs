@@ -62,12 +62,13 @@ const PTS_HZ_TICKS: i128 = clock33::PTS_HZ as i128;
 /// Wall-clock nanoseconds to 90 kHz PTS ticks (the subtitle timeline unit).
 fn duration_ticks(duration: Duration) -> i64 {
     let nanos = i128::try_from(duration.as_nanos()).unwrap_or(i128::MAX);
-    i64::try_from(nanos.saturating_mul(PTS_HZ_TICKS) / 1_000_000_000).unwrap_or(i64::MAX)
+    i64::try_from(nanos.saturating_mul(PTS_HZ_TICKS) / i128::from(NANOS_PER_SEC))
+        .unwrap_or(i64::MAX)
 }
 
 /// 90 kHz PTS ticks to a wall-clock [`Duration`].
 fn ticks_duration(ticks: i64) -> Duration {
-    let nanos = i128::from(ticks).saturating_mul(1_000_000_000) / PTS_HZ_TICKS;
+    let nanos = i128::from(ticks).saturating_mul(i128::from(NANOS_PER_SEC)) / PTS_HZ_TICKS;
     let nanos = u64::try_from(nanos.max(0)).unwrap_or(u64::MAX);
     Duration::from_nanos(nanos)
 }
@@ -78,7 +79,7 @@ const NANOS_PER_SEC: u64 = 1_000_000_000;
 const MPEGTS_AT_ORIGIN: u64 = 0;
 
 /// Where `magazine_number` 0 points (EN 300 468 §6.2.43: magazine 8).
-const MAGAZINE_ZERO_IS: u8 = 8;
+const TELETEXT_MAGAZINE_8: u8 = 8;
 
 /// One teletext subtitle page a program offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,7 +134,7 @@ pub fn teletext_pages(route: &str, max_pages: usize, tracks: &[TrackSpec]) -> Ve
                     continue;
                 };
                 let magazine = match entry.magazine_number {
-                    0 => MAGAZINE_ZERO_IS,
+                    0 => TELETEXT_MAGAZINE_8,
                     m => m,
                 };
                 let Some(language) = bcp47_language(&entry.language_code.as_str()) else {

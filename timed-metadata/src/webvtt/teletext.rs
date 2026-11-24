@@ -54,6 +54,78 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// Bytes in one `txt_data_block` (EN 300 706 packet as carried by an
+/// EN 301 775 VBI data field).
+const TXT_DATA_BLOCK_LEN: usize = 42;
+
+/// Wire bit positions of the Hamming-8/4 protection bits P1-P4
+/// (ETSI EN 300 706 §8.2, transmission order, LSB first).
+const P1_BIT: u32 = 0;
+const P2_BIT: u32 = 2;
+const P3_BIT: u32 = 4;
+const P4_BIT: u32 = 6;
+/// Wire bit positions of the Hamming-8/4 data bits D1-D4.
+const D1_BIT: u32 = 1;
+const D2_BIT: u32 = 3;
+const D3_BIT: u32 = 5;
+const D4_BIT: u32 = 7;
+/// Bit positions of D1-D4 inside the decoded nibble.
+const D1_NIBBLE_BIT: u32 = 0;
+const D2_NIBBLE_BIT: u32 = 1;
+const D3_NIBBLE_BIT: u32 = 2;
+const D4_NIBBLE_BIT: u32 = 3;
+/// Wire bits in one Hamming-8/4 protected byte.
+const HAMMING_BITS: u8 = 8;
+
+/// Mask of the 3-bit national-option value C12-C14 (EN 300 706 Table 2).
+const NATIONAL_OPTION_MASK: u8 = 0x7;
+/// Bit positions of C12-C14 in the packed national-option value.
+const C12_VALUE_BIT: u32 = 2;
+const C13_VALUE_BIT: u32 = 1;
+
+/// Mask of the 3-bit magazine field in a packet address (§7.1.2).
+const MAGAZINE_MASK: u8 = 0x7;
+/// Highest magazine number, which the all-zero magazine field denotes
+/// (§9.3.1).
+const MAGAZINE_HIGHEST: u8 = 8;
+/// Bit position of the row's high bit, which shares the first address byte.
+const ROW_HIGH_BIT: u32 = 3;
+/// Shift of the row's low bits, which come from the second address byte.
+const ROW_LOW_SHIFT: u32 = 1;
+
+/// Mask of the multi-bit fields sharing a nibble with control bits
+/// (§9.3.1): S2 is 3 bits, S4 is 2.
+const S2_MASK: u8 = 0x7;
+const S4_MASK: u8 = 0x3;
+/// Bit positions of the control bits inside their decoded nibbles.
+const C4_BIT: u32 = 3;
+const C5_BIT: u32 = 2;
+const C6_BIT: u32 = 3;
+const C7_BIT: u32 = 0;
+const C8_BIT: u32 = 1;
+const C9_BIT: u32 = 2;
+const C10_BIT: u32 = 3;
+const C11_BIT: u32 = 0;
+const C12_BIT: u32 = 1;
+const C13_BIT: u32 = 2;
+const C14_BIT: u32 = 3;
+/// Shift of the page-tens nibble above the page-units nibble (§9.3.1.1).
+const PAGE_TENS_SHIFT: u32 = 4;
+
+/// Byte offsets of the page header's Hamming-8/4 fields inside a
+/// `txt_data_block` (EN 300 706 §9.3.1, packet bytes 6-13).
+const PAGE_UNITS_OFFSET: usize = 2;
+const PAGE_TENS_OFFSET: usize = 3;
+const S1_OFFSET: usize = 4;
+const S2_C4_OFFSET: usize = 5;
+const S3_OFFSET: usize = 6;
+const S4_C5_C6_OFFSET: usize = 7;
+const C7_C10_OFFSET: usize = 8;
+const C11_C14_OFFSET: usize = 9;
+
+/// The full-block glyph a reserved Table 35 position renders as.
+const FULL_BLOCK: char = '\u{2588}';
+
 /// Decode a Hamming-8/4 protected byte (ETSI EN 300 706 §8.2): bits 1,3,5,7
 /// (transmission order, i.e. the LSB-first bit positions `0x01,0x04,0x10,0x40`)
 /// are the protection bits P1-P4, bits 2,4,6,8 (`0x02,0x08,0x20,0x80`) carry
@@ -73,17 +145,19 @@ use alloc::vec::Vec;
 /// codeword (an uncorrectable, "double error", byte per §8.2's decode table).
 #[must_use]
 pub fn decode_hamming_8_4(byte: u8) -> Option<u8> {
-    let candidate =
-        (byte >> 1) & 1 | ((byte >> 3) & 1) << 1 | ((byte >> 5) & 1) << 2 | ((byte >> 7) & 1) << 3;
+    let candidate = ((byte >> D1_BIT) & 1) << D1_NIBBLE_BIT
+        | ((byte >> D2_BIT) & 1) << D2_NIBBLE_BIT
+        | ((byte >> D3_BIT) & 1) << D3_NIBBLE_BIT
+        | ((byte >> D4_BIT) & 1) << D4_NIBBLE_BIT;
     if encode_hamming_8_4(candidate) == byte {
         return Some(candidate);
     }
-    for bit in 0..8u8 {
+    for bit in 0..HAMMING_BITS {
         let flipped = byte ^ (1 << bit);
-        let candidate = (flipped >> 1) & 1
-            | ((flipped >> 3) & 1) << 1
-            | ((flipped >> 5) & 1) << 2
-            | ((flipped >> 7) & 1) << 3;
+        let candidate = ((flipped >> D1_BIT) & 1) << D1_NIBBLE_BIT
+            | ((flipped >> D2_BIT) & 1) << D2_NIBBLE_BIT
+            | ((flipped >> D3_BIT) & 1) << D3_NIBBLE_BIT
+            | ((flipped >> D4_BIT) & 1) << D4_NIBBLE_BIT;
         if encode_hamming_8_4(candidate) == flipped {
             return Some(candidate);
         }
@@ -106,15 +180,22 @@ pub fn decode_hamming_8_4(byte: u8) -> Option<u8> {
 /// Only the low 4 bits of `nibble` are used.
 #[must_use]
 pub fn encode_hamming_8_4(nibble: u8) -> u8 {
-    let d1 = nibble & 1;
-    let d2 = (nibble >> 1) & 1;
-    let d3 = (nibble >> 2) & 1;
-    let d4 = (nibble >> 3) & 1;
+    let d1 = (nibble >> D1_NIBBLE_BIT) & 1;
+    let d2 = (nibble >> D2_NIBBLE_BIT) & 1;
+    let d3 = (nibble >> D3_NIBBLE_BIT) & 1;
+    let d4 = (nibble >> D4_NIBBLE_BIT) & 1;
     let p1 = 1 ^ d1 ^ d3 ^ d4;
     let p2 = 1 ^ d1 ^ d2 ^ d4;
     let p3 = 1 ^ d1 ^ d2 ^ d3;
     let p4 = 1 ^ p1 ^ d1 ^ p2 ^ d2 ^ p3 ^ d3 ^ d4;
-    p1 | (d1 << 1) | (p2 << 2) | (d2 << 3) | (p3 << 4) | (d3 << 5) | (p4 << 6) | (d4 << 7)
+    (p1 << P1_BIT)
+        | (d1 << D1_BIT)
+        | (p2 << P2_BIT)
+        | (d2 << D2_BIT)
+        | (p3 << P3_BIT)
+        | (d3 << D3_BIT)
+        | (p4 << P4_BIT)
+        | (d4 << D4_BIT)
 }
 
 /// The C12/C13/C14 "National Option Character Subset" selector (ETSI
@@ -167,7 +248,7 @@ impl NationalOption {
     /// Decode from the packed 3-bit value `(c12 << 2) | (c13 << 1) | c14`.
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x7 {
+        match v & NATIONAL_OPTION_MASK {
             0 => NationalOption::English,
             1 => NationalOption::German,
             2 => NationalOption::SwedishFinnishHungarian,
@@ -221,7 +302,7 @@ pub fn latin_g0_char(code: u8, option: NationalOption) -> char {
         return ' ';
     }
     if code == FULL_BLOCK_CODE {
-        return '\u{2588}';
+        return FULL_BLOCK;
     }
     if let Some(subset) = national_subset(option)
         && let Some(slot) = NATIONAL_POSITIONS.iter().position(|&p| p == code)
@@ -246,7 +327,7 @@ const NATIONAL_POSITIONS: [u8; 13] = [
     0x23, 0x24, 0x40, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60, 0x7B, 0x7C, 0x7D, 0x7E,
 ];
 
-type NationalSubset = [char; 13];
+type NationalSubset = [char; NATIONAL_POSITIONS.len()];
 
 const CZECH_SLOVAK: NationalSubset = [
     '#', 'ů', 'č', 'ť', 'ž', 'ý', 'í', 'ř', 'é', 'á', 'ě', 'ú', 'š',
@@ -330,10 +411,14 @@ pub struct PacketAddress {
 pub fn decode_packet_address(b4: u8, b5: u8) -> Option<PacketAddress> {
     let n4 = decode_hamming_8_4(b4)?;
     let n5 = decode_hamming_8_4(b5)?;
-    let mag_field = n4 & 0x7;
-    let magazine = if mag_field == 0 { 8 } else { mag_field };
-    let y0 = (n4 >> 3) & 1;
-    let row = y0 | (n5 << 1);
+    let mag_field = n4 & MAGAZINE_MASK;
+    let magazine = if mag_field == 0 {
+        MAGAZINE_HIGHEST
+    } else {
+        mag_field
+    };
+    let y0 = (n4 >> ROW_HIGH_BIT) & 1;
+    let row = y0 | (n5 << ROW_LOW_SHIFT);
     Some(PacketAddress { magazine, row })
 }
 
@@ -377,32 +462,32 @@ impl PageHeader {
     /// packet address precede these). Returns `None` if any of the 8 bytes
     /// is an uncorrectable Hamming-8/4 byte.
     #[must_use]
-    pub fn parse(txt_data_block: &[u8; 42]) -> Option<PageHeader> {
-        let page_units = decode_hamming_8_4(txt_data_block[2])?;
-        let page_tens = decode_hamming_8_4(txt_data_block[3])?;
-        let s1 = decode_hamming_8_4(txt_data_block[4])?;
-        let n_s2_c4 = decode_hamming_8_4(txt_data_block[5])?;
-        let s3 = decode_hamming_8_4(txt_data_block[6])?;
-        let n_s4_c5_c6 = decode_hamming_8_4(txt_data_block[7])?;
-        let n_c7_c10 = decode_hamming_8_4(txt_data_block[8])?;
-        let n_c11_c14 = decode_hamming_8_4(txt_data_block[9])?;
+    pub fn parse(txt_data_block: &[u8; TXT_DATA_BLOCK_LEN]) -> Option<PageHeader> {
+        let page_units = decode_hamming_8_4(txt_data_block[PAGE_UNITS_OFFSET])?;
+        let page_tens = decode_hamming_8_4(txt_data_block[PAGE_TENS_OFFSET])?;
+        let s1 = decode_hamming_8_4(txt_data_block[S1_OFFSET])?;
+        let n_s2_c4 = decode_hamming_8_4(txt_data_block[S2_C4_OFFSET])?;
+        let s3 = decode_hamming_8_4(txt_data_block[S3_OFFSET])?;
+        let n_s4_c5_c6 = decode_hamming_8_4(txt_data_block[S4_C5_C6_OFFSET])?;
+        let n_c7_c10 = decode_hamming_8_4(txt_data_block[C7_C10_OFFSET])?;
+        let n_c11_c14 = decode_hamming_8_4(txt_data_block[C11_C14_OFFSET])?;
 
-        let s2 = n_s2_c4 & 0x7;
-        let c4 = (n_s2_c4 >> 3) & 1;
-        let s4 = n_s4_c5_c6 & 0x3;
-        let c5 = (n_s4_c5_c6 >> 2) & 1;
-        let c6 = (n_s4_c5_c6 >> 3) & 1;
-        let c7 = n_c7_c10 & 1;
-        let c8 = (n_c7_c10 >> 1) & 1;
-        let c9 = (n_c7_c10 >> 2) & 1;
-        let c10 = (n_c7_c10 >> 3) & 1;
-        let c11 = n_c11_c14 & 1;
-        let c12 = (n_c11_c14 >> 1) & 1;
-        let c13 = (n_c11_c14 >> 2) & 1;
-        let c14 = (n_c11_c14 >> 3) & 1;
+        let s2 = n_s2_c4 & S2_MASK;
+        let c4 = (n_s2_c4 >> C4_BIT) & 1;
+        let s4 = n_s4_c5_c6 & S4_MASK;
+        let c5 = (n_s4_c5_c6 >> C5_BIT) & 1;
+        let c6 = (n_s4_c5_c6 >> C6_BIT) & 1;
+        let c7 = (n_c7_c10 >> C7_BIT) & 1;
+        let c8 = (n_c7_c10 >> C8_BIT) & 1;
+        let c9 = (n_c7_c10 >> C9_BIT) & 1;
+        let c10 = (n_c7_c10 >> C10_BIT) & 1;
+        let c11 = (n_c11_c14 >> C11_BIT) & 1;
+        let c12 = (n_c11_c14 >> C12_BIT) & 1;
+        let c13 = (n_c11_c14 >> C13_BIT) & 1;
+        let c14 = (n_c11_c14 >> C14_BIT) & 1;
 
         Some(PageHeader {
-            page: (page_tens << 4) | page_units,
+            page: (page_tens << PAGE_TENS_SHIFT) | page_units,
             s1,
             s2,
             s3,
@@ -415,7 +500,9 @@ impl PageHeader {
             interrupted_sequence: c9 != 0,
             inhibit_display: c10 != 0,
             magazine_serial: c11 != 0,
-            national_option: NationalOption::from_bits((c12 << 2) | (c13 << 1) | c14),
+            national_option: NationalOption::from_bits(
+                (c12 << C12_VALUE_BIT) | (c13 << C13_VALUE_BIT) | c14,
+            ),
         })
     }
 }
@@ -428,7 +515,7 @@ const ROW_PAYLOAD_START: usize = 2;
 /// the 7-bit code, `None` a byte that failed its parity check.
 type RowCodes = [Option<u8>; ROW_LEN];
 
-fn decode_row_codes(txt_data_block: &[u8; 42]) -> RowCodes {
+fn decode_row_codes(txt_data_block: &[u8; TXT_DATA_BLOCK_LEN]) -> RowCodes {
     let mut codes = [None; ROW_LEN];
     for (slot, &b) in codes
         .iter_mut()
@@ -517,7 +604,7 @@ impl PageAssembler {
         // §4.5) — `txt_data_block_logical()` undoes that wire order; run
         // Hamming-8/4 / odd-parity decode (which assume the spec's bit order
         // directly) against its output, not the raw `txt_data_block`.
-        let block: [u8; 42] = field.txt_data_block_logical();
+        let block: [u8; TXT_DATA_BLOCK_LEN] = field.txt_data_block_logical();
         let block = &block;
         let Some(addr) = decode_packet_address(block[0], block[1]) else {
             return;

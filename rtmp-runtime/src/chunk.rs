@@ -110,6 +110,16 @@ const BASIC_HEADER_2BYTE_MARKER: u8 = 0;
 const BASIC_HEADER_3BYTE_MARKER: u8 = 1;
 /// Bit shift of the 2-bit `fmt` field within basic header byte 0.
 const BASIC_HEADER_FMT_SHIFT: u8 = 6;
+
+/// Mask of the 2-bit `fmt` field in the basic header's first byte (§5.3.1.1).
+const BASIC_HEADER_FMT_MASK: u8 = 0x03;
+
+/// Total lengths of the basic header's 2-byte and 3-byte forms.
+const BASIC_HEADER_2BYTE_LEN: usize = 2;
+const BASIC_HEADER_3BYTE_LEN: usize = 3;
+
+/// Radix of the little-endian `csid - 64` high byte in the 3-byte form.
+const CSID_HIGH_BYTE_RADIX: u32 = 256;
 /// Mask for the low 6 bits of basic header byte 0 (the 1-byte csid, or the
 /// 2-/3-byte form marker).
 const BASIC_HEADER_MARKER_MASK: u8 = 0x3F;
@@ -136,10 +146,44 @@ const BASIC_HEADER_3BYTE_MAX_CSID: u32 = 65599;
 
 // ── u24 helpers ─────────────────────────────────────────────────────────
 
+/// Shifts of a 24-bit big-endian field's three bytes.
+const U24_SHIFT_HIGH: u32 = 16;
+const U24_SHIFT_LOW: u32 = 8;
+
+/// Bits in a u24 field, for the range check in [`write_u24_be`].
+const U24_BITS: u32 = 24;
+
+/// Index of a u24 field's least significant byte.
+const U24_LOW_BYTE: usize = 2;
+
+/// Byte shifts of a multi-byte field's second byte.
+const BYTE_SHIFT: u32 = 8;
+
+/// Byte positions of the Extended Timestamp field, relative to the message
+/// header's start.
+const EXTENDED_TIMESTAMP_BYTES: [usize; EXTENDED_TIMESTAMP_LEN] = [0, 1, 2, 3];
+
+/// Offset of `message type id` in a Type 0/1 message header: right after the
+/// two u24 fields (RTMP §5.3.1.2).
+const MESSAGE_TYPE_ID_OFFSET: usize = 2 * U24_LEN;
+
+/// Byte positions of `message stream id`, the Type 0 header's trailing
+/// little-endian u32.
+const MESSAGE_STREAM_ID_BYTES: [usize; 4] = [7, 8, 9, 10];
+
+/// Factor giving the not-yet-parsed `pending` budget its backstop.
+const PENDING_BUDGET_FACTOR: usize = 2;
+
+/// Capacity slack over a Type 0 message's payload for its header and an
+/// Extended Timestamp.
+const TYPE0_CAPACITY_SLACK: usize = 16;
+
 /// Read a 3-byte big-endian unsigned integer. `b` must have at least
 /// [`U24_LEN`] bytes (caller-checked).
 fn read_u24_be(b: &[u8]) -> u32 {
-    (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2])
+    (u32::from(b[0]) << U24_SHIFT_HIGH)
+        | (u32::from(b[1]) << U24_SHIFT_LOW)
+        | u32::from(b[U24_LOW_BYTE])
 }
 
 /// Write `v` as a big-endian 24-bit field into `buf`. `buf` must have at
@@ -147,10 +191,10 @@ fn read_u24_be(b: &[u8]) -> u32 {
 /// bits is [`RtmpError::FieldOverflow`], never silently masked (#1129):
 /// `message length` is a caller-supplied `u32`, so it really can overflow.
 fn write_u24_be(v: u32, buf: &mut [u8], field: &'static str) -> Result<()> {
-    let v = broadcast_common::len::fit_bits(u64::from(v), 24, field)? as u32;
-    buf[0] = (v >> 16) as u8;
-    buf[1] = (v >> 8) as u8;
-    buf[2] = v as u8;
+    let v = broadcast_common::len::fit_bits(u64::from(v), U24_BITS, field)? as u32;
+    buf[0] = (v >> U24_SHIFT_HIGH) as u8;
+    buf[1] = (v >> U24_SHIFT_LOW) as u8;
+    buf[U24_LOW_BYTE] = v as u8;
     Ok(())
 }
 
@@ -257,19 +301,29 @@ impl<'a> Parse<'a> for BasicHeader {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, 1, "chunk basic header")?;
         let byte0 = bytes[0];
-        let fmt = Fmt::from_bits((byte0 >> BASIC_HEADER_FMT_SHIFT) & 0x03)?;
+        let fmt = Fmt::from_bits((byte0 >> BASIC_HEADER_FMT_SHIFT) & BASIC_HEADER_FMT_MASK)?;
         let marker = byte0 & BASIC_HEADER_MARKER_MASK;
 
         let chunk_stream_id = ChunkStreamId::new(match marker {
             BASIC_HEADER_2BYTE_MARKER => {
-                need_in(bytes, 2, "chunk basic header (2-byte form)")?;
+                need_in(
+                    bytes,
+                    BASIC_HEADER_2BYTE_LEN,
+                    "chunk basic header (2-byte form)",
+                )?;
                 u32::from(bytes[1]) + BASIC_HEADER_CSID_OFFSET
             }
             BASIC_HEADER_3BYTE_MARKER => {
-                need_in(bytes, 3, "chunk basic header (3-byte form)")?;
+                need_in(
+                    bytes,
+                    BASIC_HEADER_3BYTE_LEN,
+                    "chunk basic header (3-byte form)",
+                )?;
                 // §5.3.1.1: csid = (byte2 * 256) + byte1 + 64 — byte 1 is
                 // the low byte, byte 2 the high byte (little-endian).
-                u32::from(bytes[1]) + u32::from(bytes[2]) * 256 + BASIC_HEADER_CSID_OFFSET
+                u32::from(bytes[1])
+                    + u32::from(bytes[BASIC_HEADER_2BYTE_LEN]) * CSID_HIGH_BYTE_RADIX
+                    + BASIC_HEADER_CSID_OFFSET
             }
             literal => u32::from(literal),
         });
@@ -287,11 +341,11 @@ impl Serialize for BasicHeader {
     fn serialized_len(&self) -> usize {
         match basic_header_form(self.chunk_stream_id.get()) {
             Ok(BasicHeaderForm::One) => 1,
-            Ok(BasicHeaderForm::Two) => 2,
-            Ok(BasicHeaderForm::Three) => 3,
+            Ok(BasicHeaderForm::Two) => BASIC_HEADER_2BYTE_LEN,
+            Ok(BasicHeaderForm::Three) => BASIC_HEADER_3BYTE_LEN,
             // Out-of-range csid: nominal upper bound. `serialize_into`
             // performs the real validation and returns the error.
-            Err(_) => 3,
+            Err(_) => BASIC_HEADER_3BYTE_LEN,
         }
     }
 
@@ -306,18 +360,18 @@ impl Serialize for BasicHeader {
                 Ok(1)
             }
             BasicHeaderForm::Two => {
-                need_out(buf, 2)?;
+                need_out(buf, BASIC_HEADER_2BYTE_LEN)?;
                 buf[0] = fmt_bits | BASIC_HEADER_2BYTE_MARKER;
                 buf[1] = (self.chunk_stream_id.get() - BASIC_HEADER_CSID_OFFSET) as u8;
-                Ok(2)
+                Ok(BASIC_HEADER_2BYTE_LEN)
             }
             BasicHeaderForm::Three => {
-                need_out(buf, 3)?;
+                need_out(buf, BASIC_HEADER_3BYTE_LEN)?;
                 buf[0] = fmt_bits | BASIC_HEADER_3BYTE_MARKER;
                 let rel = self.chunk_stream_id.get() - BASIC_HEADER_CSID_OFFSET;
                 buf[1] = rel as u8;
-                buf[2] = (rel >> 8) as u8;
-                Ok(3)
+                buf[BASIC_HEADER_2BYTE_LEN] = (rel >> BYTE_SHIFT) as u8;
+                Ok(BASIC_HEADER_3BYTE_LEN)
             }
         }
     }
@@ -403,11 +457,11 @@ impl MessageHeader {
             Fmt::Type0 => {
                 need_in(bytes, TYPE0_LEN, "type 0 message header")?;
                 let raw_timestamp = read_u24_be(&bytes[0..U24_LEN]);
-                let message_length = read_u24_be(&bytes[U24_LEN..2 * U24_LEN]);
-                let message_type_id = MessageTypeId::from_u8(bytes[2 * U24_LEN]);
-                let message_stream_id = MessageStreamId::new(u32::from_le_bytes([
-                    bytes[7], bytes[8], bytes[9], bytes[10],
-                ]));
+                let message_length = read_u24_be(&bytes[U24_LEN..MESSAGE_TYPE_ID_OFFSET]);
+                let message_type_id = MessageTypeId::from_u8(bytes[MESSAGE_TYPE_ID_OFFSET]);
+                let message_stream_id = MessageStreamId::new(u32::from_le_bytes(
+                    MESSAGE_STREAM_ID_BYTES.map(|i| bytes[i]),
+                ));
 
                 let (timestamp, consumed) = resolve_extended(raw_timestamp, bytes, TYPE0_LEN)?;
 
@@ -424,8 +478,8 @@ impl MessageHeader {
             Fmt::Type1 => {
                 need_in(bytes, TYPE1_LEN, "type 1 message header")?;
                 let raw_delta = read_u24_be(&bytes[0..U24_LEN]);
-                let message_length = read_u24_be(&bytes[U24_LEN..2 * U24_LEN]);
-                let message_type_id = MessageTypeId::from_u8(bytes[2 * U24_LEN]);
+                let message_length = read_u24_be(&bytes[U24_LEN..MESSAGE_TYPE_ID_OFFSET]);
+                let message_type_id = MessageTypeId::from_u8(bytes[MESSAGE_TYPE_ID_OFFSET]);
 
                 let (timestamp_delta, consumed) = resolve_delta(raw_delta, bytes, TYPE1_LEN)?;
 
@@ -458,12 +512,7 @@ fn resolve_extended(raw: u32, bytes: &[u8], fixed_len: usize) -> Result<(Timesta
     if raw == EXTENDED_TIMESTAMP_MARKER {
         let need = fixed_len + EXTENDED_TIMESTAMP_LEN;
         need_in(bytes, need, "extended timestamp")?;
-        let ext = u32::from_be_bytes([
-            bytes[fixed_len],
-            bytes[fixed_len + 1],
-            bytes[fixed_len + 2],
-            bytes[fixed_len + 3],
-        ]);
+        let ext = u32::from_be_bytes(EXTENDED_TIMESTAMP_BYTES.map(|i| bytes[fixed_len + i]));
         Ok((Timestamp::from_millis(ext), need))
     } else {
         Ok((Timestamp::from_millis(raw), fixed_len))
@@ -513,10 +562,10 @@ impl Serialize for MessageHeader {
                 write_u24_be(field, &mut buf[0..U24_LEN], "timestamp")?;
                 write_u24_be(
                     message_length,
-                    &mut buf[U24_LEN..2 * U24_LEN],
+                    &mut buf[U24_LEN..MESSAGE_TYPE_ID_OFFSET],
                     "message length",
                 )?;
-                buf[2 * U24_LEN] = message_type_id.to_u8();
+                buf[MESSAGE_TYPE_ID_OFFSET] = message_type_id.to_u8();
                 buf[7..11].copy_from_slice(&message_stream_id.get().to_le_bytes());
                 if extended {
                     buf[11..15].copy_from_slice(&millis.to_be_bytes());
@@ -540,10 +589,10 @@ impl Serialize for MessageHeader {
                 write_u24_be(field, &mut buf[0..U24_LEN], "timestamp")?;
                 write_u24_be(
                     message_length,
-                    &mut buf[U24_LEN..2 * U24_LEN],
+                    &mut buf[U24_LEN..MESSAGE_TYPE_ID_OFFSET],
                     "message length",
                 )?;
-                buf[2 * U24_LEN] = message_type_id.to_u8();
+                buf[MESSAGE_TYPE_ID_OFFSET] = message_type_id.to_u8();
                 if extended {
                     buf[7..11].copy_from_slice(&millis.to_be_bytes());
                 }
@@ -920,9 +969,9 @@ impl ChunkAssembler {
         // of bytes that belong to no reserved message (a caller that keeps
         // feeding unparsed input despite errors) plus at most one
         // unreserved in-flight header's worth.
-        if self.pending.len() - self.cursor > max_in_progress_bytes * 2 {
+        if self.pending.len() - self.cursor > max_in_progress_bytes * PENDING_BUDGET_FACTOR {
             return Err(RtmpError::InputBudgetExceeded {
-                max: max_in_progress_bytes * 2,
+                max: max_in_progress_bytes * PENDING_BUDGET_FACTOR,
             });
         }
         {
@@ -1477,7 +1526,7 @@ impl ChunkWriter {
         let message_length = broadcast_common::len::fit_u24(msg.payload.len(), "message_length")?;
         let extended = needs_extended_timestamp(msg.timestamp.millis());
 
-        let mut out = Vec::with_capacity(TYPE0_LEN + msg.payload.len() + 16);
+        let mut out = Vec::with_capacity(TYPE0_LEN + msg.payload.len() + TYPE0_CAPACITY_SLACK);
 
         let bh0 = BasicHeader {
             fmt: Fmt::Type0,

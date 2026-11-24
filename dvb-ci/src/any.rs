@@ -94,8 +94,12 @@ macro_rules! declare_apdus {
             /// Parse a complete APDU (header + body) by routing on its 3-byte
             /// `apdu_tag`. Unrecognised tags yield [`AnyApdu::Unknown`].
             pub fn parse(bytes: &$lt [u8]) -> Result<Self> {
-                need_in(bytes, 3, "apdu_tag")?;
-                let tag = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+                need_in(bytes, crate::objects::APDU_TAG_LEN, "apdu_tag")?;
+                let tag = ApduTag::from_bytes(
+                    bytes[0],
+                    bytes[1],
+                    bytes[crate::objects::APDU_TAG_LEN - 1],
+                );
                 match tag {
                     $( t if t == <$($path)::+ as crate::traits::ApduDef>::TAG
                         $( || $( t == $alt )||+ )? =>

@@ -596,6 +596,7 @@ use parking_lot::{Condvar, Mutex, MutexGuard};
 
 use crate::ids::{PartIndex, SegmentSeq};
 use broadcast_common::stage::Timestamp;
+use broadcast_common::units::MILLIS_PER_SEC;
 use bytes::Bytes;
 use event_listener::{Event, EventListener, Listener};
 use thiserror::Error;
@@ -1303,7 +1304,7 @@ fn epoch_ms_to_media(anchor: &TimeAnchor, utc_epoch_ms: i64) -> Option<MediaTime
     // Floor, the mirror of `media_to_epoch_ms`'s floor: truncating here
     // would map an instant up to 999 us before one the forward direction
     // floors down to it onto the next whole tick.
-    let delta_ticks = (delta_ms * i128::from(PTS_HZ)).div_euclid(1000);
+    let delta_ticks = (delta_ms * i128::from(PTS_HZ)).div_euclid(i128::from(MILLIS_PER_SEC));
     let media = i128::from(anchor.pts_90k) + delta_ticks;
     u64::try_from(media).ok().map(MediaTime)
 }

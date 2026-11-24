@@ -75,7 +75,10 @@ impl<'a> Parse<'a> for CicamMultistreamCapability {
         Ok(Self {
             length_form,
             max_local_ts: body[0],
-            max_descramblers: u16::from_be_bytes([body[1], body[2]]),
+            max_descramblers: u16::from_be_bytes([
+                body[MAX_DESCRAMBLERS_OFFSET],
+                body[MAX_DESCRAMBLERS_OFFSET + 1],
+            ]),
         })
     }
 }
@@ -91,8 +94,9 @@ impl Serialize for CicamMultistreamCapability {
             self.length_form,
             buf,
         )?;
-        buf[pos] = self.max_local_ts;
-        buf[pos + 1..pos + 3].copy_from_slice(&self.max_descramblers.to_be_bytes());
+        buf[pos + MAX_LOCAL_TS_OFFSET] = self.max_local_ts;
+        buf[pos + MAX_DESCRAMBLERS_OFFSET..pos + MAX_DESCRAMBLERS_OFFSET + MAX_DESCRAMBLERS_LEN]
+            .copy_from_slice(&self.max_descramblers.to_be_bytes());
         Ok(pos + CAPABILITY_BODY)
     }
 }
@@ -112,7 +116,7 @@ pub struct PidSelectRequest {
     /// The 2-bit `reserved` field in front of `critical_for_descrambling_flag` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<2>,
+    pub reserved: ReservedZero<PID_RESERVED_BITS>,
 }
 
 /// `PID_select_req()` (Table 4): CICAM → Host. PIDs are listed in descending
@@ -134,6 +138,31 @@ pub struct PidSelectReq {
 
 // Each loop entry is 2 bytes.
 const PID_ENTRY_LEN: usize = 2;
+// LTS_id(1) + num_PID(1) prefix of a PID_select_req body.
+const PID_SELECT_REQ_PREFIX: usize = 2;
+// LTS_id(1) + selection byte(1) + num_PID(1) prefix of a PID_select_reply body.
+const PID_SELECT_REPLY_PREFIX: usize = 3;
+/// Reserved bits in front of the PID flags.
+pub const PID_RESERVED_BITS: u32 = 2;
+/// Reserved bits in front of `PID_selection_flag`.
+pub const PID_SELECTION_RESERVED_BITS: u32 = 7;
+// Shift selecting the reserved bits of a PID entry's high byte.
+const PID_RESERVED_SHIFT: u32 = 6;
+// Shift placing a PID entry's reserved bits.
+const PID_RESERVED_PACK_SHIFT: u32 = 6;
+// Shift placing PID_selection_flag's reserved bits.
+const PID_SELECTION_RESERVED_SHIFT: u32 = 1;
+// Shift placing a PID's high bits.
+const PID_HIGH_SHIFT: u32 = 8;
+// Bit width of num_PID.
+const NUM_PID_BITS: u32 = 8;
+// Offsets of the CAPABILITY fields.
+const MAX_LOCAL_TS_OFFSET: usize = 0;
+const MAX_DESCRAMBLERS_OFFSET: usize = 1;
+// Bytes of `max_descramblers`.
+const MAX_DESCRAMBLERS_LEN: usize = core::mem::size_of::<u16>();
+// Offset of `num_PID` in a PID_select_reply body.
+const NUM_PID_REPLY_OFFSET: usize = PID_SELECT_REPLY_PREFIX - 1;
 // Mask for the 13-bit PID field.
 const PID_MASK: u16 = 0x1FFF;
 // The critical_for_descrambling_flag bit within the high byte.
@@ -145,10 +174,10 @@ impl<'a> Parse<'a> for PidSelectReq {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::PID_SELECT_REQ, "PID_select_req")?;
         // LTS_id(1) + num_PID(1).
-        need_in(body, 2, "PID_select_req")?;
+        need_in(body, PID_SELECT_REQ_PREFIX, "PID_select_req")?;
         let lts_id = body[0];
         let num_pid = body[1] as usize;
-        let loop_bytes = &body[2..];
+        let loop_bytes = &body[PID_SELECT_REQ_PREFIX..];
         need_in(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_req loop")?;
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
@@ -157,7 +186,7 @@ impl<'a> Parse<'a> for PidSelectReq {
             pids.push(PidSelectRequest {
                 critical_for_descrambling: critical,
                 pid,
-                reserved: ReservedZero::from_bits(u64::from(chunk[0] >> 6)),
+                reserved: ReservedZero::from_bits(u64::from(chunk[0] >> PID_RESERVED_SHIFT)),
             });
         }
         objects::reject_trailing_body(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_req")?;
@@ -171,18 +200,26 @@ impl<'a> Parse<'a> for PidSelectReq {
 impl Serialize for PidSelectReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(2 + self.pids.len() * PID_ENTRY_LEN, self.length_form)
+        objects::apdu_len(
+            PID_SELECT_REQ_PREFIX + self.pids.len() * PID_ENTRY_LEN,
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::fit_bits(self.pids.len() as u64, 8, "PID_select_req num_PID")?;
-        let body_len = 2 + self.pids.len() * PID_ENTRY_LEN;
+        objects::fit_bits(
+            self.pids.len() as u64,
+            NUM_PID_BITS,
+            "PID_select_req num_PID",
+        )?;
+        let body_len = PID_SELECT_REQ_PREFIX + self.pids.len() * PID_ENTRY_LEN;
         let mut pos =
             objects::write_apdu_header(tag::PID_SELECT_REQ, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.pids.len() as u8;
-        pos += 2;
+        pos += PID_SELECT_REQ_PREFIX;
         for entry in &self.pids {
-            let mut hi = ((entry.reserved.get() << 6) as u8) | (entry.pid.value() >> 8) as u8;
+            let mut hi = ((entry.reserved.get() << PID_RESERVED_PACK_SHIFT) as u8)
+                | (entry.pid.value() >> PID_HIGH_SHIFT) as u8;
             if entry.critical_for_descrambling {
                 hi |= CRITICAL_FLAG_BIT;
             }
@@ -208,7 +245,7 @@ pub struct PidSelectedEntry {
     /// The 2-bit `reserved` field in front of `PID_selected_flag` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<2>,
+    pub reserved: ReservedZero<PID_RESERVED_BITS>,
 }
 
 /// `PID_select_reply()` (Table 5): Host → CICAM.
@@ -231,7 +268,7 @@ pub struct PidSelectReply {
     /// The 7-bit `reserved` field in front of `PID_selection_flag` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<7>,
+    pub reserved: ReservedZero<PID_SELECTION_RESERVED_BITS>,
 }
 
 // The PID_selected_flag bit within the high byte (bit 5 of the 16-bit word).
@@ -245,11 +282,11 @@ impl<'a> Parse<'a> for PidSelectReply {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::PID_SELECT_REPLY, "PID_select_reply")?;
         // LTS_id(1) + reserved(7)+flag(1) byte + num_PID(1).
-        need_in(body, 3, "PID_select_reply")?;
+        need_in(body, PID_SELECT_REPLY_PREFIX, "PID_select_reply")?;
         let lts_id = body[0];
         let pid_selection = body[1] & PID_SELECTION_FLAG_BIT != 0;
-        let num_pid = body[2] as usize;
-        let loop_bytes = &body[3..];
+        let num_pid = body[NUM_PID_REPLY_OFFSET] as usize;
+        let loop_bytes = &body[PID_SELECT_REPLY_PREFIX..];
         need_in(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_reply loop")?;
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
@@ -258,7 +295,7 @@ impl<'a> Parse<'a> for PidSelectReply {
             pids.push(PidSelectedEntry {
                 pid_selected: selected,
                 pid,
-                reserved: ReservedZero::from_bits(u64::from(chunk[0] >> 6)),
+                reserved: ReservedZero::from_bits(u64::from(chunk[0] >> PID_RESERVED_SHIFT)),
             });
         }
         objects::reject_trailing_body(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_reply")?;
@@ -267,31 +304,39 @@ impl<'a> Parse<'a> for PidSelectReply {
             lts_id,
             pid_selection,
             pids,
-            reserved: ReservedZero::from_bits(u64::from(body[1] >> 1)),
+            reserved: ReservedZero::from_bits(u64::from(body[1] >> PID_SELECTION_RESERVED_SHIFT)),
         })
     }
 }
 impl Serialize for PidSelectReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(3 + self.pids.len() * PID_ENTRY_LEN, self.length_form)
+        objects::apdu_len(
+            PID_SELECT_REPLY_PREFIX + self.pids.len() * PID_ENTRY_LEN,
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::fit_bits(self.pids.len() as u64, 8, "PID_select_reply num_PID")?;
-        let body_len = 3 + self.pids.len() * PID_ENTRY_LEN;
+        objects::fit_bits(
+            self.pids.len() as u64,
+            NUM_PID_BITS,
+            "PID_select_reply num_PID",
+        )?;
+        let body_len = PID_SELECT_REPLY_PREFIX + self.pids.len() * PID_ENTRY_LEN;
         let mut pos =
             objects::write_apdu_header(tag::PID_SELECT_REPLY, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
-        buf[pos + 1] = ((self.reserved.get() << 1) as u8)
+        buf[pos + 1] = ((self.reserved.get() << PID_SELECTION_RESERVED_SHIFT) as u8)
             | if self.pid_selection {
                 PID_SELECTION_FLAG_BIT
             } else {
                 0
             };
-        buf[pos + 2] = self.pids.len() as u8;
-        pos += 3;
+        buf[pos + NUM_PID_REPLY_OFFSET] = self.pids.len() as u8;
+        pos += PID_SELECT_REPLY_PREFIX;
         for entry in &self.pids {
-            let mut hi = ((entry.reserved.get() << 6) as u8) | (entry.pid.value() >> 8) as u8;
+            let mut hi = ((entry.reserved.get() << PID_RESERVED_PACK_SHIFT) as u8)
+                | (entry.pid.value() >> PID_HIGH_SHIFT) as u8;
             if entry.pid_selected {
                 hi |= PID_SELECTED_FLAG_BIT;
             }

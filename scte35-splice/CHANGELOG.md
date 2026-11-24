@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `ISO_CODE_LEN`: the byte width of an audio descriptor component's `ISO_code` field, now named in the public `AudioComponent::iso_code` type.
 
 ## [8.0.0] - 2026-11-22
 ### Breaking

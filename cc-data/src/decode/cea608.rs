@@ -63,7 +63,7 @@ impl Cea608Color {
     /// From the 3-bit colour index used in PAC and mid-row tables (Tables 51/53).
     #[must_use]
     pub(super) fn from_idx(idx: u8) -> Self {
-        match idx & 0x07 {
+        match idx & COLOR_INDEX_MASK {
             0 => Self::White,
             1 => Self::Green,
             2 => Self::Blue,
@@ -81,6 +81,79 @@ broadcast_common::impl_spec_display!(Cea608Color);
 const SCREEN_ROWS: usize = 15;
 /// Number of caption columns on a line-21 screen.
 const SCREEN_COLS: usize = 32;
+/// Caption channels (CC1–CC4) and 608 fields (field 1 / field 2).
+const CHANNELS: usize = 4;
+const FIELDS: usize = 2;
+
+/// Mask stripping the odd-parity bit from a 7-bit line-21 code.
+const PARITY_MASK: u8 = 0x7F;
+/// Mask of the 3-bit colour index in the PAC / mid-row tables (Tables 51/53).
+const COLOR_INDEX_MASK: u8 = 0x07;
+
+/// First-byte ranges of the 7-bit control codes (CTA-608-E §8.6).
+const XDS_FIRST_MIN: u8 = 0x01;
+const XDS_FIRST_MAX: u8 = 0x0F;
+/// The XDS End control code.
+const XDS_END: u8 = 0x0F;
+const CONTROL_FIRST_MIN: u8 = 0x10;
+const CONTROL_FIRST_MAX: u8 = 0x1F;
+const PRINTABLE_FIRST_MIN: u8 = 0x20;
+
+/// Second-byte ranges of the control codes.
+const MISC_SECOND_MIN: u8 = 0x20;
+const MISC_SECOND_MAX: u8 = 0x2F;
+const SPECIAL_SECOND_MIN: u8 = 0x30;
+const SPECIAL_SECOND_MAX: u8 = 0x3F;
+const PAC_SECOND_MIN: u8 = 0x40;
+const PAC_SECOND_MAX: u8 = 0x7F;
+/// Second bytes at or above this select the second row of a PAC row pair.
+const PAC_SECOND_OF_PAIR: u8 = 0x60;
+
+/// First bytes selecting the data channel, and the field-2 misc-control shift
+/// (CTA-608-E §8.4 a/b).
+const C2_FIRST_MIN: u8 = 0x18;
+const MISC_C1_FIRST: u8 = 0x14;
+const MISC_FIELD2_C1_FIRST: u8 = 0x15;
+const MISC_FIELD2_C2_FIRST: u8 = 0x1D;
+/// Offset folding the C2 first-byte range onto C1.
+const C2_FOLD: u8 = 0x08;
+
+/// First bytes of the non-misc control categories.
+const MID_ROW_FIRST: u8 = 0x11;
+const EXTENDED_BLOCK1_FIRST: u8 = 0x12;
+const EXTENDED_BLOCK2_FIRST: u8 = 0x13;
+
+/// PAC row groups by first byte (Table 53).
+const PAC_ROW_1_2: u8 = 0x11;
+const PAC_ROW_3_4: u8 = 0x12;
+const PAC_ROW_5_6: u8 = 0x15;
+const PAC_ROW_7_8: u8 = 0x16;
+const PAC_ROW_9_10: u8 = 0x17;
+const PAC_ROW_11: u8 = 0x10;
+const PAC_ROW_12_13: u8 = 0x13;
+const PAC_ROW_14_15: u8 = 0x14;
+/// First (1-based) row of each pac row group.
+const ROW_1: usize = 1;
+const ROW_3: usize = 3;
+const ROW_5: usize = 5;
+const ROW_7: usize = 7;
+const ROW_9: usize = 9;
+const ROW_11: usize = 11;
+const ROW_12: usize = 12;
+const ROW_14: usize = 14;
+/// A row pair's second row is the first plus one.
+const ROW_PAIR_STEP: usize = 1;
+
+/// Masks / shifts of the PAC attribute byte (Table 53).
+const PAC_ATTR_MASK: u8 = 0x1F;
+const UNDERLINE_MASK: u8 = 0x01;
+const COLOR_INDEX_SHIFT: u32 = 1;
+/// Colour indices above this select italics ("white italics").
+const COLOR_INDEX_LIMIT: u8 = 6;
+/// Indent codes start here; each step is `PAC_INDENT_STEP` columns.
+const PAC_INDENT_BASE: u8 = 0x10;
+const PAC_INDENT_SHIFT: u32 = 1;
+const PAC_INDENT_STEP: usize = 4;
 
 // ── Misc-control 2nd-byte values (Table 52, data-channel-1 column) ────────────
 const MC_RCL: u8 = 0x20;
@@ -356,14 +429,14 @@ impl ChannelState {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cea608Decoder {
-    channels: [ChannelState; 4],
+    channels: [ChannelState; CHANNELS],
     /// The control pair last acted on, per field, for doubling suppression.
-    last_control: [Option<(u8, u8)>; 2],
+    last_control: [Option<(u8, u8)>; FIELDS],
     /// The channel targeted by the last control code seen on each field.
     /// Standard (non-tagged) characters are routed here, per field, since
     /// CEA-608 encodes which channel a character belongs to only implicitly,
     /// via the most recent control code on that field.
-    last_channel: [Cea608Channel; 2],
+    last_channel: [Cea608Channel; FIELDS],
     xds_active: bool,
     /// Bit `Cea608Channel::index` set once a displayable character has been
     /// written to that channel outside text mode.
@@ -414,13 +487,13 @@ impl Cea608Decoder {
     }
 
     fn process_pair(&mut self, field2: bool, raw1: u8, raw2: u8) {
-        let b1 = raw1 & 0x7F;
-        let b2 = raw2 & 0x7F;
+        let b1 = raw1 & PARITY_MASK;
+        let b2 = raw2 & PARITY_MASK;
         let field_idx = usize::from(field2);
 
         // Null filler (0x00 0x00): separates control pairs, so a control after it
         // is not a doubled copy (CTA-608-E Annex B.14; private/specs-verified/captions/cc-data/decode/cea608-decode.md).
-        if b1 == 0x00 && b2 == 0x00 {
+        if b1 == 0 && b2 == 0 {
             self.last_control[field_idx] = None;
             return;
         }
@@ -428,10 +501,10 @@ impl Cea608Decoder {
         // XDS (field 2 only): a control pair with first byte 0x01–0x0F begins or
         // continues an XDS sub-packet; 0x0F + checksum ends it. Detect + skip the
         // whole span (we never decode XDS into captions).
-        if field2 && (0x01..=0x0F).contains(&b1) {
+        if field2 && (XDS_FIRST_MIN..=XDS_FIRST_MAX).contains(&b1) {
             // 0x0F = End control (followed by a checksum byte); otherwise
             // Start/Continue. Either way this pair is XDS, not caption.
-            self.xds_active = b1 != 0x0F;
+            self.xds_active = b1 != XDS_END;
             return;
         }
 
@@ -440,7 +513,7 @@ impl Cea608Decoder {
         // Continue code), so this check runs BEFORE the xds_active short-circuit
         // below — otherwise every caption code sent while XDS is open would be
         // swallowed along with the XDS payload.
-        if (0x10..=0x1F).contains(&b1) {
+        if (CONTROL_FIRST_MIN..=CONTROL_FIRST_MAX).contains(&b1) {
             // Doubling: an identical control pair immediately repeated is one cmd.
             if self.last_control[field_idx] == Some((b1, b2)) {
                 self.last_control[field_idx] = None; // consume the doubled copy
@@ -459,7 +532,7 @@ impl Cea608Decoder {
 
         // First bytes 0x01–0x0F are reserved for XDS (field 2 only) and never
         // carry caption text on field 1 (CTA-608-E §8.6.1; private/specs-verified/captions/cc-data/decode/cea608-decode.md).
-        if (0x01..=0x0F).contains(&b1) {
+        if (XDS_FIRST_MIN..=XDS_FIRST_MAX).contains(&b1) {
             self.last_control[field_idx] = None;
             return;
         }
@@ -470,10 +543,10 @@ impl Cea608Decoder {
         // Standard chars are not channel-tagged; route to the channel targeted
         // by the last control code seen on this field.
         let ch = self.last_channel[field_idx];
-        if b1 >= 0x20 {
+        if b1 >= PRINTABLE_FIRST_MIN {
             self.put_char(ch, Self::standard_char(b1));
         }
-        if b2 >= 0x20 {
+        if b2 >= PRINTABLE_FIRST_MIN {
             self.put_char(ch, Self::standard_char(b2));
         }
     }
@@ -491,12 +564,18 @@ impl Cea608Decoder {
         // misc-control and folds the ordinary way (issue #1043 — the previous
         // fold recognised only field-1's `0x14`/`0x1C`, so field-2 misc-control
         // pairs never matched and were silently dropped).
-        let field2_misc = field2 && (0x20..=0x2F).contains(&b2) && matches!(b1, 0x15 | 0x1D);
-        let c2 = if field2_misc { b1 == 0x1D } else { b1 >= 0x18 };
+        let field2_misc = field2
+            && (MISC_SECOND_MIN..=MISC_SECOND_MAX).contains(&b2)
+            && matches!(b1, MISC_FIELD2_C1_FIRST | MISC_FIELD2_C2_FIRST);
+        let c2 = if field2_misc {
+            b1 == MISC_FIELD2_C2_FIRST
+        } else {
+            b1 >= C2_FIRST_MIN
+        };
         let base1 = if field2_misc {
-            0x14
+            MISC_C1_FIRST
         } else if c2 {
-            b1 - 0x08 // fold C2 onto C1 range
+            b1 - C2_FOLD // fold C2 onto C1 range
         } else {
             b1
         };
@@ -507,7 +586,7 @@ impl Cea608Decoder {
 
         // Misc control: first byte 0x14 (C1) / 0x1C (C2), or the field-2
         // `field2_misc` fold above.
-        if base1 == 0x14 && (0x20..=0x2F).contains(&b2) {
+        if base1 == MISC_C1_FIRST && (MISC_SECOND_MIN..=MISC_SECOND_MAX).contains(&b2) {
             self.misc_control(ch, b2);
             return;
         }
@@ -519,27 +598,27 @@ impl Cea608Decoder {
             return;
         }
         // Mid-row codes: first byte 0x11 (C1) / 0x19 (C2), 2nd 0x20–0x2F.
-        if base1 == 0x11 && (0x20..=0x2F).contains(&b2) {
+        if base1 == MID_ROW_FIRST && (MISC_SECOND_MIN..=MISC_SECOND_MAX).contains(&b2) {
             self.mid_row(ch, b2);
             return;
         }
         // Special characters: first byte 0x11/0x19, 2nd 0x30–0x3F.
-        if base1 == 0x11 && (0x30..=0x3F).contains(&b2) {
+        if base1 == MID_ROW_FIRST && (SPECIAL_SECOND_MIN..=SPECIAL_SECOND_MAX).contains(&b2) {
             self.put_char(ch, Self::special_char(b2));
             return;
         }
         // Extended chars block 1: first byte 0x12/0x1A, 2nd 0x20–0x3F.
-        if base1 == 0x12 && (0x20..=0x3F).contains(&b2) {
+        if base1 == EXTENDED_BLOCK1_FIRST && (MISC_SECOND_MIN..=SPECIAL_SECOND_MAX).contains(&b2) {
             self.put_extended(ch, Self::extended_char_block1(b2));
             return;
         }
         // Extended chars block 2: first byte 0x13/0x1B, 2nd 0x20–0x3F.
-        if base1 == 0x13 && (0x20..=0x3F).contains(&b2) {
+        if base1 == EXTENDED_BLOCK2_FIRST && (MISC_SECOND_MIN..=SPECIAL_SECOND_MAX).contains(&b2) {
             self.put_extended(ch, Self::extended_char_block2(b2));
             return;
         }
         // PAC: 2nd byte 0x40–0x7F (any control first byte).
-        if (0x40..=0x7F).contains(&b2) {
+        if (PAC_SECOND_MIN..=PAC_SECOND_MAX).contains(&b2) {
             self.pac(field2, ch, b1, b2);
         }
         // Background/foreground attr codes (0x10/0x18 2nd 0x20–0x2F) — ignored
@@ -637,10 +716,10 @@ impl Cea608Decoder {
 
     /// Mid-row code (Table 51): sets colour/italics + underline from the cursor.
     fn mid_row(&mut self, ch: Cea608Channel, b2: u8) {
-        let idx = (b2 - 0x20) as usize; // 0x20..0x2F → 0..15
-        let underline = idx & 0x01 != 0;
-        let color_idx = (idx >> 1) as u8;
-        let (color, italics) = if color_idx <= 6 {
+        let idx = (b2 - MISC_SECOND_MIN) as usize; // 0x20..0x2F → 0..15
+        let underline = idx & u32::from(UNDERLINE_MASK) as usize != 0;
+        let color_idx = (idx >> COLOR_INDEX_SHIFT) as u8;
+        let (color, italics) = if color_idx <= COLOR_INDEX_LIMIT {
             (Cea608Color::from_idx(color_idx), false)
         } else {
             (Cea608Color::White, true) // 0x2E/0x2F = italics
@@ -658,41 +737,41 @@ impl Cea608Decoder {
     /// Preamble Address Code: set row + indent / colour + underline (Table 53).
     fn pac(&mut self, _field2: bool, ch: Cea608Channel, b1: u8, b2: u8) {
         // Fold the C2 first byte (0x18–0x1F) onto the C1 first byte (0x10–0x17).
-        let f = if b1 >= 0x18 { b1 - 0x08 } else { b1 };
+        let f = if b1 >= C2_FIRST_MIN { b1 - C2_FOLD } else { b1 };
         // Row group from the first byte (Table 53 top block, C1 column).
         let row_pair = match f {
-            0x11 => 1,  // rows 1–2
-            0x12 => 3,  // rows 3–4
-            0x15 => 5,  // rows 5–6
-            0x16 => 7,  // rows 7–8
-            0x17 => 9,  // rows 9–10
-            0x10 => 11, // row 11
-            0x13 => 12, // rows 12–13
-            0x14 => 14, // rows 14–15
-            _ => 1,
+            PAC_ROW_1_2 => ROW_1,    // rows 1–2
+            PAC_ROW_3_4 => ROW_3,    // rows 3–4
+            PAC_ROW_5_6 => ROW_5,    // rows 5–6
+            PAC_ROW_7_8 => ROW_7,    // rows 7–8
+            PAC_ROW_9_10 => ROW_9,   // rows 9–10
+            PAC_ROW_11 => ROW_11,    // row 11
+            PAC_ROW_12_13 => ROW_12, // rows 12–13
+            PAC_ROW_14_15 => ROW_14, // rows 14–15
+            _ => ROW_1,
         };
         // Second byte high bit picks the row within the pair (0x40–0x5F = first
         // of pair, 0x60–0x7F = second).
-        let second_of_pair = b2 >= 0x60;
-        let row = if f == 0x10 {
-            11 // row 11 has no pair partner
+        let second_of_pair = b2 >= PAC_SECOND_OF_PAIR;
+        let row = if f == PAC_ROW_11 {
+            ROW_11 // row 11 has no pair partner
         } else if second_of_pair {
-            row_pair + 1
+            row_pair + ROW_PAIR_STEP
         } else {
             row_pair
         };
-        let row = row.clamp(1, SCREEN_ROWS); // 1-based
-        let attr = b2 & 0x1F; // low 5 bits (drop the col-A/B high nibble)
-        let underline = attr & 0x01 != 0;
+        let row = row.clamp(ROW_1, SCREEN_ROWS); // 1-based
+        let attr = b2 & PAC_ATTR_MASK; // low 5 bits (drop the col-A/B high nibble)
+        let underline = attr & UNDERLINE_MASK != 0;
 
-        let (color, italics, indent) = if attr >= 0x10 {
+        let (color, italics, indent) = if attr >= PAC_INDENT_BASE {
             // Indent codes 0x10..0x1F → indent 0..28 in steps of 4, colour white.
-            let indent = ((attr - 0x10) >> 1) as usize * 4;
+            let indent = ((attr - PAC_INDENT_BASE) >> PAC_INDENT_SHIFT) as usize * PAC_INDENT_STEP;
             (Cea608Color::White, false, indent)
         } else {
             // Colour/italics codes 0x00..0x0F.
-            let color_idx = attr >> 1;
-            let (c, it) = if color_idx <= 6 {
+            let color_idx = attr >> COLOR_INDEX_SHIFT;
+            let (c, it) = if color_idx <= COLOR_INDEX_LIMIT {
                 (Cea608Color::from_idx(color_idx), false)
             } else {
                 (Cea608Color::White, true)

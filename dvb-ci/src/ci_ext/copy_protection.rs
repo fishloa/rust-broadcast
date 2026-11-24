@@ -146,9 +146,17 @@ pub struct CpResponse<'a> {
 const CP_ID_LEN: usize = 3;
 /// `CopyProtectionID` width in bits.
 const CP_ID_BITS: u32 = 24;
+/// Shifts placing the ID's top and middle bytes.
+const CP_ID_TOP_OFFSET: usize = 0;
+const CP_ID_MID_OFFSET: usize = 1;
+const CP_ID_LOW_OFFSET: usize = CP_ID_LEN - 1;
+const CP_ID_TOP_SHIFT: u32 = 16;
+const CP_ID_MID_SHIFT: u32 = 8;
 
 fn read_cp_id(body: &[u8]) -> u32 {
-    ((body[0] as u32) << 16) | ((body[1] as u32) << 8) | body[2] as u32
+    (u32::from(body[CP_ID_TOP_OFFSET]) << CP_ID_TOP_SHIFT)
+        | (u32::from(body[CP_ID_MID_OFFSET]) << CP_ID_MID_SHIFT)
+        | u32::from(body[CP_ID_LOW_OFFSET])
 }
 
 /// Write the 24-bit `CopyProtectionID`, rejecting a `u32` that does not fit

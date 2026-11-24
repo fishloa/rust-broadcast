@@ -14,9 +14,12 @@ use crate::error::{Error, Result};
 /// is the full 4-bit nibble the wire actually carries, `0x0..=0xF` (S12-W1,
 /// #1117).
 fn bcd_field(field: &'static str, tens: u8, units: u8) -> Result<u8> {
-    bcd_to_decimal(u64::from(tens) << 4 | u64::from(units), 2)
-        .map(|v| v as u8)
-        .ok_or(Error::InvalidBcdDigit { field, tens, units })
+    bcd_to_decimal(
+        u64::from(tens) << NIBBLE_SHIFT | u64::from(units),
+        TIME_FIELD_BCD_NIBBLES,
+    )
+    .map(|v| v as u8)
+    .ok_or(Error::InvalidBcdDigit { field, tens, units })
 }
 
 // ---------------------------------------------------------------------------
@@ -41,11 +44,58 @@ pub const MAX_FRAMES: u8 = 29;
 /// Maximum value of one 4-bit binary group ("user bits") nibble (§8.1/Table 4).
 pub const MAX_BINARY_GROUP: u8 = 0x0F;
 
+// Byte offsets of the codeword fields within the 10-byte frame.
+const FRAME_UNITS_OFFSET: usize = 0;
+const FRAME_TENS_OFFSET: usize = 1;
+const SECONDS_UNITS_OFFSET: usize = 2;
+const SECONDS_TENS_OFFSET: usize = 3;
+const MINUTES_UNITS_OFFSET: usize = 4;
+const MINUTES_TENS_OFFSET: usize = 5;
+const HOURS_UNITS_OFFSET: usize = 6;
+const HOURS_TENS_OFFSET: usize = 7;
+const SYNC_WORD_OFFSET: usize = 8;
+
+/// Number of binary groups ("user bits") carried by one frame (§8.1/Table 4).
+pub const BINARY_GROUPS: usize = 8;
+// Zero-based indices of each binary group, in first..eighth order.
+const BINARY_GROUP_1: usize = 0;
+const BINARY_GROUP_2: usize = 1;
+const BINARY_GROUP_3: usize = 2;
+const BINARY_GROUP_4: usize = 3;
+const BINARY_GROUP_5: usize = 4;
+const BINARY_GROUP_6: usize = 5;
+const BINARY_GROUP_7: usize = 6;
+const BINARY_GROUP_8: usize = 7;
+
+/// Decimal radix of each BCD digit.
+const DECIMAL_RADIX: u8 = 10;
+/// Number of BCD nibbles in a two-digit time field.
+const TIME_FIELD_BCD_NIBBLES: u8 = 2;
+
+/// Shift of the high nibble within a packed byte.
+const NIBBLE_SHIFT: u32 = 4;
+/// Mask of a full 4-bit BCD nibble.
+const NIBBLE_MASK: u8 = (1 << NIBBLE_SHIFT) - 1;
+/// Shift of the lower flag bit within its byte.
+const LOWER_FLAG_SHIFT: u32 = 2;
+/// Shift of the upper flag bit within its byte.
+const UPPER_FLAG_SHIFT: u32 = 3;
+/// Mask of the lower flag bit within its byte.
+const LOWER_FLAG_MASK: u8 = 1 << LOWER_FLAG_SHIFT;
+/// Mask of the upper flag bit within its byte.
+const UPPER_FLAG_MASK: u8 = 1 << UPPER_FLAG_SHIFT;
+/// Mask of a narrow (two-bit) tens field.
+const NARROW_TENS_MASK: u8 = (1 << LOWER_FLAG_SHIFT) - 1;
+/// Mask of a wide (three-bit) tens field.
+const WIDE_TENS_MASK: u8 = (1 << UPPER_FLAG_SHIFT) - 1;
+
 /// The fixed synchronization word (§9.2.5, Table 5), as the two bytes it
 /// occupies under this crate's bit-to-byte packing (`private/specs-verified/smpte/st12-1/st12-1.md`'s "Byte
 /// packing convention"): byte 8 holds bits 64-71, byte 9 holds bits 72-79.
 /// This is the well-known LTC sync-word byte pair.
 pub const SYNC_WORD: [u8; 2] = [0xFC, 0xBF];
+/// Byte length of [`SYNC_WORD`].
+const SYNC_WORD_LEN: usize = SYNC_WORD.len();
 
 // ---------------------------------------------------------------------------
 // FrameRate — ST 12-1 Table 3's three counting-mode columns
@@ -239,7 +289,7 @@ pub struct LtcFrame {
     /// first..eighth order (Table 4 bits 4-7/12-15/20-23/28-31/36-39/44-47/
     /// 52-55/60-63). Their collective meaning is given by
     /// [`LtcFrame::binary_group_flags`]`.usage()`.
-    pub user_bits: [u8; 8],
+    pub user_bits: [u8; BINARY_GROUPS],
 }
 
 impl LtcFrame {
@@ -335,43 +385,52 @@ impl<'a> Parse<'a> for LtcFrame {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, FRAME_LEN, "LTC codeword")?;
 
-        if [bytes[8], bytes[9]] != SYNC_WORD {
+        let sync = bytes[SYNC_WORD_OFFSET..SYNC_WORD_OFFSET + SYNC_WORD_LEN]
+            .first_chunk::<SYNC_WORD_LEN>()
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: SYNC_WORD_OFFSET + SYNC_WORD_LEN,
+                    have: bytes.len(),
+                    what: "LTC sync word",
+                },
+            ))?;
+        if *sync != SYNC_WORD {
             return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
                 what: "sync word",
                 expected: u32::from(u16::from_be_bytes(SYNC_WORD)),
-                found: u32::from(u16::from_be_bytes([bytes[8], bytes[9]])),
+                found: u32::from(u16::from_be_bytes(*sync)),
             }));
         }
 
-        let frame_units = bytes[0] & 0x0F;
-        let user_bits_1 = bytes[0] >> 4;
+        let frame_units = bytes[0] & NIBBLE_MASK;
+        let user_bits_1 = bytes[0] >> NIBBLE_SHIFT;
 
-        let frame_tens = bytes[1] & 0x03;
-        let drop_frame_flag = bytes[1] & 0x04 != 0;
-        let color_frame_flag = bytes[1] & 0x08 != 0;
-        let user_bits_2 = bytes[1] >> 4;
+        let frame_tens = bytes[1] & NARROW_TENS_MASK;
+        let drop_frame_flag = bytes[1] & LOWER_FLAG_MASK != 0;
+        let color_frame_flag = bytes[1] & UPPER_FLAG_MASK != 0;
+        let user_bits_2 = bytes[1] >> NIBBLE_SHIFT;
 
-        let seconds_units = bytes[2] & 0x0F;
-        let user_bits_3 = bytes[2] >> 4;
+        let seconds_units = bytes[SECONDS_UNITS_OFFSET] & NIBBLE_MASK;
+        let user_bits_3 = bytes[SECONDS_UNITS_OFFSET] >> NIBBLE_SHIFT;
 
-        let seconds_tens = bytes[3] & 0x07;
-        let flag_bit_27 = bytes[3] & 0x08 != 0;
-        let user_bits_4 = bytes[3] >> 4;
+        let seconds_tens = bytes[SECONDS_TENS_OFFSET] & WIDE_TENS_MASK;
+        let flag_bit_27 = bytes[SECONDS_TENS_OFFSET] & UPPER_FLAG_MASK != 0;
+        let user_bits_4 = bytes[SECONDS_TENS_OFFSET] >> NIBBLE_SHIFT;
 
-        let minutes_units = bytes[4] & 0x0F;
-        let user_bits_5 = bytes[4] >> 4;
+        let minutes_units = bytes[MINUTES_UNITS_OFFSET] & NIBBLE_MASK;
+        let user_bits_5 = bytes[MINUTES_UNITS_OFFSET] >> NIBBLE_SHIFT;
 
-        let minutes_tens = bytes[5] & 0x07;
-        let flag_bit_43 = bytes[5] & 0x08 != 0;
-        let user_bits_6 = bytes[5] >> 4;
+        let minutes_tens = bytes[MINUTES_TENS_OFFSET] & WIDE_TENS_MASK;
+        let flag_bit_43 = bytes[MINUTES_TENS_OFFSET] & UPPER_FLAG_MASK != 0;
+        let user_bits_6 = bytes[MINUTES_TENS_OFFSET] >> NIBBLE_SHIFT;
 
-        let hours_units = bytes[6] & 0x0F;
-        let user_bits_7 = bytes[6] >> 4;
+        let hours_units = bytes[HOURS_UNITS_OFFSET] & NIBBLE_MASK;
+        let user_bits_7 = bytes[HOURS_UNITS_OFFSET] >> NIBBLE_SHIFT;
 
-        let hours_tens = bytes[7] & 0x03;
-        let flag_bit_58 = bytes[7] & 0x04 != 0;
-        let flag_bit_59 = bytes[7] & 0x08 != 0;
-        let user_bits_8 = bytes[7] >> 4;
+        let hours_tens = bytes[HOURS_TENS_OFFSET] & NARROW_TENS_MASK;
+        let flag_bit_58 = bytes[HOURS_TENS_OFFSET] & LOWER_FLAG_MASK != 0;
+        let flag_bit_59 = bytes[HOURS_TENS_OFFSET] & UPPER_FLAG_MASK != 0;
+        let user_bits_8 = bytes[HOURS_TENS_OFFSET] >> NIBBLE_SHIFT;
 
         let frame = Self {
             hours: bcd_field("hours", hours_tens, hours_units)?,
@@ -411,31 +470,36 @@ impl Serialize for LtcFrame {
         need_out(buf, FRAME_LEN)?;
         self.validate()?;
 
-        let frame_units = self.frames % 10;
-        let frame_tens = self.frames / 10;
-        let seconds_units = self.seconds % 10;
-        let seconds_tens = self.seconds / 10;
-        let minutes_units = self.minutes % 10;
-        let minutes_tens = self.minutes / 10;
-        let hours_units = self.hours % 10;
-        let hours_tens = self.hours / 10;
+        let frame_units = self.frames % DECIMAL_RADIX;
+        let frame_tens = self.frames / DECIMAL_RADIX;
+        let seconds_units = self.seconds % DECIMAL_RADIX;
+        let seconds_tens = self.seconds / DECIMAL_RADIX;
+        let minutes_units = self.minutes % DECIMAL_RADIX;
+        let minutes_tens = self.minutes / DECIMAL_RADIX;
+        let hours_units = self.hours % DECIMAL_RADIX;
+        let hours_tens = self.hours / DECIMAL_RADIX;
 
-        buf[0] = frame_units | (self.user_bits[0] << 4);
-        buf[1] = frame_tens
-            | (u8::from(self.drop_frame_flag) << 2)
-            | (u8::from(self.color_frame_flag) << 3)
-            | (self.user_bits[1] << 4);
-        buf[2] = seconds_units | (self.user_bits[2] << 4);
-        buf[3] = seconds_tens | (u8::from(self.flag_bit_27) << 3) | (self.user_bits[3] << 4);
-        buf[4] = minutes_units | (self.user_bits[4] << 4);
-        buf[5] = minutes_tens | (u8::from(self.flag_bit_43) << 3) | (self.user_bits[5] << 4);
-        buf[6] = hours_units | (self.user_bits[6] << 4);
-        buf[7] = hours_tens
-            | (u8::from(self.flag_bit_58) << 2)
-            | (u8::from(self.flag_bit_59) << 3)
-            | (self.user_bits[7] << 4);
-        buf[8] = SYNC_WORD[0];
-        buf[9] = SYNC_WORD[1];
+        buf[FRAME_UNITS_OFFSET] = frame_units | (self.user_bits[BINARY_GROUP_1] << NIBBLE_SHIFT);
+        buf[FRAME_TENS_OFFSET] = frame_tens
+            | (u8::from(self.drop_frame_flag) << LOWER_FLAG_SHIFT)
+            | (u8::from(self.color_frame_flag) << UPPER_FLAG_SHIFT)
+            | (self.user_bits[BINARY_GROUP_2] << NIBBLE_SHIFT);
+        buf[SECONDS_UNITS_OFFSET] =
+            seconds_units | (self.user_bits[BINARY_GROUP_3] << NIBBLE_SHIFT);
+        buf[SECONDS_TENS_OFFSET] = seconds_tens
+            | (u8::from(self.flag_bit_27) << UPPER_FLAG_SHIFT)
+            | (self.user_bits[BINARY_GROUP_4] << NIBBLE_SHIFT);
+        buf[MINUTES_UNITS_OFFSET] =
+            minutes_units | (self.user_bits[BINARY_GROUP_5] << NIBBLE_SHIFT);
+        buf[MINUTES_TENS_OFFSET] = minutes_tens
+            | (u8::from(self.flag_bit_43) << UPPER_FLAG_SHIFT)
+            | (self.user_bits[BINARY_GROUP_6] << NIBBLE_SHIFT);
+        buf[HOURS_UNITS_OFFSET] = hours_units | (self.user_bits[BINARY_GROUP_7] << NIBBLE_SHIFT);
+        buf[HOURS_TENS_OFFSET] = hours_tens
+            | (u8::from(self.flag_bit_58) << LOWER_FLAG_SHIFT)
+            | (u8::from(self.flag_bit_59) << UPPER_FLAG_SHIFT)
+            | (self.user_bits[BINARY_GROUP_8] << NIBBLE_SHIFT);
+        buf[SYNC_WORD_OFFSET..SYNC_WORD_OFFSET + SYNC_WORD_LEN].copy_from_slice(&SYNC_WORD);
 
         Ok(FRAME_LEN)
     }

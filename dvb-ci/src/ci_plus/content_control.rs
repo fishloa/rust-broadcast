@@ -59,11 +59,11 @@ pub struct CcPinReply {
     /// The 7-bit `reserved` field in front of `LTS_bound_flag` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<7>,
+    pub reserved: ReservedZero<CC_PIN_RESERVED_BITS>,
     /// The `reserved(8)` byte of the `LTS_bound_flag == 0` branch as received
     /// (ignored on serialize when `lts_id` is `Some`); `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_lts: ReservedZero<8>,
+    pub reserved_lts: ReservedZero<RESERVED_BYTE_BITS>,
 }
 
 // reserved(7)+LTS_bound_flag(1) byte + LTS_id-or-reserved(1) + PINcode_status(1).
@@ -79,16 +79,20 @@ impl<'a> Parse<'a> for CcPinReply {
         need_in(body, CC_PIN_REPLY_BODY, "cc_PIN_reply")?;
         crate::objects::reject_trailing_body(body, CC_PIN_REPLY_BODY, "cc_PIN_reply")?;
         let lts_bound = body[0] & LTS_BOUND_FLAG_BIT != 0;
-        let lts_id = if lts_bound { Some(body[1]) } else { None };
+        let lts_id = if lts_bound {
+            Some(body[LTS_ID_OFFSET])
+        } else {
+            None
+        };
         Ok(Self {
             length_form,
             lts_id,
-            pincode_status: body[2],
-            reserved: ReservedZero::from_bits(u64::from(body[0] >> 1)),
+            pincode_status: body[PINCODE_STATUS_OFFSET],
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> CC_PIN_RESERVED_SHIFT)),
             reserved_lts: if lts_bound {
                 ReservedZero::default()
             } else {
-                ReservedZero::from_bits(u64::from(body[1]))
+                ReservedZero::from_bits(u64::from(body[LTS_ID_OFFSET]))
             },
         })
     }
@@ -107,21 +111,48 @@ impl Serialize for CcPinReply {
         )?;
         match self.lts_id {
             Some(id) => {
-                buf[pos] = ((self.reserved.get() << 1) as u8) | LTS_BOUND_FLAG_BIT;
-                buf[pos + 1] = id;
+                buf[pos] =
+                    ((self.reserved.get() << CC_PIN_RESERVED_SHIFT) as u8) | LTS_BOUND_FLAG_BIT;
+                buf[pos + LTS_ID_OFFSET] = id;
             }
             None => {
-                buf[pos] = (self.reserved.get() << 1) as u8;
+                buf[pos] = (self.reserved.get() << CC_PIN_RESERVED_SHIFT) as u8;
                 // else branch: reserved(8).
-                buf[pos + 1] = self.reserved_lts.get() as u8;
+                buf[pos + LTS_ID_OFFSET] = self.reserved_lts.get() as u8;
             }
         }
-        buf[pos + 2] = self.pincode_status;
+        buf[pos + PINCODE_STATUS_OFFSET] = self.pincode_status;
         Ok(pos + CC_PIN_REPLY_BODY)
     }
 }
 
 // --- cc_PIN_event (Table 8) ---
+
+/// Reserved bits in front of the `cc_PIN_reply` flags.
+pub const CC_PIN_RESERVED_BITS: u32 = 7;
+/// Width of a `reserved(8)` byte.
+pub const RESERVED_BYTE_BITS: u32 = 8;
+/// Shift selecting the reserved bits of the `cc_PIN_reply` flags byte.
+const CC_PIN_RESERVED_SHIFT: u32 = 1;
+
+/// Offsets within a `cc_PIN_reply` body.
+const LTS_ID_OFFSET: usize = 1;
+const PINCODE_STATUS_OFFSET: usize = 2;
+
+/// Offsets within a `cc_PIN_event` body.
+const EVENT_LTS_ID_OFFSET: usize = 0;
+const PROGRAM_NUMBER_OFFSET: usize = 1;
+const EVENT_PINCODE_STATUS_OFFSET: usize = 3;
+const RATING_OFFSET: usize = 4;
+const PIN_EVENT_UTC_OFFSET: usize = 5;
+const PIN_EVENT_CENTISECONDS_OFFSET: usize = 10;
+const PIN_EVENT_PRIVATE_DATA_OFFSET: usize = 11;
+/// Bytes of `pin_event_time_utc`.
+const PIN_EVENT_UTC_LEN: usize = 5;
+/// Bytes in the serialized UTC value that precede the 40-bit field.
+const UTC_PADDING_LEN: usize = core::mem::size_of::<u64>() - PIN_EVENT_UTC_LEN;
+/// Bytes of a SAC datatype's `datatype_id` + `datatype_length` header.
+const DATATYPE_VALUE_LEN: usize = core::mem::size_of::<u16>();
 
 /// Width of the `private_data` field (Table 8: `8x15` bits = 15 bytes).
 pub const PIN_EVENT_PRIVATE_DATA_LEN: usize = 15;
@@ -187,19 +218,25 @@ impl<'a> Parse<'a> for CcPinEvent {
         // rating(1) pin_event_time_utc(5) pin_event_time_centiseconds(1)
         // private_data(15).
         let mut utc = 0u64;
-        for &b in &body[5..10] {
-            utc = (utc << 8) | b as u64;
+        for &b in &body[PIN_EVENT_UTC_OFFSET..PIN_EVENT_CENTISECONDS_OFFSET] {
+            utc = (utc << u8::BITS) | u64::from(b);
         }
         let mut private_data = [0u8; PIN_EVENT_PRIVATE_DATA_LEN];
-        private_data.copy_from_slice(&body[11..11 + PIN_EVENT_PRIVATE_DATA_LEN]);
+        private_data.copy_from_slice(
+            &body[PIN_EVENT_PRIVATE_DATA_OFFSET
+                ..PIN_EVENT_PRIVATE_DATA_OFFSET + PIN_EVENT_PRIVATE_DATA_LEN],
+        );
         Ok(Self {
             length_form,
-            lts_id: body[0],
-            program_number: u16::from_be_bytes([body[1], body[2]]),
-            pincode_status: body[3],
-            rating: body[4],
+            lts_id: body[EVENT_LTS_ID_OFFSET],
+            program_number: u16::from_be_bytes([
+                body[PROGRAM_NUMBER_OFFSET],
+                body[PROGRAM_NUMBER_OFFSET + 1],
+            ]),
+            pincode_status: body[EVENT_PINCODE_STATUS_OFFSET],
+            rating: body[RATING_OFFSET],
             pin_event_time_utc: utc,
-            pin_event_time_centiseconds: body[10],
+            pin_event_time_centiseconds: body[PIN_EVENT_CENTISECONDS_OFFSET],
             private_data,
         })
     }
@@ -216,15 +253,19 @@ impl Serialize for CcPinEvent {
             self.length_form,
             buf,
         )?;
-        buf[pos] = self.lts_id;
-        buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
-        buf[pos + 3] = self.pincode_status;
-        buf[pos + 4] = self.rating;
+        buf[pos + EVENT_LTS_ID_OFFSET] = self.lts_id;
+        buf[pos + PROGRAM_NUMBER_OFFSET..pos + EVENT_PINCODE_STATUS_OFFSET]
+            .copy_from_slice(&self.program_number.to_be_bytes());
+        buf[pos + EVENT_PINCODE_STATUS_OFFSET] = self.pincode_status;
+        buf[pos + RATING_OFFSET] = self.rating;
         // utc(40) — low 5 bytes, big-endian.
         let utc = self.pin_event_time_utc.to_be_bytes();
-        buf[pos + 5..pos + 10].copy_from_slice(&utc[3..8]);
-        buf[pos + 10] = self.pin_event_time_centiseconds;
-        buf[pos + 11..pos + 11 + PIN_EVENT_PRIVATE_DATA_LEN].copy_from_slice(&self.private_data);
+        buf[pos + PIN_EVENT_UTC_OFFSET..pos + PIN_EVENT_CENTISECONDS_OFFSET]
+            .copy_from_slice(&utc[UTC_PADDING_LEN..]);
+        buf[pos + PIN_EVENT_CENTISECONDS_OFFSET] = self.pin_event_time_centiseconds;
+        buf[pos + PIN_EVENT_PRIVATE_DATA_OFFSET
+            ..pos + PIN_EVENT_PRIVATE_DATA_OFFSET + PIN_EVENT_PRIVATE_DATA_LEN]
+            .copy_from_slice(&self.private_data);
         Ok(pos + CC_PIN_EVENT_BODY)
     }
 }
@@ -452,7 +493,7 @@ impl<'a> SacMessage<'a> {
         while !body.is_empty() {
             need_in(body, SAC_DATATYPE_HEADER, "SAC datatype header")?;
             let datatype_id = DatatypeId::from_u8(body[0]);
-            let len = u16::from_be_bytes([body[1], body[2]]) as usize;
+            let len = usize::from(u16::from_be_bytes([body[1], body[1 + 1]]));
             let end = SAC_DATATYPE_HEADER + len;
             need_in(body, end, "SAC datatype value")?;
             datatypes.push(SacDatatype {
@@ -479,7 +520,7 @@ impl<'a> SacMessage<'a> {
             let value_len =
                 u16::try_from(dt.value.len()).map_err(|_| Error::LengthTooLarge(dt.value.len()))?;
             buf[pos] = dt.datatype_id.to_u8();
-            buf[pos + 1..pos + 3].copy_from_slice(&value_len.to_be_bytes());
+            buf[pos + 1..pos + 1 + DATATYPE_VALUE_LEN].copy_from_slice(&value_len.to_be_bytes());
             pos += SAC_DATATYPE_HEADER;
             buf[pos..pos + dt.value.len()].copy_from_slice(dt.value);
             pos += dt.value.len();

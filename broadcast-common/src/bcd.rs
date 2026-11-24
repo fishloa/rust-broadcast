@@ -13,12 +13,21 @@
 /// [`decimal_to_bcd`] `u64` carrier.
 pub const MAX_NIBBLES: u8 = 16;
 
+/// Bits per BCD nibble and BCD digits per packed byte.
+const NIBBLE_BITS: u32 = 4;
+const DIGITS_PER_BYTE: u8 = 2;
+/// Mask of one BCD nibble.
+const NIBBLE_MASK: u64 = 0x0F;
+/// Largest valid BCD digit and the decimal radix it is encoded against.
+const MAX_DIGIT: u64 = 9;
+const DECIMAL_RADIX: u64 = 10;
+
 /// Decode a packed-BCD byte (two nibbles) to `0..=99`.
 ///
 /// Returns `None` if either nibble is greater than 9.
 #[must_use]
 pub fn from_bcd_byte(byte: u8) -> Option<u8> {
-    bcd_to_decimal(u64::from(byte), 2).map(|v| v as u8)
+    bcd_to_decimal(u64::from(byte), DIGITS_PER_BYTE).map(|v| v as u8)
 }
 
 /// Encode `0..=99` to a packed-BCD byte.
@@ -26,7 +35,7 @@ pub fn from_bcd_byte(byte: u8) -> Option<u8> {
 /// Returns `None` if `value > 99`.
 #[must_use]
 pub fn to_bcd_byte(value: u8) -> Option<u8> {
-    decimal_to_bcd(u64::from(value), 2).map(|v| v as u8)
+    decimal_to_bcd(u64::from(value), DIGITS_PER_BYTE).map(|v| v as u8)
 }
 
 /// Decode the low `nibbles` BCD digits of `raw` to a decimal value.
@@ -41,11 +50,11 @@ pub fn bcd_to_decimal(raw: u64, nibbles: u8) -> Option<u64> {
     }
     let mut acc = 0u64;
     for i in (0..nibbles).rev() {
-        let digit = (raw >> (i * 4)) & 0x0F;
-        if digit > 9 {
+        let digit = (raw >> (u32::from(i) * NIBBLE_BITS)) & NIBBLE_MASK;
+        if digit > MAX_DIGIT {
             return None;
         }
-        acc = acc * 10 + digit;
+        acc = acc * DECIMAL_RADIX + digit;
     }
     Some(acc)
 }
@@ -62,9 +71,9 @@ pub fn decimal_to_bcd(value: u64, nibbles: u8) -> Option<u64> {
     let mut packed = 0u64;
     let mut remaining = value;
     for i in 0..nibbles {
-        let digit = remaining % 10;
-        packed |= digit << (i * 4);
-        remaining /= 10;
+        let digit = remaining % DECIMAL_RADIX;
+        packed |= digit << (u32::from(i) * NIBBLE_BITS);
+        remaining /= DECIMAL_RADIX;
     }
     if remaining != 0 {
         // value had more digits than `nibbles` could hold.

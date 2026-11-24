@@ -20,6 +20,19 @@ use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
+/// Reserved bits in front of `module_id`.
+pub const MODULE_ID_RESERVED_BITS: u32 = 2;
+/// Shift selecting the reserved bits in front of `module_id`.
+const MODULE_ID_RESERVED_SHIFT: u32 = 6;
+/// Bit width of `module_id`.
+const MODULE_ID_BITS: u32 = 6;
+/// Mask of `module_id`.
+const MODULE_ID_MASK: u8 = 0x3F;
+/// Offset of `module_id` in a `module_id_send()` body.
+const MODULE_ID_OFFSET: usize = 0;
+/// Offset of `module_id` in a `module_id_command()` body.
+const MODULE_ID_COMMAND_OFFSET: usize = 1;
+
 /// Resource-scoped `apdu_tag`s for the Resource Manager v2 (Table 87 / Tables 3-7).
 pub mod tag {
     use crate::tag::ApduTag;
@@ -87,7 +100,7 @@ pub struct ModuleIdSend {
     /// The 2-bit `reserved` field in front of `module_id` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<2>,
+    pub reserved: ReservedZero<MODULE_ID_RESERVED_BITS>,
 }
 
 /// `command` values for `module_id_command()` (Table 7).
@@ -151,7 +164,7 @@ pub struct ModuleIdCommand {
     /// The 2-bit `reserved` field in front of `module_id` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<2>,
+    pub reserved: ReservedZero<MODULE_ID_RESERVED_BITS>,
 }
 
 // --- profile_enq / profile_changed / profile_reply ---
@@ -251,8 +264,10 @@ impl<'a> Parse<'a> for ModuleIdSend {
         crate::objects::reject_trailing_body(body, MODULE_ID_SEND_BODY, "module_id_send")?;
         Ok(Self {
             length_form,
-            module_id: body[0] & 0x3F,
-            reserved: ReservedZero::from_bits(u64::from(body[0] >> 6)),
+            module_id: body[MODULE_ID_OFFSET] & MODULE_ID_MASK,
+            reserved: ReservedZero::from_bits(u64::from(
+                body[MODULE_ID_OFFSET] >> MODULE_ID_RESERVED_SHIFT,
+            )),
         })
     }
 }
@@ -262,7 +277,11 @@ impl Serialize for ModuleIdSend {
         objects::apdu_len(MODULE_ID_SEND_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::fit_bits(u64::from(self.module_id), 6, "module_id_send module_id")?;
+        objects::fit_bits(
+            u64::from(self.module_id),
+            MODULE_ID_BITS,
+            "module_id_send module_id",
+        )?;
         let pos = objects::write_apdu_header(
             tag::MODULE_ID_SEND,
             MODULE_ID_SEND_BODY,
@@ -270,7 +289,7 @@ impl Serialize for ModuleIdSend {
             buf,
         )?;
         // reserved(2), module_id(6). Range-checked above.
-        buf[pos] = ((self.reserved.get() << 6) as u8) | self.module_id;
+        buf[pos] = ((self.reserved.get() << MODULE_ID_RESERVED_SHIFT) as u8) | self.module_id;
         Ok(pos + MODULE_ID_SEND_BODY)
     }
 }
@@ -290,8 +309,10 @@ impl<'a> Parse<'a> for ModuleIdCommand {
         Ok(Self {
             length_form,
             command: ModuleIdCommandKind::from_u8(body[0]),
-            module_id: body[1] & 0x3F,
-            reserved: ReservedZero::from_bits(u64::from(body[1] >> 6)),
+            module_id: body[MODULE_ID_COMMAND_OFFSET] & MODULE_ID_MASK,
+            reserved: ReservedZero::from_bits(u64::from(
+                body[MODULE_ID_COMMAND_OFFSET] >> MODULE_ID_RESERVED_SHIFT,
+            )),
         })
     }
 }
@@ -301,7 +322,11 @@ impl Serialize for ModuleIdCommand {
         objects::apdu_len(MODULE_ID_COMMAND_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::fit_bits(u64::from(self.module_id), 6, "module_id_command module_id")?;
+        objects::fit_bits(
+            u64::from(self.module_id),
+            MODULE_ID_BITS,
+            "module_id_command module_id",
+        )?;
         let pos = objects::write_apdu_header(
             tag::MODULE_ID_COMMAND,
             MODULE_ID_COMMAND_BODY,
@@ -310,7 +335,8 @@ impl Serialize for ModuleIdCommand {
         )?;
         buf[pos] = self.command.to_u8();
         // reserved(2), module_id(6). Range-checked above.
-        buf[pos + 1] = ((self.reserved.get() << 6) as u8) | self.module_id;
+        buf[pos + MODULE_ID_COMMAND_OFFSET] =
+            ((self.reserved.get() << MODULE_ID_RESERVED_SHIFT) as u8) | self.module_id;
         Ok(pos + MODULE_ID_COMMAND_BODY)
     }
 }

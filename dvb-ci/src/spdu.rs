@@ -223,35 +223,58 @@ pub struct OpenSessionResponse {
     pub session_nb: u16,
 }
 
+/// Bytes of `session_nb`.
+const SESSION_NB_LEN: usize = core::mem::size_of::<u16>();
+/// Bytes of a `resource_identifier()`.
+const RESOURCE_ID_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of `session_status` within a session-response body.
+const SESSION_STATUS_OFFSET: usize = 0;
+/// Offset of `resource_identifier()` within a session-response body.
+const RESOURCE_ID_OFFSET: usize = 1;
+/// Offset of `session_nb` within a session-response body.
+const SESSION_NB_OFFSET: usize = RESOURCE_ID_OFFSET + RESOURCE_ID_LEN;
+/// Body length of `open_session_response()` / `create_session_response()`:
+/// status + resource_identifier + session_nb.
+const SESSION_RESPONSE_BODY_LEN: usize = 1 + RESOURCE_ID_LEN + SESSION_NB_LEN;
+/// Body length of `create_session()`: resource_identifier + session_nb.
+const CREATE_SESSION_BODY_LEN: usize = RESOURCE_ID_LEN + SESSION_NB_LEN;
+/// Body length of `close_session_response()`: status + session_nb.
+const CLOSE_SESSION_RESPONSE_BODY_LEN: usize = 1 + SESSION_NB_LEN;
+
 impl<'a> Parse<'a> for OpenSessionResponse {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, v) = parse_spdu_fixed(
             bytes,
             tags::OPEN_SESSION_RESPONSE,
-            7,
+            SESSION_RESPONSE_BODY_LEN,
             "open_session_response",
         )?;
         Ok(Self {
             length_form,
-            status: SessionStatus::from_u8(v[0]),
-            resource: ResourceId::parse(&v[1..5])?,
-            session_nb: u16::from_be_bytes([v[5], v[6]]),
+            status: SessionStatus::from_u8(v[SESSION_STATUS_OFFSET]),
+            resource: ResourceId::parse(&v[RESOURCE_ID_OFFSET..SESSION_NB_OFFSET])?,
+            session_nb: u16::from_be_bytes([v[SESSION_NB_OFFSET], v[SESSION_NB_OFFSET + 1]]),
         })
     }
 }
 impl Serialize for OpenSessionResponse {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        spdu_len(7, self.length_form)
+        spdu_len(SESSION_RESPONSE_BODY_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = write_spdu_header(tags::OPEN_SESSION_RESPONSE, 7, self.length_form, buf)?;
+        let mut pos = write_spdu_header(
+            tags::OPEN_SESSION_RESPONSE,
+            SESSION_RESPONSE_BODY_LEN,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.status.to_u8();
         pos += 1;
         pos += self.resource.serialize_into(&mut buf[pos..])?;
-        buf[pos..pos + 2].copy_from_slice(&self.session_nb.to_be_bytes());
-        Ok(pos + 2)
+        buf[pos..pos + SESSION_NB_LEN].copy_from_slice(&self.session_nb.to_be_bytes());
+        Ok(pos + SESSION_NB_LEN)
     }
 }
 
@@ -274,24 +297,34 @@ pub struct CreateSession {
 impl<'a> Parse<'a> for CreateSession {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (length_form, v) = parse_spdu_fixed(bytes, tags::CREATE_SESSION, 6, "create_session")?;
+        let (length_form, v) = parse_spdu_fixed(
+            bytes,
+            tags::CREATE_SESSION,
+            CREATE_SESSION_BODY_LEN,
+            "create_session",
+        )?;
         Ok(Self {
             length_form,
-            resource: ResourceId::parse(&v[0..4])?,
-            session_nb: u16::from_be_bytes([v[4], v[5]]),
+            resource: ResourceId::parse(&v[..RESOURCE_ID_LEN])?,
+            session_nb: u16::from_be_bytes([v[RESOURCE_ID_LEN], v[RESOURCE_ID_LEN + 1]]),
         })
     }
 }
 impl Serialize for CreateSession {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        spdu_len(6, self.length_form)
+        spdu_len(CREATE_SESSION_BODY_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = write_spdu_header(tags::CREATE_SESSION, 6, self.length_form, buf)?;
+        let mut pos = write_spdu_header(
+            tags::CREATE_SESSION,
+            CREATE_SESSION_BODY_LEN,
+            self.length_form,
+            buf,
+        )?;
         pos += self.resource.serialize_into(&mut buf[pos..])?;
-        buf[pos..pos + 2].copy_from_slice(&self.session_nb.to_be_bytes());
-        Ok(pos + 2)
+        buf[pos..pos + SESSION_NB_LEN].copy_from_slice(&self.session_nb.to_be_bytes());
+        Ok(pos + SESSION_NB_LEN)
     }
 }
 
@@ -319,29 +352,34 @@ impl<'a> Parse<'a> for CreateSessionResponse {
         let (length_form, v) = parse_spdu_fixed(
             bytes,
             tags::CREATE_SESSION_RESPONSE,
-            7,
+            SESSION_RESPONSE_BODY_LEN,
             "create_session_response",
         )?;
         Ok(Self {
             length_form,
-            status: SessionStatus::from_u8(v[0]),
-            resource: ResourceId::parse(&v[1..5])?,
-            session_nb: u16::from_be_bytes([v[5], v[6]]),
+            status: SessionStatus::from_u8(v[SESSION_STATUS_OFFSET]),
+            resource: ResourceId::parse(&v[RESOURCE_ID_OFFSET..SESSION_NB_OFFSET])?,
+            session_nb: u16::from_be_bytes([v[SESSION_NB_OFFSET], v[SESSION_NB_OFFSET + 1]]),
         })
     }
 }
 impl Serialize for CreateSessionResponse {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        spdu_len(7, self.length_form)
+        spdu_len(SESSION_RESPONSE_BODY_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = write_spdu_header(tags::CREATE_SESSION_RESPONSE, 7, self.length_form, buf)?;
+        let mut pos = write_spdu_header(
+            tags::CREATE_SESSION_RESPONSE,
+            SESSION_RESPONSE_BODY_LEN,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.status.to_u8();
         pos += 1;
         pos += self.resource.serialize_into(&mut buf[pos..])?;
-        buf[pos..pos + 2].copy_from_slice(&self.session_nb.to_be_bytes());
-        Ok(pos + 2)
+        buf[pos..pos + SESSION_NB_LEN].copy_from_slice(&self.session_nb.to_be_bytes());
+        Ok(pos + SESSION_NB_LEN)
     }
 }
 
@@ -365,7 +403,7 @@ impl<'a> Parse<'a> for CloseSessionRequest {
         let (length_form, v) = parse_spdu_fixed(
             bytes,
             tags::CLOSE_SESSION_REQUEST,
-            2,
+            SESSION_NB_LEN,
             "close_session_request",
         )?;
         Ok(Self {
@@ -377,12 +415,17 @@ impl<'a> Parse<'a> for CloseSessionRequest {
 impl Serialize for CloseSessionRequest {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        spdu_len(2, self.length_form)
+        spdu_len(SESSION_NB_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = write_spdu_header(tags::CLOSE_SESSION_REQUEST, 2, self.length_form, buf)?;
-        buf[pos..pos + 2].copy_from_slice(&self.session_nb.to_be_bytes());
-        Ok(pos + 2)
+        let pos = write_spdu_header(
+            tags::CLOSE_SESSION_REQUEST,
+            SESSION_NB_LEN,
+            self.length_form,
+            buf,
+        )?;
+        buf[pos..pos + SESSION_NB_LEN].copy_from_slice(&self.session_nb.to_be_bytes());
+        Ok(pos + SESSION_NB_LEN)
     }
 }
 
@@ -408,27 +451,32 @@ impl<'a> Parse<'a> for CloseSessionResponse {
         let (length_form, v) = parse_spdu_fixed(
             bytes,
             tags::CLOSE_SESSION_RESPONSE,
-            3,
+            CLOSE_SESSION_RESPONSE_BODY_LEN,
             "close_session_response",
         )?;
         Ok(Self {
             length_form,
             status: SessionStatus::from_u8(v[0]),
-            session_nb: u16::from_be_bytes([v[1], v[2]]),
+            session_nb: u16::from_be_bytes([v[1], v[1 + 1]]),
         })
     }
 }
 impl Serialize for CloseSessionResponse {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        spdu_len(3, self.length_form)
+        spdu_len(CLOSE_SESSION_RESPONSE_BODY_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = write_spdu_header(tags::CLOSE_SESSION_RESPONSE, 3, self.length_form, buf)?;
+        let mut pos = write_spdu_header(
+            tags::CLOSE_SESSION_RESPONSE,
+            CLOSE_SESSION_RESPONSE_BODY_LEN,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.status.to_u8();
         pos += 1;
-        buf[pos..pos + 2].copy_from_slice(&self.session_nb.to_be_bytes());
-        Ok(pos + 2)
+        buf[pos..pos + SESSION_NB_LEN].copy_from_slice(&self.session_nb.to_be_bytes());
+        Ok(pos + SESSION_NB_LEN)
     }
 }
 
@@ -460,7 +508,7 @@ impl SessionNumber {
     /// APDU body begins.
     #[must_use]
     pub fn header_len(&self) -> usize {
-        1 + length::encoded_len_with(2, self.length_form) + 2
+        1 + length::encoded_len_with(SESSION_NB_LEN, self.length_form) + SESSION_NB_LEN
     }
 }
 
@@ -470,7 +518,12 @@ impl<'a> Parse<'a> for SessionNumber {
         // session_number is followed by an APDU body; only the value (length=2)
         // belongs to the SPDU header, so we read exactly that and ignore any
         // trailing APDU bytes.
-        let (length_form, v) = parse_spdu_fixed(bytes, tags::SESSION_NUMBER, 2, "session_number")?;
+        let (length_form, v) = parse_spdu_fixed(
+            bytes,
+            tags::SESSION_NUMBER,
+            SESSION_NB_LEN,
+            "session_number",
+        )?;
         Ok(Self {
             length_form,
             session_nb: u16::from_be_bytes([v[0], v[1]]),
@@ -480,12 +533,12 @@ impl<'a> Parse<'a> for SessionNumber {
 impl Serialize for SessionNumber {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        spdu_len(2, self.length_form)
+        spdu_len(SESSION_NB_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = write_spdu_header(tags::SESSION_NUMBER, 2, self.length_form, buf)?;
-        buf[pos..pos + 2].copy_from_slice(&self.session_nb.to_be_bytes());
-        Ok(pos + 2)
+        let pos = write_spdu_header(tags::SESSION_NUMBER, SESSION_NB_LEN, self.length_form, buf)?;
+        buf[pos..pos + SESSION_NB_LEN].copy_from_slice(&self.session_nb.to_be_bytes());
+        Ok(pos + SESSION_NB_LEN)
     }
 }
 

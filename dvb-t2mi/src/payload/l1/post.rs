@@ -22,6 +22,11 @@ use super::enums::{
 
 // ── field widths: Configurable L1-post (Figure 27) ───────────────────────────
 
+/// Bits in a byte, for the bit- to byte-length rounding and byte-chunk reads.
+const BITS_PER_BYTE: usize = 8;
+/// Bytes in a big-endian `u16` length field.
+const LENGTH_FIELD_BYTES: usize = 2;
+
 const SUB_SLICES_PER_FRAME_BITS: u32 = 15;
 const NUM_PLP_BITS: u32 = 8;
 const NUM_AUX_BITS: u32 = 4;
@@ -695,13 +700,17 @@ impl L1ExtBlock {
         let block_type = r.read_bits(L1_EXT_BLOCK_TYPE_BITS)? as u8;
         let data_bit_len = r.read_bits(L1_EXT_DATA_LEN_BITS)? as u16;
         let n = data_bit_len as usize;
-        let mut data = vec![0u8; n.div_ceil(8)];
+        let mut data = vec![0u8; n.div_ceil(BITS_PER_BYTE)];
         let mut done = 0usize;
         for byte in data.iter_mut() {
-            let take = (n - done).min(8) as u32;
+            let take = (n - done).min(BITS_PER_BYTE) as u32;
             let v = r.read_bits(take)? as u8;
             // MSB-first: a short final field sits in the high bits.
-            *byte = if take < 8 { v << (8 - take) } else { v };
+            *byte = if take < BITS_PER_BYTE as u32 {
+                v << (BITS_PER_BYTE as u32 - take)
+            } else {
+                v
+            };
             done += take as usize;
         }
         Ok(Self {
@@ -718,7 +727,7 @@ impl L1ExtBlock {
         // and in release a wraparound that makes `take` clamp back to 8 and
         // write bits beyond the declared length, misframing the L1EXT
         // region (W-T2-5).
-        let expected_bytes = (self.data_bit_len as usize).div_ceil(8);
+        let expected_bytes = (self.data_bit_len as usize).div_ceil(BITS_PER_BYTE);
         if self.data.len() != expected_bytes {
             return Err(crate::Error::LengthMismatch(
                 broadcast_common::error::LengthMismatch {
@@ -734,9 +743,9 @@ impl L1ExtBlock {
         let n = self.data_bit_len as usize;
         let mut done = 0usize;
         for &byte in &self.data {
-            let take = (n - done).min(8) as u32;
-            let v = if take < 8 {
-                u64::from(byte >> (8 - take))
+            let take = (n - done).min(BITS_PER_BYTE) as u32;
+            let v = if take < BITS_PER_BYTE as u32 {
+                u64::from(byte >> (BITS_PER_BYTE as u32 - take))
             } else {
                 u64::from(byte)
             };
@@ -819,17 +828,17 @@ pub(crate) fn parse_l1_post_from_framed(
     // ── L1CONF ────────────────────────────────────────────────────────────────
     let (b, _) = framed
         .get(pos..)
-        .and_then(|s| s.split_first_chunk::<2>())
+        .and_then(|s| s.split_first_chunk::<LENGTH_FIELD_BYTES>())
         .ok_or(crate::Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: pos + 2,
+                need: pos + LENGTH_FIELD_BYTES,
                 have: framed.len(),
                 what: "L1CONF_LEN",
             },
         ))?;
     let l1conf_len_bits = u16::from_be_bytes(*b) as usize;
-    pos += 2;
-    let l1conf_bytes = l1conf_len_bits.div_ceil(8);
+    pos += LENGTH_FIELD_BYTES;
+    let l1conf_bytes = l1conf_len_bits.div_ceil(BITS_PER_BYTE);
     need_in(framed, pos + l1conf_bytes, "L1CONF")?;
     let configurable =
         L1PostConfigurable::parse(&framed[pos..pos + l1conf_bytes], num_rf, fef_present)?;
@@ -841,17 +850,17 @@ pub(crate) fn parse_l1_post_from_framed(
     // ── L1DYN_CURR ────────────────────────────────────────────────────────────
     let (b, _) = framed
         .get(pos..)
-        .and_then(|s| s.split_first_chunk::<2>())
+        .and_then(|s| s.split_first_chunk::<LENGTH_FIELD_BYTES>())
         .ok_or(crate::Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: pos + 2,
+                need: pos + LENGTH_FIELD_BYTES,
                 have: framed.len(),
                 what: "L1DYN_CURR_LEN",
             },
         ))?;
     let l1dyn_len_bits = u16::from_be_bytes(*b) as usize;
-    pos += 2;
-    let l1dyn_bytes = l1dyn_len_bits.div_ceil(8);
+    pos += LENGTH_FIELD_BYTES;
+    let l1dyn_bytes = l1dyn_len_bits.div_ceil(BITS_PER_BYTE);
     need_in(framed, pos + l1dyn_bytes, "L1DYN_CURR")?;
     let dynamic_current = L1PostDynamic::parse(&framed[pos..pos + l1dyn_bytes], num_plp, num_aux)?;
     pos += l1dyn_bytes;
@@ -859,17 +868,17 @@ pub(crate) fn parse_l1_post_from_framed(
     // ── L1EXT ─────────────────────────────────────────────────────────────────
     let (b, _) = framed
         .get(pos..)
-        .and_then(|s| s.split_first_chunk::<2>())
+        .and_then(|s| s.split_first_chunk::<LENGTH_FIELD_BYTES>())
         .ok_or(crate::Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: pos + 2,
+                need: pos + LENGTH_FIELD_BYTES,
                 have: framed.len(),
                 what: "L1EXT_LEN",
             },
         ))?;
     let l1ext_len_bits = u16::from_be_bytes(*b) as usize;
-    pos += 2;
-    let l1ext_bytes = l1ext_len_bits.div_ceil(8);
+    pos += LENGTH_FIELD_BYTES;
+    let l1ext_bytes = l1ext_len_bits.div_ceil(BITS_PER_BYTE);
     need_in(framed, pos + l1ext_bytes, "L1EXT")?;
     let extension = if l1ext_bytes > 0 {
         parse_ext_blocks(&framed[pos..pos + l1ext_bytes], l1ext_len_bits)?
@@ -894,7 +903,7 @@ where
     let bit_len_field = broadcast_common::len::fit_u16(bit_len, "framed_block bit_len")?;
     out.extend_from_slice(&bit_len_field.to_be_bytes());
     let start = out.len();
-    out.resize(start + bit_len.div_ceil(8), 0);
+    out.resize(start + bit_len.div_ceil(BITS_PER_BYTE), 0);
     let mut w = BitWriter::new(&mut out[start..]);
     write(&mut w)?;
     Ok(())

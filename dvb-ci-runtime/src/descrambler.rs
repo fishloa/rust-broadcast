@@ -58,6 +58,12 @@ use mpeg_ts::ts::TS_SYNC_BYTE;
 /// 3 bits are `transport_error_indicator`/`payload_unit_start_indicator`/
 /// `transport_priority`, the low 5 are `PID[12:8]`.
 const TS_PID_HIGH_MASK: u8 = 0x1F;
+/// Offset of the PID high byte within a TS packet header.
+const TS_PID_HIGH_OFFSET: usize = 1;
+/// Offset of the PID low byte within a TS packet header.
+const TS_PID_LOW_OFFSET: usize = 2;
+/// Shift placing the PID high byte above the low byte.
+const TS_PID_HIGH_SHIFT: u32 = 8;
 /// Number of whole TS packets to read from `ci0` per [`CiDataDevice::read`]
 /// call while draining descrambled output in `feed_ts` — a batch buffer size,
 /// not a wire value.
@@ -70,7 +76,8 @@ const MAX_STALLED_WRITES: u32 = 20;
 /// The 13-bit PID carried by one 188-byte TS packet's header (bytes 1–2),
 /// masking off the non-PID flag bits in byte 1.
 fn packet_pid(packet: &[u8]) -> u16 {
-    (u16::from(packet[1] & TS_PID_HIGH_MASK) << 8) | u16::from(packet[2])
+    (u16::from(packet[TS_PID_HIGH_OFFSET] & TS_PID_HIGH_MASK) << TS_PID_HIGH_SHIFT)
+        | u16::from(packet[TS_PID_LOW_OFFSET])
 }
 
 /// Keep only the packets in `scrambled` whose PID is in `allow`, concatenated

@@ -12,6 +12,9 @@ use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
+/// Octets in a `resource_identifier()` (§8.2.2).
+const RESOURCE_ID_LEN: usize = core::mem::size_of::<u32>();
+
 /// A `resource_identifier()` — 4 octets, carried verbatim as a big-endian `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -82,13 +85,15 @@ impl core::fmt::Display for ResourceId {
 impl<'a> Parse<'a> for ResourceId {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let chunk = bytes.first_chunk::<4>().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
-                need: 4,
-                have: bytes.len(),
-                what: "resource_identifier",
-            },
-        ))?;
+        let chunk = bytes
+            .first_chunk::<RESOURCE_ID_LEN>()
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: RESOURCE_ID_LEN,
+                    have: bytes.len(),
+                    what: "resource_identifier",
+                },
+            ))?;
         Ok(Self(u32::from_be_bytes(*chunk)))
     }
 }
