@@ -96,7 +96,7 @@ use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::media::Media;
 pub use broadcast_common::cenc::CencScheme;
-use isobmff::cenc::{KEY_LEN, SENC, SINF, SampleEncryptionEntry, TrackEncryptionBox};
+use isobmff::cenc::{KEY_LEN, SENC, SampleEncryptionEntry, TrackEncryptionBox};
 use isobmff::init_segment::{MDIA, MINF, MOOV, MVHD, STBL, STSD, SampleTableBox, TKHD, TRAK};
 use isobmff::movie_fragment::{
     MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TFHD, TRAF, TRUN, TrackFragmentHeaderBox,
@@ -466,9 +466,6 @@ impl Decrypt for CencDecryptor {
 /// `creation_time` and `modification_time` precede `timescale` in `mdhd`
 /// (ISO/IEC 14496-12:2026 §8.4.2).
 const MDHD_TIMES_BEFORE_TIMESCALE: usize = 2;
-/// Fixed part of an `AudioSampleEntry` before its child boxes
-/// (ISO/IEC 14496-12:2026 §12.2.3).
-const AUDIO_SAMPLE_ENTRY_HDR: usize = 28;
 /// `stsd` fixed header after the FullBox: `entry_count`.
 const STSD_ENTRY_COUNT: usize = 4;
 /// A `VisualSampleEntry` fixed body length before its child boxes
@@ -723,33 +720,13 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
     if body_start > stsd.len() {
         return None;
     }
-    for entry in BoxIter::new(&stsd[body_start..]).filter_map(|b| b.ok()) {
-        let ty = entry.four_cc();
-        if ty == *b"encv" || ty == *b"enca" {
-            // Sample-entry child boxes start after the fixed VisualSampleEntry /
-            // AudioSampleEntry header. We only support protected video (encv)
-            // here; the sinf is a child box, located by scanning.
-            let child_start = if ty == *b"encv" {
-                BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR
-            } else {
-                // enca: 8 reserved + 2 channelcount + 2 samplesize + 4 predefined
-                // + 2 reserved + 2 timescale-hi... just scan from a safe minimum
-                // (AudioSampleEntry fixed part is 28 bytes past the box header).
-                BOX_HEADER_MIN_SIZE + AUDIO_SAMPLE_ENTRY_HDR
-            };
-            if child_start <= entry.bytes.len() {
-                // The child boxes start directly at `child_start` (no container
-                // header to skip), so scan them with the one walker.
-                if let Some(sinf) = BoxIter::new(&entry.bytes[child_start..])
-                    .filter_map(|b| b.ok())
-                    .find(|b| b.header.box_type.is(&SINF))
-                {
-                    return Some(sinf.bytes);
-                }
-            }
-        }
-    }
-    None
+    BoxIter::new(&stsd[body_start..])
+        .filter_map(|b| b.ok())
+        .find(|entry| {
+            let ty = entry.four_cc();
+            ty == *b"encv" || ty == *b"enca"
+        })
+        .and_then(|entry| isobmff::cenc::sinf_of_sample_entry(entry.bytes))
 }
 
 /// The FourCC of the first sample entry in an `stsd` box, as text

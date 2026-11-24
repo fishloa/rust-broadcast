@@ -29,7 +29,7 @@ const SYNC_INDEX_BIAS: u32 = 1;
 ///
 /// Plain data: it borrows nothing from the tables or the file, so a fragment
 /// sample can be kept after the `moof` buffer is gone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SampleRef {
     /// The track this sample belongs to.
@@ -51,6 +51,11 @@ pub struct SampleRef {
     pub size: u32,
     /// One-based `stsd` entry that describes this sample (§8.7.4).
     pub description_index: u32,
+    /// CENC per-sample auxiliary information from the fragment's `senc` box
+    /// (ISO/IEC 23001-7 §12.3), when the sample's track is protected and the
+    /// fragment carries one. `None` for a progressive sample and for a
+    /// constant-IV track, whose IV is in `tenc` rather than per sample.
+    pub aux: Option<crate::writer::SampleAux>,
 }
 
 /// The size table a track carries: `stsz` or the compact `stz2` (§8.7.3).
@@ -656,6 +661,7 @@ impl CursorState {
             offset,
             size,
             description_index: self.current_description_index(stbl)?,
+            aux: None,
         })
     }
 

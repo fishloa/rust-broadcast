@@ -109,7 +109,7 @@ fn the_reader_agrees_with_the_progressive_demuxer() {
             by_track
                 .entry(sample.track.value())
                 .or_default()
-                .push(*sample);
+                .push(sample.clone());
         }
         for track in &media.tracks {
             let id = track.spec.track_id.value();

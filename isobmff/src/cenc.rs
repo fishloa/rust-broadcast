@@ -1102,6 +1102,36 @@ impl Serialize for SchemeInformationBox {
 /// Four-CC of the Protection Scheme Information Box (`sinf`, ISO/IEC 14496-12:2026 §13.4.2).
 pub const SINF: [u8; 4] = *b"sinf";
 
+/// A protected `encv` entry's child boxes start after the `VisualSampleEntry`
+/// fixed part: 8 bytes of box header plus the 78 bytes §12.1.3 defines.
+const ENCV_CHILD_OFFSET: usize = crate::box_types::BOX_HEADER_MIN_SIZE + 78;
+
+/// A protected `enca` entry's child boxes start after the `AudioSampleEntry`
+/// fixed part: 8 bytes of box header plus the 28 bytes §12.2.3 defines.
+const ENCA_CHILD_OFFSET: usize = crate::box_types::BOX_HEADER_MIN_SIZE + 28;
+
+/// A protected sample entry's `sinf` child, from the entry's own box bytes.
+///
+/// A CENC-protected track renames its sample entry's four-CC to `encv`
+/// (visual) or `enca` (audio) and keeps the codec's configuration as children
+/// followed by `sinf` (§13.4.1). The fixed part's length is therefore still the
+/// wrapped entry's, and this is the one place that knows where its children
+/// start.
+#[must_use]
+pub fn sinf_of_sample_entry(entry: &[u8]) -> Option<&[u8]> {
+    let start =
+        match entry.get(crate::box_types::BOX_TYPE_SIZE..2 * crate::box_types::BOX_TYPE_SIZE)? {
+            b"encv" => ENCV_CHILD_OFFSET,
+            b"enca" => ENCA_CHILD_OFFSET,
+            _ => return None,
+        };
+    let region = entry.get(start..)?;
+    crate::box_types::BoxIter::new(region)
+        .filter_map(|item| item.ok())
+        .find(|item| item.header.box_type.is(&SINF))
+        .map(|item| item.bytes)
+}
+
 /// Protection Scheme Information Box (`sinf`) — §13.4.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

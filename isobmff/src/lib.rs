@@ -172,6 +172,7 @@ pub use nalu_types::{
 };
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use plan::SamplePlan;
+pub use reader::FragmentInfo;
 pub use reader::{
     ByteRange, Mode, Reader, ReaderConfig, SampleEntryInfo, SampleOrder, Source, Step, TrackInfo,
 };

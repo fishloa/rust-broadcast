@@ -133,7 +133,7 @@ fn file_order_matches_the_lazy_cursor_per_track() {
             grouped
                 .entry(sample.track.value())
                 .or_default()
-                .push(*sample);
+                .push(sample.clone());
         }
         for info in plan.tracks() {
             let mut cursor = plan
