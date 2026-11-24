@@ -65,6 +65,20 @@ const FS1_FIXED_LEN: usize = FS1_MODULE_VERSION_LEN
     + FS1_ORIGINAL_SIZE_LEN
     + FS1_TIMEOUT_LEN
     + FS1_OBJECT_KEY_LENGTH_LEN; // = 16
+/// Offset of `ModuleId` in the FormatId=0x01 specifier.
+const FS1_MODULE_ID_OFFSET: usize = FS1_MODULE_VERSION_LEN;
+/// Offset of `BlockSize` in the FormatId=0x01 specifier.
+const FS1_BLOCK_SIZE_OFFSET: usize = FS1_MODULE_ID_OFFSET + FS1_MODULE_ID_LEN;
+/// Offset of `ModuleSize` in the FormatId=0x01 specifier.
+const FS1_MODULE_SIZE_OFFSET: usize = FS1_BLOCK_SIZE_OFFSET + FS1_BLOCK_SIZE_LEN;
+/// Offset of `CompressionMethod` in the FormatId=0x01 specifier.
+const FS1_COMPRESSION_METHOD_OFFSET: usize = FS1_MODULE_SIZE_OFFSET + FS1_MODULE_SIZE_LEN;
+/// Offset of `OriginalSize` in the FormatId=0x01 specifier.
+const FS1_ORIGINAL_SIZE_OFFSET: usize = FS1_COMPRESSION_METHOD_OFFSET + FS1_COMPRESSION_METHOD_LEN;
+/// Offset of `TimeOut` in the FormatId=0x01 specifier.
+const FS1_TIMEOUT_OFFSET: usize = FS1_ORIGINAL_SIZE_OFFSET + FS1_ORIGINAL_SIZE_LEN;
+/// Offset of `ObjectKeyLength` in the FormatId=0x01 specifier.
+const FS1_OBJECT_KEY_LENGTH_OFFSET: usize = FS1_TIMEOUT_OFFSET + FS1_TIMEOUT_LEN;
 
 // ── FormatId values ───────────────────────────────────────────────────────────
 /// `FormatId = 0x00`: no `FormatSpecifier` bytes present.
@@ -202,8 +216,8 @@ impl<'a> Parse<'a> for CarouselIdentifierDescriptor<'a> {
                     tag: TAG,
                     reason: "carousel_identifier_descriptor body shorter than 5 bytes",
                 })?;
-        let carousel_id = u32::from_be_bytes([prefix[0], prefix[1], prefix[2], prefix[3]]);
-        let format_id = prefix[CAROUSEL_ID_LEN];
+        let [id_b0, id_b1, id_b2, id_b3, format_id] = *prefix;
+        let carousel_id = u32::from_be_bytes([id_b0, id_b1, id_b2, id_b3]);
 
         let (format, private_data) = match format_id {
             FORMAT_ID_NONE => (FormatSpecifier::Absent, after_prefix),
@@ -218,13 +232,25 @@ impl<'a> Parse<'a> for CarouselIdentifierDescriptor<'a> {
                 // [5..9]=module_size, [9]=compression_method, [10..14]=original_size,
                 // [14]=timeout, [15]=object_key_length
                 let module_version = fs1[0];
-                let module_id = u16::from_be_bytes([fs1[1], fs1[2]]);
-                let block_size = u16::from_be_bytes([fs1[3], fs1[4]]);
-                let module_size = u32::from_be_bytes([fs1[5], fs1[6], fs1[7], fs1[8]]);
-                let compression_method = fs1[9];
-                let original_size = u32::from_be_bytes([fs1[10], fs1[11], fs1[12], fs1[13]]);
-                let timeout = fs1[14];
-                let object_key_length = fs1[15] as usize;
+                let module_id = u16::from_be_bytes([
+                    fs1[FS1_MODULE_ID_OFFSET],
+                    fs1[FS1_MODULE_ID_OFFSET + 1],
+                ]);
+                let block_size = u16::from_be_bytes([
+                    fs1[FS1_BLOCK_SIZE_OFFSET],
+                    fs1[FS1_BLOCK_SIZE_OFFSET + 1],
+                ]);
+                let mut module_size_bytes = [0u8; FS1_MODULE_SIZE_LEN];
+                module_size_bytes
+                    .copy_from_slice(&fs1[FS1_MODULE_SIZE_OFFSET..FS1_COMPRESSION_METHOD_OFFSET]);
+                let module_size = u32::from_be_bytes(module_size_bytes);
+                let compression_method = fs1[FS1_COMPRESSION_METHOD_OFFSET];
+                let mut original_size_bytes = [0u8; FS1_ORIGINAL_SIZE_LEN];
+                original_size_bytes
+                    .copy_from_slice(&fs1[FS1_ORIGINAL_SIZE_OFFSET..FS1_TIMEOUT_OFFSET]);
+                let original_size = u32::from_be_bytes(original_size_bytes);
+                let timeout = fs1[FS1_TIMEOUT_OFFSET];
+                let object_key_length = fs1[FS1_OBJECT_KEY_LENGTH_OFFSET] as usize;
                 if object_key_length > after_fixed.len() {
                     return Err(Error::InvalidDescriptor {
                         tag: TAG,
