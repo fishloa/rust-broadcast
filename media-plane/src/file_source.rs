@@ -18,8 +18,8 @@ use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
 use container_probe::{Format, IsobmffLayout, Probe};
 use thiserror::Error;
 use transmux::{
-    DemuxEvent, Fmp4Demux, Media, ProgressiveDemux, PsDemux, Sample, StreamingFlvDemux,
-    StreamingTsDemux, Track, TrackId, TrackSpec, WebmDemux,
+    DemuxEvent, Media, PsDemux, Sample, StreamingFlvDemux, StreamingTsDemux, Track, TrackId,
+    TrackSpec, WebmDemux,
 };
 
 use crate::ingress::{IngestSession, ProgramId, SessionEvent};
@@ -149,6 +149,16 @@ pub enum FileReaderError {
     /// finished — SP1.4: dropping the owner cancels rather than detaches.
     #[error("file reader cancelled")]
     Cancelled,
+    /// The caller fed an input shape the container's demuxer cannot consume:
+    /// a sequential chunk to the seekable MP4 stage, or a byte range to a
+    /// forward-only TS/FLV demuxer.
+    #[error("{container} playout cannot consume a {input} file input")]
+    WrongInput {
+        /// The container's own label.
+        container: &'static str,
+        /// The fed input's label.
+        input: &'static str,
+    },
 }
 
 /// Where one replayable pass ends and the next begins, so a loop can continue the timeline.
@@ -177,10 +187,17 @@ pub struct PassRange {
 pub enum DemuxerKind {
     /// MPEG-2 TS → [`StreamingTsDemux`].
     StreamingTs,
-    /// Fragmented ISOBMFF (CMAF/fMP4) → [`Fmp4Demux`].
+    /// Fragmented ISOBMFF (CMAF/fMP4) → [`Mp4Demux`](transmux::mp4_demux::Mp4Demux),
+    /// driven by the streaming file session.
     Fmp4,
-    /// Progressive ISOBMFF → [`ProgressiveDemux`].
+    /// Progressive ISOBMFF → [`Mp4Demux`](transmux::mp4_demux::Mp4Demux),
+    /// driven by the streaming file session.
     Progressive,
+    /// ISOBMFF whose fragmented/progressive layout the bounded probe could
+    /// not settle (a large progressive file's `mdat` runs past the prefix) →
+    /// [`Mp4Demux`](transmux::mp4_demux::Mp4Demux), which decides the layout
+    /// itself while reading.
+    Mp4,
     /// Matroska / WebM → [`WebmDemux`].
     Webm,
     /// MPEG-1/2 Program Stream → [`PsDemux`].
@@ -196,6 +213,7 @@ impl DemuxerKind {
             DemuxerKind::StreamingTs => "StreamingTs",
             DemuxerKind::Fmp4 => "Fmp4",
             DemuxerKind::Progressive => "Progressive",
+            DemuxerKind::Mp4 => "Mp4",
             DemuxerKind::Webm => "Webm",
             DemuxerKind::Ps => "Ps",
             DemuxerKind::StreamingFlv => "StreamingFlv",
@@ -420,7 +438,10 @@ pub fn select_demuxer(
             match layout {
                 IsobmffLayout::Fragmented => Ok(DemuxerKind::Fmp4),
                 IsobmffLayout::Progressive => Ok(DemuxerKind::Progressive),
-                IsobmffLayout::Unknown => Err(FileReaderError::UndeterminedLayout),
+                // One stage reads both layouts, so an unsettled layout (a
+                // progressive `mdat` longer than the probe prefix) needs no
+                // guess: `Mp4Demux` finds `moov` and the sample source itself.
+                IsobmffLayout::Unknown => Ok(DemuxerKind::Mp4),
                 // Any future layout cannot name a demuxer yet — never guess.
                 _ => Err(FileReaderError::UndeterminedLayout),
             }
@@ -551,16 +572,11 @@ pub fn demux_identified(
         DemuxerKind::StreamingTs => demux_streaming_ts(bytes)
             .and_then(media_into_parsed)
             .map_err(map_demux_error),
-        DemuxerKind::Fmp4 => {
-            let mut d = Fmp4Demux::new();
-            Ok(ParsedFile {
-                tracks: d.unpackage(bytes)?.tracks,
-            })
-        }
-        DemuxerKind::Progressive => {
-            let mut d = ProgressiveDemux::new(bytes.len().max(1))?;
-            Ok(ParsedFile {
-                tracks: d.unpackage(bytes)?.tracks,
+        // An MP4 is streamed by `StreamingFileSession` over
+        // `Mp4Demux::seekable`; the whole-buffer path has no arm for it.
+        DemuxerKind::Fmp4 | DemuxerKind::Progressive | DemuxerKind::Mp4 => {
+            Err(FileReaderError::UnsupportedFormat {
+                format: Format::Isobmff.name(),
             })
         }
         DemuxerKind::Webm => {
@@ -1512,6 +1528,7 @@ mod tests {
             (DemuxerKind::StreamingTs, "StreamingTs"),
             (DemuxerKind::Fmp4, "Fmp4"),
             (DemuxerKind::Progressive, "Progressive"),
+            (DemuxerKind::Mp4, "Mp4"),
             (DemuxerKind::Webm, "Webm"),
             (DemuxerKind::Ps, "Ps"),
             (DemuxerKind::StreamingFlv, "StreamingFlv"),

@@ -997,3 +997,114 @@ fn paced_sample_is_not_released_before_it_is_due() {
         "polling before the deadline releases nothing"
     );
 }
+
+/// Drive the MP4 session over an in-memory image, answering its byte-range
+/// requests from the slice.
+fn drive_mp4(bytes: &[u8], limits: FileStreamLimits) -> Vec<Emitted> {
+    let mut session = StreamingFileSession::new(
+        StreamContainer::Mp4,
+        ProgramId(0),
+        false,
+        None,
+        false,
+        limits,
+    );
+    let mut out = Vec::new();
+    for _iteration in 0..(bytes.len() + 4096) {
+        match session.file_demand() {
+            FileDemand::Done => break,
+            FileDemand::BytesAt { offset, len } => {
+                let start = usize::try_from(offset).expect("offset fits");
+                let end = start.saturating_add(len).min(bytes.len());
+                let slice = bytes.get(start..end).unwrap_or(&[]);
+                session
+                    .feed(
+                        FileInput::At {
+                            offset,
+                            bytes: bytes::Bytes::copy_from_slice(slice),
+                        },
+                        Timestamp::ZERO,
+                    )
+                    .expect("MP4 range feed");
+            }
+            FileDemand::Eof => {
+                session
+                    .feed(FileInput::Eof, Timestamp::ZERO)
+                    .expect("MP4 end of input");
+            }
+            FileDemand::Wait => {}
+            other => panic!("unexpected MP4 demand {other:?}"),
+        }
+        while let Some(event) = session.poll() {
+            if let Some(item) = emitted(event) {
+                out.push(item);
+            }
+        }
+    }
+    out
+}
+
+type SampleShape = (i64, i64, Option<u32>, bool, Vec<u8>);
+
+fn per_track_emitted(items: &[Emitted]) -> BTreeMap<u32, Vec<SampleShape>> {
+    let mut out: BTreeMap<u32, Vec<SampleShape>> = BTreeMap::new();
+    for item in items {
+        out.entry(item.track).or_default().push((
+            item.pts,
+            item.dts,
+            item.duration,
+            item.sync,
+            item.data.clone(),
+        ));
+    }
+    out
+}
+
+fn expected_from_media(media: &Media) -> BTreeMap<u32, Vec<SampleShape>> {
+    let mut out: BTreeMap<u32, Vec<SampleShape>> = BTreeMap::new();
+    for track in &media.tracks {
+        let entry = out.entry(track.track_id().value()).or_default();
+        for sample in &track.samples {
+            let timing = sample.timing.expect("MP4 samples carry timing");
+            entry.push((
+                timing.pts().expect("MP4 samples carry a pts"),
+                timing.dts().expect("MP4 samples carry a dts"),
+                timing.duration(),
+                sample.flags.is_sync,
+                sample.data.to_vec(),
+            ));
+        }
+    }
+    out
+}
+
+#[test]
+fn mp4_streaming_session_matches_the_stage() {
+    for name in [
+        "mp4/h264-high.mp4",
+        "mp4/progressive/av-prog.mp4",
+        "mp4/h264-aac-frag.mp4",
+        "mp4/cmaf/av-frag.mp4",
+    ] {
+        let bytes = test_fixtures::read(name);
+        let total = u64::try_from(bytes.len()).expect("fixture fits u64");
+        let mp4 = transmux::mp4_demux::Mp4DemuxConfig::default().with_total_len(Some(total));
+        let limits = FileStreamLimits {
+            start_window: Duration::ZERO,
+            start_window_bytes: 0,
+            mp4,
+            ..FileStreamLimits::default()
+        };
+        let got = drive_mp4(&bytes, limits);
+        let media = test_harness::collect::media_from_mp4(
+            &bytes,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("stage demux");
+        assert_eq!(
+            per_track_emitted(&got),
+            expected_from_media(&media),
+            "{name}: streaming MP4 session sample mismatch"
+        );
+    }
+}
