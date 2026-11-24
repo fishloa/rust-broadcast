@@ -39,12 +39,54 @@ impl<'a> ExtensionBodyDef<'a> for AudioPreselection<'a> {
 /// component tags count, 3-bit before `future_extension_length`): 0 since the
 /// descriptor's introduction in EN 300 468 V1.16.1
 /// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_ZERO_3_BITS> =
-    ReservedZero::<RESERVED_ZERO_3_BITS>::FILL;
+pub const AUDIO_PRESELECTION_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_FUTURE_USE_BITS> =
+    ReservedZero::<RESERVED_FUTURE_USE_BITS>::FILL;
 /// Width of the 3-bit `reserved_zero_future_use` regions.
-const RESERVED_ZERO_3_BITS: u32 = 3;
+const RESERVED_FUTURE_USE_BITS: u32 = 3;
 /// Width of the 5-bit `reserved_zero_future_use` region.
-const RESERVED_ZERO_5_BITS: u32 = 5;
+const AUX_RESERVED_FUTURE_USE_BITS: u32 = 5;
+/// Width of `num_preselections`.
+const NUM_PRESELECTIONS_BITS: u32 = 5;
+/// Shift of `num_preselections`.
+const NUM_PRESELECTIONS_SHIFT: u32 = 3;
+/// Bytes of the per-preselection fixed header.
+const PRESELECTION_HEADER_LEN: usize = 2;
+/// Mask of `preselection_id`.
+const PRESELECTION_ID_MASK: u8 = 0x1F;
+/// Shift of `preselection_id`.
+const PRESELECTION_ID_SHIFT: u32 = 3;
+/// Mask of `audio_rendering_indication`.
+const AUDIO_RENDERING_MASK: u8 = 0x07;
+/// Shift of `audio_description`.
+const AUDIO_DESCRIPTION_SHIFT: u32 = 7;
+/// Shift of `spoken_subtitles`.
+const SPOKEN_SUBTITLES_SHIFT: u32 = 6;
+/// Shift of `dialogue_enhancement`.
+const DIALOGUE_ENHANCEMENT_SHIFT: u32 = 5;
+/// Shift of `interactivity_enabled`.
+const INTERACTIVITY_ENABLED_SHIFT: u32 = 4;
+/// Shift of `language_code_present`.
+const LANGUAGE_CODE_PRESENT_SHIFT: u32 = 3;
+/// Shift of `text_label_present`.
+const TEXT_LABEL_PRESENT_SHIFT: u32 = 2;
+/// Shift of `multi_stream_info_present`.
+const MULTI_STREAM_INFO_PRESENT_SHIFT: u32 = 1;
+/// Width of `num_aux_component_tags`.
+const AUX_COUNT_BITS: u32 = 3;
+/// Shift of `num_aux_component_tags`.
+const AUX_COUNT_SHIFT: u32 = 5;
+/// Mask of `future_extension_length`.
+const EXTENSION_LENGTH_MASK: u8 = 0x1F;
+/// Width of `future_extension_length`.
+const EXTENSION_LENGTH_BITS: u32 = 5;
+/// Shift of the `reserved_zero_future_use` before `future_extension_length`.
+const EXTENSION_RESERVED_SHIFT: u32 = 5;
+
+fn decode_lang_code(bytes: &[u8], offset: usize) -> LangCode {
+    let mut code = [0u8; ISO_639_LEN];
+    code.copy_from_slice(&bytes[offset..offset + ISO_639_LEN]);
+    LangCode(code)
+}
 
 /// `audio_rendering_indication` (3 bits) — EN 300 468 Table 111 /
 /// GY/T 422-2025 Table 2.
@@ -117,8 +159,8 @@ broadcast_common::impl_spec_display!(AudioRenderingIndication, Reserved);
 pub struct AudioPreselection<'a> {
     /// `reserved_zero_future_use` (3 bits, right-aligned) after
     /// `num_preselections`. Preserved on parse; defaults to
-    /// [`AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use_3: ReservedZero<RESERVED_ZERO_3_BITS>,
+    /// [`AUDIO_PRESELECTION_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use_3: ReservedZero<RESERVED_FUTURE_USE_BITS>,
     /// Preselection entries (num_preselections is their count).
     pub preselections: Vec<Preselection<'a>>,
     /// Bytes after the last preselection inside the declared descriptor
@@ -156,15 +198,15 @@ pub struct Preselection<'a> {
     /// `reserved_zero_future_use` (5 bits, right-aligned) next to
     /// `num_aux_components`; `Some` iff `aux_component_tags` is. Preserved on
     /// parse; a hand-built `None` serializes as
-    /// [`AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use_5: Option<ReservedZero<RESERVED_ZERO_5_BITS>>,
+    /// [`AUDIO_PRESELECTION_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use_5: Option<ReservedZero<AUX_RESERVED_FUTURE_USE_BITS>>,
     /// future_extension_byte run, present iff future_extension.
     pub future_extension: Option<&'a [u8]>,
     /// `reserved_zero_future_use` (3 bits, right-aligned) before
     /// `future_extension_length`; `Some` iff `future_extension` is. Preserved on
     /// parse; a hand-built `None` serializes as
-    /// [`AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use_3: Option<ReservedZero<RESERVED_ZERO_3_BITS>>,
+    /// [`AUDIO_PRESELECTION_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use_3: Option<ReservedZero<RESERVED_FUTURE_USE_BITS>>,
 }
 
 impl<'a> Parse<'a> for AudioPreselection<'a> {
@@ -179,29 +221,29 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                 },
             ));
         }
-        let num_preselections = sel[0] >> 3;
+        let num_preselections = sel[0] >> NUM_PRESELECTIONS_SHIFT;
         let header_reserved = ReservedZero::from_bits(u64::from(sel[0]));
         let mut pos = 1;
         let mut preselections = Vec::with_capacity(num_preselections as usize);
         for _ in 0..num_preselections {
-            need_in(sel, pos + 2, "audio_preselection body")?;
+            need_in(sel, pos + PRESELECTION_HEADER_LEN, "audio_preselection body")?;
             let byte_a = sel[pos];
             let byte_b = sel[pos + 1];
-            pos += 2;
-            let preselection_id = byte_a >> 3;
-            let audio_rendering_indication = AudioRenderingIndication::from_u8(byte_a & 0x07);
-            let audio_description = (byte_b >> 7) & 1 != 0;
-            let spoken_subtitles = (byte_b >> 6) & 1 != 0;
-            let dialogue_enhancement = (byte_b >> 5) & 1 != 0;
-            let interactivity_enabled = (byte_b >> 4) & 1 != 0;
-            let language_code_present = (byte_b >> 3) & 1 != 0;
-            let text_label_present = (byte_b >> 2) & 1 != 0;
-            let multi_stream_info_present = (byte_b >> 1) & 1 != 0;
+            pos += PRESELECTION_HEADER_LEN;
+            let preselection_id = byte_a >> PRESELECTION_ID_SHIFT;
+            let audio_rendering_indication = AudioRenderingIndication::from_u8(byte_a & AUDIO_RENDERING_MASK);
+            let audio_description = (byte_b >> AUDIO_DESCRIPTION_SHIFT) & 1 != 0;
+            let spoken_subtitles = (byte_b >> SPOKEN_SUBTITLES_SHIFT) & 1 != 0;
+            let dialogue_enhancement = (byte_b >> DIALOGUE_ENHANCEMENT_SHIFT) & 1 != 0;
+            let interactivity_enabled = (byte_b >> INTERACTIVITY_ENABLED_SHIFT) & 1 != 0;
+            let language_code_present = (byte_b >> LANGUAGE_CODE_PRESENT_SHIFT) & 1 != 0;
+            let text_label_present = (byte_b >> TEXT_LABEL_PRESENT_SHIFT) & 1 != 0;
+            let multi_stream_info_present = (byte_b >> MULTI_STREAM_INFO_PRESENT_SHIFT) & 1 != 0;
             let future_extension = byte_b & 1 != 0;
 
             let language_code = if language_code_present {
                 need_in(sel, pos + ISO_639_LEN, "audio_preselection body")?;
-                let lc = LangCode([sel[pos], sel[pos + 1], sel[pos + 2]]);
+                let lc = decode_lang_code(sel, pos);
                 pos += ISO_639_LEN;
                 Some(lc)
             } else {
@@ -237,7 +279,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                         },
                     ));
                 }
-                let num_aux = sel[pos] >> 5;
+                let num_aux = sel[pos] >> AUX_COUNT_SHIFT;
                 reserved_zero_future_use_5 = Some(ReservedZero::from_bits(u64::from(sel[pos])));
                 pos += 1;
                 need_in(sel, pos + num_aux as usize, "audio_preselection body")?;
@@ -258,9 +300,11 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                         },
                     ));
                 }
-                let ext_len = (sel[pos] & 0x1F) as usize;
+                let ext_len = (sel[pos] & EXTENSION_LENGTH_MASK) as usize;
                 reserved_zero_future_use_3 =
-                    Some(ReservedZero::from_bits(u64::from(sel[pos] >> 5)));
+                    Some(ReservedZero::from_bits(u64::from(
+                    sel[pos] >> EXTENSION_RESERVED_SHIFT,
+                )));
                 pos += 1;
                 need_in(sel, pos + ext_len, "audio_preselection body")?;
                 let ext = &sel[pos..pos + ext_len];
@@ -300,7 +344,8 @@ impl Serialize for AudioPreselection<'_> {
             .preselections
             .iter()
             .map(|p| {
-                2 + p.language_code.map_or(0, |_| ISO_639_LEN)
+                PRESELECTION_HEADER_LEN
+                    + p.language_code.map_or(0, |_| ISO_639_LEN)
                     + p.message_id.map_or(0, |_| 1)
                     + p.aux_component_tags.map_or(0, |t| 1 + t.len())
                     + p.future_extension.map_or(0, |e| 1 + e.len())
@@ -313,28 +358,32 @@ impl Serialize for AudioPreselection<'_> {
         need_out(buf, len)?;
         let num_preselections = broadcast_common::len::fit_bits(
             self.preselections.len() as u64,
-            5,
+            NUM_PRESELECTIONS_BITS,
             "num_preselections",
         )? as u8;
-        buf[0] = (num_preselections << 3) | self.reserved_zero_future_use_3.get() as u8;
+        buf[0] = (num_preselections << NUM_PRESELECTIONS_SHIFT)
+            | self.reserved_zero_future_use_3.get() as u8;
         let mut p = 1;
         for s in &self.preselections {
-            buf[p] = (broadcast_common::len::fit_mask(s.preselection_id, 0x1F, "preselection_id")?
-                << 3)
+            buf[p] = (broadcast_common::len::fit_mask(
+                s.preselection_id,
+                PRESELECTION_ID_MASK,
+                "preselection_id",
+            )? << PRESELECTION_ID_SHIFT)
                 | broadcast_common::len::fit_mask(
                     s.audio_rendering_indication.to_u8(),
-                    0x07,
+                    AUDIO_RENDERING_MASK,
                     "audio_rendering_indication",
                 )?;
-            buf[p + 1] = (u8::from(s.audio_description) << 7)
-                | (u8::from(s.spoken_subtitles) << 6)
-                | (u8::from(s.dialogue_enhancement) << 5)
-                | (u8::from(s.interactivity_enabled) << 4)
-                | (u8::from(s.language_code.is_some()) << 3)
-                | (u8::from(s.message_id.is_some()) << 2)
-                | (u8::from(s.aux_component_tags.is_some()) << 1)
+            buf[p + 1] = (u8::from(s.audio_description) << AUDIO_DESCRIPTION_SHIFT)
+                | (u8::from(s.spoken_subtitles) << SPOKEN_SUBTITLES_SHIFT)
+                | (u8::from(s.dialogue_enhancement) << DIALOGUE_ENHANCEMENT_SHIFT)
+                | (u8::from(s.interactivity_enabled) << INTERACTIVITY_ENABLED_SHIFT)
+                | (u8::from(s.language_code.is_some()) << LANGUAGE_CODE_PRESENT_SHIFT)
+                | (u8::from(s.message_id.is_some()) << TEXT_LABEL_PRESENT_SHIFT)
+                | (u8::from(s.aux_component_tags.is_some()) << MULTI_STREAM_INFO_PRESENT_SHIFT)
                 | u8::from(s.future_extension.is_some());
-            p += 2;
+            p += PRESELECTION_HEADER_LEN;
             if let Some(ref lc) = s.language_code {
                 buf[p..p + ISO_639_LEN].copy_from_slice(&lc.0);
                 p += ISO_639_LEN;
@@ -346,12 +395,12 @@ impl Serialize for AudioPreselection<'_> {
             if let Some(tags) = s.aux_component_tags {
                 let num_aux_component_tags = broadcast_common::len::fit_bits(
                     tags.len() as u64,
-                    3,
+                    AUX_COUNT_BITS,
                     "num_aux_component_tags",
                 )? as u8;
-                buf[p] = (num_aux_component_tags << 5)
+                buf[p] = (num_aux_component_tags << AUX_COUNT_SHIFT)
                     | s.reserved_zero_future_use_5
-                        .unwrap_or(ReservedZero::<RESERVED_ZERO_5_BITS>::FILL)
+                        .unwrap_or(ReservedZero::<AUX_RESERVED_FUTURE_USE_BITS>::FILL)
                         .get() as u8;
                 p += 1;
                 buf[p..p + tags.len()].copy_from_slice(tags);
@@ -360,14 +409,14 @@ impl Serialize for AudioPreselection<'_> {
             if let Some(ext) = s.future_extension {
                 buf[p] = (broadcast_common::len::fit_bits(
                     ext.len() as u64,
-                    5,
+                    EXTENSION_LENGTH_BITS,
                     "future_extension_length",
                 )? as u8)
                     | ((s
                         .reserved_zero_future_use_3
-                        .unwrap_or(AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT)
+                        .unwrap_or(AUDIO_PRESELECTION_RESERVED_FUTURE_USE_DEFAULT)
                         .get() as u8)
-                        << 5);
+                        << EXTENSION_RESERVED_SHIFT);
                 p += 1;
                 buf[p..p + ext.len()].copy_from_slice(ext);
                 p += ext.len();
