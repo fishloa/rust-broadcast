@@ -29,6 +29,32 @@ use alloc::vec::Vec;
 
 pub use isobmff::BRAND_LEN;
 
+/// Width of a Four-CC (a box type, a brand), in bytes.
+pub(crate) const FOURCC_LEN: usize = BRAND_LEN;
+
+/// Read the big-endian 32-bit field at `offset` of `bytes`.
+pub(crate) fn be_u32(bytes: &[u8], offset: usize) -> u32 {
+    const FIELD_LEN: usize = core::mem::size_of::<u32>();
+    let mut field = [0_u8; FIELD_LEN];
+    field.copy_from_slice(&bytes[offset..offset + FIELD_LEN]);
+    u32::from_be_bytes(field)
+}
+
+/// Read the big-endian 64-bit field at `offset` of `bytes`.
+pub(crate) fn be_u64(bytes: &[u8], offset: usize) -> u64 {
+    const FIELD_LEN: usize = core::mem::size_of::<u64>();
+    let mut field = [0_u8; FIELD_LEN];
+    field.copy_from_slice(&bytes[offset..offset + FIELD_LEN]);
+    u64::from_be_bytes(field)
+}
+
+/// Copy the Four-CC at `offset` of `bytes`.
+pub(crate) fn fourcc(bytes: &[u8], offset: usize) -> [u8; FOURCC_LEN] {
+    let mut field = [0_u8; FOURCC_LEN];
+    field.copy_from_slice(&bytes[offset..offset + FOURCC_LEN]);
+    field
+}
+
 /// Divisor of the geometric growth a need estimate takes when no structural
 /// need can be named.
 const NEED_GROWTH_DIVISOR: usize = 2;
