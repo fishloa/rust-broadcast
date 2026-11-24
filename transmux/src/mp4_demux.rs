@@ -27,7 +27,6 @@ use broadcast_common::timescale::Timescale;
 use bytes::{Buf, Bytes, BytesMut};
 use core::num::NonZeroUsize;
 use isobmff::Limits;
-use isobmff::driver::{MAX_HEADER_REWIND_BYTES, max_need_bytes};
 use isobmff::reader::{
     ByteRange, FragmentInfo, Mode, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo,
     Warning,
@@ -512,8 +511,10 @@ impl Mp4Demux {
 
 fn abandon_reason(err: &Error) -> AbandonReason {
     match err {
-        Error::UnsupportedSampleEntry { fourcc } if fourcc.len() == 4 => {
-            let mut bytes = [0u8; 4];
+        Error::UnsupportedSampleEntry { fourcc }
+            if fourcc.len() == isobmff::box_types::BOX_TYPE_SIZE =>
+        {
+            let mut bytes = [0u8; isobmff::box_types::BOX_TYPE_SIZE];
             for (slot, byte) in bytes.iter_mut().zip(fourcc.as_bytes()) {
                 *slot = *byte;
             }
@@ -568,7 +569,7 @@ impl Mp4Demux {
                     .unwrap_or((sref.offset, sample_end(&sref)));
                 let union_start = start.min(sref.offset);
                 let union_end = end.max(sample_end(&sref));
-                let cap = max_need_bytes(&self.config.limits);
+                let cap = self.config.limits.max_need_bytes();
                 if union_end.saturating_sub(union_start) > cap {
                     self.staged = Some(OwnedStep::Sample(sref));
                     self.seal_batch();
@@ -760,7 +761,7 @@ impl Mp4Demux {
     }
 
     fn discard_to(&mut self, absolute: u64) {
-        let keep = u64::try_from(MAX_HEADER_REWIND_BYTES).unwrap_or(0);
+        let keep = u64::try_from(isobmff::box_types::MAX_BOX_HEADER_SIZE).unwrap_or(0);
         let target = absolute.saturating_sub(keep);
         if target <= self.buf_start {
             return;
@@ -888,7 +889,7 @@ impl Mp4Demux {
         if let Some(offset) = self.next_need_offset() {
             self.discard_to(offset);
         }
-        let cap = usize::try_from(max_need_bytes(&self.config.limits)).unwrap_or(usize::MAX);
+        let cap = usize::try_from(self.config.limits.max_need_bytes()).unwrap_or(usize::MAX);
         if self.buf.len().saturating_add(data.len()) > cap {
             return Err(Error::LimitExceeded {
                 what: "mp4 sequential buffer",

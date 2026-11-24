@@ -108,7 +108,7 @@ pub enum AbandonReason {
     /// hint/chapter track, `c608`/`c708`, GoPro `gpmd`, …).
     UnsupportedSampleEntry {
         /// The rejected sample entry's four-CC, e.g. `b"tmcd"`.
-        fourcc: [u8; 4],
+        fourcc: [u8; isobmff::box_types::BOX_TYPE_SIZE],
     },
     /// The sample entry is a known box this crate parses but has no
     /// [`CodecConfig`](crate::pipeline::CodecConfig) reconstruction for, so
