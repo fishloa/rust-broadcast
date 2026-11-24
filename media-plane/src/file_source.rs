@@ -117,6 +117,14 @@ pub enum FileReaderError {
         /// The configured cap (the configured `max_file_bytes`).
         max: usize,
     },
+    /// The file was a different container when a looping reader re-probed it
+    /// for the next pass — a streaming session drives one demuxer for its
+    /// whole run and cannot switch containers mid-run.
+    #[error("file {path:?} changed container between passes")]
+    FileChangedContainer {
+        /// The path whose container changed.
+        path: PathBuf,
+    },
     /// The file demuxed into zero timed (PTS-carrying) samples — nothing can
     /// be paced, looped, or written, so the source fails rather than spinning
     /// a no-op publish loop forever.

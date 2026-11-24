@@ -33,9 +33,9 @@ const DISPOSITION: &[(&str, &str, u32, &str)] = &[
     ),
     (
         "source/file_reader.rs",
-        "read_probe_demux_once",
+        "read_capped_whole",
         1,
-        "spawn_blocking for a blocking file read; awaited inline (owned by the caller)",
+        "spawn_blocking for the whole-file probe/demux of a capped container; awaited inline (owned by the caller)",
     ),
     (
         "route.rs",
