@@ -7,6 +7,11 @@ impl<'a> ExtensionBodyDef<'a> for UriLinkage<'a> {
     const NAME: &'static str = "URI_LINKAGE";
 }
 
+/// `uri_linkage_type` + `uri_length` header bytes.
+const URI_LINKAGE_HEADER_LEN: usize = 2;
+/// Width of `min_polling_interval`.
+const POLLING_INTERVAL_LEN: usize = core::mem::size_of::<u16>();
+
 /// URI linkage type — coded according to ETSI TS 101 162 registry, non-exhaustive.
 ///
 /// Names are best-effort from the TS 101 162 registry; new values may be
@@ -93,26 +98,26 @@ pub struct UriLinkage<'a> {
 impl<'a> Parse<'a> for UriLinkage<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        need_in(sel, 2, "URI_linkage body")?;
+        need_in(sel, URI_LINKAGE_HEADER_LEN, "URI_linkage body")?;
         let uri_linkage_type = UriLinkageType::from_u8(sel[0]);
         let uri_length = sel[1] as usize;
-        let mut pos = 2;
+        let mut pos = URI_LINKAGE_HEADER_LEN;
         need_in(sel, pos + uri_length, "URI_linkage body")?;
         let uri = crate::text::DvbText::new(&sel[pos..pos + uri_length]);
         pos += uri_length;
         let min_polling_interval = if uri_linkage_type.has_polling_interval() {
             let (b, _) = sel
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<{ POLLING_INTERVAL_LEN }>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: pos + 2,
+                        need: pos + POLLING_INTERVAL_LEN,
                         have: sel.len(),
                         what: "URI_linkage body",
                     },
                 ))?;
             let v = u16::from_be_bytes(*b);
-            pos += 2;
+            pos += POLLING_INTERVAL_LEN;
             Some(v)
         } else {
             None
@@ -129,9 +134,10 @@ impl<'a> Parse<'a> for UriLinkage<'a> {
 impl Serialize for UriLinkage<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        2 + self.uri.len()
+        URI_LINKAGE_HEADER_LEN
+            + self.uri.len()
             + if self.min_polling_interval.is_some() {
-                2
+                POLLING_INTERVAL_LEN
             } else {
                 0
             }
@@ -142,7 +148,7 @@ impl Serialize for UriLinkage<'_> {
         need_out(buf, len)?;
         buf[0] = self.uri_linkage_type.to_u8();
         buf[1] = broadcast_common::len::fit_u8(self.uri.len(), "uri_length")?;
-        let mut p = 2;
+        let mut p = URI_LINKAGE_HEADER_LEN;
         buf[p..p + self.uri.len()].copy_from_slice(self.uri.raw());
         p += self.uri.len();
         // The wire `uri_linkage_type` gates the polling interval; a
@@ -155,8 +161,8 @@ impl Serialize for UriLinkage<'_> {
                     reason: "only defined for uri_linkage_type 0x00/0x01",
                 });
             }
-            buf[p..p + 2].copy_from_slice(&mpi.to_be_bytes());
-            p += 2;
+            buf[p..p + POLLING_INTERVAL_LEN].copy_from_slice(&mpi.to_be_bytes());
+            p += POLLING_INTERVAL_LEN;
         }
         buf[p..p + self.private_data.len()].copy_from_slice(self.private_data);
         Ok(len)

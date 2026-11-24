@@ -56,6 +56,14 @@ pub const EXTENDED_SAR_IDC: u8 = 255;
 /// "17..254 Reserved").
 const FIRST_RESERVED_IDC: u8 = 17;
 
+/// Last reserved `aspect_ratio_idc` (H.264 Table E-1 / H.265 Table E.1:
+/// "17..254 Reserved").
+const LAST_RESERVED_IDC: u8 = 254;
+
+/// `pic_struct` is carried in the low four bits of its wire byte
+/// (H.264 Table D-1 / H.265 Table D.2 code space).
+const PIC_STRUCT_CODE_MASK: u8 = 0x0F;
+
 /// H.264 Table E-1 / H.265 Table E.1 `aspect_ratio_idc`, the wire form kept
 /// losslessly ([`idc`](Self::idc) returns the wire byte).
 ///
@@ -149,7 +157,7 @@ impl AspectRatioIdc {
                     sar_height,
                 }
             }
-            FIRST_RESERVED_IDC..=254 => Self::Reserved(idc),
+            FIRST_RESERVED_IDC..=LAST_RESERVED_IDC => Self::Reserved(idc),
             // 1..=16: `TABLE_E1[idc - 1]`, indexed by construction (the arms
             // above removed 0, 17..=254 and 255).
             _ => TABLE_E1[usize::from(idc) - 1].0,
@@ -609,10 +617,10 @@ impl TransferCharacteristics {
             Self::Bt1361Extended => {
                 "Rec. ITU-R BT.1361-0 extended colour gamut system (historical)"
             }
-            Self::Iec61966_2_1 => {
-                "IEC 61966-2-1 sRGB (with matrix_coefficients equal to 0) \
-                 / IEC 61966-2-1 sYCC (with matrix_coefficients equal to 5)"
-            }
+            Self::Iec61966_2_1 => concat!(
+                "IEC 61966-2-1 sRGB (with matrix_coefficients equal to 0)",
+                " / IEC 61966-2-1 sYCC (with matrix_coefficients equal to 5)"
+            ),
             Self::Bt2020_10Bit => "Rec. ITU-R BT.2020-2 (10 bit system)",
             Self::Bt2020_12Bit => "Rec. ITU-R BT.2020-2 (12 bit system)",
             Self::SmpteSt2084 => "SMPTE ST 2084 (2014) / Rec. ITU-R BT.2100-2 PQ system",
@@ -1066,7 +1074,7 @@ impl ActiveFormatDescription {
 
     /// Build from the 4-bit wire code (lossless, every value maps).
     pub fn from_code(code: u8) -> Self {
-        match code & 0x0F {
+        match code & PIC_STRUCT_CODE_MASK {
             0b0000 => Self::Unknown,
             0b0010 => Self::Box16x9Top,
             0b0011 => Self::Box14x9Top,

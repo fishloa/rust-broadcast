@@ -41,6 +41,22 @@ pub const H_TYPE_EXT_PADDING: u8 = 0x00;
 const OPTIONAL_H_LEN_MIN: u8 = 1;
 /// Maximum legal `H-LEN` for an Optional extension header (RFC 4326 §5).
 const OPTIONAL_H_LEN_MAX: u8 = 5;
+/// Width of the 16-bit Type field that introduces every extension header
+/// (RFC 4326 §5).
+const TYPE_FIELD_LEN: usize = 2;
+
+/// Body length of an Optional extension header: the `2 * H-LEN` total wire
+/// length minus the `TYPE_FIELD_LEN`-byte Type field (RFC 4326 §5).
+fn optional_body_len(h_len: u8) -> usize {
+    usize::from(h_len) * TYPE_FIELD_LEN - TYPE_FIELD_LEN
+}
+
+/// Read the 16-bit Type field at byte offset `at` (RFC 4326 §5).
+fn read_type_at(data: &[u8], at: usize) -> u16 {
+    let mut bytes = [0_u8; TYPE_FIELD_LEN];
+    bytes.copy_from_slice(&data[at..at + TYPE_FIELD_LEN]);
+    u16::from_be_bytes(bytes)
+}
 
 /// Typed H-Type for a Mandatory extension header (`H-LEN = 0`, RFC 4326 §5).
 ///
@@ -257,7 +273,7 @@ impl ExtensionHeader {
                     reason: "Optional header h_len must be 1..=5",
                 });
             }
-            let expected_body_len = 2 * usize::from(*h_len) - 2;
+            let expected_body_len = optional_body_len(*h_len);
             if body.len() != expected_body_len {
                 return Err(Error::InvalidExtensionHeader {
                     reason: "Optional header body.len() must equal 2*h_len-2",
@@ -271,8 +287,8 @@ impl ExtensionHeader {
     /// field.
     pub fn wire_len(&self) -> usize {
         match self {
-            ExtensionHeader::Optional { h_len, .. } => 2 * (*h_len as usize),
-            ExtensionHeader::Mandatory { body, .. } => 2 + body.len(),
+            ExtensionHeader::Optional { h_len, .. } => (*h_len as usize) * TYPE_FIELD_LEN,
+            ExtensionHeader::Mandatory { body, .. } => TYPE_FIELD_LEN + body.len(),
         }
     }
 }
@@ -334,9 +350,9 @@ impl<'a> PayloadChain<'a> {
                     // read `cur`, except for the very first which sits in the
                     // base header). The body is 2*h_len - 2 bytes, followed by
                     // the next Type field (2 bytes).
-                    let body_len = 2 * (h_len as usize) - 2;
+                    let body_len = optional_body_len(h_len);
                     let next_type_at = off + body_len;
-                    if next_type_at + 2 > data.len() {
+                    if next_type_at + TYPE_FIELD_LEN > data.len() {
                         return Err(Error::InvalidExtensionHeader {
                             reason: "optional extension header body/next-type exceeds payload",
                         });
@@ -347,9 +363,9 @@ impl<'a> PayloadChain<'a> {
                         h_type,
                         body,
                     });
-                    let next_raw = u16::from_be_bytes([data[next_type_at], data[next_type_at + 1]]);
+                    let next_raw = read_type_at(data, next_type_at);
                     cur = TypeField::from_u16(next_raw);
-                    off = next_type_at + 2;
+                    off = next_type_at + TYPE_FIELD_LEN;
                 }
             }
         }
@@ -427,8 +443,8 @@ impl<'a> PayloadChain<'a> {
             } else {
                 self.final_type
             };
-            out[off..off + 2].copy_from_slice(&following.to_u16().to_be_bytes());
-            off += 2;
+            out[off..off + TYPE_FIELD_LEN].copy_from_slice(&following.to_u16().to_be_bytes());
+            off += TYPE_FIELD_LEN;
         }
         // When there are no optional headers, `final_type` IS the base Type
         // field (written by the SNDU serializer), so the chain content is just

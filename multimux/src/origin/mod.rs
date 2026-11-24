@@ -478,6 +478,12 @@ pub(crate) const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 /// long-lived responses (LL-HLS blocking reload, DVR catch-up, TS streams)
 /// whose bodies a hard cap would truncate mid-stream.
 ///
+/// HTTP/1 connections are served with half-close enabled: a client that shuts
+/// down its write side once its request is sent must still receive the
+/// response. Without it hyper reads the peer's FIN before the response is
+/// written and drops the pending answer as an unexpected EOF, which loses the
+/// status code of an accepted or refused upload.
+///
 /// `ConnectInfo<SocketAddr>` (read by `output_auth_gate`) is injected by
 /// wrapping the router in `axum::Extension` per connection — the same
 /// mechanism axum's own `IntoMakeServiceWithConnectInfo` uses, built here
@@ -805,7 +811,8 @@ where
                 .http1()
                 .timer(TokioTimer::new())
                 .header_read_timeout(Some(header_read))
-                .keep_alive(true);
+                .keep_alive(true)
+                .half_close(true);
             builder
                 .http2()
                 .timer(TokioTimer::new())

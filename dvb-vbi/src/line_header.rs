@@ -15,6 +15,21 @@ pub const LINE_HEADER_LEN: usize = 1;
 /// of the header byte.
 pub const RESERVED_PREFIX: u8 = 0b11;
 
+/// Bit position of the `reserved_future_use` prefix within the header byte.
+const RESERVED_SHIFT: u32 = 6;
+
+/// Bit width of the `reserved_future_use` prefix.
+pub(crate) const RESERVED_BITS: u32 = 2;
+
+/// Mask of the `field_parity` bit within the header byte.
+const FIELD_PARITY_MASK: u8 = 0b0010_0000;
+
+/// Mask of the `line_offset` field within the header byte.
+const LINE_OFFSET_MASK: u8 = 0b0001_1111;
+
+/// Bit width of `line_offset`.
+pub(crate) const LINE_OFFSET_BITS: u32 = 5;
+
 /// The shared first byte of the Teletext / VPS / WSS / CC data fields:
 /// a fixed `reserved_future_use` = `11` prefix, then `field_parity` and a 5-bit
 /// `line_offset` (ETSI EN 301 775 §4.5.1 et al.).
@@ -48,9 +63,9 @@ impl LineHeader {
     /// the byte.
     pub fn from_byte(byte: u8) -> Self {
         LineHeader {
-            reserved: byte >> 6,
-            field_parity: (byte & 0b0010_0000) != 0,
-            line_offset: byte & 0b0001_1111,
+            reserved: byte >> RESERVED_SHIFT,
+            field_parity: (byte & FIELD_PARITY_MASK) != 0,
+            line_offset: byte & LINE_OFFSET_MASK,
         }
     }
 
@@ -58,11 +73,15 @@ impl LineHeader {
     /// line_offset. Errors if `line_offset` does not fit in 5 bits or
     /// `reserved` in 2.
     pub fn to_byte(self) -> Result<u8> {
-        broadcast_common::len::fit_bits(self.reserved as u64, 2, "reserved_future_use")?;
-        broadcast_common::len::fit_bits(self.line_offset as u64, 5, "line_offset")?;
-        let mut b = self.reserved << 6;
+        broadcast_common::len::fit_bits(
+            self.reserved as u64,
+            RESERVED_BITS,
+            "reserved_future_use",
+        )?;
+        broadcast_common::len::fit_bits(self.line_offset as u64, LINE_OFFSET_BITS, "line_offset")?;
+        let mut b = self.reserved << RESERVED_SHIFT;
         if self.field_parity {
-            b |= 0b0010_0000;
+            b |= FIELD_PARITY_MASK;
         }
         b |= self.line_offset;
         Ok(b)

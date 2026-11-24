@@ -12,13 +12,26 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x03;
 const HEADER_LEN: usize = 2;
 /// Width of the `reserved` tail of the body byte (3 bits).
-const TAIL_RESERVED_BITS: u32 = 3;
+pub const TAIL_RESERVED_BITS: u32 = 3;
 /// Default of the 3-bit `reserved` tail of the body byte: H.222.0 clause
 /// 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023; audit §5 — layout
 /// unchanged in every edition). Parse keeps whatever a sender wrote.
 pub const RESERVED_DEFAULT: ReservedOnes<TAIL_RESERVED_BITS> =
     ReservedOnes::<TAIL_RESERVED_BITS>::FILL;
 const BODY_LEN: u8 = 1;
+/// Mask of `free_format_flag` in the body byte.
+const FREE_FORMAT_FLAG_MASK: u8 = 0x80;
+/// Mask of `ID` in the body byte.
+const ID_MASK: u8 = 0x40;
+/// Mask of `layer` in the body byte.
+const LAYER_MASK: u8 = 0x03;
+/// Shift of `layer` in the body byte.
+const LAYER_SHIFT: u8 = 4;
+/// Mask of `variable_rate_audio_indicator` in the body byte.
+const VARIABLE_RATE_AUDIO_INDICATOR_MASK: u8 = 0x08;
+const FREE_FORMAT_FLAG_SHIFT: u8 = 7;
+const ID_SHIFT: u8 = 6;
+const VARIABLE_RATE_AUDIO_INDICATOR_SHIFT: u8 = 3;
 
 /// Audio Stream Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,10 +90,10 @@ impl<'a> Parse<'a> for AudioStreamDescriptor {
         }
         let b = body[0];
         Ok(Self {
-            free_format_flag: (b & 0x80) != 0,
-            id: (b & 0x40) != 0,
-            layer: (b >> 4) & 0x03,
-            variable_rate_audio_indicator: (b & 0x08) != 0,
+            free_format_flag: (b & FREE_FORMAT_FLAG_MASK) != 0,
+            id: (b & ID_MASK) != 0,
+            layer: (b >> LAYER_SHIFT) & LAYER_MASK,
+            variable_rate_audio_indicator: (b & VARIABLE_RATE_AUDIO_INDICATOR_MASK) != 0,
             reserved: ReservedOnes::from_bits(u64::from(b)),
         })
     }
@@ -98,10 +111,10 @@ impl Serialize for AudioStreamDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = ((self.free_format_flag as u8) << 7)
-            | ((self.id as u8) << 6)
-            | (broadcast_common::len::fit_mask(self.layer, 0x03, "layer")? << 4)
-            | ((self.variable_rate_audio_indicator as u8) << 3)
+        buf[HEADER_LEN] = ((self.free_format_flag as u8) << FREE_FORMAT_FLAG_SHIFT)
+            | ((self.id as u8) << ID_SHIFT)
+            | (broadcast_common::len::fit_mask(self.layer, LAYER_MASK, "layer")? << LAYER_SHIFT)
+            | ((self.variable_rate_audio_indicator as u8) << VARIABLE_RATE_AUDIO_INDICATOR_SHIFT)
             | self.reserved.get() as u8;
         Ok(len)
     }

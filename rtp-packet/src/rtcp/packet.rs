@@ -97,6 +97,42 @@ pub const APP_NAME_LEN: usize = 4;
 /// Maximum count encodable in the 5-bit `RC`/`SC` field.
 const MAX_COUNT: usize = RTCP_COUNT_MASK as usize;
 
+/// Byte offsets within the 4-byte common header (RFC 3550 §6.1).
+const VERSION_OFFSET: usize = 0;
+const PACKET_TYPE_OFFSET: usize = VERSION_OFFSET + 1;
+const LENGTH_OFFSET: usize = PACKET_TYPE_OFFSET + 1;
+/// Bit shift of `version` within the first header byte.
+const VERSION_SHIFT: u32 = 6;
+
+/// Width and two's-complement masks of the 24-bit `cumulative_lost` field
+/// (RFC 3550 §6.4.1).
+const LOST_FIELD_LEN: usize = 3;
+const LOST_FIELD_MASK: u32 = 0x00FF_FFFF;
+const LOST_SIGN_EXTEND_MASK: u32 = 0xFF00_0000;
+
+/// Byte offsets within a 24-byte report block (RFC 3550 §6.4.1).
+const RB_FRACTION_LOST_OFFSET: usize = 4;
+const RB_CUMULATIVE_LOST_OFFSET: usize = RB_FRACTION_LOST_OFFSET + 1;
+const RB_EXT_HIGHEST_SEQ_OFFSET: usize = 8;
+const RB_JITTER_OFFSET: usize = 12;
+const RB_LSR_OFFSET: usize = 16;
+const RB_DLSR_OFFSET: usize = 20;
+
+/// Byte offsets within the SR sender-info block (RFC 3550 §6.4.1).
+const SR_SSRC_OFFSET: usize = 0;
+const SR_NTP_MSW_OFFSET: usize = SR_SSRC_OFFSET + core::mem::size_of::<u32>();
+const SR_NTP_LSW_OFFSET: usize = SR_NTP_MSW_OFFSET + core::mem::size_of::<u32>();
+const SR_RTP_TIMESTAMP_OFFSET: usize = SR_NTP_LSW_OFFSET + core::mem::size_of::<u32>();
+const SR_PACKET_COUNT_OFFSET: usize = SR_RTP_TIMESTAMP_OFFSET + core::mem::size_of::<u32>();
+const SR_OCTET_COUNT_OFFSET: usize = SR_PACKET_COUNT_OFFSET + core::mem::size_of::<u32>();
+
+/// Byte offsets within an SDES item and chunk (RFC 3550 §6.5).
+const SDES_ITEM_TYPE_OFFSET: usize = 0;
+const SDES_ITEM_LENGTH_OFFSET: usize = SDES_ITEM_TYPE_OFFSET + 1;
+const SDES_ITEM_TEXT_OFFSET: usize = SDES_ITEM_LENGTH_OFFSET + 1;
+const SDES_ITEM_HEADER_LEN: usize = SDES_ITEM_TEXT_OFFSET;
+const SDES_CHUNK_SOURCE_OFFSET: usize = 0;
+
 // ---------------------------------------------------------------------------
 // Big-endian read helpers (bounds-checked)
 // ---------------------------------------------------------------------------
@@ -104,11 +140,33 @@ const MAX_COUNT: usize = RTCP_COUNT_MASK as usize;
 /// Read a big-endian `u32` at `off`, or `BufferTooShort`.
 fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32> {
     bytes
-        .get(off..off + 4)
-        .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+        .get(off..off + WORD_LEN)
+        .map(|s| {
+            let mut raw = [0_u8; WORD_LEN];
+            raw.copy_from_slice(s);
+            u32::from_be_bytes(raw)
+        })
         .ok_or(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: off + 4,
+                need: off + WORD_LEN,
+                have: bytes.len(),
+                what,
+            },
+        ))
+}
+
+/// Read a big-endian `u16` at `off`, or `BufferTooShort`.
+fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16> {
+    bytes
+        .get(off..off + core::mem::size_of::<u16>())
+        .map(|s| {
+            let mut raw = [0_u8; core::mem::size_of::<u16>()];
+            raw.copy_from_slice(s);
+            u16::from_be_bytes(raw)
+        })
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: off + core::mem::size_of::<u16>(),
                 have: bytes.len(),
                 what,
             },
@@ -336,7 +394,7 @@ impl CommonHeader {
     /// Parse the common header, validating the version field.
     fn parse(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, RTCP_HEADER_LEN, "RTCP common header")?;
-        let version = bytes[0] >> 6;
+        let version = bytes[VERSION_OFFSET] >> VERSION_SHIFT;
         if version != RTCP_VERSION {
             return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "rtcp_version",
@@ -345,10 +403,10 @@ impl CommonHeader {
             }));
         }
         Ok(Self {
-            padding: bytes[0] & RTCP_PADDING_MASK != 0,
-            count: bytes[0] & RTCP_COUNT_MASK,
-            packet_type: bytes[1],
-            length: u16::from_be_bytes([bytes[2], bytes[3]]),
+            padding: bytes[VERSION_OFFSET] & RTCP_PADDING_MASK != 0,
+            count: bytes[VERSION_OFFSET] & RTCP_COUNT_MASK,
+            packet_type: bytes[PACKET_TYPE_OFFSET],
+            length: be_u16(bytes, LENGTH_OFFSET, "RTCP length")?,
         })
     }
 
@@ -360,11 +418,11 @@ impl CommonHeader {
 
     /// Write the 4-byte header (`V=2`, given `P`/count/PT/length).
     fn write(&self, buf: &mut [u8]) {
-        buf[0] = RTCP_BYTE0_V2
+        buf[VERSION_OFFSET] = RTCP_BYTE0_V2
             | (if self.padding { RTCP_PADDING_MASK } else { 0 })
             | (self.count & RTCP_COUNT_MASK);
-        buf[1] = self.packet_type;
-        buf[2..4].copy_from_slice(&self.length.to_be_bytes());
+        buf[PACKET_TYPE_OFFSET] = self.packet_type;
+        buf[LENGTH_OFFSET..RTCP_HEADER_LEN].copy_from_slice(&self.length.to_be_bytes());
     }
 }
 
@@ -416,7 +474,7 @@ impl ReportBlock {
         // raw is a 24-bit two's-complement value; extend the sign bit (bit 23).
         const SIGN_BIT: u32 = 1 << 23;
         if raw & SIGN_BIT != 0 {
-            (raw | 0xFF00_0000) as i32
+            (raw | LOST_SIGN_EXTEND_MASK) as i32
         } else {
             raw as i32
         }
@@ -437,7 +495,7 @@ impl ReportBlock {
                 reason: "outside the 24-bit signed range -8388608..=8388607",
             }));
         }
-        Ok((self.cumulative_lost as u32) & 0x00FF_FFFF)
+        Ok((self.cumulative_lost as u32) & LOST_FIELD_MASK)
     }
 }
 
@@ -447,16 +505,24 @@ impl<'a> Parse<'a> for ReportBlock {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, REPORT_BLOCK_LEN, "RTCP report block")?;
         let ssrc = Ssrc::new(be_u32(bytes, 0, "report block ssrc")?);
-        let fraction_lost = bytes[4];
-        let cumulative_raw = u32::from_be_bytes([0, bytes[5], bytes[6], bytes[7]]);
+        let fraction_lost = bytes[RB_FRACTION_LOST_OFFSET];
+        let mut cumulative = [0_u8; WORD_LEN];
+        cumulative[WORD_LEN - LOST_FIELD_LEN..].copy_from_slice(
+            &bytes[RB_CUMULATIVE_LOST_OFFSET..RB_CUMULATIVE_LOST_OFFSET + LOST_FIELD_LEN],
+        );
+        let cumulative_raw = u32::from_be_bytes(cumulative);
         Ok(ReportBlock {
             ssrc,
             fraction_lost,
             cumulative_lost: ReportBlock::decode_cumulative_lost(cumulative_raw),
-            ext_highest_seq: ExtendedSeqNo::new(be_u32(bytes, 8, "report block ext seq")?),
-            jitter: be_u32(bytes, 12, "report block jitter")?,
-            lsr: be_u32(bytes, 16, "report block lsr")?,
-            dlsr: be_u32(bytes, 20, "report block dlsr")?,
+            ext_highest_seq: ExtendedSeqNo::new(be_u32(
+                bytes,
+                RB_EXT_HIGHEST_SEQ_OFFSET,
+                "report block ext seq",
+            )?),
+            jitter: be_u32(bytes, RB_JITTER_OFFSET, "report block jitter")?,
+            lsr: be_u32(bytes, RB_LSR_OFFSET, "report block lsr")?,
+            dlsr: be_u32(bytes, RB_DLSR_OFFSET, "report block dlsr")?,
         })
     }
 }
@@ -470,14 +536,16 @@ impl Serialize for ReportBlock {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, REPORT_BLOCK_LEN)?;
-        buf[0..4].copy_from_slice(&self.ssrc.get().to_be_bytes());
-        buf[4] = self.fraction_lost;
+        buf[..RB_FRACTION_LOST_OFFSET].copy_from_slice(&self.ssrc.get().to_be_bytes());
+        buf[RB_FRACTION_LOST_OFFSET] = self.fraction_lost;
         let cum = self.encode_cumulative_lost()?.to_be_bytes();
-        buf[5..8].copy_from_slice(&cum[1..4]);
-        buf[8..12].copy_from_slice(&self.ext_highest_seq.get().to_be_bytes());
-        buf[12..16].copy_from_slice(&self.jitter.to_be_bytes());
-        buf[16..20].copy_from_slice(&self.lsr.to_be_bytes());
-        buf[20..24].copy_from_slice(&self.dlsr.to_be_bytes());
+        buf[RB_CUMULATIVE_LOST_OFFSET..RB_EXT_HIGHEST_SEQ_OFFSET]
+            .copy_from_slice(&cum[WORD_LEN - LOST_FIELD_LEN..]);
+        buf[RB_EXT_HIGHEST_SEQ_OFFSET..RB_JITTER_OFFSET]
+            .copy_from_slice(&self.ext_highest_seq.get().to_be_bytes());
+        buf[RB_JITTER_OFFSET..RB_LSR_OFFSET].copy_from_slice(&self.jitter.to_be_bytes());
+        buf[RB_LSR_OFFSET..RB_DLSR_OFFSET].copy_from_slice(&self.lsr.to_be_bytes());
+        buf[RB_DLSR_OFFSET..REPORT_BLOCK_LEN].copy_from_slice(&self.dlsr.to_be_bytes());
         Ok(REPORT_BLOCK_LEN)
     }
 }
@@ -615,12 +683,12 @@ impl<'a> Parse<'a> for SenderReport {
             "RTCP SR padding",
         )?;
         need_in(body, WORD_LEN + SR_SENDER_INFO_LEN, "RTCP SR sender info")?;
-        let ssrc = Ssrc::new(be_u32(body, 0, "SR ssrc")?);
-        let ntp_msw = be_u32(body, 4, "SR ntp msw")?;
-        let ntp_lsw = be_u32(body, 8, "SR ntp lsw")?;
-        let rtp_timestamp = be_u32(body, 12, "SR rtp ts")?;
-        let packet_count = be_u32(body, 16, "SR packet count")?;
-        let octet_count = be_u32(body, 20, "SR octet count")?;
+        let ssrc = Ssrc::new(be_u32(body, SR_SSRC_OFFSET, "SR ssrc")?);
+        let ntp_msw = be_u32(body, SR_NTP_MSW_OFFSET, "SR ntp msw")?;
+        let ntp_lsw = be_u32(body, SR_NTP_LSW_OFFSET, "SR ntp lsw")?;
+        let rtp_timestamp = be_u32(body, SR_RTP_TIMESTAMP_OFFSET, "SR rtp ts")?;
+        let packet_count = be_u32(body, SR_PACKET_COUNT_OFFSET, "SR packet count")?;
+        let octet_count = be_u32(body, SR_OCTET_COUNT_OFFSET, "SR octet count")?;
         let blocks_off = WORD_LEN + SR_SENDER_INFO_LEN;
         let report_blocks = parse_report_blocks(&body[blocks_off..], hdr.count as usize)?;
         let ext_off = blocks_off + report_blocks.len() * REPORT_BLOCK_LEN;
@@ -663,12 +731,18 @@ impl Serialize for SenderReport {
         hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
-        buf[off..off + 4].copy_from_slice(&self.ssrc.get().to_be_bytes());
-        buf[off + 4..off + 8].copy_from_slice(&self.ntp_msw.to_be_bytes());
-        buf[off + 8..off + 12].copy_from_slice(&self.ntp_lsw.to_be_bytes());
-        buf[off + 12..off + 16].copy_from_slice(&self.rtp_timestamp.to_be_bytes());
-        buf[off + 16..off + 20].copy_from_slice(&self.packet_count.to_be_bytes());
-        buf[off + 20..off + 24].copy_from_slice(&self.octet_count.to_be_bytes());
+        buf[off + SR_SSRC_OFFSET..off + SR_NTP_MSW_OFFSET]
+            .copy_from_slice(&self.ssrc.get().to_be_bytes());
+        buf[off + SR_NTP_MSW_OFFSET..off + SR_NTP_LSW_OFFSET]
+            .copy_from_slice(&self.ntp_msw.to_be_bytes());
+        buf[off + SR_NTP_LSW_OFFSET..off + SR_RTP_TIMESTAMP_OFFSET]
+            .copy_from_slice(&self.ntp_lsw.to_be_bytes());
+        buf[off + SR_RTP_TIMESTAMP_OFFSET..off + SR_PACKET_COUNT_OFFSET]
+            .copy_from_slice(&self.rtp_timestamp.to_be_bytes());
+        buf[off + SR_PACKET_COUNT_OFFSET..off + SR_OCTET_COUNT_OFFSET]
+            .copy_from_slice(&self.packet_count.to_be_bytes());
+        buf[off + SR_OCTET_COUNT_OFFSET..off + WORD_LEN + SR_SENDER_INFO_LEN]
+            .copy_from_slice(&self.octet_count.to_be_bytes());
         off += WORD_LEN + SR_SENDER_INFO_LEN;
         for block in &self.report_blocks {
             block.serialize_into(&mut buf[off..off + REPORT_BLOCK_LEN])?;
@@ -790,7 +864,7 @@ impl Serialize for ReceiverReport {
         hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
-        buf[off..off + 4].copy_from_slice(&self.ssrc.get().to_be_bytes());
+        buf[off..off + WORD_LEN].copy_from_slice(&self.ssrc.get().to_be_bytes());
         off += WORD_LEN;
         for block in &self.report_blocks {
             block.serialize_into(&mut buf[off..off + REPORT_BLOCK_LEN])?;
@@ -949,7 +1023,13 @@ impl SdesChunk {
     /// On-the-wire byte length of this chunk **before** 32-bit padding:
     /// 4 (source) + Σ(2 + text.len()) + 1 (terminator).
     fn unpadded_len(&self) -> usize {
-        WORD_LEN + self.items.iter().map(|it| 2 + it.text.len()).sum::<usize>() + 1
+        WORD_LEN
+            + self
+                .items
+                .iter()
+                .map(|it| SDES_ITEM_HEADER_LEN + it.text.len())
+                .sum::<usize>()
+            + 1
     }
 
     /// Padded (32-bit-aligned) length of this chunk on the wire.
@@ -1098,7 +1178,8 @@ impl Serialize for SourceDescription {
             for b in buf[off..off + padded].iter_mut() {
                 *b = 0;
             }
-            buf[off..off + 4].copy_from_slice(&chunk.source.to_be_bytes());
+            buf[off + SDES_CHUNK_SOURCE_OFFSET..off + WORD_LEN]
+                .copy_from_slice(&chunk.source.to_be_bytes());
             let mut io = off + WORD_LEN;
             for item in &chunk.items {
                 if item.text.len() > u8::MAX as usize {
@@ -1108,10 +1189,11 @@ impl Serialize for SourceDescription {
                         reason: "exceeds 8-bit SDES item length",
                     }));
                 }
-                buf[io] = item.item_type.wire_type()?;
-                buf[io + 1] = item.text.len() as u8;
-                buf[io + 2..io + 2 + item.text.len()].copy_from_slice(item.text.as_bytes());
-                io += 2 + item.text.len();
+                buf[io + SDES_ITEM_TYPE_OFFSET] = item.item_type.wire_type()?;
+                buf[io + SDES_ITEM_LENGTH_OFFSET] = item.text.len() as u8;
+                buf[io + SDES_ITEM_TEXT_OFFSET..io + SDES_ITEM_TEXT_OFFSET + item.text.len()]
+                    .copy_from_slice(item.text.as_bytes());
+                io += SDES_ITEM_HEADER_LEN + item.text.len();
             }
             // buf[io] terminator (already zeroed); remaining padding zeroed.
             off += padded;
@@ -1255,7 +1337,7 @@ impl Serialize for Bye {
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
         for src in &self.sources {
-            buf[off..off + 4].copy_from_slice(&src.to_be_bytes());
+            buf[off..off + WORD_LEN].copy_from_slice(&src.to_be_bytes());
             off += WORD_LEN;
         }
         if let Some(r) = &self.reason {
@@ -1373,7 +1455,7 @@ impl Serialize for App {
         hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
-        buf[off..off + 4].copy_from_slice(&self.ssrc.get().to_be_bytes());
+        buf[off..off + WORD_LEN].copy_from_slice(&self.ssrc.get().to_be_bytes());
         off += WORD_LEN;
         buf[off..off + APP_NAME_LEN].copy_from_slice(&self.name);
         off += APP_NAME_LEN;

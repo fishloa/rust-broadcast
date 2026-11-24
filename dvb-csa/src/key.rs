@@ -9,6 +9,15 @@
 //!   of the control word for LFSR initialization.
 use super::tables::KPERM;
 
+/// Bytes in a DVB-CSA control word — one 64-bit word.
+pub const KEY_LEN: usize = core::mem::size_of::<u64>();
+/// 64-bit words in the expanded block-key schedule.
+const KEY_WORDS: usize = 7;
+/// Round-key bytes in the block schedule — one per block-cipher round.
+const SCHEDULE_LEN: usize = KEY_WORDS * KEY_LEN;
+/// Bits in a nibble — the stream seed swaps the two halves of each byte.
+const NIBBLE_BITS: u32 = 4;
+
 /// An 8-byte DVB-CSA control word.
 ///
 /// Not `Copy` — a `Copy` value can be duplicated on the stack without the
@@ -20,7 +29,7 @@ use super::tables::KPERM;
 /// through the methods below), so it carries no confidentiality guarantee on
 /// its own — treat any `ControlWord` value itself as sensitive regardless.
 #[derive(Clone)]
-pub struct ControlWord(pub [u8; 8]);
+pub struct ControlWord(pub [u8; KEY_LEN]);
 
 /// Redacted: never print control word bytes (a derived `Debug` would — a
 /// `tracing::debug!`/`dbg!`/panic message of a value holding a `ControlWord`
@@ -55,7 +64,7 @@ impl Drop for ControlWord {
 
 impl ControlWord {
     /// Create a `ControlWord` from 8 bytes.
-    pub const fn from_bytes(bytes: [u8; 8]) -> Self {
+    pub const fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
         Self(bytes)
     }
 
@@ -65,20 +74,20 @@ impl ControlWord {
     /// scramble/descramble without ever holding the control word itself, so
     /// it stays internal to the crate's own cipher plumbing rather than
     /// being exposed as a second, unaudited way to hand out key material.
-    pub(crate) fn expand_block(&self) -> [u8; 56] {
+    pub(crate) fn expand_block(&self) -> [u8; SCHEDULE_LEN] {
         let cw_u64 = u64::from_le_bytes(self.0);
 
-        let mut k = [0u64; 7];
-        k[6] = cw_u64;
-        for i in (1..=6).rev() {
+        let mut k = [0u64; KEY_WORDS];
+        k[KEY_WORDS - 1] = cw_u64;
+        for i in (1..KEY_WORDS).rev() {
             k[i - 1] = key_permute(k[i]);
         }
 
-        let mut sch = [0u8; 56];
-        for i in 0..7 {
+        let mut sch = [0u8; SCHEDULE_LEN];
+        for i in 0..KEY_WORDS {
             let ki = k[i];
-            for j in 0..8 {
-                sch[i * 8 + j] = ((ki >> (j * 8)) as u8) ^ (i as u8);
+            for j in 0..KEY_LEN {
+                sch[i * KEY_LEN + j] = ((ki >> (j as u32 * u8::BITS)) as u8) ^ (i as u8);
             }
         }
         sch
@@ -90,10 +99,10 @@ impl ControlWord {
     /// `cws[i] = (cw[i] >> 4) | (cw[i] << 4)`
     ///
     /// `pub(crate)` for the same reason as [`expand_block`](Self::expand_block).
-    pub(crate) fn expand_stream(&self) -> [u8; 8] {
-        let mut cws = [0u8; 8];
+    pub(crate) fn expand_stream(&self) -> [u8; KEY_LEN] {
+        let mut cws = [0u8; KEY_LEN];
         for (i, out) in cws.iter_mut().enumerate() {
-            *out = self.0[i].rotate_left(4);
+            *out = self.0[i].rotate_left(NIBBLE_BITS);
         }
         cws
     }

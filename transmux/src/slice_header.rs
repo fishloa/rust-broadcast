@@ -39,6 +39,18 @@ const NAL_REF_IDC_SHIFT: u8 = 5;
 const SLICE_PREFIX_BYTES: usize = 64;
 /// Bits of `colour_plane_id` (§7.3.3).
 const COLOUR_PLANE_ID_BITS: usize = 2;
+/// Largest `pic_parameter_set_id` (§7.4.2.2).
+const PPS_ID_MAX: u64 = 255;
+/// Largest `seq_parameter_set_id` (§7.4.2.2).
+const SPS_ID_MAX: u64 = 31;
+/// Largest `num_slice_groups_minus1` (§7.4.2.2).
+const NUM_SLICE_GROUPS_MINUS1_MAX: u64 = 7;
+/// Bits of `weighted_bipred_idc` (§7.3.2.2).
+const WEIGHTED_BIPRED_IDC_BITS: usize = 2;
+/// Entries of `delta_pic_order_cnt[]` (§7.4.1.2.4).
+const DELTA_PIC_ORDER_CNT_LEN: usize = 2;
+/// Largest `slice_type` (Table 7-6).
+const SLICE_TYPE_MAX: u64 = 9;
 
 /// The PPS fields a slice-header parser needs (§7.3.2.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +75,7 @@ pub fn decode_avc_slice_pps(pps_nal: &[u8]) -> Result<AvcSlicePps> {
     let mut r = BitReader::with_unescape(body, "H.264 PPS")?;
     let pps_id = r.read_ue("pic_parameter_set_id")?;
     let sps_id = r.read_ue("seq_parameter_set_id")?;
-    if pps_id > 255 || sps_id > 31 {
+    if pps_id > PPS_ID_MAX || sps_id > SPS_ID_MAX {
         return Err(Error::InvalidValue(InvalidValue {
             field: "pic_parameter_set_id/seq_parameter_set_id",
             value: pps_id.max(sps_id),
@@ -74,7 +86,7 @@ pub fn decode_avc_slice_pps(pps_nal: &[u8]) -> Result<AvcSlicePps> {
     let bottom_field_pic_order_in_frame_present =
         r.read_flag("bottom_field_pic_order_in_frame_present_flag")?;
     let num_slice_groups_minus1 = r.read_ue("num_slice_groups_minus1")?;
-    if num_slice_groups_minus1 > 7 {
+    if num_slice_groups_minus1 > NUM_SLICE_GROUPS_MINUS1_MAX {
         return Err(Error::InvalidValue(InvalidValue {
             field: "num_slice_groups_minus1",
             value: num_slice_groups_minus1,
@@ -115,7 +127,7 @@ pub fn decode_avc_slice_pps(pps_nal: &[u8]) -> Result<AvcSlicePps> {
     r.read_ue("num_ref_idx_l0_default_active_minus1")?;
     r.read_ue("num_ref_idx_l1_default_active_minus1")?;
     r.read_flag("weighted_pred_flag")?;
-    r.read_bits(2, "weighted_bipred_idc")?;
+    r.read_bits(WEIGHTED_BIPRED_IDC_BITS, "weighted_bipred_idc")?;
     r.read_se("pic_init_qp_minus26")?;
     r.read_se("pic_init_qs_minus26")?;
     r.read_se("chroma_qp_index_offset")?;
@@ -160,7 +172,7 @@ pub struct AvcSliceHeader {
     /// `delta_pic_order_cnt_bottom` (inferred 0).
     pub delta_pic_order_cnt_bottom: i32,
     /// `delta_pic_order_cnt[0..=1]` (inferred 0).
-    pub delta_pic_order_cnt: [i32; 2],
+    pub delta_pic_order_cnt: [i32; DELTA_PIC_ORDER_CNT_LEN],
     /// `redundant_pic_cnt` (inferred 0).
     pub redundant_pic_cnt: u32,
 }
@@ -211,7 +223,7 @@ pub fn parse_avc_slice_header(
     let mut r = BitReader::with_unescape(&nal[1..end], "H.264 slice header")?;
     let first_mb_in_slice = to_u32(r.read_ue("first_mb_in_slice")?, "first_mb_in_slice")?;
     let slice_type = r.read_ue("slice_type")?;
-    if slice_type > 9 {
+    if slice_type > SLICE_TYPE_MAX {
         return Err(Error::InvalidValue(InvalidValue {
             field: "slice_type",
             value: slice_type,
@@ -247,7 +259,7 @@ pub fn parse_avc_slice_header(
     let bottom_poc_present = pps.bottom_field_pic_order_in_frame_present && !field_pic_flag;
     let mut pic_order_cnt_lsb = None;
     let mut delta_pic_order_cnt_bottom = 0;
-    let mut delta_pic_order_cnt = [0i32; 2];
+    let mut delta_pic_order_cnt = [0i32; DELTA_PIC_ORDER_CNT_LEN];
     if sps.pic_order_cnt_type == 0 {
         pic_order_cnt_lsb =
             Some(r.read_bits(sps.log2_max_poc_lsb as usize, "pic_order_cnt_lsb")? as u32);

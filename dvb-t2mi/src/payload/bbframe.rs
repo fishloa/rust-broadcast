@@ -25,32 +25,41 @@ pub struct BbframePayload<'a> {
     pub bbframe: &'a [u8],
 }
 
+/// Bytes of the fixed BbframePayload header.
+const BBFRAME_HEADER_LEN: usize = 3;
+/// Offset of the byte carrying `intl_frame_start` and the reserved bits.
+const FLAGS_BYTE_OFFSET: usize = 2;
+/// Mask of the `intl_frame_start` flag.
+const INTL_FRAME_START_MASK: u8 = 0x80;
+/// Mask of the seven reserved bits beside `intl_frame_start`.
+const RFU_MASK: u8 = 0x7F;
+
 impl<'a> Parse<'a> for BbframePayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
         need_in(
             bytes,
-            3,
+            BBFRAME_HEADER_LEN,
             "BbframePayload header (frame_idx + plp_id + intl_frame_start + rfu)",
         )?;
 
         let frame_idx = bytes[0];
         let plp_id = bytes[1];
-        let intl_frame_start = bytes[2] & 0x80 != 0;
+        let intl_frame_start = bytes[FLAGS_BYTE_OFFSET] & INTL_FRAME_START_MASK != 0;
 
         // RFU: byte 2 bits 6..0 — must be zero
-        if bytes[2] & 0x7F != 0 {
+        if bytes[FLAGS_BYTE_OFFSET] & RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "byte 2 bits 6..0",
                     expected: 0,
-                    found: u64::from(bytes[2] & 0x7F),
+                    found: u64::from(bytes[FLAGS_BYTE_OFFSET] & RFU_MASK),
                 },
             ));
         }
 
-        let bbframe = &bytes[3..];
+        let bbframe = &bytes[BBFRAME_HEADER_LEN..];
 
         Ok(BbframePayload {
             frame_idx,
@@ -70,7 +79,7 @@ impl Serialize for BbframePayload<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        3 + self.bbframe.len()
+        BBFRAME_HEADER_LEN + self.bbframe.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
@@ -78,9 +87,14 @@ impl Serialize for BbframePayload<'_> {
 
         buf[0] = self.frame_idx;
         buf[1] = self.plp_id;
-        buf[2] = if self.intl_frame_start { 0x80 } else { 0x00 };
+        buf[FLAGS_BYTE_OFFSET] = if self.intl_frame_start {
+            INTL_FRAME_START_MASK
+        } else {
+            0
+        };
         if !self.bbframe.is_empty() {
-            buf[3..3 + self.bbframe.len()].copy_from_slice(self.bbframe);
+            buf[BBFRAME_HEADER_LEN..BBFRAME_HEADER_LEN + self.bbframe.len()]
+                .copy_from_slice(self.bbframe);
         }
 
         Ok(self.serialized_len())

@@ -15,15 +15,29 @@ const BODY_LEN: u8 = 2;
 /// Default of the 1-bit `reserved` after `external_clock_reference_indicator`
 /// (H.222.0 Table 2-64): clause 2.1 "reserved" = `1` (all 9 editions
 /// 07/1995-08/2023, audit §5; layout unchanged; confirmed by the TSDuck oracle PMT).
-pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_AFTER_INDICATOR_BITS> =
+    ReservedOnes::<RESERVED_AFTER_INDICATOR_BITS>::FILL;
 /// Width of the `reserved` field after the indicator (1 bit).
-const RESERVED_1_BITS: u32 = 1;
+pub const RESERVED_AFTER_INDICATOR_BITS: u32 = 1;
 /// Default of the trailing 5-bit `reserved` (same rule): `11111`.
-pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_TRAILING_BITS>::FILL;
 /// Width of the trailing `reserved` field (5 bits).
-const RESERVED_5_BITS: u32 = 5;
-const RESERVED_1_MASK: u8 = 0x01;
-const RESERVED_5_MASK: u8 = 0x1F;
+pub const RESERVED_TRAILING_BITS: u32 = 5;
+const RESERVED_AFTER_INDICATOR_MASK: u8 = 0x01;
+const RESERVED_TRAILING_MASK: u8 = 0x1F;
+/// `external_clock_reference_indicator` bit of byte 0.
+const EXTERNAL_CLOCK_REFERENCE_INDICATOR_MASK: u8 = 0x80;
+/// Shift of `external_clock_reference_indicator` in byte 0.
+const EXTERNAL_CLOCK_REFERENCE_INDICATOR_SHIFT: u8 = 7;
+/// Mask of the 6-bit `clock_accuracy_integer`.
+const CLOCK_ACCURACY_INTEGER_MASK: u8 = 0x3F;
+/// Shift of `reserved(1)` in byte 0.
+const RESERVED_1_SHIFT: u8 = 6;
+/// Shift of `clock_accuracy_exponent` in byte 1.
+const CLOCK_ACCURACY_EXPONENT_SHIFT: u8 = 5;
+/// Mask of the 3-bit `clock_accuracy_exponent`.
+const CLOCK_ACCURACY_EXPONENT_MASK: u8 = 0x07;
 
 /// System Clock Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,11 +54,11 @@ pub struct SystemClockDescriptor {
     /// `reserved(1)` after the indicator (1 bit). Captured on parse, re-emitted
     /// verbatim; [`SystemClockDescriptor::new`] uses [`RESERVED_1_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_1: ReservedOnes<RESERVED_1_BITS>,
+    pub reserved_1: ReservedOnes<RESERVED_AFTER_INDICATOR_BITS>,
     /// Trailing `reserved(5)` (5 bits). Captured on parse, re-emitted verbatim;
     /// [`SystemClockDescriptor::new`] uses [`RESERVED_5_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_5: ReservedOnes<RESERVED_TRAILING_BITS>,
 }
 
 impl SystemClockDescriptor {
@@ -82,16 +96,19 @@ impl<'a> Parse<'a> for SystemClockDescriptor {
             });
         }
         let b0 = body[0];
-        let external_clock_reference_indicator = (b0 & 0x80) != 0;
-        let clock_accuracy_integer = b0 & 0x3F;
+        let external_clock_reference_indicator =
+            (b0 & EXTERNAL_CLOCK_REFERENCE_INDICATOR_MASK) != 0;
+        let clock_accuracy_integer = b0 & CLOCK_ACCURACY_INTEGER_MASK;
         let b1 = body[1];
-        let clock_accuracy_exponent = b1 >> 5;
+        let clock_accuracy_exponent = b1 >> CLOCK_ACCURACY_EXPONENT_SHIFT;
         Ok(Self {
             external_clock_reference_indicator,
             clock_accuracy_integer,
             clock_accuracy_exponent,
-            reserved_1: ReservedOnes::from_bits(u64::from((b0 >> 6) & RESERVED_1_MASK)),
-            reserved_5: ReservedOnes::from_bits(u64::from(b1 & RESERVED_5_MASK)),
+            reserved_1: ReservedOnes::from_bits(u64::from(
+                (b0 >> RESERVED_1_SHIFT) & RESERVED_AFTER_INDICATOR_MASK,
+            )),
+            reserved_5: ReservedOnes::from_bits(u64::from(b1 & RESERVED_TRAILING_MASK)),
         })
     }
 }
@@ -108,18 +125,19 @@ impl Serialize for SystemClockDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = ((self.external_clock_reference_indicator as u8) << 7)
-            | ((self.reserved_1.get() as u8) << 6)
+        buf[HEADER_LEN] = ((self.external_clock_reference_indicator as u8)
+            << EXTERNAL_CLOCK_REFERENCE_INDICATOR_SHIFT)
+            | ((self.reserved_1.get() as u8) << RESERVED_1_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.clock_accuracy_integer,
-                0x3F,
+                CLOCK_ACCURACY_INTEGER_MASK,
                 "clock_accuracy_integer",
             )?;
         buf[HEADER_LEN + 1] = (broadcast_common::len::fit_mask(
             self.clock_accuracy_exponent,
-            0x07,
+            CLOCK_ACCURACY_EXPONENT_MASK,
             "clock_accuracy_exponent",
-        )? << 5)
+        )? << CLOCK_ACCURACY_EXPONENT_SHIFT)
             | (self.reserved_5.get() as u8);
         Ok(len)
     }

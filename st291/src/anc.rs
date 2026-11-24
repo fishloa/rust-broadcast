@@ -76,6 +76,11 @@ const W_HORIZONTAL_OFFSET: u32 = 12;
 /// Number of leading bytes before `PES_packet_length`'s value applies:
 /// start_code(3) + stream_id(1) + PES_packet_length(2).
 const PES_PREFIX_LEN: usize = 6;
+/// Offset of `stream_id` within the PES prefix, after the start code.
+const PES_STREAM_ID_OFFSET: usize = PACKET_START_CODE_PREFIX.len();
+/// Offset of `PES_header_data_length` within the optional header, after the
+/// two flag bytes.
+const PES_HEADER_DATA_LENGTH_OFFSET: usize = 2;
 /// Fixed bytes of the PES optional header for ST 2038: 2 flag bytes +
 /// `PES_header_data_length` + 5-byte PTS.
 const PES_OPTIONAL_HEADER_LEN: usize = 3 + 5;
@@ -219,7 +224,7 @@ impl AncPacket {
     /// Serialized byte length of this record (body bits rounded up to a byte
     /// boundary, the pad being `'1'` bits).
     fn serialized_byte_len(&self) -> usize {
-        self.body_bits().div_ceil(8)
+        self.body_bits().div_ceil(crate::BITS_PER_BYTE)
     }
 
     /// Write this record's bits into `w`, MSB-first, then pad to the byte
@@ -293,7 +298,8 @@ impl AncPacket {
         }
         // The '1' padding up to the byte boundary (§4.2) is fixed too — note
         // '1', not '0' (contrast the RFC 8331 `word_align`, which is '0').
-        let pad = (8 - r.bits_read() % 8) % 8;
+        let pad =
+            (crate::BITS_PER_BYTE - r.bits_read() % crate::BITS_PER_BYTE) % crate::BITS_PER_BYTE;
         if pad > 0 {
             let pad_value = r.read_bits(pad as u32)?;
             let all_ones = (1u64 << pad) - 1;
@@ -379,7 +385,7 @@ impl AncDataPacket {
         let header = self.pes_header()?;
         let mut buf = alloc::vec![0u8; PES_OPTIONAL_HEADER_LEN];
         buf[0..2].copy_from_slice(&header.flag_bytes());
-        buf[2] = ANC_PES_HEADER_DATA_LENGTH;
+        buf[PES_HEADER_DATA_LENGTH_OFFSET] = ANC_PES_HEADER_DATA_LENGTH;
         header.serialize_optional_fields(&mut buf[3..])?;
         Ok(buf)
     }
@@ -467,7 +473,7 @@ impl AncDataPacket {
             }
             let mut r = BitReader::new(&payload[pos..]);
             let rec = AncPacket::read_from(&mut r)?;
-            let consumed = r.bits_read() / 8;
+            let consumed = r.bits_read() / crate::BITS_PER_BYTE;
             pos += consumed;
             anc_packets.push(rec);
         }
@@ -516,7 +522,7 @@ impl AncDataPacket {
         }
 
         buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX);
-        buf[3] = ANC_STREAM_ID;
+        buf[PES_STREAM_ID_OFFSET] = ANC_STREAM_ID;
         buf[4..6].copy_from_slice(&fit_u16(pes_len, "PES_packet_length")?.to_be_bytes());
         buf[PES_PREFIX_LEN..PES_HEADER_LEN].copy_from_slice(&self.optional_header()?);
 

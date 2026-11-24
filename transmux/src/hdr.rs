@@ -20,6 +20,7 @@ use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
+use core::mem::size_of;
 
 /// H.265 `PREFIX_SEI_NUT` (Table 7-1).
 pub const HEVC_PREFIX_SEI_NUT: u8 = 39;
@@ -37,6 +38,23 @@ const HEVC_NAL_HEADER_LEN: usize = 2;
 const CIE_PRIMARY_COUNT: usize = 3;
 const MDCV_PAYLOAD_LEN: usize = 24;
 const CLLI_PAYLOAD_LEN: usize = 4;
+
+/// Width of a box type / four-character code in bytes.
+const BOX_TYPE_LEN: usize = 4;
+/// A `ChromaticityXy` pair is two 16-bit coordinates (H.265 D.2.28).
+const CHROMATICITY_LEN: usize = 2;
+/// Stride of one `display_primaries` entry: `x` then `y`.
+const PRIMARY_STRIDE: usize = CHROMATICITY_LEN * 2;
+/// Offset of `display_primaries_y[c]` inside its entry.
+const PRIMARY_Y_OFFSET: usize = CHROMATICITY_LEN;
+/// Offset of `white_point_y` after `white_point_x`.
+const WHITE_POINT_Y_OFFSET: usize = CHROMATICITY_LEN;
+/// Offset of `max_display_mastering_luminance` after the white point.
+const MAX_MASTERING_LUMINANCE_OFFSET: usize = WHITE_POINT_Y_OFFSET + CHROMATICITY_LEN;
+/// Offset of `min_display_mastering_luminance` after the white point.
+const MIN_MASTERING_LUMINANCE_OFFSET: usize = MAX_MASTERING_LUMINANCE_OFFSET + size_of::<u32>();
+/// Offset of `max_pic_average_light_level` after `max_content_light_level`.
+const MAX_PIC_AVERAGE_LIGHT_LEVEL_OFFSET: usize = CHROMATICITY_LEN;
 
 /// A CIE 1931 chromaticity coordinate pair in increments of 0.00002 (H.265
 /// D.3.28; 50000 = 1.0).
@@ -74,11 +92,15 @@ pub struct ContentLightLevel {
 }
 
 fn be16(b: &[u8], at: usize) -> u16 {
-    u16::from_be_bytes([b[at], b[at + 1]])
+    let mut word = [0u8; size_of::<u16>()];
+    word.copy_from_slice(&b[at..at + size_of::<u16>()]);
+    u16::from_be_bytes(word)
 }
 
 fn be32(b: &[u8], at: usize) -> u32 {
-    u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
+    let mut word = [0u8; size_of::<u32>()];
+    word.copy_from_slice(&b[at..at + size_of::<u32>()]);
+    u32::from_be_bytes(word)
 }
 
 fn check_exact(bytes: &[u8], need: usize, what: &'static str) -> Result<()> {
@@ -111,18 +133,18 @@ impl<'a> Parse<'a> for MasteringDisplayColourVolume {
         check_exact(bytes, MDCV_PAYLOAD_LEN, "mdcv payload")?;
         let mut display_primaries = [ChromaticityXy { x: 0, y: 0 }; CIE_PRIMARY_COUNT];
         for (c, p) in display_primaries.iter_mut().enumerate() {
-            p.x = be16(bytes, c * 4);
-            p.y = be16(bytes, c * 4 + 2);
+            p.x = be16(bytes, c * PRIMARY_STRIDE);
+            p.y = be16(bytes, c * PRIMARY_STRIDE + PRIMARY_Y_OFFSET);
         }
-        let wp_at = CIE_PRIMARY_COUNT * 4;
+        let wp_at = CIE_PRIMARY_COUNT * PRIMARY_STRIDE;
         Ok(Self {
             display_primaries,
             white_point: ChromaticityXy {
                 x: be16(bytes, wp_at),
-                y: be16(bytes, wp_at + 2),
+                y: be16(bytes, wp_at + WHITE_POINT_Y_OFFSET),
             },
-            max_display_mastering_luminance: be32(bytes, wp_at + 4),
-            min_display_mastering_luminance: be32(bytes, wp_at + 8),
+            max_display_mastering_luminance: be32(bytes, wp_at + MAX_MASTERING_LUMINANCE_OFFSET),
+            min_display_mastering_luminance: be32(bytes, wp_at + MIN_MASTERING_LUMINANCE_OFFSET),
         })
     }
 }
@@ -137,15 +159,18 @@ impl Serialize for MasteringDisplayColourVolume {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         check_out(buf, MDCV_PAYLOAD_LEN)?;
         for (c, p) in self.display_primaries.iter().enumerate() {
-            buf[c * 4..c * 4 + 2].copy_from_slice(&p.x.to_be_bytes());
-            buf[c * 4 + 2..c * 4 + 4].copy_from_slice(&p.y.to_be_bytes());
+            let at = c * PRIMARY_STRIDE;
+            buf[at..at + CHROMATICITY_LEN].copy_from_slice(&p.x.to_be_bytes());
+            buf[at + PRIMARY_Y_OFFSET..at + PRIMARY_STRIDE].copy_from_slice(&p.y.to_be_bytes());
         }
-        let wp_at = CIE_PRIMARY_COUNT * 4;
-        buf[wp_at..wp_at + 2].copy_from_slice(&self.white_point.x.to_be_bytes());
-        buf[wp_at + 2..wp_at + 4].copy_from_slice(&self.white_point.y.to_be_bytes());
-        buf[wp_at + 4..wp_at + 8]
+        let wp_at = CIE_PRIMARY_COUNT * PRIMARY_STRIDE;
+        buf[wp_at..wp_at + CHROMATICITY_LEN].copy_from_slice(&self.white_point.x.to_be_bytes());
+        buf[wp_at + WHITE_POINT_Y_OFFSET..wp_at + PRIMARY_STRIDE]
+            .copy_from_slice(&self.white_point.y.to_be_bytes());
+        buf[wp_at + MAX_MASTERING_LUMINANCE_OFFSET..wp_at + MIN_MASTERING_LUMINANCE_OFFSET]
             .copy_from_slice(&self.max_display_mastering_luminance.to_be_bytes());
-        buf[wp_at + 8..wp_at + 12]
+        buf[wp_at + MIN_MASTERING_LUMINANCE_OFFSET
+            ..wp_at + MIN_MASTERING_LUMINANCE_OFFSET + size_of::<u32>()]
             .copy_from_slice(&self.min_display_mastering_luminance.to_be_bytes());
         Ok(MDCV_PAYLOAD_LEN)
     }
@@ -158,7 +183,7 @@ impl<'a> Parse<'a> for ContentLightLevel {
         check_exact(bytes, CLLI_PAYLOAD_LEN, "clli payload")?;
         Ok(Self {
             max_content_light_level: be16(bytes, 0),
-            max_pic_average_light_level: be16(bytes, 2),
+            max_pic_average_light_level: be16(bytes, MAX_PIC_AVERAGE_LIGHT_LEVEL_OFFSET),
         })
     }
 }
@@ -263,7 +288,7 @@ impl HdrStaticMetadata {
 
     /// The `mdcv` / `clli` sample-entry child boxes as `(fourcc, body)`, in
     /// the order `mdcv` then `clli`.
-    pub fn sample_entry_boxes(&self) -> Result<Vec<([u8; 4], Vec<u8>)>> {
+    pub fn sample_entry_boxes(&self) -> Result<Vec<([u8; BOX_TYPE_LEN], Vec<u8>)>> {
         let mut out = Vec::new();
         if let Some(m) = &self.mastering_display {
             out.push((MDCV_FOURCC, m.try_to_bytes()?));
@@ -277,7 +302,7 @@ impl HdrStaticMetadata {
     /// Read `mdcv` / `clli` bodies found among sample-entry child boxes
     /// (`(fourcc, body)`); the first of each wins. `None` when neither parses.
     pub fn from_sample_entry_boxes<'a>(
-        boxes: impl IntoIterator<Item = (&'a [u8; 4], &'a [u8])>,
+        boxes: impl IntoIterator<Item = (&'a [u8; BOX_TYPE_LEN], &'a [u8])>,
     ) -> Option<Self> {
         let mut m = Self::default();
         for (fourcc, body) in boxes {

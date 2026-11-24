@@ -1,6 +1,9 @@
 //! Region Composition Segment — ETSI EN 300 743 §7.2.3, Table 11 (segment_type 0x11).
 
 use crate::error::{Error, Result};
+use crate::segments::{
+    PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -17,6 +20,76 @@ pub const OBJECT_EXTRA_LEN: usize = 2;
 /// Top 4 bits of the 12-bit object horizontal/vertical position, held in the
 /// low nibble of the third/fifth entry byte (EN 300 743 Table 11).
 const POS_HIGH_NIBBLE_MASK: u8 = 0x0F;
+
+/// Offset of `object_id` within an object entry.
+const OBJECT_ID_OFFSET: usize = 0;
+/// Offset of the type/provider/position byte within an object entry.
+const OBJECT_FLAGS_OFFSET: usize = 2;
+/// Offset of the reserved nibble byte preceding `object_vertical_position`.
+const OBJECT_VPOS_OFFSET: usize = 4;
+/// Shift placing `object_type` at the top of its byte.
+const OBJECT_TYPE_SHIFT: u32 = 6;
+/// Mask of `object_type`.
+const OBJECT_TYPE_MASK: u8 = 0x03;
+/// Shift placing `object_provider_flag`.
+const OBJECT_PROVIDER_SHIFT: u32 = 4;
+/// Mask of `object_provider_flag`.
+const OBJECT_PROVIDER_MASK: u8 = 0x03;
+/// Shift placing the high bits of a 12-bit position.
+const POS_HIGH_SHIFT: u32 = 8;
+/// Bit width of `object_horizontal_position` / `object_vertical_position`.
+const OBJECT_POS_BITS: u32 = 12;
+/// Shift selecting the reserved nibble of the `vpos` byte.
+const OBJECT_RESERVED_SHIFT: u32 = 4;
+/// Offsets of the foreground/background pixel codes.
+const OBJECT_FOREGROUND_OFFSET: usize = 6;
+const OBJECT_BACKGROUND_OFFSET: usize = 7;
+
+/// Offset of `region_id` within the segment body.
+const REGION_ID_OFFSET: usize = 0;
+/// Offset of the version/fill/reserved byte within the segment body.
+const REGION_FLAGS_OFFSET: usize = 1;
+/// Offset of `region_width` within the segment body.
+const REGION_WIDTH_OFFSET: usize = 2;
+/// Offset of `region_height` within the segment body.
+const REGION_HEIGHT_OFFSET: usize = 4;
+/// Offset of the level/depth/reserved byte within the segment body.
+const REGION_DEPTH_OFFSET: usize = 6;
+/// Offset of `clut_id` within the segment body.
+const CLUT_ID_OFFSET: usize = 7;
+/// Offset of `region_8bit_pixel_code` within the segment body.
+const PIXEL_CODE_8BIT_OFFSET: usize = 8;
+/// Offset of the 4-bit/2-bit pixel-code byte within the segment body.
+const PIXEL_CODE_2_4BIT_OFFSET: usize = 9;
+
+/// Shift placing `region_version_number`.
+const REGION_VERSION_SHIFT: u32 = 4;
+/// Mask of `region_version_number`.
+const REGION_VERSION_MASK: u8 = 0x0F;
+/// Mask of `region_fill_flag`.
+const REGION_FILL_FLAG_MASK: u8 = 0x08;
+/// Shift placing `region_fill_flag`.
+const REGION_FILL_FLAG_SHIFT: u32 = 3;
+/// Mask of the reserved bits in the flags byte.
+const REGION_RFU_MASK: u8 = 0x07;
+/// Shift placing `region_level_of_compatibility`.
+const RLOC_SHIFT: u32 = 5;
+/// Mask of `region_level_of_compatibility`.
+const RLOC_MASK: u8 = 0x07;
+/// Shift placing `region_depth`.
+const REGION_DEPTH_SHIFT: u32 = 2;
+/// Mask of `region_depth`.
+const REGION_DEPTH_MASK: u8 = 0x07;
+/// Mask of the reserved bits in the depth byte.
+const DEPTH_RFU_MASK: u8 = 0x03;
+/// Shift placing `region_4bit_pixel_code`.
+const PIXEL_CODE_4BIT_SHIFT: u32 = 4;
+/// Mask of `region_4bit_pixel_code`.
+const PIXEL_CODE_4BIT_MASK: u8 = 0x0F;
+/// Shift placing `region_2bit_pixel_code`.
+const PIXEL_CODE_2BIT_SHIFT: u32 = 2;
+/// Mask of `region_2bit_pixel_code`.
+const PIXEL_CODE_2BIT_MASK: u8 = 0x03;
 
 /// Region level of compatibility as defined in Table 12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,27 +285,35 @@ impl RegionObjectEntry {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
-        buf[0..2].copy_from_slice(&self.object_id.to_be_bytes());
+        buf[..OBJECT_FLAGS_OFFSET].copy_from_slice(&self.object_id.to_be_bytes());
         let hpos = self.object_horizontal_position;
         let vpos = self.object_vertical_position;
         // EN 300 743 Table 11 (private/specs-verified/dvb/dvb-subtitle/tables/en_300_743/11-region-composition-segment.md:29-33):
         // both object_horizontal_position and object_vertical_position are
         // 12-bit uimsbf fields; range-check before narrowing so a value that
         // does not fit is rejected instead of silently masked (#1129/#1044).
-        broadcast_common::len::fit_bits(u64::from(hpos), 12, "object_horizontal_position")?;
-        broadcast_common::len::fit_bits(u64::from(vpos), 12, "object_vertical_position")?;
-        buf[2] = (self.object_type.to_bits() << 6)
-            | (self.object_provider_flag.to_bits() << 4)
-            | ((hpos >> 8) as u8 & POS_HIGH_NIBBLE_MASK);
-        buf[3] = hpos as u8;
+        broadcast_common::len::fit_bits(
+            u64::from(hpos),
+            OBJECT_POS_BITS,
+            "object_horizontal_position",
+        )?;
+        broadcast_common::len::fit_bits(
+            u64::from(vpos),
+            OBJECT_POS_BITS,
+            "object_vertical_position",
+        )?;
+        buf[OBJECT_FLAGS_OFFSET] = (self.object_type.to_bits() << OBJECT_TYPE_SHIFT)
+            | (self.object_provider_flag.to_bits() << OBJECT_PROVIDER_SHIFT)
+            | ((hpos >> POS_HIGH_SHIFT) as u8 & POS_HIGH_NIBBLE_MASK);
+        buf[OBJECT_FLAGS_OFFSET + 1] = hpos as u8;
         // reserved(4) then the top 4 bits of vpos, i.e. reserved is the HIGH
         // nibble and vpos's top bits are the LOW nibble — the mirror of
         // `parse`'s `(bytes[4] & 0x0F) << 8`.
-        buf[4] = (vpos >> 8) as u8 & POS_HIGH_NIBBLE_MASK;
-        buf[5] = vpos as u8;
+        buf[OBJECT_VPOS_OFFSET] = (vpos >> POS_HIGH_SHIFT) as u8 & POS_HIGH_NIBBLE_MASK;
+        buf[OBJECT_VPOS_OFFSET + 1] = vpos as u8;
         if let (Some(fg), Some(bg)) = (self.foreground_pixel_code, self.background_pixel_code) {
-            buf[6] = fg;
-            buf[7] = bg;
+            buf[OBJECT_FOREGROUND_OFFSET] = fg;
+            buf[OBJECT_BACKGROUND_OFFSET] = bg;
         }
         Ok(())
     }
@@ -278,16 +359,19 @@ pub struct RegionCompositionSegment {
 
 fn parse_object_entry(bytes: &[u8]) -> Result<(RegionObjectEntry, usize)> {
     need_in(bytes, OBJECT_ENTRY_BASE_LEN, "region_object_entry")?;
-    let object_id = u16::from_be_bytes([bytes[0], bytes[1]]);
-    let obj_type_val = (bytes[2] >> 6) & 0x03;
-    let obj_provider_val = (bytes[2] >> 4) & 0x03;
-    let obj_hpos =
-        ((u16::from(bytes[2]) & u16::from(POS_HIGH_NIBBLE_MASK)) << 8) | u16::from(bytes[3]);
-    let reserved = (bytes[4] >> 4) & POS_HIGH_NIBBLE_MASK;
+    let object_id = u16::from_be_bytes([bytes[OBJECT_ID_OFFSET], bytes[OBJECT_ID_OFFSET + 1]]);
+    let obj_type_val = (bytes[OBJECT_FLAGS_OFFSET] >> OBJECT_TYPE_SHIFT) & OBJECT_TYPE_MASK;
+    let obj_provider_val =
+        (bytes[OBJECT_FLAGS_OFFSET] >> OBJECT_PROVIDER_SHIFT) & OBJECT_PROVIDER_MASK;
+    let obj_hpos = ((u16::from(bytes[OBJECT_FLAGS_OFFSET]) & u16::from(POS_HIGH_NIBBLE_MASK))
+        << POS_HIGH_SHIFT)
+        | u16::from(bytes[OBJECT_FLAGS_OFFSET + 1]);
+    let reserved = (bytes[OBJECT_VPOS_OFFSET] >> OBJECT_RESERVED_SHIFT) & POS_HIGH_NIBBLE_MASK;
     // reserved bits tolerated per §7.2.0.2 forward compatibility
     let _ = reserved;
-    let obj_vpos =
-        ((u16::from(bytes[4]) & u16::from(POS_HIGH_NIBBLE_MASK)) << 8) | u16::from(bytes[5]);
+    let obj_vpos = ((u16::from(bytes[OBJECT_VPOS_OFFSET]) & u16::from(POS_HIGH_NIBBLE_MASK))
+        << POS_HIGH_SHIFT)
+        | u16::from(bytes[OBJECT_VPOS_OFFSET + 1]);
 
     let obj_type = match obj_type_val {
         0x00 => ObjectType::BasicBitmap,
@@ -301,7 +385,8 @@ fn parse_object_entry(bytes: &[u8]) -> Result<(RegionObjectEntry, usize)> {
         v => ObjectProviderFlag::Reserved(v),
     };
 
-    let has_extra = obj_type_val == 0x01 || obj_type_val == 0x02;
+    let has_extra = obj_type_val == ObjectType::BasicCharacter.to_bits()
+        || obj_type_val == ObjectType::CompositeString.to_bits();
     if has_extra {
         need_in(
             bytes,
@@ -315,8 +400,8 @@ fn parse_object_entry(bytes: &[u8]) -> Result<(RegionObjectEntry, usize)> {
                 object_provider_flag: obj_provider,
                 object_horizontal_position: obj_hpos,
                 object_vertical_position: obj_vpos,
-                foreground_pixel_code: Some(bytes[6]),
-                background_pixel_code: Some(bytes[7]),
+                foreground_pixel_code: Some(bytes[OBJECT_FOREGROUND_OFFSET]),
+                background_pixel_code: Some(bytes[OBJECT_BACKGROUND_OFFSET]),
             },
             OBJECT_ENTRY_BASE_LEN + OBJECT_EXTRA_LEN,
         ))
@@ -348,22 +433,27 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
                 found: u32::from(bytes[0]),
             }));
         }
-        if bytes[1] != SEGMENT_TYPE {
-            return Err(Error::UnknownSegmentType(bytes[1]));
+        if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
+            return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
+        let segment_length = u16::from_be_bytes([
+            bytes[SEGMENT_LENGTH_OFFSET],
+            bytes[SEGMENT_LENGTH_OFFSET + 1],
+        ]) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "region_composition_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
         need_in(body, FIXED_LEN, "region_composition_segment body")?;
-        let region_id = body[0];
-        let region_version_number = body[1] >> 4;
-        let region_fill_flag = (body[1] & 0x08) != 0;
-        let reserved_byte1 = body[1] & 0x07;
-        let region_width = u16::from_be_bytes([body[2], body[3]]);
-        let region_height = u16::from_be_bytes([body[4], body[5]]);
-        let rloc_val = (body[6] >> 5) & 0x07;
+        let region_id = body[REGION_ID_OFFSET];
+        let region_version_number = body[REGION_FLAGS_OFFSET] >> REGION_VERSION_SHIFT;
+        let region_fill_flag = (body[REGION_FLAGS_OFFSET] & REGION_FILL_FLAG_MASK) != 0;
+        let reserved_byte1 = body[REGION_FLAGS_OFFSET] & REGION_RFU_MASK;
+        let region_width =
+            u16::from_be_bytes([body[REGION_WIDTH_OFFSET], body[REGION_WIDTH_OFFSET + 1]]);
+        let region_height =
+            u16::from_be_bytes([body[REGION_HEIGHT_OFFSET], body[REGION_HEIGHT_OFFSET + 1]]);
+        let rloc_val = (body[REGION_DEPTH_OFFSET] >> RLOC_SHIFT) & RLOC_MASK;
         let region_level_of_compatibility = match rloc_val {
             0x00 => RegionLevelOfCompatibility::Reserved0,
             0x01 => RegionLevelOfCompatibility::Clut2Bit,
@@ -371,7 +461,7 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
             0x03 => RegionLevelOfCompatibility::Clut8Bit,
             v => RegionLevelOfCompatibility::Reserved(v),
         };
-        let rd_val = (body[6] >> 2) & 0x07;
+        let rd_val = (body[REGION_DEPTH_OFFSET] >> REGION_DEPTH_SHIFT) & REGION_DEPTH_MASK;
         let region_depth = match rd_val {
             0x00 => RegionDepth::Reserved0,
             0x01 => RegionDepth::Depth2Bit,
@@ -379,12 +469,13 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
             0x03 => RegionDepth::Depth8Bit,
             v => RegionDepth::Reserved(v),
         };
-        let reserved_byte6 = body[6] & 0x03;
-        let clut_id = body[7];
-        let region_8bit_pixel_code = body[8];
-        let region_4bit_pixel_code = body[9] >> 4;
-        let region_2bit_pixel_code = (body[9] >> 2) & 0x03;
-        let reserved_byte9 = body[9] & 0x03;
+        let reserved_byte6 = body[REGION_DEPTH_OFFSET] & DEPTH_RFU_MASK;
+        let clut_id = body[CLUT_ID_OFFSET];
+        let region_8bit_pixel_code = body[PIXEL_CODE_8BIT_OFFSET];
+        let region_4bit_pixel_code = body[PIXEL_CODE_2_4BIT_OFFSET] >> PIXEL_CODE_4BIT_SHIFT;
+        let region_2bit_pixel_code =
+            (body[PIXEL_CODE_2_4BIT_OFFSET] >> PIXEL_CODE_2BIT_SHIFT) & PIXEL_CODE_2BIT_MASK;
+        let reserved_byte9 = body[PIXEL_CODE_2_4BIT_OFFSET] & DEPTH_RFU_MASK;
 
         let obj_data = &body[FIXED_LEN..];
         let mut objects = alloc::vec::Vec::new();
@@ -432,43 +523,62 @@ impl Serialize for RegionCompositionSegment {
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = 0x0F;
-        buf[1] = SEGMENT_TYPE;
-        buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
+        buf[0] = crate::pes_data_field::SYNC_BYTE;
+        buf[SEGMENT_TYPE_OFFSET] = SEGMENT_TYPE;
+        buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]
+            .copy_from_slice(&self.page_id.to_be_bytes());
         let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
-        buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
+        buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
+            .copy_from_slice(&seg_len.to_be_bytes());
 
-        buf[6] = self.region_id;
-        buf[7] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + REGION_ID_OFFSET] = self.region_id;
+        buf[HEADER_LEN + REGION_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
             self.region_version_number,
-            0x0F,
+            REGION_VERSION_MASK,
             "region_version_number",
-        )? << 4)
-            | (u8::from(self.region_fill_flag) << 3)
-            | broadcast_common::len::fit_mask(self.reserved_byte1, 0x07, "reserved_byte1")?;
-        buf[8..10].copy_from_slice(&self.region_width.to_be_bytes());
-        buf[10..12].copy_from_slice(&self.region_height.to_be_bytes());
-        buf[12] = (broadcast_common::len::fit_mask(
+        )? << REGION_VERSION_SHIFT)
+            | (u8::from(self.region_fill_flag) << REGION_FILL_FLAG_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.reserved_byte1,
+                REGION_RFU_MASK,
+                "reserved_byte1",
+            )?;
+        buf[HEADER_LEN + REGION_WIDTH_OFFSET..HEADER_LEN + REGION_HEIGHT_OFFSET]
+            .copy_from_slice(&self.region_width.to_be_bytes());
+        buf[HEADER_LEN + REGION_HEIGHT_OFFSET..HEADER_LEN + REGION_DEPTH_OFFSET]
+            .copy_from_slice(&self.region_height.to_be_bytes());
+        buf[HEADER_LEN + REGION_DEPTH_OFFSET] = (broadcast_common::len::fit_mask(
             self.region_level_of_compatibility.to_bits(),
-            0x07,
+            RLOC_MASK,
             "region_level_of_compatibility",
-        )? << 5)
-            | (broadcast_common::len::fit_mask(self.region_depth.to_bits(), 0x07, "region_depth")?
-                << 2)
-            | broadcast_common::len::fit_mask(self.reserved_byte6, 0x03, "reserved_byte6")?;
-        buf[13] = self.clut_id;
-        buf[14] = self.region_8bit_pixel_code;
-        buf[15] = (broadcast_common::len::fit_mask(
+        )? << RLOC_SHIFT)
+            | (broadcast_common::len::fit_mask(
+                self.region_depth.to_bits(),
+                REGION_DEPTH_MASK,
+                "region_depth",
+            )? << REGION_DEPTH_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.reserved_byte6,
+                DEPTH_RFU_MASK,
+                "reserved_byte6",
+            )?;
+        buf[HEADER_LEN + CLUT_ID_OFFSET] = self.clut_id;
+        buf[HEADER_LEN + PIXEL_CODE_8BIT_OFFSET] = self.region_8bit_pixel_code;
+        buf[HEADER_LEN + PIXEL_CODE_2_4BIT_OFFSET] = (broadcast_common::len::fit_mask(
             self.region_4bit_pixel_code,
-            0x0F,
+            PIXEL_CODE_4BIT_MASK,
             "region_4bit_pixel_code",
-        )? << 4)
+        )? << PIXEL_CODE_4BIT_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.region_2bit_pixel_code,
-                0x03,
+                PIXEL_CODE_2BIT_MASK,
                 "region_2bit_pixel_code",
-            )? << 2)
-            | broadcast_common::len::fit_mask(self.reserved_byte9, 0x03, "reserved_byte9")?;
+            )? << PIXEL_CODE_2BIT_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.reserved_byte9,
+                DEPTH_RFU_MASK,
+                "reserved_byte9",
+            )?;
 
         let mut off = HEADER_LEN + FIXED_LEN;
         for obj in &self.objects {

@@ -423,8 +423,9 @@ pub const TABLE: &[Crate] = &[
     },
     // `ConfigError`, `ArchiveError`, `PlaylistError`, `ReadError`, `FsError`:
     // thiserror errors. `WriterEvent`, `Step`, `StoreOp`, `PlanOutcome`,
-    // `StoreFailure`, `RecoveredBox`, `RecoverError`, `InitRef`, `ArchiveFile`:
-    // data-carrying protocol messages whose payload a static label would drop.
+    // `StoreFailure`, `RecoveredBox`, `RecoverError`, `InitRef`, `ArchiveFile`,
+    // `ScanStep`: data-carrying protocol messages whose payload a static label
+    // would drop.
     Crate {
         name: "dvr-runtime",
         scope: Scope::Crate,
@@ -444,6 +445,7 @@ pub const TABLE: &[Crate] = &[
             "RecoverError",
             "InitRef",
             "ArchiveFile",
+            "ScanStep",
         ],
         expected: Some(&[
             "ArchiveContainer",

@@ -2,6 +2,9 @@
 //!
 //! Indicates the presence and type of HDR/WCG signalling in the stream.
 
+/// Mask of the 2-bit `HDR_WCG_idc` field (Table 2-114).
+const HDR_WCG_IDC_MASK: u8 = 0x03;
+
 /// HDR_WCG_idc field values (Table 2-114).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -21,7 +24,7 @@ impl HdrWcgIdc {
     /// Construct from a raw 2-bit value (0..=3).
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & HDR_WCG_IDC_MASK {
             0 => Self::Sdr,
             1 => Self::WcgOnly,
             2 => Self::HdrAndWcg,

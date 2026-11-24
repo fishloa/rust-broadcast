@@ -33,6 +33,10 @@ const MAX_SECTION_SIZE: usize = 4098;
 /// carrying the syntax/RFU flags and the 12-bit `section_length`
 /// (ISO/IEC 13818-1 §2.4.4.1).
 const SECTION_HEADER_LEN: usize = 3;
+/// Byte offsets within the 3-byte section header (ISO/IEC 13818-1 §2.4.4.1).
+const SECTION_TABLE_ID_OFFSET: usize = 0;
+const SECTION_FLAGS_OFFSET: usize = SECTION_TABLE_ID_OFFSET + 1;
+const SECTION_LENGTH_LO_OFFSET: usize = SECTION_FLAGS_OFFSET + 1;
 /// Mask for the 4 most-significant `section_length` bits in a section's second
 /// byte (ISO/IEC 13818-1 §2.4.4.1 — `section_length` is 12 bits). Shared with
 /// the packetiser in `mux.rs`.
@@ -40,6 +44,9 @@ pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 
 /// MPEG-2 stuffing byte (ISO/IEC 13818-1 §2.4.4.1: `0xFF` fill after the last section in a payload; also the packet fill value).
 pub(crate) const STUFFING_BYTE: u8 = 0xFF;
+
+/// Bit shift that places the high byte of a 16-bit field in position.
+const HIGH_BYTE_SHIFT: u32 = 8;
 
 /// Decode the 12-bit `section_length` field from a section's first 3 bytes
 /// (byte 1 bits 3-0 hi, byte 2 lo) and return the section's **total** size:
@@ -53,7 +60,9 @@ pub(crate) fn section_total_len(bytes: &[u8]) -> Option<usize> {
     if bytes.len() < SECTION_HEADER_LEN {
         return None;
     }
-    let section_length = ((bytes[1] & SECTION_LENGTH_HI_MASK) as usize) << 8 | bytes[2] as usize;
+    let section_length = ((bytes[SECTION_FLAGS_OFFSET] & SECTION_LENGTH_HI_MASK) as usize)
+        << HIGH_BYTE_SHIFT
+        | bytes[SECTION_LENGTH_LO_OFFSET] as usize;
     Some(SECTION_HEADER_LEN + section_length)
 }
 
@@ -84,7 +93,7 @@ pub enum ScramblingControl {
 impl ScramblingControl {
     /// Decode from the 2-bit `transport_scrambling_control` value (masked to `[1:0]`).
     pub fn from_bits(bits: u8) -> Self {
-        match bits & 0b11 {
+        match bits & SCRAMBLING_BITS {
             0b00 => Self::NotScrambled,
             0b01 => Self::Reserved,
             0b10 => Self::EvenKey,
@@ -197,6 +206,8 @@ pub const PID_MASK_HI: u8 = 0x1F;
 pub const SCRAMBLING_MASK: u8 = 0xC0;
 /// Shift of the 2-bit `transport_scrambling_control` in header byte 3.
 const SCRAMBLING_SHIFT: u32 = 6;
+/// Width mask of the 2-bit `transport_scrambling_control` value.
+const SCRAMBLING_BITS: u8 = SCRAMBLING_MASK >> SCRAMBLING_SHIFT;
 /// Shift of the 2-bit `adaptation_field_control` in header byte 3.
 const ADAPTATION_SHIFT: u32 = 4;
 /// Width mask of the 2-bit `adaptation_field_control` value.
@@ -207,6 +218,15 @@ pub const ADAPTATION_FLAG: u8 = 0x20;
 pub const PAYLOAD_FLAG: u8 = 0x10;
 /// ISO/IEC 13818-1 §2.4.3.3: byte 3 bits `[3:0]` = 4-bit continuity_counter.
 pub const CC_MASK: u8 = 0x0F;
+
+/// Byte offset of the `tei`/`pusi`/PID-high-byte byte in the 4-byte TS header
+/// (ISO/IEC 13818-1 §2.4.3.3).
+const TEI_PUSI_PID_HI_OFFSET: usize = 1;
+/// Byte offset of the PID low byte in the 4-byte TS header.
+const PID_LO_OFFSET: usize = 2;
+/// Byte offset of the `transport_scrambling_control`/`adaptation_field_control`/
+/// `continuity_counter` byte in the 4-byte TS header.
+const SCRAMBLING_AFC_CC_OFFSET: usize = 3;
 
 /// The 4-bit `continuity_counter` field (ISO/IEC 13818-1 §2.4.3.3).
 ///
@@ -353,14 +373,15 @@ pub struct TsPacket<'a> {
 impl TsHeader {
     /// Parse a 4-byte TS transport header.
     pub fn parse(raw4: &[u8]) -> Result<Self> {
-        need_in(raw4, 4, "TsHeader")?;
-        let b1 = raw4[1];
-        let b2 = raw4[2];
-        let b3 = raw4[3];
+        need_in(raw4, TsHeader::serialized_len(), "TsHeader")?;
+        let b1 = raw4[TEI_PUSI_PID_HI_OFFSET];
+        let b2 = raw4[PID_LO_OFFSET];
+        let b3 = raw4[SCRAMBLING_AFC_CC_OFFSET];
 
         let tei = (b1 & TEI_MASK) != 0;
         let pusi = (b1 & PUSI_MASK) != 0;
-        let pid = Pid::from_wire_masked((u16::from(b1 & PID_MASK_HI) << 8) | u16::from(b2));
+        let pid =
+            Pid::from_wire_masked((u16::from(b1 & PID_MASK_HI) << HIGH_BYTE_SHIFT) | u16::from(b2));
         let has_adaptation = (b3 & ADAPTATION_FLAG) != 0;
         let has_payload = (b3 & PAYLOAD_FLAG) != 0;
 
@@ -394,9 +415,9 @@ impl TsHeader {
             b[1] |= PUSI_MASK;
         }
         let pid = self.pid.value();
-        b[1] |= ((pid >> 8) as u8) & PID_MASK_HI;
-        b[2] = pid.to_be_bytes()[1];
-        b[3] = (self.scrambling.to_bits() << SCRAMBLING_SHIFT)
+        b[TEI_PUSI_PID_HI_OFFSET] |= ((pid >> HIGH_BYTE_SHIFT) as u8) & PID_MASK_HI;
+        b[PID_LO_OFFSET] = pid.to_be_bytes()[1];
+        b[SCRAMBLING_AFC_CC_OFFSET] = (self.scrambling.to_bits() << SCRAMBLING_SHIFT)
             | ((self.adaptation_field_control.to_bits() & ADAPTATION_CONTROL_MASK)
                 << ADAPTATION_SHIFT)
             | self.continuity_counter.value();
@@ -405,9 +426,9 @@ impl TsHeader {
 
     /// Serialize this header into the first 4 bytes of `buf`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        need_out(buf, 4)?;
-        buf[..4].copy_from_slice(&self.to_bytes());
-        Ok(4)
+        need_out(buf, TsHeader::serialized_len())?;
+        buf[..TsHeader::serialized_len()].copy_from_slice(&self.to_bytes());
+        Ok(TsHeader::serialized_len())
     }
 
     /// Whether an adaptation field follows the header
@@ -514,7 +535,7 @@ pub(crate) enum ClockReferenceSlot {
 /// field within `pkt`, accounting for the flags byte and the field order
 /// (PCR precedes OPCR, each 6 bytes) — ISO/IEC 13818-1 §2.4.3.4/§2.4.3.5.
 pub(crate) fn clock_reference_slot(pkt: &[u8], flag: u8) -> ClockReferenceSlot {
-    if pkt.len() <= AF_LEN_BYTE || pkt[3] & ADAPTATION_FLAG == 0 {
+    if pkt.len() <= AF_LEN_BYTE || pkt[SCRAMBLING_AFC_CC_OFFSET] & ADAPTATION_FLAG == 0 {
         return ClockReferenceSlot::NoAdaptationField;
     }
     let af_len = pkt[AF_LEN_BYTE] as usize;
@@ -570,9 +591,9 @@ impl<'a> TsPacket<'a> {
             })
         })?;
 
-        let header = TsHeader::parse(&raw[..4])?;
+        let header = TsHeader::parse(&raw[..TsHeader::serialized_len()])?;
 
-        let mut cursor = 4usize;
+        let mut cursor = TsHeader::serialized_len();
         let mut payload = None;
 
         // Capture the adaptation field if present, then skip it (the section
@@ -639,6 +660,23 @@ pub(crate) const PCR_RESERVED_BYTE_OFFSET: usize = 4;
 const PCR_RESERVED_VALUE: u8 = 0x3F;
 /// Encoded PCR / OPCR field width: 33-bit base + 6 reserved + 9-bit extension.
 pub(crate) const PCR_FIELD_LEN: usize = 6;
+/// Mask of one packed byte of the PCR/OPCR field.
+const PCR_FIELD_BYTE_MASK: u64 = 0xFF;
+/// Bit shifts of the packed 33-bit PCR/OPCR base within the 6-byte field
+/// (ISO/IEC 13818-1 §2.4.3.5).
+const PCR_BASE_SHIFT_HI: u32 = 25;
+const PCR_BASE_SHIFT_HI_MID: u32 = 17;
+const PCR_BASE_SHIFT_LO_MID: u32 = 9;
+const PCR_BASE_SHIFT_LO: u32 = 1;
+/// Bit shift of the base's least-significant bit inside the reserved-bits byte.
+const PCR_BASE_LSB_SHIFT: u32 = 7;
+/// Mask of the base's least-significant bit.
+const PCR_BASE_LSB_MASK: u64 = 0x01;
+/// Bit shift of the extension's most-significant bit inside the reserved-bits
+/// byte.
+const PCR_EXTENSION_HI_SHIFT: u32 = 8;
+/// Mask of the extension's most-significant bit.
+const PCR_EXTENSION_HI_MASK: u8 = 0x01;
 
 /// Byte offset of `adaptation_field_length` within a raw TS packet —
 /// ISO/IEC 13818-1 §2.4.3.4.
@@ -738,13 +776,15 @@ impl Pcr {
         let b = self.0.base.ticks();
         let e = u64::from(self.0.ext);
         [
-            ((b >> 25) & 0xFF) as u8,
-            ((b >> 17) & 0xFF) as u8,
-            ((b >> 9) & 0xFF) as u8,
-            ((b >> 1) & 0xFF) as u8,
+            ((b >> PCR_BASE_SHIFT_HI) & PCR_FIELD_BYTE_MASK) as u8,
+            ((b >> PCR_BASE_SHIFT_HI_MID) & PCR_FIELD_BYTE_MASK) as u8,
+            ((b >> PCR_BASE_SHIFT_LO_MID) & PCR_FIELD_BYTE_MASK) as u8,
+            ((b >> PCR_BASE_SHIFT_LO) & PCR_FIELD_BYTE_MASK) as u8,
             // byte 4: base[0] in bit 7, bits 6-1 = reserved (set to 1), ext[8] in bit 0.
-            (((b & 0x01) as u8) << 7) | PCR_RESERVED_BITS | ((e >> 8) as u8 & 0x01),
-            (e & 0xFF) as u8,
+            (((b & PCR_BASE_LSB_MASK) as u8) << PCR_BASE_LSB_SHIFT)
+                | PCR_RESERVED_BITS
+                | ((e >> PCR_EXTENSION_HI_SHIFT) as u8 & PCR_EXTENSION_HI_MASK),
+            (e & PCR_FIELD_BYTE_MASK) as u8,
         ]
     }
 
@@ -778,12 +818,14 @@ impl Pcr {
                         what: "adaptation_field PCR",
                     },
                 ))?;
-        let base = ((b[0] as u64) << 25)
-            | ((b[1] as u64) << 17)
-            | ((b[2] as u64) << 9)
-            | ((b[3] as u64) << 1)
-            | (u64::from(b[4]) >> 7);
-        let extension = ((b[4] & 0x01) as u16) << 8 | u16::from(b[5]);
+        let [b0, b1, b2, b3, b4, b5] = *b;
+        let base = (u64::from(b0) << PCR_BASE_SHIFT_HI)
+            | (u64::from(b1) << PCR_BASE_SHIFT_HI_MID)
+            | (u64::from(b2) << PCR_BASE_SHIFT_LO_MID)
+            | (u64::from(b3) << PCR_BASE_SHIFT_LO)
+            | (u64::from(b4) >> PCR_BASE_LSB_SHIFT);
+        let extension =
+            (u16::from(b4 & PCR_EXTENSION_HI_MASK) << PCR_EXTENSION_HI_SHIFT) | u16::from(b5);
         Ok(Self(broadcast_common::clock33::Clock27::from_wire_parts(
             base, extension,
         )))
@@ -837,7 +879,7 @@ impl LtwOffset {
     /// lossless.
     #[must_use]
     pub(crate) fn from_wire_masked(high: u8, low: u8) -> Self {
-        Self((u16::from(high & LTW_OFFSET_HI_MASK) << 8) | u16::from(low))
+        Self((u16::from(high & LTW_OFFSET_HI_MASK) << HIGH_BYTE_SHIFT) | u16::from(low))
     }
 
     /// The offset value.
@@ -905,7 +947,7 @@ impl SeamlessSplice {
 
     /// Parse the 5-byte `DTS_next_AU` field as written on the wire.
     #[must_use]
-    pub(crate) fn from_marked_field(field: &[u8; 5]) -> Self {
+    pub(crate) fn from_marked_field(field: &[u8; DTS_NEXT_AU_FIELD_LEN]) -> Self {
         let m = broadcast_common::clock33::unpack_marked(field);
         Self {
             splice_type: m.prefix,
@@ -916,7 +958,7 @@ impl SeamlessSplice {
 
     /// The 5 `DTS_next_AU` field bytes, or [`Error::FieldOverflow`] when a
     /// field does not fit its wire width.
-    pub fn to_marked_field(&self) -> Result<[u8; 5]> {
+    pub fn to_marked_field(&self) -> Result<[u8; DTS_NEXT_AU_FIELD_LEN]> {
         broadcast_common::len::fit_bits(
             u64::from(self.splice_type),
             SPLICE_TYPE_BITS,
@@ -963,6 +1005,23 @@ const PIECEWISE_RATE_RESERVED_SHIFT: u32 = 6;
 const PIECEWISE_RATE_RESERVED_VALUE: u8 = 0x03;
 /// Number of bits in the `piecewise_rate` wire field (ISO/IEC 13818-1 Table 2-6).
 const PIECEWISE_RATE_BITS: u32 = 22;
+/// Wire width of the `ltw_offset` field in the adaptation-field extension
+/// (ISO/IEC 13818-1 Table 2-6).
+const LTW_FIELD_LEN: usize = 2;
+/// Wire width of the `piecewise_rate` field in the adaptation-field extension.
+const PIECEWISE_RATE_FIELD_LEN: usize = 3;
+/// Byte offsets of the `piecewise_rate` field's high, middle and low bytes.
+const PIECEWISE_RATE_HI_OFFSET: usize = 0;
+const PIECEWISE_RATE_MID_OFFSET: usize = PIECEWISE_RATE_HI_OFFSET + 1;
+const PIECEWISE_RATE_LO_OFFSET: usize = PIECEWISE_RATE_MID_OFFSET + 1;
+/// Bit shift of the `piecewise_rate` high byte within its 3-byte field.
+const PIECEWISE_RATE_HI_SHIFT: u32 = 16;
+/// Width in bytes of the `seamless_splice` `DTS_next_AU` field (ISO/IEC
+/// 13818-1 §2.4.3.5, Table 2-6).
+pub const DTS_NEXT_AU_FIELD_LEN: usize = 5;
+/// Length of the `adaptation_field_extension_length` byte plus the extension
+/// flags byte.
+const AFE_PREFIX_LEN: usize = 2;
 
 /// Adaptation-field extension (ISO/IEC 13818-1 Table 2-6 / §2.4.3.5,
 /// `adaptation_field_extension_flag == 1`).
@@ -1045,8 +1104,8 @@ impl PiecewiseRate {
     #[must_use]
     pub(crate) fn from_wire_masked(high: u8, mid: u8, low: u8) -> Self {
         Self(
-            (u32::from(high & PIECEWISE_RATE_HI_MASK) << 16)
-                | (u32::from(mid) << 8)
+            (u32::from(high & PIECEWISE_RATE_HI_MASK) << PIECEWISE_RATE_HI_SHIFT)
+                | (u32::from(mid) << HIGH_BYTE_SHIFT)
                 | u32::from(low),
         )
     }
@@ -1106,10 +1165,10 @@ impl<'a> AdaptationFieldExtension<'a> {
         let mut cursor = 1usize;
 
         let ltw = if flags & AFE_LTW_FLAG != 0 {
-            need_in(ext, cursor + 2, "ltw_offset")?;
+            need_in(ext, cursor + LTW_FIELD_LEN, "ltw_offset")?;
             let w0 = ext[cursor];
             let w1 = ext[cursor + 1];
-            cursor += 2;
+            cursor += LTW_FIELD_LEN;
             Some(Ltw {
                 ltw_valid_flag: (w0 & AFE_LTW_FLAG) != 0,
                 ltw_offset: LtwOffset::from_wire_masked(w0, w1),
@@ -1120,10 +1179,14 @@ impl<'a> AdaptationFieldExtension<'a> {
 
         let mut piecewise_rate_reserved = PIECEWISE_RATE_RESERVED_VALUE;
         let piecewise_rate = if flags & AFE_PIECEWISE_RATE_FLAG != 0 {
-            need_in(ext, cursor + 3, "piecewise_rate")?;
+            need_in(ext, cursor + PIECEWISE_RATE_FIELD_LEN, "piecewise_rate")?;
             piecewise_rate_reserved = ext[cursor] >> PIECEWISE_RATE_RESERVED_SHIFT;
-            let r = PiecewiseRate::from_wire_masked(ext[cursor], ext[cursor + 1], ext[cursor + 2]);
-            cursor += 3;
+            let r = PiecewiseRate::from_wire_masked(
+                ext[cursor + PIECEWISE_RATE_HI_OFFSET],
+                ext[cursor + PIECEWISE_RATE_MID_OFFSET],
+                ext[cursor + PIECEWISE_RATE_LO_OFFSET],
+            );
+            cursor += PIECEWISE_RATE_FIELD_LEN;
             Some(r)
         } else {
             None
@@ -1131,18 +1194,17 @@ impl<'a> AdaptationFieldExtension<'a> {
 
         // seamless_splice: 5 bytes with splice_type(4) + DTS_next_AU in PTS-field encoding
         let seamless_splice = if flags & AFE_SEAMLESS_SPLICE_FLAG != 0 {
-            need_in(ext, cursor + 5, "seamless_splice DTS_next_AU")?;
-            let field = [
-                ext[cursor],
-                ext[cursor + 1],
-                ext[cursor + 2],
-                ext[cursor + 3],
-                ext[cursor + 4],
-            ];
+            need_in(
+                ext,
+                cursor + DTS_NEXT_AU_FIELD_LEN,
+                "seamless_splice DTS_next_AU",
+            )?;
+            let mut field = [0_u8; DTS_NEXT_AU_FIELD_LEN];
+            field.copy_from_slice(&ext[cursor..cursor + DTS_NEXT_AU_FIELD_LEN]);
             // DTS_next_AU uses the same 5-byte marker-bit encoding as PTS/DTS,
             // with `splice_type` in the prefix nibble.
             let splice = SeamlessSplice::from_marked_field(&field);
-            cursor += 5;
+            cursor += DTS_NEXT_AU_FIELD_LEN;
             Some(splice)
         } else {
             None
@@ -1164,9 +1226,9 @@ impl<'a> AdaptationFieldExtension<'a> {
     #[must_use]
     pub fn serialized_len(&self) -> usize {
         let body = 1 // flags byte
-            + self.ltw.map_or(0, |_| 2)
-            + self.piecewise_rate.map_or(0, |_| 3)
-            + self.seamless_splice.map_or(0, |_| 5)
+            + self.ltw.map_or(0, |_| LTW_FIELD_LEN)
+            + self.piecewise_rate.map_or(0, |_| PIECEWISE_RATE_FIELD_LEN)
+            + self.seamless_splice.map_or(0, |_| DTS_NEXT_AU_FIELD_LEN)
             + self.trailing.len();
         1 + body // + length byte itself
     }
@@ -1195,7 +1257,7 @@ impl<'a> AdaptationFieldExtension<'a> {
             flags |= AFE_AF_DESCRIPTOR_NOT_PRESENT_FLAG;
         }
         buf[1] = flags;
-        let mut cursor = 2usize;
+        let mut cursor = AFE_PREFIX_LEN;
 
         if let Some(ltw) = self.ltw {
             let ltw_valid = if ltw.ltw_valid_flag { AFE_LTW_FLAG } else { 0 };
@@ -1204,9 +1266,9 @@ impl<'a> AdaptationFieldExtension<'a> {
                 LTW_OFFSET_BITS,
                 "ltw_offset",
             )?;
-            buf[cursor] = ltw_valid | ((offset >> 8) as u8 & LTW_OFFSET_HI_MASK);
-            buf[cursor + 1] = (offset & 0xFF) as u8;
-            cursor += 2;
+            buf[cursor] = ltw_valid | ((offset >> HIGH_BYTE_SHIFT) as u8 & LTW_OFFSET_HI_MASK);
+            buf[cursor + 1] = offset as u8;
+            cursor += LTW_FIELD_LEN;
         }
         if let Some(rate) = self.piecewise_rate {
             let rate = broadcast_common::len::fit_bits(
@@ -1220,15 +1282,15 @@ impl<'a> AdaptationFieldExtension<'a> {
                 PIECEWISE_RATE_RESERVED_VALUE,
                 "piecewise_rate.reserved",
             )? << PIECEWISE_RATE_RESERVED_SHIFT)
-                | ((rate >> 16) as u8 & PIECEWISE_RATE_HI_MASK);
-            buf[cursor + 1] = (rate >> 8) as u8;
-            buf[cursor + 2] = rate as u8;
-            cursor += 3;
+                | ((rate >> PIECEWISE_RATE_HI_SHIFT) as u8 & PIECEWISE_RATE_HI_MASK);
+            buf[cursor + 1] = (rate >> HIGH_BYTE_SHIFT) as u8;
+            buf[cursor + PIECEWISE_RATE_LO_OFFSET] = rate as u8;
+            cursor += PIECEWISE_RATE_FIELD_LEN;
         }
         if let Some(ss) = self.seamless_splice {
             // byte 0: splice_type(4) | DTS[32:30](3) | marker(1) ... (5 bytes)
-            buf[cursor..cursor + 5].copy_from_slice(&ss.to_marked_field()?);
-            cursor += 5;
+            buf[cursor..cursor + DTS_NEXT_AU_FIELD_LEN].copy_from_slice(&ss.to_marked_field()?);
+            cursor += DTS_NEXT_AU_FIELD_LEN;
         }
         buf[cursor..cursor + self.trailing.len()].copy_from_slice(self.trailing);
         cursor += self.trailing.len();
@@ -1300,7 +1362,7 @@ pub(crate) fn set_pcr_reserved(field: &mut [u8], reserved: u8) -> Result<()> {
         PCR_RESERVED_BITS_COUNT,
         "pcr_reserved",
     )?;
-    field[4] = (field[4] & !PCR_RESERVED_BITS)
+    field[PCR_RESERVED_BYTE_OFFSET] = (field[PCR_RESERVED_BYTE_OFFSET] & !PCR_RESERVED_BITS)
         | (((reserved as u8) << PCR_RESERVED_SHIFT) & PCR_RESERVED_BITS);
     Ok(())
 }
@@ -1346,7 +1408,8 @@ impl<'a> AdaptationField<'a> {
         let mut opcr_reserved = PCR_RESERVED_VALUE;
         let pcr = if flags & AF_PCR_FLAG != 0 {
             let p = Pcr::parse(af, cursor)?;
-            pcr_reserved = (af[cursor + 4] & PCR_RESERVED_BITS) >> PCR_RESERVED_SHIFT;
+            pcr_reserved =
+                (af[cursor + PCR_RESERVED_BYTE_OFFSET] & PCR_RESERVED_BITS) >> PCR_RESERVED_SHIFT;
             cursor += PCR_FIELD_LEN;
             Some(p)
         } else {
@@ -1354,7 +1417,8 @@ impl<'a> AdaptationField<'a> {
         };
         let opcr = if flags & AF_OPCR_FLAG != 0 {
             let p = Pcr::parse(af, cursor)?;
-            opcr_reserved = (af[cursor + 4] & PCR_RESERVED_BITS) >> PCR_RESERVED_SHIFT;
+            opcr_reserved =
+                (af[cursor + PCR_RESERVED_BYTE_OFFSET] & PCR_RESERVED_BITS) >> PCR_RESERVED_SHIFT;
             cursor += PCR_FIELD_LEN;
             Some(p)
         } else {
@@ -1752,14 +1816,14 @@ pub fn iter_packets(buf: &[u8]) -> impl Iterator<Item = TsPacket<'_>> {
 /// No sync-byte check is performed — the caller is responsible for ensuring the
 /// slice is properly aligned. Spec: ITU-T H.222.0 (08/2023) §2.4.3.3 Table 2-5.
 pub fn extract_ts_payload(pkt: &[u8]) -> Option<&[u8]> {
-    if pkt.len() < 4 {
+    if pkt.len() < TsHeader::serialized_len() {
         return None;
     }
-    let header = TsHeader::parse(&pkt[..4]).ok()?;
+    let header = TsHeader::parse(&pkt[..TsHeader::serialized_len()]).ok()?;
     if !header.has_payload() {
         return None;
     }
-    let cursor = 4 + adaptation_field_skip(pkt, header.has_adaptation());
+    let cursor = TsHeader::serialized_len() + adaptation_field_skip(pkt, header.has_adaptation());
     if cursor < pkt.len() {
         Some(&pkt[cursor..])
     } else {

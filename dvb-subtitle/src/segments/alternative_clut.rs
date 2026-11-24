@@ -3,6 +3,9 @@
 //! Permits a CLUT to be defined in colour systems other than ITU-R BT.601.
 
 use crate::error::{Error, Result};
+use crate::segments::{
+    PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -16,6 +19,61 @@ pub const FIXED_LEN: usize = 4;
 pub const ENTRY_8BIT_LEN: usize = 4;
 /// Entry for 10-bit output: 5 bytes.
 pub const ENTRY_10BIT_LEN: usize = 5;
+
+/// Bytes of the CLUT_parameters field.
+const CLUT_PARAMETERS_LEN: usize = 2;
+
+/// Shifts and masks of CLUT_parameters byte 0 (Table 32).
+const ENTRY_MAX_NUMBER_SHIFT: u32 = 6;
+const ENTRY_MAX_NUMBER_MASK: u8 = 0x03;
+const COLOUR_COMPONENT_TYPE_SHIFT: u32 = 4;
+const COLOUR_COMPONENT_TYPE_MASK: u8 = 0x03;
+const OUTPUT_BIT_DEPTH_SHIFT: u32 = 1;
+const OUTPUT_BIT_DEPTH_MASK: u8 = 0x07;
+const PARAMETERS_RFU_MASK: u8 = 0x01;
+/// `output_bit_depth` code selecting 10-bit components.
+const OUTPUT_BIT_DEPTH_10: u8 = 1;
+
+/// Mask of a 10-bit colour component.
+const ENTRY_10BIT_MASK: u16 = 0x03FF;
+/// Mask of an 8-bit colour component.
+const ENTRY_8BIT_MASK: u16 = 0x00FF;
+
+/// Shifts and masks packing four 10-bit values into five bytes.
+const ENTRY_10BIT_SEGMENT_SHIFT: u32 = 2;
+const ENTRY_10BIT_SEGMENT_MASK: u16 = 0x0003;
+const ENTRY_10BIT_PAIR_HIGH_SHIFT: u32 = 6;
+const ENTRY_10BIT_CHROMA1_MASK: u16 = 0x03FC;
+const ENTRY_10BIT_CHROMA1_SHIFT: u32 = 4;
+const ENTRY_10BIT_CHROMA1_LOW_MASK: u16 = 0x000F;
+const ENTRY_10BIT_CHROMA2_MASK: u16 = 0x03F0;
+const ENTRY_10BIT_CHROMA2_SHIFT: u32 = 6;
+const ENTRY_10BIT_CHROMA2_LOW_MASK: u16 = 0x003F;
+const ENTRY_10BIT_T_LOW_SHIFT: u32 = 8;
+const ENTRY_10BIT_T_MASK: u16 = 0x0300;
+const ENTRY_10BIT_BYTE_MASK: u16 = 0x00FF;
+
+/// Offsets within a 10-bit entry's packed bytes.
+const ENTRY_10BIT_LUMA_OFFSET: usize = 0;
+const ENTRY_10BIT_CHROMA1_OFFSET: usize = 1;
+const ENTRY_10BIT_CHROMA2_OFFSET: usize = 2;
+const ENTRY_10BIT_T_OFFSET: usize = 3;
+const ENTRY_10BIT_LAST_OFFSET: usize = 4;
+/// Offsets within an 8-bit entry's packed bytes.
+const ENTRY_8BIT_CHROMA1_OFFSET: usize = 1;
+const ENTRY_8BIT_CHROMA2_OFFSET: usize = 2;
+const ENTRY_8BIT_T_OFFSET: usize = 3;
+
+/// Offset of `CLUT_id` within the segment body.
+const CLUT_ID_OFFSET: usize = 0;
+/// Offset of the CLUT version/reserved byte within the segment body.
+const CLUT_VERSION_OFFSET: usize = 1;
+/// Offset of the CLUT_parameters field within the segment body.
+const CLUT_PARAMETERS_OFFSET: usize = 2;
+/// Shift placing `clut_version_number` above the reserved nibble.
+const CLUT_VERSION_SHIFT: u32 = 4;
+/// Mask of the reserved nibble of the version byte.
+const CLUT_VERSION_RFU_MASK: u8 = 0x0F;
 
 /// CLUT parameters as defined in Table 32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,11 +94,12 @@ pub struct ClutParameters {
 impl ClutParameters {
     /// Parse CLUT_parameters from 2 raw bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        need_in(bytes, 2, "CLUT_parameters")?;
-        let entry_max_number = bytes[0] >> 6;
-        let colour_component_type = (bytes[0] >> 4) & 0x03;
-        let output_bit_depth = (bytes[0] >> 1) & 0x07;
-        let reserved = bytes[0] & 0x01;
+        need_in(bytes, CLUT_PARAMETERS_LEN, "CLUT_parameters")?;
+        let entry_max_number = bytes[0] >> ENTRY_MAX_NUMBER_SHIFT;
+        let colour_component_type =
+            (bytes[0] >> COLOUR_COMPONENT_TYPE_SHIFT) & COLOUR_COMPONENT_TYPE_MASK;
+        let output_bit_depth = (bytes[0] >> OUTPUT_BIT_DEPTH_SHIFT) & OUTPUT_BIT_DEPTH_MASK;
+        let reserved = bytes[0] & PARAMETERS_RFU_MASK;
         Ok(ClutParameters {
             entry_max_number,
             colour_component_type,
@@ -51,20 +110,22 @@ impl ClutParameters {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
-        buf[0] =
-            (broadcast_common::len::fit_mask(self.entry_max_number, 0x03, "entry_max_number")?
-                << 6)
-                | (broadcast_common::len::fit_mask(
-                    self.colour_component_type,
-                    0x03,
-                    "colour_component_type",
-                )? << 4)
-                | (broadcast_common::len::fit_mask(
-                    self.output_bit_depth,
-                    0x07,
-                    "output_bit_depth",
-                )? << 1)
-                | broadcast_common::len::fit_mask(self.reserved, 0x01, "reserved")?;
+        buf[0] = (broadcast_common::len::fit_mask(
+            self.entry_max_number,
+            ENTRY_MAX_NUMBER_MASK,
+            "entry_max_number",
+        )? << ENTRY_MAX_NUMBER_SHIFT)
+            | (broadcast_common::len::fit_mask(
+                self.colour_component_type,
+                COLOUR_COMPONENT_TYPE_MASK,
+                "colour_component_type",
+            )? << COLOUR_COMPONENT_TYPE_SHIFT)
+            | (broadcast_common::len::fit_mask(
+                self.output_bit_depth,
+                OUTPUT_BIT_DEPTH_MASK,
+                "output_bit_depth",
+            )? << OUTPUT_BIT_DEPTH_SHIFT)
+            | broadcast_common::len::fit_mask(self.reserved, PARAMETERS_RFU_MASK, "reserved")?;
         buf[1] = self.dynamic_range_and_colour_gamut;
         Ok(())
     }
@@ -156,25 +217,51 @@ impl AlternativeClutEntry {
     }
 
     fn serialize_into(&self, buf: &mut [u8], output_bit_depth: u8) -> Result<()> {
-        if output_bit_depth == 1 {
+        if output_bit_depth == OUTPUT_BIT_DEPTH_10 {
             // 10-bit entry: each of the four values is 10 bits wide.
-            let v0 = broadcast_common::len::fit_mask(self.luma_value, 0x03FF, "luma_value")?;
-            let v1 = broadcast_common::len::fit_mask(self.chroma1_value, 0x03FF, "chroma1_value")?;
-            let v2 = broadcast_common::len::fit_mask(self.chroma2_value, 0x03FF, "chroma2_value")?;
-            let v3 = broadcast_common::len::fit_mask(self.t_value, 0x03FF, "t_value")?;
-            buf[0] = (v0 >> 2) as u8;
-            buf[1] = (((v0 & 0x03) << 6) | ((v1 & 0x3FC) >> 4)) as u8;
-            buf[2] = (((v1 & 0x0F) << 4) | ((v2 & 0x3F0) >> 6)) as u8;
-            buf[3] = (((v2 & 0x3F) << 2) | ((v3 & 0x300) >> 8)) as u8;
-            buf[4] = (v3 & 0xFF) as u8;
+            let v0 =
+                broadcast_common::len::fit_mask(self.luma_value, ENTRY_10BIT_MASK, "luma_value")?;
+            let v1 = broadcast_common::len::fit_mask(
+                self.chroma1_value,
+                ENTRY_10BIT_MASK,
+                "chroma1_value",
+            )?;
+            let v2 = broadcast_common::len::fit_mask(
+                self.chroma2_value,
+                ENTRY_10BIT_MASK,
+                "chroma2_value",
+            )?;
+            let v3 = broadcast_common::len::fit_mask(self.t_value, ENTRY_10BIT_MASK, "t_value")?;
+            buf[ENTRY_10BIT_LUMA_OFFSET] = (v0 >> ENTRY_10BIT_SEGMENT_SHIFT) as u8;
+            buf[ENTRY_10BIT_CHROMA1_OFFSET] = (((v0 & ENTRY_10BIT_SEGMENT_MASK)
+                << ENTRY_10BIT_PAIR_HIGH_SHIFT)
+                | ((v1 & ENTRY_10BIT_CHROMA1_MASK) >> ENTRY_10BIT_CHROMA1_SHIFT))
+                as u8;
+            buf[ENTRY_10BIT_CHROMA2_OFFSET] = (((v1 & ENTRY_10BIT_CHROMA1_LOW_MASK)
+                << ENTRY_10BIT_CHROMA1_SHIFT)
+                | ((v2 & ENTRY_10BIT_CHROMA2_MASK) >> ENTRY_10BIT_CHROMA2_SHIFT))
+                as u8;
+            buf[ENTRY_10BIT_T_OFFSET] =
+                (((v2 & ENTRY_10BIT_CHROMA2_LOW_MASK) << ENTRY_10BIT_SEGMENT_SHIFT)
+                    | ((v3 & ENTRY_10BIT_T_MASK) >> ENTRY_10BIT_T_LOW_SHIFT)) as u8;
+            buf[ENTRY_10BIT_LAST_OFFSET] = (v3 & ENTRY_10BIT_BYTE_MASK) as u8;
         } else {
             // 8-bit entry: each value is 8 bits wide.
-            buf[0] = broadcast_common::len::fit_mask(self.luma_value, 0x00FF, "luma_value")? as u8;
-            buf[1] =
-                broadcast_common::len::fit_mask(self.chroma1_value, 0x00FF, "chroma1_value")? as u8;
-            buf[2] =
-                broadcast_common::len::fit_mask(self.chroma2_value, 0x00FF, "chroma2_value")? as u8;
-            buf[3] = broadcast_common::len::fit_mask(self.t_value, 0x00FF, "t_value")? as u8;
+            buf[ENTRY_10BIT_LUMA_OFFSET] =
+                broadcast_common::len::fit_mask(self.luma_value, ENTRY_8BIT_MASK, "luma_value")?
+                    as u8;
+            buf[ENTRY_8BIT_CHROMA1_OFFSET] = broadcast_common::len::fit_mask(
+                self.chroma1_value,
+                ENTRY_8BIT_MASK,
+                "chroma1_value",
+            )? as u8;
+            buf[ENTRY_8BIT_CHROMA2_OFFSET] = broadcast_common::len::fit_mask(
+                self.chroma2_value,
+                ENTRY_8BIT_MASK,
+                "chroma2_value",
+            )? as u8;
+            buf[ENTRY_8BIT_T_OFFSET] =
+                broadcast_common::len::fit_mask(self.t_value, ENTRY_8BIT_MASK, "t_value")? as u8;
         }
         Ok(())
     }
@@ -182,18 +269,27 @@ impl AlternativeClutEntry {
     fn parse(bytes: &[u8], output_bit_depth: u8) -> Result<Self> {
         let entry_len = Self::serialized_len(output_bit_depth);
         need_in(bytes, entry_len, "alternative_CLUT_entry")?;
-        let (luma, c1, c2, t) = if output_bit_depth == 1 {
-            let v0 = ((bytes[0] as u16) << 2) | ((bytes[1] as u16) >> 6);
-            let v1 = (((bytes[1] as u16) & 0x3F) << 4) | ((bytes[2] as u16) >> 4);
-            let v2 = (((bytes[2] as u16) & 0x0F) << 6) | ((bytes[3] as u16) >> 2);
-            let v3 = (((bytes[3] as u16) & 0x03) << 8) | (bytes[4] as u16);
+        let (luma, c1, c2, t) = if output_bit_depth == OUTPUT_BIT_DEPTH_10 {
+            let v0 = (u16::from(bytes[ENTRY_10BIT_LUMA_OFFSET]) << ENTRY_10BIT_SEGMENT_SHIFT)
+                | (u16::from(bytes[ENTRY_10BIT_CHROMA1_OFFSET]) >> ENTRY_10BIT_PAIR_HIGH_SHIFT);
+            let v1 = ((u16::from(bytes[ENTRY_10BIT_CHROMA1_OFFSET])
+                & ENTRY_10BIT_CHROMA2_LOW_MASK)
+                << ENTRY_10BIT_CHROMA1_SHIFT)
+                | (u16::from(bytes[ENTRY_10BIT_CHROMA2_OFFSET]) >> ENTRY_10BIT_CHROMA1_SHIFT);
+            let v2 = ((u16::from(bytes[ENTRY_10BIT_CHROMA2_OFFSET])
+                & ENTRY_10BIT_CHROMA1_LOW_MASK)
+                << ENTRY_10BIT_CHROMA2_SHIFT)
+                | (u16::from(bytes[ENTRY_10BIT_T_OFFSET]) >> ENTRY_10BIT_SEGMENT_SHIFT);
+            let v3 = ((u16::from(bytes[ENTRY_10BIT_T_OFFSET]) & ENTRY_10BIT_SEGMENT_MASK)
+                << ENTRY_10BIT_T_LOW_SHIFT)
+                | u16::from(bytes[ENTRY_10BIT_LAST_OFFSET]);
             (v0, v1, v2, v3)
         } else {
             (
-                bytes[0] as u16,
-                bytes[1] as u16,
-                bytes[2] as u16,
-                bytes[3] as u16,
+                u16::from(bytes[ENTRY_10BIT_LUMA_OFFSET]),
+                u16::from(bytes[ENTRY_8BIT_CHROMA1_OFFSET]),
+                u16::from(bytes[ENTRY_8BIT_CHROMA2_OFFSET]),
+                u16::from(bytes[ENTRY_8BIT_T_OFFSET]),
             )
         };
         Ok(AlternativeClutEntry {
@@ -235,19 +331,24 @@ impl<'a> Parse<'a> for AlternativeClutSegment {
                 found: u32::from(bytes[0]),
             }));
         }
-        if bytes[1] != SEGMENT_TYPE {
-            return Err(Error::UnknownSegmentType(bytes[1]));
+        if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
+            return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
+        let segment_length = u16::from_be_bytes([
+            bytes[SEGMENT_LENGTH_OFFSET],
+            bytes[SEGMENT_LENGTH_OFFSET + 1],
+        ]) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "alternative_CLUT_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
         need_in(body, FIXED_LEN, "alternative_CLUT_segment body")?;
-        let clut_id = body[0];
-        let clut_version_number = body[1] >> 4;
-        let reserved = body[1] & 0x0F;
-        let clut_parameters = ClutParameters::parse(&body[2..4])?;
+        let clut_id = body[CLUT_ID_OFFSET];
+        let clut_version_number = body[CLUT_VERSION_OFFSET] >> CLUT_VERSION_SHIFT;
+        let reserved = body[CLUT_VERSION_OFFSET] & CLUT_VERSION_RFU_MASK;
+        let clut_parameters = ClutParameters::parse(
+            &body[CLUT_PARAMETERS_OFFSET..CLUT_PARAMETERS_OFFSET + CLUT_PARAMETERS_LEN],
+        )?;
         let output_bit_depth = clut_parameters.output_bit_depth;
         let entry_len = AlternativeClutEntry::serialized_len(output_bit_depth);
 
@@ -295,20 +396,25 @@ impl Serialize for AlternativeClutSegment {
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = 0x0F;
-        buf[1] = SEGMENT_TYPE;
-        buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
+        buf[0] = crate::pes_data_field::SYNC_BYTE;
+        buf[SEGMENT_TYPE_OFFSET] = SEGMENT_TYPE;
+        buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]
+            .copy_from_slice(&self.page_id.to_be_bytes());
         let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
-        buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
+        buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
+            .copy_from_slice(&seg_len.to_be_bytes());
 
-        buf[6] = self.clut_id;
-        buf[7] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + CLUT_ID_OFFSET] = self.clut_id;
+        buf[HEADER_LEN + CLUT_VERSION_OFFSET] = (broadcast_common::len::fit_mask(
             self.clut_version_number,
-            0x0F,
+            CLUT_VERSION_RFU_MASK,
             "clut_version_number",
-        )? << 4)
-            | broadcast_common::len::fit_mask(self.reserved, 0x0F, "reserved")?;
-        self.clut_parameters.serialize_into(&mut buf[8..10])?;
+        )? << CLUT_VERSION_SHIFT)
+            | broadcast_common::len::fit_mask(self.reserved, CLUT_VERSION_RFU_MASK, "reserved")?;
+        self.clut_parameters.serialize_into(
+            &mut buf[HEADER_LEN + CLUT_PARAMETERS_OFFSET
+                ..HEADER_LEN + CLUT_PARAMETERS_OFFSET + CLUT_PARAMETERS_LEN],
+        )?;
 
         let entry_len = AlternativeClutEntry::serialized_len(self.clut_parameters.output_bit_depth);
         for (i, entry) in self.entries.iter().enumerate() {

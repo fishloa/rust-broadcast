@@ -10,16 +10,29 @@
 //! ```
 
 use crate::error::Result;
-use crate::h222_bits::{BitReader, BitWriter, impl_h222_descriptor};
+use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
 use broadcast_common::reserved::ReservedOnes;
 
 /// Descriptor tag of `MVC_operation_point_descriptor` (Table 2-45: 51).
 pub const TAG: u8 = 0x33;
 /// Width of the `reserved` field before `applicable_temporal_id` (5 bits).
-const RESERVED_5_BITS: u32 = 5;
+pub const RESERVED_BEFORE_TEMPORAL_ID_BITS: u32 = 5;
 /// Width of the `reserved` field before `ES_reference` (2 bits).
-const RESERVED_2_BITS: u32 = 2;
+pub const RESERVED_BEFORE_ES_REFERENCE_BITS: u32 = 2;
+/// Width of the byte-sized codec fields (8 bits).
+/// Width of `AVC_compatible_flags` (2 bits).
+const AVC_COMPATIBLE_FLAGS_BITS: usize = 2;
+/// Width of the `reserved` before `applicable_temporal_id` in reader terms.
+const RESERVED_BEFORE_TEMPORAL_ID_READ_BITS: usize = RESERVED_BEFORE_TEMPORAL_ID_BITS as usize;
+/// Width of the `reserved` before `ES_reference` in reader terms.
+const RESERVED_BEFORE_ES_REFERENCE_READ_BITS: usize = RESERVED_BEFORE_ES_REFERENCE_BITS as usize;
+/// Width of `applicable_temporal_id` (3 bits).
+const APPLICABLE_TEMPORAL_ID_BITS: usize = 3;
+/// Width of `ES_reference` (6 bits).
+const ES_REFERENCE_BITS: usize = 6;
+/// Number of `constraint_set_flag` bits.
+const CONSTRAINT_SET_FLAG_COUNT: usize = 6;
 
 /// One `ES_reference` of an operation point.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +41,7 @@ const RESERVED_2_BITS: u32 = 2;
 pub struct MvcEsReference {
     /// `reserved(2)`, default 3.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_2_BITS>,
+    pub reserved: ReservedOnes<RESERVED_BEFORE_ES_REFERENCE_BITS>,
     /// `ES_reference` (6 bits): a `hierarchy_layer_index` of the hierarchy descriptor.
     pub es_reference: u8,
 }
@@ -51,7 +64,7 @@ impl MvcEsReference {
 pub struct MvcOperationPointEntry {
     /// `reserved(5)`, default `0x1F`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved: ReservedOnes<RESERVED_BEFORE_TEMPORAL_ID_BITS>,
     /// `applicable_temporal_id` (3 bits).
     pub applicable_temporal_id: u8,
     /// `num_target_output_views`.
@@ -137,28 +150,32 @@ impl MvcOperationPointDescriptor {
 
     fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "MvcOperationPointDescriptor");
-        let profile_idc = r.u8(8)?;
-        let mut constraint_set_flags = [false; 6];
+        let profile_idc = r.u8(BITS_PER_BYTE)?;
+        let mut constraint_set_flags = [false; CONSTRAINT_SET_FLAG_COUNT];
         for f in &mut constraint_set_flags {
             *f = r.flag()?;
         }
-        let avc_compatible_flags = r.u8(2)?;
-        let level_count = r.bits(8)?;
+        let avc_compatible_flags = r.u8(AVC_COMPATIBLE_FLAGS_BITS)?;
+        let level_count = r.bits(BITS_PER_BYTE)?;
         let mut levels = Vec::new();
         for _ in 0..level_count {
-            let level_idc = r.u8(8)?;
-            let ops = r.bits(8)?;
+            let level_idc = r.u8(BITS_PER_BYTE)?;
+            let ops = r.bits(BITS_PER_BYTE)?;
             let mut operation_points = Vec::new();
             for _ in 0..ops {
-                let reserved = ReservedOnes::from_bits(u64::from(r.u8(5)?));
-                let applicable_temporal_id = r.u8(3)?;
-                let num_target_output_views = r.u8(8)?;
-                let es_count = r.bits(8)?;
+                let reserved = ReservedOnes::from_bits(u64::from(
+                    r.u8(RESERVED_BEFORE_TEMPORAL_ID_READ_BITS)?,
+                ));
+                let applicable_temporal_id = r.u8(APPLICABLE_TEMPORAL_ID_BITS)?;
+                let num_target_output_views = r.u8(BITS_PER_BYTE)?;
+                let es_count = r.bits(BITS_PER_BYTE)?;
                 let mut es_references = Vec::new();
                 for _ in 0..es_count {
                     es_references.push(MvcEsReference {
-                        reserved: ReservedOnes::from_bits(u64::from(r.u8(2)?)),
-                        es_reference: r.u8(6)?,
+                        reserved: ReservedOnes::from_bits(u64::from(
+                            r.u8(RESERVED_BEFORE_ES_REFERENCE_READ_BITS)?,
+                        )),
+                        es_reference: r.u8(ES_REFERENCE_BITS)?,
                     });
                 }
                 operation_points.push(MvcOperationPointEntry {
@@ -184,35 +201,47 @@ impl MvcOperationPointDescriptor {
 
     fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.profile_idc), 8, "profile_idc")?;
+        w.put(u64::from(self.profile_idc), BITS_PER_BYTE, "profile_idc")?;
         for f in &self.constraint_set_flags {
             w.flag(*f, "constraint_set_flag")?;
         }
         w.put(
             u64::from(self.avc_compatible_flags),
-            2,
+            AVC_COMPATIBLE_FLAGS_BITS,
             "AVC_compatible_flags",
         )?;
-        w.put(self.levels.len() as u64, 8, "level_count")?;
+        w.put(self.levels.len() as u64, BITS_PER_BYTE, "level_count")?;
         for l in &self.levels {
-            w.put(u64::from(l.level_idc), 8, "level_idc")?;
-            w.put(l.operation_points.len() as u64, 8, "operation_points_count")?;
+            w.put(u64::from(l.level_idc), BITS_PER_BYTE, "level_idc")?;
+            w.put(
+                l.operation_points.len() as u64,
+                BITS_PER_BYTE,
+                "operation_points_count",
+            )?;
             for op in &l.operation_points {
-                w.put(op.reserved.get(), 5, "reserved")?;
+                w.put(
+                    op.reserved.get(),
+                    RESERVED_BEFORE_TEMPORAL_ID_READ_BITS,
+                    "reserved",
+                )?;
                 w.put(
                     u64::from(op.applicable_temporal_id),
-                    3,
+                    APPLICABLE_TEMPORAL_ID_BITS,
                     "applicable_temporal_id",
                 )?;
                 w.put(
                     u64::from(op.num_target_output_views),
-                    8,
+                    BITS_PER_BYTE,
                     "num_target_output_views",
                 )?;
-                w.put(op.es_references.len() as u64, 8, "ES_count")?;
+                w.put(op.es_references.len() as u64, BITS_PER_BYTE, "ES_count")?;
                 for e in &op.es_references {
-                    w.put(e.reserved.get(), 2, "reserved")?;
-                    w.put(u64::from(e.es_reference), 6, "ES_reference")?;
+                    w.put(
+                        e.reserved.get(),
+                        RESERVED_BEFORE_ES_REFERENCE_READ_BITS,
+                        "reserved",
+                    )?;
+                    w.put(u64::from(e.es_reference), ES_REFERENCE_BITS, "ES_reference")?;
                 }
             }
         }

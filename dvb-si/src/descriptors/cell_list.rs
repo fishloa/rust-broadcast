@@ -40,6 +40,38 @@ pub const HEADER_LEN: usize = 2;
 pub const OUTER_FIXED_LEN: usize = 10;
 /// Bytes per subcell entry: ext(1)+lat(2)+long(2)+extents(3) = 8.
 pub const SUBCELL_LEN: usize = 8;
+/// Width of a 16-bit cell coordinate field, bytes.
+const COORDINATE_LEN: usize = core::mem::size_of::<u16>();
+/// Width of the packed 24-bit extent pair, bytes.
+const EXTENT_PAIR_LEN: usize = 3;
+/// Offset of `cell_latitude` in an outer entry.
+const CELL_LATITUDE_OFFSET: usize = COORDINATE_LEN;
+/// Offset of `cell_longitude` in an outer entry.
+const CELL_LONGITUDE_OFFSET: usize = CELL_LATITUDE_OFFSET + COORDINATE_LEN;
+/// Offset of the packed extents in an outer entry.
+const CELL_EXTENT_OFFSET: usize = CELL_LONGITUDE_OFFSET + COORDINATE_LEN;
+/// Offset of `subcell_info_loop_length` in an outer entry.
+const SUBCELL_INFO_LOOP_LENGTH_OFFSET: usize = CELL_EXTENT_OFFSET + EXTENT_PAIR_LEN;
+/// Width of `cell_id_extension` in a sub-cell entry.
+const CELL_ID_EXTENSION_LEN: usize = 1;
+/// Offset of `subcell_latitude` in a sub-cell entry.
+const SUBCELL_LATITUDE_OFFSET: usize = CELL_ID_EXTENSION_LEN;
+/// Offset of `subcell_longitude` in a sub-cell entry.
+const SUBCELL_LONGITUDE_OFFSET: usize = SUBCELL_LATITUDE_OFFSET + COORDINATE_LEN;
+/// Offset of the packed extents in a sub-cell entry.
+const SUBCELL_EXTENT_OFFSET: usize = SUBCELL_LONGITUDE_OFFSET + COORDINATE_LEN;
+/// Offset of `lat` in the packed extent pair.
+const EXTENT_LAT_OFFSET: usize = 0;
+/// Offset of the shared nibble byte in the packed extent pair.
+const EXTENT_NIBBLE_OFFSET: usize = 1;
+/// Offset of `long` in the packed extent pair.
+const EXTENT_LONG_OFFSET: usize = 2;
+/// Width of the packed extents' nibble boundary, bits.
+const EXTENT_NIBBLE_BITS: u32 = 4;
+/// Shift that places the packed `long` above its low byte.
+const EXTENT_LONG_HI_SHIFT: u32 = 8;
+/// Mask of the packed extents' low nibble.
+const EXTENT_LO_NIBBLE_MASK: u16 = 0x0F;
 /// Mask for a 12-bit extent value.
 pub const EXTENT_MASK: u16 = 0x0FFF;
 
@@ -152,8 +184,11 @@ pub struct CellListDescriptor {
 
 /// Decode the packed 24-bit extent pair `lat(12) || long(12)` from 3 bytes.
 fn read_extents(b: &[u8]) -> (u16, u16) {
-    let lat = (u16::from(b[0]) << 4) | (u16::from(b[1]) >> 4);
-    let long = ((u16::from(b[1]) & 0x0F) << 8) | u16::from(b[2]);
+    let lat = (u16::from(b[EXTENT_LAT_OFFSET]) << EXTENT_NIBBLE_BITS)
+        | (u16::from(b[EXTENT_NIBBLE_OFFSET]) >> EXTENT_NIBBLE_BITS);
+    let long = ((u16::from(b[EXTENT_NIBBLE_OFFSET]) & EXTENT_LO_NIBBLE_MASK)
+        << EXTENT_LONG_HI_SHIFT)
+        | u16::from(b[EXTENT_LONG_OFFSET]);
     (lat, long)
 }
 
@@ -161,9 +196,10 @@ fn read_extents(b: &[u8]) -> (u16, u16) {
 fn write_extents(buf: &mut [u8], lat: u16, long: u16) -> Result<()> {
     let lat = broadcast_common::len::fit_mask(lat, EXTENT_MASK, "cell_extent_of_latitude")?;
     let long = broadcast_common::len::fit_mask(long, EXTENT_MASK, "cell_extent_of_longitude")?;
-    buf[0] = (lat >> 4) as u8;
-    buf[1] = (((lat & 0x0F) << 4) | (long >> 8)) as u8;
-    buf[2] = long as u8;
+    buf[EXTENT_LAT_OFFSET] = (lat >> EXTENT_NIBBLE_BITS) as u8;
+    buf[EXTENT_NIBBLE_OFFSET] = (((lat & EXTENT_LO_NIBBLE_MASK) << EXTENT_NIBBLE_BITS)
+        | (long >> EXTENT_LONG_HI_SHIFT)) as u8;
+    buf[EXTENT_LONG_OFFSET] = long as u8;
     Ok(())
 }
 
@@ -193,10 +229,12 @@ impl<'a> Parse<'a> for CellListDescriptor {
                     reason: "cell_list outer entry truncated",
                 })?;
             let cell_id = u16::from_be_bytes([outer[0], outer[1]]);
-            let cell_latitude = u16::from_be_bytes([outer[2], outer[3]]);
-            let cell_longitude = u16::from_be_bytes([outer[4], outer[5]]);
-            let (cell_extent_of_latitude, cell_extent_of_longitude) = read_extents(&outer[6..9]);
-            let subcell_info_loop_length = outer[9] as usize;
+            let cell_latitude = crate::wire::be_u16(outer, CELL_LATITUDE_OFFSET, "cell_latitude")?;
+            let cell_longitude =
+                crate::wire::be_u16(outer, CELL_LONGITUDE_OFFSET, "cell_longitude")?;
+            let (cell_extent_of_latitude, cell_extent_of_longitude) =
+                read_extents(&outer[CELL_EXTENT_OFFSET..SUBCELL_INFO_LOOP_LENGTH_OFFSET]);
+            let subcell_info_loop_length = outer[SUBCELL_INFO_LOOP_LENGTH_OFFSET] as usize;
             pos += OUTER_FIXED_LEN;
             if !subcell_info_loop_length.is_multiple_of(SUBCELL_LEN) {
                 return Err(Error::InvalidDescriptor {
@@ -221,10 +259,16 @@ impl<'a> Parse<'a> for CellListDescriptor {
                         reason: "subcell_info_loop_length exceeds descriptor body",
                     })?;
                 let cell_id_extension = sub[0];
-                let subcell_latitude = u16::from_be_bytes([sub[1], sub[2]]);
-                let subcell_longitude = u16::from_be_bytes([sub[3], sub[4]]);
+                let subcell_latitude = u16::from_be_bytes([
+                    sub[SUBCELL_LATITUDE_OFFSET],
+                    sub[SUBCELL_LATITUDE_OFFSET + 1],
+                ]);
+                let subcell_longitude = u16::from_be_bytes([
+                    sub[SUBCELL_LONGITUDE_OFFSET],
+                    sub[SUBCELL_LONGITUDE_OFFSET + 1],
+                ]);
                 let (subcell_extent_of_latitude, subcell_extent_of_longitude) =
-                    read_extents(&sub[5..8]);
+                    read_extents(&sub[SUBCELL_EXTENT_OFFSET..SUBCELL_LEN]);
                 subcells.push(CellListSubcell {
                     cell_id_extension,
                     subcell_latitude,
@@ -275,25 +319,29 @@ impl Serialize for CellListDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + 2].copy_from_slice(&e.cell_id.to_be_bytes());
-            buf[pos + 2..pos + 4].copy_from_slice(&e.cell_latitude.to_be_bytes());
-            buf[pos + 4..pos + 6].copy_from_slice(&e.cell_longitude.to_be_bytes());
+            buf[pos..pos + COORDINATE_LEN].copy_from_slice(&e.cell_id.to_be_bytes());
+            buf[pos + CELL_LATITUDE_OFFSET..pos + CELL_LONGITUDE_OFFSET]
+                .copy_from_slice(&e.cell_latitude.to_be_bytes());
+            buf[pos + CELL_LONGITUDE_OFFSET..pos + CELL_EXTENT_OFFSET]
+                .copy_from_slice(&e.cell_longitude.to_be_bytes());
             write_extents(
-                &mut buf[pos + 6..pos + 9],
+                &mut buf[pos + CELL_EXTENT_OFFSET..pos + SUBCELL_INFO_LOOP_LENGTH_OFFSET],
                 e.cell_extent_of_latitude,
                 e.cell_extent_of_longitude,
             )?;
-            buf[pos + 9] = broadcast_common::len::fit_u8(
+            buf[pos + SUBCELL_INFO_LOOP_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
                 e.subcells.len() * SUBCELL_LEN,
                 "subcell_info_loop_length",
             )?;
             pos += OUTER_FIXED_LEN;
             for sc in &e.subcells {
                 buf[pos] = sc.cell_id_extension;
-                buf[pos + 1..pos + 3].copy_from_slice(&sc.subcell_latitude.to_be_bytes());
-                buf[pos + 3..pos + 5].copy_from_slice(&sc.subcell_longitude.to_be_bytes());
+                buf[pos + SUBCELL_LATITUDE_OFFSET..pos + SUBCELL_LONGITUDE_OFFSET]
+                    .copy_from_slice(&sc.subcell_latitude.to_be_bytes());
+                buf[pos + SUBCELL_LONGITUDE_OFFSET..pos + SUBCELL_EXTENT_OFFSET]
+                    .copy_from_slice(&sc.subcell_longitude.to_be_bytes());
                 write_extents(
-                    &mut buf[pos + 5..pos + 8],
+                    &mut buf[pos + SUBCELL_EXTENT_OFFSET..pos + SUBCELL_LEN],
                     sc.subcell_extent_of_latitude,
                     sc.subcell_extent_of_longitude,
                 )?;

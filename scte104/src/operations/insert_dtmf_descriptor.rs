@@ -22,13 +22,24 @@ pub struct InsertDtmfDescriptor<'a> {
     pub dtmf_chars: &'a [u8],
 }
 
+/// `pre_roll` + `dtmf_length` header length.
+const DTMF_HEADER_LEN: usize = 2;
+
 impl<'a> Parse<'a> for InsertDtmfDescriptor<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 2, "insert_DTMF_descriptor pre_roll+dtmf_length")?;
+        need_in(
+            bytes,
+            DTMF_HEADER_LEN,
+            "insert_DTMF_descriptor pre_roll+dtmf_length",
+        )?;
         let pre_roll = bytes[0];
         let dtmf_length = bytes[1] as usize;
-        need_in(bytes, 2 + dtmf_length, "insert_DTMF_descriptor DTMF chars")?;
+        need_in(
+            bytes,
+            DTMF_HEADER_LEN + dtmf_length,
+            "insert_DTMF_descriptor DTMF chars",
+        )?;
         Ok(Self {
             pre_roll,
             dtmf_chars: &bytes[2..2 + dtmf_length],
@@ -39,7 +50,7 @@ impl<'a> Parse<'a> for InsertDtmfDescriptor<'a> {
 impl Serialize for InsertDtmfDescriptor<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        2 + self.dtmf_chars.len()
+        DTMF_HEADER_LEN + self.dtmf_chars.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();

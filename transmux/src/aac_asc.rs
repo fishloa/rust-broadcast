@@ -38,6 +38,62 @@ const ADTS_LAYER_MASK_BITS: u8 = 0x06;
 /// (ISO/IEC 13818-7:2003 §A.2.2.3, header size included) — `2^13 - 1`.
 const ADTS_FRAME_LENGTH_MAX: u16 = 8191;
 
+/// The `0xFF` first byte of the ADTS syncword (§6.2).
+const ADTS_SYNCWORD_FIRST_BYTE: u8 = 0xFF;
+/// Byte 1 of a fixed ADTS header: syncword low nibble (1111), `ID` 0,
+/// `layer` 00, `protection_absent` 1 (§6.2).
+const ADTS_FIXED_HEADER_SECOND_BYTE: u8 = 0xF1;
+/// Mask of the syncword's low nibble, shared with the fixed `ID`/`layer` bits.
+const ADTS_SYNCWORD_LOW_NIBBLE_MASK: u8 = 0xF0;
+/// Shift assembling the 12-bit syncword value for an error report.
+const ADTS_SYNCWORD_VALUE_SHIFT: u32 = 8;
+/// `protection_absent` is the low bit of byte 1 (§6.2).
+const ADTS_PROTECTION_ABSENT_MASK: u8 = 0x01;
+/// `profile` is a 2-bit ADTS field at the top of byte 2 (§6.2).
+const ADTS_PROFILE_MASK: u8 = 0x03;
+/// Shift of `profile` in byte 2.
+const ADTS_PROFILE_SHIFT: u32 = 6;
+/// Shift of `sampling_frequency_index` in byte 2.
+const ADTS_SFI_SHIFT: u32 = 2;
+/// High bit of `channel_configuration`, in byte 2.
+const ADTS_CHANNEL_CONFIG_HIGH_MASK: u8 = 0x01;
+/// Shift of the high `channel_configuration` bit down into place.
+const ADTS_CHANNEL_CONFIG_HIGH_SHIFT: u32 = 2;
+/// Low bits of `channel_configuration`, at the top of byte 3.
+const ADTS_CHANNEL_CONFIG_LOW_MASK: u8 = 0x03;
+/// Shift of the low `channel_configuration` bits in byte 3.
+const ADTS_CHANNEL_CONFIG_LOW_SHIFT: u32 = 6;
+/// Mask of the high `frame_length` bits, in byte 3.
+const ADTS_FRAME_LENGTH_HIGH_MASK: u8 = 0x03;
+/// Shift of the high `frame_length` bits in byte 3.
+const ADTS_FRAME_LENGTH_HIGH_SHIFT: u32 = 11;
+/// Shift of the middle `frame_length` bits in byte 4.
+const ADTS_FRAME_LENGTH_MID_SHIFT: u32 = 3;
+/// Mask of the low `frame_length` bits, in byte 5.
+const ADTS_FRAME_LENGTH_LOW_MASK: u8 = 0x07;
+/// Shift of the low `frame_length` bits in byte 5.
+const ADTS_FRAME_LENGTH_LOW_SHIFT: u32 = 5;
+/// `num_raw_data_blocks` is a 2-bit field in byte 6 (§6.2).
+const ADTS_NUM_RAW_DATA_BLOCKS_MASK: u8 = 0x03;
+/// The `buffer_fullness` sentinel (VBR), all 11 bits set.
+const ADTS_BUFFER_FULLNESS_VBR: u16 = 0x7FF;
+/// Mask of the high `buffer_fullness` bits, in byte 5.
+const ADTS_BUFFER_FULLNESS_HIGH_MASK: u8 = 0x1F;
+/// Shift of the high `buffer_fullness` bits in byte 5.
+const ADTS_BUFFER_FULLNESS_HIGH_SHIFT: u32 = 6;
+/// Mask of the low `buffer_fullness` bits, in byte 6.
+const ADTS_BUFFER_FULLNESS_LOW_MASK: u8 = 0x3F;
+/// Shift of the low `buffer_fullness` bits in byte 6.
+const ADTS_BUFFER_FULLNESS_LOW_SHIFT: u32 = 2;
+/// Byte offsets of the ADTS fixed-header fields (§6.2).
+const ADTS_PROFILE_OFFSET: usize = 2;
+const ADTS_CHANNEL_CONFIG_LOW_OFFSET: usize = 3;
+const ADTS_FRAME_LENGTH_MID_OFFSET: usize = 4;
+const ADTS_FRAME_LENGTH_LOW_OFFSET: usize = 5;
+const ADTS_BUFFER_FULLNESS_LOW_OFFSET: usize = 6;
+/// Highest core `audioObjectType` an ADTS 2-bit `profile` can carry (AAC LTP).
+const ADTS_CORE_AOT_MAX: u8 = 4;
+
 // --- AudioObjectType §1.5.1.1 ---
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -77,7 +133,7 @@ impl AudioObjectType {
             Self::AacLc => 2,
             Self::AacSsr => 3,
             Self::AacLtp => 4,
-            Self::Reserved(r) => r & 0x1F,
+            Self::Reserved(r) => r & AOT_MASK,
             Self::AacScalable => 6,
             Self::TwinVq => 7,
             Self::Celp => 8,
@@ -131,7 +187,7 @@ impl AudioObjectType {
 }
 impl From<u8> for AudioObjectType {
     fn from(raw: u8) -> Self {
-        match raw & 0x1F {
+        match raw & AOT_MASK {
             0 => Self::Null,
             1 => Self::AacMain,
             2 => Self::AacLc,
@@ -159,7 +215,7 @@ impl From<u8> for AudioObjectType {
             25 => Self::ErHvxc,
             26 => Self::ErHiln,
             27 => Self::ErParametric,
-            _ => Self::Reserved(raw & 0x1F),
+            _ => Self::Reserved(raw & AOT_MASK),
         }
     }
 }
@@ -197,19 +253,19 @@ impl SamplingFrequencyIndex {
     /// the explicit-rate escape (15), which carries its own value elsewhere.
     pub fn table_hz(self) -> Option<u32> {
         match self {
-            Self::Fs96000 => Some(96_000),
-            Self::Fs88200 => Some(88_200),
-            Self::Fs64000 => Some(64_000),
-            Self::Fs48000 => Some(48_000),
-            Self::Fs44100 => Some(44_100),
-            Self::Fs32000 => Some(32_000),
-            Self::Fs24000 => Some(24_000),
-            Self::Fs22050 => Some(22_050),
-            Self::Fs16000 => Some(16_000),
-            Self::Fs12000 => Some(12_000),
-            Self::Fs11025 => Some(11_025),
-            Self::Fs8000 => Some(8_000),
-            Self::Fs7350 => Some(7_350),
+            Self::Fs96000 => Some(SAMPLE_RATE_96000_HZ),
+            Self::Fs88200 => Some(SAMPLE_RATE_88200_HZ),
+            Self::Fs64000 => Some(SAMPLE_RATE_64000_HZ),
+            Self::Fs48000 => Some(SAMPLE_RATE_48000_HZ),
+            Self::Fs44100 => Some(SAMPLE_RATE_44100_HZ),
+            Self::Fs32000 => Some(SAMPLE_RATE_32000_HZ),
+            Self::Fs24000 => Some(SAMPLE_RATE_24000_HZ),
+            Self::Fs22050 => Some(SAMPLE_RATE_22050_HZ),
+            Self::Fs16000 => Some(SAMPLE_RATE_16000_HZ),
+            Self::Fs12000 => Some(SAMPLE_RATE_12000_HZ),
+            Self::Fs11025 => Some(SAMPLE_RATE_11025_HZ),
+            Self::Fs8000 => Some(SAMPLE_RATE_8000_HZ),
+            Self::Fs7350 => Some(SAMPLE_RATE_7350_HZ),
             Self::Reserved(_) | Self::Escape => None,
         }
     }
@@ -229,7 +285,7 @@ impl SamplingFrequencyIndex {
             Self::Fs11025 => 0xA,
             Self::Fs8000 => 0xB,
             Self::Fs7350 => 0xC,
-            Self::Reserved(r) => r & 0x0F,
+            Self::Reserved(r) => r & SFI_MASK,
             Self::Escape => 0xF,
         }
     }
@@ -255,7 +311,7 @@ impl SamplingFrequencyIndex {
 }
 impl From<u8> for SamplingFrequencyIndex {
     fn from(raw: u8) -> Self {
-        match raw & 0x0F {
+        match raw & SFI_MASK {
             0x0 => Self::Fs96000,
             0x1 => Self::Fs88200,
             0x2 => Self::Fs64000,
@@ -269,9 +325,9 @@ impl From<u8> for SamplingFrequencyIndex {
             0xA => Self::Fs11025,
             0xB => Self::Fs8000,
             0xC => Self::Fs7350,
-            0xD | 0xE => Self::Reserved(raw & 0x0F),
+            0xD | 0xE => Self::Reserved(raw & SFI_MASK),
             0xF => Self::Escape,
-            _ => Self::Reserved(raw & 0x0F),
+            _ => Self::Reserved(raw & SFI_MASK),
         }
     }
 }
@@ -303,7 +359,7 @@ impl ChannelConfiguration {
             Self::Ch5 => 5,
             Self::Ch5_1 => 6,
             Self::Ch7_1 => 7,
-            Self::Reserved(r) => r & 0x0F,
+            Self::Reserved(r) => r & CHANNEL_CONFIG_MASK,
         }
     }
     pub fn name(&self) -> &'static str {
@@ -333,20 +389,13 @@ impl ChannelConfiguration {
     pub fn channel_count(&self) -> Option<u16> {
         match self {
             Self::InBand | Self::Reserved(_) => None,
-            Self::Mono => Some(1),
-            Self::Stereo => Some(2),
-            Self::Ch3 => Some(3),
-            Self::Ch4 => Some(4),
-            Self::Ch5 => Some(5),
-            Self::Ch5_1 => Some(6),
-            // 7.1 = 3 front + 2 side + 2 back + LFE per Table 1.19.
-            Self::Ch7_1 => Some(8),
+            _ => CHANNEL_COUNTS[usize::from(self.raw())],
         }
     }
 }
 impl From<u8> for ChannelConfiguration {
     fn from(raw: u8) -> Self {
-        match raw & 0x0F {
+        match raw & CHANNEL_CONFIG_MASK {
             0 => Self::InBand,
             1 => Self::Mono,
             2 => Self::Stereo,
@@ -355,7 +404,7 @@ impl From<u8> for ChannelConfiguration {
             5 => Self::Ch5,
             6 => Self::Ch5_1,
             7 => Self::Ch7_1,
-            _ => Self::Reserved(raw & 0x0F),
+            _ => Self::Reserved(raw & CHANNEL_CONFIG_MASK),
         }
     }
 }
@@ -410,6 +459,78 @@ const AAC_FRAME_SAMPLES_1024: u32 = 1024;
 const AAC_FRAME_SAMPLES_960: u32 = 960;
 /// `samplingFrequencyIndex` escape value (24-bit explicit rate follows).
 const SFI_ESCAPE: u8 = 0x0F;
+/// Mask of the 5-bit `audioObjectType` field (Table 1.1).
+const AOT_MASK: u8 = 0x1F;
+/// Mask of the 4-bit `samplingFrequencyIndex` field (Table 1.10).
+const SFI_MASK: u8 = 0x0F;
+/// Mask of the 4-bit `channelConfiguration` field (Table 1.11).
+const CHANNEL_CONFIG_MASK: u8 = 0x0F;
+/// `GetAudioObjectType()` escape value 31 (Table 1.1).
+const AOT_ESCAPE: u32 = 31;
+/// Offset added to the escaped object type (Table 1.1).
+const AOT_ESCAPE_OFFSET: u32 = 32;
+/// Width of the value following the `GetAudioObjectType()` escape.
+const AOT_ESCAPE_BITS: usize = 6;
+/// Shift that puts `audioObjectType` at the top of the first ASC byte.
+const AOT_SHIFT: u32 = u8::BITS - AOT_BITS;
+/// `samplingFrequencyIndex` shares the first ASC byte: its high bits are here.
+const SFI_HIGH_MASK: u8 = 0x07;
+/// Left shift joining the `samplingFrequencyIndex` high bits to the low bit.
+const SFI_HIGH_SHIFT: u32 = 1;
+/// Right shift isolating the `samplingFrequencyIndex` low bit in byte 1.
+const SFI_LOW_SHIFT: u32 = 7;
+/// Right shift of `channelConfiguration` inside an ASC byte.
+const CHANNEL_CONFIG_SHIFT: u32 = 3;
+/// Low bits of the byte shared with the `GASpecificConfig` head.
+const GA_TAIL_MASK: u8 = 0x07;
+/// Width of a backward-compatible sync-extension type.
+const SYNC_EXT_BITS: usize = 11;
+/// Bytes of an ASC without the explicit-rate escape.
+const ASC_HEADER_LEN: usize = 2;
+/// Bytes of an ASC carrying the 24-bit explicit rate.
+const ASC_ESCAPE_LEN: usize = 5;
+/// Byte offsets of the ASC bytes after the first.
+const ASC_SECOND_BYTE: usize = 1;
+const ASC_THIRD_BYTE: usize = 2;
+const ASC_FOURTH_BYTE: usize = 3;
+const ASC_FIFTH_BYTE: usize = 4;
+/// Mask of the 24-bit explicit `samplingFrequency`.
+const EXPLICIT_RATE_MASK: u32 = 0xFF_FFFF;
+/// Mask of the explicit rate bits held in the second ASC byte.
+const EXPLICIT_RATE_SECOND_BYTE_MASK: u32 = 0x7F;
+/// Shifts assembling the explicit `samplingFrequency` from bytes 1..=4.
+const EXPLICIT_RATE_SECOND_BYTE_SHIFT: u32 = 17;
+const EXPLICIT_RATE_THIRD_BYTE_SHIFT: u32 = 9;
+const EXPLICIT_RATE_FOURTH_BYTE_SHIFT: u32 = 1;
+const EXPLICIT_RATE_FIFTH_BYTE_SHIFT: u32 = 7;
+/// Mask of the single explicit-rate bit held in the fifth ASC byte.
+const EXPLICIT_RATE_LOW_BIT_MASK: u32 = 1;
+/// Table 1.10 sampling rates in Hz.
+const SAMPLE_RATE_96000_HZ: u32 = 96_000;
+const SAMPLE_RATE_88200_HZ: u32 = 88_200;
+const SAMPLE_RATE_64000_HZ: u32 = 64_000;
+const SAMPLE_RATE_48000_HZ: u32 = 48_000;
+const SAMPLE_RATE_44100_HZ: u32 = 44_100;
+const SAMPLE_RATE_32000_HZ: u32 = 32_000;
+const SAMPLE_RATE_24000_HZ: u32 = 24_000;
+const SAMPLE_RATE_22050_HZ: u32 = 22_050;
+const SAMPLE_RATE_16000_HZ: u32 = 16_000;
+const SAMPLE_RATE_12000_HZ: u32 = 12_000;
+const SAMPLE_RATE_11025_HZ: u32 = 11_025;
+const SAMPLE_RATE_8000_HZ: u32 = 8_000;
+const SAMPLE_RATE_7350_HZ: u32 = 7_350;
+/// Default channel count per `channelConfiguration` (Table 1.19): 0 is
+/// in-band, 7 is 7.1 (8 channels), 8..=15 are reserved.
+const CHANNEL_COUNTS: [Option<u16>; 8] = [
+    None,
+    Some(1),
+    Some(2),
+    Some(3),
+    Some(4),
+    Some(5),
+    Some(6),
+    Some(8),
+];
 
 impl AudioSpecificConfig {
     /// Build the RFC 6381 `mp4a.40.<AOT>` codec string, honouring explicit HE-AAC
@@ -502,9 +623,9 @@ fn asc_read_bits(bytes: &[u8], bit: &mut usize, n: usize) -> Option<u32> {
 
 /// `GetAudioObjectType()` — 5 bits, or `31 + 6` bits (ISO/IEC 14496-3 §1.5.1.1).
 fn asc_get_aot(bytes: &[u8], bit: &mut usize) -> Option<u8> {
-    let a = asc_read_bits(bytes, bit, 5)?;
-    if a == 31 {
-        Some((32 + asc_read_bits(bytes, bit, 6)?) as u8)
+    let a = asc_read_bits(bytes, bit, AOT_BITS as usize)?;
+    if a == AOT_ESCAPE {
+        Some((AOT_ESCAPE_OFFSET + asc_read_bits(bytes, bit, AOT_ESCAPE_BITS)?) as u8)
     } else {
         Some(a as u8)
     }
@@ -539,11 +660,11 @@ fn detect_heaac_core(bytes: &[u8]) -> Option<(u8, bool, bool)> {
     let mut ps_present = false;
 
     // samplingFrequencyIndex (+ 24-bit escape rate).
-    let sfi = asc_read_bits(bytes, &mut bit, 4)? as u8;
+    let sfi = asc_read_bits(bytes, &mut bit, SFI_BITS as usize)? as u8;
     if sfi == SFI_ESCAPE {
-        asc_read_bits(bytes, &mut bit, 24)?;
+        asc_read_bits(bytes, &mut bit, SFI_ESCAPE_BITS)?;
     }
-    asc_read_bits(bytes, &mut bit, 4)?; // channelConfiguration
+    asc_read_bits(bytes, &mut bit, CHANNEL_CONFIG_BITS)?; // channelConfiguration
 
     // Hierarchical explicit signaling: AOT 5 (SBR) or 29 (PS).
     if aot == AOT_SBR || aot == AOT_PS {
@@ -551,9 +672,9 @@ fn detect_heaac_core(bytes: &[u8]) -> Option<(u8, bool, bool)> {
             ps_present = true;
         }
         sbr_present = true;
-        let esfi = asc_read_bits(bytes, &mut bit, 4)? as u8;
+        let esfi = asc_read_bits(bytes, &mut bit, SFI_BITS as usize)? as u8;
         if esfi == SFI_ESCAPE {
-            asc_read_bits(bytes, &mut bit, 24)?;
+            asc_read_bits(bytes, &mut bit, SFI_ESCAPE_BITS)?;
         }
         aot = asc_get_aot(bytes, &mut bit)?; // core AOT
     }
@@ -562,8 +683,8 @@ fn detect_heaac_core(bytes: &[u8]) -> Option<(u8, bool, bool)> {
     // core where GASpecificConfig is a fixed 3-bit tail with no PCE).
     if !sbr_present && aot == AudioObjectType::AacLc.raw() {
         // GASpecificConfig: frameLengthFlag(1) dependsOnCoreCoder(1) extensionFlag(1).
-        asc_read_bits(bytes, &mut bit, 3);
-        if let Some(sync) = asc_read_bits(bytes, &mut bit, 11) {
+        asc_read_bits(bytes, &mut bit, GA_HEAD_BITS as usize);
+        if let Some(sync) = asc_read_bits(bytes, &mut bit, SYNC_EXT_BITS) {
             if sync as u16 == SYNC_EXT_SBR {
                 if let Some(ext_aot) = asc_get_aot(bytes, &mut bit)
                     && ext_aot == AOT_SBR
@@ -571,11 +692,12 @@ fn detect_heaac_core(bytes: &[u8]) -> Option<(u8, bool, bool)> {
                 {
                     sbr_present = flag == 1;
                     if sbr_present {
-                        let esfi = asc_read_bits(bytes, &mut bit, 4).unwrap_or(0) as u8;
+                        let esfi =
+                            asc_read_bits(bytes, &mut bit, SFI_BITS as usize).unwrap_or(0) as u8;
                         if esfi == SFI_ESCAPE {
-                            asc_read_bits(bytes, &mut bit, 24);
+                            asc_read_bits(bytes, &mut bit, SFI_ESCAPE_BITS);
                         }
-                        if let Some(sync2) = asc_read_bits(bytes, &mut bit, 11)
+                        if let Some(sync2) = asc_read_bits(bytes, &mut bit, SYNC_EXT_BITS)
                             && sync2 as u16 == SYNC_EXT_PS
                         {
                             // The psPresentFlag(1) follows; when the ASC is
@@ -597,38 +719,41 @@ fn detect_heaac_core(bytes: &[u8]) -> Option<(u8, bool, bool)> {
 impl Parse<'_> for AudioSpecificConfig {
     type Error = Error;
     fn parse(bytes: &[u8]) -> Result<Self> {
-        need_in(bytes, 2, "ASC header")?;
+        need_in(bytes, ASC_HEADER_LEN, "ASC header")?;
         let b0 = bytes[0];
-        let b1 = bytes[1];
-        let aot = AudioObjectType::from(b0 >> 3);
-        let sfi_raw = ((b0 & 7) << 1) | (b1 >> 7);
+        let b1 = bytes[ASC_SECOND_BYTE];
+        let aot = AudioObjectType::from(b0 >> AOT_SHIFT);
+        let sfi_raw = ((b0 & SFI_HIGH_MASK) << SFI_HIGH_SHIFT) | (b1 >> SFI_LOW_SHIFT);
         let sfi = SamplingFrequencyIndex::from(sfi_raw);
-        let sf = if sfi_raw == 0x0F {
-            need_in(bytes, 5, "ASC escape")?;
+        let sf = if sfi_raw == SFI_ESCAPE {
+            need_in(bytes, ASC_ESCAPE_LEN, "ASC escape")?;
             Some(
-                ((b1 as u32 & 0x7F) << 17)
-                    | (bytes[2] as u32) << 9
-                    | (bytes[3] as u32) << 1
-                    | (bytes[4] as u32 >> 7) & 1,
+                ((b1 as u32 & EXPLICIT_RATE_SECOND_BYTE_MASK) << EXPLICIT_RATE_SECOND_BYTE_SHIFT)
+                    | (bytes[ASC_THIRD_BYTE] as u32) << EXPLICIT_RATE_THIRD_BYTE_SHIFT
+                    | (bytes[ASC_FOURTH_BYTE] as u32) << EXPLICIT_RATE_FOURTH_BYTE_SHIFT
+                    | (bytes[ASC_FIFTH_BYTE] as u32 >> EXPLICIT_RATE_FIFTH_BYTE_SHIFT)
+                        & EXPLICIT_RATE_LOW_BIT_MASK,
             )
         } else {
             None
         };
-        let cc = if sfi_raw == 0x0F {
-            need_in(bytes, 5, "ASC cc esc")?;
-            ChannelConfiguration::from((bytes[4] >> 3) & 0x0F)
+        let cc = if sfi_raw == SFI_ESCAPE {
+            need_in(bytes, ASC_ESCAPE_LEN, "ASC cc esc")?;
+            ChannelConfiguration::from(
+                (bytes[ASC_FIFTH_BYTE] >> CHANNEL_CONFIG_SHIFT) & CHANNEL_CONFIG_MASK,
+            )
         } else {
-            ChannelConfiguration::from((b1 >> 3) & 0x0F)
+            ChannelConfiguration::from((b1 >> CHANNEL_CONFIG_SHIFT) & CHANNEL_CONFIG_MASK)
         };
         // trailing stores bytes after the partial byte. trailing_top stores the GASpecific
         // bits from the partial byte (bottom 3 bits of byte 1 or byte 4).
-        let (partial_idx, trailing_start) = if sfi_raw == 0x0F {
-            (4, 5usize)
+        let (partial_idx, trailing_start) = if sfi_raw == SFI_ESCAPE {
+            (ASC_FIFTH_BYTE, ASC_ESCAPE_LEN)
         } else {
-            (1, 2usize)
+            (ASC_SECOND_BYTE, ASC_THIRD_BYTE)
         };
         let trailing_top = if partial_idx < bytes.len() {
-            Some(bytes[partial_idx] & 7)
+            Some(bytes[partial_idx] & GA_TAIL_MASK)
         } else {
             None
         };
@@ -673,9 +798,9 @@ impl Serialize for AudioSpecificConfig {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let base = if self.sampling_frequency_index == SamplingFrequencyIndex::Escape {
-            5
+            ASC_ESCAPE_LEN
         } else {
-            2
+            ASC_HEADER_LEN
         };
         base + self.trailing.len()
     }
@@ -686,27 +811,29 @@ impl Serialize for AudioSpecificConfig {
         // caller serialize into a larger shared buffer, and a whole-buffer
         // `fill(0)` would zero their bytes past `need` (r04-W9).
         buf[..need].fill(0);
-        let aot = self.audio_object_type.raw() & 0x1F;
-        let sv = self.sampling_frequency_index.raw() & 0x0F;
-        let cv = self.channel_configuration.raw() & 0x0F;
+        let aot = self.audio_object_type.raw() & AOT_MASK;
+        let sv = self.sampling_frequency_index.raw() & SFI_MASK;
+        let cv = self.channel_configuration.raw() & CHANNEL_CONFIG_MASK;
         let esc = self.sampling_frequency_index == SamplingFrequencyIndex::Escape;
-        buf[0] = (aot << 3) | ((sv >> 1) & 7);
+        buf[0] = (aot << AOT_SHIFT) | ((sv >> SFI_HIGH_SHIFT) & SFI_HIGH_MASK);
         if esc {
-            let freq = self.sampling_frequency.unwrap_or(0) & 0xFF_FFFF;
-            buf[1] = ((sv & 1) << 7) | ((freq >> 17) as u8 & 0x7F);
-            buf[2] = (freq >> 9) as u8;
-            buf[3] = (freq >> 1) as u8;
-            let sf0 = (freq & 1) as u8;
-            let tt = self.trailing_top.unwrap_or(0) & 7;
-            buf[4] = (sf0 << 7) | (cv << 3) | tt;
+            let freq = self.sampling_frequency.unwrap_or(0) & EXPLICIT_RATE_MASK;
+            buf[ASC_SECOND_BYTE] = ((sv & 1) << SFI_LOW_SHIFT)
+                | ((freq >> EXPLICIT_RATE_SECOND_BYTE_SHIFT) as u8
+                    & EXPLICIT_RATE_SECOND_BYTE_MASK as u8);
+            buf[ASC_THIRD_BYTE] = (freq >> EXPLICIT_RATE_THIRD_BYTE_SHIFT) as u8;
+            buf[ASC_FOURTH_BYTE] = (freq >> EXPLICIT_RATE_FOURTH_BYTE_SHIFT) as u8;
+            let sf0 = (freq & EXPLICIT_RATE_LOW_BIT_MASK) as u8;
+            let tt = self.trailing_top.unwrap_or(0) & GA_TAIL_MASK;
+            buf[ASC_FIFTH_BYTE] = (sf0 << SFI_LOW_SHIFT) | (cv << CHANNEL_CONFIG_SHIFT) | tt;
             // `need` already covers `trailing` in full, and `buf.len() >= need`
             // was checked above, so the copy can never overrun.
-            buf[5..need].copy_from_slice(&self.trailing);
+            buf[ASC_ESCAPE_LEN..need].copy_from_slice(&self.trailing);
         } else {
-            let tt = self.trailing_top.unwrap_or(0) & 7;
-            buf[1] = ((sv & 1) << 7) | (cv << 3) | tt;
+            let tt = self.trailing_top.unwrap_or(0) & GA_TAIL_MASK;
+            buf[ASC_SECOND_BYTE] = ((sv & 1) << SFI_LOW_SHIFT) | (cv << CHANNEL_CONFIG_SHIFT) | tt;
             // As above: `need == 2 + trailing.len()`, already bounds-checked.
-            buf[2..need].copy_from_slice(&self.trailing);
+            buf[ASC_THIRD_BYTE..need].copy_from_slice(&self.trailing);
         }
         Ok(need)
     }
@@ -733,17 +860,25 @@ pub struct AdtsHeader {
 
 pub fn build_adts_header(profile: u8, sfi: u8, cc: u8, frame_len: u16) -> [u8; ADTS_HEADER_SIZE] {
     let mut h = [0u8; ADTS_HEADER_SIZE];
-    h[0] = 0xFF;
-    h[1] = 0xF1;
+    h[0] = ADTS_SYNCWORD_FIRST_BYTE;
+    h[1] = ADTS_FIXED_HEADER_SECOND_BYTE;
     // channel_configuration is a 3-bit field split across the byte boundary
     // (ISO/IEC 13818-7 §6.2 ADTS fixed header): its MSB is byte2 bit0, and its
     // low 2 bits are byte3 bits `[7:6]`.
-    h[2] = (profile & 3) << 6 | (sfi & 0x0F) << 2 | (cc >> 2) & 1;
-    h[3] = (cc & 3) << 6 | ((frame_len >> 11) & 3) as u8;
-    h[4] = (frame_len >> 3) as u8;
-    let bf: u16 = 0x7FF;
-    h[5] = ((frame_len as u8 & 7) << 5) | ((bf >> 6) as u8 & 0x1F);
-    h[6] = (bf as u8 & 0x3F) << 2;
+    h[ADTS_PROFILE_OFFSET] = (profile & ADTS_PROFILE_MASK) << ADTS_PROFILE_SHIFT
+        | (sfi & SFI_MASK) << ADTS_SFI_SHIFT
+        | (cc >> ADTS_CHANNEL_CONFIG_HIGH_SHIFT) & ADTS_CHANNEL_CONFIG_HIGH_MASK;
+    h[ADTS_CHANNEL_CONFIG_LOW_OFFSET] = (cc & ADTS_CHANNEL_CONFIG_LOW_MASK)
+        << ADTS_CHANNEL_CONFIG_LOW_SHIFT
+        | ((frame_len >> ADTS_FRAME_LENGTH_HIGH_SHIFT) & u16::from(ADTS_FRAME_LENGTH_HIGH_MASK))
+            as u8;
+    h[ADTS_FRAME_LENGTH_MID_OFFSET] = (frame_len >> ADTS_FRAME_LENGTH_MID_SHIFT) as u8;
+    let bf: u16 = ADTS_BUFFER_FULLNESS_VBR;
+    h[ADTS_FRAME_LENGTH_LOW_OFFSET] = ((frame_len as u8 & ADTS_FRAME_LENGTH_LOW_MASK)
+        << ADTS_FRAME_LENGTH_LOW_SHIFT)
+        | ((bf >> ADTS_BUFFER_FULLNESS_HIGH_SHIFT) as u8 & ADTS_BUFFER_FULLNESS_HIGH_MASK);
+    h[ADTS_BUFFER_FULLNESS_LOW_OFFSET] =
+        (bf as u8 & ADTS_BUFFER_FULLNESS_LOW_MASK) << ADTS_BUFFER_FULLNESS_LOW_SHIFT;
     h
 }
 
@@ -757,10 +892,12 @@ pub(crate) const ADTS_CRC_SIZE: usize = 2;
 
 pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
     need_in(bytes, ADTS_HEADER_SIZE, "ADTS")?;
-    if bytes[0] != 0xFF || (bytes[1] & 0xF0) != 0xF0 {
+    if bytes[0] != ADTS_SYNCWORD_FIRST_BYTE
+        || (bytes[1] & ADTS_SYNCWORD_LOW_NIBBLE_MASK) != ADTS_SYNCWORD_LOW_NIBBLE_MASK
+    {
         return Err(Error::InvalidValue(InvalidValue {
             field: "adts_syncword",
-            value: ((bytes[0] as u64) << 8) | (bytes[1] as u64),
+            value: ((bytes[0] as u64) << ADTS_SYNCWORD_VALUE_SHIFT) | (bytes[1] as u64),
             reason: "must be 0xFFF",
         }));
     }
@@ -771,19 +908,32 @@ pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
             reason: "must be 00",
         }));
     }
-    let (b2, b3, b4, b5, b6) = (bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]);
-    let protection_absent = (bytes[1] & 0x01) != 0;
-    let sampling_frequency_index_raw = (b2 >> 2) & 0x0F;
-    let num_raw_data_blocks = b6 & 3;
-    let frame_length = (((b3 & 3) as u16) << 11) | ((b4 as u16) << 3) | ((b5 >> 5) as u16);
+    let (b2, b3, b4, b5, b6) = (
+        bytes[ADTS_PROFILE_OFFSET],
+        bytes[ADTS_CHANNEL_CONFIG_LOW_OFFSET],
+        bytes[ADTS_FRAME_LENGTH_MID_OFFSET],
+        bytes[ADTS_FRAME_LENGTH_LOW_OFFSET],
+        bytes[ADTS_BUFFER_FULLNESS_LOW_OFFSET],
+    );
+    let protection_absent = (bytes[1] & ADTS_PROTECTION_ABSENT_MASK) != 0;
+    let sampling_frequency_index_raw = (b2 >> ADTS_SFI_SHIFT) & SFI_MASK;
+    let num_raw_data_blocks = b6 & ADTS_NUM_RAW_DATA_BLOCKS_MASK;
+    let frame_length = (u16::from(b3 & ADTS_FRAME_LENGTH_HIGH_MASK)
+        << ADTS_FRAME_LENGTH_HIGH_SHIFT)
+        | (u16::from(b4) << ADTS_FRAME_LENGTH_MID_SHIFT)
+        | (u16::from(b5) >> ADTS_FRAME_LENGTH_LOW_SHIFT);
 
     let hdr = AdtsHeader {
         protection_absent,
-        profile: (b2 >> 6) & 3,
+        profile: (b2 >> ADTS_PROFILE_SHIFT) & ADTS_PROFILE_MASK,
         sampling_frequency_index: sampling_frequency_index_raw,
-        channel_configuration: ((b2 & 1) << 2) | ((b3 >> 6) & 3),
+        channel_configuration: ((b2 & ADTS_CHANNEL_CONFIG_HIGH_MASK)
+            << ADTS_CHANNEL_CONFIG_HIGH_SHIFT)
+            | ((b3 >> ADTS_CHANNEL_CONFIG_LOW_SHIFT) & ADTS_CHANNEL_CONFIG_LOW_MASK),
         frame_length,
-        buffer_fullness: (((b5 & 0x1F) as u16) << 6) | ((b6 >> 2) as u16),
+        buffer_fullness: ((u16::from(b5 & ADTS_BUFFER_FULLNESS_HIGH_MASK)
+            << ADTS_BUFFER_FULLNESS_HIGH_SHIFT)
+            | (u16::from(b6) >> ADTS_BUFFER_FULLNESS_LOW_SHIFT)),
         num_raw_data_blocks,
     };
 
@@ -845,7 +995,7 @@ impl AudioSpecificConfig {
             .with_serialized(detect_heaac_core)
             .map(|(aot, _, _)| aot)
             .unwrap_or(self.audio_object_type.raw());
-        if !(1..=4).contains(&core_aot) {
+        if !(1..=ADTS_CORE_AOT_MAX).contains(&core_aot) {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "audio_object_type",
                 value: core_aot as u64,
@@ -861,7 +1011,7 @@ impl AudioSpecificConfig {
     }
     pub fn from_adts_header(adts: &AdtsHeader) -> Self {
         Self {
-            audio_object_type: AudioObjectType::from((adts.profile + 1) & 0x1F),
+            audio_object_type: AudioObjectType::from((adts.profile + 1) & AOT_MASK),
             sampling_frequency_index: SamplingFrequencyIndex::from(adts.sampling_frequency_index),
             sampling_frequency: None,
             channel_configuration: ChannelConfiguration::from(adts.channel_configuration),

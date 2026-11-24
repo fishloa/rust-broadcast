@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Internal: the BBHEADER's multi-byte fields are read and written through their slices instead of byte-by-byte offset pairs. No output byte change.
+
 ## [16.0.1] - 2026-11-23
 ### Fixed
 - `CarryOverExtractor` no longer panics (debug) or indexes out of bounds (release) when a frame's user-packet layout changes while a partial packet is carried over (#4049). The carry records the mode and stride it was collected under; an NM frame whose `UPL`/ISSYI/NPD stride differs, or a HEM frame after an NM carry (or the reverse), now discards the partial packet, counts one `partial_discards`, and resyncs at `SYNCD`. Before, `stride - pos` underflowed when the new stride was not larger than the carried byte count, against the crate's never-panic-on-malformed-input contract.

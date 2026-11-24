@@ -3,6 +3,7 @@
 //! Normal usage request for vendor-specific extensions. Carries a 32-bit
 //! proprietary identifier + 8-bit command + variable-length data.
 
+use super::{U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -13,6 +14,9 @@ pub const OP_ID: u16 = 0x010C;
 
 /// Fixed-size portion (proprietary_id + proprietary_command).
 pub const FIXED_LEN: usize = 5;
+
+/// Byte offset of `proprietary_command` within the fixed portion.
+const PROPRIETARY_COMMAND_OFFSET: usize = 4;
 
 /// proprietary_command_request_data() — §9.8.8, Table 9-30.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -32,8 +36,8 @@ impl<'a> Parse<'a> for ProprietaryCommand<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, FIXED_LEN, "proprietary_command_request_data")?;
         Ok(Self {
-            proprietary_id: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            proprietary_command: bytes[4],
+            proprietary_id: u32::from_be_bytes(be::<U32_LEN>(bytes, 0)?),
+            proprietary_command: bytes[PROPRIETARY_COMMAND_OFFSET],
             proprietary_data: &bytes[5..],
         })
     }
@@ -48,7 +52,7 @@ impl Serialize for ProprietaryCommand<'_> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         buf[0..4].copy_from_slice(&self.proprietary_id.to_be_bytes());
-        buf[4] = self.proprietary_command;
+        buf[PROPRIETARY_COMMAND_OFFSET] = self.proprietary_command;
         buf[5..need].copy_from_slice(self.proprietary_data);
         Ok(need)
     }

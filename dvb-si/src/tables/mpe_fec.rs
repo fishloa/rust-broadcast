@@ -59,11 +59,11 @@ const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
 
 /// Width of the `reserved` header fields.
-const MPE_FEC_RESERVED_BITS: u32 = 2;
+pub const MPE_FEC_RESERVED_BITS: u32 = 2;
 /// Width of `reserved_for_future_use` in the flags byte.
-const MPE_FEC_FUTURE_USE_BITS: u32 = 5;
+pub const MPE_FEC_FUTURE_USE_BITS: u32 = 5;
 /// Width of the `reserved_for_future_use` byte.
-const MPE_FEC_TRAILER_RESERVED_BITS: u32 = 8;
+pub const MPE_FEC_TRAILER_RESERVED_BITS: u32 = 8;
 
 /// Minimum total encoded length: header + extension + RTP + CRC.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + RTP_LEN + CRC_LEN;

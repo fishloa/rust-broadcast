@@ -30,6 +30,8 @@ use std::path::{Path, PathBuf};
 use broadcast_common::timescale::{Timescale, cmp_ticks};
 use broadcast_common::{Package, Unpackage};
 
+#[cfg(feature = "cenc")]
+use crate::box_types::KEY_ID_LEN;
 use crate::dash::DashPackager;
 use crate::flv::FlvDemux;
 use crate::media::{CmafMux, Fmp4Demux, Media};
@@ -55,6 +57,14 @@ use std::time::Duration;
 // `Insufficient` ("read more") answer instead of a guess. `container-probe` is a
 // `cli`-only optional dependency, so this detection is available exactly where
 // it is used: the `transmux` binary, never the `no_std` library.
+
+/// Default segment duration in seconds when `--segment-duration` is omitted.
+const DEFAULT_SEGMENT_DURATION_SECS: u32 = 6;
+/// Chunks per segment in the LL-DASH profile: the chunk is half a segment.
+const LL_DASH_CHUNKS_PER_SEGMENT: u32 = 2;
+/// Hex digits in the KID half of a `--key` argument.
+#[cfg(feature = "cenc")]
+const KEY_ID_HEX_LEN: usize = KEY_ID_LEN * 2;
 
 /// Default LL-DASH target latency in milliseconds (`Latency@target`), used when
 /// `--ll` selects the DASH low-latency profile.
@@ -352,7 +362,8 @@ impl fmt::Debug for Args {
 #[cfg(feature = "cenc")]
 fn redact_key_spec(spec: &str) -> String {
     let kid_part = spec.split_once(':').map(|(k, _)| k).unwrap_or(spec);
-    let is_kid_hex = kid_part.len() == 32 && kid_part.bytes().all(|b| b.is_ascii_hexdigit());
+    let is_kid_hex =
+        kid_part.len() == KEY_ID_HEX_LEN && kid_part.bytes().all(|b| b.is_ascii_hexdigit());
     if is_kid_hex {
         format!("{kid_part}:<redacted>")
     } else {
@@ -539,7 +550,7 @@ impl Default for Opts {
     fn default() -> Self {
         Self {
             format: OutputFormat::Cmaf,
-            segment_duration: 6,
+            segment_duration: DEFAULT_SEGMENT_DURATION_SECS,
             low_latency: false,
             utc_timing_url: None,
             tracks: Vec::new(),
@@ -1200,7 +1211,7 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
                 let seg = core::time::Duration::from_secs(u64::from(opts.segment_duration.max(1)));
                 let mut pkg = crate::ll_dash::LlDashPackager::new(
                     seg,
-                    seg / 2,
+                    seg / LL_DASH_CHUNKS_PER_SEGMENT,
                     LL_DASH_LATENCY_TARGET,
                     availability_start_time_now(),
                 )?;
@@ -1344,7 +1355,7 @@ fn decrypt_input(input: &[u8], container: Container, keys: &[String]) -> CliResu
 
 /// Parse a `<32-hex-KID>:<32-hex-key>` string into a `(kid, key)` byte pair.
 #[cfg(feature = "cenc")]
-fn parse_key(spec: &str) -> CliResult<([u8; 16], [u8; 16])> {
+fn parse_key(spec: &str) -> CliResult<([u8; KEY_ID_LEN], [u8; KEY_ID_LEN])> {
     let (kid_hex, key_hex) = spec
         .split_once(':')
         .ok_or_else(|| CliError::BadKey(redact_key_spec(spec)))?;
@@ -1353,10 +1364,10 @@ fn parse_key(spec: &str) -> CliResult<([u8; 16], [u8; 16])> {
     Ok((kid, key))
 }
 
-/// Parse exactly 32 hex chars into a 16-byte array.
+/// Parse exactly [`KEY_ID_HEX_LEN`] hex chars into a [`KEY_ID_LEN`]-byte array.
 #[cfg(feature = "cenc")]
-fn parse_hex16(s: &str) -> Option<[u8; 16]> {
-    let mut out = [0u8; 16];
+fn parse_hex16(s: &str) -> Option<[u8; KEY_ID_LEN]> {
+    let mut out = [0u8; KEY_ID_LEN];
     broadcast_common::hex::hex_decode_into(s.trim(), &mut out).ok()?;
     Some(out)
 }

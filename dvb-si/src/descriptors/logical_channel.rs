@@ -23,12 +23,19 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x83;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 4;
+/// Offset of the flags/LCN-high byte in an entry.
+const FLAGS_OFFSET: usize = core::mem::size_of::<u16>();
+/// Offset of the LCN-low byte in an entry.
+const LCN_LO_OFFSET: usize = FLAGS_OFFSET + 1;
+/// Mask of the low byte of `logical_channel_number`.
+const LCN_LO_MASK: u16 = 0xFF;
+const LCN_HI_SHIFT: u8 = 8;
 const VISIBLE_MASK: u8 = 0x80;
 const RESERVED_BITS_MASK: u8 = 0x7C;
 const RESERVED_SHIFT: u8 = 2;
 const LCN_HI_MASK: u8 = 0x03;
 /// Width of the per-entry `reserved` (5 bits).
-const RESERVED_BITS: u32 = 5;
+pub const RESERVED_BITS: u32 = 5;
 
 /// Default of the 5-bit per-entry `reserved` between `visible_service_flag`
 /// and the LCN: all ones (`0x1F`). EACEM/D-Book private layout (PDS 0x28; the
@@ -97,11 +104,12 @@ impl<'a> Parse<'a> for LogicalChannelDescriptor {
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             let service_id = crate::wire::be_u16(chunk, 0, "logical_channel")?;
-            let flags = chunk[2];
+            let flags = chunk[FLAGS_OFFSET];
             let visible_service = flags & VISIBLE_MASK != 0;
             let reserved =
                 ReservedOnes::from_bits(u64::from((flags & RESERVED_BITS_MASK) >> RESERVED_SHIFT));
-            let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(chunk[3]);
+            let lcn =
+                (u16::from(flags & LCN_HI_MASK) << LCN_HI_SHIFT) | u16::from(chunk[LCN_LO_OFFSET]);
             entries.push(LogicalChannelEntry {
                 service_id,
                 visible_service,
@@ -125,7 +133,7 @@ impl Serialize for LogicalChannelDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut offset = HEADER_LEN;
         for entry in &self.entries {
-            buf[offset..offset + 2].copy_from_slice(&entry.service_id.to_be_bytes());
+            buf[offset..offset + FLAGS_OFFSET].copy_from_slice(&entry.service_id.to_be_bytes());
             let visible_byte = if entry.visible_service {
                 VISIBLE_MASK
             } else {
@@ -138,9 +146,9 @@ impl Serialize for LogicalChannelDescriptor {
             )? as u16;
             let flags = visible_byte
                 | ((entry.reserved.get() as u8) << RESERVED_SHIFT)
-                | ((lcn >> 8) as u8 & LCN_HI_MASK);
-            buf[offset + 2] = flags;
-            buf[offset + 3] = (lcn & 0xFF) as u8;
+                | ((lcn >> LCN_HI_SHIFT) as u8 & LCN_HI_MASK);
+            buf[offset + FLAGS_OFFSET] = flags;
+            buf[offset + LCN_LO_OFFSET] = (lcn & LCN_LO_MASK) as u8;
             offset += ENTRY_LEN;
         }
         Ok(len)

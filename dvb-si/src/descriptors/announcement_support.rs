@@ -40,13 +40,19 @@ pub const INDICATOR_LEN: usize = 2;
 pub const TYPE_BYTE_LEN: usize = 1;
 /// Length of the conditional reference block: onid(2)+tsid(2)+sid(2)+component_tag(1).
 pub const REFERENCE_LEN: usize = 7;
+/// Offset of `transport_stream_id` within an announcement reference.
+const TRANSPORT_STREAM_ID_OFFSET: usize = core::mem::size_of::<u16>();
+/// Offset of `service_id` within an announcement reference.
+const SERVICE_ID_OFFSET: usize = TRANSPORT_STREAM_ID_OFFSET + core::mem::size_of::<u16>();
+/// Offset of `component_tag` within an announcement reference.
+const COMPONENT_TAG_OFFSET: usize = SERVICE_ID_OFFSET + core::mem::size_of::<u16>();
 
 const ANNOUNCEMENT_TYPE_MASK: u8 = 0xF0;
 const ANNOUNCEMENT_TYPE_SHIFT: u8 = 4;
 const RESERVED_BIT_MASK: u8 = 0x08;
 const RESERVED_BIT_SHIFT: u8 = 3;
 /// Width of the entry's `reserved_future_use` (1 bit).
-const RESERVED_BITS: u32 = 1;
+pub const RESERVED_BITS: u32 = 1;
 /// Spec default of the entry's 1-bit `reserved_future_use`: `1` (EN 300 468
 /// V1.4.1-V1.20.1 Table 17, global convention; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A, stable).
@@ -302,9 +308,15 @@ impl<'a> Parse<'a> for AnnouncementSupportDescriptor {
                 )?;
                 let r = AnnouncementReference {
                     original_network_id: u16::from_be_bytes([ref_bytes[0], ref_bytes[1]]),
-                    transport_stream_id: u16::from_be_bytes([ref_bytes[2], ref_bytes[3]]),
-                    service_id: u16::from_be_bytes([ref_bytes[4], ref_bytes[5]]),
-                    component_tag: ref_bytes[6],
+                    transport_stream_id: u16::from_be_bytes([
+                        ref_bytes[TRANSPORT_STREAM_ID_OFFSET],
+                        ref_bytes[TRANSPORT_STREAM_ID_OFFSET + 1],
+                    ]),
+                    service_id: u16::from_be_bytes([
+                        ref_bytes[SERVICE_ID_OFFSET],
+                        ref_bytes[SERVICE_ID_OFFSET + 1],
+                    ]),
+                    component_tag: ref_bytes[COMPONENT_TAG_OFFSET],
                 };
                 (Some(r), tail)
             } else {
@@ -402,10 +414,13 @@ impl Serialize for AnnouncementSupportDescriptor {
             buf[pos] = flags;
             pos += TYPE_BYTE_LEN;
             if let Some(r) = &e.reference {
-                buf[pos..pos + 2].copy_from_slice(&r.original_network_id.to_be_bytes());
-                buf[pos + 2..pos + 4].copy_from_slice(&r.transport_stream_id.to_be_bytes());
-                buf[pos + 4..pos + 6].copy_from_slice(&r.service_id.to_be_bytes());
-                buf[pos + 6] = r.component_tag;
+                buf[pos..pos + TRANSPORT_STREAM_ID_OFFSET]
+                    .copy_from_slice(&r.original_network_id.to_be_bytes());
+                buf[pos + TRANSPORT_STREAM_ID_OFFSET..pos + SERVICE_ID_OFFSET]
+                    .copy_from_slice(&r.transport_stream_id.to_be_bytes());
+                buf[pos + SERVICE_ID_OFFSET..pos + COMPONENT_TAG_OFFSET]
+                    .copy_from_slice(&r.service_id.to_be_bytes());
+                buf[pos + COMPONENT_TAG_OFFSET] = r.component_tag;
                 pos += REFERENCE_LEN;
             }
         }

@@ -17,8 +17,20 @@ const HEADER_LEN: usize = 2;
 /// audit §5; no fixture carries the descriptor).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved` field ahead of the upper bound (1 bit).
-const RESERVED_BITS: u32 = 1;
+pub const RESERVED_BITS: u32 = 1;
 const BODY_LEN: u8 = 4;
+/// `bound_valid_flag` bit of the first body byte.
+const BOUND_VALID_FLAG: u8 = 0x80;
+/// Width of each 15-bit LTW offset field.
+const BOUND_FIELD_BITS: u32 = 15;
+/// Mask of the high seven bits of an LTW offset.
+const BOUND_HI_MASK: u8 = 0x7F;
+/// Shift of the high LTW offset bits within a 16-bit packed value.
+const BOUND_HI_SHIFT: u16 = 8;
+/// Body offset of `LTW_offset_upper_bound`.
+const UPPER_BOUND_OFFSET: usize = 2;
+/// Shift of the 1-bit `reserved` run in the upper-bound high byte.
+const RESERVED_SHIFT: u16 = 7;
 
 /// Multiplex Buffer Utilization Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,14 +84,19 @@ impl<'a> Parse<'a> for MultiplexBufferUtilizationDescriptor {
                 reason: "multiplex_buffer_utilization_descriptor length must equal 4",
             });
         }
-        let bound_valid_flag = (body[0] & 0x80) != 0;
-        let ltw_offset_lower_bound = ((u16::from(body[0]) & 0x7F) << 8) | u16::from(body[1]);
-        let ltw_offset_upper_bound = ((u16::from(body[2]) & 0x7F) << 8) | u16::from(body[3]);
+        let bound_valid_flag = (body[0] & BOUND_VALID_FLAG) != 0;
+        let ltw_offset_lower_bound =
+            ((u16::from(body[0] & BOUND_HI_MASK)) << BOUND_HI_SHIFT) | u16::from(body[1]);
+        let ltw_offset_upper_bound = ((u16::from(body[UPPER_BOUND_OFFSET] & BOUND_HI_MASK))
+            << BOUND_HI_SHIFT)
+            | u16::from(body[UPPER_BOUND_OFFSET + 1]);
         Ok(Self {
             bound_valid_flag,
             ltw_offset_lower_bound,
             ltw_offset_upper_bound,
-            reserved: ReservedOnes::from_bits(u64::from(body[2] >> 7)),
+            reserved: ReservedOnes::from_bits(u64::from(
+                body[UPPER_BOUND_OFFSET] >> RESERVED_SHIFT,
+            )),
         })
     }
 }
@@ -98,22 +115,23 @@ impl Serialize for MultiplexBufferUtilizationDescriptor {
         // (audit r03-W3 class).
         broadcast_common::len::fit_bits(
             u64::from(self.ltw_offset_lower_bound),
-            15,
+            BOUND_FIELD_BITS,
             "ltw_offset_lower_bound",
         )?;
         broadcast_common::len::fit_bits(
             u64::from(self.ltw_offset_upper_bound),
-            15,
+            BOUND_FIELD_BITS,
             "ltw_offset_upper_bound",
         )?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = ((self.bound_valid_flag as u8) << 7)
-            | ((self.ltw_offset_lower_bound >> 8) as u8 & 0x7F);
-        buf[HEADER_LEN + 1] = (self.ltw_offset_lower_bound & 0xFF) as u8;
-        buf[HEADER_LEN + 2] =
-            ((self.reserved.get() as u8) << 7) | ((self.ltw_offset_upper_bound >> 8) as u8 & 0x7F);
-        buf[HEADER_LEN + 3] = (self.ltw_offset_upper_bound & 0xFF) as u8;
+        let lower = (u32::from(self.bound_valid_flag as u8) << BOUND_FIELD_BITS)
+            | u32::from(self.ltw_offset_lower_bound);
+        buf[HEADER_LEN..HEADER_LEN + size_of::<u16>()].copy_from_slice(&lower.to_be_bytes()[2..]);
+        let upper = (u32::from(self.reserved.get() as u8) << BOUND_FIELD_BITS)
+            | u32::from(self.ltw_offset_upper_bound);
+        buf[HEADER_LEN + UPPER_BOUND_OFFSET..HEADER_LEN + UPPER_BOUND_OFFSET + size_of::<u16>()]
+            .copy_from_slice(&upper.to_be_bytes()[2..]);
         Ok(len)
     }
 }

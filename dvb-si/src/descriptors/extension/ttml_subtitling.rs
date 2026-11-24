@@ -16,13 +16,43 @@ impl<'a> ExtensionBodyDef<'a> for TtmlSubtitling<'a> {
 /// TTML_subtitling_descriptor (the 2-bit one in byte 4 and the 1-bit one in
 /// each font entry): 0 (EN 303 560 V1.1.1 Table 1;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<FONT_RESERVED_BITS> =
+pub const TTML_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<FONT_RESERVED_BITS> =
     ReservedZero::<FONT_RESERVED_BITS>::FILL;
 /// Width of the `reserved_zero_future_use` in byte 4 (2 bits).
-const RESERVED_ZERO_2_BITS: u32 = 2;
+pub const TTML_RESERVED_FUTURE_USE_BITS: u32 = 2;
 /// Width of the per-font `reserved_zero_future_use` (1 bit).
-const FONT_RESERVED_BITS: u32 = 1;
+pub const FONT_RESERVED_BITS: u32 = 1;
 const FONT_ID_MASK: u8 = 0x7F;
+/// Mask of `subtitle_purpose`.
+const SUBTITLE_PURPOSE_MASK: u8 = 0x3F;
+/// Shift of `subtitle_purpose`.
+const SUBTITLE_PURPOSE_SHIFT: u32 = 2;
+/// Mask of `TTS_suitability`.
+const TTS_SUITABILITY_MASK: u8 = 0x03;
+/// Mask of `essential_font_usage_flag`.
+const ESSENTIAL_FONT_MASK: u8 = 0x80;
+/// Shift of `essential_font_usage_flag`.
+const ESSENTIAL_FONT_SHIFT: u32 = 7;
+/// Mask of `qualifier_present_flag`.
+const QUALIFIER_PRESENT_MASK: u8 = 0x40;
+/// Shift of `qualifier_present_flag`.
+const QUALIFIER_PRESENT_SHIFT: u32 = 6;
+/// Shift of byte-4 `reserved_zero_future_use`.
+const RESERVED_FUTURE_USE_SHIFT: u32 = 4;
+/// Mask of `dvb_ttml_profile_count`.
+const PROFILE_COUNT_MASK: u8 = 0x0F;
+/// Width of `dvb_ttml_profile_count`.
+const PROFILE_COUNT_BITS: u32 = 4;
+/// Shift of the per-font `reserved_zero_future_use`.
+const FONT_RESERVED_SHIFT: u32 = 7;
+/// Width of `qualifier`.
+const QUALIFIER_LEN: usize = core::mem::size_of::<u32>();
+
+fn decode_lang_code(bytes: &[u8]) -> LangCode {
+    let mut code = [0u8; ISO_639_LEN];
+    code.copy_from_slice(&bytes[..ISO_639_LEN]);
+    LangCode(code)
+}
 
 /// One `font_count` loop entry: `reserved_zero_future_use`(1) + `font_id`(7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +61,7 @@ const FONT_ID_MASK: u8 = 0x7F;
 pub struct TtmlFont {
     /// `reserved_zero_future_use` (1 bit, right-aligned) — bit 7 of the entry
     /// byte. Preserved on parse; [`TtmlFont::new`] uses
-    /// [`TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
+    /// [`TTML_RESERVED_FUTURE_USE_DEFAULT`].
     pub reserved_zero_future_use: ReservedZero<FONT_RESERVED_BITS>,
     /// `font_id` (7 bits).
     pub font_id: u8,
@@ -42,7 +72,7 @@ impl TtmlFont {
     #[must_use]
     pub const fn new(font_id: u8) -> Self {
         Self {
-            reserved_zero_future_use: TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use: TTML_RESERVED_FUTURE_USE_DEFAULT,
             font_id,
         }
     }
@@ -62,8 +92,8 @@ pub struct TtmlSubtitling<'a> {
     pub tts_suitability: u8,
     /// `reserved_zero_future_use` (2 bits, right-aligned) in byte 4, between
     /// `qualifier_present_flag` and `dvb_ttml_profile_count`. Preserved on
-    /// parse; defaults to [`TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use: ReservedZero<RESERVED_ZERO_2_BITS>,
+    /// parse; defaults to [`TTML_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use: ReservedZero<TTML_RESERVED_FUTURE_USE_BITS>,
     /// dvb_ttml_profile codes (one `Vec` entry per profile byte, EN 303 560).
     pub dvb_ttml_profiles: Vec<u8>,
     /// qualifier(32), present iff qualifier_present_flag.
@@ -94,7 +124,7 @@ impl<'a> TtmlSubtitling<'a> {
             iso_639_language_code,
             subtitle_purpose,
             tts_suitability,
-            reserved_zero_future_use: ReservedZero::<RESERVED_ZERO_2_BITS>::FILL,
+            reserved_zero_future_use: ReservedZero::<TTML_RESERVED_FUTURE_USE_BITS>::FILL,
             dvb_ttml_profiles,
             qualifier,
             font_ids,
@@ -108,15 +138,16 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         need_in(sel, TTML_FIXED_LEN, "TTML_subtitling body")?;
-        let iso_639_language_code = LangCode([sel[0], sel[1], sel[2]]);
+        let iso_639_language_code = decode_lang_code(sel);
         let b3 = sel[ISO_639_LEN];
-        let subtitle_purpose = b3 >> 2;
-        let tts_suitability = b3 & 0x03;
+        let subtitle_purpose = b3 >> SUBTITLE_PURPOSE_SHIFT;
+        let tts_suitability = b3 & TTS_SUITABILITY_MASK;
         let b4 = sel[ISO_639_LEN + 1];
-        let essential_font_usage_flag = (b4 >> 7) & 1;
-        let qualifier_present_flag = (b4 >> 6) & 1;
-        let reserved_zero_future_use = ReservedZero::from_bits(u64::from(b4 >> 4));
-        let dvb_ttml_profile_count = (b4 & 0x0F) as usize;
+        let essential_font_usage_flag = (b4 >> ESSENTIAL_FONT_SHIFT) & 1;
+        let qualifier_present_flag = (b4 >> QUALIFIER_PRESENT_SHIFT) & 1;
+        let reserved_zero_future_use =
+            ReservedZero::from_bits(u64::from(b4 >> RESERVED_FUTURE_USE_SHIFT));
+        let dvb_ttml_profile_count = (b4 & PROFILE_COUNT_MASK) as usize;
 
         let mut pos = TTML_FIXED_LEN;
 
@@ -129,16 +160,16 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
         let qualifier = if qualifier_present_flag != 0 {
             let (b, _) = sel
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<4>())
+                .and_then(|s| s.split_first_chunk::<{ QUALIFIER_LEN }>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: pos + 4,
+                        need: pos + QUALIFIER_LEN,
                         have: sel.len(),
                         what: "TTML_subtitling body",
                     },
                 ))?;
             let q = u32::from_be_bytes(*b);
-            pos += 4;
+            pos += QUALIFIER_LEN;
             Some(q)
         } else {
             None
@@ -161,7 +192,9 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
             let ids: Vec<TtmlFont> = sel[pos..pos + font_count]
                 .iter()
                 .map(|b| TtmlFont {
-                    reserved_zero_future_use: ReservedZero::from_bits(u64::from(b >> 7)),
+                    reserved_zero_future_use: ReservedZero::from_bits(u64::from(
+                        b >> FONT_RESERVED_SHIFT,
+                    )),
                     font_id: b & FONT_ID_MASK,
                 })
                 .collect();
@@ -209,7 +242,7 @@ impl Serialize for TtmlSubtitling<'_> {
     fn serialized_len(&self) -> usize {
         TTML_FIXED_LEN
             + self.dvb_ttml_profiles.len()
-            + self.qualifier.map_or(0, |_| 4)
+            + self.qualifier.map_or(0, |_| QUALIFIER_LEN)
             + self.font_ids.as_ref().map_or(0, |ids| 1 + ids.len())
             + 1
             + self.text.len()
@@ -220,20 +253,33 @@ impl Serialize for TtmlSubtitling<'_> {
         need_out(buf, len)?;
         buf[..ISO_639_LEN].copy_from_slice(&self.iso_639_language_code.0);
         // byte 3: subtitle_purpose(6) | TTS_suitability(2)
-        buf[ISO_639_LEN] =
-            (broadcast_common::len::fit_mask(self.subtitle_purpose, 0x3F, "subtitle_purpose")?
-                << 2)
-                | broadcast_common::len::fit_mask(self.tts_suitability, 0x03, "tts_suitability")?;
+        buf[ISO_639_LEN] = (broadcast_common::len::fit_mask(
+            self.subtitle_purpose,
+            SUBTITLE_PURPOSE_MASK,
+            "subtitle_purpose",
+        )? << SUBTITLE_PURPOSE_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.tts_suitability,
+                TTS_SUITABILITY_MASK,
+                "tts_suitability",
+            )?;
         // byte 4: essential_font_usage_flag(1) | qualifier_present_flag(1)
         //         | reserved_zero_future_use(2) (preserved) | dvb_ttml_profile_count(4)
         let dvb_ttml_profile_count = broadcast_common::len::fit_bits(
             self.dvb_ttml_profiles.len() as u64,
-            4,
+            PROFILE_COUNT_BITS,
             "dvb_ttml_profile_count",
         )? as u8;
-        buf[ISO_639_LEN + 1] = (if self.font_ids.is_some() { 0x80 } else { 0 })
-            | (if self.qualifier.is_some() { 0x40 } else { 0 })
-            | ((self.reserved_zero_future_use.get() as u8) << 4)
+        buf[ISO_639_LEN + 1] = (if self.font_ids.is_some() {
+            ESSENTIAL_FONT_MASK
+        } else {
+            0
+        }) | (if self.qualifier.is_some() {
+            QUALIFIER_PRESENT_MASK
+        } else {
+            0
+        }) | ((self.reserved_zero_future_use.get() as u8)
+            << RESERVED_FUTURE_USE_SHIFT)
             | dvb_ttml_profile_count;
 
         let mut pos = TTML_FIXED_LEN;
@@ -244,8 +290,8 @@ impl Serialize for TtmlSubtitling<'_> {
 
         // conditional qualifier
         if let Some(q) = self.qualifier {
-            buf[pos..pos + 4].copy_from_slice(&q.to_be_bytes());
-            pos += 4;
+            buf[pos..pos + QUALIFIER_LEN].copy_from_slice(&q.to_be_bytes());
+            pos += QUALIFIER_LEN;
         }
 
         // conditional font-id loop
@@ -253,7 +299,7 @@ impl Serialize for TtmlSubtitling<'_> {
             buf[pos] = broadcast_common::len::fit_u8(ids.len(), "font_id_count")?;
             pos += 1;
             for id in ids {
-                buf[pos] = ((id.reserved_zero_future_use.get() as u8) << 7)
+                buf[pos] = ((id.reserved_zero_future_use.get() as u8) << FONT_RESERVED_SHIFT)
                     | broadcast_common::len::fit_mask(id.font_id, FONT_ID_MASK, "font_id")?;
                 pos += 1;
             }

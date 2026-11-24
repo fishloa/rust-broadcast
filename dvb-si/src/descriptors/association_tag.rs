@@ -68,6 +68,10 @@ pub const USE_DVB_RESERVED_DEFAULT: u16 = 0x0100;
 /// Selector length (bytes) mandated when `use == 0x0000`: `transaction_id` (4)
 /// + `timeout` (4).
 const DSI_SELECTOR_LEN: usize = 8;
+/// Width of the DSI selector's `transaction_id` and `timeout` fields.
+const DSI_SELECTOR_FIELD_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of `usage` in the descriptor body prefix.
+const USAGE_OFFSET: usize = ASSOCIATION_TAG_LEN;
 
 /// Association Tag Descriptor (tag 0x14) — ISO/IEC 13818-6 §11.4.1 /
 /// ETSI TR 101 202 §4.7.7.2.
@@ -100,12 +104,8 @@ impl AssociationTagDescriptor<'_> {
     #[must_use]
     pub fn transaction_id(&self) -> Option<u32> {
         if self.usage == USE_DSI_IOR && self.selector.len() == DSI_SELECTOR_LEN {
-            Some(u32::from_be_bytes([
-                self.selector[0],
-                self.selector[1],
-                self.selector[2],
-                self.selector[3],
-            ]))
+            let (transaction_id, _) = self.selector.split_at(DSI_SELECTOR_FIELD_LEN);
+            Some(u32::from_be_bytes(transaction_id.try_into().ok()?))
         } else {
             None
         }
@@ -118,12 +118,8 @@ impl AssociationTagDescriptor<'_> {
     #[must_use]
     pub fn timeout(&self) -> Option<u32> {
         if self.usage == USE_DSI_IOR && self.selector.len() == DSI_SELECTOR_LEN {
-            Some(u32::from_be_bytes([
-                self.selector[4],
-                self.selector[5],
-                self.selector[6],
-                self.selector[7],
-            ]))
+            let (_, timeout) = self.selector.split_at(DSI_SELECTOR_FIELD_LEN);
+            Some(u32::from_be_bytes(timeout.try_into().ok()?))
         } else {
             None
         }
@@ -147,7 +143,7 @@ impl<'a> Parse<'a> for AssociationTagDescriptor<'a> {
                     reason: "association_tag_descriptor body shorter than 5 bytes",
                 })?;
         let association_tag = u16::from_be_bytes([prefix[0], prefix[1]]);
-        let usage = u16::from_be_bytes([prefix[2], prefix[3]]);
+        let usage = crate::wire::be_u16(prefix, USAGE_OFFSET, "usage")?;
         let selector_length = prefix[BODY_PREFIX_LEN - SELECTOR_LENGTH_LEN] as usize;
         if selector_length > after_prefix.len() {
             return Err(Error::InvalidDescriptor {

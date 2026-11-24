@@ -19,12 +19,16 @@ pub const HEADER_LEN: usize = 2;
 pub const CODING_BYTE_LEN: usize = 1;
 /// Length of a single frequency entry in bytes.
 pub const ENTRY_LEN: usize = 4;
+/// BCD digits carried by a 32-bit `centre_frequency` (Satellite/Cable).
+const CENTRE_FREQUENCY_BCD_DIGITS: u8 = 8;
+/// Hz per unit of the terrestrial 32-bit `centre_frequency` field.
+const TERRESTRIAL_HZ_PER_UNIT: u64 = 10;
 /// Mask for the coding_type bits (bottom 2 bits); the top 6 bits are reserved.
 pub const CODING_TYPE_MASK: u8 = 0x03;
 /// Shift of `reserved_future_use(6)` in the coding byte (top 6 bits).
 const RESERVED_SHIFT: u8 = 2;
 /// Width of the `reserved_future_use` ahead of `coding_type` (6 bits).
-const RESERVED_BITS: u32 = 6;
+pub const RESERVED_BITS: u32 = 6;
 /// Spec default of the 6-bit `reserved_future_use` ahead of `coding_type`:
 /// all ones (EN 300 468 Table 31, V1.3.1-V1.20.1, audit §6.1 class A).
 pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
@@ -73,7 +77,7 @@ pub struct FrequencyListDescriptor {
     pub coding_type: CodingType,
     /// Raw 4-byte centre_frequency entries in wire order. Interpretation
     /// depends on `coding_type`: BCD for Satellite/Cable, binary for Terrestrial.
-    pub centre_frequencies_bcd: Vec<[u8; 4]>,
+    pub centre_frequencies_bcd: Vec<[u8; ENTRY_LEN]>,
 }
 
 impl FrequencyListDescriptor {
@@ -110,7 +114,7 @@ impl FrequencyListDescriptor {
                     .map(|b| {
                         let value = broadcast_common::bcd::bcd_to_decimal(
                             u64::from(u32::from_be_bytes(*b)),
-                            8,
+                            CENTRE_FREQUENCY_BCD_DIGITS,
                         )?;
                         Some(value * scale)
                     })
@@ -119,7 +123,7 @@ impl FrequencyListDescriptor {
             CodingType::Terrestrial => self
                 .centre_frequencies_bcd
                 .iter()
-                .map(|b| Some(u64::from(u32::from_be_bytes(*b)) * 10))
+                .map(|b| Some(u64::from(u32::from_be_bytes(*b)) * TERRESTRIAL_HZ_PER_UNIT))
                 .collect(),
             CodingType::Undefined => self.centre_frequencies_bcd.iter().map(|_| None).collect(),
         }
@@ -145,7 +149,7 @@ impl FrequencyListDescriptor {
                 for &hz in frequencies_hz {
                     let bcd = super::encode_bcd_field(
                         hz / scale,
-                        8,
+                        CENTRE_FREQUENCY_BCD_DIGITS,
                         "FrequencyListDescriptor::centre_frequency",
                     )?;
                     out.push((bcd as u32).to_be_bytes());
@@ -156,7 +160,7 @@ impl FrequencyListDescriptor {
             CodingType::Terrestrial => {
                 let mut out = Vec::with_capacity(frequencies_hz.len());
                 for &hz in frequencies_hz {
-                    let units = hz / 10;
+                    let units = hz / TERRESTRIAL_HZ_PER_UNIT;
                     if units > u64::from(u32::MAX) {
                         return Err(Error::ValueOutOfRange {
                             field: "frequency_list centre_frequency",

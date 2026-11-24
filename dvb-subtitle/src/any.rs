@@ -9,6 +9,21 @@
 
 use broadcast_common::{Parse, Serialize};
 
+/// Bytes of the generic subtitling_segment header (EN 300 743 §7.2, Table 2).
+const GENERIC_SEGMENT_HEADER_LEN: usize = 6;
+/// Offset of `sync_byte` within a segment header.
+const SYNC_BYTE_OFFSET: usize = 0;
+/// Offset of `segment_type` within a segment header.
+const SEGMENT_TYPE_OFFSET: usize = 1;
+/// Offset of `page_id` within a segment header.
+const PAGE_ID_OFFSET: usize = 2;
+/// Bytes of `page_id`.
+const PAGE_ID_LEN: usize = 2;
+/// Offset of `segment_length` within a segment header.
+const SEGMENT_LENGTH_OFFSET: usize = 4;
+/// Bytes of `segment_length`.
+const SEGMENT_LENGTH_LEN: usize = 2;
+
 /// Declares [`AnySegment`] + its dispatcher from one segment type list.
 ///
 /// Each line is `Variant = 0xSEGMENT_TYPE => module::Type[<'a>]`.
@@ -108,8 +123,8 @@ macro_rules! declare_segments {
                     $(
                         Self::$variant(s) => s.serialized_len(),
                     )+
-                    Self::Unknown { data, .. } => (6 + data.len()),
-                    Self::Malformed { data, .. } => (6 + data.len()),
+                    Self::Unknown { data, .. } => (GENERIC_SEGMENT_HEADER_LEN + data.len()),
+                    Self::Malformed { data, .. } => (GENERIC_SEGMENT_HEADER_LEN + data.len()),
                 }
             }
 
@@ -135,14 +150,16 @@ macro_rules! declare_segments {
                 data: &[u8],
                 buf: &mut [u8],
             ) -> crate::Result<usize> {
-                let len = 6 + data.len();
+                let len = GENERIC_SEGMENT_HEADER_LEN + data.len();
                 broadcast_common::len::need_out(buf, len)?;
-                buf[0] = crate::pes_data_field::SYNC_BYTE;
-                buf[1] = segment_type;
-                buf[2..4].copy_from_slice(&page_id.to_be_bytes());
+                buf[SYNC_BYTE_OFFSET] = crate::pes_data_field::SYNC_BYTE;
+                buf[SEGMENT_TYPE_OFFSET] = segment_type;
+                buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]
+                    .copy_from_slice(&page_id.to_be_bytes());
                 let seg_len = crate::segments::check_segment_length(data.len())?;
-                buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
-                buf[6..len].copy_from_slice(data);
+                buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
+                    .copy_from_slice(&seg_len.to_be_bytes());
+                buf[GENERIC_SEGMENT_HEADER_LEN..len].copy_from_slice(data);
                 Ok(len)
             }
         }

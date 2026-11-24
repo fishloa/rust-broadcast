@@ -19,6 +19,12 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x6F;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 3;
+/// Offset of the version byte in an entry.
+const VERSION_OFFSET: usize = core::mem::size_of::<u16>();
+/// Shift of `reserved_future_use_1` in the `application_type` word.
+const RESERVED_FUTURE_USE_1_SHIFT: u16 = 15;
+/// Shift of `reserved_future_use_3` in the version byte.
+const RESERVED_FUTURE_USE_3_SHIFT: u8 = 5;
 
 /// Largest representable 15-bit application_type.
 const APPLICATION_TYPE_MAX: u16 = 0x7FFF;
@@ -30,16 +36,16 @@ const AIT_VERSION_MAX: u8 = 0x1F;
 /// set to 1"). Older MHP editions (TS 101 812 V1.1.1-V1.3.2) have no such bit
 /// — `application_type` is 16 bits there — so MHP-era senders write 0 here
 /// (audit §3.2); parse keeps whatever the sender wrote.
-pub const RESERVED_FUTURE_USE_1_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_1_BITS> =
-    ReservedOnes::<RESERVED_FUTURE_USE_1_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_1_DEFAULT: ReservedOnes<RESERVED_BEFORE_APPLICATION_TYPE_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_APPLICATION_TYPE_BITS>::FILL;
 /// Width of `reserved_future_use_1` (1 bit).
-const RESERVED_FUTURE_USE_1_BITS: u32 = 1;
+pub const RESERVED_BEFORE_APPLICATION_TYPE_BITS: u32 = 1;
 /// Width of `reserved_future_use_3` (3 bits).
-const RESERVED_FUTURE_USE_3_BITS: u32 = 3;
+pub const RESERVED_BEFORE_AIT_VERSION_BITS: u32 = 3;
 /// Default of the 3-bit `reserved_future_use` before `AIT_version_number`
 /// (TS 102 809 §5.3.3.2: `1`s).
-pub const RESERVED_FUTURE_USE_3_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_3_BITS> =
-    ReservedOnes::<RESERVED_FUTURE_USE_3_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_3_DEFAULT: ReservedOnes<RESERVED_BEFORE_AIT_VERSION_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_AIT_VERSION_BITS>::FILL;
 
 /// One application-signalling loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,10 +55,10 @@ pub struct ApplicationSignallingEntry {
     /// `reserved_future_use(1)` ahead of `application_type` (TS 102 809
     /// Table 17), captured on parse and re-emitted verbatim. 0 on MHP-era
     /// (TS 101 812) senders, 1 per TS 102 809.
-    pub reserved_future_use_1: ReservedOnes<RESERVED_FUTURE_USE_1_BITS>,
+    pub reserved_future_use_1: ReservedOnes<RESERVED_BEFORE_APPLICATION_TYPE_BITS>,
     /// `reserved_future_use(3)` ahead of `AIT_version_number` (3 bits,
     /// right-aligned), captured on parse and re-emitted verbatim.
-    pub reserved_future_use_3: ReservedOnes<RESERVED_FUTURE_USE_3_BITS>,
+    pub reserved_future_use_3: ReservedOnes<RESERVED_BEFORE_AIT_VERSION_BITS>,
     /// 15-bit application_type — reuses [`crate::tables::ait::ApplicationType`]
     /// (ETSI TS 102 809 §5.3.5.1 / DVB Services registry).
     pub application_type: ApplicationType,
@@ -110,10 +116,14 @@ impl<'a> Parse<'a> for ApplicationSignallingDescriptor {
             let word = crate::wire::be_u16(chunk, 0, "application_signalling")?;
             let application_type_raw = word & APPLICATION_TYPE_MAX;
             let application_type = ApplicationType::from_u16(application_type_raw);
-            let ait_version_number = chunk[2] & AIT_VERSION_MAX;
+            let ait_version_number = chunk[VERSION_OFFSET] & AIT_VERSION_MAX;
             entries.push(ApplicationSignallingEntry {
-                reserved_future_use_1: ReservedOnes::from_bits(u64::from(word >> 15)),
-                reserved_future_use_3: ReservedOnes::from_bits(u64::from(chunk[2] >> 5)),
+                reserved_future_use_1: ReservedOnes::from_bits(u64::from(
+                    word >> RESERVED_FUTURE_USE_1_SHIFT,
+                )),
+                reserved_future_use_3: ReservedOnes::from_bits(u64::from(
+                    chunk[VERSION_OFFSET] >> RESERVED_FUTURE_USE_3_SHIFT,
+                )),
                 application_type,
                 ait_version_number,
             });
@@ -155,15 +165,17 @@ impl Serialize for ApplicationSignallingDescriptor {
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             // reserved_future_use(1): preserved from parse, default 1.
-            let word = (u16::from(e.reserved_future_use_1.get() as u8) << 15)
+            let word = (u16::from(e.reserved_future_use_1.get() as u8)
+                << RESERVED_FUTURE_USE_1_SHIFT)
                 | broadcast_common::len::fit_mask(
                     e.application_type.to_u16(),
                     APPLICATION_TYPE_MAX,
                     "application_type",
                 )?;
-            buf[pos..pos + 2].copy_from_slice(&word.to_be_bytes());
+            buf[pos..pos + VERSION_OFFSET].copy_from_slice(&word.to_be_bytes());
             // reserved_future_use(3): preserved from parse, default 111.
-            buf[pos + 2] = ((e.reserved_future_use_3.get() as u8) << 5)
+            buf[pos + VERSION_OFFSET] = ((e.reserved_future_use_3.get() as u8)
+                << RESERVED_FUTURE_USE_3_SHIFT)
                 | broadcast_common::len::fit_mask(
                     e.ait_version_number,
                     AIT_VERSION_MAX,

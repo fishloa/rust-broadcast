@@ -45,32 +45,43 @@ const FLAG_NOT_TIMESLICE: u8 = 0x10;
 const TS_GS_MODE_MASK: u8 = 0x03;
 /// Bit 5 of the flags byte: `reserved_zero_future_use` (V1.16.1+; in
 /// V1.7.1-V1.15.1 it was `backwards_compatibility_indicator`).
-const FLAG_RESERVED_ZERO: u8 = 0x20;
+const FLAG_RESERVED_FUTURE_USE_BIT: u8 = 0x20;
 /// Bits 3..2 of the flags byte: `reserved_future_use(2)`.
 const FLAG_RESERVED_FU_MASK: u8 = 0x0C;
 const FLAG_RESERVED_FU_SHIFT: u8 = 2;
 /// `reserved(6)` ahead of `scrambling_sequence_index`: top 6 bits of its first byte.
 const SCRAMBLING_RESERVED_SHIFT: u8 = 2;
+/// Shift of the high `scrambling_sequence_index` bits.
+const SCRAMBLING_INDEX_HI_SHIFT: u32 = 16;
+/// Shift of the middle `scrambling_sequence_index` byte.
+const SCRAMBLING_INDEX_MID_SHIFT: u32 = 8;
+/// Offset of the middle `scrambling_sequence_index` byte.
+const SCRAMBLING_INDEX_MID_OFFSET: usize = 1;
+/// Offset of the low `scrambling_sequence_index` byte.
+const SCRAMBLING_INDEX_LO_OFFSET: usize = 2;
+/// Shift of `reserved_zero_future_use` (bit 5) in the flags byte.
+const FLAG_RESERVED_BIT_SHIFT: u8 = 5;
 
 /// Spec default of the 1-bit `reserved_zero_future_use` (bit 5): `0`
 /// (EN 300 468 Table 42, V1.16.1-V1.20.1, audit §4 row 4). Editions
 /// V1.7.1-V1.15.1 defined this bit as `backwards_compatibility_indicator`
 /// (1 = low-priority stream of a backward-compatible carrier); it is kept
 /// verbatim on parse so such a sender round-trips.
-pub const RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_ZERO_BITS> =
-    ReservedZero::<RESERVED_ZERO_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_BIT_DEFAULT: ReservedZero<RESERVED_FUTURE_USE_BIT_WIDTH> =
+    ReservedZero::<RESERVED_FUTURE_USE_BIT_WIDTH>::FILL;
 /// Width of the `reserved_zero_future_use` bit (1 bit).
-const RESERVED_ZERO_BITS: u32 = 1;
+pub const RESERVED_FUTURE_USE_BIT_WIDTH: u32 = 1;
 /// Spec default of `reserved_future_use(2)` (bits 3..2): `11` (all editions).
-pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_FU_2_BITS> =
-    ReservedOnes::<RESERVED_FU_2_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_FIELD_BITS> =
+    ReservedOnes::<RESERVED_FUTURE_USE_FIELD_BITS>::FILL;
 /// Width of the `reserved_future_use` field (2 bits).
-const RESERVED_FU_2_BITS: u32 = 2;
+pub const RESERVED_FUTURE_USE_FIELD_BITS: u32 = 2;
 /// Default of the 6-bit `reserved` ahead of `scrambling_sequence_index`:
 /// all ones (EN 300 468 Table 42, global "reserved = 1" rule).
-pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
+pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_BEFORE_SCRAMBLING_INDEX_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_SCRAMBLING_INDEX_BITS>::FILL;
 /// Width of the `reserved` ahead of `scrambling_sequence_index` (6 bits).
-const RESERVED_6_BITS: u32 = 6;
+pub const RESERVED_BEFORE_SCRAMBLING_INDEX_BITS: u32 = 6;
 
 const SCRAMBLING_INDEX_HI_MASK: u8 = 0x03;
 const SCRAMBLING_INDEX_MAX: u32 = 0x3FFFF;
@@ -133,18 +144,18 @@ broadcast_common::impl_spec_display!(TsGsMode, Reserved);
 pub struct S2SatelliteDeliverySystemDescriptor {
     /// `reserved_zero_future_use(1)` (flags bit 5). Parsed verbatim and
     /// re-emitted (an old `backwards_compatibility_indicator` survives);
-    /// `Default` is [`RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    /// `Default` is [`RESERVED_FUTURE_USE_BIT_DEFAULT`] (`0`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_zero_future_use: ReservedZero<RESERVED_ZERO_BITS>,
+    pub reserved_zero_future_use: ReservedZero<RESERVED_FUTURE_USE_BIT_WIDTH>,
     /// `reserved_future_use(2)` (flags bits 3..2). Parsed verbatim; `Default` is
     /// [`RESERVED_FUTURE_USE_DEFAULT`] (`0b11`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<RESERVED_FU_2_BITS>,
+    pub reserved_future_use: ReservedOnes<RESERVED_FUTURE_USE_FIELD_BITS>,
     /// `reserved(6)` ahead of `scrambling_sequence_index` (6 bits); only on the
     /// wire when `scrambling_sequence_selector` is set. Parsed verbatim;
     /// `Default` is [`RESERVED_6_DEFAULT`] (`0x3F`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_6: ReservedOnes<RESERVED_6_BITS>,
+    pub reserved_6: ReservedOnes<RESERVED_BEFORE_SCRAMBLING_INDEX_BITS>,
     /// Bytes after the last defined field inside the descriptor body
     /// (tolerated and previously dropped); re-emitted verbatim. Empty for a
     /// conformant descriptor.
@@ -170,7 +181,7 @@ impl Default for S2SatelliteDeliverySystemDescriptor {
     /// generic-packetized TS/GS mode, spec-default reserved bits.
     fn default() -> Self {
         Self {
-            reserved_zero_future_use: RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use: RESERVED_FUTURE_USE_BIT_DEFAULT,
             reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
             reserved_6: RESERVED_6_DEFAULT,
             trailing: Vec::new(),
@@ -208,8 +219,9 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
 
         // Reserved bits are captured (EN 300 468 §5.1 tolerance) and re-emitted.
         let flags = body[0];
-        let reserved_zero_future_use =
-            ReservedZero::from_bits(u64::from((flags & FLAG_RESERVED_ZERO) >> 5));
+        let reserved_zero_future_use = ReservedZero::from_bits(u64::from(
+            (flags & FLAG_RESERVED_FUTURE_USE_BIT) >> FLAG_RESERVED_BIT_SHIFT,
+        ));
         let reserved_future_use = ReservedOnes::from_bits(u64::from(
             (flags & FLAG_RESERVED_FU_MASK) >> FLAG_RESERVED_FU_SHIFT,
         ));
@@ -229,9 +241,10 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
             )?;
             let b0 = body[pos];
             reserved_6 = ReservedOnes::from_bits(u64::from(b0 >> SCRAMBLING_RESERVED_SHIFT));
-            let index = (u32::from(b0 & SCRAMBLING_INDEX_HI_MASK) << 16)
-                | (u32::from(body[pos + 1]) << 8)
-                | u32::from(body[pos + 2]);
+            let index = (u32::from(b0 & SCRAMBLING_INDEX_HI_MASK) << SCRAMBLING_INDEX_HI_SHIFT)
+                | (u32::from(body[pos + SCRAMBLING_INDEX_MID_OFFSET])
+                    << SCRAMBLING_INDEX_MID_SHIFT)
+                | u32::from(body[pos + SCRAMBLING_INDEX_LO_OFFSET]);
             pos += SCRAMBLING_FIELD_LEN;
             Some(index)
         } else {
@@ -308,7 +321,7 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
-        let mut flags = ((self.reserved_zero_future_use.get() as u8) << 5)
+        let mut flags = ((self.reserved_zero_future_use.get() as u8) << FLAG_RESERVED_BIT_SHIFT)
             | ((self.reserved_future_use.get() as u8) << FLAG_RESERVED_FU_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.ts_gs_mode.to_u8(),
@@ -342,9 +355,9 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
                 "scrambling_sequence_index",
             )?;
             buf[pos] = ((self.reserved_6.get() as u8) << SCRAMBLING_RESERVED_SHIFT)
-                | ((index >> 16) as u8 & SCRAMBLING_INDEX_HI_MASK);
-            buf[pos + 1] = (index >> 8) as u8;
-            buf[pos + 2] = index as u8;
+                | ((index >> SCRAMBLING_INDEX_HI_SHIFT) as u8 & SCRAMBLING_INDEX_HI_MASK);
+            buf[pos + SCRAMBLING_INDEX_MID_OFFSET] = (index >> SCRAMBLING_INDEX_MID_SHIFT) as u8;
+            buf[pos + SCRAMBLING_INDEX_LO_OFFSET] = index as u8;
             pos += SCRAMBLING_FIELD_LEN;
         }
         if self.multiple_input_stream_flag {

@@ -3,6 +3,7 @@
 //! Normal usage request. Generates an SCTE 35 section directly from a binary
 //! image of the SCTE 35 command contents (following splice_command_type).
 
+use super::{U16_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -30,13 +31,17 @@ pub struct InjectSectionData<'a> {
 /// Fixed-size portion before command_contents.
 pub const FIXED_LEN: usize = 4;
 
+// Field byte offsets within the fixed portion (§9.4.5, Table 9-6).
+const SCTE35_PROTOCOL_VERSION_OFFSET: usize = 2;
+const SCTE35_COMMAND_TYPE_OFFSET: usize = 3;
+
 impl<'a> Parse<'a> for InjectSectionData<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, FIXED_LEN, "inject_section_data header")?;
-        let scte35_command_length = u16::from_be_bytes([bytes[0], bytes[1]]);
-        let scte35_protocol_version = bytes[2];
-        let scte35_command_type = bytes[3];
+        let scte35_command_length = u16::from_be_bytes(be::<U16_LEN>(bytes, 0)?);
+        let scte35_protocol_version = bytes[SCTE35_PROTOCOL_VERSION_OFFSET];
+        let scte35_command_type = bytes[SCTE35_COMMAND_TYPE_OFFSET];
         let contents_len = usize::from(scte35_command_length);
         need_in(
             bytes,
@@ -64,8 +69,8 @@ impl Serialize for InjectSectionData<'_> {
             "inject_section_data.SCTE35_command_length",
         )?;
         buf[0..2].copy_from_slice(&command_length.to_be_bytes());
-        buf[2] = self.scte35_protocol_version;
-        buf[3] = self.scte35_command_type;
+        buf[SCTE35_PROTOCOL_VERSION_OFFSET] = self.scte35_protocol_version;
+        buf[SCTE35_COMMAND_TYPE_OFFSET] = self.scte35_command_type;
         buf[FIXED_LEN..need].copy_from_slice(self.scte35_command_contents);
         Ok(need)
     }

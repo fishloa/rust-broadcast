@@ -51,14 +51,18 @@ macro_rules! declare_resource_apdus {
 
             /// Parse an APDU, dispatching on the leading `apdu_tag`.
             pub fn parse(body: & $($lt)? [u8]) -> $crate::error::Result<Self> {
-                if body.len() < 3 {
+                if body.len() < $crate::objects::APDU_TAG_LEN {
                     return Err($crate::error::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-                        need: 3,
+                        need: $crate::objects::APDU_TAG_LEN,
                         have: body.len(),
                         what: concat!($what, " apdu_tag"),
                     }));
                 }
-                let t = $crate::tag::ApduTag::from_bytes(body[0], body[1], body[2]);
+                let t = $crate::tag::ApduTag::from_bytes(
+                    body[0],
+                    body[1],
+                    body[$crate::objects::APDU_TAG_LEN - 1],
+                );
                 match t {
                     $( $tag => Ok(Self::$variant(<$inner>::parse(body)?)), )+
                     _ => Err($crate::error::Error::UnexpectedApduTag {

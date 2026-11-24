@@ -184,7 +184,7 @@ sans-IO is right for the core and too much ceremony for a first use. The crates 
 
 ### 4.9 Extension points and write symmetry
 
-The workspace already has this pattern twice: `dvb_si::DescriptorRegistry` lets a caller register a private descriptor type, and multimux's `SchemeRegistry` lets a third-party crate add an input or output scheme. Containers get the same treatment at three levels.
+The workspace already has this pattern twice: `dvb_si::DescriptorRegistry` lets a caller register a private descriptor type, and multimux's `SchemeRegistry` lets a third-party crate add an input or output scheme. Containers get the same treatment at three levels, and tag-value payloads at a fourth.
 
 **1. Private boxes.** `isobmff::BoxRegistry`, modelled on `DescriptorRegistry`: a caller registers a type that implements `Parse` and `Serialize` for a box type (fourcc, or `uuid` plus its 16-byte extended type), optionally scoped to a parent box. The reader and the box tree hand it back typed; the writer serializes it. An unregistered box is an `OpaqueBox` with its bytes, written back as it was. `broadcast-matroska` has the same registry keyed by EBML element ID.
 
@@ -196,6 +196,13 @@ The workspace already has this pattern twice: `dvb_si::DescriptorRegistry` lets 
 **3. Payload formats.** A sample's bytes are the plug-in author's own wire format. A payload format is a type implementing `broadcast_core::{Parse, Serialize}` over one sample; nothing else is required to decode or encode it. `motion-imagery-metadata` does this for ST 0601; a `djmd` or `gpmd` crate, ours or anyone's, does the same. Because the traits live in the frozen `broadcast-core` (§4.6), a plug-in crate written against 1.0 keeps working.
 - For tools that must name and print a payload they were not compiled against by type (`media-doctor`, the CLI's dump, the browser inspector), a `PayloadRegistry` maps a track identity to an object-safe decoder that renders a sample as structured values. The CLIs take plug-ins as cargo features, each feature registering one crate.
 - The normalised telemetry type (position, attitude, gimbal, footprint, time) stays the separate decision of §10: it is one consumer of this extension point, not part of it.
+
+**4. Tag tables.** Inside a tag-value payload (MISB ST 0601 and its sibling local sets, GoPro GPMF keys, a vendor's private set) a new load of tags must be addable without drama. A tag is data, not code: nearly every one uses one of a handful of encodings.
+- A `TagRegistry` on the decoder maps a tag to a name and an encoding. The encodings are a closed, documented set: unsigned or signed integer of a given width, an integer mapped linearly onto a real range with a unit (the ST 0601 style), IMAPB, IEEE float, UTF-8 string, a microsecond timestamp, an enumeration with named values, a nested local set with its own table, and raw bytes. One registration is one line. A registered tag decodes to a typed value and encodes back from it (P10).
+- The same table loads from a data file, so a vendor tag set is one file and no recompilation: the crate parses it into the registry, and `media-doctor` and the `transmux` CLI take `--tags <file>`. The file format is the crate's own documented schema; a malformed table is a typed error naming the line.
+- A tag whose encoding is none of the above registers a custom decode/encode pair in code.
+- Registering over a tag the standard table already defines is an error unless the caller asks to override, so a private table cannot silently change standard values. An unregistered tag stays a raw item and round-trips unchanged.
+- This lives with the payload format's crate: `motion-imagery-metadata` for the MISB sets. The built-in ST 0601 table is expressed through the same registry, so the standard tags and a private set go through one path.
 
 **Symmetry (P10), stated per area:**
 
@@ -209,6 +216,7 @@ The workspace already has this pattern twice: `dvb_si::DescriptorRegistry` lets 
 | Private boxes via `BoxRegistry` | yes | yes |
 | Matroska/WebM, TS, PS, FLV data tracks | yes | yes, where the container can carry them |
 | Permissive-mode repairs | yes | no: a tolerated fault is reported, and the writer emits the corrected, conformant form. Reproducing a malformed file is not a goal. |
+| Tags added through a tag table | yes | yes |
 | ST 0601 KLV values | yes | yes, as far as the `misb` crate encodes; anything it cannot encode is written from the raw item kept on read |
 
 The round-trip test for a file is: read it, write every track and every box back through the `Writer`, and compare bytes (strict mode). The Phase 2 gate runs it over the camera and tagged fixtures of §4.7.
@@ -358,6 +366,7 @@ Separate owner decisions, not blocking this design:
 - The broadcast-common major and the workspace re-release at Milestone 2.
 - Crate names `isobmff` and `broadcast-matroska`.
 - QuickTime `.mov` is read only for now.
+- A new set of tags (drone metadata) is added as a table, in code or from a data file, with no change to our crates (§4.9, level 4).
 - People must be able to plug in special or private parsers (the drone metadata case), and writing is supported as much as reading: P10, P11 and §4.9.
 - The aim is to be the default crates for this work. Folded in: a frozen `broadcast-core` 1.0 (§4.6), tags, `.mov` input and permissive mode in `isobmff` (§4.7), streaming drivers (§4.8), and the adoption programme (§11). The name `broadcast-core` is free on crates.io and is confirmed at the Milestone 2 sign-off.
 - The §4.5 defaults are starting estimates, confirmed by measurement in Phase 2.

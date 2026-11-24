@@ -6,6 +6,7 @@
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
+use crate::{U16_LEN, U32_LEN, be};
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
@@ -14,6 +15,23 @@ pub const TAG: u8 = 0x03;
 
 /// Body length: TAI_seconds (6) + TAI_ns (4) + UTC_offset (2).
 const BODY_LEN: usize = 12;
+
+const TAI_SECONDS_OFFSET: usize = 0;
+const TAI_SECONDS_LEN: usize = 6;
+const TAI_NS_OFFSET: usize = TAI_SECONDS_OFFSET + TAI_SECONDS_LEN;
+const UTC_OFFSET_OFFSET: usize = TAI_NS_OFFSET + core::mem::size_of::<u32>();
+const TAI_SECONDS_MAX: u64 = (1u64 << (TAI_SECONDS_LEN as u32 * u8::BITS)) - 1;
+const TAI_SECONDS_TOP_SHIFT: u32 = 40;
+const TAI_SECONDS_HIGH_SHIFT: u32 = 32;
+const TAI_SECONDS_MID_SHIFT: u32 = 24;
+const TAI_SECONDS_LOW_SHIFT: u32 = 16;
+const TAI_SECONDS_BOTTOM_SHIFT: u32 = 8;
+const TAI_SECONDS_BYTE_TOP: usize = TAI_SECONDS_OFFSET;
+const TAI_SECONDS_BYTE_HIGH: usize = TAI_SECONDS_OFFSET + 1;
+const TAI_SECONDS_BYTE_MID: usize = TAI_SECONDS_OFFSET + 2;
+const TAI_SECONDS_BYTE_LOW: usize = TAI_SECONDS_OFFSET + 3;
+const TAI_SECONDS_BYTE_BOTTOM: usize = TAI_SECONDS_OFFSET + 4;
+const TAI_SECONDS_BYTE_LAST: usize = TAI_SECONDS_OFFSET + 5;
 
 /// time_descriptor() — §10.3.4, Table 27.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,26 +71,14 @@ impl<'a> Parse<'a> for TimeDescriptor {
                 },
             ));
         }
-        let tai_seconds = (u64::from(body[0]) << 40)
-            | (u64::from(body[1]) << 32)
-            | (u64::from(body[2]) << 24)
-            | (u64::from(body[3]) << 16)
-            | (u64::from(body[4]) << 8)
-            | u64::from(body[5]);
-        let tai_ns = u32::from_be_bytes(*body[6..].first_chunk::<4>().ok_or(
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-                need: HEADER_LEN + BODY_LEN,
-                have: bytes.len(),
-                what: "time_descriptor body",
-            }),
-        )?);
-        let utc_offset = u16::from_be_bytes(*body[10..].first_chunk::<2>().ok_or(
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-                need: HEADER_LEN + BODY_LEN,
-                have: bytes.len(),
-                what: "time_descriptor body",
-            }),
-        )?);
+        let tai_seconds = (u64::from(body[TAI_SECONDS_BYTE_TOP]) << TAI_SECONDS_TOP_SHIFT)
+            | (u64::from(body[TAI_SECONDS_BYTE_HIGH]) << TAI_SECONDS_HIGH_SHIFT)
+            | (u64::from(body[TAI_SECONDS_BYTE_MID]) << TAI_SECONDS_MID_SHIFT)
+            | (u64::from(body[TAI_SECONDS_BYTE_LOW]) << TAI_SECONDS_LOW_SHIFT)
+            | (u64::from(body[TAI_SECONDS_BYTE_BOTTOM]) << TAI_SECONDS_BOTTOM_SHIFT)
+            | u64::from(body[TAI_SECONDS_BYTE_LAST]);
+        let tai_ns = u32::from_be_bytes(be::<U32_LEN>(body, TAI_NS_OFFSET)?);
+        let utc_offset = u16::from_be_bytes(be::<U16_LEN>(body, UTC_OFFSET_OFFSET)?);
         Ok(Self {
             identifier,
             tai_seconds,
@@ -90,23 +96,24 @@ impl Serialize for TimeDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        if self.tai_seconds > (1u64 << 48) - 1 {
+        if self.tai_seconds > TAI_SECONDS_MAX {
             return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "time_descriptor.tai_seconds",
                 value: self.tai_seconds,
-                max: (1u64 << 48) - 1,
+                max: TAI_SECONDS_MAX,
             }));
         }
         header::write_header(buf, TAG, self.identifier, BODY_LEN)?;
         let s = self.tai_seconds;
-        buf[HEADER_LEN] = (s >> 40) as u8;
-        buf[HEADER_LEN + 1] = (s >> 32) as u8;
-        buf[HEADER_LEN + 2] = (s >> 24) as u8;
-        buf[HEADER_LEN + 3] = (s >> 16) as u8;
-        buf[HEADER_LEN + 4] = (s >> 8) as u8;
-        buf[HEADER_LEN + 5] = s as u8;
-        buf[HEADER_LEN + 6..HEADER_LEN + 10].copy_from_slice(&self.tai_ns.to_be_bytes());
-        buf[HEADER_LEN + 10..need].copy_from_slice(&self.utc_offset.to_be_bytes());
+        buf[HEADER_LEN + TAI_SECONDS_BYTE_TOP] = (s >> TAI_SECONDS_TOP_SHIFT) as u8;
+        buf[HEADER_LEN + TAI_SECONDS_BYTE_HIGH] = (s >> TAI_SECONDS_HIGH_SHIFT) as u8;
+        buf[HEADER_LEN + TAI_SECONDS_BYTE_MID] = (s >> TAI_SECONDS_MID_SHIFT) as u8;
+        buf[HEADER_LEN + TAI_SECONDS_BYTE_LOW] = (s >> TAI_SECONDS_LOW_SHIFT) as u8;
+        buf[HEADER_LEN + TAI_SECONDS_BYTE_BOTTOM] = (s >> TAI_SECONDS_BOTTOM_SHIFT) as u8;
+        buf[HEADER_LEN + TAI_SECONDS_BYTE_LAST] = s as u8;
+        buf[HEADER_LEN + TAI_NS_OFFSET..HEADER_LEN + TAI_NS_OFFSET + U32_LEN]
+            .copy_from_slice(&self.tai_ns.to_be_bytes());
+        buf[HEADER_LEN + UTC_OFFSET_OFFSET..need].copy_from_slice(&self.utc_offset.to_be_bytes());
         Ok(need)
     }
 }

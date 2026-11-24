@@ -20,8 +20,15 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 /// Wire width of a descriptor's `descriptor_tag` + `descriptor_length`.
 pub(crate) const HEADER_LEN: usize = 2;
 
+/// Width of a 48-bit MAC address, octets.
+pub const MAC_ADDRESS_LEN: usize = 6;
+/// Width of an IPv4 address, octets.
+const IPV4_OCTETS: usize = 4;
+/// Width of an IPv6 address, octets.
+const IPV6_OCTETS: usize = 16;
+
 /// A 48-bit MAC address as 6 octets, most significant octet first.
-pub type MacAddress = [u8; 6];
+pub type MacAddress = [u8; MAC_ADDRESS_LEN];
 
 /// A fixed-size wire value (an address) of `N` octets.
 pub(crate) trait Octets<const N: usize>: Copy {
@@ -29,29 +36,29 @@ pub(crate) trait Octets<const N: usize>: Copy {
     fn to_octets(self) -> [u8; N];
 }
 
-impl Octets<4> for Ipv4Addr {
-    fn from_octets(b: [u8; 4]) -> Self {
+impl Octets<IPV4_OCTETS> for Ipv4Addr {
+    fn from_octets(b: [u8; IPV4_OCTETS]) -> Self {
         Self::from(b)
     }
-    fn to_octets(self) -> [u8; 4] {
+    fn to_octets(self) -> [u8; IPV4_OCTETS] {
         self.octets()
     }
 }
 
-impl Octets<16> for Ipv6Addr {
-    fn from_octets(b: [u8; 16]) -> Self {
+impl Octets<IPV6_OCTETS> for Ipv6Addr {
+    fn from_octets(b: [u8; IPV6_OCTETS]) -> Self {
         Self::from(b)
     }
-    fn to_octets(self) -> [u8; 16] {
+    fn to_octets(self) -> [u8; IPV6_OCTETS] {
         self.octets()
     }
 }
 
-impl Octets<6> for [u8; 6] {
-    fn from_octets(b: [u8; 6]) -> Self {
+impl Octets<MAC_ADDRESS_LEN> for [u8; MAC_ADDRESS_LEN] {
+    fn from_octets(b: [u8; MAC_ADDRESS_LEN]) -> Self {
         b
     }
-    fn to_octets(self) -> [u8; 6] {
+    fn to_octets(self) -> [u8; MAC_ADDRESS_LEN] {
         self
     }
 }

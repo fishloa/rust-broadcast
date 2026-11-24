@@ -73,6 +73,10 @@ const WRITE_STALL_TIMEOUT: Duration = Duration::from_millis(50);
 /// part of — the one situation that cannot be handed back to the caller.
 const TORN_PACKET_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Bytes of the `[slot, connection_id]` link header the CA device expects in
+/// front of every TPDU written to it.
+const LINK_HEADER_LEN: usize = 2;
+
 /// Write `chunk` (a whole number of TS packets) to `file`, returning how many
 /// bytes the device accepted — always a whole number of packets. A short or
 /// non-packet-aligned write is completed (waiting up to
@@ -297,7 +301,7 @@ impl CaDevice for LinuxCaDevice {
 
     fn write(&mut self, buf: &[u8]) -> io::Result<()> {
         // Prepend the `[slot, connection_id]` link header the driver expects.
-        let mut frame = Vec::with_capacity(buf.len() + 2);
+        let mut frame = Vec::with_capacity(buf.len() + LINK_HEADER_LEN);
         frame.push(self.slot);
         frame.push(Self::connection_id(buf));
         frame.extend_from_slice(buf);

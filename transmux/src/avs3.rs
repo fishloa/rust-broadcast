@@ -46,9 +46,53 @@ pub const A3LG_FOURCC: [u8; 4] = *b"a3lg";
 const BOX_HDR: usize = 8;
 const CONFIGURATION_VERSION: u8 = 1;
 const RESERVED6_ONES: u8 = 0x3F;
-const RESERVED1_ONE: u8 = 1;
-const RESERVED2_ONES: u8 = 0b11;
+const RESERVED1_BITS: u8 = 1;
+const RESERVED2_BITS: u8 = 0b11;
 const LAYER_LEN: usize = 5;
+
+/// `configurationVersion`(1) + `sequence_header_length`(2) (GY/T 420-2025 A.3.2.4).
+const CONFIG_HEADER_LEN: usize = 3;
+/// `configurationVersion`(1) + `number_of_layers`(1) (A.3.2.5).
+const LAYER_RECORD_HEADER_LEN: usize = 2;
+/// Offset of the bit-rate tail inside a temporal-layer record.
+const LAYER_TAIL_OFFSET: usize = 1;
+/// Offset of the `LRAP_type`/`entry_count` byte in a `lrap` entry.
+const LRAP_HEADER_LEN: usize = 1;
+/// Width of one `LibrarySampleRef` in a `lrap` entry.
+const LIBRARY_SAMPLE_LEN: usize = 2;
+
+/// Width of the reserved run in a configuration record's trailing byte.
+const RESERVED6_BITS: u32 = 6;
+/// Mask and shift of `library_dependency_idc` in that byte.
+const LIBRARY_DEPENDENCY_MASK: u8 = 0x03;
+const RESERVED_TAIL_SHIFT: u32 = 2;
+
+/// Bit layout of a temporal-layer record.
+const TEMPORAL_LAYER_ID_SHIFT: u32 = 5;
+const TEMPORAL_LAYER_ID_BITS: u32 = 3;
+const FRAME_RATE_CODE_SHIFT: u32 = 1;
+const FRAME_RATE_CODE_MASK: u8 = 0x0F;
+const FRAME_RATE_CODE_BITS: u32 = 4;
+const RESERVED_A_MASK: u8 = 1;
+const BIT_RATE_LOWER_SHIFT: u32 = 14;
+const BIT_RATE_LOWER_BITS: u32 = 18;
+const BIT_RATE_UPPER_SHIFT: u32 = 2;
+const BIT_RATE_UPPER_MASK: u32 = 0xFFF;
+const BIT_RATE_UPPER_BITS: u32 = 12;
+const RESERVED_B_MASK: u32 = 0x03;
+const RESERVED_B_BITS: u32 = 2;
+
+/// Bit layout of a `lrap` entry.
+const LRAP_TYPE_SHIFT: u32 = 5;
+const LRAP_TYPE_BITS: u32 = 3;
+const LRAP_ENTRY_COUNT_SHIFT: u32 = 2;
+const LRAP_ENTRY_COUNT_MASK: u8 = 0x07;
+const LRAP_ENTRY_COUNT_BITS: u32 = 3;
+const LRAP_RESERVED_BITS: u32 = 2;
+const LIBRARY_SAMPLE_NUMBER_SHIFT: u32 = 7;
+const LIBRARY_SAMPLE_NUMBER_BITS: u32 = 9;
+const LIBRARY_SAMPLE_RESERVED_MASK: u16 = 0x7F;
+const LIBRARY_SAMPLE_RESERVED_BITS: u32 = 7;
 
 /// `library_dependency_idc` (2 bits) — GY/T 420-2025 Table A.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +114,7 @@ impl LibraryDependencyIdc {
     /// Decode from the 2-bit wire value.
     #[must_use]
     pub const fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & LIBRARY_DEPENDENCY_MASK {
             0 => Self::MainWithoutLibrary,
             1 => Self::MainWithLibrary,
             2 => Self::Library,
@@ -232,12 +276,12 @@ impl<'a> Parse<'a> for Avs3ConfigurationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (version, header) = parse_sequence_header_record(bytes, "av3c body", 1)?;
-        let tail = bytes[3 + header.len()];
+        let tail = bytes[CONFIG_HEADER_LEN + header.len()];
         Ok(Self {
             configuration_version: version,
             sequence_header: header,
-            reserved: tail >> 2,
-            library_dependency_idc: LibraryDependencyIdc::from_u8(tail & 0x03),
+            reserved: tail >> RESERVED_TAIL_SHIFT,
+            library_dependency_idc: LibraryDependencyIdc::from_u8(tail & LIBRARY_DEPENDENCY_MASK),
         })
     }
 }
@@ -250,15 +294,16 @@ pub(crate) fn parse_sequence_header_record(
     what: &'static str,
     trailing: usize,
 ) -> Result<(u8, Vec<u8>)> {
-    if bytes.len() < 3 {
+    if bytes.len() < CONFIG_HEADER_LEN {
         return Err(Error::BufferTooShort(BufferTooShort {
-            need: 3,
+            need: CONFIG_HEADER_LEN,
             have: bytes.len(),
             what,
         }));
     }
-    let len = usize::from(u16::from_be_bytes([bytes[1], bytes[2]]));
-    let need = 3 + len + trailing;
+    let mut cursor = 1;
+    let len = usize::from(crate::wire_cursor::read_u16(bytes, &mut cursor, what)?);
+    let need = CONFIG_HEADER_LEN + len + trailing;
     if bytes.len() < need {
         return Err(Error::BufferTooShort(BufferTooShort {
             need,
@@ -267,7 +312,10 @@ pub(crate) fn parse_sequence_header_record(
         }));
     }
     reject_trailing(bytes.len() - need, what)?;
-    Ok((bytes[0], bytes[3..3 + len].to_vec()))
+    Ok((
+        bytes[0],
+        bytes[CONFIG_HEADER_LEN..CONFIG_HEADER_LEN + len].to_vec(),
+    ))
 }
 
 /// The record is fully modelled (no reserved tail the typed fields drop), so
@@ -289,17 +337,18 @@ fn reject_trailing(extra: usize, what: &'static str) -> Result<()> {
 impl Serialize for Avs3ConfigurationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        3 + self.sequence_header.len() + 1
+        CONFIG_HEADER_LEN + self.sequence_header.len() + 1
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let len = fit_u16(self.sequence_header.len(), "sequence_header_length")?;
-        let reserved = fit_bits(u64::from(self.reserved), 6, "reserved")? as u8;
+        let reserved = fit_bits(u64::from(self.reserved), RESERVED6_BITS, "reserved")? as u8;
         buf[0] = self.configuration_version;
-        buf[1..3].copy_from_slice(&len.to_be_bytes());
-        buf[3..3 + self.sequence_header.len()].copy_from_slice(&self.sequence_header);
-        buf[need - 1] = (reserved << 2) | self.library_dependency_idc.to_u8();
+        buf[1..CONFIG_HEADER_LEN].copy_from_slice(&len.to_be_bytes());
+        buf[CONFIG_HEADER_LEN..CONFIG_HEADER_LEN + self.sequence_header.len()]
+            .copy_from_slice(&self.sequence_header);
+        buf[need - 1] = (reserved << RESERVED_TAIL_SHIFT) | self.library_dependency_idc.to_u8();
         Ok(need)
     }
 }
@@ -341,10 +390,10 @@ impl TemporalLayerInfo {
         Self {
             temporal_layer_id,
             frame_rate_code,
-            reserved_a: RESERVED1_ONE,
+            reserved_a: RESERVED1_BITS,
             temporal_bit_rate_lower,
             temporal_bit_rate_upper,
-            reserved_b: RESERVED2_ONES,
+            reserved_b: RESERVED2_BITS,
         }
     }
 
@@ -383,25 +432,29 @@ impl LAvsConfigurationBox {
 impl<'a> Parse<'a> for LAvsConfigurationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 2, "lavc/la2c body")?;
+        need_in(bytes, LAYER_RECORD_HEADER_LEN, "lavc/la2c body")?;
         let n = usize::from(bytes[1]);
-        let need = 2 + n * LAYER_LEN;
+        let need = LAYER_RECORD_HEADER_LEN + n * LAYER_LEN;
         need_in(bytes, need, "lavc/la2c layers")?;
         reject_trailing(bytes.len() - need, "lavc/la2c")?;
-        let layers = bytes[2..need]
+        let layers = bytes[LAYER_RECORD_HEADER_LEN..need]
             .chunks_exact(LAYER_LEN)
             .map(|c| {
-                let tail = u32::from_be_bytes([c[1], c[2], c[3], c[4]]);
-                TemporalLayerInfo {
-                    temporal_layer_id: c[0] >> 5,
-                    frame_rate_code: AvsFrameRateCode::from_u8((c[0] >> 1) & 0x0F),
-                    reserved_a: c[0] & 1,
-                    temporal_bit_rate_lower: tail >> 14,
-                    temporal_bit_rate_upper: ((tail >> 2) & 0xFFF) as u16,
-                    reserved_b: (tail & 0x03) as u8,
-                }
+                let mut cursor = LAYER_TAIL_OFFSET;
+                let tail = crate::wire_cursor::read_u32(c, &mut cursor, "temporal layer tail")?;
+                Ok(TemporalLayerInfo {
+                    temporal_layer_id: c[0] >> TEMPORAL_LAYER_ID_SHIFT,
+                    frame_rate_code: AvsFrameRateCode::from_u8(
+                        (c[0] >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK,
+                    ),
+                    reserved_a: c[0] & RESERVED_A_MASK,
+                    temporal_bit_rate_lower: tail >> BIT_RATE_LOWER_SHIFT,
+                    temporal_bit_rate_upper: ((tail >> BIT_RATE_UPPER_SHIFT) & BIT_RATE_UPPER_MASK)
+                        as u16,
+                    reserved_b: (tail & RESERVED_B_MASK) as u8,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             configuration_version: bytes[0],
             layers,
@@ -412,31 +465,41 @@ impl<'a> Parse<'a> for LAvsConfigurationBox {
 impl Serialize for LAvsConfigurationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        2 + self.layers.len() * LAYER_LEN
+        LAYER_RECORD_HEADER_LEN + self.layers.len() * LAYER_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         buf[0] = self.configuration_version;
         buf[1] = broadcast_common::len::fit_u8(self.layers.len(), "num_temporal_layers")?;
-        let mut i = 2;
+        let mut i = LAYER_RECORD_HEADER_LEN;
         for l in &self.layers {
-            let id = fit_bits(u64::from(l.temporal_layer_id), 3, "temporal_layer_id")? as u8;
-            let frc = fit_bits(u64::from(l.frame_rate_code.to_u8()), 4, "frame_rate_code")? as u8;
+            let id = fit_bits(
+                u64::from(l.temporal_layer_id),
+                TEMPORAL_LAYER_ID_BITS,
+                "temporal_layer_id",
+            )? as u8;
+            let frc = fit_bits(
+                u64::from(l.frame_rate_code.to_u8()),
+                FRAME_RATE_CODE_BITS,
+                "frame_rate_code",
+            )? as u8;
             let ra = fit_bits(u64::from(l.reserved_a), 1, "reserved")? as u8;
             let lo = fit_bits(
                 u64::from(l.temporal_bit_rate_lower),
-                18,
+                BIT_RATE_LOWER_BITS,
                 "temporal_bit_rate_lower",
             )? as u32;
             let hi = fit_bits(
                 u64::from(l.temporal_bit_rate_upper),
-                12,
+                BIT_RATE_UPPER_BITS,
                 "temporal_bit_rate_upper",
             )? as u32;
-            let rb = fit_bits(u64::from(l.reserved_b), 2, "reserved")? as u32;
-            buf[i] = (id << 5) | (frc << 1) | ra;
-            buf[i + 1..i + 5].copy_from_slice(&((lo << 14) | (hi << 2) | rb).to_be_bytes());
+            let rb = fit_bits(u64::from(l.reserved_b), RESERVED_B_BITS, "reserved")? as u32;
+            buf[i] = (id << TEMPORAL_LAYER_ID_SHIFT) | (frc << FRAME_RATE_CODE_SHIFT) | ra;
+            buf[i + LAYER_TAIL_OFFSET..i + LAYER_LEN].copy_from_slice(
+                &((lo << BIT_RATE_LOWER_SHIFT) | (hi << BIT_RATE_UPPER_SHIFT) | rb).to_be_bytes(),
+            );
             i += LAYER_LEN;
         }
         Ok(need)
@@ -552,7 +615,9 @@ impl AvsVideoSampleEntry {
     /// Parse a full sample-entry box (including the 8-byte header).
     pub fn parse_entry(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, BOX_HDR, "AVS sample entry")?;
-        let fourcc = [bytes[4], bytes[5], bytes[6], bytes[7]];
+        let mut cursor = crate::box_types::BOX_TYPE_SIZE;
+        let fourcc = crate::wire_cursor::read_u32(bytes, &mut cursor, "AVS sample entry type")?
+            .to_be_bytes();
         let kind = AvsVideoEntryKind::from_entry_fourcc(fourcc).ok_or(Error::UnexpectedBox {
             expected: "avs3/lav3/avst/lav2",
         })?;
@@ -638,10 +703,10 @@ impl Serialize for AvsVideoSampleEntry {
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
             let len = BOX_HDR + self.config_body_len();
             let len = broadcast_common::len::fit_u32(len, "config box size")?;
-            buf[*c..*c + 4].copy_from_slice(&len.to_be_bytes());
-            *c += 4;
-            buf[*c..*c + 4].copy_from_slice(&cfg_fourcc);
-            *c += 4;
+            buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&len.to_be_bytes());
+            *c += crate::box_types::BOX_TYPE_SIZE;
+            buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&cfg_fourcc);
+            *c += crate::box_types::BOX_TYPE_SIZE;
             *c += self.write_config_body(&mut buf[*c..])?;
             Ok(())
         };
@@ -756,22 +821,23 @@ impl<'a> Parse<'a> for VisualLrapEntry {
             have: 0,
             what: "lrap entry",
         }))?;
-        let n = usize::from((b0 >> 2) & 0x07);
-        let need = 1 + n * 2;
+        let n = usize::from((b0 >> LRAP_ENTRY_COUNT_SHIFT) & LRAP_ENTRY_COUNT_MASK);
+        let need = LRAP_HEADER_LEN + n * LIBRARY_SAMPLE_LEN;
         need_in(bytes, need, "lrap library samples")?;
-        let library_samples = bytes[1..need]
-            .chunks_exact(2)
+        let library_samples = bytes[LRAP_HEADER_LEN..need]
+            .chunks_exact(LIBRARY_SAMPLE_LEN)
             .map(|c| {
-                let v = u16::from_be_bytes([c[0], c[1]]);
-                LibrarySampleRef {
-                    library_sample_number: v >> 7,
-                    reserved: (v & 0x7F) as u8,
-                }
+                let mut cursor = 0;
+                let v = crate::wire_cursor::read_u16(c, &mut cursor, "lrap library sample")?;
+                Ok(LibrarySampleRef {
+                    library_sample_number: v >> LIBRARY_SAMPLE_NUMBER_SHIFT,
+                    reserved: (v & LIBRARY_SAMPLE_RESERVED_MASK) as u8,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
-            lrap_type: b0 >> 5,
-            reserved: b0 & 0x03,
+            lrap_type: b0 >> LRAP_TYPE_SHIFT,
+            reserved: b0 & LIBRARY_DEPENDENCY_MASK,
             library_samples,
         })
     }
@@ -780,25 +846,34 @@ impl<'a> Parse<'a> for VisualLrapEntry {
 impl Serialize for VisualLrapEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        1 + self.library_samples.len() * 2
+        LRAP_HEADER_LEN + self.library_samples.len() * LIBRARY_SAMPLE_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let t = fit_bits(u64::from(self.lrap_type), 3, "LRAP_type")? as u8;
-        let n = fit_bits(self.library_samples.len() as u64, 3, "entry_count")? as u8;
-        let r = fit_bits(u64::from(self.reserved), 2, "reserved")? as u8;
-        buf[0] = (t << 5) | (n << 2) | r;
+        let t = fit_bits(u64::from(self.lrap_type), LRAP_TYPE_BITS, "LRAP_type")? as u8;
+        let n = fit_bits(
+            self.library_samples.len() as u64,
+            LRAP_ENTRY_COUNT_BITS,
+            "entry_count",
+        )? as u8;
+        let r = fit_bits(u64::from(self.reserved), LRAP_RESERVED_BITS, "reserved")? as u8;
+        buf[0] = (t << LRAP_TYPE_SHIFT) | (n << LRAP_ENTRY_COUNT_SHIFT) | r;
         let mut i = 1;
         for s in &self.library_samples {
             let num = fit_bits(
                 u64::from(s.library_sample_number),
-                9,
+                LIBRARY_SAMPLE_NUMBER_BITS,
                 "library_sample_number",
             )? as u16;
-            let rs = fit_bits(u64::from(s.reserved), 7, "reserved")? as u16;
-            buf[i..i + 2].copy_from_slice(&((num << 7) | rs).to_be_bytes());
-            i += 2;
+            let rs = fit_bits(
+                u64::from(s.reserved),
+                LIBRARY_SAMPLE_RESERVED_BITS,
+                "reserved",
+            )? as u16;
+            buf[i..i + LIBRARY_SAMPLE_LEN]
+                .copy_from_slice(&((num << LIBRARY_SAMPLE_NUMBER_SHIFT) | rs).to_be_bytes());
+            i += LIBRARY_SAMPLE_LEN;
         }
         Ok(need)
     }

@@ -18,14 +18,26 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x10;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: usize = 7;
+/// Offset of `storage_property` in the descriptor body.
+const STORAGE_PROPERTY_OFFSET: usize = 0;
+/// Offset of the storage/property flags byte in the descriptor body.
+const FLAGS_OFFSET: usize = 1;
+/// Offset of the reserved bit + `version` word in the descriptor body.
+const VERSION_OFFSET: usize = 2;
+/// Width of the reserved bit + `version` word, bytes.
+const VERSION_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of `storage_priority` in the descriptor body.
+const PRIORITY_OFFSET: usize = 6;
 
 const NOT_LAUNCHABLE_FROM_BROADCAST: u8 = 0x80;
 const LAUNCHABLE_COMPLETELY_FROM_CACHE: u8 = 0x40;
 const IS_LAUNCHABLE_WITH_OLDER_VERSION: u8 = 0x20;
 const RESERVED_FLAGS_MASK: u8 = 0x1F;
 /// Width of the `reserved_flags` field (5 bits).
-const RESERVED_FLAGS_BITS: u32 = 5;
+pub const RESERVED_FLAGS_BITS: u32 = 5;
 const RESERVED_BIT_AFTER_FLAGS: u8 = 0x80;
+/// Shift that places `reserved` at the top of the 32-bit version word.
+const RESERVED_BIT_AFTER_FLAGS_SHIFT: u32 = 24;
 const VERSION_MASK: u32 = 0x7FFF_FFFF;
 
 /// Spec default of the 5-bit `reserved` after the three flags (all ones,
@@ -133,17 +145,19 @@ impl<'a> Parse<'a> for ApplicationStorageDescriptor {
                 reason: "application_storage_descriptor body must be 7 bytes",
             });
         }
-        let flags = body[1];
-        let ver = u32::from_be_bytes([body[2], body[3], body[4], body[5]]);
+        let flags = body[FLAGS_OFFSET];
+        let mut version_bytes = [0u8; VERSION_LEN];
+        version_bytes.copy_from_slice(&body[VERSION_OFFSET..VERSION_OFFSET + VERSION_LEN]);
+        let ver = u32::from_be_bytes(version_bytes);
         Ok(Self {
-            storage_property: StorageProperty::from_u8(body[0]),
+            storage_property: StorageProperty::from_u8(body[STORAGE_PROPERTY_OFFSET]),
             not_launchable_from_broadcast: flags & NOT_LAUNCHABLE_FROM_BROADCAST != 0,
             launchable_completely_from_cache: flags & LAUNCHABLE_COMPLETELY_FROM_CACHE != 0,
             is_launchable_with_older_version: flags & IS_LAUNCHABLE_WITH_OLDER_VERSION != 0,
             reserved_flags: ReservedOnes::from_bits(u64::from(flags & RESERVED_FLAGS_MASK)),
             reserved_before_version: ver & !VERSION_MASK != 0,
             version: ver & VERSION_MASK,
-            priority: body[6],
+            priority: body[PRIORITY_OFFSET],
         })
     }
 }
@@ -160,16 +174,18 @@ impl Serialize for ApplicationStorageDescriptor {
         let version = broadcast_common::len::fit_mask(self.version, VERSION_MASK, "version")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
-        buf[2] = self.storage_property.to_u8();
-        buf[3] = (u8::from(self.not_launchable_from_broadcast) * NOT_LAUNCHABLE_FROM_BROADCAST)
+        buf[HEADER_LEN + STORAGE_PROPERTY_OFFSET] = self.storage_property.to_u8();
+        buf[HEADER_LEN + FLAGS_OFFSET] = (u8::from(self.not_launchable_from_broadcast)
+            * NOT_LAUNCHABLE_FROM_BROADCAST)
             | (u8::from(self.launchable_completely_from_cache) * LAUNCHABLE_COMPLETELY_FROM_CACHE)
             | (u8::from(self.is_launchable_with_older_version) * IS_LAUNCHABLE_WITH_OLDER_VERSION)
             | reserved;
         let word = version
             | (u32::from(self.reserved_before_version)
-                * (u32::from(RESERVED_BIT_AFTER_FLAGS) << 24));
-        buf[4..8].copy_from_slice(&word.to_be_bytes());
-        buf[8] = self.priority;
+                * (u32::from(RESERVED_BIT_AFTER_FLAGS) << RESERVED_BIT_AFTER_FLAGS_SHIFT));
+        buf[HEADER_LEN + VERSION_OFFSET..HEADER_LEN + VERSION_OFFSET + VERSION_LEN]
+            .copy_from_slice(&word.to_be_bytes());
+        buf[HEADER_LEN + PRIORITY_OFFSET] = self.priority;
         Ok(len)
     }
 }

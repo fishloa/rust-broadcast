@@ -30,6 +30,9 @@ pub const AVST_FOURCC: [u8; 4] = *b"avst";
 /// FourCC of the LAVS2 sample entry.
 pub const LAV2_FOURCC: [u8; 4] = *b"lav2";
 const CONFIGURATION_VERSION: u8 = 1;
+/// `configurationVersion`(1) plus `sequence_header_length`(2)
+/// (GY/T 299.1-2016).
+const CONFIG_HEADER_LEN: usize = 3;
 
 /// `Avs2DecoderConfigurationRecord` — the body of the `av2c` box (A.2.2.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,15 +70,15 @@ impl<'a> Parse<'a> for Avs2ConfigurationBox {
 impl Serialize for Avs2ConfigurationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        3 + self.sequence_header.len()
+        CONFIG_HEADER_LEN + self.sequence_header.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let len = fit_u16(self.sequence_header.len(), "sequence_header_length")?;
         buf[0] = self.configuration_version;
-        buf[1..3].copy_from_slice(&len.to_be_bytes());
-        buf[3..need].copy_from_slice(&self.sequence_header);
+        buf[1..CONFIG_HEADER_LEN].copy_from_slice(&len.to_be_bytes());
+        buf[CONFIG_HEADER_LEN..need].copy_from_slice(&self.sequence_header);
         Ok(need)
     }
 }

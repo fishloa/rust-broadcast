@@ -20,7 +20,7 @@ const HEADER_LEN: usize = 2;
 const FLAGS_LEN: usize = 1;
 
 /// Width of the `reserved_future_use` field (5 bits).
-const RESERVED_BITS: u32 = 5;
+pub const RESERVED_BITS: u32 = 5;
 /// Bit position of the 5-bit `reserved_future_use` (the top five bits).
 const RESERVED_SHIFT: u32 = 3;
 const CAN_RUN_WITHOUT_VISIBLE_UI: u8 = 0x04;
@@ -158,7 +158,7 @@ impl Serialize for GraphicsConstraintsDescriptor {
         let reserved = self.reserved_future_use.get() as u8;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = (reserved << RESERVED_SHIFT)
+        buf[HEADER_LEN] = (reserved << RESERVED_SHIFT)
             | (u8::from(self.can_run_without_visible_ui) * CAN_RUN_WITHOUT_VISIBLE_UI)
             | (u8::from(self.handles_configuration_changed) * HANDLES_CONFIGURATION_CHANGED)
             | (u8::from(self.handles_externally_controlled_video)

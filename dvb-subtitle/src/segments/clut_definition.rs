@@ -1,6 +1,9 @@
 //! CLUT Definition Segment — ETSI EN 300 743 §7.2.4, Table 16 (segment_type 0x12).
 
 use crate::error::{Error, Result};
+use crate::segments::{
+    PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -25,6 +28,42 @@ const REDUCED_Y_MAX: u8 = 0x3F;
 const REDUCED_CR_CB_MAX: u8 = 0x0F;
 /// Largest reduced-range `T_value` (2 bits, Table 16).
 const REDUCED_T_MAX: u8 = 0x03;
+
+/// Offset of `CLUT_id` within the segment body.
+const CLUT_ID_OFFSET: usize = 0;
+/// Offset of the CLUT version/reserved byte within the segment body.
+const CLUT_VERSION_OFFSET: usize = 1;
+/// Shift placing `CLUT_version_number` above the reserved bits.
+const CLUT_VERSION_SHIFT: u32 = 4;
+/// Mask of the reserved bits in the CLUT version byte.
+const CLUT_VERSION_RFU_MASK: u8 = 0x0F;
+
+/// Flags-byte bits of a CLUT entry (Table 16).
+const ENTRY_2BIT_FLAG_MASK: u8 = 0x80;
+const ENTRY_4BIT_FLAG_MASK: u8 = 0x40;
+const ENTRY_8BIT_FLAG_MASK: u8 = 0x20;
+const ENTRY_FULL_RANGE_FLAG_MASK: u8 = 0x01;
+
+/// Offsets of the colour components of a full-range entry.
+const ENTRY_Y_OFFSET: usize = 2;
+const ENTRY_CR_OFFSET: usize = 3;
+const ENTRY_CB_OFFSET: usize = 4;
+const ENTRY_T_OFFSET: usize = 5;
+
+/// Shift packing/unpacking reduced-range components within their two bytes.
+const REDUCED_CR_SHIFT: u32 = 2;
+/// Shift placing `Y_value` above the packed `Cr_value` bits.
+const REDUCED_Y_SHIFT: u32 = 2;
+/// Shift placing `Cr_value` above `Cb_value` and `T_value`.
+const REDUCED_CR_PACK_SHIFT: u32 = 6;
+/// Shift placing `Cb_value` within the second packed byte.
+const REDUCED_CB_SHIFT: u32 = 2;
+/// Mask of `Cb_value` within the second packed byte.
+const REDUCED_CB_MASK: u8 = 0x0F;
+/// Mask of the packed `Cr_value` bits in the first byte.
+const REDUCED_CR_MASK: u8 = 0x03;
+/// Mask of the packed `T_value` bits in the second byte.
+const REDUCED_T_MASK: u8 = 0x03;
 
 /// A single CLUT entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,41 +129,44 @@ impl ClutEntry {
                 }));
             }
         }
-        buf[0] = self.clut_entry_id;
+        buf[CLUT_ID_OFFSET] = self.clut_entry_id;
         let mut flags: u8 = self.reserved_flags;
         if self.flag_2bit {
-            flags |= 0x80;
+            flags |= ENTRY_2BIT_FLAG_MASK;
         }
         if self.flag_4bit {
-            flags |= 0x40;
+            flags |= ENTRY_4BIT_FLAG_MASK;
         }
         if self.flag_8bit {
-            flags |= 0x20;
+            flags |= ENTRY_8BIT_FLAG_MASK;
         }
         if self.full_range_flag {
-            flags |= 0x01;
+            flags |= ENTRY_FULL_RANGE_FLAG_MASK;
         }
-        buf[1] = flags;
+        buf[CLUT_VERSION_OFFSET] = flags;
         if self.full_range_flag {
-            buf[2] = self.y_value;
-            buf[3] = self.cr_value;
-            buf[4] = self.cb_value;
-            buf[5] = self.t_value;
+            buf[ENTRY_Y_OFFSET] = self.y_value;
+            buf[ENTRY_CR_OFFSET] = self.cr_value;
+            buf[ENTRY_CB_OFFSET] = self.cb_value;
+            buf[ENTRY_T_OFFSET] = self.t_value;
         } else {
-            buf[2] = (self.y_value << 2) | (self.cr_value >> 2);
-            buf[3] = (self.cr_value << 6) | (self.cb_value << 2) | self.t_value;
+            buf[ENTRY_Y_OFFSET] =
+                (self.y_value << REDUCED_Y_SHIFT) | (self.cr_value >> REDUCED_CR_SHIFT);
+            buf[ENTRY_CR_OFFSET] = (self.cr_value << REDUCED_CR_PACK_SHIFT)
+                | (self.cb_value << REDUCED_CB_SHIFT)
+                | self.t_value;
         }
         Ok(())
     }
 
     fn parse(bytes: &[u8]) -> Result<(Self, usize)> {
         need_in(bytes, ENTRY_HEADER_LEN, "CLUT_entry header")?;
-        let clut_entry_id = bytes[0];
-        let flag_2bit = (bytes[1] & 0x80) != 0;
-        let flag_4bit = (bytes[1] & 0x40) != 0;
-        let flag_8bit = (bytes[1] & 0x20) != 0;
-        let reserved_flags = bytes[1] & RESERVED_FLAGS_MASK;
-        let full_range_flag = (bytes[1] & 0x01) != 0;
+        let clut_entry_id = bytes[CLUT_ID_OFFSET];
+        let flag_2bit = (bytes[CLUT_VERSION_OFFSET] & ENTRY_2BIT_FLAG_MASK) != 0;
+        let flag_4bit = (bytes[CLUT_VERSION_OFFSET] & ENTRY_4BIT_FLAG_MASK) != 0;
+        let flag_8bit = (bytes[CLUT_VERSION_OFFSET] & ENTRY_8BIT_FLAG_MASK) != 0;
+        let reserved_flags = bytes[CLUT_VERSION_OFFSET] & RESERVED_FLAGS_MASK;
+        let full_range_flag = (bytes[CLUT_VERSION_OFFSET] & ENTRY_FULL_RANGE_FLAG_MASK) != 0;
 
         let total = ENTRY_HEADER_LEN
             + if full_range_flag {
@@ -134,12 +176,18 @@ impl ClutEntry {
             };
         need_in(bytes, total, "CLUT_entry data")?;
         let (y, cr, cb, t) = if full_range_flag {
-            (bytes[2], bytes[3], bytes[4], bytes[5])
+            (
+                bytes[ENTRY_Y_OFFSET],
+                bytes[ENTRY_CR_OFFSET],
+                bytes[ENTRY_CB_OFFSET],
+                bytes[ENTRY_T_OFFSET],
+            )
         } else {
-            let y = bytes[2] >> 2;
-            let cr = ((bytes[2] & 0x03) << 2) | (bytes[3] >> 6);
-            let cb = (bytes[3] >> 2) & 0x0F;
-            let t = bytes[3] & 0x03;
+            let y = bytes[ENTRY_Y_OFFSET] >> REDUCED_Y_SHIFT;
+            let cr = ((bytes[ENTRY_Y_OFFSET] & REDUCED_CR_MASK) << REDUCED_CR_SHIFT)
+                | (bytes[ENTRY_CR_OFFSET] >> REDUCED_CR_PACK_SHIFT);
+            let cb = (bytes[ENTRY_CR_OFFSET] >> REDUCED_CB_SHIFT) & REDUCED_CB_MASK;
+            let t = bytes[ENTRY_CR_OFFSET] & REDUCED_T_MASK;
             (y, cr, cb, t)
         };
         Ok((
@@ -191,18 +239,21 @@ impl<'a> Parse<'a> for ClutDefinitionSegment {
                 found: u32::from(bytes[0]),
             }));
         }
-        if bytes[1] != SEGMENT_TYPE {
-            return Err(Error::UnknownSegmentType(bytes[1]));
+        if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
+            return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
+        let segment_length = u16::from_be_bytes([
+            bytes[SEGMENT_LENGTH_OFFSET],
+            bytes[SEGMENT_LENGTH_OFFSET + 1],
+        ]) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "CLUT_definition_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
         need_in(body, FIXED_LEN, "CLUT_definition_segment body")?;
-        let clut_id = body[0];
-        let clut_version_number = body[1] >> 4;
-        let reserved = body[1] & 0x0F;
+        let clut_id = body[CLUT_ID_OFFSET];
+        let clut_version_number = body[CLUT_VERSION_OFFSET] >> CLUT_VERSION_SHIFT;
+        let reserved = body[CLUT_VERSION_OFFSET] & CLUT_VERSION_RFU_MASK;
 
         let rest = &body[FIXED_LEN..];
         let mut entries = alloc::vec::Vec::new();
@@ -250,19 +301,21 @@ impl Serialize for ClutDefinitionSegment {
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = 0x0F;
-        buf[1] = SEGMENT_TYPE;
-        buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
+        buf[0] = crate::pes_data_field::SYNC_BYTE;
+        buf[SEGMENT_TYPE_OFFSET] = SEGMENT_TYPE;
+        buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]
+            .copy_from_slice(&self.page_id.to_be_bytes());
         let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
-        buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
+        buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
+            .copy_from_slice(&seg_len.to_be_bytes());
 
-        buf[6] = self.clut_id;
-        buf[7] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + CLUT_ID_OFFSET] = self.clut_id;
+        buf[HEADER_LEN + CLUT_VERSION_OFFSET] = (broadcast_common::len::fit_mask(
             self.clut_version_number,
-            0x0F,
+            CLUT_VERSION_RFU_MASK,
             "clut_version_number",
-        )? << 4)
-            | broadcast_common::len::fit_mask(self.reserved, 0x0F, "reserved")?;
+        )? << CLUT_VERSION_SHIFT)
+            | broadcast_common::len::fit_mask(self.reserved, CLUT_VERSION_RFU_MASK, "reserved")?;
 
         let mut off = HEADER_LEN + FIXED_LEN;
         for entry in &self.entries {

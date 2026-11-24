@@ -54,6 +54,114 @@ const ES_RATE_TRAILING_MARKER: u8 = 0x01;
 /// Mask of those low 7 bits (`PES_extension_field_length`, `stream_id_extension`).
 const LOW7_MASK: u8 = 0x7F;
 
+/// Bit widths of the hand-packed flag/sub-field values (Table 2-21, Table 2-24).
+const TRICK_FIELD_ID_BITS: u32 = 2;
+const TRICK_FREQUENCY_TRUNCATION_BITS: u32 = 2;
+const TRICK_MODE_CONTROL_BITS: u32 = 3;
+const TRICK_REP_CNTRL_BITS: u32 = 5;
+const TRICK_DATA_BITS: u32 = 5;
+const LOW7_BITS: u32 = 7;
+const ES_RATE_BITS: u32 = 22;
+const ESCR_BASE_BITS: u32 = 33;
+const ESCR_EXT_BITS: u32 = 9;
+const P_STD_BUFFER_SIZE_BITS: u32 = 13;
+
+/// Masks of the packed fields (Table 2-21, Table 2-24).
+const SCRAMBLING_CONTROL_MASK: u8 = 0x03;
+const PTS_DTS_FLAGS_MASK: u8 = 0x03;
+const TRICK_FIELD_ID_MASK: u8 = 0x03;
+const TRICK_FREQUENCY_TRUNCATION_MASK: u8 = 0x03;
+const TRICK_MODE_CONTROL_MASK: u8 = 0x07;
+const TRICK_RESERVED_MASK: u8 = 0x07;
+const TRICK_DATA_MASK: u8 = 0x1F;
+const PPSC_MPEG1_MPEG2_IDENTIFIER_MASK: u8 = 0x40;
+const P_STD_SCALE_MASK: u8 = 0x20;
+const P_STD_SIZE_HI_MASK: u8 = 0x1F;
+/// Masks of the ESCR groups as they sit in their field bytes.
+const ESCR_BASE_HI_MASK: u8 = 0x07;
+const ESCR_BASE_HI_MID_MASK: u8 = 0x03;
+const ESCR_BASE_MID_LO_MASK: u8 = 0x1F;
+const ESCR_BASE_LO_LO_MASK: u8 = 0x1F;
+const ESCR_EXT_HI_MASK: u8 = 0x03;
+/// Mask of one whole byte of a multi-byte field.
+const BYTE_MASK: u64 = 0xFF;
+
+/// Bit shifts used to pack single bits into a header byte.
+const BIT7_SHIFT: u32 = 7;
+const BIT6_SHIFT: u32 = 6;
+const BIT5_SHIFT: u32 = 5;
+const BIT4_SHIFT: u32 = 4;
+const BIT3_SHIFT: u32 = 3;
+const BIT2_SHIFT: u32 = 2;
+const BYTE_SHIFT: u32 = 8;
+
+/// Byte offsets within the fixed PES packet header (Table 2-21).
+const STREAM_ID_OFFSET: usize = crate::PACKET_START_CODE_PREFIX.len();
+const PES_PACKET_LENGTH_OFFSET: usize = STREAM_ID_OFFSET + 1;
+const FLAGS1_OFFSET: usize = MIN_LEN;
+const FLAGS2_OFFSET: usize = FLAGS1_OFFSET + 1;
+const HEADER_DATA_LENGTH_OFFSET: usize = FLAGS2_OFFSET + 1;
+/// `packet_start_code_prefix` as a 24-bit value.
+const PACKET_START_CODE_PREFIX_VALUE: u32 = 0x00_0001;
+
+/// Field widths inside the optional PES header (Table 2-21).
+const PTS_FIELD_LEN: usize = timestamp::FIELD_LEN;
+const PTS_DTS_FIELD_LEN: usize = 2 * PTS_FIELD_LEN;
+/// Width in bytes of the `ESCR` field (ISO/IEC 13818-1 §2.4.3.7, Table 2-21).
+pub const ESCR_FIELD_LEN: usize = 6;
+const ES_RATE_FIELD_LEN: usize = 3;
+const PES_PRIVATE_DATA_LEN: usize = 16;
+const ES_RATE_HI_OFFSET: usize = 0;
+const ES_RATE_MID_OFFSET: usize = ES_RATE_HI_OFFSET + 1;
+const ES_RATE_LO_OFFSET: usize = ES_RATE_MID_OFFSET + 1;
+
+/// `PTS_DTS_flags` values and their bit shift (Table 2-21).
+const PTS_DTS_NONE: u8 = 0b00;
+const PTS_DTS_PTS_ONLY: u8 = 0b10;
+const PTS_DTS_PTS_AND_DTS: u8 = 0b11;
+const PTS_DTS_FLAGS_SHIFT: u32 = 6;
+
+/// `trick_mode_control` values and the shift of their field (Table 2-24).
+const TRICK_MODE_CONTROL_SHIFT: u32 = 5;
+const TRICK_SLOW_MOTION: u8 = 0b001;
+const TRICK_FREEZE_FRAME: u8 = 0b010;
+const TRICK_FAST_REVERSE: u8 = 0b011;
+const TRICK_SLOW_REVERSE: u8 = 0b100;
+
+/// Bit shifts of the `ES_rate` groups.
+const ES_RATE_HI_SHIFT: u32 = 15;
+const ES_RATE_MID_SHIFT: u32 = 7;
+const ES_RATE_LO_SHIFT: u32 = 1;
+/// The leading `marker_bit` of `ES_rate`, within `es_rate_marker_bits`.
+const ES_RATE_LEADING_MARKER_BIT: u8 = 0b10;
+
+/// Bit shifts of the ESCR groups (Table 2-21).
+const ESCR_SHIFT_HI: u32 = 30;
+const ESCR_SHIFT_HI_MID: u32 = 28;
+const ESCR_SHIFT_MID_MID: u32 = 20;
+const ESCR_SHIFT_MID_LO: u32 = 15;
+const ESCR_SHIFT_LO_HI: u32 = 13;
+const ESCR_SHIFT_LO_MID: u32 = 5;
+const ESCR_EXT_SHIFT_HI: u32 = 7;
+const ESCR_EXT_SHIFT_LO: u32 = 1;
+/// Bit shift of the `base[32:30]`/`base[19:15]`/`base[4:0]` groups within their
+/// field bytes.
+const ESCR_GROUP_SHIFT: u32 = 3;
+
+/// Read the big-endian `u16` at `off`.
+fn read_u16_at(b: &[u8], off: usize) -> u16 {
+    let mut raw = [0_u8; core::mem::size_of::<u16>()];
+    raw.copy_from_slice(&b[off..off + core::mem::size_of::<u16>()]);
+    u16::from_be_bytes(raw)
+}
+
+/// Read the big-endian `u32` at `off`.
+fn read_u32_at(b: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; core::mem::size_of::<u32>()];
+    raw.copy_from_slice(&b[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(raw)
+}
+
 // ── PES_scrambling_control (ISO/IEC 13818-1 §2.4.3.7, Table 2-21) ──────────
 
 /// 2-bit `PES_scrambling_control` field. Table 2-21 defines only `00` (not
@@ -72,7 +180,7 @@ pub enum ScramblingControl {
 impl ScramblingControl {
     /// Decode from the 2-bit `PES_scrambling_control` value (masked to `[1:0]`).
     pub fn from_bits(bits: u8) -> Self {
-        match bits & 0b11 {
+        match bits & SCRAMBLING_CONTROL_MASK {
             0b00 => Self::NotScrambled,
             v => Self::Reserved(v),
         }
@@ -83,7 +191,7 @@ impl ScramblingControl {
     pub fn to_bits(self) -> u8 {
         match self {
             Self::NotScrambled => 0b00,
-            Self::Reserved(v) => v & 0b11,
+            Self::Reserved(v) => v & SCRAMBLING_CONTROL_MASK,
         }
     }
 
@@ -118,7 +226,7 @@ impl EsRate {
     pub fn try_new(
         rate: u32,
     ) -> core::result::Result<Self, broadcast_common::error::FieldOverflow> {
-        let fitted = broadcast_common::len::fit_bits(u64::from(rate), 22, "ES_rate")?;
+        let fitted = broadcast_common::len::fit_bits(u64::from(rate), ES_RATE_BITS, "ES_rate")?;
         Ok(Self(fitted as u32))
     }
 
@@ -230,26 +338,29 @@ impl Escr {
     /// `B3[7:0]`=`base[12:5]`,
     /// `B4[7:3]`=`base[4:0]`, `B4[2]`=marker, `B4[1:0]`=`ext[8:7]`,
     /// `B5[7:1]`=`ext[6:0]`, `B5[0]`=marker.
-    pub fn from_field_bytes(b: &[u8; 6]) -> Result<Self> {
-        if b[0] & ESCR_MARKER_MID == 0
-            || b[2] & ESCR_MARKER_MID == 0
-            || b[4] & ESCR_MARKER_MID == 0
-            || b[5] & ESCR_MARKER_LAST == 0
+    pub fn from_field_bytes(b: &[u8; ESCR_FIELD_LEN]) -> Result<Self> {
+        let [b0, b1, b2, b3, b4, b5] = *b;
+        if b0 & ESCR_MARKER_MID == 0
+            || b2 & ESCR_MARKER_MID == 0
+            || b4 & ESCR_MARKER_MID == 0
+            || b5 & ESCR_MARKER_LAST == 0
         {
             return Err(Error::BadMarker("ESCR"));
         }
-        let base = ((((b[0] >> 3) & 0x07) as u64) << 30)   // base[32:30]
-            | (((b[0] & 0x03) as u64) << 28)                 // base[29:28]
-            | ((b[1] as u64) << 20)                           // base[27:20]
-            | ((((b[2] >> 3) & 0x1F) as u64) << 15)          // base[19:15]
-            | (((b[2] & 0x03) as u64) << 13)                  // base[14:13]
-            | ((b[3] as u64) << 5)                             // base[12:5]
-            | (((b[4] >> 3) & 0x1F) as u64); // base[4:0]
-        let extension = ((((b[4] & 0x03) as u16) << 7) | ((b[5] >> 1) as u16)) & ESCR_EXT_MASK;
+        let base = ((u64::from(b0 >> ESCR_GROUP_SHIFT) & u64::from(ESCR_BASE_HI_MASK)) << ESCR_SHIFT_HI) // base[32:30]
+            | ((u64::from(b0 & ESCR_BASE_HI_MID_MASK)) << ESCR_SHIFT_HI_MID) // base[29:28]
+            | (u64::from(b1) << ESCR_SHIFT_MID_MID)                 // base[27:20]
+            | ((u64::from(b2 >> ESCR_GROUP_SHIFT) & u64::from(ESCR_BASE_MID_LO_MASK)) << ESCR_SHIFT_MID_LO) // base[19:15]
+            | ((u64::from(b2 & ESCR_BASE_HI_MID_MASK)) << ESCR_SHIFT_LO_HI)  // base[14:13]
+            | (u64::from(b3) << ESCR_SHIFT_LO_MID)                  // base[12:5]
+            | (u64::from(b4 >> ESCR_GROUP_SHIFT) & u64::from(ESCR_BASE_MID_LO_MASK)); // base[4:0]
+        let extension = ((u16::from(b4 & ESCR_EXT_HI_MASK) << ESCR_EXT_SHIFT_HI)
+            | u16::from(b5 >> ESCR_EXT_SHIFT_LO))
+            & ESCR_EXT_MASK;
         Ok(Self {
             base,
             extension,
-            reserved: b[0] >> ESCR_RESERVED_SHIFT,
+            reserved: b0 >> ESCR_RESERVED_SHIFT,
         })
     }
 
@@ -262,26 +373,32 @@ impl Escr {
     /// [`Error::FieldOverflow`] if `base` is wider than 33 bits, `extension`
     /// wider than 9 bits, or `reserved` wider than 2 bits — never silently
     /// masks (#1129 class, #2747).
-    pub fn to_field_bytes(self) -> Result<[u8; 6]> {
-        let b = broadcast_common::len::fit_bits(self.base, 33, "ESCR_base")?;
-        let e = broadcast_common::len::fit_bits(u64::from(self.extension), 9, "ESCR_ext")?;
+    pub fn to_field_bytes(self) -> Result<[u8; ESCR_FIELD_LEN]> {
+        let b = broadcast_common::len::fit_bits(self.base, ESCR_BASE_BITS, "ESCR_base")?;
+        let e =
+            broadcast_common::len::fit_bits(u64::from(self.extension), ESCR_EXT_BITS, "ESCR_ext")?;
         broadcast_common::len::fit_mask(self.reserved, ESCR_RESERVED_VALUE, "ESCR reserved")?;
         Ok([
             // B0: reserved(2)='11' | base[32:30](3) | marker(1)='1' | base[29:28](2)
             (self.reserved << ESCR_RESERVED_SHIFT)
-                | (((b >> 30) & 0x07) as u8) << 3
+                | (((b >> ESCR_SHIFT_HI) & u64::from(ESCR_BASE_HI_MASK)) as u8) << ESCR_GROUP_SHIFT
                 | ESCR_MARKER_MID
-                | ((b >> 28) & 0x03) as u8,
+                | ((b >> ESCR_SHIFT_HI_MID) & u64::from(ESCR_BASE_HI_MID_MASK)) as u8,
             // B1: base[27:20](8)
-            ((b >> 20) & 0xFF) as u8,
+            ((b >> ESCR_SHIFT_MID_MID) & BYTE_MASK) as u8,
             // B2: base[19:15](5) | marker(1)='1' | base[14:13](2)
-            (((b >> 15) & 0x1F) as u8) << 3 | ESCR_MARKER_MID | ((b >> 13) & 0x03) as u8,
+            (((b >> ESCR_SHIFT_MID_LO) & u64::from(ESCR_BASE_MID_LO_MASK)) as u8)
+                << ESCR_GROUP_SHIFT
+                | ESCR_MARKER_MID
+                | ((b >> ESCR_SHIFT_LO_HI) & u64::from(ESCR_BASE_HI_MID_MASK)) as u8,
             // B3: base[12:5](8)
-            ((b >> 5) & 0xFF) as u8,
+            ((b >> ESCR_SHIFT_LO_MID) & BYTE_MASK) as u8,
             // B4: base[4:0](5) | marker(1)='1' | ext[8:7](2)
-            (((b & 0x1F) as u8) << 3) | ESCR_MARKER_MID | ((e >> 7) & 0x03) as u8,
+            (((b & u64::from(ESCR_BASE_LO_LO_MASK)) as u8) << ESCR_GROUP_SHIFT)
+                | ESCR_MARKER_MID
+                | ((e >> ESCR_EXT_SHIFT_HI) & u64::from(ESCR_EXT_HI_MASK)) as u8,
             // B5: ext[6:0](7) | marker(1)='1'
-            (((e & 0x7F) as u8) << 1) | ESCR_MARKER_LAST,
+            (((e & u64::from(LOW7_MASK)) as u8) << ESCR_EXT_SHIFT_LO) | ESCR_MARKER_LAST,
         ])
     }
 }
@@ -343,23 +460,23 @@ pub enum TrickMode {
 impl TrickMode {
     /// Decode from the 1-byte trick-mode field (ISO/IEC 13818-1 §2.4.3.7).
     pub fn from_byte(b: u8) -> Self {
-        let control = (b >> 5) & 0x07;
-        let data = b & 0x1F;
+        let control = (b >> TRICK_MODE_CONTROL_SHIFT) & TRICK_MODE_CONTROL_MASK;
+        let data = b & TRICK_DATA_MASK;
         match control {
             0b000 => TrickMode::FastForward {
-                field_id: (data >> 3) & 0x03,
-                intra_slice_refresh: (data >> 2) & 0x01 != 0,
-                frequency_truncation: data & 0x03,
+                field_id: (data >> BIT3_SHIFT) & TRICK_FIELD_ID_MASK,
+                intra_slice_refresh: (data >> BIT2_SHIFT) & 1 != 0,
+                frequency_truncation: data & TRICK_FREQUENCY_TRUNCATION_MASK,
             },
             0b001 => TrickMode::SlowMotion { rep_cntrl: data },
             0b010 => TrickMode::FreezeFrame {
-                field_id: (data >> 3) & 0x03,
-                reserved: data & 0x07,
+                field_id: (data >> BIT3_SHIFT) & TRICK_FIELD_ID_MASK,
+                reserved: data & TRICK_RESERVED_MASK,
             },
             0b011 => TrickMode::FastReverse {
-                field_id: (data >> 3) & 0x03,
-                intra_slice_refresh: (data >> 2) & 0x01 != 0,
-                frequency_truncation: data & 0x03,
+                field_id: (data >> BIT3_SHIFT) & TRICK_FIELD_ID_MASK,
+                intra_slice_refresh: (data >> BIT2_SHIFT) & 1 != 0,
+                frequency_truncation: data & TRICK_FREQUENCY_TRUNCATION_MASK,
             },
             0b100 => TrickMode::SlowReverse { rep_cntrl: data },
             _ => TrickMode::Reserved {
@@ -384,45 +501,67 @@ impl TrickMode {
                 intra_slice_refresh,
                 frequency_truncation,
             } => {
-                let field_id = fit_bits(u64::from(field_id), 2, "trick_mode.field_id")?;
+                let field_id = fit_bits(
+                    u64::from(field_id),
+                    TRICK_FIELD_ID_BITS,
+                    "trick_mode.field_id",
+                )?;
                 let frequency_truncation = fit_bits(
                     u64::from(frequency_truncation),
-                    2,
+                    TRICK_FREQUENCY_TRUNCATION_BITS,
                     "trick_mode.frequency_truncation",
                 )?;
-                Ok(((field_id as u8) << 3)
-                    | ((intra_slice_refresh as u8) << 2)
+                Ok(((field_id as u8) << BIT3_SHIFT)
+                    | ((intra_slice_refresh as u8) << BIT2_SHIFT)
                     | (frequency_truncation as u8))
             }
             TrickMode::SlowMotion { rep_cntrl } => {
-                let rep_cntrl = fit_bits(u64::from(rep_cntrl), 5, "trick_mode.rep_cntrl")?;
-                Ok((0b001 << 5) | (rep_cntrl as u8))
+                let rep_cntrl = fit_bits(
+                    u64::from(rep_cntrl),
+                    TRICK_REP_CNTRL_BITS,
+                    "trick_mode.rep_cntrl",
+                )?;
+                Ok((TRICK_SLOW_MOTION << TRICK_MODE_CONTROL_SHIFT) | (rep_cntrl as u8))
             }
             TrickMode::FreezeFrame { field_id, reserved } => {
-                let field_id = fit_bits(u64::from(field_id), 2, "trick_mode.field_id")?;
+                let field_id = fit_bits(
+                    u64::from(field_id),
+                    TRICK_FIELD_ID_BITS,
+                    "trick_mode.field_id",
+                )?;
                 let reserved =
                     fit_mask(reserved, FREEZE_FRAME_RESERVED_VALUE, "trick_mode.reserved")?;
-                Ok((0b010 << 5) | ((field_id as u8) << 3) | reserved)
+                Ok((TRICK_FREEZE_FRAME << TRICK_MODE_CONTROL_SHIFT)
+                    | ((field_id as u8) << BIT3_SHIFT)
+                    | reserved)
             }
             TrickMode::FastReverse {
                 field_id,
                 intra_slice_refresh,
                 frequency_truncation,
             } => {
-                let field_id = fit_bits(u64::from(field_id), 2, "trick_mode.field_id")?;
+                let field_id = fit_bits(
+                    u64::from(field_id),
+                    TRICK_FIELD_ID_BITS,
+                    "trick_mode.field_id",
+                )?;
                 let frequency_truncation = fit_bits(
                     u64::from(frequency_truncation),
-                    2,
+                    TRICK_FREQUENCY_TRUNCATION_BITS,
                     "trick_mode.frequency_truncation",
                 )?;
-                Ok((0b011 << 5)
-                    | ((field_id as u8) << 3)
-                    | ((intra_slice_refresh as u8) << 2)
+                Ok((TRICK_FAST_REVERSE << TRICK_MODE_CONTROL_SHIFT)
+                    | ((field_id as u8) << BIT3_SHIFT)
+                    | ((intra_slice_refresh as u8) << BIT2_SHIFT)
                     | (frequency_truncation as u8))
             }
             TrickMode::SlowReverse { rep_cntrl } => {
-                let rep_cntrl = fit_bits(u64::from(rep_cntrl), 5, "trick_mode.rep_cntrl")?;
-                Ok((0b100 << 5) | (rep_cntrl as u8))
+                let rep_cntrl = fit_bits(
+                    u64::from(rep_cntrl),
+                    TRICK_REP_CNTRL_BITS,
+                    "trick_mode.rep_cntrl",
+                )?;
+                Ok((TRICK_SLOW_REVERSE << TRICK_MODE_CONTROL_SHIFT) | (rep_cntrl as u8))
             }
             TrickMode::Reserved {
                 trick_mode_control,
@@ -430,11 +569,11 @@ impl TrickMode {
             } => {
                 let trick_mode_control = fit_bits(
                     u64::from(trick_mode_control),
-                    3,
+                    TRICK_MODE_CONTROL_BITS,
                     "trick_mode.trick_mode_control",
                 )?;
-                let data = fit_bits(u64::from(data), 5, "trick_mode.data")?;
-                Ok(((trick_mode_control as u8) << 5) | (data as u8))
+                let data = fit_bits(u64::from(data), TRICK_DATA_BITS, "trick_mode.data")?;
+                Ok(((trick_mode_control as u8) << TRICK_MODE_CONTROL_SHIFT) | (data as u8))
             }
         }
     }
@@ -572,8 +711,8 @@ impl<'a> PesExtension<'a> {
         let mut cursor = 1usize;
 
         let pes_private_data = if flags & EXT_PES_PRIVATE_DATA != 0 {
-            let end = cursor + 16;
-            let arr: [u8; 16] = data
+            let end = cursor + PES_PRIVATE_DATA_LEN;
+            let arr: [u8; PES_PRIVATE_DATA_LEN] = data
                 .get(cursor..end)
                 .and_then(|s| s.try_into().ok())
                 .ok_or(Error::BufferTooShort(
@@ -613,33 +752,37 @@ impl<'a> PesExtension<'a> {
         };
 
         let program_packet_sequence_counter = if flags & EXT_PROGRAM_PACKET_SEQUENCE_COUNTER != 0 {
-            need_in(data, cursor + 2, "program_packet_sequence_counter")?;
+            need_in(
+                data,
+                cursor + core::mem::size_of::<u16>(),
+                "program_packet_sequence_counter",
+            )?;
             let b0 = data[cursor];
             let b1 = data[cursor + 1];
-            cursor += 2;
+            cursor += core::mem::size_of::<u16>();
             if b0 & PPSC_MARKER == 0 || b1 & PPSC_MARKER == 0 {
                 return Err(Error::BadMarker("program_packet_sequence_counter"));
             }
             Some(ProgramPacketSequenceCounter {
-                counter: b0 & 0x7F,
-                mpeg1_mpeg2_identifier: (b1 & 0x40) != 0,
-                original_stuff_length: b1 & 0x3F,
+                counter: b0 & LOW7_MASK,
+                mpeg1_mpeg2_identifier: (b1 & PPSC_MPEG1_MPEG2_IDENTIFIER_MASK) != 0,
+                original_stuff_length: b1 & ORIGINAL_STUFF_LENGTH_MASK,
             })
         } else {
             None
         };
 
         let p_std_buffer = if flags & EXT_P_STD_BUFFER != 0 {
-            need_in(data, cursor + 2, "P-STD_buffer")?;
+            need_in(data, cursor + core::mem::size_of::<u16>(), "P-STD_buffer")?;
             let b0 = data[cursor];
             let b1 = data[cursor + 1];
-            cursor += 2;
+            cursor += core::mem::size_of::<u16>();
             if b0 & P_STD_PREFIX_MASK != P_STD_PREFIX {
                 return Err(Error::BadMarker("P-STD_buffer"));
             }
             Some(PStdBuffer {
-                scale: (b0 & 0x20) != 0,
-                size: (((b0 & 0x1F) as u16) << 8) | (b1 as u16),
+                scale: (b0 & P_STD_SCALE_MASK) != 0,
+                size: (u16::from(b0 & P_STD_SIZE_HI_MASK) << BYTE_SHIFT) | u16::from(b1),
             })
         } else {
             None
@@ -699,16 +842,16 @@ impl<'a> PesExtension<'a> {
     pub fn serialized_len(&self) -> usize {
         let mut n = 1usize; // flags byte
         if self.pes_private_data.is_some() {
-            n += 16;
+            n += PES_PRIVATE_DATA_LEN;
         }
         if let Some(ph) = self.pack_header {
             n += 1 + ph.len();
         }
         if self.program_packet_sequence_counter.is_some() {
-            n += 2;
+            n += core::mem::size_of::<u16>();
         }
         if self.p_std_buffer.is_some() {
-            n += 2;
+            n += core::mem::size_of::<u16>();
         }
         if let Some(ef) = &self.pes_extension_field {
             // length byte + stream_id_extension byte + trailing bytes.
@@ -745,8 +888,8 @@ impl<'a> PesExtension<'a> {
         let mut cursor = 1usize;
 
         if let Some(pd) = &self.pes_private_data {
-            buf[cursor..cursor + 16].copy_from_slice(pd);
-            cursor += 16;
+            buf[cursor..cursor + PES_PRIVATE_DATA_LEN].copy_from_slice(pd);
+            cursor += PES_PRIVATE_DATA_LEN;
         }
         if let Some(ph) = self.pack_header {
             buf[cursor] =
@@ -769,21 +912,24 @@ impl<'a> PesExtension<'a> {
             )?;
             buf[cursor] = PPSC_MARKER | counter;
             // byte 1: marker(1) | mpeg1_mpeg2_id(1) | original_stuff_length(6)
-            buf[cursor + 1] =
-                PPSC_MARKER | ((ppsc.mpeg1_mpeg2_identifier as u8) << 6) | original_stuff_length;
-            cursor += 2;
+            buf[cursor + 1] = PPSC_MARKER
+                | ((ppsc.mpeg1_mpeg2_identifier as u8) << BIT6_SHIFT)
+                | original_stuff_length;
+            cursor += core::mem::size_of::<u16>();
         }
         if let Some(ps) = self.p_std_buffer {
             // '01' | scale(1) | size(13)
             // size is 13 bits: reject, never mask, an over-range value (#1129).
             let size = broadcast_common::len::fit_bits(
                 u64::from(ps.size),
-                13,
+                P_STD_BUFFER_SIZE_BITS,
                 "PES_extension.P-STD_buffer_size",
             )? as u16;
-            buf[cursor] = P_STD_PREFIX | ((ps.scale as u8) << 5) | ((size >> 8) as u8 & 0x1F);
-            buf[cursor + 1] = (size & 0xFF) as u8;
-            cursor += 2;
+            buf[cursor] = P_STD_PREFIX
+                | ((ps.scale as u8) << BIT5_SHIFT)
+                | ((size >> BYTE_SHIFT) as u8 & P_STD_SIZE_HI_MASK);
+            buf[cursor + 1] = size.to_be_bytes()[1];
+            cursor += core::mem::size_of::<u16>();
         }
         if let Some(ef) = &self.pes_extension_field {
             let field_len = 1 + ef.rest.len(); // stream_id_extension byte + rest
@@ -791,12 +937,13 @@ impl<'a> PesExtension<'a> {
             // bit written below is `marker_bit`, always 1.
             let checked = broadcast_common::len::fit_bits(
                 field_len as u64,
-                7,
+                LOW7_BITS,
                 "PES_extension.PES_extension_field_length",
             )?;
             buf[cursor] = MSB_FLAG | (checked as u8);
             cursor += 1;
-            buf[cursor] = ((ef.stream_id_extension_flag as u8) << 7) | (ef.low_bits & LOW7_MASK);
+            buf[cursor] =
+                ((ef.stream_id_extension_flag as u8) << BIT7_SHIFT) | (ef.low_bits & LOW7_MASK);
             cursor += 1;
             buf[cursor..cursor + ef.rest.len()].copy_from_slice(ef.rest);
             cursor += ef.rest.len();
@@ -900,24 +1047,24 @@ impl PesHeader<'_> {
     #[must_use]
     pub fn flag_bytes(&self) -> [u8; 2] {
         // f1: marker '10' | scrambling(2) | priority(1) | align(1) | copyright(1) | orig(1)
-        let f1 = 0x80
-            | (self.scrambling_control.to_bits() << 4)
-            | (u8::from(self.pes_priority) << 3)
-            | (u8::from(self.data_alignment_indicator) << 2)
+        let f1 = F1_MARKER_VALUE
+            | (self.scrambling_control.to_bits() << BIT4_SHIFT)
+            | (u8::from(self.pes_priority) << BIT3_SHIFT)
+            | (u8::from(self.data_alignment_indicator) << BIT2_SHIFT)
             | (u8::from(self.copyright) << 1)
             | u8::from(self.original_or_copy);
         // f2: pts_dts_flags(2) | escr_flag(1) | es_rate_flag(1) |
         //     trick_mode(1) | add_copy(1) | crc(1) | ext(1)
         let pts_dts_flags = match (self.pts.is_some(), self.dts.is_some()) {
-            (true, true) => 0b11u8,
-            (true, false) => 0b10,
-            _ => 0b00,
+            (true, true) => PTS_DTS_PTS_AND_DTS,
+            (true, false) => PTS_DTS_PTS_ONLY,
+            _ => PTS_DTS_NONE,
         };
-        let f2 = (pts_dts_flags << 6)
-            | (u8::from(self.escr.is_some()) << 5)
-            | (u8::from(self.es_rate.is_some()) << 4)
-            | (u8::from(self.dsm_trick_mode.is_some()) << 3)
-            | (u8::from(self.additional_copy_info.is_some()) << 2)
+        let f2 = (pts_dts_flags << PTS_DTS_FLAGS_SHIFT)
+            | (u8::from(self.escr.is_some()) << BIT5_SHIFT)
+            | (u8::from(self.es_rate.is_some()) << BIT4_SHIFT)
+            | (u8::from(self.dsm_trick_mode.is_some()) << BIT3_SHIFT)
+            | (u8::from(self.additional_copy_info.is_some()) << BIT2_SHIFT)
             | (u8::from(self.pes_crc.is_some()) << 1)
             | u8::from(self.pes_extension.is_some());
         [f1, f2]
@@ -939,21 +1086,23 @@ impl PesHeader<'_> {
         // PTS (and/or DTS).
         if let Some(pts) = self.pts {
             let prefix = if self.dts.is_some() {
-                0b0011u8
+                timestamp::PTS_WITH_DTS_PREFIX
             } else {
-                0b0010u8
+                timestamp::PTS_PREFIX
             };
-            buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(pts.ticks(), prefix));
-            cursor += 5;
+            buf[cursor..cursor + PTS_FIELD_LEN]
+                .copy_from_slice(&timestamp::write(pts.ticks(), prefix));
+            cursor += PTS_FIELD_LEN;
         }
         if let Some(dts) = self.dts {
-            buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(dts.ticks(), 0b0001));
-            cursor += 5;
+            buf[cursor..cursor + PTS_FIELD_LEN]
+                .copy_from_slice(&timestamp::write(dts.ticks(), timestamp::DTS_PREFIX));
+            cursor += PTS_FIELD_LEN;
         }
         // ESCR.
         if let Some(escr) = self.escr {
-            buf[cursor..cursor + 6].copy_from_slice(&escr.to_field_bytes()?);
-            cursor += 6;
+            buf[cursor..cursor + ESCR_FIELD_LEN].copy_from_slice(&escr.to_field_bytes()?);
+            cursor += ESCR_FIELD_LEN;
         }
         // ES_rate: marker(1) | rate(22) | marker(1) = 3 bytes.
         if let Some(rate) = self.es_rate {
@@ -965,16 +1114,17 @@ impl PesHeader<'_> {
                 "ES_rate marker bits",
             )?;
             let rate = rate.rate();
-            let leading = if marker_bits & 0b10 != 0 {
+            let leading = if marker_bits & ES_RATE_LEADING_MARKER_BIT != 0 {
                 ES_RATE_LEADING_MARKER
             } else {
                 0
             };
-            buf[cursor] = leading | ((rate >> 15) as u8 & 0x7F);
-            buf[cursor + 1] = ((rate >> 7) & 0xFF) as u8;
-            buf[cursor + 2] =
-                (((rate & 0x7F) as u8) << 1) | (marker_bits & ES_RATE_TRAILING_MARKER);
-            cursor += 3;
+            buf[cursor] = leading | ((rate >> ES_RATE_HI_SHIFT) as u8 & LOW7_MASK);
+            buf[cursor + 1] = ((rate >> ES_RATE_MID_SHIFT) & u32::from(u8::MAX)) as u8;
+            buf[cursor + ES_RATE_LO_OFFSET] = (((rate & u32::from(LOW7_MASK)) as u8)
+                << ES_RATE_LO_SHIFT)
+                | (marker_bits & ES_RATE_TRAILING_MARKER);
+            cursor += ES_RATE_FIELD_LEN;
         }
         // DSM trick mode.
         if let Some(tm) = self.dsm_trick_mode {
@@ -995,8 +1145,8 @@ impl PesHeader<'_> {
         }
         // PES_CRC (2 bytes, big-endian).
         if let Some(crc) = self.pes_crc {
-            buf[cursor..cursor + 2].copy_from_slice(&crc.to_be_bytes());
-            cursor += 2;
+            buf[cursor..cursor + core::mem::size_of::<u16>()].copy_from_slice(&crc.to_be_bytes());
+            cursor += core::mem::size_of::<u16>();
         }
         // PES_extension.
         if let Some(ref ext) = self.pes_extension {
@@ -1017,16 +1167,16 @@ impl PesHeader<'_> {
     pub fn optional_len(&self) -> usize {
         let mut n = 0usize;
         if self.pts.is_some() {
-            n += 5;
+            n += PTS_FIELD_LEN;
         }
         if self.dts.is_some() {
-            n += 5;
+            n += PTS_FIELD_LEN;
         }
         if self.escr.is_some() {
-            n += 6;
+            n += ESCR_FIELD_LEN;
         }
         if self.es_rate.is_some() {
-            n += 3;
+            n += ES_RATE_FIELD_LEN;
         }
         if self.dsm_trick_mode.is_some() {
             n += 1;
@@ -1035,7 +1185,7 @@ impl PesHeader<'_> {
             n += 1;
         }
         if self.pes_crc.is_some() {
-            n += 2;
+            n += core::mem::size_of::<u16>();
         }
         if let Some(ref ext) = self.pes_extension {
             n += ext.serialized_len();
@@ -1120,15 +1270,15 @@ impl<'a> PesPacket<'a> {
     /// strict path returns [`Error::BufferTooShort`] instead.
     fn parse_select(b: &'a [u8], lenient: bool) -> Result<(Self, Option<Truncation>)> {
         need_in(b, MIN_LEN, "PES packet header")?;
-        if b[0..3] != PACKET_START_CODE_PREFIX {
+        if b[..crate::PACKET_START_CODE_PREFIX.len()] != PACKET_START_CODE_PREFIX {
             return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
                 what: "packet_start_code_prefix",
-                expected: 0x000001,
-                found: (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]),
+                expected: PACKET_START_CODE_PREFIX_VALUE,
+                found: read_u32_at(b, 0) >> BYTE_SHIFT,
             }));
         }
-        let stream_id = StreamId::new(b[3]);
-        let pes_packet_length = u16::from_be_bytes([b[4], b[5]]);
+        let stream_id = StreamId::new(b[STREAM_ID_OFFSET]);
+        let pes_packet_length = read_u16_at(b, PES_PACKET_LENGTH_OFFSET);
         // Where the payload ends: bounded by PES_packet_length unless 0
         // (unbounded: the packet runs to the end of the buffer).
         let payload_end = if pes_packet_length == 0 {
@@ -1167,15 +1317,15 @@ impl<'a> PesPacket<'a> {
         }
 
         need_in(b, MIN_LEN + HEADER_FIXED, "PES optional header")?;
-        let f1 = b[6];
-        let f2 = b[7];
+        let f1 = b[FLAGS1_OFFSET];
+        let f2 = b[FLAGS2_OFFSET];
         // Table 2-21: the first two bits are the fixed `'10'`. Anything else
         // is not an MPEG-2 PES header (MPEG-1 PES, or damage) and would be
         // misparsed as one.
         if f1 & F1_MARKER_MASK != F1_MARKER_VALUE {
             return Err(Error::BadHeaderMarker);
         }
-        let hdl = usize::from(b[8]);
+        let hdl = usize::from(b[HEADER_DATA_LENGTH_OFFSET]);
         let hdr_start = MIN_LEN + HEADER_FIXED; // = 9
         let hdr_end = hdr_start + hdl;
         need_in(b, hdr_end, "PES_header_data_length")?;
@@ -1195,43 +1345,28 @@ impl<'a> PesPacket<'a> {
         let mut cursor = 0usize;
 
         // PTS/DTS (ISO/IEC 13818-1 §2.4.3.7 Table 2-21).
-        let pts_dts_flags = (f2 >> 6) & 0x03;
+        let pts_dts_flags = (f2 >> PTS_DTS_FLAGS_SHIFT) & PTS_DTS_FLAGS_MASK;
 
         let (pts, dts) = match pts_dts_flags {
             0b10 => {
-                need_in(opt, cursor + 5, "PTS")?;
-                // `need_in` guarantees five bytes from `cursor` are present.
-                let field = [
-                    opt[cursor],
-                    opt[cursor + 1],
-                    opt[cursor + 2],
-                    opt[cursor + 3],
-                    opt[cursor + 4],
-                ];
+                need_in(opt, cursor + PTS_FIELD_LEN, "PTS")?;
+                // `need_in` guarantees the field bytes from `cursor` are present.
+                let mut field = [0_u8; PTS_FIELD_LEN];
+                field.copy_from_slice(&opt[cursor..cursor + PTS_FIELD_LEN]);
                 let pts = Pts::from_field_bytes(&field)?;
-                cursor += 5;
+                cursor += PTS_FIELD_LEN;
                 (Some(pts), None)
             }
             0b11 => {
-                need_in(opt, cursor + 10, "PTS+DTS")?;
-                let pts_field = [
-                    opt[cursor],
-                    opt[cursor + 1],
-                    opt[cursor + 2],
-                    opt[cursor + 3],
-                    opt[cursor + 4],
-                ];
+                need_in(opt, cursor + PTS_DTS_FIELD_LEN, "PTS+DTS")?;
+                let mut pts_field = [0_u8; PTS_FIELD_LEN];
+                pts_field.copy_from_slice(&opt[cursor..cursor + PTS_FIELD_LEN]);
                 let pts = Pts::from_field_bytes_with_dts(&pts_field)?;
-                cursor += 5;
-                let dts_field = [
-                    opt[cursor],
-                    opt[cursor + 1],
-                    opt[cursor + 2],
-                    opt[cursor + 3],
-                    opt[cursor + 4],
-                ];
+                cursor += PTS_FIELD_LEN;
+                let mut dts_field = [0_u8; PTS_FIELD_LEN];
+                dts_field.copy_from_slice(&opt[cursor..cursor + PTS_FIELD_LEN]);
                 let dts = Dts::from_field_bytes(&dts_field)?;
-                cursor += 5;
+                cursor += PTS_FIELD_LEN;
                 (Some(pts), Some(dts))
             }
             0b00 => (None, None),
@@ -1245,18 +1380,12 @@ impl<'a> PesPacket<'a> {
 
         // ESCR (6 bytes, ISO/IEC 13818-1 §2.4.3.7).
         let escr = if f2 & F2_ESCR != 0 {
-            need_in(opt, cursor + 6, "ESCR")?;
-            // `need_in` guarantees six bytes from `cursor` are present.
-            let arr = [
-                opt[cursor],
-                opt[cursor + 1],
-                opt[cursor + 2],
-                opt[cursor + 3],
-                opt[cursor + 4],
-                opt[cursor + 5],
-            ];
+            need_in(opt, cursor + ESCR_FIELD_LEN, "ESCR")?;
+            // `need_in` guarantees the field bytes from `cursor` are present.
+            let mut arr = [0_u8; ESCR_FIELD_LEN];
+            arr.copy_from_slice(&opt[cursor..cursor + ESCR_FIELD_LEN]);
             let e = Escr::from_field_bytes(&arr)?;
-            cursor += 6;
+            cursor += ESCR_FIELD_LEN;
             Some(e)
         } else {
             None
@@ -1265,12 +1394,14 @@ impl<'a> PesPacket<'a> {
         // ES_rate (3 bytes: 1 marker + 22-bit rate + 1 marker).
         let mut es_rate_marker_bits = ES_RATE_MARKERS_VALUE;
         let es_rate = if f2 & F2_ES_RATE != 0 {
-            need_in(opt, cursor + 3, "ES_rate")?;
-            es_rate_marker_bits = ((opt[cursor] >> 7) << 1) | (opt[cursor + 2] & 1);
-            let rate = (((opt[cursor] & 0x7F) as u32) << 15)
-                | ((opt[cursor + 1] as u32) << 7)
-                | ((opt[cursor + 2] >> 1) as u32);
-            cursor += 3;
+            need_in(opt, cursor + ES_RATE_FIELD_LEN, "ES_rate")?;
+            es_rate_marker_bits = ((opt[cursor + ES_RATE_HI_OFFSET] >> BIT7_SHIFT)
+                << ES_RATE_LO_SHIFT)
+                | (opt[cursor + ES_RATE_LO_OFFSET] & 1);
+            let rate = (u32::from(opt[cursor + ES_RATE_HI_OFFSET] & LOW7_MASK) << ES_RATE_HI_SHIFT)
+                | (u32::from(opt[cursor + ES_RATE_MID_OFFSET]) << ES_RATE_MID_SHIFT)
+                | (u32::from(opt[cursor + ES_RATE_LO_OFFSET]) >> ES_RATE_LO_SHIFT);
+            cursor += ES_RATE_FIELD_LEN;
             // The 22-bit field is always in range; the check is a reminder that
             // `EsRate` is bounded and reports a (here-unreachable) overflow.
             Some(EsRate::try_new(rate)?)
@@ -1292,7 +1423,7 @@ impl<'a> PesPacket<'a> {
         let additional_copy_info = if f2 & F2_ADDITIONAL_COPY_INFO != 0 {
             need_in(opt, cursor + 1, "additional_copy_info")?;
             let v = AdditionalCopyInfo {
-                info: opt[cursor] & 0x7F,
+                info: opt[cursor] & LOW7_MASK,
                 marker: opt[cursor] & ADDITIONAL_COPY_INFO_MARKER != 0,
             };
             cursor += 1;
@@ -1303,9 +1434,9 @@ impl<'a> PesPacket<'a> {
 
         // PES_CRC (2 bytes).
         let pes_crc = if f2 & F2_PES_CRC != 0 {
-            need_in(opt, cursor + 2, "PES_CRC")?;
-            let crc = u16::from_be_bytes([opt[cursor], opt[cursor + 1]]);
-            cursor += 2;
+            need_in(opt, cursor + core::mem::size_of::<u16>(), "PES_CRC")?;
+            let crc = read_u16_at(opt, cursor);
+            cursor += core::mem::size_of::<u16>();
             Some(crc)
         } else {
             None
@@ -1326,7 +1457,7 @@ impl<'a> PesPacket<'a> {
         let header_stuffing = opt.get(cursor..).unwrap_or(&[]);
 
         let header = PesHeader {
-            scrambling_control: ScramblingControl::from_bits(f1 >> 4),
+            scrambling_control: ScramblingControl::from_bits(f1 >> BIT4_SHIFT),
             pes_priority: f1 & F1_PRIORITY != 0,
             data_alignment_indicator: f1 & F1_DATA_ALIGNMENT != 0,
             copyright: f1 & F1_COPYRIGHT != 0,
@@ -1367,8 +1498,8 @@ impl<'a> PesPacket<'a> {
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX);
-        buf[3] = self.stream_id.get();
+        buf[..crate::PACKET_START_CODE_PREFIX.len()].copy_from_slice(&PACKET_START_CODE_PREFIX);
+        buf[STREAM_ID_OFFSET] = self.stream_id.get();
         // PES_packet_length (ISO/IEC 13818-1 Table 2-21): every byte after the
         // field. `0` is the unbounded form — legal only where the MPEG-2
         // systems layer allows it (video in a transport stream), so a packet
@@ -1385,7 +1516,7 @@ impl<'a> PesPacket<'a> {
                 }));
             }
         };
-        buf[4..6].copy_from_slice(&packet_length.to_be_bytes());
+        buf[PES_PACKET_LENGTH_OFFSET..MIN_LEN].copy_from_slice(&packet_length.to_be_bytes());
         let payload_at = match &self.header {
             None => MIN_LEN,
             Some(h) => {
@@ -1400,14 +1531,14 @@ impl<'a> PesPacket<'a> {
                     return Err(Error::ForbiddenPtsDtsFlags);
                 }
                 let opt_len = h.optional_len();
-                if opt_len > 255 {
+                if opt_len > usize::from(u8::MAX) {
                     return Err(Error::OptionalFieldsTooLarge(opt_len));
                 }
 
                 let [f1, f2] = h.flag_bytes();
-                buf[6] = f1;
-                buf[7] = f2;
-                buf[8] = opt_len as u8;
+                buf[FLAGS1_OFFSET] = f1;
+                buf[FLAGS2_OFFSET] = f2;
+                buf[HEADER_DATA_LENGTH_OFFSET] = opt_len as u8;
                 let cursor = MIN_LEN + HEADER_FIXED; // = 9
                 h.serialize_optional_fields(&mut buf[cursor..])?;
 

@@ -3,6 +3,7 @@
 //! Supplemental usage. Adds a time_descriptor with PTP/TAI time to the
 //! resulting SCTE 35 section.
 
+use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -13,6 +14,14 @@ pub const OP_ID: u16 = 0x0110;
 
 /// Fixed wire length.
 pub const LEN: usize = 12;
+
+// Field byte offsets within the descriptor body (§8.3, Table 8-4).
+const TAI_SECONDS_OFFSET: usize = 0;
+const TAI_SECONDS_LEN: usize = 6;
+const TAI_NS_OFFSET: usize = TAI_SECONDS_OFFSET + TAI_SECONDS_LEN;
+const UTC_OFFSET_OFFSET: usize = TAI_NS_OFFSET + core::mem::size_of::<u32>();
+/// Bits per byte, used to derive the 48-bit `TAI_seconds` bound.
+const BYTE_SHIFT: u32 = u8::BITS;
 
 /// insert_time_descriptor() — §9.8.10, Table 9-32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -31,14 +40,14 @@ impl<'a> Parse<'a> for InsertTimeDescriptor {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, LEN, "insert_time_descriptor")?;
         // TAI_seconds: 6 bytes (48-bit)
-        let tai_seconds = (u64::from(bytes[0]) << 40)
-            | (u64::from(bytes[1]) << 32)
-            | (u64::from(bytes[2]) << 24)
-            | (u64::from(bytes[3]) << 16)
-            | (u64::from(bytes[4]) << 8)
-            | u64::from(bytes[5]);
-        let tai_ns = u32::from_be_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]);
-        let utc_offset = u16::from_be_bytes([bytes[10], bytes[11]]);
+        let tai_seconds = {
+            let src = &bytes[TAI_SECONDS_OFFSET..TAI_SECONDS_OFFSET + TAI_SECONDS_LEN];
+            let mut bytes_be = [0u8; core::mem::size_of::<u64>()];
+            bytes_be[core::mem::size_of::<u16>()..].copy_from_slice(src);
+            u64::from_be_bytes(bytes_be)
+        };
+        let tai_ns = u32::from_be_bytes(be::<U32_LEN>(bytes, TAI_NS_OFFSET)?);
+        let utc_offset = u16::from_be_bytes(be::<U16_LEN>(bytes, UTC_OFFSET_OFFSET)?);
         Ok(Self {
             tai_seconds,
             tai_ns,
@@ -54,20 +63,17 @@ impl Serialize for InsertTimeDescriptor {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, LEN)?;
-        if self.tai_seconds >> 48 != 0 {
+        if self.tai_seconds >> (TAI_SECONDS_LEN as u32 * BYTE_SHIFT) != 0 {
             return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "insert_time_descriptor.TAI_seconds",
                 value: self.tai_seconds,
-                max: (1 << 48) - 1,
+                max: (1 << (TAI_SECONDS_LEN as u32 * BYTE_SHIFT)) - 1,
             }));
         }
         // TAI_seconds: 6 bytes (48-bit)
-        buf[0] = (self.tai_seconds >> 40) as u8;
-        buf[1] = (self.tai_seconds >> 32) as u8;
-        buf[2] = (self.tai_seconds >> 24) as u8;
-        buf[3] = (self.tai_seconds >> 16) as u8;
-        buf[4] = (self.tai_seconds >> 8) as u8;
-        buf[5] = self.tai_seconds as u8;
+        let tai_seconds_be = self.tai_seconds.to_be_bytes();
+        buf[TAI_SECONDS_OFFSET..TAI_SECONDS_OFFSET + TAI_SECONDS_LEN]
+            .copy_from_slice(&tai_seconds_be[core::mem::size_of::<u16>()..]);
         buf[6..10].copy_from_slice(&self.tai_ns.to_be_bytes());
         buf[10..12].copy_from_slice(&self.utc_offset.to_be_bytes());
         Ok(LEN)

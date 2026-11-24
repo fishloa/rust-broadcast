@@ -25,9 +25,9 @@ const COMMON_DESC_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
 
 /// Width of the `reserved` header field.
-const RNT_RESERVED_BITS: u32 = 2;
+pub const RNT_RESERVED_BITS: u32 = 2;
 /// Width of the `reserved` above a 12-bit length.
-const RNT_RESERVED_LENGTH_BITS: u32 = 4;
+pub const RNT_RESERVED_LENGTH_BITS: u32 = 4;
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_FIELD + CRC_LEN;
 
 const RP_INFO_LEN_FIELD: usize = 2;

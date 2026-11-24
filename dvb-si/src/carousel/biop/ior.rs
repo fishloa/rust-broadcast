@@ -19,42 +19,131 @@ use super::{
     TAG_OBJECT_LOCATION, TAG_SERVICE_LOCATION,
 };
 use crate::error::{Error, Result};
+use crate::wire::{U16_LEN, U32_LEN};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 // ── wire-layout byte counts ────────────────────────────────────────────────────
 
+/// Width of a 16-bit wire field.
+/// Width of a 32-bit wire field.
+/// DVB alias `type_id` / `objectKind` width.
+pub const OBJECT_KIND_LEN: usize = U32_LEN;
+
+/// `type_id_length` field in the IOR header.
+const IOR_TYPE_ID_LENGTH_LEN: usize = U32_LEN;
+/// `taggedProfiles_count` field in the IOR header.
+const IOR_PROFILES_COUNT_LEN: usize = U32_LEN;
 /// IOR: type_id_length (4) + taggedProfiles_count (4).
-const IOR_FIXED_LEN: usize = 8;
+const IOR_FIXED_LEN: usize = IOR_TYPE_ID_LENGTH_LEN + IOR_PROFILES_COUNT_LEN;
+/// `profileId_tag` offset in a tagged profile.
+const PROFILE_TAG_OFFSET: usize = 0;
+/// `profileId_tag` width.
+const PROFILE_TAG_LEN: usize = U32_LEN;
+/// `profile_data_length` offset in a tagged profile.
+const PROFILE_DATA_LEN_OFFSET: usize = PROFILE_TAG_OFFSET + PROFILE_TAG_LEN;
 /// Per-profile: profileId_tag (4) + profile_data_length (4).
-const PROFILE_HEADER_LEN: usize = 8;
+const PROFILE_HEADER_LEN: usize = PROFILE_DATA_LEN_OFFSET + U32_LEN;
 /// BIOP Profile Body: byte_order (1) + liteComponents_count (1).
 const BIOP_BODY_FIXED_LEN: usize = 2;
+/// Mandatory liteComponents in a BIOP Profile Body.
+const BIOP_MANDATORY_COMPONENTS: usize = 2;
+/// `componentId_tag` offset in a liteComponent header.
+const COMPONENT_TAG_OFFSET: usize = 0;
+/// `componentId_tag` width.
+const COMPONENT_TAG_LEN: usize = U32_LEN;
+/// `component_data_length` offset in a liteComponent header.
+const COMPONENT_DATA_LEN_OFFSET: usize = COMPONENT_TAG_OFFSET + COMPONENT_TAG_LEN;
 /// Per liteComponent: componentId_tag (4) + component_data_length (1).
-const COMPONENT_HEADER_LEN: usize = 5;
+const COMPONENT_HEADER_LEN: usize = COMPONENT_DATA_LEN_OFFSET + 1;
+/// `carousel_id` offset in an ObjectLocation.
+const OL_CAROUSEL_ID_OFFSET: usize = 0;
+/// `carousel_id` width.
+const OL_CAROUSEL_ID_LEN: usize = U32_LEN;
+/// `module_id` offset in an ObjectLocation.
+const OL_MODULE_ID_OFFSET: usize = OL_CAROUSEL_ID_OFFSET + OL_CAROUSEL_ID_LEN;
+/// `module_id` width.
+const OL_MODULE_ID_LEN: usize = U16_LEN;
+/// `version_major` offset in an ObjectLocation.
+const OL_VERSION_MAJOR_OFFSET: usize = OL_MODULE_ID_OFFSET + OL_MODULE_ID_LEN;
+/// `version_minor` offset in an ObjectLocation.
+const OL_VERSION_MINOR_OFFSET: usize = OL_VERSION_MAJOR_OFFSET + 1;
+/// `objectKey_length` offset in an ObjectLocation.
+const OL_OBJECT_KEY_LEN_OFFSET: usize = OL_VERSION_MINOR_OFFSET + 1;
 /// ObjectLocation fixed: carousel_id(4)+module_id(2)+version_major(1)+version_minor(1)+key_len(1) = 9.
-const OBJECT_LOCATION_FIXED_LEN: usize = 9;
+const OBJECT_LOCATION_FIXED_LEN: usize = OL_OBJECT_KEY_LEN_OFFSET + 1;
 /// ConnBinder fixed: taps_count(1).
 const CONN_BINDER_FIXED_LEN: usize = 1;
+/// `id` offset in a Tap.
+const TAP_ID_OFFSET: usize = 0;
+/// `id` width.
+const TAP_ID_LEN: usize = U16_LEN;
+/// `use` offset in a Tap.
+const TAP_USE_OFFSET: usize = TAP_ID_OFFSET + TAP_ID_LEN;
+/// `association_tag` offset in a Tap.
+const TAP_ASSOCIATION_OFFSET: usize = TAP_USE_OFFSET + TAP_ID_LEN;
+/// `selector_length` offset in a Tap.
+const TAP_SELECTOR_LENGTH_OFFSET: usize = TAP_ASSOCIATION_OFFSET + TAP_ID_LEN;
 /// Tap fixed: id(2)+use(2)+association_tag(2)+selector_length(1) = 7.
-const TAP_FIXED_LEN: usize = 7;
+const TAP_FIXED_LEN: usize = TAP_SELECTOR_LENGTH_OFFSET + 1;
+/// MESSAGE-selector layout: selector_type(2)+transactionId(4)+timeout(4).
+const TAP_MESSAGE_SELECTOR_LEN: usize = 10;
+/// `selector_type` width before the MESSAGE selector fields.
+const SELECTOR_TYPE_LEN: usize = U16_LEN;
+/// `transactionId` offset within a MESSAGE selector.
+const SELECTOR_TRANSACTION_ID_OFFSET: usize = SELECTOR_TYPE_LEN;
+/// `timeout` offset within a MESSAGE selector.
+const SELECTOR_TIMEOUT_OFFSET: usize = SELECTOR_TRANSACTION_ID_OFFSET + U32_LEN;
 /// LiteOptions Profile Body: byte_order(1) + component_count(1).
 const LITE_OPTIONS_BODY_FIXED_LEN: usize = 2;
+/// `componentId_tag` offset in a ServiceLocation component header.
+const SERVICE_LOCATION_TAG_OFFSET: usize = 0;
+/// `componentId_tag` width.
+const SERVICE_LOCATION_TAG_LEN: usize = U32_LEN;
+/// `component_data_length` offset in a ServiceLocation component header.
+const SERVICE_LOCATION_DATA_LEN_OFFSET: usize =
+    SERVICE_LOCATION_TAG_OFFSET + SERVICE_LOCATION_TAG_LEN;
 /// ServiceLocation component header: componentId_tag(4)+component_data_length(4).
-const SERVICE_LOCATION_COMP_HEADER_LEN: usize = 8;
+const SERVICE_LOCATION_COMP_HEADER_LEN: usize = SERVICE_LOCATION_DATA_LEN_OFFSET + U32_LEN;
 /// serviceDomain_length(1) = 1 prefix before the 20-byte NSAP address.
 const SERVICE_DOMAIN_LEN_FIELD: usize = 1;
+/// `carouselId` offset in the NSAP address.
+const NSAP_CAROUSEL_ID_OFFSET: usize = 2;
+/// `carouselId` width in the NSAP address.
+const NSAP_CAROUSEL_ID_LEN: usize = U32_LEN;
+/// `specifierType` offset in the NSAP address.
+const NSAP_SPECIFIER_TYPE_OFFSET: usize = NSAP_CAROUSEL_ID_OFFSET + NSAP_CAROUSEL_ID_LEN;
+/// `specifierData` offset in the NSAP address.
+const NSAP_SPECIFIER_DATA_OFFSET: usize = NSAP_SPECIFIER_TYPE_OFFSET + 1;
+/// `specifierData` width in the NSAP address.
+pub const NSAP_SPECIFIER_DATA_LEN: usize = 3;
+/// `transport_stream_id` offset in the NSAP address.
+const NSAP_TSID_OFFSET: usize = NSAP_SPECIFIER_DATA_OFFSET + NSAP_SPECIFIER_DATA_LEN;
+/// 16-bit id field width in the NSAP address.
+const NSAP_ID_LEN: usize = U16_LEN;
+/// `original_network_id` offset in the NSAP address.
+const NSAP_ONID_OFFSET: usize = NSAP_TSID_OFFSET + NSAP_ID_LEN;
+/// `service_id` offset in the NSAP address.
+const NSAP_SID_OFFSET: usize = NSAP_ONID_OFFSET + NSAP_ID_LEN;
+/// Reserved-field offset in the NSAP address.
+const NSAP_RESERVED_OFFSET: usize = NSAP_SID_OFFSET + NSAP_ID_LEN;
+/// Reserved-field width in the NSAP address.
+const NSAP_RESERVED_LEN: usize = U32_LEN;
 /// DVB Carousel NSAP address: always 20 bytes.  See Table 4.8.
-const NSAP_ADDRESS_LEN: usize = 20;
+const NSAP_ADDRESS_LEN: usize = NSAP_RESERVED_OFFSET + NSAP_RESERVED_LEN;
 /// NSAP: AFI(1)+Type(1)+carouselId(4)+specifierType(1)+specifierData(3)+tsid(2)+onid(2)+sid(2)+reserved(4) = 20.
 const _NSAP_FIELDS_LEN: usize = NSAP_ADDRESS_LEN; // same constant, alias for clarity
 /// CosNaming nameComponents_count in ServiceLocation: 32-bit.
-const NAMING_COUNT_LEN: usize = 4;
+const NAMING_COUNT_LEN: usize = U32_LEN;
 /// id_length / kind_length in ServiceLocation CosNaming: 32-bit each.
-const NAMING_FIELD_LEN: usize = 4;
+const NAMING_FIELD_LEN: usize = U32_LEN;
 /// initialContext_length in ServiceLocation: 32-bit.
-const INITIAL_CONTEXT_LEN_FIELD: usize = 4;
+const INITIAL_CONTEXT_LEN_FIELD: usize = U32_LEN;
+/// Cap on preallocation from an untrusted entry count.
+const MAX_ENTRIES_PREALLOC: usize = 16;
+/// Smaller preallocation cap for component lists.
+const MAX_COMPONENT_PREALLOC: usize = 8;
 
 // ── ObjectKind ────────────────────────────────────────────────────────────────
 
@@ -75,12 +164,12 @@ pub enum ObjectKind {
     /// `"ste\0"` (0x73746500) — BIOP::StreamEvent.
     StreamEvent,
     /// Unknown 4-byte kind.
-    Unknown([u8; 4]),
+    Unknown([u8; OBJECT_KIND_LEN]),
 }
 
 impl ObjectKind {
     /// Parse 4 bytes into an `ObjectKind`.
-    pub fn from_bytes(b: [u8; 4]) -> Self {
+    pub fn from_bytes(b: [u8; OBJECT_KIND_LEN]) -> Self {
         match &b {
             b"dir\0" => Self::Directory,
             b"fil\0" => Self::File,
@@ -92,7 +181,7 @@ impl ObjectKind {
     }
 
     /// Serialize this kind to its 4-byte wire representation.
-    pub fn to_bytes(&self) -> [u8; 4] {
+    pub fn to_bytes(&self) -> [u8; OBJECT_KIND_LEN] {
         match self {
             Self::Directory => *b"dir\0",
             Self::File => *b"fil\0",
@@ -129,8 +218,9 @@ impl<'a> Tap<'a> {
     /// Selector layout (when `use == 0x0016` and `selector.len() >= 10`):
     /// selector_type(2) | transactionId(4) | timeout(4).
     pub fn transaction_id(&self) -> Option<u32> {
-        if self.use_ == BIOP_DELIVERY_PARA_USE && self.selector.len() >= 10 {
-            let (chunk, _) = self.selector[2..].split_first_chunk::<4>()?;
+        if self.use_ == BIOP_DELIVERY_PARA_USE && self.selector.len() >= TAP_MESSAGE_SELECTOR_LEN {
+            let (chunk, _) = self.selector[SELECTOR_TRANSACTION_ID_OFFSET..]
+                .split_first_chunk::<{ core::mem::size_of::<u32>() }>()?;
             Some(u32::from_be_bytes(*chunk))
         } else {
             None
@@ -140,8 +230,9 @@ impl<'a> Tap<'a> {
     /// Returns the `timeout` (µs) decoded from the selector when this is a
     /// `BIOP_DELIVERY_PARA_USE` tap with a 10-byte MESSAGE selector.
     pub fn timeout(&self) -> Option<u32> {
-        if self.use_ == BIOP_DELIVERY_PARA_USE && self.selector.len() >= 10 {
-            let (chunk, _) = self.selector[6..].split_first_chunk::<4>()?;
+        if self.use_ == BIOP_DELIVERY_PARA_USE && self.selector.len() >= TAP_MESSAGE_SELECTOR_LEN {
+            let (chunk, _) = self.selector[SELECTOR_TIMEOUT_OFFSET..]
+                .split_first_chunk::<{ core::mem::size_of::<u32>() }>()?;
             Some(u32::from_be_bytes(*chunk))
         } else {
             None
@@ -163,10 +254,11 @@ impl<'a> Tap<'a> {
                         what: "BIOP Tap fixed fields",
                     },
                 ))?;
-        let id = u16::from_be_bytes([tap_hdr[0], tap_hdr[1]]);
-        let use_ = u16::from_be_bytes([tap_hdr[2], tap_hdr[3]]);
-        let association_tag = u16::from_be_bytes([tap_hdr[4], tap_hdr[5]]);
-        let selector_length = tap_hdr[6] as usize;
+        let id = crate::wire::be_u16(tap_hdr, TAP_ID_OFFSET, "Tap id")?;
+        let use_ = crate::wire::be_u16(tap_hdr, TAP_USE_OFFSET, "Tap use")?;
+        let association_tag =
+            crate::wire::be_u16(tap_hdr, TAP_ASSOCIATION_OFFSET, "Tap association_tag")?;
+        let selector_length = tap_hdr[TAP_SELECTOR_LENGTH_OFFSET] as usize;
         let data_start = pos + TAP_FIXED_LEN;
         if data_start + selector_length > end {
             return Err(Error::SectionLengthOverflow {
@@ -195,11 +287,13 @@ impl<'a> Tap<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[0..2].copy_from_slice(&self.id.to_be_bytes());
-        buf[2..4].copy_from_slice(&self.use_.to_be_bytes());
-        buf[4..6].copy_from_slice(&self.association_tag.to_be_bytes());
-        buf[6] = broadcast_common::len::fit_u8(self.selector.len(), "self.selector")?;
-        buf[7..7 + self.selector.len()].copy_from_slice(self.selector);
+        buf[TAP_ID_OFFSET..TAP_ID_OFFSET + TAP_ID_LEN].copy_from_slice(&self.id.to_be_bytes());
+        buf[TAP_USE_OFFSET..TAP_USE_OFFSET + TAP_ID_LEN].copy_from_slice(&self.use_.to_be_bytes());
+        buf[TAP_ASSOCIATION_OFFSET..TAP_ASSOCIATION_OFFSET + TAP_ID_LEN]
+            .copy_from_slice(&self.association_tag.to_be_bytes());
+        buf[TAP_SELECTOR_LENGTH_OFFSET] =
+            broadcast_common::len::fit_u8(self.selector.len(), "self.selector")?;
+        buf[TAP_FIXED_LEN..TAP_FIXED_LEN + self.selector.len()].copy_from_slice(self.selector);
         Ok(len)
     }
 }
@@ -239,11 +333,13 @@ impl<'a> ObjectLocation<'a> {
                     what: "BIOP ObjectLocation fixed fields",
                 },
             ))?;
-        let carousel_id = u32::from_be_bytes([ol_hdr[0], ol_hdr[1], ol_hdr[2], ol_hdr[3]]);
-        let module_id = u16::from_be_bytes([ol_hdr[4], ol_hdr[5]]);
-        let version_major = ol_hdr[6];
-        let version_minor = ol_hdr[7];
-        let object_key_length = ol_hdr[8] as usize;
+        let carousel_id =
+            crate::wire::be_u32(ol_hdr, OL_CAROUSEL_ID_OFFSET, "ObjectLocation carousel_id")?;
+        let module_id =
+            crate::wire::be_u16(ol_hdr, OL_MODULE_ID_OFFSET, "ObjectLocation module_id")?;
+        let version_major = ol_hdr[OL_VERSION_MAJOR_OFFSET];
+        let version_minor = ol_hdr[OL_VERSION_MINOR_OFFSET];
+        let object_key_length = ol_hdr[OL_OBJECT_KEY_LEN_OFFSET] as usize;
         let data_start = pos + OBJECT_LOCATION_FIXED_LEN;
         if data_start + object_key_length > end {
             return Err(Error::SectionLengthOverflow {
@@ -272,12 +368,16 @@ impl<'a> ObjectLocation<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[0..4].copy_from_slice(&self.carousel_id.to_be_bytes());
-        buf[4..6].copy_from_slice(&self.module_id.to_be_bytes());
-        buf[6] = self.version_major;
-        buf[7] = self.version_minor;
-        buf[8] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
-        buf[9..9 + self.object_key.len()].copy_from_slice(self.object_key);
+        buf[OL_CAROUSEL_ID_OFFSET..OL_CAROUSEL_ID_OFFSET + OL_CAROUSEL_ID_LEN]
+            .copy_from_slice(&self.carousel_id.to_be_bytes());
+        buf[OL_MODULE_ID_OFFSET..OL_MODULE_ID_OFFSET + OL_MODULE_ID_LEN]
+            .copy_from_slice(&self.module_id.to_be_bytes());
+        buf[OL_VERSION_MAJOR_OFFSET] = self.version_major;
+        buf[OL_VERSION_MINOR_OFFSET] = self.version_minor;
+        buf[OL_OBJECT_KEY_LEN_OFFSET] =
+            broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
+        buf[OBJECT_LOCATION_FIXED_LEN..OBJECT_LOCATION_FIXED_LEN + self.object_key.len()]
+            .copy_from_slice(self.object_key);
         Ok(len)
     }
 }
@@ -311,7 +411,7 @@ impl<'a> ConnBinder<'a> {
         }
         let taps_count = bytes[pos] as usize;
         let mut cur = pos + CONN_BINDER_FIXED_LEN;
-        let mut taps = Vec::with_capacity(taps_count.min(16));
+        let mut taps = Vec::with_capacity(taps_count.min(MAX_ENTRIES_PREALLOC));
         for _ in 0..taps_count {
             let (tap, next) = Tap::parse_from(bytes, cur, end)?;
             taps.push(tap);
@@ -397,7 +497,7 @@ impl<'a> BiopProfileBody<'a> {
             }));
         }
         let lite_components_count = bytes[1] as usize;
-        if lite_components_count < 2 {
+        if lite_components_count < BIOP_MANDATORY_COMPONENTS {
             return Err(Error::ValueOutOfRange {
                 field: "liteComponents_count",
                 reason: "BIOP Profile Body must have at least 2 components (ObjectLocation + ConnBinder)",
@@ -414,7 +514,7 @@ impl<'a> BiopProfileBody<'a> {
                     what: "BIOP ObjectLocation component header",
                 },
             ))?;
-        let comp0_tag = u32::from_be_bytes([ch0[0], ch0[1], ch0[2], ch0[3]]);
+        let comp0_tag = crate::wire::be_u32(ch0, COMPONENT_TAG_OFFSET, "componentId_tag")?;
         if comp0_tag != TAG_OBJECT_LOCATION {
             return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "componentId_tag[0]",
@@ -422,7 +522,7 @@ impl<'a> BiopProfileBody<'a> {
                 reason: "first liteComponent must be TAG_ObjectLocation (0x49534F50)",
             }));
         }
-        let comp0_len = ch0[4] as usize;
+        let comp0_len = ch0[COMPONENT_DATA_LEN_OFFSET] as usize;
         pos += COMPONENT_HEADER_LEN;
         let comp0_end = pos + comp0_len;
         if comp0_end > end {
@@ -457,7 +557,7 @@ impl<'a> BiopProfileBody<'a> {
                     what: "BIOP ConnBinder component header",
                 },
             ))?;
-        let comp1_tag = u32::from_be_bytes([ch1[0], ch1[1], ch1[2], ch1[3]]);
+        let comp1_tag = crate::wire::be_u32(ch1, COMPONENT_TAG_OFFSET, "componentId_tag")?;
         if comp1_tag != TAG_CONN_BINDER {
             return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "componentId_tag[1]",
@@ -465,7 +565,7 @@ impl<'a> BiopProfileBody<'a> {
                 reason: "second liteComponent must be TAG_ConnBinder (0x49534F40)",
             }));
         }
-        let comp1_len = ch1[4] as usize;
+        let comp1_len = ch1[COMPONENT_DATA_LEN_OFFSET] as usize;
         pos += COMPONENT_HEADER_LEN;
         let comp1_end = pos + comp1_len;
         if comp1_end > end {
@@ -490,8 +590,8 @@ impl<'a> BiopProfileBody<'a> {
         pos = comp1_end;
 
         // Remaining extra components
-        let extra_count = lite_components_count - 2;
-        let mut extra = Vec::with_capacity(extra_count.min(8));
+        let extra_count = lite_components_count - BIOP_MANDATORY_COMPONENTS;
+        let mut extra = Vec::with_capacity(extra_count.min(MAX_COMPONENT_PREALLOC));
         for _ in 0..extra_count {
             let (ch_ex, _) = bytes[pos..end]
                 .split_first_chunk::<COMPONENT_HEADER_LEN>()
@@ -502,8 +602,8 @@ impl<'a> BiopProfileBody<'a> {
                         what: "BIOP extra liteComponent header",
                     },
                 ))?;
-            let tag = u32::from_be_bytes([ch_ex[0], ch_ex[1], ch_ex[2], ch_ex[3]]);
-            let data_len = ch_ex[4] as usize;
+            let tag = crate::wire::be_u32(ch_ex, COMPONENT_TAG_OFFSET, "componentId_tag")?;
+            let data_len = ch_ex[COMPONENT_DATA_LEN_OFFSET] as usize;
             pos += COMPONENT_HEADER_LEN;
             if pos + data_len > end {
                 return Err(Error::SectionLengthOverflow {
@@ -554,7 +654,7 @@ impl<'a> BiopProfileBody<'a> {
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let total_components = 2 + self.extra.len();
+        let total_components = BIOP_MANDATORY_COMPONENTS + self.extra.len();
         if total_components > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
                 declared: total_components,
@@ -573,8 +673,9 @@ impl<'a> BiopProfileBody<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos..pos + 4].copy_from_slice(&TAG_OBJECT_LOCATION.to_be_bytes());
-        buf[pos + 4] = ol_data_len as u8;
+        buf[pos + COMPONENT_TAG_OFFSET..pos + COMPONENT_TAG_OFFSET + COMPONENT_TAG_LEN]
+            .copy_from_slice(&TAG_OBJECT_LOCATION.to_be_bytes());
+        buf[pos + COMPONENT_DATA_LEN_OFFSET] = ol_data_len as u8;
         pos += COMPONENT_HEADER_LEN;
         let written = self.object_location.serialize_into_buf(&mut buf[pos..])?;
         pos += written;
@@ -587,8 +688,9 @@ impl<'a> BiopProfileBody<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos..pos + 4].copy_from_slice(&TAG_CONN_BINDER.to_be_bytes());
-        buf[pos + 4] = cb_data_len as u8;
+        buf[pos + COMPONENT_TAG_OFFSET..pos + COMPONENT_TAG_OFFSET + COMPONENT_TAG_LEN]
+            .copy_from_slice(&TAG_CONN_BINDER.to_be_bytes());
+        buf[pos + COMPONENT_DATA_LEN_OFFSET] = cb_data_len as u8;
         pos += COMPONENT_HEADER_LEN;
         let written = self.conn_binder.serialize_into_buf(&mut buf[pos..])?;
         pos += written;
@@ -602,8 +704,9 @@ impl<'a> BiopProfileBody<'a> {
                     available: u8::MAX as usize,
                 });
             }
-            buf[pos..pos + 4].copy_from_slice(&comp.tag.to_be_bytes());
-            buf[pos + 4] = data_len as u8;
+            buf[pos + COMPONENT_TAG_OFFSET..pos + COMPONENT_TAG_OFFSET + COMPONENT_TAG_LEN]
+                .copy_from_slice(&comp.tag.to_be_bytes());
+            buf[pos + COMPONENT_DATA_LEN_OFFSET] = data_len as u8;
             pos += COMPONENT_HEADER_LEN;
             buf[pos..pos + data_len].copy_from_slice(comp.data);
             pos += data_len;
@@ -625,7 +728,7 @@ pub struct NsapAddress {
     /// `carouselId` field.
     pub carousel_id: u32,
     /// `specifierData` — 3-byte IEEE OUI (e.g. DVB OUI).
-    pub specifier_data: [u8; 3],
+    pub specifier_data: [u8; NSAP_SPECIFIER_DATA_LEN],
     /// `transport_stream_id`.
     pub transport_stream_id: u16,
     /// `original_network_id`.
@@ -658,12 +761,16 @@ impl NsapAddress {
             ))?;
         // AFI and Type are fixed per DVB profile; do not reject if they differ
         // (be tolerant, but documented).
-        let carousel_id = u32::from_be_bytes([nsap[2], nsap[3], nsap[4], nsap[5]]);
-        // specifierType at nsap[6]
-        let specifier_data = [nsap[7], nsap[8], nsap[9]];
-        let transport_stream_id = u16::from_be_bytes([nsap[10], nsap[11]]);
-        let original_network_id = u16::from_be_bytes([nsap[12], nsap[13]]);
-        let service_id = u16::from_be_bytes([nsap[14], nsap[15]]);
+        let carousel_id = crate::wire::be_u32(nsap, NSAP_CAROUSEL_ID_OFFSET, "NSAP carouselId")?;
+        let mut specifier_data = [0u8; NSAP_SPECIFIER_DATA_LEN];
+        specifier_data.copy_from_slice(
+            &nsap[NSAP_SPECIFIER_DATA_OFFSET..NSAP_SPECIFIER_DATA_OFFSET + NSAP_SPECIFIER_DATA_LEN],
+        );
+        let transport_stream_id =
+            crate::wire::be_u16(nsap, NSAP_TSID_OFFSET, "NSAP transport_stream_id")?;
+        let original_network_id =
+            crate::wire::be_u16(nsap, NSAP_ONID_OFFSET, "NSAP original_network_id")?;
+        let service_id = crate::wire::be_u16(nsap, NSAP_SID_OFFSET, "NSAP service_id")?;
         // reserved nsap[16..20]
         Ok(NsapAddress {
             carousel_id,
@@ -678,13 +785,19 @@ impl NsapAddress {
         need_out(buf, NSAP_ADDRESS_LEN)?;
         buf[0] = Self::AFI;
         buf[1] = Self::NSAP_TYPE;
-        buf[2..6].copy_from_slice(&self.carousel_id.to_be_bytes());
-        buf[6] = Self::SPECIFIER_TYPE;
-        buf[7..10].copy_from_slice(&self.specifier_data);
-        buf[10..12].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[12..14].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[14..16].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[16..20].copy_from_slice(&Self::RESERVED.to_be_bytes());
+        buf[NSAP_CAROUSEL_ID_OFFSET..NSAP_CAROUSEL_ID_OFFSET + NSAP_CAROUSEL_ID_LEN]
+            .copy_from_slice(&self.carousel_id.to_be_bytes());
+        buf[NSAP_SPECIFIER_TYPE_OFFSET] = Self::SPECIFIER_TYPE;
+        buf[NSAP_SPECIFIER_DATA_OFFSET..NSAP_SPECIFIER_DATA_OFFSET + NSAP_SPECIFIER_DATA_LEN]
+            .copy_from_slice(&self.specifier_data);
+        buf[NSAP_TSID_OFFSET..NSAP_TSID_OFFSET + NSAP_ID_LEN]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        buf[NSAP_ONID_OFFSET..NSAP_ONID_OFFSET + NSAP_ID_LEN]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
+        buf[NSAP_SID_OFFSET..NSAP_SID_OFFSET + NSAP_ID_LEN]
+            .copy_from_slice(&self.service_id.to_be_bytes());
+        buf[NSAP_RESERVED_OFFSET..NSAP_RESERVED_OFFSET + NSAP_RESERVED_LEN]
+            .copy_from_slice(&Self::RESERVED.to_be_bytes());
         Ok(NSAP_ADDRESS_LEN)
     }
 }
@@ -713,7 +826,7 @@ impl<'a> NameComponent<'a> {
     /// Parse one CosNaming name component with 32-bit length prefixes.
     pub(crate) fn parse_32bit(bytes: &'a [u8], pos: usize, end: usize) -> Result<(Self, usize)> {
         let (bid, _) = bytes[pos..end]
-            .split_first_chunk::<4>()
+            .split_first_chunk::<{ NAMING_FIELD_LEN }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: pos + NAMING_FIELD_LEN,
@@ -725,16 +838,15 @@ impl<'a> NameComponent<'a> {
         let id_range = super::span(id_start, u32::from_be_bytes(*bid), end)?;
         let id = &bytes[id_range.clone()];
         let kind_pos = id_range.end;
-        let (bkind, _) =
-            bytes[kind_pos..end]
-                .split_first_chunk::<4>()
-                .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
-                        need: kind_pos + NAMING_FIELD_LEN,
-                        have: end,
-                        what: "CosNaming kind_length",
-                    },
-                ))?;
+        let (bkind, _) = bytes[kind_pos..end]
+            .split_first_chunk::<{ NAMING_FIELD_LEN }>()
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: kind_pos + NAMING_FIELD_LEN,
+                    have: end,
+                    what: "CosNaming kind_length",
+                },
+            ))?;
         let kind_start = kind_pos + NAMING_FIELD_LEN;
         let kind_range = super::span(kind_start, u32::from_be_bytes(*bkind), end)?;
         let kind = &bytes[kind_range.clone()];
@@ -746,13 +858,14 @@ impl<'a> NameComponent<'a> {
         let len = self.serialized_len_32bit();
         need_out(buf, len)?;
         let id_len = broadcast_common::len::fit_u32(self.id.len(), "NameComponent id_length")?;
-        buf[0..4].copy_from_slice(&id_len.to_be_bytes());
-        buf[4..4 + self.id.len()].copy_from_slice(self.id);
-        let kind_pos = 4 + self.id.len();
+        buf[0..NAMING_FIELD_LEN].copy_from_slice(&id_len.to_be_bytes());
+        buf[NAMING_FIELD_LEN..NAMING_FIELD_LEN + self.id.len()].copy_from_slice(self.id);
+        let kind_pos = NAMING_FIELD_LEN + self.id.len();
         let kind_len =
             broadcast_common::len::fit_u32(self.kind.len(), "NameComponent kind_length")?;
-        buf[kind_pos..kind_pos + 4].copy_from_slice(&kind_len.to_be_bytes());
-        buf[kind_pos + 4..kind_pos + 4 + self.kind.len()].copy_from_slice(self.kind);
+        buf[kind_pos..kind_pos + NAMING_FIELD_LEN].copy_from_slice(&kind_len.to_be_bytes());
+        buf[kind_pos + NAMING_FIELD_LEN..kind_pos + NAMING_FIELD_LEN + self.kind.len()]
+            .copy_from_slice(self.kind);
         Ok(len)
     }
 
@@ -890,7 +1003,7 @@ impl<'a> ServiceLocation<'a> {
         let mut cur = sd_start + NSAP_ADDRESS_LEN;
 
         let (bnc, _) = bytes[cur..end]
-            .split_first_chunk::<4>()
+            .split_first_chunk::<{ NAMING_COUNT_LEN }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + NAMING_COUNT_LEN,
@@ -900,7 +1013,7 @@ impl<'a> ServiceLocation<'a> {
             ))?;
         let name_count = u32::from_be_bytes(*bnc) as usize;
         cur += NAMING_COUNT_LEN;
-        let mut path = Vec::with_capacity(name_count.min(16));
+        let mut path = Vec::with_capacity(name_count.min(MAX_ENTRIES_PREALLOC));
         for _ in 0..name_count {
             let (nc, next) = NameComponent::parse_32bit(bytes, cur, end)?;
             path.push(nc);
@@ -908,7 +1021,7 @@ impl<'a> ServiceLocation<'a> {
         }
 
         let (bic, _) = bytes[cur..end]
-            .split_first_chunk::<4>()
+            .split_first_chunk::<{ INITIAL_CONTEXT_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: cur + INITIAL_CONTEXT_LEN_FIELD,
@@ -939,7 +1052,7 @@ impl<'a> ServiceLocation<'a> {
         let mut pos = SERVICE_DOMAIN_LEN_FIELD + NSAP_ADDRESS_LEN;
         let path_count =
             broadcast_common::len::fit_u32(self.path.len(), "ServiceLocation path count")?;
-        buf[pos..pos + 4].copy_from_slice(&path_count.to_be_bytes());
+        buf[pos..pos + NAMING_COUNT_LEN].copy_from_slice(&path_count.to_be_bytes());
         pos += NAMING_COUNT_LEN;
         for nc in &self.path {
             let written = nc.serialize_32bit(&mut buf[pos..])?;
@@ -947,7 +1060,7 @@ impl<'a> ServiceLocation<'a> {
         }
         let ic_len = self.initial_context.len();
         let ic_len_u32 = broadcast_common::len::fit_u32(ic_len, "initialContext_length")?;
-        buf[pos..pos + 4].copy_from_slice(&ic_len_u32.to_be_bytes());
+        buf[pos..pos + INITIAL_CONTEXT_LEN_FIELD].copy_from_slice(&ic_len_u32.to_be_bytes());
         pos += INITIAL_CONTEXT_LEN_FIELD;
         buf[pos..pos + ic_len].copy_from_slice(self.initial_context);
         pos += ic_len;
@@ -1008,7 +1121,7 @@ impl<'a> LiteOptionsProfileBody<'a> {
                     what: "LiteOptions ServiceLocation component header",
                 },
             ))?;
-        let comp0_tag = u32::from_be_bytes([slch[0], slch[1], slch[2], slch[3]]);
+        let comp0_tag = crate::wire::be_u32(slch, SERVICE_LOCATION_TAG_OFFSET, "componentId_tag")?;
         if comp0_tag != TAG_SERVICE_LOCATION {
             return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "componentId_tag[0] (LiteOptions)",
@@ -1016,7 +1129,11 @@ impl<'a> LiteOptionsProfileBody<'a> {
                 reason: "first component must be TAG_ServiceLocation (0x49534F46)",
             }));
         }
-        let comp0_len_wire = u32::from_be_bytes([slch[4], slch[5], slch[6], slch[7]]);
+        let comp0_len_wire = crate::wire::be_u32(
+            slch,
+            SERVICE_LOCATION_DATA_LEN_OFFSET,
+            "component_data_length",
+        )?;
         pos += SERVICE_LOCATION_COMP_HEADER_LEN;
         let comp0_end = super::span(pos, comp0_len_wire, end)?.end;
         let (service_location, consumed) = ServiceLocation::parse_from(bytes, pos, comp0_end)?;
@@ -1035,7 +1152,7 @@ impl<'a> LiteOptionsProfileBody<'a> {
 
         // Extra components (8-bit length)
         let extra_count = component_count - 1;
-        let mut extra = Vec::with_capacity(extra_count.min(8));
+        let mut extra = Vec::with_capacity(extra_count.min(MAX_COMPONENT_PREALLOC));
         for _ in 0..extra_count {
             let (ech, _) = bytes[pos..end]
                 .split_first_chunk::<COMPONENT_HEADER_LEN>()
@@ -1046,8 +1163,8 @@ impl<'a> LiteOptionsProfileBody<'a> {
                         what: "LiteOptions extra component header",
                     },
                 ))?;
-            let tag = u32::from_be_bytes([ech[0], ech[1], ech[2], ech[3]]);
-            let data_len = ech[4] as usize;
+            let tag = crate::wire::be_u32(ech, COMPONENT_TAG_OFFSET, "componentId_tag")?;
+            let data_len = ech[COMPONENT_DATA_LEN_OFFSET] as usize;
             pos += COMPONENT_HEADER_LEN;
             if pos + data_len > end {
                 return Err(Error::SectionLengthOverflow {
@@ -1104,8 +1221,12 @@ impl<'a> LiteOptionsProfileBody<'a> {
             self.service_location.serialized_len(),
             "ServiceLocation data length",
         )?;
-        buf[pos..pos + 4].copy_from_slice(&TAG_SERVICE_LOCATION.to_be_bytes());
-        buf[pos + 4..pos + 8].copy_from_slice(&sl_data_len.to_be_bytes());
+        buf[pos + SERVICE_LOCATION_TAG_OFFSET
+            ..pos + SERVICE_LOCATION_TAG_OFFSET + SERVICE_LOCATION_TAG_LEN]
+            .copy_from_slice(&TAG_SERVICE_LOCATION.to_be_bytes());
+        buf[pos + SERVICE_LOCATION_DATA_LEN_OFFSET
+            ..pos + SERVICE_LOCATION_DATA_LEN_OFFSET + U32_LEN]
+            .copy_from_slice(&sl_data_len.to_be_bytes());
         pos += SERVICE_LOCATION_COMP_HEADER_LEN;
         let written = self.service_location.serialize_into_buf(&mut buf[pos..])?;
         pos += written;
@@ -1119,8 +1240,9 @@ impl<'a> LiteOptionsProfileBody<'a> {
                     available: u8::MAX as usize,
                 });
             }
-            buf[pos..pos + 4].copy_from_slice(&comp.tag.to_be_bytes());
-            buf[pos + 4] = data_len as u8;
+            buf[pos + COMPONENT_TAG_OFFSET..pos + COMPONENT_TAG_OFFSET + COMPONENT_TAG_LEN]
+                .copy_from_slice(&comp.tag.to_be_bytes());
+            buf[pos + COMPONENT_DATA_LEN_OFFSET] = data_len as u8;
             pos += COMPONENT_HEADER_LEN;
             buf[pos..pos + data_len].copy_from_slice(comp.data);
             pos += data_len;
@@ -1209,12 +1331,12 @@ pub struct Ior<'a> {
 impl<'a> Ior<'a> {
     /// Decode the `type_id` as an [`ObjectKind`].
     pub fn object_kind(&self) -> ObjectKind {
-        if self.type_id.len() == 4 {
-            let mut arr = [0u8; 4];
+        if self.type_id.len() == OBJECT_KIND_LEN {
+            let mut arr = [0u8; OBJECT_KIND_LEN];
             arr.copy_from_slice(self.type_id);
             ObjectKind::from_bytes(arr)
         } else {
-            ObjectKind::Unknown([0; 4])
+            ObjectKind::Unknown([0; OBJECT_KIND_LEN])
         }
     }
 
@@ -1251,33 +1373,34 @@ impl<'a> Ior<'a> {
                         what: "IOP::IOR fixed fields",
                     },
                 ))?;
-        let type_id_length_wire =
-            u32::from_be_bytes([ior_hdr[0], ior_hdr[1], ior_hdr[2], ior_hdr[3]]);
+        let type_id_length_wire = crate::wire::be_u32(ior_hdr, 0, "IOR type_id_length")?;
         // DVB: only alias type_ids (N%4==0); reject non-conformant.
-        if !(type_id_length_wire as usize).is_multiple_of(4) {
+        if !(type_id_length_wire as usize).is_multiple_of(OBJECT_KIND_LEN) {
             return Err(Error::ValueOutOfRange {
                 field: "IOR.type_id_length",
-                reason: "type_id_length must be a multiple of 4 (DVB alias type_ids only — \
-                         non-aligned type_ids are not supported per TR 101 202 §4.7.3.1)",
+                reason: concat!(
+                    "type_id_length must be a multiple of 4 (DVB alias type_ids only — ",
+                    "non-aligned type_ids are not supported per TR 101 202 §4.7.3.1)",
+                ),
             });
         }
-        let type_id_range = super::span(4, type_id_length_wire, end)?;
+        let type_id_range = super::span(IOR_TYPE_ID_LENGTH_LEN, type_id_length_wire, end)?;
         let type_id = &bytes[type_id_range.clone()];
         let mut pos = type_id_range.end;
 
         let (bpc, _) = bytes[pos..end]
-            .split_first_chunk::<4>()
+            .split_first_chunk::<{ IOR_PROFILES_COUNT_LEN }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: pos + 4,
+                    need: pos + IOR_PROFILES_COUNT_LEN,
                     have: end,
                     what: "IOR taggedProfiles_count",
                 },
             ))?;
         let profiles_count = u32::from_be_bytes(*bpc) as usize;
-        pos += 4;
+        pos += IOR_PROFILES_COUNT_LEN;
 
-        let mut profiles = Vec::with_capacity(profiles_count.min(8));
+        let mut profiles = Vec::with_capacity(profiles_count.min(MAX_COMPONENT_PREALLOC));
         for _ in 0..profiles_count {
             let (phdr, _) = bytes[pos..end]
                 .split_first_chunk::<PROFILE_HEADER_LEN>()
@@ -1288,8 +1411,9 @@ impl<'a> Ior<'a> {
                         what: "TaggedProfile header",
                     },
                 ))?;
-            let tag = u32::from_be_bytes([phdr[0], phdr[1], phdr[2], phdr[3]]);
-            let data_len_wire = u32::from_be_bytes([phdr[4], phdr[5], phdr[6], phdr[7]]);
+            let tag = crate::wire::be_u32(phdr, PROFILE_TAG_OFFSET, "profileId_tag")?;
+            let data_len_wire =
+                crate::wire::be_u32(phdr, PROFILE_DATA_LEN_OFFSET, "profile_data_length")?;
             pos += PROFILE_HEADER_LEN;
             let data_range = super::span(pos, data_len_wire, end)?;
             let profile_data = &bytes[data_range.clone()];
@@ -1335,29 +1459,27 @@ impl Serialize for Ior<'_> {
     fn serialized_len(&self) -> usize {
         let type_id_len = self.type_id.len();
         let profiles_len: usize = self.profiles.iter().map(|p| p.serialized_len()).sum();
-        4 // type_id_length field
-            + type_id_len
-            + 4 // taggedProfiles_count field
-            + profiles_len
+        IOR_TYPE_ID_LENGTH_LEN + type_id_len + IOR_PROFILES_COUNT_LEN + profiles_len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        if !self.type_id.len().is_multiple_of(4) {
+        if !self.type_id.len().is_multiple_of(OBJECT_KIND_LEN) {
             return Err(Error::ValueOutOfRange {
                 field: "IOR.type_id_length",
                 reason: "type_id_length must be a multiple of 4 (DVB alias type_ids only)",
             });
         }
         let type_id_len = broadcast_common::len::fit_u32(self.type_id.len(), "IOR type_id_length")?;
-        buf[0..4].copy_from_slice(&type_id_len.to_be_bytes());
-        buf[4..4 + self.type_id.len()].copy_from_slice(self.type_id);
-        let mut pos = 4 + self.type_id.len();
+        buf[0..IOR_TYPE_ID_LENGTH_LEN].copy_from_slice(&type_id_len.to_be_bytes());
+        buf[IOR_TYPE_ID_LENGTH_LEN..IOR_TYPE_ID_LENGTH_LEN + self.type_id.len()]
+            .copy_from_slice(self.type_id);
+        let mut pos = IOR_TYPE_ID_LENGTH_LEN + self.type_id.len();
         let profiles_count =
             broadcast_common::len::fit_u32(self.profiles.len(), "IOR taggedProfiles_count")?;
-        buf[pos..pos + 4].copy_from_slice(&profiles_count.to_be_bytes());
-        pos += 4;
+        buf[pos..pos + IOR_PROFILES_COUNT_LEN].copy_from_slice(&profiles_count.to_be_bytes());
+        pos += IOR_PROFILES_COUNT_LEN;
         for profile in &self.profiles {
             let written = profile.serialize_into_buf(&mut buf[pos..])?;
             pos += written;

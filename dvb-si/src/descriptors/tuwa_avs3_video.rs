@@ -43,9 +43,53 @@ const FIXED_BODY_LEN: usize = 7;
 const REF_LEN: usize = 2;
 const MAX_REFS: usize = 127;
 /// Width of a `reserved(3)` field.
-const RESERVED_3_BITS: u32 = 3;
+pub const RESERVED_TRAILING_BITS: u32 = 3;
 /// Width of a `reserved(5)` field.
-const RESERVED_5_BITS: u32 = 5;
+const RESERVED_STREAM_ID_TAIL_BITS: u32 = 5;
+/// Body offset of `colour_primaries`.
+const COLOUR_PRIMARIES_OFFSET: usize = 4;
+/// Body offset of `transfer_characteristics`.
+const TRANSFER_CHARACTERISTICS_OFFSET: usize = 5;
+/// Body offset of `matrix_coefficients`.
+const MATRIX_COEFFICIENTS_OFFSET: usize = 6;
+/// Body offset of the frame-rate byte.
+const FRAME_RATE_BYTE_OFFSET: usize = 2;
+/// Body offset of the chroma/temporal byte.
+const CHROMA_BYTE_OFFSET: usize = 3;
+/// Shift of `frame_rate_code` in the frame-rate byte.
+const FRAME_RATE_CODE_SHIFT: u8 = 3;
+/// Mask of the 4-bit `frame_rate_code`.
+const FRAME_RATE_CODE_MASK: u8 = 0x0F;
+/// Mask of the trailing 3-bit `sample_precision` / `reserved(3)` fields.
+const TAIL_BITS_MASK: u8 = 0x07;
+/// Shift of `chroma_format` in the chroma byte.
+const CHROMA_FORMAT_SHIFT: u8 = 6;
+/// Mask of the 2-bit `chroma_format`.
+const CHROMA_FORMAT_MASK: u8 = 0x03;
+/// Bit position of `library_stream_flag`.
+const LIBRARY_STREAM_SHIFT: u32 = 3;
+/// Bit position of `temporal_id_flag`.
+const TEMPORAL_ID_SHIFT: u32 = 5;
+/// Bit position of `td_mode_flag`.
+const TD_MODE_SHIFT: u32 = 4;
+/// Bit position of `multiple_frame_rate_flag`.
+const MULTIPLE_FRAME_RATE_SHIFT: u32 = 7;
+/// Shift of `num_ref_library_stream` in the reference header byte.
+const NUM_REFS_SHIFT: u8 = 1;
+/// Mask of the `id_type_flag` bit in the reference header byte.
+const ID_TYPE_FLAG_MASK: u8 = 0x01;
+/// Shift of the 13-bit PEID within its two wire bytes.
+const PEID_SHIFT: u16 = 3;
+/// Shift of `reserved(5)` in the stream-id form.
+const RESERVED_5_SHIFT: u8 = 3;
+/// Bit width of `frame_rate_code`.
+const FRAME_RATE_CODE_BITS: u32 = 4;
+/// Bit width of `sample_precision`.
+const SAMPLE_PRECISION_BITS: u32 = 3;
+/// Bit width of `chroma_format`.
+const CHROMA_FORMAT_BITS: u32 = 2;
+/// Bit width of `num_ref_library_stream`.
+const NUM_REFS_BITS: u32 = 7;
 
 /// One library-stream reference (the form is selected by `id_type_flag`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,16 +101,16 @@ pub enum TuwaLibraryRef {
         /// PID of the TS packets carrying the library bitstream.
         pid: Pid,
         /// `reserved` (3 bits).
-        reserved: ReservedOnes<RESERVED_3_BITS>,
+        reserved: ReservedOnes<RESERVED_TRAILING_BITS>,
     },
     /// `id_type_flag == 0`: `ref_library_stream_id` (8) + `reserved` (5) + `reserved` (3).
     StreamId {
         /// `stream_id` of the PES carrying the library bitstream.
         stream_id: u8,
         /// `reserved` (5 bits).
-        reserved_5: ReservedOnes<RESERVED_5_BITS>,
+        reserved_5: ReservedOnes<RESERVED_STREAM_ID_TAIL_BITS>,
         /// `reserved` (3 bits).
-        reserved_3: ReservedOnes<RESERVED_3_BITS>,
+        reserved_3: ReservedOnes<RESERVED_TRAILING_BITS>,
     },
 }
 
@@ -76,8 +120,8 @@ impl TuwaLibraryRef {
     pub const fn stream_id(stream_id: u8) -> Self {
         Self::StreamId {
             stream_id,
-            reserved_5: ReservedOnes::<RESERVED_5_BITS>::FILL,
-            reserved_3: ReservedOnes::<RESERVED_3_BITS>::FILL,
+            reserved_5: ReservedOnes::<RESERVED_STREAM_ID_TAIL_BITS>::FILL,
+            reserved_3: ReservedOnes::<RESERVED_TRAILING_BITS>::FILL,
         }
     }
 }
@@ -131,7 +175,7 @@ pub struct TuwaAvs3VideoDescriptor {
     pub library_stream_flag: bool,
     /// `reserved` (3 bits) after `library_stream_flag`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_3_BITS>,
+    pub reserved: ReservedOnes<RESERVED_TRAILING_BITS>,
     /// `colour_primaries` (8 bits).
     pub colour_primaries: u8,
     /// `transfer_characteristics` (8 bits).
@@ -156,8 +200,8 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
             "unexpected tag for T/UWA 012.2 AVS3 video descriptor",
         )?;
         need_in(body, FIXED_BODY_LEN, "TuwaAvs3VideoDescriptor")?;
-        let (b2, b3) = (body[2], body[3]);
-        let library_stream_flag = bit(b3, 3);
+        let (b2, b3) = (body[FRAME_RATE_BYTE_OFFSET], body[CHROMA_BYTE_OFFSET]);
+        let library_stream_flag = bit(b3, LIBRARY_STREAM_SHIFT);
         let library_refs = if library_stream_flag {
             if body.len() != FIXED_BODY_LEN {
                 return Err(Error::InvalidDescriptor {
@@ -174,8 +218,8 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
                     what: "TuwaAvs3VideoDescriptor",
                 },
             ))?;
-            let n = usize::from(head >> 1);
-            let id_type = head & 1 != 0;
+            let n = usize::from(head >> NUM_REFS_SHIFT);
+            let id_type = head & ID_TYPE_FLAG_MASK != 0;
             let rest = &body[FIXED_BODY_LEN + 1..];
             if rest.len() != n * REF_LEN {
                 return Err(Error::InvalidDescriptor {
@@ -188,14 +232,18 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
                 .map(|c| {
                     if id_type {
                         TuwaLibraryRef::Peid {
-                            pid: Pid::from_wire_masked(u16::from_be_bytes([c[0], c[1]]) >> 3),
-                            reserved: ReservedOnes::from_bits(u64::from(c[1] & 0x07)),
+                            pid: Pid::from_wire_masked(
+                                u16::from_be_bytes([c[0], c[1]]) >> PEID_SHIFT,
+                            ),
+                            reserved: ReservedOnes::from_bits(u64::from(c[1] & TAIL_BITS_MASK)),
                         }
                     } else {
                         TuwaLibraryRef::StreamId {
                             stream_id: c[0],
-                            reserved_5: ReservedOnes::from_bits(u64::from(c[1] >> 3)),
-                            reserved_3: ReservedOnes::from_bits(u64::from(c[1] & 0x07)),
+                            reserved_5: ReservedOnes::from_bits(u64::from(
+                                c[1] >> RESERVED_5_SHIFT,
+                            )),
+                            reserved_3: ReservedOnes::from_bits(u64::from(c[1] & TAIL_BITS_MASK)),
                         }
                     }
                 })
@@ -208,17 +256,19 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
         Ok(Self {
             profile_id: body[0],
             level_id: body[1],
-            multiple_frame_rate_flag: bit(b2, 7),
-            frame_rate_code: Avs3FrameRateCode::from_u8((b2 >> 3) & 0x0F),
-            sample_precision: b2 & 0x07,
-            chroma_format: b3 >> 6,
-            temporal_id_flag: bit(b3, 5),
-            td_mode_flag: bit(b3, 4),
+            multiple_frame_rate_flag: bit(b2, MULTIPLE_FRAME_RATE_SHIFT),
+            frame_rate_code: Avs3FrameRateCode::from_u8(
+                (b2 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK,
+            ),
+            sample_precision: b2 & TAIL_BITS_MASK,
+            chroma_format: (b3 >> CHROMA_FORMAT_SHIFT) & CHROMA_FORMAT_MASK,
+            temporal_id_flag: bit(b3, TEMPORAL_ID_SHIFT),
+            td_mode_flag: bit(b3, TD_MODE_SHIFT),
             library_stream_flag,
-            reserved: ReservedOnes::from_bits(u64::from(b3 & 0x07)),
-            colour_primaries: body[4],
-            transfer_characteristics: body[5],
-            matrix_coefficients: body[6],
+            reserved: ReservedOnes::from_bits(u64::from(b3 & TAIL_BITS_MASK)),
+            colour_primaries: body[COLOUR_PRIMARIES_OFFSET],
+            transfer_characteristics: body[TRANSFER_CHARACTERISTICS_OFFSET],
+            matrix_coefficients: body[MATRIX_COEFFICIENTS_OFFSET],
             library_refs,
         })
     }
@@ -250,24 +300,35 @@ impl Serialize for TuwaAvs3VideoDescriptor {
         }
         let frc = fit_bits(
             u64::from(self.frame_rate_code.to_u8()),
-            4,
+            FRAME_RATE_CODE_BITS,
             "frame_rate_code",
         )? as u8;
-        let sp = fit_bits(u64::from(self.sample_precision), 3, "sample_precision")? as u8;
-        let cf = fit_bits(u64::from(self.chroma_format), 2, "chroma_format")? as u8;
+        let sp = fit_bits(
+            u64::from(self.sample_precision),
+            SAMPLE_PRECISION_BITS,
+            "sample_precision",
+        )? as u8;
+        let cf = fit_bits(
+            u64::from(self.chroma_format),
+            CHROMA_FORMAT_BITS,
+            "chroma_format",
+        )? as u8;
         let rsv = self.reserved.get() as u8;
         write_descriptor_header(buf, TAG, self.body_len())?;
-        buf[2] = self.profile_id;
-        buf[3] = self.level_id;
-        buf[4] = (u8::from(self.multiple_frame_rate_flag) << 7) | (frc << 3) | sp;
-        buf[5] = (cf << 6)
-            | (u8::from(self.temporal_id_flag) << 5)
-            | (u8::from(self.td_mode_flag) << 4)
-            | (u8::from(self.library_stream_flag) << 3)
+        buf[HEADER_LEN] = self.profile_id;
+        buf[HEADER_LEN + 1] = self.level_id;
+        buf[HEADER_LEN + FRAME_RATE_BYTE_OFFSET] = (u8::from(self.multiple_frame_rate_flag)
+            << MULTIPLE_FRAME_RATE_SHIFT)
+            | (frc << FRAME_RATE_CODE_SHIFT)
+            | sp;
+        buf[HEADER_LEN + CHROMA_BYTE_OFFSET] = (cf << CHROMA_FORMAT_SHIFT)
+            | (u8::from(self.temporal_id_flag) << TEMPORAL_ID_SHIFT)
+            | (u8::from(self.td_mode_flag) << TD_MODE_SHIFT)
+            | (u8::from(self.library_stream_flag) << LIBRARY_STREAM_SHIFT)
             | rsv;
-        buf[6] = self.colour_primaries;
-        buf[7] = self.transfer_characteristics;
-        buf[8] = self.matrix_coefficients;
+        buf[HEADER_LEN + COLOUR_PRIMARIES_OFFSET] = self.colour_primaries;
+        buf[HEADER_LEN + TRANSFER_CHARACTERISTICS_OFFSET] = self.transfer_characteristics;
+        buf[HEADER_LEN + MATRIX_COEFFICIENTS_OFFSET] = self.matrix_coefficients;
         let mut i = HEADER_LEN + FIXED_BODY_LEN;
         if let Some(r) = &self.library_refs {
             if r.refs.len() > MAX_REFS {
@@ -281,15 +342,15 @@ impl Serialize for TuwaAvs3VideoDescriptor {
                 Some(TuwaLibraryRef::StreamId { .. }) => false,
                 None => r.id_type_flag_if_empty,
             };
-            let n = fit_bits(r.refs.len() as u64, 7, "num_ref_library_stream")? as u8;
-            buf[i] = (n << 1) | u8::from(id_type);
+            let n = fit_bits(r.refs.len() as u64, NUM_REFS_BITS, "num_ref_library_stream")? as u8;
+            buf[i] = (n << NUM_REFS_SHIFT) | u8::from(id_type);
             i += 1;
             for entry in &r.refs {
                 match (*entry, id_type) {
                     (TuwaLibraryRef::Peid { pid, reserved }, true) => {
                         let rs = reserved.get() as u16;
-                        let v = (pid.value() << 3) | rs;
-                        buf[i..i + 2].copy_from_slice(&v.to_be_bytes());
+                        let v = (pid.value() << PEID_SHIFT) | rs;
+                        buf[i..i + REF_LEN].copy_from_slice(&v.to_be_bytes());
                     }
                     (
                         TuwaLibraryRef::StreamId {
@@ -302,7 +363,7 @@ impl Serialize for TuwaAvs3VideoDescriptor {
                         let r5 = reserved_5.get() as u8;
                         let r3 = reserved_3.get() as u8;
                         buf[i] = stream_id;
-                        buf[i + 1] = (r5 << 3) | r3;
+                        buf[i + 1] = (r5 << RESERVED_5_SHIFT) | r3;
                     }
                     _ => {
                         return Err(Error::ValueOutOfRange {
@@ -498,7 +559,7 @@ mod tests {
     fn library_ref_labels_name_the_id_type() {
         let peid = TuwaLibraryRef::Peid {
             pid: Pid::from_const(0x0101),
-            reserved: ReservedOnes::<RESERVED_3_BITS>::FILL,
+            reserved: ReservedOnes::<RESERVED_TRAILING_BITS>::FILL,
         };
         assert_eq!(peid.name(), "PEID");
         assert_eq!(peid.to_string(), "PEID");
@@ -537,7 +598,7 @@ mod tests {
             temporal_id_flag: false,
             td_mode_flag: false,
             library_stream_flag: false,
-            reserved: ReservedOnes::<RESERVED_3_BITS>::FILL,
+            reserved: ReservedOnes::<RESERVED_TRAILING_BITS>::FILL,
             colour_primaries: 9,
             transfer_characteristics: 14,
             matrix_coefficients: 9,

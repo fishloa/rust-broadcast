@@ -26,14 +26,23 @@ const MAX_SERVICE_LEN: usize = u8::MAX as usize;
 const LINE_RESERVED_SHIFT: u8 = 6;
 const LINE_RESERVED_MASK: u8 = 0xC0;
 const LINE_PARITY_MASK: u8 = 0x20;
+const LINE_PARITY_SHIFT: u8 = 5;
 const LINE_OFFSET_MASK: u8 = 0x1F;
+/// `data_service_id` of EBU teletext (Table 107).
+const DATA_SERVICE_ID_EBU_TELETEXT: u8 = 0x01;
+/// `data_service_id` of inverted teletext (Table 107).
+const DATA_SERVICE_ID_INVERTED_TELETEXT: u8 = 0x02;
+/// `data_service_id` of VPS (Table 107).
+const DATA_SERVICE_ID_VPS: u8 = 0x04;
+/// `data_service_id` of monochrome 4:2:2 samples (Table 107).
+const DATA_SERVICE_ID_MONOCHROME: u8 = 0x07;
 /// Spec default of the per-line `reserved_future_use`(2) (`reserved` before
 /// V1.17.1): all ones (EN 300 468 V1.4.1-V1.20.1 Table 106; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
 pub const LINE_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<LINE_RESERVED_BITS> =
     ReservedOnes::<LINE_RESERVED_BITS>::FILL;
 /// Width of the per-line `reserved_future_use` (2 bits).
-const LINE_RESERVED_BITS: u32 = 2;
+pub const LINE_RESERVED_BITS: u32 = 2;
 
 /// Per-service-descriptor content, keyed by `data_service_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,7 +136,12 @@ impl<'a> Parse<'a> for VbiDataDescriptor<'a> {
             }
             let svc_bytes = &body[pos..pos + svc_len];
             pos += svc_len;
-            let service_descriptor = if matches!(data_service_id, 0x01 | 0x02 | 0x04..=0x07) {
+            let service_descriptor = if matches!(
+                data_service_id,
+                DATA_SERVICE_ID_EBU_TELETEXT
+                    | DATA_SERVICE_ID_INVERTED_TELETEXT
+                    | DATA_SERVICE_ID_VPS..=DATA_SERVICE_ID_MONOCHROME
+            ) {
                 let lines = svc_bytes
                     .iter()
                     .map(|&b| VbiLine {
@@ -198,7 +212,7 @@ impl Serialize for VbiDataDescriptor<'_> {
                 VbiService::Lines(lines) => {
                     for line in lines {
                         buf[pos] = ((line.reserved_future_use.get() as u8) << LINE_RESERVED_SHIFT)
-                            | (u8::from(line.field_parity) << 5)
+                            | (u8::from(line.field_parity) << LINE_PARITY_SHIFT)
                             | broadcast_common::len::fit_mask(
                                 line.line_offset,
                                 LINE_OFFSET_MASK,

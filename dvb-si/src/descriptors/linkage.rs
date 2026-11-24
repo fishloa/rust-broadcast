@@ -15,6 +15,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use crate::wire::U16_LEN;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::reserved::ReservedOnes;
@@ -34,7 +35,7 @@ const ORIGIN_TYPE_MASK: u8 = 0x01;
 const RESERVED_HANDOVER_MASK: u8 = 0x0E;
 const RESERVED_HANDOVER_SHIFT: u8 = 1;
 /// Width of the mobile hand-over `reserved_future_use` (3 bits).
-const RESERVED_HANDOVER_BITS: u32 = 3;
+pub const RESERVED_HANDOVER_BITS: u32 = 3;
 /// Spec default of the mobile hand-over `reserved_future_use`(3): all ones
 /// (EN 300 468 V1.12.1-V1.20.1 Table 61; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A).
@@ -45,7 +46,7 @@ const TARGET_LISTED_MASK: u8 = 0x80;
 const EVENT_SIMULCAST_MASK: u8 = 0x40;
 const RESERVED_EVENT_MASK: u8 = 0x3F;
 /// Width of the event-linkage `reserved_future_use` (6 bits).
-const RESERVED_EVENT_BITS: u32 = 6;
+pub const RESERVED_EVENT_BITS: u32 = 6;
 /// Spec default of the event-linkage `reserved_future_use`(6) (`reserved`
 /// before V1.17.1): all ones (EN 300 468 V1.12.1-V1.20.1 Table 64; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
@@ -58,6 +59,33 @@ const EXT_LINK_TYPE_MASK: u8 = 0x30;
 const EXT_TARGET_ID_TYPE_MASK: u8 = 0x0C;
 const EXT_ONID_FLAG_MASK: u8 = 0x02;
 const EXT_SID_FLAG_MASK: u8 = 0x01;
+/// Width of a 16-bit wire field, bytes.
+/// Width of a one-byte flags field.
+const FLAGS_LEN: usize = 1;
+/// Offset of the flags byte that follows `target_event_id`.
+const FLAGS_OFFSET: usize = U16_LEN;
+/// Shift of `hand_over_type` in the mobile hand-over flags byte.
+const HANDOVER_TYPE_SHIFT: u8 = 4;
+/// Shift of `link_type` in the extended-event flags byte.
+const EXT_LINK_TYPE_SHIFT: u8 = 4;
+/// Shift of `target_id_type` in the extended-event flags byte.
+const EXT_TARGET_ID_TYPE_SHIFT: u8 = 2;
+/// Mask of a 2-bit type field's value.
+const TYPE_VALUE_MASK: u8 = 0x03;
+/// First `hand_over_type` value that carries a `network_id`.
+const HANDOVER_TYPE_WITH_NETWORK_ID_FIRST: u8 = 0x01;
+/// Last `hand_over_type` value that carries a `network_id`.
+const HANDOVER_TYPE_WITH_NETWORK_ID_LAST: u8 = 0x03;
+/// First privately defined `linkage_type` value.
+const LINKAGE_TYPE_PRIVATE_FIRST: u8 = 0x80;
+/// Last privately defined `linkage_type` value.
+const LINKAGE_TYPE_PRIVATE_LAST: u8 = 0xFE;
+/// Offset of `original_network_id` in the fixed fields.
+const ORIGINAL_NETWORK_ID_OFFSET: usize = U16_LEN;
+/// Offset of `service_id` in the fixed fields.
+const SERVICE_ID_OFFSET: usize = ORIGINAL_NETWORK_ID_OFFSET + U16_LEN;
+/// Offset of `linkage_type` in the fixed fields.
+const LINKAGE_TYPE_OFFSET: usize = SERVICE_ID_OFFSET + U16_LEN;
 
 /// Linkage type — ETSI EN 300 468 Table 60.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -399,17 +427,17 @@ impl MobileHandOverInfo {
             self.hand_over_type.to_u8(),
             HANDOVER_TYPE_VALUE_MASK,
             "hand_over_type",
-        )? << 4)
+        )? << HANDOVER_TYPE_SHIFT)
             | ((self.reserved_future_use.get() as u8) << RESERVED_HANDOVER_SHIFT)
             | u8::from(self.origin_type);
         buf[0] = flags_byte;
         let mut pos = 1;
         if let Some(nid) = self.network_id {
-            buf[pos..pos + 2].copy_from_slice(&nid.to_be_bytes());
-            pos += 2;
+            buf[pos..pos + U16_LEN].copy_from_slice(&nid.to_be_bytes());
+            pos += U16_LEN;
         }
         if let Some(sid) = self.initial_service_id {
-            buf[pos..pos + 2].copy_from_slice(&sid.to_be_bytes());
+            buf[pos..pos + U16_LEN].copy_from_slice(&sid.to_be_bytes());
         }
         Ok(len)
     }
@@ -460,7 +488,7 @@ impl EventLinkageInfo {
         if self.event_simulcast {
             byte2 |= EVENT_SIMULCAST_MASK;
         }
-        buf[2] = byte2;
+        buf[FLAGS_OFFSET] = byte2;
         Ok(Self::SERIALIZED_LEN)
     }
 }
@@ -573,17 +601,17 @@ impl TargetId {
                 target_service_id,
                 ..
             } => {
-                let ts_len = target_transport_stream_id.map_or(0, |_| 2);
-                let onid_len = target_original_network_id.map_or(0, |_| 2);
+                let ts_len = target_transport_stream_id.map_or(0, |_| U16_LEN);
+                let onid_len = target_original_network_id.map_or(0, |_| U16_LEN);
                 if let Some(ts_id) = target_transport_stream_id {
                     buf[..2].copy_from_slice(&ts_id.to_be_bytes());
                 }
                 if let Some(onid) = target_original_network_id {
-                    buf[ts_len..ts_len + 2].copy_from_slice(&onid.to_be_bytes());
+                    buf[ts_len..ts_len + U16_LEN].copy_from_slice(&onid.to_be_bytes());
                 }
                 if let Some(sid) = target_service_id {
                     let off = ts_len + onid_len;
-                    buf[off..off + 2].copy_from_slice(&sid.to_be_bytes());
+                    buf[off..off + U16_LEN].copy_from_slice(&sid.to_be_bytes());
                 }
             }
         }
@@ -612,11 +640,11 @@ pub struct ExtendedEventLinkageEntry {
 
 impl ExtendedEventLinkageEntry {
     fn serialized_len(&self) -> usize {
-        2 + 1 + self.target_id.serialized_len()
+        U16_LEN + FLAGS_LEN + self.target_id.serialized_len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let flags_byte_len = 3;
+        let flags_byte_len = U16_LEN + FLAGS_LEN;
         need_out(buf, flags_byte_len)?;
         buf[0..2].copy_from_slice(&self.target_event_id.to_be_bytes());
         let mut byte2: u8 = 0;
@@ -626,12 +654,14 @@ impl ExtendedEventLinkageEntry {
         if self.event_simulcast {
             byte2 |= EXT_EVENT_SIMULCAST_MASK;
         }
-        byte2 |= broadcast_common::len::fit_mask(self.link_type.to_u8(), 0x03, "link_type")? << 4;
+        byte2 |=
+            broadcast_common::len::fit_mask(self.link_type.to_u8(), TYPE_VALUE_MASK, "link_type")?
+                << EXT_LINK_TYPE_SHIFT;
         byte2 |= broadcast_common::len::fit_mask(
             self.target_id.target_id_type().to_u8(),
-            0x03,
+            TYPE_VALUE_MASK,
             "target_id_type",
-        )? << 2;
+        )? << EXT_TARGET_ID_TYPE_SHIFT;
         let (onid_flag, sid_flag) = match &self.target_id {
             // No ONID/SID field exists for user_defined_id; the flag bits are
             // still on the wire and are carried verbatim.
@@ -651,9 +681,11 @@ impl ExtendedEventLinkageEntry {
         if sid_flag {
             byte2 |= EXT_SID_FLAG_MASK;
         }
-        buf[2] = byte2;
-        let tid_written = self.target_id.serialize_into(&mut buf[3..])?;
-        Ok(3 + tid_written)
+        buf[FLAGS_OFFSET] = byte2;
+        let tid_written = self
+            .target_id
+            .serialize_into(&mut buf[FLAGS_OFFSET + FLAGS_LEN..])?;
+        Ok(U16_LEN + FLAGS_LEN + tid_written)
     }
 }
 
@@ -753,11 +785,15 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
         });
     }
     let flags_byte = bytes[0];
-    let hand_over_type = HandOverType::from_u8((flags_byte & HANDOVER_TYPE_MASK) >> 4);
+    let hand_over_type =
+        HandOverType::from_u8((flags_byte & HANDOVER_TYPE_MASK) >> HANDOVER_TYPE_SHIFT);
     let origin_type = (flags_byte & ORIGIN_TYPE_MASK) != 0;
     let mut pos = 1;
-    let network_id = if matches!(hand_over_type.to_u8(), 0x01..=0x03) {
-        if pos + 2 > end {
+    let network_id = if matches!(
+        hand_over_type.to_u8(),
+        HANDOVER_TYPE_WITH_NETWORK_ID_FIRST..=HANDOVER_TYPE_WITH_NETWORK_ID_LAST
+    ) {
+        if pos + U16_LEN > end {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "mobile hand-over info with gated network_id needs at least 3 bytes",
@@ -765,19 +801,19 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
         }
         let (nid_bytes, _) = bytes
             .get(pos..)
-            .and_then(|s| s.split_first_chunk::<2>())
+            .and_then(|s| s.split_first_chunk::<U16_LEN>())
             .ok_or(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "mobile hand-over info with gated network_id needs at least 3 bytes",
             })?;
         let nid = u16::from_be_bytes(*nid_bytes);
-        pos += 2;
+        pos += U16_LEN;
         Some(nid)
     } else {
         None
     };
     let initial_service_id = if !origin_type {
-        if pos + 2 > end {
+        if pos + U16_LEN > end {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "mobile hand-over info with origin_type=NIT needs initial_service_id",
@@ -785,7 +821,7 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
         }
         let (sid_bytes, _) = bytes
             .get(pos..)
-            .and_then(|s| s.split_first_chunk::<2>())
+            .and_then(|s| s.split_first_chunk::<U16_LEN>())
             .ok_or(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "mobile hand-over info with origin_type=NIT needs initial_service_id",
@@ -806,17 +842,20 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
 }
 
 fn parse_event_linkage(bytes: &[u8]) -> Result<EventLinkageInfo> {
-    let (hdr, _) = bytes
-        .split_first_chunk::<3>()
-        .ok_or(Error::InvalidDescriptor {
-            tag: TAG,
-            reason: "event linkage info needs 3 bytes",
-        })?;
+    let (hdr, _) =
+        bytes
+            .split_first_chunk::<{ U16_LEN + FLAGS_LEN }>()
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "event linkage info needs 3 bytes",
+            })?;
     let target_event_id = u16::from_be_bytes([hdr[0], hdr[1]]);
-    let target_listed = (hdr[2] & TARGET_LISTED_MASK) != 0;
-    let event_simulcast = (hdr[2] & EVENT_SIMULCAST_MASK) != 0;
+    let target_listed = (hdr[FLAGS_OFFSET] & TARGET_LISTED_MASK) != 0;
+    let event_simulcast = (hdr[FLAGS_OFFSET] & EVENT_SIMULCAST_MASK) != 0;
     Ok(EventLinkageInfo {
-        reserved_future_use: ReservedOnes::from_bits(u64::from(hdr[2] & RESERVED_EVENT_MASK)),
+        reserved_future_use: ReservedOnes::from_bits(u64::from(
+            hdr[FLAGS_OFFSET] & RESERVED_EVENT_MASK,
+        )),
         target_event_id,
         target_listed,
         event_simulcast,
@@ -836,20 +875,21 @@ fn parse_extended_event_linkage(bytes: &[u8]) -> Result<ExtendedEventLinkageInfo
     let mut entries = Vec::new();
     let mut pos = 1;
     let read_u16 = |p: &mut usize| -> Result<u16> {
-        if *p + 2 > loop_end {
+        if *p + U16_LEN > loop_end {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "extended event linkage entry truncated (need u16)",
             });
         }
-        let (b, _) = bytes[*p..]
-            .split_first_chunk::<2>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "extended event linkage entry truncated (need u16)",
-            })?;
+        let (b, _) =
+            bytes[*p..]
+                .split_first_chunk::<U16_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "extended event linkage entry truncated (need u16)",
+                })?;
         let v = u16::from_be_bytes(*b);
-        *p += 2;
+        *p += U16_LEN;
         Ok(v)
     };
     while pos < loop_end {
@@ -864,8 +904,9 @@ fn parse_extended_event_linkage(bytes: &[u8]) -> Result<ExtendedEventLinkageInfo
         pos += 1;
         let target_listed = (fb & EXT_TARGET_LISTED_MASK) != 0;
         let event_simulcast = (fb & EXT_EVENT_SIMULCAST_MASK) != 0;
-        let link_type = LinkType::from_u8((fb & EXT_LINK_TYPE_MASK) >> 4);
-        let target_id_type = TargetIdType::from_u8((fb & EXT_TARGET_ID_TYPE_MASK) >> 2);
+        let link_type = LinkType::from_u8((fb & EXT_LINK_TYPE_MASK) >> EXT_LINK_TYPE_SHIFT);
+        let target_id_type =
+            TargetIdType::from_u8((fb & EXT_TARGET_ID_TYPE_MASK) >> EXT_TARGET_ID_TYPE_SHIFT);
         let original_network_id_flag = (fb & EXT_ONID_FLAG_MASK) != 0;
         let service_id_flag = (fb & EXT_SID_FLAG_MASK) != 0;
 
@@ -950,9 +991,10 @@ impl<'a> Parse<'a> for LinkageDescriptor<'a> {
                     reason: "linkage_descriptor body shorter than minimum 7 bytes",
                 })?;
         let transport_stream_id = u16::from_be_bytes([fixed[0], fixed[1]]);
-        let original_network_id = u16::from_be_bytes([fixed[2], fixed[3]]);
-        let service_id = u16::from_be_bytes([fixed[4], fixed[5]]);
-        let linkage_type_raw = fixed[6];
+        let original_network_id =
+            crate::wire::be_u16(fixed, ORIGINAL_NETWORK_ID_OFFSET, "original_network_id")?;
+        let service_id = crate::wire::be_u16(fixed, SERVICE_ID_OFFSET, "service_id")?;
+        let linkage_type_raw = fixed[LINKAGE_TYPE_OFFSET];
         let linkage_type = LinkageType::from_u8(linkage_type_raw);
         let tail_len = tail.len();
 
@@ -972,7 +1014,9 @@ impl<'a> Parse<'a> for LinkageDescriptor<'a> {
                 let consumed = info.serialized_len();
                 (LinkageData::ExtendedEventLinkage(info), &tail[consumed..])
             }
-            lt if LINKAGE_TYPES_WITH_OTHER.contains(&lt) || (0x80..=0xFE).contains(&lt) => {
+            lt if LINKAGE_TYPES_WITH_OTHER.contains(&lt)
+                || (LINKAGE_TYPE_PRIVATE_FIRST..=LINKAGE_TYPE_PRIVATE_LAST).contains(&lt) =>
+            {
                 (LinkageData::Other(tail), &[] as &[u8])
             }
             _ => (LinkageData::None, tail),
@@ -999,10 +1043,13 @@ impl Serialize for LinkageDescriptor<'_> {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let bs = HEADER_LEN;
-        buf[bs..bs + 2].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[bs + 2..bs + 4].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[bs + 4..bs + 6].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[bs + 6] = self.linkage_type.to_u8();
+        buf[bs..bs + ORIGINAL_NETWORK_ID_OFFSET]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        buf[bs + ORIGINAL_NETWORK_ID_OFFSET..bs + SERVICE_ID_OFFSET]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
+        buf[bs + SERVICE_ID_OFFSET..bs + LINKAGE_TYPE_OFFSET]
+            .copy_from_slice(&self.service_id.to_be_bytes());
+        buf[bs + LINKAGE_TYPE_OFFSET] = self.linkage_type.to_u8();
         let ld_start = bs + FIXED_FIELDS_LEN;
         let ld_written = self.linkage_data.serialize_into(&mut buf[ld_start..])?;
         let pd_start = ld_start + ld_written;

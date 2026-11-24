@@ -20,6 +20,10 @@ const ENTRY_LEN: usize = 3;
 
 /// Largest representable 3-bit running_status.
 const RUNNING_STATUS_MAX: u8 = 0x07;
+/// Offset of `running_status` in an entry.
+const RUNNING_STATUS_OFFSET: usize = 2;
+/// Shift of `reserved` in the packed status byte.
+const RESERVED_SHIFT: u8 = 3;
 
 /// TVA running status — ETSI TS 102 323 Table 115.
 ///
@@ -101,7 +105,7 @@ broadcast_common::impl_spec_display!(TvaRunningStatus, Unallocated);
 /// to '1'" (V1.1.1-V1.5.1). Parse keeps whatever a sender wrote.
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `Reserved` field ahead of `running_status` (5 bits).
-const RESERVED_BITS: u32 = 5;
+pub const RESERVED_BITS: u32 = 5;
 
 /// One TVA_id loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,9 +170,12 @@ impl<'a> Parse<'a> for TvaIdDescriptor {
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             let tva_id = crate::wire::be_u16(chunk, 0, "tva_id")?;
-            let running_status = TvaRunningStatus::from_u8(chunk[2] & RUNNING_STATUS_MAX);
+            let running_status =
+                TvaRunningStatus::from_u8(chunk[RUNNING_STATUS_OFFSET] & RUNNING_STATUS_MAX);
             entries.push(TvaIdEntry {
-                reserved: ReservedOnes::from_bits(u64::from(chunk[2] >> 3)),
+                reserved: ReservedOnes::from_bits(u64::from(
+                    chunk[RUNNING_STATUS_OFFSET] >> RESERVED_SHIFT,
+                )),
                 tva_id,
                 running_status,
             });
@@ -203,9 +210,9 @@ impl Serialize for TvaIdDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, self.entries.len() * ENTRY_LEN)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + 2].copy_from_slice(&e.tva_id.to_be_bytes());
+            buf[pos..pos + RUNNING_STATUS_OFFSET].copy_from_slice(&e.tva_id.to_be_bytes());
             // Reserved(5): preserved from parse, default 11111.
-            buf[pos + 2] = ((e.reserved.get() as u8) << 3)
+            buf[pos + RUNNING_STATUS_OFFSET] = ((e.reserved.get() as u8) << RESERVED_SHIFT)
                 | broadcast_common::len::fit_mask(
                     e.running_status.to_u8(),
                     RUNNING_STATUS_MAX,

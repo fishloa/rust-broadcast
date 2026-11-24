@@ -49,6 +49,55 @@ mod iso8859;
 use alloc::borrow::Cow;
 use alloc::string::String;
 
+/// A 3-byte ISO 639-2 / ISO 3166 code.
+pub const LANG_CODE_LEN: usize = 3;
+/// Table A.3: first byte at or above this is default-Latin text with no selector.
+const DEFAULT_TABLE_MIN: u8 = 0x20;
+/// Table A.3 selector for the extended ISO 8859 form.
+const ISO8859_EXTENDED_SELECTOR: u8 = 0x10;
+/// Bytes in an extended ISO 8859 selector sequence.
+const ISO8859_EXTENDED_SELECTOR_LEN: usize = 3;
+/// Offset of the ISO 8859 part number after the extended selector.
+const ISO8859_PART_OFFSET: usize = 2;
+/// Table A.3 selector for the `encoding_type_id` escape.
+const ENCODING_TYPE_ID_SELECTOR: u8 = 0x1F;
+/// Bytes in an `encoding_type_id` selector sequence.
+const ENCODING_TYPE_ID_SELECTOR_LEN: usize = 2;
+/// Bytes a Figure A.1 combining-prefix sequence occupies.
+const COMBINING_SEQUENCE_LEN: usize = 2;
+/// Bytes in one UCS-2 code unit.
+const UCS2_CODE_UNIT_LEN: usize = core::mem::size_of::<u16>();
+/// First byte of the Figure A.1 non-spacing (combining-prefix) row.
+const COMBINING_ROW_START: u8 = 0xC0;
+/// Last byte of the Figure A.1 non-spacing (combining-prefix) row.
+const COMBINING_ROW_END: u8 = 0xCF;
+/// Figure A.1 combining prefix: grave.
+const COMBINING_GRAVE: u8 = 0xC1;
+/// Figure A.1 combining prefix: acute.
+const COMBINING_ACUTE: u8 = 0xC2;
+/// Figure A.1 combining prefix: circumflex.
+const COMBINING_CIRCUMFLEX: u8 = 0xC3;
+/// Figure A.1 combining prefix: tilde.
+const COMBINING_TILDE: u8 = 0xC4;
+/// Figure A.1 combining prefix: macron.
+const COMBINING_MACRON: u8 = 0xC5;
+/// Figure A.1 combining prefix: breve.
+const COMBINING_BREVE: u8 = 0xC6;
+/// Figure A.1 combining prefix: dot above.
+const COMBINING_DOT_ABOVE: u8 = 0xC7;
+/// Figure A.1 combining prefix: diaeresis.
+const COMBINING_DIAERESIS: u8 = 0xC8;
+/// Figure A.1 combining prefix: ring above.
+const COMBINING_RING_ABOVE: u8 = 0xCA;
+/// Figure A.1 combining prefix: cedilla.
+const COMBINING_CEDILLA: u8 = 0xCB;
+/// Figure A.1 combining prefix: double acute.
+const COMBINING_HUNGARUMLAUT: u8 = 0xCD;
+/// Figure A.1 combining prefix: ogonek.
+const COMBINING_OGONEK: u8 = 0xCE;
+/// Figure A.1 combining prefix: caron.
+const COMBINING_CARON: u8 = 0xCF;
+
 /// A Table A.3 character set whose codec tables come from `encoding_rs` and
 /// so need the `legacy-charsets` feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -274,7 +323,7 @@ impl serde::Serialize for DvbText<'_> {
 
 /// ISO 639-2 language code or ISO 3166 country code — 3 raw bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LangCode(pub [u8; 3]);
+pub struct LangCode(pub [u8; LANG_CODE_LEN]);
 
 impl LangCode {
     /// The code as a string; lossy (U+FFFD) for non-ASCII garbage.
@@ -285,8 +334,8 @@ impl LangCode {
 }
 
 impl core::ops::Deref for LangCode {
-    type Target = [u8; 3];
-    fn deref(&self) -> &[u8; 3] {
+    type Target = [u8; LANG_CODE_LEN];
+    fn deref(&self) -> &[u8; LANG_CODE_LEN] {
         &self.0
     }
 }
@@ -323,13 +372,20 @@ enum Charset {
 
 fn split_charset(bytes: &[u8]) -> (Charset, &[u8]) {
     match bytes[0] {
-        b if b >= 0x20 => (Charset::Iso6937, bytes),
+        b if b >= DEFAULT_TABLE_MIN => (Charset::Iso6937, bytes),
         0x00 => (Charset::Iso6937, &bytes[1..]),
         // Table A.3: 0x01..=0x0B map to ISO 8859-5..-15, EXCEPT 0x08 which is
         // "reserved for future use" (there is no ISO 8859-12).
         0x08 => (Charset::Unsupported(0x08), &bytes[1..]),
         0x01..=0x0B => (Charset::Iso8859(bytes[0] + 4), &bytes[1..]),
-        0x10 if bytes.len() >= 3 && bytes[1] == 0x00 => (Charset::Iso8859(bytes[2]), &bytes[3..]),
+        ISO8859_EXTENDED_SELECTOR
+            if bytes.len() >= ISO8859_EXTENDED_SELECTOR_LEN && bytes[1] == 0 =>
+        {
+            (
+                Charset::Iso8859(bytes[ISO8859_PART_OFFSET]),
+                &bytes[ISO8859_EXTENDED_SELECTOR_LEN..],
+            )
+        }
         0x11 => (Charset::Ucs2Be, &bytes[1..]),
         0x12 => (Charset::Legacy(LegacyCharset::Ksx1001), &bytes[1..]),
         0x13 => (Charset::Legacy(LegacyCharset::Gb2312), &bytes[1..]),
@@ -337,7 +393,10 @@ fn split_charset(bytes: &[u8]) -> (Charset, &[u8]) {
         0x15 => (Charset::Utf8, &bytes[1..]),
         // 0x1F: an 8-bit encoding_type_id follows (Table A.4 area); no ids are
         // registered for broadcast text — treat the body as undecodable.
-        0x1F if bytes.len() >= 2 => (Charset::Unsupported(0x1F), &bytes[2..]),
+        ENCODING_TYPE_ID_SELECTOR if bytes.len() >= ENCODING_TYPE_ID_SELECTOR_LEN => (
+            Charset::Unsupported(ENCODING_TYPE_ID_SELECTOR),
+            &bytes[ENCODING_TYPE_ID_SELECTOR_LEN..],
+        ),
         other => (Charset::Unsupported(other), &bytes[1..]),
     }
 }
@@ -348,7 +407,7 @@ fn decode_iso_6937(bytes: &[u8]) -> String {
     while i < bytes.len() {
         let b = bytes[i];
         // 0xC0..=0xCF is the Figure A.1 non-spacing (combining-prefix) row.
-        if (0xC0..=0xCF).contains(&b) {
+        if (COMBINING_ROW_START..=COMBINING_ROW_END).contains(&b) {
             match combining_mark(b) {
                 Some(mark) if i + 1 < bytes.len() => {
                     let base = bytes[i + 1];
@@ -360,7 +419,7 @@ fn decode_iso_6937(bytes: &[u8]) -> String {
                         out.push(iso_6937_single(base));
                         out.push(mark);
                     }
-                    i += 2;
+                    i += COMBINING_SEQUENCE_LEN;
                 }
                 // Undefined prefix (0xC0/0xC9/0xCC) or dangling prefix at end.
                 _ => {
@@ -475,173 +534,173 @@ fn iso_6937_single(b: u8) -> char {
 /// (row 0xC0..=0xCF). `None` for the undefined positions 0xC0/0xC9/0xCC.
 fn combining_mark(prefix: u8) -> Option<char> {
     Some(match prefix {
-        0xC1 => '\u{0300}', // grave
-        0xC2 => '\u{0301}', // acute
-        0xC3 => '\u{0302}', // circumflex
-        0xC4 => '\u{0303}', // tilde
-        0xC5 => '\u{0304}', // macron
-        0xC6 => '\u{0306}', // breve
-        0xC7 => '\u{0307}', // dot above
-        0xC8 => '\u{0308}', // diaeresis
-        0xCA => '\u{030A}', // ring above
-        0xCB => '\u{0327}', // cedilla
-        0xCD => '\u{030B}', // double acute
-        0xCE => '\u{0328}', // ogonek
-        0xCF => '\u{030C}', // caron
+        COMBINING_GRAVE => '\u{0300}',        // grave
+        COMBINING_ACUTE => '\u{0301}',        // acute
+        COMBINING_CIRCUMFLEX => '\u{0302}',   // circumflex
+        COMBINING_TILDE => '\u{0303}',        // tilde
+        COMBINING_MACRON => '\u{0304}',       // macron
+        COMBINING_BREVE => '\u{0306}',        // breve
+        COMBINING_DOT_ABOVE => '\u{0307}',    // dot above
+        COMBINING_DIAERESIS => '\u{0308}',    // diaeresis
+        COMBINING_RING_ABOVE => '\u{030A}',   // ring above
+        COMBINING_CEDILLA => '\u{0327}',      // cedilla
+        COMBINING_HUNGARUMLAUT => '\u{030B}', // double acute
+        COMBINING_OGONEK => '\u{0328}',       // ogonek
+        COMBINING_CARON => '\u{030C}',        // caron
         _ => return None,
     })
 }
 
 fn combine(prefix: u8, base: u8) -> Option<char> {
     Some(match (prefix, base) {
-        (0xC1, b'A') => 'À',
-        (0xC1, b'E') => 'È',
-        (0xC1, b'I') => 'Ì',
-        (0xC1, b'O') => 'Ò',
-        (0xC1, b'U') => 'Ù',
-        (0xC1, b'a') => 'à',
-        (0xC1, b'e') => 'è',
-        (0xC1, b'i') => 'ì',
-        (0xC1, b'o') => 'ò',
-        (0xC1, b'u') => 'ù',
-        (0xC2, b'A') => 'Á',
-        (0xC2, b'E') => 'É',
-        (0xC2, b'I') => 'Í',
-        (0xC2, b'O') => 'Ó',
-        (0xC2, b'U') => 'Ú',
-        (0xC2, b'Y') => 'Ý',
-        (0xC2, b'a') => 'á',
-        (0xC2, b'e') => 'é',
-        (0xC2, b'i') => 'í',
-        (0xC2, b'o') => 'ó',
-        (0xC2, b'u') => 'ú',
-        (0xC2, b'y') => 'ý',
-        (0xC2, b'C') => 'Ć',
-        (0xC2, b'c') => 'ć',
-        (0xC2, b'L') => 'Ĺ',
-        (0xC2, b'l') => 'ĺ',
-        (0xC2, b'N') => 'Ń',
-        (0xC2, b'n') => 'ń',
-        (0xC2, b'R') => 'Ŕ',
-        (0xC2, b'r') => 'ŕ',
-        (0xC2, b'S') => 'Ś',
-        (0xC2, b's') => 'ś',
-        (0xC2, b'Z') => 'Ź',
-        (0xC2, b'z') => 'ź',
-        (0xC3, b'A') => 'Â',
-        (0xC3, b'E') => 'Ê',
-        (0xC3, b'I') => 'Î',
-        (0xC3, b'O') => 'Ô',
-        (0xC3, b'U') => 'Û',
-        (0xC3, b'a') => 'â',
-        (0xC3, b'e') => 'ê',
-        (0xC3, b'i') => 'î',
-        (0xC3, b'o') => 'ô',
-        (0xC3, b'u') => 'û',
-        (0xC4, b'A') => 'Ã',
-        (0xC4, b'N') => 'Ñ',
-        (0xC4, b'O') => 'Õ',
-        (0xC4, b'a') => 'ã',
-        (0xC4, b'n') => 'ñ',
-        (0xC4, b'o') => 'õ',
-        (0xC4, b'I') => 'Ĩ',
-        (0xC4, b'i') => 'ĩ',
-        (0xC4, b'U') => 'Ũ',
-        (0xC4, b'u') => 'ũ',
+        (COMBINING_GRAVE, b'A') => 'À',
+        (COMBINING_GRAVE, b'E') => 'È',
+        (COMBINING_GRAVE, b'I') => 'Ì',
+        (COMBINING_GRAVE, b'O') => 'Ò',
+        (COMBINING_GRAVE, b'U') => 'Ù',
+        (COMBINING_GRAVE, b'a') => 'à',
+        (COMBINING_GRAVE, b'e') => 'è',
+        (COMBINING_GRAVE, b'i') => 'ì',
+        (COMBINING_GRAVE, b'o') => 'ò',
+        (COMBINING_GRAVE, b'u') => 'ù',
+        (COMBINING_ACUTE, b'A') => 'Á',
+        (COMBINING_ACUTE, b'E') => 'É',
+        (COMBINING_ACUTE, b'I') => 'Í',
+        (COMBINING_ACUTE, b'O') => 'Ó',
+        (COMBINING_ACUTE, b'U') => 'Ú',
+        (COMBINING_ACUTE, b'Y') => 'Ý',
+        (COMBINING_ACUTE, b'a') => 'á',
+        (COMBINING_ACUTE, b'e') => 'é',
+        (COMBINING_ACUTE, b'i') => 'í',
+        (COMBINING_ACUTE, b'o') => 'ó',
+        (COMBINING_ACUTE, b'u') => 'ú',
+        (COMBINING_ACUTE, b'y') => 'ý',
+        (COMBINING_ACUTE, b'C') => 'Ć',
+        (COMBINING_ACUTE, b'c') => 'ć',
+        (COMBINING_ACUTE, b'L') => 'Ĺ',
+        (COMBINING_ACUTE, b'l') => 'ĺ',
+        (COMBINING_ACUTE, b'N') => 'Ń',
+        (COMBINING_ACUTE, b'n') => 'ń',
+        (COMBINING_ACUTE, b'R') => 'Ŕ',
+        (COMBINING_ACUTE, b'r') => 'ŕ',
+        (COMBINING_ACUTE, b'S') => 'Ś',
+        (COMBINING_ACUTE, b's') => 'ś',
+        (COMBINING_ACUTE, b'Z') => 'Ź',
+        (COMBINING_ACUTE, b'z') => 'ź',
+        (COMBINING_CIRCUMFLEX, b'A') => 'Â',
+        (COMBINING_CIRCUMFLEX, b'E') => 'Ê',
+        (COMBINING_CIRCUMFLEX, b'I') => 'Î',
+        (COMBINING_CIRCUMFLEX, b'O') => 'Ô',
+        (COMBINING_CIRCUMFLEX, b'U') => 'Û',
+        (COMBINING_CIRCUMFLEX, b'a') => 'â',
+        (COMBINING_CIRCUMFLEX, b'e') => 'ê',
+        (COMBINING_CIRCUMFLEX, b'i') => 'î',
+        (COMBINING_CIRCUMFLEX, b'o') => 'ô',
+        (COMBINING_CIRCUMFLEX, b'u') => 'û',
+        (COMBINING_TILDE, b'A') => 'Ã',
+        (COMBINING_TILDE, b'N') => 'Ñ',
+        (COMBINING_TILDE, b'O') => 'Õ',
+        (COMBINING_TILDE, b'a') => 'ã',
+        (COMBINING_TILDE, b'n') => 'ñ',
+        (COMBINING_TILDE, b'o') => 'õ',
+        (COMBINING_TILDE, b'I') => 'Ĩ',
+        (COMBINING_TILDE, b'i') => 'ĩ',
+        (COMBINING_TILDE, b'U') => 'Ũ',
+        (COMBINING_TILDE, b'u') => 'ũ',
         // macron
-        (0xC5, b'A') => 'Ā',
-        (0xC5, b'a') => 'ā',
-        (0xC5, b'E') => 'Ē',
-        (0xC5, b'e') => 'ē',
-        (0xC5, b'I') => 'Ī',
-        (0xC5, b'i') => 'ī',
-        (0xC5, b'O') => 'Ō',
-        (0xC5, b'o') => 'ō',
-        (0xC5, b'U') => 'Ū',
-        (0xC5, b'u') => 'ū',
+        (COMBINING_MACRON, b'A') => 'Ā',
+        (COMBINING_MACRON, b'a') => 'ā',
+        (COMBINING_MACRON, b'E') => 'Ē',
+        (COMBINING_MACRON, b'e') => 'ē',
+        (COMBINING_MACRON, b'I') => 'Ī',
+        (COMBINING_MACRON, b'i') => 'ī',
+        (COMBINING_MACRON, b'O') => 'Ō',
+        (COMBINING_MACRON, b'o') => 'ō',
+        (COMBINING_MACRON, b'U') => 'Ū',
+        (COMBINING_MACRON, b'u') => 'ū',
         // breve
-        (0xC6, b'A') => 'Ă',
-        (0xC6, b'a') => 'ă',
-        (0xC6, b'G') => 'Ğ',
-        (0xC6, b'g') => 'ğ',
-        (0xC6, b'U') => 'Ŭ',
-        (0xC6, b'u') => 'ŭ',
+        (COMBINING_BREVE, b'A') => 'Ă',
+        (COMBINING_BREVE, b'a') => 'ă',
+        (COMBINING_BREVE, b'G') => 'Ğ',
+        (COMBINING_BREVE, b'g') => 'ğ',
+        (COMBINING_BREVE, b'U') => 'Ŭ',
+        (COMBINING_BREVE, b'u') => 'ŭ',
         // dot above
-        (0xC7, b'C') => 'Ċ',
-        (0xC7, b'c') => 'ċ',
-        (0xC7, b'E') => 'Ė',
-        (0xC7, b'e') => 'ė',
-        (0xC7, b'G') => 'Ġ',
-        (0xC7, b'g') => 'ġ',
-        (0xC7, b'I') => 'İ',
-        (0xC7, b'Z') => 'Ż',
-        (0xC7, b'z') => 'ż',
-        (0xC8, b'A') => 'Ä',
-        (0xC8, b'E') => 'Ë',
-        (0xC8, b'I') => 'Ï',
-        (0xC8, b'O') => 'Ö',
-        (0xC8, b'U') => 'Ü',
-        (0xC8, b'Y') => 'Ÿ',
-        (0xC8, b'a') => 'ä',
-        (0xC8, b'e') => 'ë',
-        (0xC8, b'i') => 'ï',
-        (0xC8, b'o') => 'ö',
-        (0xC8, b'u') => 'ü',
-        (0xC8, b'y') => 'ÿ',
+        (COMBINING_DOT_ABOVE, b'C') => 'Ċ',
+        (COMBINING_DOT_ABOVE, b'c') => 'ċ',
+        (COMBINING_DOT_ABOVE, b'E') => 'Ė',
+        (COMBINING_DOT_ABOVE, b'e') => 'ė',
+        (COMBINING_DOT_ABOVE, b'G') => 'Ġ',
+        (COMBINING_DOT_ABOVE, b'g') => 'ġ',
+        (COMBINING_DOT_ABOVE, b'I') => 'İ',
+        (COMBINING_DOT_ABOVE, b'Z') => 'Ż',
+        (COMBINING_DOT_ABOVE, b'z') => 'ż',
+        (COMBINING_DIAERESIS, b'A') => 'Ä',
+        (COMBINING_DIAERESIS, b'E') => 'Ë',
+        (COMBINING_DIAERESIS, b'I') => 'Ï',
+        (COMBINING_DIAERESIS, b'O') => 'Ö',
+        (COMBINING_DIAERESIS, b'U') => 'Ü',
+        (COMBINING_DIAERESIS, b'Y') => 'Ÿ',
+        (COMBINING_DIAERESIS, b'a') => 'ä',
+        (COMBINING_DIAERESIS, b'e') => 'ë',
+        (COMBINING_DIAERESIS, b'i') => 'ï',
+        (COMBINING_DIAERESIS, b'o') => 'ö',
+        (COMBINING_DIAERESIS, b'u') => 'ü',
+        (COMBINING_DIAERESIS, b'y') => 'ÿ',
         // ring above
-        (0xCA, b'A') => 'Å',
-        (0xCA, b'a') => 'å',
-        (0xCA, b'U') => 'Ů',
-        (0xCA, b'u') => 'ů',
-        (0xCB, b'C') => 'Ç',
-        (0xCB, b'c') => 'ç',
-        (0xCB, b'G') => 'Ģ',
-        (0xCB, b'g') => 'ģ',
-        (0xCB, b'K') => 'Ķ',
-        (0xCB, b'k') => 'ķ',
-        (0xCB, b'L') => 'Ļ',
-        (0xCB, b'l') => 'ļ',
-        (0xCB, b'N') => 'Ņ',
-        (0xCB, b'n') => 'ņ',
-        (0xCB, b'R') => 'Ŗ',
-        (0xCB, b'r') => 'ŗ',
-        (0xCB, b'S') => 'Ş',
-        (0xCB, b's') => 'ş',
-        (0xCB, b'T') => 'Ţ',
-        (0xCB, b't') => 'ţ',
+        (COMBINING_RING_ABOVE, b'A') => 'Å',
+        (COMBINING_RING_ABOVE, b'a') => 'å',
+        (COMBINING_RING_ABOVE, b'U') => 'Ů',
+        (COMBINING_RING_ABOVE, b'u') => 'ů',
+        (COMBINING_CEDILLA, b'C') => 'Ç',
+        (COMBINING_CEDILLA, b'c') => 'ç',
+        (COMBINING_CEDILLA, b'G') => 'Ģ',
+        (COMBINING_CEDILLA, b'g') => 'ģ',
+        (COMBINING_CEDILLA, b'K') => 'Ķ',
+        (COMBINING_CEDILLA, b'k') => 'ķ',
+        (COMBINING_CEDILLA, b'L') => 'Ļ',
+        (COMBINING_CEDILLA, b'l') => 'ļ',
+        (COMBINING_CEDILLA, b'N') => 'Ņ',
+        (COMBINING_CEDILLA, b'n') => 'ņ',
+        (COMBINING_CEDILLA, b'R') => 'Ŗ',
+        (COMBINING_CEDILLA, b'r') => 'ŗ',
+        (COMBINING_CEDILLA, b'S') => 'Ş',
+        (COMBINING_CEDILLA, b's') => 'ş',
+        (COMBINING_CEDILLA, b'T') => 'Ţ',
+        (COMBINING_CEDILLA, b't') => 'ţ',
         // double acute
-        (0xCD, b'O') => 'Ő',
-        (0xCD, b'o') => 'ő',
-        (0xCD, b'U') => 'Ű',
-        (0xCD, b'u') => 'ű',
+        (COMBINING_HUNGARUMLAUT, b'O') => 'Ő',
+        (COMBINING_HUNGARUMLAUT, b'o') => 'ő',
+        (COMBINING_HUNGARUMLAUT, b'U') => 'Ű',
+        (COMBINING_HUNGARUMLAUT, b'u') => 'ű',
         // ogonek
-        (0xCE, b'A') => 'Ą',
-        (0xCE, b'a') => 'ą',
-        (0xCE, b'E') => 'Ę',
-        (0xCE, b'e') => 'ę',
-        (0xCE, b'I') => 'Į',
-        (0xCE, b'i') => 'į',
-        (0xCE, b'U') => 'Ų',
-        (0xCE, b'u') => 'ų',
+        (COMBINING_OGONEK, b'A') => 'Ą',
+        (COMBINING_OGONEK, b'a') => 'ą',
+        (COMBINING_OGONEK, b'E') => 'Ę',
+        (COMBINING_OGONEK, b'e') => 'ę',
+        (COMBINING_OGONEK, b'I') => 'Į',
+        (COMBINING_OGONEK, b'i') => 'į',
+        (COMBINING_OGONEK, b'U') => 'Ų',
+        (COMBINING_OGONEK, b'u') => 'ų',
         // caron
-        (0xCF, b'C') => 'Č',
-        (0xCF, b'c') => 'č',
-        (0xCF, b'D') => 'Ď',
-        (0xCF, b'd') => 'ď',
-        (0xCF, b'E') => 'Ě',
-        (0xCF, b'e') => 'ě',
-        (0xCF, b'L') => 'Ľ',
-        (0xCF, b'l') => 'ľ',
-        (0xCF, b'N') => 'Ň',
-        (0xCF, b'n') => 'ň',
-        (0xCF, b'R') => 'Ř',
-        (0xCF, b'r') => 'ř',
-        (0xCF, b'S') => 'Š',
-        (0xCF, b's') => 'š',
-        (0xCF, b'T') => 'Ť',
-        (0xCF, b't') => 'ť',
-        (0xCF, b'Z') => 'Ž',
-        (0xCF, b'z') => 'ž',
+        (COMBINING_CARON, b'C') => 'Č',
+        (COMBINING_CARON, b'c') => 'č',
+        (COMBINING_CARON, b'D') => 'Ď',
+        (COMBINING_CARON, b'd') => 'ď',
+        (COMBINING_CARON, b'E') => 'Ě',
+        (COMBINING_CARON, b'e') => 'ě',
+        (COMBINING_CARON, b'L') => 'Ľ',
+        (COMBINING_CARON, b'l') => 'ľ',
+        (COMBINING_CARON, b'N') => 'Ň',
+        (COMBINING_CARON, b'n') => 'ň',
+        (COMBINING_CARON, b'R') => 'Ř',
+        (COMBINING_CARON, b'r') => 'ř',
+        (COMBINING_CARON, b'S') => 'Š',
+        (COMBINING_CARON, b's') => 'š',
+        (COMBINING_CARON, b'T') => 'Ť',
+        (COMBINING_CARON, b't') => 'ť',
+        (COMBINING_CARON, b'Z') => 'Ž',
+        (COMBINING_CARON, b'z') => 'ž',
         _ => return None,
     })
 }
@@ -666,7 +725,7 @@ fn decode_ucs2_be(bytes: &[u8]) -> String {
     out.extend(
         char::decode_utf16(
             bytes
-                .chunks_exact(2)
+                .chunks_exact(UCS2_CODE_UNIT_LEN)
                 .map(|pair| u16::from_be_bytes([pair[0], pair[1]])),
         )
         .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER)),

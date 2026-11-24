@@ -178,7 +178,10 @@ impl Mpeg2DisplayTracker {
             if payload.len() < USER_IDENTIFIER_LEN {
                 continue;
             }
-            let identifier = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+            let identifier = payload
+                .first_chunk::<USER_IDENTIFIER_LEN>()
+                .map(|b| u32::from_be_bytes(*b))
+                .unwrap_or_default();
             let body = &payload[USER_IDENTIFIER_LEN..];
             match identifier {
                 DTG1_USER_IDENTIFIER => {

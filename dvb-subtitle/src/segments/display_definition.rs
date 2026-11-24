@@ -3,6 +3,9 @@
 //! Defines the display resolution and optional display window for a subtitle service.
 
 use crate::error::{Error, Result};
+use crate::segments::{
+    PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -12,6 +15,31 @@ pub const SEGMENT_TYPE: u8 = 0x14;
 pub const HEADER_LEN: usize = 6;
 /// Fixed segment body (after header): dds_version_number(4b)+display_window_flag(1b)+reserved(3b) + display_width(2) + display_height(2) = 5 bytes.
 pub const FIXED_BODY_LEN: usize = 5;
+
+/// Offset of the version/window-flag/reserved byte within the segment body.
+const FLAGS_OFFSET: usize = 0;
+/// Offset of `display_width` within the segment body.
+const DISPLAY_WIDTH_OFFSET: usize = 1;
+/// Offset of `display_height` within the segment body.
+const DISPLAY_HEIGHT_OFFSET: usize = 3;
+/// Shift placing `dds_version_number` at the top of the flags byte.
+const DDS_VERSION_SHIFT: u32 = 4;
+/// Mask of `dds_version_number`.
+const DDS_VERSION_MASK: u8 = 0x0F;
+/// Mask of the `display_window_flag`.
+const DISPLAY_WINDOW_FLAG_MASK: u8 = 0x08;
+/// Shift placing the `display_window_flag` below the version nibble.
+const DISPLAY_WINDOW_FLAG_SHIFT: u32 = 3;
+/// Mask of the reserved bits beside the window flag.
+const RESERVED_MASK: u8 = 0x07;
+
+/// Offsets of the four display-window position fields.
+const WINDOW_HORIZONTAL_MIN_OFFSET: usize = 0;
+const WINDOW_HORIZONTAL_MAX_OFFSET: usize = 2;
+const WINDOW_VERTICAL_MIN_OFFSET: usize = 4;
+const WINDOW_VERTICAL_MAX_OFFSET: usize = 6;
+/// Bytes of a display-window position field.
+const WINDOW_FIELD_LEN: usize = 2;
 /// Optional display window fields: 4 × u16 = 8 bytes.
 pub const WINDOW_LEN: usize = 8;
 
@@ -54,21 +82,26 @@ impl<'a> Parse<'a> for DisplayDefinitionSegment {
                 found: u32::from(bytes[0]),
             }));
         }
-        if bytes[1] != SEGMENT_TYPE {
-            return Err(Error::UnknownSegmentType(bytes[1]));
+        if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
+            return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
+        let segment_length = u16::from_be_bytes([
+            bytes[SEGMENT_LENGTH_OFFSET],
+            bytes[SEGMENT_LENGTH_OFFSET + 1],
+        ]) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "display_definition_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
         need_in(body, FIXED_BODY_LEN, "display_definition_segment body")?;
-        let b0 = body[0];
-        let dds_version_number = b0 >> 4;
-        let display_window_flag = (b0 & 0x08) != 0;
-        let reserved = b0 & 0x07;
-        let display_width = u16::from_be_bytes([body[1], body[2]]);
-        let display_height = u16::from_be_bytes([body[3], body[4]]);
+        let b0 = body[FLAGS_OFFSET];
+        let dds_version_number = b0 >> DDS_VERSION_SHIFT;
+        let display_window_flag = (b0 & DISPLAY_WINDOW_FLAG_MASK) != 0;
+        let reserved = b0 & RESERVED_MASK;
+        let display_width =
+            u16::from_be_bytes([body[DISPLAY_WIDTH_OFFSET], body[DISPLAY_WIDTH_OFFSET + 1]]);
+        let display_height =
+            u16::from_be_bytes([body[DISPLAY_HEIGHT_OFFSET], body[DISPLAY_HEIGHT_OFFSET + 1]]);
 
         if display_window_flag {
             need_in(
@@ -85,13 +118,21 @@ impl<'a> Parse<'a> for DisplayDefinitionSegment {
                 display_width,
                 display_height,
                 display_window_horizontal_position_minimum: Some(u16::from_be_bytes([
-                    dw[0], dw[1],
+                    dw[WINDOW_HORIZONTAL_MIN_OFFSET],
+                    dw[WINDOW_HORIZONTAL_MIN_OFFSET + 1],
                 ])),
                 display_window_horizontal_position_maximum: Some(u16::from_be_bytes([
-                    dw[2], dw[3],
+                    dw[WINDOW_HORIZONTAL_MAX_OFFSET],
+                    dw[WINDOW_HORIZONTAL_MAX_OFFSET + 1],
                 ])),
-                display_window_vertical_position_minimum: Some(u16::from_be_bytes([dw[4], dw[5]])),
-                display_window_vertical_position_maximum: Some(u16::from_be_bytes([dw[6], dw[7]])),
+                display_window_vertical_position_minimum: Some(u16::from_be_bytes([
+                    dw[WINDOW_VERTICAL_MIN_OFFSET],
+                    dw[WINDOW_VERTICAL_MIN_OFFSET + 1],
+                ])),
+                display_window_vertical_position_maximum: Some(u16::from_be_bytes([
+                    dw[WINDOW_VERTICAL_MAX_OFFSET],
+                    dw[WINDOW_VERTICAL_MAX_OFFSET + 1],
+                ])),
             })
         } else {
             Ok(DisplayDefinitionSegment {
@@ -127,21 +168,27 @@ impl Serialize for DisplayDefinitionSegment {
         let len = self.serialized_len();
         need_out(buf, len)?;
         // Generic header
-        buf[0] = 0x0F; // sync_byte
-        buf[1] = SEGMENT_TYPE;
-        buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
+        buf[0] = crate::pes_data_field::SYNC_BYTE; // sync_byte
+        buf[SEGMENT_TYPE_OFFSET] = SEGMENT_TYPE;
+        buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]
+            .copy_from_slice(&self.page_id.to_be_bytes());
         let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
-        buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
+        buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
+            .copy_from_slice(&seg_len.to_be_bytes());
 
         // Fixed body byte 0: version(4b) | window_flag(1b) | reserved(3b)
-        buf[6] =
-            (broadcast_common::len::fit_mask(self.dds_version_number, 0x0F, "dds_version_number")?
-                << 4)
-                | (u8::from(self.display_window_flag) << 3)
-                | broadcast_common::len::fit_mask(self.reserved, 0x07, "reserved")?;
+        buf[HEADER_LEN + FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+            self.dds_version_number,
+            DDS_VERSION_MASK,
+            "dds_version_number",
+        )? << DDS_VERSION_SHIFT)
+            | (u8::from(self.display_window_flag) << DISPLAY_WINDOW_FLAG_SHIFT)
+            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
         // Fixed body bytes 1-4: display_width, display_height
-        buf[7..9].copy_from_slice(&self.display_width.to_be_bytes());
-        buf[9..11].copy_from_slice(&self.display_height.to_be_bytes());
+        buf[HEADER_LEN + DISPLAY_WIDTH_OFFSET..HEADER_LEN + DISPLAY_HEIGHT_OFFSET]
+            .copy_from_slice(&self.display_width.to_be_bytes());
+        buf[HEADER_LEN + DISPLAY_HEIGHT_OFFSET..HEADER_LEN + FIXED_BODY_LEN]
+            .copy_from_slice(&self.display_height.to_be_bytes());
 
         // Optional window
         if self.display_window_flag {
@@ -149,10 +196,16 @@ impl Serialize for DisplayDefinitionSegment {
             let wmax = self.display_window_horizontal_position_maximum.unwrap_or(0);
             let vmin = self.display_window_vertical_position_minimum.unwrap_or(0);
             let vmax = self.display_window_vertical_position_maximum.unwrap_or(0);
-            buf[11..13].copy_from_slice(&wmin.to_be_bytes());
-            buf[13..15].copy_from_slice(&wmax.to_be_bytes());
-            buf[15..17].copy_from_slice(&vmin.to_be_bytes());
-            buf[17..19].copy_from_slice(&vmax.to_be_bytes());
+            let base = HEADER_LEN + FIXED_BODY_LEN;
+            buf[base + WINDOW_HORIZONTAL_MIN_OFFSET..base + WINDOW_HORIZONTAL_MAX_OFFSET]
+                .copy_from_slice(&wmin.to_be_bytes());
+            buf[base + WINDOW_HORIZONTAL_MAX_OFFSET..base + WINDOW_VERTICAL_MIN_OFFSET]
+                .copy_from_slice(&wmax.to_be_bytes());
+            buf[base + WINDOW_VERTICAL_MIN_OFFSET..base + WINDOW_VERTICAL_MAX_OFFSET]
+                .copy_from_slice(&vmin.to_be_bytes());
+            buf[base + WINDOW_VERTICAL_MAX_OFFSET
+                ..base + WINDOW_VERTICAL_MAX_OFFSET + WINDOW_FIELD_LEN]
+                .copy_from_slice(&vmax.to_be_bytes());
         }
         Ok(len)
     }

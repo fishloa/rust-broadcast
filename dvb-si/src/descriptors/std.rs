@@ -16,7 +16,11 @@ const HEADER_LEN: usize = 2;
 /// §5; confirmed by the TSDuck oracle PMT).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved` field ahead of `leak_valid_flag` (7 bits).
-const RESERVED_BITS: u32 = 7;
+pub const RESERVED_BITS: u32 = 7;
+/// `leak_valid_flag` occupies the low bit of the body byte.
+const LEAK_VALID_FLAG_MASK: u8 = 0x01;
+/// `reserved` starts at bit 1 of the body byte.
+const RESERVED_SHIFT: u32 = 1;
 const BODY_LEN: u8 = 1;
 
 /// STD Descriptor.
@@ -60,10 +64,10 @@ impl<'a> Parse<'a> for StdDescriptor {
                 reason: "STD_descriptor length must equal 1",
             });
         }
-        let leak_valid_flag = (body[0] & 0x01) != 0;
+        let leak_valid_flag = (body[0] & LEAK_VALID_FLAG_MASK) != 0;
         Ok(Self {
             leak_valid_flag,
-            reserved: ReservedOnes::from_bits(u64::from(body[0] >> 1)),
+            reserved: ReservedOnes::from_bits(u64::from(body[0] >> RESERVED_SHIFT)),
         })
     }
 }

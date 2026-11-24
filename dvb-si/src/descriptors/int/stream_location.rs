@@ -15,6 +15,16 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x13;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: usize = 9;
+/// Offset of `network_id` in the body.
+const NETWORK_ID_OFFSET: usize = 0;
+/// Offset of `original_network_id` in the body.
+const ORIGINAL_NETWORK_ID_OFFSET: usize = NETWORK_ID_OFFSET + size_of::<u16>();
+/// Offset of `transport_stream_id` in the body.
+const TRANSPORT_STREAM_ID_OFFSET: usize = ORIGINAL_NETWORK_ID_OFFSET + size_of::<u16>();
+/// Offset of `service_id` in the body.
+const SERVICE_ID_OFFSET: usize = TRANSPORT_STREAM_ID_OFFSET + size_of::<u16>();
+/// Offset of `component_tag` in the body.
+const COMPONENT_TAG_OFFSET: usize = SERVICE_ID_OFFSET + size_of::<u16>();
 
 /// IP/MAC_stream_location_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,11 +62,19 @@ impl<'a> Parse<'a> for IpMacStreamLocationDescriptor<'a> {
                     reason: "IP/MAC_stream_location_descriptor body shorter than 9 bytes",
                 })?;
         Ok(Self {
-            network_id: u16::from_be_bytes([f[0], f[1]]),
-            original_network_id: u16::from_be_bytes([f[2], f[3]]),
-            transport_stream_id: u16::from_be_bytes([f[4], f[5]]),
-            service_id: u16::from_be_bytes([f[6], f[7]]),
-            component_tag: f[8],
+            network_id: crate::wire::be_u16(f, NETWORK_ID_OFFSET, "network_id")?,
+            original_network_id: crate::wire::be_u16(
+                f,
+                ORIGINAL_NETWORK_ID_OFFSET,
+                "original_network_id",
+            )?,
+            transport_stream_id: crate::wire::be_u16(
+                f,
+                TRANSPORT_STREAM_ID_OFFSET,
+                "transport_stream_id",
+            )?,
+            service_id: crate::wire::be_u16(f, SERVICE_ID_OFFSET, "service_id")?,
+            component_tag: f[COMPONENT_TAG_OFFSET],
             trailing,
         })
     }
@@ -71,11 +89,15 @@ impl Serialize for IpMacStreamLocationDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2..4].copy_from_slice(&self.network_id.to_be_bytes());
-        buf[4..6].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[6..8].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[8..10].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[10] = self.component_tag;
+        buf[HEADER_LEN + NETWORK_ID_OFFSET..HEADER_LEN + ORIGINAL_NETWORK_ID_OFFSET]
+            .copy_from_slice(&self.network_id.to_be_bytes());
+        buf[HEADER_LEN + ORIGINAL_NETWORK_ID_OFFSET..HEADER_LEN + TRANSPORT_STREAM_ID_OFFSET]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
+        buf[HEADER_LEN + TRANSPORT_STREAM_ID_OFFSET..HEADER_LEN + SERVICE_ID_OFFSET]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        buf[HEADER_LEN + SERVICE_ID_OFFSET..HEADER_LEN + COMPONENT_TAG_OFFSET]
+            .copy_from_slice(&self.service_id.to_be_bytes());
+        buf[HEADER_LEN + COMPONENT_TAG_OFFSET] = self.component_tag;
         buf[HEADER_LEN + BODY_LEN..len].copy_from_slice(self.trailing);
         Ok(len)
     }
