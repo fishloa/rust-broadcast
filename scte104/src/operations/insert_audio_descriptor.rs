@@ -78,16 +78,16 @@ impl<'a> Parse<'a> for InsertAudioDescriptor {
         }
         let entries = rest[..need]
             .chunks_exact(ENTRY_LEN)
-            .map(|e| AudioEntry {
-                component_tag: e[COMPONENT_TAG_OFFSET],
-                iso_code: [
-                    e[ISO_CODE_OFFSET],
-                    e[ISO_CODE_OFFSET + 1],
-                    e[BIT_STREAM_MODE_OFFSET - 1],
-                ],
-                bit_stream_mode: e[BIT_STREAM_MODE_OFFSET],
-                num_channels: e[NUM_CHANNELS_OFFSET],
-                full_srvc_audio: e[FULL_SRVC_AUDIO_OFFSET],
+            .map(|e| {
+                let mut iso_code = [0_u8; ISO_CODE_LEN];
+                iso_code.copy_from_slice(&e[ISO_CODE_OFFSET..ISO_CODE_OFFSET + ISO_CODE_LEN]);
+                AudioEntry {
+                    component_tag: e[COMPONENT_TAG_OFFSET],
+                    iso_code,
+                    bit_stream_mode: e[BIT_STREAM_MODE_OFFSET],
+                    num_channels: e[NUM_CHANNELS_OFFSET],
+                    full_srvc_audio: e[FULL_SRVC_AUDIO_OFFSET],
+                }
             })
             .collect();
         Ok(Self { entries })
@@ -108,7 +108,7 @@ impl Serialize for InsertAudioDescriptor {
         )?;
         for (chunk, e) in buf[1..need].chunks_exact_mut(ENTRY_LEN).zip(&self.entries) {
             chunk[COMPONENT_TAG_OFFSET] = e.component_tag;
-            chunk[1..4].copy_from_slice(&e.iso_code);
+            chunk[ISO_CODE_OFFSET..ISO_CODE_OFFSET + ISO_CODE_LEN].copy_from_slice(&e.iso_code);
             chunk[BIT_STREAM_MODE_OFFSET] = e.bit_stream_mode;
             chunk[NUM_CHANNELS_OFFSET] = e.num_channels;
             chunk[FULL_SRVC_AUDIO_OFFSET] = e.full_srvc_audio;
