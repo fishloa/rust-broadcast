@@ -64,6 +64,13 @@ const HEADER_LEN: usize = 8;
 const SECTION_LENGTH_PREFIX: usize = 3;
 use super::CRC_LEN;
 
+/// Width of the `reserved_zero_future_use` above `font_file_format`.
+const FORMAT_RESERVED_BITS: u32 = 4;
+/// Shift of the `reserved_zero_future_use` above `font_file_format`.
+const FORMAT_RESERVED_SHIFT: u32 = 4;
+/// `reserved_zero_future_use` bit after `font_weight`.
+const WEIGHT_RESERVED_MASK: u8 = 0x01;
+
 /// `style(3)` field mask inside a StyleWeight style/weight byte: bits `[7:5]`
 /// (ETSI TS 103 283 §5.3.2.3.1 Table 22).
 const STYLE_MASK: u8 = 0x07;
@@ -72,9 +79,26 @@ const WEIGHT_MASK: u8 = 0x0F;
 /// `format(4)` field mask of a FileUri font-info type byte.
 const FORMAT_MASK: u8 = 0x0F;
 /// `reserved_zero_future_use(1)` mask in the StyleWeight byte (bit 0).
-const RESERVED_ZERO_1: u8 = 0x01;
-/// Shift of the `reserved_zero_future_use(4)` above `font_file_format(4)`.
-const RESERVED_ZERO_4_SHIFT: u32 = 4;
+/// `font_id_extension(9) | font_id(7)` split.
+const FONT_ID_EXTENSION_MASK: u16 = 0x01FF;
+const FONT_ID_MASK: u16 = 0x7F;
+const FONT_ID_EXTENSION_SHIFT: u16 = 7;
+
+/// `style(3)` shift in the packed style/weight byte.
+const STYLE_SHIFT: u8 = 5;
+
+/// Byte offsets in the section header.
+const ID_WORD_OFFSET: usize = 3;
+
+/// Fixed byte lengths of the `font_info` bodies, excluding the type byte.
+const FONT_INFO_TYPE_LEN: usize = 1;
+const FILE_URI_BODY_LEN: usize = 2;
+const FILE_URI_ENTRY_LEN: usize = FONT_INFO_TYPE_LEN + FILE_URI_BODY_LEN;
+const FONT_SIZE_FIELD_LEN: usize = 2;
+const FONT_SIZE_BODY_LEN: usize = 3;
+const FONT_SIZE_ENTRY_LEN: usize = FONT_INFO_TYPE_LEN + FONT_SIZE_BODY_LEN;
+const LENGTH_DELIMITED_ENTRY_LEN: usize = FONT_INFO_TYPE_LEN + 1;
+const STYLE_WEIGHT_ENTRY_LEN: usize = FONT_INFO_TYPE_LEN + 1;
 
 /// One entry in the DFIS font_info loop (§5.3.2.3.1 Table 22).
 ///
@@ -104,7 +128,7 @@ pub enum FontInfo<'a> {
         /// `reserved_zero_future_use(4)` before `font_file_format` (`0000`);
         /// preserved from the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_zero_future_use: ReservedZero<4>,
+        reserved_zero_future_use: ReservedZero<FORMAT_RESERVED_BITS>,
     },
     /// `font_info_type == 0x02`: font_size(16) followed by the length-delimited block.
     FontSize {
@@ -217,13 +241,13 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
         )?;
 
         // bytes[3..5] = font_id_extension(9) | font_id(7).
-        let id_word = crate::wire::be_u16(bytes, 3, "downloadable_font_info")?;
-        let font_id_extension = id_word >> 7;
-        let font_id = (id_word & 0x7F) as u8;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let id_word = crate::wire::be_u16(bytes, ID_WORD_OFFSET, "downloadable_font_info")?;
+        let font_id_extension = id_word >> FONT_ID_EXTENSION_SHIFT;
+        let font_id = (id_word & FONT_ID_MASK) as u8;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let loop_end = total - CRC_LEN;
         let mut font_info = Vec::new();
@@ -242,25 +266,25 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                     let b = bytes[pos];
                     pos += 1;
                     font_info.push(FontInfo::StyleWeight {
-                        style: b >> 5,
+                        style: b >> STYLE_SHIFT,
                         weight: (b >> 1) & WEIGHT_MASK,
                         reserved_zero_future_use: ReservedZero::from_bits(u64::from(
-                            b & RESERVED_ZERO_1,
+                            b & WEIGHT_RESERVED_MASK,
                         )),
                     });
                 }
                 FONT_INFO_TYPE_FILE_URI => {
-                    if pos + 2 > loop_end {
+                    if pos + FILE_URI_BODY_LEN > loop_end {
                         return Err(Error::SectionLengthOverflow {
-                            declared: 2,
+                            declared: FILE_URI_BODY_LEN,
                             available: loop_end - pos,
                         });
                     }
                     let format = bytes[pos] & FORMAT_MASK;
                     let reserved_zero_future_use =
-                        ReservedZero::from_bits(u64::from(bytes[pos] >> RESERVED_ZERO_4_SHIFT));
+                        ReservedZero::from_bits(u64::from(bytes[pos] >> FORMAT_RESERVED_SHIFT));
                     let uri_length = bytes[pos + 1] as usize;
-                    let uri_start = pos + 2;
+                    let uri_start = pos + FILE_URI_BODY_LEN;
                     let uri_end = uri_start + uri_length;
                     if uri_end > loop_end {
                         return Err(Error::SectionLengthOverflow {
@@ -277,22 +301,22 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                 }
                 FONT_INFO_TYPE_FONT_SIZE => {
                     // font_size(16) then font_info_length(8) + block (Table 22, type >= 0x02).
-                    if pos + 3 > loop_end {
+                    if pos + FONT_SIZE_BODY_LEN > loop_end {
                         return Err(Error::SectionLengthOverflow {
-                            declared: 3,
+                            declared: FONT_SIZE_BODY_LEN,
                             available: loop_end - pos,
                         });
                     }
                     let (b2, _) = bytes
                         .get(pos..)
-                        .and_then(|s| s.split_first_chunk::<2>())
+                        .and_then(|s| s.split_first_chunk::<FONT_SIZE_FIELD_LEN>())
                         .ok_or(Error::SectionLengthOverflow {
-                            declared: 3,
+                            declared: FONT_SIZE_BODY_LEN,
                             available: loop_end - pos,
                         })?;
                     let size = u16::from_be_bytes(*b2);
-                    let info_length = bytes[pos + 2] as usize;
-                    let info_start = pos + 3;
+                    let info_length = bytes[pos + FONT_SIZE_FIELD_LEN] as usize;
+                    let info_start = pos + FONT_SIZE_BODY_LEN;
                     let info_end = info_start + info_length;
                     if info_end > loop_end {
                         return Err(Error::SectionLengthOverflow {
@@ -340,7 +364,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
             section_number,
             last_section_number,
             font_info,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
         })
     }
 }
@@ -352,10 +376,10 @@ impl Serialize for DownloadableFontInfoSection<'_> {
             .font_info
             .iter()
             .map(|f| match f {
-                FontInfo::StyleWeight { .. } => 2, // type + 1 packed byte
-                FontInfo::FileUri { uri, .. } => 1 + 2 + uri.len(), // type + (fmt|len) + uri
-                FontInfo::FontSize { info, .. } => 1 + 2 + 1 + info.len(), // type + size + len + info
-                FontInfo::LengthDelimited { info, .. } => 1 + 1 + info.len(), // type + len + info
+                FontInfo::StyleWeight { .. } => STYLE_WEIGHT_ENTRY_LEN, // type + 1 packed byte
+                FontInfo::FileUri { uri, .. } => FILE_URI_ENTRY_LEN + uri.len(), // type + (fmt|len) + uri
+                FontInfo::FontSize { info, .. } => FONT_SIZE_ENTRY_LEN + info.len(), // type + size + len + info
+                FontInfo::LengthDelimited { info, .. } => LENGTH_DELIMITED_ENTRY_LEN + info.len(), // type + len + info
             })
             .sum();
         HEADER_LEN + loop_bytes + CRC_LEN
@@ -367,17 +391,19 @@ impl Serialize for DownloadableFontInfoSection<'_> {
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         // font_id_extension(9) | font_id(7); spec mandates extension all-zero.
-        let id_word =
-            (broadcast_common::len::fit_mask(self.font_id_extension, 0x01FF, "font_id_extension")?
-                << 7)
-                | broadcast_common::len::fit_mask(self.font_id as u16, 0x7F, "font_id")?;
-        buf[3..5].copy_from_slice(&id_word.to_be_bytes());
+        let id_word = (broadcast_common::len::fit_mask(
+            self.font_id_extension,
+            FONT_ID_EXTENSION_MASK,
+            "font_id_extension",
+        )? << FONT_ID_EXTENSION_SHIFT)
+            | broadcast_common::len::fit_mask(self.font_id as u16, FONT_ID_MASK, "font_id")?;
+        buf[ID_WORD_OFFSET..super::VERSION_FLAGS_OFFSET].copy_from_slice(&id_word.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
-        buf[5] = self
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         // 8-bit length prefixes error on over-range payloads rather than
         // silently truncating (the crate's strict serialize idiom).
@@ -402,10 +428,10 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     buf[pos] = FONT_INFO_TYPE_STYLE_WEIGHT;
                     // style(3) | weight(4) | reserved_zero_future_use(1).
                     buf[pos + 1] = (broadcast_common::len::fit_mask(*style, STYLE_MASK, "style")?
-                        << 5)
+                        << STYLE_SHIFT)
                         | (broadcast_common::len::fit_mask(*weight, WEIGHT_MASK, "weight")? << 1)
                         | (*reserved_zero_future_use).get() as u8;
-                    pos += 2;
+                    pos += STYLE_WEIGHT_ENTRY_LEN;
                 }
                 FontInfo::FileUri {
                     format,
@@ -416,19 +442,21 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     buf[pos] = FONT_INFO_TYPE_FILE_URI;
                     // reserved_zero_future_use(4) | font_file_format(4).
                     buf[pos + 1] = (((*reserved_zero_future_use).get() as u8)
-                        << RESERVED_ZERO_4_SHIFT)
+                        << FORMAT_RESERVED_SHIFT)
                         | broadcast_common::len::fit_mask(*format, FORMAT_MASK, "format")?;
-                    buf[pos + 2] = broadcast_common::len::fit_u8(uri.len(), "uri")?;
-                    let s = pos + 3;
+                    buf[pos + FILE_URI_BODY_LEN] = broadcast_common::len::fit_u8(uri.len(), "uri")?;
+                    let s = pos + FILE_URI_ENTRY_LEN;
                     buf[s..s + uri.len()].copy_from_slice(uri);
                     pos = s + uri.len();
                 }
                 FontInfo::FontSize { size, info } => {
                     guard_u8(info.len())?;
                     buf[pos] = FONT_INFO_TYPE_FONT_SIZE;
-                    buf[pos + 1..pos + 3].copy_from_slice(&size.to_be_bytes());
-                    buf[pos + 3] = broadcast_common::len::fit_u8(info.len(), "info")?;
-                    let s = pos + 4;
+                    buf[pos + FONT_INFO_TYPE_LEN..pos + FONT_INFO_TYPE_LEN + FONT_SIZE_FIELD_LEN]
+                        .copy_from_slice(&size.to_be_bytes());
+                    buf[pos + FONT_SIZE_BODY_LEN] =
+                        broadcast_common::len::fit_u8(info.len(), "info")?;
+                    let s = pos + FONT_SIZE_ENTRY_LEN;
                     buf[s..s + info.len()].copy_from_slice(info);
                     pos = s + info.len();
                 }
@@ -453,7 +481,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     guard_u8(info.len())?;
                     buf[pos] = *font_info_type;
                     buf[pos + 1] = broadcast_common::len::fit_u8(info.len(), "info")?;
-                    let s = pos + 2;
+                    let s = pos + LENGTH_DELIMITED_ENTRY_LEN;
                     buf[s..s + info.len()].copy_from_slice(info);
                     pos = s + info.len();
                 }

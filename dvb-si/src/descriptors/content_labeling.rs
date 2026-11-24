@@ -29,6 +29,46 @@ const RESERVED_3_BITS: u32 = 3;
 const RESERVED_7_BITS: u32 = 7;
 /// Width of the 1-bit `reserved` ahead of `contentId`.
 const RESERVED_1_BITS: u32 = 1;
+/// Width of `metadata_application_format`, bytes.
+const FORMAT_LEN: usize = core::mem::size_of::<u16>();
+/// Width of the flags byte, bytes.
+const FLAGS_LEN: usize = 1;
+/// Width of `metadata_application_format` + the flags byte, bytes.
+const HEADER_PREFIX_LEN: usize = FORMAT_LEN + FLAGS_LEN;
+/// Width of `metadata_application_format_identifier`, bytes.
+const FORMAT_IDENTIFIER_LEN: usize = core::mem::size_of::<u32>();
+/// Width of one `reserved(7) | value(33)` group, bytes.
+const TIME_BASE_FIELD_LEN: usize = 5;
+/// Width of the two-group time base block, bytes.
+const TIME_BASE_BLOCK_LEN: usize = TIME_BASE_FIELD_LEN + TIME_BASE_FIELD_LEN;
+/// Width of a 33-bit time base value, bits.
+const TIME_BASE_VALUE_BITS: u32 = 33;
+/// Shift that places the 33-bit value's high bit.
+const TIME_BASE_HI_SHIFT: u32 = 32;
+/// Shift between the reserved bits and the 33-bit value's high bit.
+const RESERVED_SHIFT: u8 = 1;
+/// Mask of the 33-bit value's high bit.
+const LOW_BIT_MASK: u8 = 0x01;
+/// `metadata_application_format` value that adds the format identifier.
+const FORMAT_IDENTIFIER_PRESENT: u16 = 0xFFFF;
+/// Shift of `metadata_application_format`'s high byte.
+const FORMAT_HI_SHIFT: u8 = 8;
+/// Mask of `content_reference_id_record_flag`.
+const CONTENT_REFERENCE_ID_RECORD_FLAG_MASK: u8 = 0x80;
+/// Mask of `content_time_base_indicator`.
+const CONTENT_TIME_BASE_INDICATOR_MASK: u8 = 0x0F;
+/// Shift of `content_time_base_indicator` in the flags byte.
+const CONTENT_TIME_BASE_INDICATOR_SHIFT: u8 = 3;
+/// `content_time_base_indicator` value that adds a `contentId`.
+const CONTENT_TIME_BASE_INDICATOR_WITH_CONTENT_ID: u8 = 2;
+/// First `content_time_base_indicator` value that adds association data.
+const CONTENT_TIME_BASE_INDICATOR_ASSOCIATION_FIRST: u8 = 3;
+/// Last `content_time_base_indicator` value that adds association data.
+const CONTENT_TIME_BASE_INDICATOR_ASSOCIATION_LAST: u8 = 7;
+/// Mask of `contentId`.
+const CONTENT_ID_MASK: u8 = 0x7F;
+/// Shift of the `reserved` bit above `contentId`.
+const CONTENT_ID_RESERVED_SHIFT: u8 = 7;
 /// Default of each 7-bit `reserved` ahead of a 33-bit time-base value (see
 /// [`RESERVED_3_DEFAULT`]).
 pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
@@ -151,19 +191,16 @@ impl Default for ContentLabelingDescriptor<'_> {
 // `(reserved(7), value(33))`.
 fn read_33bit(bytes: &[u8], pos: usize) -> (ReservedOnes<RESERVED_7_BITS>, u64) {
     (
-        ReservedOnes::from_bits(u64::from(bytes[pos] >> 1)),
+        ReservedOnes::from_bits(u64::from(bytes[pos] >> RESERVED_SHIFT)),
         read_33bit_value(bytes, pos),
     )
 }
 
 fn read_33bit_value(bytes: &[u8], pos: usize) -> u64 {
-    ((u64::from(bytes[pos]) & 0x01) << 32)
-        | u64::from(u32::from_be_bytes([
-            bytes[pos + 1],
-            bytes[pos + 2],
-            bytes[pos + 3],
-            bytes[pos + 4],
-        ]))
+    let mut value_bytes = [0u8; core::mem::size_of::<u32>()];
+    value_bytes.copy_from_slice(&bytes[pos + 1..pos + TIME_BASE_FIELD_LEN]);
+    ((u64::from(bytes[pos]) & u64::from(LOW_BIT_MASK)) << TIME_BASE_HI_SHIFT)
+        | u64::from(u32::from_be_bytes(value_bytes))
 }
 
 fn write_33bit(
@@ -174,9 +211,10 @@ fn write_33bit(
 ) -> Result<()> {
     // A value wider than 33 bits used to be masked down silently (audit
     // r03-W3 class).
-    let v = broadcast_common::len::fit_bits(value, 33, "time_base_value")?;
-    buf[pos] = ((reserved.get() as u8) << 1) | ((v >> 32) as u8 & 0x01);
-    buf[pos + 1..pos + 5].copy_from_slice(&(v as u32).to_be_bytes());
+    let v = broadcast_common::len::fit_bits(value, TIME_BASE_VALUE_BITS, "time_base_value")?;
+    buf[pos] = ((reserved.get() as u8) << RESERVED_SHIFT)
+        | ((v >> TIME_BASE_HI_SHIFT) as u8 & LOW_BIT_MASK);
+    buf[pos + 1..pos + TIME_BASE_FIELD_LEN].copy_from_slice(&(v as u32).to_be_bytes());
     Ok(())
 }
 
@@ -192,7 +230,7 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
         )?;
 
         // Minimum: metadata_application_format(2) + flags(1) = 3 bytes
-        if body.len() < 3 {
+        if body.len() < HEADER_PREFIX_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "content_labeling_descriptor too short (< 3 body bytes)",
@@ -200,17 +238,21 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
         }
 
         let metadata_application_format = u16::from_be_bytes([body[0], body[1]]);
-        let mut pos = 2;
+        let mut pos = FORMAT_LEN;
 
-        let metadata_application_format_identifier = if metadata_application_format == 0xFFFF {
-            if body.len() < pos + 4 {
+        let metadata_application_format_identifier = if metadata_application_format
+            == FORMAT_IDENTIFIER_PRESENT
+        {
+            if body.len() < pos + FORMAT_IDENTIFIER_LEN {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "content_labeling_descriptor too short for metadata_application_format_identifier",
                 });
             }
-            let id = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
-            pos += 4;
+            let mut id_bytes = [0u8; FORMAT_IDENTIFIER_LEN];
+            id_bytes.copy_from_slice(&body[pos..pos + FORMAT_IDENTIFIER_LEN]);
+            let id = u32::from_be_bytes(id_bytes);
+            pos += FORMAT_IDENTIFIER_LEN;
             Some(id)
         } else {
             None
@@ -223,8 +265,9 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
             });
         }
         let flags = body[pos];
-        let content_reference_id_record_flag = (flags & 0x80) != 0;
-        let indicator_raw = (flags >> 3) & 0x0F;
+        let content_reference_id_record_flag = (flags & CONTENT_REFERENCE_ID_RECORD_FLAG_MASK) != 0;
+        let indicator_raw =
+            (flags >> CONTENT_TIME_BASE_INDICATOR_SHIFT) & CONTENT_TIME_BASE_INDICATOR_MASK;
         let content_time_base_indicator = ContentTimeBaseIndicator::from_u8(indicator_raw);
         let reserved = ReservedOnes::from_bits(u64::from(flags));
         pos += 1;
@@ -251,54 +294,59 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
             (None, pos)
         };
 
-        let time_base = if indicator_raw == 1 || indicator_raw == 2 {
-            // 7 reserved bits + 33-bit content_time_base_value + 7 reserved bits + 33-bit metadata_time_base_value
-            // = 80 bits = 10 bytes
-            if body.len() < pos + 10 {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "content_labeling_descriptor too short for time base block",
-                });
-            }
-            // byte[pos]: reserved(7) | content_time_base_value top bit
-            // That's: 1 reserved byte + 4.125 bytes for the 33-bit value
-            // The 33-bit value spans bytes pos..pos+5, with byte[pos] having 7 reserved + 1 data bit
-            // Wait — the syntax table shows:
-            //   reserved(7) | content_time_base_value(33)
-            // The reserved(7) occupies the first 7 bits of byte pos, then content_time_base_value starts at bit 0 of byte pos
-            // Actually: 7 reserved + 33 = 40 bits = 5 bytes
-            // Then: reserved(7) | metadata_time_base_value(33) = 40 bits = 5 bytes
-            // Total = 10 bytes
-            let (reserved_content, ctv) = read_33bit(&body[pos..], 0);
-            let (reserved_metadata, mtv) = read_33bit(&body[pos + 5..], 0);
-            pos += 10;
-            Some(ContentTimeBase {
-                content_time_base_value: ctv,
-                metadata_time_base_value: mtv,
-                reserved_content,
-                reserved_metadata,
-            })
-        } else {
-            None
-        };
+        let time_base =
+            if indicator_raw == 1 || indicator_raw == CONTENT_TIME_BASE_INDICATOR_WITH_CONTENT_ID {
+                // 7 reserved bits + 33-bit content_time_base_value + 7 reserved bits + 33-bit metadata_time_base_value
+                // = 80 bits = 10 bytes
+                if body.len() < pos + TIME_BASE_BLOCK_LEN {
+                    return Err(Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "content_labeling_descriptor too short for time base block",
+                    });
+                }
+                // byte[pos]: reserved(7) | content_time_base_value top bit
+                // That's: 1 reserved byte + 4.125 bytes for the 33-bit value
+                // The 33-bit value spans bytes pos..pos+5, with byte[pos] having 7 reserved + 1 data bit
+                // Wait — the syntax table shows:
+                //   reserved(7) | content_time_base_value(33)
+                // The reserved(7) occupies the first 7 bits of byte pos, then content_time_base_value starts at bit 0 of byte pos
+                // Actually: 7 reserved + 33 = 40 bits = 5 bytes
+                // Then: reserved(7) | metadata_time_base_value(33) = 40 bits = 5 bytes
+                // Total = 10 bytes
+                let (reserved_content, ctv) = read_33bit(&body[pos..], 0);
+                let (reserved_metadata, mtv) = read_33bit(&body[pos + TIME_BASE_FIELD_LEN..], 0);
+                pos += TIME_BASE_BLOCK_LEN;
+                Some(ContentTimeBase {
+                    content_time_base_value: ctv,
+                    metadata_time_base_value: mtv,
+                    reserved_content,
+                    reserved_metadata,
+                })
+            } else {
+                None
+            };
 
         let mut content_id_reserved = RESERVED_1_DEFAULT;
-        let content_id = if indicator_raw == 2 {
+        let content_id = if indicator_raw == CONTENT_TIME_BASE_INDICATOR_WITH_CONTENT_ID {
             if body.len() < pos + 1 {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "content_labeling_descriptor too short for contentId byte",
                 });
             }
-            let id = body[pos] & 0x7F;
-            content_id_reserved = ReservedOnes::from_bits(u64::from(body[pos] >> 7));
+            let id = body[pos] & CONTENT_ID_MASK;
+            content_id_reserved =
+                ReservedOnes::from_bits(u64::from(body[pos] >> CONTENT_ID_RESERVED_SHIFT));
             pos += 1;
             Some(id)
         } else {
             None
         };
 
-        let time_base_association = if (3..=7).contains(&indicator_raw) {
+        let time_base_association = if (CONTENT_TIME_BASE_INDICATOR_ASSOCIATION_FIRST
+            ..=CONTENT_TIME_BASE_INDICATOR_ASSOCIATION_LAST)
+            .contains(&indicator_raw)
+        {
             if body.len() < pos + 1 {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
@@ -342,15 +390,15 @@ impl Serialize for ContentLabelingDescriptor<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        let mut len: usize = HEADER_LEN + 3; // metadata_application_format(2) + flags(1)
+        let mut len: usize = HEADER_LEN + HEADER_PREFIX_LEN;
         if self.metadata_application_format_identifier.is_some() {
-            len += 4;
+            len += FORMAT_IDENTIFIER_LEN;
         }
         if let Some(rec) = self.content_reference_id_record {
             len += 1 + rec.len();
         }
         if self.time_base.is_some() {
-            len += 10;
+            len += TIME_BASE_BLOCK_LEN;
         }
         if self.content_id.is_some() {
             len += 1;
@@ -369,12 +417,14 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         // disagreement with the Options would misframe on re-parse (r03-W5).
         let ind = broadcast_common::len::fit_mask(
             self.content_time_base_indicator.to_u8(),
-            0x0F,
+            CONTENT_TIME_BASE_INDICATOR_MASK,
             "content_time_base_indicator",
         )?;
-        let want_time_base = ind == 1 || ind == 2;
-        let want_content_id = ind == 2;
-        let want_assoc = (3..=7).contains(&ind);
+        let want_time_base = ind == 1 || ind == CONTENT_TIME_BASE_INDICATOR_WITH_CONTENT_ID;
+        let want_content_id = ind == CONTENT_TIME_BASE_INDICATOR_WITH_CONTENT_ID;
+        let want_assoc = (CONTENT_TIME_BASE_INDICATOR_ASSOCIATION_FIRST
+            ..=CONTENT_TIME_BASE_INDICATOR_ASSOCIATION_LAST)
+            .contains(&ind);
         for (field, want, have) in [
             ("time_base", want_time_base, self.time_base.is_some()),
             ("content_id", want_content_id, self.content_id.is_some()),
@@ -393,24 +443,24 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
-        buf[HEADER_LEN] = (self.metadata_application_format >> 8) as u8;
+        buf[HEADER_LEN] = (self.metadata_application_format >> FORMAT_HI_SHIFT) as u8;
         buf[HEADER_LEN + 1] = self.metadata_application_format as u8;
-        let mut pos = HEADER_LEN + 2;
+        let mut pos = HEADER_LEN + FORMAT_LEN;
 
         if let Some(id) = self.metadata_application_format_identifier {
-            buf[pos..pos + 4].copy_from_slice(&id.to_be_bytes());
-            pos += 4;
+            buf[pos..pos + FORMAT_IDENTIFIER_LEN].copy_from_slice(&id.to_be_bytes());
+            pos += FORMAT_IDENTIFIER_LEN;
         }
 
         let mut flags = (broadcast_common::len::fit_mask(
             self.content_time_base_indicator.to_u8(),
-            0x0F,
+            CONTENT_TIME_BASE_INDICATOR_MASK,
             "content_time_base_indicator",
-        )? << 3)
+        )? << CONTENT_TIME_BASE_INDICATOR_SHIFT)
             | self.reserved.get() as u8;
         // Derived from the Option, never the stored flag (r03-W5).
         if self.content_reference_id_record.is_some() {
-            flags |= 0x80;
+            flags |= CONTENT_REFERENCE_ID_RECORD_FLAG_MASK;
         }
         buf[pos] = flags;
         pos += 1;
@@ -426,15 +476,15 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         if let Some(ref tb) = self.time_base {
             // reserved(7) + 33-bit content_time_base_value
             write_33bit(buf, pos, tb.reserved_content, tb.content_time_base_value)?;
-            pos += 5;
+            pos += TIME_BASE_FIELD_LEN;
             // reserved(7) + 33-bit metadata_time_base_value
             write_33bit(buf, pos, tb.reserved_metadata, tb.metadata_time_base_value)?;
-            pos += 5;
+            pos += TIME_BASE_FIELD_LEN;
         }
 
         if let Some(cid) = self.content_id {
-            buf[pos] = ((self.content_id_reserved.get() as u8) << 7)
-                | broadcast_common::len::fit_mask(cid, 0x7F, "cid")?;
+            buf[pos] = ((self.content_id_reserved.get() as u8) << CONTENT_ID_RESERVED_SHIFT)
+                | broadcast_common::len::fit_mask(cid, CONTENT_ID_MASK, "cid")?;
             pos += 1;
         }
 

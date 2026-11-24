@@ -59,7 +59,9 @@ impl<'a> EntryReader<'a> {
         let b = self.body;
         let p = self.pos;
         self.pos += LANG_LEN;
-        Ok(LangCode([b[p], b[p + 1], b[p + 2]]))
+        let mut code = [0u8; LANG_LEN];
+        code.copy_from_slice(&b[p..p + LANG_LEN]);
+        Ok(LangCode(code))
     }
 
     /// Read one length-prefixed text. `reserve` is the number of bytes that

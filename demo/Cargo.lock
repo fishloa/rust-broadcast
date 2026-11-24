@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "16.0.0"
+version = "16.0.1"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "16.0.0"
+version = "16.0.1"
 dependencies = [
  "broadcast-common",
  "bytes",

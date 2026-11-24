@@ -277,7 +277,7 @@ impl ParsedFile {
             let max_pts = pres_pts.last().copied().unwrap_or(first_pts);
             let span_ticks = max_pts.checked_sub(first_pts).unwrap_or(0);
             let mut frame = 0i64;
-            for pair in pres_pts.windows(2) {
+            for pair in pres_pts.windows(ADJACENT_PAIR_LEN) {
                 let d = match pair[1].checked_sub(pair[0]) {
                     Some(d) => d,
                     None => continue,
@@ -622,6 +622,12 @@ where
 /// (not a bare `90_000`) so the value's source is cited where it is used.
 const MPEG_TS_MOVIE_TIMESCALE: Timescale = transmux::VIDEO_CLOCK_TIMESCALE;
 
+/// Window size for walking consecutive presentation-timestamp pairs.
+const ADJACENT_PAIR_LEN: usize = 2;
+
+/// Divisor of the rounding term added before a nanosecond conversion.
+const ROUNDING_DIVISOR: u128 = 2;
+
 /// Convert a non-negative seconds value into a wall-clock [`Duration`] without
 /// panicking — `Duration::from_secs_f64` panics on a non-finite, negative, or
 /// overflowing input, and `pts as f64 / timescale` is unbounded for a
@@ -638,7 +644,9 @@ pub fn secs_to_duration(value: f64) -> Result<Duration, FileReaderError> {
 fn ticks_to_duration(ticks: i64, timescale: Timescale) -> Duration {
     let ticks = u128::try_from(ticks).unwrap_or(0);
     let denom = u128::from(timescale.get());
-    let nanos = (ticks * u128::from(broadcast_common::units::NANOS_PER_SEC) + denom / 2) / denom;
+    let nanos = (ticks * u128::from(broadcast_common::units::NANOS_PER_SEC)
+        + denom / ROUNDING_DIVISOR)
+        / denom;
     Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 

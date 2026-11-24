@@ -35,7 +35,7 @@ impl IdentifierType {
     #[must_use]
     /// Creates a value from a 2-bit wire nibble (upper bits masked off).
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & IDENTIFIER_TYPE_MASK {
             0x00 => Self::None,
             0x01 => Self::EventId,
             0x02 => Self::TvaIdEit,
@@ -85,6 +85,11 @@ const POST_EXT_FIXED_LEN: usize = 3;
 const LINK_ENTRY_HEADER_LEN: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
+
+/// Width of the `reserved` header fields.
+const RCT_RESERVED_BITS: u32 = 2;
+/// Width of the `reserved_future_use` entry fields.
+const RCT_RESERVED_FUTURE_USE_BITS: u32 = 4;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
@@ -108,6 +113,57 @@ const LOCATOR_RESERVED_SHIFT: u32 = 3;
 
 const ITEM_RFU_SHIFT: u32 = 6;
 const ITEM_COUNT_MASK: u8 = 0x3F;
+
+/// Bit widths passed to the bit-field helpers.
+const ITEM_COUNT_BITS: u32 = 6;
+const LOCATOR_TRIPLET_ID_BITS: u32 = 10;
+const ICON_DESC_LEN_BITS: u32 = 12;
+
+/// Wire masks for the code enums and packed fields.
+const IDENTIFIER_TYPE_MASK: u8 = 0x03;
+const LINK_TYPE_VALUE_MASK: u8 = 0x0F;
+const HOW_RELATED_VALUE_MASK: u8 = 0x3F;
+const HOW_RELATED_LO_MASK: u8 = 0x0F;
+const GROUP_ID_VALUE_MASK: u8 = 0x0F;
+const ICON_ID_VALUE_MASK: u8 = 0x07;
+const LOCATOR_START_DATE_LO_MASK: u8 = 0x3F;
+const LOCATOR_TRIPLET_ID_HI_MASK: u16 = 0x03;
+
+/// Packed-field shifts.
+const LOCATOR_START_DATE_LO_SHIFT: u8 = 2;
+const LOCATOR_RELIABILITY_SHIFT: u8 = 5;
+const LOCATOR_INLINE_SHIFT: u8 = 4;
+const EARLY_START_WINDOW_SHIFT: u8 = 5;
+const HOW_RELATED_SHIFT: u8 = 4;
+const ICON_FLAG_SHIFT: u8 = 7;
+
+/// Byte lengths of the fixed layouts.
+const WORD_LEN: usize = 2;
+const LOCATOR_HEADER_LEN: usize = 2;
+const LOCATOR_TRIPLET_LEN: usize = 3;
+const LOCATOR_FULL_TRIPLET_LEN: usize = 6;
+const LOCATOR_TIME_FIELDS_LEN: usize = 4;
+const LOCATOR_TVA_PES_LEN: usize = 3;
+const LINK_INFO_HEADER_LEN: usize = 4;
+const LINK_ITEM_HEADER_LEN: usize = 4;
+
+/// Byte offsets inside the locator and link_info layouts.
+const LOCATOR_TRIPLET_ID_LO_OFFSET: usize = 2;
+const TRIPLET_ONID_OFFSET: usize = 2;
+const TRIPLET_SID_OFFSET: usize = 4;
+const TVA_PES_COMPONENT_OFFSET: usize = 2;
+const LOCATOR_TSID_OFFSET: usize = 2;
+const LOCATOR_ONID_OFFSET: usize = 4;
+const LOCATOR_SID_OFFSET: usize = 6;
+const LOCATOR_FULL_TRIPLET_END: usize = 8;
+const LINK_ITEM_LANG_LAST_OFFSET: usize = 2;
+const LINK_ITEM_TEXT_LEN_OFFSET: usize = 3;
+const TERM_ID_LO_OFFSET: usize = 2;
+const GROUP_ID_OFFSET: usize = 3;
+
+/// Byte offsets in the RCT section header.
+const YEAR_OFFSET_OFFSET: usize = 8;
+const LINK_COUNT_OFFSET: usize = 10;
 
 const LINK_INFO_HEADER_RFU: u8 = 0x0C;
 const LINK_INFO_HEADER_RFU_SHIFT: u32 = 2;
@@ -143,7 +199,7 @@ impl LinkType {
     #[must_use]
     /// Decode from the wire value.  Every value maps (lossless).
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x0F {
+        match v & LINK_TYPE_VALUE_MASK {
             0x0 => Self::UriString,
             0x1 => Self::BinaryLocator,
             0x2 => Self::Both,
@@ -244,7 +300,7 @@ pub struct LinkItem<'a> {
 }
 
 fn link_item_serialized_len(item: &LinkItem) -> usize {
-    3 + 1 + item.promotional_text.len()
+    LINK_ITEM_HEADER_LEN + item.promotional_text.len()
 }
 
 /// Service identification within a DVB binary locator (Table 31, §7.3.2.3.3).
@@ -341,7 +397,7 @@ pub struct DvbBinaryLocator {
     /// `inline_service == 1` (`11`); preserved from the wire, written only for
     /// [`DvbLocatorService::Full`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_inline_service: ReservedOnes<2>,
+    pub reserved_inline_service: ReservedOnes<RCT_RESERVED_BITS>,
 }
 
 impl DvbBinaryLocator {
@@ -388,12 +444,12 @@ impl DvbBinaryLocator {
 }
 
 fn locator_serialized_len(loc: &DvbBinaryLocator) -> usize {
-    let mut len = 2;
+    let mut len = LOCATOR_HEADER_LEN;
     len += match &loc.service {
         DvbLocatorService::Triplet { .. } => 1,
-        DvbLocatorService::Full { .. } => 6,
+        DvbLocatorService::Full { .. } => LOCATOR_FULL_TRIPLET_LEN,
     };
-    len += 4;
+    len += LOCATOR_TIME_FIELDS_LEN;
     len += match &loc.identifier {
         DvbLocatorIdentifier::None => 0,
         DvbLocatorIdentifier::EventId { .. } => 2,
@@ -435,14 +491,14 @@ pub struct LinkInfo<'a> {
     pub descriptors: DescriptorLoop<'a>,
     /// `reserved_future_use(4)` before `link_info_length` (`1111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_link_info_length: ReservedOnes<4>,
+    pub reserved_link_info_length: ReservedOnes<RCT_RESERVED_FUTURE_USE_BITS>,
     /// `reserved_future_use(2)` between `link_type` and
     /// `how_related_classification_scheme_id` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_link_type: ReservedOnes<2>,
+    pub reserved_link_type: ReservedOnes<RCT_RESERVED_BITS>,
     /// `reserved_future_use(2)` before `number_items` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_number_items: ReservedOnes<2>,
+    pub reserved_number_items: ReservedOnes<RCT_RESERVED_BITS>,
 }
 
 impl<'a> LinkInfo<'a> {
@@ -481,7 +537,7 @@ impl<'a> LinkInfo<'a> {
 }
 
 fn link_info_serialized_len(li: &LinkInfo) -> usize {
-    let mut len = 4;
+    let mut len = LINK_INFO_HEADER_LEN;
     len += li.media_uri.map_or(0, |u| 1 + u.len());
     len += li
         .dvb_binary_locator
@@ -489,7 +545,7 @@ fn link_info_serialized_len(li: &LinkInfo) -> usize {
         .map_or(0, locator_serialized_len);
     len += 1;
     len += li.items.iter().map(link_item_serialized_len).sum::<usize>();
-    len += 2;
+    len += WORD_LEN;
     len += li.descriptors.len();
     len
 }
@@ -526,13 +582,13 @@ pub struct RctSection<'a> {
     pub descriptors: DescriptorLoop<'a>,
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<2>,
+    pub reserved_b1: ReservedOnes<RCT_RESERVED_BITS>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<2>,
+    pub reserved_b5: ReservedOnes<RCT_RESERVED_BITS>,
     /// `reserved_future_use(4)` before `descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_descriptor_loop_length: ReservedOnes<4>,
+    pub reserved_descriptor_loop_length: ReservedOnes<RCT_RESERVED_FUTURE_USE_BITS>,
 }
 
 impl<'a> RctSection<'a> {
@@ -565,7 +621,11 @@ impl<'a> RctSection<'a> {
 }
 
 fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
-    need_in(data, 2, "RctSection dvb_binary_locator header")?;
+    need_in(
+        data,
+        LOCATOR_HEADER_LEN,
+        "RctSection dvb_binary_locator header",
+    )?;
     let b0 = data[0];
     let b1 = data[1];
     let identifier_type =
@@ -573,24 +633,33 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
     let scheduled_time_reliability = (b0 & LOCATOR_RELIABILITY_MASK) != 0;
     let inline_service = (b0 & LOCATOR_INLINE_MASK) != 0;
     let start_date = ((b0 & LOCATOR_START_DATE_HI_MASK) as u16) << LOCATOR_START_DATE_HI_SHIFT
-        | ((b1 >> 2) as u16 & 0x3F);
+        | ((b1 >> LOCATOR_START_DATE_LO_SHIFT) as u16 & u16::from(LOCATOR_START_DATE_LO_MASK));
 
-    let mut pos = 2;
+    let mut pos = LOCATOR_HEADER_LEN;
     let service = if inline_service {
-        need_in(data, pos + 6, "RctSection dvb_binary_locator full triplet")?;
+        need_in(
+            data,
+            pos + LOCATOR_FULL_TRIPLET_LEN,
+            "RctSection dvb_binary_locator full triplet",
+        )?;
         let tsid = crate::wire::be_u16(data, pos, "rct")?;
-        let onid = crate::wire::be_u16(data, pos + 2, "rct")?;
-        let sid = crate::wire::be_u16(data, pos + 4, "rct")?;
-        pos += 6;
+        let onid = crate::wire::be_u16(data, pos + TRIPLET_ONID_OFFSET, "rct")?;
+        let sid = crate::wire::be_u16(data, pos + TRIPLET_SID_OFFSET, "rct")?;
+        pos += LOCATOR_FULL_TRIPLET_LEN;
         DvbLocatorService::Full {
             transport_stream_id: tsid,
             original_network_id: onid,
             service_id: sid,
         }
     } else {
-        need_in(data, 3, "RctSection dvb_binary_locator triplet")?;
-        let triplet_id = ((b1 as u16 & 0x03) << 8) | data[2] as u16;
-        pos = 3;
+        need_in(
+            data,
+            LOCATOR_TRIPLET_LEN,
+            "RctSection dvb_binary_locator triplet",
+        )?;
+        let triplet_id = ((b1 as u16 & LOCATOR_TRIPLET_ID_HI_MASK) << u8::BITS)
+            | data[LOCATOR_TRIPLET_ID_LO_OFFSET] as u16;
+        pos = LOCATOR_TRIPLET_LEN;
         DvbLocatorService::Triplet {
             dvb_service_triplet_id: triplet_id,
         }
@@ -598,79 +667,93 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
 
     need_in(
         data,
-        pos + 4,
+        pos + LOCATOR_TIME_FIELDS_LEN,
         "RctSection dvb_binary_locator start_time/duration",
     )?;
     let (b2, rest) = data
         .get(pos..)
-        .and_then(|s| s.split_first_chunk::<2>())
+        .and_then(|s| s.split_first_chunk::<WORD_LEN>())
         .ok_or(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: pos + 4,
+                need: pos + LOCATOR_TIME_FIELDS_LEN,
                 have: data.len(),
                 what: "RctSection dvb_binary_locator start_time/duration",
             },
         ))?;
     let start_time = u16::from_be_bytes(*b2);
-    let (b2, _) = rest.split_first_chunk::<2>().ok_or(Error::BufferTooShort(
-        broadcast_common::error::BufferTooShort {
-            need: pos + 4,
-            have: data.len(),
-            what: "RctSection dvb_binary_locator start_time/duration",
-        },
-    ))?;
+    let (b2, _) = rest
+        .split_first_chunk::<WORD_LEN>()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: pos + LOCATOR_TIME_FIELDS_LEN,
+                have: data.len(),
+                what: "RctSection dvb_binary_locator start_time/duration",
+            },
+        ))?;
     let duration = u16::from_be_bytes(*b2);
-    pos += 4;
+    pos += LOCATOR_TIME_FIELDS_LEN;
 
     let identifier = match identifier_type {
         IdentifierType::None => DvbLocatorIdentifier::None,
         IdentifierType::EventId => {
-            need_in(data, pos + 2, "RctSection dvb_binary_locator event_id")?;
+            need_in(
+                data,
+                pos + WORD_LEN,
+                "RctSection dvb_binary_locator event_id",
+            )?;
             let (b2, _) = data
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<WORD_LEN>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: pos + 2,
+                        need: pos + WORD_LEN,
                         have: data.len(),
                         what: "RctSection dvb_binary_locator event_id",
                     },
                 ))?;
             let event_id = u16::from_be_bytes(*b2);
-            pos += 2;
+            pos += WORD_LEN;
             DvbLocatorIdentifier::EventId { event_id }
         }
         IdentifierType::TvaIdEit => {
-            need_in(data, pos + 2, "RctSection dvb_binary_locator TVA_id (EIT)")?;
+            need_in(
+                data,
+                pos + WORD_LEN,
+                "RctSection dvb_binary_locator TVA_id (EIT)",
+            )?;
             let (b2, _) = data
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<WORD_LEN>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: pos + 2,
+                        need: pos + WORD_LEN,
                         have: data.len(),
                         what: "RctSection dvb_binary_locator TVA_id (EIT)",
                     },
                 ))?;
             let tva_id = u16::from_be_bytes(*b2);
-            pos += 2;
+            pos += WORD_LEN;
             DvbLocatorIdentifier::TvaIdEit { tva_id }
         }
         IdentifierType::TvaIdPes => {
-            need_in(data, pos + 3, "RctSection dvb_binary_locator TVA_id (PES)")?;
+            need_in(
+                data,
+                pos + LOCATOR_TVA_PES_LEN,
+                "RctSection dvb_binary_locator TVA_id (PES)",
+            )?;
             let (b2, _) = data
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<WORD_LEN>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: pos + 3,
+                        need: pos + LOCATOR_TVA_PES_LEN,
                         have: data.len(),
                         what: "RctSection dvb_binary_locator TVA_id (PES)",
                     },
                 ))?;
             let tva_id = u16::from_be_bytes(*b2);
-            let component = data[pos + 2];
-            pos += 3;
+            let component = data[pos + TVA_PES_COMPONENT_OFFSET];
+            pos += LOCATOR_TVA_PES_LEN;
             DvbLocatorIdentifier::TvaIdPes { tva_id, component }
         }
     };
@@ -688,7 +771,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
         let wb = data[pos];
         pos += 1;
         Some(DvbLocatorWindows {
-            early_start_window: (wb >> 5) & EARLY_START_WINDOW_MASK,
+            early_start_window: (wb >> EARLY_START_WINDOW_SHIFT) & EARLY_START_WINDOW_MASK,
             late_end_window: wb & LATE_END_WINDOW_MASK,
         })
     } else {
@@ -738,12 +821,13 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
 
     broadcast_common::len::fit_mask(
         loc.start_date,
-        (u16::from(LOCATOR_START_DATE_HI_MASK) << LOCATOR_START_DATE_HI_SHIFT) | 0x3F,
+        (u16::from(LOCATOR_START_DATE_HI_MASK) << LOCATOR_START_DATE_HI_SHIFT)
+            | u16::from(LOCATOR_START_DATE_LO_MASK),
         "start_date",
     )?;
     let b0 = (loc.identifier_type().to_u8() << LOCATOR_ID_TYPE_SHIFT)
-        | (u8::from(loc.scheduled_time_reliability) << 5)
-        | (u8::from(loc.inline_service()) << 4)
+        | (u8::from(loc.scheduled_time_reliability) << LOCATOR_RELIABILITY_SHIFT)
+        | (u8::from(loc.inline_service()) << LOCATOR_INLINE_SHIFT)
         | ((loc.reserved.get() as u8) << LOCATOR_RESERVED_SHIFT)
         | ((loc.start_date >> LOCATOR_START_DATE_HI_SHIFT) as u8 & LOCATOR_START_DATE_HI_MASK);
     buf[0] = b0;
@@ -755,45 +839,50 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
         } => {
             broadcast_common::len::fit_bits(
                 u64::from(*dvb_service_triplet_id),
-                10,
+                LOCATOR_TRIPLET_ID_BITS,
                 "dvb_service_triplet_id",
             )?;
-            let sd_lo = (loc.start_date & 0x3F) as u8;
-            buf[1] = (sd_lo << 2) | ((dvb_service_triplet_id >> 8) as u8 & 0x03);
-            buf[2] = (dvb_service_triplet_id & 0xFF) as u8;
-            pos = 3;
+            let sd_lo = (loc.start_date & u16::from(LOCATOR_START_DATE_LO_MASK)) as u8;
+            buf[1] = (sd_lo << LOCATOR_START_DATE_LO_SHIFT)
+                | ((dvb_service_triplet_id >> u8::BITS) as u8 & LOCATOR_TRIPLET_ID_HI_MASK as u8);
+            buf[WORD_LEN] = (dvb_service_triplet_id & u16::from(u8::MAX)) as u8;
+            pos = LOCATOR_TRIPLET_LEN;
         }
         DvbLocatorService::Full {
             transport_stream_id,
             original_network_id,
             service_id,
         } => {
-            let sd_lo = (loc.start_date & 0x3F) as u8;
-            buf[1] = (sd_lo << 2) | (loc.reserved_inline_service.get() as u8);
-            buf[2..4].copy_from_slice(&transport_stream_id.to_be_bytes());
-            buf[4..6].copy_from_slice(&original_network_id.to_be_bytes());
-            buf[6..8].copy_from_slice(&service_id.to_be_bytes());
-            pos = 8;
+            let sd_lo = (loc.start_date & u16::from(LOCATOR_START_DATE_LO_MASK)) as u8;
+            buf[1] =
+                (sd_lo << LOCATOR_START_DATE_LO_SHIFT) | (loc.reserved_inline_service.get() as u8);
+            buf[LOCATOR_TSID_OFFSET..LOCATOR_ONID_OFFSET]
+                .copy_from_slice(&transport_stream_id.to_be_bytes());
+            buf[LOCATOR_ONID_OFFSET..LOCATOR_SID_OFFSET]
+                .copy_from_slice(&original_network_id.to_be_bytes());
+            buf[LOCATOR_SID_OFFSET..LOCATOR_FULL_TRIPLET_END]
+                .copy_from_slice(&service_id.to_be_bytes());
+            pos = LOCATOR_FULL_TRIPLET_END;
         }
     }
-    buf[pos..pos + 2].copy_from_slice(&loc.start_time.to_be_bytes());
-    buf[pos + 2..pos + 4].copy_from_slice(&loc.duration.to_be_bytes());
-    pos += 4;
+    buf[pos..pos + WORD_LEN].copy_from_slice(&loc.start_time.to_be_bytes());
+    buf[pos + WORD_LEN..pos + LOCATOR_TIME_FIELDS_LEN].copy_from_slice(&loc.duration.to_be_bytes());
+    pos += LOCATOR_TIME_FIELDS_LEN;
 
     match &loc.identifier {
         DvbLocatorIdentifier::None => {}
         DvbLocatorIdentifier::EventId { event_id } => {
-            buf[pos..pos + 2].copy_from_slice(&event_id.to_be_bytes());
-            pos += 2;
+            buf[pos..pos + WORD_LEN].copy_from_slice(&event_id.to_be_bytes());
+            pos += WORD_LEN;
         }
         DvbLocatorIdentifier::TvaIdEit { tva_id } => {
-            buf[pos..pos + 2].copy_from_slice(&tva_id.to_be_bytes());
-            pos += 2;
+            buf[pos..pos + WORD_LEN].copy_from_slice(&tva_id.to_be_bytes());
+            pos += WORD_LEN;
         }
         DvbLocatorIdentifier::TvaIdPes { tva_id, component } => {
-            buf[pos..pos + 2].copy_from_slice(&tva_id.to_be_bytes());
-            buf[pos + 2] = *component;
-            pos += 3;
+            buf[pos..pos + WORD_LEN].copy_from_slice(&tva_id.to_be_bytes());
+            buf[pos + TVA_PES_COMPONENT_OFFSET] = *component;
+            pos += LOCATOR_TVA_PES_LEN;
         }
     }
     if let Some(w) = &loc.windows {
@@ -801,7 +890,7 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
             w.early_start_window,
             EARLY_START_WINDOW_MASK,
             "early_start_window",
-        )? << 5)
+        )? << EARLY_START_WINDOW_SHIFT)
             | broadcast_common::len::fit_mask(
                 w.late_end_window,
                 LATE_END_WINDOW_MASK,
@@ -813,15 +902,17 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
 }
 
 fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>> {
-    need_in(data, 4, "RctSection link_info header")?;
+    need_in(data, LINK_INFO_HEADER_LEN, "RctSection link_info header")?;
     let link_type = LinkType::from_u8((data[0] & LINK_TYPE_MASK) >> LINK_TYPE_SHIFT);
-    let how_related_raw = (data[0] & HOW_RELATED_HI_MASK) << 4 | (data[1] >> 4) & 0x0F;
+    let how_related_raw = (data[0] & HOW_RELATED_HI_MASK) << HOW_RELATED_SHIFT
+        | (data[1] >> HOW_RELATED_SHIFT) & HOW_RELATED_LO_MASK;
     let how_related = HowRelated::from_u8(how_related_raw);
-    let term_id = ((data[1] as u16 & TERM_ID_HI_MASK as u16) << TERM_ID_HI_SHIFT) | data[2] as u16;
-    let group_id = (data[3] & GROUP_ID_MASK) >> GROUP_ID_SHIFT;
-    let precedence = data[3] & PRECEDENCE_MASK;
+    let term_id = ((data[1] as u16 & TERM_ID_HI_MASK as u16) << TERM_ID_HI_SHIFT)
+        | data[TERM_ID_LO_OFFSET] as u16;
+    let group_id = (data[GROUP_ID_OFFSET] & GROUP_ID_MASK) >> GROUP_ID_SHIFT;
+    let precedence = data[GROUP_ID_OFFSET] & PRECEDENCE_MASK;
 
-    let mut pos = 4;
+    let mut pos = LINK_INFO_HEADER_LEN;
     let end = link_info_length;
 
     let media_uri = if link_type == LinkType::UriString || link_type == LinkType::Both {
@@ -885,18 +976,22 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
 
     let mut items = Vec::with_capacity(number_items);
     for _ in 0..number_items {
-        if pos + 4 > end {
+        if pos + LINK_ITEM_HEADER_LEN > end {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: pos + 4,
+                    need: pos + LINK_ITEM_HEADER_LEN,
                     have: end,
                     what: "RctSection link_item",
                 },
             ));
         }
-        let language_code = LangCode([data[pos], data[pos + 1], data[pos + 2]]);
-        let text_len = data[pos + 3] as usize;
-        pos += 4;
+        let language_code = LangCode([
+            data[pos],
+            data[pos + 1],
+            data[pos + LINK_ITEM_LANG_LAST_OFFSET],
+        ]);
+        let text_len = data[pos + LINK_ITEM_TEXT_LEN_OFFSET] as usize;
+        pos += LOCATOR_TIME_FIELDS_LEN;
         if pos + text_len > end {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
@@ -914,10 +1009,10 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
         });
     }
 
-    if pos + 2 > end {
+    if pos + WORD_LEN > end {
         return Err(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: pos + 2,
+                need: pos + WORD_LEN,
                 have: end,
                 what: "RctSection icon/desc",
             },
@@ -925,8 +1020,9 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
     }
     let default_icon_flag = (data[pos] & ICON_FLAG_MASK) != 0;
     let icon_id = (data[pos] & ICON_ID_MASK) >> ICON_ID_SHIFT;
-    let desc_len = (((data[pos] & ICON_DESC_LEN_HI_MASK) as usize) << 8) | data[pos + 1] as usize;
-    pos += 2;
+    let desc_len =
+        (((data[pos] & ICON_DESC_LEN_HI_MASK) as usize) << u8::BITS) | data[pos + 1] as usize;
+    pos += WORD_LEN;
     let desc_start = pos;
     let desc_end = desc_start + desc_len;
     if desc_end > end {
@@ -972,21 +1068,28 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
 
 fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
     let lt = li.link_type.to_u8();
-    let hr = broadcast_common::len::fit_mask(li.how_related.to_u8(), 0x3F, "how_related")?;
+    let hr = broadcast_common::len::fit_mask(
+        li.how_related.to_u8(),
+        HOW_RELATED_VALUE_MASK,
+        "how_related",
+    )?;
     broadcast_common::len::fit_mask(
         li.term_id,
-        (u16::from(TERM_ID_HI_MASK) << TERM_ID_HI_SHIFT) | 0xFF,
+        (u16::from(TERM_ID_HI_MASK) << TERM_ID_HI_SHIFT) | u16::from(u8::MAX),
         "term_id",
     )?;
-    buf[0] = (broadcast_common::len::fit_mask(lt, 0x0F, "lt")? << LINK_TYPE_SHIFT)
+    buf[0] = (broadcast_common::len::fit_mask(lt, LINK_TYPE_VALUE_MASK, "lt")? << LINK_TYPE_SHIFT)
         | ((li.reserved_link_type.get() as u8) << LINK_INFO_HEADER_RFU_SHIFT)
-        | ((hr >> 4) & HOW_RELATED_HI_MASK);
-    buf[1] = ((hr & 0x0F) << 4) | ((li.term_id >> TERM_ID_HI_SHIFT) as u8 & TERM_ID_HI_MASK);
-    buf[2] = li.term_id as u8;
-    buf[3] = (broadcast_common::len::fit_mask(li.group_id, 0x0F, "group_id")? << GROUP_ID_SHIFT)
-        | broadcast_common::len::fit_mask(li.precedence, PRECEDENCE_MASK, "precedence")?;
+        | ((hr >> HOW_RELATED_SHIFT) & HOW_RELATED_HI_MASK);
+    buf[1] = ((hr & HOW_RELATED_LO_MASK) << HOW_RELATED_SHIFT)
+        | ((li.term_id >> TERM_ID_HI_SHIFT) as u8 & TERM_ID_HI_MASK);
+    buf[TERM_ID_LO_OFFSET] = li.term_id as u8;
+    buf[GROUP_ID_OFFSET] =
+        (broadcast_common::len::fit_mask(li.group_id, GROUP_ID_VALUE_MASK, "group_id")?
+            << GROUP_ID_SHIFT)
+            | broadcast_common::len::fit_mask(li.precedence, PRECEDENCE_MASK, "precedence")?;
 
-    let mut pos = 4;
+    let mut pos = LINK_INFO_HEADER_LEN;
     if let Some(uri) = li.media_uri {
         let uri_len = broadcast_common::len::fit_u8(uri.len(), "media_uri_length")?;
         buf[pos] = uri_len;
@@ -998,28 +1101,30 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
         let n = serialize_locator(loc, &mut buf[pos..])?;
         pos += n;
     }
-    let item_count = broadcast_common::len::fit_bits(li.items.len() as u64, 6, "number_items")?;
+    let item_count =
+        broadcast_common::len::fit_bits(li.items.len() as u64, ITEM_COUNT_BITS, "number_items")?;
     buf[pos] = ((li.reserved_number_items.get() as u8) << ITEM_RFU_SHIFT) | item_count as u8;
     pos += 1;
     for item in &li.items {
         let text_len =
             broadcast_common::len::fit_u8(item.promotional_text.len(), "promotional_text_length")?;
-        buf[pos..pos + 3].copy_from_slice(&item.language_code.0);
-        buf[pos + 3] = text_len;
-        pos += 4;
+        buf[pos..pos + LINK_ITEM_TEXT_LEN_OFFSET].copy_from_slice(&item.language_code.0);
+        buf[pos + LINK_ITEM_TEXT_LEN_OFFSET] = text_len;
+        pos += LOCATOR_TIME_FIELDS_LEN;
         buf[pos..pos + item.promotional_text.len()].copy_from_slice(item.promotional_text.raw());
         pos += item.promotional_text.len();
     }
     let dll = broadcast_common::len::fit_bits(
         li.descriptors.len() as u64,
-        12,
+        ICON_DESC_LEN_BITS,
         "icon_descriptors_length",
     )?;
-    buf[pos] = u8::from(li.default_icon_flag) << 7
-        | (broadcast_common::len::fit_mask(li.icon_id, 0x07, "icon_id")? << ICON_ID_SHIFT)
-        | ((dll >> 8) as u8);
+    buf[pos] = u8::from(li.default_icon_flag) << ICON_FLAG_SHIFT
+        | (broadcast_common::len::fit_mask(li.icon_id, ICON_ID_VALUE_MASK, "icon_id")?
+            << ICON_ID_SHIFT)
+        | ((dll >> u8::BITS) as u8);
     buf[pos + 1] = dll as u8;
-    pos += 2;
+    pos += WORD_LEN;
     buf[pos..pos + li.descriptors.len()].copy_from_slice(li.descriptors.raw());
     pos += li.descriptors.len();
     Ok(pos)
@@ -1047,13 +1152,13 @@ impl<'a> Parse<'a> for RctSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let service_id = crate::wire::be_u16(bytes, 3, "rct")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
-        let year_offset = crate::wire::be_u16(bytes, 8, "rct")?;
-        let link_count = bytes[10];
+        let service_id = crate::wire::be_u16(bytes, super::TABLE_ID_EXTENSION_OFFSET, "rct")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
+        let year_offset = crate::wire::be_u16(bytes, YEAR_OFFSET_OFFSET, "rct")?;
+        let link_count = bytes[LINK_COUNT_OFFSET];
 
         let payload_end = total - CRC_LEN;
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN;
@@ -1131,7 +1236,9 @@ impl<'a> Parse<'a> for RctSection<'a> {
             links,
             descriptors,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
-            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
+                bytes[super::VERSION_FLAGS_OFFSET],
+            ))),
             reserved_descriptor_loop_length: ReservedOnes::from_bits(u64::from(
                 super::len_reserved_of(bytes[pos]),
             )),
@@ -1168,27 +1275,28 @@ impl Serialize for RctSection<'_> {
         )?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
-        buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = super::b5_of(
+        buf[super::TABLE_ID_EXTENSION_OFFSET..super::VERSION_FLAGS_OFFSET]
+            .copy_from_slice(&self.service_id.to_be_bytes());
+        buf[super::VERSION_FLAGS_OFFSET] = super::b5_of(
             self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
-        buf[8..10].copy_from_slice(&self.year_offset.to_be_bytes());
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
+        buf[YEAR_OFFSET_OFFSET..LINK_COUNT_OFFSET].copy_from_slice(&self.year_offset.to_be_bytes());
         let link_count = broadcast_common::len::fit_u8(self.links.len(), "number_of_links")?;
-        buf[10] = link_count;
+        buf[LINK_COUNT_OFFSET] = link_count;
 
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN;
         for li in &self.links {
             let li_body_len = broadcast_common::len::fit_bits(
                 link_info_serialized_len(li) as u64,
-                12,
+                super::DESC_LOOP_LEN_BITS,
                 "link_info_length",
             )?;
             super::write_desc_loop_len_r(
-                &mut buf[pos..pos + 2],
+                &mut buf[pos..pos + WORD_LEN],
                 li_body_len as usize,
                 li.reserved_link_info_length.get() as u8,
             )?;
@@ -1198,11 +1306,11 @@ impl Serialize for RctSection<'_> {
 
         let dll = broadcast_common::len::fit_bits(
             self.descriptors.len() as u64,
-            12,
+            super::DESC_LOOP_LEN_BITS,
             "descriptors_length",
         )?;
         super::write_desc_loop_len_r(
-            &mut buf[pos..pos + 2],
+            &mut buf[pos..pos + WORD_LEN],
             dll as usize,
             self.reserved_descriptor_loop_length.get() as u8,
         )?;

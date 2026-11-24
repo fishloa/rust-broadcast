@@ -428,7 +428,7 @@ pub struct HandshakeConfig {
     /// packet's `Peer IP Address` field (§3.2.1: "IPv4 or IPv6 address of
     /// the packet's *sender*" — despite the field's name, each party reports
     /// its own address, not its peer's).
-    pub local_ip: [u32; 4],
+    pub local_ip: [u32; IPV4_ADDR_WORDS],
     /// Longest silence from the peer before the last-sent handshake packet is
     /// retransmitted: a [`crate::caller::CallerHandshake::tick`] /
     /// [`crate::listener::ListenerHandshake::tick`] call is the caller's own
@@ -513,7 +513,7 @@ impl HandshakeConfig {
 
     /// Sets [`local_ip`](Self::local_ip).
     #[must_use]
-    pub fn with_local_ip(mut self, local_ip: [u32; 4]) -> Self {
+    pub fn with_local_ip(mut self, local_ip: [u32; IPV4_ADDR_WORDS]) -> Self {
         self.local_ip = local_ip;
         self
     }
@@ -552,14 +552,37 @@ pub const DEFAULT_MAX_RETRIES: u32 = 12;
 /// handshake retransmit period divided by the three ticks it used to count.
 pub const DEFAULT_RETRANSMIT_AFTER: Duration = Duration::from_micros(83_333);
 
+/// Default negotiated handshake parameters (§4.3.2): proposed latency, MTU,
+/// flow-control window and the SRT version this crate announces.
+const DEFAULT_LATENCY: Duration = Duration::from_millis(120);
+const DEFAULT_MTU: u32 = 1500;
+const DEFAULT_FLOW_WINDOW: u32 = 8192;
+const DEFAULT_SRT_VERSION: u32 = 0x0105_0000;
+
+/// Words in an IPv4 address as the handshake carries it (§3.2.1).
+const IPV4_ADDR_WORDS: usize = 4;
+
+/// Bytes in one SipHash input word, and in the SYN-cookie and listener-id
+/// inputs, and the mask of the length byte SipHash's final block carries.
+const SIPHASH_WORD_LEN: usize = 8;
+const COOKIE_INPUT_LEN: usize = 12;
+const LISTENER_INPUT_LEN: usize = 13;
+const LENGTH_BYTE_MASK: usize = 0xFF;
+/// Byte offset of the peer key and of the time bucket in the listener-id
+/// input, which leads with a domain-separator byte.
+const LISTENER_PEER_KEY_OFFSET: usize = 1;
+const LISTENER_TIME_BUCKET_OFFSET: usize = 9;
+/// Bits a `u128` secret's halves are split at.
+const SECRET_SPLIT_SHIFT: u32 = 64;
+
 impl Default for HandshakeConfig {
     fn default() -> Self {
         HandshakeConfig {
-            latency: Duration::from_millis(120),
-            mtu: 1500,
-            max_flow_window_size: 8192,
+            latency: DEFAULT_LATENCY,
+            mtu: DEFAULT_MTU,
+            max_flow_window_size: DEFAULT_FLOW_WINDOW,
             initial_seq_number: 0,
-            srt_version: 0x0105_0000,
+            srt_version: DEFAULT_SRT_VERSION,
             flags: HandshakeExtensionMessageFlags(
                 crate::packet::handshake::HS_MSG_FLAG_TSBPDSND
                     | crate::packet::handshake::HS_MSG_FLAG_TSBPDRCV
@@ -1106,9 +1129,9 @@ fn siphash24(k0: u64, k1: u64, data: &[u8]) -> u64 {
         *v2 = v2.rotate_left(32);
     }
 
-    let mut chunks = data.chunks_exact(8);
+    let mut chunks = data.chunks_exact(SIPHASH_WORD_LEN);
     for chunk in chunks.by_ref() {
-        let mut word = [0u8; 8];
+        let mut word = [0u8; SIPHASH_WORD_LEN];
         word.copy_from_slice(chunk);
         let m = u64::from_le_bytes(word);
         v3 ^= m;
@@ -1119,10 +1142,10 @@ fn siphash24(k0: u64, k1: u64, data: &[u8]) -> u64 {
     }
     // Final block: the remaining 0..=7 bytes, with the input length in the
     // top byte (modulo 256, as the reference does).
-    let mut last = [0u8; 8];
+    let mut last = [0u8; SIPHASH_WORD_LEN];
     let rest = chunks.remainder();
     last[..rest.len()].copy_from_slice(rest);
-    last[7] = u8::try_from(data.len() & 0xFF).unwrap_or(0);
+    last[SIPHASH_WORD_LEN - 1] = u8::try_from(data.len() & LENGTH_BYTE_MASK).unwrap_or(0);
     let m = u64::from_le_bytes(last);
     v3 ^= m;
     for _ in 0..C_ROUNDS {
@@ -1153,11 +1176,11 @@ fn siphash24(k0: u64, k1: u64, data: &[u8]) -> u64 {
 /// periodically (the tokio adapter's listener draws it from the OS and
 /// rotates it every minute).
 pub fn derive_cookie(peer_key: u64, time_bucket: u32, secret: u128) -> u32 {
-    let mut input = [0u8; 12];
-    input[..8].copy_from_slice(&peer_key.to_le_bytes());
-    input[8..].copy_from_slice(&time_bucket.to_le_bytes());
+    let mut input = [0u8; COOKIE_INPUT_LEN];
+    input[..SIPHASH_WORD_LEN].copy_from_slice(&peer_key.to_le_bytes());
+    input[SIPHASH_WORD_LEN..].copy_from_slice(&time_bucket.to_le_bytes());
     let k0 = u64::try_from(secret & u128::from(u64::MAX)).unwrap_or(0);
-    let k1 = u64::try_from(secret >> 64).unwrap_or(0);
+    let k1 = u64::try_from(secret >> SECRET_SPLIT_SHIFT).unwrap_or(0);
     let digest = siphash24(k0, k1, &input);
     // Keep the low 32 bits; `| 1` so it is never 0, never confused with "no
     // cookie yet".
@@ -1183,12 +1206,13 @@ const ISN_DOMAIN: u8 = 2;
 /// Listener should keep the identifiers it issued.
 pub fn derive_listener_ids(peer_key: u64, time_bucket: u32, secret: u128) -> (u32, u32) {
     let k0 = u64::try_from(secret & u128::from(u64::MAX)).unwrap_or(0);
-    let k1 = u64::try_from(secret >> 64).unwrap_or(0);
+    let k1 = u64::try_from(secret >> SECRET_SPLIT_SHIFT).unwrap_or(0);
     let keyed = |domain: u8| {
-        let mut input = [0u8; 13];
+        let mut input = [0u8; LISTENER_INPUT_LEN];
         input[0] = domain;
-        input[1..9].copy_from_slice(&peer_key.to_le_bytes());
-        input[9..].copy_from_slice(&time_bucket.to_le_bytes());
+        input[LISTENER_PEER_KEY_OFFSET..LISTENER_PEER_KEY_OFFSET + SIPHASH_WORD_LEN]
+            .copy_from_slice(&peer_key.to_le_bytes());
+        input[LISTENER_TIME_BUCKET_OFFSET..].copy_from_slice(&time_bucket.to_le_bytes());
         u32::try_from(siphash24(k0, k1, &input) & u64::from(u32::MAX)).unwrap_or(0)
     };
     // Never 0: that value marks "no socket assigned" in this adapter.

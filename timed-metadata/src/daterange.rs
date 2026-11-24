@@ -272,13 +272,16 @@ fn parse_checked_f64(what: &'static str, v: &str) -> Result<f64> {
     Ok(parsed)
 }
 
+/// Hexadecimal digits per decoded byte.
+const HEX_DIGITS_PER_BYTE: usize = 2;
+
 fn parse_hex(v: &str) -> Result<Vec<u8>> {
     let digits = v
         .strip_prefix("0x")
         .or_else(|| v.strip_prefix("0X"))
         .unwrap_or(v);
     broadcast_common::hex::hex_decode(digits).ok_or_else(|| {
-        if !digits.len().is_multiple_of(2) {
+        if !digits.len().is_multiple_of(HEX_DIGITS_PER_BYTE) {
             Error::AttrParse("odd-length hex".to_string())
         } else {
             Error::AttrParse("bad hex".to_string())

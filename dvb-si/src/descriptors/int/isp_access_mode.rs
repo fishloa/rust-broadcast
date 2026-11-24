@@ -103,7 +103,7 @@ impl Serialize for IspAccessModeDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = self.access_mode.to_u8();
+        buf[HEADER_LEN] = self.access_mode.to_u8();
         buf[3..len].copy_from_slice(self.trailing);
         Ok(len)
     }

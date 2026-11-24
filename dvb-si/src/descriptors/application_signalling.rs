@@ -19,6 +19,12 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x6F;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 3;
+/// Offset of the version byte in an entry.
+const VERSION_OFFSET: usize = core::mem::size_of::<u16>();
+/// Shift of `reserved_future_use_1` in the `application_type` word.
+const RESERVED_FUTURE_USE_1_SHIFT: u16 = 15;
+/// Shift of `reserved_future_use_3` in the version byte.
+const RESERVED_FUTURE_USE_3_SHIFT: u8 = 5;
 
 /// Largest representable 15-bit application_type.
 const APPLICATION_TYPE_MAX: u16 = 0x7FFF;
@@ -110,10 +116,14 @@ impl<'a> Parse<'a> for ApplicationSignallingDescriptor {
             let word = crate::wire::be_u16(chunk, 0, "application_signalling")?;
             let application_type_raw = word & APPLICATION_TYPE_MAX;
             let application_type = ApplicationType::from_u16(application_type_raw);
-            let ait_version_number = chunk[2] & AIT_VERSION_MAX;
+            let ait_version_number = chunk[VERSION_OFFSET] & AIT_VERSION_MAX;
             entries.push(ApplicationSignallingEntry {
-                reserved_future_use_1: ReservedOnes::from_bits(u64::from(word >> 15)),
-                reserved_future_use_3: ReservedOnes::from_bits(u64::from(chunk[2] >> 5)),
+                reserved_future_use_1: ReservedOnes::from_bits(u64::from(
+                    word >> RESERVED_FUTURE_USE_1_SHIFT,
+                )),
+                reserved_future_use_3: ReservedOnes::from_bits(u64::from(
+                    chunk[VERSION_OFFSET] >> RESERVED_FUTURE_USE_3_SHIFT,
+                )),
                 application_type,
                 ait_version_number,
             });
@@ -155,15 +165,17 @@ impl Serialize for ApplicationSignallingDescriptor {
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             // reserved_future_use(1): preserved from parse, default 1.
-            let word = (u16::from(e.reserved_future_use_1.get() as u8) << 15)
+            let word = (u16::from(e.reserved_future_use_1.get() as u8)
+                << RESERVED_FUTURE_USE_1_SHIFT)
                 | broadcast_common::len::fit_mask(
                     e.application_type.to_u16(),
                     APPLICATION_TYPE_MAX,
                     "application_type",
                 )?;
-            buf[pos..pos + 2].copy_from_slice(&word.to_be_bytes());
+            buf[pos..pos + VERSION_OFFSET].copy_from_slice(&word.to_be_bytes());
             // reserved_future_use(3): preserved from parse, default 111.
-            buf[pos + 2] = ((e.reserved_future_use_3.get() as u8) << 5)
+            buf[pos + VERSION_OFFSET] = ((e.reserved_future_use_3.get() as u8)
+                << RESERVED_FUTURE_USE_3_SHIFT)
                 | broadcast_common::len::fit_mask(
                     e.ait_version_number,
                     AIT_VERSION_MAX,

@@ -65,6 +65,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Default attempts a missing file is retried.
+const DEFAULT_MAX_RETRIES: u32 = 3;
+
+/// Default interval between those attempts.
+const DEFAULT_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+
 use media_plane::file_source::{
     FILE_TIMED_RING, FileIngestSession, FileReaderError, ParsedFile, PublishItem, advance_offsets,
     probe_and_demux, secs_to_duration,
@@ -127,8 +133,8 @@ impl FileReaderConfig {
             loop_file,
             trunk,
             pace: true,
-            max_retries: 3,
-            retry_interval: Duration::from_millis(500),
+            max_retries: DEFAULT_MAX_RETRIES,
+            retry_interval: DEFAULT_RETRY_INTERVAL,
             max_loops: None,
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
         }

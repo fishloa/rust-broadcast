@@ -19,7 +19,18 @@ use broadcast_common::reserved::{ReservedOnes, ReservedZero};
 const TAG: u8 = super::mpeg2_extension::TAG;
 const RESERVED_1_BITS: u32 = 1;
 const RESERVED_3_BITS: u32 = 3;
-const RESERVED_ZERO_2_BITS: u32 = 2;
+/// Width of the zero-filled padding field in `LCEVC_video_descriptor`.
+const RESERVED_PADDING_BITS: u32 = PAIR_BITS as u32;
+/// Width of a byte-sized field.
+const BYTE_BITS: usize = u8::BITS as usize;
+/// Width of a 4-bit field.
+const NIBBLE_BITS: usize = 4;
+/// Width of a 2-bit field.
+const PAIR_BITS: usize = 2;
+/// Width of a 3-bit field.
+const TRIPLE_BITS: usize = 3;
+/// Width of `ID_type` (13 bits).
+const ID_TYPE_BITS: usize = 13;
 
 // ───────────────────────── 0x17 LCEVC_video_descriptor ──────────────────────
 
@@ -49,7 +60,7 @@ pub struct LcevcVideo {
     pub hdr_wcg_idc: HdrWcgIdc,
     /// `reserved_zero_2bit`, default 0.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_zero_2bit: ReservedZero<RESERVED_ZERO_2_BITS>,
+    pub reserved_zero_2bit: ReservedZero<RESERVED_PADDING_BITS>,
     /// `video_properties_tag` (4 bits; Tables 2-135…2-138 select its meaning by
     /// `HDR_WCG_idc`).
     pub video_properties_tag: u8,
@@ -89,39 +100,51 @@ impl LcevcVideo {
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "LcevcVideo");
         Ok(Self {
-            lcevc_stream_tag: r.u8(8)?,
-            profile_idc: r.u8(4)?,
-            level_idc: r.u8(4)?,
-            sublevel_idc: r.u8(2)?,
+            lcevc_stream_tag: r.u8(BYTE_BITS)?,
+            profile_idc: r.u8(NIBBLE_BITS)?,
+            level_idc: r.u8(NIBBLE_BITS)?,
+            sublevel_idc: r.u8(PAIR_BITS)?,
             processed_planes_type_flag: r.flag()?,
             picture_type_bit_flag: r.flag()?,
             field_type_bit_flag: r.flag()?,
-            reserved: ReservedOnes::from_bits(u64::from(r.u8(3)?)),
-            hdr_wcg_idc: HdrWcgIdc::from_u8(r.u8(2)?),
-            reserved_zero_2bit: ReservedZero::from_bits(u64::from(r.u8(2)?)),
-            video_properties_tag: r.u8(4)?,
+            reserved: ReservedOnes::from_bits(u64::from(r.u8(TRIPLE_BITS)?)),
+            hdr_wcg_idc: HdrWcgIdc::from_u8(r.u8(PAIR_BITS)?),
+            reserved_zero_2bit: ReservedZero::from_bits(u64::from(r.u8(PAIR_BITS)?)),
+            video_properties_tag: r.u8(NIBBLE_BITS)?,
             trailing: r.rest()?.to_vec(),
         })
     }
 
     pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.lcevc_stream_tag), 8, "lcevc_stream_tag")?;
-        w.put(u64::from(self.profile_idc), 4, "profile_idc")?;
-        w.put(u64::from(self.level_idc), 4, "level_idc")?;
-        w.put(u64::from(self.sublevel_idc), 2, "sublevel_idc")?;
+        w.put(
+            u64::from(self.lcevc_stream_tag),
+            BYTE_BITS,
+            "lcevc_stream_tag",
+        )?;
+        w.put(u64::from(self.profile_idc), NIBBLE_BITS, "profile_idc")?;
+        w.put(u64::from(self.level_idc), NIBBLE_BITS, "level_idc")?;
+        w.put(u64::from(self.sublevel_idc), PAIR_BITS, "sublevel_idc")?;
         w.flag(
             self.processed_planes_type_flag,
             "processed_planes_type_flag",
         )?;
         w.flag(self.picture_type_bit_flag, "picture_type_bit_flag")?;
         w.flag(self.field_type_bit_flag, "field_type_bit_flag")?;
-        w.put(self.reserved.get(), 3, "reserved")?;
-        w.put(u64::from(self.hdr_wcg_idc.to_u8()), 2, "HDR_WCG_idc")?;
-        w.put(self.reserved_zero_2bit.get(), 2, "reserved_zero_2bit")?;
+        w.put(self.reserved.get(), TRIPLE_BITS, "reserved")?;
+        w.put(
+            u64::from(self.hdr_wcg_idc.to_u8()),
+            PAIR_BITS,
+            "HDR_WCG_idc",
+        )?;
+        w.put(
+            self.reserved_zero_2bit.get(),
+            PAIR_BITS,
+            "reserved_zero_2bit",
+        )?;
         w.put(
             u64::from(self.video_properties_tag),
-            4,
+            NIBBLE_BITS,
             "video_properties_tag",
         )?;
         w.bytes(&self.trailing)?;
@@ -160,10 +183,10 @@ impl LcevcLinkage {
 
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "LcevcLinkage");
-        let n = r.bits(8)?;
+        let n = r.bits(BYTE_BITS)?;
         let mut tags = Vec::new();
         for _ in 0..n {
-            tags.push(r.u8(8)?);
+            tags.push(r.u8(BYTE_BITS)?);
         }
         Ok(Self {
             lcevc_stream_tags: tags,
@@ -175,7 +198,7 @@ impl LcevcLinkage {
         let mut w = BitWriter::new();
         w.put(
             self.lcevc_stream_tags.len() as u64,
-            8,
+            BYTE_BITS,
             "num_lcevc_stream_tags",
         )?;
         w.bytes(&self.lcevc_stream_tags)?;
@@ -430,14 +453,14 @@ impl MediaServiceKind {
         while r.remaining_bytes() > 0 {
             let media_description_flag = r.flag()?;
             let identifier_flag = r.flag()?;
-            let lang_pairs = r.bits(3)?;
-            let media_type_idc = MediaTypeIdc::from_u8(r.u8(2)?);
+            let lang_pairs = r.bits(TRIPLE_BITS)?;
+            let media_type_idc = MediaTypeIdc::from_u8(r.u8(PAIR_BITS)?);
             let reserved = ReservedOnes::from_bits(u64::from(r.u8(1)?));
             let identifier = if identifier_flag {
-                let id_length_code = r.u8(3)?;
-                let id_type = r.u16(13)?;
+                let id_length_code = r.u8(TRIPLE_BITS)?;
+                let id_type = r.u16(ID_TYPE_BITS)?;
                 let len = if id_length_code == ID_LENGTH_CODE_EXPLICIT {
-                    usize::from(r.u8(8)?)
+                    usize::from(r.u8(BYTE_BITS)?)
                 } else {
                     ID_LENGTHS[usize::from(id_length_code)]
                 };
@@ -451,12 +474,12 @@ impl MediaServiceKind {
             };
             let mut languages = Vec::new();
             for _ in 0..lang_pairs {
-                let configuration_type = ConfigurationType::from_u8(r.u8(2)?);
-                let purpose_cnt = r.bits(3)?;
-                let lang_len_idc = r.u8(2)?;
+                let configuration_type = ConfigurationType::from_u8(r.u8(PAIR_BITS)?);
+                let purpose_cnt = r.bits(TRIPLE_BITS)?;
+                let lang_len_idc = r.u8(PAIR_BITS)?;
                 let reserved = ReservedOnes::from_bits(u64::from(r.u8(1)?));
                 let len = match lang_len_idc {
-                    0 => usize::from(r.u8(8)?),
+                    0 => usize::from(r.u8(BYTE_BITS)?),
                     1 => 2,
                     2 => 3,
                     _ => {
@@ -492,14 +515,18 @@ impl MediaServiceKind {
         for e in &self.entries {
             w.flag(e.media_description_flag, "media_description_flag")?;
             w.flag(e.identifier.is_some(), "identifier_flag")?;
-            w.put(e.languages.len() as u64, 3, "lang_pairs")?;
-            w.put(u64::from(e.media_type_idc.to_u8()), 2, "media_type_idc")?;
+            w.put(e.languages.len() as u64, TRIPLE_BITS, "lang_pairs")?;
+            w.put(
+                u64::from(e.media_type_idc.to_u8()),
+                PAIR_BITS,
+                "media_type_idc",
+            )?;
             w.put(e.reserved.get(), 1, "reserved")?;
             if let Some(id) = &e.identifier {
-                w.put(u64::from(id.id_length_code), 3, "ID_length_code")?;
-                w.put(u64::from(id.id_type), 13, "ID_type")?;
+                w.put(u64::from(id.id_length_code), TRIPLE_BITS, "ID_length_code")?;
+                w.put(u64::from(id.id_type), ID_TYPE_BITS, "ID_type")?;
                 if id.id_length_code == ID_LENGTH_CODE_EXPLICIT {
-                    w.put(id.media_id.len() as u64, 8, "ID_len")?;
+                    w.put(id.media_id.len() as u64, BYTE_BITS, "ID_len")?;
                 } else if ID_LENGTHS.get(usize::from(id.id_length_code)) != Some(&id.media_id.len())
                 {
                     return Err(invalid(
@@ -512,14 +539,18 @@ impl MediaServiceKind {
             for l in &e.languages {
                 w.put(
                     u64::from(l.configuration_type.to_u8()),
-                    2,
+                    PAIR_BITS,
                     "configuration_type",
                 )?;
-                w.put(l.media_service_types.len() as u64, 3, "lang_purpose_cnt")?;
-                w.put(u64::from(l.lang_len_idc), 2, "lang_len_idc")?;
+                w.put(
+                    l.media_service_types.len() as u64,
+                    TRIPLE_BITS,
+                    "lang_purpose_cnt",
+                )?;
+                w.put(u64::from(l.lang_len_idc), PAIR_BITS, "lang_len_idc")?;
                 w.put(l.reserved.get(), 1, "reserved")?;
                 match (l.lang_len_idc, l.language_code.len()) {
-                    (0, n) => w.put(n as u64, 8, "lang_len")?,
+                    (0, n) => w.put(n as u64, BYTE_BITS, "lang_len")?,
                     (1, 2) | (2, 3) => {}
                     _ => {
                         return Err(invalid(

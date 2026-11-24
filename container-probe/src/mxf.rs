@@ -72,7 +72,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     let ber = &region[UL_KEY_LEN..];
 
     let detail = Detail::Mxf {
-        partition_kind: partition_kind_from_byte(region[13]),
+        partition_kind: partition_kind_from_byte(region[MXF_UL_PARTITION_KIND_OFFSET]),
     };
     if is_partition_pack_key(region) && ber_length_well_formed(ber) {
         Outcome::Match(Evidence {
@@ -89,6 +89,13 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     }
 }
 
+/// Byte offsets within a 16-byte MXF universal label: the Structure Kind and
+/// the Partition Kind (SMPTE ST 377-1 §7.1, Table 4), and the start of the
+/// mid section.
+const MXF_UL_STRUCTURE_KIND_OFFSET: usize = 12;
+const MXF_UL_PARTITION_KIND_OFFSET: usize = 13;
+const MXF_UL_MID_OFFSET: usize = 8;
+
 /// `true` when `key` is a complete Partition Pack Key (SMPTE ST 377-1 §7.1,
 /// Table 4): the fixed 7-byte prefix, the `0D 01 02 01` mid section, the
 /// `0x01` Structure Kind byte, and a valid Partition Kind byte (`0x02`/`0x03`/
@@ -97,9 +104,10 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 /// alone cannot separate a Partition Pack from a Primer/Random-Index Pack.
 fn is_partition_pack_key(key: &[u8]) -> bool {
     key[..MXF_KEY_PREFIX.len()] == MXF_KEY_PREFIX
-        && key[8..8 + MXF_KEY_MID.len()] == MXF_KEY_MID
-        && key[12] == MXF_KEY_STRUCTURE_KIND
-        && (MXF_PARTITION_KIND_HEADER..=MXF_PARTITION_KIND_FOOTER).contains(&key[13])
+        && key[MXF_UL_MID_OFFSET..MXF_UL_MID_OFFSET + MXF_KEY_MID.len()] == MXF_KEY_MID
+        && key[MXF_UL_STRUCTURE_KIND_OFFSET] == MXF_KEY_STRUCTURE_KIND
+        && (MXF_PARTITION_KIND_HEADER..=MXF_PARTITION_KIND_FOOTER)
+            .contains(&key[MXF_UL_PARTITION_KIND_OFFSET])
 }
 
 /// `true` when `ber` begins with a well-formed BER length (ITU-T X.690 §8.1.3):

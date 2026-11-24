@@ -1323,7 +1323,7 @@ impl InputSpec {
                             reason: "must be greater than zero".into(),
                         });
                     }
-                    if *n > 1024 * 1024 * 1024 {
+                    if *n > MAX_OBJECT_BYTES {
                         return Err(MultimuxError::ConfigInvalid {
                             field: ConfigField::RoutesInputMaxObjectBytes,
                             reason: "must not exceed 1 GiB".into(),
@@ -2532,6 +2532,15 @@ fn default_program_date_time() -> ProgramDateTimeSource {
     ProgramDateTimeSource::Arrival
 }
 
+/// Cap on a configured maximum object size: 1 GiB.
+const MAX_OBJECT_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Default target segment duration.
+const DEFAULT_TARGET_DURATION: Duration = Duration::from_secs(4);
+
+/// Default part target duration.
+const DEFAULT_PART_TARGET: Duration = Duration::from_millis(500);
+
 fn default_hold_cold_playlist() -> bool {
     hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT
 }
@@ -2540,9 +2549,9 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             bind: "0.0.0.0:8080".to_string(),
-            target_duration: Duration::from_secs(4),
-            part_target: Duration::from_millis(500),
-            window_segments: 8,
+            target_duration: DEFAULT_TARGET_DURATION,
+            part_target: DEFAULT_PART_TARGET,
+            window_segments: crate::route::DEFAULT_WINDOW_SEGMENTS,
             routes: Vec::new(),
             request_timeout: crate::origin::DEFAULT_REQUEST_TIMEOUT,
             max_concurrent_requests: crate::origin::DEFAULT_MAX_CONCURRENT_REQUESTS,

@@ -16,6 +16,10 @@
 
 use std::time::Duration;
 
+/// Nanosecond digits a fraction of a second can fill (W3C XML Schema 1.1
+/// Part 2 §3.3.6); further digits are beyond [`Duration`]'s precision.
+const MAX_FRACTION_DIGITS: usize = 9;
+
 // ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------
@@ -138,7 +142,7 @@ fn normalise_xs_duration(s: &str) -> Option<String> {
                 }
                 out.push('.');
                 // Valid XSD allows any number of digits; Duration holds nanoseconds.
-                out.push_str(&frac[..frac.len().min(9)]);
+                out.push_str(&frac[..frac.len().min(MAX_FRACTION_DIGITS)]);
             }
             out.push('S');
             time_components += 1;

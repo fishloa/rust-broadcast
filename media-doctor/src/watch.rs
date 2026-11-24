@@ -94,7 +94,7 @@ use transmux::iter_annexb_nals;
 /// backward jump from a legal wrap (ISO/IEC 13818-1 §2.4.3.7). The modulus
 /// itself comes from [`broadcast_common::clock33`] — the shared owner of this
 /// math, rather than a second hand-rolled `1 << 33` (audit MD-W10).
-const PTS_HALF: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
+const PTS_WRAP_MIDPOINT: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
 
 /// Nanoseconds in one tick of the 90 kHz program clock (ANSI/SCTE 35 §9.2).
 const NANOS_PER_TICK: u128 = 1_000_000_000 / broadcast_common::clock33::PTS_HZ as u128;
@@ -634,7 +634,7 @@ impl WatchState {
 
         if let Some(prev) = track.prev_decode {
             let delta = broadcast_common::clock33::wrapping_forward_distance(prev, raw);
-            if delta != 0 && delta > PTS_HALF {
+            if delta != 0 && delta > PTS_WRAP_MIDPOINT {
                 track.decode_anomaly = true;
                 self.pts_dts_anomalies_total += 1;
             }

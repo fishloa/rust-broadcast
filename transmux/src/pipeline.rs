@@ -40,6 +40,7 @@ use crate::movie_fragment::{
     TrackFragmentBox, media_fragment_run,
 };
 use crate::mpegh::MHAC_FOURCC;
+use crate::nalu_types::{HEVC_SPS_NUT, HEVC_VPS_NUT};
 use crate::opus::DOPS_FOURCC;
 use crate::sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
@@ -57,6 +58,30 @@ const LANG_UND: u16 = 0x55C4;
 const IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
 /// `tkhd` flags: track_enabled | in_movie | in_preview.
 const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
+/// `ftyp` minor version this crate writes.
+const FTYP_MINOR_VERSION: u32 = 512;
+/// `mvhd` `rate` for normal playback: 1.0 in 16.16 fixed point (§8.2.2).
+const MVHD_RATE_UNITY: u32 = 0x0001_0000;
+/// `mvhd` `volume` for full volume: 1.0 in 8.8 fixed point (§8.2.2).
+const MVHD_VOLUME_UNITY: u16 = 0x0100;
+/// `tkhd` `volume` for full volume: 1.0 in 8.8 fixed point (§8.3.2).
+const TKHD_VOLUME_UNITY: i16 = 0x0100;
+/// Fractional bits of the 16.16 fixed-point fields (`samplerate`, `tkhd` size).
+const FIXED_16_16_FRACTION_BITS: u32 = u16::BITS;
+/// Half of the 16.16 fixed-point unit, for round-to-nearest scaling.
+const FIXED_POINT_ROUND_BIAS: u64 = 1 << (u16::BITS - 1);
+/// Width of an ISOBMFF four-character box type (ISO/IEC 14496-12:2026 §4.2).
+const FOURCC_LEN: usize = 4;
+/// Millihartz per hertz, the unit [`FrameRateBasis`] rates are reported in.
+const MILLIHERTZ_PER_HERTZ: u128 = 1000;
+/// H.264 `time_scale` counts field intervals, so the frame period is twice
+/// `num_units_in_tick` (H.264 §E.2.1).
+const H264_FIELD_PERIOD_FACTOR: u128 = 2;
+/// `field_seq_flag = 1` makes every coded picture a field: the frame period is
+/// twice the picture period (H.265 §E.3.2).
+const HEVC_FIELD_SEQ_FACTOR: u128 = 2;
+/// The `2` that halves a divisor for a rounded quotient.
+const ROUNDING_DIVISOR: u64 = 2;
 
 /// [`CodecConfig`], [`DataCarriage`], [`TrackSpec`], [`Sample`],
 /// [`SampleFlags`], [`Provenance`], [`FragmentTrackData`] moved to
@@ -77,7 +102,7 @@ pub fn build_init_segment(
     let movie_timescale = movie_timescale.into();
     let ftyp = FileTypeBox {
         major_brand: *b"iso5",
-        minor_version: 512,
+        minor_version: FTYP_MINOR_VERSION,
         compatible_brands: vec![*b"iso5", *b"iso6", *b"mp41"],
     };
 
@@ -93,8 +118,8 @@ pub fn build_init_segment(
         modification_time: 0,
         timescale: movie_timescale,
         duration: 0,
-        rate: 0x0001_0000,
-        volume: 0x0100,
+        rate: MVHD_RATE_UNITY,
+        volume: MVHD_VOLUME_UNITY,
         matrix: IDENTITY_MATRIX,
         next_track_id,
     };
@@ -162,7 +187,7 @@ fn unmuxable_track_error(t: &TrackSpec) -> crate::error::Error {
 /// Serialize a typed config box body and wrap it as an [`OpaqueBox`] under the
 /// given four-CC (mirrors the `esds`/`dac3` embedding for audio sample entries).
 fn config_box<C: Serialize<Error = crate::error::Error>>(
-    fourcc: &[u8; 4],
+    fourcc: &[u8; FOURCC_LEN],
     config: &C,
 ) -> Result<OpaqueBox> {
     let mut body = vec![0u8; config.serialized_len()];
@@ -204,7 +229,7 @@ fn audio_rate_carriage(sample_rate: u32) -> AudioRateCarriage {
     if AudioSampleEntryV1::rate_fits_v0(sample_rate) {
         AudioRateCarriage {
             entry_version: 0,
-            samplerate_field: sample_rate << 16,
+            samplerate_field: sample_rate << FIXED_16_16_FRACTION_BITS,
             srat: None,
         }
     } else {
@@ -320,8 +345,10 @@ pub fn presentation_size(
 ) -> (u32, u32) {
     let (w, h) = presentation_size_fixed(display, coded_width, coded_height);
     (
-        u32::try_from((w + (1 << 15)) >> 16).unwrap_or(u32::MAX),
-        u32::try_from((h + (1 << 15)) >> 16).unwrap_or(u32::MAX),
+        u32::try_from((w + FIXED_POINT_ROUND_BIAS) >> FIXED_16_16_FRACTION_BITS)
+            .unwrap_or(u32::MAX),
+        u32::try_from((h + FIXED_POINT_ROUND_BIAS) >> FIXED_16_16_FRACTION_BITS)
+            .unwrap_or(u32::MAX),
     )
 }
 
@@ -357,11 +384,11 @@ fn frame_rate_millihertz_from_timing(time_scale: u32, num_units_in_tick: u32) ->
     if num_units_in_tick == 0 {
         return None;
     }
-    let denominator = u128::from(num_units_in_tick).saturating_mul(2);
+    let denominator = u128::from(num_units_in_tick).saturating_mul(H264_FIELD_PERIOD_FACTOR);
     if denominator == 0 {
         return None;
     }
-    let numerator = u128::from(time_scale).saturating_mul(1000);
+    let numerator = u128::from(time_scale).saturating_mul(MILLIHERTZ_PER_HERTZ);
     let millihertz = numerator
         .checked_add(u128::from(num_units_in_tick))?
         .checked_div(denominator)?;
@@ -375,10 +402,10 @@ fn frame_rate_millihertz_hevc_convention(time_scale: u32, num_units_in_tick: u32
         return None;
     }
     let denominator = u128::from(num_units_in_tick);
-    let numerator = u128::from(time_scale).saturating_mul(1000);
+    let numerator = u128::from(time_scale).saturating_mul(MILLIHERTZ_PER_HERTZ);
     // round half up: add denominator/2
     let millihertz = numerator
-        .checked_add(denominator / 2)?
+        .checked_add(denominator / u128::from(ROUNDING_DIVISOR))?
         .checked_div(denominator)?;
     u32::try_from(millihertz).ok()
 }
@@ -401,16 +428,18 @@ fn frame_rate_millihertz_hevc_normative(
     // denominator ticks = num_units * elemental_duration, times 2 if field_seq
     let ticks = u128::from(num_units_in_tick).checked_mul(u128::from(elemental_duration))?;
     let ticks = if field_seq {
-        ticks.checked_mul(2)?
+        ticks.checked_mul(HEVC_FIELD_SEQ_FACTOR)?
     } else {
         ticks
     };
     if ticks == 0 {
         return None;
     }
-    let numerator = u128::from(time_scale).saturating_mul(1000);
+    let numerator = u128::from(time_scale).saturating_mul(MILLIHERTZ_PER_HERTZ);
     // round half up
-    let millihertz = numerator.checked_add(ticks / 2)?.checked_div(ticks)?;
+    let millihertz = numerator
+        .checked_add(ticks / u128::from(ROUNDING_DIVISOR))?
+        .checked_div(ticks)?;
     u32::try_from(millihertz).ok()
 }
 
@@ -517,7 +546,7 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
                 .config
                 .arrays
                 .iter()
-                .find(|a| a.nal_unit_type == 33)?
+                .find(|a| a.nal_unit_type == HEVC_SPS_NUT)?
                 .nalus
                 .first()?
                 .0
@@ -532,7 +561,7 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
                 .config
                 .arrays
                 .iter()
-                .find(|a| a.nal_unit_type == 32)
+                .find(|a| a.nal_unit_type == HEVC_VPS_NUT)
                 .and_then(|a| a.nalus.first())
                 .and_then(|n| {
                     crate::sps::decode_hevc_vps_timing(n.0.as_slice())
@@ -564,26 +593,26 @@ fn presentation_size_fixed(
 ) -> (u64, u64) {
     let Some(display) = display else {
         return (
-            (u64::from(coded_width)) << 16,
-            (u64::from(coded_height)) << 16,
+            (u64::from(coded_width)) << FIXED_16_16_FRACTION_BITS,
+            (u64::from(coded_height)) << FIXED_16_16_FRACTION_BITS,
         );
     };
     let out = display.output_rect;
-    let height = (u64::from(out.height)) << 16;
+    let height = (u64::from(out.height)) << FIXED_16_16_FRACTION_BITS;
     let width = match display.typed_sample_aspect_ratio() {
         Some(sar) => {
             let sar_w = u64::from(sar.width());
             let sar_h = u64::from(sar.height());
             if sar_h == 0 {
-                (u64::from(out.width)) << 16
+                (u64::from(out.width)) << FIXED_16_16_FRACTION_BITS
             } else {
-                let num = u64::from(out.width) * sar_w * 65536;
-                (num + sar_h / 2)
+                let num = u64::from(out.width) * sar_w * (1 << FIXED_16_16_FRACTION_BITS);
+                (num + sar_h / ROUNDING_DIVISOR)
                     .checked_div(sar_h)
-                    .unwrap_or((u64::from(out.width)) << 16)
+                    .unwrap_or((u64::from(out.width)) << FIXED_16_16_FRACTION_BITS)
             }
         }
-        None => (u64::from(out.width)) << 16,
+        None => (u64::from(out.width)) << FIXED_16_16_FRACTION_BITS,
     };
     (width, height)
 }
@@ -720,7 +749,7 @@ fn track_header(track_id: TrackId, audio: bool, width: u32, height: u32) -> Trac
         duration: 0,
         layer: 0,
         alternate_group: 0,
-        volume: if audio { 0x0100 } else { 0 },
+        volume: if audio { TKHD_VOLUME_UNITY } else { 0 },
         matrix: IDENTITY_MATRIX,
         width,
         height,

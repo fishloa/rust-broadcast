@@ -3260,8 +3260,17 @@ fn addr_to_u64(addr: &std::net::SocketAddr) -> u64 {
 /// CONCLUSION replayed with a rewritten Socket ID no longer validates, while
 /// the same host may still reconnect from the same port under a fresh ID
 /// (its INDUCTION issues a cookie for that ID).
+/// Bits a `u64` must be shifted to occupy a `u128`'s high half.
+const U128_HIGH_SHIFT: u32 = 64;
+
+/// Shift placing the Caller's Socket ID in the high half of the peer key.
+const SOCKET_ID_SHIFT: u32 = 32;
+
+/// Seconds in the SYN cookie's one-minute time bucket (§4.3.1.1).
+const SECONDS_PER_MINUTE: u64 = 60;
+
 fn cookie_peer_key(addr: &std::net::SocketAddr, caller_socket_id: u32) -> u64 {
-    addr_to_u64(addr) ^ (u64::from(caller_socket_id) << 32)
+    addr_to_u64(addr) ^ (u64::from(caller_socket_id) << SOCKET_ID_SHIFT)
 }
 
 /// The current UNIX time, bucketed to 1-minute accuracy — the `time_bucket`
@@ -3272,14 +3281,14 @@ fn unix_time_bucket() -> u32 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    u32::try_from(secs / 60).unwrap_or(u32::MAX)
+    u32::try_from(secs / SECONDS_PER_MINUTE).unwrap_or(u32::MAX)
 }
 
 /// A random `u64` from the OS randomness source (`getrandom`), used as
 /// `derive_cookie`'s `secret` input and to draw the per-connection Socket ID
 /// and ISN (SRT-W11). A failing OS source is reported, never panicked on.
 fn random_u64() -> Result<u64> {
-    let mut bytes = [0u8; 8];
+    let mut bytes = [0u8; core::mem::size_of::<u64>()];
     getrandom::fill(&mut bytes).map_err(|_| Error::Io {
         kind: std::io::ErrorKind::Other,
         context: "getrandom",
@@ -3289,7 +3298,7 @@ fn random_u64() -> Result<u64> {
 
 /// A random `u128` (two OS draws).
 fn random_u128() -> Result<u128> {
-    Ok((u128::from(random_u64()?) << 64) | u128::from(random_u64()?))
+    Ok((u128::from(random_u64()?) << U128_HIGH_SHIFT) | u128::from(random_u64()?))
 }
 
 /// The low 32 bits of a fresh random `u64`.

@@ -16,6 +16,8 @@ use crate::xs_datetime::format_xs_datetime;
 const ROOT_NAME: &str = "MPD";
 const BARE_ROOT_TAG: &str = "<MPD>";
 const MPD_ROOT_SLACK: usize = 256;
+/// Spaces per XML indentation level.
+const XML_INDENT_WIDTH: usize = 2;
 const PREFIX_SEPARATOR: char = ':';
 const PREFIX_DVB: &str = "dvb";
 const PREFIX_XLINK: &str = "xlink";
@@ -92,7 +94,7 @@ impl Mpd {
     /// formatted or a stored string holds a character outside the XML 1.0 §2.2
     /// `Char` production.
     pub fn to_xml(&self) -> Result<String, MpdError> {
-        let mut w = Writer::new_with_indent(Vec::new(), b' ', 2);
+        let mut w = Writer::new_with_indent(Vec::new(), b' ', XML_INDENT_WIDTH);
         w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))
             .map_err(io_err)?;
         w.write_event(Event::Start(BytesStart::new(ROOT_NAME)))
@@ -105,7 +107,7 @@ impl Mpd {
         let root_at = bare_len - BARE_ROOT_TAG.len();
         let (head_sep, rest) = (&doc[..root_at], &doc[bare_len..]);
         let used = Prefixes::emitted_by(&String::from_utf8_lossy(&doc[root_at..]))?;
-        let mut root_writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+        let mut root_writer = Writer::new_with_indent(Vec::new(), b' ', XML_INDENT_WIDTH);
         root_writer
             .write_event(Event::Start(self.root_start(&used)?))
             .map_err(io_err)?;

@@ -16,6 +16,10 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x0D;
 const HEADER_LEN: usize = 2;
 const FIXED_LEN: usize = 2;
+/// Offset of `max_holdoff_time` in the descriptor.
+const MAX_HOLDOFF_TIME_OFFSET: usize = HEADER_LEN;
+/// Offset of `min_polling_interval` in the descriptor.
+const MIN_POLLING_INTERVAL_OFFSET: usize = MAX_HOLDOFF_TIME_OFFSET + 1;
 
 /// ssu_uri_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,8 +67,8 @@ impl Serialize for SsuUriDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = self.max_holdoff_time;
-        buf[3] = self.min_polling_interval;
+        buf[MAX_HOLDOFF_TIME_OFFSET] = self.max_holdoff_time;
+        buf[MIN_POLLING_INTERVAL_OFFSET] = self.min_polling_interval;
         buf[4..len].copy_from_slice(self.uri.raw());
         Ok(len)
     }

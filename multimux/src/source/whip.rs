@@ -124,7 +124,7 @@ use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
 /// The `avcC` record's `lengthSizeMinusOne` for the AVCC-style 4-byte NAL
 /// length prefix [`RtpStreamDepacketiser::push`] emits
 /// (ISO/IEC 14496-15:2017 §5.3.4.1.1).
-const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
+const NAL_LENGTH_PREFIX_CODE: u8 = 3;
 
 /// Unknown coded dimensions — the SDP/RTP path gives no frame geometry at
 /// all, matching `crate::source::sdp`'s own `UNKNOWN_DIMENSION` placeholder
@@ -137,6 +137,35 @@ const UNKNOWN_DIMENSION: u16 = 0;
 /// for one origin's worth of encoders while still bounding a flood of inbound
 /// connections.
 pub const DEFAULT_WHIP_MAX_SESSIONS: usize = 16;
+
+/// Bytes of the ICE ufrag and password the answer advertises (RFC 8445 §5.3,
+/// RFC 8839 §5.1).
+const ICE_UFRAG_BYTES: usize = 8;
+const ICE_PASSWORD_BYTES: usize = 24;
+
+/// Bytes of the `ETag` token identifying one signalling response.
+const ETAG_BYTES: usize = 16;
+
+/// Target duration, part target and window of the harness route a
+/// test-hooks load driver runs.
+#[cfg(feature = "test-hooks")]
+const HARNESS_TARGET_DURATION: Duration = Duration::from_secs(1);
+#[cfg(feature = "test-hooks")]
+const HARNESS_PART_TARGET: Duration = Duration::from_millis(500);
+#[cfg(feature = "test-hooks")]
+const HARNESS_WINDOW_SEGMENTS: usize = 8;
+
+/// Ring slots of the harness `Trunk`.
+#[cfg(feature = "test-hooks")]
+const HARNESS_TIMED_SLOTS: usize = 64;
+#[cfg(feature = "test-hooks")]
+const HARNESS_SPARSE_SLOTS: usize = 16;
+#[cfg(feature = "test-hooks")]
+const HARNESS_SEGMENT_SLOTS: usize = 8;
+#[cfg(feature = "test-hooks")]
+const HARNESS_EVENT_SLOTS: usize = 8;
+#[cfg(feature = "test-hooks")]
+const HARNESS_PART_SLOTS: usize = 8;
 
 /// Bound on the accept-pump task's channel — see
 /// `crate::source::rtmp::ACCEPT_QUEUE_CAPACITY`'s identical reasoning.
@@ -620,9 +649,9 @@ async fn serve_read_load_inner(
     let policy = handshake_policy(handshake_timeout);
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration(std::time::Duration::from_secs(1))
-            .with_part_target(std::time::Duration::from_millis(500))
-            .with_window_segments(8),
+            .with_target_duration(HARNESS_TARGET_DURATION)
+            .with_part_target(HARNESS_PART_TARGET)
+            .with_window_segments(HARNESS_WINDOW_SEGMENTS),
     ));
     let route_clone = Arc::clone(&route);
     let abort_token = token.clone();
@@ -630,11 +659,11 @@ async fn serve_read_load_inner(
         let _ = run_whip(
             &route_clone,
             TrunkConfig::default()
-                .with_timed_capacity(NonZeroUsize::new(64).unwrap())
-                .with_sparse_capacity(NonZeroUsize::new(16).unwrap())
-                .with_segment_capacity(NonZeroUsize::new(8).unwrap())
-                .with_event_capacity(NonZeroUsize::new(8).unwrap())
-                .with_part_capacity(NonZeroUsize::new(8).unwrap()),
+                .with_timed_capacity(NonZeroUsize::new(HARNESS_TIMED_SLOTS).unwrap())
+                .with_sparse_capacity(NonZeroUsize::new(HARNESS_SPARSE_SLOTS).unwrap())
+                .with_segment_capacity(NonZeroUsize::new(HARNESS_SEGMENT_SLOTS).unwrap())
+                .with_event_capacity(NonZeroUsize::new(HARNESS_EVENT_SLOTS).unwrap())
+                .with_part_capacity(NonZeroUsize::new(HARNESS_PART_SLOTS).unwrap()),
             policy,
             &route_handle,
         )
@@ -985,8 +1014,8 @@ async fn whip_post_inner(
         reason: format!("whip: media socket local_addr: {e}"),
     })?;
 
-    let local_ice_ufrag = crate::secure_random::token(8);
-    let local_ice_pwd = crate::secure_random::token(24);
+    let local_ice_ufrag = crate::secure_random::token(ICE_UFRAG_BYTES);
+    let local_ice_pwd = crate::secure_random::token(ICE_PASSWORD_BYTES);
     let mut media = MediaTransport::new(
         MediaTransportConfig::new(
             local_addr,
@@ -1027,7 +1056,7 @@ async fn whip_post_inner(
     // own origin (the `Location` it renders is what a peer resolves against the request).
     let mut session = WhipSession::new(crate::webrtc_session::resource_url("whip", &resource_id));
     let _ = session.on_post(Vec::new());
-    let etag = crate::secure_random::token(16);
+    let etag = crate::secure_random::token(ETAG_BYTES);
     let response = session.accept(answer.into_bytes(), etag);
     if response.status != axum::http::StatusCode::CREATED {
         // The state machine could not build the 201 (an unsendable header):
@@ -1241,7 +1270,7 @@ impl WhipIngestSession {
                         profile_indication: 0,
                         profile_compatibility: 0,
                         level_indication: 0,
-                        length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
+                        length_size_minus_one: NAL_LENGTH_PREFIX_CODE,
                         sps: Vec::new(),
                         pps: Vec::new(),
                         chroma_format: None,

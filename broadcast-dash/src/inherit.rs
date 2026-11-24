@@ -196,6 +196,11 @@ fn finish_multi(m: MultiInfo) -> Result<ResolvedMulti, InheritError> {
     })
 }
 
+/// Inheritance layers, outermost first (ISO/IEC 23009-1 §5.3.9.1).
+const PERIOD_LAYER: usize = 0;
+const ADAPTATION_SET_LAYER: usize = 1;
+const REPRESENTATION_LAYER: usize = 2;
+
 /// Resolve the effective Segment information of `rep`.
 ///
 /// # Errors
@@ -213,7 +218,11 @@ pub fn resolve_segment_info(
         .enumerate()
         .map(|(i, l)| with_inherited_timeline(segments[..i].iter().copied(), l))
         .collect::<Result<_, _>>()?;
-    let layers = [&resolved[0], &resolved[1], &resolved[2]];
+    let layers = [
+        &resolved[PERIOD_LAYER],
+        &resolved[ADAPTATION_SET_LAYER],
+        &resolved[REPRESENTATION_LAYER],
+    ];
     let has_template = layers.iter().any(|l| l.template.is_some());
     let has_list = layers.iter().any(|l| l.list.is_some());
     if has_template && has_list {

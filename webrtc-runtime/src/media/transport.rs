@@ -99,6 +99,9 @@ const OFFERED_SRTP_PROFILE: SrtpProtectionProfile =
 /// The label used to export SRTP keying material from a completed DTLS
 /// handshake (RFC 5764 §4.2).
 const SRTP_KEYING_MATERIAL_LABEL: &str = "EXTRACTOR-dtls_srtp";
+/// Keying-material blocks exported per association: one per direction
+/// (client-to-server, server-to-client), RFC 5764 §4.2.
+const KEYING_MATERIAL_DIRECTIONS: usize = 2;
 
 // ---------------------------------------------------------------------------
 // SDP certificate fingerprint (RFC 8122 §5) — the identity WebRTC actually
@@ -1578,7 +1581,11 @@ impl MediaTransport {
         let key_len = srtp_profile.key_len();
         let salt_len = srtp_profile.salt_len();
         let material = state
-            .export_keying_material(SRTP_KEYING_MATERIAL_LABEL, &[], 2 * (key_len + salt_len))
+            .export_keying_material(
+                SRTP_KEYING_MATERIAL_LABEL,
+                &[],
+                KEYING_MATERIAL_DIRECTIONS * (key_len + salt_len),
+            )
             .map_err(|e| {
                 Error::Media(MediaError::Other(format!(
                     "export srtp keying material: {e}"
@@ -1586,10 +1593,11 @@ impl MediaTransport {
             })?;
 
         let material = material.as_ref();
+        let salt_base = KEYING_MATERIAL_DIRECTIONS * key_len;
         let client_key = &material[0..key_len];
-        let server_key = &material[key_len..2 * key_len];
-        let client_salt = &material[2 * key_len..2 * key_len + salt_len];
-        let server_salt = &material[2 * key_len + salt_len..2 * key_len + 2 * salt_len];
+        let server_key = &material[key_len..salt_base];
+        let client_salt = &material[salt_base..salt_base + salt_len];
+        let server_salt = &material[salt_base + salt_len..][..salt_len];
 
         let ((read_key, read_salt), (write_key, write_salt)) = select_read_write_material(
             state.is_client(),

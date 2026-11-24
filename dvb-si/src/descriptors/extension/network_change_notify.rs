@@ -38,12 +38,12 @@ impl ChangeType {
     /// Creates a value from a 4-bit wire nibble (upper bits masked off),
     /// preserving every possible value for lossless round-trip.
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x0F {
+        match v & CHANGE_TYPE_MASK {
             0 => Self::MessageOnly,
             1 => Self::MinorDefault,
             2 => Self::MinorMultiplexRemoved,
             3 => Self::MinorServiceChanged,
-            v @ 4..=7 => Self::MinorReserved(v),
+            v @ MINOR_RESERVED_START..=MINOR_RESERVED_END => Self::MinorReserved(v),
             8 => Self::MajorDefault,
             9 => Self::MajorFrequencyChanged,
             10 => Self::MajorCoverageChanged,
@@ -91,6 +91,52 @@ const CELL_HEADER_LEN: usize = 2; // cell_id(16)
 const LOOP_LENGTH_LEN: usize = 1; // loop_length(8)
 const CHANGE_BASE_LEN: usize = 12; // id(1)+ver(1)+start(5)+dur(3)+packed(1)+msg(1)
 const INVARIANT_TS_LEN: usize = 4; // tsid(16)+onid(16)
+/// Width of `cell_id`.
+const CELL_ID_LEN: usize = core::mem::size_of::<u16>();
+/// Width of `change_type`.
+const CHANGE_TYPE_MASK: u8 = 0x0F;
+/// First reserved minor `change_type`.
+const MINOR_RESERVED_START: u8 = 4;
+/// Last reserved minor `change_type`.
+const MINOR_RESERVED_END: u8 = 7;
+/// Width of `start_time_of_change` in bytes.
+const START_TIME_LEN: usize = 5;
+/// Offset of `start_time_of_change` in a change entry.
+const START_TIME_OFFSET: usize = 2;
+/// Offset of the low byte of `start_time_of_change`.
+const START_TIME_LAST_OFFSET: usize = START_TIME_OFFSET + START_TIME_LEN - 1;
+/// Offset of the 5 bytes within the 8-byte big-endian `u64`.
+const START_TIME_U64_OFFSET: usize = core::mem::size_of::<u64>() - START_TIME_LEN;
+/// Width of `start_time_of_change` in bits.
+const START_TIME_BITS: u32 = 40;
+/// Width of `change_duration` in bytes.
+const DURATION_LEN: usize = 3;
+/// Offset of `change_duration` in a change entry.
+const DURATION_OFFSET: usize = 7;
+/// Offset of the low byte of `change_duration`.
+const DURATION_LAST_OFFSET: usize = DURATION_OFFSET + DURATION_LEN - 1;
+/// Offset of the 3 bytes within the 4-byte big-endian `u32`.
+const DURATION_U64_OFFSET: usize = core::mem::size_of::<u32>() - DURATION_LEN;
+/// Width of `change_duration` in bits.
+const DURATION_BITS: u32 = 24;
+/// Shift of a high byte into a wider integer.
+const HIGH_BYTE_SHIFT: u32 = 8;
+/// Offset of the packed flags byte in a change entry.
+const PACKED_OFFSET: usize = 10;
+/// Shift of `receiver_category`.
+const RECEIVER_CATEGORY_SHIFT: u32 = 5;
+/// Mask of `receiver_category`.
+const RECEIVER_CATEGORY_MASK: u8 = 0x07;
+/// Width of `receiver_category`.
+const RECEIVER_CATEGORY_BITS: u32 = 3;
+/// Shift of `invariant_ts_present`.
+const INVARIANT_TS_PRESENT_SHIFT: u32 = 4;
+/// Offset of `message_id` in a change entry.
+const MESSAGE_ID_OFFSET: usize = 11;
+/// Offset of `invariant_ts_onid`.
+const INVARIANT_ONID_OFFSET: usize = 2;
+/// Offset of the 5 `start_time_of_change` bytes within the `u64`.
+const START_TIME_U64_END: usize = core::mem::size_of::<u64>();
 
 /// network_change_notify body (Table 149, §6.4.9). The two-level cell/change loop is unfolded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,7 +200,9 @@ impl NetworkChange {
     #[must_use]
     pub fn start_time_of_change_utc(&self) -> Option<jiff::Timestamp> {
         let raw = self.start_time_of_change.to_be_bytes();
-        broadcast_common::time::decode_mjd_bcd_utc([raw[3], raw[4], raw[5], raw[6], raw[7]])
+        let mut mjd = [0u8; START_TIME_LEN];
+        mjd.copy_from_slice(&raw[START_TIME_U64_OFFSET..START_TIME_U64_END]);
+        broadcast_common::time::decode_mjd_bcd_utc(mjd)
     }
 
     /// `change_duration` (24-bit BCD `HHMMSS`) in seconds; `None` if a BCD
@@ -162,7 +210,9 @@ impl NetworkChange {
     #[must_use]
     pub fn change_duration_secs(&self) -> Option<u32> {
         let raw = self.change_duration.to_be_bytes();
-        broadcast_common::time::decode_bcd_duration([raw[1], raw[2], raw[3]])
+        let mut dur = [0u8; DURATION_LEN];
+        dur.copy_from_slice(&raw[DURATION_U64_OFFSET..]);
+        broadcast_common::time::decode_bcd_duration(dur)
             .and_then(|d| u32::try_from(d.as_secs()).ok())
     }
 }
@@ -189,7 +239,7 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
             )?;
             let (cell_id_bytes, _) = sel
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<{ CELL_ID_LEN }>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
                         need: pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN,
@@ -219,19 +269,23 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                 }
                 let network_change_id = sel[pos];
                 let network_change_version = sel[pos + 1];
-                let start_time_of_change = (u64::from(sel[pos + 2]) << 32)
-                    | (u64::from(sel[pos + 3]) << 24)
-                    | (u64::from(sel[pos + 4]) << 16)
-                    | (u64::from(sel[pos + 5]) << 8)
-                    | u64::from(sel[pos + 6]);
-                let change_duration = (u32::from(sel[pos + 7]) << 16)
-                    | (u32::from(sel[pos + 8]) << 8)
-                    | u32::from(sel[pos + 9]);
-                let packed = sel[pos + 10];
-                let receiver_category = packed >> 5;
-                let invariant_ts_present = (packed >> 4) & 1;
-                let change_type = ChangeType::from_u8(packed & 0x0F);
-                let message_id = sel[pos + 11];
+                let start_time_of_change = (u64::from(crate::wire::be_u32(
+                    sel,
+                    pos + START_TIME_OFFSET,
+                    "start_time_of_change",
+                )?) << HIGH_BYTE_SHIFT)
+                    | u64::from(sel[pos + START_TIME_LAST_OFFSET]);
+                let change_duration = (u32::from(crate::wire::be_u16(
+                    sel,
+                    pos + DURATION_OFFSET,
+                    "change_duration",
+                )?) << HIGH_BYTE_SHIFT)
+                    | u32::from(sel[pos + DURATION_LAST_OFFSET]);
+                let packed = sel[pos + PACKED_OFFSET];
+                let receiver_category = packed >> RECEIVER_CATEGORY_SHIFT;
+                let invariant_ts_present = (packed >> INVARIANT_TS_PRESENT_SHIFT) & 1;
+                let change_type = ChangeType::from_u8(packed & CHANGE_TYPE_MASK);
+                let message_id = sel[pos + MESSAGE_ID_OFFSET];
                 pos += CHANGE_BASE_LEN;
 
                 let invariant_ts = if invariant_ts_present == 1 {
@@ -255,8 +309,12 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                             },
                         ))?;
                     let ts = InvariantTs {
-                        tsid: u16::from_be_bytes([inv_bytes[0], inv_bytes[1]]),
-                        onid: u16::from_be_bytes([inv_bytes[2], inv_bytes[3]]),
+                        tsid: crate::wire::be_u16(inv_bytes, 0, "invariant_ts_tsid")?,
+                        onid: crate::wire::be_u16(
+                            inv_bytes,
+                            INVARIANT_ONID_OFFSET,
+                            "invariant_ts_onid",
+                        )?,
                     };
                     pos += INVARIANT_TS_LEN;
                     Some(ts)
@@ -307,53 +365,55 @@ impl Serialize for NetworkChangeNotify {
         need_out(buf, len)?;
         let mut pos = 0;
         for cell in &self.cells {
-            buf[pos..pos + 2].copy_from_slice(&cell.cell_id.to_be_bytes());
-            pos += 2;
+            buf[pos..pos + CELL_ID_LEN].copy_from_slice(&cell.cell_id.to_be_bytes());
+            pos += CELL_ID_LEN;
             let loop_length: usize = cell.changes.iter().map(change_serialized_len).sum();
             let loop_length =
-                broadcast_common::len::fit_bits(loop_length as u64, 8, "loop_length")? as usize;
+                broadcast_common::len::fit_bits(loop_length as u64, u8::BITS, "loop_length")?
+                    as usize;
             buf[pos] = loop_length as u8;
             pos += 1;
             for ch in &cell.changes {
                 let st = broadcast_common::len::fit_bits(
                     ch.start_time_of_change,
-                    40,
+                    START_TIME_BITS,
                     "start_time_of_change",
                 )?;
                 let dur = broadcast_common::len::fit_bits(
                     u64::from(ch.change_duration),
-                    24,
+                    DURATION_BITS,
                     "change_duration",
                 )?;
                 let receiver_category = broadcast_common::len::fit_bits(
                     u64::from(ch.receiver_category),
-                    3,
+                    RECEIVER_CATEGORY_BITS,
                     "receiver_category",
                 )? as u8;
                 buf[pos] = ch.network_change_id;
                 buf[pos + 1] = ch.network_change_version;
-                buf[pos + 2] = (st >> 32) as u8;
-                buf[pos + 3] = (st >> 24) as u8;
-                buf[pos + 4] = (st >> 16) as u8;
-                buf[pos + 5] = (st >> 8) as u8;
-                buf[pos + 6] = st as u8;
+                buf[pos + START_TIME_OFFSET..pos + START_TIME_OFFSET + START_TIME_LEN]
+                    .copy_from_slice(&st.to_be_bytes()[START_TIME_U64_OFFSET..START_TIME_U64_END]);
                 let dur = dur as u32;
-                buf[pos + 7] = (dur >> 16) as u8;
-                buf[pos + 8] = (dur >> 8) as u8;
-                buf[pos + 9] = dur as u8;
+                buf[pos + DURATION_OFFSET..pos + DURATION_OFFSET + DURATION_LEN]
+                    .copy_from_slice(&dur.to_be_bytes()[DURATION_U64_OFFSET..]);
                 let packed = (broadcast_common::len::fit_mask(
                     receiver_category,
-                    0x07,
+                    RECEIVER_CATEGORY_MASK,
                     "receiver_category",
-                )? << 5)
-                    | ((ch.invariant_ts.is_some() as u8) << 4)
-                    | broadcast_common::len::fit_mask(ch.change_type.to_u8(), 0x0F, "change_type")?;
-                buf[pos + 10] = packed;
-                buf[pos + 11] = ch.message_id;
+                )? << RECEIVER_CATEGORY_SHIFT)
+                    | ((ch.invariant_ts.is_some() as u8) << INVARIANT_TS_PRESENT_SHIFT)
+                    | broadcast_common::len::fit_mask(
+                        ch.change_type.to_u8(),
+                        CHANGE_TYPE_MASK,
+                        "change_type",
+                    )?;
+                buf[pos + PACKED_OFFSET] = packed;
+                buf[pos + MESSAGE_ID_OFFSET] = ch.message_id;
                 pos += CHANGE_BASE_LEN;
                 if let Some(ref inv) = ch.invariant_ts {
-                    buf[pos..pos + 2].copy_from_slice(&inv.tsid.to_be_bytes());
-                    buf[pos + 2..pos + 4].copy_from_slice(&inv.onid.to_be_bytes());
+                    buf[pos..pos + CELL_ID_LEN].copy_from_slice(&inv.tsid.to_be_bytes());
+                    buf[pos + INVARIANT_ONID_OFFSET..pos + INVARIANT_ONID_OFFSET + CELL_ID_LEN]
+                        .copy_from_slice(&inv.onid.to_be_bytes());
                     pos += INVARIANT_TS_LEN;
                 }
             }

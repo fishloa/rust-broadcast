@@ -23,6 +23,23 @@ const TYPE_UUID: [u8; 4] = *b"uuid";
 const UUID_USERTYPE_LEN: usize = 16;
 /// Byte offset of the box type within a box header (§4.2).
 const TYPE_OFFSET: usize = 4;
+
+/// Width of a box type Four-CC.
+const FOURCC_LEN: usize = 4;
+
+/// Byte positions of a box's 32-bit `size` field.
+const SIZE_BYTES: [usize; FOURCC_LEN] = [0, 1, 2, 3];
+
+/// Byte positions of a box's `type` Four-CC.
+const TYPE_BYTES: [usize; FOURCC_LEN] = [
+    TYPE_OFFSET,
+    TYPE_OFFSET + 1,
+    TYPE_OFFSET + 2,
+    TYPE_OFFSET + 3,
+];
+
+/// A quorum of lanes: at least half of a long body's positions must be synced.
+const LANE_QUORUM: usize = 2;
 /// Byte offset of the 64-bit `largesize` within a box header (§4.2).
 const LARGESIZE_OFFSET: usize = 8;
 /// Lanes at or above which a TS body needs only half of them synced.
@@ -45,7 +62,7 @@ pub fn ts_structure(bytes: &[u8]) -> bool {
             0 => false,
             1 => phase == 0 && lanes_synced == 1,
             n if n < TS_TRUSTED_LANES => lanes_synced == n,
-            n => lanes_synced.saturating_mul(2) >= n,
+            n => lanes_synced.saturating_mul(LANE_QUORUM) >= n,
         }
     })
 }
@@ -94,7 +111,7 @@ impl<'a> TopLevelBoxes<'a> {
 
 impl Iterator for TopLevelBoxes<'_> {
     /// `None` is a malformed or truncated box; the walk ends after yielding it.
-    type Item = Option<[u8; 4]>;
+    type Item = Option<[u8; FOURCC_LEN]>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.remaining.is_empty() {
@@ -116,17 +133,12 @@ impl Iterator for TopLevelBoxes<'_> {
 /// The type and total length of the box at the start of `bytes` (a to-EOF box runs to the end of
 /// `bytes`), or `None` when its header is truncated or inconsistent or its payload is not all
 /// present (ISO/IEC 14496-12:2026 §4.2).
-fn next_box(bytes: &[u8]) -> Option<([u8; 4], usize)> {
+fn next_box(bytes: &[u8]) -> Option<([u8; FOURCC_LEN], usize)> {
     if bytes.len() < BOX_HEADER_MIN_SIZE {
         return None;
     }
-    let raw_size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-    let box_type = [
-        bytes[TYPE_OFFSET],
-        bytes[TYPE_OFFSET + 1],
-        bytes[TYPE_OFFSET + 2],
-        bytes[TYPE_OFFSET + 3],
-    ];
+    let raw_size = u32::from_be_bytes(SIZE_BYTES.map(|i| bytes[i]));
+    let box_type = TYPE_BYTES.map(|i| bytes[i]);
     let mut header = BOX_HEADER_MIN_SIZE;
     let size = if raw_size == SIZE_INDICATES_LARGESIZE {
         let large = bytes.get(LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE)?;

@@ -31,6 +31,13 @@ use crate::ops::{Op, StreamModel};
 /// `pub(crate)` in mpeg-ts.
 const AF_DISCONTINUITY: u8 = 0x80;
 
+/// Byte offset of `adaptation_field_length` in a TS packet (ISO/IEC 13818-1
+/// §2.4.3.4).
+const ADAPTATION_FIELD_LENGTH_OFFSET: usize = 4;
+/// Byte offset of the adaptation field flags byte, which carries
+/// `discontinuity_indicator` (§2.4.3.5).
+const ADAPTATION_FIELD_FLAGS_OFFSET: usize = 5;
+
 /// Per-PID continuity-tracking state.
 struct PidState {
     /// The CC we expect on the next payload-bearing packet (mod 16).
@@ -85,12 +92,12 @@ impl ContinuityOp {
     /// `pkt` is the full 188-byte TS packet.
     fn has_discontinuity(pkt: &[u8]) -> bool {
         debug_assert!(pkt.len() == TS_PACKET_SIZE);
-        let af_len = pkt[4] as usize;
+        let af_len = pkt[ADAPTATION_FIELD_LENGTH_OFFSET] as usize;
         if af_len == 0 {
             return false;
         }
         // pkt[5] is the adaptation field flags byte; bit 7 = discontinuity_indicator.
-        pkt[5] & AF_DISCONTINUITY != 0
+        pkt[ADAPTATION_FIELD_FLAGS_OFFSET] & AF_DISCONTINUITY != 0
     }
 }
 

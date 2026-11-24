@@ -9,6 +9,13 @@
 /// The placeholder every redaction leaves in place of a secret.
 pub(crate) const REDACTED: &str = "<redacted>";
 
+/// Length of the `://` scheme separator a URL is split on.
+const SCHEME_SEPARATOR_LEN: usize = 3;
+
+/// Shortest fragment treated as a secret candidate: shorter pieces are too
+/// generic to redact without mangling ordinary text.
+const MIN_SECRET_TOKEN_LEN: usize = 3;
+
 /// Redacts the userinfo (`user[:pass]@`) portion of a URL-shaped string to
 /// `***@`, leaving the scheme, host, and path intact — e.g.
 /// `"rtsp://user:secret@host/s"` becomes `"rtsp://***@host/s"`. A query
@@ -69,12 +76,12 @@ fn redact_unparseable_userinfo(raw: &str) -> String {
     let Some(scheme_end) = raw.find("://") else {
         return raw.to_string();
     };
-    let after_scheme = &raw[scheme_end + 3..];
+    let after_scheme = &raw[scheme_end + SCHEME_SEPARATOR_LEN..];
     let tail_end = after_scheme.find(['?', '#']).unwrap_or(after_scheme.len());
     let Some(at) = after_scheme[..tail_end].rfind('@') else {
         return raw.to_string();
     };
-    let scheme = &raw[..scheme_end + 3];
+    let scheme = &raw[..scheme_end + SCHEME_SEPARATOR_LEN];
     let rest = &after_scheme[at + 1..];
     format!("{scheme}***@{rest}")
 }
@@ -129,8 +136,8 @@ fn redact_unparseable_destination(raw: &str) -> String {
     let Some(scheme_end) = raw.find("://") else {
         return REDACTED.to_string();
     };
-    let scheme = &raw[..scheme_end + 3];
-    let after_scheme = &raw[scheme_end + 3..];
+    let scheme = &raw[..scheme_end + SCHEME_SEPARATOR_LEN];
+    let after_scheme = &raw[scheme_end + SCHEME_SEPARATOR_LEN..];
     let authority_end = after_scheme
         .find(['/', '?', '#'])
         .unwrap_or(after_scheme.len());
@@ -171,7 +178,7 @@ pub(crate) fn scrub_destination_secrets(text: &str, url: &str) -> String {
             }
         }
     }
-    tokens.retain(|t| t.len() >= 3);
+    tokens.retain(|t| t.len() >= MIN_SECRET_TOKEN_LEN);
     // Longest first, so a whole URL goes before the pieces inside it.
     tokens.sort_by_key(|t| std::cmp::Reverse(t.len()));
     tokens.dedup();

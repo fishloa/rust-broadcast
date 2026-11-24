@@ -93,7 +93,7 @@ impl RunningStatus {
     /// Map any 3-bit value to a `RunningStatus`.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x07 {
+        match v & RUNNING_STATUS_MASK {
             0 => Self::Undefined,
             1 => Self::NotRunning,
             2 => Self::StartsInAFewSeconds,
@@ -468,9 +468,10 @@ pub(crate) fn write_crc(buf: &mut [u8], crc_pos: usize) {
 /// table serializer must route its outer `section_length` write through
 /// this one helper so the guard cannot be forgotten again.
 pub(crate) fn write_section_length(buf: &mut [u8], body_len: usize) -> crate::Result<()> {
-    let fitted = broadcast_common::len::fit_bits(body_len as u64, 12, "section_length")?;
-    buf[1] = (buf[1] & 0xF0) | ((fitted >> 8) as u8);
-    buf[2] = fitted as u8;
+    let fitted =
+        broadcast_common::len::fit_bits(body_len as u64, SECTION_LENGTH_BITS, "section_length")?;
+    buf[1] = (buf[1] & !SECTION_LENGTH_HI_MASK) | ((fitted >> u8::BITS) as u8);
+    buf[SECTION_LENGTH_LO_OFFSET] = fitted as u8;
     Ok(())
 }
 
@@ -485,6 +486,27 @@ pub(crate) fn write_section_length(buf: &mut [u8], body_len: usize) -> crate::Re
 /// Low 4 bits of long-form section byte 1: the high nibble of the 12-bit
 /// `section_length`.
 pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
+
+/// Width of the 12-bit section_length and descriptor-loop length fields.
+pub(crate) const SECTION_LENGTH_BITS: u32 = 12;
+
+/// Byte offsets of the common long-form section-header layout
+/// (ISO/IEC 13818-1 §2.4.4.10, ETSI EN 300 468 §5.2).
+pub(crate) const TABLE_ID_EXTENSION_OFFSET: usize = 3;
+/// Extension-header byte carrying `reserved`, `version_number` and
+/// `current_next_indicator`.
+pub(crate) const VERSION_FLAGS_OFFSET: usize = 5;
+pub(crate) const SECTION_NUMBER_OFFSET: usize = 6;
+pub(crate) const LAST_SECTION_NUMBER_OFFSET: usize = 7;
+/// Byte offset of `transport_stream_id` in the EIT/CIT extension header.
+pub(crate) const TRANSPORT_STREAM_ID_OFFSET: usize = 8;
+/// Byte offset of `original_network_id` in the EIT/CIT extension header.
+pub(crate) const ORIGINAL_NETWORK_ID_OFFSET: usize = 10;
+/// Width of the 12-bit descriptor-loop length fields.
+pub(crate) const DESC_LOOP_LEN_BITS: u32 = 12;
+
+/// Byte offset of the low `section_length` byte (byte 2).
+pub(crate) const SECTION_LENGTH_LO_OFFSET: usize = 2;
 
 /// `version_number` field mask in the extension-header flags byte (byte 5):
 /// bits `[5:1]`.
@@ -506,6 +528,9 @@ pub(crate) const DESC_LOOP_LEN_HI_RESERVED_BITS: u8 = 0xF0;
 /// (ETSI EN 300 468 §5.2.3/§5.2.4 service and event loops).
 pub(crate) const RUNNING_STATUS_MASK: u8 = 0x07;
 
+/// Shift of `running_status(3)` in a status/length byte.
+pub(crate) const RUNNING_STATUS_SHIFT: u32 = 5;
+
 /// `free_CA_mode` bit inside a status/length byte: bit `[4]`
 /// (ETSI EN 300 468 §5.2.3/§5.2.4 service and event loops).
 pub(crate) const FREE_CA_MODE: u8 = 0x10;
@@ -513,7 +538,7 @@ pub(crate) const FREE_CA_MODE: u8 = 0x10;
 /// Decode the `running_status(3)` field from a status/length byte.
 #[must_use]
 pub(crate) fn running_status_of(status_and_len_hi: u8) -> u8 {
-    (status_and_len_hi >> 5) & RUNNING_STATUS_MASK
+    (status_and_len_hi >> RUNNING_STATUS_SHIFT) & RUNNING_STATUS_MASK
 }
 
 /// Decode the `free_CA_mode(1)` field from a status/length byte.
@@ -526,14 +551,14 @@ pub(crate) fn free_ca_mode_of(status_and_len_hi: u8) -> bool {
 /// nibble of a status/length byte, combined with its length-low byte.
 #[must_use]
 pub(crate) fn dll_from_status(status_and_len_hi: u8, lo: u8) -> usize {
-    (((status_and_len_hi & SECTION_LENGTH_HI_MASK) as usize) << 8) | usize::from(lo)
+    (((status_and_len_hi & SECTION_LENGTH_HI_MASK) as usize) << u8::BITS) | usize::from(lo)
 }
 
 /// Assemble the SDT/EIT `running_status(3) | free_CA_mode(1) |
 /// descriptors_loop_length[11:8]` status byte from typed fields.
 #[must_use]
 pub(crate) fn status_byte(running_status: u8, free_ca_mode: bool, dll_hi: u8) -> u8 {
-    ((running_status & RUNNING_STATUS_MASK) << 5)
+    ((running_status & RUNNING_STATUS_MASK) << RUNNING_STATUS_SHIFT)
         | (u8::from(free_ca_mode) * FREE_CA_MODE)
         | (dll_hi & SECTION_LENGTH_HI_MASK)
 }
@@ -550,7 +575,8 @@ pub(crate) fn version_byte(version_number: u8, current_next_indicator: bool) -> 
 /// Decode the 12-bit `section_length` from bytes 1–2 of a section header.
 #[must_use]
 pub(crate) fn section_length_of(bytes: &[u8]) -> usize {
-    ((usize::from(bytes[1] & SECTION_LENGTH_HI_MASK)) << 8) | usize::from(bytes[2])
+    ((usize::from(bytes[1] & SECTION_LENGTH_HI_MASK)) << u8::BITS)
+        | usize::from(bytes[SECTION_LENGTH_LO_OFFSET])
 }
 
 /// Decode the `version_number` from the extension-header flags byte (byte 5).
@@ -569,7 +595,7 @@ pub(crate) fn current_next_of(flags_byte: u8) -> bool {
 /// Decode a 13-bit PID from its two wire bytes.
 #[must_use]
 pub(crate) fn pid_of(hi: u8, lo: u8) -> mpeg_ts::pid::Pid {
-    mpeg_ts::pid::Pid::from_wire_masked(((u16::from(hi & PID_LO_MASK)) << 8) | u16::from(lo))
+    mpeg_ts::pid::Pid::from_wire_masked(((u16::from(hi & PID_LO_MASK)) << u8::BITS) | u16::from(lo))
 }
 
 /// Write a 13-bit PID carrying the three `reserved='111'` bits.
@@ -604,8 +630,8 @@ pub(crate) fn write_pid_r(
     let pid = pid.value();
     buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_3, "reserved")?
         << PID_RESERVED_SHIFT)
-        | ((pid >> 8) as u8 & PID_LO_MASK);
-    buf[1] = (pid & 0xFF) as u8;
+        | ((pid >> u8::BITS) as u8 & PID_LO_MASK);
+    buf[1] = (pid & u16::from(u8::MAX)) as u8;
     Ok(())
 }
 
@@ -617,10 +643,11 @@ pub(crate) fn len_reserved_of(hi: u8) -> u8 {
 
 /// Write a checked 12-bit length with a caller-supplied `reserved(4)`.
 pub(crate) fn write_desc_loop_len_r(buf: &mut [u8], len: usize, reserved: u8) -> crate::Result<()> {
-    let fitted = broadcast_common::len::fit_bits(len as u64, 12, "descriptors_length")?;
+    let fitted =
+        broadcast_common::len::fit_bits(len as u64, SECTION_LENGTH_BITS, "descriptors_length")?;
     buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_4, "reserved")?
         << LEN_RESERVED_SHIFT)
-        | ((fitted >> 8) as u8);
+        | ((fitted >> u8::BITS) as u8);
     buf[1] = fitted as u8;
     Ok(())
 }
@@ -629,7 +656,7 @@ pub(crate) fn write_desc_loop_len_r(buf: &mut [u8], len: usize, reserved: u8) ->
 /// four bits of `hi` are reserved and masked off).
 #[must_use]
 pub(crate) fn desc_loop_len_of(hi: u8, lo: u8) -> usize {
-    (((hi & !DESC_LOOP_LEN_HI_RESERVED_BITS) as usize) << 8) | usize::from(lo)
+    (((hi & !DESC_LOOP_LEN_HI_RESERVED_BITS) as usize) << u8::BITS) | usize::from(lo)
 }
 
 /// Mask of the low nibble of a byte: a sub-byte field's width when the byte

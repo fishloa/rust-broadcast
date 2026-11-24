@@ -13,6 +13,8 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x55;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 4;
+/// Width of `country_code` in bytes.
+const COUNTRY_CODE_LEN: usize = 3;
 
 /// One parental rating entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,8 +64,8 @@ impl<'a> Parse<'a> for ParentalRatingDescriptor {
         let mut entries = Vec::with_capacity(num_entries);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(RatingEntry {
-                country_code: LangCode([chunk[0], chunk[1], chunk[2]]),
-                rating: chunk[3],
+                country_code: LangCode(chunk[..COUNTRY_CODE_LEN].try_into().unwrap_or_default()),
+                rating: chunk[COUNTRY_CODE_LEN],
             });
         }
         Ok(Self { entries })
@@ -82,8 +84,8 @@ impl Serialize for ParentalRatingDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         for (i, entry) in self.entries.iter().enumerate() {
             let entry_start = HEADER_LEN + i * ENTRY_LEN;
-            buf[entry_start..entry_start + 3].copy_from_slice(&entry.country_code.0);
-            buf[entry_start + 3] = entry.rating;
+            buf[entry_start..entry_start + COUNTRY_CODE_LEN].copy_from_slice(&entry.country_code.0);
+            buf[entry_start + COUNTRY_CODE_LEN] = entry.rating;
         }
         Ok(len)
     }

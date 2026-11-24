@@ -231,6 +231,18 @@ const NONCE_LEN: usize = NONCE_TIME_LEN + NONCE_SEQ_LEN + NONCE_MAC_LEN;
 /// RFC 7616 §3.4: `nc-value = 8LHEX`.
 const NC_HEX_LEN: usize = 8;
 
+/// Radix of the hex digits in a Digest `nc`/nonce field (RFC 7616 §3.4).
+const HEX_RADIX: u32 = 16;
+
+/// Quote delimiters around an RFC 9110 §5.6.4 `quoted-string`.
+const QUOTED_STRING_DELIMITERS: usize = 2;
+
+/// Length of an RFC 8187 §3.2.1 `pct-encoded` escape: `%` plus two hex digits.
+const PCT_ENCODED_LEN: usize = 3;
+
+/// Offset of the second hex digit within a `pct-encoded` escape.
+const PCT_SECOND_DIGIT_OFFSET: usize = 2;
+
 /// Digest nonce secret plus the per-`(nonce, cnonce)` `nc` table.
 struct DigestNonces {
     secret: [u8; NONCE_SECRET_LEN],
@@ -246,7 +258,7 @@ impl Drop for DigestNonces {
 
 /// SHA-256 of `nonce ‖ cnonce` (the nonce has a fixed length, so this is
 /// unambiguous) — keeps table entries small whatever the client sends.
-type PairKey = [u8; 32];
+type PairKey = [u8; NONCE_MAC_LEN];
 
 /// When and in which order a nonce was issued.
 #[derive(Clone, Copy)]
@@ -747,7 +759,7 @@ fn sanitize_realm(realm: &str) -> String {
 /// implements only `Debug`; escalation E1). `tests/it/challenge_render.rs` parses
 /// every rendering back with `http-auth`'s `ChallengeParser`.
 fn quoted(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
+    let mut out = String::with_capacity(value.len() + QUOTED_STRING_DELIMITERS);
     out.push('"');
     for c in value
         .chars()
@@ -769,13 +781,13 @@ fn is_ext_value_syntax(value: &str) -> bool {
     while i < b.len() {
         match b[i] {
             b'%' => {
-                if !(i + 2 < b.len()
+                if !(i + PCT_SECOND_DIGIT_OFFSET < b.len()
                     && b[i + 1].is_ascii_hexdigit()
-                    && b[i + 2].is_ascii_hexdigit())
+                    && b[i + PCT_SECOND_DIGIT_OFFSET].is_ascii_hexdigit())
                 {
                     return false;
                 }
-                i += 3;
+                i += PCT_ENCODED_LEN;
             }
             c if c.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&c) => i += 1,
             _ => return false,
@@ -969,7 +981,7 @@ fn parse_nc(nc: &str) -> Option<u32> {
     if nc.len() != NC_HEX_LEN || !nc.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    u32::from_str_radix(nc, 16).ok()
+    u32::from_str_radix(nc, HEX_RADIX).ok()
 }
 
 /// RFC 7616 §3.4.1's SHOULD-check: does the client's claimed Digest `uri`
