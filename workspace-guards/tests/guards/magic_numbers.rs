@@ -305,7 +305,7 @@ fn range_literal(s: &str) -> Option<&str> {
     (n > 0).then(|| &s[n..])
 }
 
-/// `^LIT(\s*\|\s*LIT)*\s*(\.\.=?\s*LIT)?\s*=>` — a match-arm pattern made only
+/// `^LIT(\s*\|\s*LIT)*\s*(\.\.=?\s*LIT)?\s*=>`: a match-arm pattern made only
 /// of literals (a spec-code table's `=>` arms).
 fn is_literal_arm(code: &str) -> bool {
     let Some(mut rest) = pattern_literal(code) else {
@@ -339,7 +339,7 @@ fn is_literal_arm(code: &str) -> bool {
     rest.trim_start().starts_with("=>")
 }
 
-/// `^[A-Z]\w*\s*=\s*(0x|0b)?\w+\s*(=>.*)?,?$` — an enum discriminant or a
+/// `^[A-Z]\w*\s*=\s*(0x|0b)?\w+\s*(=>.*)?,?$`: an enum discriminant or a
 /// spec-code table row.
 fn is_code_row(code: &str) -> bool {
     let Some(eq) = code.find('=') else {
@@ -372,7 +372,7 @@ fn is_code_row(code: &str) -> bool {
     rest.is_empty() || rest == "," || rest.starts_with("=>")
 }
 
-/// `=>\s*LIT\s*,?$` — a match arm whose value is a bare literal.
+/// `=>\s*LIT\s*,?$`: a match arm whose value is a bare literal.
 fn is_literal_value_arm(code: &str) -> bool {
     let Some(pos) = code.rfind("=>") else {
         return false;
