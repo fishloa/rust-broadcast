@@ -23,7 +23,7 @@ use core::time::Duration;
 use tstd::TstdModel;
 
 use broadcast_common::Parse;
-use broadcast_common::units::MICROS_PER_SEC;
+use broadcast_common::units::{MICROS_PER_MILLI, MICROS_PER_SEC, MILLIS_PER_SEC};
 use dvb_si::tables::eit::EitSection;
 use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
 use dvb_si::tables::pmt::PmtSection;
@@ -147,6 +147,18 @@ const MAX_EIT_PF_SUBTABLES: usize = 1024;
 /// (following).
 const EIT_PF_SECTIONS: usize = 2;
 
+/// Occurrences of an `_other` section before SI_repetition_error may report —
+/// the first sighting only arms the interval check.
+const SI_OTHER_MIN_OCCURRENCES: u64 = 2;
+
+/// T-STD transport-buffer leak rate assumed before a bitrate can be estimated
+/// (bytes per second).
+const INITIAL_TB_LEAK_RATE_BYTES_PER_SEC: u64 = 1_000_000;
+
+/// T-STD transport-buffer leak rate used for the first millisecond of a PID's
+/// history, before the effective bitrate estimate exists (bytes per second).
+const BOOTSTRAP_TB_LEAK_RATE_BYTES_PER_SEC: u64 = 5_000_000;
+
 /// `stream_id`s whose PES packet has no optional header after
 /// `PES_packet_length` (ISO/IEC 13818-1 §2.4.3.7): program_stream_map,
 /// padding_stream, private_stream_2, ECM, EMM, DSMCC_stream,
@@ -165,6 +177,23 @@ const PES_PREFIX_2: u8 = 0x01;
 /// Offset of the PES header `marker_bits + flags` byte relative to the PES
 /// packet start (byte 6: `'10' + PES_scrambling_control + …`).
 const PES_FLAGS_OFFSET: usize = 6;
+
+/// Offset of `PTS_DTS_flags` within a PES packet (ISO/IEC 13818-1 §2.4.3.7,
+/// Table 2-21).
+const PES_PTS_DTS_FLAGS_OFFSET: usize = PES_FLAGS_OFFSET + 1;
+
+/// Shift extracting the `'10'` marker prefix from the PES flags byte.
+const PES_FLAGS_PREFIX_SHIFT: u32 = 6;
+
+/// The `'10'` marker prefix value of the PES flags byte.
+const PES_FLAGS_PREFIX: u8 = 0b10;
+
+/// Byte offset of `packet_start_code_prefix` byte 0 within a PES packet.
+const PES_PREFIX_BYTE_0_OFFSET: usize = 0;
+/// Byte offset of `packet_start_code_prefix` byte 1 within a PES packet.
+const PES_PREFIX_BYTE_1_OFFSET: usize = 1;
+/// Byte offset of `packet_start_code_prefix` byte 2 within a PES packet.
+const PES_PREFIX_BYTE_2_OFFSET: usize = 2;
 
 /// Mask for the `PTS_DTS_flags` field within the PES header byte at offset 7
 /// (bits `[7:6]` — `0b10` means PTS present, `0b11` means PTS+DTS).
@@ -1976,7 +2005,7 @@ impl ConformanceMonitor {
         // 2.3b: PCR_discontinuity_indicator_error — PCR delta exceeds 100 ms
         // without a signalled discontinuity.
         let delta = last_pcr_27mhz.signed_distance_to(pcr_27mhz).unsigned_abs();
-        let delta_ms = delta * 1000 / CLOCK_27MHZ;
+        let delta_ms = delta * MILLIS_PER_SEC / CLOCK_27MHZ;
         let limit_ms = self.config.pcr_discontinuity_limit.as_millis() as u64;
         let limit_ticks = (self.config.pcr_discontinuity_limit.as_micros() as u64)
             .saturating_mul(CLOCK_27MHZ)
@@ -2044,10 +2073,13 @@ impl ConformanceMonitor {
     /// Only checks PIDs that have been "armed" by seeing at least one PTS.
     fn check_pts(&mut self, pid: Pid, payload: &[u8], t: Duration) {
         // PES start-code prefix: 00 00 01.
-        if payload.len() < PES_FLAGS_OFFSET + 2 {
+        if payload.len() <= PES_PTS_DTS_FLAGS_OFFSET {
             return;
         }
-        if payload[0] != PES_PREFIX_0 || payload[1] != PES_PREFIX_1 || payload[2] != PES_PREFIX_2 {
+        if payload[PES_PREFIX_BYTE_0_OFFSET] != PES_PREFIX_0
+            || payload[PES_PREFIX_BYTE_1_OFFSET] != PES_PREFIX_1
+            || payload[PES_PREFIX_BYTE_2_OFFSET] != PES_PREFIX_2
+        {
             return;
         }
 
@@ -2057,12 +2089,12 @@ impl ConformanceMonitor {
 
         // Byte 6: `'10' + flags` — the top two bits must be `10`.
         let flags_byte = payload[PES_FLAGS_OFFSET];
-        if (flags_byte >> 6) != 0b10 {
+        if (flags_byte >> PES_FLAGS_PREFIX_SHIFT) != PES_FLAGS_PREFIX {
             return;
         }
 
         // Byte 7: PTS_DTS_flags in bits `[7:6]`.
-        let pts_dts_flags = payload[PES_FLAGS_OFFSET + 1] & PES_PTS_DTS_FLAGS_MASK;
+        let pts_dts_flags = payload[PES_PTS_DTS_FLAGS_OFFSET] & PES_PTS_DTS_FLAGS_MASK;
         let pts_present = (pts_dts_flags & PES_PTS_PRESENT) != 0;
         if !pts_present {
             return;
@@ -2225,7 +2257,7 @@ impl ConformanceMonitor {
         entry.occurrences += 1;
 
         // Snapshot what we need before any emit.
-        let should_report = entry.occurrences >= 2
+        let should_report = entry.occurrences >= SI_OTHER_MIN_OCCURRENCES
             && t.saturating_sub(entry.last_seen) > self.config.si_other_interval;
         let last_seen = entry.last_seen;
 
@@ -2459,7 +2491,7 @@ impl ConformanceMonitor {
             let entry = self.tstd.pid_buffers.entry(pid).or_insert_with(|| {
                 // Initial leak rate conservatively high: the effective
                 // bitrate will be estimated once we have timing data.
-                tstd::PidStdState::new(1_000_000u64, t)
+                tstd::PidStdState::new(INITIAL_TB_LEAK_RATE_BYTES_PER_SEC, t)
             });
 
             // Accumulate bytes for effective bitrate estimation.
@@ -2471,9 +2503,9 @@ impl ConformanceMonitor {
             // ~6 Mbit/s (750 KB/s) until then.
             let leak = {
                 let elapsed_us = t.saturating_sub(entry.first_seen).as_micros() as u64;
-                if elapsed_us >= 1_000 {
-                    // bytes per second = total_bytes * 1_000_000 / elapsed_us
-                    (entry.total_bytes * 1_000_000 / elapsed_us).max(tstd::TB_LEAK_RATE_FLOOR)
+                if elapsed_us >= MICROS_PER_MILLI {
+                    // bytes per second = total_bytes * MICROS_PER_SEC / elapsed_us
+                    (entry.total_bytes * MICROS_PER_SEC / elapsed_us).max(tstd::TB_LEAK_RATE_FLOOR)
                 } else {
                     // Default: generous initial rate (~40 Mbit/s).
                     // This prevents false overflows during the first
@@ -2481,7 +2513,7 @@ impl ConformanceMonitor {
                     // the effective bitrate. For a real ~38 Mbit/s stream
                     // with 40 µs inter-packet, this is close enough to
                     // prevent overflow during the convergence period.
-                    5_000_000u64
+                    BOOTSTRAP_TB_LEAK_RATE_BYTES_PER_SEC
                 }
             };
             entry.tb.set_leak_rate(leak);
