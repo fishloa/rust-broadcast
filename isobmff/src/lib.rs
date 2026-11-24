@@ -32,6 +32,11 @@
 //! - [`segments`], [`timing`], [`visual_ext`], [`cenc`], [`sample_groups`],
 //!   [`movie_fragment`], [`frag_offsets`] — the box set and the §8.8.7/§8.8.8
 //!   fragment sample-offset resolver.
+//! - [`limits`] — the hostile-input caps every count or size read from a file
+//!   is checked against before anything is allocated.
+//! - [`sample_table`] — [`TrackCursor`], the lazy per-track walk over the
+//!   `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss` tables, and the
+//!   run-length table builders.
 //! - [`avc_config`], [`hevc_config`], [`vvc_config`], [`nalu_types`], [`av1`],
 //!   [`vp9`], [`mp4esds`], [`ac3`], [`ac4`], [`dts`], [`flac`], [`opus`],
 //!   [`mpegh`], [`dovi`], [`hdr_boxes`], [`avs2`], [`avs3`], [`avs3_audio`] —

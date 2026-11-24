@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `Limits`, the hostile-input caps for the Phase 2 reader: walk depth, `moov`
+  size, samples per track, one sample, one fragment and one metadata item,
+  each with a named default and a `with_*` builder.
+
+- Typed `stz2` (`CompactSampleSizeBox`, 4/8/16-bit entries) and `sdtp`
+  (`SampleDependencyTypeBox`, four 2-bit fields per sample) as `StblChild`
+  variants, both symmetric `Parse`/`Serialize`.
+
+- `sample_table::TrackCursor`, a lazy per-track cursor over
+  `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss` yielding one
+  `SampleRef` at a time with `len()`, `peek_decode_time()` and
+  `seek_sync()`. It validates the tables against `Limits` up front and
+  allocates nothing proportional to a declared sample count.
+
+- `sample_table::{build_stts, build_ctts, build_stss, build_stsc}`, the
+  run-length sample-table encoders moved down from `transmux`.
+
 - Four-CC constants for the boxes the crate already modelled but had not
   named: `segments::{FREE, SKIP}`, `init_segment::{MOOV, MVHD, TRAK, TKHD,
   MDIA, MINF, STBL, STSD}`, `movie_fragment::{TRAF, TFHD, TFDT, TRUN}`,

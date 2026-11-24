@@ -18,7 +18,7 @@ It never knows the media IR or a codec bitstream.
 | `box_types` | `size`/`type` header, `largesize`, `uuid` usertype, the `BoxIter` walker |
 | `box_support` | shared opaque-child and container building helpers |
 | `segments` | `ftyp`, `styp`, `mdat` |
-| `init_segment` | `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`/`smhd`, `dinf`/`dref`, `stbl`, `stsd`, `edts`/`elst`, `mvex`/`trex`, the audio sample entries |
+| `init_segment` | `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`/`smhd`, `dinf`/`dref`, `stbl` (`stts`/`ctts`/`stsc`/`stsz`/`stz2`/`sdtp`/`stco`/`co64`/`stss`), `stsd`, `edts`/`elst`, `mvex`/`trex`, the audio sample entries |
 | `sample_entries` | `avc1`/`avc3`, `hvc1`/`hev1`, `vvc1`/`vvi1`, `mp4v`, `VisualSampleEntry` |
 | `subtitle_entries` | `stpp`, `wvtt`, `vttc`/`vtte`/`vtta`/`payl`/`sttg`/`iden` |
 | `avc_parameter_set` | `avcp` sample entry and parameter set sample |
@@ -47,6 +47,8 @@ It never knows the media IR or a codec bitstream.
 | `cenc` | `tenc`, `senc`, `pssh`, `saiz`, `saio`, `sinf`, `frma`, `schm`, `schi` |
 | `sample_groups` | `prft`, `sgpd`, `sbgp`, `subs`, `ssrt` |
 | `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
+| `limits` | hostile-input caps (`Limits`) for the Phase 2 reader |
+| `sample_table` | lazy per-track sample cursor and the run-length table builders |
 | `frag_offsets` | ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 sample-data addressing rules |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
 
