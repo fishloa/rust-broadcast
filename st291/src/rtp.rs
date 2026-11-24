@@ -19,6 +19,8 @@ use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
+use crate::{U16_LEN, be};
+
 use crate::anc_content::{AncContent, check_field_width};
 use crate::error::{Error, Result};
 
@@ -41,15 +43,10 @@ const MAX_ANC_COUNT: usize = u8::MAX as usize;
 const F_SHIFT: u8 = 6;
 /// Mask for `F`'s 2 bits once shifted down.
 const F_MASK: u8 = 0b11;
-/// Mask isolating the top-6-bits-of-`reserved` portion of byte 5.
-const RESERVED_BYTE5_MASK: u8 = 0x3F;
-/// Shift of byte 6's reserved octet within the 22-bit `reserved` value.
-const RESERVED_BYTE6_SHIFT: u32 = 8;
-/// Shift of byte 5's reserved octet within the 22-bit `reserved` value.
-const RESERVED_BYTE5_SHIFT: u32 = 16;
-
-/// Bits per byte, for bit<->byte length conversions.
-const BITS_PER_BYTE: usize = 8;
+/// Mask isolating the top six bits of `reserved` (the high octet).
+const RESERVED_HIGH_BITS_MASK: u8 = 0x3F;
+/// Shift of the high reserved octet within the 22-bit `reserved` value.
+const RESERVED_HIGH_SHIFT: u32 = 16;
 
 // Payload-header field byte offsets (RFC 8331 §2.1).
 const LENGTH_WORD_OFFSET: usize = 2;
@@ -216,7 +213,7 @@ impl RtpAncPacket {
     #[must_use]
     pub fn serialized_len(&self) -> usize {
         let bits = self.body_bits();
-        (bits + bits_to_word_boundary(bits) as usize) / BITS_PER_BYTE
+        (bits + bits_to_word_boundary(bits) as usize) / crate::BITS_PER_BYTE
     }
 
     /// Write this record (placement + content + `word_align`) into `w`.
@@ -421,17 +418,15 @@ impl<'a> Parse<'a> for AncRtpPayload {
     /// declared `Length`.
     fn parse(b: &'a [u8]) -> Result<Self> {
         need_in(b, ANC_RTP_PAYLOAD_HEADER_LEN, "ANC RTP payload header")?;
-        let extended_sequence_number = ExtendedSequenceNumber(u16::from_be_bytes([b[0], b[1]]));
-        let length = usize::from(u16::from_be_bytes([
-            b[LENGTH_WORD_OFFSET],
-            b[LENGTH_WORD_OFFSET + 1],
-        ]));
+        let extended_sequence_number =
+            ExtendedSequenceNumber(u16::from_be_bytes(be::<U16_LEN>(b, 0)?));
+        let length = usize::from(u16::from_be_bytes(be::<U16_LEN>(b, LENGTH_WORD_OFFSET)?));
         let anc_count = usize::from(b[ANC_COUNT_OFFSET]);
         let f_bits = b[FIELD_SENSE_OFFSET] >> F_SHIFT;
-        let reserved = (u32::from(b[FIELD_SENSE_OFFSET] & RESERVED_BYTE5_MASK)
-            << RESERVED_BYTE5_SHIFT)
-            | (u32::from(b[RESERVED_LOW_BYTES_OFFSET]) << RESERVED_BYTE6_SHIFT)
-            | u32::from(b[RESERVED_LOW_BYTES_OFFSET + 1]);
+        let reserved_low = u16::from_be_bytes(be::<U16_LEN>(b, RESERVED_LOW_BYTES_OFFSET)?);
+        let reserved = (u32::from(b[FIELD_SENSE_OFFSET] & RESERVED_HIGH_BITS_MASK)
+            << RESERVED_HIGH_SHIFT)
+            | u32::from(reserved_low);
         if reserved != 0 {
             return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
                 field: "reserved (RFC 8331 §2.1)",
@@ -450,7 +445,7 @@ impl<'a> Parse<'a> for AncRtpPayload {
         for _ in 0..anc_count {
             anc_packets.push(RtpAncPacket::read_from(&mut r)?);
         }
-        let consumed_bytes = r.bits_read() / BITS_PER_BYTE;
+        let consumed_bytes = r.bits_read() / crate::BITS_PER_BYTE;
         if !r.is_byte_aligned() || consumed_bytes != body.len() {
             return Err(Error::LengthMismatch(
                 broadcast_common::error::LengthMismatch {
@@ -497,8 +492,8 @@ impl Serialize for AncRtpPayload {
         buf[2..4].copy_from_slice(&(body_len as u16).to_be_bytes());
         buf[ANC_COUNT_OFFSET] = anc_count as u8;
         buf[FIELD_SENSE_OFFSET] = self.field_sense.to_bits() << F_SHIFT; // reserved bits: 0
-        buf[RESERVED_LOW_BYTES_OFFSET] = 0;
-        buf[RESERVED_LOW_BYTES_OFFSET + 1] = 0;
+        buf[RESERVED_LOW_BYTES_OFFSET..RESERVED_LOW_BYTES_OFFSET + U16_LEN]
+            .copy_from_slice(&0u16.to_be_bytes());
 
         let mut pos = ANC_RTP_PAYLOAD_HEADER_LEN;
         for pkt in &self.anc_packets {

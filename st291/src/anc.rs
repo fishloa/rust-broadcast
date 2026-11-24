@@ -81,8 +81,6 @@ const PES_STREAM_ID_OFFSET: usize = PACKET_START_CODE_PREFIX.len();
 /// Offset of `PES_header_data_length` within the optional header, after the
 /// two flag bytes.
 const PES_HEADER_DATA_LENGTH_OFFSET: usize = 2;
-/// Bits per byte, for bit<->byte length conversions.
-const BITS_PER_BYTE: usize = 8;
 /// Fixed bytes of the PES optional header for ST 2038: 2 flag bytes +
 /// `PES_header_data_length` + 5-byte PTS.
 const PES_OPTIONAL_HEADER_LEN: usize = 3 + 5;
@@ -226,7 +224,7 @@ impl AncPacket {
     /// Serialized byte length of this record (body bits rounded up to a byte
     /// boundary, the pad being `'1'` bits).
     fn serialized_byte_len(&self) -> usize {
-        self.body_bits().div_ceil(BITS_PER_BYTE)
+        self.body_bits().div_ceil(crate::BITS_PER_BYTE)
     }
 
     /// Write this record's bits into `w`, MSB-first, then pad to the byte
@@ -300,7 +298,8 @@ impl AncPacket {
         }
         // The '1' padding up to the byte boundary (§4.2) is fixed too — note
         // '1', not '0' (contrast the RFC 8331 `word_align`, which is '0').
-        let pad = (BITS_PER_BYTE - r.bits_read() % BITS_PER_BYTE) % BITS_PER_BYTE;
+        let pad =
+            (crate::BITS_PER_BYTE - r.bits_read() % crate::BITS_PER_BYTE) % crate::BITS_PER_BYTE;
         if pad > 0 {
             let pad_value = r.read_bits(pad as u32)?;
             let all_ones = (1u64 << pad) - 1;
@@ -474,7 +473,7 @@ impl AncDataPacket {
             }
             let mut r = BitReader::new(&payload[pos..]);
             let rec = AncPacket::read_from(&mut r)?;
-            let consumed = r.bits_read() / BITS_PER_BYTE;
+            let consumed = r.bits_read() / crate::BITS_PER_BYTE;
             pos += consumed;
             anc_packets.push(rec);
         }
