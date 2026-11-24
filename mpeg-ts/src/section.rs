@@ -57,7 +57,7 @@ const SSI_MASK: u8 = 0x80;
 /// this position for the DVB `private_indicator` (ETSI EN 300 468 §5.1.1).
 const PRIVATE_INDICATOR_MASK: u8 = 0x40;
 /// Byte 1 bits 5-4: reserved (ISO/IEC 13818-1 §2.4.4.1).
-const BYTE1_RESERVED_BITS: u8 = 0x30;
+const HEADER_RESERVED_MASK: u8 = 0x30;
 /// Number of bits in the `section_length` field (12, ISO/IEC 13818-1 §2.4.4.1).
 const SECTION_LENGTH_BITS: u32 = 12;
 /// `version_number` — 5 bits (byte 5 bits 5-1 of the long-form extension header).
@@ -65,15 +65,15 @@ const VERSION_NUMBER_MASK: u8 = 0x1F;
 /// Number of bits in `version_number` (5, ISO/IEC 13818-1 §2.4.4.1).
 const VERSION_NUMBER_BITS: u32 = 5;
 /// Byte 5 bits 7-6: reserved (ISO/IEC 13818-1 §2.4.4.1).
-const BYTE5_RESERVED_BITS: u8 = 0xC0;
+const VERSION_BYTE_RESERVED_MASK: u8 = 0xC0;
 /// The 2 reserved bits sit at bits 7..6 of byte 5.
-const BYTE5_RESERVED_SHIFT: u32 = 6;
+const VERSION_BYTE_RESERVED_SHIFT: u32 = 6;
 /// `current_next_indicator` — byte 5 bit 0 of the long-form extension header.
 const CURRENT_NEXT_MASK: u8 = 0x01;
 
 /// Byte offsets of the 3-byte common section header (ISO/IEC 13818-1 §2.4.4.1).
 const TABLE_ID_OFFSET: usize = 0;
-const BYTE1_OFFSET: usize = TABLE_ID_OFFSET + 1;
+const FLAGS_BYTE_OFFSET: usize = TABLE_ID_OFFSET + 1;
 /// Byte offset of the 16-bit `table_id_extension` field, the first byte of the
 /// long-form extension header (ISO/IEC 13818-1 §2.4.4.1).
 const EXTENSION_ID_OFFSET: usize = MIN_HEADER_LEN;
@@ -268,7 +268,7 @@ impl<'a> Section<'a> {
             (self.extension_id >> HIGH_BYTE_SHIFT) as u8,
             self.extension_id.to_be_bytes()[1],
             fit_u8(
-                usize::from(self.byte5_reserved) << BYTE5_RESERVED_SHIFT
+                usize::from(self.byte5_reserved) << VERSION_BYTE_RESERVED_SHIFT
                     | usize::from(version) << VERSION_NUMBER_SHIFT
                     | usize::from(self.current_next_indicator),
                 "section byte 5",
@@ -324,10 +324,10 @@ impl<'a> Parse<'a> for Section<'a> {
         need_in(bytes, MIN_HEADER_LEN, "section header")?;
 
         let table_id = bytes[TABLE_ID_OFFSET];
-        let section_syntax_indicator = (bytes[BYTE1_OFFSET] & SSI_MASK) != 0;
-        let private_indicator = (bytes[BYTE1_OFFSET] & PRIVATE_INDICATOR_MASK) != 0;
+        let section_syntax_indicator = (bytes[FLAGS_BYTE_OFFSET] & SSI_MASK) != 0;
+        let private_indicator = (bytes[FLAGS_BYTE_OFFSET] & PRIVATE_INDICATOR_MASK) != 0;
         let byte1_reserved =
-            (bytes[BYTE1_OFFSET] & BYTE1_RESERVED_BITS) & !crate::ts::SECTION_LENGTH_HI_MASK;
+            (bytes[FLAGS_BYTE_OFFSET] & HEADER_RESERVED_MASK) & !crate::ts::SECTION_LENGTH_HI_MASK;
 
         // Total section size is section_length + 3 (the 3-byte header itself
         // is not counted by section_length). W14 (#1074): shared with the
@@ -373,7 +373,7 @@ impl<'a> Parse<'a> for Section<'a> {
                 last_section_number: 0,
                 payload,
                 byte1_reserved,
-                byte5_reserved: BYTE5_RESERVED_BITS >> BYTE5_RESERVED_SHIFT,
+                byte5_reserved: VERSION_BYTE_RESERVED_MASK >> VERSION_BYTE_RESERVED_SHIFT,
                 parsed_crc32: None,
             });
         }
@@ -390,8 +390,8 @@ impl<'a> Parse<'a> for Section<'a> {
 
         let extension_id =
             u16::from_be_bytes([bytes[EXTENSION_ID_OFFSET], bytes[EXTENSION_ID_OFFSET + 1]]);
-        let byte5_reserved =
-            (bytes[VERSION_BYTE_OFFSET] & BYTE5_RESERVED_BITS) >> BYTE5_RESERVED_SHIFT;
+        let byte5_reserved = (bytes[VERSION_BYTE_OFFSET] & VERSION_BYTE_RESERVED_MASK)
+            >> VERSION_BYTE_RESERVED_SHIFT;
         let version_number =
             (bytes[VERSION_BYTE_OFFSET] >> VERSION_NUMBER_SHIFT) & VERSION_NUMBER_MASK;
         let current_next_indicator = (bytes[VERSION_BYTE_OFFSET] & CURRENT_NEXT_MASK) != 0;
@@ -795,8 +795,8 @@ mod tests {
         // Byte 1 and byte 5 reserved bits used to be forced to `11` on
         // serialize, so such a section did not round-trip.
         let mut raw = make_long_section(0x42, 0x0001, 3, true, 0, 0, &[0xAA]);
-        raw[1] = (raw[1] & !BYTE1_RESERVED_BITS) | 0x10;
-        raw[5] &= !BYTE5_RESERVED_BITS;
+        raw[1] = (raw[1] & !HEADER_RESERVED_MASK) | 0x10;
+        raw[5] &= !VERSION_BYTE_RESERVED_MASK;
         let len = raw.len();
         let crc = crc32(&raw[..len - CRC_LEN]);
         raw[len - CRC_LEN..].copy_from_slice(&crc.to_be_bytes());

@@ -17,11 +17,12 @@ use crate::amf0::{Amf0Value, Command};
 use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
 use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::{
-    EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RANDOM_LEN, RTMP_VERSION, Version,
-    default_random_fill,
+    EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RANDOM_LEN, RTMP_VERSION, VERSION_LEN,
+    Version, default_random_fill,
 };
 use crate::ids::{ChunkStreamId, MessageStreamId, SequenceNumber, Timestamp};
 use crate::message::{ChunkSize, MessageTypeId, ProtocolControl, UserControl};
+use crate::server::DEFAULT_WINDOW_ACK_SIZE;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -37,14 +38,11 @@ const PAYLOAD_CHUNK_STREAM_ID: u32 = 4;
 const VIDEO_CHUNK_STREAM_ID: u32 = 5;
 /// Default `chunk_size` the client announces.
 const DEFAULT_CLIENT_CHUNK_SIZE: u32 = 4096;
-/// Default `window_ack_size` the client announces (RTMP §5.4.4).
-const DEFAULT_WINDOW_ACK_SIZE: u32 = 2_500_000;
 /// Tolerance comparing an echoed AMF0 transaction id with the one sent: AMP0
 /// carries them as doubles.
 const TRANSACTION_ID_TOLERANCE: f64 = 0.5;
 /// Mask of the 32-bit sequence number an acknowledgement carries (§5.4.3).
 const SEQUENCE_NUMBER_MASK: u64 = u32::MAX as u64;
-const VERSION_LEN: usize = 1;
 /// `flashVer` announced in `connect`: the Flash Media Live Encoder
 /// identity that ingest services key their publisher-compatibility
 /// handling on (what ffmpeg/OBS announce; #1108/RTMP-W9).

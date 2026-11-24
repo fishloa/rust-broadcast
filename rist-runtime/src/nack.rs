@@ -19,8 +19,9 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::{
-    FMT_GENERIC_NACK, PT_RTPFB, RIST_APP_NAME, RIST_APP_NAME_U32, RTCP_COUNT_MASK,
-    RTCP_PADDING_MASK, SUBTYPE_RANGE_NACK,
+    FMT_GENERIC_NACK, PT_APP, PT_RTPFB, RIST_APP_NAME, RIST_APP_NAME_U32, RTCP_COUNT_MASK,
+    RTCP_HEADER_LEN, RTCP_LENGTH_OFFSET, RTCP_PADDING_MASK, RTCP_VERSION, SUBTYPE_RANGE_NACK,
+    VERSION_SHIFT, WORD_LEN, be_u16, be_u32,
 };
 
 /// The end of the unpadded body of the `total_len`-byte sub-packet at the
@@ -107,16 +108,8 @@ fn serialize_padded(
 // Wire constants
 // ---------------------------------------------------------------------------
 
-/// RTCP protocol version — always 2 (RFC 3550 §6.4.1).
-const RTCP_VERSION: u8 = 2;
-/// Common-header length in bytes.
-const RTCP_HEADER_LEN: usize = 4;
-/// One 32-bit word, in bytes.
-const WORD_LEN: usize = 4;
 /// APP name field length in bytes.
 const APP_NAME_LEN: usize = 4;
-/// PT for RTCP APP (RFC 3550 §6.7).
-const PT_APP: u8 = 204;
 /// Maximum number of range entries per Range NACK (TR-06-1 §5.3.2.2).
 ///
 /// `pub(crate)` (rather than private) so `crate::arq`'s receiver-side
@@ -131,23 +124,16 @@ const GENERIC_NACK_MIN_LEN: usize = RTCP_HEADER_LEN + WORD_LEN + WORD_LEN;
 /// Size of one Generic NACK FCI entry: PID(2) + BLP(2) = 4 bytes.
 const NACK_FCI_LEN: usize = 4;
 
-/// Shift of the 2-bit `version` field in the common header's first byte
-/// (RFC 3550 §6.1).
-const VERSION_SHIFT: u32 = 6;
+/// Byte offset of a Generic NACK's sender SSRC (RFC 4585 §6.2.1).
+const SSRC_SENDER_OFFSET: usize = 4;
 
-/// Byte positions of the 16-bit `length` field.
-const LENGTH_BYTES: [usize; 2] = [2, 3];
+/// Byte offset of a Generic NACK's media-source SSRC.
+const SSRC_MEDIA_OFFSET: usize = 8;
 
-/// Byte positions of the sender SSRC (RFC 4585 §6.2.1).
-const SSRC_SENDER_BYTES: [usize; WORD_LEN] = [4, 5, 6, 7];
-
-/// Byte positions of the media-source SSRC.
-const SSRC_MEDIA_BYTES: [usize; WORD_LEN] = [8, 9, 10, 11];
-
-/// Byte positions of the media SSRC in a range NACK, whose header carries no
+/// Byte offsets of the media SSRC in a range NACK, whose header carries no
 /// sender SSRC, and of the `APP` name after it (TR-06-1 §5.2.1).
-const RANGE_SSRC_MEDIA_BYTES: [usize; WORD_LEN] = [4, 5, 6, 7];
-const RANGE_APP_NAME_BYTES: [usize; WORD_LEN] = [8, 9, 10, 11];
+const RANGE_SSRC_MEDIA_OFFSET: usize = 4;
+const RANGE_APP_NAME_OFFSET: usize = 8;
 
 /// Offset of `PID` within a NACK FCI entry.
 const FCI_PID_OFFSET: usize = 0;
@@ -261,7 +247,7 @@ impl<'a> Parse<'a> for GenericNack {
             });
         }
 
-        let length_field = u16::from_be_bytes(LENGTH_BYTES.map(|i| bytes[i])) as usize;
+        let length_field = usize::from(be_u16(bytes, RTCP_LENGTH_OFFSET));
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -279,8 +265,8 @@ impl<'a> Parse<'a> for GenericNack {
             }));
         }
 
-        let ssrc_sender = u32::from_be_bytes(SSRC_SENDER_BYTES.map(|i| bytes[i]));
-        let ssrc_media = u32::from_be_bytes(SSRC_MEDIA_BYTES.map(|i| bytes[i]));
+        let ssrc_sender = be_u32(bytes, SSRC_SENDER_OFFSET);
+        let ssrc_media = be_u32(bytes, SSRC_MEDIA_OFFSET);
 
         let end = unpadded_end(bytes, total_len)?;
         if end < GENERIC_NACK_MIN_LEN {
@@ -447,7 +433,7 @@ impl<'a> Parse<'a> for RangeNack {
             });
         }
 
-        let length_field = u16::from_be_bytes(LENGTH_BYTES.map(|i| bytes[i])) as usize;
+        let length_field = usize::from(be_u16(bytes, RTCP_LENGTH_OFFSET));
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -466,9 +452,9 @@ impl<'a> Parse<'a> for RangeNack {
         }
 
         // SSRC of media source.
-        let ssrc_media = u32::from_be_bytes(RANGE_SSRC_MEDIA_BYTES.map(|i| bytes[i]));
+        let ssrc_media = be_u32(bytes, RANGE_SSRC_MEDIA_OFFSET);
 
-        let name = u32::from_be_bytes(RANGE_APP_NAME_BYTES.map(|i| bytes[i]));
+        let name = be_u32(bytes, RANGE_APP_NAME_OFFSET);
         if name != RIST_APP_NAME_U32 {
             return Err(Error::InvalidAppName(name));
         }

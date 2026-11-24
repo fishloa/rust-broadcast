@@ -19,6 +19,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
@@ -809,7 +810,7 @@ impl<'a> Reader<'a> {
     }
     fn u16(&mut self) -> Result<u16> {
         let s = self.take(DRM_SYSTEM_ID_LEN)?;
-        Ok(u16::from_be_bytes([s[0], s[1]]))
+        Ok(be_u16(s, 0))
     }
     /// Reject any body bytes the typed fields did not consume (they would be
     /// dropped on re-serialize).

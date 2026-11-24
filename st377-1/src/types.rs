@@ -48,6 +48,7 @@ pub(crate) fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]>
         ))
 }
 
+const TIMESTAMP_YEAR_OFFSET: usize = 0;
 const TIMESTAMP_MONTH_OFFSET: usize = core::mem::size_of::<i16>();
 const TIMESTAMP_DAY_OFFSET: usize = TIMESTAMP_MONTH_OFFSET + 1;
 const TIMESTAMP_HOUR_OFFSET: usize = TIMESTAMP_DAY_OFFSET + 1;
@@ -394,9 +395,8 @@ impl MxfTimestamp {
     /// Serialize into an 8-byte buffer.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, TIMESTAMP_LEN)?;
-        let yb = self.year.to_be_bytes();
-        buf[0] = yb[0];
-        buf[1] = yb[1];
+        buf[TIMESTAMP_YEAR_OFFSET..TIMESTAMP_MONTH_OFFSET]
+            .copy_from_slice(&self.year.to_be_bytes());
         buf[TIMESTAMP_MONTH_OFFSET] = self.month;
         buf[TIMESTAMP_DAY_OFFSET] = self.day;
         buf[TIMESTAMP_HOUR_OFFSET] = self.hour;
@@ -409,17 +409,16 @@ impl MxfTimestamp {
     /// The 8-byte wire form, with no fallible length check.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; TIMESTAMP_LEN] {
-        let yb = self.year.to_be_bytes();
-        [
-            yb[0],
-            yb[1],
-            self.month,
-            self.day,
-            self.hour,
-            self.minute,
-            self.second,
-            self.msec_div4,
-        ]
+        let mut out = [0_u8; TIMESTAMP_LEN];
+        out[TIMESTAMP_YEAR_OFFSET..TIMESTAMP_MONTH_OFFSET]
+            .copy_from_slice(&self.year.to_be_bytes());
+        out[TIMESTAMP_MONTH_OFFSET] = self.month;
+        out[TIMESTAMP_DAY_OFFSET] = self.day;
+        out[TIMESTAMP_HOUR_OFFSET] = self.hour;
+        out[TIMESTAMP_MINUTE_OFFSET] = self.minute;
+        out[TIMESTAMP_SECOND_OFFSET] = self.second;
+        out[TIMESTAMP_MSEC_DIV4_OFFSET] = self.msec_div4;
+        out
     }
 }
 

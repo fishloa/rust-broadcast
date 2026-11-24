@@ -55,29 +55,14 @@ const TYPE_SKIP: [u8; 4] = *b"skip";
 const TYPE_FREE: [u8; 4] = *b"free";
 /// The `mdat` box type (§8.1.1).
 pub(crate) const TYPE_MDAT: [u8; 4] = *b"mdat";
-/// The major brand field of an ISO file (its 4-byte brand), which is what the
-/// leading `ftyp`/`styp` box reports.
-pub(crate) const BRAND_LEN: usize = 4;
+/// Bytes in the major-brand field a leading `ftyp`/`styp` box reports (ISO/IEC 14496-12:2026 §8.14.2).
+pub const BRAND_LEN: usize = 4;
 
-/// Byte positions of a box's 32-bit `size` field.
-const SIZE_BYTES: [usize; BRAND_LEN] = [0, 1, 2, 3];
-/// Byte positions of a box's `type` Four-CC.
+/// Byte offset of a box's `type` Four-CC.
 const TYPE_OFFSET: usize = 4;
-const TYPE_BYTES: [usize; BRAND_LEN] = [
-    TYPE_OFFSET,
-    TYPE_OFFSET + 1,
-    TYPE_OFFSET + 2,
-    TYPE_OFFSET + 3,
-];
-/// Byte positions of the major brand a `ftyp`/`styp` box carries.
-const BRAND_BYTES: [usize; BRAND_LEN] = [
-    BRAND_OFFSET,
-    BRAND_OFFSET + 1,
-    BRAND_OFFSET + 2,
-    BRAND_OFFSET + 3,
-];
-/// Byte positions of the 64-bit `largesize` field.
-const LARGESIZE_BYTES: [usize; 8] = [8, 9, 10, 11, 12, 13, 14, 15];
+/// Byte offset of the 64-bit `largesize` a `size32 == 1` header carries
+/// (ISO/IEC 14496-12:2026 §4.2).
+const LARGESIZE_OFFSET: usize = 8;
 
 /// Boxes a clean chain needs before it counts as structural evidence.
 const MIN_BOXES_FOR_STRUCTURE: u64 = 2;
@@ -111,7 +96,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         return Outcome::Insufficient(BOX_HEADER_MIN_SIZE);
     }
 
-    let leading_type = TYPE_BYTES.map(|i| region[i]);
+    let leading_type = crate::fourcc(region, TYPE_OFFSET);
     if !LEADING_BOX_TYPES.contains(&leading_type) {
         return Outcome::None;
     }
@@ -178,9 +163,9 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         };
         if size_u32 == SIZE_TO_EOF || eff >= min_header {
             if offset == 0 && leading_is_ftyp && rem.len() >= BRAND_OFFSET + BRAND_LEN {
-                brand = Some(BRAND_BYTES.map(|i| rem[i]));
+                brand = Some(crate::fourcc(rem, BRAND_OFFSET));
             }
-            let this_type = TYPE_BYTES.map(|i| rem[i]);
+            let this_type = crate::fourcc(rem, TYPE_OFFSET);
             if this_type == TYPE_MOOF || this_type == TYPE_COMPRESSED_MOOF {
                 saw_moof = true;
             } else if this_type == TYPE_MOOV || this_type == TYPE_COMPRESSED_MOOV {
@@ -285,7 +270,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 /// leave the header unreadable, so it returns immediately for more.
 fn header_len_required(rem: &[u8]) -> usize {
     if rem.len() >= BRAND_LEN {
-        let size32 = u32::from_be_bytes(SIZE_BYTES.map(|i| rem[i]));
+        let size32 = crate::be_u32(rem, 0);
         if size32 == SIZE_INDICATES_LARGESIZE {
             return BOX_HEADER_LARGESIZE_SIZE;
         }
@@ -324,12 +309,12 @@ fn decode_header(rem: &[u8]) -> Option<(u32, usize)> {
     if rem.len() < BOX_HEADER_MIN_SIZE {
         return None;
     }
-    let size32 = u32::from_be_bytes(SIZE_BYTES.map(|i| rem[i]));
+    let size32 = crate::be_u32(rem, 0);
     if size32 == SIZE_INDICATES_LARGESIZE {
         if rem.len() < BOX_HEADER_LARGESIZE_SIZE {
             return None;
         }
-        let ls = u64::from_be_bytes(LARGESIZE_BYTES.map(|i| rem[i]));
+        let ls = crate::be_u64(rem, LARGESIZE_OFFSET);
         Some((size32, largesize_to_len(ls, usize::BITS)?))
     } else if size32 == SIZE_TO_EOF {
         Some((size32, 0))

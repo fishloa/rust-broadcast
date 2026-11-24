@@ -7,9 +7,9 @@
 use super::tables::{PERM, SBOX};
 
 /// Rounds in the DVB-CSA2 block cipher; one round-key byte each.
-const ROUNDS: usize = 56;
+pub(crate) const ROUNDS: usize = 56;
 /// Bytes in one CSA block (64 bits).
-const BLOCK_BYTES: usize = 8;
+pub(crate) const BLOCK_BYTES: usize = 8;
 /// The DVB-CSA2 block cipher, initialized with 56 round-key bytes.
 ///
 /// Not `Copy` (holds key-derived round-key bytes; see [`Drop for

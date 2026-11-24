@@ -9,6 +9,8 @@ use broadcast_common::wire_enum;
 
 use broadcast_common::{Parse, Serialize};
 
+use super::RFU_TOP_BIT_SHIFT;
+
 wire_enum! {
     /// S1 field (3 bits) per EN 302 755 §7.2.1.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +97,7 @@ impl S2Field1 {
     /// Decode from the wire byte.  Every byte maps to a variant (lossless).
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & S1_BITS {
+        match v & S1_MASK {
             0 => Self::Fft1k,
             1 => Self::Fft2k,
             2 => Self::Fft4k,
@@ -173,27 +175,23 @@ impl FefNullPayload {
 
 const FEF_NULL_LEN: usize = 3;
 
-/// Bit width of S2 field 1 / `s1_field` (3 bits).
-const S1_BITS: u8 = 0x07;
 /// Mask of the reserved top bit of the S1/S2 byte.
-const S1_S2_RFU_MASK: u8 = 0x80;
+pub(super) const S1_S2_RFU_MASK: u8 = 0x80;
 /// Offset of the reserved byte preceding the S1/S2 byte.
-const RFU_BYTE_OFFSET: usize = 1;
+pub(super) const RFU_BYTE_OFFSET: usize = 1;
 /// Offset of the byte carrying `s1_field` / `s2_field`.
-const S1_S2_BYTE_OFFSET: usize = 2;
-/// Shift placing the reserved top bit for the error report.
-const RFU_TOP_BIT_SHIFT: u32 = 7;
+pub(super) const S1_S2_BYTE_OFFSET: usize = 2;
 
 /// Shift placing `s1_field` above `s2_field` in the S1/S2 byte.
-const S1_SHIFT: u32 = 4;
-/// Mask of the three-bit `s1_field`.
-const S1_MASK: u8 = 0x07;
+pub(super) const S1_SHIFT: u32 = 4;
+/// Mask of the three-bit `s1_field` and of S2 field 1.
+pub(super) const S1_MASK: u8 = 0x07;
 /// Mask of the four-bit `s2_field`.
-const S2_MASK: u8 = 0x0F;
+pub(super) const S2_MASK: u8 = 0x0F;
 /// Shift selecting S2 field 1 from `s2_field`.
-const S2_FIELD1_SHIFT: u32 = 1;
+pub(super) const S2_FIELD1_SHIFT: u32 = 1;
 /// Mask of the mixed flag (S2 field 2) inside `s2_field`.
-const S2_MIXED_FLAG_MASK: u8 = 0x01;
+pub(super) const S2_MIXED_FLAG_MASK: u8 = 0x01;
 
 impl<'a> Parse<'a> for FefNullPayload {
     type Error = crate::error::Error;

@@ -6,10 +6,15 @@
 //! bit) followed by a per-ES list, each ES with its own `CA_enable_flag` +
 //! optional 7-bit `CA_enable`.
 
+use super::ca_pmt::{
+    CURRENT_NEXT_INDICATOR_MASK, VERSION_NUMBER_BITS, VERSION_NUMBER_MASK, VERSION_NUMBER_SHIFT,
+    VERSION_RESERVED_SHIFT,
+};
 use crate::error::{Error, Result};
 use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
@@ -138,11 +143,10 @@ const CA_ENABLE_FLAG_MASK: u8 = 0x80;
 pub const ES_PID_RESERVED_BITS: u32 = 3;
 /// Reserved bits beside a `CA_enable` value.
 pub const CA_ENABLE_RESERVED_BITS: u32 = 7;
-/// Reserved bits in front of `version_number`.
-pub const VERSION_RESERVED_BITS: u32 = 2;
+pub use super::ca_pmt::VERSION_RESERVED_BITS;
 
 /// Offsets of the `ca_pmt_reply()` reply prefix fields.
-const PROGRAM_NUMBER_OFFSET: usize = 0;
+const REPLY_PROGRAM_NUMBER_OFFSET: usize = 0;
 const VERSION_BYTE_OFFSET: usize = 2;
 const CA_ENABLE_OFFSET: usize = 3;
 
@@ -151,16 +155,6 @@ const ES_PID_HIGH_OFFSET: usize = 0;
 const ES_PID_LOW_OFFSET: usize = 1;
 const ES_CA_ENABLE_OFFSET: usize = 2;
 
-/// Shift placing `version_number` below the reserved bits.
-const VERSION_NUMBER_SHIFT: u32 = 1;
-/// Mask of `version_number`.
-const VERSION_NUMBER_MASK: u8 = 0x1F;
-/// Bit width of `version_number`.
-const VERSION_NUMBER_BITS: u32 = 5;
-/// Shift selecting the reserved bits of the version byte.
-const VERSION_RESERVED_SHIFT: u32 = 6;
-/// Mask of `current_next_indicator`.
-const CURRENT_NEXT_INDICATOR_MASK: u8 = 0x01;
 /// Shift selecting the reserved bits in front of `elementary_PID`.
 const ES_PID_RESERVED_SHIFT: u32 = 5;
 /// Mask of `elementary_PID`'s high bits.
@@ -174,8 +168,7 @@ impl<'a> Parse<'a> for CaPmtReply {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::CA_PMT_REPLY, "ca_pmt_reply")?;
         need_in(body, REPLY_PREFIX, "ca_pmt_reply prefix")?;
-        let program_number =
-            u16::from_be_bytes([body[PROGRAM_NUMBER_OFFSET], body[PROGRAM_NUMBER_OFFSET + 1]]);
+        let program_number = be_u16(body, REPLY_PROGRAM_NUMBER_OFFSET);
         let version_number =
             (body[VERSION_BYTE_OFFSET] >> VERSION_NUMBER_SHIFT) & VERSION_NUMBER_MASK;
         let current_next_indicator = (body[VERSION_BYTE_OFFSET] & CURRENT_NEXT_INDICATOR_MASK) != 0;
@@ -270,7 +263,7 @@ impl Serialize for CaPmtReply {
         )?;
         let body = REPLY_PREFIX + reply_streams_len(&self.streams);
         let mut pos = super::write_apdu_header(tag::CA_PMT_REPLY, body, self.length_form, buf)?;
-        buf[pos + PROGRAM_NUMBER_OFFSET..pos + VERSION_BYTE_OFFSET]
+        buf[pos + REPLY_PROGRAM_NUMBER_OFFSET..pos + VERSION_BYTE_OFFSET]
             .copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). Range-checked above.
         buf[pos + VERSION_BYTE_OFFSET] = ((self.reserved_version.get() << VERSION_RESERVED_SHIFT)

@@ -672,11 +672,11 @@ fn hunt_extract(hunt: &mut Vec<u8>, next: &mut usize, emitted: &mut Vec<T2miEven
     // Smallest byte count a real T2-MI packet can occupy: 6-byte header plus
     // 4-byte CRC plus at least one payload bit (one byte), per ETSI TS 102
     // 773 §5.1 — `Header::total_len` of a zero-payload header.
-    const MIN_PACKET_LEN: usize = crate::ts::HEADER_LEN + crate::crc::CRC_LEN + 1;
+    const MIN_PACKET_LEN: usize = crate::packet::HEADER_LEN + crate::crc::CRC_LEN + 1;
     let mut offset = *next;
     let mut last_end = 0usize;
     loop {
-        if offset + crate::ts::HEADER_LEN > hunt.len() {
+        if offset + crate::packet::HEADER_LEN > hunt.len() {
             // No complete header fits here (nor at any later offset — this
             // is the first such offset the scan reached). Judge the tail
             // straddle exactly once.

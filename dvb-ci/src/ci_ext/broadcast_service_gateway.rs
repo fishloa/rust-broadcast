@@ -20,6 +20,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::tag::ApduTag;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
@@ -189,9 +190,9 @@ const ACK_LENGTH_LOW_OFFSET: usize = 1;
 
 /// Offsets within an `EITSectionReq` body.
 const TABLE_ID_OFFSET: usize = 0;
-const SERVICE_ID_OFFSET: usize = 2;
+const EIT_SERVICE_ID_OFFSET: usize = 2;
 const SECTION_NUMBER_OFFSET: usize = 4;
-const ORIGINAL_NETWORK_ID_OFFSET: usize = 5;
+const EIT_ORIGINAL_NETWORK_ID_OFFSET: usize = 5;
 const DISRUPT_FLAGS_OFFSET: usize = 7;
 
 /// Offsets within an EIT event entry.
@@ -220,13 +221,10 @@ impl<'a> Parse<'a> for EitSectionReq {
         crate::objects::reject_trailing_body(body, EIT_SECTION_REQ_BODY, "EITSectionReq")?;
         Ok(Self {
             length_form,
-            table_id: u16::from_be_bytes([body[TABLE_ID_OFFSET], body[TABLE_ID_OFFSET + 1]]),
-            service_id: u16::from_be_bytes([body[SERVICE_ID_OFFSET], body[SERVICE_ID_OFFSET + 1]]),
+            table_id: be_u16(body, TABLE_ID_OFFSET),
+            service_id: be_u16(body, EIT_SERVICE_ID_OFFSET),
             section_number: body[SECTION_NUMBER_OFFSET],
-            original_network_id: u16::from_be_bytes([
-                body[ORIGINAL_NETWORK_ID_OFFSET],
-                body[ORIGINAL_NETWORK_ID_OFFSET + 1],
-            ]),
+            original_network_id: be_u16(body, EIT_ORIGINAL_NETWORK_ID_OFFSET),
             ok_to_disrupt_service: (body[DISRUPT_FLAGS_OFFSET] & OK_TO_DISRUPT_MASK) != 0,
             reserved: ReservedZero::from_bits(u64::from(
                 body[DISRUPT_FLAGS_OFFSET] >> DISRUPT_FLAG_RESERVED_SHIFT,
@@ -246,12 +244,12 @@ impl Serialize for EitSectionReq {
             self.length_form,
             buf,
         )?;
-        buf[pos + TABLE_ID_OFFSET..pos + SERVICE_ID_OFFSET]
+        buf[pos + TABLE_ID_OFFSET..pos + EIT_SERVICE_ID_OFFSET]
             .copy_from_slice(&self.table_id.to_be_bytes());
-        buf[pos + SERVICE_ID_OFFSET..pos + SECTION_NUMBER_OFFSET]
+        buf[pos + EIT_SERVICE_ID_OFFSET..pos + SECTION_NUMBER_OFFSET]
             .copy_from_slice(&self.service_id.to_be_bytes());
         buf[pos + SECTION_NUMBER_OFFSET] = self.section_number;
-        buf[pos + ORIGINAL_NETWORK_ID_OFFSET..pos + DISRUPT_FLAGS_OFFSET]
+        buf[pos + EIT_ORIGINAL_NETWORK_ID_OFFSET..pos + DISRUPT_FLAGS_OFFSET]
             .copy_from_slice(&self.original_network_id.to_be_bytes());
         // Reserved(7), OKToDisruptService(1).
         buf[pos + DISRUPT_FLAGS_OFFSET] = ((self.reserved.get() << DISRUPT_FLAG_RESERVED_SHIFT)
@@ -300,8 +298,7 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
                     reason: "truncated event header",
                 });
             }
-            let event_id =
-                u16::from_be_bytes([body[p + EVENT_ID_OFFSET], body[p + EVENT_ID_OFFSET + 1]]);
+            let event_id = be_u16(body, p + EVENT_ID_OFFSET);
             let mut start_time = [0u8; START_TIME_LEN];
             start_time.copy_from_slice(
                 &body[p + START_TIME_OFFSET..p + START_TIME_OFFSET + START_TIME_LEN],

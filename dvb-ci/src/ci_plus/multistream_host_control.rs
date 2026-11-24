@@ -41,6 +41,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::tag::ApduTag;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
@@ -218,18 +219,9 @@ impl<'a> Parse<'a> for TuneTripletReq {
             background_tune: flags & TRIPLET_BACKGROUND_BIT != 0,
             tune_quietly: flags & TRIPLET_QUIETLY_BIT != 0,
             keep_app_running: flags & TRIPLET_KEEP_BIT != 0,
-            original_network_id: u16::from_be_bytes([
-                body[TRIPLET_ONID_OFFSET],
-                body[TRIPLET_ONID_OFFSET + 1],
-            ]),
-            transport_stream_id: u16::from_be_bytes([
-                body[TRIPLET_TSID_OFFSET],
-                body[TRIPLET_TSID_OFFSET + 1],
-            ]),
-            service_id: u16::from_be_bytes([
-                body[TRIPLET_SID_OFFSET],
-                body[TRIPLET_SID_OFFSET + 1],
-            ]),
+            original_network_id: be_u16(body, TRIPLET_ONID_OFFSET),
+            transport_stream_id: be_u16(body, TRIPLET_TSID_OFFSET),
+            service_id: be_u16(body, TRIPLET_SID_OFFSET),
             delivery_system_descriptor_tag: dsd_tag,
             descriptor_tag_extension,
             reserved: ReservedZero::from_bits(u64::from(flags >> TRIPLET_RESERVED_SHIFT)),
@@ -326,8 +318,7 @@ impl<'a> Parse<'a> for TuneLcnReq {
         let background_tune = body[LCN_FLAGS_OFFSET] & LCN_BACKGROUND_BIT != 0;
         let tune_quietly = body[LCN_HIGH_OFFSET] & LCN_QUIETLY_BIT != 0;
         let keep_app_running = body[LCN_HIGH_OFFSET] & LCN_KEEP_BIT != 0;
-        let logical_channel_number =
-            u16::from_be_bytes([body[LCN_HIGH_OFFSET], body[LCN_LOW_OFFSET]]) & LCN_MASK;
+        let logical_channel_number = be_u16(body, LCN_HIGH_OFFSET) & LCN_MASK;
         Ok(Self {
             length_form,
             background_tune,

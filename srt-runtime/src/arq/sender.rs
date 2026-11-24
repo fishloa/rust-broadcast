@@ -28,7 +28,7 @@ use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use crate::error::Result;
-use crate::packet::number::SocketId;
+use crate::packet::number::{MESSAGE_NUMBER_BITS, SocketId};
 use crate::packet::{
     AckAckPacket, AckCif, AckPacket, ControlPacket, DataPacket, EncryptionKeyField, LossListEntry,
     NakPacket, PacketPosition,
@@ -57,10 +57,9 @@ const MIN_RETRANSMIT_INTERVAL: Duration = Duration::from_millis(20);
 /// Divisor taking the midpoint of a bisection range.
 const BISECTION_DIVISOR: usize = 2;
 
-/// Bit widths of the two sequence fields the NAK/Drop Request CIFs carry
+/// Bit width of the Packet Sequence Number the NAK/Drop Request CIFs carry
 /// (§3.2.5, §3.2.7).
 const SEQ_NUMBER_BITS: u32 = 31;
-const MESSAGE_NUMBER_BITS: u32 = 26;
 
 /// One buffered, sent-but-not-yet-acknowledged data packet (rules 1, 16,
 /// 18).

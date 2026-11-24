@@ -108,15 +108,12 @@ const MARKER_LEN: usize = 1;
 const NUMBER_LEN: usize = 8;
 const BOOLEAN_LEN: usize = 1;
 const U16_LEN: usize = 2;
-const U32_LEN: usize = 4;
+const U32_LEN: usize = core::mem::size_of::<u32>();
 const DATE_RESERVED_LEN: usize = 2;
 /// `00 00 09`: empty key + [`marker::OBJECT_END`].
 const OBJECT_END_LEN: usize = 3;
 /// Offset of the [`marker::OBJECT_END`] byte within that three-byte sequence.
 const OBJECT_END_MARKER_OFFSET: usize = 2;
-
-/// Byte positions of a big-endian u32 field.
-const U32_BYTES: [usize; U32_LEN] = [0, 1, 2, 3];
 
 /// A single AMF0 value (`[AMF0]` §2, private/specs-verified/rtmp/rtmp-runtime/rtmp.md §8.2).
 ///
@@ -199,7 +196,7 @@ fn read_utf8_long(bytes: &[u8]) -> Result<(String, usize)> {
             "AMF0 long string length",
         ));
     }
-    let len = u32::from_be_bytes(U32_BYTES.map(|i| bytes[i])) as usize;
+    let len = crate::be_u32(bytes, 0) as usize;
     // `len` can be up to `u32::MAX`: on a 32-bit target, `U32_LEN + len`
     // wraps `usize` (e.g. `len == usize::MAX - 1`), which would make
     // `bytes.len() < total` compare against a garbage-small wrapped value
@@ -347,7 +344,7 @@ fn parse_value(bytes: &[u8], depth: usize, values: &mut usize) -> Result<(Amf0Va
                     "amf0 strict array count",
                 ));
             }
-            let count = u32::from_be_bytes(U32_BYTES.map(|i| body[i]));
+            let count = crate::be_u32(body, 0);
             let mut rest = &body[U32_LEN..];
             let mut elements = Vec::new();
             for _ in 0..count {

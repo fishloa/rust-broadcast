@@ -35,22 +35,21 @@ const RESV1_FIXED: u8 = 0;
 const RESV2_FIXED: u8 = 0;
 const RESV3_FIXED: u16 = 0;
 
-/// Bytes of the Key Material message's fixed header, of its ICV, and of the
-/// 4-byte block `SLen`/`KLen` are counted in (§3.2.2, Figure 7).
+/// Bytes of the Key Material message's fixed header, and of the 4-byte block
+/// `SLen`/`KLen` are counted in (§3.2.2, Figure 7).
 const FIXED_HEADER_LEN: usize = 16;
-const ICV_LEN: usize = 8;
+/// Bytes of the Key Material message's ICV, the first half of a wrapped block
+/// (§3.2.2, Figure 7; RFC 3394 §2.2.3.1).
+pub const ICV_LEN: usize = 8;
 const KEY_BLOCK_LEN: usize = 4;
-
-/// Key lengths (bytes) AES key wrap accepts: AES-128/192/256.
-const VALID_KEY_LENS: [usize; 3] = [16, 24, 32];
 
 /// Keys a message with `KK = 11b` carries: the even and the odd SEK.
 const KEY_COUNT_BOTH: usize = 2;
 
-/// Byte offsets of the fixed header's four words.
+/// Byte offsets of the fixed header's words.
 const KEKI_OFFSET: usize = 4;
-const WORD2_OFFSET: usize = 8;
-const WORD3_OFFSET: usize = 12;
+const FLAGS_OFFSET: usize = 8;
+const LENGTHS_OFFSET: usize = 12;
 
 /// Shifts and masks of the first word's fields (§3.2.2, Figure 7).
 const S_SHIFT: u32 = 31;
@@ -421,7 +420,7 @@ impl<'a> KeyMaterial<'a> {
 
         let keki = be32(bytes, KEKI_OFFSET);
 
-        let word2 = be32(bytes, WORD2_OFFSET);
+        let word2 = be32(bytes, FLAGS_OFFSET);
         let cipher = Cipher::from_bits((word2 >> CIPHER_SHIFT) as u8);
         let auth = KmAuth::from_bits((word2 >> AUTH_SHIFT) as u8);
         let se = StreamEncapsulation::from_bits((word2 >> SE_SHIFT) as u8);
@@ -433,7 +432,7 @@ impl<'a> KeyMaterial<'a> {
             });
         }
 
-        let word3 = be32(bytes, WORD3_OFFSET);
+        let word3 = be32(bytes, LENGTHS_OFFSET);
         let resv3 = (word3 >> RESV3_SHIFT) as u16;
         let slen4 = ((word3 >> SLEN_SHIFT) & LEN_MASK) as usize;
         let klen4 = (word3 & LEN_MASK) as usize;
@@ -446,7 +445,7 @@ impl<'a> KeyMaterial<'a> {
 
         let slen = slen4 * KEY_BLOCK_LEN;
         let klen = klen4 * KEY_BLOCK_LEN;
-        if !VALID_KEY_LENS.contains(&klen) {
+        if !crate::AES_KEY_LENS.contains(&klen) {
             return Err(Error::InvalidKeyMaterial {
                 field: "KLen",
                 reason: "must be 16, 24, or 32 bytes (AES-128/192/256)",
@@ -528,7 +527,7 @@ impl<'a> KeyMaterial<'a> {
         // the message with `Ok` (#1129). Checked in `usize` before the
         // 8-bit field is packed below.
         broadcast_common::len::fit_u8(self.salt.len() / KEY_BLOCK_LEN, "Salt length / 4 (SLen)")?;
-        if !VALID_KEY_LENS.contains(&self.x_sek.len()) {
+        if !crate::AES_KEY_LENS.contains(&self.x_sek.len()) {
             return Err(Error::InvalidKeyMaterial {
                 field: "xSEK",
                 reason: "length must be 16, 24, or 32 bytes",
@@ -564,11 +563,11 @@ impl<'a> KeyMaterial<'a> {
             | (u32::from(self.auth.to_bits()) << AUTH_SHIFT)
             | (u32::from(self.se.to_bits()) << SE_SHIFT)
             | u32::from(RESV2_FIXED);
-        put_be32(buf, WORD2_OFFSET, word2);
+        put_be32(buf, FLAGS_OFFSET, word2);
         let slen4 = (self.salt.len() / KEY_BLOCK_LEN) as u32;
         let klen4 = (self.x_sek.len() / KEY_BLOCK_LEN) as u32;
         let word3 = (u32::from(RESV3_FIXED) << RESV3_SHIFT) | (slen4 << SLEN_SHIFT) | klen4;
-        put_be32(buf, WORD3_OFFSET, word3);
+        put_be32(buf, LENGTHS_OFFSET, word3);
 
         let mut off = FIXED_HEADER_LEN;
         buf[off..off + self.salt.len()].copy_from_slice(self.salt);

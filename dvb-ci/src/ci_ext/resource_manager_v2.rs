@@ -27,7 +27,7 @@ const MODULE_ID_RESERVED_SHIFT: u32 = 6;
 /// Bit width of `module_id`.
 const MODULE_ID_BITS: u32 = 6;
 /// Mask of `module_id`.
-const MODULE_ID_MASK: u8 = 0x3F;
+const MODULE_ID_FIELD_MASK: u8 = 0x3F;
 /// Offset of `module_id` in a `module_id_send()` body.
 const MODULE_ID_OFFSET: usize = 0;
 /// Offset of `module_id` in a `module_id_command()` body.
@@ -264,7 +264,7 @@ impl<'a> Parse<'a> for ModuleIdSend {
         crate::objects::reject_trailing_body(body, MODULE_ID_SEND_BODY, "module_id_send")?;
         Ok(Self {
             length_form,
-            module_id: body[MODULE_ID_OFFSET] & MODULE_ID_MASK,
+            module_id: body[MODULE_ID_OFFSET] & MODULE_ID_FIELD_MASK,
             reserved: ReservedZero::from_bits(u64::from(
                 body[MODULE_ID_OFFSET] >> MODULE_ID_RESERVED_SHIFT,
             )),
@@ -309,7 +309,7 @@ impl<'a> Parse<'a> for ModuleIdCommand {
         Ok(Self {
             length_form,
             command: ModuleIdCommandKind::from_u8(body[0]),
-            module_id: body[MODULE_ID_COMMAND_OFFSET] & MODULE_ID_MASK,
+            module_id: body[MODULE_ID_COMMAND_OFFSET] & MODULE_ID_FIELD_MASK,
             reserved: ReservedZero::from_bits(u64::from(
                 body[MODULE_ID_COMMAND_OFFSET] >> MODULE_ID_RESERVED_SHIFT,
             )),

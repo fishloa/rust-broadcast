@@ -19,9 +19,9 @@ const PREFIX_SHIFT: u32 = 4;
 const MARKER_MASK: u8 = 0x01;
 /// Byte offsets of the `marker_bit`s within the PTS/DTS field
 /// (ISO/IEC 13818-1 Table 2-21).
-const MARKER_BYTE_0: usize = 0;
-const MARKER_BYTE_2: usize = MARKER_BYTE_0 + 2;
-const MARKER_BYTE_4: usize = MARKER_BYTE_2 + 2;
+const MARKER_HI_BYTE: usize = 0;
+const MARKER_MID_BYTE: usize = MARKER_HI_BYTE + 2;
+const MARKER_LOW_BYTE: usize = MARKER_MID_BYTE + 2;
 
 /// Presentation Time Stamp (33-bit, 90 kHz units), carried as the validated
 /// [`Clock33`] so an out-of-range value cannot be constructed.
@@ -164,9 +164,9 @@ pub(crate) fn read(b: &[u8], prefix: u8, what: &'static str) -> Result<u64> {
     if (b[0] >> PREFIX_SHIFT) != prefix {
         return Err(crate::error::Error::BadTimestampPrefix(what));
     }
-    if b[MARKER_BYTE_0] & MARKER_MASK == 0
-        || b[MARKER_BYTE_2] & MARKER_MASK == 0
-        || b[MARKER_BYTE_4] & MARKER_MASK == 0
+    if b[MARKER_HI_BYTE] & MARKER_MASK == 0
+        || b[MARKER_MID_BYTE] & MARKER_MASK == 0
+        || b[MARKER_LOW_BYTE] & MARKER_MASK == 0
     {
         return Err(crate::error::Error::BadTimestampMarker(what));
     }

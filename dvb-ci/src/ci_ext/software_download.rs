@@ -26,6 +26,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::wire::be_u16;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -66,10 +67,6 @@ const BINARY_ID_SPECIFIER_LEN: usize = 3;
 const BINARY_ID_SPECIFIER_OFFSET: usize = 0;
 const BINARY_ID_MODEL_OFFSET: usize = BINARY_ID_SPECIFIER_LEN;
 const BINARY_ID_VERSION_OFFSET: usize = BINARY_ID_MODEL_OFFSET + 2;
-/// Bytes of a `u16` field.
-const U16_LEN: usize = core::mem::size_of::<u16>();
-/// Bytes of a `u32` field.
-const U32_LEN: usize = core::mem::size_of::<u32>();
 
 /// Bytes of the DSM-CC U-N message header (Tables 79-83).
 const DSMCC_HEADER_LEN: usize = 12;
@@ -90,7 +87,7 @@ const MESSAGE_LENGTH_BITS: u32 = 16;
 
 /// Bytes of the fixed part of `DownloadInfoRequest` before its compatibility
 /// block (bufferSize(4) + maximumBlockSize(2)).
-const INFO_REQUEST_FIXED: usize = U32_LEN + U16_LEN;
+const INFO_REQUEST_FIXED: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
 /// Offsets within the `DownloadInfoResponse` fixed part.
 const INFO_RESPONSE_DOWNLOAD_ID_OFFSET: usize = 0;
 const INFO_RESPONSE_BLOCK_SIZE_OFFSET: usize = 4;
@@ -126,7 +123,7 @@ const DATA_BLOCK_FIXED: usize = 6;
 /// moduleVersion(1) moduleInfoLength(1)).
 const MODULE_INFO_FIXED: usize = 8;
 /// Bytes of a length field that counts the bytes after itself.
-const BLOCK_LENGTH_LEN: usize = U16_LEN;
+const BLOCK_LENGTH_LEN: usize = core::mem::size_of::<u16>();
 
 impl BinaryId {
     fn read(b: &[u8]) -> Self {
@@ -134,11 +131,8 @@ impl BinaryId {
             specifier: (u32::from(b[BINARY_ID_SPECIFIER_OFFSET]) << MESSAGE_LENGTH_BITS)
                 | (u32::from(b[BINARY_ID_SPECIFIER_OFFSET + 1]) << ADAPTATION_LENGTH_BITS)
                 | u32::from(b[BINARY_ID_SPECIFIER_OFFSET + BINARY_ID_SPECIFIER_LEN - 1]),
-            model: u16::from_be_bytes([b[BINARY_ID_MODEL_OFFSET], b[BINARY_ID_MODEL_OFFSET + 1]]),
-            version: u16::from_be_bytes([
-                b[BINARY_ID_VERSION_OFFSET],
-                b[BINARY_ID_VERSION_OFFSET + 1],
-            ]),
+            model: be_u16(b, BINARY_ID_MODEL_OFFSET),
+            version: be_u16(b, BINARY_ID_VERSION_OFFSET),
         }
     }
     /// Write the 7-byte `binary_id`, rejecting a `specifier` that does not fit
@@ -153,7 +147,7 @@ impl BinaryId {
         buf[..BINARY_ID_SPECIFIER_LEN].copy_from_slice(&be[1..]);
         buf[BINARY_ID_MODEL_OFFSET..BINARY_ID_VERSION_OFFSET]
             .copy_from_slice(&self.model.to_be_bytes());
-        buf[BINARY_ID_VERSION_OFFSET..BINARY_ID_VERSION_OFFSET + U16_LEN]
+        buf[BINARY_ID_VERSION_OFFSET..BINARY_ID_VERSION_OFFSET + core::mem::size_of::<u16>()]
             .copy_from_slice(&self.version.to_be_bytes());
         Ok(())
     }
@@ -352,7 +346,7 @@ fn parse_dsmcc_header<'a>(
             reason: "dsmccType is not U-N Download (0x03)",
         });
     }
-    let message_id = u16::from_be_bytes([body[MESSAGE_ID_OFFSET], body[MESSAGE_ID_OFFSET + 1]]);
+    let message_id = be_u16(body, MESSAGE_ID_OFFSET);
     if message_id != expected_message_id {
         return Err(Error::InvalidObject {
             what,
@@ -362,8 +356,8 @@ fn parse_dsmcc_header<'a>(
     let id = u32::from_be_bytes([
         body[TRANSACTION_ID_OFFSET],
         body[TRANSACTION_ID_OFFSET + 1],
-        body[TRANSACTION_ID_OFFSET + U16_LEN],
-        body[TRANSACTION_ID_OFFSET + U16_LEN + 1],
+        body[TRANSACTION_ID_OFFSET + core::mem::size_of::<u16>()],
+        body[TRANSACTION_ID_OFFSET + core::mem::size_of::<u16>() + 1],
     ]);
     let adaptation_length = body[ADAPTATION_LENGTH_OFFSET] as usize;
     if body.len() < HDR + adaptation_length {
@@ -375,8 +369,7 @@ fn parse_dsmcc_header<'a>(
             },
         ));
     }
-    let declared_message_length =
-        u16::from_be_bytes([body[MESSAGE_LENGTH_OFFSET], body[MESSAGE_LENGTH_OFFSET + 1]]) as usize;
+    let declared_message_length = be_u16(body, MESSAGE_LENGTH_OFFSET) as usize;
     // messageLength counts everything after the messageLength field itself
     // (§6.7.5: adaptationType/adaptationDataBytes + the message body).
     let actual_message_length = body.len() - HDR;
@@ -463,12 +456,16 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
                 },
             ));
         }
-        let buffer_size = u32::from_be_bytes([rest[0], rest[1], rest[U16_LEN], rest[U16_LEN + 1]]);
-        let maximum_block_size = u16::from_be_bytes([rest[U32_LEN], rest[U32_LEN + 1]]);
+        let buffer_size = u32::from_be_bytes([
+            rest[0],
+            rest[1],
+            rest[core::mem::size_of::<u16>()],
+            rest[core::mem::size_of::<u16>() + 1],
+        ]);
+        let maximum_block_size = be_u16(rest, core::mem::size_of::<u32>());
         // compatibilityDescriptorLength counts the bytes *after* the length field
         // (descriptorCount + descriptor loop).
-        let compat_len =
-            u16::from_be_bytes([rest[INFO_REQUEST_FIXED], rest[INFO_REQUEST_FIXED + 1]]) as usize;
+        let compat_len = be_u16(rest, INFO_REQUEST_FIXED) as usize;
         // start of compatibilityDescriptor block (incl. its length field)
         let compat_start = INFO_REQUEST_FIXED;
         let compat_block_end = compat_start + BLOCK_LENGTH_LEN + compat_len;
@@ -482,8 +479,7 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
             ));
         }
         let compatibility_descriptor = &rest[compat_start..compat_block_end];
-        let priv_len =
-            u16::from_be_bytes([rest[compat_block_end], rest[compat_block_end + 1]]) as usize;
+        let priv_len = be_u16(rest, compat_block_end) as usize;
         let priv_start = compat_block_end + BLOCK_LENGTH_LEN;
         let priv_end = priv_start + priv_len;
         if rest.len() < priv_end {
@@ -532,10 +528,12 @@ impl Serialize for DownloadInfoRequest<'_> {
             self.adaptation,
             message_length,
         )?;
-        buf[pos..pos + U32_LEN].copy_from_slice(&self.buffer_size.to_be_bytes());
-        pos += U32_LEN;
-        buf[pos..pos + U16_LEN].copy_from_slice(&self.maximum_block_size.to_be_bytes());
-        pos += U16_LEN;
+        buf[pos..pos + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.buffer_size.to_be_bytes());
+        pos += core::mem::size_of::<u32>();
+        buf[pos..pos + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.maximum_block_size.to_be_bytes());
+        pos += core::mem::size_of::<u16>();
         buf[pos..pos + self.compatibility_descriptor.len()]
             .copy_from_slice(self.compatibility_descriptor);
         pos += self.compatibility_descriptor.len();
@@ -603,30 +601,26 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
         let download_id = u32::from_be_bytes([
             rest[INFO_RESPONSE_DOWNLOAD_ID_OFFSET],
             rest[INFO_RESPONSE_DOWNLOAD_ID_OFFSET + 1],
-            rest[INFO_RESPONSE_DOWNLOAD_ID_OFFSET + U16_LEN],
-            rest[INFO_RESPONSE_DOWNLOAD_ID_OFFSET + U16_LEN + 1],
+            rest[INFO_RESPONSE_DOWNLOAD_ID_OFFSET + core::mem::size_of::<u16>()],
+            rest[INFO_RESPONSE_DOWNLOAD_ID_OFFSET + core::mem::size_of::<u16>() + 1],
         ]);
-        let block_size = u16::from_be_bytes([
-            rest[INFO_RESPONSE_BLOCK_SIZE_OFFSET],
-            rest[INFO_RESPONSE_BLOCK_SIZE_OFFSET + 1],
-        ]);
+        let block_size = be_u16(rest, INFO_RESPONSE_BLOCK_SIZE_OFFSET);
         let window_size = rest[INFO_RESPONSE_WINDOW_SIZE_OFFSET];
         let ack_period = rest[INFO_RESPONSE_ACK_PERIOD_OFFSET];
         let tc_download_window = u32::from_be_bytes([
             rest[INFO_RESPONSE_TC_WINDOW_OFFSET],
             rest[INFO_RESPONSE_TC_WINDOW_OFFSET + 1],
-            rest[INFO_RESPONSE_TC_WINDOW_OFFSET + U16_LEN],
-            rest[INFO_RESPONSE_TC_WINDOW_OFFSET + U16_LEN + 1],
+            rest[INFO_RESPONSE_TC_WINDOW_OFFSET + core::mem::size_of::<u16>()],
+            rest[INFO_RESPONSE_TC_WINDOW_OFFSET + core::mem::size_of::<u16>() + 1],
         ]);
         let tc_download_scenario = u32::from_be_bytes([
             rest[INFO_RESPONSE_TC_SCENARIO_OFFSET],
             rest[INFO_RESPONSE_TC_SCENARIO_OFFSET + 1],
-            rest[INFO_RESPONSE_TC_SCENARIO_OFFSET + U16_LEN],
-            rest[INFO_RESPONSE_TC_SCENARIO_OFFSET + U16_LEN + 1],
+            rest[INFO_RESPONSE_TC_SCENARIO_OFFSET + core::mem::size_of::<u16>()],
+            rest[INFO_RESPONSE_TC_SCENARIO_OFFSET + core::mem::size_of::<u16>() + 1],
         ]);
         let compat_len_off = INFO_RESPONSE_FIXED;
-        let compat_len =
-            u16::from_be_bytes([rest[compat_len_off], rest[compat_len_off + 1]]) as usize;
+        let compat_len = be_u16(rest, compat_len_off) as usize;
         let compat_block_end = compat_len_off + BLOCK_LENGTH_LEN + compat_len;
         // + numberOfModules(2) at compat_block_end.
         if rest.len() < compat_block_end + BLOCK_LENGTH_LEN {
@@ -639,8 +633,7 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
             ));
         }
         let compatibility_descriptor = &rest[compat_len_off..compat_block_end];
-        let number_of_modules =
-            u16::from_be_bytes([rest[compat_block_end], rest[compat_block_end + 1]]) as usize;
+        let number_of_modules = be_u16(rest, compat_block_end) as usize;
         let mut mpos = compat_block_end + BLOCK_LENGTH_LEN;
         for _ in 0..number_of_modules {
             // moduleId(2) moduleSize(4) moduleVersion(1) moduleInfoLength(1).
@@ -675,7 +668,7 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
                 },
             ));
         }
-        let priv_len = u16::from_be_bytes([rest[mpos], rest[mpos + 1]]) as usize;
+        let priv_len = be_u16(rest, mpos) as usize;
         let priv_start = mpos + BLOCK_LENGTH_LEN;
         let priv_end = priv_start + priv_len;
         if rest.len() < priv_end {
@@ -729,17 +722,20 @@ impl Serialize for DownloadInfoResponse<'_> {
             self.adaptation,
             message_length,
         )?;
-        buf[pos..pos + U32_LEN].copy_from_slice(&self.download_id.to_be_bytes());
-        pos += U32_LEN;
-        buf[pos..pos + U16_LEN].copy_from_slice(&self.block_size.to_be_bytes());
-        pos += U16_LEN;
+        buf[pos..pos + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.download_id.to_be_bytes());
+        pos += core::mem::size_of::<u32>();
+        buf[pos..pos + core::mem::size_of::<u16>()].copy_from_slice(&self.block_size.to_be_bytes());
+        pos += core::mem::size_of::<u16>();
         buf[pos] = self.window_size;
         buf[pos + 1] = self.ack_period;
-        pos += U16_LEN;
-        buf[pos..pos + U32_LEN].copy_from_slice(&self.tc_download_window.to_be_bytes());
-        pos += U32_LEN;
-        buf[pos..pos + U32_LEN].copy_from_slice(&self.tc_download_scenario.to_be_bytes());
-        pos += U32_LEN;
+        pos += core::mem::size_of::<u16>();
+        buf[pos..pos + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.tc_download_window.to_be_bytes());
+        pos += core::mem::size_of::<u32>();
+        buf[pos..pos + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.tc_download_scenario.to_be_bytes());
+        pos += core::mem::size_of::<u32>();
         buf[pos..pos + self.compatibility_descriptor.len()]
             .copy_from_slice(self.compatibility_descriptor);
         pos += self.compatibility_descriptor.len();
@@ -795,19 +791,13 @@ impl<'a> Parse<'a> for DownloadCancel<'a> {
         let download_id = u32::from_be_bytes([
             rest[CANCEL_DOWNLOAD_ID_OFFSET],
             rest[CANCEL_DOWNLOAD_ID_OFFSET + 1],
-            rest[CANCEL_DOWNLOAD_ID_OFFSET + U16_LEN],
-            rest[CANCEL_DOWNLOAD_ID_OFFSET + U16_LEN + 1],
+            rest[CANCEL_DOWNLOAD_ID_OFFSET + core::mem::size_of::<u16>()],
+            rest[CANCEL_DOWNLOAD_ID_OFFSET + core::mem::size_of::<u16>() + 1],
         ]);
-        let module_id = u16::from_be_bytes([
-            rest[CANCEL_MODULE_ID_OFFSET],
-            rest[CANCEL_MODULE_ID_OFFSET + 1],
-        ]);
-        let block_number = u16::from_be_bytes([
-            rest[CANCEL_BLOCK_NUMBER_OFFSET],
-            rest[CANCEL_BLOCK_NUMBER_OFFSET + 1],
-        ]);
+        let module_id = be_u16(rest, CANCEL_MODULE_ID_OFFSET);
+        let block_number = be_u16(rest, CANCEL_BLOCK_NUMBER_OFFSET);
         let download_cancel_reason = rest[CANCEL_REASON_OFFSET];
-        let priv_len = u16::from_be_bytes([rest[CANCEL_FIXED], rest[CANCEL_FIXED + 1]]) as usize;
+        let priv_len = be_u16(rest, CANCEL_FIXED) as usize;
         let priv_start = CANCEL_FIXED + BLOCK_LENGTH_LEN;
         let priv_end = priv_start + priv_len;
         if rest.len() < priv_end {
@@ -855,12 +845,14 @@ impl Serialize for DownloadCancel<'_> {
             self.adaptation,
             message_length,
         )?;
-        buf[pos..pos + U32_LEN].copy_from_slice(&self.download_id.to_be_bytes());
-        pos += U32_LEN;
-        buf[pos..pos + U16_LEN].copy_from_slice(&self.module_id.to_be_bytes());
-        pos += U16_LEN;
-        buf[pos..pos + U16_LEN].copy_from_slice(&self.block_number.to_be_bytes());
-        pos += U16_LEN;
+        buf[pos..pos + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.download_id.to_be_bytes());
+        pos += core::mem::size_of::<u32>();
+        buf[pos..pos + core::mem::size_of::<u16>()].copy_from_slice(&self.module_id.to_be_bytes());
+        pos += core::mem::size_of::<u16>();
+        buf[pos..pos + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.block_number.to_be_bytes());
+        pos += core::mem::size_of::<u16>();
         buf[pos] = self.download_cancel_reason;
         pos += 1;
         buf[pos..pos + BLOCK_LENGTH_LEN]
@@ -908,8 +900,8 @@ impl<'a> Parse<'a> for DownloadDataRequest<'a> {
         Ok(Self {
             download_id,
             adaptation,
-            module_id: u16::from_be_bytes([rest[0], rest[1]]),
-            block_number: u16::from_be_bytes([rest[U16_LEN], rest[U16_LEN + 1]]),
+            module_id: be_u16(rest, 0),
+            block_number: be_u16(rest, core::mem::size_of::<u16>()),
             download_reason: rest[DATA_REQUEST_REASON_OFFSET],
         })
     }
@@ -930,10 +922,11 @@ impl Serialize for DownloadDataRequest<'_> {
             self.adaptation,
             message_length,
         )?;
-        buf[pos..pos + U16_LEN].copy_from_slice(&self.module_id.to_be_bytes());
-        pos += U16_LEN;
-        buf[pos..pos + U16_LEN].copy_from_slice(&self.block_number.to_be_bytes());
-        pos += U16_LEN;
+        buf[pos..pos + core::mem::size_of::<u16>()].copy_from_slice(&self.module_id.to_be_bytes());
+        pos += core::mem::size_of::<u16>();
+        buf[pos..pos + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.block_number.to_be_bytes());
+        pos += core::mem::size_of::<u16>();
         buf[pos] = self.download_reason;
         Ok(pos + 1)
     }
@@ -980,13 +973,10 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
         Ok(Self {
             download_id,
             adaptation,
-            module_id: u16::from_be_bytes([rest[0], rest[1]]),
+            module_id: be_u16(rest, 0),
             module_version: rest[DATA_BLOCK_VERSION_OFFSET],
             // rest[3] = reserved
-            block_number: u16::from_be_bytes([
-                rest[DATA_BLOCK_BLOCK_NUMBER_OFFSET],
-                rest[DATA_BLOCK_BLOCK_NUMBER_OFFSET + 1],
-            ]),
+            block_number: be_u16(rest, DATA_BLOCK_BLOCK_NUMBER_OFFSET),
             block_data: &rest[FIXED..],
         })
     }
@@ -1007,13 +997,14 @@ impl Serialize for DownloadDataBlock<'_> {
             self.adaptation,
             message_length,
         )?;
-        buf[pos..pos + U16_LEN].copy_from_slice(&self.module_id.to_be_bytes());
-        pos += U16_LEN;
+        buf[pos..pos + core::mem::size_of::<u16>()].copy_from_slice(&self.module_id.to_be_bytes());
+        pos += core::mem::size_of::<u16>();
         buf[pos] = self.module_version;
         buf[pos + 1] = DSMCC_RESERVED_BYTE; // reserved
-        pos += U16_LEN;
-        buf[pos..pos + U16_LEN].copy_from_slice(&self.block_number.to_be_bytes());
-        pos += U16_LEN;
+        pos += core::mem::size_of::<u16>();
+        buf[pos..pos + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.block_number.to_be_bytes());
+        pos += core::mem::size_of::<u16>();
         buf[pos..pos + self.block_data.len()].copy_from_slice(self.block_data);
         Ok(pos + self.block_data.len())
     }

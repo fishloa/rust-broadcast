@@ -7,8 +7,10 @@
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 
+use crate::PREFIX_LEN;
 use crate::descriptor_loop::DescriptorLoop;
 use crate::error::{Error, Result};
+use crate::wire::read_u16_at;
 use broadcast_common::{Parse, Serialize, crc32_mpeg2};
 
 /// `packet_start_code_prefix` — `0x000001`.
@@ -18,9 +20,6 @@ pub const MAP_STREAM_ID: u8 = 0xBC;
 /// The combined PSM start code: `packet_start_code_prefix` + `map_stream_id`
 /// (`0x000001BC`).
 pub const PSM_START_CODE: u32 = (PACKET_START_CODE_PREFIX << 8) | MAP_STREAM_ID as u32;
-
-/// Bytes before the map body: prefix(3) + map_stream_id(1) + psm_length(2) = 6.
-const PREFIX_LEN: usize = 6;
 
 /// `program_stream_map_length` upper bound (ISO/IEC 13818-1 Table 2-41).
 const MAP_LENGTH_MAX: usize = 1018;
@@ -86,9 +85,10 @@ const PSEUDO_EXTENSION_OFFSET: usize = PSEUDO_LENGTH_OFFSET + 1;
 const PSEUDO_DESCRIPTORS_OFFSET: usize = PSEUDO_EXTENSION_OFFSET + 1;
 
 /// Masks of the individual bits of a header byte.
-const BIT7_MASK: u8 = 0x80;
-const BIT6_MASK: u8 = 0x40;
-const BIT0_MASK: u8 = 0x01;
+const CURRENT_NEXT_INDICATOR_MASK: u8 = 0x80;
+const SINGLE_EXTENSION_STREAM_FLAG_MASK: u8 = 0x40;
+/// The marker bit in the reserved byte (Table 2-41).
+const RESERVED_MARKER_MASK: u8 = 0x01;
 /// Bit shifts of `current_next_indicator` and `single_extension_stream_flag`
 /// within the flags byte.
 const CURRENT_NEXT_SHIFT: u32 = 7;
@@ -169,8 +169,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
             return Err(Error::BadMapStreamId(b[MAP_STREAM_ID_OFFSET]));
         }
 
-        let map_length =
-            u16::from_be_bytes([b[MAP_LENGTH_OFFSET], b[MAP_LENGTH_OFFSET + 1]]) as usize;
+        let map_length = usize::from(read_u16_at(b, MAP_LENGTH_OFFSET));
         let crc_end = PREFIX_LEN + map_length;
         // `program_stream_map_length` max 1018 (Table 2-41), the same ceiling
         // the serializer enforces, so every accepted PSM can be written back
@@ -196,17 +195,16 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
 
         // flags byte: current_next(1) | single_extension(1) | reserved(1) | version(5)
         let flags = b[FLAGS_OFFSET];
-        let current_next_indicator = flags & BIT7_MASK != 0;
-        let single_extension_stream_flag = flags & BIT6_MASK != 0;
+        let current_next_indicator = flags & CURRENT_NEXT_INDICATOR_MASK != 0;
+        let single_extension_stream_flag = flags & SINGLE_EXTENSION_STREAM_FLAG_MASK != 0;
         let version = flags & VERSION_MASK;
 
         // reserved byte (7 bits reserved + marker_bit)
-        if b[RESERVED_OFFSET] & BIT0_MASK == 0 {
+        if b[RESERVED_OFFSET] & RESERVED_MARKER_MASK == 0 {
             return Err(Error::BadMarker("program_stream_map marker_bit"));
         }
 
-        let program_stream_info_length =
-            u16::from_be_bytes([b[PROG_INFO_LEN_OFFSET], b[PROG_INFO_LEN_OFFSET + 1]]) as usize;
+        let program_stream_info_length = usize::from(read_u16_at(b, PROG_INFO_LEN_OFFSET));
 
         let info_start = PREFIX_LEN + PROG_INFO_PREFIX_LEN;
         let info_end = info_start + program_stream_info_length;
@@ -220,8 +218,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
                 available: b.len().saturating_sub(PREFIX_LEN),
             });
         }
-        let elementary_stream_map_length =
-            u16::from_be_bytes([b[info_end], b[info_end + 1]]) as usize;
+        let elementary_stream_map_length = usize::from(read_u16_at(b, info_end));
 
         let es_start = info_end + LENGTH_FIELD_LEN; // after elementary_stream_map_length(2)
         let es_end = es_start + elementary_stream_map_length;
@@ -333,8 +330,7 @@ fn es_entry_len(e: &EsMapEntry<'_>) -> usize {
 /// plus `program_stream_map_length` (ISO/IEC 13818-1 Table 2-41).
 pub(crate) fn program_stream_map_wire_len(data: &[u8]) -> Result<usize> {
     need_in(data, PREFIX_LEN, "program_stream_map prefix")?;
-    let map_length =
-        u16::from_be_bytes([data[MAP_LENGTH_OFFSET], data[MAP_LENGTH_OFFSET + 1]]) as usize;
+    let map_length = usize::from(read_u16_at(data, MAP_LENGTH_OFFSET));
     Ok(PREFIX_LEN + map_length)
 }
 

@@ -159,17 +159,13 @@ const U24_LOW_BYTE: usize = 2;
 /// Byte shifts of a multi-byte field's second byte.
 const BYTE_SHIFT: u32 = 8;
 
-/// Byte positions of the Extended Timestamp field, relative to the message
-/// header's start.
-const EXTENDED_TIMESTAMP_BYTES: [usize; EXTENDED_TIMESTAMP_LEN] = [0, 1, 2, 3];
-
 /// Offset of `message type id` in a Type 0/1 message header: right after the
 /// two u24 fields (RTMP §5.3.1.2).
 const MESSAGE_TYPE_ID_OFFSET: usize = 2 * U24_LEN;
 
-/// Byte positions of `message stream id`, the Type 0 header's trailing
-/// little-endian u32.
-const MESSAGE_STREAM_ID_BYTES: [usize; 4] = [7, 8, 9, 10];
+/// Byte offset of `message stream id`, the Type 0 header's trailing
+/// little-endian u32 (RTMP §5.3.1.2).
+const MESSAGE_STREAM_ID_OFFSET: usize = 7;
 
 /// Factor giving the not-yet-parsed `pending` budget its backstop.
 const PENDING_BUDGET_FACTOR: usize = 2;
@@ -181,9 +177,10 @@ const TYPE0_CAPACITY_SLACK: usize = 16;
 /// Read a 3-byte big-endian unsigned integer. `b` must have at least
 /// [`U24_LEN`] bytes (caller-checked).
 fn read_u24_be(b: &[u8]) -> u32 {
-    (u32::from(b[0]) << U24_SHIFT_HIGH)
-        | (u32::from(b[1]) << U24_SHIFT_LOW)
-        | u32::from(b[U24_LOW_BYTE])
+    const FIELD_LEN: usize = 3;
+    let mut field = [0_u8; core::mem::size_of::<u32>()];
+    field[core::mem::size_of::<u32>() - FIELD_LEN..].copy_from_slice(&b[..FIELD_LEN]);
+    u32::from_be_bytes(field)
 }
 
 /// Write `v` as a big-endian 24-bit field into `buf`. `buf` must have at
@@ -459,9 +456,8 @@ impl MessageHeader {
                 let raw_timestamp = read_u24_be(&bytes[0..U24_LEN]);
                 let message_length = read_u24_be(&bytes[U24_LEN..MESSAGE_TYPE_ID_OFFSET]);
                 let message_type_id = MessageTypeId::from_u8(bytes[MESSAGE_TYPE_ID_OFFSET]);
-                let message_stream_id = MessageStreamId::new(u32::from_le_bytes(
-                    MESSAGE_STREAM_ID_BYTES.map(|i| bytes[i]),
-                ));
+                let message_stream_id =
+                    MessageStreamId::new(crate::le_u32(bytes, MESSAGE_STREAM_ID_OFFSET));
 
                 let (timestamp, consumed) = resolve_extended(raw_timestamp, bytes, TYPE0_LEN)?;
 
@@ -512,7 +508,7 @@ fn resolve_extended(raw: u32, bytes: &[u8], fixed_len: usize) -> Result<(Timesta
     if raw == EXTENDED_TIMESTAMP_MARKER {
         let need = fixed_len + EXTENDED_TIMESTAMP_LEN;
         need_in(bytes, need, "extended timestamp")?;
-        let ext = u32::from_be_bytes(EXTENDED_TIMESTAMP_BYTES.map(|i| bytes[fixed_len + i]));
+        let ext = crate::be_u32(bytes, fixed_len);
         Ok((Timestamp::from_millis(ext), need))
     } else {
         Ok((Timestamp::from_millis(raw), fixed_len))

@@ -17,17 +17,14 @@
 //! generated, so regeneration cannot regenerate its own gate — evaluates every
 //! circuit over its *entire* input domain and compares against the table it was
 //! generated from. A generator bug cannot ship.
-use super::{BITS_PER_BYTE, Word};
+use super::{PQZYX_BITS, Word};
+use crate::stream::NIBBLE_BITS;
 
 /// Bits in a `STREAM_SBOX` row index — each row has 32 entries.
 const SBOX_INDEX_BITS: usize = 5;
 
 /// Bits in an output pair — every S-box and every keystream round yields two.
 const PAIR_BITS: usize = 2;
-
-/// Bits in a nibble — the D nibble indexes `STREAM_OUT` and `stream_b_sel`
-/// yields one.
-const NIBBLE_BITS: usize = 4;
 
 /// Index bits consumed by the `STREAM_CDEF` table.
 const CDEF_INDEX_BITS: usize = 10;
@@ -37,9 +34,6 @@ const CDEF_OUT_BITS_COUNT: usize = 9;
 
 /// Bits in each of the stream cipher's two shift registers.
 const STREAM_REGISTER_BITS: usize = 40;
-
-/// Live bits of the `pqzyx` word produced by [`stream_sboxes`].
-const PQZYX_BITS: usize = 14;
 
 /// A-register bit positions selected by each stream S-box's index mask.
 const A_TAP_5: usize = 5;
@@ -108,7 +102,7 @@ const D_TAP_3: usize = 3;
 ///
 /// Synthesis: ROBDD, order [0, 1, 5, 7, 4, 2, 3, 6] — 350 gates.
 #[inline]
-pub(super) fn block_sbox(x: &[Word; BITS_PER_BYTE]) -> [Word; BITS_PER_BYTE] {
+pub(super) fn block_sbox(x: &[Word; u8::BITS as usize]) -> [Word; u8::BITS as usize] {
     let [x0, x1, x2, x3, x4, x5, x6, x7] = *x;
     let t0 = x3 ^ x2;
     let t1 = !x6 ^ ((!x6 ^ !x3) & x2);
@@ -687,7 +681,7 @@ pub(super) fn stream_cdef(x: &[Word; CDEF_INDEX_BITS]) -> [Word; CDEF_OUT_BITS_C
 /// `PERM` is GF(2)-linear and maps each input bit to exactly one output
 /// bit, so bitsliced it is free: `PERM[s]` bit `PERM_BIT[k]` is `s` bit
 /// `k`.
-pub(super) const PERM_BIT: [usize; BITS_PER_BYTE] = [1, 7, 5, 4, 2, 6, 0, 3];
+pub(super) const PERM_BIT: [usize; u8::BITS as usize] = [1, 7, 5, 4, 2, 6, 0, 3];
 
 /// `pqzyx` bit positions written by [`stream_sboxes`], in the order it
 /// returns them.

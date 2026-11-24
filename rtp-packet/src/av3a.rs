@@ -78,8 +78,7 @@ const FRAME_CRC_BITS: u32 = 8;
 /// anc_data_index`.
 const AATF_FIXED_PREFIX_BITS: u32 = SYNCWORD_BITS + AUDIO_CODEC_ID_BITS + ANC_DATA_INDEX_BITS;
 /// Bits per octet (the `byte_alignment()` granularity).
-const BITS_PER_BYTE: u32 = 8;
-const BITS_PER_BYTE_USIZE: usize = BITS_PER_BYTE as usize;
+const BITS_PER_BYTE: usize = u8::BITS as usize;
 /// `coding_profile` selecting the HOA (higher-order ambisonics) content.
 const HOA_CODING_PROFILE: u8 = 2;
 /// `coding_profile` values that carry no typed content (reserved range).
@@ -408,14 +407,13 @@ impl<'a> AatfFrame<'a> {
                 ));
             }
         };
-        let pad_bits =
-            (BITS_PER_BYTE_USIZE - r.bits_read() % BITS_PER_BYTE_USIZE) % BITS_PER_BYTE_USIZE;
+        let pad_bits = (BITS_PER_BYTE - r.bits_read() % BITS_PER_BYTE) % BITS_PER_BYTE;
         let alignment = if pad_bits == 0 {
             0
         } else {
             rd(&mut r, pad_bits as u32, w)? as u8
         };
-        let consumed = r.bits_read() / BITS_PER_BYTE_USIZE;
+        let consumed = r.bits_read() / BITS_PER_BYTE;
         Ok(Self {
             anc_data_index,
             header,
@@ -484,7 +482,7 @@ impl<'a> AatfFrame<'a> {
     /// Serialized length: the byte-aligned header plus [`AatfFrame::body`].
     #[must_use]
     pub fn serialized_len(&self) -> usize {
-        self.header_bits().div_ceil(BITS_PER_BYTE_USIZE) + self.body.len()
+        self.header_bits().div_ceil(BITS_PER_BYTE) + self.body.len()
     }
 
     /// Serialize the frame (header bits, alignment padding, body).
@@ -496,7 +494,7 @@ impl<'a> AatfFrame<'a> {
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let hdr_bytes = self.header_bits().div_ceil(BITS_PER_BYTE_USIZE);
+        let hdr_bytes = self.header_bits().div_ceil(BITS_PER_BYTE);
         buf[..hdr_bytes].fill(0);
         {
             let mut w = BitWriter::new(&mut buf[..hdr_bytes]);
@@ -699,7 +697,7 @@ impl<'a> AatfFrame<'a> {
                     )?;
                 }
             }
-            let pad = hdr_bytes * BITS_PER_BYTE_USIZE - self.header_bits();
+            let pad = hdr_bytes * BITS_PER_BYTE - self.header_bits();
             if pad > 0 {
                 put(u64::from(self.alignment), pad as u32, "byte_alignment")?;
             }

@@ -22,6 +22,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::{ReservedOnes, ReservedZero};
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
@@ -338,8 +339,7 @@ impl<'a> Parse<'a> for ServiceListAck {
             objects::parse_apdu_header(bytes, tag::SERVICE_LIST_ACK, "ServiceListAck")?;
         need_in(body, SERVICE_LIST_ACK_PREFIX, "ServiceListAck")?;
         let version_number = body[SERVICE_LIST_VERSION_OFFSET];
-        let count = u16::from_be_bytes([body[SERVICE_COUNT_OFFSET], body[SERVICE_COUNT_OFFSET + 1]])
-            as usize;
+        let count = be_u16(body, SERVICE_COUNT_OFFSET) as usize;
         let list = &body[SERVICE_LIST_ACK_PREFIX..];
         if list.len() < count * SERVICE_REF_LEN {
             return Err(Error::LengthMismatch(
@@ -354,11 +354,8 @@ impl<'a> Parse<'a> for ServiceListAck {
         let mut services = Vec::with_capacity(count);
         for chunk in list[..count * SERVICE_REF_LEN].chunks_exact(SERVICE_REF_LEN) {
             services.push(ServiceReference {
-                original_network_id: u16::from_be_bytes([chunk[0], chunk[1]]),
-                service_id: u16::from_be_bytes([
-                    chunk[SERVICE_REF_SERVICE_ID_OFFSET],
-                    chunk[SERVICE_REF_SERVICE_ID_OFFSET + 1],
-                ]),
+                original_network_id: be_u16(chunk, 0),
+                service_id: be_u16(chunk, SERVICE_REF_SERVICE_ID_OFFSET),
             });
         }
         Ok(Self {
@@ -413,11 +410,8 @@ impl<'a> Parse<'a> for ServiceDescReq {
         Ok(Self {
             length_form,
             service: ServiceReference {
-                original_network_id: u16::from_be_bytes([body[0], body[1]]),
-                service_id: u16::from_be_bytes([
-                    body[SERVICE_REF_SERVICE_ID_OFFSET],
-                    body[SERVICE_REF_SERVICE_ID_OFFSET + 1],
-                ]),
+                original_network_id: be_u16(body, 0),
+                service_id: be_u16(body, SERVICE_REF_SERVICE_ID_OFFSET),
             },
         })
     }
@@ -477,11 +471,8 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
         Ok(Self {
             length_form,
             service: ServiceReference {
-                original_network_id: u16::from_be_bytes([body[0], body[1]]),
-                service_id: u16::from_be_bytes([
-                    body[SERVICE_REF_SERVICE_ID_OFFSET],
-                    body[SERVICE_REF_SERVICE_ID_OFFSET + 1],
-                ]),
+                original_network_id: be_u16(body, 0),
+                service_id: be_u16(body, SERVICE_REF_SERVICE_ID_OFFSET),
             },
             eit_schedule_flag: (flags & EIT_SCHEDULE_FLAG_MASK) != 0,
             eit_present_following_flag: (flags & EIT_PRESENT_FOLLOWING_FLAG_MASK) != 0,
@@ -550,11 +541,8 @@ impl<'a> Parse<'a> for GetServiceReq {
             need_in(body, SERVICE_REF_LEN, "GetServiceReq")?;
             objects::reject_trailing_body(body, SERVICE_REF_LEN, "GetServiceReq")?;
             Some(ServiceReference {
-                original_network_id: u16::from_be_bytes([body[0], body[1]]),
-                service_id: u16::from_be_bytes([
-                    body[SERVICE_REF_SERVICE_ID_OFFSET],
-                    body[SERVICE_REF_SERVICE_ID_OFFSET + 1],
-                ]),
+                original_network_id: be_u16(body, 0),
+                service_id: be_u16(body, SERVICE_REF_SERVICE_ID_OFFSET),
             })
         };
         Ok(Self {
@@ -612,19 +600,13 @@ impl<'a> Parse<'a> for GetServiceAck {
         Ok(Self {
             length_form,
             service: ServiceReference {
-                original_network_id: u16::from_be_bytes([body[0], body[1]]),
-                service_id: u16::from_be_bytes([
-                    body[SERVICE_REF_SERVICE_ID_OFFSET],
-                    body[SERVICE_REF_SERVICE_ID_OFFSET + 1],
-                ]),
+                original_network_id: be_u16(body, 0),
+                service_id: be_u16(body, SERVICE_REF_SERVICE_ID_OFFSET),
             },
             service_terminated: (flags & SERVICE_TERMINATED_MASK) != 0,
             service_not_available: (flags & SERVICE_NOT_AVAILABLE_MASK) != 0,
             ca_service_flag: (flags & CA_SERVICE_FLAG_MASK) != 0,
-            actual_service: u16::from_be_bytes([
-                body[GET_ACK_ACTUAL_SERVICE_OFFSET],
-                body[GET_ACK_ACTUAL_SERVICE_OFFSET + 1],
-            ]),
+            actual_service: be_u16(body, GET_ACK_ACTUAL_SERVICE_OFFSET),
             reserved: ReservedZero::from_bits(u64::from(flags >> GET_SERVICE_RESERVED_SHIFT)),
         })
     }

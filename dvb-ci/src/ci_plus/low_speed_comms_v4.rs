@@ -36,6 +36,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -246,7 +247,7 @@ const INPUT_DELIVERY_PID_PACK_SHIFT: u32 = 13;
 const PORT_LEN: usize = core::mem::size_of::<u16>();
 
 /// Offsets within a `comms_info_reply` body.
-const LTS_ID_OFFSET: usize = 0;
+const INFO_REPLY_LTS_ID_OFFSET: usize = 0;
 const STATUS_OFFSET: usize = 1;
 const SOURCE_IP_OFFSET: usize = 2;
 const SOURCE_PORT_OFFSET: usize = SOURCE_IP_OFFSET + IP_ADDR_LEN;
@@ -268,17 +269,13 @@ impl<'a> Parse<'a> for CommsInfoReply {
             objects::parse_apdu_header(bytes, tag::COMMS_INFO_REPLY, "comms_info_reply")?;
         need_in(body, INFO_REPLY_BODY, "comms_info_reply")?;
         crate::objects::reject_trailing_body(body, INFO_REPLY_BODY, "comms_info_reply")?;
-        let lts_id = body[LTS_ID_OFFSET];
+        let lts_id = body[INFO_REPLY_LTS_ID_OFFSET];
         let status = body[STATUS_OFFSET] & STATUS_BIT != 0;
         let mut source_ip_address = [0u8; IP_ADDR_LEN];
         source_ip_address.copy_from_slice(&body[SOURCE_IP_OFFSET..SOURCE_PORT_OFFSET]);
-        let source_port =
-            u16::from_be_bytes([body[SOURCE_PORT_OFFSET], body[SOURCE_PORT_OFFSET + 1]]);
+        let source_port = be_u16(body, SOURCE_PORT_OFFSET);
         let input_delivery_pid = Pid::from_wire_masked(
-            u16::from_be_bytes([
-                body[INPUT_DELIVERY_PID_OFFSET],
-                body[INPUT_DELIVERY_PID_OFFSET + 1],
-            ]) & INPUT_DELIVERY_PID_MASK,
+            be_u16(body, INPUT_DELIVERY_PID_OFFSET) & INPUT_DELIVERY_PID_MASK,
         );
         Ok(Self {
             length_form,
@@ -308,7 +305,7 @@ impl Serialize for CommsInfoReply {
             self.length_form,
             buf,
         )?;
-        buf[pos + LTS_ID_OFFSET] = self.lts_id;
+        buf[pos + INFO_REPLY_LTS_ID_OFFSET] = self.lts_id;
         // reserved(7) + status(1).
         buf[pos + STATUS_OFFSET] =
             ((self.reserved_status.get() << STATUS_RESERVED_SHIFT) as u8) | u8::from(self.status);
@@ -722,8 +719,7 @@ impl MulticastDescriptor {
         need_in(data, MULTICAST_FIXED, "multicast_descriptor")?;
         let ip_protocol_version = IpProtocolVersion::from_u8(data[IP_PROTOCOL_VERSION_OFFSET]);
         let ip_address = read_addr(data, 1);
-        let multicast_port =
-            u16::from_be_bytes([data[MULTICAST_PORT_OFFSET], data[MULTICAST_PORT_OFFSET + 1]]);
+        let multicast_port = be_u16(data, MULTICAST_PORT_OFFSET);
         let include_sources = data[MULTICAST_FLAGS_OFFSET] & INCLUDE_SOURCES_BIT != 0;
         let n = data[MULTICAST_COUNT_OFFSET] as usize;
         let mut pos = MULTICAST_FIXED;
