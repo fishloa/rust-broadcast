@@ -1,2 +1,3 @@
 transmux/src/annexb.rs:pub const NAL_LENGTH_SIZE_MINUS_ONE: u8 = (NAL_LENGTH_SIZE - 1) as u8; # public API naming the ISO/IEC 14496-15 §5.3.3.1.3 field lengthSizeMinusOne; renaming it is a breaking API change
 transmux/src/dovi.rs:pub const DOVI_RESERVED_ZERO: [u8; DOVI_RESERVED_LEN] = [0; DOVI_RESERVED_LEN]; # public API constant naming the spec's all-reserved-bits-zero value, not a magic number; renaming it is a breaking API change
+transmux/src/init_segment.rs:const ZERO_WIDTH_PREALLOC: usize = 1024; # names zero-width entries, not the number; referenced by test code
