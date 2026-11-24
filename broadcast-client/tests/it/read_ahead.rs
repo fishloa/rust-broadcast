@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use broadcast_client::{
-    Action, BufferEvent, Config, ConnId, Error, Event, PauseReason, Session, Status,
+    Action, BufferEvent, Config, ConnId, Error, Event, PauseReason, ReadAhead, Session, Status,
 };
 use broadcast_common::clock33::{Clock27, PCR_HZ};
 use broadcast_common::stage::Timestamp;
@@ -39,6 +39,21 @@ fn open(config: Config) -> Session {
         ts(0),
     )
     .unwrap()
+}
+
+fn limited(read_ahead: ReadAhead) -> Config {
+    let mut config = Config::default();
+    config.ts_http = config.ts_http.with_read_ahead(read_ahead);
+    config
+}
+
+fn config_error(config: Config) -> Error {
+    Session::open(
+        Url::parse("http://example.invalid/live.ts").unwrap(),
+        config,
+        ts(0),
+    )
+    .unwrap_err()
 }
 
 /// Drive the session to its first request and answer it with a plain TS body.
@@ -182,9 +197,7 @@ fn clock(ticks: u64) -> Clock27 {
 #[test]
 fn a_fast_ts_source_is_paused_at_the_time_cap() {
     let cap = seconds(30);
-    let config = Config::default()
-        .with_read_ahead_max(Some(cap))
-        .with_read_ahead_max_bytes(None);
+    let config = limited(ReadAhead::time(cap));
     let mut session = open(config);
     let conn = connect(&mut session);
     session.on_playback_position(ts(0), Some(clock(0)));
@@ -227,9 +240,7 @@ fn a_fast_ts_source_is_paused_at_the_time_cap() {
 #[test]
 fn the_byte_cap_pauses_when_time_cannot_be_measured() {
     let cap = 300_000usize;
-    let config = Config::default()
-        .with_read_ahead_max(None)
-        .with_read_ahead_max_bytes(Some(cap));
+    let config = limited(ReadAhead::bytes(cap as u64));
     let mut session = open(config);
     let conn = connect(&mut session);
 
@@ -266,9 +277,7 @@ fn the_byte_cap_pauses_when_time_cannot_be_measured() {
 #[test]
 fn reading_resumes_as_playback_advances() {
     let cap = seconds(5);
-    let config = Config::default()
-        .with_read_ahead_max(Some(cap))
-        .with_read_ahead_max_bytes(None);
+    let config = limited(ReadAhead::time(cap));
     let mut session = open(config);
     let conn = connect(&mut session);
     session.on_playback_position(ts(0), Some(clock(0)));
@@ -327,11 +336,9 @@ fn reading_resumes_as_playback_advances() {
 fn a_read_pause_is_not_a_stall() {
     let ts_http = broadcast_client::TsHttpConfig::default()
         .with_stall_notice(milliseconds(100))
-        .with_stall_reconnect(milliseconds(200));
-    let config = Config::default()
-        .with_read_ahead_max(Some(seconds(2)))
-        .with_read_ahead_max_bytes(None);
-    let mut config = config;
+        .with_stall_reconnect(milliseconds(200))
+        .with_read_ahead(ReadAhead::time(seconds(2)));
+    let mut config = Config::default();
     config.ts_http = ts_http;
     let mut session = open(config);
     let conn = connect(&mut session);
@@ -380,7 +387,7 @@ fn a_read_pause_is_not_a_stall() {
 
 #[test]
 fn a_real_time_source_is_never_paused() {
-    let mut session = open(Config::default());
+    let mut session = open(limited(ReadAhead::time(seconds(30))));
     let conn = connect(&mut session);
     session.on_playback_position(ts(0), Some(clock(0)));
 
@@ -409,9 +416,7 @@ fn a_real_time_source_is_never_paused() {
 #[test]
 fn the_byte_cap_holds_while_the_position_advances() {
     let cap = 300_000usize;
-    let config = Config::default()
-        .with_read_ahead_max(None)
-        .with_read_ahead_max_bytes(Some(cap));
+    let config = limited(ReadAhead::bytes(cap as u64));
     let mut session = open(config);
     let conn = connect(&mut session);
     session.on_playback_position(ts(0), Some(clock(0)));
@@ -448,9 +453,7 @@ fn the_byte_cap_holds_while_the_position_advances() {
 #[test]
 fn bytes_behind_the_position_stop_counting() {
     let cap = 300_000usize;
-    let config = Config::default()
-        .with_read_ahead_max(None)
-        .with_read_ahead_max_bytes(Some(cap));
+    let config = limited(ReadAhead::bytes(cap as u64));
     let mut session = open(config);
     let conn = connect(&mut session);
     session.on_playback_position(ts(0), Some(clock(0)));
@@ -512,9 +515,7 @@ fn bytes_behind_the_position_stop_counting() {
 #[test]
 fn a_stream_without_timed_samples_is_still_capped() {
     let cap = 300_000usize;
-    let config = Config::default()
-        .with_read_ahead_max(None)
-        .with_read_ahead_max_bytes(Some(cap));
+    let config = limited(ReadAhead::bytes(cap as u64));
     let mut session = open(config);
     let conn = connect(&mut session);
     session.on_playback_position(ts(0), Some(clock(0)));
@@ -564,12 +565,10 @@ fn sample_sequence(session: &mut Session) -> Vec<(u32, Option<i64>, usize)> {
 
 #[test]
 fn bytes_fed_while_paused_are_kept() {
-    let mut capped = open(Config::default());
+    let mut capped = open(limited(ReadAhead::time(seconds(30))));
     let conn = connect(&mut capped);
     capped.on_playback_position(ts(0), Some(clock(0)));
-    let uncapped = Config::default()
-        .with_read_ahead_max(None)
-        .with_read_ahead_max_bytes(None);
+    let uncapped = limited(ReadAhead::Unlimited);
     let mut open_ended = open(uncapped);
     let other = connect(&mut open_ended);
     open_ended.on_playback_position(ts(0), Some(clock(0)));
@@ -593,9 +592,7 @@ fn bytes_fed_while_paused_are_kept() {
 
 #[test]
 fn a_reconnect_clears_the_pause_without_a_resume_for_the_old_connection() {
-    let config = Config::default()
-        .with_read_ahead_max(Some(seconds(2)))
-        .with_read_ahead_max_bytes(None);
+    let config = limited(ReadAhead::time(seconds(2)));
     let mut session = open(config);
     let conn = connect(&mut session);
     session.on_playback_position(ts(0), Some(clock(0)));
@@ -620,34 +617,32 @@ fn a_reconnect_clears_the_pause_without_a_resume_for_the_old_connection() {
 }
 
 #[test]
-fn zero_caps_are_a_config_error() {
-    let time = Config::default().with_read_ahead_max(Some(Duration::ZERO));
+fn a_limit_with_no_bound_is_a_config_error() {
+    let config = limited(ReadAhead::Limit {
+        time: None,
+        bytes: None,
+    });
     assert_eq!(
-        Session::open(
-            Url::parse("http://example.invalid/live.ts").unwrap(),
-            time,
-            ts(0)
-        )
-        .unwrap_err(),
-        Error::InvalidConfig(broadcast_client::ConfigField::ReadAheadMax)
-    );
-    let bytes = Config::default().with_read_ahead_max_bytes(Some(0));
-    assert_eq!(
-        Session::open(
-            Url::parse("http://example.invalid/live.ts").unwrap(),
-            bytes,
-            ts(0)
-        )
-        .unwrap_err(),
-        Error::InvalidConfig(broadcast_client::ConfigField::ReadAheadMaxBytes)
+        config_error(config),
+        Error::InvalidConfig(broadcast_client::ConfigField::ReadAhead)
     );
 }
 
 #[test]
-fn both_caps_none_disables_the_mechanism() {
-    let config = Config::default()
-        .with_read_ahead_max(None)
-        .with_read_ahead_max_bytes(None);
+fn a_zero_bound_is_a_config_error() {
+    let time = limited(ReadAhead::time(Duration::ZERO));
+    assert_eq!(
+        config_error(time),
+        Error::InvalidConfig(broadcast_client::ConfigField::ReadAhead)
+    );
+    let bytes = limited(ReadAhead::bytes(0));
+    assert_eq!(
+        config_error(bytes),
+        Error::InvalidConfig(broadcast_client::ConfigField::ReadAhead)
+    );
+}
+
+fn assert_never_pauses(config: Config) {
     let mut session = open(config);
     let conn = connect(&mut session);
     session.on_playback_position(ts(0), Some(clock(0)));
@@ -658,6 +653,26 @@ fn both_caps_none_disables_the_mechanism() {
         let actions = pump(&mut session, ts(0));
         paused |= pause_read(&actions, conn) || resume_read(&actions, conn);
     }
-    assert!(!paused, "no cap means no read action");
+    assert!(!paused, "an unbounded session never asks the host to pause");
     assert!(!session.read_paused(conn));
+}
+
+#[test]
+fn unlimited_never_pauses() {
+    assert_never_pauses(limited(ReadAhead::Unlimited));
+}
+
+#[test]
+fn the_default_is_unlimited() {
+    assert_eq!(ReadAhead::default(), ReadAhead::Unlimited);
+    assert_eq!(Config::default().ts_http.read_ahead, ReadAhead::Unlimited);
+    assert_never_pauses(Config::default());
+}
+
+#[test]
+fn large_limits_are_accepted_and_never_pause_a_small_file() {
+    assert_never_pauses(limited(ReadAhead::time_and_bytes(
+        Duration::from_secs(90),
+        128 << 30,
+    )));
 }

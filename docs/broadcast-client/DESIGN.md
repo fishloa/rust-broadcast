@@ -995,7 +995,7 @@ Smooth: PlayReady/PIFF decryption, text and multi-video `StreamIndex`es, `tfrf` 
 A live source arrives at the rate it plays, but a recording served over HTTP arrives at
 network speed: a multi-GB `.ts` would be pulled whole into the session's queues and the
 player's buffer. Memory is bounded by configuration, never by input size, so the TS-over-HTTP
-source carries an explicit read-ahead cap and tells the host when to stop reading.
+source supports an optional caller-set read-ahead limit and tells the host when to stop reading.
 
 ### Measure
 
@@ -1023,19 +1023,24 @@ source carries an explicit read-ahead cap and tells the host when to stop readin
 
 ### Actions
 
-`Action::PauseRead { conn }` is emitted once when either measure crosses its cap; the host stops
-reading that socket and lets TCP flow control hold the server. `Action::ResumeRead { conn }` is
-emitted once when both measures fall under half their caps (hysteresis, so the two do not flap).
+`Action::PauseRead { conn }` is emitted once when either configured bound is reached; the host
+stops reading that socket and lets TCP flow control hold the server. `Action::ResumeRead { conn }`
+is emitted once when both measures fall under half their bounds (hysteresis, so the two do not
+flap).
 `Session::read_paused(conn)` answers the same question. Bytes fed through `Session::on_data`
 while paused are accepted, never dropped, and count toward the measure.
 
 ### Configuration
 
-`Config::read_ahead_max` (default 30 s) and `Config::read_ahead_max_bytes` (default 64 MiB),
-each `None` to disable and both `None` to disable the mechanism; a zero value is a typed
-`InvalidConfig` (`ConfigField::ReadAheadMax` / `ReadAheadMaxBytes`). A host that never reports a
-playback position is still bounded (the measure runs from the first sample), but it must report
-positions for the cap to release again.
+The library chooses no numbers. `TsHttpConfig::with_read_ahead` takes a public [`ReadAhead`]:
+[`ReadAhead::Unlimited`] (the default) never asks the host to pause, so memory is then bounded
+only by the host's own buffering; [`ReadAhead::time`], [`ReadAhead::bytes`] and
+[`ReadAhead::time_and_bytes`] set one or both bounds. The caller may ask for anything (90 s,
+128 GiB, ten minutes): there is no built-in maximum or minimum beyond a non-zero value, and the
+byte bound is a `u64` so a large value is expressible on a 32-bit target. A `Limit` with neither
+bound, or a zero bound, is `Error::InvalidConfig(ConfigField::ReadAhead)`. A host that never
+reports a playback position is still bounded by a set limit (the measure runs from the first
+sample), but it must report positions for the pause to release again.
 
 ### Timers and lifecycle
 

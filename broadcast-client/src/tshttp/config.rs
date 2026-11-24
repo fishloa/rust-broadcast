@@ -4,6 +4,8 @@ use core::time::Duration;
 use broadcast_common::backoff::{BackoffSteps, MAX_FLOOR};
 use broadcast_common::timeouts::Timeouts;
 
+use crate::events::ReadAhead;
+
 /// Session configuration (defaults per DESIGN.md).
 ///
 /// [`Config::validate`] reports an inconsistent configuration;
@@ -28,6 +30,11 @@ pub struct Config {
     /// lasted less than this interval, so a long-lived stream still
     /// reconnects with no delay.
     pub min_reconnect_interval: Duration,
+    /// Optional read-ahead limit: how far media may run ahead of the playback
+    /// position before the session asks the host to pause reading the
+    /// connection. The default is [`ReadAhead::Unlimited`], which never pauses;
+    /// the library chooses no numbers.
+    pub read_ahead: ReadAhead,
     /// Failed attempts in a row, with no media played in between, after which the session gives up
     /// with one fatal `Event::Error` (`ErrorKind::ReconnectAttemptsExhausted`) instead of retrying.
     /// `None` (the default) retries forever, which is what a live stream wants: the backoff bounds
@@ -110,6 +117,14 @@ impl Config {
         self
     }
 
+    /// Set the read-ahead limit ([`ReadAhead`]). `ReadAhead::Unlimited` (the
+    /// default) never asks the host to pause reading.
+    #[must_use]
+    pub fn with_read_ahead(mut self, read_ahead: ReadAhead) -> Self {
+        self.read_ahead = read_ahead;
+        self
+    }
+
     /// Set the give-up ceiling on failed attempts in a row.
     #[must_use]
     pub fn with_max_reconnect_attempts(mut self, max_reconnect_attempts: Option<u32>) -> Self {
@@ -129,6 +144,7 @@ impl Default for Config {
                 cap: DEFAULT_BACKOFF_CAP,
             },
             min_reconnect_interval: DEFAULT_MIN_RECONNECT_INTERVAL,
+            read_ahead: ReadAhead::Unlimited,
             max_reconnect_attempts: None,
         }
     }

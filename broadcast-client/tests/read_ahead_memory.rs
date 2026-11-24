@@ -15,7 +15,7 @@ use std::io::{BufReader, Read};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use broadcast_client::{Action, Config, ConnId, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Event, ReadAhead, Session, Status};
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use url::Url;
@@ -88,19 +88,19 @@ fn capped(mut config: Config) -> Config {
 }
 
 fn time_capped() -> Config {
-    capped(
-        Config::default()
-            .with_read_ahead_max(Some(Duration::from_secs(30)))
-            .with_read_ahead_max_bytes(Some(64 << 20)),
-    )
+    let mut config = Config::default();
+    config.ts_http = config
+        .ts_http
+        .with_read_ahead(ReadAhead::time_and_bytes(Duration::from_secs(30), 64 << 20));
+    capped(config)
 }
 
 fn byte_capped() -> Config {
-    capped(
-        Config::default()
-            .with_read_ahead_max(None)
-            .with_read_ahead_max_bytes(Some(BYTE_CAP)),
-    )
+    let mut config = Config::default();
+    config.ts_http = config
+        .ts_http
+        .with_read_ahead(ReadAhead::bytes(BYTE_CAP as u64));
+    capped(config)
 }
 
 fn play(

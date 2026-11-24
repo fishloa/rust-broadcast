@@ -13,6 +13,7 @@ use broadcast_common::timescale::Timescale;
 use broadcast_common::units::MICROS_PER_SEC;
 
 use crate::buffer::{negative_origin, pts_to_27mhz_from, raw_27mhz};
+use crate::events::ReadAhead;
 
 /// 27 MHz ticks in one microsecond.
 const TICKS_PER_MICRO: u64 = PCR_HZ / MICROS_PER_SEC;
@@ -43,7 +44,7 @@ fn limit_ticks(limit: Duration) -> u64 {
 }
 
 /// The read-ahead measure and its hysteresis state.
-pub(crate) struct ReadAhead {
+pub(crate) struct ReadAheadTracker {
     /// Time cap in 27 MHz ticks; `None` leaves the time measure uncapped.
     max_time: Option<u64>,
     /// Byte cap on bytes still ahead of the playback position.
@@ -69,8 +70,9 @@ pub(crate) struct ReadAhead {
     paused: bool,
 }
 
-impl ReadAhead {
-    pub(crate) fn new(max_time: Option<Duration>, max_bytes: Option<usize>) -> Self {
+impl ReadAheadTracker {
+    pub(crate) fn new(read_ahead: ReadAhead) -> Self {
+        let (max_time, max_bytes) = read_ahead.bounds();
         let slice_ticks = limit_ticks(READ_AHEAD_SLICE);
         let max_slices = match max_time {
             Some(cap) => usize::try_from(limit_ticks(cap) / slice_ticks)
@@ -81,7 +83,7 @@ impl ReadAhead {
         };
         Self {
             max_time: max_time.map(limit_ticks),
-            max_bytes: max_bytes.map(|bytes| bytes as u64),
+            max_bytes,
             slice_ticks,
             max_slices,
             origin: None,

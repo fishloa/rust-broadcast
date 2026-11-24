@@ -99,10 +99,8 @@ pub enum ConfigField {
     MaxQueuedEvents,
     /// `max_queued_bytes` is zero.
     MaxQueuedBytes,
-    /// `read_ahead_max` is zero.
-    ReadAheadMax,
-    /// `read_ahead_max_bytes` is zero.
-    ReadAheadMaxBytes,
+    /// The TS-over-HTTP `read_ahead` limit is empty or a bound is zero.
+    ReadAhead,
     /// `max_recorded_buffer_inputs` is zero.
     MaxRecordedBufferInputs,
     /// `max_manifest_bytes` is zero.
@@ -164,8 +162,7 @@ impl ConfigField {
             Self::UdpReorderWait => "udp.reorder_wait",
             Self::MaxQueuedEvents => "max_queued_events",
             Self::MaxQueuedBytes => "max_queued_bytes",
-            Self::ReadAheadMax => "read_ahead_max",
-            Self::ReadAheadMaxBytes => "read_ahead_max_bytes",
+            Self::ReadAhead => "read_ahead",
             Self::MaxRecordedBufferInputs => "max_recorded_buffer_inputs",
             Self::MaxManifestBytes => "max_manifest_bytes",
             Self::MaxSegmentBytes => "max_segment_bytes",

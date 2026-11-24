@@ -16,7 +16,7 @@ use crate::events::{Action, Config, ErrorKind, Event, SourceKind, Status};
 use crate::headers;
 use crate::playout::{Playout, Source};
 use crate::queue::EventQueue;
-use crate::read_ahead::ReadAhead;
+use crate::read_ahead::ReadAheadTracker;
 use crate::redirect;
 use crate::source::adaptive::Adaptive;
 use crate::source::dash::DashSource;
@@ -108,7 +108,7 @@ pub struct Session {
     hls_joins: crate::source::hls_join::HlsJoins,
     wall: Option<WallClock>,
     payload_bytes: u64,
-    read_ahead: ReadAhead,
+    read_ahead: ReadAheadTracker,
     paused_conn: Option<ConnId>,
     track_timescales: alloc::collections::BTreeMap<TrackId, Timescale>,
 }
@@ -214,7 +214,7 @@ impl Session {
         let buffer_cfg = config.buffer;
         let start_pending_wait = config.start_pending_track_wait;
         let start_pending_hard_cap = config.start_pending_track_hard_cap;
-        let read_ahead = ReadAhead::new(config.read_ahead_max, config.read_ahead_max_bytes);
+        let read_ahead = ReadAheadTracker::new(config.ts_http.read_ahead);
         let jump = JumpDetector::new(config.timeline_jump);
         let event_cap = config.max_queued_events;
         let event_byte_budget = config.max_queued_bytes;

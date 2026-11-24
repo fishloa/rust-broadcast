@@ -92,6 +92,102 @@ impl StreamKind {
 }
 broadcast_common::impl_spec_display!(StreamKind);
 
+/// Read-ahead limit for the TS-over-HTTP source: how far media may run ahead of
+/// the player's reported position before the session asks the host to stop
+/// reading the connection.
+///
+/// The library chooses no numbers: [`Self::Unlimited`] is the default, and a
+/// host that wants a bound sets one with [`Self::time`], [`Self::bytes`] or
+/// [`Self::time_and_bytes`] on the TS-over-HTTP configuration
+/// ([`crate::TsHttpConfig::with_read_ahead`]). `time` measures the latest
+/// delivered presentation time minus the playback position; `bytes` measures
+/// accepted body bytes attributed to delivered samples whose presentation end
+/// is still ahead of that position (100 ms slices, so bytes the player has
+/// passed stop counting). A pause is emitted once either bound is reached and
+/// released once both fall under half of it.
+///
+/// [`Self::Unlimited`] means the session never emits
+/// [`Action::PauseRead`]: memory is then bounded only
+/// by the host's own buffering.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ReadAhead {
+    /// No cap: the session never asks the host to pause reading.
+    #[default]
+    Unlimited,
+    /// Pause reading once media ahead of the playback position reaches either
+    /// bound; at least one must be set.
+    Limit {
+        /// Media-time bound.
+        time: Option<Duration>,
+        /// Accepted-byte bound.
+        bytes: Option<u64>,
+    },
+}
+
+impl ReadAhead {
+    /// A media-time bound only.
+    #[must_use]
+    pub const fn time(time: Duration) -> Self {
+        Self::Limit {
+            time: Some(time),
+            bytes: None,
+        }
+    }
+
+    /// An accepted-byte bound only.
+    #[must_use]
+    pub const fn bytes(bytes: u64) -> Self {
+        Self::Limit {
+            time: None,
+            bytes: Some(bytes),
+        }
+    }
+
+    /// Both bounds; the earlier one pauses.
+    #[must_use]
+    pub const fn time_and_bytes(time: Duration, bytes: u64) -> Self {
+        Self::Limit {
+            time: Some(time),
+            bytes: Some(bytes),
+        }
+    }
+
+    /// Spec label for this limit.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Unlimited => "unlimited",
+            Self::Limit {
+                time: Some(_),
+                bytes: None,
+            } => "time",
+            Self::Limit {
+                time: None,
+                bytes: Some(_),
+            } => "bytes",
+            Self::Limit {
+                time: Some(_),
+                bytes: Some(_),
+            } => "time-and-bytes",
+            Self::Limit {
+                time: None,
+                bytes: None,
+            } => "invalid",
+        }
+    }
+
+    pub(crate) fn bounds(self) -> (Option<Duration>, Option<u64>) {
+        match self {
+            Self::Unlimited => (None, None),
+            Self::Limit { time, bytes } => (time, bytes),
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ReadAhead);
+
 pub use transmux::AvSync;
 
 /// Status values carried by [`Event::Status`].
@@ -1008,7 +1104,7 @@ pub const DEFAULT_MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 /// Default maximum redirects a single request may follow.
 pub const DEFAULT_MAX_REDIRECTS: u32 = 5;
 /// Default maximum accepted HLS media resource body size.
-pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
+pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 1024 * 1024 * 64;
 /// Default per-request timeout for manifests (playlists).
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// Default per-request timeout for HLS media resources.
@@ -1067,15 +1163,6 @@ pub const DEFAULT_START_PENDING_TRACK_HARD_CAP: Duration = Duration::from_secs(4
 pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 /// Default cap on the sample bytes queued for the host, see [`Config::max_queued_bytes`].
 pub const DEFAULT_MAX_QUEUED_BYTES: usize = 256 * 1024 * 1024;
-
-/// Default TS-over-HTTP read-ahead cap in media time, see [`Config::read_ahead_max`]: 30 s
-/// runs a live stream's start lead out twice over while stopping a recording from being
-/// pulled whole at network speed.
-pub const DEFAULT_READ_AHEAD_MAX: Option<Duration> = Some(Duration::from_secs(30));
-/// Default TS-over-HTTP read-ahead cap in accepted bytes, see
-/// [`Config::read_ahead_max_bytes`]: 64 MiB is the time cap at a typical broadcast bitrate,
-/// and it still bounds a source whose timestamps cannot be measured.
-pub const DEFAULT_READ_AHEAD_MAX_BYTES: Option<usize> = Some(64 * 1024 * 1024);
 
 /// Default cap on recorded buffering inputs, see [`Config::max_recorded_buffer_inputs`].
 pub const DEFAULT_MAX_RECORDED_BUFFER_INPUTS: usize = 1_000_000;
@@ -1186,27 +1273,6 @@ pub struct Config {
     /// [`Event::Discontinuity`] exactly as for the event cap. A single sample larger than the whole
     /// budget is dropped as well. Must be non-zero (a zero budget would drop every sample).
     pub max_queued_bytes: usize,
-    /// TS-over-HTTP read-ahead cap in media time: when the latest delivered
-    /// presentation time runs this far past the position reported by
-    /// [`crate::Session::on_playback_position`], the session emits one
-    /// [`Action::PauseRead`] for the live connection and resumes it with one
-    /// [`Action::ResumeRead`] once the lead falls under half the cap. Before the
-    /// first position is known the measure runs from the first delivered sample.
-    /// `None` leaves the time measure uncapped; `None` here and on
-    /// [`Config::read_ahead_max_bytes`] disables the mechanism. Must be non-zero
-    /// when set. Applies to the TS-over-HTTP source only. A host that never
-    /// reports a position is still bounded (the measure runs from the first
-    /// delivered sample) but cannot progress past the cap: it must report
-    /// positions for [`Action::ResumeRead`] to release the pause.
-    pub read_ahead_max: Option<Duration>,
-    /// TS-over-HTTP read-ahead cap in bytes of media still ahead of the playback
-    /// position: accepted bytes are attributed to delivered samples in 100 ms
-    /// presentation slices, and slices the position has passed stop counting. A
-    /// source whose timestamps cannot be measured is still held by this cap;
-    /// bytes fed while reads are paused are accepted and counted, never dropped.
-    /// `None` leaves the byte measure uncapped. Must be non-zero when set.
-    /// Applies to the TS-over-HTTP source only.
-    pub read_ahead_max_bytes: Option<usize>,
     /// Record every call the session makes into its buffering controller so the host can drain
     /// them with [`crate::Session::drain_buffer_inputs`] and replay them offline through a
     /// `buffering_runtime::BufferController` built from [`Config::controller_config`] (see
@@ -1360,22 +1426,6 @@ impl Config {
         self
     }
 
-    /// Set the TS-over-HTTP read-ahead cap in media time
-    /// ([`Config::read_ahead_max`]). `None` disables it.
-    #[must_use]
-    pub fn with_read_ahead_max(mut self, max: Option<Duration>) -> Self {
-        self.read_ahead_max = max;
-        self
-    }
-
-    /// Set the TS-over-HTTP read-ahead cap in accepted bytes
-    /// ([`Config::read_ahead_max_bytes`]). `None` disables it.
-    #[must_use]
-    pub fn with_read_ahead_max_bytes(mut self, max: Option<usize>) -> Self {
-        self.read_ahead_max_bytes = max;
-        self
-    }
-
     /// The exact controller configuration a session opened with this `Config` builds its
     /// buffering controller from: [`Config::buffer`] with the track-silence timeout raised above
     /// the start-pending wait. Build the replay `buffering_runtime::BufferController` from this,
@@ -1398,11 +1448,16 @@ impl Config {
         if self.max_queued_bytes == 0 {
             return invalid(ConfigField::MaxQueuedBytes);
         }
-        if self.read_ahead_max.is_some_and(|max| max.is_zero()) {
-            return invalid(ConfigField::ReadAheadMax);
-        }
-        if self.read_ahead_max_bytes == Some(0) {
-            return invalid(ConfigField::ReadAheadMaxBytes);
+        match self.ts_http.read_ahead {
+            ReadAhead::Unlimited => {}
+            ReadAhead::Limit { time, bytes } => {
+                if (time.is_none() && bytes.is_none())
+                    || time.is_some_and(|time| time.is_zero())
+                    || bytes == Some(0)
+                {
+                    return invalid(ConfigField::ReadAhead);
+                }
+            }
         }
         if self.max_recorded_buffer_inputs == 0 {
             return invalid(ConfigField::MaxRecordedBufferInputs);
@@ -1509,8 +1564,6 @@ impl Default for Config {
             auto_select_audio: true,
             max_queued_events: DEFAULT_MAX_QUEUED_EVENTS,
             max_queued_bytes: DEFAULT_MAX_QUEUED_BYTES,
-            read_ahead_max: DEFAULT_READ_AHEAD_MAX,
-            read_ahead_max_bytes: DEFAULT_READ_AHEAD_MAX_BYTES,
             record_buffer_inputs: false,
             max_recorded_buffer_inputs: DEFAULT_MAX_RECORDED_BUFFER_INPUTS,
             timeline_jump: Some(transmux::TimelineJumpConfig::default()),
@@ -1562,8 +1615,6 @@ impl core::fmt::Debug for Config {
             .field("auto_select_audio", &self.auto_select_audio)
             .field("max_queued_events", &self.max_queued_events)
             .field("max_queued_bytes", &self.max_queued_bytes)
-            .field("read_ahead_max", &self.read_ahead_max)
-            .field("read_ahead_max_bytes", &self.read_ahead_max_bytes)
             .field("record_buffer_inputs", &self.record_buffer_inputs)
             .field(
                 "max_recorded_buffer_inputs",

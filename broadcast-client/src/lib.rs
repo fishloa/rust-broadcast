@@ -31,7 +31,8 @@ pub use dash_runtime::timing::clock::ClockSource;
 pub use error::{ConfigField, Error, TransportError};
 pub use events::{
     AUDIO_TRACK_ID_OFFSET, Action, AvSync, BufferEvent, BufferStats, Config, ErrorKind, Event,
-    MAX_SERVER_REFUSED_REASON_BYTES, PauseReason, ResumeMode, SourceKind, Status, StreamKind,
+    MAX_SERVER_REFUSED_REASON_BYTES, PauseReason, ReadAhead, ResumeMode, SourceKind, Status,
+    StreamKind,
 };
 pub use identity::{ClientIdentity, ClientIdentityScope};
 pub use playout::PlayoutConfig;
