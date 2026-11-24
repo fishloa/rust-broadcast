@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use broadcast_common::timescale::{Timescale, cmp_ticks};
 use broadcast_common::{Package, Unpackage};
 
+#[cfg(feature = "cenc")]
 use crate::box_types::KEY_ID_LEN;
 use crate::dash::DashPackager;
 use crate::flv::FlvDemux;
