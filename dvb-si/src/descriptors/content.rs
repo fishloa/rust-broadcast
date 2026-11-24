@@ -17,6 +17,8 @@ const ENTRY_LEN: usize = 2;
 /// masked at parse *and* serialize so a wider value can never silently
 /// corrupt its neighbour nibble (r03-W2).
 const NIBBLE_MASK: u8 = 0x0F;
+/// Shift between the two 4-bit genre nibbles of the first entry byte.
+const NIBBLE_SHIFT: u8 = 4;
 
 /// Content genre level-1 broad category — EN 300 468 Table 29.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +64,7 @@ impl ContentGenre {
     /// this range are masked with `& 0x0F`.
     #[must_use]
     pub fn from_nibble_1(n1: u8) -> Self {
-        let n1 = n1 & 0x0F;
+        let n1 = n1 & NIBBLE_MASK;
         match n1 {
             0x0 => Self::UndefinedContent,
             0x1 => Self::MovieDrama,
@@ -335,7 +337,7 @@ impl<'a> Parse<'a> for ContentDescriptor {
             "unexpected tag for ContentDescriptor",
         )?;
 
-        if body.len() % 2 != 0 {
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_length must be a multiple of 2",
@@ -346,7 +348,7 @@ impl<'a> Parse<'a> for ContentDescriptor {
 
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(ContentEntry {
-                nibble_1: (chunk[0] >> 4) & NIBBLE_MASK,
+                nibble_1: (chunk[0] >> NIBBLE_SHIFT) & NIBBLE_MASK,
                 nibble_2: chunk[0] & NIBBLE_MASK,
                 user_byte: chunk[1],
             });
@@ -368,8 +370,11 @@ impl Serialize for ContentDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
-            buf[pos] = (broadcast_common::len::fit_mask(entry.nibble_1, NIBBLE_MASK, "nibble_1")?
-                << 4)
+            buf[pos] = (broadcast_common::len::fit_mask(
+                entry.nibble_1,
+                NIBBLE_MASK,
+                "nibble_1",
+            )? << NIBBLE_SHIFT)
                 | broadcast_common::len::fit_mask(entry.nibble_2, NIBBLE_MASK, "nibble_2")?;
             buf[pos + 1] = entry.user_byte;
             pos += ENTRY_LEN;
