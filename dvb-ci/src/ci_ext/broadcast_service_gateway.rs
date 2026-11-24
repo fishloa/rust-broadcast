@@ -359,8 +359,12 @@ impl<'a> BroadcastServiceGatewayApdu<'a> {
     /// objects; any other tag is delegated to the inherited Generic Service
     /// Gateway dispatch.
     pub fn parse(body: &'a [u8]) -> Result<Self> {
-        need_in(body, 3, "broadcast_service_gateway apdu_tag")?;
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
+        need_in(
+            body,
+            crate::objects::APDU_TAG_LEN,
+            "broadcast_service_gateway apdu_tag",
+        )?;
+        let t = ApduTag::from_bytes(body[0], body[1], body[crate::objects::APDU_TAG_LEN - 1]);
         match t {
             tag::EIT_SECTION_REQ => Ok(Self::EitSectionReq(EitSectionReq::parse(body)?)),
             tag::EIT_SECTION_ACK => Ok(Self::EitSectionAck(EitSectionAck::parse(body)?)),

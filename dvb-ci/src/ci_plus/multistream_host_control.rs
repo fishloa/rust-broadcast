@@ -621,8 +621,12 @@ impl<'a> MultistreamHostControlApdu<'a> {
     /// Parse a Multi-stream Host Control APDU, dispatching on the leading
     /// `apdu_tag`. `mode` selects the [`TuneIpReq`] reserved-bit budget.
     pub fn parse_mode(body: &'a [u8], mode: HostControlMode) -> Result<Self> {
-        need_in(body, 3, "multistream_host_control apdu_tag")?;
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
+        need_in(
+            body,
+            crate::objects::APDU_TAG_LEN,
+            "multistream_host_control apdu_tag",
+        )?;
+        let t = ApduTag::from_bytes(body[0], body[1], body[crate::objects::APDU_TAG_LEN - 1]);
         match t {
             tag::TUNE_TRIPLET_REQ => Ok(Self::TuneTripletReq(TuneTripletReq::parse(body)?)),
             tag::TUNE_LCN_REQ => Ok(Self::TuneLcnReq(TuneLcnReq::parse(body)?)),

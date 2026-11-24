@@ -762,8 +762,8 @@ impl SubtitleSegment<'_> {
 impl<'a> Parse<'a> for SubtitleSegment<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "subtitle_segment tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "subtitle_segment tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let (expected, more) = match t {
             tag::SUBTITLE_SEGMENT_MORE => (tag::SUBTITLE_SEGMENT_MORE, true),
             _ => (tag::SUBTITLE_SEGMENT_LAST, false),
@@ -1181,8 +1181,8 @@ impl SubtitleDownload<'_> {
 impl<'a> Parse<'a> for SubtitleDownload<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "subtitle_download tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "subtitle_download tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let (expected, more) = match t {
             tag::SUBTITLE_DOWNLOAD_MORE => (tag::SUBTITLE_DOWNLOAD_MORE, true),
             _ => (tag::SUBTITLE_DOWNLOAD_LAST, false),

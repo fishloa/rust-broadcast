@@ -52,8 +52,8 @@ impl<'a> Text<'a> {
     /// Parse a nested `TEXT()` component at the front of `bytes`, returning the
     /// object and the number of bytes it consumed (tag + length + chars).
     pub(crate) fn parse_component(bytes: &'a [u8]) -> Result<(Self, usize)> {
-        need_in(bytes, 3, "text component tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "text component tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let more = match t {
             tag::TEXT_LAST => false,
             tag::TEXT_MORE => true,
@@ -66,7 +66,7 @@ impl<'a> Text<'a> {
             }
         };
         let (len_value, len_hdr, length_form) = length::decode_form(&bytes[3..])?;
-        let body_start = 3 + len_hdr;
+        let body_start = crate::objects::LENGTH_FIELD_OFFSET + len_hdr;
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
             return Err(Error::LengthMismatch(
@@ -478,8 +478,8 @@ impl<'a> Menu<'a> {
 
     /// Parse a `list()` object (Tables 51) from a complete APDU.
     pub fn parse_list(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "list tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "list tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let expected = if t == tag::LIST_MORE {
             tag::LIST_MORE
         } else {
@@ -503,8 +503,8 @@ impl<'a> Menu<'a> {
 impl<'a> Parse<'a> for Menu<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "menu tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "menu tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let expected = if t == tag::MENU_MORE {
             tag::MENU_MORE
         } else {

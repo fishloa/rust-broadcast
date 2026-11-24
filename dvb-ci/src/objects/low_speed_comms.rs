@@ -145,8 +145,12 @@ impl<'a> ConnectionDescriptor<'a> {
     /// Parse a nested `connection_descriptor()` at the front of `bytes`, returning
     /// the object and how many bytes it consumed (tag + length + body).
     pub(crate) fn parse_component(bytes: &'a [u8]) -> Result<(Self, usize)> {
-        need_in(bytes, 3, "connection_descriptor tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(
+            bytes,
+            crate::objects::APDU_TAG_LEN,
+            "connection_descriptor tag",
+        )?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         if t != tag::CONNECTION_DESCRIPTOR {
             return Err(Error::UnexpectedApduTag {
                 got: t.as_u24(),
@@ -155,7 +159,7 @@ impl<'a> ConnectionDescriptor<'a> {
             });
         }
         let (len_value, len_hdr, length_form) = length::decode_form(&bytes[3..])?;
-        let body_start = 3 + len_hdr;
+        let body_start = crate::objects::LENGTH_FIELD_OFFSET + len_hdr;
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
             return Err(Error::LengthMismatch(
@@ -593,8 +597,8 @@ impl CommsSend<'_> {
 impl<'a> Parse<'a> for CommsSend<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "comms_send tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "comms_send tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let (expected, more) = match t {
             tag::COMMS_SEND_MORE => (tag::COMMS_SEND_MORE, true),
             _ => (tag::COMMS_SEND_LAST, false),
@@ -674,8 +678,8 @@ impl CommsRcv<'_> {
 impl<'a> Parse<'a> for CommsRcv<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "comms_rcv tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "comms_rcv tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let (expected, more) = match t {
             tag::COMMS_RCV_MORE => (tag::COMMS_RCV_MORE, true),
             _ => (tag::COMMS_RCV_LAST, false),
