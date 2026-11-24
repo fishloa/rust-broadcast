@@ -43,6 +43,7 @@ use crate::aac_asc::{ChannelConfiguration, SamplingFrequencyIndex};
 use crate::annexb::iter_annexb_nals;
 use crate::error::{Error as CrateError, Result as CrateResult};
 use crate::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
+use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
 use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};

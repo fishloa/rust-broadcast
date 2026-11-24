@@ -10,8 +10,9 @@
 
 use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
 use transmux::TrackFragmentRunBox;
-use transmux::init_segment::protect_init_segment;
-use transmux::movie_fragment::{FragmentProtection, MovieFragmentBox, protect_media_segment};
+use transmux::cenc_segment::protect_init_segment;
+use transmux::fragment_build::{FragmentProtection, protect_media_segment};
+use transmux::movie_fragment::MovieFragmentBox;
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, KeyMap, Media,
     Sample, SubsamplePolicy, Track, TrackId, TrackSpec, TsDemux,

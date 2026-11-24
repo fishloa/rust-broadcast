@@ -13,6 +13,7 @@ use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
 use mpeg_ts::pid::Pid;
 use transmux::annexb::iter_annexb_nals;
+use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
 use transmux::{AVCDecoderConfigurationRecord, AvcSps, AvcSpsInfo, HevcNalUnit, HevcSpsInfo};
 
 // ---- Helpers -----------------------------------------------------------------

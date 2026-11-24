@@ -38,17 +38,18 @@ use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
+use crate::codec_config_ext::VvcRecordCodecInfo;
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 
 use crate::ac4::Ac4SpecificBox;
+use crate::box_support::OpaqueBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, parse_box};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;
 use crate::init_segment::{
-    MovieBox, OpaqueBox, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox,
-    sampling_rate_override,
+    MovieBox, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox, sampling_rate_override,
 };
 use crate::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC,

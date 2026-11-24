@@ -13,11 +13,11 @@
 //! All boxes are FullBoxes. Lengths/counts are computed from fields
 //! (no `self.raw`).
 
+use crate::box_support::{bounded_entry_count, flat_table_len, serialize_flat_table};
 use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_MASK,
 };
 use crate::error::{Error, Result};
-use crate::init_segment::{bounded_entry_count, flat_table_len, serialize_flat_table};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};

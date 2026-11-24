@@ -505,7 +505,7 @@ pub struct Mp4vSampleEntry {
     pub visual: VisualSampleEntryFields,
     /// Trailing child boxes (the `esds` first, then any `pasp`/`fiel`/`btrt`),
     /// each preserved verbatim (box header + body) for byte-exact round-trip.
-    pub config_boxes: Vec<crate::init_segment::OpaqueBox>,
+    pub config_boxes: Vec<crate::box_support::OpaqueBox>,
 }
 
 impl Mp4vSampleEntry {
@@ -594,10 +594,10 @@ fn capture_extra_boxes(region: &[u8], skip: &[&[u8; BOX_TYPE_SIZE]]) -> Vec<Opaq
 }
 
 /// Split a sample entry's trailing child-box region into verbatim
-/// [`init_segment::OpaqueBox`](crate::init_segment::OpaqueBox) entries (each
+/// [`init_segment::OpaqueBox`](crate::box_support::OpaqueBox) entries (each
 /// carrying the box body after its 8-byte header). Stops at the first malformed
 /// length so a truncated tail does not lose earlier boxes.
-fn parse_trailing_boxes(region: &[u8]) -> Vec<crate::init_segment::OpaqueBox> {
+fn parse_trailing_boxes(region: &[u8]) -> Vec<crate::box_support::OpaqueBox> {
     let mut out = Vec::new();
     let mut off = 0usize;
     while off + BOX_HEADER_MIN_SIZE <= region.len() {
@@ -611,7 +611,7 @@ fn parse_trailing_boxes(region: &[u8]) -> Vec<crate::init_segment::OpaqueBox> {
         let mut bt = [0u8; BOX_TYPE_SIZE];
         bt.copy_from_slice(&region[off + BOX_TYPE_OFFSET..off + BOX_HEADER_MIN_SIZE]);
         let mut child =
-            crate::init_segment::OpaqueBox::new(bt, region[off + hdr..off + sz].to_vec());
+            crate::box_support::OpaqueBox::new(bt, region[off + hdr..off + sz].to_vec());
         // Keep the `size = 1` + `largesize` form so a parse -> serialize trip
         // re-emits the header it read (§4.2).
         child.largesize = hdr != BOX_HEADER_MIN_SIZE;

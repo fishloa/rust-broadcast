@@ -52,8 +52,8 @@
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
 //!   ([`CencDecryptor`]) + encrypt ([`CencEncryptor`], which populates
 //!   [`Track::encryption`] for the muxer's `sinf`/`senc`/`saio`/`saiz` box
-//!   emission — [`init_segment::protect_init_segment`] /
-//!   [`movie_fragment::protect_media_segment`]); DRM signalling driven off
+//!   emission — [`cenc_segment::protect_init_segment`] /
+//!   [`fragment_build::protect_media_segment`]); DRM signalling driven off
 //!   that same `Track::encryption` — [`DashPackager`] auto-derives the
 //!   generic-CENC `ContentProtection` (plus caller-supplied per-DRM-system
 //!   `cenc:pssh`), [`broadcast_hls::cenc_ext_x_key`] renders the HLS
@@ -94,7 +94,7 @@
 //! alongside it.
 //!
 //! Lower-level entry points remain: [`build_init_segment`]/[`build_media_segment`]
-//! (batch CMAF), [`AvcSps::decode`] + [`AvcSps::rfc6381`] (codec metadata). See the
+//! (batch CMAF), [`nalu_ext::AvcSpsCodecInfo`] (codec metadata). See the
 //! crate README for the full **feature matrix** and the `examples/` directory for
 //! runnable end-to-end walkthroughs.
 //!
@@ -150,6 +150,7 @@ struct ReadmeDoctests;
 
 pub mod aac_asc;
 pub mod ac3;
+pub mod ac3_syncframe;
 pub mod ac4;
 pub mod annexb;
 pub mod au;
@@ -161,6 +162,7 @@ pub mod avs2;
 pub mod avs3;
 pub mod avs3_audio;
 pub mod bitreader;
+pub mod box_support;
 pub mod box_types;
 pub mod caption_detect;
 pub mod cenc;
@@ -170,23 +172,29 @@ pub(crate) mod cenc_crypto;
 pub mod cenc_decrypt;
 #[cfg(feature = "cenc")]
 pub mod cenc_encrypt;
+pub mod cenc_segment;
 #[cfg(feature = "cli")]
 pub mod cli;
+pub mod codec_config_ext;
 pub mod container;
 #[cfg(feature = "std")]
 pub mod dash;
 pub(crate) mod display_track;
 pub mod dovi;
+pub mod dovi_descriptor;
 pub mod drm;
 pub mod dts;
+pub mod dts_core;
 pub mod error;
 pub mod flac;
 pub mod flv;
 pub mod flv_stream;
 pub mod frag_offsets;
+pub mod fragment_build;
 pub mod h262;
 pub mod hdr;
 pub mod hdr10plus;
+pub mod hdr_boxes;
 pub mod hevc_config;
 pub mod init_segment;
 pub mod interlace;
@@ -196,6 +204,7 @@ pub mod live_join;
 pub mod ll_dash;
 pub mod ll_hls;
 pub mod media;
+pub mod mhas;
 pub mod mkv_mux;
 pub mod movie_fragment;
 pub mod mp4esds;
@@ -203,6 +212,7 @@ pub mod mpeg2_display;
 pub mod mpeg_legacy;
 pub mod mpegh;
 pub mod nal;
+pub mod nalu_ext;
 pub mod nalu_types;
 pub mod opus;
 pub mod pipeline;
@@ -271,7 +281,8 @@ pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
     HeAacSignaling, SamplingFrequencyIndex, build_adts_header, parse_adts_header,
 };
-pub use ac3::{Ac3SpecificBox, Ac3SyncframeInfo, Ec3SpecificBox, Ec3Substream, Ec3SyncframeInfo};
+pub use ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream};
+pub use ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 pub use ac4::{AC4_FOURCC, Ac4SpecificBox, DAC4_FOURCC};
 pub use annexb::{
     NAL_LENGTH_SIZE, annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
@@ -286,6 +297,7 @@ pub use avs3::{
     LAvsConfigurationBox, LibraryDependencyIdc, TemporalLayerEntry, VisualLrapEntry,
 };
 pub use avs3_audio::{AV3A_FOURCC, Ca3SpecificBox, DCA3_FOURCC};
+pub use box_support::OpaqueBox;
 pub use box_types::{BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader, box_iter, parse_box};
 pub use broadcast_common::klv::KlvItem;
 pub use caption_detect::{CaptionDetector, DetectedCaption, declared_caption_services};
@@ -333,10 +345,9 @@ pub use init_segment::{
     DataEntryImdaBox, DataEntrySeqNumImdaBox, DataEntryUrlBox, DataEntryUrnBox, DataInformationBox,
     DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry, HandlerBox,
     MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox,
-    MovieHeaderBox, Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox,
-    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox,
-    StblChild, StscEntry, SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox,
-    VideoMediaHeaderBox,
+    MovieHeaderBox, Mp4aSampleEntry, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant,
+    SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry,
+    SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use interlace::{
     PicStruct, PictureFacts, SourceScanType, VideoScan, video_picture_facts, video_scan,
@@ -455,11 +466,10 @@ pub use timeline::{
 // Note: `broadcast_smooth::StreamType` (the Smooth `StreamIndex@Type`) is not
 // re-exported at the crate root — it would collide with `mp4esds::StreamType`
 // (an unrelated ES descriptor field); reach it via `broadcast_smooth`.
-pub use dovi::{
-    DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord, DoviSampleEntryKind,
-    DoviVideoStreamDescriptor,
-};
-pub use hdr::{ChromaticityXy, ContentLightLevel, HdrStaticMetadata, MasteringDisplayColourVolume};
+pub use dovi::{DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord, DoviSampleEntryKind};
+pub use dovi_descriptor::DoviVideoStreamDescriptor;
+pub use hdr::HdrStaticMetadata;
+pub use hdr_boxes::{ChromaticityXy, ContentLightLevel, MasteringDisplayColourVolume};
 pub use hdr10plus::{
     AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
     Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,

@@ -83,6 +83,7 @@ use mpeg_ts::ts::{
 
 use crate::aac_asc::{ADTS_HEADER_SIZE, AudioSpecificConfig};
 use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals, length_prefixed_to_annexb};
+use crate::codec_config_ext::EsdsBoxCodecInfo;
 use crate::error::{Error, Result};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};

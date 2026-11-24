@@ -11,8 +11,8 @@
 use broadcast_common::{Encrypt, Package, Unpackage};
 use std::path::PathBuf;
 use std::process::Command;
-use transmux::init_segment::protect_init_segment;
-use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
+use transmux::cenc_segment::protect_init_segment;
+use transmux::fragment_build::{FragmentProtection, protect_media_segment};
 use transmux::{
     CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
     SubsamplePolicy, TrackEncryption,

@@ -41,8 +41,8 @@ use std::process::Command;
 
 use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
 use bytes::Bytes;
-use transmux::init_segment::protect_init_segment;
-use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
+use transmux::cenc_segment::protect_init_segment;
+use transmux::fragment_build::{FragmentProtection, protect_media_segment};
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig,
     Fmp4Demux, IvGen, KeyMap, Media, SubsamplePolicy, TrackEncryption,

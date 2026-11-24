@@ -33,6 +33,7 @@ use transmux::{CodecConfig, Media, TsDemux};
 use crate::Diagnostic;
 use crate::Report;
 use crate::report::{Finding, Location, Severity};
+use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
 
 /// HEVC `NAL_unit_type` for a sequence parameter set (ITU-T H.265 §7.3.1.2
 /// Table 7-1) — used to pick the SPS array out of `hvcC`'s `numOfArrays`

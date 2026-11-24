@@ -13,6 +13,7 @@ use crate::ac4::Ac4SpecificBox;
 use crate::av1::Av1ConfigurationBox;
 use crate::avc_config::AVCConfigurationBox;
 use crate::box_types::BOX_TYPE_SIZE;
+use crate::codec_config_ext::EsdsBoxCodecInfo;
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;

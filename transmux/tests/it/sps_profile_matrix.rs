@@ -642,6 +642,7 @@ fn contains_ascii(haystack: &[u8], needle: &[u8; 4]) -> bool {
 // ---------------------------------------------------------------------------
 
 use crate::sps_builder::{AvcHrd, AvcSps, AvcVui, avc_sps};
+use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
 
 #[test]
 fn avc_poc_cycle_count_bound() {

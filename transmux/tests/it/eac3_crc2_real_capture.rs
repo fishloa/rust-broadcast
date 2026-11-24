@@ -16,7 +16,7 @@
 
 use broadcast_common::Unpackage;
 use broadcast_common::error::InvalidValue;
-use transmux::ac3::{Ac3SyncframeInfo, Ec3SyncframeInfo};
+use transmux::ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 use transmux::pipeline::CodecConfig;
 use transmux::{Error, TsDemux};
 

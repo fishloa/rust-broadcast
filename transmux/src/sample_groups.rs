@@ -32,11 +32,11 @@
 //!   [`SubSampleReferenceTableBox`]).
 
 use crate::TrackId;
+use crate::box_support::bounded_entry_count;
 use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_MASK,
 };
 use crate::error::{Error, Result};
-use crate::init_segment::bounded_entry_count;
 use crate::wire_cursor::{be_u16, be_u32, be_u64, i16_at};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};

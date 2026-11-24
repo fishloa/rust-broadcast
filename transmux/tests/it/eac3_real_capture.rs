@@ -12,7 +12,7 @@
 //! capture's non-video packets).
 
 use broadcast_common::Unpackage;
-use transmux::ac3::{split_eac3_syncframe_ranges, split_eac3_syncframes};
+use transmux::ac3_syncframe::{split_eac3_syncframe_ranges, split_eac3_syncframes};
 use transmux::pipeline::CodecConfig;
 use transmux::{Ec3SyncframeInfo, TsDemux};
 

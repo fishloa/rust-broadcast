@@ -4,7 +4,7 @@
 
 use crate::ts_psi::pid_of;
 use broadcast_common::Unpackage;
-use transmux::ac3::split_eac3_syncframes;
+use transmux::ac3_syncframe::split_eac3_syncframes;
 use transmux::pipeline::CodecConfig;
 use transmux::{DemuxEvent, StreamingTsDemux, TsDemux};
 

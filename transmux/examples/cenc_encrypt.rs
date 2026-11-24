@@ -47,8 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     use broadcast_common::{Encrypt, Package, Unpackage};
     use broadcast_hls::cenc_ext_x_key;
-    use transmux::init_segment::protect_init_segment;
-    use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
+    use transmux::cenc_segment::protect_init_segment;
+    use transmux::fragment_build::{FragmentProtection, protect_media_segment};
     use transmux::pipeline::CodecConfig;
     use transmux::{
         CencEncryptor, CencScheme, CmafMux, DashPackager, EncryptConfig, IvGen, Media,

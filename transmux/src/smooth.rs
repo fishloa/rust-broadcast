@@ -37,6 +37,7 @@
 //! escaped by quick-xml). Integer arithmetic only.
 
 use crate::TrackId;
+use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::units::ROUNDING_DIVISOR;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -52,10 +53,9 @@ use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BoxHeader, BoxType, FULLBOX_EXTRA_SIZE, UUID_TYPE_SIZE,
 };
 use crate::error::{Error, Result};
+use crate::fragment_build::{MediaRunSample, media_fragment_run};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
-use crate::movie_fragment::{
-    MediaRunSample, MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBox, media_fragment_run,
-};
+use crate::movie_fragment::{MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBox};
 use crate::pipeline::{CodecConfig, Sample};
 use crate::segments::{MediaDataBox, SegmentTypeBox, starts_with_moof};
 use crate::wire_cursor::{be_u32, be_u64};

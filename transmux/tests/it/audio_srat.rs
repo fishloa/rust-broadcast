@@ -573,12 +573,12 @@ fn a_zero_or_malformed_srat_falls_back_to_the_16_16_field() {
         let b = SamplingRateBox::new(0);
         let mut v = vec![0u8; b.serialized_len()];
         b.serialize_into(&mut v).unwrap();
-        transmux::init_segment::OpaqueBox::new(*b"srat", v[8..].to_vec())
+        transmux::box_support::OpaqueBox::new(*b"srat", v[8..].to_vec())
     };
     assert_eq!(sampling_rate_override(&[zero]), None);
 
     // A truncated `srat` body: ignored, not sliced.
-    let short = transmux::init_segment::OpaqueBox::new(*b"srat", vec![0u8; 3]);
+    let short = transmux::box_support::OpaqueBox::new(*b"srat", vec![0u8; 3]);
     assert_eq!(sampling_rate_override(&[short]), None);
 
     // A well-formed one is honoured.
@@ -586,7 +586,7 @@ fn a_zero_or_malformed_srat_falls_back_to_the_16_16_field() {
         let b = SamplingRateBox::new(192_000);
         let mut v = vec![0u8; b.serialized_len()];
         b.serialize_into(&mut v).unwrap();
-        transmux::init_segment::OpaqueBox::new(*b"srat", v[8..].to_vec())
+        transmux::box_support::OpaqueBox::new(*b"srat", v[8..].to_vec())
     };
     assert_eq!(sampling_rate_override(&[good]), Some(192_000));
 
@@ -601,7 +601,7 @@ fn a_zero_or_malformed_srat_falls_back_to_the_16_16_field() {
         samplesize: 16,
         compression_id_and_packet_size: [0u8; 4],
         samplerate: 48_000 << 16,
-        config_boxes: vec![transmux::init_segment::OpaqueBox::new(
+        config_boxes: vec![transmux::box_support::OpaqueBox::new(
             *b"srat",
             vec![0, 0, 0, 0, 0, 0, 0, 0],
         )],

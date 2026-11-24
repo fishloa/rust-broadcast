@@ -36,7 +36,7 @@
 //! [`crate::au::AccessUnitSplitter`], which decides a boundary from
 //! `first_mb_in_slice` as well as from an access-unit delimiter — an AUD is
 //! *optional* in H.264 and absent from most PS captures. Audio is split into
-//! AC-3 syncframes by [`crate::ac3::split_ac3_syncframes`], which walks each
+//! AC-3 syncframes by [`crate::ac3_syncframe::split_ac3_syncframes`], which walks each
 //! frame's declared length rather than scanning for the next syncword. Timing is
 //! anchored off the PES-level PTS/DTS that are present and the constant frame
 //! duration derived from the stamped decode timestamps.
@@ -65,7 +65,7 @@ use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use mpeg_ps::program_stream::scan_packs;
 
-use crate::ac3::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
+use crate::ac3_syncframe::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use crate::annexb::iter_annexb_nals;
 use crate::au::AccessUnitSplitter;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -286,7 +286,7 @@ struct Private1Header {
     substream_id: u8,
     /// `number_of_frames` — how many complete access units start in this PES
     /// packet. Unused beyond validation: this demuxer splits frames by their own
-    /// length ([`crate::ac3::split_ac3_syncframes`]) rather than by the count,
+    /// length ([`crate::ac3_syncframe::split_ac3_syncframes`]) rather than by the count,
     /// but a header claiming frames in a payload too short to hold them is
     /// malformed.
     number_of_frames: u8,
@@ -1089,7 +1089,7 @@ fn frame_duration(order: &[usize], dts: &[i128], pos: usize) -> u32 {
 /// Split a reassembled AC-3 byte stream into individual syncframes and return
 /// their `(start, end)` byte ranges.
 ///
-/// The frames are located by [`crate::ac3::split_ac3_syncframes_resyncing`],
+/// The frames are located by [`crate::ac3_syncframe::split_ac3_syncframes_resyncing`],
 /// which walks each syncframe's own `frmsizecod`-derived length (ETSI TS 102 366
 /// Table 4.13) instead of hunting for the next `0x0B77`, and resynchronises
 /// after a frame that does not parse so a single corrupted frame does not
@@ -1105,7 +1105,7 @@ fn split_ac3_frames(data: &[u8]) -> Vec<(usize, usize)> {
     // offset 0 once a resync has skipped bytes, so reconstructing them by
     // summing frame lengths (as this used to) slices mid-frame and emits a
     // sample beginning at the corrupted byte.
-    crate::ac3::split_ac3_syncframe_ranges(data, true)
+    crate::ac3_syncframe::split_ac3_syncframe_ranges(data, true)
 }
 
 /// Recover AC-3 config (syncframe BSI → `dac3`) + one raw sample per syncframe.
@@ -1704,7 +1704,7 @@ mod private1_tests {
     fn a_complete_frame_before_the_first_access_unit_is_not_emitted() {
         let es = std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.a0.ac3"))
             .expect("real AC-3 elementary stream fixture");
-        let frames = crate::ac3::split_ac3_syncframes(&es);
+        let frames = crate::ac3_syncframe::split_ac3_syncframes(&es);
         assert!(frames.len() >= 2, "fixture carries several syncframes");
         let (first, second) = (frames[0], frames[1]);
 

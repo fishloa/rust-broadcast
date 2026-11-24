@@ -21,8 +21,11 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
-use crate::units::ROUNDING_DIVISOR;
 use crate::wire_cursor::{be_u16, be_u32};
+
+/// Divisor that halves a denominator so `(num + den / ROUNDING_DIVISOR) / den`
+/// rounds a quotient to nearest.
+const ROUNDING_DIVISOR: u64 = 2;
 
 // ---------------------------------------------------------------------------
 // PixelAspectRatioBox — pasp (§12.1.4.2)
