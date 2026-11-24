@@ -13,6 +13,11 @@ use alloc::vec::Vec;
 use broadcast_common::bits::{BitError, BitWriter};
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 
+/// Widest field [`read_bits_at`] and [`BitReader::read_bits`] accept.
+const MAX_READ_BITS: usize = u64::BITS as usize;
+/// Bits in one byte, the unit of the RBSP buffer length.
+const BITS_PER_BYTE: usize = u8::BITS as usize;
+
 /// Read `n` (<= 64) bits MSB-first from `data` at `*bit_pos`, advancing it.
 ///
 /// The one cursor-style reader shared by the per-module header decoders
@@ -40,7 +45,7 @@ pub(crate) fn read_bits_checked(
     n: usize,
     what: &'static str,
 ) -> Result<u64> {
-    if n > 64 {
+    if n > MAX_READ_BITS {
         return Err(Error::InvalidValue(InvalidValue {
             field: what,
             value: n as u64,
@@ -57,7 +62,7 @@ pub(crate) fn read_bits_checked(
 /// Bytes needed to hold `n` more bits starting at `bit_pos` (saturating, for
 /// the `need` field of a `BufferTooShort`).
 pub(crate) fn bytes_needed(bit_pos: usize, n: usize) -> usize {
-    bit_pos.saturating_add(n).div_ceil(8)
+    bit_pos.saturating_add(n).div_ceil(BITS_PER_BYTE)
 }
 
 /// Maps a shared [`BitError`] onto this crate's typed errors: a short buffer
@@ -147,7 +152,7 @@ impl BitReader {
     }
 
     fn has_bits(&self, n: usize) -> bool {
-        self.bit_pos + n <= self.data.len() * 8
+        self.bit_pos + n <= self.data.len() * BITS_PER_BYTE
     }
 
     /// Read `n` bits as an unsigned integer (`u(n)` / `f(n)`).
@@ -161,7 +166,7 @@ impl BitReader {
     /// class the crate's `BitError` conversion gives `BitError::TooManyBits`;
     /// only a genuinely short buffer is [`Error::BufferTooShort`].
     pub fn read_bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
-        if n > 64 {
+        if n > MAX_READ_BITS {
             return Err(Error::InvalidValue(InvalidValue {
                 field: what,
                 value: n as u64,
@@ -189,7 +194,7 @@ impl BitReader {
     /// named for `what`.
     fn short(&self, n: usize, what: &'static str) -> Error {
         Error::BufferTooShort(BufferTooShort {
-            need: self.bit_pos.saturating_add(n).div_ceil(8),
+            need: self.bit_pos.saturating_add(n).div_ceil(BITS_PER_BYTE),
             have: self.data.len(),
             what,
         })
@@ -203,7 +208,7 @@ impl BitReader {
     /// Consume padding bits up to the next byte boundary (e.g.
     /// `gci_alignment_zero_bit` / `ptl_reserved_zero_bit`, H.266 §7.3.3).
     pub fn align_to_byte(&mut self, what: &'static str) -> Result<()> {
-        while !self.bit_pos.is_multiple_of(8) {
+        while !self.bit_pos.is_multiple_of(BITS_PER_BYTE) {
             let _ = self.read_bits(1, what)?;
         }
         Ok(())
@@ -229,7 +234,7 @@ impl BitReader {
             // H.264 §9.1 / H.265 §9.2.2 bound codeNum (leadingZeroBits ≤ 32);
             // a longer run is not a valid `ue(v)` and must never reach a
             // caller's loop count or shift.
-            if leading_zero_bits > 32 {
+            if leading_zero_bits > u32::BITS {
                 return Err(Error::InvalidValue(InvalidValue {
                     field: what,
                     value: leading_zero_bits as u64,

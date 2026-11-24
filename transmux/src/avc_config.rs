@@ -52,6 +52,49 @@ use core::fmt;
 /// (ISO/IEC 14496-15:2017 §5.3.3.1.3: range 0 to 4, inclusive).
 pub(crate) const MAX_BIT_DEPTH_MINUS8: u8 = 4;
 
+/// `AVCProfileIndication` High profile (ISO/IEC 14496-15:2017 §5.3.3.1.2).
+const AVC_PROFILE_HIGH: u8 = 100;
+/// `AVCProfileIndication` High 10 profile.
+const AVC_PROFILE_HIGH_10: u8 = 110;
+/// `AVCProfileIndication` High 4:2:2 profile.
+const AVC_PROFILE_HIGH_422: u8 = 122;
+/// `AVCProfileIndication` High 4:4:4 Predictive profile.
+const AVC_PROFILE_HIGH_444_PREDICTIVE: u8 = 244;
+
+/// Bytes before the parameter-set arrays: configurationVersion,
+/// AVCProfileIndication, profile_compatibility, AVCLevelIndication,
+/// lengthSizeMinusOne and numOfSequenceParameterSets.
+const RECORD_FIXED_HEADER_LEN: usize = 6;
+/// `nalUnitLength` is a `u16` (§5.3.3.1.1).
+const NAL_LENGTH_PREFIX_LEN: usize = 2;
+/// Bytes of the high-profile trailer before its SPS extension array:
+/// chroma_format, bit_depth_luma_minus8, bit_depth_chroma_minus8 and
+/// numOfSequenceParameterSetExt.
+const HIGH_PROFILE_TRAILER_LEN: usize = 4;
+
+/// Bit width of `numOfSequenceParameterSets`.
+const NUM_SPS_BITS: u32 = 5;
+/// Shifts and masks of the `lengthSizeMinusOne` byte.
+const LENGTH_SIZE_SHIFT: u32 = 2;
+const LENGTH_SIZE_RESERVED_MASK: u8 = 0x3F;
+const LENGTH_SIZE_RESERVED_BITS: u8 = 0xFC;
+const LENGTH_SIZE_MASK: u8 = 0x03;
+/// Shifts and masks of the `numOfSequenceParameterSets` byte.
+const NUM_SPS_SHIFT: u32 = 5;
+const NUM_SPS_RESERVED_MASK: u8 = 0x07;
+const NUM_SPS_RESERVED_BITS: u8 = 0xE0;
+const NUM_SPS_MASK: u8 = 0x1F;
+/// Shifts and masks of the `chroma_format` byte.
+const CHROMA_FORMAT_SHIFT: u32 = 2;
+const CHROMA_FORMAT_RESERVED_MASK: u8 = 0x3F;
+const CHROMA_FORMAT_RESERVED_BITS: u8 = 0xFC;
+const CHROMA_FORMAT_MASK: u8 = 0x03;
+/// Shifts and masks of the `bit_depth_*_minus8` bytes.
+const BIT_DEPTH_SHIFT: u32 = 3;
+const BIT_DEPTH_RESERVED_MASK: u8 = 0x1F;
+const BIT_DEPTH_RESERVED_BITS: u8 = 0xF8;
+const BIT_DEPTH_MASK: u8 = 0x07;
+
 // ---------------------------------------------------------------------------
 // AVCDecoderConfigurationRecord
 // ---------------------------------------------------------------------------
@@ -98,7 +141,13 @@ impl AVCDecoderConfigurationRecord {
     /// presence. `pub(crate)`: used by [`crate::rtp_sdp`]'s `avcC` builder as
     /// well as this module's own constructors.
     pub(crate) fn has_high_profile_ext(profile: u8) -> bool {
-        matches!(profile, 100 | 110 | 122 | 244)
+        matches!(
+            profile,
+            AVC_PROFILE_HIGH
+                | AVC_PROFILE_HIGH_10
+                | AVC_PROFILE_HIGH_422
+                | AVC_PROFILE_HIGH_444_PREDICTIVE
+        )
     }
 
     /// Fail unless the record carries at least one SPS.
@@ -140,8 +189,8 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
 
         // reserved(6) + lengthSizeMinusOne(2)
         let b4 = read_u8(bytes, &mut cursor, "lengthSizeMinusOne byte")?;
-        let _reserved_6 = (b4 >> 2) & 0x3F;
-        let length_size_minus_one = b4 & 0x03;
+        let _reserved_6 = (b4 >> LENGTH_SIZE_SHIFT) & LENGTH_SIZE_RESERVED_MASK;
+        let length_size_minus_one = b4 & LENGTH_SIZE_MASK;
         // Reject value 2 as invalid (§5.3.3 p19).
         if !VALID_LENGTH_SIZES.contains(&length_size_minus_one) {
             return Err(Error::InvalidValue(InvalidValue {
@@ -153,8 +202,8 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
 
         // reserved(3) + numOfSequenceParameterSets(5)
         let b5 = read_u8(bytes, &mut cursor, "numOfSequenceParameterSets byte")?;
-        let _reserved_3 = (b5 >> 5) & 0x07;
-        let num_sps = (b5 & 0x1F) as usize;
+        let _reserved_3 = (b5 >> NUM_SPS_SHIFT) & NUM_SPS_RESERVED_MASK;
+        let num_sps = (b5 & NUM_SPS_MASK) as usize;
         // SPS array
         let mut sps = Vec::with_capacity(num_sps);
         for _ in 0..num_sps {
@@ -190,20 +239,20 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
         if Self::has_high_profile_ext(profile_indication) && cursor < bytes.len() {
             // byte: reserved(6) + chroma_format(2)
             let b_cf = read_u8(bytes, &mut cursor, "chroma_format byte")?;
-            let _reserved_cf = (b_cf >> 2) & 0x3F;
-            let cf = b_cf & 0x03;
+            let _reserved_cf = (b_cf >> CHROMA_FORMAT_SHIFT) & CHROMA_FORMAT_RESERVED_MASK;
+            let cf = b_cf & CHROMA_FORMAT_MASK;
             chroma_format = Some(cf);
 
             // byte: reserved(5) + bit_depth_luma_minus8(3)
             let b_bdl = read_u8(bytes, &mut cursor, "bit_depth_luma_minus8 byte")?;
-            let _reserved_bdl = (b_bdl >> 3) & 0x1F;
-            let bdl = check_bit_depth("bit_depth_luma_minus8", b_bdl & 0x07)?;
+            let _reserved_bdl = (b_bdl >> BIT_DEPTH_SHIFT) & BIT_DEPTH_RESERVED_MASK;
+            let bdl = check_bit_depth("bit_depth_luma_minus8", b_bdl & BIT_DEPTH_MASK)?;
             bit_depth_luma_minus8 = Some(bdl);
 
             // byte: reserved(5) + bit_depth_chroma_minus8(3)
             let b_bdc = read_u8(bytes, &mut cursor, "bit_depth_chroma_minus8 byte")?;
-            let _reserved_bdc = (b_bdc >> 3) & 0x1F;
-            let bdc = check_bit_depth("bit_depth_chroma_minus8", b_bdc & 0x07)?;
+            let _reserved_bdc = (b_bdc >> BIT_DEPTH_SHIFT) & BIT_DEPTH_RESERVED_MASK;
+            let bdc = check_bit_depth("bit_depth_chroma_minus8", b_bdc & BIT_DEPTH_MASK)?;
             bit_depth_chroma_minus8 = Some(bdc);
 
             // numOfSequenceParameterSetExt (8)
@@ -237,14 +286,14 @@ impl Serialize for AVCDecoderConfigurationRecord {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut len = 6usize; // configVersion + profile + compat + level + lengthSize + numSPS
+        let mut len = RECORD_FIXED_HEADER_LEN;
         // SPS: each has 2-byte length prefix + data
         for sps in &self.sps {
-            len += 2 + sps.0.len();
+            len += NAL_LENGTH_PREFIX_LEN + sps.0.len();
         }
         len += 1; // numPPS
         for pps in &self.pps {
-            len += 2 + pps.0.len();
+            len += NAL_LENGTH_PREFIX_LEN + pps.0.len();
         }
         // High-profile ext: emit it iff it was actually present (`chroma_format
         // .is_some()`), not merely because the profile allows it — a
@@ -252,9 +301,9 @@ impl Serialize for AVCDecoderConfigurationRecord {
         // round-trip back to the same trailer-less bytes, not grow one back
         // with invented zero defaults.
         if self.chroma_format.is_some() {
-            len += 4; // chroma_fmt + bit_depth_luma + bit_depth_chroma + numSPSExt
+            len += HIGH_PROFILE_TRAILER_LEN;
             for sps_ext in &self.sps_ext {
-                len += 2 + sps_ext.0.len();
+                len += NAL_LENGTH_PREFIX_LEN + sps_ext.0.len();
             }
         }
         len
@@ -283,23 +332,23 @@ impl Serialize for AVCDecoderConfigurationRecord {
         cursor += 1;
 
         // reserved(6) + lengthSizeMinusOne(2): reserved bits = all-ones
-        buf[cursor] = 0xFC | (self.length_size_minus_one & 0x03);
+        buf[cursor] = LENGTH_SIZE_RESERVED_BITS | (self.length_size_minus_one & LENGTH_SIZE_MASK);
         cursor += 1;
 
         // reserved(3) + numOfSequenceParameterSets(5): reserved bits = all-ones
         let num_sps = broadcast_common::len::fit_bits(
             self.sps.len() as u64,
-            5,
+            NUM_SPS_BITS,
             "numOfSequenceParameterSets",
         )?;
-        buf[cursor] = 0xE0 | (num_sps as u8);
+        buf[cursor] = NUM_SPS_RESERVED_BITS | (num_sps as u8);
         cursor += 1;
 
         // SPS array
         for sps in &self.sps {
             let len = broadcast_common::len::fit_u16(sps.0.len(), "sps NALU length")?;
-            buf[cursor..cursor + 2].copy_from_slice(&len.to_be_bytes());
-            cursor += 2;
+            buf[cursor..cursor + NAL_LENGTH_PREFIX_LEN].copy_from_slice(&len.to_be_bytes());
+            cursor += NAL_LENGTH_PREFIX_LEN;
             buf[cursor..cursor + sps.0.len()].copy_from_slice(&sps.0);
             cursor += sps.0.len();
         }
@@ -312,8 +361,8 @@ impl Serialize for AVCDecoderConfigurationRecord {
         // PPS array
         for pps in &self.pps {
             let len = broadcast_common::len::fit_u16(pps.0.len(), "pps NALU length")?;
-            buf[cursor..cursor + 2].copy_from_slice(&len.to_be_bytes());
-            cursor += 2;
+            buf[cursor..cursor + NAL_LENGTH_PREFIX_LEN].copy_from_slice(&len.to_be_bytes());
+            cursor += NAL_LENGTH_PREFIX_LEN;
             buf[cursor..cursor + pps.0.len()].copy_from_slice(&pps.0);
             cursor += pps.0.len();
         }
@@ -321,21 +370,21 @@ impl Serialize for AVCDecoderConfigurationRecord {
         // High-profile ext — mirrors `serialized_len`'s presence gate above:
         // written iff it was actually present on parse, never invented.
         if let Some(cf) = self.chroma_format {
-            buf[cursor] = 0xFC | (cf & 0x03);
+            buf[cursor] = CHROMA_FORMAT_RESERVED_BITS | (cf & CHROMA_FORMAT_MASK);
             cursor += 1;
 
             let bdl = check_bit_depth(
                 "bit_depth_luma_minus8",
                 self.bit_depth_luma_minus8.unwrap_or(0),
             )?;
-            buf[cursor] = 0xF8 | bdl;
+            buf[cursor] = BIT_DEPTH_RESERVED_BITS | bdl;
             cursor += 1;
 
             let bdc = check_bit_depth(
                 "bit_depth_chroma_minus8",
                 self.bit_depth_chroma_minus8.unwrap_or(0),
             )?;
-            buf[cursor] = 0xF8 | bdc;
+            buf[cursor] = BIT_DEPTH_RESERVED_BITS | bdc;
             cursor += 1;
 
             // numOfSequenceParameterSetExt
@@ -347,8 +396,8 @@ impl Serialize for AVCDecoderConfigurationRecord {
             // SPSExt array
             for sps_ext in &self.sps_ext {
                 let len = broadcast_common::len::fit_u16(sps_ext.0.len(), "sps_ext NALU length")?;
-                buf[cursor..cursor + 2].copy_from_slice(&len.to_be_bytes());
-                cursor += 2;
+                buf[cursor..cursor + NAL_LENGTH_PREFIX_LEN].copy_from_slice(&len.to_be_bytes());
+                cursor += NAL_LENGTH_PREFIX_LEN;
                 buf[cursor..cursor + sps_ext.0.len()].copy_from_slice(&sps_ext.0);
                 cursor += sps_ext.0.len();
             }
@@ -402,7 +451,9 @@ impl Serialize for AVCConfigurationBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(8 + self.config.serialized_len())
+        crate::box_types::box_len(
+            crate::box_types::BOX_HEADER_MIN_SIZE + self.config.serialized_len(),
+        )
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {

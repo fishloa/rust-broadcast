@@ -155,10 +155,10 @@ fn validate_subsample_map(subsamples: &[SubSampleEntry], data_len: usize) -> Res
         offset = end;
     }
     if offset != data_len {
-        return Err(Error::InvalidInput(
-            "CENC subsample map does not cover the whole sample (ISO/IEC 23001-7 §9.3): the \
-             uncovered bytes would be passed through unprotected",
-        ));
+        return Err(Error::InvalidInput(concat!(
+            "CENC subsample map does not cover the whole sample (ISO/IEC 23001-7 §9.3): ",
+            "the uncovered bytes would be passed through unprotected",
+        )));
     }
     Ok(())
 }

@@ -34,6 +34,19 @@ use crate::sps::{
     AvcPicTimingLayout, AvcSliceSps, decode_avc_slice_sps, decode_hevc_interlace_sps,
 };
 
+/// `pic_struct` 9 (H.265 Table D.2): top field paired with the previous
+/// bottom field in output order.
+const PIC_STRUCT_TOP_PAIRED_PREVIOUS_BOTTOM: u8 = 9;
+/// `pic_struct` 10 (H.265 Table D.2): bottom field paired with the previous
+/// top field.
+const PIC_STRUCT_BOTTOM_PAIRED_PREVIOUS_TOP: u8 = 10;
+/// `pic_struct` 11 (H.265 Table D.2): top field paired with the next bottom
+/// field.
+const PIC_STRUCT_TOP_PAIRED_NEXT_BOTTOM: u8 = 11;
+/// `pic_struct` 12 (H.265 Table D.2): bottom field paired with the next top
+/// field.
+const PIC_STRUCT_BOTTOM_PAIRED_NEXT_TOP: u8 = 12;
+
 /// `nal_unit_type` of an SPS in H.264 (Table 7-1) and the NAL header mask.
 const AVC_NAL_TYPE_MASK: u8 = 0x1F;
 /// H.264 coded slice of a non-IDR picture.
@@ -159,10 +172,10 @@ impl PicStruct {
             6 => PicStruct::BottomTopBottom,
             7 => PicStruct::FrameDoubling,
             8 => PicStruct::FrameTripling,
-            9 if hevc => PicStruct::TopPairedWithPreviousBottom,
-            10 if hevc => PicStruct::BottomPairedWithPreviousTop,
-            11 if hevc => PicStruct::TopPairedWithNextBottom,
-            12 if hevc => PicStruct::BottomPairedWithNextTop,
+            PIC_STRUCT_TOP_PAIRED_PREVIOUS_BOTTOM if hevc => PicStruct::TopPairedWithPreviousBottom,
+            PIC_STRUCT_BOTTOM_PAIRED_PREVIOUS_TOP if hevc => PicStruct::BottomPairedWithPreviousTop,
+            PIC_STRUCT_TOP_PAIRED_NEXT_BOTTOM if hevc => PicStruct::TopPairedWithNextBottom,
+            PIC_STRUCT_BOTTOM_PAIRED_NEXT_TOP if hevc => PicStruct::BottomPairedWithNextTop,
             _ => return None,
         })
     }

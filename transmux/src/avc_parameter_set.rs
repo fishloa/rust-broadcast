@@ -140,7 +140,8 @@ impl Serialize for AVCParameterSample {
         let mut cursor = 0usize;
         for nal in &self.nal_units {
             let len = fit_bits(nal.0.len() as u64, bits, "NALUnitLength")?;
-            buf[cursor..cursor + width].copy_from_slice(&len.to_be_bytes()[8 - width..]);
+            buf[cursor..cursor + width]
+                .copy_from_slice(&len.to_be_bytes()[core::mem::size_of::<u64>() - width..]);
             cursor += width;
             buf[cursor..cursor + nal.0.len()].copy_from_slice(&nal.0);
             cursor += nal.0.len();
