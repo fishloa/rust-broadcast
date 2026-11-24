@@ -57,12 +57,14 @@ use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, parse_box};
 use isobmff::dts::DtsSpecificBox;
 use isobmff::flac::FlacSpecificBox;
 use isobmff::init_segment::{
-    MovieBox, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox, sampling_rate_override,
+    MOOV, MovieBox, STSD, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox,
+    sampling_rate_override,
 };
 use isobmff::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use isobmff::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use isobmff::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use isobmff::opus::OpusSpecificBox;
+use isobmff::segments::{MDAT, MOOF};
 use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
 /// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
@@ -133,8 +135,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
     type Error = Error;
 
     fn unpackage(&mut self, input: &'a [u8]) -> Result<Media> {
-        let moov_bytes =
-            find_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+        let moov_bytes = find_box(input, &MOOV).ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let moov = MovieBox::parse(moov_bytes)?;
         let movie_timescale = moov.mvhd.timescale;
         let trex_defaults: &[isobmff::init_segment::TrackExtendsBox] =
@@ -224,7 +225,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 Err(e) => return Err(e.into()),
             };
             let ty = bx.header.box_type.0;
-            if &ty == b"moof" {
+            if ty == MOOF {
                 match MovieFragmentBox::parse_body_budgeted(bx.body, &mut zero_width_budget) {
                     Ok(mut moof) => {
                         apply_trex_defaults(&mut moof, trex_defaults);
@@ -234,7 +235,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                         position: offset as u64,
                     }),
                 }
-            } else if &ty == b"mdat" {
+            } else if ty == MDAT {
                 // A `moof`'s samples live in the `mdat` that follows it; a
                 // segment carrying several `moof`s before one `mdat` resolves
                 // them in order.
@@ -813,7 +814,7 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
             StblChild::Stsd(s) => Some(Ok(s.clone())),
             StblChild::Opaque(bytes)
                 if bytes.len() >= BOX_HEADER_MIN_SIZE
-                    && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == b"stsd" =>
+                    && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == STSD.as_slice() =>
             {
                 Some(SampleDescriptionBox::parse(bytes.as_slice()))
             }
@@ -1003,7 +1004,7 @@ fn track_entry_inband_and_extras(
         StblChild::Stsd(s) => Some(Ok(s.clone())),
         StblChild::Opaque(bytes)
             if bytes.len() >= BOX_HEADER_MIN_SIZE
-                && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == b"stsd" =>
+                && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == STSD.as_slice() =>
         {
             Some(SampleDescriptionBox::parse(bytes.as_slice()))
         }

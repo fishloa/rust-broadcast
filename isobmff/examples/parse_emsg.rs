@@ -1,11 +1,14 @@
-/// Read the committed `scte35-emsg-v0.bin` fixture (a version 0 `emsg` carrying
-/// a real SCTE 35 splice_info_section in `message_data`), parse it, print the
-/// decoded fields, and prove a byte-exact round-trip + recomputed `size`.
+/// Read an `emsg` box file (by default the committed `scte35-emsg-v0.bin`
+/// fixture, a version 0 `emsg` carrying a real SCTE 35 splice_info_section in
+/// `message_data`), parse it, print the decoded fields, and prove a byte-exact
+/// round-trip + recomputed `size`.
 ///
 /// ```sh
-/// cargo run -p isobmff --example parse_emsg
+/// cargo run -p isobmff --example parse_emsg -- fixtures/scte35/scte35-emsg-v0.bin
 /// ```
+use std::env;
 use std::fs;
+use std::path::PathBuf;
 
 use isobmff::emsg::EmsgBox;
 
@@ -13,7 +16,10 @@ fn main() {
     // Fixtures live in the workspace-shared `fixtures/` tree, not under the
     // crate. A committed fixture that cannot be read is a bug, not a reason
     // to skip — so a missing/unreadable fixture is a hard failure.
-    let path = test_fixtures::path("scte35/scte35-emsg-v0.bin");
+    let path = env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| test_fixtures::path("scte35/scte35-emsg-v0.bin"));
     let bytes = fs::read(&path).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",

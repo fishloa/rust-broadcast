@@ -48,8 +48,8 @@ use crate::media::{
 use crate::pipeline::Sample;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
 use isobmff::init_segment::{
-    ChunkLargeOffsetBox, ChunkOffsetBox, MovieBox, SampleSizeBox, SampleToChunkBox, StblChild,
-    SyncSampleBox, TrackBox,
+    ChunkLargeOffsetBox, ChunkOffsetBox, MOOV, MovieBox, SampleSizeBox, SampleToChunkBox,
+    StblChild, SyncSampleBox, TrackBox,
 };
 use isobmff::timing::{CompositionOffsetBox, TimeToSampleBox};
 
@@ -169,7 +169,7 @@ impl<'a> Unpackage for ProgressiveDemux<'a> {
 /// `input` (every [`Sample`]'s bytes are copied out), so this needs no
 /// lifetime tied to the caller's input at all.
 fn demux_progressive(input: &[u8]) -> Result<Media> {
-    let moov_bytes = find_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+    let moov_bytes = find_box(input, &MOOV).ok_or(Error::UnexpectedBox { expected: "moov" })?;
     let moov = MovieBox::parse(moov_bytes)?;
     let movie_timescale = moov.mvhd.timescale;
 

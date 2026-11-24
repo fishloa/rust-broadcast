@@ -23,6 +23,8 @@ mod no_dom;
 mod no_dom_data;
 mod non_exhaustive;
 mod non_exhaustive_data;
+mod one_box_home;
+mod one_box_home_data;
 mod panic_idioms;
 mod panic_idioms_data;
 mod scan_self_tests;

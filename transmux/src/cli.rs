@@ -841,7 +841,7 @@ fn segment_track_fragments(segment: &[u8]) -> CliResult<Vec<(TrackId, u32, u64)>
     while !remaining.is_empty() {
         let (bx, consumed) = parse_box(remaining)
             .map_err(|_| crate::Error::InvalidInput("media segment box could not be parsed"))?;
-        if bx.header.box_type.is(b"moof") {
+        if bx.header.box_type.is(&isobmff::segments::MOOF) {
             let moof = MovieFragmentBox::parse_body(bx.body)
                 .map_err(|_| crate::Error::InvalidInput("moof box could not be parsed"))?;
             let mut out = Vec::with_capacity(moof.traf.len());
@@ -891,7 +891,7 @@ fn segment_secs(segment: &[u8], media: &Media) -> CliResult<f64> {
     while !remaining.is_empty() {
         let (bx, consumed) = parse_box(remaining)
             .map_err(|_| crate::Error::InvalidInput("media segment box could not be parsed"))?;
-        if bx.header.box_type.is(b"moof") {
+        if bx.header.box_type.is(&isobmff::segments::MOOF) {
             let moof = MovieFragmentBox::parse_body(bx.body)
                 .map_err(|_| crate::Error::InvalidInput("moof box could not be parsed"))?;
             let mut longest = 0.0f64;
@@ -994,7 +994,7 @@ fn segment_ticks(segment: &[u8]) -> CliResult<u64> {
     while !remaining.is_empty() {
         let (bx, consumed) = parse_box(remaining)
             .map_err(|_| crate::Error::InvalidInput("media segment box could not be parsed"))?;
-        if bx.header.box_type.is(b"moof") {
+        if bx.header.box_type.is(&isobmff::segments::MOOF) {
             let moof = MovieFragmentBox::parse_body(bx.body)
                 .map_err(|_| crate::Error::InvalidInput("moof box could not be parsed"))?;
             let mut longest = 0u64;

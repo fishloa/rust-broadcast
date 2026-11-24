@@ -97,12 +97,17 @@ use crate::error::{Error, Result};
 use crate::media::Media;
 use crate::progressive_demux::sample_layout;
 pub use broadcast_common::cenc::CencScheme;
-use isobmff::cenc::{KEY_LEN, SampleEncryptionEntry, TrackEncryptionBox};
-use isobmff::init_segment::{ChunkLargeOffsetBox, ChunkOffsetBox, SampleSizeBox, SampleToChunkBox};
+use isobmff::cenc::{KEY_LEN, SENC, SINF, SampleEncryptionEntry, TrackEncryptionBox};
+use isobmff::init_segment::{
+    ChunkLargeOffsetBox, ChunkOffsetBox, MDIA, MINF, MOOV, MVHD, STBL, STSD, SampleSizeBox,
+    SampleToChunkBox, TKHD, TRAK,
+};
 use isobmff::movie_fragment::{
-    MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TrackFragmentHeaderBox, TrackFragmentRunBox,
+    MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TFHD, TRAF, TRUN, TrackFragmentHeaderBox,
+    TrackFragmentRunBox,
 };
 use isobmff::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
+use isobmff::segments::{MDAT, MOOF};
 
 /// A map of content keys, keyed by 16-byte Key ID (KID).
 ///
@@ -483,11 +488,11 @@ const VISUAL_SAMPLE_ENTRY_HDR: usize = 78;
 /// for a fragmented file [`harvest_fragment_senc`] walks every `moof` and
 /// appends each `traf`'s `senc` entries, in file order.
 fn harvest_tracks(file: &[u8], out: &mut Vec<TrackCrypto>) -> Result<()> {
-    let moov = find_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
-    let fragmented = find_box(file, b"moof").is_some();
+    let moov = find_box(file, &MOOV).ok_or(Error::UnexpectedBox { expected: "moov" })?;
+    let fragmented = find_box(file, &MOOF).is_some();
     for trak in BoxIter::new(box_body(moov, 0, "moov body")?) {
         let trak = trak?;
-        if !trak.header.box_type.is(b"trak") {
+        if !trak.header.box_type.is(&TRAK) {
             continue;
         }
         if let Some(crypto) = harvest_track(trak.bytes, fragmented)? {
@@ -510,12 +515,12 @@ fn harvest_tracks(file: &[u8], out: &mut Vec<TrackCrypto>) -> Result<()> {
 /// `stbl` at all.
 fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
     // Navigate trak → mdia → minf → stbl.
-    let Some(stbl) = descend_boxes(trak, &[b"mdia", b"minf", b"stbl"]) else {
+    let Some(stbl) = descend_boxes(trak, &[&MDIA, &MINF, &STBL]) else {
         return Ok(None);
     };
 
     // sinf lives inside the protected sample entry (encv/enca) under stsd.
-    let Some(stsd) = find_box(box_body(stbl, 0, "stbl body")?, b"stsd") else {
+    let Some(stsd) = find_box(box_body(stbl, 0, "stbl body")?, &STSD) else {
         return Ok(None);
     };
     let Some(sinf) = find_sinf_in_stsd(stsd) else {
@@ -552,7 +557,7 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
         ));
     }
 
-    let tkhd = find_box(box_body(trak, 0, "trak body")?, b"tkhd")
+    let tkhd = find_box(box_body(trak, 0, "trak body")?, &TKHD)
         .ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
     let track_id = isobmff::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
 
@@ -563,7 +568,7 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
     } else {
         // Progressive fMP4: a single senc lives inside stbl, covering every
         // sample of the (fragment-less) track.
-        let senc = find_box(box_body(stbl, 0, "stbl body")?, b"senc")
+        let senc = find_box(box_body(stbl, 0, "stbl body")?, &SENC)
             .ok_or(Error::UnexpectedBox { expected: "senc" })?;
         parse_senc_box(senc, tenc.default_per_sample_iv_size)?.entries
     };
@@ -634,16 +639,16 @@ fn parse_senc_box(
 fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> {
     for moof in BoxIter::new(file)
         .filter_map(|b| b.ok())
-        .filter(|b| b.header.box_type.is(b"moof"))
+        .filter(|b| b.header.box_type.is(&MOOF))
     {
         let moof = moof.bytes;
         for traf in BoxIter::new(box_body(moof, 0, "moof body")?) {
             let traf = traf?;
-            if !traf.header.box_type.is(b"traf") {
+            if !traf.header.box_type.is(&TRAF) {
                 continue;
             }
             let traf = traf.bytes;
-            let Some(tfhd) = find_box(box_body(traf, 0, "traf body")?, b"tfhd") else {
+            let Some(tfhd) = find_box(box_body(traf, 0, "traf body")?, &TFHD) else {
                 continue;
             };
             need_in(
@@ -671,7 +676,7 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
                     "seig sample-group key rotation not implemented",
                 ));
             }
-            match find_box(box_body(traf, 0, "traf body")?, b"senc") {
+            match find_box(box_body(traf, 0, "traf body")?, &SENC) {
                 Some(senc) => {
                     let senc_parsed = parse_senc_box(senc, crypto.tenc.default_per_sample_iv_size)?;
                     crypto.samples.extend(senc_parsed.entries);
@@ -705,7 +710,7 @@ fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
     let mut total = 0usize;
     for trun in BoxIter::new(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..])
         .filter_map(|b| b.ok())
-        .filter(|b| b.header.box_type.is(b"trun"))
+        .filter(|b| b.header.box_type.is(&TRUN))
     {
         let parsed = TrackFragmentRunBox::parse_body(trun.body)?;
         total += parsed.samples.len();
@@ -740,7 +745,7 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
                 // header to skip), so scan them with the one walker.
                 if let Some(sinf) = BoxIter::new(&entry.bytes[child_start..])
                     .filter_map(|b| b.ok())
-                    .find(|b| b.header.box_type.is(b"sinf"))
+                    .find(|b| b.header.box_type.is(&SINF))
                 {
                     return Some(sinf.bytes);
                 }
@@ -783,28 +788,28 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
     use isobmff::AVCConfigurationBox;
 
-    let moov = find_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+    let moov = find_box(file, &MOOV).ok_or(Error::UnexpectedBox { expected: "moov" })?;
     let movie_timescale = mvhd_timescale(moov)?;
-    let fragmented = find_box(file, b"moof").is_some();
+    let fragmented = find_box(file, &MOOF).is_some();
 
     let mut tracks = Vec::new();
     let mut skipped: Vec<crate::ir::SkippedTrack> = Vec::new();
     for trak in BoxIter::new(box_body(moov, 0, "moov body")?) {
         let trak = trak?;
-        if !trak.header.box_type.is(b"trak") {
+        if !trak.header.box_type.is(&TRAK) {
             continue;
         }
         let trak = trak.bytes;
-        let Some(stbl) = descend_boxes(trak, &[b"mdia", b"minf", b"stbl"]) else {
+        let Some(stbl) = descend_boxes(trak, &[&MDIA, &MINF, &STBL]) else {
             continue;
         };
-        let mdhd = descend_boxes(trak, &[b"mdia"])
+        let mdhd = descend_boxes(trak, &[&MDIA])
             .and_then(|mdia| find_box(box_body(mdia, 0, "mdia body").ok()?, b"mdhd"))
             .ok_or(Error::UnexpectedBox { expected: "mdhd" })?;
         let timescale = mdhd_timescale(mdhd)?;
 
         // Only protected video (encv → original avc1) is reconstructed here.
-        let Some(stsd) = find_box(box_body(stbl, 0, "stbl body")?, b"stsd") else {
+        let Some(stsd) = find_box(box_body(stbl, 0, "stbl body")?, &STSD) else {
             continue;
         };
         let Some(sinf) = find_sinf_in_stsd(stsd) else {
@@ -841,7 +846,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
         // Recover the avcC config record from inside the encv entry.
         let avc_config = find_avcc_config(stsd)?;
 
-        let tkhd = find_box(box_body(trak, 0, "trak body")?, b"tkhd")
+        let tkhd = find_box(box_body(trak, 0, "trak body")?, &TKHD)
             .ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
         let track_id = isobmff::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
 
@@ -930,10 +935,10 @@ fn collect_fragment_samples(
     let mut seeded = false;
     while offset + BOX_HEADER_MIN_SIZE <= file.len() {
         let (bx, consumed) = parse_box(&file[offset..])?;
-        if bx.header.box_type.is(b"moof") {
+        if bx.header.box_type.is(&MOOF) {
             let moof = MovieFragmentBox::parse_body(bx.body)?;
             pending_moof = Some((offset, moof));
-        } else if bx.header.box_type.is(b"mdat")
+        } else if bx.header.box_type.is(&MDAT)
             && let Some((moof_off, moof)) = pending_moof.take()
         {
             if !seeded {
@@ -1080,7 +1085,7 @@ fn container_has_seig_sgpd(container: &[u8]) -> Result<bool> {
 
 /// Read `mvhd.timescale` (handles version 0 and 1 layouts).
 fn mvhd_timescale(moov: &[u8]) -> Result<Timescale> {
-    let mvhd = find_box(box_body(moov, 0, "moov body")?, b"mvhd")
+    let mvhd = find_box(box_body(moov, 0, "moov body")?, &MVHD)
         .ok_or(Error::UnexpectedBox { expected: "mvhd" })?;
     header_timescale(mvhd, "mvhd")
 }

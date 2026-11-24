@@ -2552,8 +2552,10 @@ mod segmenter_tests {
                     "segment {} is MPEG-TS bytes on an fMP4 route",
                     entry.sequence_number
                 );
+                let four_cc = &entry.bytes[4..8];
                 assert!(
-                    matches!(&entry.bytes[4..8], STYP_BYTES | MOOF_BYTES),
+                    four_cc == isobmff::segments::STYP.as_slice()
+                        || four_cc == isobmff::segments::MOOF.as_slice(),
                     "segment {} does not start with an fMP4 box: {:02x?}",
                     entry.sequence_number,
                     &entry.bytes[..8]
@@ -2568,8 +2570,6 @@ mod segmenter_tests {
     }
 
     pub(super) const TS_SYNC_BYTE: u8 = 0x47;
-    pub(super) const STYP_BYTES: &[u8] = b"styp";
-    pub(super) const MOOF_BYTES: &[u8] = b"moof";
 
     /// The effective track set a refused change leaves behind: the segmenter
     /// keeps producing fMP4 and its published set does not grow.
@@ -3583,23 +3583,16 @@ mod segmenter_tests {
     }
 
     fn tfdt_of(segment: &[u8]) -> u64 {
-        let at = segment
-            .windows(4)
-            .position(|w| w == b"tfdt")
-            .expect("an fMP4 segment carries a tfdt box");
-        match segment[at + 4] {
-            0 => u64::from(u32::from_be_bytes(
-                segment[at + 8..at + 12]
-                    .try_into()
-                    .expect("v0 tfdt is 4 bytes"),
-            )),
-            1 => u64::from_be_bytes(
-                segment[at + 8..at + 16]
-                    .try_into()
-                    .expect("v1 tfdt is 8 bytes"),
-            ),
-            version => panic!("unexpected tfdt version {version}"),
-        }
+        let moof = isobmff::box_types::find_box(segment, &isobmff::segments::MOOF)
+            .expect("an fMP4 segment carries a moof box");
+        let body = isobmff::box_types::box_body(moof, 0, "moof").expect("moof has a header");
+        let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(body)
+            .expect("an fMP4 segment carries a parsable moof");
+        moof.traf[0]
+            .tfdt
+            .as_ref()
+            .expect("an fMP4 segment carries a tfdt box")
+            .base_media_decode_time()
     }
 
     #[test]
@@ -3607,7 +3600,11 @@ mod segmenter_tests {
         let fmp4 = any_segmenter(Container::Fmp4);
         let init = fmp4.init_segment().expect("fMP4 has an init segment");
         assert!(!init.is_empty());
-        assert_eq!(&init[4..8], b"ftyp", "the init segment starts with ftyp");
+        assert_eq!(
+            &init[4..8],
+            isobmff::segments::FTYP.as_slice(),
+            "the init segment starts with ftyp"
+        );
         assert_eq!(
             fmp4.part_target(),
             Some(Duration::from_millis(250)),
@@ -4130,7 +4127,7 @@ mod segmenter_tests {
         let fmp4 = segmenter_for(&fmp4_trunk, fmp4_config());
         let init = fmp4.init_segment().expect("fMP4 exposes its init segment");
         assert!(!init.is_empty());
-        assert_eq!(&init[4..8], b"ftyp");
+        assert_eq!(&init[4..8], isobmff::segments::FTYP.as_slice());
 
         let (ts_trunk, _writer) = video_trunk();
         let ts = segmenter_for(&ts_trunk, ts_config());

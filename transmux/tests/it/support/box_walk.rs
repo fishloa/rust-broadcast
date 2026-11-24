@@ -8,23 +8,24 @@ pub fn find_box_range(
     fourcc: &[u8; 4],
     containers: &[&[u8; 4]],
 ) -> Option<(usize, usize)> {
-    let mut off = lo;
-    while off + 8 <= hi {
-        let size =
-            u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]) as usize;
-        if size < 8 || off + size > hi {
-            break;
+    for b in isobmff::BoxIter::new(data.get(lo..hi)?) {
+        let Ok(b) = b else { break };
+        let start = lo + b.start;
+        let end = lo + b.end;
+        if b.four_cc() == *fourcc {
+            return Some((start, end - start));
         }
-        let t = [data[off + 4], data[off + 5], data[off + 6], data[off + 7]];
-        if &t == fourcc {
-            return Some((off, size));
-        }
-        if containers.contains(&&t)
-            && let Some(found) = find_box_range(data, off + 8, off + size, fourcc, containers)
+        if containers.contains(&&b.four_cc())
+            && let Some(found) = find_box_range(
+                data,
+                start + b.header.header_size(),
+                end,
+                fourcc,
+                containers,
+            )
         {
             return Some(found);
         }
-        off += size;
     }
     None
 }

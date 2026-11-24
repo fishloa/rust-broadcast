@@ -113,6 +113,9 @@ impl Serialize for MovieFragmentHeaderBox {
     }
 }
 
+/// Four-CC of the Track Fragment Header Box (`tfhd`, ISO/IEC 14496-12:2026 §8.8.7).
+pub const TFHD: [u8; 4] = *b"tfhd";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TrackFragmentHeaderBox {
@@ -280,6 +283,9 @@ impl Serialize for TrackFragmentHeaderBox {
     }
 }
 
+/// Four-CC of the Track Fragment Base Media Decode Time Box (`tfdt`, ISO/IEC 14496-12:2026 §8.8.12).
+pub const TFDT: [u8; 4] = *b"tfdt";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TrackFragmentBaseMediaDecodeTimeBox {
@@ -394,6 +400,9 @@ impl Default for TrunSample {
         Self::new()
     }
 }
+
+/// Four-CC of the Track Fragment Run Box (`trun`, ISO/IEC 14496-12:2026 §8.8.8).
+pub const TRUN: [u8; 4] = *b"trun";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -858,6 +867,9 @@ pub enum MoofChild {
     /// Any other child, verbatim.
     Opaque(OpaqueChild),
 }
+
+/// Four-CC of the Track Fragment Box (`traf`, ISO/IEC 14496-12:2026 §8.8.3).
+pub const TRAF: [u8; 4] = *b"traf";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

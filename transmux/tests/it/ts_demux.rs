@@ -12,7 +12,6 @@
 
 use std::path::PathBuf;
 
-use crate::box_iter::{Box4, iter_boxes};
 use broadcast_common::{Package, Serialize, Unpackage};
 use test_fixtures::ffprobe;
 use transmux::TsDemux;
@@ -43,48 +42,7 @@ fn load_ref_mp4() -> Vec<u8> {
 
 // ── Minimal ISOBMFF box walking for the ref mp4 (progressive, non-fragmented) ─
 
-/// A parsed box: type, absolute file offset, total size, header size, and body.
-use crate::ref_mp4::{ref_track_samples, ref_tracks};
-
-fn find_box<'a>(buf: &'a [u8], base: usize, want: &[u8; 4]) -> Option<Box4<'a>> {
-    for b in iter_boxes(buf, base) {
-        if &b.ty == want {
-            // Re-borrow with correct lifetimes.
-            return Some(Box4 {
-                ty: b.ty,
-                offset: b.offset,
-                size: b.size,
-                header: b.header,
-                body: b.body,
-            });
-        }
-        let containers: &[[u8; 4]] = &[
-            *b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"mvex", *b"edts",
-        ];
-        if containers.contains(&b.ty)
-            && let Some(found) = find_box(b.body, b.offset + b.header, want)
-        {
-            return Some(found);
-        }
-        if &b.ty == b"stsd" {
-            // stsd: 8 bytes (version/flags + entry_count) before entries.
-            if b.body.len() > 8
-                && let Some(found) = find_box(&b.body[8..], b.offset + b.header + 8, want)
-            {
-                return Some(found);
-            }
-        }
-        if &b.ty == b"avc1" || &b.ty == b"mp4a" {
-            let skip = if &b.ty == b"avc1" { 78 } else { 28 };
-            if b.body.len() > skip
-                && let Some(found) = find_box(&b.body[skip..], b.offset + b.header + skip, want)
-            {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
+use crate::ref_mp4::{find_box, ref_track_samples, ref_tracks};
 
 /// Split length-prefixed (4-byte) NAL data into its coded NAL payloads.
 fn split_length_prefixed(lp: &[u8]) -> Vec<&[u8]> {
@@ -269,7 +227,7 @@ fn built_config_matches_ref_mp4_byte_for_byte() {
         }
         other => panic!("track 0 must be AVC, got {other:?}"),
     };
-    let ref_avcc = find_box(&ref_mp4, 0, b"avcC").expect("ref mp4 must have an avcC box");
+    let ref_avcc = find_box(&ref_mp4, b"avcC").expect("ref mp4 must have an avcC box");
     assert_eq!(
         demuxed_avcc,
         ref_avcc.body.to_vec(),
@@ -292,7 +250,7 @@ fn built_config_matches_ref_mp4_byte_for_byte() {
         }
         other => panic!("track 1 must be AAC, got {other:?}"),
     };
-    let ref_esds = find_box(&ref_mp4, 0, b"esds").expect("ref mp4 must have an esds box");
+    let ref_esds = find_box(&ref_mp4, b"esds").expect("ref mp4 must have an esds box");
     let ref_asc = extract_esds_asc(ref_esds.body).expect("ref esds must carry an ASC");
     assert_eq!(
         built_asc, ref_asc,
@@ -385,7 +343,7 @@ fn video_sample_payloads_match_ref_mp4() {
         .iter()
         .find(|t| &t.handler == b"vide")
         .expect("ref mp4 must have a video track");
-    let ref_samples = ref_track_samples(&ref_mp4, ref_vid.trak_body, ref_vid.trak_base);
+    let ref_samples = ref_track_samples(&ref_mp4, ref_vid.trak_body);
     assert_eq!(ref_samples.len(), 75, "ref mp4 has 75 video samples");
 
     // Both are 4-byte length-prefixed AVC; compare the coded NAL payload

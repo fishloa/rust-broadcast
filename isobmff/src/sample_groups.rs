@@ -53,7 +53,9 @@ const SGPD_ENTRY_PREFIX_LEN: usize = core::mem::size_of::<u32>();
 const SUBS_ENTRY_HEADER_LEN: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
 const SUBS_V2_ENTRY_HEADER_LEN: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
 
-const PRFT_TYPE: u32 = u32::from_be_bytes(*b"prft");
+/// Four-CC of the Producer Reference Time Box (`prft`, ISO/IEC 14496-12:2026 §8.14.5).
+pub const PRFT: [u8; 4] = *b"prft";
+const PRFT_TYPE: u32 = u32::from_be_bytes(PRFT);
 const SGPD_TYPE: u32 = u32::from_be_bytes(*b"sgpd");
 const SBGP_TYPE: u32 = u32::from_be_bytes(*b"sbgp");
 const SUBS_TYPE: u32 = u32::from_be_bytes(*b"subs");

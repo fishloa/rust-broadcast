@@ -24,16 +24,12 @@ use crate::ir::TrackId;
 use crate::smooth::{TFXD_UUID, TfxdBox};
 use broadcast_smooth::default_limits;
 use isobmff::BoxIter;
-use isobmff::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
-use isobmff::movie_fragment::MovieFragmentBox;
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, UUID, parse_box};
+use isobmff::cenc::{SAIO, SAIZ, SENC};
+use isobmff::movie_fragment::{MovieFragmentBox, TRAF};
 use isobmff::segments::MOOF;
 
 const PROTECTION_ELEMENT: &str = "Protection";
-const BOX_TRAF: [u8; 4] = *b"traf";
-const BOX_UUID: [u8; 4] = *b"uuid";
-const BOX_SENC: [u8; 4] = *b"senc";
-const BOX_SAIZ: [u8; 4] = *b"saiz";
-const BOX_SAIO: [u8; 4] = *b"saio";
 const BOX_SIZE_LEN: usize = 4;
 
 /// The PIFF "UUID Sample Encryption Box" extended type
@@ -167,7 +163,7 @@ fn moof_is_encrypted(moof_body: &[u8]) -> Option<bool> {
         let Ok(child) = result else {
             return None;
         };
-        if !child.header.box_type.is(&BOX_TRAF) {
+        if !child.header.box_type.is(&TRAF) {
             continue;
         }
         for result in BoxIter::new(child.body) {
@@ -175,10 +171,10 @@ fn moof_is_encrypted(moof_body: &[u8]) -> Option<bool> {
                 return None;
             };
             let t = grandchild.header.box_type;
-            if t.is(&BOX_SENC) || t.is(&BOX_SAIZ) || t.is(&BOX_SAIO) {
+            if t.is(&SENC) || t.is(&SAIZ) || t.is(&SAIO) {
                 return Some(true);
             }
-            if t.is(&BOX_UUID)
+            if t.is(&UUID)
                 && grandchild.header.usertype.as_ref() == Some(&PIFF_SAMPLE_ENCRYPTION_UUID)
             {
                 return Some(true);
@@ -228,13 +224,12 @@ pub fn fragment_tfxd(fragment: &[u8]) -> Option<TfxdBox> {
         }
         for child in BoxIter::new(bx.body) {
             let traf = child.ok()?;
-            if !traf.header.box_type.is(&BOX_TRAF) {
+            if !traf.header.box_type.is(&TRAF) {
                 continue;
             }
             for grandchild in BoxIter::new(traf.body) {
                 let g = grandchild.ok()?;
-                if g.header.box_type.is(&BOX_UUID) && g.header.usertype.as_ref() == Some(&TFXD_UUID)
-                {
+                if g.header.box_type.is(&UUID) && g.header.usertype.as_ref() == Some(&TFXD_UUID) {
                     return TfxdBox::parse_body(g.body).ok();
                 }
             }

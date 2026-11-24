@@ -56,10 +56,11 @@ use crate::pipeline::{CodecConfig, Sample};
 use broadcast_common::wire::{be_u32, be_u64};
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 use isobmff::box_types::{
-    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BoxHeader, BoxType, FULLBOX_EXTRA_SIZE, UUID_TYPE_SIZE,
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BoxHeader, BoxType, FULLBOX_EXTRA_SIZE, UUID,
+    UUID_TYPE_SIZE,
 };
-use isobmff::movie_fragment::{MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBox};
-use isobmff::segments::{MediaDataBox, SegmentTypeBox, starts_with_moof};
+use isobmff::movie_fragment::{MovieFragmentBox, MovieFragmentHeaderBox, TRAF, TrackFragmentBox};
+use isobmff::segments::{MDAT, MediaDataBox, SegmentTypeBox, starts_with_moof};
 
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
 /// [MS-SSTR] §2.2.2 (`SmoothStreamingMedia@TimeScale`); the single definition
@@ -197,7 +198,7 @@ impl Serialize for TfxdBox {
 
     fn serialized_len(&self) -> usize {
         // box header(8) + usertype(16) + FullBox version/flags(4) + payload(16).
-        let hdr = BoxHeader::new(0, BoxType::from_bytes(*b"uuid"), Some(TFXD_UUID));
+        let hdr = BoxHeader::new(0, BoxType::from_bytes(UUID), Some(TFXD_UUID));
         hdr.serialized_len() + FULLBOX_EXTRA_SIZE + Self::PAYLOAD_LEN
     }
 
@@ -205,7 +206,7 @@ impl Serialize for TfxdBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         // uuid box header (size, "uuid", usertype = TFXD_UUID).
-        let hdr = BoxHeader::new(need as u64, BoxType::from_bytes(*b"uuid"), Some(TFXD_UUID));
+        let hdr = BoxHeader::new(need as u64, BoxType::from_bytes(UUID), Some(TFXD_UUID));
         let mut c = hdr.serialize_into(buf)?;
         // FullBox header: version + 24-bit flags(0).
         let fullbox = [Self::VERSION, 0, 0, 0];
@@ -876,7 +877,7 @@ fn build_smooth_fragment(
     let moof_size = moof.serialized_len() + tfxd_len;
     let mdat_payload_len: u64 = samples.iter().map(|s| s.data.len() as u64).sum();
     let mdat_header =
-        BoxHeader::for_payload(BoxType::from_bytes(*b"mdat"), None, mdat_payload_len).header_size();
+        BoxHeader::for_payload(BoxType::from_bytes(MDAT), None, mdat_payload_len).header_size();
     let mdat_start = moof_size + mdat_header;
     let data_offset = i32::try_from(mdat_start).map_err(|_| {
         Error::InvalidValue(InvalidValue {
@@ -921,7 +922,7 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
     let mfhd_size = be_u32(moof, BOX_HEADER_MIN_SIZE, "moof box header")? as usize;
     let traf_off = BOX_HEADER_MIN_SIZE + mfhd_size;
     if moof.len() < traf_off + BOX_HEADER_MIN_SIZE
-        || &moof[traf_off + BOX_TYPE_OFFSET..traf_off + BOX_HEADER_MIN_SIZE] != b"traf"
+        || &moof[traf_off + BOX_TYPE_OFFSET..traf_off + BOX_HEADER_MIN_SIZE] != TRAF.as_slice()
     {
         return Err(Error::UnexpectedBox { expected: "traf" });
     }

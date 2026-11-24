@@ -27,6 +27,10 @@ pub const FTYP: [u8; 4] = *b"ftyp";
 pub const STYP: [u8; 4] = *b"styp";
 /// Four-CC of the Media Data Box.
 pub const MDAT: [u8; 4] = *b"mdat";
+/// Four-CC of the Free Space Box (ISO/IEC 14496-12:2026 §8.1.2).
+pub const FREE: [u8; 4] = *b"free";
+/// Four-CC of the Skip Box (ISO/IEC 14496-12:2026 §8.1.2).
+pub const SKIP: [u8; 4] = *b"skip";
 
 /// A brand / compatible-brand list, shared by `ftyp` and `styp`.
 ///

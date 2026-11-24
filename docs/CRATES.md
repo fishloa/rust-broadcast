@@ -475,7 +475,7 @@ Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` hea
 - **Cargo description:** ISO/IEC 14496-12:2026 (ISO BMFF) box syntax — box/FullBox headers, the top-level, sample-table, movie-fragment and CENC boxes, and DASH emsg, no_std.
 - **Version (in-tree):** 0.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`test-harness`](#test-harness), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Links:** [README](../isobmff/README.md) · [CHANGELOG](../isobmff/CHANGELOG.md) · [crates.io](https://crates.io/crates/isobmff) · [docs.rs](https://docs.rs/isobmff)
 
 #### transmux
@@ -913,7 +913,7 @@ One copy of the DASH loopback simulator (world/synth/capture/loopback), the RTMP
 - **Standards:** n/a
 - **Cargo description:** Shared test harnesses for workspace integration tests (unpublished).
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 7
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dash-runtime`](#dash-runtime), [`rtmp-runtime`](#rtmp-runtime), [`test-fixtures`](#test-fixtures), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dash-runtime`](#dash-runtime), [`isobmff`](#isobmff), [`rtmp-runtime`](#rtmp-runtime), [`test-fixtures`](#test-fixtures), [`transmux`](#transmux)
 - **Used by (workspace):** none
 
 ### Dependency layers

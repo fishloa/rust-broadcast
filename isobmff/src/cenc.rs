@@ -85,6 +85,9 @@ pub use broadcast_common::cenc::CencScheme;
 // tenc — TrackEncryptionBox (ISO/IEC 23001-7 §12.2)
 // ---------------------------------------------------------------------------
 
+/// Four-CC of the Track Encryption Box (`tenc`, ISO/IEC 23001-7 §12.2).
+pub const TENC: [u8; 4] = *b"tenc";
+
 /// Track Encryption Box (`tenc`) — ISO/IEC 23001-7 §12.2.
 ///
 /// Carries the default KID, per-sample IV size, and cryptic block parameters
@@ -254,6 +257,9 @@ pub const SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION: u32 = 0x000001;
 /// KID(128)` = 20 bytes.
 #[cfg(test)]
 pub const SENC_OVERRIDE_FIELDS_LEN: usize = 20;
+
+/// Four-CC of the Sample Encryption Box (`senc`, ISO/IEC 23001-7 §12.3).
+pub const SENC: [u8; 4] = *b"senc";
 
 /// Sample Encryption Box (`senc`) — ISO/IEC 23001-7 §12.3.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -606,6 +612,9 @@ fn write_be(
 // saiz — SampleAuxiliaryInformationSizesBox (ISO/IEC 14496-12:2026 §8.7.8)
 // ---------------------------------------------------------------------------
 
+/// Four-CC of the Sample Auxiliary Information Sizes Box (`saiz`, ISO/IEC 14496-12:2026 §8.7.8).
+pub const SAIZ: [u8; 4] = *b"saiz";
+
 /// Sample Auxiliary Information Sizes Box (`saiz`) — §8.7.8.
 ///
 /// `sample_count` (wire `unsigned int(32)`) is carried explicitly: unlike
@@ -759,6 +768,9 @@ impl Serialize for SampleAuxInfoSizesBox {
 // ---------------------------------------------------------------------------
 // saio — SampleAuxiliaryInformationOffsetsBox (ISO/IEC 14496-12:2026 §8.7.9)
 // ---------------------------------------------------------------------------
+
+/// Four-CC of the Sample Auxiliary Information Offsets Box (`saio`, ISO/IEC 14496-12:2026 §8.7.9).
+pub const SAIO: [u8; 4] = *b"saio";
 
 /// Sample Auxiliary Information Offsets Box (`saio`) — §8.7.9.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1086,6 +1098,9 @@ impl Serialize for SchemeInformationBox {
 // ---------------------------------------------------------------------------
 // sinf — Protection Scheme Information Box (ISO/IEC 14496-12:2026 §13.4.2)
 // ---------------------------------------------------------------------------
+
+/// Four-CC of the Protection Scheme Information Box (`sinf`, ISO/IEC 14496-12:2026 §13.4.2).
+pub const SINF: [u8; 4] = *b"sinf";
 
 /// Protection Scheme Information Box (`sinf`) — §13.4.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
