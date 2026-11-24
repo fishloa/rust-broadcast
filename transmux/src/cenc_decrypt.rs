@@ -97,7 +97,7 @@ use crate::error::{Error, Result};
 use crate::init_segment::{ChunkLargeOffsetBox, ChunkOffsetBox, SampleSizeBox, SampleToChunkBox};
 use crate::media::Media;
 use crate::progressive_demux::sample_layout;
-pub use isobmff::cenc::CencScheme;
+pub use broadcast_common::cenc::CencScheme;
 use isobmff::cenc::{KEY_LEN, SampleEncryptionEntry, TrackEncryptionBox};
 use isobmff::movie_fragment::{
     MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TrackFragmentHeaderBox, TrackFragmentRunBox,

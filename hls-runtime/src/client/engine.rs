@@ -19,7 +19,8 @@ use broadcast_hls::{
     ByteRange, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist, MediaSegment,
     OpenSegment, PreloadHintType,
 };
-use transmux::sample_aes::{BLOCK_LEN, KEY_LEN, aes128_decrypt_segment};
+use isobmff::cenc::KEY_LEN;
+use transmux::sample_aes::{BLOCK_LEN, aes128_decrypt_segment};
 use transmux::{DemuxEvent, Fmp4Demux, InputDegradation, Sample, StreamingTsDemux, TrackSpec};
 
 use super::action::{Action, BlockingReload, KeyId, ResourceId};

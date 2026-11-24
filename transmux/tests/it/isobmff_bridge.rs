@@ -114,10 +114,19 @@ fn every_isobmff_error_maps_to_its_transmux_variant() {
             "unsupported feature: seig",
         ),
     ];
+    // A new `isobmff::Error` variant needs a case here and an arm in the
+    // `From` impl; the fallback check below catches it if only the arm is
+    // forgotten.
+    const FALLBACK: &str = "unsupported feature: unrecognised ISO BMFF box error";
     for (isobmff_err, matches_transmux, text) in cases {
         assert_eq!(isobmff_err.to_string(), text);
         let mapped = transmux::Error::from(isobmff_err);
         assert!(matches_transmux(&mapped), "mapped to {mapped:?}");
+        assert_ne!(
+            mapped.to_string(),
+            FALLBACK,
+            "{text}: converted to the From fallback; add an arm in transmux::Error::from(isobmff::Error)"
+        );
     }
 
     // The `emsg` parser's own variants (and its version check) have always
@@ -174,6 +183,7 @@ fn track_ids_print_and_serialise_alike() {
 
 /// `Fmp4Demux` scans the file's `mdat`s exactly once however many
 /// fragments/trafs it holds (was once per traf: O(fragments x boxes)).
+#[cfg(feature = "scan-counters")]
 #[test]
 fn demux_scans_mdats_once_per_file() {
     use broadcast_common::Unpackage;

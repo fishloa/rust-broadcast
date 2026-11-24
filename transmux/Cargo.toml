@@ -100,6 +100,9 @@ cenc   = ["dep:aes", "dep:ctr", "dep:cbc", "dep:zeroize", "dep:subtle"]
 # `cbc` sub-features for its PKCS#7 whole-segment API. All crypto stays
 # feature-gated: the default no_std core build has none.
 sample-aes = ["cenc", "cbc/alloc", "cbc/block-padding"]
+# Test-only gate for the `scan-counters` instrumentation test; not enabled by
+# default, so a normal build never compiles the counter.
+scan-counters = ["isobmff/scan-counters"]
 # `cli` builds the `transmux` command-line packager (std + clap). The library
 # itself stays `no_std`; only this feature/binary pulls `clap` and `std`.
 cli    = ["dep:clap", "dep:container-probe", "std"]
@@ -123,6 +126,10 @@ test-alloc = { path = "../test-alloc" }
 # result; already resolved workspace-wide at this version (see Cargo.lock), so
 # this adds no new dependency to the tree.
 serde_json   = { workspace = true }
+# Test instrumentation only: `tests/it/isobmff_bridge.rs` asserts the fMP4 demux
+# scans a file's `mdat`s once, which needs isobmff's `scan-counters` feature.
+# Enabled on the dev edge only, never in a normal build.
+isobmff      = { path = "../isobmff", version = "0.1.0", features = ["scan-counters"] }
 # ssai_ad_stitch.rs (issue #664) wires transmux's splice/HLS/DASH machinery to
 # the SCTE-35 cue parser and the SCTE-35<->HLS-DATERANGE/DASH-emsg conversion
 # crate. Dev-dependency only: transmux itself stays free of a SCTE-35

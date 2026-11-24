@@ -19,6 +19,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 /// Error variants that box parsers and builders can return.
 ///
+/// A new variant also needs an arm in `transmux`'s
+/// `impl From<Error> for transmux::Error` and a case in
+/// `transmux/tests/it/isobmff_bridge.rs`; that conversion's fallback arm would
+/// otherwise swallow it silently.
+///
 /// Spec references inside `#[error(...)]` strings quote clauses from
 /// ISO/IEC 14496-12:2026 (§4.2) where applicable.
 // `PartialEq` but not `Eq`: kept identical to `transmux::Error`'s derives so the

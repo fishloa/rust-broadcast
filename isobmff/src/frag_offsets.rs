@@ -71,17 +71,16 @@ pub struct MdatRange {
     end: usize,
 }
 
-// Number of whole-file `mdat` scans on this thread (work-counter for the
-// "scan once per file, not once per `traf`" guarantee). Exposed so the muxing
-// hub above this crate can assert its demuxer holds the guarantee too; it
-// costs one thread-local increment per `mdat_ranges` call.
-#[cfg(feature = "std")]
+// Test instrumentation only (feature `scan-counters`): number of whole-file
+// `mdat` scans on this thread, so the muxing hub above this crate can assert
+// its demuxer scans once per file. Compiled out of the default build.
+#[cfg(feature = "scan-counters")]
 std::thread_local! {
-    pub static MDAT_SCANS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    static MDAT_SCANS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
 }
 
 /// Number of whole-file `mdat` scans performed on the current thread.
-#[cfg(feature = "std")]
+#[cfg(feature = "scan-counters")]
 #[doc(hidden)]
 pub fn mdat_scans_on_thread() -> usize {
     MDAT_SCANS.with(core::cell::Cell::get)
@@ -105,7 +104,7 @@ thread_local! {
 /// hold a cut-short recording whose early fragments are intact, which is why
 /// the walk is [`clamped_boxes`] and not the strict `box_iter`.
 pub fn mdat_ranges(file: &[u8]) -> Vec<MdatRange> {
-    #[cfg(feature = "std")]
+    #[cfg(feature = "scan-counters")]
     MDAT_SCANS.with(|c| c.set(c.get() + 1));
     clamped_boxes(file)
         .filter(|b| b.header.box_type.is(b"mdat"))

@@ -33,6 +33,11 @@ std = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 # `serde::Serialize` derives on the moved box types (and the golden-hashed
 # `TrackId` transparent form). Off by default; transmux's `serde` forwards here.
 serde = ["dep:serde", "broadcast-common/serde"]
+# Test instrumentation only, not part of the API: a per-thread counter of
+# `frag_offsets::mdat_ranges` calls so a demuxer above this crate can assert it
+# scans the file's `mdat`s once. Off by default, so a normal build has no
+# counter code at all; a caller's tests opt in. Implies `std` (thread_local).
+scan-counters = ["std"]
 
 [lints]
 workspace = true
