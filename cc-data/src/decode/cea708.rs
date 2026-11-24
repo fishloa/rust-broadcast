@@ -48,7 +48,7 @@ impl AnchorPoint {
     /// From the 4-bit `ap` wire value (§8.4.6; values 9–15 fold to `TopLeft`).
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x0F {
+        match v & ANCHOR_POINT_MASK {
             0 => Self::TopLeft,
             1 => Self::TopCenter,
             2 => Self::TopRight,
@@ -93,7 +93,7 @@ const MAX_WINDOW_COLS: usize = 42;
 
 // ── Packet layer (§5) ───────────────────────────────────────────────────────
 /// `packet_size_code == 0` ⇒ 127 data bytes (§5.1).
-const PACKET_SIZE_ZERO_DATA: usize = 127;
+const PACKET_FULL_DATA_LEN: usize = 127;
 
 // ── Service block (§6.2) ──────────────────────────────────────────────────────
 /// `service_number == 7` is the extended-service escape (§6.2.2).
@@ -137,6 +137,82 @@ const G1_START: u8 = 0xA0;
 
 // ── G0 substitution (§7.1.6): 0x7F is the musical note, not DEL ───────────────
 const G0_MUSIC_NOTE: u8 = 0x7F;
+/// Top of the code space (`G1` runs to `0xFF`, §7.1).
+const CODE_SPACE_MAX: u8 = 0xFF;
+/// G3 `0xA0` is the `[CC]` icon (§7.1.9).
+const G3_CC_ICON: u8 = 0xA0;
+
+// ── Field masks / shifts of the packet, service-block and window syntax ──────
+/// Mask of the 4-bit `ap` anchor point (§8.4.6).
+const ANCHOR_POINT_MASK: u8 = 0x0F;
+/// `packet_size_code`(6) | `sequence_number`(2) in a CCP header (§5.1).
+const CCP_SIZE_CODE_MASK: u8 = 0x3F;
+const CCP_SEQUENCE_SHIFT: u32 = 6;
+const CCP_SEQUENCE_MASK: u8 = 0x03;
+/// `data_size = size_code * 2 - 1` (§5.1).
+const CCP_SIZE_CODE_FACTOR: usize = 2;
+const CCP_SIZE_CODE_BIAS: usize = 1;
+/// `service_number`(3) | `block_size`(5) in a Service Block Header (§6.2).
+const SERVICE_NUMBER_SHIFT: u32 = 5;
+const SERVICE_NUMBER_MASK: u8 = 0x07;
+const BLOCK_SIZE_MASK: u8 = 0x1F;
+/// 6-bit extended `service_number` (§6.2.2).
+const EXTENDED_SERVICE_NUMBER_MASK: u8 = 0x3F;
+/// A C3 variable-length header: command + length byte, then `N` data bytes.
+const C3_VARIABLE_HEADER_LEN: usize = 3;
+const C3_LENGTH_BYTE_OFFSET: usize = 2;
+const C3_VARIABLE_LENGTH_MASK: u8 = 0x3F;
+/// Bytes consumed by a two-byte EXT1 element (`EXT1` + base byte).
+const EXT1_ELEMENT_LEN: usize = 2;
+/// Bytes consumed by a window-map command (opcode + window bitmap).
+const WINDOW_MAP_CMD_LEN: usize = 2;
+/// Maximum length of a UTF-8 encoded `char`.
+const UTF8_MAX_LEN: usize = 4;
+
+/// Byte offsets of the DefineWindow parameters (§8.10.5.2).
+const P1_OFFSET: usize = 1;
+const P2_OFFSET: usize = 2;
+const P3_OFFSET: usize = 3;
+const P4_OFFSET: usize = 4;
+const P5_OFFSET: usize = 5;
+const P6_OFFSET: usize = 6;
+
+/// Masks / shifts of the DefineWindow window fields (§8.10.5.2).
+const WINDOW_PRIORITY_MASK: u8 = 0x07;
+const COLUMN_LOCK_SHIFT: u32 = 3;
+const ROW_LOCK_SHIFT: u32 = 4;
+const WINDOW_STATE_SHIFT: u32 = 5;
+const RELATIVE_POSITION_SHIFT: u32 = 7;
+const ANCHOR_VERTICAL_MASK: u8 = 0x7F;
+const ANCHOR_POINT_SHIFT: u32 = 4;
+const ROW_COUNT_MASK: u8 = 0x0F;
+const COLUMN_COUNT_MASK: u8 = 0x3F;
+const WINDOW_STYLE_SHIFT: u32 = 3;
+const WINDOW_STYLE_MASK: u8 = 0x07;
+const PEN_STYLE_MASK: u8 = 0x07;
+/// One-bit window flags share this mask.
+const BIT_FLAG_MASK: u8 = 0x01;
+
+/// Masks / shifts of the colour and attribute bytes (§8.10.5.8–§8.10.5.10).
+const OPACITY_SHIFT: u32 = 6;
+const COLOR_HI_SHIFT: u32 = 4;
+const COLOR_MID_SHIFT: u32 = 2;
+const COLOR_COMPONENT_MASK: u8 = 0x03;
+const BORDER_TYPE_LO_SHIFT: u32 = 6;
+const BORDER_TYPE_HI_SHIFT: u32 = 7;
+const BORDER_TYPE_HI_IN_FIELD_SHIFT: u32 = 2;
+const WORD_WRAP_SHIFT: u32 = 6;
+const PRINT_DIRECTION_SHIFT: u32 = 4;
+const SCROLL_DIRECTION_SHIFT: u32 = 2;
+const JUSTIFY_MASK: u8 = 0x03;
+const PEN_OFFSET_SHIFT: u32 = 2;
+const ITALICS_SHIFT: u32 = 7;
+const UNDERLINE_SHIFT: u32 = 6;
+const PEN_EDGE_TYPE_SHIFT: u32 = 3;
+const PEN_EDGE_TYPE_MASK: u8 = 0x07;
+const FONT_STYLE_MASK: u8 = 0x07;
+const PEN_ROW_MASK: u8 = 0x0F;
+const PEN_COL_MASK: u8 = 0x3F;
 
 /// State of a window's display (§8.10.5 DisplayWindows / HideWindows / Toggle).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -315,9 +391,10 @@ impl Window {
         }
         if self.pen_col < cols {
             match row.char_indices().nth(self.pen_col) {
-                Some((at, old)) => {
-                    row.replace_range(at..at + old.len_utf8(), ch.encode_utf8(&mut [0; 4]))
-                }
+                Some((at, old)) => row.replace_range(
+                    at..at + old.len_utf8(),
+                    ch.encode_utf8(&mut [0; UTF8_MAX_LEN]),
+                ),
                 None => row.push(ch),
             }
             self.pen_col += 1;
@@ -536,11 +613,11 @@ impl Cea708Decoder {
         let Some(&header) = self.packet.first() else {
             return false;
         };
-        let size_code = header & 0x3F;
+        let size_code = header & CCP_SIZE_CODE_MASK;
         let data_size = if size_code == 0 {
-            PACKET_SIZE_ZERO_DATA
+            PACKET_FULL_DATA_LEN
         } else {
-            (size_code as usize) * 2 - 1
+            (size_code as usize) * CCP_SIZE_CODE_FACTOR - CCP_SIZE_CODE_BIAS
         };
         self.packet.len() > data_size
     }
@@ -559,16 +636,16 @@ impl Cea708Decoder {
         let Some((&header, rest)) = ccp.split_first() else {
             return;
         };
-        let seq = (header >> 6) & 0x03;
-        let size_code = header & 0x3F;
+        let seq = (header >> CCP_SEQUENCE_SHIFT) & CCP_SEQUENCE_MASK;
+        let size_code = header & CCP_SIZE_CODE_MASK;
         let data_size = if size_code == 0 {
-            PACKET_SIZE_ZERO_DATA
+            PACKET_FULL_DATA_LEN
         } else {
-            (size_code as usize) * 2 - 1
+            (size_code as usize) * CCP_SIZE_CODE_FACTOR - CCP_SIZE_CODE_BIAS
         };
         // discontinuity check (§5.1): non-consecutive seq ⇒ reset every service
         if let Some(prev) = self.last_seq
-            && seq != (prev + 1) & 0x03
+            && seq != (prev + 1) & CCP_SEQUENCE_MASK
         {
             for s in &mut self.services {
                 s.reset();
@@ -589,15 +666,16 @@ impl Cea708Decoder {
             if header == 0 {
                 return;
             }
-            let mut service_number = u16::from((header >> 5) & 0x07);
-            let block_size = (header & 0x1F) as usize;
+            let mut service_number =
+                u16::from((header >> SERVICE_NUMBER_SHIFT) & SERVICE_NUMBER_MASK);
+            let block_size = (header & BLOCK_SIZE_MASK) as usize;
             let mut body = rest;
             if service_number == u16::from(EXTENDED_SERVICE_ESCAPE) && block_size != 0 {
                 // Extended Service Block Header (§6.2.2): 2nd byte low 6 bits.
                 let Some((&ext, after)) = rest.split_first() else {
                     return;
                 };
-                service_number = u16::from(ext & 0x3F);
+                service_number = u16::from(ext & EXTENDED_SERVICE_NUMBER_MASK);
                 body = after;
             }
             if block_size > body.len() {
@@ -637,7 +715,7 @@ impl Cea708Decoder {
                     1
                 }
                 C1_START..=C1_END => Self::handle_c1(service, &block[i..]),
-                G1_START..=0xFF => {
+                G1_START..=CODE_SPACE_MAX => {
                     // G1 = ISO 8859-1 Latin-1: byte value is the code point.
                     Self::put(service, char::from(b));
                     1
@@ -673,7 +751,8 @@ impl Cea708Decoder {
                 1
             }
             C0_EXT1 => Self::handle_ext1(service, data),
-            C0_P16 => 3, // P16: command + 2 bytes (16-bit char addressing)
+            // P16: command + 2 bytes (16-bit char addressing).
+            C0_P16 => 3,
             // Undefined codes: 0x11–0x17 ⇒ 2 bytes; 0x19–0x1F ⇒ 3 bytes; all
             // other (undefined 0x00–0x0F) ⇒ 1 byte (§7.1.4).
             0x11..=0x17 => 2,
@@ -697,20 +776,22 @@ impl Cea708Decoder {
             // G2 (0x20–0x7F): EXT1 + base (two-byte element).
             0x20..=0x7F => {
                 Self::put(service, Self::g2_char(base));
-                2
+                EXT1_ELEMENT_LEN
             }
             // C3 (0x80–0x9F): fixed/variable length (Tables 22/23).
             0x80..=0x87 => 6,
             0x88..=0x8F => 7,
             0x90..=0x9F => {
                 // variable: 1-byte header after the command; N = (data1 & 0x3F)+1.
-                let n = data.get(2).map_or(0, |d| (d & 0x3F) as usize + 1);
-                3 + n
+                let n = data
+                    .get(C3_LENGTH_BYTE_OFFSET)
+                    .map_or(0, |d| (d & C3_VARIABLE_LENGTH_MASK) as usize + 1);
+                C3_VARIABLE_HEADER_LEN + n
             }
             // G3 (0xA0–0xFF): EXT1 + base (two-byte element).
             _ => {
                 Self::put(service, Self::g3_char(base));
-                2
+                EXT1_ELEMENT_LEN
             }
         }
     }
@@ -731,7 +812,8 @@ impl Cea708Decoder {
             C1_HDW => Self::window_map_cmd(service, data, WindowMapOp::Hide),
             C1_TGW => Self::window_map_cmd(service, data, WindowMapOp::Toggle),
             C1_DLW => Self::window_map_cmd(service, data, WindowMapOp::Delete),
-            C1_DLY => 2, // DLY: command + tenths-of-seconds
+            // DLY: command + tenths-of-seconds.
+            C1_DLY => 2,
             C1_DLC => 1, // DLC: no parameters
             C1_RST => {
                 service.reset();
@@ -783,7 +865,7 @@ impl Cea708Decoder {
                 }
             }
         }
-        2
+        WINDOW_MAP_CMD_LEN
     }
 
     /// DefineWindow DF0–DF7 (§8.10.5.2): 6 parameter bytes.
@@ -793,32 +875,32 @@ impl Cea708Decoder {
             return data.len().max(1);
         }
         let id = (data[0] - C1_DF0) as usize;
-        let p1 = data[1];
-        let p2 = data[2];
-        let p3 = data[3];
-        let p4 = data[4];
-        let p5 = data[5];
-        let p6 = data[6];
+        let p1 = data[P1_OFFSET];
+        let p2 = data[P2_OFFSET];
+        let p3 = data[P3_OFFSET];
+        let p4 = data[P4_OFFSET];
+        let p5 = data[P5_OFFSET];
+        let p6 = data[P6_OFFSET];
 
         let creating = service.windows[id].is_none();
         let w = service.windows[id].get_or_insert_with(Window::new);
 
-        w.priority = p1 & 0x07;
-        w.column_lock = (p1 >> 3) & 0x01 != 0;
-        w.row_lock = (p1 >> 4) & 0x01 != 0;
-        w.state = if (p1 >> 5) & 0x01 != 0 {
+        w.priority = p1 & WINDOW_PRIORITY_MASK;
+        w.column_lock = (p1 >> COLUMN_LOCK_SHIFT) & BIT_FLAG_MASK != 0;
+        w.row_lock = (p1 >> ROW_LOCK_SHIFT) & BIT_FLAG_MASK != 0;
+        w.state = if (p1 >> WINDOW_STATE_SHIFT) & BIT_FLAG_MASK != 0 {
             WindowState::Visible
         } else {
             WindowState::Hidden
         };
-        w.relative_position = (p2 >> 7) & 0x01 != 0;
-        w.anchor_vertical = p2 & 0x7F;
+        w.relative_position = (p2 >> RELATIVE_POSITION_SHIFT) & BIT_FLAG_MASK != 0;
+        w.anchor_vertical = p2 & ANCHOR_VERTICAL_MASK;
         w.anchor_horizontal = p3;
-        w.anchor_point = AnchorPoint::from_bits((p4 >> 4) & 0x0F);
-        w.row_count = (p4 & 0x0F) + 1;
-        w.column_count = (p5 & 0x3F) + 1;
-        w.window_style = (p6 >> 3) & 0x07;
-        w.pen_style = p6 & 0x07;
+        w.anchor_point = AnchorPoint::from_bits((p4 >> ANCHOR_POINT_SHIFT) & ANCHOR_POINT_MASK);
+        w.row_count = (p4 & ROW_COUNT_MASK) + 1;
+        w.column_count = (p5 & COLUMN_COUNT_MASK) + 1;
+        w.window_style = (p6 >> WINDOW_STYLE_SHIFT) & WINDOW_STYLE_MASK;
+        w.pen_style = p6 & PEN_STYLE_MASK;
 
         if creating {
             // On create: apply preset window/pen styles, fill, pen at (0,0).
@@ -853,21 +935,31 @@ impl Cea708Decoder {
         if data.len() < TOTAL {
             return data.len().max(1);
         }
-        let p1 = data[1];
-        let p2 = data[2];
-        let p3 = data[3];
-        let p4 = data[4];
+        let p1 = data[P1_OFFSET];
+        let p2 = data[P2_OFFSET];
+        let p3 = data[P3_OFFSET];
+        let p4 = data[P4_OFFSET];
         if let Some(w) = service.current() {
-            w.fill_opacity = Opacity::from_bits((p1 >> 6) & 0x03);
-            w.fill_color = Color::new((p1 >> 4) & 0x03, (p1 >> 2) & 0x03, p1 & 0x03);
-            let bt_lo = (p2 >> 6) & 0x03;
-            w.border_color = Color::new((p2 >> 4) & 0x03, (p2 >> 2) & 0x03, p2 & 0x03);
-            let bt_hi = (p3 >> 7) & 0x01;
-            w.border_type = EdgeType::from_bits((bt_hi << 2) | bt_lo);
-            w.word_wrap = (p3 >> 6) & 0x01 != 0;
-            w.print_direction = PrintDirection::from_bits((p3 >> 4) & 0x03);
-            w.scroll_direction = ScrollDirection::from_bits((p3 >> 2) & 0x03);
-            w.justify = Justify::from_bits(p3 & 0x03);
+            w.fill_opacity = Opacity::from_bits((p1 >> OPACITY_SHIFT) & COLOR_COMPONENT_MASK);
+            w.fill_color = Color::new(
+                (p1 >> COLOR_HI_SHIFT) & COLOR_COMPONENT_MASK,
+                (p1 >> COLOR_MID_SHIFT) & COLOR_COMPONENT_MASK,
+                p1 & COLOR_COMPONENT_MASK,
+            );
+            let bt_lo = (p2 >> BORDER_TYPE_LO_SHIFT) & COLOR_COMPONENT_MASK;
+            w.border_color = Color::new(
+                (p2 >> COLOR_HI_SHIFT) & COLOR_COMPONENT_MASK,
+                (p2 >> COLOR_MID_SHIFT) & COLOR_COMPONENT_MASK,
+                p2 & COLOR_COMPONENT_MASK,
+            );
+            let bt_hi = (p3 >> BORDER_TYPE_HI_SHIFT) & BIT_FLAG_MASK;
+            w.border_type = EdgeType::from_bits((bt_hi << BORDER_TYPE_HI_IN_FIELD_SHIFT) | bt_lo);
+            w.word_wrap = (p3 >> WORD_WRAP_SHIFT) & BIT_FLAG_MASK != 0;
+            w.print_direction =
+                PrintDirection::from_bits((p3 >> PRINT_DIRECTION_SHIFT) & COLOR_COMPONENT_MASK);
+            w.scroll_direction =
+                ScrollDirection::from_bits((p3 >> SCROLL_DIRECTION_SHIFT) & COLOR_COMPONENT_MASK);
+            w.justify = Justify::from_bits(p3 & JUSTIFY_MASK);
             // p4: effect speed / direction / display effect — not rendered here.
             let _ = p4;
         }
@@ -880,15 +972,15 @@ impl Cea708Decoder {
         if data.len() < TOTAL {
             return data.len().max(1);
         }
-        let p1 = data[1];
-        let p2 = data[2];
+        let p1 = data[P1_OFFSET];
+        let p2 = data[P2_OFFSET];
         if let Some(w) = service.current() {
-            w.pen_offset = PenOffset::from_bits((p1 >> 2) & 0x03);
-            w.pen_size = PenSize::from_bits(p1 & 0x03);
-            w.italics = (p2 >> 7) & 0x01 != 0;
-            w.underline = (p2 >> 6) & 0x01 != 0;
-            w.edge_type = EdgeType::from_bits((p2 >> 3) & 0x07);
-            w.font_style = FontStyle::from_bits(p2 & 0x07);
+            w.pen_offset = PenOffset::from_bits((p1 >> PEN_OFFSET_SHIFT) & COLOR_COMPONENT_MASK);
+            w.pen_size = PenSize::from_bits(p1 & COLOR_COMPONENT_MASK);
+            w.italics = (p2 >> ITALICS_SHIFT) & BIT_FLAG_MASK != 0;
+            w.underline = (p2 >> UNDERLINE_SHIFT) & BIT_FLAG_MASK != 0;
+            w.edge_type = EdgeType::from_bits((p2 >> PEN_EDGE_TYPE_SHIFT) & PEN_EDGE_TYPE_MASK);
+            w.font_style = FontStyle::from_bits(p2 & FONT_STYLE_MASK);
         }
         TOTAL
     }
@@ -899,16 +991,28 @@ impl Cea708Decoder {
         if data.len() < TOTAL {
             return data.len().max(1);
         }
-        let p1 = data[1];
-        let p2 = data[2];
-        let p3 = data[3];
+        let p1 = data[P1_OFFSET];
+        let p2 = data[P2_OFFSET];
+        let p3 = data[P3_OFFSET];
         if let Some(w) = service.current() {
-            w.fg_opacity = Opacity::from_bits((p1 >> 6) & 0x03);
-            w.fg_color = Color::new((p1 >> 4) & 0x03, (p1 >> 2) & 0x03, p1 & 0x03);
-            w.bg_opacity = Opacity::from_bits((p2 >> 6) & 0x03);
-            w.bg_color = Color::new((p2 >> 4) & 0x03, (p2 >> 2) & 0x03, p2 & 0x03);
+            w.fg_opacity = Opacity::from_bits((p1 >> OPACITY_SHIFT) & COLOR_COMPONENT_MASK);
+            w.fg_color = Color::new(
+                (p1 >> COLOR_HI_SHIFT) & COLOR_COMPONENT_MASK,
+                (p1 >> COLOR_MID_SHIFT) & COLOR_COMPONENT_MASK,
+                p1 & COLOR_COMPONENT_MASK,
+            );
+            w.bg_opacity = Opacity::from_bits((p2 >> OPACITY_SHIFT) & COLOR_COMPONENT_MASK);
+            w.bg_color = Color::new(
+                (p2 >> COLOR_HI_SHIFT) & COLOR_COMPONENT_MASK,
+                (p2 >> COLOR_MID_SHIFT) & COLOR_COMPONENT_MASK,
+                p2 & COLOR_COMPONENT_MASK,
+            );
             // p3 = edge colour (the pen's own edge, not the window border).
-            w.edge_color = Color::new((p3 >> 4) & 0x03, (p3 >> 2) & 0x03, p3 & 0x03);
+            w.edge_color = Color::new(
+                (p3 >> COLOR_HI_SHIFT) & COLOR_COMPONENT_MASK,
+                (p3 >> COLOR_MID_SHIFT) & COLOR_COMPONENT_MASK,
+                p3 & COLOR_COMPONENT_MASK,
+            );
         }
         TOTAL
     }
@@ -919,8 +1023,8 @@ impl Cea708Decoder {
         if data.len() < TOTAL {
             return data.len().max(1);
         }
-        let row = (data[1] & 0x0F) as usize;
-        let col = (data[2] & 0x3F) as usize;
+        let row = (data[P1_OFFSET] & PEN_ROW_MASK) as usize;
+        let col = (data[P2_OFFSET] & PEN_COL_MASK) as usize;
         if let Some(w) = service.current() {
             w.set_pen_location(row, col);
         }
@@ -970,7 +1074,7 @@ impl Cea708Decoder {
 
     /// G3 byte → glyph (§7.1.9): 0xA0 = [CC] icon; the rest substitute `_`.
     fn g3_char(b: u8) -> char {
-        if b == 0xA0 {
+        if b == G3_CC_ICON {
             '\u{1F4FA}' // 📺 stand-in for the [CC] icon
         } else {
             '_'
