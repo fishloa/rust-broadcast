@@ -23,8 +23,20 @@ pub const TAG: u8 = 0x39;
 const RESERVED_5_BITS: u32 = 5;
 /// Width of a `reserved(2)` field.
 const RESERVED_2_BITS: u32 = 2;
-/// Width of the `reserved_zero_4bits` field.
-const RESERVED_ZERO_4_BITS: u32 = 4;
+/// Width of the `reserved_zero_4bits` field and `video_properties_tag` (4 bits).
+const NIBBLE_BITS: usize = 4;
+/// Width of `reserved_zero_4bits` in `ReservedZero` terms.
+const RESERVED_PADDING_BITS: u32 = NIBBLE_BITS as u32;
+/// Width of `profile_idc`.
+const PROFILE_IDC_BITS: usize = 7;
+/// Width of a byte-sized field.
+const BYTE_BITS: usize = u8::BITS as usize;
+/// Width of `sub_profile_idc`.
+const SUB_PROFILE_IDC_BITS: usize = u32::BITS as usize;
+/// Width of `reserved(5)` in reader terms.
+const RESERVED_5_READ_BITS: usize = RESERVED_5_BITS as usize;
+/// Width of `reserved(2)` in reader terms.
+const RESERVED_2_READ_BITS: usize = RESERVED_2_BITS as usize;
 
 /// The `temporal_id_min` / `temporal_id_max` block (present iff
 /// `temporal_layer_subset_flag == '1'`), shared by the VVC and EVC descriptors.
@@ -96,7 +108,7 @@ pub struct VvcVideoDescriptor {
     /// `reserved_zero_4bits`: "shall be set to '0000'"; re-emitted verbatim,
     /// default 0.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_zero_4bits: ReservedZero<RESERVED_ZERO_4_BITS>,
+    pub reserved_zero_4bits: ReservedZero<RESERVED_PADDING_BITS>,
     /// `level_idc` (H.266 `general_level_idc`, external code).
     pub level_idc: u8,
     /// `VVC_still_present_flag`.
@@ -157,26 +169,26 @@ impl VvcVideoDescriptor {
 
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "VvcVideoDescriptor");
-        let profile_idc = r.u8(7)?;
+        let profile_idc = r.u8(PROFILE_IDC_BITS)?;
         let tier_flag = r.flag()?;
-        let n = r.bits(8)?;
+        let n = r.bits(BYTE_BITS)?;
         let mut sub_profile_idcs = Vec::new();
         for _ in 0..n {
-            sub_profile_idcs.push(r.bits(32)?);
+            sub_profile_idcs.push(r.bits(SUB_PROFILE_IDC_BITS)?);
         }
         let progressive_source_flag = r.flag()?;
         let interlaced_source_flag = r.flag()?;
         let non_packed_constraint_flag = r.flag()?;
         let frame_only_constraint_flag = r.flag()?;
-        let reserved_zero_4bits = ReservedZero::from_bits(u64::from(r.u8(4)?));
-        let level_idc = r.u8(8)?;
+        let reserved_zero_4bits = ReservedZero::from_bits(u64::from(r.u8(NIBBLE_BITS)?));
+        let level_idc = r.u8(BYTE_BITS)?;
         let subset = r.flag()?;
         let still_present_flag = r.flag()?;
         let picture_24hr_present_flag = r.flag()?;
-        let reserved_5 = ReservedOnes::from_bits(u64::from(r.u8(5)?));
-        let hdr_wcg_idc = HdrWcgIdc::from_u8(r.u8(2)?);
-        let reserved_2 = ReservedOnes::from_bits(u64::from(r.u8(2)?));
-        let video_properties_tag = r.u8(4)?;
+        let reserved_5 = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_5_READ_BITS)?));
+        let hdr_wcg_idc = HdrWcgIdc::from_u8(r.u8(RESERVED_2_READ_BITS)?);
+        let reserved_2 = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_2_READ_BITS)?));
+        let video_properties_tag = r.u8(NIBBLE_BITS)?;
         let temporal_layer_subset = if subset {
             Some(TemporalIdRange::read(&mut r)?)
         } else {
@@ -205,11 +217,15 @@ impl VvcVideoDescriptor {
 
     pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.profile_idc), 7, "profile_idc")?;
+        w.put(u64::from(self.profile_idc), PROFILE_IDC_BITS, "profile_idc")?;
         w.flag(self.tier_flag, "tier_flag")?;
-        w.put(self.sub_profile_idcs.len() as u64, 8, "num_sub_profiles")?;
+        w.put(
+            self.sub_profile_idcs.len() as u64,
+            BYTE_BITS,
+            "num_sub_profiles",
+        )?;
         for s in &self.sub_profile_idcs {
-            w.put(u64::from(*s), 32, "sub_profile_idc")?;
+            w.put(u64::from(*s), SUB_PROFILE_IDC_BITS, "sub_profile_idc")?;
         }
         w.flag(self.progressive_source_flag, "progressive_source_flag")?;
         w.flag(self.interlaced_source_flag, "interlaced_source_flag")?;
@@ -221,8 +237,12 @@ impl VvcVideoDescriptor {
             self.frame_only_constraint_flag,
             "frame_only_constraint_flag",
         )?;
-        w.put(self.reserved_zero_4bits.get(), 4, "reserved_zero_4bits")?;
-        w.put(u64::from(self.level_idc), 8, "level_idc")?;
+        w.put(
+            self.reserved_zero_4bits.get(),
+            NIBBLE_BITS,
+            "reserved_zero_4bits",
+        )?;
+        w.put(u64::from(self.level_idc), BYTE_BITS, "level_idc")?;
         w.flag(
             self.temporal_layer_subset.is_some(),
             "temporal_layer_subset_flag",
@@ -232,12 +252,16 @@ impl VvcVideoDescriptor {
             self.picture_24hr_present_flag,
             "VVC_24hr_picture_present_flag",
         )?;
-        w.put(self.reserved_5.get(), 5, "reserved")?;
-        w.put(u64::from(self.hdr_wcg_idc.to_u8()), 2, "HDR_WCG_idc")?;
-        w.put(self.reserved_2.get(), 2, "reserved")?;
+        w.put(self.reserved_5.get(), RESERVED_5_READ_BITS, "reserved")?;
+        w.put(
+            u64::from(self.hdr_wcg_idc.to_u8()),
+            RESERVED_2_READ_BITS,
+            "HDR_WCG_idc",
+        )?;
+        w.put(self.reserved_2.get(), RESERVED_2_READ_BITS, "reserved")?;
         w.put(
             u64::from(self.video_properties_tag),
-            4,
+            NIBBLE_BITS,
             "video_properties_tag",
         )?;
         if let Some(t) = &self.temporal_layer_subset {
