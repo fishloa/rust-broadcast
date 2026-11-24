@@ -154,8 +154,11 @@ pub struct FileAck<'a> {
     /// The 7 `reserved` bits in front of `FileOK` as received, preserved so
     /// the object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<7>,
+    pub reserved: ReservedZero<FILE_OK_RESERVED_BITS>,
 }
+
+/// Width of the `reserved` bits in front of `FileOK` (Table 66).
+const FILE_OK_RESERVED_BITS: u32 = 7;
 
 /// `AppAbortReq()` (Table 67): host → app **or** app → host — opaque,
 /// application-domain-specific abort qualification.

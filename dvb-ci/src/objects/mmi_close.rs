@@ -68,6 +68,9 @@ pub struct CloseMmi {
     pub delay: Option<u8>,
 }
 
+/// Bytes of `cmd_id` at the start of a `close_mmi()` body.
+const CMD_ID_LEN: usize = 1;
+
 impl<'a> Parse<'a> for CloseMmi {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -81,13 +84,13 @@ impl<'a> Parse<'a> for CloseMmi {
         ))?;
         let cmd_id = CloseMmiCmdId::from_u8(cmd_byte);
         let delay = if cmd_id == CloseMmiCmdId::Delay {
-            if body.len() < 2 {
+            if body.len() < CMD_ID_LEN + 1 {
                 return Err(Error::InvalidObject {
                     what: "close_mmi",
                     reason: "cmd_id=delay requires a delay byte",
                 });
             }
-            Some(body[1])
+            Some(body[CMD_ID_LEN])
         } else {
             None
         };
