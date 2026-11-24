@@ -815,8 +815,9 @@ pub(crate) fn register_session<M>(
 
 /// [`register_session`] against a fresh private table, so a test can build a
 /// session with its resource registered exactly as the signalling handlers do
-/// (`test-seams` only). The returned guard unregisters on drop.
-#[cfg(feature = "test-seams")]
+/// (`test-seams` only, and only `whip`'s `from_spec` seam calls it). The
+/// returned guard unregisters on drop.
+#[cfg(all(feature = "test-seams", feature = "whip"))]
 pub(crate) fn register_session_for_test<M>(
     resource_id: &str,
     machine: M,

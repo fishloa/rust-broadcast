@@ -7,9 +7,18 @@
 # lib.rs declares `no_std` is ALSO checked with no features at all, so its test
 # modules must compile against `alloc` alone (or be gated on `std`).
 #
+# Every optional feature of the crates in `each_feature_alone` is then built by
+# itself: `--all-features` unifies them, so an import or an item left behind by
+# ONE feature being off is invisible to every other lane (multimux built
+# `--features whip` with an unused `RouteConfig` import, #4083). A feature that
+# genuinely needs another declares it in [features] rather than being skipped
+# here (multimux's `test-hooks` implies `whip`, whose seams it re-exports).
+#
 # Usage: tools/check-bare-features.sh [crate...]   (default: every member)
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
+
+each_feature_alone=(multimux)
 
 members=$(cargo metadata --no-deps --format-version 1 --locked | python3 -c '
 import json, os, sys
@@ -44,4 +53,31 @@ while read -r c has_std is_nostd; do
         echo "::endgroup::"
     fi
 done <<< "$members"
+
+# Every non-`default` feature of one crate, built one invocation at a time. The
+# feature list comes from the manifest via cargo metadata so a new feature is
+# covered without editing this script.
+check_each_feature_alone() {
+    local c=$1 f
+    local feats
+    mapfile -t feats < <(cargo metadata --no-deps --format-version 1 --locked | python3 -c '
+import json, sys
+for p in json.load(sys.stdin)["packages"]:
+    if p["name"] == sys.argv[1]:
+        print("\n".join(sorted(f for f in p["features"] if f != "default")))
+' "$c")
+    for f in ${feats[@]+"${feats[@]}"}; do
+        echo "::group::$c (--no-default-features --features $f)"
+        cargo check -p "$c" --all-targets --no-default-features --features "$f" --locked \
+            || { echo "::error::$c fails with only '$f'"; fail=1; }
+        echo "::endgroup::"
+    done
+}
+
+for c in "${each_feature_alone[@]}"; do
+    if [ "$#" -gt 0 ]; then
+        case " $* " in *" $c "*) ;; *) continue ;; esac
+    fi
+    check_each_feature_alone "$c"
+done
 exit "$fail"

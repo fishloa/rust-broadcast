@@ -53,12 +53,7 @@ const GUARD: Duration = Duration::from_secs(20);
 /// Workspace-convention scratch dir (mirrors `golden_gate.rs`'s own
 /// `scratch_dir` — no `tempfile` dependency needed).
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/push-rtsp-tmp")
-        .join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create push_rtsp scratch dir");
-    dir
+    test_fixtures::process::scratch_dir(&format!("push-rtsp-{name}"))
 }
 
 // ── External-tool availability gates ────────────────────────────────────────

@@ -199,6 +199,27 @@ pub fn which(bin: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// A fresh, empty scratch directory named after `tag`, unique to this process
+/// AND to this call, under the system temp dir.
+///
+/// Tests used to write their playlist and segment trees to
+/// `<checkout>/target/<tag>`: two suites running at once (two loops in one
+/// checkout, or a local gate next to CI's) deleted and rewrote each other's
+/// tree mid-run, which an external oracle then reported against as a "stale
+/// playlist" or a missing media file (#4072). A name carrying the process id
+/// and a per-call counter cannot collide with a sibling process or thread.
+///
+/// # Panics
+/// If the directory cannot be created.
+#[must_use]
+pub fn scratch_dir(tag: &str) -> PathBuf {
+    let call = CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("{tag}-{}-{call}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("create scratch dir");
+    dir
+}
+
 /// Wait until `addr` accepts a bare TCP connection.
 pub async fn wait_for_port(addr: SocketAddr) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -258,9 +279,17 @@ pub fn free_tcp_port() -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{REQUIRE_EXTERNAL_TOOLS, gate};
+    use super::{REQUIRE_EXTERNAL_TOOLS, gate, scratch_dir};
 
     const SITE: &str = "SOME_TOOL_REQUIRE";
+
+    #[test]
+    fn two_scratch_dirs_with_one_tag_never_share_a_path() {
+        let first = scratch_dir("shared-tag");
+        let second = scratch_dir("shared-tag");
+        assert_ne!(first, second);
+        assert!(first.is_dir() && second.is_dir());
+    }
 
     #[test]
     fn a_present_tool_is_never_a_failure() {
