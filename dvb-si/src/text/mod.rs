@@ -92,7 +92,7 @@ const COMBINING_RING_ABOVE: u8 = 0xCA;
 /// Figure A.1 combining prefix: cedilla.
 const COMBINING_CEDILLA: u8 = 0xCB;
 /// Figure A.1 combining prefix: double acute.
-const COMBINING_DOUBLE_ACUTE: u8 = 0xCD;
+const COMBINING_HUNGARUMLAUT: u8 = 0xCD;
 /// Figure A.1 combining prefix: ogonek.
 const COMBINING_OGONEK: u8 = 0xCE;
 /// Figure A.1 combining prefix: caron.
@@ -544,7 +544,7 @@ fn combining_mark(prefix: u8) -> Option<char> {
         COMBINING_DIAERESIS => '\u{0308}', // diaeresis
         COMBINING_RING_ABOVE => '\u{030A}', // ring above
         COMBINING_CEDILLA => '\u{0327}', // cedilla
-        COMBINING_DOUBLE_ACUTE => '\u{030B}', // double acute
+        COMBINING_HUNGARUMLAUT => '\u{030B}', // double acute
         COMBINING_OGONEK => '\u{0328}', // ogonek
         COMBINING_CARON => '\u{030C}', // caron
         _ => return None,
@@ -669,10 +669,10 @@ fn combine(prefix: u8, base: u8) -> Option<char> {
         (COMBINING_CEDILLA, b'T') => 'Ţ',
         (COMBINING_CEDILLA, b't') => 'ţ',
         // double acute
-        (COMBINING_DOUBLE_ACUTE, b'O') => 'Ő',
-        (COMBINING_DOUBLE_ACUTE, b'o') => 'ő',
-        (COMBINING_DOUBLE_ACUTE, b'U') => 'Ű',
-        (COMBINING_DOUBLE_ACUTE, b'u') => 'ű',
+        (COMBINING_HUNGARUMLAUT, b'O') => 'Ő',
+        (COMBINING_HUNGARUMLAUT, b'o') => 'ő',
+        (COMBINING_HUNGARUMLAUT, b'U') => 'Ű',
+        (COMBINING_HUNGARUMLAUT, b'u') => 'ű',
         // ogonek
         (COMBINING_OGONEK, b'A') => 'Ą',
         (COMBINING_OGONEK, b'a') => 'ą',

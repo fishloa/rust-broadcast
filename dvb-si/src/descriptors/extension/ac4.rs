@@ -63,7 +63,7 @@ broadcast_common::impl_spec_display!(Ac4ChannelMode, Reserved);
 /// descriptor: EN 300 468 V1.15.1 (`reserved_future_use` + NOTE "all bits 0")
 /// and V1.16.1+ (`reserved_zero_future_use`) — 0 in every edition
 /// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<AC4_CONFIG_RESERVED_BITS> =
+pub const AC4_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<AC4_CONFIG_RESERVED_BITS> =
     ReservedZero::<AC4_CONFIG_RESERVED_BITS>::FILL;
 /// Width of the first-byte `reserved_zero_future_use` (6 bits).
 const AC4_FLAGS_RESERVED_BITS: u32 = 6;
@@ -98,11 +98,11 @@ pub struct Ac4<'a> {
     pub ac4_toc_flag: bool,
     /// `reserved_zero_future_use` (6 bits, right-aligned) of the first byte.
     /// Preserved on parse; [`Ac4::new`] uses
-    /// [`AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
+    /// [`AC4_RESERVED_FUTURE_USE_DEFAULT`].
     pub reserved_zero_future_use_6: ReservedZero<AC4_FLAGS_RESERVED_BITS>,
     /// `reserved_zero_future_use` (5 bits, right-aligned) of the config byte;
     /// `Some` iff `ac4_config_flag`. Preserved on parse; defaults to
-    /// [`AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT`] when `None` but the flag is set.
+    /// [`AC4_RESERVED_FUTURE_USE_DEFAULT`] when `None` but the flag is set.
     pub reserved_zero_future_use_5: Option<ReservedZero<AC4_CONFIG_RESERVED_BITS>>,
     /// ac4_dialog_enhancement_enabled(1), present iff `ac4_config_flag`.
     pub ac4_dialog_enhancement_enabled: Option<bool>,
@@ -136,7 +136,7 @@ impl<'a> Ac4<'a> {
             ac4_toc_flag,
             reserved_zero_future_use_6: ReservedZero::<AC4_FLAGS_RESERVED_BITS>::FILL,
             reserved_zero_future_use_5: if ac4_config_flag {
-                Some(AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT)
+                Some(AC4_RESERVED_FUTURE_USE_DEFAULT)
             } else {
                 None
             },
@@ -236,7 +236,7 @@ impl Serialize for Ac4<'_> {
             let cm = broadcast_common::len::fit_mask(cm, AC4_CHANNEL_MODE_MASK, "ac4_channel_mode")?;
             let rz = self
                 .reserved_zero_future_use_5
-                .unwrap_or(AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT);
+                .unwrap_or(AC4_RESERVED_FUTURE_USE_DEFAULT);
             buf[p] = (u8::from(de) << AC4_DIALOG_ENHANCEMENT_SHIFT)
                 | (cm << AC4_CHANNEL_MODE_SHIFT)
                 | rz.get() as u8;

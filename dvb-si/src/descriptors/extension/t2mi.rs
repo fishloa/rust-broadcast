@@ -10,7 +10,7 @@ use broadcast_common::reserved::ReservedZero;
 /// descriptor (Table 158; V1.16.1-V1.20.1 `reserved_zero_future_use`, and the
 /// V1.13.1-V1.15.1 `reserved_future_use (see note)` with the NOTE "set to 0"):
 /// all zeros.
-pub const T2MI_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RZFU_5_BITS> =
+pub const T2MI_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RZFU_5_BITS> =
     ReservedZero::<RZFU_5_BITS>::FILL;
 /// Width of the two `reserved_zero_future_use` regions that precede the 3-bit
 /// ids (5 bits).
@@ -41,7 +41,7 @@ impl<'a> ExtensionBodyDef<'a> for T2mi<'a> {
 pub struct T2mi<'a> {
     /// `reserved_zero_future_use(5)` ahead of `t2mi_stream_id` (byte 0 high
     /// bits, right-aligned 5 bits). Captured on parse, re-emitted verbatim;
-    /// [`T2mi::new`] defaults to [`T2MI_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    /// [`T2mi::new`] defaults to [`T2MI_RESERVED_FUTURE_USE_DEFAULT`] (`0`).
     pub reserved_zero_future_use_stream: ReservedZero<RZFU_5_BITS>,
     /// t2mi_stream_id(3) — byte 0 low bits.
     pub t2mi_stream_id: u8,
@@ -69,9 +69,9 @@ impl<'a> T2mi<'a> {
         reserved_tail: &'a [u8],
     ) -> Self {
         Self {
-            reserved_zero_future_use_stream: T2MI_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use_stream: T2MI_RESERVED_FUTURE_USE_DEFAULT,
             t2mi_stream_id,
-            reserved_zero_future_use_num: T2MI_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use_num: T2MI_RESERVED_FUTURE_USE_DEFAULT,
             num_t2mi_streams_minus_one,
             reserved_zero_future_use_flag: ReservedZero::<RZFU_7_BITS>::FILL,
             pcr_iscr_common_clock_flag,
