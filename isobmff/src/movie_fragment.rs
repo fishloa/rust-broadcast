@@ -16,6 +16,7 @@ use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_MASK, LARGESIZE_SIZE,
 };
 use crate::error::{Error, Result};
+use crate::init_segment::TrackExtendsBox;
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
 use broadcast_common::error::BufferTooShort;
@@ -1216,6 +1217,36 @@ pub fn aux_info_type_of(
     let mut aux_info_type = [0u8; BOX_TYPE_SIZE];
     aux_info_type.copy_from_slice(ty);
     Some(aux_info_type)
+}
+
+/// Fill what a `tfhd` leaves out from the track's `trex` (ISO/IEC
+/// 14496-12:2026 §8.8.3, §8.8.7): a sample's duration, size and flags default
+/// to the `tfhd` value, and when that is absent too, to the `trex` of the init
+/// movie.
+///
+/// A packager that declares its durations once in `trex` (GPAC does for a
+/// fragment whose samples all last the same) writes `trun` entries with sizes
+/// only; without the `trex` fallback every such sample comes out with duration
+/// 0 and the whole fragment at one decode time. A `trex` size of zero means
+/// "not declared" in practice and is not applied.
+pub fn apply_trex_defaults(moof: &mut MovieFragmentBox, trex: &[TrackExtendsBox]) {
+    for traf in &mut moof.traf {
+        let Some(defaults) = trex
+            .iter()
+            .find(|t| t.track_id.value() == traf.tfhd.track_id.value())
+        else {
+            continue;
+        };
+        let tfhd = &mut traf.tfhd;
+        tfhd.default_sample_duration
+            .get_or_insert(defaults.default_sample_duration);
+        tfhd.default_sample_flags
+            .get_or_insert(defaults.default_sample_flags);
+        if defaults.default_sample_size != 0 {
+            tfhd.default_sample_size
+                .get_or_insert(defaults.default_sample_size);
+        }
+    }
 }
 
 #[cfg(test)]
