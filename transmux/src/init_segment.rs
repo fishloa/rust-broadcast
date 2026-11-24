@@ -32,27 +32,34 @@ const FULLBOX_FLAGS_OFFSET: usize = BOX_HEADER_MIN_SIZE + 1;
 const FULLBOX_VERSION_LEN: usize = 1;
 /// Width of a FullBox `flags` field in bytes.
 const FULLBOX_FLAGS_WIDTH: usize = FULLBOX_EXTRA_SIZE - FULLBOX_VERSION_LEN;
-/// Zero-padded big-endian byte positions of a 24-bit `flags` field.
-const FLAGS_BYTE_OFFSETS: [usize; FULLBOX_FLAGS_WIDTH] = [0, 1, 2];
-/// Byte positions of a big-endian 16-bit field.
-const U16_BYTE_OFFSETS: [usize; core::mem::size_of::<u16>()] = [0, 1];
-/// Byte positions of a big-endian 32-bit field.
-const U32_BYTE_OFFSETS: [usize; core::mem::size_of::<u32>()] = [0, 1, 2, 3];
-/// Byte positions of a big-endian 64-bit field.
-const U64_BYTE_OFFSETS: [usize; LARGESIZE_SIZE] = [0, 1, 2, 3, 4, 5, 6, 7];
-
 fn be_u16_at(bytes: &[u8], off: usize) -> u16 {
-    u16::from_be_bytes(U16_BYTE_OFFSETS.map(|i| bytes[off + i]))
+    let mut field = [0u8; core::mem::size_of::<u16>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u16>()]);
+    u16::from_be_bytes(field)
 }
 
 fn be_u32_at(bytes: &[u8], off: usize) -> u32 {
-    u32::from_be_bytes(U32_BYTE_OFFSETS.map(|i| bytes[off + i]))
+    let mut field = [0u8; core::mem::size_of::<u32>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(field)
+}
+
+fn be_u64_at(bytes: &[u8], off: usize) -> u64 {
+    let mut field = [0u8; core::mem::size_of::<u64>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u64>()]);
+    u64::from_be_bytes(field)
 }
 
 fn be_u24_at(bytes: &[u8], off: usize) -> u32 {
-    let mut out = [0u8; FULLBOX_EXTRA_SIZE];
-    out[FULLBOX_VERSION_LEN..].copy_from_slice(&FLAGS_BYTE_OFFSETS.map(|i| bytes[off + i]));
-    u32::from_be_bytes(out)
+    let mut field = [0u8; core::mem::size_of::<u32>()];
+    field[FULLBOX_VERSION_LEN..].copy_from_slice(&bytes[off..off + FULLBOX_FLAGS_WIDTH]);
+    u32::from_be_bytes(field)
+}
+
+fn read_fourcc_at(bytes: &[u8], off: usize) -> [u8; BOX_TYPE_SIZE] {
+    let mut field = [0u8; BOX_TYPE_SIZE];
+    field.copy_from_slice(&bytes[off..off + BOX_TYPE_SIZE]);
+    field
 }
 
 /// Wire width of one transformation-matrix value.
@@ -939,13 +946,17 @@ impl<'a> Parse<'a> for TrackHeaderBox {
 }
 
 fn read_i16(bytes: &[u8], off: usize) -> i16 {
-    i16::from_be_bytes(U16_BYTE_OFFSETS.map(|i| bytes[off + i]))
+    let mut field = [0u8; core::mem::size_of::<i16>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<i16>()]);
+    i16::from_be_bytes(field)
 }
 
 fn matrix_from_bytes(b: &[u8]) -> [i32; MATRIX_VALUES] {
     let mut m = [0i32; MATRIX_VALUES];
     for (i, slot) in m.iter_mut().enumerate() {
-        *slot = i32::from_be_bytes(U32_BYTE_OFFSETS.map(|j| b[i * MATRIX_VALUE_LEN + j]));
+        let mut field = [0u8; MATRIX_VALUE_LEN];
+        field.copy_from_slice(&b[i * MATRIX_VALUE_LEN..i * MATRIX_VALUE_LEN + MATRIX_VALUE_LEN]);
+        *slot = i32::from_be_bytes(field);
     }
     m
 }
@@ -1243,7 +1254,7 @@ impl<'a> Parse<'a> for HandlerBox {
         need_in(bytes, HDLR_MIN_LEN, "hdlr")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
         let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
-        let handler_type = U32_BYTE_OFFSETS.map(|i| bytes[HDLR_HANDLER_TYPE_OFFSET + i]);
+        let handler_type = read_fourcc_at(bytes, HDLR_HANDLER_TYPE_OFFSET);
         let name = if bytes.len() > HDLR_NAME_OFFSET {
             bytes[HDLR_NAME_OFFSET..].to_vec()
         } else {
@@ -1478,7 +1489,7 @@ impl From<DataEntryUrlBox> for DataEntry {
 impl DataEntry {
     fn parse(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "dref entry")?;
-        let ty = U32_BYTE_OFFSETS.map(|i| bytes[BOX_TYPE_OFFSET + i]);
+        let ty = read_fourcc_at(bytes, BOX_TYPE_OFFSET);
         match ty {
             URL_ENTRY_TYPE => Ok(Self::Url(DataEntryUrlBox::parse(bytes)?)),
             URN_ENTRY_TYPE => Ok(Self::Urn(DataEntryUrnBox::parse(bytes)?)),
@@ -2143,7 +2154,7 @@ impl<'a> Parse<'a> for ChunkLargeOffsetBox {
             "co64",
             "ChunkLargeOffsetBox.entry_count",
             core::mem::size_of::<u64>(),
-            |b| u64::from_be_bytes(U64_BYTE_OFFSETS.map(|i| b[i])),
+            |b| be_u64_at(b, 0),
         )?;
         Ok(Self {
             version,
@@ -3003,7 +3014,7 @@ fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAu
             break;
         }
         let end = off.saturating_add(sz).min(body.len());
-        let boxtype = U32_BYTE_OFFSETS.map(|i| body[off + BOX_TYPE_OFFSET + i]);
+        let boxtype = read_fourcc_at(body, off + BOX_TYPE_OFFSET);
         let data = body[off + BOX_HEADER_MIN_SIZE..end].to_vec();
         config_boxes.push(OpaqueBox {
             box_type: boxtype,
