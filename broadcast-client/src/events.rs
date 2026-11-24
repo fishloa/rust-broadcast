@@ -116,10 +116,10 @@ broadcast_common::impl_spec_display!(StreamKind);
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ReadAhead {
-    /// No cap: the session never asks the host to pause reading.
+    /// No cap: the session never paces a source.
     #[default]
     Unlimited,
-    /// Pause reading once media ahead of the playback position reaches either
+    /// Stop pulling once media ahead of the playback position reaches either
     /// bound; at least one must be set.
     Limit {
         /// Media-time bound.
