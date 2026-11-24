@@ -35,6 +35,15 @@ const NBLKS_MAX: u8 = 0x7F; // 7 bits
 const FSIZE_MAX: u16 = 0x3FFF; // 14 bits
 const SURROUND_MODE_MAX: u8 = 0x3F; // 6 bits
 const EXTENDED_SURROUND_MAX: u8 = 0x03; // 2 bits
+/// Mask of `lfe_flag` in the packed 40-bit field.
+const LFE_FLAG_MASK: u8 = 0x01;
+const SAMPLE_RATE_CODE_SHIFT: u32 = 36;
+const BIT_RATE_CODE_SHIFT: u32 = 30;
+const NBLKS_SHIFT: u32 = 23;
+const FSIZE_SHIFT: u32 = 9;
+const SURROUND_MODE_SHIFT: u32 = 3;
+const LFE_FLAG_SHIFT: u32 = 2;
+const PACKED_BYTES: usize = core::mem::size_of::<u64>();
 
 /// DTS Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,18 +160,16 @@ impl<'a> Parse<'a> for DtsDescriptor<'a> {
                 reason: "DTS_descriptor body shorter than 5 bytes",
             });
         }
-        let packed: u64 = (u64::from(body[0]) << 32)
-            | (u64::from(body[1]) << 24)
-            | (u64::from(body[2]) << 16)
-            | (u64::from(body[3]) << 8)
-            | u64::from(body[4]);
-        let sample_rate_code = ((packed >> 36) & 0x0F) as u8;
-        let bit_rate_code = ((packed >> 30) & 0x3F) as u8;
-        let nblks = ((packed >> 23) & 0x7F) as u8;
-        let fsize = ((packed >> 9) & 0x3FFF) as u16;
-        let surround_mode = ((packed >> 3) & 0x3F) as u8;
-        let lfe_flag = ((packed >> 2) & 0x01) != 0;
-        let extended_surround_flag = (packed & 0x03) as u8;
+        let mut packed_bytes = [0u8; PACKED_BYTES];
+        packed_bytes[PACKED_BYTES - FIXED_LEN..].copy_from_slice(&body[..FIXED_LEN]);
+        let packed = u64::from_be_bytes(packed_bytes);
+        let sample_rate_code = ((packed >> SAMPLE_RATE_CODE_SHIFT) & u64::from(SAMPLE_RATE_CODE_MAX)) as u8;
+        let bit_rate_code = ((packed >> BIT_RATE_CODE_SHIFT) & u64::from(BIT_RATE_CODE_MAX)) as u8;
+        let nblks = ((packed >> NBLKS_SHIFT) & u64::from(NBLKS_MAX)) as u8;
+        let fsize = ((packed >> FSIZE_SHIFT) & u64::from(FSIZE_MAX)) as u16;
+        let surround_mode = ((packed >> SURROUND_MODE_SHIFT) & u64::from(SURROUND_MODE_MAX)) as u8;
+        let lfe_flag = ((packed >> LFE_FLAG_SHIFT) & u64::from(LFE_FLAG_MASK)) != 0;
+        let extended_surround_flag = (packed & u64::from(EXTENDED_SURROUND_MAX)) as u8;
         let additional_info = &body[FIXED_LEN..];
         Ok(Self {
             sample_rate_code,
@@ -233,18 +240,17 @@ impl Serialize for DtsDescriptor<'_> {
             TAG,
             FIXED_LEN + self.additional_info.len(),
         )?;
-        let packed: u64 = ((u64::from(self.sample_rate_code) & 0x0F) << 36)
-            | ((u64::from(self.bit_rate_code) & 0x3F) << 30)
-            | ((u64::from(self.nblks) & 0x7F) << 23)
-            | ((u64::from(self.fsize) & 0x3FFF) << 9)
-            | ((u64::from(self.surround_mode) & 0x3F) << 3)
-            | (u64::from(self.lfe_flag) << 2)
-            | (u64::from(self.extended_surround_flag) & 0x03);
-        buf[2] = (packed >> 32) as u8;
-        buf[3] = (packed >> 24) as u8;
-        buf[4] = (packed >> 16) as u8;
-        buf[5] = (packed >> 8) as u8;
-        buf[6] = packed as u8;
+        let packed: u64 = ((u64::from(self.sample_rate_code) & u64::from(SAMPLE_RATE_CODE_MAX))
+            << SAMPLE_RATE_CODE_SHIFT)
+            | ((u64::from(self.bit_rate_code) & u64::from(BIT_RATE_CODE_MAX)) << BIT_RATE_CODE_SHIFT)
+            | ((u64::from(self.nblks) & u64::from(NBLKS_MAX)) << NBLKS_SHIFT)
+            | ((u64::from(self.fsize) & u64::from(FSIZE_MAX)) << FSIZE_SHIFT)
+            | ((u64::from(self.surround_mode) & u64::from(SURROUND_MODE_MAX))
+                << SURROUND_MODE_SHIFT)
+            | (u64::from(self.lfe_flag) << LFE_FLAG_SHIFT)
+            | (u64::from(self.extended_surround_flag) & u64::from(EXTENDED_SURROUND_MAX));
+        buf[HEADER_LEN..HEADER_LEN + FIXED_LEN]
+            .copy_from_slice(&packed.to_be_bytes()[PACKED_BYTES - FIXED_LEN..]);
         buf[HEADER_LEN + FIXED_LEN..len].copy_from_slice(self.additional_info);
         Ok(len)
     }
