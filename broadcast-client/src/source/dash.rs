@@ -29,7 +29,7 @@ use url::Url;
 
 use crate::ConnId;
 use crate::error::{Error, TransportError};
-use crate::events::{Action, Config, ErrorKind, Event, Status};
+use crate::events::{Action, Config, ErrorKind, Event, ReadAhead, Status};
 use crate::playout::Source;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::deadline;
@@ -212,6 +212,12 @@ pub(crate) struct DashSource {
     stash: Stash<Purpose>,
     parked: Vec<Req>,
     retries: BTreeMap<ResourceId, u64>,
+    read_paused: bool,
+    /// A read-ahead limit is configured: media requests are paced, one in flight
+    /// per representation at most, so the gate can close before the runtime's
+    /// whole segment list has been requested.
+    paced: bool,
+    held: VecDeque<DashAction>,
     mpd_retry_at: Option<u64>,
     wake_pushed: Option<u64>,
     reported: BTreeSet<&'static str>,
@@ -304,6 +310,9 @@ impl DashSource {
             stash: Stash::with_segment_budget(config.max_segment_bytes),
             parked: Vec::new(),
             retries: BTreeMap::new(),
+            read_paused: false,
+            paced: matches!(config.ts_http.read_ahead, ReadAhead::Limit { .. }),
+            held: VecDeque::new(),
             mpd_retry_at: None,
             wake_pushed: None,
             reported: BTreeSet::new(),
@@ -389,6 +398,12 @@ impl DashSource {
         }
         self.expire(now);
         self.advance(now, auth);
+    }
+
+    /// Hold or release new segment fetches for the read-ahead gate. A request already in flight
+    /// completes; a held segment is issued once the gate reopens.
+    pub(crate) fn set_read_paused(&mut self, paused: bool) {
+        self.read_paused = paused;
     }
 
     pub(crate) fn select_variant(
@@ -927,6 +942,7 @@ impl DashSource {
     }
 
     fn advance(&mut self, now: u64, auth: &mut AuthState) {
+        self.release_held(now, auth);
         for _ in 0..MAX_ADVANCE_ROUNDS {
             if self.fatal {
                 return;
@@ -934,6 +950,12 @@ impl DashSource {
             self.run_due_retries(now);
             let mut issued = false;
             while let Some(action) = self.client.poll(Timestamp::from_micros(now)) {
+                if let DashAction::FetchSegment { id, .. } = &action
+                    && (self.read_paused || (self.paced && self.segment_in_flight(*id)))
+                {
+                    self.held.push_back(action);
+                    continue;
+                }
                 issued = true;
                 self.issue(action, now, auth);
                 if self.fatal {
@@ -946,6 +968,50 @@ impl DashSource {
             }
         }
         self.sync_wake(now);
+    }
+
+    /// Issue the held media actions that may go now. None while the read-ahead
+    /// gate is closed, and, for a paced session, never a second segment for a
+    /// representation whose previous one is still in flight: the runtime offers a
+    /// static presentation's whole segment list at once, so without this the gate
+    /// would only close after the last request was already made.
+    fn release_held(&mut self, now: u64, auth: &mut AuthState) {
+        if self.read_paused {
+            return;
+        }
+        let mut released = Vec::new();
+        let mut index = 0;
+        while index < self.held.len() {
+            let ready = match &self.held[index] {
+                DashAction::FetchSegment { id, .. } => !self.paced || !self.segment_in_flight(*id),
+                _ => true,
+            };
+            if ready {
+                if let Some(action) = self.held.remove(index) {
+                    released.push(action);
+                }
+            } else {
+                index = index.saturating_add(1);
+            }
+        }
+        for action in released {
+            self.issue(action, now, auth);
+        }
+    }
+
+    /// Whether a media segment of the same Representation is still in flight.
+    fn segment_in_flight(&self, id: ResourceId) -> bool {
+        let ResourceId::Segment { rep, .. } = id else {
+            return self
+                .flight
+                .reqs
+                .values()
+                .any(|req| req.purpose == Purpose::Resource(id));
+        };
+        self.flight.reqs.values().any(|req| match req.purpose {
+            Purpose::Resource(ResourceId::Segment { rep: other, .. }) => other == rep,
+            _ => false,
+        })
     }
 
     fn sync_wake(&mut self, now: u64) {
@@ -1057,6 +1123,7 @@ impl DashSource {
         self.parked.clear();
         self.retries.clear();
         self.mpd_retry_at = None;
+        self.held.clear();
     }
 
     fn try_pending(&mut self) {

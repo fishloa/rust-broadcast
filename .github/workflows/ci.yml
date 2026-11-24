@@ -147,6 +147,9 @@ jobs:
       # only ever removes tests (everything feature-gated compiles out), so the
       # all-features `test` job already ran every one of them. What a bare run
       # can still show is the code that differs when a feature is off, below.
+      # The same script builds each optional multimux feature BY ITSELF: an
+      # `--all-features` lane unifies them, so a stale import or an item left
+      # dead when one feature is off never failed anywhere else (#4083).
       - name: Tests compile without default features (per crate)
         run: tools/check-bare-features.sh
       # The only runtime alternative arms behind `cfg(not(feature = "serde"))`:

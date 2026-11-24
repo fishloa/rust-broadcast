@@ -30,10 +30,12 @@ pub struct Config {
     /// lasted less than this interval, so a long-lived stream still
     /// reconnects with no delay.
     pub min_reconnect_interval: Duration,
-    /// Optional read-ahead limit: how far media may run ahead of the playback
-    /// position before the session asks the host to pause reading the
-    /// connection. The default is [`ReadAhead::Unlimited`], which never pauses;
-    /// the library chooses no numbers.
+    /// Optional read-ahead limit, shared by every pull source (TS-over-HTTP,
+    /// HLS, DASH, Smooth, RTSP over interleaved TCP): how far media may run
+    /// ahead of the playback position before the session stops pulling it. The
+    /// default is [`ReadAhead::Unlimited`], which never paces; the library
+    /// chooses no numbers. It lives here because this configuration carries the
+    /// knobs every pull source shares.
     pub read_ahead: ReadAhead,
     /// Failed attempts in a row, with no media played in between, after which the session gives up
     /// with one fatal `Event::Error` (`ErrorKind::ReconnectAttemptsExhausted`) instead of retrying.
@@ -117,8 +119,8 @@ impl Config {
         self
     }
 
-    /// Set the read-ahead limit ([`ReadAhead`]). `ReadAhead::Unlimited` (the
-    /// default) never asks the host to pause reading.
+    /// Set the read-ahead limit ([`ReadAhead`]), which every pull source
+    /// honours. `ReadAhead::Unlimited` (the default) never paces a source.
     #[must_use]
     pub fn with_read_ahead(mut self, read_ahead: ReadAhead) -> Self {
         self.read_ahead = read_ahead;

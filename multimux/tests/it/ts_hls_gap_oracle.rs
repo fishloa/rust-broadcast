@@ -270,11 +270,7 @@ fn segment_uris(playlist: &str) -> Vec<String> {
 }
 
 fn scratch_dir(tag: &str) -> Scratch {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target")
-        .join(format!("ts-hls-gap-{tag}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let dir = test_fixtures::process::scratch_dir(&format!("ts-hls-gap-{tag}"));
     Scratch(dir)
 }
 
