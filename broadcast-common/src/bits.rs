@@ -31,6 +31,10 @@ use crate::error::BufferTooShort;
 
 /// Bits in one byte: the unit every `BufferTooShort` count is expressed in.
 const BITS_PER_BYTE: usize = 8;
+/// Index of the most-significant bit within a byte (MSB-first order).
+const BYTE_MSB_INDEX: usize = BITS_PER_BYTE - 1;
+/// Largest field a single read/write call accepts (`u64` width).
+const MAX_FIELD_BITS: u32 = u64::BITS;
 
 /// Error from a [`BitReader`] / [`BitWriter`] operation.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -123,7 +127,7 @@ impl<'a> BitReader<'a> {
     /// Total bits in the backing buffer.
     #[must_use]
     pub fn total_bits(&self) -> usize {
-        self.data.len() * 8
+        self.data.len() * BITS_PER_BYTE
     }
 
     /// Bits already consumed.
@@ -141,7 +145,7 @@ impl<'a> BitReader<'a> {
     /// `true` if the cursor sits on a byte boundary.
     #[must_use]
     pub fn is_byte_aligned(&self) -> bool {
-        self.bit_pos.is_multiple_of(8)
+        self.bit_pos.is_multiple_of(BITS_PER_BYTE)
     }
 
     /// Read `n` bits (`0..=64`) MSB-first into the low bits of a `u64`.
@@ -152,7 +156,7 @@ impl<'a> BitReader<'a> {
     /// [`BitError::TooManyBits`] if `n > 64`; [`BitError::OutOfBounds`] if
     /// fewer than `n` bits remain.
     pub fn read_bits(&mut self, n: u32) -> Result<u64, BitError> {
-        if n > 64 {
+        if n > MAX_FIELD_BITS {
             return Err(BitError::TooManyBits { requested: n });
         }
         if n == 0 {
@@ -168,8 +172,8 @@ impl<'a> BitReader<'a> {
         }
         let mut value: u64 = 0;
         for _ in 0..n {
-            let byte = self.data[self.bit_pos / 8];
-            let bit_index = 7 - (self.bit_pos % 8); // MSB first within the byte
+            let byte = self.data[self.bit_pos / BITS_PER_BYTE];
+            let bit_index = BYTE_MSB_INDEX - (self.bit_pos % BITS_PER_BYTE); // MSB first within the byte
             let bit = (byte >> bit_index) & 1;
             value = (value << 1) | u64::from(bit);
             self.bit_pos += 1;
@@ -206,9 +210,9 @@ impl<'a> BitReader<'a> {
 
     /// Advance to the next byte boundary (no-op if already aligned).
     pub fn align_to_byte(&mut self) {
-        let rem = self.bit_pos % 8;
+        let rem = self.bit_pos % BITS_PER_BYTE;
         if rem != 0 {
-            self.bit_pos += 8 - rem;
+            self.bit_pos += BITS_PER_BYTE - rem;
         }
     }
 }
@@ -247,7 +251,7 @@ impl<'a> BitWriter<'a> {
     /// Total bits the backing buffer can hold.
     #[must_use]
     pub fn capacity_bits(&self) -> usize {
-        self.data.len() * 8
+        self.data.len() * BITS_PER_BYTE
     }
 
     /// Bits written so far.
@@ -259,7 +263,7 @@ impl<'a> BitWriter<'a> {
     /// `true` if the cursor sits on a byte boundary.
     #[must_use]
     pub fn is_byte_aligned(&self) -> bool {
-        self.bit_pos.is_multiple_of(8)
+        self.bit_pos.is_multiple_of(BITS_PER_BYTE)
     }
 
     /// Write the low `n` bits (`0..=64`) of `value`, MSB-first.
@@ -271,14 +275,14 @@ impl<'a> BitWriter<'a> {
     /// `value` has bits set above bit `n-1`; [`BitError::OutOfBounds`] if the
     /// buffer cannot hold `n` more bits.
     pub fn write_bits(&mut self, value: u64, n: u32) -> Result<(), BitError> {
-        if n > 64 {
+        if n > MAX_FIELD_BITS {
             return Err(BitError::TooManyBits { requested: n });
         }
         if n == 0 {
             return Ok(());
         }
         // Reject values that don't fit — catches caller arithmetic bugs.
-        if n < 64 && value >= (1u64 << n) {
+        if n < MAX_FIELD_BITS && value >= (1u64 << n) {
             return Err(BitError::ValueTooWide { value, bits: n });
         }
         let need = n as usize;
@@ -291,8 +295,8 @@ impl<'a> BitWriter<'a> {
         }
         for i in (0..n).rev() {
             let bit = ((value >> i) & 1) as u8;
-            let byte_idx = self.bit_pos / 8;
-            let bit_index = 7 - (self.bit_pos % 8);
+            let byte_idx = self.bit_pos / BITS_PER_BYTE;
+            let bit_index = BYTE_MSB_INDEX - (self.bit_pos % BITS_PER_BYTE);
             if bit == 1 {
                 self.data[byte_idx] |= 1 << bit_index;
             } else {
@@ -316,9 +320,9 @@ impl<'a> BitWriter<'a> {
     /// # Errors
     /// [`BitError::OutOfBounds`] if the buffer cannot hold the padding.
     pub fn align_to_byte(&mut self) -> Result<(), BitError> {
-        let rem = self.bit_pos % 8;
+        let rem = self.bit_pos % BITS_PER_BYTE;
         if rem != 0 {
-            self.write_bits(0, (8 - rem) as u32)?;
+            self.write_bits(0, (BITS_PER_BYTE - rem) as u32)?;
         }
         Ok(())
     }
@@ -361,7 +365,7 @@ impl BitBuf {
     /// [`BitError::TooManyBits`] if `n > 64`; [`BitError::ValueTooWide`] if
     /// `value` has bits set above bit `n-1`. The buffer is unchanged on error.
     pub fn write_bits(&mut self, value: u64, n: u32) -> Result<(), BitError> {
-        if n > 64 {
+        if n > MAX_FIELD_BITS {
             return Err(BitError::TooManyBits { requested: n });
         }
         let grown = (self.bit_len + n as usize).div_ceil(BITS_PER_BYTE);

@@ -27,6 +27,10 @@ use crate::error::{Error, Result};
 pub const FIXED_HET_MIN: u8 = 128;
 /// Bytes in one 32-bit word.
 pub const WORD: usize = 4;
+/// Bytes before a variable-length extension's content: HET(1) + HEL(1).
+const VARIABLE_HEADER_LEN: usize = 2;
+/// Bit width of the `HEL` count (RFC 5651 §5.2).
+const HEL_BITS: u32 = 8;
 
 /// One LCT/NORM header extension (RFC 5651 §5.2 / RFC 5740 §4.1).
 ///
@@ -66,7 +70,7 @@ impl<'a> HeaderExtension<'a> {
             WORD
         } else {
             // HET + HEL + content.
-            2 + self.content.len()
+            VARIABLE_HEADER_LEN + self.content.len()
         }
     }
 
@@ -93,7 +97,11 @@ impl<'a> HeaderExtension<'a> {
             ))
         } else {
             // Variable-length: HET, HEL, then 4*HEL-2 content bytes.
-            need_in(data, 2, "variable-length header extension HEL")?;
+            need_in(
+                data,
+                VARIABLE_HEADER_LEN,
+                "variable-length header extension HEL",
+            )?;
             let hel = data[1] as usize;
             if hel == 0 {
                 return Err(Error::InvalidExtension {
@@ -105,7 +113,7 @@ impl<'a> HeaderExtension<'a> {
             Ok((
                 HeaderExtension {
                     het,
-                    content: &data[2..total],
+                    content: &data[VARIABLE_HEADER_LEN..total],
                 },
                 total,
             ))
@@ -134,7 +142,7 @@ impl<'a> HeaderExtension<'a> {
                 });
             }
             let hel = total / WORD;
-            broadcast_common::len::fit_bits(hel as u64, 8, "HEL")?;
+            broadcast_common::len::fit_bits(hel as u64, HEL_BITS, "HEL")?;
             out[1] = hel as u8;
             out[2..total].copy_from_slice(self.content);
             Ok(total)

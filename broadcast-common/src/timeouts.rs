@@ -74,13 +74,19 @@ impl Timeouts {
     }
 }
 
+/// Default bounds: 10 s connect and handshake, 30 s idle read, 10 s write.
+const DEFAULT_CONNECT_SECS: u64 = 10;
+const DEFAULT_HANDSHAKE_SECS: u64 = 10;
+const DEFAULT_READ_IDLE_SECS: u64 = 30;
+const DEFAULT_WRITE_SECS: u64 = 10;
+
 impl Default for Timeouts {
     fn default() -> Self {
         Timeouts::new(
-            Duration::from_secs(10),
-            Duration::from_secs(10),
-            Duration::from_secs(30),
-            Duration::from_secs(10),
+            Duration::from_secs(DEFAULT_CONNECT_SECS),
+            Duration::from_secs(DEFAULT_HANDSHAKE_SECS),
+            Duration::from_secs(DEFAULT_READ_IDLE_SECS),
+            Duration::from_secs(DEFAULT_WRITE_SECS),
         )
     }
 }

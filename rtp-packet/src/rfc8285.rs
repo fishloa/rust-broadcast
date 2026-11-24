@@ -31,44 +31,51 @@ pub const ONE_BYTE_PROFILE_ID: u16 = 0xBEDE;
 /// Mask isolating the top 12 bits of `profile_id` that identify the two-byte
 /// header form (§4.3 bit diagram: `0x100` in the top 12 bits, `appbits` in
 /// the bottom 4).
-const TWO_BYTE_PROFILE_ID_MASK: u16 = 0xFFF0;
+const PROFILE_ID_FORM_MASK: u16 = 0xFFF0;
 /// The fixed top-12-bit pattern (`0x100`, shifted into position) identifying
 /// the two-byte header form (§4.3).
-const TWO_BYTE_PROFILE_ID_PREFIX: u16 = 0x1000;
+const PROFILE_ID_FORM_PREFIX: u16 = 0x1000;
 
 /// The reserved one-byte-form local identifier that halts extension parsing
 /// (§4.1.2/§4.2: "the reserved value of 15").
-const ONE_BYTE_STOP_ID: u8 = 15;
+const EXT_STOP_ID: u8 = 15;
 /// A literal zero byte is always a single padding byte in the byte-by-byte
 /// scan (§4.1.2: "padding bytes have the value of 0 (zero)").
 const PADDING_BYTE: u8 = 0x00;
 
 /// Minimum valid one-byte-form local identifier (§4.2: "range 1-14
 /// inclusive"; 0 is reserved for padding).
-const ONE_BYTE_ID_MIN: u8 = 1;
+const LOCAL_ID_MIN: u8 = 1;
 /// Maximum valid one-byte-form local identifier (§4.2; 15 is reserved).
-const ONE_BYTE_ID_MAX: u8 = 14;
+const LOCAL_ID_MAX: u8 = 14;
 /// Minimum one-byte-form element data length in bytes (§4.2: the `len`
 /// nibble encodes `data.len() - 1`, so the shortest representable element is
 /// 1 byte).
-const ONE_BYTE_DATA_MIN: usize = 1;
+const ELEMENT_DATA_MIN: usize = 1;
 /// Maximum one-byte-form element data length in bytes (§4.2: `len` nibble
 /// `15` -> 16 bytes).
-const ONE_BYTE_DATA_MAX: usize = 16;
+const ELEMENT_DATA_MAX: usize = 16;
 
 /// Minimum valid two-byte-form local identifier. Per RFC 8285 §4.1.2/§5,
 /// "0 is reserved for padding in **both** forms" (not just the one-byte
 /// form, despite §4.3 in isolation reading as "range 1-255 inclusive" —
 /// see `private/specs-verified/rtp/rtp-packet/rfc8285_header_ext.md`'s "Judgment calls" section).
-const TWO_BYTE_ID_MIN: u8 = 1;
+const EXT_FORM_ID_MIN: u8 = 1;
 /// Maximum two-byte-form element data length in bytes (§4.3: an 8-bit
 /// length field, stored directly with no `-1` bias, unlike the one-byte
 /// form).
-const TWO_BYTE_DATA_MAX: usize = u8::MAX as usize;
+const EXT_FORM_DATA_MAX: usize = u8::MAX as usize;
 
 /// The alignment (in bytes) the overall RFC 3550 §5.3.1 extension `data`
 /// must be padded to (a whole number of 32-bit words).
 const EXT_ALIGN: usize = 4;
+/// Bit shift of the one-byte form's `id` nibble within its element byte
+/// (§4.2).
+const ID_NIBBLE_SHIFT: u32 = 4;
+/// Mask of the one-byte form's `len` nibble within its element byte (§4.2).
+const LEN_NIBBLE_MASK: u8 = 0x0F;
+/// On-the-wire header length of a two-byte-form element (`id` + `len`).
+const EXT_ELEMENT_HEADER_LEN: usize = 2;
 
 // ---------------------------------------------------------------------------
 // OneByteId / TwoByteId — validating local-identifier newtypes
@@ -88,7 +95,7 @@ impl OneByteId {
     /// [`Error::InvalidOneByteExtensionId`] for `0`, `15`, or any value
     /// outside the 4-bit field (`> 15`).
     pub fn new(id: u8) -> Result<Self> {
-        if (ONE_BYTE_ID_MIN..=ONE_BYTE_ID_MAX).contains(&id) {
+        if (LOCAL_ID_MIN..=LOCAL_ID_MAX).contains(&id) {
             Ok(Self(id))
         } else {
             Err(Error::InvalidOneByteExtensionId(id))
@@ -115,7 +122,7 @@ impl TwoByteId {
     /// Construct a validated two-byte-form identifier. Returns
     /// [`Error::InvalidTwoByteExtensionId`] for `0`.
     pub fn new(id: u8) -> Result<Self> {
-        if id >= TWO_BYTE_ID_MIN {
+        if id >= EXT_FORM_ID_MIN {
             Ok(Self(id))
         } else {
             Err(Error::InvalidTwoByteExtensionId)
@@ -183,8 +190,8 @@ impl<'a> Parse<'a> for OneByteElements<'a> {
                 pos += 1;
                 continue;
             }
-            let id_nibble = b >> 4;
-            if id_nibble == ONE_BYTE_STOP_ID || id_nibble == 0 {
+            let id_nibble = b >> ID_NIBBLE_SHIFT;
+            if id_nibble == EXT_STOP_ID || id_nibble == 0 {
                 // id_nibble == 15: the reserved "stop" marker (§4.2).
                 // id_nibble == 0 (but b != 0, so the length nibble is
                 // nonzero): the malformed "ID 0 with length > 0" case
@@ -192,7 +199,7 @@ impl<'a> Parse<'a> for OneByteElements<'a> {
                 // ignore the length field, stop, keep prior elements.
                 break;
             }
-            let len = usize::from(b & 0x0F) + 1; // len nibble = data.len() - 1
+            let len = usize::from(b & LEN_NIBBLE_MASK) + 1; // len nibble = data.len() - 1
             let data_start = pos + 1;
             let data_end = data_start + len;
             need_in(bytes, data_end, "RFC 8285 one-byte extension element data")?;
@@ -224,7 +231,7 @@ impl Serialize for OneByteElements<'_> {
         // Validate every element before writing a byte, so an error leaves
         // `buf` untouched rather than half-serialized (r14-RTP-O1).
         for e in &self.0 {
-            if !(ONE_BYTE_DATA_MIN..=ONE_BYTE_DATA_MAX).contains(&e.data.len()) {
+            if !(ELEMENT_DATA_MIN..=ELEMENT_DATA_MAX).contains(&e.data.len()) {
                 return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "OneByteElement::data.len()",
                     value: e.data.len() as u64,
@@ -235,7 +242,7 @@ impl Serialize for OneByteElements<'_> {
         let mut pos = 0;
         for e in &self.0 {
             let len_nibble = (e.data.len() - 1) as u8;
-            buf[pos] = (e.id.get() << 4) | len_nibble;
+            buf[pos] = (e.id.get() << ID_NIBBLE_SHIFT) | len_nibble;
             pos += 1;
             buf[pos..pos + e.data.len()].copy_from_slice(e.data);
             pos += e.data.len();
@@ -335,7 +342,11 @@ impl Serialize for TwoByteElements<'_> {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let raw: usize = self.0.iter().map(|e| 2 + e.data.len()).sum();
+        let raw: usize = self
+            .0
+            .iter()
+            .map(|e| EXT_ELEMENT_HEADER_LEN + e.data.len())
+            .sum();
         raw.div_ceil(EXT_ALIGN) * EXT_ALIGN
     }
 
@@ -344,7 +355,7 @@ impl Serialize for TwoByteElements<'_> {
         need_out(buf, len)?;
         // Validate first (see `OneByteElements::serialize_into`).
         for e in &self.0 {
-            if e.data.len() > TWO_BYTE_DATA_MAX {
+            if e.data.len() > EXT_FORM_DATA_MAX {
                 return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "TwoByteElement::data.len()",
                     value: e.data.len() as u64,
@@ -356,7 +367,7 @@ impl Serialize for TwoByteElements<'_> {
         for e in &self.0 {
             buf[pos] = e.id.get();
             buf[pos + 1] = e.data.len() as u8;
-            pos += 2;
+            pos += EXT_ELEMENT_HEADER_LEN;
             buf[pos..pos + e.data.len()].copy_from_slice(e.data);
             pos += e.data.len();
         }
@@ -417,7 +428,7 @@ pub fn parse_extensions<'a>(ext: &HeaderExtension<'a>) -> Result<ExtensionElemen
         Ok(ExtensionElements::OneByte(OneByteElements::parse(
             ext.data,
         )?))
-    } else if ext.profile_id & TWO_BYTE_PROFILE_ID_MASK == TWO_BYTE_PROFILE_ID_PREFIX {
+    } else if ext.profile_id & PROFILE_ID_FORM_MASK == PROFILE_ID_FORM_PREFIX {
         Ok(ExtensionElements::TwoByte(TwoByteElements::parse(
             ext.data,
         )?))

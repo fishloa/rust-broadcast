@@ -55,6 +55,16 @@ pub enum XmlCharError {
     },
 }
 
+/// XML 1.0 §2.2 `Char` production ranges.
+const CHAR_RANGE_1_START: char = '\u{20}';
+const CHAR_RANGE_1_END: char = '\u{D7FF}';
+const CHAR_RANGE_2_START: char = '\u{E000}';
+const CHAR_RANGE_2_END: char = '\u{FFFD}';
+const CHAR_RANGE_3_START: char = '\u{10000}';
+const CHAR_RANGE_3_END: char = '\u{10FFFF}';
+/// Indentation width of the shared XML writer, in spaces.
+const INDENT_SPACES: usize = 2;
+
 /// XML 1.0 §2.2 `Char` production: the only characters a document may
 /// contain, whether written literally or through a character reference.
 pub fn is_xml_char(c: char) -> bool {
@@ -62,9 +72,9 @@ pub fn is_xml_char(c: char) -> bool {
         c,
         '\t' | '\n'
             | '\r'
-            | '\u{20}'..='\u{D7FF}'
-            | '\u{E000}'..='\u{FFFD}'
-            | '\u{10000}'..='\u{10FFFF}'
+            | CHAR_RANGE_1_START..=CHAR_RANGE_1_END
+            | CHAR_RANGE_2_START..=CHAR_RANGE_2_END
+            | CHAR_RANGE_3_START..=CHAR_RANGE_3_END
     )
 }
 
@@ -367,7 +377,7 @@ pub type XmlWriter = Writer<Vec<u8>>;
 /// written through the helpers below is escaped by quick-xml.
 #[must_use]
 pub fn new_writer() -> XmlWriter {
-    Writer::new_with_indent(Vec::new(), b' ', 2)
+    Writer::new_with_indent(Vec::new(), b' ', INDENT_SPACES)
 }
 
 /// A write into an [`XmlWriter`]'s outcome.

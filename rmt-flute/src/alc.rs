@@ -124,6 +124,25 @@ pub struct FecPayloadId128 {
 /// Wire size in bytes of a [`FecPayloadId128`].
 pub const FEC_PAYLOAD_ID_128_LEN: usize = 8;
 
+/// Byte offsets within the 8-byte FEC Payload ID (RFC 5445 layout).
+const SOURCE_BLOCK_NUMBER_OFFSET: usize = 0;
+const SOURCE_BLOCK_LENGTH_OFFSET: usize = SOURCE_BLOCK_NUMBER_OFFSET + core::mem::size_of::<u32>();
+const ENCODING_SYMBOL_ID_OFFSET: usize = SOURCE_BLOCK_LENGTH_OFFSET + core::mem::size_of::<u16>();
+
+/// Read the big-endian `u16` at `off`.
+fn read_u16_at(data: &[u8], off: usize) -> u16 {
+    let mut raw = [0_u8; core::mem::size_of::<u16>()];
+    raw.copy_from_slice(&data[off..off + core::mem::size_of::<u16>()]);
+    u16::from_be_bytes(raw)
+}
+
+/// Read the big-endian `u32` at `off`.
+fn read_u32_at(data: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; core::mem::size_of::<u32>()];
+    raw.copy_from_slice(&data[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(raw)
+}
+
 impl FecPayloadId128 {
     /// Serialized length (always [`FEC_PAYLOAD_ID_128_LEN`]).
     pub fn serialized_len(&self) -> usize {
@@ -138,18 +157,21 @@ impl FecPayloadId128 {
             "FEC Payload ID (fec_id 128/129)",
         )?;
         Ok(FecPayloadId128 {
-            source_block_number: u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
-            source_block_length: u16::from_be_bytes([data[4], data[5]]),
-            encoding_symbol_id: u16::from_be_bytes([data[6], data[7]]),
+            source_block_number: read_u32_at(data, SOURCE_BLOCK_NUMBER_OFFSET),
+            source_block_length: read_u16_at(data, SOURCE_BLOCK_LENGTH_OFFSET),
+            encoding_symbol_id: read_u16_at(data, ENCODING_SYMBOL_ID_OFFSET),
         })
     }
 
     /// Serialize into `out` (8 bytes). Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         need_out(out, FEC_PAYLOAD_ID_128_LEN)?;
-        out[0..4].copy_from_slice(&self.source_block_number.to_be_bytes());
-        out[4..6].copy_from_slice(&self.source_block_length.to_be_bytes());
-        out[6..8].copy_from_slice(&self.encoding_symbol_id.to_be_bytes());
+        out[SOURCE_BLOCK_NUMBER_OFFSET..SOURCE_BLOCK_LENGTH_OFFSET]
+            .copy_from_slice(&self.source_block_number.to_be_bytes());
+        out[SOURCE_BLOCK_LENGTH_OFFSET..ENCODING_SYMBOL_ID_OFFSET]
+            .copy_from_slice(&self.source_block_length.to_be_bytes());
+        out[ENCODING_SYMBOL_ID_OFFSET..FEC_PAYLOAD_ID_128_LEN]
+            .copy_from_slice(&self.encoding_symbol_id.to_be_bytes());
         Ok(FEC_PAYLOAD_ID_128_LEN)
     }
 }

@@ -30,6 +30,15 @@ const REP_SAMPLES: usize = 2;
 /// How long a bounded drain waits for one more sample before concluding none
 /// is coming.
 const DRAIN_QUIET: Duration = Duration::from_millis(300);
+/// A refused upload's body, several socket buffers deep so it is still in
+/// flight when the route has already refused the request.
+const REFUSED_BODY_BYTES: usize = 3 * 1024 * 1024;
+/// How much of that body one write carries, so the server sees it arriving.
+const REFUSED_BODY_CHUNK: usize = 64 * 1024;
+/// Half-closing requests the regression test sends: enough that an HTTP/1
+/// connection reading once more before it writes the answer is reliably
+/// exercised.
+const HALF_CLOSE_ROUNDS: usize = 64;
 
 struct Rep {
     id: String,
@@ -134,7 +143,32 @@ fn chunked_request(method: &str, path: &str, frames: &[&[u8]]) -> Vec<u8> {
     request
 }
 
-/// Send one raw request and return the response status code.
+/// The status code carried by one raw HTTP/1.1 response, if it carries one.
+fn status_of(response: &[u8]) -> Option<u16> {
+    String::from_utf8_lossy(response)
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+}
+
+/// Read the whole response, stating which bytes arrived when the read fails:
+/// a reset after a refusal must be reported as the reset it is, never as the
+/// empty response it leaves behind.
+async fn read_response(socket: &mut TcpStream, response: &mut Vec<u8>) {
+    let read = tokio::time::timeout(GUARD, socket.read_to_end(response))
+        .await
+        .expect("read must not hang");
+    if let Err(e) = read {
+        panic!(
+            "response read failed ({e:?}) after {} bytes: {:?}",
+            response.len(),
+            String::from_utf8_lossy(response)
+        );
+    }
+}
+
+/// Send one raw request, half-close the write side as a client that is done
+/// sending, and return the response status code.
 async fn status(addr: SocketAddr, request: Vec<u8>) -> u16 {
     let mut socket = tokio::time::timeout(GUARD, TcpStream::connect(addr))
         .await
@@ -143,15 +177,8 @@ async fn status(addr: SocketAddr, request: Vec<u8>) -> u16 {
     socket.write_all(&request).await.expect("write request");
     let _ = socket.shutdown().await;
     let mut response = Vec::new();
-    tokio::time::timeout(GUARD, socket.read_to_end(&mut response))
-        .await
-        .expect("read must not hang")
-        .expect("read response");
-    String::from_utf8_lossy(&response)
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse().ok())
-        .expect("response status code")
+    read_response(&mut socket, &mut response).await;
+    status_of(&response).expect("response status code")
 }
 
 async fn post(rig: &Rig, path: &str, body: &[u8]) -> u16 {
@@ -221,6 +248,78 @@ async fn paths_are_checked_against_the_publishing_point() {
         200,
         "the publishing point itself is served"
     );
+    rig.task.abort();
+}
+
+/// A client that half-closes its write side once the request is sent must
+/// still receive the answer: finishing the request is not leaving the
+/// connection, and a connection dropped then loses the status code.
+#[tokio::test]
+async fn a_half_closed_client_still_receives_its_status() {
+    let rig = start_with(|route| route, never_times_out()).await;
+    for round in 0..HALF_CLOSE_ROUNDS {
+        assert_eq!(
+            status(rig.addr, http_request("POST", "/live-other/x", b"")).await,
+            404,
+            "refused request {round} must be answered after the half-close"
+        );
+        assert_eq!(
+            post(&rig, "/live", b"").await,
+            200,
+            "served request {round} must be answered after the half-close"
+        );
+    }
+    rig.task.abort();
+}
+
+/// A body several socket buffers deep is still arriving when the route
+/// refuses the path. The refusal must still reach the client: cut the
+/// connection with that body unread and the kernel resets it, so a real
+/// client never learns why its upload was refused.
+#[tokio::test]
+async fn a_refused_path_answers_a_body_that_is_still_in_flight() {
+    let rig = start_with(|route| route, never_times_out()).await;
+    let mut socket = tokio::time::timeout(GUARD, TcpStream::connect(rig.addr))
+        .await
+        .expect("connect must not hang")
+        .expect("connect");
+    socket
+        .write_all(&declared_request(
+            "POST",
+            "/live-other/x",
+            REFUSED_BODY_BYTES,
+        ))
+        .await
+        .expect("write request head");
+    let chunk = vec![0u8; REFUSED_BODY_CHUNK];
+    let mut sent = 0;
+    let mut write = Ok(());
+    while sent < REFUSED_BODY_BYTES {
+        write = socket.write_all(&chunk).await;
+        if write.is_err() {
+            break;
+        }
+        sent += chunk.len();
+        tokio::task::yield_now().await;
+    }
+    let mut response = Vec::new();
+    let read = tokio::time::timeout(GUARD, socket.read_to_end(&mut response))
+        .await
+        .expect("read must not hang");
+    assert!(
+        write.is_ok(),
+        "the refused body must be read while it arrives: {write:?} after {sent} bytes"
+    );
+    assert!(
+        read.is_ok(),
+        "the refusal must be delivered, not reset: {read:?}"
+    );
+    assert_eq!(
+        status_of(&response),
+        Some(404),
+        "a path outside the publishing point is refused however large its body"
+    );
+    let _ = socket.shutdown().await;
     rig.task.abort();
 }
 
