@@ -41,11 +41,12 @@ use broadcast_common::{Demand, Parse, Stage, Timestamp, Unpackage};
 
 use crate::error::{Error, Result};
 use crate::media::{
-    Media, SkippedTrack, Track, find_box, normalise_track_nal_lengths, refine_legacy_config,
-    skipped_track, track_spec_from_trak,
+    Media, SkippedTrack, Track, find_box, nal_length_size, normalise_nal_lengths,
+    normalise_spec_nal_length, refine_legacy_config, skipped_track, track_spec_from_track_info,
 };
 use crate::pipeline::Sample;
 use isobmff::init_segment::{MOOV, MovieBox, TrackBox};
+use isobmff::reader::TrackInfo;
 use isobmff::sample_table::TrackCursor;
 
 /// Demux a non-fragmented ISOBMFF/MP4 byte stream into a [`Media`].
@@ -178,10 +179,17 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
     let mut tracks = Vec::with_capacity(moov.tracks.len());
     let mut skipped: Vec<SkippedTrack> = Vec::new();
     for trak in &moov.tracks {
-        let mut spec = match track_spec_from_trak(trak) {
-            Ok(spec) => spec,
+        let info = match TrackInfo::from_trak(trak).map_err(Error::from) {
+            Ok(info) => info,
             Err(err) => {
                 skipped.push(skipped_track(err, trak.tkhd.track_id.into()));
+                continue;
+            }
+        };
+        let mut spec = match track_spec_from_track_info(&info) {
+            Ok(spec) => spec,
+            Err(err) => {
+                skipped.push(skipped_track(err, info.track_id.into()));
                 continue;
             }
         };
@@ -196,14 +204,22 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
                 continue;
             }
         };
-        refine_legacy_config(&mut spec.config, &samples);
-        if let Err(err) = normalise_track_nal_lengths(&mut spec, &mut samples) {
-            skipped.push(SkippedTrack {
-                fourcc: String::from("unknown"),
-                reason: err.to_string(),
-                track_id: Some(trak.tkhd.track_id.into()),
-            });
-            continue;
+        if let Some(first) = samples.first() {
+            refine_legacy_config(&mut spec.config, first);
+        }
+        if let Some(length_size) = nal_length_size(&spec.config) {
+            if let Err(err) = samples
+                .iter_mut()
+                .try_for_each(|sample| normalise_nal_lengths(length_size, sample))
+            {
+                skipped.push(SkippedTrack {
+                    fourcc: String::from("unknown"),
+                    reason: err.to_string(),
+                    track_id: Some(trak.tkhd.track_id.into()),
+                });
+                continue;
+            }
+            normalise_spec_nal_length(&mut spec);
         }
         tracks.push(Track::new(spec, samples));
     }
