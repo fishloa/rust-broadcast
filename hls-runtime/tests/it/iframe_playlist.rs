@@ -11,12 +11,12 @@ use bytes::Bytes;
 use hls_runtime::server::{
     BlockingQuery, DEFAULT_TRACK_ID, HlsOrigin, HlsOriginConfig, HlsRequest,
 };
+use isobmff::movie_fragment::MovieFragmentBox;
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::Container;
 use transmux::SegmentMeta;
-use transmux::movie_fragment::MovieFragmentBox;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };
@@ -100,13 +100,13 @@ fn iframe_playlist_text(origin: &HlsOrigin) -> EgressResponse<hls_runtime::serve
 }
 
 fn find_moof_offset(bytes: &[u8]) -> Option<usize> {
-    transmux::box_types::clamped_boxes(bytes)
+    isobmff::box_types::clamped_boxes(bytes)
         .find(|b| b.header.box_type.is(b"moof"))
         .map(|b| b.start)
 }
 
 fn find_mdat_payload_start(bytes: &[u8], sample_start: usize) -> Option<usize> {
-    transmux::box_types::clamped_boxes(bytes)
+    isobmff::box_types::clamped_boxes(bytes)
         .filter(|b| b.header.box_type.is(b"mdat"))
         .find(|b| (b.payload_start()..b.end).contains(&sample_start))
         .map(|b| b.payload_start())
@@ -161,18 +161,18 @@ fn iframe_geometry_oracle() {
         // sample_ranges over FULL segment
         let moof_off = find_moof_offset(seg_bytes).expect("moof");
         let rest = &seg_bytes[moof_off..];
-        let header = transmux::box_types::BoxHeader::parse(rest).expect("box header");
+        let header = isobmff::box_types::BoxHeader::parse(rest).expect("box header");
         let hdr_sz = header.header_size();
         let total = usize::try_from(header.size).expect("size");
         let body = &seg_bytes[moof_off + hdr_sz..moof_off + total];
         let moof = MovieFragmentBox::parse_body(body).expect("moof parse");
-        let mdats = transmux::frag_offsets::mdat_ranges(seg_bytes);
-        let samples = transmux::frag_offsets::sample_ranges_in(
+        let mdats = isobmff::frag_offsets::mdat_ranges(seg_bytes);
+        let samples = isobmff::frag_offsets::sample_ranges_in(
             seg_bytes,
             &mdats,
             moof_off,
             &moof,
-            TrackId::new(1),
+            TrackId::new(1).into(),
         )
         .expect("sample ranges");
         assert!(!samples.is_empty());

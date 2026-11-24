@@ -14,7 +14,8 @@ use axum::Router;
 use axum::http::StatusCode;
 use broadcast_common::Parse;
 use broadcast_hls::{MasterPlaylist, MediaPlaylist};
-use transmux::{MovieBox, MovieFragmentBox};
+use isobmff::movie_fragment::MovieFragmentBox;
+use transmux::MovieBox;
 
 use multimux::config::Config;
 use transmux::audio_profile::{AudioProfile, AudioProfileOverride, AudioTrackSelector};
@@ -275,7 +276,11 @@ async fn heaac_route_init_mdhd_uses_output_rate() {
         .filter(|(cc, _)| cc == b"moof")
     {
         let moof = MovieFragmentBox::parse_body(&moof_bytes[BOX_HEADER_LEN..]).expect("moof");
-        for traf in moof.traf.iter().filter(|t| t.tfhd.track_id == audio_id) {
+        for traf in moof
+            .traf
+            .iter()
+            .filter(|t| t.tfhd.track_id.value() == audio_id.value())
+        {
             for run in &traf.trun {
                 for sample in &run.samples {
                     let duration = sample

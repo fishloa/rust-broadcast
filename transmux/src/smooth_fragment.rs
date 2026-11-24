@@ -19,13 +19,13 @@ use broadcast_common::xml_chars::{XmlBudget, namespace_of};
 use quick_xml::NsReader;
 use quick_xml::events::Event;
 
-use crate::box_types::{BOX_HEADER_MIN_SIZE, box_iter, parse_box};
 use crate::error::{Error, Result};
 use crate::ir::TrackId;
-use crate::movie_fragment::MovieFragmentBox;
-use crate::segments::MOOF;
 use crate::smooth::{TFXD_UUID, TfxdBox};
 use broadcast_smooth::default_limits;
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, box_iter, parse_box};
+use isobmff::movie_fragment::MovieFragmentBox;
+use isobmff::segments::MOOF;
 
 const PROTECTION_ELEMENT: &str = "Protection";
 const BOX_TRAF: [u8; 4] = *b"traf";

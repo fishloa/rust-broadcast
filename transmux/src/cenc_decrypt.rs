@@ -2,7 +2,7 @@
 //!
 //! Turns a CENC-encrypted ISOBMFF/CMAF file back into cleartext coded samples,
 //! implementing the hub [`broadcast_common::Decrypt`] trait. Only the box
-//! *parsers* (in [`crate::cenc`]) are reused here; this module adds the
+//! *parsers* (in [`isobmff::cenc`]) are reused here; this module adds the
 //! `sinf`/`frma` unwrap and dispatches AES sample-decryption (both ciphers) to
 //! the shared cipher core in `cenc_crypto` (factored out so an
 //! encrypt path can reuse it — see that module's docs for the `cbcs` CBC
@@ -25,7 +25,7 @@
 //!   one [`crate::media::Track`], exactly like the progressive case — see
 //!   this module's private `harvest_fragment_senc` and
 //!   `collect_fragment_samples` helpers. The already-typed
-//!   fragment parsers in [`crate::movie_fragment`] (`MovieFragmentBox`,
+//!   fragment parsers in [`isobmff::movie_fragment`] (`MovieFragmentBox`,
 //!   `TrackFragmentHeaderBox`, `TrackFragmentRunBox`) are reused rather than a
 //!   second hand-rolled `moof`/`traf`/`trun` walker; only the `senc` lookup
 //!   (which those types do not carry) is done with this module's own
@@ -85,24 +85,24 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Decrypt, Parse};
 
-use crate::box_types::{
+use isobmff::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET, box_slices,
     child_boxes, descend_boxes, find_child_box, find_top_box, parse_box,
 };
 // Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
 // resolving for existing callers even though the type now lives in
 // `crate::cenc` (issue #564 — one shared definition for decrypt/encrypt/IR).
-pub use crate::cenc::CencScheme;
-use crate::cenc::{KEY_LEN, SampleEncryptionEntry, TrackEncryptionBox};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::init_segment::{ChunkLargeOffsetBox, ChunkOffsetBox, SampleSizeBox, SampleToChunkBox};
 use crate::media::Media;
-use crate::movie_fragment::{
+use crate::progressive_demux::sample_layout;
+pub use broadcast_common::cenc::CencScheme;
+use isobmff::cenc::{KEY_LEN, SampleEncryptionEntry, TrackEncryptionBox};
+use isobmff::movie_fragment::{
     MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TrackFragmentHeaderBox, TrackFragmentRunBox,
 };
-use crate::progressive_demux::sample_layout;
-use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
+use isobmff::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
 
 /// A map of content keys, keyed by 16-byte Key ID (KID).
 ///
@@ -517,7 +517,7 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
     let Some(sinf) = find_sinf_in_stsd(stsd) else {
         return Ok(None);
     };
-    let sinf_parsed = crate::cenc::ProtectionSchemeInfoBox::parse(sinf)?;
+    let sinf_parsed = isobmff::cenc::ProtectionSchemeInfoBox::parse(sinf)?;
     let scheme = sinf_parsed
         .scheme_type
         .as_ref()
@@ -574,7 +574,10 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
 
 /// Parse a full `senc` box (header + FullBox + body) into its typed form,
 /// given the track's `tenc.default_per_sample_iv_size`.
-fn parse_senc_box(senc: &[u8], per_sample_iv_size: u8) -> Result<crate::cenc::SampleEncryptionBox> {
+fn parse_senc_box(
+    senc: &[u8],
+    per_sample_iv_size: u8,
+) -> Result<isobmff::cenc::SampleEncryptionBox> {
     need_in(
         senc,
         BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE,
@@ -586,12 +589,13 @@ fn parse_senc_box(senc: &[u8], per_sample_iv_size: u8) -> Result<crate::cenc::Sa
         &senc[BOX_HEADER_MIN_SIZE + FULLBOX_FLAGS_OFFSET..BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE],
     );
     let flags = u32::from_be_bytes(flag_word);
-    crate::cenc::SampleEncryptionBox::parse_body(
+    isobmff::cenc::SampleEncryptionBox::parse_body(
         &senc[BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE..],
         version,
         flags,
         per_sample_iv_size,
     )
+    .map_err(Error::from)
 }
 
 /// Walk every top-level `moof` in a fragmented file and append each `traf`'s
@@ -599,7 +603,7 @@ fn parse_senc_box(senc: &[u8], per_sample_iv_size: u8) -> Result<crate::cenc::Sa
 /// file order.
 ///
 /// Reuses the already-typed [`TrackFragmentHeaderBox`] parser (from
-/// [`crate::movie_fragment`]) to recover `tfhd.track_id` — `senc` itself is
+/// [`isobmff::movie_fragment`]) to recover `tfhd.track_id` — `senc` itself is
 /// not part of that crate's typed `moof`/`traf` structures (only
 /// `tfhd`/`tfdt`/`trun` are), so it is located directly among the `traf`'s
 /// sibling boxes with this module's own box-navigation helpers, the same way
@@ -634,12 +638,12 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
                 "tfhd header",
             )?;
             let tfhd_parsed = TrackFragmentHeaderBox::parse_body(
-                &tfhd[crate::box_types::box_header_len(tfhd)?..],
+                &tfhd[isobmff::box_types::box_header_len(tfhd)?..],
             )?;
 
             let Some(crypto) = tracks
                 .iter_mut()
-                .find(|t| t.track_id == tfhd_parsed.track_id)
+                .find(|t| t.track_id.value() == tfhd_parsed.track_id.value())
             else {
                 // This traf's track isn't one we're decrypting (e.g. the
                 // unencrypted audio track alongside a protected video track).
@@ -691,7 +695,7 @@ fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
     {
         need_in(trun, BOX_HEADER_MIN_SIZE, "trun header")?;
         let parsed =
-            TrackFragmentRunBox::parse_body(&trun[crate::box_types::box_header_len(trun)?..])?;
+            TrackFragmentRunBox::parse_body(&trun[isobmff::box_types::box_header_len(trun)?..])?;
         total += parsed.samples.len();
     }
     Ok(total)
@@ -795,7 +799,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
             ));
             continue;
         };
-        let sinf_parsed = crate::cenc::ProtectionSchemeInfoBox::parse(sinf)?;
+        let sinf_parsed = isobmff::cenc::ProtectionSchemeInfoBox::parse(sinf)?;
         if &sinf_parsed.original_format.data_format != b"avc1" {
             // Skip, rather than fail the whole file, a protected track whose
             // original format is not AVC — a typical `encv`+`enca` CENC
@@ -889,7 +893,7 @@ fn collect_fragment_samples(
     let mut out = Vec::new();
     let mut offset = 0usize;
     // One `mdat` scan for the whole file, shared by every fragment.
-    let mdats = crate::frag_offsets::mdat_ranges(file);
+    let mdats = isobmff::frag_offsets::mdat_ranges(file);
     // Sample bytes copied so far, for the whole file and never refilled: many
     // `moof`s each claiming one `mdat` would otherwise copy it once per
     // fragment (audit 20 finding 13).
@@ -917,7 +921,7 @@ fn collect_fragment_samples(
                 if let Some(tfdt) = moof
                     .traf
                     .iter()
-                    .find(|t| t.tfhd.track_id == target_track_id)
+                    .find(|t| t.tfhd.track_id.value() == target_track_id.value())
                     .and_then(|t| t.tfdt.as_ref())
                 {
                     next_dts = tfdt.base_media_decode_time() as i64;
@@ -972,7 +976,7 @@ fn collect_fragment_samples(
 /// `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`.
 fn absorb_protected_fragment(
     file: &bytes::Bytes,
-    mdats: &[crate::frag_offsets::MdatRange],
+    mdats: &[isobmff::frag_offsets::MdatRange],
     moof_off: usize,
     moof: &MovieFragmentBox,
     target_track_id: TrackId,
@@ -984,16 +988,16 @@ fn absorb_protected_fragment(
 
     // All §8.8.7/§8.8.8 addressing and bounds live in `frag_offsets`, shared
     // with `Fmp4Demux` so the two cannot drift (audit r05-W7).
-    for r in crate::frag_offsets::sample_ranges_in_run(
+    for r in isobmff::frag_offsets::sample_ranges_in_run(
         file,
         mdats,
         moof_off,
         moof,
-        target_track_id,
+        target_track_id.into(),
         copied_bytes,
     )? {
         let dts = *next_dts;
-        let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
+        let pts = isobmff::frag_offsets::add_offset(dts, r.composition_offset)?;
         let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
         out.push(Sample {
             data: file.slice(r.start..r.end),
@@ -1004,7 +1008,7 @@ fn absorb_protected_fragment(
             provenance: None,
             display: None,
         });
-        *next_dts = crate::frag_offsets::add_duration(dts, r.duration)?;
+        *next_dts = isobmff::frag_offsets::add_duration(dts, r.duration)?;
     }
     Ok(())
 }
@@ -1020,7 +1024,7 @@ fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigur
             {
                 // avcC full bytes → body after the 8-byte box header.
                 let cfg = crate::AVCConfigurationBox::parse_body(
-                    &avcc[crate::box_types::box_header_len(avcc)?..],
+                    &avcc[isobmff::box_types::box_header_len(avcc)?..],
                 )?;
                 return Ok(cfg.config);
             }
@@ -1518,7 +1522,7 @@ mod tests {
     fn decrypt_is_atomic_on_bad_subsample_map_track2() {
         let mut second = crypto(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
         // 64-byte samples (see `plaintext`): claim 100 protected bytes.
-        second.samples[0].subsamples = alloc::vec![crate::cenc::SubSampleEntry {
+        second.samples[0].subsamples = alloc::vec![isobmff::cenc::SubSampleEntry {
             bytes_of_clear_data: 0,
             bytes_of_protected_data: 100,
         }];

@@ -14,7 +14,7 @@
 //!   Period-relative start is `(time - PTO) / timescale` (5.3.9.6.1).
 //! * Availability (dynamic only): [`crate::timing::availability`].
 
-use transmux::SegmentIndexBox;
+use isobmff::timing::SegmentIndexBox;
 
 use super::AddressError;
 use super::base_index::{self, IndexedSegment};

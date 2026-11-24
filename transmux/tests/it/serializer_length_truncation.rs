@@ -9,7 +9,8 @@
 
 use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
-use transmux::{MediaHeaderBox, MovieHeaderBox, ProducerReferenceTimeBox, TrackHeaderBox, TrackId};
+use isobmff::sample_groups::ProducerReferenceTimeBox;
+use transmux::{MediaHeaderBox, MovieHeaderBox, TrackHeaderBox, TrackId};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -71,7 +72,7 @@ fn prft(version: u8, media_time: u64) -> ProducerReferenceTimeBox {
     ProducerReferenceTimeBox {
         version,
         flags: 0,
-        reference_track_id: TrackId::new(1),
+        reference_track_id: isobmff::TrackId::new(1),
         ntp_timestamp: 1,
         media_time,
     }
@@ -115,7 +116,7 @@ fn v0_header_boxes_reject_values_above_u32() {
     }
     assert!(matches!(
         serialize(&prft(0, OVER_U32)),
-        Err(transmux::error::Error::FieldOverflow(..))
+        Err(isobmff::Error::FieldOverflow(..))
     ));
     assert!(serialize(&prft(1, OVER_U32)).is_ok());
 }

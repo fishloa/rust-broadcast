@@ -12,7 +12,7 @@
 //! 5. clap from spec vector build + round-trip
 
 use broadcast_common::{Parse, Serialize};
-use transmux::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
+use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
 // Oracle bytes from fixtures/mp4/PROVENANCE.md
 const COLR_BODY_ORACLE: [u8; 11] = [
@@ -249,7 +249,7 @@ fn clap_spec_vector_round_trip() {
 
 #[test]
 fn colour_type_labels_and_display_are_pinned() {
-    use transmux::visual_ext::ColourType;
+    use isobmff::visual_ext::ColourType;
     assert_eq!(ColourType::Nclx.name(), "nclx");
     assert_eq!(ColourType::RIcc.name(), "rICC");
     assert_eq!(ColourType::Prof.name(), "prof");

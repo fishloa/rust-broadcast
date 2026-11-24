@@ -5,13 +5,13 @@
 //! [`TrackEncryption`] and rewrites the `moov`
 //! tree through its typed `Serialize` impl.
 
-use crate::box_types::box_iter;
 use crate::error::{Error, Result};
 use crate::init_segment::{MovieBox, StblChild, protect_sample_entry};
 use crate::ir::TrackId;
 use crate::media::TrackEncryption;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
+use isobmff::box_types::box_iter;
 
 /// Rewrite an already-built CMAF/fMP4 init segment (`ftyp` + `moov`) so the
 /// given track's sample entry becomes CENC-protected (issue #564 Task 3):

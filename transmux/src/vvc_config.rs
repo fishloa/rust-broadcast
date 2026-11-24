@@ -66,16 +66,16 @@
 //! predates the final H.266 assignments; the values here follow the published
 //! ITU-T H.266 Table 5 and are validated against the committed real fixture.)
 
-use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 use crate::error::{Error, Result};
 use crate::nalu_types::VALID_LENGTH_SIZES;
-use crate::wire_cursor::u24_at;
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitError, BitWriter};
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::u24_at;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 
 // ---------------------------------------------------------------------------
 // Field widths, masks and fixed sizes
@@ -615,7 +615,7 @@ impl Serialize for VvcConfigurationBox {
 
     fn serialized_len(&self) -> usize {
         // 8-byte box header + 4-byte FullBox header + record.
-        crate::box_types::box_len(
+        isobmff::box_types::box_len(
             BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.config.serialized_len(),
         )
     }
@@ -625,7 +625,7 @@ impl Serialize for VvcConfigurationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = 0usize;
-        cursor += crate::box_types::write_full_box_header(
+        cursor += isobmff::box_types::write_full_box_header(
             buf,
             b"vvcC",
             need,

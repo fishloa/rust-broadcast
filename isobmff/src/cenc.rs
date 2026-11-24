@@ -27,10 +27,10 @@ use crate::box_types::{
     BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET, FULLBOX_VERSION_OFFSET,
 };
 use crate::error::{Error, Result};
-use crate::wire_cursor::{u16_at, u32_at, u64_at};
 use alloc::vec::Vec;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{u16_at, u32_at, u64_at};
 use broadcast_common::{Parse, Serialize};
 
 /// Width of an AES-128 content key in bytes (ISO/IEC 23001-7 AES-128 content
@@ -72,12 +72,10 @@ fn fullbox_flags(full: &[u8]) -> u32 {
 /// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
 ///
 /// Re-exported from [`broadcast_common::cenc`], which is where the single
-/// definition lives. The decrypt path ([`crate::cenc_decrypt::CencDecryptor`],
-/// which recovers it from a protected file's `schm`), the encrypt path
-/// ([`crate::cenc_encrypt::CencEncryptor`], which is given it by the caller),
-/// and the IR carrier ([`crate::media::TrackEncryption`]) share that one
-/// definition rather than three (issue #564) — and so does `broadcast-hls`,
-/// which renders the HLS `#EXT-X-KEY` tag from it (issue #878). The scheme
+/// definition lives. The decrypt path, the encrypt path, and the IR crypto
+/// carrier share that one definition rather than three (issue #564) — and so
+/// does `broadcast-hls`, which renders the HLS `#EXT-X-KEY` tag from it (issue
+/// #878). The scheme
 /// identity is container-independent, so it belongs below both this crate and
 /// the playlist crate; only the *boxes* that carry it (`tenc`/`senc`/`schm`/…,
 /// below) are ISOBMFF-specific and stay here.
@@ -255,7 +253,7 @@ pub const SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION: u32 = 0x000001;
 /// ([`SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION`]): `AlgorithmID(24) + IV_size(8) +
 /// KID(128)` = 20 bytes.
 #[cfg(test)]
-pub(crate) const SENC_OVERRIDE_FIELDS_LEN: usize = 20;
+pub const SENC_OVERRIDE_FIELDS_LEN: usize = 20;
 
 /// Sample Encryption Box (`senc`) — ISO/IEC 23001-7 §12.3.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1216,52 +1214,6 @@ impl Serialize for ProtectionSchemeInfoBox {
         Ok(c)
     }
 }
-
-/// Whether a `cbcs` track with [`IvGen::Constant`](crate::cenc_encrypt::IvGen::Constant)
-/// emits a `senc` box with the constant IV replicated per sample (the
-/// default, for interop with decryptors such as Bento4 `mp4decrypt` that
-/// silently ignore protected tracks lacking a `senc`), or omits the
-/// `senc`/`saiz`/`saio` triple entirely (the spec-minimal shape —
-/// ISO/IEC 23001-7 §12.2/§12.3 permit it because
-/// `tenc.default_constant_IV` carries the lone IV and there is no
-/// per-sample subsample map to record). The self-consistency gate
-/// ([`CencDecryptor`](crate::CencDecryptor) round-trip) is tested for
-/// both shapes; the new default shape is additionally verified against
-/// Bento4's `mp4decrypt`. Has no effect when `iv` is not
-/// [`IvGen::Constant`](crate::cenc_encrypt::IvGen::Constant) or `scheme`
-/// is not [`CencScheme::Cbcs`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum ConstantIvSenc {
-    /// Emit a `senc` box with each sample's entry carrying the constant IV
-    /// replicated (`per_sample_iv_size = 16`). The default — chosen for
-    /// maximum third-party decryptor interop (Bento4 `mp4decrypt`, Shaka
-    /// Packager, and several other tools require an explicit `senc` in the
-    /// `traf` to recognize the track as decryptable at all, even when a
-    /// `tenc.default_constant_IV` is present). The few extra bytes per
-    /// fragment are the cost of interop.
-    #[default]
-    Emit,
-    /// Omit `senc`/`saiz`/`saio` entirely. The spec-minimal, `tenc`-only
-    /// shape: every decryptor that follows ISO/IEC 23001-7 to the letter
-    /// can decrypt this shape, and it costs zero overhead per fragment,
-    /// but it is known to be silently ignored by common tools (notably
-    /// Bento4 `mp4decrypt` 1.6.0.0 — it exits 0 but the `mdat` is
-    /// unchanged). Opt in when you control the decryptor chain.
-    Omit,
-}
-
-impl ConstantIvSenc {
-    /// Human-readable label for this enum variant.
-    pub fn name(&self) -> &'static str {
-        match self {
-            ConstantIvSenc::Emit => "emit",
-            ConstantIvSenc::Omit => "omit",
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(ConstantIvSenc);
 
 #[cfg(test)]
 mod tests {
@@ -2345,13 +2297,5 @@ mod tests {
         let bytes = container_box(b"sinf", &body);
         let b = buffer_too_short(ProtectionSchemeInfoBox::parse(&bytes).unwrap_err());
         assert_eq!((b.need, b.have, b.what), (8, 0, "schm body"));
-    }
-
-    #[test]
-    fn constant_iv_senc_labels_are_pinned() {
-        assert_eq!(ConstantIvSenc::Emit.name(), "emit");
-        assert_eq!(ConstantIvSenc::Omit.name(), "omit");
-        assert_eq!(alloc::format!("{}", ConstantIvSenc::Emit), "emit");
-        assert_eq!(alloc::format!("{}", ConstantIvSenc::Omit), "omit");
     }
 }

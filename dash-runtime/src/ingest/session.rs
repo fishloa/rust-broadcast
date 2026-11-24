@@ -372,7 +372,7 @@ impl DashifIngestSession {
                 let mut i = 0usize;
                 let mut end = None;
                 while i < handle.buf.len() {
-                    match transmux::parse_box(&handle.buf[i..]) {
+                    match isobmff::parse_box(&handle.buf[i..]) {
                         Ok((bx, consumed)) => {
                             i += consumed;
                             if bx.header.box_type.is(b"mdat") {
@@ -401,7 +401,7 @@ impl DashifIngestSession {
             let mut i = 0usize;
             let mut end = None;
             while i < handle.buf.len() {
-                match transmux::parse_box(&handle.buf[i..]) {
+                match isobmff::parse_box(&handle.buf[i..]) {
                     Ok((bx, consumed)) => {
                         i += consumed;
                         if bx.header.box_type.is(b"mdat") {
@@ -504,7 +504,7 @@ impl DashifIngestSession {
     }
 
     fn detect_styp_lmsg(&mut self, rep_id: &str, bytes: &[u8]) {
-        if let Ok((boxref, _)) = transmux::parse_box(bytes)
+        if let Ok((boxref, _)) = isobmff::parse_box(bytes)
             && boxref.header.box_type.is(b"styp")
         {
             let body = boxref.body;

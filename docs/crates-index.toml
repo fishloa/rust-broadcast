@@ -317,6 +317,14 @@ what = "Parses and serializes the Smooth `SmoothStreamingMedia` client Manifest:
 crates_io = true
 lifecycle = "active"
 
+[crate.isobmff]
+domain = "containers"
+summary = "ISO/IEC 14496-12:2026 (ISO BMFF) box syntax: box/FullBox headers, top-level and movie-fragment boxes, sample tables, CENC boxes."
+standards = "ISO/IEC 14496-12:2026, ISO/IEC 23001-7 (CENC boxes)"
+what = "Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` headers (64-bit `largesize`, `uuid` usertype), the size-driven `box_iter` walker, `ftyp`/`styp`/`mdat`, the sample-table/timing boxes, the visual-extension and sample-group boxes, the movie-fragment boxes, the CENC boxes, and the §8.8.7/§8.8.8 fragment sample-offset resolver. It knows box syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`."
+crates_io = true
+lifecycle = "active"
+
 [crate.transmux]
 domain = "containers"
 summary = "Any-to-any container remux hub: TS/fMP4/PS/WebM/FLV/RTMP in, CMAF/MP4/TS/HLS/DASH/LL-*/Smooth out."

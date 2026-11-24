@@ -175,8 +175,8 @@ fn truncated_final_box_is_tolerated() {
 #[test]
 fn two_moofs_before_one_mdat_keeps_both_fragments() {
     use broadcast_common::Serialize;
-    use transmux::movie_fragment::TFHD_BASE_DATA_OFFSET_PRESENT;
-    use transmux::{
+    use isobmff::movie_fragment::TFHD_BASE_DATA_OFFSET_PRESENT;
+    use isobmff::movie_fragment::{
         MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
         TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
     };
@@ -202,7 +202,7 @@ fn two_moofs_before_one_mdat_keeps_both_fragments() {
     for (i, sample) in [&sample_a, &sample_b].iter().enumerate() {
         let trun = TrackFragmentRunBox {
             version: 0,
-            tr_flags: transmux::movie_fragment::TRUN_SAMPLE_SIZE_PRESENT,
+            tr_flags: isobmff::movie_fragment::TRUN_SAMPLE_SIZE_PRESENT,
             data_offset: None,
             first_sample_flags: None,
             samples: vec![TrunSample {
@@ -218,7 +218,7 @@ fn two_moofs_before_one_mdat_keeps_both_fragments() {
                 TrackFragmentHeaderBox {
                     // An explicit base pointing at the single `mdat` payload.
                     flags: TFHD_BASE_DATA_OFFSET_PRESENT,
-                    track_id: TrackId::new(1),
+                    track_id: TrackId::new(1).into(),
                     base_data_offset: Some(0),
                     sample_description_index: None,
                     default_sample_duration: None,
@@ -292,7 +292,7 @@ fn track1_first_sample_len(file: &[u8]) -> u64 {
         .iter()
         .find(|(ty, ..)| *ty == *b"moof")
         .expect("a moof");
-    let moof = transmux::MovieFragmentBox::parse_body(&file[off + 8..off + size])
+    let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(&file[off + 8..off + size])
         .expect("parse moof body");
     let trun = &moof.traf[0].trun[0];
     u64::from(trun.samples[0].sample_size.expect("sample_size present"))

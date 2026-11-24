@@ -11,7 +11,8 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
-use transmux::{CompositionOffsetBox, EditListBox, SegmentIndexBox, TimeToSampleBox, box_iter};
+use isobmff::box_types::box_iter;
+use isobmff::timing::{CompositionOffsetBox, EditListBox, SegmentIndexBox, TimeToSampleBox};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

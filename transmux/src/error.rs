@@ -107,7 +107,7 @@ pub enum Error {
     /// The zero-width `trun`s (no per-sample fields, so the buffer length cannot
     /// bound their `sample_count`) of one `moof` — or of the run of `moof`s a
     /// demuxer holds before their `mdat` — declare more samples in total than
-    /// [`MAX_ZERO_WIDTH_TRUN_SAMPLES`](crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES)
+    /// [`MAX_ZERO_WIDTH_TRUN_SAMPLES`](isobmff::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES)
     /// allows. The allowance is aggregate: a 16-byte `trun` may legally declare
     /// 2^20 samples, so a per-`trun` cap would let N such `trun`s allocate
     /// N x 40 MiB.
@@ -125,7 +125,7 @@ pub enum Error {
     ///
     /// The bound is structural, not a tunable: samples that do not overlap can
     /// never total more than the input length (the allowance is
-    /// [`MAX_SAMPLE_BYTES_PER_INPUT_LENGTH`](crate::frag_offsets::MAX_SAMPLE_BYTES_PER_INPUT_LENGTH)
+    /// [`MAX_SAMPLE_BYTES_PER_INPUT_LENGTH`](isobmff::frag_offsets::MAX_SAMPLE_BYTES_PER_INPUT_LENGTH)
     /// times it). A larger total means overlapping `stco`/`stsc` chunks,
     /// overlapping `trun` runs, or several `moof`s each claiming the same
     /// `mdat` — every one of which would have its bytes copied again, turning
@@ -338,4 +338,48 @@ pub enum Error {
         /// The `main_adaptation_set_id` supplied by the caller.
         main_adaptation_set_id: u32,
     },
+}
+
+// The ISO BMFF box layer below this crate has its own error type. Map it
+// variant-for-variant onto this crate's existing variants (never a single
+// wrapper), so every `Error::X` match in this crate, `media-plane` and
+// `dash-runtime` keeps its meaning and its message. The box layer's
+// `UnsupportedVersion` and `emsg` variants arrive only through the `emsg`
+// parser today, which this crate has always surfaced as `EmsgSerialize`.
+impl From<isobmff::Error> for Error {
+    fn from(e: isobmff::Error) -> Self {
+        use isobmff::Error as I;
+        match e {
+            I::BufferTooShort(v) => Error::BufferTooShort(v),
+            I::LargesizeBufferTooShort { need, have } => {
+                Error::LargesizeBufferTooShort { need, have }
+            }
+            I::UuidBufferTooShort { need, have } => Error::UuidBufferTooShort { need, have },
+            I::BoxSizeUnderflow { size, header_size } => {
+                Error::BoxSizeUnderflow { size, header_size }
+            }
+            I::OutputBufferTooSmall(v) => Error::OutputBufferTooSmall(v),
+            I::InvalidValue(v) => Error::InvalidValue(v),
+            I::InvalidField(v) => Error::InvalidField(v),
+            I::UnexpectedBox { expected } => Error::UnexpectedBox { expected },
+            I::InvalidInput(s) => Error::InvalidInput(s),
+            I::ZeroWidthTrunBudgetExceeded { limit } => {
+                Error::ZeroWidthTrunBudgetExceeded { limit }
+            }
+            I::SampleDataBudgetExceeded { limit } => Error::SampleDataBudgetExceeded { limit },
+            I::FieldOverflow(v) => Error::FieldOverflow(v),
+            I::UnsupportedFeature(s) => Error::UnsupportedFeature(s),
+            I::UnsupportedVersion(v) => {
+                Error::EmsgSerialize(mp4_emsg::Error::UnsupportedVersion(v))
+            }
+            I::NotEmsg { found } => Error::EmsgSerialize(mp4_emsg::Error::NotEmsg { found }),
+            I::InvalidSize { size, reason } => {
+                Error::EmsgSerialize(mp4_emsg::Error::InvalidSize { size, reason })
+            }
+            I::InvalidString { field, reason } => {
+                Error::EmsgSerialize(mp4_emsg::Error::InvalidString { field, reason })
+            }
+            _ => Error::UnsupportedFeature("unrecognised ISO BMFF box error"),
+        }
+    }
 }

@@ -29,7 +29,8 @@ use serde::Serialize;
 
 use transmux::ir::{CodecConfig, Media, Track};
 use transmux::sps::rfc6381_avc1;
-use transmux::{AudioSpecificConfig, Fmp4Demux, ProgressiveDemux, box_iter};
+use isobmff::box_iter;
+use transmux::{AudioSpecificConfig, Fmp4Demux, ProgressiveDemux};
 
 /// One track's codec identity + coarse throughput stats.
 #[derive(Serialize)]

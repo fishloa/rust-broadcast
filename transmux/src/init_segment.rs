@@ -10,20 +10,20 @@
 //! `sample_entries`.
 
 use crate::TrackId;
-use crate::box_types::{
-    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_VERSION_OFFSET,
-};
 use crate::error::{Error, Result};
-use crate::wire_cursor::{fourcc_at, i16_at, u16_at, u24_at, u32_at, u64_at};
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::timescale::Timescale;
+use broadcast_common::wire::{fourcc_at, i16_at, u16_at, u24_at, u32_at, u64_at};
 use broadcast_common::{Parse, Serialize};
+use isobmff::box_types::{
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_VERSION_OFFSET,
+};
 
-use crate::box_support::{
+use isobmff::box_support::{
     ChildOrder, FLAT_TABLE_COUNT_OFFSET, FLAT_TABLE_FLAGS_OFFSET, FLAT_TABLE_HEADER_LEN,
     FLAT_TABLE_VERSION_OFFSET, FULLBOX_FLAGS_WIDTH, FULLBOX_FLAGS_WIRE_OFFSET, FULLBOX_VERSION_LEN,
     OpaqueBox, SerializeBox, bounded_entry_count, box_body, check_entry_count, flat_table_len,
@@ -137,18 +137,22 @@ impl<'a> Parse<'a> for MovieHeaderBox {
             Ok(Self {
                 version: 1,
                 flags,
-                creation_time: crate::wire_cursor::be_u64(
+                creation_time: broadcast_common::wire::be_u64(
                     bytes,
                     MVHD_V1_CREATION_TIME_OFFSET,
                     "mvhd v1",
                 )?,
-                modification_time: crate::wire_cursor::be_u64(
+                modification_time: broadcast_common::wire::be_u64(
                     bytes,
                     MVHD_V1_MODIFICATION_TIME_OFFSET,
                     "mvhd v1",
                 )?,
                 timescale: Timescale::try_new(u32_at(bytes, MVHD_V1_TIMESCALE_OFFSET))?,
-                duration: crate::wire_cursor::be_u64(bytes, MVHD_V1_DURATION_OFFSET, "mvhd v1")?,
+                duration: broadcast_common::wire::be_u64(
+                    bytes,
+                    MVHD_V1_DURATION_OFFSET,
+                    "mvhd v1",
+                )?,
                 rate: u32_at(bytes, MVHD_V1_RATE_OFFSET),
                 volume: u16_at(bytes, MVHD_V1_VOLUME_OFFSET),
                 matrix: matrix_from_bytes(
@@ -174,7 +178,7 @@ impl Serialize for MovieHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"mvhd",
             need,
@@ -345,11 +349,12 @@ impl<'a> Parse<'a> for TrackHeaderBox {
             // duration, so duration starts at byte 36, not 40 — every field
             // from `duration` on was previously read 4 bytes early
             // (issue #1016).
-            let ct = crate::wire_cursor::be_u64(bytes, TKHD_V1_CREATION_TIME_OFFSET, "tkhd v1")?;
+            let ct =
+                broadcast_common::wire::be_u64(bytes, TKHD_V1_CREATION_TIME_OFFSET, "tkhd v1")?;
             let mt =
-                crate::wire_cursor::be_u64(bytes, TKHD_V1_MODIFICATION_TIME_OFFSET, "tkhd v1")?;
+                broadcast_common::wire::be_u64(bytes, TKHD_V1_MODIFICATION_TIME_OFFSET, "tkhd v1")?;
             let tid = u32_at(bytes, TKHD_V1_TRACK_ID_OFFSET);
-            let dur = crate::wire_cursor::be_u64(bytes, TKHD_V1_DURATION_OFFSET, "tkhd v1")?;
+            let dur = broadcast_common::wire::be_u64(bytes, TKHD_V1_DURATION_OFFSET, "tkhd v1")?;
             Ok(Self {
                 version: 1,
                 flags,
@@ -373,7 +378,7 @@ impl<'a> Parse<'a> for TrackHeaderBox {
 fn matrix_from_bytes(b: &[u8]) -> [i32; MATRIX_VALUES] {
     let mut m = [0i32; MATRIX_VALUES];
     for (i, slot) in m.iter_mut().enumerate() {
-        *slot = crate::wire_cursor::i32_at(b, i * MATRIX_VALUE_LEN);
+        *slot = broadcast_common::wire::i32_at(b, i * MATRIX_VALUE_LEN);
     }
     m
 }
@@ -391,7 +396,7 @@ impl Serialize for TrackHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"tkhd",
             need,
@@ -545,18 +550,22 @@ impl<'a> Parse<'a> for MediaHeaderBox {
             Ok(Self {
                 version: 1,
                 flags,
-                creation_time: crate::wire_cursor::be_u64(
+                creation_time: broadcast_common::wire::be_u64(
                     bytes,
                     MDHD_V1_CREATION_TIME_OFFSET,
                     "mdhd v1",
                 )?,
-                modification_time: crate::wire_cursor::be_u64(
+                modification_time: broadcast_common::wire::be_u64(
                     bytes,
                     MDHD_V1_MODIFICATION_TIME_OFFSET,
                     "mdhd v1",
                 )?,
                 timescale: Timescale::try_new(u32_at(bytes, MDHD_V1_TIMESCALE_OFFSET))?,
-                duration: crate::wire_cursor::be_u64(bytes, MDHD_V1_DURATION_OFFSET, "mdhd v1")?,
+                duration: broadcast_common::wire::be_u64(
+                    bytes,
+                    MDHD_V1_DURATION_OFFSET,
+                    "mdhd v1",
+                )?,
                 language: u16_at(bytes, MDHD_V1_LANGUAGE_OFFSET),
             })
         }
@@ -576,7 +585,7 @@ impl Serialize for MediaHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"mdhd",
             need,
@@ -666,7 +675,7 @@ pub struct HandlerBox {
 impl<'a> Parse<'a> for HandlerBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, HDLR_MIN_LEN, "hdlr")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
@@ -689,7 +698,7 @@ impl<'a> Parse<'a> for HandlerBox {
 impl Serialize for HandlerBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(
+        isobmff::box_types::box_len(
             BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + HDLR_FIXED_BODY_LEN + self.name.len(),
         )
     }
@@ -697,7 +706,7 @@ impl Serialize for HandlerBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"hdlr",
             need,
@@ -773,7 +782,7 @@ impl Serialize for VideoMediaHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"vmhd",
             need,
@@ -837,7 +846,7 @@ impl Serialize for SoundMediaHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"smhd",
             need,
@@ -911,7 +920,7 @@ impl DataEntry {
             IMDA_ENTRY_TYPE => Ok(Self::Imda(DataEntryImdaBox::parse(bytes)?)),
             SEQ_NUM_IMDA_ENTRY_TYPE => Ok(Self::SeqNumImda(DataEntrySeqNumImdaBox::parse(bytes)?)),
             _ => {
-                let compact = crate::box_types::compact_form(bytes)?;
+                let compact = isobmff::box_types::compact_form(bytes)?;
                 Ok(Self::Other(OpaqueBox::new(
                     ty,
                     compact[BOX_HEADER_MIN_SIZE..].to_vec(),
@@ -938,7 +947,7 @@ impl Serialize for DataEntry {
             Self::Urn(b) => b.serialize_into(buf),
             Self::Imda(b) => b.serialize_into(buf),
             Self::SeqNumImda(b) => b.serialize_into(buf),
-            Self::Other(b) => b.serialize_into(buf),
+            Self::Other(b) => Ok(b.serialize_into(buf)?),
         }
     }
 }
@@ -946,7 +955,7 @@ impl Serialize for DataEntry {
 impl<'a> Parse<'a> for DataReferenceBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "dref")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -968,7 +977,7 @@ impl<'a> Parse<'a> for DataReferenceBox {
             if off + BOX_HEADER_MIN_SIZE > bytes.len() {
                 break;
             }
-            let Some(sz) = crate::box_types::child_extent_in(&bytes[off..]) else {
+            let Some(sz) = isobmff::box_types::child_extent_in(&bytes[off..]) else {
                 break;
             };
             let end = off + sz;
@@ -990,13 +999,13 @@ impl Serialize for DataReferenceBox {
         for e in &self.entries {
             n += e.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"dref",
             need,
@@ -1032,7 +1041,7 @@ pub struct DataEntryUrlBox {
 impl<'a> Parse<'a> for DataEntryUrlBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FULLBOX_BODY_OFFSET, "url")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
@@ -1053,13 +1062,13 @@ impl<'a> Parse<'a> for DataEntryUrlBox {
 impl Serialize for DataEntryUrlBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.location.len())
+        isobmff::box_types::box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.location.len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"url ",
             need,
@@ -1085,7 +1094,7 @@ fn parse_data_entry_header(
     expected: [u8; BOX_TYPE_SIZE],
     what: &'static str,
 ) -> Result<(u8, u32, Vec<u8>)> {
-    let compact = crate::box_types::compact_form(bytes)?;
+    let compact = isobmff::box_types::compact_form(bytes)?;
     need_in(&compact, FULLBOX_BODY_OFFSET, what)?;
     if compact[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != expected {
         return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
@@ -1109,7 +1118,9 @@ fn write_data_entry_header(
     version: u8,
     flags: u32,
 ) -> Result<usize> {
-    crate::box_types::write_full_box_header(buf, ty, need, version, flags, false)
+    Ok(isobmff::box_types::write_full_box_header(
+        buf, ty, need, version, flags, false,
+    )?)
 }
 
 /// Data Entry URN Box (`urn `) — §8.7.2.2: `utf8string name; utf8string
@@ -1150,7 +1161,7 @@ impl<'a> Parse<'a> for DataEntryUrnBox {
 impl Serialize for DataEntryUrnBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(
+        isobmff::box_types::box_len(
             BOX_HEADER_MIN_SIZE
                 + FULLBOX_EXTRA_SIZE
                 + self.name.len()
@@ -1206,7 +1217,7 @@ impl<'a> Parse<'a> for DataEntryImdaBox {
 impl Serialize for DataEntryImdaBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(
+        isobmff::box_types::box_len(
             BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
         )
     }
@@ -1243,7 +1254,7 @@ impl<'a> Parse<'a> for DataEntrySeqNumImdaBox {
 impl Serialize for DataEntrySeqNumImdaBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE)
+        isobmff::box_types::box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1292,7 +1303,7 @@ pub struct SampleToChunkBox {
 impl<'a> Parse<'a> for SampleToChunkBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsc")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -1332,13 +1343,13 @@ impl<'a> Parse<'a> for SampleToChunkBox {
 impl Serialize for SampleToChunkBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(FLAT_TABLE_HEADER_LEN + self.entries.len() * STSC_ENTRY_LEN)
+        isobmff::box_types::box_len(FLAT_TABLE_HEADER_LEN + self.entries.len() * STSC_ENTRY_LEN)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"stsc",
             need,
@@ -1398,7 +1409,7 @@ pub struct SampleSizeBox {
 impl<'a> Parse<'a> for SampleSizeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, STSZ_PREFIX_LEN, "stsz")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
@@ -1456,7 +1467,7 @@ impl Serialize for SampleSizeBox {
         } else {
             0
         };
-        crate::box_types::box_len(STSZ_PREFIX_LEN + count * core::mem::size_of::<u32>())
+        isobmff::box_types::box_len(STSZ_PREFIX_LEN + count * core::mem::size_of::<u32>())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.sample_size == 0 && self.entries.len() != self.sample_count as usize {
@@ -1467,7 +1478,7 @@ impl Serialize for SampleSizeBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"stsz",
             need,
@@ -1538,6 +1549,7 @@ impl Serialize for ChunkOffsetBox {
                 Ok(u32_len)
             },
         )
+        .map_err(Error::from)
     }
 }
 
@@ -1594,6 +1606,7 @@ impl Serialize for ChunkLargeOffsetBox {
                 Ok(u64_len)
             },
         )
+        .map_err(Error::from)
     }
 }
 
@@ -1651,6 +1664,7 @@ impl Serialize for SyncSampleBox {
                 Ok(u32_len)
             },
         )
+        .map_err(Error::from)
     }
 }
 
@@ -2252,7 +2266,7 @@ impl Serialize for DtsSampleEntry {
 impl<'a> Parse<'a> for DtsSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, BOX_HEADER_MIN_SIZE, "DtsSampleEntry")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
@@ -2337,7 +2351,7 @@ impl Serialize for MhaSampleEntry {
 impl<'a> Parse<'a> for MhaSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, BOX_HEADER_MIN_SIZE, "MhaSampleEntry")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
@@ -2402,7 +2416,7 @@ struct ParsedAudioSampleEntry {
 }
 
 fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAudioSampleEntry> {
-    let body = crate::box_types::box_body(bytes, AUDIO_SAMPLE_ENTRY_FIXED_LEN, what)?;
+    let body = isobmff::box_types::box_body(bytes, AUDIO_SAMPLE_ENTRY_FIXED_LEN, what)?;
     let entry_version = u16_at(body, AUDIO_SAMPLE_ENTRY_ENTRY_VERSION_OFFSET);
     let mut reserved_1 = [0u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN];
     reserved_1.copy_from_slice(
@@ -2488,7 +2502,7 @@ fn audio_sample_entry_serialized_len(config_boxes: &[OpaqueBox]) -> usize {
     for c in config_boxes {
         n += c.serialized_len();
     }
-    crate::box_types::box_len(n)
+    isobmff::box_types::box_len(n)
 }
 
 /// The shared fixed fields of an audio sample entry, grouped so the writer
@@ -2510,7 +2524,7 @@ fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -
     let need = audio_sample_entry_serialized_len(config_boxes);
     need_out(buf, need)?;
     let mut c = 0usize;
-    c += crate::box_types::write_box_header(buf, f.fourcc, need)?;
+    c += isobmff::box_types::write_box_header(buf, f.fourcc, need)?;
     // SampleEntry: reserved(6) zeros + data_reference_index(2). Written, not
     // skipped, so a reused caller buffer cannot keep garbage (r04-W45).
     let u16_len = core::mem::size_of::<u16>();
@@ -2552,7 +2566,7 @@ fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -
 impl<'a> Parse<'a> for Mp4aSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         // bytes is a full box with 8-byte header; fields start at bytes[8]
         need_in(
@@ -2712,7 +2726,7 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Flac(f) => f.serialize_into(buf),
             SampleEntryVariant::Mha(m) => m.serialize_into(buf),
             SampleEntryVariant::Dts(d) => d.serialize_into(buf),
-            SampleEntryVariant::Unknown(u) => u.serialize_into(buf),
+            SampleEntryVariant::Unknown(u) => Ok(u.serialize_into(buf)?),
         }
     }
 }
@@ -2729,7 +2743,7 @@ pub struct SampleDescriptionBox {
 impl<'a> Parse<'a> for SampleDescriptionBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsd")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -2751,7 +2765,7 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
             if off + BOX_HEADER_MIN_SIZE > bytes.len() {
                 break;
             }
-            let Some(sz) = crate::box_types::child_extent_in(&bytes[off..]) else {
+            let Some(sz) = isobmff::box_types::child_extent_in(&bytes[off..]) else {
                 break;
             };
             let end = off + sz;
@@ -2804,7 +2818,7 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                     c4.copy_from_slice(&codec[..BOX_TYPE_SIZE.min(codec.len())]);
                     SampleEntryVariant::Unknown(OpaqueBox::new(
                         c4,
-                        box_bytes[crate::box_types::box_header_len(box_bytes)?..].to_vec(),
+                        box_bytes[isobmff::box_types::box_header_len(box_bytes)?..].to_vec(),
                     ))
                 }
             };
@@ -2826,13 +2840,13 @@ impl Serialize for SampleDescriptionBox {
         for e in &self.entries {
             n += e.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_full_box_header(
+        c += isobmff::box_types::write_full_box_header(
             buf,
             b"stsd",
             need,
@@ -2866,8 +2880,8 @@ impl Serialize for SampleDescriptionBox {
 #[non_exhaustive]
 pub enum StblChild {
     Stsd(SampleDescriptionBox),
-    Stts(crate::timing::TimeToSampleBox),
-    Ctts(crate::timing::CompositionOffsetBox),
+    Stts(isobmff::timing::TimeToSampleBox),
+    Ctts(isobmff::timing::CompositionOffsetBox),
     Stsc(SampleToChunkBox),
     Stsz(SampleSizeBox),
     Stco(ChunkOffsetBox),
@@ -2878,7 +2892,7 @@ pub enum StblChild {
 
 fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
     let mut children = Vec::new();
-    walk_children(body, |child| {
+    walk_children::<_, Error>(body, |child| {
         let box_bytes = child.bytes;
         let boxtype = child.four_cc;
         children.push(match &boxtype {
@@ -2907,11 +2921,11 @@ fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
             // whose four-CC matches what they're looking for, recovering the
             // real error instead of silently treating a corrupt table as
             // absent or empty (audit finding #3).
-            b"stts" => match crate::timing::TimeToSampleBox::parse(box_bytes) {
+            b"stts" => match isobmff::timing::TimeToSampleBox::parse(box_bytes) {
                 Ok(b) => StblChild::Stts(b),
                 Err(_) => StblChild::Opaque(box_bytes.to_vec()),
             },
-            b"ctts" => match crate::timing::CompositionOffsetBox::parse(box_bytes) {
+            b"ctts" => match isobmff::timing::CompositionOffsetBox::parse(box_bytes) {
                 Ok(b) => StblChild::Ctts(b),
                 Err(_) => StblChild::Opaque(box_bytes.to_vec()),
             },
@@ -3005,13 +3019,13 @@ impl<'a> Parse<'a> for SampleTableBox {
 impl Serialize for SampleTableBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + stbl_children_len(&self.children))
+        isobmff::box_types::box_len(BOX_HEADER_MIN_SIZE + stbl_children_len(&self.children))
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"stbl", need)?;
+        c += isobmff::box_types::write_box_header(buf, b"stbl", need)?;
         serialize_stbl_children(&self.children, buf, &mut c)?;
         Ok(c)
     }
@@ -3043,8 +3057,8 @@ impl DataInformationBox {
 
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
-    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(1);
+    fn typed_children(&self) -> Vec<&dyn SerializeBox<Error = crate::Error>> {
+        let mut out: Vec<&dyn SerializeBox<Error = crate::Error>> = Vec::with_capacity(1);
         if let Some(ref d) = self.dref {
             out.push(d);
         }
@@ -3072,7 +3086,7 @@ impl<'a> Parse<'a> for DataInformationBox {
         let mut dref = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children(box_body(bytes)?, |child| {
+        walk_children::<_, Error>(box_body(bytes)?, |child| {
             if is_four_cc(&child.four_cc, b"dref") {
                 order.push(child.four_cc);
                 dref = Some(DataReferenceBox::parse(child.bytes)?);
@@ -3105,7 +3119,7 @@ impl Serialize for DataInformationBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_container(
@@ -3185,8 +3199,9 @@ impl MediaInformationBox {
 
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
-    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(MINF_TYPED_CHILDREN_MAX);
+    fn typed_children(&self) -> Vec<&dyn SerializeBox<Error = crate::Error>> {
+        let mut out: Vec<&dyn SerializeBox<Error = crate::Error>> =
+            Vec::with_capacity(MINF_TYPED_CHILDREN_MAX);
         if let Some(ref b) = self.vmhd {
             out.push(b);
         }
@@ -3234,7 +3249,7 @@ impl<'a> Parse<'a> for MediaInformationBox {
         let mut stbl = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children(box_body(bytes)?, |child| {
+        walk_children::<_, Error>(box_body(bytes)?, |child| {
             match &child.four_cc {
                 b"vmhd" => {
                     order.push(child.four_cc);
@@ -3291,7 +3306,7 @@ impl Serialize for MediaInformationBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_container(
@@ -3345,8 +3360,9 @@ impl MediaBox {
 impl MediaBox {
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
-    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(MDIA_TYPED_CHILDREN_MAX);
+    fn typed_children(&self) -> Vec<&dyn SerializeBox<Error = crate::Error>> {
+        let mut out: Vec<&dyn SerializeBox<Error = crate::Error>> =
+            Vec::with_capacity(MDIA_TYPED_CHILDREN_MAX);
         if let Some(ref b) = self.mdhd {
             out.push(b);
         }
@@ -3387,7 +3403,7 @@ impl<'a> Parse<'a> for MediaBox {
         let mut minf = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children(box_body(bytes)?, |child| {
+        walk_children::<_, Error>(box_body(bytes)?, |child| {
             match &child.four_cc {
                 b"mdhd" => {
                     order.push(child.four_cc);
@@ -3434,7 +3450,7 @@ impl Serialize for MediaBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_container(
@@ -3455,7 +3471,7 @@ impl Serialize for MediaBox {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EditBox {
-    pub elst: Option<crate::timing::EditListBox>,
+    pub elst: Option<isobmff::timing::EditListBox>,
     pub opaque: Vec<OpaqueBox>,
     /// The wire order of this container's children (audit r05-W12).
     pub order: ChildOrder,
@@ -3464,7 +3480,7 @@ pub struct EditBox {
 impl EditBox {
     /// Build an `edts` from its typed parts, children in the conventional
     /// `elst`-then-opaque order.
-    pub fn new(elst: Option<crate::timing::EditListBox>, opaque: Vec<OpaqueBox>) -> Self {
+    pub fn new(elst: Option<isobmff::timing::EditListBox>, opaque: Vec<OpaqueBox>) -> Self {
         Self {
             elst,
             opaque,
@@ -3474,8 +3490,8 @@ impl EditBox {
 
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
-    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(1);
+    fn typed_children(&self) -> Vec<&dyn SerializeBox<Error = isobmff::Error>> {
+        let mut out: Vec<&dyn SerializeBox<Error = isobmff::Error>> = Vec::with_capacity(1);
         if let Some(ref b) = self.elst {
             out.push(b);
         }
@@ -3502,10 +3518,10 @@ impl<'a> Parse<'a> for EditBox {
         let mut elst = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children(box_body(bytes)?, |child| {
+        walk_children::<_, Error>(box_body(bytes)?, |child| {
             if is_four_cc(&child.four_cc, b"elst") {
                 order.push(child.four_cc);
-                elst = Some(crate::timing::EditListBox::parse(child.bytes)?);
+                elst = Some(isobmff::timing::EditListBox::parse(child.bytes)?);
             } else {
                 order.push_opaque(child.four_cc);
                 opaque.push(OpaqueBox {
@@ -3535,7 +3551,7 @@ impl Serialize for EditBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_container(
@@ -3546,6 +3562,7 @@ impl Serialize for EditBox {
             &self.opaque,
             buf,
         )
+        .map_err(Error::from)
     }
 }
 
@@ -3597,8 +3614,9 @@ impl TrackBox {
 
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
-    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(TRAK_TYPED_CHILDREN_MAX);
+    fn typed_children(&self) -> Vec<&dyn SerializeBox<Error = crate::Error>> {
+        let mut out: Vec<&dyn SerializeBox<Error = crate::Error>> =
+            Vec::with_capacity(TRAK_TYPED_CHILDREN_MAX);
         out.push(&self.tkhd);
         if let Some(ref b) = self.edts {
             out.push(b);
@@ -3635,7 +3653,7 @@ impl<'a> Parse<'a> for TrackBox {
         let mut mdia = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children(box_body(bytes)?, |child| {
+        walk_children::<_, Error>(box_body(bytes)?, |child| {
             match &child.four_cc {
                 b"tkhd" => {
                     order.push(child.four_cc);
@@ -3686,7 +3704,7 @@ impl Serialize for TrackBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_container(
@@ -3750,7 +3768,7 @@ pub struct TrackExtendsBox {
 impl<'a> Parse<'a> for TrackExtendsBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = crate::box_types::box_body(bytes, TREX_BODY_LEN, "trex")?;
+        let body = isobmff::box_types::box_body(bytes, TREX_BODY_LEN, "trex")?;
         let version = body[0];
         let flags = u24_at(body, TREX_FLAGS_OFFSET);
         Ok(Self {
@@ -3827,8 +3845,11 @@ impl MovieExtendsBox {
 
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
-    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        self.trex.iter().map(|t| t as &dyn SerializeBox).collect()
+    fn typed_children(&self) -> Vec<&dyn SerializeBox<Error = crate::Error>> {
+        self.trex
+            .iter()
+            .map(|t| t as &dyn SerializeBox<Error = crate::Error>)
+            .collect()
     }
 
     /// This container's typed children in declaration order, as four-CCs.
@@ -3847,7 +3868,7 @@ impl<'a> Parse<'a> for MovieExtendsBox {
         let mut trex = Vec::new();
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children(box_body(bytes)?, |child| {
+        walk_children::<_, Error>(box_body(bytes)?, |child| {
             match &child.four_cc {
                 b"trex" => {
                     order.push(child.four_cc);
@@ -3884,7 +3905,7 @@ impl Serialize for MovieExtendsBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_container(
@@ -3931,8 +3952,8 @@ impl MovieBox {
 
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
-    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> =
+    fn typed_children(&self) -> Vec<&dyn SerializeBox<Error = crate::Error>> {
+        let mut out: Vec<&dyn SerializeBox<Error = crate::Error>> =
             Vec::with_capacity(MOOV_FIXED_TYPED_CHILDREN + self.tracks.len());
         out.push(&self.mvhd);
         for t in &self.tracks {
@@ -3970,7 +3991,7 @@ impl<'a> Parse<'a> for MovieBox {
         let mut mvex = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children(box_body(bytes)?, |child| {
+        walk_children::<_, Error>(box_body(bytes)?, |child| {
             match &child.four_cc {
                 b"mvhd" => {
                     order.push(child.four_cc);
@@ -4023,7 +4044,7 @@ impl Serialize for MovieBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_container(
@@ -4107,8 +4128,8 @@ fn sample_entry_bytes(entry: &SampleEntryVariant) -> Result<Vec<u8>> {
 /// unchanged (issue #564).
 pub fn protect_sample_entry(
     original: &SampleEntryVariant,
-    scheme: crate::cenc::CencScheme,
-    tenc: &crate::cenc::TrackEncryptionBox,
+    scheme: isobmff::cenc::CencScheme,
+    tenc: &isobmff::cenc::TrackEncryptionBox,
 ) -> Result<SampleEntryVariant> {
     let wrapper_fourcc: [u8; BOX_TYPE_SIZE] = match sample_entry_media_kind(original) {
         SampleEntryMediaKind::Video => *b"encv",
@@ -4129,18 +4150,18 @@ pub fn protect_sample_entry(
     let mut scheme_type = [0u8; BOX_TYPE_SIZE];
     scheme_type.copy_from_slice(&scheme_name[..4]);
 
-    let sinf = crate::cenc::ProtectionSchemeInfoBox {
-        original_format: crate::cenc::OriginalFormatBox {
+    let sinf = isobmff::cenc::ProtectionSchemeInfoBox {
+        original_format: isobmff::cenc::OriginalFormatBox {
             data_format: original_format,
         },
-        scheme_type: Some(crate::cenc::SchemeTypeBox {
+        scheme_type: Some(isobmff::cenc::SchemeTypeBox {
             version: 0,
             flags: 0,
             scheme_type,
             scheme_version: CENC_SCHEME_VERSION,
             scheme_uri: None,
         }),
-        scheme_info: Some(crate::cenc::SchemeInformationBox {
+        scheme_info: Some(isobmff::cenc::SchemeInformationBox {
             tenc: Some(tenc.clone()),
             extra_boxes: Vec::new(),
         }),
@@ -4152,7 +4173,7 @@ pub fn protect_sample_entry(
 
     let mut body =
         Vec::with_capacity(original_bytes.len() - BOX_HEADER_MIN_SIZE + sinf_bytes.len());
-    body.extend_from_slice(&original_bytes[crate::box_types::box_header_len(&original_bytes)?..]);
+    body.extend_from_slice(&original_bytes[isobmff::box_types::box_header_len(&original_bytes)?..]);
     body.extend_from_slice(&sinf_bytes);
 
     Ok(SampleEntryVariant::Unknown(OpaqueBox::new(
@@ -4284,7 +4305,7 @@ mod tests {
     #[test]
     fn walk_children_reports_the_trailing_child_header_shortfall() {
         let after_one_child = b"\x00\x00\x00\x08free\xAA\xBB\xCC";
-        let b = match walk_children(after_one_child, |_| Ok(())) {
+        let b = match walk_children::<_, Error>(after_one_child, |_| Ok(())) {
             Err(Error::BufferTooShort(b)) => b,
             other => panic!("expected BufferTooShort, got {other:?}"),
         };
@@ -4293,7 +4314,7 @@ mod tests {
         assert_eq!(b.what, "container child header");
 
         let at_start = b"\xAA\xBB\xCC";
-        let b = match walk_children(at_start, |_| Ok(())) {
+        let b = match walk_children::<_, Error>(at_start, |_| Ok(())) {
             Err(Error::BufferTooShort(b)) => b,
             other => panic!("expected BufferTooShort, got {other:?}"),
         };
@@ -4719,7 +4740,7 @@ mod tests {
     fn bounded_entry_count_never_preallocates_a_zero_width_count() {
         assert_eq!(
             bounded_entry_count(0, 0, 0xFFFF_FFFF),
-            crate::box_support::ZERO_WIDTH_PREALLOC
+            isobmff::box_support::ZERO_WIDTH_PREALLOC
         );
         assert_eq!(bounded_entry_count(0, 0, 7), 7);
     }

@@ -22,12 +22,13 @@
 //! test documents and applies that constant.
 
 use broadcast_common::Package;
+use isobmff::box_types::parse_box;
 use test_fixtures::ffprobe;
 use transmux::TrackId;
 use transmux::error::Error;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
-use transmux::{CmafMux, Media, parse_box};
+use transmux::{CmafMux, Media};
 
 /// Path to the committed WebM fixture, relative to this crate's manifest dir.
 const FIXTURE: &str = "mkv/vp9-opus.webm";

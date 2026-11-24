@@ -479,7 +479,7 @@ fn insert_growing_ancestors(data: &[u8], at: usize, extra: &[u8]) -> Vec<u8> {
 /// `harvest_track` walks, not a synthetic stand-in for it.
 fn cenc_mp4_with_seig_sgpd() -> Vec<u8> {
     use broadcast_common::Serialize;
-    use transmux::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, SgpdEntry};
+    use isobmff::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, SgpdEntry};
 
     let file = read(CENC_MP4);
     let (stbl_start, stbl_size) =

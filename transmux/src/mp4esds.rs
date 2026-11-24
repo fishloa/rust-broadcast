@@ -34,14 +34,14 @@
 //! (`private/specs-verified/mpeg/transmux/codec/es-descriptor-14496-1.md`) and byte-exact round-tripped
 //! against a real ffmpeg-authored `esds` (see `real_esds_box_round_trips_byte_exact`).
 
-use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, FULLBOX_EXTRA_SIZE};
 use crate::error::{Error, Result};
-use crate::wire_cursor::{U24_LEN, read_u16, read_u32, take};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{U24_LEN, read_u16, read_u32, take};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, FULLBOX_EXTRA_SIZE};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -105,7 +105,7 @@ fn read_u24_be(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u
 }
 
 fn read_u32_be(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u32> {
-    read_u32(bytes, cursor, what)
+    Ok(read_u32(bytes, cursor, what)?)
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,7 +1177,7 @@ impl Serialize for EsdsBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(
+        isobmff::box_types::box_len(
             BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.es_descriptor.serialized_len(),
         )
     }
@@ -1187,7 +1187,7 @@ impl Serialize for EsdsBox {
         need_out(buf, need)?;
         let mut cursor = 0usize;
         // Box header
-        cursor += crate::box_types::write_box_header(buf, b"esds", need)?;
+        cursor += isobmff::box_types::write_box_header(buf, b"esds", need)?;
         // FullBox: version=0, flags=0
         buf[cursor..cursor + core::mem::size_of::<u32>()]
             .copy_from_slice(&[0u8; core::mem::size_of::<u32>()]);

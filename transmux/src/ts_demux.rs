@@ -270,7 +270,7 @@ use crate::nal::{
 };
 use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
-use crate::wire_cursor::{be_u16, u16_at};
+use broadcast_common::wire::{be_u16, u16_at};
 
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
 

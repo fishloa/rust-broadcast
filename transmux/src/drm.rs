@@ -1,7 +1,7 @@
 //! Multi-DRM `pssh` init-data payload generation.
 //!
 //! The [`ProtectionSystemSpecificHeaderBox`] container (`pssh`,
-//! ISO/IEC 23001-7 §12.1) is reused from [`crate::cenc`]; this module builds
+//! ISO/IEC 23001-7 §12.1) is reused from [`isobmff::cenc`]; this module builds
 //! the **system-specific `Data` payloads** and the convenience builders that
 //! assemble a complete `pssh` box per DRM system.
 //!
@@ -25,12 +25,12 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
 
-use crate::box_types::{BOX_TYPE_SIZE, KEY_ID_LEN};
-use crate::cenc::ProtectionSystemSpecificHeaderBox;
 use crate::error::{Error, Result};
 use crate::rtp::base64_decode;
 #[cfg(feature = "std")]
 use broadcast_common::base64::base64_encode;
+use isobmff::box_types::{BOX_TYPE_SIZE, KEY_ID_LEN};
+use isobmff::cenc::ProtectionSystemSpecificHeaderBox;
 #[cfg(feature = "std")]
 use quick_xml::Writer;
 #[cfg(feature = "std")]

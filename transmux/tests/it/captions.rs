@@ -297,7 +297,7 @@ fn cue_payload_box_round_trip() {
 // stpp non-empty fields and extra child boxes (audit 23 #3857)
 // ---------------------------------------------------------------------------
 
-use transmux::OpaqueBox;
+use isobmff::box_support::OpaqueBox;
 
 #[test]
 fn stpp_nonempty_strings_and_extra_boxes_round_trip() {

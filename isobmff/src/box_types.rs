@@ -73,27 +73,27 @@ pub const KEY_ID_LEN: usize = 16;
 pub const BOX_HEADER_LARGESIZE_SIZE: usize = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
 
 /// Byte offset of the `size` field, which starts every box (ISO/IEC 14496-12:2026 §4.2).
-pub(crate) const BOX_SIZE_OFFSET: usize = 0;
+pub const BOX_SIZE_OFFSET: usize = 0;
 
 /// Byte offset of the four-CC `type` field inside a box header (§4.2).
-pub(crate) const BOX_TYPE_OFFSET: usize = core::mem::size_of::<u32>();
+pub const BOX_TYPE_OFFSET: usize = core::mem::size_of::<u32>();
 
 /// Byte offset of the `largesize` field after the fixed header (§4.2).
 const LARGESIZE_OFFSET: usize = BOX_HEADER_MIN_SIZE;
 
 /// Byte offset of a FullBox's `version` byte, which follows the 8-byte box
 /// header (§4.2).
-pub(crate) const FULLBOX_VERSION_OFFSET: usize = BOX_HEADER_MIN_SIZE;
+pub const FULLBOX_VERSION_OFFSET: usize = BOX_HEADER_MIN_SIZE;
 
 /// Width of the FullBox `flags` field (§4.2).
 const FULLBOX_FLAGS_BITS: u32 = 24;
 
 /// Mask of the FullBox `flags` field.
-pub(crate) const FULLBOX_FLAGS_MASK: u32 = (1 << FULLBOX_FLAGS_BITS) - 1;
+pub const FULLBOX_FLAGS_MASK: u32 = (1 << FULLBOX_FLAGS_BITS) - 1;
 
 /// Byte offset of the first of the three `flags` bytes inside the FullBox
 /// extension, i.e. just past its `version` byte (§4.2).
-pub(crate) const FULLBOX_FLAGS_OFFSET: usize = 1;
+pub const FULLBOX_FLAGS_OFFSET: usize = 1;
 
 /// Bytes the 24-bit `flags` field occupies.
 const FULLBOX_FLAGS_LEN: usize = FULLBOX_EXTRA_SIZE - FULLBOX_FLAGS_OFFSET;
@@ -130,7 +130,7 @@ impl BoxType {
     /// Check whether this type matches a static ASCII literal.
     ///
     /// ```
-    /// # use transmux::box_types::BoxType;
+    /// # use isobmff::box_types::BoxType;
     /// assert!(BoxType(*b"ftyp").is(b"ftyp"));
     /// assert!(!BoxType(*b"moov").is(b"mdat"));
     /// ```
@@ -277,7 +277,7 @@ impl BoxHeader {
     /// box fits, else `size = 1` + 64-bit `largesize`, whose extra 8 header
     /// bytes count toward the size. The single place a box writer should
     /// derive its header length and `size` from.
-    pub(crate) fn for_payload(
+    pub fn for_payload(
         box_type: BoxType,
         usertype: Option<[u8; UUID_TYPE_SIZE]>,
         payload_len: u64,
@@ -309,11 +309,11 @@ std::thread_local! {
 
 /// RAII guard turning the largesize test seam on for this thread.
 #[cfg(test)]
-pub(crate) struct ForceLargesize;
+pub struct ForceLargesize;
 
 #[cfg(test)]
 impl ForceLargesize {
-    pub(crate) fn on() -> Self {
+    pub fn on() -> Self {
         FORCE_LARGESIZE.with(|f| f.set(true));
         ForceLargesize
     }
@@ -345,7 +345,7 @@ fn force_largesize() -> bool {
 /// `largesize` the `size = 1` form adds. Every variable-size box writer's
 /// `serialized_len` ends with this, so it agrees with
 /// [`write_box_header`]'s choice of form (#1147).
-pub(crate) fn box_len(compact_len: usize) -> usize {
+pub fn box_len(compact_len: usize) -> usize {
     if force_largesize() || compact_len as u64 > u32::MAX as u64 {
         compact_len.saturating_add(LARGESIZE_SIZE)
     } else {
@@ -359,7 +359,7 @@ pub(crate) fn box_len(compact_len: usize) -> usize {
 /// (ISO/IEC 14496-12:2026 §4.2). `total` must come from [`box_len`] (it
 /// counts the 8 `largesize` bytes). Pure: touches no payload, so tests can
 /// exercise a multi-GiB `total` without allocating it.
-pub(crate) fn encode_box_header(
+pub fn encode_box_header(
     fourcc: &[u8; BOX_TYPE_SIZE],
     total: u64,
 ) -> ([u8; BOX_HEADER_LARGESIZE_SIZE], usize) {
@@ -381,7 +381,7 @@ pub(crate) fn encode_box_header(
 /// `largesize` form). The single place a box writer's `size` is derived —
 /// replaces the per-box `need as u32` that silently wrapped a >4 GiB box
 /// (#1147).
-pub(crate) fn write_box_header(
+pub fn write_box_header(
     buf: &mut [u8],
     fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,
@@ -397,7 +397,7 @@ pub(crate) fn write_box_header(
 /// 4 GiB), returning 8. A `need` that nevertheless exceeds the 32-bit field is
 /// a typed error, never a wrap (#1147). These boxes' readers take fixed
 /// offsets, so unlike [`write_box_header`] this never switches to `largesize`.
-pub(crate) fn write_compact_box_header(
+pub fn write_compact_box_header(
     buf: &mut [u8],
     fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,
@@ -412,7 +412,7 @@ pub(crate) fn write_compact_box_header(
 /// Write a FullBox header: box header (size + type) followed by the 4-byte
 /// FullBox extension (`version`(8) + `flags`(24)), returning the number of
 /// bytes written. Replaces the per-box copy of this sequence (#2004).
-pub(crate) fn write_full_box_header(
+pub fn write_full_box_header(
     buf: &mut [u8],
     fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,
@@ -443,7 +443,7 @@ pub(crate) fn write_full_box_header(
 /// 8 bytes dropped (the `size` field rewritten to the compact length, saturating
 /// at `u32::MAX` for a box too big to express compactly — no reader consults
 /// it). Borrowed in the overwhelmingly common compact case (#1147).
-pub(crate) fn compact_form(bytes: &[u8]) -> Result<alloc::borrow::Cow<'_, [u8]>> {
+pub fn compact_form(bytes: &[u8]) -> Result<alloc::borrow::Cow<'_, [u8]>> {
     let hdr = box_header_len(bytes)?;
     if hdr == BOX_HEADER_MIN_SIZE {
         return Ok(alloc::borrow::Cow::Borrowed(bytes));
@@ -464,11 +464,7 @@ pub(crate) fn compact_form(bytes: &[u8]) -> Result<alloc::borrow::Cow<'_, [u8]>>
 /// header, so a guard written against an 8-byte header lets a short
 /// `largesize` box through to an out-of-bounds index (#1147 follow-up). The
 /// error reports the whole-box length needed (`header + min_body`).
-pub(crate) fn box_body<'a>(
-    bytes: &'a [u8],
-    min_body: usize,
-    what: &'static str,
-) -> Result<&'a [u8]> {
+pub fn box_body<'a>(bytes: &'a [u8], min_body: usize, what: &'static str) -> Result<&'a [u8]> {
     let hdr = box_header_len(bytes)?;
     let body = &bytes[hdr..];
     if body.len() < min_body {
@@ -487,9 +483,9 @@ pub(crate) fn box_body<'a>(
 /// header is truncated or declares a length shorter than itself — the
 /// tolerant "stop walking here" signal the lenient child scanners use. Not
 /// clamped to `region`.
-pub(crate) fn child_extent(region: &[u8]) -> Option<usize> {
+pub fn child_extent(region: &[u8]) -> Option<usize> {
     let hdr = box_header_len(region).ok()?;
-    let size = crate::wire_cursor::u32_at(region, BOX_SIZE_OFFSET);
+    let size = broadcast_common::wire::u32_at(region, BOX_SIZE_OFFSET);
     let total = if size == SIZE_INDICATES_LARGESIZE {
         usize::try_from(u64::from_be_bytes(
             region[LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE]
@@ -508,7 +504,7 @@ pub(crate) fn child_extent(region: &[u8]) -> Option<usize> {
 /// [`child_extent`] bounded by what `region` actually holds, so the walker's
 /// `off += extent` can neither overflow on a hostile `largesize` nor step past
 /// the end of the region.
-pub(crate) fn child_extent_in(region: &[u8]) -> Option<usize> {
+pub fn child_extent_in(region: &[u8]) -> Option<usize> {
     child_extent(region).map(|total| total.min(region.len()))
 }
 
@@ -518,9 +514,9 @@ pub(crate) fn child_extent_in(region: &[u8]) -> Option<usize> {
 /// body at this offset instead of a hardcoded 8, so a box written in the
 /// `largesize` form (see [`write_box_header`]) parses back (#1147). The usual
 /// `uuid` `usertype` is left to the callers that handle `uuid` boxes.
-pub(crate) fn box_header_len(bytes: &[u8]) -> Result<usize> {
+pub fn box_header_len(bytes: &[u8]) -> Result<usize> {
     need_in(bytes, BOX_HEADER_MIN_SIZE, "box header")?;
-    let size = crate::wire_cursor::u32_at(bytes, BOX_SIZE_OFFSET);
+    let size = broadcast_common::wire::u32_at(bytes, BOX_SIZE_OFFSET);
     if size == SIZE_INDICATES_LARGESIZE {
         let need = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
         if bytes.len() < need {
@@ -545,8 +541,9 @@ impl<'a> Parse<'a> for BoxHeader {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "BoxHeader")?;
 
-        let raw_size = crate::wire_cursor::u32_at(bytes, BOX_SIZE_OFFSET);
-        let box_type = BoxType::from_bytes(crate::wire_cursor::fourcc_at(bytes, BOX_TYPE_OFFSET));
+        let raw_size = broadcast_common::wire::u32_at(bytes, BOX_SIZE_OFFSET);
+        let box_type =
+            BoxType::from_bytes(broadcast_common::wire::fourcc_at(bytes, BOX_TYPE_OFFSET));
 
         let mut cursor = BOX_HEADER_MIN_SIZE;
 
@@ -557,7 +554,7 @@ impl<'a> Parse<'a> for BoxHeader {
                     have: bytes.len(),
                 });
             }
-            let v = crate::wire_cursor::u64_at(bytes, cursor);
+            let v = broadcast_common::wire::u64_at(bytes, cursor);
             cursor += LARGESIZE_SIZE;
             v
         } else {
@@ -813,7 +810,7 @@ pub fn parse_box<'a>(bytes: &'a [u8]) -> Result<(BoxRef<'a>, usize)> {
 /// # Examples
 ///
 /// ```
-/// use transmux::box_iter;
+/// use isobmff::box_iter;
 ///
 /// # let bytes = &[];
 /// // Walk all top-level boxes:
@@ -924,7 +921,7 @@ pub fn box_iter(data: &[u8]) -> BoxIter<'_> {
 /// typed parser. The single slice-yielding adapter over [`box_iter`]
 /// (audit r05-O1 / #1141; `cenc_decrypt`, `media`, `progressive` each carried
 /// their own walker).
-pub(crate) fn box_slices(data: &[u8]) -> impl Iterator<Item = &[u8]> {
+pub fn box_slices(data: &[u8]) -> impl Iterator<Item = &[u8]> {
     let mut offset = 0usize;
     box_iter(data).map_while(move |step| {
         let (_, consumed) = step.ok()?;
@@ -935,7 +932,7 @@ pub(crate) fn box_slices(data: &[u8]) -> impl Iterator<Item = &[u8]> {
 }
 
 /// Find a top-level box by four-CC, returning its full bytes (header + body).
-pub(crate) fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&'a [u8]> {
+pub fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&'a [u8]> {
     box_slices(data).find(|b| b[BOX_TYPE_RANGE] == *fourcc)
 }
 
@@ -944,7 +941,6 @@ pub(crate) fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> 
 /// so a `largesize` container's children are found — a hardcoded 8-byte skip
 /// would start mid-`largesize`). A truncated header yields an empty body: the
 /// lenient navigation contract of [`box_slices`].
-#[cfg(feature = "cenc")]
 fn container_body(container: &[u8]) -> &[u8] {
     match box_header_len(container) {
         Ok(hdr) => &container[hdr..],
@@ -956,8 +952,7 @@ fn container_body(container: &[u8]) -> &[u8] {
 /// four-CC is `fourcc`, each as full box bytes. Best-effort like
 /// [`box_slices`]. The shared child-navigation helper (issue #982:
 /// `cenc_decrypt` carried private copies).
-#[cfg(feature = "cenc")]
-pub(crate) fn child_boxes<'a>(
+pub fn child_boxes<'a>(
     container: &'a [u8],
     fourcc: &'a [u8; BOX_TYPE_SIZE],
 ) -> impl Iterator<Item = &'a [u8]> {
@@ -965,21 +960,13 @@ pub(crate) fn child_boxes<'a>(
 }
 
 /// The first child of `container` with four-CC `fourcc` (full box bytes).
-#[cfg(feature = "cenc")]
-pub(crate) fn find_child_box<'a>(
-    container: &'a [u8],
-    fourcc: &[u8; BOX_TYPE_SIZE],
-) -> Option<&'a [u8]> {
+pub fn find_child_box<'a>(container: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&'a [u8]> {
     box_slices(container_body(container)).find(|b| b[BOX_TYPE_RANGE] == *fourcc)
 }
 
 /// Descend a chain of container four-CCs from `start`, returning the innermost
 /// box's full bytes (or `None` if any link is missing).
-#[cfg(feature = "cenc")]
-pub(crate) fn descend_boxes<'a>(
-    start: &'a [u8],
-    path: &[&[u8; BOX_TYPE_SIZE]],
-) -> Option<&'a [u8]> {
+pub fn descend_boxes<'a>(start: &'a [u8], path: &[&[u8; BOX_TYPE_SIZE]]) -> Option<&'a [u8]> {
     let mut cur = start;
     for fourcc in path {
         cur = find_child_box(cur, fourcc)?;
@@ -1672,7 +1659,7 @@ mod largesize_tests {
     use broadcast_common::error::OutputBufferTooSmall;
 
     use super::*;
-    use crate::{MovieBox, MovieFragmentBox};
+    use crate::movie_fragment::MovieFragmentBox;
     use broadcast_common::{Parse, Serialize};
 
     const FOUR_GIB: u64 = 1 << 32;
@@ -1778,55 +1765,6 @@ mod largesize_tests {
         (large, all)
     }
 
-    /// A real `moov` (every variable-size sample-table box + every container)
-    /// serialized in the forced largesize form re-parses to an identical tree,
-    /// and re-serializes in the compact form to the original bytes.
-    #[test]
-    fn moov_round_trips_through_the_largesize_form() {
-        let data = fixture("h264-aac-prog.mp4");
-        let orig = top_box(&data, b"moov");
-        let moov = MovieBox::parse(orig).unwrap();
-
-        let forced = {
-            let _g = ForceLargesize::on();
-            let len = moov.serialized_len();
-            let bytes = moov.try_to_bytes().unwrap();
-            assert_eq!(bytes.len(), len, "serialized_len agrees with the writer");
-            bytes
-        };
-        assert!(forced.len() > orig.len());
-        assert_eq!(&forced[..4], &[0, 0, 0, 1], "moov carries the marker");
-        assert_eq!(&forced[4..8], b"moov");
-        assert_eq!(
-            u64::from_be_bytes(forced[8..16].try_into().unwrap()),
-            forced.len() as u64,
-            "largesize is the whole box"
-        );
-        for cc in [
-            b"trak", b"mdia", b"minf", b"stbl", b"stsd", b"stts", b"stsc", b"stsz", b"stco",
-            b"dinf", b"dref", b"url ",
-        ] {
-            let (large, all) = count_large(&forced, cc);
-            assert!(
-                all > 0 && large == all,
-                "{cc:?}: {large}/{all} use largesize"
-            );
-        }
-
-        // `hdlr` also occurs inside a verbatim opaque child (kept compact), so
-        // only require that the typed ones switched.
-        let (hdlr_large, _) = count_large(&forced, b"hdlr");
-        assert!(hdlr_large >= 2, "typed hdlr boxes use largesize");
-
-        let reparsed = MovieBox::parse(&forced).expect("largesize moov parses");
-        assert_eq!(reparsed, moov, "typed tree identical after largesize trip");
-        assert_eq!(
-            reparsed.try_to_bytes().unwrap(),
-            orig,
-            "compact re-serialize is byte-identical"
-        );
-    }
-
     /// Same for a fragment's `moof` (mfhd/traf/trun).
     #[test]
     fn moof_round_trips_through_the_largesize_form() {
@@ -1852,52 +1790,6 @@ mod largesize_tests {
         let rel = rel.trim_start_matches("../fixtures/");
         let path = test_fixtures::path(rel);
         std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-    }
-
-    /// Every committed fixture's `moov` (AVC/HEVC/AAC entries, CENC `sinf`/
-    /// `schm`/`schi`/`tenc` wrappers, subtitle entries, v1 `mvhd`) survives the
-    /// largesize form: tree-identical on re-parse and byte-identical when
-    /// written compact again.
-    #[test]
-    fn every_fixture_moov_round_trips_through_the_largesize_form() {
-        let mut checked = 0;
-        for rel in [
-            "../fixtures/mp4/h264-aac-prog.mp4",
-            "../fixtures/mp4/h264-aac-frag.mp4",
-            "../fixtures/mp4/h264-cenc.mp4",
-            "../fixtures/mp4/h264-cbcs.mp4",
-            "../fixtures/mp4/hevc-frag.mp4",
-            "../fixtures/mp4/cmaf-av-subtitle/av-frag.mp4",
-            "../fixtures/mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
-            "../fixtures/mp4/cmaf-av-subtitle/av-aac-subtitle-frag.mp4",
-            "../fixtures/mp4/cenc-boxes/aac-cenc.mp4",
-            "../fixtures/mp4/cenc-boxes/pcm-clear.mp4",
-            "../fixtures/mp4/cenc-boxes/v1-mvhd.mp4",
-        ] {
-            let data = read_path(rel);
-            let Some(orig) = find_top_box(&data, b"moov") else {
-                continue;
-            };
-            checked += 1;
-            let moov = MovieBox::parse(orig).unwrap_or_else(|e| panic!("{rel}: {e}"));
-            let forced = {
-                let _g = ForceLargesize::on();
-                moov.try_to_bytes().unwrap()
-            };
-            assert_eq!(&forced[..4], &[0, 0, 0, 1], "{rel}");
-            let reparsed =
-                MovieBox::parse(&forced).unwrap_or_else(|e| panic!("{rel}: largesize: {e}"));
-            assert_eq!(reparsed, moov, "{rel}: tree changed through largesize");
-            assert_eq!(
-                reparsed.try_to_bytes().unwrap(),
-                orig,
-                "{rel}: not byte-identical"
-            );
-        }
-        assert!(
-            checked >= 8,
-            "fixtures went missing: only {checked} checked"
-        );
     }
 
     /// Every fixture fragment's `moof` too (traf with opaque `senc`/`saiz`/`saio`

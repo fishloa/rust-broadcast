@@ -1,7 +1,7 @@
 //! ISO Base Media File Format prober — ISO/IEC 14496-12:2026 §4.2.
 //!
 //! Walks the top-level box chain by size. Header layout follows
-//! `transmux/src/box_types.rs` (which round-trips real fixtures): a `u32`
+//! `isobmff/src/box_types.rs` (which round-trips real fixtures): a `u32`
 //! big-endian size, a 4-byte type, an optional 64-bit `largesize` when
 //! `size == 1`, and `size == 0` meaning "runs to end of file".
 //!
@@ -570,5 +570,48 @@ mod tests {
             decode_header(&[0x00, 0x00, 0x00, 0x08, b'f', b'r', b'e', b'e']),
             Some((8, 8))
         );
+    }
+}
+
+/// Drift guard, this crate's own direction: the prober re-declares the box
+/// header constants (they are private by design) and decodes a header itself.
+/// Compare both against `isobmff` so an upstream change is caught here, where
+/// the private copy is visible. The opposite direction (upstream still declares
+/// what this crate was written against) lives in `tests/it/drift_guard.rs`.
+#[cfg(test)]
+mod drift {
+    use super::{BOX_HEADER_MIN_SIZE, SIZE_INDICATES_LARGESIZE, SIZE_TO_EOF, decode_header};
+    use isobmff::box_types::BOX_HEADER_MIN_SIZE as UPSTREAM_MIN;
+
+    #[test]
+    fn header_constants_match_isobmff() {
+        assert_eq!(BOX_HEADER_MIN_SIZE, UPSTREAM_MIN);
+        assert_eq!(
+            SIZE_TO_EOF,
+            isobmff::box_types::SIZE_TO_EOF,
+            "isobmff changed the size-0 sentinel"
+        );
+        assert_eq!(
+            SIZE_INDICATES_LARGESIZE,
+            isobmff::box_types::SIZE_INDICATES_LARGESIZE,
+            "isobmff changed the largesize marker"
+        );
+    }
+
+    /// The prober's own header decode agrees with `isobmff` on every top-level
+    /// box of a real fixture (sizes and header lengths).
+    #[test]
+    fn header_decode_agrees_with_isobmff_on_a_fixture() {
+        let data = test_fixtures::read("mp4/h264-aac-prog.mp4");
+        let mut checked = 0usize;
+        let mut start = 0usize;
+        for step in isobmff::box_iter(&data) {
+            let (boxref, consumed) = step.expect("isobmff walks the fixture");
+            let (_size_field, total) = decode_header(&data[start..]).expect("prober decodes it");
+            assert_eq!(total as u64, boxref.header.size);
+            checked += 1;
+            start += consumed;
+        }
+        assert!(checked > 0, "the fixture holds at least one box");
     }
 }

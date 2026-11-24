@@ -30,8 +30,6 @@ use std::path::{Path, PathBuf};
 use broadcast_common::timescale::{Timescale, cmp_ticks};
 use broadcast_common::{Package, Unpackage};
 
-#[cfg(feature = "cenc")]
-use crate::box_types::KEY_ID_LEN;
 use crate::dash::DashPackager;
 use crate::flv::FlvDemux;
 use crate::media::{CmafMux, Fmp4Demux, Media};
@@ -42,6 +40,8 @@ use crate::ts_demux::TsDemux;
 use crate::ts_hls::TsHlsPackager;
 use crate::ts_mux::TsMux;
 use crate::webm_demux::WebmDemux;
+#[cfg(feature = "cenc")]
+use isobmff::box_types::KEY_ID_LEN;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -834,8 +834,8 @@ fn segment_track_ranges(media: &Media, target_secs: u32) -> CliResult<Vec<TrackS
 /// [`Error::InvalidInput`](crate::Error::InvalidInput) when the segment's boxes
 /// cannot be parsed.
 fn segment_track_fragments(segment: &[u8]) -> CliResult<Vec<(TrackId, u32, u64)>> {
-    use crate::box_types::parse_box;
-    use crate::movie_fragment::MovieFragmentBox;
+    use isobmff::box_types::parse_box;
+    use isobmff::movie_fragment::MovieFragmentBox;
 
     let mut remaining = segment;
     while !remaining.is_empty() {
@@ -856,7 +856,7 @@ fn segment_track_fragments(segment: &[u8]) -> CliResult<Vec<(TrackId, u32, u64)>
                     .as_ref()
                     .map(|t| t.base_media_decode_time())
                     .unwrap_or(0);
-                out.push((traf.tfhd.track_id, count, tfdt));
+                out.push((traf.tfhd.track_id.into(), count, tfdt));
             }
             return Ok(out);
         }
@@ -884,8 +884,8 @@ fn segment_track_fragments(segment: &[u8]) -> CliResult<Vec<(TrackId, u32, u64)>
 /// no parseable `moof`/`trun` (a zero duration would be a lie, and
 /// [`segment_ticks`]'s old `unwrap_or(0)` silently produced one).
 fn segment_secs(segment: &[u8], media: &Media) -> CliResult<f64> {
-    use crate::box_types::parse_box;
-    use crate::movie_fragment::MovieFragmentBox;
+    use isobmff::box_types::parse_box;
+    use isobmff::movie_fragment::MovieFragmentBox;
 
     let mut remaining = segment;
     while !remaining.is_empty() {
@@ -899,7 +899,7 @@ fn segment_secs(segment: &[u8], media: &Media) -> CliResult<f64> {
                 let scale = media
                     .tracks
                     .iter()
-                    .find(|t| t.spec.track_id == traf.tfhd.track_id)
+                    .find(|t| t.spec.track_id.value() == traf.tfhd.track_id.value())
                     .map(|t| f64::from(t.spec.timescale.get()))
                     .ok_or(crate::Error::InvalidInput(
                         "media segment names a track not present in the input",
@@ -986,8 +986,8 @@ impl PartialOrd for OrderedKey {
 /// `SegmentTemplate@duration` is a lie that makes the MPD unplayable (audit fix
 /// wave 2, item 5).
 fn segment_ticks(segment: &[u8]) -> CliResult<u64> {
-    use crate::box_types::parse_box;
-    use crate::movie_fragment::MovieFragmentBox;
+    use isobmff::box_types::parse_box;
+    use isobmff::movie_fragment::MovieFragmentBox;
 
     // Top-level walk: the first `moof` (a media segment is `[styp] moof mdat`).
     let mut remaining = segment;

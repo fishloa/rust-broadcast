@@ -185,9 +185,9 @@ fn fragment_tfxd_is_none_without_a_tfxd_or_on_unwalkable_input() {
 
 /// Build a `uuid` box with `usertype` and `body` (MS-SSTR 2.2.4.4 extended type).
 fn uuid_box(usertype: [u8; 16], body: &[u8]) -> Vec<u8> {
-    let header = transmux::box_types::BoxHeader::new(
-        (transmux::box_types::BOX_HEADER_MIN_SIZE + 16 + body.len()) as u64,
-        transmux::box_types::BoxType::from_bytes(*b"uuid"),
+    let header = isobmff::box_types::BoxHeader::new(
+        (isobmff::box_types::BOX_HEADER_MIN_SIZE + 16 + body.len()) as u64,
+        isobmff::box_types::BoxType::from_bytes(*b"uuid"),
         Some(usertype),
     );
     let mut out = vec![0u8; header.serialized_len() + body.len()];

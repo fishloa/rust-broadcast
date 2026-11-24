@@ -17,6 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["url"] }
 transmux          = { path = "../transmux", version = "0.33.0", default-features = false, features = ["sample-aes"] }
+isobmff           = { path = "../isobmff", version = "0.1.0", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the client/origin engines parse
 # and render playlists via this crate directly rather than through `transmux`.
 broadcast-hls     = { path = "../broadcast-hls", version = "0.9.0", default-features = false }

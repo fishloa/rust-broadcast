@@ -15,18 +15,17 @@
 mod stsd;
 
 use crate::TrackId;
-use crate::box_types::BOX_TYPE_SIZE;
 use crate::units::ROUNDING_DIVISOR;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
+use isobmff::box_types::BOX_TYPE_SIZE;
 
 use broadcast_common::Serialize;
 
 use crate::ac4::DAC4_FOURCC;
 use crate::av1::Av1SampleEntry;
-use crate::box_support::OpaqueBox;
 use crate::dts::DDTS_FOURCC;
 use crate::error::{Error, Result};
 use crate::flac::DFLA_FOURCC;
@@ -39,20 +38,21 @@ use crate::init_segment::{
     SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, TrackBox, TrackExtendsBox,
     TrackHeaderBox, VideoMediaHeaderBox,
 };
-use crate::movie_fragment::{
-    MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentBox,
-};
 use crate::mpegh::MHAC_FOURCC;
 use crate::nalu_types::{HEVC_SPS_NUT, HEVC_VPS_NUT};
 use crate::opus::DOPS_FOURCC;
 use crate::sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
 };
-use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
-use crate::visual_ext::{ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
+use isobmff::box_support::OpaqueBox;
+use isobmff::movie_fragment::{
+    MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentBox,
+};
+use isobmff::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
+use isobmff::visual_ext::{ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 
-use crate::timing::TimeToSampleBox;
 use crate::vp9::Vp9SampleEntry;
+use isobmff::timing::TimeToSampleBox;
 pub use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 /// ISO-639-2 packed language code `und` (undetermined).
@@ -872,7 +872,7 @@ pub(crate) fn build_chunk(
     let mut moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(sequence_number), traf_boxes);
 
     let moof_size = moof.serialized_len();
-    let mut cursor = moof_size + crate::box_types::BOX_HEADER_MIN_SIZE;
+    let mut cursor = moof_size + isobmff::box_types::BOX_HEADER_MIN_SIZE;
     let mut mdat_data = Vec::new();
     for (i, ft) in tracks.iter().enumerate() {
         moof.traf[i].trun[0].data_offset = Some(i32::try_from(cursor).map_err(|_| {

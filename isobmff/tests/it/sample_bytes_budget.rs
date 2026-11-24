@@ -2,7 +2,7 @@
 //! from quadratic memory into a rejection, so the multiplier's value is pinned
 //! literally rather than read back through the derived budget alone.
 
-use transmux::frag_offsets::{MAX_SAMPLE_BYTES_PER_INPUT_LENGTH, sample_bytes_budget};
+use isobmff::frag_offsets::{MAX_SAMPLE_BYTES_PER_INPUT_LENGTH, sample_bytes_budget};
 
 #[test]
 fn one_input_length_of_sample_bytes_is_the_allowance() {

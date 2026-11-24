@@ -19,9 +19,10 @@
 use std::collections::BTreeSet;
 
 use broadcast_common::{Package, Serialize, Unpackage};
+use isobmff::box_support::OpaqueBox;
 use transmux::pipeline::{CodecConfig, SubtitleSampleEntry};
 use transmux::{
-    CmafMux, DashPackager, Fmp4Demux, Media, OpaqueBox, ProgressiveDemux, SmoothPackager, Track,
+    CmafMux, DashPackager, Fmp4Demux, Media, ProgressiveDemux, SmoothPackager, Track,
     WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, parse_wvtt_sample,
 };
 

@@ -6,12 +6,12 @@
 //! `dfLa` is a `FullBox(version=0, 0)` carrying one or more FLAC metadata blocks;
 //! the first block MUST be STREAMINFO (block type 0).
 
-use crate::box_types::FULLBOX_EXTRA_SIZE;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
+use isobmff::box_types::FULLBOX_EXTRA_SIZE;
 
 /// FourCC of the FLAC config box.
 pub const DFLA_FOURCC: [u8; 4] = *b"dfLa";

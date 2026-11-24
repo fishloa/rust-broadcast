@@ -22,6 +22,7 @@ broadcast-hls    = { path = "../broadcast-hls",    version = "0.9.0",  default-f
 media-plane      = { path = "../media-plane",      version = "0.14.0", default-features = false, features = ["std"] }
 dvb-si           = { path = "../dvb-si",           version = "16.0.0", default-features = false, features = ["std", "jiff", "ts"] }
 transmux         = { path = "../transmux",         version = "0.33.0", default-features = false, features = ["std"] }
+isobmff          = { path = "../isobmff",          version = "0.1.0", default-features = false }
 bytes            = "1"
 jiff             = "1"
 thiserror        = "2"

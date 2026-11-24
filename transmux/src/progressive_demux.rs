@@ -15,7 +15,7 @@
 //!   per-sample duration.
 //! - `ctts` (§8.6.1.3): run-length composition offsets (v0 unsigned / v1
 //!   signed — both stored as a wire `u32` reinterpreted as `i32`, matching
-//!   [`crate::timing::CompositionOffsetBox`]'s own convention), expanded to a
+//!   [`isobmff::timing::CompositionOffsetBox`]'s own convention), expanded to a
 //!   per-sample composition offset; absent ⇒ every sample's offset is `0`.
 //! - `stss` (§8.6.2): the sync-sample index list; absent ⇒ every sample is a
 //!   sync sample (§8.6.2).
@@ -40,7 +40,6 @@ use core::marker::PhantomData;
 
 use broadcast_common::{Demand, Parse, Stage, Timestamp, Unpackage};
 
-use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
 use crate::error::{Error, Result};
 use crate::init_segment::{
     ChunkLargeOffsetBox, ChunkOffsetBox, MovieBox, SampleSizeBox, SampleToChunkBox, StblChild,
@@ -51,7 +50,8 @@ use crate::media::{
     skipped_track, track_spec_from_trak,
 };
 use crate::pipeline::Sample;
-use crate::timing::{CompositionOffsetBox, TimeToSampleBox};
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
+use isobmff::timing::{CompositionOffsetBox, TimeToSampleBox};
 
 /// Demux a non-fragmented ISOBMFF/MP4 byte stream into a [`Media`].
 ///
@@ -384,7 +384,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
             StblChild::Stts(b) => Some(b),
             _ => None,
         },
-        |bytes| TimeToSampleBox::parse(bytes).unwrap_err(),
+        |bytes| TimeToSampleBox::parse(bytes).unwrap_err().into(),
     )?
     .ok_or(Error::UnexpectedBox { expected: "stts" })?;
     let ctts = find_stbl_child(
@@ -394,7 +394,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
             StblChild::Ctts(b) => Some(b),
             _ => None,
         },
-        |bytes| CompositionOffsetBox::parse(bytes).unwrap_err(),
+        |bytes| CompositionOffsetBox::parse(bytes).unwrap_err().into(),
     )?;
     let stss = find_stbl_child(
         &stbl.children,
@@ -506,7 +506,7 @@ thread_local! {
 /// the same file region, and a uniform `stsz.sample_size` then makes
 /// `sample_count` samples each copy those same bytes again — `file_len^2`
 /// bytes from a `file_len` input. The running total is therefore capped at
-/// [`sample_bytes_budget`](crate::frag_offsets::sample_bytes_budget)
+/// [`sample_bytes_budget`](isobmff::frag_offsets::sample_bytes_budget)
 /// (§8.7.3: a sample's data lies in the file, so samples that do not overlap
 /// never total more than it holds), reported as
 /// [`Error::SampleDataBudgetExceeded`] (audit 20 finding 6).
@@ -543,7 +543,7 @@ pub(crate) fn sample_layout(
     // Total sample bytes resolved so far, against the input's own length: an
     // overlapping chunk layout would otherwise be copied once per claimant.
     let mut total_bytes: usize = 0;
-    let budget = crate::frag_offsets::sample_bytes_budget(file_len);
+    let budget = isobmff::frag_offsets::sample_bytes_budget(file_len);
     // Index of the stsc run applying to the current chunk, once one starts.
     let mut run = 0usize;
     for (c, &chunk_base) in chunk_offsets.iter().enumerate() {

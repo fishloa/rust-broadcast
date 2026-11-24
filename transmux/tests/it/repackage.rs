@@ -13,11 +13,13 @@ use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use bytes::Bytes;
+use isobmff::box_types::parse_box;
+use isobmff::movie_fragment::MovieFragmentBox;
 use transmux::media::{Fmp4Demux, Media};
 use transmux::pipeline::CodecConfig;
 use transmux::{
-    HEVCConfigurationBox, HEVCDecoderConfigurationRecord, MovieFragmentBox, Repackage, Sample,
-    Track, TrackSpec, TsDemux, parse_box,
+    HEVCConfigurationBox, HEVCDecoderConfigurationRecord, Repackage, Sample, Track, TrackSpec,
+    TsDemux,
 };
 
 // ── Fixtures / oracle ───────────────────────────────────────────────────────
@@ -71,7 +73,7 @@ fn first_sample_flags(segment: &[u8], track_id: u32) -> Option<u32> {
         if &bx.header.box_type.0 == b"moof" {
             let moof = MovieFragmentBox::parse_body(bx.body).expect("parse moof");
             for traf in &moof.traf {
-                if traf.tfhd.track_id != TrackId::new(track_id) {
+                if traf.tfhd.track_id.value() != track_id {
                     continue;
                 }
                 let trun = traf.trun.first()?;
@@ -604,7 +606,7 @@ fn sample_track_order(segments: &[Vec<u8>]) -> Vec<TrackId> {
                 for traf in &moof.traf {
                     for trun in &traf.trun {
                         for _ in &trun.samples {
-                            out.push(traf.tfhd.track_id);
+                            out.push(traf.tfhd.track_id.into());
                         }
                     }
                 }

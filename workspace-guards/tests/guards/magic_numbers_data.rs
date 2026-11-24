@@ -738,9 +738,14 @@ pub const TABLE: &[Crate] = &[
                 "pub const DOVI_RESERVED_ZERO: [u8; DOVI_RESERVED_LEN] = [0; DOVI_RESERVED_LEN];",
                 "public API constant naming the spec's all-reserved-bits-zero value, not a magic number; renaming it is a breaking API change; reserved zero fill, not a magic number",
             ),
+        ],
+    },
+    Crate {
+        name: "isobmff",
+        allow: &[
             (
                 "src/box_support.rs",
-                "pub(crate) const ZERO_WIDTH_PREALLOC: usize = 1024;",
+                "pub const ZERO_WIDTH_PREALLOC: usize = 1024;",
                 "names zero-width entries, not the number; referenced by test code; preallocation bound, role-named",
             ),
             (

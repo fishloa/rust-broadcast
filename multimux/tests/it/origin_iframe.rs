@@ -220,16 +220,21 @@ async fn iframe_playlist_byterange_matches_independent_calc() {
 }
 
 fn first_sample_end(seg: &[u8]) -> u64 {
-    let found = transmux::box_types::clamped_boxes(seg)
+    let found = isobmff::box_types::clamped_boxes(seg)
         .find(|b| b.header.box_type.is(b"moof"))
         .expect("moof");
     let moof_off = found.start;
     let body = &seg[found.payload_start()..found.end];
-    let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(body).expect("moof parse");
-    let mdats = transmux::frag_offsets::mdat_ranges(seg);
-    let samples =
-        transmux::frag_offsets::sample_ranges_in(seg, &mdats, moof_off, &moof, TrackId::new(1))
-            .expect("sample ranges");
+    let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(body).expect("moof parse");
+    let mdats = isobmff::frag_offsets::mdat_ranges(seg);
+    let samples = isobmff::frag_offsets::sample_ranges_in(
+        seg,
+        &mdats,
+        moof_off,
+        &moof,
+        TrackId::new(1).into(),
+    )
+    .expect("sample ranges");
     samples[0].end as u64
 }
 

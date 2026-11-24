@@ -2,8 +2,8 @@
 
 use super::*;
 
-use crate::box_types::BOX_TYPE_SIZE;
 use crate::sample_entries::SAMPLE_ENTRY_RESERVED_LEN;
+use isobmff::box_types::BOX_TYPE_SIZE;
 
 /// An audio sample entry's `compression_id` + `packet_size`, two reserved
 /// `u16` fields (ISO/IEC 14496-12:2026 §12.2.3.2).
@@ -60,7 +60,7 @@ impl MediaKind {
         match self {
             Self::Subtitle { media_header, .. } => Some(OpaqueBox::new(
                 *media_header,
-                vec![0u8; crate::box_types::FULLBOX_EXTRA_SIZE],
+                vec![0u8; isobmff::box_types::FULLBOX_EXTRA_SIZE],
             )),
             _ => None,
         }
@@ -222,8 +222,8 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             sample_size,
         } => {
             let mut dac3_full =
-                vec![0u8; config.serialized_len() + crate::box_types::BOX_HEADER_MIN_SIZE];
-            dac3_full[BOX_TYPE_SIZE..crate::box_types::BOX_HEADER_MIN_SIZE]
+                vec![0u8; config.serialized_len() + isobmff::box_types::BOX_HEADER_MIN_SIZE];
+            dac3_full[BOX_TYPE_SIZE..isobmff::box_types::BOX_HEADER_MIN_SIZE]
                 .copy_from_slice(b"dac3");
             let n = config.serialize_into(&mut dac3_full[8..])?;
             let dac3_opaque = OpaqueBox::new(*b"dac3", dac3_full[8..8 + n].to_vec());
@@ -251,8 +251,8 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             sample_size,
         } => {
             let mut dec3_full =
-                vec![0u8; config.serialized_len() + crate::box_types::BOX_HEADER_MIN_SIZE];
-            dec3_full[BOX_TYPE_SIZE..crate::box_types::BOX_HEADER_MIN_SIZE]
+                vec![0u8; config.serialized_len() + isobmff::box_types::BOX_HEADER_MIN_SIZE];
+            dec3_full[BOX_TYPE_SIZE..isobmff::box_types::BOX_HEADER_MIN_SIZE]
                 .copy_from_slice(b"dec3");
             let n = config.serialize_into(&mut dec3_full[8..])?;
             let dec3_opaque = OpaqueBox::new(*b"dec3", dec3_full[8..8 + n].to_vec());

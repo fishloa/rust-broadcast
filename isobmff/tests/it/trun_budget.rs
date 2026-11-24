@@ -1,8 +1,8 @@
 //! The zero-width `trun` allowance is AGGREGATE per `moof`, and breaching it is
 //! a typed error (not a generic `InvalidInput`).
 
-use transmux::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
-use transmux::{Error, MovieFragmentBox};
+use isobmff::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
+use isobmff::movie_fragment::MovieFragmentBox;
 
 fn boxed(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
     let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
@@ -32,7 +32,7 @@ fn aggregate_zero_width_samples_over_the_cap_are_a_typed_error() {
         .expect_err("aggregate cap");
     assert_eq!(
         err,
-        Error::ZeroWidthTrunBudgetExceeded {
+        isobmff::Error::ZeroWidthTrunBudgetExceeded {
             limit: MAX_ZERO_WIDTH_TRUN_SAMPLES
         }
     );

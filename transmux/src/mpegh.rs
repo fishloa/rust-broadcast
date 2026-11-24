@@ -8,10 +8,10 @@
 //! elementary stream lives in [`crate::mhas`].
 
 use crate::error::{Error, Result};
-use crate::wire_cursor::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::be_u16;
 use broadcast_common::{Parse, Serialize};
 
 // ---------------------------------------------------------------------------

@@ -10,19 +10,21 @@ use crate::box_walk::find_box_range;
 use broadcast_common::Parse;
 use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
-use transmux::TrackId;
-use transmux::movie_fragment::{
+use isobmff::movie_fragment::{
+    MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
+    TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
+};
+use isobmff::movie_fragment::{
     TFHD_DEFAULT_BASE_IS_MOOF, TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT, TRUN_DATA_OFFSET_PRESENT,
     TRUN_FIRST_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_DURATION_PRESENT, TRUN_SAMPLE_FLAGS_PRESENT,
     TRUN_SAMPLE_SIZE_PRESENT,
 };
-use transmux::segments::{MediaDataBox, SegmentTypeBox};
+use isobmff::segments::{MediaDataBox, SegmentTypeBox};
+use transmux::TrackId;
 use transmux::{
-    CodecConfig, EsdsBox, FragmentTrackData, MovieBox, MovieFragmentBox, MovieFragmentHeaderBox,
-    Sample, SampleEntryVariant, Severity, StblChild, TrackFragmentBaseMediaDecodeTimeBox,
-    TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrackSpec, TrunSample,
-    build_init_segment, build_media_segment, validate::SegmentOrigin, validate_cmaf_track,
-    validate_init_segment, validate_media_segment,
+    CodecConfig, EsdsBox, FragmentTrackData, MovieBox, Sample, SampleEntryVariant, Severity,
+    StblChild, TrackSpec, build_init_segment, build_media_segment, validate::SegmentOrigin,
+    validate_cmaf_track, validate_init_segment, validate_media_segment,
 };
 
 // ---------------------------------------------------------------------------
@@ -965,7 +967,7 @@ fn flagged_segment(
     }
     let tfhd = TrackFragmentHeaderBox {
         flags: tfhd_flags,
-        track_id: TrackId::new(1),
+        track_id: TrackId::new(1).into(),
         base_data_offset: None,
         sample_description_index: None,
         default_sample_duration: None,

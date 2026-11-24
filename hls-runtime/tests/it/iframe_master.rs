@@ -65,15 +65,20 @@ fn fixture_bytes(name: &str) -> Vec<u8> {
 
 fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
     let found =
-        transmux::box_types::clamped_boxes(segment).find(|b| b.header.box_type.is(b"moof"))?;
+        isobmff::box_types::clamped_boxes(segment).find(|b| b.header.box_type.is(b"moof"))?;
     let moof_off = found.start;
     let body = &segment[found.payload_start()..found.end];
-    let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(body).ok()?;
+    let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(body).ok()?;
 
-    let mdats = transmux::frag_offsets::mdat_ranges(segment);
-    let samples =
-        transmux::frag_offsets::sample_ranges_in(segment, &mdats, moof_off, &moof, video_track_id)
-            .ok()?;
+    let mdats = isobmff::frag_offsets::mdat_ranges(segment);
+    let samples = isobmff::frag_offsets::sample_ranges_in(
+        segment,
+        &mdats,
+        moof_off,
+        &moof,
+        video_track_id.into(),
+    )
+    .ok()?;
     if samples.is_empty() {
         return None;
     }
@@ -81,7 +86,7 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
     if first.flags & (1 << 16) != 0 {
         return None;
     }
-    let mdat_payload_start = transmux::box_types::clamped_boxes(segment)
+    let mdat_payload_start = isobmff::box_types::clamped_boxes(segment)
         .filter(|b| b.header.box_type.is(b"mdat"))
         .find(|b| (b.payload_start()..b.end).contains(&first.start))?
         .payload_start();

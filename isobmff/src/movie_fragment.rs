@@ -16,11 +16,11 @@ use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_MASK, LARGESIZE_SIZE,
 };
 use crate::error::{Error, Result};
-use crate::wire_cursor::{be_u32, be_u64, read_u32};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{be_u32, be_u64, read_u32};
 
 const TRUN_SAMPLE_FIELD_COUNT: usize = 4;
 const CENC_AUX_INFO_TYPE_COUNT: usize = 4;
@@ -62,13 +62,13 @@ pub const TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT: u32 = 0x000800;
 /// `sample_flags` for a sync sample (I-frame): `sample_depends_on = 2` (does not
 /// depend on others), `sample_is_non_sync_sample = 0` — ISO/IEC 14496-12:2026
 /// §8.8.3.1. The one copy every fragment builder writes (audit r05-O6).
-pub(crate) const SAMPLE_FLAGS_SYNC: u32 = 0x0200_0000;
+pub const SAMPLE_FLAGS_SYNC: u32 = 0x0200_0000;
 /// `sample_flags` for a non-sync sample: `sample_depends_on = 1`,
 /// `sample_is_non_sync_sample = 1` (§8.8.3.1).
-pub(crate) const SAMPLE_FLAGS_NON_SYNC: u32 = 0x0101_0000;
+pub const SAMPLE_FLAGS_NON_SYNC: u32 = 0x0101_0000;
 /// `sample_is_non_sync_sample` bit within a 32-bit `sample_flags` word
 /// (§8.8.3.1, bit `[16]`). Set = the sample is **not** a sync sample.
-pub(crate) const SAMPLE_FLAG_IS_NON_SYNC: u32 = 0x0001_0000;
+pub const SAMPLE_FLAG_IS_NON_SYNC: u32 = 0x0001_0000;
 
 /// Read version(8) and flags(24) from the body bytes (first 4 bytes of a FullBox payload).
 fn read_ver_flags(body: &[u8]) -> Result<(u8, u32)> {
@@ -420,7 +420,7 @@ impl TrackFragmentRunBox {
     /// a run of `moof`s) shares ONE [`MAX_ZERO_WIDTH_TRUN_SAMPLES`] allowance
     /// rather than getting a fresh one per `trun` (16-byte `trun`s x 2^20
     /// samples x 40 bytes each is a ~40 MiB-per-16-bytes amplification).
-    pub(crate) fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
+    pub fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
         let (ver, tr_flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
         need_in(payload, core::mem::size_of::<u32>(), "trun.sc")?;
@@ -742,7 +742,7 @@ impl OpaqueChild {
     /// An opaque child preserving everything the wire carried: the payload
     /// after `size`/`type` (usertype of a `uuid` included, `largesize` bytes
     /// excluded) plus the `largesize` / `size == 0` forms.
-    pub(crate) fn from_child(child: &crate::box_support::ChildBox<'_>) -> Self {
+    pub fn from_child(child: &crate::box_support::ChildBox<'_>) -> Self {
         Self {
             box_type: child.four_cc,
             data: child.payload.to_vec(),
@@ -779,7 +779,7 @@ impl OpaqueChild {
     /// is the container's last child: a `size == 0` box may only use that form
     /// when nothing follows it (§4.2), or it would swallow the sibling after
     /// it.
-    pub(crate) fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
+    pub fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         // See `box_support::OpaqueBox`: the header is written here, not
@@ -832,7 +832,7 @@ impl OpaqueChild {
 /// §6.2, Table 2) optional `sbgp`/`sgpd`/`subs`/`saiz`/`saio`/`meta`. This crate
 /// models only the first three; [`TrackFragmentBox::order`] keeps every child
 /// in the sequence it appeared on the wire, so a parse → serialize — and any
-/// rewrite such as [`crate::fragment_build::protect_media_segment`] — reproduces the file's own
+/// rewrite such as a CENC media-segment protection pass — reproduces the file's own
 /// ordering and preserves the children it does not understand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -902,14 +902,14 @@ impl TrackFragmentBox {
 
     /// [`TrackFragmentBox::parse_body`] sharing `zero_width_budget` across its
     /// `trun`s (see [`TrackFragmentRunBox::parse_body_budgeted`]).
-    pub(crate) fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
+    pub fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
         let mut tfhd: Option<TrackFragmentHeaderBox> = None;
         let mut tfdt: Option<TrackFragmentBaseMediaDecodeTimeBox> = None;
         let mut trun: Vec<TrackFragmentRunBox> = Vec::new();
         let mut order: Vec<TrafChild> = Vec::new();
         // The crate's one container-child walker (audit r05-O3 / #1141): this
         // loop used to be a private copy of it.
-        crate::box_support::walk_children(body, |child| {
+        crate::box_support::walk_children::<_, Error>(body, |child| {
             if child.is(b"tfhd") {
                 tfhd = Some(TrackFragmentHeaderBox::parse_body(child.payload)?);
                 order.push(TrafChild::Tfhd);
@@ -1046,11 +1046,11 @@ impl MovieFragmentBox {
     /// the caller's `zero_width_budget`: the allowance is shared by every
     /// `trun` of every `traf` of this `moof`, and a demuxer holding several
     /// `moof`s before their `mdat` passes the same budget to each.
-    pub(crate) fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
+    pub fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
         let mut mfhd: Option<MovieFragmentHeaderBox> = None;
         let mut traf: Vec<TrackFragmentBox> = Vec::new();
         let mut order: Vec<MoofChild> = Vec::new();
-        crate::box_support::walk_children(body, |child| {
+        crate::box_support::walk_children::<_, Error>(body, |child| {
             if child.is(b"mfhd") {
                 mfhd = Some(MovieFragmentHeaderBox::parse_body(child.payload)?);
                 order.push(MoofChild::Mfhd);
@@ -1091,9 +1091,9 @@ impl MovieFragmentBox {
         out
     }
 
-    /// [`MovieFragmentBox::child_order`] for a rewriting caller (it has to be
-    /// visible to [`protect_media_segment`], which lives outside this impl).
-    pub(crate) fn child_order_for_rewrite(&self) -> Vec<MoofChild> {
+    /// The `child_order` of a rewriting caller (it has to be
+    /// visible to the CENC media-segment protection pass, which lives outside this impl).
+    pub fn child_order_for_rewrite(&self) -> Vec<MoofChild> {
         self.child_order()
     }
 }
@@ -1149,7 +1149,7 @@ impl Serialize for MovieFragmentBox {
 // protects the track. Instead this is a *post-processing* pass over an
 // already-built movie fragment (`moof`), driven by the caller's
 // [`crate::cenc::SampleEncryptionEntry`] list (from
-// [`crate::media::TrackEncryption::samples`]) — it composes with any CMAF
+// the IR crypto carrier's per-sample entry list) — it composes with any CMAF
 // muxer output without the crypto metadata needing to flow through the
 // `trun`/`traf` builder plumbing itself.
 //
@@ -1170,20 +1170,20 @@ impl Serialize for MovieFragmentBox {
 /// Number of bytes from the start of a `senc` box (ISO/IEC 23001-7 §12.3) to
 /// its first sample's IV: 8-byte box header + 4-byte FullBox version/flags +
 /// 4-byte `sample_count`.
-pub(crate) const SENC_ENTRIES_OFFSET: u64 = 16;
+pub const SENC_ENTRIES_OFFSET: u64 = 16;
 
 /// Per-`subsample` fixed fields written by `senc` when
 /// [`crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION`] is set — ISO/IEC
 /// 23001-7 §12.3.2: `subsample_count` (2 bytes).
-pub(crate) const SAIZ_SUBSAMPLE_COUNT_SIZE: usize = 2;
+pub const SAIZ_SUBSAMPLE_COUNT_SIZE: usize = 2;
 /// One `(bytes_of_clear_data, bytes_of_protected_data)` subsample entry:
 /// 2-byte clear count + 4-byte protected count — ISO/IEC 23001-7 §12.3.2.
-pub(crate) const SAIZ_SUBSAMPLE_ENTRY_SIZE: usize = 6;
+pub const SAIZ_SUBSAMPLE_ENTRY_SIZE: usize = 6;
 
 /// The `aux_info_type` values that name a CENC scheme. ISO/IEC 23001-7 §12.3's
 /// `aux_info_type` defaults to `cenc`, and the four-CCs below are the schemes
 /// that specification defines.
-pub(crate) const CENC_AUX_INFO_TYPES: [[u8; BOX_TYPE_SIZE]; CENC_AUX_INFO_TYPE_COUNT] =
+pub const CENC_AUX_INFO_TYPES: [[u8; BOX_TYPE_SIZE]; CENC_AUX_INFO_TYPE_COUNT] =
     [*b"cenc", *b"cens", *b"cbc1", *b"cbcs"];
 
 /// The `aux_info_type` of a `saiz`/`saio` box's opaque payload (the bytes
@@ -1191,7 +1191,7 @@ pub(crate) const CENC_AUX_INFO_TYPES: [[u8; BOX_TYPE_SIZE]; CENC_AUX_INFO_TYPE_C
 ///
 /// Both are FullBoxes: a version-0 box carries the field only when flag bit 0
 /// is set (§8.7.8.2, §8.7.9.2); version 1 always carries it.
-pub(crate) fn aux_info_type_of(
+pub fn aux_info_type_of(
     payload: &[u8],
     box_type: &[u8; BOX_TYPE_SIZE],
 ) -> Option<[u8; BOX_TYPE_SIZE]> {
@@ -1213,10 +1213,6 @@ pub(crate) fn aux_info_type_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fragment_build::{
-        FragmentProtection, MediaRunSample, build_cenc_fragment_boxes, media_fragment_run,
-        protect_media_segment,
-    };
     use alloc::vec;
 
     #[test]
@@ -1230,30 +1226,6 @@ mod tests {
     #[test]
     fn mfhd_len() {
         assert_eq!(MovieFragmentHeaderBox::new(1).serialized_len(), 16);
-    }
-
-    #[test]
-    fn media_fragment_run_serializes_the_derived_trun_flags() {
-        let sample = |composition_offset: i32| MediaRunSample {
-            duration: 1_000,
-            size: 40,
-            is_sync: true,
-            composition_offset,
-        };
-        let flags_of = |offset: i32| {
-            let (_, trun) = media_fragment_run(
-                TrackId::new(1),
-                [sample(offset), sample(offset)].into_iter(),
-            )
-            .expect("two-sample run");
-            let bytes = trun.try_to_bytes().expect("serialize trun");
-            u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]])
-        };
-        // data-offset-present (0x000001) | sample-duration (0x000100) |
-        // sample-size (0x000200) | sample-flags (0x000400).
-        assert_eq!(flags_of(0), 0x0000_0701);
-        // plus sample-composition-time-offset-present (0x000800).
-        assert_eq!(flags_of(1), 0x0000_0F01);
     }
 
     #[test]
@@ -2105,133 +2077,6 @@ mod tests {
         panic!("moof box not found");
     }
 
-    // ── Issue R3: constant-IV + whole-sample `senc` producer/parser mismatch ─
-
-    /// A constant-IV (`per_sample_iv_size == 0`), whole-sample-protected
-    /// (`subsamples` empty) track has nothing for `senc` to carry: every one
-    /// of `sample_count`'s entries would be zero bytes wide. That degenerate
-    /// shape is exactly what [`crate::cenc::SampleEncryptionBox::parse_body`]
-    /// rejects — proven directly here against a hand-built body matching what
-    /// [`build_cenc_fragment_boxes`] *used* to emit for this case, so the
-    /// producer/parser mismatch this issue is about is reproduced, not just
-    /// asserted. [`build_cenc_fragment_boxes`] must therefore return `None`.
-    #[test]
-    fn build_cenc_fragment_boxes_omits_senc_for_constant_iv_whole_sample() {
-        // Reproduce the old shape directly: a `senc` FullBox body declaring
-        // `sample_count == 2` with `per_sample_iv_size == 0` and no
-        // `UseSubSampleEncryption` flag — i.e. every entry is zero bytes.
-        let degenerate_senc_body: [u8; 4] = 2u32.to_be_bytes(); // sample_count = 2
-        let rejected = crate::cenc::SampleEncryptionBox::parse_body(
-            &degenerate_senc_body,
-            0,
-            0, // flags: UseSubSampleEncryption clear
-            0, // per_sample_iv_size
-        );
-        assert!(
-            matches!(rejected, Err(Error::InvalidInput(_))),
-            "this crate's own senc parser must reject a sample_count with no backing per-sample \
-             bytes, got {rejected:?}"
-        );
-
-        // The exact shape that would produce that rejected body: a
-        // `FragmentProtection` with a constant IV (`per_sample_iv_size: 0`)
-        // and whole-sample protection (empty `subsamples` on every entry).
-        let entries = alloc::vec![
-            crate::cenc::SampleEncryptionEntry {
-                initialization_vector: Vec::new(),
-                subsamples: Vec::new(),
-            },
-            crate::cenc::SampleEncryptionEntry {
-                initialization_vector: Vec::new(),
-                subsamples: Vec::new(),
-            },
-        ];
-        let protection = FragmentProtection {
-            track_id: TrackId::new(1),
-            entries: &entries,
-            per_sample_iv_size: 0,
-        };
-        let built = build_cenc_fragment_boxes(&protection).expect("must not error");
-        assert!(
-            built.is_none(),
-            "a constant-IV whole-sample track has nothing for senc/saiz/saio to carry \
-             (ISO/IEC 23001-7 §12.2/§12.3) — build_cenc_fragment_boxes must return None, not a \
-             senc shape this crate's own parser rejects"
-        );
-    }
-
-    /// End-to-end: [`protect_media_segment`] over a constant-IV,
-    /// whole-sample-protected track must leave the `moof` byte-identical to
-    /// the unprotected input — no `senc`/`saiz`/`saio` appended — so there is
-    /// nothing for this crate's own hardened `senc` parser to ever reject on
-    /// its own output (the hard round-trip invariant this issue is about).
-    #[test]
-    fn protect_media_segment_constant_iv_whole_sample_round_trips_with_no_senc() {
-        const TRACK_ID: u32 = 1;
-
-        let tfhd = TrackFragmentHeaderBox {
-            flags: 0,
-            track_id: TrackId::new(TRACK_ID),
-            base_data_offset: None,
-            sample_description_index: None,
-            default_sample_duration: None,
-            default_sample_size: None,
-            default_sample_flags: None,
-        };
-        let trun = TrackFragmentRunBox {
-            version: 0,
-            tr_flags: TRUN_SAMPLE_SIZE_PRESENT,
-            data_offset: None,
-            first_sample_flags: None,
-            samples: vec![
-                TrunSample {
-                    sample_duration: None,
-                    sample_size: Some(4),
-                    sample_flags: None,
-                    sample_composition_time_offset: None,
-                },
-                TrunSample {
-                    sample_duration: None,
-                    sample_size: Some(4),
-                    sample_flags: None,
-                    sample_composition_time_offset: None,
-                },
-            ],
-        };
-        let traf = TrackFragmentBox::new(tfhd, None, vec![trun]);
-        let moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(1), vec![traf]);
-        let unprotected = moof.try_to_bytes().unwrap();
-
-        let entries = alloc::vec![
-            crate::cenc::SampleEncryptionEntry {
-                initialization_vector: Vec::new(),
-                subsamples: Vec::new(),
-            },
-            crate::cenc::SampleEncryptionEntry {
-                initialization_vector: Vec::new(),
-                subsamples: Vec::new(),
-            },
-        ];
-        let protection = FragmentProtection {
-            track_id: TrackId::new(TRACK_ID),
-            entries: &entries,
-            per_sample_iv_size: 0,
-        };
-
-        let protected = protect_media_segment(&unprotected, &[protection])
-            .expect("protect_media_segment must not error on a constant-IV whole-sample track");
-        assert_eq!(
-            protected, unprotected,
-            "no senc/saiz/saio bytes must be appended when there is nothing for them to carry"
-        );
-
-        // Re-parse with this crate's own parser: still a well-formed moof.
-        let reparsed = MovieFragmentBox::parse_body(&protected[BOX_HEADER_MIN_SIZE..])
-            .expect("protected output must still parse as a valid moof");
-        assert_eq!(reparsed.traf.len(), 1);
-        assert_eq!(reparsed.traf[0].trun[0].samples.len(), 2);
-    }
-
     /// `aux_info_type_of` reads a `saiz`/`saio`'s optional `aux_info_type`:
     /// version 1 always carries it, a version-0 box only when flag bit 0 is
     /// set (§8.7.8.2, §8.7.9.2), and a payload too short to hold either is
@@ -2270,71 +2115,6 @@ mod tests {
             aux_info_type_of(&[1, 0, 0, 0], b"saio"),
             None,
             "version 1 with no type bytes is absent"
-        );
-    }
-
-    /// A `saiz` `sample_info_size` is the per-sample IV length plus, under
-    /// subsample encryption, a 2-byte count and a 6-byte entry per subsample
-    /// (ISO/IEC 23001-7 §12.3.2), and its `u8` width makes 255 legal and 256
-    /// an error rather than a silent truncation.
-    #[test]
-    fn build_cenc_fragment_boxes_sizes_each_sample_aux_info() {
-        let entry = |iv: u8, subsamples: usize| crate::cenc::SampleEncryptionEntry {
-            initialization_vector: alloc::vec![0x11; usize::from(iv)],
-            subsamples: (0..subsamples)
-                .map(|i| crate::cenc::SubSampleEntry {
-                    bytes_of_clear_data: i as u16,
-                    bytes_of_protected_data: 0,
-                })
-                .collect(),
-        };
-        let entries = alloc::vec![entry(8, 1), entry(8, 3), entry(8, 0)];
-        let protection = FragmentProtection {
-            track_id: TrackId::new(1),
-            entries: &entries,
-            per_sample_iv_size: 8,
-        };
-        let built = build_cenc_fragment_boxes(&protection)
-            .expect("aux info sizes below the ceiling")
-            .expect("subsample encryption carries a senc");
-        assert_eq!(
-            built.saiz.sample_info_sizes,
-            alloc::vec![8 + 2 + 6, 8 + 2 + 18, 8 + 2],
-            "IV + 2-byte count + 6 bytes per subsample"
-        );
-        assert_eq!(built.saiz.sample_count, 3);
-        assert_eq!(built.saiz.default_sample_info_size, 0);
-        assert_eq!(
-            built.senc.flags & crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
-            crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION
-        );
-
-        // 1 + 2 + 6 * 42 == 255 fits the `u8` field and stays uniform.
-        let entries = alloc::vec![entry(1, 42)];
-        let at_the_ceiling = FragmentProtection {
-            track_id: TrackId::new(1),
-            entries: &entries,
-            per_sample_iv_size: 1,
-        };
-        let built = build_cenc_fragment_boxes(&at_the_ceiling)
-            .expect("255 bytes is a legal sample_info_size")
-            .expect("senc present");
-        assert_eq!(built.saiz.default_sample_info_size, 255);
-        assert!(built.saiz.sample_info_sizes.is_empty());
-
-        // 2 + 2 + 6 * 42 == 256 does not.
-        let entries = alloc::vec![entry(2, 42)];
-        let over_the_ceiling = FragmentProtection {
-            track_id: TrackId::new(1),
-            entries: &entries,
-            per_sample_iv_size: 2,
-        };
-        let err = build_cenc_fragment_boxes(&over_the_ceiling)
-            .err()
-            .expect("256 bytes exceeds the u8 sample_info_size");
-        assert!(
-            matches!(err, Error::InvalidInput(_)),
-            "expected InvalidInput, got {err:?}"
         );
     }
 }

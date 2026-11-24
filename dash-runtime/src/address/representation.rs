@@ -2,8 +2,8 @@
 //! inherited Segment information, derive the Period's place on the timeline,
 //! gather the BaseURL candidates and build the plan.
 
+use isobmff::timing::SegmentIndexBox;
 use thiserror::Error;
-use transmux::SegmentIndexBox;
 
 use super::AddressError;
 use super::plan::{DynamicContext, PlanInput, SegmentPlan};

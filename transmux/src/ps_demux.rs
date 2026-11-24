@@ -55,9 +55,9 @@
 //!   precedes the AC-3 syncframes.
 
 use crate::TrackId;
-use crate::wire_cursor::u16_at;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use broadcast_common::wire::u16_at;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
 

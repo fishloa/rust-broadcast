@@ -110,7 +110,7 @@ fn dts_seq(media: &Media) -> Vec<Option<i64>> {
 
 /// Parse the first `moof`/`traf`/`tfdt` baseMediaDecodeTime out of an fMP4.
 fn muxed_tfdt(fmp4: &[u8]) -> u64 {
-    use transmux::movie_fragment::MovieFragmentBox;
+    use isobmff::movie_fragment::MovieFragmentBox;
     let mut off = 0usize;
     while off + 8 <= fmp4.len() {
         let sz =

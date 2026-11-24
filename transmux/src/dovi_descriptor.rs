@@ -10,9 +10,9 @@ use crate::dovi::{
 };
 use crate::error::{Error, Result};
 use crate::ts_demux::DESCRIPTOR_HEADER_LEN;
-use crate::wire_cursor::u16_at;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::u16_at;
 use broadcast_common::{Parse, Serialize};
 
 /// MPEG-2 TS `DOVI_video_stream_descriptor` tag (TS spec Table 3-2).

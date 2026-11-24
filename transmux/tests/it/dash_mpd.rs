@@ -27,11 +27,12 @@ use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
+use isobmff::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
 use transmux::pipeline::CodecConfig;
 use transmux::{
     Addressing, CencScheme, CmafMux, ConstantIvSenc, ContentProtectionSystem, DashPackager,
-    Fmp4Demux, InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, SampleEncryptionEntry,
-    Segmenter, TrackEncryption, TrackEncryptionBox, TrackSegments, TrackSpec, TsDemux,
+    Fmp4Demux, InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, Segmenter,
+    TrackEncryption, TrackSegments, TrackSpec, TsDemux,
 };
 
 // ---------------------------------------------------------------------------

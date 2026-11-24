@@ -117,6 +117,10 @@ pub const TABLE: &[Crate] = &[
         allowlist: &[],
     },
     Crate {
+        name: "isobmff",
+        allowlist: &[],
+    },
+    Crate {
         name: "mpeg-pes",
         allowlist: &[],
     },

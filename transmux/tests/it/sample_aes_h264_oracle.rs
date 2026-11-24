@@ -21,8 +21,9 @@
 
 use std::path::PathBuf;
 
+use isobmff::cenc::KEY_LEN;
 use transmux::annexb::{iter_annexb_nals, length_prefixed_to_annexb};
-use transmux::sample_aes::{BLOCK_LEN, KEY_LEN, h264_decrypt_nal, h264_encrypt_nal};
+use transmux::sample_aes::{BLOCK_LEN, h264_decrypt_nal, h264_encrypt_nal};
 
 /// `fixtures/crypto/sample-aes-h264/key.bin`.
 const KEY: [u8; KEY_LEN] = [

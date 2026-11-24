@@ -84,7 +84,7 @@ fn pasp_of(entry: &AVCSampleEntry) -> Option<(u32, u32)> {
         .iter()
         .find(|b| b.box_type == *b"pasp")
         .map(|b| {
-            let p = transmux::visual_ext::PixelAspectRatioBox::parse(&b.data).unwrap();
+            let p = isobmff::visual_ext::PixelAspectRatioBox::parse(&b.data).unwrap();
             (p.h_spacing, p.v_spacing)
         })
 }
@@ -95,7 +95,7 @@ fn colr_of(entry: &AVCSampleEntry) -> Option<(u16, u16, u16, bool)> {
         .iter()
         .find(|b| b.box_type == *b"colr")
         .map(|b| {
-            let c = transmux::visual_ext::ColourInformationBox::parse(&b.data).unwrap();
+            let c = isobmff::visual_ext::ColourInformationBox::parse(&b.data).unwrap();
             let n = c.nclx.unwrap();
             (
                 n.colour_primaries,
@@ -454,9 +454,9 @@ fn hevc_writes_pasp_and_colr() {
     // extra_boxes for HEVC: inspect via pasp/colr using raw box types
     let types: Vec<[u8; 4]> = e.extra_boxes.iter().map(|b| b.box_type).collect();
     assert_eq!(types, vec![*b"pasp", *b"colr"]);
-    let pasp = transmux::visual_ext::PixelAspectRatioBox::parse(&e.extra_boxes[0].data).unwrap();
+    let pasp = isobmff::visual_ext::PixelAspectRatioBox::parse(&e.extra_boxes[0].data).unwrap();
     assert_eq!((pasp.h_spacing, pasp.v_spacing), (64, 45));
-    let colr = transmux::visual_ext::ColourInformationBox::parse(&e.extra_boxes[1].data).unwrap();
+    let colr = isobmff::visual_ext::ColourInformationBox::parse(&e.extra_boxes[1].data).unwrap();
     let n = colr.nclx.unwrap();
     assert_eq!(
         (

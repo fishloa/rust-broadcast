@@ -30,6 +30,7 @@ dvb-conformance  = { path = "../dvb-conformance", version = "16.0.0", default-fe
 scte35-splice    = { path = "../scte35-splice", version = "8.0.0", default-features = false }
 timed-metadata   = { path = "../timed-metadata", version = "0.12.0", default-features = false }
 transmux         = { path = "../transmux", version = "0.33.0", default-features = false }
+isobmff          = { path = "../isobmff", version = "0.1.0", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the validator parses playlists
 # via this crate directly rather than reaching through `transmux` for it.
 broadcast-dash   = { path = "../broadcast-dash", version = "0.3.0", optional = true }

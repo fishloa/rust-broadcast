@@ -37,7 +37,6 @@ use alloc::vec::Vec;
 use broadcast_common::timescale::{Rounding, Timescale, rescale, rescale_i64, rescale_u64};
 use broadcast_common::{Package, Parse, Serialize};
 
-use crate::box_types::{BoxHeader, BoxType, find_top_box};
 use crate::error::{Error, Result};
 use crate::init_segment::{
     ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MovieBox, SampleSizeBox, SampleToChunkBox,
@@ -45,8 +44,9 @@ use crate::init_segment::{
 };
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::{Sample, build_init_segment};
-use crate::segments::FileTypeBox;
-use crate::timing::{
+use isobmff::box_types::{BoxHeader, BoxType, find_top_box};
+use isobmff::segments::FileTypeBox;
+use isobmff::timing::{
     CompositionOffsetBox, CttsEntry, EditListBox, EditListEntry, SttsEntry, TimeToSampleBox,
 };
 

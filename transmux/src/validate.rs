@@ -8,8 +8,8 @@
 //! only inspects box structure, presence, ordering, and the sample-size /
 //! `data_offset` arithmetic.
 //!
-//! Parsing is done with the crate's own box walker ([`crate::box_iter`] /
-//! [`crate::parse_box`]) and the `movie_fragment` field parsers, so malformed
+//! Parsing is done with the crate's own box walker ([`isobmff::box_iter`] /
+//! [`isobmff::parse_box`]) and the `movie_fragment` field parsers, so malformed
 //! input yields issues rather than panics: every fallible read is matched, and
 //! nothing is `unwrap`ped on parsed lengths.
 //!
@@ -72,15 +72,15 @@
 //!   strictly increasing across segments (§8.8.5).
 
 use crate::TrackId;
-use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxRef, box_iter};
-use crate::movie_fragment::{
-    MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF,
-    TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox, TrackFragmentRunBox,
-};
-use crate::segments::{MOOF, SegmentTypeBox};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxRef, box_iter};
+use isobmff::movie_fragment::{
+    MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF,
+    TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox, TrackFragmentRunBox,
+};
+use isobmff::segments::{MOOF, SegmentTypeBox};
 
 // ---------------------------------------------------------------------------
 // Box four-CCs (named constants — no magic numbers)
@@ -486,7 +486,7 @@ fn validate_media_inner(
     };
 
     // One whole-file `mdat` scan shared by every moof's resolver call.
-    let mdat_extents = crate::frag_offsets::mdat_ranges(bytes);
+    let mdat_extents = isobmff::frag_offsets::mdat_ranges(bytes);
     for &mp in &moof_positions {
         let (_, moof_bx) = &top[mp];
         let (seq_no, info) = validate_moof(
@@ -543,12 +543,12 @@ fn validate_media_inner(
             else {
                 continue;
             };
-            let ranges = match crate::frag_offsets::sample_ranges_in(
+            let ranges = match isobmff::frag_offsets::sample_ranges_in(
                 bytes,
                 &mdat_extents,
                 moof_off,
                 moof_box,
-                track_id,
+                track_id.into(),
             ) {
                 Ok(r) => r,
                 Err(_) => {
@@ -700,7 +700,7 @@ fn validate_moof(
         // stays untyped and its zero span is reported as unstated.
         let is_video: Option<bool> = child_body(traf.body, &TFHD)
             .and_then(|b| TrackFragmentHeaderBox::parse_body(b).ok())
-            .map(|h| video_track(h.track_id));
+            .map(|h| video_track(h.track_id.into()));
         let is_video: Option<bool> = if video_tracks.is_empty() && origin == SegmentOrigin::FromIr {
             None
         } else {
@@ -889,7 +889,7 @@ fn validate_traf(
     }
 
     TrafInfo {
-        track_id,
+        track_id: track_id.map(Into::into),
         tfdt,
         total_duration,
     }

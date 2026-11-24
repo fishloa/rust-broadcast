@@ -13,9 +13,10 @@ use crate::hub_fixtures::{audio_track, dummy_avc_config, video_track};
 use broadcast_common::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
 use core::time::Duration;
+use isobmff::movie_fragment::MovieFragmentBox;
 use transmux::TrackId;
 use transmux::ll_hls::LlHlsSegmenter;
-use transmux::{CodecConfig, FragmentTrackData, MovieFragmentBox, Sample, TrackSpec};
+use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -463,7 +464,7 @@ fn part_media_matches_whole_segment_build() {
                     let sz = s.sample_size.expect("sample_size present") as usize;
                     let bytes = mdat[cursor..cursor + sz].to_vec();
                     cursor += sz;
-                    if tid == TrackId::new(1) {
+                    if tid.value() == 1 {
                         part_vid.push(bytes);
                     } else {
                         part_aud.push(bytes);
@@ -497,7 +498,7 @@ fn part_media_matches_whole_segment_build() {
                 let sz = s.sample_size.unwrap() as usize;
                 let bytes = whole_mdat[cursor..cursor + sz].to_vec();
                 cursor += sz;
-                if tid == TrackId::new(1) {
+                if tid.value() == 1 {
                     whole_vid.push(bytes);
                 } else {
                     whole_aud.push(bytes);
@@ -533,7 +534,7 @@ fn part_media_matches_whole_segment_build() {
                 let sz = s.sample_size.unwrap() as usize;
                 let bytes = seg_mdat[c2..c2 + sz].to_vec();
                 c2 += sz;
-                if tid == TrackId::new(1) {
+                if tid.value() == 1 {
                     seg_vid.push(bytes);
                 } else {
                     seg_aud.push(bytes);

@@ -9,15 +9,17 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
-use transmux::Error;
-use transmux::TrackId;
-use transmux::{
-    CodecSpecificParameters, CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox,
-    EditListEntry, GROUPING_TYPE_ROLL, ProducerReferenceTimeBox, SampleGroupDescriptionBox,
-    SampleToGroupBox, SbgpEntry, SegmentIndexBox, SgpdEntry, SidxReference, SttsEntry,
-    SubSampleDescriptor, SubSampleInformationBox, SubSampleInformationBoxV2,
-    SubSampleReferenceTableBox, SubsEntry, SubsV2Entry, SubsV2Source, SubsV2Subsample,
-    SubsampleProperties, TimeToSampleBox,
+use isobmff::Error;
+use isobmff::TrackId;
+use isobmff::sample_groups::{
+    CodecSpecificParameters, GROUPING_TYPE_ROLL, ProducerReferenceTimeBox,
+    SampleGroupDescriptionBox, SampleToGroupBox, SbgpEntry, SgpdEntry, SubSampleDescriptor,
+    SubSampleInformationBox, SubSampleInformationBoxV2, SubSampleReferenceTableBox, SubsEntry,
+    SubsV2Entry, SubsV2Source, SubsV2Subsample, SubsampleProperties,
+};
+use isobmff::timing::{
+    CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox, EditListEntry,
+    SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,
 };
 
 // ---------------------------------------------------------------------------
@@ -466,7 +468,7 @@ fn ssrt_long_form_empty_table_parses() {
 fn ssrt_body_ending_inside_entry_count_errors() {
     let cut: [u8; 13] = [0, 0, 0, 13, b's', b's', b'r', b't', 0, 0, 0, 0, 0x00];
     match SubSampleReferenceTableBox::parse(&cut) {
-        Err(transmux::Error::BufferTooShort(e)) => {
+        Err(isobmff::Error::BufferTooShort(e)) => {
             assert_eq!((e.need, e.have, e.what), (6, 5, "ssrt entry_count"));
         }
         other => panic!("expected BufferTooShort, got {other:?}"),
@@ -479,7 +481,7 @@ fn ssrt_body_ending_inside_entry_count_errors() {
 fn ssrt_short_form_count_without_entry_errors() {
     let cut: [u8; 13] = [0, 0, 0, 13, b's', b's', b'r', b't', 0, 0, 0, 0, 0x81];
     match SubSampleReferenceTableBox::parse(&cut) {
-        Err(transmux::Error::BufferTooShort(e)) => {
+        Err(isobmff::Error::BufferTooShort(e)) => {
             assert_eq!((e.need, e.have, e.what), (6, 5, "ssrt entry"));
         }
         other => panic!("expected BufferTooShort, got {other:?}"),
@@ -519,19 +521,19 @@ fn timing_parse_body_short_bodies_are_errors() {
     for body in [&[][..], &[0u8, 0, 0][..]] {
         assert!(matches!(
             TimeToSampleBox::parse_body(body),
-            Err(transmux::Error::BufferTooShort(_))
+            Err(isobmff::Error::BufferTooShort(_))
         ));
         assert!(matches!(
             CompositionOffsetBox::parse_body(body),
-            Err(transmux::Error::BufferTooShort(_))
+            Err(isobmff::Error::BufferTooShort(_))
         ));
         assert!(matches!(
             CompositionToDecodeBox::parse_body(body),
-            Err(transmux::Error::BufferTooShort(_))
+            Err(isobmff::Error::BufferTooShort(_))
         ));
         assert!(matches!(
             EditListBox::parse_body(body),
-            Err(transmux::Error::BufferTooShort(_))
+            Err(isobmff::Error::BufferTooShort(_))
         ));
     }
 }
@@ -620,7 +622,7 @@ fn elst_truncated_entry_is_an_error() {
         assert!(
             matches!(
                 EditListBox::parse_body(&elst_body(0, 1, tail)),
-                Err(transmux::Error::BufferTooShort(_))
+                Err(isobmff::Error::BufferTooShort(_))
             ),
             "v0 entry with {tail} bytes must be rejected"
         );
@@ -628,7 +630,7 @@ fn elst_truncated_entry_is_an_error() {
     assert!(EditListBox::parse_body(&elst_body(0, 1, 12)).is_ok());
     assert!(matches!(
         EditListBox::parse_body(&elst_body(1, 1, 19)),
-        Err(transmux::Error::BufferTooShort(_))
+        Err(isobmff::Error::BufferTooShort(_))
     ));
     assert!(EditListBox::parse_body(&elst_body(1, 1, 20)).is_ok());
 }
@@ -692,7 +694,7 @@ fn elst_empty_box_parses_and_round_trips() {
 fn elst_box_short_of_its_count_errors() {
     let bytes: [u8; 8] = [0, 0, 0, 8, b'e', b'l', b's', b't'];
     match EditListBox::parse(&bytes) {
-        Err(transmux::Error::BufferTooShort(e)) => {
+        Err(isobmff::Error::BufferTooShort(e)) => {
             assert_eq!((e.need, e.have, e.what), (16, 8, "elst box"));
         }
         other => panic!("expected BufferTooShort, got {other:?}"),
@@ -718,7 +720,7 @@ fn cslg_short_payload_reports_need_and_field() {
         let mut body = vec![0u8; body_len];
         body[0] = version;
         match CompositionToDecodeBox::parse_body(&body) {
-            Err(transmux::Error::BufferTooShort(e)) => {
+            Err(isobmff::Error::BufferTooShort(e)) => {
                 assert_eq!((e.need, e.have, e.what), (need, body_len, what));
             }
             other => panic!("v{version} body {body_len}: expected BufferTooShort, got {other:?}"),
@@ -804,7 +806,7 @@ fn cslg_serialized_len_and_size_field() {
         assert_eq!(b.try_to_bytes().unwrap(), buf);
         assert!(matches!(
             b.serialize_into(&mut buf[..len - 1]),
-            Err(transmux::Error::OutputBufferTooSmall(_))
+            Err(isobmff::Error::OutputBufferTooSmall(_))
         ));
     }
 }
@@ -822,7 +824,7 @@ fn sidx_truncated_bodies_are_errors() {
         let mut body = vec![0u8; len];
         body[8..12].copy_from_slice(&90000u32.to_be_bytes());
         match SegmentIndexBox::parse_body(&body) {
-            Err(transmux::Error::BufferTooShort(e)) => {
+            Err(isobmff::Error::BufferTooShort(e)) => {
                 assert_eq!((e.need, e.have, e.what), (20, len, "sidx body"));
             }
             other => panic!("body {len}: expected BufferTooShort, got {other:?}"),
@@ -833,7 +835,7 @@ fn sidx_truncated_bodies_are_errors() {
         let mut body = vec![0u8; len];
         body[8..12].copy_from_slice(&90000u32.to_be_bytes());
         match SegmentIndexBox::parse_body(&body) {
-            Err(transmux::Error::BufferTooShort(e)) => {
+            Err(isobmff::Error::BufferTooShort(e)) => {
                 assert_eq!((e.need, e.have, e.what), (24, len, "sidx reserved+count"));
             }
             other => panic!("body {len}: expected BufferTooShort, got {other:?}"),
@@ -844,7 +846,7 @@ fn sidx_truncated_bodies_are_errors() {
     body[8..12].copy_from_slice(&90000u32.to_be_bytes());
     body[22..24].copy_from_slice(&2u16.to_be_bytes());
     match SegmentIndexBox::parse_body(&body) {
-        Err(transmux::Error::BufferTooShort(e)) => {
+        Err(isobmff::Error::BufferTooShort(e)) => {
             assert_eq!((e.need, e.have, e.what), (48, 42, "sidx reference entry"));
         }
         other => panic!("expected BufferTooShort, got {other:?}"),
@@ -951,7 +953,7 @@ fn sidx_with_reference(reference_type: u8, starts_with_sap: u8, sap_type: u8) ->
 
 fn assert_overflow(bad: SegmentIndexBox, field: &str, value: u64, max: u64) {
     match bad.try_to_bytes() {
-        Err(transmux::Error::FieldOverflow(e)) => {
+        Err(isobmff::Error::FieldOverflow(e)) => {
             assert_eq!(e.field, field);
             assert_eq!(e.value, value);
             assert_eq!(e.max, max);

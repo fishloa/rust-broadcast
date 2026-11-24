@@ -41,10 +41,10 @@
 
 use crate::error::{Error, Result};
 use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt, VALID_LENGTH_SIZES};
-use crate::wire_cursor::{read_nalu_16, read_u8};
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::len::need_out;
+use broadcast_common::wire::{read_nalu_16, read_u8};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
@@ -451,8 +451,8 @@ impl Serialize for AVCConfigurationBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(
-            crate::box_types::BOX_HEADER_MIN_SIZE + self.config.serialized_len(),
+        isobmff::box_types::box_len(
+            isobmff::box_types::BOX_HEADER_MIN_SIZE + self.config.serialized_len(),
         )
     }
 
@@ -460,7 +460,7 @@ impl Serialize for AVCConfigurationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = 0usize;
-        cursor += crate::box_types::write_box_header(buf, b"avcC", need)?;
+        cursor += isobmff::box_types::write_box_header(buf, b"avcC", need)?;
         cursor += self.config.serialize_into(&mut buf[cursor..])?;
         Ok(cursor)
     }

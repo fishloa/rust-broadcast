@@ -17,13 +17,13 @@ use std::vec::Vec;
 use transmux::TrackId;
 
 use broadcast_common::{Parse, Serialize};
+use isobmff::movie_fragment::MovieFragmentBox;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
 use transmux::StblChild;
 use transmux::annexb::{annexb_to_length_prefixed, iter_annexb_nals};
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::init_segment::{MovieBox, SampleEntryVariant};
-use transmux::movie_fragment::MovieFragmentBox;
 use transmux::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
     SLConfigDescriptor, StreamType,
@@ -492,8 +492,8 @@ fn ts_to_cmaf_end_to_end() {
         "video trun must have 75 samples"
     );
     assert_eq!(
-        vid_traf.tfhd.track_id,
-        TrackId::new(1),
+        vid_traf.tfhd.track_id.value(),
+        1,
         "video traf tfhd track_id = 1"
     );
 
@@ -506,8 +506,8 @@ fn ts_to_cmaf_end_to_end() {
         "audio trun sample count must equal total ADTS frame count"
     );
     assert_eq!(
-        aud_traf.tfhd.track_id,
-        TrackId::new(2),
+        aud_traf.tfhd.track_id.value(),
+        2,
         "audio traf tfhd track_id = 2"
     );
 

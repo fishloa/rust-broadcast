@@ -7,9 +7,10 @@
 //! allocate ~640 MiB+. FAILS on the code under review.
 
 use broadcast_common::Unpackage;
+use isobmff::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
+use isobmff::movie_fragment::MovieFragmentBox;
 use test_alloc::ThreadCounting;
-use transmux::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
-use transmux::{Fmp4Demux, MovieFragmentBox};
+use transmux::Fmp4Demux;
 
 #[global_allocator]
 static ALLOC: ThreadCounting = ThreadCounting::new();

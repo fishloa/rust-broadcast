@@ -442,7 +442,7 @@ fn cbcs_whole_sample_constant_iv_emit_senc_round_trip_and_mp4decrypt_interop() {
             u32::from_be_bytes([moof_bytes[0], moof_bytes[1], moof_bytes[2], moof_bytes[3]])
                 as usize;
         let moof_body = &moof_bytes[8..moof_size];
-        let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(moof_body)
+        let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(moof_body)
             .expect("moof must parse");
         let traf = moof.traf.first().expect("traf must be present");
         // Count trun samples to verify

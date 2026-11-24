@@ -163,7 +163,8 @@ fn squashed_media() -> Media {
 
 #[cfg(feature = "cenc")]
 fn encrypted_media(scheme: transmux::CencScheme, kid: [u8; 16]) -> Media {
-    use transmux::{ConstantIvSenc, SampleEncryptionEntry, TrackEncryption, TrackEncryptionBox};
+    use isobmff::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
+    use transmux::{ConstantIvSenc, TrackEncryption};
     let mut media = media();
     for track in &mut media.tracks {
         let samples = vec![

@@ -532,7 +532,7 @@ fn child<'a>(bytes: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
 
 fn first_tfdt(segment: &[u8]) -> u64 {
     let moof = child(segment, b"moof").expect("moof");
-    let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(moof).expect("moof parses");
+    let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(moof).expect("moof parses");
     moof.traf
         .first()
         .and_then(|t| t.tfdt.as_ref())

@@ -29,7 +29,7 @@
 //!
 //! For an AVC/HEVC/VVC (NAL-carried) track under [`SubsamplePolicy::Video`],
 //! each length-prefixed NAL unit in a sample ([`crate::annexb::iter_length_prefixed_nals`])
-//! contributes one [`crate::cenc::SubSampleEntry`]: the 4-byte length prefix
+//! contributes one [`isobmff::cenc::SubSampleEntry`]: the 4-byte length prefix
 //! plus the codec's NAL header (1 byte AVC, 2 bytes HEVC/VVC — ITU-T H.264
 //! §7.3.1 / H.265 §7.3.1.2 / H.266 §7.3.1.2) is left clear, and the rest of
 //! the NAL (its payload) is protected. Any other track, or
@@ -53,12 +53,14 @@ use alloc::vec::Vec;
 use broadcast_common::Encrypt;
 
 use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals};
-use crate::cenc::{CencScheme, KEY_LEN, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::media::{Media, TrackEncryption};
 use crate::nal::NalCodec;
 use crate::pipeline::CodecConfig;
+use isobmff::cenc::{
+    CencScheme, KEY_LEN, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox,
+};
 
 /// Length of a constant `cbcs` IV: one AES block.
 const CONSTANT_IV_LEN: usize = 16;
@@ -167,7 +169,7 @@ pub enum IvGen {
     Constant([u8; KEY_LEN]),
 }
 
-pub use super::cenc::ConstantIvSenc;
+pub use super::ir::ConstantIvSenc;
 
 /// How the protected byte ranges (subsample map) of each sample are chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -424,7 +426,7 @@ impl Encrypt for CencEncryptor {
     ///    drift from what was checked.
     /// 2. **Cipher from the validated plan.** The main loop consumes
     ///    `plan[track][sample]` directly to build each
-    ///    [`crate::cenc::SampleEncryptionEntry`] and to seed the cipher core —
+    ///    [`isobmff::cenc::SampleEncryptionEntry`] and to seed the cipher core —
     ///    it never calls IV resolution or sample-structure walking again, so
     ///    nothing that depends on a sample's contents can fail once the first
     ///    byte has been written.
@@ -1068,7 +1070,7 @@ mod tests {
     //! ([`cenc_crypto::apply_ctr`] / [`cenc_crypto::cbcs_sample`] +
     //! [`CbcsOp::Decrypt`]) directly — the same functions
     //! [`crate::cenc_decrypt::CencDecryptor`] calls — using each recorded
-    //! [`crate::cenc::SampleEncryptionEntry`]'s IV/subsample map. Only
+    //! [`isobmff::cenc::SampleEncryptionEntry`]'s IV/subsample map. Only
     //! reachable from an in-crate unit test (`cenc_crypto` is `pub(crate)`);
     //! `tests/it/cenc_encrypt.rs` covers the equivalent public-API-only surface
     //! (see that file's docs for why it does not repeat this exact reversal).

@@ -802,6 +802,7 @@ name = "container-probe"
 version = "0.6.0"
 dependencies = [
  "broadcast-common",
+ "isobmff",
  "mpeg-ps",
  "mpeg-ts",
  "st377-1",
@@ -1035,6 +1036,7 @@ dependencies = [
  "container-probe",
  "headers",
  "http",
+ "isobmff",
  "jiff",
  "media-plane",
  "percent-encoding",
@@ -1315,6 +1317,7 @@ dependencies = [
  "broadcast-hls",
  "bytes",
  "dvb-si",
+ "isobmff",
  "jiff",
  "media-plane",
  "mpeg-ts",
@@ -1681,6 +1684,7 @@ dependencies = [
  "broadcast-hls",
  "bytes",
  "container-probe",
+ "isobmff",
  "jiff",
  "media-doctor",
  "media-plane",
@@ -2001,6 +2005,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad7d3f647f560b2e5c7d7da6d9326223893247feb3e086a388a14654683aa2f2"
 
 [[package]]
+name = "isobmff"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "serde_json",
+ "test-fixtures",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2261,6 +2276,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "isobmff",
  "metrics",
  "metrics-exporter-prometheus",
  "mpeg-pes",
@@ -2481,6 +2497,7 @@ dependencies = [
  "http-body",
  "hyper",
  "hyper-util",
+ "isobmff",
  "jiff",
  "media-doctor",
  "media-plane",
@@ -4369,6 +4386,7 @@ dependencies = [
  "dvb-conformance",
  "dvb-si",
  "dvb-vbi",
+ "isobmff",
  "jiff",
  "memchr",
  "motion-imagery-metadata",

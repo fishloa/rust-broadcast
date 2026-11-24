@@ -1,0 +1,51 @@
+[package]
+name    = "isobmff"
+version = "0.1.0"
+edition = "2024"
+description = "ISO/IEC 14496-12:2026 (ISO BMFF) box syntax — box/FullBox headers, the top-level and movie-fragment box set, and the sample-table boxes, no_std."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["isobmff", "mp4", "bmff", "iso14496", "no-std"]
+categories   = ["parser-implementations", "multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+exclude = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+thiserror = { version = "2", default-features = false }
+serde     = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+serde_json    = { workspace = true }
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std = ["broadcast-common/std", "thiserror/std", "serde?/std"]
+# `serde::Serialize` derives on the moved box types (and the golden-hashed
+# `TrackId` transparent form). Off by default; transmux's `serde` forwards here.
+serde = ["dep:serde", "broadcast-common/serde"]
+# Test instrumentation only, not part of the API: a per-thread counter of
+# `frag_offsets::mdat_ranges` calls so a demuxer above this crate can assert it
+# scans the file's `mdat`s once. Off by default, so a normal build has no
+# counter code at all; a caller's tests opt in. Implies `std` (thread_local).
+scan-counters = ["std"]
+
+[lints]
+workspace = true
+
+[[example]]
+name = "parse_boxes"
+required-features = ["std"]
+
+[[example]]
+name = "build_ftyp"
+required-features = ["std"]

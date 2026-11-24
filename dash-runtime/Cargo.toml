@@ -20,6 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["std", "jiff", "xml", "http-date", "lang", "url"] }
 broadcast-dash   = { path = "../broadcast-dash", version = "0.3.0" }
 transmux         = { path = "../transmux", version = "0.33.0", default-features = false, features = ["std"] }
+isobmff          = { path = "../isobmff", version = "0.1.0", default-features = false }
 media-plane      = { path = "../media-plane", version = "0.14.0", default-features = false, features = ["std"] }
 http             = "1"
 headers          = { workspace = true }

@@ -67,7 +67,7 @@ use crate::opus::OpusSpecificBox;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtp_sdp::aac_config_from_asc_bytes;
 use crate::vp9::Vp9ConfigurationBox;
-use crate::wire_cursor::{be_u64, i16_at};
+use broadcast_common::wire::{be_u64, i16_at};
 
 // ORDER: element-hierarchy order (EBML header, Segment, then each master's children), not numeric: IDs are variable-length marker-bit values.
 // --- EBML / Matroska element IDs (RFC 9559 §27; stored with marker bits) -----

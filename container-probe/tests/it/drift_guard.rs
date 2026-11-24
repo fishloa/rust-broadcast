@@ -106,3 +106,26 @@ fn mxf_key_prefix_header_matches_st377_1() {
     // with each other and with this crate's copy.
     assert_eq!(OP1A_UL_PREFIX[..4], FILL_ITEM_KEY_PREFIX[..4]);
 }
+
+/// Upstream `isobmff` still declares the box-header constants this crate's
+/// ISOBMFF prober was written against (the other direction — this crate's own
+/// private copy — is the `isobmff::drift` unit-test module inside
+/// `src/isobmff.rs`).
+#[test]
+fn upstream_isobmff_still_declares_the_expected_header_constants() {
+    assert_eq!(
+        isobmff::box_types::BOX_HEADER_MIN_SIZE,
+        8,
+        "isobmff changed the minimum box header size; re-review container-probe/src/isobmff.rs"
+    );
+    assert_eq!(
+        isobmff::box_types::SIZE_TO_EOF,
+        0,
+        "isobmff changed the to-EOF size sentinel"
+    );
+    assert_eq!(
+        isobmff::box_types::SIZE_INDICATES_LARGESIZE,
+        1,
+        "isobmff changed the largesize marker"
+    );
+}
