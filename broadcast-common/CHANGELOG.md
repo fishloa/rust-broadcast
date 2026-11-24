@@ -4,6 +4,8 @@
 
 ### Added
 
+- `stage::Demand::at(offset, want_bytes)` and its `Demand::offset` field name the absolute input offset a stage wants next, so one driver loop can serve a seekable stage that asks for a range as well as a forward-only one.
+- `capped` (feature `std`): `read_capped` and `read_file_capped` read one whole unit (a downloaded file, a media segment) under a caller-supplied byte cap and fail with a typed `TooLarge { what, limit }` rather than allocating past it.
 - The length constants the public signatures already name are now public and documented: `cenc::FOURCC_LEN` (ISOBMFF `schm.scheme_type` four-CC, ISO/IEC 23001-7 §4), `clock33::MARKED_FIELD_LEN` (the 5-byte marker-bit PTS/DTS field, ISO/IEC 13818-1 §2.4.3.7), and `time::MJD_BCD_LEN` / `time::BCD_DURATION_LEN` (the DVB UTC-time and BCD-duration widths, EN 300 468 Annex C), so rustdoc shows the width a caller must supply instead of an unresolved private name.
 
 ## [14.0.0] - 2026-11-22

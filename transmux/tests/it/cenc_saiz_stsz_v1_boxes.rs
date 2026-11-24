@@ -208,7 +208,7 @@ fn tkhd_v1_matches_mp4box_diso() {
 #[test]
 fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
     use isobmff::cenc::SampleAuxInfoOffsetsBox;
-    use transmux::fragment_build::{FragmentProtection, protect_media_segment};
+    use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 
     fn boxed(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
         let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
@@ -241,12 +241,12 @@ fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
     let b = entries(0x22);
     let protections = [
         FragmentProtection {
-            track_id: TrackId::new(1).into(),
+            track_id: TrackId::new(1),
             entries: &a,
             per_sample_iv_size: 8,
         },
         FragmentProtection {
-            track_id: TrackId::new(2).into(),
+            track_id: TrackId::new(2),
             entries: &b,
             per_sample_iv_size: 8,
         },

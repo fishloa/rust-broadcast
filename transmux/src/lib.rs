@@ -53,7 +53,7 @@
 //!   ([`CencDecryptor`]) + encrypt ([`CencEncryptor`], which populates
 //!   [`Track::encryption`] for the muxer's `sinf`/`senc`/`saio`/`saiz` box
 //!   emission — [`cenc_segment::protect_init_segment`] /
-//!   [`fragment_build::protect_media_segment`]); DRM signalling driven off
+//!   [`isobmff::writer::fragmented::protect_media_segment`]); DRM signalling driven off
 //!   that same `Track::encryption` — [`DashPackager`] auto-derives the
 //!   generic-CENC `ContentProtection` (plus caller-supplied per-DRM-system
 //!   `cenc:pssh`), [`broadcast_hls::cenc_ext_x_key`] renders the HLS
@@ -175,7 +175,6 @@ pub mod dts_core;
 pub mod error;
 pub mod flv;
 pub mod flv_stream;
-pub mod fragment_build;
 pub mod h262;
 pub mod hdr;
 pub mod hdr10plus;

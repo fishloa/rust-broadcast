@@ -50,7 +50,6 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
-use crate::fragment_build::{MediaRunSample, media_fragment_run};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::{CodecConfig, Sample};
 use broadcast_common::wire::{be_u32, be_u64};
@@ -61,6 +60,7 @@ use isobmff::box_types::{
 };
 use isobmff::movie_fragment::{MovieFragmentBox, MovieFragmentHeaderBox, TRAF, TrackFragmentBox};
 use isobmff::segments::{MDAT, MediaDataBox, SegmentTypeBox, starts_with_moof};
+use isobmff::writer::{RunSample, media_fragment_run};
 
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
 /// [MS-SSTR] §2.2.2 (`SmoothStreamingMedia@TimeScale`); the single definition
@@ -853,11 +853,11 @@ fn build_smooth_fragment(
     };
 
     let (tfhd, trun) = media_fragment_run(
-        track_id,
-        samples.iter().zip(times).map(|(s, t)| MediaRunSample {
+        isobmff::TrackId::new(track_id.value()),
+        samples.iter().zip(times).map(|(s, t)| RunSample {
             duration: t.duration,
             size: s.data.len(),
-            is_sync: s.flags.is_sync,
+            sync: s.flags.is_sync,
             composition_offset: t.composition_offset,
         }),
     )?;

@@ -211,6 +211,9 @@ pub struct Demand {
     /// `true` if the stage is currently full and would prefer not to receive
     /// more input until it has been polled / has had time to drain.
     pub saturated: bool,
+    /// Absolute input offset the stage wants the next bytes at, or `None` when
+    /// the stage consumes its input as a plain forward-only stream.
+    pub offset: Option<u64>,
 }
 
 impl Demand {
@@ -219,6 +222,16 @@ impl Demand {
         Demand {
             want_bytes,
             saturated: false,
+            offset: None,
+        }
+    }
+
+    /// Build a [`Demand`] for `want_bytes` at the absolute offset `offset`.
+    pub const fn at(offset: u64, want_bytes: usize) -> Self {
+        Demand {
+            want_bytes,
+            saturated: false,
+            offset: Some(offset),
         }
     }
 
@@ -227,6 +240,7 @@ impl Demand {
         Demand {
             want_bytes: 0,
             saturated: true,
+            offset: None,
         }
     }
 
@@ -463,6 +477,16 @@ mod tests {
             super::Demand::saturated()
         );
         assert_eq!(super::Demand::saturated_if(false), super::Demand::default());
+    }
+
+    #[test]
+    fn only_at_carries_an_absolute_offset() {
+        assert_eq!(super::Demand::at(4096, 32).offset, Some(4096));
+        assert_eq!(super::Demand::at(4096, 32).want_bytes, 32);
+        assert!(!super::Demand::at(4096, 32).saturated);
+        assert_eq!(super::Demand::new(32).offset, None);
+        assert_eq!(super::Demand::saturated().offset, None);
+        assert_eq!(super::Demand::default().offset, None);
     }
 
     use super::*;
