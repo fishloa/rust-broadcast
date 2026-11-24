@@ -43,6 +43,9 @@ use broadcast_common::clock33::pcr_signed_distance;
 
 const TICKS_PER_US_I: i64 = TICKS_PER_US as i64;
 
+/// Fewest known tracks for a limiting track to be meaningful.
+const MIN_LIMITING_TRACKS: usize = 2;
+
 /// Signed lead in microseconds of `media_end` over `from` (PTS domain).
 fn lead_between(from: Clock27, media_end: Clock27) -> i64 {
     pcr_signed_distance(from.ticks(), media_end.ticks()) / TICKS_PER_US_I
@@ -324,7 +327,7 @@ impl BufferController {
 
     /// The limiting track, only meaningful with two or more tracks known.
     fn limiting(&self) -> Option<u32> {
-        if self.tracks.len() < 2 {
+        if self.tracks.len() < MIN_LIMITING_TRACKS {
             return None;
         }
         self.effective().map(|e| e.limiting)

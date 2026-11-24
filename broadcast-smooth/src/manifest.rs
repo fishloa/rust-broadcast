@@ -256,7 +256,7 @@ impl From<XmlError> for SmoothParseError {
 #[must_use]
 pub fn default_limits() -> XmlLimits {
     let mut limits = XmlLimits::default();
-    limits.max_attribute_bytes = 2 * MAX_CODEC_PRIVATE_DATA_HEX_LEN;
+    limits.max_attribute_bytes = CODEC_PRIVATE_DATA_ATTRIBUTE_CAP;
     limits
 }
 
@@ -276,6 +276,11 @@ pub const MAX_CHUNK_RUN: usize = 100_000;
 /// a few hundred bytes), while still protecting against a hostile Manifest's
 /// unbounded `CodecPrivateData` allocating without limit.
 pub const MAX_CODEC_PRIVATE_DATA_HEX_LEN: usize = 65_536;
+
+/// Attribute ceiling [`default_limits`] applies: twice the
+/// `CodecPrivateData` hex cap, so that cap (not the generic one) rejects an
+/// oversized value.
+const CODEC_PRIVATE_DATA_ATTRIBUTE_CAP: usize = 2 * MAX_CODEC_PRIVATE_DATA_HEX_LEN;
 
 // ---------------------------------------------------------------------------
 // Manifest wire constants
@@ -320,7 +325,7 @@ const ATTR_URL: &str = "Url";
 const ATTR_N: &str = "n";
 const ATTR_INDEX: &str = "Index";
 const ATTR_BITRATE: &str = "Bitrate";
-const ATTR_FOUR_CC: &str = "FourCC";
+const ATTR_FOURCC: &str = "FourCC";
 const ATTR_CODEC_PRIVATE_DATA: &str = "CodecPrivateData";
 const ATTR_MAX_WIDTH: &str = "MaxWidth";
 const ATTR_MAX_HEIGHT: &str = "MaxHeight";
@@ -846,7 +851,8 @@ impl SmoothManifest {
         const EL: &str = "SmoothStreamingMedia";
         let root = read_tree::<Ns>(xml.as_bytes(), ELEMENT_ROOT, &limits)?;
 
-        let major_version: u32 = parse_attr(&root, "MajorVersion", EL)?.unwrap_or(2);
+        let major_version: u32 =
+            parse_attr(&root, "MajorVersion", EL)?.unwrap_or(DEFAULT_MAJOR_VERSION);
         let minor_version: u32 = parse_attr(&root, "MinorVersion", EL)?.unwrap_or(0);
         let timescale = parse_timescale(&root, EL)?.unwrap_or(SMOOTH_DEFAULT_TIMESCALE);
         let duration: Option<u64> = parse_attr(&root, "Duration", EL)?;
@@ -1141,7 +1147,7 @@ impl QualityLevel {
         let mut attrs = alloc::vec![
             (ATTR_INDEX, self.index.to_string()),
             (ATTR_BITRATE, self.bitrate.to_string()),
-            (ATTR_FOUR_CC, self.four_cc.clone()),
+            (ATTR_FOURCC, self.four_cc.clone()),
         ];
         if let Some(width) = self.width {
             attrs.push((ATTR_MAX_WIDTH, width.to_string()));

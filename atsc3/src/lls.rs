@@ -19,6 +19,11 @@ use broadcast_common::{Parse, Serialize};
 /// `LLS_group_id` + `group_count_minus1` + `LLS_table_version`), in bytes.
 const HEADER_LEN: usize = 4;
 
+/// Byte offset of `group_count_minus1` within the `LLS_table()` header.
+const GROUP_COUNT_MINUS1_OFFSET: usize = 2;
+/// Byte offset of `LLS_table_version` within the `LLS_table()` header.
+const TABLE_VERSION_OFFSET: usize = 3;
+
 /// `LLS_table()` common envelope (A/331 §6.2 Table 6.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -63,8 +68,8 @@ impl<'a> Parse<'a> for LlsEnvelope<'a> {
         Ok(Self {
             table_id: LlsTableId::from_u8(bytes[0]),
             group_id: bytes[1],
-            group_count_minus1: bytes[2],
-            table_version: bytes[3],
+            group_count_minus1: bytes[GROUP_COUNT_MINUS1_OFFSET],
+            table_version: bytes[TABLE_VERSION_OFFSET],
             payload: &bytes[HEADER_LEN..],
         })
     }
@@ -87,8 +92,8 @@ impl Serialize for LlsEnvelope<'_> {
         }
         buf[0] = self.table_id.to_u8();
         buf[1] = self.group_id;
-        buf[2] = self.group_count_minus1;
-        buf[3] = self.table_version;
+        buf[GROUP_COUNT_MINUS1_OFFSET] = self.group_count_minus1;
+        buf[TABLE_VERSION_OFFSET] = self.table_version;
         buf[HEADER_LEN..len].copy_from_slice(self.payload);
         Ok(len)
     }
