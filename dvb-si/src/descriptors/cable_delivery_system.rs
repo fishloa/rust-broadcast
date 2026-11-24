@@ -36,7 +36,7 @@ const FEC_INNER_OFFSET: usize = SYMBOL_RATE_BCD_OFFSET + SYMBOL_RATE_BCD_BYTES;
 /// Shift of the reserved bits within the reserved/fec_outer word.
 const RESERVED_FU_SHIFT: u16 = 4;
 /// Mask of `fec_outer` within its word.
-const FEC_OUTER_MASK: u16 = 0x000F;
+const FEC_OUTER_MASK: u8 = 0x0F;
 /// Shift of the `symbol_rate` low nibble in the packed 28-bit field.
 const SYMBOL_RATE_LOW_NIBBLE_SHIFT: u32 = 4;
 /// Mask of the `symbol_rate` low nibble.
@@ -394,7 +394,7 @@ impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
 
         let bytes_4_5 = u16::from_be_bytes([hdr[RESERVED_FU_OFFSET], hdr[RESERVED_FU_OFFSET + 1]]);
         let reserved_future_use = ReservedOnes::from_bits(u64::from(bytes_4_5 >> RESERVED_FU_SHIFT));
-        let fec_outer_raw = (bytes_4_5 & FEC_OUTER_MASK) as u8;
+        let fec_outer_raw = (bytes_4_5 & u16::from(FEC_OUTER_MASK)) as u8;
 
         let modulation_byte = hdr[MODULATION_OFFSET];
 
