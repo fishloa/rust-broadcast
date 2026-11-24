@@ -29,6 +29,13 @@ pub struct Time {
 /// Fixed wire length for `time()`.
 pub const TIME_LEN: usize = 8;
 
+/// Byte offset of `seconds` within `time()`.
+const SECONDS_OFFSET: usize = 0;
+/// Byte offset of `microseconds` within `time()`.
+const MICROSECONDS_OFFSET: usize = 4;
+/// Offset of the second 16-bit word within a 4-byte big-endian word.
+const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
+
 impl Time {
     /// Construct a zero `Time` (signals unused / time sync not active).
     #[must_use]
@@ -45,8 +52,18 @@ impl<'a> Parse<'a> for Time {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, TIME_LEN, "time()")?;
         Ok(Self {
-            seconds: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            microseconds: u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+            seconds: u32::from_be_bytes([
+                bytes[SECONDS_OFFSET],
+                bytes[SECONDS_OFFSET + 1],
+                bytes[SECONDS_OFFSET + U32_SECOND_WORD_OFFSET],
+                bytes[SECONDS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
+            ]),
+            microseconds: u32::from_be_bytes([
+                bytes[MICROSECONDS_OFFSET],
+                bytes[MICROSECONDS_OFFSET + 1],
+                bytes[MICROSECONDS_OFFSET + U32_SECOND_WORD_OFFSET],
+                bytes[MICROSECONDS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
+            ]),
         })
     }
 }
@@ -78,12 +95,38 @@ pub struct SpliceScheduleTime {
 /// Fixed wire length for `SpliceScheduleTime`.
 pub const SCHEDULE_TIME_LEN: usize = 4;
 
+// `timestamp()` layout (ANSI/SCTE 104 2023 §8.2.1).
+const TIME_TYPE_OFFSET: usize = 0;
+const TIME_TYPE_NONE: u8 = 0;
+const TIME_TYPE_UTC: u8 = 1;
+const TIME_TYPE_VITC: u8 = 2;
+const TIME_TYPE_GPI: u8 = 3;
+const UTC_SECONDS_OFFSET: usize = 1;
+const UTC_MICROSECONDS_OFFSET: usize = 5;
+const VITC_HOURS_OFFSET: usize = 1;
+const VITC_MINUTES_OFFSET: usize = 2;
+const VITC_SECONDS_OFFSET: usize = 3;
+const VITC_FRAMES_OFFSET: usize = 4;
+const GPI_NUMBER_OFFSET: usize = 1;
+const GPI_EDGE_OFFSET: usize = 2;
+/// Wire length of a UTC timestamp (type byte included).
+const UTC_TIMESTAMP_LEN: usize = 7;
+/// Wire length of a VITC timestamp.
+const VITC_TIMESTAMP_LEN: usize = 5;
+/// Wire length of a GPI timestamp.
+const GPI_TIMESTAMP_LEN: usize = 3;
+
 impl<'a> Parse<'a> for SpliceScheduleTime {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, SCHEDULE_TIME_LEN, "schedule time")?;
         Ok(Self {
-            seconds: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            seconds: u32::from_be_bytes([
+                bytes[SECONDS_OFFSET],
+                bytes[SECONDS_OFFSET + 1],
+                bytes[SECONDS_OFFSET + U32_SECOND_WORD_OFFSET],
+                bytes[SECONDS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
+            ]),
         })
     }
 }
@@ -226,29 +269,37 @@ impl<'a> Parse<'a> for Timestamp {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, 1, "timestamp time_type")?;
-        match bytes[0] {
+        match bytes[TIME_TYPE_OFFSET] {
             0 => Ok(Self::None),
             1 => {
-                need_in(bytes, 7, "timestamp UTC")?;
+                need_in(bytes, UTC_TIMESTAMP_LEN, "timestamp UTC")?;
                 Ok(Self::Utc(UtcTimestamp {
-                    seconds: u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]),
-                    microseconds: u16::from_be_bytes([bytes[5], bytes[6]]),
+                    seconds: u32::from_be_bytes([
+                        bytes[UTC_SECONDS_OFFSET],
+                        bytes[UTC_SECONDS_OFFSET + 1],
+                        bytes[UTC_SECONDS_OFFSET + U32_SECOND_WORD_OFFSET],
+                        bytes[UTC_SECONDS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
+                    ]),
+                    microseconds: u16::from_be_bytes([
+                        bytes[UTC_MICROSECONDS_OFFSET],
+                        bytes[UTC_MICROSECONDS_OFFSET + 1],
+                    ]),
                 }))
             }
             2 => {
-                need_in(bytes, 5, "timestamp VITC")?;
+                need_in(bytes, VITC_TIMESTAMP_LEN, "timestamp VITC")?;
                 Ok(Self::SmpteVitc(SmpteVitcTimestamp {
-                    hours: bytes[1],
-                    minutes: bytes[2],
-                    seconds: bytes[3],
-                    frames: bytes[4],
+                    hours: bytes[VITC_HOURS_OFFSET],
+                    minutes: bytes[VITC_MINUTES_OFFSET],
+                    seconds: bytes[VITC_SECONDS_OFFSET],
+                    frames: bytes[VITC_FRAMES_OFFSET],
                 }))
             }
             3 => {
-                need_in(bytes, 3, "timestamp GPI")?;
+                need_in(bytes, GPI_TIMESTAMP_LEN, "timestamp GPI")?;
                 Ok(Self::Gpi(GpiTimestamp {
-                    gpi_number: bytes[1],
-                    gpi_edge: bytes[2],
+                    gpi_number: bytes[GPI_NUMBER_OFFSET],
+                    gpi_edge: bytes[GPI_EDGE_OFFSET],
                 }))
             }
             other => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
@@ -275,24 +326,24 @@ impl Serialize for Timestamp {
         need_out(buf, need)?;
         match self {
             Self::None => {
-                buf[0] = 0;
+                buf[TIME_TYPE_OFFSET] = TIME_TYPE_NONE;
             }
             Self::Utc(u) => {
-                buf[0] = 1;
+                buf[TIME_TYPE_OFFSET] = TIME_TYPE_UTC;
                 buf[1..5].copy_from_slice(&u.seconds.to_be_bytes());
                 buf[5..7].copy_from_slice(&u.microseconds.to_be_bytes());
             }
             Self::SmpteVitc(v) => {
-                buf[0] = 2;
-                buf[1] = v.hours;
-                buf[2] = v.minutes;
-                buf[3] = v.seconds;
-                buf[4] = v.frames;
+                buf[TIME_TYPE_OFFSET] = TIME_TYPE_VITC;
+                buf[VITC_HOURS_OFFSET] = v.hours;
+                buf[VITC_MINUTES_OFFSET] = v.minutes;
+                buf[VITC_SECONDS_OFFSET] = v.seconds;
+                buf[VITC_FRAMES_OFFSET] = v.frames;
             }
             Self::Gpi(g) => {
-                buf[0] = 3;
-                buf[1] = g.gpi_number;
-                buf[2] = g.gpi_edge;
+                buf[TIME_TYPE_OFFSET] = TIME_TYPE_GPI;
+                buf[GPI_NUMBER_OFFSET] = g.gpi_number;
+                buf[GPI_EDGE_OFFSET] = g.gpi_edge;
             }
         }
         Ok(need)

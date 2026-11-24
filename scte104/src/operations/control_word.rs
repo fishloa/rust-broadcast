@@ -21,6 +21,18 @@ pub const DELETE_LEN: usize = 1;
 /// Fixed wire length of `update_ControlWord_data()`.
 pub const UPDATE_LEN: usize = 1 + 8 + 8 + 8; // CW_index + CW_A + CW_B + CW_C = 25
 
+// Field byte offsets within `update_ControlWord_data()` (ANSI/SCTE 104 2023 §9.4.4).
+const CW_INDEX_OFFSET: usize = 0;
+const CW_A_OFFSET: usize = 1;
+const CW_B_OFFSET: usize = CW_A_OFFSET + core::mem::size_of::<u64>();
+const CW_C_OFFSET: usize = CW_B_OFFSET + core::mem::size_of::<u64>();
+
+fn read_u64_be(bytes: &[u8], offset: usize) -> u64 {
+    let mut be = [0u8; core::mem::size_of::<u64>()];
+    be.copy_from_slice(&bytes[offset..offset + core::mem::size_of::<u64>()]);
+    u64::from_be_bytes(be)
+}
+
 /// delete_ControlWord_data() — §9.4.4, Table 9-10.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -58,7 +70,7 @@ impl Serialize for DeleteControlWord {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, DELETE_LEN)?;
-        buf[0] = self.cw_index;
+        buf[CW_INDEX_OFFSET] = self.cw_index;
         Ok(DELETE_LEN)
     }
 }
@@ -73,18 +85,10 @@ impl<'a> Parse<'a> for UpdateControlWord {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, UPDATE_LEN, "update_ControlWord data")?;
         Ok(Self {
-            cw_index: bytes[0],
-            cw_a: u64::from_be_bytes([
-                bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
-            ]),
-            cw_b: u64::from_be_bytes([
-                bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
-                bytes[16],
-            ]),
-            cw_c: u64::from_be_bytes([
-                bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
-                bytes[24],
-            ]),
+            cw_index: bytes[CW_INDEX_OFFSET],
+            cw_a: read_u64_be(bytes, CW_A_OFFSET),
+            cw_b: read_u64_be(bytes, CW_B_OFFSET),
+            cw_c: read_u64_be(bytes, CW_C_OFFSET),
         })
     }
 }
@@ -96,7 +100,7 @@ impl Serialize for UpdateControlWord {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, UPDATE_LEN)?;
-        buf[0] = self.cw_index;
+        buf[CW_INDEX_OFFSET] = self.cw_index;
         buf[1..9].copy_from_slice(&self.cw_a.to_be_bytes());
         buf[9..17].copy_from_slice(&self.cw_b.to_be_bytes());
         buf[17..25].copy_from_slice(&self.cw_c.to_be_bytes());

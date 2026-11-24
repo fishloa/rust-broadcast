@@ -25,6 +25,8 @@ pub struct ComponentModeEntry {
 
 /// Fixed wire size per component entry.
 pub const ENTRY_LEN: usize = 3;
+/// Byte offset of `component_preroll` within one entry.
+const COMPONENT_PREROLL_OFFSET: usize = 1;
 
 /// component_mode_DPI_request_data() — §9.5.1, Table 9-11.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -53,7 +55,10 @@ impl<'a> Parse<'a> for ComponentModeDpi {
             let off = i * ENTRY_LEN;
             components.push(ComponentModeEntry {
                 component_tag: bytes[off],
-                component_preroll: u16::from_be_bytes([bytes[off + 1], bytes[off + 2]]),
+                component_preroll: u16::from_be_bytes([
+                    bytes[off + COMPONENT_PREROLL_OFFSET],
+                    bytes[off + COMPONENT_PREROLL_OFFSET + 1],
+                ]),
             });
         }
         Ok(Self { components })
@@ -71,7 +76,8 @@ impl Serialize for ComponentModeDpi {
         for (i, c) in self.components.iter().enumerate() {
             let off = i * ENTRY_LEN;
             buf[off] = c.component_tag;
-            buf[off + 1..off + 3].copy_from_slice(&c.component_preroll.to_be_bytes());
+            buf[off + COMPONENT_PREROLL_OFFSET..off + ENTRY_LEN]
+                .copy_from_slice(&c.component_preroll.to_be_bytes());
         }
         Ok(need)
     }

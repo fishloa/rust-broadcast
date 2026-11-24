@@ -14,6 +14,18 @@ pub const OP_ID: u16 = 0x0101;
 
 /// Fixed wire length of `splice_request_data()`.
 pub const LEN: usize = 15;
+// Field byte offsets within `splice_request_data()` (ANSI/SCTE 104 2023 §9.3.2).
+const SPLICE_INSERT_TYPE_OFFSET: usize = 0;
+const SPLICE_EVENT_ID_OFFSET: usize = 1;
+const UNIQUE_PROGRAM_ID_OFFSET: usize = 5;
+const PRE_ROLL_TIME_OFFSET: usize = 7;
+const BREAK_DURATION_OFFSET: usize = 9;
+const AVAIL_NUM_OFFSET: usize = 11;
+const AVAILS_EXPECTED_OFFSET: usize = 12;
+const AUTO_RETURN_FLAG_OFFSET: usize = 13;
+const NOT_AN_ENTRY_FLAG_OFFSET: usize = 14;
+/// Offset of the second 16-bit word within a 4-byte big-endian word.
+const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 // splice_insert_type(1) + splice_event_id(4) + unique_program_id(2) +
 // pre_roll_time(2) + break_duration(2) + avail_num(1) + avails_expected(1) +
 // auto_return_flag(1) + not_an_entry_flag(1)
@@ -130,15 +142,29 @@ impl<'a> Parse<'a> for SpliceRequest {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, LEN, "splice_request_data")?;
         Ok(Self {
-            splice_insert_type: SpliceInsertType::from_byte(bytes[0]),
-            splice_event_id: u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]),
-            unique_program_id: u16::from_be_bytes([bytes[5], bytes[6]]),
-            pre_roll_time: u16::from_be_bytes([bytes[7], bytes[8]]),
-            break_duration: u16::from_be_bytes([bytes[9], bytes[10]]),
-            avail_num: bytes[11],
-            avails_expected: bytes[12],
-            auto_return_flag: bytes[13],
-            not_an_entry_flag: bytes[14],
+            splice_insert_type: SpliceInsertType::from_byte(bytes[SPLICE_INSERT_TYPE_OFFSET]),
+            splice_event_id: u32::from_be_bytes([
+                bytes[SPLICE_EVENT_ID_OFFSET],
+                bytes[SPLICE_EVENT_ID_OFFSET + 1],
+                bytes[SPLICE_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET],
+                bytes[SPLICE_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET + 1],
+            ]),
+            unique_program_id: u16::from_be_bytes([
+                bytes[UNIQUE_PROGRAM_ID_OFFSET],
+                bytes[UNIQUE_PROGRAM_ID_OFFSET + 1],
+            ]),
+            pre_roll_time: u16::from_be_bytes([
+                bytes[PRE_ROLL_TIME_OFFSET],
+                bytes[PRE_ROLL_TIME_OFFSET + 1],
+            ]),
+            break_duration: u16::from_be_bytes([
+                bytes[BREAK_DURATION_OFFSET],
+                bytes[BREAK_DURATION_OFFSET + 1],
+            ]),
+            avail_num: bytes[AVAIL_NUM_OFFSET],
+            avails_expected: bytes[AVAILS_EXPECTED_OFFSET],
+            auto_return_flag: bytes[AUTO_RETURN_FLAG_OFFSET],
+            not_an_entry_flag: bytes[NOT_AN_ENTRY_FLAG_OFFSET],
         })
     }
 }
@@ -150,15 +176,15 @@ impl Serialize for SpliceRequest {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, LEN)?;
-        buf[0] = self.splice_insert_type.to_byte();
+        buf[SPLICE_INSERT_TYPE_OFFSET] = self.splice_insert_type.to_byte();
         buf[1..5].copy_from_slice(&self.splice_event_id.to_be_bytes());
         buf[5..7].copy_from_slice(&self.unique_program_id.to_be_bytes());
         buf[7..9].copy_from_slice(&self.pre_roll_time.to_be_bytes());
         buf[9..11].copy_from_slice(&self.break_duration.to_be_bytes());
-        buf[11] = self.avail_num;
-        buf[12] = self.avails_expected;
-        buf[13] = self.auto_return_flag;
-        buf[14] = self.not_an_entry_flag;
+        buf[AVAIL_NUM_OFFSET] = self.avail_num;
+        buf[AVAILS_EXPECTED_OFFSET] = self.avails_expected;
+        buf[AUTO_RETURN_FLAG_OFFSET] = self.auto_return_flag;
+        buf[NOT_AN_ENTRY_FLAG_OFFSET] = self.not_an_entry_flag;
         Ok(LEN)
     }
 }

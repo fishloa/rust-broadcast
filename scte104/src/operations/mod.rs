@@ -45,7 +45,31 @@ pub mod start_schedule_download;
 pub mod time_signal_request;
 pub mod transmit_schedule;
 
+use self::provisioning_request::SERVICE_NAME_LEN;
 pub use any::AnyOperation;
+
+// Shared wire layout constants (ANSI/SCTE 104 2023 §8/§10).
+const PROVIDER_AVAIL_ID_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of the second 16-bit word within a 4-byte big-endian word.
+const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
+
+/// Fixed wire length of `inject_complete_response`.
+const INJECT_COMPLETE_RESPONSE_LEN: usize = 2;
+
+// `config_request_data()` field offsets (§10.4.1, Table 10-1).
+const AS_IP_ADDRESS_OFFSET: usize = 0;
+const AS_SOCKET_NUMBER_OFFSET: usize = 4;
+const ACTIVE_FLAG_OFFSET: usize = 6;
+const PROTOCOL_VERSION_OFFSET: usize = 7;
+const LAST_AS_INDEX_OFFSET: usize = 8;
+const LAST_INJECTOR_COUNT_OFFSET: usize = 9;
+const PERMANENT_CONNECTION_REQUESTED_OFFSET: usize = 11;
+
+// `fault_request_data()` field offsets (§10.6.1, Table 10-5).
+const FAULT_IP_ADDRESS_OFFSET: usize = 0;
+const FAULT_SOCKET_NUMBER_OFFSET: usize = 4;
+const FAULT_SERVICE_NAME_OFFSET: usize = 6;
+const FAULT_DPI_PID_INDEX_OFFSET: usize = 38;
 
 /// Reject an operation body whose length is not exactly what the parsed typed
 /// structure re-serializes to (#1103 W4). The typed parsers read what they
@@ -83,16 +107,23 @@ pub(crate) fn parse_provider_avail_ids(
         ));
     };
     let count = usize::from(count);
-    let need = 1 + count * 4;
+    let need = 1 + count * PROVIDER_AVAIL_ID_LEN;
     need_in(bytes, need, what_ids)?;
     Ok(bytes[1..need]
-        .chunks_exact(4)
-        .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+        .chunks_exact(PROVIDER_AVAIL_ID_LEN)
+        .map(|c| {
+            u32::from_be_bytes([
+                c[0],
+                c[1],
+                c[U32_SECOND_WORD_OFFSET],
+                c[U32_SECOND_WORD_OFFSET + 1],
+            ])
+        })
         .collect())
 }
 
 pub(crate) fn provider_avail_ids_len(ids: &[u32]) -> usize {
-    1 + ids.len() * 4
+    1 + ids.len() * PROVIDER_AVAIL_ID_LEN
 }
 
 pub(crate) fn write_provider_avail_ids(
@@ -103,7 +134,10 @@ pub(crate) fn write_provider_avail_ids(
     let need = provider_avail_ids_len(ids);
     need_out(buf, need)?;
     buf[0] = broadcast_common::len::fit_u8(ids.len(), what_count)?;
-    for (chunk, &id) in buf[1..need].chunks_exact_mut(4).zip(ids) {
+    for (chunk, &id) in buf[1..need]
+        .chunks_exact_mut(PROVIDER_AVAIL_ID_LEN)
+        .zip(ids)
+    {
         chunk.copy_from_slice(&id.to_be_bytes());
     }
     Ok(need)
@@ -256,7 +290,7 @@ pub struct FaultRequest {
     pub injector_socket_number: u16,
     /// `injector_service_name` — 32-byte NUL-terminated string field. Must
     /// match the `service_name` sent by the PAMS in `provisioning_request_data()`.
-    pub injector_service_name: [u8; 32],
+    pub injector_service_name: [u8; SERVICE_NAME_LEN],
     /// `DPI_PID_index` — 2 bytes. May be zero if the Injector is otherwise
     /// unambiguously identified.
     pub dpi_pid_index: u16,
@@ -402,7 +436,11 @@ impl crate::traits::OperationDef<'_> for InjectResponse {
 impl<'a> Parse<'a> for InjectCompleteResponse {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 2, "inject_complete_response")?;
+        need_in(
+            bytes,
+            INJECT_COMPLETE_RESPONSE_LEN,
+            "inject_complete_response",
+        )?;
         Ok(Self {
             message_number: bytes[0],
             cue_message_count: bytes[1],
@@ -413,13 +451,13 @@ impl<'a> Parse<'a> for InjectCompleteResponse {
 impl Serialize for InjectCompleteResponse {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        2
+        INJECT_COMPLETE_RESPONSE_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        need_out(buf, 2)?;
+        need_out(buf, INJECT_COMPLETE_RESPONSE_LEN)?;
         buf[0] = self.message_number;
         buf[1] = self.cue_message_count;
-        Ok(2)
+        Ok(INJECT_COMPLETE_RESPONSE_LEN)
     }
 }
 
@@ -435,13 +473,24 @@ impl<'a> Parse<'a> for ConfigRequest {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, CONFIG_REQUEST_LEN, "config_request_data")?;
         Ok(Self {
-            as_ip_address: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            as_socket_number: u16::from_be_bytes([bytes[4], bytes[5]]),
-            activeflag: bytes[6],
-            protocol_version: bytes[7],
-            last_as_index: bytes[8],
-            last_injectorcount: u16::from_be_bytes([bytes[9], bytes[10]]),
-            permanent_connection_requested: bytes[11],
+            as_ip_address: u32::from_be_bytes([
+                bytes[AS_IP_ADDRESS_OFFSET],
+                bytes[AS_IP_ADDRESS_OFFSET + 1],
+                bytes[AS_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET],
+                bytes[AS_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
+            ]),
+            as_socket_number: u16::from_be_bytes([
+                bytes[AS_SOCKET_NUMBER_OFFSET],
+                bytes[AS_SOCKET_NUMBER_OFFSET + 1],
+            ]),
+            activeflag: bytes[ACTIVE_FLAG_OFFSET],
+            protocol_version: bytes[PROTOCOL_VERSION_OFFSET],
+            last_as_index: bytes[LAST_AS_INDEX_OFFSET],
+            last_injectorcount: u16::from_be_bytes([
+                bytes[LAST_INJECTOR_COUNT_OFFSET],
+                bytes[LAST_INJECTOR_COUNT_OFFSET + 1],
+            ]),
+            permanent_connection_requested: bytes[PERMANENT_CONNECTION_REQUESTED_OFFSET],
         })
     }
 }
@@ -455,11 +504,11 @@ impl Serialize for ConfigRequest {
         need_out(buf, CONFIG_REQUEST_LEN)?;
         buf[0..4].copy_from_slice(&self.as_ip_address.to_be_bytes());
         buf[4..6].copy_from_slice(&self.as_socket_number.to_be_bytes());
-        buf[6] = self.activeflag;
-        buf[7] = self.protocol_version;
-        buf[8] = self.last_as_index;
+        buf[ACTIVE_FLAG_OFFSET] = self.activeflag;
+        buf[PROTOCOL_VERSION_OFFSET] = self.protocol_version;
+        buf[LAST_AS_INDEX_OFFSET] = self.last_as_index;
         buf[9..11].copy_from_slice(&self.last_injectorcount.to_be_bytes());
-        buf[11] = self.permanent_connection_requested;
+        buf[PERMANENT_CONNECTION_REQUESTED_OFFSET] = self.permanent_connection_requested;
         Ok(CONFIG_REQUEST_LEN)
     }
 }
@@ -504,13 +553,26 @@ impl<'a> Parse<'a> for FaultRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, FAULT_REQUEST_LEN, "fault_request_data")?;
-        let mut injector_service_name = [0u8; 32];
-        injector_service_name.copy_from_slice(&bytes[6..38]);
+        let mut injector_service_name = [0u8; SERVICE_NAME_LEN];
+        injector_service_name.copy_from_slice(
+            &bytes[FAULT_SERVICE_NAME_OFFSET..FAULT_SERVICE_NAME_OFFSET + SERVICE_NAME_LEN],
+        );
         Ok(Self {
-            injector_ip_address: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            injector_socket_number: u16::from_be_bytes([bytes[4], bytes[5]]),
+            injector_ip_address: u32::from_be_bytes([
+                bytes[FAULT_IP_ADDRESS_OFFSET],
+                bytes[FAULT_IP_ADDRESS_OFFSET + 1],
+                bytes[FAULT_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET],
+                bytes[FAULT_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
+            ]),
+            injector_socket_number: u16::from_be_bytes([
+                bytes[FAULT_SOCKET_NUMBER_OFFSET],
+                bytes[FAULT_SOCKET_NUMBER_OFFSET + 1],
+            ]),
             injector_service_name,
-            dpi_pid_index: u16::from_be_bytes([bytes[38], bytes[39]]),
+            dpi_pid_index: u16::from_be_bytes([
+                bytes[FAULT_DPI_PID_INDEX_OFFSET],
+                bytes[FAULT_DPI_PID_INDEX_OFFSET + 1],
+            ]),
         })
     }
 }

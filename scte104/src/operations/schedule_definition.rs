@@ -14,6 +14,16 @@ pub const OP_ID: u16 = 0x010E;
 
 /// Fixed wire length of `schedule_definition_data()`.
 pub const LEN: usize = 16;
+// Field byte offsets within `schedule_definition_data()` (ANSI/SCTE 104 2023 §9.7.2).
+const SPLICE_SCHEDULE_COMMAND_OFFSET: usize = 0;
+const SPLICE_EVENT_ID_OFFSET: usize = 1;
+const UNIQUE_PROGRAM_ID_OFFSET: usize = 9;
+const AUTO_RETURN_OFFSET: usize = 11;
+const BREAK_DURATION_OFFSET: usize = 12;
+const AVAIL_NUM_OFFSET: usize = 14;
+const AVAILS_EXPECTED_OFFSET: usize = 15;
+/// Offset of the second 16-bit word within a 4-byte big-endian word.
+const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 // splice_schedule_command(1) + splice_event_id(4) + time(4) +
 // unique_program_id(2) + auto_return(1) + break_duration(2) +
 // avail_num(1) + avails_expected(1)
@@ -117,14 +127,27 @@ impl<'a> Parse<'a> for ScheduleDefinition {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, LEN, "schedule_definition_data")?;
         Ok(Self {
-            splice_schedule_command: SpliceScheduleCommand::from_byte(bytes[0]),
-            splice_event_id: u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]),
+            splice_schedule_command: SpliceScheduleCommand::from_byte(
+                bytes[SPLICE_SCHEDULE_COMMAND_OFFSET],
+            ),
+            splice_event_id: u32::from_be_bytes([
+                bytes[SPLICE_EVENT_ID_OFFSET],
+                bytes[SPLICE_EVENT_ID_OFFSET + 1],
+                bytes[SPLICE_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET],
+                bytes[SPLICE_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET + 1],
+            ]),
             time: SpliceScheduleTime::parse(&bytes[5..9])?,
-            unique_program_id: u16::from_be_bytes([bytes[9], bytes[10]]),
-            auto_return: bytes[11],
-            break_duration: u16::from_be_bytes([bytes[12], bytes[13]]),
-            avail_num: bytes[14],
-            avails_expected: bytes[15],
+            unique_program_id: u16::from_be_bytes([
+                bytes[UNIQUE_PROGRAM_ID_OFFSET],
+                bytes[UNIQUE_PROGRAM_ID_OFFSET + 1],
+            ]),
+            auto_return: bytes[AUTO_RETURN_OFFSET],
+            break_duration: u16::from_be_bytes([
+                bytes[BREAK_DURATION_OFFSET],
+                bytes[BREAK_DURATION_OFFSET + 1],
+            ]),
+            avail_num: bytes[AVAIL_NUM_OFFSET],
+            avails_expected: bytes[AVAILS_EXPECTED_OFFSET],
         })
     }
 }
@@ -136,14 +159,14 @@ impl Serialize for ScheduleDefinition {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, LEN)?;
-        buf[0] = self.splice_schedule_command.to_byte();
+        buf[SPLICE_SCHEDULE_COMMAND_OFFSET] = self.splice_schedule_command.to_byte();
         buf[1..5].copy_from_slice(&self.splice_event_id.to_be_bytes());
         self.time.serialize_into(&mut buf[5..9])?;
         buf[9..11].copy_from_slice(&self.unique_program_id.to_be_bytes());
-        buf[11] = self.auto_return;
+        buf[AUTO_RETURN_OFFSET] = self.auto_return;
         buf[12..14].copy_from_slice(&self.break_duration.to_be_bytes());
-        buf[14] = self.avail_num;
-        buf[15] = self.avails_expected;
+        buf[AVAIL_NUM_OFFSET] = self.avail_num;
+        buf[AVAILS_EXPECTED_OFFSET] = self.avails_expected;
         Ok(LEN)
     }
 }

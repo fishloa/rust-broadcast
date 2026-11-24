@@ -2,3 +2,10 @@
 # checker's per-line string stripping does not apply. Format: <path>:<trimmed line> # reason
 st337/src/error.rs:see private/specs-verified/smpte/st337/st337.md scope decision 2)" # prose in a multi-line error message string
 st337/src/error.rs:included) exceeds the 16-bit-mode length_code maximum of 65535 bits" # prose in a multi-line error message string
+scte104/src/operations/mod.rs:impl_empty_body!(GeneralResponse, "GENERAL_RESPONSE", 0x0000); # spec opID constant in a declare-style macro row
+scte104/src/operations/mod.rs:impl_empty_body!(InitRequest, "INIT_REQUEST", 0x0001); # spec opID constant in a declare-style macro row
+scte104/src/operations/mod.rs:impl_empty_body!(InitResponse, "INIT_RESPONSE", 0x0002); # spec opID constant in a declare-style macro row
+scte104/src/operations/mod.rs:impl_empty_body!(ProvisioningResponse, "PROVISIONING_RESPONSE", 0x000C); # spec opID constant in a declare-style macro row
+scte104/src/operations/mod.rs:impl_empty_body!(FaultResponse, "FAULT_RESPONSE", 0x0010); # spec opID constant in a declare-style macro row
+scte104/src/operations/mod.rs:impl_empty_body!(AsAliveRequest, "AS_ALIVE_REQUEST", 0x0011); # spec opID constant in a declare-style macro row
+scte104/src/operations/mod.rs:impl_empty_body!(AsAliveResponse, "AS_ALIVE_RESPONSE", 0x0012); # spec opID constant in a declare-style macro row
