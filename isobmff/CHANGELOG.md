@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `quicktime`, read-only QuickTime atoms a camera or editing `.mov` carries:
+  sound description versions 1 and 2 (including the 64-bit version 2 sample
+  rate and the four version 1 fields), the `wave` decompression container and
+  its `esds`, the base media information header `gmhd`/`gmin`/`tcmi`, the
+  `tmcd` timecode sample entry with `timecode_from_sample`, track aperture
+  dimensions (`tapt`), chapter-title samples, and a `qt  ` or absent `ftyp`.
+  `Mp4aSampleEntry::wave`/`esds` reach an `esds` inside `wave` through the same
+  accessor as a top-level one, `TrackInfo` carries `tapt`, `MediaInformationBox`
+  exposes `gmhd`, and `Reader::brand` reports the `ftyp` box. QuickTime-only
+  types implement `Parse` only; a writer handed one returns
+  `Error::QuickTimeOnly { atom }`, and a plan carries the entry as raw bytes.
+- `Mode::Permissive` and `Step::Warning(Warning)`: the reader tolerates the
+  faults streaming-first design §4.7 lists (a clamped `moov` child, an
+  unparseable known sample entry, an `mp4a` `wave` with no `esds`, a zero
+  `mvhd` timescale, a truncated final `mdat` or fragment, a malformed middle
+  `moof`) and reports each as a typed warning. Strict mode keeps rejecting
+  them, and both modes still fail every `Limits` violation.
+- `DriverStep::Warning` from every driver, `Advance::Warning` in the shared
+  step classifier, and `broadcast-client`'s HTTP-range driver passes it too.
+
+## [Unreleased]
+### Added
+
 - `driver` (feature `std`): `FileReader<R: Read + Seek>` and
   `ForwardReader<R: Read>` answer the sans-IO `Reader`'s structure demands
   themselves and yield `DriverStep::{Tracks, Fragment, Sample, Done}`.

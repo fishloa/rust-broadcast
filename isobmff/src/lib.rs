@@ -50,7 +50,13 @@
 //!   structure byte ranges, surfaces every track and one [`SampleRef`] at a
 //!   time, and hands out a [`SamplePlan`] from the index alone. [`plan`] also
 //!   holds [`OwnedPlan`], the same tables with no borrow, and [`PlanBuilder`],
-//!   which builds one from pushed sample descriptors.
+//!   which builds one from pushed sample descriptors. [`reader::Mode`] is
+//!   strict by default; `Mode::Permissive` reports the design §4.7 faults as
+//!   [`reader::Step::Warning`] instead of failing the read.
+//! - [`quicktime`] — read-only QuickTime atoms a camera or editing `.mov`
+//!   carries: sound description versions 1 and 2, `wave`, `gmhd`, `tmcd`,
+//!   `tapt`, chapter titles, and a `qt  ` or absent `ftyp`. These implement
+//!   `Parse` only; a writer refuses one with `Error::QuickTimeOnly`.
 //! - [`reader`] over a fragmented file — the same state machine reads one
 //!   `moof` at a time, addresses its samples from the following `mdat`
 //!   headers, and seeks through a `sidx` or the trailing `mfra`/`tfra`.
@@ -117,6 +123,7 @@ pub mod mpegh;
 pub mod nalu_types;
 pub mod opus;
 pub mod plan;
+pub mod quicktime;
 pub mod reader;
 pub mod sample_entries;
 pub mod sample_groups;

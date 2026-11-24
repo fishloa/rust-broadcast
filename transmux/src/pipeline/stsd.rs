@@ -191,6 +191,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplesize: *sample_size,
                 compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
+                quicktime: None,
                 config_boxes,
             }));
             TrackMedia::audio(entry)
@@ -220,6 +221,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplesize: *sample_size,
                 compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
+                quicktime: None,
                 config_boxes,
             }));
             TrackMedia::audio(entry)
@@ -249,6 +251,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplesize: *sample_size,
                 compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
+                quicktime: None,
                 config_boxes,
             }));
             TrackMedia::audio(entry)
@@ -317,6 +320,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplesize: *sample_size,
                 compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
+                quicktime: None,
                 config_boxes,
             }));
             TrackMedia::audio(entry)
@@ -341,6 +345,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplesize: *sample_size,
                 compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
+                quicktime: None,
                 config_boxes,
             }));
             TrackMedia::audio(entry)
@@ -365,6 +370,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplesize: *sample_size,
                 compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
+                quicktime: None,
                 config_boxes,
             }));
             TrackMedia::audio(entry)
@@ -390,6 +396,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplesize: *sample_size,
                 compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
+                quicktime: None,
                 config_boxes,
             }));
             TrackMedia::audio(entry)
@@ -443,6 +450,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplesize: *sample_size,
                 compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
+                quicktime: None,
                 config_boxes,
             }));
             TrackMedia::audio(entry)
@@ -469,6 +477,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplesize: *sample_size,
                 compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
+                quicktime: None,
                 config_boxes,
             }));
             TrackMedia::audio(entry)

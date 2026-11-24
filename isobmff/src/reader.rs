@@ -35,11 +35,12 @@ use broadcast_common::Parse;
 use broadcast_common::timescale::Timescale;
 
 use crate::box_types::{
-    BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxHeader, BoxIter, FULLBOX_EXTRA_SIZE, parse_box,
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, BoxHeader, BoxIter, FULLBOX_EXTRA_SIZE,
+    parse_box,
 };
 use crate::cenc::{SampleEncryptionBox, TrackEncryptionBox, sinf_of_sample_entry};
 use crate::error::{Error, Result};
-use crate::frag_offsets::{MdatRange, sample_ranges_in_run};
+use crate::frag_offsets::{MdatRange, sample_ranges_in_run, sample_ranges_in_run_until};
 use crate::init_segment::{
     MediaBox, MovieBox, SampleEntryVariant, StblChild, TrackBox, TrackExtendsBox,
 };
@@ -52,6 +53,7 @@ use crate::movie_fragment::{
 use crate::plan::{SamplePlan, sample_description, sample_table};
 use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
 use crate::sample_table::{CursorState, SampleRef};
+use crate::segments::FileTypeBox;
 use crate::timing::{
     EditListEntry, MovieFragmentRandomAccessBox, MovieFragmentRandomAccessOffsetBox,
     SegmentIndexBox,
@@ -255,6 +257,8 @@ pub struct TrackInfo {
     /// The `stsd` entries in wire order; `description_index` on a sample is
     /// one-based into this list.
     pub entries: Vec<SampleEntryInfo>,
+    /// The QuickTime track aperture dimensions (`tapt`), when present.
+    pub tapt: Option<crate::quicktime::TrackApertureModeDimensionsBox>,
 }
 
 /// One fragment (`moof`) the reader is about to hand out samples for.
@@ -268,6 +272,79 @@ pub struct FragmentInfo {
     /// The tracks this fragment carries samples for, in `traf` order.
     pub tracks: Vec<TrackId>,
 }
+
+/// A fault [`Mode::Permissive`] tolerated, reported once as [`Step::Warning`].
+///
+/// Each variant names the box or sample table row that carried the fault and
+/// the absolute file offset it starts at. A warning never invents a field
+/// value: the reader keeps what the file states and drops only what it cannot
+/// address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Warning {
+    /// A box inside `moov` declared a size past its parent; it was clamped to
+    /// the parent's end.
+    ClampedBox {
+        /// The four-CC of the clamped box.
+        box_type: [u8; BOX_TYPE_SIZE],
+        /// Absolute offset of the box.
+        offset: u64,
+    },
+    /// A known sample-entry four-CC did not parse; the entry was kept raw, with
+    /// no typed form.
+    UnparseableSampleEntry {
+        /// The original four-CC.
+        fourcc: [u8; BOX_TYPE_SIZE],
+        /// Absolute offset of the entry.
+        offset: u64,
+    },
+    /// An `mp4a` sound entry's `wave` atom carried no `esds`.
+    WaveWithoutEsds {
+        /// Absolute offset of the `wave` atom.
+        offset: u64,
+    },
+    /// The movie header timescale was zero; it was treated as 1 so the walk can
+    /// continue. Durations in the movie timescale are unknown.
+    ZeroMovieTimescale {
+        /// Absolute offset of the `mvhd` box.
+        offset: u64,
+    },
+    /// The final `mdat` was truncated; samples fully inside the input were
+    /// emitted.
+    TruncatedMdat {
+        /// Absolute offset of the first range or box past the input end.
+        offset: u64,
+    },
+    /// A final fragment (`moof` or its `mdat`) was truncated.
+    TruncatedFragment {
+        /// Absolute offset of the truncated fragment box.
+        offset: u64,
+    },
+    /// A `moof` in the middle of the file was malformed; the walk continued
+    /// with the next fragment.
+    MalformedFragment {
+        /// Absolute offset of the malformed `moof`.
+        offset: u64,
+    },
+}
+
+impl Warning {
+    /// The warning's stable label.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::ClampedBox { .. } => "clamped-box",
+            Self::UnparseableSampleEntry { .. } => "unparseable-sample-entry",
+            Self::WaveWithoutEsds { .. } => "wave-without-esds",
+            Self::ZeroMovieTimescale { .. } => "zero-movie-timescale",
+            Self::TruncatedMdat { .. } => "truncated-mdat",
+            Self::TruncatedFragment { .. } => "truncated-fragment",
+            Self::MalformedFragment { .. } => "malformed-fragment",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(Warning);
 
 /// One step of the reader state machine.
 #[derive(Debug)]
@@ -284,6 +361,8 @@ pub enum Step<'a> {
     Fragment(FragmentInfo),
     /// One sample descriptor, in the configured order.
     Sample(SampleRef),
+    /// A fault the configured [`Mode::Permissive`] tolerated.
+    Warning(Warning),
     /// No more steps.
     Done,
 }
@@ -292,6 +371,7 @@ pub enum Step<'a> {
 #[derive(Debug, Clone, Copy)]
 enum Pending {
     Header(ByteRange),
+    Ftyp(ByteRange),
     Moov(ByteRange),
     Moof(ByteRange),
     Index(ByteRange),
@@ -303,6 +383,7 @@ impl Pending {
     fn range(&self) -> ByteRange {
         match self {
             Self::Header(range)
+            | Self::Ftyp(range)
             | Self::Moov(range)
             | Self::Moof(range)
             | Self::Index(range)
@@ -323,6 +404,7 @@ struct CursorSlot {
 struct RawEntry {
     fourcc: [u8; BOX_TYPE_SIZE],
     body: Vec<u8>,
+    offset: u64,
 }
 
 /// One protected track's `tenc` defaults, resolved from the `sinf` of its
@@ -382,6 +464,7 @@ enum FragmentStep {
 struct ResolvedFragment {
     info: FragmentInfo,
     samples: Vec<SampleRef>,
+    truncated: bool,
     /// Per track: the `moov` track index, the decode time after the fragment
     /// and the sample count after it.
     cursors: Vec<(usize, u64, u32)>,
@@ -417,6 +500,9 @@ pub struct Reader {
     highest_requested: u64,
     saw_mdat: bool,
     movie: Option<MovieBox>,
+    brand: Option<FileTypeBox>,
+    warnings: Vec<Warning>,
+    deferred_warning: Option<Warning>,
     tracks: Vec<TrackInfo>,
     cursors: Vec<CursorSlot>,
     emitted_tracks: bool,
@@ -448,6 +534,9 @@ impl Reader {
             highest_requested: 0,
             saw_mdat: false,
             movie: None,
+            brand: None,
+            warnings: Vec::new(),
+            deferred_warning: None,
             tracks: Vec::new(),
             cursors: Vec::new(),
             emitted_tracks: false,
@@ -491,7 +580,8 @@ impl Reader {
         }
         match pending {
             Pending::Header(range) => self.accept_header(range, bytes),
-            Pending::Moov(_) => self.accept_moov(bytes),
+            Pending::Ftyp(_) => self.accept_ftyp(bytes),
+            Pending::Moov(range) => self.accept_moov(range, bytes),
             Pending::Moof(_) => self.accept_moof(bytes),
             Pending::Index(range) => self.accept_index(range, bytes),
             Pending::MfraTrailer(_) => self.accept_mfra_trailer(bytes),
@@ -553,6 +643,15 @@ impl Reader {
         Ok(())
     }
 
+    /// The file's `ftyp` brand box, when the file carries one.
+    ///
+    /// A QuickTime `.mov` whose major brand is `qt  ` and a brandless file both
+    /// read completely; this is how a caller tells them from an ISO file.
+    #[must_use]
+    pub fn brand(&self) -> Option<&FileTypeBox> {
+        self.brand.as_ref()
+    }
+
     /// The progressive sample plan, once `moov` is parsed.
     #[must_use]
     pub fn plan(&self) -> Option<SamplePlan<'_>> {
@@ -563,6 +662,36 @@ impl Reader {
 }
 
 impl Reader {
+    fn warn(&mut self, warning: Warning) {
+        self.warnings.push(warning);
+    }
+
+    fn finish_step(&mut self) -> Result<Step<'_>> {
+        self.done = true;
+        if let Some(warning) = self.next_warning() {
+            return Ok(Step::Warning(warning));
+        }
+        Ok(Step::Done)
+    }
+
+    fn take_warning(&mut self) -> Option<Warning> {
+        if self.warnings.is_empty() {
+            return None;
+        }
+        Some(self.warnings.remove(0))
+    }
+
+    fn next_warning(&mut self) -> Option<Warning> {
+        if self.ready.is_some() {
+            return None;
+        }
+        self.deferred_warning.take().or_else(|| self.take_warning())
+    }
+
+    fn tolerated(&self) -> bool {
+        self.config.mode == Mode::Permissive
+    }
+
     fn seek_fragmented(&mut self, track: TrackId, decode_time: u64) -> Result<()> {
         if let Some(offset) = self.indexed_moof(track, decode_time) {
             return self.reposition(offset);
@@ -632,6 +761,7 @@ impl Reader {
         self.pending = None;
         self.fragment = None;
         self.ready = None;
+        self.deferred_warning = None;
         // Progressive samples of a hybrid file are not re-read; the seek
         // positions the fragment walk.
         self.cursors.clear();
@@ -710,6 +840,41 @@ impl Reader {
     }
 }
 
+/// Whether an opaque `stsd` holds an entry with a body, which means a known
+/// four-CC failed to parse. A header-only entry is a caller's raw sample entry
+/// and stays legal in both modes.
+fn opaque_stsd_has_body(stsd: &[u8]) -> bool {
+    let Some(body) = stsd.get(BOX_HEADER_MIN_SIZE..) else {
+        return false;
+    };
+    if body.len() < FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() {
+        return false;
+    }
+    let count = broadcast_common::wire::u32_at(body, FULLBOX_EXTRA_SIZE);
+    let mut at = FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
+    for _ in 0..count {
+        let Some(header) = body.get(at..at + BOX_HEADER_MIN_SIZE) else {
+            return false;
+        };
+        let size = usize::try_from(broadcast_common::wire::u32_at(header, 0)).unwrap_or(0);
+        if size > BOX_HEADER_MIN_SIZE {
+            return true;
+        }
+        if size < BOX_HEADER_MIN_SIZE {
+            return false;
+        }
+        at = at.saturating_add(size);
+    }
+    false
+}
+
+/// Whether a fragment parse failure is one the permissive mode tolerates.
+///
+/// A `LimitExceeded` is never tolerated: the caps bind both modes.
+fn tolerable_fragment_error(error: &Error) -> bool {
+    matches!(error, Error::BufferTooShort(_) | Error::InvalidInput(_))
+}
+
 /// The `moof` a `sidx` names for `decode_time` (§8.14.3).
 ///
 /// Reference offsets start at the box's `first_offset` past the byte following
@@ -759,6 +924,9 @@ impl Reader {
     /// [`Step::Tracks`] arm hands out its own track table), which
     /// [`Iterator::next`]'s signature cannot express.
     pub fn step(&mut self) -> Result<Step<'_>> {
+        if let Some(warning) = self.next_warning() {
+            return Ok(Step::Warning(warning));
+        }
         if let Some(pending) = self.pending {
             return Ok(Step::Need(pending.range()));
         }
@@ -791,8 +959,7 @@ impl Reader {
                 return Ok(Step::Sample(sample));
             }
             if !self.fragmented {
-                self.done = true;
-                return Ok(Step::Done);
+                return self.finish_step();
             }
         }
         self.walk_step()
@@ -829,8 +996,7 @@ impl Reader {
                         FragmentStep::Sample(sample) => Step::Sample(sample),
                     });
                 }
-                self.done = true;
-                Ok(Step::Done)
+                self.finish_step()
             }
         }
     }
@@ -897,7 +1063,7 @@ impl Reader {
             }
         }
         let header = BoxHeader::parse(bytes)?;
-        let size = if header.size == 0 {
+        let mut size = if header.size == 0 {
             let total = self.config.total_len.ok_or(Error::InvalidInput(
                 "a size-0 box needs the total input length",
             ))?;
@@ -907,19 +1073,49 @@ impl Reader {
         } else {
             header.size
         };
-        let end = offset
+        let mut end = offset
             .checked_add(size)
             .ok_or(Error::InvalidInput("top-level box end overflow"))?;
         if let Some(total) = self.config.total_len
             && end > total
         {
-            return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: usize::try_from(size).unwrap_or(usize::MAX),
-                    have: usize::try_from(total.saturating_sub(offset)).unwrap_or(usize::MAX),
-                    what: "top-level box body",
-                },
-            ));
+            let truncatable = header.box_type.is(b"mdat") || header.box_type.is(b"moof");
+            if self.tolerated() && truncatable {
+                end = total;
+                size = end.saturating_sub(offset);
+                if header.box_type.is(b"mdat") {
+                    let warning = if self.fragment.is_some() {
+                        Warning::TruncatedFragment { offset }
+                    } else {
+                        Warning::TruncatedMdat { offset }
+                    };
+                    self.warn(warning);
+                } else {
+                    self.warn(Warning::TruncatedFragment { offset });
+                    self.done = true;
+                }
+            } else {
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: usize::try_from(size).unwrap_or(usize::MAX),
+                        have: usize::try_from(total.saturating_sub(offset)).unwrap_or(usize::MAX),
+                        what: "top-level box body",
+                    },
+                ));
+            }
+        }
+        if header.box_type.is(b"ftyp") {
+            if size > self.config.limits.max_moov_bytes() {
+                return Err(Error::LimitExceeded {
+                    what: "ftyp size",
+                    limit: self.config.limits.max_moov_bytes(),
+                });
+            }
+            let range = ByteRange { offset, len: size };
+            self.request(offset, size)?;
+            self.pending = Some(Pending::Ftyp(range));
+            self.pos = end;
+            return Ok(());
         }
         if header.box_type.is(b"moov") {
             if self.config.source == Source::ForwardOnly && self.saw_mdat {
@@ -1011,29 +1207,66 @@ impl Reader {
         Ok(())
     }
 
+    fn accept_ftyp(&mut self, bytes: &[u8]) -> Result<()> {
+        self.brand = Some(FileTypeBox::parse_box(bytes)?);
+        Ok(())
+    }
+
     fn accept_moof(&mut self, bytes: &[u8]) -> Result<()> {
-        let Some(fragment) = &mut self.fragment else {
+        let Some(fragment) = self.fragment.as_mut() else {
             return Err(Error::InvalidInput(
                 "moof supplied with no fragment pending",
             ));
         };
-        let (header, _) = parse_box(bytes)?;
-        let mut zero_width_budget = MAX_ZERO_WIDTH_TRUN_SAMPLES;
-        let mut moof = MovieFragmentBox::parse_body_budgeted(header.body, &mut zero_width_budget)?;
-        apply_trex_defaults(&mut moof, &self.trex);
-        fragment.moof = Some(moof);
-        Ok(())
+        let offset = fragment.range.offset;
+        let parsed = parse_box(bytes).and_then(|(header, _)| {
+            let mut zero_width_budget = MAX_ZERO_WIDTH_TRUN_SAMPLES;
+            MovieFragmentBox::parse_body_budgeted(header.body, &mut zero_width_budget)
+        });
+        match parsed {
+            Ok(mut moof) => {
+                apply_trex_defaults(&mut moof, &self.trex);
+                fragment.moof = Some(moof);
+                Ok(())
+            }
+            Err(err) if self.tolerated() && tolerable_fragment_error(&err) => {
+                self.fragment = None;
+                let truncated = self.config.total_len.is_some_and(|total| self.pos >= total);
+                if !self.done {
+                    self.warn(if truncated {
+                        Warning::TruncatedFragment { offset }
+                    } else {
+                        Warning::MalformedFragment { offset }
+                    });
+                }
+                if truncated {
+                    self.done = true;
+                }
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
-    fn accept_moov(&mut self, bytes: &[u8]) -> Result<()> {
-        let movie = MovieBox::parse(bytes)?;
+    fn accept_moov(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
+        let mut owned = Vec::new();
+        let source: &[u8] = if self.tolerated() {
+            owned.extend_from_slice(bytes);
+            sanitize_moov(&mut owned, range.offset, &mut self.warnings);
+            &owned
+        } else {
+            bytes
+        };
+        let movie = MovieBox::parse(source)?;
         let mut tracks = Vec::with_capacity(movie.tracks.len());
         let mut cursors = Vec::new();
         let mut crypto = Vec::with_capacity(movie.tracks.len());
         let mut decode_times = Vec::with_capacity(movie.tracks.len());
         let mut sample_counts = Vec::with_capacity(movie.tracks.len());
         for (index, trak) in movie.tracks.iter().enumerate() {
-            let raw = raw_stsd_entries(bytes, index, &self.config.limits)?;
+            let raw = raw_stsd_entries(source, index, &self.config.limits, range.offset)?;
+            self.check_opaque_stsd(trak, &raw)?;
+            self.check_wave_esds(trak, &raw)?;
             let track_crypto = track_crypto(trak, &raw)?;
             let info = build_track_info(trak, raw)?;
             let mut declared_samples = 0u32;
@@ -1105,16 +1338,44 @@ impl Reader {
         let Some(moof) = state.moof.as_ref() else {
             return Ok(());
         };
-        let resolved = match self.resolve_fragment(&state, moof) {
+        let at_end = self.config.total_len.is_some_and(|total| self.pos >= total);
+        let partial = unresolved == Unresolved::Fail && at_end && self.tolerated();
+        let resolved = match self.resolve_fragment(&state, moof, partial) {
             Ok(resolved) => resolved,
             Err(err) => {
                 if unresolved == Unresolved::Keep {
                     self.fragment = Some(state);
                     return Ok(());
                 }
+                if self.tolerated() && tolerable_fragment_error(&err) {
+                    let truncated = self.config.total_len.is_some_and(|total| self.pos >= total);
+                    let already = self.warnings.iter().any(|warning| {
+                        matches!(warning, Warning::TruncatedFragment { offset } if *offset == state.offset)
+                    });
+                    if !already {
+                        self.warn(if truncated {
+                            Warning::TruncatedFragment {
+                                offset: state.offset,
+                            }
+                        } else {
+                            Warning::MalformedFragment {
+                                offset: state.offset,
+                            }
+                        });
+                    }
+                    if truncated {
+                        self.done = true;
+                    }
+                    return Ok(());
+                }
                 return Err(err);
             }
         };
+        if resolved.truncated {
+            self.deferred_warning = Some(Warning::TruncatedFragment {
+                offset: state.offset,
+            });
+        }
         for (index, decode_time, count) in resolved.cursors {
             self.decode_times[index] = decode_time;
             self.sample_counts[index] = count;
@@ -1138,6 +1399,7 @@ impl Reader {
         &self,
         state: &FragmentState,
         moof: &MovieFragmentBox,
+        partial: bool,
     ) -> Result<ResolvedFragment> {
         // The fragment's own media: a sample must live inside one of these
         // payloads, so non-overlapping samples cannot total more than they do.
@@ -1146,6 +1408,7 @@ impl Reader {
         });
         let mut copied_bytes = 0u64;
         let mut rows: Vec<(usize, SampleRef)> = Vec::new();
+        let mut truncated = false;
         let mut present: Vec<TrackId> = Vec::new();
         let mut cursors: Vec<(usize, u64, u32)> = Vec::new();
         for traf in &moof.traf {
@@ -1165,14 +1428,31 @@ impl Reader {
                     .find(|slot| slot.0 == index)
                     .map_or(self.decode_times[index], |slot| slot.1),
             };
-            let ranges = sample_ranges_in_run(
-                state.offset,
-                moof,
-                track_id,
-                &state.mdats,
-                budget,
-                &mut copied_bytes,
-            )?;
+            let (ranges, cut) = if partial {
+                sample_ranges_in_run_until(
+                    state.offset,
+                    moof,
+                    track_id,
+                    &state.mdats,
+                    budget,
+                    &mut copied_bytes,
+                )?
+            } else {
+                (
+                    sample_ranges_in_run(
+                        state.offset,
+                        moof,
+                        track_id,
+                        &state.mdats,
+                        budget,
+                        &mut copied_bytes,
+                    )?,
+                    false,
+                )
+            };
+            if cut {
+                truncated = true;
+            }
             let auxes = fragment_aux(traf, self.crypto[index].as_ref(), ranges.len())?;
             let description_index = traf
                 .tfhd
@@ -1217,6 +1497,9 @@ impl Reader {
                 }
                 None => cursors.push((index, decode_time, count)),
             }
+            if truncated {
+                break;
+            }
         }
         let order = self.config.order;
         let tracks = &self.tracks;
@@ -1238,6 +1521,7 @@ impl Reader {
                 tracks: present,
             },
             samples: rows.into_iter().map(|(_, sample)| sample).collect(),
+            truncated,
             cursors,
         })
     }
@@ -1314,7 +1598,15 @@ impl Reader {
             .get(track_index)
             .ok_or(Error::UnexpectedBox { expected: "trak" })?;
         let stbl = sample_table(trak).ok_or(Error::UnexpectedBox { expected: "stbl" })?;
-        slot.state.advance(stbl)?;
+        if let Err(err) = slot.state.advance(stbl) {
+            if self.tolerated() && matches!(err, Error::BufferTooShort(_)) {
+                self.warn(Warning::TruncatedMdat {
+                    offset: sample.offset,
+                });
+                return Ok(None);
+            }
+            return Err(err);
+        }
         Ok(Some(sample))
     }
 }
@@ -1514,6 +1806,11 @@ fn build_track_info(trak: &TrackBox, raw: Vec<RawEntry>) -> Result<TrackInfo> {
         Some(elst) => elst.entries.clone(),
         None => Vec::new(),
     };
+    let tapt = trak
+        .opaque
+        .iter()
+        .find(|b| b.box_type == crate::quicktime::aperture::TAPT)
+        .and_then(|b| crate::quicktime::TrackApertureModeDimensionsBox::parse_body(&b.data).ok());
     Ok(TrackInfo {
         track_id: trak.tkhd.track_id,
         handler: hdlr.handler_type,
@@ -1523,10 +1820,16 @@ fn build_track_info(trak: &TrackBox, raw: Vec<RawEntry>) -> Result<TrackInfo> {
         references,
         edits,
         entries,
+        tapt,
     })
 }
 
-fn raw_stsd_entries(moov: &[u8], track_index: usize, limits: &Limits) -> Result<Vec<RawEntry>> {
+fn raw_stsd_entries(
+    moov: &[u8],
+    track_index: usize,
+    limits: &Limits,
+    base_offset: u64,
+) -> Result<Vec<RawEntry>> {
     let movie = parse_box(moov)?.0;
     let Some(trak) = nth_child(movie.body, b"trak", track_index, TRAK_DEPTH, limits)? else {
         return Ok(Vec::new());
@@ -1552,14 +1855,18 @@ fn raw_stsd_entries(moov: &[u8], track_index: usize, limits: &Limits) -> Result<
     .unwrap_or(usize::MAX);
     let entries_start = STSD_ENTRY_COUNT_OFFSET + core::mem::size_of::<u32>();
     let entries = stsd_body.get(entries_start..).unwrap_or(&[]);
+    let base = moov.as_ptr() as usize;
     let mut out = Vec::new();
     for item in BoxIter::clamped(entries).take(count) {
         let Ok(item) = item else {
             break;
         };
+        let offset = base_offset
+            .saturating_add(u64::try_from(item.bytes.as_ptr() as usize - base).unwrap_or(u64::MAX));
         out.push(RawEntry {
             fourcc: item.four_cc(),
             body: item.bytes.to_vec(),
+            offset,
         });
     }
     Ok(out)
@@ -1618,4 +1925,191 @@ fn rescale_floor(value: u64, from: Timescale, to: Timescale) -> u64 {
     }
     let scaled = u128::from(value) * u128::from(to.get()) / u128::from(from.get());
     u64::try_from(scaled).unwrap_or(u64::MAX)
+}
+
+/// Four-CC of the sample description box.
+const STSD: [u8; BOX_TYPE_SIZE] = *b"stsd";
+
+impl Reader {
+    fn check_opaque_stsd(&mut self, trak: &TrackBox, raw: &[RawEntry]) -> Result<()> {
+        let Some(stbl) = sample_table(trak) else {
+            return Ok(());
+        };
+        let failed = stbl.children.iter().any(|child| match child {
+            StblChild::Opaque(bytes)
+                if bytes.len() >= BOX_HEADER_MIN_SIZE
+                    && bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] == STSD =>
+            {
+                opaque_stsd_has_body(bytes)
+            }
+            _ => false,
+        });
+        if !failed {
+            return Ok(());
+        }
+        if self.tolerated() {
+            let (fourcc, offset) = raw.first().map_or(([0u8; BOX_TYPE_SIZE], 0), |entry| {
+                (entry.fourcc, entry.offset)
+            });
+            self.warn(Warning::UnparseableSampleEntry { fourcc, offset });
+            Ok(())
+        } else {
+            Err(Error::InvalidInput(
+                "a known sample-entry four-CC did not parse",
+            ))
+        }
+    }
+
+    fn check_wave_esds(&mut self, trak: &TrackBox, raw: &[RawEntry]) -> Result<()> {
+        let Some(stsd) = trak
+            .mdia
+            .as_ref()
+            .and_then(|mdia| mdia.minf.as_ref())
+            .and_then(|minf| minf.stbl.as_ref())
+            .and_then(sample_description)
+        else {
+            return Ok(());
+        };
+        for (index, entry) in stsd.entries.iter().enumerate() {
+            let SampleEntryVariant::Mp4a(mp4a) = entry else {
+                continue;
+            };
+            let Some(wave) = mp4a.wave() else {
+                continue;
+            };
+            if wave.esds.is_some() {
+                continue;
+            }
+            let offset = raw.get(index).map_or(0, |entry| entry.offset);
+            if self.tolerated() {
+                self.warn(Warning::WaveWithoutEsds { offset });
+            } else {
+                return Err(Error::UnexpectedBox {
+                    expected: "esds in an mp4a wave atom",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Deepest container nesting the moov sanitizer descends.
+const SANITIZE_MAX_DEPTH: u32 = 16;
+
+/// Offset of the byte after a `meta` box's FullBox header.
+const META_BODY_START: usize = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE;
+/// Body offset of the `mvhd` timescale in the version 0 form.
+const MVHD_V0_TIMESCALE_BODY_OFFSET: usize = FULLBOX_EXTRA_SIZE + 8;
+/// Body offset of the `mvhd` timescale in the version 1 form.
+const MVHD_V1_TIMESCALE_BODY_OFFSET: usize = FULLBOX_EXTRA_SIZE + 16;
+
+/// Container four-CCs the permissive `moov` sanitizer descends.
+const SANITIZE_CONTAINERS: &[[u8; BOX_TYPE_SIZE]] = &[
+    *b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"dinf", *b"edts", *b"udta", *b"mvex",
+];
+
+/// The `meta` box that carries a four-byte FullBox header before its children.
+const META: [u8; BOX_TYPE_SIZE] = *b"meta";
+
+/// Repair the faults a permissive `moov` walk tolerates.
+fn sanitize_moov(data: &mut [u8], base: u64, warnings: &mut Vec<Warning>) {
+    let body_start = crate::box_types::BoxHeader::parse(data)
+        .map(|header| header.header_size())
+        .unwrap_or(BOX_HEADER_MIN_SIZE);
+    clamp_children(data, body_start, data.len(), base, warnings, 0);
+    patch_zero_mvhd(data, body_start, base, warnings);
+}
+
+fn clamp_children(
+    data: &mut [u8],
+    start: usize,
+    end: usize,
+    base: u64,
+    warnings: &mut Vec<Warning>,
+    depth: u32,
+) {
+    if depth > SANITIZE_MAX_DEPTH {
+        return;
+    }
+    let mut at = start;
+    while at + BOX_HEADER_MIN_SIZE <= end {
+        let size = broadcast_common::wire::u32_at(data, at);
+        if size == 0 {
+            return;
+        }
+        if size == 1 {
+            return;
+        }
+        let mut size = usize::try_from(size).unwrap_or(usize::MAX);
+        if size < BOX_HEADER_MIN_SIZE {
+            return;
+        }
+        let mut fourcc = [0u8; BOX_TYPE_SIZE];
+        fourcc.copy_from_slice(&data[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE]);
+        if at.saturating_add(size) > end {
+            let clamped = end.saturating_sub(at);
+            let Ok(clamped32) = u32::try_from(clamped) else {
+                return;
+            };
+            data[at..at + BOX_TYPE_OFFSET].copy_from_slice(&clamped32.to_be_bytes());
+            warnings.push(Warning::ClampedBox {
+                box_type: fourcc,
+                offset: base.saturating_add(u64::try_from(at).unwrap_or(u64::MAX)),
+            });
+            size = clamped;
+        }
+        let child_body = if fourcc == META {
+            at + META_BODY_START
+        } else {
+            at + BOX_HEADER_MIN_SIZE
+        };
+        if SANITIZE_CONTAINERS.contains(&fourcc) || fourcc == META {
+            clamp_children(data, child_body, at + size, base, warnings, depth + 1);
+        }
+        at = at.saturating_add(size);
+    }
+}
+
+fn patch_zero_mvhd(data: &mut [u8], start: usize, base: u64, warnings: &mut Vec<Warning>) {
+    let mut found = None;
+    let mut at = start;
+    while at + BOX_HEADER_MIN_SIZE <= data.len() {
+        let size = usize::try_from(broadcast_common::wire::u32_at(data, at)).unwrap_or(usize::MAX);
+        if size < BOX_HEADER_MIN_SIZE {
+            return;
+        }
+        if data[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE] == *b"mvhd" {
+            found = Some((at, size));
+            break;
+        }
+        let next = at.saturating_add(size);
+        if next <= at || next > data.len() {
+            return;
+        }
+        at = next;
+    }
+    let Some((at, size)) = found else {
+        return;
+    };
+    let body = at + BOX_HEADER_MIN_SIZE;
+    if body + FULLBOX_EXTRA_SIZE > data.len() || body + FULLBOX_EXTRA_SIZE > at + size {
+        return;
+    }
+    let version = data[body];
+    let timescale_at = if version == 1 {
+        body + MVHD_V1_TIMESCALE_BODY_OFFSET
+    } else {
+        body + MVHD_V0_TIMESCALE_BODY_OFFSET
+    };
+    if timescale_at + core::mem::size_of::<u32>() > data.len() {
+        return;
+    }
+    if broadcast_common::wire::u32_at(data, timescale_at) != 0 {
+        return;
+    }
+    data[timescale_at..timescale_at + core::mem::size_of::<u32>()]
+        .copy_from_slice(&1u32.to_be_bytes());
+    warnings.push(Warning::ZeroMovieTimescale {
+        offset: base.saturating_add(u64::try_from(at).unwrap_or(u64::MAX)),
+    });
 }

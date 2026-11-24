@@ -91,6 +91,12 @@ WHOLE_FILE_GLOBS: dict[str, tuple[str, ...]] = {
 }
 
 
+# These targets take a mode byte before the file bytes: even selects strict,
+# odd selects permissive. Seed both policies so neither is reached only by
+# mutation.
+MODE_PREFIXED = frozenset({"isobmff_reader", "isobmff_reader_fragmented"})
+
+
 def seed_whole(target: str, patterns: tuple[str, ...], check_only: bool) -> int:
     out = REPO / "fuzz" / "corpus" / target
     files = sorted({p for pat in patterns for p in REPO.glob(pat)})
@@ -99,7 +105,12 @@ def seed_whole(target: str, patterns: tuple[str, ...], check_only: bool) -> int:
     out.mkdir(parents=True, exist_ok=True)
     for path in files:
         name = "_".join(path.relative_to(REPO).parts)
-        (out / name).write_bytes(path.read_bytes())
+        data = path.read_bytes()
+        if target in MODE_PREFIXED:
+            (out / f"strict_{name}").write_bytes(bytes([0]) + data)
+            (out / f"permissive_{name}").write_bytes(bytes([1]) + data)
+        else:
+            (out / name).write_bytes(data)
     return len(files)
 
 

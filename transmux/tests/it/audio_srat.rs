@@ -363,6 +363,7 @@ fn quicktime_v1_fixture_has_a_non_zero_compression_id() {
         samplesize: 16,
         compression_id_and_packet_size: [0xFF, 0xFE, 0x00, 0x00],
         samplerate: 44_100 << 16,
+        quicktime: None,
         config_boxes: vec![],
     };
     let mut buf = vec![0u8; typed.serialized_len()];
@@ -393,6 +394,7 @@ fn quicktime_v2_entry_version_round_trips_verbatim() {
         samplesize: 16,
         compression_id_and_packet_size: [0xFF, 0xFE, 0x00, 0x00],
         samplerate: 44_100 << 16,
+        quicktime: None,
         config_boxes: vec![],
     };
     let mut buf = vec![0u8; typed.serialized_len()];
@@ -602,6 +604,7 @@ fn a_zero_or_malformed_srat_falls_back_to_the_16_16_field() {
         samplesize: 16,
         compression_id_and_packet_size: [0u8; 4],
         samplerate: 48_000 << 16,
+        quicktime: None,
         config_boxes: vec![isobmff::box_support::OpaqueBox::new(
             *b"srat",
             vec![0, 0, 0, 0, 0, 0, 0, 0],
@@ -627,6 +630,7 @@ fn mp4a_v0_entry_round_trips() {
         samplesize: 16,
         compression_id_and_packet_size: [0u8; 4],
         samplerate: 48_000 << 16,
+        quicktime: None,
         config_boxes: vec![],
     };
     assert_eq!(entry.serialized_len(), 36);

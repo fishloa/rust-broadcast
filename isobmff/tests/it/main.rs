@@ -13,6 +13,8 @@ mod init_segment;
 mod init_segment_sweep;
 mod largesize_truncation;
 mod metadata;
+mod permissive;
+mod quicktime;
 mod reader_fragmented;
 mod reader_progressive;
 mod sample_bytes_budget;

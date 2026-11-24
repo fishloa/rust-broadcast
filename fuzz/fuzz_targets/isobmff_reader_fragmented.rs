@@ -1,6 +1,6 @@
 #![no_main]
 
-use isobmff::{Limits, Reader, ReaderConfig, SampleOrder, Source, Step};
+use isobmff::{Limits, Mode, Reader, ReaderConfig, SampleOrder, Source, Step};
 use libfuzzer_sys::fuzz_target;
 
 /// Caps small enough that a hostile table cannot allocate its way out of the
@@ -25,11 +25,19 @@ fn seek_target(data: &[u8]) -> u64 {
     seed * 1_000
 }
 
-fn drive(data: &[u8], order: SampleOrder, source: Source, total_len: Option<u64>, seek: bool) {
+fn drive(
+    data: &[u8],
+    mode: Mode,
+    order: SampleOrder,
+    source: Source,
+    total_len: Option<u64>,
+    seek: bool,
+) {
     let config = ReaderConfig::default()
         .with_total_len(total_len)
         .with_order(order)
         .with_source(source)
+        .with_mode(mode)
         .with_limits(fuzz_limits());
     let mut reader = Reader::new(config);
     let mut sought = false;
@@ -64,10 +72,18 @@ fn drive(data: &[u8], order: SampleOrder, source: Source, total_len: Option<u64>
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+fuzz_target!(|input: &[u8]| {
+    let Some((mode_byte, data)) = input.split_first() else {
+        return;
+    };
+    let mode = if mode_byte & 1 == 0 {
+        Mode::Strict
+    } else {
+        Mode::Permissive
+    };
     let exact = Some(data.len() as u64);
-    drive(data, SampleOrder::DecodeTime, Source::Seekable, exact, false);
-    drive(data, SampleOrder::File, Source::Seekable, exact, true);
-    drive(data, SampleOrder::File, Source::ForwardOnly, exact, false);
-    drive(data, SampleOrder::DecodeTime, Source::Seekable, None, true);
+    drive(data, mode, SampleOrder::DecodeTime, Source::Seekable, exact, false);
+    drive(data, mode, SampleOrder::File, Source::Seekable, exact, true);
+    drive(data, mode, SampleOrder::File, Source::ForwardOnly, exact, false);
+    drive(data, mode, SampleOrder::DecodeTime, Source::Seekable, None, true);
 });

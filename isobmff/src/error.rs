@@ -232,6 +232,15 @@ pub enum Error {
         cap: u64,
     },
 
+    /// A QuickTime-only atom cannot be written: its ISO form would silently
+    /// drop the fields it carries. Read the track as its raw sample-entry bytes
+    /// to carry it through unchanged.
+    #[error("QuickTime-only atom {atom:?} cannot be written")]
+    QuickTimeOnly {
+        /// The four-CC of the atom that has no ISO wire form in this crate.
+        atom: [u8; BOX_TYPE_LEN],
+    },
+
     /// A planned sample was never pushed when the writer was finished.
     #[error("track {track} sample {missing} was planned but never pushed")]
     PlanIncomplete {

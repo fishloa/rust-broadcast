@@ -1,6 +1,6 @@
 #![no_main]
 
-use isobmff::{Limits, Reader, ReaderConfig, SampleOrder, Source, Step};
+use isobmff::{Limits, Mode, Reader, ReaderConfig, SampleOrder, Source, Step};
 use libfuzzer_sys::fuzz_target;
 
 /// Caps small enough that a hostile table cannot allocate its way out of the
@@ -18,11 +18,12 @@ fn fuzz_limits() -> Limits {
 /// A hostile file cannot describe more steps than this.
 const MAX_STEPS: usize = 1 << 20;
 
-fn drive(data: &[u8], order: SampleOrder, source: Source) {
+fn drive(data: &[u8], mode: Mode, order: SampleOrder, source: Source) {
     let config = ReaderConfig::default()
         .with_total_len(Some(data.len() as u64))
         .with_order(order)
         .with_source(source)
+        .with_mode(mode)
         .with_limits(fuzz_limits());
     let mut reader = Reader::new(config);
     for _ in 0..MAX_STEPS {
@@ -43,8 +44,16 @@ fn drive(data: &[u8], order: SampleOrder, source: Source) {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
-    drive(data, SampleOrder::DecodeTime, Source::Seekable);
-    drive(data, SampleOrder::File, Source::Seekable);
-    drive(data, SampleOrder::File, Source::ForwardOnly);
+fuzz_target!(|input: &[u8]| {
+    let Some((mode_byte, data)) = input.split_first() else {
+        return;
+    };
+    let mode = if mode_byte & 1 == 0 {
+        Mode::Strict
+    } else {
+        Mode::Permissive
+    };
+    drive(data, mode, SampleOrder::DecodeTime, Source::Seekable);
+    drive(data, mode, SampleOrder::File, Source::Seekable);
+    drive(data, mode, SampleOrder::File, Source::ForwardOnly);
 });

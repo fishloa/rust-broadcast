@@ -1840,6 +1840,9 @@ pub const TABLE: &[Crate] = &[
             "SampleEntryChild",
             "SampleEntryVariant",
             "StblChild",
+            // `QuickTimeSound`: a data-carrying ADT over the version 1 and
+            // version 2 sound-description extensions, not a flat spec code.
+            "QuickTimeSound",
             // `writer::SampleEntry`: a typed sample entry or a raw entry's
             // box bytes, a data-carrying ADT in the writer's input, not a
             // spec/field value decoded from the wire.
