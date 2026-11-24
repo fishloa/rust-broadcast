@@ -26,6 +26,12 @@ const BODY_LEN: usize = 5;
 const VERSION_MAX: u8 = 0x1F;
 /// Largest representable 3-bit xait_update_policy.
 const UPDATE_POLICY_MAX: u8 = 0x07;
+/// Offset of `xait_service_id` in the body.
+const XAIT_SERVICE_ID_OFFSET: usize = 2;
+/// Offset of `xait_version_number` / `xait_update_policy` in the body.
+const VERSION_NUMBER_OFFSET: usize = 4;
+/// Shift of `xait_version_number` in the packed body byte.
+const VERSION_NUMBER_SHIFT: u8 = 3;
 
 /// XAIT Location Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,9 +72,13 @@ impl<'a> Parse<'a> for XaitLocationDescriptor {
             });
         }
         let xait_original_network_id = u16::from_be_bytes([hdr[0], hdr[1]]);
-        let xait_service_id = u16::from_be_bytes([hdr[2], hdr[3]]);
-        let xait_version_number = (hdr[4] >> 3) & VERSION_MAX;
-        let xait_update_policy = hdr[4] & UPDATE_POLICY_MAX;
+        let xait_service_id = u16::from_be_bytes([
+            hdr[XAIT_SERVICE_ID_OFFSET],
+            hdr[XAIT_SERVICE_ID_OFFSET + 1],
+        ]);
+        let xait_version_number =
+            (hdr[VERSION_NUMBER_OFFSET] >> VERSION_NUMBER_SHIFT) & VERSION_MAX;
+        let xait_update_policy = hdr[VERSION_NUMBER_OFFSET] & UPDATE_POLICY_MAX;
         Ok(Self {
             xait_original_network_id,
             xait_service_id,
@@ -102,11 +112,11 @@ impl Serialize for XaitLocationDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[2..4].copy_from_slice(&self.xait_original_network_id.to_be_bytes());
         buf[4..6].copy_from_slice(&self.xait_service_id.to_be_bytes());
-        buf[6] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + VERSION_NUMBER_OFFSET] = (broadcast_common::len::fit_mask(
             self.xait_version_number,
             VERSION_MAX,
             "xait_version_number",
-        )? << 3)
+        )? << VERSION_NUMBER_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.xait_update_policy,
                 UPDATE_POLICY_MAX,

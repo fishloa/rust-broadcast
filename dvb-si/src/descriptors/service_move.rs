@@ -14,6 +14,13 @@ pub const TAG: u8 = 0x60;
 const HEADER_LEN: usize = 2;
 /// Fixed payload length: three 16-bit identifiers (EN 300 468 Table 92).
 const BODY_LEN: u8 = 6;
+/// Offset of `new_original_network_id` in the body.
+const NEW_ORIGINAL_NETWORK_ID_OFFSET: usize = 0;
+/// Offset of `new_transport_stream_id` in the body.
+const NEW_TRANSPORT_STREAM_ID_OFFSET: usize =
+    NEW_ORIGINAL_NETWORK_ID_OFFSET + size_of::<u16>();
+/// Offset of `new_service_id` in the body.
+const NEW_SERVICE_ID_OFFSET: usize = NEW_TRANSPORT_STREAM_ID_OFFSET + size_of::<u16>();
 
 /// Service Move Descriptor (tag 0x60).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,15 +50,24 @@ impl<'a> Parse<'a> for ServiceMoveDescriptor {
             });
         }
         let (hdr, _) = body
-            .split_first_chunk::<6>()
+            .split_first_chunk::<{ usize::from(BODY_LEN) }>()
             .ok_or(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_move_descriptor length must equal 6",
             })?;
         Ok(Self {
-            new_original_network_id: u16::from_be_bytes([hdr[0], hdr[1]]),
-            new_transport_stream_id: u16::from_be_bytes([hdr[2], hdr[3]]),
-            new_service_id: u16::from_be_bytes([hdr[4], hdr[5]]),
+            new_original_network_id: u16::from_be_bytes([
+                hdr[NEW_ORIGINAL_NETWORK_ID_OFFSET],
+                hdr[NEW_ORIGINAL_NETWORK_ID_OFFSET + 1],
+            ]),
+            new_transport_stream_id: u16::from_be_bytes([
+                hdr[NEW_TRANSPORT_STREAM_ID_OFFSET],
+                hdr[NEW_TRANSPORT_STREAM_ID_OFFSET + 1],
+            ]),
+            new_service_id: u16::from_be_bytes([
+                hdr[NEW_SERVICE_ID_OFFSET],
+                hdr[NEW_SERVICE_ID_OFFSET + 1],
+            ]),
         })
     }
 }
@@ -67,10 +83,12 @@ impl Serialize for ServiceMoveDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        let b = HEADER_LEN;
-        buf[b..b + 2].copy_from_slice(&self.new_original_network_id.to_be_bytes());
-        buf[b + 2..b + 4].copy_from_slice(&self.new_transport_stream_id.to_be_bytes());
-        buf[b + 4..b + 6].copy_from_slice(&self.new_service_id.to_be_bytes());
+        buf[HEADER_LEN + NEW_ORIGINAL_NETWORK_ID_OFFSET..HEADER_LEN + NEW_TRANSPORT_STREAM_ID_OFFSET]
+            .copy_from_slice(&self.new_original_network_id.to_be_bytes());
+        buf[HEADER_LEN + NEW_TRANSPORT_STREAM_ID_OFFSET..HEADER_LEN + NEW_SERVICE_ID_OFFSET]
+            .copy_from_slice(&self.new_transport_stream_id.to_be_bytes());
+        buf[HEADER_LEN + NEW_SERVICE_ID_OFFSET..HEADER_LEN + NEW_SERVICE_ID_OFFSET + size_of::<u16>()]
+            .copy_from_slice(&self.new_service_id.to_be_bytes());
         Ok(len)
     }
 }

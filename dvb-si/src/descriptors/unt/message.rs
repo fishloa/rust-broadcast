@@ -78,7 +78,7 @@ impl Serialize for MessageDescriptor<'_> {
             "last_descriptor_number",
         )?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = (number << NUMBER_SHIFT) | last;
+        buf[HEADER_LEN] = (number << NUMBER_SHIFT) | last;
         buf[3..6].copy_from_slice(&self.language_code.0);
         buf[6..len].copy_from_slice(self.text.raw());
         Ok(len)

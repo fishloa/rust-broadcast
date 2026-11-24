@@ -1,0 +1,3 @@
+# Literals that are not magic numbers (audited).
+dvb-si/src/descriptors/int/mod.rs:@owned 0x00..=0x3F, # declare_scoped_namespace! row: INT-owned descriptor tag range, not a magic number
+dvb-si/src/descriptors/unt/mod.rs:@owned 0x00..=0x3F, # declare_scoped_namespace! row: UNT-owned descriptor tag range, not a magic number

@@ -540,6 +540,13 @@ impl<'r, 'a> ExtRegistryIter<'r, 'a> {
     }
 }
 
+/// Wire header of one descriptor entry: tag + length.
+const DESCRIPTOR_HEADER_LEN: usize = 2;
+/// Offset of `extension_descriptor_tag` within an extension descriptor entry.
+const EXTENSION_TAG_OFFSET: usize = DESCRIPTOR_HEADER_LEN;
+/// Offset of the extension descriptor body within its entry.
+const EXTENSION_BODY_OFFSET: usize = DESCRIPTOR_HEADER_LEN + 1;
+
 impl<'a> Iterator for ExtRegistryIter<'_, 'a> {
     type Item = crate::Result<ExtIterItem<'a>>;
 
@@ -555,11 +562,11 @@ impl<'a> Iterator for ExtRegistryIter<'_, 'a> {
 
         update_pds(&mut self.current_pds, tag, full);
 
-        let len = full.len() - 2;
+        let len = full.len() - DESCRIPTOR_HEADER_LEN;
         if tag == crate::descriptors::extension::TAG && len >= 1 {
-            let tag_extension = full[2];
+            let tag_extension = full[EXTENSION_TAG_OFFSET];
             if self.ext_reg.has_custom(tag_extension) {
-                return Some(match self.ext_reg.parse_body(tag_extension, &full[3..]) {
+                return Some(match self.ext_reg.parse_body(tag_extension, &full[EXTENSION_BODY_OFFSET..]) {
                     Ok(super::extension::registry::RegisteredExtension::Custom {
                         tag_extension,
                         value,

@@ -16,6 +16,12 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x05;
 const HEADER_LEN: usize = 2;
 const LANG_LEN: usize = 3;
+/// Smallest body: language code plus the two 1-byte length prefixes.
+const MIN_BODY_LEN: usize = LANG_LEN + 2;
+/// Offset of `name_length` in the body.
+const NAME_LENGTH_OFFSET: usize = LANG_LEN;
+/// Offset of `name_char`s in the body.
+const NAME_START: usize = NAME_LENGTH_OFFSET + 1;
 
 /// SSU_event_name_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,11 +49,11 @@ impl<'a> Parse<'a> for SsuEventNameDescriptor<'a> {
             "unexpected tag for SSU_event_name_descriptor",
         )?;
         let bad = |reason| Error::InvalidDescriptor { tag: TAG, reason };
-        if body.len() < LANG_LEN + 2 {
+        if body.len() < MIN_BODY_LEN {
             return Err(bad("SSU_event_name_descriptor body shorter than 5 bytes"));
         }
-        let name_len = usize::from(body[LANG_LEN]);
-        let name_start = LANG_LEN + 1;
+        let name_len = usize::from(body[NAME_LENGTH_OFFSET]);
+        let name_start = NAME_START;
         let name_end = name_start + name_len;
         let text_len = usize::from(
             *body
@@ -60,7 +66,7 @@ impl<'a> Parse<'a> for SsuEventNameDescriptor<'a> {
             return Err(bad("text_length runs past descriptor end"));
         }
         Ok(Self {
-            language_code: LangCode([body[0], body[1], body[2]]),
+            language_code: LangCode(body[..LANG_LEN].try_into().unwrap_or_default()),
             name: DvbText::new(&body[name_start..name_end]),
             text: DvbText::new(&body[text_start..text_end]),
             trailing: &body[text_end..],
@@ -80,9 +86,9 @@ impl Serialize for SsuEventNameDescriptor<'_> {
         let text_len = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2..5].copy_from_slice(&self.language_code.0);
-        buf[5] = name_len;
-        let n_end = 6 + self.name.len();
-        buf[6..n_end].copy_from_slice(self.name.raw());
+        buf[HEADER_LEN + NAME_LENGTH_OFFSET] = name_len;
+        let n_end = HEADER_LEN + NAME_START + self.name.len();
+        buf[HEADER_LEN + NAME_START..n_end].copy_from_slice(self.name.raw());
         buf[n_end] = text_len;
         let t_start = n_end + 1;
         let t_end = t_start + self.text.len();

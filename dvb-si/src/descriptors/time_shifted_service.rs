@@ -38,7 +38,7 @@ impl<'a> Parse<'a> for TimeShiftedServiceDescriptor {
             });
         }
         let (hdr, _) = body
-            .split_first_chunk::<2>()
+            .split_first_chunk::<{ size_of::<u16>() }>()
             .ok_or(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "time_shifted_service_descriptor length must be 2",
