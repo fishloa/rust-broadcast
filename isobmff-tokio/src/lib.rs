@@ -73,6 +73,7 @@ impl<R: AsyncRead + AsyncSeek + Unpin> AsyncFileReader<R> {
                 Advance::Metadata(metadata) => {
                     return Ok(DriverStep::Metadata(self.metadata.insert(metadata)));
                 }
+                Advance::Warning(warning) => return Ok(DriverStep::Warning(warning)),
                 Advance::Done => return Ok(DriverStep::Done),
             }
         }

@@ -153,6 +153,9 @@ impl RangeReader {
                         self.metadata.insert(metadata),
                     )));
                 }
+                Advance::Warning(warning) => {
+                    return Ok(RangeAction::Step(DriverStep::Warning(warning)));
+                }
                 Advance::Done => return Ok(RangeAction::Done),
             }
         }
