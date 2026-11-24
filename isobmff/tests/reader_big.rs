@@ -148,6 +148,7 @@ const FRAGMENTED_PEAK_SLACK: usize = 8 << 20;
 
 /// Bytes the reader may request per fragment beyond its `moof` and one box
 /// header: the `mdat` header plus a `styp`/`mfra` allowance.
+#[cfg(feature = "scan-counters")]
 const FRAGMENTED_HEADER_ALLOWANCE: u64 = 64;
 
 /// Drive a fragmented file, returning `(samples, fragments, requested bytes,
