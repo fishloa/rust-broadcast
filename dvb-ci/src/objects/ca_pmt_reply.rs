@@ -135,11 +135,11 @@ const CA_ENABLE_MASK: u8 = 0x7F;
 /// Mask of the `CA_enable_flag`.
 const CA_ENABLE_FLAG_MASK: u8 = 0x80;
 /// Reserved bits in front of `elementary_PID`.
-const ES_PID_RESERVED_BITS: u32 = 3;
+pub const ES_PID_RESERVED_BITS: u32 = 3;
 /// Reserved bits beside a `CA_enable` value.
-const CA_ENABLE_RESERVED_BITS: u32 = 7;
+pub const CA_ENABLE_RESERVED_BITS: u32 = 7;
 /// Reserved bits in front of `version_number`.
-const VERSION_RESERVED_BITS: u32 = 2;
+pub const VERSION_RESERVED_BITS: u32 = 2;
 
 /// Offsets of the `ca_pmt_reply()` reply prefix fields.
 const PROGRAM_NUMBER_OFFSET: usize = 0;

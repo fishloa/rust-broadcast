@@ -172,18 +172,18 @@ const LENGTH_SHIFT: u32 = 8;
 const LENGTH_MAX: usize = 0x0FFF;
 
 /// Reserved bits in front of `OKToDisruptService`.
-const DISRUPT_FLAG_RESERVED_BITS: u32 = 7;
+pub const DISRUPT_FLAG_RESERVED_BITS: u32 = 7;
 /// Shift selecting the reserved bits in front of `OKToDisruptService`.
 const DISRUPT_FLAG_RESERVED_SHIFT: u32 = 1;
 /// Mask of `OKToDisruptService`.
 const OK_TO_DISRUPT_MASK: u8 = 0x01;
 /// Reserved bits in front of `ResponseCode`.
-const ACK_RESERVED_BITS: u32 = 2;
+pub const ACK_RESERVED_BITS: u32 = 2;
 
 /// Bytes of `start_time` (MJD + BCD HHMMSS).
-const START_TIME_LEN: usize = 5;
+pub const START_TIME_LEN: usize = 5;
 /// Bytes of `duration` (BCD HHMMSS).
-const DURATION_LEN: usize = 3;
+pub const DURATION_LEN: usize = 3;
 /// Offset of `pending_length`'s low byte in an `EITSectionAck`.
 const ACK_LENGTH_LOW_OFFSET: usize = 1;
 

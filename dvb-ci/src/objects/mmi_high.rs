@@ -162,7 +162,7 @@ pub struct Enq<'a> {
 // reserved/blind_answer(1) + answer_text_length(1).
 const ENQ_PREFIX: usize = 2;
 /// Reserved bits in front of the `enq` `blind_answer_flag`.
-const ENQ_RESERVED_BITS: u32 = 7;
+pub const ENQ_RESERVED_BITS: u32 = 7;
 /// Shift selecting the reserved bits of the `enq` flags byte.
 const ENQ_RESERVED_SHIFT: u32 = 1;
 /// Mask of `blind_answer_flag`.

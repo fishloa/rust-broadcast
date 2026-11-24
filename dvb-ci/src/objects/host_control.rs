@@ -124,7 +124,7 @@ pub struct Replace {
 const REPLACE_BODY: usize = 5;
 
 /// Reserved bits in front of a PID in `replace()`.
-const REPLACE_PID_RESERVED_BITS: u32 = 3;
+pub const REPLACE_PID_RESERVED_BITS: u32 = 3;
 /// Shift selecting the reserved bits in front of a PID.
 const REPLACE_PID_RESERVED_SHIFT: u32 = 5;
 /// Mask of a PID's high bits.

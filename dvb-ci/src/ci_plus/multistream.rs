@@ -142,10 +142,10 @@ const PID_ENTRY_LEN: usize = 2;
 const PID_SELECT_REQ_PREFIX: usize = 2;
 // LTS_id(1) + selection byte(1) + num_PID(1) prefix of a PID_select_reply body.
 const PID_SELECT_REPLY_PREFIX: usize = 3;
-// Reserved bits in front of the PID flags.
-const PID_RESERVED_BITS: u32 = 2;
-// Reserved bits in front of PID_selection_flag.
-const PID_SELECTION_RESERVED_BITS: u32 = 7;
+/// Reserved bits in front of the PID flags.
+pub const PID_RESERVED_BITS: u32 = 2;
+/// Reserved bits in front of `PID_selection_flag`.
+pub const PID_SELECTION_RESERVED_BITS: u32 = 7;
 // Shift selecting the reserved bits of a PID entry's high byte.
 const PID_RESERVED_SHIFT: u32 = 6;
 // Shift placing a PID entry's reserved bits.

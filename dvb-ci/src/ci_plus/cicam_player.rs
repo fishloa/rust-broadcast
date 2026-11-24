@@ -534,9 +534,9 @@ const U16_LEN: usize = core::mem::size_of::<u16>();
 /// Bytes of a `u32` field.
 const U32_LEN: usize = core::mem::size_of::<u32>();
 /// Reserved bits in a nibble.
-const NIBBLE_RESERVED_BITS: u32 = 4;
+pub const NIBBLE_RESERVED_BITS: u32 = 4;
 /// Reserved bits in a byte-wide reserved field.
-const BYTE_RESERVED_BITS: u32 = 7;
+pub const BYTE_RESERVED_BITS: u32 = 7;
 /// Mask of the seven reserved bits beside a one-bit flag.
 const RESERVED_BYTE_MASK: u8 = 0x7F;
 /// Shift placing `stream_content` at the top of its byte.
@@ -627,12 +627,12 @@ impl Serialize for PlayerCapabilitiesReply {
         let body_len = CAPABILITIES_PREFIX + self.component_types.len() * COMPONENT_TYPE_LEN;
         let mut pos =
             objects::write_apdu_header(tag::CAPABILITIES_REPLY, body_len, self.length_form, buf)?;
-        let count = objects::fit_bits(
-            self.component_types.len() as u64,
-            u16::BITS,
-            "component_types",
-        )?;
-        buf[pos..pos + COMPONENT_TYPE_COUNT_LEN].copy_from_slice(&(count as u16).to_be_bytes());
+        let count = broadcast_common::len::fit_u16(self.component_types.len(), "component_types")
+            .map_err(|_| Error::InvalidObject {
+            what: "CICAM_player_capabilities_reply",
+            reason: "more than 65535 component types",
+        })?;
+        buf[pos..pos + COMPONENT_TYPE_COUNT_LEN].copy_from_slice(&count.to_be_bytes());
         pos += CAPABILITIES_PREFIX;
         for c in &self.component_types {
             // stream_content(4) << 4 + reserved(4).
@@ -738,9 +738,15 @@ impl Serialize for PlayerStartReq<'_> {
                 } else {
                     0
                 };
-        let pmt_length = objects::fit_bits(self.pmt.len() as u64, u16::BITS, "PMT_length")?;
+        let pmt_length =
+            broadcast_common::len::fit_u16(self.pmt.len(), "PMT_length").map_err(|_| {
+                Error::InvalidObject {
+                    what: "CICAM_player_start_req",
+                    reason: "PMT longer than 65535 bytes",
+                }
+            })?;
         buf[pos + START_PMT_LENGTH_OFFSET..pos + START_REQ_PREFIX]
-            .copy_from_slice(&(pmt_length as u16).to_be_bytes());
+            .copy_from_slice(&pmt_length.to_be_bytes());
         buf[pos + START_REQ_PREFIX..pos + body_len].copy_from_slice(self.pmt);
         Ok(pos + body_len)
     }
@@ -1428,9 +1434,15 @@ impl Serialize for PlayerUpdateReq<'_> {
         let body_len = UPDATE_REQ_PREFIX + self.pmt.len();
         let pos = objects::write_apdu_header(tag::UPDATE_REQ, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
-        let pmt_length = objects::fit_bits(self.pmt.len() as u64, u16::BITS, "PMT_length")?;
+        let pmt_length =
+            broadcast_common::len::fit_u16(self.pmt.len(), "PMT_length").map_err(|_| {
+                Error::InvalidObject {
+                    what: "CICAM_player_update_req",
+                    reason: "PMT longer than 65535 bytes",
+                }
+            })?;
         buf[pos + UPDATE_PMT_LENGTH_OFFSET..pos + UPDATE_REQ_PREFIX]
-            .copy_from_slice(&(pmt_length as u16).to_be_bytes());
+            .copy_from_slice(&pmt_length.to_be_bytes());
         buf[pos + UPDATE_REQ_PREFIX..pos + body_len].copy_from_slice(self.pmt);
         Ok(pos + body_len)
     }

@@ -144,13 +144,13 @@ const TRIPLET_BODY: usize = 1 + 2 + 2 + 2 + 1 + 1;
 const DSD_TAG_EXTENSION: u8 = 0x7F;
 
 /// Reserved bits in front of the `tune_triplet_req` flags.
-const TRIPLET_RESERVED_BITS: u32 = 5;
+pub const TRIPLET_RESERVED_BITS: u32 = 5;
 /// Reserved bits of the `tune_ip_req` first byte.
-const TUNE_IP_RESERVED_BITS: u32 = 2;
+pub const TUNE_IP_RESERVED_BITS: u32 = 2;
 /// Reserved bits in front of the `tuner_status_reply` DSD flags.
-const DSD_RESERVED_BITS: u32 = 7;
+pub const DSD_RESERVED_BITS: u32 = 7;
 /// Width of the trailing `reserved(8)` byte.
-const RESERVED_BYTE_BITS: u32 = 8;
+pub const RESERVED_BYTE_BITS: u32 = 8;
 
 /// Bytes of one identifier in `tune_triplet_req`.
 const TRIPLET_ID_LEN: usize = core::mem::size_of::<u16>();

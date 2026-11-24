@@ -211,11 +211,11 @@ const CA_PMT_PREFIX: usize = 6;
 const ES_PREFIX: usize = 5;
 
 /// Reserved bits in front of `elementary_PID` (Table 25).
-const ES_PID_RESERVED_BITS: u32 = 3;
+pub const ES_PID_RESERVED_BITS: u32 = 3;
 /// Reserved bits in front of `ES_info_length` / `program_info_length`.
-const ES_INFO_RESERVED_BITS: u32 = 4;
+pub const ES_INFO_RESERVED_BITS: u32 = 4;
 /// Reserved bits in front of `version_number`.
-const VERSION_RESERVED_BITS: u32 = 2;
+pub const VERSION_RESERVED_BITS: u32 = 2;
 
 /// Offsets of the `ca_pmt()` fixed prefix fields.
 const LIST_MANAGEMENT_OFFSET: usize = 0;

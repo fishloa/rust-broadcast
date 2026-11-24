@@ -26,7 +26,7 @@ pub mod tag {
 /// Mask of the `activation_state` field.
 const ACTIVATION_STATE_MASK: u8 = 0x0F;
 /// Reserved bits beside `activation_state`.
-const RESERVED_NIBBLE_BITS: u32 = 4;
+pub const RESERVED_NIBBLE_BITS: u32 = 4;
 /// Shift placing the reserved bits above `activation_state`.
 const RESERVED_NIBBLE_SHIFT: u32 = 4;
 

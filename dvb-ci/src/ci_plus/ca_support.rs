@@ -102,13 +102,13 @@ pub struct MsCaPmt<'a> {
 const MS_CA_PMT_PREFIX: usize = 1 + 1 + 2 + 2 + 1 + 2;
 
 /// Reserved bits in front of `PMT_PID`.
-const PMT_PID_RESERVED_BITS: u32 = 3;
+pub const PMT_PID_RESERVED_BITS: u32 = 3;
 /// Reserved bits in front of `version_number`.
-const VERSION_RESERVED_BITS: u32 = 2;
+pub const VERSION_RESERVED_BITS: u32 = 2;
 /// Reserved bits in front of `program_info_length` / beside a `CA_enable`.
-const NIBBLE_RESERVED_BITS: u32 = 4;
+pub const NIBBLE_RESERVED_BITS: u32 = 4;
 /// Reserved bits beside a `CA_enable` value.
-const CA_ENABLE_RESERVED_BITS: u32 = 7;
+pub const CA_ENABLE_RESERVED_BITS: u32 = 7;
 
 /// Offsets within the multi-stream `ca_pmt()` prefix.
 const MS_SET_LTS_ID_OFFSET: usize = 0;

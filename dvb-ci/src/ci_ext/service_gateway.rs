@@ -282,9 +282,9 @@ const SERVICE_LIST_VERSION_OFFSET: usize = 0;
 const SERVICE_COUNT_OFFSET: usize = 1;
 
 /// Reserved bits in front of the `EIT_schedule_flag`.
-const SERVICE_DESC_RESERVED_BITS: u32 = 6;
+pub const SERVICE_DESC_RESERVED_BITS: u32 = 6;
 /// Reserved bits in front of `ServiceTerminated`.
-const GET_SERVICE_RESERVED_BITS: u32 = 5;
+pub const GET_SERVICE_RESERVED_BITS: u32 = 5;
 /// Shift selecting the reserved bits of the `ServiceDescAck` flags byte.
 const SERVICE_DESC_RESERVED_SHIFT: u32 = 2;
 /// Shift selecting the reserved bits of the `GetServiceAck` flags byte.

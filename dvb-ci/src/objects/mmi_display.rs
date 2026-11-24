@@ -328,7 +328,7 @@ const GFX_FIXED: usize = 9;
 /// Bytes of the `display_control` body when it carries `mmi_mode`.
 const DISPLAY_CONTROL_WITH_MODE_LEN: usize = 2;
 /// Bits of a reserved field that is neither a nibble nor a single bit.
-const NARROW_RESERVED_FIELD_BITS: u32 = 2;
+pub const NARROW_RESERVED_FIELD_BITS: u32 = 2;
 /// Bytes of one `pixel_depth` entry.
 const PIXEL_DEPTH_ENTRY_LEN: usize = 2;
 

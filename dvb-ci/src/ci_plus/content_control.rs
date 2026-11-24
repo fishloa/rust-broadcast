@@ -129,9 +129,9 @@ impl Serialize for CcPinReply {
 // --- cc_PIN_event (Table 8) ---
 
 /// Reserved bits in front of the `cc_PIN_reply` flags.
-const CC_PIN_RESERVED_BITS: u32 = 7;
+pub const CC_PIN_RESERVED_BITS: u32 = 7;
 /// Width of a `reserved(8)` byte.
-const RESERVED_BYTE_BITS: u32 = 8;
+pub const RESERVED_BYTE_BITS: u32 = 8;
 /// Shift selecting the reserved bits of the `cc_PIN_reply` flags byte.
 const CC_PIN_RESERVED_SHIFT: u32 = 1;
 

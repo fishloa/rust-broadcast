@@ -253,13 +253,13 @@ const DRM_SYSTEM_ID_COUNT_LEN: usize = 1;
 /// Bytes of one `drm_system_id`.
 const DRM_SYSTEM_ID_LEN: usize = core::mem::size_of::<u16>();
 /// Reserved bits in front of `track_PID`.
-const TRACK_PID_RESERVED_BITS: u32 = 3;
+pub const TRACK_PID_RESERVED_BITS: u32 = 3;
 /// Shift selecting the reserved bits in front of `track_PID`.
 const TRACK_PID_RESERVED_SHIFT: u32 = 13;
 /// Shift packing the reserved bits above `track_PID`.
 const TRACK_PID_PACK_SHIFT: u32 = 13;
 /// Reserved bits in front of the `ts_flag`.
-const TS_FLAG_RESERVED_BITS: u32 = 7;
+pub const TS_FLAG_RESERVED_BITS: u32 = 7;
 /// Width of a count/length field carried in one byte.
 const COUNT_BYTE_BITS: u32 = 8;
 /// Width of `drm_metadata_length`.

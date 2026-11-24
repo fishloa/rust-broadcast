@@ -21,7 +21,7 @@ use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Reserved bits in front of `module_id`.
-const MODULE_ID_RESERVED_BITS: u32 = 2;
+pub const MODULE_ID_RESERVED_BITS: u32 = 2;
 /// Shift selecting the reserved bits in front of `module_id`.
 const MODULE_ID_RESERVED_SHIFT: u32 = 6;
 /// Bit width of `module_id`.

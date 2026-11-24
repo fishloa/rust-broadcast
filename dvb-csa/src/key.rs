@@ -10,7 +10,7 @@
 use super::tables::KPERM;
 
 /// Bytes in a DVB-CSA control word — one 64-bit word.
-const KEY_LEN: usize = core::mem::size_of::<u64>();
+pub const KEY_LEN: usize = core::mem::size_of::<u64>();
 /// 64-bit words in the expanded block-key schedule.
 const KEY_WORDS: usize = 7;
 /// Round-key bytes in the block schedule — one per block-cipher round.

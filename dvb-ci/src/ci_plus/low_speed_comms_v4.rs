@@ -231,13 +231,13 @@ const CONNECTION_STATE_MASK: u8 = 0x03;
 /// Shift placing `connection_state` at the top of its byte.
 const CONNECTION_STATE_SHIFT: u32 = 6;
 /// Reserved bits beside `connection_state`.
-const CONNECTION_STATE_RESERVED_BITS: u32 = 6;
+pub const CONNECTION_STATE_RESERVED_BITS: u32 = 6;
 /// Reserved bits in front of `status`.
-const STATUS_RESERVED_BITS: u32 = 7;
+pub const STATUS_RESERVED_BITS: u32 = 7;
 /// Shift selecting the reserved bits in front of `status`.
 const STATUS_RESERVED_SHIFT: u32 = 1;
 /// Reserved bits in front of `inputDeliveryPID`.
-const INPUT_DELIVERY_PID_RESERVED_BITS: u32 = 3;
+pub const INPUT_DELIVERY_PID_RESERVED_BITS: u32 = 3;
 /// Shift selecting the reserved bits in front of `inputDeliveryPID`.
 const INPUT_DELIVERY_PID_RESERVED_SHIFT: u32 = 5;
 /// Shift placing the 13-bit `inputDeliveryPID` beneath its reserved bits.
@@ -759,11 +759,12 @@ impl Serialize for MulticastDescriptor {
             .copy_from_slice(&self.multicast_port.to_be_bytes());
         // reserved(7)='0000000' + include_sources(1).
         buf[pos + MULTICAST_FLAGS_OFFSET] = u8::from(self.include_sources);
-        buf[pos + MULTICAST_COUNT_OFFSET] = objects::fit_bits(
-            self.source_addresses.len() as u64,
-            u8::BITS,
-            "num_source_addresses",
-        )? as u8;
+        buf[pos + MULTICAST_COUNT_OFFSET] =
+            broadcast_common::len::fit_u8(self.source_addresses.len(), "num_source_addresses")
+                .map_err(|_| Error::InvalidObject {
+                    what: "multicast_descriptor",
+                    reason: "more than 255 source addresses",
+                })?;
         pos += MULTICAST_FIXED;
         for a in &self.source_addresses {
             buf[pos..pos + IP_ADDR_LEN].copy_from_slice(a);
@@ -858,6 +859,7 @@ crate::dispatch::declare_resource_apdus! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     const IP_A: [u8; IP_ADDR_LEN] = [
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xC0, 0xA8, 0x01,
@@ -903,6 +905,35 @@ mod tests {
         other.status = false;
         assert_eq!(other.try_to_bytes().unwrap()[5], 0x00);
         assert_ne!(bytes, other.try_to_bytes().unwrap());
+    }
+
+    #[test]
+    fn multicast_source_count_over_range_is_rejected_not_wrapped() {
+        // The descriptor_length byte caps the body at 255 bytes, so a source
+        // list that would need a larger count byte must fail rather than have
+        // its count wrap to a smaller value.
+        let over = MulticastDescriptor {
+            ip_protocol_version: IpProtocolVersion::Ipv4,
+            ip_address: IP_A,
+            multicast_port: 0x1234,
+            include_sources: true,
+            source_addresses: vec![IP_B; 256],
+        };
+        assert!(matches!(over.try_to_bytes(), Err(Error::LengthTooLarge(_))));
+
+        // The largest count that still fits the descriptor body round-trips.
+        let max_fitting = (u8::MAX as usize - MULTICAST_FIXED) / IP_ADDR_LEN;
+        let fit = MulticastDescriptor {
+            ip_protocol_version: IpProtocolVersion::Ipv4,
+            ip_address: IP_A,
+            multicast_port: 0x1234,
+            include_sources: true,
+            source_addresses: vec![IP_B; max_fitting],
+        };
+        let bytes = fit.try_to_bytes().unwrap();
+        assert_eq!(usize::from(bytes[1]), fit.data_len());
+        assert_eq!(usize::from(bytes[22]), max_fitting);
+        assert_eq!(MulticastDescriptor::parse(&bytes).unwrap(), fit);
     }
 
     #[test]

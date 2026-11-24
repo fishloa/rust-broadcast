@@ -158,7 +158,7 @@ pub struct FileAck<'a> {
 }
 
 /// Width of the `reserved` bits in front of `FileOK` (Table 66).
-const FILE_OK_RESERVED_BITS: u32 = 7;
+pub const FILE_OK_RESERVED_BITS: u32 = 7;
 
 /// `AppAbortReq()` (Table 67): host → app **or** app → host — opaque,
 /// application-domain-specific abort qualification.
