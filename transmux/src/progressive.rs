@@ -62,6 +62,10 @@ const SAMPLE_DESCRIPTION_INDEX: u32 = 1;
 const ELST_EMPTY_EDIT: i64 = -1;
 /// `elst` `media_rate_integer` for normal-speed playback (§8.6.6).
 const ELST_NORMAL_RATE: i16 = 1;
+/// Position of `ctts` among the `stbl` children: after `stsd`/`stts` (§8.5.1).
+const STBL_CTTS_INDEX: usize = 2;
+/// Longest edit list this muxer emits: an optional empty edit plus the media edit.
+const EDIT_LIST_MAX_ENTRIES: usize = 2;
 
 /// Package a [`Media`] into a single-file, non-fragmented `.mp4`.
 ///
@@ -228,7 +232,7 @@ fn build_stbl_children(
     ];
     if let Some(ctts) = build_ctts(samples)? {
         // ctts follows stts in the recommended stbl order (§8.5.1).
-        children.insert(2, StblChild::Ctts(ctts));
+        children.insert(STBL_CTTS_INDEX, StblChild::Ctts(ctts));
     }
     if use_co64 {
         children.push(StblChild::Co64(ChunkLargeOffsetBox {
@@ -770,7 +774,7 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Result<Vec<TrackT
                     edts: None,
                 };
             }
-            let mut entries = Vec::with_capacity(2);
+            let mut entries = Vec::with_capacity(EDIT_LIST_MAX_ENTRIES);
             if empty > 0 {
                 entries.push(EditListEntry {
                     segment_duration: empty,

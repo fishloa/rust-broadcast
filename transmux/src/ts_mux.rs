@@ -77,11 +77,12 @@ use broadcast_common::{Package, Serialize};
 use mpeg_pes::StreamId;
 use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{
-    AdaptationFieldControl, ContinuityCounter, Pcr, ScramblingControl, TS_PACKET_SIZE, TsHeader,
+    AdaptationFieldControl, CC_MASK, ContinuityCounter, PID_MASK_HI, Pcr, ScramblingControl,
+    TS_PACKET_SIZE, TsHeader,
 };
 
-use crate::aac_asc::AudioSpecificConfig;
-use crate::annexb::{iter_length_prefixed_nals, length_prefixed_to_annexb};
+use crate::aac_asc::{ADTS_HEADER_SIZE, AudioSpecificConfig};
+use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals, length_prefixed_to_annexb};
 use crate::error::{Error, Result};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::mp4esds::EsdsBox;
@@ -275,6 +276,8 @@ const H264_NAL_AUD_BYTE: u8 = 0x09;
 /// i.e. a picture of any type. The byte is `primary_pic_type`(3 bits, `111`)
 /// followed by `rbsp_trailing_bits` (`1` then zero-padding).
 const H264_AUD_PRIMARY_PIC_TYPE: u8 = 0xF0;
+/// The complete AVC AUD NAL unit this muxer prepends (H.264 §7.3.2.4).
+const AVC_AUD_NAL: [u8; 2] = [H264_NAL_AUD_BYTE, H264_AUD_PRIMARY_PIC_TYPE];
 
 // ── H.265/HEVC NAL constants (ITU-T H.265 Table 7-1) — issue #627 ───────────
 
@@ -298,6 +301,8 @@ const HEVC_AUD_SECOND_BYTE: u8 = 0x01;
 /// valid for any access unit. Followed by `rbsp_trailing_bits` (`1` then
 /// zero-padding).
 const HEVC_AUD_PIC_TYPE: u8 = 0x50;
+/// The complete HEVC AUD NAL unit this muxer prepends (H.265 §7.4.2.4).
+const HEVC_AUD_NAL: [u8; 3] = [HEVC_AUD_FIRST_BYTE, HEVC_AUD_SECOND_BYTE, HEVC_AUD_PIC_TYPE];
 
 // ── TS adaptation-field constants (ISO/IEC 13818-1 §2.4.3.4/§2.4.3.5) ───────
 
@@ -311,6 +316,33 @@ const AF_PCR_FLAG: u8 = 0x10;
 const PCR_FIELD_LEN: usize = 6;
 /// Stuffing byte for unused TS/PES payload bytes (§2.4.4).
 const STUFFING_BYTE: u8 = 0xFF;
+
+/// Bytes of the fixed TS packet header before the adaptation field or payload
+/// (§2.4.3.2 Table 2-4).
+const TS_HEADER_LEN: usize = 4;
+/// Offset of the header byte carrying `adaptation_field_control` and the
+/// `continuity_counter`.
+const CC_OFFSET: usize = 3;
+/// Offset of `adaptation_field_length`, the first adaptation-field byte.
+const AF_LENGTH_OFFSET: usize = TS_HEADER_LEN;
+/// Offset of the adaptation-field flags byte.
+const AF_FLAGS_OFFSET: usize = TS_HEADER_LEN + 1;
+
+/// Bytes of a PES `PTS`/`DTS` field (§2.4.3.7).
+const PES_TIMESTAMP_LEN: usize = 5;
+/// Bytes of a PTS+DTS pair in the optional header (§2.4.3.7).
+const PES_TIMESTAMP_PAIR_LEN: usize = PES_TIMESTAMP_LEN * 2;
+/// Offset of the PID's low byte in the TS header (§2.4.3.2).
+const PID_LO_OFFSET: usize = 2;
+/// Stamps per gap when scanning consecutive PCR stamps (`windows(2)`).
+const PCR_STAMP_PAIR_LEN: usize = 2;
+
+/// Bytes of a descriptor's `descriptor_tag` + `descriptor_length` header
+/// (§2.6).
+const DESCRIPTOR_HEADER_LEN: usize = 2;
+/// Bytes a PSI `section_length` does not count: `table_id` and the 2-byte
+/// `section_length` field itself (§2.4.4).
+const PSI_SECTION_LENGTH_PREFIX: usize = 3;
 
 /// Media timescale of a Transport Stream / PES clock (90 kHz).
 /// The 90 kHz MPEG-2 Systems clock, both as a `Timescale` and as the `u64`
@@ -824,10 +856,10 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
         next_pid += 1;
     }
     if plans.is_empty() {
-        return Err(Error::InvalidInput(
-            "no track carries a TS-representable codec (AVC/HEVC/MPEG-2-video/AAC/\
-             MPEG-audio/AC-3/E-AC-3/DTS/MPEG-H/Data)",
-        ));
+        return Err(Error::InvalidInput(concat!(
+            "no track carries a TS-representable codec (AVC/HEVC/MPEG-2-video/AAC/",
+            "MPEG-audio/AC-3/E-AC-3/DTS/MPEG-H/Data)"
+        )));
     }
     Ok((plans, planned_idx))
 }
@@ -872,11 +904,11 @@ fn merge_es_info_descriptors(inherited: &[u8], synthesized: &[Vec<u8>]) -> Resul
 
     let mut out = Vec::with_capacity(inherited.len() + total_param_len(synthesized));
     let mut off = 0usize;
-    while off + 2 <= inherited.len() {
+    while off + DESCRIPTOR_HEADER_LEN <= inherited.len() {
         let tag = inherited[off];
         let len = inherited[off + 1] as usize;
-        let end = (off + 2 + len).min(inherited.len());
-        let body = &inherited[(off + 2).min(end)..end];
+        let end = (off + DESCRIPTOR_HEADER_LEN + len).min(inherited.len());
+        let body = &inherited[(off + DESCRIPTOR_HEADER_LEN).min(end)..end];
         let key = descriptor_dedup_key(tag, body);
         if tag != DESCRIPTOR_TAG_CA && !synthesized_keys.contains(&key) {
             out.extend_from_slice(&inherited[off..end]);
@@ -1081,7 +1113,7 @@ impl TsContinuity {
     /// Record that a payload-bearing packet with counter `cc` was written on
     /// `pid`; the next one takes `cc + 1` modulo 16 (§2.4.3.3).
     fn advance(&mut self, pid: Pid, cc: u8) {
-        self.set_next_for(pid, (cc + 1) & 0x0F);
+        self.set_next_for(pid, (cc + 1) & CC_MASK);
     }
 
     /// The PMT `version_number` for a section whose version-0 rendering is
@@ -1103,7 +1135,7 @@ impl TsContinuity {
         if self.counters.len() <= idx {
             self.counters.resize(idx + 1, None);
         }
-        self.counters[idx] = Some(cc & 0x0F);
+        self.counters[idx] = Some(cc & CC_MASK);
     }
 }
 
@@ -1159,13 +1191,13 @@ fn mux_tracks_timed_with_cc(
     // in an earlier call; only the periodic repeats below apply.
     if !psi.started {
         let pat_pkts = packetise_section(PAT_PID, &pat, continuity.next_for(PAT_PID));
-        let pat_last_cc = pat_pkts.last().map(|p| p[3] & 0x0F).unwrap_or(0);
+        let pat_last_cc = pat_pkts.last().map(|p| p[CC_OFFSET] & CC_MASK).unwrap_or(0);
         for pkt in pat_pkts {
             out.extend_from_slice(&pkt);
         }
         continuity.advance(PAT_PID, pat_last_cc);
         let pmt_pkts = packetise_section(PMT_PID, &pmt, continuity.next_for(PMT_PID));
-        let pmt_last_cc = pmt_pkts.last().map(|p| p[3] & 0x0F).unwrap_or(0);
+        let pmt_last_cc = pmt_pkts.last().map(|p| p[CC_OFFSET] & CC_MASK).unwrap_or(0);
         for pkt in pmt_pkts {
             out.extend_from_slice(&pkt);
         }
@@ -1355,7 +1387,7 @@ fn emit_pcr_only_packets(pcr_pid: Pid, pcr_stamps: &mut [u64], tagged: &mut Vec<
     }
     pcr_stamps.sort_unstable();
     let mut insertions: Vec<u64> = Vec::new();
-    for w in pcr_stamps.windows(2) {
+    for w in pcr_stamps.windows(PCR_STAMP_PAIR_LEN) {
         let (a, b) = (w[0], w[1]);
         if b - a <= MAX_PCR_INTERVAL_TICKS {
             continue;
@@ -1382,7 +1414,7 @@ fn emit_pcr_only_packets(pcr_pid: Pid, pcr_stamps: &mut [u64], tagged: &mut Vec<
     let mut cc_at: Vec<(u64, u8)> = tagged
         .iter()
         .filter(|tp| pid_of_packet(&tp.packet) == pcr_pid.value())
-        .map(|tp| (tp.sort_key, tp.packet[3] & 0x0F))
+        .map(|tp| (tp.sort_key, tp.packet[CC_OFFSET] & CC_MASK))
         .collect();
     cc_at.sort_by_key(|&(k, _)| k);
 
@@ -1410,7 +1442,7 @@ fn emit_pcr_only_packets(pcr_pid: Pid, pcr_stamps: &mut [u64], tagged: &mut Vec<
 
 /// Read the 13-bit PID from a TS packet's header.
 fn pid_of_packet(pkt: &[u8; TS_PACKET_SIZE]) -> u16 {
-    (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16
+    (((pkt[1] & PID_MASK_HI) as u16) << u8::BITS) | pkt[PID_LO_OFFSET] as u16
 }
 
 /// Write a PCR-only TS packet: an adaptation field with the PCR and no payload
@@ -1430,8 +1462,8 @@ fn write_pcr_only_packet(
         continuity_counter: cc,
     };
     hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
-    pkt[4] = PCR_ONLY_AF_LEN as u8;
-    pkt[5] = AF_PCR_FLAG;
+    pkt[AF_LENGTH_OFFSET] = PCR_ONLY_AF_LEN as u8;
+    pkt[AF_FLAGS_OFFSET] = AF_PCR_FLAG;
     pkt[6..6 + PCR_FIELD_LEN].copy_from_slice(&pcr.to_field_bytes());
 }
 
@@ -1501,7 +1533,7 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
                 .asc
                 .as_ref()
                 .ok_or(Error::InvalidInput("AAC ES has no AudioSpecificConfig"))?;
-            let frame_len_usize = sample.data.len() + 7; // 7-byte ADTS header
+            let frame_len_usize = sample.data.len() + ADTS_HEADER_SIZE;
             let frame_len: u16 = frame_len_usize.try_into().map_err(|_| {
                 Error::InvalidValue(InvalidValue {
                     field: "frame_len",
@@ -1575,7 +1607,7 @@ where
 
 /// Total Annex B length the parameter sets add (4-byte start code each).
 fn total_param_len(sps_pps: &[Vec<u8>]) -> usize {
-    sps_pps.iter().map(|p| 4 + p.len()).sum()
+    sps_pps.iter().map(|p| NAL_LENGTH_SIZE + p.len()).sum()
 }
 
 /// Append each parameter set as a 4-byte-start-code Annex B NAL.
@@ -1606,9 +1638,9 @@ fn ensure_avc_aud(mut au: Vec<u8>) -> Result<Vec<u8>> {
     if first_avc_nal_type(&au) == Some(H264_NAL_AUD) {
         return Ok(au);
     }
-    let mut out = Vec::with_capacity(ANNEXB_START_CODE.len() + 2 + au.len());
+    let mut out = Vec::with_capacity(ANNEXB_START_CODE.len() + AVC_AUD_NAL.len() + au.len());
     out.extend_from_slice(&ANNEXB_START_CODE);
-    out.extend_from_slice(&[H264_NAL_AUD_BYTE, H264_AUD_PRIMARY_PIC_TYPE]);
+    out.extend_from_slice(&AVC_AUD_NAL);
     out.append(&mut au);
     Ok(out)
 }
@@ -1625,9 +1657,9 @@ fn ensure_hevc_aud(mut au: Vec<u8>) -> Result<Vec<u8>> {
     if first_hevc_nal_type(&au) == Some(HEVC_NAL_AUD) {
         return Ok(au);
     }
-    let mut out = Vec::with_capacity(ANNEXB_START_CODE.len() + 3 + au.len());
+    let mut out = Vec::with_capacity(ANNEXB_START_CODE.len() + HEVC_AUD_NAL.len() + au.len());
     out.extend_from_slice(&ANNEXB_START_CODE);
-    out.extend_from_slice(&[HEVC_AUD_FIRST_BYTE, HEVC_AUD_SECOND_BYTE, HEVC_AUD_PIC_TYPE]);
+    out.extend_from_slice(&HEVC_AUD_NAL);
     out.append(&mut au);
     Ok(out)
 }
@@ -1696,7 +1728,11 @@ fn build_pmt_section(pcr_pid: Pid, plans: &[EsPlan], version: u8) -> Result<Vec<
         streams,
     );
     // Preserve the §2.4.4.4 1021-byte section_length cap check (issue #1129).
-    if pmt.serialized_len().saturating_sub(3) > MAX_SECTION_LENGTH {
+    if pmt
+        .serialized_len()
+        .saturating_sub(PSI_SECTION_LENGTH_PREFIX)
+        > MAX_SECTION_LENGTH
+    {
         return Err(Error::BufferCapExceeded {
             what: "PSI section_length",
             cap: MAX_SECTION_LENGTH,
@@ -1715,7 +1751,7 @@ fn build_pmt_section(pcr_pid: Pid, plans: &[EsPlan], version: u8) -> Result<Vec<
 /// handled by the generic loop for safety. ISO/IEC 13818-1 §2.4.4.
 fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACKET_SIZE]> {
     let mut packets = Vec::new();
-    let mut cc: u8 = start_cc & 0x0F;
+    let mut cc: u8 = start_cc & CC_MASK;
     let mut pos = 0usize;
     let mut first = true;
     while pos < section.len() || first {
@@ -1729,8 +1765,8 @@ fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
             continuity_counter: ContinuityCounter::from_wire_masked(cc),
         };
         hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
-        cc = (cc + 1) & 0x0F;
-        let mut w = 4usize;
+        cc = (cc + 1) & CC_MASK;
+        let mut w = TS_HEADER_LEN;
         let cap = if first {
             pkt[w] = 0; // pointer_field
             w += 1;
@@ -1780,7 +1816,7 @@ fn packetise_pes(
         let pcr_af_content = if want_pcr { 1 + PCR_FIELD_LEN } else { 0 };
         // Header bytes before the payload when only the forced AF (if any) is
         // present: 4 header + (1 af_len byte + pcr_af_content) when an AF exists.
-        let forced_header = 4 + if want_pcr { 1 + pcr_af_content } else { 0 };
+        let forced_header = TS_HEADER_LEN + if want_pcr { 1 + pcr_af_content } else { 0 };
         let cap = TS_PACKET_SIZE - forced_header;
 
         let is_last = remaining <= cap;
@@ -1809,7 +1845,7 @@ fn packetise_pes(
             // af_len = flags(1) + stuffing; but the AF also costs its own 1-byte
             // length prefix, so total added = 2 + (stuff - 1) accounted below.
             // Choose af_len so 4 + 1 + af_len + to_copy == 188.
-            let af_len = TS_PACKET_SIZE - 4 - 1 - to_copy;
+            let af_len = TS_PACKET_SIZE - TS_HEADER_LEN - 1 - to_copy;
             write_af_packet(
                 &mut pkt,
                 plan.pid,
@@ -1884,19 +1920,22 @@ fn write_af_packet(
     hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
     // Ensure the control bits reflect adaptation+payload (bits already set by the
     // header serializer via has_adaptation/has_payload).
-    debug_assert_eq!(pkt[3] & (AF_CTRL_ADAPTATION | AF_CTRL_PAYLOAD), 0x30);
-    pkt[4] = af_len as u8;
+    debug_assert_eq!(
+        pkt[CC_OFFSET] & (AF_CTRL_ADAPTATION | AF_CTRL_PAYLOAD),
+        AF_CTRL_ADAPTATION | AF_CTRL_PAYLOAD
+    );
+    pkt[AF_LENGTH_OFFSET] = af_len as u8;
     // An af_len of 0 is a valid single-stuffing-byte adaptation field with no
     // flags byte (§2.4.3.4); anything larger carries the 1-byte flags field.
     if af_len >= 1 {
         // Flags byte (byte 5); the rest of the AF stays 0xFF stuffing from init.
-        pkt[5] = if has_pcr { AF_PCR_FLAG } else { 0 };
+        pkt[AF_FLAGS_OFFSET] = if has_pcr { AF_PCR_FLAG } else { 0 };
         if has_pcr && let Some(p) = pcr {
             pkt[6..6 + PCR_FIELD_LEN].copy_from_slice(&p.to_field_bytes());
         }
     }
     // Remaining AF bytes (up to 5 + af_len) stay 0xFF stuffing (already set).
-    let payload_start = 5 + af_len;
+    let payload_start = TS_HEADER_LEN + 1 + af_len;
     pkt[payload_start..payload_start + payload.len()].copy_from_slice(payload);
 }
 
@@ -1925,7 +1964,11 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
     let include_dts = dts90 != pts90;
     // PES optional-header content length after the 3 fixed bytes: PTS (5) always,
     // + DTS (5) when present.
-    let opt_content = if include_dts { 10 } else { 5 };
+    let opt_content = if include_dts {
+        PES_TIMESTAMP_PAIR_LEN
+    } else {
+        PES_TIMESTAMP_LEN
+    };
     // PES_packet_length counts everything after the 16-bit length field: the
     // 3 fixed optional-header bytes + optional content + payload. Video uses 0
     // (unbounded) so an access unit may exceed 65535 bytes; audio sets it exactly.
@@ -1966,7 +2009,7 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
 
 /// Encode a 33-bit timestamp into the 5-byte PTS/DTS field with the given 4-bit
 /// `prefix`, interleaving the mandatory `marker_bit`s. ISO/IEC 13818-1 §2.4.3.7.
-fn encode_timestamp(ts: u64, prefix: u8) -> [u8; 5] {
+fn encode_timestamp(ts: u64, prefix: u8) -> [u8; PES_TIMESTAMP_LEN] {
     broadcast_common::clock33::pack_marked(ts, prefix)
 }
 

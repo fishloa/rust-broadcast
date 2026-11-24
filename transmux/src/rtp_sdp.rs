@@ -36,7 +36,6 @@ use broadcast_common::error::InvalidValue;
 use broadcast_common::len::need_in;
 
 /// Length prefix size transmux uses for coded NALs (4-byte).
-const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
 /// H.264 `nal_unit_type` for a sequence parameter set (SPS).
 const AVC_NAL_SPS: u8 = 7;
 /// H.264 `nal_unit_type` for a picture parameter set (PPS).
@@ -198,7 +197,7 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
         profile_indication,
         profile_compatibility: first_sps.0[2],
         level_indication: first_sps.0[3],
-        length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
+        length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
         sps,
         pps,
         chroma_format: ext.as_ref().map(|i| i.chroma_format_idc),

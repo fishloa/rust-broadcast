@@ -79,6 +79,7 @@ use crate::nal::{NalCodec, ParamKind, parameter_set_is_valid};
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::ts_demux::{
+    AVC_SPS_CONFIG_MIN_LEN, AVC_SPS_CONSTRAINT_FLAGS_OFFSET, AVC_SPS_LEVEL_IDC_OFFSET,
     ESDS_VIDEO_ES_ID, MPEG2_PICTURE_START_CODE, OTI_MPEG2_VIDEO_MAIN, STREAM_TYPE_VISUAL,
     mpeg2_is_sync,
 };
@@ -168,7 +169,6 @@ const SUBSTREAM_ID_AUDIO_LO: u8 = 0x80;
 // ── H.264 NAL / config constants (ISO/IEC 14496-10 / 14496-15:2017) ───────────────
 
 /// NAL length-field width for `mdat` samples: 4-byte prefixes → `lengthSizeMinusOne = 3`.
-const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
 /// H.264 `nal_unit_type` for SPS (Table 7-1).
 const H264_NAL_SPS: u8 = 7;
 /// H.264 `nal_unit_type` for PPS (Table 7-1).
@@ -178,6 +178,11 @@ const H264_NAL_IDR: u8 = 5;
 /// Mask for the H.264 5-bit `nal_unit_type` in the NAL header byte.
 const H264_NAL_TYPE_MASK: u8 = 0x1F;
 
+// ── MPEG-2 video picture boundaries ──────────────────────────────────────────
+
+/// Offset of a start code's code byte, one past its 3-byte `00 00 01` prefix.
+const START_CODE_BYTE_OFFSET: usize = 3;
+
 // ── Timestamps / timescale ───────────────────────────────────────────────────
 
 /// Video media timescale (90 kHz — the PS/PES timestamp clock).
@@ -186,6 +191,8 @@ const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(crate::rtp::VIDE
 const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
 /// Fallback per-frame duration (90 kHz ticks) when only one stamped frame exists.
 const DEFAULT_FRAME_DURATION: i128 = 3600;
+/// Fewest stamped decode timestamps that yield a per-frame delta.
+const MIN_FRAMES_FOR_DELTA: usize = 2;
 
 /// Codec class recovered from a `stream_id`. Data-carrying dispatch discriminant,
 /// not a spec label enum — hence no `name()`/`Display` (see the
@@ -679,7 +686,9 @@ fn split_mpeg2_pictures(data: &[u8]) -> Vec<(usize, usize)> {
     let codes = crate::annexb::start_code_positions(data);
     let mut starts: Vec<usize> = Vec::new();
     for &pos in &codes {
-        if pos + 3 < data.len() && data[pos + 3] == MPEG2_PICTURE_START_CODE {
+        if pos + START_CODE_BYTE_OFFSET < data.len()
+            && data[pos + START_CODE_BYTE_OFFSET] == MPEG2_PICTURE_START_CODE
+        {
             starts.push(pos);
         }
     }
@@ -814,7 +823,7 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
     let (Some(sps), Some(pps)) = (sps, pps) else {
         return Ok(None);
     };
-    if sps.len() < 4 {
+    if sps.len() < AVC_SPS_CONFIG_MIN_LEN {
         return Ok(None);
     }
 
@@ -823,9 +832,9 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
         // profile_idc / constraint_flags / level_idc live at SPS bytes 1..=3
         // (after the 1-byte NAL header) — ISO/IEC 14496-15:2017 §5.3.3.1.
         profile_indication: sps[1],
-        profile_compatibility: sps[2],
-        level_indication: sps[3],
-        length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
+        profile_compatibility: sps[AVC_SPS_CONSTRAINT_FLAGS_OFFSET],
+        level_indication: sps[AVC_SPS_LEVEL_IDC_OFFSET],
+        length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
         sps: alloc::vec![AvcSps(sps)],
         pps: alloc::vec![AvcPps(pps)],
         chroma_format: None,
@@ -1027,7 +1036,7 @@ fn stamped_frame_duration(units: &[AccessUnit]) -> i128 {
         .enumerate()
         .filter_map(|(i, u)| u.dts.map(|d| (i, d as i128)))
         .collect();
-    if stamped.len() < 2 {
+    if stamped.len() < MIN_FRAMES_FOR_DELTA {
         return DEFAULT_FRAME_DURATION;
     }
     let (i0, d0) = stamped[0];

@@ -1240,7 +1240,7 @@ struct RtpTrack {
 const RTP_TS_WRAP: i64 = 1 << 32;
 /// Half the 32-bit range — the classic wrap-detection threshold: a step of
 /// more than half the range is read as a wrap, not a real jump.
-const RTP_TS_WRAP_HALF: i64 = RTP_TS_WRAP / 2;
+const RTP_TS_WRAP_MIDPOINT: i64 = RTP_TS_WRAP / 2;
 
 /// Incremental 32-bit RTP-timestamp wrap-unroll (RFC 3550 §5.1), one access
 /// unit at a time — the RTP analogue of `ts_demux`'s 33-bit `WrapState`, and
@@ -1268,9 +1268,9 @@ impl RtpWrapState {
             return self.prev_uw;
         }
         let mut delta = raw as i64 - self.prev_raw as i64;
-        if delta > RTP_TS_WRAP_HALF {
+        if delta > RTP_TS_WRAP_MIDPOINT {
             delta -= RTP_TS_WRAP; // wrapped backward across 2^32
-        } else if delta < -RTP_TS_WRAP_HALF {
+        } else if delta < -RTP_TS_WRAP_MIDPOINT {
             delta += RTP_TS_WRAP; // wrapped forward across 2^32
         }
         let uw = self.prev_uw + delta;

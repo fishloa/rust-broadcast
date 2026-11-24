@@ -91,7 +91,7 @@ pub struct CleanApertureBox {
 
 /// The `/ 2` of `pcX = horizOff + (width - 1)/2` and the clean aperture edges
 /// `pcX ± (cleanApertureWidth - 1)/2` (ISO/IEC 14496-12:2026 §12.1.4.1).
-const HALF: i128 = 2;
+const ROUNDING_DIVISOR: i128 = 2;
 
 /// One axis of [`CleanApertureBox::aperture_within`]: the first sample and the
 /// length of the aperture inside a frame of `frame` samples.
@@ -109,8 +109,8 @@ fn aperture_axis(size: (i32, i32), offset: (i32, i32), frame: u32) -> Option<(u3
     }
     let size = size_n / size_d;
     let frame = i128::from(frame);
-    let first_num = HALF * off_n + off_d * (frame - size);
-    let first_den = HALF * off_d;
+    let first_num = ROUNDING_DIVISOR * off_n + off_d * (frame - size);
+    let first_den = ROUNDING_DIVISOR * off_d;
     if first_num % first_den != 0 {
         return None;
     }
