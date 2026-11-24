@@ -328,8 +328,8 @@ test = false
 doc  = false
 
 [[bin]]
-name = "transmux_sample_entries"
-path = "fuzz_targets/transmux_sample_entries.rs"
+name = "isobmff_sample_entries"
+path = "fuzz_targets/isobmff_sample_entries.rs"
 test = false
 doc  = false
 

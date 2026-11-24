@@ -21,11 +21,12 @@ use isobmff::movie_fragment::{
     TRUN_SAMPLE_SIZE_PRESENT,
 };
 use isobmff::segments::{MediaDataBox, SegmentTypeBox};
+use isobmff::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::TrackId;
 use transmux::{
-    CodecConfig, FragmentTrackData, MovieBox, Sample, SampleEntryVariant, Severity, StblChild,
-    TrackSpec, build_init_segment, build_media_segment, validate::SegmentOrigin,
-    validate_cmaf_track, validate_init_segment, validate_media_segment,
+    CodecConfig, FragmentTrackData, Sample, Severity, TrackSpec, build_init_segment,
+    build_media_segment, validate::SegmentOrigin, validate_cmaf_track, validate_init_segment,
+    validate_media_segment,
 };
 
 // ---------------------------------------------------------------------------

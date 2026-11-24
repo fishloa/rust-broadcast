@@ -58,8 +58,8 @@
 
 use broadcast_common::{Parse, Unpackage};
 use isobmff::box_types::clamped_boxes;
+use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::TrackId;
-use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals_with};
 
 use crate::report::{Finding, Location, Report, Severity};
@@ -127,7 +127,7 @@ fn check_hevc_sample_entries(bytes: &[u8], report: &mut Report) {
                 for array in entry.config.config.unpermitted_arrays() {
                     report.push(Finding::new(
                         Severity::Warning,
-                        Location::at_track(0, track_id),
+                        Location::at_track(0, track_id.into()),
                         "hvcc-array-nal-type",
                         alloc::format!(
                             "{name} hvcC on track {track_id} carries an array of NAL_unit_type {}, \
@@ -140,7 +140,7 @@ fn check_hevc_sample_entries(bytes: &[u8], report: &mut Report) {
                 for array in entry.array_completeness_violations() {
                     report.push(Finding::new(
                         Severity::Warning,
-                        Location::at_track(0, track_id),
+                        Location::at_track(0, track_id.into()),
                         "hvc1-array-completeness",
                         alloc::format!(
                             "hvc1 hvcC on track {track_id} has array_completeness {} on the \

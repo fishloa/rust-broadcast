@@ -65,6 +65,15 @@ pub const TABLE: &[Crate] = &[
         needs_xml_module: true,
     },
     Crate {
+        name: "isobmff",
+        allowed_types: &[(
+            "XmlSubtitleSampleEntry",
+            "ISO BMFF stpp sample entry (XML subtitle track) box, unrelated to XML parsing",
+        )],
+        allowed_fns: &[],
+        needs_xml_module: false,
+    },
+    Crate {
         name: "media-doctor",
         allowed_types: &[],
         allowed_fns: &[],
@@ -86,10 +95,7 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "transmux",
-        allowed_types: &[(
-            "XmlSubtitleSampleEntry",
-            "ISO BMFF stpp sample entry (XML subtitle track) box, unrelated to XML parsing",
-        )],
+        allowed_types: &[],
         allowed_fns: &[
             (
                 "xml_error",

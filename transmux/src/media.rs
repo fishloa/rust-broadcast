@@ -43,9 +43,6 @@ use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
-use crate::init_segment::{
-    MovieBox, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox, sampling_rate_override,
-};
 use crate::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC,
     FragmentTrackData, InputDegradation, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry,
@@ -59,6 +56,9 @@ use isobmff::box_support::OpaqueBox;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, parse_box};
 use isobmff::dts::DtsSpecificBox;
 use isobmff::flac::FlacSpecificBox;
+use isobmff::init_segment::{
+    MovieBox, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox, sampling_rate_override,
+};
 use isobmff::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use isobmff::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use isobmff::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
@@ -124,7 +124,7 @@ struct TrackBuilder {
     in_band: bool,
     /// Container-level boxes from the sample entry, used to overlay `pasp` /
     /// `colr nclx` onto every tag the in-band tracker produces.
-    entry_extra_boxes: Vec<crate::sample_entries::OpaqueBox>,
+    entry_extra_boxes: Vec<isobmff::sample_entries::OpaqueBox>,
 }
 
 impl<'a> Unpackage for Fmp4Demux<'a> {
@@ -137,7 +137,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             find_top_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let moov = MovieBox::parse(moov_bytes)?;
         let movie_timescale = moov.mvhd.timescale;
-        let trex_defaults: &[crate::init_segment::TrackExtendsBox] =
+        let trex_defaults: &[isobmff::init_segment::TrackExtendsBox] =
             moov.mvex.as_ref().map_or(&[], |m| m.trex.as_slice());
 
         // DEMUX = lenient but loud (media plane step-2 fix wave 1, B2/B3): a
@@ -165,7 +165,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                         entry_extra_boxes,
                     })
                 }
-                Err(err) => skipped.push(skipped_track(err, trak.tkhd.track_id)),
+                Err(err) => skipped.push(skipped_track(err, trak.tkhd.track_id.into())),
             }
         }
 
@@ -309,7 +309,10 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
 /// only; without the `trex` fallback every such sample came out with duration
 /// 0 and the whole fragment at one `dts`. A `trex` size of zero means "not
 /// declared" in practice and is not applied.
-fn apply_trex_defaults(moof: &mut MovieFragmentBox, trex: &[crate::init_segment::TrackExtendsBox]) {
+fn apply_trex_defaults(
+    moof: &mut MovieFragmentBox,
+    trex: &[isobmff::init_segment::TrackExtendsBox],
+) {
     for traf in &mut moof.traf {
         let Some(defaults) = trex
             .iter()
@@ -822,7 +825,7 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
     })?;
 
     let config = codec_config_from_entry(entry)?;
-    let spec = TrackSpec::new(track_id, timescale, config);
+    let spec = TrackSpec::new(track_id.into(), timescale, config);
     // Overlay container-level display geometry (pasp / colr nclx) from the
     // sample entry onto the SPS-derived display — ISO/IEC 14496-12:2026
     // §12.1.4.1 (pasp) / §12.1.5.1 (colr). AVC/HEVC entries only; see
@@ -855,7 +858,7 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
 pub(crate) fn overlay_sample_entry_geometry(
     display: Option<DisplayGeometry>,
     config: &CodecConfig,
-    extra_boxes: &[crate::sample_entries::OpaqueBox],
+    extra_boxes: &[isobmff::sample_entries::OpaqueBox],
 ) -> Option<DisplayGeometry> {
     // First `pasp` in entry order.
     let pasp = extra_boxes
@@ -965,7 +968,7 @@ pub(crate) fn overlay_sample_entry_geometry(
 /// [`TrackSpec::display`].
 fn overlay_sample_entry_display(
     mut spec: TrackSpec,
-    extra_boxes: &[crate::sample_entries::OpaqueBox],
+    extra_boxes: &[isobmff::sample_entries::OpaqueBox],
 ) -> TrackSpec {
     let config = spec.config.clone();
     spec.display = overlay_sample_entry_geometry(spec.display, &config, extra_boxes);
@@ -984,7 +987,9 @@ fn overlay_sample_entry_display(
 
 /// Whether a `trak`'s sample entry carries parameter sets in-band
 /// (avc3/avc4/hev1), plus its entry-level extra boxes for the display overlay.
-fn track_entry_inband_and_extras(trak: &TrackBox) -> (bool, Vec<crate::sample_entries::OpaqueBox>) {
+fn track_entry_inband_and_extras(
+    trak: &TrackBox,
+) -> (bool, Vec<isobmff::sample_entries::OpaqueBox>) {
     let Some(mdia) = trak.mdia.as_ref() else {
         return (false, Vec::new());
     };
@@ -1100,7 +1105,7 @@ fn tag_fmp4_inband_display(b: &mut TrackBuilder) {
 fn overlay_display_info(
     raw: &Arc<DisplayInfo>,
     config: &CodecConfig,
-    extra: &[crate::sample_entries::OpaqueBox],
+    extra: &[isobmff::sample_entries::OpaqueBox],
 ) -> Arc<DisplayInfo> {
     let mut info = (**raw).clone();
     info.geometry = overlay_sample_entry_geometry(info.geometry, config, extra);
@@ -1124,7 +1129,7 @@ fn gcd_u32(mut a: u32, mut b: u32) -> u32 {
 /// track, `c608`/`c708`, GoPro `gpmd`, ...) is the *only* way
 /// `track_spec_from_trak` can fail once it has reached a `stsd` entry at all
 /// ([`codec_config_from_entry`] only errors on
-/// [`SampleEntryVariant::Unknown`](crate::init_segment::SampleEntryVariant::Unknown)).
+/// [`SampleEntryVariant::Unknown`](isobmff::init_segment::SampleEntryVariant::Unknown)).
 /// Any other error means the `trak` was too structurally malformed to even
 /// reach an entry (missing `mdia`/`mdhd`/`minf`/`stbl`/`stsd`), so there is no
 /// FourCC to recover; `"unknown"` names that case honestly rather than
@@ -1345,6 +1350,10 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
         SampleEntryVariant::AvcParameterSet(entry) => Err(Error::UnsupportedSampleEntry {
             fourcc: String::from_utf8_lossy(&entry.entry.codec_type).into_owned(),
         }),
+        // A variant added to this non-exhaustive enum above this crate.
+        _ => Err(Error::UnsupportedSampleEntry {
+            fourcc: String::from("unknown"),
+        }),
     }
 }
 
@@ -1453,7 +1462,7 @@ fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; BOX_TYPE_SIZE]) -> 
 mod tests {
     use super::*;
     use crate::TrackId;
-    use crate::subtitle_entries::WvttSampleEntry;
+    use isobmff::subtitle_entries::WvttSampleEntry;
 
     /// ffmpeg's `mov` muxer cannot produce a `wvtt` sample entry (only
     /// `stpp`/TTML — see `../fixtures/mp4/cmaf-av-subtitle/PROVENANCE.md`), so WebVTT

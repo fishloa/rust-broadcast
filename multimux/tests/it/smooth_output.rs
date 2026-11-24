@@ -1054,7 +1054,7 @@ fn subtitle_spec(track_id: u32) -> TrackSpec {
         CodecConfig::Subtitle {
             format: transmux::ir::SubtitleFormat::Ttml,
             sample_entry: Some(transmux::pipeline::SubtitleSampleEntry::Ttml(
-                transmux::XmlSubtitleSampleEntry::new(TTML_NAMESPACE),
+                isobmff::XmlSubtitleSampleEntry::new(TTML_NAMESPACE),
             )),
         },
     )

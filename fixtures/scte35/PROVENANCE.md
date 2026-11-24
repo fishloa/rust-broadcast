@@ -286,9 +286,9 @@ fixture.** Root cause, isolated:
 - `read_u8` past the end of the 41-byte body returns `Err` as designed (no
   panic), but that `Err` propagates through
   `AVCSampleEntry::bare_parse` → `SampleDescriptionBox::parse`, where
-  `transmux::init_segment::parse_stbl_children`'s
+  `isobmff::init_segment::parse_stbl_children`'s
   `.unwrap_or_else(|_| SampleDescriptionBox { entries: Vec::new(), .. })`
-  (`transmux/src/init_segment.rs`, the `b"stsd"` arm, ~line 2174) **silently
+  (`isobmff/src/init_segment.rs`, the `b"stsd"` arm, ~line 2174) **silently
   swallows the error into zero `stsd` entries**, which makes
   `track_spec_from_trak` fail with `UnexpectedBox { expected: "stsd entry"
   }`, which makes the **entire video track** get dropped into

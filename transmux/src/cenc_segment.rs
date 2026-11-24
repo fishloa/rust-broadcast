@@ -6,12 +6,12 @@
 //! tree through its typed `Serialize` impl.
 
 use crate::error::{Error, Result};
-use crate::init_segment::{MovieBox, StblChild, protect_sample_entry};
 use crate::ir::TrackId;
 use crate::media::TrackEncryption;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use isobmff::box_types::box_iter;
+use isobmff::init_segment::{MovieBox, StblChild, protect_sample_entry};
 
 /// Rewrite an already-built CMAF/fMP4 init segment (`ftyp` + `moov`) so the
 /// given track's sample entry becomes CENC-protected (issue #564 Task 3):
@@ -56,7 +56,7 @@ pub fn protect_init_segment(
         let track = moov
             .tracks
             .iter_mut()
-            .find(|t| t.tkhd.track_id == track_id)
+            .find(|t| t.tkhd.track_id == track_id.into())
             .ok_or(Error::InvalidInput(
                 "protect_init_segment: track_id not found in moov",
             ))?;

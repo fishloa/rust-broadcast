@@ -11,9 +11,9 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
+use isobmff::TrackId;
 use isobmff::cenc::SampleAuxInfoSizesBox;
-use transmux::TrackId;
-use transmux::init_segment::{MovieHeaderBox, Mp4aSampleEntry, SampleSizeBox, TrackHeaderBox};
+use isobmff::init_segment::{MovieHeaderBox, Mp4aSampleEntry, SampleSizeBox, TrackHeaderBox};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -241,12 +241,12 @@ fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
     let b = entries(0x22);
     let protections = [
         FragmentProtection {
-            track_id: TrackId::new(1),
+            track_id: TrackId::new(1).into(),
             entries: &a,
             per_sample_iv_size: 8,
         },
         FragmentProtection {
-            track_id: TrackId::new(2),
+            track_id: TrackId::new(2).into(),
             entries: &b,
             per_sample_iv_size: 8,
         },

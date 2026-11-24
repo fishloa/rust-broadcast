@@ -1726,10 +1726,6 @@ pub const TABLE: &[Crate] = &[
             // `rtp_align::AlignOut` (#2380): a data-carrying ADT (`Sample(TrackId, Sample)`),
             // the result of placing one sample, not a spec code.
             "AlignOut",
-            // `init_segment::DataEntry` (#1908): dispatch enum over the `dref` entry
-            // boxes (`url `, `urn `, `imdt`, `snim`), each variant wrapping a full
-            // structured box, not a flat spec code.
-            "DataEntry",
             // `slice_header::AvcPicture` (issue #1161): a data-carrying classification
             // ADT (`Field(AvcFieldInfo)`), not a spec-token label.
             "AvcPicture",
@@ -1761,9 +1757,6 @@ pub const TABLE: &[Crate] = &[
             // whole parsed `stpp`/`wvtt` sample entry; its format label is
             // `SubtitleFormat` (which carries `name()` + `impl_spec_display!`).
             "SubtitleSampleEntry",
-            // `subtitle_entries::WvttSampleBox`: a data-carrying ADT of the boxes of a
-            // `wvtt` media sample (`vttc` / `vtte` / `vtta` / other), not a spec label.
-            "WvttSampleBox",
             // errors (Display comes from `thiserror`'s derive or a hand-written
             // human-readable message, not a spec-token label)
             "Error",
@@ -1804,8 +1797,6 @@ pub const TABLE: &[Crate] = &[
             // same shape as `DemuxEvent` above — not a spec-defined flat code.
             "LlHlsStageOutput",
             "Output",
-            "SampleEntryVariant",
-            "StblChild",
             "ProtocolControl",
             "AmfValue",
             // `cenc_encrypt` (#564) config enums: `IvGen` carries either a scalar
@@ -1815,10 +1806,6 @@ pub const TABLE: &[Crate] = &[
             // fabricated rather than transcribed from a spec table.
             "IvGen",
             "SubsamplePolicy",
-            // `sample_entries::SampleEntryChild` (audit item 3, round 3): the same
-            // shape again — either an opaque child's full bytes, or a marker for the
-            // codec config box at its wire position.
-            "SampleEntryChild",
         ],
         expected: None,
         min_enums: None,
@@ -1836,6 +1823,18 @@ pub const TABLE: &[Crate] = &[
             "SubsV2Source",
             "TrafChild",
             "MoofChild",
+            // `DataEntry` (#1908): dispatch enum over the `dref` entry boxes
+            // (`url `, `urn `, `imdt`, `snim`), each variant wrapping a full
+            // structured box, not a flat spec code.
+            "DataEntry",
+            // `WvttSampleBox`: a data-carrying ADT of the boxes of a `wvtt` media
+            // sample (`vttc` / `vtte` / `vtta` / other), not a spec label.
+            "WvttSampleBox",
+            // A `stsd` entry or `stbl` child: every variant wraps a distinct
+            // structured box, so the typed variant *is* the label.
+            "SampleEntryChild",
+            "SampleEntryVariant",
+            "StblChild",
         ],
         expected: None,
         min_enums: None,

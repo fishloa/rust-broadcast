@@ -6,7 +6,6 @@ mod audio_metadata;
 mod audio_pes_straddle;
 mod audio_srat;
 mod avc_hvc_config;
-mod avc_parameter_set_stream;
 mod base64_lenient;
 #[path = "support/bit_writer.rs"]
 mod bit_writer;
@@ -14,9 +13,7 @@ mod bit_writer;
 mod box_iter;
 #[path = "support/box_walk.rs"]
 mod box_walk;
-mod box_walk_untrusted_sizes;
 mod caption_detect;
-mod captions;
 mod cea608_in_band_carriage;
 mod cenc_decrypt;
 mod cenc_decrypt_frag_synthetic;
@@ -35,7 +32,6 @@ mod codec_tail;
 mod codecs_new;
 #[cfg(feature = "cli")]
 mod common;
-mod container_child_order;
 mod damaged_unit_resync;
 mod damaged_unit_resync_flv;
 mod damaged_unit_resync_webm;
@@ -86,7 +82,6 @@ mod hdr10;
 mod hdr10plus;
 #[cfg(feature = "std")]
 mod heaac_signalling;
-mod hevc_array_rules;
 mod hevc_damaged_parameter_sets;
 mod hevc_sps;
 mod hevc_vps_timing;
@@ -96,8 +91,6 @@ mod hub;
 #[path = "support/hub_fixtures.rs"]
 mod hub_fixtures;
 mod idr_fallback;
-mod init_segment;
-mod init_segment_sweep;
 mod interlace_facts;
 mod ir_labels;
 mod ir_timing;
@@ -105,7 +98,6 @@ mod isobmff_bridge;
 mod issue_952_avcc_no_trailer;
 mod key_hygiene;
 mod klv;
-mod largesize_truncation;
 mod live_join_boundaries;
 mod live_join_fixtures;
 mod ll_dash;

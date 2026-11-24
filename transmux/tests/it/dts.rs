@@ -9,10 +9,11 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
+use isobmff::SampleEntryVariant;
 use isobmff::box_types::box_iter;
 use isobmff::{DDTS_BODY_LEN, DTSC_FOURCC, DtsSpecificBox};
 use transmux::TrackId;
-use transmux::{CodecConfig, SampleEntryVariant, TrackSpec, build_init_segment};
+use transmux::{CodecConfig, TrackSpec, build_init_segment};
 
 // ---------------------------------------------------------------------------
 // Hand-computed spec vector
@@ -301,7 +302,7 @@ fn dtsc_init_segment_ddts_round_trip() {
 
 #[test]
 fn stsd_round_trip_dts_entry() {
-    use transmux::{MovieBox, StblChild};
+    use isobmff::{MovieBox, StblChild};
 
     let ddts = spec_vector();
     let sample_rate: u32 = 48_000;

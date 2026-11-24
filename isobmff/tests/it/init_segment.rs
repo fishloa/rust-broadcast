@@ -8,8 +8,8 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
-use transmux::TrackId;
-use transmux::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
+use isobmff::TrackId;
+use isobmff::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -183,7 +183,7 @@ fn moov_navigation_reaches_avc1_and_mp4a() {
         .children
         .iter()
         .find_map(|c| {
-            if let transmux::StblChild::Stsd(s) = c {
+            if let isobmff::StblChild::Stsd(s) = c {
                 Some(s)
             } else {
                 None
@@ -217,7 +217,7 @@ fn moov_navigation_reaches_avc1_and_mp4a() {
         .children
         .iter()
         .find_map(|c| {
-            if let transmux::StblChild::Stsd(s) = c {
+            if let isobmff::StblChild::Stsd(s) = c {
                 Some(s)
             } else {
                 None

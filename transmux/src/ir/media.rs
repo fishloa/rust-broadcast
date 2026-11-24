@@ -112,7 +112,7 @@ pub struct Media {
     pub tracks: Vec<Track>,
     /// Movie timescale (`mvhd.timescale`), preserved for lossless re-muxing.
     /// Non-zero by construction: a wire `mvhd.timescale` of `0` is refused when
-    /// the box is parsed ([`MovieHeaderBox::parse`](crate::MovieHeaderBox)).
+    /// the box is parsed ([`MovieHeaderBox::parse`](isobmff::MovieHeaderBox)).
     pub movie_timescale: broadcast_common::timescale::Timescale,
     /// PCR timeline recovered from the source, in wire order
     /// ([`PcrSample`], ISO/IEC 13818-1 §2.4.3.4). Empty for every demuxer that

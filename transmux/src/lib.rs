@@ -153,9 +153,6 @@ pub mod ac3_syncframe;
 pub mod annexb;
 pub mod au;
 pub mod audio_profile;
-pub mod av1;
-pub mod avc_parameter_set;
-pub mod avs3;
 pub mod bitreader;
 pub mod caption_detect;
 #[cfg(feature = "cenc")]
@@ -182,7 +179,6 @@ pub mod fragment_build;
 pub mod h262;
 pub mod hdr;
 pub mod hdr10plus;
-pub mod init_segment;
 pub mod interlace;
 pub mod ir;
 pub mod klv;
@@ -216,7 +212,6 @@ pub mod rtp_sdp;
 pub mod rtp_stream;
 #[cfg(feature = "sample-aes")]
 pub mod sample_aes;
-pub mod sample_entries;
 pub mod segment_cut;
 pub mod segmenter;
 pub mod slice_header;
@@ -229,8 +224,6 @@ pub mod smooth_codec;
 pub mod smooth_fragment;
 pub mod splice;
 pub mod sps;
-pub mod subtitle_entries;
-pub mod track_reference;
 pub mod trickplay;
 pub mod ts_demux;
 pub mod ts_hls;
@@ -238,19 +231,7 @@ pub mod ts_mux;
 pub(crate) mod units;
 pub mod user_data;
 pub mod validate;
-pub mod vp9;
 pub mod webm_demux;
-
-/// Serialize a [`Timescale`](broadcast_common::timescale::Timescale) as the
-/// plain ticks-per-second integer it wraps, so a serde-JSON consumer sees the
-/// same number the wire box carries (not a `NonZeroU32` newtype object).
-#[cfg(feature = "serde")]
-fn ser_timescale<S: serde::Serializer>(
-    timescale: &broadcast_common::timescale::Timescale,
-    serializer: S,
-) -> core::result::Result<S::Ok, S::Error> {
-    serializer.serialize_u32(timescale.get())
-}
 
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
@@ -262,8 +243,6 @@ pub use annexb::{
     iter_length_prefixed_nals_with, length_prefixed_to_annexb, normalise_nal_length_size,
 };
 pub use au::{AccessUnitSplitter, split_access_units};
-pub use av1::{AV01_FOURCC, Av1SampleEntry};
-pub use avs3::{AvsVideoConfig, AvsVideoEntryKind, AvsVideoSampleEntry};
 pub use broadcast_common::CencScheme;
 pub use broadcast_common::klv::KlvItem;
 pub use caption_detect::{CaptionDetector, DetectedCaption, declared_caption_services};
@@ -293,15 +272,6 @@ pub use flv::{
 };
 pub use flv_stream::StreamingFlvDemux;
 pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
-pub use init_segment::{
-    Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntry,
-    DataEntryImdaBox, DataEntrySeqNumImdaBox, DataEntryUrlBox, DataEntryUrnBox, DataInformationBox,
-    DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry, HandlerBox,
-    MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox,
-    MovieHeaderBox, Mp4aSampleEntry, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant,
-    SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry,
-    SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
-};
 pub use interlace::{
     PicStruct, PictureFacts, SourceScanType, VideoScan, video_picture_facts, video_scan,
 };
@@ -377,9 +347,6 @@ pub use sample_aes::{
     ac3_encrypt_frame, aes128_decrypt_segment, aes128_encrypt_segment, eac3_decrypt_frame,
     eac3_encrypt_frame, h264_decrypt_nal, h264_encrypt_nal, iv_from_sequence_number,
 };
-pub use sample_entries::{
-    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VisualSampleEntryFields,
-};
 pub use segment_cut::{IdrWait, SegmentCutPolicy};
 pub use segmenter::{SegmentMeta, Segmenter};
 #[cfg(feature = "std")]
@@ -408,11 +375,6 @@ pub use sps::{
     decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing, decode_hevc_sps,
     decode_hevc_vps_timing, decode_hevc_vui_timing, rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a,
 };
-pub use subtitle_entries::{
-    CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
-    WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, XmlSubtitleSampleEntry,
-    parse_wvtt_sample,
-};
 pub use trickplay::{append_iframe_track, derive_iframe_track};
 pub use ts_demux::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
@@ -425,5 +387,4 @@ pub use ts_mux::{DEFAULT_PSI_INTERVAL, StreamingTsMux, TsContinuity, TsMux};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };
-pub use vp9::{VP09_FOURCC, Vp9SampleEntry};
 pub use webm_demux::{IR_TIMESCALE, WebmDemux};

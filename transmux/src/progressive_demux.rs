@@ -41,16 +41,16 @@ use core::marker::PhantomData;
 use broadcast_common::{Demand, Parse, Stage, Timestamp, Unpackage};
 
 use crate::error::{Error, Result};
-use crate::init_segment::{
-    ChunkLargeOffsetBox, ChunkOffsetBox, MovieBox, SampleSizeBox, SampleToChunkBox, StblChild,
-    SyncSampleBox, TrackBox,
-};
 use crate::media::{
     Media, SkippedTrack, Track, find_top_box, normalise_track_nal_lengths, refine_legacy_config,
     skipped_track, track_spec_from_trak,
 };
 use crate::pipeline::Sample;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
+use isobmff::init_segment::{
+    ChunkLargeOffsetBox, ChunkOffsetBox, MovieBox, SampleSizeBox, SampleToChunkBox, StblChild,
+    SyncSampleBox, TrackBox,
+};
 use isobmff::timing::{CompositionOffsetBox, TimeToSampleBox};
 
 /// Demux a non-fragmented ISOBMFF/MP4 byte stream into a [`Media`].
@@ -187,7 +187,7 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
         let mut spec = match track_spec_from_trak(trak) {
             Ok(spec) => spec,
             Err(err) => {
-                skipped.push(skipped_track(err, trak.tkhd.track_id));
+                skipped.push(skipped_track(err, trak.tkhd.track_id.into()));
                 continue;
             }
         };
@@ -197,7 +197,7 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
                 skipped.push(SkippedTrack {
                     fourcc: String::from("unknown"),
                     reason: err.to_string(),
-                    track_id: Some(trak.tkhd.track_id),
+                    track_id: Some(trak.tkhd.track_id.into()),
                 });
                 continue;
             }
@@ -207,7 +207,7 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
             skipped.push(SkippedTrack {
                 fourcc: String::from("unknown"),
                 reason: err.to_string(),
-                track_id: Some(trak.tkhd.track_id),
+                track_id: Some(trak.tkhd.track_id.into()),
             });
             continue;
         }
@@ -403,7 +403,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
             StblChild::Stss(b) => Some(b),
             _ => None,
         },
-        |bytes| SyncSampleBox::parse(bytes).unwrap_err(),
+        |bytes| SyncSampleBox::parse(bytes).unwrap_err().into(),
     )?;
     let stsz = find_stbl_child(
         &stbl.children,
@@ -412,7 +412,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
             StblChild::Stsz(b) => Some(b),
             _ => None,
         },
-        |bytes| SampleSizeBox::parse(bytes).unwrap_err(),
+        |bytes| SampleSizeBox::parse(bytes).unwrap_err().into(),
     )?
     .ok_or(Error::UnexpectedBox { expected: "stsz" })?;
     let stsc = find_stbl_child(
@@ -422,7 +422,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
             StblChild::Stsc(b) => Some(b),
             _ => None,
         },
-        |bytes| SampleToChunkBox::parse(bytes).unwrap_err(),
+        |bytes| SampleToChunkBox::parse(bytes).unwrap_err().into(),
     )?
     .ok_or(Error::UnexpectedBox { expected: "stsc" })?;
     let co64 = find_stbl_child(
@@ -432,7 +432,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
             StblChild::Co64(b) => Some(b),
             _ => None,
         },
-        |bytes| ChunkLargeOffsetBox::parse(bytes).unwrap_err(),
+        |bytes| ChunkLargeOffsetBox::parse(bytes).unwrap_err().into(),
     )?;
     let stco = find_stbl_child(
         &stbl.children,
@@ -441,7 +441,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
             StblChild::Stco(b) => Some(b),
             _ => None,
         },
-        |bytes| ChunkOffsetBox::parse(bytes).unwrap_err(),
+        |bytes| ChunkOffsetBox::parse(bytes).unwrap_err().into(),
     )?;
 
     let layout = sample_layout(stsz, stsc, co64, stco, file.len())?;
@@ -695,7 +695,7 @@ mod tests {
     use broadcast_common::error::InvalidValue;
 
     use super::*;
-    use crate::init_segment::StscEntry;
+    use isobmff::init_segment::StscEntry;
 
     /// `ProgressiveDemux::new(0)` must be rejected outright: a zero cap can
     /// never accept a byte, so a `Stage` built from it would be permanently
@@ -746,7 +746,7 @@ mod tests {
     }
 
     fn stsc_reparse_err(bytes: &[u8]) -> Error {
-        SampleToChunkBox::parse(bytes).unwrap_err()
+        SampleToChunkBox::parse(bytes).unwrap_err().into()
     }
 
     /// The typed variant, when present, is returned as-is — no Opaque

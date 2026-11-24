@@ -1,9 +1,17 @@
+mod avc_parameter_set_stream;
 mod bit_shortfall_units;
+mod box_walk_untrusted_sizes;
+mod captions;
 mod cenc;
 mod codec_config_boxes;
+mod container_child_order;
 mod esds_config;
 mod fixture_scte35;
 mod fixture_v1_scte35_livesim;
+mod hevc_array_rules;
+mod init_segment;
+mod init_segment_sweep;
+mod largesize_truncation;
 mod sample_bytes_budget;
 mod short_buffers;
 mod timing;

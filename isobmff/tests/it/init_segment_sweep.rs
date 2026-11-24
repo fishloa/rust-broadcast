@@ -18,7 +18,7 @@
 //! states its own size, so a short tail means the file is malformed.
 
 use broadcast_common::{Parse, Serialize};
-use transmux::MovieBox;
+use isobmff::MovieBox;
 
 /// Fixtures that legitimately cannot round-trip byte-for-byte, with the reason.
 ///
@@ -185,7 +185,7 @@ fn a_moov_with_trailing_partial_bytes_is_rejected() {
         patched[..4].copy_from_slice(&new_size.to_be_bytes());
         let err = MovieBox::parse(&patched).expect_err("trailing partial bytes must be rejected");
         assert!(
-            matches!(err, transmux::Error::BufferTooShort(..)),
+            matches!(err, isobmff::Error::BufferTooShort(..)),
             "extra={extra}: expected BufferTooShort, got {err:?}"
         );
     }
@@ -205,7 +205,7 @@ fn alloc_pad(n: usize) -> Vec<u8> {
 #[test]
 fn vp09_child_order_is_preserved_around_the_config_box() {
     use broadcast_common::Parse;
-    use transmux::{SampleDescriptionBox, SampleEntryVariant};
+    use isobmff::{SampleDescriptionBox, SampleEntryVariant};
 
     // A vpcC v1 record (the only version this crate accepts): 4 bytes of
     // FullBox header + the 8-byte fixed record.
@@ -255,7 +255,7 @@ fn vp09_child_order_is_preserved_around_the_config_box() {
     entry.extend_from_slice(&colr);
 
     let parsed = SampleEntryVariant::Vp09(Box::new(
-        transmux::vp9::Vp9SampleEntry::parse_entry(&entry).expect("parses"),
+        isobmff::vp9::Vp9SampleEntry::parse_entry(&entry).expect("parses"),
     ));
     assert!(
         !parsed_config_first(&parsed),
@@ -284,11 +284,11 @@ fn vp09_child_order_is_preserved_around_the_config_box() {
 }
 
 /// Whether the config box sits *first* among the entry's children.
-fn parsed_config_first(entry: &transmux::SampleEntryVariant) -> bool {
-    use transmux::SampleEntryChild;
+fn parsed_config_first(entry: &isobmff::SampleEntryVariant) -> bool {
+    use isobmff::SampleEntryChild;
     let children = match entry {
-        transmux::SampleEntryVariant::Vp09(e) => &e.children,
-        transmux::SampleEntryVariant::Av01(e) => &e.children,
+        isobmff::SampleEntryVariant::Vp09(e) => &e.children,
+        isobmff::SampleEntryVariant::Av01(e) => &e.children,
         _ => panic!("not a vp09/av01 entry"),
     };
     matches!(children.first(), Some(SampleEntryChild::Config))
@@ -299,7 +299,7 @@ fn parsed_config_first(entry: &transmux::SampleEntryVariant) -> bool {
 /// size field with fewer bytes behind it (audit item 3).
 #[test]
 fn vp09_truncated_child_is_an_error() {
-    use transmux::vp9::Vp9SampleEntry;
+    use isobmff::vp9::Vp9SampleEntry;
 
     // A *complete* vpcC (20 bytes) so the only fault in the entry is the
     // truncated child after it.
@@ -337,7 +337,7 @@ fn vp09_truncated_child_is_an_error() {
         .expect_err("a truncated sample-entry child must be rejected");
 
     assert!(
-        matches!(err, transmux::Error::BufferTooShort(..)),
+        matches!(err, isobmff::Error::BufferTooShort(..)),
         "expected BufferTooShort, got {err:?}"
     );
 }

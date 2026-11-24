@@ -18,9 +18,10 @@ use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize, Unpackage};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};
+use isobmff::{MovieBox, StblChild};
+use transmux::TrackId;
 use transmux::media::Fmp4Demux;
 use transmux::pipeline::{CodecConfig, TrackSpec, build_init_segment};
-use transmux::{MovieBox, StblChild, TrackId};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

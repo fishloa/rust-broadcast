@@ -615,11 +615,11 @@ mod tests {
     /// comparison and `trim` can never see a zero denominator.
     #[test]
     fn a_zero_timescale_media_is_a_typed_error_not_flattened_to_one() {
-        let err = crate::init_segment::MediaHeaderBox::parse(&mdhd_v0(0))
+        let err = isobmff::init_segment::MediaHeaderBox::parse(&mdhd_v0(0))
             .expect_err("a wire mdhd.timescale of 0 must not parse");
         assert_eq!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            isobmff::Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "timescale",
                 value: 0,
                 reason: "must be non-zero",
@@ -629,11 +629,11 @@ mod tests {
         mvhd[4..8].copy_from_slice(b"mvhd");
         mvhd[20..24].copy_from_slice(&0u32.to_be_bytes()); // timescale = 0
         mvhd[104..108].copy_from_slice(&2u32.to_be_bytes()); // next_track_id
-        let err = crate::init_segment::MovieHeaderBox::parse(&mvhd)
+        let err = isobmff::init_segment::MovieHeaderBox::parse(&mvhd)
             .expect_err("a wire mvhd.timescale of 0 must not parse");
         assert_eq!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            isobmff::Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "timescale",
                 value: 0,
                 reason: "must be non-zero",

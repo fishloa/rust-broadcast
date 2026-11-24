@@ -19,12 +19,13 @@ use transmux::dash::{
     InbandEventStream, TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
 };
 
+use isobmff::WvttSampleEntry;
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::ts_demux::TsDemux;
 use transmux::{
     AspectRatioIdc, Fmp4Demux, Media, MediaKind, Sample, SmoothPackager, Track, TrackId, TrackSpec,
-    WvttSampleEntry, playready_wrmheader,
+    playready_wrmheader,
 };
 
 fn timescale(value: u32) -> Timescale {

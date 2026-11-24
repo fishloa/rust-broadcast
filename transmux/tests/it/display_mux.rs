@@ -10,11 +10,12 @@
 use broadcast_common::Parse;
 use broadcast_common::timescale::Timescale;
 use isobmff::{AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord};
+use isobmff::{AVCSampleEntry, HEVCSampleEntry};
 use transmux::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType,
 };
 use transmux::pipeline;
-use transmux::{AVCSampleEntry, HEVCSampleEntry, TrackId, TrackSpec};
+use transmux::{TrackId, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

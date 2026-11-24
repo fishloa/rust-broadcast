@@ -2,8 +2,8 @@
 
 use super::*;
 
-use crate::sample_entries::SAMPLE_ENTRY_RESERVED_LEN;
 use isobmff::box_types::BOX_TYPE_SIZE;
+use isobmff::sample_entries::SAMPLE_ENTRY_RESERVED_LEN;
 
 /// An audio sample entry's `compression_id` + `packet_size`, two reserved
 /// `u16` fields (ISO/IEC 14496-12:2026 §12.2.3.2).
@@ -287,7 +287,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             let entry = SampleEntryVariant::Av01(Box::new(Av1SampleEntry {
                 visual,
                 config: config.clone(),
-                children: alloc::vec![crate::sample_entries::SampleEntryChild::Config],
+                children: alloc::vec![isobmff::sample_entries::SampleEntryChild::Config],
             }));
             TrackMedia::video(
                 entry,
@@ -309,7 +309,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             let entry = SampleEntryVariant::Vp09(Box::new(Vp9SampleEntry {
                 visual,
                 config: config.clone(),
-                children: alloc::vec![crate::sample_entries::SampleEntryChild::Config],
+                children: alloc::vec![isobmff::sample_entries::SampleEntryChild::Config],
             }));
             TrackMedia::video(
                 entry,

@@ -9,7 +9,7 @@
 //!   round-trip serialize→parse→serialize and assert byte-identical.
 
 use broadcast_common::{Parse, Serialize};
-use transmux::{
+use isobmff::{
     CuePayloadBox, SampleDescriptionBox, SampleEntryVariant, VttCueBox, VttEmptyCueBox,
     WebVttConfigurationBox, WvttSampleEntry, XmlSubtitleSampleEntry,
 };

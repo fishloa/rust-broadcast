@@ -5,10 +5,11 @@ ISO/IEC 14496-12:2026 (ISO Base Media File Format) **box syntax**, no_std +
 
 This crate is the box layer below the `transmux` muxing hub: it parses and
 writes the `size`/`type` box headers (including the 64-bit `largesize` and the
-`uuid` extended type), the top-level and movie-fragment box set, the
-sample-table/timing boxes, the visual-extension boxes, the sample-group boxes,
-the CENC box syntax (ISO/IEC 23001-7), and the DASH Event Message Box (`emsg`,
-ISO/IEC 23009-1). It never knows the media IR or a codec bitstream.
+`uuid` extended type), the top-level and movie-fragment box set, the `moov`
+tree and its sample entries, the sample-table/timing boxes, the
+visual-extension boxes, the sample-group boxes, the CENC box syntax
+(ISO/IEC 23001-7), and the DASH Event Message Box (`emsg`, ISO/IEC 23009-1).
+It never knows the media IR or a codec bitstream.
 
 ## Coverage
 
@@ -16,6 +17,11 @@ ISO/IEC 23009-1). It never knows the media IR or a codec bitstream.
 |---|---|
 | `box_types` | `size`/`type` header, `largesize`, `uuid` usertype, the `box_iter` walker |
 | `segments` | `ftyp`, `styp`, `mdat` |
+| `init_segment` | `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`/`smhd`, `dinf`/`dref`, `stbl`, `stsd`, `edts`/`elst`, `mvex`/`trex`, the audio sample entries |
+| `sample_entries` | `avc1`/`avc3`, `hvc1`/`hev1`, `vvc1`/`vvi1`, `mp4v`, `VisualSampleEntry` |
+| `subtitle_entries` | `stpp`, `wvtt`, `vttc`/`vtte`/`vtta`/`payl`/`sttg`/`iden` |
+| `avc_parameter_set` | `avcp` sample entry and parameter set sample |
+| `track_reference` | `tref` |
 | `timing` | `stts`, `ctts`, `cslg`, `elst`, `sidx` |
 | `visual_ext` | `pasp`, `clap`, `colr` |
 | `cenc` | `tenc`, `senc`, `pssh`, `saiz`, `saio`, `sinf`, `frma`, `schm`, `schi` |

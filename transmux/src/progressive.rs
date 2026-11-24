@@ -38,13 +38,13 @@ use broadcast_common::timescale::{Rounding, Timescale, rescale, rescale_i64, res
 use broadcast_common::{Package, Parse, Serialize};
 
 use crate::error::{Error, Result};
-use crate::init_segment::{
-    ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MovieBox, SampleSizeBox, SampleToChunkBox,
-    StblChild, StscEntry, SyncSampleBox,
-};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::{Sample, build_init_segment};
 use isobmff::box_types::{BoxHeader, BoxType, find_top_box};
+use isobmff::init_segment::{
+    ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MovieBox, SampleSizeBox, SampleToChunkBox,
+    StblChild, StscEntry, SyncSampleBox,
+};
 use isobmff::segments::FileTypeBox;
 use isobmff::timing::{
     CompositionOffsetBox, CttsEntry, EditListBox, EditListEntry, SttsEntry, TimeToSampleBox,

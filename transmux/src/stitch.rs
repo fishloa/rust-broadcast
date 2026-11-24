@@ -116,7 +116,6 @@ impl Stitcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::Error;
     use crate::media::Fmp4Demux;
     use broadcast_common::units::MICROS_PER_SEC;
     use broadcast_common::{Parse, Unpackage};
@@ -194,17 +193,17 @@ mod tests {
     /// error naming the field, not a silent 1 Hz fallback.
     #[test]
     fn a_track_with_a_zero_timescale_is_a_typed_error_not_a_silent_one() {
-        let err = crate::init_segment::MediaHeaderBox::parse(&mdhd_v0(0))
+        let err = isobmff::init_segment::MediaHeaderBox::parse(&mdhd_v0(0))
             .expect_err("a wire mdhd.timescale of 0 must not parse");
         assert_eq!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            isobmff::Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "timescale",
                 value: 0,
                 reason: "must be non-zero",
             })
         );
-        let ok = crate::init_segment::MediaHeaderBox::parse(&mdhd_v0(90_000))
+        let ok = isobmff::init_segment::MediaHeaderBox::parse(&mdhd_v0(90_000))
             .expect("a non-zero mdhd.timescale parses");
         assert_eq!(ok.timescale, broadcast_common::timescale!(90_000));
         assert!(Timescale::try_new(0).is_err(), "the type has no zero value");

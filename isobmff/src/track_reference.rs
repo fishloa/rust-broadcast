@@ -7,14 +7,14 @@
 //! Spec input: `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`
 //! (§8.3.3).
 
+use crate::TrackId;
+use crate::box_support::{box_body, walk_children};
+use crate::box_types::BOX_HEADER_MIN_SIZE;
 use crate::error::{Error, Result};
-use crate::ir::TrackId;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
-use isobmff::box_support::{box_body, walk_children};
-use isobmff::box_types::BOX_HEADER_MIN_SIZE;
 
 /// `reference_type` of the track reference from a video track to its AVC
 /// parameter set stream (ISO/IEC 14496-15:2017 §5.4.3.3).
@@ -92,7 +92,7 @@ impl<'a> Parse<'a> for TrackReferenceBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (header, _) = isobmff::box_types::parse_box(bytes)?;
+        let (header, _) = crate::box_types::parse_box(bytes)?;
         if !header.header.box_type.is(&TREF) {
             return Err(Error::BufferTooShort(BufferTooShort {
                 need: BOX_HEADER_MIN_SIZE,
@@ -108,16 +108,16 @@ impl Serialize for TrackReferenceBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        isobmff::box_types::box_len(BOX_HEADER_MIN_SIZE + self.body_len())
+        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + self.body_len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut cursor = isobmff::box_types::write_box_header(buf, &TREF, need)?;
+        let mut cursor = crate::box_types::write_box_header(buf, &TREF, need)?;
         for reference in &self.references {
             let len = BOX_HEADER_MIN_SIZE + reference.track_ids.len() * TRACK_ID_LEN;
-            cursor += isobmff::box_types::write_box_header(
+            cursor += crate::box_types::write_box_header(
                 &mut buf[cursor..],
                 &reference.reference_type,
                 len,

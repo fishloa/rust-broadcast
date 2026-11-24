@@ -1172,7 +1172,7 @@ mod tests {
             CodecConfig::Subtitle {
                 format: transmux::ir::SubtitleFormat::Ttml,
                 sample_entry: Some(transmux::pipeline::SubtitleSampleEntry::Ttml(
-                    transmux::subtitle_entries::XmlSubtitleSampleEntry::new(TTML_NAMESPACE),
+                    isobmff::subtitle_entries::XmlSubtitleSampleEntry::new(TTML_NAMESPACE),
                 )),
             },
         )

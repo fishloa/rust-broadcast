@@ -10,7 +10,7 @@
 use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
 use isobmff::sample_groups::ProducerReferenceTimeBox;
-use transmux::{MediaHeaderBox, MovieHeaderBox, TrackHeaderBox, TrackId};
+use isobmff::{MediaHeaderBox, MovieHeaderBox, TrackHeaderBox, TrackId};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -91,21 +91,21 @@ fn v0_header_boxes_reject_values_above_u32() {
         assert!(
             matches!(
                 serialize(&mvhd(0, ct, mt, dur)),
-                Err(transmux::error::Error::FieldOverflow(..))
+                Err(isobmff::Error::FieldOverflow(..))
             ),
             "mvhd {ct} {mt} {dur}"
         );
         assert!(
             matches!(
                 serialize(&tkhd(0, ct, mt, dur)),
-                Err(transmux::error::Error::FieldOverflow(..))
+                Err(isobmff::Error::FieldOverflow(..))
             ),
             "tkhd {ct} {mt} {dur}"
         );
         assert!(
             matches!(
                 serialize(&mdhd(0, ct, mt, dur)),
-                Err(transmux::error::Error::FieldOverflow(..))
+                Err(isobmff::Error::FieldOverflow(..))
             ),
             "mdhd {ct} {mt} {dur}"
         );
