@@ -21,6 +21,11 @@ pub mod program_stream;
 pub mod program_stream_map;
 mod scr;
 mod system_header;
+mod wire;
+
+/// Bytes before a program-stream packet body: the 4-byte start code
+/// (`packet_start_code_prefix` + `stream_id`) and the 16-bit length field.
+pub(crate) const PREFIX_LEN: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
 
 pub use descriptor_loop::{
     DESCRIPTOR_HEADER_LEN, DescriptorEntry, DescriptorEntryIter, DescriptorLoop,

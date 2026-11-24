@@ -78,7 +78,7 @@ impl Cea608Color {
 broadcast_common::impl_spec_display!(Cea608Color);
 
 /// Number of caption rows on a line-21 screen (§3.2.2).
-const SCREEN_ROWS: usize = 15;
+pub const SCREEN_ROWS: usize = 15;
 /// Number of caption columns on a line-21 screen.
 const SCREEN_COLS: usize = 32;
 /// Caption channels (CC1–CC4) and 608 fields (field 1 / field 2).

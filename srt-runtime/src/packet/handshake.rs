@@ -51,7 +51,7 @@ pub const HANDSHAKE_EXT_WORD_LEN: usize = 4;
 const HS_EXT_BLOCK_LEN_OFFSET: usize = 2;
 
 /// Byte offsets of the Handshake CIF fields (§3.2.1, Figure 5).
-const CIF_FIELDS_OFFSET: usize = 4;
+const CIF_ENCRYPTION_OFFSET: usize = 4;
 const CIF_INITIAL_SEQ_OFFSET: usize = 8;
 const CIF_MTU_OFFSET: usize = 12;
 const CIF_FLOW_WINDOW_OFFSET: usize = 16;
@@ -60,9 +60,11 @@ const CIF_SOCKET_ID_OFFSET: usize = 24;
 const CIF_SYN_COOKIE_OFFSET: usize = 28;
 const CIF_PEER_IP_OFFSET: usize = 32;
 
-/// Bytes in one IPv4 address word of the peer-IP array, and words in it.
+/// Bytes in one IPv4 address word of the peer-IP array.
 const IPV4_ADDR_LEN: usize = 4;
-const PEER_IP_WORDS: usize = 4;
+/// IPv4 address words a Handshake CIF's `SRTPeerIP` field carries
+/// (`draft-sharabayko-srt-01` §3.2.1, Figure 5).
+pub const PEER_IP_WORDS: usize = 4;
 
 /// Shifts and mask of the Handshake CIF's second word: `Encryption Field`
 /// above `Extension Field` (§3.2.1, Figure 5).
@@ -855,7 +857,7 @@ impl<'a> HandshakePacket<'a> {
     ) -> Result<Self> {
         need_in(cif, HANDSHAKE_CIF_FIXED_LEN, "handshake CIF")?;
         let version = be32(cif, 0);
-        let word1 = be32(cif, CIF_FIELDS_OFFSET);
+        let word1 = be32(cif, CIF_ENCRYPTION_OFFSET);
         let encryption_field = EncryptionField::from_bits((word1 >> CIF_ENCRYPTION_SHIFT) as u16);
         let extension_field = HandshakeExtensionFlags((word1 & CIF_EXTENSION_MASK) as u16);
         let initial_seq_number = be32(cif, CIF_INITIAL_SEQ_OFFSET);
@@ -900,7 +902,7 @@ impl<'a> HandshakePacket<'a> {
         let word1 = (u32::from(self.encryption_field.to_bits()) << CIF_ENCRYPTION_SHIFT)
             | u32::from(self.extension_field.0);
         put_be32(buf, 0, self.version);
-        put_be32(buf, CIF_FIELDS_OFFSET, word1);
+        put_be32(buf, CIF_ENCRYPTION_OFFSET, word1);
         put_be32(buf, CIF_INITIAL_SEQ_OFFSET, self.initial_seq_number);
         put_be32(buf, CIF_MTU_OFFSET, self.mtu);
         put_be32(buf, CIF_FLOW_WINDOW_OFFSET, self.max_flow_window_size);

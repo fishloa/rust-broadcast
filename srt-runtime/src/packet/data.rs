@@ -8,16 +8,10 @@
 //! rest                              Data
 //! ```
 
+pub(crate) use super::number::{MESSAGE_NUMBER_BITS, MESSAGE_NUMBER_MASK};
 use super::number::{SocketId, SrtTimestamp};
 use super::{Error, Result, SEQ_NUMBER_MASK, SRT_HEADER_LEN, be32, put_be32};
 use broadcast_common::len::{need_in, need_out};
-
-/// Bit width of the Message Number field (§3.1).
-pub(crate) const MESSAGE_NUMBER_BITS: u32 = 26;
-/// Mask for the 26-bit Message Number field (§3.1). `pub(crate)` so
-/// `io::Driver` can wrap its own message-number counter at the same
-/// boundary [`next_message_number`] uses (issue #1062).
-pub(crate) const MESSAGE_NUMBER_MASK: u32 = (1 << MESSAGE_NUMBER_BITS) - 1;
 
 /// The next Message Number after `n`, wrapping at the 26-bit boundary
 /// (`draft-sharabayko-srt-01` §3.1) back to `0` — analogous to
@@ -220,7 +214,7 @@ impl<'a> DataPacket<'a> {
                 expected: "data packet (F=0)",
             });
         }
-        let word1 = be32(bytes, super::TYPE_SPECIFIC_OFFSET);
+        let word1 = be32(bytes, super::TYPE_FIELD_OFFSET);
         let seq_number = word0 & SEQ_NUMBER_MASK;
         let position = PacketPosition::from_bits((word1 >> PP_SHIFT) as u8);
         let in_order = (word1 >> O_SHIFT) & 1 != 0;
@@ -269,7 +263,7 @@ impl<'a> DataPacket<'a> {
             | (u32::from(self.retransmitted) << R_SHIFT)
             | self.message_number;
         put_be32(buf, 0, word0);
-        put_be32(buf, super::TYPE_SPECIFIC_OFFSET, word1);
+        put_be32(buf, super::TYPE_FIELD_OFFSET, word1);
         put_be32(buf, super::TIMESTAMP_OFFSET, self.timestamp.value());
         put_be32(
             buf,

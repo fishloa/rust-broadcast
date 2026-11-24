@@ -42,6 +42,9 @@ use broadcast_common::wire_enum;
 
 use broadcast_common::{Parse, Serialize};
 
+use super::{BYTE_MASK_U16, BYTE_MASK_U32};
+use crate::packet::be_u16;
+
 wire_enum! {
     /// Function tags per §5.2.8.2 Tables 5 & 6.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,17 +442,11 @@ const FREQUENCY_BODY_LEN: usize = 5;
 /// Shift placing the 24-bit `frequency_offset` in the top of an `i32`.
 const FREQUENCY_OFFSET_SHIFT: u32 = 8;
 
-/// Bytes in a big-endian `u16` field.
-const U16_LEN: usize = core::mem::size_of::<u16>();
-/// One-byte mask selecting the low (or high) byte of a 16-bit value.
-const BYTE_MASK_U16: u16 = 0xFF;
-/// One-byte mask selecting the low byte of a 32-bit value.
-const BYTE_MASK_U32: u32 = 0xFF;
 /// Mask of a single-bit flag in the low bit position.
 const FLAG_LSB_MASK: u8 = 0x01;
 
 /// Offset of `wait_for_enable_flag` / `rfu` within a cell_id body.
-const CELL_ID_WAIT_FOR_ENABLE_OFFSET: usize = U16_LEN;
+const CELL_ID_WAIT_FOR_ENABLE_OFFSET: usize = core::mem::size_of::<u16>();
 /// Mask of the 7-bit `reserved_future_use` field of a cell_id body.
 const CELL_ID_RFU_MASK: u8 = 0x7F;
 /// Bit width of the cell_id body's `reserved_future_use`.
@@ -512,7 +509,7 @@ const NUMBER_OF_ITERATIONS_SHIFT: u32 = 8;
 const NUMBER_OF_ITERATIONS_BITS: u32 = 10;
 
 /// Offset of `rfu` within the L1-ACE-PAPR body.
-const L1_ACE_PAPR_RFU_OFFSET: usize = U16_LEN;
+const L1_ACE_PAPR_RFU_OFFSET: usize = core::mem::size_of::<u16>();
 
 /// Shift placing `rfu`/`seq_num` in the TX-SIG FEF sequence-number body.
 const TX_SIG_RFU_SHIFT: u32 = 3;
@@ -568,7 +565,7 @@ const FREQUENCY_SHIFT_FOURTH_BYTE: u32 = 11;
 const FREQUENCY_SHIFT_FIFTH_BYTE: u32 = 3;
 
 /// Bytes of the `transmitter_id` prefix of a transmitter entry.
-const TRANSMITTER_ID_LEN: usize = U16_LEN;
+const TRANSMITTER_ID_LEN: usize = core::mem::size_of::<u16>();
 /// Offset of the high byte of `transmitter_id` in a transmitter entry.
 const TRANSMITTER_ID_HI_OFFSET: usize = 0;
 /// Offset of the low byte of `transmitter_id` in a transmitter entry.
@@ -787,7 +784,7 @@ fn parse_cell_id(body: &[u8]) -> Result<CellIdBody, crate::Error> {
                 },
             ))?;
     Ok(CellIdBody {
-        cell_id: u16::from_be_bytes([b[0], b[TRANSMITTER_ID_LO_OFFSET]]),
+        cell_id: be_u16(b, TRANSMITTER_ID_HI_OFFSET),
         wait_for_enable_flag: b[CELL_ID_WAIT_FOR_ENABLE_OFFSET] & CELL_ID_WAIT_FOR_ENABLE_MASK != 0,
         rfu: b[CELL_ID_WAIT_FOR_ENABLE_OFFSET] & CELL_ID_RFU_MASK,
     })
@@ -853,8 +850,8 @@ fn parse_l1_ace_papr(body: &[u8]) -> Result<L1AcePaprBody, crate::Error> {
                 },
             ))?;
     Ok(L1AcePaprBody {
-        l1_ace_max_correction: u16::from_be_bytes([b[0], b[1]]),
-        rfu: u16::from_be_bytes([b[L1_ACE_PAPR_RFU_OFFSET], b[L1_ACE_PAPR_RFU_OFFSET + 1]]),
+        l1_ace_max_correction: be_u16(b, 0),
+        rfu: be_u16(b, L1_ACE_PAPR_RFU_OFFSET),
     })
 }
 
@@ -1020,7 +1017,7 @@ fn serialize_cell_id(body: &CellIdBody, buf: &mut [u8]) -> Result<(), crate::err
         CELL_ID_RFU_BITS,
         "cell_id reserved_future_use",
     )?;
-    buf[..U16_LEN].copy_from_slice(&body.cell_id.to_be_bytes());
+    buf[..core::mem::size_of::<u16>()].copy_from_slice(&body.cell_id.to_be_bytes());
     buf[CELL_ID_WAIT_FOR_ENABLE_OFFSET] = if body.wait_for_enable_flag {
         CELL_ID_WAIT_FOR_ENABLE_MASK
     } else {
@@ -1091,8 +1088,8 @@ fn serialize_tr_papr(body: &TrPaprBody, buf: &mut [u8]) -> Result<(), crate::err
 }
 
 fn serialize_l1_ace_papr(body: &L1AcePaprBody, buf: &mut [u8]) {
-    buf[..U16_LEN].copy_from_slice(&body.l1_ace_max_correction.to_be_bytes());
-    buf[L1_ACE_PAPR_RFU_OFFSET..L1_ACE_PAPR_RFU_OFFSET + U16_LEN]
+    buf[..core::mem::size_of::<u16>()].copy_from_slice(&body.l1_ace_max_correction.to_be_bytes());
+    buf[L1_ACE_PAPR_RFU_OFFSET..L1_ACE_PAPR_RFU_OFFSET + core::mem::size_of::<u16>()]
         .copy_from_slice(&body.rfu.to_be_bytes());
 }
 

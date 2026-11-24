@@ -11,6 +11,7 @@
 //! - [`progressive_movie`]: a `moov` (or compressed `!mov`, §8.16.6) with no `moof`, a progressive MP4
 //!   rather than a fragmented one.
 
+use crate::FOURCC_LEN;
 use crate::isobmff::{
     BOX_HEADER_LARGESIZE_SIZE, BOX_HEADER_MIN_SIZE, SIZE_INDICATES_LARGESIZE, SIZE_TO_EOF,
     TYPE_COMPRESSED_MOOF, TYPE_COMPRESSED_MOOV, TYPE_MDAT, TYPE_MOOF, TYPE_MOOV,
@@ -23,20 +24,6 @@ const TYPE_UUID: [u8; 4] = *b"uuid";
 const UUID_USERTYPE_LEN: usize = 16;
 /// Byte offset of the box type within a box header (§4.2).
 const TYPE_OFFSET: usize = 4;
-
-/// Width of a box type Four-CC.
-const FOURCC_LEN: usize = 4;
-
-/// Byte positions of a box's 32-bit `size` field.
-const SIZE_BYTES: [usize; FOURCC_LEN] = [0, 1, 2, 3];
-
-/// Byte positions of a box's `type` Four-CC.
-const TYPE_BYTES: [usize; FOURCC_LEN] = [
-    TYPE_OFFSET,
-    TYPE_OFFSET + 1,
-    TYPE_OFFSET + 2,
-    TYPE_OFFSET + 3,
-];
 
 /// A quorum of lanes: at least half of a long body's positions must be synced.
 const LANE_QUORUM: usize = 2;
@@ -137,8 +124,8 @@ fn next_box(bytes: &[u8]) -> Option<([u8; FOURCC_LEN], usize)> {
     if bytes.len() < BOX_HEADER_MIN_SIZE {
         return None;
     }
-    let raw_size = u32::from_be_bytes(SIZE_BYTES.map(|i| bytes[i]));
-    let box_type = TYPE_BYTES.map(|i| bytes[i]);
+    let raw_size = crate::be_u32(bytes, 0);
+    let box_type = crate::fourcc(bytes, TYPE_OFFSET);
     let mut header = BOX_HEADER_MIN_SIZE;
     let size = if raw_size == SIZE_INDICATES_LARGESIZE {
         let large = bytes.get(LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE)?;

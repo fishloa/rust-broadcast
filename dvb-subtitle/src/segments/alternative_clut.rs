@@ -5,6 +5,7 @@
 use crate::error::{Error, Result};
 use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+    be_u16,
 };
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -334,11 +335,8 @@ impl<'a> Parse<'a> for AlternativeClutSegment {
         if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
-        let segment_length = u16::from_be_bytes([
-            bytes[SEGMENT_LENGTH_OFFSET],
-            bytes[SEGMENT_LENGTH_OFFSET + 1],
-        ]) as usize;
+        let page_id = be_u16(bytes, PAGE_ID_OFFSET);
+        let segment_length = be_u16(bytes, SEGMENT_LENGTH_OFFSET) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "alternative_CLUT_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];

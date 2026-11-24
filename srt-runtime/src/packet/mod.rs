@@ -56,9 +56,9 @@ pub(crate) const F_BIT: u32 = 0x8000_0000;
 /// Appendix A): all bits below the `F`/range-marker bit.
 pub(crate) const SEQ_NUMBER_MASK: u32 = SeqNo::MAX.value();
 
-/// Byte offset of the packet-type-specific field — the second header word —
+/// Byte offset of the second header word — the packet-type-specific field —
 /// shared by every data and control packet (§3, Figure 2).
-pub(crate) const TYPE_SPECIFIC_OFFSET: usize = 4;
+pub(crate) const TYPE_FIELD_OFFSET: usize = 4;
 
 /// Byte offset of the Timestamp, shared by every data and control packet
 /// (§3, Figure 2).
@@ -68,12 +68,9 @@ pub(crate) const TIMESTAMP_OFFSET: usize = 8;
 /// header words shared by every data and control packet (§3, Figure 2).
 pub(crate) const DEST_SOCKET_ID_OFFSET: usize = 12;
 
-/// Bytes in a big-endian `u32` field, and in a big-endian `u16` field.
-const U32_LEN: usize = 4;
-const U16_LEN: usize = 2;
-
-/// Byte positions of a big-endian `u32` field, relative to its start.
-const U32_BYTES: [usize; U32_LEN] = [0, 1, 2, 3];
+/// Byte width of a big-endian `u32` field, and of a big-endian `u16` field.
+const U32_FIELD_LEN: usize = core::mem::size_of::<u32>();
+const U16_FIELD_LEN: usize = core::mem::size_of::<u16>();
 
 /// Reads the Destination Socket ID straight off the wire header, without a
 /// full [`SrtPacket::parse`] — it sits at the same fixed offset for every
@@ -158,7 +155,9 @@ impl broadcast_common::Serialize for SrtPacket<'_> {
 /// Panics if `bytes.len() < off + 4`. Every call site slices/length-checks
 /// first, so this is an internal invariant, not an external input path.
 pub(crate) fn be32(bytes: &[u8], off: usize) -> u32 {
-    u32::from_be_bytes(U32_BYTES.map(|i| bytes[off + i]))
+    let mut field = [0_u8; U32_FIELD_LEN];
+    field.copy_from_slice(&bytes[off..off + U32_FIELD_LEN]);
+    u32::from_be_bytes(field)
 }
 
 /// Write a big-endian `u32` at byte offset `off`.
@@ -166,17 +165,19 @@ pub(crate) fn be32(bytes: &[u8], off: usize) -> u32 {
 /// # Panics
 /// Panics if `buf.len() < off + 4`; see [`be32`].
 pub(crate) fn put_be32(buf: &mut [u8], off: usize, value: u32) {
-    buf[off..off + U32_LEN].copy_from_slice(&value.to_be_bytes());
+    buf[off..off + U32_FIELD_LEN].copy_from_slice(&value.to_be_bytes());
 }
 
 /// Read a big-endian `u16` at byte offset `off`. See [`be32`] on panics.
 pub(crate) fn be16(bytes: &[u8], off: usize) -> u16 {
-    u16::from_be_bytes([bytes[off], bytes[off + 1]])
+    let mut field = [0_u8; U16_FIELD_LEN];
+    field.copy_from_slice(&bytes[off..off + U16_FIELD_LEN]);
+    u16::from_be_bytes(field)
 }
 
 /// Write a big-endian `u16` at byte offset `off`. See [`put_be32`] on panics.
 pub(crate) fn put_be16(buf: &mut [u8], off: usize, value: u16) {
-    buf[off..off + U16_LEN].copy_from_slice(&value.to_be_bytes());
+    buf[off..off + U16_FIELD_LEN].copy_from_slice(&value.to_be_bytes());
 }
 
 #[cfg(all(test, feature = "tokio"))]

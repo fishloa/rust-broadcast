@@ -3,6 +3,7 @@
 use crate::error::{Error, Result};
 use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+    be_u16,
 };
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -359,7 +360,7 @@ pub struct RegionCompositionSegment {
 
 fn parse_object_entry(bytes: &[u8]) -> Result<(RegionObjectEntry, usize)> {
     need_in(bytes, OBJECT_ENTRY_BASE_LEN, "region_object_entry")?;
-    let object_id = u16::from_be_bytes([bytes[OBJECT_ID_OFFSET], bytes[OBJECT_ID_OFFSET + 1]]);
+    let object_id = be_u16(bytes, OBJECT_ID_OFFSET);
     let obj_type_val = (bytes[OBJECT_FLAGS_OFFSET] >> OBJECT_TYPE_SHIFT) & OBJECT_TYPE_MASK;
     let obj_provider_val =
         (bytes[OBJECT_FLAGS_OFFSET] >> OBJECT_PROVIDER_SHIFT) & OBJECT_PROVIDER_MASK;
@@ -436,11 +437,8 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
         if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
-        let segment_length = u16::from_be_bytes([
-            bytes[SEGMENT_LENGTH_OFFSET],
-            bytes[SEGMENT_LENGTH_OFFSET + 1],
-        ]) as usize;
+        let page_id = be_u16(bytes, PAGE_ID_OFFSET);
+        let segment_length = be_u16(bytes, SEGMENT_LENGTH_OFFSET) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "region_composition_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
@@ -449,10 +447,8 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
         let region_version_number = body[REGION_FLAGS_OFFSET] >> REGION_VERSION_SHIFT;
         let region_fill_flag = (body[REGION_FLAGS_OFFSET] & REGION_FILL_FLAG_MASK) != 0;
         let reserved_byte1 = body[REGION_FLAGS_OFFSET] & REGION_RFU_MASK;
-        let region_width =
-            u16::from_be_bytes([body[REGION_WIDTH_OFFSET], body[REGION_WIDTH_OFFSET + 1]]);
-        let region_height =
-            u16::from_be_bytes([body[REGION_HEIGHT_OFFSET], body[REGION_HEIGHT_OFFSET + 1]]);
+        let region_width = be_u16(body, REGION_WIDTH_OFFSET);
+        let region_height = be_u16(body, REGION_HEIGHT_OFFSET);
         let rloc_val = (body[REGION_DEPTH_OFFSET] >> RLOC_SHIFT) & RLOC_MASK;
         let region_level_of_compatibility = match rloc_val {
             0x00 => RegionLevelOfCompatibility::Reserved0,

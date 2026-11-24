@@ -5,7 +5,11 @@ use core::fmt;
 
 use broadcast_common::{Parse, Serialize};
 
-use super::fef_null::{S1Field, S2Field1};
+use super::RFU_TOP_BIT_SHIFT;
+use super::fef_null::{
+    RFU_BYTE_OFFSET, S1_MASK, S1_S2_BYTE_OFFSET, S1_S2_RFU_MASK, S1_SHIFT, S1Field,
+    S2_FIELD1_SHIFT, S2_MASK, S2_MIXED_FLAG_MASK, S2Field1,
+};
 
 /// FEF part: I/Q data payload (type 0x31) per ETSI TS 102 773 §5.2.10.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,25 +41,6 @@ impl FefIqPayload<'_> {
 }
 
 const FEF_IQ_HEADER_LEN: usize = 3;
-
-/// Offset of the reserved byte preceding the S1/S2 byte.
-const RFU_BYTE_OFFSET: usize = 1;
-/// Offset of the byte carrying `s1_field` / `s2_field`.
-const S1_S2_BYTE_OFFSET: usize = 2;
-/// Mask of the reserved top bit of the S1/S2 byte.
-const S1_S2_RFU_MASK: u8 = 0x80;
-/// Mask of the three-bit `s1_field`.
-const S1_MASK: u8 = 0x07;
-/// Mask of the four-bit `s2_field`.
-const S2_MASK: u8 = 0x0F;
-/// Shift placing `s1_field` above `s2_field` in the S1/S2 byte.
-const S1_SHIFT: u32 = 4;
-/// Shift selecting S2 field 1 from `s2_field`.
-const S2_FIELD1_SHIFT: u32 = 1;
-/// Mask of the mixed flag (S2 field 2) inside `s2_field`.
-const S2_MIXED_FLAG_MASK: u8 = 0x01;
-/// Shift placing the reserved top bit for the error report.
-const RFU_TOP_BIT_SHIFT: u32 = 7;
 
 impl<'a> Parse<'a> for FefIqPayload<'a> {
     type Error = crate::error::Error;

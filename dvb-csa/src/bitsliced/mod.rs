@@ -63,6 +63,7 @@ mod circuit_tests;
 mod circuits;
 mod stream;
 
+use crate::block::BLOCK_BYTES;
 use crate::key::ControlWord;
 use crate::zeroize::Zeroizing;
 pub(crate) use block::BitslicedBlock;
@@ -78,14 +79,10 @@ type Word = u64;
 /// `LANES` gets proportionally less of the speed-up.
 pub const LANES: usize = Word::BITS as usize;
 
-/// Bytes in one CSA block.
-const BLOCK_BYTES: usize = 8;
-/// Bits in one byte — the width of the block cipher's byte-wise state words.
-const BITS_PER_BYTE: usize = 8;
+/// Live bits of the `pqzyx` S-box output word: X, Y, Z, then P and Q.
+const PQZYX_BITS: usize = 14;
 /// Bits in one CSA block; also the side length of the transpose matrix.
-const BLOCK_BITS: usize = BLOCK_BYTES * BITS_PER_BYTE;
-/// Side length of one off-diagonal quadrant of the transpose matrix.
-const QUADRANT_LANES: usize = LANES / 2;
+const BLOCK_BITS: usize = BLOCK_BYTES * u8::BITS as usize;
 
 const _: () = assert!(BLOCK_BITS == LANES, "the transpose is square");
 
@@ -104,8 +101,8 @@ const _: () = assert!(BLOCK_BITS == LANES, "the transpose is square");
 /// sub-matrix — `mask` selects the low `j` columns of each such block, and
 /// halves alongside `j`.
 fn transpose(m: &mut [Word; LANES]) {
-    let mut j = QUADRANT_LANES;
-    let mut mask: Word = !0 >> QUADRANT_LANES;
+    let mut j = LANES / 2;
+    let mut mask: Word = !0 >> (LANES / 2);
     while j != 0 {
         let mut k = 0;
         while k < LANES {
@@ -334,8 +331,8 @@ fn stream_xor(cw: &ControlWord, payloads: &mut [&mut [u8]], g: &Group) {
         // One transpose covers BLOCK_BYTES keystream bytes for every lane.
         for byte in 0..BLOCK_BYTES {
             let bits = sc.keystream_byte();
-            for bit in 0..BITS_PER_BYTE {
-                ks[byte * BITS_PER_BYTE + bit] = bits[bit];
+            for bit in 0..u8::BITS as usize {
+                ks[byte * u8::BITS as usize + bit] = bits[bit];
             }
         }
         transpose(&mut ks);

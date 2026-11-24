@@ -32,6 +32,7 @@ mod strict_tests;
 pub mod tag;
 pub mod tpdu;
 pub mod traits;
+mod wire;
 
 pub use any::AnyApdu;
 pub use error::{Error, Result};

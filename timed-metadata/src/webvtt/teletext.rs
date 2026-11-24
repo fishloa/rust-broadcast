@@ -56,7 +56,7 @@ use alloc::vec::Vec;
 
 /// Bytes in one `txt_data_block` (EN 300 706 packet as carried by an
 /// EN 301 775 VBI data field).
-const TXT_DATA_BLOCK_LEN: usize = 42;
+pub const TXT_DATA_BLOCK_LEN: usize = 42;
 
 /// Wire bit positions of the Hamming-8/4 protection bits P1-P4
 /// (ETSI EN 300 706 §8.2, transmission order, LSB first).

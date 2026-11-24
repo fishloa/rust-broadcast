@@ -38,6 +38,10 @@ pub const TAG_INSTANCE_UID: u16 = 0x3C0A;
 pub const TAG_GENERATION_UID: u16 = 0x0102;
 /// Local tag: Object Class (A.1).
 pub const TAG_OBJECT_CLASS: u16 = 0x0101;
+/// Local tag: Data Definition (B.8), carried by every Structural Component.
+pub const TAG_DATA_DEFINITION: u16 = 0x0201;
+/// Local tag: Duration (B.8), carried by every Structural Component.
+pub const TAG_DURATION: u16 = 0x0202;
 
 impl InterchangeObjectFields {
     /// Decode from a parsed [`LocalSet`]'s items, collecting any of the

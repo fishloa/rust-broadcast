@@ -8,7 +8,9 @@
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 
+use crate::PREFIX_LEN;
 use crate::error::{Error, Result};
+use crate::wire::{read_u16_at, read_u32_at};
 use broadcast_common::{Parse, Serialize};
 
 /// `system_header_start_code` — `0x000001BB`.
@@ -18,9 +20,6 @@ pub const SYSTEM_HEADER_START_CODE: u32 = 0x0000_01BB;
 const EXT_STREAM_ID: u8 = 0xB7;
 /// The fixed `'1011 0110'` byte that follows `stream_id_extension` (Table 2-40).
 const STREAM_ID_EXTENSION_PREFIX: u8 = 0xB6;
-
-/// Fixed bytes before the stream loop: start_code(4) + header_length(2).
-pub(crate) const PREFIX_LEN: usize = 6;
 
 /// Byte offset of `system_header_start_code`.
 const START_CODE_OFFSET: usize = 0;
@@ -50,19 +49,20 @@ const STREAM_BUFFER_SIZE_LO_OFFSET: usize = 2;
 const EXT_STREAM_ENTRY_LEN: usize = 6;
 const STREAM_ENTRY_LEN: usize = 3;
 
-/// Mask of the most significant bit of a header byte — the stream-loop
-/// "entry follows" bit and every `stream_id`'s leading `1`.
-const MSB_MASK: u8 = 0x80;
-/// Masks of the individual flag and marker bits of a header byte.
-const RATE_BOUND_MARKER_MASK: u8 = MSB_MASK;
-const SYSTEM_AUDIO_LOCK_MASK: u8 = 0x80;
-const SYSTEM_VIDEO_LOCK_MASK: u8 = 0x40;
-const PACKET_RATE_RESTRICTION_MASK: u8 = 0x80;
-const VIDEO_BOUND_MARKER_MASK: u8 = 0x20;
-const BUFFER_BOUND_SCALE_MASK: u8 = 0x20;
-const FIXED_FLAG_MASK: u8 = 0x02;
+/// Masks of the flags and marker bits that share a header byte.
+const RATE_BOUND_HI_MARKER_MASK: u8 = 0x80;
 const RATE_BOUND_LO_MARKER_MASK: u8 = 0x01;
+const VIDEO_BOUND_MARKER_MASK: u8 = 0x20;
+const FIXED_FLAG_MASK: u8 = 0x02;
 const CSPS_FLAG_MASK: u8 = 0x01;
+const SYSTEM_AUDIO_LOCK_FLAG_MASK: u8 = 0x80;
+const SYSTEM_VIDEO_LOCK_FLAG_MASK: u8 = 0x40;
+const PACKET_RATE_RESTRICTION_FLAG_MASK: u8 = 0x80;
+const EXT_BUFFER_SCALE_FLAG_MASK: u8 = 0x20;
+const STREAM_BUFFER_SCALE_FLAG_MASK: u8 = 0x20;
+/// Mask of the MSB that starts a stream-bound entry and that a trailing
+/// reserved byte must not carry (Table 2-40).
+const STREAM_ENTRY_MSB_MASK: u8 = 0x80;
 /// Mask of the low 7 bits of a byte, shared by the `reserved_bits` field, the
 /// `rate_bound` high group and `stream_id_extension` (Table 2-40).
 const RESERVED_BITS_MASK: u8 = 0x7F;
@@ -93,13 +93,6 @@ const BUFFER_SIZE_BOUND_HI_SHIFT: u32 = 8;
 
 /// Mask of the 22-bit `rate_bound` field.
 const RATE_BOUND_MASK: u32 = (1 << RATE_BOUND_BITS) - 1;
-
-/// Read the big-endian `u32` at `off`.
-fn read_u32_at(b: &[u8], off: usize) -> u32 {
-    let mut raw = [0_u8; core::mem::size_of::<u32>()];
-    raw.copy_from_slice(&b[off..off + core::mem::size_of::<u32>()]);
-    u32::from_be_bytes(raw)
-}
 
 /// A per-stream P-STD buffer bound entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,8 +175,7 @@ impl<'a> Parse<'a> for SystemHeader {
             )));
         }
 
-        let header_length =
-            u16::from_be_bytes([b[HEADER_LENGTH_OFFSET], b[HEADER_LENGTH_OFFSET + 1]]) as usize;
+        let header_length = usize::from(read_u16_at(b, HEADER_LENGTH_OFFSET));
         let body_end = PREFIX_LEN + header_length;
         if b.len() < body_end {
             return Err(Error::HeaderLengthOverflow {
@@ -212,7 +204,7 @@ impl<'a> Parse<'a> for SystemHeader {
         }
 
         // Marker bit checks
-        if body[RATE_BOUND_OFFSET] & RATE_BOUND_MARKER_MASK == 0 {
+        if body[RATE_BOUND_OFFSET] & RATE_BOUND_HI_MARKER_MASK == 0 {
             return Err(Error::BadMarker("system_header rate_bound marker 1"));
         }
         if body[RATE_BOUND_LO_OFFSET] & RATE_BOUND_LO_MARKER_MASK == 0 {
@@ -235,8 +227,8 @@ impl<'a> Parse<'a> for SystemHeader {
         let csps_flag = body[AUDIO_BOUND_OFFSET] & CSPS_FLAG_MASK != 0;
 
         // byte 4: system_audio_lock_flag(1) | system_video_lock_flag(1) | marker(1) | video_bound[4:0](5)
-        let system_audio_lock_flag = body[STREAM_FLAGS_OFFSET] & SYSTEM_AUDIO_LOCK_MASK != 0;
-        let system_video_lock_flag = body[STREAM_FLAGS_OFFSET] & SYSTEM_VIDEO_LOCK_MASK != 0;
+        let system_audio_lock_flag = body[STREAM_FLAGS_OFFSET] & SYSTEM_AUDIO_LOCK_FLAG_MASK != 0;
+        let system_video_lock_flag = body[STREAM_FLAGS_OFFSET] & SYSTEM_VIDEO_LOCK_FLAG_MASK != 0;
         // W1 (#1119): `video_bound` is the low 5 bits of byte 4, not 4 —
         // `& 0x0F` dropped bit 4, so `video_bound` in 16..=31 round-tripped
         // to `video_bound - 16` (serialize already used the correct 5-bit
@@ -245,13 +237,13 @@ impl<'a> Parse<'a> for SystemHeader {
 
         // byte 5: packet_rate_restriction_flag(1) | reserved(7)
         let packet_rate_restriction_flag =
-            body[PACKET_RATE_OFFSET] & PACKET_RATE_RESTRICTION_MASK != 0;
+            body[PACKET_RATE_OFFSET] & PACKET_RATE_RESTRICTION_FLAG_MASK != 0;
         let reserved_bits = body[PACKET_RATE_OFFSET] & RESERVED_BITS_MASK;
 
         // Stream loop — each entry starts with MSB=1 (nextbits()=='1')
         let mut pos = FIXED_BODY_LEN;
         let mut std_buffer_bounds = Vec::new();
-        while pos < body.len() && body[pos] & MSB_MASK != 0 {
+        while pos < body.len() && body[pos] & STREAM_ENTRY_MSB_MASK != 0 {
             let stream_id = body[pos];
             if stream_id == EXT_STREAM_ID {
                 // Extension form (6 bytes)
@@ -284,7 +276,7 @@ impl<'a> Parse<'a> for SystemHeader {
                     return Err(Error::BadMarker("P-STD_buffer_bound_scale prefix (ext)"));
                 }
                 let buffer_bound_scale =
-                    body[pos + EXT_BUFFER_FLAGS_OFFSET] & BUFFER_BOUND_SCALE_MASK != 0;
+                    body[pos + EXT_BUFFER_FLAGS_OFFSET] & EXT_BUFFER_SCALE_FLAG_MASK != 0;
                 // bytes pos+4/pos+5: '11'(2) | scale(1) | size[12:8](5), then size[7:0](8):
                 // the 13-bit size has no trailing marker bit (Table 2-40).
                 let buffer_size_bound =
@@ -308,7 +300,7 @@ impl<'a> Parse<'a> for SystemHeader {
                     return Err(Error::BadMarker("P-STD_buffer_bound_scale prefix"));
                 }
                 let buffer_bound_scale =
-                    body[pos + STREAM_BUFFER_FLAGS_OFFSET] & BUFFER_BOUND_SCALE_MASK != 0;
+                    body[pos + STREAM_BUFFER_FLAGS_OFFSET] & STREAM_BUFFER_SCALE_FLAG_MASK != 0;
                 // bytes pos+1/pos+2: '11'(2) | scale(1) | size[12:8](5), then size[7:0](8).
                 let buffer_size_bound =
                     (u16::from(body[pos + STREAM_BUFFER_FLAGS_OFFSET] & LOW_5_BITS_MASK)
@@ -346,7 +338,7 @@ impl SystemHeader {
     /// 2-40), and `stream_id == 0xB7` selects the 6-byte extension form.
     fn validate_stream_loop(&self) -> Result<()> {
         for b in &self.std_buffer_bounds {
-            if b.stream_id & MSB_MASK == 0 {
+            if b.stream_id & STREAM_ENTRY_MSB_MASK == 0 {
                 return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                     field: "system_header.stream_id",
                     reason: "stream_id MSB is 0, so the entry would end the stream loop on parse",
@@ -384,7 +376,7 @@ impl SystemHeader {
         if self
             .trailing_reserved
             .first()
-            .is_some_and(|f| f & MSB_MASK != 0)
+            .is_some_and(|f| f & STREAM_ENTRY_MSB_MASK != 0)
         {
             return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                 field: "system_header.trailing_reserved",
@@ -441,7 +433,7 @@ impl Serialize for SystemHeader {
 
         let body = &mut buf[PREFIX_LEN..total];
         // byte 6: marker(1) | rate_bound[21:15](7)
-        body[RATE_BOUND_OFFSET] = RATE_BOUND_MARKER_MASK
+        body[RATE_BOUND_OFFSET] = RATE_BOUND_HI_MARKER_MASK
             | ((rate_bound >> RATE_BOUND_HI_SHIFT) & u32::from(RESERVED_BITS_MASK)) as u8;
         // byte 7: rate_bound[14:7]
         body[RATE_BOUND_MID_OFFSET] =

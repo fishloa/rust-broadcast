@@ -6,6 +6,7 @@
 use crate::error::{Error, Result};
 use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+    be_u16,
 };
 
 /// Offsets of the three bytes of `interval_duration`.
@@ -330,11 +331,8 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
         if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
-        let segment_length = u16::from_be_bytes([
-            bytes[SEGMENT_LENGTH_OFFSET],
-            bytes[SEGMENT_LENGTH_OFFSET + 1],
-        ]) as usize;
+        let page_id = be_u16(bytes, PAGE_ID_OFFSET);
+        let segment_length = be_u16(bytes, SEGMENT_LENGTH_OFFSET) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "disparity_signalling_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
@@ -382,11 +380,8 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
                 need_in(body, pos + entry_len, "subregion entry")?;
 
                 let (hpos, width) = if has_pos {
-                    let h = u16::from_be_bytes([body[pos], body[pos + 1]]);
-                    let w = u16::from_be_bytes([
-                        body[pos + SUBREGION_WIDTH_OFFSET],
-                        body[pos + SUBREGION_WIDTH_OFFSET + 1],
-                    ]);
+                    let h = be_u16(body, pos);
+                    let w = be_u16(body, pos + SUBREGION_WIDTH_OFFSET);
                     pos += SUBREGION_POSITION_LEN;
                     (Some(h), Some(w))
                 } else {

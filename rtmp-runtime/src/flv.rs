@@ -84,8 +84,8 @@ pub(crate) fn unpack_aggregate(
         }
         let header = &body[offset..offset + AGG_SUB_MESSAGE_HEADER_LEN];
         let tag_type = MessageTypeId::from_u8(header[0]);
-        let data_size = u24_at(TAG_DATA_SIZE_BYTES, |i| header[i]) as usize;
-        let ts_low24 = u24_at(TAG_TIMESTAMP_BYTES, |i| header[i]);
+        let data_size = read_u24_be(header, TAG_DATA_SIZE_AT) as usize;
+        let ts_low24 = read_u24_be(header, TAG_TIMESTAMP_AT);
         // Same layout `flv_tag` writes (Annex E.4.1): the 24-bit
         // `Timestamp` field holds bits 0..=23, `TimestampExtended`
         // holds the top 8.
@@ -108,8 +108,7 @@ pub(crate) fn unpack_aggregate(
                 });
             }
         };
-        let back_pointer =
-            u32::from_be_bytes(U32_BYTES.map(|i| body[back_end - AGG_BACK_POINTER_LEN + i]));
+        let back_pointer = crate::be_u32(body, back_end - AGG_BACK_POINTER_LEN);
         let expected_back_pointer = match broadcast_common::len::fit_u32(
             AGG_SUB_MESSAGE_HEADER_LEN + data_size,
             "Back Pointer",
@@ -408,8 +407,7 @@ impl<'a> FlvTag<'a> {
     /// [`RtmpError::BufferTooShort`] if `bytes` does not hold a full header.
     pub fn data_size(bytes: &'a [u8]) -> FlvResult<usize> {
         need_in(bytes, FLV_TAG_HEADER_LEN, "FLV tag header")?;
-        let field = |at: usize| bytes.get(at).copied().unwrap_or_default();
-        let data_size = u24_at(TAG_DATA_SIZE_BYTES, field);
+        let data_size = read_u24_be(bytes, TAG_DATA_SIZE_AT);
         usize::try_from(data_size).map_err(|_| RtmpError::Malformed {
             what: "FLV tag DataSize",
         })
@@ -507,10 +505,10 @@ impl FlvTagHeader {
     pub fn parse(bytes: &[u8]) -> FlvResult<Self> {
         need_in(bytes, FLV_TAG_HEADER_LEN, "FLV tag header")?;
         let field = |at: usize| bytes.get(at).copied().unwrap_or_default();
-        let data_size = u24_at(TAG_DATA_SIZE_BYTES, field);
-        let ts_low24 = u24_at(TAG_TIMESTAMP_BYTES, field);
+        let data_size = read_u24_be(bytes, TAG_DATA_SIZE_AT);
+        let ts_low24 = read_u24_be(bytes, TAG_TIMESTAMP_AT);
         let ts_extended = u32::from(field(TAG_TIMESTAMP_EXTENDED_AT));
-        let stream_id = u24_at(TAG_STREAM_ID_BYTES, field);
+        let stream_id = read_u24_be(bytes, TAG_STREAM_ID_AT);
         Ok(Self {
             tag_type: TagType::from_byte(field(0)),
             data_size,
@@ -625,27 +623,14 @@ const TAG_STREAM_ID_AT: usize = 8;
 /// Byte width of a UI24 field.
 const U24_LEN: usize = 3;
 /// Byte width of a u32 field.
-const U32_LEN: usize = 4;
-/// Shifts of a UI24 field's first and middle bytes.
-const U24_SHIFT_HIGH: u32 = 16;
-const U24_SHIFT_LOW: u32 = 8;
-/// Index of a UI24 field's least significant byte.
-const U24_LOW_BYTE: usize = 2;
-/// Byte positions of the UI24 fields a tag header carries (§E.4.1).
-const TAG_DATA_SIZE_BYTES: [usize; U24_LEN] =
-    [TAG_DATA_SIZE_AT, TAG_DATA_SIZE_AT + 1, TAG_DATA_SIZE_AT + 2];
-const TAG_TIMESTAMP_BYTES: [usize; U24_LEN] =
-    [TAG_TIMESTAMP_AT, TAG_TIMESTAMP_AT + 1, TAG_TIMESTAMP_AT + 2];
-const TAG_STREAM_ID_BYTES: [usize; U24_LEN] =
-    [TAG_STREAM_ID_AT, TAG_STREAM_ID_AT + 1, TAG_STREAM_ID_AT + 2];
-/// Byte positions of a u32 field's four bytes.
-const U32_BYTES: [usize; U32_LEN] = [0, 1, 2, 3];
-
-/// Read a big-endian UI24 field at `at`'s byte positions.
-fn u24_at(at: [usize; U24_LEN], byte: impl Fn(usize) -> u8) -> u32 {
-    (u32::from(byte(at[0])) << U24_SHIFT_HIGH)
-        | (u32::from(byte(at[1])) << U24_SHIFT_LOW)
-        | u32::from(byte(at[U24_LOW_BYTE]))
+const U32_LEN: usize = core::mem::size_of::<u32>();
+/// Read a big-endian UI24 field at `offset` of `bytes`.
+fn read_u24_be(bytes: &[u8], offset: usize) -> u32 {
+    const FIELD_LEN: usize = 3;
+    let mut field = [0_u8; core::mem::size_of::<u32>()];
+    field[core::mem::size_of::<u32>() - FIELD_LEN..]
+        .copy_from_slice(&bytes[offset..offset + FIELD_LEN]);
+    u32::from_be_bytes(field)
 }
 /// The low 24 bits of a tag's `Timestamp` (§E.4.1), the part the UI24 field
 /// carries.

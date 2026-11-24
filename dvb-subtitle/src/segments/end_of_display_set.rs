@@ -3,6 +3,7 @@
 use crate::error::{Error, Result};
 use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+    be_u16,
 };
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -35,11 +36,8 @@ impl<'a> Parse<'a> for EndOfDisplaySetSegment {
         if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
-        let segment_length = u16::from_be_bytes([
-            bytes[SEGMENT_LENGTH_OFFSET],
-            bytes[SEGMENT_LENGTH_OFFSET + 1],
-        ]);
+        let page_id = be_u16(bytes, PAGE_ID_OFFSET);
+        let segment_length = be_u16(bytes, SEGMENT_LENGTH_OFFSET);
         if segment_length != 0 {
             return Err(Error::SegmentTooLarge);
         }

@@ -35,15 +35,15 @@ pub(crate) const TS_PACKET_SIZE: usize = 188;
 /// M2TS/BDAV packet length: a `188`-byte TS packet preceded by a 4-byte
 /// `TP_extra_header` (copy-permission + arrival-time-stamp); an M2TS file is
 /// exactly these 192-byte records back to back.
-const TS_PACKET_SIZE_192: usize = 192;
+const TS_PACKET_SIZE_M2TS: usize = 192;
 
 /// A DVB TS packet with a trailing 16-byte Reed-Solomon parity block (ETSI
 /// EN 300 421 §5.2.2 — `188` payload + `16` parity).
-const TS_PACKET_SIZE_204: usize = 204;
+const TS_PACKET_SIZE_DVB_RS: usize = 204;
 
 /// A `204`-byte DVB packet with a `TP_extra_header` prefix, 208 bytes (an
 /// M2TS-style wrapper on the RS-protected packet, from some recorders).
-const TS_PACKET_SIZE_208: usize = 208;
+const TS_PACKET_SIZE_M2TS_RS: usize = 208;
 
 /// Consecutive sync confirmations that lift a TS lattice to
 /// [`crate::Confidence::LATTICE_STRONG`] (design §"MPEG-2 TS").
@@ -71,9 +71,9 @@ const TS_MIN_COVERAGE_PCT: u64 = 50;
 /// The four candidate packet strides — the legal MPEG-2 TS/DVB/M2TS lengths.
 const TS_STRIDES: [usize; 4] = [
     TS_PACKET_SIZE,
-    TS_PACKET_SIZE_192,
-    TS_PACKET_SIZE_204,
-    TS_PACKET_SIZE_208,
+    TS_PACKET_SIZE_M2TS,
+    TS_PACKET_SIZE_DVB_RS,
+    TS_PACKET_SIZE_M2TS_RS,
 ];
 
 /// The registered TS prober: lattice search over `limit` bytes.
@@ -368,12 +368,15 @@ mod drift {
         const TP_EXTRA_HEADER: usize = 4;
         const RS_PARITY: usize = 16;
         assert_eq!(
-            super::TS_PACKET_SIZE_192,
+            super::TS_PACKET_SIZE_M2TS,
             super::TS_PACKET_SIZE + TP_EXTRA_HEADER
         );
-        assert_eq!(super::TS_PACKET_SIZE_204, super::TS_PACKET_SIZE + RS_PARITY);
         assert_eq!(
-            super::TS_PACKET_SIZE_208,
+            super::TS_PACKET_SIZE_DVB_RS,
+            super::TS_PACKET_SIZE + RS_PARITY
+        );
+        assert_eq!(
+            super::TS_PACKET_SIZE_M2TS_RS,
             super::TS_PACKET_SIZE + RS_PARITY + TP_EXTRA_HEADER
         );
     }

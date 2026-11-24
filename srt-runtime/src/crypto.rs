@@ -66,16 +66,13 @@ pub const PBKDF2_ITERATIONS: u32 = 2048;
 /// words — the only salt length the draft defines, `srt-rules.md` §3.2.2).
 pub const SALT_LEN: usize = 16;
 
+/// Bytes of RFC 3394's default initial value (the wrap ICV).
+pub const WRAP_ICV_LEN: usize = 8;
+
 /// Number of least-significant bytes of the 128-bit `Salt` fed to PBKDF2 as
 /// its salt argument (`LSB(64,Salt)`, §6.2.1/§6.3.1: 64 bits = 8 bytes). The
 /// remaining (most-significant) bytes of `Salt` feed the AES-CTR IV instead
 /// (§6.1.2/§6.2.2/§6.3.2).
-/// Key lengths (bytes) AES key wrap accepts: AES-128/192/256.
-const VALID_KEY_LENS: [usize; 3] = [16, 24, 32];
-
-/// Bytes of RFC 3394's default initial value (the wrap ICV).
-const WRAP_ICV_LEN: usize = 8;
-
 const PBKDF2_SALT_LEN: usize = 8;
 
 /// Number of most-significant bytes of the 128-bit `Salt` used to build the
@@ -85,7 +82,7 @@ const IV_SALT_LEN: usize = 14;
 /// AES block size in bytes (FIPS 197) — also the AES-CTR counter width
 /// (§6.1.2: "The counter for AES-CTR is the size of the cipher's block, i.e.
 /// 128 bits").
-const AES_BLOCK_LEN: usize = 16;
+pub const AES_BLOCK_LEN: usize = 16;
 
 /// A key length not one of AES-128/192/256's 16/24/32 bytes (`KLen/4` ∈
 /// `{4,6,8}`, `srt-rules.md` §3.2.2).
@@ -138,7 +135,7 @@ pub fn derive_kek(
     salt: &[u8; SALT_LEN],
     klen: usize,
 ) -> Result<Zeroizing<Vec<u8>>> {
-    if !VALID_KEY_LENS.contains(&klen) {
+    if !crate::AES_KEY_LENS.contains(&klen) {
         return Err(invalid_key_length("KLen"));
     }
     // LSB(64, Salt): the low/least-significant 8 bytes of the 128-bit,

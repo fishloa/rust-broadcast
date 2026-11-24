@@ -154,10 +154,10 @@ pub const CONTROL_MESSAGE_STREAM_ID: MessageStreamId = MessageStreamId::new(0);
 
 /// Byte width of a `u32` protocol control field (chunk size, chunk stream
 /// id, sequence number, window ack size).
-const U32_LEN: usize = 4;
+const CONTROL_FIELD_LEN: usize = core::mem::size_of::<u32>();
 /// Byte width of the Set Peer Bandwidth payload: window size (4) + limit
 /// type (1).
-const SET_PEER_BANDWIDTH_LEN: usize = U32_LEN + 1;
+const SET_PEER_BANDWIDTH_LEN: usize = CONTROL_FIELD_LEN + 1;
 
 /// Bit mask isolating the reserved top bit of the Set Chunk Size payload
 /// (§5.4.1: 1 reserved bit, MUST be 0, + 31-bit chunk size).
@@ -166,21 +166,20 @@ const SET_CHUNK_SIZE_RESERVED_MASK: u32 = 0x8000_0000;
 /// payload.
 const SET_CHUNK_SIZE_VALUE_MASK: u32 = 0x7FFF_FFFF;
 
-/// Byte positions of a big-endian u32 field.
-const U32_BYTES: [usize; U32_LEN] = [0, 1, 2, 3];
-
 /// Payload length of a Set Buffer Length user-control event: stream id and
 /// buffer length, both u32 (RTMP §5.4.3).
-const SET_BUFFER_LENGTH_LEN: usize = 2 * U32_LEN;
+const SET_BUFFER_LENGTH_LEN: usize = 2 * CONTROL_FIELD_LEN;
 
 fn read_u32_be(b: &[u8]) -> u32 {
-    u32::from_be_bytes(U32_BYTES.map(|i| b[i]))
+    let mut field = [0_u8; CONTROL_FIELD_LEN];
+    field.copy_from_slice(&b[..CONTROL_FIELD_LEN]);
+    u32::from_be_bytes(field)
 }
 
 fn need_u32(bytes: &[u8], what: &'static str) -> Result<u32> {
-    if bytes.len() < U32_LEN {
+    if bytes.len() < CONTROL_FIELD_LEN {
         return Err(RtmpError::BufferTooShort(BufferTooShort {
-            need: U32_LEN,
+            need: CONTROL_FIELD_LEN,
             have: bytes.len(),
             what,
         }));
@@ -413,8 +412,8 @@ impl ProtocolControl {
                     SET_PEER_BANDWIDTH_LEN,
                     "set peer bandwidth payload",
                 )?;
-                let ack_window_size = read_u32_be(&payload[0..U32_LEN]);
-                let limit_type = LimitType::from_u8(payload[U32_LEN])?;
+                let ack_window_size = read_u32_be(&payload[0..CONTROL_FIELD_LEN]);
+                let limit_type = LimitType::from_u8(payload[CONTROL_FIELD_LEN])?;
                 Ok(Some(ProtocolControl::SetPeerBandwidth {
                     ack_window_size,
                     limit_type,
@@ -431,23 +430,23 @@ impl ProtocolControl {
         let mut buf = alloc::vec![0u8; self.serialized_len()];
         match *self {
             ProtocolControl::SetChunkSize(size) => {
-                buf[0..U32_LEN].copy_from_slice(&size.value().to_be_bytes());
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&size.value().to_be_bytes());
             }
             ProtocolControl::Abort { chunk_stream_id } => {
-                buf[0..U32_LEN].copy_from_slice(&chunk_stream_id.to_be_bytes());
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&chunk_stream_id.to_be_bytes());
             }
             ProtocolControl::Acknowledgement(sequence_number) => {
-                buf[0..U32_LEN].copy_from_slice(&sequence_number.get().to_be_bytes());
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&sequence_number.get().to_be_bytes());
             }
             ProtocolControl::WindowAckSize(window) => {
-                buf[0..U32_LEN].copy_from_slice(&window.to_be_bytes());
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&window.to_be_bytes());
             }
             ProtocolControl::SetPeerBandwidth {
                 ack_window_size,
                 limit_type,
             } => {
-                buf[0..U32_LEN].copy_from_slice(&ack_window_size.to_be_bytes());
-                buf[U32_LEN] = limit_type.to_u8();
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&ack_window_size.to_be_bytes());
+                buf[CONTROL_FIELD_LEN] = limit_type.to_u8();
             }
         }
         buf
@@ -481,7 +480,7 @@ impl Serialize for ProtocolControl {
             ProtocolControl::SetChunkSize(_)
             | ProtocolControl::Abort { .. }
             | ProtocolControl::Acknowledgement(_)
-            | ProtocolControl::WindowAckSize(_) => U32_LEN,
+            | ProtocolControl::WindowAckSize(_) => CONTROL_FIELD_LEN,
             ProtocolControl::SetPeerBandwidth { .. } => SET_PEER_BANDWIDTH_LEN,
         }
     }
@@ -491,23 +490,23 @@ impl Serialize for ProtocolControl {
         need_in(buf, written, "protocol control payload output")?;
         match *self {
             ProtocolControl::SetChunkSize(size) => {
-                buf[0..U32_LEN].copy_from_slice(&size.value().to_be_bytes());
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&size.value().to_be_bytes());
             }
             ProtocolControl::Abort { chunk_stream_id } => {
-                buf[0..U32_LEN].copy_from_slice(&chunk_stream_id.to_be_bytes());
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&chunk_stream_id.to_be_bytes());
             }
             ProtocolControl::Acknowledgement(sequence_number) => {
-                buf[0..U32_LEN].copy_from_slice(&sequence_number.get().to_be_bytes());
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&sequence_number.get().to_be_bytes());
             }
             ProtocolControl::WindowAckSize(window) => {
-                buf[0..U32_LEN].copy_from_slice(&window.to_be_bytes());
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&window.to_be_bytes());
             }
             ProtocolControl::SetPeerBandwidth {
                 ack_window_size,
                 limit_type,
             } => {
-                buf[0..U32_LEN].copy_from_slice(&ack_window_size.to_be_bytes());
-                buf[U32_LEN] = limit_type.to_u8();
+                buf[0..CONTROL_FIELD_LEN].copy_from_slice(&ack_window_size.to_be_bytes());
+                buf[CONTROL_FIELD_LEN] = limit_type.to_u8();
             }
         }
         Ok(written)
@@ -618,10 +617,10 @@ impl UserControl {
             | UserControl::StreamIsRecorded(stream_id)
             | UserControl::PingRequest(stream_id)
             | UserControl::PingResponse(stream_id) => {
-                data[0..U32_LEN].copy_from_slice(&stream_id.to_be_bytes());
+                data[0..CONTROL_FIELD_LEN].copy_from_slice(&stream_id.to_be_bytes());
             }
             UserControl::SetBufferLength { stream_id, buffer } => {
-                data[0..U32_LEN].copy_from_slice(&stream_id.to_be_bytes());
+                data[0..CONTROL_FIELD_LEN].copy_from_slice(&stream_id.to_be_bytes());
                 let millis = u32::try_from(buffer.as_millis()).map_err(|_| {
                     RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
                         field: "set_buffer_length.buffer",
@@ -629,7 +628,8 @@ impl UserControl {
                         max: u64::from(u32::MAX),
                     })
                 })?;
-                data[U32_LEN..2 * U32_LEN].copy_from_slice(&millis.to_be_bytes());
+                data[CONTROL_FIELD_LEN..2 * CONTROL_FIELD_LEN]
+                    .copy_from_slice(&millis.to_be_bytes());
             }
         }
         Ok(buf)
@@ -679,9 +679,9 @@ impl<'a> Parse<'a> for UserControl {
             event_type::SET_BUFFER_LENGTH => {
                 need_in(data, SET_BUFFER_LENGTH_LEN, "set buffer length event data")?;
                 Ok(UserControl::SetBufferLength {
-                    stream_id: read_u32_be(&data[0..U32_LEN]),
+                    stream_id: read_u32_be(&data[0..CONTROL_FIELD_LEN]),
                     buffer: Duration::from_millis(u64::from(read_u32_be(
-                        &data[U32_LEN..SET_BUFFER_LENGTH_LEN],
+                        &data[CONTROL_FIELD_LEN..SET_BUFFER_LENGTH_LEN],
                     ))),
                 })
             }
@@ -708,7 +708,7 @@ impl Serialize for UserControl {
     fn serialized_len(&self) -> usize {
         let data_len = match self {
             UserControl::SetBufferLength { .. } => SET_BUFFER_LENGTH_LEN,
-            _ => U32_LEN,
+            _ => CONTROL_FIELD_LEN,
         };
         EVENT_TYPE_LEN + data_len
     }
@@ -725,7 +725,7 @@ impl Serialize for UserControl {
             | UserControl::StreamIsRecorded(stream_id)
             | UserControl::PingRequest(stream_id)
             | UserControl::PingResponse(stream_id) => {
-                data[0..U32_LEN].copy_from_slice(&stream_id.to_be_bytes());
+                data[0..CONTROL_FIELD_LEN].copy_from_slice(&stream_id.to_be_bytes());
             }
             UserControl::SetBufferLength { stream_id, buffer } => {
                 let millis = u32::try_from(buffer.as_millis()).map_err(|_| {
@@ -735,8 +735,9 @@ impl Serialize for UserControl {
                         max: u64::from(u32::MAX),
                     })
                 })?;
-                data[0..U32_LEN].copy_from_slice(&stream_id.to_be_bytes());
-                data[U32_LEN..2 * U32_LEN].copy_from_slice(&millis.to_be_bytes());
+                data[0..CONTROL_FIELD_LEN].copy_from_slice(&stream_id.to_be_bytes());
+                data[CONTROL_FIELD_LEN..2 * CONTROL_FIELD_LEN]
+                    .copy_from_slice(&millis.to_be_bytes());
             }
         }
         Ok(written)

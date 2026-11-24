@@ -26,14 +26,6 @@ const TYPE_FLAG_RESERVED_MASK: u8 = !(TYPE_FLAG_AUDIO | TYPE_FLAG_VIDEO);
 const TYPE_FLAGS_OFFSET: usize = 4;
 /// `DataOffset` is the 4-byte big-endian field starting at byte 5.
 const DATA_OFFSET_POS: usize = 5;
-/// The four bytes of that field.
-const DATA_OFFSET_BYTES: [usize; 4] = [
-    DATA_OFFSET_POS,
-    DATA_OFFSET_POS + 1,
-    DATA_OFFSET_POS + 2,
-    DATA_OFFSET_POS + 3,
-];
-
 /// The registered FLV prober: signature + header-field checks over `limit`.
 pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
@@ -50,7 +42,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     }
     // DataOffset (bytes 5..9) is the header size; it must be >= the 9-byte
     // header (so the field itself is sane and points at/after the header).
-    let data_offset = u32::from_be_bytes(DATA_OFFSET_BYTES.map(|i| region[i])) as usize;
+    let data_offset = crate::be_u32(region, DATA_OFFSET_POS) as usize;
     if data_offset < FLV_HEADER_LEN {
         return Outcome::None;
     }

@@ -226,7 +226,7 @@ const TEI_PUSI_PID_HI_OFFSET: usize = 1;
 const PID_LO_OFFSET: usize = 2;
 /// Byte offset of the `transport_scrambling_control`/`adaptation_field_control`/
 /// `continuity_counter` byte in the 4-byte TS header.
-const SCRAMBLING_AFC_CC_OFFSET: usize = 3;
+pub(crate) const SCRAMBLING_AFC_CC_OFFSET: usize = 3;
 
 /// The 4-bit `continuity_counter` field (ISO/IEC 13818-1 §2.4.3.3).
 ///

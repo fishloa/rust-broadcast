@@ -3,6 +3,9 @@
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
+use super::BYTE_MASK_U32;
+use crate::packet::be_u16;
+
 /// Arbitrary cell insertion payload (type 0x02) per ETSI TS 102 773 §5.2.3.
 ///
 /// Layout (byte offsets relative to payload start):
@@ -56,8 +59,6 @@ const CELL_ADDR_HIGH_SHIFT: u32 = 16;
 const CELL_ADDR_MID_SHIFT: u32 = 8;
 /// Mask of the six cell-address bits carried in its high byte.
 const CELL_ADDR_HIGH_BYTE_MASK: u32 = 0x3F;
-/// Mask of one byte.
-const BYTE_MASK: u32 = 0xFF;
 
 impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
     type Error = crate::error::Error;
@@ -72,8 +73,7 @@ impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
         )?;
 
         let frame_idx = hdr[0];
-        let tx_identifier =
-            u16::from_be_bytes([hdr[TX_IDENTIFIER_OFFSET], hdr[TX_IDENTIFIER_OFFSET + 1]]);
+        let tx_identifier = be_u16(hdr, TX_IDENTIFIER_OFFSET);
 
         // RFU: bytes 3-4 (16 bits) + byte 5 top 2 bits = 18 bits total, must be 0
         if hdr[RFU_FIRST_OFFSET] != 0
@@ -132,16 +132,15 @@ impl Serialize for ArbitraryCellsPayload<'_> {
         }
 
         buf[0] = self.frame_idx;
-        let tx_id = self.tx_identifier.to_be_bytes();
-        buf[TX_IDENTIFIER_OFFSET] = tx_id[0];
-        buf[TX_IDENTIFIER_OFFSET + 1] = tx_id[1];
+        buf[TX_IDENTIFIER_OFFSET..TX_IDENTIFIER_OFFSET + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.tx_identifier.to_be_bytes());
         buf[RFU_FIRST_OFFSET] = 0; // RFU byte 1
         buf[RFU_SECOND_OFFSET] = 0; // RFU byte 2
         buf[START_CELL_HIGH_OFFSET] =
             ((self.start_cell_address >> CELL_ADDR_HIGH_SHIFT) & CELL_ADDR_HIGH_BYTE_MASK) as u8;
         buf[START_CELL_MID_OFFSET] =
-            ((self.start_cell_address >> CELL_ADDR_MID_SHIFT) & BYTE_MASK) as u8;
-        buf[START_CELL_LOW_OFFSET] = (self.start_cell_address & BYTE_MASK) as u8;
+            ((self.start_cell_address >> CELL_ADDR_MID_SHIFT) & BYTE_MASK_U32) as u8;
+        buf[START_CELL_LOW_OFFSET] = (self.start_cell_address & BYTE_MASK_U32) as u8;
 
         if !self.arbitrary_cell_data.is_empty() {
             buf[ARB_CELLS_HEADER_LEN..ARB_CELLS_HEADER_LEN + self.arbitrary_cell_data.len()]

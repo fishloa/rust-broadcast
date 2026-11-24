@@ -66,9 +66,8 @@ use crate::ids::{ExtendedSeqNo, Ssrc};
 
 /// RTCP protocol version — always 2 (RFC 3550 §6.4.1).
 const RTCP_VERSION: u8 = 2;
-/// The `V=2` version field of the common header's first byte (`P=0` and a zero
-/// count field are written separately).
-const RTCP_VERSION_FIELD: u8 = RTCP_VERSION << 6;
+/// The common header's `version` field positioned in byte 0, with `P=0` and a zero count.
+const RTCP_VERSION_FIELD: u8 = RTCP_VERSION << VERSION_SHIFT;
 /// Common-header length in bytes (`V/P/count | PT | length(16)`).
 const RTCP_HEADER_LEN: usize = 4;
 /// Padding-bit mask within byte 0 (`P` — RFC 3550 §6.4.1).

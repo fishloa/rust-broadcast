@@ -15,6 +15,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
@@ -75,10 +76,7 @@ impl<'a> Parse<'a> for CicamMultistreamCapability {
         Ok(Self {
             length_form,
             max_local_ts: body[0],
-            max_descramblers: u16::from_be_bytes([
-                body[MAX_DESCRAMBLERS_OFFSET],
-                body[MAX_DESCRAMBLERS_OFFSET + 1],
-            ]),
+            max_descramblers: be_u16(body, MAX_DESCRAMBLERS_OFFSET),
         })
     }
 }
@@ -152,8 +150,6 @@ const PID_RESERVED_SHIFT: u32 = 6;
 const PID_RESERVED_PACK_SHIFT: u32 = 6;
 // Shift placing PID_selection_flag's reserved bits.
 const PID_SELECTION_RESERVED_SHIFT: u32 = 1;
-// Shift placing a PID's high bits.
-const PID_HIGH_SHIFT: u32 = 8;
 // Bit width of num_PID.
 const NUM_PID_BITS: u32 = 8;
 // Offsets of the CAPABILITY fields.
@@ -182,7 +178,7 @@ impl<'a> Parse<'a> for PidSelectReq {
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
             let critical = chunk[0] & CRITICAL_FLAG_BIT != 0;
-            let pid = Pid::from_wire_masked(u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK);
+            let pid = Pid::from_wire_masked(be_u16(chunk, 0) & PID_MASK);
             pids.push(PidSelectRequest {
                 critical_for_descrambling: critical,
                 pid,
@@ -219,7 +215,7 @@ impl Serialize for PidSelectReq {
         pos += PID_SELECT_REQ_PREFIX;
         for entry in &self.pids {
             let mut hi = ((entry.reserved.get() << PID_RESERVED_PACK_SHIFT) as u8)
-                | (entry.pid.value() >> PID_HIGH_SHIFT) as u8;
+                | (entry.pid.value() >> u8::BITS) as u8;
             if entry.critical_for_descrambling {
                 hi |= CRITICAL_FLAG_BIT;
             }
@@ -291,7 +287,7 @@ impl<'a> Parse<'a> for PidSelectReply {
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
             let selected = chunk[0] & PID_SELECTED_FLAG_BIT != 0;
-            let pid = Pid::from_wire_masked(u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK);
+            let pid = Pid::from_wire_masked(be_u16(chunk, 0) & PID_MASK);
             pids.push(PidSelectedEntry {
                 pid_selected: selected,
                 pid,
@@ -336,7 +332,7 @@ impl Serialize for PidSelectReply {
         pos += PID_SELECT_REPLY_PREFIX;
         for entry in &self.pids {
             let mut hi = ((entry.reserved.get() << PID_RESERVED_PACK_SHIFT) as u8)
-                | (entry.pid.value() >> PID_HIGH_SHIFT) as u8;
+                | (entry.pid.value() >> u8::BITS) as u8;
             if entry.pid_selected {
                 hi |= PID_SELECTED_FLAG_BIT;
             }

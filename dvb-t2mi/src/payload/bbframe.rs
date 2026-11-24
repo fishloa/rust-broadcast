@@ -32,7 +32,7 @@ const FLAGS_BYTE_OFFSET: usize = 2;
 /// Mask of the `intl_frame_start` flag.
 const INTL_FRAME_START_MASK: u8 = 0x80;
 /// Mask of the seven reserved bits beside `intl_frame_start`.
-const RFU_MASK: u8 = 0x7F;
+const FLAGS_RFU_MASK: u8 = 0x7F;
 
 impl<'a> Parse<'a> for BbframePayload<'a> {
     type Error = crate::error::Error;
@@ -49,12 +49,12 @@ impl<'a> Parse<'a> for BbframePayload<'a> {
         let intl_frame_start = bytes[FLAGS_BYTE_OFFSET] & INTL_FRAME_START_MASK != 0;
 
         // RFU: byte 2 bits 6..0 — must be zero
-        if bytes[FLAGS_BYTE_OFFSET] & RFU_MASK != 0 {
+        if bytes[FLAGS_BYTE_OFFSET] & FLAGS_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "byte 2 bits 6..0",
                     expected: 0,
-                    found: u64::from(bytes[FLAGS_BYTE_OFFSET] & RFU_MASK),
+                    found: u64::from(bytes[FLAGS_BYTE_OFFSET] & FLAGS_RFU_MASK),
                 },
             ));
         }

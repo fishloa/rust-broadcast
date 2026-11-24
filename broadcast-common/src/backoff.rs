@@ -57,6 +57,8 @@ use core::fmt;
 use core::num::NonZeroU32;
 use core::time::Duration;
 
+use crate::units::NANOS_PER_SEC;
+
 /// The highest attempt the exponential series is raised to; well before it
 /// the raw delay has saturated at the cap for any sane factor, so every later
 /// attempt returns the cap without iterating.
@@ -98,8 +100,6 @@ const MAX_SCALING_FACTOR: f64 = 1e15;
 pub const MAX_FLOOR: Duration = Duration::new(MAX_FLOOR_SECS, 0);
 
 const MAX_FLOOR_SECS: u64 = u64::MAX / NANOS_PER_SEC;
-
-const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 /// Why [`RetrySchedule::new`] refused its bounds.
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]

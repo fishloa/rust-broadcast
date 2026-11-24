@@ -278,7 +278,7 @@ impl<'a> ControlPacket<'a> {
         }
         let control_type_bits = ((word0 >> CONTROL_TYPE_SHIFT) & CONTROL_TYPE_MASK) as u16;
         let subtype = (word0 & SUBTYPE_MASK) as u16;
-        let type_specific_info = be32(bytes, super::TYPE_SPECIFIC_OFFSET);
+        let type_specific_info = be32(bytes, super::TYPE_FIELD_OFFSET);
         let timestamp = SrtTimestamp::from_wire(be32(bytes, super::TIMESTAMP_OFFSET));
         let dest_socket_id = SocketId::from_wire(be32(bytes, super::DEST_SOCKET_ID_OFFSET));
         let cif = &bytes[SRT_HEADER_LEN..];
@@ -519,7 +519,7 @@ impl<'a> ControlPacket<'a> {
             | (u32::from(control_type_bits) << CONTROL_TYPE_SHIFT)
             | u32::from(self.subtype());
         put_be32(buf, 0, word0);
-        put_be32(buf, super::TYPE_SPECIFIC_OFFSET, self.word1()?);
+        put_be32(buf, super::TYPE_FIELD_OFFSET, self.word1()?);
         put_be32(buf, super::TIMESTAMP_OFFSET, self.timestamp().value());
         put_be32(
             buf,
