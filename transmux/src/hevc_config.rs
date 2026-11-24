@@ -35,8 +35,8 @@
 //! }
 //! ```
 
+use crate::box_support::bounded_entry_count;
 use crate::error::{Error, Result};
-use crate::init_segment::bounded_entry_count;
 use crate::nalu_types::{HevcNalArray, HevcNalUnit, VALID_LENGTH_SIZES};
 use crate::wire_cursor::{read_u8, read_u16, read_u32, read_u48};
 use alloc::vec::Vec;

@@ -1024,7 +1024,7 @@ impl Serialize for SchemeTypeBox {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SchemeInformationBox {
     pub tenc: Option<TrackEncryptionBox>,
-    pub extra_boxes: Vec<crate::init_segment::OpaqueBox>,
+    pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
 }
 
 impl<'a> Parse<'a> for SchemeInformationBox {
@@ -1045,7 +1045,7 @@ impl<'a> Parse<'a> for SchemeInformationBox {
             if &boxtype == b"tenc" {
                 tenc = Some(TrackEncryptionBox::parse_box(&body[off..end])?);
             } else {
-                extra_boxes.push(crate::init_segment::OpaqueBox {
+                extra_boxes.push(crate::box_support::OpaqueBox {
                     box_type: boxtype,
                     data: body[off + crate::box_types::BOX_HEADER_MIN_SIZE..end].to_vec(),
                     to_end: false,
@@ -1096,7 +1096,7 @@ pub struct ProtectionSchemeInfoBox {
     pub original_format: OriginalFormatBox,
     pub scheme_type: Option<SchemeTypeBox>,
     pub scheme_info: Option<SchemeInformationBox>,
-    pub extra_boxes: Vec<crate::init_segment::OpaqueBox>,
+    pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
 }
 
 impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
@@ -1163,7 +1163,7 @@ impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
                     scheme_info = Some(SchemeInformationBox::parse(&body[off..end])?);
                 }
                 _ => {
-                    extra_boxes.push(crate::init_segment::OpaqueBox {
+                    extra_boxes.push(crate::box_support::OpaqueBox {
                         box_type: boxtype,
                         data: body[off + crate::box_types::BOX_HEADER_MIN_SIZE..end].to_vec(),
                         to_end: false,

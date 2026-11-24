@@ -541,7 +541,7 @@ impl TrackFragmentRunBox {
             }
             *zero_width_budget -= sc;
         }
-        let mut samples = Vec::with_capacity(crate::init_segment::bounded_entry_count(
+        let mut samples = Vec::with_capacity(crate::box_support::bounded_entry_count(
             payload.len().saturating_sub(c),
             entry_size,
             sc,
@@ -811,7 +811,7 @@ impl OpaqueChild {
     /// An opaque child preserving everything the wire carried: the payload
     /// after `size`/`type` (usertype of a `uuid` included, `largesize` bytes
     /// excluded) plus the `largesize` / `size == 0` forms.
-    pub(crate) fn from_child(child: &crate::init_segment::ChildBox<'_>) -> Self {
+    pub(crate) fn from_child(child: &crate::box_support::ChildBox<'_>) -> Self {
         Self {
             box_type: child.four_cc,
             data: child.payload.to_vec(),
@@ -851,7 +851,7 @@ impl OpaqueChild {
     pub(crate) fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        // See `init_segment::OpaqueBox`: the header is written here, not
+        // See `box_support::OpaqueBox`: the header is written here, not
         // through `BoxHeader`, because the payload already carries a `uuid`'s
         // usertype.
         let mut c = 0usize;
@@ -978,7 +978,7 @@ impl TrackFragmentBox {
         let mut order: Vec<TrafChild> = Vec::new();
         // The crate's one container-child walker (audit r05-O3 / #1141): this
         // loop used to be a private copy of it.
-        crate::init_segment::walk_children(body, |child| {
+        crate::box_support::walk_children(body, |child| {
             if child.is(b"tfhd") {
                 tfhd = Some(TrackFragmentHeaderBox::parse_body(child.payload)?);
                 order.push(TrafChild::Tfhd);
@@ -1119,7 +1119,7 @@ impl MovieFragmentBox {
         let mut mfhd: Option<MovieFragmentHeaderBox> = None;
         let mut traf: Vec<TrackFragmentBox> = Vec::new();
         let mut order: Vec<MoofChild> = Vec::new();
-        crate::init_segment::walk_children(body, |child| {
+        crate::box_support::walk_children(body, |child| {
             if child.is(b"mfhd") {
                 mfhd = Some(MovieFragmentHeaderBox::parse_body(child.payload)?);
                 order.push(MoofChild::Mfhd);

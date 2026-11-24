@@ -7,9 +7,9 @@
 //! Spec input: `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`
 //! (§8.3.3).
 
+use crate::box_support::{box_body, walk_children};
 use crate::box_types::BOX_HEADER_MIN_SIZE;
 use crate::error::{Error, Result};
-use crate::init_segment::{box_body, walk_children};
 use crate::ir::TrackId;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};

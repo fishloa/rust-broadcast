@@ -161,6 +161,7 @@ pub mod avs2;
 pub mod avs3;
 pub mod avs3_audio;
 pub mod bitreader;
+pub mod box_support;
 pub mod box_types;
 pub mod caption_detect;
 pub mod cenc;
@@ -286,6 +287,7 @@ pub use avs3::{
     LAvsConfigurationBox, LibraryDependencyIdc, TemporalLayerEntry, VisualLrapEntry,
 };
 pub use avs3_audio::{AV3A_FOURCC, Ca3SpecificBox, DCA3_FOURCC};
+pub use box_support::OpaqueBox;
 pub use box_types::{BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader, box_iter, parse_box};
 pub use broadcast_common::klv::KlvItem;
 pub use caption_detect::{CaptionDetector, DetectedCaption, declared_caption_services};
@@ -333,10 +335,9 @@ pub use init_segment::{
     DataEntryImdaBox, DataEntrySeqNumImdaBox, DataEntryUrlBox, DataEntryUrnBox, DataInformationBox,
     DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry, HandlerBox,
     MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox,
-    MovieHeaderBox, Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox,
-    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox,
-    StblChild, StscEntry, SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox,
-    VideoMediaHeaderBox,
+    MovieHeaderBox, Mp4aSampleEntry, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant,
+    SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry,
+    SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use interlace::{
     PicStruct, PictureFacts, SourceScanType, VideoScan, video_picture_facts, video_scan,

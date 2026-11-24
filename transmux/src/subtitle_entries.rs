@@ -98,7 +98,7 @@ pub struct XmlSubtitleSampleEntry {
     /// Auxiliary MIME types, null-terminated (may be empty).
     pub auxiliary_mime_types: String,
     /// Optional trailing boxes (e.g. `btrt`) preserved verbatim for round-trip.
-    pub extra_boxes: Vec<crate::init_segment::OpaqueBox>,
+    pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
 }
 
 impl XmlSubtitleSampleEntry {
@@ -138,7 +138,7 @@ impl XmlSubtitleSampleEntry {
             let mut bt = [0u8; BOX_TYPE_SIZE];
             bt.copy_from_slice(&body[pos + BOX_TYPE_OFFSET..pos + BOX_HEADER_MIN_SIZE]);
             let data = body[pos + BOX_HEADER_MIN_SIZE..end].to_vec();
-            extra_boxes.push(crate::init_segment::OpaqueBox::new(bt, data));
+            extra_boxes.push(crate::box_support::OpaqueBox::new(bt, data));
             pos = pos.saturating_add(sz);
         }
 
@@ -357,8 +357,8 @@ pub struct VttCueBox {
     /// Optional cue identifier string (`iden`).
     pub cue_id: Option<CueIdBox>,
     /// Children this crate has no typed model for, verbatim (box header
-    /// preserved through [`OpaqueBox`](crate::init_segment::OpaqueBox)).
-    pub extra_children: Vec<crate::init_segment::OpaqueBox>,
+    /// preserved through [`OpaqueBox`](crate::box_support::OpaqueBox)).
+    pub extra_children: Vec<crate::box_support::OpaqueBox>,
     /// Wire order of the children of a parsed cue; empty for a built one.
     #[cfg_attr(feature = "serde", serde(skip))]
     child_order: Vec<CueChild>,
@@ -397,7 +397,7 @@ impl VttCueBox {
         let mut payload: Option<CuePayloadBox> = None;
         let mut settings: Option<CueSettingsBox> = None;
         let mut cue_id: Option<CueIdBox> = None;
-        let mut extra_children: Vec<crate::init_segment::OpaqueBox> = Vec::new();
+        let mut extra_children: Vec<crate::box_support::OpaqueBox> = Vec::new();
         let mut child_order: Vec<CueChild> = Vec::new();
         let mut pos = 0usize;
         while pos + BOX_HEADER_MIN_SIZE <= body.len() {
@@ -439,7 +439,7 @@ impl VttCueBox {
                     let mut bt = [0u8; BOX_TYPE_SIZE];
                     bt.copy_from_slice(other);
                     child_order.push(CueChild::Extra(extra_children.len()));
-                    extra_children.push(crate::init_segment::OpaqueBox::new(
+                    extra_children.push(crate::box_support::OpaqueBox::new(
                         bt,
                         child[BOX_HEADER_MIN_SIZE..].to_vec(),
                     ));
@@ -605,7 +605,7 @@ pub enum WvttSampleBox {
     /// `vtta`: additional non-cue text such as a `NOTE` block.
     AdditionalText(VttAdditionalTextBox),
     /// Any other box, verbatim.
-    Other(crate::init_segment::OpaqueBox),
+    Other(crate::box_support::OpaqueBox),
 }
 
 /// Split a `wvtt` media sample into its boxes.
@@ -637,7 +637,7 @@ pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
             other => {
                 let mut bt = [0u8; BOX_TYPE_SIZE];
                 bt.copy_from_slice(other);
-                WvttSampleBox::Other(crate::init_segment::OpaqueBox::new(
+                WvttSampleBox::Other(crate::box_support::OpaqueBox::new(
                     bt,
                     boxed[BOX_HEADER_MIN_SIZE..].to_vec(),
                 ))
@@ -703,7 +703,7 @@ pub struct WvttSampleEntry {
     /// WebVTT configuration box (`vttC`), mandatory.
     pub config: WebVttConfigurationBox,
     /// Optional trailing boxes preserved verbatim for round-trip.
-    pub extra_boxes: Vec<crate::init_segment::OpaqueBox>,
+    pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
 }
 
 impl WvttSampleEntry {
@@ -729,7 +729,7 @@ impl WvttSampleEntry {
 
         let mut pos = SAMPLE_ENTRY_FIXED_LEN;
         let mut config: Option<WebVttConfigurationBox> = None;
-        let mut extra_boxes: Vec<crate::init_segment::OpaqueBox> = Vec::new();
+        let mut extra_boxes: Vec<crate::box_support::OpaqueBox> = Vec::new();
 
         while pos + BOX_HEADER_MIN_SIZE <= body.len() {
             let sz = be_u32(body, pos, "child box size")? as usize;
@@ -744,7 +744,7 @@ impl WvttSampleEntry {
                 _ => {
                     let mut bt = [0u8; BOX_TYPE_SIZE];
                     bt.copy_from_slice(fourcc);
-                    extra_boxes.push(crate::init_segment::OpaqueBox::new(
+                    extra_boxes.push(crate::box_support::OpaqueBox::new(
                         bt,
                         child[crate::box_types::box_header_len(child)?..].to_vec(),
                     ));
@@ -959,7 +959,7 @@ mod tests {
         let mut with_id = base.clone();
         with_id.cue_id = Some(CueIdBox::new("id1"));
         let mut with_extra = base.clone();
-        with_extra.extra_children = alloc::vec![crate::init_segment::OpaqueBox::new(
+        with_extra.extra_children = alloc::vec![crate::box_support::OpaqueBox::new(
             *b"vsid",
             alloc::vec![0, 0, 0, 7],
         )];
