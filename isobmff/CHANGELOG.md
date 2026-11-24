@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- The `reader` walks fragmented files: after a `moov` with `mvex` it reads one
+  `moof` at a time under `Limits::max_fragment_bytes`, applies the `trex`
+  defaults, learns the following `mdat` payload ranges from their headers
+  (never their bytes), and emits `Step::Fragment` followed by one
+  `Step::Sample` per sample with its `tfdt`-based decode time, effective sync
+  flag, `tfhd`/`trex` description index and, for a protected track, the
+  `senc` IV and subsample map in `SampleRef::aux`. A fragment's samples are
+  addressed by `frag_offsets` from the `moof` and those ranges, so no byte
+  inside an `mdat` payload is requested.
+- `Reader::seek_to` on a fragmented file: the last sync sample at or before the
+  time is found through a `sidx` seen before the fragments or, failing that,
+  the trailing `mfra` reached through its `mfro` (which needs `total_len` and a
+  seekable source); a file with neither is `Error::NoIndex`. The next material
+  step after a seek is the `Step::Fragment` containing the time.
+- Typed `tfra` (`TrackFragmentRandomAccessBox`), `mfra`
+  (`MovieFragmentRandomAccessBox`) and `mfro`
+  (`MovieFragmentRandomAccessOffsetBox`) in `timing`, both `Parse` and
+  `Serialize`, with the entry count bounded by the box body.
+- `cenc::sinf_of_sample_entry`, the one place that knows where a protected
+  `encv`/`enca` sample entry's children (and so its `sinf`) begin.
+- `movie_fragment::apply_trex_defaults`, the `trex` fallback for a fragment's
+  sample defaults, moved down from `transmux`.
+
 - `writer`, the sans-IO fragmented MP4 writer: `Writer::fragmented` returns a
   `FragmentedWriter` whose `init()` assembles `ftyp`+`moov` from `TrackSetup`
   values (a typed `SampleEntry` or a raw sample-entry box, so a track this
@@ -102,11 +125,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `frag_offsets` addresses a fragment without a slice of the file:
+  `sample_ranges_in` / `sample_ranges_in_run` take the parsed `moof`, its
+  absolute offset, the `mdat` payload ranges and the run's sample-byte
+  allowance; the old whole-file `sample_ranges` is gone. `mdat_ranges` stays
+  as the convenience that walks a supplied file.
+
 - `ftyp`/`styp` accept the 64-bit `largesize` and `size == 0` (to-end) box
   forms (ISO/IEC 14496-12:2026 §4.2); the serializer still emits the compact
   form.
 
 ### Breaking
+
+- `SampleRef` carries CENC per-sample data in `aux` (`Option<SampleAux>`), so
+  it is no longer `Copy` (it stays `Clone`); `SampleRef::aux` is `None` for a
+  progressive sample and for a constant-IV track.
+- `frag_offsets::FragmentSampleRange::{start, end}` are `u64` as on the wire,
+  `frag_offsets::MdatRange` holds `u64` offsets and is built with
+  `MdatRange::new` / read with `start`/`end`, and `sample_bytes_budget` takes
+  and returns `u64`.
+- `Error::SampleDataBudgetExceeded::limit` is `u64`, matching the offsets and
+  byte counts it bounds.
 
 - The box walkers are consolidated into one iterator. `BoxRef`, `ClampedBox`,
   `box_iter`, `clamped_boxes`, `find_top_box`, `find_child_box`, `child_boxes`,

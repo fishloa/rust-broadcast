@@ -340,6 +340,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "isobmff_reader_fragmented"
+path = "fuzz_targets/isobmff_reader_fragmented.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "isobmff_cenc_boxes"
 path = "fuzz_targets/isobmff_cenc_boxes.rs"
 test = false

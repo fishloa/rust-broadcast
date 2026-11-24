@@ -53,6 +53,8 @@ It never knows the media IR or a codec bitstream.
 | `reader` | sans-IO progressive-file `Reader`: asks for structure byte ranges, yields every track and one sample descriptor at a time, `seek_to` over `stss` |
 | `plan` | `SamplePlan`, the progressive index a `Reader` hands out without reading media |
 | `frag_offsets` | ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 sample-data addressing rules |
+| `reader` (fragmented) | the same `Reader` reads a fragmented file one `moof` at a time and seeks through `sidx` or the trailing `tfra` |
+| `timing` (random access) | `tfra`, `mfra`, `mfro` |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
 
 Every type implements the workspace `Parse` / `Serialize` pair, so a parse →

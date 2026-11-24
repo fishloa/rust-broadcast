@@ -1326,7 +1326,7 @@ fn fragment_aux(
         ));
     }
     let version = data[0];
-    let flags = u32::from_be_bytes([0, data[1], data[2], data[3]]);
+    let flags = broadcast_common::wire::u32_at(data, 0) & crate::box_types::FULLBOX_FLAGS_MASK;
     let parsed = SampleEncryptionBox::parse_body(
         &data[FULLBOX_EXTRA_SIZE..],
         version,

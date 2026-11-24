@@ -47,6 +47,9 @@
 //! - [`reader`], [`plan`] — the sans-IO progressive [`Reader`]: it asks for
 //!   structure byte ranges, surfaces every track and one [`SampleRef`] at a
 //!   time, and hands out a [`SamplePlan`] from the index alone.
+//! - [`reader`] over a fragmented file — the same state machine reads one
+//!   `moof` at a time, addresses its samples from the following `mdat`
+//!   headers, and seeks through a `sidx` or the trailing `mfra`/`tfra`.
 //! - [`avc_config`], [`hevc_config`], [`vvc_config`], [`nalu_types`], [`av1`],
 //!   [`vp9`], [`mp4esds`], [`ac3`], [`ac4`], [`dts`], [`flac`], [`opus`],
 //!   [`mpegh`], [`dovi`], [`hdr_boxes`], [`avs2`], [`avs3`], [`avs3_audio`] —

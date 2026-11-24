@@ -61,6 +61,9 @@ const TFRA_FIXED_FIELDS_LEN: usize = 3 * core::mem::size_of::<u32>();
 /// The largest byte width of a `tfra` `traf_number`/`trun_number`/
 /// `sample_delta` field (the wire's 2-bit value plus one, §8.8.10.3).
 const TFRA_MAX_FIELD_BYTES: usize = 4;
+/// Fields of a fixed width at the head of a `tfra` entry: `time` and
+/// `moof_offset` (§8.8.10.2).
+const TFRA_FIXED_WIDTH_FIELDS: usize = 2;
 
 // ---------------------------------------------------------------------------
 // Constants: 4-byte box-type literals as u32
@@ -894,7 +897,7 @@ impl TrackFragmentRandomAccessBox {
         } else {
             TFRA_TIME_V1_LEN
         };
-        time * 2
+        time.saturating_mul(TFRA_FIXED_WIDTH_FIELDS)
             + Self::field_bytes(self.length_size_of_traf_num)
             + Self::field_bytes(self.length_size_of_trun_num)
             + Self::field_bytes(self.length_size_of_sample_num)
@@ -927,7 +930,7 @@ impl TrackFragmentRandomAccessBox {
         } else {
             TFRA_TIME_V1_LEN
         };
-        let entry_len = time * 2
+        let entry_len = time.saturating_mul(TFRA_FIXED_WIDTH_FIELDS)
             + Self::field_bytes(length_size_of_traf_num)
             + Self::field_bytes(length_size_of_trun_num)
             + Self::field_bytes(length_size_of_sample_num);
@@ -987,7 +990,7 @@ fn read_uint(body: &[u8], cursor: &mut usize, wire_value: u8, what: &'static str
     need_in(body, cursor.saturating_add(width), what)?;
     let mut value = 0u32;
     for byte in &body[*cursor..*cursor + width] {
-        value = (value << 8) | u32::from(*byte);
+        value = (value << u8::BITS) | u32::from(*byte);
     }
     *cursor += width;
     Ok(value)
