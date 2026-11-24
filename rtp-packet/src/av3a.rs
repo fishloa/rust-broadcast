@@ -54,6 +54,49 @@ pub const DYNAMIC_PT_MAX: u8 = 127;
 /// `sampling_frequency_index` value that adds an explicit 24-bit `sampling_frequency`.
 pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
 
+/// Bit widths of the `aatf_frame()` fields (T/AI 109.3-2023 Annex A,
+/// Tables A.4–A.7).
+const SYNCWORD_BITS: u32 = 12;
+const AUDIO_CODEC_ID_BITS: u32 = 4;
+const ANC_DATA_INDEX_BITS: u32 = 1;
+const CODING_PROFILE_BITS: u32 = 3;
+const SAMPLING_FREQUENCY_INDEX_BITS: u32 = 4;
+const SAMPLING_FREQUENCY_BITS: u32 = 24;
+const RAW_FRAME_LENGTH_BITS: u32 = 16;
+const CRC_CHECK_BITS: u32 = 8;
+const CHANNEL_NUMBER_INDEX_BITS: u32 = 7;
+const RESOLUTION_BITS: u32 = 2;
+const BITRATE_INDEX_BITS: u32 = 4;
+const BITSTREAM_TYPE_BITS: u32 = 1;
+const NN_TYPE_BITS: u32 = 3;
+const SOUND_BED_TYPE_BITS: u32 = 2;
+const OBJECT_CHANNEL_NUMBER_BITS: u32 = 7;
+const BITRATE_INDEX_PER_CHANNEL_BITS: u32 = 4;
+const HOA_ORDER_BITS: u32 = 4;
+const FRAME_CRC_BITS: u32 = 8;
+/// The fixed prefix before the codec header: `syncword | audio_codec_id |
+/// anc_data_index`.
+const AATF_FIXED_PREFIX_BITS: u32 = SYNCWORD_BITS + AUDIO_CODEC_ID_BITS + ANC_DATA_INDEX_BITS;
+/// Bits per octet (the `byte_alignment()` granularity).
+const BITS_PER_BYTE: u32 = 8;
+const BITS_PER_BYTE_USIZE: usize = BITS_PER_BYTE as usize;
+/// `coding_profile` selecting the HOA (higher-order ambisonics) content.
+const HOA_CODING_PROFILE: u8 = 2;
+/// `coding_profile` values that carry no typed content (reserved range).
+const RESERVED_PROFILE_MIN: u8 = 3;
+const RESERVED_PROFILE_MAX: u8 = 7;
+/// Reserved `soundBedType` values.
+const RESERVED_SOUND_BED_MIN: u8 = 2;
+const RESERVED_SOUND_BED_MAX: u8 = 3;
+/// Index of each `a=fmtp` parameter in the duplicate-detection table.
+const FMTP_PARAM_COUNT: usize = 4;
+const FMTP_RATE_SLOT: usize = 0;
+const FMTP_BITRATE_SLOT: usize = 1;
+const FMTP_CODEC_NN_ID_SLOT: usize = 2;
+const FMTP_CONFIG_SLOT: usize = 3;
+/// Radix of the hexadecimal `codec-nn-id` value.
+const HEX_RADIX: u32 = 16;
+
 /// Convert a bit-level read failure into a [`BufferTooShort`] carrying the
 /// real byte counts, naming `what` (the field being read).
 fn short_bit(what: &'static str, error: broadcast_common::bits::BitError) -> Error {
@@ -258,22 +301,22 @@ impl<'a> AatfFrame<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
         let w = "aatf_frame header";
         let mut r = BitReader::new(bytes);
-        let sync = rd(&mut r, 12, w)?;
+        let sync = rd(&mut r, SYNCWORD_BITS, w)?;
         if sync != u64::from(AATF_SYNCWORD) {
             return Err(bad("syncword", sync, "must be 0xFFF"));
         }
-        let id = rd(&mut r, 4, w)? as u8;
-        let anc_data_index = rd(&mut r, 1, w)? != 0;
+        let id = rd(&mut r, AUDIO_CODEC_ID_BITS, w)? as u8;
+        let anc_data_index = rd(&mut r, ANC_DATA_INDEX_BITS, w)? != 0;
         let header = match id {
             0 => {
-                let coding_profile = rd(&mut r, 3, w)? as u8;
-                let sampling_frequency_index = rd(&mut r, 4, w)? as u8;
-                let raw_frame_length = rd(&mut r, 16, w)? as u16;
-                let aatf_crc = rd(&mut r, 8, w)? as u8;
-                let channel_number_index = rd(&mut r, 7, w)? as u8;
-                let resolution = rd(&mut r, 2, w)? as u8;
-                let bitrate_index = rd(&mut r, 4, w)? as u8;
-                let bitstream_type = rd(&mut r, 1, w)? != 0;
+                let coding_profile = rd(&mut r, CODING_PROFILE_BITS, w)? as u8;
+                let sampling_frequency_index = rd(&mut r, SAMPLING_FREQUENCY_INDEX_BITS, w)? as u8;
+                let raw_frame_length = rd(&mut r, RAW_FRAME_LENGTH_BITS, w)? as u16;
+                let aatf_crc = rd(&mut r, CRC_CHECK_BITS, w)? as u8;
+                let channel_number_index = rd(&mut r, CHANNEL_NUMBER_INDEX_BITS, w)? as u8;
+                let resolution = rd(&mut r, RESOLUTION_BITS, w)? as u8;
+                let bitrate_index = rd(&mut r, BITRATE_INDEX_BITS, w)? as u8;
+                let bitstream_type = rd(&mut r, BITSTREAM_TYPE_BITS, w)? != 0;
                 AatfFrameHeader::GeneralHigh(GhHeader {
                     coding_profile,
                     sampling_frequency_index,
@@ -286,16 +329,16 @@ impl<'a> AatfFrame<'a> {
                 })
             }
             1 => {
-                let coding_profile = rd(&mut r, 3, w)? as u8;
-                let sampling_frequency_index = rd(&mut r, 4, w)? as u8;
+                let coding_profile = rd(&mut r, CODING_PROFILE_BITS, w)? as u8;
+                let sampling_frequency_index = rd(&mut r, SAMPLING_FREQUENCY_INDEX_BITS, w)? as u8;
                 let sampling_frequency =
                     if sampling_frequency_index == SAMPLING_FREQUENCY_INDEX_EXPLICIT {
-                        Some(rd(&mut r, 24, w)? as u32)
+                        Some(rd(&mut r, SAMPLING_FREQUENCY_BITS, w)? as u32)
                     } else {
                         None
                     };
-                let raw_frame_length = rd(&mut r, 16, w)? as u16;
-                let aatf_crc = rd(&mut r, 8, w)? as u8;
+                let raw_frame_length = rd(&mut r, RAW_FRAME_LENGTH_BITS, w)? as u16;
+                let aatf_crc = rd(&mut r, CRC_CHECK_BITS, w)? as u8;
                 AatfFrameHeader::Lossless(LlHeader {
                     coding_profile,
                     sampling_frequency_index,
@@ -305,39 +348,47 @@ impl<'a> AatfFrame<'a> {
                 })
             }
             2 => {
-                let nn_type = rd(&mut r, 3, w)? as u8;
-                let coding_profile = rd(&mut r, 3, w)? as u8;
-                let sampling_frequency_index = rd(&mut r, 4, w)? as u8;
-                let aatf_crc = rd(&mut r, 8, w)? as u8;
+                let nn_type = rd(&mut r, NN_TYPE_BITS, w)? as u8;
+                let coding_profile = rd(&mut r, CODING_PROFILE_BITS, w)? as u8;
+                let sampling_frequency_index = rd(&mut r, SAMPLING_FREQUENCY_INDEX_BITS, w)? as u8;
+                let aatf_crc = rd(&mut r, CRC_CHECK_BITS, w)? as u8;
                 let content = match coding_profile {
                     0 => GaContent::Channel {
-                        channel_number_index: rd(&mut r, 7, w)? as u8,
+                        channel_number_index: rd(&mut r, CHANNEL_NUMBER_INDEX_BITS, w)? as u8,
                     },
-                    1 => match rd(&mut r, 2, w)? as u8 {
+                    1 => match rd(&mut r, SOUND_BED_TYPE_BITS, w)? as u8 {
                         0 => GaContent::ObjectsOnly {
-                            object_channel_number: rd(&mut r, 7, w)? as u8,
-                            bitrate_index_per_channel: rd(&mut r, 4, w)? as u8,
+                            object_channel_number: rd(&mut r, OBJECT_CHANNEL_NUMBER_BITS, w)? as u8,
+                            bitrate_index_per_channel: rd(
+                                &mut r,
+                                BITRATE_INDEX_PER_CHANNEL_BITS,
+                                w,
+                            )? as u8,
                         },
                         1 => GaContent::ChannelAndObjects {
-                            channel_number_index: rd(&mut r, 7, w)? as u8,
-                            bitrate_index: rd(&mut r, 4, w)? as u8,
-                            object_channel_number: rd(&mut r, 7, w)? as u8,
-                            bitrate_index_per_channel: rd(&mut r, 4, w)? as u8,
+                            channel_number_index: rd(&mut r, CHANNEL_NUMBER_INDEX_BITS, w)? as u8,
+                            bitrate_index: rd(&mut r, BITRATE_INDEX_BITS, w)? as u8,
+                            object_channel_number: rd(&mut r, OBJECT_CHANNEL_NUMBER_BITS, w)? as u8,
+                            bitrate_index_per_channel: rd(
+                                &mut r,
+                                BITRATE_INDEX_PER_CHANNEL_BITS,
+                                w,
+                            )? as u8,
                         },
                         other => GaContent::ReservedSoundBed(other),
                     },
                     2 => GaContent::Hoa {
-                        order: rd(&mut r, 4, w)? as u8,
+                        order: rd(&mut r, HOA_ORDER_BITS, w)? as u8,
                     },
                     other => GaContent::ReservedProfile(other),
                 };
-                let resolution = rd(&mut r, 2, w)? as u8;
+                let resolution = rd(&mut r, RESOLUTION_BITS, w)? as u8;
                 let bitrate_index = if coding_profile != 1 {
-                    Some(rd(&mut r, 4, w)? as u8)
+                    Some(rd(&mut r, BITRATE_INDEX_BITS, w)? as u8)
                 } else {
                     None
                 };
-                let frame_crc = rd(&mut r, 8, w)? as u8;
+                let frame_crc = rd(&mut r, FRAME_CRC_BITS, w)? as u8;
                 AatfFrameHeader::GeneralFull(GaHeader {
                     nn_type,
                     coding_profile,
@@ -357,13 +408,14 @@ impl<'a> AatfFrame<'a> {
                 ));
             }
         };
-        let pad_bits = (8 - r.bits_read() % 8) % 8;
+        let pad_bits =
+            (BITS_PER_BYTE_USIZE - r.bits_read() % BITS_PER_BYTE_USIZE) % BITS_PER_BYTE_USIZE;
         let alignment = if pad_bits == 0 {
             0
         } else {
             rd(&mut r, pad_bits as u32, w)? as u8
         };
-        let consumed = r.bits_read() / 8;
+        let consumed = r.bits_read() / BITS_PER_BYTE_USIZE;
         Ok(Self {
             anc_data_index,
             header,
@@ -373,36 +425,66 @@ impl<'a> AatfFrame<'a> {
     }
 
     fn header_bits(&self) -> usize {
-        17 + match &self.header {
-            AatfFrameHeader::GeneralHigh(_) => 3 + 4 + 16 + 8 + 7 + 2 + 4 + 1,
-            AatfFrameHeader::Lossless(l) => {
-                3 + 4
-                    + if l.sampling_frequency.is_some() {
-                        24
-                    } else {
-                        0
-                    }
-                    + 16
-                    + 8
+        AATF_FIXED_PREFIX_BITS as usize
+            + match &self.header {
+                AatfFrameHeader::GeneralHigh(_) => {
+                    (CODING_PROFILE_BITS
+                        + SAMPLING_FREQUENCY_INDEX_BITS
+                        + RAW_FRAME_LENGTH_BITS
+                        + CRC_CHECK_BITS
+                        + CHANNEL_NUMBER_INDEX_BITS
+                        + RESOLUTION_BITS
+                        + BITRATE_INDEX_BITS
+                        + BITSTREAM_TYPE_BITS) as usize
+                }
+                AatfFrameHeader::Lossless(l) => {
+                    (CODING_PROFILE_BITS + SAMPLING_FREQUENCY_INDEX_BITS) as usize
+                        + if l.sampling_frequency.is_some() {
+                            SAMPLING_FREQUENCY_BITS as usize
+                        } else {
+                            0
+                        }
+                        + (RAW_FRAME_LENGTH_BITS + CRC_CHECK_BITS) as usize
+                }
+                AatfFrameHeader::GeneralFull(g) => {
+                    let content = match g.content {
+                        GaContent::Channel { .. } => CHANNEL_NUMBER_INDEX_BITS,
+                        GaContent::ObjectsOnly { .. } => {
+                            SOUND_BED_TYPE_BITS
+                                + OBJECT_CHANNEL_NUMBER_BITS
+                                + BITRATE_INDEX_PER_CHANNEL_BITS
+                        }
+                        GaContent::ChannelAndObjects { .. } => {
+                            SOUND_BED_TYPE_BITS
+                                + CHANNEL_NUMBER_INDEX_BITS
+                                + BITRATE_INDEX_BITS
+                                + OBJECT_CHANNEL_NUMBER_BITS
+                                + BITRATE_INDEX_PER_CHANNEL_BITS
+                        }
+                        GaContent::ReservedSoundBed(_) => SOUND_BED_TYPE_BITS,
+                        GaContent::Hoa { .. } => HOA_ORDER_BITS,
+                        GaContent::ReservedProfile(_) => 0,
+                    };
+                    (NN_TYPE_BITS
+                        + CODING_PROFILE_BITS
+                        + SAMPLING_FREQUENCY_INDEX_BITS
+                        + CRC_CHECK_BITS
+                        + content
+                        + RESOLUTION_BITS
+                        + if g.bitrate_index.is_some() {
+                            BITRATE_INDEX_BITS
+                        } else {
+                            0
+                        }
+                        + FRAME_CRC_BITS) as usize
+                }
             }
-            AatfFrameHeader::GeneralFull(g) => {
-                let content = match g.content {
-                    GaContent::Channel { .. } => 7,
-                    GaContent::ObjectsOnly { .. } => 2 + 7 + 4,
-                    GaContent::ChannelAndObjects { .. } => 2 + 7 + 4 + 7 + 4,
-                    GaContent::ReservedSoundBed(_) => 2,
-                    GaContent::Hoa { .. } => 4,
-                    GaContent::ReservedProfile(_) => 0,
-                };
-                3 + 3 + 4 + 8 + content + 2 + if g.bitrate_index.is_some() { 4 } else { 0 } + 8
-            }
-        }
     }
 
     /// Serialized length: the byte-aligned header plus [`AatfFrame::body`].
     #[must_use]
     pub fn serialized_len(&self) -> usize {
-        self.header_bits().div_ceil(8) + self.body.len()
+        self.header_bits().div_ceil(BITS_PER_BYTE_USIZE) + self.body.len()
     }
 
     /// Serialize the frame (header bits, alignment padding, body).
@@ -414,7 +496,7 @@ impl<'a> AatfFrame<'a> {
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let hdr_bytes = self.header_bits().div_ceil(8);
+        let hdr_bytes = self.header_bits().div_ceil(BITS_PER_BYTE_USIZE);
         buf[..hdr_bytes].fill(0);
         {
             let mut w = BitWriter::new(&mut buf[..hdr_bytes]);
@@ -422,34 +504,68 @@ impl<'a> AatfFrame<'a> {
                 w.write_bits(v, n)
                     .map_err(|_| bad(field, v, "exceeds its bit width"))
             };
-            put(u64::from(AATF_SYNCWORD), 12, "syncword")?;
-            put(u64::from(self.header.audio_codec_id()), 4, "audio_codec_id")?;
-            put(u64::from(self.anc_data_index), 1, "anc_data_index")?;
+            put(u64::from(AATF_SYNCWORD), SYNCWORD_BITS, "syncword")?;
+            put(
+                u64::from(self.header.audio_codec_id()),
+                AUDIO_CODEC_ID_BITS,
+                "audio_codec_id",
+            )?;
+            put(
+                u64::from(self.anc_data_index),
+                ANC_DATA_INDEX_BITS,
+                "anc_data_index",
+            )?;
             match &self.header {
                 AatfFrameHeader::GeneralHigh(h) => {
-                    put(u64::from(h.coding_profile), 3, "coding_profile")?;
+                    put(
+                        u64::from(h.coding_profile),
+                        CODING_PROFILE_BITS,
+                        "coding_profile",
+                    )?;
                     put(
                         u64::from(h.sampling_frequency_index),
-                        4,
+                        SAMPLING_FREQUENCY_INDEX_BITS,
                         "sampling_frequency_index",
                     )?;
-                    put(u64::from(h.raw_frame_length), 16, "raw_frame_length")?;
-                    put(u64::from(h.aatf_crc), 8, "crc_check")?;
-                    put(u64::from(h.channel_number_index), 7, "channel_number_index")?;
-                    put(u64::from(h.resolution), 2, "resolution")?;
-                    put(u64::from(h.bitrate_index), 4, "bitrate_index")?;
-                    put(u64::from(h.bitstream_type), 1, "bitstream_type")?;
+                    put(
+                        u64::from(h.raw_frame_length),
+                        RAW_FRAME_LENGTH_BITS,
+                        "raw_frame_length",
+                    )?;
+                    put(u64::from(h.aatf_crc), CRC_CHECK_BITS, "crc_check")?;
+                    put(
+                        u64::from(h.channel_number_index),
+                        CHANNEL_NUMBER_INDEX_BITS,
+                        "channel_number_index",
+                    )?;
+                    put(u64::from(h.resolution), RESOLUTION_BITS, "resolution")?;
+                    put(
+                        u64::from(h.bitrate_index),
+                        BITRATE_INDEX_BITS,
+                        "bitrate_index",
+                    )?;
+                    put(
+                        u64::from(h.bitstream_type),
+                        BITSTREAM_TYPE_BITS,
+                        "bitstream_type",
+                    )?;
                 }
                 AatfFrameHeader::Lossless(l) => {
-                    put(u64::from(l.coding_profile), 3, "coding_profile")?;
+                    put(
+                        u64::from(l.coding_profile),
+                        CODING_PROFILE_BITS,
+                        "coding_profile",
+                    )?;
                     put(
                         u64::from(l.sampling_frequency_index),
-                        4,
+                        SAMPLING_FREQUENCY_INDEX_BITS,
                         "sampling_frequency_index",
                     )?;
                     let explicit = l.sampling_frequency_index == SAMPLING_FREQUENCY_INDEX_EXPLICIT;
                     match (explicit, l.sampling_frequency) {
-                        (true, Some(f)) => put(u64::from(f), 24, "sampling_frequency")?,
+                        (true, Some(f)) => {
+                            put(u64::from(f), SAMPLING_FREQUENCY_BITS, "sampling_frequency")?
+                        }
                         (false, None) => {}
                         _ => {
                             return Err(bad(
@@ -459,26 +575,35 @@ impl<'a> AatfFrame<'a> {
                             ));
                         }
                     }
-                    put(u64::from(l.raw_frame_length), 16, "raw_frame_length")?;
-                    put(u64::from(l.aatf_crc), 8, "crc_check")?;
+                    put(
+                        u64::from(l.raw_frame_length),
+                        RAW_FRAME_LENGTH_BITS,
+                        "raw_frame_length",
+                    )?;
+                    put(u64::from(l.aatf_crc), CRC_CHECK_BITS, "crc_check")?;
                 }
                 AatfFrameHeader::GeneralFull(g) => {
-                    put(u64::from(g.nn_type), 3, "nn_type")?;
-                    put(u64::from(g.coding_profile), 3, "coding_profile")?;
+                    put(u64::from(g.nn_type), NN_TYPE_BITS, "nn_type")?;
+                    put(
+                        u64::from(g.coding_profile),
+                        CODING_PROFILE_BITS,
+                        "coding_profile",
+                    )?;
                     put(
                         u64::from(g.sampling_frequency_index),
-                        4,
+                        SAMPLING_FREQUENCY_INDEX_BITS,
                         "sampling_frequency_index",
                     )?;
-                    put(u64::from(g.aatf_crc), 8, "crc_check")?;
+                    put(u64::from(g.aatf_crc), CRC_CHECK_BITS, "crc_check")?;
                     let profile_ok = match g.content {
                         GaContent::Channel { .. } => g.coding_profile == 0,
                         GaContent::ObjectsOnly { .. }
                         | GaContent::ChannelAndObjects { .. }
                         | GaContent::ReservedSoundBed(_) => g.coding_profile == 1,
-                        GaContent::Hoa { .. } => g.coding_profile == 2,
+                        GaContent::Hoa { .. } => g.coding_profile == HOA_CODING_PROFILE,
                         GaContent::ReservedProfile(p) => {
-                            (3..=7).contains(&p) && p == g.coding_profile
+                            (RESERVED_PROFILE_MIN..=RESERVED_PROFILE_MAX).contains(&p)
+                                && p == g.coding_profile
                         }
                     };
                     if !profile_ok {
@@ -492,17 +617,25 @@ impl<'a> AatfFrame<'a> {
                         GaContent::Channel {
                             channel_number_index,
                         } => {
-                            put(u64::from(channel_number_index), 7, "channel_number_index")?;
+                            put(
+                                u64::from(channel_number_index),
+                                CHANNEL_NUMBER_INDEX_BITS,
+                                "channel_number_index",
+                            )?;
                         }
                         GaContent::ObjectsOnly {
                             object_channel_number,
                             bitrate_index_per_channel,
                         } => {
-                            put(0, 2, "soundBedType")?;
-                            put(u64::from(object_channel_number), 7, "object_channel_number")?;
+                            put(0, SOUND_BED_TYPE_BITS, "soundBedType")?;
+                            put(
+                                u64::from(object_channel_number),
+                                OBJECT_CHANNEL_NUMBER_BITS,
+                                "object_channel_number",
+                            )?;
                             put(
                                 u64::from(bitrate_index_per_channel),
-                                4,
+                                BITRATE_INDEX_PER_CHANNEL_BITS,
                                 "bitrate_index_per_channel",
                             )?;
                         }
@@ -512,32 +645,44 @@ impl<'a> AatfFrame<'a> {
                             object_channel_number,
                             bitrate_index_per_channel,
                         } => {
-                            put(1, 2, "soundBedType")?;
-                            put(u64::from(channel_number_index), 7, "channel_number_index")?;
-                            put(u64::from(bitrate_index), 4, "bitrate_index")?;
-                            put(u64::from(object_channel_number), 7, "object_channel_number")?;
+                            put(1, SOUND_BED_TYPE_BITS, "soundBedType")?;
+                            put(
+                                u64::from(channel_number_index),
+                                CHANNEL_NUMBER_INDEX_BITS,
+                                "channel_number_index",
+                            )?;
+                            put(
+                                u64::from(bitrate_index),
+                                BITRATE_INDEX_BITS,
+                                "bitrate_index",
+                            )?;
+                            put(
+                                u64::from(object_channel_number),
+                                OBJECT_CHANNEL_NUMBER_BITS,
+                                "object_channel_number",
+                            )?;
                             put(
                                 u64::from(bitrate_index_per_channel),
-                                4,
+                                BITRATE_INDEX_PER_CHANNEL_BITS,
                                 "bitrate_index_per_channel",
                             )?;
                         }
                         GaContent::ReservedSoundBed(s) => {
-                            if !(2..=3).contains(&s) {
+                            if !(RESERVED_SOUND_BED_MIN..=RESERVED_SOUND_BED_MAX).contains(&s) {
                                 return Err(bad(
                                     "soundBedType",
                                     u64::from(s),
                                     "reserved values are 2 and 3",
                                 ));
                             }
-                            put(u64::from(s), 2, "soundBedType")?;
+                            put(u64::from(s), SOUND_BED_TYPE_BITS, "soundBedType")?;
                         }
-                        GaContent::Hoa { order } => put(u64::from(order), 4, "order")?,
+                        GaContent::Hoa { order } => put(u64::from(order), HOA_ORDER_BITS, "order")?,
                         GaContent::ReservedProfile(_) => {}
                     }
-                    put(u64::from(g.resolution), 2, "resolution")?;
+                    put(u64::from(g.resolution), RESOLUTION_BITS, "resolution")?;
                     match (g.coding_profile != 1, g.bitrate_index) {
-                        (true, Some(b)) => put(u64::from(b), 4, "bitrate_index")?,
+                        (true, Some(b)) => put(u64::from(b), BITRATE_INDEX_BITS, "bitrate_index")?,
                         (false, None) => {}
                         _ => {
                             return Err(bad(
@@ -547,10 +692,14 @@ impl<'a> AatfFrame<'a> {
                             ));
                         }
                     }
-                    put(u64::from(g.frame_crc), 8, "frame_error_check crc_check")?;
+                    put(
+                        u64::from(g.frame_crc),
+                        FRAME_CRC_BITS,
+                        "frame_error_check crc_check",
+                    )?;
                 }
             }
-            let pad = hdr_bytes * 8 - self.header_bits();
+            let pad = hdr_bytes * BITS_PER_BYTE_USIZE - self.header_bits();
             if pad > 0 {
                 put(u64::from(self.alignment), pad as u32, "byte_alignment")?;
             }
@@ -738,7 +887,7 @@ impl Av3aFmtp {
     /// (a leading `+`, `rate=0`) or a known parameter given twice.
     pub fn parse(s: &str) -> Result<Self> {
         let mut out = Self::default();
-        let mut seen = [false; 4];
+        let mut seen = [false; FMTP_PARAM_COUNT];
         for part in s.split(';') {
             let part = part.trim();
             let Some((k, v)) = part.split_once('=') else {
@@ -747,10 +896,10 @@ impl Av3aFmtp {
             let v = v.trim();
             let key = k.trim().to_ascii_lowercase();
             let slot = match key.as_str() {
-                "rate" => Some((0, "rate")),
-                "bitrate" => Some((1, "bitrate")),
-                "codec-nn-id" => Some((2, "codec-nn-id")),
-                "config" => Some((3, "config")),
+                "rate" => Some((FMTP_RATE_SLOT, "rate")),
+                "bitrate" => Some((FMTP_BITRATE_SLOT, "bitrate")),
+                "codec-nn-id" => Some((FMTP_CODEC_NN_ID_SLOT, "codec-nn-id")),
+                "config" => Some((FMTP_CONFIG_SLOT, "config")),
                 _ => None,
             };
             if let Some((i, name)) = slot {
@@ -778,7 +927,7 @@ impl Av3aFmtp {
                     if !h.bytes().all(|c| c.is_ascii_hexdigit()) {
                         return Err(bad("codec-nn-id", 0, "not a 16-bit hex value"));
                     }
-                    let n = u16::from_str_radix(h, 16)
+                    let n = u16::from_str_radix(h, HEX_RADIX)
                         .map_err(|_| bad("codec-nn-id", 0, "not a 16-bit hex value"))?;
                     out.codec_nn_id = Some(CodecNnId::from_u16(n));
                 }
