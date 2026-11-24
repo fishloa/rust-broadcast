@@ -41,14 +41,14 @@ pub fn need_out(buf: &[u8], need: usize) -> Result<(), OutputBufferTooSmall> {
 /// answered with [`FieldOverflow`] rather than a panic a caller cannot see in
 /// the signature (a width of 64 is the whole `u64` and is accepted).
 pub fn fit_bits(value: u64, bits: u32, field: &'static str) -> Result<u64, FieldOverflow> {
-    if bits == 0 || bits > 64 {
+    if bits == 0 || bits > u64::BITS {
         return Err(FieldOverflow {
             field,
             value,
             max: 0,
         });
     }
-    let max = if bits == 64 {
+    let max = if bits == u64::BITS {
         u64::MAX
     } else {
         (1u64 << bits) - 1
@@ -90,7 +90,7 @@ where
 pub fn fit_u8(value: usize, field: &'static str) -> Result<u8, FieldOverflow> {
     // `usize` is at most 64 bits on every supported target, so the widening
     // cast is lossless; the narrowing one is guarded by `fit_bits`.
-    let fitted = fit_bits(value as u64, 8, field)?;
+    let fitted = fit_bits(value as u64, u8::BITS, field)?;
     Ok(fitted as u8)
 }
 
@@ -98,13 +98,16 @@ pub fn fit_u8(value: usize, field: &'static str) -> Result<u8, FieldOverflow> {
 pub fn fit_u16(value: usize, field: &'static str) -> Result<u16, FieldOverflow> {
     // `usize` is at most 64 bits on every supported target, so the widening
     // cast is lossless; the narrowing one is guarded by `fit_bits`.
-    let fitted = fit_bits(value as u64, 16, field)?;
+    let fitted = fit_bits(value as u64, u16::BITS, field)?;
     Ok(fitted as u16)
 }
 
+/// Bit width of a 24-bit wire field (no native Rust integer is 24-bit).
+const U24_BITS: u32 = 24;
+
 /// 24-bit field (e.g. FLV/RTMP UI24), returned in a u32.
 pub fn fit_u24(value: usize, field: &'static str) -> Result<u32, FieldOverflow> {
-    let fitted = fit_bits(value as u64, 24, field)?;
+    let fitted = fit_bits(value as u64, U24_BITS, field)?;
     Ok(fitted as u32)
 }
 
@@ -112,7 +115,7 @@ pub fn fit_u24(value: usize, field: &'static str) -> Result<u32, FieldOverflow> 
 pub fn fit_u32(value: usize, field: &'static str) -> Result<u32, FieldOverflow> {
     // `usize` is at most 64 bits on every supported target, so the widening
     // cast is lossless; the narrowing one is guarded by `fit_bits`.
-    let fitted = fit_bits(value as u64, 32, field)?;
+    let fitted = fit_bits(value as u64, u32::BITS, field)?;
     Ok(fitted as u32)
 }
 

@@ -207,7 +207,7 @@ pub fn pcr_forward_distance(from: u64, to: u64) -> u64 {
 #[must_use]
 pub fn pcr_signed_distance(from: u64, to: u64) -> i64 {
     let forward = pcr_forward_distance(from, to);
-    if forward <= PCR_WRAP_27MHZ / 2 {
+    if forward <= WRAP_33BIT_HALF * PCR_EXT_MODULUS {
         forward as i64 // `forward <= M/2 < 2^41`: lossless
     } else {
         -((PCR_WRAP_27MHZ - forward) as i64) // in `[1, M/2)`: lossless
@@ -219,6 +219,36 @@ pub fn pcr_signed_distance(from: u64, to: u64) -> i64 {
 /// All three `marker_bit`s of a 5-byte marked timestamp set to `1` (the value
 /// every PES `PTS`/`DTS` must carry, ISO/IEC 13818-1 §2.4.3.7).
 pub const MARKERS_ALL_SET: u8 = 0b111;
+
+/// Bit layout of the 5-byte marker-bit timestamp field (ISO/IEC 13818-1
+/// §2.4.3.7 Table 2-21).
+const MARKED_FIELD_LEN: usize = 5;
+/// Bit shift of the 4-bit `prefix`.
+const MARKED_PREFIX_SHIFT: u32 = 4;
+/// Mask of the 4-bit `prefix`.
+const MARKED_PREFIX_MASK: u8 = 0x0F;
+/// Bit shift and mask of `ts[32:30]`.
+const MARKED_HI_SHIFT: u32 = 1;
+const MARKED_HI_MASK: u8 = 0x07;
+/// Bit shift that packs a 7-bit group beside its marker bit.
+const MARKED_GROUP_SHIFT: u32 = 7;
+/// Bit shifts of the `ts[32:30]` / `ts[29:15]` groups within the timestamp.
+const MARKED_HI_GROUP_SHIFT: u32 = 30;
+const MARKED_MID_GROUP_SHIFT: u32 = 15;
+/// Bit shift of the 8-bit group that sits between the two 7-bit groups.
+const MARKED_MID_HI_GROUP_SHIFT: u32 = 22;
+/// Mask of an 8-bit group and of a 7-bit group.
+const MARKED_BYTE_MASK: u8 = 0xFF;
+const MARKED_LOW_GROUP_MASK: u8 = 0x7F;
+/// Bit shifts of the three markers within `Marked::markers`.
+const MARKER_BYTE0_SHIFT: u32 = 2;
+const MARKER_BYTE2_SHIFT: u32 = 1;
+/// Byte offsets within the marked timestamp field.
+const MARKED_BYTE0: usize = 0;
+const MARKED_BYTE1: usize = MARKED_BYTE0 + 1;
+const MARKED_BYTE2: usize = MARKED_BYTE1 + 1;
+const MARKED_BYTE3: usize = MARKED_BYTE2 + 1;
+const MARKED_BYTE4: usize = MARKED_BYTE3 + 1;
 
 /// A decoded 5-byte marker-bit timestamp field.
 ///
@@ -241,14 +271,18 @@ pub struct Marked {
 /// validates `prefix` and `markers` against its own spec clause and maps a
 /// mismatch into its own error type.
 #[must_use]
-pub fn unpack_marked(b: &[u8; 5]) -> Marked {
-    let hi = u64::from((b[0] >> 1) & 0x07); // [32:30]
-    let mid = (u64::from(b[1]) << 7) | u64::from(b[2] >> 1); // [29:15]
-    let lo = (u64::from(b[3]) << 7) | u64::from(b[4] >> 1); // [14:0]
+pub fn unpack_marked(b: &[u8; MARKED_FIELD_LEN]) -> Marked {
+    let hi = u64::from((b[MARKED_BYTE0] >> MARKED_HI_SHIFT) & MARKED_HI_MASK); // [32:30]
+    let mid = (u64::from(b[MARKED_BYTE1]) << MARKED_GROUP_SHIFT)
+        | u64::from(b[MARKED_BYTE2] >> MARKED_HI_SHIFT); // [29:15]
+    let lo = (u64::from(b[MARKED_BYTE3]) << MARKED_GROUP_SHIFT)
+        | u64::from(b[MARKED_BYTE4] >> MARKED_HI_SHIFT); // [14:0]
     Marked {
-        prefix: b[0] >> 4,
-        timestamp: (hi << 30) | (mid << 15) | lo,
-        markers: ((b[0] & 1) << 2) | ((b[2] & 1) << 1) | (b[4] & 1),
+        prefix: b[MARKED_BYTE0] >> MARKED_PREFIX_SHIFT,
+        timestamp: (hi << MARKED_HI_GROUP_SHIFT) | (mid << MARKED_MID_GROUP_SHIFT) | lo,
+        markers: ((b[MARKED_BYTE0] & 1) << MARKER_BYTE0_SHIFT)
+            | ((b[MARKED_BYTE2] & 1) << MARKER_BYTE2_SHIFT)
+            | (b[MARKED_BYTE4] & 1),
     }
 }
 
@@ -256,20 +290,25 @@ pub fn unpack_marked(b: &[u8; 5]) -> Marked {
 /// [`Marked::markers`]); `timestamp` is reduced modulo 2^33 and only the low
 /// nibble of `prefix` / low 3 bits of `markers` are used (the wire widths).
 #[must_use]
-pub fn pack_marked_with(timestamp: u64, prefix: u8, markers: u8) -> [u8; 5] {
+pub fn pack_marked_with(timestamp: u64, prefix: u8, markers: u8) -> [u8; MARKED_FIELD_LEN] {
     let ts = timestamp & (WRAP_33BIT - 1);
     [
-        ((prefix & 0x0F) << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | ((markers >> 2) & 1),
-        ((ts >> 22) & 0xFF) as u8,
-        ((((ts >> 15) & 0x7F) as u8) << 1) | ((markers >> 1) & 1),
-        ((ts >> 7) & 0xFF) as u8,
-        (((ts & 0x7F) as u8) << 1) | (markers & 1),
+        ((prefix & MARKED_PREFIX_MASK) << MARKED_PREFIX_SHIFT)
+            | ((((ts >> MARKED_HI_GROUP_SHIFT) & u64::from(MARKED_HI_MASK)) as u8)
+                << MARKED_HI_SHIFT)
+            | ((markers >> MARKER_BYTE0_SHIFT) & 1),
+        ((ts >> MARKED_MID_HI_GROUP_SHIFT) & u64::from(MARKED_BYTE_MASK)) as u8,
+        ((((ts >> MARKED_MID_GROUP_SHIFT) & u64::from(MARKED_LOW_GROUP_MASK)) as u8)
+            << MARKED_HI_SHIFT)
+            | ((markers >> MARKER_BYTE2_SHIFT) & 1),
+        ((ts >> MARKED_GROUP_SHIFT) & u64::from(MARKED_BYTE_MASK)) as u8,
+        (((ts & u64::from(MARKED_LOW_GROUP_MASK)) as u8) << MARKED_HI_SHIFT) | (markers & 1),
     ]
 }
 
 /// Encode a conformant PTS/DTS field: every `marker_bit` set to `1`.
 #[must_use]
-pub fn pack_marked(timestamp: u64, prefix: u8) -> [u8; 5] {
+pub fn pack_marked(timestamp: u64, prefix: u8) -> [u8; MARKED_FIELD_LEN] {
     pack_marked_with(timestamp, prefix, MARKERS_ALL_SET)
 }
 

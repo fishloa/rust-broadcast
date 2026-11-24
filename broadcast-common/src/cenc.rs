@@ -26,13 +26,15 @@
 //! The *box layouts* that carry this scheme (`tenc`, `senc`, `sinf`, `schm`,
 //! …) are ISOBMFF-specific and stay in `transmux`.
 
+/// Width of an ISOBMFF FourCC (`schm.scheme_type`).
+const FOURCC_LEN: usize = 4;
 /// Four-CC identifying the `cenc` (AES-128 full-block counter, CTR)
 /// protection scheme, as it appears in `schm.scheme_type`.
-pub const SCHEME_CENC: [u8; 4] = *b"cenc";
+pub const SCHEME_CENC: [u8; FOURCC_LEN] = *b"cenc";
 
 /// Four-CC identifying the `cbcs` (AES-128 pattern cipher-block-chaining)
 /// protection scheme, as it appears in `schm.scheme_type`.
-pub const SCHEME_CBCS: [u8; 4] = *b"cbcs";
+pub const SCHEME_CBCS: [u8; FOURCC_LEN] = *b"cbcs";
 
 /// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
 ///
@@ -59,7 +61,7 @@ impl CencScheme {
 
     /// The scheme's `schm.scheme_type` four-CC bytes, the inverse of
     /// [`CencScheme::from_four_cc`].
-    pub fn to_four_cc(&self) -> [u8; 4] {
+    pub fn to_four_cc(&self) -> [u8; FOURCC_LEN] {
         match self {
             CencScheme::Cenc => SCHEME_CENC,
             CencScheme::Cbcs => SCHEME_CBCS,
@@ -68,7 +70,7 @@ impl CencScheme {
 
     /// Map a `schm.scheme_type` four-CC to a known scheme, or `None` if it is
     /// one this workspace does not implement (e.g. `cens`/`cbc1`).
-    pub fn from_four_cc(four_cc: &[u8; 4]) -> Option<Self> {
+    pub fn from_four_cc(four_cc: &[u8; FOURCC_LEN]) -> Option<Self> {
         match *four_cc {
             SCHEME_CENC => Some(CencScheme::Cenc),
             SCHEME_CBCS => Some(CencScheme::Cbcs),
