@@ -120,7 +120,9 @@ impl<'a> Parse<'a> for C2BundleDeliverySystem {
                 plp_id: chunk[0],
                 data_slice_id: chunk[1],
                 c2_system_tuning_frequency: freq,
-                c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(packed >> C2_BUNDLE_FREQUENCY_TYPE_SHIFT),
+                c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(
+                    packed >> C2_BUNDLE_FREQUENCY_TYPE_SHIFT,
+                ),
                 active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8(
                     (packed >> C2_BUNDLE_OFDM_SHIFT) & C2_BUNDLE_OFDM_MASK,
                 ),
@@ -165,9 +167,9 @@ impl Serialize for C2BundleDeliverySystem {
                     C2_BUNDLE_GUARD_MASK,
                     "guard_interval",
                 )?;
-            buf[p + C2_BUNDLE_PRIMARY_OFFSET] =
-                (u8::from(e.primary_channel) << C2_BUNDLE_PRIMARY_SHIFT)
-                    | e.reserved_zero_future_use.get() as u8;
+            buf[p + C2_BUNDLE_PRIMARY_OFFSET] = (u8::from(e.primary_channel)
+                << C2_BUNDLE_PRIMARY_SHIFT)
+                | e.reserved_zero_future_use.get() as u8;
             p += C2_BUNDLE_ENTRY_LEN;
         }
         Ok(len)

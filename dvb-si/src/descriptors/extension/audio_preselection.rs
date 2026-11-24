@@ -226,12 +226,17 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
         let mut pos = 1;
         let mut preselections = Vec::with_capacity(num_preselections as usize);
         for _ in 0..num_preselections {
-            need_in(sel, pos + PRESELECTION_HEADER_LEN, "audio_preselection body")?;
+            need_in(
+                sel,
+                pos + PRESELECTION_HEADER_LEN,
+                "audio_preselection body",
+            )?;
             let byte_a = sel[pos];
             let byte_b = sel[pos + 1];
             pos += PRESELECTION_HEADER_LEN;
             let preselection_id = byte_a >> PRESELECTION_ID_SHIFT;
-            let audio_rendering_indication = AudioRenderingIndication::from_u8(byte_a & AUDIO_RENDERING_MASK);
+            let audio_rendering_indication =
+                AudioRenderingIndication::from_u8(byte_a & AUDIO_RENDERING_MASK);
             let audio_description = (byte_b >> AUDIO_DESCRIPTION_SHIFT) & 1 != 0;
             let spoken_subtitles = (byte_b >> SPOKEN_SUBTITLES_SHIFT) & 1 != 0;
             let dialogue_enhancement = (byte_b >> DIALOGUE_ENHANCEMENT_SHIFT) & 1 != 0;
@@ -301,8 +306,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                     ));
                 }
                 let ext_len = (sel[pos] & EXTENSION_LENGTH_MASK) as usize;
-                reserved_zero_future_use_3 =
-                    Some(ReservedZero::from_bits(u64::from(
+                reserved_zero_future_use_3 = Some(ReservedZero::from_bits(u64::from(
                     sel[pos] >> EXTENSION_RESERVED_SHIFT,
                 )));
                 pos += 1;

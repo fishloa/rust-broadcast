@@ -248,8 +248,7 @@ impl Serialize for VideoDepthRange<'_> {
                 }
                 DepthRangeBody::Other(s) => {
                     buf[p + 1] = broadcast_common::len::fit_u8(s.len(), "depth_range_length")?;
-                    buf[p + VD_RANGE_HDR_LEN..p + VD_RANGE_HDR_LEN + s.len()]
-                        .copy_from_slice(s);
+                    buf[p + VD_RANGE_HDR_LEN..p + VD_RANGE_HDR_LEN + s.len()].copy_from_slice(s);
                     p += VD_RANGE_HDR_LEN + s.len();
                 }
             }

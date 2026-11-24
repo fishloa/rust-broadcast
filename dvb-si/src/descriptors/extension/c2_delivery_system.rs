@@ -235,8 +235,12 @@ impl<'a> Parse<'a> for C2DeliverySystem {
             plp_id: sel[0],
             data_slice_id: sel[1],
             c2_system_tuning_frequency: u32::from_be_bytes(*freq_bytes),
-            c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(packed >> C2_FREQUENCY_TYPE_SHIFT),
-            active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8((packed >> C2_OFDM_DURATION_SHIFT) & C2_OFDM_DURATION_MASK),
+            c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(
+                packed >> C2_FREQUENCY_TYPE_SHIFT,
+            ),
+            active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8(
+                (packed >> C2_OFDM_DURATION_SHIFT) & C2_OFDM_DURATION_MASK,
+            ),
             guard_interval: C2GuardInterval::from_u8(packed & C2_GUARD_INTERVAL_MASK),
             trailing: sel[C2_LEN..].to_vec(),
         })
@@ -264,7 +268,11 @@ impl Serialize for C2DeliverySystem {
                 C2_OFDM_DURATION_MASK,
                 "active_ofdm_symbol_duration",
             )? << C2_OFDM_DURATION_SHIFT)
-            | broadcast_common::len::fit_mask(self.guard_interval.to_u8(), C2_GUARD_INTERVAL_MASK, "guard_interval")?;
+            | broadcast_common::len::fit_mask(
+                self.guard_interval.to_u8(),
+                C2_GUARD_INTERVAL_MASK,
+                "guard_interval",
+            )?;
         buf[C2_LEN..len].copy_from_slice(&self.trailing);
         Ok(len)
     }

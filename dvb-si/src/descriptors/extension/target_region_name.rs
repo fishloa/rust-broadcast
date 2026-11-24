@@ -173,19 +173,17 @@ impl Serialize for TargetRegionName<'_> {
         let mut pos = HEADER_LEN;
         for region in &self.regions {
             let raw = region.region_name.raw();
-            let region_name_length =
-                broadcast_common::len::fit_bits(
+            let region_name_length = broadcast_common::len::fit_bits(
                 raw.len() as u64,
                 REGION_NAME_LENGTH_BITS,
                 "region_name_length",
             )? as u8;
-            buf[pos] =
-                (broadcast_common::len::fit_mask(
-                    region.region_depth,
-                    REGION_DEPTH_MASK,
-                    "region_depth",
-                )? << REGION_DEPTH_SHIFT)
-                    | region_name_length;
+            buf[pos] = (broadcast_common::len::fit_mask(
+                region.region_depth,
+                REGION_DEPTH_MASK,
+                "region_depth",
+            )? << REGION_DEPTH_SHIFT)
+                | region_name_length;
             pos += 1;
             buf[pos..pos + raw.len()].copy_from_slice(raw);
             pos += raw.len();

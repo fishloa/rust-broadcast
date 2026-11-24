@@ -304,8 +304,11 @@ impl S2XChannelBond {
     /// Decode the 16-bit BCD `orbital_position` to degrees (tenths resolution).
     #[must_use]
     pub fn orbital_position_deg(&self) -> Option<f64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.orbital_position), ORBITAL_POSITION_BCD_DIGITS)
-            .map(|tenths| tenths as f64 / ORBITAL_TENTHS_PER_DEGREE)
+        broadcast_common::bcd::bcd_to_decimal(
+            u64::from(self.orbital_position),
+            ORBITAL_POSITION_BCD_DIGITS,
+        )
+        .map(|tenths| tenths as f64 / ORBITAL_TENTHS_PER_DEGREE)
     }
 
     /// Decode the 28-bit BCD `symbol_rate` to symbols/second (100 sym/s resolution).
@@ -418,8 +421,11 @@ impl S2XSatelliteDeliverySystem<'_> {
     /// Decode the 16-bit BCD `orbital_position` to degrees (tenths resolution).
     #[must_use]
     pub fn orbital_position_deg(&self) -> Option<f64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.orbital_position), ORBITAL_POSITION_BCD_DIGITS)
-            .map(|tenths| tenths as f64 / ORBITAL_TENTHS_PER_DEGREE)
+        broadcast_common::bcd::bcd_to_decimal(
+            u64::from(self.orbital_position),
+            ORBITAL_POSITION_BCD_DIGITS,
+        )
+        .map(|tenths| tenths as f64 / ORBITAL_TENTHS_PER_DEGREE)
     }
 
     /// Decode the 28-bit BCD `symbol_rate` to symbols/second (100 sym/s resolution).
@@ -508,8 +514,9 @@ fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
     let reserved_zero_future_use_4 = ReservedZero::from_bits(u64::from(
         sel[*pos + CHANNEL_RESERVED_SYMBOL_OFFSET] >> RZFU_4_BITS,
     ));
-    let symbol_rate = crate::wire::be_u32(sel, *pos + CHANNEL_RESERVED_SYMBOL_OFFSET, "symbol_rate")?
-        & SYMBOL_RATE_MASK;
+    let symbol_rate =
+        crate::wire::be_u32(sel, *pos + CHANNEL_RESERVED_SYMBOL_OFFSET, "symbol_rate")?
+            & SYMBOL_RATE_MASK;
     *pos += BOND_BASE_LEN;
     Ok(ChannelCommon {
         frequency,
@@ -539,9 +546,9 @@ fn write_channel_common(
         .copy_from_slice(&orbital_position.to_be_bytes());
     buf[*p + CHANNEL_PACKED_OFFSET] = packed;
     let sr = broadcast_common::len::fit_mask(symbol_rate, SYMBOL_RATE_MASK, "symbol_rate")?;
-    buf[*p + CHANNEL_RESERVED_SYMBOL_OFFSET] =
-        ((reserved_zero_future_use_4.get() as u8) << RZFU_4_BITS)
-            | ((sr >> SYMBOL_RATE_HIGH_SHIFT) as u8 & SYMBOL_RATE_HIGH_MASK);
+    buf[*p + CHANNEL_RESERVED_SYMBOL_OFFSET] = ((reserved_zero_future_use_4.get() as u8)
+        << RZFU_4_BITS)
+        | ((sr >> SYMBOL_RATE_HIGH_SHIFT) as u8 & SYMBOL_RATE_HIGH_MASK);
     let tail_start = *p + CHANNEL_RESERVED_SYMBOL_OFFSET + SYMBOL_RATE_TAIL_OFFSET;
     buf[tail_start..tail_start + SYMBOL_RATE_TAIL_LEN]
         .copy_from_slice(&sr.to_be_bytes()[SYMBOL_RATE_TAIL_OFFSET..]);
@@ -705,10 +712,11 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
         };
         S2X_HEADER_LEN
             + if self.scrambling_sequence_selector {
-            S2X_SCRAMBLING_LEN
-        } else {
-            0
-            } + S2X_PRIMARY_LEN
+                S2X_SCRAMBLING_LEN
+            } else {
+                0
+            }
+            + S2X_PRIMARY_LEN
             + usize::from(self.input_stream_identifier.is_some())
             + usize::from(self.timeslice_number.is_some())
             + bond_len

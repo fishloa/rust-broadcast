@@ -233,7 +233,8 @@ impl Serialize for Ac4<'_> {
                     reason: "required when ac4_config_flag is set",
                 })?
                 .to_u8();
-            let cm = broadcast_common::len::fit_mask(cm, AC4_CHANNEL_MODE_MASK, "ac4_channel_mode")?;
+            let cm =
+                broadcast_common::len::fit_mask(cm, AC4_CHANNEL_MODE_MASK, "ac4_channel_mode")?;
             let rz = self
                 .reserved_zero_future_use_5
                 .unwrap_or(AC4_RESERVED_FUTURE_USE_DEFAULT);

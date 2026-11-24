@@ -253,17 +253,16 @@ impl Serialize for TtmlSubtitling<'_> {
         need_out(buf, len)?;
         buf[..ISO_639_LEN].copy_from_slice(&self.iso_639_language_code.0);
         // byte 3: subtitle_purpose(6) | TTS_suitability(2)
-        buf[ISO_639_LEN] =
-            (broadcast_common::len::fit_mask(
-                self.subtitle_purpose,
-                SUBTITLE_PURPOSE_MASK,
-                "subtitle_purpose",
-            )? << SUBTITLE_PURPOSE_SHIFT)
-                | broadcast_common::len::fit_mask(
-                    self.tts_suitability,
-                    TTS_SUITABILITY_MASK,
-                    "tts_suitability",
-                )?;
+        buf[ISO_639_LEN] = (broadcast_common::len::fit_mask(
+            self.subtitle_purpose,
+            SUBTITLE_PURPOSE_MASK,
+            "subtitle_purpose",
+        )? << SUBTITLE_PURPOSE_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.tts_suitability,
+                TTS_SUITABILITY_MASK,
+                "tts_suitability",
+            )?;
         // byte 4: essential_font_usage_flag(1) | qualifier_present_flag(1)
         //         | reserved_zero_future_use(2) (preserved) | dvb_ttml_profile_count(4)
         let dvb_ttml_profile_count = broadcast_common::len::fit_bits(
@@ -279,7 +278,8 @@ impl Serialize for TtmlSubtitling<'_> {
             QUALIFIER_PRESENT_MASK
         } else {
             0
-        }) | ((self.reserved_zero_future_use.get() as u8) << RESERVED_FUTURE_USE_SHIFT)
+        }) | ((self.reserved_zero_future_use.get() as u8)
+            << RESERVED_FUTURE_USE_SHIFT)
             | dvb_ttml_profile_count;
 
         let mut pos = TTML_FIXED_LEN;

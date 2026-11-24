@@ -185,9 +185,12 @@ impl<'a> Parse<'a> for DtsUhd<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         need_in(sel, DTS_UHD_FIXED_LEN, "DTS-UHD descriptor body")?;
-        let decoder_profile_code = (sel[0] >> DTS_UHD_PROFILE_CODE_SHIFT) & DTS_UHD_PROFILE_CODE_MASK;
+        let decoder_profile_code =
+            (sel[0] >> DTS_UHD_PROFILE_CODE_SHIFT) & DTS_UHD_PROFILE_CODE_MASK;
         let frame_duration_code = FrameDurationCode::from_u8(sel[0] & DTS_UHD_FRAME_DURATION_MASK);
-        let max_payload_code = MaxPayloadCode::from_u8((sel[1] >> DTS_UHD_MAX_PAYLOAD_SHIFT) & DTS_UHD_MAX_PAYLOAD_MASK);
+        let max_payload_code = MaxPayloadCode::from_u8(
+            (sel[1] >> DTS_UHD_MAX_PAYLOAD_SHIFT) & DTS_UHD_MAX_PAYLOAD_MASK,
+        );
         let dts_reserved = (sel[1] >> DTS_UHD_RESERVED_SHIFT) & DTS_UHD_RESERVED_MASK;
         let stream_index = sel[1] & DTS_UHD_STREAM_INDEX_MASK;
         Ok(DtsUhd {

@@ -125,24 +125,25 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             let byte0 = sogi_slice[k];
             let byte1 = sogi_slice[k + 1];
             let sogi_flag = (byte0 >> SOGI_FLAG_SHIFT) != 0;
-            let target_region_flag = ((byte0 >> TARGET_REGION_FLAG_SHIFT) & TARGET_REGION_FLAG_MASK) != 0;
+            let target_region_flag =
+                ((byte0 >> TARGET_REGION_FLAG_SHIFT) & TARGET_REGION_FLAG_MASK) != 0;
             let service_flag = ((byte0 >> SERVICE_FLAG_SHIFT) & SERVICE_FLAG_MASK) != 0;
-            let reserved_future_use = ReservedOnes::from_bits(u64::from(byte0 >> SOGI_RESERVED_SHIFT));
-            let sogi_priority =
-                ((u16::from(byte0) & SOGI_PRIORITY_NIBBLE_MASK) << SOGI_PRIORITY_HIGH_SHIFT)
-                    | u16::from(byte1);
+            let reserved_future_use =
+                ReservedOnes::from_bits(u64::from(byte0 >> SOGI_RESERVED_SHIFT));
+            let sogi_priority = ((u16::from(byte0) & SOGI_PRIORITY_NIBBLE_MASK)
+                << SOGI_PRIORITY_HIGH_SHIFT)
+                | u16::from(byte1);
             k += SOGI_ENTRY_FIXED_LEN;
             let service_id = if service_flag {
-                let (b, _) =
-                    sogi_slice[k..]
-                        .split_first_chunk::<{ SOGI_SERVICE_ID_LEN }>()
-                        .ok_or(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
-                                need: 1 + k + SOGI_ENTRY_FIXED_LEN,
-                                have: sel.len(),
-                                what: "service_prominence body",
-                            },
-                        ))?;
+                let (b, _) = sogi_slice[k..]
+                    .split_first_chunk::<{ SOGI_SERVICE_ID_LEN }>()
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: 1 + k + SOGI_ENTRY_FIXED_LEN,
+                            have: sel.len(),
+                            what: "service_prominence body",
+                        },
+                    ))?;
                 let id = u16::from_be_bytes(*b);
                 k += SOGI_SERVICE_ID_LEN;
                 Some(id)
@@ -220,11 +221,8 @@ impl Serialize for ServiceProminence<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let sogi_len = len - 1 - self.private_data.len();
-        let sogi_len = broadcast_common::len::fit_bits(
-            sogi_len as u64,
-            LOOP_LENGTH_BITS,
-            "sogi_list_length",
-        )?;
+        let sogi_len =
+            broadcast_common::len::fit_bits(sogi_len as u64, LOOP_LENGTH_BITS, "sogi_list_length")?;
         buf[0] = sogi_len as u8;
         let mut p = 1;
         for e in &self.sogi_list {

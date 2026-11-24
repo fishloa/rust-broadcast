@@ -126,8 +126,8 @@ impl Serialize for T2mi<'_> {
                 "num_t2mi_streams_minus_one",
             )?;
         // reserved_zero_future_use(7) | pcr_iscr_common_clock_flag(1)
-        buf[T2MI_FLAG_BYTE_OFFSET] =
-            ((self.reserved_zero_future_use_flag.get() as u8) << RZFU_7_SHIFT)
+        buf[T2MI_FLAG_BYTE_OFFSET] = ((self.reserved_zero_future_use_flag.get() as u8)
+            << RZFU_7_SHIFT)
             | u8::from(self.pcr_iscr_common_clock_flag);
         buf[T2MI_MIN_LEN..len].copy_from_slice(self.reserved_tail);
         Ok(len)

@@ -45,21 +45,13 @@ impl<'a> Parse<'a> for ServiceRelocated {
             });
         }
         Ok(ServiceRelocated {
-            old_original_network_id: crate::wire::be_u16(
-                hdr,
-                0,
-                "old_original_network_id",
-            )?,
+            old_original_network_id: crate::wire::be_u16(hdr, 0, "old_original_network_id")?,
             old_transport_stream_id: crate::wire::be_u16(
                 hdr,
                 OLD_TRANSPORT_STREAM_ID_OFFSET,
                 "old_transport_stream_id",
             )?,
-            old_service_id: crate::wire::be_u16(
-                hdr,
-                OLD_SERVICE_ID_OFFSET,
-                "old_service_id",
-            )?,
+            old_service_id: crate::wire::be_u16(hdr, OLD_SERVICE_ID_OFFSET, "old_service_id")?,
         })
     }
 }

@@ -432,10 +432,10 @@ impl<'a> Parse<'a> for CpcmUsi {
         let b2 = body[1];
         let move_local = (b2 >> MOVE_LOCAL_SHIFT) & 1 != 0;
         let view_local = (b2 >> VIEW_LOCAL_SHIFT) & 1 != 0;
-        let move_and_copy_propagation_information = MoveCopyPropagation::from_u8(b2 >> MOVE_COPY_PROPAGATION_SHIFT);
+        let move_and_copy_propagation_information =
+            MoveCopyPropagation::from_u8(b2 >> MOVE_COPY_PROPAGATION_SHIFT);
         let view_propagation_information = ViewPropagation::from_u8(b2 >> VIEW_PROPAGATION_SHIFT);
-        let remote_access_date_moving_window_flag =
-            (b2 >> REMOTE_ACCESS_MOVING_SHIFT) & 1 != 0;
+        let remote_access_date_moving_window_flag = (b2 >> REMOTE_ACCESS_MOVING_SHIFT) & 1 != 0;
         let remote_access_date_immediate_flag = b2 & 1 != 0;
 
         // ── byte 3 ─────────────────────────────────────────────────────────

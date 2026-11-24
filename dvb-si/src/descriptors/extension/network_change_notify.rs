@@ -369,7 +369,8 @@ impl Serialize for NetworkChangeNotify {
             pos += CELL_ID_LEN;
             let loop_length: usize = cell.changes.iter().map(change_serialized_len).sum();
             let loop_length =
-                broadcast_common::len::fit_bits(loop_length as u64, u8::BITS, "loop_length")? as usize;
+                broadcast_common::len::fit_bits(loop_length as u64, u8::BITS, "loop_length")?
+                    as usize;
             buf[pos] = loop_length as u8;
             pos += 1;
             for ch in &cell.changes {

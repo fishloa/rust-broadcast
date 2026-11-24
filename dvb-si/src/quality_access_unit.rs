@@ -96,7 +96,10 @@ impl<'a> QualitySample<'a> {
         if high.iter().any(|b| *b != 0) {
             return None;
         }
-        Some(low.iter().fold(0u64, |v, b| (v << u8::BITS) | u64::from(*b)))
+        Some(
+            low.iter()
+                .fold(0u64, |v, b| (v << u8::BITS) | u64::from(*b)),
+        )
     }
 }
 

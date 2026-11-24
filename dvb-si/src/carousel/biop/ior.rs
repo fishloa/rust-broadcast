@@ -103,7 +103,8 @@ const SERVICE_LOCATION_TAG_OFFSET: usize = 0;
 /// `componentId_tag` width.
 const SERVICE_LOCATION_TAG_LEN: usize = U32_LEN;
 /// `component_data_length` offset in a ServiceLocation component header.
-const SERVICE_LOCATION_DATA_LEN_OFFSET: usize = SERVICE_LOCATION_TAG_OFFSET + SERVICE_LOCATION_TAG_LEN;
+const SERVICE_LOCATION_DATA_LEN_OFFSET: usize =
+    SERVICE_LOCATION_TAG_OFFSET + SERVICE_LOCATION_TAG_LEN;
 /// ServiceLocation component header: componentId_tag(4)+component_data_length(4).
 const SERVICE_LOCATION_COMP_HEADER_LEN: usize = SERVICE_LOCATION_DATA_LEN_OFFSET + U32_LEN;
 /// serviceDomain_length(1) = 1 prefix before the 20-byte NSAP address.
@@ -288,8 +289,7 @@ impl<'a> Tap<'a> {
             });
         }
         buf[TAP_ID_OFFSET..TAP_ID_OFFSET + TAP_ID_LEN].copy_from_slice(&self.id.to_be_bytes());
-        buf[TAP_USE_OFFSET..TAP_USE_OFFSET + TAP_ID_LEN]
-            .copy_from_slice(&self.use_.to_be_bytes());
+        buf[TAP_USE_OFFSET..TAP_USE_OFFSET + TAP_ID_LEN].copy_from_slice(&self.use_.to_be_bytes());
         buf[TAP_ASSOCIATION_OFFSET..TAP_ASSOCIATION_OFFSET + TAP_ID_LEN]
             .copy_from_slice(&self.association_tag.to_be_bytes());
         buf[TAP_SELECTOR_LENGTH_OFFSET] =
@@ -839,16 +839,15 @@ impl<'a> NameComponent<'a> {
         let id_range = super::span(id_start, u32::from_be_bytes(*bid), end)?;
         let id = &bytes[id_range.clone()];
         let kind_pos = id_range.end;
-        let (bkind, _) =
-            bytes[kind_pos..end]
-                .split_first_chunk::<{ NAMING_FIELD_LEN }>()
-                .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
-                        need: kind_pos + NAMING_FIELD_LEN,
-                        have: end,
-                        what: "CosNaming kind_length",
-                    },
-                ))?;
+        let (bkind, _) = bytes[kind_pos..end]
+            .split_first_chunk::<{ NAMING_FIELD_LEN }>()
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: kind_pos + NAMING_FIELD_LEN,
+                    have: end,
+                    what: "CosNaming kind_length",
+                },
+            ))?;
         let kind_start = kind_pos + NAMING_FIELD_LEN;
         let kind_range = super::span(kind_start, u32::from_be_bytes(*bkind), end)?;
         let kind = &bytes[kind_range.clone()];
@@ -1123,8 +1122,7 @@ impl<'a> LiteOptionsProfileBody<'a> {
                     what: "LiteOptions ServiceLocation component header",
                 },
             ))?;
-        let comp0_tag =
-            crate::wire::be_u32(slch, SERVICE_LOCATION_TAG_OFFSET, "componentId_tag")?;
+        let comp0_tag = crate::wire::be_u32(slch, SERVICE_LOCATION_TAG_OFFSET, "componentId_tag")?;
         if comp0_tag != TAG_SERVICE_LOCATION {
             return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "componentId_tag[0] (LiteOptions)",
@@ -1132,8 +1130,11 @@ impl<'a> LiteOptionsProfileBody<'a> {
                 reason: "first component must be TAG_ServiceLocation (0x49534F46)",
             }));
         }
-        let comp0_len_wire =
-            crate::wire::be_u32(slch, SERVICE_LOCATION_DATA_LEN_OFFSET, "component_data_length")?;
+        let comp0_len_wire = crate::wire::be_u32(
+            slch,
+            SERVICE_LOCATION_DATA_LEN_OFFSET,
+            "component_data_length",
+        )?;
         pos += SERVICE_LOCATION_COMP_HEADER_LEN;
         let comp0_end = super::span(pos, comp0_len_wire, end)?.end;
         let (service_location, consumed) = ServiceLocation::parse_from(bytes, pos, comp0_end)?;
@@ -1221,7 +1222,8 @@ impl<'a> LiteOptionsProfileBody<'a> {
             self.service_location.serialized_len(),
             "ServiceLocation data length",
         )?;
-        buf[pos + SERVICE_LOCATION_TAG_OFFSET..pos + SERVICE_LOCATION_TAG_OFFSET + SERVICE_LOCATION_TAG_LEN]
+        buf[pos + SERVICE_LOCATION_TAG_OFFSET
+            ..pos + SERVICE_LOCATION_TAG_OFFSET + SERVICE_LOCATION_TAG_LEN]
             .copy_from_slice(&TAG_SERVICE_LOCATION.to_be_bytes());
         buf[pos + SERVICE_LOCATION_DATA_LEN_OFFSET
             ..pos + SERVICE_LOCATION_DATA_LEN_OFFSET + U32_LEN]
@@ -1372,8 +1374,7 @@ impl<'a> Ior<'a> {
                         what: "IOP::IOR fixed fields",
                     },
                 ))?;
-        let type_id_length_wire =
-            crate::wire::be_u32(ior_hdr, 0, "IOR type_id_length")?;
+        let type_id_length_wire = crate::wire::be_u32(ior_hdr, 0, "IOR type_id_length")?;
         // DVB: only alias type_ids (N%4==0); reject non-conformant.
         if !(type_id_length_wire as usize).is_multiple_of(OBJECT_KIND_LEN) {
             return Err(Error::ValueOutOfRange {
@@ -1459,10 +1460,7 @@ impl Serialize for Ior<'_> {
     fn serialized_len(&self) -> usize {
         let type_id_len = self.type_id.len();
         let profiles_len: usize = self.profiles.iter().map(|p| p.serialized_len()).sum();
-        IOR_TYPE_ID_LENGTH_LEN
-            + type_id_len
-            + IOR_PROFILES_COUNT_LEN
-            + profiles_len
+        IOR_TYPE_ID_LENGTH_LEN + type_id_len + IOR_PROFILES_COUNT_LEN + profiles_len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {

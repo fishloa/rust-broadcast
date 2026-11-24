@@ -412,15 +412,16 @@ impl<'a> Parse<'a> for T2DeliverySystem {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         need_in(sel, T2_FIXED_PREFIX_LEN, "T2_delivery_system body")?;
         let plp_id = sel[0];
-        let (t2_id_bytes, _) = sel[1..]
-            .split_first_chunk::<{ T2_SYSTEM_ID_LEN }>()
-            .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: T2_FIXED_PREFIX_LEN,
-                    have: sel.len(),
-                    what: "T2_delivery_system body",
-                },
-            ))?;
+        let (t2_id_bytes, _) =
+            sel[1..]
+                .split_first_chunk::<{ T2_SYSTEM_ID_LEN }>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: T2_FIXED_PREFIX_LEN,
+                        have: sel.len(),
+                        what: "T2_delivery_system body",
+                    },
+                ))?;
         let t2_system_id = u16::from_be_bytes(*t2_id_bytes);
         let mut pos = T2_FIXED_PREFIX_LEN;
         let mut reserved_future_use = T2_RESERVED_FUTURE_USE_DEFAULT;
@@ -514,12 +515,12 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                         .get(pos..)
                         .and_then(|s| s.split_first_chunk::<{ CENTRE_FREQUENCY_LEN }>())
                         .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
-                            need: pos + CENTRE_FREQUENCY_LEN,
-                            have: sel.len(),
-                            what: "T2_delivery_system body",
-                        },
-                    ))?;
+                            broadcast_common::error::BufferTooShort {
+                                need: pos + CENTRE_FREQUENCY_LEN,
+                                have: sel.len(),
+                                what: "T2_delivery_system body",
+                            },
+                        ))?;
                     let freq = u32::from_be_bytes(*freq_bytes);
                     pos += CENTRE_FREQUENCY_LEN;
                     vec![freq]

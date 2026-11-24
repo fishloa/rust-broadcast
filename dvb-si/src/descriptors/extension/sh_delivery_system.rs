@@ -891,8 +891,11 @@ impl<'a> Parse<'a> for ShDeliverySystem {
 
             let modulation = if modulation_type == 0 {
                 let polarization = ShPolarization::from_u8(mb0 >> TDM_POLARIZATION_SHIFT);
-                let roll_off = ShRollOff::from_u8((mb0 >> TDM_ROLL_OFF_SHIFT) & POLARIZATION_VALUE_MASK);
-                let modulation_mode = ShModulationModeType::from_u8((mb0 >> TDM_MODULATION_MODE_SHIFT) & MODULATION_MODE_VALUE_MASK);
+                let roll_off =
+                    ShRollOff::from_u8((mb0 >> TDM_ROLL_OFF_SHIFT) & POLARIZATION_VALUE_MASK);
+                let modulation_mode = ShModulationModeType::from_u8(
+                    (mb0 >> TDM_MODULATION_MODE_SHIFT) & MODULATION_MODE_VALUE_MASK,
+                );
                 let code_rate_raw = ((mb0 & CODE_RATE_LOW_MASK) << CODE_RATE_FIRST_SHIFT)
                     | (mb1 >> CODE_RATE_HIGH_SHIFT);
                 let code_rate = ShCodeRate::from_u8(code_rate_raw);
@@ -908,14 +911,15 @@ impl<'a> Parse<'a> for ShDeliverySystem {
             } else {
                 let bandwidth = ShBandwidth::from_u8(mb0 >> OFDM_BANDWIDTH_SHIFT);
                 let priority = ((mb0 >> OFDM_PRIORITY_SHIFT) & OFDM_PRIORITY_MASK) != 0;
-                let constellation_and_hierarchy =
-                    ShConstellationAndHierarchy::from_u8(
+                let constellation_and_hierarchy = ShConstellationAndHierarchy::from_u8(
                     (mb0 >> OFDM_CONSTELLATION_SHIFT) & CONSTELLATION_HIERARCHY_VALUE_MASK,
                 );
                 let code_rate_raw = ((mb0 & OFDM_CODE_RATE_HIGH_MASK) << CODE_RATE_HIGH_BIT_SHIFT)
                     | (mb1 >> CODE_RATE_SECOND_BYTE_SHIFT);
                 let code_rate = ShCodeRate::from_u8(code_rate_raw);
-                let guard_interval = ShGuardInterval::from_u8((mb1 >> OFDM_GUARD_SHIFT) & GUARD_TRANSMISSION_VALUE_MASK);
+                let guard_interval = ShGuardInterval::from_u8(
+                    (mb1 >> OFDM_GUARD_SHIFT) & GUARD_TRANSMISSION_VALUE_MASK,
+                );
                 let transmission_mode = ShTransmissionMode::from_u8(
                     (mb1 >> OFDM_TRANSMISSION_SHIFT) & GUARD_TRANSMISSION_VALUE_MASK,
                 );
@@ -949,9 +953,10 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                     let common_multiplier = b0 >> COMMON_MULTIPLIER_SHIFT;
                     let nof_late_taps = ((b0 & LATE_TAPS_HIGH_MASK) << LATE_TAPS_HIGH_SHIFT)
                         | (b1 >> LATE_TAPS_LOW_SHIFT);
-                    let nof_slices = ((b1 & SLICES_HIGH_MASK) << SLICES_HIGH_SHIFT)
-                        | (b2 >> SLICES_LOW_SHIFT);
-                    let slice_distance = ((b2 & INTERLEAVER_FIELD_MASK) << SLICE_DISTANCE_HIGH_SHIFT)
+                    let nof_slices =
+                        ((b1 & SLICES_HIGH_MASK) << SLICES_HIGH_SHIFT) | (b2 >> SLICES_LOW_SHIFT);
+                    let slice_distance = ((b2 & INTERLEAVER_FIELD_MASK)
+                        << SLICE_DISTANCE_HIGH_SHIFT)
                         | (b3 >> SLICE_DISTANCE_LOW_SHIFT);
                     let non_late_increments = b3 & INTERLEAVER_FIELD_MASK;
                     pos += INTERLEAVER_TYPE0_LEN;
@@ -1144,9 +1149,16 @@ impl Serialize for ShDeliverySystem {
                         INTERLEAVER_FIELD_MASK,
                         "common_multiplier",
                     )?;
-                    let lt =
-                        broadcast_common::len::fit_mask(*nof_late_taps, INTERLEAVER_FIELD_MASK, "nof_late_taps")?;
-                    let ns = broadcast_common::len::fit_mask(*nof_slices, INTERLEAVER_FIELD_MASK, "nof_slices")?;
+                    let lt = broadcast_common::len::fit_mask(
+                        *nof_late_taps,
+                        INTERLEAVER_FIELD_MASK,
+                        "nof_late_taps",
+                    )?;
+                    let ns = broadcast_common::len::fit_mask(
+                        *nof_slices,
+                        INTERLEAVER_FIELD_MASK,
+                        "nof_slices",
+                    )?;
                     let sd = slice_distance;
                     let nli = broadcast_common::len::fit_mask(
                         *non_late_increments,
@@ -1154,9 +1166,9 @@ impl Serialize for ShDeliverySystem {
                         "non_late_increments",
                     )?;
                     buf[p] = (cm << COMMON_MULTIPLIER_SHIFT) | (lt >> LATE_TAPS_LOW_SHIFT);
-                    buf[p + 1] = ((lt & NIBBLE_MASK) << NIBBLE_SHIFT)
-                        | (ns >> SLICES_HIGH_SHIFT);
-                    buf[p + INTERLEAVER_B2_OFFSET] = ((ns & CODE_RATE_LOW_MASK) << SLICES_LOW_SHIFT)
+                    buf[p + 1] = ((lt & NIBBLE_MASK) << NIBBLE_SHIFT) | (ns >> SLICES_HIGH_SHIFT);
+                    buf[p + INTERLEAVER_B2_OFFSET] = ((ns & CODE_RATE_LOW_MASK)
+                        << SLICES_LOW_SHIFT)
                         | (sd >> SLICE_DISTANCE_HIGH_SHIFT);
                     buf[p + INTERLEAVER_B3_OFFSET] =
                         ((sd & SLICE_DISTANCE_LOW_MASK) << SLICE_DISTANCE_LOW_SHIFT) | nli;

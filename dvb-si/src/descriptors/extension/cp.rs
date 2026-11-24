@@ -69,11 +69,7 @@ impl<'a> Parse<'a> for Cp<'a> {
             reserved_future_use: ReservedOnes::from_bits(u64::from(
                 sel[CP_PID_BYTE_OFFSET] >> RESERVED_BYTE_SHIFT,
             )),
-            cp_pid: Pid::from_wire_masked(crate::wire::be_u16(
-                sel,
-                CP_PID_BYTE_OFFSET,
-                "CP_PID",
-            )?),
+            cp_pid: Pid::from_wire_masked(crate::wire::be_u16(sel, CP_PID_BYTE_OFFSET, "CP_PID")?),
             private_data: &sel[CP_HEADER_LEN..],
         })
     }

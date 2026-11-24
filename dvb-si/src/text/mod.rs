@@ -534,19 +534,19 @@ fn iso_6937_single(b: u8) -> char {
 /// (row 0xC0..=0xCF). `None` for the undefined positions 0xC0/0xC9/0xCC.
 fn combining_mark(prefix: u8) -> Option<char> {
     Some(match prefix {
-        COMBINING_GRAVE => '\u{0300}', // grave
-        COMBINING_ACUTE => '\u{0301}', // acute
-        COMBINING_CIRCUMFLEX => '\u{0302}', // circumflex
-        COMBINING_TILDE => '\u{0303}', // tilde
-        COMBINING_MACRON => '\u{0304}', // macron
-        COMBINING_BREVE => '\u{0306}', // breve
-        COMBINING_DOT_ABOVE => '\u{0307}', // dot above
-        COMBINING_DIAERESIS => '\u{0308}', // diaeresis
-        COMBINING_RING_ABOVE => '\u{030A}', // ring above
-        COMBINING_CEDILLA => '\u{0327}', // cedilla
+        COMBINING_GRAVE => '\u{0300}',        // grave
+        COMBINING_ACUTE => '\u{0301}',        // acute
+        COMBINING_CIRCUMFLEX => '\u{0302}',   // circumflex
+        COMBINING_TILDE => '\u{0303}',        // tilde
+        COMBINING_MACRON => '\u{0304}',       // macron
+        COMBINING_BREVE => '\u{0306}',        // breve
+        COMBINING_DOT_ABOVE => '\u{0307}',    // dot above
+        COMBINING_DIAERESIS => '\u{0308}',    // diaeresis
+        COMBINING_RING_ABOVE => '\u{030A}',   // ring above
+        COMBINING_CEDILLA => '\u{0327}',      // cedilla
         COMBINING_HUNGARUMLAUT => '\u{030B}', // double acute
-        COMBINING_OGONEK => '\u{0328}', // ogonek
-        COMBINING_CARON => '\u{030C}', // caron
+        COMBINING_OGONEK => '\u{0328}',       // ogonek
+        COMBINING_CARON => '\u{030C}',        // caron
         _ => return None,
     })
 }

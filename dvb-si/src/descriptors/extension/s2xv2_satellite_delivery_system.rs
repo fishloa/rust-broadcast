@@ -424,12 +424,12 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         let (dsid_bytes, _) =
             sel.split_first_chunk::<{ FREQUENCY_LEN }>()
                 .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
-                need: S2XV2_CORE_LEN,
-                have: sel.len(),
-                what: "S2Xv2 body",
-            },
-        ))?;
+                    broadcast_common::error::BufferTooShort {
+                        need: S2XV2_CORE_LEN,
+                        have: sel.len(),
+                        what: "S2Xv2 body",
+                    },
+                ))?;
         let delivery_system_id = u32::from_be_bytes(*dsid_bytes);
         // Byte 4: S2Xv2_mode(4) | multiple_input_stream_flag(1) | roll_off(3).
         let b4 = sel[B4_OFFSET];
@@ -438,7 +438,8 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         let roll_off = RollOff::from_u8(b4 & ROLL_OFF_MASK);
         // Byte 5: reserved(2) | NCR_reference(1) | NCR_version(1) | channel_bond(2) | polarization(2).
         let b5 = sel[B5_OFFSET];
-        let reserved_zero_future_use_2 = ReservedZero::from_bits(u64::from(b5 >> B5_RESERVED_SHIFT));
+        let reserved_zero_future_use_2 =
+            ReservedZero::from_bits(u64::from(b5 >> B5_RESERVED_SHIFT));
         let ncr_reference = (b5 & NCR_REFERENCE_MASK) != 0;
         let ncr_version = (b5 & NCR_VERSION_MASK) != 0;
         let channel_bond = (b5 >> CHANNEL_BOND_SHIFT) & CHANNEL_BOND_MASK;
@@ -578,12 +579,12 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
             let b1 = sel[pos + 1];
             let sffi_selector = (b1 & SFFI_SELECTOR_MASK) != 0;
             let beam_hopping_time_plan_selector = (b1 & BH_SELECTOR_MASK) != 0;
-            let sf_reserved_zero_future_use_2 = ReservedZero::from_bits(u64::from(b1 >> SUPERFRAME_B1_RESERVED_SHIFT));
+            let sf_reserved_zero_future_use_2 =
+                ReservedZero::from_bits(u64::from(b1 >> SUPERFRAME_B1_RESERVED_SHIFT));
             let ref_scram_hi = u32::from(b1 & REF_SCRAMBLING_HIGH_MASK);
-            let reference_scrambling_index =
-                (ref_scram_hi << HIGH_BYTE_SHIFT)
-                    | (u32::from(sel[pos + SUPERFRAME_REF_MID_OFFSET]) << MID_BYTE_SHIFT)
-                    | u32::from(sel[pos + SUPERFRAME_REF_LOW_OFFSET]);
+            let reference_scrambling_index = (ref_scram_hi << HIGH_BYTE_SHIFT)
+                | (u32::from(sel[pos + SUPERFRAME_REF_MID_OFFSET]) << MID_BYTE_SHIFT)
+                | u32::from(sel[pos + SUPERFRAME_REF_LOW_OFFSET]);
             // pos+4: SFFI_or_reserved(4) | psi_hi(4).
             let b4s = sel[pos + SUPERFRAME_B4_OFFSET];
             let sffi = if sffi_selector {
@@ -597,10 +598,9 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                 ReservedZero::from_bits(u64::from(b4s >> SUPERFRAME_B4_RESERVED_SHIFT))
             };
             let psi_hi = u32::from(b4s & NIBBLE_MASK);
-            let payload_scrambling_index =
-                (psi_hi << HIGH_BYTE_SHIFT)
-                    | (u32::from(sel[pos + SUPERFRAME_PSI_MID_OFFSET]) << MID_BYTE_SHIFT)
-                    | u32::from(sel[pos + SUPERFRAME_PSI_LOW_OFFSET]);
+            let payload_scrambling_index = (psi_hi << HIGH_BYTE_SHIFT)
+                | (u32::from(sel[pos + SUPERFRAME_PSI_MID_OFFSET]) << MID_BYTE_SHIFT)
+                | u32::from(sel[pos + SUPERFRAME_PSI_LOW_OFFSET]);
             pos += SUPERFRAME_FIXED_LEN;
             // Conditional: beamhopping_time_plan_id.
             let beamhopping_time_plan_id = if beam_hopping_time_plan_selector {
@@ -628,8 +628,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
             // Final superframe byte: pilots(5) | postamble_PLI(3).
             need_in(sel, pos + 1, "S2Xv2 body (superframe final byte)")?;
             let last = sel[pos];
-            let superframe_pilots_wh_sequence_number =
-                (last >> PILOTS_SHIFT) & PILOTS_MASK;
+            let superframe_pilots_wh_sequence_number = (last >> PILOTS_SHIFT) & PILOTS_MASK;
             let postamble_pli = last & POSTAMBLE_MASK;
             pos += 1;
             Some(S2Xv2Superframe {
@@ -770,8 +769,7 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                     field: "scrambling_sequence_index",
                     reason: "required when scrambling_sequence_selector is set",
                 })?;
-            let idx =
-                broadcast_common::len::fit_mask(
+            let idx = broadcast_common::len::fit_mask(
                 idx,
                 SCRAMBLING_INDEX_MASK,
                 "scrambling_sequence_index",
@@ -816,12 +814,14 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                 "payload_scrambling_index",
             )?;
             buf[p] = sf.sosf_wh_sequence_number;
-            let ref_hi = (sf.reference_scrambling_index >> HIGH_BYTE_SHIFT) as u8 & REF_SCRAMBLING_HIGH_MASK;
+            let ref_hi =
+                (sf.reference_scrambling_index >> HIGH_BYTE_SHIFT) as u8 & REF_SCRAMBLING_HIGH_MASK;
             buf[p + SUPERFRAME_B1_OFFSET] = (u8::from(sf.sffi_selector) << SFFI_SELECTOR_SHIFT)
                 | (u8::from(sf.beam_hopping_time_plan_selector) << BH_SELECTOR_SHIFT)
                 | ((sf.reserved_zero_future_use_2.get() as u8) << SUPERFRAME_B1_RESERVED_SHIFT)
                 | ref_hi;
-            buf[p + SUPERFRAME_REF_MID_OFFSET] = (sf.reference_scrambling_index >> MID_BYTE_SHIFT) as u8;
+            buf[p + SUPERFRAME_REF_MID_OFFSET] =
+                (sf.reference_scrambling_index >> MID_BYTE_SHIFT) as u8;
             buf[p + SUPERFRAME_REF_LOW_OFFSET] = sf.reference_scrambling_index as u8;
             // sffi_selector promises the 4 SFFI bits on the wire; fabricating
             // 0 would invent a bypass index (r03-W5).
@@ -837,7 +837,8 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
             let sffi_nibble = broadcast_common::len::fit_mask(sffi_nibble, NIBBLE_MASK, "sffi")?;
             let psi_hi = (sf.payload_scrambling_index >> HIGH_BYTE_SHIFT) as u8 & NIBBLE_MASK;
             buf[p + SUPERFRAME_B4_OFFSET] = (sffi_nibble << NIBBLE_SHIFT) | psi_hi;
-            buf[p + SUPERFRAME_PSI_MID_OFFSET] = (sf.payload_scrambling_index >> MID_BYTE_SHIFT) as u8;
+            buf[p + SUPERFRAME_PSI_MID_OFFSET] =
+                (sf.payload_scrambling_index >> MID_BYTE_SHIFT) as u8;
             buf[p + SUPERFRAME_PSI_LOW_OFFSET] = sf.payload_scrambling_index as u8;
             p += SUPERFRAME_FIXED_LEN;
             if sf.beam_hopping_time_plan_selector {
@@ -856,7 +857,11 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                 PILOTS_MASK,
                 "superframe_pilots_wh_sequence_number",
             )? << PILOTS_SHIFT)
-                | broadcast_common::len::fit_mask(sf.postamble_pli, POSTAMBLE_MASK, "postamble_pli")?;
+                | broadcast_common::len::fit_mask(
+                    sf.postamble_pli,
+                    POSTAMBLE_MASK,
+                    "postamble_pli",
+                )?;
             p += 1;
         }
         // Reserved tail.

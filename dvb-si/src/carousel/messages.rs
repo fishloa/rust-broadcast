@@ -187,13 +187,15 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (b, _) = bytes.split_first_chunk::<GII_NUMBER_OF_GROUPS_LEN>().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
-                need: GII_NUMBER_OF_GROUPS_LEN,
-                have: bytes.len(),
-                what: "GroupInfoIndication NumberOfGroups",
-            },
-        ))?;
+        let (b, _) = bytes
+            .split_first_chunk::<GII_NUMBER_OF_GROUPS_LEN>()
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: GII_NUMBER_OF_GROUPS_LEN,
+                    have: bytes.len(),
+                    what: "GroupInfoIndication NumberOfGroups",
+                },
+            ))?;
         let number_of_groups = u16::from_be_bytes(*b) as usize;
         let mut pos = GII_NUMBER_OF_GROUPS_LEN;
         let end = bytes.len();
@@ -210,8 +212,7 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
                     },
                 ))?;
             let group_id = crate::wire::be_u32(hdr, 0, "GroupInfo GroupId")?;
-            let group_size =
-                crate::wire::be_u32(hdr, GII_GROUP_ID_LEN, "GroupInfo GroupSize")?;
+            let group_size = crate::wire::be_u32(hdr, GII_GROUP_ID_LEN, "GroupInfo GroupSize")?;
             pos += GII_GROUP_FIXED_LEN;
 
             // GroupCompatibility — CompatibilityDescriptor (Table 7).
@@ -240,16 +241,15 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             pos += compat_total;
 
             // GroupInfoLength + GroupInfoByte loop.
-            let (bgi, _) =
-                bytes[pos..end]
-                    .split_first_chunk::<GII_GROUP_INFO_LEN_FIELD>()
-                    .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
-                            need: pos + GII_GROUP_INFO_LEN_FIELD,
-                            have: end,
-                            what: "GroupInfo GroupInfoLength",
-                        },
-                    ))?;
+            let (bgi, _) = bytes[pos..end]
+                .split_first_chunk::<GII_GROUP_INFO_LEN_FIELD>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + GII_GROUP_INFO_LEN_FIELD,
+                        have: end,
+                        what: "GroupInfo GroupInfoLength",
+                    },
+                ))?;
             let group_info_len = u16::from_be_bytes(*bgi) as usize;
             pos += GII_GROUP_INFO_LEN_FIELD;
             if pos + group_info_len > end {
@@ -262,16 +262,15 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             pos += group_info_len;
 
             // PrivateDataLength + PrivateDataByte loop.
-            let (bpd, _) =
-                bytes[pos..end]
-                    .split_first_chunk::<GII_PRIVATE_DATA_LEN_FIELD>()
-                    .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
-                            need: pos + GII_PRIVATE_DATA_LEN_FIELD,
-                            have: end,
-                            what: "GroupInfo PrivateDataLength",
-                        },
-                    ))?;
+            let (bpd, _) = bytes[pos..end]
+                .split_first_chunk::<GII_PRIVATE_DATA_LEN_FIELD>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + GII_PRIVATE_DATA_LEN_FIELD,
+                        have: end,
+                        what: "GroupInfo PrivateDataLength",
+                    },
+                ))?;
             let private_data_len = u16::from_be_bytes(*bpd) as usize;
             pos += GII_PRIVATE_DATA_LEN_FIELD;
             if pos + private_data_len > end {
@@ -507,8 +506,7 @@ fn parse_header<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u16, u32, &'
     let message_id = crate::wire::be_u16(hdr, MESSAGE_ID_OFFSET, "messageId")?;
     let id = crate::wire::be_u32(hdr, TRANSACTION_ID_OFFSET, "transactionId/downloadId")?;
     let adaptation_length = hdr[ADAPTATION_LENGTH_OFFSET] as usize;
-    let message_length =
-        crate::wire::be_u16(hdr, MESSAGE_LENGTH_OFFSET, "messageLength")? as usize;
+    let message_length = crate::wire::be_u16(hdr, MESSAGE_LENGTH_OFFSET, "messageLength")? as usize;
     let total = MESSAGE_HEADER_LEN + message_length;
     if bytes.len() < total {
         return Err(Error::SectionLengthOverflow {
@@ -692,8 +690,7 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                             },
                         ))?;
                     let module_id = crate::wire::be_u16(mhdr, MODULE_ID_OFFSET, "moduleId")?;
-                    let module_size =
-                        crate::wire::be_u32(mhdr, MODULE_SIZE_OFFSET, "moduleSize")?;
+                    let module_size = crate::wire::be_u32(mhdr, MODULE_SIZE_OFFSET, "moduleSize")?;
                     let module_version = mhdr[MODULE_VERSION_OFFSET];
                     let module_info_length = mhdr[MODULE_INFO_LENGTH_OFFSET] as usize;
                     let info_start = pos + MODULE_HEADER_LEN;
@@ -795,7 +792,8 @@ impl Serialize for UnMessage<'_> {
                     dii.adaptation,
                     payload_len,
                 )?;
-                buf[pos + DII_DOWNLOAD_ID_OFFSET..pos + DII_DOWNLOAD_ID_OFFSET + DII_DOWNLOAD_ID_LEN]
+                buf[pos + DII_DOWNLOAD_ID_OFFSET
+                    ..pos + DII_DOWNLOAD_ID_OFFSET + DII_DOWNLOAD_ID_LEN]
                     .copy_from_slice(&dii.download_id.to_be_bytes());
                 buf[pos + DII_BLOCK_SIZE_OFFSET..pos + DII_BLOCK_SIZE_OFFSET + DII_BLOCK_SIZE_LEN]
                     .copy_from_slice(&dii.block_size.to_be_bytes());

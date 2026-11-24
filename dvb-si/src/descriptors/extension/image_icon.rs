@@ -282,8 +282,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
         let descriptor_number = sel[0] >> DESCRIPTOR_NUMBER_SHIFT;
         let last_descriptor_number = sel[0] & DESCRIPTOR_NUMBER_MASK;
         let icon_id = sel[1] & ICON_ID_MASK;
-        let reserved_future_use =
-            ReservedOnes::from_bits(u64::from(sel[1] >> ICON_RESERVED_SHIFT));
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(sel[1] >> ICON_RESERVED_SHIFT));
 
         let body = if descriptor_number == 0 {
             need_in(sel, SEGMENT_DATA_OFFSET, "image_icon body")?;
@@ -294,17 +293,17 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
 
             let mut no_position_reserved = None;
             let position = if position_flag == 1 {
-                let coordinate_system = (packed >> COORDINATE_SYSTEM_SHIFT) & COORDINATE_SYSTEM_MASK;
+                let coordinate_system =
+                    (packed >> COORDINATE_SYSTEM_SHIFT) & COORDINATE_SYSTEM_MASK;
                 let position_reserved = ReservedOnes::from_bits(u64::from(packed));
                 need_in(sel, pos + ORIGIN_LEN, "image_icon body")?;
                 let b0 = sel[pos];
                 let b1 = sel[pos + 1];
                 let b2 = sel[pos + ORIGIN_THIRD_OFFSET];
-                let icon_horizontal_origin = (u16::from(b0) << ORIGIN_HIGH_SHIFT)
-                    | (u16::from(b1) >> ORIGIN_HIGH_SHIFT);
-                let icon_vertical_origin = ((u16::from(b1) & ORIGIN_NIBBLE_MASK)
-                    << ORIGIN_SECOND_SHIFT)
-                    | u16::from(b2);
+                let icon_horizontal_origin =
+                    (u16::from(b0) << ORIGIN_HIGH_SHIFT) | (u16::from(b1) >> ORIGIN_HIGH_SHIFT);
+                let icon_vertical_origin =
+                    ((u16::from(b1) & ORIGIN_NIBBLE_MASK) << ORIGIN_SECOND_SHIFT) | u16::from(b2);
                 pos += ORIGIN_LEN;
                 Some(IconPosition {
                     coordinate_system,
@@ -363,7 +362,11 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             // Continuation segment.
             need_in(sel, SEGMENT_DATA_OFFSET, "image_icon body")?;
             let icon_data_length = sel[PACKED_BYTE_OFFSET] as usize;
-            need_in(sel, SEGMENT_DATA_OFFSET + icon_data_length, "image_icon body")?;
+            need_in(
+                sel,
+                SEGMENT_DATA_OFFSET + icon_data_length,
+                "image_icon body",
+            )?;
             let icon_data = &sel[SEGMENT_DATA_OFFSET..SEGMENT_DATA_OFFSET + icon_data_length];
             if SEGMENT_DATA_OFFSET + icon_data_length != sel.len() {
                 return Err(invalid("image_icon: trailing bytes"));
@@ -386,8 +389,8 @@ impl Serialize for ImageIcon<'_> {
     fn serialized_len(&self) -> usize {
         IMAGE_ICON_PREFIX_LEN
             + match &self.body {
-            ImageIconBody::First(f) => {
-                1 // packed byte
+                ImageIconBody::First(f) => {
+                    1 // packed byte
                     + if f.position.is_some() { ORIGIN_LEN } else { 0 }
                     + 1 // icon_type_length
                     + f.icon_type.len()
@@ -396,9 +399,9 @@ impl Serialize for ImageIcon<'_> {
                         IconLocation::Url(u) => 1 + u.len(),
                         IconLocation::None => 0,
                     }
+                }
+                ImageIconBody::Continuation { icon_data } => 1 + icon_data.len(),
             }
-            ImageIconBody::Continuation { icon_data } => 1 + icon_data.len(),
-        }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();

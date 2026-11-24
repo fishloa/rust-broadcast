@@ -267,15 +267,16 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             COMPAT_DESC_LEN_FIELD,
             "CompatibilityDescriptor length field",
         )?;
-        let (b2, _) = bytes
-            .split_first_chunk::<COMPAT_DESC_LEN_FIELD>()
-            .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
-                need: COMPAT_DESC_LEN_FIELD,
-                have: bytes.len(),
-                what: "CompatibilityDescriptor length field",
-            },
-        ))?;
+        let (b2, _) =
+            bytes
+                .split_first_chunk::<COMPAT_DESC_LEN_FIELD>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: COMPAT_DESC_LEN_FIELD,
+                        have: bytes.len(),
+                        what: "CompatibilityDescriptor length field",
+                    },
+                ))?;
         let compat_desc_len = u16::from_be_bytes(*b2) as usize;
         let body_end = COMPAT_DESC_LEN_FIELD + compat_desc_len;
         if body_end > bytes.len() {
