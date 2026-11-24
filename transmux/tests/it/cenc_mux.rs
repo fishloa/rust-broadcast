@@ -23,10 +23,10 @@ use broadcast_common::{Decrypt, Encrypt, Package, Parse, Serialize, Unpackage};
 use isobmff::cenc::{
     ProtectionSchemeInfoBox, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox,
 };
+use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use isobmff::movie_fragment::MovieFragmentBox;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::fragment_build::{FragmentProtection, protect_media_segment};
-use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::{
     CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
 };
@@ -182,7 +182,7 @@ fn protect_init_segment_emits_encv_sinf() {
     let track = moov
         .tracks
         .iter()
-        .find(|t| t.tkhd.track_id == track_id)
+        .find(|t| t.tkhd.track_id == track_id.into())
         .expect("track present");
     let stbl = track
         .mdia
@@ -1119,7 +1119,7 @@ fn protect_init_segment_accepts_an_init_only_buffer() {
     let stsd = moov
         .tracks
         .iter()
-        .find(|t| t.tkhd.track_id == track_id)
+        .find(|t| t.tkhd.track_id == track_id.into())
         .expect("track present")
         .mdia
         .as_ref()

@@ -12,10 +12,10 @@ use broadcast_common::timescale::Timescale;
 use isobmff::EsdsBox;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::segments::MediaDataBox;
+use isobmff::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::TrackId;
 use transmux::{
-    CodecConfig, FragmentTrackData, MovieBox, Sample, SampleEntryVariant, StblChild, TrackSpec,
-    build_init_segment, build_media_segment,
+    CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
 
 fn timescale(value: u32) -> Timescale {
@@ -186,8 +186,8 @@ fn init_segment_from_real_config_reparses() {
         .as_ref()
         .expect("fragmented init must have mvex");
     assert_eq!(mvex.trex.len(), 2, "one trex per track");
-    assert_eq!(mvex.trex[0].track_id, TrackId::new(1));
-    assert_eq!(mvex.trex[1].track_id, TrackId::new(2));
+    assert_eq!(mvex.trex[0].track_id, TrackId::new(1).into());
+    assert_eq!(mvex.trex[1].track_id, TrackId::new(2).into());
 
     // Video stsd survived with a real avcC (SPS present).
     match track_stsd_entry(&out_moov, 0) {

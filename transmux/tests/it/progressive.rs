@@ -887,7 +887,7 @@ fn promoted_v1_duration_is_read_by_ffprobe() {
 /// one tick past it promotes to version 1.
 #[test]
 fn duration_version_boundary_is_exact() {
-    use transmux::MovieHeaderBox;
+    use isobmff::MovieHeaderBox;
 
     let at_limit = MovieHeaderBox {
         version: 0,
@@ -899,7 +899,7 @@ fn duration_version_boundary_is_exact() {
         rate: 0x0001_0000,
         volume: 0x0100,
         matrix: [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000],
-        next_track_id: TrackId::new(2),
+        next_track_id: TrackId::new(2).into(),
     };
     let b = at_limit.try_to_bytes().expect("serialize at the limit");
     assert_eq!(b.len(), 108, "u32::MAX fits version 0");

@@ -8,7 +8,7 @@
 
 use broadcast_common::Parse;
 use isobmff::cenc::{ProtectionSchemeInfoBox, SchemeInformationBox};
-use transmux::{SampleDescriptionBox, TrackExtendsBox};
+use isobmff::{SampleDescriptionBox, TrackExtendsBox};
 
 const FOURCCS: &[&[u8; 4]] = &[
     b"avc1", b"avc3", b"avc2", b"hvc1", b"hev1", b"vvc1", b"mp4v", b"mp4a", b"enca", b"ac-3",

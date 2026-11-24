@@ -14,8 +14,8 @@ use axum::Router;
 use axum::http::StatusCode;
 use broadcast_common::Parse;
 use broadcast_hls::{MasterPlaylist, MediaPlaylist};
+use isobmff::MovieBox;
 use isobmff::movie_fragment::MovieFragmentBox;
-use transmux::MovieBox;
 
 use multimux::config::Config;
 use transmux::audio_profile::{AudioProfile, AudioProfileOverride, AudioTrackSelector};

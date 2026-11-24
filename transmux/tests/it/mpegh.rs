@@ -24,7 +24,8 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use isobmff::{MHAC_CONFIGURATION_VERSION, MHAC_FOURCC, MHADecoderConfigurationRecord};
-use transmux::{CmafMux, CodecConfig, Fmp4Demux, SampleDescriptionBox, SampleEntryVariant};
+use isobmff::{SampleDescriptionBox, SampleEntryVariant};
+use transmux::{CmafMux, CodecConfig, Fmp4Demux};
 
 static FIXTURE: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("mp4/frag/mpegh-stereo.frag.mp4"));

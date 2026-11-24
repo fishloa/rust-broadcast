@@ -931,8 +931,8 @@ fn child_whole<'a>(
 /// `moov > trak > tkhd` whose `mdia > hdlr` handler is `vide`
 /// (ISO/IEC 14496-12:2026 §8.4.3). Empty when the init segment cannot be walked.
 fn init_video_track_ids(init: &[u8]) -> Vec<TrackId> {
-    use crate::init_segment::{HandlerBox, TrackHeaderBox};
     use broadcast_common::Parse;
+    use isobmff::init_segment::{HandlerBox, TrackHeaderBox};
 
     let Some(moov) = child_body(init, &MOOV) else {
         return Vec::new();
@@ -953,7 +953,7 @@ fn init_video_track_ids(init: &[u8]) -> Vec<TrackId> {
             .and_then(|hd| HandlerBox::parse(hd).ok())
             .is_some_and(|h| &h.handler_type == b"vide");
         if is_video {
-            ids.push(header.track_id);
+            ids.push(header.track_id.into());
         }
     }
     ids
@@ -962,8 +962,8 @@ fn init_video_track_ids(init: &[u8]) -> Vec<TrackId> {
 /// The `track_id`s an init segment declares, from every `moov > trak > tkhd`
 /// (ISO/IEC 14496-12:2026 §8.3.2). Empty when no `moov`/`tkhd` can be parsed.
 fn init_track_ids(init: &[u8]) -> Vec<TrackId> {
-    use crate::init_segment::TrackHeaderBox;
     use broadcast_common::Parse;
+    use isobmff::init_segment::TrackHeaderBox;
 
     let Some(moov) = child_body(init, &MOOV) else {
         return Vec::new();
@@ -976,7 +976,7 @@ fn init_track_ids(init: &[u8]) -> Vec<TrackId> {
         if let Some(bytes) = child_whole(moov, trak.body, &TKHD)
             && let Ok(h) = TrackHeaderBox::parse(bytes)
         {
-            ids.push(h.track_id);
+            ids.push(h.track_id.into());
         }
     }
     ids

@@ -24,10 +24,14 @@ use isobmff::box_types::BOX_TYPE_SIZE;
 
 use broadcast_common::Serialize;
 
-use crate::av1::Av1SampleEntry;
 use crate::error::{Error, Result};
 use crate::fragment_build::{MediaRunSample, media_fragment_run};
-use crate::init_segment::{
+use isobmff::ac4::DAC4_FOURCC;
+use isobmff::av1::Av1SampleEntry;
+use isobmff::box_support::OpaqueBox;
+use isobmff::dts::DDTS_FOURCC;
+use isobmff::flac::DFLA_FOURCC;
+use isobmff::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntry, DataEntryUrlBox, DataInformationBox,
     DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, FlacSampleEntry, HandlerBox, MediaBox,
     MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox, MovieHeaderBox,
@@ -35,25 +39,21 @@ use crate::init_segment::{
     SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, TrackBox, TrackExtendsBox,
     TrackHeaderBox, VideoMediaHeaderBox,
 };
-use crate::sample_entries::{
-    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
-};
-use isobmff::ac4::DAC4_FOURCC;
-use isobmff::box_support::OpaqueBox;
-use isobmff::dts::DDTS_FOURCC;
-use isobmff::flac::DFLA_FOURCC;
 use isobmff::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentBox,
 };
 use isobmff::mpegh::MHAC_FOURCC;
 use isobmff::nalu_types::{HEVC_SPS_NUT, HEVC_VPS_NUT};
 use isobmff::opus::DOPS_FOURCC;
+use isobmff::sample_entries::{
+    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
+};
 use isobmff::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 use isobmff::visual_ext::{ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 
-use crate::vp9::Vp9SampleEntry;
 use isobmff::emsg::EmsgBox;
 use isobmff::timing::TimeToSampleBox;
+use isobmff::vp9::Vp9SampleEntry;
 
 /// ISO-639-2 packed language code `und` (undetermined).
 const LANG_UND: u16 = 0x55C4;
@@ -120,7 +120,7 @@ pub fn build_init_segment(
         rate: MVHD_RATE_UNITY,
         volume: MVHD_VOLUME_UNITY,
         matrix: IDENTITY_MATRIX,
-        next_track_id,
+        next_track_id: next_track_id.into(),
     };
 
     let mut trak_boxes = Vec::with_capacity(tracks.len());
@@ -143,7 +143,7 @@ pub fn build_init_segment(
         trex.push(TrackExtendsBox {
             version: 0,
             flags: 0,
-            track_id: t.track_id,
+            track_id: t.track_id.into(),
             default_sample_description_index: 1,
             default_sample_duration: 0,
             default_sample_size: 0,
@@ -206,7 +206,7 @@ fn config_box<C: Serialize<Error = isobmff::Error>>(
 /// carrying the real rate. Such an entry must sit in an `stsd` whose version
 /// is 1.
 ///
-/// [`SamplingRateBox`]: crate::init_segment::SamplingRateBox
+/// [`SamplingRateBox`]: isobmff::init_segment::SamplingRateBox
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AudioRateCarriage {
     /// `entry_version` to write into the sample entry (0 or 1).
@@ -214,7 +214,7 @@ struct AudioRateCarriage {
     /// Value for the entry's 16.16 `samplerate` field.
     samplerate_field: u32,
     /// The `srat` box to append as a config child, when the v1 form is used.
-    srat: Option<crate::init_segment::SamplingRateBox>,
+    srat: Option<isobmff::init_segment::SamplingRateBox>,
 }
 
 /// Decide the `stsd` sampling-rate carriage for `sample_rate`
@@ -224,7 +224,7 @@ struct AudioRateCarriage {
 /// a rate above `u16::MAX` needs the v1 entry, its `srat` box and an `stsd`
 /// version of 1.
 fn audio_rate_carriage(sample_rate: u32) -> AudioRateCarriage {
-    use crate::init_segment::{AudioSampleEntryV1, SamplingRateBox};
+    use isobmff::init_segment::{AudioSampleEntryV1, SamplingRateBox};
     if AudioSampleEntryV1::rate_fits_v0(sample_rate) {
         AudioRateCarriage {
             entry_version: 0,
@@ -244,12 +244,12 @@ fn audio_rate_carriage(sample_rate: u32) -> AudioRateCarriage {
 /// `config_boxes` carry (body only, 8-byte box header stripped), matching how
 /// the typed config records above are embedded.
 ///
-/// [`SamplingRateBox`]: crate::init_segment::SamplingRateBox
-fn srat_opaque(rate: crate::init_segment::SamplingRateBox) -> Result<OpaqueBox> {
+/// [`SamplingRateBox`]: isobmff::init_segment::SamplingRateBox
+fn srat_opaque(rate: isobmff::init_segment::SamplingRateBox) -> Result<OpaqueBox> {
     let mut full = vec![0u8; rate.serialized_len()];
     let n = rate.serialize_into(&mut full)?;
     Ok(OpaqueBox::new(
-        crate::init_segment::SamplingRateBox::FOURCC,
+        isobmff::init_segment::SamplingRateBox::FOURCC,
         full[8..n].to_vec(),
     ))
 }
@@ -265,18 +265,18 @@ fn avc_hevc_display_extra_boxes(
     display: Option<&crate::ir::DisplayGeometry>,
     hdr: Option<&crate::hdr::HdrStaticMetadata>,
     dovi: Option<&isobmff::dovi::DoviDecoderConfigurationRecord>,
-) -> Result<Vec<crate::sample_entries::OpaqueBox>> {
+) -> Result<Vec<isobmff::sample_entries::OpaqueBox>> {
     let mut extra_boxes = Vec::new();
     if let Some(display) = display {
         push_display_boxes(display, &mut extra_boxes)?;
     }
     if let Some(hdr) = hdr {
         for (box_type, data) in hdr.sample_entry_boxes()? {
-            extra_boxes.push(crate::sample_entries::OpaqueBox { box_type, data });
+            extra_boxes.push(isobmff::sample_entries::OpaqueBox { box_type, data });
         }
     }
     if let Some(dovi) = dovi {
-        extra_boxes.push(crate::sample_entries::OpaqueBox {
+        extra_boxes.push(isobmff::sample_entries::OpaqueBox {
             box_type: dovi.box_fourcc(),
             data: dovi.try_to_bytes()?,
         });
@@ -286,7 +286,7 @@ fn avc_hevc_display_extra_boxes(
 
 fn push_display_boxes(
     display: &crate::ir::DisplayGeometry,
-    extra_boxes: &mut Vec<crate::sample_entries::OpaqueBox>,
+    extra_boxes: &mut Vec<isobmff::sample_entries::OpaqueBox>,
 ) -> Result<()> {
     // pasp — only when the SAR is specified and not square (§12.1.4.1: an
     // absent pasp means square pixels).
@@ -299,7 +299,7 @@ fn push_display_boxes(
         };
         let mut body = alloc::vec![0u8; pasp.serialized_len()];
         pasp.serialize_into(&mut body)?;
-        extra_boxes.push(crate::sample_entries::OpaqueBox {
+        extra_boxes.push(isobmff::sample_entries::OpaqueBox {
             box_type: *b"pasp",
             data: body,
         });
@@ -322,7 +322,7 @@ fn push_display_boxes(
         };
         let mut body = alloc::vec![0u8; colr.serialized_len()];
         colr.serialize_into(&mut body)?;
-        extra_boxes.push(crate::sample_entries::OpaqueBox {
+        extra_boxes.push(isobmff::sample_entries::OpaqueBox {
             box_type: *b"colr",
             data: body,
         });
@@ -744,7 +744,7 @@ fn track_header(track_id: TrackId, audio: bool, width: u32, height: u32) -> Trac
         flags: TKHD_ENABLED_IN_MOVIE,
         creation_time: 0,
         modification_time: 0,
-        track_id,
+        track_id: track_id.into(),
         duration: 0,
         layer: 0,
         alternate_group: 0,

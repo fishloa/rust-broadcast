@@ -37,9 +37,9 @@ fuzz_target!(|data: &[u8]| {
     large.extend_from_slice(&((16 + body.len()) as u64).to_be_bytes());
     large.extend_from_slice(body);
     for entry in [&compact, &large] {
-        let _ = transmux::SampleDescriptionBox::parse(&stsd(entry));
+        let _ = isobmff::SampleDescriptionBox::parse(&stsd(entry));
     }
-    let _ = transmux::TrackExtendsBox::parse(data);
+    let _ = isobmff::TrackExtendsBox::parse(data);
     let _ = isobmff::cenc::SchemeInformationBox::parse(data);
     let _ = isobmff::cenc::ProtectionSchemeInfoBox::parse(data);
 });

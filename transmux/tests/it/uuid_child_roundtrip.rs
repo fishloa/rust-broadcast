@@ -12,7 +12,8 @@
 //! see `../fixtures/mp4/uuid-boxes/PROVENANCE.md`.
 
 use broadcast_common::{Parse, Serialize, Unpackage};
-use transmux::{Fmp4Demux, MovieBox};
+use isobmff::MovieBox;
+use transmux::Fmp4Demux;
 
 const DIR: &str = "mp4/uuid-boxes";
 

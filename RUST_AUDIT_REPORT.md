@@ -61,7 +61,7 @@ No `unsafe impl Send/Sync`, no raw-pointer dereference, no uninitialised memory 
 | P1 | `rtmp-runtime/src/chunk.rs:1427` | `ChunkWriter::write` **panics on a caller precondition** (`valid chunk_stream_id 2..=65599`) in a public API. Return `Err` (the project's own #1129 rule for lengths). | Medium |
 | P2 | `multimux/src/origin/admin.rs:153,160,177,441,442,631` | `expect("armed")` x6 and `expect("... called twice")`: a runtime state flag standing in for a type. Use a type-state (`Pending` -> `Armed`) so the invalid state is unrepresentable. | Medium |
 | P3 | `dvb-si/src/tables/*.rs` (76 sites; e.g. `bat.rs:123`, `ait.rs:328`, `compatibility.rs:277`, `demux.rs:449`) | `u16::from_be_bytes(*bytes[..].first_chunk::<2>().unwrap())` after `check_section_length`. Guarded today, but the guard is far from the use and the project parses untrusted broadcast data. Introduce one checked reader (`be_u16(bytes, off) -> Result`) and delete the unwraps. | Medium (robustness) |
-| P4 | `transmux/src/init_segment.rs:742-745, 910-913` | `bytes[a..b].try_into().unwrap()` guarded by `bytes.len() < need` at `:730`. Same pattern as P3. | Low |
+| P4 | `isobmff/src/init_segment.rs:742-745, 910-913` | `bytes[a..b].try_into().unwrap()` guarded by `bytes.len() < need` at `:730`. Same pattern as P3. | Low |
 | P5 | `hls-runtime/src/server/engine.rs` | **Withdrawn (false positive).** Verified on fix: every `Duration::from_secs_f64` is inside `#[cfg(test)] mod tests` (line 1683+); production `expect`s are on `DecimalSeconds::new(as_secs_f64())` / `u32/1000.0`, finite and non-negative by type. | None |
 | P6 | `multimux/src/source/whip.rs:1314-1316` | std-mutex poison `expect` plus a take-once `expect("... already taken")`. See section 2. | Low |
 

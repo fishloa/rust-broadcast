@@ -8,9 +8,9 @@
 //! every record here must also round-trip byte for byte.
 
 use broadcast_common::{Parse, Serialize};
+use isobmff::init_segment::{SampleDescriptionBox, SampleEntryVariant};
+use isobmff::sample_entries::HEVCSampleEntry;
 use isobmff::{HEVCDecoderConfigurationRecord, HevcNalArray, HevcNalUnit};
-use transmux::init_segment::{SampleDescriptionBox, SampleEntryVariant};
-use transmux::sample_entries::HEVCSampleEntry;
 
 const HVC1_CONFORMANT: &str = "mp4/hevc-frag.mp4";
 const HEV1_DEFAULT: &str = "mp4/hevc-main.mp4";

@@ -8,10 +8,9 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Serialize, Unpackage};
+use isobmff::{VttCueBox, WvttSampleEntry};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
-use transmux::{
-    CmafMux, Fmp4Demux, Media, Sample, Track, TrackId, TrackSpec, VttCueBox, WvttSampleEntry,
-};
+use transmux::{CmafMux, Fmp4Demux, Media, Sample, Track, TrackId, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

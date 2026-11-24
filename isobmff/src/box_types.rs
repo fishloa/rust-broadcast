@@ -1659,6 +1659,7 @@ mod largesize_tests {
     use broadcast_common::error::OutputBufferTooSmall;
 
     use super::*;
+    use crate::init_segment::MovieBox;
     use crate::movie_fragment::MovieFragmentBox;
     use broadcast_common::{Parse, Serialize};
 
@@ -1765,6 +1766,55 @@ mod largesize_tests {
         (large, all)
     }
 
+    /// A real `moov` (every variable-size sample-table box + every container)
+    /// serialized in the forced largesize form re-parses to an identical tree,
+    /// and re-serializes in the compact form to the original bytes.
+    #[test]
+    fn moov_round_trips_through_the_largesize_form() {
+        let data = fixture("h264-aac-prog.mp4");
+        let orig = top_box(&data, b"moov");
+        let moov = MovieBox::parse(orig).unwrap();
+
+        let forced = {
+            let _g = ForceLargesize::on();
+            let len = moov.serialized_len();
+            let bytes = moov.try_to_bytes().unwrap();
+            assert_eq!(bytes.len(), len, "serialized_len agrees with the writer");
+            bytes
+        };
+        assert!(forced.len() > orig.len());
+        assert_eq!(&forced[..4], &[0, 0, 0, 1], "moov carries the marker");
+        assert_eq!(&forced[4..8], b"moov");
+        assert_eq!(
+            u64::from_be_bytes(forced[8..16].try_into().unwrap()),
+            forced.len() as u64,
+            "largesize is the whole box"
+        );
+        for cc in [
+            b"trak", b"mdia", b"minf", b"stbl", b"stsd", b"stts", b"stsc", b"stsz", b"stco",
+            b"dinf", b"dref", b"url ",
+        ] {
+            let (large, all) = count_large(&forced, cc);
+            assert!(
+                all > 0 && large == all,
+                "{cc:?}: {large}/{all} use largesize"
+            );
+        }
+
+        // `hdlr` also occurs inside a verbatim opaque child (kept compact), so
+        // only require that the typed ones switched.
+        let (hdlr_large, _) = count_large(&forced, b"hdlr");
+        assert!(hdlr_large >= 2, "typed hdlr boxes use largesize");
+
+        let reparsed = MovieBox::parse(&forced).expect("largesize moov parses");
+        assert_eq!(reparsed, moov, "typed tree identical after largesize trip");
+        assert_eq!(
+            reparsed.try_to_bytes().unwrap(),
+            orig,
+            "compact re-serialize is byte-identical"
+        );
+    }
+
     /// Same for a fragment's `moof` (mfhd/traf/trun).
     #[test]
     fn moof_round_trips_through_the_largesize_form() {
@@ -1790,6 +1840,52 @@ mod largesize_tests {
         let rel = rel.trim_start_matches("../fixtures/");
         let path = test_fixtures::path(rel);
         std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// Every committed fixture's `moov` (AVC/HEVC/AAC entries, CENC `sinf`/
+    /// `schm`/`schi`/`tenc` wrappers, subtitle entries, v1 `mvhd`) survives the
+    /// largesize form: tree-identical on re-parse and byte-identical when
+    /// written compact again.
+    #[test]
+    fn every_fixture_moov_round_trips_through_the_largesize_form() {
+        let mut checked = 0;
+        for rel in [
+            "../fixtures/mp4/h264-aac-prog.mp4",
+            "../fixtures/mp4/h264-aac-frag.mp4",
+            "../fixtures/mp4/h264-cenc.mp4",
+            "../fixtures/mp4/h264-cbcs.mp4",
+            "../fixtures/mp4/hevc-frag.mp4",
+            "../fixtures/mp4/cmaf-av-subtitle/av-frag.mp4",
+            "../fixtures/mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
+            "../fixtures/mp4/cmaf-av-subtitle/av-aac-subtitle-frag.mp4",
+            "../fixtures/mp4/cenc-boxes/aac-cenc.mp4",
+            "../fixtures/mp4/cenc-boxes/pcm-clear.mp4",
+            "../fixtures/mp4/cenc-boxes/v1-mvhd.mp4",
+        ] {
+            let data = read_path(rel);
+            let Some(orig) = find_top_box(&data, b"moov") else {
+                continue;
+            };
+            checked += 1;
+            let moov = MovieBox::parse(orig).unwrap_or_else(|e| panic!("{rel}: {e}"));
+            let forced = {
+                let _g = ForceLargesize::on();
+                moov.try_to_bytes().unwrap()
+            };
+            assert_eq!(&forced[..4], &[0, 0, 0, 1], "{rel}");
+            let reparsed =
+                MovieBox::parse(&forced).unwrap_or_else(|e| panic!("{rel}: largesize: {e}"));
+            assert_eq!(reparsed, moov, "{rel}: tree changed through largesize");
+            assert_eq!(
+                reparsed.try_to_bytes().unwrap(),
+                orig,
+                "{rel}: not byte-identical"
+            );
+        }
+        assert!(
+            checked >= 8,
+            "fixtures went missing: only {checked} checked"
+        );
     }
 
     /// Every fixture fragment's `moof` too (traf with opaque `senc`/`saiz`/`saio`

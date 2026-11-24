@@ -17,8 +17,8 @@ use std::fs;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Unpackage};
+use isobmff::init_segment::MovieBox;
 use isobmff::movie_fragment::MovieFragmentBox;
-use transmux::init_segment::MovieBox;
 use transmux::media::{CmafMux, Fmp4Demux, Media};
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,

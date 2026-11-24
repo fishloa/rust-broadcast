@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`mp4esds`), and the AVS2/AVS3 configuration records
   (`avs2`/`avs3`/`avs3_audio`), with the real-fixture tests that exercise
   them.
+- The sample entries and the `moov` tree moved from `transmux`:
+  `init_segment` (`mvhd`, `tkhd`, `mdhd`, `hdlr`, `vmhd`/`smhd`, `dref`,
+  the sample-table boxes, `stsd`, the audio/visual/subtitle sample entries,
+  `SampleEntryVariant`, `StblChild`, `TrackBox`, `MovieBox`, `mvex`/`trex`,
+  `edts`, the AVC parameter set stream and the box-level
+  `protect_sample_entry`), `sample_entries`, `subtitle_entries`,
+  `avc_parameter_set`, `track_reference`, and the `av01`/`vp09`/`avs3`/`avst`
+  sample entries in `av1`/`vp9`/`avs3`, with their in-file and real-fixture
+  tests.
+- `sample_entries::SAMPLE_ENTRY_RESERVED_LEN` and
+  `init_segment::MediaInformationBox::set_leading_opaque_header` are public:
+  a caller above this crate builds an audio sample entry and installs an
+  opaque media header.
 - `emsg` (ISO/IEC 23009-1 §5.10.3.3, DASH-IF IOP Part 10): `EmsgBox`,
   `PresentationTime`, `EmsgVersion` and the box constants, moved from the
   absorbed `mp4-emsg` crate, plus its real-fixture tests and examples. The

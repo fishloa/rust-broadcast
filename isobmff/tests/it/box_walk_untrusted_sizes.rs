@@ -30,15 +30,15 @@ fn harness(data: &[u8]) {
     large.extend_from_slice(&((16 + body.len()) as u64).to_be_bytes());
     large.extend_from_slice(body);
     for entry in [&compact, &large] {
-        let _ = transmux::SampleDescriptionBox::parse(&stsd(entry));
+        let _ = isobmff::SampleDescriptionBox::parse(&stsd(entry));
     }
-    let _ = transmux::TrackExtendsBox::parse(data);
+    let _ = isobmff::TrackExtendsBox::parse(data);
     let _ = isobmff::cenc::SchemeInformationBox::parse(data);
     let _ = isobmff::cenc::ProtectionSchemeInfoBox::parse(data);
 }
 
 /// Verbatim libFuzzer artifact `crash-5d5150b8d59a6b21d0a75cef5cdcc296f5099750`
-/// (`transmux_sample_entries`): a child box with `largesize = u64::MAX` made
+/// (`isobmff_sample_entries`): a child box with `largesize = u64::MAX` made
 /// `find_config_box` panic on `off += size`.
 const CRASH_5D5150B8: &[u8] = &[
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -78,14 +78,14 @@ fn dref_child_with_overflowing_largesize_does_not_panic() {
     let mut body = vec![0, 0, 0, 0, 0, 0, 0, 1];
     body.extend(largesize_max_box(b"url ", &[0, 0, 0, 1]));
     let dref = full_box(b"dref", &body);
-    let _ = transmux::DataReferenceBox::parse(&dref);
+    let _ = isobmff::DataReferenceBox::parse(&dref);
 }
 
 #[test]
 fn stsd_entry_with_overflowing_largesize_does_not_panic() {
     for fourcc in FOURCCS {
         let entry = largesize_max_box(fourcc, &[0u8; 120]);
-        let _ = transmux::SampleDescriptionBox::parse(&stsd(&entry));
+        let _ = isobmff::SampleDescriptionBox::parse(&stsd(&entry));
     }
 }
 
@@ -95,7 +95,7 @@ fn sample_entry_config_child_with_overflowing_largesize_does_not_panic() {
         let mut inner = vec![0u8; 78];
         inner.extend(largesize_max_box(b"avcC", &[0u8; 8]));
         let entry = full_box(fourcc, &inner);
-        let _ = transmux::SampleDescriptionBox::parse(&stsd(&entry));
+        let _ = isobmff::SampleDescriptionBox::parse(&stsd(&entry));
     }
 }
 

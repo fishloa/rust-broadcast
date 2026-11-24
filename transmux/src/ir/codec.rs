@@ -102,9 +102,9 @@ broadcast_common::impl_spec_display!(SubtitleFormat);
 #[non_exhaustive]
 pub enum SubtitleSampleEntry {
     /// `stpp` XMLSubtitleSampleEntry (TTML/IMSC), ISO/IEC 14496-30 §7.2.
-    Ttml(crate::subtitle_entries::XmlSubtitleSampleEntry),
+    Ttml(isobmff::subtitle_entries::XmlSubtitleSampleEntry),
     /// `wvtt` WVTTSampleEntry (WebVTT), ISO/IEC 14496-30 §9.2.
-    WebVtt(crate::subtitle_entries::WvttSampleEntry),
+    WebVtt(isobmff::subtitle_entries::WvttSampleEntry),
 }
 
 /// Per-track codec configuration for the initialization segment.
@@ -228,7 +228,7 @@ pub enum CodecConfig {
     ///
     /// Use `mha1` for raw MHAS frames (config in `mhaC`).  For in-band MHAS
     /// (`mhm1`) the caller should convert the `codec_type` on the resulting
-    /// [`MhaSampleEntry`](crate::init_segment::MhaSampleEntry) if needed;
+    /// [`MhaSampleEntry`](isobmff::init_segment::MhaSampleEntry) if needed;
     /// `build_trak` always emits `mha1`.
     MpegH {
         /// The `MHADecoderConfigurationRecord` carried in the `mhaC` box.

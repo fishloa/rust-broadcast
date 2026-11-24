@@ -94,11 +94,11 @@ use isobmff::box_types::{
 // `crate::cenc` (issue #564 — one shared definition for decrypt/encrypt/IR).
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
-use crate::init_segment::{ChunkLargeOffsetBox, ChunkOffsetBox, SampleSizeBox, SampleToChunkBox};
 use crate::media::Media;
 use crate::progressive_demux::sample_layout;
 pub use broadcast_common::cenc::CencScheme;
 use isobmff::cenc::{KEY_LEN, SampleEncryptionEntry, TrackEncryptionBox};
+use isobmff::init_segment::{ChunkLargeOffsetBox, ChunkOffsetBox, SampleSizeBox, SampleToChunkBox};
 use isobmff::movie_fragment::{
     MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TrackFragmentHeaderBox, TrackFragmentRunBox,
 };
@@ -549,7 +549,7 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
     }
 
     let tkhd = find_child_box(trak, b"tkhd").ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
-    let track_id = crate::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
+    let track_id = isobmff::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
 
     let samples = if fragmented {
         // Filled in later by `harvest_fragment_senc`, once every `moof` has
@@ -564,7 +564,7 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
     };
 
     Ok(Some(TrackCrypto {
-        track_id,
+        track_id: track_id.into(),
         tenc,
         original_format,
         scheme,
@@ -824,10 +824,10 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
 
         let tkhd =
             find_child_box(trak, b"tkhd").ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
-        let track_id = crate::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
+        let track_id = isobmff::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
 
         let samples = if fragmented {
-            collect_fragment_samples(file, track_id)?
+            collect_fragment_samples(file, track_id.into())?
         } else {
             // Sample byte layout from stsz + stsc + stco (contiguous chunks).
             let layout = progressive_sample_layout(stbl, file.len())?;
@@ -856,7 +856,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
 
         tracks.push(Track::new(
             TrackSpec::new(
-                track_id,
+                track_id.into(),
                 timescale,
                 CodecConfig::Avc {
                     config: AVCConfigurationBox::new(avc_config),

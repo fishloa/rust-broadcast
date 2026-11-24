@@ -14,18 +14,19 @@
 //!
 //! The fixture is real, tool-generated media — see
 //! `../fixtures/mp4/cmaf-av-subtitle/PROVENANCE.md`.
+use isobmff::{Error, TrackId};
 
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::{Parse, Serialize};
+use isobmff::MovieBox;
 use isobmff::box_support::OpaqueBox;
-use isobmff::timing::EditListEntry;
-use transmux::init_segment::{
+use isobmff::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, AudioSampleEntryV1, DataInformationBox, DtsSampleEntry,
     Ec3SampleEntry, FlacSampleEntry, MediaBox, MediaInformationBox, MhaSampleEntry,
     Mp4aSampleEntry, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant, SampleTableBox,
     StblChild, TrackBox,
 };
-use transmux::{Error, MovieBox, TrackId};
+use isobmff::timing::EditListEntry;
 
 /// Find a top-level box by type and return its full bytes (header + body).
 fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
@@ -324,7 +325,7 @@ fn moov_round_trip_is_mp4box_readable() {
 #[test]
 fn truncated_sample_tables_are_rejected() {
     use broadcast_common::Parse;
-    use transmux::{
+    use isobmff::{
         ChunkOffsetBox, SampleDescriptionBox, SampleSizeBox, SampleToChunkBox, SyncSampleBox,
     };
 
@@ -366,7 +367,7 @@ fn truncated_sample_tables_are_rejected() {
     co64[..4].copy_from_slice(&16u32.to_be_bytes());
     co64[4..8].copy_from_slice(b"co64");
     co64[12..16].copy_from_slice(&2u32.to_be_bytes());
-    let err = transmux::ChunkLargeOffsetBox::parse(&co64).expect_err("truncated co64");
+    let err = isobmff::ChunkLargeOffsetBox::parse(&co64).expect_err("truncated co64");
     assert_label(&err, "ChunkLargeOffsetBox.entry_count");
 
     // stsd: count 2 with no entries at all.
@@ -398,7 +399,7 @@ fn assert_label(err: &Error, expected: &str) {
 #[test]
 fn complete_sample_tables_still_parse() {
     use broadcast_common::Parse;
-    use transmux::ChunkOffsetBox;
+    use isobmff::ChunkOffsetBox;
 
     let mut stco = vec![0u8; 24];
     stco[..4].copy_from_slice(&24u32.to_be_bytes());
@@ -620,7 +621,7 @@ fn moof_size_zero_child_written_explicitly_when_not_last() {
 
     let tfhd = TrackFragmentHeaderBox {
         flags: 0,
-        track_id: TrackId::new(1).into(),
+        track_id: TrackId::new(1),
         base_data_offset: None,
         sample_description_index: None,
         default_sample_duration: None,
@@ -982,7 +983,7 @@ fn edts_opaque_child_keeps_wire_order_and_length() {
             body.extend_from_slice(child);
         }
         let bytes = boxed(b"edts", &body);
-        let parsed = transmux::init_segment::EditBox::parse(&bytes).expect(label);
+        let parsed = isobmff::init_segment::EditBox::parse(&bytes).expect(label);
         assert!(parsed.elst.is_some(), "{label}: elst typed");
         assert_eq!(parsed.opaque.len(), 1, "{label}: one opaque child");
         assert_round_trips(&parsed, &bytes);

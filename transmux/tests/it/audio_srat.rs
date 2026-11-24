@@ -25,7 +25,7 @@ use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use isobmff::FlacSpecificBox;
-use transmux::init_segment::{
+use isobmff::init_segment::{
     AudioSampleEntryV1, FlacSampleEntry, Mp4aSampleEntry, SampleDescriptionBox, SampleEntryVariant,
     SamplingRateBox,
 };
@@ -523,7 +523,7 @@ fn truncated_srat_is_rejected() {
     let short = [0u8, 0, 0, 16, b's', b'r', b'a', b't', 0, 0, 0];
     assert!(matches!(
         SamplingRateBox::parse(&short),
-        Err(transmux::error::Error::BufferTooShort(..))
+        Err(isobmff::Error::BufferTooShort(..))
     ));
     // Every shorter prefix too, down to empty.
     let full = {
@@ -536,7 +536,7 @@ fn truncated_srat_is_rejected() {
         assert!(
             matches!(
                 SamplingRateBox::parse(&full[..n]),
-                Err(transmux::error::Error::BufferTooShort(..))
+                Err(isobmff::Error::BufferTooShort(..))
             ),
             "a {n}-byte prefix must be rejected"
         );
@@ -553,7 +553,7 @@ fn srat_parser_rejects_a_foreign_four_cc() {
     buf[12..16].copy_from_slice(&192_000u32.to_be_bytes());
     assert!(matches!(
         SamplingRateBox::parse(&buf),
-        Err(transmux::error::Error::InvalidInput(..))
+        Err(isobmff::Error::InvalidInput(..))
     ));
     // The same bytes with the right four-CC do parse.
     buf[4..8].copy_from_slice(b"srat");
@@ -567,7 +567,7 @@ fn srat_parser_rejects_a_foreign_four_cc() {
 /// in force — never replacing a good rate with 0.
 #[test]
 fn a_zero_or_malformed_srat_falls_back_to_the_16_16_field() {
-    use transmux::init_segment::sampling_rate_override;
+    use isobmff::init_segment::sampling_rate_override;
 
     // A zero-rate `srat`: ignored.
     let zero = {

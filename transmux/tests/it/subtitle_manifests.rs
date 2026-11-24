@@ -16,11 +16,9 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
+use isobmff::{WvttSampleEntry, XmlSubtitleSampleEntry};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
-use transmux::{
-    DashPackager, Fmp4Demux, Media, Sample, SmoothPackager, Track, TrackId, TrackSpec,
-    WvttSampleEntry, XmlSubtitleSampleEntry,
-};
+use transmux::{DashPackager, Fmp4Demux, Media, Sample, SmoothPackager, Track, TrackId, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -193,7 +191,7 @@ fn stpp_namespace_without_a_nul_reports_the_missing_terminator_need() {
     bytes.extend_from_slice(b"stpp");
     bytes.extend_from_slice(&body);
     match XmlSubtitleSampleEntry::bare_parse(&bytes) {
-        Err(transmux::error::Error::BufferTooShort(e)) => {
+        Err(isobmff::Error::BufferTooShort(e)) => {
             assert_eq!(e.need, body.len() + 1, "the NUL byte is part of need");
             assert_eq!(e.have, body.len());
             assert_eq!(e.what, "null-terminated string");

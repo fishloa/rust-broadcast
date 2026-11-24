@@ -8,13 +8,13 @@
 //! parameter set sample is made of that record's own SPS and PPS.
 //!
 //! Spec input: `private/specs-verified/mpeg/isobmff/iso-iec-14496-15-2017-avc-hevc-config.md`.
+use isobmff::{Error, TrackId};
 
 use broadcast_common::error::InvalidValue;
 use broadcast_common::{Parse, Serialize};
-use transmux::avc_parameter_set::{AVCP_SAMPLE_ENTRY, AVCParameterSample, AVCParameterSampleEntry};
-use transmux::init_segment::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
-use transmux::track_reference::{AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox};
-use transmux::{Error, TrackId};
+use isobmff::avc_parameter_set::{AVCP_SAMPLE_ENTRY, AVCParameterSample, AVCParameterSampleEntry};
+use isobmff::init_segment::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
+use isobmff::track_reference::{AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox};
 
 const TREF_FILE: &str = "mp4/tref-avcp.mp4";
 const AVC_FILE: &str = "mp4/progressive/av-prog.mp4";
@@ -81,7 +81,7 @@ fn a_tref_with_a_partial_track_id_is_rejected() {
     ));
 }
 
-fn avc1_entry() -> transmux::sample_entries::AVCSampleEntry {
+fn avc1_entry() -> isobmff::sample_entries::AVCSampleEntry {
     let file = test_fixtures::read(AVC_FILE);
     let stsd = SampleDescriptionBox::parse(find_box(&file, b"stsd")).expect("stsd");
     match stsd.entries.into_iter().next() {
