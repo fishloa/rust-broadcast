@@ -13,6 +13,7 @@ mod init_segment;
 mod init_segment_sweep;
 mod largesize_truncation;
 mod sample_bytes_budget;
+mod sample_table;
 mod short_buffers;
 mod timing;
 mod timing_groups;

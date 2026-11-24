@@ -32,6 +32,11 @@
 //! - [`segments`], [`timing`], [`visual_ext`], [`cenc`], [`sample_groups`],
 //!   [`movie_fragment`], [`frag_offsets`] — the box set and the §8.8.7/§8.8.8
 //!   fragment sample-offset resolver.
+//! - [`limits`] — the hostile-input caps every count or size read from a file
+//!   is checked against before anything is allocated.
+//! - [`sample_table`] — [`TrackCursor`], the lazy per-track walk over the
+//!   `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss` tables, and the
+//!   run-length table builders.
 //! - [`avc_config`], [`hevc_config`], [`vvc_config`], [`nalu_types`], [`av1`],
 //!   [`vp9`], [`mp4esds`], [`ac3`], [`ac4`], [`dts`], [`flac`], [`opus`],
 //!   [`mpegh`], [`dovi`], [`hdr_boxes`], [`avs2`], [`avs3`], [`avs3_audio`] —
@@ -80,6 +85,7 @@ pub mod frag_offsets;
 pub mod hdr_boxes;
 pub mod hevc_config;
 pub mod init_segment;
+pub mod limits;
 pub mod movie_fragment;
 pub mod mp4esds;
 pub mod mpegh;
@@ -87,6 +93,7 @@ pub mod nalu_types;
 pub mod opus;
 pub mod sample_entries;
 pub mod sample_groups;
+pub mod sample_table;
 pub mod segments;
 pub mod subtitle_entries;
 pub mod timing;
@@ -128,14 +135,15 @@ pub use hdr_boxes::{
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, AudioSampleEntryV1, ChunkLargeOffsetBox, ChunkOffsetBox,
-    DataEntry, DataEntryImdaBox, DataEntrySeqNumImdaBox, DataEntryUrlBox, DataEntryUrnBox,
-    DataInformationBox, DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry,
-    HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox,
-    MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpusSampleEntry, SampleDescriptionBox,
-    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SamplingRateBox,
-    SoundMediaHeaderBox, StblChild, StscEntry, SyncSampleBox, TrackBox, TrackExtendsBox,
-    TrackHeaderBox, VideoMediaHeaderBox,
+    CompactSampleSizeBox, DataEntry, DataEntryImdaBox, DataEntrySeqNumImdaBox, DataEntryUrlBox,
+    DataEntryUrnBox, DataInformationBox, DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox,
+    FlacSampleEntry, HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry,
+    MovieBox, MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpusSampleEntry,
+    SampleDependencyTypeBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox,
+    SampleTableBox, SampleToChunkBox, SamplingRateBox, SoundMediaHeaderBox, StblChild, StscEntry,
+    SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
+pub use limits::Limits;
 pub use mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,
     OTI_MPEG2_AUDIO, OTI_MPEG4_AUDIO, ObjectTypeIndication, SLConfigDescriptor, STREAM_TYPE_AUDIO,
@@ -154,6 +162,7 @@ pub use sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VVCSampleEntry,
     VisualSampleEntryFields,
 };
+pub use sample_table::{SampleRef, TrackCursor, build_ctts, build_stsc, build_stss, build_stts};
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
     WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, XmlSubtitleSampleEntry,

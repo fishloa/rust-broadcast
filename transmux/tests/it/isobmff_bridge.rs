@@ -100,6 +100,22 @@ fn every_isobmff_error_maps_to_its_transmux_variant() {
              (overlapping chunks, runs or fragments?)",
         ),
         (
+            I::LimitExceeded {
+                what: "samples per track",
+                limit: 5,
+            },
+            |e| {
+                matches!(
+                    e,
+                    T::LimitExceeded {
+                        what: "samples per track",
+                        limit: 5
+                    }
+                )
+            },
+            "samples per track exceeds the configured limit of 5",
+        ),
+        (
             I::FieldOverflow(FieldOverflow {
                 field: "f",
                 value: 9,

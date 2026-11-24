@@ -95,18 +95,15 @@ use isobmff::box_types::{
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::media::Media;
-use crate::progressive_demux::sample_layout;
 pub use broadcast_common::cenc::CencScheme;
 use isobmff::cenc::{KEY_LEN, SENC, SINF, SampleEncryptionEntry, TrackEncryptionBox};
-use isobmff::init_segment::{
-    ChunkLargeOffsetBox, ChunkOffsetBox, MDIA, MINF, MOOV, MVHD, STBL, STSD, SampleSizeBox,
-    SampleToChunkBox, TKHD, TRAK,
-};
+use isobmff::init_segment::{MDIA, MINF, MOOV, MVHD, STBL, STSD, SampleTableBox, TKHD, TRAK};
 use isobmff::movie_fragment::{
     MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TFHD, TRAF, TRUN, TrackFragmentHeaderBox,
     TrackFragmentRunBox,
 };
 use isobmff::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
+use isobmff::sample_table::TrackCursor;
 use isobmff::segments::{MDAT, MOOF};
 
 /// A map of content keys, keyed by 16-byte Key ID (KID).
@@ -1119,30 +1116,27 @@ fn header_timescale(header: &[u8], expected: &'static str) -> Result<Timescale> 
 
 /// Each sample's `(absolute_file_offset, size)` from a progressive `stbl`.
 ///
-/// Parses `stsz`/`stsc`/`stco`/`co64` with the typed box parsers (which bound
-/// every wire count against the bytes present) and expands them through the
-/// one shared [`sample_layout`] (audit r05-O1 / #1141 — this module used to
-/// carry its own raw-byte expander, which ignored `co64`). `file_len` bounds
-/// the declared `sample_count`: no sample occupies fewer than one byte of the
-/// file (ISO/IEC 14496-12:2026 §8.7.3), so a larger count is rejected before
-/// anything allocates (r05-C4).
+/// Parses the whole `stbl` into its typed children and walks them through
+/// [`TrackCursor`], so `co64` is honoured and every wire count is bounded
+/// before it can drive an allocation (audit r05-O1 / #1141, r05-C4).
 fn progressive_sample_layout(stbl: &[u8], file_len: usize) -> Result<Vec<(usize, usize)>> {
-    let stsz = SampleSizeBox::parse(
-        find_box(box_body(stbl, 0, "stbl body")?, b"stsz")
-            .ok_or(Error::UnexpectedBox { expected: "stsz" })?,
+    let table = SampleTableBox::parse(stbl)?;
+    let file_len =
+        u64::try_from(file_len).map_err(|_| Error::InvalidInput("file length exceeds u64"))?;
+    let cursor = TrackCursor::new(
+        &table,
+        isobmff::TrackId::new(0),
+        &isobmff::Limits::default(),
+        Some(file_len),
     )?;
-    let stsc = SampleToChunkBox::parse(
-        find_box(box_body(stbl, 0, "stbl body")?, b"stsc")
-            .ok_or(Error::UnexpectedBox { expected: "stsc" })?,
-    )?;
-    let stbl_body = box_body(stbl, 0, "stbl body")?;
-    let stco = find_box(stbl_body, b"stco")
-        .map(ChunkOffsetBox::parse)
-        .transpose()?;
-    let co64 = find_box(stbl_body, b"co64")
-        .map(ChunkLargeOffsetBox::parse)
-        .transpose()?;
-    sample_layout(&stsz, &stsc, co64.as_ref(), stco.as_ref(), file_len)
+    let mut layout = Vec::with_capacity(usize::try_from(cursor.len()).unwrap_or(0));
+    for item in cursor {
+        let sample = item?;
+        let offset = usize::try_from(sample.offset)
+            .map_err(|_| Error::InvalidInput("sample offset exceeds addressable range"))?;
+        layout.push((offset, sample.size as usize));
+    }
+    Ok(layout)
 }
 
 #[cfg(test)]
@@ -1190,6 +1184,14 @@ mod tests {
         b
     }
 
+    /// A single-run `stts` with the given per-sample delta.
+    fn stts_box(count: u32, delta: u32) -> Vec<u8> {
+        let mut entries = Vec::new();
+        entries.extend_from_slice(&count.to_be_bytes());
+        entries.extend_from_slice(&delta.to_be_bytes());
+        full_box(b"stts", &entries, 1)
+    }
+
     /// r05-O1: one entry per chunk; the shared expander must lay samples out
     /// at each chunk's `stco` offset.
     #[test]
@@ -1204,6 +1206,7 @@ mod tests {
             stco.extend_from_slice(&(c * 100).to_be_bytes());
         }
         let stbl = stbl_with(&[
+            stts_box(CHUNKS, 10),
             stsz_box(10, CHUNKS),
             full_box(b"stsc", &stsc, CHUNKS),
             full_box(b"stco", &stco, CHUNKS),
@@ -1225,6 +1228,7 @@ mod tests {
         stsc.extend_from_slice(&1u32.to_be_bytes());
         let co64 = 0x1_0000u64.to_be_bytes();
         let stbl = stbl_with(&[
+            stts_box(2, 1),
             stsz_box(7, 2),
             full_box(b"stsc", &stsc, 1),
             full_box(b"co64", &co64, 1),
@@ -1238,6 +1242,7 @@ mod tests {
     #[test]
     fn stbl_layout_rejects_sample_count_above_file_length() {
         let stbl = stbl_with(&[
+            stts_box(1, 1),
             stsz_box(1, u32::MAX),
             full_box(b"stsc", &[], 0),
             full_box(b"stco", &[], 0),
@@ -1263,6 +1268,7 @@ mod tests {
             stco.extend_from_slice(&0u32.to_be_bytes());
         }
         let stbl = stbl_with(&[
+            stts_box(4, 1),
             stsz_box(64, 4),
             full_box(b"stsc", &stsc, 1),
             full_box(b"stco", &stco, 4),

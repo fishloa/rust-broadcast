@@ -2013,6 +2013,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-alloc",
  "test-fixtures",
  "thiserror 2.0.21",
 ]

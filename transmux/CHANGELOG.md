@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `Error::LimitExceeded { what, limit }`, reporting a count or size read from
+  the input that exceeded an `isobmff::Limits` cap before anything was
+  allocated from it; it is the variant `isobmff::Error::LimitExceeded` maps
+  onto.
 - `nal::NAL_TYPE_MASK` (the 5-bit H.264 `nal_unit_type` mask of ITU-T H.264 §7.3.1) and `cenc::KEY_LEN` (the AES-128 content-key width) are the one definitions of those values, exported from the modules that own them; `sample_aes::NAL_TYPE_MASK` keeps its existing path as a re-export; `sample_aes::KEY_LEN` no longer does (see Breaking).
 
 ### Changed
+- Internal: the progressive demuxer and the protected-progressive path read
+  their sample tables through `isobmff::sample_table::TrackCursor` instead of
+  local expanders, and the progressive muxer uses `isobmff::sample_table`'s
+  table builders. Output is unchanged; the per-sample tables are no longer
+  expanded into one vector entry per sample.
 - Internal: the crate keeps one definition of each shared constant instead of a per-module copy — the box/full-box header widths, four-CC length and flag mask in `box_types`, the NAL header widths, type masks and parameter-set types in `nal`/`nalu_types`, the key width in `cenc`, and a new crate-private `units` module for the kilobit and round-to-nearest divisors. Byte-width constants are now `size_of::<T>()`/`T::BITS` at the use site. No output, behaviour or public signature changes.
 
 ### Breaking

@@ -1665,6 +1665,313 @@ impl Serialize for SyncSampleBox {
 }
 
 // ---------------------------------------------------------------------------
+// CompactSampleSizeBox — stz2 (ISO/IEC 14496-12:2026 §8.7.3.3)
+// ---------------------------------------------------------------------------
+
+/// `stz2` reserved-field length before `field_size` (§8.7.3.3.1).
+const STZ2_RESERVED_LEN: usize = 3;
+/// Byte offset of `stz2` `field_size` (§8.7.3.3.1).
+const STZ2_FIELD_SIZE_OFFSET: usize = FULLBOX_BODY_OFFSET + STZ2_RESERVED_LEN;
+/// Byte offset of `stz2` `sample_count` (§8.7.3.3.1).
+const STZ2_SAMPLE_COUNT_OFFSET: usize = STZ2_FIELD_SIZE_OFFSET + 1;
+/// Length of the `stz2` header before its size entries (§8.7.3.3.1).
+const STZ2_PREFIX_LEN: usize = STZ2_SAMPLE_COUNT_OFFSET + core::mem::size_of::<u32>();
+/// Bits in one byte.
+const STZ2_BITS_PER_BYTE: usize = u8::BITS as usize;
+/// Shift that places the first 4-bit entry in a packed byte's high nibble (§8.7.3.3.2).
+const STZ2_HIGH_NIBBLE_SHIFT: u32 = 4;
+/// Mask of one 4-bit packed entry.
+const STZ2_NIBBLE_MASK: u8 = 0x0F;
+/// Entries packed into one byte when `field_size` is 4 (§8.7.3.3.2).
+const STZ2_ENTRIES_PER_NIBBLE_BYTE: usize = 2;
+
+/// The `stz2` `field_size` values the spec allows (§8.7.3.3.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompactFieldSize {
+    Bits4,
+    Bits8,
+    Bits16,
+}
+
+impl CompactFieldSize {
+    fn parse(field_size: u8) -> Result<Self> {
+        match field_size {
+            4 => Ok(Self::Bits4),
+            8 => Ok(Self::Bits8),
+            16 => Ok(Self::Bits16),
+            _ => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "stz2.field_size",
+                value: u64::from(field_size),
+                reason: "field_size must be 4, 8 or 16 (ISO/IEC 14496-12:2026 §8.7.3.3.2)",
+            })),
+        }
+    }
+
+    const fn bits(self) -> u32 {
+        match self {
+            Self::Bits4 => 4,
+            Self::Bits8 => 8,
+            Self::Bits16 => 16,
+        }
+    }
+
+    /// Bytes needed to pack `count` entries at this width.
+    fn packed_len(self, count: usize) -> usize {
+        let total_bits = count.saturating_mul(self.bits() as usize);
+        total_bits.div_ceil(STZ2_BITS_PER_BYTE)
+    }
+}
+
+/// Compact Sample Size Box (`stz2`) — ISO/IEC 14496-12:2026 §8.7.3.3.
+///
+/// The compact sibling of [`SampleSizeBox`]: every entry is `field_size`
+/// (4, 8 or 16) bits wide, and two 4-bit entries share one byte with the first
+/// entry in the high nibble (§8.7.3.3.2). `entries` holds each size widened to
+/// a `u32`, so a caller reads the same values whichever size table the file
+/// chose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct CompactSampleSizeBox {
+    pub version: u8,
+    pub flags: u32,
+    /// Width of one size entry in bits: 4, 8 or 16 (§8.7.3.3.2).
+    pub field_size: u8,
+    pub sample_count: u32,
+    pub entries: Vec<u32>,
+}
+
+impl<'a> Parse<'a> for CompactSampleSizeBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
+        need_in(bytes, STZ2_PREFIX_LEN, "stz2")?;
+        let version = bytes[FLAT_TABLE_VERSION_OFFSET];
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
+        let field_size = bytes[STZ2_FIELD_SIZE_OFFSET];
+        let size = CompactFieldSize::parse(field_size)?;
+        let count = u32_at(bytes, STZ2_SAMPLE_COUNT_OFFSET) as usize;
+        let payload = &bytes[STZ2_PREFIX_LEN..];
+        let needed = size.packed_len(count);
+        if needed > payload.len() {
+            return Err(Error::BufferTooShort(BufferTooShort {
+                need: STZ2_PREFIX_LEN.saturating_add(needed),
+                have: bytes.len(),
+                what: "stz2 sample sizes",
+            }));
+        }
+        let payload = &payload[..needed];
+        let entries: Vec<u32> = match size {
+            CompactFieldSize::Bits4 => payload
+                .iter()
+                .flat_map(|&b| {
+                    [
+                        u32::from(b >> STZ2_HIGH_NIBBLE_SHIFT),
+                        u32::from(b & STZ2_NIBBLE_MASK),
+                    ]
+                })
+                .take(count)
+                .collect(),
+            CompactFieldSize::Bits8 => payload.iter().take(count).map(|&b| u32::from(b)).collect(),
+            CompactFieldSize::Bits16 => payload
+                .chunks_exact(core::mem::size_of::<u16>())
+                .take(count)
+                .map(|c| u32::from(u16::from_be_bytes([c[0], c[1]])))
+                .collect(),
+        };
+        Ok(Self {
+            version,
+            flags,
+            field_size,
+            sample_count: count as u32,
+            entries,
+        })
+    }
+}
+
+impl Serialize for CompactSampleSizeBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        let total_bits = self
+            .entries
+            .len()
+            .saturating_mul(usize::from(self.field_size));
+        crate::box_types::box_len(STZ2_PREFIX_LEN + total_bits.div_ceil(STZ2_BITS_PER_BYTE))
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        if self.entries.len() != self.sample_count as usize {
+            return Err(Error::InvalidInput(
+                "stz2: entries.len() must equal sample_count",
+            ));
+        }
+        let size = CompactFieldSize::parse(self.field_size)?;
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_full_box_header(
+            buf,
+            b"stz2",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
+        buf[c..c + STZ2_RESERVED_LEN].fill(0);
+        c += STZ2_RESERVED_LEN;
+        buf[c] = self.field_size;
+        c += 1;
+        let u32_len = core::mem::size_of::<u32>();
+        buf[c..c + u32_len].copy_from_slice(&self.sample_count.to_be_bytes());
+        c += u32_len;
+        match size {
+            CompactFieldSize::Bits4 => {
+                for pair in self.entries.chunks(STZ2_ENTRIES_PER_NIBBLE_BYTE) {
+                    let high = broadcast_common::len::fit_bits(
+                        u64::from(pair[0]),
+                        size.bits(),
+                        "stz2.entry_size",
+                    )? as u8;
+                    let low = match pair.get(1) {
+                        Some(&value) => broadcast_common::len::fit_bits(
+                            u64::from(value),
+                            size.bits(),
+                            "stz2.entry_size",
+                        )? as u8,
+                        None => 0,
+                    };
+                    buf[c] = (high << STZ2_HIGH_NIBBLE_SHIFT) | low;
+                    c += 1;
+                }
+            }
+            CompactFieldSize::Bits8 => {
+                for &value in &self.entries {
+                    buf[c] = broadcast_common::len::fit_bits(
+                        u64::from(value),
+                        size.bits(),
+                        "stz2.entry_size",
+                    )? as u8;
+                    c += 1;
+                }
+            }
+            CompactFieldSize::Bits16 => {
+                let u16_len = core::mem::size_of::<u16>();
+                for &value in &self.entries {
+                    let wide = broadcast_common::len::fit_bits(
+                        u64::from(value),
+                        size.bits(),
+                        "stz2.entry_size",
+                    )? as u16;
+                    buf[c..c + u16_len].copy_from_slice(&wide.to_be_bytes());
+                    c += u16_len;
+                }
+            }
+        }
+        Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SampleDependencyTypeBox — sdtp (ISO/IEC 14496-12:2026 §8.6.4)
+// ---------------------------------------------------------------------------
+
+/// `sdtp` shortest prefix: the Box header plus the FullBox version/flags.
+const SDTP_MIN_LEN: usize = FULLBOX_BODY_OFFSET;
+/// Shift of the `is_leading` field in an `sdtp` sample byte (§8.6.4.2).
+const SDTP_IS_LEADING_SHIFT: u8 = 6;
+/// Shift of the `sample_depends_on` field in an `sdtp` sample byte (§8.6.4.2).
+const SDTP_SAMPLE_DEPENDS_ON_SHIFT: u8 = 4;
+/// Shift of the `sample_is_depended_on` field in an `sdtp` sample byte (§8.6.4.2).
+const SDTP_SAMPLE_IS_DEPENDED_ON_SHIFT: u8 = 2;
+/// Shift of the `sample_has_redundancy` field in an `sdtp` sample byte (§8.6.4.2).
+const SDTP_SAMPLE_HAS_REDUNDANCY_SHIFT: u8 = 0;
+/// Mask of one 2-bit `sdtp` field (§8.6.4.2).
+const SDTP_FIELD_MASK: u8 = 0x03;
+
+/// Sample Dependency Type Box (`sdtp`) — ISO/IEC 14496-12:2026 §8.6.4.
+///
+/// One byte per sample, four 2-bit fields (§8.6.4.2). The table's length is the
+/// size of the box, so it carries no count of its own; `entries.len()` is the
+/// sample count the size table declared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SampleDependencyTypeBox {
+    pub version: u8,
+    pub flags: u32,
+    /// One packed dependency byte per sample (§8.6.4.2).
+    pub entries: Vec<u8>,
+}
+
+impl SampleDependencyTypeBox {
+    fn field(&self, sample: u32, shift: u8) -> Option<u8> {
+        let byte = *self.entries.get(usize::try_from(sample).ok()?)?;
+        Some((byte >> shift) & SDTP_FIELD_MASK)
+    }
+
+    /// The `is_leading` value of sample `sample` (§8.6.4.3), or `None` past the
+    /// table.
+    #[must_use]
+    pub fn is_leading(&self, sample: u32) -> Option<u8> {
+        self.field(sample, SDTP_IS_LEADING_SHIFT)
+    }
+
+    /// The `sample_depends_on` value of sample `sample` (§8.6.4.3), or `None`
+    /// past the table.
+    #[must_use]
+    pub fn sample_depends_on(&self, sample: u32) -> Option<u8> {
+        self.field(sample, SDTP_SAMPLE_DEPENDS_ON_SHIFT)
+    }
+
+    /// The `sample_is_depended_on` value of sample `sample` (§8.6.4.3), or
+    /// `None` past the table.
+    #[must_use]
+    pub fn sample_is_depended_on(&self, sample: u32) -> Option<u8> {
+        self.field(sample, SDTP_SAMPLE_IS_DEPENDED_ON_SHIFT)
+    }
+
+    /// The `sample_has_redundancy` value of sample `sample` (§8.6.4.3), or
+    /// `None` past the table.
+    #[must_use]
+    pub fn sample_has_redundancy(&self, sample: u32) -> Option<u8> {
+        self.field(sample, SDTP_SAMPLE_HAS_REDUNDANCY_SHIFT)
+    }
+}
+
+impl<'a> Parse<'a> for SampleDependencyTypeBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
+        need_in(bytes, SDTP_MIN_LEN, "sdtp")?;
+        Ok(Self {
+            version: bytes[FLAT_TABLE_VERSION_OFFSET],
+            flags: u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET),
+            entries: bytes[SDTP_MIN_LEN..].to_vec(),
+        })
+    }
+}
+
+impl Serialize for SampleDependencyTypeBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(FULLBOX_BODY_OFFSET + self.entries.len())
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_full_box_header(
+            buf,
+            b"sdtp",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
+        buf[c..c + self.entries.len()].copy_from_slice(&self.entries);
+        c += self.entries.len();
+        Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SampleDescriptionBox — stsd (ISO/IEC 14496-12:2026 §8.5.2)
 // ---------------------------------------------------------------------------
 
@@ -2876,6 +3183,8 @@ pub enum StblChild {
     Ctts(crate::timing::CompositionOffsetBox),
     Stsc(SampleToChunkBox),
     Stsz(SampleSizeBox),
+    Stz2(CompactSampleSizeBox),
+    Sdtp(SampleDependencyTypeBox),
     Stco(ChunkOffsetBox),
     Co64(ChunkLargeOffsetBox),
     Stss(SyncSampleBox),
@@ -2930,6 +3239,14 @@ fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
                 Ok(b) => StblChild::Stsz(b),
                 Err(_) => StblChild::Opaque(box_bytes.to_vec()),
             },
+            b"stz2" => match CompactSampleSizeBox::parse(box_bytes) {
+                Ok(b) => StblChild::Stz2(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
+            b"sdtp" => match SampleDependencyTypeBox::parse(box_bytes) {
+                Ok(b) => StblChild::Sdtp(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
             b"stco" => match ChunkOffsetBox::parse(box_bytes) {
                 Ok(b) => StblChild::Stco(b),
                 Err(_) => StblChild::Opaque(box_bytes.to_vec()),
@@ -2956,6 +3273,8 @@ fn serialize_stbl_children(children: &[StblChild], buf: &mut [u8], off: &mut usi
             StblChild::Ctts(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Stsc(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Stsz(b) => *off += b.serialize_into(&mut buf[*off..])?,
+            StblChild::Stz2(b) => *off += b.serialize_into(&mut buf[*off..])?,
+            StblChild::Sdtp(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Stco(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Co64(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Stss(b) => *off += b.serialize_into(&mut buf[*off..])?,
@@ -2978,6 +3297,8 @@ fn stbl_children_len(children: &[StblChild]) -> usize {
             StblChild::Ctts(b) => b.serialized_len(),
             StblChild::Stsc(b) => b.serialized_len(),
             StblChild::Stsz(b) => b.serialized_len(),
+            StblChild::Stz2(b) => b.serialized_len(),
+            StblChild::Sdtp(b) => b.serialized_len(),
             StblChild::Stco(b) => b.serialized_len(),
             StblChild::Co64(b) => b.serialized_len(),
             StblChild::Stss(b) => b.serialized_len(),
@@ -4945,5 +5266,179 @@ mod tests {
             );
             assert_eq!(&clean[28..32], &[0u8; 4], "{fourcc:?}: predefined+reserved");
         }
+    }
+}
+
+#[cfg(test)]
+mod compact_size_and_dependency_tests {
+    use super::*;
+    use broadcast_common::Serialize;
+
+    fn stz2_box(field_size: u8, sample_count: u32, payload: &[u8]) -> Vec<u8> {
+        let len = STZ2_PREFIX_LEN + payload.len();
+        let mut out = Vec::with_capacity(len);
+        out.extend_from_slice(&(len as u32).to_be_bytes());
+        out.extend_from_slice(b"stz2");
+        out.extend_from_slice(&[0u8; FULLBOX_EXTRA_SIZE]);
+        out.extend_from_slice(&[0u8; STZ2_RESERVED_LEN]);
+        out.push(field_size);
+        out.extend_from_slice(&sample_count.to_be_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn assert_stz2_round_trip(field_size: u8, entries: &[u32], payload: &[u8]) {
+        let bytes = stz2_box(field_size, entries.len() as u32, payload);
+        let parsed = CompactSampleSizeBox::parse(&bytes).expect("a well-formed stz2");
+        assert_eq!(parsed.field_size, field_size);
+        assert_eq!(parsed.sample_count, entries.len() as u32);
+        assert_eq!(parsed.entries, entries);
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        let written = parsed.serialize_into(&mut out).expect("serialize");
+        assert_eq!(written, out.len());
+        assert_eq!(out, bytes);
+    }
+
+    #[test]
+    fn stz2_round_trips_at_each_field_size() {
+        // Two 4-bit entries share one byte, the first in the high nibble; an
+        // odd count pads the last byte with zeros (§8.7.3.3.2).
+        assert_stz2_round_trip(4, &[1, 15, 7], &[0x1F, 0x70]);
+        assert_stz2_round_trip(8, &[200, 3], &[200, 3]);
+        assert_stz2_round_trip(16, &[1000, 65535], &[0x03, 0xE8, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn stz2_rejects_an_unsupported_field_size() {
+        let bytes = stz2_box(5, 1, &[0]);
+        assert!(matches!(
+            CompactSampleSizeBox::parse(&bytes),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "stz2.field_size",
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn stz2_rejects_a_truncated_size_table() {
+        let bytes = stz2_box(16, 2, &[0, 1]);
+        assert!(matches!(
+            CompactSampleSizeBox::parse(&bytes),
+            Err(Error::BufferTooShort(_))
+        ));
+    }
+
+    fn sdtp_box(entries: &[u8]) -> Vec<u8> {
+        let len = FULLBOX_BODY_OFFSET + entries.len();
+        let mut out = Vec::with_capacity(len);
+        out.extend_from_slice(&(len as u32).to_be_bytes());
+        out.extend_from_slice(b"sdtp");
+        out.extend_from_slice(&[0u8; FULLBOX_EXTRA_SIZE]);
+        out.extend_from_slice(entries);
+        out
+    }
+
+    fn find_sdtp_box(file: &[u8]) -> Option<&[u8]> {
+        let needle = b"sdtp";
+        let mut i = core::mem::size_of::<u32>();
+        while i + needle.len() <= file.len() {
+            if &file[i..i + needle.len()] == needle {
+                let size = u32::from_be_bytes([file[i - 4], file[i - 3], file[i - 2], file[i - 1]])
+                    as usize;
+                if size >= FULLBOX_BODY_OFFSET && i - 4 + size <= file.len() {
+                    return Some(&file[i - 4..i - 4 + size]);
+                }
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e, "mp4" | "m4a" | "mov"))
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn sdtp_round_trips_a_real_box() {
+        let mut files = Vec::new();
+        walk(&test_fixtures::root().join("mp4"), &mut files);
+        if let Some(private) = test_fixtures::private("mp4") {
+            walk(&private, &mut files);
+        }
+        let mut checked = 0usize;
+        for path in files {
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            let Some(box_bytes) = find_sdtp_box(&bytes) else {
+                continue;
+            };
+            let parsed = SampleDependencyTypeBox::parse(box_bytes)
+                .unwrap_or_else(|e| panic!("{}: sdtp parse: {e}", path.display()));
+            let mut out = alloc::vec![0u8; parsed.serialized_len()];
+            let written = parsed.serialize_into(&mut out).expect("serialize");
+            assert_eq!(written, out.len());
+            assert_eq!(
+                out,
+                box_bytes,
+                "{}: sdtp must serialize byte-identically",
+                path.display()
+            );
+            checked += 1;
+        }
+        if checked == 0 {
+            eprintln!(
+                "SKIPPED: no fixture under fixtures/mp4 or private/fixtures/mp4 has an sdtp box"
+            );
+        }
+    }
+
+    #[test]
+    fn sdtp_exposes_the_four_two_bit_fields() {
+        // is_leading=1, depends_on=2, is_depended_on=0, has_redundancy=3.
+        let raw = (1u8 << SDTP_IS_LEADING_SHIFT)
+            | (2u8 << SDTP_SAMPLE_DEPENDS_ON_SHIFT)
+            | (0u8 << SDTP_SAMPLE_IS_DEPENDED_ON_SHIFT)
+            | (3u8 << SDTP_SAMPLE_HAS_REDUNDANCY_SHIFT);
+        let parsed = SampleDependencyTypeBox::parse(&sdtp_box(&[raw])).expect("parse");
+        assert_eq!(parsed.is_leading(0), Some(1));
+        assert_eq!(parsed.sample_depends_on(0), Some(2));
+        assert_eq!(parsed.sample_is_depended_on(0), Some(0));
+        assert_eq!(parsed.sample_has_redundancy(0), Some(3));
+        assert_eq!(parsed.is_leading(1), None);
+    }
+
+    #[test]
+    fn stz2_and_sdtp_round_trip_through_an_stbl() {
+        let stz2 = stz2_box(8, 2, &[4, 5]);
+        let sdtp = sdtp_box(&[0x24, 0x18]);
+        let mut body = Vec::new();
+        body.extend_from_slice(&stz2);
+        body.extend_from_slice(&sdtp);
+        let mut whole = Vec::with_capacity(BOX_HEADER_MIN_SIZE + body.len());
+        whole.extend_from_slice(&((BOX_HEADER_MIN_SIZE + body.len()) as u32).to_be_bytes());
+        whole.extend_from_slice(b"stbl");
+        whole.extend_from_slice(&body);
+        let parsed = SampleTableBox::parse(&whole).expect("stbl");
+        assert!(matches!(parsed.children[0], StblChild::Stz2(_)));
+        assert!(matches!(parsed.children[1], StblChild::Sdtp(_)));
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).expect("serialize");
+        assert_eq!(out, whole);
     }
 }

@@ -129,6 +129,16 @@ pub enum Error {
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
 
+    /// A count or size read from the input exceeded a configured
+    /// [`Limits`](crate::Limits) cap before anything was allocated from it.
+    #[error("{what} exceeds the configured limit of {limit}")]
+    LimitExceeded {
+        /// Which quantity exceeded its cap.
+        what: &'static str,
+        /// The cap it exceeded.
+        limit: u64,
+    },
+
     /// The input needs a feature this crate does not implement yet.
     ///
     /// Distinct from a codec/scheme this crate has no handling for at all:
