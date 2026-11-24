@@ -81,6 +81,7 @@ example_args() {
             echo "fixtures/atsc3/slt-lls-2019-01-07.bin $WORKDIR/descrambled.bin 0102030405060708" ;;
         dvr-runtime/record_ts_file)
             echo "fixtures/ts/h264-aac.ts" ;;
+        isobmff/parse_boxes)  echo "fixtures/mp4/progressive/av-faststart.mp4" ;;
         dvr-runtime/list_programmes)
             echo "fixtures/ts/tnt-5w-12732v-isi6-10s.ts" ;;
         *) echo "" ;;
