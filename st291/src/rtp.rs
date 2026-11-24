@@ -43,6 +43,24 @@ const F_SHIFT: u8 = 6;
 const F_MASK: u8 = 0b11;
 /// Mask isolating the top-6-bits-of-`reserved` portion of byte 5.
 const RESERVED_BYTE5_MASK: u8 = 0x3F;
+/// Shift of byte 6's reserved octet within the 22-bit `reserved` value.
+const RESERVED_BYTE6_SHIFT: u32 = 8;
+/// Shift of byte 5's reserved octet within the 22-bit `reserved` value.
+const RESERVED_BYTE5_SHIFT: u32 = 16;
+
+/// Bits per byte, for bit<->byte length conversions.
+const BITS_PER_BYTE: usize = 8;
+
+// Payload-header field byte offsets (RFC 8331 §2.1).
+const LENGTH_WORD_OFFSET: usize = 2;
+const ANC_COUNT_OFFSET: usize = 4;
+const FIELD_SENSE_OFFSET: usize = 5;
+const RESERVED_LOW_BYTES_OFFSET: usize = 6;
+
+/// Wire bit width of `ANC_Count` (RFC 8331 §2.1).
+const ANC_COUNT_BITS: u32 = 8;
+/// Wire bit width of `Length` (RFC 8331 §2.1).
+const LENGTH_BITS: u32 = 16;
 
 /// `video/smpte291` — the RFC 8331 §3.1 media type + subtype
 /// (`Type name: video`, `Subtype name: smpte291`).
@@ -198,7 +216,7 @@ impl RtpAncPacket {
     #[must_use]
     pub fn serialized_len(&self) -> usize {
         let bits = self.body_bits();
-        (bits + bits_to_word_boundary(bits) as usize) / 8
+        (bits + bits_to_word_boundary(bits) as usize) / BITS_PER_BYTE
     }
 
     /// Write this record (placement + content + `word_align`) into `w`.
@@ -404,12 +422,16 @@ impl<'a> Parse<'a> for AncRtpPayload {
     fn parse(b: &'a [u8]) -> Result<Self> {
         need_in(b, ANC_RTP_PAYLOAD_HEADER_LEN, "ANC RTP payload header")?;
         let extended_sequence_number = ExtendedSequenceNumber(u16::from_be_bytes([b[0], b[1]]));
-        let length = usize::from(u16::from_be_bytes([b[2], b[3]]));
-        let anc_count = usize::from(b[4]);
-        let f_bits = b[5] >> F_SHIFT;
-        let reserved = (u32::from(b[5] & RESERVED_BYTE5_MASK) << 16)
-            | (u32::from(b[6]) << 8)
-            | u32::from(b[7]);
+        let length = usize::from(u16::from_be_bytes([
+            b[LENGTH_WORD_OFFSET],
+            b[LENGTH_WORD_OFFSET + 1],
+        ]));
+        let anc_count = usize::from(b[ANC_COUNT_OFFSET]);
+        let f_bits = b[FIELD_SENSE_OFFSET] >> F_SHIFT;
+        let reserved = (u32::from(b[FIELD_SENSE_OFFSET] & RESERVED_BYTE5_MASK)
+            << RESERVED_BYTE5_SHIFT)
+            | (u32::from(b[RESERVED_LOW_BYTES_OFFSET]) << RESERVED_BYTE6_SHIFT)
+            | u32::from(b[RESERVED_LOW_BYTES_OFFSET + 1]);
         if reserved != 0 {
             return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
                 field: "reserved (RFC 8331 §2.1)",
@@ -428,7 +450,7 @@ impl<'a> Parse<'a> for AncRtpPayload {
         for _ in 0..anc_count {
             anc_packets.push(RtpAncPacket::read_from(&mut r)?);
         }
-        let consumed_bytes = r.bits_read() / 8;
+        let consumed_bytes = r.bits_read() / BITS_PER_BYTE;
         if !r.is_byte_aligned() || consumed_bytes != body.len() {
             return Err(Error::LengthMismatch(
                 broadcast_common::error::LengthMismatch {
@@ -467,16 +489,16 @@ impl Serialize for AncRtpPayload {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let anc_count = self.anc_count();
-        broadcast_common::len::fit_bits(anc_count as u64, 8, "ANC_Count")?;
+        broadcast_common::len::fit_bits(anc_count as u64, ANC_COUNT_BITS, "ANC_Count")?;
         let body_len = self.body_len();
-        broadcast_common::len::fit_bits(body_len as u64, 16, "Length")?;
+        broadcast_common::len::fit_bits(body_len as u64, LENGTH_BITS, "Length")?;
 
         buf[0..2].copy_from_slice(&self.extended_sequence_number.value().to_be_bytes());
         buf[2..4].copy_from_slice(&(body_len as u16).to_be_bytes());
-        buf[4] = anc_count as u8;
-        buf[5] = self.field_sense.to_bits() << F_SHIFT; // reserved bits: 0
-        buf[6] = 0;
-        buf[7] = 0;
+        buf[ANC_COUNT_OFFSET] = anc_count as u8;
+        buf[FIELD_SENSE_OFFSET] = self.field_sense.to_bits() << F_SHIFT; // reserved bits: 0
+        buf[RESERVED_LOW_BYTES_OFFSET] = 0;
+        buf[RESERVED_LOW_BYTES_OFFSET + 1] = 0;
 
         let mut pos = ANC_RTP_PAYLOAD_HEADER_LEN;
         for pkt in &self.anc_packets {
