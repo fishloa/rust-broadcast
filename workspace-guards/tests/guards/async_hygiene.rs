@@ -38,6 +38,7 @@ const BLOCKING_CRATES: &[&str] = &[
     "broadcast-client",
     "dash-runtime",
     "hls-runtime",
+    "isobmff-tokio",
     "rtmp-runtime",
     "rtsp-runtime",
     "smooth-runtime",

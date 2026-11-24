@@ -29,6 +29,7 @@ pub const TABLE: &[Crate] = &[
     plain("ule"),
     plain("dvb-simulcrypt"),
     plain("isobmff"),
+    plain("isobmff-tokio"),
     plain("dvb-vbi"),
     plain("rmt-flute"),
     Crate {
