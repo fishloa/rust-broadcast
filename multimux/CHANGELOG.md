@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Every optional feature builds on its own with `RUSTFLAGS="-D warnings"`. `--features whip` no longer imports the test-seam-only `RouteConfig`, the test-seam helper `register_session_for_test` is gated on `whip` as well as `test-seams` (it is only ever called from `whip`'s `from_spec`), and `test-hooks` declares `whip`, whose signalling seams it re-exports (#4083).
 - TS and FLV `file` inputs stream from disk in bounded memory instead of being read whole, so a large slate/filler/loop asset no longer makes the origin's memory grow with the file. Each loop pass re-opens and re-identifies the file: a longer file simply plays longer, while a file replaced by a different container fails with `FileReaderError::FileChangedContainer` (#4057).
 - A DASH-IF ingest client that half-closes its write side once its request is sent still receives the answer. The origin serves HTTP/1 with half-close enabled, where hyper otherwise read the peer's FIN before the response was written and dropped the pending answer as an unexpected EOF, so the publisher lost the status code of its upload (#4063).
 - A request the ingest route refuses before reading its body (a path outside the publishing point, an unsupported method, an oversized declared length, a refused `Begin` or chunk, an oversized or over-budget body) is answered before the connection closes: the remaining body is drained first, bounded in bytes and time, so the answer is followed by an orderly close instead of a reset that discarded it (#4063).
