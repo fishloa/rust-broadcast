@@ -13,6 +13,70 @@ impl<'a> ExtensionBodyDef<'a> for DtsHd<'a> {
 const FLAGS_RESERVED_BITS: u32 = 3;
 /// Width of the `reserved_future_use` in a substream / asset block (2 bits).
 const SUBSTREAM_RESERVED_BITS: u32 = 2;
+/// Mask of `substream_core_flag`.
+const SUBSTREAM_CORE_FLAG_MASK: u8 = 0x80;
+/// Shift of `substream_core_flag`.
+const SUBSTREAM_CORE_FLAG_SHIFT: u32 = 7;
+/// Mask of `substream_0_flag`.
+const SUBSTREAM_0_FLAG_MASK: u8 = 0x40;
+/// Shift of `substream_0_flag`.
+const SUBSTREAM_0_FLAG_SHIFT: u32 = 6;
+/// Mask of `substream_1_flag`.
+const SUBSTREAM_1_FLAG_MASK: u8 = 0x20;
+/// Shift of `substream_1_flag`.
+const SUBSTREAM_1_FLAG_SHIFT: u32 = 5;
+/// Mask of `substream_2_flag`.
+const SUBSTREAM_2_FLAG_MASK: u8 = 0x10;
+/// Shift of `substream_2_flag`.
+const SUBSTREAM_2_FLAG_SHIFT: u32 = 4;
+/// Mask of `substream_3_flag`.
+const SUBSTREAM_3_FLAG_MASK: u8 = 0x08;
+/// Shift of `substream_3_flag`.
+const SUBSTREAM_3_FLAG_SHIFT: u32 = 3;
+/// Shift of `num_assets_minus_one`.
+const NUM_ASSETS_SHIFT: u32 = 5;
+/// Shift of `lfe_flag`.
+const LFE_FLAG_SHIFT: u32 = 7;
+/// Offset of the `lfe_flag` byte in a substream header.
+const SUBSTREAM_LFE_BYTE_OFFSET: usize = 2;
+/// Offset of the reserved byte in an asset info block.
+const ASSET_RESERVED_BYTE_OFFSET: usize = 2;
+/// Mask of `sampling_frequency`.
+const SAMPLING_FREQUENCY_MASK: u8 = 0x0F;
+/// Shift of `sampling_frequency`.
+const SAMPLING_FREQUENCY_SHIFT: u32 = 3;
+/// Shift of `sample_resolution`.
+const SAMPLE_RESOLUTION_SHIFT: u32 = 2;
+/// Shift of `asset_construction`.
+const ASSET_CONSTRUCTION_SHIFT: u32 = 3;
+/// Mask of `vbr_flag`.
+const VBR_FLAG_MASK: u8 = 0x04;
+/// Shift of `vbr_flag`.
+const VBR_FLAG_SHIFT: u32 = 2;
+/// Mask of `post_encode_br_scaling_flag`.
+const POST_ENCODE_BR_SCALING_MASK: u8 = 0x02;
+/// Shift of `post_encode_br_scaling_flag`.
+const POST_ENCODE_BR_SCALING_SHIFT: u32 = 1;
+/// Mask of `component_type_flag`.
+const COMPONENT_TYPE_FLAG_MASK: u8 = 0x01;
+/// Mask of `language_code_flag`.
+const LANGUAGE_CODE_FLAG_MASK: u8 = 0x80;
+/// Shift of `language_code_flag`.
+const LANGUAGE_CODE_FLAG_SHIFT: u32 = 7;
+/// Mask of the high 7 bits of `bit_rate`.
+const BIT_RATE_HIGH_MASK: u16 = 0x007F;
+/// Shift of the high 7 bits of `bit_rate`.
+const BIT_RATE_HIGH_SHIFT: u16 = 6;
+/// Mask of the low 6 bits of `bit_rate`.
+const BIT_RATE_LOW_MASK: u16 = 0x003F;
+/// Shift of the low 6 bits of `bit_rate`.
+const BIT_RATE_LOW_SHIFT: u16 = 2;
+
+fn decode_lang_code(bytes: &[u8]) -> LangCode {
+    let mut code = [0u8; ISO_639_LEN];
+    code.copy_from_slice(&bytes[..ISO_639_LEN]);
+    LangCode(code)
+}
 
 /// DTS-HD descriptor body (Table G.6, Annex G.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,7 +279,7 @@ impl Serialize for SubstreamInfo {
         // straight off `SUBSTREAM_HEADER_LEN` under-counted by one, so a
         // re-serialized substream's assets overran its own length field.
         let substream_length = len - 1;
-        if substream_length > 0xFF {
+        if substream_length > u8::MAX as usize {
             return Err(Error::ValueOutOfRange {
                 field: "substream_length",
                 reason: "substream payload exceeds 255 bytes",
@@ -242,19 +306,19 @@ impl Serialize for SubstreamInfo {
             });
         }
         let na = (num_assets - 1) as u8;
-        buf[1] = (na << 5)
+        buf[1] = (na << NUM_ASSETS_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.channel_count,
                 MAX_CHANNEL_COUNT,
                 "channel_count",
             )?;
-        buf[2] = ((u8::from(self.lfe_flag)) << 7)
+        buf[SUBSTREAM_LFE_BYTE_OFFSET] = ((u8::from(self.lfe_flag)) << LFE_FLAG_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.sampling_frequency.to_u8(),
-                0x0F,
+                SAMPLING_FREQUENCY_MASK,
                 "sampling_frequency",
-            )? << 3)
-            | ((u8::from(self.sample_resolution)) << 2)
+            )? << SAMPLING_FREQUENCY_SHIFT)
+            | ((u8::from(self.sample_resolution)) << SAMPLE_RESOLUTION_SHIFT)
             | self.reserved.get() as u8;
         let mut pos = SUBSTREAM_HEADER_LEN;
         for a in &self.assets {
@@ -270,13 +334,16 @@ impl Serialize for SubstreamInfo {
                 a.asset_construction,
                 ASSET_CONSTRUCTION_MASK,
                 "asset_construction",
-            )? << 3)
-                | ((u8::from(a.vbr_flag)) << 2)
-                | ((u8::from(a.post_encode_br_scaling_flag)) << 1)
+            )? << ASSET_CONSTRUCTION_SHIFT)
+                | ((u8::from(a.vbr_flag)) << VBR_FLAG_SHIFT)
+                | ((u8::from(a.post_encode_br_scaling_flag)) << POST_ENCODE_BR_SCALING_SHIFT)
                 | u8::from(a.component_type_flag);
-            buf[pos + 1] =
-                (u8::from(a.language_code_flag) << 7) | ((a.bit_rate_or_scaled >> 6) as u8 & 0x7F);
-            buf[pos + 2] = ((a.bit_rate_or_scaled as u8 & 0x3F) << 2) | a.reserved.get() as u8;
+            let bit_rate = u32::from(a.bit_rate_or_scaled);
+            buf[pos + 1] = (u8::from(a.language_code_flag) << LANGUAGE_CODE_FLAG_SHIFT)
+                | ((bit_rate >> BIT_RATE_HIGH_SHIFT) as u8);
+            buf[pos + ASSET_RESERVED_BYTE_OFFSET] =
+                (((bit_rate & u32::from(BIT_RATE_LOW_MASK)) as u8) << BIT_RATE_LOW_SHIFT)
+                    | a.reserved.get() as u8;
             pos += ASSET_FIXED_LEN;
             if a.component_type_flag {
                 // The flag promises a wire byte; inventing `0` would emit a
@@ -310,11 +377,11 @@ impl<'a> Parse<'a> for DtsHd<'a> {
                 what: "DTS-HD descriptor body",
             },
         ))?;
-        let substream_core_flag = (first & 0x80) != 0;
-        let substream_0_flag = (first & 0x40) != 0;
-        let substream_1_flag = (first & 0x20) != 0;
-        let substream_2_flag = (first & 0x10) != 0;
-        let substream_3_flag = (first & 0x08) != 0;
+        let substream_core_flag = (first & SUBSTREAM_CORE_FLAG_MASK) != 0;
+        let substream_0_flag = (first & SUBSTREAM_0_FLAG_MASK) != 0;
+        let substream_1_flag = (first & SUBSTREAM_1_FLAG_MASK) != 0;
+        let substream_2_flag = (first & SUBSTREAM_2_FLAG_MASK) != 0;
+        let substream_3_flag = (first & SUBSTREAM_3_FLAG_MASK) != 0;
         let reserved = ReservedOnes::from_bits(u64::from(first));
         let flags = [
             substream_core_flag,
@@ -355,12 +422,14 @@ fn parse_substream_info(sel: &[u8], pos: &mut usize) -> Result<SubstreamInfo> {
     *pos += 1;
     let end = *pos + substream_length;
     need_in(sel, end, "substream_info body")?;
-    let num_assets = ((sel[*pos] >> 5) & 0x07) as usize + 1;
-    let channel_count = sel[*pos] & 0x1F;
+    let num_assets = ((sel[*pos] >> NUM_ASSETS_SHIFT) & MAX_NUM_ASSETS as u8) as usize + 1;
+    let channel_count = sel[*pos] & MAX_CHANNEL_COUNT;
     *pos += 1;
-    let lfe_flag = (sel[*pos] & 0x80) != 0;
-    let sampling_frequency = SamplingFrequency::from_u8((sel[*pos] >> 3) & 0x0F);
-    let sample_resolution = (sel[*pos] & 0x04) != 0;
+    let lfe_flag = (sel[*pos] & SUBSTREAM_CORE_FLAG_MASK) != 0;
+    let sampling_frequency = SamplingFrequency::from_u8(
+        (sel[*pos] >> SAMPLING_FREQUENCY_SHIFT) & SAMPLING_FREQUENCY_MASK,
+    );
+    let sample_resolution = (sel[*pos] & (1 << SAMPLE_RESOLUTION_SHIFT)) != 0;
     let s_reserved = ReservedOnes::from_bits(u64::from(sel[*pos]));
     *pos += 1;
 
@@ -393,13 +462,15 @@ fn parse_substream_info(sel: &[u8], pos: &mut usize) -> Result<SubstreamInfo> {
 fn parse_asset_info(sel: &[u8], pos: &mut usize) -> Result<AssetInfo> {
     let need = *pos + ASSET_FIXED_LEN;
     need_in(sel, need, "asset_info")?;
-    let asset_construction = (sel[*pos] >> 3) & 0x1F;
-    let vbr_flag = (sel[*pos] & 0x04) != 0;
-    let post_encode_br_scaling_flag = (sel[*pos] & 0x02) != 0;
-    let component_type_flag = (sel[*pos] & 0x01) != 0;
+    let asset_construction = (sel[*pos] >> ASSET_CONSTRUCTION_SHIFT) & ASSET_CONSTRUCTION_MASK;
+    let vbr_flag = (sel[*pos] & VBR_FLAG_MASK) != 0;
+    let post_encode_br_scaling_flag = (sel[*pos] & POST_ENCODE_BR_SCALING_MASK) != 0;
+    let component_type_flag = (sel[*pos] & COMPONENT_TYPE_FLAG_MASK) != 0;
     *pos += 1;
-    let language_code_flag = (sel[*pos] & 0x80) != 0;
-    let bit_rate_or_scaled = ((u16::from(sel[*pos] & 0x7F)) << 6) | (u16::from(sel[*pos + 1]) >> 2);
+    let language_code_flag = (sel[*pos] & LANGUAGE_CODE_FLAG_MASK) != 0;
+    let bit_rate_or_scaled = ((u16::from(sel[*pos] & BIT_RATE_HIGH_MASK as u8))
+        << BIT_RATE_HIGH_SHIFT)
+        | (u16::from(sel[*pos + 1]) >> BIT_RATE_LOW_SHIFT);
     *pos += 1;
     let a_reserved = ReservedOnes::from_bits(u64::from(sel[*pos]));
     *pos += 1;
@@ -428,7 +499,7 @@ fn parse_asset_info(sel: &[u8], pos: &mut usize) -> Result<AssetInfo> {
             },
         ))?;
         *pos += ISO_639_LEN;
-        Some(LangCode([lang_bytes[0], lang_bytes[1], lang_bytes[2]]))
+        Some(decode_lang_code(lang_bytes))
     } else {
         None
     };
@@ -459,11 +530,11 @@ impl Serialize for DtsHd<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = ((u8::from(self.substream_core_flag)) << 7)
-            | ((u8::from(self.substream_0_flag)) << 6)
-            | ((u8::from(self.substream_1_flag)) << 5)
-            | ((u8::from(self.substream_2_flag)) << 4)
-            | ((u8::from(self.substream_3_flag)) << 3)
+        buf[0] = ((u8::from(self.substream_core_flag)) << SUBSTREAM_CORE_FLAG_SHIFT)
+            | ((u8::from(self.substream_0_flag)) << SUBSTREAM_0_FLAG_SHIFT)
+            | ((u8::from(self.substream_1_flag)) << SUBSTREAM_1_FLAG_SHIFT)
+            | ((u8::from(self.substream_2_flag)) << SUBSTREAM_2_FLAG_SHIFT)
+            | ((u8::from(self.substream_3_flag)) << SUBSTREAM_3_FLAG_SHIFT)
             | self.reserved.get() as u8;
 
         let flags = [

@@ -93,10 +93,10 @@ builds (see the table above against the in-tree versions below).
 | [`mpeg-ts`](#mpeg-ts) | MPEG-2 TS / PES / PS framing | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/mpeg-ts.svg)](https://crates.io/crates/mpeg-ts) | yes | 1 | on crates.io |
 | [`mpeg-ps`](#mpeg-ps) | MPEG-2 TS / PES / PS framing | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/mpeg-ps.svg)](https://crates.io/crates/mpeg-ps) | yes | 2 | on crates.io |
 | [`dvb-stream`](#dvb-stream) | MPEG-2 TS / PES / PS framing | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/dvb-stream.svg)](https://crates.io/crates/dvb-stream) | no | 3 | on crates.io |
-| [`dvb-bbframe`](#dvb-bbframe) | DVB service information, physical-layer framing and conformance | 16.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-bbframe.svg)](https://crates.io/crates/dvb-bbframe) | yes | 1 | on crates.io |
-| [`dvb-si`](#dvb-si) | DVB service information, physical-layer framing and conformance | 16.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-si.svg)](https://crates.io/crates/dvb-si) | yes | 2 | on crates.io |
-| [`dvb-t2mi`](#dvb-t2mi) | DVB service information, physical-layer framing and conformance | 16.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-t2mi.svg)](https://crates.io/crates/dvb-t2mi) | yes | 2 | on crates.io |
-| [`dvb-conformance`](#dvb-conformance) | DVB service information, physical-layer framing and conformance | 16.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-conformance.svg)](https://crates.io/crates/dvb-conformance) | yes | 3 | on crates.io |
+| [`dvb-bbframe`](#dvb-bbframe) | DVB service information, physical-layer framing and conformance | 16.0.1 | [![crates.io](https://img.shields.io/crates/v/dvb-bbframe.svg)](https://crates.io/crates/dvb-bbframe) | yes | 1 | on crates.io |
+| [`dvb-si`](#dvb-si) | DVB service information, physical-layer framing and conformance | 16.0.1 | [![crates.io](https://img.shields.io/crates/v/dvb-si.svg)](https://crates.io/crates/dvb-si) | yes | 2 | on crates.io |
+| [`dvb-t2mi`](#dvb-t2mi) | DVB service information, physical-layer framing and conformance | 16.0.1 | [![crates.io](https://img.shields.io/crates/v/dvb-t2mi.svg)](https://crates.io/crates/dvb-t2mi) | yes | 2 | on crates.io |
+| [`dvb-conformance`](#dvb-conformance) | DVB service information, physical-layer framing and conformance | 16.0.1 | [![crates.io](https://img.shields.io/crates/v/dvb-conformance.svg)](https://crates.io/crates/dvb-conformance) | yes | 3 | on crates.io |
 | [`dvb-simulcrypt`](#dvb-simulcrypt) | Common Interface, conditional access, scrambling, SimulCrypt | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/dvb-simulcrypt.svg)](https://crates.io/crates/dvb-simulcrypt) | yes | 1 | on crates.io |
 | [`dvb-csa`](#dvb-csa) | Common Interface, conditional access, scrambling, SimulCrypt | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/dvb-csa.svg)](https://crates.io/crates/dvb-csa) | yes | 2 | on crates.io |
 | [`dvb-ci`](#dvb-ci) | Common Interface, conditional access, scrambling, SimulCrypt | 0.14.0 | [![crates.io](https://img.shields.io/crates/v/dvb-ci.svg)](https://crates.io/crates/dvb-ci) | yes | 3 | on crates.io |
@@ -130,7 +130,7 @@ builds (see the table above against the in-tree versions below).
 | [`smooth-runtime`](#smooth-runtime) | Live transport protocols | 0.4.0 | — | no | 6 | not on crates.io |
 | [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.8.0 | — | no | 7 | not on crates.io |
 | [`ssai-runtime`](#ssai-runtime) | Servers, runtimes and tools | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/ssai-runtime.svg)](https://crates.io/crates/ssai-runtime) | yes | 2 | on crates.io |
-| [`dvb-tools`](#dvb-tools) | Servers, runtimes and tools | 16.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | no | 3 | on crates.io |
+| [`dvb-tools`](#dvb-tools) | Servers, runtimes and tools | 16.0.1 | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | no | 3 | on crates.io |
 | [`playout-runtime`](#playout-runtime) | Servers, runtimes and tools | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/playout-runtime.svg)](https://crates.io/crates/playout-runtime) | yes | 3 | on crates.io |
 | [`media-doctor`](#media-doctor) | Servers, runtimes and tools | 0.18.0 | [![crates.io](https://img.shields.io/crates/v/media-doctor.svg)](https://crates.io/crates/media-doctor) | yes | 4 | on crates.io |
 | [`ts-fix`](#ts-fix) | Servers, runtimes and tools | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/ts-fix.svg)](https://crates.io/crates/ts-fix) | yes | 4 | on crates.io |
@@ -237,7 +237,7 @@ The 10-byte BBHEADER (MATYPE/UPL/DFL/SYNC/SYNCD) with CRC-8, user-packet extract
 
 - **Standards:** ETSI EN 302 307-1 / -2 (DVB-S2 / S2X); EN 302 755 V1.4.1 (DVB-T2, Annex C ISSY)
 - **Cargo description:** ETSI DVB-S2 / S2X / T2 BBFrame parser + builder.
-- **Version (in-tree):** 16.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
+- **Version (in-tree):** 16.0.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`dvb-t2mi`](#dvb-t2mi)
 - **Links:** [README](../dvb-bbframe/README.md) · [CHANGELOG](../dvb-bbframe/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-bbframe) · [docs.rs](https://docs.rs/dvb-bbframe)
@@ -248,7 +248,7 @@ The largest crate: parse and build every allocated EN 300 468 table and descript
 
 - **Standards:** ETSI EN 300 468 V1.20.1 (baseline V1.19.1); ISO/IEC 13818-1 PSI; ISO/IEC 13818-6 + TR 101 202 (carousel); TS 102 006 (SSU); TS 102 809 (AIT); TS 102 323; EN 301 192; NorDig LCN; Chinese AVS2/AVS3/caption descriptors
 - **Cargo description:** ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included.
-- **Version (in-tree):** 16.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
+- **Version (in-tree):** 16.0.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dvb-ci`](#dvb-ci), [`dvb-ci-runtime`](#dvb-ci-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-stream`](#dvb-stream), [`dvb-tools`](#dvb-tools), [`dvr-runtime`](#dvr-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
 - **Links:** [README](../dvb-si/README.md) · [CHANGELOG](../dvb-si/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-si) · [docs.rs](https://docs.rs/dvb-si)
@@ -259,7 +259,7 @@ Parses and builds T2-MI packets (BBFrame, L1-current/future, FEF, timestamp, ind
 
 - **Standards:** ETSI TS 102 773 V1.4.1; EN 302 755 V1.4.1 (L1 signalling)
 - **Cargo description:** ETSI TS 102 773 DVB-T2 Modulator Interface parser + builder.
-- **Version (in-tree):** 16.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
+- **Version (in-tree):** 16.0.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-bbframe`](#dvb-bbframe), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** [`dvb-stream`](#dvb-stream), [`dvb-tools`](#dvb-tools)
 - **Links:** [README](../dvb-t2mi/README.md) · [CHANGELOG](../dvb-t2mi/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-t2mi) · [docs.rs](https://docs.rs/dvb-t2mi)
@@ -270,7 +270,7 @@ Feeds TS packets through the TR 101 290 indicator set on a caller-supplied clock
 
 - **Standards:** ETSI TR 101 290 V1.4.1 (2020-06) Tables 5.0a/b/c; partial ISO/IEC 13818-1 T-STD buffer model
 - **Cargo description:** ETSI TR 101 290 transport-stream conformance monitor (DVB measurement guidelines).
-- **Version (in-tree):** 16.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
+- **Version (in-tree):** 16.0.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-si`](#dvb-si), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`media-doctor`](#media-doctor), [`ts-fix`](#ts-fix)
 - **Links:** [README](../dvb-conformance/README.md) · [CHANGELOG](../dvb-conformance/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-conformance) · [docs.rs](https://docs.rs/dvb-conformance)
@@ -668,7 +668,7 @@ Command-line analyzer over the DVB crates: dump changed SI sections (optionally 
 
 - **Standards:** see dvb-si, dvb-t2mi
 - **Cargo description:** Command-line DVB stream analyzer (dump / services / epg / pids / t2mi) over the rust-broadcast crates.
-- **Version (in-tree):** 16.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 3
+- **Version (in-tree):** 16.0.1 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-si`](#dvb-si), [`dvb-t2mi`](#dvb-t2mi), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** none
 - **Links:** [README](../dvb-tools/README.md) · [CHANGELOG](../dvb-tools/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-tools)

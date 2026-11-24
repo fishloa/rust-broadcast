@@ -11,6 +11,9 @@ impl ExtensionBodyDef<'_> for CpIdentifier {
     const NAME: &'static str = "CP_IDENTIFIER";
 }
 
+/// Width of one `CP_system_id`.
+const CP_SYSTEM_ID_LEN: usize = core::mem::size_of::<u16>();
+
 /// CP_identifier descriptor body (Table 114, §6.4.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -23,14 +26,14 @@ pub struct CpIdentifier {
 impl<'a> Parse<'a> for CpIdentifier {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if !sel.len().is_multiple_of(2) {
+        if !sel.len().is_multiple_of(CP_SYSTEM_ID_LEN) {
             return Err(Error::InvalidDescriptor {
                 tag: crate::descriptor_tag::DescriptorTag::Extension as u8,
                 reason: "CP_identifier body length must be a multiple of 2",
             });
         }
         let cp_system_ids = sel
-            .chunks_exact(2)
+            .chunks_exact(CP_SYSTEM_ID_LEN)
             .map(|c| u16::from_be_bytes([c[0], c[1]]))
             .collect();
         Ok(CpIdentifier { cp_system_ids })
@@ -40,13 +43,14 @@ impl<'a> Parse<'a> for CpIdentifier {
 impl Serialize for CpIdentifier {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        self.cp_system_ids.len() * 2
+        self.cp_system_ids.len() * CP_SYSTEM_ID_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         for (i, id) in self.cp_system_ids.iter().enumerate() {
-            buf[i * 2..i * 2 + 2].copy_from_slice(&id.to_be_bytes());
+            buf[i * CP_SYSTEM_ID_LEN..i * CP_SYSTEM_ID_LEN + CP_SYSTEM_ID_LEN]
+                .copy_from_slice(&id.to_be_bytes());
         }
         Ok(len)
     }

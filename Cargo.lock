@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-bbframe"
-version = "16.0.0"
+version = "16.0.1"
 dependencies = [
  "broadcast-common",
  "criterion",
@@ -1173,7 +1173,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "16.0.0"
+version = "16.0.1"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -1206,7 +1206,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "16.0.0"
+version = "16.0.1"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1267,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "16.0.0"
+version = "16.0.1"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "16.0.0"
+version = "16.0.1"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -2390,15 +2390,15 @@ dependencies = [
 
 [[package]]
 name = "misb"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11212607254d323818fff9905f8ff8762134e3eb5306e703204a026177cae4f4"
+checksum = "d696c0de8f9fcdaa3545b02749fa617c2e756e8e812e2d57c0b68d334aaf6367"
 
 [[package]]
 name = "motion-imagery-metadata"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b04bd2e6c634544d9f776564a6c11ec7b5c92f6e9a785bcc072b769dd225ad65"
+checksum = "07389d4be0d68d7a36a7701bb40114d39a0620cac64b219751788e82e94c68ea"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -4036,6 +4036,7 @@ dependencies = [
  "headers",
  "jiff",
  "rtmp-runtime",
+ "test-alloc",
  "test-fixtures",
  "transmux",
  "url",

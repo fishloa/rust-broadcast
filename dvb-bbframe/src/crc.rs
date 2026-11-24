@@ -14,6 +14,8 @@ pub const CRC8_POLY: u8 = 0xD5;
 /// Standard CRC-8 initial register value (0x00).
 pub const CRC8_INIT: u8 = 0x00;
 
+const CRC8_MSB: u8 = 0x80;
+
 /// Compute CRC-8 with the standard initial value (0x00).
 ///
 /// There is no separate "HEM init": EN 302 755 §5.1.7 puts
@@ -26,8 +28,8 @@ pub fn crc8(bytes: &[u8]) -> u8 {
     let mut crc = CRC8_INIT;
     for &byte in bytes {
         crc ^= byte;
-        for _ in 0..8 {
-            if crc & 0x80 != 0 {
+        for _ in 0..u8::BITS {
+            if crc & CRC8_MSB != 0 {
                 crc = (crc << 1) ^ CRC8_POLY;
             } else {
                 crc <<= 1;

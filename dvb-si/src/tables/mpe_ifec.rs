@@ -59,8 +59,15 @@ const EXTENSION_HEADER_LEN: usize = 5;
 
 use super::CRC_LEN;
 
+/// Width of the `reserved` header fields.
+const MPE_IFEC_RESERVED_BITS: u32 = 2;
+
 /// Minimum total encoded length: header + extension + RTP + CRC.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + RTP_LEN + CRC_LEN;
+
+/// Byte offsets in the MPE-IFEC extension header.
+const BURST_NUMBER_OFFSET: usize = 3;
+const IFEC_BURST_SIZE_OFFSET: usize = 4;
 
 /// Time-slicing / MPE-IFEC real-time parameters (TS 102 772 §5.3, Table 3).
 ///
@@ -139,10 +146,10 @@ pub struct MpeIfecSection<'a> {
     pub ifec_data: &'a [u8],
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<2>,
+    pub reserved_b1: ReservedOnes<MPE_IFEC_RESERVED_BITS>,
     /// `reserved(2)` in front of `version` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<2>,
+    pub reserved_b5: ReservedOnes<MPE_IFEC_RESERVED_BITS>,
 }
 
 impl<'a> MpeIfecSection<'a> {
@@ -191,21 +198,18 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
         let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
         let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
-        let burst_number = bytes[3];
-        let ifec_burst_size = bytes[4];
+        let burst_number = bytes[BURST_NUMBER_OFFSET];
+        let ifec_burst_size = bytes[IFEC_BURST_SIZE_OFFSET];
         // byte 5: reserved(2) | version(5) | current_next_indicator(1)
-        let version = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let version = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let rtp_start = HEADER_LEN + EXTENSION_HEADER_LEN;
-        let real_time_parameters = RealTimeParameters::from_bytes([
-            bytes[rtp_start],
-            bytes[rtp_start + 1],
-            bytes[rtp_start + 2],
-            bytes[rtp_start + 3],
-        ]);
+        let mut rtp = [0u8; RTP_LEN];
+        rtp.copy_from_slice(&bytes[rtp_start..rtp_start + RTP_LEN]);
+        let real_time_parameters = RealTimeParameters::from_bytes(rtp);
 
         let data_start = rtp_start + RTP_LEN;
         let data_end = total - CRC_LEN;
@@ -223,7 +227,9 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
             real_time_parameters,
             ifec_data,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
-            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
+                bytes[super::VERSION_FLAGS_OFFSET],
+            ))),
         })
     }
 }
@@ -251,16 +257,16 @@ impl Serialize for MpeIfecSection<'_> {
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.
-        buf[3] = self.burst_number;
-        buf[4] = self.ifec_burst_size;
+        buf[BURST_NUMBER_OFFSET] = self.burst_number;
+        buf[IFEC_BURST_SIZE_OFFSET] = self.ifec_burst_size;
         // reserved(2)=11 | version(5) | current_next_indicator(1)
-        buf[5] = super::b5_of(
+        buf[super::VERSION_FLAGS_OFFSET] = super::b5_of(
             self.reserved_b5.get() as u8,
             self.version,
             self.current_next_indicator,
         )?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         // real_time_parameters.
         let rtp_start = HEADER_LEN + EXTENSION_HEADER_LEN;

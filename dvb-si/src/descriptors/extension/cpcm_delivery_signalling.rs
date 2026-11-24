@@ -92,14 +92,14 @@ pub enum CopyControl {
     /// 4 — Copy Never — Zero Retention Asserted.
     CopyNeverZeroRetentionAsserted = 4,
     /// 5–7 — Reserved for future use.
-    Reserved(u8) = 5,
+    Reserved(u8) = COPY_CONTROL_RESERVED,
 }
 
 impl CopyControl {
     /// Construct from the raw 3-bit value; values 5–7 map to `Reserved(v)`.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x07 {
+        match v & COPY_CONTROL_MASK {
             0 => CopyControl::CopyControlNotAsserted,
             1 => CopyControl::CopyOnce,
             2 => CopyControl::CopyNoMore,
@@ -143,6 +143,50 @@ broadcast_common::impl_spec_display!(CopyControl, Reserved);
 /// `Reserved(v)` payload at the shift so a wide value cannot bleed into the
 /// flag bits below it (r03-W2).
 const COPY_CONTROL_MASK: u8 = 0x07;
+/// First reserved `copy_control` value.
+const COPY_CONTROL_RESERVED: u8 = 5;
+/// Mask of a 2-bit propagation field.
+const PROPAGATION_MASK: u8 = 0x03;
+/// Shift of `copy_control`.
+const COPY_CONTROL_SHIFT: u32 = 5;
+/// Shift of `do_not_cpcm_scramble`.
+const DO_NOT_CPCM_SCRAMBLE_SHIFT: u32 = 4;
+/// Shift of `viewable`.
+const VIEWABLE_SHIFT: u32 = 3;
+/// Shift of `view_window_activated`.
+const VIEW_WINDOW_ACTIVATED_SHIFT: u32 = 2;
+/// Shift of `view_period_activated`.
+const VIEW_PERIOD_ACTIVATED_SHIFT: u32 = 1;
+/// Shift of `move_local`.
+const MOVE_LOCAL_SHIFT: u32 = 7;
+/// Shift of `view_local`.
+const VIEW_LOCAL_SHIFT: u32 = 6;
+/// Shift of `move_and_copy_propagation_information`.
+const MOVE_COPY_PROPAGATION_SHIFT: u32 = 4;
+/// Shift of `view_propagation_information`.
+const VIEW_PROPAGATION_SHIFT: u32 = 2;
+/// Shift of `remote_access_date_moving_window_flag`.
+const REMOTE_ACCESS_MOVING_SHIFT: u32 = 1;
+/// Shift of `remote_access_record_flag`.
+const REMOTE_ACCESS_RECORD_SHIFT: u32 = 7;
+/// Shift of `export_controlled_cps`.
+const EXPORT_CONTROLLED_CPS_SHIFT: u32 = 6;
+/// Shift of `export_beyond_trust`.
+const EXPORT_BEYOND_TRUST_SHIFT: u32 = 5;
+/// Shift of `disable_analogue_sd_export`.
+const DISABLE_ANALOGUE_SD_EXPORT_SHIFT: u32 = 4;
+/// Shift of `disable_analogue_sd_consumption`.
+const DISABLE_ANALOGUE_SD_CONSUMPTION_SHIFT: u32 = 3;
+/// Shift of `disable_analogue_hd_export`.
+const DISABLE_ANALOGUE_HD_EXPORT_SHIFT: u32 = 2;
+/// Shift of `disable_analogue_hd_consumption`.
+const DISABLE_ANALOGUE_HD_CONSUMPTION_SHIFT: u32 = 1;
+/// Offset of the third USI flags byte within `body`.
+const FLAGS_BYTE3_OFFSET: usize = 2;
+/// Offset of the second USI flags byte in the output buffer.
+const USI_BYTE2_OFFSET: usize = 2;
+/// Offset of the third USI flags byte in the output buffer.
+const USI_BYTE3_OFFSET: usize = 3;
 
 /// `move_and_copy_propagation_information` — ETSI TS 102 825-4 Table 10.
 ///
@@ -166,7 +210,7 @@ impl MoveCopyPropagation {
     /// Construct from the raw 2-bit value; the field is total (values 0–3 exhaustive).
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & PROPAGATION_MASK {
             0 => MoveCopyPropagation::Mlad,
             1 => MoveCopyPropagation::Mgad,
             2 => MoveCopyPropagation::Mad,
@@ -215,7 +259,7 @@ impl ViewPropagation {
     /// Construct from the raw 2-bit value; the field is total (values 0–3 exhaustive).
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & PROPAGATION_MASK {
             0 => ViewPropagation::Vlad,
             1 => ViewPropagation::Vgad,
             2 => ViewPropagation::Vad,
@@ -260,6 +304,8 @@ pub struct CpsVectorEntry {
 const USI_FLAGS_LEN: usize = 3;
 /// Byte width of `CPCM_date_time` (40-bit opaque timestamp, Table 8).
 const CPCM_DATE_TIME_LEN: usize = 5;
+/// Two contiguous `CPCM_date_time` values.
+const CPCM_DATE_TIME_PAIR_LEN: usize = CPCM_DATE_TIME_LEN * 2;
 /// Byte width of `CPCM_playback_period` (16-bit opaque value, Table 8).
 const CPCM_PLAYBACK_PERIOD_LEN: usize = 2;
 /// Byte width of `simultaneous_view_count` (8-bit uimsbf).
@@ -267,6 +313,10 @@ const SIMULTANEOUS_VIEW_COUNT_LEN: usize = 1;
 /// Byte width of the per-CPS-entry header before the variable payload
 /// (`C_and_R_regime_mask`(1) + `cps_vector_length`(2)).
 const CPS_ENTRY_HDR_LEN: usize = 3;
+/// Offset of `cps_vector_length` in a CPS entry header.
+const CPS_VECTOR_LENGTH_OFFSET: usize = 1;
+/// Width of `cps_vector_length`.
+const CPS_VECTOR_LENGTH_LEN: usize = core::mem::size_of::<u16>();
 
 /// Typed decode of `CPCM_usage_state_information()` — ETSI TS 102 825-4 §5.4 Table 8.
 ///
@@ -371,31 +421,34 @@ impl<'a> Parse<'a> for CpcmUsi {
 
         // ── byte 1 ─────────────────────────────────────────────────────────
         let b1 = body[0];
-        let copy_control = CopyControl::from_u8(b1 >> 5);
-        let do_not_cpcm_scramble = (b1 >> 4) & 1 != 0;
-        let viewable = (b1 >> 3) & 1 != 0;
-        let view_window_activated = (b1 >> 2) & 1 != 0;
-        let view_period_activated = (b1 >> 1) & 1 != 0;
+        let copy_control = CopyControl::from_u8(b1 >> COPY_CONTROL_SHIFT);
+        let do_not_cpcm_scramble = (b1 >> DO_NOT_CPCM_SCRAMBLE_SHIFT) & 1 != 0;
+        let viewable = (b1 >> VIEWABLE_SHIFT) & 1 != 0;
+        let view_window_activated = (b1 >> VIEW_WINDOW_ACTIVATED_SHIFT) & 1 != 0;
+        let view_period_activated = (b1 >> VIEW_PERIOD_ACTIVATED_SHIFT) & 1 != 0;
         let simultaneous_view_count_activated = b1 & 1 != 0;
 
         // ── byte 2 ─────────────────────────────────────────────────────────
         let b2 = body[1];
-        let move_local = (b2 >> 7) & 1 != 0;
-        let view_local = (b2 >> 6) & 1 != 0;
-        let move_and_copy_propagation_information = MoveCopyPropagation::from_u8(b2 >> 4);
-        let view_propagation_information = ViewPropagation::from_u8(b2 >> 2);
-        let remote_access_date_moving_window_flag = (b2 >> 1) & 1 != 0;
+        let move_local = (b2 >> MOVE_LOCAL_SHIFT) & 1 != 0;
+        let view_local = (b2 >> VIEW_LOCAL_SHIFT) & 1 != 0;
+        let move_and_copy_propagation_information =
+            MoveCopyPropagation::from_u8(b2 >> MOVE_COPY_PROPAGATION_SHIFT);
+        let view_propagation_information = ViewPropagation::from_u8(b2 >> VIEW_PROPAGATION_SHIFT);
+        let remote_access_date_moving_window_flag = (b2 >> REMOTE_ACCESS_MOVING_SHIFT) & 1 != 0;
         let remote_access_date_immediate_flag = b2 & 1 != 0;
 
         // ── byte 3 ─────────────────────────────────────────────────────────
-        let b3 = body[2];
-        let remote_access_record_flag = (b3 >> 7) & 1 != 0;
-        let export_controlled_cps = (b3 >> 6) & 1 != 0;
-        let export_beyond_trust = (b3 >> 5) & 1 != 0;
-        let disable_analogue_sd_export = (b3 >> 4) & 1 != 0;
-        let disable_analogue_sd_consumption = (b3 >> 3) & 1 != 0;
-        let disable_analogue_hd_export = (b3 >> 2) & 1 != 0;
-        let disable_analogue_hd_consumption = (b3 >> 1) & 1 != 0;
+        let b3 = body[FLAGS_BYTE3_OFFSET];
+        let remote_access_record_flag = (b3 >> REMOTE_ACCESS_RECORD_SHIFT) & 1 != 0;
+        let export_controlled_cps = (b3 >> EXPORT_CONTROLLED_CPS_SHIFT) & 1 != 0;
+        let export_beyond_trust = (b3 >> EXPORT_BEYOND_TRUST_SHIFT) & 1 != 0;
+        let disable_analogue_sd_export = (b3 >> DISABLE_ANALOGUE_SD_EXPORT_SHIFT) & 1 != 0;
+        let disable_analogue_sd_consumption =
+            (b3 >> DISABLE_ANALOGUE_SD_CONSUMPTION_SHIFT) & 1 != 0;
+        let disable_analogue_hd_export = (b3 >> DISABLE_ANALOGUE_HD_EXPORT_SHIFT) & 1 != 0;
+        let disable_analogue_hd_consumption =
+            (b3 >> DISABLE_ANALOGUE_HD_CONSUMPTION_SHIFT) & 1 != 0;
         let image_constraint = b3 & 1 != 0;
 
         // ── conditional fields ──────────────────────────────────────────────
@@ -406,7 +459,7 @@ impl<'a> Parse<'a> for CpcmUsi {
         if view_window_activated {
             need_in(
                 body,
-                pos + CPCM_DATE_TIME_LEN * 2,
+                pos + CPCM_DATE_TIME_PAIR_LEN,
                 "CpcmUsi view_window_start/end",
             )?;
             let mut start = [0u8; CPCM_DATE_TIME_LEN];
@@ -468,7 +521,9 @@ impl<'a> Parse<'a> for CpcmUsi {
             for _ in 0..cps_vector_count {
                 need_in(body, pos + CPS_ENTRY_HDR_LEN, "CpcmUsi CPS entry header")?;
                 let c_and_r_regime_mask = body[pos];
-                let cps_vector_length = u16::from_be_bytes([body[pos + 1], body[pos + 2]]) as usize;
+                let cps_vector_length =
+                    crate::wire::be_u16(body, pos + CPS_VECTOR_LENGTH_OFFSET, "cps_vector_length")?
+                        as usize;
                 pos += CPS_ENTRY_HDR_LEN;
                 need_in(body, pos + cps_vector_length, "CpcmUsi cps_vector_byte")?;
                 let cps_vector = body[pos..pos + cps_vector_length].to_vec();
@@ -516,7 +571,7 @@ impl CpcmUsi {
     fn body_len(&self) -> usize {
         let mut n = USI_FLAGS_LEN;
         if self.view_window_activated {
-            n += CPCM_DATE_TIME_LEN * 2;
+            n += CPCM_DATE_TIME_PAIR_LEN;
         }
         if self.view_period_activated {
             n += CPCM_PLAYBACK_PERIOD_LEN;
@@ -584,37 +639,41 @@ impl Serialize for CpcmUsi {
             self.copy_control.to_u8(),
             COPY_CONTROL_MASK,
             "copy_control",
-        )? << 5)
-            | ((u8::from(self.do_not_cpcm_scramble)) << 4)
-            | ((u8::from(self.viewable)) << 3)
-            | ((u8::from(self.view_window_activated)) << 2)
-            | ((u8::from(self.view_period_activated)) << 1)
+        )? << COPY_CONTROL_SHIFT)
+            | ((u8::from(self.do_not_cpcm_scramble)) << DO_NOT_CPCM_SCRAMBLE_SHIFT)
+            | ((u8::from(self.viewable)) << VIEWABLE_SHIFT)
+            | ((u8::from(self.view_window_activated)) << VIEW_WINDOW_ACTIVATED_SHIFT)
+            | ((u8::from(self.view_period_activated)) << VIEW_PERIOD_ACTIVATED_SHIFT)
             | u8::from(self.simultaneous_view_count_activated);
 
         // ── byte 2 ─────────────────────────────────────────────────────────
-        buf[2] = ((u8::from(self.move_local)) << 7)
-            | ((u8::from(self.view_local)) << 6)
+        buf[USI_BYTE2_OFFSET] = ((u8::from(self.move_local)) << MOVE_LOCAL_SHIFT)
+            | ((u8::from(self.view_local)) << VIEW_LOCAL_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.move_and_copy_propagation_information.to_u8(),
-                0x03,
+                PROPAGATION_MASK,
                 "move_and_copy_propagation_information",
-            )? << 4)
+            )? << MOVE_COPY_PROPAGATION_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.view_propagation_information.to_u8(),
-                0x03,
+                PROPAGATION_MASK,
                 "view_propagation_information",
-            )? << 2)
-            | ((u8::from(self.remote_access_date_moving_window_flag)) << 1)
+            )? << VIEW_PROPAGATION_SHIFT)
+            | ((u8::from(self.remote_access_date_moving_window_flag))
+                << REMOTE_ACCESS_MOVING_SHIFT)
             | u8::from(self.remote_access_date_immediate_flag);
 
         // ── byte 3 ─────────────────────────────────────────────────────────
-        buf[3] = ((u8::from(self.remote_access_record_flag)) << 7)
-            | ((u8::from(self.export_controlled_cps)) << 6)
-            | ((u8::from(self.export_beyond_trust)) << 5)
-            | ((u8::from(self.disable_analogue_sd_export)) << 4)
-            | ((u8::from(self.disable_analogue_sd_consumption)) << 3)
-            | ((u8::from(self.disable_analogue_hd_export)) << 2)
-            | ((u8::from(self.disable_analogue_hd_consumption)) << 1)
+        buf[USI_BYTE3_OFFSET] = ((u8::from(self.remote_access_record_flag))
+            << REMOTE_ACCESS_RECORD_SHIFT)
+            | ((u8::from(self.export_controlled_cps)) << EXPORT_CONTROLLED_CPS_SHIFT)
+            | ((u8::from(self.export_beyond_trust)) << EXPORT_BEYOND_TRUST_SHIFT)
+            | ((u8::from(self.disable_analogue_sd_export)) << DISABLE_ANALOGUE_SD_EXPORT_SHIFT)
+            | ((u8::from(self.disable_analogue_sd_consumption))
+                << DISABLE_ANALOGUE_SD_CONSUMPTION_SHIFT)
+            | ((u8::from(self.disable_analogue_hd_export)) << DISABLE_ANALOGUE_HD_EXPORT_SHIFT)
+            | ((u8::from(self.disable_analogue_hd_consumption))
+                << DISABLE_ANALOGUE_HD_CONSUMPTION_SHIFT)
             | u8::from(self.image_constraint);
 
         let mut pos = 1 + USI_FLAGS_LEN; // 4
@@ -653,7 +712,9 @@ impl Serialize for CpcmUsi {
                 buf[pos] = entry.c_and_r_regime_mask;
                 let vlen =
                     broadcast_common::len::fit_u16(entry.cps_vector.len(), "cps_vector_length")?;
-                buf[pos + 1..pos + 3].copy_from_slice(&vlen.to_be_bytes());
+                buf[pos + CPS_VECTOR_LENGTH_OFFSET
+                    ..pos + CPS_VECTOR_LENGTH_OFFSET + CPS_VECTOR_LENGTH_LEN]
+                    .copy_from_slice(&vlen.to_be_bytes());
                 pos += CPS_ENTRY_HDR_LEN;
                 buf[pos..pos + entry.cps_vector.len()].copy_from_slice(&entry.cps_vector);
                 pos += entry.cps_vector.len();

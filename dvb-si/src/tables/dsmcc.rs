@@ -26,7 +26,16 @@ pub const TABLE_ID_LAST: u8 = 0x3F;
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
+
+/// Width of the `reserved` header fields.
+const DSMCC_RESERVED_BITS: u32 = 2;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
+
+/// Trailer checksum length and reserved header-field width.
+const CHECKSUM_LEN: usize = 4;
+
+/// Byte offsets in the DSM-CC section header.
+const EXTENSION_ID_OFFSET: usize = 3;
 
 /// A DSM-CC section — minimal wrapper that validates header framing
 /// and carries the raw payload.
@@ -58,13 +67,13 @@ pub struct DsmccSection<'a> {
     /// Verbatim trailer bytes when `section_syntax_indicator == false` (an
     /// ISO/IEC 13818-6 checksum). Ignored when SSI is `true`, where the
     /// trailer is a computed CRC-32.
-    pub checksum: [u8; 4],
+    pub checksum: [u8; CHECKSUM_LEN],
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: ReservedOnes<2>,
+    pub reserved_b1: ReservedOnes<DSMCC_RESERVED_BITS>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: ReservedOnes<2>,
+    pub reserved_b5: ReservedOnes<DSMCC_RESERVED_BITS>,
 }
 
 impl<'a> DsmccSection<'a> {
@@ -90,7 +99,7 @@ impl<'a> DsmccSection<'a> {
             section_number,
             last_section_number,
             payload,
-            checksum: [0; 4],
+            checksum: [0; CHECKSUM_LEN],
             reserved_b1: ReservedOnes::FILL,
             reserved_b5: ReservedOnes::FILL,
         }
@@ -139,23 +148,19 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let extension_id = crate::wire::be_u16(bytes, 3, "dsmcc")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let extension_id = crate::wire::be_u16(bytes, EXTENSION_ID_OFFSET, "dsmcc")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let payload_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         let payload_end = total - CRC_LEN;
         let payload = &bytes[payload_start..payload_end];
 
         let trailer_start = total - CRC_LEN;
-        let checksum = [
-            bytes[trailer_start],
-            bytes[trailer_start + 1],
-            bytes[trailer_start + 2],
-            bytes[trailer_start + 3],
-        ];
+        let mut checksum = [0u8; CHECKSUM_LEN];
+        checksum.copy_from_slice(&bytes[trailer_start..trailer_start + CHECKSUM_LEN]);
 
         Ok(DsmccSection {
             table_id,
@@ -169,7 +174,9 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
             payload,
             checksum,
             reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
-            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(
+                bytes[super::VERSION_FLAGS_OFFSET],
+            ))),
         })
     }
 }
@@ -197,14 +204,15 @@ impl Serialize for DsmccSection<'_> {
             self.reserved_b1.get() as u8,
         )?;
         super::write_section_length(buf, section_length)?;
-        buf[3..5].copy_from_slice(&self.extension_id.to_be_bytes());
-        buf[5] = super::b5_of(
+        buf[EXTENSION_ID_OFFSET..super::VERSION_FLAGS_OFFSET]
+            .copy_from_slice(&self.extension_id.to_be_bytes());
+        buf[super::VERSION_FLAGS_OFFSET] = super::b5_of(
             self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         let payload_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         let payload_end = payload_start + self.payload.len();

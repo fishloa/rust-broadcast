@@ -34,24 +34,79 @@ pub const MESSAGE_ID_DDB: u16 = 0x1003;
 /// `messageId` of DownloadServerInitiate.
 pub const MESSAGE_ID_DSI: u16 = 0x1006;
 
+/// `messageId` offset in dsmccMessageHeader / dsmccDownloadDataHeader.
+const MESSAGE_ID_OFFSET: usize = 2;
+/// `messageId` length.
+const MESSAGE_ID_LEN: usize = core::mem::size_of::<u16>();
+/// `transactionId` / `downloadId` offset.
+const TRANSACTION_ID_OFFSET: usize = MESSAGE_ID_OFFSET + MESSAGE_ID_LEN;
+/// `transactionId` / `downloadId` length.
+const TRANSACTION_ID_LEN: usize = core::mem::size_of::<u32>();
+/// Reserved byte offset.
+const RESERVED_OFFSET: usize = TRANSACTION_ID_OFFSET + TRANSACTION_ID_LEN;
+/// `adaptationLength` offset.
+const ADAPTATION_LENGTH_OFFSET: usize = RESERVED_OFFSET + 1;
+/// `messageLength` offset.
+const MESSAGE_LENGTH_OFFSET: usize = ADAPTATION_LENGTH_OFFSET + 1;
+/// `messageLength` length.
+const MESSAGE_LENGTH_LEN: usize = core::mem::size_of::<u16>();
+/// Reserved-byte fill (all ones).
+const RESERVED_BYTE: u8 = 0xFF;
 /// Bytes of dsmccMessageHeader / dsmccDownloadDataHeader before the
-/// adaptation header: pd(1) + type(1) + messageId(2) + transactionId-or-
-/// downloadId(4) + reserved(1) + adaptationLength(1) + messageLength(2).
-const MESSAGE_HEADER_LEN: usize = 12;
+/// adaptation header.
+const MESSAGE_HEADER_LEN: usize = MESSAGE_LENGTH_OFFSET + MESSAGE_LENGTH_LEN;
 /// serverId is a fixed 20-byte field in the DSI (DVB: all 0xFF).
 const SERVER_ID_LEN: usize = 20;
 /// 16-bit privateDataLength field.
 const PRIVATE_LEN_FIELD: usize = 2;
-/// Fixed DII body bytes before the compatibilityDescriptor: downloadId(4) +
-/// blockSize(2) + windowSize(1) + ackPeriod(1) + tCDownloadWindow(4) +
-/// tCDownloadScenario(4).
-const DII_FIXED_LEN: usize = 16;
+/// A 16-bit length field.
+const LENGTH_FIELD_LEN: usize = core::mem::size_of::<u16>();
+/// Cap on preallocation from an untrusted count.
+const MAX_PREALLOC: usize = 256;
+/// `downloadId` offset in the fixed DII body.
+const DII_DOWNLOAD_ID_OFFSET: usize = 0;
+/// `downloadId` length.
+const DII_DOWNLOAD_ID_LEN: usize = core::mem::size_of::<u32>();
+/// `blockSize` offset in the fixed DII body.
+const DII_BLOCK_SIZE_OFFSET: usize = DII_DOWNLOAD_ID_OFFSET + DII_DOWNLOAD_ID_LEN;
+/// `blockSize` length.
+const DII_BLOCK_SIZE_LEN: usize = core::mem::size_of::<u16>();
+/// `windowSize` offset in the fixed DII body.
+const DII_WINDOW_SIZE_OFFSET: usize = DII_BLOCK_SIZE_OFFSET + DII_BLOCK_SIZE_LEN;
+/// `ackPeriod` offset in the fixed DII body.
+const DII_ACK_PERIOD_OFFSET: usize = DII_WINDOW_SIZE_OFFSET + 1;
+/// `tCDownloadWindow` offset in the fixed DII body.
+const DII_TC_WINDOW_OFFSET: usize = DII_ACK_PERIOD_OFFSET + 1;
+/// `tCDownloadScenario` offset in the fixed DII body.
+const DII_TC_SCENARIO_OFFSET: usize = DII_TC_WINDOW_OFFSET + core::mem::size_of::<u32>();
+/// Fixed DII body bytes before the compatibilityDescriptor.
+const DII_FIXED_LEN: usize = DII_TC_SCENARIO_OFFSET + core::mem::size_of::<u32>();
+/// `moduleId` offset in a DII module entry.
+const MODULE_ID_OFFSET: usize = 0;
+/// `moduleId` length.
+const MODULE_ID_LEN: usize = core::mem::size_of::<u16>();
+/// `moduleSize` offset in a DII module entry.
+const MODULE_SIZE_OFFSET: usize = MODULE_ID_OFFSET + MODULE_ID_LEN;
+/// `moduleSize` length.
+const MODULE_SIZE_LEN: usize = core::mem::size_of::<u32>();
+/// `moduleVersion` offset in a DII module entry.
+const MODULE_VERSION_OFFSET: usize = MODULE_SIZE_OFFSET + MODULE_SIZE_LEN;
+/// `moduleInfoLength` offset in a DII module entry.
+const MODULE_INFO_LENGTH_OFFSET: usize = MODULE_VERSION_OFFSET + 1;
 /// Per-module fixed bytes: moduleId(2) + moduleSize(4) + moduleVersion(1) +
 /// moduleInfoLength(1).
-const MODULE_HEADER_LEN: usize = 8;
+const MODULE_HEADER_LEN: usize = MODULE_INFO_LENGTH_OFFSET + 1;
+/// `moduleVersion` offset in the DDB body.
+const DDB_MODULE_VERSION_OFFSET: usize = MODULE_ID_LEN;
+/// Reserved-byte offset in the DDB body.
+const DDB_RESERVED_OFFSET: usize = DDB_MODULE_VERSION_OFFSET + 1;
+/// `blockNumber` offset in the DDB body.
+const DDB_BLOCK_NUMBER_OFFSET: usize = DDB_RESERVED_OFFSET + 1;
+/// `blockNumber` length.
+const DDB_BLOCK_NUMBER_LEN: usize = core::mem::size_of::<u16>();
 /// DDB body bytes before blockData: moduleId(2) + moduleVersion(1) +
 /// reserved(1) + blockNumber(2).
-const DDB_FIXED_LEN: usize = 6;
+const DDB_FIXED_LEN: usize = DDB_BLOCK_NUMBER_OFFSET + DDB_BLOCK_NUMBER_LEN;
 
 // ── GroupInfoIndication layout constants (TS 102 006 Table 6) ────────────────
 /// NumberOfGroups field: 2 bytes.
@@ -60,6 +115,8 @@ const GII_NUMBER_OF_GROUPS_LEN: usize = 2;
 const GII_GROUP_ID_LEN: usize = 4;
 /// GroupSize field: 4 bytes.
 const GII_GROUP_SIZE_LEN: usize = 4;
+/// GroupId + GroupSize fixed prefix.
+const GII_GROUP_FIXED_LEN: usize = GII_GROUP_ID_LEN + GII_GROUP_SIZE_LEN;
 /// GroupInfoLength field: 2 bytes.
 const GII_GROUP_INFO_LEN_FIELD: usize = 2;
 /// PrivateDataLength field: 2 bytes.
@@ -130,41 +187,40 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (b, _) = bytes.split_first_chunk::<2>().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
-                need: GII_NUMBER_OF_GROUPS_LEN,
-                have: bytes.len(),
-                what: "GroupInfoIndication NumberOfGroups",
-            },
-        ))?;
+        let (b, _) = bytes
+            .split_first_chunk::<GII_NUMBER_OF_GROUPS_LEN>()
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: GII_NUMBER_OF_GROUPS_LEN,
+                    have: bytes.len(),
+                    what: "GroupInfoIndication NumberOfGroups",
+                },
+            ))?;
         let number_of_groups = u16::from_be_bytes(*b) as usize;
         let mut pos = GII_NUMBER_OF_GROUPS_LEN;
         let end = bytes.len();
-        let mut groups = Vec::with_capacity(number_of_groups.min(256));
+        let mut groups = Vec::with_capacity(number_of_groups.min(MAX_PREALLOC));
 
         for _ in 0..number_of_groups {
-            // GroupId (4 bytes) + GroupSize (4 bytes)
-            let fixed = GII_GROUP_ID_LEN + GII_GROUP_SIZE_LEN;
-            let (hdr, _) =
-                bytes[pos..end]
-                    .split_first_chunk::<8>()
-                    .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
-                            need: pos + fixed,
-                            have: end,
-                            what: "GroupInfo GroupId/GroupSize",
-                        },
-                    ))?;
-            let group_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
-            let group_size = u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]);
-            pos += fixed;
+            let (hdr, _) = bytes[pos..end]
+                .split_first_chunk::<GII_GROUP_FIXED_LEN>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + GII_GROUP_FIXED_LEN,
+                        have: end,
+                        what: "GroupInfo GroupId/GroupSize",
+                    },
+                ))?;
+            let group_id = crate::wire::be_u32(hdr, 0, "GroupInfo GroupId")?;
+            let group_size = crate::wire::be_u32(hdr, GII_GROUP_ID_LEN, "GroupInfo GroupSize")?;
+            pos += GII_GROUP_FIXED_LEN;
 
             // GroupCompatibility — CompatibilityDescriptor (Table 7).
             // CompatibilityDescriptor::parse consumes exactly the declared
             // compatibilityDescriptorLength + 2-byte length prefix.
             use crate::compatibility::COMPAT_DESC_LEN_FIELD;
             let (bc, _) = bytes[pos..end]
-                .split_first_chunk::<2>()
+                .split_first_chunk::<COMPAT_DESC_LEN_FIELD>()
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
                         need: pos + COMPAT_DESC_LEN_FIELD,
@@ -185,16 +241,15 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             pos += compat_total;
 
             // GroupInfoLength + GroupInfoByte loop.
-            let (bgi, _) =
-                bytes[pos..end]
-                    .split_first_chunk::<2>()
-                    .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
-                            need: pos + GII_GROUP_INFO_LEN_FIELD,
-                            have: end,
-                            what: "GroupInfo GroupInfoLength",
-                        },
-                    ))?;
+            let (bgi, _) = bytes[pos..end]
+                .split_first_chunk::<GII_GROUP_INFO_LEN_FIELD>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + GII_GROUP_INFO_LEN_FIELD,
+                        have: end,
+                        what: "GroupInfo GroupInfoLength",
+                    },
+                ))?;
             let group_info_len = u16::from_be_bytes(*bgi) as usize;
             pos += GII_GROUP_INFO_LEN_FIELD;
             if pos + group_info_len > end {
@@ -207,16 +262,15 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             pos += group_info_len;
 
             // PrivateDataLength + PrivateDataByte loop.
-            let (bpd, _) =
-                bytes[pos..end]
-                    .split_first_chunk::<2>()
-                    .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
-                            need: pos + GII_PRIVATE_DATA_LEN_FIELD,
-                            have: end,
-                            what: "GroupInfo PrivateDataLength",
-                        },
-                    ))?;
+            let (bpd, _) = bytes[pos..end]
+                .split_first_chunk::<GII_PRIVATE_DATA_LEN_FIELD>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + GII_PRIVATE_DATA_LEN_FIELD,
+                        have: end,
+                        what: "GroupInfo PrivateDataLength",
+                    },
+                ))?;
             let private_data_len = u16::from_be_bytes(*bpd) as usize;
             pos += GII_PRIVATE_DATA_LEN_FIELD;
             if pos + private_data_len > end {
@@ -276,9 +330,10 @@ impl Serialize for GroupInfoIndication<'_> {
         let mut pos = GII_NUMBER_OF_GROUPS_LEN;
 
         for g in &self.groups {
-            buf[pos..pos + 4].copy_from_slice(&g.group_id.to_be_bytes());
-            buf[pos + 4..pos + 8].copy_from_slice(&g.group_size.to_be_bytes());
-            pos += GII_GROUP_ID_LEN + GII_GROUP_SIZE_LEN;
+            buf[pos..pos + GII_GROUP_ID_LEN].copy_from_slice(&g.group_id.to_be_bytes());
+            buf[pos + GII_GROUP_ID_LEN..pos + GII_GROUP_FIXED_LEN]
+                .copy_from_slice(&g.group_size.to_be_bytes());
+            pos += GII_GROUP_FIXED_LEN;
 
             let written = g.group_compatibility.serialize_into(&mut buf[pos..])?;
             pos += written;
@@ -289,7 +344,7 @@ impl Serialize for GroupInfoIndication<'_> {
                     available: u16::MAX as usize,
                 });
             }
-            buf[pos..pos + 2].copy_from_slice(
+            buf[pos..pos + GII_GROUP_INFO_LEN_FIELD].copy_from_slice(
                 &broadcast_common::len::fit_u16(g.group_info.len(), "g.group_info")?.to_be_bytes(),
             );
             pos += GII_GROUP_INFO_LEN_FIELD;
@@ -302,7 +357,7 @@ impl Serialize for GroupInfoIndication<'_> {
                     available: u16::MAX as usize,
                 });
             }
-            buf[pos..pos + 2].copy_from_slice(
+            buf[pos..pos + GII_PRIVATE_DATA_LEN_FIELD].copy_from_slice(
                 &broadcast_common::len::fit_u16(g.private_data.len(), "g.private_data")?
                     .to_be_bytes(),
             );
@@ -448,10 +503,10 @@ fn parse_header<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u16, u32, &'
             reason: "must be 0x03 (U-N download)",
         }));
     }
-    let message_id = u16::from_be_bytes([hdr[2], hdr[3]]);
-    let id = u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]);
-    let adaptation_length = hdr[9] as usize;
-    let message_length = u16::from_be_bytes([hdr[10], hdr[11]]) as usize;
+    let message_id = crate::wire::be_u16(hdr, MESSAGE_ID_OFFSET, "messageId")?;
+    let id = crate::wire::be_u32(hdr, TRANSACTION_ID_OFFSET, "transactionId/downloadId")?;
+    let adaptation_length = hdr[ADAPTATION_LENGTH_OFFSET] as usize;
+    let message_length = crate::wire::be_u16(hdr, MESSAGE_LENGTH_OFFSET, "messageLength")? as usize;
     let total = MESSAGE_HEADER_LEN + message_length;
     if bytes.len() < total {
         return Err(Error::SectionLengthOverflow {
@@ -494,11 +549,14 @@ fn serialize_header(
     }
     buf[0] = PROTOCOL_DISCRIMINATOR;
     buf[1] = DSMCC_TYPE_UN_DOWNLOAD;
-    buf[2..4].copy_from_slice(&message_id.to_be_bytes());
-    buf[4..8].copy_from_slice(&id.to_be_bytes());
-    buf[8] = 0xFF; // reserved
-    buf[9] = broadcast_common::len::fit_u8(adaptation.len(), "adaptation")?;
-    buf[10..12].copy_from_slice(&(message_length as u16).to_be_bytes());
+    buf[MESSAGE_ID_OFFSET..MESSAGE_ID_OFFSET + MESSAGE_ID_LEN]
+        .copy_from_slice(&message_id.to_be_bytes());
+    buf[TRANSACTION_ID_OFFSET..TRANSACTION_ID_OFFSET + TRANSACTION_ID_LEN]
+        .copy_from_slice(&id.to_be_bytes());
+    buf[RESERVED_OFFSET] = RESERVED_BYTE;
+    buf[ADAPTATION_LENGTH_OFFSET] = broadcast_common::len::fit_u8(adaptation.len(), "adaptation")?;
+    buf[MESSAGE_LENGTH_OFFSET..MESSAGE_LENGTH_OFFSET + MESSAGE_LENGTH_LEN]
+        .copy_from_slice(&(message_length as u16).to_be_bytes());
     buf[MESSAGE_HEADER_LEN..MESSAGE_HEADER_LEN + adaptation.len()].copy_from_slice(adaptation);
     Ok(MESSAGE_HEADER_LEN + adaptation.len())
 }
@@ -506,16 +564,16 @@ fn serialize_header(
 /// Read a 16-bit-length-prefixed slice at `pos`, bounds-checked against `end`.
 fn length_prefixed(bytes: &[u8], pos: usize, end: usize) -> Result<(&[u8], usize)> {
     let (b, _) = bytes[pos..end]
-        .split_first_chunk::<2>()
+        .split_first_chunk::<LENGTH_FIELD_LEN>()
         .ok_or(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: pos + 2,
+                need: pos + LENGTH_FIELD_LEN,
                 have: end,
                 what: "DSM-CC 16-bit length field",
             },
         ))?;
     let len = u16::from_be_bytes(*b) as usize;
-    let start = pos + 2;
+    let start = pos + LENGTH_FIELD_LEN;
     if start + len > end {
         return Err(Error::SectionLengthOverflow {
             declared: len,
@@ -534,7 +592,7 @@ fn parse_compat_block(
 ) -> Result<(CompatibilityDescriptor<'_>, usize)> {
     use crate::compatibility::COMPAT_DESC_LEN_FIELD;
     let (b, _) = payload[offset..]
-        .split_first_chunk::<2>()
+        .split_first_chunk::<COMPAT_DESC_LEN_FIELD>()
         .ok_or(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
                 need: offset + COMPAT_DESC_LEN_FIELD,
@@ -597,29 +655,29 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                             },
                         ))?;
                 let download_id =
-                    u32::from_be_bytes([dii_hdr[0], dii_hdr[1], dii_hdr[2], dii_hdr[3]]);
-                let block_size = u16::from_be_bytes([dii_hdr[4], dii_hdr[5]]);
-                let window_size = dii_hdr[6];
-                let ack_period = dii_hdr[7];
+                    crate::wire::be_u32(dii_hdr, DII_DOWNLOAD_ID_OFFSET, "downloadId")?;
+                let block_size = crate::wire::be_u16(dii_hdr, DII_BLOCK_SIZE_OFFSET, "blockSize")?;
+                let window_size = dii_hdr[DII_WINDOW_SIZE_OFFSET];
+                let ack_period = dii_hdr[DII_ACK_PERIOD_OFFSET];
                 let t_c_download_window =
-                    u32::from_be_bytes([dii_hdr[8], dii_hdr[9], dii_hdr[10], dii_hdr[11]]);
+                    crate::wire::be_u32(dii_hdr, DII_TC_WINDOW_OFFSET, "tCDownloadWindow")?;
                 let t_c_download_scenario =
-                    u32::from_be_bytes([dii_hdr[12], dii_hdr[13], dii_hdr[14], dii_hdr[15]]);
+                    crate::wire::be_u32(dii_hdr, DII_TC_SCENARIO_OFFSET, "tCDownloadScenario")?;
                 let (compatibility_descriptor, mut pos) =
                     parse_compat_block(payload, DII_FIXED_LEN, end)?;
                 let (bnm, _) = payload
                     .get(pos..)
-                    .and_then(|s| s.split_first_chunk::<2>())
+                    .and_then(|s| s.split_first_chunk::<LENGTH_FIELD_LEN>())
                     .ok_or(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: pos + 2,
+                            need: pos + LENGTH_FIELD_LEN,
                             have: end,
                             what: "Dii numberOfModules",
                         },
                     ))?;
                 let number_of_modules = u16::from_be_bytes(*bnm) as usize;
-                pos += 2;
-                let mut modules = Vec::with_capacity(number_of_modules.min(256));
+                pos += LENGTH_FIELD_LEN;
+                let mut modules = Vec::with_capacity(number_of_modules.min(MAX_PREALLOC));
                 for _ in 0..number_of_modules {
                     let (mhdr, _) = payload
                         .get(pos..)
@@ -631,10 +689,10 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                                 what: "Dii module entry",
                             },
                         ))?;
-                    let module_id = u16::from_be_bytes([mhdr[0], mhdr[1]]);
-                    let module_size = u32::from_be_bytes([mhdr[2], mhdr[3], mhdr[4], mhdr[5]]);
-                    let module_version = mhdr[6];
-                    let module_info_length = mhdr[7] as usize;
+                    let module_id = crate::wire::be_u16(mhdr, MODULE_ID_OFFSET, "moduleId")?;
+                    let module_size = crate::wire::be_u32(mhdr, MODULE_SIZE_OFFSET, "moduleSize")?;
+                    let module_version = mhdr[MODULE_VERSION_OFFSET];
+                    let module_info_length = mhdr[MODULE_INFO_LENGTH_OFFSET] as usize;
                     let info_start = pos + MODULE_HEADER_LEN;
                     if info_start + module_info_length > end {
                         return Err(Error::SectionLengthOverflow {
@@ -692,7 +750,7 @@ impl Serialize for UnMessage<'_> {
                     + dii.adaptation.len()
                     + DII_FIXED_LEN
                     + dii.compatibility_descriptor.serialized_len()
-                    + 2 // numberOfModules
+                    + LENGTH_FIELD_LEN // numberOfModules
                     + dii
                         .modules
                         .iter()
@@ -734,12 +792,19 @@ impl Serialize for UnMessage<'_> {
                     dii.adaptation,
                     payload_len,
                 )?;
-                buf[pos..pos + 4].copy_from_slice(&dii.download_id.to_be_bytes());
-                buf[pos + 4..pos + 6].copy_from_slice(&dii.block_size.to_be_bytes());
-                buf[pos + 6] = dii.window_size;
-                buf[pos + 7] = dii.ack_period;
-                buf[pos + 8..pos + 12].copy_from_slice(&dii.t_c_download_window.to_be_bytes());
-                buf[pos + 12..pos + 16].copy_from_slice(&dii.t_c_download_scenario.to_be_bytes());
+                buf[pos + DII_DOWNLOAD_ID_OFFSET
+                    ..pos + DII_DOWNLOAD_ID_OFFSET + DII_DOWNLOAD_ID_LEN]
+                    .copy_from_slice(&dii.download_id.to_be_bytes());
+                buf[pos + DII_BLOCK_SIZE_OFFSET..pos + DII_BLOCK_SIZE_OFFSET + DII_BLOCK_SIZE_LEN]
+                    .copy_from_slice(&dii.block_size.to_be_bytes());
+                buf[pos + DII_WINDOW_SIZE_OFFSET] = dii.window_size;
+                buf[pos + DII_ACK_PERIOD_OFFSET] = dii.ack_period;
+                buf[pos + DII_TC_WINDOW_OFFSET
+                    ..pos + DII_TC_WINDOW_OFFSET + core::mem::size_of::<u32>()]
+                    .copy_from_slice(&dii.t_c_download_window.to_be_bytes());
+                buf[pos + DII_TC_SCENARIO_OFFSET
+                    ..pos + DII_TC_SCENARIO_OFFSET + core::mem::size_of::<u32>()]
+                    .copy_from_slice(&dii.t_c_download_scenario.to_be_bytes());
                 pos += DII_FIXED_LEN;
                 let written = dii
                     .compatibility_descriptor
@@ -751,11 +816,11 @@ impl Serialize for UnMessage<'_> {
                         available: u16::MAX as usize,
                     });
                 }
-                buf[pos..pos + 2].copy_from_slice(
+                buf[pos..pos + LENGTH_FIELD_LEN].copy_from_slice(
                     &broadcast_common::len::fit_u16(dii.modules.len(), "dii.modules")?
                         .to_be_bytes(),
                 );
-                pos += 2;
+                pos += LENGTH_FIELD_LEN;
                 for m in &dii.modules {
                     if m.module_info.len() > u8::MAX as usize {
                         return Err(Error::SectionLengthOverflow {
@@ -763,10 +828,12 @@ impl Serialize for UnMessage<'_> {
                             available: u8::MAX as usize,
                         });
                     }
-                    buf[pos..pos + 2].copy_from_slice(&m.module_id.to_be_bytes());
-                    buf[pos + 2..pos + 6].copy_from_slice(&m.module_size.to_be_bytes());
-                    buf[pos + 6] = m.module_version;
-                    buf[pos + 7] =
+                    buf[pos + MODULE_ID_OFFSET..pos + MODULE_ID_OFFSET + MODULE_ID_LEN]
+                        .copy_from_slice(&m.module_id.to_be_bytes());
+                    buf[pos + MODULE_SIZE_OFFSET..pos + MODULE_SIZE_OFFSET + MODULE_SIZE_LEN]
+                        .copy_from_slice(&m.module_size.to_be_bytes());
+                    buf[pos + MODULE_VERSION_OFFSET] = m.module_version;
+                    buf[pos + MODULE_INFO_LENGTH_OFFSET] =
                         broadcast_common::len::fit_u8(m.module_info.len(), "m.module_info")?;
                     pos += MODULE_HEADER_LEN;
                     buf[pos..pos + m.module_info.len()].copy_from_slice(m.module_info);
@@ -787,10 +854,10 @@ fn put_length_prefixed(buf: &mut [u8], pos: usize, data: &[u8]) -> Result<usize>
             available: u16::MAX as usize,
         });
     }
-    buf[pos..pos + 2]
+    buf[pos..pos + LENGTH_FIELD_LEN]
         .copy_from_slice(&broadcast_common::len::fit_u16(data.len(), "data")?.to_be_bytes());
-    buf[pos + 2..pos + 2 + data.len()].copy_from_slice(data);
-    Ok(pos + 2 + data.len())
+    buf[pos + LENGTH_FIELD_LEN..pos + LENGTH_FIELD_LEN + data.len()].copy_from_slice(data);
+    Ok(pos + LENGTH_FIELD_LEN + data.len())
 }
 
 impl<'a> Parse<'a> for DownloadDataBlock<'a> {
@@ -819,9 +886,9 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
         Ok(DownloadDataBlock {
             download_id,
             adaptation,
-            module_id: u16::from_be_bytes([ddb_hdr[0], ddb_hdr[1]]),
-            module_version: ddb_hdr[2],
-            block_number: u16::from_be_bytes([ddb_hdr[4], ddb_hdr[5]]),
+            module_id: crate::wire::be_u16(ddb_hdr, MODULE_ID_OFFSET, "moduleId")?,
+            module_version: ddb_hdr[DDB_MODULE_VERSION_OFFSET],
+            block_number: crate::wire::be_u16(ddb_hdr, DDB_BLOCK_NUMBER_OFFSET, "blockNumber")?,
             block_data: &payload[DDB_FIXED_LEN..],
         })
     }
@@ -845,10 +912,12 @@ impl Serialize for DownloadDataBlock<'_> {
             self.adaptation,
             payload_len,
         )?;
-        buf[pos..pos + 2].copy_from_slice(&self.module_id.to_be_bytes());
-        buf[pos + 2] = self.module_version;
-        buf[pos + 3] = 0xFF; // reserved
-        buf[pos + 4..pos + 6].copy_from_slice(&self.block_number.to_be_bytes());
+        buf[pos + MODULE_ID_OFFSET..pos + MODULE_ID_OFFSET + MODULE_ID_LEN]
+            .copy_from_slice(&self.module_id.to_be_bytes());
+        buf[pos + DDB_MODULE_VERSION_OFFSET] = self.module_version;
+        buf[pos + DDB_RESERVED_OFFSET] = RESERVED_BYTE;
+        buf[pos + DDB_BLOCK_NUMBER_OFFSET..pos + DDB_BLOCK_NUMBER_OFFSET + DDB_BLOCK_NUMBER_LEN]
+            .copy_from_slice(&self.block_number.to_be_bytes());
         buf[pos + DDB_FIXED_LEN..pos + DDB_FIXED_LEN + self.block_data.len()]
             .copy_from_slice(self.block_data);
         Ok(len)

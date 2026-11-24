@@ -22,7 +22,7 @@ pub struct TdtSection {
     /// Raw 5-byte UTC time (16-bit MJD + 24-bit BCD HHMMSS) per
     /// EN 300 468 Annex C. Private — use [`utc_time_decoded`](Self::utc_time_decoded)
     /// for decoded access.
-    pub(crate) utc_time_raw: [u8; 5],
+    pub(crate) utc_time_raw: [u8; UTC_TIME_LEN],
     /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
     /// (EN 300 468 §5.2.5, `0x70` with `section_syntax_indicator` = 0;
     /// default [`SectionBits::dvb`](super::SectionBits::dvb)). `reserved_b5`
@@ -61,13 +61,13 @@ impl TdtSection {
 
     /// Raw 5-byte UTC time field (for round-trip / serialization).
     #[must_use]
-    pub fn utc_time_raw(&self) -> [u8; 5] {
+    pub fn utc_time_raw(&self) -> [u8; UTC_TIME_LEN] {
         self.utc_time_raw
     }
 
     /// Construct a `TdtSection` from raw wire fields.
     #[must_use]
-    pub fn new(utc_time_raw: [u8; 5]) -> Self {
+    pub fn new(utc_time_raw: [u8; UTC_TIME_LEN]) -> Self {
         Self {
             utc_time_raw,
             bits: super::SectionBits::dvb().short_form(),
@@ -119,7 +119,8 @@ impl<'a> Parse<'a> for TdtSection {
                 available: UTC_TIME_LEN,
             });
         }
-        let utc_time_raw = [bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
+        let mut utc_time_raw = [0u8; UTC_TIME_LEN];
+        utc_time_raw.copy_from_slice(&bytes[HEADER_LEN..HEADER_LEN + UTC_TIME_LEN]);
         Ok(TdtSection {
             utc_time_raw,
             bits: super::SectionBits::parse(bytes[1], None),
@@ -138,7 +139,7 @@ impl Serialize for TdtSection {
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, UTC_TIME_LEN)?;
-        buf[3..8].copy_from_slice(&self.utc_time_raw);
+        buf[HEADER_LEN..HEADER_LEN + UTC_TIME_LEN].copy_from_slice(&self.utc_time_raw);
         Ok(len)
     }
 }
