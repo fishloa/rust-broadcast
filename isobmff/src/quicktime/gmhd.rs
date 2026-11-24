@@ -29,6 +29,40 @@ pub const TEXT: [u8; BOX_TYPE_SIZE] = *b"text";
 const GMIN_BODY_LEN: usize = 12;
 /// Bytes of a `tcmi` body after its FullBox header, before the font name.
 const TCMI_BODY_LEN: usize = 18;
+/// An RGB triple's element count.
+const COLOR_LEN: usize = 3;
+/// Offset of the graphics mode.
+const GMIN_GRAPHICS_MODE_OFFSET: usize = 0;
+/// Offset of the red opcolour.
+const GMIN_OPCOLOR_RED_OFFSET: usize = 2;
+/// Offset of the green opcolour.
+const GMIN_OPCOLOR_GREEN_OFFSET: usize = 4;
+/// Offset of the blue opcolour.
+const GMIN_OPCOLOR_BLUE_OFFSET: usize = 6;
+/// Offset of the sound balance.
+const GMIN_BALANCE_OFFSET: usize = 8;
+/// Offset of the reserved field.
+const GMIN_RESERVED_OFFSET: usize = 10;
+/// Offset of the text font.
+const TCMI_FONT_OFFSET: usize = 0;
+/// Offset of the text face.
+const TCMI_FACE_OFFSET: usize = 2;
+/// Offset of the text size.
+const TCMI_SIZE_OFFSET: usize = 4;
+/// Offset of the red text colour.
+const TCMI_TEXT_RED_OFFSET: usize = 6;
+/// Offset of the green text colour.
+const TCMI_TEXT_GREEN_OFFSET: usize = 8;
+/// Offset of the blue text colour.
+const TCMI_TEXT_BLUE_OFFSET: usize = 10;
+/// Offset of the red background colour.
+const TCMI_BACKGROUND_RED_OFFSET: usize = 12;
+/// Offset of the green background colour.
+const TCMI_BACKGROUND_GREEN_OFFSET: usize = 14;
+/// Offset of the blue background colour.
+const TCMI_BACKGROUND_BLUE_OFFSET: usize = 16;
+/// Offset of the font name's length byte.
+const TCMI_NAME_LEN_OFFSET: usize = 18;
 /// The `gmin` base media info atom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -40,7 +74,7 @@ pub struct GminAtom {
     /// QuickDraw transfer mode.
     pub graphics_mode: u16,
     /// Red, green and blue opcolour values.
-    pub opcolor: [u16; 3],
+    pub opcolor: [u16; COLOR_LEN],
     /// Sound balance.
     pub balance: i16,
     /// Reserved.
@@ -59,14 +93,14 @@ impl<'a> Parse<'a> for GminAtom {
         Ok(Self {
             version: body[0],
             flags: u24_at(body, 1),
-            graphics_mode: u16_at(body, FULLBOX_EXTRA_SIZE),
+            graphics_mode: u16_at(body, FULLBOX_EXTRA_SIZE + GMIN_GRAPHICS_MODE_OFFSET),
             opcolor: [
-                u16_at(body, FULLBOX_EXTRA_SIZE + 2),
-                u16_at(body, FULLBOX_EXTRA_SIZE + 4),
-                u16_at(body, FULLBOX_EXTRA_SIZE + 6),
+                u16_at(body, FULLBOX_EXTRA_SIZE + GMIN_OPCOLOR_RED_OFFSET),
+                u16_at(body, FULLBOX_EXTRA_SIZE + GMIN_OPCOLOR_GREEN_OFFSET),
+                u16_at(body, FULLBOX_EXTRA_SIZE + GMIN_OPCOLOR_BLUE_OFFSET),
             ],
-            balance: i16_at(body, FULLBOX_EXTRA_SIZE + 8),
-            reserved: u16_at(body, FULLBOX_EXTRA_SIZE + 10),
+            balance: i16_at(body, FULLBOX_EXTRA_SIZE + GMIN_BALANCE_OFFSET),
+            reserved: u16_at(body, FULLBOX_EXTRA_SIZE + GMIN_RESERVED_OFFSET),
         })
     }
 }
@@ -86,9 +120,9 @@ pub struct TcmiAtom {
     /// Text point size.
     pub text_size: u16,
     /// Text colour, red/green/blue.
-    pub text_color: [u16; 3],
+    pub text_color: [u16; COLOR_LEN],
     /// Background colour, red/green/blue.
-    pub background_color: [u16; 3],
+    pub background_color: [u16; COLOR_LEN],
     /// Font name bytes (a Pascal string's payload).
     pub font_name: Vec<u8>,
 }
@@ -105,8 +139,8 @@ impl<'a> Parse<'a> for TcmiAtom {
         let version = body[0];
         let flags = u24_at(body, 1);
         let base = FULLBOX_EXTRA_SIZE;
-        let name_len = usize::from(body[base + TCMI_BODY_LEN]);
-        let name_at = base + TCMI_BODY_LEN + 1;
+        let name_len = usize::from(body[base + TCMI_NAME_LEN_OFFSET]);
+        let name_at = base + TCMI_NAME_LEN_OFFSET + 1;
         let font_name = body
             .get(name_at..name_at.saturating_add(name_len))
             .map(<[u8]>::to_vec)
@@ -114,18 +148,18 @@ impl<'a> Parse<'a> for TcmiAtom {
         Ok(Self {
             version,
             flags,
-            text_font: u16_at(body, base),
-            text_face: u16_at(body, base + 2),
-            text_size: u16_at(body, base + 4),
+            text_font: u16_at(body, base + TCMI_FONT_OFFSET),
+            text_face: u16_at(body, base + TCMI_FACE_OFFSET),
+            text_size: u16_at(body, base + TCMI_SIZE_OFFSET),
             text_color: [
-                u16_at(body, base + 6),
-                u16_at(body, base + 8),
-                u16_at(body, base + 10),
+                u16_at(body, base + TCMI_TEXT_RED_OFFSET),
+                u16_at(body, base + TCMI_TEXT_GREEN_OFFSET),
+                u16_at(body, base + TCMI_TEXT_BLUE_OFFSET),
             ],
             background_color: [
-                u16_at(body, base + 12),
-                u16_at(body, base + 14),
-                u16_at(body, base + 16),
+                u16_at(body, base + TCMI_BACKGROUND_RED_OFFSET),
+                u16_at(body, base + TCMI_BACKGROUND_GREEN_OFFSET),
+                u16_at(body, base + TCMI_BACKGROUND_BLUE_OFFSET),
             ],
             font_name,
         })

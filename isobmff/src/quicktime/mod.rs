@@ -1,4 +1,4 @@
-//! QuickTime atoms no ISO/IEC 14496-12 file carries — **read only**.
+//! QuickTime atoms no ISO/IEC 14496-12:2026 file carries — **read only**.
 //!
 //! A camera or editing `.mov` carries sound description versions 1 and 2, the
 //! `wave` decompression container, the base media information header `gmhd`,

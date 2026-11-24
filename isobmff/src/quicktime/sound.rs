@@ -27,6 +27,11 @@ pub const V1_FIXED_LEN: usize = 44;
 /// Bytes of a QuickTime version 2 sound description before its children.
 pub const V2_FIXED_LEN: usize = 64;
 
+/// QuickTime's `revision_level` + `vendor` width.
+const QT_RESERVED_LEN: usize = 6;
+/// `compression_ID` + `packet_size` width.
+const COMPRESSION_LEN: usize = BOX_TYPE_SIZE;
+
 /// Offset of the version field inside a sound entry's body.
 const VERSION_OFFSET: usize = 8;
 /// Offset of the `revision_level`/`vendor` block inside the body.
@@ -162,7 +167,7 @@ pub struct SoundEntry {
     /// `entry_version` verbatim.
     pub entry_version: u16,
     /// QuickTime's `revision_level` + `vendor` (ISO's `reserved[3]`).
-    pub reserved_1: [u8; 6],
+    pub reserved_1: [u8; QT_RESERVED_LEN],
     /// `data_reference_index`.
     pub data_reference_index: u16,
     /// `channelcount` as the fixed field carries it.
@@ -170,7 +175,7 @@ pub struct SoundEntry {
     /// `samplesize` as the fixed field carries it.
     pub samplesize: u16,
     /// `compression_ID` + `packet_size`.
-    pub compression_id_and_packet_size: [u8; 4],
+    pub compression_id_and_packet_size: [u8; COMPRESSION_LEN],
     /// The 16.16 `samplerate` field as written.
     pub samplerate: u32,
     /// The version 1/2 extension, when the entry carries one.
@@ -209,7 +214,7 @@ impl SoundEntry {
     pub fn sample_rate_hz(&self) -> f64 {
         match self.quicktime {
             Some(QuickTimeSound::V2(v2)) => v2.audio_sample_rate(),
-            _ => f64::from(self.samplerate >> SIXTEEN_BITS),
+            _ => f64::from(self.samplerate >> SAMPLERATE_INTEGER_SHIFT),
         }
     }
 
@@ -239,10 +244,11 @@ impl<'a> Parse<'a> for SoundEntry {
         codec_type.copy_from_slice(&bytes[crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
         let body = crate::box_types::box_body(bytes, V0_FIXED_LEN, "QuickTime sound entry")?;
         let entry_version = u16_at(body, VERSION_OFFSET);
-        let mut reserved_1 = [0u8; 6];
-        reserved_1.copy_from_slice(&body[RESERVED_OFFSET..RESERVED_OFFSET + 6]);
-        let mut compression = [0u8; 4];
-        compression.copy_from_slice(&body[COMPRESSION_OFFSET..COMPRESSION_OFFSET + 4]);
+        let mut reserved_1 = [0u8; QT_RESERVED_LEN];
+        reserved_1.copy_from_slice(&body[RESERVED_OFFSET..RESERVED_OFFSET + QT_RESERVED_LEN]);
+        let mut compression = [0u8; COMPRESSION_LEN];
+        compression
+            .copy_from_slice(&body[COMPRESSION_OFFSET..COMPRESSION_OFFSET + COMPRESSION_LEN]);
         let (quicktime, children_at) = match entry_version {
             QUICKTIME_VERSION_1 => v1_extension(body)?,
             QUICKTIME_VERSION_2 => {
@@ -283,17 +289,17 @@ impl<'a> Parse<'a> for SoundEntry {
 /// Parse the version 1/2 extension of an audio sample entry and return it with
 /// the body offset its children start at.
 pub(crate) fn parse_extension(
-    bytes: &[u8],
+    _bytes: &[u8],
     body: &[u8],
 ) -> Result<(Option<QuickTimeSound>, usize)> {
     match u16_at(body, VERSION_OFFSET) {
         QUICKTIME_VERSION_1 => v1_extension(body),
         QUICKTIME_VERSION_2 => {
-            need_in(
-                bytes,
-                BOX_HEADER_MIN_SIZE + V2_FIXED_LEN,
-                "QuickTime v2 sound entry",
-            )?;
+            if body.len() < V2_FIXED_LEN {
+                // A synthetic or legacy `entry_version = 2` with no version 2
+                // fields: keep the ISO layout rather than rejecting the file.
+                return Ok((None, V0_FIXED_LEN));
+            }
             Ok((Some(parse_v2(body)), V2_FIXED_LEN))
         }
         _ => Ok((None, V0_FIXED_LEN)),
@@ -377,7 +383,7 @@ const COPYRIGHT_SIGN: u8 = 0xA9;
 /// The printable space.
 const SPACE: u8 = 0x20;
 /// Bits the integer part of a 16.16 fixed-point value is shifted by.
-const SIXTEEN_BITS: u32 = 16;
+const SAMPLERATE_INTEGER_SHIFT: u32 = 16;
 /// QuickTime sound description version 1.
 const QUICKTIME_VERSION_1: u16 = 1;
 /// QuickTime sound description version 2.

@@ -47,6 +47,14 @@ const MINUTES_MASK: u8 = 0x7F;
 const MAX_SECONDS: u8 = 59;
 /// The largest valid minutes value in the record form.
 const MAX_MINUTES: u8 = 59;
+/// Bytes of one decoded timecode sample.
+const TMCD_SAMPLE_LEN: usize = 4;
+/// Byte offset of the seconds field.
+const SECONDS_BYTE_OFFSET: usize = 2;
+/// Byte offset of the frames field.
+const FRAMES_BYTE_OFFSET: usize = 3;
+/// Bytes of a `name` atom's string length prefix.
+const LENGTH_PREFIX_LEN: usize = 2;
 
 /// A QuickTime timecode sample description.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,18 +154,18 @@ pub struct Timecode {
 /// Drop-frame renumbering is **not** implemented (the flag is reported and the
 /// value is the non-drop derivation), per the design's no-guessing rule.
 pub fn timecode_from_sample(entry: &TimecodeEntry, sample: &[u8]) -> Result<Timecode> {
-    need_in(sample, 4, "tmcd sample")?;
-    let record_is_valid = sample[2] <= MAX_SECONDS
+    need_in(sample, TMCD_SAMPLE_LEN, "tmcd sample")?;
+    let record_is_valid = sample[SECONDS_BYTE_OFFSET] <= MAX_SECONDS
         && (sample[1] & MINUTES_MASK) <= MAX_MINUTES
-        && (entry.number_of_frames == 0 || sample[3] < entry.number_of_frames);
+        && (entry.number_of_frames == 0 || sample[FRAMES_BYTE_OFFSET] < entry.number_of_frames);
     if entry.counter() || !record_is_valid {
         return counter_timecode(entry, u32_at(sample, 0));
     }
     Ok(Timecode {
         hours: sample[0],
         minutes: sample[1] & MINUTES_MASK,
-        seconds: sample[2],
-        frames: sample[3],
+        seconds: sample[SECONDS_BYTE_OFFSET],
+        frames: sample[FRAMES_BYTE_OFFSET],
         negative: sample[1] & NEGATIVE_BIT != 0,
         drop_frame: entry.drop_frame(),
     })
@@ -178,11 +186,15 @@ fn counter_timecode(entry: &TimecodeEntry, value: u32) -> Result<Timecode> {
     let minutes_total = seconds_total / SECONDS_PER_MINUTE;
     let minutes = minutes_total % MINUTES_PER_HOUR;
     let hours = minutes_total / MINUTES_PER_HOUR;
+    let field = |value: u64| {
+        u8::try_from(value)
+            .map_err(|_| Error::InvalidInput("timecode counter leaves the 8-bit time fields"))
+    };
     Ok(Timecode {
-        hours: u8::try_from(hours).unwrap_or(u8::MAX),
-        minutes: u8::try_from(minutes).unwrap_or(u8::MAX),
-        seconds: u8::try_from(seconds).unwrap_or(u8::MAX),
-        frames: u8::try_from(frames).unwrap_or(u8::MAX),
+        hours: field(hours)?,
+        minutes: field(minutes)?,
+        seconds: field(seconds)?,
+        frames: field(frames)?,
         negative: false,
         drop_frame: entry.drop_frame(),
     })
@@ -190,12 +202,12 @@ fn counter_timecode(entry: &TimecodeEntry, value: u32) -> Result<Timecode> {
 
 /// A `name` atom string: a 16-bit length then the bytes.
 fn pascal_or_short_string(payload: &[u8]) -> Vec<u8> {
-    if payload.len() < 2 {
+    if payload.len() < LENGTH_PREFIX_LEN {
         return Vec::new();
     }
     let len = usize::from(u16_at(payload, 0));
     payload
-        .get(2..2 + len)
+        .get(LENGTH_PREFIX_LEN..LENGTH_PREFIX_LEN + len)
         .map(<[u8]>::to_vec)
         .unwrap_or_default()
 }

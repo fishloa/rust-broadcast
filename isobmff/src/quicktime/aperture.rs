@@ -23,6 +23,8 @@ pub const ENOF: [u8; BOX_TYPE_SIZE] = *b"enof";
 
 /// Bytes of an aperture dimensions body after the FullBox fields.
 const DIMENSIONS_BODY_LEN: usize = 8;
+/// Offset of the height field after the width field.
+const HEIGHT_OFFSET: usize = 4;
 
 /// One aperture's 16.16 width and height.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +57,7 @@ impl<'a> Parse<'a> for ApertureDimensions {
             version: body[0],
             flags: u24_at(body, 1),
             width: u32_at(body, FULLBOX_EXTRA_SIZE),
-            height: u32_at(body, FULLBOX_EXTRA_SIZE + 4),
+            height: u32_at(body, FULLBOX_EXTRA_SIZE + HEIGHT_OFFSET),
         })
     }
 }

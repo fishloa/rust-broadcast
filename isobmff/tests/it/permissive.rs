@@ -99,7 +99,7 @@ fn last_moof(data: &[u8]) -> usize {
         .into_iter()
         .filter(|(_, _, fourcc)| fourcc == b"moof")
         .map(|(at, _, _)| at)
-        .last()
+        .next_back()
         .expect("a moof")
 }
 
@@ -188,10 +188,9 @@ fn find_box(data: &[u8], start: usize, end: usize, fourcc: &[u8; 4]) -> Option<u
         if matches!(
             &data[at + 4..at + 8],
             b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" | b"dinf" | b"edts" | b"udta" | b"mvex"
-        ) {
-            if let Some(found) = find_box(data, at + 8, at + size, fourcc) {
-                return Some(found);
-            }
+        ) && let Some(found) = find_box(data, at + 8, at + size, fourcc)
+        {
+            return Some(found);
         }
         at += size;
     }

@@ -444,14 +444,16 @@ enum MdatForm {
 fn synthetic_init() -> Vec<u8> {
     use broadcast_common::timescale::Timescale;
     use isobmff::writer::{SampleEntry, TrackSetup, Writer};
-    let entry_body = box_bytes(b"avc1", &[0u8; 78]);
+    // A raw entry this crate has no typed form for: the test addresses
+    // fragment samples, not sample-entry parsing.
+    let entry_body = box_bytes(b"raw1", &[0u8; 78]);
     let setup = TrackSetup::new(
         isobmff::TrackId::new(SYNTH_TRACK),
         *b"vide",
         vec![],
         Timescale::try_new(1_000).expect("timescale"),
         SampleEntry::Raw {
-            fourcc: *b"avc1",
+            fourcc: *b"raw1",
             body: entry_body,
         },
     );

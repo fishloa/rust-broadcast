@@ -1955,6 +1955,13 @@ impl Reader {
 /// Deepest container nesting the moov sanitizer descends.
 const SANITIZE_MAX_DEPTH: u32 = 16;
 
+/// Offset of the byte after a `meta` box's FullBox header.
+const META_BODY_START: usize = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE;
+/// Body offset of the `mvhd` timescale in the version 0 form.
+const MVHD_V0_TIMESCALE_BODY_OFFSET: usize = FULLBOX_EXTRA_SIZE + 8;
+/// Body offset of the `mvhd` timescale in the version 1 form.
+const MVHD_V1_TIMESCALE_BODY_OFFSET: usize = FULLBOX_EXTRA_SIZE + 16;
+
 /// Container four-CCs the permissive `moov` sanitizer descends.
 const SANITIZE_CONTAINERS: &[[u8; BOX_TYPE_SIZE]] = &[
     *b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"dinf", *b"edts", *b"udta", *b"mvex",
@@ -2011,7 +2018,7 @@ fn clamp_children(
             size = clamped;
         }
         let child_body = if fourcc == META {
-            at + 12
+            at + META_BODY_START
         } else {
             at + BOX_HEADER_MIN_SIZE
         };
@@ -2049,9 +2056,9 @@ fn patch_zero_mvhd(data: &mut [u8], start: usize, base: u64, warnings: &mut Vec<
     }
     let version = data[body];
     let timescale_at = if version == 1 {
-        body + FULLBOX_EXTRA_SIZE + 16
+        body + MVHD_V1_TIMESCALE_BODY_OFFSET
     } else {
-        body + FULLBOX_EXTRA_SIZE + 8
+        body + MVHD_V0_TIMESCALE_BODY_OFFSET
     };
     if timescale_at + core::mem::size_of::<u32>() > data.len() {
         return;
