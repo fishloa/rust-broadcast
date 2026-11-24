@@ -509,7 +509,7 @@ thread_local! {
 /// (§8.7.3: a sample's data lies in the file, so samples that do not overlap
 /// never total more than it holds), reported as
 /// [`Error::SampleDataBudgetExceeded`] (audit 20 finding 6).
-pub(crate) fn sample_layout(
+pub fn sample_layout(
     stsz: &SampleSizeBox,
     stsc: &SampleToChunkBox,
     co64: Option<&ChunkLargeOffsetBox>,
@@ -620,7 +620,7 @@ fn sample_size(stsz: &SampleSizeBox, index: usize) -> Result<usize> {
 
 /// Expand `stts`'s run-length `(sample_count, sample_delta)` table (§8.6.1.2)
 /// into an explicit per-sample duration.
-fn expand_stts(stts: &TimeToSampleBox, total_samples: usize) -> Result<Vec<u32>> {
+pub fn expand_stts(stts: &TimeToSampleBox, total_samples: usize) -> Result<Vec<u32>> {
     let mut out = Vec::with_capacity(total_samples);
     for entry in &stts.entries {
         // A wire `sample_count` is untrusted: a run longer than the slots
@@ -648,7 +648,7 @@ fn expand_stts(stts: &TimeToSampleBox, total_samples: usize) -> Result<Vec<u32>>
 /// Expand `ctts`'s run-length `(sample_count, sample_offset)` table
 /// (§8.6.1.3) into an explicit per-sample composition offset; `None` (no
 /// `ctts`) yields all-zero offsets (every sample's CT == DT).
-fn expand_ctts(ctts: Option<&CompositionOffsetBox>, total_samples: usize) -> Result<Vec<i32>> {
+pub fn expand_ctts(ctts: Option<&CompositionOffsetBox>, total_samples: usize) -> Result<Vec<i32>> {
     let Some(ctts) = ctts else {
         return Ok(alloc::vec![0i32; total_samples]);
     };
@@ -675,7 +675,7 @@ fn expand_ctts(ctts: Option<&CompositionOffsetBox>, total_samples: usize) -> Res
 
 /// Resolve every sample's sync flag from `stss`'s 1-based index list
 /// (§8.6.2); absent ⇒ every sample is implicitly a sync sample.
-fn expand_stss(stss: Option<&SyncSampleBox>, total_samples: usize) -> Vec<bool> {
+pub fn expand_stss(stss: Option<&SyncSampleBox>, total_samples: usize) -> Vec<bool> {
     let Some(stss) = stss else {
         return alloc::vec![true; total_samples];
     };
