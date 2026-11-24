@@ -1,6 +1,6 @@
 //! ISO BMFF box syntax lives in exactly one crate (streaming-first Phase 1).
 //!
-//! Every ISO/IEC 14496-12 box header, four-CC literal and size-driven walk is
+//! Every ISO/IEC 14496-12:2026 box header, four-CC literal and size-driven walk is
 //! `isobmff`'s. A workspace member that hand-rolls one is drift. This guard
 //! scans every crate's non-test `src/` code (except `isobmff` itself) and
 //! fails on:
