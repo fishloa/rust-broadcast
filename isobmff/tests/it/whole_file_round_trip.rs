@@ -411,6 +411,7 @@ fn rebuild_fragmented(bytes: &[u8], run: &Run) -> Vec<u8> {
                         composition_offset: sample.composition_offset,
                         sync: sample.sync,
                         aux: sample.aux.clone(),
+                        description_index: sample.description_index,
                     },
                     sample_bytes(bytes, sample),
                 )

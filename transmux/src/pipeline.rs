@@ -677,6 +677,7 @@ pub(crate) fn build_chunk(
                         composition_offset: s.composition_offset()?.unwrap_or(0),
                         sync: s.flags.is_sync,
                         aux: None,
+                        description_index: isobmff::plan::DEFAULT_DESCRIPTION_INDEX,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?,

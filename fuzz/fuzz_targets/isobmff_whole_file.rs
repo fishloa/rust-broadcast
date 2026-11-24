@@ -1,0 +1,263 @@
+#![no_main]
+
+//! Whole-file read-write-read: the input is a file image, not a box.
+//!
+//! A strict read that reaches [`Step::Done`] with every sample inside the input
+//! is rewritten through the writer and read back. The rewrite must describe the
+//! same tracks, the same sample descriptors and the same sample bytes; the
+//! write path is the one place an arbitrary input reaches the *output* code, so
+//! this is where a reader/writer disagreement (a size the writer trusts that
+//! the reader derived differently) would land.
+
+use std::collections::BTreeMap;
+
+use isobmff::plan::OwnedPlan;
+use isobmff::sample_table::SampleRef;
+use isobmff::writer::{
+    FileType, Interleave, Layout, MovieHeader, SampleMeta, Sink, TrackSetup, Write, Writer,
+};
+use isobmff::{Limits, Reader, ReaderConfig, SampleOrder, Step, TrackId, TrackInfo};
+use libfuzzer_sys::fuzz_target;
+
+/// A hostile input cannot describe more steps than this.
+const MAX_STEPS: usize = 1 << 16;
+/// The rewrite is materialised whole to read it back; refuse anything larger.
+const MAX_FILE_BYTES: u64 = 8 << 20;
+
+fn fuzz_limits() -> Limits {
+    Limits::default()
+        .with_max_depth(8)
+        .with_max_moov_bytes(1 << 20)
+        .with_max_samples_per_track(1 << 12)
+        .with_max_sample_bytes(1 << 16)
+        .with_max_fragment_bytes(1 << 20)
+        .with_max_metadata_item_bytes(1 << 16)
+}
+
+struct Run {
+    tracks: Vec<TrackInfo>,
+    samples: Vec<SampleRef>,
+    fragments: Vec<(u32, Vec<SampleRef>)>,
+    plan: OwnedPlan,
+}
+
+fn drive(data: &[u8]) -> Option<Run> {
+    let mut reader = Reader::new(
+        ReaderConfig::default()
+            .with_total_len(Some(data.len() as u64))
+            .with_order(SampleOrder::File)
+            .with_limits(fuzz_limits()),
+    );
+    let mut tracks = Vec::new();
+    let mut samples: Vec<SampleRef> = Vec::new();
+    let mut fragments: Vec<(u32, Vec<SampleRef>)> = Vec::new();
+    for _ in 0..MAX_STEPS {
+        match reader.step().ok()? {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).ok()?;
+                let end = usize::try_from(range.end()).ok()?.min(data.len());
+                reader.supply(range.offset, data.get(start..end)?).ok()?;
+            }
+            Step::Tracks(step_tracks) => tracks = step_tracks.to_vec(),
+            Step::Fragment(info) => fragments.push((info.sequence_number, Vec::new())),
+            Step::Sample(sample) => {
+                let end = sample.offset.checked_add(u64::from(sample.size))?;
+                if end > data.len() as u64 {
+                    return None;
+                }
+                if let Some(fragment) = fragments.last_mut() {
+                    fragment.1.push(sample.clone());
+                }
+                samples.push(sample);
+            }
+            Step::Done => {
+                let plan = reader.plan()?.to_owned_plan().ok()?;
+                return Some(Run {
+                    tracks,
+                    samples,
+                    fragments,
+                    plan,
+                });
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn sample_bytes<'a>(data: &'a [u8], sample: &SampleRef) -> Option<&'a [u8]> {
+    let start = usize::try_from(sample.offset).ok()?;
+    let end = start.checked_add(usize::try_from(sample.size).ok()?)?;
+    data.get(start..end)
+}
+
+fn place(out: &mut [u8], write: &Write<'_>) -> Option<()> {
+    let start = usize::try_from(write.offset).ok()?;
+    let end = start.checked_add(write.bytes.len())?;
+    out.get_mut(start..end)?.copy_from_slice(&write.bytes);
+    Some(())
+}
+
+fn file_type(data: &[u8]) -> FileType {
+    let Some(ftyp) = isobmff::box_types::find_box(data, b"ftyp") else {
+        return FileType::default();
+    };
+    match isobmff::segments::FileTypeBox::parse_box(ftyp) {
+        Ok(ftyp) => FileType {
+            major_brand: ftyp.major_brand,
+            minor_version: ftyp.minor_version,
+            compatible_brands: ftyp.compatible_brands.clone(),
+        },
+        Err(_) => FileType::default(),
+    }
+}
+
+fn rewrite(data: &[u8], run: &Run) -> Option<Vec<u8>> {
+    if run.fragments.is_empty() {
+        rewrite_progressive(data, run)
+    } else {
+        rewrite_fragmented(data, run)
+    }
+}
+
+fn rewrite_progressive(data: &[u8], run: &Run) -> Option<Vec<u8>> {
+    let shell = run.plan.shell()?;
+    let layout = Layout::new(true, Interleave::AsPlanned, Sink::Seekable);
+    let header = MovieHeader::with_times(
+        shell.mvhd.timescale,
+        shell.mvhd.creation_time,
+        shell.mvhd.modification_time,
+    );
+    let mut writer = Writer::progressive(
+        run.plan.clone(),
+        layout,
+        file_type(data),
+        header,
+        fuzz_limits(),
+    )
+    .ok()?;
+    let len = writer.file_len();
+    if len > MAX_FILE_BYTES {
+        return None;
+    }
+    let mut out = vec![0u8; usize::try_from(len).ok()?];
+    for write in writer.header() {
+        place(&mut out, &write)?;
+    }
+    for sample in &run.samples {
+        let bytes = sample_bytes(data, sample)?;
+        for write in writer.push(sample.track, sample.index, bytes).ok()? {
+            place(&mut out, &write)?;
+        }
+    }
+    for write in writer.finish().ok()? {
+        place(&mut out, &write)?;
+    }
+    Some(out)
+}
+
+fn rewrite_fragmented(data: &[u8], run: &Run) -> Option<Vec<u8>> {
+    let shell = run.plan.shell()?.clone();
+    let setups: Vec<TrackSetup> = run
+        .plan
+        .tracks()
+        .iter()
+        .map(|track| track.setup.clone())
+        .collect();
+    let mut writer = Writer::fragmented(setups, shell.mvhd.timescale, fuzz_limits()).ok()?;
+    writer.set_file_type(file_type(data));
+    writer.set_movie_shell(shell);
+    let init = writer.init().ok()?;
+    if init.len() as u64 > MAX_FILE_BYTES {
+        return None;
+    }
+    let mut out = init;
+    for (sequence_number, samples) in &run.fragments {
+        writer.set_sequence_number(*sequence_number);
+        let mut based: Vec<TrackId> = Vec::new();
+        for sample in samples {
+            if !based.contains(&sample.track) {
+                based.push(sample.track);
+                writer
+                    .set_base_decode_time(sample.track, sample.decode_time)
+                    .ok()?;
+            }
+        }
+        for sample in samples {
+            writer
+                .push(
+                    sample.track,
+                    SampleMeta {
+                        duration: sample.duration,
+                        composition_offset: sample.composition_offset,
+                        sync: sample.sync,
+                        aux: sample.aux.clone(),
+                        description_index: sample.description_index,
+                    },
+                    sample_bytes(data, sample)?,
+                )
+                .ok()?;
+        }
+        let fragment = writer.flush().ok()??;
+        out.extend_from_slice(&fragment.bytes);
+        if out.len() as u64 > MAX_FILE_BYTES {
+            return None;
+        }
+    }
+    out.extend_from_slice(&writer.trailer().ok()?);
+    Some(out)
+}
+
+/// The track facts that live on the wire. `typed` and `registered` are two
+/// *parses* of an entry's carried bytes (one of which a malformed `stsd` can
+/// suppress), so they are derived data: the assertion compares the four-CC and
+/// the bytes, which is what the rewrite has to preserve.
+fn wire_tracks(mut tracks: Vec<TrackInfo>) -> Vec<TrackInfo> {
+    for track in &mut tracks {
+        for entry in &mut track.entries {
+            entry.typed = None;
+            entry.registered = None;
+        }
+    }
+    tracks
+}
+
+fn descriptors(data: &[u8], run: &Run) -> BTreeMap<(u32, u32), (SampleRef, Vec<u8>)> {
+    run.samples
+        .iter()
+        .filter_map(|sample| {
+            let mut keyed = sample.clone();
+            keyed.offset = 0;
+            Some((
+                (sample.track.value(), sample.index),
+                (keyed, sample_bytes(data, sample)?.to_vec()),
+            ))
+        })
+        .collect()
+}
+
+fuzz_target!(|data: &[u8]| {
+    let Some(source) = drive(data) else {
+        return;
+    };
+    let Some(rewritten) = rewrite(data, &source) else {
+        return;
+    };
+    let Some(read_back) = drive(&rewritten) else {
+        panic!("the writer's output does not read back");
+    };
+    assert_eq!(
+        wire_tracks(read_back.tracks.clone()),
+        wire_tracks(source.tracks.clone()),
+        "the rewrite describes different tracks"
+    );
+    let want = descriptors(data, &source);
+    let got = descriptors(&rewritten, &read_back);
+    assert_eq!(got.len(), want.len(), "the rewrite describes a different sample count");
+    for (key, expected) in &want {
+        let actual = got
+            .get(key)
+            .unwrap_or_else(|| panic!("the rewrite has no sample {key:?}"));
+        assert_eq!(actual, expected, "the rewrite describes sample {key:?} differently");
+    }
+});

@@ -422,10 +422,10 @@ fn raw_entry_variant(fourcc: [u8; BOX_TYPE_SIZE], body: &[u8]) -> Result<SampleE
             "raw sample entry four-CC does not match its box header",
         ));
     }
-    Ok(SampleEntryVariant::Unknown(OpaqueBox::new(
-        fourcc,
-        item.payload().to_vec(),
-    )))
+    let mut opaque = OpaqueBox::new(fourcc, item.payload().to_vec());
+    opaque.to_end = item.to_end();
+    opaque.largesize = item.has_largesize();
+    Ok(SampleEntryVariant::Unknown(opaque))
 }
 
 /// An empty `stsd` holding the track's single sample entry: the init segment
@@ -579,7 +579,7 @@ pub struct SampleAux {
 }
 
 /// One sample's metadata for the fragment's `trun`.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SampleMeta {
     /// `sample_duration`, in the track timescale.
     pub duration: u32,
@@ -589,6 +589,22 @@ pub struct SampleMeta {
     pub sync: bool,
     /// CENC per-sample auxiliary information, when the track is protected.
     pub aux: Option<SampleAux>,
+    /// One-based `stsd` entry this sample uses (§8.7.4). A fragment states it
+    /// once per track fragment (`tfhd.sample_description_index`), so every
+    /// sample of one `traf` must share it.
+    pub description_index: u32,
+}
+
+impl Default for SampleMeta {
+    fn default() -> Self {
+        Self {
+            duration: 0,
+            composition_offset: 0,
+            sync: false,
+            aux: None,
+            description_index: TREX_DEFAULT_DESCRIPTION_INDEX,
+        }
+    }
 }
 
 /// One finished fragment: the bytes to emit and the `moof` length inside them.
@@ -629,4 +645,32 @@ pub struct FragmentOptions<'a> {
     pub styp: Option<&'a SegmentBrands>,
     /// Event Message Boxes, emitted after `styp` and before `moof`.
     pub events: &'a [EmsgBox<'a>],
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A raw entry the wire encoded with the `size == 0` form ("to the end of
+    /// the enclosing container", §4.2) is written back with the same form:
+    /// spelling the length out instead changes the entry's bytes (fuzz finding
+    /// on `isobmff_whole_file`).
+    #[test]
+    fn a_to_end_raw_entry_keeps_the_size_zero_form() {
+        let body = [0u8, 0, 0, 0, b'a', b'c', b'm', b'e', 0xde, 0xad, 0xbe, 0xef];
+        let entry = raw_entry_variant(*b"acme", &body).expect("raw entry");
+        let bytes = entry.try_to_bytes().expect("bytes");
+        assert_eq!(bytes, body);
+        assert_eq!(bytes[0..4], [0, 0, 0, 0]);
+    }
+
+    /// The same box with an explicit length keeps it.
+    #[test]
+    fn an_explicit_length_raw_entry_is_unchanged() {
+        let body = [
+            0u8, 0, 0, 12, b'a', b'c', b'm', b'e', 0xde, 0xad, 0xbe, 0xef,
+        ];
+        let entry = raw_entry_variant(*b"acme", &body).expect("raw entry");
+        assert_eq!(entry.try_to_bytes().expect("bytes"), body);
+    }
 }

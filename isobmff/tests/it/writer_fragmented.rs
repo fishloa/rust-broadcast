@@ -17,7 +17,7 @@ use isobmff::sample_table::{SampleRef, TrackCursor};
 use isobmff::writer::{
     FragmentedWriter, SampleEntry, SampleMeta, TrackSetup, Writer, fragmented_segment,
 };
-use isobmff::{TrackId, parse_box};
+use isobmff::{Reader, ReaderConfig, SampleOrder, Step, TrackId, parse_box};
 
 struct SourceTrack {
     setup: TrackSetup,
@@ -150,6 +150,7 @@ fn write_fragmented(tracks: &[SourceTrack]) -> Vec<u8> {
                             composition_offset: sample.reference.composition_offset,
                             sync: sample.reference.sync,
                             aux: None,
+                            description_index: 1,
                         },
                         &sample.data,
                     )
@@ -341,6 +342,7 @@ fn a_fragment_over_the_cap_is_rejected_before_it_grows() {
                 composition_offset: 0,
                 sync: true,
                 aux: None,
+                description_index: 1,
             },
             &[0u8; 128],
         )
@@ -380,6 +382,7 @@ fn init_and_one_fragment_parse_back() {
                 composition_offset: -2,
                 sync: false,
                 aux: None,
+                description_index: 1,
             },
             &[1, 2, 3, 4],
         )
@@ -405,6 +408,63 @@ fn init_and_one_fragment_parse_back() {
     assert_eq!(sample.sample_composition_time_offset, Some(-2));
 }
 
+/// A run of samples that use the second `stsd` entry states it once in
+/// `tfhd.sample_description_index`, and a reader sees it on every sample
+/// (fuzz finding on `isobmff_whole_file`: the writer dropped the field).
+#[test]
+fn a_second_description_entry_is_stated_in_the_tfhd() {
+    let entry = SampleEntry::Raw {
+        fourcc: *b"avc1",
+        body: [0u8, 0, 0, 8, b'a', b'v', b'c', b'1'].to_vec(),
+    };
+    let mut setup = raw_video_setup();
+    setup.entry = entry;
+    let mut writer = Writer::fragmented(
+        vec![setup],
+        broadcast_common::timescale::Timescale::try_new(1000).expect("timescale"),
+        Limits::default(),
+    )
+    .expect("writer");
+    let mut out = writer.init().expect("init");
+    writer
+        .set_base_decode_time(TrackId::new(1), 0)
+        .expect("base");
+    let meta = SampleMeta {
+        duration: 40,
+        sync: true,
+        description_index: 2,
+        ..SampleMeta::default()
+    };
+    writer
+        .push(TrackId::new(1), meta, &[0u8; 16])
+        .expect("push");
+    let fragment = writer.flush().expect("flush").expect("a fragment");
+    out.extend_from_slice(&fragment.bytes);
+
+    let mut reader = Reader::new(
+        ReaderConfig::default()
+            .with_total_len(Some(out.len() as u64))
+            .with_order(SampleOrder::File),
+    );
+    let mut samples = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, &out[start..end])
+                    .expect("supply");
+            }
+            Step::Sample(sample) => samples.push(sample),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(samples.len(), 1);
+    assert_eq!(samples[0].description_index, 2);
+}
+
 #[test]
 fn a_caller_can_build_a_fragment_without_the_buffering_writer() {
     let meta = SampleMeta {
@@ -412,6 +472,7 @@ fn a_caller_can_build_a_fragment_without_the_buffering_writer() {
         composition_offset: 0,
         sync: true,
         aux: None,
+        description_index: 1,
     };
     let samples = [
         isobmff::writer::SampleData {
@@ -463,6 +524,7 @@ fn cenc_aux_emits_senc_saiz_saio_in_the_traf() {
         composition_offset: 0,
         sync: true,
         aux: Some(aux),
+        description_index: 1,
     };
     let samples = [isobmff::writer::SampleData {
         meta: &meta,

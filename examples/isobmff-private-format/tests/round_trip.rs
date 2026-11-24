@@ -170,6 +170,7 @@ fn meta_of(sample: &SampleRef) -> SampleMeta {
         composition_offset: sample.composition_offset,
         sync: sample.sync,
         aux: sample.aux.clone(),
+        description_index: sample.description_index,
     }
 }
 

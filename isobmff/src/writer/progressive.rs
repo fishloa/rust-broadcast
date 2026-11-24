@@ -1225,7 +1225,12 @@ fn stsd_template_version(track: &PlannedTrack) -> Option<u8> {
 /// Set the header durations and the edit list a non-fragmented movie carries
 /// in `mvhd`/`tkhd`/`mdhd` (§8.2.2.2, §8.3.2.2, §8.4.2.2, §8.6.6).
 fn apply_durations(trak: &mut crate::init_segment::TrackBox, track: &PlannedTrack) {
-    trak.tkhd.version = u8::from(!duration_fits_v0(track.presentation_duration));
+    // A source header keeps the version the file stated (a QuickTime or
+    // out-of-spec version is not this writer's to normalize); only a duration
+    // that no longer fits the 32-bit form forces the 64-bit one.
+    if !duration_fits_v0(track.presentation_duration) {
+        trak.tkhd.version = 1;
+    }
     trak.tkhd.duration = track.presentation_duration;
     trak.edts = edit_box(&track.edits);
     if trak.edts.is_some() && track.edts_after_mdia && trak.order.is_empty() {
@@ -1238,7 +1243,9 @@ fn apply_durations(trak: &mut crate::init_segment::TrackBox, track: &PlannedTrac
         trak.order = order;
     }
     if let Some(mdhd) = trak.mdia.as_mut().and_then(|media| media.mdhd.as_mut()) {
-        mdhd.version = u8::from(!duration_fits_v0(track.media_duration));
+        if !duration_fits_v0(track.media_duration) {
+            mdhd.version = 1;
+        }
         mdhd.duration = track.media_duration;
     }
 }

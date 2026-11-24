@@ -6,7 +6,8 @@
 //! ISO/IEC 23001-7 §12.2/§12.3.
 
 use super::{
-    Fragment, FragmentOptions, FragmentTrack, SampleData, SampleMeta, SegmentBrands, TrackSetup,
+    Fragment, FragmentOptions, FragmentTrack, SampleData, SampleMeta, SegmentBrands,
+    TREX_DEFAULT_DESCRIPTION_INDEX, TrackSetup,
 };
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
 use crate::cenc::{SAIO, SAIZ, SENC, SampleEncryptionEntry};
@@ -274,6 +275,7 @@ pub fn fragmented_segment(
 
     let mut traf_boxes = Vec::with_capacity(tracks.len());
     for ft in tracks {
+        let description = fragment_description(ft)?;
         let runs = ft
             .samples
             .iter()
@@ -286,7 +288,7 @@ pub fn fragmented_segment(
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let (tfhd, trun) = media_fragment_run(ft.track_id, runs.into_iter())?;
+        let (tfhd, trun) = media_fragment_run(ft.track_id, runs.into_iter(), description)?;
         let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(ft.base_decode_time);
         traf_boxes.push(TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]));
     }
@@ -341,6 +343,28 @@ pub fn fragmented_segment(
     Ok(Fragment { bytes, moof_len })
 }
 
+/// The one-based `stsd` entry a fragment's samples use, when it is not the
+/// default one.
+///
+/// `tfhd.sample_description_index` is stated once per track fragment, so a run
+/// whose samples disagree cannot be expressed and is refused rather than
+/// silently rewritten with the first sample's entry.
+fn fragment_description(ft: &FragmentTrack<'_>) -> Result<Option<u32>> {
+    let mut entries = ft
+        .samples
+        .iter()
+        .map(|sample| sample.meta.description_index);
+    let Some(first) = entries.next() else {
+        return Ok(None);
+    };
+    if entries.any(|index| index != first) {
+        return Err(Error::InvalidInput(
+            "one track fragment mixes sample_description_index values",
+        ));
+    }
+    Ok((first != TREX_DEFAULT_DESCRIPTION_INDEX).then_some(first))
+}
+
 /// The first box of `bytes` whose type is `fourcc`, as its declared length.
 fn first_box_len(bytes: &[u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Result<usize> {
     for step in crate::BoxIter::new(bytes) {
@@ -382,6 +406,7 @@ pub struct RunSample {
 pub fn media_fragment_run(
     track_id: TrackId,
     samples: impl Iterator<Item = RunSample> + Clone,
+    description_index: Option<u32>,
 ) -> Result<(TrackFragmentHeaderBox, TrackFragmentRunBox)> {
     let any_cts = samples.clone().any(|s| s.composition_offset != 0);
     let mut run_samples = Vec::new();
@@ -421,7 +446,7 @@ pub fn media_fragment_run(
         flags: TFHD_DEFAULT_BASE_IS_MOOF,
         track_id,
         base_data_offset: None,
-        sample_description_index: None,
+        sample_description_index: description_index,
         default_sample_duration: None,
         default_sample_size: None,
         default_sample_flags: None,
@@ -816,6 +841,7 @@ mod tests {
             let (_, trun) = media_fragment_run(
                 TrackId::new(1),
                 [sample(offset), sample(offset)].into_iter(),
+                None,
             )
             .expect("two-sample run");
             let bytes = trun.try_to_bytes().expect("serialize trun");
