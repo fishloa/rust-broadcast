@@ -11,11 +11,12 @@
 
 use crate::TrackId;
 use crate::box_types::{
-    BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, LARGESIZE_SIZE,
-    SIZE_INDICATES_LARGESIZE, box_iter,
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE,
+    FULLBOX_VERSION_OFFSET, LARGESIZE_SIZE, SIZE_INDICATES_LARGESIZE, box_iter,
 };
 use crate::error::{Error, Result};
 use crate::media::TrackEncryption;
+use crate::wire_cursor::{fourcc_at, i16_at, u16_at, u24_at, u32_at, u64_at};
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -24,44 +25,13 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 
-/// Byte offset of a FullBox `version` field.
-const FULLBOX_VERSION_OFFSET: usize = BOX_HEADER_MIN_SIZE;
-/// Byte offset of a FullBox 24-bit `flags` field.
-const FULLBOX_FLAGS_OFFSET: usize = BOX_HEADER_MIN_SIZE + 1;
+/// Byte offset of a FullBox 24-bit `flags` field in a whole box.
+const FULLBOX_FLAGS_WIRE_OFFSET: usize =
+    BOX_HEADER_MIN_SIZE + crate::box_types::FULLBOX_FLAGS_OFFSET;
 /// Width of a FullBox `version` field in bytes.
 const FULLBOX_VERSION_LEN: usize = 1;
 /// Width of a FullBox `flags` field in bytes.
 const FULLBOX_FLAGS_WIDTH: usize = FULLBOX_EXTRA_SIZE - FULLBOX_VERSION_LEN;
-fn be_u16_at(bytes: &[u8], off: usize) -> u16 {
-    let mut field = [0u8; core::mem::size_of::<u16>()];
-    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u16>()]);
-    u16::from_be_bytes(field)
-}
-
-fn be_u32_at(bytes: &[u8], off: usize) -> u32 {
-    let mut field = [0u8; core::mem::size_of::<u32>()];
-    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u32>()]);
-    u32::from_be_bytes(field)
-}
-
-fn be_u64_at(bytes: &[u8], off: usize) -> u64 {
-    let mut field = [0u8; core::mem::size_of::<u64>()];
-    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u64>()]);
-    u64::from_be_bytes(field)
-}
-
-fn be_u24_at(bytes: &[u8], off: usize) -> u32 {
-    let mut field = [0u8; core::mem::size_of::<u32>()];
-    field[FULLBOX_VERSION_LEN..].copy_from_slice(&bytes[off..off + FULLBOX_FLAGS_WIDTH]);
-    u32::from_be_bytes(field)
-}
-
-fn read_fourcc_at(bytes: &[u8], off: usize) -> [u8; BOX_TYPE_SIZE] {
-    let mut field = [0u8; BOX_TYPE_SIZE];
-    field.copy_from_slice(&bytes[off..off + BOX_TYPE_SIZE]);
-    field
-}
-
 /// Wire width of one transformation-matrix value.
 const MATRIX_VALUE_LEN: usize = core::mem::size_of::<i32>();
 /// Number of values in a transformation matrix.
@@ -75,7 +45,7 @@ const FLAT_TABLE_HEADER_LEN: usize =
 /// Byte offset of a flat table's `version` field.
 const FLAT_TABLE_VERSION_OFFSET: usize = BOX_HEADER_MIN_SIZE;
 /// Byte offset of a flat table's `flags` field.
-const FLAT_TABLE_FLAGS_OFFSET: usize = FULLBOX_FLAGS_OFFSET;
+const FLAT_TABLE_FLAGS_OFFSET: usize = FULLBOX_FLAGS_WIRE_OFFSET;
 /// Byte offset of a flat table's `entry_count` field.
 const FLAT_TABLE_COUNT_OFFSET: usize = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE;
 
@@ -156,8 +126,8 @@ pub(crate) fn parse_flat_table<E>(
             what,
         }));
     }
-    let flags = be_u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
-    let count = be_u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
+    let flags = u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
+    let count = u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
     let body = &bytes[FLAT_TABLE_HEADER_LEN..];
     check_entry_count(body.len(), entry_len, count, count_field)?;
     let mut entries = Vec::with_capacity(bounded_entry_count(body.len(), entry_len, count));
@@ -685,22 +655,22 @@ impl<'a> Parse<'a> for MovieHeaderBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, MVHD_MIN_LEN, "mvhd")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
         if ver == 0 {
             need_in(bytes, MVHD_V0_LEN, "mvhd v0")?;
             Ok(Self {
                 version: 0,
                 flags,
-                creation_time: u64::from(be_u32_at(bytes, MVHD_V0_CREATION_TIME_OFFSET)),
-                modification_time: u64::from(be_u32_at(bytes, MVHD_V0_MODIFICATION_TIME_OFFSET)),
-                timescale: Timescale::try_new(be_u32_at(bytes, MVHD_V0_TIMESCALE_OFFSET))?,
-                duration: u64::from(be_u32_at(bytes, MVHD_V0_DURATION_OFFSET)),
-                rate: be_u32_at(bytes, MVHD_V0_RATE_OFFSET),
-                volume: be_u16_at(bytes, MVHD_V0_VOLUME_OFFSET),
+                creation_time: u64::from(u32_at(bytes, MVHD_V0_CREATION_TIME_OFFSET)),
+                modification_time: u64::from(u32_at(bytes, MVHD_V0_MODIFICATION_TIME_OFFSET)),
+                timescale: Timescale::try_new(u32_at(bytes, MVHD_V0_TIMESCALE_OFFSET))?,
+                duration: u64::from(u32_at(bytes, MVHD_V0_DURATION_OFFSET)),
+                rate: u32_at(bytes, MVHD_V0_RATE_OFFSET),
+                volume: u16_at(bytes, MVHD_V0_VOLUME_OFFSET),
                 matrix: matrix_from_bytes(
                     &bytes[MVHD_V0_MATRIX_OFFSET..MVHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
-                next_track_id: TrackId::new(be_u32_at(bytes, MVHD_V0_NEXT_TRACK_ID_OFFSET)),
+                next_track_id: TrackId::new(u32_at(bytes, MVHD_V0_NEXT_TRACK_ID_OFFSET)),
             })
         } else {
             // v1 body (ISO/IEC 14496-12:2026 §8.2.2.2): the 8-byte creation/
@@ -722,14 +692,14 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                     MVHD_V1_MODIFICATION_TIME_OFFSET,
                     "mvhd v1",
                 )?,
-                timescale: Timescale::try_new(be_u32_at(bytes, MVHD_V1_TIMESCALE_OFFSET))?,
+                timescale: Timescale::try_new(u32_at(bytes, MVHD_V1_TIMESCALE_OFFSET))?,
                 duration: crate::wire_cursor::be_u64(bytes, MVHD_V1_DURATION_OFFSET, "mvhd v1")?,
-                rate: be_u32_at(bytes, MVHD_V1_RATE_OFFSET),
-                volume: be_u16_at(bytes, MVHD_V1_VOLUME_OFFSET),
+                rate: u32_at(bytes, MVHD_V1_RATE_OFFSET),
+                volume: u16_at(bytes, MVHD_V1_VOLUME_OFFSET),
                 matrix: matrix_from_bytes(
                     &bytes[MVHD_V1_MATRIX_OFFSET..MVHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
-                next_track_id: TrackId::new(be_u32_at(bytes, MVHD_V1_NEXT_TRACK_ID_OFFSET)),
+                next_track_id: TrackId::new(u32_at(bytes, MVHD_V1_NEXT_TRACK_ID_OFFSET)),
             })
         }
     }
@@ -890,13 +860,13 @@ impl<'a> Parse<'a> for TrackHeaderBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, TKHD_MIN_LEN, "tkhd")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
         if ver == 0 {
             need_in(bytes, TKHD_V0_LEN, "tkhd v0")?;
-            let ct = u64::from(be_u32_at(bytes, TKHD_V0_CREATION_TIME_OFFSET));
-            let mt = u64::from(be_u32_at(bytes, TKHD_V0_MODIFICATION_TIME_OFFSET));
-            let tid = be_u32_at(bytes, TKHD_V0_TRACK_ID_OFFSET);
-            let dur = u64::from(be_u32_at(bytes, TKHD_V0_DURATION_OFFSET));
+            let ct = u64::from(u32_at(bytes, TKHD_V0_CREATION_TIME_OFFSET));
+            let mt = u64::from(u32_at(bytes, TKHD_V0_MODIFICATION_TIME_OFFSET));
+            let tid = u32_at(bytes, TKHD_V0_TRACK_ID_OFFSET);
+            let dur = u64::from(u32_at(bytes, TKHD_V0_DURATION_OFFSET));
             Ok(Self {
                 version: 0,
                 flags,
@@ -904,14 +874,14 @@ impl<'a> Parse<'a> for TrackHeaderBox {
                 modification_time: mt,
                 track_id: TrackId::new(tid),
                 duration: dur,
-                layer: read_i16(bytes, TKHD_V0_LAYER_OFFSET),
-                alternate_group: read_i16(bytes, TKHD_V0_ALTERNATE_GROUP_OFFSET),
-                volume: read_i16(bytes, TKHD_V0_VOLUME_OFFSET),
+                layer: i16_at(bytes, TKHD_V0_LAYER_OFFSET),
+                alternate_group: i16_at(bytes, TKHD_V0_ALTERNATE_GROUP_OFFSET),
+                volume: i16_at(bytes, TKHD_V0_VOLUME_OFFSET),
                 matrix: matrix_from_bytes(
                     &bytes[TKHD_V0_MATRIX_OFFSET..TKHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
-                width: be_u32_at(bytes, TKHD_V0_WIDTH_OFFSET),
-                height: be_u32_at(bytes, TKHD_V0_HEIGHT_OFFSET),
+                width: u32_at(bytes, TKHD_V0_WIDTH_OFFSET),
+                height: u32_at(bytes, TKHD_V0_HEIGHT_OFFSET),
             })
         } else {
             need_in(bytes, TKHD_V1_LEN, "tkhd v1")?;
@@ -923,7 +893,7 @@ impl<'a> Parse<'a> for TrackHeaderBox {
             let ct = crate::wire_cursor::be_u64(bytes, TKHD_V1_CREATION_TIME_OFFSET, "tkhd v1")?;
             let mt =
                 crate::wire_cursor::be_u64(bytes, TKHD_V1_MODIFICATION_TIME_OFFSET, "tkhd v1")?;
-            let tid = be_u32_at(bytes, TKHD_V1_TRACK_ID_OFFSET);
+            let tid = u32_at(bytes, TKHD_V1_TRACK_ID_OFFSET);
             let dur = crate::wire_cursor::be_u64(bytes, TKHD_V1_DURATION_OFFSET, "tkhd v1")?;
             Ok(Self {
                 version: 1,
@@ -932,31 +902,23 @@ impl<'a> Parse<'a> for TrackHeaderBox {
                 modification_time: mt,
                 track_id: TrackId::new(tid),
                 duration: dur,
-                layer: read_i16(bytes, TKHD_V1_LAYER_OFFSET),
-                alternate_group: read_i16(bytes, TKHD_V1_ALTERNATE_GROUP_OFFSET),
-                volume: read_i16(bytes, TKHD_V1_VOLUME_OFFSET),
+                layer: i16_at(bytes, TKHD_V1_LAYER_OFFSET),
+                alternate_group: i16_at(bytes, TKHD_V1_ALTERNATE_GROUP_OFFSET),
+                volume: i16_at(bytes, TKHD_V1_VOLUME_OFFSET),
                 matrix: matrix_from_bytes(
                     &bytes[TKHD_V1_MATRIX_OFFSET..TKHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
-                width: be_u32_at(bytes, TKHD_V1_WIDTH_OFFSET),
-                height: be_u32_at(bytes, TKHD_V1_HEIGHT_OFFSET),
+                width: u32_at(bytes, TKHD_V1_WIDTH_OFFSET),
+                height: u32_at(bytes, TKHD_V1_HEIGHT_OFFSET),
             })
         }
     }
 }
 
-fn read_i16(bytes: &[u8], off: usize) -> i16 {
-    let mut field = [0u8; core::mem::size_of::<i16>()];
-    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<i16>()]);
-    i16::from_be_bytes(field)
-}
-
 fn matrix_from_bytes(b: &[u8]) -> [i32; MATRIX_VALUES] {
     let mut m = [0i32; MATRIX_VALUES];
     for (i, slot) in m.iter_mut().enumerate() {
-        let mut field = [0u8; MATRIX_VALUE_LEN];
-        field.copy_from_slice(&b[i * MATRIX_VALUE_LEN..i * MATRIX_VALUE_LEN + MATRIX_VALUE_LEN]);
-        *slot = i32::from_be_bytes(field);
+        *slot = crate::wire_cursor::i32_at(b, i * MATRIX_VALUE_LEN);
     }
     m
 }
@@ -1111,17 +1073,17 @@ impl<'a> Parse<'a> for MediaHeaderBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, MDHD_MIN_LEN, "mdhd")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
         if ver == 0 {
             need_in(bytes, MDHD_V0_LEN, "mdhd v0")?;
             Ok(Self {
                 version: 0,
                 flags,
-                creation_time: u64::from(be_u32_at(bytes, MDHD_V0_CREATION_TIME_OFFSET)),
-                modification_time: u64::from(be_u32_at(bytes, MDHD_V0_MODIFICATION_TIME_OFFSET)),
-                timescale: Timescale::try_new(be_u32_at(bytes, MDHD_V0_TIMESCALE_OFFSET))?,
-                duration: u64::from(be_u32_at(bytes, MDHD_V0_DURATION_OFFSET)),
-                language: be_u16_at(bytes, MDHD_V0_LANGUAGE_OFFSET),
+                creation_time: u64::from(u32_at(bytes, MDHD_V0_CREATION_TIME_OFFSET)),
+                modification_time: u64::from(u32_at(bytes, MDHD_V0_MODIFICATION_TIME_OFFSET)),
+                timescale: Timescale::try_new(u32_at(bytes, MDHD_V0_TIMESCALE_OFFSET))?,
+                duration: u64::from(u32_at(bytes, MDHD_V0_DURATION_OFFSET)),
+                language: u16_at(bytes, MDHD_V0_LANGUAGE_OFFSET),
             })
         } else {
             need_in(bytes, MDHD_V1_LEN, "mdhd v1")?;
@@ -1138,9 +1100,9 @@ impl<'a> Parse<'a> for MediaHeaderBox {
                     MDHD_V1_MODIFICATION_TIME_OFFSET,
                     "mdhd v1",
                 )?,
-                timescale: Timescale::try_new(be_u32_at(bytes, MDHD_V1_TIMESCALE_OFFSET))?,
+                timescale: Timescale::try_new(u32_at(bytes, MDHD_V1_TIMESCALE_OFFSET))?,
                 duration: crate::wire_cursor::be_u64(bytes, MDHD_V1_DURATION_OFFSET, "mdhd v1")?,
-                language: be_u16_at(bytes, MDHD_V1_LANGUAGE_OFFSET),
+                language: u16_at(bytes, MDHD_V1_LANGUAGE_OFFSET),
             })
         }
     }
@@ -1253,8 +1215,8 @@ impl<'a> Parse<'a> for HandlerBox {
         let bytes: &[u8] = &compact;
         need_in(bytes, HDLR_MIN_LEN, "hdlr")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
-        let handler_type = read_fourcc_at(bytes, HDLR_HANDLER_TYPE_OFFSET);
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
+        let handler_type = fourcc_at(bytes, HDLR_HANDLER_TYPE_OFFSET);
         let name = if bytes.len() > HDLR_NAME_OFFSET {
             bytes[HDLR_NAME_OFFSET..].to_vec()
         } else {
@@ -1333,15 +1295,15 @@ impl<'a> Parse<'a> for VideoMediaHeaderBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, VMHD_MIN_LEN, "vmhd")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
         let mut opcolor = [0u16; OPCOLOR_VALUES];
         for (i, slot) in opcolor.iter_mut().enumerate() {
-            *slot = be_u16_at(bytes, VMHD_OPCOLOR_OFFSET + i * core::mem::size_of::<u16>());
+            *slot = u16_at(bytes, VMHD_OPCOLOR_OFFSET + i * core::mem::size_of::<u16>());
         }
         Ok(Self {
             version: ver,
             flags,
-            graphicsmode: be_u16_at(bytes, VMHD_GRAPHICSMODE_OFFSET),
+            graphicsmode: u16_at(bytes, VMHD_GRAPHICSMODE_OFFSET),
             opcolor,
         })
     }
@@ -1402,11 +1364,11 @@ impl<'a> Parse<'a> for SoundMediaHeaderBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, SMHD_MIN_LEN, "smhd")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
         Ok(Self {
             version: ver,
             flags,
-            balance: read_i16(bytes, SMHD_BALANCE_OFFSET),
+            balance: i16_at(bytes, SMHD_BALANCE_OFFSET),
         })
     }
 }
@@ -1446,8 +1408,6 @@ const URL_ENTRY_TYPE: [u8; BOX_TYPE_SIZE] = *b"url ";
 const URN_ENTRY_TYPE: [u8; BOX_TYPE_SIZE] = *b"urn ";
 const IMDA_ENTRY_TYPE: [u8; BOX_TYPE_SIZE] = *b"imdt";
 const SEQ_NUM_IMDA_ENTRY_TYPE: [u8; BOX_TYPE_SIZE] = *b"snim";
-/// Byte offset of a box `type` field (§4.2).
-const BOX_TYPE_OFFSET: usize = BOX_HEADER_MIN_SIZE - BOX_TYPE_SIZE;
 /// Length of the NUL terminator after a `urn ` entry name (§8.7.2.2).
 const URN_NAME_TERMINATOR_LEN: usize = 1;
 
@@ -1489,7 +1449,7 @@ impl From<DataEntryUrlBox> for DataEntry {
 impl DataEntry {
     fn parse(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "dref entry")?;
-        let ty = read_fourcc_at(bytes, BOX_TYPE_OFFSET);
+        let ty = fourcc_at(bytes, BOX_TYPE_OFFSET);
         match ty {
             URL_ENTRY_TYPE => Ok(Self::Url(DataEntryUrlBox::parse(bytes)?)),
             URN_ENTRY_TYPE => Ok(Self::Urn(DataEntryUrnBox::parse(bytes)?)),
@@ -1535,8 +1495,8 @@ impl<'a> Parse<'a> for DataReferenceBox {
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "dref")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
-        let count = be_u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
+        let flags = u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
+        let count = u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
         check_entry_count(
             bytes.len().saturating_sub(FLAT_TABLE_HEADER_LEN),
             BOX_HEADER_MIN_SIZE,
@@ -1621,7 +1581,7 @@ impl<'a> Parse<'a> for DataEntryUrlBox {
         let bytes: &[u8] = &compact;
         need_in(bytes, FULLBOX_BODY_OFFSET, "url")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
         let location = if bytes.len() > FULLBOX_BODY_OFFSET {
             bytes[FULLBOX_BODY_OFFSET..].to_vec()
         } else {
@@ -1675,11 +1635,11 @@ fn parse_data_entry_header(
     if compact[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != expected {
         return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "box_type",
-            value: u64::from(be_u32_at(&compact, BOX_TYPE_OFFSET)),
+            value: u64::from(u32_at(&compact, BOX_TYPE_OFFSET)),
             reason: what,
         }));
     }
-    let flags = be_u24_at(&compact, FULLBOX_FLAGS_OFFSET);
+    let flags = u24_at(&compact, FULLBOX_FLAGS_WIRE_OFFSET);
     Ok((
         compact[FULLBOX_VERSION_OFFSET],
         flags,
@@ -1783,7 +1743,7 @@ impl<'a> Parse<'a> for DataEntryImdaBox {
         Ok(Self {
             version,
             flags,
-            imda_ref_identifier: be_u32_at(&rest, 0),
+            imda_ref_identifier: u32_at(&rest, 0),
         })
     }
 }
@@ -1881,8 +1841,8 @@ impl<'a> Parse<'a> for SampleToChunkBox {
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsc")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
-        let count = be_u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
+        let flags = u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
+        let count = u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
         check_entry_count(
             bytes.len().saturating_sub(FLAT_TABLE_HEADER_LEN),
             STSC_ENTRY_LEN,
@@ -1900,12 +1860,9 @@ impl<'a> Parse<'a> for SampleToChunkBox {
                 break;
             }
             entries.push(StscEntry {
-                first_chunk: be_u32_at(bytes, off + STSC_FIRST_CHUNK_OFFSET),
-                samples_per_chunk: be_u32_at(bytes, off + STSC_SAMPLES_PER_CHUNK_OFFSET),
-                sample_description_index: be_u32_at(
-                    bytes,
-                    off + STSC_SAMPLE_DESCRIPTION_INDEX_OFFSET,
-                ),
+                first_chunk: u32_at(bytes, off + STSC_FIRST_CHUNK_OFFSET),
+                samples_per_chunk: u32_at(bytes, off + STSC_SAMPLES_PER_CHUNK_OFFSET),
+                sample_description_index: u32_at(bytes, off + STSC_SAMPLE_DESCRIPTION_INDEX_OFFSET),
             });
             off += STSC_ENTRY_LEN;
         }
@@ -1990,9 +1947,9 @@ impl<'a> Parse<'a> for SampleSizeBox {
         let bytes: &[u8] = &compact;
         need_in(bytes, STSZ_PREFIX_LEN, "stsz")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
-        let sample_size = be_u32_at(bytes, STSZ_SAMPLE_SIZE_OFFSET);
-        let count = be_u32_at(bytes, STSZ_SAMPLE_COUNT_OFFSET) as usize;
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
+        let sample_size = u32_at(bytes, STSZ_SAMPLE_SIZE_OFFSET);
+        let count = u32_at(bytes, STSZ_SAMPLE_COUNT_OFFSET) as usize;
         if sample_size == 0 {
             check_entry_count(
                 bytes.len().saturating_sub(STSZ_PREFIX_LEN),
@@ -2022,7 +1979,7 @@ impl<'a> Parse<'a> for SampleSizeBox {
                 if off + entry_len > bytes.len() {
                     break;
                 }
-                entries.push(be_u32_at(bytes, off));
+                entries.push(u32_at(bytes, off));
                 off += entry_len;
             }
         }
@@ -2098,7 +2055,7 @@ impl<'a> Parse<'a> for ChunkOffsetBox {
             "stco",
             "ChunkOffsetBox.entry_count",
             core::mem::size_of::<u32>(),
-            |b| be_u32_at(b, 0),
+            |b| u32_at(b, 0),
         )?;
         Ok(Self {
             version,
@@ -2154,7 +2111,7 @@ impl<'a> Parse<'a> for ChunkLargeOffsetBox {
             "co64",
             "ChunkLargeOffsetBox.entry_count",
             core::mem::size_of::<u64>(),
-            |b| be_u64_at(b, 0),
+            |b| u64_at(b, 0),
         )?;
         Ok(Self {
             version,
@@ -2211,7 +2168,7 @@ impl<'a> Parse<'a> for SyncSampleBox {
             "stss",
             "SyncSampleBox.entry_count",
             core::mem::size_of::<u32>(),
-            |b| be_u32_at(b, 0),
+            |b| u32_at(b, 0),
         )?;
         Ok(Self {
             version,
@@ -2340,7 +2297,8 @@ impl Serialize for SamplingRateBox {
         buf[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE].copy_from_slice(&Self::FOURCC);
         buf[FULLBOX_VERSION_OFFSET] = self.version;
         let fb = self.flags.to_be_bytes();
-        buf[FULLBOX_FLAGS_OFFSET..FULLBOX_BODY_OFFSET].copy_from_slice(&fb[FULLBOX_VERSION_LEN..]);
+        buf[FULLBOX_FLAGS_WIRE_OFFSET..FULLBOX_BODY_OFFSET]
+            .copy_from_slice(&fb[FULLBOX_VERSION_LEN..]);
         buf[FULLBOX_BODY_OFFSET..FULLBOX_BODY_OFFSET + core::mem::size_of::<u32>()]
             .copy_from_slice(&self.sampling_rate.to_be_bytes());
         Ok(need)
@@ -2359,8 +2317,8 @@ impl<'a> Parse<'a> for SamplingRateBox {
             return Err(Error::InvalidInput("SamplingRateBox: not an 'srat' box"));
         }
         let version = bytes[FULLBOX_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
-        let sampling_rate = be_u32_at(bytes, FULLBOX_BODY_OFFSET);
+        let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
+        let sampling_rate = u32_at(bytes, FULLBOX_BODY_OFFSET);
         Ok(Self {
             version,
             flags,
@@ -2990,31 +2948,31 @@ struct ParsedAudioSampleEntry {
 
 fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAudioSampleEntry> {
     let body = crate::box_types::box_body(bytes, AUDIO_SAMPLE_ENTRY_FIXED_LEN, what)?;
-    let entry_version = be_u16_at(body, AUDIO_SAMPLE_ENTRY_ENTRY_VERSION_OFFSET);
+    let entry_version = u16_at(body, AUDIO_SAMPLE_ENTRY_ENTRY_VERSION_OFFSET);
     let mut reserved_1 = [0u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN];
     reserved_1.copy_from_slice(
         &body[AUDIO_SAMPLE_ENTRY_RESERVED_OFFSET
             ..AUDIO_SAMPLE_ENTRY_RESERVED_OFFSET + AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     );
-    let dri = be_u16_at(body, AUDIO_SAMPLE_ENTRY_DATA_REFERENCE_INDEX_OFFSET);
-    let chan = be_u16_at(body, AUDIO_SAMPLE_ENTRY_CHANNELCOUNT_OFFSET);
-    let samp_sz = be_u16_at(body, AUDIO_SAMPLE_ENTRY_SAMPLESIZE_OFFSET);
+    let dri = u16_at(body, AUDIO_SAMPLE_ENTRY_DATA_REFERENCE_INDEX_OFFSET);
+    let chan = u16_at(body, AUDIO_SAMPLE_ENTRY_CHANNELCOUNT_OFFSET);
+    let samp_sz = u16_at(body, AUDIO_SAMPLE_ENTRY_SAMPLESIZE_OFFSET);
     let mut compression_id_and_packet_size = [0u8; core::mem::size_of::<u32>()];
     compression_id_and_packet_size.copy_from_slice(
         &body[AUDIO_SAMPLE_ENTRY_COMPRESSION_OFFSET
             ..AUDIO_SAMPLE_ENTRY_COMPRESSION_OFFSET + core::mem::size_of::<u32>()],
     );
-    let sr = be_u32_at(body, AUDIO_SAMPLE_ENTRY_SAMPLERATE_OFFSET);
+    let sr = u32_at(body, AUDIO_SAMPLE_ENTRY_SAMPLERATE_OFFSET);
 
     let mut config_boxes = Vec::new();
     let mut off = AUDIO_SAMPLE_ENTRY_FIXED_LEN;
     while off + BOX_HEADER_MIN_SIZE <= body.len() {
-        let sz = be_u32_at(body, off) as usize;
+        let sz = u32_at(body, off) as usize;
         if sz < BOX_HEADER_MIN_SIZE {
             break;
         }
         let end = off.saturating_add(sz).min(body.len());
-        let boxtype = read_fourcc_at(body, off + BOX_TYPE_OFFSET);
+        let boxtype = fourcc_at(body, off + BOX_TYPE_OFFSET);
         let data = body[off + BOX_HEADER_MIN_SIZE..end].to_vec();
         config_boxes.push(OpaqueBox {
             box_type: boxtype,
@@ -3320,8 +3278,8 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsd")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
-        let flags = be_u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
-        let count = be_u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
+        let flags = u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
+        let count = u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
         check_entry_count(
             bytes.len().saturating_sub(FLAT_TABLE_HEADER_LEN),
             BOX_HEADER_MIN_SIZE,
@@ -4339,15 +4297,15 @@ impl<'a> Parse<'a> for TrackExtendsBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let body = crate::box_types::box_body(bytes, TREX_BODY_LEN, "trex")?;
         let version = body[0];
-        let flags = be_u24_at(body, TREX_FLAGS_OFFSET);
+        let flags = u24_at(body, TREX_FLAGS_OFFSET);
         Ok(Self {
             version,
             flags,
-            track_id: TrackId::new(be_u32_at(body, TREX_TRACK_ID_OFFSET)),
-            default_sample_description_index: be_u32_at(body, TREX_SAMPLE_DESCRIPTION_INDEX_OFFSET),
-            default_sample_duration: be_u32_at(body, TREX_SAMPLE_DURATION_OFFSET),
-            default_sample_size: be_u32_at(body, TREX_SAMPLE_SIZE_OFFSET),
-            default_sample_flags: be_u32_at(body, TREX_SAMPLE_FLAGS_OFFSET),
+            track_id: TrackId::new(u32_at(body, TREX_TRACK_ID_OFFSET)),
+            default_sample_description_index: u32_at(body, TREX_SAMPLE_DESCRIPTION_INDEX_OFFSET),
+            default_sample_duration: u32_at(body, TREX_SAMPLE_DURATION_OFFSET),
+            default_sample_size: u32_at(body, TREX_SAMPLE_SIZE_OFFSET),
+            default_sample_flags: u32_at(body, TREX_SAMPLE_FLAGS_OFFSET),
         })
     }
 }

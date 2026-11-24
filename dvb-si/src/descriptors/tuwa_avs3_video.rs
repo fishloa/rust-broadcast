@@ -43,9 +43,9 @@ const FIXED_BODY_LEN: usize = 7;
 const REF_LEN: usize = 2;
 const MAX_REFS: usize = 127;
 /// Width of a `reserved(3)` field.
-const RESERVED_3_BITS: u32 = 3;
+pub const RESERVED_TRAILING_BITS: u32 = 3;
 /// Width of a `reserved(5)` field.
-const RESERVED_5_BITS: u32 = 5;
+const RESERVED_STREAM_ID_TAIL_BITS: u32 = 5;
 /// Body offset of `colour_primaries`.
 const COLOUR_PRIMARIES_OFFSET: usize = 4;
 /// Body offset of `transfer_characteristics`.
@@ -101,16 +101,16 @@ pub enum TuwaLibraryRef {
         /// PID of the TS packets carrying the library bitstream.
         pid: Pid,
         /// `reserved` (3 bits).
-        reserved: ReservedOnes<RESERVED_3_BITS>,
+        reserved: ReservedOnes<RESERVED_TRAILING_BITS>,
     },
     /// `id_type_flag == 0`: `ref_library_stream_id` (8) + `reserved` (5) + `reserved` (3).
     StreamId {
         /// `stream_id` of the PES carrying the library bitstream.
         stream_id: u8,
         /// `reserved` (5 bits).
-        reserved_5: ReservedOnes<RESERVED_5_BITS>,
+        reserved_5: ReservedOnes<RESERVED_STREAM_ID_TAIL_BITS>,
         /// `reserved` (3 bits).
-        reserved_3: ReservedOnes<RESERVED_3_BITS>,
+        reserved_3: ReservedOnes<RESERVED_TRAILING_BITS>,
     },
 }
 
@@ -120,8 +120,8 @@ impl TuwaLibraryRef {
     pub const fn stream_id(stream_id: u8) -> Self {
         Self::StreamId {
             stream_id,
-            reserved_5: ReservedOnes::<RESERVED_5_BITS>::FILL,
-            reserved_3: ReservedOnes::<RESERVED_3_BITS>::FILL,
+            reserved_5: ReservedOnes::<RESERVED_STREAM_ID_TAIL_BITS>::FILL,
+            reserved_3: ReservedOnes::<RESERVED_TRAILING_BITS>::FILL,
         }
     }
 }
@@ -175,7 +175,7 @@ pub struct TuwaAvs3VideoDescriptor {
     pub library_stream_flag: bool,
     /// `reserved` (3 bits) after `library_stream_flag`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_3_BITS>,
+    pub reserved: ReservedOnes<RESERVED_TRAILING_BITS>,
     /// `colour_primaries` (8 bits).
     pub colour_primaries: u8,
     /// `transfer_characteristics` (8 bits).
@@ -559,7 +559,7 @@ mod tests {
     fn library_ref_labels_name_the_id_type() {
         let peid = TuwaLibraryRef::Peid {
             pid: Pid::from_const(0x0101),
-            reserved: ReservedOnes::<RESERVED_3_BITS>::FILL,
+            reserved: ReservedOnes::<RESERVED_TRAILING_BITS>::FILL,
         };
         assert_eq!(peid.name(), "PEID");
         assert_eq!(peid.to_string(), "PEID");
@@ -598,7 +598,7 @@ mod tests {
             temporal_id_flag: false,
             td_mode_flag: false,
             library_stream_flag: false,
-            reserved: ReservedOnes::<RESERVED_3_BITS>::FILL,
+            reserved: ReservedOnes::<RESERVED_TRAILING_BITS>::FILL,
             colour_primaries: 9,
             transfer_characteristics: 14,
             matrix_coefficients: 9,

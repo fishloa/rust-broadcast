@@ -8,6 +8,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use crate::wire::U32_LEN;
 use broadcast_common::len::need_out;
 use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
@@ -18,21 +19,23 @@ const HEADER_LEN: usize = 2;
 /// Default of the 6-bit `reserved` in byte 0 (H.222.0 Table 2-93): clause 2.1
 /// "reserved" = `1` (all editions 06/2012-08/2023, audit §5; confirmed by the
 /// TSDuck oracle PMT).
-pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
+pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_FIRST_BYTE_BITS> =
+    ReservedOnes::<RESERVED_FIRST_BYTE_BITS>::FILL;
 /// Default of the 7-bit `reserved` after `90kHz_flag` (same rule).
-pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
+pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_AFTER_90KHZ_FLAG_BITS> =
+    ReservedOnes::<RESERVED_AFTER_90KHZ_FLAG_BITS>::FILL;
 /// Default of the trailing 5-bit `reserved` after the frame-rate flags (same
 /// rule).
-pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_TRAILING_BITS>::FILL;
 /// Width of the `reserved` in the first body byte (6 bits).
-const RESERVED_6_BITS: u32 = 6;
+pub const RESERVED_FIRST_BYTE_BITS: u32 = 6;
 /// Width of the `reserved` after `90kHz_flag` (7 bits).
-const RESERVED_7_BITS: u32 = 7;
+pub const RESERVED_AFTER_90KHZ_FLAG_BITS: u32 = 7;
 /// Width of the trailing `reserved` after the frame-rate flags (5 bits).
-const RESERVED_5_BITS: u32 = 5;
+pub const RESERVED_TRAILING_BITS: u32 = 5;
 const FIXED_BODY_LEN: u8 = 1; // first byte always present (hrd_management_valid_flag..picture_and_timing_info_present)
 /// Width of a 32-bit wire field, bytes.
-const U32_LEN: usize = core::mem::size_of::<u32>();
 /// Width of the `N` + `K` pair, bytes.
 const N_AND_K_LEN: usize = U32_LEN + U32_LEN;
 /// Width of the `90kHz_flag`/reserved byte, bytes.
@@ -73,7 +76,7 @@ pub struct AvcPictureTiming {
     /// `reserved(7)` after `90kHz_flag` (7 bits, right-aligned). Captured on
     /// parse, re-emitted verbatim; [`AvcPictureTiming::new`] uses
     /// [`RESERVED_7_DEFAULT`].
-    pub reserved_7: ReservedOnes<RESERVED_7_BITS>,
+    pub reserved_7: ReservedOnes<RESERVED_AFTER_90KHZ_FLAG_BITS>,
 }
 
 impl AvcPictureTiming {
@@ -114,11 +117,11 @@ pub struct AvcTimingAndHrdDescriptor {
     /// `reserved(6)` in byte 0 (6 bits, right-aligned). Captured on parse,
     /// re-emitted verbatim; [`AvcTimingAndHrdDescriptor::new`] uses
     /// [`RESERVED_6_DEFAULT`].
-    pub reserved_6: ReservedOnes<RESERVED_6_BITS>,
+    pub reserved_6: ReservedOnes<RESERVED_FIRST_BYTE_BITS>,
     /// Trailing `reserved(5)` after the flags (5 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_5_DEFAULT`].
-    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_5: ReservedOnes<RESERVED_TRAILING_BITS>,
 }
 
 impl AvcTimingAndHrdDescriptor {

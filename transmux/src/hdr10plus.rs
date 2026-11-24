@@ -30,6 +30,7 @@
 
 use crate::bitreader::{bit_error, write_bits_checked};
 use crate::error::{Error, Result};
+use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::error::InvalidValue;
@@ -55,15 +56,14 @@ pub const T35_HEADER_LEN: usize = 7;
 /// `ApplicationVersion` 1 (`B5 00 3C 00 01 04 01`).
 pub const T35_HEADER_V1: [u8; T35_HEADER_LEN] = [
     T35_COUNTRY_CODE_US,
-    (T35_PROVIDER_CODE >> BITS_PER_BYTE) as u8,
+    (T35_PROVIDER_CODE >> u8::BITS) as u8,
     T35_PROVIDER_CODE as u8,
-    (T35_PROVIDER_ORIENTED_CODE >> BITS_PER_BYTE) as u8,
+    (T35_PROVIDER_ORIENTED_CODE >> u8::BITS) as u8,
     T35_PROVIDER_ORIENTED_CODE as u8,
     APPLICATION_IDENTIFIER,
     APPLICATION_VERSION_MAX,
 ];
 
-const BITS_PER_BYTE: u32 = 8;
 /// Bytes the T.35 header spends on `application_identifier` and
 /// `application_version`, after the country/provider/oriented prefix
 /// (SMPTE ST 2094-40 §5).
@@ -74,7 +74,6 @@ const T35_PREFIX_LEN: usize = T35_HEADER_LEN - T35_APPLICATION_SUFFIX_LEN;
 const APPLICATION_IDENTIFIER_OFFSET: usize = T35_PREFIX_LEN;
 /// Offset of `application_version` in the T.35 header.
 const APPLICATION_VERSION_OFFSET: usize = T35_APPLICATION_SUFFIX_LEN + T35_PREFIX_LEN - 1;
-const HEVC_NAL_HEADER_LEN: usize = 2;
 const NAL_LENGTH_PREFIX_LEN: usize = 4;
 
 const NUM_WINDOWS_BITS: u32 = 2;
@@ -611,7 +610,7 @@ impl Hdr10PlusMetadata {
     }
 
     fn padding_bits(&self) -> u32 {
-        (self.payload_bits().next_multiple_of(BITS_PER_BYTE as usize) - self.payload_bits()) as u32
+        (self.payload_bits().next_multiple_of(u8::BITS as usize) - self.payload_bits()) as u32
     }
 
     /// Whether `payload` (a `user_data_registered_itu_t_t35` payload, starting at
@@ -774,10 +773,10 @@ impl<'a> Parse<'a> for Hdr10PlusMetadata {
         }
 
         let pad = r.bits_remaining();
-        if pad >= BITS_PER_BYTE as usize {
+        if pad >= u8::BITS as usize {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "HDR10+ payload",
-                value: (pad / BITS_PER_BYTE as usize) as u64,
+                value: (pad / u8::BITS as usize) as u64,
                 reason: "trailing bytes after the defined syntax",
             }));
         }
@@ -815,7 +814,7 @@ impl Serialize for Hdr10PlusMetadata {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        T35_HEADER_LEN + self.payload_bits().div_ceil(BITS_PER_BYTE as usize)
+        T35_HEADER_LEN + self.payload_bits().div_ceil(u8::BITS as usize)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {

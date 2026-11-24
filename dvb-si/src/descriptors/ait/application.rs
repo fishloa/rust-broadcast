@@ -31,7 +31,7 @@ const SERVICE_BOUND_FLAG_MASK: u8 = 0x80;
 const SERVICE_BOUND_FLAG_SHIFT: u8 = 7;
 const VISIBILITY_SHIFT: u8 = 5;
 /// Width mask of the 5-bit `reserved_future_use` in the flags byte.
-const RESERVED_FU_BITS: u32 = 5;
+pub const RESERVED_FU_BITS: u32 = 5;
 
 /// Spec default of `reserved_future_use(5)` in the flags byte: all ones
 /// (TS 102 809 V1.1.1-V1.3.1 Table 20, clause 5.3.3.2; audit §6.3 class A).
@@ -183,7 +183,7 @@ impl<'a> Parse<'a> for ApplicationDescriptor {
         let mut profiles = Vec::with_capacity(profiles_length / PROFILE_ENTRY_LEN);
         let mut pos = 1;
         while pos < profiles_end {
-            let profile = u16::from_be_bytes([body[pos], body[pos + 1]]);
+            let profile = crate::wire::be_u16(body, pos, "profile")?;
             let version_major = body[pos + VERSION_MAJOR_OFFSET];
             let version_minor = body[pos + VERSION_MINOR_OFFSET];
             let version_micro = body[pos + VERSION_MICRO_OFFSET];

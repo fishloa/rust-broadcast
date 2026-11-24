@@ -37,6 +37,7 @@
 //! escaped by quick-xml). Integer arithmetic only.
 
 use crate::TrackId;
+use crate::units::ROUNDING_DIVISOR;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -48,7 +49,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::box_types::{
-    BOX_HEADER_MIN_SIZE, BoxHeader, BoxType, FULLBOX_EXTRA_SIZE, UUID_TYPE_SIZE,
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BoxHeader, BoxType, FULLBOX_EXTRA_SIZE, UUID_TYPE_SIZE,
 };
 use crate::error::{Error, Result};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
@@ -109,10 +110,6 @@ const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 
 /// Default target fragment duration, in whole seconds.
 const DEFAULT_TARGET_SECS: u64 = 2;
-/// The `2` that halves a divisor for a rounded quotient.
-const ROUNDING_DIVISOR: u64 = 2;
-/// Offset of a box's type (FourCC) within its header: after the 32-bit size.
-const BOX_TYPE_OFFSET: usize = core::mem::size_of::<u32>();
 /// Length of one `tfxd` 64-bit time field.
 const TFXD_TIME_LEN: usize = core::mem::size_of::<u64>();
 

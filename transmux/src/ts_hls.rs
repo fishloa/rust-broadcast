@@ -74,6 +74,7 @@
 //!   is self-describing.
 
 use crate::TrackId;
+use crate::units::ROUNDING_DIVISOR;
 use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::String;
@@ -114,9 +115,6 @@ const DEFAULT_HLS_VERSION: u8 = 3;
 
 /// Default segment target duration, in whole seconds.
 const DEFAULT_TARGET_SECS: u32 = 6;
-
-/// The `2` that halves a denominator to round a quotient to nearest.
-const ROUNDING_DIVISOR: u128 = 2;
 
 // Test-only count of `MediaClock::tick` calls `TsHlsPackager::package` makes on
 // the *current thread*.
@@ -444,7 +442,7 @@ fn target_ticks_for(target_secs: u32, ts_scale: u32) -> u64 {
 fn segment_duration(anchor_ticks: u64, ts_scale: Timescale) -> (Duration, u32) {
     let denom = u128::from(ts_scale.get());
     let nanos = (u128::from(anchor_ticks) * u128::from(broadcast_common::units::NANOS_PER_SEC)
-        + denom / ROUNDING_DIVISOR)
+        + denom / u128::from(ROUNDING_DIVISOR))
         / denom;
     let duration = Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX));
     let ceil_secs = anchor_ticks.div_ceil(ts_scale.as_u64()) as u32;

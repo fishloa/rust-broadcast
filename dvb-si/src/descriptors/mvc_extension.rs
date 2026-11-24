@@ -19,7 +19,7 @@ const HEADER_LEN: usize = 2;
 /// oracle PMT).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved` field ahead of `view_order_index_min` (2 bits).
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 /// Mask and shift of `reserved(2)` within byte 4.
 const RESERVED_MASK: u8 = 0x03;
 /// Shift of the 2-bit `reserved` run within its byte.

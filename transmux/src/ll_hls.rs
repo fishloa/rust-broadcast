@@ -36,6 +36,7 @@
 //! see the `broadcast-hls` crate for the exact RFC 8216bis syntax and sections.
 
 use crate::TrackId;
+use crate::units::ROUNDING_DIVISOR;
 use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -1678,9 +1679,6 @@ fn take_span(t: &TrackState, target_ticks: u64) -> usize {
 
 const PERCENT_SCALE: u64 = 100;
 
-/// Divisor that turns a truncating `a / d` into round-to-nearest.
-const ROUND_NEAREST_DIVISOR: u128 = 2;
-
 /// RFC 8216bis §4.4.4.9: a non-terminal Partial Segment lasts at least this
 /// percentage of the Part Target Duration.
 const PART_MIN_PERCENT: u64 = 85;
@@ -1763,8 +1761,9 @@ fn follower_dts(sample: &Sample) -> i64 {
 /// Convert a media-timescale tick count to whole nanoseconds of wall-clock time.
 fn ticks_duration(ticks: u64, timescale: Timescale) -> Duration {
     let denom = u128::from(timescale.get());
-    let nanos =
-        (u128::from(ticks) * u128::from(NANOS_PER_SEC) + denom / ROUND_NEAREST_DIVISOR) / denom;
+    let nanos = (u128::from(ticks) * u128::from(NANOS_PER_SEC)
+        + denom / u128::from(ROUNDING_DIVISOR))
+        / denom;
     Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 

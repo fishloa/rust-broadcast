@@ -16,7 +16,7 @@ const HEADER_LEN: usize = 2;
 /// §5; confirmed by the TSDuck oracle PMT).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved` field ahead of `leak_valid_flag` (7 bits).
-const RESERVED_BITS: u32 = 7;
+pub const RESERVED_BITS: u32 = 7;
 /// `leak_valid_flag` occupies the low bit of the body byte.
 const LEAK_VALID_FLAG_MASK: u8 = 0x01;
 /// `reserved` starts at bit 1 of the body byte.

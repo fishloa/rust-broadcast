@@ -7,7 +7,7 @@ use broadcast_common::reserved::ReservedOnes;
 /// Shift of `reserved_future_use(5)` in the per-entry flags byte.
 const ENTRY_RESERVED_SHIFT: u8 = 3;
 /// Width of the `reserved_future_use` in the per-entry flags byte (5 bits).
-const ENTRY_RESERVED_BITS: u32 = 5;
+pub const ENTRY_RESERVED_BITS: u32 = 5;
 /// Shift of `country_code_flag` in the per-entry flags byte.
 const COUNTRY_CODE_FLAG_SHIFT: u8 = 2;
 /// Mask of `region_depth` in the per-entry flags byte.

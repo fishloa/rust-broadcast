@@ -16,6 +16,8 @@ pub const BBHEADER_LEN: usize = 10;
 
 /// MATYPE field length in bytes — EN 302 755 Table 1.
 const MATYPE_LEN: usize = 2;
+/// Width in bytes of a `u16` BBHEADER field.
+const U16_LEN: usize = core::mem::size_of::<u16>();
 /// BBHEADER byte offsets — EN 302 755 §5.1.7.
 const MATYPE_1_OFFSET: usize = 0;
 const MATYPE_2_OFFSET: usize = 1;
@@ -27,6 +29,12 @@ const SYNC_OFFSET: usize = 6;
 const SYNCD_HI_OFFSET: usize = 7;
 const SYNCD_LO_OFFSET: usize = 8;
 const CRC_OFFSET: usize = 9;
+
+fn be_u16_at(hdr: &[u8], off: usize) -> u16 {
+    hdr.get(off..off + U16_LEN)
+        .and_then(|s| s.first_chunk::<U16_LEN>())
+        .map_or(0, |b| u16::from_be_bytes(*b))
+}
 /// Index of ISSY_1LSB within the 3-byte ISSY field — EN 302 755 §5.1.7.
 /// Loosest valid DFL upper bound in bits across the standards this crate parses.
 ///
@@ -296,10 +304,12 @@ impl<'a> Parse<'a> for Bbheader {
                 },
             ))?;
 
-        let matype_bytes = [hdr[MATYPE_1_OFFSET], hdr[MATYPE_2_OFFSET]];
+        let matype_bytes: [u8; MATYPE_LEN] = hdr[MATYPE_1_OFFSET..MATYPE_1_OFFSET + MATYPE_LEN]
+            .try_into()
+            .unwrap_or_default();
         let matype = Matype::try_from(matype_bytes)?;
-        let dfl = u16::from_be_bytes([hdr[DFL_HI_OFFSET], hdr[DFL_LO_OFFSET]]);
-        let syncd = u16::from_be_bytes([hdr[SYNCD_HI_OFFSET], hdr[SYNCD_LO_OFFSET]]);
+        let dfl = be_u16_at(hdr, DFL_HI_OFFSET);
+        let syncd = be_u16_at(hdr, SYNCD_HI_OFFSET);
         let crc_stored = hdr[CRC_OFFSET];
 
         if dfl > DFL_MAX_BITS {
@@ -320,11 +330,7 @@ impl<'a> Parse<'a> for Bbheader {
         let mode = Mode::try_from(mode_val)?;
 
         let (upl, sync, issy_in_header) = match mode {
-            Mode::Normal => (
-                u16::from_be_bytes([hdr[UPL_HI_OFFSET], hdr[UPL_LO_OFFSET]]),
-                hdr[SYNC_OFFSET],
-                None,
-            ),
+            Mode::Normal => (be_u16_at(hdr, UPL_HI_OFFSET), hdr[SYNC_OFFSET], None),
             Mode::HighEfficiency => {
                 // In HEM, bytes[2..4] are ISSY_2MSB, byte[6] is ISSY_1LSB —
                 // UPL and SYNC are repurposed for ISSY.
@@ -391,26 +397,21 @@ impl Serialize for Bbheader {
         }
 
         let ma = <[u8; MATYPE_LEN]>::from(self.matype);
-        buf[MATYPE_1_OFFSET] = ma[0];
-        buf[MATYPE_2_OFFSET] = ma[1];
+        buf[MATYPE_1_OFFSET..MATYPE_1_OFFSET + MATYPE_LEN].copy_from_slice(&ma);
 
         match self.mode {
             Mode::Normal => {
                 let upl = self.upl.to_be_bytes();
-                buf[UPL_HI_OFFSET] = upl[0];
-                buf[UPL_LO_OFFSET] = upl[1];
+                buf[UPL_HI_OFFSET..UPL_HI_OFFSET + U16_LEN].copy_from_slice(&upl);
                 let dfl = self.dfl.to_be_bytes();
-                buf[DFL_HI_OFFSET] = dfl[0];
-                buf[DFL_LO_OFFSET] = dfl[1];
+                buf[DFL_HI_OFFSET..DFL_HI_OFFSET + U16_LEN].copy_from_slice(&dfl);
                 buf[SYNC_OFFSET] = self.sync;
                 let syncd = self.syncd.to_be_bytes();
-                buf[SYNCD_HI_OFFSET] = syncd[0];
-                buf[SYNCD_LO_OFFSET] = syncd[1];
+                buf[SYNCD_HI_OFFSET..SYNCD_HI_OFFSET + U16_LEN].copy_from_slice(&syncd);
             }
             Mode::HighEfficiency => {
                 if let Some(issy) = self.issy_in_header {
-                    buf[UPL_HI_OFFSET] = issy[0];
-                    buf[UPL_LO_OFFSET] = issy[1];
+                    buf[UPL_HI_OFFSET..UPL_HI_OFFSET + U16_LEN].copy_from_slice(&issy[..U16_LEN]);
                     let dfl = self.dfl.to_be_bytes();
                     buf[DFL_HI_OFFSET] = dfl[0];
                     buf[DFL_LO_OFFSET] = dfl[1];
@@ -423,8 +424,7 @@ impl Serialize for Bbheader {
                     // so serialize_into is fully deterministic regardless of whether
                     // the caller's buffer was zero-initialised or not. Without this,
                     // stale bytes at the repurposed UPL/SYNC positions corrupt the CRC-8.
-                    buf[UPL_HI_OFFSET] = 0;
-                    buf[UPL_LO_OFFSET] = 0;
+                    buf[UPL_HI_OFFSET..UPL_HI_OFFSET + U16_LEN].fill(0);
                     let dfl = self.dfl.to_be_bytes();
                     buf[DFL_HI_OFFSET] = dfl[0];
                     buf[DFL_LO_OFFSET] = dfl[1];

@@ -46,8 +46,9 @@ type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 /// AES-128-CBC decryptor (NIST SP 800-38A).
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
-/// AES-128 key length, in bytes (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §11).
-pub const KEY_LEN: usize = 16;
+/// AES-128 key length, in bytes — one definition, in [`crate::cenc`] (also the
+/// width of a CENC key id).
+pub use crate::cenc::KEY_LEN;
 /// AES block size, in bytes (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §11).
 pub const BLOCK_LEN: usize = 16;
 
@@ -60,7 +61,7 @@ pub const NAL_TYPE_NON_IDR_SLICE: u8 = 1;
 /// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.1).
 pub const NAL_TYPE_IDR_SLICE: u8 = 5;
 /// Mask selecting the 5-bit `nal_unit_type` from the NAL header byte.
-pub const NAL_TYPE_MASK: u8 = 0x1F;
+pub use crate::nal::NAL_TYPE_MASK;
 /// Minimum NAL length (bytes, header included) for encryption to apply; NALs of
 /// this length or shorter are left entirely clear (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.1).
 pub const H264_MIN_ENCRYPTED_NAL_LEN: usize = 48;

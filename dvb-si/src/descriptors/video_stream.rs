@@ -19,10 +19,11 @@ const BODY_MPEG1_LEN: u8 = 1;
 /// Table 2-46): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023,
 /// audit §5; confirmed by the TSDuck oracle PMT and the real
 /// `si/tsduck-mpeg-descriptors-pmt.bin` capture).
-pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_TRAILING_BITS>::FILL;
 /// Width of the trailing `reserved` field of the MPEG-2 branch (5 bits).
-const RESERVED_5_BITS: u32 = 5;
-const RESERVED_5_MASK: u8 = 0x1F;
+pub const RESERVED_TRAILING_BITS: u32 = 5;
+const RESERVED_TRAILING_MASK: u8 = 0x1F;
 
 /// `frame_rate_code(4)` field mask inside byte 0: bits `[6:3]`; masks the
 /// `Reserved(v)` payload so it cannot bleed into `multiple_frame_rate_flag`
@@ -172,7 +173,7 @@ pub struct VideoStreamDescriptor {
     /// `mpeg_1_only_flag` is set. Captured on parse, re-emitted verbatim; the
     /// constructors use [`RESERVED_5_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_5: ReservedOnes<RESERVED_TRAILING_BITS>,
     /// Body bytes after the defined fields (after byte 0 in the MPEG-1 branch,
     /// after byte 2 otherwise): tolerated on parse and re-emitted verbatim.
     pub trailing: Vec<u8>,
@@ -286,7 +287,7 @@ impl<'a> Parse<'a> for VideoStreamDescriptor {
                 profile_and_level_indication: Some(profile_and_level_indication),
                 chroma_format: Some(chroma_format),
                 frame_rate_extension_flag: Some(frame_rate_extension_flag),
-                reserved_5: ReservedOnes::from_bits(u64::from(b2 & RESERVED_5_MASK)),
+                reserved_5: ReservedOnes::from_bits(u64::from(b2 & RESERVED_TRAILING_MASK)),
                 trailing: body[BODY_LEN as usize..].to_vec(),
             })
         }

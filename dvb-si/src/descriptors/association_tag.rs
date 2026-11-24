@@ -143,7 +143,7 @@ impl<'a> Parse<'a> for AssociationTagDescriptor<'a> {
                     reason: "association_tag_descriptor body shorter than 5 bytes",
                 })?;
         let association_tag = u16::from_be_bytes([prefix[0], prefix[1]]);
-        let usage = u16::from_be_bytes([prefix[USAGE_OFFSET], prefix[USAGE_OFFSET + 1]]);
+        let usage = crate::wire::be_u16(prefix, USAGE_OFFSET, "usage")?;
         let selector_length = prefix[BODY_PREFIX_LEN - SELECTOR_LENGTH_LEN] as usize;
         if selector_length > after_prefix.len() {
             return Err(Error::InvalidDescriptor {

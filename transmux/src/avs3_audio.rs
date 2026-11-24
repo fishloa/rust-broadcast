@@ -38,8 +38,6 @@ pub const AV3A_FOURCC: [u8; 4] = *b"av3a";
 /// `sampling_frequency_index` value that adds an explicit 24-bit `sampling_frequency`.
 pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
 
-/// Field widths of the AVS3 `dca3` config syntax (GY/T 358-2022).
-const BITS_PER_BYTE: usize = u8::BITS as usize;
 /// `audio_codec_id` of a General High config.
 const AUDIO_CODEC_ID_GENERAL_HIGH: u8 = 0;
 /// `audio_codec_id` of a General Bitrate config.
@@ -329,9 +327,9 @@ fn parse_gh(r: &mut BitReader<'_>) -> Result<Avs3AudioGhConfig> {
     let raw_frame_length = rd(r, RAW_FRAME_LENGTH_BITS)? as u16;
     let resolution = rd(r, RESOLUTION_BITS)? as u8;
     let n = rd(r, ADDITION_INFO_LENGTH_BITS)? as usize;
-    let mut addition_info = Vec::with_capacity(n.min(r.bits_remaining() / BITS_PER_BYTE));
+    let mut addition_info = Vec::with_capacity(n.min(r.bits_remaining() / u8::BITS as usize));
     for _ in 0..n {
-        addition_info.push(rd(r, BITS_PER_BYTE as u32)? as u8);
+        addition_info.push(rd(r, u8::BITS as usize as u32)? as u8);
     }
     let reserved = rd(r, GH_RESERVED_BITS)? as u8;
     Ok(Avs3AudioGhConfig {
@@ -362,9 +360,9 @@ fn parse_ll(r: &mut BitReader<'_>) -> Result<Avs3AudioLlConfig> {
     let channel_number = rd(r, CHANNEL_NUMBER_BITS)? as u8;
     let resolution = rd(r, RESOLUTION_BITS)? as u8;
     let n = rd(r, ADDITION_INFO_LENGTH_BITS)? as usize;
-    let mut addition_info = Vec::with_capacity(n.min(r.bits_remaining() / BITS_PER_BYTE));
+    let mut addition_info = Vec::with_capacity(n.min(r.bits_remaining() / u8::BITS as usize));
     for _ in 0..n {
-        addition_info.push(rd(r, BITS_PER_BYTE as u32)? as u8);
+        addition_info.push(rd(r, u8::BITS as usize as u32)? as u8);
     }
     let reserved = rd(r, LL_RESERVED_BITS)? as u8;
     Ok(Avs3AudioLlConfig {
@@ -404,7 +402,7 @@ impl<'a> Parse<'a> for Ca3SpecificBox {
                 });
             }
         };
-        if r.bits_remaining() >= BITS_PER_BYTE {
+        if r.bits_remaining() >= u8::BITS as usize {
             return Err(Error::InvalidInput("dca3 body has trailing bytes"));
         }
         Ok(Self { config })
@@ -448,7 +446,7 @@ impl Ca3SpecificBox {
                     + CHANNEL_NUMBER_BITS as usize
                     + RESOLUTION_BITS as usize
                     + ADDITION_INFO_LENGTH_BITS as usize
-                    + BITS_PER_BYTE * l.addition_info.len()
+                    + u8::BITS as usize * l.addition_info.len()
                     + LL_RESERVED_BITS as usize
             }
             Ca3Config::GeneralHigh(g) => {
@@ -461,10 +459,10 @@ impl Ca3SpecificBox {
                     + RAW_FRAME_LENGTH_BITS as usize
                     + RESOLUTION_BITS as usize
                     + ADDITION_INFO_LENGTH_BITS as usize
-                    + BITS_PER_BYTE * g.addition_info.len()
+                    + u8::BITS as usize * g.addition_info.len()
                     + GH_RESERVED_BITS as usize
             }
-            Ca3Config::Other { body, .. } => BITS_PER_BYTE * body.len(),
+            Ca3Config::Other { body, .. } => u8::BITS as usize * body.len(),
         }
     }
 }
@@ -472,7 +470,7 @@ impl Ca3SpecificBox {
 impl Serialize for Ca3SpecificBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        self.bits().div_ceil(BITS_PER_BYTE)
+        self.bits().div_ceil(u8::BITS as usize)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -646,7 +644,7 @@ impl Serialize for Ca3SpecificBox {
                     write_bits_checked(
                         &mut w,
                         u64::from(*b),
-                        BITS_PER_BYTE as u32,
+                        u8::BITS as usize as u32,
                         "addition_info",
                     )?;
                 }
@@ -702,7 +700,7 @@ impl Serialize for Ca3SpecificBox {
                     write_bits_checked(
                         &mut w,
                         u64::from(*b),
-                        BITS_PER_BYTE as u32,
+                        u8::BITS as usize as u32,
                         "addition_info",
                     )?;
                 }

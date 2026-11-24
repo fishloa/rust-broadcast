@@ -72,7 +72,7 @@
 //!   strictly increasing across segments (§8.8.5).
 
 use crate::TrackId;
-use crate::box_types::{BoxRef, box_iter};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxRef, box_iter};
 use crate::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF,
     TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox, TrackFragmentRunBox,
@@ -106,13 +106,11 @@ const TFHD: [u8; 4] = *b"tfhd";
 const TFDT: [u8; 4] = *b"tfdt";
 const TRUN: [u8; 4] = *b"trun";
 const MDAT: [u8; 4] = *b"mdat";
-const BOX_HEADER_SIZE: usize = 8;
 const PAIR_WINDOW_LEN: usize = 2;
-const FOURCC_LEN: usize = 4;
 
 /// CMAF/DASH segment brands accepted for the `styp` box (CMAF §7.3.2.3): the
 /// DASH segment brands `msdh`/`msix` and any CMAF `cmf*` brand.
-fn is_segment_brand(b: &[u8; FOURCC_LEN]) -> bool {
+fn is_segment_brand(b: &[u8; BOX_TYPE_SIZE]) -> bool {
     b == b"msdh" || b == b"msix" || &b[..3] == b"cmf"
 }
 
@@ -181,7 +179,7 @@ impl ConformanceIssue {
 /// Walk the direct children of a container `body`, collecting `(fourcc, BoxRef)`
 /// pairs. Stops cleanly at the first malformed child (so a truncated tail does
 /// not panic and does not abort the whole walk with an error).
-fn children(body: &[u8]) -> Vec<([u8; FOURCC_LEN], BoxRef<'_>)> {
+fn children(body: &[u8]) -> Vec<([u8; BOX_TYPE_SIZE], BoxRef<'_>)> {
     box_iter(body)
         .map_while(|step| step.ok())
         .map(|(bx, _)| (bx.header.box_type.0, bx))
@@ -189,12 +187,12 @@ fn children(body: &[u8]) -> Vec<([u8; FOURCC_LEN], BoxRef<'_>)> {
 }
 
 /// Whether a container `body` has a direct child of the given four-CC.
-fn has_child(body: &[u8], fourcc: &[u8; FOURCC_LEN]) -> bool {
+fn has_child(body: &[u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
     children(body).iter().any(|(t, _)| t == fourcc)
 }
 
 /// Return the body of the first direct child with the given four-CC.
-fn child_body<'a>(body: &'a [u8], fourcc: &[u8; FOURCC_LEN]) -> Option<&'a [u8]> {
+fn child_body<'a>(body: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&'a [u8]> {
     children(body)
         .into_iter()
         .find(|(t, _)| t == fourcc)
@@ -913,7 +911,7 @@ const SAMPLE_FLAGS_IS_NON_SYNC: u32 = 1 << 16;
 fn child_whole<'a>(
     owner: &'a [u8],
     parent_body: &'a [u8],
-    fourcc: &[u8; FOURCC_LEN],
+    fourcc: &[u8; BOX_TYPE_SIZE],
 ) -> Option<&'a [u8]> {
     let bx_body = child_body(parent_body, fourcc)?;
     let base = owner.as_ptr() as usize;
@@ -924,7 +922,7 @@ fn child_whole<'a>(
     let body_off = body_ptr - base;
     // The box header is 8 bytes, or 16 for a largesize box; a `tkhd` inside a
     // `moov` is never largesize, and `parse` revalidates the size itself.
-    let start = body_off.checked_sub(BOX_HEADER_SIZE)?;
+    let start = body_off.checked_sub(BOX_HEADER_MIN_SIZE)?;
     let end = body_off.checked_add(bx_body.len())?;
     owner.get(start..end)
 }

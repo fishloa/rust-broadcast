@@ -12,7 +12,8 @@ use alloc::vec::Vec;
 use broadcast_common::bits::BitBuf;
 use broadcast_common::len::{FieldOverflow, fit_bits};
 
-const BITS_PER_BYTE: usize = 8;
+/// Bits in one byte, the width every whole-byte bit access uses.
+pub(crate) const BITS_PER_BYTE: usize = u8::BITS as usize;
 const MISALIGNED_BYTES: &str = "whole-byte access at a non-byte-aligned bit position";
 pub(crate) const DESCRIPTOR_HEADER_LEN: usize = 2;
 

@@ -18,16 +18,17 @@ const COORDINATE_SYSTEM_MASK: u8 = 0x07;
 /// and the one that follows `position_flag == 0`): all ones, EN 300 468 Table
 /// 145 in every edition V1.9.1-V1.20.1
 /// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> =
-    ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_REGION_BITS> =
+    ReservedOnes::<RESERVED_FUTURE_USE_REGION_BITS>::FILL;
 /// Spec default of the 2-bit `reserved_future_use` after `coordinate_system`:
 /// all ones (same source as [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`]).
-pub const IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> =
-    ReservedOnes::<RESERVED_2_BITS>::FILL;
+pub const IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<
+    RESERVED_FUTURE_USE_AFTER_COORDINATE_BITS,
+> = ReservedOnes::<RESERVED_FUTURE_USE_AFTER_COORDINATE_BITS>::FILL;
 /// Width of the 5-bit `reserved_future_use` regions.
-const RESERVED_5_BITS: u32 = 5;
+pub const RESERVED_FUTURE_USE_REGION_BITS: u32 = 5;
 /// Width of the 2-bit `reserved_future_use` region.
-const RESERVED_2_BITS: u32 = 2;
+pub const RESERVED_FUTURE_USE_AFTER_COORDINATE_BITS: u32 = 2;
 /// Bytes before the segment payload.
 const IMAGE_ICON_PREFIX_LEN: usize = 2;
 /// Offset of the packed first-segment byte.
@@ -136,7 +137,7 @@ pub struct ImageIcon<'a> {
     /// `reserved_future_use` (5 bits, right-aligned) — `[7:3]` of byte 1.
     /// Preserved on parse; [`ImageIcon::new`] uses
     /// [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`] (all ones).
-    pub reserved_future_use: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_future_use: ReservedOnes<RESERVED_FUTURE_USE_REGION_BITS>,
     /// `icon_id` (3 bits) — `[2:0]` of byte 1.
     pub icon_id: u8,
     /// First-segment metadata vs. continuation payload (keyed by `descriptor_number == 0`).
@@ -191,7 +192,7 @@ pub struct ImageIconFirst<'a> {
     /// `position_flag == 0`; `Some` iff `position` is `None`. Preserved on
     /// parse; a hand-built `None` serializes as
     /// [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`].
-    pub reserved_future_use: Option<ReservedOnes<RESERVED_5_BITS>>,
+    pub reserved_future_use: Option<ReservedOnes<RESERVED_FUTURE_USE_REGION_BITS>>,
     /// `icon_type_char` text run (length-delimited in the wire).
     pub icon_type: crate::text::DvbText<'a>,
     /// Transport-mode-dependent payload (Table 146):
@@ -249,7 +250,7 @@ pub struct IconPosition {
     /// `reserved_future_use` (2 bits, right-aligned) after `coordinate_system`.
     /// Preserved on parse; [`IconPosition::new`] uses
     /// [`IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT`] (all ones).
-    pub reserved_future_use: ReservedOnes<RESERVED_2_BITS>,
+    pub reserved_future_use: ReservedOnes<RESERVED_FUTURE_USE_AFTER_COORDINATE_BITS>,
     /// `icon_horizontal_origin` (12 bits).
     pub icon_horizontal_origin: u16,
     /// `icon_vertical_origin` (12 bits).

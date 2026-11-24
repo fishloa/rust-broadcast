@@ -163,10 +163,10 @@ pub fn bar_data_from_ga94_payload(payload: &[u8]) -> Option<BarData> {
         right_bar_start_pixel: None,
     };
     let value = |pos: &mut usize| -> Option<u16> {
-        let a = *payload.get(*pos)?;
-        let b = *payload.get(*pos + 1)?;
-        *pos += 2;
-        Some(u16::from_be_bytes([a, b]) & BAR_VALUE_MASK)
+        let end = pos.checked_add(core::mem::size_of::<u16>())?;
+        let field: [u8; core::mem::size_of::<u16>()] = payload.get(*pos..end)?.try_into().ok()?;
+        *pos = end;
+        Some(u16::from_be_bytes(field) & BAR_VALUE_MASK)
     };
     if top {
         bd.top_bar_end_line = value(&mut pos);

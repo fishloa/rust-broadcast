@@ -22,13 +22,14 @@ const HEADER_LEN: usize = 2;
 /// "reserved" = `1` (all editions 2006-08/2023, audit §5). The
 /// `time_base_association_data` bytes are `reserved(8)` per entry and are
 /// carried verbatim in [`ContentTimeBaseAssociation::data`].
-pub const RESERVED_3_DEFAULT: ReservedOnes<RESERVED_3_BITS> = ReservedOnes::<RESERVED_3_BITS>::FILL;
+pub const RESERVED_3_DEFAULT: ReservedOnes<RESERVED_AFTER_TIME_BASE_INDICATOR_BITS> =
+    ReservedOnes::<RESERVED_AFTER_TIME_BASE_INDICATOR_BITS>::FILL;
 /// Width of the 3-bit `reserved` after `content_time_base_indicator`.
-const RESERVED_3_BITS: u32 = 3;
+pub const RESERVED_AFTER_TIME_BASE_INDICATOR_BITS: u32 = 3;
 /// Width of the 7-bit `reserved` ahead of each 33-bit time-base value.
-const RESERVED_7_BITS: u32 = 7;
+pub const RESERVED_BEFORE_TIME_BASE_BITS: u32 = 7;
 /// Width of the 1-bit `reserved` ahead of `contentId`.
-const RESERVED_1_BITS: u32 = 1;
+pub const RESERVED_BEFORE_CONTENT_ID_BITS: u32 = 1;
 /// Width of `metadata_application_format`, bytes.
 const FORMAT_LEN: usize = core::mem::size_of::<u16>();
 /// Width of the flags byte, bytes.
@@ -71,10 +72,12 @@ const CONTENT_ID_MASK: u8 = 0x7F;
 const CONTENT_ID_RESERVED_SHIFT: u8 = 7;
 /// Default of each 7-bit `reserved` ahead of a 33-bit time-base value (see
 /// [`RESERVED_3_DEFAULT`]).
-pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
+pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_BEFORE_TIME_BASE_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_TIME_BASE_BITS>::FILL;
 /// Default of the 1-bit `reserved` ahead of `contentId` (see
 /// [`RESERVED_3_DEFAULT`]).
-pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_BEFORE_CONTENT_ID_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_CONTENT_ID_BITS>::FILL;
 
 /// Time-base block — present when content_time_base_indicator is 1 or 2.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,11 +91,11 @@ pub struct ContentTimeBase {
     /// `reserved(7)` ahead of `content_time_base_value` (7 bits,
     /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_7_DEFAULT`].
-    pub reserved_content: ReservedOnes<RESERVED_7_BITS>,
+    pub reserved_content: ReservedOnes<RESERVED_BEFORE_TIME_BASE_BITS>,
     /// `reserved(7)` ahead of `metadata_time_base_value` (7 bits,
     /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_7_DEFAULT`].
-    pub reserved_metadata: ReservedOnes<RESERVED_7_BITS>,
+    pub reserved_metadata: ReservedOnes<RESERVED_BEFORE_TIME_BASE_BITS>,
 }
 
 impl ContentTimeBase {
@@ -150,11 +153,11 @@ pub struct ContentLabelingDescriptor<'a> {
     /// `reserved(3)` after `content_time_base_indicator` (3 bits,
     /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_3_DEFAULT`].
-    pub reserved: ReservedOnes<RESERVED_3_BITS>,
+    pub reserved: ReservedOnes<RESERVED_AFTER_TIME_BASE_INDICATOR_BITS>,
     /// `reserved(1)` ahead of `contentId` (1 bit, right-aligned); on the wire
     /// only when `content_id` is present. Captured on parse, re-emitted
     /// verbatim; defaults to [`RESERVED_1_DEFAULT`].
-    pub content_id_reserved: ReservedOnes<RESERVED_1_BITS>,
+    pub content_id_reserved: ReservedOnes<RESERVED_BEFORE_CONTENT_ID_BITS>,
 }
 
 impl<'a> ContentLabelingDescriptor<'a> {
@@ -189,7 +192,7 @@ impl Default for ContentLabelingDescriptor<'_> {
 // TOP 7 bits of the first byte, and the 33-bit value's MSB is bit 0 of that
 // same byte, followed by 4 full bytes (32 more bits). Returns
 // `(reserved(7), value(33))`.
-fn read_33bit(bytes: &[u8], pos: usize) -> (ReservedOnes<RESERVED_7_BITS>, u64) {
+fn read_33bit(bytes: &[u8], pos: usize) -> (ReservedOnes<RESERVED_BEFORE_TIME_BASE_BITS>, u64) {
     (
         ReservedOnes::from_bits(u64::from(bytes[pos] >> RESERVED_SHIFT)),
         read_33bit_value(bytes, pos),
@@ -206,7 +209,7 @@ fn read_33bit_value(bytes: &[u8], pos: usize) -> u64 {
 fn write_33bit(
     buf: &mut [u8],
     pos: usize,
-    reserved: ReservedOnes<RESERVED_7_BITS>,
+    reserved: ReservedOnes<RESERVED_BEFORE_TIME_BASE_BITS>,
     value: u64,
 ) -> Result<()> {
     // A value wider than 33 bits used to be masked down silently (audit

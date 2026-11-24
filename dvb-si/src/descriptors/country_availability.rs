@@ -25,7 +25,7 @@ const MAX_BODY_LEN: usize = u8::MAX as usize;
 /// country_availability_flag occupies bit 7 (MSB) of the flag byte.
 const AVAILABILITY_FLAG_MASK: u8 = 0x80;
 /// Lower 7 bits of the flag byte are `reserved_future_use`. Width in bits.
-const RESERVED_BITS: u32 = 7;
+pub const RESERVED_BITS: u32 = 7;
 /// Spec default of `reserved_future_use`(7): all ones (EN 300 468 V1.3.1-V1.20.1,
 /// audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A: stable in
 /// every edition).

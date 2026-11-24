@@ -56,9 +56,9 @@ pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
 const NIBBLE: u32 = 4;
 const ALL_ONES_1: ReservedOnes<1> = ReservedOnes::<1>::FILL;
 /// Width of a per-body `reserved` field.
-const BODY_RESERVED_BITS: u32 = 4;
+pub const BODY_RESERVED_BITS: u32 = 4;
 /// Width of the descriptor-level `reserved` field.
-const DESCRIPTOR_RESERVED_BITS: u32 = 6;
+pub const DESCRIPTOR_RESERVED_BITS: u32 = 6;
 const ALL_ONES_4: ReservedOnes<BODY_RESERVED_BITS> = ReservedOnes::<BODY_RESERVED_BITS>::FILL;
 const ALL_ONES_6: ReservedOnes<DESCRIPTOR_RESERVED_BITS> =
     ReservedOnes::<DESCRIPTOR_RESERVED_BITS>::FILL;

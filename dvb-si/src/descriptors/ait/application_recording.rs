@@ -35,9 +35,9 @@ const INITIATING_REPLAY_FLAG: u8 = 0x04;
 const RESERVED_MASK: u8 = 0x03;
 const LABEL_RESERVED_MASK: u8 = 0x3F;
 /// Width of the 2-bit `reserved` after the flags.
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 /// Width of the 6-bit per-label `reserved`.
-const LABEL_RESERVED_BITS: u32 = 6;
+pub const LABEL_RESERVED_BITS: u32 = 6;
 const STORAGE_PROPERTIES_SHIFT: u32 = 6;
 
 /// Spec default of the 2-bit `reserved` after the flags (all ones, TS 102 809

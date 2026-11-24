@@ -55,6 +55,7 @@
 //!   precedes the AC-3 syncframes.
 
 use crate::TrackId;
+use crate::wire_cursor::u16_at;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -70,12 +71,15 @@ use crate::au::AccessUnitSplitter;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
-use crate::ir::DisplayGeometry;
+use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, DisplayGeometry};
 use crate::media::{Media, Track};
 use crate::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
 use crate::mpeg_legacy::Mpeg2SeqHeader;
 use crate::mpeg2_display::Mpeg2DisplayTracker;
-use crate::nal::{NalCodec, ParamKind, parameter_set_is_valid};
+use crate::nal::{
+    AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, ParamKind,
+    parameter_set_is_valid,
+};
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::ts_demux::{
@@ -168,16 +172,6 @@ const SUBSTREAM_ID_AUDIO_LO: u8 = 0x80;
 
 // ── H.264 NAL / config constants (ISO/IEC 14496-10 / 14496-15:2017) ───────────────
 
-/// NAL length-field width for `mdat` samples: 4-byte prefixes → `lengthSizeMinusOne = 3`.
-/// H.264 `nal_unit_type` for SPS (Table 7-1).
-const H264_NAL_SPS: u8 = 7;
-/// H.264 `nal_unit_type` for PPS (Table 7-1).
-const H264_NAL_PPS: u8 = 8;
-/// H.264 `nal_unit_type` for a coded slice of an IDR picture (Table 7-1).
-const H264_NAL_IDR: u8 = 5;
-/// Mask for the H.264 5-bit `nal_unit_type` in the NAL header byte.
-const H264_NAL_TYPE_MASK: u8 = 0x1F;
-
 // ── MPEG-2 video picture boundaries ──────────────────────────────────────────
 
 /// Offset of a start code's code byte, one past its 3-byte `00 00 01` prefix.
@@ -187,8 +181,6 @@ const START_CODE_BYTE_OFFSET: usize = 3;
 
 /// Video media timescale (90 kHz — the PS/PES timestamp clock).
 const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
-/// Audio sample size in bits carried in the sample entry (PCM-equivalent; 16).
-const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
 /// Fallback per-frame duration (90 kHz ticks) when only one stamped frame exists.
 const DEFAULT_FRAME_DURATION: i128 = 3600;
 /// Fewest stamped decode timestamps that yield a per-frame delta.
@@ -317,7 +309,7 @@ impl Private1Header {
         let header = Private1Header {
             substream_id: payload[PRIVATE1_SUBSTREAM_ID_OFFSET],
             number_of_frames: payload[PRIVATE1_NUM_FRAMES_OFFSET],
-            first_access_unit_pointer: u16::from_be_bytes([payload[ptr], payload[ptr + 1]]),
+            first_access_unit_pointer: u16_at(payload, ptr),
         };
         Some((header, &payload[PRIVATE1_HEADER_LEN..]))
     }
@@ -796,16 +788,16 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
         .enumerate()
         .map(|(i, &(start, end))| {
             for nal in iter_annexb_nals(&es.es_bytes[start..end]) {
-                match nal[0] & H264_NAL_TYPE_MASK {
+                match nal[0] & NAL_TYPE_MASK {
                     // Only valid parameter sets (issue #1171): a damaged
                     // "SPS" of garbage must not reach the avcC.
-                    H264_NAL_SPS
+                    AVC_NAL_SPS
                         if sps.is_none()
                             && parameter_set_is_valid(NalCodec::Avc, ParamKind::Sps, nal) =>
                     {
                         sps = Some(nal.to_vec())
                     }
-                    H264_NAL_PPS
+                    AVC_NAL_PPS
                         if pps.is_none()
                             && parameter_set_is_valid(NalCodec::Avc, ParamKind::Pps, nal) =>
                     {
@@ -1024,7 +1016,7 @@ fn to_ticks(uw: i128) -> i64 {
 
 /// True if an Annex B access unit contains an IDR slice NAL (type 5).
 fn au_is_idr(au: &[u8]) -> bool {
-    iter_annexb_nals(au).any(|nal| (nal[0] & H264_NAL_TYPE_MASK) == H264_NAL_IDR)
+    iter_annexb_nals(au).any(|nal| (nal[0] & NAL_TYPE_MASK) == AVC_NAL_IDR)
 }
 
 /// Derive the constant per-frame duration (90 kHz ticks) from the stamped DTS
@@ -1368,7 +1360,7 @@ mod h264_config_tests {
             }
             let nal = &sample[off..off + n];
             off += n;
-            let nal_type = nal[0] & H264_NAL_TYPE_MASK;
+            let nal_type = nal[0] & NAL_TYPE_MASK;
             if nal_type == 1 || nal_type == 5 {
                 slice = nal.to_vec();
                 break;

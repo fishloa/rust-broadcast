@@ -85,9 +85,11 @@ use crate::aac_asc::{ADTS_HEADER_SIZE, AudioSpecificConfig};
 use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals, length_prefixed_to_annexb};
 use crate::error::{Error, Result};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
-use crate::mp4esds::EsdsBox;
-use crate::nal::{NalCodec, nal_unit_type};
+use crate::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
+use crate::nal::{AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, nal_unit_type};
+use crate::nalu_types::HEVC_SPS_NUT;
 use crate::pipeline::{CodecConfig, DataCarriage, Sample};
+use crate::ts_demux::DESCRIPTOR_HEADER_LEN;
 
 // ── PID / PSI constants (ISO/IEC 13818-1 §2.4.4) ────────────────────────────
 
@@ -142,13 +144,6 @@ const STREAM_TYPE_AC3: u8 = 0x81;
 const STREAM_TYPE_DTS: u8 = 0x82;
 /// E-AC-3 (user-private) — ETSI TS 101 154 §G.
 const STREAM_TYPE_EAC3: u8 = 0x87;
-
-/// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 14496-1 Table 5) —
-/// selects TS `stream_type` 0x03 vs 0x04 for a re-muxed
-/// [`CodecConfig::MpegAudio`] track (issue #627).
-const OTI_MPEG1_AUDIO: u8 = 0x6B;
-/// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 14496-1 Table 5).
-const OTI_MPEG2_AUDIO: u8 = 0x69;
 
 /// Maximum value of the 12-bit `ES_info_length` field (§2.4.4.9).
 const MAX_ES_INFO_LENGTH: usize = 0x0FFF;
@@ -260,12 +255,8 @@ const TS_PREFIX_DTS: u8 = 0b0001;
 
 // ── H.264 NAL constants (ISO/IEC 14496-10 Table 7-1) ────────────────────────
 
-/// Mask for the 5-bit `nal_unit_type` in the NAL header byte.
-const H264_NAL_TYPE_MASK: u8 = 0x1F;
 /// `nal_unit_type` for an Access Unit Delimiter.
 const H264_NAL_AUD: u8 = 9;
-/// `nal_unit_type` for a Sequence Parameter Set.
-const H264_NAL_SPS: u8 = 7;
 /// AVC AUD NAL header byte: `forbidden_zero_bit`(1)=0 + `nal_ref_idc`(2)=0 +
 /// `nal_unit_type`(5)=9 (H.264 §7.3.2.4 / Table 7-1 — Table 7-1 gives the AUD
 /// the *category* 6, not `nal_ref_idc` 6: `nal_ref_idc` is a 2-bit field, and an
@@ -283,8 +274,6 @@ const AVC_AUD_NAL: [u8; 2] = [H264_NAL_AUD_BYTE, H264_AUD_PRIMARY_PIC_TYPE];
 
 /// H.265 `nal_unit_type` for VPS (`VPS_NUT`) — Table 7-1 (type 32).
 const HEVC_NAL_VPS: u8 = 32;
-/// H.265 `nal_unit_type` for SPS (`SPS_NUT`) — Table 7-1 (type 33).
-const HEVC_NAL_SPS: u8 = 33;
 /// H.265 `nal_unit_type` for PPS (`PPS_NUT`) — Table 7-1 (type 34).
 const HEVC_NAL_PPS: u8 = 34;
 /// H.265 `nal_unit_type` for an Access Unit Delimiter (`AUD_NUT`) — Table 7-1
@@ -337,9 +326,6 @@ const PID_LO_OFFSET: usize = 2;
 /// Stamps per gap when scanning consecutive PCR stamps (`windows(2)`).
 const PCR_STAMP_PAIR_LEN: usize = 2;
 
-/// Bytes of a descriptor's `descriptor_tag` + `descriptor_length` header
-/// (§2.6).
-const DESCRIPTOR_HEADER_LEN: usize = 2;
 /// Bytes a PSI `section_length` does not count: `table_id` and the 2-byte
 /// `section_length` field itself (§2.4.4).
 const PSI_SECTION_LENGTH_PREFIX: usize = 3;
@@ -964,7 +950,7 @@ fn hevc_parameter_sets(
     for array in &record.arrays {
         let bucket = match array.nal_unit_type {
             HEVC_NAL_VPS => &mut vps,
-            HEVC_NAL_SPS => &mut sps,
+            HEVC_SPS_NUT => &mut sps,
             HEVC_NAL_PPS => &mut pps,
             _ => continue,
         };
@@ -1513,8 +1499,8 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
                 &sample.data,
                 sample.flags.is_sync,
                 &plan.avc_sps_pps,
-                |n| !n.is_empty() && (n[0] & H264_NAL_TYPE_MASK) == H264_NAL_SPS,
-                |n| n.first().map(|b| b & H264_NAL_TYPE_MASK) == Some(H264_NAL_AUD),
+                |n| !n.is_empty() && (n[0] & NAL_TYPE_MASK) == AVC_NAL_SPS,
+                |n| n.first().map(|b| b & NAL_TYPE_MASK) == Some(H264_NAL_AUD),
             )?;
             ensure_avc_aud(au)
         }
@@ -1523,7 +1509,7 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
                 &sample.data,
                 sample.flags.is_sync,
                 &plan.hevc_vps_sps_pps,
-                |n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_SPS),
+                |n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_SPS_NUT),
                 |n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_AUD),
             )?;
             ensure_hevc_aud(au)
@@ -1669,7 +1655,7 @@ fn ensure_hevc_aud(mut au: Vec<u8>) -> Result<Vec<u8>> {
 fn first_avc_nal_type(annexb: &[u8]) -> Option<u8> {
     crate::annexb::iter_annexb_nals(annexb)
         .next()
-        .and_then(|n| n.first().map(|b| b & H264_NAL_TYPE_MASK))
+        .and_then(|n| n.first().map(|b| b & NAL_TYPE_MASK))
 }
 
 /// The HEVC `nal_unit_type` of the first NAL in an Annex B buffer (2-byte NAL

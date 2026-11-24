@@ -15,7 +15,7 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for HEVC_video_descriptor.
 pub const TAG: u8 = 0x38;
 const HEADER_LEN: usize = 2;
-const COPIED_44_MASK: u64 = (1 << 44) - 1;
+const COPIED_BITS_MASK: u64 = (1 << 44) - 1;
 /// `profile_space(2)` (ISO/IEC 23001-2 Table 1); raw field, mask so a wide
 /// value cannot bleed into `tier_flag` (r03-W2).
 const PROFILE_SPACE_MASK: u8 = 0x03;
@@ -33,13 +33,13 @@ const TEMPORAL_ID_MASK: u8 = 0x07;
 /// both the H.222.0 table and the data.) Parse preserves whatever is read.
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the byte-12 `reserved` (2 bits).
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 /// Default of the 5-bit `reserved` in each temporal-sub-block byte (same
 /// rule): `11111`.
 pub const TEMPORAL_RESERVED_DEFAULT: ReservedOnes<TEMPORAL_RESERVED_BITS> =
     ReservedOnes::<TEMPORAL_RESERVED_BITS>::FILL;
 /// Width of the temporal-sub `reserved` (5 bits).
-const TEMPORAL_RESERVED_BITS: u32 = 5;
+pub const TEMPORAL_RESERVED_BITS: u32 = 5;
 /// Fixed body length without temporal_id sub-block.
 const FIXED_BODY_LEN: u8 = 12;
 /// Offset of the profile/tier byte in the descriptor body.
@@ -245,7 +245,7 @@ impl<'a> Parse<'a> for HevcVideoDescriptor {
         copied_44_lo_bytes[core::mem::size_of::<u64>() - COPIED_44_LO_LEN..]
             .copy_from_slice(&body[COPIED_44_LO_OFFSET..COPIED_44_LO_OFFSET + COPIED_44_LO_LEN]);
         let copied_44bits_lo = u64::from_be_bytes(copied_44_lo_bytes);
-        let copied_44bits = (copied_44bits_hi | copied_44bits_lo) & COPIED_44_MASK;
+        let copied_44bits = (copied_44bits_hi | copied_44bits_lo) & COPIED_BITS_MASK;
 
         let b11 = body[LEVEL_IDC_OFFSET]; // level_idc
 
@@ -361,7 +361,7 @@ impl Serialize for HevcVideoDescriptor {
 
         // constraint flags byte: flags(4) | copied_44bits hi 4 bits
         let copied =
-            broadcast_common::len::fit_mask(self.copied_44bits, COPIED_44_MASK, "copied_44bits")?;
+            broadcast_common::len::fit_mask(self.copied_44bits, COPIED_BITS_MASK, "copied_44bits")?;
         buf[HEADER_LEN + CONSTRAINT_FLAGS_OFFSET] = (u8::from(self.progressive_source_flag)
             << PROGRESSIVE_SOURCE_FLAG_SHIFT)
             | (u8::from(self.interlaced_source_flag) << INTERLACED_SOURCE_FLAG_SHIFT)
@@ -450,7 +450,7 @@ mod tests {
             interlaced_source_flag: false,
             non_packed_constraint_flag: true,
             frame_only_constraint_flag: false,
-            copied_44bits: 0x123456789AB & COPIED_44_MASK,
+            copied_44bits: 0x123456789AB & COPIED_BITS_MASK,
             level_idc: 0x99,
             temporal_layer_subset_flag: false,
             hevc_still_present_flag: true,
@@ -518,7 +518,7 @@ mod tests {
             interlaced_source_flag: true,
             non_packed_constraint_flag: false,
             frame_only_constraint_flag: true,
-            copied_44bits: 0xABCDEF01234 & COPIED_44_MASK,
+            copied_44bits: 0xABCDEF01234 & COPIED_BITS_MASK,
             level_idc: 0x5A,
             temporal_layer_subset_flag: true,
             hevc_still_present_flag: false,
@@ -546,7 +546,7 @@ mod tests {
             interlaced_source_flag: false,
             non_packed_constraint_flag: false,
             frame_only_constraint_flag: false,
-            copied_44bits: COPIED_44_MASK, // all 44 bits set
+            copied_44bits: COPIED_BITS_MASK, // all 44 bits set
             level_idc: 0x3C,
             temporal_layer_subset_flag: false,
             hevc_still_present_flag: false,
@@ -560,7 +560,7 @@ mod tests {
         orig.serialize_into(&mut buf).unwrap();
         let reparsed = HevcVideoDescriptor::parse(&buf).unwrap();
         assert_eq!(orig, reparsed);
-        assert_eq!(reparsed.copied_44bits, COPIED_44_MASK);
+        assert_eq!(reparsed.copied_44bits, COPIED_BITS_MASK);
     }
 
     #[test]
@@ -592,7 +592,7 @@ mod tests {
             interlaced_source_flag: false,
             non_packed_constraint_flag: true,
             frame_only_constraint_flag: false,
-            copied_44bits: 0x123456789AB & COPIED_44_MASK,
+            copied_44bits: 0x123456789AB & COPIED_BITS_MASK,
             level_idc: 0x99,
             temporal_layer_subset_flag: false,
             hevc_still_present_flag: false,
@@ -645,7 +645,7 @@ mod tests {
             interlaced_source_flag: false,
             non_packed_constraint_flag: true,
             frame_only_constraint_flag: false,
-            copied_44bits: 0x123456789AB & COPIED_44_MASK,
+            copied_44bits: 0x123456789AB & COPIED_BITS_MASK,
             level_idc: 0x99,
             temporal_layer_subset_flag: true,
             hevc_still_present_flag: false,

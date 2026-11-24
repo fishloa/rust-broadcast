@@ -35,7 +35,7 @@ const MAX_14: u16 = (1 << 14) - 1;
 pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
     ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of each `reserved_future_use` field (2 bits).
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 /// Width of the 22-bit rate fields (Table 165).
 const RATE_BITS: u32 = 22;
 /// Wire width of a 22-bit rate field in bytes.

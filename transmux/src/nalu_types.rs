@@ -4,6 +4,7 @@
 //! Arrays carry them in wire order and compute their own serialized length.
 
 use crate::error::{Error, Result};
+use crate::nal::{HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK};
 use crate::sps::{
     AvcSpsInfo, HevcSpsInfo, decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1,
 };
@@ -16,10 +17,6 @@ use broadcast_common::len::need_out;
 /// (value 2 is invalid).
 pub(crate) const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
 
-/// Byte width of an HEVC NAL header (ITU-T H.265 §7.3.1.2).
-const HEVC_NAL_HEADER_LEN: usize = 2;
-/// Mask for the HEVC 6-bit `nal_unit_type` in the first header byte.
-const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
 /// One-byte `array_completeness` flag in an `hvcC` NAL-array header.
 const ARRAY_COMPLETENESS_FLAG: u8 = 0x80;
 /// Byte size of an `hvcC` NAL-array header: one packed byte plus the 16-bit

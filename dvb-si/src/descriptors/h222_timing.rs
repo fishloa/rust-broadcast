@@ -22,13 +22,15 @@ use broadcast_common::reserved::ReservedOnes;
 
 /// Default of every `reserved` field of these descriptors (H.222.0 clause 2.1:
 /// "reserved" bits are `1`).
-const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
-const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
+const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_AFTER_90KHZ_FLAG_BITS> =
+    ReservedOnes::<RESERVED_AFTER_90KHZ_FLAG_BITS>::FILL;
+const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_AFTER_HRD_VALID_FLAG_BITS> =
+    ReservedOnes::<RESERVED_AFTER_HRD_VALID_FLAG_BITS>::FILL;
 const RESERVED_IDX_DEFAULT: u8 = 0x1F;
 /// Width of the `reserved(7)` after `90kHz_flag`.
-const RESERVED_7_BITS: u32 = 7;
+pub const RESERVED_AFTER_90KHZ_FLAG_BITS: u32 = 7;
 /// Width of the `reserved(6)` after `hrd_management_valid_flag`.
-const RESERVED_6_BITS: u32 = 6;
+pub const RESERVED_AFTER_HRD_VALID_FLAG_BITS: u32 = 6;
 const TARGET_SCHEDULE_IDX_BITS: usize = 5;
 /// Width of a 32-bit wire word, bits.
 const WORD_BITS: usize = u32::BITS as usize;
@@ -64,7 +66,7 @@ pub struct PictureAndTimingInfo {
     pub num_units_in_tick: u32,
     /// `reserved(7)` after `90kHz_flag`, right-aligned; re-emitted verbatim,
     /// default `0x7F`.
-    pub reserved: ReservedOnes<RESERVED_7_BITS>,
+    pub reserved: ReservedOnes<RESERVED_AFTER_90KHZ_FLAG_BITS>,
 }
 
 impl PictureAndTimingInfo {
@@ -80,7 +82,8 @@ impl PictureAndTimingInfo {
 
     fn read(r: &mut BitReader<'_>) -> Result<Self> {
         let is_90khz = r.flag()?;
-        let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_7_BITS as usize)?));
+        let reserved =
+            ReservedOnes::from_bits(u64::from(r.u8(RESERVED_AFTER_90KHZ_FLAG_BITS as usize)?));
         let nk = if is_90khz {
             None
         } else {
@@ -98,7 +101,11 @@ impl PictureAndTimingInfo {
 
     fn write(&self, w: &mut BitWriter) -> Result<()> {
         w.flag(self.nk.is_none(), "90kHz_flag")?;
-        w.put(self.reserved.get(), RESERVED_7_BITS as usize, "reserved")?;
+        w.put(
+            self.reserved.get(),
+            RESERVED_AFTER_90KHZ_FLAG_BITS as usize,
+            "reserved",
+        )?;
         if let Some(nk) = &self.nk {
             w.put(u64::from(nk.n), WORD_BITS, "N")?;
             w.put(u64::from(nk.k), WORD_BITS, "K")?;
@@ -204,11 +211,13 @@ fn read_flag_block(
     r: &mut BitReader<'_>,
 ) -> Result<(
     bool,
-    ReservedOnes<RESERVED_6_BITS>,
+    ReservedOnes<RESERVED_AFTER_HRD_VALID_FLAG_BITS>,
     Option<PictureAndTimingInfo>,
 )> {
     let hrd_management_valid_flag = r.flag()?;
-    let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_6_BITS as usize)?));
+    let reserved = ReservedOnes::from_bits(u64::from(
+        r.u8(RESERVED_AFTER_HRD_VALID_FLAG_BITS as usize)?,
+    ));
     let picture_timing = if r.flag()? {
         Some(PictureAndTimingInfo::read(r)?)
     } else {
@@ -220,11 +229,15 @@ fn read_flag_block(
 fn write_flag_block(
     w: &mut BitWriter,
     hrd_management_valid_flag: bool,
-    reserved: ReservedOnes<RESERVED_6_BITS>,
+    reserved: ReservedOnes<RESERVED_AFTER_HRD_VALID_FLAG_BITS>,
     picture_timing: Option<&PictureAndTimingInfo>,
 ) -> Result<()> {
     w.flag(hrd_management_valid_flag, "hrd_management_valid_flag")?;
-    w.put(reserved.get(), RESERVED_6_BITS as usize, "reserved")?;
+    w.put(
+        reserved.get(),
+        RESERVED_AFTER_HRD_VALID_FLAG_BITS as usize,
+        "reserved",
+    )?;
     w.flag(
         picture_timing.is_some(),
         "picture_and_timing_info_present_flag",
@@ -244,7 +257,7 @@ pub struct VvcTimingAndHrd {
     pub hrd_management_valid_flag: bool,
     /// `reserved(6)` after the flag, right-aligned; re-emitted verbatim,
     /// default `0x3F`.
-    pub reserved: ReservedOnes<RESERVED_6_BITS>,
+    pub reserved: ReservedOnes<RESERVED_AFTER_HRD_VALID_FLAG_BITS>,
     /// `picture_and_timing_info`, present iff `picture_and_timing_info_present_flag`.
     pub picture_timing: Option<PictureAndTimingInfo>,
     /// Bytes after the syntax, preserved verbatim.
@@ -299,7 +312,7 @@ pub struct EvcTimingAndHrd {
     pub hrd_management_valid_flag: bool,
     /// `reserved(6)` after the flag, right-aligned; re-emitted verbatim,
     /// default `0x3F`.
-    pub reserved: ReservedOnes<RESERVED_6_BITS>,
+    pub reserved: ReservedOnes<RESERVED_AFTER_HRD_VALID_FLAG_BITS>,
     /// `picture_and_timing_info`, present iff `picture_and_timing_info_present_flag`.
     pub picture_timing: Option<PictureAndTimingInfo>,
     /// Bytes after the syntax, preserved verbatim.

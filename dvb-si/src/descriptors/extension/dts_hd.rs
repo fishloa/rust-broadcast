@@ -10,9 +10,9 @@ impl<'a> ExtensionBodyDef<'a> for DtsHd<'a> {
 }
 
 /// Width of the `reserved_future_use` in the DTS-HD flags byte (3 bits).
-const FLAGS_RESERVED_BITS: u32 = 3;
+pub const FLAGS_RESERVED_BITS: u32 = 3;
 /// Width of the `reserved_future_use` in a substream / asset block (2 bits).
-const SUBSTREAM_RESERVED_BITS: u32 = 2;
+pub const SUBSTREAM_RESERVED_BITS: u32 = 2;
 /// Mask of `substream_core_flag`.
 const SUBSTREAM_CORE_FLAG_MASK: u8 = 0x80;
 /// Shift of `substream_core_flag`.

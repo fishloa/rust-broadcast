@@ -21,12 +21,13 @@ pub const TABLE_ID: u8 = 0x73;
 pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0014);
 
 const HEADER_LEN: usize = 3;
-const UTC_TIME_LEN: usize = 5;
+/// Width of the 40-bit `UTC_time` field.
+pub const UTC_TIME_LEN: usize = 5;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
 
 /// Width of the `reserved_descriptors_loop_length` field.
-const TOT_RESERVED_BITS: u32 = 4;
+pub const TOT_RESERVED_BITS: u32 = 4;
 const MIN_SECTION_LEN: usize = HEADER_LEN + UTC_TIME_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
 /// Byte offset of the descriptor-loop length field.

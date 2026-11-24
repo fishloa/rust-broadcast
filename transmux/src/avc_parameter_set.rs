@@ -23,8 +23,6 @@ use broadcast_common::len::{fit_bits, need_out};
 /// Sample entry four-CC of an AVC parameter set stream (§5.4.3.1).
 pub const AVCP_SAMPLE_ENTRY: [u8; 4] = *b"avcp";
 
-const BITS_PER_BYTE: u32 = 8;
-
 /// `AVCParameterSampleEntry` (`avcp`) — ISO/IEC 14496-15:2017 §5.4.3.1: a
 /// `VisualSampleEntry` and an `AVCConfigurationBox` whose record shall declare
 /// no SPS and no PPS.
@@ -136,7 +134,7 @@ impl Serialize for AVCParameterSample {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let width = self.length_field_len();
-        let bits = BITS_PER_BYTE * (u32::from(self.length_size_minus_one) + 1);
+        let bits = u8::BITS * (u32::from(self.length_size_minus_one) + 1);
         let mut cursor = 0usize;
         for nal in &self.nal_units {
             let len = fit_bits(nal.0.len() as u64, bits, "NALUnitLength")?;

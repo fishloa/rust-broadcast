@@ -67,7 +67,7 @@ use crate::opus::OpusSpecificBox;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtp_sdp::aac_config_from_asc_bytes;
 use crate::vp9::Vp9ConfigurationBox;
-use crate::wire_cursor::be_u64;
+use crate::wire_cursor::{be_u64, i16_at};
 
 // ORDER: element-hierarchy order (EBML header, Segment, then each master's children), not numeric: IDs are variable-length marker-bit values.
 // --- EBML / Matroska element IDs (RFC 9559 §27; stored with marker bits) -----
@@ -209,8 +209,6 @@ const fn ebml_lace_delta_bias(vint_len: usize) -> i64 {
 const DEFAULT_TIMESTAMP_SCALE_NS: u64 = 1_000_000;
 /// The IR timescale (ticks per second) this demuxer emits: milliseconds.
 pub const IR_TIMESCALE: Timescale = broadcast_common::timescale!(1000);
-/// Nanoseconds per second (TimestampScale → IR-tick conversion).
-const NS_PER_SECOND: u64 = 1_000_000_000;
 /// Nanoseconds as a [`Timescale`] (a `DefaultDuration` is a count of ns).
 const NS_TIMESCALE: Timescale = broadcast_common::timescale!(1_000_000_000);
 /// OpusHead identification-header magic (RFC 7845 §5.1).
@@ -689,7 +687,7 @@ fn parse_block(
         off + BLOCK_HEADER_TAIL_LEN,
         "webm block header (rel-ts + flags)",
     )?;
-    let rel_ts = i16::from_be_bytes([data[off], data[off + 1]]) as i64;
+    let rel_ts = i16_at(data, off) as i64;
     let flags = data[off + BLOCK_FLAGS_OFFSET];
     off += BLOCK_HEADER_TAIL_LEN;
 
@@ -711,12 +709,12 @@ fn parse_block(
     let frames = unlace(&data[off..], flags)?;
 
     // Presentation time in IR ticks (ms): (cluster_ts + rel_ts) ticks × scale(ns)
-    // → ns → ms.  ns = raw_ticks × timestamp_scale_ns; ms = ns / (NS_PER_SECOND / IR_TIMESCALE).
+    // → ns → ms.  ns = raw_ticks × timestamp_scale_ns; ms = ns / (broadcast_common::units::NANOS_PER_SEC / IR_TIMESCALE).
     let raw_ticks = cluster_ts.checked_add(rel_ts).ok_or(Error::InvalidInput(
         "webm block timestamp: cluster_ts + rel_ts overflowed i64",
     ))?;
     let ns = raw_ticks.saturating_mul(timestamp_scale_ns as i64);
-    let ns_per_ir_tick = (NS_PER_SECOND / IR_TIMESCALE.as_u64()) as i64;
+    let ns_per_ir_tick = (broadcast_common::units::NANOS_PER_SEC / IR_TIMESCALE.as_u64()) as i64;
     let pts_ticks = ns / ns_per_ir_tick;
 
     Ok(RawBlock {
