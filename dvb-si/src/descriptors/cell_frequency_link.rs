@@ -142,7 +142,8 @@ impl<'a> Parse<'a> for CellFrequencyLinkDescriptor {
                         reason: "subcell_info_loop_length exceeds descriptor body",
                     })?;
                 let [cell_id_extension, t0, t1, t2, t3] = *sub;
-                let transposer_frequency = u32::from_be_bytes([t0, t1, t2, t3]);                subcells.push(CellFrequencyLinkSubcell {
+                let transposer_frequency = u32::from_be_bytes([t0, t1, t2, t3]);
+                subcells.push(CellFrequencyLinkSubcell {
                     cell_id_extension,
                     transposer_frequency,
                 });

@@ -297,7 +297,8 @@ impl Serialize for HierarchyDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = (u8::from(self.no_view_scalability_flag) << NO_VIEW_SCALABILITY_FLAG_SHIFT)
+        buf[HEADER_LEN] = (u8::from(self.no_view_scalability_flag)
+            << NO_VIEW_SCALABILITY_FLAG_SHIFT)
             | (u8::from(self.no_temporal_scalability_flag) << NO_TEMPORAL_SCALABILITY_FLAG_SHIFT)
             | (u8::from(self.no_spatial_scalability_flag) << NO_SPATIAL_SCALABILITY_FLAG_SHIFT)
             | (u8::from(self.no_quality_scalability_flag) << NO_QUALITY_SCALABILITY_FLAG_SHIFT)
@@ -306,13 +307,15 @@ impl Serialize for HierarchyDescriptor {
                 HIERARCHY_TYPE_MASK,
                 "hierarchy_type",
             )?;
-        buf[HEADER_LEN + LAYER_INDEX_OFFSET] = ((self.reserved_layer_index.get() as u8) << RESERVED_SHIFT)
+        buf[HEADER_LEN + LAYER_INDEX_OFFSET] = ((self.reserved_layer_index.get() as u8)
+            << RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.hierarchy_layer_index,
                 LAYER_INDEX_MASK,
                 "hierarchy_layer_index",
             )?;
-        buf[HEADER_LEN + EMBEDDED_LAYER_INDEX_OFFSET] = (u8::from(self.tref_present_flag) << TREF_PRESENT_FLAG_SHIFT)
+        buf[HEADER_LEN + EMBEDDED_LAYER_INDEX_OFFSET] = (u8::from(self.tref_present_flag)
+            << TREF_PRESENT_FLAG_SHIFT)
             | ((self.reserved_embedded.get() as u8) << RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.hierarchy_embedded_layer_index,
@@ -320,7 +323,11 @@ impl Serialize for HierarchyDescriptor {
                 "hierarchy_embedded_layer_index",
             )?;
         buf[HEADER_LEN + CHANNEL_OFFSET] = ((self.reserved_channel.get() as u8) << RESERVED_SHIFT)
-            | broadcast_common::len::fit_mask(self.hierarchy_channel, CHANNEL_MASK, "hierarchy_channel")?;
+            | broadcast_common::len::fit_mask(
+                self.hierarchy_channel,
+                CHANNEL_MASK,
+                "hierarchy_channel",
+            )?;
         Ok(len)
     }
 }

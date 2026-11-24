@@ -240,8 +240,9 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
         let metadata_application_format = u16::from_be_bytes([body[0], body[1]]);
         let mut pos = FORMAT_LEN;
 
-        let metadata_application_format_identifier =
-            if metadata_application_format == FORMAT_IDENTIFIER_PRESENT {
+        let metadata_application_format_identifier = if metadata_application_format
+            == FORMAT_IDENTIFIER_PRESENT
+        {
             if body.len() < pos + FORMAT_IDENTIFIER_LEN {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
@@ -293,37 +294,37 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
             (None, pos)
         };
 
-        let time_base = if indicator_raw == 1 || indicator_raw == CONTENT_TIME_BASE_INDICATOR_WITH_CONTENT_ID {
-            // 7 reserved bits + 33-bit content_time_base_value + 7 reserved bits + 33-bit metadata_time_base_value
-            // = 80 bits = 10 bytes
-            if body.len() < pos + TIME_BASE_BLOCK_LEN {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "content_labeling_descriptor too short for time base block",
-                });
-            }
-            // byte[pos]: reserved(7) | content_time_base_value top bit
-            // That's: 1 reserved byte + 4.125 bytes for the 33-bit value
-            // The 33-bit value spans bytes pos..pos+5, with byte[pos] having 7 reserved + 1 data bit
-            // Wait — the syntax table shows:
-            //   reserved(7) | content_time_base_value(33)
-            // The reserved(7) occupies the first 7 bits of byte pos, then content_time_base_value starts at bit 0 of byte pos
-            // Actually: 7 reserved + 33 = 40 bits = 5 bytes
-            // Then: reserved(7) | metadata_time_base_value(33) = 40 bits = 5 bytes
-            // Total = 10 bytes
-            let (reserved_content, ctv) = read_33bit(&body[pos..], 0);
-            let (reserved_metadata, mtv) =
-                read_33bit(&body[pos + TIME_BASE_FIELD_LEN..], 0);
-            pos += TIME_BASE_BLOCK_LEN;
-            Some(ContentTimeBase {
-                content_time_base_value: ctv,
-                metadata_time_base_value: mtv,
-                reserved_content,
-                reserved_metadata,
-            })
-        } else {
-            None
-        };
+        let time_base =
+            if indicator_raw == 1 || indicator_raw == CONTENT_TIME_BASE_INDICATOR_WITH_CONTENT_ID {
+                // 7 reserved bits + 33-bit content_time_base_value + 7 reserved bits + 33-bit metadata_time_base_value
+                // = 80 bits = 10 bytes
+                if body.len() < pos + TIME_BASE_BLOCK_LEN {
+                    return Err(Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "content_labeling_descriptor too short for time base block",
+                    });
+                }
+                // byte[pos]: reserved(7) | content_time_base_value top bit
+                // That's: 1 reserved byte + 4.125 bytes for the 33-bit value
+                // The 33-bit value spans bytes pos..pos+5, with byte[pos] having 7 reserved + 1 data bit
+                // Wait — the syntax table shows:
+                //   reserved(7) | content_time_base_value(33)
+                // The reserved(7) occupies the first 7 bits of byte pos, then content_time_base_value starts at bit 0 of byte pos
+                // Actually: 7 reserved + 33 = 40 bits = 5 bytes
+                // Then: reserved(7) | metadata_time_base_value(33) = 40 bits = 5 bytes
+                // Total = 10 bytes
+                let (reserved_content, ctv) = read_33bit(&body[pos..], 0);
+                let (reserved_metadata, mtv) = read_33bit(&body[pos + TIME_BASE_FIELD_LEN..], 0);
+                pos += TIME_BASE_BLOCK_LEN;
+                Some(ContentTimeBase {
+                    content_time_base_value: ctv,
+                    metadata_time_base_value: mtv,
+                    reserved_content,
+                    reserved_metadata,
+                })
+            } else {
+                None
+            };
 
         let mut content_id_reserved = RESERVED_1_DEFAULT;
         let content_id = if indicator_raw == CONTENT_TIME_BASE_INDICATOR_WITH_CONTENT_ID {
@@ -334,9 +335,8 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
                 });
             }
             let id = body[pos] & CONTENT_ID_MASK;
-            content_id_reserved = ReservedOnes::from_bits(u64::from(
-                body[pos] >> CONTENT_ID_RESERVED_SHIFT,
-            ));
+            content_id_reserved =
+                ReservedOnes::from_bits(u64::from(body[pos] >> CONTENT_ID_RESERVED_SHIFT));
             pos += 1;
             Some(id)
         } else {

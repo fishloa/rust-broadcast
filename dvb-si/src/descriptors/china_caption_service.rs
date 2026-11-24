@@ -281,9 +281,8 @@ impl Serialize for ChinaCaptionServiceDescriptor {
             let cs = fit_bits(u64::from(s.char_set.to_u8()), CHAR_SET_BITS, "char_set")? as u8;
             buf[i..i + LANGUAGE_LEN].copy_from_slice(&s.language.0);
             buf[i + RESERVED_A_OFFSET] = (ra << RESERVED_A_SHIFT) | num;
-            buf[i + RESERVED_B_OFFSET] = (rb << RESERVED_B_SHIFT)
-                | (u8::from(s.wide_aspect_ratio) << RESERVED_A_SHIFT)
-                | cs;
+            buf[i + RESERVED_B_OFFSET] =
+                (rb << RESERVED_B_SHIFT) | (u8::from(s.wide_aspect_ratio) << RESERVED_A_SHIFT) | cs;
             buf[i + RESERVED_C_OFFSET] = s.reserved_c.get() as u8;
             i += SERVICE_LEN;
         }

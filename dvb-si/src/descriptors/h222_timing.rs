@@ -103,7 +103,11 @@ impl PictureAndTimingInfo {
             w.put(u64::from(nk.n), WORD_BITS, "N")?;
             w.put(u64::from(nk.k), WORD_BITS, "K")?;
         }
-        w.put(u64::from(self.num_units_in_tick), WORD_BITS, "num_units_in_tick")
+        w.put(
+            u64::from(self.num_units_in_tick),
+            WORD_BITS,
+            "num_units_in_tick",
+        )
     }
 }
 

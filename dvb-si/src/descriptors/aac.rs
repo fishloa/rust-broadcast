@@ -383,7 +383,7 @@ impl Serialize for AacDescriptor<'_> {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[HEADER_LEN + PROFILE_AND_LEVEL_OFFSET] = self.profile_and_level;
-        let mut pos = HEADER_LEN + EXTENSION_OFFSET;
+        let mut pos = HEADER_LEN + FLAGS_OFFSET;
         if let Some(ext) = &self.extension {
             let mut flags = 0u8;
             if ext.aac_type.is_some() {
@@ -593,7 +593,9 @@ mod tests {
     /// ones) re-serializes byte-identically.
     #[test]
     fn aac_reserved_preserved() {
-        for r in 0u8..=u8::try_from(ReservedZero::<RESERVED_FUTURE_USE_BITS>::MASK).unwrap_or(u8::MAX) {
+        for r in
+            0u8..=u8::try_from(ReservedZero::<RESERVED_FUTURE_USE_BITS>::MASK).unwrap_or(u8::MAX)
+        {
             for flags in [0u8, FLAG_SAOC_DE] {
                 let bytes = [TAG, 3, 0x50, flags | r, 0xEE];
                 let d = AacDescriptor::parse(&bytes).unwrap();
@@ -628,7 +630,10 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         // flags byte: no flags set, reserved zeros => 0x00.
-        assert_eq!(buf[3] & ReservedZero::<RESERVED_FUTURE_USE_BITS>::MASK as u8, 0);
+        assert_eq!(
+            buf[3] & ReservedZero::<RESERVED_FUTURE_USE_BITS>::MASK as u8,
+            0
+        );
         assert_eq!(buf[3], 0x00);
     }
 

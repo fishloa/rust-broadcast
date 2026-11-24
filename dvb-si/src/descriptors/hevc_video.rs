@@ -229,9 +229,8 @@ impl<'a> Parse<'a> for HevcVideoDescriptor {
 
         // profile_compatibility_indication: 32 bits big-endian
         let mut compatibility_bytes = [0u8; PROFILE_COMPATIBILITY_LEN];
-        compatibility_bytes.copy_from_slice(
-            &body[PROFILE_COMPATIBILITY_OFFSET..CONSTRAINT_FLAGS_OFFSET],
-        );
+        compatibility_bytes
+            .copy_from_slice(&body[PROFILE_COMPATIBILITY_OFFSET..CONSTRAINT_FLAGS_OFFSET]);
         let profile_compatibility_indication = u32::from_be_bytes(compatibility_bytes);
 
         let b5 = body[CONSTRAINT_FLAGS_OFFSET]; // progressive_source_flag..frame_only_constraint_flag | copied_44bits hi 4 bits
@@ -363,12 +362,12 @@ impl Serialize for HevcVideoDescriptor {
         // constraint flags byte: flags(4) | copied_44bits hi 4 bits
         let copied =
             broadcast_common::len::fit_mask(self.copied_44bits, COPIED_44_MASK, "copied_44bits")?;
-        buf[HEADER_LEN + CONSTRAINT_FLAGS_OFFSET] =
-            (u8::from(self.progressive_source_flag) << PROGRESSIVE_SOURCE_FLAG_SHIFT)
-                | (u8::from(self.interlaced_source_flag) << INTERLACED_SOURCE_FLAG_SHIFT)
-                | (u8::from(self.non_packed_constraint_flag) << NON_PACKED_CONSTRAINT_FLAG_SHIFT)
-                | (u8::from(self.frame_only_constraint_flag) << FRAME_ONLY_CONSTRAINT_FLAG_SHIFT)
-                | (((copied >> COPIED_44_HI_SHIFT) & COPIED_44_HI_MASK) as u8);
+        buf[HEADER_LEN + CONSTRAINT_FLAGS_OFFSET] = (u8::from(self.progressive_source_flag)
+            << PROGRESSIVE_SOURCE_FLAG_SHIFT)
+            | (u8::from(self.interlaced_source_flag) << INTERLACED_SOURCE_FLAG_SHIFT)
+            | (u8::from(self.non_packed_constraint_flag) << NON_PACKED_CONSTRAINT_FLAG_SHIFT)
+            | (u8::from(self.frame_only_constraint_flag) << FRAME_ONLY_CONSTRAINT_FLAG_SHIFT)
+            | (((copied >> COPIED_44_HI_SHIFT) & COPIED_44_HI_MASK) as u8);
 
         // low 40 bits of copied_44bits
         buf[HEADER_LEN + COPIED_44_LO_OFFSET..HEADER_LEN + COPIED_44_LO_OFFSET + COPIED_44_LO_LEN]
@@ -380,15 +379,19 @@ impl Serialize for HevcVideoDescriptor {
         buf[HEADER_LEN + LEVEL_IDC_OFFSET] = self.level_idc;
 
         // tls(7)|still(6)|24hr(5)|sub_pic(4)|reserved(3:2)|HDR_WCG_idc(1:0)
-        buf[HEADER_LEN + FLAGS_OFFSET] =
-            (u8::from(self.temporal_layer_subset_flag) << TEMPORAL_LAYER_SUBSET_FLAG_SHIFT)
-                | (u8::from(self.hevc_still_present_flag) << HEVC_STILL_PRESENT_FLAG_SHIFT)
-                | (u8::from(self.hevc_24hr_picture_present_flag)
-                    << HEVC_24HR_PICTURE_PRESENT_FLAG_SHIFT)
-                | (u8::from(self.sub_pic_hrd_params_not_present_flag)
-                    << SUB_PIC_HRD_PARAMS_NOT_PRESENT_FLAG_SHIFT)
-                | ((self.reserved.get() as u8) << RESERVED_SHIFT)
-                | broadcast_common::len::fit_mask(self.hdr_wcg_idc.to_u8(), HDR_WCG_IDC_MASK, "hdr_wcg_idc")?;
+        buf[HEADER_LEN + FLAGS_OFFSET] = (u8::from(self.temporal_layer_subset_flag)
+            << TEMPORAL_LAYER_SUBSET_FLAG_SHIFT)
+            | (u8::from(self.hevc_still_present_flag) << HEVC_STILL_PRESENT_FLAG_SHIFT)
+            | (u8::from(self.hevc_24hr_picture_present_flag)
+                << HEVC_24HR_PICTURE_PRESENT_FLAG_SHIFT)
+            | (u8::from(self.sub_pic_hrd_params_not_present_flag)
+                << SUB_PIC_HRD_PARAMS_NOT_PRESENT_FLAG_SHIFT)
+            | ((self.reserved.get() as u8) << RESERVED_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.hdr_wcg_idc.to_u8(),
+                HDR_WCG_IDC_MASK,
+                "hdr_wcg_idc",
+            )?;
 
         if self.temporal_layer_subset_flag != self.temporal_sub.is_some() {
             // serialized_len reserves the 2 temporal-sub bytes from the flag

@@ -163,7 +163,8 @@ impl<'a> Parse<'a> for DtsDescriptor<'a> {
         let mut packed_bytes = [0u8; PACKED_BYTES];
         packed_bytes[PACKED_BYTES - FIXED_LEN..].copy_from_slice(&body[..FIXED_LEN]);
         let packed = u64::from_be_bytes(packed_bytes);
-        let sample_rate_code = ((packed >> SAMPLE_RATE_CODE_SHIFT) & u64::from(SAMPLE_RATE_CODE_MAX)) as u8;
+        let sample_rate_code =
+            ((packed >> SAMPLE_RATE_CODE_SHIFT) & u64::from(SAMPLE_RATE_CODE_MAX)) as u8;
         let bit_rate_code = ((packed >> BIT_RATE_CODE_SHIFT) & u64::from(BIT_RATE_CODE_MAX)) as u8;
         let nblks = ((packed >> NBLKS_SHIFT) & u64::from(NBLKS_MAX)) as u8;
         let fsize = ((packed >> FSIZE_SHIFT) & u64::from(FSIZE_MAX)) as u16;
@@ -242,7 +243,8 @@ impl Serialize for DtsDescriptor<'_> {
         )?;
         let packed: u64 = ((u64::from(self.sample_rate_code) & u64::from(SAMPLE_RATE_CODE_MAX))
             << SAMPLE_RATE_CODE_SHIFT)
-            | ((u64::from(self.bit_rate_code) & u64::from(BIT_RATE_CODE_MAX)) << BIT_RATE_CODE_SHIFT)
+            | ((u64::from(self.bit_rate_code) & u64::from(BIT_RATE_CODE_MAX))
+                << BIT_RATE_CODE_SHIFT)
             | ((u64::from(self.nblks) & u64::from(NBLKS_MAX)) << NBLKS_SHIFT)
             | ((u64::from(self.fsize) & u64::from(FSIZE_MAX)) << FSIZE_SHIFT)
             | ((u64::from(self.surround_mode) & u64::from(SURROUND_MODE_MAX))

@@ -55,8 +55,7 @@ impl<'a> Parse<'a> for FlexMuxTimingDescriptor {
             });
         }
         let mut resolution_bytes = [0u8; FCR_RESOLUTION_LEN];
-        resolution_bytes
-            .copy_from_slice(&body[FCR_RESOLUTION_OFFSET..FCR_LENGTH_OFFSET]);
+        resolution_bytes.copy_from_slice(&body[FCR_RESOLUTION_OFFSET..FCR_LENGTH_OFFSET]);
         Ok(Self {
             fcr_es_id: u16::from_be_bytes([body[0], body[1]]),
             fcr_resolution: u32::from_be_bytes(resolution_bytes),

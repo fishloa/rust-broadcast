@@ -186,7 +186,8 @@ pub struct CellListDescriptor {
 fn read_extents(b: &[u8]) -> (u16, u16) {
     let lat = (u16::from(b[EXTENT_LAT_OFFSET]) << EXTENT_NIBBLE_BITS)
         | (u16::from(b[EXTENT_NIBBLE_OFFSET]) >> EXTENT_NIBBLE_BITS);
-    let long = ((u16::from(b[EXTENT_NIBBLE_OFFSET]) & EXTENT_LO_NIBBLE_MASK) << EXTENT_LONG_HI_SHIFT)
+    let long = ((u16::from(b[EXTENT_NIBBLE_OFFSET]) & EXTENT_LO_NIBBLE_MASK)
+        << EXTENT_LONG_HI_SHIFT)
         | u16::from(b[EXTENT_LONG_OFFSET]);
     (lat, long)
 }
@@ -196,9 +197,8 @@ fn write_extents(buf: &mut [u8], lat: u16, long: u16) -> Result<()> {
     let lat = broadcast_common::len::fit_mask(lat, EXTENT_MASK, "cell_extent_of_latitude")?;
     let long = broadcast_common::len::fit_mask(long, EXTENT_MASK, "cell_extent_of_longitude")?;
     buf[EXTENT_LAT_OFFSET] = (lat >> EXTENT_NIBBLE_BITS) as u8;
-    buf[EXTENT_NIBBLE_OFFSET] =
-        (((lat & EXTENT_LO_NIBBLE_MASK) << EXTENT_NIBBLE_BITS) | (long >> EXTENT_LONG_HI_SHIFT))
-            as u8;
+    buf[EXTENT_NIBBLE_OFFSET] = (((lat & EXTENT_LO_NIBBLE_MASK) << EXTENT_NIBBLE_BITS)
+        | (long >> EXTENT_LONG_HI_SHIFT)) as u8;
     buf[EXTENT_LONG_OFFSET] = long as u8;
     Ok(())
 }
@@ -229,10 +229,8 @@ impl<'a> Parse<'a> for CellListDescriptor {
                     reason: "cell_list outer entry truncated",
                 })?;
             let cell_id = u16::from_be_bytes([outer[0], outer[1]]);
-            let cell_latitude = u16::from_be_bytes([
-                outer[CELL_LATITUDE_OFFSET],
-                outer[CELL_LATITUDE_OFFSET + 1],
-            ]);
+            let cell_latitude =
+                u16::from_be_bytes([outer[CELL_LATITUDE_OFFSET], outer[CELL_LATITUDE_OFFSET + 1]]);
             let cell_longitude = u16::from_be_bytes([
                 outer[CELL_LONGITUDE_OFFSET],
                 outer[CELL_LONGITUDE_OFFSET + 1],

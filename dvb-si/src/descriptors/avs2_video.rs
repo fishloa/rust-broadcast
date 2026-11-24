@@ -129,7 +129,9 @@ impl<'a> Parse<'a> for Avs2VideoDescriptor {
             level_id: body[1],
             extension_layer_number: body[EXTENSION_LAYER_NUMBER_OFFSET],
             multiple_frame_rate_flag: b3 & MULTIPLE_FRAME_RATE_FLAG_MASK != 0,
-            frame_rate_code: Avs3FrameRateCode::from_u8((b3 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK),
+            frame_rate_code: Avs3FrameRateCode::from_u8(
+                (b3 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK,
+            ),
             avs_still_present: b3 & AVS_STILL_PRESENT_MASK != 0,
             chroma_format: b3 & CHROMA_FORMAT_MASK,
             sample_precision: b4 >> SAMPLE_PRECISION_SHIFT,
@@ -167,11 +169,11 @@ impl Serialize for Avs2VideoDescriptor {
         buf[HEADER_LEN] = self.profile_id;
         buf[HEADER_LEN + 1] = self.level_id;
         buf[HEADER_LEN + EXTENSION_LAYER_NUMBER_OFFSET] = self.extension_layer_number;
-        buf[HEADER_LEN + FLAGS_HI_OFFSET] =
-            (u8::from(self.multiple_frame_rate_flag) << MULTIPLE_FRAME_RATE_FLAG_SHIFT)
-                | (frc << FRAME_RATE_CODE_SHIFT)
-                | (u8::from(self.avs_still_present) << AVS_STILL_PRESENT_SHIFT)
-                | cf;
+        buf[HEADER_LEN + FLAGS_HI_OFFSET] = (u8::from(self.multiple_frame_rate_flag)
+            << MULTIPLE_FRAME_RATE_FLAG_SHIFT)
+            | (frc << FRAME_RATE_CODE_SHIFT)
+            | (u8::from(self.avs_still_present) << AVS_STILL_PRESENT_SHIFT)
+            | cf;
         buf[HEADER_LEN + FLAGS_LO_OFFSET] = (sp << SAMPLE_PRECISION_SHIFT) | rsv;
         Ok(len)
     }

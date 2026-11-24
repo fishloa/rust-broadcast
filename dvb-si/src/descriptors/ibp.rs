@@ -20,8 +20,6 @@ const CLOSED_GOP_FLAG_MASK: u8 = 0x80;
 const IDENTICAL_GOP_FLAG_MASK: u8 = 0x40;
 /// Mask of the high bits of `max_gop_length` in the first body byte.
 const MAX_GOP_LENGTH_HI_MASK: u16 = 0x3F;
-/// Mask of the low byte of `max_gop_length`.
-const MAX_GOP_LENGTH_LO_MASK: u16 = 0xFF;
 const CLOSED_GOP_FLAG_SHIFT: u8 = 7;
 const IDENTICAL_GOP_FLAG_SHIFT: u8 = 6;
 const MAX_GOP_LENGTH_HI_SHIFT: u16 = 8;
@@ -91,10 +89,11 @@ impl Serialize for IbpDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
+        let max_gop = self.max_gop_length.to_be_bytes();
         buf[HEADER_LEN] = ((self.closed_gop_flag as u8) << CLOSED_GOP_FLAG_SHIFT)
             | ((self.identical_gop_flag as u8) << IDENTICAL_GOP_FLAG_SHIFT)
-            | ((self.max_gop_length >> MAX_GOP_LENGTH_HI_SHIFT) as u8 & MAX_GOP_LENGTH_HI_MASK as u8);
-        buf[HEADER_LEN + 1] = (self.max_gop_length & MAX_GOP_LENGTH_LO_MASK) as u8;
+            | max_gop[0];
+        buf[HEADER_LEN + 1] = max_gop[1];
         Ok(len)
     }
 }

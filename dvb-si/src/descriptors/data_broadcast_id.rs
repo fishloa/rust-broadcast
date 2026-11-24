@@ -355,7 +355,8 @@ impl Serialize for SsuIdSelector<'_> {
         let mut pos = SSU_OUI_DATA_LENGTH_LEN;
         for e in &self.oui_entries {
             buf[pos..pos + OUI_LEN].copy_from_slice(&e.oui);
-            buf[pos + SSU_UPDATE_TYPE_OFFSET] = ((e.reserved_4.get() as u8) << SSU_RESERVED_4_SHIFT)
+            buf[pos + SSU_UPDATE_TYPE_OFFSET] = ((e.reserved_4.get() as u8)
+                << SSU_RESERVED_4_SHIFT)
                 | broadcast_common::len::fit_mask(
                     e.update_type.to_u8(),
                     SSU_UPDATE_TYPE_MASK,
@@ -366,7 +367,8 @@ impl Serialize for SsuIdSelector<'_> {
             } else {
                 0
             };
-            buf[pos + SSU_UPDATE_VERSION_OFFSET] = ((e.reserved_2.get() as u8) << SSU_RESERVED_2_SHIFT)
+            buf[pos + SSU_UPDATE_VERSION_OFFSET] = ((e.reserved_2.get() as u8)
+                << SSU_RESERVED_2_SHIFT)
                 | uvf_bit
                 | broadcast_common::len::fit_mask(
                     e.update_version,

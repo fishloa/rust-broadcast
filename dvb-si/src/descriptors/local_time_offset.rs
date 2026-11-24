@@ -46,12 +46,16 @@ const NEXT_TIME_OFFSET_BCD_OFFSET: usize = TIME_OF_CHANGE_OFFSET + TIME_OF_CHANG
 /// Shift of `country_region_id` in the flags byte.
 const REGION_ID_SHIFT: u8 = 2;
 /// Shift between the two bytes of a BCD `HHMM` offset.
+#[cfg(feature = "jiff")]
 const BCD_HI_BYTE_SHIFT: u8 = 8;
 /// Mask of the low byte of a BCD `HHMM` offset.
+#[cfg(feature = "jiff")]
 const BCD_LO_BYTE_MASK: u16 = 0xFF;
 /// Minutes in one hour.
+#[cfg(feature = "jiff")]
 const MINUTES_PER_HOUR: u32 = 60;
 /// Largest `HH` value a BCD offset can carry.
+#[cfg(feature = "jiff")]
 const MAX_OFFSET_HOURS: u64 = 99;
 /// Spec default of the entry's 1-bit `reserved_future_use` (`reserved` before
 /// V1.17.1): `1` (EN 300 468 V1.3.1-V1.20.1 Table 29; audit
@@ -276,19 +280,13 @@ impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
             let flags = chunk[FLAGS_OFFSET];
             let country_region_id = (flags & REGION_ID_MASK) >> REGION_ID_SHIFT;
             let local_time_offset_negative = flags & POLARITY_MASK != 0;
-            let local_time_offset_bcd = crate::wire::be_u16(
-                chunk,
-                LOCAL_TIME_OFFSET_BCD_OFFSET,
-                "local_time_offset",
-            )?;
+            let local_time_offset_bcd =
+                crate::wire::be_u16(chunk, LOCAL_TIME_OFFSET_BCD_OFFSET, "local_time_offset")?;
             let mut time_of_change_raw = [0u8; TIME_OF_CHANGE_LEN];
             time_of_change_raw
                 .copy_from_slice(&chunk[TIME_OF_CHANGE_OFFSET..NEXT_TIME_OFFSET_BCD_OFFSET]);
-            let next_time_offset_bcd = crate::wire::be_u16(
-                chunk,
-                NEXT_TIME_OFFSET_BCD_OFFSET,
-                "local_time_offset",
-            )?;
+            let next_time_offset_bcd =
+                crate::wire::be_u16(chunk, NEXT_TIME_OFFSET_BCD_OFFSET, "local_time_offset")?;
             entries.push(LocalTimeOffsetEntry {
                 reserved_future_use: ReservedOnes::from_bits(u64::from(
                     (flags & RESERVED_BIT_MASK) >> RESERVED_BIT_SHIFT,
@@ -323,18 +321,17 @@ impl Serialize for LocalTimeOffsetDescriptor {
                 REGION_ID_BITS,
                 "country_region_id",
             )? as u8;
-            let flags =
-                (broadcast_common::len::fit_mask(
-                    region_id,
-                    REGION_ID_MASK >> REGION_ID_SHIFT,
-                    "region_id",
-                )? << REGION_ID_SHIFT)
-                    | ((entry.reserved_future_use.get() as u8) << RESERVED_BIT_SHIFT)
-                    | if entry.local_time_offset_negative {
-                        POLARITY_MASK
-                    } else {
-                        0
-                    };
+            let flags = (broadcast_common::len::fit_mask(
+                region_id,
+                REGION_ID_MASK >> REGION_ID_SHIFT,
+                "region_id",
+            )? << REGION_ID_SHIFT)
+                | ((entry.reserved_future_use.get() as u8) << RESERVED_BIT_SHIFT)
+                | if entry.local_time_offset_negative {
+                    POLARITY_MASK
+                } else {
+                    0
+                };
             buf[offset + FLAGS_OFFSET] = flags;
             buf[offset + LOCAL_TIME_OFFSET_BCD_OFFSET..offset + TIME_OF_CHANGE_OFFSET]
                 .copy_from_slice(&entry.local_time_offset_bcd.to_be_bytes());

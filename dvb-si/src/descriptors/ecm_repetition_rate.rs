@@ -44,10 +44,15 @@ impl<'a> Parse<'a> for EcmRepetitionRateDescriptor<'a> {
                     tag: TAG,
                     reason: "ECM_repetition_rate_descriptor body shorter than 4 bytes",
                 })?;
-        let [ca_system_id_hi, ca_system_id_lo, ecm_repetition_rate_hi, ecm_repetition_rate_lo] =
-            *fixed;
+        let [
+            ca_system_id_hi,
+            ca_system_id_lo,
+            ecm_repetition_rate_hi,
+            ecm_repetition_rate_lo,
+        ] = *fixed;
         let ca_system_id = u16::from_be_bytes([ca_system_id_hi, ca_system_id_lo]);
-        let ecm_repetition_rate = u16::from_be_bytes([ecm_repetition_rate_hi, ecm_repetition_rate_lo]);
+        let ecm_repetition_rate =
+            u16::from_be_bytes([ecm_repetition_rate_hi, ecm_repetition_rate_lo]);
         Ok(Self {
             ca_system_id,
             ecm_repetition_rate,

@@ -175,13 +175,11 @@ impl Serialize for ApplicationStorageDescriptor {
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[HEADER_LEN + STORAGE_PROPERTY_OFFSET] = self.storage_property.to_u8();
-        buf[HEADER_LEN + FLAGS_OFFSET] =
-            (u8::from(self.not_launchable_from_broadcast) * NOT_LAUNCHABLE_FROM_BROADCAST)
-                | (u8::from(self.launchable_completely_from_cache)
-                    * LAUNCHABLE_COMPLETELY_FROM_CACHE)
-                | (u8::from(self.is_launchable_with_older_version)
-                    * IS_LAUNCHABLE_WITH_OLDER_VERSION)
-                | reserved;
+        buf[HEADER_LEN + FLAGS_OFFSET] = (u8::from(self.not_launchable_from_broadcast)
+            * NOT_LAUNCHABLE_FROM_BROADCAST)
+            | (u8::from(self.launchable_completely_from_cache) * LAUNCHABLE_COMPLETELY_FROM_CACHE)
+            | (u8::from(self.is_launchable_with_older_version) * IS_LAUNCHABLE_WITH_OLDER_VERSION)
+            | reserved;
         let word = version
             | (u32::from(self.reserved_before_version)
                 * (u32::from(RESERVED_BIT_AFTER_FLAGS) << RESERVED_BIT_AFTER_FLAGS_SHIFT));

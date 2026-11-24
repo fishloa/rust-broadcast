@@ -188,7 +188,11 @@ impl EvcVideoDescriptor {
             self.picture_24hr_present_flag,
             "EVC_24hr_picture_present_flag",
         )?;
-        w.put(u64::from(self.hdr_wcg_idc.to_u8()), HDR_WCG_IDC_BITS, "HDR_WCG_idc")?;
+        w.put(
+            u64::from(self.hdr_wcg_idc.to_u8()),
+            HDR_WCG_IDC_BITS,
+            "HDR_WCG_idc",
+        )?;
         w.put(self.reserved_2.get(), RESERVED_2_BITS as usize, "reserved")?;
         w.put(
             u64::from(self.video_properties_tag),

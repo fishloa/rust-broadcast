@@ -654,7 +654,9 @@ impl ExtendedEventLinkageEntry {
         if self.event_simulcast {
             byte2 |= EXT_EVENT_SIMULCAST_MASK;
         }
-        byte2 |= broadcast_common::len::fit_mask(self.link_type.to_u8(), TYPE_VALUE_MASK, "link_type")? << EXT_LINK_TYPE_SHIFT;
+        byte2 |=
+            broadcast_common::len::fit_mask(self.link_type.to_u8(), TYPE_VALUE_MASK, "link_type")?
+                << EXT_LINK_TYPE_SHIFT;
         byte2 |= broadcast_common::len::fit_mask(
             self.target_id.target_id_type().to_u8(),
             TYPE_VALUE_MASK,
@@ -840,12 +842,13 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
 }
 
 fn parse_event_linkage(bytes: &[u8]) -> Result<EventLinkageInfo> {
-    let (hdr, _) = bytes
-        .split_first_chunk::<{ U16_LEN + FLAGS_LEN }>()
-        .ok_or(Error::InvalidDescriptor {
-            tag: TAG,
-            reason: "event linkage info needs 3 bytes",
-        })?;
+    let (hdr, _) =
+        bytes
+            .split_first_chunk::<{ U16_LEN + FLAGS_LEN }>()
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "event linkage info needs 3 bytes",
+            })?;
     let target_event_id = u16::from_be_bytes([hdr[0], hdr[1]]);
     let target_listed = (hdr[FLAGS_OFFSET] & TARGET_LISTED_MASK) != 0;
     let event_simulcast = (hdr[FLAGS_OFFSET] & EVENT_SIMULCAST_MASK) != 0;
@@ -878,12 +881,13 @@ fn parse_extended_event_linkage(bytes: &[u8]) -> Result<ExtendedEventLinkageInfo
                 reason: "extended event linkage entry truncated (need u16)",
             });
         }
-        let (b, _) = bytes[*p..]
-            .split_first_chunk::<U16_LEN>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "extended event linkage entry truncated (need u16)",
-            })?;
+        let (b, _) =
+            bytes[*p..]
+                .split_first_chunk::<U16_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "extended event linkage entry truncated (need u16)",
+                })?;
         let v = u16::from_be_bytes(*b);
         *p += U16_LEN;
         Ok(v)
@@ -991,10 +995,8 @@ impl<'a> Parse<'a> for LinkageDescriptor<'a> {
             fixed[ORIGINAL_NETWORK_ID_OFFSET],
             fixed[ORIGINAL_NETWORK_ID_OFFSET + 1],
         ]);
-        let service_id = u16::from_be_bytes([
-            fixed[SERVICE_ID_OFFSET],
-            fixed[SERVICE_ID_OFFSET + 1],
-        ]);
+        let service_id =
+            u16::from_be_bytes([fixed[SERVICE_ID_OFFSET], fixed[SERVICE_ID_OFFSET + 1]]);
         let linkage_type_raw = fixed[LINKAGE_TYPE_OFFSET];
         let linkage_type = LinkageType::from_u8(linkage_type_raw);
         let tail_len = tail.len();
@@ -1015,7 +1017,9 @@ impl<'a> Parse<'a> for LinkageDescriptor<'a> {
                 let consumed = info.serialized_len();
                 (LinkageData::ExtendedEventLinkage(info), &tail[consumed..])
             }
-            lt if LINKAGE_TYPES_WITH_OTHER.contains(&lt) || (LINKAGE_TYPE_PRIVATE_FIRST..=LINKAGE_TYPE_PRIVATE_LAST).contains(&lt) => {
+            lt if LINKAGE_TYPES_WITH_OTHER.contains(&lt)
+                || (LINKAGE_TYPE_PRIVATE_FIRST..=LINKAGE_TYPE_PRIVATE_LAST).contains(&lt) =>
+            {
                 (LinkageData::Other(tail), &[] as &[u8])
             }
             _ => (LinkageData::None, tail),

@@ -41,6 +41,8 @@ const FEC_OUTER_MASK: u8 = 0x0F;
 const SYMBOL_RATE_LOW_NIBBLE_SHIFT: u32 = 4;
 /// Mask of the `symbol_rate` low nibble.
 const SYMBOL_RATE_LOW_NIBBLE_MASK: u32 = 0x0F;
+/// Mask of the 28-bit BCD `symbol_rate` field.
+const SYMBOL_RATE_MASK: u32 = 0x0FFF_FFFF;
 
 /// Width of `reserved_future_use` (12 bits, top of body bytes 4-5).
 const RESERVED_FU_BITS: u32 = 12;
@@ -267,12 +269,11 @@ impl CableDeliverySystemDescriptor {
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
     /// the 8-digit BCD field.
     pub fn set_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
-        self.frequency_bcd =
-            super::encode_bcd_field(
-                hz / BCD_UNIT,
-                FREQUENCY_BCD_DIGITS,
-                "CableDeliverySystemDescriptor::frequency",
-            )? as u32;
+        self.frequency_bcd = super::encode_bcd_field(
+            hz / BCD_UNIT,
+            FREQUENCY_BCD_DIGITS,
+            "CableDeliverySystemDescriptor::frequency",
+        )? as u32;
         Ok(())
     }
 
@@ -293,12 +294,11 @@ impl CableDeliverySystemDescriptor {
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
     /// the 7-digit BCD field.
     pub fn set_symbol_rate_sps(&mut self, sps: u64) -> crate::Result<()> {
-        self.symbol_rate_bcd =
-            super::encode_bcd_field(
-                sps / BCD_UNIT,
-                SYMBOL_RATE_BCD_DIGITS,
-                "CableDeliverySystemDescriptor::symbol_rate",
-            )? as u32;
+        self.symbol_rate_bcd = super::encode_bcd_field(
+            sps / BCD_UNIT,
+            SYMBOL_RATE_BCD_DIGITS,
+            "CableDeliverySystemDescriptor::symbol_rate",
+        )? as u32;
         Ok(())
     }
 }
@@ -381,19 +381,20 @@ impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
             });
         }
 
-        let (hdr, _) = body
-            .split_first_chunk::<{ BODY_LEN as usize }>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "body length must equal 11",
-            })?;
+        let (hdr, _) =
+            body.split_first_chunk::<{ BODY_LEN as usize }>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "body length must equal 11",
+                })?;
 
         let mut frequency_bytes = [0u8; FREQUENCY_BCD_LEN];
         frequency_bytes.copy_from_slice(&hdr[FREQUENCY_BCD_OFFSET..RESERVED_FU_OFFSET]);
         let frequency_bcd = u32::from_be_bytes(frequency_bytes);
 
         let bytes_4_5 = u16::from_be_bytes([hdr[RESERVED_FU_OFFSET], hdr[RESERVED_FU_OFFSET + 1]]);
-        let reserved_future_use = ReservedOnes::from_bits(u64::from(bytes_4_5 >> RESERVED_FU_SHIFT));
+        let reserved_future_use =
+            ReservedOnes::from_bits(u64::from(bytes_4_5 >> RESERVED_FU_SHIFT));
         let fec_outer_raw = (bytes_4_5 & u16::from(FEC_OUTER_MASK)) as u8;
 
         let modulation_byte = hdr[MODULATION_OFFSET];
@@ -446,15 +447,16 @@ impl Serialize for CableDeliverySystemDescriptor {
 
         buf[HEADER_LEN + MODULATION_OFFSET] = serialize_modulation(self.modulation);
 
-        let spec_value = self.symbol_rate_bcd >> SYMBOL_RATE_LOW_NIBBLE_SHIFT;
+        let symbol_rate =
+            broadcast_common::len::fit_mask(self.symbol_rate_bcd, SYMBOL_RATE_MASK, "symbol_rate")?;
+        let spec_value = symbol_rate >> SYMBOL_RATE_LOW_NIBBLE_SHIFT;
         let spec_bytes = spec_value.to_be_bytes();
         buf[HEADER_LEN + SYMBOL_RATE_BCD_OFFSET..HEADER_LEN + FEC_INNER_OFFSET]
             .copy_from_slice(&spec_bytes[FREQUENCY_BCD_LEN - SYMBOL_RATE_BCD_BYTES..]);
 
-        buf[HEADER_LEN + FEC_INNER_OFFSET] =
-            (((self.symbol_rate_bcd & SYMBOL_RATE_LOW_NIBBLE_MASK) as u8)
-                << SYMBOL_RATE_LOW_NIBBLE_SHIFT)
-                | serialize_fec_inner(self.fec_inner)?;
+        buf[HEADER_LEN + FEC_INNER_OFFSET] = (((symbol_rate & SYMBOL_RATE_LOW_NIBBLE_MASK) as u8)
+            << SYMBOL_RATE_LOW_NIBBLE_SHIFT)
+            | serialize_fec_inner(self.fec_inner)?;
 
         Ok(len)
     }

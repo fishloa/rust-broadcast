@@ -162,14 +162,16 @@ impl Serialize for ExtendedEventDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[HEADER_LEN] =
-            (broadcast_common::len::fit_mask(self.descriptor_number, NUMBER_MASK, "descriptor_number")?
-                << DESCRIPTOR_NUMBER_SHIFT)
-                | broadcast_common::len::fit_mask(
-                    self.last_descriptor_number,
-                    NUMBER_MASK,
-                    "last_descriptor_number",
-                )?;
+        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
+            self.descriptor_number,
+            NUMBER_MASK,
+            "descriptor_number",
+        )? << DESCRIPTOR_NUMBER_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.last_descriptor_number,
+                NUMBER_MASK,
+                "last_descriptor_number",
+            )?;
         buf[HEADER_LEN + NUMBERS_LEN..HEADER_LEN + ITEMS_LEN_OFFSET]
             .copy_from_slice(&self.language_code.0);
 

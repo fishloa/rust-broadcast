@@ -232,10 +232,8 @@ impl<'a> Parse<'a> for CarouselIdentifierDescriptor<'a> {
                 // [5..9]=module_size, [9]=compression_method, [10..14]=original_size,
                 // [14]=timeout, [15]=object_key_length
                 let module_version = fs1[0];
-                let module_id = u16::from_be_bytes([
-                    fs1[FS1_MODULE_ID_OFFSET],
-                    fs1[FS1_MODULE_ID_OFFSET + 1],
-                ]);
+                let module_id =
+                    u16::from_be_bytes([fs1[FS1_MODULE_ID_OFFSET], fs1[FS1_MODULE_ID_OFFSET + 1]]);
                 let block_size = u16::from_be_bytes([
                     fs1[FS1_BLOCK_SIZE_OFFSET],
                     fs1[FS1_BLOCK_SIZE_OFFSET + 1],

@@ -184,9 +184,9 @@ impl<'a> Parse<'a> for ContentIdentifierDescriptor<'a> {
                         .get(pos..)
                         .and_then(|s| s.split_first_chunk::<CRID_REFERENCE_LEN>())
                         .ok_or(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "CRID reference truncated",
-                    })?;
+                            tag: TAG,
+                            reason: "CRID reference truncated",
+                        })?;
                     let crid_ref = u16::from_be_bytes(*ref_bytes);
                     pos += CRID_REFERENCE_LEN;
                     CridLocation::Reference(crid_ref)
@@ -237,7 +237,8 @@ impl Serialize for ContentIdentifierDescriptor<'_> {
                     buf[pos] = header;
                     buf[pos + CRID_LENGTH_OFFSET] =
                         broadcast_common::len::fit_u8(data.len(), "crid_length")?;
-                    buf[pos + CRID_DATA_OFFSET..pos + CRID_DATA_OFFSET + data.len()].copy_from_slice(data);
+                    buf[pos + CRID_DATA_OFFSET..pos + CRID_DATA_OFFSET + data.len()]
+                        .copy_from_slice(data);
                     pos += CRID_DATA_OFFSET + data.len();
                 }
                 CridLocation::Reference(val) => {

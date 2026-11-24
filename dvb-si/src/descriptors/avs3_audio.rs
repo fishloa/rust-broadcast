@@ -478,14 +478,28 @@ impl Avs3AudioDescriptor {
             NIBBLE,
             "sampling_frequency_index",
         )? as u8;
-        let id = fit_bits(u64::from(self.body.audio_codec_id()), NIBBLE, "audio_codec_id")? as u8;
+        let id = fit_bits(
+            u64::from(self.body.audio_codec_id()),
+            NIBBLE,
+            "audio_codec_id",
+        )? as u8;
         out.push((id << NIBBLE) | sfi);
         match &self.body {
             Avs3AudioBody::Codec0(b) => {
-                let prof = fit_bits(u64::from(b.coding_profile), CODING_PROFILE_BITS, "coding_profile")? as u8;
+                let prof = fit_bits(
+                    u64::from(b.coding_profile),
+                    CODING_PROFILE_BITS,
+                    "coding_profile",
+                )? as u8;
                 let rate = fit_bits(u64::from(b.bitrate_index), NIBBLE, "bitrate_index")? as u8;
-                out.push((u8::from(b.anc_data_index) << ANC_DATA_INDEX_SHIFT) | (prof << NIBBLE) | rate);
-                let ch = fit_bits(u64::from(b.channel_number_index), CONTENT_INDEX_BITS, "channel_number_index")? as u8;
+                out.push(
+                    (u8::from(b.anc_data_index) << ANC_DATA_INDEX_SHIFT) | (prof << NIBBLE) | rate,
+                );
+                let ch = fit_bits(
+                    u64::from(b.channel_number_index),
+                    CONTENT_INDEX_BITS,
+                    "channel_number_index",
+                )? as u8;
                 out.push((u8::from(b.bitstream_type) << BITSTREAM_TYPE_SHIFT) | ch);
                 out.extend_from_slice(&b.raw_frame_length.to_be_bytes());
             }
@@ -493,7 +507,9 @@ impl Avs3AudioDescriptor {
                 let explicit = sfi == SAMPLING_FREQUENCY_INDEX_EXPLICIT;
                 match (explicit, b.sampling_frequency) {
                     (true, Some(f)) => {
-                        let f = fit_bits(u64::from(f), SAMPLING_FREQUENCY_BITS, "sampling_frequency")? as u32;
+                        let f =
+                            fit_bits(u64::from(f), SAMPLING_FREQUENCY_BITS, "sampling_frequency")?
+                                as u32;
                         out.extend_from_slice(&f.to_be_bytes()[1..]);
                     }
                     (false, None) => {}
@@ -504,15 +520,22 @@ impl Avs3AudioDescriptor {
                         });
                     }
                 }
-                let prof = fit_bits(u64::from(b.coding_profile), CODING_PROFILE_BITS, "coding_profile")? as u8;
+                let prof = fit_bits(
+                    u64::from(b.coding_profile),
+                    CODING_PROFILE_BITS,
+                    "coding_profile",
+                )? as u8;
                 let res = b.reserved.get() as u8;
-                out.push((u8::from(b.anc_data_index) << ANC_DATA_INDEX_SHIFT) | (prof << NIBBLE) | res);
+                out.push(
+                    (u8::from(b.anc_data_index) << ANC_DATA_INDEX_SHIFT) | (prof << NIBBLE) | res,
+                );
                 out.push(b.channel_number);
             }
             Avs3AudioBody::Codec2(b) => {
                 let nn = fit_bits(u64::from(b.nn_type), NN_TYPE_BITS, "nn_type")? as u8;
                 let res = b.reserved.get() as u8;
-                let ct = fit_bits(u64::from(b.content.content_type()), NIBBLE, "content_type")? as u8;
+                let ct =
+                    fit_bits(u64::from(b.content.content_type()), NIBBLE, "content_type")? as u8;
                 out.push((nn << NN_TYPE_SHIFT) | (res << NIBBLE) | ct);
                 match &b.content {
                     Avs3AudioContent::Channel {
@@ -560,7 +583,13 @@ impl Avs3AudioDescriptor {
                         hoa_order,
                         reserved,
                     } => {
-                        out.push(pack(*hoa_order, NIBBLE, reserved.get() as u8, NIBBLE, "hoa_order")?);
+                        out.push(pack(
+                            *hoa_order,
+                            NIBBLE,
+                            reserved.get() as u8,
+                            NIBBLE,
+                            "hoa_order",
+                        )?);
                     }
                     Avs3AudioContent::Reserved(_) => {}
                 }

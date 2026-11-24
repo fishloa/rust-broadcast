@@ -59,8 +59,7 @@ impl Serialize for GroupLinkDescriptor {
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[HEADER_LEN] = self.position.to_u8();
-        buf[HEADER_LEN + 1..HEADER_LEN + BODY_LEN]
-            .copy_from_slice(&self.group_id.to_be_bytes());
+        buf[HEADER_LEN + 1..HEADER_LEN + BODY_LEN].copy_from_slice(&self.group_id.to_be_bytes());
         Ok(len)
     }
 }

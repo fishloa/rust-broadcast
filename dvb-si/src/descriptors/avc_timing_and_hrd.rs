@@ -268,7 +268,8 @@ impl Serialize for AvcTimingAndHrdDescriptor {
         buf[1] = body_len;
 
         let picture_and_timing_info_present = self.picture_timing.is_some();
-        buf[HEADER_LEN] = (u8::from(self.hrd_management_valid_flag) << HRD_MANAGEMENT_VALID_FLAG_SHIFT)
+        buf[HEADER_LEN] = (u8::from(self.hrd_management_valid_flag)
+            << HRD_MANAGEMENT_VALID_FLAG_SHIFT)
             | ((self.reserved_6.get() as u8) << RESERVED_6_SHIFT)
             | (if picture_and_timing_info_present {
                 1

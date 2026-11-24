@@ -308,7 +308,9 @@ impl<'a> Parse<'a> for Avs3VideoDescriptor {
             profile_id: body[0],
             level_id: body[1],
             multiple_frame_rate_flag: bit(b2, MULTIPLE_FRAME_RATE_FLAG_SHIFT),
-            frame_rate_code: Avs3FrameRateCode::from_u8((b2 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK),
+            frame_rate_code: Avs3FrameRateCode::from_u8(
+                (b2 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK,
+            ),
             sample_precision: b2 & SAMPLE_PRECISION_MASK,
             chroma_format: b3 >> CHROMA_FORMAT_SHIFT,
             temporal_id_flag: bit(b3, TEMPORAL_ID_FLAG_SHIFT),

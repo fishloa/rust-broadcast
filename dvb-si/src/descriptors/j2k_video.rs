@@ -52,6 +52,8 @@ const VIDEO_FULL_RANGE_FLAG_MASK: u8 = 0x80;
 const FLAGS_WORD_OFFSET: usize = 0;
 /// Width of the `extended_capability_flag`/`profile_and_level` word, bytes.
 const FLAGS_WORD_LEN: usize = U16_LEN;
+/// Offset of the low byte of the flags/profile word.
+const FLAGS_WORD_LO_OFFSET: usize = FLAGS_WORD_LEN - 1;
 /// Offset of `horizontal_size` in the body.
 const HORIZONTAL_SIZE_OFFSET: usize = FLAGS_WORD_LEN;
 /// Offset of `vertical_size` in the body.
@@ -72,12 +74,10 @@ const COLOR_SPECIFICATION_BLOCK_LEN: usize = 2;
 const COLOR_SPECIFICATION_OFFSET: usize = 0;
 /// Offset of the still/interlaced byte after the preamble.
 const STILL_MODE_OFFSET: usize = 1;
-/// Offset of the extended-capability flag byte in the extended block.
-const EXT_CAPABILITY_FLAGS_OFFSET: usize = 0;
-/// Offset of the still/interlaced byte in the extended block.
-const EXT_STILL_MODE_OFFSET: usize = 1;
-/// Offset of `colour_primaries` in the extended block.
-const COLOUR_PRIMARIES_OFFSET: usize = EXT_STILL_MODE_OFFSET + 1;
+/// Width of the extended block's two leading flag bytes.
+const EXT_HEADER_FLAGS_LEN: usize = 2;
+/// Offset of `colour_primaries` in the colour-parameter block.
+const COLOUR_PRIMARIES_OFFSET: usize = 0;
 /// Offset of `transfer_characteristics` in the extended block.
 const TRANSFER_CHARACTERISTICS_OFFSET: usize = COLOUR_PRIMARIES_OFFSET + 1;
 /// Offset of `matrix_coefficients` in the extended block.
@@ -87,7 +87,7 @@ const VIDEO_FULL_RANGE_OFFSET: usize = MATRIX_COEFFICIENTS_OFFSET + 1;
 /// Width of the extended block's colour parameters, bytes.
 const COLOUR_PARAMETERS_LEN: usize = 4;
 /// Length of the extended block before any sub-block.
-const EXTENDED_HEADER_LEN: usize = COLOUR_PRIMARIES_OFFSET + COLOUR_PARAMETERS_LEN;
+const EXTENDED_HEADER_LEN: usize = EXT_HEADER_FLAGS_LEN + COLOUR_PARAMETERS_LEN;
 /// Offset of `strp_max_idx` in the stripe sub-block.
 const STRIPE_MAX_IDX_OFFSET: usize = 0;
 /// Offset of `strp_height` in the stripe sub-block.
@@ -357,7 +357,7 @@ fn parse_extended_capability(
             reason: "J2K_video_descriptor too short for stripe/block/mdm flags",
         });
     }
-    let sb = body[pos + EXT_CAPABILITY_FLAGS_OFFSET];
+    let sb = body[pos];
     let stripe_flag = (sb & STRIPE_FLAG_MASK) != 0;
     let block_flag = (sb & BLOCK_FLAG_MASK) != 0;
     let mdm_flag = (sb & MDM_FLAG_MASK) != 0;
@@ -373,7 +373,7 @@ fn parse_extended_capability(
             reason: "J2K_video_descriptor too short for still_mode/interlaced byte",
         });
     }
-    let sm_iv = body[pos + EXT_STILL_MODE_OFFSET];
+    let sm_iv = body[pos];
     let still_mode = (sm_iv & STILL_MODE_MASK) != 0;
     let interlaced_video = (sm_iv & INTERLACED_VIDEO_MASK) != 0;
     let reserved_6 = ReservedOnes::from_bits(u64::from(sm_iv));
@@ -425,8 +425,9 @@ fn parse_extended_capability(
             });
         }
         let mut full_h_bytes = [0u8; U32_LEN];
-        full_h_bytes
-            .copy_from_slice(&body[pos + FULL_HORIZONTAL_SIZE_OFFSET..pos + FULL_VERTICAL_SIZE_OFFSET]);
+        full_h_bytes.copy_from_slice(
+            &body[pos + FULL_HORIZONTAL_SIZE_OFFSET..pos + FULL_VERTICAL_SIZE_OFFSET],
+        );
         let full_horizontal_size = u32::from_be_bytes(full_h_bytes);
         let mut full_v_bytes = [0u8; U32_LEN];
         full_v_bytes
@@ -481,14 +482,10 @@ fn parse_extended_capability(
         let mut l_min_bytes = [0u8; U32_LEN];
         l_min_bytes.copy_from_slice(&body[pos + L_MIN_OFFSET..pos + MAX_CLL_OFFSET]);
         let l_min = u32::from_be_bytes(l_min_bytes);
-        let max_cll = u16::from_be_bytes([
-            body[pos + MAX_CLL_OFFSET],
-            body[pos + MAX_CLL_OFFSET + 1],
-        ]);
-        let max_fall = u16::from_be_bytes([
-            body[pos + MAX_FALL_OFFSET],
-            body[pos + MAX_FALL_OFFSET + 1],
-        ]);
+        let max_cll =
+            u16::from_be_bytes([body[pos + MAX_CLL_OFFSET], body[pos + MAX_CLL_OFFSET + 1]]);
+        let max_fall =
+            u16::from_be_bytes([body[pos + MAX_FALL_OFFSET], body[pos + MAX_FALL_OFFSET + 1]]);
         pos += MDM_SUB_BLOCK_LEN;
         Some(J2kMdm {
             x_c0,
@@ -550,7 +547,7 @@ fn serialize_extended_capability(
     if ext.mdm.is_some() {
         sb |= MDM_FLAG_MASK;
     }
-    buf[pos + EXT_CAPABILITY_FLAGS_OFFSET] = sb;
+    buf[pos] = sb;
     pos += 1;
 
     // still_mode/interlaced_video precede the colour parameters here (Table 2-101).
@@ -561,7 +558,7 @@ fn serialize_extended_capability(
     if interlaced_video {
         sm_iv |= INTERLACED_VIDEO_MASK;
     }
-    buf[pos + EXT_STILL_MODE_OFFSET] = sm_iv;
+    buf[pos] = sm_iv;
     pos += 1;
 
     buf[pos + COLOUR_PRIMARIES_OFFSET] = ext.colour_primaries;
@@ -654,15 +651,13 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
 
         // extended_capability_flag(1) | profile_and_level(15)
         let mut flags_word_bytes = [0u8; FLAGS_WORD_LEN];
-        flags_word_bytes
-            .copy_from_slice(&body[FLAGS_WORD_OFFSET..HORIZONTAL_SIZE_OFFSET]);
+        flags_word_bytes.copy_from_slice(&body[FLAGS_WORD_OFFSET..HORIZONTAL_SIZE_OFFSET]);
         let b01 = u16::from_be_bytes(flags_word_bytes);
         let extended_capability_flag = (b01 & EXTENDED_CAPABILITY_FLAG_MASK) != 0;
         let profile_and_level = b01 & PROFILE_AND_LEVEL_MASK;
 
         let mut horizontal_bytes = [0u8; U32_LEN];
-        horizontal_bytes
-            .copy_from_slice(&body[HORIZONTAL_SIZE_OFFSET..VERTICAL_SIZE_OFFSET]);
+        horizontal_bytes.copy_from_slice(&body[HORIZONTAL_SIZE_OFFSET..VERTICAL_SIZE_OFFSET]);
         let horizontal_size = u32::from_be_bytes(horizontal_bytes);
         let mut vertical_bytes = [0u8; U32_LEN];
         vertical_bytes.copy_from_slice(&body[VERTICAL_SIZE_OFFSET..MAX_BIT_RATE_OFFSET]);
@@ -673,14 +668,10 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
         let mut buffer_bytes = [0u8; U32_LEN];
         buffer_bytes.copy_from_slice(&body[MAX_BUFFER_SIZE_OFFSET..DEN_FRAME_RATE_OFFSET]);
         let max_buffer_size = u32::from_be_bytes(buffer_bytes);
-        let den_frame_rate = u16::from_be_bytes([
-            body[DEN_FRAME_RATE_OFFSET],
-            body[DEN_FRAME_RATE_OFFSET + 1],
-        ]);
-        let num_frame_rate = u16::from_be_bytes([
-            body[NUM_FRAME_RATE_OFFSET],
-            body[NUM_FRAME_RATE_OFFSET + 1],
-        ]);
+        let den_frame_rate =
+            u16::from_be_bytes([body[DEN_FRAME_RATE_OFFSET], body[DEN_FRAME_RATE_OFFSET + 1]]);
+        let num_frame_rate =
+            u16::from_be_bytes([body[NUM_FRAME_RATE_OFFSET], body[NUM_FRAME_RATE_OFFSET + 1]]);
         let pos = PREAMBLE_LEN;
 
         let (
@@ -774,7 +765,7 @@ impl Serialize for J2kVideoDescriptor<'_> {
             b01 |= EXTENDED_CAPABILITY_FLAG_MASK;
         }
         buf[HEADER_LEN + FLAGS_WORD_OFFSET] = (b01 >> FLAGS_WORD_HI_SHIFT) as u8;
-        buf[HEADER_LEN + FLAGS_WORD_LEN] = b01 as u8;
+        buf[HEADER_LEN + FLAGS_WORD_LO_OFFSET] = b01 as u8;
         buf[HEADER_LEN + HORIZONTAL_SIZE_OFFSET..HEADER_LEN + VERTICAL_SIZE_OFFSET]
             .copy_from_slice(&self.horizontal_size.to_be_bytes());
         buf[HEADER_LEN + VERTICAL_SIZE_OFFSET..HEADER_LEN + MAX_BIT_RATE_OFFSET]
@@ -815,7 +806,7 @@ impl Serialize for J2kVideoDescriptor<'_> {
             if self.interlaced_video {
                 sm_iv |= INTERLACED_VIDEO_MASK;
             }
-            buf[pos + STILL_MODE_OFFSET] = sm_iv;
+            buf[pos] = sm_iv;
             pos += 1;
         }
 

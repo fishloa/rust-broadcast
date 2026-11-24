@@ -158,25 +158,25 @@ impl Serialize for AvcVideoDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         buf[HEADER_LEN] = self.profile_idc;
-        buf[HEADER_LEN + CONSTRAINT_FLAGS_OFFSET] =
-            (u8::from(self.constraint_set0_flag) * CONSTRAINT_SET0_FLAG_MASK)
-                | (u8::from(self.constraint_set1_flag) * CONSTRAINT_SET1_FLAG_MASK)
-                | (u8::from(self.constraint_set2_flag) * CONSTRAINT_SET2_FLAG_MASK)
-                | (u8::from(self.constraint_set3_flag) * CONSTRAINT_SET3_FLAG_MASK)
-                | (u8::from(self.constraint_set4_flag) * CONSTRAINT_SET4_FLAG_MASK)
-                | (u8::from(self.constraint_set5_flag) * CONSTRAINT_SET5_FLAG_MASK)
-                | broadcast_common::len::fit_mask(
-                    self.avc_compatible_flags,
-                    AVC_COMPATIBLE_FLAGS_MASK,
-                    "avc_compatible_flags",
-                )?;
+        buf[HEADER_LEN + CONSTRAINT_FLAGS_OFFSET] = (u8::from(self.constraint_set0_flag)
+            * CONSTRAINT_SET0_FLAG_MASK)
+            | (u8::from(self.constraint_set1_flag) * CONSTRAINT_SET1_FLAG_MASK)
+            | (u8::from(self.constraint_set2_flag) * CONSTRAINT_SET2_FLAG_MASK)
+            | (u8::from(self.constraint_set3_flag) * CONSTRAINT_SET3_FLAG_MASK)
+            | (u8::from(self.constraint_set4_flag) * CONSTRAINT_SET4_FLAG_MASK)
+            | (u8::from(self.constraint_set5_flag) * CONSTRAINT_SET5_FLAG_MASK)
+            | broadcast_common::len::fit_mask(
+                self.avc_compatible_flags,
+                AVC_COMPATIBLE_FLAGS_MASK,
+                "avc_compatible_flags",
+            )?;
         buf[HEADER_LEN + LEVEL_IDC_OFFSET] = self.level_idc;
-        buf[HEADER_LEN + TAIL_FLAGS_OFFSET] =
-            (u8::from(self.avc_still_present) * AVC_STILL_PRESENT_MASK)
-                | (u8::from(self.avc_24_hour_picture_flag) * AVC_24_HOUR_PICTURE_FLAG_MASK)
-                | (u8::from(self.frame_packing_sei_not_present_flag)
-                    * FRAME_PACKING_SEI_NOT_PRESENT_FLAG_MASK)
-                | self.reserved.get() as u8;
+        buf[HEADER_LEN + TAIL_FLAGS_OFFSET] = (u8::from(self.avc_still_present)
+            * AVC_STILL_PRESENT_MASK)
+            | (u8::from(self.avc_24_hour_picture_flag) * AVC_24_HOUR_PICTURE_FLAG_MASK)
+            | (u8::from(self.frame_packing_sei_not_present_flag)
+                * FRAME_PACKING_SEI_NOT_PRESENT_FLAG_MASK)
+            | self.reserved.get() as u8;
         Ok(len)
     }
 }

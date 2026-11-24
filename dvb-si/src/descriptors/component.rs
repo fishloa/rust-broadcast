@@ -65,9 +65,8 @@ impl<'a> Parse<'a> for ComponentDescriptor<'a> {
         let component_type = body[1];
         let component_tag = body[COMPONENT_TAG_OFFSET];
         let mut language_bytes = [0u8; LANGUAGE_LEN];
-        language_bytes.copy_from_slice(
-            &body[LANGUAGE_CODE_OFFSET..LANGUAGE_CODE_OFFSET + LANGUAGE_LEN],
-        );
+        language_bytes
+            .copy_from_slice(&body[LANGUAGE_CODE_OFFSET..LANGUAGE_CODE_OFFSET + LANGUAGE_LEN]);
         let language_code = LangCode(language_bytes);
         let text = DvbText::new(&body[PRE_TEXT_LEN..]);
         Ok(Self {

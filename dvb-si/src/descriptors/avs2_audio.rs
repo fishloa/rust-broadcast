@@ -284,7 +284,11 @@ impl Avs2AudioDescriptor {
     fn body_bytes(&self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         out.push(self.num_channels);
-        let sri = fit_bits(u64::from(self.sample_rate_index), NIBBLE_BITS, "sample_rate_index")? as u8;
+        let sri = fit_bits(
+            u64::from(self.sample_rate_index),
+            NIBBLE_BITS,
+            "sample_rate_index",
+        )? as u8;
         let rsv = self.reserved.get() as u8;
         out.push(
             (sri << NIBBLE_SHIFT)
@@ -304,13 +308,24 @@ impl Avs2AudioDescriptor {
         }
         if let Some(v) = &self.version {
             let id = fit_bits(u64::from(v.audio_codec_id), NIBBLE_BITS, "audio_codec_id")? as u8;
-            let prof = fit_bits(u64::from(v.coding_profile), CODING_PROFILE_BITS, "coding_profile")? as u8;
-            out.push((id << NIBBLE_SHIFT) | (u8::from(v.anc_data_index) << ANC_DATA_INDEX_SHIFT) | prof);
+            let prof = fit_bits(
+                u64::from(v.coding_profile),
+                CODING_PROFILE_BITS,
+                "coding_profile",
+            )? as u8;
+            out.push(
+                (id << NIBBLE_SHIFT) | (u8::from(v.anc_data_index) << ANC_DATA_INDEX_SHIFT) | prof,
+            );
             match (id, &v.codec0) {
                 (0, Some(c)) => {
-                    let br = fit_bits(u64::from(c.bitrate_index), NIBBLE_BITS, "bitrate_index")? as u8;
+                    let br =
+                        fit_bits(u64::from(c.bitrate_index), NIBBLE_BITS, "bitrate_index")? as u8;
                     let rs = c.reserved.get() as u8;
-                    out.push((br << NIBBLE_SHIFT) | (u8::from(c.bitstream_type) << BITSTREAM_TYPE_SHIFT) | rs);
+                    out.push(
+                        (br << NIBBLE_SHIFT)
+                            | (u8::from(c.bitstream_type) << BITSTREAM_TYPE_SHIFT)
+                            | rs,
+                    );
                     out.extend_from_slice(&c.raw_frame_length.to_be_bytes());
                 }
                 (0, None) | (1..=AUDIO_CODEC_ID_MAX, Some(_)) => {
