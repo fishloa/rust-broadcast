@@ -426,3 +426,32 @@ fn assert_warning_forward<R: std::io::Read>(reader: &mut ForwardReader<R>) {
         }
     }
 }
+
+#[test]
+fn a_cut_final_mdat_emits_its_complete_prefix() {
+    let data = fixture("h264-aac-frag.mp4");
+    let (mdat, size) = top_boxes(&data)
+        .into_iter()
+        .filter(|(_, _, fourcc)| fourcc == b"mdat")
+        .map(|(at, size, _)| (at, size))
+        .next_back()
+        .expect("mdat");
+    let cut = mdat + 8 + (size - 8) / 2;
+    let truncated = &data[..cut];
+    assert!(strict(truncated).error.is_some());
+    let good = strict(&data);
+    let lenient = permissive(truncated);
+    assert!(matches!(
+        lenient.warnings.as_slice(),
+        [Warning::TruncatedFragment { .. }]
+    ));
+    let cut64 = u64::try_from(cut).expect("cut");
+    let expected: Vec<_> = good
+        .samples
+        .iter()
+        .filter(|sample| u64::from(sample.size).saturating_add(sample.offset) <= cut64)
+        .map(sample_key)
+        .collect();
+    let got: Vec<_> = lenient.samples.iter().map(sample_key).collect();
+    assert_eq!(got, expected);
+}

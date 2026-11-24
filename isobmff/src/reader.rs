@@ -40,7 +40,7 @@ use crate::box_types::{
 };
 use crate::cenc::{SampleEncryptionBox, TrackEncryptionBox, sinf_of_sample_entry};
 use crate::error::{Error, Result};
-use crate::frag_offsets::{MdatRange, sample_ranges_in_run};
+use crate::frag_offsets::{MdatRange, sample_ranges_in_run, sample_ranges_in_run_until};
 use crate::init_segment::{
     MediaBox, MovieBox, SampleEntryVariant, StblChild, TrackBox, TrackExtendsBox,
 };
@@ -464,6 +464,7 @@ enum FragmentStep {
 struct ResolvedFragment {
     info: FragmentInfo,
     samples: Vec<SampleRef>,
+    truncated: bool,
     /// Per track: the `moov` track index, the decode time after the fragment
     /// and the sample count after it.
     cursors: Vec<(usize, u64, u32)>,
@@ -501,6 +502,7 @@ pub struct Reader {
     movie: Option<MovieBox>,
     brand: Option<FileTypeBox>,
     warnings: Vec<Warning>,
+    deferred_warning: Option<Warning>,
     tracks: Vec<TrackInfo>,
     cursors: Vec<CursorSlot>,
     emitted_tracks: bool,
@@ -534,6 +536,7 @@ impl Reader {
             movie: None,
             brand: None,
             warnings: Vec::new(),
+            deferred_warning: None,
             tracks: Vec::new(),
             cursors: Vec::new(),
             emitted_tracks: false,
@@ -665,7 +668,7 @@ impl Reader {
 
     fn finish_step(&mut self) -> Result<Step<'_>> {
         self.done = true;
-        if let Some(warning) = self.take_warning() {
+        if let Some(warning) = self.next_warning() {
             return Ok(Step::Warning(warning));
         }
         Ok(Step::Done)
@@ -676,6 +679,13 @@ impl Reader {
             return None;
         }
         Some(self.warnings.remove(0))
+    }
+
+    fn next_warning(&mut self) -> Option<Warning> {
+        if self.ready.is_some() {
+            return None;
+        }
+        self.deferred_warning.take().or_else(|| self.take_warning())
     }
 
     fn tolerated(&self) -> bool {
@@ -751,6 +761,7 @@ impl Reader {
         self.pending = None;
         self.fragment = None;
         self.ready = None;
+        self.deferred_warning = None;
         // Progressive samples of a hybrid file are not re-read; the seek
         // positions the fragment walk.
         self.cursors.clear();
@@ -913,7 +924,7 @@ impl Reader {
     /// [`Step::Tracks`] arm hands out its own track table), which
     /// [`Iterator::next`]'s signature cannot express.
     pub fn step(&mut self) -> Result<Step<'_>> {
-        if let Some(warning) = self.take_warning() {
+        if let Some(warning) = self.next_warning() {
             return Ok(Step::Warning(warning));
         }
         if let Some(pending) = self.pending {
@@ -1327,7 +1338,9 @@ impl Reader {
         let Some(moof) = state.moof.as_ref() else {
             return Ok(());
         };
-        let resolved = match self.resolve_fragment(&state, moof) {
+        let at_end = self.config.total_len.is_some_and(|total| self.pos >= total);
+        let partial = unresolved == Unresolved::Fail && at_end && self.tolerated();
+        let resolved = match self.resolve_fragment(&state, moof, partial) {
             Ok(resolved) => resolved,
             Err(err) => {
                 if unresolved == Unresolved::Keep {
@@ -1358,6 +1371,11 @@ impl Reader {
                 return Err(err);
             }
         };
+        if resolved.truncated {
+            self.deferred_warning = Some(Warning::TruncatedFragment {
+                offset: state.offset,
+            });
+        }
         for (index, decode_time, count) in resolved.cursors {
             self.decode_times[index] = decode_time;
             self.sample_counts[index] = count;
@@ -1381,6 +1399,7 @@ impl Reader {
         &self,
         state: &FragmentState,
         moof: &MovieFragmentBox,
+        partial: bool,
     ) -> Result<ResolvedFragment> {
         // The fragment's own media: a sample must live inside one of these
         // payloads, so non-overlapping samples cannot total more than they do.
@@ -1389,6 +1408,7 @@ impl Reader {
         });
         let mut copied_bytes = 0u64;
         let mut rows: Vec<(usize, SampleRef)> = Vec::new();
+        let mut truncated = false;
         let mut present: Vec<TrackId> = Vec::new();
         let mut cursors: Vec<(usize, u64, u32)> = Vec::new();
         for traf in &moof.traf {
@@ -1408,14 +1428,31 @@ impl Reader {
                     .find(|slot| slot.0 == index)
                     .map_or(self.decode_times[index], |slot| slot.1),
             };
-            let ranges = sample_ranges_in_run(
-                state.offset,
-                moof,
-                track_id,
-                &state.mdats,
-                budget,
-                &mut copied_bytes,
-            )?;
+            let (ranges, cut) = if partial {
+                sample_ranges_in_run_until(
+                    state.offset,
+                    moof,
+                    track_id,
+                    &state.mdats,
+                    budget,
+                    &mut copied_bytes,
+                )?
+            } else {
+                (
+                    sample_ranges_in_run(
+                        state.offset,
+                        moof,
+                        track_id,
+                        &state.mdats,
+                        budget,
+                        &mut copied_bytes,
+                    )?,
+                    false,
+                )
+            };
+            if cut {
+                truncated = true;
+            }
             let auxes = fragment_aux(traf, self.crypto[index].as_ref(), ranges.len())?;
             let description_index = traf
                 .tfhd
@@ -1460,6 +1497,9 @@ impl Reader {
                 }
                 None => cursors.push((index, decode_time, count)),
             }
+            if truncated {
+                break;
+            }
         }
         let order = self.config.order;
         let tracks = &self.tracks;
@@ -1481,6 +1521,7 @@ impl Reader {
                 tracks: present,
             },
             samples: rows.into_iter().map(|(_, sample)| sample).collect(),
+            truncated,
             cursors,
         })
     }

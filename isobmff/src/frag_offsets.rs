@@ -215,6 +215,31 @@ pub fn sample_ranges_in_run(
     budget: u64,
     copied_bytes: &mut u64,
 ) -> Result<Vec<FragmentSampleRange>> {
+    let (ranges, truncated) =
+        sample_ranges_in_run_until(moof_off, moof, track_id, mdats, budget, copied_bytes)?;
+    if truncated {
+        return Err(Error::InvalidInput(
+            "fragment sample range is outside every mdat payload",
+        ));
+    }
+    Ok(ranges)
+}
+
+/// The same walk as [`sample_ranges_in_run`], stopping at the first sample
+/// whose range leaves every `mdat` payload located so far.
+///
+/// The flag is `true` when such a sample was met; the returned ranges then
+/// cover only the samples fully inside those payloads. This is how a reader at
+/// the end of a truncated input hands out the complete prefix of a cut final
+/// fragment instead of dropping the whole fragment.
+pub fn sample_ranges_in_run_until(
+    moof_off: u64,
+    moof: &MovieFragmentBox,
+    track_id: TrackId,
+    mdats: &[MdatRange],
+    budget: u64,
+    copied_bytes: &mut u64,
+) -> Result<(Vec<FragmentSampleRange>, bool)> {
     let mut out = Vec::new();
     // Running end of the data consumed so far in this moof, used for a trun
     // without a `data_offset` and for the next traf with no explicit base.
@@ -271,9 +296,7 @@ pub fn sample_ranges_in_run(
                         return Err(Error::SampleDataBudgetExceeded { limit: budget });
                     }
                     if !inside_mdat(mdats, start, end) {
-                        return Err(Error::InvalidInput(
-                            "fragment sample range is outside every mdat payload",
-                        ));
+                        return Ok((out, true));
                     }
                     out.push(FragmentSampleRange {
                         start,
@@ -291,7 +314,7 @@ pub fn sample_ranges_in_run(
         }
         data_end = run_cursor.max(data_end);
     }
-    Ok(out)
+    Ok((out, false))
 }
 
 /// Apply a `trun.data_offset` to the track fragment's base, checked.
