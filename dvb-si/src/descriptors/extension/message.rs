@@ -23,9 +23,11 @@ impl<'a> Parse<'a> for Message<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         need_in(sel, 1 + ISO_639_LEN, "message body")?;
+        let mut language_code = [0u8; ISO_639_LEN];
+        language_code.copy_from_slice(&sel[1..1 + ISO_639_LEN]);
         Ok(Message {
             message_id: sel[0],
-            iso_639_language_code: LangCode([sel[1], sel[2], sel[3]]),
+            iso_639_language_code: LangCode(language_code),
             text: DvbText::new(&sel[1 + ISO_639_LEN..]),
         })
     }

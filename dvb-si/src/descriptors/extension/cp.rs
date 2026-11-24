@@ -15,6 +15,10 @@ impl<'a> ExtensionBodyDef<'a> for Cp<'a> {
 const CP_HEADER_LEN: usize = 4; // CP_system_id(2) + reserved(3)/CP_PID(13)
 /// Shift of `reserved_future_use(3)` in the CP_PID word.
 const RESERVED_SHIFT: u16 = 13;
+/// Offset of the byte holding `reserved_future_use` and `CP_PID`.
+const CP_PID_BYTE_OFFSET: usize = 2;
+/// Shift of `reserved_future_use(3)` within the CP_PID byte.
+const RESERVED_BYTE_SHIFT: u32 = 5;
 /// Width of `reserved_future_use` ahead of `CP_PID` (3 bits).
 const RESERVED_BITS: u32 = 3;
 
@@ -62,8 +66,10 @@ impl<'a> Parse<'a> for Cp<'a> {
         need_in(sel, CP_HEADER_LEN, "CP body")?;
         Ok(Cp {
             cp_system_id: u16::from_be_bytes([sel[0], sel[1]]),
-            reserved_future_use: ReservedOnes::from_bits(u64::from(sel[2] >> 5)),
-            cp_pid: Pid::from_wire_masked(u16::from_be_bytes([sel[2], sel[3]])),
+            reserved_future_use: ReservedOnes::from_bits(u64::from(
+                sel[CP_PID_BYTE_OFFSET] >> RESERVED_BYTE_SHIFT,
+            )),
+            cp_pid: Pid::from_wire_masked(crate::wire::be_u16(sel, CP_PID_BYTE_OFFSET, "CP_PID")?),
             private_data: &sel[CP_HEADER_LEN..],
         })
     }

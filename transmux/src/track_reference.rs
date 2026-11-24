@@ -21,6 +21,7 @@ pub const AVCP_REFERENCE_TYPE: [u8; 4] = *b"avcp";
 
 const TREF: [u8; 4] = *b"tref";
 const TRACK_ID_LEN: usize = 4;
+const REFERENCE_TYPE_LEN: usize = 4;
 const BOX_HEADER_LEN: usize = 8;
 
 /// `TrackReferenceTypeBox`: the box type is the `reference_type`.
@@ -28,7 +29,7 @@ const BOX_HEADER_LEN: usize = 8;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TrackReferenceTypeBox {
     /// `reference_type`, e.g. [`AVCP_REFERENCE_TYPE`], `hint`, `cdsc`.
-    pub reference_type: [u8; 4],
+    pub reference_type: [u8; REFERENCE_TYPE_LEN],
     /// `track_IDs`: referenced track ids or track group ids.
     pub track_ids: Vec<TrackId>,
 }
@@ -59,7 +60,11 @@ impl TrackReferenceBox {
                 reference_type: child.four_cc,
                 track_ids: payload
                     .chunks_exact(TRACK_ID_LEN)
-                    .map(|c| TrackId::new(u32::from_be_bytes([c[0], c[1], c[2], c[3]])))
+                    .map(|c| {
+                        let mut id = [0u8; TRACK_ID_LEN];
+                        id.copy_from_slice(c);
+                        TrackId::new(u32::from_be_bytes(id))
+                    })
                     .collect(),
             });
             Ok(())
@@ -68,7 +73,7 @@ impl TrackReferenceBox {
     }
 
     /// The `track_IDs` of the reference of `reference_type`, if present.
-    pub fn track_ids(&self, reference_type: &[u8; 4]) -> Option<&[TrackId]> {
+    pub fn track_ids(&self, reference_type: &[u8; REFERENCE_TYPE_LEN]) -> Option<&[TrackId]> {
         self.references
             .iter()
             .find(|r| &r.reference_type == reference_type)

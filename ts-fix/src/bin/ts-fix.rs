@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::resync::TsResync;
+use mpeg_ts::ts::TS_PACKET_SIZE;
 use ts_fix::{PcrRestamp, PidFilter, Stuffing, TsFix};
 
 #[derive(Parser)]
@@ -206,7 +207,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     eprintln!(
         "wrote {} packets ({} bytes) to {}",
-        output.len() / 188,
+        output.len() / TS_PACKET_SIZE,
         output.len(),
         cli.output.display(),
     );

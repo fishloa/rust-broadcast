@@ -258,6 +258,12 @@ fn read_id_vint(b: &[u8]) -> VintRead<&[u8]> {
     VintRead::Ok(width, &b[..width])
 }
 
+/// Bits in one byte: the VINT marker sits `width` bits below the byte top,
+/// and each continuation byte shifts the accumulator by this much.
+const BYTE_BITS: usize = 8;
+/// Payload bits a size VINT carries per byte (RFC 8794 §4.5).
+const VINT_VALUE_BITS_PER_BYTE: usize = 7;
+
 /// Read an EBML **size** VINT, clearing the length-marker bit. Returns the
 /// width and the decoded value, or `None` for an all-ones "unknown" size.
 fn read_size_vint(b: &[u8]) -> VintRead<Option<usize>> {
@@ -277,17 +283,17 @@ fn read_size_vint(b: &[u8]) -> VintRead<Option<usize>> {
     // and never underflows — unlike the earlier `7 - width + 1`, which
     // underflowed to `0..6` for `width == 8` and panicked (attacker bytes can
     // set any width).
-    let marker: u8 = 1u8 << (8 - width);
+    let marker: u8 = 1u8 << (BYTE_BITS - width);
     // A size VINT's value field is `7 * w` bits in total (RFC 8794 §4.5): the
     // marker bit is data-free in the first byte and the remaining `w-1` bytes
     // each carry a full 8; `7 * 8 == 56`, the width-8 maximum. Decode into a
     // `u64` so the `(1 << bits) - 1` "all-ones unknown-size" test never
     // overflows on a 32-bit `usize` target (where `1usize << 35` for width 5
     // would otherwise panic or mask).
-    let bits = width * 7;
+    let bits = width * VINT_VALUE_BITS_PER_BYTE;
     let mut v: u64 = u64::from(first & !marker);
     for &byte in &b[1..width] {
-        v = (v << 8) | u64::from(byte);
+        v = (v << BYTE_BITS) | u64::from(byte);
     }
     // "Unknown size": every payload bit set = this width's all-ones value.
     let max: u64 = (1u64 << bits) - 1;

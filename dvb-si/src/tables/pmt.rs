@@ -26,9 +26,23 @@ const EXTENSION_HEADER_LEN: usize = 5;
 const PCR_PID_LEN: usize = 2;
 const PROG_INFO_LEN_BYTES: usize = 2;
 use super::CRC_LEN;
+
+/// Width of the `reserved` above a PID.
+const PMT_RESERVED_PID_BITS: u32 = 3;
+/// Width of the `reserved` above a 12-bit length.
+const PMT_RESERVED_LENGTH_BITS: u32 = 4;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES + CRC_LEN;
 const STREAM_HEADER_LEN: usize = 5;
+
+/// Byte offsets in the PMT section header.
+const PROGRAM_NUMBER_OFFSET: usize = 3;
+const PCR_PID_OFFSET: usize = 8;
+const PROGRAM_INFO_LEN_OFFSET: usize = 10;
+
+/// Byte offsets inside one stream header.
+const ELEMENTARY_PID_HI_OFFSET: usize = 2;
+const ES_INFO_LEN_OFFSET: usize = 3;
 
 /// Stream type coding — Rec. ITU-T H.222.0 (06/2021) Table 2-34.
 ///
@@ -592,10 +606,10 @@ pub struct PmtStream<'a> {
     /// `reserved(3)` before `elementary_PID` (ISO/IEC 13818-1 §2.4.4.9,
     /// `111` in every edition); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pid: ReservedOnes<3>,
+    pub reserved_pid: ReservedOnes<PMT_RESERVED_PID_BITS>,
     /// `reserved(4)` before `ES_info_length` (`1111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_es_info_length: ReservedOnes<4>,
+    pub reserved_es_info_length: ReservedOnes<PMT_RESERVED_LENGTH_BITS>,
 }
 
 impl<'a> PmtStream<'a> {
@@ -644,10 +658,10 @@ pub struct PmtSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(3)` before `PCR_PID` (`111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pcr_pid: ReservedOnes<3>,
+    pub reserved_pcr_pid: ReservedOnes<PMT_RESERVED_PID_BITS>,
     /// `reserved(4)` before `program_info_length` (`1111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_program_info_length: ReservedOnes<4>,
+    pub reserved_program_info_length: ReservedOnes<PMT_RESERVED_LENGTH_BITS>,
 }
 
 impl<'a> PmtSection<'a> {
@@ -702,14 +716,17 @@ impl<'a> Parse<'a> for PmtSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let program_number = crate::wire::be_u16(bytes, 3, "pmt")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let program_number = crate::wire::be_u16(bytes, PROGRAM_NUMBER_OFFSET, "pmt")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
-        let pcr_pid = super::pid_of(bytes[8], bytes[9]);
-        let program_info_length = super::desc_loop_len_of(bytes[10], bytes[11]);
+        let pcr_pid = super::pid_of(bytes[PCR_PID_OFFSET], bytes[PCR_PID_OFFSET + 1]);
+        let program_info_length = super::desc_loop_len_of(
+            bytes[PROGRAM_INFO_LEN_OFFSET],
+            bytes[PROGRAM_INFO_LEN_OFFSET + 1],
+        );
 
         let prog_info_start =
             MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES;
@@ -727,8 +744,12 @@ impl<'a> Parse<'a> for PmtSection<'a> {
         let mut pos = prog_info_end;
         while pos + STREAM_HEADER_LEN <= stream_loop_end {
             let stream_type = StreamType::from_u8(bytes[pos]);
-            let elementary_pid = super::pid_of(bytes[pos + 1], bytes[pos + 2]);
-            let es_info_length = super::desc_loop_len_of(bytes[pos + 3], bytes[pos + 4]);
+            let elementary_pid =
+                super::pid_of(bytes[pos + 1], bytes[pos + ELEMENTARY_PID_HI_OFFSET]);
+            let es_info_length = super::desc_loop_len_of(
+                bytes[pos + ES_INFO_LEN_OFFSET],
+                bytes[pos + ES_INFO_LEN_OFFSET + 1],
+            );
             let es_start = pos + STREAM_HEADER_LEN;
             let es_end = es_start + es_info_length;
             if es_end > stream_loop_end {
@@ -745,7 +766,7 @@ impl<'a> Parse<'a> for PmtSection<'a> {
                     bytes[pos + 1],
                 ))),
                 reserved_es_info_length: ReservedOnes::from_bits(u64::from(
-                    super::len_reserved_of(bytes[pos + 3]),
+                    super::len_reserved_of(bytes[pos + ES_INFO_LEN_OFFSET]),
                 )),
             });
             pos = es_end;
@@ -770,10 +791,12 @@ impl<'a> Parse<'a> for PmtSection<'a> {
             pcr_pid,
             program_info,
             streams,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
-            reserved_pcr_pid: ReservedOnes::from_bits(u64::from(super::pid_reserved_of(bytes[8]))),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
+            reserved_pcr_pid: ReservedOnes::from_bits(u64::from(super::pid_reserved_of(
+                bytes[PCR_PID_OFFSET],
+            ))),
             reserved_program_info_length: ReservedOnes::from_bits(u64::from(
-                super::len_reserved_of(bytes[10]),
+                super::len_reserved_of(bytes[PROGRAM_INFO_LEN_OFFSET]),
             )),
         })
     }
@@ -803,24 +826,25 @@ impl Serialize for PmtSection<'_> {
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[3..5].copy_from_slice(&self.program_number.to_be_bytes());
-        buf[5] = self
+        buf[PROGRAM_NUMBER_OFFSET..super::VERSION_FLAGS_OFFSET]
+            .copy_from_slice(&self.program_number.to_be_bytes());
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         super::write_pid_r(
-            &mut buf[8..10],
+            &mut buf[PCR_PID_OFFSET..PROGRAM_INFO_LEN_OFFSET],
             self.pcr_pid,
             self.reserved_pcr_pid.get() as u8,
         )?;
         let pil = broadcast_common::len::fit_bits(
             self.program_info.len() as u64,
-            12,
+            super::DESC_LOOP_LEN_BITS,
             "program_info_length",
         )?;
         super::write_desc_loop_len_r(
-            &mut buf[10..12],
+            &mut buf[PROGRAM_INFO_LEN_OFFSET..PROGRAM_INFO_LEN_OFFSET + PROG_INFO_LEN_BYTES],
             pil as usize,
             self.reserved_program_info_length.get() as u8,
         )?;
@@ -834,14 +858,17 @@ impl Serialize for PmtSection<'_> {
         for stream in &self.streams {
             buf[pos] = stream.stream_type.to_u8();
             super::write_pid_r(
-                &mut buf[pos + 1..pos + 3],
+                &mut buf[pos + 1..pos + ELEMENTARY_PID_HI_OFFSET + 1],
                 stream.elementary_pid,
                 stream.reserved_pid.get() as u8,
             )?;
-            let esl =
-                broadcast_common::len::fit_bits(stream.es_info.len() as u64, 12, "es_info_length")?;
+            let esl = broadcast_common::len::fit_bits(
+                stream.es_info.len() as u64,
+                super::DESC_LOOP_LEN_BITS,
+                "es_info_length",
+            )?;
             super::write_desc_loop_len_r(
-                &mut buf[pos + 3..pos + 5],
+                &mut buf[pos + ES_INFO_LEN_OFFSET..pos + STREAM_HEADER_LEN],
                 esl as usize,
                 stream.reserved_es_info_length.get() as u8,
             )?;

@@ -26,7 +26,29 @@ const TEST_APPLICATION_FLAG_SHIFT: u8 = 7;
 /// Low 7 bits of byte 3: the high bits of the 15-bit `application_type`.
 const APPLICATION_TYPE_HI_MASK: u8 = 0x7F;
 use super::CRC_LEN;
+
+/// Width of the `reserved_future_use` fields (16-bit applications_control).
+const AIT_RESERVED_BITS: u32 = 4;
 const APP_HEADER_LEN: usize = 9;
+
+/// Width of the `reserved` length fields and application_type.
+const APPLICATION_TYPE_BITS: u32 = 15;
+
+/// Byte offsets in the AIT section header.
+const AIT_FLAGS_OFFSET: usize = 3;
+const APPLICATION_TYPE_LO_OFFSET: usize = 4;
+const COMMON_DESC_LEN_OFFSET: usize = 8;
+const COMMON_DESC_LEN_END: usize = 10;
+
+/// Byte layout of one application header.
+const ORGANISATION_ID_LEN: usize = 4;
+const ORGANISATION_ID_BYTE_2_OFFSET: usize = 2;
+const ORGANISATION_ID_BYTE_3_OFFSET: usize = 3;
+const APP_ID_OFFSET: usize = 4;
+const APPLICATION_ID_LEN: usize = 2;
+const APP_CONTROL_CODE_OFFSET: usize = 6;
+const APP_DESC_LEN_OFFSET: usize = 7;
+const APP_DESC_LEN_END: usize = 9;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES + APP_LOOP_LEN_BYTES + CRC_LEN;
 
@@ -205,7 +227,7 @@ pub struct AitApplication<'a> {
     /// `reserved_future_use(4)` before `application_descriptors_loop_length`
     /// (TS 102 809 §5.3.4, `1111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<4>,
+    pub reserved_future_use: ReservedOnes<AIT_RESERVED_BITS>,
 }
 
 impl<'a> AitApplication<'a> {
@@ -264,10 +286,10 @@ pub struct AitSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `common_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_common_descriptors_length: ReservedOnes<4>,
+    pub reserved_common_descriptors_length: ReservedOnes<AIT_RESERVED_BITS>,
     /// `reserved_future_use(4)` before `application_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_application_loop_length: ReservedOnes<4>,
+    pub reserved_application_loop_length: ReservedOnes<AIT_RESERVED_BITS>,
 }
 
 impl<'a> AitSection<'a> {
@@ -331,16 +353,20 @@ impl<'a> Parse<'a> for AitSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let test_application_flag = (bytes[3] & TEST_APPLICATION_FLAG) != 0;
-        let application_type_raw =
-            (((bytes[3] & APPLICATION_TYPE_HI_MASK) as u16) << 8) | (bytes[4] as u16);
+        let test_application_flag = (bytes[AIT_FLAGS_OFFSET] & TEST_APPLICATION_FLAG) != 0;
+        let application_type_raw = (((bytes[AIT_FLAGS_OFFSET] & APPLICATION_TYPE_HI_MASK) as u16)
+            << u8::BITS)
+            | (bytes[APPLICATION_TYPE_LO_OFFSET] as u16);
         let application_type = ApplicationType::from_u16(application_type_raw);
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
-        let common_descriptors_length = super::desc_loop_len_of(bytes[8], bytes[9]);
+        let common_descriptors_length = super::desc_loop_len_of(
+            bytes[COMMON_DESC_LEN_OFFSET],
+            bytes[COMMON_DESC_LEN_OFFSET + 1],
+        );
         let common_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES;
         let common_desc_end = common_desc_start + common_descriptors_length;
         let app_loop_end = total - CRC_LEN;
@@ -381,13 +407,18 @@ impl<'a> Parse<'a> for AitSection<'a> {
         let mut applications = Vec::new();
         let mut pos = app_loop_start;
         while pos + APP_HEADER_LEN <= app_loop_actual_end {
-            let organisation_id = ((bytes[pos] as u32) << 24)
-                | ((bytes[pos + 1] as u32) << 16)
-                | ((bytes[pos + 2] as u32) << 8)
-                | (bytes[pos + 3] as u32);
-            let application_id = crate::wire::be_u16(bytes, pos + 4, "ait")?;
-            let control_code = ControlCode::from_u8(bytes[pos + 6]);
-            let app_desc_length = super::desc_loop_len_of(bytes[pos + 7], bytes[pos + 8]);
+            let organisation_id = u32::from_be_bytes([
+                bytes[pos],
+                bytes[pos + 1],
+                bytes[pos + ORGANISATION_ID_BYTE_2_OFFSET],
+                bytes[pos + ORGANISATION_ID_BYTE_3_OFFSET],
+            ]);
+            let application_id = crate::wire::be_u16(bytes, pos + APP_ID_OFFSET, "ait")?;
+            let control_code = ControlCode::from_u8(bytes[pos + APP_CONTROL_CODE_OFFSET]);
+            let app_desc_length = super::desc_loop_len_of(
+                bytes[pos + APP_DESC_LEN_OFFSET],
+                bytes[pos + APP_DESC_LEN_OFFSET + 1],
+            );
             let app_desc_start = pos + APP_HEADER_LEN;
             let app_desc_end = app_desc_start + app_desc_length;
             if app_desc_end > app_loop_actual_end {
@@ -404,7 +435,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
                 control_code,
                 descriptors: DescriptorLoop::new(&bytes[app_desc_start..app_desc_end]),
                 reserved_future_use: ReservedOnes::from_bits(u64::from(super::len_reserved_of(
-                    bytes[pos + 7],
+                    bytes[pos + APP_DESC_LEN_OFFSET],
                 ))),
             });
             pos = app_desc_end;
@@ -429,9 +460,9 @@ impl<'a> Parse<'a> for AitSection<'a> {
             last_section_number,
             common_descriptors,
             applications,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
             reserved_common_descriptors_length: ReservedOnes::from_bits(u64::from(
-                super::len_reserved_of(bytes[8]),
+                super::len_reserved_of(bytes[COMMON_DESC_LEN_OFFSET]),
             )),
             reserved_application_loop_length: ReservedOnes::from_bits(u64::from(
                 super::len_reserved_of(bytes[common_desc_end]),
@@ -466,28 +497,29 @@ impl Serialize for AitSection<'_> {
         // (r02-W20).
         let app_type_raw = broadcast_common::len::fit_bits(
             self.application_type.to_u16() as u64,
-            15,
+            APPLICATION_TYPE_BITS,
             "application_type",
         )?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[3] = (u8::from(self.test_application_flag) << TEST_APPLICATION_FLAG_SHIFT)
-            | ((app_type_raw >> 8) as u8);
-        buf[4] = (app_type_raw & 0xFF) as u8;
-        buf[5] = self
+        buf[AIT_FLAGS_OFFSET] = (u8::from(self.test_application_flag)
+            << TEST_APPLICATION_FLAG_SHIFT)
+            | ((app_type_raw >> u8::BITS) as u8);
+        buf[APPLICATION_TYPE_LO_OFFSET] = (app_type_raw & u64::from(u8::MAX)) as u8;
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         let cdl = broadcast_common::len::fit_bits(
             self.common_descriptors.len() as u64,
-            12,
+            super::DESC_LOOP_LEN_BITS,
             "common_descriptors_length",
         )?;
         super::write_desc_loop_len_r(
-            &mut buf[8..10],
+            &mut buf[COMMON_DESC_LEN_OFFSET..COMMON_DESC_LEN_END],
             cdl as usize,
             self.reserved_common_descriptors_length.get() as u8,
         )?;
@@ -502,25 +534,31 @@ impl Serialize for AitSection<'_> {
             .iter()
             .map(|a| APP_HEADER_LEN + a.descriptors.len())
             .sum();
-        let apl = broadcast_common::len::fit_bits(app_bytes as u64, 12, "application_loop_length")?;
+        let apl = broadcast_common::len::fit_bits(
+            app_bytes as u64,
+            super::DESC_LOOP_LEN_BITS,
+            "application_loop_length",
+        )?;
         super::write_desc_loop_len_r(
-            &mut buf[app_loop_start..app_loop_start + 2],
+            &mut buf[app_loop_start..app_loop_start + APP_LOOP_LEN_BYTES],
             apl as usize,
             self.reserved_application_loop_length.get() as u8,
         )?;
 
         let mut pos = app_loop_start + APP_LOOP_LEN_BYTES;
         for app in &self.applications {
-            buf[pos..pos + 4].copy_from_slice(&app.identifier.organisation_id.to_be_bytes());
-            buf[pos + 4..pos + 6].copy_from_slice(&app.identifier.application_id.to_be_bytes());
-            buf[pos + 6] = app.control_code.to_u8();
+            buf[pos..pos + ORGANISATION_ID_LEN]
+                .copy_from_slice(&app.identifier.organisation_id.to_be_bytes());
+            buf[pos + APP_ID_OFFSET..pos + APP_ID_OFFSET + APPLICATION_ID_LEN]
+                .copy_from_slice(&app.identifier.application_id.to_be_bytes());
+            buf[pos + APP_CONTROL_CODE_OFFSET] = app.control_code.to_u8();
             let adl = broadcast_common::len::fit_bits(
                 app.descriptors.len() as u64,
-                12,
+                super::DESC_LOOP_LEN_BITS,
                 "application_descriptors_loop_length",
             )?;
             super::write_desc_loop_len_r(
-                &mut buf[pos + 7..pos + 9],
+                &mut buf[pos + APP_DESC_LEN_OFFSET..pos + APP_DESC_LEN_END],
                 adl as usize,
                 app.reserved_future_use.get() as u8,
             )?;

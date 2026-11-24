@@ -29,6 +29,7 @@
 //! `MHADecoderConfigurationRecord` as its body.
 
 use crate::error::{Error, Result};
+use crate::wire_cursor::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
@@ -63,6 +64,15 @@ pub const MHAC_RECORD_FIXED_LEN: usize = 5;
 
 /// The only valid value for `configurationVersion` (ISO/IEC 23008-3 §20).
 pub const MHAC_CONFIGURATION_VERSION: u8 = 1;
+
+/// Byte offset of `referenceChannelLayout` in the record.
+const MHAC_REFERENCE_CHANNEL_LAYOUT_OFFSET: usize = 2;
+/// Byte offset of `mpegh3daConfigLength` in the record.
+const MHAC_CONFIG_LENGTH_OFFSET: usize = 3;
+/// Byte width of `mpegh3daConfigLength`.
+const MHAC_CONFIG_LENGTH_LEN: usize = core::mem::size_of::<u16>();
+/// Number of bits in one byte, for MHAS byte/bit position conversion.
+const BITS_PER_BYTE: usize = u8::BITS as usize;
 
 // ---------------------------------------------------------------------------
 // MHADecoderConfigurationRecord
@@ -136,8 +146,12 @@ impl<'a> Parse<'a> for MHADecoderConfigurationRecord {
             }));
         }
         let mpegh3da_profile_level_indication = bytes[1];
-        let reference_channel_layout = bytes[2];
-        let config_len = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
+        let reference_channel_layout = bytes[MHAC_REFERENCE_CHANNEL_LAYOUT_OFFSET];
+        let config_len = usize::from(be_u16(
+            bytes,
+            MHAC_CONFIG_LENGTH_OFFSET,
+            "MHADecoderConfigurationRecord",
+        )?);
         let need = MHAC_RECORD_FIXED_LEN + config_len;
         need_in(bytes, need, "MHADecoderConfigurationRecord.mpegh3daConfig")?;
         let mpegh3da_config = bytes[MHAC_RECORD_FIXED_LEN..need].to_vec();
@@ -162,11 +176,12 @@ impl Serialize for MHADecoderConfigurationRecord {
         need_out(buf, need)?;
         buf[0] = self.configuration_version;
         buf[1] = self.mpegh3da_profile_level_indication;
-        buf[2] = self.reference_channel_layout;
+        buf[MHAC_REFERENCE_CHANNEL_LAYOUT_OFFSET] = self.reference_channel_layout;
         let config_len =
             broadcast_common::len::fit_u16(self.mpegh3da_config.len(), "mpegh3daConfigLength")?;
-        buf[3..5].copy_from_slice(&config_len.to_be_bytes());
-        buf[5..need].copy_from_slice(&self.mpegh3da_config);
+        buf[MHAC_CONFIG_LENGTH_OFFSET..MHAC_CONFIG_LENGTH_OFFSET + MHAC_CONFIG_LENGTH_LEN]
+            .copy_from_slice(&config_len.to_be_bytes());
+        buf[MHAC_RECORD_FIXED_LEN..need].copy_from_slice(&self.mpegh3da_config);
         Ok(need)
     }
 }
@@ -248,7 +263,7 @@ impl<'a> BitReader<'a> {
     /// Jump forward to `byte_offset` (never backward — every call site here
     /// only ever advances past a just-located, already-consumed header).
     fn seek_to_byte(&mut self, byte_offset: usize) {
-        let target_bits = byte_offset * 8;
+        let target_bits = byte_offset * BITS_PER_BYTE;
         let current_bits = self.inner.bits_read();
         if target_bits > current_bits {
             let _ = self.inner.skip_bits(target_bits - current_bits);
@@ -259,7 +274,7 @@ impl<'a> BitReader<'a> {
     fn byte_pos(&self) -> Option<usize> {
         self.inner
             .is_byte_aligned()
-            .then_some(self.inner.bits_read() / 8)
+            .then_some(self.inner.bits_read() / BITS_PER_BYTE)
     }
 }
 

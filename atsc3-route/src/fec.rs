@@ -38,6 +38,12 @@ pub const ROUTE_FEC_PAYLOAD_ID_LEN: usize = 4;
 /// Maximum value of the 24-bit Encoding Symbol ID (`ESI`) field.
 pub const MAX_ESI: u32 = 0x00FF_FFFF;
 
+/// Bit width of the Encoding Symbol ID (`ESI`) field (A/331 Figure A.3.4).
+const ESI_BITS: u32 = 24;
+
+/// Byte offset of the Source Block Number (`SBN`) field.
+const SBN_OFFSET: usize = 0;
+
 // ---------------------------------------------------------------------------
 // SourceFecPayloadId — Compact No-Code FEC scheme (§A.3.5.1, Figure A.3.3)
 // ---------------------------------------------------------------------------
@@ -65,8 +71,10 @@ impl<'a> Parse<'a> for SourceFecPayloadId {
             ROUTE_FEC_PAYLOAD_ID_LEN,
             "source-flow FEC Payload ID (start_offset)",
         )?;
+        let mut id = [0u8; ROUTE_FEC_PAYLOAD_ID_LEN];
+        id.copy_from_slice(&bytes[..ROUTE_FEC_PAYLOAD_ID_LEN]);
         Ok(SourceFecPayloadId {
-            start_offset: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            start_offset: u32::from_be_bytes(id),
         })
     }
 }
@@ -80,7 +88,7 @@ impl Serialize for SourceFecPayloadId {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, ROUTE_FEC_PAYLOAD_ID_LEN)?;
-        buf[0..4].copy_from_slice(&self.start_offset.to_be_bytes());
+        buf[..ROUTE_FEC_PAYLOAD_ID_LEN].copy_from_slice(&self.start_offset.to_be_bytes());
         Ok(ROUTE_FEC_PAYLOAD_ID_LEN)
     }
 }
@@ -111,8 +119,10 @@ impl<'a> Parse<'a> for RepairFecPayloadId {
             ROUTE_FEC_PAYLOAD_ID_LEN,
             "repair-flow FEC Payload ID (SBN/ESI)",
         )?;
-        let sbn = bytes[0];
-        let esi = u32::from_be_bytes([0, bytes[1], bytes[2], bytes[3]]);
+        let mut id = [0u8; ROUTE_FEC_PAYLOAD_ID_LEN];
+        id.copy_from_slice(&bytes[..ROUTE_FEC_PAYLOAD_ID_LEN]);
+        let sbn = id[SBN_OFFSET];
+        let esi = u32::from_be_bytes(id) & MAX_ESI;
         Ok(RepairFecPayloadId { sbn, esi })
     }
 }
@@ -126,10 +136,9 @@ impl Serialize for RepairFecPayloadId {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, ROUTE_FEC_PAYLOAD_ID_LEN)?;
-        broadcast_common::len::fit_bits(self.esi as u64, 24, "ESI")?;
-        let esi_bytes = self.esi.to_be_bytes();
-        buf[0] = self.sbn;
-        buf[1..4].copy_from_slice(&esi_bytes[1..4]);
+        broadcast_common::len::fit_bits(u64::from(self.esi), ESI_BITS, "ESI")?;
+        let packed = (u32::from(self.sbn) << ESI_BITS) | self.esi;
+        buf[..ROUTE_FEC_PAYLOAD_ID_LEN].copy_from_slice(&packed.to_be_bytes());
         Ok(ROUTE_FEC_PAYLOAD_ID_LEN)
     }
 }

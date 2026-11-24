@@ -37,6 +37,10 @@ pub use timed_metadata::webvtt::{
     cue_block, escape_payload, format_timestamp, write_document, write_segment,
 };
 
+/// Index of the timing line when a cue identifier line precedes it
+/// (W3C WebVTT §4.3, cue timings).
+const TIMING_LINE_AFTER_IDENTIFIER: usize = 2;
+
 /// The result of [`parse_webvtt`]: the extracted cues, plus whether the
 /// source document used any construct this crate's model (and SRT) cannot
 /// represent.
@@ -185,7 +189,7 @@ fn parse_block(lines: &[&str]) -> Result<Option<(Cue, bool)>, Error> {
         let t = *lines
             .get(1)
             .ok_or(Error::InvalidWebVtt(WebVttError::IdentifierWithoutTiming))?;
-        (2, t)
+        (TIMING_LINE_AFTER_IDENTIFIER, t)
     };
 
     let (start_str, after_arrow) = timing_line.split_once("-->").ok_or_else(|| {

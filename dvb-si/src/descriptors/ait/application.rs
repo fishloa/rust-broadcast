@@ -18,6 +18,18 @@ const HEADER_LEN: usize = 2;
 const PROFILE_ENTRY_LEN: usize = 5;
 const FLAGS_LEN: usize = 1;
 const PRIORITY_LEN: usize = 1;
+/// Offset of `version_major` in a profile entry.
+const VERSION_MAJOR_OFFSET: usize = core::mem::size_of::<u16>();
+/// Offset of `version_minor` in a profile entry.
+const VERSION_MINOR_OFFSET: usize = VERSION_MAJOR_OFFSET + 1;
+/// Offset of `version_micro` in a profile entry.
+const VERSION_MICRO_OFFSET: usize = VERSION_MINOR_OFFSET + 1;
+/// Mask of the 2-bit `visibility` field.
+const VISIBILITY_MASK: u8 = 0x03;
+/// Mask of `service_bound_flag` in the flags byte.
+const SERVICE_BOUND_FLAG_MASK: u8 = 0x80;
+const SERVICE_BOUND_FLAG_SHIFT: u8 = 7;
+const VISIBILITY_SHIFT: u8 = 5;
 /// Width mask of the 5-bit `reserved_future_use` in the flags byte.
 const RESERVED_FU_BITS: u32 = 5;
 
@@ -47,7 +59,7 @@ impl Visibility {
     /// Decode from the 2-bit wire value.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & VISIBILITY_MASK {
             0 => Self::NotVisibleAll,
             1 => Self::NotVisibleUsers,
             2 => Self::ReservedFutureUse,
@@ -64,7 +76,7 @@ impl Visibility {
             Self::NotVisibleUsers => 1,
             Self::ReservedFutureUse => 2,
             Self::VisibleAll => 3,
-            Self::Other(v) => v & 0x03,
+            Self::Other(v) => v & VISIBILITY_MASK,
         }
     }
 
@@ -172,9 +184,9 @@ impl<'a> Parse<'a> for ApplicationDescriptor {
         let mut pos = 1;
         while pos < profiles_end {
             let profile = u16::from_be_bytes([body[pos], body[pos + 1]]);
-            let version_major = body[pos + 2];
-            let version_minor = body[pos + 3];
-            let version_micro = body[pos + 4];
+            let version_major = body[pos + VERSION_MAJOR_OFFSET];
+            let version_minor = body[pos + VERSION_MINOR_OFFSET];
+            let version_micro = body[pos + VERSION_MICRO_OFFSET];
             profiles.push(ApplicationProfile {
                 profile,
                 version_major,
@@ -190,8 +202,8 @@ impl<'a> Parse<'a> for ApplicationDescriptor {
             });
         }
         let flags_byte = body[profiles_end];
-        let service_bound_flag = (flags_byte & 0x80) != 0;
-        let visibility = Visibility::from_u8((flags_byte >> 5) & 0x03);
+        let service_bound_flag = (flags_byte & SERVICE_BOUND_FLAG_MASK) != 0;
+        let visibility = Visibility::from_u8((flags_byte >> VISIBILITY_SHIFT) & VISIBILITY_MASK);
         let reserved_future_use = ReservedOnes::from_bits(u64::from(flags_byte));
         let application_priority = body[profiles_end + FLAGS_LEN];
         let labels_start = profiles_end + FLAGS_LEN + PRIORITY_LEN;
@@ -236,17 +248,21 @@ impl Serialize for ApplicationDescriptor {
         }
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
-        buf[2] = profiles_length as u8;
-        let mut pos = 3;
+        buf[HEADER_LEN] = profiles_length as u8;
+        let mut pos = HEADER_LEN + 1;
         for p in &self.profiles {
-            buf[pos..pos + 2].copy_from_slice(&p.profile.to_be_bytes());
-            buf[pos + 2] = p.version_major;
-            buf[pos + 3] = p.version_minor;
-            buf[pos + 4] = p.version_micro;
+            buf[pos..pos + VERSION_MAJOR_OFFSET].copy_from_slice(&p.profile.to_be_bytes());
+            buf[pos + VERSION_MAJOR_OFFSET] = p.version_major;
+            buf[pos + VERSION_MINOR_OFFSET] = p.version_minor;
+            buf[pos + VERSION_MICRO_OFFSET] = p.version_micro;
             pos += PROFILE_ENTRY_LEN;
         }
-        let flags_byte = (u8::from(self.service_bound_flag) << 7)
-            | (broadcast_common::len::fit_mask(self.visibility.to_u8(), 0x03, "visibility")? << 5)
+        let flags_byte = (u8::from(self.service_bound_flag) << SERVICE_BOUND_FLAG_SHIFT)
+            | (broadcast_common::len::fit_mask(
+                self.visibility.to_u8(),
+                VISIBILITY_MASK,
+                "visibility",
+            )? << VISIBILITY_SHIFT)
             | self.reserved_future_use.get() as u8;
         buf[pos] = flags_byte;
         buf[pos + 1] = self.application_priority;

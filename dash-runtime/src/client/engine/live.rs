@@ -13,6 +13,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use url::Url;
 
 use super::*;
+
+/// Divisor splitting a measured round trip into its outbound half.
+const RTT_HALVING_DIVISOR: u32 = 2;
+
+/// Standby bound used when the segment count is unknown.
+const UNBOUNDED_COUNT: u64 = u64::MAX / 2;
 use crate::client::action::{MpdValidators, UtcId};
 use crate::client::config::DashClockPolicy;
 use crate::client::meta::UtcResponse;
@@ -647,7 +653,8 @@ impl DashClient {
             }
         }
         let mid = self.live.as_ref().map_or(now, |l| {
-            let half = l.mpd_exchange.received.saturating_sub(l.mpd_exchange.sent) / 2;
+            let half =
+                l.mpd_exchange.received.saturating_sub(l.mpd_exchange.sent) / RTT_HALVING_DIVISOR;
             l.mpd_exchange
                 .sent
                 .checked_add(half)
@@ -1304,7 +1311,7 @@ impl DashClient {
         self.mpd_failures = 0;
         live.refresh.awaiting_retry = false;
         let ex = live.mpd_exchange;
-        let half = ex.received.saturating_sub(ex.sent) / 2;
+        let half = ex.received.saturating_sub(ex.sent) / RTT_HALVING_DIVISOR;
         let mid = ex.sent.checked_add(half).unwrap_or(ex.sent);
         live.refresh.next_at = mup.and_then(|m| mid.checked_add(m.max(floor)));
     }
@@ -1608,7 +1615,7 @@ impl DashClient {
             let marker = {
                 let rep = &mut self.periods[pi].lanes[li].reps[ri];
                 if rep.joined {
-                    let bound = p.plan.len().unwrap_or(u64::MAX / 2);
+                    let bound = p.plan.len().unwrap_or(UNBOUNDED_COUNT);
                     rep.next_issue = match rep.last_time {
                         Some(t) => p
                             .plan

@@ -47,6 +47,15 @@ use alloc::vec::Vec;
 
 use crate::document::{self, *};
 
+/// Colons in a frame time expression: `HH:MM:SS:FF` (IMSC 1.1 §7.12.7).
+const FRAME_TIME_COLONS: usize = 3;
+
+/// Most regions an ISD may present (IMSC 1.1 §7.12.1.3).
+const MAX_PRESENTED_REGIONS: usize = 4;
+
+/// Most `tts:textShadow` values (IMSC 1.1 §8.4.11).
+const MAX_TEXT_SHADOWS: usize = 4;
+
 /// Which IMSC profile version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -371,7 +380,7 @@ impl Validator {
             return true;
         }
         let colon_count = expr.chars().filter(|&c| c == ':').count();
-        colon_count == 3
+        colon_count == FRAME_TIME_COLONS
     }
 
     fn validate_head(&mut self, head: &HeadElement) {
@@ -382,7 +391,7 @@ impl Validator {
 
     fn validate_layout(&mut self, layout: &LayoutElement) {
         // §7.12.1.3: max 4 presented regions
-        if layout.regions.len() > 4 {
+        if layout.regions.len() > MAX_PRESENTED_REGIONS {
             self.err(
                 "IMSC §7.12.1.3",
                 format!(
@@ -441,7 +450,7 @@ impl Validator {
             // §8.4.11: textShadow max 4 shadow values
             if let Some(ref ts) = p.style_attributes.tts_text_shadow {
                 let count: usize = ts.split(',').count();
-                if count > 4 {
+                if count > MAX_TEXT_SHADOWS {
                     self.err(
                         "IMSC §8.4.11",
                         format!("tts:textShadow has {} shadow values (max 4)", count),

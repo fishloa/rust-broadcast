@@ -20,6 +20,26 @@ pub const TAG: u8 = 0x02;
 const HEADER_LEN: usize = 2;
 const PROTOCOL_ID_LEN: usize = 2;
 const LABEL_LEN: usize = 1;
+/// Width of the fixed body prefix: `protocol_id` + `transport_protocol_label`.
+const BODY_PREFIX_LEN: usize = PROTOCOL_ID_LEN + LABEL_LEN;
+/// Offset of `transport_protocol_label` in the descriptor body.
+const LABEL_OFFSET: usize = PROTOCOL_ID_LEN;
+/// Width of the OC selector's `remote_connection` byte.
+const REMOTE_CONNECTION_BYTE_LEN: usize = 1;
+/// Mask of `remote_connection` in the OC selector's first byte.
+const REMOTE_CONNECTION_MASK: u8 = 0x80;
+/// Width of the OC selector's `remote_connection_info` block.
+const REMOTE_CONNECTION_INFO_LEN: usize = 6;
+/// Width of each service identifier field in `remote_connection_info`.
+const SERVICE_ID_FIELD_LEN: usize = core::mem::size_of::<u16>();
+/// Offset of `original_network_id` in `remote_connection_info`.
+const ORIGINAL_NETWORK_ID_OFFSET: usize = 0;
+/// Offset of `transport_stream_id` in `remote_connection_info`.
+const TRANSPORT_STREAM_ID_OFFSET: usize = SERVICE_ID_FIELD_LEN;
+/// Offset of `service_id` in `remote_connection_info`.
+const SERVICE_ID_OFFSET: usize = TRANSPORT_STREAM_ID_OFFSET + SERVICE_ID_FIELD_LEN;
+/// Shortest OC selector: the `remote_connection` byte + `component_tag`.
+const MIN_OC_SELECTOR_LEN: usize = REMOTE_CONNECTION_BYTE_LEN + 1;
 
 /// Protocol ID for Object Carousel — ETSI TS 102 809 Table 29.
 pub const PROTOCOL_ID_OBJECT_CAROUSEL: u16 = 0x0001;
@@ -121,21 +141,30 @@ impl<'a> TransportProtocolDescriptor<'a> {
 
     fn decode_oc_selector(&self) -> SelectorKind<'a> {
         let b = self.selector_bytes;
-        if b.len() < 2 {
+        if b.len() < MIN_OC_SELECTOR_LEN {
             return SelectorKind::Unknown(b);
         }
-        let remote_connection = (b[0] & 0x80) != 0;
-        let mut pos = 1;
+        let remote_connection = (b[0] & REMOTE_CONNECTION_MASK) != 0;
+        let mut pos = REMOTE_CONNECTION_BYTE_LEN;
         let remote_connection_info = if remote_connection {
-            if pos + 6 > b.len() {
+            if pos + REMOTE_CONNECTION_INFO_LEN > b.len() {
                 return SelectorKind::Unknown(b);
             }
             let info = OcRemoteConnection {
-                original_network_id: u16::from_be_bytes([b[pos], b[pos + 1]]),
-                transport_stream_id: u16::from_be_bytes([b[pos + 2], b[pos + 3]]),
-                service_id: u16::from_be_bytes([b[pos + 4], b[pos + 5]]),
+                original_network_id: u16::from_be_bytes([
+                    b[pos + ORIGINAL_NETWORK_ID_OFFSET],
+                    b[pos + ORIGINAL_NETWORK_ID_OFFSET + 1],
+                ]),
+                transport_stream_id: u16::from_be_bytes([
+                    b[pos + TRANSPORT_STREAM_ID_OFFSET],
+                    b[pos + TRANSPORT_STREAM_ID_OFFSET + 1],
+                ]),
+                service_id: u16::from_be_bytes([
+                    b[pos + SERVICE_ID_OFFSET],
+                    b[pos + SERVICE_ID_OFFSET + 1],
+                ]),
             };
-            pos += 6;
+            pos += REMOTE_CONNECTION_INFO_LEN;
             Some(info)
         } else {
             None
@@ -218,15 +247,15 @@ impl<'a> Parse<'a> for TransportProtocolDescriptor<'a> {
             "TransportProtocolDescriptor",
             "unexpected tag for transport_protocol_descriptor",
         )?;
-        if body.len() < PROTOCOL_ID_LEN + LABEL_LEN {
+        if body.len() < BODY_PREFIX_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "transport_protocol_descriptor body shorter than minimum 3 bytes",
             });
         }
         let protocol_id = u16::from_be_bytes([body[0], body[1]]);
-        let transport_protocol_label = body[2];
-        let selector_bytes = &body[PROTOCOL_ID_LEN + LABEL_LEN..];
+        let transport_protocol_label = body[LABEL_OFFSET];
+        let selector_bytes = &body[BODY_PREFIX_LEN..];
         Ok(Self {
             protocol_id,
             transport_protocol_label,
@@ -238,7 +267,7 @@ impl<'a> Parse<'a> for TransportProtocolDescriptor<'a> {
 impl Serialize for TransportProtocolDescriptor<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + PROTOCOL_ID_LEN + LABEL_LEN + self.selector_bytes.len()
+        HEADER_LEN + BODY_PREFIX_LEN + self.selector_bytes.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -252,9 +281,10 @@ impl Serialize for TransportProtocolDescriptor<'_> {
         }
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
-        buf[2..4].copy_from_slice(&self.protocol_id.to_be_bytes());
-        buf[4] = self.transport_protocol_label;
-        buf[5..5 + self.selector_bytes.len()].copy_from_slice(self.selector_bytes);
+        buf[HEADER_LEN..HEADER_LEN + LABEL_OFFSET].copy_from_slice(&self.protocol_id.to_be_bytes());
+        buf[HEADER_LEN + LABEL_OFFSET] = self.transport_protocol_label;
+        buf[HEADER_LEN + BODY_PREFIX_LEN..HEADER_LEN + BODY_PREFIX_LEN + self.selector_bytes.len()]
+            .copy_from_slice(self.selector_bytes);
         Ok(len)
     }
 }

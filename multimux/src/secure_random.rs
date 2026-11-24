@@ -25,8 +25,12 @@ fn fill(buf: &mut [u8]) {
 /// jitter). Unlike [`fill`]'s callers this is not a security boundary, so an
 /// unavailable source degrades to `0` (which the jitter's own mixing turns
 /// into a non-degenerate sequence) rather than taking the process down.
+/// Random bytes drawn per token fill.
+#[cfg(any(feature = "whip", feature = "whep"))]
+const TOKEN_CHUNK_BYTES: usize = 64;
+
 pub(crate) fn seed_entropy() -> u64 {
-    let mut buf = [0u8; 8];
+    let mut buf = [0u8; core::mem::size_of::<u64>()];
     getrandom::fill(&mut buf).map_or(0, |()| u64::from_le_bytes(buf))
 }
 
@@ -49,7 +53,7 @@ fn token_symbol(b: u8) -> Option<char> {
 /// A uniformly random alphanumeric token of `len` characters.
 pub(crate) fn token(len: usize) -> String {
     let mut out = String::with_capacity(len);
-    let mut buf = [0u8; 64];
+    let mut buf = [0u8; TOKEN_CHUNK_BYTES];
     while out.len() < len {
         fill(&mut buf);
         for &b in &buf {
@@ -66,7 +70,7 @@ pub(crate) fn token(len: usize) -> String {
 /// A random non-zero 32-bit SSRC (the low bit is forced so the value is
 /// never 0).
 pub(crate) fn ssrc() -> u32 {
-    let mut b = [0u8; 4];
+    let mut b = [0u8; core::mem::size_of::<u32>()];
     fill(&mut b);
     u32::from_be_bytes(b) | 1
 }

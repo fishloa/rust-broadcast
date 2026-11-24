@@ -2,12 +2,18 @@
 
 use super::*;
 
+/// `SampleEntry` `reserved[6]` (ISO/IEC 14496-12:2026 §8.5.2.2).
+const SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
+/// An audio sample entry's `compression_id` + `packet_size`, two reserved
+/// `u16` fields (ISO/IEC 14496-12:2026 §12.2.3.2).
+const COMPRESSION_ID_AND_PACKET_SIZE_LEN: usize = core::mem::size_of::<u32>();
+
 pub(super) enum MediaKind {
     Video,
     Audio,
     Subtitle {
-        media_header: [u8; 4],
-        handler: [u8; 4],
+        media_header: [u8; FOURCC_LEN],
+        handler: [u8; FOURCC_LEN],
         name: &'static [u8],
     },
 }
@@ -30,7 +36,7 @@ impl MediaKind {
         })
     }
 
-    pub(super) fn handler_type(&self) -> [u8; 4] {
+    pub(super) fn handler_type(&self) -> [u8; FOURCC_LEN] {
         match self {
             Self::Video => *b"vide",
             Self::Audio => *b"soun",
@@ -51,9 +57,10 @@ impl MediaKind {
     /// §12.6.2), `nmhd` for `wvtt`/`text` (§8.4.5.2), see §7.3.4.
     pub(super) fn minf_header(&self) -> Option<OpaqueBox> {
         match self {
-            Self::Subtitle { media_header, .. } => {
-                Some(OpaqueBox::new(*media_header, vec![0u8; 4]))
-            }
+            Self::Subtitle { media_header, .. } => Some(OpaqueBox::new(
+                *media_header,
+                vec![0u8; crate::box_types::FULLBOX_EXTRA_SIZE],
+            )),
             _ => None,
         }
     }
@@ -174,7 +181,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 config: config.clone(),
                 extra_boxes: vec![],
             }));
-            TrackMedia::video(entry, (*width as u32) << 16, (*height as u32) << 16)
+            TrackMedia::video(
+                entry,
+                (*width as u32) << FIXED_16_16_FRACTION_BITS,
+                (*height as u32) << FIXED_16_16_FRACTION_BITS,
+            )
         }
         CodecConfig::Aac {
             esds,
@@ -193,11 +204,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             let entry = SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry {
                 codec_type: *b"mp4a",
                 entry_version: rate.entry_version,
-                reserved_1: [0u8; 6],
+                reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                compression_id_and_packet_size: [0u8; 4],
+                compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
                 config_boxes,
             }));
@@ -209,8 +220,9 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             sample_rate,
             sample_size,
         } => {
-            let mut dac3_full = vec![0u8; config.serialized_len() + 8];
-            dac3_full[4..8].copy_from_slice(b"dac3");
+            let mut dac3_full =
+                vec![0u8; config.serialized_len() + crate::box_types::BOX_HEADER_MIN_SIZE];
+            dac3_full[FOURCC_LEN..crate::box_types::BOX_HEADER_MIN_SIZE].copy_from_slice(b"dac3");
             let n = config.serialize_into(&mut dac3_full[8..])?;
             let dac3_opaque = OpaqueBox::new(*b"dac3", dac3_full[8..8 + n].to_vec());
             let rate = audio_rate_carriage(*sample_rate);
@@ -220,11 +232,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }
             let entry = SampleEntryVariant::Ac3(Box::new(Ac3SampleEntry {
                 entry_version: rate.entry_version,
-                reserved_1: [0u8; 6],
+                reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                compression_id_and_packet_size: [0u8; 4],
+                compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
                 config_boxes,
             }));
@@ -236,8 +248,9 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             sample_rate,
             sample_size,
         } => {
-            let mut dec3_full = vec![0u8; config.serialized_len() + 8];
-            dec3_full[4..8].copy_from_slice(b"dec3");
+            let mut dec3_full =
+                vec![0u8; config.serialized_len() + crate::box_types::BOX_HEADER_MIN_SIZE];
+            dec3_full[FOURCC_LEN..crate::box_types::BOX_HEADER_MIN_SIZE].copy_from_slice(b"dec3");
             let n = config.serialize_into(&mut dec3_full[8..])?;
             let dec3_opaque = OpaqueBox::new(*b"dec3", dec3_full[8..8 + n].to_vec());
             let rate = audio_rate_carriage(*sample_rate);
@@ -247,11 +260,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }
             let entry = SampleEntryVariant::Ec3(Box::new(Ec3SampleEntry {
                 entry_version: rate.entry_version,
-                reserved_1: [0u8; 6],
+                reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                compression_id_and_packet_size: [0u8; 4],
+                compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
                 config_boxes,
             }));
@@ -273,7 +286,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 config: config.clone(),
                 children: alloc::vec![crate::sample_entries::SampleEntryChild::Config],
             }));
-            TrackMedia::video(entry, (*width as u32) << 16, (*height as u32) << 16)
+            TrackMedia::video(
+                entry,
+                (*width as u32) << FIXED_16_16_FRACTION_BITS,
+                (*height as u32) << FIXED_16_16_FRACTION_BITS,
+            )
         }
         CodecConfig::Vp9 {
             config,
@@ -291,7 +308,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 config: config.clone(),
                 children: alloc::vec![crate::sample_entries::SampleEntryChild::Config],
             }));
-            TrackMedia::video(entry, (*width as u32) << 16, (*height as u32) << 16)
+            TrackMedia::video(
+                entry,
+                (*width as u32) << FIXED_16_16_FRACTION_BITS,
+                (*height as u32) << FIXED_16_16_FRACTION_BITS,
+            )
         }
         CodecConfig::Opus {
             config,
@@ -307,11 +328,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }
             let entry = SampleEntryVariant::Opus(Box::new(OpusSampleEntry {
                 entry_version: rate.entry_version,
-                reserved_1: [0u8; 6],
+                reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                compression_id_and_packet_size: [0u8; 4],
+                compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
                 config_boxes,
             }));
@@ -331,11 +352,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }
             let entry = SampleEntryVariant::Flac(Box::new(FlacSampleEntry {
                 entry_version: rate.entry_version,
-                reserved_1: [0u8; 6],
+                reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                compression_id_and_packet_size: [0u8; 4],
+                compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
                 config_boxes,
             }));
@@ -355,11 +376,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }
             let entry = SampleEntryVariant::Ac4(Box::new(Ac4SampleEntry {
                 entry_version: rate.entry_version,
-                reserved_1: [0u8; 6],
+                reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                compression_id_and_packet_size: [0u8; 4],
+                compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
                 config_boxes,
             }));
@@ -380,11 +401,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             let entry = SampleEntryVariant::Mha(Box::new(MhaSampleEntry {
                 codec_type: crate::mpegh::MHA1_FOURCC,
                 entry_version: rate.entry_version,
-                reserved_1: [0u8; 6],
+                reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                compression_id_and_packet_size: [0u8; 4],
+                compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
                 config_boxes,
             }));
@@ -409,7 +430,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 visual,
                 config_boxes: vec![esds_opaque],
             }));
-            TrackMedia::video(entry, (*width as u32) << 16, (*height as u32) << 16)
+            TrackMedia::video(
+                entry,
+                (*width as u32) << FIXED_16_16_FRACTION_BITS,
+                (*height as u32) << FIXED_16_16_FRACTION_BITS,
+            )
         }
         CodecConfig::MpegAudio {
             esds,
@@ -429,11 +454,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             let entry = SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry {
                 codec_type: *b"mp4a",
                 entry_version: rate.entry_version,
-                reserved_1: [0u8; 6],
+                reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                compression_id_and_packet_size: [0u8; 4],
+                compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
                 config_boxes,
             }));
@@ -455,11 +480,11 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             let entry = SampleEntryVariant::Dts(Box::new(DtsSampleEntry {
                 codec_type: *codec_fourcc,
                 entry_version: rate.entry_version,
-                reserved_1: [0u8; 6],
+                reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                compression_id_and_packet_size: [0u8; 4],
+                compression_id_and_packet_size: [0u8; COMPRESSION_ID_AND_PACKET_SIZE_LEN],
                 samplerate: rate.samplerate_field,
                 config_boxes,
             }));
@@ -488,7 +513,12 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             sample_entry: Some(se),
             ..
         } => {
-            let (entry, media_header, handler, name): (_, &[u8; 4], &[u8; 4], &[u8]) = match se {
+            let (entry, media_header, handler, name): (
+                _,
+                &[u8; FOURCC_LEN],
+                &[u8; FOURCC_LEN],
+                &[u8],
+            ) = match se {
                 SubtitleSampleEntry::Ttml(e) => (
                     SampleEntryVariant::Stpp(Box::new(e.clone())),
                     b"sthd",

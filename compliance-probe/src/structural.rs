@@ -34,13 +34,17 @@ use media_doctor::{
 
 use crate::record::record_counter;
 
+/// Number of `media-doctor` structural diagnostics driven by
+/// [`run_structural_checks`].
+const STRUCTURAL_DIAGNOSTIC_COUNT: usize = 7;
+
 /// Run `media-doctor`'s structural [`Diagnostic`] set over `ts` (a
 /// contiguous, whole-number-of-188-byte-packets TS byte buffer — see
 /// `media_doctor::Diagnostic::run`'s own contract), recording
 /// `compliance_probe_structural_findings_total` for every [`media_doctor::Finding`]
 /// raised, then returning the full [`Report`] for direct inspection.
 pub fn run_structural_checks(ts: &[u8]) -> Report {
-    let checks: [&dyn Diagnostic; 7] = [
+    let checks: [&dyn Diagnostic; STRUCTURAL_DIAGNOSTIC_COUNT] = [
         &SyncByteCheck,
         &PatPmtVersionCheck,
         &CcAnomalyCheck,

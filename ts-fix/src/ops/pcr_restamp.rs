@@ -176,6 +176,10 @@ pub(crate) struct PcrRestampOp {
 /// ticks-per-packet rate at a given bitrate (`188 × 8 × 27_000_000 / bps`).
 const TICKS_NUM: u128 = 188 * 8 * (broadcast_common::clock33::PCR_HZ as u128);
 
+/// Largest forward PCR distance that is unambiguous: beyond half the wrap the
+/// nearer direction is backwards.
+const PCR_27MHZ_MAX_FORWARD: u64 = PCR_27MHZ_MODULUS / 2;
+
 impl PcrRestampOp {
     pub(crate) fn new(mode: PcrRestamp) -> Self {
         Self {
@@ -309,7 +313,7 @@ impl Op for PcrRestampOp {
                 if is_genuine_unflagged_break {
                     anchor.frozen = true;
                 }
-                if !anchor.frozen && fwd > 0 && fwd < PCR_27MHZ_MODULUS / 2 && pkt_delta > 0 {
+                if !anchor.frozen && fwd > 0 && fwd < PCR_27MHZ_MAX_FORWARD && pkt_delta > 0 {
                     // Sane forward observation (possibly across a wrap): trust it,
                     // advance the anchor's observation window.
                     anchor.last_obs_pkt = now;

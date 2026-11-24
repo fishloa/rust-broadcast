@@ -88,6 +88,20 @@ use crate::route::RouteHandle;
 /// manifest and reuses this constant rather than duplicating the literal.
 pub(crate) const DASH_MANIFEST_CONTENT_TYPE: &str = "application/dash+xml";
 
+/// Divisor of the rounding term added before a nanosecond conversion.
+const ROUNDING_DIVISOR: u128 = 2;
+
+/// Smallest duration a manifest may advertise, in seconds: a positive
+/// `minimumUpdatePeriod`/`minBufferTime`.
+const MIN_DURATION_SECS: f64 = 0.001;
+
+/// Milliseconds in one second, as the float the xs:duration writer works in.
+const MILLIS_PER_SEC_F64: f64 = 1000.0;
+
+/// `Latency@target` as a multiple of the part target (ISO/IEC 23009-1
+/// low-latency mode).
+const LATENCY_TARGET_PARTS: u64 = 3;
+
 /// The DASH [`Output`]: `manifest.mpd` only. Init/segment bytes are the
 /// origin's shared resource route — see the module docs.
 pub struct DashOutput;
@@ -555,7 +569,7 @@ fn set_presentation_time_offset(
             let timescale = template.multi.base.effective_timescale();
             let nanos_per_sec = u128::from(broadcast_common::units::NANOS_PER_SEC);
             let ticks = (u128::from(media_start_ns) * u128::from(timescale.get())
-                + nanos_per_sec / 2)
+                + nanos_per_sec / ROUNDING_DIVISOR)
                 / nanos_per_sec;
             let ticks = u64::try_from(ticks).ok()?;
             template.multi.base.presentation_time_offset = (ticks > 0).then_some(ticks);
@@ -642,7 +656,7 @@ fn render_period_document(
         minimum_update_period: Some(xs_duration_secs_checked(
             "minimum_update_period",
             if flavour == DashFlavour::LowLatency {
-                route.part_target().as_secs_f64().max(0.001)
+                route.part_target().as_secs_f64().max(MIN_DURATION_SECS)
             } else {
                 target_duration_secs
             },
@@ -670,10 +684,11 @@ fn render_period_document(
     if flavour == DashFlavour::LowLatency {
         let part_target_ms =
             u32::try_from(route.part_target().as_millis().max(1)).unwrap_or(u32::MAX);
-        let chunk_duration_secs = f64::from(part_target_ms) / 1000.0;
-        let latency_target_ms = u32::try_from(u64::from(part_target_ms) * 3).unwrap_or(u32::MAX);
+        let chunk_duration_secs = f64::from(part_target_ms) / MILLIS_PER_SEC_F64;
+        let latency_target_ms =
+            u32::try_from(u64::from(part_target_ms) * LATENCY_TARGET_PARTS).unwrap_or(u32::MAX);
         let ato = (target_duration_secs - chunk_duration_secs).max(0.0);
-        let ato = (ato * 1000.0).round() / 1000.0;
+        let ato = (ato * MILLIS_PER_SEC_F64).round() / MILLIS_PER_SEC_F64;
         let mut mpd = broadcast_dash::Mpd::parse(xml.as_bytes()).ok()?;
         for template in mpd
             .periods

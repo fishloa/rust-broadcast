@@ -20,6 +20,8 @@ pub const TAG: u8 = 0x0C;
 const HEADER_LEN: usize = 2;
 const LABEL_LEN_FIELD: usize = 1;
 const PRIORITY_LEN: usize = 1;
+/// Width of the `transport_protocol_label` byte after the descriptor header.
+const TRANSPORT_PROTOCOL_LABEL_LEN: usize = 1;
 
 /// Lowest legal `prefetch_priority` (inclusive).
 pub const PRIORITY_MIN: u8 = 1;
@@ -108,8 +110,8 @@ impl Serialize for PrefetchDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = self.transport_protocol_label;
-        let mut pos = 3;
+        buf[HEADER_LEN] = self.transport_protocol_label;
+        let mut pos = HEADER_LEN + TRANSPORT_PROTOCOL_LABEL_LEN;
         for e in &self.entries {
             buf[pos] = broadcast_common::len::fit_u8(e.label.len(), "label_length")?;
             pos += LABEL_LEN_FIELD;

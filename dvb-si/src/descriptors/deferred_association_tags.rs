@@ -50,6 +50,8 @@ const LOOP_LENGTH_LEN: usize = 1;
 const ASSOCIATION_TAG_LEN: usize = 2;
 /// `transport_stream_id` + `program_number` (2 × 16-bit uimsbf).
 const SERVICE_ID_LEN: usize = 4;
+/// Width of each of the two service identifier fields (TS id, programme number).
+const SERVICE_ID_FIELD_LEN: usize = core::mem::size_of::<u16>();
 /// `org_network_id` field width in bytes (16-bit uimsbf).
 const ORG_NETWORK_ID_LEN: usize = 2;
 
@@ -161,7 +163,8 @@ impl<'a> Parse<'a> for DeferredAssociationTagsDescriptor<'a> {
             .map(|c| u16::from_be_bytes([c[0], c[1]]))
             .collect();
         let transport_stream_id = u16::from_be_bytes([rest[0], rest[1]]);
-        let program_number = u16::from_be_bytes([rest[2], rest[3]]);
+        let program_number =
+            u16::from_be_bytes([rest[SERVICE_ID_FIELD_LEN], rest[SERVICE_ID_FIELD_LEN + 1]]);
         let private = &rest[SERVICE_ID_LEN..];
         let deferred_service_location = match private.len() {
             0 => None,
@@ -206,8 +209,10 @@ impl Serialize for DeferredAssociationTagsDescriptor<'_> {
             buf[pos..pos + ASSOCIATION_TAG_LEN].copy_from_slice(&tag.to_be_bytes());
             pos += ASSOCIATION_TAG_LEN;
         }
-        buf[pos..pos + 2].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[pos + 2..pos + SERVICE_ID_LEN].copy_from_slice(&self.program_number.to_be_bytes());
+        buf[pos..pos + SERVICE_ID_FIELD_LEN]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        buf[pos + SERVICE_ID_FIELD_LEN..pos + SERVICE_ID_LEN]
+            .copy_from_slice(&self.program_number.to_be_bytes());
         pos += SERVICE_ID_LEN;
         if let Some(loc) = &self.deferred_service_location {
             buf[pos..pos + ORG_NETWORK_ID_LEN].copy_from_slice(&loc.org_network_id.to_be_bytes());

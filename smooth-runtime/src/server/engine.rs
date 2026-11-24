@@ -22,6 +22,10 @@ pub const QUALITY_LEVELS_PREFIX: &str = "QualityLevels(";
 /// (MS-SSTR §2.2.3).
 pub const FRAGMENTS_SEGMENT: &str = "Fragments(";
 
+/// Trailing path segments of the fragment-URL template: `QualityLevels(N)` and
+/// `Fragments(KIND=START)` (MS-SSTR §2.2.3).
+const TEMPLATE_PATH_SEGMENT_COUNT: usize = 2;
+
 /// `StreamIndex@Subtype` for a text stream: `SUBT`, "Subtitles that are used for
 /// foreign-language audio" (MS-SSTR §2.2.2.3). The IR does not say whether a
 /// track is a caption service for the deaf (`CAPT`), so the subtitle category is
@@ -1000,7 +1004,7 @@ impl SmoothRequest {
         let mut trailing = path
             .rsplit('/')
             .filter(|segment| !segment.is_empty())
-            .take(2);
+            .take(TEMPLATE_PATH_SEGMENT_COUNT);
         let fragment = trailing.next()?;
         let quality = trailing.next()?.strip_prefix(QUALITY_LEVELS_PREFIX)?;
         let bitrate = quality.strip_suffix(')')?.parse().ok()?;
