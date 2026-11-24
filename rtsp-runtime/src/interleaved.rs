@@ -22,6 +22,9 @@ pub const MAGIC: u8 = 0x24;
 /// Length of the interleaved framing prefix: `$` + channel + u16 length.
 pub const HEADER_LEN: usize = 4;
 
+/// Byte offset of the 2-byte payload-length field in an interleaved frame.
+const LENGTH_OFFSET: usize = 2;
+
 /// One interleaved binary data block (RFC 2326 §10.12): a channel id and a
 /// payload (exactly one upper-layer PDU, e.g. one RTP packet).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,7 +110,7 @@ impl InterleavedFrame {
             }));
         }
         let channel = buf[1];
-        let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+        let len = u16::from_be_bytes([buf[LENGTH_OFFSET], buf[LENGTH_OFFSET + 1]]) as usize;
         let total = HEADER_LEN + len;
         if buf.len() < total {
             return Ok(None);

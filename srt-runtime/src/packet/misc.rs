@@ -4,6 +4,11 @@
 
 use super::number::{AckNumber, MESSAGE_NUMBER_MASK, MessageNumber, SeqNo, SocketId, SrtTimestamp};
 use super::{Error, Result, be32, put_be32};
+
+/// Length of a Drop Request CIF and the offset of its Last Packet Sequence
+/// Number (§3.2.5, Figure 15).
+const DROP_REQ_CIF_LEN: usize = 8;
+const DROP_REQ_LAST_SEQ_OFFSET: usize = 4;
 use broadcast_common::error::BufferTooShort;
 
 /// Peer error code for a file-system error — the only value
@@ -94,9 +99,9 @@ impl DropReqPacket {
         dest_socket_id: SocketId,
         cif: &[u8],
     ) -> Result<Self> {
-        if cif.len() != 8 {
+        if cif.len() != DROP_REQ_CIF_LEN {
             return Err(Error::BufferTooShort(BufferTooShort {
-                need: 8,
+                need: DROP_REQ_CIF_LEN,
                 have: cif.len(),
                 what: "drop request CIF",
             }));
@@ -113,17 +118,17 @@ impl DropReqPacket {
             timestamp,
             dest_socket_id,
             first_seq: SeqNo::from_wire_masked(be32(cif, 0)),
-            last_seq: SeqNo::from_wire_masked(be32(cif, 4)),
+            last_seq: SeqNo::from_wire_masked(be32(cif, DROP_REQ_LAST_SEQ_OFFSET)),
         })
     }
 
     pub(crate) fn cif_len(&self) -> usize {
-        8
+        DROP_REQ_CIF_LEN
     }
 
     pub(crate) fn write_cif(&self, buf: &mut [u8]) -> Result<()> {
         put_be32(buf, 0, self.first_seq.value());
-        put_be32(buf, 4, self.last_seq.value());
+        put_be32(buf, DROP_REQ_LAST_SEQ_OFFSET, self.last_seq.value());
         Ok(())
     }
 }

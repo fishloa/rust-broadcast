@@ -19,6 +19,9 @@ use media_plane::trunk::TrunkConfig;
 use std::convert::Infallible;
 use std::time::Duration;
 
+/// Factor the reconnect backoff grows by on each attempt.
+const BACKOFF_EXPANSION: u64 = 2;
+
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
@@ -73,7 +76,7 @@ fn retry_schedule() -> broadcast_common::backoff::BackoffSteps {
     let mut delay = RESOURCE_RETRY_BASE_MS;
     for _ in 0..MAX_RESOURCE_ATTEMPTS {
         steps.push(Duration::from_millis(delay.min(RESOURCE_RETRY_CAP_MS)));
-        delay = delay.saturating_mul(2);
+        delay = delay.saturating_mul(BACKOFF_EXPANSION);
     }
     broadcast_common::backoff::BackoffSteps {
         steps,

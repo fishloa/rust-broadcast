@@ -70,6 +70,12 @@ pub const SALT_LEN: usize = 16;
 /// its salt argument (`LSB(64,Salt)`, §6.2.1/§6.3.1: 64 bits = 8 bytes). The
 /// remaining (most-significant) bytes of `Salt` feed the AES-CTR IV instead
 /// (§6.1.2/§6.2.2/§6.3.2).
+/// Key lengths (bytes) AES key wrap accepts: AES-128/192/256.
+const VALID_KEY_LENS: [usize; 3] = [16, 24, 32];
+
+/// Bytes of RFC 3394's default initial value (the wrap ICV).
+const WRAP_ICV_LEN: usize = 8;
+
 const PBKDF2_SALT_LEN: usize = 8;
 
 /// Number of most-significant bytes of the 128-bit `Salt` used to build the
@@ -132,7 +138,7 @@ pub fn derive_kek(
     salt: &[u8; SALT_LEN],
     klen: usize,
 ) -> Result<Zeroizing<Vec<u8>>> {
-    if !matches!(klen, 16 | 24 | 32) {
+    if !VALID_KEY_LENS.contains(&klen) {
         return Err(invalid_key_length("KLen"));
     }
     // LSB(64, Salt): the low/least-significant 8 bytes of the 128-bit,
@@ -229,8 +235,8 @@ impl KekCache {
 /// [`Error::InvalidField`] if `kek.len()` is not 16, 24, or 32, or if
 /// `plaintext_keys.len()` is not a multiple of 8 bytes (RFC 3394 operates on
 /// 64-bit semiblocks).
-pub fn wrap_sek(kek: &[u8], plaintext_keys: &[u8]) -> Result<([u8; 8], Vec<u8>)> {
-    let mut out = vec![0u8; plaintext_keys.len() + 8];
+pub fn wrap_sek(kek: &[u8], plaintext_keys: &[u8]) -> Result<([u8; WRAP_ICV_LEN], Vec<u8>)> {
+    let mut out = vec![0u8; plaintext_keys.len() + WRAP_ICV_LEN];
     match kek.len() {
         16 => KwAes128::new_from_slice(kek)
             .map_err(|_| invalid_key_length("KEK"))?
@@ -252,9 +258,9 @@ pub fn wrap_sek(kek: &[u8], plaintext_keys: &[u8]) -> Result<([u8; 8], Vec<u8>)>
             reason: "length must be a multiple of 8 bytes (RFC 3394 semiblocks)",
         })
     })?;
-    let mut icv = [0u8; 8];
-    icv.copy_from_slice(&out[..8]);
-    Ok((icv, out[8..].to_vec()))
+    let mut icv = [0u8; WRAP_ICV_LEN];
+    icv.copy_from_slice(&out[..WRAP_ICV_LEN]);
+    Ok((icv, out[WRAP_ICV_LEN..].to_vec()))
 }
 
 /// Unwrap the SEK(s) with the KEK (inverse RFC 3394 AES key wrap —
@@ -273,8 +279,12 @@ pub fn wrap_sek(kek: &[u8], plaintext_keys: &[u8]) -> Result<([u8; 8], Vec<u8>)>
 ///
 /// The plaintext SEK(s) come back in a [`Zeroizing`] buffer, wiped when
 /// dropped.
-pub fn unwrap_sek(kek: &[u8], icv: &[u8; 8], wrapped: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
-    let mut input = Vec::with_capacity(8 + wrapped.len());
+pub fn unwrap_sek(
+    kek: &[u8],
+    icv: &[u8; WRAP_ICV_LEN],
+    wrapped: &[u8],
+) -> Result<Zeroizing<Vec<u8>>> {
+    let mut input = Vec::with_capacity(WRAP_ICV_LEN + wrapped.len());
     input.extend_from_slice(icv);
     input.extend_from_slice(wrapped);
     let mut out = Zeroizing::new(vec![0u8; wrapped.len()]);

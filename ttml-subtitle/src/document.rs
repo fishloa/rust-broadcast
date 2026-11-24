@@ -72,6 +72,13 @@ pub const NS_XLINK: &str = "http://www.w3.org/1999/xlink";
 /// Maximum nesting depth for span/metadata elements to prevent stack overflow.
 const MAX_NESTING_DEPTH: usize = 64;
 
+/// Components of `ttp:frameRateMultiplier`'s `"<numerator> <denominator>"`
+/// value (TTML2 §7.2.7).
+const FRAME_RATE_MULTIPLIER_PARTS: usize = 2;
+
+/// Nesting depth at which a metadata child's own children are scanned.
+const METADATA_CHILD_DEPTH: usize = 2;
+
 /// Maximum depth of an [`UnknownElement`] subtree captured by the parser
 /// (TTML2 §7.2 foreign content); the subtree shape is input-controlled, so
 /// it is bounded at parse time just like span/metadata nesting.
@@ -375,7 +382,7 @@ pub struct TtElement {
 impl TtElement {
     /// Derive the time context from this element's parameter attributes.
     pub fn time_context(&self) -> crate::time::TimeContext {
-        use crate::time::{ClockMode, DropMode, MarkerMode, TimeBase};
+        use crate::time::{ClockMode, DEFAULT_FRAME_RATE, DropMode, MarkerMode, TimeBase};
 
         let time_base = match self.ttp_time_base.as_deref() {
             Some("smpte") => TimeBase::Smpte,
@@ -387,11 +394,11 @@ impl TtElement {
             .ttp_frame_rate
             .as_deref()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(30);
+            .unwrap_or(DEFAULT_FRAME_RATE);
 
         let (frame_mult_num, frame_mult_den) = if let Some(s) = &self.ttp_frame_rate_multiplier {
             let parts: Vec<&str> = s.split_whitespace().collect();
-            if parts.len() == 2 {
+            if parts.len() == FRAME_RATE_MULTIPLIER_PARTS {
                 (parts[0].parse().unwrap_or(1), parts[1].parse().unwrap_or(1))
             } else {
                 (1, 1)
@@ -2668,7 +2675,7 @@ fn parse_document_metadata_child(p: &mut Pull<'_>, node: &StartTag) -> Result<Me
             Item::Text(text) => push_text(&mut nodes, text),
             Item::Start(child) => {
                 if child.local() == "conformsToStandard" && child.namespace() == Some(NS_EBUTTM) {
-                    let scanned = scan_children(p, &child, 2)?;
+                    let scanned = scan_children(p, &child, METADATA_CHILD_DEPTH)?;
                     if !has_foreign_namespace_attributes(&child) && !scanned.has_element {
                         typed.push(MetadataChild::EbuttmConformsToStandard(build_ebuttm_text(
                             &child,
@@ -4539,7 +4546,7 @@ fn style_attrs_namespaces(attrs: &StyleAttributes, ns: &mut NamespaceMap) {
 /// Does any field of `attrs` belong to namespace `ns`? The per-URI check the
 /// pre-#1110 `*_ns_needed` helpers each inlined, kept as one function.
 fn style_attrs_use_ns(attrs: &StyleAttributes, ns: &str) -> bool {
-    let fields: [(&str, &Option<String>); 59] = [
+    let fields: &[(&str, &Option<String>)] = &[
         (NS_TTS, &attrs.tts_background_color),
         (NS_TTS, &attrs.tts_background_clip),
         (NS_TTS, &attrs.tts_background_extent),

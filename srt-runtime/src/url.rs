@@ -241,10 +241,14 @@ fn has_srt_scheme(input: &str) -> bool {
 
 /// Percent-encode every `#` that occurs after the first `?`, so a `#` inside a
 /// query value is not read as a fragment delimiter (see [`parse_url`]).
+/// Capacity slack for the percent-escapes this pass may add.
+const PERCENT_ESCAPE_SLACK: usize = 8;
+
 fn escape_query_fragments(input: &str) -> alloc::string::String {
     match input.split_once('?') {
         Some((head, query)) => {
-            let mut out = alloc::string::String::with_capacity(input.len() + 8);
+            let mut out =
+                alloc::string::String::with_capacity(input.len() + PERCENT_ESCAPE_SLACK);
             out.push_str(head);
             out.push('?');
             for ch in query.chars() {

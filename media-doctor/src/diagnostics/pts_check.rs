@@ -38,9 +38,31 @@ use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 /// and `transmux`'s demux-edge unroller all apply.
 const PTS_MODULUS: u64 = broadcast_common::clock33::WRAP_33BIT;
 
+/// `private_stream_1`, which carries a PES optional header
+/// (ISO/IEC 13818-1 §2.4.3.7 Table 2-22).
+const STREAM_ID_PRIVATE_STREAM_1: u8 = 0xBD;
+
+/// Lowest audio `stream_id` with a PES optional header (§2.4.3.7 Table 2-22).
+const STREAM_ID_AUDIO_MIN: u8 = 0xC0;
+
+/// Highest stream `stream_id` with a PES optional header, covering audio
+/// (`0xC0`-`0xDF`) and video (`0xE0`-`0xEF`).
+const STREAM_ID_AUDIO_MAX: u8 = 0xEF;
+
+/// `packet_start_code_prefix` (ISO/IEC 13818-1 §2.4.3.2).
+const PES_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
+
+/// Offset of `stream_id` after the `packet_start_code_prefix`.
+const PES_STREAM_ID_OFFSET: usize = 3;
+
+/// Shortest PES header that can carry an optional header: start code,
+/// `stream_id`, `PES_packet_length`, flags and `PES_header_data_length`
+/// (ISO/IEC 13818-1 §2.4.3.6).
+const PES_MIN_HEADER_LEN: usize = 9;
+
 /// Half of the 33-bit range — used as the threshold to distinguish a genuine
 /// backward jump from a legal 33-bit wrap.
-const PTS_HALF: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
+const PTS_WRAP_MIDPOINT: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
 
 /// Which timestamp kinds we track per PID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +171,8 @@ impl Diagnostic for PtsCheck {
 /// program_stream_map, etc.) — and any payload that is not a PES at all
 /// (PSI/SI section data on PIDs like PAT/PMT/EIT) — are skipped.
 fn is_pes_with_optional_header(stream_id: u8) -> bool {
-    stream_id == 0xBD || (0xC0..=0xEF).contains(&stream_id)
+    stream_id == STREAM_ID_PRIVATE_STREAM_1
+        || (STREAM_ID_AUDIO_MIN..=STREAM_ID_AUDIO_MAX).contains(&stream_id)
 }
 
 /// Check a single assembled unit for PTS/DTS issues.
@@ -172,10 +195,10 @@ fn check_pes(
     prev_decode: &mut TsValue,
 ) {
     // Gate: must be a real PES with an optional header.
-    if pes_bytes.len() < 9 || pes_bytes[0..3] != [0x00, 0x00, 0x01] {
+    if pes_bytes.len() < PES_MIN_HEADER_LEN || pes_bytes[..PES_START_CODE.len()] != PES_START_CODE {
         return;
     }
-    let stream_id = pes_bytes[3];
+    let stream_id = pes_bytes[PES_STREAM_ID_OFFSET];
     if !is_pes_with_optional_header(stream_id) {
         return;
     }
@@ -215,7 +238,7 @@ fn check_pes(
         // Wrap-aware forward-distance on the 33-bit clock: a legal step is a
         // small positive modular delta; a backward jump is a large one.
         let delta = broadcast_common::clock33::wrapping_forward_distance(prev_decode.raw, raw);
-        if delta != 0 && delta > PTS_HALF {
+        if delta != 0 && delta > PTS_WRAP_MIDPOINT {
             let rule = if kind == "DTS" {
                 "dts-backward"
             } else {
@@ -507,7 +530,7 @@ mod tests {
             report
         }
 
-        let at_half = report_after(PTS_HALF);
+        let at_half = report_after(PTS_WRAP_MIDPOINT);
         assert!(
             at_half
                 .findings()
@@ -517,7 +540,7 @@ mod tests {
             at_half.findings()
         );
 
-        let past_half = report_after(PTS_HALF + 1);
+        let past_half = report_after(PTS_WRAP_MIDPOINT + 1);
         assert_eq!(
             past_half
                 .findings()

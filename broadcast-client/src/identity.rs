@@ -139,8 +139,11 @@ impl ClientIdentity {
     }
 }
 
+/// DER SEQUENCE header: the tag byte plus its length octet (ITU-T X.690 §8.1).
+const DER_SEQUENCE_HEADER_LEN: usize = 2;
+
 fn is_der_sequence(der: &[u8]) -> bool {
-    der.first() == Some(&DER_SEQUENCE_TAG) && der.len() > 2
+    der.first() == Some(&DER_SEQUENCE_TAG) && der.len() > DER_SEQUENCE_HEADER_LEN
 }
 
 impl Drop for ClientIdentity {

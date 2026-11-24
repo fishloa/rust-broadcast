@@ -54,6 +54,14 @@ const MAX_NAK_SEQS_PER_PACKET: usize = 1 << 16;
 /// driver's outbound queue forever.
 const MIN_RETRANSMIT_INTERVAL: Duration = Duration::from_millis(20);
 
+/// Divisor taking the midpoint of a bisection range.
+const BISECTION_DIVISOR: usize = 2;
+
+/// Bit widths of the two sequence fields the NAK/Drop Request CIFs carry
+/// (§3.2.5, §3.2.7).
+const SEQ_NUMBER_BITS: u32 = 31;
+const MESSAGE_NUMBER_BITS: u32 = 26;
+
 /// One buffered, sent-but-not-yet-acknowledged data packet (rules 1, 16,
 /// 18).
 #[derive(Debug, Clone)]
@@ -114,7 +122,7 @@ impl Sender {
         let (mut lo, mut hi) = (0usize, self.buffer.len());
         while lo < hi {
             self.lookup_steps = self.lookup_steps.saturating_add(1);
-            let mid = lo + (hi - lo) / 2;
+            let mid = lo + (hi - lo) / BISECTION_DIVISOR;
             let d = seq::seq_diff(self.buffer[mid].seq, seq);
             match d.cmp(&0) {
                 core::cmp::Ordering::Equal => return Some(mid),
@@ -131,7 +139,7 @@ impl Sender {
         let (mut lo, mut hi) = (0usize, self.buffer.len());
         while lo < hi {
             self.lookup_steps = self.lookup_steps.saturating_add(1);
-            let mid = lo + (hi - lo) / 2;
+            let mid = lo + (hi - lo) / BISECTION_DIVISOR;
             if seq::seq_diff(self.buffer[mid].seq, seq) < 0 {
                 lo = mid + 1;
             } else {
@@ -182,8 +190,12 @@ impl Sender {
         // The wire fields are 31 and 26 bits wide (§3.1): a wider value is a
         // caller bug, reported rather than silently wrapped into another
         // packet's number.
-        broadcast_common::len::fit_bits(u64::from(seq), 31, "Packet Sequence Number")?;
-        broadcast_common::len::fit_bits(u64::from(message_number), 26, "Message Number")?;
+        broadcast_common::len::fit_bits(u64::from(seq), SEQ_NUMBER_BITS, "Packet Sequence Number")?;
+        broadcast_common::len::fit_bits(
+        u64::from(message_number),
+        MESSAGE_NUMBER_BITS,
+        "Message Number",
+    )?;
         debug_assert!(
             self.buffer
                 .back()
@@ -225,8 +237,12 @@ impl Sender {
         key_flag: EncryptionKeyField,
         now: Timestamp,
     ) -> Result<Vec<u8>> {
-        broadcast_common::len::fit_bits(u64::from(seq), 31, "Packet Sequence Number")?;
-        broadcast_common::len::fit_bits(u64::from(message_number), 26, "Message Number")?;
+        broadcast_common::len::fit_bits(u64::from(seq), SEQ_NUMBER_BITS, "Packet Sequence Number")?;
+        broadcast_common::len::fit_bits(
+        u64::from(message_number),
+        MESSAGE_NUMBER_BITS,
+        "Message Number",
+    )?;
         debug_assert!(
             self.buffer
                 .back()

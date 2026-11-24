@@ -1,0 +1,26 @@
+broadcast-dash/src/descriptors.rs:pub const XLINK_RESOLVE_TO_ZERO: &str = "urn:mpeg:dash:resolve-to-zero:2013"; # public API name mirrors the spec token `resolve-to-zero`; renaming would break the public API
+broadcast-hls/src/lib.rs:pub const ZERO: Self = Self(0.0); # public API constant `ZERO`; renaming would break the public API
+broadcast-hls/src/seq.rs:pub const ZERO: MediaSequence = MediaSequence(0); # public API constant `ZERO`; renaming would break the public API
+broadcast-hls/src/seq.rs:pub const ZERO: PartIndex = PartIndex(0); # public API constant `ZERO`; renaming would break the public API
+media-doctor/src/container_codec.rs:it — ISO/IEC 14496-15:2017 §8.3.3.1.1", # spec clause number inside a line-continued string literal, not code
+media-doctor/src/container_codec.rs:NAL_unit_type {} array; hvc1 requires {} — ISO/IEC 14496-15:2017 \ # spec clause number inside a line-continued string literal, not code
+media-doctor/src/container_codec.rs:length prefix (ISO/IEC 14496-15:2017 §4.3.2)", # spec clause number inside a line-continued string literal, not code
+media-doctor/src/container_codec.rs:embedded SPS profile_idc 0x{:02X} — ISO/IEC 14496-15:2017 §5.3.3.1.1", # spec clause number inside a line-continued string literal, not code
+media-doctor/src/container_codec.rs:embedded SPS level_idc 0x{:02X} — ISO/IEC 14496-15:2017 §5.3.3.1.1", # spec clause number inside a line-continued string literal, not code
+media-doctor/src/container_codec.rs:embedded SPS chroma_format_idc {} — ISO/IEC 14496-15:2017 §5.3.3.1.1", # spec clause number inside a line-continued string literal, not code
+media-doctor/src/container_codec.rs:SPS general_profile_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1", # spec clause number inside a line-continued string literal, not code
+media-doctor/src/container_codec.rs:general_level_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1", # spec clause number inside a line-continued string literal, not code
+media-doctor/src/container_codec.rs:chroma_format_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1", # spec clause number inside a line-continued string literal, not code
+media-doctor/src/diagnostics/codec_signalling.rs:claim and the bitstream disagree (ISO/IEC 13818-1 Table 2-34)", # spec clause number inside a line-continued string literal, not code
+media-doctor/src/diagnostics/codec_signalling.rs:"PMT declares stream_type AAC-ADTS (0x0F) on PID 0x{pid:04X} but its \ # spec clause number inside a line-continued string literal, not code
+media-doctor/src/diagnostics/fps_cadence.rs:ISO/IEC 13818-1 §2.4.3.7 PES-timestamp cadence" # spec clause number inside a line-continued string literal, not code
+media-doctor/src/diagnostics/pts_check.rs:"Forbidden PTS_DTS_flags == 0b01 on PID 0x{pid:04X} \ # spec clause number inside a line-continued string literal, not code
+webrtc-runtime/src/media/transport.rs:(RFC 8122 §5, RFC 8827 §6.5)" # spec citation inside a line-continued format string, not code
+ts-fix/src/bin/ts-fix.rs:help = "Set discontinuity_indicator on genuine, unflagged PCR breaks (TR 101 290 §5.2.2 2.3b) \ # spec citation inside a line-continued clap help string, not code
+container-probe/src/ts.rs:const TS_PACKET_SIZE_192: usize = 192; # name states the exact wire packet size, which is the constant's identity; the tests reference these names
+container-probe/src/ts.rs:const TS_PACKET_SIZE_204: usize = 204; # name states the exact wire packet size, which is the constant's identity; the tests reference these names
+container-probe/src/ts.rs:const TS_PACKET_SIZE_208: usize = 208; # name states the exact wire packet size, which is the constant's identity; the tests reference these names
+rtmp-runtime/src/ids.rs:pub const ZERO: Self = Self(Duration::ZERO); # public API constant `ZERO`; renaming would break the public API
+multimux/src/output/whep.rs:"whep: packetiser emitted a packet shorter than the RFC 3550 §5.1 fixed \ # spec citation inside a line-continued string literal, not code
+srt-runtime/src/packet/number.rs:pub const ZERO: AckNumber = AckNumber(0); # public API constant `ZERO`; renaming would break the public API
+srt-runtime/src/packet/number.rs:pub const ZERO: SrtTimestamp = SrtTimestamp(0); # public API constant `ZERO`; renaming would break the public API

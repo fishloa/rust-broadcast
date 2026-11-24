@@ -22,6 +22,9 @@ const MAX_EPOCH_MS: i64 = 253_402_300_799_999;
 /// `None` outside years -9999..=9999. (`jiff::Timestamp` is deliberately NOT
 /// used: its range stops at 9999-12-30T22:00Z, which would break the
 /// byte-identical output for the last day of year 9999.)
+/// Digits jiff prints for a negative year, which this renderer trims back.
+const PRINTED_YEAR_DIGITS: usize = 6;
+
 fn civil_from_epoch_ms(epoch_ms: i64) -> Option<DateTime> {
     date(1970, 1, 1)
         .at(0, 0, 0, 0)
@@ -36,7 +39,7 @@ fn render(dt: &DateTime) -> String {
         // has always printed `{year:04}`, i.e. `-001` (sign + at least 3
         // digits), and keeps doing so. (Negative years are not RFC 3339.)
         Some(rest) => {
-            let (year6, tail) = rest.split_at(6);
+            let (year6, tail) = rest.split_at(PRINTED_YEAR_DIGITS);
             let digits = year6.trim_start_matches('0');
             alloc::format!("-{digits:0>3}{tail}")
         }
@@ -68,7 +71,7 @@ impl TimeAnchor {
         // ticks / 90_000 * 1000 == ticks / 90 ; done in i128 so nothing overflows.
         let ms = i128::from(self.utc_epoch_ms)
             + delta_ticks
-                .saturating_mul(1000)
+                .saturating_mul(i128::from(broadcast_common::units::MILLIS_PER_SEC))
                 .div_euclid(i128::from(crate::PTS_HZ));
         ms.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
     }

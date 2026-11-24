@@ -17,6 +17,10 @@ use alloc::vec::Vec;
 use super::number::{SeqNo, SocketId, SrtTimestamp};
 use super::{Error, F_BIT, Result, be32, put_be32};
 
+/// Bytes of one loss-list entry word; a range is two of them (Appendix A).
+const LOSS_ENTRY_WORD_LEN: usize = 4;
+const RANGE_ENTRY_LEN: usize = 2 * LOSS_ENTRY_WORD_LEN;
+
 /// One decoded entry of a NAK loss list (Appendix A). Data-carrying ADT — not
 /// a spec/field label, so it is exempt from the `name()`/`Display`
 /// convention (see `workspace-guards/tests/guards/label.rs`).
@@ -55,25 +59,25 @@ impl NakPacket {
         dest_socket_id: SocketId,
         cif: &[u8],
     ) -> Result<Self> {
-        let mut entries = Vec::with_capacity(cif.len() / 4);
+        let mut entries = Vec::with_capacity(cif.len() / LOSS_ENTRY_WORD_LEN);
         let mut rest = cif;
         while !rest.is_empty() {
-            if rest.len() < 4 {
+            if rest.len() < LOSS_ENTRY_WORD_LEN {
                 return Err(Error::InvalidLossList {
                     reason: "trailing bytes are not a whole 4-byte entry",
                 });
             }
             let w0 = be32(rest, 0);
-            rest = &rest[4..];
+            rest = &rest[LOSS_ENTRY_WORD_LEN..];
             if w0 & F_BIT != 0 {
                 let first = SeqNo::from_wire_masked(w0);
-                if rest.len() < 4 {
+                if rest.len() < LOSS_ENTRY_WORD_LEN {
                     return Err(Error::InvalidLossList {
                         reason: "range entry missing its end sequence number",
                     });
                 }
                 let w1 = be32(rest, 0);
-                rest = &rest[4..];
+                rest = &rest[LOSS_ENTRY_WORD_LEN..];
                 if w1 & F_BIT != 0 {
                     return Err(Error::InvalidLossList {
                         reason: "range end entry had its top bit set",
@@ -97,8 +101,8 @@ impl NakPacket {
         self.entries
             .iter()
             .map(|e| match e {
-                LossListEntry::Single(_) => 4,
-                LossListEntry::Range(..) => 8,
+                LossListEntry::Single(_) => LOSS_ENTRY_WORD_LEN,
+                LossListEntry::Range(..) => RANGE_ENTRY_LEN,
             })
             .sum()
     }
@@ -109,12 +113,12 @@ impl NakPacket {
             match *entry {
                 LossListEntry::Single(seq) => {
                     put_be32(buf, off, seq.value());
-                    off += 4;
+                    off += LOSS_ENTRY_WORD_LEN;
                 }
                 LossListEntry::Range(first, last) => {
                     put_be32(buf, off, first.value() | F_BIT);
-                    put_be32(buf, off + 4, last.value());
-                    off += 8;
+                    put_be32(buf, off + LOSS_ENTRY_WORD_LEN, last.value());
+                    off += RANGE_ENTRY_LEN;
                 }
             }
         }

@@ -139,6 +139,34 @@ use axum::response::IntoResponse as _;
 /// inbound viewer connections.
 pub const DEFAULT_WHEP_MAX_SESSIONS: usize = 64;
 
+/// Bytes of the ICE ufrag and password the answer advertises (RFC 8445 §5.3,
+/// RFC 8839 §5.1).
+const ICE_UFRAG_BYTES: usize = 8;
+const ICE_PASSWORD_BYTES: usize = 24;
+
+/// Bytes of the `ETag` token identifying one signalling response.
+const ETAG_BYTES: usize = 16;
+
+/// Ring slots of the harness `Trunk` a test-hooks WHEP state owns.
+#[cfg(feature = "test-hooks")]
+const HARNESS_RING_SLOTS: usize = 4;
+
+/// Queue depth of the harness admission channel.
+#[cfg(feature = "test-hooks")]
+const HARNESS_CHANNEL_SLOTS: usize = 4;
+
+/// Sessions the harness route admits.
+#[cfg(feature = "test-hooks")]
+const HARNESS_MAX_SESSIONS: usize = DEFAULT_WHEP_MAX_SESSIONS;
+
+/// Values of the harness AVC decoder configuration record.
+#[cfg(feature = "test-hooks")]
+const AVC_PROFILE_INDICATION: u8 = 0x42;
+#[cfg(feature = "test-hooks")]
+const AVC_LEVEL_INDICATION: u8 = 0x1f;
+#[cfg(feature = "test-hooks")]
+const AVC_LENGTH_PREFIX_CODE: u8 = 3;
+
 /// Bound on the accept-pump's admission channel — see
 /// `crate::source::whip::ACCEPT_QUEUE_CAPACITY`'s identical reasoning.
 const ACCEPT_QUEUE_CAPACITY: usize = 32;
@@ -507,11 +535,11 @@ impl WhepServeState {
         WhepServeState {
             trunk: Trunk::new(
                 media_plane::trunk::TrunkConfig::default()
-                    .with_timed_capacity(std::num::NonZeroUsize::new(4).unwrap())
-                    .with_sparse_capacity(std::num::NonZeroUsize::new(4).unwrap())
-                    .with_segment_capacity(std::num::NonZeroUsize::new(4).unwrap())
-                    .with_event_capacity(std::num::NonZeroUsize::new(4).unwrap())
-                    .with_part_capacity(std::num::NonZeroUsize::new(4).unwrap()),
+                    .with_timed_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap())
+                    .with_sparse_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap())
+                    .with_segment_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap())
+                    .with_event_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap())
+                    .with_part_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap()),
             ),
             tx,
             active_sessions: Arc::new(AtomicUsize::new(0)),
@@ -693,8 +721,8 @@ async fn whep_post_inner(
     let local_addr = shared.local_addr();
 
     let setup_role = choose_setup_role(parsed.setup.as_deref());
-    let local_ice_ufrag = crate::secure_random::token(8);
-    let local_ice_pwd = crate::secure_random::token(24);
+    let local_ice_ufrag = crate::secure_random::token(ICE_UFRAG_BYTES);
+    let local_ice_pwd = crate::secure_random::token(ICE_PASSWORD_BYTES);
     let mut media = MediaTransport::new(
         MediaTransportConfig::new(
             local_addr,
@@ -738,7 +766,7 @@ async fn whep_post_inner(
     // own origin (the `Location` it renders is what a peer resolves against the request).
     let mut machine = WhepSession::new(crate::webrtc_session::resource_url("whep", &resource_id));
     let _ = machine.on_post(Vec::new());
-    let response = machine.accept(answer.into_bytes(), crate::secure_random::token(16));
+    let response = machine.accept(answer.into_bytes(), crate::secure_random::token(ETAG_BYTES));
     if response.status != axum::http::StatusCode::CREATED {
         // The state machine could not build the 201 (an unsendable header):
         // nothing was admitted, `slot` releases on drop.
@@ -830,8 +858,8 @@ fn loopback_ip_for(peer: std::net::SocketAddr) -> std::net::IpAddr {
 pub async fn serve_whep_for_test(
     verifier: Option<Arc<Verifier>>,
 ) -> (axum::Router, CancellationToken) {
-    let (tx, _rx) = mpsc::channel::<AdmittedWhep>(4);
-    let state = Arc::new(WhepServeState::without_trunk(tx, 64));
+    let (tx, _rx) = mpsc::channel::<AdmittedWhep>(HARNESS_CHANNEL_SLOTS);
+    let state = Arc::new(WhepServeState::without_trunk(tx, HARNESS_MAX_SESSIONS));
     (whep_router(state, verifier), CancellationToken::new())
 }
 
@@ -848,8 +876,8 @@ pub async fn serve_whep_for_test(
 pub async fn serve_whep_for_test_saturated_accept() -> (std::net::SocketAddr, CancellationToken) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let (tx, _rx) = mpsc::channel::<AdmittedWhep>(4);
-    let state = Arc::new(WhepServeState::without_trunk(tx, 64));
+    let (tx, _rx) = mpsc::channel::<AdmittedWhep>(HARNESS_CHANNEL_SLOTS);
+    let state = Arc::new(WhepServeState::without_trunk(tx, HARNESS_MAX_SESSIONS));
     let cancel = CancellationToken::new();
     let serve_cancel = cancel.clone();
     let router = whep_router(state, None);
@@ -867,7 +895,7 @@ pub async fn serve_whep_for_test_with_trunk(
     verifier: Option<Arc<Verifier>>,
 ) -> (axum::Router, CancellationToken) {
     let trunk = trunk_with_avc_track();
-    let (tx, rx) = mpsc::channel::<AdmittedWhep>(4);
+    let (tx, rx) = mpsc::channel::<AdmittedWhep>(HARNESS_CHANNEL_SLOTS);
     // Keep the admit channel open (a closed one is a `503`, not a `201`) for
     // the life of the process: this test-only harness never drives sessions.
     std::mem::forget(rx);
@@ -875,7 +903,7 @@ pub async fn serve_whep_for_test_with_trunk(
         trunk,
         tx,
         active_sessions: Arc::new(AtomicUsize::new(0)),
-        max_sessions: 64,
+        max_sessions: HARNESS_MAX_SESSIONS,
         resources: ResourceTable::new(),
         sockets: Arc::default(),
         packets: Arc::default(),
@@ -904,7 +932,7 @@ pub async fn serve_whep_run_for_test() -> (
     // port in.
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let route = WhepRoute::with_listener("test-whep", listener, 64);
+    let route = WhepRoute::with_listener("test-whep", listener, HARNESS_MAX_SESSIONS);
     let cancel = CancellationToken::new();
     let run_cancel = cancel.clone();
     let sessions = tokio_util::task::TaskTracker::new();
@@ -1017,10 +1045,10 @@ fn whep_avc_track_spec() -> TrackSpec {
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
                 configuration_version: 1,
-                profile_indication: 0x42,
+                profile_indication: AVC_PROFILE_INDICATION,
                 profile_compatibility: 0,
-                level_indication: 0x1f,
-                length_size_minus_one: 3,
+                level_indication: AVC_LEVEL_INDICATION,
+                length_size_minus_one: AVC_LENGTH_PREFIX_CODE,
                 sps: Vec::new(),
                 pps: Vec::new(),
                 chroma_format: None,
@@ -1040,11 +1068,11 @@ fn whep_avc_track_spec() -> TrackSpec {
 fn trunk_with_avc_track() -> Arc<Trunk> {
     let trunk = Trunk::new(
         media_plane::trunk::TrunkConfig::default()
-            .with_timed_capacity(std::num::NonZeroUsize::new(4).unwrap())
-            .with_sparse_capacity(std::num::NonZeroUsize::new(4).unwrap())
-            .with_segment_capacity(std::num::NonZeroUsize::new(4).unwrap())
-            .with_event_capacity(std::num::NonZeroUsize::new(4).unwrap())
-            .with_part_capacity(std::num::NonZeroUsize::new(4).unwrap()),
+            .with_timed_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap())
+            .with_sparse_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap())
+            .with_segment_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap())
+            .with_event_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap())
+            .with_part_capacity(std::num::NonZeroUsize::new(HARNESS_RING_SLOTS).unwrap()),
     );
     let writer = trunk.writer().expect("fresh trunk has a writer");
     writer.set_tracks(vec![whep_avc_track_spec()]);
@@ -1995,7 +2023,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         verifier: Option<Arc<Verifier>>,
         max_sessions: usize,
     ) -> (axum::Router, Arc<AtomicUsize>, mpsc::Receiver<AdmittedWhep>) {
-        let (tx, rx) = mpsc::channel::<AdmittedWhep>(4);
+        let (tx, rx) = mpsc::channel::<AdmittedWhep>(HARNESS_CHANNEL_SLOTS);
         let active = Arc::new(AtomicUsize::new(0));
         let state = Arc::new(WhepServeState {
             trunk: trunk.unwrap_or_else(empty_trunk),
@@ -2128,10 +2156,10 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 config: transmux::AVCConfigurationBox::new(
                     transmux::AVCDecoderConfigurationRecord {
                         configuration_version: 1,
-                        profile_indication: 0x42,
+                        profile_indication: AVC_PROFILE_INDICATION,
                         profile_compatibility: 0,
-                        level_indication: 0x1f,
-                        length_size_minus_one: 3,
+                        level_indication: AVC_LEVEL_INDICATION,
+                        length_size_minus_one: AVC_LENGTH_PREFIX_CODE,
                         sps: Vec::new(),
                         pps: Vec::new(),
                         chroma_format: None,
@@ -2671,7 +2699,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 trunk: empty_trunk(),
                 tx,
                 active_sessions: Arc::new(AtomicUsize::new(0)),
-                max_sessions: 64,
+                max_sessions: HARNESS_MAX_SESSIONS,
                 resources: ResourceTable::new(),
                 sockets: Arc::default(),
                 packets: Arc::default(),

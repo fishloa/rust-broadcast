@@ -34,6 +34,12 @@ use jiff::{SignedDuration, Timestamp};
 
 const MICROS: i128 = 1_000_000;
 
+/// Standby bound used when the segment count is unknown.
+const UNBOUNDED_COUNT: u64 = u64::MAX / 2;
+
+/// Divisor taking the midpoint of a bisection range.
+const BISECTION_DIVISOR: u64 = 2;
+
 fn duration_micros(d: Duration) -> i128 {
     i128::from(d.as_secs()) * MICROS + i128::from(d.subsec_micros())
 }
@@ -745,9 +751,9 @@ impl SegmentPlan {
         period_time: SignedDuration,
     ) -> Result<Option<u64>, AddressError> {
         let n = self.len();
-        let (mut lo, mut hi) = (0u64, n.unwrap_or(u64::MAX / 2));
+        let (mut lo, mut hi) = (0u64, n.unwrap_or(UNBOUNDED_COUNT));
         while lo < hi {
-            let mid = lo + (hi - lo) / 2;
+            let mid = lo + (hi - lo) / BISECTION_DIVISOR;
             match self.get(mid) {
                 Ok(Some(s)) if s.start <= period_time => lo = mid + 1,
                 Ok(Some(_)) | Ok(None) | Err(_) => hi = mid,
@@ -776,7 +782,7 @@ impl SegmentPlan {
     ) -> Result<u64, AddressError> {
         let (mut lo, mut hi) = (0u64, bound);
         while lo < hi {
-            let mid = lo + (hi - lo) / 2;
+            let mid = lo + (hi - lo) / BISECTION_DIVISOR;
             match self.get(mid) {
                 Ok(Some(s)) if pred(&s) => lo = mid + 1,
                 Ok(Some(_)) | Ok(None) | Err(_) => hi = mid,
