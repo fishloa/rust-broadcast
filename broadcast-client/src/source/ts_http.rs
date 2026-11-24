@@ -301,6 +301,14 @@ impl TsHttpSource {
         self.drain_ts_events();
     }
 
+    /// Hold or release the stall timers because the host stopped or resumed
+    /// reading this connection.
+    pub fn set_read_paused(&mut self, paused: bool, now_us: u64) {
+        self.now_us = now_us;
+        self.ts
+            .set_read_paused(paused, Timestamp::from_micros(now_us));
+    }
+
     /// Body bytes of a refused response; `true` once enough was captured to drop the connection.
     pub fn on_refused_body(&mut self, bytes: &[u8], now_us: u64) -> bool {
         self.now_us = now_us;

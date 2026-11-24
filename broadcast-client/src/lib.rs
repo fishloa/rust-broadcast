@@ -14,6 +14,7 @@ pub mod identity;
 mod join;
 pub mod playout;
 mod queue;
+mod read_ahead;
 pub(crate) mod redirect;
 mod rendered;
 pub mod session;

@@ -89,6 +89,11 @@ impl TsHttpClient {
         self.policy.set_retry_after(retry_after);
     }
 
+    /// Hold or release the stall timers because the host stopped or resumed reading.
+    pub fn set_read_paused(&mut self, paused: bool, now: Timestamp) {
+        self.policy.set_read_paused(paused, now);
+    }
+
     /// Feed body bytes (T5, T14).
     pub fn feed(&mut self, chunk: &[u8], now: Timestamp) {
         if chunk.is_empty() || !self.policy.accepts_bytes() {

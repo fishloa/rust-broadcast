@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- TS-over-HTTP read-ahead backpressure: the session measures how far delivered media runs ahead of the playback position, in media time and in bytes accepted since the position last advanced, and emits `Action::PauseRead`/`Action::ResumeRead` so a host stops and restarts reading the socket (TCP flow control then holds a recording's server). `Session::read_paused` answers the same question, and `Config::read_ahead_max` (default 30 s) / `Config::read_ahead_max_bytes` (default 64 MiB) set the caps, each `None` to disable and both `None` to turn the mechanism off. A deliberate pause suppresses the stall timers and causes no buffer pause or reconnect (#4085).
 
 ## [0.8.0] - 2026-11-22
 ### Breaking

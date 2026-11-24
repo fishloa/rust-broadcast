@@ -989,3 +989,62 @@ A part is done only when every line of its list holds on a fresh run of the full
 ### Not in this part
 
 Smooth: PlayReady/PIFF decryption, text and multi-video `StreamIndex`es, `tfrf` look-ahead addressing, `CustomAttributes`, byte-range resume of a stalled fragment. RTMP: RTMPE/RTMPT, Adobe challenge authentication, AMF3 data and shared-object messages, `play2`, sending media. Both: the Smooth `Manifest(format=...)` and RTMP-over-WebSocket renderings.
+
+## Read-ahead backpressure (#4085)
+
+A live source arrives at the rate it plays, but a recording served over HTTP arrives at
+network speed: a multi-GB `.ts` would be pulled whole into the session's queues and the
+player's buffer. Memory is bounded by configuration, never by input size, so the TS-over-HTTP
+source carries an explicit read-ahead cap and tells the host when to stop reading.
+
+### Measure
+
+`read_ahead.rs` keeps two O(1) measures of how far ahead the session is:
+
+- **Media time**: the latest delivered presentation end (PTS plus duration, per track, converted
+  to the 27 MHz clock and compared with `broadcast_common::clock33::pcr_signed_distance`) minus
+  the position from `Session::on_playback_position`. Before the first position is known the
+  baseline is the first delivered sample.
+- **Bytes**: body bytes accepted since the playback position last *changed* (a host that reports
+  the same position every tick does not reset the window). This is the fallback when timestamps
+  cannot be measured.
+
+### Actions
+
+`Action::PauseRead { conn }` is emitted once when either measure crosses its cap; the host stops
+reading that socket and lets TCP flow control hold the server. `Action::ResumeRead { conn }` is
+emitted once when both measures fall under half their caps (hysteresis, so the two do not flap).
+`Session::read_paused(conn)` answers the same question. Bytes fed through `Session::on_data`
+while paused are accepted, never dropped, and count toward the measure.
+
+### Configuration
+
+`Config::read_ahead_max` (default 30 s) and `Config::read_ahead_max_bytes` (default 64 MiB),
+each `None` to disable and both `None` to disable the mechanism; a zero value is a typed
+`InvalidConfig` (`ConfigField::ReadAheadMax` / `ReadAheadMaxBytes`). A host that never reports a
+playback position is still bounded (the measure runs from the first sample), but it must report
+positions for the cap to release again.
+
+### Timers and lifecycle
+
+While reads are paused, the TS policy's stall notice, no-data starvation and stall reconnect do
+not run and arm no wake; releasing restarts them from the resume instant, so a deliberate pause
+is never reported as a stall or a reconnect and causes no `BufferEvent::Pause`/`Reprime`. A
+close, a reconnect, a redirect or a new connection clears the paused state without a
+`ResumeRead` for a connection that no longer exists; a same-connection discontinuity re-baselines
+the media measure but keeps the pause. A real-time source never reaches the cap in normal
+operation.
+
+### Other pull sources
+
+Only TS-over-HTTP got the cap in this change. The others were checked; the findings are:
+
+| Source | Read-ahead bound |
+| --- | --- |
+| TS-over-HTTP | this cap (new). |
+| HLS, DASH | the adapter's fetch window bounds *in-flight and held segment bodies* by `Config::max_inflight_segments` x `Config::max_segment_bytes`, but prefetch is not tied to the playback position: a host that drains events lets a VOD be pulled at network speed into its own buffer. Same gap; not changed here (it needs a pause action per segment connection, which is several hooks, not one line). |
+| Smooth | one fragment outstanding per stream, bounded by `Config::max_segment_bytes`; like HLS/DASH the fragment plan is not tied to playback, so the player-buffer gap remains. Not changed here. |
+| RTSP | the RTP depayloader's reorder window is bounded, but the session never asks the host to stop reading the TCP connection; a file-over-RTSP source has the same gap. Not changed here. |
+| UDP/RTP | no pull to pause: a slow host drops datagrams at the socket, and `udp.reorder_*` bounds the reorder window. Memory cannot grow with input size. |
+| SRT | `srt-runtime`'s TSBPD scheduler and receive buffer bound what is held; the host socket keeps reading and late packets are dropped. No playback-tied pause action exists. |
+

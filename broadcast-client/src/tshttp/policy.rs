@@ -68,6 +68,7 @@ pub struct TsHttpPolicy {
     received_bytes: u64,
     finite_done: bool,
     retry_after: Duration,
+    read_paused: bool,
 }
 
 impl TsHttpPolicy {
@@ -114,6 +115,7 @@ impl TsHttpPolicy {
             received_bytes: 0,
             finite_done: false,
             retry_after: Duration::ZERO,
+            read_paused: false,
         };
         c.start_open(now);
         c
@@ -173,6 +175,29 @@ impl TsHttpPolicy {
     /// Server-requested retry delay (a `Retry-After`), applied to the next failure.
     pub fn set_retry_after(&mut self, retry_after: Duration) {
         self.retry_after = retry_after;
+    }
+
+    /// Hold or release the stall timers because the host stopped or resumed
+    /// reading this connection. While held, no stall notice, no no-data
+    /// starvation and no stall reconnect can fire; releasing restarts them
+    /// cleanly from `now`.
+    pub fn set_read_paused(&mut self, paused: bool, now: Timestamp) {
+        if self.read_paused == paused {
+            return;
+        }
+        self.read_paused = paused;
+        if !paused {
+            self.last_byte_at = now;
+            self.last_sample_at = now;
+            self.first_notice_at = None;
+            self.next_notice_at = None;
+            self.notice_step = STALL_NOTICE_REPEAT;
+            self.starved_data_fired = false;
+            self.starved_nodata_fired = false;
+            if matches!(self.phase, Phase::Playing) {
+                self.attempt = 0;
+            }
+        }
     }
 
     fn header_values<'a>(headers: &'a HeaderMap, name: &str) -> alloc::vec::Vec<&'a str> {
@@ -305,7 +330,10 @@ impl TsHttpPolicy {
         }
         if sampled {
             self.on_sample(now);
-        } else if !(self.starved_data_fired || (self.finite && self.finite_done)) {
+        } else if !(self.read_paused
+            || self.starved_data_fired
+            || (self.finite && self.finite_done))
+        {
             let baseline = self.last_sample_at;
             if since(now, baseline) >= self.config.stall_notice {
                 self.events.push_back(Event::Starved(StarveKind::Data));
@@ -379,6 +407,7 @@ impl TsHttpPolicy {
         self.first_notice_at = None;
         self.next_notice_at = None;
         self.notice_step = STALL_NOTICE_REPEAT;
+        self.read_paused = false;
         self.actions.push_back(Action::Abort);
         self.actions.push_back(Action::Reconnect {
             after: Duration::ZERO,
@@ -425,8 +454,12 @@ impl TsHttpPolicy {
             }
             return;
         }
-        // Playing stall timers (disabled once finite transfer complete)
-        if matches!(self.phase, Phase::Playing) && !(self.finite && self.finite_done) {
+        // Playing stall timers (disabled once finite transfer complete, and
+        // while the host stopped reading this connection)
+        if matches!(self.phase, Phase::Playing)
+            && !(self.finite && self.finite_done)
+            && !self.read_paused
+        {
             let idle = since(now, self.last_byte_at);
             if idle >= self.config.stall_notice {
                 if !self.starved_nodata_fired {
@@ -465,6 +498,9 @@ impl TsHttpPolicy {
             return None;
         }
         if self.finite && self.finite_done {
+            return None;
+        }
+        if self.read_paused && matches!(self.phase, Phase::Playing) {
             return None;
         }
         match self.phase {
@@ -515,6 +551,7 @@ impl TsHttpPolicy {
         self.received_bytes = 0;
         self.finite_done = false;
         self.retry_after = Duration::ZERO;
+        self.read_paused = false;
         self.actions.push_back(Action::Open {
             url: self.url.clone(),
         });
