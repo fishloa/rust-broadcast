@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- `FileStreamLimits` gained a required `mp4: transmux::mp4_demux::Mp4DemuxConfig` field (the stage's caller policy: read window and total length). A struct literal must now name it or spread `..FileStreamLimits::default()`. The read window stays unset by default.
+
+
 ### Added
 
 - `file_stream::StreamContainer::Mp4` streams an MP4 file by absolute byte ranges through `transmux::mp4_demux::Mp4Demux` (issue #4057): the session gained `FileDemand::BytesAt { offset, len }`, `FileInput::At { offset, bytes }` and `FileDemand::Eof`, `FileStreamLimits::mp4` carries the stage's `Mp4DemuxConfig` (read window unset by default), and `FileReaderError::WrongInput` reports an input shape the container cannot consume. `StreamingFileSession::rewound` acknowledges a seek before the next range demand.
