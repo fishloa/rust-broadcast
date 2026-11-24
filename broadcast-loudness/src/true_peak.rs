@@ -39,7 +39,7 @@ const DB_PER_LOG10: f64 = 20.0;
 ///
 /// Derived from BS.1770‑5 Annex 2, Phase 0–3 columns (12 taps each).
 #[rustfmt::skip]
-const FIR_COEFFS: [[f64; 12]; 4] = [
+const FIR_COEFFS: [[f64; TAP_COUNT]; 4] = [
     // Phase 0
     [
          0.001_708_984_375_0,
