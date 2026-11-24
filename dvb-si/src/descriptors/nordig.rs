@@ -37,6 +37,14 @@ const V1_RESERVED_SHIFT: u8 = 6;
 const V1_LCN_HI_MASK: u8 = 0x3F;
 /// Largest 14-bit V1 `logical_channel_number`.
 const V1_LCN_MAX: u16 = ((V1_LCN_HI_MASK as u16) << 8) | 0xFF;
+/// Offset of the flags byte in a service entry.
+const SERVICE_FLAGS_OFFSET: usize = 2;
+/// Offset of the low `logical_channel_number` byte in a service entry.
+const SERVICE_LCN_LO_OFFSET: usize = 3;
+/// Shift of the high `logical_channel_number` bits.
+const LCN_HI_SHIFT: u16 = 8;
+/// Mask of the low `logical_channel_number` byte.
+const LCN_LO_MASK: u16 = 0xFF;
 
 /// Default of the 1-bit per-entry `reserved` of the v1 descriptor: `1`.
 /// NorDig Unified Requirements v3.2.2 §12.2.9.2, Table 12.12: "All 'reserved'
@@ -108,11 +116,12 @@ impl<'a> Parse<'a> for NordigLogicalChannelV1 {
         let mut entries = Vec::with_capacity(body.len() / V1_ENTRY_LEN);
         for chunk in body.chunks_exact(V1_ENTRY_LEN) {
             let service_id = crate::wire::be_u16(chunk, 0, "nordig")?;
-            let flags = chunk[2];
+            let flags = chunk[SERVICE_FLAGS_OFFSET];
             let visible_service_flag = flags & V1_VISIBLE_MASK != 0;
             let reserved =
                 ReservedOnes::from_bits(u64::from((flags & V1_RESERVED_MASK) >> V1_RESERVED_SHIFT));
-            let lcn = (u16::from(flags & V1_LCN_HI_MASK) << 8) | u16::from(chunk[3]);
+            let lcn = (u16::from(flags & V1_LCN_HI_MASK) << LCN_HI_SHIFT)
+                | u16::from(chunk[SERVICE_LCN_LO_OFFSET]);
             entries.push(NordigLogicalChannelV1Entry {
                 service_id,
                 visible_service_flag,
@@ -144,7 +153,8 @@ impl Serialize for NordigLogicalChannelV1 {
                     reason: "exceeds 14-bit field",
                 });
             }
-            buf[offset..offset + 2].copy_from_slice(&entry.service_id.to_be_bytes());
+            buf[offset..offset + SERVICE_FLAGS_OFFSET]
+                .copy_from_slice(&entry.service_id.to_be_bytes());
             let visible_byte = if entry.visible_service_flag {
                 V1_VISIBLE_MASK
             } else {
@@ -152,9 +162,10 @@ impl Serialize for NordigLogicalChannelV1 {
             };
             let flags = visible_byte
                 | ((entry.reserved.get() as u8) << V1_RESERVED_SHIFT)
-                | ((entry.logical_channel_number >> 8) as u8 & V1_LCN_HI_MASK);
-            buf[offset + 2] = flags;
-            buf[offset + 3] = (entry.logical_channel_number & 0xFF) as u8;
+                | ((entry.logical_channel_number >> LCN_HI_SHIFT) as u8 & V1_LCN_HI_MASK);
+            buf[offset + SERVICE_FLAGS_OFFSET] = flags;
+            buf[offset + SERVICE_LCN_LO_OFFSET] =
+                (entry.logical_channel_number & LCN_LO_MASK) as u8;
             offset += V1_ENTRY_LEN;
         }
         Ok(len)
@@ -174,6 +185,14 @@ impl crate::traits::DescriptorDef<'_> for NordigLogicalChannelV1 {
 pub const TAG_V2: u8 = 0x87;
 const V2_HEADER_LEN: usize = 2;
 const V2_SERVICE_ENTRY_LEN: usize = 4;
+/// Offset of `channel_list_name_length` in a channel list header.
+const CHANNEL_LIST_NAME_LENGTH_OFFSET: usize = 1;
+/// Offset of `channel_list_name` in a channel list header.
+const CHANNEL_LIST_NAME_START: usize = 2;
+/// Wire width of `country_code`.
+const COUNTRY_CODE_LEN: usize = 3;
+/// Wire width of `channel_list_descriptor_length`.
+const CHANNEL_LIST_DESCRIPTOR_LENGTH_LEN: usize = 1;
 const V2_VISIBLE_MASK: u8 = 0x80;
 const V2_RESERVED_MASK: u8 = 0x7C;
 const V2_RESERVED_SHIFT: u8 = 2;
@@ -259,21 +278,22 @@ impl<'a> Parse<'a> for NordigLogicalChannelV2 {
         )?;
         let mut channel_lists = Vec::new();
         while !body.is_empty() {
-            need_in(body, 2, "NordigLogicalChannelV2 channel_list header")?;
+            need_in(body, V2_HEADER_LEN, "NordigLogicalChannelV2 channel_list header")?;
             let channel_list_id = body[0];
-            let name_len = body[1] as usize;
-            let name_start = 2;
+            let name_len = body[CHANNEL_LIST_NAME_LENGTH_OFFSET] as usize;
+            let name_start = CHANNEL_LIST_NAME_START;
             let name_end = name_start + name_len;
             need_in(
                 body,
-                name_end + 3 + 1,
+                name_end + COUNTRY_CODE_LEN + CHANNEL_LIST_DESCRIPTOR_LENGTH_LEN,
                 "NordigLogicalChannelV2 channel_list country_code + descriptor_length",
             )?;
             let channel_list_name = body[name_start..name_end].to_vec();
             let cc_start = name_end;
-            let country_code = LangCode([body[cc_start], body[cc_start + 1], body[cc_start + 2]]);
-            let desc_len = body[cc_start + 3] as usize;
-            let svc_start = cc_start + 4;
+            let country_code =
+                LangCode(body[cc_start..cc_start + COUNTRY_CODE_LEN].try_into().unwrap_or_default());
+            let desc_len = body[cc_start + COUNTRY_CODE_LEN] as usize;
+            let svc_start = cc_start + COUNTRY_CODE_LEN + CHANNEL_LIST_DESCRIPTOR_LENGTH_LEN;
             let svc_end = svc_start + desc_len;
             need_in(body, svc_end, "NordigLogicalChannelV2 service loop")?;
             if !desc_len.is_multiple_of(V2_SERVICE_ENTRY_LEN) {
@@ -286,12 +306,13 @@ impl<'a> Parse<'a> for NordigLogicalChannelV2 {
             let mut services = Vec::with_capacity(svc_body.len() / V2_SERVICE_ENTRY_LEN);
             for chunk in svc_body.chunks_exact(V2_SERVICE_ENTRY_LEN) {
                 let service_id = crate::wire::be_u16(chunk, 0, "nordig")?;
-                let flags = chunk[2];
+                let flags = chunk[SERVICE_FLAGS_OFFSET];
                 let visible_service_flag = flags & V2_VISIBLE_MASK != 0;
                 let reserved = ReservedOnes::from_bits(u64::from(
                     (flags & V2_RESERVED_MASK) >> V2_RESERVED_SHIFT,
                 ));
-                let lcn = (u16::from(flags & V2_LCN_HI_MASK) << 8) | u16::from(chunk[3]);
+                let lcn = (u16::from(flags & V2_LCN_HI_MASK) << LCN_HI_SHIFT)
+                    | u16::from(chunk[SERVICE_LCN_LO_OFFSET]);
                 services.push(NordigLogicalChannelV2Service {
                     service_id,
                     visible_service_flag,
@@ -316,10 +337,10 @@ impl Serialize for NordigLogicalChannelV2 {
     fn serialized_len(&self) -> usize {
         let mut total = V2_HEADER_LEN;
         for cl in &self.channel_lists {
-            total += 2 // id + name_len
+            total += CHANNEL_LIST_NAME_START
                 + cl.channel_list_name.len()
-                + 3 // country_code
-                + 1 // descriptor_length
+                + COUNTRY_CODE_LEN
+                + CHANNEL_LIST_DESCRIPTOR_LENGTH_LEN
                 + V2_SERVICE_ENTRY_LEN * cl.services.len();
         }
         total
@@ -336,11 +357,11 @@ impl Serialize for NordigLogicalChannelV2 {
                 cl.channel_list_name.len(),
                 "channel_list_name_length",
             )?;
-            offset += 2;
+            offset += CHANNEL_LIST_NAME_START;
             buf[offset..offset + cl.channel_list_name.len()].copy_from_slice(&cl.channel_list_name);
             offset += cl.channel_list_name.len();
-            buf[offset..offset + 3].copy_from_slice(&cl.country_code.0);
-            offset += 3;
+            buf[offset..offset + COUNTRY_CODE_LEN].copy_from_slice(&cl.country_code.0);
+            offset += COUNTRY_CODE_LEN;
             let desc_len = V2_SERVICE_ENTRY_LEN * cl.services.len();
             buf[offset] =
                 broadcast_common::len::fit_u8(desc_len, "channel_list_descriptor_length")?;
@@ -352,7 +373,8 @@ impl Serialize for NordigLogicalChannelV2 {
                         reason: "exceeds 10-bit field",
                     });
                 }
-                buf[offset..offset + 2].copy_from_slice(&svc.service_id.to_be_bytes());
+                buf[offset..offset + SERVICE_FLAGS_OFFSET]
+                    .copy_from_slice(&svc.service_id.to_be_bytes());
                 let visible_byte = if svc.visible_service_flag {
                     V2_VISIBLE_MASK
                 } else {
@@ -360,9 +382,10 @@ impl Serialize for NordigLogicalChannelV2 {
                 };
                 let flags = visible_byte
                     | ((svc.reserved.get() as u8) << V2_RESERVED_SHIFT)
-                    | ((svc.logical_channel_number >> 8) as u8 & V2_LCN_HI_MASK);
-                buf[offset + 2] = flags;
-                buf[offset + 3] = (svc.logical_channel_number & 0xFF) as u8;
+                    | ((svc.logical_channel_number >> LCN_HI_SHIFT) as u8 & V2_LCN_HI_MASK);
+                buf[offset + SERVICE_FLAGS_OFFSET] = flags;
+                buf[offset + SERVICE_LCN_LO_OFFSET] =
+                    (svc.logical_channel_number & LCN_LO_MASK) as u8;
                 offset += V2_SERVICE_ENTRY_LEN;
             }
         }
