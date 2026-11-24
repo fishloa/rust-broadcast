@@ -187,7 +187,7 @@ impl<'a> Parse<'a> for ProducerReferenceTimeBox {
                 reason: "expected prft",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 
@@ -477,7 +477,7 @@ impl<'a> Parse<'a> for SampleGroupDescriptionBox {
                 reason: "expected sgpd",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 
@@ -701,7 +701,7 @@ impl<'a> Parse<'a> for SampleToGroupBox {
                 reason: "expected sbgp",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 
@@ -933,7 +933,7 @@ impl<'a> Parse<'a> for SubSampleInformationBox {
                 reason: "expected subs",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 
@@ -1323,7 +1323,7 @@ impl<'a> Parse<'a> for SubSampleInformationBoxV2 {
                 reason: "expected subs",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 
@@ -1450,7 +1450,7 @@ impl<'a> Parse<'a> for SubSampleReferenceTableBox {
                 reason: "expected ssrt",
             }));
         }
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = crate::box_types::parse_box(bytes)?.0.body;
         need_in(body, FULLBOX_EXTRA_SIZE + 1, "ssrt body")?;
         let flags = be_u32(body, 0, "full box header")? & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;

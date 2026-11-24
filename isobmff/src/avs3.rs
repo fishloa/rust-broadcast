@@ -1037,7 +1037,7 @@ impl AvsVideoSampleEntry {
                 expected: "AVS configuration box",
             },
         )?;
-        let body = &cfg[crate::box_types::box_header_len(cfg)?..];
+        let body = crate::box_types::parse_box(cfg)?.0.body;
         let config = match kind {
             AvsVideoEntryKind::Avs3 => AvsVideoConfig::Avs3(Avs3ConfigurationBox::parse(body)?),
             AvsVideoEntryKind::Avs2 => {
@@ -1067,8 +1067,8 @@ impl AvsVideoSampleEntry {
         };
         self.children.iter().find_map(|c| match c {
             SampleEntryChild::Other(b) if b.get(4..8) == Some(&want[..]) => {
-                let hdr = crate::box_types::box_header_len(b).ok()?;
-                Some(LAvsConfigurationBox::parse(&b[hdr..]))
+                let body = crate::box_types::parse_box(b).ok()?.0.body;
+                Some(LAvsConfigurationBox::parse(body))
             }
             _ => None,
         })

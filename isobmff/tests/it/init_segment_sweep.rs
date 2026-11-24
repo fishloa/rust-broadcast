@@ -10,7 +10,7 @@
 //! A `moov` whose last child leaves 1..7 trailing bytes inside the container is
 //! a hard error, not something ignored: `MovieBox::parse` rejects it (audit
 //! r05-W13). That matches the one other container walker in the crate
-//! (`init_segment::walk_children`, which every container in the module shares):
+//! (`BoxIter::new`, which every container in the module shares):
 //! a partial child header cannot be framed, so it is `BufferTooShort`. The
 //! other TS/container demuxers (`TsDemux`, `PsDemux`, `WebmDemux`) stop at a
 //! short tail instead, because a live capture legitimately ends mid-packet and

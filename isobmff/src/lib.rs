@@ -18,7 +18,7 @@
 //! # Layout
 //!
 //! - [`box_types`] — box / FullBox headers, [`BoxType`],
-//!   the size-driven [`box_iter`] walker, the header
+//!   the size-driven [`BoxIter`] walker, the header
 //!   writers, and the opaque round-trip carriers.
 //! - [`box_support`] — the shared flat-table and container-child helpers every
 //!   box module builds on.
@@ -109,7 +109,7 @@ pub use avs3::{
     TemporalLayerEntry, TemporalLayerInfo, VisualLrapEntry,
 };
 pub use avs3_audio::{AV3A_FOURCC, Avs3AudioContent, Ca3Config, Ca3SpecificBox, DCA3_FOURCC};
-pub use box_types::{BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader, box_iter, parse_box};
+pub use box_types::{BoxHeader, BoxItem, BoxIter, BoxType, FullBoxHeader, parse_box};
 pub use dovi::{
     AVC_PROFILE, DOVI_RECORD_LEN, DOVI_RESERVED_LEN, DOVI_RESERVED_ZERO, DVA1_FOURCC, DVCC_FOURCC,
     DVH1_FOURCC, DVHE_FOURCC, DVVC_FOURCC, DoviBlSignalCompatibilityId,

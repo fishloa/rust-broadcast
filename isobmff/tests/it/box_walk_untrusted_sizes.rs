@@ -100,9 +100,9 @@ fn sample_entry_config_child_with_overflowing_largesize_does_not_panic() {
 }
 
 #[test]
-fn box_iter_rejects_overflowing_largesize() {
+fn box_walker_rejects_overflowing_largesize() {
     let bytes = largesize_max_box(b"moov", &[0u8; 8]);
-    let mut it = isobmff::box_types::box_iter(&bytes);
+    let mut it = isobmff::BoxIter::new(&bytes);
     assert!(matches!(it.next(), Some(Err(_))));
 }
 

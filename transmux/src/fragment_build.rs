@@ -241,21 +241,20 @@ pub fn protect_media_segment(
 
     let mut prefix_len = 0usize;
     let mut moof_len = None;
-    for step in isobmff::box_types::box_iter(media_segment) {
-        let (box_ref, consumed) = step?;
+    for step in isobmff::BoxIter::new(media_segment) {
+        let box_ref = step?;
+        let size = box_ref.end - box_ref.start;
         if box_ref.header.box_type.is(b"moof") {
-            moof_len = Some(consumed);
+            moof_len = Some(size);
             break;
         }
-        prefix_len += consumed;
+        prefix_len += size;
     }
     let moof_len = moof_len.ok_or(Error::UnexpectedBox { expected: "moof" })?;
     let moof_bytes = &media_segment[prefix_len..prefix_len + moof_len];
     let suffix = &media_segment[prefix_len + moof_len..];
 
-    let mut moof = MovieFragmentBox::parse_body(
-        &moof_bytes[isobmff::box_types::box_header_len(moof_bytes)?..],
-    )?;
+    let mut moof = MovieFragmentBox::parse_body(isobmff::box_types::parse_box(moof_bytes)?.0.body)?;
 
     let mut built: Vec<Option<CencFragmentBoxes>> = (0..moof.traf.len()).map(|_| None).collect();
     for p in protections {

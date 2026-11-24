@@ -86,8 +86,8 @@ use alloc::vec::Vec;
 use broadcast_common::{Decrypt, Parse};
 
 use isobmff::box_types::{
-    BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET, box_slices,
-    child_boxes, descend_boxes, find_child_box, find_top_box, parse_box,
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET,
+    box_body, descend_boxes, find_box, parse_box,
 };
 // Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
 // resolving for existing callers even though the type now lives in
@@ -483,10 +483,14 @@ const VISUAL_SAMPLE_ENTRY_HDR: usize = 78;
 /// for a fragmented file [`harvest_fragment_senc`] walks every `moof` and
 /// appends each `traf`'s `senc` entries, in file order.
 fn harvest_tracks(file: &[u8], out: &mut Vec<TrackCrypto>) -> Result<()> {
-    let moov = find_top_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
-    let fragmented = find_top_box(file, b"moof").is_some();
-    for trak in child_boxes(moov, b"trak") {
-        if let Some(crypto) = harvest_track(trak, fragmented)? {
+    let moov = find_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+    let fragmented = find_box(file, b"moof").is_some();
+    for trak in BoxIter::new(box_body(moov, 0, "moov body")?) {
+        let trak = trak?;
+        if !trak.header.box_type.is(b"trak") {
+            continue;
+        }
+        if let Some(crypto) = harvest_track(trak.bytes, fragmented)? {
             out.push(crypto);
         }
     }
@@ -511,7 +515,7 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
     };
 
     // sinf lives inside the protected sample entry (encv/enca) under stsd.
-    let Some(stsd) = find_child_box(stbl, b"stsd") else {
+    let Some(stsd) = find_box(box_body(stbl, 0, "stbl body")?, b"stsd") else {
         return Ok(None);
     };
     let Some(sinf) = find_sinf_in_stsd(stsd) else {
@@ -548,7 +552,8 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
         ));
     }
 
-    let tkhd = find_child_box(trak, b"tkhd").ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
+    let tkhd = find_box(box_body(trak, 0, "trak body")?, b"tkhd")
+        .ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
     let track_id = isobmff::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
 
     let samples = if fragmented {
@@ -558,8 +563,8 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
     } else {
         // Progressive fMP4: a single senc lives inside stbl, covering every
         // sample of the (fragment-less) track.
-        let senc =
-            find_child_box(stbl, b"senc").ok_or(Error::UnexpectedBox { expected: "senc" })?;
+        let senc = find_box(box_body(stbl, 0, "stbl body")?, b"senc")
+            .ok_or(Error::UnexpectedBox { expected: "senc" })?;
         parse_senc_box(senc, tenc.default_per_sample_iv_size)?.entries
     };
 
@@ -627,9 +632,18 @@ fn parse_senc_box(
 /// than treated as fatal, and the same sample-count check downstream will
 /// still catch it.
 fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> {
-    for moof in box_slices(file).filter(|b| b[4..8] == *b"moof") {
-        for traf in child_boxes(moof, b"traf") {
-            let Some(tfhd) = find_child_box(traf, b"tfhd") else {
+    for moof in BoxIter::new(file)
+        .filter_map(|b| b.ok())
+        .filter(|b| b.header.box_type.is(b"moof"))
+    {
+        let moof = moof.bytes;
+        for traf in BoxIter::new(box_body(moof, 0, "moof body")?) {
+            let traf = traf?;
+            if !traf.header.box_type.is(b"traf") {
+                continue;
+            }
+            let traf = traf.bytes;
+            let Some(tfhd) = find_box(box_body(traf, 0, "traf body")?, b"tfhd") else {
                 continue;
             };
             need_in(
@@ -637,9 +651,8 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
                 BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE,
                 "tfhd header",
             )?;
-            let tfhd_parsed = TrackFragmentHeaderBox::parse_body(
-                &tfhd[isobmff::box_types::box_header_len(tfhd)?..],
-            )?;
+            let tfhd_parsed =
+                TrackFragmentHeaderBox::parse_body(isobmff::box_types::parse_box(tfhd)?.0.body)?;
 
             let Some(crypto) = tracks
                 .iter_mut()
@@ -658,7 +671,7 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
                     "seig sample-group key rotation not implemented",
                 ));
             }
-            match find_child_box(traf, b"senc") {
+            match find_box(box_body(traf, 0, "traf body")?, b"senc") {
                 Some(senc) => {
                     let senc_parsed = parse_senc_box(senc, crypto.tenc.default_per_sample_iv_size)?;
                     crypto.samples.extend(senc_parsed.entries);
@@ -690,12 +703,11 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
 /// [`harvest_fragment_senc`]).
 fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
     let mut total = 0usize;
-    for trun in
-        box_slices(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..]).filter(|b| &b[4..8] == b"trun")
+    for trun in BoxIter::new(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..])
+        .filter_map(|b| b.ok())
+        .filter(|b| b.header.box_type.is(b"trun"))
     {
-        need_in(trun, BOX_HEADER_MIN_SIZE, "trun header")?;
-        let parsed =
-            TrackFragmentRunBox::parse_body(&trun[isobmff::box_types::box_header_len(trun)?..])?;
+        let parsed = TrackFragmentRunBox::parse_body(trun.body)?;
         total += parsed.samples.len();
     }
     Ok(total)
@@ -709,13 +721,13 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
     if body_start > stsd.len() {
         return None;
     }
-    for entry in box_slices(&stsd[body_start..]) {
-        let ty = &entry[4..8];
-        if ty == b"encv" || ty == b"enca" {
+    for entry in BoxIter::new(&stsd[body_start..]).filter_map(|b| b.ok()) {
+        let ty = entry.four_cc();
+        if ty == *b"encv" || ty == *b"enca" {
             // Sample-entry child boxes start after the fixed VisualSampleEntry /
             // AudioSampleEntry header. We only support protected video (encv)
             // here; the sinf is a child box, located by scanning.
-            let child_start = if ty == b"encv" {
+            let child_start = if ty == *b"encv" {
                 BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR
             } else {
                 // enca: 8 reserved + 2 channelcount + 2 samplesize + 4 predefined
@@ -723,12 +735,14 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
                 // (AudioSampleEntry fixed part is 28 bytes past the box header).
                 BOX_HEADER_MIN_SIZE + AUDIO_SAMPLE_ENTRY_HDR
             };
-            if child_start <= entry.len() {
+            if child_start <= entry.bytes.len() {
                 // The child boxes start directly at `child_start` (no container
-                // header to skip), so scan them with `iter_boxes`.
-                if let Some(sinf) = box_slices(&entry[child_start..]).find(|b| &b[4..8] == b"sinf")
+                // header to skip), so scan them with the one walker.
+                if let Some(sinf) = BoxIter::new(&entry.bytes[child_start..])
+                    .filter_map(|b| b.ok())
+                    .find(|b| b.header.box_type.is(b"sinf"))
                 {
-                    return Some(sinf);
+                    return Some(sinf.bytes);
                 }
             }
         }
@@ -769,23 +783,28 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
     use isobmff::AVCConfigurationBox;
 
-    let moov = find_top_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+    let moov = find_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
     let movie_timescale = mvhd_timescale(moov)?;
-    let fragmented = find_top_box(file, b"moof").is_some();
+    let fragmented = find_box(file, b"moof").is_some();
 
     let mut tracks = Vec::new();
     let mut skipped: Vec<crate::ir::SkippedTrack> = Vec::new();
-    for trak in child_boxes(moov, b"trak") {
+    for trak in BoxIter::new(box_body(moov, 0, "moov body")?) {
+        let trak = trak?;
+        if !trak.header.box_type.is(b"trak") {
+            continue;
+        }
+        let trak = trak.bytes;
         let Some(stbl) = descend_boxes(trak, &[b"mdia", b"minf", b"stbl"]) else {
             continue;
         };
         let mdhd = descend_boxes(trak, &[b"mdia"])
-            .and_then(|mdia| find_child_box(mdia, b"mdhd"))
+            .and_then(|mdia| find_box(box_body(mdia, 0, "mdia body").ok()?, b"mdhd"))
             .ok_or(Error::UnexpectedBox { expected: "mdhd" })?;
         let timescale = mdhd_timescale(mdhd)?;
 
         // Only protected video (encv → original avc1) is reconstructed here.
-        let Some(stsd) = find_child_box(stbl, b"stsd") else {
+        let Some(stsd) = find_box(box_body(stbl, 0, "stbl body")?, b"stsd") else {
             continue;
         };
         let Some(sinf) = find_sinf_in_stsd(stsd) else {
@@ -822,8 +841,8 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
         // Recover the avcC config record from inside the encv entry.
         let avc_config = find_avcc_config(stsd)?;
 
-        let tkhd =
-            find_child_box(trak, b"tkhd").ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
+        let tkhd = find_box(box_body(trak, 0, "trak body")?, b"tkhd")
+            .ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
         let track_id = isobmff::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
 
         let samples = if fragmented {
@@ -1016,16 +1035,15 @@ fn absorb_protected_fragment(
 /// Parse the avcC record from the (first) encv entry of an stsd.
 fn find_avcc_config(stsd: &[u8]) -> Result<isobmff::avc_config::AVCDecoderConfigurationRecord> {
     let body_start = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT;
-    for entry in box_slices(&stsd[body_start.min(stsd.len())..]) {
-        if &entry[4..8] == b"encv" {
+    for entry in BoxIter::new(&stsd[body_start.min(stsd.len())..]).filter_map(|b| b.ok()) {
+        if entry.header.box_type.is(b"encv") {
             let child_start = BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR;
-            if child_start <= entry.len()
-                && let Some(avcc) = box_slices(&entry[child_start..]).find(|b| &b[4..8] == b"avcC")
+            if child_start <= entry.bytes.len()
+                && let Some(avcc) = BoxIter::new(&entry.bytes[child_start..])
+                    .filter_map(|b| b.ok())
+                    .find(|b| b.header.box_type.is(b"avcC"))
             {
-                // avcC full bytes → body after the 8-byte box header.
-                let cfg = isobmff::AVCConfigurationBox::parse_body(
-                    &avcc[isobmff::box_types::box_header_len(avcc)?..],
-                )?;
+                let cfg = isobmff::AVCConfigurationBox::parse_body(avcc.body)?;
                 return Ok(cfg.config);
             }
         }
@@ -1047,8 +1065,12 @@ fn find_avcc_config(stsd: &[u8]) -> Result<isobmff::avc_config::AVCDecoderConfig
 /// A container can carry more than one `sgpd` (one per grouping type in use),
 /// so every child is checked rather than just the first.
 fn container_has_seig_sgpd(container: &[u8]) -> Result<bool> {
-    for entry in child_boxes(container, b"sgpd") {
-        let sgpd = SampleGroupDescriptionBox::parse(entry)?;
+    for entry in BoxIter::new(box_body(container, 0, "container body")?) {
+        let entry = entry?;
+        if !entry.header.box_type.is(b"sgpd") {
+            continue;
+        }
+        let sgpd = SampleGroupDescriptionBox::parse(entry.bytes)?;
         if sgpd.grouping_type == GROUPING_TYPE_SEIG {
             return Ok(true);
         }
@@ -1058,7 +1080,8 @@ fn container_has_seig_sgpd(container: &[u8]) -> Result<bool> {
 
 /// Read `mvhd.timescale` (handles version 0 and 1 layouts).
 fn mvhd_timescale(moov: &[u8]) -> Result<Timescale> {
-    let mvhd = find_child_box(moov, b"mvhd").ok_or(Error::UnexpectedBox { expected: "mvhd" })?;
+    let mvhd = find_box(box_body(moov, 0, "moov body")?, b"mvhd")
+        .ok_or(Error::UnexpectedBox { expected: "mvhd" })?;
     header_timescale(mvhd, "mvhd")
 }
 
@@ -1100,15 +1123,18 @@ fn header_timescale(header: &[u8], expected: &'static str) -> Result<Timescale> 
 /// anything allocates (r05-C4).
 fn progressive_sample_layout(stbl: &[u8], file_len: usize) -> Result<Vec<(usize, usize)>> {
     let stsz = SampleSizeBox::parse(
-        find_child_box(stbl, b"stsz").ok_or(Error::UnexpectedBox { expected: "stsz" })?,
+        find_box(box_body(stbl, 0, "stbl body")?, b"stsz")
+            .ok_or(Error::UnexpectedBox { expected: "stsz" })?,
     )?;
     let stsc = SampleToChunkBox::parse(
-        find_child_box(stbl, b"stsc").ok_or(Error::UnexpectedBox { expected: "stsc" })?,
+        find_box(box_body(stbl, 0, "stbl body")?, b"stsc")
+            .ok_or(Error::UnexpectedBox { expected: "stsc" })?,
     )?;
-    let stco = find_child_box(stbl, b"stco")
+    let stbl_body = box_body(stbl, 0, "stbl body")?;
+    let stco = find_box(stbl_body, b"stco")
         .map(ChunkOffsetBox::parse)
         .transpose()?;
-    let co64 = find_child_box(stbl, b"co64")
+    let co64 = find_box(stbl_body, b"co64")
         .map(ChunkLargeOffsetBox::parse)
         .transpose()?;
     sample_layout(&stsz, &stsc, co64.as_ref(), stco.as_ref(), file_len)
@@ -1796,15 +1822,49 @@ mod tests {
     /// with on every real fixture.
     fn legacy_children<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Vec<&'a [u8]> {
         let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
-        box_slices(body).filter(|b| &b[4..8] == fourcc).collect()
+        let mut out = Vec::new();
+        let mut off = 0usize;
+        while off + BOX_HEADER_MIN_SIZE <= body.len() {
+            let size = u32::from_be_bytes(
+                body[off..off + core::mem::size_of::<u32>()]
+                    .try_into()
+                    .expect("four size bytes"),
+            ) as usize;
+            if size < BOX_HEADER_MIN_SIZE || off + size > body.len() {
+                break;
+            }
+            let child = &body[off..off + size];
+            if &child[4..8] == fourcc {
+                out.push(child);
+            }
+            off += size;
+        }
+        out
+    }
+
+    fn shared_children<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Vec<&'a [u8]> {
+        let Ok(body) = box_body(container, 0, "container body") else {
+            return Vec::new();
+        };
+        BoxIter::new(body)
+            .filter_map(|b| b.ok())
+            .filter(|b| b.header.box_type.is(fourcc))
+            .map(|b| b.bytes)
+            .collect()
+    }
+
+    fn shared_find<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+        box_body(container, 0, "container body")
+            .ok()
+            .and_then(|body| find_box(body, fourcc))
     }
 
     /// Compare shared vs legacy child lookup for one container/four-CC.
     fn check_agree(container: &[u8], fourcc: &[u8; 4]) {
-        let shared: Vec<&[u8]> = child_boxes(container, fourcc).collect();
+        let shared = shared_children(container, fourcc);
         let legacy = legacy_children(container, fourcc);
         assert_eq!(shared, legacy);
-        assert_eq!(find_child_box(container, fourcc), legacy.first().copied());
+        assert_eq!(shared_find(container, fourcc), legacy.first().copied());
     }
 
     const NAV_KIDS: [&[u8; 4]; 12] = [
@@ -1817,11 +1877,15 @@ mod tests {
     fn assert_nav_agrees(file: &[u8]) -> usize {
         let mut compared = 0usize;
         for top in [b"moov", b"moof"] {
-            for c in box_slices(file).filter(|b| b[4..8] == *top) {
+            for c in BoxIter::new(file)
+                .filter_map(|b| b.ok())
+                .filter(|b| b.header.box_type.is(top))
+            {
+                let c = c.bytes;
                 for kid in NAV_KIDS {
                     check_agree(c, kid);
                     compared += 1;
-                    for sub in child_boxes(c, kid) {
+                    for sub in shared_children(c, kid) {
                         for kid2 in NAV_KIDS {
                             check_agree(sub, kid2);
                             compared += 1;
@@ -1881,8 +1945,8 @@ mod tests {
         trak.extend_from_slice(b"trak");
         trak.extend_from_slice(&(total as u64).to_be_bytes());
         trak.extend_from_slice(&child);
-        assert_eq!(find_child_box(&trak, b"tkhd"), Some(child.as_slice()));
-        assert_eq!(child_boxes(&trak, b"tkhd").count(), 1);
+        assert_eq!(shared_find(&trak, b"tkhd"), Some(child.as_slice()));
+        assert_eq!(shared_children(&trak, b"tkhd").len(), 1);
         assert!(
             legacy_children(&trak, b"tkhd").is_empty(),
             "the removed 8-byte skip could not see into a largesize container"

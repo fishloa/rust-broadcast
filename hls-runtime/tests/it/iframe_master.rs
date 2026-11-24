@@ -64,8 +64,9 @@ fn fixture_bytes(name: &str) -> Vec<u8> {
 }
 
 fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
-    let found =
-        isobmff::box_types::clamped_boxes(segment).find(|b| b.header.box_type.is(b"moof"))?;
+    let found = isobmff::BoxIter::clamped(segment)
+        .filter_map(|b| b.ok())
+        .find(|b| b.header.box_type.is(b"moof"))?;
     let moof_off = found.start;
     let body = &segment[found.payload_start()..found.end];
     let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(body).ok()?;
@@ -86,7 +87,8 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
     if first.flags & (1 << 16) != 0 {
         return None;
     }
-    let mdat_payload_start = isobmff::box_types::clamped_boxes(segment)
+    let mdat_payload_start = isobmff::BoxIter::clamped(segment)
+        .filter_map(|b| b.ok())
         .filter(|b| b.header.box_type.is(b"mdat"))
         .find(|b| (b.payload_start()..b.end).contains(&first.start))?
         .payload_start();

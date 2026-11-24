@@ -15,7 +15,7 @@ It never knows the media IR or a codec bitstream.
 
 | Module | Boxes (four-CC) |
 |---|---|
-| `box_types` | `size`/`type` header, `largesize`, `uuid` usertype, the `box_iter` walker |
+| `box_types` | `size`/`type` header, `largesize`, `uuid` usertype, the `BoxIter` walker |
 | `segments` | `ftyp`, `styp`, `mdat` |
 | `init_segment` | `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`/`smhd`, `dinf`/`dref`, `stbl`, `stsd`, `edts`/`elst`, `mvex`/`trex`, the audio sample entries |
 | `sample_entries` | `avc1`/`avc3`, `hvc1`/`hev1`, `vvc1`/`vvi1`, `mp4v`, `VisualSampleEntry` |

@@ -100,13 +100,15 @@ fn iframe_playlist_text(origin: &HlsOrigin) -> EgressResponse<hls_runtime::serve
 }
 
 fn find_moof_offset(bytes: &[u8]) -> Option<usize> {
-    isobmff::box_types::clamped_boxes(bytes)
+    isobmff::BoxIter::clamped(bytes)
+        .filter_map(|b| b.ok())
         .find(|b| b.header.box_type.is(b"moof"))
         .map(|b| b.start)
 }
 
 fn find_mdat_payload_start(bytes: &[u8], sample_start: usize) -> Option<usize> {
-    isobmff::box_types::clamped_boxes(bytes)
+    isobmff::BoxIter::clamped(bytes)
+        .filter_map(|b| b.ok())
         .filter(|b| b.header.box_type.is(b"mdat"))
         .find(|b| (b.payload_start()..b.end).contains(&sample_start))
         .map(|b| b.payload_start())

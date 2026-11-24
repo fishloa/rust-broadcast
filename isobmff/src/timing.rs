@@ -128,7 +128,7 @@ impl<'a> Parse<'a> for TimeToSampleBox {
                 reason: "expected stts",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 
@@ -242,7 +242,7 @@ impl<'a> Parse<'a> for CompositionOffsetBox {
                 reason: "expected ctts",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 
@@ -358,7 +358,7 @@ impl<'a> Parse<'a> for CompositionToDecodeBox {
                 reason: "expected cslg",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 
@@ -511,7 +511,7 @@ impl<'a> Parse<'a> for EditListBox {
                 reason: "expected elst",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 
@@ -708,7 +708,7 @@ impl<'a> Parse<'a> for SegmentIndexBox {
                 reason: "expected sidx",
             }));
         }
-        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
     }
 }
 

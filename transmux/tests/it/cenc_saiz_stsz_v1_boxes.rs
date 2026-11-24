@@ -260,13 +260,15 @@ fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
     let mut senc_at = Vec::new();
     let mut saio = Vec::new();
     let mut off = 0usize;
-    for step in isobmff::box_types::box_iter(body) {
-        let (child, consumed) = step.expect("walk the moof");
+    for step in isobmff::BoxIter::new(body) {
+        let child = step.expect("walk the moof");
+        let consumed = child.bytes.len();
         if child.header.box_type.is(b"traf") {
             let traf_body_at = 8 + off + 8;
             let mut inner = 0usize;
-            for step in isobmff::box_types::box_iter(child.body) {
-                let (grandchild, size) = step.expect("walk the traf");
+            for step in isobmff::BoxIter::new(child.body) {
+                let grandchild = step.expect("walk the traf");
+                let size = grandchild.bytes.len();
                 if grandchild.header.box_type.is(b"senc") {
                     senc_at.push(traf_body_at + inner);
                 } else if grandchild.header.box_type.is(b"saio") {

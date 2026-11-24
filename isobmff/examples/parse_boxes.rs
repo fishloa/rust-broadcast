@@ -13,8 +13,8 @@ fn main() {
         std::process::exit(2);
     });
     let bytes = fs::read(&path).expect("read the input file");
-    for step in isobmff::box_iter(&bytes) {
-        let (boxref, _consumed) = match step {
+    for step in isobmff::BoxIter::new(&bytes) {
+        let boxref = match step {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("stop: {e}");

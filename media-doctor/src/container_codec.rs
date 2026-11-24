@@ -57,7 +57,7 @@
 //! input).
 
 use broadcast_common::{Parse, Unpackage};
-use isobmff::box_types::clamped_boxes;
+use isobmff::BoxIter;
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::TrackId;
 use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals_with};
@@ -99,7 +99,10 @@ pub fn check_container_codec(bytes: &[u8], report: &mut Report) {
 }
 
 fn check_hevc_sample_entries(bytes: &[u8], report: &mut Report) {
-    let Some(moov) = clamped_boxes(bytes).find(|b| b.header.box_type.is(b"moov")) else {
+    let Some(moov) = BoxIter::clamped(bytes)
+        .filter_map(|b| b.ok())
+        .find(|b| b.header.box_type.is(b"moov"))
+    else {
         return;
     };
     let Ok(movie) = MovieBox::parse(&bytes[moov.start..moov.end]) else {

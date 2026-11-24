@@ -41,7 +41,7 @@ use crate::TrackId;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 
-use crate::box_types::clamped_boxes;
+use crate::box_types::BoxIter;
 use crate::error::{Error, Result};
 use crate::movie_fragment::{MovieFragmentBox, TFHD_DEFAULT_BASE_IS_MOOF};
 
@@ -102,11 +102,12 @@ thread_local! {
 /// A box whose declared size runs past the file (a truncated capture) is
 /// clamped to the file end rather than rejected: the caller may legitimately
 /// hold a cut-short recording whose early fragments are intact, which is why
-/// the walk is [`clamped_boxes`] and not the strict `box_iter`.
+/// the walk is [`BoxIter::clamped`] and not [`BoxIter::new`].
 pub fn mdat_ranges(file: &[u8]) -> Vec<MdatRange> {
     #[cfg(feature = "scan-counters")]
     MDAT_SCANS.with(|c| c.set(c.get() + 1));
-    clamped_boxes(file)
+    BoxIter::clamped(file)
+        .filter_map(|b| b.ok())
         .filter(|b| b.header.box_type.is(b"mdat"))
         .map(|b| MdatRange {
             start: b.payload_start(),

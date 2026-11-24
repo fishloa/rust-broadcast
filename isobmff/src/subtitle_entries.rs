@@ -246,7 +246,7 @@ macro_rules! utf8_text_box {
             /// Parse from full box bytes (including 8-byte header).
             pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
                 need_in(bytes, BOX_HEADER_MIN_SIZE, $fourcc)?;
-                let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+                let body = crate::box_types::parse_box(bytes)?.0.body;
                 let text = core::str::from_utf8(body).map_err(|_| Error::InvalidValue(InvalidValue {
                     field: concat!($fourcc, " ", stringify!($field)),
                     value: 0,
@@ -393,7 +393,7 @@ impl VttCueBox {
     /// Parse from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "vttc")?;
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = crate::box_types::parse_box(bytes)?.0.body;
         let mut payload: Option<CuePayloadBox> = None;
         let mut settings: Option<CueSettingsBox> = None;
         let mut cue_id: Option<CueIdBox> = None;
@@ -724,7 +724,7 @@ impl WvttSampleEntry {
             BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN + BOX_HEADER_MIN_SIZE,
             "wvtt",
         )?;
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = crate::box_types::parse_box(bytes)?.0.body;
         let data_reference_index = be_u16(body, DATA_REFERENCE_INDEX_OFFSET, "sample entry")?;
 
         let mut pos = SAMPLE_ENTRY_FIXED_LEN;
@@ -746,7 +746,7 @@ impl WvttSampleEntry {
                     bt.copy_from_slice(fourcc);
                     extra_boxes.push(crate::box_support::OpaqueBox::new(
                         bt,
-                        child[crate::box_types::box_header_len(child)?..].to_vec(),
+                        crate::box_types::parse_box(child)?.0.payload().to_vec(),
                     ));
                 }
             }

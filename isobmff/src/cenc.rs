@@ -964,7 +964,7 @@ impl SchemeTypeBox {
         scheme_type.copy_from_slice(&bytes[0..crate::box_types::BOX_TYPE_SIZE]);
         let scheme_version = u32_at(bytes, crate::box_types::BOX_TYPE_SIZE);
         let scheme_uri = if (flags & SCHM_FLAG_HAS_SCHEME_URI) != 0 {
-            Some(bytes[crate::box_types::box_header_len(bytes)?..].to_vec())
+            Some(bytes[AUX_INFO_LEN..].to_vec())
         } else {
             None
         };
@@ -1029,7 +1029,7 @@ impl<'a> Parse<'a> for SchemeInformationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "schi")?;
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = crate::box_types::parse_box(bytes)?.0.body;
         let mut tenc = None;
         let mut extra_boxes = Vec::new();
         let mut off = 0usize;
@@ -1101,7 +1101,7 @@ impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "sinf")?;
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = crate::box_types::parse_box(bytes)?.0.body;
         if body.len() < crate::box_types::BOX_HEADER_MIN_SIZE + crate::box_types::BOX_TYPE_SIZE {
             return Err(Error::BufferTooShort(BufferTooShort {
                 need: crate::box_types::BOX_HEADER_MIN_SIZE + crate::box_types::BOX_TYPE_SIZE,
