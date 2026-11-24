@@ -66,6 +66,7 @@
 //! predates the final H.266 assignments; the values here follow the published
 //! ITU-T H.266 Table 5 and are validated against the committed real fixture.)
 
+use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 use crate::error::{Error, Result};
 use crate::nalu_types::VALID_LENGTH_SIZES;
 use alloc::vec::Vec;
@@ -75,7 +76,6 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::u24_at;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
-use isobmff::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 
 // ---------------------------------------------------------------------------
 // Field widths, masks and fixed sizes
@@ -615,7 +615,7 @@ impl Serialize for VvcConfigurationBox {
 
     fn serialized_len(&self) -> usize {
         // 8-byte box header + 4-byte FullBox header + record.
-        isobmff::box_types::box_len(
+        crate::box_types::box_len(
             BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.config.serialized_len(),
         )
     }
@@ -625,7 +625,7 @@ impl Serialize for VvcConfigurationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = 0usize;
-        cursor += isobmff::box_types::write_full_box_header(
+        cursor += crate::box_types::write_full_box_header(
             buf,
             b"vvcC",
             need,
@@ -972,7 +972,6 @@ mod tests {
     use broadcast_common::error::{BufferTooShort, InvalidValue};
 
     use super::*;
-    use crate::codec_config_ext::VvcRecordCodecInfo;
 
     #[test]
     fn the_record_bit_reader_keeps_its_cursor_and_typed_errors() {
@@ -1111,13 +1110,6 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         assert_eq!(reparsed.max_picture_width, 640);
     }
 
-    #[test]
-    fn test_vvcc_dimensions_from_sps() {
-        let body = fixture_vvcc_body();
-        let record = VvcDecoderConfigurationRecord::parse(&body[4..]).unwrap();
-        assert_eq!(record.dimensions(), Some((320, 240)));
-    }
-
     /// Build a `profile_tier_level` bitstream (via the real writer) for a PTL
     /// record and hand it back to the real reader.
     fn ptl_round_trip(ptl: &VvcPtlRecord, num_sublayers: u8) -> VvcPtlRecord {
@@ -1172,11 +1164,6 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         assert_eq!(
             parsed.general_constraint_info, ptl.general_constraint_info,
             "the 94-bit payload must survive parse → serialize byte-exactly"
-        );
-        // The RFC 6381 CTA- suffix prints the payload bytes verbatim.
-        assert_eq!(
-            crate::sps::rfc6381_vvc1(1, false, 32, &parsed.general_constraint_info, 12),
-            "vvc1.1.L32.CTA-00112233445566778899AAFC"
         );
     }
 

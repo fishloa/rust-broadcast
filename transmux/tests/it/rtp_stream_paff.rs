@@ -7,13 +7,11 @@
 
 use crate::bit_writer::BitWriter;
 use broadcast_common::timescale::Timescale;
+use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
-use transmux::{
-    AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, RtpLossEvent,
-    RtpStreamDepacketiser, RtpStreamTrack,
-};
+use transmux::{RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

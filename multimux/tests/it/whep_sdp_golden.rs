@@ -27,8 +27,8 @@ a=fmtp:97 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
 a=rtpmap:98 VP8/90000\r\n";
 
 /// No live codec config: the golden just pins the structural order.
-fn config() -> transmux::AVCDecoderConfigurationRecord {
-    transmux::AVCDecoderConfigurationRecord {
+fn config() -> isobmff::AVCDecoderConfigurationRecord {
+    isobmff::AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication: 0x42,
         profile_compatibility: 0,

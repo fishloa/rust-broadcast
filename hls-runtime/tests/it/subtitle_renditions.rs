@@ -20,16 +20,14 @@ use hls_runtime::server::{
     BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginBuildError, HlsOriginConfig,
     HlsRequest, SUBTITLES_GROUP_ID, SubtitleRenditionDecl,
 };
+use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
 use media_doctor::{Report, check_hls_playlist};
 use media_plane::ServedEgress;
 use media_plane::egress::{AwaitPolicy, EgressResponse};
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::Container;
-use transmux::{
-    AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, SegmentMeta,
-    TrackId, TrackSpec,
-};
+use transmux::{CodecConfig, SegmentMeta, TrackId, TrackSpec};
 
 const TARGET_SECS: Duration = Duration::from_secs(4);
 const HEARING_IMPAIRED: &str = "CHARACTERISTICS=\"public.accessibility.transcribes-spoken-dialog,public.accessibility.describes-music-and-sound\"";

@@ -12,12 +12,12 @@
 //! Spec input: `private/specs-verified/mpeg/isobmff/iso-iec-14496-15-2017-avc-hevc-config.md`.
 
 use crate::error::{Error, Result};
-use crate::nalu_types::{AvcNalUnit, VALID_LENGTH_SIZES};
 use crate::sample_entries::AVCSampleEntry;
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{fit_bits, need_in, need_out};
+use isobmff::nalu_types::{AvcNalUnit, VALID_LENGTH_SIZES};
 
 /// Sample entry four-CC of an AVC parameter set stream (§5.4.3.1).
 pub const AVCP_SAMPLE_ENTRY: [u8; 4] = *b"avcp";

@@ -52,6 +52,7 @@ test-fixtures = { path = "../test-fixtures" }
 test-harness = { path = "../test-harness" }
 buffering-runtime = { path = "../buffering-runtime", version = "0.5.0" }
 transmux = { path = "../transmux", version = "0.33.0" }
+isobmff  = { path = "../isobmff", version = "0.1.0", default-features = false }
 broadcast-auth = { path = "../broadcast-auth", version = "0.9.0" }
 rtsp-runtime = { path = "../rtsp-runtime", version = "0.14.0", default-features = false }
 sdp-types = { workspace = true }

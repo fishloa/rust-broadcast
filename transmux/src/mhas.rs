@@ -3,8 +3,8 @@
 //!
 //! Used only to locate the `PACTYP_MPEGH3DACFG` packet whose payload is the
 //! opaque `mpegh3daConfig()` blob already carried by
-//! [`crate::mpegh::MHADecoderConfigurationRecord`]. The `mhaC` box itself
-//! lives in [`crate::mpegh`].
+//! [`isobmff::mpegh::MHADecoderConfigurationRecord`]. The `mhaC` box itself
+//! lives in [`isobmff::mpegh`].
 
 use alloc::vec::Vec;
 
@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 // decodes the MPEG-H audio bitstream, so the framing below is used for
 // exactly one purpose: **locating** the `PACTYP_MPEGH3DACFG` packet whose
 // payload is the opaque `mpegh3daConfig()` blob (already copied through
-// unchanged by [`crate::mpegh::MHADecoderConfigurationRecord`]), and flagging an access
+// unchanged by [`isobmff::mpegh::MHADecoderConfigurationRecord`]), and flagging an access
 // unit that carries one as a random-access point.
 //
 // The packet-type numbering and the three-tier "escaped value" header coding

@@ -10,11 +10,9 @@
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use isobmff::box_types::box_iter;
+use isobmff::{DDTS_BODY_LEN, DTSC_FOURCC, DtsSpecificBox};
 use transmux::TrackId;
-use transmux::{
-    CodecConfig, DDTS_BODY_LEN, DTSC_FOURCC, DtsSpecificBox, SampleEntryVariant, TrackSpec,
-    build_init_segment,
-};
+use transmux::{CodecConfig, SampleEntryVariant, TrackSpec, build_init_segment};
 
 // ---------------------------------------------------------------------------
 // Hand-computed spec vector

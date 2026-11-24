@@ -534,14 +534,14 @@ fn lp_nal(payload: &[u8]) -> Vec<u8> {
 
 /// An AVC track spec — the same minimal shape `tests/it/splice.rs` builds.
 fn avc_spec(track_id: u32) -> transmux::TrackSpec {
-    let record = transmux::AVCDecoderConfigurationRecord {
+    let record = isobmff::AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication: 66,
         profile_compatibility: 0,
         level_indication: 30,
         length_size_minus_one: 3,
-        sps: vec![transmux::AvcSps(vec![0x67, 0x42, 0x00, 0x1e])],
-        pps: vec![transmux::AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+        sps: vec![isobmff::AvcSps(vec![0x67, 0x42, 0x00, 0x1e])],
+        pps: vec![isobmff::AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
         chroma_format: None,
         bit_depth_luma_minus8: None,
         bit_depth_chroma_minus8: None,
@@ -551,7 +551,7 @@ fn avc_spec(track_id: u32) -> transmux::TrackSpec {
         TrackId::new(track_id),
         timescale(90_000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox::new(record),
+            config: isobmff::AVCConfigurationBox::new(record),
             width: 16,
             height: 16,
         },
@@ -677,7 +677,7 @@ use aes::cipher::{Block, BlockModeEncrypt, KeyIvInit};
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 
 fn whole_sample_media(data: Vec<u8>) -> Media {
-    let record = transmux::AVCDecoderConfigurationRecord {
+    let record = isobmff::AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication: 66,
         profile_compatibility: 0,
@@ -694,7 +694,7 @@ fn whole_sample_media(data: Vec<u8>) -> Media {
         TrackId::new(1),
         timescale(1000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox::new(record),
+            config: isobmff::AVCConfigurationBox::new(record),
             width: 16,
             height: 16,
         },

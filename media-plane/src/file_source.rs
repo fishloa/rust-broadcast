@@ -1019,7 +1019,7 @@ mod tests {
     }
 
     use super::*;
-    use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+    use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
     /// Demux a real TS fixture into a `ParsedFile`.
     fn demux_fixture() -> ParsedFile {

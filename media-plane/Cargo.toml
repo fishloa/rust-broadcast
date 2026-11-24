@@ -15,6 +15,7 @@ broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-f
 bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
 transmux         = { path = "../transmux", version = "0.33.0", default-features = false, optional = true }
+isobmff          = { path = "../isobmff", version = "0.1.0", default-features = false, optional = true }
 timed-metadata   = { path = "../timed-metadata", version = "0.12.0", default-features = false, optional = true }
 # Only pulled in by the `std` feature: `Trunk`'s reader-wake primitive
 # (step 3b-iv) needs a runtime-agnostic wakeup a `ServedEgress` can wait on
@@ -53,7 +54,7 @@ default = ["std"]
 # The `ts_session::test_support` helpers (muxed TS bytes, configs) for a host's tests: a
 # `[dev-dependencies]` feature, not for production builds.
 test-support = ["std"]
-std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "transmux/std", "dep:timed-metadata", "dep:event-listener", "dep:parking_lot", "dep:container-probe", "dep:caption-convert", "dep:dvb-si", "dep:tracing", "dep:broadcast-hls"]
+std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "transmux/std", "dep:isobmff", "isobmff/std", "dep:timed-metadata", "dep:event-listener", "dep:parking_lot", "dep:container-probe", "dep:caption-convert", "dep:dvb-si", "dep:tracing", "dep:broadcast-hls"]
 
 [package.metadata.docs.rs]
 # `all-features = true` alone is not enough here: this crate's `std` feature

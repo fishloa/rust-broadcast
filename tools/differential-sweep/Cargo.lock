@@ -799,6 +799,7 @@ dependencies = [
  "container-probe",
  "dvb-si",
  "event-listener",
+ "isobmff",
  "parking_lot",
  "thiserror",
  "timed-metadata",

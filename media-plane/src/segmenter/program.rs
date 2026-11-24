@@ -3716,7 +3716,7 @@ mod segmenter_tests {
 
     fn hevc_config() -> CodecConfig {
         CodecConfig::Hevc {
-            config: transmux::HEVCConfigurationBox::new(transmux::HEVCDecoderConfigurationRecord {
+            config: isobmff::HEVCConfigurationBox::new(isobmff::HEVCDecoderConfigurationRecord {
                 configuration_version: 1,
                 general_profile_space: 0,
                 general_tier_flag: false,
@@ -3743,7 +3743,7 @@ mod segmenter_tests {
 
     fn vvc_config() -> CodecConfig {
         CodecConfig::Vvc {
-            config: transmux::VvcConfigurationBox::new(transmux::VvcDecoderConfigurationRecord {
+            config: isobmff::VvcConfigurationBox::new(isobmff::VvcDecoderConfigurationRecord {
                 length_size_minus_one: 3,
                 ptl_present: false,
                 ols_idx: 0,
@@ -3764,7 +3764,7 @@ mod segmenter_tests {
 
     fn av1_config() -> CodecConfig {
         CodecConfig::Av1 {
-            config: transmux::Av1ConfigurationBox {
+            config: isobmff::Av1ConfigurationBox {
                 version: 1,
                 seq_profile: 0,
                 seq_level_idx_0: 0,

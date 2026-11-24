@@ -35,6 +35,7 @@
 //! }
 //! ```
 
+use crate::box_support::bounded_entry_count;
 use crate::error::{Error, Result};
 use crate::nalu_types::{HevcNalArray, HevcNalUnit, VALID_LENGTH_SIZES};
 use alloc::vec::Vec;
@@ -43,7 +44,6 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{read_u8, read_u16, read_u32, read_u48};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
-use isobmff::box_support::bounded_entry_count;
 
 // ---------------------------------------------------------------------------
 // HEVCDecoderConfigurationRecord
@@ -464,8 +464,8 @@ impl Serialize for HEVCConfigurationBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        isobmff::box_types::box_len(
-            isobmff::box_types::BOX_HEADER_MIN_SIZE + self.config.serialized_len(),
+        crate::box_types::box_len(
+            crate::box_types::BOX_HEADER_MIN_SIZE + self.config.serialized_len(),
         )
     }
 
@@ -473,7 +473,7 @@ impl Serialize for HEVCConfigurationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = 0usize;
-        cursor += isobmff::box_types::write_box_header(buf, b"hvcC", need)?;
+        cursor += crate::box_types::write_box_header(buf, b"hvcC", need)?;
         cursor += self.config.serialize_into(&mut buf[cursor..])?;
         Ok(cursor)
     }

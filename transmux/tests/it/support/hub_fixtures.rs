@@ -1,11 +1,12 @@
 //! Dummy codec configs and track specs shared by the transmux segmenter tests.
 
 use broadcast_common::timescale::Timescale;
-use transmux::pipeline::{CodecConfig, TrackSpec};
-use transmux::{
+use isobmff::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, DecoderConfigDescriptor,
-    DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor, TrackId,
+    DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
 };
+use transmux::TrackId;
+use transmux::pipeline::{CodecConfig, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -18,8 +19,8 @@ pub fn dummy_avc_config() -> AVCConfigurationBox {
         profile_compatibility: 0,
         level_indication: 30,
         length_size_minus_one: 3,
-        sps: vec![transmux::AvcSps(vec![0x67, 66, 0, 30, 0x00])],
-        pps: vec![transmux::AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
+        sps: vec![isobmff::AvcSps(vec![0x67, 66, 0, 30, 0x00])],
+        pps: vec![isobmff::AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
         chroma_format: None,
         bit_depth_luma_minus8: None,
         bit_depth_chroma_minus8: None,

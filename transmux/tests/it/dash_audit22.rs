@@ -3,8 +3,8 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::{Package, Unpackage};
+use isobmff::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox};
 use transmux::dash::{Addressing, DashPackager, TrackSegments};
-use transmux::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox};
 use transmux::{CodecConfig, MpegAudioLayer, TsDemux, rfc6381_codec_string};
 
 fn esds(oti: u8) -> EsdsBox {

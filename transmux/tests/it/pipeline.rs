@@ -9,12 +9,13 @@
 
 use broadcast_common::Parse;
 use broadcast_common::timescale::Timescale;
+use isobmff::EsdsBox;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::segments::MediaDataBox;
 use transmux::TrackId;
 use transmux::{
-    CodecConfig, EsdsBox, FragmentTrackData, MovieBox, Sample, SampleEntryVariant, StblChild,
-    TrackSpec, build_init_segment, build_media_segment,
+    CodecConfig, FragmentTrackData, MovieBox, Sample, SampleEntryVariant, StblChild, TrackSpec,
+    build_init_segment, build_media_segment,
 };
 
 fn timescale(value: u32) -> Timescale {

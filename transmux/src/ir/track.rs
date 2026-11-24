@@ -8,8 +8,8 @@ use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use super::{CodecConfig, DisplayGeometry, ProgramNumber, Sample, TrackId};
-use crate::dovi::DoviDecoderConfigurationRecord;
 use crate::hdr::HdrStaticMetadata;
+use isobmff::dovi::DoviDecoderConfigurationRecord;
 
 /// A track's identity + codec config, used to build the init segment.
 #[derive(Clone, PartialEq, Eq)]

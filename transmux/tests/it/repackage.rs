@@ -15,12 +15,10 @@ use broadcast_common::Unpackage;
 use bytes::Bytes;
 use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
+use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::media::{Fmp4Demux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::{
-    HEVCConfigurationBox, HEVCDecoderConfigurationRecord, Repackage, Sample, Track, TrackSpec,
-    TsDemux,
-};
+use transmux::{Repackage, Sample, Track, TrackSpec, TsDemux};
 
 // ── Fixtures / oracle ───────────────────────────────────────────────────────
 
@@ -374,7 +372,7 @@ fn hevc_video_track(track_id: u32) -> TrackSpec {
 fn aac_audio_track(track_id: u32) -> TrackSpec {
     // Reuses the same minimal esds shape `ll_hls.rs`'s tests use; only the
     // discriminant (CodecConfig::Aac, an audio codec) matters here.
-    use transmux::{
+    use isobmff::{
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };
     let esds = EsdsBox::new(ESDescriptor::new(

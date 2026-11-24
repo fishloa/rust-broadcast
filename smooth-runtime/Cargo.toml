@@ -20,6 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common  = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["std", "xml", "url"] }
 broadcast-smooth   = { path = "../broadcast-smooth", version = "0.3.0" }
 transmux          = { path = "../transmux", version = "0.33.0", default-features = false, features = ["std"] }
+isobmff           = { path = "../isobmff", version = "0.1.0", default-features = false }
 # Only pulled in by the `std` feature: `server::SmoothOrigin` (issue #2453)
 # renders the live Manifest from a `media_plane::Trunk`'s own segment ring —
 # `Trunk` is `std`-only (see its module doc), the same gate `hls-runtime`'s
@@ -40,7 +41,7 @@ quick-xml        = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["broadcast-common/std", "broadcast-smooth/std", "transmux/std", "thiserror/std", "media-plane/std", "dep:bytes"]
+std = ["broadcast-common/std", "broadcast-smooth/std", "transmux/std", "isobmff/std", "thiserror/std", "media-plane/std", "dep:bytes"]
 
 [lints]
 workspace = true

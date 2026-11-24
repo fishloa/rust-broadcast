@@ -14,9 +14,8 @@
 //! syncframe's own bit stream information rather than assuming one PES
 //! payload equals one syncframe.
 //!
-//! The `dac3`/`dec3` boxes themselves live in [`crate::ac3`].
+//! The `dac3`/`dec3` boxes themselves live in [`isobmff::ac3`].
 
-use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream, acmod_channels};
 use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
@@ -24,6 +23,7 @@ use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_in;
 use broadcast_common::wire::u16_at;
+use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream, acmod_channels};
 
 // AC-3 syncword (big-endian).
 pub(crate) const AC3_SYNCWORD: u16 = 0x0B77;
@@ -1360,7 +1360,6 @@ const EAC3_CHANMAP_TO_CHAN_LOC: [(u8, u8); 9] = [
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::ac3::*;
     use alloc::vec;
     use broadcast_common::{Parse, Serialize};
 
@@ -2247,7 +2246,7 @@ pub(crate) mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue(InvalidValue {
+                isobmff::Error::InvalidValue(InvalidValue {
                     field: "dec3 num_ind_sub",
                     ..
                 })
@@ -2409,7 +2408,7 @@ pub(crate) mod tests {
     #[test]
     fn ec3_parse_reports_the_missing_dec3_substream_bytes() {
         match Ec3SpecificBox::parse(&DEC3_ORACLE[..3]) {
-            Err(Error::BufferTooShort(e)) => {
+            Err(isobmff::Error::BufferTooShort(e)) => {
                 assert_eq!((e.need, e.have, e.what), (5, 3, "dec3 substreams"));
             }
             other => panic!("expected a dec3 substreams bound, got {other:?}"),

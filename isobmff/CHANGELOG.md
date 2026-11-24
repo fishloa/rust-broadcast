@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which prints as a bare integer and serialises transparently).
 - `ser_timescale` (feature `serde`): serialise a `Timescale` as the plain
   ticks-per-second integer the wire box carries.
+- The codec configuration boxes moved from `transmux`: `avcC`/`hvcC`/`vvcC`
+  (`avc_config`/`hevc_config`/`vvc_config`), the AVC/HEVC NAL-unit newtypes
+  (`nalu_types`), `av1C`/`vpcC` (`av1`/`vp9`), `dOps`, `dfLa`, `dac4`,
+  `dac3`/`dec3`, `ddts`, `mhaC`, the Dolby Vision record (`dovi`), the
+  `mdcv`/`clli` bodies (`hdr_boxes`), the `esds` descriptor chain
+  (`mp4esds`), and the AVS2/AVS3 configuration records
+  (`avs2`/`avs3`/`avs3_audio`), with the real-fixture tests that exercise
+  them.
 - `emsg` (ISO/IEC 23009-1 §5.10.3.3, DASH-IF IOP Part 10): `EmsgBox`,
   `PresentationTime`, `EmsgVersion` and the box constants, moved from the
   absorbed `mp4-emsg` crate, plus its real-fixture tests and examples. The

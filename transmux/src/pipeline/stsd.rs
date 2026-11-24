@@ -147,7 +147,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             // (private/specs-verified/dolby/vision/dolby-vision-streams-in-isobmff-v2.0-2017-12.md 8.1.2).
             let dovi = t.dovi.as_ref().filter(|d| d.is_single_layer());
             let codec_type = if dovi.is_some_and(|d| d.uses_dolby_hevc_entry()) {
-                crate::dovi::DVH1_FOURCC
+                isobmff::dovi::DVH1_FOURCC
             } else {
                 *b"hvc1"
             };
@@ -402,7 +402,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 config_boxes.push(srat_opaque(srat)?);
             }
             let entry = SampleEntryVariant::Mha(Box::new(MhaSampleEntry {
-                codec_type: crate::mpegh::MHA1_FOURCC,
+                codec_type: isobmff::mpegh::MHA1_FOURCC,
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,

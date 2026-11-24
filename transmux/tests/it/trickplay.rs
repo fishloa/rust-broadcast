@@ -20,7 +20,7 @@ use std::fs;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
-use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::error::Error;
 use transmux::media::{Fmp4Demux, Track};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};

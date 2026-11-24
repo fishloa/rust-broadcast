@@ -1080,16 +1080,16 @@ fn a_co64_offset_past_the_file_is_out_of_range() {
 // ---------------------------------------------------------------------------
 
 fn avc_spec(timescale: Timescale) -> transmux::pipeline::TrackSpec {
-    let record = transmux::avc_config::AVCDecoderConfigurationRecord {
+    let record = isobmff::avc_config::AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication: 66,
         profile_compatibility: 0,
         level_indication: 30,
         length_size_minus_one: 3,
-        sps: vec![transmux::nalu_types::AvcSps(vec![
+        sps: vec![isobmff::nalu_types::AvcSps(vec![
             0x67, 0x42, 0xc0, 0x1e, 0xd9, 0x00, 0x80, 0x1e, 0x24,
         ])],
-        pps: vec![transmux::nalu_types::AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+        pps: vec![isobmff::nalu_types::AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
         chroma_format: None,
         bit_depth_luma_minus8: None,
         bit_depth_chroma_minus8: None,
@@ -1099,7 +1099,7 @@ fn avc_spec(timescale: Timescale) -> transmux::pipeline::TrackSpec {
         TrackId::new(1),
         timescale,
         CodecConfig::Avc {
-            config: transmux::avc_config::AVCConfigurationBox::new(record),
+            config: isobmff::avc_config::AVCConfigurationBox::new(record),
             width: 16,
             height: 16,
         },

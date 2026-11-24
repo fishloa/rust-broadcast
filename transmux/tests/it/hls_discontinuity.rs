@@ -18,11 +18,9 @@ use crate::hub_fixtures::dummy_avc_config;
 use broadcast_common::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment, mark_init_discontinuities};
 use core::time::Duration;
+use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::TrackId;
-use transmux::{
-    AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample, SegmentMeta,
-    Segmenter, TrackSpec,
-};
+use transmux::{CodecConfig, Sample, SegmentMeta, Segmenter, TrackSpec};
 
 // ---------------------------------------------------------------------------
 // Helpers shared across tests
@@ -40,8 +38,8 @@ fn dummy_avc_config_b() -> AVCConfigurationBox {
         profile_compatibility: 0,
         level_indication: 30,
         length_size_minus_one: 3,
-        sps: vec![transmux::AvcSps(vec![0x67, 100, 0, 30, 0x00])],
-        pps: vec![transmux::AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
+        sps: vec![isobmff::AvcSps(vec![0x67, 100, 0, 30, 0x00])],
+        pps: vec![isobmff::AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
         chroma_format: None,
         bit_depth_luma_minus8: None,
         bit_depth_chroma_minus8: None,

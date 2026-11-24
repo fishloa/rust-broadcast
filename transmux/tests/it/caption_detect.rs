@@ -11,12 +11,12 @@ use broadcast_common::Unpackage;
 use cc_data::decode::Cea608Channel;
 use dvb_si::descriptors::atsc_caption_service::{AtscCaptionKind, AtscCaptionService};
 use dvb_si::text::LangCode;
-use transmux::ir::DataCarriage;
-use transmux::{
-    CaptionDetector, CodecConfig, DecoderConfigDescriptor, DetectedCaption, ESDescriptor, EsdsBox,
-    HEVCConfigurationBox, HEVCDecoderConfigurationRecord, SLConfigDescriptor, TsDemux,
-    declared_caption_services,
+use isobmff::{
+    DecoderConfigDescriptor, ESDescriptor, EsdsBox, HEVCConfigurationBox,
+    HEVCDecoderConfigurationRecord, SLConfigDescriptor,
 };
+use transmux::ir::DataCarriage;
+use transmux::{CaptionDetector, CodecConfig, DetectedCaption, TsDemux, declared_caption_services};
 
 fn detect(fixture: &str, test: &str) -> Option<Vec<DetectedCaption>> {
     let data = test_fixtures::require_bytes(fixture, test)?;

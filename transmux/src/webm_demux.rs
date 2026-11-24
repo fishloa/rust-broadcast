@@ -58,16 +58,16 @@ use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_common::{Parse, Unpackage};
 
 use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
-use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
-use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::ir::InputDegradation;
 use crate::media::{Media, Track};
-use crate::opus::OpusSpecificBox;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtp_sdp::aac_config_from_asc_bytes;
-use crate::vp9::Vp9ConfigurationBox;
 use broadcast_common::wire::{be_u64, i16_at};
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+use isobmff::opus::OpusSpecificBox;
+use isobmff::vp9::Vp9ConfigurationBox;
 
 // ORDER: element-hierarchy order (EBML header, Segment, then each master's children), not numeric: IDs are variable-length marker-bit values.
 // --- EBML / Matroska element IDs (RFC 9559 §27; stored with marker bits) -----
@@ -1394,7 +1394,7 @@ fn opus_config(info: &TrackInfo) -> Result<CodecConfig> {
         let coupled_count = cp[OPUS_HEAD_COUPLED_COUNT_OFFSET];
         let map_start = OPUS_HEAD_CHANNEL_MAPPING_OFFSET;
         let map_end = map_start + output_channel_count as usize;
-        Some(crate::opus::ChannelMappingTable {
+        Some(isobmff::opus::ChannelMappingTable {
             stream_count,
             coupled_count,
             channel_mapping: cp[map_start..map_end].to_vec(),
@@ -1931,12 +1931,12 @@ mod tests {
     /// in-memory field check).
     #[test]
     fn webm_avc_two_byte_nal_lengths_normalised_to_four() {
-        use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
         use crate::mkv_mux::MkvMux;
-        use crate::nalu_types::{AvcPps, AvcSps};
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
         use broadcast_common::Package;
+        use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+        use isobmff::nalu_types::{AvcPps, AvcSps};
 
         let record = AVCDecoderConfigurationRecord {
             configuration_version: 1,
@@ -2028,12 +2028,12 @@ mod tests {
     /// be normalised to 4 on the samples *and* on the emitted record.
     #[test]
     fn webm_hevc_two_byte_nal_lengths_normalised_to_four() {
-        use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
         use crate::mkv_mux::MkvMux;
-        use crate::nalu_types::{HevcNalArray, HevcNalUnit};
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
         use broadcast_common::Package;
+        use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+        use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
 
         let record = HEVCDecoderConfigurationRecord {
             configuration_version: 1,

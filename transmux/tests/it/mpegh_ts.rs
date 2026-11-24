@@ -19,9 +19,10 @@
 
 use crate::ts_psi::{first_section, parse_pat, payload_offset, pid_of, pusi_of};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use isobmff::MHADecoderConfigurationRecord;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::{Fmp4Demux, MHADecoderConfigurationRecord, TsDemux, TsMux};
+use transmux::{Fmp4Demux, TsDemux, TsMux};
 
 const TS: usize = 188;
 

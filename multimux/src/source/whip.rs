@@ -36,7 +36,7 @@
 //! arrive: [`transmux::avc_access_unit_parameter_sets`] walks a real IDR's
 //! length-prefixed NAL units for a genuine SPS (type 7) + PPS (type 8) pair,
 //! [`transmux::avc_config_from_sps_pps`] builds the real
-//! [`transmux::AVCConfigurationBox`] from it, and
+//! [`isobmff::AVCConfigurationBox`] from it, and
 //! `RtpStreamDepacketiser::set_track_config` installs it on the track.
 //! [`SessionEvent::NewProgram`] is deferred until that has happened —
 //! mirrors `crate::source::rtmp`'s own
@@ -96,11 +96,9 @@ use media_plane::ingress::{
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 
+use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{
-    AVCConfigurationBox, AVCDecoderConfigurationRecord, RtpStreamDepacketiser, RtpStreamTrack,
-    avc_config_from_sps_pps,
-};
+use transmux::{RtpStreamDepacketiser, RtpStreamTrack, avc_config_from_sps_pps};
 
 use webrtc_runtime::media::{
     Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,

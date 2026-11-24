@@ -149,9 +149,9 @@ mod tests {
 
     // Codec config is irrelevant to the transforms; build a minimal AVC spec.
     fn spec() -> TrackSpec {
-        use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-        use crate::nalu_types::{AvcPps, AvcSps};
         use crate::pipeline::CodecConfig;
+        use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+        use isobmff::nalu_types::{AvcPps, AvcSps};
         let record = AVCDecoderConfigurationRecord {
             configuration_version: 1,
             profile_indication: 66,

@@ -22,7 +22,7 @@ fn source_media() -> Media {
         .expect("demux the real av.flv fixture")
 }
 
-fn avc_config() -> (transmux::AVCConfigurationBox, u16, u16) {
+fn avc_config() -> (isobmff::AVCConfigurationBox, u16, u16) {
     let media = source_media();
     match media.tracks[0].config() {
         CodecConfig::Avc {
@@ -34,7 +34,7 @@ fn avc_config() -> (transmux::AVCConfigurationBox, u16, u16) {
     }
 }
 
-fn aac_config() -> (transmux::EsdsBox, u16, u32) {
+fn aac_config() -> (isobmff::EsdsBox, u16, u32) {
     let media = source_media();
     let track = media
         .tracks
@@ -337,7 +337,7 @@ fn an_unsupported_codec_is_named_in_the_mux_error() {
             TrackId::new(1),
             timescale(1000),
             CodecConfig::Ac3 {
-                config: transmux::Ac3SpecificBox {
+                config: isobmff::Ac3SpecificBox {
                     fscod: 0,
                     bsid: 8,
                     bsmod: 0,

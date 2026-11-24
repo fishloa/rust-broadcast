@@ -21,20 +21,20 @@
 //! for the RFC background and SDP fmtp→CodecConfig mapping specification.
 
 use crate::aac_asc::AudioSpecificConfig;
-use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
-use crate::mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG4_AUDIO,
-    SLConfigDescriptor, STREAM_TYPE_AUDIO,
-};
 use crate::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
-use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::CodecConfig;
 use crate::rtp::{base64_decode, hex_decode};
 use alloc::vec::Vec;
 use broadcast_common::Parse;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::len::need_in;
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::mp4esds::{
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG4_AUDIO,
+    SLConfigDescriptor, STREAM_TYPE_AUDIO,
+};
+use isobmff::nalu_types::{AvcPps, AvcSps};
 
 /// `SLConfigDescriptor` `predefined = 2` (MP4 storage) — ISO/IEC 14496-14 §3.1.2.
 /// AAC sample size is always 16 bits in the sample entry (fMP4/CMAF convention).
@@ -186,7 +186,7 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
     // that governs *parsing* the SPS syntax; the trailer's own condition is
     // the narrower §5.3.3.1.2 set, so a profile in the wider list but outside
     // the trailer set keeps `None` without decoding anything.
-    let ext = if crate::avc_config::AVCDecoderConfigurationRecord::has_high_profile_ext(
+    let ext = if isobmff::avc_config::AVCDecoderConfigurationRecord::has_high_profile_ext(
         profile_indication,
     ) {
         Some(crate::sps::decode_avc_sps(&first_sps.0)?)
@@ -462,7 +462,7 @@ mod tests {
     /// set writes no trailer, and does not need the SPS decoded at all.
     #[test]
     fn trailer_gate_is_the_avcc_profile_set_not_the_sps_parse_set() {
-        use crate::avc_config::AVCDecoderConfigurationRecord as Record;
+        use isobmff::avc_config::AVCDecoderConfigurationRecord as Record;
         for idc in [100u8, 110, 122, 244] {
             assert!(
                 Record::has_high_profile_ext(idc),

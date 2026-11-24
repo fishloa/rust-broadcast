@@ -29,7 +29,7 @@
 //!
 //! ```rust
 //! use transmux::{trickplay::derive_iframe_track, pipeline::{TrackSpec, Sample, CodecConfig}};
-//! use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+//! use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 //! use transmux::media::Track;
 //!
 //! // Build a minimal AVC TrackSpec for the example.

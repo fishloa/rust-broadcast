@@ -472,19 +472,19 @@ mod tests {
                 TrackId::new(1),
                 Timescale::try_new(timescale).expect("timescale"),
                 CodecConfig::Aac {
-                    esds: crate::mp4esds::EsdsBox::new(crate::mp4esds::ESDescriptor::new(
+                    esds: isobmff::mp4esds::EsdsBox::new(isobmff::mp4esds::ESDescriptor::new(
                         1,
                         0,
-                        Some(crate::mp4esds::DecoderConfigDescriptor::new(
+                        Some(isobmff::mp4esds::DecoderConfigDescriptor::new(
                             0x40,
                             0x05,
                             false,
                             0,
                             0,
                             0,
-                            Some(crate::mp4esds::DecoderSpecificInfo::new(vec![0x12, 0x10])),
+                            Some(isobmff::mp4esds::DecoderSpecificInfo::new(vec![0x12, 0x10])),
                         )),
-                        Some(crate::mp4esds::SLConfigDescriptor::predefined_two()),
+                        Some(isobmff::mp4esds::SLConfigDescriptor::predefined_two()),
                     )),
                     channel_count: 2,
                     sample_rate: timescale,

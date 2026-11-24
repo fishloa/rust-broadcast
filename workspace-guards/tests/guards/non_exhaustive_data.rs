@@ -168,25 +168,13 @@ pub const TABLE: &[Crate] = &[
     // `EmsgConfig` and `TimedEvent` are conversion/value structs that grow;
     // the DATERANGE/WebVTT models carry no suffix and are handled elsewhere.
     runtime("timed-metadata", &[], &["TimedEvent"]),
-    // The codec configuration records (`*DecoderConfigurationRecord`, `*PtlRecord`)
-    // are spec-fixed wire layouts that share the `Config`/`Record` suffix; the
-    // decoded `*SpsInfo`/`*SyncframeInfo`/`AudioSpecificConfig`/`DtsCoreFrameInfo`/
-    // `AvcFieldInfo`/`NclxColourInfo`/`DecoderSpecificInfo` records are
-    // `#[non_exhaustive]` too (so a newly decoded field is additive); `PartInfo`/
+    // The codec configuration records that stay in transmux (the IR-side
+    // `DtsCoreFrameInfo`/`Ac3SyncframeInfo`/`HevcSpsInfo` records) are
+    // `#[non_exhaustive]` so a newly decoded field is additive; `PartInfo`/
     // `SegmentInfo` are LL-HLS output value structs that grow, and
-    // `TimelineJumpConfig`/`EncryptConfig` are runtime config.
-    runtime(
-        "transmux",
-        &[
-            "AVCDecoderConfigurationRecord",
-            "DoviDecoderConfigurationRecord",
-            "HEVCDecoderConfigurationRecord",
-            "MHADecoderConfigurationRecord",
-            "VvcDecoderConfigurationRecord",
-            "VvcPtlRecord",
-        ],
-        &[],
-    ),
+    // `TimelineJumpConfig`/`EncryptConfig` are runtime config. The ISO BMFF
+    // decoder configuration records themselves moved to `isobmff`.
+    runtime("transmux", &[], &[]),
     plain("ts-fix"),
     plain("ttml-subtitle"),
     plain("ule"),

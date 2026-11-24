@@ -6,18 +6,18 @@
 //!   `private/specs-verified/mpeg/hdr/h265-d2-28-mastering-display-syntax.md`,
 //!   `h265-d2-35-content-light-level-syntax.md` and
 //!   `h265-sei-payload-dispatch.md`.
-//! - Box layout: the `mdcv` / `clli` body types live in [`crate::hdr_boxes`];
+//! - Box layout: the `mdcv` / `clli` body types live in [`isobmff::hdr_boxes`];
 //!   the SEI payload and the box body are byte-identical, so one type serves
 //!   both and the box header is added by the sample-entry writer.
 
 use crate::error::Result;
-use crate::hdr_boxes::{
-    BOX_TYPE_LEN, CLLI_FOURCC, ContentLightLevel, MDCV_FOURCC, MasteringDisplayColourVolume,
-};
-use crate::hevc_config::HEVCDecoderConfigurationRecord;
 use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
+use isobmff::hdr_boxes::{
+    BOX_TYPE_LEN, CLLI_FOURCC, ContentLightLevel, MDCV_FOURCC, MasteringDisplayColourVolume,
+};
+use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
 
 pub const HEVC_PREFIX_SEI_NUT: u8 = 39;
 /// SEI `payloadType` of `mastering_display_colour_volume` (H.265 D.2.28).
@@ -141,7 +141,7 @@ impl HdrStaticMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hdr_boxes::{CLLI_PAYLOAD_LEN, ChromaticityXy, MDCV_PAYLOAD_LEN};
+    use isobmff::hdr_boxes::{CLLI_PAYLOAD_LEN, ChromaticityXy, MDCV_PAYLOAD_LEN};
 
     const MDCV_BODY: [u8; 24] = [
         0x33, 0xc2, 0x86, 0xc4, 0x1d, 0x4c, 0x0b, 0xb8, 0x84, 0xd0, 0x3e, 0x80, 0x3d, 0x13, 0x40,
@@ -177,17 +177,17 @@ mod tests {
     fn wrong_lengths_are_rejected() {
         assert!(matches!(
             MasteringDisplayColourVolume::parse(&MDCV_BODY[..23]),
-            Err(crate::error::Error::BufferTooShort(..))
+            Err(isobmff::Error::BufferTooShort(..))
         ));
         let mut long = MDCV_BODY.to_vec();
         long.push(0);
         assert!(matches!(
             MasteringDisplayColourVolume::parse(&long),
-            Err(crate::error::Error::InvalidValue(..))
+            Err(isobmff::Error::InvalidValue(..))
         ));
         assert!(matches!(
             ContentLightLevel::parse(&CLLI_BODY[..3]),
-            Err(crate::error::Error::BufferTooShort(..))
+            Err(isobmff::Error::BufferTooShort(..))
         ));
     }
 
@@ -197,13 +197,13 @@ mod tests {
         let mut short = [0u8; MDCV_PAYLOAD_LEN - 1];
         assert!(matches!(
             m.serialize_into(&mut short),
-            Err(crate::error::Error::OutputBufferTooSmall(..))
+            Err(isobmff::Error::OutputBufferTooSmall(..))
         ));
         let c = ContentLightLevel::parse(&CLLI_BODY).unwrap();
         let mut short = [0u8; CLLI_PAYLOAD_LEN - 1];
         assert!(matches!(
             c.serialize_into(&mut short),
-            Err(crate::error::Error::OutputBufferTooSmall(..))
+            Err(isobmff::Error::OutputBufferTooSmall(..))
         ));
     }
 

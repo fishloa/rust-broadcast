@@ -9,10 +9,11 @@
 
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
+use isobmff::ChromaticityXy;
 use transmux::codec_config_ext::HevcRecordCodecInfo;
 use transmux::ir::{CodecConfig, TrackSpec};
 use transmux::ts_demux::TsDemux;
-use transmux::{ChromaticityXy, HdrStaticMetadata, build_init_segment};
+use transmux::{HdrStaticMetadata, build_init_segment};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

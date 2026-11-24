@@ -68,25 +68,25 @@ use mpeg_ps::program_stream::scan_packs;
 use crate::ac3_syncframe::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use crate::annexb::iter_annexb_nals;
 use crate::au::AccessUnitSplitter;
-use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, DisplayGeometry};
 use crate::media::{Media, Track};
-use crate::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
 use crate::mpeg_legacy::Mpeg2SeqHeader;
 use crate::mpeg2_display::Mpeg2DisplayTracker;
 use crate::nal::{
     AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, ParamKind,
     parameter_set_is_valid,
 };
-use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::ts_demux::{
     AVC_SPS_CONFIG_MIN_LEN, AVC_SPS_CONSTRAINT_FLAGS_OFFSET, AVC_SPS_LEVEL_IDC_OFFSET,
     ESDS_VIDEO_ES_ID, MPEG2_PICTURE_START_CODE, OTI_MPEG2_VIDEO_MAIN, STREAM_TYPE_VISUAL,
     mpeg2_is_sync,
 };
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
+use isobmff::nalu_types::{AvcPps, AvcSps};
 
 // ── stream_id → codec (ISO/IEC 13818-1 Table 2-22) ──────────────────────────
 

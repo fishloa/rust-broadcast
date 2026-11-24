@@ -13,12 +13,13 @@
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
-use test_fixtures::vectors::DAC4_ORACLE;
-use transmux::TrackId;
-use transmux::{
-    Ac4SpecificBox, AudioSpecificConfig, Av1ConfigurationBox, EsdsBox, FlacSpecificBox,
-    OpusSpecificBox, Vp9ConfigurationBox,
+use isobmff::{
+    Ac4SpecificBox, Av1ConfigurationBox, EsdsBox, FlacSpecificBox, OpusSpecificBox,
+    Vp9ConfigurationBox,
 };
+use test_fixtures::vectors::DAC4_ORACLE;
+use transmux::AudioSpecificConfig;
+use transmux::TrackId;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -60,7 +61,7 @@ fn fixture(rel: &str) -> Vec<u8> {
     test_fixtures::read(rel)
 }
 
-fn roundtrip<T: Serialize<Error = transmux::Error>>(v: &T, oracle: &[u8]) -> Vec<u8> {
+fn roundtrip<T: Serialize<Error = isobmff::Error>>(v: &T, oracle: &[u8]) -> Vec<u8> {
     let mut buf = vec![0u8; v.serialized_len()];
     let n = v.serialize_into(&mut buf).expect("serialize");
     buf.truncate(n);
@@ -145,7 +146,7 @@ fn av1c_marker_bit_clear_is_rejected() {
     assert!(
         matches!(
             err,
-            transmux::Error::InvalidValue(InvalidValue {
+            isobmff::Error::InvalidValue(InvalidValue {
                 field: "av1C marker",
                 ..
             })
@@ -259,7 +260,7 @@ fn dops_truncated_channel_mapping_errors() {
     assert!(
         matches!(
             err,
-            transmux::Error::BufferTooShort(BufferTooShort {
+            isobmff::Error::BufferTooShort(BufferTooShort {
                 need: 19,
                 have: 15,
                 what: "dOps ChannelMapping"
@@ -293,7 +294,7 @@ fn dops_truncated_channel_mapping_header_errors() {
     assert!(
         matches!(
             err,
-            transmux::Error::BufferTooShort(BufferTooShort {
+            isobmff::Error::BufferTooShort(BufferTooShort {
                 need: 13,
                 have: 11,
                 what: "dOps channel mapping"
@@ -308,7 +309,7 @@ fn dops_truncated_channel_mapping_header_errors() {
     assert!(
         matches!(
             err,
-            transmux::Error::BufferTooShort(BufferTooShort {
+            isobmff::Error::BufferTooShort(BufferTooShort {
                 need: 13,
                 have: 12,
                 what: "dOps channel mapping"
@@ -324,7 +325,7 @@ fn dops_truncated_channel_mapping_header_errors() {
     assert!(
         matches!(
             err,
-            transmux::Error::BufferTooShort(BufferTooShort {
+            isobmff::Error::BufferTooShort(BufferTooShort {
                 need: 15,
                 have: 13,
                 what: "dOps ChannelMapping"

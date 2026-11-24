@@ -26,17 +26,17 @@
 
 use crate::annexb::iter_length_prefixed_nals_with;
 use crate::bitreader::BitReader;
-use crate::hevc_config::HEVCDecoderConfigurationRecord;
 use crate::ir::CodecConfig;
 use crate::nal::{
     AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SEI, AVC_NAL_SPS, HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK,
     NAL_TYPE_MASK, sei_messages,
 };
-use crate::nalu_types::HEVC_SPS_NUT;
 use crate::slice_header::{AvcParamSets, AvcSliceHeader};
 use crate::sps::{
     AvcPicTimingLayout, AvcSliceSps, decode_avc_slice_sps, decode_hevc_interlace_sps,
 };
+use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
+use isobmff::nalu_types::HEVC_SPS_NUT;
 
 /// `pic_struct` 9 (H.265 Table D.2): top field paired with the previous
 /// bottom field in output order.
@@ -537,12 +537,12 @@ mod tests {
         assert_eq!(SourceScanType::from_code(3), SourceScanType::Unknown);
     }
 
-    use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
     use crate::ir::CodecConfig;
-    use crate::nalu_types::{HevcNalArray, HevcNalUnit};
     use crate::test_bits::BitWriter;
     use alloc::vec;
     use alloc::vec::Vec;
+    use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+    use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
 
     fn hevc_nal(nal_type: u8, body: &[u8]) -> Vec<u8> {
         let mut v = vec![nal_type << 1, 0x01];
