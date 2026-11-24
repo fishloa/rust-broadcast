@@ -18,13 +18,13 @@ const MIN_EPOCH_MS: i64 = -377_705_116_800_000;
 #[cfg(test)]
 const MAX_EPOCH_MS: i64 = 253_402_300_799_999;
 
+/// Digits jiff prints for a negative year, which this renderer trims back.
+const PRINTED_YEAR_DIGITS: usize = 6;
+
 /// The UTC calendar date-time `epoch_ms` milliseconds after the Unix epoch, or
 /// `None` outside years -9999..=9999. (`jiff::Timestamp` is deliberately NOT
 /// used: its range stops at 9999-12-30T22:00Z, which would break the
 /// byte-identical output for the last day of year 9999.)
-/// Digits jiff prints for a negative year, which this renderer trims back.
-const PRINTED_YEAR_DIGITS: usize = 6;
-
 fn civil_from_epoch_ms(epoch_ms: i64) -> Option<DateTime> {
     date(1970, 1, 1)
         .at(0, 0, 0, 0)

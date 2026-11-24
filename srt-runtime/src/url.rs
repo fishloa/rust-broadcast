@@ -247,8 +247,7 @@ const PERCENT_ESCAPE_SLACK: usize = 8;
 fn escape_query_fragments(input: &str) -> alloc::string::String {
     match input.split_once('?') {
         Some((head, query)) => {
-            let mut out =
-                alloc::string::String::with_capacity(input.len() + PERCENT_ESCAPE_SLACK);
+            let mut out = alloc::string::String::with_capacity(input.len() + PERCENT_ESCAPE_SLACK);
             out.push_str(head);
             out.push('?');
             for ch in query.chars() {

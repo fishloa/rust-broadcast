@@ -271,7 +271,11 @@ impl<'a> DataPacket<'a> {
         put_be32(buf, 0, word0);
         put_be32(buf, super::WORD1_OFFSET, word1);
         put_be32(buf, super::TIMESTAMP_OFFSET, self.timestamp.value());
-        put_be32(buf, super::DEST_SOCKET_ID_OFFSET, self.dest_socket_id.value());
+        put_be32(
+            buf,
+            super::DEST_SOCKET_ID_OFFSET,
+            self.dest_socket_id.value(),
+        );
         buf[SRT_HEADER_LEN..len].copy_from_slice(self.data);
         Ok(len)
     }

@@ -2441,10 +2441,7 @@ mod tests {
         // driver-minted Trunk once live, so there is a `ProgramServing`
         // bundle for `set_init` to write into at all.
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -2510,10 +2507,7 @@ mod tests {
             .with_declared_bandwidth_bps(5_000_000),
         );
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             name.to_string(),
@@ -2657,10 +2651,7 @@ mod tests {
             .with_declared_bandwidth_bps(5_000_000),
         );
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_health(HealthState::Live);
         let mut streams = HashMap::new();
         streams.insert(
@@ -2743,10 +2734,7 @@ mod tests {
             .with_declared_bandwidth_bps(5_000_000),
         );
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             "metrics-probe".to_string(),
@@ -2857,10 +2845,7 @@ mod tests {
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
@@ -3027,10 +3012,7 @@ mod tests {
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
@@ -3190,10 +3172,7 @@ mod tests {
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
@@ -3266,10 +3245,7 @@ mod tests {
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
@@ -3455,10 +3431,7 @@ mod tests {
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
@@ -3530,10 +3503,7 @@ mod tests {
                 .with_window_segments(8),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
@@ -3637,10 +3607,7 @@ mod tests {
                 .with_window_segments(4),
         ));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
@@ -3755,10 +3722,7 @@ mod tests {
             .with_declared_bandwidth_bps(5_000_000),
         );
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        store.set_init(
-            crate::route::SPTS_PROGRAM_ID,
-            vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
-        );
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),

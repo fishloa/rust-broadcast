@@ -904,7 +904,11 @@ impl<'a> HandshakePacket<'a> {
         put_be32(buf, CIF_INITIAL_SEQ_OFFSET, self.initial_seq_number);
         put_be32(buf, CIF_MTU_OFFSET, self.mtu);
         put_be32(buf, CIF_FLOW_WINDOW_OFFSET, self.max_flow_window_size);
-        put_be32(buf, CIF_HANDSHAKE_TYPE_OFFSET, self.handshake_type.to_bits());
+        put_be32(
+            buf,
+            CIF_HANDSHAKE_TYPE_OFFSET,
+            self.handshake_type.to_bits(),
+        );
         put_be32(buf, CIF_SOCKET_ID_OFFSET, self.srt_socket_id);
         put_be32(buf, CIF_SYN_COOKIE_OFFSET, self.syn_cookie);
         for (word, value) in self.peer_ip.iter().enumerate() {

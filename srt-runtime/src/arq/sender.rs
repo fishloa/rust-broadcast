@@ -192,10 +192,10 @@ impl Sender {
         // packet's number.
         broadcast_common::len::fit_bits(u64::from(seq), SEQ_NUMBER_BITS, "Packet Sequence Number")?;
         broadcast_common::len::fit_bits(
-        u64::from(message_number),
-        MESSAGE_NUMBER_BITS,
-        "Message Number",
-    )?;
+            u64::from(message_number),
+            MESSAGE_NUMBER_BITS,
+            "Message Number",
+        )?;
         debug_assert!(
             self.buffer
                 .back()
@@ -239,10 +239,10 @@ impl Sender {
     ) -> Result<Vec<u8>> {
         broadcast_common::len::fit_bits(u64::from(seq), SEQ_NUMBER_BITS, "Packet Sequence Number")?;
         broadcast_common::len::fit_bits(
-        u64::from(message_number),
-        MESSAGE_NUMBER_BITS,
-        "Message Number",
-    )?;
+            u64::from(message_number),
+            MESSAGE_NUMBER_BITS,
+            "Message Number",
+        )?;
         debug_assert!(
             self.buffer
                 .back()

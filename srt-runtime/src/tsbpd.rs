@@ -122,7 +122,6 @@ const MICROS_PER_MILLI: u64 = 1000;
 const TIMESTAMP_WRAP_MIDPOINT: i64 = 1 << 31;
 const TIMESTAMP_MODULUS: i64 = 1 << 32;
 
-
 /// SRT receiver-side TSBPD delivery scheduler + Too-Late Packet Drop
 /// (`draft-sharabayko-srt-01` §4.5/§4.6).
 ///
@@ -260,7 +259,8 @@ impl TsbpdScheduler {
             .tsbpd_time_base
             .saturating_add(unwrapped_pkt_timestamp_us)
             .saturating_add(
-                i64::try_from(self.tsbpd_delay_ms.saturating_mul(MICROS_PER_MILLI)).unwrap_or(i64::MAX),
+                i64::try_from(self.tsbpd_delay_ms.saturating_mul(MICROS_PER_MILLI))
+                    .unwrap_or(i64::MAX),
             )
             .saturating_add(self.drift_us);
         u64::try_from(sum).unwrap_or(0)

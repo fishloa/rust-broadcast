@@ -521,7 +521,11 @@ impl<'a> ControlPacket<'a> {
         put_be32(buf, 0, word0);
         put_be32(buf, super::WORD1_OFFSET, self.word1()?);
         put_be32(buf, super::TIMESTAMP_OFFSET, self.timestamp().value());
-        put_be32(buf, super::DEST_SOCKET_ID_OFFSET, self.dest_socket_id().value());
+        put_be32(
+            buf,
+            super::DEST_SOCKET_ID_OFFSET,
+            self.dest_socket_id().value(),
+        );
         let cif = &mut buf[SRT_HEADER_LEN..len];
         match self {
             ControlPacket::Handshake(h) => {

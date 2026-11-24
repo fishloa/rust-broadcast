@@ -608,7 +608,9 @@ pub mod test_support {
     ) -> Vec<u8> {
         use broadcast_common::Package;
         let spec = track_spec(track_id);
-        let frame_dur = broadcast_common::clock33::PTS_HZ / FRAME_RATE_FPS;
+        let frame_dur =
+            u32::try_from(broadcast_common::clock33::PTS_HZ / u64::from(FRAME_RATE_FPS))
+                .unwrap_or(u32::MAX);
         let samples: Vec<Sample> = (0..count)
             .map(|i| {
                 let nal = [IDR_NAL_HEADER, nal_byte, (i % BYTE_RANGE) as u8];

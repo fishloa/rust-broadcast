@@ -2023,7 +2023,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         verifier: Option<Arc<Verifier>>,
         max_sessions: usize,
     ) -> (axum::Router, Arc<AtomicUsize>, mpsc::Receiver<AdmittedWhep>) {
-        let (tx, rx) = mpsc::channel::<AdmittedWhep>(HARNESS_CHANNEL_SLOTS);
+        let (tx, rx) = mpsc::channel::<AdmittedWhep>(4);
         let active = Arc::new(AtomicUsize::new(0));
         let state = Arc::new(WhepServeState {
             trunk: trunk.unwrap_or_else(empty_trunk),
@@ -2156,10 +2156,10 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 config: transmux::AVCConfigurationBox::new(
                     transmux::AVCDecoderConfigurationRecord {
                         configuration_version: 1,
-                        profile_indication: AVC_PROFILE_INDICATION,
+                        profile_indication: 0x42,
                         profile_compatibility: 0,
-                        level_indication: AVC_LEVEL_INDICATION,
-                        length_size_minus_one: AVC_LENGTH_PREFIX_CODE,
+                        level_indication: 0x1f,
+                        length_size_minus_one: 3,
                         sps: Vec::new(),
                         pps: Vec::new(),
                         chroma_format: None,
@@ -2699,7 +2699,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 trunk: empty_trunk(),
                 tx,
                 active_sessions: Arc::new(AtomicUsize::new(0)),
-                max_sessions: HARNESS_MAX_SESSIONS,
+                max_sessions: 64,
                 resources: ResourceTable::new(),
                 sockets: Arc::default(),
                 packets: Arc::default(),

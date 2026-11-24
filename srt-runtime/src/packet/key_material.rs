@@ -527,10 +527,7 @@ impl<'a> KeyMaterial<'a> {
         // would otherwise shift into the reserved `Resv3` bits, misframing
         // the message with `Ok` (#1129). Checked in `usize` before the
         // 8-bit field is packed below.
-        broadcast_common::len::fit_u8(
-            self.salt.len() / KEY_BLOCK_LEN,
-            "Salt length / 4 (SLen)",
-        )?;
+        broadcast_common::len::fit_u8(self.salt.len() / KEY_BLOCK_LEN, "Salt length / 4 (SLen)")?;
         if !VALID_KEY_LENS.contains(&self.x_sek.len()) {
             return Err(Error::InvalidKeyMaterial {
                 field: "xSEK",

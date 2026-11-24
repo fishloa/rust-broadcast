@@ -252,7 +252,7 @@ impl LiveCC {
         //
         // pkt_size is in bytes, MAX_BW in bytes/sec. The factor 1_000_000
         // converts seconds to microseconds (L3237-3238).
-        let period_us = pkt_size * u64::from(broadcast_common::units::MICROS_PER_SEC) / max_bw;
+        let period_us = pkt_size * broadcast_common::units::MICROS_PER_SEC / max_bw;
         Duration::from_micros(period_us)
     }
 
