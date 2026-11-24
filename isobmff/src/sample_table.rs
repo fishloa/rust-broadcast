@@ -18,6 +18,7 @@ use crate::init_segment::{
 use crate::limits::Limits;
 use crate::timing::{CompositionOffsetBox, TimeToSampleBox};
 use crate::track_id::TrackId;
+use alloc::vec::Vec;
 use broadcast_common::Parse;
 use broadcast_common::error::BufferTooShort;
 
@@ -729,4 +730,152 @@ fn find_child<'a, T>(
         }
     }
     Ok(None)
+}
+
+/// One-based `stsd` entry the builders place on every new `stsc` run.
+const SAMPLE_DESCRIPTION_INDEX: u32 = 1;
+
+/// Run-length code a per-sample decode-delta list into `stts` entries
+/// (ISO/IEC 14496-12:2026 §8.6.1.2): consecutive equal deltas collapse into a
+/// single `(sample_count, sample_delta)` run.
+#[must_use]
+pub fn build_stts(deltas: &[u32]) -> TimeToSampleBox {
+    let mut entries: Vec<crate::timing::SttsEntry> = Vec::new();
+    for &delta in deltas {
+        match entries.last_mut() {
+            Some(last) if last.sample_delta == delta => last.sample_count += 1,
+            _ => entries.push(crate::timing::SttsEntry {
+                sample_count: 1,
+                sample_delta: delta,
+            }),
+        }
+    }
+    TimeToSampleBox {
+        version: 0,
+        flags: 0,
+        entries,
+    }
+}
+
+/// Run-length code a per-sample composition-offset list into `ctts` entries
+/// (§8.6.1.3), or `None` when every offset is zero and the box is omitted.
+/// Writes version 1 so a negative B-frame offset survives.
+#[must_use]
+pub fn build_ctts(offsets: &[i32]) -> Option<CompositionOffsetBox> {
+    let mut entries: Vec<crate::timing::CttsEntry> = Vec::new();
+    for &offset in offsets {
+        match entries.last_mut() {
+            Some(last) if last.sample_offset == offset => last.sample_count += 1,
+            _ => entries.push(crate::timing::CttsEntry {
+                sample_count: 1,
+                sample_offset: offset,
+            }),
+        }
+    }
+    if entries.iter().all(|entry| entry.sample_offset == 0) {
+        return None;
+    }
+    Some(CompositionOffsetBox {
+        version: 1,
+        flags: 0,
+        entries,
+    })
+}
+
+/// Build the `stss` sync-sample list of 1-based indices (§8.6.2), or `None`
+/// when every sample is a sync sample and the box is omitted.
+#[must_use]
+pub fn build_stss(sync: &[bool]) -> Option<SyncSampleBox> {
+    if sync.iter().all(|&is_sync| is_sync) {
+        return None;
+    }
+    let entries: Vec<u32> = sync
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &is_sync)| {
+            is_sync
+                .then(|| u32::try_from(index.checked_add(1)?).ok())
+                .flatten()
+        })
+        .collect();
+    Some(SyncSampleBox {
+        version: 0,
+        flags: 0,
+        entries,
+    })
+}
+
+/// Run-length code a per-chunk sample count into `stsc` runs (§8.7.4): one
+/// entry per distinct count, keyed by the one-based first chunk it applies to.
+pub fn build_stsc(samples_per_chunk: &[u32]) -> Result<SampleToChunkBox> {
+    let mut entries: Vec<StscEntry> = Vec::new();
+    for (index, &count) in samples_per_chunk.iter().enumerate() {
+        let first_chunk = broadcast_common::len::fit_u32(index.saturating_add(1), "first_chunk")?;
+        match entries.last_mut() {
+            Some(last) if last.samples_per_chunk == count => {}
+            _ => entries.push(StscEntry {
+                first_chunk,
+                samples_per_chunk: count,
+                sample_description_index: SAMPLE_DESCRIPTION_INDEX,
+            }),
+        }
+    }
+    Ok(SampleToChunkBox {
+        version: 0,
+        flags: 0,
+        entries,
+    })
+}
+
+#[cfg(test)]
+mod builder_tests {
+    use super::*;
+
+    #[test]
+    fn build_stts_run_length_codes_consecutive_equal_deltas() {
+        let stts = build_stts(&[10, 10, 20, 10]);
+        let entries: alloc::vec::Vec<(u32, u32)> = stts
+            .entries
+            .iter()
+            .map(|e| (e.sample_count, e.sample_delta))
+            .collect();
+        assert_eq!(entries, alloc::vec![(2, 10), (1, 20), (1, 10)]);
+    }
+
+    #[test]
+    fn build_ctts_omits_an_all_zero_table() {
+        assert!(build_ctts(&[0, 0, 0]).is_none());
+        let ctts = build_ctts(&[0, 5, 5, -3]).expect("a non-zero offset keeps the box");
+        assert_eq!(ctts.version, 1);
+        let entries: alloc::vec::Vec<(u32, i32)> = ctts
+            .entries
+            .iter()
+            .map(|e| (e.sample_count, e.sample_offset))
+            .collect();
+        assert_eq!(entries, alloc::vec![(1, 0), (2, 5), (1, -3)]);
+    }
+
+    #[test]
+    fn build_stss_omits_an_all_sync_table() {
+        assert!(build_stss(&[true, true, true]).is_none());
+        let stss = build_stss(&[true, false, true]).expect("a non-sync sample keeps the box");
+        assert_eq!(stss.entries, alloc::vec![1, 3]);
+    }
+
+    #[test]
+    fn build_stsc_run_length_codes_equal_chunk_sizes() {
+        let stsc = build_stsc(&[5, 5, 3, 5]).expect("chunk counts fit");
+        let entries: alloc::vec::Vec<(u32, u32, u32)> = stsc
+            .entries
+            .iter()
+            .map(|e| {
+                (
+                    e.first_chunk,
+                    e.samples_per_chunk,
+                    e.sample_description_index,
+                )
+            })
+            .collect();
+        assert_eq!(entries, alloc::vec![(1, 5, 1), (3, 3, 1), (4, 5, 1)]);
+    }
 }

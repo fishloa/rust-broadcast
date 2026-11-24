@@ -13,8 +13,9 @@
 //! movie timeline, relative to the earliest track, by an `elst` (§8.6.6)
 //! whenever it starts later or opens with a composition lead-in; composition
 //! offsets go into `ctts` (§8.6.1.3) only when some sample has a non-zero
-//! offset; per-sample byte sizes fill `stsz` (§8.7.3); a single-chunk-per-track
-//! `stsc` (§8.7.4) maps samples to chunks; each track's chunk byte offset lands
+//! offset; per-sample byte sizes fill `stsz` (§8.7.3); roughly
+//! half-second chunks, run-length coded into `stsc` (§8.7.4), map samples to
+//! chunks; each track's chunk byte offset lands
 //! in `stco` (§8.7.5) — promoted to the 64-bit `co64` when any offset exceeds
 //! [`u32::MAX`]; and the sync-sample list is emitted as `stss` (§8.6.2), omitted
 //! when every sample is a sync sample.
@@ -42,20 +43,16 @@ use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::{Sample, build_init_segment};
 use isobmff::box_types::{BoxHeader, BoxType, find_box};
 use isobmff::init_segment::{
-    ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MOOV, MovieBox, SampleSizeBox, SampleToChunkBox,
-    StblChild, StscEntry, SyncSampleBox,
+    ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MOOV, MovieBox, SampleSizeBox, StblChild,
 };
+use isobmff::sample_table::{build_ctts, build_stsc, build_stss, build_stts};
 use isobmff::segments::{FileTypeBox, MDAT};
-use isobmff::timing::{
-    CompositionOffsetBox, CttsEntry, EditListBox, EditListEntry, SttsEntry, TimeToSampleBox,
-};
+use isobmff::timing::{EditListBox, EditListEntry};
 
 /// `ftyp` major brand for a progressive (non-fragmented) MP4.
 const FTYP_MAJOR_BRAND: [u8; 4] = *b"isom";
 /// `ftyp` minor version.
 const FTYP_MINOR_VERSION: u32 = 512;
-/// The `default_sample_description_index` referenced by the single `stsd` entry.
-const SAMPLE_DESCRIPTION_INDEX: u32 = 1;
 /// `elst` `media_time` of an empty edit (ISO/IEC 14496-12:2026 §8.6.6).
 const ELST_EMPTY_EDIT: i64 = -1;
 /// `elst` `media_rate_integer` for normal-speed playback (§8.6.6).
@@ -103,83 +100,12 @@ fn decode_deltas(samples: &[Sample], times: &[i64]) -> Vec<u32> {
         .collect()
 }
 
-/// Run-length code a per-sample decode-delta list into `stts` entries
-/// (ISO/IEC 14496-12:2026 §8.6.1.2): consecutive equal deltas collapse into a
-/// single `(sample_count, sample_delta)` run.
-fn build_stts(deltas: &[u32]) -> TimeToSampleBox {
-    let mut entries: Vec<SttsEntry> = Vec::new();
-    for &delta in deltas {
-        match entries.last_mut() {
-            Some(last) if last.sample_delta == delta => last.sample_count += 1,
-            _ => entries.push(SttsEntry {
-                sample_count: 1,
-                sample_delta: delta,
-            }),
-        }
-    }
-    TimeToSampleBox {
-        version: 0,
-        flags: 0,
-        entries,
-    }
-}
-
-/// Build the `ctts` composition-offset table (§8.6.1.3), run-length coded, or
-/// `None` when every sample has a zero composition offset (in which case the box
-/// is omitted per §8.6.1.3). Uses version 1 (signed offsets) to support
-/// negative offsets from B-frame reordering.
-fn build_ctts(samples: &[Sample]) -> Result<Option<CompositionOffsetBox>> {
-    let mut entries: Vec<CttsEntry> = Vec::new();
-    for s in samples {
-        let offset = s.composition_offset()?.unwrap_or(0);
-        match entries.last_mut() {
-            Some(last) if last.sample_offset == offset => last.sample_count += 1,
-            _ => entries.push(CttsEntry {
-                sample_count: 1,
-                sample_offset: offset,
-            }),
-        }
-    }
-    if entries.iter().all(|entry| entry.sample_offset == 0) {
-        return Ok(None);
-    }
-    Ok(Some(CompositionOffsetBox {
-        version: 1,
-        flags: 0,
-        entries,
-    }))
-}
-
-/// Build the `stss` sync-sample list (§8.6.2) of 1-based sample indices, or
-/// `None` when every sample is a sync sample (then the box is omitted and all
-/// samples are implicitly random-access points).
-fn build_stss(samples: &[Sample]) -> Option<SyncSampleBox> {
-    if samples.iter().all(|s| s.flags.is_sync) {
-        return None;
-    }
-    let entries: Vec<u32> = samples
-        .iter()
-        .enumerate()
-        .filter_map(|(i, s)| {
-            if s.flags.is_sync {
-                Some(i as u32 + 1)
-            } else {
-                None
-            }
-        })
-        .collect();
-    Some(SyncSampleBox {
-        version: 0,
-        flags: 0,
-        entries,
-    })
-}
-
 /// Assemble the ordered `stbl` children for one track from its samples, given
 /// the already-resolved absolute `chunk_offset` (the file position of this
-/// track's single chunk) and the existing `stsd` child (reused verbatim).
+/// track's chunks) and the existing `stsd` child (reused verbatim).
 ///
-/// One chunk per track keeps `stsc` trivial and correct (§8.7.4). `use_co64`
+/// The interleaved ~500 ms chunks are run-length coded into `stsc` runs of
+/// equal chunk size (§8.7.4). `use_co64`
 /// selects the 64-bit `co64` chunk-offset box (§8.7.5) over the 32-bit `stco`;
 /// it is chosen once for the whole file so the `moov` size stays offset-stable.
 fn build_stbl_children(
@@ -201,26 +127,7 @@ fn build_stbl_children(
         sample_count: broadcast_common::len::fit_u32(stsz_entries.len(), "stsz sample_count")?,
         entries: stsz_entries,
     };
-    // `stsc` runs: one entry per distinct `samples_per_chunk`, keyed by the
-    // 1-based first chunk it applies to (§8.7.4). An interleaved file gives
-    // each track several equal-sized chunks, so the whole run is one entry.
-    let mut stsc_entries: Vec<StscEntry> = Vec::new();
-    for (i, &count) in samples_per_chunk.iter().enumerate() {
-        let first_chunk = broadcast_common::len::fit_u32(i + 1, "first_chunk")?;
-        match stsc_entries.last_mut() {
-            Some(last) if last.samples_per_chunk == count => {}
-            _ => stsc_entries.push(StscEntry {
-                first_chunk,
-                samples_per_chunk: count,
-                sample_description_index: SAMPLE_DESCRIPTION_INDEX,
-            }),
-        }
-    }
-    let stsc = SampleToChunkBox {
-        version: 0,
-        flags: 0,
-        entries: stsc_entries,
-    };
+    let stsc = build_stsc(samples_per_chunk)?;
 
     let mut children = vec![
         stsd,
@@ -228,7 +135,11 @@ fn build_stbl_children(
         StblChild::Stsc(stsc),
         StblChild::Stsz(stsz),
     ];
-    if let Some(ctts) = build_ctts(samples)? {
+    let composition_offsets: Vec<i32> = samples
+        .iter()
+        .map(|sample| Ok(sample.composition_offset()?.unwrap_or(0)))
+        .collect::<Result<_>>()?;
+    if let Some(ctts) = build_ctts(&composition_offsets) {
         // ctts follows stts in the recommended stbl order (§8.5.1).
         children.insert(STBL_CTTS_INDEX, StblChild::Ctts(ctts));
     }
@@ -253,7 +164,8 @@ fn build_stbl_children(
             entries,
         }));
     }
-    if let Some(stss) = build_stss(samples) {
+    let sync_flags: Vec<bool> = samples.iter().map(|sample| sample.flags.is_sync).collect();
+    if let Some(stss) = build_stss(&sync_flags) {
         children.push(StblChild::Stss(stss));
     }
     Ok(children)
@@ -937,25 +849,6 @@ mod tests {
             base,
             &layout(&[0, u64::from(u32::MAX) - base + 1])
         ));
-    }
-
-    /// §8.6.1.2 run-length coding: only *consecutive equal* deltas share an
-    /// entry, so a variable-rate track keeps one `stts` entry per distinct
-    /// run instead of collapsing every sample into the first delta.
-    #[test]
-    fn build_stts_run_length_codes_consecutive_equal_deltas() {
-        let stts = build_stts(&[10, 10, 20, 10]);
-        let entries: alloc::vec::Vec<(u32, u32)> = stts
-            .entries
-            .iter()
-            .map(|e| (e.sample_count, e.sample_delta))
-            .collect();
-        assert_eq!(
-            entries,
-            alloc::vec![(2, 10), (1, 20), (1, 10)],
-            "the run at the end must not merge into the leading run"
-        );
-        assert_eq!(stts.entries.len(), 3);
     }
 
     /// On equal chunk-start ticks the lowest track index wins, so the mdat

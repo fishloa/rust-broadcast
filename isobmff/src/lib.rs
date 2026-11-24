@@ -157,7 +157,7 @@ pub use sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VVCSampleEntry,
     VisualSampleEntryFields,
 };
-pub use sample_table::{SampleRef, TrackCursor};
+pub use sample_table::{SampleRef, TrackCursor, build_ctts, build_stsc, build_stss, build_stts};
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
     WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, XmlSubtitleSampleEntry,
