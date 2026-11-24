@@ -122,22 +122,28 @@ impl Serialize for SdInfoReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         objects::apdu_len(
-            1 + self.drm_system_ids.len() * 2 + 1 + self.drm_uuids.len() * DRM_UUID_LEN,
+            DRM_SYSTEM_ID_COUNT_LEN
+                + self.drm_system_ids.len() * DRM_SYSTEM_ID_LEN
+                + DRM_SYSTEM_ID_COUNT_LEN
+                + self.drm_uuids.len() * DRM_UUID_LEN,
             self.length_form,
         )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(
             self.drm_system_ids.len() as u64,
-            8,
+            COUNT_BYTE_BITS,
             "sd_info_reply number_of_DRM_system_ids",
         )?;
         objects::fit_bits(
             self.drm_uuids.len() as u64,
-            8,
+            COUNT_BYTE_BITS,
             "sd_info_reply number_of_DRM_UUIDs",
         )?;
-        let body_len = 1 + self.drm_system_ids.len() * 2 + 1 + self.drm_uuids.len() * DRM_UUID_LEN;
+        let body_len = DRM_SYSTEM_ID_COUNT_LEN
+            + self.drm_system_ids.len() * DRM_SYSTEM_ID_LEN
+            + DRM_SYSTEM_ID_COUNT_LEN
+            + self.drm_uuids.len() * DRM_UUID_LEN;
         let pos = objects::write_apdu_header(tag::SD_INFO_REPLY, body_len, self.length_form, buf)?;
         let mut w = Writer::new(&mut buf[pos..]);
         w.u8(self.drm_system_ids.len() as u8);
@@ -207,7 +213,7 @@ impl<'a> DrmMetadataRecord<'a> {
     fn validate(&self) -> Result<()> {
         objects::fit_bits(
             self.drm_metadata.len() as u64,
-            16,
+            DRM_METADATA_LENGTH_BITS,
             "drm_metadata drm_metadata_length",
         )?;
         Ok(())
@@ -235,12 +241,29 @@ pub struct SampleTrack<'a> {
     /// The 3-bit `reserved` field in front of `track_PID` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<3>,
+    pub reserved: ReservedZero<TRACK_PID_RESERVED_BITS>,
 }
 
 // reserved(3)+track_PID(13) = 2 bytes, then number_of_metadata_records(1).
 const TRACK_FIXED: usize = 2 + 1;
 const TRACK_PID_MASK: u16 = 0x1FFF;
+
+/// Offset of the `drm_system_id` list count within an `sd_info_reply` body.
+const DRM_SYSTEM_ID_COUNT_LEN: usize = 1;
+/// Bytes of one `drm_system_id`.
+const DRM_SYSTEM_ID_LEN: usize = core::mem::size_of::<u16>();
+/// Reserved bits in front of `track_PID`.
+const TRACK_PID_RESERVED_BITS: u32 = 3;
+/// Shift selecting the reserved bits in front of `track_PID`.
+const TRACK_PID_RESERVED_SHIFT: u32 = 13;
+/// Shift packing the reserved bits above `track_PID`.
+const TRACK_PID_PACK_SHIFT: u32 = 13;
+/// Reserved bits in front of the `ts_flag`.
+const TS_FLAG_RESERVED_BITS: u32 = 7;
+/// Width of a count/length field carried in one byte.
+const COUNT_BYTE_BITS: u32 = 8;
+/// Width of `drm_metadata_length`.
+const DRM_METADATA_LENGTH_BITS: u32 = 16;
 
 /// The Sample-decryption payload that follows the per-LTS fixed header in both
 /// `sd_start` (Table 33) and `sd_update` (Table 38): selected by `ts_flag`.
@@ -285,7 +308,9 @@ impl<'a> SamplePayload<'a> {
                 tracks.push(SampleTrack {
                     track_pid,
                     records,
-                    reserved: ReservedZero::from_bits(u64::from(pid_word >> 13)),
+                    reserved: ReservedZero::from_bits(u64::from(
+                        pid_word >> TRACK_PID_RESERVED_SHIFT,
+                    )),
                 });
             }
             Ok(Self::Tracks(tracks))
@@ -323,7 +348,7 @@ impl<'a> SamplePayload<'a> {
             Self::Ts(records) => {
                 objects::fit_bits(
                     records.len() as u64,
-                    8,
+                    COUNT_BYTE_BITS,
                     "sd_start/sd_update number_of_metadata_records",
                 )?;
                 for rec in records {
@@ -333,13 +358,13 @@ impl<'a> SamplePayload<'a> {
             Self::Tracks(tracks) => {
                 objects::fit_bits(
                     tracks.len() as u64,
-                    8,
+                    COUNT_BYTE_BITS,
                     "sd_start/sd_update number_of_Sample_Tracks",
                 )?;
                 for track in tracks {
                     objects::fit_bits(
                         track.records.len() as u64,
-                        8,
+                        COUNT_BYTE_BITS,
                         "sd_start/sd_update number_of_metadata_records",
                     )?;
                     for rec in &track.records {
@@ -364,7 +389,10 @@ impl<'a> SamplePayload<'a> {
                 for track in tracks {
                     // reserved(3) + track_PID(13). Range-checked by
                     // validate(), so no mask is needed to fit the field.
-                    w.u16(((track.reserved.get() << 13) as u16) | track.track_pid.value());
+                    w.u16(
+                        ((track.reserved.get() << TRACK_PID_PACK_SHIFT) as u16)
+                            | track.track_pid.value(),
+                    );
                     w.u8(track.records.len() as u8);
                     for rec in &track.records {
                         rec.write_into(w);
@@ -397,7 +425,7 @@ pub struct SdStart<'a> {
     /// The 7-bit `reserved` field in front of `ts_flag` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<7>,
+    pub reserved: ReservedZero<TS_FLAG_RESERVED_BITS>,
 }
 
 // LTS_id(1) + program_number(2) + reserved(7)+ts_flag(1) byte.
@@ -636,7 +664,7 @@ pub struct SdUpdate<'a> {
     /// The 7-bit `reserved` field in front of `ts_flag` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<7>,
+    pub reserved: ReservedZero<TS_FLAG_RESERVED_BITS>,
 }
 
 // LTS_id(1) + reserved(7)+ts_flag(1) byte.
@@ -780,7 +808,7 @@ impl<'a> Reader<'a> {
         Ok(self.take(1)?[0])
     }
     fn u16(&mut self) -> Result<u16> {
-        let s = self.take(2)?;
+        let s = self.take(DRM_SYSTEM_ID_LEN)?;
         Ok(u16::from_be_bytes([s[0], s[1]]))
     }
     /// Reject any body bytes the typed fields did not consume (they would be
@@ -809,8 +837,8 @@ impl<'a> Writer<'a> {
         self.pos += 1;
     }
     fn u16(&mut self, v: u16) {
-        self.buf[self.pos..self.pos + 2].copy_from_slice(&v.to_be_bytes());
-        self.pos += 2;
+        self.buf[self.pos..self.pos + DRM_SYSTEM_ID_LEN].copy_from_slice(&v.to_be_bytes());
+        self.pos += DRM_SYSTEM_ID_LEN;
     }
     fn uuid(&mut self, v: &[u8; DRM_UUID_LEN]) {
         self.buf[self.pos..self.pos + DRM_UUID_LEN].copy_from_slice(v);
