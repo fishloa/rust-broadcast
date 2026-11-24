@@ -70,6 +70,116 @@ const CRC16_TOP_BIT: u16 = 0x8000;
 /// Bytes of the `0x0B77` syncword, excluded from the CRC.
 const AC3_SYNCWORD_BYTES: usize = 2;
 
+/// AC-3 `syncinfo()` length in bytes: syncword(16) + crc1(16) + fscod(2) +
+/// frmsizecod(6).
+const AC3_SYNCINFO_LEN: usize = 5;
+/// Byte offset of `bsid` in an AC-3 syncframe.
+const AC3_BSID_BYTE_OFFSET: usize = AC3_SYNCINFO_LEN;
+/// Minimum byte length of an E-AC-3 syncframe carrying the fixed `bsi()` prefix.
+const EAC3_SYNCFRAME_MIN_LEN: usize = 6;
+/// Width of the AC-3/E-AC-3 syncword.
+const AC3_SYNCWORD_BITS: usize = 16;
+/// Width of `crc1`.
+const AC3_CRC_BITS: usize = 16;
+/// Width of `fscod`.
+const FSCOD_BITS: usize = 2;
+/// `fscod` code selecting the E-AC-3 half-rate sample-rate table.
+const EAC3_FSCOD_REDUCED_RATE: u8 = 3;
+/// Width of `frmsizecod`.
+const FRMSIZECOD_BITS: usize = 6;
+/// Width of `bsid`.
+const BSID_BITS: usize = 5;
+/// Width of `strmtyp`.
+const STRMTYP_BITS: usize = 2;
+/// Width of `substreamid`.
+const SUBSTREAMID_BITS: usize = 3;
+/// Width of `frmsiz`.
+const FRMSIZ_BITS: usize = 11;
+/// Width of `sr_code2`.
+const SR_CODE2_BITS: usize = 2;
+/// Blocks per syncframe when `fscod` selects half-rate mode.
+const EAC3_REDUCED_RATE_BLOCKS_PER_SYNCFRAME: u8 = 6;
+/// Width of `numblkscod`.
+const NUMBLKSCOD_BITS: usize = 2;
+/// Width of `bsmod`.
+const BSMOD_BITS: usize = 3;
+/// Width of `acmod`.
+const ACMOD_BITS: usize = 3;
+/// `acmod` bit whose set value marks a centre channel, gating `cmixlev`.
+const ACMOD_CENTRE_BIT: u8 = 0x1;
+/// `acmod` bit marking a surround channel.
+const ACMOD_SURROUND_BIT: u8 = 0x4;
+/// `acmod` code for 2/0 stereo.
+const ACMOD_2_0: u8 = 0x2;
+/// `acmod` code for 1+1 dual mono.
+const ACMOD_DUAL_MONO: u8 = 0x0;
+/// Width of `cmixlev`.
+const CMIXLEV_BITS: usize = 2;
+/// Width of `surmixlev`.
+const SURMIXLEV_BITS: usize = 2;
+/// Width of `dsurmod`.
+const DSURMOD_BITS: usize = 2;
+/// Serialized length of the `dac3` box body.
+const DAC3_BODY_LEN: usize = 3;
+/// Width of `bit_rate_code`.
+const BIT_RATE_CODE_BITS: usize = 5;
+/// Width of the `dac3` reserved field.
+const DAC3_RESERVED_BITS: usize = 5;
+/// Bits per kbit/s in the `data_rate` formula.
+const BITS_PER_KILOBIT: u32 = 1000;
+/// Width of `num_ind_sub`.
+const NUM_IND_SUB_BITS: usize = 3;
+/// Width of `data_rate`.
+const DATA_RATE_BITS: usize = 13;
+/// Serialized length of an `Ec3Substream` without `chan_loc`.
+const EC3_SUBSTREAM_LEN: usize = 3;
+/// Serialized length of an `Ec3Substream` carrying `chan_loc`.
+const EC3_SUBSTREAM_LEN_CHAN_LOC: usize = 4;
+/// Byte length of the fixed `dec3` header.
+const DEC3_HEADER_LEN: usize = 2;
+/// Width of an `Ec3Substream` reserved field.
+const EC3_SUBSTREAM_RESERVED_BITS: usize = 3;
+/// Width of `num_dep_sub`.
+const NUM_DEP_SUB_BITS: usize = 4;
+/// Width of `chan_loc`.
+const CHAN_LOC_BITS: usize = 9;
+/// Bits per byte.
+const BITS_PER_BYTE: usize = u8::BITS as usize;
+/// Width of `dialnorm`.
+const DIALNORM_BITS: usize = 5;
+/// Width of `compr`.
+const COMPR_BITS: usize = 8;
+/// Width of `dmixmod`.
+const DMIXMOD_BITS: usize = 2;
+/// Width of the `*mixlev` fields.
+const MIX_LEVEL_BITS: usize = 3;
+/// Width of `lfemixlevcod`.
+const LFEMIXLEVCOD_BITS: usize = 5;
+/// Width of the programme-scale fields.
+const PGMSCL_BITS: usize = 6;
+/// Width of `mixdef`.
+const MIXDEF_BITS: usize = 2;
+/// Width of `mixdata`.
+const MIXDATA_BITS: usize = 12;
+/// Width of `mixdeflen`.
+const MIXDEFLEN_BITS: usize = 5;
+/// Offset added to `mixdeflen` in the `mixdata` bit length.
+const MIXDEFLEN_BASE: usize = 2;
+/// Width of the `spchdat` fields.
+const SPCHDAT_BITS: usize = 5;
+/// Width of `spchan1att`.
+const SPCHAN1ATT_BITS: usize = 2;
+/// Width of `spchan2att`.
+const SPCHAN2ATT_BITS: usize = 3;
+/// Width of `panmean`.
+const PANMEAN_BITS: usize = 8;
+/// Width of `paninfo`.
+const PANINFO_BITS: usize = 6;
+/// Width of `blkmixcfginfo`.
+const BLKMIXCFGINFO_BITS: usize = 5;
+/// Width of the `extpgm*scle` values.
+const EXT_PGM_SCALE_BITS: usize = 4;
+
 /// CRC-16 of `bytes` with the AC-3 generator, register initialised to zero, no
 /// reflection, no final XOR. Run over a whole syncframe **after** the 16-bit
 /// syncword, the stored `crc2` (§4.4.5.2: "applies to the entire syncframe")
@@ -77,7 +187,7 @@ const AC3_SYNCWORD_BYTES: usize = 2;
 fn ac3_crc16(bytes: &[u8]) -> u16 {
     let mut crc = 0u16;
     for &b in bytes {
-        crc ^= u16::from(b) << 8;
+        crc ^= u16::from(b) << u8::BITS;
         for _ in 0..8 {
             crc = if crc & CRC16_TOP_BIT != 0 {
                 (crc << 1) ^ AC3_CRC_POLY
@@ -132,7 +242,7 @@ const AC3_FRAME_SIZE_WORDS: [[u16; 3]; 38] = [
     [1920, 1393, 1280], [1920, 1394, 1280],
 ];
 
-/// Words-per-syncframe for `(fscod, frmsizecod)` — Table 4.13. `fscod == 3`
+/// Words-per-syncframe for `(fscod, frmsizecod)` — Table 4.13. `fscod == EAC3_FSCOD_REDUCED_RATE`
 /// (reserved, Table 4.1) or `frmsizecod > 37` (reserved, Table 4.13) yield
 /// `None`.
 fn ac3_frame_words(fscod: u8, frmsizecod: u8) -> Option<u16> {
@@ -176,7 +286,7 @@ impl Ac3SyncframeInfo {
 
     pub(crate) fn parse_at(data: &[u8], off: usize) -> Result<Self> {
         // syncword(16) + crc1(16) + fscod(2) + frmsizecod(6) = 40 bits = 5 bytes
-        let need = off + 5;
+        let need = off + AC3_SYNCINFO_LEN;
         need_in(data, need, "AC-3 syncinfo")?;
         // Use BitReader on the raw syncframe bytes (no emulation-prevention
         // in AC-3 — it's a raw bitstream).
@@ -186,29 +296,29 @@ impl Ac3SyncframeInfo {
         let mut bit_pos = 0usize;
 
         // syncword: 16 bits (skip — already scanned)
-        bit_pos += 16;
+        bit_pos += AC3_SYNCWORD_BITS;
         // crc1: 16 bits (skip)
-        bit_pos += 16;
+        bit_pos += AC3_CRC_BITS;
         // fscod: 2 bits
-        let fscod = read_bits(es, &mut bit_pos, 2, "fscod")? as u8;
+        let fscod = read_bits(es, &mut bit_pos, FSCOD_BITS, "fscod")? as u8;
         // frmsizecod: 6 bits
-        let frmsizecod = read_bits(es, &mut bit_pos, 6, "frmsizecod")? as u8;
-        let bsid = read_bits(es, &mut bit_pos, 5, "bsid")? as u8;
+        let frmsizecod = read_bits(es, &mut bit_pos, FRMSIZECOD_BITS, "frmsizecod")? as u8;
+        let bsid = read_bits(es, &mut bit_pos, BSID_BITS, "bsid")? as u8;
         // bsmod: 3 bits
-        let bsmod = read_bits(es, &mut bit_pos, 3, "bsmod")? as u8;
+        let bsmod = read_bits(es, &mut bit_pos, BSMOD_BITS, "bsmod")? as u8;
         // acmod: 3 bits
-        let acmod = read_bits(es, &mut bit_pos, 3, "acmod")? as u8;
+        let acmod = read_bits(es, &mut bit_pos, ACMOD_BITS, "acmod")? as u8;
         // cmixlev(2) if acmod has 3 front channels
-        if (acmod & 0x1) != 0 && acmod != 0x1 {
-            bit_pos += 2; // cmixlev
+        if (acmod & ACMOD_CENTRE_BIT) != 0 && acmod != ACMOD_CENTRE_BIT {
+            bit_pos += CMIXLEV_BITS; // cmixlev
         }
         // surmixlev(2) if surround channel exists
-        if (acmod & 0x4) != 0 {
-            bit_pos += 2; // surmixlev
+        if (acmod & ACMOD_SURROUND_BIT) != 0 {
+            bit_pos += SURMIXLEV_BITS; // surmixlev
         }
         // dsurmod(2) if 2/0 mode
-        if acmod == 0x2 {
-            bit_pos += 2; // dsurmod
+        if acmod == ACMOD_2_0 {
+            bit_pos += DSURMOD_BITS; // dsurmod
         }
         // lfeon: 1 bit
         let lfeon = read_bits(es, &mut bit_pos, 1, "lfeon")? != 0;
@@ -287,7 +397,7 @@ pub fn split_ac3_syncframes_resyncing(payload: &[u8], resync: bool) -> Vec<&[u8]
 pub fn split_ac3_syncframe_ranges(payload: &[u8], resync: bool) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut off = 0usize;
-    while off + 2 <= payload.len() {
+    while off + AC3_SYNCWORD_BYTES <= payload.len() {
         if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
             if !resync {
                 break;
@@ -393,7 +503,7 @@ impl Ec3SyncframeInfo {
         // frmsiz(11) + fscod(2) + [sr_code2(2) or numblkscod(2)] +
         // acmod(3) + lfeon(1) + bsid(5)
         // = 16 + 2 + 3 + 11 + 2 + 2 + 3 + 1 + 5 = 45 bits minimum → 6 bytes
-        let need = off + 6;
+        let need = off + EAC3_SYNCFRAME_MIN_LEN;
         need_in(data, need, "E-AC-3 syncframe")?;
         // An AC-3 syncframe (bsid <= 8) is a valid independent substream 0 of an
         // E-AC-3 bit stream: ETSI TS 102 366 §E.1.3.1.2 "If an AC-3 bit stream is
@@ -402,7 +512,7 @@ impl Ec3SyncframeInfo {
         // Annex J.1.5.2.2 (CMAF) allows independent substream 0 of a stream with a
         // dependent substream to have bsid 6 or 8. Real 7.1 / Atmos streams carry
         // exactly that: an AC-3 core frame followed by a dependent E-AC-3 frame.
-        if data[off + 5] >> 3 <= AC3_MAX_BSID {
+        if data[off + AC3_BSID_BYTE_OFFSET] >> BSMOD_BITS as u32 <= AC3_MAX_BSID {
             // An AC-3 `bsi()` always carries `bsmod` (§4.4.2.2).
             return Self::from_ac3_independent(data, off).map(|info| (info, true));
         }
@@ -410,35 +520,39 @@ impl Ec3SyncframeInfo {
         let mut bit_pos = 0usize;
 
         // syncword: 16 bits
-        bit_pos += 16;
+        bit_pos += AC3_SYNCWORD_BITS;
         // strmtyp: 2 bits
-        let strmtyp = read_bits(es, &mut bit_pos, 2, "strmtyp")? as u8;
+        let strmtyp = read_bits(es, &mut bit_pos, STRMTYP_BITS, "strmtyp")? as u8;
         // substreamid: 3 bits
-        let substreamid = read_bits(es, &mut bit_pos, 3, "substreamid")? as u8;
+        let substreamid = read_bits(es, &mut bit_pos, SUBSTREAMID_BITS, "substreamid")? as u8;
         // frmsiz: 11 bits
-        let frmsiz = read_bits(es, &mut bit_pos, 11, "frmsiz")? as u16;
+        let frmsiz = read_bits(es, &mut bit_pos, FRMSIZ_BITS, "frmsiz")? as u16;
         // fscod: 2 bits
-        let fscod = read_bits(es, &mut bit_pos, 2, "fscod")? as u8;
+        let fscod = read_bits(es, &mut bit_pos, FSCOD_BITS, "fscod")? as u8;
 
-        let (sample_rate, sample_rate_khz, numblks) = if fscod == 3 {
+        let (sample_rate, sample_rate_khz, numblks) = if fscod == EAC3_FSCOD_REDUCED_RATE {
             // sr_code2: 2 bits (half-rate mode)
-            let sr_code2 = read_bits(es, &mut bit_pos, 2, "sr_code2")? as u8;
+            let sr_code2 = read_bits(es, &mut bit_pos, SR_CODE2_BITS, "sr_code2")? as u8;
             // numblkscod not present; default 6 blocks
             let sr = eac3_half_sample_rate(sr_code2);
-            (sr, eac3_half_sample_rate_khz(sr_code2), 6u8)
+            (
+                sr,
+                eac3_half_sample_rate_khz(sr_code2),
+                EAC3_REDUCED_RATE_BLOCKS_PER_SYNCFRAME,
+            )
         } else {
             // numblkscod: 2 bits
-            let numblkscod = read_bits(es, &mut bit_pos, 2, "numblkscod")? as u8;
+            let numblkscod = read_bits(es, &mut bit_pos, NUMBLKSCOD_BITS, "numblkscod")? as u8;
             let nb = eac3_num_blocks(numblkscod);
             let sr = ac3_sample_rate(fscod);
             (sr, ac3_sample_rate_khz(fscod), nb)
         };
         // acmod: 3 bits
-        let acmod = read_bits(es, &mut bit_pos, 3, "acmod")? as u8;
+        let acmod = read_bits(es, &mut bit_pos, ACMOD_BITS, "acmod")? as u8;
         // lfeon: 1 bit
         let lfeon = read_bits(es, &mut bit_pos, 1, "lfeon")? != 0;
         // bsid: 5 bits
-        let bsid = read_bits(es, &mut bit_pos, 5, "bsid")? as u8;
+        let bsid = read_bits(es, &mut bit_pos, BSID_BITS, "bsid")? as u8;
         // The rest of `bsi()` (§E.1.2.2): skip to the fields that feed dec3 —
         // a dependent substream's custom channel map (`chanmap`, E.1.3.1.7/.8)
         // and the informational-metadata `bsmod` (E.1.3.1.x).
@@ -653,7 +767,7 @@ impl Ec3SyncframeInfo {
     fn walk(data: &[u8], crc: bool) -> (Vec<Self>, bool) {
         let mut out = Vec::new();
         let mut off = 0usize;
-        while off + 2 <= data.len() {
+        while off + AC3_SYNCWORD_BYTES <= data.len() {
             if u16::from_be_bytes([data[off], data[off + 1]]) != AC3_SYNCWORD {
                 return (out, true);
             }
@@ -738,7 +852,7 @@ pub struct Ec3SplitFrame {
 pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
     let mut out: Vec<Ec3SplitFrame> = Vec::new();
     let mut off = 0usize;
-    while off + 2 <= payload.len() {
+    while off + AC3_SYNCWORD_BYTES <= payload.len() {
         if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
             break;
         }
@@ -787,7 +901,7 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
 pub fn split_eac3_syncframe_ranges(payload: &[u8]) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut off = 0usize;
-    while off + 2 <= payload.len() {
+    while off + AC3_SYNCWORD_BYTES <= payload.len() {
         if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
             break;
         }
@@ -860,15 +974,16 @@ impl<'a> Parse<'a> for Ac3SpecificBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // Box body is 3 bytes
-        need_in(bytes, 3, "dac3 body")?;
+        need_in(bytes, DAC3_BODY_LEN, "dac3 body")?;
         let mut bit_pos = 0usize;
-        let fscod = read_bits(bytes, &mut bit_pos, 2, "fscod")? as u8;
-        let bsid = read_bits(bytes, &mut bit_pos, 5, "bsid")? as u8;
-        let bsmod = read_bits(bytes, &mut bit_pos, 3, "bsmod")? as u8;
-        let acmod = read_bits(bytes, &mut bit_pos, 3, "acmod")? as u8;
+        let fscod = read_bits(bytes, &mut bit_pos, FSCOD_BITS, "fscod")? as u8;
+        let bsid = read_bits(bytes, &mut bit_pos, BSID_BITS, "bsid")? as u8;
+        let bsmod = read_bits(bytes, &mut bit_pos, BSMOD_BITS, "bsmod")? as u8;
+        let acmod = read_bits(bytes, &mut bit_pos, ACMOD_BITS, "acmod")? as u8;
         let lfeon = read_bits(bytes, &mut bit_pos, 1, "lfeon")? != 0;
-        let bit_rate_code = read_bits(bytes, &mut bit_pos, 5, "bit_rate_code")? as u8;
-        let _reserved = read_bits(bytes, &mut bit_pos, 5, "reserved")?;
+        let bit_rate_code =
+            read_bits(bytes, &mut bit_pos, BIT_RATE_CODE_BITS, "bit_rate_code")? as u8;
+        let _reserved = read_bits(bytes, &mut bit_pos, DAC3_RESERVED_BITS, "reserved")?;
         Ok(Self {
             fscod,
             bsid,
@@ -883,19 +998,24 @@ impl<'a> Parse<'a> for Ac3SpecificBox {
 impl Serialize for Ac3SpecificBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        3
+        DAC3_BODY_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        need_out(buf, 3)?;
+        need_out(buf, DAC3_BODY_LEN)?;
         let mut bit_pos = 0usize;
-        write_bits(buf, &mut bit_pos, 2, self.fscod as u64);
-        write_bits(buf, &mut bit_pos, 5, self.bsid as u64);
-        write_bits(buf, &mut bit_pos, 3, self.bsmod as u64);
-        write_bits(buf, &mut bit_pos, 3, self.acmod as u64);
+        write_bits(buf, &mut bit_pos, FSCOD_BITS, self.fscod as u64);
+        write_bits(buf, &mut bit_pos, BSID_BITS, self.bsid as u64);
+        write_bits(buf, &mut bit_pos, BSMOD_BITS, self.bsmod as u64);
+        write_bits(buf, &mut bit_pos, ACMOD_BITS, self.acmod as u64);
         write_bits(buf, &mut bit_pos, 1, self.lfeon as u64);
-        write_bits(buf, &mut bit_pos, 5, self.bit_rate_code as u64);
-        write_bits(buf, &mut bit_pos, 5, 0); // reserved
-        Ok(3)
+        write_bits(
+            buf,
+            &mut bit_pos,
+            BIT_RATE_CODE_BITS,
+            self.bit_rate_code as u64,
+        );
+        write_bits(buf, &mut bit_pos, DAC3_RESERVED_BITS, 0); // reserved
+        Ok(DAC3_BODY_LEN)
     }
 }
 
@@ -1021,7 +1141,7 @@ impl Ec3SpecificBox {
         let mut substreams: Vec<Ec3Substream> = Vec::new();
         for f in frames {
             let num = (f.frmsiz as u32 + 1) * f.sample_rate;
-            let den = (f.numblks as u32) * 16 * 1000;
+            let den = (f.numblks as u32) * u16::BITS * BITS_PER_KILOBIT;
             if den > 0 {
                 data_rate = data_rate.saturating_add(num.div_ceil(den));
             }
@@ -1070,7 +1190,11 @@ impl Ec3SpecificBox {
         // §F.6.1 makes `num_ind_sub` 3 bits and `data_rate` 13: a value that
         // does not fit is a real (if improbable) stream this box cannot
         // describe, so fail rather than wrap.
-        let num_ind_sub = broadcast_common::len::fit_bits(last_ind as u64, 3, "num_ind_sub")? as u8;
+        let num_ind_sub = broadcast_common::len::fit_bits(
+            last_ind as u64,
+            NUM_IND_SUB_BITS as u32,
+            "num_ind_sub",
+        )? as u8;
         // §F.6.1: the box carries exactly `num_ind_sub + 1` independent
         // substreams, and `serialize_into` refuses any other count. Damaged
         // input can present independent frames whose `substreamid`s are not
@@ -1083,8 +1207,11 @@ impl Ec3SpecificBox {
                 reason: "independent substreams must be numbered contiguously from 0",
             }));
         }
-        let data_rate =
-            broadcast_common::len::fit_bits(data_rate as u64, 13, "dec3 data_rate")? as u16;
+        let data_rate = broadcast_common::len::fit_bits(
+            data_rate as u64,
+            DATA_RATE_BITS as u32,
+            "dec3 data_rate",
+        )? as u16;
         Ok(Self {
             data_rate,
             num_ind_sub,
@@ -1166,44 +1293,50 @@ fn ec3_substream_serialized_len(sub: &Ec3Substream) -> usize {
     // + chan_loc(9) when num_dep_sub>0 (32 bits = 4 bytes) else
     // + reserved(1) (24 bits = 3 bytes). A dependent substream (7.1 content
     // signalled via chan_loc) is 4 bytes, not always 3 (issue #1055).
-    if sub.num_dep_sub > 0 { 4 } else { 3 }
+    if sub.num_dep_sub > 0 {
+        EC3_SUBSTREAM_LEN_CHAN_LOC
+    } else {
+        EC3_SUBSTREAM_LEN
+    }
 }
 
 impl<'a> Parse<'a> for Ec3SpecificBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 2, "dec3 body")?;
+        need_in(bytes, DEC3_HEADER_LEN, "dec3 body")?;
         let mut bit_pos = 0usize;
-        let data_rate = read_bits(bytes, &mut bit_pos, 13, "data_rate")? as u16;
-        let num_ind_sub = read_bits(bytes, &mut bit_pos, 3, "num_ind_sub")? as u8;
+        let data_rate = read_bits(bytes, &mut bit_pos, DATA_RATE_BITS, "data_rate")? as u16;
+        let num_ind_sub = read_bits(bytes, &mut bit_pos, NUM_IND_SUB_BITS, "num_ind_sub")? as u8;
         let num_sub = num_ind_sub as usize + 1;
 
-        let need_bytes = 2 + num_sub
-            * ec3_substream_serialized_len(&Ec3Substream {
-                fscod: 0,
-                bsid: 0,
-                asvc: false,
-                bsmod: 0,
-                acmod: 0,
-                lfeon: false,
-                num_dep_sub: 0,
-                chan_loc: None,
-            });
+        let need_bytes = DEC3_HEADER_LEN
+            + num_sub
+                * ec3_substream_serialized_len(&Ec3Substream {
+                    fscod: 0,
+                    bsid: 0,
+                    asvc: false,
+                    bsmod: 0,
+                    acmod: 0,
+                    lfeon: false,
+                    num_dep_sub: 0,
+                    chan_loc: None,
+                });
         need_in(bytes, need_bytes, "dec3 substreams")?;
 
         let mut substreams = Vec::with_capacity(num_sub);
         for _ in 0..num_sub {
-            let fscod = read_bits(bytes, &mut bit_pos, 2, "fscod")? as u8;
-            let bsid = read_bits(bytes, &mut bit_pos, 5, "bsid")? as u8;
+            let fscod = read_bits(bytes, &mut bit_pos, FSCOD_BITS, "fscod")? as u8;
+            let bsid = read_bits(bytes, &mut bit_pos, BSID_BITS, "bsid")? as u8;
             let _res1 = read_bits(bytes, &mut bit_pos, 1, "reserved")?;
             let asvc = read_bits(bytes, &mut bit_pos, 1, "asvc")? != 0;
-            let bsmod = read_bits(bytes, &mut bit_pos, 3, "bsmod")? as u8;
-            let acmod = read_bits(bytes, &mut bit_pos, 3, "acmod")? as u8;
+            let bsmod = read_bits(bytes, &mut bit_pos, BSMOD_BITS, "bsmod")? as u8;
+            let acmod = read_bits(bytes, &mut bit_pos, ACMOD_BITS, "acmod")? as u8;
             let lfeon = read_bits(bytes, &mut bit_pos, 1, "lfeon")? != 0;
-            let _res3 = read_bits(bytes, &mut bit_pos, 3, "reserved")?;
-            let num_dep_sub = read_bits(bytes, &mut bit_pos, 4, "num_dep_sub")? as u8;
+            let _res3 = read_bits(bytes, &mut bit_pos, EC3_SUBSTREAM_RESERVED_BITS, "reserved")?;
+            let num_dep_sub =
+                read_bits(bytes, &mut bit_pos, NUM_DEP_SUB_BITS, "num_dep_sub")? as u8;
             let chan_loc = if num_dep_sub > 0 {
-                Some(read_bits(bytes, &mut bit_pos, 9, "chan_loc")? as u16)
+                Some(read_bits(bytes, &mut bit_pos, CHAN_LOC_BITS, "chan_loc")? as u16)
             } else {
                 let _res1 = read_bits(bytes, &mut bit_pos, 1, "reserved")?;
                 None
@@ -1222,7 +1355,7 @@ impl<'a> Parse<'a> for Ec3SpecificBox {
 
         // §F.6.2.14: whatever follows the last substream is reserved; keep it
         // byte-for-byte so a parsed box re-serializes identically.
-        let tail_start = (bit_pos.div_ceil(8)).min(bytes.len());
+        let tail_start = (bit_pos.div_ceil(BITS_PER_BYTE)).min(bytes.len());
         let reserved_tail = bytes[tail_start..].to_vec();
 
         Ok(Self {
@@ -1240,11 +1373,12 @@ impl Serialize for Ec3SpecificBox {
         // 2 bytes header (data_rate+num_ind_sub) + 3 or 4 bytes per substream
         // (4 when it has dependent substreams — see `ec3_substream_serialized_len`),
         // then the reserved tail.
-        2 + self
-            .substreams
-            .iter()
-            .map(ec3_substream_serialized_len)
-            .sum::<usize>()
+        DEC3_HEADER_LEN
+            + self
+                .substreams
+                .iter()
+                .map(ec3_substream_serialized_len)
+                .sum::<usize>()
             + self.reserved_tail.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -1263,26 +1397,31 @@ impl Serialize for Ec3SpecificBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut bit_pos = 0usize;
-        write_bits(buf, &mut bit_pos, 13, self.data_rate as u64);
-        write_bits(buf, &mut bit_pos, 3, self.num_ind_sub as u64);
+        write_bits(buf, &mut bit_pos, DATA_RATE_BITS, self.data_rate as u64);
+        write_bits(buf, &mut bit_pos, NUM_IND_SUB_BITS, self.num_ind_sub as u64);
         for sub in &self.substreams {
-            write_bits(buf, &mut bit_pos, 2, sub.fscod as u64);
-            write_bits(buf, &mut bit_pos, 5, sub.bsid as u64);
+            write_bits(buf, &mut bit_pos, FSCOD_BITS, sub.fscod as u64);
+            write_bits(buf, &mut bit_pos, BSID_BITS, sub.bsid as u64);
             write_bits(buf, &mut bit_pos, 1, 0); // reserved
             write_bits(buf, &mut bit_pos, 1, sub.asvc as u64);
-            write_bits(buf, &mut bit_pos, 3, sub.bsmod as u64);
-            write_bits(buf, &mut bit_pos, 3, sub.acmod as u64);
+            write_bits(buf, &mut bit_pos, BSMOD_BITS, sub.bsmod as u64);
+            write_bits(buf, &mut bit_pos, ACMOD_BITS, sub.acmod as u64);
             write_bits(buf, &mut bit_pos, 1, sub.lfeon as u64);
-            write_bits(buf, &mut bit_pos, 3, 0); // reserved
-            write_bits(buf, &mut bit_pos, 4, sub.num_dep_sub as u64);
+            write_bits(buf, &mut bit_pos, EC3_SUBSTREAM_RESERVED_BITS, 0); // reserved
+            write_bits(buf, &mut bit_pos, NUM_DEP_SUB_BITS, sub.num_dep_sub as u64);
             if sub.num_dep_sub > 0 {
-                write_bits(buf, &mut bit_pos, 9, sub.chan_loc.unwrap_or(0) as u64);
+                write_bits(
+                    buf,
+                    &mut bit_pos,
+                    CHAN_LOC_BITS,
+                    sub.chan_loc.unwrap_or(0) as u64,
+                );
             } else {
                 write_bits(buf, &mut bit_pos, 1, 0); // reserved
             }
         }
         // §F.6.2.14 reserved tail, verbatim.
-        let tail_start = bit_pos.div_ceil(8);
+        let tail_start = bit_pos.div_ceil(BITS_PER_BYTE);
         buf[tail_start..tail_start + self.reserved_tail.len()].copy_from_slice(&self.reserved_tail);
         Ok(need)
     }
@@ -1316,17 +1455,17 @@ fn parse_eac3_bsi_tail(
     let dependent = strmtyp == EAC3_STRMTYP_DEPENDENT;
 
     // dialnorm(5), compre(1) + optional compr(8)
-    let _dialnorm = read_bits(es, bit_pos, 5, "dialnorm")?;
+    let _dialnorm = read_bits(es, bit_pos, DIALNORM_BITS, "dialnorm")?;
     let compre = read_bits(es, bit_pos, 1, "compre")? != 0;
     if compre {
-        let _compr = read_bits(es, bit_pos, 8, "compr")?;
+        let _compr = read_bits(es, bit_pos, COMPR_BITS, "compr")?;
     }
-    if acmod == 0x0 {
+    if acmod == ACMOD_DUAL_MONO {
         // 1+1 mode carries a second value for several fields.
-        let _dialnorm2 = read_bits(es, bit_pos, 5, "dialnorm2")?;
+        let _dialnorm2 = read_bits(es, bit_pos, DIALNORM_BITS, "dialnorm2")?;
         let compr2e = read_bits(es, bit_pos, 1, "compr2e")? != 0;
         if compr2e {
-            let _compr2 = read_bits(es, bit_pos, 8, "compr2")?;
+            let _compr2 = read_bits(es, bit_pos, COMPR_BITS, "compr2")?;
         }
     }
     // A dependent substream's custom channel map (§E.1.3.1.7).
@@ -1334,27 +1473,27 @@ fn parse_eac3_bsi_tail(
     if dependent {
         let chanmape = read_bits(es, bit_pos, 1, "chanmape")? != 0;
         if chanmape {
-            chanmap = Some(read_bits(es, bit_pos, 16, "chanmap")? as u16);
+            chanmap = Some(read_bits(es, bit_pos, u16::BITS as usize, "chanmap")? as u16);
         }
     }
     // mixmdate block — present in both independent and dependent frames.
     let mixmdate = read_bits(es, bit_pos, 1, "mixmdate")? != 0;
     if mixmdate {
-        if acmod > 0x2 {
-            let _dmixmod = read_bits(es, bit_pos, 2, "dmixmod")?;
+        if acmod > ACMOD_2_0 {
+            let _dmixmod = read_bits(es, bit_pos, DMIXMOD_BITS, "dmixmod")?;
         }
-        if (acmod & 0x1) != 0 && acmod > 0x2 {
-            let _ltrtcmixlev = read_bits(es, bit_pos, 3, "ltrtcmixlev")?;
-            let _lorocmixlev = read_bits(es, bit_pos, 3, "lorocmixlev")?;
+        if (acmod & ACMOD_CENTRE_BIT) != 0 && acmod > ACMOD_2_0 {
+            let _ltrtcmixlev = read_bits(es, bit_pos, MIX_LEVEL_BITS, "ltrtcmixlev")?;
+            let _lorocmixlev = read_bits(es, bit_pos, MIX_LEVEL_BITS, "lorocmixlev")?;
         }
-        if (acmod & 0x4) != 0 {
-            let _ltrtsurmixlev = read_bits(es, bit_pos, 3, "ltrtsurmixlev")?;
-            let _lorosurmixlev = read_bits(es, bit_pos, 3, "lorosurmixlev")?;
+        if (acmod & ACMOD_SURROUND_BIT) != 0 {
+            let _ltrtsurmixlev = read_bits(es, bit_pos, MIX_LEVEL_BITS, "ltrtsurmixlev")?;
+            let _lorosurmixlev = read_bits(es, bit_pos, MIX_LEVEL_BITS, "lorosurmixlev")?;
         }
         if lfeon {
             let lfemixlevcode = read_bits(es, bit_pos, 1, "lfemixlevcode")? != 0;
             if lfemixlevcode {
-                let _lfemixlevcod = read_bits(es, bit_pos, 5, "lfemixlevcod")?;
+                let _lfemixlevcod = read_bits(es, bit_pos, LFEMIXLEVCOD_BITS, "lfemixlevcod")?;
             }
         }
         // §E.1.2.2 gates this block on `strmtyp == 0x0` specifically, not on
@@ -1364,71 +1503,74 @@ fn parse_eac3_bsi_tail(
         if strmtyp == EAC3_STRMTYP_INDEPENDENT {
             let pgmscle = read_bits(es, bit_pos, 1, "pgmscle")? != 0;
             if pgmscle {
-                let _pgmscl = read_bits(es, bit_pos, 6, "pgmscl")?;
+                let _pgmscl = read_bits(es, bit_pos, PGMSCL_BITS, "pgmscl")?;
             }
-            if acmod == 0x0 {
+            if acmod == ACMOD_DUAL_MONO {
                 let pgmscl2e = read_bits(es, bit_pos, 1, "pgmscl2e")? != 0;
                 if pgmscl2e {
-                    let _pgmscl2 = read_bits(es, bit_pos, 6, "pgmscl2")?;
+                    let _pgmscl2 = read_bits(es, bit_pos, PGMSCL_BITS, "pgmscl2")?;
                 }
             }
             let extpgmscle = read_bits(es, bit_pos, 1, "extpgmscle")? != 0;
             if extpgmscle {
-                let _extpgmscl = read_bits(es, bit_pos, 6, "extpgmscl")?;
+                let _extpgmscl = read_bits(es, bit_pos, PGMSCL_BITS, "extpgmscl")?;
             }
-            let mixdef = read_bits(es, bit_pos, 2, "mixdef")? as u8;
+            let mixdef = read_bits(es, bit_pos, MIXDEF_BITS, "mixdef")? as u8;
             match mixdef {
                 0x1 => {
                     let _premixcmpsel = read_bits(es, bit_pos, 1, "premixcmpsel")?;
                     let _drcsrc = read_bits(es, bit_pos, 1, "drcsrc")?;
-                    let _premixcmpscl = read_bits(es, bit_pos, 3, "premixcmpscl")?;
+                    let _premixcmpscl = read_bits(es, bit_pos, MIX_LEVEL_BITS, "premixcmpscl")?;
                 }
                 0x2 => {
-                    let _mixdata = read_bits(es, bit_pos, 12, "mixdata")?;
+                    let _mixdata = read_bits(es, bit_pos, MIXDATA_BITS, "mixdata")?;
                 }
                 0x3 => {
-                    let mixdeflen = read_bits(es, bit_pos, 5, "mixdeflen")? as usize;
+                    let mixdeflen = read_bits(es, bit_pos, MIXDEFLEN_BITS, "mixdeflen")? as usize;
                     let mixdata2e = read_bits(es, bit_pos, 1, "mixdata2e")? != 0;
                     if mixdata2e {
                         skip_eac3_mixdata2(es, bit_pos)?;
                     }
                     let mixdata3e = read_bits(es, bit_pos, 1, "mixdata3e")? != 0;
                     if mixdata3e {
-                        let _spchdat = read_bits(es, bit_pos, 5, "spchdat")?;
+                        let _spchdat = read_bits(es, bit_pos, SPCHDAT_BITS, "spchdat")?;
                         let addspchdate = read_bits(es, bit_pos, 1, "addspchdate")? != 0;
                         if addspchdate {
-                            let _spchdat1 = read_bits(es, bit_pos, 5, "spchdat1")?;
-                            let _spchan1att = read_bits(es, bit_pos, 2, "spchan1att")?;
+                            let _spchdat1 = read_bits(es, bit_pos, SPCHDAT_BITS, "spchdat1")?;
+                            let _spchan1att =
+                                read_bits(es, bit_pos, SPCHAN1ATT_BITS, "spchan1att")?;
                             let addspchdat1e = read_bits(es, bit_pos, 1, "addspchdat1e")? != 0;
                             if addspchdat1e {
-                                let _spchdat2 = read_bits(es, bit_pos, 5, "spchdat2")?;
-                                let _spchan2att = read_bits(es, bit_pos, 3, "spchan2att")?;
+                                let _spchdat2 = read_bits(es, bit_pos, SPCHDAT_BITS, "spchdat2")?;
+                                let _spchan2att =
+                                    read_bits(es, bit_pos, SPCHAN2ATT_BITS, "spchan2att")?;
                             }
                         }
                     }
                     // §E.1.2.2: `mixdata` is `(8 * (mixdeflen + 2))` bits, then
                     // 0..=7 `mixdatafill` bits to the next byte boundary — the
                     // fixed-width part is byte-aligned, so the fill is implicit.
-                    skip_eac3_bits(es, bit_pos, 8 * (mixdeflen + 2))?;
+                    skip_eac3_bits(es, bit_pos, BITS_PER_BYTE * (mixdeflen + MIXDEFLEN_BASE))?;
                     // `mixdatafill`: "0 - 7" bits — the encoder pads to a byte
                     // boundary, so re-align rather than guessing a count.
-                    if !bit_pos.is_multiple_of(8) {
-                        *bit_pos += (8 - (*bit_pos).rem_euclid(8)) % 8;
+                    if !bit_pos.is_multiple_of(BITS_PER_BYTE) {
+                        *bit_pos +=
+                            (BITS_PER_BYTE - (*bit_pos).rem_euclid(BITS_PER_BYTE)) % BITS_PER_BYTE;
                     }
                 }
                 _ => {}
             }
-            if acmod < 0x2 {
+            if acmod < ACMOD_2_0 {
                 let paninfoe = read_bits(es, bit_pos, 1, "paninfoe")? != 0;
                 if paninfoe {
-                    let _panmean = read_bits(es, bit_pos, 8, "panmean")?;
-                    let _paninfo = read_bits(es, bit_pos, 6, "paninfo")?;
+                    let _panmean = read_bits(es, bit_pos, PANMEAN_BITS, "panmean")?;
+                    let _paninfo = read_bits(es, bit_pos, PANINFO_BITS, "paninfo")?;
                 }
-                if acmod == 0x0 {
+                if acmod == ACMOD_DUAL_MONO {
                     let paninfo2e = read_bits(es, bit_pos, 1, "paninfo2e")? != 0;
                     if paninfo2e {
-                        let _panmean2 = read_bits(es, bit_pos, 8, "panmean2")?;
-                        let _paninfo2 = read_bits(es, bit_pos, 6, "paninfo2")?;
+                        let _panmean2 = read_bits(es, bit_pos, PANMEAN_BITS, "panmean2")?;
+                        let _paninfo2 = read_bits(es, bit_pos, PANINFO_BITS, "paninfo2")?;
                     }
                 }
             }
@@ -1436,12 +1578,14 @@ fn parse_eac3_bsi_tail(
             if frmmixcfginfoe {
                 if numblks == 1 {
                     // `numblkscod == 0x0` → a single 5-bit `blkmixcfginfo[0]`.
-                    let _blkmixcfginfo = read_bits(es, bit_pos, 5, "blkmixcfginfo")?;
+                    let _blkmixcfginfo =
+                        read_bits(es, bit_pos, BLKMIXCFGINFO_BITS, "blkmixcfginfo")?;
                 } else {
                     for _ in 0..numblks {
                         let blkmixcfginfoe = read_bits(es, bit_pos, 1, "blkmixcfginfoe")? != 0;
                         if blkmixcfginfoe {
-                            let _blkmixcfginfo = read_bits(es, bit_pos, 5, "blkmixcfginfo")?;
+                            let _blkmixcfginfo =
+                                read_bits(es, bit_pos, BLKMIXCFGINFO_BITS, "blkmixcfginfo")?;
                         }
                     }
                 }
@@ -1451,7 +1595,7 @@ fn parse_eac3_bsi_tail(
     // infomdate → bsmod (§E.1.3.1.x). Absent means 0 in the `dec3` (§F.6.2.8).
     let infomdate = read_bits(es, bit_pos, 1, "infomdate")? != 0;
     let bsmod = if infomdate {
-        Some(read_bits(es, bit_pos, 3, "bsmod")? as u8)
+        Some(read_bits(es, bit_pos, BSMOD_BITS, "bsmod")? as u8)
     } else {
         None
     };
@@ -1462,7 +1606,7 @@ fn parse_eac3_bsi_tail(
 fn skip_eac3_mixdata2(es: &[u8], bit_pos: &mut usize) -> Result<()> {
     let _premixcmpsel = read_bits(es, bit_pos, 1, "premixcmpsel")?;
     let _drcsrc = read_bits(es, bit_pos, 1, "drcsrc")?;
-    let _premixcmpscl = read_bits(es, bit_pos, 3, "premixcmpscl")?;
+    let _premixcmpscl = read_bits(es, bit_pos, MIX_LEVEL_BITS, "premixcmpscl")?;
     for what in [
         "extpgmlscle",
         "extpgmcscle",
@@ -1474,7 +1618,7 @@ fn skip_eac3_mixdata2(es: &[u8], bit_pos: &mut usize) -> Result<()> {
     ] {
         let present = read_bits(es, bit_pos, 1, what)? != 0;
         if present {
-            let _value = read_bits(es, bit_pos, 4, what)?;
+            let _value = read_bits(es, bit_pos, EXT_PGM_SCALE_BITS, what)?;
         }
     }
     let addche = read_bits(es, bit_pos, 1, "addche")? != 0;
@@ -1482,7 +1626,7 @@ fn skip_eac3_mixdata2(es: &[u8], bit_pos: &mut usize) -> Result<()> {
         for what in ["extpgmaux1scle", "extpgmaux2scle"] {
             let present = read_bits(es, bit_pos, 1, what)? != 0;
             if present {
-                let _value = read_bits(es, bit_pos, 4, what)?;
+                let _value = read_bits(es, bit_pos, EXT_PGM_SCALE_BITS, what)?;
             }
         }
     }
@@ -1492,9 +1636,9 @@ fn skip_eac3_mixdata2(es: &[u8], bit_pos: &mut usize) -> Result<()> {
 /// Advance `bit_pos` by `n` bits, erroring if the buffer is too short.
 fn skip_eac3_bits(es: &[u8], bit_pos: &mut usize, n: usize) -> Result<()> {
     let end = bit_pos.saturating_add(n);
-    if end > es.len() * 8 {
+    if end > es.len() * BITS_PER_BYTE {
         return Err(Error::BufferTooShort(BufferTooShort {
-            need: end.div_ceil(8),
+            need: end.div_ceil(BITS_PER_BYTE),
             have: es.len(),
             what: "E-AC-3 bsi",
         }));
@@ -1519,8 +1663,8 @@ fn find_syncword(data: &[u8]) -> Result<usize> {
 /// Write `n` bits from `val` MSB-first into `buf` at `bit_pos`, advancing it.
 fn write_bits(buf: &mut [u8], bit_pos: &mut usize, n: usize, val: u64) {
     for i in (0..n).rev() {
-        let byte_idx = *bit_pos / 8;
-        let bit_in_byte = 7 - (*bit_pos % 8);
+        let byte_idx = *bit_pos / BITS_PER_BYTE;
+        let bit_in_byte = BITS_PER_BYTE - 1 - (*bit_pos % BITS_PER_BYTE);
         let bit = ((val >> i) & 1) as u8;
         buf[byte_idx] = (buf[byte_idx] & !(1 << bit_in_byte)) | (bit << bit_in_byte);
         *bit_pos += 1;
@@ -1533,7 +1677,8 @@ fn ac3_sample_rate(fscod: u8) -> u32 {
         0 => 48000,
         1 => 44100,
         2 => 32000,
-        _ => 44100, // reserved → assume 44100
+        // Reserved fscod: assume 44100
+        _ => 44100,
     }
 }
 
@@ -1587,7 +1732,8 @@ fn acmod_channels(acmod: u8) -> u8 {
         4 => 3, // 2/1
         5 => 4, // 3/1
         6 => 4, // 2/2
-        _ => 5, // 3/2 (5.1)
+        // 3/2 (5.1)
+        _ => 5,
     }
 }
 

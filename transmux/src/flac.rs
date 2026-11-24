@@ -20,6 +20,17 @@ pub const FLAC_FOURCC: [u8; 4] = *b"fLaC";
 const FULL_HDR: usize = 4;
 /// FLAC metadata block header: `last(1)` | `type(7)` | `length(24)` = 4 bytes.
 const METADATA_BLOCK_HDR: usize = 4;
+/// Byte offsets of the three low-order bytes of a 4-byte big-endian field.
+const BE32_BYTE_1: usize = 1;
+const BE32_BYTE_2: usize = 2;
+const BE32_BYTE_3: usize = 3;
+/// `LastMetadataBlockFlag` mask in a FLAC metadata block header.
+const LAST_METADATA_BLOCK_MASK: u8 = 0x80;
+/// `BlockType` mask in a FLAC metadata block header.
+const METADATA_BLOCK_TYPE_MASK: u8 = 0x7F;
+/// Bit position of `LastMetadataBlockFlag`.
+const LAST_METADATA_BLOCK_SHIFT: u8 = 7;
+
 /// STREAMINFO metadata block type.
 pub const BLOCK_TYPE_STREAMINFO: u8 = 0;
 
@@ -67,15 +78,24 @@ impl<'a> Parse<'a> for FlacSpecificBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, FULL_HDR, "dfLa body")?;
         let version = bytes[0];
-        let flags = u32::from_be_bytes([0, bytes[1], bytes[2], bytes[3]]);
+        let flags = u32::from_be_bytes([
+            0,
+            bytes[BE32_BYTE_1],
+            bytes[BE32_BYTE_2],
+            bytes[BE32_BYTE_3],
+        ]);
         let mut blocks = Vec::new();
         let mut off = FULL_HDR;
         while off + METADATA_BLOCK_HDR <= bytes.len() {
             let hdr = bytes[off];
-            let last = (hdr & 0x80) != 0;
-            let block_type = hdr & 0x7F;
-            let length =
-                u32::from_be_bytes([0, bytes[off + 1], bytes[off + 2], bytes[off + 3]]) as usize;
+            let last = (hdr & LAST_METADATA_BLOCK_MASK) != 0;
+            let block_type = hdr & METADATA_BLOCK_TYPE_MASK;
+            let length = u32::from_be_bytes([
+                0,
+                bytes[off + BE32_BYTE_1],
+                bytes[off + BE32_BYTE_2],
+                bytes[off + BE32_BYTE_3],
+            ]) as usize;
             let data_start = off + METADATA_BLOCK_HDR;
             // A block whose declared `METADATA_BLOCK_LENGTH` runs past the end of
             // the box is truncated input, not a shorter valid block: accepting it
@@ -137,10 +157,11 @@ impl Serialize for FlacSpecificBox {
         buf[1..4].copy_from_slice(&fb[1..]);
         let mut off = FULL_HDR;
         for b in &self.blocks {
-            buf[off] = ((b.last as u8) << 7) | (b.block_type & 0x7F);
+            buf[off] = ((b.last as u8) << LAST_METADATA_BLOCK_SHIFT)
+                | (b.block_type & METADATA_BLOCK_TYPE_MASK);
             let len = broadcast_common::len::fit_u24(b.data.len(), "METADATA_BLOCK_LENGTH")?;
             let lb = len.to_be_bytes();
-            buf[off + 1..off + 4].copy_from_slice(&lb[1..]);
+            buf[off + BE32_BYTE_1..off + METADATA_BLOCK_HDR].copy_from_slice(&lb[BE32_BYTE_1..]);
             off += METADATA_BLOCK_HDR;
             buf[off..off + b.data.len()].copy_from_slice(&b.data);
             off += b.data.len();

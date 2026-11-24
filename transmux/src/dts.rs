@@ -68,6 +68,74 @@ const DTS_CORE_LAYOUT_USE_CHANNEL_LAYOUT: u8 = 31;
 
 /// `RATE` code for open/variable bit rate — ETSI TS 102 114 Table 5-7 (`0b11101`).
 const DTS_RATE_OPEN: u8 = 0b11101;
+/// Byte length of a 32-bit big-endian word.
+const U32_LEN: usize = core::mem::size_of::<u32>();
+/// Byte length of a 16-bit big-endian word.
+const U16_LEN: usize = core::mem::size_of::<u16>();
+/// Byte length of a FourCC code.
+const FOURCC_LEN: usize = 4;
+
+/// Width of `SHORT`.
+const DTS_SHORT_BITS: usize = 5;
+/// Width of `NBLKS`.
+const DTS_NBLKS_BITS: usize = 7;
+/// Width of `FSIZE`.
+const DTS_FSIZE_BITS: usize = 14;
+/// Width of `AMODE`.
+const DTS_AMODE_BITS: usize = 6;
+/// Width of `SFREQ`.
+const DTS_SFREQ_BITS: usize = 4;
+/// Width of `RATE`.
+const DTS_RATE_BITS: usize = 5;
+/// Width of `EXT_AUDIO_ID`.
+const DTS_EXT_AUDIO_ID_BITS: usize = 3;
+/// Width of `LFF`.
+const DTS_LFF_BITS: usize = 2;
+
+/// Byte offset of `DTSSamplingFrequency` in the `ddts` body.
+const DDTS_SAMPLING_FREQUENCY_OFFSET: usize = 0;
+/// Byte offset of `maxBitrate` in the `ddts` body.
+const DDTS_MAX_BITRATE_OFFSET: usize = 4;
+/// Byte offset of `avgBitrate` in the `ddts` body.
+const DDTS_AVG_BITRATE_OFFSET: usize = 8;
+/// Byte offset of `pcmSampleDepth` in the `ddts` body.
+const DDTS_PCM_SAMPLE_DEPTH_OFFSET: usize = 12;
+/// Byte offset of the packed `ddts` bit fields.
+const DDTS_PACKED_OFFSET: usize = 13;
+/// Byte offset of `ChannelLayout` in the `ddts` body.
+const DDTS_CHANNEL_LAYOUT_OFFSET: usize = 17;
+/// Byte offset of the `ddts` flags byte.
+const DDTS_FLAGS_OFFSET: usize = 19;
+
+/// Mask of `FrameDuration` in the packed `ddts` word.
+const DDTS_FRAME_DURATION_MASK: u32 = 0x03;
+/// Shift of `FrameDuration` in the packed `ddts` word.
+const DDTS_FRAME_DURATION_SHIFT: u32 = 30;
+/// Mask of `StreamConstruction` in the packed `ddts` word.
+const DDTS_STREAM_CONSTRUCTION_MASK: u32 = 0x1F;
+/// Shift of `StreamConstruction` in the packed `ddts` word.
+const DDTS_STREAM_CONSTRUCTION_SHIFT: u32 = 25;
+/// Shift of `CoreLFEPresent` in the packed `ddts` word.
+const DDTS_CORE_LFE_PRESENT_SHIFT: u32 = 24;
+/// Mask of `CoreLayout` in the packed `ddts` word.
+const DDTS_CORE_LAYOUT_MASK: u32 = 0x3F;
+/// Shift of `CoreLayout` in the packed `ddts` word.
+const DDTS_CORE_LAYOUT_SHIFT: u32 = 18;
+/// Mask of `CoreSize` in the packed `ddts` word.
+const DDTS_CORE_SIZE_MASK: u32 = 0x3FFF;
+/// Shift of `CoreSize` in the packed `ddts` word.
+const DDTS_CORE_SIZE_SHIFT: u32 = 4;
+/// Shift of `StereoDownmix` in the packed `ddts` word.
+const DDTS_STEREO_DOWNMIX_SHIFT: u32 = 3;
+/// Mask of `RepresentationType` in the packed `ddts` word.
+const DDTS_REPRESENTATION_TYPE_MASK: u32 = 0x07;
+
+/// Mask of `MultiAssetFlag` in the `ddts` flags byte.
+const DDTS_MULTI_ASSET_FLAG_MASK: u8 = 0x80;
+/// Mask of `LBRDurationMod` in the `ddts` flags byte.
+const DDTS_LBR_DURATION_MOD_MASK: u8 = 0x40;
+/// Mask of `ReservedBoxPresent` in the `ddts` flags byte.
+const DDTS_RESERVED_BOX_PRESENT_MASK: u8 = 0x20;
 
 /// DTS core `RATE` field (Table 5-7) → nominal bit rate in bits/s, indices
 /// `0..=28`. Verified bit-exact against ffmpeg's `ff_dca_bit_rates` table
@@ -152,10 +220,28 @@ fn dts_rate_bps(rate: u8) -> u32 {
     DTS_RATE_BPS.get(rate as usize).copied().unwrap_or(0)
 }
 
+/// Read a big-endian `u32` at `offset`.
+fn read_be_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(
+        bytes[offset..offset + U32_LEN]
+            .try_into()
+            .expect("u32 length"),
+    )
+}
+
+/// Read a big-endian `u16` at `offset`.
+fn read_be_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_be_bytes(
+        bytes[offset..offset + U16_LEN]
+            .try_into()
+            .expect("u16 length"),
+    )
+}
+
 /// Find the byte offset of the [`DTS_CORE_SYNC_WORD`] in a buffer.
 fn find_dts_sync(data: &[u8]) -> Result<usize> {
-    for i in 0..data.len().saturating_sub(3) {
-        let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+    for i in 0..data.len().saturating_sub(U32_LEN - 1) {
+        let word = read_be_u32(data, i);
         if word == DTS_CORE_SYNC_WORD {
             return Ok(i);
         }
@@ -234,11 +320,11 @@ impl DtsCoreFrameInfo {
         let mut bit_pos = 0usize;
 
         // SYNC: 32 bits (already matched by the caller).
-        bit_pos += 32;
+        bit_pos += u32::BITS as usize;
         let _ftype = read_bits(es, &mut bit_pos, 1, "FTYPE")?;
-        let _short = read_bits(es, &mut bit_pos, 5, "SHORT")?;
+        let _short = read_bits(es, &mut bit_pos, DTS_SHORT_BITS, "SHORT")?;
         let _cpf = read_bits(es, &mut bit_pos, 1, "CPF")?;
-        let nblks = read_bits(es, &mut bit_pos, 7, "NBLKS")? as u8;
+        let nblks = read_bits(es, &mut bit_pos, DTS_NBLKS_BITS, "NBLKS")? as u8;
         if nblks < DTS_NBLKS_MIN {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "NBLKS",
@@ -246,7 +332,7 @@ impl DtsCoreFrameInfo {
                 reason: "must be >= 5 (0..=4 reserved — Table 5-1)",
             }));
         }
-        let fsize = read_bits(es, &mut bit_pos, 14, "FSIZE")? as u16;
+        let fsize = read_bits(es, &mut bit_pos, DTS_FSIZE_BITS, "FSIZE")? as u16;
         if fsize < DTS_FSIZE_MIN {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "FSIZE",
@@ -254,18 +340,18 @@ impl DtsCoreFrameInfo {
                 reason: "must be >= 95 (0..=94 reserved — Table 5-1)",
             }));
         }
-        let amode = read_bits(es, &mut bit_pos, 6, "AMODE")? as u8;
-        let sfreq = read_bits(es, &mut bit_pos, 4, "SFREQ")? as u8;
-        let rate = read_bits(es, &mut bit_pos, 5, "RATE")? as u8;
+        let amode = read_bits(es, &mut bit_pos, DTS_AMODE_BITS, "AMODE")? as u8;
+        let sfreq = read_bits(es, &mut bit_pos, DTS_SFREQ_BITS, "SFREQ")? as u8;
+        let rate = read_bits(es, &mut bit_pos, DTS_RATE_BITS, "RATE")? as u8;
         let _fixed_bit = read_bits(es, &mut bit_pos, 1, "FixedBit")?;
         let _dynf = read_bits(es, &mut bit_pos, 1, "DYNF")?;
         let _timef = read_bits(es, &mut bit_pos, 1, "TIMEF")?;
         let _auxf = read_bits(es, &mut bit_pos, 1, "AUXF")?;
         let _hdcd = read_bits(es, &mut bit_pos, 1, "HDCD")?;
-        let _ext_audio_id = read_bits(es, &mut bit_pos, 3, "EXT_AUDIO_ID")?;
+        let _ext_audio_id = read_bits(es, &mut bit_pos, DTS_EXT_AUDIO_ID_BITS, "EXT_AUDIO_ID")?;
         let _ext_audio = read_bits(es, &mut bit_pos, 1, "EXT_AUDIO")?;
         let _aspf = read_bits(es, &mut bit_pos, 1, "ASPF")?;
-        let lff = read_bits(es, &mut bit_pos, 2, "LFF")? as u8;
+        let lff = read_bits(es, &mut bit_pos, DTS_LFF_BITS, "LFF")? as u8;
         let _hflag = read_bits(es, &mut bit_pos, 1, "HFLAG")?;
 
         let sample_rate = dts_sfreq_hz(sfreq).ok_or(Error::InvalidValue(InvalidValue {
@@ -359,13 +445,8 @@ pub struct DtsCoreFrame<'a> {
 pub fn split_dts_core_frames(payload: &[u8]) -> Vec<DtsCoreFrame<'_>> {
     let mut frames = Vec::new();
     let mut off = 0usize;
-    while off + 4 <= payload.len() {
-        let word = u32::from_be_bytes([
-            payload[off],
-            payload[off + 1],
-            payload[off + 2],
-            payload[off + 3],
-        ]);
+    while off + U32_LEN <= payload.len() {
+        let word = read_be_u32(payload, off);
         if word != DTS_CORE_SYNC_WORD {
             break;
         }
@@ -467,7 +548,7 @@ impl DtsSpecificBox {
     /// Returns the fourcc as a UTF-8 string. For the four defined DTS FourCCs
     /// (`dtsc`, `dtsh`, `dtsl`, `dtse`) the result is the codec identifier used
     /// in `Content-Type` and HLS `CODECS=` attributes.
-    pub fn rfc6381(codec_fourcc: &[u8; 4]) -> &'static str {
+    pub fn rfc6381(codec_fourcc: &[u8; FOURCC_LEN]) -> &'static str {
         match codec_fourcc {
             b"dtsc" => "dtsc",
             b"dtsh" => "dtsh",
@@ -486,25 +567,28 @@ impl DtsSpecificBox {
     /// `[2:0]` `representation_type`.
     fn encode_packed_word(&self) -> u32 {
         let mut w: u32 = 0;
-        w |= (u32::from(self.frame_duration) & 0x03) << 30;
-        w |= (u32::from(self.stream_construction) & 0x1F) << 25;
-        w |= u32::from(self.core_lfe_present) << 24;
-        w |= (u32::from(self.core_layout) & 0x3F) << 18;
-        w |= (u32::from(self.core_size) & 0x3FFF) << 4;
-        w |= u32::from(self.stereo_downmix) << 3;
-        w |= u32::from(self.representation_type) & 0x07;
+        w |= (u32::from(self.frame_duration) & DDTS_FRAME_DURATION_MASK)
+            << DDTS_FRAME_DURATION_SHIFT;
+        w |= (u32::from(self.stream_construction) & DDTS_STREAM_CONSTRUCTION_MASK)
+            << DDTS_STREAM_CONSTRUCTION_SHIFT;
+        w |= u32::from(self.core_lfe_present) << DDTS_CORE_LFE_PRESENT_SHIFT;
+        w |= (u32::from(self.core_layout) & DDTS_CORE_LAYOUT_MASK) << DDTS_CORE_LAYOUT_SHIFT;
+        w |= (u32::from(self.core_size) & DDTS_CORE_SIZE_MASK) << DDTS_CORE_SIZE_SHIFT;
+        w |= u32::from(self.stereo_downmix) << DDTS_STEREO_DOWNMIX_SHIFT;
+        w |= u32::from(self.representation_type) & DDTS_REPRESENTATION_TYPE_MASK;
         w
     }
 
     /// Decode the packed 32-bit word produced by [`encode_packed_word`].
     fn decode_packed_word(w: u32) -> (u8, u8, bool, u8, u16, bool, u8) {
-        let frame_duration = ((w >> 30) & 0x03) as u8;
-        let stream_construction = ((w >> 25) & 0x1F) as u8;
-        let core_lfe_present = ((w >> 24) & 0x01) != 0;
-        let core_layout = ((w >> 18) & 0x3F) as u8;
-        let core_size = ((w >> 4) & 0x3FFF) as u16;
-        let stereo_downmix = ((w >> 3) & 0x01) != 0;
-        let representation_type = (w & 0x07) as u8;
+        let frame_duration = ((w >> DDTS_FRAME_DURATION_SHIFT) & DDTS_FRAME_DURATION_MASK) as u8;
+        let stream_construction =
+            ((w >> DDTS_STREAM_CONSTRUCTION_SHIFT) & DDTS_STREAM_CONSTRUCTION_MASK) as u8;
+        let core_lfe_present = ((w >> DDTS_CORE_LFE_PRESENT_SHIFT) & 1) != 0;
+        let core_layout = ((w >> DDTS_CORE_LAYOUT_SHIFT) & DDTS_CORE_LAYOUT_MASK) as u8;
+        let core_size = ((w >> DDTS_CORE_SIZE_SHIFT) & DDTS_CORE_SIZE_MASK) as u16;
+        let stereo_downmix = ((w >> DDTS_STEREO_DOWNMIX_SHIFT) & 1) != 0;
+        let representation_type = (w & DDTS_REPRESENTATION_TYPE_MASK) as u8;
         (
             frame_duration,
             stream_construction,
@@ -523,13 +607,13 @@ impl DtsSpecificBox {
     fn encode_flags_byte(&self) -> u8 {
         let mut b: u8 = 0;
         if self.multi_asset_flag {
-            b |= 0x80;
+            b |= DDTS_MULTI_ASSET_FLAG_MASK;
         }
         if self.lbr_duration_mod {
-            b |= 0x40;
+            b |= DDTS_LBR_DURATION_MOD_MASK;
         }
         if self.reserved_box_present {
-            b |= 0x20;
+            b |= DDTS_RESERVED_BOX_PRESENT_MASK;
         }
         b
     }
@@ -540,11 +624,11 @@ impl<'a> Parse<'a> for DtsSpecificBox {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, DDTS_BODY_LEN, "ddts")?;
-        let dts_sampling_frequency = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let max_bitrate = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let avg_bitrate = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
-        let pcm_sample_depth = bytes[12];
-        let packed = u32::from_be_bytes([bytes[13], bytes[14], bytes[15], bytes[16]]);
+        let dts_sampling_frequency = read_be_u32(bytes, DDTS_SAMPLING_FREQUENCY_OFFSET);
+        let max_bitrate = read_be_u32(bytes, DDTS_MAX_BITRATE_OFFSET);
+        let avg_bitrate = read_be_u32(bytes, DDTS_AVG_BITRATE_OFFSET);
+        let pcm_sample_depth = bytes[DDTS_PCM_SAMPLE_DEPTH_OFFSET];
+        let packed = read_be_u32(bytes, DDTS_PACKED_OFFSET);
         let (
             frame_duration,
             stream_construction,
@@ -554,11 +638,11 @@ impl<'a> Parse<'a> for DtsSpecificBox {
             stereo_downmix,
             representation_type,
         ) = Self::decode_packed_word(packed);
-        let channel_layout = u16::from_be_bytes([bytes[17], bytes[18]]);
-        let flags_byte = bytes[19];
-        let multi_asset_flag = (flags_byte & 0x80) != 0;
-        let lbr_duration_mod = (flags_byte & 0x40) != 0;
-        let reserved_box_present = (flags_byte & 0x20) != 0;
+        let channel_layout = read_be_u16(bytes, DDTS_CHANNEL_LAYOUT_OFFSET);
+        let flags_byte = bytes[DDTS_FLAGS_OFFSET];
+        let multi_asset_flag = (flags_byte & DDTS_MULTI_ASSET_FLAG_MASK) != 0;
+        let lbr_duration_mod = (flags_byte & DDTS_LBR_DURATION_MOD_MASK) != 0;
+        let reserved_box_present = (flags_byte & DDTS_RESERVED_BOX_PRESENT_MASK) != 0;
 
         Ok(Self {
             dts_sampling_frequency,
@@ -590,13 +674,18 @@ impl Serialize for DtsSpecificBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = DDTS_BODY_LEN;
         need_out(buf, need)?;
-        buf[0..4].copy_from_slice(&self.dts_sampling_frequency.to_be_bytes());
-        buf[4..8].copy_from_slice(&self.max_bitrate.to_be_bytes());
-        buf[8..12].copy_from_slice(&self.avg_bitrate.to_be_bytes());
-        buf[12] = self.pcm_sample_depth;
-        buf[13..17].copy_from_slice(&self.encode_packed_word().to_be_bytes());
-        buf[17..19].copy_from_slice(&self.channel_layout.to_be_bytes());
-        buf[19] = self.encode_flags_byte();
+        buf[DDTS_SAMPLING_FREQUENCY_OFFSET..DDTS_MAX_BITRATE_OFFSET]
+            .copy_from_slice(&self.dts_sampling_frequency.to_be_bytes());
+        buf[DDTS_MAX_BITRATE_OFFSET..DDTS_AVG_BITRATE_OFFSET]
+            .copy_from_slice(&self.max_bitrate.to_be_bytes());
+        buf[DDTS_AVG_BITRATE_OFFSET..DDTS_PCM_SAMPLE_DEPTH_OFFSET]
+            .copy_from_slice(&self.avg_bitrate.to_be_bytes());
+        buf[DDTS_PCM_SAMPLE_DEPTH_OFFSET] = self.pcm_sample_depth;
+        buf[DDTS_PACKED_OFFSET..DDTS_CHANNEL_LAYOUT_OFFSET]
+            .copy_from_slice(&self.encode_packed_word().to_be_bytes());
+        buf[DDTS_CHANNEL_LAYOUT_OFFSET..DDTS_FLAGS_OFFSET]
+            .copy_from_slice(&self.channel_layout.to_be_bytes());
+        buf[DDTS_FLAGS_OFFSET] = self.encode_flags_byte();
         Ok(need)
     }
 }

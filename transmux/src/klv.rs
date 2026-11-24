@@ -63,6 +63,10 @@ const BER_LOW7_MASK: u8 = 0x7F;
 /// BER-OID continuation bit: bit 7 of a multi-byte OID tag byte (more bytes
 /// follow). MISB ST 0601 tags above 127 (128..=143) take two bytes.
 const BER_OID_CONTINUATION: u8 = 0x80;
+/// Payload bits carried by each byte of a BER-OID integer.
+const BER_OID_DIGIT_BITS: u32 = 7;
+/// Maximum bytes occupied by the BER length token of a KLV value.
+const BER_LENGTH_MAX_LEN: usize = 4;
 
 /// MISB ST 0601 tag 1 — Checksum, MUST be the last LS item.
 pub const TAG_CHECKSUM: u32 = 1;
@@ -132,7 +136,7 @@ pub fn encode_ber_oid(tag: u32) -> Vec<u8> {
     let mut v = tag;
     while v > 0 {
         digits.push((v & BER_LOW7_MASK as u32) as u8);
-        v >>= 7;
+        v >>= BER_OID_DIGIT_BITS;
     }
     digits.reverse();
     let last = digits.len() - 1;
@@ -157,14 +161,14 @@ pub fn ber_oid(bytes: &[u8]) -> Result<(u32, usize)> {
                 what: "BER-OID tag byte",
             }))?;
         // Guard against overflow of the accumulator before shifting in 7 bits.
-        if value > (u32::MAX >> 7) {
+        if value > (u32::MAX >> BER_OID_DIGIT_BITS) {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "ber_oid",
                 value: value as u64,
                 reason: "BER-OID tag exceeds u32 range",
             }));
         }
-        value = (value << 7) | (b & BER_LOW7_MASK) as u32;
+        value = (value << BER_OID_DIGIT_BITS) | (b & BER_LOW7_MASK) as u32;
         consumed += 1;
         if b & BER_OID_CONTINUATION == 0 {
             break;
@@ -323,7 +327,7 @@ impl UasLocalSet {
 
         // Packet prefix = UL key + BER length of (value + 2 value bytes) + value.
         let value_total = value.len() + CHECKSUM_LEN;
-        let mut packet = Vec::with_capacity(UNIVERSAL_LABEL_LEN + 4 + value_total);
+        let mut packet = Vec::with_capacity(UNIVERSAL_LABEL_LEN + BER_LENGTH_MAX_LEN + value_total);
         packet.extend_from_slice(&UAS_LS_KEY);
         push_ber_length(&mut packet, value_total)?;
         packet.extend_from_slice(&value);
@@ -427,7 +431,7 @@ impl Serialize for UasLocalSet {
 pub fn checksum_bcc16(data: &[u8]) -> u16 {
     let mut bcc: u16 = 0;
     for (i, &byte) in data.iter().enumerate() {
-        bcc = bcc.wrapping_add(u16::from(byte) << (8 * ((i + 1) % 2)));
+        bcc = bcc.wrapping_add(u16::from(byte) << (u8::BITS as usize * ((i + 1) % CHECKSUM_LEN)));
     }
     bcc
 }
