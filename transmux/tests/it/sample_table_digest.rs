@@ -222,8 +222,8 @@ const DIGESTS: &[(&str, u32, u64)] = &[
     ),
     (
         "private/quicktime/iphone-x-live-photo.mov",
-        117576,
-        0x80b67132641023f4,
+        117_576,
+        0x80b6_7132_6410_23f4,
     ),
     (
         "private/quicktime/lavf-aac-tmcd.mov",

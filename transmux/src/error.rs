@@ -388,6 +388,13 @@ impl From<isobmff::Error> for Error {
             I::SampleDataBudgetExceeded { limit } => Error::SampleDataBudgetExceeded { limit },
             I::LimitExceeded { what, limit } => Error::LimitExceeded { what, limit },
             I::FragmentTooLarge { limit } => Error::FragmentTooLarge { limit },
+            I::MoovAfterMdatForwardOnly => {
+                Error::UnsupportedFeature("moov after mdat over a forward-only source")
+            }
+            I::SupplyMismatch { .. } => {
+                Error::InvalidInput("reader supply does not match its outstanding need")
+            }
+            I::NoIndex { .. } => Error::UnsupportedFeature("no random-access index to seek on"),
             I::FieldOverflow(v) => Error::FieldOverflow(v),
             I::UnsupportedFeature(s) => Error::UnsupportedFeature(s),
             I::UnsupportedVersion(v) => Error::EmsgSerialize(I::UnsupportedVersion(v)),

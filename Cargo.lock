@@ -2015,6 +2015,7 @@ dependencies = [
  "serde_json",
  "test-alloc",
  "test-fixtures",
+ "test-harness",
  "thiserror 2.0.21",
 ]
 

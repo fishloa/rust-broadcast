@@ -1839,6 +1839,12 @@ pub const TABLE: &[Crate] = &[
             // box bytes, a data-carrying ADT in the writer's input, not a
             // spec/field value decoded from the wire.
             "SampleEntry",
+            // Reader configuration choices (`SampleOrder`, `Source`, `Mode`)
+            // and the reader's data-carrying step ADT (`Step`), not wire codes.
+            "SampleOrder",
+            "Source",
+            "Mode",
+            "Step",
         ],
         expected: None,
         min_enums: None,
