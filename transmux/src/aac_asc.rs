@@ -39,10 +39,10 @@ const ADTS_LAYER_MASK_BITS: u8 = 0x06;
 const ADTS_FRAME_LENGTH_MAX: u16 = 8191;
 
 /// The `0xFF` first byte of the ADTS syncword (§6.2).
-const ADTS_SYNCWORD_BYTE_0: u8 = 0xFF;
+const ADTS_SYNCWORD_FIRST_BYTE: u8 = 0xFF;
 /// Byte 1 of a fixed ADTS header: syncword low nibble (1111), `ID` 0,
 /// `layer` 00, `protection_absent` 1 (§6.2).
-const ADTS_FIXED_HEADER_BYTE_1: u8 = 0xF1;
+const ADTS_FIXED_HEADER_SECOND_BYTE: u8 = 0xF1;
 /// Mask of the syncword's low nibble, shared with the fixed `ID`/`layer` bits.
 const ADTS_SYNCWORD_LOW_NIBBLE_MASK: u8 = 0xF0;
 /// Shift assembling the 12-bit syncword value for an error report.
@@ -85,12 +85,12 @@ const ADTS_BUFFER_FULLNESS_HIGH_SHIFT: u32 = 6;
 const ADTS_BUFFER_FULLNESS_LOW_MASK: u8 = 0x3F;
 /// Shift of the low `buffer_fullness` bits in byte 6.
 const ADTS_BUFFER_FULLNESS_LOW_SHIFT: u32 = 2;
-/// Byte offsets of the ADTS header fields after the syncword (§6.2).
-const ADTS_BYTE_2: usize = 2;
-const ADTS_BYTE_3: usize = 3;
-const ADTS_BYTE_4: usize = 4;
-const ADTS_BYTE_5: usize = 5;
-const ADTS_BYTE_6: usize = 6;
+/// Byte offsets of the ADTS fixed-header fields (§6.2).
+const ADTS_PROFILE_OFFSET: usize = 2;
+const ADTS_CHANNEL_CONFIG_LOW_OFFSET: usize = 3;
+const ADTS_FRAME_LENGTH_MID_OFFSET: usize = 4;
+const ADTS_FRAME_LENGTH_LOW_OFFSET: usize = 5;
+const ADTS_BUFFER_FULLNESS_LOW_OFFSET: usize = 6;
 /// Highest core `audioObjectType` an ADTS 2-bit `profile` can carry (AAC LTP).
 const ADTS_CORE_AOT_MAX: u8 = 4;
 
@@ -474,7 +474,7 @@ const AOT_ESCAPE_BITS: usize = 6;
 /// Shift that puts `audioObjectType` at the top of the first ASC byte.
 const AOT_SHIFT: u32 = u8::BITS - AOT_BITS;
 /// `samplingFrequencyIndex` shares the first ASC byte: its high bits are here.
-const SFI_IN_BYTE0_MASK: u8 = 0x07;
+const SFI_HIGH_MASK: u8 = 0x07;
 /// Left shift joining the `samplingFrequencyIndex` high bits to the low bit.
 const SFI_HIGH_SHIFT: u32 = 1;
 /// Right shift isolating the `samplingFrequencyIndex` low bit in byte 1.
@@ -490,19 +490,19 @@ const ASC_HEADER_LEN: usize = 2;
 /// Bytes of an ASC carrying the 24-bit explicit rate.
 const ASC_ESCAPE_LEN: usize = 5;
 /// Byte offsets of the ASC bytes after the first.
-const ASC_BYTE_1: usize = 1;
-const ASC_BYTE_2: usize = 2;
-const ASC_BYTE_3: usize = 3;
-const ASC_BYTE_4: usize = 4;
+const ASC_SECOND_BYTE: usize = 1;
+const ASC_THIRD_BYTE: usize = 2;
+const ASC_FOURTH_BYTE: usize = 3;
+const ASC_FIFTH_BYTE: usize = 4;
 /// Mask of the 24-bit explicit `samplingFrequency`.
 const EXPLICIT_RATE_MASK: u32 = 0xFF_FFFF;
 /// Mask of the explicit rate bits held in the second ASC byte.
-const EXPLICIT_RATE_BYTE1_MASK: u32 = 0x7F;
+const EXPLICIT_RATE_SECOND_BYTE_MASK: u32 = 0x7F;
 /// Shifts assembling the explicit `samplingFrequency` from bytes 1..=4.
-const EXPLICIT_RATE_BYTE1_SHIFT: u32 = 17;
-const EXPLICIT_RATE_BYTE2_SHIFT: u32 = 9;
-const EXPLICIT_RATE_BYTE3_SHIFT: u32 = 1;
-const EXPLICIT_RATE_BYTE4_SHIFT: u32 = 7;
+const EXPLICIT_RATE_SECOND_BYTE_SHIFT: u32 = 17;
+const EXPLICIT_RATE_THIRD_BYTE_SHIFT: u32 = 9;
+const EXPLICIT_RATE_FOURTH_BYTE_SHIFT: u32 = 1;
+const EXPLICIT_RATE_FIFTH_BYTE_SHIFT: u32 = 7;
 /// Mask of the single explicit-rate bit held in the fifth ASC byte.
 const EXPLICIT_RATE_LOW_BIT_MASK: u32 = 1;
 /// Table 1.10 sampling rates in Hz.
@@ -721,17 +721,17 @@ impl Parse<'_> for AudioSpecificConfig {
     fn parse(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, ASC_HEADER_LEN, "ASC header")?;
         let b0 = bytes[0];
-        let b1 = bytes[ASC_BYTE_1];
+        let b1 = bytes[ASC_SECOND_BYTE];
         let aot = AudioObjectType::from(b0 >> AOT_SHIFT);
-        let sfi_raw = ((b0 & SFI_IN_BYTE0_MASK) << SFI_HIGH_SHIFT) | (b1 >> SFI_LOW_SHIFT);
+        let sfi_raw = ((b0 & SFI_HIGH_MASK) << SFI_HIGH_SHIFT) | (b1 >> SFI_LOW_SHIFT);
         let sfi = SamplingFrequencyIndex::from(sfi_raw);
         let sf = if sfi_raw == SFI_ESCAPE {
             need_in(bytes, ASC_ESCAPE_LEN, "ASC escape")?;
             Some(
-                ((b1 as u32 & EXPLICIT_RATE_BYTE1_MASK) << EXPLICIT_RATE_BYTE1_SHIFT)
-                    | (bytes[ASC_BYTE_2] as u32) << EXPLICIT_RATE_BYTE2_SHIFT
-                    | (bytes[ASC_BYTE_3] as u32) << EXPLICIT_RATE_BYTE3_SHIFT
-                    | (bytes[ASC_BYTE_4] as u32 >> EXPLICIT_RATE_BYTE4_SHIFT)
+                ((b1 as u32 & EXPLICIT_RATE_SECOND_BYTE_MASK) << EXPLICIT_RATE_SECOND_BYTE_SHIFT)
+                    | (bytes[ASC_THIRD_BYTE] as u32) << EXPLICIT_RATE_THIRD_BYTE_SHIFT
+                    | (bytes[ASC_FOURTH_BYTE] as u32) << EXPLICIT_RATE_FOURTH_BYTE_SHIFT
+                    | (bytes[ASC_FIFTH_BYTE] as u32 >> EXPLICIT_RATE_FIFTH_BYTE_SHIFT)
                         & EXPLICIT_RATE_LOW_BIT_MASK,
             )
         } else {
@@ -740,7 +740,7 @@ impl Parse<'_> for AudioSpecificConfig {
         let cc = if sfi_raw == SFI_ESCAPE {
             need_in(bytes, ASC_ESCAPE_LEN, "ASC cc esc")?;
             ChannelConfiguration::from(
-                (bytes[ASC_BYTE_4] >> CHANNEL_CONFIG_SHIFT) & CHANNEL_CONFIG_MASK,
+                (bytes[ASC_FIFTH_BYTE] >> CHANNEL_CONFIG_SHIFT) & CHANNEL_CONFIG_MASK,
             )
         } else {
             ChannelConfiguration::from((b1 >> CHANNEL_CONFIG_SHIFT) & CHANNEL_CONFIG_MASK)
@@ -748,9 +748,9 @@ impl Parse<'_> for AudioSpecificConfig {
         // trailing stores bytes after the partial byte. trailing_top stores the GASpecific
         // bits from the partial byte (bottom 3 bits of byte 1 or byte 4).
         let (partial_idx, trailing_start) = if sfi_raw == SFI_ESCAPE {
-            (ASC_BYTE_4, ASC_ESCAPE_LEN)
+            (ASC_FIFTH_BYTE, ASC_ESCAPE_LEN)
         } else {
-            (ASC_BYTE_1, ASC_BYTE_2)
+            (ASC_SECOND_BYTE, ASC_THIRD_BYTE)
         };
         let trailing_top = if partial_idx < bytes.len() {
             Some(bytes[partial_idx] & GA_TAIL_MASK)
@@ -815,24 +815,25 @@ impl Serialize for AudioSpecificConfig {
         let sv = self.sampling_frequency_index.raw() & SFI_MASK;
         let cv = self.channel_configuration.raw() & CHANNEL_CONFIG_MASK;
         let esc = self.sampling_frequency_index == SamplingFrequencyIndex::Escape;
-        buf[0] = (aot << AOT_SHIFT) | ((sv >> SFI_HIGH_SHIFT) & SFI_IN_BYTE0_MASK);
+        buf[0] = (aot << AOT_SHIFT) | ((sv >> SFI_HIGH_SHIFT) & SFI_HIGH_MASK);
         if esc {
             let freq = self.sampling_frequency.unwrap_or(0) & EXPLICIT_RATE_MASK;
-            buf[ASC_BYTE_1] = ((sv & 1) << SFI_LOW_SHIFT)
-                | ((freq >> EXPLICIT_RATE_BYTE1_SHIFT) as u8 & EXPLICIT_RATE_BYTE1_MASK as u8);
-            buf[ASC_BYTE_2] = (freq >> EXPLICIT_RATE_BYTE2_SHIFT) as u8;
-            buf[ASC_BYTE_3] = (freq >> EXPLICIT_RATE_BYTE3_SHIFT) as u8;
+            buf[ASC_SECOND_BYTE] = ((sv & 1) << SFI_LOW_SHIFT)
+                | ((freq >> EXPLICIT_RATE_SECOND_BYTE_SHIFT) as u8
+                    & EXPLICIT_RATE_SECOND_BYTE_MASK as u8);
+            buf[ASC_THIRD_BYTE] = (freq >> EXPLICIT_RATE_THIRD_BYTE_SHIFT) as u8;
+            buf[ASC_FOURTH_BYTE] = (freq >> EXPLICIT_RATE_FOURTH_BYTE_SHIFT) as u8;
             let sf0 = (freq & EXPLICIT_RATE_LOW_BIT_MASK) as u8;
             let tt = self.trailing_top.unwrap_or(0) & GA_TAIL_MASK;
-            buf[ASC_BYTE_4] = (sf0 << SFI_LOW_SHIFT) | (cv << CHANNEL_CONFIG_SHIFT) | tt;
+            buf[ASC_FIFTH_BYTE] = (sf0 << SFI_LOW_SHIFT) | (cv << CHANNEL_CONFIG_SHIFT) | tt;
             // `need` already covers `trailing` in full, and `buf.len() >= need`
             // was checked above, so the copy can never overrun.
             buf[ASC_ESCAPE_LEN..need].copy_from_slice(&self.trailing);
         } else {
             let tt = self.trailing_top.unwrap_or(0) & GA_TAIL_MASK;
-            buf[ASC_BYTE_1] = ((sv & 1) << SFI_LOW_SHIFT) | (cv << CHANNEL_CONFIG_SHIFT) | tt;
+            buf[ASC_SECOND_BYTE] = ((sv & 1) << SFI_LOW_SHIFT) | (cv << CHANNEL_CONFIG_SHIFT) | tt;
             // As above: `need == 2 + trailing.len()`, already bounds-checked.
-            buf[ASC_BYTE_2..need].copy_from_slice(&self.trailing);
+            buf[ASC_THIRD_BYTE..need].copy_from_slice(&self.trailing);
         }
         Ok(need)
     }
@@ -859,23 +860,25 @@ pub struct AdtsHeader {
 
 pub fn build_adts_header(profile: u8, sfi: u8, cc: u8, frame_len: u16) -> [u8; ADTS_HEADER_SIZE] {
     let mut h = [0u8; ADTS_HEADER_SIZE];
-    h[0] = ADTS_SYNCWORD_BYTE_0;
-    h[1] = ADTS_FIXED_HEADER_BYTE_1;
+    h[0] = ADTS_SYNCWORD_FIRST_BYTE;
+    h[1] = ADTS_FIXED_HEADER_SECOND_BYTE;
     // channel_configuration is a 3-bit field split across the byte boundary
     // (ISO/IEC 13818-7 §6.2 ADTS fixed header): its MSB is byte2 bit0, and its
     // low 2 bits are byte3 bits `[7:6]`.
-    h[ADTS_BYTE_2] = (profile & ADTS_PROFILE_MASK) << ADTS_PROFILE_SHIFT
+    h[ADTS_PROFILE_OFFSET] = (profile & ADTS_PROFILE_MASK) << ADTS_PROFILE_SHIFT
         | (sfi & SFI_MASK) << ADTS_SFI_SHIFT
         | (cc >> ADTS_CHANNEL_CONFIG_HIGH_SHIFT) & ADTS_CHANNEL_CONFIG_HIGH_MASK;
-    h[ADTS_BYTE_3] = (cc & ADTS_CHANNEL_CONFIG_LOW_MASK) << ADTS_CHANNEL_CONFIG_LOW_SHIFT
+    h[ADTS_CHANNEL_CONFIG_LOW_OFFSET] = (cc & ADTS_CHANNEL_CONFIG_LOW_MASK)
+        << ADTS_CHANNEL_CONFIG_LOW_SHIFT
         | ((frame_len >> ADTS_FRAME_LENGTH_HIGH_SHIFT) & u16::from(ADTS_FRAME_LENGTH_HIGH_MASK))
             as u8;
-    h[ADTS_BYTE_4] = (frame_len >> ADTS_FRAME_LENGTH_MID_SHIFT) as u8;
+    h[ADTS_FRAME_LENGTH_MID_OFFSET] = (frame_len >> ADTS_FRAME_LENGTH_MID_SHIFT) as u8;
     let bf: u16 = ADTS_BUFFER_FULLNESS_VBR;
-    h[ADTS_BYTE_5] = ((frame_len as u8 & ADTS_FRAME_LENGTH_LOW_MASK)
+    h[ADTS_FRAME_LENGTH_LOW_OFFSET] = ((frame_len as u8 & ADTS_FRAME_LENGTH_LOW_MASK)
         << ADTS_FRAME_LENGTH_LOW_SHIFT)
         | ((bf >> ADTS_BUFFER_FULLNESS_HIGH_SHIFT) as u8 & ADTS_BUFFER_FULLNESS_HIGH_MASK);
-    h[ADTS_BYTE_6] = (bf as u8 & ADTS_BUFFER_FULLNESS_LOW_MASK) << ADTS_BUFFER_FULLNESS_LOW_SHIFT;
+    h[ADTS_BUFFER_FULLNESS_LOW_OFFSET] =
+        (bf as u8 & ADTS_BUFFER_FULLNESS_LOW_MASK) << ADTS_BUFFER_FULLNESS_LOW_SHIFT;
     h
 }
 
@@ -889,7 +892,7 @@ pub(crate) const ADTS_CRC_SIZE: usize = 2;
 
 pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
     need_in(bytes, ADTS_HEADER_SIZE, "ADTS")?;
-    if bytes[0] != ADTS_SYNCWORD_BYTE_0
+    if bytes[0] != ADTS_SYNCWORD_FIRST_BYTE
         || (bytes[1] & ADTS_SYNCWORD_LOW_NIBBLE_MASK) != ADTS_SYNCWORD_LOW_NIBBLE_MASK
     {
         return Err(Error::InvalidValue(InvalidValue {
@@ -906,11 +909,11 @@ pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
         }));
     }
     let (b2, b3, b4, b5, b6) = (
-        bytes[ADTS_BYTE_2],
-        bytes[ADTS_BYTE_3],
-        bytes[ADTS_BYTE_4],
-        bytes[ADTS_BYTE_5],
-        bytes[ADTS_BYTE_6],
+        bytes[ADTS_PROFILE_OFFSET],
+        bytes[ADTS_CHANNEL_CONFIG_LOW_OFFSET],
+        bytes[ADTS_FRAME_LENGTH_MID_OFFSET],
+        bytes[ADTS_FRAME_LENGTH_LOW_OFFSET],
+        bytes[ADTS_BUFFER_FULLNESS_LOW_OFFSET],
     );
     let protection_absent = (bytes[1] & ADTS_PROTECTION_ABSENT_MASK) != 0;
     let sampling_frequency_index_raw = (b2 >> ADTS_SFI_SHIFT) & SFI_MASK;

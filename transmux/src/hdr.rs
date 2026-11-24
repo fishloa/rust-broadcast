@@ -41,12 +41,6 @@ const CLLI_PAYLOAD_LEN: usize = 4;
 
 /// Width of a box type / four-character code in bytes.
 const BOX_TYPE_LEN: usize = 4;
-/// Offset of the low byte of a big-endian 16-bit field.
-const BE16_LOW_OFFSET: usize = 1;
-/// Byte offsets of the trailing bytes of a big-endian 32-bit field.
-const BE32_BYTE_1_OFFSET: usize = 1;
-const BE32_BYTE_2_OFFSET: usize = 2;
-const BE32_BYTE_3_OFFSET: usize = 3;
 /// A `ChromaticityXy` pair is two 16-bit coordinates (H.265 D.2.28).
 const CHROMATICITY_LEN: usize = 2;
 /// Stride of one `display_primaries` entry: `x` then `y`.
@@ -98,16 +92,15 @@ pub struct ContentLightLevel {
 }
 
 fn be16(b: &[u8], at: usize) -> u16 {
-    u16::from_be_bytes([b[at], b[at + BE16_LOW_OFFSET]])
+    let mut word = [0u8; size_of::<u16>()];
+    word.copy_from_slice(&b[at..at + size_of::<u16>()]);
+    u16::from_be_bytes(word)
 }
 
 fn be32(b: &[u8], at: usize) -> u32 {
-    u32::from_be_bytes([
-        b[at],
-        b[at + BE32_BYTE_1_OFFSET],
-        b[at + BE32_BYTE_2_OFFSET],
-        b[at + BE32_BYTE_3_OFFSET],
-    ])
+    let mut word = [0u8; size_of::<u32>()];
+    word.copy_from_slice(&b[at..at + size_of::<u32>()]);
+    u32::from_be_bytes(word)
 }
 
 fn check_exact(bytes: &[u8], need: usize, what: &'static str) -> Result<()> {
