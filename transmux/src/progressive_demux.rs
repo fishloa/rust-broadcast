@@ -42,7 +42,7 @@ use broadcast_common::{Demand, Parse, Stage, Timestamp, Unpackage};
 
 use crate::error::{Error, Result};
 use crate::media::{
-    Media, SkippedTrack, Track, find_top_box, normalise_track_nal_lengths, refine_legacy_config,
+    Media, SkippedTrack, Track, find_box, normalise_track_nal_lengths, refine_legacy_config,
     skipped_track, track_spec_from_trak,
 };
 use crate::pipeline::Sample;
@@ -169,8 +169,7 @@ impl<'a> Unpackage for ProgressiveDemux<'a> {
 /// `input` (every [`Sample`]'s bytes are copied out), so this needs no
 /// lifetime tied to the caller's input at all.
 fn demux_progressive(input: &[u8]) -> Result<Media> {
-    let moov_bytes =
-        find_top_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+    let moov_bytes = find_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
     let moov = MovieBox::parse(moov_bytes)?;
     let movie_timescale = moov.mvhd.timescale;
 

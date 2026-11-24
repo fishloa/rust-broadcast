@@ -106,7 +106,7 @@
 //! # Quick start
 //!
 //! ```rust
-//! use isobmff::{box_iter, parse_box, BoxHeader, BoxType};
+//! use isobmff::{parse_box, BoxHeader, BoxType};
 //! use broadcast_common::Parse;
 //!
 //! // Parse a simple ftyp box header.

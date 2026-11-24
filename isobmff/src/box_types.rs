@@ -6,10 +6,10 @@
 //!   `size`(32), `type`(32 four-CC), optional `largesize`(64 when size==1),
 //!   optional `usertype`(128 when type==`uuid`), and `size==0` = to end of file.
 //! - [`FullBoxHeader`] — extends [`BoxHeader`] with `version`(8) + `flags`(24).
-//! - [`BoxRef`] — a borrowed view of a box: header + body bytes (a slice), for
-//!   generic size-driven walking.
-//! - [`box_iter`] — yield every top-level box in an ISOBMFF file by advancing
-//!   via `size`; unknown `type` values are skipped (ISO/IEC 14496-12:2026 §4.2).
+//! - [`BoxItem`] — one box: header, offset, whole bytes and body (a slice),
+//!   for generic size-driven walking.
+//! - [`BoxIter`] — yield every box in an ISOBMFF buffer by advancing via
+//!   `size`; unknown `type` values are skipped (ISO/IEC 14496-12:2026 §4.2).
 //!
 //! # Wire layout (§4.2)
 //!
@@ -298,7 +298,7 @@ impl BoxHeader {
 }
 
 // Test seam (#1147): while a [`ForceLargesize`] guard is alive on this
-// thread, every box writer behind [`box_len`] / [`encode_box_header`] emits
+// thread, every box writer behind [`box_len`] / [`write_box_header`] emits
 // the 16-byte `size = 1` + 64-bit `largesize` header even for a small box.
 // A real >4 GiB box is not allocatable in a test; this drives the identical
 // code path with a small real payload. Compiled out of non-test builds.
@@ -353,60 +353,32 @@ pub fn box_len(compact_len: usize) -> usize {
     }
 }
 
-/// Encode a box header for a box of `total` bytes (header included) and
-/// return its length: the compact 8-byte `size`+`type` when `total` fits
-/// `u32`, else the 16-byte `size = 1` + `type` + 64-bit `largesize` form
-/// (ISO/IEC 14496-12:2026 §4.2). `total` must come from [`box_len`] (it
-/// counts the 8 `largesize` bytes). Pure: touches no payload, so tests can
-/// exercise a multi-GiB `total` without allocating it.
-pub fn encode_box_header(
-    fourcc: &[u8; BOX_TYPE_SIZE],
-    total: u64,
-) -> ([u8; BOX_HEADER_LARGESIZE_SIZE], usize) {
-    let mut out = [0u8; BOX_HEADER_LARGESIZE_SIZE];
-    out[BOX_TYPE_RANGE].copy_from_slice(fourcc);
-    if force_largesize() || total > u32::MAX as u64 {
-        out[0..BOX_TYPE_SIZE].copy_from_slice(&SIZE_INDICATES_LARGESIZE.to_be_bytes());
-        out[LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE].copy_from_slice(&total.to_be_bytes());
-        (out, BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE)
-    } else {
-        // `total <= u32::MAX` was just checked.
-        out[0..BOX_TYPE_SIZE].copy_from_slice(&(total as u32).to_be_bytes());
-        (out, BOX_HEADER_MIN_SIZE)
-    }
-}
-
-/// Write a box header for a box of `need` total bytes at the front of `buf`
-/// via [`encode_box_header`], returning the header length (8, or 16 for the
-/// `largesize` form). The single place a box writer's `size` is derived —
-/// replaces the per-box `need as u32` that silently wrapped a >4 GiB box
-/// (#1147).
+/// Write a box header for a box of `need` total bytes at the front of `buf`,
+/// returning the header length (8, or 16 for the `largesize` form): the compact
+/// 8-byte `size`+`type` when `need` fits `u32`, else the 16-byte `size = 1` +
+/// `type` + 64-bit `largesize` form (ISO/IEC 14496-12:2026 §4.2). `need` must
+/// come from [`box_len`] (it counts the 8 `largesize` bytes). The single place
+/// a box writer's `size` is derived — replaces the per-box `need as u32` that
+/// silently wrapped a >4 GiB box (#1147).
 pub fn write_box_header(
     buf: &mut [u8],
     fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,
 ) -> Result<usize> {
-    let (hdr, len) = encode_box_header(fourcc, need as u64);
-    need_out(buf, len)?;
-    buf[..len].copy_from_slice(&hdr[..len]);
-    Ok(len)
-}
-
-/// Write the compact 8-byte header of a box whose size is bounded by its own
-/// fixed layout (`mvhd`, `tkhd`, `mfhd`, ...; no payload that can grow toward
-/// 4 GiB), returning 8. A `need` that nevertheless exceeds the 32-bit field is
-/// a typed error, never a wrap (#1147). These boxes' readers take fixed
-/// offsets, so unlike [`write_box_header`] this never switches to `largesize`.
-pub fn write_compact_box_header(
-    buf: &mut [u8],
-    fourcc: &[u8; BOX_TYPE_SIZE],
-    need: usize,
-) -> Result<usize> {
-    let size = broadcast_common::len::fit_u32(need, "box size")?;
-    need_out(buf, BOX_HEADER_MIN_SIZE)?;
-    buf[0..BOX_TYPE_SIZE].copy_from_slice(&size.to_be_bytes());
-    buf[BOX_TYPE_RANGE].copy_from_slice(fourcc);
-    Ok(BOX_HEADER_MIN_SIZE)
+    if force_largesize() || (need as u64) > u32::MAX as u64 {
+        need_out(buf, BOX_HEADER_LARGESIZE_SIZE)?;
+        buf[0..BOX_TYPE_SIZE].copy_from_slice(&SIZE_INDICATES_LARGESIZE.to_be_bytes());
+        buf[BOX_TYPE_RANGE].copy_from_slice(fourcc);
+        buf[LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE]
+            .copy_from_slice(&(need as u64).to_be_bytes());
+        Ok(BOX_HEADER_LARGESIZE_SIZE)
+    } else {
+        need_out(buf, BOX_HEADER_MIN_SIZE)?;
+        let size = broadcast_common::len::fit_u32(need, "box size")?;
+        buf[0..BOX_TYPE_SIZE].copy_from_slice(&size.to_be_bytes());
+        buf[BOX_TYPE_RANGE].copy_from_slice(fourcc);
+        Ok(BOX_HEADER_MIN_SIZE)
+    }
 }
 
 /// Write a FullBox header: box header (size + type) followed by the 4-byte
@@ -421,7 +393,11 @@ pub fn write_full_box_header(
     compact: bool,
 ) -> Result<usize> {
     let mut c = if compact {
-        write_compact_box_header(buf, fourcc, need)?
+        let size = broadcast_common::len::fit_u32(need, "box size")?;
+        need_out(buf, BOX_HEADER_MIN_SIZE)?;
+        buf[0..BOX_TYPE_SIZE].copy_from_slice(&size.to_be_bytes());
+        buf[BOX_TYPE_RANGE].copy_from_slice(fourcc);
+        BOX_HEADER_MIN_SIZE
     } else {
         write_box_header(buf, fourcc, need)?
     };
@@ -475,37 +451,6 @@ pub fn box_body<'a>(bytes: &'a [u8], min_body: usize, what: &'static str) -> Res
         }));
     }
     Ok(body)
-}
-
-/// The total length of the child box at the front of `region`, header
-/// included: its `size`, the 64-bit `largesize` when `size == 1`, or the rest
-/// of `region` when `size == 0` (ISO/IEC 14496-12:2026 §4.2). `None` when the
-/// header is truncated or declares a length shorter than itself — the
-/// tolerant "stop walking here" signal the lenient child scanners use. Not
-/// clamped to `region`.
-pub fn child_extent(region: &[u8]) -> Option<usize> {
-    let hdr = box_header_len(region).ok()?;
-    let size = broadcast_common::wire::u32_at(region, BOX_SIZE_OFFSET);
-    let total = if size == SIZE_INDICATES_LARGESIZE {
-        usize::try_from(u64::from_be_bytes(
-            region[LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE]
-                .try_into()
-                .ok()?,
-        ))
-        .ok()?
-    } else if size == SIZE_TO_EOF {
-        region.len()
-    } else {
-        size as usize
-    };
-    (total >= hdr).then_some(total)
-}
-
-/// [`child_extent`] bounded by what `region` actually holds, so the walker's
-/// `off += extent` can neither overflow on a hostile `largesize` nor step past
-/// the end of the region.
-pub fn child_extent_in(region: &[u8]) -> Option<usize> {
-    child_extent(region).map(|total| total.min(region.len()))
 }
 
 /// Length of the `size`+`type` (+ `largesize`) header at the front of the
@@ -741,227 +686,270 @@ impl Serialize for FullBoxHeader {
 }
 
 // ---------------------------------------------------------------------------
-// BoxRef — borrowed box view
+// BoxItem / BoxIter — the one box walker
 // ---------------------------------------------------------------------------
 
-/// A borrowed view of an entire ISOBMFF box: its header and its body bytes.
-///
-/// The body starts after the entire header (including optional largesize/usertype
-/// and FullBox extension). The body length is `header.size - header.header_size()`
-/// (for non-to-EOF boxes).
+/// One box located by [`BoxIter`]: its header, its offset in the walked
+/// buffer, and its (possibly clamped) bytes.
 #[derive(Debug, Clone, Copy)]
-pub struct BoxRef<'a> {
+pub struct BoxItem<'a> {
     /// The parsed header.
     pub header: BoxHeader,
-    /// Body bytes (after all header + FullBox extras).
+    /// Offset of the first header byte in the buffer that was walked.
+    pub start: usize,
+    /// Offset one past this box's last byte in that buffer.
+    pub end: usize,
+    /// `buffer[start..end]`, the whole box bytes.
+    pub bytes: &'a [u8],
+    /// The body: everything after the whole header (`usertype` included in
+    /// the header).
     pub body: &'a [u8],
 }
 
-/// Decode a `BoxRef` from the front of a byte buffer.
+impl<'a> BoxItem<'a> {
+    /// The box's four-CC (`type`).
+    pub fn four_cc(&self) -> [u8; BOX_TYPE_SIZE] {
+        self.header.box_type.0
+    }
+
+    /// Whether the wire used the `size == 0` to-end form
+    /// (ISO/IEC 14496-12:2026 §4.2).
+    pub fn to_end(&self) -> bool {
+        self.header.size == 0
+    }
+
+    /// Whether the wire used the `size == 1` + 64-bit `largesize` form
+    /// (ISO/IEC 14496-12:2026 §4.2).
+    pub fn has_largesize(&self) -> bool {
+        self.header.has_largesize()
+    }
+
+    /// Whether the declared size ran past the walked buffer, so `end` and
+    /// `body` were clamped to it. Always `false` in strict mode.
+    pub fn is_truncated(&self) -> bool {
+        self.header.size != 0 && u64::try_from(self.bytes.len()).ok() != Some(self.header.size)
+    }
+
+    /// The payload after `size`/`type` (`usertype` of a `uuid` included,
+    /// `largesize` bytes excluded): the bytes an opaque child keeps so a
+    /// round trip re-emits them verbatim.
+    pub fn payload(&self) -> &'a [u8] {
+        let start = BOX_HEADER_MIN_SIZE
+            + if self.header.has_largesize() {
+                LARGESIZE_SIZE
+            } else {
+                0
+            };
+        self.bytes.get(start..).unwrap_or(&[])
+    }
+
+    /// Offset of the first body byte in the walked buffer.
+    pub fn payload_start(&self) -> usize {
+        self.start + self.header.header_size()
+    }
+
+    /// Iterate this container's children in wire order.
+    pub fn children(&self) -> BoxIter<'a> {
+        BoxIter::new(self.body)
+    }
+}
+
+/// The walk's short-buffer policy: strict stops on a box that overruns its
+/// buffer, clamped shortens it to the buffer end instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalkMode {
+    Strict,
+    Clamped,
+}
+
+/// An iterator that yields every box in an ISOBMFF byte buffer in wire order.
 ///
-/// Returns the box and the number of bytes consumed. Parses only the header;
-/// body is a slice of the remaining bytes up to `header.size` (or to EOF if
-/// size == 0).
-pub fn parse_box<'a>(bytes: &'a [u8]) -> Result<(BoxRef<'a>, usize)> {
+/// The walk is **size-driven**: each step advances by the box's reported
+/// `size` (or the remaining buffer for to-EOF boxes, ISO/IEC 14496-12:2026
+/// §4.2). [`BoxIter::new`] is strict: a box that overruns the buffer yields
+/// `Err`. [`BoxIter::clamped`] shortens such a box to the buffer end and ends
+/// the walk at an unparseable header, a size below the header size or a zero
+/// step, so a truncated capture still yields its intact leading boxes.
+///
+/// # Examples
+///
+/// ```
+/// use isobmff::BoxIter;
+///
+/// # let bytes = &[];
+/// // Walk all top-level boxes:
+/// for result in BoxIter::new(bytes) {
+///     let bx = result.unwrap();
+///     println!("{} at offset {}", bx.header.box_type, bx.start);
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct BoxIter<'a> {
+    remaining: &'a [u8],
+    offset: usize,
+    mode: WalkMode,
+}
+
+impl<'a> BoxIter<'a> {
+    /// Create a strict iterator over `data`.
+    pub fn new(data: &'a [u8]) -> Self {
+        Self {
+            remaining: data,
+            offset: 0,
+            mode: WalkMode::Strict,
+        }
+    }
+
+    /// Create an iterator that clamps a box overrunning `data` to the buffer
+    /// end instead of reporting it.
+    pub fn clamped(data: &'a [u8]) -> Self {
+        Self {
+            remaining: data,
+            offset: 0,
+            mode: WalkMode::Clamped,
+        }
+    }
+}
+
+impl<'a> Iterator for BoxIter<'a> {
+    type Item = Result<BoxItem<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining.is_empty() {
+            return None;
+        }
+        match self.mode {
+            WalkMode::Strict => {
+                if self.remaining.len() < BOX_HEADER_MIN_SIZE {
+                    let err = Error::BufferTooShort(BufferTooShort {
+                        need: self.offset + BOX_HEADER_MIN_SIZE,
+                        have: self.offset + self.remaining.len(),
+                        what: "container child header",
+                    });
+                    self.remaining = &[];
+                    return Some(Err(err));
+                }
+                match parse_box_at(self.remaining, self.offset) {
+                    Ok((item, consumed)) => {
+                        self.remaining = self.remaining.get(consumed..).unwrap_or(&[]);
+                        self.offset += consumed;
+                        Some(Ok(item))
+                    }
+                    Err(err) => {
+                        self.remaining = &[];
+                        Some(Err(err))
+                    }
+                }
+            }
+            WalkMode::Clamped => {
+                let (item, consumed) = clamped_item(self.remaining, self.offset)?;
+                self.remaining = self.remaining.get(consumed..).unwrap_or(&[]);
+                self.offset += consumed;
+                Some(Ok(item))
+            }
+        }
+    }
+}
+
+/// Locate the next clamped box of `data` at `offset`.
+fn clamped_item(data: &[u8], offset: usize) -> Option<(BoxItem<'_>, usize)> {
+    if data.len() < BOX_HEADER_MIN_SIZE {
+        return None;
+    }
+    let header = BoxHeader::parse(data).ok()?;
+    let hdr_sz = header.header_size();
+    if hdr_sz > data.len() {
+        return None;
+    }
+    let declared = if header.size == 0 {
+        data.len()
+    } else {
+        match usize::try_from(header.size) {
+            Ok(total) if total >= hdr_sz => total,
+            Ok(_) => return None,
+            Err(_) => data.len(),
+        }
+    };
+    let step = declared.min(data.len());
+    if step == 0 {
+        return None;
+    }
+    let bytes = &data[..step];
+    Some((
+        BoxItem {
+            header,
+            start: offset,
+            end: offset + step,
+            bytes,
+            body: bytes.get(hdr_sz..).unwrap_or(&[]),
+        },
+        step,
+    ))
+}
+
+/// Decode one strict box from the front of `bytes` at `offset`.
+fn parse_box_at(bytes: &[u8], offset: usize) -> Result<(BoxItem<'_>, usize)> {
     let header = BoxHeader::parse(bytes)?;
     let hdr_sz = header.header_size();
-
-    let body: &'a [u8] = if header.size == SIZE_TO_EOF as u64 {
-        // To end of buffer.
-        &bytes[hdr_sz..]
+    let total = if header.size == 0 {
+        bytes.len()
     } else {
-        let total = usize::try_from(header.size).map_err(|_| {
+        let declared = usize::try_from(header.size).map_err(|_| {
             Error::BufferTooShort(BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "BoxRef body",
             })
         })?;
-        if total < hdr_sz {
+        if declared < hdr_sz {
             return Err(Error::BoxSizeUnderflow {
                 size: header.size,
                 header_size: hdr_sz,
             });
         }
-        need_in(bytes, total, "BoxRef body")?;
-        &bytes[hdr_sz..total]
+        need_in(bytes, declared, "BoxRef body")?;
+        declared
     };
-
-    let consumed = if header.size == 0 {
-        bytes.len()
-    } else {
-        hdr_sz + body.len()
-    };
-
-    Ok((BoxRef { header, body }, consumed))
-}
-
-// ---------------------------------------------------------------------------
-// BoxIter — size-driven box walker
-// ---------------------------------------------------------------------------
-
-/// An iterator that yields every top-level box in an ISOBMFF byte buffer.
-///
-/// The walk is **size-driven**: each step advances by the box's reported `size`
-/// (or the remaining buffer for to-EOF boxes). Unknown box types are skipped —
-/// the iterator yields only parseable boxes. This matches the spec requirement
-/// (ISO/IEC 14496-12:2026 §4.2): "Unknown `type` → ignore + skip".
-///
-/// # Examples
-///
-/// ```
-/// use isobmff::box_iter;
-///
-/// # let bytes = &[];
-/// // Walk all top-level boxes:
-/// for result in box_iter(bytes) {
-///     let (box_ref, consumed) = result.unwrap();
-///     println!("{} at offset {}", box_ref.header.box_type, consumed);
-/// }
-/// ```
-#[derive(Debug, Clone)]
-pub struct BoxIter<'a> {
-    remaining: &'a [u8],
-}
-
-impl<'a> BoxIter<'a> {
-    /// Create a new iterator over boxes in `data`.
-    pub fn new(data: &'a [u8]) -> Self {
-        Self { remaining: data }
-    }
-}
-
-impl<'a> Iterator for BoxIter<'a> {
-    type Item = Result<(BoxRef<'a>, usize)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining.is_empty() {
-            return None;
-        }
-
-        match parse_box(self.remaining) {
-            Ok((box_ref, consumed)) => {
-                self.remaining = &self.remaining[consumed.min(self.remaining.len())..];
-                Some(Ok((box_ref, consumed)))
-            }
-            Err(e) => {
-                // Advance past the error point to avoid infinite loop.
-                self.remaining = &[];
-                Some(Err(e))
-            }
-        }
-    }
-}
-
-/// One top-level box located by [`clamped_boxes`]: its header and its byte
-/// range `[start, end)` in the scanned buffer (header included).
-#[derive(Debug, Clone, Copy)]
-pub struct ClampedBox {
-    /// Parsed box header.
-    pub header: BoxHeader,
-    /// Offset of the first header byte.
-    pub start: usize,
-    /// Offset one past the last byte, clamped to the buffer end.
-    pub end: usize,
-}
-
-impl ClampedBox {
-    /// Offset of the first body byte.
-    pub fn payload_start(&self) -> usize {
-        self.start + self.header.header_size()
-    }
-}
-
-/// Walk the top-level boxes of `data`, clamping a box whose declared size runs
-/// past the buffer (a truncated capture) to the buffer end instead of failing
-/// as [`box_iter`] does. The walk ends at an unparseable header, a size below
-/// the header size or a zero step.
-pub fn clamped_boxes(data: &[u8]) -> impl Iterator<Item = ClampedBox> + '_ {
-    let mut offset = 0usize;
-    core::iter::from_fn(move || {
-        let rest = data
-            .get(offset..)
-            .filter(|r| r.len() >= BOX_HEADER_MIN_SIZE)?;
-        let header = BoxHeader::parse(rest).ok()?;
-        let hdr_sz = header.header_size();
-        if hdr_sz > rest.len() {
-            return None;
-        }
-        let total = if header.size == u64::from(SIZE_TO_EOF) {
-            rest.len()
-        } else {
-            match usize::try_from(header.size) {
-                Ok(t) if t >= hdr_sz => t,
-                Ok(_) => return None,
-                Err(_) => rest.len(),
-            }
-        };
-        let step = total.min(rest.len());
-        if step == 0 {
-            return None;
-        }
-        let found = ClampedBox {
+    let bytes = &bytes[..total];
+    Ok((
+        BoxItem {
             header,
             start: offset,
-            end: offset + step,
-        };
-        offset += step;
-        Some(found)
-    })
+            end: offset + total,
+            bytes,
+            body: bytes.get(hdr_sz..).unwrap_or(&[]),
+        },
+        total,
+    ))
 }
 
-/// Convenience function to create a `BoxIter`.
-pub fn box_iter(data: &[u8]) -> BoxIter<'_> {
-    BoxIter::new(data)
+/// Decode one box from the front of a byte buffer.
+///
+/// Returns the box and the number of bytes it occupies. Strict: a box that
+/// overruns `bytes` is a typed short read. A `size == 0` box consumes the
+/// rest of the buffer (ISO/IEC 14496-12:2026 §4.2).
+pub fn parse_box(bytes: &[u8]) -> Result<(BoxItem<'_>, usize)> {
+    parse_box_at(bytes, 0)
 }
 
-/// Iterate the top-level boxes of `data`, yielding each box's *full* bytes
+/// Iterate the top-level boxes of `data`, yielding each box's full bytes
 /// (header + body). Best-effort: the first malformed or truncated box ends the
-/// walk silently — for navigation helpers that hand the slices to a strict
-/// typed parser. The single slice-yielding adapter over [`box_iter`]
-/// (audit r05-O1 / #1141; `cenc_decrypt`, `media`, `progressive` each carried
-/// their own walker).
+/// walk silently, for navigation helpers that hand the slices to a strict
+/// typed parser.
 pub fn box_slices(data: &[u8]) -> impl Iterator<Item = &[u8]> {
-    let mut offset = 0usize;
-    box_iter(data).map_while(move |step| {
-        let (_, consumed) = step.ok()?;
-        let start = offset;
-        offset += consumed;
-        Some(&data[start..start + consumed])
-    })
+    BoxIter::new(data)
+        .filter_map(|step| step.ok())
+        .map(|bx| bx.bytes)
 }
 
-/// Find a top-level box by four-CC, returning its full bytes (header + body).
-pub fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&'a [u8]> {
-    box_slices(data).find(|b| b[BOX_TYPE_RANGE] == *fourcc)
-}
-
-/// The body of the whole container box `container` (everything after its
-/// `size`+`type` header, which is 16 bytes when the `largesize` form is used,
-/// so a `largesize` container's children are found — a hardcoded 8-byte skip
-/// would start mid-`largesize`). A truncated header yields an empty body: the
-/// lenient navigation contract of [`box_slices`].
-fn container_body(container: &[u8]) -> &[u8] {
-    match box_header_len(container) {
-        Ok(hdr) => &container[hdr..],
-        Err(_) => &[],
-    }
-}
-
-/// Iterate the children of the container box `container` (full bytes) whose
-/// four-CC is `fourcc`, each as full box bytes. Best-effort like
-/// [`box_slices`]. The shared child-navigation helper (issue #982:
-/// `cenc_decrypt` carried private copies).
-pub fn child_boxes<'a>(
-    container: &'a [u8],
-    fourcc: &'a [u8; BOX_TYPE_SIZE],
-) -> impl Iterator<Item = &'a [u8]> {
-    box_slices(container_body(container)).filter(move |b| b[BOX_TYPE_RANGE] == *fourcc)
-}
-
-/// The first child of `container` with four-CC `fourcc` (full box bytes).
-pub fn find_child_box<'a>(container: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&'a [u8]> {
-    box_slices(container_body(container)).find(|b| b[BOX_TYPE_RANGE] == *fourcc)
+/// Find a box by four-CC at one level, returning its full bytes (header +
+/// body). Call it on a file buffer for a top-level box, or on a container's
+/// [`BoxItem::body`] for one of its children.
+pub fn find_box<'a>(data: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&'a [u8]> {
+    BoxIter::new(data)
+        .filter_map(|step| step.ok())
+        .find(|bx| bx.header.box_type.is(fourcc))
+        .map(|bx| bx.bytes)
 }
 
 /// Descend a chain of container four-CCs from `start`, returning the innermost
@@ -969,7 +957,7 @@ pub fn find_child_box<'a>(container: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> 
 pub fn descend_boxes<'a>(start: &'a [u8], path: &[&[u8; BOX_TYPE_SIZE]]) -> Option<&'a [u8]> {
     let mut cur = start;
     for fourcc in path {
-        cur = find_child_box(cur, fourcc)?;
+        cur = find_box(box_body(cur, 0, "container body").ok()?, fourcc)?;
     }
     Some(cur)
 }
@@ -1287,7 +1275,7 @@ mod tests {
         let mut uuid_box = alloc::vec![0u8; 24];
         uuid_box[0..4].copy_from_slice(&12u32.to_be_bytes());
         uuid_box[4..8].copy_from_slice(b"uuid");
-        assert!(clamped_boxes(&uuid_box).next().is_none());
+        assert!(BoxIter::clamped(&uuid_box).next().is_none());
     }
 
     /// r04-W8: `header_size()` counts 16 bytes for a `uuid` header, so one
@@ -1445,7 +1433,7 @@ mod tests {
         assert_eq!(out, bytes[..fh.serialized_len()]);
     }
 
-    // -- BoxRef tests ------------------------------------------------------
+    // -- parse_box tests ------------------------------------------------------
 
     #[test]
     fn test_parse_box() {
@@ -1467,13 +1455,13 @@ mod tests {
     // -- BoxIter tests -----------------------------------------------------
 
     #[test]
-    fn test_box_iter_empty() {
-        let result: Vec<_> = box_iter(&[]).collect();
+    fn box_walker_is_empty_for_an_empty_buffer() {
+        let result: Vec<_> = BoxIter::new(&[]).collect();
         assert!(result.is_empty());
     }
 
     #[test]
-    fn test_box_iter_multiple() {
+    fn box_walker_yields_every_top_level_box() {
         // Three boxes: ftyp (16 bytes), moov (24 bytes), mdat (32 bytes)
         let mut data = Vec::new();
         // Box 1: ftyp (16)
@@ -1492,11 +1480,11 @@ mod tests {
         data.extend_from_slice(b"mdat");
         data.resize(16 + 24 + 32, 0);
 
-        let boxes: Vec<_> = box_iter(&data).collect::<Result<Vec<_>>>().unwrap();
+        let boxes: Vec<_> = BoxIter::new(&data).collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(boxes.len(), 3);
-        assert!(boxes[0].0.header.box_type.is(b"ftyp"));
-        assert!(boxes[1].0.header.box_type.is(b"moov"));
-        assert!(boxes[2].0.header.box_type.is(b"mdat"));
+        assert!(boxes[0].header.box_type.is(b"ftyp"));
+        assert!(boxes[1].header.box_type.is(b"moov"));
+        assert!(boxes[2].header.box_type.is(b"mdat"));
     }
 
     // -- Real-fixture round-trip test --------------------------------------
@@ -1509,8 +1497,8 @@ mod tests {
 
         // Re-serialize every top-level box into a flat buffer.
         let mut output = Vec::new();
-        for result in box_iter(&data) {
-            let (bx, _consumed) = result.unwrap();
+        for result in BoxIter::new(&data) {
+            let bx = result.unwrap();
             // Recompute the box header + body.
             let hdr_sz = bx.header.header_size();
             let total = hdr_sz + bx.body.len();
@@ -1549,18 +1537,18 @@ mod tests {
         data.extend_from_slice(b"moov");
         data.resize(16 + 24 + 20, 0xEE);
 
-        let boxes: Vec<_> = box_iter(&data).collect::<Result<Vec<_>>>().unwrap();
+        let boxes: Vec<_> = BoxIter::new(&data).collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(
             boxes.len(),
             3,
             "should parse all three boxes including unknown"
         );
-        assert!(boxes[0].0.header.box_type.is(b"ftyp"));
+        assert!(boxes[0].header.box_type.is(b"ftyp"));
         assert!(
-            boxes[1].0.header.box_type.is(b"XXXX"),
+            boxes[1].header.box_type.is(b"XXXX"),
             "unknown box should parse by size"
         );
-        assert!(boxes[2].0.header.box_type.is(b"moov"));
+        assert!(boxes[2].header.box_type.is(b"moov"));
     }
 
     // -- Field mutation test (no raw passthrough) --------------------------
@@ -1637,15 +1625,15 @@ mod tests {
         data.extend_from_slice(b"mdat");
         data.resize(16 + 100 + 32, 0xCD);
 
-        let boxes: Vec<_> = box_iter(&data).collect::<Result<Vec<_>>>().unwrap();
+        let boxes: Vec<_> = BoxIter::new(&data).collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(boxes.len(), 3);
-        assert!(boxes[0].0.header.box_type.is(b"ftyp"));
-        assert_eq!(boxes[0].0.header.size, 16);
-        assert!(boxes[1].0.header.box_type.is(b"free"));
-        assert_eq!(boxes[1].0.header.size, 100);
-        assert_eq!(boxes[1].0.body.len(), 92); // 100 - 8 header
-        assert!(boxes[2].0.header.box_type.is(b"mdat"));
-        assert_eq!(boxes[2].0.header.size, 32);
+        assert!(boxes[0].header.box_type.is(b"ftyp"));
+        assert_eq!(boxes[0].header.size, 16);
+        assert!(boxes[1].header.box_type.is(b"free"));
+        assert_eq!(boxes[1].header.size, 100);
+        assert_eq!(boxes[1].body.len(), 92); // 100 - 8 header
+        assert!(boxes[2].header.box_type.is(b"mdat"));
+        assert_eq!(boxes[2].header.size, 32);
     }
 }
 
@@ -1666,13 +1654,14 @@ mod largesize_tests {
     const FOUR_GIB: u64 = 1 << 32;
 
     #[test]
-    fn encode_header_threshold_is_u32_max() {
-        let (hdr, len) = encode_box_header(b"stts", u64::from(u32::MAX));
+    fn header_threshold_is_u32_max() {
+        let mut hdr = [0u8; BOX_HEADER_LARGESIZE_SIZE];
+        let len = write_box_header(&mut hdr, b"stts", u32::MAX as usize).unwrap();
         assert_eq!(len, 8, "u32::MAX still fits the compact form");
         assert_eq!(&hdr[..4], &u32::MAX.to_be_bytes());
         assert_eq!(&hdr[4..8], b"stts");
 
-        let (hdr, len) = encode_box_header(b"stts", FOUR_GIB);
+        let len = write_box_header(&mut hdr, b"stts", FOUR_GIB as usize).unwrap();
         assert_eq!(len, 16, "one past u32::MAX needs largesize");
         assert_eq!(&hdr[..4], &1u32.to_be_bytes(), "size = 1 marker");
         assert_eq!(&hdr[4..8], b"stts");
@@ -1680,7 +1669,7 @@ mod largesize_tests {
 
         // 5 GiB: the pre-fix `as u32` wrote 1 GiB (0x4000_0000) here.
         let five = 5 * (1u64 << 30);
-        let (hdr, len) = encode_box_header(b"moov", five);
+        let len = write_box_header(&mut hdr, b"moov", five as usize).unwrap();
         assert_eq!(len, 16);
         assert_eq!(&hdr[8..16], &five.to_be_bytes());
     }
@@ -1748,7 +1737,7 @@ mod largesize_tests {
     }
 
     fn top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
-        find_top_box(data, fourcc).expect("box present")
+        find_box(data, fourcc).expect("box present")
     }
 
     /// Count how many boxes named `fourcc` appear, and how many of those have
@@ -1863,7 +1852,7 @@ mod largesize_tests {
             "../fixtures/mp4/cenc-boxes/v1-mvhd.mp4",
         ] {
             let data = read_path(rel);
-            let Some(orig) = find_top_box(&data, b"moov") else {
+            let Some(orig) = find_box(&data, b"moov") else {
                 continue;
             };
             checked += 1;
@@ -1902,7 +1891,7 @@ mod largesize_tests {
             "../fixtures/mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
         ] {
             let data = read_path(rel);
-            let Some(orig) = find_top_box(&data, b"moof") else {
+            let Some(orig) = find_box(&data, b"moof") else {
                 continue;
             };
             checked += 1;

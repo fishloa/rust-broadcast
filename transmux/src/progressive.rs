@@ -40,7 +40,7 @@ use broadcast_common::{Package, Parse, Serialize};
 use crate::error::{Error, Result};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::{Sample, build_init_segment};
-use isobmff::box_types::{BoxHeader, BoxType, find_top_box};
+use isobmff::box_types::{BoxHeader, BoxType, find_box};
 use isobmff::init_segment::{
     ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MovieBox, SampleSizeBox, SampleToChunkBox,
     StblChild, StscEntry, SyncSampleBox,
@@ -493,7 +493,7 @@ impl Package for ProgressiveMux {
         let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let init = build_init_segment(&specs, movie_timescale)?;
         let moov_bytes =
-            find_top_box(&init, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+            find_box(&init, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let mut moov = MovieBox::parse(moov_bytes)?;
         moov.mvex = None; // not a fragmented movie
         let timings = track_timings(media, movie_timescale)?;

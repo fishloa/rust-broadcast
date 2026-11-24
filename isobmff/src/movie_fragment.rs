@@ -106,11 +106,7 @@ impl Serialize for MovieFragmentHeaderBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut c = 0;
-        c += crate::box_types::write_compact_box_header(buf, b"mfhd", need)?;
-        buf[c..c + core::mem::size_of::<u32>()]
-            .copy_from_slice(&[0u8; core::mem::size_of::<u32>()]);
-        c += core::mem::size_of::<u32>();
+        let c = crate::box_types::write_full_box_header(buf, b"mfhd", need, 0, 0, true)?;
         buf[c..c + core::mem::size_of::<u32>()]
             .copy_from_slice(&self.sequence_number.to_be_bytes());
         Ok(c + core::mem::size_of::<u32>())
@@ -742,12 +738,12 @@ impl OpaqueChild {
     /// An opaque child preserving everything the wire carried: the payload
     /// after `size`/`type` (usertype of a `uuid` included, `largesize` bytes
     /// excluded) plus the `largesize` / `size == 0` forms.
-    pub fn from_child(child: &crate::box_support::ChildBox<'_>) -> Self {
+    pub fn from_child(child: &crate::box_types::BoxItem<'_>) -> Self {
         Self {
-            box_type: child.four_cc,
-            data: child.payload.to_vec(),
-            largesize: child.largesize,
-            to_end: child.to_end,
+            box_type: child.four_cc(),
+            data: child.payload().to_vec(),
+            largesize: child.has_largesize(),
+            to_end: child.to_end(),
         }
     }
 
@@ -909,18 +905,19 @@ impl TrackFragmentBox {
         let mut order: Vec<TrafChild> = Vec::new();
         // The crate's one container-child walker (audit r05-O3 / #1141): this
         // loop used to be a private copy of it.
-        crate::box_support::walk_children::<_, Error>(body, |child| {
-            if child.is(b"tfhd") {
-                tfhd = Some(TrackFragmentHeaderBox::parse_body(child.payload)?);
+        for child in crate::box_types::BoxIter::new(body) {
+            let child = child?;
+            if child.header.box_type.is(b"tfhd") {
+                tfhd = Some(TrackFragmentHeaderBox::parse_body(child.payload())?);
                 order.push(TrafChild::Tfhd);
-            } else if child.is(b"tfdt") {
+            } else if child.header.box_type.is(b"tfdt") {
                 tfdt = Some(TrackFragmentBaseMediaDecodeTimeBox::parse_body(
-                    child.payload,
+                    child.payload(),
                 )?);
                 order.push(TrafChild::Tfdt);
-            } else if child.is(b"trun") {
+            } else if child.header.box_type.is(b"trun") {
                 let parsed =
-                    TrackFragmentRunBox::parse_body_budgeted(child.payload, zero_width_budget)?;
+                    TrackFragmentRunBox::parse_body_budgeted(child.payload(), zero_width_budget)?;
                 order.push(TrafChild::Trun(trun.len()));
                 trun.push(parsed);
             } else {
@@ -929,8 +926,7 @@ impl TrackFragmentBox {
                 // its 16-byte usertype on the way back out (audit item 1).
                 order.push(TrafChild::Opaque(OpaqueChild::from_child(&child)));
             }
-            Ok(())
-        })?;
+        }
         let tfhd = tfhd.ok_or(Error::BufferTooShort(BufferTooShort {
             need: 1,
             have: 0,
@@ -1050,20 +1046,20 @@ impl MovieFragmentBox {
         let mut mfhd: Option<MovieFragmentHeaderBox> = None;
         let mut traf: Vec<TrackFragmentBox> = Vec::new();
         let mut order: Vec<MoofChild> = Vec::new();
-        crate::box_support::walk_children::<_, Error>(body, |child| {
-            if child.is(b"mfhd") {
-                mfhd = Some(MovieFragmentHeaderBox::parse_body(child.payload)?);
+        for child in crate::box_types::BoxIter::new(body) {
+            let child = child?;
+            if child.header.box_type.is(b"mfhd") {
+                mfhd = Some(MovieFragmentHeaderBox::parse_body(child.payload())?);
                 order.push(MoofChild::Mfhd);
-            } else if child.is(b"traf") {
+            } else if child.header.box_type.is(b"traf") {
                 let parsed =
-                    TrackFragmentBox::parse_body_budgeted(child.payload, zero_width_budget)?;
+                    TrackFragmentBox::parse_body_budgeted(child.payload(), zero_width_budget)?;
                 order.push(MoofChild::Traf(traf.len()));
                 traf.push(parsed);
             } else {
                 order.push(MoofChild::Opaque(OpaqueChild::from_child(&child)));
             }
-            Ok(())
-        })?;
+        }
         let mfhd = mfhd.ok_or(Error::BufferTooShort(BufferTooShort {
             need: 1,
             have: 0,

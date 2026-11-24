@@ -8,7 +8,7 @@
 //! only inspects box structure, presence, ordering, and the sample-size /
 //! `data_offset` arithmetic.
 //!
-//! Parsing is done with the crate's own box walker ([`isobmff::box_iter`] /
+//! Parsing is done with the crate's own box walker ([`isobmff::BoxIter`] /
 //! [`isobmff::parse_box`]) and the `movie_fragment` field parsers, so malformed
 //! input yields issues rather than panics: every fallible read is matched, and
 //! nothing is `unwrap`ped on parsed lengths.
@@ -75,7 +75,7 @@ use crate::TrackId;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxRef, box_iter};
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxItem, BoxIter};
 use isobmff::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF,
     TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox, TrackFragmentRunBox,
@@ -176,13 +176,13 @@ impl ConformanceIssue {
 // Generic box-tree helpers (never panic on malformed input)
 // ---------------------------------------------------------------------------
 
-/// Walk the direct children of a container `body`, collecting `(fourcc, BoxRef)`
+/// Walk the direct children of a container `body`, collecting `(fourcc, BoxItem)`
 /// pairs. Stops cleanly at the first malformed child (so a truncated tail does
 /// not panic and does not abort the whole walk with an error).
-fn children(body: &[u8]) -> Vec<([u8; BOX_TYPE_SIZE], BoxRef<'_>)> {
-    box_iter(body)
+fn children(body: &[u8]) -> Vec<([u8; BOX_TYPE_SIZE], BoxItem<'_>)> {
+    BoxIter::new(body)
         .map_while(|step| step.ok())
-        .map(|(bx, _)| (bx.header.box_type.0, bx))
+        .map(|bx| (bx.header.box_type.0, bx))
         .collect()
 }
 
@@ -629,7 +629,7 @@ fn validate_media_inner(
 
 /// Re-slice the whole styp box (header + body) from the segment bytes so it can
 /// be parsed by [`SegmentTypeBox::parse_box`], which expects the full box.
-fn styp_whole<'a>(bytes: &'a [u8], bx: &BoxRef<'a>) -> Option<&'a [u8]> {
+fn styp_whole<'a>(bytes: &'a [u8], bx: &BoxItem<'a>) -> Option<&'a [u8]> {
     let hdr = bx.header.header_size();
     // The body slice is a sub-slice of `bytes`; compute its offset.
     let base = bytes.as_ptr() as usize;

@@ -143,123 +143,6 @@ pub fn serialize_flat_table<E>(
     Ok(c)
 }
 
-// ---------------------------------------------------------------------------
-// Container child walker — ISO/IEC 14496-12:2026 §4.2
-// ---------------------------------------------------------------------------
-
-/// One child box of a container, borrowed from the container's body.
-pub struct ChildBox<'a> {
-    /// The child's four-CC (`type`).
-    pub four_cc: [u8; BOX_TYPE_SIZE],
-    /// The child's whole bytes, header included.
-    pub bytes: &'a [u8],
-    /// The child's *opaque payload*: the 16-byte `usertype` of a `uuid` box
-    /// (ISO/IEC 14496-12:2026 §4.2) followed by its body — i.e. everything
-    /// after `size`/`type`, **except** the 8 `largesize` bytes when the
-    /// `size == 1` form was used.
-    ///
-    /// Deliberately **not** `BoxRef::body` (which starts after the *whole*
-    /// header, usertype included): an opaque child is round-tripped by
-    /// re-emitting `size`+`type`+payload, so dropping the usertype would
-    /// corrupt every `uuid` box — the shape a PlayReady/ISMV `moov`/`trak`
-    /// uuid and a Smooth `tfxd`/`tfrf` use (audit item 1). Keeping the
-    /// `largesize` bytes would be just as wrong in the other direction: the
-    /// serializer writes its own `size`/`type` (and its own `largesize` when
-    /// [`ChildBox::largesize`] is set), so those 8 bytes would land in the
-    /// body as junk (audit item 1, round 3).
-    pub payload: &'a [u8],
-    /// Whether this child used the `size == 0` form (§4.2) — see
-    /// [`OpaqueBox::to_end`].
-    pub to_end: bool,
-    /// Whether this child used the `size == 1` + 64-bit `largesize` form
-    /// (§4.2), so the round trip re-emits that form.
-    pub largesize: bool,
-}
-
-impl ChildBox<'_> {
-    /// Whether this child's four-CC is `four_cc`.
-    pub fn is(&self, four_cc: &[u8; BOX_TYPE_SIZE]) -> bool {
-        self.four_cc == *four_cc
-    }
-}
-
-/// Walk the children of a container body (the bytes after the container's own
-/// 8-byte header), calling `f` for each in wire order.
-///
-/// Every existing container loop in this module read the four-byte `size`
-/// itself and clamped with `size.min(remaining)`, `break`ing on anything
-/// unusual. Three conformant shapes were mis-handled as a result (audit
-/// r05-W13):
-///
-/// - a child written with 64-bit `largesize` (`size == 1`) — its leading `1`
-///   failed the `size < 8` test and every *following* sibling was dropped;
-/// - a truncated child — the clamp silently shortened it, so the container
-///   parsed "successfully" with a child shorter than it claims;
-/// - trailing bytes too short to hold a header — silently ignored.
-///
-/// `parse_box` handles largesize and usertype, and rejects a declared size
-/// past the buffer, so the walk is size-driven and exact.
-///
-/// A `size == 0` child means "the box extends to the end of the enclosing
-/// container" (ISO/IEC 14496-12:2026 §4.2 — for a child box, the end of its
-/// parent, not of the file). `parse_box` implements exactly that against the
-/// slice it is handed, which here *is* the container body, so such a child
-/// consumes the remaining bytes and ends the walk by construction — there is
-/// no following sibling to drop.
-pub fn walk_children<'a, F, E>(body: &'a [u8], mut f: F) -> core::result::Result<(), E>
-where
-    F: FnMut(ChildBox<'a>) -> core::result::Result<(), E>,
-    E: From<Error>,
-{
-    let mut off = 0usize;
-    while off < body.len() {
-        if body.len() - off < BOX_HEADER_MIN_SIZE {
-            return Err(E::from(Error::BufferTooShort(BufferTooShort {
-                need: off + BOX_HEADER_MIN_SIZE,
-                have: body.len(),
-                what: "container child header",
-            })));
-        }
-        let (bx, consumed) = crate::box_types::parse_box(&body[off..]).map_err(E::from)?;
-        let bytes = &body[off..off + consumed];
-        // The payload starts after `size`+`type` plus the 8 `largesize` bytes
-        // *only when that form was used*; the serializer re-emits the header
-        // itself (see `ChildBox::payload`).
-        let payload_start = BOX_HEADER_MIN_SIZE
-            + if bx.header.has_largesize() {
-                LARGESIZE_SIZE
-            } else {
-                0
-            };
-        f(ChildBox {
-            four_cc: bx.header.box_type.0,
-            bytes,
-            payload: bytes.get(payload_start..).unwrap_or(&[]),
-            to_end: bx.header.size == 0,
-            largesize: bx.header.has_largesize(),
-        })?;
-        off += consumed;
-    }
-    Ok(())
-}
-
-/// The four-CC is the key a container's parse and serialize directions use to
-/// line a child back up with the typed field (or opaque blob) it came from.
-pub fn is_four_cc(four_cc: &[u8; BOX_TYPE_SIZE], expected: &[u8; BOX_TYPE_SIZE]) -> bool {
-    four_cc == expected
-}
-
-/// The body bytes of a whole box (`size` + `type` + optional largesize/usertype
-/// + body).
-///
-/// A container's own `Parse` impl used to slice `bytes[8..]` — correct only
-/// for the 8-byte header form. A container written with 64-bit `largesize`
-/// (`size == 1`, §4.2) has a 16-byte header, so the hardcoded slice swallowed
-/// its first 8 body bytes and the child walk started mid-box (audit r05-W13).
-pub fn box_body(bytes: &[u8]) -> Result<&[u8]> {
-    Ok(crate::box_types::parse_box(bytes)?.0.body)
-}
-
 /// The wire order of a container's children, recorded at parse time so the
 /// serializer can reproduce it.
 ///
@@ -337,11 +220,14 @@ impl ChildOrder {
             }
             // A *typed* wire entry whose typed child has since been removed
             // (as `progressive.rs` does when it drops `mvex`) emits nothing.
-            if let Some((slot, _)) = typed_four_ccs
-                .iter()
-                .enumerate()
-                .find(|(slot, cc)| !used[*slot] && is_four_cc(four_cc, cc))
-            {
+            let mut found = None;
+            for (slot, cc) in typed_four_ccs.iter().enumerate() {
+                if !used[slot] && four_cc == *cc {
+                    found = Some(slot);
+                    break;
+                }
+            }
+            if let Some(slot) = found {
                 used[slot] = true;
                 out.push(Some(slot));
             }

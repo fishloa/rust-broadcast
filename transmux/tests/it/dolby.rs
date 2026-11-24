@@ -8,7 +8,7 @@ use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
 
-use isobmff::box_types::box_iter;
+use isobmff::BoxIter;
 use isobmff::{Ac3SpecificBox, Ec3SpecificBox};
 use transmux::{Ac3SyncframeInfo, CodecConfig, Ec3SyncframeInfo, TrackSpec, build_init_segment};
 
@@ -66,16 +66,16 @@ fn find_child_box_body<'a>(data: &'a [u8], child_tag: &[u8; 4]) -> Option<&'a [u
     const AUDIO_ENTRY_FIXED: usize = 28;
     const AUDIO_FOURCCS: &[[u8; 4]] = &[*b"ac-3", *b"ec-3"];
 
-    for item in box_iter(data) {
-        let (bx, _sz) = match item {
+    for item in BoxIter::new(data) {
+        let bx = match item {
             Ok(v) => v,
             Err(_) => continue,
         };
         // If this is an audio sample entry, skip fixed prefix and iterate config boxes.
         if AUDIO_FOURCCS.contains(&bx.header.box_type.0) {
             let config_region = &bx.body[AUDIO_ENTRY_FIXED.min(bx.body.len())..];
-            for ch in box_iter(config_region) {
-                let (cb_bx, _) = match ch {
+            for ch in BoxIter::new(config_region) {
+                let cb_bx = match ch {
                     Ok(v) => v,
                     Err(_) => continue,
                 };

@@ -605,12 +605,12 @@ mod drift {
         let data = test_fixtures::read("mp4/h264-aac-prog.mp4");
         let mut checked = 0usize;
         let mut start = 0usize;
-        for step in isobmff::box_iter(&data) {
-            let (boxref, consumed) = step.expect("isobmff walks the fixture");
+        for step in isobmff::BoxIter::new(&data) {
+            let boxref = step.expect("isobmff walks the fixture");
             let (_size_field, total) = decode_header(&data[start..]).expect("prober decodes it");
             assert_eq!(total as u64, boxref.header.size);
             checked += 1;
-            start += consumed;
+            start = boxref.end;
         }
         assert!(checked > 0, "the fixture holds at least one box");
     }

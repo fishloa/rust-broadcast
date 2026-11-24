@@ -10,7 +10,7 @@ use crate::ir::TrackId;
 use crate::media::TrackEncryption;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
-use isobmff::box_types::box_iter;
+use isobmff::BoxIter;
 use isobmff::init_segment::{MovieBox, StblChild, protect_sample_entry};
 
 /// Rewrite an already-built CMAF/fMP4 init segment (`ftyp` + `moov`) so the
@@ -39,13 +39,14 @@ pub fn protect_init_segment(
 ) -> Result<Vec<u8>> {
     let mut prefix_len = 0usize;
     let mut moov_len = None;
-    for step in box_iter(init_segment) {
-        let (box_ref, consumed) = step?;
+    for step in BoxIter::new(init_segment) {
+        let box_ref = step?;
+        let size = box_ref.end - box_ref.start;
         if box_ref.header.box_type.is(b"moov") {
-            moov_len = Some(consumed);
+            moov_len = Some(size);
             break;
         }
-        prefix_len += consumed;
+        prefix_len += size;
     }
     let moov_len = moov_len.ok_or(Error::UnexpectedBox { expected: "moov" })?;
     let moov_bytes = &init_segment[prefix_len..prefix_len + moov_len];

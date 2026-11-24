@@ -30,7 +30,7 @@ use serde::Serialize;
 use transmux::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
 use transmux::ir::{CodecConfig, Media, Track};
 use transmux::sps::rfc6381_avc1;
-use isobmff::box_iter;
+use isobmff::BoxIter;
 use transmux::{AudioSpecificConfig, Fmp4Demux, ProgressiveDemux};
 
 /// One track's codec identity + coarse throughput stats.
@@ -351,13 +351,13 @@ fn build_report(
 /// `moof` (movie fragment) — the presence test that decides fragmented
 /// ([`Fmp4Demux`]) vs. progressive ([`ProgressiveDemux`]) demux below.
 /// Malformed/truncated boxes encountered while walking simply end the scan
-/// (`box_iter` stops yielding on the first parse error) rather than
+/// (`BoxIter` stops yielding on the first parse error) rather than
 /// panicking; a file that turns out unreadable either way surfaces as a
 /// `parse_error` from whichever demuxer is then tried.
 fn has_top_level_moof(bytes: &[u8]) -> bool {
-    box_iter(bytes)
+    BoxIter::new(bytes)
         .filter_map(|r| r.ok())
-        .any(|(box_ref, _consumed)| box_ref.header.box_type.is(b"moof"))
+        .any(|box_ref| box_ref.header.box_type.is(b"moof"))
 }
 
 /// Run the MP4/CMAF codec-identity pass over a raw ISO-BMFF byte buffer.

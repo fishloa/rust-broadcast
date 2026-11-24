@@ -8,8 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `BoxItem` (one box: header, offset, whole bytes and body), `BoxIter::clamped`
+  (the tolerant mode of the one walker), `BoxItem::children`, and the
+  one-level `box_types::find_box` lookup. Strict iteration is `BoxIter::new`;
+  the strict `parse_box` remains the single-box entry point.
+
 - The ISO/IEC 14496-12:2026 box layer, extracted from `transmux`: the box /
-  FullBox headers (64-bit `largesize`, `uuid` usertype), the `box_iter`
+  FullBox headers (64-bit `largesize`, `uuid` usertype), the `BoxIter`
   walker, `ftyp`/`styp`/`mdat`, the sample-table and timing boxes, the
   visual-extension boxes, the sample-group boxes, the movie-fragment boxes,
   the CENC boxes (ISO/IEC 23001-7 §12), and the §8.8.7/§8.8.8 fragment
@@ -43,6 +48,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PresentationTime`, `EmsgVersion` and the box constants, moved from the
   absorbed `mp4-emsg` crate, plus its real-fixture tests and examples. The
   emsg parse/serialize errors are variants of this crate's `Error`.
+
+### Breaking
+
+- The box walkers are consolidated into one iterator. `BoxRef`, `ClampedBox`,
+  `box_iter`, `clamped_boxes`, `find_top_box`, `find_child_box`, `child_boxes`,
+  `walk_children`, `ChildBox`, `box_support::box_body`, `is_four_cc`,
+  `child_extent`, `child_extent_in`, `encode_box_header` and
+  `write_compact_box_header` are removed. Use `BoxItem`/`BoxIter` (with
+  `BoxIter::new` or `BoxIter::clamped`), `BoxItem::children`, `find_box`,
+  the single `box_types::box_body`, `BoxType::is`, `write_box_header` and
+  `write_full_box_header`. Wire bytes and parsed results are unchanged.
 
 ### Breaking
 

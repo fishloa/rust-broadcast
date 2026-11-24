@@ -107,7 +107,7 @@ pub struct FileTypeBox {
 impl FileTypeBox {
     /// Parse a whole `ftyp` box (including the 8-byte header).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let b = BrandBox::parse_body(box_body(bytes, &FTYP)?)?;
+        let b = BrandBox::parse_body(typed_body(bytes, &FTYP)?)?;
         Ok(Self {
             major_brand: b.major_brand,
             minor_version: b.minor_version,
@@ -152,7 +152,7 @@ pub struct SegmentTypeBox {
 impl SegmentTypeBox {
     /// Parse a whole `styp` box (including the 8-byte header).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let b = BrandBox::parse_body(box_body(bytes, &STYP)?)?;
+        let b = BrandBox::parse_body(typed_body(bytes, &STYP)?)?;
         Ok(Self {
             major_brand: b.major_brand,
             minor_version: b.minor_version,
@@ -264,25 +264,15 @@ impl Serialize for MediaDataBox {
     }
 }
 
-/// Validate a whole box's four-CC and return its body (bytes after the 8-byte
-/// header). Only the compact 32-bit size form is supported here (`ftyp`/`styp`
-/// are always small).
-fn box_body<'a>(bytes: &'a [u8], four_cc: &[u8; BOX_TYPE_SIZE]) -> Result<&'a [u8]> {
-    need_in(bytes, BOX_HEADER_MIN_SIZE, "box header")?;
-    if bytes[core::mem::size_of::<u32>()..BOX_HEADER_MIN_SIZE] != *four_cc {
+/// The body of a whole `ftyp`/`styp` box, after validating its four-CC.
+fn typed_body<'a>(bytes: &'a [u8], four_cc: &[u8; BOX_TYPE_SIZE]) -> Result<&'a [u8]> {
+    let item = crate::box_types::parse_box(bytes)?.0;
+    if !item.header.box_type.is(four_cc) {
         return Err(Error::UnexpectedBox {
             expected: "ftyp/styp",
         });
     }
-    let size = broadcast_common::wire::be_u32(bytes, 0, "box header")? as usize;
-    if size < BOX_HEADER_MIN_SIZE || size > bytes.len() {
-        return Err(Error::BufferTooShort(BufferTooShort {
-            need: size,
-            have: bytes.len(),
-            what: "box size",
-        }));
-    }
-    Ok(&bytes[BOX_HEADER_MIN_SIZE..size])
+    Ok(item.body)
 }
 
 /// Four-CC of the Movie Fragment Box.
@@ -489,25 +479,25 @@ mod tests {
     }
 
     #[test]
-    fn box_body_accepts_a_header_only_box() {
+    fn header_only_box_parses_with_an_empty_body() {
         let bytes = [0, 0, 0, 8, b's', b't', b'y', b'p'];
-        assert_eq!(box_body(&bytes, &STYP).unwrap(), &[] as &[u8]);
+        assert_eq!(typed_body(&bytes, &STYP).unwrap(), &[] as &[u8]);
     }
 
     #[test]
-    fn box_body_rejects_a_size_below_the_header_or_past_the_buffer() {
+    fn typed_body_rejects_a_size_below_the_header_or_past_the_buffer() {
         let below = [0, 0, 0, 7, b's', b't', b'y', b'p'];
-        assert!(box_body(&below, &STYP).is_err());
+        assert!(typed_body(&below, &STYP).is_err());
         let past = [0, 0, 0, 16, b's', b't', b'y', b'p'];
-        assert!(box_body(&past, &STYP).is_err());
+        assert!(typed_body(&past, &STYP).is_err());
         assert!(SegmentTypeBox::parse_box(&below).is_err());
     }
 
     #[test]
-    fn box_body_excludes_trailing_bytes() {
+    fn typed_body_excludes_trailing_bytes() {
         let mut bytes = plain_box(b"styp", 8);
         bytes.extend_from_slice(&[0xAA; 4]);
-        let body = box_body(&bytes, &STYP).unwrap();
+        let body = typed_body(&bytes, &STYP).unwrap();
         assert_eq!(body.len(), 8, "a size 16 box stops at byte 16");
         assert_eq!(body, &bytes[8..16]);
     }

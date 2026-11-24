@@ -8,8 +8,7 @@
 //! (§8.3.3).
 
 use crate::TrackId;
-use crate::box_support::{box_body, walk_children};
-use crate::box_types::BOX_HEADER_MIN_SIZE;
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxIter};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
@@ -47,8 +46,9 @@ impl TrackReferenceBox {
     /// kept in [`crate::init_segment::TrackBox::opaque`].
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         let mut references = Vec::new();
-        walk_children(body, |child| {
-            let payload = child.payload;
+        for child in BoxIter::new(body) {
+            let child = child?;
+            let payload = child.payload();
             if payload.len() % TRACK_ID_LEN != 0 {
                 return Err(Error::InvalidValue(InvalidValue {
                     field: "track_IDs",
@@ -57,7 +57,7 @@ impl TrackReferenceBox {
                 }));
             }
             references.push(TrackReferenceTypeBox {
-                reference_type: child.four_cc,
+                reference_type: child.four_cc(),
                 track_ids: payload
                     .chunks_exact(TRACK_ID_LEN)
                     .map(|c| {
@@ -67,8 +67,7 @@ impl TrackReferenceBox {
                     })
                     .collect(),
             });
-            Ok(())
-        })?;
+        }
         Ok(Self { references })
     }
 
@@ -92,15 +91,15 @@ impl<'a> Parse<'a> for TrackReferenceBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (header, _) = crate::box_types::parse_box(bytes)?;
-        if !header.header.box_type.is(&TREF) {
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if !item.header.box_type.is(&TREF) {
             return Err(Error::BufferTooShort(BufferTooShort {
                 need: BOX_HEADER_MIN_SIZE,
                 have: bytes.len(),
                 what: "tref box type",
             }));
         }
-        Self::parse_body(box_body(bytes)?)
+        Self::parse_body(item.body)
     }
 }
 

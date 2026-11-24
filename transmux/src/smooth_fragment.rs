@@ -23,7 +23,8 @@ use crate::error::{Error, Result};
 use crate::ir::TrackId;
 use crate::smooth::{TFXD_UUID, TfxdBox};
 use broadcast_smooth::default_limits;
-use isobmff::box_types::{BOX_HEADER_MIN_SIZE, box_iter, parse_box};
+use isobmff::BoxIter;
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::segments::MOOF;
 
@@ -162,15 +163,15 @@ pub fn fragment_state(bytes: &[u8]) -> FragmentState {
 }
 
 fn moof_is_encrypted(moof_body: &[u8]) -> Option<bool> {
-    for result in box_iter(moof_body) {
-        let Ok((child, _)) = result else {
+    for result in BoxIter::new(moof_body) {
+        let Ok(child) = result else {
             return None;
         };
         if !child.header.box_type.is(&BOX_TRAF) {
             continue;
         }
-        for result in box_iter(child.body) {
-            let Ok((grandchild, _)) = result else {
+        for result in BoxIter::new(child.body) {
+            let Ok(grandchild) = result else {
                 return None;
             };
             let t = grandchild.header.box_type;
@@ -220,18 +221,18 @@ pub fn fragment_track_id(fragment: &[u8]) -> Result<TrackId> {
 /// `moof` cannot be walked.
 #[must_use]
 pub fn fragment_tfxd(fragment: &[u8]) -> Option<TfxdBox> {
-    for result in box_iter(fragment) {
-        let (bx, _) = result.ok()?;
+    for result in BoxIter::new(fragment) {
+        let bx = result.ok()?;
         if !bx.header.box_type.is(&MOOF) {
             continue;
         }
-        for child in box_iter(bx.body) {
-            let (traf, _) = child.ok()?;
+        for child in BoxIter::new(bx.body) {
+            let traf = child.ok()?;
             if !traf.header.box_type.is(&BOX_TRAF) {
                 continue;
             }
-            for grandchild in box_iter(traf.body) {
-                let (g, _) = grandchild.ok()?;
+            for grandchild in BoxIter::new(traf.body) {
+                let g = grandchild.ok()?;
                 if g.header.box_type.is(&BOX_UUID) && g.header.usertype.as_ref() == Some(&TFXD_UUID)
                 {
                     return TfxdBox::parse_body(g.body).ok();

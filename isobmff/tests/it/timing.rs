@@ -4,14 +4,14 @@
 //!
 //! - `stts` / `ctts` (and the trak's `elst`) extracted from `h264-aac-prog.mp4`
 //!   via `moov → trak → [edts → elst] → mdia → minf → stbl`
-//! - `sidx` from `h264-sidx.mp4` at top level via `box_iter`
+//! - `sidx` from `h264-sidx.mp4` at top level via `BoxIter`
 //!
 //! Each parsed box is serialised back and compared byte-for-byte with the
 //! original box body (excluding the 8-byte box header).
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
-use isobmff::box_types::box_iter;
+use isobmff::BoxIter;
 use isobmff::timing::{CompositionOffsetBox, EditListBox, SegmentIndexBox, TimeToSampleBox};
 
 fn timescale(value: u32) -> Timescale {
@@ -208,7 +208,7 @@ fn elst_mutation_changes_bytes() {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture: h264-sidx.mp4 — sidx at top level via box_iter
+// Fixture: h264-sidx.mp4 — sidx at top level via BoxIter
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -216,10 +216,10 @@ fn sidx_real_fixture_round_trip() {
     let path = test_fixtures::path("mp4/h264-sidx.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
-    // Find sidx via box_iter
+    // Find sidx via the box walker
     let mut found = false;
-    for box_ref in box_iter(&data) {
-        let (br, _consumed) = box_ref.expect("valid box");
+    for box_ref in BoxIter::new(&data) {
+        let br = box_ref.expect("valid box");
         if br.header.box_type.is(b"sidx") {
             // Reconstruct full box bytes: header + body
             let hdr_len = br.header.serialized_len();
@@ -274,8 +274,8 @@ fn sidx_mutation_changes_bytes() {
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let mut parsed = None;
-    for box_ref in box_iter(&data) {
-        let (br, _consumed) = box_ref.expect("valid box");
+    for box_ref in BoxIter::new(&data) {
+        let br = box_ref.expect("valid box");
         if br.header.box_type.is(b"sidx") {
             let hdr_len = br.header.serialized_len();
             let mut full_box = vec![0u8; hdr_len + br.body.len()];

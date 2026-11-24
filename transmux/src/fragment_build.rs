@@ -241,13 +241,14 @@ pub fn protect_media_segment(
 
     let mut prefix_len = 0usize;
     let mut moof_len = None;
-    for step in isobmff::box_types::box_iter(media_segment) {
-        let (box_ref, consumed) = step?;
+    for step in isobmff::BoxIter::new(media_segment) {
+        let box_ref = step?;
+        let size = box_ref.end - box_ref.start;
         if box_ref.header.box_type.is(b"moof") {
-            moof_len = Some(consumed);
+            moof_len = Some(size);
             break;
         }
-        prefix_len += consumed;
+        prefix_len += size;
     }
     let moof_len = moof_len.ok_or(Error::UnexpectedBox { expected: "moof" })?;
     let moof_bytes = &media_segment[prefix_len..prefix_len + moof_len];

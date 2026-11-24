@@ -220,7 +220,8 @@ async fn iframe_playlist_byterange_matches_independent_calc() {
 }
 
 fn first_sample_end(seg: &[u8]) -> u64 {
-    let found = isobmff::box_types::clamped_boxes(seg)
+    let found = isobmff::BoxIter::clamped(seg)
+        .filter_map(|b| b.ok())
         .find(|b| b.header.box_type.is(b"moof"))
         .expect("moof");
     let moof_off = found.start;

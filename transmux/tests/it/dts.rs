@@ -9,8 +9,8 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
+use isobmff::BoxIter;
 use isobmff::SampleEntryVariant;
-use isobmff::box_types::box_iter;
 use isobmff::{DDTS_BODY_LEN, DTSC_FOURCC, DtsSpecificBox};
 use transmux::TrackId;
 use transmux::{CodecConfig, TrackSpec, build_init_segment};
@@ -239,13 +239,13 @@ fn ddts_core_size_boundary() {
 fn find_ddts_body(data: &[u8]) -> Option<&[u8]> {
     const AUDIO_ENTRY_FIXED: usize = 28;
 
-    for item in box_iter(data) {
-        let (bx, _) = item.ok()?;
+    for item in BoxIter::new(data) {
+        let bx = item.ok()?;
         // If this is a DTS sample entry, iterate config boxes after fixed prefix.
         if matches!(&bx.header.box_type.0, b"dtsc" | b"dtsh" | b"dtsl" | b"dtse") {
             let config = &bx.body[AUDIO_ENTRY_FIXED.min(bx.body.len())..];
-            for ch in box_iter(config) {
-                let (cb, _) = ch.ok()?;
+            for ch in BoxIter::new(config) {
+                let cb = ch.ok()?;
                 if &cb.header.box_type.0 == b"ddts" {
                     return Some(cb.body);
                 }

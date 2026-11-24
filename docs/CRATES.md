@@ -469,7 +469,7 @@ Identifies MPEG-2 TS (any of 188/192/204/208-byte strides at any phase), ISOBMFF
 
 #### isobmff
 
-Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` headers (64-bit `largesize`, `uuid` usertype), the size-driven `box_iter` walker, `ftyp`/`styp`/`mdat`, the sample-table/timing boxes, the visual-extension and sample-group boxes, the movie-fragment boxes, the CENC boxes, the §8.8.7/§8.8.8 fragment sample-offset resolver, and the DASH Event Message Box (`emsg`, versions 0 and 1). It knows box syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`.
+Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` headers (64-bit `largesize`, `uuid` usertype), the size-driven `BoxIter` walker, `ftyp`/`styp`/`mdat`, the sample-table/timing boxes, the visual-extension and sample-group boxes, the movie-fragment boxes, the CENC boxes, the §8.8.7/§8.8.8 fragment sample-offset resolver, and the DASH Event Message Box (`emsg`, versions 0 and 1). It knows box syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`.
 
 - **Standards:** ISO/IEC 14496-12:2026, ISO/IEC 23001-7 (CENC boxes), ISO/IEC 23009-1 §5.10.3.3 (emsg); DASH-IF IOP Part 10 V5.0.0
 - **Cargo description:** ISO/IEC 14496-12:2026 (ISO BMFF) box syntax — box/FullBox headers, the top-level, sample-table, movie-fragment and CENC boxes, and DASH emsg, no_std.

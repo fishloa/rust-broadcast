@@ -134,7 +134,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
 
     fn unpackage(&mut self, input: &'a [u8]) -> Result<Media> {
         let moov_bytes =
-            find_top_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+            find_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let moov = MovieBox::parse(moov_bytes)?;
         let movie_timescale = moov.mvhd.timescale;
         let trex_defaults: &[isobmff::init_segment::TrackExtendsBox] =
@@ -772,8 +772,8 @@ impl Package for HlsPackager {
 ///
 /// Re-exported for [`crate::progressive_demux::ProgressiveDemux`], which walks
 /// the same top-level `moov` box; the one implementation is
-/// [`isobmff::box_types::find_top_box`] (#1141).
-pub(crate) use isobmff::box_types::find_top_box;
+/// [`isobmff::box_types::find_box`] (#1141).
+pub(crate) use isobmff::box_types::find_box;
 
 /// Rebuild a [`TrackSpec`] from a parsed `trak` box (identity + codec config).
 ///

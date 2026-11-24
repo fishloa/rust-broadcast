@@ -1111,12 +1111,10 @@ fn tfhd_track_ids(segment_bytes: &[u8]) -> Vec<u32> {
 fn top_level_boxes<'a>(
     data: &'a [u8],
     box_type: [u8; 4],
-) -> impl Iterator<Item = isobmff::box_types::BoxRef<'a>> {
-    isobmff::box_types::box_iter(data)
+) -> impl Iterator<Item = isobmff::BoxItem<'a>> {
+    isobmff::BoxIter::new(data)
         .map_while(Result::ok)
-        .filter_map(move |(b, _consumed)| {
-            (b.header.box_type == isobmff::box_types::BoxType(box_type)).then_some(b)
-        })
+        .filter(move |b| b.header.box_type == isobmff::box_types::BoxType(box_type))
 }
 
 const GAP_AUDIO_TRACK: u32 = 2;

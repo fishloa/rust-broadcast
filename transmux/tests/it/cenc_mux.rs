@@ -69,13 +69,11 @@ fn clear_video_media() -> Option<Media> {
 
 /// Find a top-level box by four-CC; returns `(file_offset, full_box_bytes)`.
 fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<(usize, &'a [u8])> {
-    let mut off = 0usize;
-    for step in isobmff::box_types::box_iter(data) {
-        let (box_ref, consumed) = step.ok()?;
+    for step in isobmff::BoxIter::new(data) {
+        let box_ref = step.ok()?;
         if box_ref.header.box_type.is(fourcc) {
-            return Some((off, &data[off..off + consumed]));
+            return Some((box_ref.start, box_ref.bytes));
         }
-        off += consumed;
     }
     None
 }

@@ -11,7 +11,8 @@
 
 use crate::TrackId;
 use crate::box_types::{
-    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_VERSION_OFFSET,
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, BoxIter, FULLBOX_EXTRA_SIZE,
+    FULLBOX_VERSION_OFFSET, parse_box,
 };
 use crate::error::{Error, Result};
 use alloc::boxed::Box;
@@ -26,8 +27,8 @@ use broadcast_common::{Parse, Serialize};
 use crate::box_support::{
     ChildOrder, FLAT_TABLE_COUNT_OFFSET, FLAT_TABLE_FLAGS_OFFSET, FLAT_TABLE_HEADER_LEN,
     FLAT_TABLE_VERSION_OFFSET, FULLBOX_FLAGS_WIDTH, FULLBOX_FLAGS_WIRE_OFFSET, FULLBOX_VERSION_LEN,
-    OpaqueBox, SerializeBox, bounded_entry_count, box_body, check_entry_count, flat_table_len,
-    is_four_cc, parse_flat_table, serialize_container, serialize_flat_table, walk_children,
+    OpaqueBox, SerializeBox, bounded_entry_count, check_entry_count, flat_table_len,
+    parse_flat_table, serialize_container, serialize_flat_table,
 };
 
 /// Wire width of one transformation-matrix value.
@@ -972,17 +973,11 @@ impl<'a> Parse<'a> for DataReferenceBox {
             BOX_HEADER_MIN_SIZE,
             count,
         ));
-        let mut off = FLAT_TABLE_HEADER_LEN;
-        for _ in 0..count {
-            if off + BOX_HEADER_MIN_SIZE > bytes.len() {
-                break;
-            }
-            let Some(sz) = crate::box_types::child_extent_in(&bytes[off..]) else {
+        for item in BoxIter::clamped(&bytes[FLAT_TABLE_HEADER_LEN..]).take(count) {
+            let Ok(item) = item else {
                 break;
             };
-            let end = off + sz;
-            entries.push(DataEntry::parse(&bytes[off..end])?);
-            off = end;
+            entries.push(DataEntry::parse(item.bytes)?);
         }
         Ok(Self {
             version: ver,
@@ -2429,22 +2424,21 @@ fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAu
     let sr = u32_at(body, AUDIO_SAMPLE_ENTRY_SAMPLERATE_OFFSET);
 
     let mut config_boxes = Vec::new();
-    let mut off = AUDIO_SAMPLE_ENTRY_FIXED_LEN;
-    while off + BOX_HEADER_MIN_SIZE <= body.len() {
-        let sz = u32_at(body, off) as usize;
-        if sz < BOX_HEADER_MIN_SIZE {
+    for item in BoxIter::clamped(&body[AUDIO_SAMPLE_ENTRY_FIXED_LEN..]) {
+        let Ok(item) = item else {
+            break;
+        };
+        // The entry reader takes the compact form only: a to-end or largesize
+        // child ends the walk, as the fixed-offset reader always did.
+        if item.to_end() || item.has_largesize() {
             break;
         }
-        let end = off.saturating_add(sz).min(body.len());
-        let boxtype = fourcc_at(body, off + BOX_TYPE_OFFSET);
-        let data = body[off + BOX_HEADER_MIN_SIZE..end].to_vec();
         config_boxes.push(OpaqueBox {
-            box_type: boxtype,
-            data,
+            box_type: item.four_cc(),
+            data: item.payload().to_vec(),
             to_end: false,
             largesize: false,
         });
-        off = off.saturating_add(sz);
     }
     Ok(ParsedAudioSampleEntry {
         entry_version,
@@ -2755,16 +2749,11 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
             BOX_HEADER_MIN_SIZE,
             count,
         ));
-        let mut off = FLAT_TABLE_HEADER_LEN;
-        for _ in 0..count {
-            if off + BOX_HEADER_MIN_SIZE > bytes.len() {
-                break;
-            }
-            let Some(sz) = crate::box_types::child_extent_in(&bytes[off..]) else {
+        for item in BoxIter::clamped(&bytes[FLAT_TABLE_HEADER_LEN..]).take(count) {
+            let Ok(item) = item else {
                 break;
             };
-            let end = off + sz;
-            let box_bytes = &bytes[off..end];
+            let box_bytes = item.bytes;
             let codec = &box_bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
             let entry = match codec {
                 b"avc1" | b"avc3" | b"avc2" | b"avc4" => SampleEntryVariant::Avc1(
@@ -2818,7 +2807,6 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 }
             };
             entries.push(entry);
-            off = end;
         }
         Ok(Self {
             version: ver,
@@ -2887,9 +2875,10 @@ pub enum StblChild {
 
 fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
     let mut children = Vec::new();
-    walk_children::<_, Error>(body, |child| {
+    for child in BoxIter::new(body) {
+        let child = child?;
         let box_bytes = child.bytes;
-        let boxtype = child.four_cc;
+        let boxtype = child.four_cc();
         children.push(match &boxtype {
             // A `stsd` that fails to parse (e.g. an `avcC` with a malformed
             // trailer) is kept as raw bytes rather than defaulted to an empty
@@ -2946,8 +2935,7 @@ fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
             },
             _ => StblChild::Opaque(box_bytes.to_vec()),
         });
-        Ok(())
-    })?;
+    }
     Ok(children)
 }
 
@@ -3006,7 +2994,7 @@ impl<'a> Parse<'a> for SampleTableBox {
         // Expect full box bytes (size+type header then body)
 
         Ok(Self {
-            children: parse_stbl_children(box_body(bytes)?)?,
+            children: parse_stbl_children(parse_box(bytes)?.0.body)?,
         })
     }
 }
@@ -3081,21 +3069,21 @@ impl<'a> Parse<'a> for DataInformationBox {
         let mut dref = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children::<_, Error>(box_body(bytes)?, |child| {
-            if is_four_cc(&child.four_cc, b"dref") {
-                order.push(child.four_cc);
+        for child in parse_box(bytes)?.0.children() {
+            let child = child?;
+            if child.header.box_type.is(b"dref") {
+                order.push(child.four_cc());
                 dref = Some(DataReferenceBox::parse(child.bytes)?);
             } else {
-                order.push_opaque(child.four_cc);
+                order.push_opaque(child.four_cc());
                 opaque.push(OpaqueBox {
-                    box_type: child.four_cc,
-                    data: child.payload.to_vec(),
-                    to_end: child.to_end,
-                    largesize: child.largesize,
+                    box_type: child.four_cc(),
+                    data: child.payload().to_vec(),
+                    to_end: child.to_end(),
+                    largesize: child.has_largesize(),
                 });
             }
-            Ok(())
-        })?;
+        }
         Ok(Self {
             dref,
             opaque,
@@ -3244,22 +3232,23 @@ impl<'a> Parse<'a> for MediaInformationBox {
         let mut stbl = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children::<_, Error>(box_body(bytes)?, |child| {
-            match &child.four_cc {
+        for child in parse_box(bytes)?.0.children() {
+            let child = child?;
+            match &child.four_cc() {
                 b"vmhd" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     vmhd = Some(VideoMediaHeaderBox::parse(child.bytes)?);
                 }
                 b"smhd" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     smhd = Some(SoundMediaHeaderBox::parse(child.bytes)?);
                 }
                 b"dinf" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     dinf = Some(DataInformationBox::parse(child.bytes)?);
                 }
                 b"stbl" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     stbl = Some(SampleTableBox::parse(child.bytes)?);
                 }
                 // A subtitle track's `sthd` and a data track's `nmhd` are not
@@ -3269,17 +3258,16 @@ impl<'a> Parse<'a> for MediaInformationBox {
                 // "typed first, opaque last" serializer moved them after
                 // `stbl`, where strict readers reject them (audit r05-W12).
                 _ => {
-                    order.push_opaque(child.four_cc);
+                    order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
-                        box_type: child.four_cc,
-                        data: child.payload.to_vec(),
-                        to_end: child.to_end,
-                        largesize: child.largesize,
+                        box_type: child.four_cc(),
+                        data: child.payload().to_vec(),
+                        to_end: child.to_end(),
+                        largesize: child.has_largesize(),
                     });
                 }
             }
-            Ok(())
-        })?;
+        }
         Ok(Self {
             vmhd,
             smhd,
@@ -3398,33 +3386,33 @@ impl<'a> Parse<'a> for MediaBox {
         let mut minf = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children::<_, Error>(box_body(bytes)?, |child| {
-            match &child.four_cc {
+        for child in parse_box(bytes)?.0.children() {
+            let child = child?;
+            match &child.four_cc() {
                 b"mdhd" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     mdhd = Some(MediaHeaderBox::parse(child.bytes)?);
                 }
                 b"hdlr" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     hdlr = Some(HandlerBox::parse(child.bytes)?);
                 }
                 b"minf" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     minf = Some(MediaInformationBox::parse(child.bytes)?);
                 }
                 // `elng` (§8.4.6) is not modelled and stays opaque, in place.
                 _ => {
-                    order.push_opaque(child.four_cc);
+                    order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
-                        box_type: child.four_cc,
-                        data: child.payload.to_vec(),
-                        to_end: child.to_end,
-                        largesize: child.largesize,
+                        box_type: child.four_cc(),
+                        data: child.payload().to_vec(),
+                        to_end: child.to_end(),
+                        largesize: child.has_largesize(),
                     });
                 }
             }
-            Ok(())
-        })?;
+        }
         Ok(Self {
             mdhd,
             hdlr,
@@ -3513,21 +3501,21 @@ impl<'a> Parse<'a> for EditBox {
         let mut elst = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children::<_, Error>(box_body(bytes)?, |child| {
-            if is_four_cc(&child.four_cc, b"elst") {
-                order.push(child.four_cc);
+        for child in parse_box(bytes)?.0.children() {
+            let child = child?;
+            if child.header.box_type.is(b"elst") {
+                order.push(child.four_cc());
                 elst = Some(crate::timing::EditListBox::parse(child.bytes)?);
             } else {
-                order.push_opaque(child.four_cc);
+                order.push_opaque(child.four_cc());
                 opaque.push(OpaqueBox {
-                    box_type: child.four_cc,
-                    data: child.payload.to_vec(),
-                    to_end: child.to_end,
-                    largesize: child.largesize,
+                    box_type: child.four_cc(),
+                    data: child.payload().to_vec(),
+                    to_end: child.to_end(),
+                    largesize: child.has_largesize(),
                 });
             }
-            Ok(())
-        })?;
+        }
         Ok(Self {
             elst,
             opaque,
@@ -3647,33 +3635,33 @@ impl<'a> Parse<'a> for TrackBox {
         let mut mdia = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children::<_, Error>(box_body(bytes)?, |child| {
-            match &child.four_cc {
+        for child in parse_box(bytes)?.0.children() {
+            let child = child?;
+            match &child.four_cc() {
                 b"tkhd" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     tkhd = Some(TrackHeaderBox::parse(child.bytes)?);
                 }
                 b"edts" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     edts = Some(EditBox::parse(child.bytes)?);
                 }
                 b"mdia" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     mdia = Some(MediaBox::parse(child.bytes)?);
                 }
                 // `tref`/`trgr`/`udta`/`meta` stay opaque, in place.
                 _ => {
-                    order.push_opaque(child.four_cc);
+                    order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
-                        box_type: child.four_cc,
-                        data: child.payload.to_vec(),
-                        to_end: child.to_end,
-                        largesize: child.largesize,
+                        box_type: child.four_cc(),
+                        data: child.payload().to_vec(),
+                        to_end: child.to_end(),
+                        largesize: child.has_largesize(),
                     });
                 }
             }
-            Ok(())
-        })?;
+        }
         Ok(Self {
             tkhd: tkhd.ok_or(Error::BufferTooShort(BufferTooShort {
                 need: 0,
@@ -3862,25 +3850,25 @@ impl<'a> Parse<'a> for MovieExtendsBox {
         let mut trex = Vec::new();
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children::<_, Error>(box_body(bytes)?, |child| {
-            match &child.four_cc {
+        for child in parse_box(bytes)?.0.children() {
+            let child = child?;
+            match &child.four_cc() {
                 b"trex" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     trex.push(TrackExtendsBox::parse(child.bytes)?);
                 }
                 // `mehd`/`leva`/`trep` stay opaque, in place.
                 _ => {
-                    order.push_opaque(child.four_cc);
+                    order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
-                        box_type: child.four_cc,
-                        data: child.payload.to_vec(),
-                        to_end: child.to_end,
-                        largesize: child.largesize,
+                        box_type: child.four_cc(),
+                        data: child.payload().to_vec(),
+                        to_end: child.to_end(),
+                        largesize: child.has_largesize(),
                     });
                 }
             }
-            Ok(())
-        })?;
+        }
         Ok(Self {
             trex,
             opaque,
@@ -3985,35 +3973,35 @@ impl<'a> Parse<'a> for MovieBox {
         let mut mvex = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        walk_children::<_, Error>(box_body(bytes)?, |child| {
-            match &child.four_cc {
+        for child in parse_box(bytes)?.0.children() {
+            let child = child?;
+            match &child.four_cc() {
                 b"mvhd" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     mvhd = Some(MovieHeaderBox::parse(child.bytes)?);
                 }
                 b"trak" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     tracks.push(TrackBox::parse(child.bytes)?);
                 }
                 b"mvex" => {
-                    order.push(child.four_cc);
+                    order.push(child.four_cc());
                     mvex = Some(MovieExtendsBox::parse(child.bytes)?);
                 }
                 // `pssh`/`udta`/`meta`/`iods` stay opaque, in place: the
                 // conventional layout writes `pssh` ahead of the `trak`s, and the
                 // old serializer always emitted it last.
                 _ => {
-                    order.push_opaque(child.four_cc);
+                    order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
-                        box_type: child.four_cc,
-                        data: child.payload.to_vec(),
-                        to_end: child.to_end,
-                        largesize: child.largesize,
+                        box_type: child.four_cc(),
+                        data: child.payload().to_vec(),
+                        to_end: child.to_end(),
+                        largesize: child.has_largesize(),
                     });
                 }
             }
-            Ok(())
-        })?;
+        }
         Ok(Self {
             mvhd: mvhd.ok_or(Error::BufferTooShort(BufferTooShort {
                 need: 0,
@@ -4293,14 +4281,15 @@ mod tests {
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
-    /// The trailing-byte shortfall `walk_children` reports must name the bytes
-    /// actually missing: a caller feeding buffer length back from `need` reads
-    /// the wrong amount otherwise (ISO/IEC 14496-12:2026 §4.2 box framing).
+    /// The trailing-byte shortfall the child walker reports must name the
+    /// bytes actually missing: a caller feeding buffer length back from `need`
+    /// reads the wrong amount otherwise (ISO/IEC 14496-12:2026 §4.2 box
+    /// framing).
     #[test]
-    fn walk_children_reports_the_trailing_child_header_shortfall() {
+    fn child_walker_reports_the_trailing_child_header_shortfall() {
         let after_one_child = b"\x00\x00\x00\x08free\xAA\xBB\xCC";
-        let b = match walk_children::<_, Error>(after_one_child, |_| Ok(())) {
-            Err(Error::BufferTooShort(b)) => b,
+        let b = match BoxIter::new(after_one_child).find_map(|r| r.err()) {
+            Some(Error::BufferTooShort(b)) => b,
             other => panic!("expected BufferTooShort, got {other:?}"),
         };
         assert_eq!(b.need, 16);
@@ -4308,8 +4297,8 @@ mod tests {
         assert_eq!(b.what, "container child header");
 
         let at_start = b"\xAA\xBB\xCC";
-        let b = match walk_children::<_, Error>(at_start, |_| Ok(())) {
-            Err(Error::BufferTooShort(b)) => b,
+        let b = match BoxIter::new(at_start).find_map(|r| r.err()) {
+            Some(Error::BufferTooShort(b)) => b,
             other => panic!("expected BufferTooShort, got {other:?}"),
         };
         assert_eq!(b.need, 8);
