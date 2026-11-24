@@ -13,16 +13,14 @@
 use super::circuits::{
     CDEF_OUT_BITS, STREAM_SBOX_OUT_BITS, stream_b_sel, stream_cdef, stream_out, stream_sboxes,
 };
-use super::{BITS_PER_BYTE, BLOCK_BITS, BLOCK_BYTES, Word};
+use super::{BLOCK_BITS, PQZYX_BITS, Word};
+use crate::block::BLOCK_BYTES;
+use crate::stream::NIBBLE_BITS;
 
-/// Bits in a nibble — the shift registers advance one nibble per round.
-const NIBBLE_BITS: usize = 4;
 /// Bits in the A shift register (ten nibbles).
 const A_BITS: usize = 40;
 /// Bits in the B shift register (ten nibbles).
 const B_BITS: usize = 40;
-/// Live bits of the `pqzyx` S-box output word: X, Y, Z, then P and Q.
-const PQZYX_BITS: usize = 14;
 /// Live bits of the `cfed` feedback word: D, E, F, then the carried C bit.
 const CFED_BITS: usize = 13;
 /// Index bits consumed by the `STREAM_CDEF` table.
@@ -120,11 +118,11 @@ impl BitslicedStream {
         };
 
         for byte in 0..BLOCK_BYTES {
-            let base = byte * BITS_PER_BYTE;
+            let base = byte * u8::BITS as usize;
             let mut low = [0 as Word; NIBBLE_BITS];
             let mut high = [0 as Word; NIBBLE_BITS];
             low.copy_from_slice(&iv[base..base + NIBBLE_BITS]);
-            high.copy_from_slice(&iv[base + NIBBLE_BITS..base + BITS_PER_BYTE]);
+            high.copy_from_slice(&iv[base + NIBBLE_BITS..base + u8::BITS as usize]);
             // The scalar path runs iv, swap_nbl(iv), iv, swap_nbl(iv); the
             // swap exchanges which nibble reaches which register.
             for _ in 0..ROUNDS_PER_IV_BYTE / NIBBLES_PER_BYTE {
@@ -237,16 +235,17 @@ impl BitslicedStream {
     /// Produce one keystream byte per lane, sliced: `[bit][lane]`.
     ///
     /// Four rounds contribute two bits each, most significant pair first.
-    pub(super) fn keystream_byte(&mut self) -> [Word; BITS_PER_BYTE] {
+    pub(super) fn keystream_byte(&mut self) -> [Word; u8::BITS as usize] {
         let idle = [0 as Word; NIBBLE_BITS];
-        let mut out = [0 as Word; BITS_PER_BYTE];
+        let mut out = [0 as Word; u8::BITS as usize];
         for phase in 0..ROUNDS_PER_BYTE {
             self.round::<false>(&idle, &idle);
             let mut d = [0 as Word; NIBBLE_BITS];
             d.copy_from_slice(&self.cfed[D_BASE..D_BASE + NIBBLE_BITS]);
             let [high, low] = stream_out(&d);
-            out[BITS_PER_BYTE - 1 - KEYSTREAM_BITS_PER_ROUND * phase] = high;
-            out[BITS_PER_BYTE - KEYSTREAM_BITS_PER_ROUND - KEYSTREAM_BITS_PER_ROUND * phase] = low;
+            out[u8::BITS as usize - 1 - KEYSTREAM_BITS_PER_ROUND * phase] = high;
+            out[u8::BITS as usize - KEYSTREAM_BITS_PER_ROUND - KEYSTREAM_BITS_PER_ROUND * phase] =
+                low;
         }
         out
     }

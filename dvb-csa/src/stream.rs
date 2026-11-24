@@ -6,17 +6,17 @@
 use super::tables::{STREAM_CDEF, STREAM_OUT, STREAM_SBOX};
 
 /// Bits in a nibble — the shift registers advance one nibble per round.
-const NIBBLE_BITS: u32 = 4;
+pub(crate) const NIBBLE_BITS: usize = 4;
 /// Mask of a nibble.
 const NIBBLE_MASK: u32 = 0xf;
 /// Bit of `pqzyx` selecting the B-register feedback rotation (`tstp`).
 const P_BIT_MASK: u32 = 0x1000;
 /// Nibble of A read back after the register shift (`nbget(a, 10)`).
-const A_FEEDBACK_NIBBLE: u32 = 10;
+const A_FEEDBACK_NIBBLE: usize = 10;
 /// First nibble of B XOR-folded into its feedback (`nbget(b, 6)`).
-const B_FEEDBACK_NIBBLE_0: u32 = 6;
+const B_FEEDBACK_NIBBLE_0: usize = 6;
 /// Second nibble of B XOR-folded into its feedback (`nbget(b, 9)`).
-const B_FEEDBACK_NIBBLE_1: u32 = 9;
+const B_FEEDBACK_NIBBLE_1: usize = 9;
 /// Bytes in the control-word seed and the initialisation vector.
 const SEED_BYTES: usize = 8;
 /// Bytes in each of the seed's two register halves.
@@ -93,7 +93,7 @@ const B_SEL_LSB_TAP_SECONDARY: u32 = 23;
 const B_SEL_UPPER_TAPS_SHIFT: u32 = 13;
 
 /// Nibble from shift register at position n (nibble index)
-fn nbget(r: u64, n: u32) -> u64 {
+fn nbget(r: u64, n: usize) -> u64 {
     r >> (n * NIBBLE_BITS)
 }
 
@@ -238,7 +238,7 @@ impl StreamCipher {
 }
 
 fn swap_nbl(byte: u8) -> u8 {
-    byte.rotate_left(NIBBLE_BITS)
+    byte.rotate_left(NIBBLE_BITS as u32)
 }
 
 fn csa_stream_rotate(p: bool, x: u32) -> u32 {

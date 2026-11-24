@@ -8,13 +8,11 @@
 //! is the same for every lane, so `sch[round] ^ b[7]` is a complement of the
 //! selected bit-words rather than a XOR against data.
 use super::circuits::{PERM_BIT, block_sbox};
-use super::{BITS_PER_BYTE, BLOCK_BITS, BLOCK_BYTES, Word};
-
-/// Rounds in the DVB-CSA2 block cipher; one round key byte each.
-const ROUNDS: usize = 56;
+use super::{BLOCK_BITS, Word};
+use crate::block::{BLOCK_BYTES, ROUNDS};
 
 /// One byte of block state, sliced: `[bit][lane]`.
-type ByteSlice = [Word; BITS_PER_BYTE];
+type ByteSlice = [Word; u8::BITS as usize];
 /// A whole block, sliced: `[byte][bit][lane]`.
 type BlockSlice = [ByteSlice; BLOCK_BYTES];
 
@@ -36,7 +34,7 @@ impl Drop for BitslicedBlock {
 /// Apply the block cipher's `PERM` permutation to a sliced byte.
 #[inline]
 fn permute(s: &ByteSlice) -> ByteSlice {
-    let mut p = [0 as Word; BITS_PER_BYTE];
+    let mut p = [0 as Word; u8::BITS as usize];
     for (bit, word) in s.iter().enumerate() {
         p[PERM_BIT[bit]] = *word;
     }
@@ -58,7 +56,7 @@ fn keyed_sbox(byte: &ByteSlice, key: u8) -> ByteSlice {
 
 #[inline]
 fn xor(a: &ByteSlice, b: &ByteSlice) -> ByteSlice {
-    let mut o = [0 as Word; BITS_PER_BYTE];
+    let mut o = [0 as Word; u8::BITS as usize];
     for (bit, word) in o.iter_mut().enumerate() {
         *word = a[bit] ^ b[bit];
     }
@@ -68,10 +66,10 @@ fn xor(a: &ByteSlice, b: &ByteSlice) -> ByteSlice {
 /// Split a flat transposed matrix into per-byte, per-bit slices.
 #[inline]
 fn unpack(m: &[Word; BLOCK_BITS]) -> BlockSlice {
-    let mut b = [[0 as Word; BITS_PER_BYTE]; BLOCK_BYTES];
+    let mut b = [[0 as Word; u8::BITS as usize]; BLOCK_BYTES];
     for (byte, slot) in b.iter_mut().enumerate() {
         for (bit, word) in slot.iter_mut().enumerate() {
-            *word = m[byte * BITS_PER_BYTE + bit];
+            *word = m[byte * u8::BITS as usize + bit];
         }
     }
     b
@@ -82,7 +80,7 @@ fn unpack(m: &[Word; BLOCK_BITS]) -> BlockSlice {
 fn pack(b: &BlockSlice, m: &mut [Word; BLOCK_BITS]) {
     for (byte, slot) in b.iter().enumerate() {
         for (bit, word) in slot.iter().enumerate() {
-            m[byte * BITS_PER_BYTE + bit] = *word;
+            m[byte * u8::BITS as usize + bit] = *word;
         }
     }
 }

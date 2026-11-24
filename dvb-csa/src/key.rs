@@ -8,6 +8,7 @@
 //! - **Stream cipher seed** (`expand_stream`): produces a nibble-swapped copy
 //!   of the control word for LFSR initialization.
 use super::tables::KPERM;
+use crate::stream::NIBBLE_BITS;
 
 /// Bytes in a DVB-CSA control word — one 64-bit word.
 pub const KEY_LEN: usize = core::mem::size_of::<u64>();
@@ -15,8 +16,6 @@ pub const KEY_LEN: usize = core::mem::size_of::<u64>();
 const KEY_WORDS: usize = 7;
 /// Round-key bytes in the block schedule — one per block-cipher round.
 const SCHEDULE_LEN: usize = KEY_WORDS * KEY_LEN;
-/// Bits in a nibble — the stream seed swaps the two halves of each byte.
-const NIBBLE_BITS: u32 = 4;
 
 /// An 8-byte DVB-CSA control word.
 ///
@@ -102,7 +101,7 @@ impl ControlWord {
     pub(crate) fn expand_stream(&self) -> [u8; KEY_LEN] {
         let mut cws = [0u8; KEY_LEN];
         for (i, out) in cws.iter_mut().enumerate() {
-            *out = self.0[i].rotate_left(NIBBLE_BITS);
+            *out = self.0[i].rotate_left(NIBBLE_BITS as u32);
         }
         cws
     }
