@@ -62,6 +62,7 @@ const DEFAULT_SEGMENT_DURATION_SECS: u32 = 6;
 /// Chunks per segment in the LL-DASH profile: the chunk is half a segment.
 const LL_DASH_CHUNKS_PER_SEGMENT: u32 = 2;
 /// Hex digits in the KID half of a `--key` argument.
+#[cfg(feature = "cenc")]
 const KEY_ID_HEX_LEN: usize = KEY_ID_LEN * 2;
 
 /// Default LL-DASH target latency in milliseconds (`Latency@target`), used when
