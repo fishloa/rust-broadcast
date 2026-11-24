@@ -10,7 +10,9 @@ use broadcast_common::xml_chars::is_xml_char;
 use crate::duration::xs_duration;
 use crate::error::MpdError;
 use crate::model::*;
-use crate::parse::{INFINITY_TOKEN, NEGATIVE_INFINITY_TOKEN};
+use crate::parse::{
+    INFINITY_TOKEN, NEGATIVE_INFINITY_TOKEN, NS_CENC, NS_DVB, NS_MPD, NS_URLPARAM, NS_XLINK,
+};
 use crate::xs_datetime::format_xs_datetime;
 
 const ROOT_NAME: &str = "MPD";
@@ -25,11 +27,6 @@ const PREFIX_URLPARAM: &str = "urlparam";
 const PREFIX_CENC: &str = "cenc";
 const PREFIX_XMLNS: &str = "xmlns";
 const PREFIX_XML: &str = "xml";
-const NS_MPD: &str = "urn:mpeg:dash:schema:mpd:2011";
-const NS_DVB: &str = "urn:dvb:dash:dash-extensions:2014-1";
-const NS_CENC: &str = "urn:mpeg:cenc:2013";
-const NS_XLINK: &str = "http://www.w3.org/1999/xlink";
-const NS_URLPARAM: &str = "urn:mpeg:dash:schema:urlparam:2014";
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Prefixes {
