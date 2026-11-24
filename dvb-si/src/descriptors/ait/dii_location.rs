@@ -16,6 +16,10 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x0D;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 4;
+/// Width of the `DII_identification` word at the head of an entry.
+const DII_IDENTIFICATION_LEN: usize = ENTRY_LEN / 2;
+/// Width of the `transport_protocol_label` byte after the descriptor header.
+const TRANSPORT_PROTOCOL_LABEL_LEN: usize = 1;
 const DII_IDENTIFICATION_MASK: u16 = 0x7FFF;
 const RESERVED_BIT: u16 = 0x8000;
 
@@ -78,11 +82,12 @@ impl<'a> Parse<'a> for DiiLocationDescriptor {
         let locations = rest
             .chunks_exact(ENTRY_LEN)
             .map(|c| {
-                let id = u16::from_be_bytes([c[0], c[1]]);
+                let (id_bytes, tag_bytes) = c.split_at(DII_IDENTIFICATION_LEN);
+                let id = u16::from_be_bytes([id_bytes[0], id_bytes[1]]);
                 DiiLocation {
                     reserved_future_use: id & RESERVED_BIT != 0,
                     dii_identification: id & DII_IDENTIFICATION_MASK,
-                    association_tag: u16::from_be_bytes([c[2], c[3]]),
+                    association_tag: u16::from_be_bytes([tag_bytes[0], tag_bytes[1]]),
                 }
             })
             .collect();
@@ -103,8 +108,8 @@ impl Serialize for DiiLocationDescriptor {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = self.transport_protocol_label;
-        let mut pos = 3;
+        buf[HEADER_LEN] = self.transport_protocol_label;
+        let mut pos = HEADER_LEN + TRANSPORT_PROTOCOL_LABEL_LEN;
         for l in &self.locations {
             let id = broadcast_common::len::fit_mask(
                 l.dii_identification,
@@ -112,8 +117,9 @@ impl Serialize for DiiLocationDescriptor {
                 "DII_identification",
             )?;
             let word = id | (u16::from(l.reserved_future_use) * RESERVED_BIT);
-            buf[pos..pos + 2].copy_from_slice(&word.to_be_bytes());
-            buf[pos + 2..pos + ENTRY_LEN].copy_from_slice(&l.association_tag.to_be_bytes());
+            buf[pos..pos + DII_IDENTIFICATION_LEN].copy_from_slice(&word.to_be_bytes());
+            buf[pos + DII_IDENTIFICATION_LEN..pos + ENTRY_LEN]
+                .copy_from_slice(&l.association_tag.to_be_bytes());
             pos += ENTRY_LEN;
         }
         Ok(len)

@@ -36,15 +36,14 @@ impl<'a> Parse<'a> for GroupLinkDescriptor {
             "GroupLinkDescriptor",
             "unexpected tag for group_link_descriptor",
         )?;
-        if body.len() != BODY_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "group_link_descriptor body must be 5 bytes",
-            });
-        }
+        let b: [u8; BODY_LEN] = body.try_into().map_err(|_| Error::InvalidDescriptor {
+            tag: TAG,
+            reason: "group_link_descriptor body must be 5 bytes",
+        })?;
+        let [position, id_b0, id_b1, id_b2, id_b3] = b;
         Ok(Self {
-            position: LinkPosition::from_u8(body[0]),
-            group_id: u32::from_be_bytes([body[1], body[2], body[3], body[4]]),
+            position: LinkPosition::from_u8(position),
+            group_id: u32::from_be_bytes([id_b0, id_b1, id_b2, id_b3]),
         })
     }
 }
@@ -59,8 +58,9 @@ impl Serialize for GroupLinkDescriptor {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
-        buf[2] = self.position.to_u8();
-        buf[3..7].copy_from_slice(&self.group_id.to_be_bytes());
+        buf[HEADER_LEN] = self.position.to_u8();
+        buf[HEADER_LEN + 1..HEADER_LEN + BODY_LEN]
+            .copy_from_slice(&self.group_id.to_be_bytes());
         Ok(len)
     }
 }

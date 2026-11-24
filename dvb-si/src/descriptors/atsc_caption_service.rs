@@ -35,6 +35,10 @@ const HEADER_LEN: usize = 2;
 const COUNT_BYTE_LEN: usize = 1;
 const SERVICE_LEN: usize = 6;
 const LANGUAGE_LEN: usize = 3;
+/// Offset of the service's trailing byte within an entry.
+const SERVICE_TAIL_OFFSET: usize = LANGUAGE_LEN + 1;
+/// Offset of the low `reserved_b` byte within an entry.
+const RESERVED_B_LO_OFFSET: usize = LANGUAGE_LEN + 2;
 const MAX_SERVICES: usize = 16;
 const COUNT_MASK: u8 = 0x1F;
 const RESERVED_HEAD_SHIFT: u32 = 5;
@@ -215,9 +219,11 @@ impl<'a> Parse<'a> for AtscCaptionServiceDescriptor {
                         caption_service_number: flags & SERVICE_NUMBER_MASK,
                     }
                 };
-                let tail = chunk[LANGUAGE_LEN + 1];
+                let tail = chunk[SERVICE_TAIL_OFFSET];
+                let mut language_bytes = [0u8; LANGUAGE_LEN];
+                language_bytes.copy_from_slice(&chunk[..LANGUAGE_LEN]);
                 AtscCaptionService {
-                    language: LangCode([chunk[0], chunk[1], chunk[2]]),
+                    language: LangCode(language_bytes),
                     reserved_a: ReservedOnes::from_bits(u64::from(
                         (flags & RESERVED_A_BIT) >> RESERVED_A_SHIFT,
                     )),
@@ -226,7 +232,7 @@ impl<'a> Parse<'a> for AtscCaptionServiceDescriptor {
                     wide_aspect_ratio: tail & WIDE_ASPECT_RATIO_BIT != 0,
                     reserved_b: ReservedOnes::from_bits(
                         (u64::from(tail & RESERVED_B_HI_MASK) << u8::BITS)
-                            | u64::from(chunk[LANGUAGE_LEN + 2]),
+                            | u64::from(chunk[RESERVED_B_LO_OFFSET]),
                     ),
                 }
             })
@@ -285,10 +291,10 @@ impl Serialize for AtscCaptionServiceDescriptor {
             let reserved_b = s.reserved_b.get() as u16;
             buf[i..i + LANGUAGE_LEN].copy_from_slice(&s.language.0);
             buf[i + LANGUAGE_LEN] = kind_bit | (reserved_a << RESERVED_A_SHIFT) | low;
-            buf[i + LANGUAGE_LEN + 1] = (u8::from(s.easy_reader) * EASY_READER_BIT)
+            buf[i + SERVICE_TAIL_OFFSET] = (u8::from(s.easy_reader) * EASY_READER_BIT)
                 | (u8::from(s.wide_aspect_ratio) * WIDE_ASPECT_RATIO_BIT)
                 | (reserved_b >> u8::BITS) as u8;
-            buf[i + LANGUAGE_LEN + 2] = (reserved_b & u16::from(u8::MAX)) as u8;
+            buf[i + RESERVED_B_LO_OFFSET] = (reserved_b & u16::from(u8::MAX)) as u8;
             i += SERVICE_LEN;
         }
         Ok(i)
