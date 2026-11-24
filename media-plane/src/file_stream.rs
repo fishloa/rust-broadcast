@@ -17,8 +17,8 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use transmux::{DemuxEvent, Sample, StreamingFlvDemux, StreamingTsDemux, TrackId, TrackSpec};
 
 use crate::file_source::{
-    FileReaderError, MAX_SAMPLES_PER_DRAIN, PassRange, advance_offsets, secs_to_duration,
-    ticks_to_duration,
+    ADJACENT_PAIR_LEN, FileReaderError, MAX_SAMPLES_PER_DRAIN, PassRange, advance_offsets,
+    secs_to_duration, ticks_to_duration,
 };
 use crate::ingress::{ProgramId, SessionEvent};
 use crate::trunk::RetentionClass;
@@ -302,7 +302,7 @@ impl StreamTrack {
 
     fn drain_window(&mut self) {
         let mut frame = self.frame_ticks;
-        for pair in self.window.windows(2) {
+        for pair in self.window.windows(ADJACENT_PAIR_LEN) {
             let gap = pair[1].saturating_sub(pair[0]);
             if gap > 0 {
                 frame = Some(frame.map_or(gap, |current| current.min(gap)));

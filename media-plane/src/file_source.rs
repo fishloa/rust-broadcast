@@ -694,7 +694,7 @@ where
 const MPEG_TS_MOVIE_TIMESCALE: Timescale = transmux::VIDEO_CLOCK_TIMESCALE;
 
 /// Window size for walking consecutive presentation-timestamp pairs.
-const ADJACENT_PAIR_LEN: usize = 2;
+pub(crate) const ADJACENT_PAIR_LEN: usize = 2;
 
 /// Divisor of the rounding term added before a nanosecond conversion.
 const ROUNDING_DIVISOR: u128 = 2;
