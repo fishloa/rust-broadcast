@@ -43,18 +43,15 @@ pub const RTMP_VERSION: u8 = 3;
 pub const HANDSHAKE_PACKET_LEN: usize = 1536;
 
 /// Wire length in bytes of C0/S0 (§5.2.2): `1`.
-const VERSION_LEN: usize = 1;
+pub(crate) const VERSION_LEN: usize = 1;
 /// Byte width of the `time`/`zero`/`time2` fields.
 const FIELD_LEN: usize = 4;
 /// Byte width of the `random bytes`/`random echo` field:
 /// `HANDSHAKE_PACKET_LEN` minus two 4-byte fields.
 pub(crate) const RANDOM_LEN: usize = HANDSHAKE_PACKET_LEN - FIELD_LEN - FIELD_LEN;
 
-/// Byte positions of the two u32 fields at the front of a C1/S1 packet.
-const TIME_BYTES: [usize; FIELD_LEN] = [0, 1, 2, 3];
-const RESERVED_FIELD_BYTES: [usize; FIELD_LEN] = [4, 5, 6, 7];
-
-/// Offset of the random block after the two u32 fields (RTMP §5.2.1).
+/// Offset of the random block after the two u32 fields at the front of a
+/// C1/S1 packet (RTMP §5.2.1).
 const RANDOM_OFFSET: usize = 2 * FIELD_LEN;
 
 /// C0 (client→server) or S0 (server→client): the 1-byte RTMP version
@@ -112,8 +109,8 @@ impl<'a> Parse<'a> for HandshakePacket {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HANDSHAKE_PACKET_LEN, "C1/S1")?;
-        let time = u32::from_be_bytes(TIME_BYTES.map(|i| bytes[i]));
-        let zero = u32::from_be_bytes(RESERVED_FIELD_BYTES.map(|i| bytes[i]));
+        let time = crate::be_u32(bytes, 0);
+        let zero = crate::be_u32(bytes, FIELD_LEN);
         let mut random = [0u8; RANDOM_LEN];
         random.copy_from_slice(&bytes[RANDOM_OFFSET..HANDSHAKE_PACKET_LEN]);
         Ok(HandshakePacket { time, zero, random })
@@ -168,8 +165,8 @@ impl<'a> Parse<'a> for EchoPacket {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HANDSHAKE_PACKET_LEN, "C2/S2")?;
-        let time = u32::from_be_bytes(TIME_BYTES.map(|i| bytes[i]));
-        let time2 = u32::from_be_bytes(RESERVED_FIELD_BYTES.map(|i| bytes[i]));
+        let time = crate::be_u32(bytes, 0);
+        let time2 = crate::be_u32(bytes, FIELD_LEN);
         let mut random_echo = [0u8; RANDOM_LEN];
         random_echo.copy_from_slice(&bytes[RANDOM_OFFSET..HANDSHAKE_PACKET_LEN]);
         Ok(EchoPacket {
