@@ -34,9 +34,13 @@ impl TrackId {
 
     /// The id following this one (`value() + 1`), for demuxers that hand out
     /// consecutive ids.
+    ///
+    /// Saturates at `u32::MAX`: a file that already carries the largest
+    /// possible `track_ID` has no id after it, and wrapping would name the
+    /// invalid id 0.
     #[must_use]
     pub const fn next(self) -> Self {
-        Self(self.0 + 1)
+        Self(self.0.saturating_add(1))
     }
 }
 
@@ -64,5 +68,13 @@ mod tests {
         assert_eq!(format!("{:04}", TrackId::new(5)), "0005");
         assert_eq!(TrackId::new(9).value(), 9);
         assert_eq!(TrackId::new(9).next(), TrackId::new(10));
+    }
+
+    /// A crafted `track_ID` of `u32::MAX` must not panic the id arithmetic a
+    /// writer uses to derive `mvhd.next_track_ID` (fuzz finding on
+    /// `isobmff_whole_file`).
+    #[test]
+    fn next_saturates_at_the_largest_id() {
+        assert_eq!(TrackId::new(u32::MAX).next(), TrackId::new(u32::MAX));
     }
 }

@@ -258,4 +258,13 @@ pub enum Error {
         /// What the plan could not supply.
         what: &'static str,
     },
+
+    /// A [`BoxRegistry`](crate::registry::BoxRegistry) registration named a
+    /// key that is already registered, or a four-CC this crate types itself,
+    /// and override was not requested.
+    #[error("box type cannot be registered: {reason}")]
+    BoxTypeRegistered {
+        /// Why the registration was refused.
+        reason: &'static str,
+    },
 }

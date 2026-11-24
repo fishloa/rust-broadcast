@@ -81,6 +81,7 @@ class Crate:
     no_std_ci: bool = False
     layer: int = 0
     dependents: list[str] = field(default_factory=list)
+    path: str = ""
 
 
 # --------------------------------------------------------------------- inputs
@@ -198,6 +199,7 @@ def load(root: Path = ROOT) -> tuple[list[dict], dict[str, Crate]]:
             publish=publish,
             has_lib=(root / member_names[name] / "src" / "lib.rs").exists(),
             ws_deps=ws_deps,
+            path=member_names[name],
             domain=entry["domain"],
             summary=entry["summary"],
             standards=entry["standards"],
@@ -350,11 +352,16 @@ def render_crates_md_block(domains: list[dict], crates: dict[str, Crate], root: 
                 users = ", ".join(f"[`{x}`](#{_anchor(x)})" for x in c.dependents) or "none"
             lines.append(f"- **Depends on (workspace):** {deps}")
             lines.append(f"- **Used by (workspace):** {users}")
-            links = [f"[README](../{c.name}/README.md)"] if (root / c.name / "README.md").exists() else []
-            if (root / c.name / "CHANGELOG.md").exists():
-                links.append(f"[CHANGELOG](../{c.name}/CHANGELOG.md)")
-            if (root / c.name / "docs").is_dir():
-                links.append(f"[docs + spec pointer](../{c.name}/docs/)")
+            directory = c.path or c.name
+            links = (
+                [f"[README](../{directory}/README.md)"]
+                if (root / directory / "README.md").exists()
+                else []
+            )
+            if (root / directory / "CHANGELOG.md").exists():
+                links.append(f"[CHANGELOG](../{directory}/CHANGELOG.md)")
+            if (root / directory / "docs").is_dir():
+                links.append(f"[docs + spec pointer](../{directory}/docs/)")
             if c.crates_io:
                 links.append(f"[crates.io](https://crates.io/crates/{c.name})")
                 if c.has_lib:
@@ -421,7 +428,7 @@ def render_readme_block(domains: list[dict], crates: dict[str, Crate]) -> str:
             if c.lifecycle == "archived" and c.crates_io:
                 badge = f"{badge} archived"
             lines.append(
-                f"| [`{c.name}`]({c.name}/) | {_md(c.summary)} | {_md(c.standards)} | {badge} |"
+                f"| [`{c.name}`]({c.path or c.name}/) | {_md(c.summary)} | {_md(c.standards)} | {badge} |"
             )
         lines.append("")
     internal = sorted(c.name for c in crates.values() if c.lifecycle == "internal")
