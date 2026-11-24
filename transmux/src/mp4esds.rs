@@ -47,13 +47,13 @@ use core::fmt;
 // Constants
 // ---------------------------------------------------------------------------
 
-/// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 11172-3) —
+/// `esds` `objectTypeIndication` for MPEG-4 Audio (ISO/IEC 14496-3) —
 /// ISO/IEC 14496-1 §7.2.6.6 Table 5.
-pub(crate) const OTI_MPEG1_AUDIO: u8 = 0x6B;
+pub(crate) const OTI_MPEG4_AUDIO: u8 = 0x40;
 /// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 13818-3) — Table 5.
 pub(crate) const OTI_MPEG2_AUDIO: u8 = 0x69;
-/// `esds` `objectTypeIndication` for MPEG-4 Audio (ISO/IEC 14496-3) — Table 5.
-pub(crate) const OTI_MPEG4_AUDIO: u8 = 0x40;
+/// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 11172-3) — Table 5.
+pub(crate) const OTI_MPEG1_AUDIO: u8 = 0x6B;
 /// `esds` `streamType` for an AudioStream — ISO/IEC 14496-1 §7.2.6.6.2 Table 6.
 pub(crate) const STREAM_TYPE_AUDIO: u8 = 5;
 
