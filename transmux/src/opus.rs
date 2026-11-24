@@ -7,9 +7,9 @@
 //! carry **no** magic signature.
 
 use crate::error::{Error, Result};
-use crate::wire_cursor::{be_u16, be_u32, i16_at};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{be_u16, be_u32, i16_at};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the Opus config box.

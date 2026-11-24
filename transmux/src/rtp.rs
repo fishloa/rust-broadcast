@@ -62,12 +62,12 @@
 
 use crate::TrackId;
 use crate::nal::NAL_TYPE_MASK;
-use crate::wire_cursor::u16_at;
 use alloc::collections::VecDeque;
 #[cfg(feature = "std")]
 use alloc::format;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
+use broadcast_common::wire::u16_at;
 
 use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};

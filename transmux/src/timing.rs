@@ -23,7 +23,7 @@ use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::timescale::Timescale;
 
-use crate::wire_cursor::{be_u32, be_u64, read_u16, read_u32};
+use broadcast_common::wire::{be_u32, be_u64, read_u16, read_u32};
 use broadcast_common::{Parse, Serialize};
 
 const U32_PAIR_LEN: usize = core::mem::size_of::<u32>() * 2;

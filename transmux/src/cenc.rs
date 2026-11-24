@@ -27,10 +27,10 @@ use crate::box_types::{
     BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET, FULLBOX_VERSION_OFFSET,
 };
 use crate::error::{Error, Result};
-use crate::wire_cursor::{u16_at, u32_at, u64_at};
 use alloc::vec::Vec;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{u16_at, u32_at, u64_at};
 use broadcast_common::{Parse, Serialize};
 
 /// Width of an AES-128 content key in bytes (ISO/IEC 23001-7 AES-128 content

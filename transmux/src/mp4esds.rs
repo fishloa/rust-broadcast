@@ -36,10 +36,10 @@
 
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, FULLBOX_EXTRA_SIZE};
 use crate::error::{Error, Result};
-use crate::wire_cursor::{U24_LEN, read_u16, read_u32, take};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{U24_LEN, read_u16, read_u32, take};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
@@ -105,7 +105,7 @@ fn read_u24_be(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u
 }
 
 fn read_u32_be(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u32> {
-    read_u32(bytes, cursor, what)
+    Ok(read_u32(bytes, cursor, what)?)
 }
 
 // ---------------------------------------------------------------------------

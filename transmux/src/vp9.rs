@@ -13,10 +13,10 @@
 use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
-use crate::wire_cursor::{be_u16, be_u32};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{be_u16, be_u32};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the VP9 config box.

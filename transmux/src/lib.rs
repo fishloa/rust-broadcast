@@ -264,7 +264,6 @@ pub mod visual_ext;
 pub mod vp9;
 pub mod vvc_config;
 pub mod webm_demux;
-mod wire_cursor;
 
 /// Serialize a [`Timescale`](broadcast_common::timescale::Timescale) as the
 /// plain ticks-per-second integer it wraps, so a serde-JSON consumer sees the

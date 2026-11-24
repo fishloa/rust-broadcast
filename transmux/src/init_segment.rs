@@ -14,13 +14,13 @@ use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_VERSION_OFFSET,
 };
 use crate::error::{Error, Result};
-use crate::wire_cursor::{fourcc_at, i16_at, u16_at, u24_at, u32_at, u64_at};
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::timescale::Timescale;
+use broadcast_common::wire::{fourcc_at, i16_at, u16_at, u24_at, u32_at, u64_at};
 use broadcast_common::{Parse, Serialize};
 
 use crate::box_support::{
@@ -137,18 +137,22 @@ impl<'a> Parse<'a> for MovieHeaderBox {
             Ok(Self {
                 version: 1,
                 flags,
-                creation_time: crate::wire_cursor::be_u64(
+                creation_time: broadcast_common::wire::be_u64(
                     bytes,
                     MVHD_V1_CREATION_TIME_OFFSET,
                     "mvhd v1",
                 )?,
-                modification_time: crate::wire_cursor::be_u64(
+                modification_time: broadcast_common::wire::be_u64(
                     bytes,
                     MVHD_V1_MODIFICATION_TIME_OFFSET,
                     "mvhd v1",
                 )?,
                 timescale: Timescale::try_new(u32_at(bytes, MVHD_V1_TIMESCALE_OFFSET))?,
-                duration: crate::wire_cursor::be_u64(bytes, MVHD_V1_DURATION_OFFSET, "mvhd v1")?,
+                duration: broadcast_common::wire::be_u64(
+                    bytes,
+                    MVHD_V1_DURATION_OFFSET,
+                    "mvhd v1",
+                )?,
                 rate: u32_at(bytes, MVHD_V1_RATE_OFFSET),
                 volume: u16_at(bytes, MVHD_V1_VOLUME_OFFSET),
                 matrix: matrix_from_bytes(
@@ -345,11 +349,12 @@ impl<'a> Parse<'a> for TrackHeaderBox {
             // duration, so duration starts at byte 36, not 40 — every field
             // from `duration` on was previously read 4 bytes early
             // (issue #1016).
-            let ct = crate::wire_cursor::be_u64(bytes, TKHD_V1_CREATION_TIME_OFFSET, "tkhd v1")?;
+            let ct =
+                broadcast_common::wire::be_u64(bytes, TKHD_V1_CREATION_TIME_OFFSET, "tkhd v1")?;
             let mt =
-                crate::wire_cursor::be_u64(bytes, TKHD_V1_MODIFICATION_TIME_OFFSET, "tkhd v1")?;
+                broadcast_common::wire::be_u64(bytes, TKHD_V1_MODIFICATION_TIME_OFFSET, "tkhd v1")?;
             let tid = u32_at(bytes, TKHD_V1_TRACK_ID_OFFSET);
-            let dur = crate::wire_cursor::be_u64(bytes, TKHD_V1_DURATION_OFFSET, "tkhd v1")?;
+            let dur = broadcast_common::wire::be_u64(bytes, TKHD_V1_DURATION_OFFSET, "tkhd v1")?;
             Ok(Self {
                 version: 1,
                 flags,
@@ -373,7 +378,7 @@ impl<'a> Parse<'a> for TrackHeaderBox {
 fn matrix_from_bytes(b: &[u8]) -> [i32; MATRIX_VALUES] {
     let mut m = [0i32; MATRIX_VALUES];
     for (i, slot) in m.iter_mut().enumerate() {
-        *slot = crate::wire_cursor::i32_at(b, i * MATRIX_VALUE_LEN);
+        *slot = broadcast_common::wire::i32_at(b, i * MATRIX_VALUE_LEN);
     }
     m
 }
@@ -545,18 +550,22 @@ impl<'a> Parse<'a> for MediaHeaderBox {
             Ok(Self {
                 version: 1,
                 flags,
-                creation_time: crate::wire_cursor::be_u64(
+                creation_time: broadcast_common::wire::be_u64(
                     bytes,
                     MDHD_V1_CREATION_TIME_OFFSET,
                     "mdhd v1",
                 )?,
-                modification_time: crate::wire_cursor::be_u64(
+                modification_time: broadcast_common::wire::be_u64(
                     bytes,
                     MDHD_V1_MODIFICATION_TIME_OFFSET,
                     "mdhd v1",
                 )?,
                 timescale: Timescale::try_new(u32_at(bytes, MDHD_V1_TIMESCALE_OFFSET))?,
-                duration: crate::wire_cursor::be_u64(bytes, MDHD_V1_DURATION_OFFSET, "mdhd v1")?,
+                duration: broadcast_common::wire::be_u64(
+                    bytes,
+                    MDHD_V1_DURATION_OFFSET,
+                    "mdhd v1",
+                )?,
                 language: u16_at(bytes, MDHD_V1_LANGUAGE_OFFSET),
             })
         }

@@ -69,11 +69,11 @@
 use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 use crate::error::{Error, Result};
 use crate::nalu_types::VALID_LENGTH_SIZES;
-use crate::wire_cursor::u24_at;
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitError, BitWriter};
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::u24_at;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 

@@ -7,10 +7,10 @@
 
 use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
-use crate::wire_cursor::u16_at;
 use alloc::string::String;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::u16_at;
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the Dolby Vision configuration box for `dv_profile <= 7`.

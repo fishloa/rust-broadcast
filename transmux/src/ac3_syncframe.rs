@@ -20,10 +20,10 @@ use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream, acmod_channels};
 use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
-use crate::wire_cursor::u16_at;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_in;
+use broadcast_common::wire::u16_at;
 
 // AC-3 syncword (big-endian).
 pub(crate) const AC3_SYNCWORD: u16 = 0x0B77;

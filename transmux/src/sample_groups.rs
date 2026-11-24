@@ -37,10 +37,10 @@ use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_MASK,
 };
 use crate::error::{Error, Result};
-use crate::wire_cursor::{be_u16, be_u32, be_u64, i16_at};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{be_u16, be_u32, be_u64, i16_at};
 
 use broadcast_common::{Parse, Serialize};
 

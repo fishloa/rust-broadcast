@@ -58,7 +58,7 @@ use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::movie_fragment::{MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBox};
 use crate::pipeline::{CodecConfig, Sample};
 use crate::segments::{MediaDataBox, SegmentTypeBox, starts_with_moof};
-use crate::wire_cursor::{be_u32, be_u64};
+use broadcast_common::wire::{be_u32, be_u64};
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),

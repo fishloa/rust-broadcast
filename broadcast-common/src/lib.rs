@@ -83,6 +83,7 @@ pub mod traits;
 pub mod units;
 #[cfg(feature = "url")]
 pub mod url_ref;
+pub mod wire;
 mod wire_enum;
 #[cfg(feature = "xml")]
 pub mod xml;

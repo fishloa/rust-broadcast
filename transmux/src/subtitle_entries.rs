@@ -23,11 +23,11 @@
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE};
 use crate::error::{Error, Result};
 use crate::sample_entries::SAMPLE_ENTRY_RESERVED_LEN;
-use crate::wire_cursor::{be_u16, be_u32};
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{be_u16, be_u32};
 use broadcast_common::{Parse, Serialize};
 
 const SAMPLE_ENTRY_FIXED_LEN: usize = SAMPLE_ENTRY_RESERVED_LEN + core::mem::size_of::<u16>();

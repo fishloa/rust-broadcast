@@ -489,7 +489,7 @@ pub(crate) fn box_body<'a>(
 /// clamped to `region`.
 pub(crate) fn child_extent(region: &[u8]) -> Option<usize> {
     let hdr = box_header_len(region).ok()?;
-    let size = crate::wire_cursor::u32_at(region, BOX_SIZE_OFFSET);
+    let size = broadcast_common::wire::u32_at(region, BOX_SIZE_OFFSET);
     let total = if size == SIZE_INDICATES_LARGESIZE {
         usize::try_from(u64::from_be_bytes(
             region[LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE]
@@ -520,7 +520,7 @@ pub(crate) fn child_extent_in(region: &[u8]) -> Option<usize> {
 /// `uuid` `usertype` is left to the callers that handle `uuid` boxes.
 pub(crate) fn box_header_len(bytes: &[u8]) -> Result<usize> {
     need_in(bytes, BOX_HEADER_MIN_SIZE, "box header")?;
-    let size = crate::wire_cursor::u32_at(bytes, BOX_SIZE_OFFSET);
+    let size = broadcast_common::wire::u32_at(bytes, BOX_SIZE_OFFSET);
     if size == SIZE_INDICATES_LARGESIZE {
         let need = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
         if bytes.len() < need {
@@ -545,8 +545,9 @@ impl<'a> Parse<'a> for BoxHeader {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "BoxHeader")?;
 
-        let raw_size = crate::wire_cursor::u32_at(bytes, BOX_SIZE_OFFSET);
-        let box_type = BoxType::from_bytes(crate::wire_cursor::fourcc_at(bytes, BOX_TYPE_OFFSET));
+        let raw_size = broadcast_common::wire::u32_at(bytes, BOX_SIZE_OFFSET);
+        let box_type =
+            BoxType::from_bytes(broadcast_common::wire::fourcc_at(bytes, BOX_TYPE_OFFSET));
 
         let mut cursor = BOX_HEADER_MIN_SIZE;
 
@@ -557,7 +558,7 @@ impl<'a> Parse<'a> for BoxHeader {
                     have: bytes.len(),
                 });
             }
-            let v = crate::wire_cursor::u64_at(bytes, cursor);
+            let v = broadcast_common::wire::u64_at(bytes, cursor);
             cursor += LARGESIZE_SIZE;
             v
         } else {
