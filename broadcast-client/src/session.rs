@@ -16,6 +16,7 @@ use crate::events::{Action, Config, ErrorKind, Event, SourceKind, Status};
 use crate::headers;
 use crate::playout::{Playout, Source};
 use crate::queue::EventQueue;
+use crate::read_ahead::ReadAheadTracker;
 use crate::redirect;
 use crate::source::adaptive::Adaptive;
 use crate::source::dash::DashSource;
@@ -40,6 +41,7 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 use crate::tshttp::Action as TsAction;
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
+use broadcast_common::timescale::Timescale;
 use core::time::Duration;
 
 const SCHEME_HTTP: &str = "http";
@@ -106,6 +108,9 @@ pub struct Session {
     hls_joins: crate::source::hls_join::HlsJoins,
     wall: Option<WallClock>,
     payload_bytes: u64,
+    read_ahead: ReadAheadTracker,
+    paused_conn: Option<ConnId>,
+    track_timescales: alloc::collections::BTreeMap<TrackId, Timescale>,
 }
 
 impl Session {
@@ -209,6 +214,7 @@ impl Session {
         let buffer_cfg = config.buffer;
         let start_pending_wait = config.start_pending_track_wait;
         let start_pending_hard_cap = config.start_pending_track_hard_cap;
+        let read_ahead = ReadAheadTracker::new(config.ts_http.read_ahead);
         let jump = JumpDetector::new(config.timeline_jump);
         let event_cap = config.max_queued_events;
         let event_byte_budget = config.max_queued_bytes;
@@ -310,6 +316,9 @@ impl Session {
             hls_joins: crate::source::hls_join::HlsJoins::default(),
             wall: None,
             payload_bytes: 0,
+            read_ahead,
+            paused_conn: None,
+            track_timescales: alloc::collections::BTreeMap::new(),
         })
     }
 
@@ -409,6 +418,7 @@ impl Session {
                 let lineage = self.conn_auth.remove(&conn).unwrap_or_default();
                 if self.live_conn == Some(conn) {
                     self.live_conn = None;
+                    self.clear_read_ahead(Timestamp::from_micros(self.now_us));
                 }
                 self.actions.push_back(Action::Close { conn });
                 let new_conn = self.alloc_conn(target.clone());
@@ -447,6 +457,7 @@ impl Session {
             self.conn_auth.remove(&conn);
             if self.live_conn == Some(conn) {
                 self.live_conn = None;
+                self.clear_read_ahead(Timestamp::from_micros(self.now_us));
             }
             self.actions.push_back(Action::Close { conn });
 
@@ -505,12 +516,14 @@ impl Session {
 
         if status.is_success() {
             self.redirect_count = 0;
+            self.clear_read_ahead(Timestamp::from_micros(self.now_us));
             self.live_conn = Some(conn);
         } else {
             self.known_conns.remove(&conn);
             self.conn_auth.remove(&conn);
             if self.live_conn == Some(conn) {
                 self.live_conn = None;
+                self.clear_read_ahead(Timestamp::from_micros(self.now_us));
             }
             if status != STATUS_TOO_MANY_REQUESTS && status != STATUS_SERVICE_UNAVAILABLE {
                 self.actions.push_back(Action::Close { conn });
@@ -529,6 +542,10 @@ impl Session {
     }
 
     /// Data callback.
+    ///
+    /// Bytes are accepted even while [`Self::read_paused`] is true for `conn`
+    /// (a pause tells the host to stop reading the socket; it never drops what
+    /// the host already read), and they count toward the read-ahead measure.
     pub fn on_data(&mut self, conn: ConnId, bytes: &[u8], now: Timestamp) {
         let now_us = now.as_micros();
         if self.closed {
@@ -596,6 +613,7 @@ impl Session {
         }
         self.now_us = now_us;
         self.payload_bytes = self.payload_bytes.saturating_add(bytes.len() as u64);
+        self.read_ahead.on_bytes(bytes.len());
         self.source.on_data(bytes, now_us);
         self.drain_source();
         if !bytes.is_empty() {
@@ -658,6 +676,7 @@ impl Session {
         self.conn_auth.remove(&conn);
         if self.live_conn == Some(conn) {
             self.live_conn = None;
+            self.clear_read_ahead(now);
         }
         self.now_us = now_us;
         self.buffer.hint(now_us, hint);
@@ -705,6 +724,83 @@ impl Session {
     #[must_use]
     pub fn payload_bytes(&self) -> u64 {
         self.payload_bytes
+    }
+
+    /// Whether read-ahead backpressure has stopped this connection: the host
+    /// should not read its socket until [`Action::ResumeRead`] names it. A host
+    /// may ask this instead of tracking [`Action::PauseRead`] and
+    /// [`Action::ResumeRead`]; the answer is `false` for a connection the
+    /// session no longer holds.
+    #[must_use]
+    pub fn read_paused(&self, conn: ConnId) -> bool {
+        self.paused_conn == Some(conn)
+    }
+
+    fn read_ahead_applies(&self) -> bool {
+        self.read_ahead.enabled()
+            && self.adaptive.is_none()
+            && self.rtsp.is_none()
+            && self.rtmp.is_none()
+            && self.datagram.is_none()
+    }
+
+    fn note_track_specs(&mut self, specs: &[TrackSpec]) {
+        if !self.read_ahead_applies() {
+            return;
+        }
+        for spec in specs {
+            self.track_timescales.insert(spec.track_id, spec.timescale);
+        }
+    }
+
+    fn note_sample(&mut self, track: TrackId, sample: &Sample) {
+        if !self.read_ahead_applies() {
+            return;
+        }
+        let Some(&timescale) = self.track_timescales.get(&track) else {
+            return;
+        };
+        let Some(pts) = sample.timing.and_then(|t| t.pts()) else {
+            return;
+        };
+        let duration = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
+        self.read_ahead
+            .on_sample(pts, pts.saturating_add(duration), timescale);
+    }
+
+    fn refresh_read_ahead(&mut self, now: Timestamp) {
+        if !self.read_ahead_applies() {
+            return;
+        }
+        let Some(conn) = self.live_conn else {
+            self.clear_read_ahead(now);
+            return;
+        };
+        if self.paused_conn.is_some_and(|paused| paused != conn) {
+            self.clear_read_ahead(now);
+        }
+        if self.read_ahead.pause_due() {
+            self.read_ahead.set_paused(true);
+            self.paused_conn = Some(conn);
+            self.source.set_read_paused(true, now.as_micros());
+            self.actions.push_back(Action::PauseRead { conn });
+        } else if self.read_ahead.is_paused() && self.read_ahead.resume_due() {
+            self.read_ahead.set_paused(false);
+            self.paused_conn = None;
+            self.source.set_read_paused(false, now.as_micros());
+            self.actions.push_back(Action::ResumeRead { conn });
+        }
+    }
+
+    /// Forget the read-ahead state without a `ResumeRead`: the connection it
+    /// named is gone (a close, a reconnect or a new connection).
+    fn clear_read_ahead(&mut self, now: Timestamp) {
+        let was_paused = self.paused_conn.take().is_some();
+        if was_paused {
+            self.source.set_read_paused(false, now.as_micros());
+        }
+        self.read_ahead.reset();
+        self.track_timescales.clear();
     }
 
     /// Datagram counters of a UDP, RTP or SRT session; all zero for any other source.
@@ -974,6 +1070,7 @@ impl Session {
         }
         self.now_us = now_us;
         let pts = position.map(Clock27::ticks);
+        self.read_ahead.on_position(pts);
         self.buffer.on_playback_position(now_us, pts);
         let evs = self.buffer.drain();
         for e in evs {
@@ -981,6 +1078,7 @@ impl Session {
         }
         self.playout.on_position(pts);
         self.drain_playout();
+        self.refresh_read_ahead(now);
     }
 
     /// Set rendered tracks. `now` is the host clock at the call, as for every other input; it
@@ -1188,6 +1286,7 @@ impl Session {
         self.refused_conns.clear();
         self.conn_auth.clear();
         self.live_conn = None;
+        self.clear_read_ahead(now);
         self.events.clear();
     }
 
@@ -1276,6 +1375,7 @@ impl Session {
         if self.jump.is_jump(track, sample, join, self.now_us) {
             let handled = self.jump.already_handled();
             self.emit(Event::Discontinuity);
+            self.read_ahead.reset_timeline();
             self.jump.begin_epoch(track, sample);
             if !handled {
                 self.buffer.on_demux_discontinuity(self.now_us);
@@ -1434,6 +1534,7 @@ impl Session {
         self.conn_auth.remove(&conn);
         if self.live_conn == Some(conn) {
             self.live_conn = None;
+            self.clear_read_ahead(Timestamp::from_micros(self.now_us));
         }
         self.actions.push_back(Action::Close { conn });
         self.signal_connect_failure();
@@ -1466,9 +1567,11 @@ impl Session {
                 Event::Status(Status::Establishing) => {
                     self.buffer.new_connection();
                     self.playout.disengage();
+                    self.clear_read_ahead(Timestamp::from_micros(self.now_us));
                     self.emit(e);
                 }
                 Event::Tracks(specs) => {
+                    self.note_track_specs(&specs);
                     self.buffer_tracks(&specs);
                     self.emit(Event::Tracks(specs));
                 }
@@ -1476,6 +1579,7 @@ impl Session {
                     let Some(join) = self.buffer_sample(track, &sample) else {
                         continue;
                     };
+                    self.note_sample(track, &sample);
                     self.emit(Event::Sample {
                         track,
                         sample,
@@ -1484,6 +1588,7 @@ impl Session {
                 }
                 Event::Discontinuity => {
                     self.buffer_reconnected();
+                    self.read_ahead.reset_timeline();
                     self.emit(e);
                 }
                 other => {
@@ -1499,6 +1604,7 @@ impl Session {
             self.map_source_action(ta);
         }
         self.sync_expected();
+        self.refresh_read_ahead(Timestamp::from_micros(self.now_us));
         self.sync_ts_wake();
     }
 
@@ -1599,6 +1705,7 @@ impl Session {
                 self.known_conns.clear();
                 self.conn_auth.clear();
                 self.live_conn = None;
+                self.clear_read_ahead(Timestamp::from_micros(self.now_us));
             }
             TsAction::Reconnect { after } => self.schedule_reconnect(after),
         }

@@ -989,3 +989,79 @@ A part is done only when every line of its list holds on a fresh run of the full
 ### Not in this part
 
 Smooth: PlayReady/PIFF decryption, text and multi-video `StreamIndex`es, `tfrf` look-ahead addressing, `CustomAttributes`, byte-range resume of a stalled fragment. RTMP: RTMPE/RTMPT, Adobe challenge authentication, AMF3 data and shared-object messages, `play2`, sending media. Both: the Smooth `Manifest(format=...)` and RTMP-over-WebSocket renderings.
+
+## Read-ahead backpressure (#4085)
+
+A live source arrives at the rate it plays, but a recording served over HTTP arrives at
+network speed: a multi-GB `.ts` would be pulled whole into the session's queues and the
+player's buffer. Memory is bounded by configuration, never by input size, so the TS-over-HTTP
+source supports an optional caller-set read-ahead limit and tells the host when to stop reading.
+
+### Measure
+
+`read_ahead.rs` keeps two bounded measures of how far ahead the session is:
+
+- **Media time**: the latest delivered presentation end (PTS plus duration, per track, converted
+  to the 27 MHz clock and compared with `broadcast_common::clock33::pcr_signed_distance`) minus
+  the position from `Session::on_playback_position`. Before the first position is known the
+  baseline is the first delivered sample.
+- **Bytes ahead of the player**: accepted body bytes split into *pending* bytes (accepted after
+  the last delivered sample: a partial PES plus container overhead) and bytes attributed to
+  delivered samples, grouped into presentation-time slices of `READ_AHEAD_SLICE` (100 ms) by each
+  sample's presentation end. Every pending byte is attributed in full to the next delivered
+  sample, so TS/PES overhead cannot accumulate past the cap; bytes accepted after the last sample
+  of a feed stay pending until the next one. `bytes_ahead` is pending plus the slices still
+  ahead. When the position advances, every slice whose end is at or behind it is dropped and its
+  bytes subtracted; a position that does not move drops nothing, and before the first position
+  nothing is dropped. Pending bytes always count, so a stream that delivers bytes but no timed
+  sample (PSI and null packets) is still capped; bytes the player has passed stop counting, so
+  playback progress releases the cap even while the position is reported many times a second.
+  The slice queue is bounded by the configured time cap (`cap / 100 ms + 1` entries) when one is
+  set, otherwise by `MAX_READ_AHEAD_SLICES` (4096); past that the two oldest slices merge into
+  one ending at the later of their ends. Queue length is never proportional to the file or the
+  sample count.
+
+### Actions
+
+`Action::PauseRead { conn }` is emitted once when either configured bound is reached; the host
+stops reading that socket and lets TCP flow control hold the server. `Action::ResumeRead { conn }`
+is emitted once when both measures fall under half their bounds (hysteresis, so the two do not
+flap).
+`Session::read_paused(conn)` answers the same question. Bytes fed through `Session::on_data`
+while paused are accepted, never dropped, and count toward the measure.
+
+### Configuration
+
+The library chooses no numbers. `TsHttpConfig::with_read_ahead` takes a public [`ReadAhead`]:
+[`ReadAhead::Unlimited`] (the default) never asks the host to pause, so memory is then bounded
+only by the host's own buffering; [`ReadAhead::time`], [`ReadAhead::bytes`] and
+[`ReadAhead::time_and_bytes`] set one or both bounds. The caller may ask for anything (90 s,
+128 GiB, ten minutes): there is no built-in maximum or minimum beyond a non-zero value, and the
+byte bound is a `u64` so a large value is expressible on a 32-bit target. A `Limit` with neither
+bound, or a zero bound, is `Error::InvalidConfig(ConfigField::ReadAhead)`. A host that never
+reports a playback position is still bounded by a set limit (the measure runs from the first
+sample), but it must report positions for the pause to release again.
+
+### Timers and lifecycle
+
+While reads are paused, the TS policy's stall notice, no-data starvation and stall reconnect do
+not run and arm no wake; releasing restarts them from the resume instant, so a deliberate pause
+is never reported as a stall or a reconnect and causes no `BufferEvent::Pause`/`Reprime`. A
+close, a reconnect, a redirect or a new connection clears the paused state without a
+`ResumeRead` for a connection that no longer exists; a same-connection discontinuity re-baselines
+the media measure but keeps the pause. A real-time source never reaches the cap in normal
+operation.
+
+### Other pull sources
+
+Only TS-over-HTTP got the cap in this change. The others were checked; the findings are:
+
+| Source | Read-ahead bound |
+| --- | --- |
+| TS-over-HTTP | this cap (new). |
+| HLS, DASH | the adapter's fetch window bounds *in-flight and held segment bodies* by `Config::max_inflight_segments` x `Config::max_segment_bytes`, but prefetch is not tied to the playback position: a host that drains events lets a VOD be pulled at network speed into its own buffer. Same gap; not changed here (it needs a pause action per segment connection, which is several hooks, not one line). |
+| Smooth | one fragment outstanding per stream, bounded by `Config::max_segment_bytes`; like HLS/DASH the fragment plan is not tied to playback, so the player-buffer gap remains. Not changed here. |
+| RTSP | the RTP depayloader's reorder window is bounded, but the session never asks the host to stop reading the TCP connection; a file-over-RTSP source has the same gap. Not changed here. |
+| UDP/RTP | no pull to pause: a slow host drops datagrams at the socket, and `udp.reorder_*` bounds the reorder window. Memory cannot grow with input size. |
+| SRT | `srt-runtime`'s TSBPD scheduler and receive buffer bound what is held; the host socket keeps reading and late packets are dropped. No playback-tied pause action exists. |
+
