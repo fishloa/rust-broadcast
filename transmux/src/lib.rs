@@ -25,7 +25,9 @@
 //! - **Demux (`Unpackage`) inputs:** MPEG-2 TS ([`TsDemux`], a thin batch
 //!   wrapper over the event-driven [`StreamingTsDemux`] — issue #555),
 //!   fMP4/CMAF ([`Fmp4Demux`]), progressive (non-fragmented) MP4
-//!   ([`ProgressiveDemux`] — issue #561), MPEG Program Stream ([`PsDemux`]),
+//!   ([`ProgressiveDemux`] — issue #561), and the streaming MP4 stage
+//!   [`mp4_demux::Mp4Demux`] (seekable byte ranges or forward-only input), MPEG
+//!   Program Stream ([`PsDemux`]),
 //!   WebM/Matroska ([`WebmDemux`] — Xiph/EBML/fixed-size laced blocks are
 //!   unlaced into one sample per frame, see the module docs), FLV
 //!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
@@ -187,6 +189,7 @@ pub mod ll_hls;
 pub mod media;
 pub mod mhas;
 pub mod mkv_mux;
+pub mod mp4_demux;
 pub mod mpeg2_display;
 pub mod mpeg_legacy;
 pub mod nal;

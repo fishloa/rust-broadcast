@@ -76,6 +76,10 @@ pub const KEY_ID_LEN: usize = 16;
 /// Size of the widest fixed header: `size` + `type` + 64-bit `largesize`.
 pub const BOX_HEADER_LARGESIZE_SIZE: usize = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
 
+/// Size of the widest possible box header: `size` + `type` + 64-bit
+/// `largesize` + 128-bit `usertype` (ISO/IEC 14496-12:2026 §4.2).
+pub const MAX_BOX_HEADER_SIZE: usize = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE + UUID_TYPE_SIZE;
+
 /// Byte offset of the `size` field, which starts every box (ISO/IEC 14496-12:2026 §4.2).
 pub const BOX_SIZE_OFFSET: usize = 0;
 

@@ -261,6 +261,99 @@ pub struct TrackInfo {
     pub tapt: Option<crate::quicktime::TrackApertureModeDimensionsBox>,
 }
 
+impl TrackInfo {
+    /// The reader's track view for an already-parsed `trak`.
+    ///
+    /// A caller that holds the whole `moov` (the whole-input demuxers) needs
+    /// the same per-track facts [`Reader`] surfaces in [`Step::Tracks`]. This
+    /// is that view, built from the typed box tree: each `stsd` entry is
+    /// serialised back to its own box bytes so [`SampleEntryInfo::body`] is
+    /// the bytes the reader would have copied. `handler` is zero when the
+    /// `trak` carries no `hdlr`, which the whole-input demuxers never read.
+    pub fn from_trak(trak: &TrackBox) -> Result<Self> {
+        use broadcast_common::Serialize;
+        let mdia = trak
+            .mdia
+            .as_ref()
+            .ok_or(Error::UnexpectedBox { expected: "mdia" })?;
+        let mdhd = mdia
+            .mdhd
+            .as_ref()
+            .ok_or(Error::UnexpectedBox { expected: "mdhd" })?;
+        let minf = mdia
+            .minf
+            .as_ref()
+            .ok_or(Error::UnexpectedBox { expected: "minf" })?;
+        let stbl = minf
+            .stbl
+            .as_ref()
+            .ok_or(Error::UnexpectedBox { expected: "stbl" })?;
+        let stsd = stbl
+            .children
+            .iter()
+            .find_map(|child| match child {
+                StblChild::Stsd(stsd) => Some(Ok(stsd.clone())),
+                StblChild::Opaque(bytes)
+                    if bytes.len() >= BOX_HEADER_MIN_SIZE
+                        && &bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] == b"stsd" =>
+                {
+                    Some(crate::init_segment::SampleDescriptionBox::parse(
+                        bytes.as_slice(),
+                    ))
+                }
+                _ => None,
+            })
+            .ok_or(Error::UnexpectedBox { expected: "stsd" })??;
+        let mut entries = Vec::with_capacity(stsd.entries.len());
+        for entry in &stsd.entries {
+            let mut body = alloc::vec![0u8; entry.serialized_len()];
+            let len = entry.serialize_into(&mut body).unwrap_or(0);
+            body.truncate(len);
+            let mut fourcc = [0u8; BOX_TYPE_SIZE];
+            if body.len() >= BOX_HEADER_MIN_SIZE {
+                fourcc.copy_from_slice(&body[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
+            }
+            entries.push(SampleEntryInfo {
+                fourcc,
+                body,
+                typed: match entry {
+                    SampleEntryVariant::Unknown(_) => None,
+                    known => Some(known.clone()),
+                },
+            });
+        }
+        let references = match trak.track_references()? {
+            Some(reference) => reference.references,
+            None => Vec::new(),
+        };
+        let edits = match trak.edts.as_ref().and_then(|edts| edts.elst.as_ref()) {
+            Some(elst) => elst.entries.clone(),
+            None => Vec::new(),
+        };
+        let tapt = trak
+            .opaque
+            .iter()
+            .find(|b| b.box_type == crate::quicktime::aperture::TAPT)
+            .and_then(|b| {
+                crate::quicktime::TrackApertureModeDimensionsBox::parse_body(&b.data).ok()
+            });
+        Ok(Self {
+            track_id: trak.tkhd.track_id,
+            handler: mdia
+                .hdlr
+                .as_ref()
+                .map_or([0u8; BOX_TYPE_SIZE], |hdlr| hdlr.handler_type),
+            timescale: mdhd.timescale,
+            duration: mdhd.duration,
+            header: trak.tkhd.clone(),
+            references,
+            edits,
+            entries,
+            tapt,
+        })
+    }
+}
+
 /// One fragment (`moof`) the reader is about to hand out samples for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -345,6 +438,22 @@ impl Warning {
 }
 
 broadcast_common::impl_spec_display!(Warning);
+
+impl Warning {
+    /// The absolute file offset the fault starts at.
+    #[must_use]
+    pub const fn position(&self) -> u64 {
+        match self {
+            Self::ClampedBox { offset, .. }
+            | Self::UnparseableSampleEntry { offset, .. }
+            | Self::WaveWithoutEsds { offset }
+            | Self::ZeroMovieTimescale { offset }
+            | Self::TruncatedMdat { offset }
+            | Self::TruncatedFragment { offset }
+            | Self::MalformedFragment { offset } => *offset,
+        }
+    }
+}
 
 /// One step of the reader state machine.
 #[derive(Debug)]
@@ -658,6 +767,19 @@ impl Reader {
         self.movie
             .as_ref()
             .map(|movie| SamplePlan::new(movie, &self.tracks, self.config.total_len))
+    }
+
+    /// The movie timescale (`mvhd.timescale`), once `moov` is parsed.
+    #[must_use]
+    pub fn movie_timescale(&self) -> Option<Timescale> {
+        self.movie.as_ref().map(|movie| movie.mvhd.timescale)
+    }
+
+    /// Whether the movie is fragmented (`moov` carries `mvex`), once `moov` is
+    /// parsed. `None` before the track table is known.
+    #[must_use]
+    pub fn is_fragmented(&self) -> Option<bool> {
+        self.movie.as_ref().map(|_| self.fragmented)
     }
 }
 

@@ -91,6 +91,25 @@ pub enum Error {
     #[error("invalid input: {0}")]
     InvalidInput(&'static str),
 
+    /// A byte range supplied to [`Mp4Demux`](crate::mp4_demux::Mp4Demux) did
+    /// not match the range it asked for: either the offset differed, or the
+    /// supply was longer than requested. Both ranges are named so the caller
+    /// can see what it got wrong.
+    #[error(
+        "supplied range {got_offset}+{got_len} does not match the requested \
+         {expected_offset}+{expected_len}"
+    )]
+    InputRangeMismatch {
+        /// Offset the stage asked for.
+        expected_offset: u64,
+        /// Length the stage asked for.
+        expected_len: u64,
+        /// Offset the caller supplied.
+        got_offset: u64,
+        /// Length the caller supplied.
+        got_len: u64,
+    },
+
     /// A sample's `dts` and `pts` differ by more than `i64`, so the
     /// composition offset cannot be represented.
     #[error("sample timestamps span more than i64")]
