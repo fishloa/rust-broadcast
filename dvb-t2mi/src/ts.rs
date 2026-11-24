@@ -5,7 +5,7 @@
 use alloc::collections::VecDeque;
 
 use crate::crc::CRC_LEN;
-use crate::packet::{BYTE2_RFU_MASK, PacketType};
+use crate::packet::{PacketType, SECOND_HEADER_BYTE_RFU_MASK};
 
 /// Per-PID T2-MI packet reassembler.
 ///
@@ -19,6 +19,20 @@ pub struct PacketReassembler {
 
 /// Total bytes in a T2-MI header.
 pub(crate) const HEADER_LEN: usize = 6;
+
+/// Offset of the `superframe_idx`/`t2mi_stream_id` byte in a T2-MI header.
+const SUPERFRAME_BYTE_OFFSET: usize = 2;
+/// Offset of the reserved byte in a T2-MI header.
+const RFU_BYTE_OFFSET: usize = 3;
+/// Offset of `payload_len_bits` in a T2-MI header.
+const PAYLOAD_LEN_BITS_OFFSET: usize = 4;
+/// Shift placing the high byte of `payload_len_bits`.
+const PAYLOAD_LEN_HIGH_SHIFT: u32 = 8;
+/// Bits in a byte, for the bit- to byte-length rounding.
+const BITS_PER_BYTE: usize = 8;
+/// Offsets of the two RFU bytes probed in a `packet_type`-stripped tail.
+const RFU_FIRST_SCAN_OFFSET: usize = 2;
+const RFU_SECOND_SCAN_OFFSET: usize = 3;
 
 /// Given at least [`HEADER_LEN`] bytes at the start of `header`, the total
 /// packet length (header + payload + CRC-32 trailer) implied by its
@@ -34,8 +48,9 @@ pub(crate) fn implied_packet_len(header: &[u8]) -> Option<usize> {
     if header.len() < HEADER_LEN {
         return None;
     }
-    let payload_len_bits = ((header[4] as u16) << 8) | (header[5] as u16);
-    let payload_len_bytes = payload_len_bits.div_ceil(8) as usize;
+    let payload_len_bits = (u16::from(header[PAYLOAD_LEN_BITS_OFFSET]) << PAYLOAD_LEN_HIGH_SHIFT)
+        | u16::from(header[PAYLOAD_LEN_BITS_OFFSET + 1]);
+    let payload_len_bytes = payload_len_bits.div_ceil(BITS_PER_BYTE as u16) as usize;
     Some(HEADER_LEN + payload_len_bytes + CRC_LEN)
 }
 
@@ -51,7 +66,9 @@ pub(crate) fn header_plausible(header: &[u8]) -> bool {
     }
     // Allocated packet types: ETSI TS 102 773 Table 1, i.e. `PacketType`.
     let packet_type_ok = PacketType::is_allocated(header[0]);
-    packet_type_ok && (header[2] & BYTE2_RFU_MASK == 0) && header[3] == 0
+    packet_type_ok
+        && (header[SUPERFRAME_BYTE_OFFSET] & SECOND_HEADER_BYTE_RFU_MASK == 0)
+        && header[RFU_BYTE_OFFSET] == 0
 }
 
 /// Like [`header_plausible`], but legal for a tail holding fewer than
@@ -69,8 +86,10 @@ pub(crate) fn partial_header_plausible(header: &[u8]) -> bool {
     };
     // Allocated packet types: ETSI TS 102 773 Table 1, i.e. `PacketType`.
     let packet_type_ok = PacketType::is_allocated(*first);
-    let rfu_byte2_ok = rest.get(2).is_none_or(|b| b & BYTE2_RFU_MASK == 0);
-    let rfu_byte3_ok = rest.get(3).is_none_or(|b| *b == 0);
+    let rfu_byte2_ok = rest
+        .get(RFU_FIRST_SCAN_OFFSET)
+        .is_none_or(|b| b & SECOND_HEADER_BYTE_RFU_MASK == 0);
+    let rfu_byte3_ok = rest.get(RFU_SECOND_SCAN_OFFSET).is_none_or(|b| *b == 0);
     packet_type_ok && rfu_byte2_ok && rfu_byte3_ok
 }
 

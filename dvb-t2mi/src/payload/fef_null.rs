@@ -95,7 +95,7 @@ impl S2Field1 {
     /// Decode from the wire byte.  Every byte maps to a variant (lossless).
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x07 {
+        match v & S1_BITS {
             0 => Self::Fft1k,
             1 => Self::Fft2k,
             2 => Self::Fft4k,
@@ -161,17 +161,39 @@ impl FefNullPayload {
     /// Decode S2 field 1 (3 bits, upper nibble minus rfu).
     #[must_use]
     pub fn s2_field1(&self) -> S2Field1 {
-        S2Field1::from_u8(self.s2_field >> 1)
+        S2Field1::from_u8(self.s2_field >> S2_FIELD1_SHIFT)
     }
 
     /// S2 field 2: mixed flag (1 bit, bit 0).
     #[must_use]
     pub fn is_mixed(&self) -> bool {
-        (self.s2_field & 0x01) != 0
+        (self.s2_field & S2_MIXED_FLAG_MASK) != 0
     }
 }
 
 const FEF_NULL_LEN: usize = 3;
+
+/// Bit width of S2 field 1 / `s1_field` (3 bits).
+const S1_BITS: u8 = 0x07;
+/// Mask of the reserved top bit of the S1/S2 byte.
+const S1_S2_RFU_MASK: u8 = 0x80;
+/// Offset of the reserved byte preceding the S1/S2 byte.
+const RFU_BYTE_OFFSET: usize = 1;
+/// Offset of the byte carrying `s1_field` / `s2_field`.
+const S1_S2_BYTE_OFFSET: usize = 2;
+/// Shift placing the reserved top bit for the error report.
+const RFU_TOP_BIT_SHIFT: u32 = 7;
+
+/// Shift placing `s1_field` above `s2_field` in the S1/S2 byte.
+const S1_SHIFT: u32 = 4;
+/// Mask of the three-bit `s1_field`.
+const S1_MASK: u8 = 0x07;
+/// Mask of the four-bit `s2_field`.
+const S2_MASK: u8 = 0x0F;
+/// Shift selecting S2 field 1 from `s2_field`.
+const S2_FIELD1_SHIFT: u32 = 1;
+/// Mask of the mixed flag (S2 field 2) inside `s2_field`.
+const S2_MIXED_FLAG_MASK: u8 = 0x01;
 
 impl<'a> Parse<'a> for FefNullPayload {
     type Error = crate::error::Error;
@@ -180,20 +202,21 @@ impl<'a> Parse<'a> for FefNullPayload {
         need_in(bytes, FEF_NULL_LEN, "FefNullPayload")?;
         // Layout (Figure 12): fef_idx(8) | rfu(9) | s1_field(3) | s2_field(4).
         // rfu spans all of byte 1 plus the top bit of byte 2.
-        if bytes[1] != 0 || bytes[2] & 0x80 != 0 {
+        if bytes[RFU_BYTE_OFFSET] != 0 || bytes[S1_S2_BYTE_OFFSET] & S1_S2_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "9-bit rfu",
                     expected: 0,
-                    found: (u64::from(bytes[1]) << 1) | u64::from(bytes[2] >> 7),
+                    found: (u64::from(bytes[RFU_BYTE_OFFSET]) << 1)
+                        | u64::from(bytes[S1_S2_BYTE_OFFSET] >> RFU_TOP_BIT_SHIFT),
                 },
             ));
         }
         Ok(FefNullPayload {
             fef_idx: bytes[0],
             // byte 2: rfu(1) | s1_field(3) [6:4] | s2_field(4) [3:0]
-            s1_field: S1Field::try_from((bytes[2] >> 4) & 0x07)?,
-            s2_field: bytes[2] & 0x0F,
+            s1_field: S1Field::try_from((bytes[S1_S2_BYTE_OFFSET] >> S1_SHIFT) & S1_MASK)?,
+            s2_field: bytes[S1_S2_BYTE_OFFSET] & S2_MASK,
         })
     }
 }
@@ -212,18 +235,19 @@ impl Serialize for FefNullPayload {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
         need_out(buf, self.serialized_len())?;
-        if self.s2_field > 0x0F {
+        if self.s2_field > S2_MASK {
             return Err(crate::Error::FieldOverflow(
                 broadcast_common::len::FieldOverflow {
                     field: "s2_field",
                     value: u64::from(self.s2_field),
-                    max: 0x0F,
+                    max: u64::from(S2_MASK),
                 },
             ));
         }
         buf[0] = self.fef_idx;
-        buf[1] = 0; // rfu (high 8 of the 9 reserved bits)
-        buf[2] = ((u8::from(self.s1_field) & 0x07) << 4) | (self.s2_field & 0x0F);
+        buf[RFU_BYTE_OFFSET] = 0; // rfu (high 8 of the 9 reserved bits)
+        buf[S1_S2_BYTE_OFFSET] =
+            ((u8::from(self.s1_field) & S1_MASK) << S1_SHIFT) | (self.s2_field & S2_MASK);
         Ok(self.serialized_len())
     }
 }

@@ -8,10 +8,25 @@ const HEADER_LEN: usize = 6;
 
 /// Largest `superframe_idx` (4-bit field, byte 2 bits `[7:4]`, §5.1).
 const SUPERFRAME_IDX_MAX: u8 = 0x0F;
-/// Byte 2 bit 3 — the RFU bit that must be zero (§5.1).
-pub(crate) const BYTE2_RFU_MASK: u8 = 0x08;
-/// Byte 2 bits `[2:0]` — `t2mi_stream_id` (§5.1).
+/// Bit 3 of the second header byte — the RFU bit that must be zero (§5.1).
+pub(crate) const SECOND_HEADER_BYTE_RFU_MASK: u8 = 0x08;
+/// Bits `[2:0]` of the second header byte — `t2mi_stream_id` (§5.1).
 const T2MI_STREAM_ID_MASK: u8 = 0x07;
+/// Shift placing `superframe_idx` at the top of the second header byte.
+const SUPERFRAME_IDX_SHIFT: u32 = 4;
+
+/// Offset of `packet_type` in the T2-MI header (§5.1, Table 1).
+const PACKET_TYPE_OFFSET: usize = 0;
+/// Offset of `packet_count` in the T2-MI header.
+const PACKET_COUNT_OFFSET: usize = 1;
+/// Offset of the `superframe_idx`/`t2mi_stream_id` byte in the T2-MI header.
+const SUPERFRAME_BYTE_OFFSET: usize = 2;
+/// Offset of the reserved byte in the T2-MI header.
+const RFU_BYTE_OFFSET: usize = 3;
+/// Offset of `payload_len_bits` in the T2-MI header.
+const PAYLOAD_LEN_BITS_OFFSET: usize = 4;
+/// Bits in a byte, for the bit- to byte-length rounding.
+const BITS_PER_BYTE: usize = 8;
 
 wire_enum! {
     /// Packet types per ETSI TS 102 773 Table 1.
@@ -118,38 +133,42 @@ impl<'a> broadcast_common::Parse<'a> for Header {
                 },
             ))?;
 
-        let packet_type = PacketType::try_from(hdr[0])?;
-        let packet_count = hdr[1];
+        let packet_type = PacketType::try_from(hdr[PACKET_TYPE_OFFSET])?;
+        let packet_count = hdr[PACKET_COUNT_OFFSET];
 
         // byte 2 [7:4] = superframe_idx
-        let superframe_idx = (hdr[2] >> 4) & SUPERFRAME_IDX_MAX;
+        let superframe_idx =
+            (hdr[SUPERFRAME_BYTE_OFFSET] >> SUPERFRAME_IDX_SHIFT) & SUPERFRAME_IDX_MAX;
 
         // byte 2 [3] = rfu — spec says must be 0
-        if hdr[2] & BYTE2_RFU_MASK != 0 {
+        if hdr[SUPERFRAME_BYTE_OFFSET] & SECOND_HEADER_BYTE_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "byte 2 bit 3",
                     expected: 0,
-                    found: u64::from(hdr[2] & BYTE2_RFU_MASK),
+                    found: u64::from(hdr[SUPERFRAME_BYTE_OFFSET] & SECOND_HEADER_BYTE_RFU_MASK),
                 },
             ));
         }
 
         // byte 2 [2:0] = t2mi_stream_id
-        let t2mi_stream_id = hdr[2] & T2MI_STREAM_ID_MASK;
+        let t2mi_stream_id = hdr[SUPERFRAME_BYTE_OFFSET] & T2MI_STREAM_ID_MASK;
 
         // byte 3 = rfu — spec says must be 0
-        if hdr[3] != 0 {
+        if hdr[RFU_BYTE_OFFSET] != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "byte 3",
                     expected: 0,
-                    found: u64::from(hdr[3]),
+                    found: u64::from(hdr[RFU_BYTE_OFFSET]),
                 },
             ));
         }
 
-        let payload_len_bits = u16::from_be_bytes([hdr[4], hdr[5]]);
+        let payload_len_bits = u16::from_be_bytes([
+            hdr[PAYLOAD_LEN_BITS_OFFSET],
+            hdr[PAYLOAD_LEN_BITS_OFFSET + 1],
+        ]);
 
         Ok(Header {
             packet_type,
@@ -165,7 +184,7 @@ impl Header {
     /// Compute payload length in bytes (ceil(bits / 8)).
     #[must_use]
     pub fn payload_len_bytes(&self) -> usize {
-        (self.payload_len_bits as usize).div_ceil(8)
+        (self.payload_len_bits as usize).div_ceil(BITS_PER_BYTE)
     }
 
     /// Total packet size including header + payload + CRC-32 trailer, in bytes.
@@ -200,8 +219,11 @@ impl Header {
                         what: "T2MI Header",
                     },
                 ))?;
-        let payload_len_bits = u16::from_be_bytes([hdr[4], hdr[5]]);
-        let payload_len_bytes = (payload_len_bits as usize).div_ceil(8);
+        let payload_len_bits = u16::from_be_bytes([
+            hdr[PAYLOAD_LEN_BITS_OFFSET],
+            hdr[PAYLOAD_LEN_BITS_OFFSET + 1],
+        ]);
+        let payload_len_bytes = (payload_len_bits as usize).div_ceil(BITS_PER_BYTE);
         let end = HEADER_LEN + payload_len_bytes;
         if packet.len() < end {
             return Err(crate::error::Error::PayloadLengthMismatch {
@@ -259,13 +281,14 @@ impl broadcast_common::Serialize for Header {
             ));
         }
 
-        buf[0] = self.packet_type.into();
-        buf[1] = self.packet_count;
-        buf[2] = (self.superframe_idx << 4) | self.t2mi_stream_id;
-        buf[3] = 0; // RFU = 0
+        buf[PACKET_TYPE_OFFSET] = self.packet_type.into();
+        buf[PACKET_COUNT_OFFSET] = self.packet_count;
+        buf[SUPERFRAME_BYTE_OFFSET] =
+            (self.superframe_idx << SUPERFRAME_IDX_SHIFT) | self.t2mi_stream_id;
+        buf[RFU_BYTE_OFFSET] = 0; // RFU = 0
         let len_be = self.payload_len_bits.to_be_bytes();
-        buf[4] = len_be[0];
-        buf[5] = len_be[1];
+        buf[PAYLOAD_LEN_BITS_OFFSET] = len_be[0];
+        buf[PAYLOAD_LEN_BITS_OFFSET + 1] = len_be[1];
 
         Ok(HEADER_LEN)
     }
