@@ -128,6 +128,24 @@ A thin `std` adapter (feature `std`) drives a `Reader` over `Read + Seek` for ca
 
 **Tests and tooling** that want "all samples of this small fixture" collect `DemuxEvent`s into per-track `Vec`s with a helper in the `publish = false` `test-harness` crate, taken as a path-only dev-dependency. It is never available to non-test code.
 
+### 4.5 Limits and defaults (builder may tune with evidence)
+
+| Limit | Default | Reason |
+|---|---|---|
+| max box header walk depth | 16 | deepest real nesting is about 8 |
+| max `moov` size | 256 MB | about 16M samples; far above any real file |
+| max samples per track | 50M | 24 h at 600 Hz audio |
+| max single sample size | 64 MB | well above an 8K intra frame |
+| max fragment (`moof`+`mdat`) held | 64 MB | above any real CMAF fragment |
+| max segment held (HLS/DASH/Smooth pull) | 64 MB | as today's per-source caps |
+| max samples in a plan | as max samples per track, per track | the plan is an index (P2) |
+| per-track read-ahead (seekable demux) | 4 MB | coalesces sample reads; bounds what one shared buffer pins |
+| progressive reorder buffer (append-only sink) | 64 MB | far above the skew of a sanely muxed input |
+| start window (origin without a plan) | 10 s of media or 16 MB | above real mux skew at stream start |
+| max segments in a manifest summary | 1M | a week of 0.5 s segments |
+
+Every limit is a field of the crate's `Limits` struct, overridable by the caller; no literal appears outside it.
+
 ### 4.6 `broadcast-core`: a foundation that does not break
 
 broadcast-common is at major 14 and holds about 35 modules, from the `Parse`/`Serialize` traits to an XML reader, a backoff policy and HTTP dates. Any break in any module is a major, and under epoch purity every crate above it then takes a major-class release. An outside project that adopts `isobmff` would get a breaking bump because an unrelated module changed. No project builds on that.
@@ -160,24 +178,6 @@ sans-IO is right for the core and too much ceremony for a first use. The crates 
 - transmux gets the matching one-call drivers for "this file to that output".
 - Every driver is covered by the bounded-memory tests of §6. None of them offers a "read it all" call.
 - Each crate's README opens with the five-line example, and `isobmff` carries migration notes for users of `mp4` and `mp4parse`.
-
-### 4.5 Limits and defaults (builder may tune with evidence)
-
-| Limit | Default | Reason |
-|---|---|---|
-| max box header walk depth | 16 | deepest real nesting is about 8 |
-| max `moov` size | 256 MB | about 16M samples; far above any real file |
-| max samples per track | 50M | 24 h at 600 Hz audio |
-| max single sample size | 64 MB | well above an 8K intra frame |
-| max fragment (`moof`+`mdat`) held | 64 MB | above any real CMAF fragment |
-| max segment held (HLS/DASH/Smooth pull) | 64 MB | as today's per-source caps |
-| max samples in a plan | as max samples per track, per track | the plan is an index (P2) |
-| per-track read-ahead (seekable demux) | 4 MB | coalesces sample reads; bounds what one shared buffer pins |
-| progressive reorder buffer (append-only sink) | 64 MB | far above the skew of a sanely muxed input |
-| start window (origin without a plan) | 10 s of media or 16 MB | above real mux skew at stream start |
-| max segments in a manifest summary | 1M | a week of 0.5 s segments |
-
-Every limit is a field of the crate's `Limits` struct, overridable by the caller; no literal appears outside it.
 
 ## 5. Phases
 
@@ -273,16 +273,6 @@ Every phase, run by Claude on its own gate run, never on a delegate's word:
 - **Golden drift**: a move that silently changes bytes. Byte identity is the gate at every phase.
 - **Dev-dependency cycles** when tests move with the box code: cross-crate tests live in the highest crate.
 
-## 11. Adoption programme (starts when Milestone 1 ships)
-
-Not design work, but what turns good crates into the default ones. Tracked as issues, run alongside Phases 4 to 6.
-
-- **Public proof.** Differential runs against ffmpeg, Bento4 and Shaka Packager over public corpora (ffmpeg FATE samples, the GPAC test suite), with results published in the repo. OSS-Fuzz enrolment for `isobmff`, `mpeg-ts` and `dvb-si`. Published benchmarks: peak memory and throughput against Bento4 and Shaka on the #953 input.
-- **Tools people install.** Prebuilt binaries and a Homebrew formula for `media-doctor` and the `transmux` CLI, built by CI on tag. An `mp4dump`-style box inspector subcommand. A browser (WASM) inspector on the Pages site: drop a file, see its boxes, nothing uploaded.
-- **Project signals.** A CONTRIBUTING guide that says which tests run without the private fixtures (the public tier must be enough for an outside PR). A public roadmap. A docs site with a cookbook. Whether the repo moves to a GitHub organisation is an owner decision.
-- **Adopters.** Upstream PRs once `isobmff` 0.2 is live: telemetry-parser/Gyroflow (replace `mp4parse-patched`), Rerun (`re_mp4` exists because `mp4` died), `retina`. One well-known user is worth more than any README.
-- **Later coverage.** HEIF/AVIF items. A `codec` crate for the container-independent bitstream parsers. Single-pass progressive output as its own tested feature.
-
 ## 9. Left to the builder
 
 - Exact type and method names, module layout inside `isobmff`, and how the `Step` enum is split.
@@ -332,3 +322,13 @@ Separate owner decisions, not blocking this design:
 - Crate names `isobmff` and `broadcast-matroska`.
 - The aim is to be the default crates for this work. Folded in: a frozen `broadcast-core` 1.0 (§4.6), tags, `.mov` input and permissive mode in `isobmff` (§4.7), streaming drivers (§4.8), and the adoption programme (§11). The name `broadcast-core` is free on crates.io and is confirmed at the Milestone 2 sign-off.
 - The §4.5 defaults are starting estimates, confirmed by measurement in Phase 2.
+
+## 11. Adoption programme (starts when Milestone 1 ships)
+
+Not design work, but what turns good crates into the default ones. Tracked as issues, run alongside Phases 4 to 6.
+
+- **Public proof.** Differential runs against ffmpeg, Bento4 and Shaka Packager over public corpora (ffmpeg FATE samples, the GPAC test suite), with results published in the repo. OSS-Fuzz enrolment for `isobmff`, `mpeg-ts` and `dvb-si`. Published benchmarks: peak memory and throughput against Bento4 and Shaka on the #953 input.
+- **Tools people install.** Prebuilt binaries and a Homebrew formula for `media-doctor` and the `transmux` CLI, built by CI on tag. An `mp4dump`-style box inspector subcommand. A browser (WASM) inspector on the Pages site: drop a file, see its boxes, nothing uploaded.
+- **Project signals.** A CONTRIBUTING guide that says which tests run without the private fixtures (the public tier must be enough for an outside PR). A public roadmap. A docs site with a cookbook. Whether the repo moves to a GitHub organisation is an owner decision.
+- **Adopters.** Upstream PRs once `isobmff` 0.2 is live: telemetry-parser/Gyroflow (replace `mp4parse-patched`), Rerun (`re_mp4` exists because `mp4` died), `retina`. One well-known user is worth more than any README.
+- **Later coverage.** HEIF/AVIF items. A `codec` crate for the container-independent bitstream parsers. Single-pass progressive output as its own tested feature.
