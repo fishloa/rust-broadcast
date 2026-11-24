@@ -322,10 +322,11 @@ fn a_truncated_final_mdat_emits_the_samples_inside_it() {
     let strict_drive = strict(truncated);
     assert!(strict_drive.error.is_some());
     let lenient = permissive(truncated);
-    assert!(matches!(
-        lenient.warnings.as_slice(),
-        [Warning::TruncatedMdat { .. }]
-    ));
+    assert!(
+        matches!(lenient.warnings.as_slice(), [Warning::TruncatedMdat { .. }]),
+        "{:?}",
+        lenient.warnings
+    );
     assert_eq!(
         lenient.samples.iter().map(sample_key).collect::<Vec<_>>(),
         strict_drive

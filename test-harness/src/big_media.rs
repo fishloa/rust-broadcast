@@ -706,6 +706,8 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
         Some(HandlerBox {
             version: 0,
             flags: 0,
+            pre_defined: 0,
+            reserved: [0u8; 12],
             handler_type: spec.handler,
             name: vec![],
         }),

@@ -469,6 +469,8 @@ fn tiny_mp4() -> Vec<u8> {
         Some(HandlerBox {
             version: 0,
             flags: 0,
+            pre_defined: 0,
+            reserved: [0u8; 12],
             handler_type: *b"vide",
             name: vec![],
         }),

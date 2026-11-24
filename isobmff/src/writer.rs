@@ -110,6 +110,22 @@ pub enum SampleEntry {
     },
 }
 
+impl SampleEntry {
+    /// A registered private sample entry as the raw entry the writer carries.
+    ///
+    /// The writer itself needs no [`BoxRegistry`](crate::registry::BoxRegistry):
+    /// a private entry becomes its complete box bytes here, at the call
+    /// boundary, and travels through [`SampleEntry::Raw`] unchanged.
+    pub fn from_registered(entry: &dyn crate::registry::RegisteredBox) -> Result<Self> {
+        let fourcc = entry.fourcc();
+        let mut body = vec![0u8; entry.serialized_len()];
+        let written = entry.serialize_into(&mut body)?;
+        body.truncate(written);
+        raw_entry_variant(fourcc, &body)?;
+        Ok(Self::Raw { fourcc, body })
+    }
+}
+
 /// The default sample values one track's `trex` states (§8.8.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrexDefaults {
@@ -178,6 +194,12 @@ pub struct TrackSetup {
     pub trex: Option<TrexDefaults>,
     /// CENC protection to wrap the sample entry with.
     pub protection: Option<SampleEntryProtection>,
+    /// The parsed `trak` this setup was read from, holding every `tkhd`/
+    /// `mdhd`/`hdlr` field, extra child (`tref`, `udta`, `gmhd`) and wire order
+    /// a [`TrackSetup`] does not model. The writer swaps its own `stbl` in and
+    /// writes the rest exactly as the source carried it; `None` builds the
+    /// conventional `trak`.
+    pub shell: Option<TrackBox>,
 }
 
 impl TrackSetup {
@@ -202,6 +224,7 @@ impl TrackSetup {
             entry,
             trex: None,
             protection: None,
+            shell: None,
         }
     }
 }
@@ -248,6 +271,7 @@ pub(crate) fn build_init_segment(
     tracks: &[TrackSetup],
     movie_timescale: Timescale,
     file_type: &FileType,
+    shell: Option<&crate::plan::MovieShell>,
 ) -> Result<Vec<u8>> {
     let ftyp = FileTypeBox {
         major_brand: file_type.major_brand,
@@ -260,17 +284,20 @@ pub(crate) fn build_init_segment(
         .map(|t| t.track_id)
         .max()
         .map_or(TrackId::new(1), TrackId::next);
-    let mvhd = MovieHeaderBox {
-        version: 0,
-        flags: 0,
-        creation_time: 0,
-        modification_time: 0,
-        timescale: movie_timescale,
-        duration: 0,
-        rate: MVHD_RATE_UNITY,
-        volume: MVHD_VOLUME_UNITY,
-        matrix: IDENTITY_MATRIX,
-        next_track_id,
+    let mvhd = match shell {
+        Some(shell) => shell.mvhd.clone(),
+        None => MovieHeaderBox {
+            version: 0,
+            flags: 0,
+            creation_time: 0,
+            modification_time: 0,
+            timescale: movie_timescale,
+            duration: 0,
+            rate: MVHD_RATE_UNITY,
+            volume: MVHD_VOLUME_UNITY,
+            matrix: IDENTITY_MATRIX,
+            next_track_id,
+        },
     };
 
     let mut trak_boxes = Vec::with_capacity(tracks.len());
@@ -289,17 +316,38 @@ pub(crate) fn build_init_segment(
         });
     }
 
-    let moov = MovieBox::new(
-        mvhd,
-        trak_boxes,
-        Some(MovieExtendsBox::new(trex, vec![])),
-        vec![],
-    );
+    let moov = match shell {
+        Some(shell) => MovieBox {
+            mvhd,
+            tracks: trak_boxes,
+            mvex: shell
+                .mvex
+                .clone()
+                .or_else(|| Some(MovieExtendsBox::new(trex, vec![]))),
+            opaque: shell.opaque.clone(),
+            order: shell.order.clone(),
+        },
+        None => MovieBox::new(
+            mvhd,
+            trak_boxes,
+            Some(MovieExtendsBox::new(trex, vec![])),
+            vec![],
+        ),
+    };
 
-    let mut out = vec![0u8; ftyp.serialized_len() + moov.serialized_len()];
-    let n1 = ftyp.serialize_into(&mut out)?;
-    let n2 = moov.serialize_into(&mut out[n1..])?;
-    out.truncate(n1 + n2);
+    let mut out = Vec::new();
+    out.extend_from_slice(&ftyp.try_to_bytes()?);
+    if let Some(shell) = shell {
+        for box_ in shell.top_level_at(crate::plan::BoxPosition::AfterFtyp) {
+            out.extend_from_slice(&box_.try_to_bytes()?);
+        }
+    }
+    out.extend_from_slice(&moov.try_to_bytes()?);
+    if let Some(shell) = shell {
+        for box_ in shell.top_level_at(crate::plan::BoxPosition::AfterMoov) {
+            out.extend_from_slice(&box_.try_to_bytes()?);
+        }
+    }
     Ok(out)
 }
 
@@ -308,6 +356,12 @@ pub(crate) fn build_init_segment(
 fn build_trak(t: &TrackSetup) -> Result<TrackBox> {
     let entry = track_entry(t)?;
     let stbl = empty_sample_table(empty_sample_description(entry));
+    let stbl = match progressive::stbl_template(t.shell.as_ref()) {
+        Some(template) => SampleTableBox {
+            children: progressive::stbl_children(Some(template), stbl.children),
+        },
+        None => stbl,
+    };
     track_box(t, stbl)
 }
 
@@ -316,6 +370,17 @@ fn build_trak(t: &TrackSetup) -> Result<TrackBox> {
 /// The fragmented init and the progressive writer share this: only the sample
 /// table differs between them.
 pub(crate) fn track_box(t: &TrackSetup, stbl: SampleTableBox) -> Result<TrackBox> {
+    if let Some(shell) = &t.shell {
+        let mut trak = shell.clone();
+        trak.edts = None;
+        let minf = trak
+            .mdia
+            .as_mut()
+            .and_then(|mdia| mdia.minf.as_mut())
+            .ok_or(Error::UnexpectedBox { expected: "minf" })?;
+        minf.stbl = Some(stbl);
+        return Ok(trak);
+    }
     let minf = track_media_information(&t.handler, stbl, t.minf_header);
     let mdia = MediaBox::new(
         Some(track_media_header(t.timescale, t.language)),
@@ -477,6 +542,8 @@ fn track_handler(t: &TrackSetup) -> HandlerBox {
     HandlerBox {
         version: 0,
         flags: 0,
+        pre_defined: 0,
+        reserved: [0u8; 12],
         handler_type: t.handler,
         name: t.handler_name.clone(),
     }

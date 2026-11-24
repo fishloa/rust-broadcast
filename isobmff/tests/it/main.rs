@@ -17,6 +17,7 @@ mod permissive;
 mod quicktime;
 mod reader_fragmented;
 mod reader_progressive;
+mod registry;
 mod sample_bytes_budget;
 mod sample_table;
 mod short_buffers;

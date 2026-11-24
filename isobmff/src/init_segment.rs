@@ -667,6 +667,8 @@ const HDLR_NAME_OFFSET: usize = 32;
 const HDLR_FIXED_BODY_LEN: usize = 20;
 /// Width of the `pre_defined` field (§8.4.3.2).
 const HDLR_PRE_DEFINED_LEN: usize = 4;
+/// Byte offset of `pre_defined` (§8.4.3.2).
+const HDLR_PRE_DEFINED_OFFSET: usize = 12;
 /// Reserved bytes after `handler_type` (§8.4.3.2).
 const HDLR_RESERVED_LEN: usize = 12;
 
@@ -677,7 +679,14 @@ const HDLR_RESERVED_LEN: usize = 12;
 pub struct HandlerBox {
     pub version: u8,
     pub flags: u32,
+    /// The `pre_defined` field (§8.4.3.2). ISO files write 0; a QuickTime
+    /// file's own convention puts the component type there (`mhlr`/`dhlr`),
+    /// which is carried verbatim so a `.mov` round-trips.
+    pub pre_defined: u32,
     pub handler_type: [u8; BOX_TYPE_SIZE],
+    /// The 12 reserved bytes after `handler_type` (§8.4.3.2), carried verbatim:
+    /// Apple writes its manufacturer code and flags there.
+    pub reserved: [u8; HDLR_RESERVED_LEN],
     pub name: Vec<u8>,
 }
 
@@ -689,7 +698,18 @@ impl<'a> Parse<'a> for HandlerBox {
         need_in(bytes, HDLR_MIN_LEN, "hdlr")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
         let flags = u24_at(bytes, FULLBOX_FLAGS_WIRE_OFFSET);
+        let pre_defined = u32_at(bytes, HDLR_PRE_DEFINED_OFFSET);
         let handler_type = fourcc_at(bytes, HDLR_HANDLER_TYPE_OFFSET);
+        let mut reserved = [0u8; HDLR_RESERVED_LEN];
+        reserved.copy_from_slice(
+            bytes
+                .get(HDLR_HANDLER_TYPE_OFFSET + BOX_TYPE_SIZE..HDLR_NAME_OFFSET)
+                .ok_or(Error::BufferTooShort(BufferTooShort {
+                    need: HDLR_NAME_OFFSET,
+                    have: bytes.len(),
+                    what: "hdlr reserved",
+                }))?,
+        );
         let name = if bytes.len() > HDLR_NAME_OFFSET {
             bytes[HDLR_NAME_OFFSET..].to_vec()
         } else {
@@ -698,7 +718,9 @@ impl<'a> Parse<'a> for HandlerBox {
         Ok(Self {
             version: ver,
             flags,
+            pre_defined,
             handler_type,
+            reserved,
             name,
         })
     }
@@ -723,13 +745,15 @@ impl Serialize for HandlerBox {
             self.flags,
             false,
         )?;
-        // pre_defined(32) = 0, written rather than skipped (r04-W45).
-        buf[c..c + HDLR_PRE_DEFINED_LEN].fill(0);
+        // pre_defined(32), carried from the source rather than skipped
+        // (r04-W45): a QuickTime file keeps its component type here.
+        buf[c..c + HDLR_PRE_DEFINED_LEN].copy_from_slice(&self.pre_defined.to_be_bytes());
         c += HDLR_PRE_DEFINED_LEN;
         buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&self.handler_type);
         c += BOX_TYPE_SIZE;
-        // reserved[3] (12 bytes) = 0, written rather than skipped (r04-W45).
-        buf[c..c + HDLR_RESERVED_LEN].fill(0);
+        // reserved[3] (12 bytes), carried from the source rather than skipped
+        // (r04-W45): Apple writes its manufacturer code here.
+        buf[c..c + HDLR_RESERVED_LEN].copy_from_slice(&self.reserved);
         c += HDLR_RESERVED_LEN;
         if !self.name.is_empty() {
             buf[c..c + self.name.len()].copy_from_slice(&self.name);
@@ -5421,6 +5445,8 @@ mod tests {
             &HandlerBox {
                 version: 0,
                 flags: 0,
+                pre_defined: 0,
+                reserved: [0u8; 12],
                 handler_type: *b"vide",
                 name: alloc::vec![b'v', b'i', b'd', 0],
             },
