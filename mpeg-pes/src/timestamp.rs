@@ -7,6 +7,21 @@ use broadcast_common::clock33::{Clock33, ClockOutOfRange};
 
 /// The 4-bit prefix of a standalone DTS field (ISO/IEC 13818-1 Table 2-21).
 pub(crate) const DTS_PREFIX: u8 = 0b0001;
+/// The 4-bit prefix of a standalone PTS field.
+pub(crate) const PTS_PREFIX: u8 = 0b0010;
+/// The 4-bit prefix of the PTS field that is followed by a DTS.
+pub(crate) const PTS_WITH_DTS_PREFIX: u8 = 0b0011;
+/// Byte width of a PTS/DTS field.
+pub(crate) const FIELD_LEN: usize = 5;
+/// Bit shift of the 4-bit prefix within the field's first byte.
+const PREFIX_SHIFT: u32 = 4;
+/// `marker_bit` at bit 0 of field bytes 0, 2 and 4.
+const MARKER_MASK: u8 = 0x01;
+/// Byte offsets of the `marker_bit`s within the PTS/DTS field
+/// (ISO/IEC 13818-1 Table 2-21).
+const MARKER_BYTE_0: usize = 0;
+const MARKER_BYTE_2: usize = MARKER_BYTE_0 + 2;
+const MARKER_BYTE_4: usize = MARKER_BYTE_2 + 2;
 
 /// Presentation Time Stamp (33-bit, 90 kHz units), carried as the validated
 /// [`Clock33`] so an out-of-range value cannot be constructed.
@@ -56,7 +71,7 @@ impl Pts {
     /// Encode as a standalone 5-byte PTS field (prefix `0010`, for `PTS_DTS_flags = 10`).
     #[must_use]
     pub fn to_field_bytes(self) -> [u8; 5] {
-        write(self.0.ticks(), 0b0010)
+        write(self.0.ticks(), PTS_PREFIX)
     }
 
     /// Decode from a 5-byte PTS-only field (prefix `0010`).
@@ -64,12 +79,16 @@ impl Pts {
     /// Exact inverse of [`to_field_bytes`](Self::to_field_bytes).
     /// Returns an error if the prefix or marker bits are wrong.
     pub fn from_field_bytes(b: &[u8; 5]) -> Result<Self> {
-        Ok(Pts(Clock33::try_new(read(b, 0b0010, "PTS")?)?))
+        Ok(Pts(Clock33::try_new(read(b, PTS_PREFIX, "PTS")?)?))
     }
 
     /// Decode from a 5-byte PTS field in a PTS+DTS pair (prefix `0011`).
     pub fn from_field_bytes_with_dts(b: &[u8; 5]) -> Result<Self> {
-        Ok(Pts(Clock33::try_new(read(b, 0b0011, "PTS(with DTS)")?)?))
+        Ok(Pts(Clock33::try_new(read(
+            b,
+            PTS_WITH_DTS_PREFIX,
+            "PTS(with DTS)",
+        )?)?))
     }
 }
 
@@ -133,28 +152,32 @@ impl From<Clock33> for Dts {
 /// `marker_bit`s must be `1`. The returned value is always in `[0, 2^33)`, so it
 /// fits a [`Clock33`] without another check.
 pub(crate) fn read(b: &[u8], prefix: u8, what: &'static str) -> Result<u64> {
-    if b.len() < 5 {
+    if b.len() < FIELD_LEN {
         return Err(crate::error::Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: 5,
+                need: FIELD_LEN,
                 have: b.len(),
                 what,
             },
         ));
     }
-    if (b[0] >> 4) != prefix {
+    if (b[0] >> PREFIX_SHIFT) != prefix {
         return Err(crate::error::Error::BadTimestampPrefix(what));
     }
-    if b[0] & 0x01 == 0 || b[2] & 0x01 == 0 || b[4] & 0x01 == 0 {
+    if b[MARKER_BYTE_0] & MARKER_MASK == 0
+        || b[MARKER_BYTE_2] & MARKER_MASK == 0
+        || b[MARKER_BYTE_4] & MARKER_MASK == 0
+    {
         return Err(crate::error::Error::BadTimestampMarker(what));
     }
-    // `b.len() < 5` was rejected above, so the first five bytes are present.
-    let field = [b[0], b[1], b[2], b[3], b[4]];
+    // `b.len() < FIELD_LEN` was rejected above, so the field bytes are present.
+    let mut field = [0_u8; FIELD_LEN];
+    field.copy_from_slice(&b[..FIELD_LEN]);
     Ok(broadcast_common::clock33::unpack_marked(&field).timestamp)
 }
 
 /// Encode a 33-bit value into a 5-byte PTS/DTS field with the given 4-bit prefix.
-pub(crate) fn write(ts: u64, prefix: u8) -> [u8; 5] {
+pub(crate) fn write(ts: u64, prefix: u8) -> [u8; FIELD_LEN] {
     broadcast_common::clock33::pack_marked(ts, prefix)
 }
 
