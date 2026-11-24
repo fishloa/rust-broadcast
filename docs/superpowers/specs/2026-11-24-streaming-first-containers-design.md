@@ -167,7 +167,7 @@ The MP4 box code uses five things from broadcast-common: `len`, the error kinds,
 These shape the `isobmff` API, so they are in scope here rather than added later.
 
 - **iTunes-style metadata** (`moov/udta/meta/ilst`): typed read and write of the common atoms (title, artist, album, track and disc numbers, date, genre, cover art, encoder), freeform `----` items, and chapter lists (Nero `chpl` and QuickTime chapter tracks), read and write. Tag reading is the most common reason a project takes an MP4 crate. Cover art is a bounded unit under `Limits`.
-- **QuickTime `.mov`**: the atoms camera and editing files carry that ISO files do not: `wave` and version 1/2 sound sample descriptions, `wide`, `mdta`-keyed metadata (`keys`/`ilst`), `tapt`/`clef`, `gmhd` and `tmcd` timecode tracks, a QuickTime-brand `ftyp` or none at all. Read and write (P10): each atom round-trips, and a written `.mov` is checked with `ffprobe` and, on macOS, AVFoundation's own reader.
+- **QuickTime `.mov`**: the atoms camera and editing files carry that ISO files do not: `wave` and version 1/2 sound sample descriptions, `wide`, `mdta`-keyed metadata (`keys`/`ilst`), `tapt`/`clef`, `gmhd` and `tmcd` timecode tracks, a QuickTime-brand `ftyp` or none at all. Read only for now (owner, 2026-11-24): a QuickTime-only atom parses into a typed value and is kept so nothing is lost on read, but the writer does not produce QuickTime-brand files. Listed as an exception in §4.9.
 - **Permissive mode**: `Limits`-style configuration picks strict (today's behaviour: any violation is an error) or permissive. Permissive tolerates the known real-world faults and reports each as a typed warning event instead of failing: an unknown sample entry (kept as an opaque track, which #4056 needs anyway), a box that overruns its parent by trailing bytes, a `wave` atom without `esds`, a zero `mvhd` timescale, a truncated final `mdat`. It never guesses a field value and never relaxes a `Limits` bound. Strict stays the default inside the workspace; byte-identical round-trips are a strict-mode property.
 - Each of these gets real fixtures first (camera originals, an iTunes-tagged `.m4a`, a QuickTime `.mov`), in `private/fixtures/` with PROVENANCE, and the spec transcription where one exists (QuickTime File Format is Apple-published; the `ilst` atom set is documented by Apple and by long-standing convention, so each atom is cited to its source or left opaque).
 
@@ -205,7 +205,7 @@ The workspace already has this pattern twice: `dvb_si::DescriptorRegistry` lets 
 | Progressive and fragmented files | yes | yes |
 | Metadata and private tracks (#4056) | yes | yes |
 | `udta`/`meta`, `©xyz`, iTunes tags, chapters | yes | yes |
-| QuickTime-specific atoms | yes | yes |
+| QuickTime-specific atoms (`.mov`) | yes | no, for now (owner decision): the writer emits ISO-brand files only. A track read from a `.mov` is written as its ISO equivalent where one exists, or refused with a typed error naming the atom. |
 | Private boxes via `BoxRegistry` | yes | yes |
 | Matroska/WebM, TS, PS, FLV data tracks | yes | yes, where the container can carry them |
 | Permissive-mode repairs | yes | no: a tolerated fault is reported, and the writer emits the corrected, conformant form. Reproducing a malformed file is not a goal. |
@@ -239,7 +239,7 @@ Each phase lands on main green, with byte-identical goldens, before the next sta
 - §4.2 and §4.3, including metadata tracks and `©xyz` (#4056) and `Limits`.
 - broadcast-common minor: `Demand`'s optional offset and the capped-read helper (§6). Both additive.
 - Fuzz targets for the reader (progressive and fragmented) and writer round-trip.
-- The §4.7 coverage (tags, `.mov`, permissive mode) and the §4.8 drivers, each behind its real fixtures.
+- The §4.7 coverage (tags, `.mov` input, permissive mode) and the §4.8 drivers, each behind its real fixtures.
 - The §4.9 extension points: `BoxRegistry`, typed or opaque sample entries on read and write, and a worked third-party example crate under `examples/` that adds one private box and one private metadata track from outside `isobmff`.
 - Gate addition: whole-file round-trip (read, write back, byte-identical) over every §4.7 fixture, including a file with a metadata track.
 - Gate: peak-memory tests over generated multi-GB files; hostile-count/size tests; a remote-fixture test over an HTTP range adapter that bounds the number of requests.
@@ -357,6 +357,7 @@ Separate owner decisions, not blocking this design:
 - The capped-read helper lives in broadcast-common behind `std`.
 - The broadcast-common major and the workspace re-release at Milestone 2.
 - Crate names `isobmff` and `broadcast-matroska`.
+- QuickTime `.mov` is read only for now.
 - People must be able to plug in special or private parsers (the drone metadata case), and writing is supported as much as reading: P10, P11 and §4.9.
 - The aim is to be the default crates for this work. Folded in: a frozen `broadcast-core` 1.0 (§4.6), tags, `.mov` input and permissive mode in `isobmff` (§4.7), streaming drivers (§4.8), and the adoption programme (§11). The name `broadcast-core` is free on crates.io and is confirmed at the Milestone 2 sign-off.
 - The §4.5 defaults are starting estimates, confirmed by measurement in Phase 2.
