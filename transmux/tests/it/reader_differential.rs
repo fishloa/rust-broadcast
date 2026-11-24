@@ -57,12 +57,13 @@ fn fixtures() -> Vec<(String, PathBuf)> {
     out
 }
 
-fn reader_rows(bytes: &[u8]) -> isobmff::Result<Vec<SampleRef>> {
+fn reader_rows(bytes: &[u8]) -> isobmff::Result<(Vec<isobmff::TrackId>, Vec<SampleRef>)> {
     let config = ReaderConfig::default()
         .with_total_len(Some(bytes.len() as u64))
         .with_order(SampleOrder::File);
     let mut reader = Reader::new(config);
     let mut samples = Vec::new();
+    let mut tracks = Vec::new();
     loop {
         match reader.next()? {
             Step::Need(range) => {
@@ -71,12 +72,12 @@ fn reader_rows(bytes: &[u8]) -> isobmff::Result<Vec<SampleRef>> {
                 reader.supply(range.offset, bytes.get(start..end).unwrap_or(&[]))?;
             }
             Step::Sample(sample) => samples.push(sample),
-            Step::Tracks(_) => {}
+            Step::Tracks(infos) => tracks = infos.iter().map(|info| info.track_id).collect(),
             Step::Done => break,
             _ => break,
         }
     }
-    Ok(samples)
+    Ok((tracks, samples))
 }
 
 #[test]
@@ -96,7 +97,7 @@ fn the_reader_agrees_with_the_progressive_demuxer() {
         if media.tracks.is_empty() {
             continue;
         }
-        let rows = reader_rows(&bytes).expect("reader");
+        let (reader_tracks, rows) = reader_rows(&bytes).expect("reader");
         let mut by_track: BTreeMap<u32, Vec<SampleRef>> = BTreeMap::new();
         for sample in &rows {
             by_track
@@ -106,6 +107,11 @@ fn the_reader_agrees_with_the_progressive_demuxer() {
         }
         for track in &media.tracks {
             let id = track.spec.track_id.value();
+            let iso_id: isobmff::TrackId = track.spec.track_id.into();
+            assert!(
+                reader_tracks.contains(&iso_id),
+                "{key}: reader dropped track {id}"
+            );
             let reader_samples = by_track.get(&id).cloned().unwrap_or_default();
             assert_eq!(
                 reader_samples.len(),
