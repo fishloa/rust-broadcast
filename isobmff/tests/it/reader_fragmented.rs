@@ -5,11 +5,13 @@
 //! whole file's `mdat` ranges, so the header-only path and the whole-file path
 //! must agree byte for byte.
 
+use broadcast_common::Parse;
 use isobmff::frag_offsets::{FragmentSampleRange, MdatRange, mdat_ranges, sample_ranges_in};
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::sample_table::SampleRef;
+use isobmff::timing::{MovieFragmentRandomAccessBox, SegmentIndexBox};
 use isobmff::{
-    ByteRange, FragmentInfo, Limits, Reader, ReaderConfig, SampleOrder, Step, TrackInfo,
+    ByteRange, FragmentInfo, Limits, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo,
 };
 
 /// Fragmented fixtures the walk must exercise: enough that a checkout with no
@@ -310,5 +312,192 @@ fn a_truncated_final_fragment_is_a_typed_error() {
     assert!(
         drive(truncated, config(truncated, SampleOrder::DecodeTime)).is_err(),
         "a fragment whose mdat is cut short must fail, not silently yield fewer samples"
+    );
+}
+
+/// Drive to [`Step::Tracks`], seek, and return the first material step after
+/// the seek.
+fn drive_seek(
+    bytes: &[u8],
+    track: u32,
+    decode_time: u64,
+    source: Source,
+) -> isobmff::Result<FragmentInfo> {
+    let config = ReaderConfig::default()
+        .with_total_len(Some(bytes.len() as u64))
+        .with_order(SampleOrder::DecodeTime)
+        .with_source(source);
+    let mut reader = Reader::new(config);
+    let mut sought = false;
+    let mut tracks = 0usize;
+    for _ in 0..1_000_000 {
+        let mut seek_now = false;
+        match reader.step()? {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
+                let end = usize::try_from(range.end()).unwrap_or(usize::MAX);
+                reader.supply(range.offset, bytes.get(start..end).unwrap_or(&[]))?;
+            }
+            Step::Tracks(_) => {
+                tracks += 1;
+                seek_now = tracks == 1;
+            }
+            Step::Fragment(info) => {
+                if sought {
+                    return Ok(info);
+                }
+            }
+            Step::Sample(_) => {
+                if sought {
+                    return Err(isobmff::Error::InvalidInput(
+                        "a sample arrived before the fragment the seek named",
+                    ));
+                }
+            }
+            Step::Done => break,
+            _ => break,
+        }
+        if seek_now {
+            reader.seek_to(isobmff::TrackId::new(track), decode_time)?;
+            sought = true;
+        }
+    }
+    Err(isobmff::Error::InvalidInput(
+        "no fragment after the seek, or the seek never ran",
+    ))
+}
+
+/// The offset of every top-level `moof`, in file order.
+fn moof_offsets(bytes: &[u8]) -> Vec<u64> {
+    isobmff::BoxIter::clamped(bytes)
+        .filter_map(|b| b.ok())
+        .filter(|b| b.header.box_type.is(b"moof"))
+        .map(|b| b.start as u64)
+        .collect()
+}
+
+#[test]
+fn seek_through_sidx_lands_on_the_fragment_it_names() {
+    for name in [
+        "dash/ondemand-sidx/v_dashinit.mp4",
+        "dash/ondemand-sidx/a_dashinit.mp4",
+    ] {
+        let bytes = test_fixtures::read(name);
+        let sidx = isobmff::BoxIter::clamped(&bytes)
+            .filter_map(|b| b.ok())
+            .find(|b| b.header.box_type.is(b"sidx"))
+            .expect("the fixture carries a sidx");
+        let index = SegmentIndexBox::parse(sidx.bytes).expect("sidx parses");
+        let moofs = moof_offsets(&bytes);
+        let mut time = index.earliest_presentation_time;
+        for (slot, reference) in index.references.iter().enumerate() {
+            // The time inside this subsegment, in the index's timescale.
+            let probe = time + u64::from(reference.subsegment_duration) / 2;
+            let info = drive_seek(&bytes, index.reference_id, probe, Source::Seekable)
+                .unwrap_or_else(|err| panic!("{name}: seek to {probe}: {err}"));
+            assert_eq!(
+                info.moof.offset, moofs[slot],
+                "{name}: subsegment {slot} is fragment {slot}"
+            );
+            time += u64::from(reference.subsegment_duration);
+        }
+    }
+}
+
+#[test]
+fn seek_through_sidx_works_over_a_forward_only_source() {
+    let bytes = test_fixtures::read("dash/ondemand-sidx/v_dashinit.mp4");
+    let moofs = moof_offsets(&bytes);
+    let info = drive_seek(&bytes, 1, 1_000, Source::ForwardOnly).expect("forward seek");
+    assert_eq!(info.moof.offset, moofs[0]);
+}
+
+#[test]
+fn seek_through_mfra_lands_on_the_listed_moof() {
+    let bytes = test_fixtures::read("mp4/h264-aac-frag.mp4");
+    let moofs = moof_offsets(&bytes);
+    let mfra = isobmff::BoxIter::clamped(&bytes)
+        .filter_map(|b| b.ok())
+        .find(|b| b.header.box_type.is(b"mfra"))
+        .expect("the fixture carries an mfra");
+    let parsed = MovieFragmentRandomAccessBox::parse(mfra.bytes).expect("mfra parses");
+    let mut checked = 0usize;
+    for tfra in &parsed.tfra {
+        if tfra.entries.len() < 2 {
+            continue;
+        }
+        for entry in &tfra.entries {
+            let info = drive_seek(&bytes, tfra.track_id.value(), entry.time, Source::Seekable)
+                .unwrap_or_else(|err| panic!("seek to {}: {err}", entry.time));
+            assert_eq!(
+                info.moof.offset, entry.moof_offset,
+                "the entry's own time lands on its fragment"
+            );
+            assert!(moofs.contains(&info.moof.offset));
+            checked += 1;
+        }
+        // A time between two listed entries lands on the earlier one.
+        let first = tfra.entries[0];
+        let second = tfra.entries[1];
+        if second.time > first.time + 1 {
+            let probe = first.time + 1;
+            let info = drive_seek(&bytes, tfra.track_id.value(), probe, Source::Seekable)
+                .expect("seek between entries");
+            assert_eq!(
+                info.moof.offset, first.moof_offset,
+                "the earlier entry wins"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 2,
+        "the mfra seek was exercised {checked} time(s)"
+    );
+}
+
+#[test]
+fn a_file_with_no_index_reports_no_index() {
+    let bytes = test_fixtures::read("mp4/cmaf/av-frag.mp4");
+    let mfra = isobmff::BoxIter::clamped(&bytes)
+        .filter_map(|b| b.ok())
+        .find(|b| b.header.box_type.is(b"mfra"))
+        .expect("the fixture carries an mfra");
+    let truncated = &bytes[..mfra.start];
+    let config = ReaderConfig::default()
+        .with_total_len(Some(truncated.len() as u64))
+        .with_order(SampleOrder::DecodeTime);
+    let mut reader = Reader::new(config);
+    let mut seek_error = None;
+    for _ in 0..100_000 {
+        match reader.step() {
+            Ok(Step::Need(range)) => {
+                let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
+                let end = usize::try_from(range.end()).unwrap_or(usize::MAX);
+                if let Err(err) =
+                    reader.supply(range.offset, truncated.get(start..end).unwrap_or(&[]))
+                {
+                    seek_error = Some(err);
+                    break;
+                }
+            }
+            Ok(Step::Tracks(tracks)) => {
+                let track = tracks[0].track_id;
+                if let Err(err) = reader.seek_to(track, 0) {
+                    seek_error = Some(err);
+                    break;
+                }
+            }
+            Ok(Step::Done) => break,
+            Err(err) => {
+                seek_error = Some(err);
+                break;
+            }
+            Ok(_) => {}
+        }
+    }
+    assert!(
+        matches!(seek_error, Some(isobmff::Error::NoIndex { .. })),
+        "a file with neither sidx nor mfra is NoIndex, got {seek_error:?}"
     );
 }
