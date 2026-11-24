@@ -15,6 +15,7 @@ mod largesize_truncation;
 mod metadata;
 mod permissive;
 mod quicktime;
+mod quicktime_write;
 mod reader_fragmented;
 mod reader_progressive;
 mod registry;
