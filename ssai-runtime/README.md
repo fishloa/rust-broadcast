@@ -158,7 +158,7 @@ about alignment that is not there.
 ## Related crates
 
 Depends on `broadcast-common` and `broadcast-hls` (playlist syntax); dev-depends
-on `scte35-splice` and `mp4-emsg` for the real-fixture tests. Media splicing is
+on `scte35-splice` and `isobmff` for the real-fixture tests. Media splicing is
 `transmux`; the HTTP-facing origin is `multimux`.
 
 ## Spec references

@@ -17,7 +17,7 @@ fn timescale(value: u32) -> Timescale {
 }
 
 use broadcast_common::timescale::Timescale;
-use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
+use isobmff::emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 fn fixture() -> Vec<u8> {
     test_fixtures::read("scte35/emsg-v1-scte35-livesim.bin")

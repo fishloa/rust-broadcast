@@ -261,7 +261,7 @@ def _publish_deps(manifest: Path) -> set[str]:
     """Names in [dependencies] / [build-dependencies] (incl. target-specific
     tables), plus VERSIONED dev-dependencies: `cargo publish` resolves a
     dev-dependency that carries a `version` against the index (mpeg-ts's dev-dep
-    on mp4-emsg gates its publish), while a path-only dev-dependency is stripped
+    on isobmff gates its publish), while a path-only dev-dependency is stripped
     and cannot gate anything -- counting those created cycles that used to
     collapse the order to alphabetical."""
     import tomllib

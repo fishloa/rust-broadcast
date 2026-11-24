@@ -1,5 +1,7 @@
 # Changelog
 
+The `mp4-emsg` crate was absorbed into `isobmff`; this file records its history up to the absorption.
+
 All notable changes to `mp4-emsg` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

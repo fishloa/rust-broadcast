@@ -19,7 +19,7 @@
 //! higher-layer Period-level adjustment).
 use crate::error::{Error, Result};
 use broadcast_common::timescale::Timescale;
-use mp4_emsg::{EmsgBox, PresentationTime};
+use isobmff::emsg::{EmsgBox, PresentationTime};
 
 /// Segment-level timing parameters needed for emsg version conversion.
 ///
@@ -97,7 +97,7 @@ fn movie_timeline_t(emsg: &EmsgBox<'_>, timing: &SegmentTiming) -> Result<u64> {
             .earliest_presentation_time
             .checked_add(u64::from(d))
             .ok_or(Error::EmsgPresentationTimeOverflow),
-        // `PresentationTime` is `#[non_exhaustive]` in `mp4-emsg`: a future
+        // `PresentationTime` is `#[non_exhaustive]` in `isobmff`: a future
         // variant is an error here, never a panic.
         _ => Err(Error::UnsupportedPresentationTime),
     }
@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn v0_to_v1_ept_plus_delta_overflow_is_error_not_wrap() {
         let emsg = EmsgBox {
-            flags: mp4_emsg::EMSG_FLAGS,
+            flags: isobmff::emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "1",
             timescale: timescale(90_000),
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn v0_to_v1_to_v0_round_trips() {
         let emsg = EmsgBox {
-            flags: mp4_emsg::EMSG_FLAGS,
+            flags: isobmff::emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "1",
             timescale: timescale(90_000),
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn v1_to_v0_to_v1_round_trips() {
         let emsg = EmsgBox {
-            flags: mp4_emsg::EMSG_FLAGS,
+            flags: isobmff::emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "2",
             timescale: timescale(90_000),
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn timescale_mismatch_returns_error() {
         let emsg = EmsgBox {
-            flags: mp4_emsg::EMSG_FLAGS,
+            flags: isobmff::emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "",
             timescale: timescale(90_000),
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn v0_event_before_ept_errors() {
         let emsg = EmsgBox {
-            flags: mp4_emsg::EMSG_FLAGS,
+            flags: isobmff::emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "",
             timescale: timescale(90_000),

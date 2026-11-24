@@ -275,14 +275,6 @@ what = "Parses and builds `single_operation_message` and `multiple_operation_mes
 crates_io = true
 lifecycle = "active"
 
-[crate.mp4-emsg]
-domain = "signalling"
-summary = "ISO BMFF / DASH Event Message Box (emsg) v0 and v1."
-standards = "ISO/IEC 23009-1 emsg (edition unverified); DASH-IF IOP Part 10 V5.0.0"
-what = "Parses and builds the `emsg` box used for in-band DASH/CMAF events (SCTE 35, ID3, ad tracking), deriving `size` and `version` from the typed fields on serialize."
-crates_io = true
-lifecycle = "active"
-
 [crate.timed-metadata]
 domain = "signalling"
 summary = "Convert SCTE 35 to/from DASH emsg and to HLS EXT-X-DATERANGE; 33-bit PTS wrap unrolling."
@@ -319,9 +311,9 @@ lifecycle = "active"
 
 [crate.isobmff]
 domain = "containers"
-summary = "ISO/IEC 14496-12:2026 (ISO BMFF) box syntax: box/FullBox headers, top-level and movie-fragment boxes, sample tables, CENC boxes."
-standards = "ISO/IEC 14496-12:2026, ISO/IEC 23001-7 (CENC boxes)"
-what = "Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` headers (64-bit `largesize`, `uuid` usertype), the size-driven `box_iter` walker, `ftyp`/`styp`/`mdat`, the sample-table/timing boxes, the visual-extension and sample-group boxes, the movie-fragment boxes, the CENC boxes, and the §8.8.7/§8.8.8 fragment sample-offset resolver. It knows box syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`."
+summary = "ISO/IEC 14496-12:2026 (ISO BMFF) box syntax: box/FullBox headers, top-level and movie-fragment boxes, sample tables, CENC boxes, DASH emsg."
+standards = "ISO/IEC 14496-12:2026, ISO/IEC 23001-7 (CENC boxes), ISO/IEC 23009-1 §5.10.3.3 (emsg); DASH-IF IOP Part 10 V5.0.0"
+what = "Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` headers (64-bit `largesize`, `uuid` usertype), the size-driven `box_iter` walker, `ftyp`/`styp`/`mdat`, the sample-table/timing boxes, the visual-extension and sample-group boxes, the movie-fragment boxes, the CENC boxes, the §8.8.7/§8.8.8 fragment sample-offset resolver, and the DASH Event Message Box (`emsg`, versions 0 and 1). It knows box syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`."
 crates_io = true
 lifecycle = "active"
 

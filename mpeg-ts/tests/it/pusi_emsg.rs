@@ -3,7 +3,7 @@
 //! Verifies that:
 //! - `PusiReassembler` can reassemble a real TS packet carrying a DASH emsg box
 //! - The reassembled bytes are byte-identical to the known-good fixture
-//! - The emsg box parses correctly via `mp4-emsg`
+//! - The emsg box parses correctly via `isobmff`
 
 use broadcast_common::timescale::Timescale;
 use mpeg_ts::OwnedTsPacket;
@@ -57,8 +57,8 @@ fn reassemble_emsg_from_ts() {
     );
 
     // Now parse as an emsg box.
-    let emsg =
-        mp4_emsg::EmsgBox::parse(&reassembled).expect("reassembled bytes must parse as EmsgBox");
+    let emsg = isobmff::emsg::EmsgBox::parse(&reassembled)
+        .expect("reassembled bytes must parse as EmsgBox");
     assert_eq!(
         emsg.timescale,
         timescale(90_000),

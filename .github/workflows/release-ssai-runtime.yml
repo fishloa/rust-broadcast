@@ -8,7 +8,7 @@ name: Release ssai-runtime
 #
 # DEPENDENCY ORDER: ssai-runtime depends on broadcast-common (lockstep,
 # already live) and broadcast-hls (>= 0.1, already live); its scte35-splice
-# and mp4-emsg deps are dev-only (fixture tests/examples) and do not gate
+# and isobmff deps are dev-only (fixture tests/examples) and do not gate
 # publishing. Downstream, playout-runtime depends on ssai-runtime (>= 0.1) —
 # this must land before that (see release-playout-runtime.yml).
 

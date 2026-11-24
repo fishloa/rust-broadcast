@@ -81,7 +81,7 @@ paths; every one of them is private-only now.
 | ISO/IEC 14496-1 / -3 | MPEG-4 systems ES descriptor / AAC | edition unverified | `transmux` | Partial | `private/specs-verified/mpeg/transmux/codec/es-descriptor-14496-1.md`, `heaac-asc.md` | `esds`, AudioSpecificConfig incl. SBR/PS. |
 | ISO/IEC 13818-7 | MPEG-2 AAC (ADTS) | 2004 | `transmux`, `container-probe` | Partial | `private/specs-verified/mpeg/transmux/codec/adts-error-check.md` | ADTS framing. |
 | ISO/IEC 23000-19 | CMAF | edition unverified | `transmux` | Partial | — | CMAF mux and conformance validator. |
-| ISO/IEC 23009-1 | MPEG-DASH (MPD, `emsg`) | edition unverified | `transmux`, `mp4-emsg`, `timed-metadata`, `media-doctor`, `multimux` | Partial | `private/specs-verified/mpeg/mp4-emsg/emsg.md` | MPD write (and validation in `media-doctor`); `emsg` v0/v1 Full. |
+| ISO/IEC 23009-1 | MPEG-DASH (MPD, `emsg`) | edition unverified | `transmux`, `isobmff`, `timed-metadata`, `media-doctor`, `multimux` | Partial | `private/specs-verified/mpeg/mp4-emsg/emsg.md` | MPD write (and validation in `media-doctor`); `emsg` v0/v1 Full. |
 | ISO/IEC 23001-7 | Common Encryption (CENC) | edition unverified | `transmux`, `broadcast-common`, `broadcast-hls` | Partial | `private/specs-verified/mpeg/transmux/codec/cenc-23001-7.md` | `cenc` and `cbcs` encrypt/decrypt; scheme identity in `broadcast-common`. Paid text. |
 | ISO/IEC 23008-3 | MPEG-H 3D Audio | edition unverified | `transmux` | Partial | `private/specs-verified/mpeg/transmux/codec/mpegh-mhaC.md` | `mhaC` record and TS carriage; no audio decoding. |
 | ITU-T H.264 / H.265 / H.266 / H.262 | AVC / HEVC / VVC / MPEG-2 video | H.264 (08/2024), H.265 (01/2026), H.266 (01/2026), H.262 (1995) | `transmux` | Partial | `private/specs-verified/mpeg/transmux/codec/` | Parameter-set and SEI fields needed for container signalling only. Samples are never decoded. |
@@ -93,7 +93,7 @@ paths; every one of them is private-only now.
 |---|---|---|---|---|---|---|
 | ANSI/SCTE 35 | Digital Program Insertion cueing | 2023r1 | `scte35-splice` (and consumers `timed-metadata`, `ssai-runtime`, `playout-runtime`, `media-doctor`, `compliance-probe`) | Full | `scte35-splice/docs/` | All splice commands and descriptors. |
 | ANSI/SCTE 104 | Automation to compression API | 2023 | `scte104` | Full (messages + operations) | `private/specs-verified/scte/scte104/ansi_scte_104/` | |
-| ANSI/SCTE 214-3 | SCTE 35 in DASH (`emsg`) | edition unverified | `timed-metadata`, `mp4-emsg`, `transmux` | Partial | — | §8.3.3 `emsg` carriage, scheme `urn:scte:scte35:2013:bin`. |
+| ANSI/SCTE 214-3 | SCTE 35 in DASH (`emsg`) | edition unverified | `timed-metadata`, `isobmff`, `transmux` | Partial | — | §8.3.3 `emsg` carriage, scheme `urn:scte:scte35:2013:bin`. |
 | ANSI/CTA-608-E | Line 21 data services | S-2019 | `cc-data` (`decode`), `caption-convert`, `timed-metadata` | Partial | `private/specs-verified/captions/cc-data/decode/cea608-decode.md` | Byte-pair decode model. |
 | ANSI/CTA-708-E | DTV closed captioning | S-2023 | `cc-data` (`decode`), `caption-convert`, `timed-metadata` | Partial | `private/specs-verified/captions/cc-data/decode/cea708-decode.md` | Service-block decode model. |
 | ATSC A/53 Part 4 | MPEG-2 video system characteristics (caption carriage) | 2009 | `transmux`, `cc-data` | Partial | `private/specs-verified/mpeg/transmux/codec/a53-caption-sei.md` | `GA94` user data / SEI extraction. |
@@ -156,7 +156,7 @@ paths; every one of them is private-only now.
 | Adobe RTMP 1.0 + AMF0 | Real-Time Messaging Protocol | Dec 2012 | `rtmp-runtime`, `transmux` | Partial | `private/specs-verified/rtmp/rtmp-runtime/rtmp.md`, `private/specs-verified/mpeg/transmux/rtmp/rtmp.md` | Publish/ingest only. |
 | Adobe FLV | Flash Video file format | v10.1 Annex E | `transmux`, `container-probe` | Partial | `private/specs-verified/mpeg/transmux/codec/flv.md` | |
 | Microsoft MS-SSTR | Smooth Streaming protocol | revision 11.0 (19 Nov 2024) per the vendored copy's revision summary | `transmux`, `multimux` | Partial | `private/specs-verified/mpeg/transmux/smooth/ms-sstr.md` | Manifest and fragments; PlayReady header via `private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md`. |
-| DASH-IF IOP Part 10 | Events and timed metadata | V5.0.0 (2023-01) | `mp4-emsg` | Reference | `private/specs-verified/mpeg/mp4-emsg/emsg.md` | |
+| DASH-IF IOP Part 10 | Events and timed metadata | V5.0.0 (2023-01) | `isobmff` | Reference | `private/specs-verified/mpeg/mp4-emsg/emsg.md` | |
 | DASH-IF CPIX | Content protection information exchange | 2.3 | — | Not implemented | `cpix/docs/` | Docs-only directory. |
 | Apple HLS SAMPLE-AES | MPEG-2 stream encryption for HLS | version unverified | `transmux`, `broadcast-hls` | Partial | `private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` | |
 | AOMedia AV1-ISOBMFF, WebM VP9-ISOBMFF, Opus/FLAC-in-ISOBMFF | Codec bindings in ISOBMFF | as published (free) | `transmux` | Partial | `private/specs-verified/mpeg/transmux/codec/` | Sample entries and config records only. |

@@ -9,8 +9,8 @@
 #[path = "../../examples/ssai_ad_stitch/demo.rs"]
 mod demo;
 
+use isobmff::emsg::EmsgBox;
 use timed_metadata::convert::emsg_to_scte35;
-use transmux::EmsgBox;
 
 /// The HLS media playlist must carry exactly one `#EXT-X-DISCONTINUITY` per
 /// splice join (ad-in + resume = 2), each immediately before an `#EXTINF`.

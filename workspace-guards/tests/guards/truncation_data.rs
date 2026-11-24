@@ -113,10 +113,6 @@ pub const TABLE: &[Crate] = &[
         allowlist: &[],
     },
     Crate {
-        name: "mp4-emsg",
-        allowlist: &[],
-    },
-    Crate {
         name: "isobmff",
         allowlist: &[],
     },

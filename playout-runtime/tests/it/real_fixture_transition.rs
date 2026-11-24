@@ -14,7 +14,7 @@
 
 use broadcast_common::clock33::{self, Clock33};
 use broadcast_common::{Parse, Serialize};
-use mp4_emsg::{EmsgBox, PresentationTime};
+use isobmff::emsg::{EmsgBox, PresentationTime};
 use playout_runtime::schedule::{CodecConfigId, EntryKind, Schedule, ScheduleEntry};
 use playout_runtime::scte35::{BreakEdge, build_splice_insert, to_section};
 use playout_runtime::transition::TransitionPlan;

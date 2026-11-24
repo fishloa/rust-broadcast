@@ -52,8 +52,8 @@ use isobmff::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 use isobmff::visual_ext::{ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 
 use crate::vp9::Vp9SampleEntry;
+use isobmff::emsg::EmsgBox;
 use isobmff::timing::TimeToSampleBox;
-pub use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 /// ISO-639-2 packed language code `und` (undetermined).
 const LANG_UND: u16 = 0x55C4;
@@ -808,9 +808,9 @@ pub fn build_media_segment(
 ///
 /// # Timing
 ///
-/// [`PresentationTime::Delta`] (version 0) expresses the event time relative to
+/// [`isobmff::emsg::PresentationTime::Delta`] (version 0) expresses the event time relative to
 /// the segment's earliest presentation time in `timescale` ticks.
-/// [`PresentationTime::Absolute`] (version 1) expresses an absolute
+/// [`isobmff::emsg::PresentationTime::Absolute`] (version 1) expresses an absolute
 /// representation-timeline position, per ISO/IEC 23009-1 §5.10.3.3.
 ///
 /// # Empty slice

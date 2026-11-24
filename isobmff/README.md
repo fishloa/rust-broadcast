@@ -7,8 +7,8 @@ This crate is the box layer below the `transmux` muxing hub: it parses and
 writes the `size`/`type` box headers (including the 64-bit `largesize` and the
 `uuid` extended type), the top-level and movie-fragment box set, the
 sample-table/timing boxes, the visual-extension boxes, the sample-group boxes,
-and the CENC box syntax (ISO/IEC 23001-7). It never knows the media IR or a
-codec bitstream.
+the CENC box syntax (ISO/IEC 23001-7), and the DASH Event Message Box (`emsg`,
+ISO/IEC 23009-1). It never knows the media IR or a codec bitstream.
 
 ## Coverage
 
@@ -22,6 +22,7 @@ codec bitstream.
 | `sample_groups` | `prft`, `sgpd`, `sbgp`, `subs`, `ssrt` |
 | `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
 | `frag_offsets` | ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 sample-data addressing rules |
+| `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
 
 Every type implements the workspace `Parse` / `Serialize` pair, so a parse →
 serialize round-trip is byte-identical.
@@ -40,11 +41,13 @@ let ftyp = FileTypeBox {
 let bytes = ftyp.try_to_bytes().unwrap();
 ```
 
-Two runnable examples ship with the crate:
+Four runnable examples ship with the crate:
 
 ```bash
 cargo run -p isobmff --example parse_boxes -- fixtures/mp4/h264-aac-prog.mp4
 cargo run -p isobmff --example build_ftyp
+cargo run -p isobmff --example parse_emsg
+cargo run -p isobmff --example build_emsg
 ```
 
 ## Features
@@ -59,3 +62,4 @@ cargo run -p isobmff --example build_ftyp
 - **Box / FullBox**: ISO/IEC 14496-12:2026 §4.2.
 - **Skip-unknown rule**: §4.2 — unknown type → ignore + skip via `size`.
 - **CENC boxes**: ISO/IEC 23001-7 §12.
+- **`emsg`**: ISO/IEC 23009-1 §5.10.3.3; DASH-IF IOP Part 10 §6.1.

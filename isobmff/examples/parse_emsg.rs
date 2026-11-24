@@ -3,11 +3,11 @@
 /// decoded fields, and prove a byte-exact round-trip + recomputed `size`.
 ///
 /// ```sh
-/// cargo run -p mp4-emsg --example parse_emsg
+/// cargo run -p isobmff --example parse_emsg
 /// ```
 use std::fs;
 
-use mp4_emsg::EmsgBox;
+use isobmff::emsg::EmsgBox;
 
 fn main() {
     // Fixtures live in the workspace-shared `fixtures/` tree, not under the

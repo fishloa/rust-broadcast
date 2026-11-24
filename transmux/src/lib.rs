@@ -376,10 +376,9 @@ pub use nal::{
 pub use nalu_types::{AvcNalUnit, AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use pipeline::{
-    CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, FrameRateBasis, PresentationTime,
-    Provenance, Sample, SampleFlags, TrackSpec, build_init_segment, build_media_segment,
-    build_media_segment_with_events, nominal_frame_rate, nominal_frame_rate_millihertz,
-    presentation_size,
+    CodecConfig, FragmentTrackData, FrameRateBasis, Provenance, Sample, SampleFlags, TrackSpec,
+    build_init_segment, build_media_segment, build_media_segment_with_events, nominal_frame_rate,
+    nominal_frame_rate_millihertz, presentation_size,
 };
 pub use progressive::ProgressiveMux;
 pub use progressive_demux::ProgressiveDemux;

@@ -694,10 +694,6 @@ pub const TABLE: &[Crate] = &[
         allow: &[],
     },
     Crate {
-        name: "mp4-emsg",
-        allow: &[],
-    },
-    Crate {
         name: "dvb-vbi",
         allow: &[],
     },

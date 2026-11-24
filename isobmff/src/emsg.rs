@@ -3,8 +3,8 @@
 //! Field semantics: DASH-IF IOP Part 10 §6.1 / Table 6-2 (free). Box syntax
 //! (the `aligned(8) class EventMessageBox extends FullBox('emsg', version,
 //! flags = 0)` declaration, field ordering, and the null-terminated-string
-//! layout): ISO/IEC 23009-1 §5.10.3.3 (paid, **not vendored** — see the crate
-//! root caveat). Both the field set/types and the v0/v1 ordering difference are
+//! layout): ISO/IEC 23009-1 §5.10.3.3 (paid, **not vendored**). Both the field
+//! set/types and the v0/v1 ordering difference are
 //! transcribed in `private/specs-verified/mpeg/mp4-emsg/emsg.md`.
 //!
 //! Wire layout (ISOBMFF `FullBox`):
@@ -38,9 +38,12 @@
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::timescale::Timescale;
+use broadcast_common::wire::{u24_at, u32_at, u64_at};
 
 use crate::error::{Error, Result};
-use crate::version::EmsgVersion;
+
+mod version;
+pub use version::{EmsgVersion, VERSION_0, VERSION_1};
 
 /// The 4-byte ISOBMFF box type for an Event Message Box.
 pub const EMSG_BOX_TYPE: [u8; 4] = *b"emsg";
@@ -220,7 +223,7 @@ impl<'a> EmsgBox<'a> {
     pub fn parse(data: &'a [u8]) -> Result<Self> {
         need_in(data, FULLBOX_HEADER_LEN, "emsg FullBox header")?;
 
-        let size = read_u32_at(data, SIZE_OFFSET);
+        let size = u32_at(data, SIZE_OFFSET);
         let mut box_type = [0_u8; BOX_TYPE_LEN];
         box_type.copy_from_slice(&data[BOX_TYPE_OFFSET..VERSION_OFFSET]);
         if box_type != EMSG_BOX_TYPE {
@@ -229,7 +232,7 @@ impl<'a> EmsgBox<'a> {
         let version = data[VERSION_OFFSET];
         // flags = data[9..12]; mandated 0, but parsed permissively (some
         // muxers are sloppy) and kept in `Self::flags`.
-        let flags = read_u24_at(data, FLAGS_OFFSET);
+        let flags = u24_at(data, FLAGS_OFFSET);
 
         if (size as usize) < FULLBOX_HEADER_LEN {
             return Err(Error::InvalidSize {
@@ -269,10 +272,10 @@ impl<'a> EmsgBox<'a> {
         let (value, rest) = parse_cstr(rest, "value")?;
 
         need_in(rest, V0_INTS_LEN, "emsg v0 integer fields")?;
-        let timescale = Timescale::try_new(read_u32_at(rest, V0_TIMESCALE_OFFSET))?;
-        let delta = read_u32_at(rest, V0_PRESENTATION_TIME_DELTA_OFFSET);
-        let event_duration = read_u32_at(rest, V0_EVENT_DURATION_OFFSET);
-        let id = read_u32_at(rest, V0_ID_OFFSET);
+        let timescale = Timescale::try_new(u32_at(rest, V0_TIMESCALE_OFFSET))?;
+        let delta = u32_at(rest, V0_PRESENTATION_TIME_DELTA_OFFSET);
+        let event_duration = u32_at(rest, V0_EVENT_DURATION_OFFSET);
+        let id = u32_at(rest, V0_ID_OFFSET);
         let message_data = &rest[V0_INTS_LEN..];
 
         Ok(EmsgBox {
@@ -291,10 +294,10 @@ impl<'a> EmsgBox<'a> {
     /// scheme\0 value\0 message_data[].
     fn parse_v1(body: &'a [u8]) -> Result<Self> {
         need_in(body, V1_INTS_LEN, "emsg v1 integer fields")?;
-        let timescale = Timescale::try_new(read_u32_at(body, V1_TIMESCALE_OFFSET))?;
-        let presentation_time = read_u64_at(body, V1_PRESENTATION_TIME_OFFSET);
-        let event_duration = read_u32_at(body, V1_EVENT_DURATION_OFFSET);
-        let id = read_u32_at(body, V1_ID_OFFSET);
+        let timescale = Timescale::try_new(u32_at(body, V1_TIMESCALE_OFFSET))?;
+        let presentation_time = u64_at(body, V1_PRESENTATION_TIME_OFFSET);
+        let event_duration = u32_at(body, V1_EVENT_DURATION_OFFSET);
+        let id = u32_at(body, V1_ID_OFFSET);
 
         let (scheme_id_uri, rest) = parse_cstr(&body[V1_INTS_LEN..], "scheme_id_uri")?;
         let (value, message_data) = parse_cstr(rest, "value")?;
@@ -439,32 +442,6 @@ fn write_cstr(out: &mut [u8], off: usize, s: &str) -> usize {
     let term = off + bytes.len();
     out[term] = STRING_TERMINATOR;
     term + 1
-}
-
-fn read_u32(b: &[u8]) -> u32 {
-    let mut bytes = [0_u8; U32_LEN];
-    bytes.copy_from_slice(&b[..U32_LEN]);
-    u32::from_be_bytes(bytes)
-}
-
-fn read_u32_at(b: &[u8], off: usize) -> u32 {
-    read_u32(&b[off..off + U32_LEN])
-}
-
-fn read_u24_at(b: &[u8], off: usize) -> u32 {
-    let mut bytes = [0_u8; U32_LEN];
-    bytes[U32_LEN - FLAGS_LEN..].copy_from_slice(&b[off..off + FLAGS_LEN]);
-    u32::from_be_bytes(bytes)
-}
-
-fn read_u64(b: &[u8]) -> u64 {
-    let mut bytes = [0_u8; U64_LEN];
-    bytes.copy_from_slice(&b[..U64_LEN]);
-    u64::from_be_bytes(bytes)
-}
-
-fn read_u64_at(b: &[u8], off: usize) -> u64 {
-    read_u64(&b[off..off + U64_LEN])
 }
 
 fn write_u32(out: &mut [u8], off: usize, v: u32) -> usize {

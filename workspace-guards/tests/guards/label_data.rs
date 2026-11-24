@@ -1057,23 +1057,6 @@ pub const TABLE: &[Crate] = &[
     // Drift-guard for the spec/field-enum label convention (issue #204).
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
-    // skip-list (errors only — all other public enums in mp4-emsg are spec/field
-    // label enums), and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
-    // A present `Display` delegates to an inherent `name()`, so it transitively
-    // guarantees `name()` exists — this one check enforces the whole convention
-    // and catches a new `pub enum` that nobody labelled.
-    Crate {
-        name: "mp4-emsg",
-        scope: Scope::Crate,
-        matcher: Matcher::Loose,
-        skip: &["Error"],
-        expected: None,
-        min_enums: None,
-    },
-    // Drift-guard for the spec/field-enum label convention (issue #204).
-    //
-    // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
     // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one

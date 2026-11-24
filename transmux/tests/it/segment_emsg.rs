@@ -5,7 +5,7 @@
 //! 1. **emsg present + round-trips (real SCTE-35 payload)** — builds a segment
 //!    with one `emsg` v0 box carrying the committed SCTE 35 splice-info fixture,
 //!    locates the box in the output, asserts placement (after `styp`, before
-//!    `moof`), and round-trips all fields through `mp4_emsg::EmsgBox::parse`.
+//!    `moof`), and round-trips all fields through `isobmff::emsg::EmsgBox::parse`.
 //! 2. **Placement/order** — two `emsg` boxes appear in the output, in order,
 //!    before `moof`.
 //! 3. **No-emsg unchanged** — `build_media_segment_with_events(.., &[])` is
@@ -19,7 +19,7 @@
 //!   `urn:scte:scte35:2013:bin`.
 
 use broadcast_common::timescale::Timescale;
-use mp4_emsg::{EMSG_BOX_TYPE, EmsgBox, EmsgVersion, PresentationTime};
+use isobmff::emsg::{EMSG_BOX_TYPE, EmsgBox, EmsgVersion, PresentationTime};
 use transmux::TrackId;
 use transmux::{FragmentTrackData, Sample, build_media_segment, build_media_segment_with_events};
 

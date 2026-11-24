@@ -13,7 +13,7 @@
 //!
 //! `transmux` (a container-muxing hub) cannot take a dependency on
 //! `timed-metadata` (a DPI/timed-metadata *signalling* conversion crate several
-//! layers up the stack, pulling in `scte35-splice`/`mp4-emsg`) without an
+//! layers up the stack, pulling in `scte35-splice`/`isobmff`) without an
 //! inverted, heavy dependency edge, and the primitive itself has no
 //! dependencies of its own — so it lives here, in the crate every one of the
 //! four already depends on, rather than promoting one sibling to depend on

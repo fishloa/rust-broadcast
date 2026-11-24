@@ -139,7 +139,6 @@ pub const TABLE: &[Crate] = &[
     // match the suffix rule meaningfully.
     runtime("media-doctor", &["Report"], &[]),
     plain("media-plane"),
-    plain("mp4-emsg"),
     plain("isobmff"),
     plain("mpeg-pes"),
     plain("mpeg-ps"),

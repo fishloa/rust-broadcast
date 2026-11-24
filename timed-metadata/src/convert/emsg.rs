@@ -4,14 +4,14 @@
 //! here. (The MPD `EventStream` form, `urn:scte:scte35:2014:xml+bin`, is
 //! SCTE 214-1 §6.8.4 — a different part for a different carriage.)
 //!
-//! #951 recorded this crate and `mp4-emsg` citing contradictory parts. This
+//! #951 recorded this crate and `isobmff` citing contradictory parts. This
 //! crate was right. Settled from DASH-IF IOP v4.3 §5.4.3 p.163, which is
 //! freely published and states the split explicitly, so no paywalled SCTE
 //! document was needed after all.
 use crate::error::{Error, Result};
 use alloc::{string::String, vec::Vec};
 use broadcast_common::timescale::Timescale;
-use mp4_emsg::{EmsgBox, PresentationTime};
+use isobmff::emsg::{EmsgBox, PresentationTime};
 
 /// The SCTE-35 binary carriage scheme for inband DASH `emsg`
 /// (ANSI/SCTE 214-3 §8.3.3).
@@ -56,7 +56,7 @@ impl EmsgConfig {
 /// Wrap a verbatim `splice_info_section` as a SCTE-35 `emsg` box (serialized bytes).
 pub fn scte35_to_emsg(splice_raw: &[u8], cfg: &EmsgConfig) -> Result<Vec<u8>> {
     let boxx = EmsgBox {
-        flags: mp4_emsg::EMSG_FLAGS,
+        flags: isobmff::emsg::EMSG_FLAGS,
         scheme_id_uri: SCTE35_SCHEME,
         value: &cfg.value,
         timescale: cfg.timescale,

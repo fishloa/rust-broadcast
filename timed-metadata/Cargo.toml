@@ -16,7 +16,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 scte35-splice = { path = "../scte35-splice", version = "8.0.0", default-features = false }
-mp4-emsg      = { path = "../mp4-emsg",      version = "0.9.0", default-features = false }
+isobmff       = { path = "../isobmff",       version = "0.1.0", default-features = false }
 broadcast-common    = { path = "../broadcast-common",    version = "14.0.0", default-features = false }
 # The shared HLS attribute-list tokenizer/renderer (issue #1140 T12):
 # `daterange.rs` used to carry its own copy of the quoted-comma splitter and
@@ -33,8 +33,8 @@ serde         = { version = "1", default-features = false, features = ["derive",
 test-fixtures = { path = "../test-fixtures" }
 [features]
 default = ["std"]
-std     = ["jiff/std", "scte35-splice/std", "mp4-emsg/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std", "broadcast-hls/std"]
-serde   = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde", "cc-data?/serde", "dvb-vbi?/serde", "broadcast-hls/serde"]
+std     = ["jiff/std", "scte35-splice/std", "isobmff/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std", "broadcast-hls/std"]
+serde   = ["dep:serde", "scte35-splice/serde", "isobmff/serde", "cc-data?/serde", "dvb-vbi?/serde", "broadcast-hls/serde"]
 # CEA-608/708 -> WebVTT cue extraction (`webvtt::Cea608CueExtractor` /
 # `Cea708CueExtractor`), layered on `cc-data`'s decode-only 608/708 model.
 # Not in `default`: pulls in the whole caption-decode crate, which most

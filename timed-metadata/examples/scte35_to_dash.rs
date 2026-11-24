@@ -10,7 +10,7 @@
 //! ```
 
 use broadcast_common::timescale::Timescale;
-use mp4_emsg::PresentationTime;
+use isobmff::emsg::PresentationTime;
 use timed_metadata::{TimeAnchor, Timeline, convert::EmsgConfig};
 
 fn timescale(value: u32) -> Timescale {

@@ -1,6 +1,10 @@
 mod cenc;
+mod fixture_scte35;
+mod fixture_v1_scte35_livesim;
 mod sample_bytes_budget;
+mod short_buffers;
 mod timing;
 mod timing_groups;
+mod trait_round_trip;
 mod trun_budget;
 mod visual_ext;

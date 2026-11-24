@@ -18,7 +18,7 @@ pub enum Error {
     Scte35(#[from] scte35_splice::Error),
     /// emsg parse/serialize failure.
     #[error("emsg: {0}")]
-    Emsg(#[from] mp4_emsg::Error),
+    Emsg(#[from] isobmff::Error),
     /// `EXT-X-DATERANGE` tag could not be parsed.
     #[error("DATERANGE parse: {0}")]
     AttrParse(String),

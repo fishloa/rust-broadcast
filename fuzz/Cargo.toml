@@ -40,7 +40,6 @@ st337        = { path = "../st337" }
 rdd29        = { path = "../rdd29" }
 st377-1      = { path = "../st377-1" }
 transmux      = { path = "../transmux" }
-isobmff       = { path = "../isobmff" }
 broadcast-hls = { path = "../broadcast-hls" }
 broadcast-smooth = { path = "../broadcast-smooth" }
 media-doctor  = { path = "../media-doctor" }
@@ -73,7 +72,7 @@ container-probe = { path = "../container-probe" }
 srt-runtime    = { path = "../srt-runtime" }
 dvb-simulcrypt = { path = "../dvb-simulcrypt" }
 dvb-vbi        = { path = "../dvb-vbi" }
-mp4-emsg       = { path = "../mp4-emsg" }
+isobmff        = { path = "../isobmff" }
 timed-metadata = { path = "../timed-metadata" }
 ts-fix         = { path = "../ts-fix" }
 hls-runtime    = { path = "../hls-runtime" }

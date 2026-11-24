@@ -9,7 +9,7 @@ attacker-influenced input safely is a primary goal.
 Security fixes are released for the **latest published minor** of the lockstep
 core crates (`broadcast-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-conformance`,
 `dvb-tools`) and the latest independently-versioned crates (`dvb-stream`,
-`scte35-splice`, `mp4-emsg`, and others). Older versions are not patched —
+`scte35-splice`, `isobmff`, and others). Older versions are not patched —
 upgrade to the latest release.
 
 | Crate set | Supported |

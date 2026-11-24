@@ -173,7 +173,7 @@ async fn fetch_segment(route: Arc<RouteHandle>, seq: u32) -> Vec<u8> {
     bytes
 }
 
-fn parse_emsg_boxes(bytes: &[u8]) -> Vec<transmux::EmsgBox<'_>> {
+fn parse_emsg_boxes(bytes: &[u8]) -> Vec<isobmff::emsg::EmsgBox<'_>> {
     let mut out = Vec::new();
     let mut i = 0usize;
     while i + 8 <= bytes.len() {
@@ -183,7 +183,7 @@ fn parse_emsg_boxes(bytes: &[u8]) -> Vec<transmux::EmsgBox<'_>> {
             break;
         }
         if &bytes[i + 4..i + 8] == b"emsg"
-            && let Ok(e) = transmux::EmsgBox::parse(&bytes[i..i + size])
+            && let Ok(e) = isobmff::emsg::EmsgBox::parse(&bytes[i..i + size])
         {
             out.push(e);
         }
@@ -280,7 +280,7 @@ async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
     // pass even if the box carried the segment start rather than the event's
     // own instant.
     let pt = match box0.presentation_time {
-        transmux::PresentationTime::Absolute(t) => t,
+        isobmff::emsg::PresentationTime::Absolute(t) => t,
         other => panic!("expected an absolute presentation time, got {other:?}"),
     };
     assert_eq!(

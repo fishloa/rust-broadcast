@@ -329,7 +329,7 @@ media time; allowed when the set is `segmentAlignment` true with `startWithSAP` 
 LL-DASH (`availabilityTimeOffset` + `availabilityTimeComplete=false`, CMAF chunked transfer, `ServiceDescription/Latency`, DVB-DASH 10.20) is OUT as a feature for 0.1.0, with a safe degradation: such MPDs
 play at segment granularity (requests are scheduled at the complete-segment time, so no chunk is ever consumed half-delivered, DVB-DASH 10.20.2 notes progressive arrival only matters when requesting early) and emit `Notice::LowLatencyIgnored`.
 Reason: chunk-level delivery needs an incremental `Fmp4Demux` feed and a partial-body event in the session that the HLS adapter also lacks (it delivers on `on_closed`); doing it once for both is a 0.2 story (it would be shared with
-LL-HLS parts in `hls-runtime`). `use_availability_time_offset=true` is available for experimentation and still delivers whole segments. Out: subtitles (typed `TrackDropped`), trick modes (`Representation@maxPlayoutRate`, A.5), segment sequences, seeking, CENC decryption, MPEG-2 TS and WebM segments (typed `UnsupportedContainer{"mp2t_segments"|"webm"}`), `EventStream` surfacing (HLS does not surface SCTE-35 either; `mp4-emsg`/`timed-metadata` are the future route).
+LL-HLS parts in `hls-runtime`). `use_availability_time_offset=true` is available for experimentation and still delivers whole segments. Out: subtitles (typed `TrackDropped`), trick modes (`Representation@maxPlayoutRate`, A.5), segment sequences, seeking, CENC decryption, MPEG-2 TS and WebM segments (typed `UnsupportedContainer{"mp2t_segments"|"webm"}`), `EventStream` surfacing (HLS does not surface SCTE-35 either; `isobmff`/`timed-metadata` are the future route).
 
 ## 6. Mapping into `broadcast-client` (source/dash.rs)
 

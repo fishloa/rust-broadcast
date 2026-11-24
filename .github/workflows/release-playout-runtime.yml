@@ -8,7 +8,7 @@ name: Release playout-runtime
 #
 # DEPENDENCY ORDER: playout-runtime depends on broadcast-common (lockstep,
 # already live), ssai-runtime (>= 0.1 — see release-ssai-runtime.yml, MUST
-# land first), and scte35-splice (>= 2, already live). Its mp4-emsg dep is
+# land first), and scte35-splice (>= 2, already live). Its isobmff dep is
 # dev-only (fixture tests/examples) and does not gate publishing.
 
 on:

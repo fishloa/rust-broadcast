@@ -81,7 +81,7 @@ builds (see the table above against the in-tree versions below).
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**66 workspace members.** 56 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**65 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -107,14 +107,13 @@ builds (see the table above against the in-tree versions below).
 | [`ttml-subtitle`](#ttml-subtitle) | Subtitles, captions, teletext, VBI and ancillary data | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/ttml-subtitle.svg)](https://crates.io/crates/ttml-subtitle) | yes | 1 | on crates.io |
 | [`st291`](#st291) | Subtitles, captions, teletext, VBI and ancillary data | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/st291.svg)](https://crates.io/crates/st291) | yes | 2 | on crates.io |
 | [`caption-convert`](#caption-convert) | Subtitles, captions, teletext, VBI and ancillary data | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/caption-convert.svg)](https://crates.io/crates/caption-convert) | yes | 4 | on crates.io |
-| [`mp4-emsg`](#mp4-emsg) | Metadata and ad-insertion signalling | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/mp4-emsg.svg)](https://crates.io/crates/mp4-emsg) | yes | 1 | on crates.io |
 | [`scte104`](#scte104) | Metadata and ad-insertion signalling | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/scte104.svg)](https://crates.io/crates/scte104) | yes | 1 | on crates.io |
 | [`scte35-splice`](#scte35-splice) | Metadata and ad-insertion signalling | 8.0.0 | [![crates.io](https://img.shields.io/crates/v/scte35-splice.svg)](https://crates.io/crates/scte35-splice) | yes | 2 | on crates.io |
 | [`timed-metadata`](#timed-metadata) | Metadata and ad-insertion signalling | 0.12.0 | [![crates.io](https://img.shields.io/crates/v/timed-metadata.svg)](https://crates.io/crates/timed-metadata) | yes | 3 | on crates.io |
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
 | [`broadcast-smooth`](#broadcast-smooth) | Containers and adaptive streaming | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-smooth.svg)](https://crates.io/crates/broadcast-smooth) | no | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
-| [`isobmff`](#isobmff) | Containers and adaptive streaming | 0.1.0 | [![crates.io](https://img.shields.io/crates/v/isobmff.svg)](https://crates.io/crates/isobmff) | no | 1 | on crates.io |
+| [`isobmff`](#isobmff) | Containers and adaptive streaming | 0.1.0 | [![crates.io](https://img.shields.io/crates/v/isobmff.svg)](https://crates.io/crates/isobmff) | yes | 1 | on crates.io |
 | [`transmux`](#transmux) | Containers and adaptive streaming | 0.33.0 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
 | [`broadcast-dash`](#broadcast-dash) | Live transport protocols | 0.3.0 | — | no | 1 | not on crates.io |
 | [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
@@ -166,7 +165,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 14.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 60 workspace crates
+- **Used by (workspace):** 59 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 #### broadcast-auth
@@ -398,17 +397,6 @@ Converts between caption formats using the decoders already in the workspace rat
 
 SCTE 35 / SCTE 104 cueing, DASH emsg, and conversion between the OTT carriages.
 
-#### mp4-emsg
-
-Parses and builds the `emsg` box used for in-band DASH/CMAF events (SCTE 35, ID3, ad tracking), deriving `size` and `version` from the typed fields on serialize.
-
-- **Standards:** ISO/IEC 23009-1 emsg (edition unverified); DASH-IF IOP Part 10 V5.0.0
-- **Cargo description:** ISO BMFF / DASH Event Message Box (emsg, ISO/IEC 23009-1) — parser + serializer, no_std.
-- **Version (in-tree):** 0.9.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
-- **Links:** [README](../mp4-emsg/README.md) · [CHANGELOG](../mp4-emsg/CHANGELOG.md) · [crates.io](https://crates.io/crates/mp4-emsg) · [docs.rs](https://docs.rs/mp4-emsg)
-
 #### scte104
 
 Parses and builds `single_operation_message` and `multiple_operation_message` and the operations they carry (splice request, time signal, insert descriptor, segmentation, ...) that an automation system uses to make an encoder insert SCTE 35.
@@ -438,7 +426,7 @@ Lossless conversion of SCTE 35 cues between in-band TS, DASH `emsg` (both direct
 - **Standards:** ANSI/SCTE 214-3 §8.3.3 (emsg carriage); RFC 8216 / rfc8216bis §4.4.5.1 (DATERANGE); EN 300 706 V1.2.1 teletext decode (`teletext`)
 - **Cargo description:** Convert DPI / timed-metadata signalling between SCTE-35, HLS EXT-X-DATERANGE and DASH emsg. no_std.
 - **Version (in-tree):** 0.12.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`cc-data`](#cc-data), [`dvb-vbi`](#dvb-vbi), [`mp4-emsg`](#mp4-emsg), [`scte35-splice`](#scte35-splice)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`cc-data`](#cc-data), [`dvb-vbi`](#dvb-vbi), [`isobmff`](#isobmff), [`scte35-splice`](#scte35-splice)
 - **Used by (workspace):** [`caption-convert`](#caption-convert), [`compliance-probe`](#compliance-probe), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux)
 - **Links:** [README](../timed-metadata/README.md) · [CHANGELOG](../timed-metadata/CHANGELOG.md) · [crates.io](https://crates.io/crates/timed-metadata) · [docs.rs](https://docs.rs/timed-metadata)
 
@@ -481,13 +469,13 @@ Identifies MPEG-2 TS (any of 188/192/204/208-byte strides at any phase), ISOBMFF
 
 #### isobmff
 
-Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` headers (64-bit `largesize`, `uuid` usertype), the size-driven `box_iter` walker, `ftyp`/`styp`/`mdat`, the sample-table/timing boxes, the visual-extension and sample-group boxes, the movie-fragment boxes, the CENC boxes, and the §8.8.7/§8.8.8 fragment sample-offset resolver. It knows box syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`.
+Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` headers (64-bit `largesize`, `uuid` usertype), the size-driven `box_iter` walker, `ftyp`/`styp`/`mdat`, the sample-table/timing boxes, the visual-extension and sample-group boxes, the movie-fragment boxes, the CENC boxes, the §8.8.7/§8.8.8 fragment sample-offset resolver, and the DASH Event Message Box (`emsg`, versions 0 and 1). It knows box syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`.
 
-- **Standards:** ISO/IEC 14496-12:2026, ISO/IEC 23001-7 (CENC boxes)
-- **Cargo description:** ISO/IEC 14496-12:2026 (ISO BMFF) box syntax — box/FullBox headers, the top-level and movie-fragment box set, and the sample-table boxes, no_std.
-- **Version (in-tree):** 0.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
+- **Standards:** ISO/IEC 14496-12:2026, ISO/IEC 23001-7 (CENC boxes), ISO/IEC 23009-1 §5.10.3.3 (emsg); DASH-IF IOP Part 10 V5.0.0
+- **Cargo description:** ISO/IEC 14496-12:2026 (ISO BMFF) box syntax — box/FullBox headers, the top-level, sample-table, movie-fragment and CENC boxes, and DASH emsg, no_std.
+- **Version (in-tree):** 0.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux)
+- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Links:** [README](../isobmff/README.md) · [CHANGELOG](../isobmff/CHANGELOG.md) · [crates.io](https://crates.io/crates/isobmff) · [docs.rs](https://docs.rs/isobmff)
 
 #### transmux
@@ -497,7 +485,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Standards:** ISO/IEC 14496-12:2026 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
 - **Version (in-tree):** 0.33.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`isobmff`](#isobmff), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`isobmff`](#isobmff), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`test-harness`](#test-harness)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
@@ -934,7 +922,7 @@ Layer 0 has no workspace dependencies; every other crate sits one layer above it
 
 ```text
 layer 0: broadcast-common, test-alloc, test-fixtures, workspace-guards
-layer 1: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, isobmff, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
+layer 1: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, isobmff, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 3: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
 layer 4: caption-convert, dvb-ci-runtime, media-doctor, ts-fix
@@ -968,7 +956,6 @@ flowchart BT
     dvb_subtitle["dvb-subtitle"]
     dvb_vbi["dvb-vbi"]
     isobmff["isobmff"]
-    mp4_emsg["mp4-emsg"]
     mpeg_pes["mpeg-pes"]
     mpeg_ts["mpeg-ts"]
     rdd29["rdd29"]
@@ -1077,7 +1064,6 @@ flowchart BT
   media_doctor --> transmux
   media_plane --> caption_convert
   media_plane --> transmux
-  mp4_emsg --> broadcast_common
   mpeg_pes --> broadcast_common
   mpeg_ps --> mpeg_pes
   mpeg_ts --> broadcast_common
@@ -1110,7 +1096,7 @@ flowchart BT
   timed_metadata --> broadcast_hls
   timed_metadata --> cc_data
   timed_metadata --> dvb_vbi
-  timed_metadata --> mp4_emsg
+  timed_metadata --> isobmff
   timed_metadata --> scte35_splice
   transmux --> broadcast_dash
   transmux --> broadcast_hls
@@ -1119,7 +1105,6 @@ flowchart BT
   transmux --> container_probe
   transmux --> dvb_si
   transmux --> isobmff
-  transmux --> mp4_emsg
   transmux --> mpeg_ps
   transmux --> rtmp_runtime
   transmux --> rtp_packet
