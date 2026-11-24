@@ -31,26 +31,29 @@ impl Default for AvailDescriptor {
     }
 }
 
+const PROVIDER_AVAIL_ID_LEN: usize = core::mem::size_of::<u32>();
+
 impl<'a> Parse<'a> for AvailDescriptor {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "avail_descriptor")?;
-        if body.len() < 4 {
+        if body.len() < PROVIDER_AVAIL_ID_LEN {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: HEADER_LEN + 4,
+                    need: HEADER_LEN + PROVIDER_AVAIL_ID_LEN,
                     have: bytes.len(),
                     what: "avail_descriptor provider_avail_id",
                 },
             ));
         }
-        let provider_avail_id = u32::from_be_bytes(*body.first_chunk::<4>().ok_or(
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-                need: HEADER_LEN + 4,
-                have: bytes.len(),
-                what: "avail_descriptor provider_avail_id",
-            }),
-        )?);
+        let provider_avail_id =
+            u32::from_be_bytes(*body.first_chunk::<PROVIDER_AVAIL_ID_LEN>().ok_or(
+                Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + PROVIDER_AVAIL_ID_LEN,
+                    have: bytes.len(),
+                    what: "avail_descriptor provider_avail_id",
+                }),
+            )?);
         Ok(Self {
             identifier,
             provider_avail_id,
@@ -61,12 +64,12 @@ impl<'a> Parse<'a> for AvailDescriptor {
 impl Serialize for AvailDescriptor {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + 4
+        HEADER_LEN + PROVIDER_AVAIL_ID_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        header::write_header(buf, TAG, self.identifier, 4)?;
+        header::write_header(buf, TAG, self.identifier, PROVIDER_AVAIL_ID_LEN)?;
         buf[HEADER_LEN..need].copy_from_slice(&self.provider_avail_id.to_be_bytes());
         Ok(need)
     }

@@ -26,6 +26,21 @@ use crate::section::SpliceInfoSection;
 use broadcast_common::len::{fit_bits, fit_u8};
 use broadcast_common::{Parse, Serialize};
 
+const HEADER_LEN: usize = 2;
+const FLAGS_OFFSET: usize = 1;
+const TEMI_TAG_OFFSET: usize = 2;
+const TEMI_ID_OFFSET: usize = 3;
+const TEMI_DVB_DATA_LEN: usize = 3;
+const TEMI_TOTAL_LEN: usize = 4;
+const TEMI_FIELDS_LEN: usize = 2;
+const NIBBLE_MASK: u8 = 0x0F;
+const EVENT_TYPE_SHIFT: u32 = 4;
+const EVENT_TYPE_MASK: u8 = 0x01;
+const TIMELINE_TYPE_BITS: u32 = 4;
+const RESERVED_BITS: u8 = 0xE0;
+const PRIVATE_DATA_SPECIFIER_LEN: usize = core::mem::size_of::<u32>();
+const U16_LEN: usize = core::mem::size_of::<u16>();
+
 /// `event_type` value for inline carriage (`SCTE_35_section()` follows).
 pub const EVENT_TYPE_INLINE: u8 = 0;
 
@@ -57,7 +72,7 @@ impl TimelineType {
     /// Decode the 4-bit `timeline_type` field (only the low nibble is used).
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x0F {
+        match v & NIBBLE_MASK {
             0x0 => Self::None,
             0x1 => Self::VideoPts,
             0x2 => Self::Temi,
@@ -179,7 +194,11 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // DVB_data_length(8) + [reserved(3)+event_type(1)+timeline_type(4)](8) ...
-        need_in(bytes, 2, "DSM-CC_stream_event_payload_binary header")?;
+        need_in(
+            bytes,
+            HEADER_LEN,
+            "DSM-CC_stream_event_payload_binary header",
+        )?;
         let dvb_data_length = bytes[0] as usize;
         // The DVB_data region begins at byte 1 and is dvb_data_length bytes long.
         if bytes.len() < 1 + dvb_data_length {
@@ -199,26 +218,30 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
             ));
         }
         let flags = bytes[1];
-        let event_type = (flags >> 4) & 0x01;
-        let timeline_type = TimelineType::from_bits(flags & 0x0F);
+        let event_type = (flags >> EVENT_TYPE_SHIFT) & EVENT_TYPE_MASK;
+        let timeline_type = TimelineType::from_bits(flags & NIBBLE_MASK);
         let temi = if timeline_type == TimelineType::Temi {
-            if dvb_data_length < 3 || bytes.len() < 4 {
+            if dvb_data_length < TEMI_DVB_DATA_LEN || bytes.len() < TEMI_TOTAL_LEN {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: 4,
+                        need: TEMI_TOTAL_LEN,
                         have: bytes.len(),
                         what: "DSM-CC_stream_event_payload_binary temi fields",
                     },
                 ));
             }
-            Some((bytes[2], bytes[3]))
+            Some((bytes[TEMI_TAG_OFFSET], bytes[TEMI_ID_OFFSET]))
         } else {
             None
         };
         // Any remaining DVB_data bytes after the flags byte (and optional temi)
         // are reserved_zero_future_use; keep them for a byte-exact re-serialize.
         let mut pos = 1 + dvb_data_length;
-        let reserved_start = if temi.is_some() { 4 } else { 2 };
+        let reserved_start = if temi.is_some() {
+            TEMI_TOTAL_LEN
+        } else {
+            HEADER_LEN
+        };
         let reserved_dvb_data = &bytes[reserved_start..pos];
 
         // private_data_length(8).
@@ -234,7 +257,7 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
         let private_data_length = bytes[pos] as usize;
         pos += 1;
         let private_data = if private_data_length > 0 {
-            if private_data_length < 4 {
+            if private_data_length < PRIVATE_DATA_SPECIFIER_LEN {
                 return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "DSM-CC_stream_event_payload_binary.private_data_length",
                     value: private_data_length as u64,
@@ -248,8 +271,12 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
                     what: "DSM-CC_stream_event_payload_binary private_data",
                 });
             }
-            let specifier =
-                u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
+            let specifier = u32::from_be_bytes([
+                bytes[pos],
+                bytes[pos + 1],
+                bytes[pos + U16_LEN],
+                bytes[pos + U16_LEN + 1],
+            ]);
             let pd_bytes = &bytes[pos + 4..pos + private_data_length];
             pos += private_data_length;
             Some(PrivateData {
@@ -320,7 +347,7 @@ impl Serialize for StreamEventPayload<'_> {
         // instead of masking it into a different timeline.
         let timeline_bits = fit_bits(
             u64::from(self.timeline_type.bits()),
-            4,
+            TIMELINE_TYPE_BITS,
             "DSM-CC_stream_event_payload_binary.timeline_type",
         )? as u8;
         // The temi_* bytes are present iff timeline_type == 0x2 (§6.3.1), so
@@ -332,12 +359,13 @@ impl Serialize for StreamEventPayload<'_> {
             }));
         }
         // reserved(3)=1, event_type(1), timeline_type(4).
-        buf[1] = 0xE0 | (self.carriage.event_type() << 4) | timeline_bits;
-        let mut pos = 2;
+        buf[FLAGS_OFFSET] =
+            RESERVED_BITS | (self.carriage.event_type() << EVENT_TYPE_SHIFT) | timeline_bits;
+        let mut pos = HEADER_LEN;
         if let Some((tag, id)) = self.temi {
             buf[pos] = tag;
             buf[pos + 1] = id;
-            pos += 2;
+            pos += TEMI_FIELDS_LEN;
         }
         buf[pos..pos + self.reserved_dvb_data.len()].copy_from_slice(self.reserved_dvb_data);
         pos += self.reserved_dvb_data.len();
@@ -354,8 +382,8 @@ impl Serialize for StreamEventPayload<'_> {
         buf[pos] = pdl as u8;
         pos += 1;
         if let Some(p) = &self.private_data {
-            buf[pos..pos + 4].copy_from_slice(&p.specifier.to_be_bytes());
-            pos += 4;
+            buf[pos..pos + PRIVATE_DATA_SPECIFIER_LEN].copy_from_slice(&p.specifier.to_be_bytes());
+            pos += PRIVATE_DATA_SPECIFIER_LEN;
             buf[pos..pos + p.bytes.len()].copy_from_slice(p.bytes);
             pos += p.bytes.len();
         }

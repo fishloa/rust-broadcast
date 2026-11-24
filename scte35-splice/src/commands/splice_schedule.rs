@@ -16,6 +16,31 @@ use broadcast_common::{Parse, Serialize};
 /// `splice_command_type` for splice_schedule (§9.6.1, Table 7).
 pub const COMMAND_TYPE: u8 = 0x04;
 
+const U16_LEN: usize = core::mem::size_of::<u16>();
+const SPLICE_EVENT_ID_LEN: usize = core::mem::size_of::<u32>();
+/// `splice_event_id` + cancel/compliance byte.
+const EVENT_HEADER_LEN: usize = SPLICE_EVENT_ID_LEN + 1;
+const UTC_SPLICE_TIME_LEN: usize = core::mem::size_of::<u32>();
+const COMPONENT_TAG_LEN: usize = 1;
+const COMPONENT_LEN: usize = COMPONENT_TAG_LEN + UTC_SPLICE_TIME_LEN;
+const COMPONENT_UTC_OFFSET: usize = COMPONENT_TAG_LEN;
+/// `unique_program_id` (2) + `avail_num` (1) + `avails_expected` (1).
+const TRAILER_LEN: usize = U16_LEN + U16_LEN;
+const TRAILER_UNIQUE_PROGRAM_ID_OFFSET: usize = 0;
+const TRAILER_AVAIL_NUM_OFFSET: usize = U16_LEN;
+const TRAILER_AVAILS_EXPECTED_OFFSET: usize = U16_LEN + 1;
+const CANCEL_INDICATOR_MASK: u8 = 0x80;
+const COMPLIANCE_INDICATOR_MASK: u8 = 0x40;
+const OUT_OF_NETWORK_MASK: u8 = 0x80;
+const PROGRAM_SPLICE_MASK: u8 = 0x40;
+const DURATION_FLAG_MASK: u8 = 0x20;
+const TOP_BIT_SHIFT: u32 = 7;
+const COMPLIANCE_SHIFT: u32 = 6;
+const PROGRAM_SPLICE_SHIFT: u32 = 6;
+const DURATION_FLAG_SHIFT: u32 = 5;
+const HEADER_RESERVED_BITS: u8 = 0x3F;
+const FLAGS_RESERVED_BITS: u8 = 0x1F;
+
 /// One component entry in a scheduled event's deprecated component loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -76,39 +101,39 @@ impl Default for SpliceScheduleEvent {
 impl SpliceScheduleEvent {
     fn serialized_len(&self) -> usize {
         // splice_event_id (4) + flags byte (1).
-        let mut len = 5;
+        let mut len = EVENT_HEADER_LEN;
         if self.splice_event_cancel_indicator {
             return len;
         }
         len += 1; // out_of_network/program/duration/reserved byte
         if self.program_splice_flag {
-            len += 4; // utc_splice_time
+            len += UTC_SPLICE_TIME_LEN; // utc_splice_time
         } else {
             len += 1; // component_count
-            len += self.components.len() * 5; // tag (1) + utc_splice_time (4)
+            len += self.components.len() * COMPONENT_LEN; // tag (1) + utc_splice_time (4)
         }
         if self.break_duration.is_some() {
             len += BreakDuration::LEN;
         }
-        len += 4; // unique_program_id (2) + avail_num (1) + avails_expected (1)
+        len += TRAILER_LEN; // unique_program_id (2) + avail_num (1) + avails_expected (1)
         len
     }
 
     fn parse_at(bytes: &[u8], pos: &mut usize) -> Result<Self> {
         let (hdr, _) = bytes[*pos..]
-            .split_first_chunk::<5>()
+            .split_first_chunk::<EVENT_HEADER_LEN>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: *pos + 5,
+                    need: *pos + EVENT_HEADER_LEN,
                     have: bytes.len(),
                     what: "splice_schedule event header",
                 },
             ))?;
-        let splice_event_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
-        let b = hdr[4];
-        *pos += 5;
-        let cancel = b & 0x80 != 0;
-        let compliance = b & 0x40 != 0;
+        let splice_event_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[U16_LEN], hdr[U16_LEN + 1]]);
+        let b = hdr[SPLICE_EVENT_ID_LEN];
+        *pos += EVENT_HEADER_LEN;
+        let cancel = b & CANCEL_INDICATOR_MASK != 0;
+        let compliance = b & COMPLIANCE_INDICATOR_MASK != 0;
 
         let mut ev = Self {
             splice_event_id,
@@ -123,40 +148,42 @@ impl SpliceScheduleEvent {
         need_in(bytes, *pos + 1, "splice_schedule event flags")?;
         let flags = bytes[*pos];
         *pos += 1;
-        ev.out_of_network_indicator = flags & 0x80 != 0;
-        ev.program_splice_flag = flags & 0x40 != 0;
-        let duration_flag = flags & 0x20 != 0;
+        ev.out_of_network_indicator = flags & OUT_OF_NETWORK_MASK != 0;
+        ev.program_splice_flag = flags & PROGRAM_SPLICE_MASK != 0;
+        let duration_flag = flags & DURATION_FLAG_MASK != 0;
 
         if ev.program_splice_flag {
             let (t, _) = bytes[*pos..]
-                .split_first_chunk::<4>()
+                .split_first_chunk::<UTC_SPLICE_TIME_LEN>()
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: *pos + 4,
+                        need: *pos + UTC_SPLICE_TIME_LEN,
                         have: bytes.len(),
                         what: "splice_schedule utc_splice_time",
                     },
                 ))?;
             ev.utc_splice_time = Some(u32::from_be_bytes(*t));
-            *pos += 4;
+            *pos += UTC_SPLICE_TIME_LEN;
         } else {
             need_in(bytes, *pos + 1, "splice_schedule component_count")?;
             let count = bytes[*pos] as usize;
             *pos += 1;
             for _ in 0..count {
-                let (comp, _) =
-                    bytes[*pos..]
-                        .split_first_chunk::<5>()
-                        .ok_or(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
-                                need: *pos + 5,
-                                have: bytes.len(),
-                                what: "splice_schedule component",
-                            },
-                        ))?;
+                let (comp, _) = bytes[*pos..].split_first_chunk::<COMPONENT_LEN>().ok_or(
+                    Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                        need: *pos + COMPONENT_LEN,
+                        have: bytes.len(),
+                        what: "splice_schedule component",
+                    }),
+                )?;
                 let component_tag = comp[0];
-                let utc_splice_time = u32::from_be_bytes([comp[1], comp[2], comp[3], comp[4]]);
-                *pos += 5;
+                let utc_splice_time = u32::from_be_bytes([
+                    comp[COMPONENT_UTC_OFFSET],
+                    comp[COMPONENT_UTC_OFFSET + 1],
+                    comp[COMPONENT_UTC_OFFSET + U16_LEN],
+                    comp[COMPONENT_UTC_OFFSET + U16_LEN + 1],
+                ]);
+                *pos += COMPONENT_LEN;
                 ev.components.push(SpliceScheduleComponent {
                     component_tag,
                     utc_splice_time,
@@ -169,44 +196,50 @@ impl SpliceScheduleEvent {
             *pos += BreakDuration::LEN;
         }
 
-        let (trailer, _) = bytes[*pos..]
-            .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: *pos + 4,
-                    have: bytes.len(),
-                    what: "splice_schedule event trailer",
-                },
-            ))?;
-        ev.unique_program_id = u16::from_be_bytes([trailer[0], trailer[1]]);
-        ev.avail_num = trailer[2];
-        ev.avails_expected = trailer[3];
-        *pos += 4;
+        let (trailer, _) =
+            bytes[*pos..]
+                .split_first_chunk::<TRAILER_LEN>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: *pos + TRAILER_LEN,
+                        have: bytes.len(),
+                        what: "splice_schedule event trailer",
+                    },
+                ))?;
+        ev.unique_program_id = u16::from_be_bytes([
+            trailer[TRAILER_UNIQUE_PROGRAM_ID_OFFSET],
+            trailer[TRAILER_UNIQUE_PROGRAM_ID_OFFSET + 1],
+        ]);
+        ev.avail_num = trailer[TRAILER_AVAIL_NUM_OFFSET];
+        ev.avails_expected = trailer[TRAILER_AVAILS_EXPECTED_OFFSET];
+        *pos += TRAILER_LEN;
         Ok(ev)
     }
 
     fn serialize_at(&self, buf: &mut [u8], pos: &mut usize) -> Result<()> {
-        buf[*pos..*pos + 4].copy_from_slice(&self.splice_event_id.to_be_bytes());
+        buf[*pos..*pos + SPLICE_EVENT_ID_LEN].copy_from_slice(&self.splice_event_id.to_be_bytes());
         // cancel (1) + compliance (1) + 6 reserved bits = 1.
-        buf[*pos + 4] = (u8::from(self.splice_event_cancel_indicator) << 7)
-            | (u8::from(self.event_id_compliance_flag) << 6)
-            | 0x3F;
-        *pos += 5;
+        buf[*pos + SPLICE_EVENT_ID_LEN] = (u8::from(self.splice_event_cancel_indicator)
+            << TOP_BIT_SHIFT)
+            | (u8::from(self.event_id_compliance_flag) << COMPLIANCE_SHIFT)
+            | HEADER_RESERVED_BITS;
+        *pos += EVENT_HEADER_LEN;
         if self.splice_event_cancel_indicator {
             return Ok(());
         }
 
         let duration_flag = self.break_duration.is_some();
         // out_of_network (1) + program_splice (1) + duration (1) + 5 reserved.
-        buf[*pos] = (u8::from(self.out_of_network_indicator) << 7)
-            | (u8::from(self.program_splice_flag) << 6)
-            | (u8::from(duration_flag) << 5)
-            | 0x1F;
+        buf[*pos] = (u8::from(self.out_of_network_indicator) << TOP_BIT_SHIFT)
+            | (u8::from(self.program_splice_flag) << PROGRAM_SPLICE_SHIFT)
+            | (u8::from(duration_flag) << DURATION_FLAG_SHIFT)
+            | FLAGS_RESERVED_BITS;
         *pos += 1;
 
         if self.program_splice_flag {
-            buf[*pos..*pos + 4].copy_from_slice(&self.utc_splice_time.unwrap_or(0).to_be_bytes());
-            *pos += 4;
+            buf[*pos..*pos + UTC_SPLICE_TIME_LEN]
+                .copy_from_slice(&self.utc_splice_time.unwrap_or(0).to_be_bytes());
+            *pos += UTC_SPLICE_TIME_LEN;
         } else {
             buf[*pos] = broadcast_common::len::fit_u8(
                 self.components.len(),
@@ -215,8 +248,9 @@ impl SpliceScheduleEvent {
             *pos += 1;
             for c in &self.components {
                 buf[*pos] = c.component_tag;
-                buf[*pos + 1..*pos + 5].copy_from_slice(&c.utc_splice_time.to_be_bytes());
-                *pos += 5;
+                buf[*pos + COMPONENT_UTC_OFFSET..*pos + COMPONENT_LEN]
+                    .copy_from_slice(&c.utc_splice_time.to_be_bytes());
+                *pos += COMPONENT_LEN;
             }
         }
 
@@ -224,10 +258,10 @@ impl SpliceScheduleEvent {
             *pos += bd.serialize_into(&mut buf[*pos..])?;
         }
 
-        buf[*pos..*pos + 2].copy_from_slice(&self.unique_program_id.to_be_bytes());
-        buf[*pos + 2] = self.avail_num;
-        buf[*pos + 3] = self.avails_expected;
-        *pos += 4;
+        buf[*pos..*pos + U16_LEN].copy_from_slice(&self.unique_program_id.to_be_bytes());
+        buf[*pos + TRAILER_AVAIL_NUM_OFFSET] = self.avail_num;
+        buf[*pos + TRAILER_AVAILS_EXPECTED_OFFSET] = self.avails_expected;
+        *pos += TRAILER_LEN;
         Ok(())
     }
 }

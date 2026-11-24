@@ -32,6 +32,44 @@ const FIXED_HEADER_LEN: usize = 14;
 /// Bytes of the trailing CRC_32.
 const CRC_LEN: usize = 4;
 
+// splice_info_section byte offsets and field masks (Table 5, §9.6.1).
+const SECTION_LENGTH_HEADER_LEN: usize = 3;
+const SECTION_LENGTH_LOW_OFFSET: usize = 2;
+const SECTION_LENGTH_HIGH_SHIFT: u32 = u8::BITS;
+const PROTOCOL_VERSION_OFFSET: usize = 3;
+const ENCRYPTED_PACKET_OFFSET: usize = 4;
+const ENCRYPTED_PACKET_SHIFT: u32 = 7;
+const ENCRYPTED_PACKET_MASK: u8 = 0x80;
+const ENCRYPTION_ALGORITHM_OFFSET: usize = 4;
+const ENCRYPTION_ALGORITHM_SHIFT: u32 = 1;
+const ENCRYPTION_ALGORITHM_MASK: u8 = 0x3F;
+const PTS_ADJUSTMENT_TOP_OFFSET: usize = 4;
+const PTS_ADJUSTMENT_HIGH_OFFSET: usize = 5;
+const PTS_ADJUSTMENT_MID_OFFSET: usize = 6;
+const PTS_ADJUSTMENT_LOW_OFFSET: usize = 7;
+const PTS_ADJUSTMENT_BOTTOM_OFFSET: usize = 8;
+const PTS_ADJUSTMENT_TOP_MASK: u8 = 0x01;
+const PTS_ADJUSTMENT_TOP_SHIFT: u32 = 32;
+const PTS_ADJUSTMENT_HIGH_SHIFT: u32 = 24;
+const PTS_ADJUSTMENT_MID_SHIFT: u32 = 16;
+const PTS_ADJUSTMENT_LOW_SHIFT: u32 = 8;
+const CW_INDEX_OFFSET: usize = 9;
+const TIER_OFFSET: usize = 10;
+const TIER_SHIFT: u32 = 4;
+const SPLICE_COMMAND_LENGTH_OFFSET: usize = 11;
+const SPLICE_COMMAND_LENGTH_LOW_OFFSET: usize = 12;
+const SPLICE_COMMAND_TYPE_OFFSET: usize = 13;
+const DESCRIPTOR_LOOP_LENGTH_LEN: usize = 2;
+const DESCRIPTOR_LOOP_LENGTH_HIGH_SHIFT: u32 = u8::BITS;
+const SPLICE_COMMAND_LENGTH_BITS: u32 = 12;
+const SECTION_LENGTH_MAX: usize = 4093;
+const NIBBLE_MASK: u8 = 0x0F;
+const NIBBLE_MASK_U16: u16 = 0x0F;
+const LOW_BYTE_MASK_U16: u16 = u8::MAX as u16;
+const SAP_TYPE_OFFSET: usize = 1;
+const SAP_TYPE_SHIFT: u32 = 4;
+const SAP_TYPE_MASK: u8 = 0x03;
+
 /// `tier` value (0xFFF) that downstream equipment shall ignore (§9.6.1).
 pub const TIER_IGNORE: u16 = 0x0FFF;
 
@@ -113,7 +151,7 @@ impl<'a> SpliceInfoSection<'a> {
     #[must_use]
     pub fn new_clear(command: AnyCommand<'a>, descriptor_loop: SpliceDescriptorLoop<'a>) -> Self {
         Self {
-            sap_type: 0x3,
+            sap_type: SAP_TYPE_MASK,
             protocol_version: 0,
             encrypted_packet: false,
             encryption_algorithm: 0,
@@ -155,7 +193,10 @@ impl<'a> SpliceInfoSection<'a> {
     fn payload_len(&self) -> usize {
         match (&self.clear, self.encrypted_payload) {
             (Some(c), _) => {
-                1 + c.command.body_len() + 2 + c.descriptor_loop.len() + c.alignment_stuffing.len()
+                1 + c.command.body_len()
+                    + DESCRIPTOR_LOOP_LENGTH_LEN
+                    + c.descriptor_loop.len()
+                    + c.alignment_stuffing.len()
             }
             (None, Some(enc)) => enc.len(),
             (None, None) => 0,
@@ -174,12 +215,12 @@ impl<'a> SpliceInfoSection<'a> {
 /// rather than guessed). Truncated candidates fail (a) for every command with
 /// a fixed minimum size, so the first hit is the real length.
 fn derive_command_length(command_type: u8, payload: &[u8]) -> Result<usize> {
-    for n in 0..=payload.len().saturating_sub(3) {
-        let Some(dll_bytes) = payload.get(1 + n..1 + n + 2) else {
+    for n in 0..=payload.len().saturating_sub(SECTION_LENGTH_HEADER_LEN) {
+        let Some(dll_bytes) = payload.get(1 + n..1 + n + DESCRIPTOR_LOOP_LENGTH_LEN) else {
             break;
         };
         let dll = usize::from(u16::from_be_bytes([dll_bytes[0], dll_bytes[1]]));
-        if 1 + n + 2 + dll != payload.len() {
+        if 1 + n + DESCRIPTOR_LOOP_LENGTH_LEN + dll != payload.len() {
             continue;
         }
         if AnyCommand::dispatch(command_type, &payload[1..1 + n]).is_ok() {
@@ -213,13 +254,15 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
                 reason: "must be 0 (§9.6.1, Table 5)",
             }));
         }
-        let sap_type = (bytes[1] >> 4) & 0x03;
-        let section_length = (u16::from(bytes[1] & 0x0F) << 8) | u16::from(bytes[2]);
-        let total = 3 + section_length as usize;
+        let sap_type = (bytes[SAP_TYPE_OFFSET] >> SAP_TYPE_SHIFT) & SAP_TYPE_MASK;
+        let section_length = (u16::from(bytes[SAP_TYPE_OFFSET] & NIBBLE_MASK)
+            << SECTION_LENGTH_HIGH_SHIFT)
+            | u16::from(bytes[SECTION_LENGTH_LOW_OFFSET]);
+        let total = SECTION_LENGTH_HEADER_LEN + section_length as usize;
         if bytes.len() < total {
             return Err(Error::LengthOverflow {
                 declared: section_length as usize,
-                available: bytes.len().saturating_sub(3),
+                available: bytes.len().saturating_sub(SECTION_LENGTH_HEADER_LEN),
                 what: "splice_info_section section_length",
             });
         }
@@ -256,18 +299,25 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
             }));
         }
 
-        let protocol_version = bytes[3];
-        let encrypted_packet = bytes[4] & 0x80 != 0;
-        let encryption_algorithm = (bytes[4] >> 1) & 0x3F;
-        let pts_adjustment = (u64::from(bytes[4] & 0x01) << 32)
-            | (u64::from(bytes[5]) << 24)
-            | (u64::from(bytes[6]) << 16)
-            | (u64::from(bytes[7]) << 8)
-            | u64::from(bytes[8]);
-        let cw_index = bytes[9];
-        let tier = (u16::from(bytes[10]) << 4) | (u16::from(bytes[11]) >> 4);
-        let splice_command_length = (u16::from(bytes[11] & 0x0F) << 8) | u16::from(bytes[12]);
-        let splice_command_type = bytes[13];
+        let protocol_version = bytes[PROTOCOL_VERSION_OFFSET];
+        let encrypted_packet = bytes[ENCRYPTED_PACKET_OFFSET] & ENCRYPTED_PACKET_MASK != 0;
+        let encryption_algorithm = (bytes[ENCRYPTION_ALGORITHM_OFFSET]
+            >> ENCRYPTION_ALGORITHM_SHIFT)
+            & ENCRYPTION_ALGORITHM_MASK;
+        let pts_adjustment =
+            (u64::from(bytes[PTS_ADJUSTMENT_TOP_OFFSET] & PTS_ADJUSTMENT_TOP_MASK)
+                << PTS_ADJUSTMENT_TOP_SHIFT)
+                | (u64::from(bytes[PTS_ADJUSTMENT_HIGH_OFFSET]) << PTS_ADJUSTMENT_HIGH_SHIFT)
+                | (u64::from(bytes[PTS_ADJUSTMENT_MID_OFFSET]) << PTS_ADJUSTMENT_MID_SHIFT)
+                | (u64::from(bytes[PTS_ADJUSTMENT_LOW_OFFSET]) << PTS_ADJUSTMENT_LOW_SHIFT)
+                | u64::from(bytes[PTS_ADJUSTMENT_BOTTOM_OFFSET]);
+        let cw_index = bytes[CW_INDEX_OFFSET];
+        let tier = (u16::from(bytes[TIER_OFFSET]) << TIER_SHIFT)
+            | (u16::from(bytes[SPLICE_COMMAND_LENGTH_OFFSET]) >> TIER_SHIFT);
+        let splice_command_length = (u16::from(bytes[SPLICE_COMMAND_LENGTH_OFFSET] & NIBBLE_MASK)
+            << SECTION_LENGTH_HIGH_SHIFT)
+            | u16::from(bytes[SPLICE_COMMAND_LENGTH_LOW_OFFSET]);
+        let splice_command_type = bytes[SPLICE_COMMAND_TYPE_OFFSET];
 
         let mut section = SpliceInfoSection {
             sap_type,
@@ -283,7 +333,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         };
 
         // Region from splice_command_type (byte 13) through E_CRC_32/CRC_32.
-        let payload = &bytes[13..crc_pos];
+        let payload = &bytes[SPLICE_COMMAND_TYPE_OFFSET..crc_pos];
         if encrypted_packet {
             // Keep the encrypted region (command_type + body + descriptors +
             // E_CRC_32) verbatim; do not attempt to interpret it.
@@ -311,7 +361,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         // payload = [command_type][command_body(scl)][dll(2)][loop]
         need_in(
             payload,
-            1 + scl + 2,
+            1 + scl + DESCRIPTOR_LOOP_LENGTH_LEN,
             "splice_info_section command + descriptor_loop_length",
         )?;
         let command_body = &payload[1..1 + scl];
@@ -320,16 +370,16 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         let dll_pos = 1 + scl;
         let (dll_bytes, _) = payload
             .get(dll_pos..)
-            .and_then(|s| s.split_first_chunk::<2>())
+            .and_then(|s| s.split_first_chunk::<DESCRIPTOR_LOOP_LENGTH_LEN>())
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: 1 + scl + 2,
+                    need: 1 + scl + DESCRIPTOR_LOOP_LENGTH_LEN,
                     have: payload.len(),
                     what: "splice_info_section command + descriptor_loop_length",
                 },
             ))?;
         let descriptor_loop_length = usize::from(u16::from_be_bytes(*dll_bytes));
-        let loop_start = dll_pos + 2;
+        let loop_start = dll_pos + DESCRIPTOR_LOOP_LENGTH_LEN;
         if payload.len() < loop_start + descriptor_loop_length {
             return Err(Error::LengthOverflow {
                 declared: descriptor_loop_length,
@@ -358,7 +408,7 @@ impl Serialize for SpliceInfoSection<'_> {
         // table_id(1) + flags/length(2) + protocol_version(1) + 5 + cw_index(1)
         // + tier/scl(3) = 13 bytes before splice_command_type, then the payload
         // (command_type..E_CRC_32 / descriptors), then CRC_32(4).
-        13 + self.payload_len() + CRC_LEN
+        SPLICE_COMMAND_TYPE_OFFSET + self.payload_len() + CRC_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -383,12 +433,12 @@ impl Serialize for SpliceInfoSection<'_> {
         // section_length counts the bytes after byte 2 up to and including CRC.
         // Compare in usize BEFORE narrowing to u16: a body of 64 KiB or more
         // must be rejected, not silently wrapped (#1129).
-        let section_length_usize = need - 3;
-        if section_length_usize > 4093 {
+        let section_length_usize = need - SECTION_LENGTH_HEADER_LEN;
+        if section_length_usize > SECTION_LENGTH_MAX {
             return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "splice_info_section.section_length",
                 value: section_length_usize as u64,
-                max: 4093,
+                max: SECTION_LENGTH_MAX as u64,
             }));
         }
         let section_length = section_length_usize as u16;
@@ -396,25 +446,27 @@ impl Serialize for SpliceInfoSection<'_> {
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0, private_indicator=0, sap_type(2),
         // section_length(12).
-        buf[1] =
-            (broadcast_common::len::fit_mask(self.sap_type, 0x03, "splice_info_section.sap_type")?
-                << 4)
-                | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
-        buf[3] = self.protocol_version;
-        buf[4] = (u8::from(self.encrypted_packet) << 7)
+        buf[1] = (broadcast_common::len::fit_mask(
+            self.sap_type,
+            SAP_TYPE_MASK,
+            "splice_info_section.sap_type",
+        )? << SAP_TYPE_SHIFT)
+            | ((section_length >> SECTION_LENGTH_HIGH_SHIFT) as u8 & NIBBLE_MASK);
+        buf[SECTION_LENGTH_LOW_OFFSET] = (section_length & LOW_BYTE_MASK_U16) as u8;
+        buf[PROTOCOL_VERSION_OFFSET] = self.protocol_version;
+        buf[ENCRYPTED_PACKET_OFFSET] = (u8::from(self.encrypted_packet) << ENCRYPTED_PACKET_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.encryption_algorithm,
-                0x3F,
+                ENCRYPTION_ALGORITHM_MASK,
                 "splice_info_section.encryption_algorithm",
-            )? << 1)
-            | ((self.pts_adjustment >> 32) as u8 & 0x01);
-        buf[5] = (self.pts_adjustment >> 24) as u8;
-        buf[6] = (self.pts_adjustment >> 16) as u8;
-        buf[7] = (self.pts_adjustment >> 8) as u8;
-        buf[8] = self.pts_adjustment as u8;
-        buf[9] = self.cw_index;
-        buf[10] = (self.tier >> 4) as u8;
+            )? << ENCRYPTION_ALGORITHM_SHIFT)
+            | ((self.pts_adjustment >> PTS_ADJUSTMENT_TOP_SHIFT) as u8 & PTS_ADJUSTMENT_TOP_MASK);
+        buf[PTS_ADJUSTMENT_HIGH_OFFSET] = (self.pts_adjustment >> PTS_ADJUSTMENT_HIGH_SHIFT) as u8;
+        buf[PTS_ADJUSTMENT_MID_OFFSET] = (self.pts_adjustment >> PTS_ADJUSTMENT_MID_SHIFT) as u8;
+        buf[PTS_ADJUSTMENT_LOW_OFFSET] = (self.pts_adjustment >> PTS_ADJUSTMENT_LOW_SHIFT) as u8;
+        buf[PTS_ADJUSTMENT_BOTTOM_OFFSET] = self.pts_adjustment as u8;
+        buf[CW_INDEX_OFFSET] = self.cw_index;
+        buf[TIER_OFFSET] = (self.tier >> TIER_SHIFT) as u8;
 
         // payload region (after splice_command_length byte at index 12).
         match (&self.clear, self.encrypted_payload) {
@@ -424,7 +476,7 @@ impl Serialize for SpliceInfoSection<'_> {
                 // instead of wrapping (#1129).
                 let real_scl = broadcast_common::len::fit_bits(
                     c.command.body_len() as u64,
-                    12,
+                    SPLICE_COMMAND_LENGTH_BITS,
                     "splice_info_section.splice_command_length",
                 )? as u16;
                 // A section parsed with the deprecated 0xFFF sentinel keeps it.
@@ -433,19 +485,21 @@ impl Serialize for SpliceInfoSection<'_> {
                 } else {
                     real_scl
                 };
-                buf[11] = (((self.tier & 0x0F) as u8) << 4) | ((scl >> 8) as u8 & 0x0F);
-                buf[12] = (scl & 0xFF) as u8;
-                buf[13] = c.command.command_type();
-                let mut pos = 14;
+                buf[SPLICE_COMMAND_LENGTH_OFFSET] = (((self.tier & NIBBLE_MASK_U16) as u8)
+                    << TIER_SHIFT)
+                    | ((scl >> SECTION_LENGTH_HIGH_SHIFT) as u8 & NIBBLE_MASK);
+                buf[SPLICE_COMMAND_LENGTH_LOW_OFFSET] = (scl & LOW_BYTE_MASK_U16) as u8;
+                buf[SPLICE_COMMAND_TYPE_OFFSET] = c.command.command_type();
+                let mut pos = FIXED_HEADER_LEN;
                 pos += c.command.serialize_body_into(&mut buf[pos..])?;
                 // descriptor_loop_length is a 16-bit field; same reasoning.
                 let dll = broadcast_common::len::fit_u16(
                     c.descriptor_loop.len(),
                     "splice_info_section.descriptor_loop_length",
                 )?;
-                buf[pos] = (dll >> 8) as u8;
-                buf[pos + 1] = (dll & 0xFF) as u8;
-                pos += 2;
+                buf[pos] = (dll >> DESCRIPTOR_LOOP_LENGTH_HIGH_SHIFT) as u8;
+                buf[pos + 1] = (dll & LOW_BYTE_MASK_U16) as u8;
+                pos += DESCRIPTOR_LOOP_LENGTH_LEN;
                 buf[pos..pos + c.descriptor_loop.len()].copy_from_slice(c.descriptor_loop.raw());
                 pos += c.descriptor_loop.len();
                 // W2 (#1102): re-emit alignment_stuffing instead of dropping
@@ -468,16 +522,20 @@ impl Serialize for SpliceInfoSection<'_> {
                         self.encrypted_splice_command_length
                             .unwrap_or(SPLICE_COMMAND_LENGTH_IGNORE),
                     ),
-                    12,
+                    SPLICE_COMMAND_LENGTH_BITS,
                     "splice_info_section.splice_command_length",
                 )? as u16;
-                buf[11] = (((self.tier & 0x0F) as u8) << 4) | ((scl >> 8) as u8 & 0x0F);
-                buf[12] = (scl & 0xFF) as u8;
-                buf[13..13 + enc.len()].copy_from_slice(enc);
+                buf[SPLICE_COMMAND_LENGTH_OFFSET] = (((self.tier & NIBBLE_MASK_U16) as u8)
+                    << TIER_SHIFT)
+                    | ((scl >> SECTION_LENGTH_HIGH_SHIFT) as u8 & NIBBLE_MASK);
+                buf[SPLICE_COMMAND_LENGTH_LOW_OFFSET] = (scl & LOW_BYTE_MASK_U16) as u8;
+                buf[SPLICE_COMMAND_TYPE_OFFSET..SPLICE_COMMAND_TYPE_OFFSET + enc.len()]
+                    .copy_from_slice(enc);
             }
             (None, None) => {
-                buf[11] = ((self.tier & 0x0F) as u8) << 4;
-                buf[12] = 0;
+                buf[SPLICE_COMMAND_LENGTH_OFFSET] =
+                    ((self.tier & NIBBLE_MASK_U16) as u8) << TIER_SHIFT;
+                buf[SPLICE_COMMAND_LENGTH_LOW_OFFSET] = 0;
                 // No command/payload: splice_command_type would be missing.
                 return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                     field: "splice_info_section",
@@ -608,7 +666,7 @@ mod tests {
     #[test]
     fn alignment_stuffing_round_trips_byte_identically() {
         let section = SpliceInfoSection {
-            sap_type: 0x3,
+            sap_type: SAP_TYPE_MASK,
             protocol_version: 0,
             encrypted_packet: false,
             encryption_algorithm: 0,

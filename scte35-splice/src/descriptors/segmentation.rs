@@ -39,6 +39,64 @@ const MPU_FORMAT_IDENTIFIER_LEN: usize = 4; // 32 bits / 8
 /// Minimum byte length of an MID() sub-entry header: `segmentation_upid_type` (1) + `length` (1).
 const MID_ENTRY_HEADER_LEN: usize = 2;
 
+/// Byte length of the CUEI `identifier` preceding a descriptor body.
+const CUEI_LEN: usize = core::mem::size_of::<u32>();
+const SEGMENTATION_EVENT_ID_LEN: usize = core::mem::size_of::<u32>();
+const CANCEL_AND_COMPLIANCE_LEN: usize = 1;
+/// `segmentation_event_id` + the cancel/compliance flags byte.
+const EVENT_ID_AND_FLAGS_LEN: usize = SEGMENTATION_EVENT_ID_LEN + CANCEL_AND_COMPLIANCE_LEN;
+/// Event ID, cancel/compliance byte, and the program flags byte.
+const SEGMENTATION_HEADER_LEN: usize = EVENT_ID_AND_FLAGS_LEN + 1;
+const FLAGS_OFFSET: usize = EVENT_ID_AND_FLAGS_LEN;
+const CANCEL_INDICATOR_MASK: u8 = 0x80;
+const COMPLIANCE_INDICATOR_MASK: u8 = 0x40;
+const PROGRAM_SEGMENTATION_MASK: u8 = 0x80;
+const DURATION_FLAG_MASK: u8 = 0x40;
+const DELIVERY_NOT_RESTRICTED_MASK: u8 = 0x20;
+const WEB_DELIVERY_ALLOWED_MASK: u8 = 0x10;
+const NO_REGIONAL_BLACKOUT_MASK: u8 = 0x08;
+const ARCHIVE_ALLOWED_MASK: u8 = 0x04;
+const DEVICE_RESTRICTIONS_MASK: u8 = 0x03;
+const CANCEL_INDICATOR_SHIFT: u32 = 7;
+const COMPLIANCE_INDICATOR_SHIFT: u32 = 6;
+const PROGRAM_SEGMENTATION_SHIFT: u32 = 7;
+const DURATION_FLAG_SHIFT: u32 = 6;
+const WEB_DELIVERY_ALLOWED_SHIFT: u32 = 4;
+const NO_REGIONAL_BLACKOUT_SHIFT: u32 = 3;
+const ARCHIVE_ALLOWED_SHIFT: u32 = 2;
+const RESERVED_BITS_SET: u8 = 0x3F;
+const DELIVERY_RESERVED_BITS: u8 = 0x1F;
+const PTS_RESERVED_BITS: u8 = 0xFE;
+const COMPONENT_LEN: usize = 6;
+const COMPONENT_TAG_OFFSET: usize = 0;
+const COMPONENT_PTS_TOP_OFFSET: usize = 1;
+const COMPONENT_PTS_HIGH_OFFSET: usize = 2;
+const COMPONENT_PTS_MID_OFFSET: usize = 3;
+const COMPONENT_PTS_LOW_OFFSET: usize = 4;
+const COMPONENT_PTS_BOTTOM_OFFSET: usize = 5;
+const PTS_OFFSET_TOP_MASK: u8 = 0x01;
+const PTS_OFFSET_TOP_SHIFT: u32 = 32;
+const PTS_OFFSET_HIGH_SHIFT: u32 = 24;
+const PTS_OFFSET_MID_SHIFT: u32 = 16;
+const PTS_OFFSET_LOW_SHIFT: u32 = 8;
+const DURATION_LEN: usize = 5;
+const DURATION_TOP_OFFSET: usize = 0;
+const DURATION_HIGH_OFFSET: usize = 1;
+const DURATION_MID_OFFSET: usize = 2;
+const DURATION_LOW_OFFSET: usize = 3;
+const DURATION_BOTTOM_OFFSET: usize = 4;
+const DURATION_TOP_SHIFT: u32 = 32;
+const DURATION_HIGH_SHIFT: u32 = 24;
+const DURATION_MID_SHIFT: u32 = 16;
+const DURATION_LOW_SHIFT: u32 = 8;
+const UPID_TYPE_LEN: usize = 1;
+const UPID_HEADER_LEN: usize = 2;
+const SEGMENTATION_TYPE_ID_OFFSET: usize = 0;
+const SEGMENT_NUM_OFFSET: usize = 1;
+const SEGMENTS_EXPECTED_OFFSET: usize = 2;
+const TYPE_SEGMENT_LEN: usize = 3;
+const SUB_SEGMENTS_LEN: usize = 2;
+
 /// Decoded view of a Managed Private UPID (MPU()) — §10.3.3.3, Table 24.
 ///
 /// `segmentation_upid_type` 0x0C. The `segmentation_upid()` bytes begin with a
@@ -201,26 +259,28 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "segmentation_descriptor")?;
         // segmentation_event_id (4) + flags byte (1).
-        if body.len() < 5 {
+        if body.len() < EVENT_ID_AND_FLAGS_LEN {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: HEADER_LEN + 5,
+                    need: HEADER_LEN + EVENT_ID_AND_FLAGS_LEN,
                     have: bytes.len(),
                     what: "segmentation_descriptor header",
                 },
             ));
         }
-        let (eid_bytes, rest) = body.split_first_chunk::<4>().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
-                need: HEADER_LEN + 5,
-                have: bytes.len(),
-                what: "segmentation_descriptor header",
-            },
-        ))?;
+        let (eid_bytes, rest) = body
+            .split_first_chunk::<SEGMENTATION_EVENT_ID_LEN>()
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + EVENT_ID_AND_FLAGS_LEN,
+                    have: bytes.len(),
+                    what: "segmentation_descriptor header",
+                },
+            ))?;
         let segmentation_event_id = u32::from_be_bytes(*eid_bytes);
         let b = rest[0];
-        let cancel = b & 0x80 != 0;
-        let compliance = b & 0x40 != 0;
+        let cancel = b & CANCEL_INDICATOR_MASK != 0;
+        let compliance = b & COMPLIANCE_INDICATOR_MASK != 0;
 
         let mut out = Self {
             identifier,
@@ -233,28 +293,30 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
             return Ok(out);
         }
 
-        if body.len() < 6 {
+        if body.len() < SEGMENTATION_HEADER_LEN {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: HEADER_LEN + 6,
+                    need: HEADER_LEN + SEGMENTATION_HEADER_LEN,
                     have: bytes.len(),
                     what: "segmentation_descriptor flags",
                 },
             ));
         }
-        let flags = body[5];
-        out.program_segmentation_flag = flags & 0x80 != 0;
-        let duration_flag = flags & 0x40 != 0;
-        let delivery_not_restricted = flags & 0x20 != 0;
+        let flags = body[FLAGS_OFFSET];
+        out.program_segmentation_flag = flags & PROGRAM_SEGMENTATION_MASK != 0;
+        let duration_flag = flags & DURATION_FLAG_MASK != 0;
+        let delivery_not_restricted = flags & DELIVERY_NOT_RESTRICTED_MASK != 0;
         if !delivery_not_restricted {
             out.delivery_restrictions = Some(DeliveryRestrictions {
-                web_delivery_allowed: flags & 0x10 != 0,
-                no_regional_blackout: flags & 0x08 != 0,
-                archive_allowed: flags & 0x04 != 0,
-                device_restrictions: DeviceRestrictions::from_bits(flags & 0x03),
+                web_delivery_allowed: flags & WEB_DELIVERY_ALLOWED_MASK != 0,
+                no_regional_blackout: flags & NO_REGIONAL_BLACKOUT_MASK != 0,
+                archive_allowed: flags & ARCHIVE_ALLOWED_MASK != 0,
+                device_restrictions: DeviceRestrictions::from_bits(
+                    flags & DEVICE_RESTRICTIONS_MASK,
+                ),
             });
         }
-        let mut pos = 6;
+        let mut pos = SEGMENTATION_HEADER_LEN;
 
         if !out.program_segmentation_flag {
             if body.len() < pos + 1 {
@@ -269,62 +331,66 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
             let count = body[pos] as usize;
             pos += 1;
             for _ in 0..count {
-                if body.len() < pos + 6 {
+                if body.len() < pos + COMPONENT_LEN {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: HEADER_LEN + pos + 6,
+                            need: HEADER_LEN + pos + COMPONENT_LEN,
                             have: bytes.len(),
                             what: "segmentation_descriptor component",
                         },
                     ));
                 }
-                let component_tag = body[pos];
+                let component_tag = body[pos + COMPONENT_TAG_OFFSET];
                 // 7 reserved bits, then 33-bit pts_offset.
-                let pts_offset = ((u64::from(body[pos + 1] & 0x01)) << 32)
-                    | (u64::from(body[pos + 2]) << 24)
-                    | (u64::from(body[pos + 3]) << 16)
-                    | (u64::from(body[pos + 4]) << 8)
-                    | u64::from(body[pos + 5]);
+                let pts_offset =
+                    (u64::from(body[pos + COMPONENT_PTS_TOP_OFFSET] & PTS_OFFSET_TOP_MASK)
+                        << PTS_OFFSET_TOP_SHIFT)
+                        | (u64::from(body[pos + COMPONENT_PTS_HIGH_OFFSET])
+                            << PTS_OFFSET_HIGH_SHIFT)
+                        | (u64::from(body[pos + COMPONENT_PTS_MID_OFFSET]) << PTS_OFFSET_MID_SHIFT)
+                        | (u64::from(body[pos + COMPONENT_PTS_LOW_OFFSET]) << PTS_OFFSET_LOW_SHIFT)
+                        | u64::from(body[pos + COMPONENT_PTS_BOTTOM_OFFSET]);
                 out.components.push(SegmentationComponent {
                     component_tag,
                     pts_offset,
                 });
-                pos += 6;
+                pos += COMPONENT_LEN;
             }
         }
 
         if duration_flag {
-            if body.len() < pos + 5 {
+            if body.len() < pos + DURATION_LEN {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: HEADER_LEN + pos + 5,
+                        need: HEADER_LEN + pos + DURATION_LEN,
                         have: bytes.len(),
                         what: "segmentation_descriptor segmentation_duration",
                     },
                 ));
             }
-            let d = (u64::from(body[pos]) << 32)
-                | (u64::from(body[pos + 1]) << 24)
-                | (u64::from(body[pos + 2]) << 16)
-                | (u64::from(body[pos + 3]) << 8)
-                | u64::from(body[pos + 4]);
+            let d = (u64::from(body[pos + DURATION_TOP_OFFSET]) << DURATION_TOP_SHIFT)
+                | (u64::from(body[pos + DURATION_HIGH_OFFSET]) << DURATION_HIGH_SHIFT)
+                | (u64::from(body[pos + DURATION_MID_OFFSET]) << DURATION_MID_SHIFT)
+                | (u64::from(body[pos + DURATION_LOW_OFFSET]) << DURATION_LOW_SHIFT)
+                | u64::from(body[pos + DURATION_BOTTOM_OFFSET]);
             out.segmentation_duration = Some(d);
-            pos += 5;
+            pos += DURATION_LEN;
         }
 
         // segmentation_upid_type (1) + segmentation_upid_length (1).
-        if body.len() < pos + 2 {
+        if body.len() < pos + UPID_HEADER_LEN {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: HEADER_LEN + pos + 2,
+                    need: HEADER_LEN + pos + UPID_HEADER_LEN,
                     have: bytes.len(),
                     what: "segmentation_descriptor upid header",
                 },
             ));
         }
-        out.segmentation_upid_type = SegmentationUpidType::from_u8(body[pos]);
-        let upid_len = body[pos + 1] as usize;
-        pos += 2;
+        out.segmentation_upid_type =
+            SegmentationUpidType::from_u8(body[pos + SEGMENTATION_TYPE_ID_OFFSET]);
+        let upid_len = body[pos + UPID_TYPE_LEN] as usize;
+        pos += UPID_HEADER_LEN;
         if body.len() < pos + upid_len {
             return Err(Error::LengthOverflow {
                 declared: upid_len,
@@ -336,19 +402,20 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         pos += upid_len;
 
         // segmentation_type_id (1) + segment_num (1) + segments_expected (1).
-        if body.len() < pos + 3 {
+        if body.len() < pos + TYPE_SEGMENT_LEN {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: HEADER_LEN + pos + 3,
+                    need: HEADER_LEN + pos + TYPE_SEGMENT_LEN,
                     have: bytes.len(),
                     what: "segmentation_descriptor type/segment",
                 },
             ));
         }
-        out.segmentation_type_id = SegmentationTypeId::from_u8(body[pos]);
-        out.segment_num = body[pos + 1];
-        out.segments_expected = body[pos + 2];
-        pos += 3;
+        out.segmentation_type_id =
+            SegmentationTypeId::from_u8(body[pos + SEGMENTATION_TYPE_ID_OFFSET]);
+        out.segment_num = body[pos + SEGMENT_NUM_OFFSET];
+        out.segments_expected = body[pos + SEGMENTS_EXPECTED_OFFSET];
+        pos += TYPE_SEGMENT_LEN;
 
         // The optional sub-segment appendix (§10.3.3.1). SCTE 35 says
         // `descriptor_length` alone announces it, while Table 23 defines it only
@@ -356,14 +423,19 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         // kept in `trailing`, never dropped, so a re-serialize is byte-exact.
         let rest = &body[pos..];
         out.sub_segments = if out.segmentation_type_id.has_sub_segments() {
-            rest.first_chunk::<2>().map(|pair| SubSegments {
-                sub_segment_num: pair[0],
-                sub_segments_expected: pair[1],
-            })
+            rest.first_chunk::<SUB_SEGMENTS_LEN>()
+                .map(|pair| SubSegments {
+                    sub_segment_num: pair[0],
+                    sub_segments_expected: pair[1],
+                })
         } else {
             None
         };
-        out.trailing = &rest[if out.sub_segments.is_some() { 2 } else { 0 }..];
+        out.trailing = &rest[if out.sub_segments.is_some() {
+            SUB_SEGMENTS_LEN
+        } else {
+            0
+        }..];
         Ok(out)
     }
 }
@@ -371,20 +443,20 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
 impl<'a> SegmentationDescriptor<'a> {
     fn body_len(&self) -> usize {
         if self.segmentation_event_cancel_indicator {
-            return 5; // event_id (4) + cancel byte (1)
+            return EVENT_ID_AND_FLAGS_LEN; // event_id (4) + cancel byte (1)
         }
-        let mut len = 6; // event_id (4) + cancel byte (1) + flags byte (1)
+        let mut len = SEGMENTATION_HEADER_LEN; // event_id (4) + cancel byte (1) + flags byte (1)
         if !self.program_segmentation_flag {
             len += 1; // component_count
-            len += self.components.len() * 6;
+            len += self.components.len() * COMPONENT_LEN;
         }
         if self.segmentation_duration.is_some() {
-            len += 5;
+            len += DURATION_LEN;
         }
-        len += 2 + self.segmentation_upid.len(); // upid_type + upid_length + upid
-        len += 3; // type_id + segment_num + segments_expected
+        len += UPID_HEADER_LEN + self.segmentation_upid.len(); // upid_type + upid_length + upid
+        len += TYPE_SEGMENT_LEN; // type_id + segment_num + segments_expected
         if self.sub_segments.is_some() {
-            len += 2;
+            len += SUB_SEGMENTS_LEN;
         }
         len += self.trailing.len();
         len
@@ -471,41 +543,44 @@ impl Serialize for SegmentationDescriptor<'_> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let body_len = self.body_len();
-        if body_len + 4 > u8::MAX as usize {
+        if body_len + CUEI_LEN > u8::MAX as usize {
             return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "segmentation_descriptor.descriptor_length",
-                value: (body_len + 4) as u64,
+                value: (body_len + CUEI_LEN) as u64,
                 max: u64::from(u8::MAX),
             }));
         }
         header::write_header(buf, TAG, self.identifier, body_len)?;
         let mut pos = HEADER_LEN;
 
-        buf[pos..pos + 4].copy_from_slice(&self.segmentation_event_id.to_be_bytes());
+        buf[pos..pos + SEGMENTATION_EVENT_ID_LEN]
+            .copy_from_slice(&self.segmentation_event_id.to_be_bytes());
         // cancel (1) + compliance (1) + 6 reserved bits = 1.
-        buf[pos + 4] = (u8::from(self.segmentation_event_cancel_indicator) << 7)
-            | (u8::from(self.segmentation_event_id_compliance_indicator) << 6)
-            | 0x3F;
-        pos += 5;
+        buf[pos + SEGMENTATION_EVENT_ID_LEN] = (u8::from(self.segmentation_event_cancel_indicator)
+            << CANCEL_INDICATOR_SHIFT)
+            | (u8::from(self.segmentation_event_id_compliance_indicator)
+                << COMPLIANCE_INDICATOR_SHIFT)
+            | RESERVED_BITS_SET;
+        pos += EVENT_ID_AND_FLAGS_LEN;
         if self.segmentation_event_cancel_indicator {
             return Ok(need);
         }
 
         let duration_flag = self.segmentation_duration.is_some();
-        let mut flags =
-            (u8::from(self.program_segmentation_flag) << 7) | (u8::from(duration_flag) << 6);
+        let mut flags = (u8::from(self.program_segmentation_flag) << PROGRAM_SEGMENTATION_SHIFT)
+            | (u8::from(duration_flag) << DURATION_FLAG_SHIFT);
         match &self.delivery_restrictions {
             Some(dr) => {
                 // delivery_not_restricted_flag = 0
-                flags |= u8::from(dr.web_delivery_allowed) << 4;
-                flags |= u8::from(dr.no_regional_blackout) << 3;
-                flags |= u8::from(dr.archive_allowed) << 2;
+                flags |= u8::from(dr.web_delivery_allowed) << WEB_DELIVERY_ALLOWED_SHIFT;
+                flags |= u8::from(dr.no_regional_blackout) << NO_REGIONAL_BLACKOUT_SHIFT;
+                flags |= u8::from(dr.archive_allowed) << ARCHIVE_ALLOWED_SHIFT;
                 // `DeviceRestrictions` is a closed 2-bit enum: `bits()` is always <= 0b11.
                 flags |= dr.device_restrictions.bits();
             }
             None => {
                 // delivery_not_restricted_flag = 1, 5 reserved bits = 1.
-                flags |= 0x20 | 0x1F;
+                flags |= DELIVERY_NOT_RESTRICTED_MASK | DELIVERY_RESERVED_BITS;
             }
         }
         buf[pos] = flags;
@@ -528,12 +603,13 @@ impl Serialize for SegmentationDescriptor<'_> {
                 }
                 let o = c.pts_offset;
                 // 7 reserved bits = 1, then top pts_offset bit.
-                buf[pos + 1] = 0xFE | ((o >> 32) as u8 & 0x01);
-                buf[pos + 2] = (o >> 24) as u8;
-                buf[pos + 3] = (o >> 16) as u8;
-                buf[pos + 4] = (o >> 8) as u8;
-                buf[pos + 5] = o as u8;
-                pos += 6;
+                buf[pos + COMPONENT_PTS_TOP_OFFSET] =
+                    PTS_RESERVED_BITS | ((o >> PTS_OFFSET_TOP_SHIFT) as u8 & PTS_OFFSET_TOP_MASK);
+                buf[pos + COMPONENT_PTS_HIGH_OFFSET] = (o >> PTS_OFFSET_HIGH_SHIFT) as u8;
+                buf[pos + COMPONENT_PTS_MID_OFFSET] = (o >> PTS_OFFSET_MID_SHIFT) as u8;
+                buf[pos + COMPONENT_PTS_LOW_OFFSET] = (o >> PTS_OFFSET_LOW_SHIFT) as u8;
+                buf[pos + COMPONENT_PTS_BOTTOM_OFFSET] = o as u8;
+                pos += COMPONENT_LEN;
             }
         }
 
@@ -545,27 +621,27 @@ impl Serialize for SegmentationDescriptor<'_> {
                     max: crate::time::DURATION_40_MAX,
                 }));
             }
-            buf[pos] = (d >> 32) as u8;
-            buf[pos + 1] = (d >> 24) as u8;
-            buf[pos + 2] = (d >> 16) as u8;
-            buf[pos + 3] = (d >> 8) as u8;
-            buf[pos + 4] = d as u8;
-            pos += 5;
+            buf[pos + DURATION_TOP_OFFSET] = (d >> DURATION_TOP_SHIFT) as u8;
+            buf[pos + DURATION_HIGH_OFFSET] = (d >> DURATION_HIGH_SHIFT) as u8;
+            buf[pos + DURATION_MID_OFFSET] = (d >> DURATION_MID_SHIFT) as u8;
+            buf[pos + DURATION_LOW_OFFSET] = (d >> DURATION_LOW_SHIFT) as u8;
+            buf[pos + DURATION_BOTTOM_OFFSET] = d as u8;
+            pos += DURATION_LEN;
         }
 
-        buf[pos] = self.segmentation_upid_type.to_u8();
-        buf[pos + 1] = broadcast_common::len::fit_u8(
+        buf[pos + SEGMENTATION_TYPE_ID_OFFSET] = self.segmentation_upid_type.to_u8();
+        buf[pos + UPID_TYPE_LEN] = broadcast_common::len::fit_u8(
             self.segmentation_upid.len(),
             "segmentation_descriptor.segmentation_upid_length",
         )?;
-        pos += 2;
+        pos += UPID_HEADER_LEN;
         buf[pos..pos + self.segmentation_upid.len()].copy_from_slice(self.segmentation_upid);
         pos += self.segmentation_upid.len();
 
-        buf[pos] = self.segmentation_type_id.to_u8();
-        buf[pos + 1] = self.segment_num;
-        buf[pos + 2] = self.segments_expected;
-        pos += 3;
+        buf[pos + SEGMENTATION_TYPE_ID_OFFSET] = self.segmentation_type_id.to_u8();
+        buf[pos + SEGMENT_NUM_OFFSET] = self.segment_num;
+        buf[pos + SEGMENTS_EXPECTED_OFFSET] = self.segments_expected;
+        pos += TYPE_SEGMENT_LEN;
 
         if let Some(sub_segments) = self.sub_segments {
             if !self.segmentation_type_id.has_sub_segments() {
@@ -577,7 +653,7 @@ impl Serialize for SegmentationDescriptor<'_> {
             }
             buf[pos] = sub_segments.sub_segment_num;
             buf[pos + 1] = sub_segments.sub_segments_expected;
-            pos += 2;
+            pos += SUB_SEGMENTS_LEN;
         }
         buf[pos..pos + self.trailing.len()].copy_from_slice(self.trailing);
         pos += self.trailing.len();
