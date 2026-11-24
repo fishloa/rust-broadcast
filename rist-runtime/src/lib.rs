@@ -42,6 +42,42 @@ pub(crate) const RTCP_COUNT_MASK: u8 = 0x1F;
 /// Mask for the padding (P) bit in RTCP byte 0 (RFC 3550 §6.4.1).
 pub(crate) const RTCP_PADDING_MASK: u8 = 0x20;
 
+/// Common-header length in bytes (RFC 3550 §6.1).
+pub(crate) const RTCP_HEADER_LEN: usize = 4;
+
+/// One 32-bit word, in bytes — the unit of the common-header `length` field
+/// (RFC 3550 §6.1).
+pub(crate) const WORD_LEN: usize = 4;
+
+/// Byte offset of the common header's packet-type field (RFC 3550 §6.1).
+pub(crate) const RTCP_LENGTH_OFFSET: usize = 2;
+
+/// RTCP packet type for an application-defined packet (RFC 3550 §6.7).
+pub(crate) const PT_APP: u8 = 204;
+
+/// RTCP protocol version — always 2 (RFC 3550 §6.4.1).
+pub(crate) const RTCP_VERSION: u8 = 2;
+
+/// Shift of the 2-bit `version` field in the common header's first byte
+/// (RFC 3550 §6.1).
+pub(crate) const VERSION_SHIFT: u32 = 6;
+
+/// Read the big-endian 32-bit field at `offset` of `bytes`.
+pub(crate) fn be_u32(bytes: &[u8], offset: usize) -> u32 {
+    const FIELD_LEN: usize = core::mem::size_of::<u32>();
+    let mut field = [0_u8; FIELD_LEN];
+    field.copy_from_slice(&bytes[offset..offset + FIELD_LEN]);
+    u32::from_be_bytes(field)
+}
+
+/// Read the big-endian 16-bit field at `offset` of `bytes`.
+pub(crate) fn be_u16(bytes: &[u8], offset: usize) -> u16 {
+    const FIELD_LEN: usize = core::mem::size_of::<u16>();
+    let mut field = [0_u8; FIELD_LEN];
+    field.copy_from_slice(&bytes[offset..offset + FIELD_LEN]);
+    u16::from_be_bytes(field)
+}
+
 // ---------------------------------------------------------------------------
 // Re-exports for convenience
 // ---------------------------------------------------------------------------
