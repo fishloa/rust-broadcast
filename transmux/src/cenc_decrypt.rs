@@ -620,7 +620,7 @@ fn parse_senc_box(
 /// track) is skipped. A `traf` with no `senc` at all is only ever legitimate
 /// for a **constant-IV, whole-sample-protected** track
 /// (`tenc.default_per_sample_iv_size == 0`) — the one shape
-/// [`crate::fragment_build::protect_media_segment`] (via its private
+/// [`isobmff::writer::fragmented::protect_media_segment`] (via its private
 /// `build_cenc_fragment_boxes`) deliberately omits `senc`/`saiz`/`saio` for,
 /// since every sample of such a track decrypts from `tenc.default_constant_IV`
 /// alone and there is nothing per-sample for `senc` to carry (ISO/IEC

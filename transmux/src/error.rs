@@ -151,6 +151,15 @@ pub enum Error {
         limit: u64,
     },
 
+    /// A buffered fragment would exceed
+    /// [`isobmff::Limits::max_fragment_bytes`], so the writer refused the push
+    /// before the buffer grew.
+    #[error("fragment exceeds the configured limit of {limit} bytes")]
+    FragmentTooLarge {
+        /// The cap it exceeded.
+        limit: u64,
+    },
+
     /// A [`CodecConfig`](crate::pipeline::CodecConfig) has no ISOBMFF/fMP4
     /// carriage in this crate (e.g. the WebM-native VP8 / Vorbis codecs, which
     /// are carried in the IR for `{WebM} → IR → {WebM}` and inspection only).
@@ -378,6 +387,7 @@ impl From<isobmff::Error> for Error {
             }
             I::SampleDataBudgetExceeded { limit } => Error::SampleDataBudgetExceeded { limit },
             I::LimitExceeded { what, limit } => Error::LimitExceeded { what, limit },
+            I::FragmentTooLarge { limit } => Error::FragmentTooLarge { limit },
             I::FieldOverflow(v) => Error::FieldOverflow(v),
             I::UnsupportedFeature(s) => Error::UnsupportedFeature(s),
             I::UnsupportedVersion(v) => Error::EmsgSerialize(I::UnsupportedVersion(v)),

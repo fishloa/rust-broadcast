@@ -340,6 +340,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "isobmff_writer_roundtrip"
+path = "fuzz_targets/isobmff_writer_roundtrip.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "transmux_ts_demux"
 path = "fuzz_targets/transmux_ts_demux.rs"
 test = false

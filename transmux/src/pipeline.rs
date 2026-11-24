@@ -14,33 +14,23 @@
 
 mod stsd;
 
-use crate::TrackId;
 use crate::units::ROUNDING_DIVISOR;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
 use isobmff::box_types::BOX_TYPE_SIZE;
 
 use broadcast_common::Serialize;
 
-use crate::error::{Error, Result};
-use crate::fragment_build::{MediaRunSample, media_fragment_run};
+use crate::error::Result;
 use isobmff::ac4::DAC4_FOURCC;
 use isobmff::av1::Av1SampleEntry;
 use isobmff::box_support::OpaqueBox;
 use isobmff::dts::DDTS_FOURCC;
 use isobmff::flac::DFLA_FOURCC;
 use isobmff::init_segment::{
-    Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntry, DataEntryUrlBox, DataInformationBox,
-    DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, FlacSampleEntry, HandlerBox, MediaBox,
-    MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox, MovieHeaderBox,
-    Mp4aSampleEntry, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox,
-    SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, TrackBox, TrackExtendsBox,
-    TrackHeaderBox, VideoMediaHeaderBox,
-};
-use isobmff::movie_fragment::{
-    MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentBox,
+    Ac3SampleEntry, Ac4SampleEntry, DtsSampleEntry, Ec3SampleEntry, FlacSampleEntry,
+    MhaSampleEntry, Mp4aSampleEntry, OpusSampleEntry, SampleEntryVariant,
 };
 use isobmff::mpegh::MHAC_FOURCC;
 use isobmff::nalu_types::{HEVC_SPS_NUT, HEVC_VPS_NUT};
@@ -48,25 +38,11 @@ use isobmff::opus::DOPS_FOURCC;
 use isobmff::sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
 };
-use isobmff::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 use isobmff::visual_ext::{ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 
 use isobmff::emsg::EmsgBox;
-use isobmff::timing::TimeToSampleBox;
 use isobmff::vp9::Vp9SampleEntry;
 
-/// ISO-639-2 packed language code `und` (undetermined).
-const LANG_UND: u16 = 0x55C4;
-/// The ISOBMFF identity transformation matrix (ISO/IEC 14496-12:2026 §7.3.2), unity + `[2,30]` fixed.
-const IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
-/// `tkhd` flags: track_enabled | in_movie | in_preview.
-const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
-/// `ftyp` minor version this crate writes.
-const FTYP_MINOR_VERSION: u32 = 512;
-/// `mvhd` `rate` for normal playback: 1.0 in 16.16 fixed point (§8.2.2).
-const MVHD_RATE_UNITY: u32 = 0x0001_0000;
-/// `mvhd` `volume` for full volume: 1.0 in 8.8 fixed point (§8.2.2).
-const MVHD_VOLUME_UNITY: u16 = 0x0100;
 /// `tkhd` `volume` for full volume: 1.0 in 8.8 fixed point (§8.3.2).
 const TKHD_VOLUME_UNITY: i16 = 0x0100;
 /// Fractional bits of the 16.16 fixed-point fields (`samplerate`, `tkhd` size).
@@ -94,37 +70,16 @@ pub use crate::ir::{
 /// Build a CMAF initialization segment (`ftyp` + fragmented-init `moov`) for the
 /// given tracks. The `moov` carries empty sample tables (`stts`/`stsc`/`stsz`/
 /// `stco`) plus an `mvex`/`trex` per track, marking the movie as fragmented.
+///
+/// The boxes are assembled by [`isobmff::writer::FragmentedWriter`]; this
+/// function only maps the IR onto [`isobmff::writer::TrackSetup`].
 pub fn build_init_segment(
     tracks: &[TrackSpec],
     movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
 ) -> Result<Vec<u8>> {
     let movie_timescale = movie_timescale.into();
-    let ftyp = FileTypeBox {
-        major_brand: *b"iso5",
-        minor_version: FTYP_MINOR_VERSION,
-        compatible_brands: vec![*b"iso5", *b"iso6", *b"mp41"],
-    };
 
-    let next_track_id = tracks
-        .iter()
-        .map(|t| t.track_id)
-        .max()
-        .map_or(TrackId::new(1), TrackId::next);
-    let mvhd = MovieHeaderBox {
-        version: 0,
-        flags: 0,
-        creation_time: 0,
-        modification_time: 0,
-        timescale: movie_timescale,
-        duration: 0,
-        rate: MVHD_RATE_UNITY,
-        volume: MVHD_VOLUME_UNITY,
-        matrix: IDENTITY_MATRIX,
-        next_track_id: next_track_id.into(),
-    };
-
-    let mut trak_boxes = Vec::with_capacity(tracks.len());
-    let mut trex = Vec::with_capacity(tracks.len());
+    let mut setups = Vec::with_capacity(tracks.len());
     for t in tracks {
         // MUX = strict but filterable (media plane step-2 fix wave 1,
         // B1-B4): a track this crate cannot place into an ISOBMFF `trak`
@@ -139,30 +94,38 @@ pub fn build_init_segment(
         if !t.config.is_muxable_in_bmff() {
             return Err(unmuxable_track_error(t));
         }
-        trak_boxes.push(build_trak(t)?);
-        trex.push(TrackExtendsBox {
-            version: 0,
-            flags: 0,
-            track_id: t.track_id.into(),
-            default_sample_description_index: 1,
-            default_sample_duration: 0,
-            default_sample_size: 0,
-            default_sample_flags: 0,
-        });
+        setups.push(track_setup(t)?);
     }
 
-    let moov = MovieBox::new(
-        mvhd,
-        trak_boxes,
-        Some(MovieExtendsBox::new(trex, vec![])),
-        vec![],
-    );
+    let writer =
+        isobmff::writer::Writer::fragmented(setups, movie_timescale, isobmff::Limits::default())?;
+    Ok(writer.init()?)
+}
 
-    let mut out = vec![0u8; ftyp.serialized_len() + moov.serialized_len()];
-    let n1 = ftyp.serialize_into(&mut out)?;
-    let n2 = moov.serialize_into(&mut out[n1..])?;
-    out.truncate(n1 + n2);
-    Ok(out)
+/// The one IR-to-[`TrackSetup`](isobmff::writer::TrackSetup) mapping.
+fn track_setup(t: &TrackSpec) -> Result<isobmff::writer::TrackSetup> {
+    let stsd::TrackMedia {
+        entry,
+        kind,
+        tkhd_w,
+        tkhd_h,
+    } = stsd::track_media(t)?;
+    let mut setup = isobmff::writer::TrackSetup::new(
+        isobmff::TrackId::new(t.track_id.value()),
+        kind.handler_type(),
+        kind.handler_name(),
+        t.timescale,
+        isobmff::writer::SampleEntry::Typed(entry),
+    );
+    setup.minf_header = kind.minf_header_fourcc();
+    setup.width = tkhd_w;
+    setup.height = tkhd_h;
+    setup.volume = if t.config.is_audio() {
+        TKHD_VOLUME_UNITY
+    } else {
+        0
+    };
+    Ok(setup)
 }
 
 /// Build the named, typed rejection for a track [`CodecConfig::is_muxable_in_bmff`]
@@ -255,7 +218,7 @@ fn srat_opaque(rate: isobmff::init_segment::SamplingRateBox) -> Result<OpaqueBox
 }
 
 /// Build the `pasp`/`colr` child boxes (ISO/IEC 14496-12:2026 §12.1.4–5)
-/// that `build_trak` appends to an AVC/HEVC sample entry from the track's
+/// that `track_setup` appends to an AVC/HEVC sample entry from the track's
 /// [`DisplayGeometry`] (Phase 4a-1). `pasp` is emitted only for a non-1:1
 /// sample aspect ratio; `colr` (`nclx`) only when a colour description was
 /// signalled. The track's HDR10 static metadata adds `mdcv` then `clli`
@@ -631,153 +594,6 @@ fn tkhd_presentation_size(
     )
 }
 
-/// An empty `stsd` holding the track's single sample entry: the init segment
-/// declares the codec, and every sample arrives through the fragments.
-fn empty_sample_description(entry: SampleEntryVariant) -> SampleDescriptionBox {
-    SampleDescriptionBox {
-        version: entry.required_stsd_version(),
-        flags: 0,
-        entries: vec![entry],
-    }
-}
-
-/// The empty `stbl` of a fragmented init: `stsd` plus the four sample tables a
-/// fragmenting writer leaves unpopulated (their entries land in `moof`).
-fn empty_sample_table(stsd: SampleDescriptionBox) -> SampleTableBox {
-    SampleTableBox {
-        children: vec![
-            StblChild::Stsd(stsd),
-            StblChild::Stts(TimeToSampleBox {
-                version: 0,
-                flags: 0,
-                entries: vec![],
-            }),
-            StblChild::Stsc(SampleToChunkBox {
-                version: 0,
-                flags: 0,
-                entries: vec![],
-            }),
-            StblChild::Stsz(SampleSizeBox {
-                version: 0,
-                flags: 0,
-                sample_size: 0,
-                sample_count: 0,
-                entries: vec![],
-            }),
-            StblChild::Stco(ChunkOffsetBox {
-                version: 0,
-                flags: 0,
-                entries: vec![],
-            }),
-        ],
-    }
-}
-
-/// The `dinf` of a self-contained track: one `url ` entry with flags bit 0 set
-/// (media in this file).
-fn self_contained_data_information() -> DataInformationBox {
-    DataInformationBox::new(
-        Some(DataReferenceBox {
-            version: 0,
-            flags: 0,
-            entries: vec![DataEntry::Url(DataEntryUrlBox {
-                version: 0,
-                flags: 1,
-                location: vec![],
-            })],
-        }),
-        vec![],
-    )
-}
-
-/// The `minf` of one track: the media header for its `kind`, the shared
-/// `dinf`, the empty `stbl`, and any header the handler requires ahead of its
-/// children.
-fn track_media_information(
-    kind: stsd::MediaKind,
-    stbl: SampleTableBox,
-    minf_header: Option<OpaqueBox>,
-) -> MediaInformationBox {
-    let (vmhd, smhd) = (kind.vmhd(), kind.smhd());
-    let mut minf = MediaInformationBox::new(
-        vmhd,
-        smhd,
-        Some(self_contained_data_information()),
-        Some(stbl),
-        vec![],
-    );
-    if let Some(h) = minf_header {
-        minf.set_leading_opaque_header(h);
-    }
-    minf
-}
-
-/// The `mdhd` of a fragmented init: zero timeline, per-track timescale, and
-/// the `und` language.
-fn track_media_header(timescale: broadcast_common::timescale::Timescale) -> MediaHeaderBox {
-    MediaHeaderBox {
-        version: 0,
-        flags: 0,
-        creation_time: 0,
-        modification_time: 0,
-        timescale,
-        duration: 0,
-        language: LANG_UND,
-    }
-}
-
-/// The `hdlr` naming the track's handler type.
-fn track_handler(kind: &stsd::MediaKind) -> HandlerBox {
-    HandlerBox {
-        version: 0,
-        flags: 0,
-        handler_type: kind.handler_type(),
-        name: kind.handler_name(),
-    }
-}
-
-/// The `tkhd` of a fragmented init: enabled in movie, zero timeline, and the
-/// presentation size (audio carries no visual size, only the volume field).
-fn track_header(track_id: TrackId, audio: bool, width: u32, height: u32) -> TrackHeaderBox {
-    TrackHeaderBox {
-        version: 0,
-        flags: TKHD_ENABLED_IN_MOVIE,
-        creation_time: 0,
-        modification_time: 0,
-        track_id: track_id.into(),
-        duration: 0,
-        layer: 0,
-        alternate_group: 0,
-        volume: if audio { TKHD_VOLUME_UNITY } else { 0 },
-        matrix: IDENTITY_MATRIX,
-        width,
-        height,
-        // Anamorphic tkhd presentation size (ISO/IEC 14496-12:2026 §8.3.2) is a follow-up; coded size retained.
-    }
-}
-
-/// Build one fragmented-init `trak` (empty sample tables + a single `stsd` entry).
-fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
-    let stsd::TrackMedia {
-        entry: stsd_entry,
-        kind,
-        tkhd_w,
-        tkhd_h,
-    } = stsd::track_media(t)?;
-    let stbl = empty_sample_table(empty_sample_description(stsd_entry));
-    let minf_header = kind.minf_header();
-    let handler = track_handler(&kind);
-    let minf = track_media_information(kind, stbl, minf_header);
-    let mdia = MediaBox::new(
-        Some(track_media_header(t.timescale)),
-        Some(handler),
-        Some(minf),
-        vec![],
-    );
-    let tkhd = track_header(t.track_id, t.config.is_audio(), tkhd_w, tkhd_h);
-    Ok(TrackBox::new(tkhd, None, Some(mdia), vec![]))
-}
-
 /// Build one CMAF media segment (`styp` + `moof` + `mdat`) carrying the given
 /// per-track samples. Each `trun.data_offset` is computed from the finished
 /// `moof` size (the tracks' sample data are concatenated into a single `mdat`
@@ -830,7 +646,8 @@ pub fn build_media_segment_with_events(
 const STYP_MAJOR_BRAND: [u8; 4] = *b"msdh";
 const STYP_COMPATIBLE_BRANDS: [[u8; 4]; 2] = [*b"msdh", *b"msix"];
 
-/// Build one CMAF fragment (`[styp] [emsg]* moof mdat`) over a run of samples.
+/// Map the IR onto the writer's one fragment builder, which emits
+/// `[styp] [emsg]* moof mdat` over a run of samples.
 ///
 /// The single builder behind [`build_media_segment_with_events`] and the LL-DASH
 /// and LL-HLS chunk/part builders: same `trun` flags and `default-base-is-moof`
@@ -844,72 +661,56 @@ pub(crate) fn build_chunk(
     with_styp: bool,
     emsgs: &[EmsgBox<'_>],
 ) -> Result<Vec<u8>> {
-    let styp = with_styp.then(|| SegmentTypeBox {
+    let mut metas: Vec<Vec<isobmff::writer::SampleMeta>> = Vec::with_capacity(tracks.len());
+    for ft in tracks {
+        metas.push(
+            ft.samples
+                .iter()
+                .map(|s| {
+                    Ok(isobmff::writer::SampleMeta {
+                        duration: s.timing.and_then(|t| t.duration()).unwrap_or(0),
+                        composition_offset: s.composition_offset()?.unwrap_or(0),
+                        sync: s.flags.is_sync,
+                        aux: None,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?,
+        );
+    }
+    let mut sample_sets: Vec<Vec<isobmff::writer::SampleData<'_>>> =
+        Vec::with_capacity(tracks.len());
+    for (ft, track_metas) in tracks.iter().zip(&metas) {
+        sample_sets.push(
+            ft.samples
+                .iter()
+                .zip(track_metas)
+                .map(|(s, meta)| isobmff::writer::SampleData {
+                    meta,
+                    data: &s.data,
+                })
+                .collect(),
+        );
+    }
+    let fragment_tracks: Vec<isobmff::writer::FragmentTrack<'_>> = tracks
+        .iter()
+        .enumerate()
+        .map(|(i, ft)| isobmff::writer::FragmentTrack {
+            track_id: isobmff::TrackId::new(ft.track_id.value()),
+            base_decode_time: ft.base_media_decode_time,
+            samples: &sample_sets[i],
+        })
+        .collect();
+    let styp = with_styp.then_some(isobmff::writer::SegmentBrands {
         major_brand: STYP_MAJOR_BRAND,
         minor_version: 0,
         compatible_brands: STYP_COMPATIBLE_BRANDS.to_vec(),
     });
-
-    let mut traf_boxes = Vec::with_capacity(tracks.len());
-    for ft in tracks {
-        let runs = ft
-            .samples
-            .iter()
-            .map(|s| {
-                Ok(MediaRunSample {
-                    duration: s.timing.and_then(|t| t.duration()).unwrap_or(0),
-                    size: s.data.len(),
-                    is_sync: s.flags.is_sync,
-                    composition_offset: s.composition_offset()?.unwrap_or(0),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let (tfhd, trun) = media_fragment_run(ft.track_id, runs.into_iter())?;
-        let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(ft.base_media_decode_time);
-        traf_boxes.push(TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]));
-    }
-
-    let mut moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(sequence_number), traf_boxes);
-
-    let moof_size = moof.serialized_len();
-    let mut cursor = moof_size + isobmff::box_types::BOX_HEADER_MIN_SIZE;
-    let mut mdat_data = Vec::new();
-    for (i, ft) in tracks.iter().enumerate() {
-        moof.traf[i].trun[0].data_offset = Some(i32::try_from(cursor).map_err(|_| {
-            Error::InvalidValue(InvalidValue {
-                field: "trun data_offset",
-                value: cursor as u64,
-                reason: "fragment too large for the signed 32-bit trun data_offset",
-            })
-        })?);
-        for s in ft.samples {
-            mdat_data.extend_from_slice(&s.data);
-            cursor += s.data.len();
-        }
-    }
-    let mdat = MediaDataBox { data: mdat_data };
-
-    let emsg_vecs: Vec<Vec<u8>> = emsgs
-        .iter()
-        .map(|e| Ok(e.to_vec()?))
-        .collect::<Result<_>>()?;
-    let emsg_total: usize = emsg_vecs.iter().map(|v| v.len()).sum();
-
-    let styp_len = styp.as_ref().map_or(0, |s| s.serialized_len());
-    let total = styp_len + emsg_total + moof.serialized_len() + mdat.serialized_len();
-    let mut out = vec![0u8; total];
-    let mut c = 0usize;
-    if let Some(styp) = &styp {
-        c += styp.serialize_into(&mut out[c..])?;
-    }
-    for ev in &emsg_vecs {
-        out[c..c + ev.len()].copy_from_slice(ev);
-        c += ev.len();
-    }
-    c += moof.serialize_into(&mut out[c..])?;
-    c += mdat.serialize_into(&mut out[c..])?;
-    out.truncate(c);
-    Ok(out)
+    let options = isobmff::writer::FragmentOptions {
+        sequence_number,
+        styp: styp.as_ref(),
+        events: emsgs,
+    };
+    Ok(isobmff::writer::fragmented_segment(&fragment_tracks, &options)?.bytes)
 }
 
 #[cfg(test)]

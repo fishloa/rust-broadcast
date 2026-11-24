@@ -1,0 +1,521 @@
+//! Sans-IO fragmented MP4 writer: the initialization segment and the
+//! `moof`+`mdat` fragments that follow it.
+//!
+//! ISO/IEC 14496-12:2026 §8.8 (movie fragments), §8.16 (CMAF), §8.14.2
+//! (`styp`). The [`FragmentedWriter`] owns the per-track sample buffers and
+//! hands back one whole `[styp] [emsg]* moof mdat` run per
+//! [`flush`](FragmentedWriter::flush); [`fragmented_segment`] is the same one
+//! builder for a caller that already has its samples in hand.
+//!
+//! Every count and size taken from a file is checked against [`Limits`]
+//! before anything is allocated, and the buffered fragment is capped by
+//! [`Limits::max_fragment_bytes`] before a push grows it: a hostile header can
+//! only ever produce a typed error.
+
+use crate::box_support::OpaqueBox;
+use crate::box_types::{BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE};
+use crate::cenc::{CencScheme, SubSampleEntry, TrackEncryptionBox};
+use crate::emsg::EmsgBox;
+use crate::error::{Error, Result};
+use crate::init_segment::{
+    ChunkOffsetBox, DataEntry, DataEntryUrlBox, DataInformationBox, DataReferenceBox, HandlerBox,
+    MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox,
+    SampleDescriptionBox, SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox,
+    SoundMediaHeaderBox, StblChild, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
+};
+use crate::limits::Limits;
+use crate::segments::FileTypeBox;
+use crate::timing::TimeToSampleBox;
+use crate::track_id::TrackId;
+use alloc::vec;
+use alloc::vec::Vec;
+use broadcast_common::Serialize;
+use broadcast_common::timescale::Timescale;
+
+pub mod fragmented;
+
+pub use fragmented::{FragmentedWriter, RunSample, fragmented_segment, media_fragment_run};
+
+/// ISO-639-2 packed language code `und` (undetermined).
+const LANG_UND: u16 = 0x55C4;
+/// The ISOBMFF identity transformation matrix (§7.3.2), unity + `[2,30]` fixed.
+const IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
+/// `tkhd` flags: track_enabled | in_movie | in_preview.
+const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
+/// `ftyp` minor version this crate writes for its default brand set.
+const FTYP_MINOR_VERSION: u32 = 512;
+/// `mvhd` `rate` for normal playback: 1.0 in 16.16 fixed point (§8.2.2).
+const MVHD_RATE_UNITY: u32 = 0x0001_0000;
+/// `mvhd` `volume` for full volume: 1.0 in 8.8 fixed point (§8.2.2).
+const MVHD_VOLUME_UNITY: u16 = 0x0100;
+/// `trex` default sample description index (1-based, §8.8.3).
+const TREX_DEFAULT_DESCRIPTION_INDEX: u32 = 1;
+/// The one `url ` data entry a self-contained track carries (§8.7.2).
+const SELF_CONTAINED_DATA_ENTRY_FLAGS: u32 = 1;
+
+/// The `ftyp` brand set an initialization segment is written under.
+///
+/// The brand choice belongs to the caller (a CMAF packager writes
+/// `iso5`/`iso6`/`mp41`, a Smooth packager something else), so it is a value
+/// the writer carries rather than a constant it decides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileType {
+    /// Best-use brand.
+    pub major_brand: [u8; BOX_TYPE_SIZE],
+    /// Minor version of the major brand.
+    pub minor_version: u32,
+    /// Brands the file is compatible with.
+    pub compatible_brands: Vec<[u8; BOX_TYPE_SIZE]>,
+}
+
+impl Default for FileType {
+    fn default() -> Self {
+        Self {
+            major_brand: *b"iso5",
+            minor_version: FTYP_MINOR_VERSION,
+            compatible_brands: vec![*b"iso5", *b"iso6", *b"mp41"],
+        }
+    }
+}
+
+/// The `styp` brand set of the fragments a writer flushes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentBrands {
+    /// Best-use brand.
+    pub major_brand: [u8; BOX_TYPE_SIZE],
+    /// Minor version of the major brand.
+    pub minor_version: u32,
+    /// Brands the segment is compatible with.
+    pub compatible_brands: Vec<[u8; BOX_TYPE_SIZE]>,
+}
+
+/// One sample entry as the init segment's `stsd` carries it.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum SampleEntry {
+    /// A typed entry this crate parses and serializes.
+    Typed(SampleEntryVariant),
+    /// An entry this crate has no typed form for, kept as its complete box
+    /// bytes (header included) so the writer emits it verbatim.
+    Raw {
+        /// The entry's four-CC.
+        fourcc: [u8; BOX_TYPE_SIZE],
+        /// The complete sample-entry box, 8-byte header included.
+        body: Vec<u8>,
+    },
+}
+
+/// The default sample values one track's `trex` states (§8.8.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrexDefaults {
+    /// Default `stsd` entry index (1-based).
+    pub sample_description_index: u32,
+    /// Default sample duration, in the track timescale.
+    pub default_sample_duration: u32,
+    /// Default sample size, in bytes.
+    pub default_sample_size: u32,
+    /// Default per-sample flags (§8.8.3 sample-flags layout).
+    pub default_sample_flags: u32,
+}
+
+impl Default for TrexDefaults {
+    fn default() -> Self {
+        Self {
+            sample_description_index: TREX_DEFAULT_DESCRIPTION_INDEX,
+            default_sample_duration: 0,
+            default_sample_size: 0,
+            default_sample_flags: 0,
+        }
+    }
+}
+
+/// CENC protection applied to a track's sample entry in the init segment
+/// (ISO/IEC 14496-12:2026 §13.4, ISO/IEC 23001-7 §12.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SampleEntryProtection {
+    /// The protection scheme (`schm.scheme_type`).
+    pub scheme: CencScheme,
+    /// The track encryption box (`tenc`) that carries the scheme parameters.
+    pub tenc: TrackEncryptionBox,
+}
+
+/// Everything the init segment needs to know about one track.
+///
+/// The fields are the `tkhd`/`mdhd`/`hdlr`/`stsd` values the caller already
+/// has in its own model; the writer assembles the boxes from them. A track
+/// with any four-CC handler and any sample entry can be written, so a track
+/// outside the caller's codec set is not dropped.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackSetup {
+    /// `tkhd.track_ID` / `tfhd.track_ID` / `trex.track_ID`.
+    pub track_id: TrackId,
+    /// `hdlr.handler_type` (`vide`, `soun`, `meta`, …).
+    pub handler: [u8; BOX_TYPE_SIZE],
+    /// `hdlr.name` bytes (NUL-terminated by the caller's own convention).
+    pub handler_name: Vec<u8>,
+    /// The headerless FullBox kept as the first `minf` child (`sthd`, `nmhd`),
+    /// when the handler needs one (§7.3.4).
+    pub minf_header: Option<[u8; BOX_TYPE_SIZE]>,
+    /// `mdhd.timescale`.
+    pub timescale: Timescale,
+    /// `tkhd.width`, 16.16 fixed point.
+    pub width: u32,
+    /// `tkhd.height`, 16.16 fixed point.
+    pub height: u32,
+    /// `tkhd.volume`, 8.8 fixed point.
+    pub volume: i16,
+    /// The single sample entry of the fragmented init.
+    pub entry: SampleEntry,
+    /// The track's `trex` defaults; `None` writes the neutral ones.
+    pub trex: Option<TrexDefaults>,
+    /// CENC protection to wrap the sample entry with.
+    pub protection: Option<SampleEntryProtection>,
+}
+
+impl TrackSetup {
+    /// A track with the neutral `tkhd` and `trex` values.
+    pub fn new(
+        track_id: TrackId,
+        handler: [u8; BOX_TYPE_SIZE],
+        handler_name: Vec<u8>,
+        timescale: Timescale,
+        entry: SampleEntry,
+    ) -> Self {
+        Self {
+            track_id,
+            handler,
+            handler_name,
+            minf_header: None,
+            timescale,
+            width: 0,
+            height: 0,
+            volume: 0,
+            entry,
+            trex: None,
+            protection: None,
+        }
+    }
+}
+
+/// The writer's entry point.
+pub struct Writer;
+
+impl Writer {
+    /// Start a fragmented writer over `tracks`, in the order they appear in
+    /// the `moov` and in each `moof`.
+    ///
+    /// The buffered fragment is capped by `limits`; a push that would exceed
+    /// [`Limits::max_fragment_bytes`] fails before the buffer grows.
+    pub fn fragmented(
+        tracks: Vec<TrackSetup>,
+        movie_timescale: Timescale,
+        limits: Limits,
+    ) -> Result<FragmentedWriter> {
+        FragmentedWriter::new(tracks, movie_timescale, limits)
+    }
+}
+
+/// Build a fragmented initialization segment (`ftyp` + `moov`) for `tracks`.
+///
+/// The `moov` carries one empty `stbl` per track (`stsd` plus empty
+/// `stts`/`stsc`/`stsz`/`stco`) and an `mvex`/`trex`, marking the movie as
+/// fragmented (§8.8).
+pub(crate) fn build_init_segment(
+    tracks: &[TrackSetup],
+    movie_timescale: Timescale,
+    file_type: &FileType,
+) -> Result<Vec<u8>> {
+    let ftyp = FileTypeBox {
+        major_brand: file_type.major_brand,
+        minor_version: file_type.minor_version,
+        compatible_brands: file_type.compatible_brands.clone(),
+    };
+
+    let next_track_id = tracks
+        .iter()
+        .map(|t| t.track_id)
+        .max()
+        .map_or(TrackId::new(1), TrackId::next);
+    let mvhd = MovieHeaderBox {
+        version: 0,
+        flags: 0,
+        creation_time: 0,
+        modification_time: 0,
+        timescale: movie_timescale,
+        duration: 0,
+        rate: MVHD_RATE_UNITY,
+        volume: MVHD_VOLUME_UNITY,
+        matrix: IDENTITY_MATRIX,
+        next_track_id,
+    };
+
+    let mut trak_boxes = Vec::with_capacity(tracks.len());
+    let mut trex = Vec::with_capacity(tracks.len());
+    for t in tracks {
+        trak_boxes.push(build_trak(t)?);
+        let defaults = t.trex.unwrap_or_default();
+        trex.push(TrackExtendsBox {
+            version: 0,
+            flags: 0,
+            track_id: t.track_id,
+            default_sample_description_index: defaults.sample_description_index,
+            default_sample_duration: defaults.default_sample_duration,
+            default_sample_size: defaults.default_sample_size,
+            default_sample_flags: defaults.default_sample_flags,
+        });
+    }
+
+    let moov = MovieBox::new(
+        mvhd,
+        trak_boxes,
+        Some(MovieExtendsBox::new(trex, vec![])),
+        vec![],
+    );
+
+    let mut out = vec![0u8; ftyp.serialized_len() + moov.serialized_len()];
+    let n1 = ftyp.serialize_into(&mut out)?;
+    let n2 = moov.serialize_into(&mut out[n1..])?;
+    out.truncate(n1 + n2);
+    Ok(out)
+}
+
+/// Build one fragmented-init `trak`: empty sample tables plus a single `stsd`
+/// entry.
+fn build_trak(t: &TrackSetup) -> Result<TrackBox> {
+    let entry = track_entry(t)?;
+    let stbl = empty_sample_table(empty_sample_description(entry));
+    let minf = track_media_information(&t.handler, stbl, t.minf_header);
+    let mdia = MediaBox::new(
+        Some(track_media_header(t.timescale)),
+        Some(track_handler(t)),
+        Some(minf),
+        vec![],
+    );
+    let tkhd = track_header(t);
+    Ok(TrackBox::new(tkhd, None, Some(mdia), vec![]))
+}
+
+/// The sample entry the track's `stsd` carries, protecting it first when the
+/// setup asks for CENC.
+fn track_entry(t: &TrackSetup) -> Result<SampleEntryVariant> {
+    let entry = match &t.entry {
+        SampleEntry::Typed(v) => v.clone(),
+        SampleEntry::Raw { fourcc, body } => raw_entry_variant(*fourcc, body)?,
+    };
+    match &t.protection {
+        Some(p) => crate::init_segment::protect_sample_entry(&entry, p.scheme, &p.tenc),
+        None => Ok(entry),
+    }
+}
+
+/// A raw entry as the generic passthrough variant, after checking that the
+/// stored bytes really are that box.
+fn raw_entry_variant(fourcc: [u8; BOX_TYPE_SIZE], body: &[u8]) -> Result<SampleEntryVariant> {
+    let (item, _) = crate::box_types::parse_box(body)?;
+    if !item.header.box_type.is(&fourcc) {
+        return Err(Error::InvalidInput(
+            "raw sample entry four-CC does not match its box header",
+        ));
+    }
+    Ok(SampleEntryVariant::Unknown(OpaqueBox::new(
+        fourcc,
+        item.payload().to_vec(),
+    )))
+}
+
+/// An empty `stsd` holding the track's single sample entry: the init segment
+/// declares the codec, and every sample arrives through the fragments.
+fn empty_sample_description(entry: SampleEntryVariant) -> SampleDescriptionBox {
+    SampleDescriptionBox {
+        version: entry.required_stsd_version(),
+        flags: 0,
+        entries: vec![entry],
+    }
+}
+
+/// The empty `stbl` of a fragmented init: `stsd` plus the four sample tables a
+/// fragmenting writer leaves unpopulated (their entries land in `moof`).
+fn empty_sample_table(stsd: SampleDescriptionBox) -> SampleTableBox {
+    SampleTableBox {
+        children: vec![
+            StblChild::Stsd(stsd),
+            StblChild::Stts(TimeToSampleBox {
+                version: 0,
+                flags: 0,
+                entries: vec![],
+            }),
+            StblChild::Stsc(SampleToChunkBox {
+                version: 0,
+                flags: 0,
+                entries: vec![],
+            }),
+            StblChild::Stsz(SampleSizeBox {
+                version: 0,
+                flags: 0,
+                sample_size: 0,
+                sample_count: 0,
+                entries: vec![],
+            }),
+            StblChild::Stco(ChunkOffsetBox {
+                version: 0,
+                flags: 0,
+                entries: vec![],
+            }),
+        ],
+    }
+}
+
+/// The `dinf` of a self-contained track: one `url ` entry with flags bit 0 set
+/// (media in this file).
+fn self_contained_data_information() -> DataInformationBox {
+    DataInformationBox::new(
+        Some(DataReferenceBox {
+            version: 0,
+            flags: 0,
+            entries: vec![DataEntry::Url(DataEntryUrlBox {
+                version: 0,
+                flags: SELF_CONTAINED_DATA_ENTRY_FLAGS,
+                location: vec![],
+            })],
+        }),
+        vec![],
+    )
+}
+
+/// The `minf` of one track: the media header its handler implies, the shared
+/// `dinf`, the empty `stbl`, and any header the handler requires ahead of its
+/// children.
+fn track_media_information(
+    handler: &[u8; BOX_TYPE_SIZE],
+    stbl: SampleTableBox,
+    minf_header: Option<[u8; BOX_TYPE_SIZE]>,
+) -> MediaInformationBox {
+    let vmhd = (handler == b"vide").then_some(VideoMediaHeaderBox {
+        version: 0,
+        flags: 1,
+        graphicsmode: 0,
+        opcolor: [0, 0, 0],
+    });
+    let smhd = (handler == b"soun").then_some(SoundMediaHeaderBox {
+        version: 0,
+        flags: 0,
+        balance: 0,
+    });
+    let mut minf = MediaInformationBox::new(
+        vmhd,
+        smhd,
+        Some(self_contained_data_information()),
+        Some(stbl),
+        vec![],
+    );
+    if let Some(header) = minf_header {
+        minf.set_leading_opaque_header(OpaqueBox::new(header, vec![0u8; FULLBOX_EXTRA_SIZE]));
+    }
+    minf
+}
+
+/// The `mdhd` of a fragmented init: zero timeline, the track's timescale, and
+/// the `und` language.
+fn track_media_header(timescale: Timescale) -> MediaHeaderBox {
+    MediaHeaderBox {
+        version: 0,
+        flags: 0,
+        creation_time: 0,
+        modification_time: 0,
+        timescale,
+        duration: 0,
+        language: LANG_UND,
+    }
+}
+
+/// The `hdlr` naming the track's handler type.
+fn track_handler(t: &TrackSetup) -> HandlerBox {
+    HandlerBox {
+        version: 0,
+        flags: 0,
+        handler_type: t.handler,
+        name: t.handler_name.clone(),
+    }
+}
+
+/// The `tkhd` of a fragmented init: enabled in movie, zero timeline, and the
+/// presentation size and volume the caller supplied.
+fn track_header(t: &TrackSetup) -> TrackHeaderBox {
+    TrackHeaderBox {
+        version: 0,
+        flags: TKHD_ENABLED_IN_MOVIE,
+        creation_time: 0,
+        modification_time: 0,
+        track_id: t.track_id,
+        duration: 0,
+        layer: 0,
+        alternate_group: 0,
+        volume: t.volume,
+        matrix: IDENTITY_MATRIX,
+        width: t.width,
+        height: t.height,
+    }
+}
+
+/// Per-sample CENC auxiliary information, as `senc` carries it
+/// (ISO/IEC 23001-7 §12.3).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SampleAux {
+    /// The sample's initialization vector (`Per_Sample_IV_Size` bytes).
+    pub initialization_vector: Vec<u8>,
+    /// The clear/protected ranges of a subsample-encrypted sample.
+    pub subsamples: Vec<SubSampleEntry>,
+}
+
+/// One sample's metadata for the fragment's `trun`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SampleMeta {
+    /// `sample_duration`, in the track timescale.
+    pub duration: u32,
+    /// `pts - dts` composition offset.
+    pub composition_offset: i32,
+    /// Whether the sample is a sync sample (random-access point).
+    pub sync: bool,
+    /// CENC per-sample auxiliary information, when the track is protected.
+    pub aux: Option<SampleAux>,
+}
+
+/// One finished fragment: the bytes to emit and the `moof` length inside them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fragment {
+    /// `[styp] [emsg]* moof mdat`, in that order.
+    pub bytes: Vec<u8>,
+    /// The length of the `moof` box inside [`Fragment::bytes`].
+    pub moof_len: usize,
+}
+
+/// One sample handed to [`fragmented_segment`].
+#[derive(Debug, Clone, Copy)]
+pub struct SampleData<'a> {
+    /// The sample's timing and flags.
+    pub meta: &'a SampleMeta,
+    /// The coded sample bytes.
+    pub data: &'a [u8],
+}
+
+/// One track's samples for a single fragment.
+#[derive(Debug, Clone, Copy)]
+pub struct FragmentTrack<'a> {
+    /// The `traf.tfhd.track_ID`.
+    pub track_id: TrackId,
+    /// The first sample's decode time (`tfdt`).
+    pub base_decode_time: u64,
+    /// The samples, in decode order.
+    pub samples: &'a [SampleData<'a>],
+}
+
+/// The segment-level choices of one fragment.
+#[derive(Debug, Clone, Copy)]
+pub struct FragmentOptions<'a> {
+    /// `mfhd.sequence_number`.
+    pub sequence_number: u32,
+    /// The `styp` brands to emit; `None` omits `styp`.
+    pub styp: Option<&'a SegmentBrands>,
+    /// Event Message Boxes, emitted after `styp` and before `moof`.
+    pub events: &'a [EmsgBox<'a>],
+}
