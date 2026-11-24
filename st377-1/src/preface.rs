@@ -16,6 +16,7 @@ use crate::sets::{
     get_required_fixed, get_required_raw,
 };
 use crate::types::{MxfTimestamp, UidBatch, UlBytes};
+use crate::types::{U16_LEN, U32_LEN, UL_LEN};
 
 // ORDER: Annex A.2 property-table order (spec clause order), not numeric.
 /// Local tag: Last Modified Date (A.2).
@@ -166,28 +167,29 @@ impl<'a> Parse<'a> for Preface {
             "Last Modified Date",
             "Preface",
         )?)?;
-        let version = u16::from_be_bytes(get_required_fixed::<2>(
+        let version = u16::from_be_bytes(get_required_fixed::<U16_LEN>(
             items,
             TAG_VERSION,
             "Version",
             "Preface",
         )?);
         let object_model_version =
-            get_optional_fixed::<4>(items, TAG_OBJECT_MODEL_VERSION, "Object Model Version")?
+            get_optional_fixed::<U32_LEN>(items, TAG_OBJECT_MODEL_VERSION, "Object Model Version")?
                 .map(u32::from_be_bytes);
         let primary_package =
-            get_optional_fixed::<16>(items, TAG_PRIMARY_PACKAGE, "Primary Package")?.map(UlBytes);
+            get_optional_fixed::<UL_LEN>(items, TAG_PRIMARY_PACKAGE, "Primary Package")?
+                .map(UlBytes);
         let identifications_batch = get_optional_raw(items, TAG_IDENTIFICATIONS)
             .map(UidBatch::parse)
             .transpose()?;
         let identifications = identifications_batch.as_ref().map(|b| b.items().to_vec());
-        let content_storage = UlBytes(get_required_fixed::<16>(
+        let content_storage = UlBytes(get_required_fixed::<UL_LEN>(
             items,
             TAG_CONTENT_STORAGE,
             "Content Storage",
             "Preface",
         )?);
-        let operational_pattern = UlBytes(get_required_fixed::<16>(
+        let operational_pattern = UlBytes(get_required_fixed::<UL_LEN>(
             items,
             TAG_OPERATIONAL_PATTERN,
             "Operational Pattern",

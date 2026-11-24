@@ -19,6 +19,7 @@ use crate::sets::{
     get_required_fixed,
 };
 use crate::types::UlBytes;
+use crate::types::{U16_LEN, U64_LEN, UL_LEN};
 
 // ── Structural Component base tags (B.8) ────────────────────────────────
 
@@ -84,21 +85,21 @@ impl<'a> Parse<'a> for TimecodeComponent {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Timecode Component")?;
-        let data_definition = UlBytes(get_required_fixed::<16>(
+        let data_definition = UlBytes(get_required_fixed::<UL_LEN>(
             items,
             TAG_DATA_DEFINITION,
             "Data Definition",
             "Timecode Component",
         )?);
         let duration =
-            get_optional_fixed::<8>(items, TAG_DURATION, "Duration")?.map(i64::from_be_bytes);
-        let start_timecode = i64::from_be_bytes(get_required_fixed::<8>(
+            get_optional_fixed::<U64_LEN>(items, TAG_DURATION, "Duration")?.map(i64::from_be_bytes);
+        let start_timecode = i64::from_be_bytes(get_required_fixed::<U64_LEN>(
             items,
             TAG_START_TIMECODE,
             "Start Timecode",
             "Timecode Component",
         )?);
-        let rounded_timecode_base = u16::from_be_bytes(get_required_fixed::<2>(
+        let rounded_timecode_base = u16::from_be_bytes(get_required_fixed::<U16_LEN>(
             items,
             TAG_ROUNDED_TIMECODE_BASE,
             "Rounded Timecode Base",

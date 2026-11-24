@@ -16,6 +16,7 @@ use crate::sets::{
     get_required_fixed,
 };
 use crate::types::PackageId;
+use crate::types::{PACKAGE_ID_LEN, U32_LEN};
 
 /// Local tag: Linked Package UID (A.5).
 pub const TAG_LINKED_PACKAGE_UID: u16 = 0x2701;
@@ -73,15 +74,15 @@ impl<'a> Parse<'a> for EssenceContainerData {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Essence Container Data")?;
-        let linked_package_uid = PackageId(get_required_fixed::<32>(
+        let linked_package_uid = PackageId(get_required_fixed::<PACKAGE_ID_LEN>(
             items,
             TAG_LINKED_PACKAGE_UID,
             "Linked Package UID",
             "Essence Container Data",
         )?);
-        let index_sid =
-            get_optional_fixed::<4>(items, TAG_INDEX_SID, "IndexSID")?.map(u32::from_be_bytes);
-        let body_sid = u32::from_be_bytes(get_required_fixed::<4>(
+        let index_sid = get_optional_fixed::<U32_LEN>(items, TAG_INDEX_SID, "IndexSID")?
+            .map(u32::from_be_bytes);
+        let body_sid = u32::from_be_bytes(get_required_fixed::<U32_LEN>(
             items,
             TAG_BODY_SID,
             "BodySID",

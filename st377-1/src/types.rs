@@ -9,25 +9,79 @@ use broadcast_common::len::{fit_u32, need_out};
 
 use crate::error::{Error, Result};
 
+/// Wire width of a SMPTE Universal Label (§4.2), in bytes.
+pub const UL_LEN: usize = 16;
+/// Wire width of a Package ID (§4.2), in bytes.
+pub const PACKAGE_ID_LEN: usize = 32;
+/// Wire width of a `UInt16`/`Int16` field, in bytes.
+pub const U16_LEN: usize = core::mem::size_of::<u16>();
+/// Wire width of a `UInt32`/`Int32` field, in bytes.
+pub(crate) const U32_LEN: usize = core::mem::size_of::<u32>();
+/// Wire width of a `UInt64`/`Int64` field, in bytes.
+pub(crate) const U64_LEN: usize = core::mem::size_of::<u64>();
+
+/// Mask of byte 0's top bit (AUID UL/UUID discriminator, §4.2.1).
+const AUID_UL_FLAG_MASK: u8 = 0x80;
+
+const RATIONAL_NUMERATOR_OFFSET: usize = 0;
+const RATIONAL_DENOMINATOR_OFFSET: usize = RATIONAL_NUMERATOR_OFFSET + core::mem::size_of::<i32>();
+
+/// Registry-version byte shared by Set/Pack Keys (§9.2/§7.1).
+pub(crate) const REGISTRY_VERSION_BYTE: u8 = 0x01;
+/// Structure-kind byte shared by Set/Pack Keys.
+pub(crate) const STRUCTURE_KIND_BYTE: u8 = 0x01;
+/// Zero reserved byte at the end of a Set/Pack Key.
+pub(crate) const RESERVED_KEY_BYTE: u8 = 0x00;
+
+/// Copy `N` big-endian bytes at `offset` into an array.
+pub(crate) fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
+    bytes
+        .get(offset..offset + N)
+        .and_then(|s| s.first_chunk::<N>())
+        .copied()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: offset + N,
+                have: bytes.len(),
+                what: "fixed-width big-endian field",
+            },
+        ))
+}
+
+const TIMESTAMP_MONTH_OFFSET: usize = core::mem::size_of::<i16>();
+const TIMESTAMP_DAY_OFFSET: usize = TIMESTAMP_MONTH_OFFSET + 1;
+const TIMESTAMP_HOUR_OFFSET: usize = TIMESTAMP_DAY_OFFSET + 1;
+const TIMESTAMP_MINUTE_OFFSET: usize = TIMESTAMP_HOUR_OFFSET + 1;
+const TIMESTAMP_SECOND_OFFSET: usize = TIMESTAMP_MINUTE_OFFSET + 1;
+const TIMESTAMP_MSEC_DIV4_OFFSET: usize = TIMESTAMP_SECOND_OFFSET + 1;
+
+const PRODUCT_VERSION_MINOR_OFFSET: usize = 2;
+const PRODUCT_VERSION_TERTIARY_OFFSET: usize = 4;
+const PRODUCT_VERSION_PATCH_OFFSET: usize = 6;
+const PRODUCT_VERSION_RELEASE_OFFSET: usize = 8;
+
+const UID_BATCH_COUNT_OFFSET: usize = 0;
+const UID_BATCH_ITEM_LEN_OFFSET: usize = U32_LEN;
+
 /// A 16-byte SMPTE Universal Label (§4.2) — an object identification key,
 /// distinct by type from the [`StrongRef`] and [`Auid`] values that share its
 /// wire form.
 ///
-/// The inner `[u8; 16]` is the wire octets in order. `From<[u8; 16]>`,
-/// `From<UlBytes> for [u8; 16]` and [`UlBytes::as_bytes`] convert.
+/// The inner `[u8; UL_LEN]` is the wire octets in order. `From<[u8; UL_LEN]>`,
+/// `From<UlBytes> for [u8; UL_LEN]` and [`UlBytes::as_bytes`] convert.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct UlBytes(pub [u8; 16]);
+pub struct UlBytes(pub [u8; UL_LEN]);
 
 impl UlBytes {
     /// The all-zero value (a 32-zero-byte `PackageId` chain terminator's
     /// leading half, and the "unused" entry of an index table).
-    pub const NULL: Self = Self([0u8; 16]);
+    pub const NULL: Self = Self([0u8; UL_LEN]);
 
     /// The wire octets, in order.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8; 16] {
+    pub fn as_bytes(&self) -> &[u8; UL_LEN] {
         &self.0
     }
 }
@@ -38,13 +92,13 @@ impl Default for UlBytes {
     }
 }
 
-impl From<[u8; 16]> for UlBytes {
-    fn from(bytes: [u8; 16]) -> Self {
+impl From<[u8; UL_LEN]> for UlBytes {
+    fn from(bytes: [u8; UL_LEN]) -> Self {
         Self(bytes)
     }
 }
 
-impl From<UlBytes> for [u8; 16] {
+impl From<UlBytes> for [u8; UL_LEN] {
     fn from(ul: UlBytes) -> Self {
         ul.0
     }
@@ -71,26 +125,26 @@ impl core::fmt::Display for UlBytes {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct StrongRef(pub [u8; 16]);
+pub struct StrongRef(pub [u8; UL_LEN]);
 
 impl StrongRef {
     /// The all-zero UUID (references no Set).
-    pub const NULL: Self = Self([0u8; 16]);
+    pub const NULL: Self = Self([0u8; UL_LEN]);
 
     /// The wire octets, in order.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8; 16] {
+    pub fn as_bytes(&self) -> &[u8; UL_LEN] {
         &self.0
     }
 }
 
-impl From<[u8; 16]> for StrongRef {
-    fn from(bytes: [u8; 16]) -> Self {
+impl From<[u8; UL_LEN]> for StrongRef {
+    fn from(bytes: [u8; UL_LEN]) -> Self {
         Self(bytes)
     }
 }
 
-impl From<StrongRef> for [u8; 16] {
+impl From<StrongRef> for [u8; UL_LEN] {
     fn from(reference: StrongRef) -> Self {
         reference.0
     }
@@ -144,8 +198,8 @@ impl Rational {
             });
         }
         Ok(Rational {
-            numerator: i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            denominator: i32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+            numerator: i32::from_be_bytes(be::<U32_LEN>(bytes, RATIONAL_NUMERATOR_OFFSET)?),
+            denominator: i32::from_be_bytes(be::<U32_LEN>(bytes, RATIONAL_DENOMINATOR_OFFSET)?),
         })
     }
 
@@ -176,9 +230,9 @@ impl Rational {
 /// established idiom throughout this workspace for a bounds-proven-safe
 /// fixed-size extraction.
 pub(crate) fn ul_bytes_from_prefix(bytes: &[u8]) -> UlBytes {
-    let mut out = [0u8; 16];
+    let mut out = [0u8; UL_LEN];
     let mut i = 0;
-    while i < 16 {
+    while i < UL_LEN {
         out[i] = bytes[i];
         i += 1;
     }
@@ -192,32 +246,38 @@ pub(crate) fn ul_bytes_from_prefix(bytes: &[u8]) -> UlBytes {
 /// as an opaque, fixed-size value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct PackageId(#[cfg_attr(feature = "serde", serde(with = "serde_bytes32"))] pub [u8; 32]);
+pub struct PackageId(
+    #[cfg_attr(feature = "serde", serde(with = "serde_bytes32"))] pub [u8; PACKAGE_ID_LEN],
+);
 
 impl PackageId {
     /// The all-zero "reference chain terminator" value (§4.2).
-    pub const NULL: PackageId = PackageId([0u8; 32]);
+    pub const NULL: PackageId = PackageId([0u8; PACKAGE_ID_LEN]);
 
     /// True if this is the all-zero terminator value.
     #[must_use]
     pub fn is_null(&self) -> bool {
-        self.0 == [0u8; 32]
+        self.0 == [0u8; PACKAGE_ID_LEN]
     }
 }
 
 #[cfg(feature = "serde")]
 mod serde_bytes32 {
+    use super::PACKAGE_ID_LEN;
     use serde::{Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(v: &[u8; 32], s: S) -> core::result::Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(
+        v: &[u8; PACKAGE_ID_LEN],
+        s: S,
+    ) -> core::result::Result<S::Ok, S::Error> {
         s.serialize_bytes(v)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
         d: D,
-    ) -> core::result::Result<[u8; 32], D::Error> {
+    ) -> core::result::Result<[u8; PACKAGE_ID_LEN], D::Error> {
         let bytes = serde_bytes_vec::deserialize(d)?;
-        <[u8; 32]>::try_from(bytes.as_slice())
+        <[u8; PACKAGE_ID_LEN]>::try_from(bytes.as_slice())
             .map_err(|_| serde::de::Error::custom("PackageId must be 32 bytes"))
     }
 
@@ -245,7 +305,7 @@ impl Auid {
     /// True if this AUID holds a UL (byte 0's top bit clear).
     #[must_use]
     pub fn is_ul(&self) -> bool {
-        self.0.0[0] & 0x80 == 0
+        self.0.0[0] & AUID_UL_FLAG_MASK == 0
     }
 
     /// The UUID held in this AUID, in natural UUID storage order: the top and
@@ -266,7 +326,7 @@ impl Auid {
 }
 
 fn swap_halves(bytes: UlBytes) -> UlBytes {
-    let mut out = [0u8; 16];
+    let mut out = [0u8; UL_LEN];
     out[..8].copy_from_slice(&bytes.0[8..]);
     out[8..].copy_from_slice(&bytes.0[..8]);
     UlBytes(out)
@@ -321,13 +381,13 @@ impl MxfTimestamp {
             });
         }
         Ok(MxfTimestamp {
-            year: i16::from_be_bytes([bytes[0], bytes[1]]),
-            month: bytes[2],
-            day: bytes[3],
-            hour: bytes[4],
-            minute: bytes[5],
-            second: bytes[6],
-            msec_div4: bytes[7],
+            year: i16::from_be_bytes(be::<U16_LEN>(bytes, 0)?),
+            month: bytes[TIMESTAMP_MONTH_OFFSET],
+            day: bytes[TIMESTAMP_DAY_OFFSET],
+            hour: bytes[TIMESTAMP_HOUR_OFFSET],
+            minute: bytes[TIMESTAMP_MINUTE_OFFSET],
+            second: bytes[TIMESTAMP_SECOND_OFFSET],
+            msec_div4: bytes[TIMESTAMP_MSEC_DIV4_OFFSET],
         })
     }
 
@@ -337,12 +397,12 @@ impl MxfTimestamp {
         let yb = self.year.to_be_bytes();
         buf[0] = yb[0];
         buf[1] = yb[1];
-        buf[2] = self.month;
-        buf[3] = self.day;
-        buf[4] = self.hour;
-        buf[5] = self.minute;
-        buf[6] = self.second;
-        buf[7] = self.msec_div4;
+        buf[TIMESTAMP_MONTH_OFFSET] = self.month;
+        buf[TIMESTAMP_DAY_OFFSET] = self.day;
+        buf[TIMESTAMP_HOUR_OFFSET] = self.hour;
+        buf[TIMESTAMP_MINUTE_OFFSET] = self.minute;
+        buf[TIMESTAMP_SECOND_OFFSET] = self.second;
+        buf[TIMESTAMP_MSEC_DIV4_OFFSET] = self.msec_div4;
         Ok(TIMESTAMP_LEN)
     }
 
@@ -460,26 +520,27 @@ impl ProductVersion {
                 expected: PRODUCT_VERSION_LEN,
             });
         }
-        let u16_at = |i: usize| u16::from_be_bytes([bytes[i], bytes[i + 1]]);
+        let u16_at = |i: usize| be::<U16_LEN>(bytes, i).map(u16::from_be_bytes);
         Ok(ProductVersion {
-            major: u16_at(0),
-            minor: u16_at(2),
-            tertiary: u16_at(4),
-            patch: u16_at(6),
-            release: ReleaseType::from_u16(u16_at(8)),
+            major: u16_at(0)?,
+            minor: u16_at(PRODUCT_VERSION_MINOR_OFFSET)?,
+            tertiary: u16_at(PRODUCT_VERSION_TERTIARY_OFFSET)?,
+            patch: u16_at(PRODUCT_VERSION_PATCH_OFFSET)?,
+            release: ReleaseType::from_u16(u16_at(PRODUCT_VERSION_RELEASE_OFFSET)?),
         })
     }
 
     /// Serialize into a 10-byte buffer.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, PRODUCT_VERSION_LEN)?;
-        let put =
-            |buf: &mut [u8], i: usize, v: u16| buf[i..i + 2].copy_from_slice(&v.to_be_bytes());
+        let put = |buf: &mut [u8], i: usize, v: u16| {
+            buf[i..i + U16_LEN].copy_from_slice(&v.to_be_bytes())
+        };
         put(buf, 0, self.major);
-        put(buf, 2, self.minor);
-        put(buf, 4, self.tertiary);
-        put(buf, 6, self.patch);
-        put(buf, 8, self.release.to_u16());
+        put(buf, PRODUCT_VERSION_MINOR_OFFSET, self.minor);
+        put(buf, PRODUCT_VERSION_TERTIARY_OFFSET, self.tertiary);
+        put(buf, PRODUCT_VERSION_PATCH_OFFSET, self.patch);
+        put(buf, PRODUCT_VERSION_RELEASE_OFFSET, self.release.to_u16());
         Ok(PRODUCT_VERSION_LEN)
     }
 
@@ -487,29 +548,34 @@ impl ProductVersion {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; PRODUCT_VERSION_LEN] {
         let mut buf = [0u8; PRODUCT_VERSION_LEN];
-        let put =
-            |buf: &mut [u8], i: usize, v: u16| buf[i..i + 2].copy_from_slice(&v.to_be_bytes());
+        let put = |buf: &mut [u8], i: usize, v: u16| {
+            buf[i..i + U16_LEN].copy_from_slice(&v.to_be_bytes())
+        };
         put(&mut buf, 0, self.major);
-        put(&mut buf, 2, self.minor);
-        put(&mut buf, 4, self.tertiary);
-        put(&mut buf, 6, self.patch);
-        put(&mut buf, 8, self.release.to_u16());
+        put(&mut buf, PRODUCT_VERSION_MINOR_OFFSET, self.minor);
+        put(&mut buf, PRODUCT_VERSION_TERTIARY_OFFSET, self.tertiary);
+        put(&mut buf, PRODUCT_VERSION_PATCH_OFFSET, self.patch);
+        put(
+            &mut buf,
+            PRODUCT_VERSION_RELEASE_OFFSET,
+            self.release.to_u16(),
+        );
         buf
     }
 }
 
 /// Decode a big-endian UTF-16 string (§4.3 "String") into an owned `String`.
 pub fn decode_utf16_be(bytes: &[u8]) -> Result<String> {
-    if !bytes.len().is_multiple_of(2) {
+    if !bytes.len().is_multiple_of(U16_LEN) {
         return Err(Error::InvalidUtf16 {
             tag: 0,
             name: "UTF-16 string",
         });
     }
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_be_bytes([c[0], c[1]]))
-        .collect();
+        .chunks_exact(U16_LEN)
+        .map(|c| be::<U16_LEN>(c, 0).map(u16::from_be_bytes))
+        .collect::<Result<Vec<u16>>>()?;
     char::decode_utf16(units)
         .collect::<core::result::Result<String, _>>()
         .map_err(|_| Error::InvalidUtf16 {
@@ -521,7 +587,7 @@ pub fn decode_utf16_be(bytes: &[u8]) -> Result<String> {
 /// Encode a string as big-endian UTF-16 (§4.3 "String").
 #[must_use]
 pub fn encode_utf16_be(s: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len() * 2);
+    let mut out = Vec::with_capacity(s.len() * U16_LEN);
     for unit in s.encode_utf16() {
         out.extend_from_slice(&unit.to_be_bytes());
     }
@@ -544,7 +610,8 @@ pub struct UidBatch {
 }
 
 /// The 8-byte Batch/Array header (`count: u32`, `item_len: u32`).
-const UID_BATCH_HEADER_LEN: usize = 8;
+/// Wire width of a Batch/Array header (`count: u32`, `item_len: u32`).
+pub const UID_BATCH_HEADER_LEN: usize = 8;
 
 impl UidBatch {
     /// The elements.
@@ -587,12 +654,10 @@ impl UidBatch {
                 buffer_len: bytes.len(),
             });
         }
-        let count = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let item_len = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let header = [
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ];
-        let body = &bytes[8..];
+        let count = u32::from_be_bytes(be::<U32_LEN>(bytes, UID_BATCH_COUNT_OFFSET)?);
+        let item_len = u32::from_be_bytes(be::<U32_LEN>(bytes, UID_BATCH_ITEM_LEN_OFFSET)?);
+        let header = be::<UID_BATCH_HEADER_LEN>(bytes, 0)?;
+        let body = &bytes[UID_BATCH_HEADER_LEN..];
         // `item_len` only describes the size of an actual element, so it is only
         // meaningful (and validated against 16) when `count > 0`. A real
         // encoder-written empty Batch (`count == 0`) has been observed with
@@ -606,16 +671,16 @@ impl UidBatch {
         // `Vec::with_capacity(count as usize)`. `checked_mul` rejects the
         // overflow instead, and the allocation below is sized from the
         // already-bounded `body.len()`, never from the untrusted `count`.
-        let expected_len = (count as usize).checked_mul(16);
-        if (count > 0 && item_len != 16) || expected_len != Some(body.len()) {
+        let expected_len = (count as usize).checked_mul(UL_LEN);
+        if (count > 0 && item_len != UL_LEN as u32) || expected_len != Some(body.len()) {
             return Err(Error::InvalidBatchHeader {
                 count,
                 item_len,
                 buffer_len: body.len(),
             });
         }
-        let mut out = Vec::with_capacity(body.len() / 16);
-        for chunk in body.chunks_exact(16) {
+        let mut out = Vec::with_capacity(body.len() / UL_LEN);
+        for chunk in body.chunks_exact(UL_LEN) {
             out.push(ul_bytes_from_prefix(chunk));
         }
         Ok(Self {
@@ -635,20 +700,21 @@ impl UidBatch {
     /// field disagrees with `items.len()`.
     pub fn serialize(&self) -> Result<Vec<u8>> {
         let count = fit_u32(self.items.len(), "batch count")?;
-        let mut out = Vec::with_capacity(UID_BATCH_HEADER_LEN + self.items.len() * 16);
+        let mut out = Vec::with_capacity(UID_BATCH_HEADER_LEN + self.items.len() * UL_LEN);
         match self.header {
             None => {
                 out.extend_from_slice(&count.to_be_bytes());
-                out.extend_from_slice(&16u32.to_be_bytes());
+                out.extend_from_slice(&(UL_LEN as u32).to_be_bytes());
             }
             Some(header) => {
-                let declared = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-                let item_len = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+                let declared = u32::from_be_bytes(be::<U32_LEN>(&header, UID_BATCH_COUNT_OFFSET)?);
+                let item_len =
+                    u32::from_be_bytes(be::<U32_LEN>(&header, UID_BATCH_ITEM_LEN_OFFSET)?);
                 if declared != count {
                     return Err(Error::InvalidBatchHeader {
                         count: declared,
                         item_len,
-                        buffer_len: self.items.len() * 16,
+                        buffer_len: self.items.len() * UL_LEN,
                     });
                 }
                 out.extend_from_slice(&header);

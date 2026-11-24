@@ -14,6 +14,7 @@
 //! `break_num` (8), `breaks_expected` (8), a reserved nibble + 4-bit
 //! [`EquivalentSegmentationType`], and a trailing variable-length `upid`.
 
+use crate::NIBBLE_MASK;
 use crate::descriptors::header::{self, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
@@ -55,12 +56,16 @@ pub enum EquivalentSegmentationType {
     Reserved(u8),
 }
 
+const NIBBLE_SHIFT: u32 = 4;
+const DAS_TYPE_NIBBLE_OFFSET: usize = 2;
+const MAX_DAS_BODY_LEN: usize = u8::MAX as usize - core::mem::size_of::<u32>();
+
 impl EquivalentSegmentationType {
     /// Decode the 4-bit `equivalent_segmentation_type` field (only the low
     /// nibble is used).
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x0F {
+        match v & NIBBLE_MASK {
             0x0 => Self::NoEquivalent,
             0x1 => Self::DistributorPlacementOpportunity,
             0x2 => Self::ProviderPlacementOpportunity,
@@ -162,8 +167,8 @@ impl DasNibbleOrder {
     pub const fn join(self, equivalent_segmentation_type: u8, reserved: u8) -> u8 {
         let (t, r) = (equivalent_segmentation_type & 0x0F, reserved & 0x0F);
         match self {
-            Self::TypeHigh => (t << 4) | r,
-            Self::TypeLow => (r << 4) | t,
+            Self::TypeHigh => (t << NIBBLE_SHIFT) | r,
+            Self::TypeLow => (r << NIBBLE_SHIFT) | t,
         }
     }
 
@@ -247,7 +252,7 @@ impl<'a> DvbDasDescriptor<'a> {
         let break_num = body[0];
         let breaks_expected = body[1];
         // body[2]: the type/reserved byte; nibble order per `order`.
-        let (type_nibble, _reserved) = order.split(body[2]);
+        let (type_nibble, _reserved) = order.split(body[DAS_TYPE_NIBBLE_OFFSET]);
         let equivalent_segmentation_type = EquivalentSegmentationType::from_bits(type_nibble);
         let upid = &body[FIXED_BODY_LEN..];
         Ok(Self {
@@ -287,10 +292,10 @@ impl DvbDasDescriptor<'_> {
         // `descriptor_length` is a u8 covering `identifier(4) + body_len`.
         // Max allowed body_len = 255 − 4 = 251; a longer upid would make
         // `4 + body_len ≥ 256`, silently truncating the length byte.
-        if body_len > 251 {
+        if body_len > MAX_DAS_BODY_LEN {
             return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "DVB_DAS_descriptor.descriptor_length",
-                value: (4 + body_len) as u64,
+                value: (core::mem::size_of::<u32>() + body_len) as u64,
                 max: u64::from(u8::MAX),
             }));
         }
@@ -301,10 +306,10 @@ impl DvbDasDescriptor<'_> {
         // the 4-bit equivalent_segmentation_type, in the order `order` selects.
         let das_type = broadcast_common::len::fit_mask(
             self.equivalent_segmentation_type.bits(),
-            0x0F,
+            NIBBLE_MASK,
             "equivalent_segmentation_type",
         )?;
-        buf[HEADER_LEN + 2] = order.join(das_type, 0x0F);
+        buf[HEADER_LEN + DAS_TYPE_NIBBLE_OFFSET] = order.join(das_type, NIBBLE_MASK);
         buf[HEADER_LEN + FIXED_BODY_LEN..need].copy_from_slice(self.upid);
         Ok(need)
     }

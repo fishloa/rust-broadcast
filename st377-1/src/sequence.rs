@@ -19,6 +19,7 @@ use crate::sets::{
     get_required_fixed, get_required_raw, strong_ref_batch_bytes,
 };
 use crate::types::{StrongRef, UidBatch, UlBytes};
+use crate::types::{U64_LEN, UL_LEN};
 
 // ── Structural Component base tags (B.8) ────────────────────────────────
 
@@ -99,14 +100,14 @@ impl<'a> Parse<'a> for Sequence {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Sequence")?;
-        let data_definition = UlBytes(get_required_fixed::<16>(
+        let data_definition = UlBytes(get_required_fixed::<UL_LEN>(
             items,
             TAG_DATA_DEFINITION,
             "Data Definition",
             "Sequence",
         )?);
         let duration =
-            get_optional_fixed::<8>(items, TAG_DURATION, "Duration")?.map(i64::from_be_bytes);
+            get_optional_fixed::<U64_LEN>(items, TAG_DURATION, "Duration")?.map(i64::from_be_bytes);
         let structural_components_batch = UidBatch::parse(get_required_raw(
             items,
             TAG_STRUCTURAL_COMPONENTS,
