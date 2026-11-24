@@ -387,13 +387,13 @@ impl AVCSampleEntry {
         need_in(bytes, BARE_ENTRY_MIN_LEN, "avc1 bare")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
         codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = crate::box_types::parse_box(bytes)?.0.body;
         let visual = VisualSampleEntryFields::parse_body(bytes, "avc1 bare")?;
         let config_region = &body[VISUAL_SAMPLE_ENTRY_SIZE..];
         if let Some(avcc) = find_config_box(config_region, b"avcC") {
             // avcc is the full box (header+body); parse_body expects only the body
             let config = if avcc.len() > BOX_HEADER_MIN_SIZE {
-                AVCConfigurationBox::parse_body(&avcc[crate::box_types::box_header_len(avcc)?..])?
+                AVCConfigurationBox::parse_body(crate::box_types::parse_box(avcc)?.0.body)?
             } else {
                 return Err(Error::BufferTooShort(BufferTooShort {
                     need: BOX_HEADER_MIN_SIZE,
@@ -629,12 +629,12 @@ impl HEVCSampleEntry {
         need_in(bytes, BARE_ENTRY_MIN_LEN, "hvc1 bare")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
         codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = crate::box_types::parse_box(bytes)?.0.body;
         let visual = VisualSampleEntryFields::parse_body(bytes, "hvc1 bare")?;
         let config_region = &body[VISUAL_SAMPLE_ENTRY_SIZE..];
         if let Some(hvcc) = find_config_box(config_region, b"hvcC") {
             let config = if hvcc.len() > BOX_HEADER_MIN_SIZE {
-                HEVCConfigurationBox::parse_body(&hvcc[crate::box_types::box_header_len(hvcc)?..])?
+                HEVCConfigurationBox::parse_body(crate::box_types::parse_box(hvcc)?.0.body)?
             } else {
                 return Err(Error::BufferTooShort(BufferTooShort {
                     need: BOX_HEADER_MIN_SIZE,
@@ -769,7 +769,7 @@ impl VVCSampleEntry {
         let config_region = &bytes[BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_SIZE..];
         if let Some(vvcc) = find_config_box(config_region, b"vvcC") {
             let config = if vvcc.len() > BOX_HEADER_MIN_SIZE {
-                VvcConfigurationBox::parse_body(&vvcc[crate::box_types::box_header_len(vvcc)?..])?
+                VvcConfigurationBox::parse_body(crate::box_types::parse_box(vvcc)?.0.body)?
             } else {
                 return Err(Error::BufferTooShort(BufferTooShort {
                     need: BOX_HEADER_MIN_SIZE,

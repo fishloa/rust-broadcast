@@ -438,7 +438,7 @@ impl Vp9SampleEntry {
                 what: "vp09 missing vpcC",
             }),
         )?;
-        let config = Vp9ConfigurationBox::parse(&vpcc[crate::box_types::box_header_len(vpcc)?..])?;
+        let config = Vp9ConfigurationBox::parse(crate::box_types::parse_box(vpcc)?.0.body)?;
         let children = crate::sample_entries::entry_children(region, &VPCC_FOURCC)?;
         Ok(Self {
             visual,

@@ -87,7 +87,7 @@ use broadcast_common::{Decrypt, Parse};
 
 use isobmff::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET,
-    box_body, box_slices, descend_boxes, find_box, parse_box,
+    box_body, descend_boxes, find_box, parse_box,
 };
 // Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
 // resolving for existing callers even though the type now lives in
@@ -632,7 +632,11 @@ fn parse_senc_box(
 /// than treated as fatal, and the same sample-count check downstream will
 /// still catch it.
 fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> {
-    for moof in box_slices(file).filter(|b| b[4..8] == *b"moof") {
+    for moof in BoxIter::new(file)
+        .filter_map(|b| b.ok())
+        .filter(|b| b.header.box_type.is(b"moof"))
+    {
+        let moof = moof.bytes;
         for traf in BoxIter::new(box_body(moof, 0, "moof body")?) {
             let traf = traf?;
             if !traf.header.box_type.is(b"traf") {
@@ -647,9 +651,8 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
                 BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE,
                 "tfhd header",
             )?;
-            let tfhd_parsed = TrackFragmentHeaderBox::parse_body(
-                &tfhd[isobmff::box_types::box_header_len(tfhd)?..],
-            )?;
+            let tfhd_parsed =
+                TrackFragmentHeaderBox::parse_body(isobmff::box_types::parse_box(tfhd)?.0.body)?;
 
             let Some(crypto) = tracks
                 .iter_mut()
@@ -700,12 +703,11 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
 /// [`harvest_fragment_senc`]).
 fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
     let mut total = 0usize;
-    for trun in
-        box_slices(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..]).filter(|b| &b[4..8] == b"trun")
+    for trun in BoxIter::new(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..])
+        .filter_map(|b| b.ok())
+        .filter(|b| b.header.box_type.is(b"trun"))
     {
-        need_in(trun, BOX_HEADER_MIN_SIZE, "trun header")?;
-        let parsed =
-            TrackFragmentRunBox::parse_body(&trun[isobmff::box_types::box_header_len(trun)?..])?;
+        let parsed = TrackFragmentRunBox::parse_body(trun.body)?;
         total += parsed.samples.len();
     }
     Ok(total)
@@ -719,13 +721,13 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
     if body_start > stsd.len() {
         return None;
     }
-    for entry in box_slices(&stsd[body_start..]) {
-        let ty = &entry[4..8];
-        if ty == b"encv" || ty == b"enca" {
+    for entry in BoxIter::new(&stsd[body_start..]).filter_map(|b| b.ok()) {
+        let ty = entry.four_cc();
+        if ty == *b"encv" || ty == *b"enca" {
             // Sample-entry child boxes start after the fixed VisualSampleEntry /
             // AudioSampleEntry header. We only support protected video (encv)
             // here; the sinf is a child box, located by scanning.
-            let child_start = if ty == b"encv" {
+            let child_start = if ty == *b"encv" {
                 BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR
             } else {
                 // enca: 8 reserved + 2 channelcount + 2 samplesize + 4 predefined
@@ -733,12 +735,14 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
                 // (AudioSampleEntry fixed part is 28 bytes past the box header).
                 BOX_HEADER_MIN_SIZE + AUDIO_SAMPLE_ENTRY_HDR
             };
-            if child_start <= entry.len() {
+            if child_start <= entry.bytes.len() {
                 // The child boxes start directly at `child_start` (no container
-                // header to skip), so scan them with `iter_boxes`.
-                if let Some(sinf) = box_slices(&entry[child_start..]).find(|b| &b[4..8] == b"sinf")
+                // header to skip), so scan them with the one walker.
+                if let Some(sinf) = BoxIter::new(&entry.bytes[child_start..])
+                    .filter_map(|b| b.ok())
+                    .find(|b| b.header.box_type.is(b"sinf"))
                 {
-                    return Some(sinf);
+                    return Some(sinf.bytes);
                 }
             }
         }
@@ -1031,16 +1035,15 @@ fn absorb_protected_fragment(
 /// Parse the avcC record from the (first) encv entry of an stsd.
 fn find_avcc_config(stsd: &[u8]) -> Result<isobmff::avc_config::AVCDecoderConfigurationRecord> {
     let body_start = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT;
-    for entry in box_slices(&stsd[body_start.min(stsd.len())..]) {
-        if &entry[4..8] == b"encv" {
+    for entry in BoxIter::new(&stsd[body_start.min(stsd.len())..]).filter_map(|b| b.ok()) {
+        if entry.header.box_type.is(b"encv") {
             let child_start = BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR;
-            if child_start <= entry.len()
-                && let Some(avcc) = box_slices(&entry[child_start..]).find(|b| &b[4..8] == b"avcC")
+            if child_start <= entry.bytes.len()
+                && let Some(avcc) = BoxIter::new(&entry.bytes[child_start..])
+                    .filter_map(|b| b.ok())
+                    .find(|b| b.header.box_type.is(b"avcC"))
             {
-                // avcC full bytes → body after the 8-byte box header.
-                let cfg = isobmff::AVCConfigurationBox::parse_body(
-                    &avcc[isobmff::box_types::box_header_len(avcc)?..],
-                )?;
+                let cfg = isobmff::AVCConfigurationBox::parse_body(avcc.body)?;
                 return Ok(cfg.config);
             }
         }
@@ -1819,7 +1822,24 @@ mod tests {
     /// with on every real fixture.
     fn legacy_children<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Vec<&'a [u8]> {
         let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
-        box_slices(body).filter(|b| &b[4..8] == fourcc).collect()
+        let mut out = Vec::new();
+        let mut off = 0usize;
+        while off + BOX_HEADER_MIN_SIZE <= body.len() {
+            let size = u32::from_be_bytes(
+                body[off..off + core::mem::size_of::<u32>()]
+                    .try_into()
+                    .expect("four size bytes"),
+            ) as usize;
+            if size < BOX_HEADER_MIN_SIZE || off + size > body.len() {
+                break;
+            }
+            let child = &body[off..off + size];
+            if &child[4..8] == fourcc {
+                out.push(child);
+            }
+            off += size;
+        }
+        out
     }
 
     fn shared_children<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Vec<&'a [u8]> {
@@ -1857,7 +1877,11 @@ mod tests {
     fn assert_nav_agrees(file: &[u8]) -> usize {
         let mut compared = 0usize;
         for top in [b"moov", b"moof"] {
-            for c in box_slices(file).filter(|b| b[4..8] == *top) {
+            for c in BoxIter::new(file)
+                .filter_map(|b| b.ok())
+                .filter(|b| b.header.box_type.is(top))
+            {
+                let c = c.bytes;
                 for kid in NAV_KIDS {
                     check_agree(c, kid);
                     compared += 1;

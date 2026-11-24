@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   absorbed `mp4-emsg` crate, plus its real-fixture tests and examples. The
   emsg parse/serialize errors are variants of this crate's `Error`.
 
+### Changed
+
+- `ftyp`/`styp` accept the 64-bit `largesize` and `size == 0` (to-end) box
+  forms (ISO/IEC 14496-12:2026 §4.2); the serializer still emits the compact
+  form.
+
 ### Breaking
 
 - The box walkers are consolidated into one iterator. `BoxRef`, `ClampedBox`,

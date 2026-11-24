@@ -224,28 +224,39 @@ impl<'a> EmsgBox<'a> {
         need_in(data, FULLBOX_HEADER_LEN, "emsg FullBox header")?;
 
         let size = u32_at(data, SIZE_OFFSET);
-        let mut box_type = [0_u8; BOX_TYPE_LEN];
-        box_type.copy_from_slice(&data[BOX_TYPE_OFFSET..VERSION_OFFSET]);
-        if box_type != EMSG_BOX_TYPE {
-            return Err(Error::NotEmsg { found: box_type });
+        let invalid_size = Error::InvalidSize {
+            size,
+            reason: "size smaller than the FullBox header (0/1 large-size forms unsupported)",
+        };
+        let item = match crate::box_types::parse_box(data) {
+            Ok((item, _)) => item,
+            Err(Error::BufferTooShort(_)) if u64::from(size) > data.len() as u64 => {
+                return Err(Error::InvalidSize {
+                    size,
+                    reason: "size exceeds available bytes",
+                });
+            }
+            Err(_) if size == 1 || (size != 0 && u64::from(size) < FULLBOX_HEADER_LEN as u64) => {
+                return Err(invalid_size);
+            }
+            Err(err) => return Err(err),
+        };
+        if !item.header.box_type.is(&EMSG_BOX_TYPE) {
+            return Err(Error::NotEmsg {
+                found: item.four_cc(),
+            });
         }
-        let version = data[VERSION_OFFSET];
-        // flags = data[9..12]; mandated 0, but parsed permissively (some
-        // muxers are sloppy) and kept in `Self::flags`.
-        let flags = u24_at(data, FLAGS_OFFSET);
+        if item.header.size == 0
+            || item.header.has_largesize()
+            || item.header.size < FULLBOX_HEADER_LEN as u64
+        {
+            return Err(invalid_size);
+        }
 
-        if (size as usize) < FULLBOX_HEADER_LEN {
-            return Err(Error::InvalidSize {
-                size,
-                reason: "size smaller than the FullBox header (0/1 large-size forms unsupported)",
-            });
-        }
-        if size as usize > data.len() {
-            return Err(Error::InvalidSize {
-                size,
-                reason: "size exceeds available bytes",
-            });
-        }
+        let version = item.body[0];
+        // flags live after version; mandated 0, but parsed permissively (some
+        // muxers are sloppy) and kept in `Self::flags`.
+        let flags = u24_at(item.body, VERSION_LEN);
 
         let version = EmsgVersion::from_u8(version).ok_or(Error::UnsupportedVersion(
             broadcast_common::error::UnsupportedVersion {
@@ -255,7 +266,7 @@ impl<'a> EmsgBox<'a> {
         ))?;
 
         // The box body region is [FULLBOX_HEADER_LEN, size).
-        let body = &data[FULLBOX_HEADER_LEN..size as usize];
+        let body = &item.body[VERSION_LEN + FLAGS_LEN..];
 
         let mut emsg = match version {
             EmsgVersion::SegmentRelative => Self::parse_v0(body),

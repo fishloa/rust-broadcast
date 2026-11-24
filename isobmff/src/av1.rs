@@ -237,7 +237,7 @@ impl Av1SampleEntry {
                 what: "av01 missing av1C",
             }),
         )?;
-        let config = Av1ConfigurationBox::parse(&av1c[crate::box_types::box_header_len(av1c)?..])?;
+        let config = Av1ConfigurationBox::parse(crate::box_types::parse_box(av1c)?.0.body)?;
         let children = crate::sample_entries::entry_children(region, &AV1C_FOURCC)?;
         Ok(Self {
             visual,

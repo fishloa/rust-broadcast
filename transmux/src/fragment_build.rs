@@ -254,9 +254,7 @@ pub fn protect_media_segment(
     let moof_bytes = &media_segment[prefix_len..prefix_len + moof_len];
     let suffix = &media_segment[prefix_len + moof_len..];
 
-    let mut moof = MovieFragmentBox::parse_body(
-        &moof_bytes[isobmff::box_types::box_header_len(moof_bytes)?..],
-    )?;
+    let mut moof = MovieFragmentBox::parse_body(isobmff::box_types::parse_box(moof_bytes)?.0.body)?;
 
     let mut built: Vec<Option<CencFragmentBoxes>> = (0..moof.traf.len()).map(|_| None).collect();
     for p in protections {

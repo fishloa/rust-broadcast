@@ -2802,7 +2802,7 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                     c4.copy_from_slice(&codec[..BOX_TYPE_SIZE.min(codec.len())]);
                     SampleEntryVariant::Unknown(OpaqueBox::new(
                         c4,
-                        box_bytes[crate::box_types::box_header_len(box_bytes)?..].to_vec(),
+                        crate::box_types::parse_box(box_bytes)?.0.payload().to_vec(),
                     ))
                 }
             };
@@ -4155,7 +4155,7 @@ pub fn protect_sample_entry(
 
     let mut body =
         Vec::with_capacity(original_bytes.len() - BOX_HEADER_MIN_SIZE + sinf_bytes.len());
-    body.extend_from_slice(&original_bytes[crate::box_types::box_header_len(&original_bytes)?..]);
+    body.extend_from_slice(crate::box_types::parse_box(&original_bytes)?.0.body);
     body.extend_from_slice(&sinf_bytes);
 
     Ok(SampleEntryVariant::Unknown(OpaqueBox::new(

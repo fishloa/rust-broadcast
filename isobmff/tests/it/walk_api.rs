@@ -1,6 +1,23 @@
 //! The one box walker: strict vs clamped mode, and child iteration.
 
+use broadcast_common::Serialize;
+use isobmff::segments::FileTypeBox;
 use isobmff::{BoxIter, Error};
+
+fn ftyp_body() -> Vec<u8> {
+    let mut body = b"iso5".to_vec();
+    body.extend_from_slice(&0u32.to_be_bytes());
+    body.extend_from_slice(b"iso6mp41");
+    body
+}
+
+fn compact_ftyp() -> Vec<u8> {
+    let body = ftyp_body();
+    let mut bytes = ((8 + body.len()) as u32).to_be_bytes().to_vec();
+    bytes.extend_from_slice(b"ftyp");
+    bytes.extend_from_slice(&body);
+    bytes
+}
 
 #[test]
 fn strict_rejects_a_box_that_overruns_its_parent() {
@@ -81,4 +98,37 @@ fn moov_children_visit_the_recorded_wire_sequence() {
         (*b"udta", 1124, 98),
     ];
     assert_eq!(visited, expected);
+}
+
+#[test]
+fn ftyp_largesize_parses_to_the_same_brands_and_serializes_compact() {
+    let compact = compact_ftyp();
+    let mut large = 1u32.to_be_bytes().to_vec();
+    large.extend_from_slice(b"ftyp");
+    large.extend_from_slice(&((16 + ftyp_body().len()) as u64).to_be_bytes());
+    large.extend_from_slice(&ftyp_body());
+
+    let from_compact = FileTypeBox::parse_box(&compact).expect("compact ftyp");
+    let from_large = FileTypeBox::parse_box(&large).expect("largesize ftyp");
+    assert_eq!(from_large, from_compact);
+
+    let out = from_large.try_to_bytes().expect("serialize");
+    assert_eq!(
+        &out[..4],
+        &(compact.len() as u32).to_be_bytes(),
+        "the serializer emits the compact header form"
+    );
+    assert_eq!(out, compact);
+}
+
+#[test]
+fn ftyp_with_size_zero_is_parsed_to_the_end_of_the_buffer() {
+    let body = ftyp_body();
+    let mut bytes = 0u32.to_be_bytes().to_vec();
+    bytes.extend_from_slice(b"ftyp");
+    bytes.extend_from_slice(&body);
+
+    let ftyp = FileTypeBox::parse_box(&bytes).expect("to-end ftyp");
+    assert_eq!(ftyp.major_brand, *b"iso5");
+    assert_eq!(ftyp.compatible_brands, vec![*b"iso6", *b"mp41"]);
 }

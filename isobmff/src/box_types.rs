@@ -420,15 +420,21 @@ pub fn write_full_box_header(
 /// at `u32::MAX` for a box too big to express compactly — no reader consults
 /// it). Borrowed in the overwhelmingly common compact case (#1147).
 pub fn compact_form(bytes: &[u8]) -> Result<alloc::borrow::Cow<'_, [u8]>> {
-    let hdr = box_header_len(bytes)?;
-    if hdr == BOX_HEADER_MIN_SIZE {
+    need_in(bytes, BOX_HEADER_MIN_SIZE, "box header")?;
+    if broadcast_common::wire::u32_at(bytes, BOX_SIZE_OFFSET) != SIZE_INDICATES_LARGESIZE {
         return Ok(alloc::borrow::Cow::Borrowed(bytes));
+    }
+    if bytes.len() < BOX_HEADER_LARGESIZE_SIZE {
+        return Err(Error::LargesizeBufferTooShort {
+            need: BOX_HEADER_LARGESIZE_SIZE,
+            have: bytes.len(),
+        });
     }
     let mut out = alloc::vec::Vec::with_capacity(bytes.len() - LARGESIZE_SIZE);
     let compact_len = u32::try_from(bytes.len() - LARGESIZE_SIZE).unwrap_or(u32::MAX);
     out.extend_from_slice(&compact_len.to_be_bytes());
     out.extend_from_slice(&bytes[BOX_TYPE_RANGE]);
-    out.extend_from_slice(&bytes[hdr..]);
+    out.extend_from_slice(&bytes[BOX_HEADER_LARGESIZE_SIZE..]);
     Ok(alloc::borrow::Cow::Owned(out))
 }
 
@@ -441,7 +447,7 @@ pub fn compact_form(bytes: &[u8]) -> Result<alloc::borrow::Cow<'_, [u8]>> {
 /// `largesize` box through to an out-of-bounds index (#1147 follow-up). The
 /// error reports the whole-box length needed (`header + min_body`).
 pub fn box_body<'a>(bytes: &'a [u8], min_body: usize, what: &'static str) -> Result<&'a [u8]> {
-    let hdr = box_header_len(bytes)?;
+    let hdr = BoxHeader::parse(bytes)?.header_size();
     let body = &bytes[hdr..];
     if body.len() < min_body {
         return Err(Error::BufferTooShort(BufferTooShort {
@@ -451,29 +457,6 @@ pub fn box_body<'a>(bytes: &'a [u8], min_body: usize, what: &'static str) -> Res
         }));
     }
     Ok(body)
-}
-
-/// Length of the `size`+`type` (+ `largesize`) header at the front of the
-/// whole box `bytes`: 8, or 16 when `size == 1` announces the 64-bit
-/// `largesize` (ISO/IEC 14496-12:2026 §4.2). Typed box readers slice their
-/// body at this offset instead of a hardcoded 8, so a box written in the
-/// `largesize` form (see [`write_box_header`]) parses back (#1147). The usual
-/// `uuid` `usertype` is left to the callers that handle `uuid` boxes.
-pub fn box_header_len(bytes: &[u8]) -> Result<usize> {
-    need_in(bytes, BOX_HEADER_MIN_SIZE, "box header")?;
-    let size = broadcast_common::wire::u32_at(bytes, BOX_SIZE_OFFSET);
-    if size == SIZE_INDICATES_LARGESIZE {
-        let need = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
-        if bytes.len() < need {
-            return Err(Error::LargesizeBufferTooShort {
-                need,
-                have: bytes.len(),
-            });
-        }
-        Ok(need)
-    } else {
-        Ok(BOX_HEADER_MIN_SIZE)
-    }
 }
 
 impl<'a> Parse<'a> for BoxHeader {
@@ -932,16 +915,6 @@ pub fn parse_box(bytes: &[u8]) -> Result<(BoxItem<'_>, usize)> {
     parse_box_at(bytes, 0)
 }
 
-/// Iterate the top-level boxes of `data`, yielding each box's full bytes
-/// (header + body). Best-effort: the first malformed or truncated box ends the
-/// walk silently, for navigation helpers that hand the slices to a strict
-/// typed parser.
-pub fn box_slices(data: &[u8]) -> impl Iterator<Item = &[u8]> {
-    BoxIter::new(data)
-        .filter_map(|step| step.ok())
-        .map(|bx| bx.bytes)
-}
-
 /// Find a box by four-CC at one level, returning its full bytes (header +
 /// body). Call it on a file buffer for a top-level box, or on a container's
 /// [`BoxItem::body`] for one of its children.
@@ -1139,7 +1112,6 @@ mod tests {
         assert_eq!(header.size, 0x110);
         assert!(header.has_largesize);
         assert_eq!(header.header_size(), 16);
-        assert_eq!(box_header_len(&large).unwrap(), 16);
 
         // A largesize whose every byte differs: a 64-bit length is a promise
         // about the box, and a read from the wrong byte of it changes it.
@@ -1151,15 +1123,6 @@ mod tests {
         assert_eq!(header.size, 0x0102_0304_0506_0708);
 
         for have in 8..16usize {
-            match box_header_len(&large[..have]) {
-                Err(Error::LargesizeBufferTooShort {
-                    need,
-                    have: reported,
-                }) => assert_eq!((need, reported), (16, have)),
-                other => panic!(
-                    "box_header_len on {have} bytes: expected LargesizeBufferTooShort, got {other:?}"
-                ),
-            }
             match BoxHeader::parse(&large[..have]) {
                 Err(Error::LargesizeBufferTooShort {
                     need,
@@ -1809,7 +1772,7 @@ mod largesize_tests {
     fn moof_round_trips_through_the_largesize_form() {
         let data = fixture("h264-aac-frag.mp4");
         let orig = top_box(&data, b"moof");
-        let moof = MovieFragmentBox::parse_body(&orig[box_header_len(orig).unwrap()..]).unwrap();
+        let moof = MovieFragmentBox::parse_body(parse_box(orig).unwrap().0.body).unwrap();
         let forced = {
             let _g = ForceLargesize::on();
             moof.try_to_bytes().unwrap()
@@ -1819,7 +1782,7 @@ mod largesize_tests {
             let (large, all) = count_large(&forced, cc);
             assert!(all > 0 && large == all, "{cc:?}: {large}/{all}");
         }
-        let reparsed = MovieFragmentBox::parse_body(&forced[box_header_len(&forced).unwrap()..])
+        let reparsed = MovieFragmentBox::parse_body(parse_box(&forced).unwrap().0.body)
             .expect("largesize moof parses");
         assert_eq!(reparsed, moof);
         assert_eq!(reparsed.try_to_bytes().unwrap(), orig);
@@ -1895,13 +1858,12 @@ mod largesize_tests {
                 continue;
             };
             checked += 1;
-            let hdr = box_header_len(orig).unwrap();
-            let moof = MovieFragmentBox::parse_body(&orig[hdr..]).unwrap();
+            let moof = MovieFragmentBox::parse_body(parse_box(orig).unwrap().0.body).unwrap();
             let forced = {
                 let _g = ForceLargesize::on();
                 moof.try_to_bytes().unwrap()
             };
-            let body = &forced[box_header_len(&forced).unwrap()..];
+            let body = parse_box(&forced).unwrap().0.body;
             let reparsed = MovieFragmentBox::parse_body(body)
                 .unwrap_or_else(|e| panic!("{rel}: largesize: {e}"));
             assert_eq!(reparsed, moof, "{rel}");

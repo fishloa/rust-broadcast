@@ -196,7 +196,7 @@ fn panics<R>(f: impl FnOnce() -> R + std::panic::UnwindSafe) -> bool {
 }
 
 /// #1147 taught the sample-entry readers the `largesize` header by slicing the
-/// body at `box_header_len` (16), but their minimum-length guards still assume
+/// body after the 16-byte header, but their minimum-length guards still assume
 /// an 8-byte header, so a short `largesize` entry indexes past the body and
 /// PANICS instead of returning `BufferTooShort`. Reachable from any untrusted
 /// init segment: `stsd` dispatches `stpp`/`av01`/`vp09`/`avs3` entries straight
