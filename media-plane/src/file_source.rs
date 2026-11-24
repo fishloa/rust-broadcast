@@ -459,6 +459,77 @@ pub fn probe_and_demux(bytes: &[u8]) -> Result<ParsedFile, FileReaderError> {
     }
 }
 
+/// Largest prefix read to identify a playout file: 4 MiB.
+///
+/// A container probe needs a sync-stride lattice and a frame-length chain, not
+/// the whole stream; 4 MiB covers every format this reader plays, while a
+/// file that cannot be settled within it is reported rather than read whole.
+pub const PROBE_PREFIX_MAX: usize = 4 << 20;
+
+/// One step of the bounded-prefix probe loop, returned by [`probe_prefix`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeStep {
+    /// Read the file's first `prefix_len` bytes and call again.
+    NeedPrefix {
+        /// How many leading bytes to hand to the next [`probe_prefix`] call.
+        prefix_len: usize,
+    },
+    /// The container is identified and its playout demuxer selected.
+    Identified(DemuxerKind),
+}
+
+impl ProbeStep {
+    /// Stable label for this probe step.
+    pub fn name(&self) -> &'static str {
+        match self {
+            ProbeStep::NeedPrefix { .. } => "need-prefix",
+            ProbeStep::Identified(_) => "identified",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ProbeStep);
+
+/// Identify a file from a bounded leading prefix instead of the whole file.
+///
+/// `prefix` is the file's first `prefix.len()` bytes and `file_len` its total
+/// length. The caller starts from [`container_probe::DEFAULT_BUDGET`] bytes and
+/// follows each [`ProbeStep::NeedPrefix`] until the demuxer is identified, the
+/// [`PROBE_PREFIX_MAX`] cap is reached, or the file itself is exhausted.
+///
+/// # Errors
+/// [`FileReaderError::AmbiguousProbe`] for a near-tie, [`FileReaderError::FileTooShortToIdentify`]
+/// when `Insufficient` persists at the cap, [`FileReaderError::UnknownProbe`]
+/// for any other verdict, and whatever [`select_demuxer`] rejects.
+pub fn probe_prefix(prefix: &[u8], file_len: u64) -> Result<ProbeStep, FileReaderError> {
+    match container_probe::probe_with_budget(prefix, prefix.len()) {
+        Probe::Identified { format, detail, .. } => {
+            Ok(ProbeStep::Identified(select_demuxer(format, detail)?))
+        }
+        Probe::Ambiguous { candidates, .. } => Err(FileReaderError::AmbiguousProbe {
+            candidates: candidates
+                .iter()
+                .map(|candidate| candidate.format.name().to_string())
+                .collect(),
+        }),
+        Probe::Insufficient { need_at_least, .. } => {
+            let limit = usize::try_from(file_len)
+                .unwrap_or(usize::MAX)
+                .min(PROBE_PREFIX_MAX);
+            if prefix.len() >= limit {
+                return Err(FileReaderError::FileTooShortToIdentify {
+                    need_at_least,
+                    file_bytes: prefix.len(),
+                });
+            }
+            let next = need_at_least.max(prefix.len() + 1).min(limit);
+            Ok(ProbeStep::NeedPrefix { prefix_len: next })
+        }
+        _ => Err(FileReaderError::UnknownProbe),
+    }
+}
+
 /// Map probe+detail to the transmux demuxer per the design spec's table, run
 /// it, and return the parsed tracks.
 pub fn demux_identified(
