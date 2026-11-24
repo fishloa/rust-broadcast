@@ -186,10 +186,10 @@ impl RendezvousRole {
 
 broadcast_common::impl_spec_display!(RendezvousRole);
 
-/// Bit 31 (the sign bit of a 32-bit value), used to test the sign of a
-/// 32-bit quantity carried in a wider (`i64`) type without it having been
-/// sign-extended into that width — see [`cookie_contest`].
-const SIGN_BIT_32: i64 = 0x8000_0000;
+/// The sign bit of a 32-bit cookie, used to test the sign of a value carried
+/// in a wider (`i64`) type without it having been sign-extended into that
+/// width — see [`cookie_contest`].
+const SIGN_BIT: i64 = 0x8000_0000;
 
 /// The cookie contest tie-break (issue #1064): given two cookies (this
 /// side's and the peer's, both already known not to be equal — see
@@ -245,9 +245,9 @@ fn cookie_contest(own_cookie: u32, peer_cookie: u32) -> RendezvousRole {
     let xres = i64::from(res);
     let contest = xreq - xres;
 
-    if contest & SIGN_BIT_32 != 0 {
+    if contest & SIGN_BIT != 0 {
         let revert = xres - xreq;
-        if revert & SIGN_BIT_32 != 0 && req > res {
+        if revert & SIGN_BIT != 0 && req > res {
             return RendezvousRole::Initiator;
         }
         return RendezvousRole::Responder;

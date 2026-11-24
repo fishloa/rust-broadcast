@@ -84,6 +84,8 @@ const BLOCK_BYTES: usize = 8;
 const BITS_PER_BYTE: usize = 8;
 /// Bits in one CSA block; also the side length of the transpose matrix.
 const BLOCK_BITS: usize = BLOCK_BYTES * BITS_PER_BYTE;
+/// Side length of one off-diagonal quadrant of the transpose matrix.
+const QUADRANT_LANES: usize = LANES / 2;
 
 const _: () = assert!(BLOCK_BITS == LANES, "the transpose is square");
 
@@ -102,8 +104,8 @@ const _: () = assert!(BLOCK_BITS == LANES, "the transpose is square");
 /// sub-matrix — `mask` selects the low `j` columns of each such block, and
 /// halves alongside `j`.
 fn transpose(m: &mut [Word; LANES]) {
-    let mut j = LANES / 2;
-    let mut mask: Word = !0 >> (LANES / 2);
+    let mut j = QUADRANT_LANES;
+    let mut mask: Word = !0 >> QUADRANT_LANES;
     while j != 0 {
         let mut k = 0;
         while k < LANES {

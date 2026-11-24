@@ -85,14 +85,14 @@ const PSEUDO_LENGTH_OFFSET: usize = PSEUDO_TAG_OFFSET + 1;
 const PSEUDO_EXTENSION_OFFSET: usize = PSEUDO_LENGTH_OFFSET + 1;
 const PSEUDO_DESCRIPTORS_OFFSET: usize = PSEUDO_EXTENSION_OFFSET + 1;
 
-/// Masks of the individual bits of a header byte.
-const BIT7_MASK: u8 = 0x80;
-const BIT6_MASK: u8 = 0x40;
-const BIT0_MASK: u8 = 0x01;
 /// Bit shifts of `current_next_indicator` and `single_extension_stream_flag`
-/// within the flags byte.
+/// within the flags byte, and their masks.
 const CURRENT_NEXT_SHIFT: u32 = 7;
 const SINGLE_EXTENSION_SHIFT: u32 = 6;
+const CURRENT_NEXT_MASK: u8 = 1 << CURRENT_NEXT_SHIFT;
+const SINGLE_EXTENSION_MASK: u8 = 1 << SINGLE_EXTENSION_SHIFT;
+/// Mask of the `marker_bit` that closes the reserved byte.
+const MARKER_MASK: u8 = 1;
 
 /// Read the big-endian `u32` at `off`.
 fn read_u32_at(b: &[u8], off: usize) -> u32 {
@@ -196,12 +196,12 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
 
         // flags byte: current_next(1) | single_extension(1) | reserved(1) | version(5)
         let flags = b[FLAGS_OFFSET];
-        let current_next_indicator = flags & BIT7_MASK != 0;
-        let single_extension_stream_flag = flags & BIT6_MASK != 0;
+        let current_next_indicator = flags & CURRENT_NEXT_MASK != 0;
+        let single_extension_stream_flag = flags & SINGLE_EXTENSION_MASK != 0;
         let version = flags & VERSION_MASK;
 
         // reserved byte (7 bits reserved + marker_bit)
-        if b[RESERVED_OFFSET] & BIT0_MASK == 0 {
+        if b[RESERVED_OFFSET] & MARKER_MASK == 0 {
             return Err(Error::BadMarker("program_stream_map marker_bit"));
         }
 

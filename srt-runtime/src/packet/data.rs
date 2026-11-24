@@ -220,7 +220,7 @@ impl<'a> DataPacket<'a> {
                 expected: "data packet (F=0)",
             });
         }
-        let word1 = be32(bytes, super::WORD1_OFFSET);
+        let word1 = be32(bytes, super::TYPE_SPECIFIC_OFFSET);
         let seq_number = word0 & SEQ_NUMBER_MASK;
         let position = PacketPosition::from_bits((word1 >> PP_SHIFT) as u8);
         let in_order = (word1 >> O_SHIFT) & 1 != 0;
@@ -269,7 +269,7 @@ impl<'a> DataPacket<'a> {
             | (u32::from(self.retransmitted) << R_SHIFT)
             | self.message_number;
         put_be32(buf, 0, word0);
-        put_be32(buf, super::WORD1_OFFSET, word1);
+        put_be32(buf, super::TYPE_SPECIFIC_OFFSET, word1);
         put_be32(buf, super::TIMESTAMP_OFFSET, self.timestamp.value());
         put_be32(
             buf,

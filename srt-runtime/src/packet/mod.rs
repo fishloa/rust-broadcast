@@ -56,9 +56,9 @@ pub(crate) const F_BIT: u32 = 0x8000_0000;
 /// Appendix A): all bits below the `F`/range-marker bit.
 pub(crate) const SEQ_NUMBER_MASK: u32 = SeqNo::MAX.value();
 
-/// Byte offset of the second header word — the packet-type-specific field —
+/// Byte offset of the packet-type-specific field — the second header word —
 /// shared by every data and control packet (§3, Figure 2).
-pub(crate) const WORD1_OFFSET: usize = 4;
+pub(crate) const TYPE_SPECIFIC_OFFSET: usize = 4;
 
 /// Byte offset of the Timestamp, shared by every data and control packet
 /// (§3, Figure 2).
