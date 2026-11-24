@@ -307,7 +307,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
             CommsCommandId::ConnectOnChannel => {
                 let (cd, consumed) = ConnectionDescriptor::parse_component(rest)?;
                 let tail = &rest[consumed..];
-                need_in(tail, 2, "comms_cmd connect retry/timeout")?;
+                need_in(tail, COMMS_CONNECT_TAIL, "comms_cmd connect retry/timeout")?;
                 super::reject_trailing_body(tail, COMMS_CONNECT_TAIL, "comms_cmd connect")?;
                 CommsCmdParams::Connect {
                     connection_descriptor: cd,
@@ -316,7 +316,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
                 }
             }
             CommsCommandId::SetParams => {
-                need_in(rest, 2, "comms_cmd set_params")?;
+                need_in(rest, COMMS_SET_PARAMS_BODY, "comms_cmd set_params")?;
                 super::reject_trailing_body(rest, COMMS_SET_PARAMS_BODY, "comms_cmd set_params")?;
                 CommsCmdParams::SetParams {
                     buffer_size: rest[0],
@@ -353,8 +353,8 @@ impl CommsCmd<'_> {
             CommsCmdParams::Connect {
                 connection_descriptor,
                 ..
-            } => connection_descriptor.component_len() + 2,
-            CommsCmdParams::SetParams { .. } => 2,
+            } => connection_descriptor.component_len() + COMMS_CONNECT_TAIL,
+            CommsCmdParams::SetParams { .. } => COMMS_SET_PARAMS_BODY,
             CommsCmdParams::GetNextBuffer { .. } => 1,
             CommsCmdParams::None => 0,
         }
@@ -418,7 +418,7 @@ impl Serialize for CommsCmd<'_> {
                 pos += connection_descriptor.serialize_component(&mut buf[pos..])?;
                 buf[pos] = *retry_count;
                 buf[pos + 1] = *timeout;
-                pos += 2;
+                pos += COMMS_CONNECT_TAIL;
             }
             CommsCmdParams::SetParams {
                 buffer_size,
@@ -426,7 +426,7 @@ impl Serialize for CommsCmd<'_> {
             } => {
                 buf[pos] = *buffer_size;
                 buf[pos + 1] = *timeout;
-                pos += 2;
+                pos += COMMS_SET_PARAMS_BODY;
             }
             CommsCmdParams::GetNextBuffer { comms_phase_id } => {
                 buf[pos] = *comms_phase_id;

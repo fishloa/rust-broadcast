@@ -23,6 +23,13 @@ pub mod tag {
     pub const ACTIVATION_STATE_CHANGE_ACK: ApduTag = ApduTag::from_bytes(0x9F, 0x80, 0x01);
 }
 
+/// Mask of the `activation_state` field.
+const ACTIVATION_STATE_MASK: u8 = 0x0F;
+/// Reserved bits beside `activation_state`.
+const RESERVED_NIBBLE_BITS: u32 = 4;
+/// Shift placing the reserved bits above `activation_state`.
+const RESERVED_NIBBLE_SHIFT: u32 = 4;
+
 /// `activation_state` — the requested power mode (Table 53).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -38,7 +45,7 @@ impl ActivationState {
     /// Decode the 4-bit `activation_state`.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x0F {
+        match v & ACTIVATION_STATE_MASK {
             0 => Self::StandbyPassive,
             other => Self::Reserved(other),
         }
@@ -121,7 +128,7 @@ pub struct ActivationStateChangeRequest {
     /// The 4-bit `reserved` field in front of `activation_state` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<4>,
+    pub reserved: ReservedZero<RESERVED_NIBBLE_BITS>,
 }
 
 /// `activation_state_change_ack()` (Table 54): module → host.
@@ -159,8 +166,8 @@ impl<'a> Parse<'a> for ActivationStateChangeRequest {
         )?;
         Ok(Self {
             length_form,
-            activation_state: ActivationState::from_u8(body[0] & 0x0F),
-            reserved: ReservedZero::from_bits(u64::from(body[0] >> 4)),
+            activation_state: ActivationState::from_u8(body[0] & ACTIVATION_STATE_MASK),
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> RESERVED_NIBBLE_SHIFT)),
         })
     }
 }
@@ -177,7 +184,8 @@ impl Serialize for ActivationStateChangeRequest {
             buf,
         )?;
         // reserved(4), activation_state(4).
-        buf[pos] = ((self.reserved.get() << 4) as u8) | (self.activation_state.to_u8() & 0x0F);
+        buf[pos] = ((self.reserved.get() << RESERVED_NIBBLE_SHIFT) as u8)
+            | (self.activation_state.to_u8() & ACTIVATION_STATE_MASK);
         Ok(pos + REQUEST_BODY)
     }
 }
