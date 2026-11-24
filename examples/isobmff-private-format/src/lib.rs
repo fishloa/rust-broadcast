@@ -43,8 +43,9 @@ pub const SHIFT_OFFSET: usize = GAIN_OFFSET + FIELD_LEN;
 pub const LABEL_LEN_OFFSET: usize = SHIFT_OFFSET + FIELD_LEN;
 /// Offset of the label bytes inside a calibration body.
 pub const LABEL_OFFSET: usize = LABEL_LEN_OFFSET + 1;
-/// Bytes of a calibration box before its label.
-pub const CALIBRATION_FIXED_LEN: usize = LABEL_OFFSET;
+/// Bytes of a calibration box before its label: the FullBox
+/// `version`/`flags` and the body fields up to the label.
+pub const CALIBRATION_FIXED_LEN: usize = VERSION_AND_FLAGS_LEN + LABEL_OFFSET;
 /// Bytes of the telemetry payload word.
 pub const TELEMETRY_PAYLOAD_LEN: usize = 4;
 /// `acal` is a `udta` atom.
