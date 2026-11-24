@@ -2,7 +2,9 @@
 //! every guard family relies on, so the predicate that decides what is test
 //! code is pinned here once.
 
-use workspace_guards::scan::{non_test_source, test_only_attribute};
+use workspace_guards::scan::{
+    non_test_source, test_only_attribute, test_starting_attribute, without_attributed_items,
+};
 
 const PLAIN: &str = "#[cfg(test)]";
 const ALL_TEST: &str = "#[cfg(all(test))]";
@@ -48,4 +50,24 @@ fn both_test_module_forms_are_stripped_and_the_code_after_them_kept() {
 fn a_conditional_module_that_is_not_test_only_is_kept() {
     let src = "#[cfg(any(test, feature = \"x\"))] mod t { fn f() { marker_kept(); } }\n";
     assert!(non_test_source(src).contains("marker_kept"));
+}
+
+#[test]
+fn an_attribute_that_starts_with_test_is_test_code_even_with_a_feature() {
+    assert!(test_starting_attribute("#[cfg(test)]"));
+    assert!(test_starting_attribute(
+        "#[cfg(all(test, feature = \"std\"))]"
+    ));
+    assert!(!test_starting_attribute(
+        "#[cfg(any(test, feature = \"x\"))]"
+    ));
+    assert!(!test_starting_attribute("#[cfg(feature = \"x\")]"));
+}
+
+#[test]
+fn an_array_type_semicolon_does_not_end_the_item() {
+    let src = "#[cfg(test)]\nconst TABLE: [(u8, usize); 3] = [];\nfn prod() { marker(); }\n";
+    let out = without_attributed_items(src, test_starting_attribute);
+    assert!(!out.contains("const TABLE"), "{out:?}");
+    assert!(out.contains("marker"), "{out:?}");
 }

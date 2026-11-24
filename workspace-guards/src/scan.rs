@@ -245,10 +245,12 @@ fn attributed_item_end(
 
 /// Index just past the item whose head starts at `j`: a `;`-terminated
 /// declaration or a `{`-delimited body, scanning the head with the same lexer
-/// so a `{` or `;` inside a string, a char literal, a comment or an angle
-/// bracket cannot end it early.
+/// so a `{`, `;` or `[` inside a string, a char literal, a comment or an array
+/// type (`[u8; 4]`) cannot end it early.
 fn item_end(b: &[u8], start: usize) -> Option<usize> {
     let mut j = start;
+    // A `;` inside `[T; N]` or a `(..)` tuple type is not the item's end.
+    let mut brackets = 0i32;
     while j < b.len() {
         match b[j] {
             b'/' if b.get(j + 1) == Some(&b'/') => {
@@ -266,12 +268,36 @@ fn item_end(b: &[u8], start: usize) -> Option<usize> {
                 j += 1;
             }
             b'\'' => j = skip_char_literal(b, j),
-            b';' => return Some(j + 1),
-            b'{' => return Some(skip_block(b, j)),
+            b'[' | b'(' => {
+                brackets += 1;
+                j += 1;
+            }
+            b']' | b')' => {
+                brackets -= 1;
+                j += 1;
+            }
+            b';' if brackets == 0 => return Some(j + 1),
+            b'{' if brackets == 0 => return Some(skip_block(b, j)),
             _ => j += 1,
         }
     }
     None
+}
+
+/// The `#[cfg(...)]` forms a lexical sweep treats as test code: `#[cfg(test)]`
+/// and `#[cfg(all(test, ..))]`, even when a feature also gates it. Unlike
+/// [`test_only_attribute`], a `feature` term does not opt the item out: the
+/// code is still a test, just one that compiles only when that feature is on.
+/// Used by guards whose specification drew the line there.
+pub fn test_starting_attribute(attr: &str) -> bool {
+    let attr = attr.trim();
+    let attr = attr.strip_prefix("#[").unwrap_or(attr);
+    let attr = attr.strip_suffix(']').unwrap_or(attr);
+    let Some(rest) = attr.trim().strip_prefix("cfg(") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    rest.starts_with("test") || rest.starts_with("all(test")
 }
 
 /// Index just past the char literal starting at `i` (a lifetime `'a` is not
