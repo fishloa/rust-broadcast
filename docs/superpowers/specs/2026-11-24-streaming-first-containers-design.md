@@ -26,6 +26,8 @@ Tracking: #4057 (whole-file inputs), #4056 (MP4 metadata tracks), #953 (closed w
 - **P7. Output is byte-identical.** Every existing golden and fixture round-trip produces identical bytes at every phase. The rewrite changes how bytes are reached, not what is produced.
 - **P9. A foundation that does not break.** A crate meant for outside adoption depends only on a small frozen core, never on anything that majors for unrelated reasons (§4.6).
 - **P8. A fact about the whole input comes from a plan, never from held samples.** Timeline origin, total duration, sample sizes and counts are read from a *sample plan* (§4.4): sample descriptors without sample bytes. A seekable container gives one from its index. A replayable forward-only input gives one from a descriptor-only pass. An input that can give neither gets a bounded start window or a typed refusal, never a silent different answer.
+- **P10. Whatever is read can be written.** Every structure, track kind and metadata item the crates read has a write path of the same rank, with a round-trip test (parse, serialize, byte-identical). A read-only capability is a defect unless §4.9 lists it with its reason.
+- **P11. Open to private formats.** A third party can add a box, a sample entry, a track kind or a payload format from its own crate, for reading and for writing, without editing ours. What nobody has registered is carried opaque and written back byte-identical; it is never dropped and never an error.
 
 ## 3. Goals, non-goals, anti-goals
 
@@ -39,6 +41,7 @@ Tracking: #4057 (whole-file inputs), #4056 (MP4 metadata tracks), #953 (closed w
 - A frozen `broadcast-core` at 1.0 under `isobmff` and the other wire-format crates, so a consumer of one of them never takes a breaking release caused by an unrelated module (§4.6).
 - `isobmff` covers the common outside uses of an MP4 crate: iTunes-style tags, QuickTime `.mov` input, and real-world malformed files in a permissive mode (§4.7).
 - First-class streaming adapters for files, tokio and HTTP ranges, so the easy path is also the bounded one (§4.8).
+- Extension points for private boxes, tracks and payloads, and read/write symmetry throughout (§4.9).
 
 **Non-goals**
 - Decoding codec payloads (still opaque samples).
@@ -163,8 +166,8 @@ The MP4 box code uses five things from broadcast-common: `len`, the error kinds,
 
 These shape the `isobmff` API, so they are in scope here rather than added later.
 
-- **iTunes-style metadata** (`moov/udta/meta/ilst`): typed read and write of the common atoms (title, artist, album, track and disc numbers, date, genre, cover art, encoder), freeform `----` items, and chapter lists (Nero `chpl` and QuickTime chapter tracks, read). Tag reading is the most common reason a project takes an MP4 crate. Cover art is a bounded unit under `Limits`.
-- **QuickTime `.mov` input**: the atoms camera and editing files carry that ISO files do not: `wave` and version 1/2 sound sample descriptions, `wide`, `mdta`-keyed metadata (`keys`/`ilst`), `tapt`/`clef`, `gmhd` and `tmcd` timecode tracks, a QuickTime-brand `ftyp` or none at all. Read support; writing `.mov` is not a goal.
+- **iTunes-style metadata** (`moov/udta/meta/ilst`): typed read and write of the common atoms (title, artist, album, track and disc numbers, date, genre, cover art, encoder), freeform `----` items, and chapter lists (Nero `chpl` and QuickTime chapter tracks), read and write. Tag reading is the most common reason a project takes an MP4 crate. Cover art is a bounded unit under `Limits`.
+- **QuickTime `.mov`**: the atoms camera and editing files carry that ISO files do not: `wave` and version 1/2 sound sample descriptions, `wide`, `mdta`-keyed metadata (`keys`/`ilst`), `tapt`/`clef`, `gmhd` and `tmcd` timecode tracks, a QuickTime-brand `ftyp` or none at all. Read and write (P10): each atom round-trips, and a written `.mov` is checked with `ffprobe` and, on macOS, AVFoundation's own reader.
 - **Permissive mode**: `Limits`-style configuration picks strict (today's behaviour: any violation is an error) or permissive. Permissive tolerates the known real-world faults and reports each as a typed warning event instead of failing: an unknown sample entry (kept as an opaque track, which #4056 needs anyway), a box that overruns its parent by trailing bytes, a `wave` atom without `esds`, a zero `mvhd` timescale, a truncated final `mdat`. It never guesses a field value and never relaxes a `Limits` bound. Strict stays the default inside the workspace; byte-identical round-trips are a strict-mode property.
 - Each of these gets real fixtures first (camera originals, an iTunes-tagged `.m4a`, a QuickTime `.mov`), in `private/fixtures/` with PROVENANCE, and the spec transcription where one exists (QuickTime File Format is Apple-published; the `ilst` atom set is documented by Apple and by long-standing convention, so each atom is cited to its source or left opaque).
 
@@ -178,6 +181,37 @@ sans-IO is right for the core and too much ceremony for a first use. The crates 
 - transmux gets the matching one-call drivers for "this file to that output".
 - Every driver is covered by the bounded-memory tests of §6. None of them offers a "read it all" call.
 - Each crate's README opens with the five-line example, and `isobmff` carries migration notes for users of `mp4` and `mp4parse`.
+
+### 4.9 Extension points and write symmetry
+
+The workspace already has this pattern twice: `dvb_si::DescriptorRegistry` lets a caller register a private descriptor type, and multimux's `SchemeRegistry` lets a third-party crate add an input or output scheme. Containers get the same treatment at three levels.
+
+**1. Private boxes.** `isobmff::BoxRegistry`, modelled on `DescriptorRegistry`: a caller registers a type that implements `Parse` and `Serialize` for a box type (fourcc, or `uuid` plus its 16-byte extended type), optionally scoped to a parent box. The reader and the box tree hand it back typed; the writer serializes it. An unregistered box is an `OpaqueBox` with its bytes, written back as it was. `broadcast-matroska` has the same registry keyed by EBML element ID.
+
+**2. Private tracks.** A track is defined by its handler type and sample entry.
+- Read: every track is surfaced (§4.2), whatever its handler or sample-entry fourcc. A registered sample-entry type comes back typed; an unknown one comes back with its fourcc and raw body. Its samples flow like any others.
+- Write: the writer accepts a track described by a caller-supplied handler type and sample entry (a registered type or raw fourcc plus body) and muxes its samples, progressive and fragmented. So a DJI `djmd`, GoPro `gpmd`, Google `camm`, ST 0601 KLV or a company's own metadata track can be written into an MP4, not only read from one.
+- In transmux's IR this is `CodecConfig::Data`, which exists today for unknown TS streams. It gains the MP4 and Matroska identities (handler, sample-entry fourcc and body; Matroska `CodecID` and `CodecPrivate`) beside the TS one (`stream_type`, descriptors), and it becomes muxable in every container that can carry an arbitrary track: TS (private `stream_type` and registration descriptor, already carried), MP4 and Matroska. The mux paths stop rejecting it. Carrying a data track between container families needs the caller to say what identity it takes in the target; without that the muxer refuses with a typed error naming the track, never drops it.
+
+**3. Payload formats.** A sample's bytes are the plug-in author's own wire format. A payload format is a type implementing `broadcast_core::{Parse, Serialize}` over one sample; nothing else is required to decode or encode it. `motion-imagery-metadata` does this for ST 0601; a `djmd` or `gpmd` crate, ours or anyone's, does the same. Because the traits live in the frozen `broadcast-core` (§4.6), a plug-in crate written against 1.0 keeps working.
+- For tools that must name and print a payload they were not compiled against by type (`media-doctor`, the CLI's dump, the browser inspector), a `PayloadRegistry` maps a track identity to an object-safe decoder that renders a sample as structured values. The CLIs take plug-ins as cargo features, each feature registering one crate.
+- The normalised telemetry type (position, attitude, gimbal, footprint, time) stays the separate decision of §10: it is one consumer of this extension point, not part of it.
+
+**Symmetry (P10), stated per area:**
+
+| Area | Read | Write |
+|---|---|---|
+| ISO BMFF boxes, codec configuration, CENC, sample groups | yes | yes (today) |
+| Progressive and fragmented files | yes | yes |
+| Metadata and private tracks (#4056) | yes | yes |
+| `udta`/`meta`, `©xyz`, iTunes tags, chapters | yes | yes |
+| QuickTime-specific atoms | yes | yes |
+| Private boxes via `BoxRegistry` | yes | yes |
+| Matroska/WebM, TS, PS, FLV data tracks | yes | yes, where the container can carry them |
+| Permissive-mode repairs | yes | no: a tolerated fault is reported, and the writer emits the corrected, conformant form. Reproducing a malformed file is not a goal. |
+| ST 0601 KLV values | yes | yes, as far as the `misb` crate encodes; anything it cannot encode is written from the raw item kept on read |
+
+The round-trip test for a file is: read it, write every track and every box back through the `Writer`, and compare bytes (strict mode). The Phase 2 gate runs it over the camera and tagged fixtures of §4.7.
 
 ## 5. Phases
 
@@ -205,7 +239,9 @@ Each phase lands on main green, with byte-identical goldens, before the next sta
 - §4.2 and §4.3, including metadata tracks and `©xyz` (#4056) and `Limits`.
 - broadcast-common minor: `Demand`'s optional offset and the capped-read helper (§6). Both additive.
 - Fuzz targets for the reader (progressive and fragmented) and writer round-trip.
-- The §4.7 coverage (tags, `.mov` input, permissive mode) and the §4.8 drivers, each behind its real fixtures.
+- The §4.7 coverage (tags, `.mov`, permissive mode) and the §4.8 drivers, each behind its real fixtures.
+- The §4.9 extension points: `BoxRegistry`, typed or opaque sample entries on read and write, and a worked third-party example crate under `examples/` that adds one private box and one private metadata track from outside `isobmff`.
+- Gate addition: whole-file round-trip (read, write back, byte-identical) over every §4.7 fixture, including a file with a metadata track.
 - Gate: peak-memory tests over generated multi-GB files; hostile-count/size tests; a remote-fixture test over an HTTP range adapter that bounds the number of requests.
 
 **Phase 3 – streaming MP4 demux in transmux and its consumers.**
@@ -219,6 +255,7 @@ Each phase lands on main green, with byte-identical goldens, before the next sta
 - Every muxer and packager listed in §4.4 becomes a stage and loses `Package`; its callers in all consumer crates move in the same series, split by muxer and consumer cluster.
 - The sample plan, the planned progressive writer (fast start and `mdat`-first), and the transforms of §4.4.
 - CENC encrypt/decrypt and SAMPLE-AES as per-sample stages; per-sample protection data moves onto `Sample`.
+- `CodecConfig::Data` gains its MP4 and Matroska identities and becomes muxable (§4.9): a metadata track is carried TS to MP4 and MP4 to TS when the caller names the target identity. `PayloadRegistry` and the CLI plug-in features.
 - The transmux CLI streams every input to every output. A progressive MP4 output from a non-replayable input (stdin) is refused with the typed error of §4.3.
 - Gate: the #953 benchmark re-run (2 GB CENC fMP4 to TS), peak RSS recorded in the PR and kept below 128 MB.
 
@@ -320,6 +357,7 @@ Separate owner decisions, not blocking this design:
 - The capped-read helper lives in broadcast-common behind `std`.
 - The broadcast-common major and the workspace re-release at Milestone 2.
 - Crate names `isobmff` and `broadcast-matroska`.
+- People must be able to plug in special or private parsers (the drone metadata case), and writing is supported as much as reading: P10, P11 and §4.9.
 - The aim is to be the default crates for this work. Folded in: a frozen `broadcast-core` 1.0 (§4.6), tags, `.mov` input and permissive mode in `isobmff` (§4.7), streaming drivers (§4.8), and the adoption programme (§11). The name `broadcast-core` is free on crates.io and is confirmed at the Milestone 2 sign-off.
 - The §4.5 defaults are starting estimates, confirmed by measurement in Phase 2.
 
