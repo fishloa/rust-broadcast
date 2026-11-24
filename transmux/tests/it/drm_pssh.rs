@@ -4,7 +4,7 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::base64::base64_decode_lenient as base64_decode;
-use transmux::cenc::ProtectionSystemSpecificHeaderBox;
+use isobmff::cenc::ProtectionSystemSpecificHeaderBox;
 use transmux::drm::{
     FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID, cenc_kid_to_playready,
     fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc, playready_kid_value_decode,

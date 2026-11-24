@@ -83,15 +83,16 @@ fn moof_and_traf_uuid_children_are_preserved_on_parse() {
         }
         if &data[off + 4..off + 8] == b"moof" {
             let moof_bytes = &data[off..off + size];
-            let moof = transmux::MovieFragmentBox::parse_body(&moof_bytes[8..]).expect("moof");
+            let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(&moof_bytes[8..])
+                .expect("moof");
             let moof_has_uuid = moof
                 .order
                 .iter()
-                .any(|c| matches!(c, transmux::movie_fragment::MoofChild::Opaque(o) if &o.box_type == b"uuid"));
+                .any(|c| matches!(c, isobmff::movie_fragment::MoofChild::Opaque(o) if &o.box_type == b"uuid"));
             assert!(moof_has_uuid, "the moof-level uuid child is preserved");
             let traf_has_uuid = moof.traf.iter().any(|t| {
                 t.order.iter().any(|c| {
-                    matches!(c, transmux::movie_fragment::TrafChild::Opaque(o) if &o.box_type == b"uuid")
+                    matches!(c, isobmff::movie_fragment::TrafChild::Opaque(o) if &o.box_type == b"uuid")
                 })
             });
             assert!(traf_has_uuid, "the traf-level uuid child is preserved");
@@ -250,7 +251,8 @@ fn largesize_uuid_child_round_trips_in_every_container() {
     moof.extend_from_slice(b"moof");
     moof.extend_from_slice(&moof_body);
 
-    let parsed = transmux::MovieFragmentBox::parse_body(&moof[8..]).expect("moof parses");
+    let parsed =
+        isobmff::movie_fragment::MovieFragmentBox::parse_body(&moof[8..]).expect("moof parses");
     let out = {
         let mut b = vec![0u8; parsed.serialized_len()];
         let n = parsed.serialize_into(&mut b).expect("serialize");

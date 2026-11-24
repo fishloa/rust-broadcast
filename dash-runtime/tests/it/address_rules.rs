@@ -427,8 +427,8 @@ fn a_representation_index_template_is_used_only_without_number_or_time() {
 #[test]
 fn a_sidx_plan_numbers_its_subsegments_from_one() {
     use dash_runtime::address::{PlanOptions, base_index};
-    use transmux::SegmentIndexBox;
-    use transmux::timing::SidxReference;
+    use isobmff::timing::SegmentIndexBox;
+    use isobmff::timing::SidxReference;
 
     let m = mpd(
         r#"type="static" mediaPresentationDuration="PT6S""#,
@@ -479,8 +479,8 @@ fn a_sidx_plan_numbers_its_subsegments_from_one() {
 #[test]
 fn a_sidx_reference_to_another_sidx_is_refused() {
     use dash_runtime::address::base_index;
-    use transmux::SegmentIndexBox;
-    use transmux::timing::SidxReference;
+    use isobmff::timing::SegmentIndexBox;
+    use isobmff::timing::SidxReference;
 
     let sidx = SegmentIndexBox {
         version: 0,
@@ -509,8 +509,8 @@ fn a_sidx_reference_to_another_sidx_is_refused() {
 #[test]
 fn a_sidx_segment_without_starts_with_sap_is_marked_so() {
     use dash_runtime::address::base_index;
-    use transmux::SegmentIndexBox;
-    use transmux::timing::SidxReference;
+    use isobmff::timing::SegmentIndexBox;
+    use isobmff::timing::SidxReference;
 
     let reference = |sap: u8| SidxReference {
         reference_type: 0,

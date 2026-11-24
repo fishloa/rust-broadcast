@@ -60,7 +60,7 @@ fn sidx_of(
     mpd: &Mpd,
     at: RepRef,
     doc: &Url,
-) -> Result<(transmux::SegmentIndexBox, u64), Box<dyn std::error::Error>> {
+) -> Result<(isobmff::timing::SegmentIndexBox, u64), Box<dyn std::error::Error>> {
     let (period, set, rep) = at.resolve(mpd).ok_or("no such Representation")?;
     let SegmentInfo::Base(base) = resolve_segment_info(period, set, rep)? else {
         return Err("not a SegmentBase Representation".into());

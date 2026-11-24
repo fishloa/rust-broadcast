@@ -72,12 +72,10 @@ fn fullbox_flags(full: &[u8]) -> u32 {
 /// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
 ///
 /// Re-exported from [`broadcast_common::cenc`], which is where the single
-/// definition lives. The decrypt path ([`crate::cenc_decrypt::CencDecryptor`],
-/// which recovers it from a protected file's `schm`), the encrypt path
-/// ([`crate::cenc_encrypt::CencEncryptor`], which is given it by the caller),
-/// and the IR carrier ([`crate::media::TrackEncryption`]) share that one
-/// definition rather than three (issue #564) — and so does `broadcast-hls`,
-/// which renders the HLS `#EXT-X-KEY` tag from it (issue #878). The scheme
+/// definition lives. The decrypt path, the encrypt path, and the IR crypto
+/// carrier share that one definition rather than three (issue #564) — and so
+/// does `broadcast-hls`, which renders the HLS `#EXT-X-KEY` tag from it (issue
+/// #878). The scheme
 /// identity is container-independent, so it belongs below both this crate and
 /// the playlist crate; only the *boxes* that carry it (`tenc`/`senc`/`schm`/…,
 /// below) are ISOBMFF-specific and stay here.
@@ -255,7 +253,7 @@ pub const SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION: u32 = 0x000001;
 /// ([`SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION`]): `AlgorithmID(24) + IV_size(8) +
 /// KID(128)` = 20 bytes.
 #[cfg(test)]
-pub(crate) const SENC_OVERRIDE_FIELDS_LEN: usize = 20;
+pub const SENC_OVERRIDE_FIELDS_LEN: usize = 20;
 
 /// Sample Encryption Box (`senc`) — ISO/IEC 23001-7 §12.3.
 #[derive(Debug, Clone, PartialEq, Eq)]

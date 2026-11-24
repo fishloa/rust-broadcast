@@ -17,9 +17,9 @@ use std::fs;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Unpackage};
+use isobmff::movie_fragment::MovieFragmentBox;
 use transmux::init_segment::MovieBox;
 use transmux::media::{CmafMux, Fmp4Demux, Media};
-use transmux::movie_fragment::MovieFragmentBox;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };
@@ -50,7 +50,7 @@ fn expected_counts(file: &[u8]) -> std::collections::BTreeMap<TrackId, usize> {
                 MovieFragmentBox::parse_body(&file[off + 8..off + size]).expect("parse moof body");
             for traf in &moof.traf {
                 let n: usize = traf.trun.iter().map(|t| t.samples.len()).sum();
-                *counts.entry(traf.tfhd.track_id).or_insert(0) += n;
+                *counts.entry(traf.tfhd.track_id.into()).or_insert(0) += n;
             }
         }
         off += size;

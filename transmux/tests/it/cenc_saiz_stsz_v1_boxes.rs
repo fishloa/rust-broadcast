@@ -11,8 +11,8 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
+use isobmff::cenc::SampleAuxInfoSizesBox;
 use transmux::TrackId;
-use transmux::cenc::SampleAuxInfoSizesBox;
 use transmux::init_segment::{MovieHeaderBox, Mp4aSampleEntry, SampleSizeBox, TrackHeaderBox};
 
 fn timescale(value: u32) -> Timescale {
@@ -207,7 +207,7 @@ fn tkhd_v1_matches_mp4box_diso() {
 /// included, or a decryptor reads its aux info from the wrong bytes.
 #[test]
 fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
-    use transmux::cenc::SampleAuxInfoOffsetsBox;
+    use isobmff::cenc::SampleAuxInfoOffsetsBox;
     use transmux::fragment_build::{FragmentProtection, protect_media_segment};
 
     fn boxed(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
@@ -232,7 +232,7 @@ fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
     let moof = boxed(b"moof", &moof_body);
 
     let entries = |iv: u8| {
-        vec![transmux::cenc::SampleEncryptionEntry {
+        vec![isobmff::cenc::SampleEncryptionEntry {
             initialization_vector: vec![iv; 8],
             subsamples: Vec::new(),
         }]
@@ -260,12 +260,12 @@ fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
     let mut senc_at = Vec::new();
     let mut saio = Vec::new();
     let mut off = 0usize;
-    for step in transmux::box_iter(body) {
+    for step in isobmff::box_types::box_iter(body) {
         let (child, consumed) = step.expect("walk the moof");
         if child.header.box_type.is(b"traf") {
             let traf_body_at = 8 + off + 8;
             let mut inner = 0usize;
-            for step in transmux::box_iter(child.body) {
+            for step in isobmff::box_types::box_iter(child.body) {
                 let (grandchild, size) = step.expect("walk the traf");
                 if grandchild.header.box_type.is(b"senc") {
                     senc_at.push(traf_body_at + inner);

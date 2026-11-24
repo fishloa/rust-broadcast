@@ -20,13 +20,13 @@
 //! `0` in the sample groups); they are captured on parse and re-emitted verbatim,
 //! hand-built values use the spec value.
 
-use crate::box_types::BOX_HEADER_MIN_SIZE;
 use crate::error::{Error, Result};
 use crate::sample_entries::{SampleEntryChild, VisualSampleEntryFields};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
 use broadcast_common::len::{fit_bits, fit_u16, need_in, need_out};
 use broadcast_common::{Parse, Serialize};
+use isobmff::box_types::BOX_HEADER_MIN_SIZE;
 
 /// FourCC of the AVS3 configuration box.
 pub const AV3C_FOURCC: [u8; 4] = *b"av3c";
@@ -615,7 +615,7 @@ impl AvsVideoSampleEntry {
     /// Parse a full sample-entry box (including the 8-byte header).
     pub fn parse_entry(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "AVS sample entry")?;
-        let mut cursor = crate::box_types::BOX_TYPE_SIZE;
+        let mut cursor = isobmff::box_types::BOX_TYPE_SIZE;
         let fourcc = broadcast_common::wire::read_u32(bytes, &mut cursor, "AVS sample entry type")?
             .to_be_bytes();
         let kind = AvsVideoEntryKind::from_entry_fourcc(fourcc).ok_or(Error::UnexpectedBox {
@@ -629,7 +629,7 @@ impl AvsVideoSampleEntry {
                 expected: "AVS configuration box",
             },
         )?;
-        let body = &cfg[crate::box_types::box_header_len(cfg)?..];
+        let body = &cfg[isobmff::box_types::box_header_len(cfg)?..];
         let config = match kind {
             AvsVideoEntryKind::Avs3 => AvsVideoConfig::Avs3(Avs3ConfigurationBox::parse(body)?),
             AvsVideoEntryKind::Avs2 => {
@@ -659,7 +659,7 @@ impl AvsVideoSampleEntry {
         };
         self.children.iter().find_map(|c| match c {
             SampleEntryChild::Other(b) if b.get(4..8) == Some(&want[..]) => {
-                let hdr = crate::box_types::box_header_len(b).ok()?;
+                let hdr = isobmff::box_types::box_header_len(b).ok()?;
                 Some(LAvsConfigurationBox::parse(&b[hdr..]))
             }
             _ => None,
@@ -687,7 +687,7 @@ impl Serialize for AvsVideoSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let config_len = BOX_HEADER_MIN_SIZE + self.config_body_len();
-        crate::box_types::box_len(
+        isobmff::box_types::box_len(
             BOX_HEADER_MIN_SIZE
                 + VisualSampleEntryFields::serialized_len()
                 + crate::sample_entries::entry_children_len(&self.children, config_len),
@@ -697,16 +697,16 @@ impl Serialize for AvsVideoSampleEntry {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, &self.kind.entry_fourcc(), need)?;
+        c += isobmff::box_types::write_box_header(buf, &self.kind.entry_fourcc(), need)?;
         c += self.visual.serialize_body_into(&mut buf[c..])?;
         let cfg_fourcc = self.kind.config_fourcc();
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
             let len = BOX_HEADER_MIN_SIZE + self.config_body_len();
             let len = broadcast_common::len::fit_u32(len, "config box size")?;
-            buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&len.to_be_bytes());
-            *c += crate::box_types::BOX_TYPE_SIZE;
-            buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&cfg_fourcc);
-            *c += crate::box_types::BOX_TYPE_SIZE;
+            buf[*c..*c + isobmff::box_types::BOX_TYPE_SIZE].copy_from_slice(&len.to_be_bytes());
+            *c += isobmff::box_types::BOX_TYPE_SIZE;
+            buf[*c..*c + isobmff::box_types::BOX_TYPE_SIZE].copy_from_slice(&cfg_fourcc);
+            *c += isobmff::box_types::BOX_TYPE_SIZE;
             *c += self.write_config_body(&mut buf[*c..])?;
             Ok(())
         };

@@ -20,7 +20,6 @@
 //! inside the sample entry, but they are provided here for completeness so callers can
 //! build and parse cue sample payloads.
 
-use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE};
 use crate::error::{Error, Result};
 use crate::sample_entries::SAMPLE_ENTRY_RESERVED_LEN;
 use alloc::string::String;
@@ -29,6 +28,7 @@ use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{be_u16, be_u32};
 use broadcast_common::{Parse, Serialize};
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE};
 
 const SAMPLE_ENTRY_FIXED_LEN: usize = SAMPLE_ENTRY_RESERVED_LEN + core::mem::size_of::<u16>();
 const DATA_REFERENCE_INDEX_OFFSET: usize = SAMPLE_ENTRY_RESERVED_LEN;
@@ -98,7 +98,7 @@ pub struct XmlSubtitleSampleEntry {
     /// Auxiliary MIME types, null-terminated (may be empty).
     pub auxiliary_mime_types: String,
     /// Optional trailing boxes (e.g. `btrt`) preserved verbatim for round-trip.
-    pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
+    pub extra_boxes: Vec<isobmff::box_support::OpaqueBox>,
 }
 
 impl XmlSubtitleSampleEntry {
@@ -116,7 +116,7 @@ impl XmlSubtitleSampleEntry {
     /// Parse from full box bytes (including the 8-byte box header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         // Minimum body: SampleEntry reserved+dri (8) + 3 NUL bytes = 11
-        let body = crate::box_types::box_body(
+        let body = isobmff::box_types::box_body(
             bytes,
             SAMPLE_ENTRY_FIXED_LEN + SUBTITLE_CSTRING_COUNT,
             "stpp",
@@ -138,7 +138,7 @@ impl XmlSubtitleSampleEntry {
             let mut bt = [0u8; BOX_TYPE_SIZE];
             bt.copy_from_slice(&body[pos + BOX_TYPE_OFFSET..pos + BOX_HEADER_MIN_SIZE]);
             let data = body[pos + BOX_HEADER_MIN_SIZE..end].to_vec();
-            extra_boxes.push(crate::box_support::OpaqueBox::new(bt, data));
+            extra_boxes.push(isobmff::box_support::OpaqueBox::new(bt, data));
             pos = pos.saturating_add(sz);
         }
 
@@ -174,7 +174,7 @@ impl Serialize for XmlSubtitleSampleEntry {
         for eb in &self.extra_boxes {
             n += eb.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -182,7 +182,7 @@ impl Serialize for XmlSubtitleSampleEntry {
         need_out(buf, need)?;
         let mut c = 0usize;
         // box header: size(32) + fourcc(32)
-        c += crate::box_types::write_box_header(buf, b"stpp", need)?;
+        c += isobmff::box_types::write_box_header(buf, b"stpp", need)?;
         // SampleEntry: reserved(6) zeros + data_reference_index(16). The zeros
         // are written, not skipped: a reused/dirty caller buffer would
         // otherwise keep garbage there (r04-W45).
@@ -246,7 +246,7 @@ macro_rules! utf8_text_box {
             /// Parse from full box bytes (including 8-byte header).
             pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
                 need_in(bytes, BOX_HEADER_MIN_SIZE, $fourcc)?;
-                let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+                let body = &bytes[isobmff::box_types::box_header_len(bytes)?..];
                 let text = core::str::from_utf8(body).map_err(|_| Error::InvalidValue(InvalidValue {
                     field: concat!($fourcc, " ", stringify!($field)),
                     value: 0,
@@ -269,14 +269,14 @@ macro_rules! utf8_text_box {
             type Error = Error;
 
             fn serialized_len(&self) -> usize {
-                crate::box_types::box_len(BOX_HEADER_MIN_SIZE + self.$field.len())
+                isobmff::box_types::box_len(BOX_HEADER_MIN_SIZE + self.$field.len())
             }
 
             fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
                 let need = self.serialized_len();
                 need_out(buf, need)?;
                 let mut c = 0usize;
-                c += crate::box_types::write_box_header(buf, $cc, need)?;
+                c += isobmff::box_types::write_box_header(buf, $cc, need)?;
                 buf[c..c + self.$field.len()].copy_from_slice(self.$field.as_bytes());
                 c += self.$field.len();
                 Ok(c)
@@ -357,8 +357,8 @@ pub struct VttCueBox {
     /// Optional cue identifier string (`iden`).
     pub cue_id: Option<CueIdBox>,
     /// Children this crate has no typed model for, verbatim (box header
-    /// preserved through [`OpaqueBox`](crate::box_support::OpaqueBox)).
-    pub extra_children: Vec<crate::box_support::OpaqueBox>,
+    /// preserved through [`OpaqueBox`](isobmff::box_support::OpaqueBox)).
+    pub extra_children: Vec<isobmff::box_support::OpaqueBox>,
     /// Wire order of the children of a parsed cue; empty for a built one.
     #[cfg_attr(feature = "serde", serde(skip))]
     child_order: Vec<CueChild>,
@@ -393,11 +393,11 @@ impl VttCueBox {
     /// Parse from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "vttc")?;
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = &bytes[isobmff::box_types::box_header_len(bytes)?..];
         let mut payload: Option<CuePayloadBox> = None;
         let mut settings: Option<CueSettingsBox> = None;
         let mut cue_id: Option<CueIdBox> = None;
-        let mut extra_children: Vec<crate::box_support::OpaqueBox> = Vec::new();
+        let mut extra_children: Vec<isobmff::box_support::OpaqueBox> = Vec::new();
         let mut child_order: Vec<CueChild> = Vec::new();
         let mut pos = 0usize;
         while pos + BOX_HEADER_MIN_SIZE <= body.len() {
@@ -439,7 +439,7 @@ impl VttCueBox {
                     let mut bt = [0u8; BOX_TYPE_SIZE];
                     bt.copy_from_slice(other);
                     child_order.push(CueChild::Extra(extra_children.len()));
-                    extra_children.push(crate::box_support::OpaqueBox::new(
+                    extra_children.push(isobmff::box_support::OpaqueBox::new(
                         bt,
                         child[BOX_HEADER_MIN_SIZE..].to_vec(),
                     ));
@@ -517,14 +517,14 @@ impl Serialize for VttCueBox {
         for e in &self.extra_children {
             n += BOX_HEADER_MIN_SIZE + e.data.len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"vttc", need)?;
+        c += isobmff::box_types::write_box_header(buf, b"vttc", need)?;
         for child in self.write_order() {
             match child {
                 CueChild::Iden => {
@@ -541,7 +541,7 @@ impl Serialize for VttCueBox {
                 CueChild::Extra(i) => {
                     let e = &self.extra_children[i];
                     let len = BOX_HEADER_MIN_SIZE + e.data.len();
-                    c += crate::box_types::write_box_header(&mut buf[c..], &e.box_type, len)?;
+                    c += isobmff::box_types::write_box_header(&mut buf[c..], &e.box_type, len)?;
                     buf[c..c + e.data.len()].copy_from_slice(&e.data);
                     c += e.data.len();
                 }
@@ -605,7 +605,7 @@ pub enum WvttSampleBox {
     /// `vtta`: additional non-cue text such as a `NOTE` block.
     AdditionalText(VttAdditionalTextBox),
     /// Any other box, verbatim.
-    Other(crate::box_support::OpaqueBox),
+    Other(isobmff::box_support::OpaqueBox),
 }
 
 /// Split a `wvtt` media sample into its boxes.
@@ -637,7 +637,7 @@ pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
             other => {
                 let mut bt = [0u8; BOX_TYPE_SIZE];
                 bt.copy_from_slice(other);
-                WvttSampleBox::Other(crate::box_support::OpaqueBox::new(
+                WvttSampleBox::Other(isobmff::box_support::OpaqueBox::new(
                     bt,
                     boxed[BOX_HEADER_MIN_SIZE..].to_vec(),
                 ))
@@ -668,7 +668,7 @@ impl Serialize for WvttSampleBox {
             WvttSampleBox::Other(b) => {
                 let need = BOX_HEADER_MIN_SIZE + b.data.len();
                 need_out(buf, need)?;
-                let mut c = crate::box_types::write_box_header(buf, &b.box_type, need)?;
+                let mut c = isobmff::box_types::write_box_header(buf, &b.box_type, need)?;
                 buf[c..c + b.data.len()].copy_from_slice(&b.data);
                 c += b.data.len();
                 Ok(c)
@@ -703,7 +703,7 @@ pub struct WvttSampleEntry {
     /// WebVTT configuration box (`vttC`), mandatory.
     pub config: WebVttConfigurationBox,
     /// Optional trailing boxes preserved verbatim for round-trip.
-    pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
+    pub extra_boxes: Vec<isobmff::box_support::OpaqueBox>,
 }
 
 impl WvttSampleEntry {
@@ -724,12 +724,12 @@ impl WvttSampleEntry {
             BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN + BOX_HEADER_MIN_SIZE,
             "wvtt",
         )?;
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        let body = &bytes[isobmff::box_types::box_header_len(bytes)?..];
         let data_reference_index = be_u16(body, DATA_REFERENCE_INDEX_OFFSET, "sample entry")?;
 
         let mut pos = SAMPLE_ENTRY_FIXED_LEN;
         let mut config: Option<WebVttConfigurationBox> = None;
-        let mut extra_boxes: Vec<crate::box_support::OpaqueBox> = Vec::new();
+        let mut extra_boxes: Vec<isobmff::box_support::OpaqueBox> = Vec::new();
 
         while pos + BOX_HEADER_MIN_SIZE <= body.len() {
             let sz = be_u32(body, pos, "child box size")? as usize;
@@ -744,9 +744,9 @@ impl WvttSampleEntry {
                 _ => {
                     let mut bt = [0u8; BOX_TYPE_SIZE];
                     bt.copy_from_slice(fourcc);
-                    extra_boxes.push(crate::box_support::OpaqueBox::new(
+                    extra_boxes.push(isobmff::box_support::OpaqueBox::new(
                         bt,
-                        child[crate::box_types::box_header_len(child)?..].to_vec(),
+                        child[isobmff::box_types::box_header_len(child)?..].to_vec(),
                     ));
                 }
             }
@@ -783,14 +783,14 @@ impl Serialize for WvttSampleEntry {
         for eb in &self.extra_boxes {
             n += eb.serialized_len();
         }
-        crate::box_types::box_len(n)
+        isobmff::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"wvtt", need)?;
+        c += isobmff::box_types::write_box_header(buf, b"wvtt", need)?;
         // SampleEntry: reserved(6) zeros + data_reference_index(16). Written
         // explicitly so a reused/dirty caller buffer cannot leave garbage in the
         // reserved bytes (r04-W45).
@@ -959,7 +959,7 @@ mod tests {
         let mut with_id = base.clone();
         with_id.cue_id = Some(CueIdBox::new("id1"));
         let mut with_extra = base.clone();
-        with_extra.extra_children = alloc::vec![crate::box_support::OpaqueBox::new(
+        with_extra.extra_children = alloc::vec![isobmff::box_support::OpaqueBox::new(
             *b"vsid",
             alloc::vec![0, 0, 0, 7],
         )];

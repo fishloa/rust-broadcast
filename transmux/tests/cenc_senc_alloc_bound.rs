@@ -22,7 +22,7 @@
 
 #![cfg(feature = "cenc")]
 
-use transmux::{SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION, SampleEncryptionBox};
+use isobmff::cenc::{SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION, SampleEncryptionBox};
 
 /// Recording is gated on [`ALLOC`]'s armed flag so the test harness's own
 /// allocations outside the measured window are not attributed to the parse.
@@ -63,8 +63,7 @@ fn hostile_senc_sample_count_allocates_nothing_large() {
         assert!(
             matches!(
                 result,
-                Err(transmux::error::Error::BufferTooShort(..)
-                    | transmux::error::Error::InvalidInput(..))
+                Err(isobmff::Error::BufferTooShort(..) | isobmff::Error::InvalidInput(..))
             ),
             "iv_size={iv_size} flags={flags:#x}: a 20-byte senc declaring 0xFFFFFFFF samples \
              must be rejected"

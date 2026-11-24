@@ -7,7 +7,7 @@
 //! `tenc`/`senc`/`saiz`/`saio`/`schm`/`frma`/`sinf`.
 
 use broadcast_common::{Parse, Serialize};
-use transmux::{
+use isobmff::cenc::{
     OriginalFormatBox, ProtectionSchemeInfoBox, ProtectionSystemSpecificHeaderBox,
     SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox,
     SampleEncryptionBox, SchemeInformationBox, SchemeTypeBox, TrackEncryptionBox,

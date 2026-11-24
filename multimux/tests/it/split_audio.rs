@@ -393,7 +393,7 @@ fn child<'a>(bytes: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
 
 fn first_tfdt(segment: &[u8]) -> (u32, u64) {
     let moof = child(segment, b"moof").expect("moof");
-    let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(moof).expect("moof parses");
+    let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(moof).expect("moof parses");
     let traf = moof.traf.first().expect("traf");
     let tfdt = traf.tfdt.as_ref().expect("tfdt").base_media_decode_time();
     (traf.tfhd.track_id.value(), tfdt)
@@ -2035,7 +2035,7 @@ async fn every_part_is_within_its_own_playlists_part_target() {
 
 fn trun_secs(part: &[u8], timescale: f64) -> f64 {
     let moof = child(part, b"moof").expect("moof");
-    let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(moof).expect("moof parses");
+    let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(moof).expect("moof parses");
     let traf = moof.traf.first().expect("traf");
     let default = traf.tfhd.default_sample_duration;
     let ticks: u64 = traf

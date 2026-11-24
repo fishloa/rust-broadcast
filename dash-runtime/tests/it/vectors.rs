@@ -829,8 +829,8 @@ fn two_periods_may_not_share_an_id() {
 #[test]
 fn sidx_zero_size_reference_is_skipped_but_still_advances_the_timeline() {
     use dash_runtime::address::base_index;
-    use transmux::SegmentIndexBox;
-    use transmux::timing::SidxReference;
+    use isobmff::timing::SegmentIndexBox;
+    use isobmff::timing::SidxReference;
     let sidx = SegmentIndexBox {
         version: 0,
         flags: 0,

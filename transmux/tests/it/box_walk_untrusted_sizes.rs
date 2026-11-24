@@ -33,8 +33,8 @@ fn harness(data: &[u8]) {
         let _ = transmux::SampleDescriptionBox::parse(&stsd(entry));
     }
     let _ = transmux::TrackExtendsBox::parse(data);
-    let _ = transmux::SchemeInformationBox::parse(data);
-    let _ = transmux::ProtectionSchemeInfoBox::parse(data);
+    let _ = isobmff::cenc::SchemeInformationBox::parse(data);
+    let _ = isobmff::cenc::ProtectionSchemeInfoBox::parse(data);
 }
 
 /// Verbatim libFuzzer artifact `crash-5d5150b8d59a6b21d0a75cef5cdcc296f5099750`
@@ -102,7 +102,7 @@ fn sample_entry_config_child_with_overflowing_largesize_does_not_panic() {
 #[test]
 fn box_iter_rejects_overflowing_largesize() {
     let bytes = largesize_max_box(b"moov", &[0u8; 8]);
-    let mut it = transmux::box_iter(&bytes);
+    let mut it = isobmff::box_types::box_iter(&bytes);
     assert!(matches!(it.next(), Some(Err(_))));
 }
 
@@ -113,9 +113,9 @@ fn box_iter_rejects_overflowing_largesize() {
 fn tfhd_body_shorter_than_track_id_is_a_short_read() {
     use broadcast_common::error::BufferTooShort;
     for len in 0..=7usize {
-        let err = transmux::TrackFragmentHeaderBox::parse_body(&vec![0u8; len])
+        let err = isobmff::movie_fragment::TrackFragmentHeaderBox::parse_body(&vec![0u8; len])
             .expect_err("truncated tfhd must not parse");
-        let transmux::Error::BufferTooShort(BufferTooShort { what, .. }) = err else {
+        let isobmff::Error::BufferTooShort(BufferTooShort { what, .. }) = err else {
             panic!("len {len}: wrong error: {err:?}");
         };
         if len >= 4 {
@@ -132,13 +132,14 @@ fn tfhd_track_id_is_a_big_endian_u32_and_round_trips() {
     for id in [0x0102_0304u32, 0xFFFF_FFFF, 0x0000_0100] {
         let mut body = vec![0u8, 0, 0, 0];
         body.extend_from_slice(&id.to_be_bytes());
-        let tfhd = transmux::TrackFragmentHeaderBox::parse_body(&body)
+        let tfhd = isobmff::movie_fragment::TrackFragmentHeaderBox::parse_body(&body)
             .unwrap_or_else(|e| panic!("{id:#010x}: {e}"));
-        assert_eq!(tfhd.track_id, transmux::TrackId::new(id));
+        assert_eq!(tfhd.track_id.value(), id);
         let mut buf = vec![0u8; tfhd.serialized_len()];
         let n = tfhd.serialize_into(&mut buf).expect("serialize");
         assert_eq!(n, buf.len());
-        let reparsed = transmux::TrackFragmentHeaderBox::parse_body(&buf[8..]).expect("reparse");
+        let reparsed = isobmff::movie_fragment::TrackFragmentHeaderBox::parse_body(&buf[8..])
+            .expect("reparse");
         assert_eq!(reparsed, tfhd);
     }
 }

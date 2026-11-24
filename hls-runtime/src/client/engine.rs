@@ -146,7 +146,7 @@ fn keys_at_maps(text: &str) -> Vec<(MapTag, Option<MediaKey>)> {
 /// `true` when `bytes` holds a complete `moov` box: what every Media
 /// Initialization Section of fragmented MP4 carries.
 fn has_movie_box(bytes: &[u8]) -> bool {
-    for step in transmux::box_iter(bytes) {
+    for step in isobmff::box_iter(bytes) {
         let Ok((boxed, _)) = step else { return false };
         if boxed.header.box_type.0 == MOVIE_BOX {
             return true;

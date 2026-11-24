@@ -42,8 +42,6 @@ use crate::codec_config_ext::VvcRecordCodecInfo;
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 
 use crate::ac4::Ac4SpecificBox;
-use crate::box_support::OpaqueBox;
-use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, parse_box};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
@@ -56,14 +54,16 @@ use crate::ir::{
     FragmentTrackData, InputDegradation, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry,
     TrackSpec, VideoFormat, VideoSignalType,
 };
-use crate::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use crate::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{build_init_segment, build_media_segment};
-use crate::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 use alloc::sync::Arc;
+use isobmff::box_support::OpaqueBox;
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, parse_box};
+use isobmff::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
+use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
 /// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
@@ -176,7 +176,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         let mut offset = 0usize;
         // Every `mdat` payload range, scanned once for the whole file (not once
         // per `traf`).
-        let mdats = crate::frag_offsets::mdat_ranges(input);
+        let mdats = isobmff::frag_offsets::mdat_ranges(input);
         // Fragments waiting for their `mdat`. A queue, not a single slot:
         // `moof`, `moof`, `mdat` is legal (ISO/IEC 14496-12:2026 §8.8.4 allows
         // any number of `moof`s, and CMAF writes one per track for
@@ -189,7 +189,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         // queued here (and refilled once an `mdat` consumes them): a per-`trun`
         // or per-`moof` cap lets N tiny fragments held before one `mdat` cost
         // N x 40 MiB of `TrunSample`s.
-        let mut zero_width_budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
+        let mut zero_width_budget = isobmff::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
         // Sample bytes copied so far, for the whole file and never refilled:
         // one `mdat` followed by N `moof`s that each claim all of it would
         // otherwise copy those same bytes N times (audit 20 finding 13).
@@ -218,10 +218,10 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 // usertype cut short (`UuidBufferTooShort`), and a `largesize`
                 // field cut short (`LargesizeBufferTooShort`) — and all three
                 // mean the same thing at the tail (audit item 9, round 3).
-                Err(Error::BufferTooShort(..))
-                | Err(Error::UuidBufferTooShort { .. })
-                | Err(Error::LargesizeBufferTooShort { .. }) => break,
-                Err(e) => return Err(e),
+                Err(isobmff::Error::BufferTooShort(..))
+                | Err(isobmff::Error::UuidBufferTooShort { .. })
+                | Err(isobmff::Error::LargesizeBufferTooShort { .. }) => break,
+                Err(e) => return Err(e.into()),
             };
             let ty = bx.header.box_type.0;
             if &ty == b"moof" {
@@ -252,7 +252,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                         });
                     }
                 }
-                zero_width_budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
+                zero_width_budget = isobmff::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
             }
             if consumed == 0 {
                 break;
@@ -311,7 +311,10 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
 /// declared" in practice and is not applied.
 fn apply_trex_defaults(moof: &mut MovieFragmentBox, trex: &[crate::init_segment::TrackExtendsBox]) {
     for traf in &mut moof.traf {
-        let Some(defaults) = trex.iter().find(|t| t.track_id == traf.tfhd.track_id) else {
+        let Some(defaults) = trex
+            .iter()
+            .find(|t| t.track_id.value() == traf.tfhd.track_id.value())
+        else {
             continue;
         };
         let tfhd = &mut traf.tfhd;
@@ -329,11 +332,11 @@ fn apply_trex_defaults(moof: &mut MovieFragmentBox, trex: &[crate::init_segment:
 /// Resolve a fragment's samples into `builders`, slicing coded bytes from the
 /// file per ISO/IEC 14496-12:2026 §8.8.7 / §8.8.8.
 ///
-/// The addressing (and its bounds) live in [`crate::frag_offsets`], shared with
+/// The addressing (and its bounds) live in [`isobmff::frag_offsets`], shared with
 /// [`crate::cenc_decrypt::CencDecryptor`] so the two cannot drift.
 fn absorb_fragment(
     file: &[u8],
-    mdats: &[crate::frag_offsets::MdatRange],
+    mdats: &[isobmff::frag_offsets::MdatRange],
     moof_off: usize,
     moof: &MovieFragmentBox,
     builders: &mut [TrackBuilder],
@@ -353,10 +356,10 @@ fn absorb_fragment(
 
 fn absorb_traf(
     file: &[u8],
-    mdats: &[crate::frag_offsets::MdatRange],
+    mdats: &[isobmff::frag_offsets::MdatRange],
     moof_off: usize,
     moof: &MovieFragmentBox,
-    traf: &crate::movie_fragment::TrackFragmentBox,
+    traf: &isobmff::movie_fragment::TrackFragmentBox,
     builders: &mut [TrackBuilder],
     copied_bytes: &mut usize,
 ) -> Result<()> {
@@ -364,7 +367,7 @@ fn absorb_traf(
         let tfhd = &traf.tfhd;
         let Some(builder) = builders
             .iter_mut()
-            .find(|b| b.spec.track_id == tfhd.track_id)
+            .find(|b| b.spec.track_id.value() == tfhd.track_id.value())
         else {
             // A track present in a fragment but absent from the init movie:
             // skip it (well-formed CMAF declares every track in the init moov).
@@ -396,10 +399,10 @@ fn absorb_traf(
             if start_decode_time.is_none() {
                 start_decode_time = Some(base);
             }
-            next_dts = crate::frag_offsets::tfdt_as_i64(base)?;
+            next_dts = isobmff::frag_offsets::tfdt_as_i64(base)?;
         }
         let mut samples = Vec::new();
-        for r in crate::frag_offsets::sample_ranges_in_run(
+        for r in isobmff::frag_offsets::sample_ranges_in_run(
             file,
             mdats,
             moof_off,
@@ -409,7 +412,7 @@ fn absorb_traf(
         )? {
             let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
             let dts = next_dts;
-            let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
+            let pts = isobmff::frag_offsets::add_offset(dts, r.composition_offset)?;
             samples.push(Sample {
                 data: file[r.start..r.end].to_vec().into(),
                 timing: Some(crate::ir::SampleTiming::timed_with_duration(
@@ -422,7 +425,7 @@ fn absorb_traf(
                 provenance: None,
                 display: None,
             });
-            next_dts = crate::frag_offsets::add_duration(dts, r.duration)?;
+            next_dts = isobmff::frag_offsets::add_duration(dts, r.duration)?;
         }
         builder.start_decode_time = start_decode_time;
         builder.next_dts = next_dts;
@@ -593,7 +596,7 @@ pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> Result<f64> {
         let ts = f64::from(t.spec.timescale.get());
         for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)?) {
             let offset = i64::from(s.composition_offset()?.unwrap_or(0));
-            let pts = crate::frag_offsets::add_offset(dts, offset)? as f64 / ts;
+            let pts = isobmff::frag_offsets::add_offset(dts, offset)? as f64 / ts;
             let end = pts + f64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)) / ts;
             span = Some(match span {
                 None => (pts, end),
@@ -766,8 +769,8 @@ impl Package for HlsPackager {
 ///
 /// Re-exported for [`crate::progressive_demux::ProgressiveDemux`], which walks
 /// the same top-level `moov` box; the one implementation is
-/// [`crate::box_types::find_top_box`] (#1141).
-pub(crate) use crate::box_types::find_top_box;
+/// [`isobmff::box_types::find_top_box`] (#1141).
+pub(crate) use isobmff::box_types::find_top_box;
 
 /// Rebuild a [`TrackSpec`] from a parsed `trak` box (identity + codec config).
 ///

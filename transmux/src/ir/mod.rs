@@ -41,7 +41,7 @@
 //!   (`crate::ts_demux`, `crate::rtp`) — never re-derived downstream.
 //! - Samples within a [`Track`] are always in decode order.
 //! - [`Track::encryption`], when present, must have exactly one
-//!   [`crate::cenc::SampleEncryptionEntry`] per [`Track::samples`] entry.
+//!   [`isobmff::cenc::SampleEncryptionEntry`] per [`Track::samples`] entry.
 //!
 //! This module is a pure type consolidation (media plane step 2a): the
 //! packagers/depackagers built on this IR ([`Fmp4Demux`](crate::media::Fmp4Demux),

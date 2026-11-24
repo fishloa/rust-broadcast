@@ -48,7 +48,7 @@ type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
 /// AES-128 key length, in bytes — one definition, in [`crate::cenc`] (also the
 /// width of a CENC key id).
-pub use crate::cenc::KEY_LEN;
+pub use isobmff::cenc::KEY_LEN;
 /// AES block size, in bytes (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §11).
 pub const BLOCK_LEN: usize = 16;
 

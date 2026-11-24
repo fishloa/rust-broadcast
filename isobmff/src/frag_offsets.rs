@@ -1,9 +1,9 @@
 //! Fragmented-MP4 sample-data addressing — ISO/IEC 14496-12:2026 §8.8.7 / §8.8.8.
 //!
 //! The single place in this crate that decides *where a fragment's sample
-//! bytes live*. Both [`crate::media::Fmp4Demux`] and
-//! [`crate::cenc_decrypt::CencDecryptor`] resolve `moof`/`trun` sample offsets
-//! through [`sample_ranges`], so the two cannot drift (audit r05-W7).
+//! bytes live*. Both the fMP4 demuxer and the CENC decryptor (in the muxing
+//! hub above this crate) resolve `moof`/`trun` sample offsets through
+//! [`sample_ranges`], so the two cannot drift (audit r05-W7).
 //!
 //! # The rules (§8.8.7 / §8.8.8)
 //!
@@ -71,12 +71,24 @@ pub struct MdatRange {
     end: usize,
 }
 
+// Number of whole-file `mdat` scans on this thread (work-counter for the
+// "scan once per file, not once per `traf`" guarantee). Exposed so the muxing
+// hub above this crate can assert its demuxer holds the guarantee too; it
+// costs one thread-local increment per `mdat_ranges` call.
+#[cfg(feature = "std")]
+std::thread_local! {
+    pub static MDAT_SCANS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+/// Number of whole-file `mdat` scans performed on the current thread.
+#[cfg(feature = "std")]
+#[doc(hidden)]
+pub fn mdat_scans_on_thread() -> usize {
+    MDAT_SCANS.with(core::cell::Cell::get)
+}
+
 #[cfg(test)]
 thread_local! {
-    /// Number of whole-file `mdat` scans on this thread (work-counter for the
-    /// "scan once per file, not once per `traf`" guarantee).
-    pub(crate) static MDAT_SCANS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
-
     /// Number of `mdat` ranges [`inside_mdat`]'s search compared on this thread
     /// (work-counter for the "log mdats per sample, not mdats x samples"
     /// guarantee).
@@ -93,7 +105,7 @@ thread_local! {
 /// hold a cut-short recording whose early fragments are intact, which is why
 /// the walk is [`clamped_boxes`] and not the strict `box_iter`.
 pub fn mdat_ranges(file: &[u8]) -> Vec<MdatRange> {
-    #[cfg(test)]
+    #[cfg(feature = "std")]
     MDAT_SCANS.with(|c| c.set(c.get() + 1));
     clamped_boxes(file)
         .filter(|b| b.header.box_type.is(b"mdat"))
@@ -182,7 +194,7 @@ pub fn sample_ranges_in(
 /// bounded by [`sample_bytes_budget`], which non-overlapping fragments can
 /// never exceed — one `mdat` read once, however it is split into fragments
 /// (audit 20 finding 13).
-pub(crate) fn sample_ranges_in_run(
+pub fn sample_ranges_in_run(
     file: &[u8],
     mdats: &[MdatRange],
     moof_off: usize,
@@ -737,11 +749,6 @@ mod tests {
         assert_eq!(add_offset(10, -3).unwrap(), 7);
     }
 
-    /// Number of whole-file `mdat` scans so far on this thread.
-    fn scans() -> usize {
-        MDAT_SCANS.with(|c| c.get())
-    }
-
     /// A final `mdat` cut short mid-payload is clamped to the file end (the
     /// documented behaviour), so samples that lie inside the surviving bytes
     /// still resolve. `parse_box` reports such a box as `BufferTooShort`, which
@@ -796,20 +803,5 @@ mod tests {
             sample_ranges(&full3[..payload + 5], moof_off3, &moof3, TrackId::new(1)),
             Err(Error::InvalidInput(_))
         ));
-    }
-
-    /// `Fmp4Demux` scans the file's `mdat`s exactly once however many
-    /// fragments/trafs it holds (was once per traf: O(fragments x boxes)).
-    #[test]
-    fn demux_scans_mdats_once_per_file() {
-        use broadcast_common::Unpackage;
-        let path = test_fixtures::path("mp4/cenc-layouts/clear-multitrun-omit-implicit.mp4");
-        let bytes = std::fs::read(path).expect("fixture");
-        let before = scans();
-        let media = crate::media::Fmp4Demux::new()
-            .unpackage(bytes.as_slice())
-            .expect("demux");
-        assert!(media.tracks.iter().map(|t| t.samples.len()).sum::<usize>() > 1);
-        assert_eq!(scans() - before, 1, "one mdat scan per file");
     }
 }

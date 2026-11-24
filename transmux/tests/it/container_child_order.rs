@@ -17,13 +17,15 @@
 
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::{Parse, Serialize};
+use isobmff::box_support::OpaqueBox;
+use isobmff::timing::EditListEntry;
 use transmux::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, AudioSampleEntryV1, DataInformationBox, DtsSampleEntry,
     Ec3SampleEntry, FlacSampleEntry, MediaBox, MediaInformationBox, MhaSampleEntry,
     Mp4aSampleEntry, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant, SampleTableBox,
     StblChild, TrackBox,
 };
-use transmux::{EditListEntry, Error, MovieBox, OpaqueBox, TrackId};
+use transmux::{Error, MovieBox, TrackId};
 
 /// Find a top-level box by type and return its full bytes (header + body).
 fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
@@ -550,8 +552,7 @@ fn traf_size_zero_last_child_round_trips_and_grows_safely() {
     traf.extend_from_slice(b"traf");
     traf.extend_from_slice(&traf_body);
 
-    let parsed =
-        transmux::movie_fragment::TrackFragmentBox::parse_body(&traf[8..]).expect("parses");
+    let parsed = isobmff::movie_fragment::TrackFragmentBox::parse_body(&traf[8..]).expect("parses");
     let mut out = vec![0u8; parsed.serialized_len()];
     let n = parsed.serialize_into(&mut out).expect("serialize");
     out.truncate(n);
@@ -590,11 +591,11 @@ fn moof_size_zero_last_child_round_trips_byte_exact() {
     moof.extend_from_slice(&body);
 
     use broadcast_common::Serialize;
-    use transmux::movie_fragment::MovieFragmentBox;
+    use isobmff::movie_fragment::MovieFragmentBox;
     let parsed = MovieFragmentBox::parse_body(&moof[8..]).expect("parses");
     let last = parsed.order.last().expect("children recorded");
     match last {
-        transmux::movie_fragment::MoofChild::Opaque(o) => {
+        isobmff::movie_fragment::MoofChild::Opaque(o) => {
             assert_eq!(o.box_type, *b"free");
             assert!(o.to_end, "the size-0 form is recorded");
         }
@@ -612,14 +613,14 @@ fn moof_size_zero_last_child_round_trips_byte_exact() {
 #[test]
 fn moof_size_zero_child_written_explicitly_when_not_last() {
     use broadcast_common::Serialize;
-    use transmux::movie_fragment::{
+    use isobmff::movie_fragment::{
         MoofChild, MovieFragmentBox, MovieFragmentHeaderBox, OpaqueChild, TrackFragmentBox,
         TrackFragmentHeaderBox,
     };
 
     let tfhd = TrackFragmentHeaderBox {
         flags: 0,
-        track_id: TrackId::new(1),
+        track_id: TrackId::new(1).into(),
         base_data_offset: None,
         sample_description_index: None,
         default_sample_duration: None,

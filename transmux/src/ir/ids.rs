@@ -120,3 +120,18 @@ mod tests {
         assert_eq!(serde_json::to_string(&ProgramNumber::new(1)).unwrap(), "1");
     }
 }
+
+// The ISO BMFF box layer carries the same `track_ID` but defines its own
+// newtype (so a box-only consumer does not need the IR). These conversions are
+// the only crossing between the two identities.
+impl From<isobmff::TrackId> for TrackId {
+    fn from(id: isobmff::TrackId) -> Self {
+        Self::new(id.value())
+    }
+}
+
+impl From<TrackId> for isobmff::TrackId {
+    fn from(id: TrackId) -> Self {
+        isobmff::TrackId::new(id.value())
+    }
+}

@@ -13,13 +13,14 @@ use crate::hub_fixtures::{audio_track, video_track};
 use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
 use core::time::Duration;
+use isobmff::movie_fragment::MovieFragmentBox;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
 use transmux::TrackId;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, DecoderConfigDescriptor,
-    DecoderSpecificInfo, ESDescriptor, EsdsBox, FragmentTrackData, MovieFragmentBox,
-    SLConfigDescriptor, Sample, Segmenter, TrackSpec, build_media_segment,
+    DecoderSpecificInfo, ESDescriptor, EsdsBox, FragmentTrackData, SLConfigDescriptor, Sample,
+    Segmenter, TrackSpec, build_media_segment,
 };
 
 /// Wire value of a sync (random-access) `sample_flags`, per ISO/IEC 14496-12:2026
@@ -59,7 +60,7 @@ fn moof_summary(segment: &[u8]) -> Vec<(TrackId, u64, usize, u32)> {
     mf.traf
         .iter()
         .map(|traf| {
-            let track_id = traf.tfhd.track_id;
+            let track_id = traf.tfhd.track_id.into();
             let base = traf
                 .tfdt
                 .as_ref()

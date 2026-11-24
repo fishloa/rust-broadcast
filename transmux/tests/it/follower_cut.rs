@@ -655,7 +655,7 @@ fn first_tfdt(segment: &[u8]) -> u64 {
         ]) as usize;
         if &segment[at + 4..at + 8] == b"moof" {
             let moof =
-                transmux::movie_fragment::MovieFragmentBox::parse_body(&segment[at + 8..at + size])
+                isobmff::movie_fragment::MovieFragmentBox::parse_body(&segment[at + 8..at + size])
                     .unwrap();
             return moof.traf[0].tfdt.as_ref().unwrap().base_media_decode_time();
         }

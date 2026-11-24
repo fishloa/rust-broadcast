@@ -1,7 +1,7 @@
 //! CMAF muxer CENC box-emission tests (issue #564 Task 3).
 //!
 //! Verifies `transmux::cenc_segment::protect_init_segment` and
-//! `transmux::movie_fragment::protect_media_segment` — the post-processing
+//! `isobmff::movie_fragment::protect_media_segment` — the post-processing
 //! passes that turn an already-muxed clear CMAF `CmafMux` output into a
 //! standards-compliant CENC-protected one, reading the crypto metadata
 //! [`CencEncryptor`] records on `Track::encryption`.
@@ -20,13 +20,13 @@ use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Decrypt, Encrypt, Package, Parse, Serialize, Unpackage};
-use transmux::cenc::{
+use isobmff::cenc::{
     ProtectionSchemeInfoBox, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox,
 };
+use isobmff::movie_fragment::MovieFragmentBox;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::fragment_build::{FragmentProtection, protect_media_segment};
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
-use transmux::movie_fragment::MovieFragmentBox;
 use transmux::{
     CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
 };
@@ -70,7 +70,7 @@ fn clear_video_media() -> Option<Media> {
 /// Find a top-level box by four-CC; returns `(file_offset, full_box_bytes)`.
 fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<(usize, &'a [u8])> {
     let mut off = 0usize;
-    for step in transmux::box_iter(data) {
+    for step in isobmff::box_types::box_iter(data) {
         let (box_ref, consumed) = step.ok()?;
         if box_ref.header.box_type.is(fourcc) {
             return Some((off, &data[off..off + consumed]));
@@ -118,8 +118,8 @@ fn find_traf_for_track(moof_body: &[u8], track_id: u32) -> Option<(usize, &[u8])
             let traf_body = &moof_body[off + 8..end];
             if let Some((_, tfhd)) = find_child_box(traf_body, b"tfhd")
                 && let Ok(parsed) =
-                    transmux::movie_fragment::TrackFragmentHeaderBox::parse_body(&tfhd[8..])
-                && parsed.track_id == TrackId::new(track_id)
+                    isobmff::movie_fragment::TrackFragmentHeaderBox::parse_body(&tfhd[8..])
+                && parsed.track_id.value() == track_id
             {
                 return Some((off, &moof_body[off..end]));
             }
@@ -282,7 +282,7 @@ fn protect_media_segment_emits_senc_saiz_saio() {
     let traf = moof
         .traf
         .iter()
-        .find(|t| t.tfhd.track_id == track_id)
+        .find(|t| t.tfhd.track_id.value() == track_id.value())
         .expect("typed traf present");
     let typed_sample_count: usize = traf.trun.iter().map(|r| r.samples.len()).sum();
     assert_eq!(typed_sample_count, sample_count);
@@ -298,7 +298,7 @@ fn protect_media_segment_emits_senc_saiz_saio() {
         "senc entries match Track::encryption.samples exactly"
     );
     assert_eq!(
-        senc.flags & transmux::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
+        senc.flags & isobmff::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
         0,
         "WholeSample policy: no subsample flag"
     );
@@ -361,7 +361,7 @@ fn protect_media_segment_sets_subsample_flag() {
 
     let senc = parse_senc(senc_bytes, enc.tenc.default_per_sample_iv_size);
     assert_ne!(
-        senc.flags & transmux::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
+        senc.flags & isobmff::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
         0,
         "subsample flag must be set when any sample carries subsamples"
     );
@@ -983,7 +983,7 @@ fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
 /// one still must.
 #[test]
 fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
-    use transmux::cenc::{SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox};
+    use isobmff::cenc::{SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox};
 
     // `saiz` v0, aux_info_type present (flag 0x1) and *not* a CENC four-CC.
     let saiz = SampleAuxInfoSizesBox {

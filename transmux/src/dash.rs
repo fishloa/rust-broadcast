@@ -74,7 +74,7 @@
 //! `<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011"
 //! value="cenc"|"cbcs" cenc:default_KID="...">` — derived from that track's
 //! [`crate::media::TrackEncryption::scheme`] and
-//! [`crate::cenc::TrackEncryptionBox::default_kid`]; no caller wiring is
+//! [`isobmff::cenc::TrackEncryptionBox::default_kid`]; no caller wiring is
 //! needed for this element. (Real-world packaging protects every
 //! `Representation` in a set with the same scheme/KID; a set is assumed
 //! homogeneous — the first encrypted `Representation`'s scheme/KID is used.)
@@ -100,7 +100,6 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use crate::aac_asc::AudioSpecificConfig;
-use crate::box_types::KEY_ID_LEN;
 use crate::codec_config_ext::{EsdsBoxCodecInfo, HevcRecordCodecInfo, VvcRecordCodecInfo};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
@@ -113,6 +112,7 @@ use broadcast_dash::{
     AdaptationSet, Descriptor, Mpd, Period, PresentationType, Representation, SegmentTemplate,
     SegmentTimeline, TimelineEntry,
 };
+use isobmff::box_types::KEY_ID_LEN;
 
 /// DASH MPD namespace (ISO/IEC 23009-1 §5.3.1.2 — `urn:mpeg:dash:schema:mpd:2011`).
 pub const MPD_NAMESPACE: &str = "urn:mpeg:dash:schema:mpd:2011";
@@ -278,7 +278,7 @@ pub struct ContentProtectionSystem {
     pub default_kid: Option<[u8; KEY_ID_LEN]>,
     /// Optional `cenc:pssh` child (ISO/IEC 23001-7 §12.1) — base64 of a
     /// caller-supplied, fully-serialized `pssh` box (e.g.
-    /// [`crate::cenc::ProtectionSystemSpecificHeaderBox::to_vec`], or one of
+    /// [`isobmff::cenc::ProtectionSystemSpecificHeaderBox::to_vec`], or one of
     /// the [`crate::drm`] builders' output run through it). `None` renders a
     /// bare identification element with no `<cenc:pssh>` child. No DRM logic
     /// lives here — the box bytes are carried verbatim.
@@ -534,8 +534,8 @@ struct ReprInfo {
     lang: Option<String>,
     /// The track's [`crate::media::TrackEncryption::scheme`], if protected
     /// (issue #564) — drives the auto-derived "common" `ContentProtection`.
-    encryption_scheme: Option<crate::cenc::CencScheme>,
-    /// The track's [`crate::cenc::TrackEncryptionBox::default_kid`], if
+    encryption_scheme: Option<isobmff::cenc::CencScheme>,
+    /// The track's [`isobmff::cenc::TrackEncryptionBox::default_kid`], if
     /// protected (issue #564).
     encryption_kid: Option<[u8; KEY_ID_LEN]>,
     // Video geometry.

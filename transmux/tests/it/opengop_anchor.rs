@@ -24,7 +24,8 @@
 use core::time::Duration;
 use std::path::PathBuf;
 
-use transmux::{CodecConfig, MovieFragmentBox, Segmenter, TsDemux};
+use isobmff::movie_fragment::MovieFragmentBox;
+use transmux::{CodecConfig, Segmenter, TsDemux};
 
 fn fixtures_dir() -> PathBuf {
     test_fixtures::path("ts")

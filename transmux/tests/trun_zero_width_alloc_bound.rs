@@ -11,9 +11,10 @@
 //! behaviour fails (aborts) instead of exhausting the host.
 
 use broadcast_common::Unpackage;
+use isobmff::movie_fragment::TrackFragmentRunBox;
+use isobmff::movie_fragment::{MAX_ZERO_WIDTH_TRUN_SAMPLES, TRUN_SAMPLE_DURATION_PRESENT};
 use test_alloc::ThreadCapped;
-use transmux::movie_fragment::{MAX_ZERO_WIDTH_TRUN_SAMPLES, TRUN_SAMPLE_DURATION_PRESENT};
-use transmux::{Fmp4Demux, TrackFragmentRunBox};
+use transmux::Fmp4Demux;
 
 #[global_allocator]
 static ALLOC: ThreadCapped<{ 256 << 20 }> = ThreadCapped::new();
@@ -68,7 +69,7 @@ fn zero_width_trun_with_hostile_sample_count_is_rejected_not_allocated() {
         assert!(
             matches!(
                 err,
-                transmux::Error::ZeroWidthTrunBudgetExceeded {
+                isobmff::Error::ZeroWidthTrunBudgetExceeded {
                     limit: MAX_ZERO_WIDTH_TRUN_SAMPLES
                 }
             ),
@@ -107,7 +108,7 @@ fn a_duration_only_trun_is_bounded_by_the_payload_not_the_zero_width_cap() {
         .expect_err("the declared samples do not fit the payload");
     assert_eq!(
         err,
-        transmux::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        isobmff::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
             need: 8,
             have: 4,
             what: "trun.dur",

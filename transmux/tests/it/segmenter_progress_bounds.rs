@@ -33,14 +33,14 @@ use transmux::TrackId;
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Stage, Unpackage};
+use isobmff::movie_fragment::MovieFragmentBox;
 use transmux::ll_dash::LlSegmenter;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::pipeline::DataCarriage;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::ts_hls::{StreamingTsHlsSegmenter, TsHlsPackager, TsSegment};
 use transmux::{
-    CodecConfig, HEVCConfigurationBox, Media, MovieFragmentBox, Sample, Segmenter, Track,
-    TrackSpec, TsDemux,
+    CodecConfig, HEVCConfigurationBox, Media, Sample, Segmenter, Track, TrackSpec, TsDemux,
 };
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -168,7 +168,7 @@ fn tfdts(segment: &[u8]) -> Vec<(TrackId, u64)> {
         .iter()
         .map(|t| {
             (
-                t.tfhd.track_id,
+                t.tfhd.track_id.into(),
                 t.tfdt
                     .as_ref()
                     .map(|b| b.base_media_decode_time())

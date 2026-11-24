@@ -10,7 +10,6 @@
 //! | [`Vp9ConfigurationBox`] | `vpcC` | `FullBox` v1 VPCodecConfigurationRecord |
 //! | [`Vp9SampleEntry`] | `vp09` | VisualSampleEntry carrying `vpcC` |
 
-use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
 use alloc::vec::Vec;
@@ -18,6 +17,7 @@ use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{be_u16, be_u32};
 use broadcast_common::{Parse, Serialize};
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 
 /// FourCC of the VP9 config box.
 pub const VPCC_FOURCC: [u8; 4] = *b"vpcC";
@@ -242,7 +242,8 @@ impl Vp9SampleEntry {
                 what: "vp09 missing vpcC",
             }),
         )?;
-        let config = Vp9ConfigurationBox::parse(&vpcc[crate::box_types::box_header_len(vpcc)?..])?;
+        let config =
+            Vp9ConfigurationBox::parse(&vpcc[isobmff::box_types::box_header_len(vpcc)?..])?;
         let children = crate::sample_entries::entry_children(region, &VPCC_FOURCC)?;
         Ok(Self {
             visual,
@@ -256,7 +257,7 @@ impl Serialize for Vp9SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let config_len = BOX_HEADER_MIN_SIZE + self.config.serialized_len();
-        crate::box_types::box_len(
+        isobmff::box_types::box_len(
             BOX_HEADER_MIN_SIZE
                 + VisualSampleEntryFields::serialized_len()
                 + crate::sample_entries::entry_children_len(&self.children, config_len),
@@ -266,7 +267,7 @@ impl Serialize for Vp9SampleEntry {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, &VP09_FOURCC, need)?;
+        c += isobmff::box_types::write_box_header(buf, &VP09_FOURCC, need)?;
         c += self.visual.serialize_body_into(&mut buf[c..])?;
         // The config box keeps its wire position: a real `vp09`/`av01` entry
         // often carries `pasp` *before* it (audit item 3, round 3).

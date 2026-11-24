@@ -16,7 +16,8 @@
 //! demuxer's decode-order [`Track`]/[`Sample`] IR carries.
 
 use broadcast_common::{Package, Unpackage};
-use transmux::{CmafMux, CodecConfig, Fmp4Demux, ProgressiveDemux, SegmentIndexBox};
+use isobmff::timing::SegmentIndexBox;
+use transmux::{CmafMux, CodecConfig, Fmp4Demux, ProgressiveDemux};
 
 fn prog_fixture() -> Vec<u8> {
     let path = test_fixtures::path("mp4/h264-aac-prog.mp4");

@@ -17,21 +17,21 @@ use broadcast_common::len::need_out;
 use broadcast_common::wire::{u24_at, u32_at};
 
 /// Byte offset of a FullBox 24-bit `flags` field in a whole box.
-pub(crate) const FULLBOX_FLAGS_WIRE_OFFSET: usize =
+pub const FULLBOX_FLAGS_WIRE_OFFSET: usize =
     BOX_HEADER_MIN_SIZE + crate::box_types::FULLBOX_FLAGS_OFFSET;
 /// Width of a FullBox `version` field in bytes.
-pub(crate) const FULLBOX_VERSION_LEN: usize = 1;
+pub const FULLBOX_VERSION_LEN: usize = 1;
 /// Width of a FullBox `flags` field in bytes.
-pub(crate) const FULLBOX_FLAGS_WIDTH: usize = FULLBOX_EXTRA_SIZE - FULLBOX_VERSION_LEN;
+pub const FULLBOX_FLAGS_WIDTH: usize = FULLBOX_EXTRA_SIZE - FULLBOX_VERSION_LEN;
 /// Prefix length of a flat FullBox table: header + version/flags + count.
-pub(crate) const FLAT_TABLE_HEADER_LEN: usize =
+pub const FLAT_TABLE_HEADER_LEN: usize =
     BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
 /// Byte offset of a flat table's `version` field.
-pub(crate) const FLAT_TABLE_VERSION_OFFSET: usize = BOX_HEADER_MIN_SIZE;
+pub const FLAT_TABLE_VERSION_OFFSET: usize = BOX_HEADER_MIN_SIZE;
 /// Byte offset of a flat table's `flags` field.
-pub(crate) const FLAT_TABLE_FLAGS_OFFSET: usize = FULLBOX_FLAGS_WIRE_OFFSET;
+pub const FLAT_TABLE_FLAGS_OFFSET: usize = FULLBOX_FLAGS_WIRE_OFFSET;
 /// Byte offset of a flat table's `entry_count` field.
-pub(crate) const FLAT_TABLE_COUNT_OFFSET: usize = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE;
+pub const FLAT_TABLE_COUNT_OFFSET: usize = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE;
 
 /// Bound an untrusted wire entry `count` (the FullBox array-count fields of
 /// ISO/IEC 14496-12:2026 §8.5.2.3, §8.6.1.2.3, §8.7.4.3, e.g.
@@ -49,7 +49,7 @@ pub(crate) const FLAT_TABLE_COUNT_OFFSET: usize = BOX_HEADER_MIN_SIZE + FULLBOX_
 /// out, so capping the count fed to `Vec::with_capacity` changes no
 /// successful parse's resulting `entries` — only how large the up-front
 /// allocation is allowed to be.
-pub(crate) fn bounded_entry_count(remaining: usize, entry_len: usize, count: usize) -> usize {
+pub fn bounded_entry_count(remaining: usize, entry_len: usize, count: usize) -> usize {
     if entry_len == 0 {
         // Zero-width entries: the buffer length bounds nothing, so never size
         // an up-front allocation from the wire count (#1130). The `Vec` still
@@ -61,7 +61,7 @@ pub(crate) fn bounded_entry_count(remaining: usize, entry_len: usize, count: usi
 
 /// Largest up-front allocation (in entries) for a table whose entries are zero
 /// bytes wide; see [`bounded_entry_count`].
-pub(crate) const ZERO_WIDTH_PREALLOC: usize = 1024;
+pub const ZERO_WIDTH_PREALLOC: usize = 1024;
 
 /// Reject a declared `count` that the body cannot hold, before its loop runs.
 ///
@@ -74,7 +74,7 @@ pub(crate) const ZERO_WIDTH_PREALLOC: usize = 1024;
 /// (ISO/IEC 14496-12:2026 §8.7.4.3: `entry_count` "gives the number of entries
 /// in the following table"), so a body that cannot hold it is a malformed box,
 /// not a short one.
-pub(crate) fn check_entry_count(
+pub fn check_entry_count(
     remaining: usize,
     entry_len: usize,
     count: usize,
@@ -94,7 +94,7 @@ pub(crate) fn check_entry_count(
     Ok(())
 }
 
-pub(crate) fn parse_flat_table<E>(
+pub fn parse_flat_table<E>(
     bytes: &[u8],
     what: &'static str,
     count_field: &'static str,
@@ -119,11 +119,11 @@ pub(crate) fn parse_flat_table<E>(
     Ok((bytes[FLAT_TABLE_VERSION_OFFSET], flags, entries))
 }
 
-pub(crate) fn flat_table_len(entries: usize, entry_len: usize) -> usize {
+pub fn flat_table_len(entries: usize, entry_len: usize) -> usize {
     crate::box_types::box_len(FLAT_TABLE_HEADER_LEN + entries * entry_len)
 }
 
-pub(crate) fn serialize_flat_table<E>(
+pub fn serialize_flat_table<E>(
     buf: &mut [u8],
     fourcc: &[u8; BOX_TYPE_SIZE],
     (version, flags): (u8, u32),
@@ -148,7 +148,7 @@ pub(crate) fn serialize_flat_table<E>(
 // ---------------------------------------------------------------------------
 
 /// One child box of a container, borrowed from the container's body.
-pub(crate) struct ChildBox<'a> {
+pub struct ChildBox<'a> {
     /// The child's four-CC (`type`).
     pub four_cc: [u8; BOX_TYPE_SIZE],
     /// The child's whole bytes, header included.
@@ -178,7 +178,7 @@ pub(crate) struct ChildBox<'a> {
 
 impl ChildBox<'_> {
     /// Whether this child's four-CC is `four_cc`.
-    pub(crate) fn is(&self, four_cc: &[u8; BOX_TYPE_SIZE]) -> bool {
+    pub fn is(&self, four_cc: &[u8; BOX_TYPE_SIZE]) -> bool {
         self.four_cc == *four_cc
     }
 }
@@ -206,20 +206,21 @@ impl ChildBox<'_> {
 /// slice it is handed, which here *is* the container body, so such a child
 /// consumes the remaining bytes and ends the walk by construction — there is
 /// no following sibling to drop.
-pub(crate) fn walk_children<'a, F>(body: &'a [u8], mut f: F) -> Result<()>
+pub fn walk_children<'a, F, E>(body: &'a [u8], mut f: F) -> core::result::Result<(), E>
 where
-    F: FnMut(ChildBox<'a>) -> Result<()>,
+    F: FnMut(ChildBox<'a>) -> core::result::Result<(), E>,
+    E: From<Error>,
 {
     let mut off = 0usize;
     while off < body.len() {
         if body.len() - off < BOX_HEADER_MIN_SIZE {
-            return Err(Error::BufferTooShort(BufferTooShort {
+            return Err(E::from(Error::BufferTooShort(BufferTooShort {
                 need: off + BOX_HEADER_MIN_SIZE,
                 have: body.len(),
                 what: "container child header",
-            }));
+            })));
         }
-        let (bx, consumed) = crate::box_types::parse_box(&body[off..])?;
+        let (bx, consumed) = crate::box_types::parse_box(&body[off..]).map_err(E::from)?;
         let bytes = &body[off..off + consumed];
         // The payload starts after `size`+`type` plus the 8 `largesize` bytes
         // *only when that form was used*; the serializer re-emits the header
@@ -244,7 +245,7 @@ where
 
 /// The four-CC is the key a container's parse and serialize directions use to
 /// line a child back up with the typed field (or opaque blob) it came from.
-pub(crate) fn is_four_cc(four_cc: &[u8; BOX_TYPE_SIZE], expected: &[u8; BOX_TYPE_SIZE]) -> bool {
+pub fn is_four_cc(four_cc: &[u8; BOX_TYPE_SIZE], expected: &[u8; BOX_TYPE_SIZE]) -> bool {
     four_cc == expected
 }
 
@@ -255,7 +256,7 @@ pub(crate) fn is_four_cc(four_cc: &[u8; BOX_TYPE_SIZE], expected: &[u8; BOX_TYPE
 /// for the 8-byte header form. A container written with 64-bit `largesize`
 /// (`size == 1`, §4.2) has a 16-byte header, so the hardcoded slice swallowed
 /// its first 8 body bytes and the child walk started mid-box (audit r05-W13).
-pub(crate) fn box_body(bytes: &[u8]) -> Result<&[u8]> {
+pub fn box_body(bytes: &[u8]) -> Result<&[u8]> {
     Ok(crate::box_types::parse_box(bytes)?.0.body)
 }
 
@@ -285,13 +286,13 @@ pub struct ChildOrder {
 
 impl ChildOrder {
     /// Record one typed child's four-CC, in wire order.
-    pub(crate) fn push(&mut self, four_cc: [u8; BOX_TYPE_SIZE]) {
+    pub fn push(&mut self, four_cc: [u8; BOX_TYPE_SIZE]) {
         self.entries.push(four_cc);
         self.opaque.push(false);
     }
 
     /// Record one opaque child's four-CC, in wire order.
-    pub(crate) fn push_opaque(&mut self, four_cc: [u8; BOX_TYPE_SIZE]) {
+    pub fn push_opaque(&mut self, four_cc: [u8; BOX_TYPE_SIZE]) {
         self.entries.push(four_cc);
         self.opaque.push(true);
     }
@@ -323,7 +324,7 @@ impl ChildOrder {
     /// container, as `protect_init_segment` does when it rewrites a sample
     /// entry — is appended in declaration order, so a rewrite can never drop
     /// a child.
-    pub(crate) fn resolve(&self, typed_four_ccs: &[&[u8; BOX_TYPE_SIZE]]) -> Vec<Option<usize>> {
+    pub fn resolve(&self, typed_four_ccs: &[&[u8; BOX_TYPE_SIZE]]) -> Vec<Option<usize>> {
         if self.entries.is_empty() {
             return (0..typed_four_ccs.len()).map(Some).collect();
         }
@@ -359,13 +360,13 @@ impl ChildOrder {
 ///
 /// Shared by every container in this module so the "typed field or opaque
 /// blob, at the position the file had it" walk exists once.
-fn serialize_children(
+fn serialize_children<E: From<Error>>(
     order: &[Option<usize>],
     typed: &[Vec<u8>],
     opaque: &[OpaqueBox],
     buf: &mut [u8],
     c: &mut usize,
-) -> Result<()> {
+) -> core::result::Result<(), E> {
     let mut opaque_index = 0usize;
     for (i, slot) in order.iter().enumerate() {
         // A `size == 0` opaque child may only use that form when nothing
@@ -381,17 +382,21 @@ fn serialize_children(
                     *c += bytes.len();
                 }
                 None => {
-                    return Err(Error::InvalidInput(
+                    return Err(E::from(Error::InvalidInput(
                         "container child order names a typed child that is not present",
-                    ));
+                    )));
                 }
             },
             None => match opaque.get(opaque_index) {
-                Some(o) => *c += o.serialize_child_into(&mut buf[*c..], is_last)?,
+                Some(o) => {
+                    *c += o
+                        .serialize_child_into(&mut buf[*c..], is_last)
+                        .map_err(E::from)?
+                }
                 None => {
-                    return Err(Error::InvalidInput(
+                    return Err(E::from(Error::InvalidInput(
                         "container child order names an opaque child that is not present",
-                    ));
+                    )));
                 }
             },
         }
@@ -405,46 +410,55 @@ fn serialize_children(
 /// Serialize every typed child of a container to its own box bytes, in
 /// declaration order, so [`serialize_children`] can place each at the wire
 /// position [`ChildOrder::resolve`] chose for it.
-fn typed_child_bytes(children: &[&dyn SerializeBox]) -> Result<Vec<Vec<u8>>> {
-    children
-        .iter()
-        .map(|b| b.serialize_box())
-        .collect::<Result<Vec<_>>>()
+fn typed_child_bytes<E>(
+    children: &[&dyn SerializeBox<Error = E>],
+) -> core::result::Result<Vec<Vec<u8>>, E> {
+    children.iter().map(|b| b.serialize_box()).collect()
 }
 
 /// Serialize a container box: header, then its children in wire order.
-pub(crate) fn serialize_container(
+///
+/// Generic over the child serializer's error `E` so a container whose typed
+/// children still live in a crate above this one (their `Serialize` impl uses
+/// that crate's error) can use the same walk: `E: From<Error>` is the only
+/// requirement, and the crate that owns the children supplies its own error.
+pub fn serialize_container<E: From<Error>>(
     fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,
     order: &[Option<usize>],
-    typed_children: &[&dyn SerializeBox],
+    typed_children: &[&dyn SerializeBox<Error = E>],
     opaque: &[OpaqueBox],
     buf: &mut [u8],
-) -> Result<usize> {
-    need_out(buf, need)?;
-    let mut c = crate::box_types::write_box_header(buf, fourcc, need)?;
+) -> core::result::Result<usize, E> {
+    need_out(buf, need).map_err(Error::from).map_err(E::from)?;
+    let mut c = crate::box_types::write_box_header(buf, fourcc, need).map_err(E::from)?;
     let typed = typed_child_bytes(typed_children)?;
     serialize_children(order, &typed, opaque, buf, &mut c)?;
     if c != need {
-        return Err(Error::InvalidInput(
+        return Err(E::from(Error::InvalidInput(
             "container child order does not account for the whole box",
-        ));
+        )));
     }
     Ok(c)
 }
 
 /// A typed child of one of this module's containers, which the shared child
 /// walker serializes positionally.
-pub(crate) trait SerializeBox {
+pub trait SerializeBox {
+    /// The child's own error type (the `Serialize` impl it wraps).
+    type Error;
+
     /// This child's own box bytes (header + body).
-    fn serialize_box(&self) -> Result<Vec<u8>>;
+    fn serialize_box(&self) -> core::result::Result<Vec<u8>, Self::Error>;
 
     /// The length [`SerializeBox::serialize_box`] will produce.
     fn box_len(&self) -> usize;
 }
 
-impl<T: Serialize<Error = Error>> SerializeBox for T {
-    fn serialize_box(&self) -> Result<Vec<u8>> {
+impl<T: Serialize> SerializeBox for T {
+    type Error = <T as Serialize>::Error;
+
+    fn serialize_box(&self) -> core::result::Result<Vec<u8>, Self::Error> {
         self.try_to_bytes()
     }
 

@@ -12,9 +12,9 @@
 
 use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
+use isobmff::frag_offsets::FragmentSampleRange;
 use transmux::TrackId;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-use transmux::frag_offsets::FragmentSampleRange;
 use transmux::ir::SampleTiming;
 use transmux::media::{HlsPackager, Media, Track};
 use transmux::nalu_types::{AvcPps, AvcSps};
@@ -74,7 +74,7 @@ fn the_presentation_time_sum_does_not_fit_i64() {
     // `i64` since it may exceed `i32::MAX`) is positive: the presentation
     // time `dts + offset` is one past `i64::MAX`, so there is no honest
     // presentation time to report.
-    let dts = transmux::frag_offsets::tfdt_as_i64(i64::MAX as u64).expect("i64::MAX fits");
+    let dts = isobmff::frag_offsets::tfdt_as_i64(i64::MAX as u64).expect("i64::MAX fits");
     let range = FragmentSampleRange {
         start: 0,
         end: 0,
@@ -83,8 +83,8 @@ fn the_presentation_time_sum_does_not_fit_i64() {
         composition_offset: 1,
     };
     assert_eq!(
-        transmux::frag_offsets::add_offset(dts, range.composition_offset),
-        Err(transmux::Error::InvalidInput("sample pts overflow"))
+        isobmff::frag_offsets::add_offset(dts, range.composition_offset),
+        Err(isobmff::Error::InvalidInput("sample pts overflow"))
     );
 }
 

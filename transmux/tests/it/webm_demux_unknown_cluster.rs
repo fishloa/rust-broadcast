@@ -26,9 +26,10 @@
 //! all of them.
 
 use broadcast_common::Package;
+use isobmff::box_types::parse_box;
 use test_fixtures::ffprobe;
 use transmux::webm_demux::WebmDemux;
-use transmux::{CmafMux, Media, parse_box};
+use transmux::{CmafMux, Media};
 
 const FIXTURE: &str = "mkv/vp9-opus.webm";
 const ORACLE: &str = "mkv/vp9-opus.packets.csv";

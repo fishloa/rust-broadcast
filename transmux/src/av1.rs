@@ -13,13 +13,13 @@
 //! The record's `configOBUs` tail carries an optional Sequence Header OBU verbatim;
 //! it is preserved opaquely so the box round-trips byte-exact.
 
-use crate::box_types::BOX_HEADER_MIN_SIZE;
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
+use isobmff::box_types::BOX_HEADER_MIN_SIZE;
 
 /// FourCC of the AV1 config box.
 pub const AV1C_FOURCC: [u8; 4] = *b"av1C";
@@ -235,7 +235,8 @@ impl Av1SampleEntry {
                 what: "av01 missing av1C",
             }),
         )?;
-        let config = Av1ConfigurationBox::parse(&av1c[crate::box_types::box_header_len(av1c)?..])?;
+        let config =
+            Av1ConfigurationBox::parse(&av1c[isobmff::box_types::box_header_len(av1c)?..])?;
         let children = crate::sample_entries::entry_children(region, &AV1C_FOURCC)?;
         Ok(Self {
             visual,
@@ -249,7 +250,7 @@ impl Serialize for Av1SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let config_len = BOX_HEADER_MIN_SIZE + self.config.serialized_len();
-        crate::box_types::box_len(
+        isobmff::box_types::box_len(
             BOX_HEADER_MIN_SIZE
                 + VisualSampleEntryFields::serialized_len()
                 + crate::sample_entries::entry_children_len(&self.children, config_len),
@@ -259,17 +260,17 @@ impl Serialize for Av1SampleEntry {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, &AV01_FOURCC, need)?;
+        c += isobmff::box_types::write_box_header(buf, &AV01_FOURCC, need)?;
         c += self.visual.serialize_body_into(&mut buf[c..])?;
         // The config box keeps its wire position: a real `vp09`/`av01` entry
         // often carries `pasp` *before* it (audit item 3, round 3).
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
             let len = BOX_HEADER_MIN_SIZE + self.config.serialized_len();
             let len = broadcast_common::len::fit_u32(len, "config box size")?;
-            buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&len.to_be_bytes());
-            *c += crate::box_types::BOX_TYPE_SIZE;
-            buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&AV1C_FOURCC);
-            *c += crate::box_types::BOX_TYPE_SIZE;
+            buf[*c..*c + isobmff::box_types::BOX_TYPE_SIZE].copy_from_slice(&len.to_be_bytes());
+            *c += isobmff::box_types::BOX_TYPE_SIZE;
+            buf[*c..*c + isobmff::box_types::BOX_TYPE_SIZE].copy_from_slice(&AV1C_FOURCC);
+            *c += isobmff::box_types::BOX_TYPE_SIZE;
             *c += self.config.serialize_into(&mut buf[*c..])?;
             Ok(())
         };

@@ -248,14 +248,14 @@ impl Track {
 #[non_exhaustive]
 pub struct TrackEncryption {
     /// The protection scheme (`cenc` AES-CTR or `cbcs` AES-CBC pattern).
-    pub scheme: crate::cenc::CencScheme,
+    pub scheme: isobmff::cenc::CencScheme,
     /// Track-level crypto defaults — KID, per-sample IV size, and (for
     /// `cbcs`) the pattern's `crypt`:`skip` block counts — ISO/IEC 23001-7
     /// §12.2.
-    pub tenc: crate::cenc::TrackEncryptionBox,
+    pub tenc: isobmff::cenc::TrackEncryptionBox,
     /// Per-sample IV + subsample map, in decode order — ISO/IEC 23001-7 §12.3.
     /// `samples.len()` must equal the owning [`Track`]'s `samples.len()`.
-    pub samples: Vec<crate::cenc::SampleEncryptionEntry>,
+    pub samples: Vec<isobmff::cenc::SampleEncryptionEntry>,
     /// Whether a `cbcs` + [`crate::IvGen::Constant`](crate::cenc_encrypt::IvGen::Constant)
     /// track should emit a `senc` box with the constant IV replicated per
     /// sample. See [`ConstantIvSenc`].
@@ -266,9 +266,9 @@ impl TrackEncryption {
     /// Build a track's crypto carrier from its scheme, `tenc` defaults, and
     /// per-sample IV/subsample entries in decode order.
     pub fn new(
-        scheme: crate::cenc::CencScheme,
-        tenc: crate::cenc::TrackEncryptionBox,
-        samples: Vec<crate::cenc::SampleEncryptionEntry>,
+        scheme: isobmff::cenc::CencScheme,
+        tenc: isobmff::cenc::TrackEncryptionBox,
+        samples: Vec<isobmff::cenc::SampleEncryptionEntry>,
         constant_iv_senc: ConstantIvSenc,
     ) -> Self {
         Self {
@@ -292,7 +292,7 @@ impl TrackEncryption {
 /// both shapes; the new default shape is additionally verified against
 /// Bento4's `mp4decrypt`. Has no effect when `iv` is not
 /// [`IvGen::Constant`](crate::cenc_encrypt::IvGen::Constant) or `scheme`
-/// is not [`CencScheme::Cbcs`](crate::cenc::CencScheme::Cbcs).
+/// is not [`CencScheme::Cbcs`](isobmff::cenc::CencScheme::Cbcs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum ConstantIvSenc {

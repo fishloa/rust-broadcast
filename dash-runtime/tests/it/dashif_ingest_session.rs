@@ -294,9 +294,9 @@ fn session_lmsg() {
     let seg = build_media_segment(1, &[ftd]).expect("seg");
 
     // build styp with lmsg compatible brand
-    let consumed = transmux::parse_box(&seg).unwrap().1;
+    let consumed = isobmff::parse_box(&seg).unwrap().1;
     let rest = &seg[consumed..];
-    let styp_box = transmux::segments::SegmentTypeBox {
+    let styp_box = isobmff::segments::SegmentTypeBox {
         major_brand: *b"msdh",
         minor_version: 0,
         compatible_brands: vec![*b"msdh", *b"msix", *b"lmsg"],

@@ -14,8 +14,8 @@ use std::num::NonZeroU64;
 
 use broadcast_common::Parse;
 use broadcast_common::range::ByteSpan;
-use transmux::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, LARGESIZE_SIZE, SIZE_TO_EOF};
-use transmux::segments::{FTYP, MDAT, MOOF, STYP};
+use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, LARGESIZE_SIZE, SIZE_TO_EOF};
+use isobmff::segments::{FTYP, MDAT, MOOF, STYP};
 
 /// Width of a box Four-CC (ISO/IEC 14496-12:2026 §4.2).
 const FOURCC_LEN: usize = 4;

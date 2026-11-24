@@ -5,13 +5,13 @@
 //! specification. The MPEG-2 TS `DOVI_video_stream_descriptor` lives in
 //! [`crate::dovi_descriptor`].
 
-use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
 use alloc::string::String;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::u16_at;
 use broadcast_common::{Parse, Serialize};
+use isobmff::box_types::BOX_TYPE_SIZE;
 
 /// FourCC of the Dolby Vision configuration box for `dv_profile <= 7`.
 pub const DVCC_FOURCC: [u8; 4] = *b"dvcC";

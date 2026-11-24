@@ -489,7 +489,7 @@ fn inject_segment_events(
     cache
         .splices
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let spliced = transmux::insert_event_message_boxes_after_styp(segment, &emsg_bytes);
+    let spliced = isobmff::segments::insert_event_message_boxes_after_styp(segment, &emsg_bytes);
 
     let spliced = Bytes::from(spliced);
     cache.insert(seq, bytes.clone(), emsg_bytes, spliced.clone());

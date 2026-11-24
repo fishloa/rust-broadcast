@@ -9,10 +9,10 @@
 #![cfg(feature = "cenc")]
 
 use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
-use transmux::TrackFragmentRunBox;
+use isobmff::movie_fragment::MovieFragmentBox;
+use isobmff::movie_fragment::TrackFragmentRunBox;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::fragment_build::{FragmentProtection, protect_media_segment};
-use transmux::movie_fragment::MovieFragmentBox;
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, KeyMap, Media,
     Sample, SubsamplePolicy, Track, TrackId, TrackSpec, TsDemux,
@@ -112,7 +112,7 @@ fn traf_range(file: &[u8], track_id: u32) -> (usize, usize) {
     let index = moof
         .traf
         .iter()
-        .position(|t| t.tfhd.track_id == TrackId::new(track_id))
+        .position(|t| t.tfhd.track_id.value() == track_id)
         .expect("traf for the requested track");
     let trafs: Vec<(usize, usize)> = children(moof_body)
         .into_iter()

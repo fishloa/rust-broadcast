@@ -12,7 +12,6 @@ use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::ac4::Ac4SpecificBox;
 use crate::av1::Av1ConfigurationBox;
 use crate::avc_config::AVCConfigurationBox;
-use crate::box_types::BOX_TYPE_SIZE;
 use crate::codec_config_ext::EsdsBoxCodecInfo;
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
@@ -23,6 +22,7 @@ use crate::opus::OpusSpecificBox;
 use crate::units::BITS_PER_KILOBIT;
 use crate::vp9::Vp9ConfigurationBox;
 use crate::vvc_config::VvcConfigurationBox;
+use isobmff::box_types::BOX_TYPE_SIZE;
 
 /// Whether a [`CodecConfig::Data`] elementary stream carries PES packets or
 /// PSI/private sections on its PID.

@@ -1095,7 +1095,9 @@ fn tfhd_track_ids(segment_bytes: &[u8]) -> Vec<u32> {
     for moof in top_level_boxes(segment_bytes, MOOF) {
         for traf in top_level_boxes(moof.body, TRAF) {
             for tfhd in top_level_boxes(traf.body, TFHD) {
-                if let Ok(header) = transmux::TrackFragmentHeaderBox::parse_body(tfhd.body) {
+                if let Ok(header) =
+                    isobmff::movie_fragment::TrackFragmentHeaderBox::parse_body(tfhd.body)
+                {
                     ids.push(header.track_id.value());
                 }
             }
@@ -1109,11 +1111,11 @@ fn tfhd_track_ids(segment_bytes: &[u8]) -> Vec<u32> {
 fn top_level_boxes<'a>(
     data: &'a [u8],
     box_type: [u8; 4],
-) -> impl Iterator<Item = transmux::box_types::BoxRef<'a>> {
-    transmux::box_types::box_iter(data)
+) -> impl Iterator<Item = isobmff::box_types::BoxRef<'a>> {
+    isobmff::box_types::box_iter(data)
         .map_while(Result::ok)
         .filter_map(move |(b, _consumed)| {
-            (b.header.box_type == transmux::box_types::BoxType(box_type)).then_some(b)
+            (b.header.box_type == isobmff::box_types::BoxType(box_type)).then_some(b)
         })
 }
 

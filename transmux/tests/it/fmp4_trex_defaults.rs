@@ -137,13 +137,13 @@ fn init_with_trex_sample_size(size: u32) -> Vec<u8> {
 
 fn assemble_moof(data_offset: u32, per_sample_size: bool) -> Vec<u8> {
     let mfhd = boxed(b"mfhd", &[0, 0, 0, 0, 0, 0, 0, 1]);
-    let mut tfhd_body = transmux::movie_fragment::TFHD_DEFAULT_BASE_IS_MOOF
+    let mut tfhd_body = isobmff::movie_fragment::TFHD_DEFAULT_BASE_IS_MOOF
         .to_be_bytes()
         .to_vec();
     tfhd_body.extend_from_slice(&TRACK_ID.to_be_bytes());
-    let mut flags = transmux::movie_fragment::TRUN_DATA_OFFSET_PRESENT;
+    let mut flags = isobmff::movie_fragment::TRUN_DATA_OFFSET_PRESENT;
     if per_sample_size {
-        flags |= transmux::movie_fragment::TRUN_SAMPLE_SIZE_PRESENT;
+        flags |= isobmff::movie_fragment::TRUN_SAMPLE_SIZE_PRESENT;
     }
     let mut trun_body = flags.to_be_bytes().to_vec();
     trun_body.extend_from_slice(&SAMPLE_COUNT.to_be_bytes());
