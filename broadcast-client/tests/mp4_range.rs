@@ -225,7 +225,7 @@ fn a_range_driver_reports_the_movie_metadata() {
             RangeAction::Step(DriverStep::Metadata(metadata)) => {
                 title = metadata
                     .movie
-                    .text(&isobmff::metadata::ItemKey::FourCc(*b"\xa9nam"))
+                    .text(&isobmff::metadata::ItemKey::TITLE)
                     .map(str::to_string);
                 continue;
             }

@@ -1866,7 +1866,9 @@ pub const TABLE: &[Crate] = &[
             // value (a text value and its locale, a chapter list, an unknown
             // box), so the variant *is* the label; `MetaFlavor` is a
             // detection result (ISO full box vs QuickTime bare `meta`), not a
-            // spec/field code.
+            // spec/field code. `ItemKey` has no `name()` (a keyed item's label
+            // is a runtime string), so its `Display` prints the key itself
+            // instead of a static token.
             "ItemKey",
             "TextLocale",
             "MetadataItem",

@@ -401,7 +401,7 @@ fn metadata_title(path: &Path) -> Option<String> {
             DriverStep::Metadata(metadata) => {
                 return metadata
                     .movie
-                    .text(&isobmff::metadata::ItemKey::FourCc(*b"\xa9nam"))
+                    .text(&isobmff::metadata::ItemKey::TITLE)
                     .map(str::to_string);
             }
             DriverStep::Done => return None,
