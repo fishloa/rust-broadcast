@@ -50,8 +50,8 @@ fn candidates() -> Vec<String> {
     vec!["0 1 udp 2130706431 127.0.0.1 54321 typ host".to_string()]
 }
 
-fn config() -> transmux::AVCDecoderConfigurationRecord {
-    transmux::AVCDecoderConfigurationRecord {
+fn config() -> isobmff::AVCDecoderConfigurationRecord {
+    isobmff::AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication: 0x42,
         profile_compatibility: 0,

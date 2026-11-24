@@ -765,9 +765,9 @@ fn stsd_entry_fourcc(stsd: &[u8]) -> &'static str {
 /// CMAF (`moov` + one or more `moof`/`mdat` pairs, sample layout from each
 /// fragment's `trun`) — see [`collect_fragment_samples`].
 fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
-    use crate::AVCConfigurationBox;
     use crate::media::{Media, Track};
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+    use isobmff::AVCConfigurationBox;
 
     let moov = find_top_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
     let movie_timescale = mvhd_timescale(moov)?;
@@ -1014,7 +1014,7 @@ fn absorb_protected_fragment(
 }
 
 /// Parse the avcC record from the (first) encv entry of an stsd.
-fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigurationRecord> {
+fn find_avcc_config(stsd: &[u8]) -> Result<isobmff::avc_config::AVCDecoderConfigurationRecord> {
     let body_start = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT;
     for entry in box_slices(&stsd[body_start.min(stsd.len())..]) {
         if &entry[4..8] == b"encv" {
@@ -1023,7 +1023,7 @@ fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigur
                 && let Some(avcc) = box_slices(&entry[child_start..]).find(|b| &b[4..8] == b"avcC")
             {
                 // avcC full bytes → body after the 8-byte box header.
-                let cfg = crate::AVCConfigurationBox::parse_body(
+                let cfg = isobmff::AVCConfigurationBox::parse_body(
                     &avcc[isobmff::box_types::box_header_len(avcc)?..],
                 )?;
                 return Ok(cfg.config);
@@ -1377,7 +1377,7 @@ mod tests {
     /// build by hand, needing no parsed configuration record.
     fn test_codec_config() -> CodecConfig {
         CodecConfig::Opus {
-            config: crate::opus::OpusSpecificBox {
+            config: isobmff::opus::OpusSpecificBox {
                 version: 0,
                 output_channel_count: 2,
                 pre_skip: 0,

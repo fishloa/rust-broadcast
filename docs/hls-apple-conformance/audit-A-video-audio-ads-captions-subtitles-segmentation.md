@@ -63,7 +63,7 @@ Class legend: MET-V verified, MET-U unverified, GAP, PARTIAL, N/A (ENCODER/CONTE
 | Item | Requirement | Class | Evidence (file:line) | Note |
 |---|---|---|---|---|
 | 2.1 | Audio as elementary stream or fMP4 | PARTIAL | F2; EN:163-196 | fMP4 output is fine. TS output multiplexes audio with video in the same `.ts`; no audio-only/elementary rendition is ever produced. |
-| 2.2 | Stereo codecs APAC/AAC/HE-AAC/xHE-AAC/ALAC/FLAC | GAP-OPT | `git grep -w usac/xhe-aac/apac/alac` in transmux: zero; transmux/src/flac.rs exists | xHE-AAC, APAC, Apple Lossless have no codec identity in transmux; FLAC is carried in CMAF only. Origin does not restrict to the list. |
+| 2.2 | Stereo codecs APAC/AAC/HE-AAC/xHE-AAC/ALAC/FLAC | GAP-OPT | `git grep -w usac/xhe-aac/apac/alac` in transmux: zero; isobmff/src/flac.rs exists | xHE-AAC, APAC, Apple Lossless have no codec identity in transmux; FLAC is carried in CMAF only. Origin does not restrict to the list. |
 | 2.3 | Stereo AAC/HE-AAC MUST be provided | N/A ENCODER | | Origin cannot transcode; a broadcast AC-3-only source yields an AC-3-only stream with no check (GAP-OPT: could flag from CODECS). |
 | 2.4 | No HE-AAC above 64 kb/s | N/A ENCODER | | |
 | 2.5 | Multichannel codec list | GAP-OPT | ts_mux.rs:420-446 (accepts DTS, MPEG audio, MPEG-H) | Non-Apple codecs pass through. |

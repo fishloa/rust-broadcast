@@ -380,7 +380,7 @@ fn build_whep_answer(
     local_ice_ufrag: &str,
     local_ice_pwd: &str,
     setup_role: SetupRole,
-    config: &transmux::AVCDecoderConfigurationRecord,
+    config: &isobmff::AVCDecoderConfigurationRecord,
 ) -> Result<String> {
     render_whep_answer(
         parsed,
@@ -412,7 +412,7 @@ pub struct WhepAnswerParams<'a> {
     /// SDP setup role for this side.
     pub setup_role: SetupRole,
     /// H.264 decoder configuration record read off the track.
-    pub config: &'a transmux::AVCDecoderConfigurationRecord,
+    pub config: &'a isobmff::AVCDecoderConfigurationRecord,
     /// DTLS fingerprint string.
     pub fingerprint: &'a str,
     /// ICE candidate lines.
@@ -427,7 +427,7 @@ impl<'a> WhepAnswerParams<'a> {
         local_ice_ufrag: &'a str,
         local_ice_pwd: &'a str,
         setup_role: SetupRole,
-        config: &'a transmux::AVCDecoderConfigurationRecord,
+        config: &'a isobmff::AVCDecoderConfigurationRecord,
         fingerprint: &'a str,
         candidates: &'a [String],
     ) -> Self {
@@ -1043,7 +1043,7 @@ fn whep_avc_track_spec() -> TrackSpec {
         TrackId::new(1),
         VIDEO_CLOCK_TIMESCALE,
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
+            config: isobmff::AVCConfigurationBox::new(isobmff::AVCDecoderConfigurationRecord {
                 configuration_version: 1,
                 profile_indication: AVC_PROFILE_INDICATION,
                 profile_compatibility: 0,
@@ -2151,21 +2151,19 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             TrackId::new(1),
             timescale(VIDEO_CLOCK_RATE),
             CodecConfig::Avc {
-                config: transmux::AVCConfigurationBox::new(
-                    transmux::AVCDecoderConfigurationRecord {
-                        configuration_version: 1,
-                        profile_indication: 0x42,
-                        profile_compatibility: 0,
-                        level_indication: 0x1f,
-                        length_size_minus_one: 3,
-                        sps: Vec::new(),
-                        pps: Vec::new(),
-                        chroma_format: None,
-                        bit_depth_luma_minus8: None,
-                        bit_depth_chroma_minus8: None,
-                        sps_ext: Vec::new(),
-                    },
-                ),
+                config: isobmff::AVCConfigurationBox::new(isobmff::AVCDecoderConfigurationRecord {
+                    configuration_version: 1,
+                    profile_indication: 0x42,
+                    profile_compatibility: 0,
+                    level_indication: 0x1f,
+                    length_size_minus_one: 3,
+                    sps: Vec::new(),
+                    pps: Vec::new(),
+                    chroma_format: None,
+                    bit_depth_luma_minus8: None,
+                    bit_depth_chroma_minus8: None,
+                    sps_ext: Vec::new(),
+                }),
                 width: 0,
                 height: 0,
             },

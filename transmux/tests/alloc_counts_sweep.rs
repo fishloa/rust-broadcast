@@ -219,11 +219,9 @@ mod segmenter_cuts {
     use super::measure;
     use broadcast_common::timescale::Timescale;
     use core::time::Duration;
+    use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
     use transmux::TrackId;
-    use transmux::{
-        AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Sample,
-        Segmenter, TrackSpec,
-    };
+    use transmux::{CodecConfig, Sample, Segmenter, TrackSpec};
 
     fn timescale(value: u32) -> Timescale {
         Timescale::try_new(value).expect("a non-zero timescale")
@@ -296,7 +294,7 @@ mod segmenter_cuts {
 mod hvcc_prealloc {
     use super::measure;
     use broadcast_common::Parse;
-    use transmux::HEVCDecoderConfigurationRecord;
+    use isobmff::HEVCDecoderConfigurationRecord;
 
     /// A 22-byte hvcC header (`lengthSizeMinusOne = 3`) declaring 255 arrays whose
     /// first array declares 65535 NAL units, followed by no bytes at all.
@@ -317,7 +315,7 @@ mod hvcc_prealloc {
     fn declared_counts_do_not_drive_preallocation() {
         let bytes = hostile();
         let (r, allocs, bytes_alloc) = measure(|| HEVCDecoderConfigurationRecord::parse(&bytes));
-        assert!(matches!(r, Err(transmux::error::Error::BufferTooShort(..))));
+        assert!(matches!(r, Err(isobmff::error::Error::BufferTooShort(..))));
         eprintln!("hvcC hostile counts: {allocs} allocs, {bytes_alloc} bytes");
         assert!(bytes_alloc <= HVCC_BYTES_BUDGET, "{bytes_alloc} bytes");
     }

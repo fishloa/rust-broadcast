@@ -7,7 +7,7 @@
 //! | [`Ec3SpecificBox`] | `dec3` | §F.6 | E-AC-3 decoder config |
 //!
 //! The syncframe BSI parsers, frame splitters and the `dac3`/`dec3`
-//! constructors live in [`crate::ac3_syncframe`].
+//! constructors live in `transmux::ac3_syncframe`.
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
@@ -49,7 +49,7 @@ const NUM_DEP_SUB_BITS: usize = 4;
 const CHAN_LOC_BITS: usize = 9;
 /// Number of full-bandwidth channels a coded `acmod` value describes
 /// (ETSI TS 102 366 Table 4.5).
-pub(crate) fn acmod_channels(acmod: u8) -> u8 {
+pub fn acmod_channels(acmod: u8) -> u8 {
     match acmod {
         0 => 2, // 1+1 (dual mono) → 2 channels
         1 => 1, // 1/0 (mono)

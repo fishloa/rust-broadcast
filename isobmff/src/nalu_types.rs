@@ -10,7 +10,7 @@ use broadcast_common::len::need_out;
 
 /// `lengthSizeMinusOne` of an AVC/HEVC/VVC decoder configuration record must be 0, 1, or 3
 /// (value 2 is invalid).
-pub(crate) const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
+pub const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
 
 /// H.265 `PREFIX_SEI_NUT` — ITU-T H.265 Table 7-1 (type 39).
 pub const HEVC_PREFIX_SEI_NUT: u8 = 39;

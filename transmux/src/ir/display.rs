@@ -929,7 +929,7 @@ impl DisplayGeometry {
                     .config
                     .arrays
                     .iter()
-                    .filter(|a| a.nal_unit_type == crate::nalu_types::HEVC_SPS_NUT)
+                    .filter(|a| a.nal_unit_type == isobmff::nalu_types::HEVC_SPS_NUT)
                     .flat_map(|a| a.nalus.iter())
                     .next()?;
                 Self::from_hevc_sps(&sps.0).ok()

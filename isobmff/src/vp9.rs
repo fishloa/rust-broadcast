@@ -1,0 +1,404 @@
+//! VP9 codec configuration box in ISOBMFF — the `vpcC` record.
+//!
+//! WebM Project "VP Codec ISO Media File Format Binding"
+//! (<https://www.webmproject.org/vp9/mp4/>, VPCodecConfigurationBox).
+//!
+//! | Box | FourCC | Description |
+//! |-----|--------|-------------|
+//! | [`Vp9ConfigurationBox`] | `vpcC` | `FullBox` v1 VPCodecConfigurationRecord |
+
+use crate::box_types::{FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
+use crate::error::{Error, Result};
+use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
+use broadcast_common::len::{need_in, need_out};
+use broadcast_common::wire::{be_u16, be_u32};
+use broadcast_common::{Parse, Serialize};
+
+/// FourCC of the VP9 config box.
+pub const VPCC_FOURCC: [u8; 4] = *b"vpcC";
+/// Fixed length of the VPCodecConfigurationRecord (before `codecInitializationData`).
+const VPCC_RECORD_FIXED: usize = 8;
+/// The only FullBox version the binding defines. The VP Codec ISO Media File
+/// Format Binding v1.0 (2017-03-31) declares the box as
+/// `FullBox('vpcC', version = 1, 0)` and states "Version 0 is deprecated and
+/// should not be used" — it gives no syntax for version 0 at all, so no other
+/// version can be decoded or emitted (see `private/specs-verified/mpeg/transmux/codec/vp9-isobmff.md`).
+const VERSION_1: u8 = 1;
+/// A 4-bit field occupies the high nibble of its byte.
+const BIT_DEPTH_SHIFT: u8 = 4;
+/// `chromaSubsampling` is 3 bits, so 0..=7 (values 4..7 reserved); the record
+/// packs `bitDepth(4)` then `chromaSubsampling(3)` in one byte.
+const CHROMA_SUBSAMPLING_MASK: u8 = 0x07;
+/// Width of `chromaSubsampling`, `u(3)`.
+const CHROMA_SUBSAMPLING_BITS: u32 = 3;
+/// `videoFullRangeFlag` is the low bit of the packed nibble byte.
+const VIDEO_FULL_RANGE_MASK: u8 = 0x01;
+/// Offset of `level` in the VPCodecConfigurationRecord.
+const VPCC_LEVEL_OFFSET: usize = 1;
+/// Offset of the `bitDepth`/`chromaSubsampling`/`videoFullRangeFlag` byte.
+const VPCC_BIT_DEPTH_OFFSET: usize = 2;
+/// Offset of `colourPrimaries`.
+const VPCC_COLOUR_PRIMARIES_OFFSET: usize = 3;
+/// Offset of `transferCharacteristics`.
+const VPCC_TRANSFER_CHARACTERISTICS_OFFSET: usize = 4;
+/// Offset of `matrixCoefficients`.
+const VPCC_MATRIX_COEFFICIENTS_OFFSET: usize = 5;
+/// Offset of `codecInitializationDataSize`.
+const VPCC_INIT_SIZE_OFFSET: usize = 6;
+
+/// VPCodecConfigurationBox (`vpcC`) — a `FullBox(version=1, 0)` VP9 config record.
+///
+/// Record layout after the FullBox header — VP Codec ISO Media File Format
+/// Binding v1.0 `VPCodecConfigurationRecord`:
+/// `profile(8)` | `level(8)` | `bitDepth(4)` | `chromaSubsampling(3)` |
+/// `videoFullRangeFlag(1)` | `colourPrimaries(8)` | `transferCharacteristics(8)` |
+/// `matrixCoefficients(8)` | `codecInitializationDataSize(16)` | `codecInitializationData[]`.
+///
+/// Only version 1 exists in the binding; a version other than 1 is
+/// [`Error::InvalidValue`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Vp9ConfigurationBox {
+    /// FullBox version (1).
+    pub version: u8,
+    /// FullBox flags (0).
+    pub flags: u32,
+    /// VP9 profile (0-3).
+    pub profile: u8,
+    /// VP9 level.
+    pub level: u8,
+    /// Bit depth in bits (8, 10, or 12).
+    pub bit_depth: u8,
+    /// `chromaSubsampling` (3 bits; 0..=3 defined, 4..7 reserved).
+    pub chroma_subsampling: u8,
+    /// `videoFullRangeFlag`.
+    pub video_full_range_flag: bool,
+    /// `colourPrimaries` (ISO/IEC 23001-8).
+    pub colour_primaries: u8,
+    /// `transferCharacteristics` (ISO/IEC 23001-8).
+    pub transfer_characteristics: u8,
+    /// `matrixCoefficients` (ISO/IEC 23001-8).
+    pub matrix_coefficients: u8,
+    /// `codecInitializationData` (MUST be empty for VP8/VP9).
+    pub codec_initialization_data: Vec<u8>,
+}
+
+impl Vp9ConfigurationBox {
+    /// RFC 6381 codec string `vp09.PP.LL.DD` (profile, level, bit depth).
+    pub fn rfc6381(&self) -> alloc::string::String {
+        use alloc::format;
+        format!(
+            "vp09.{:02}.{:02}.{:02}",
+            self.profile, self.level, self.bit_depth
+        )
+    }
+}
+
+impl<'a> Parse<'a> for Vp9ConfigurationBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(bytes, FULLBOX_EXTRA_SIZE + VPCC_RECORD_FIXED, "vpcC body")?;
+        let version = bytes[0];
+        // Only version 1 is defined by the binding; version 0 is deprecated with
+        // no published syntax, so guessing at a layout for it would be
+        // fabrication. Reject anything else rather than mis-reading it.
+        if version != VERSION_1 {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "vpcC FullBox version",
+                value: u64::from(version),
+                reason: "VP Codec ISO Media File Format Binding defines only version 1 \
+                         (version 0 is deprecated with no published syntax)",
+            }));
+        }
+        let flags = be_u32(bytes, FULLBOX_FLAGS_OFFSET, "vpcC body")?;
+        let r = &bytes[FULLBOX_EXTRA_SIZE..];
+        let profile = r[0];
+        let level = r[VPCC_LEVEL_OFFSET];
+        // `bitDepth(4) chromaSubsampling(3) videoFullRangeFlag(1)`, then the
+        // three 8-bit CICP fields (v1 `VPCodecConfigurationRecord`).
+        let bit_depth = r[VPCC_BIT_DEPTH_OFFSET] >> BIT_DEPTH_SHIFT;
+        let chroma_subsampling = (r[VPCC_BIT_DEPTH_OFFSET] >> 1) & CHROMA_SUBSAMPLING_MASK;
+        let video_full_range_flag = (r[VPCC_BIT_DEPTH_OFFSET] & VIDEO_FULL_RANGE_MASK) != 0;
+        let colour_primaries = r[VPCC_COLOUR_PRIMARIES_OFFSET];
+        let transfer_characteristics = r[VPCC_TRANSFER_CHARACTERISTICS_OFFSET];
+        let matrix_coefficients = r[VPCC_MATRIX_COEFFICIENTS_OFFSET];
+        let init_size = usize::from(be_u16(r, VPCC_INIT_SIZE_OFFSET, "vpcC body")?);
+        let init_start = FULLBOX_EXTRA_SIZE + VPCC_RECORD_FIXED;
+        // A `codecInitializationDataSize` that overruns the box is an error, not
+        // a silent truncation: the size is the only length the record carries,
+        // so a short read means the box is malformed.
+        let init_end = init_start
+            .checked_add(init_size)
+            .ok_or(Error::BufferTooShort(BufferTooShort {
+                need: usize::MAX,
+                have: bytes.len(),
+                what: "codecInitializationDataSize overflows the offset",
+            }))?;
+        need_in(bytes, init_end, "codecInitializationData")?;
+        let codec_initialization_data = bytes[init_start..init_end].to_vec();
+        Ok(Self {
+            version,
+            flags,
+            profile,
+            level,
+            bit_depth,
+            chroma_subsampling,
+            video_full_range_flag,
+            colour_primaries,
+            transfer_characteristics,
+            matrix_coefficients,
+            codec_initialization_data,
+        })
+    }
+}
+
+impl Serialize for Vp9ConfigurationBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        FULLBOX_EXTRA_SIZE + VPCC_RECORD_FIXED + self.codec_initialization_data.len()
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        // Only version 1 can be written; emitting any other version with this
+        // layout would claim a syntax that is not the one being written.
+        if self.version != VERSION_1 {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "vpcC FullBox version",
+                value: u64::from(self.version),
+                reason: "VP Codec ISO Media File Format Binding defines only version 1",
+            }));
+        }
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        buf[0] = self.version;
+        let fb = self.flags.to_be_bytes();
+        buf[1..4].copy_from_slice(&fb[1..]);
+        let r = &mut buf[FULLBOX_EXTRA_SIZE..];
+        r[0] = self.profile;
+        r[1] = self.level;
+        // Both 4-bit/3-bit fields are written through the checked helper:
+        // `bitDepth` outside 0..=15 would shift its high bits out of the byte,
+        // and `chromaSubsampling` outside 0..=7 would fold into
+        // `videoFullRangeFlag` — either way the wire would describe a different
+        // stream than the struct.
+        let bit_depth = broadcast_common::len::fit_bits(
+            u64::from(self.bit_depth),
+            u32::from(BIT_DEPTH_SHIFT),
+            "bitDepth",
+        )?;
+        let chroma = broadcast_common::len::fit_bits(
+            u64::from(self.chroma_subsampling),
+            CHROMA_SUBSAMPLING_BITS,
+            "chromaSubsampling",
+        )?;
+        r[VPCC_BIT_DEPTH_OFFSET] = ((bit_depth as u8) << BIT_DEPTH_SHIFT)
+            | ((chroma as u8) << 1)
+            | (self.video_full_range_flag as u8);
+        r[VPCC_COLOUR_PRIMARIES_OFFSET] = self.colour_primaries;
+        r[VPCC_TRANSFER_CHARACTERISTICS_OFFSET] = self.transfer_characteristics;
+        r[VPCC_MATRIX_COEFFICIENTS_OFFSET] = self.matrix_coefficients;
+        let size = broadcast_common::len::fit_u16(
+            self.codec_initialization_data.len(),
+            "codecIntializationDataSize",
+        )?;
+        r[VPCC_INIT_SIZE_OFFSET..VPCC_INIT_SIZE_OFFSET + core::mem::size_of::<u16>()]
+            .copy_from_slice(&size.to_be_bytes());
+        r[VPCC_RECORD_FIXED..VPCC_RECORD_FIXED + self.codec_initialization_data.len()]
+            .copy_from_slice(&self.codec_initialization_data);
+        Ok(need)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use broadcast_common::error::{BufferTooShort, InvalidValue};
+
+    use super::*;
+
+    fn config(codec_initialization_data: Vec<u8>) -> Vp9ConfigurationBox {
+        Vp9ConfigurationBox {
+            version: 1,
+            flags: 0,
+            profile: 0,
+            level: 10,
+            bit_depth: 8,
+            chroma_subsampling: 1,
+            video_full_range_flag: false,
+            colour_primaries: 2,
+            transfer_characteristics: 2,
+            matrix_coefficients: 2,
+            codec_initialization_data,
+        }
+    }
+
+    /// A real `vpcC` body produced by ffmpeg (independent oracle), FullBox v1.
+    ///
+    /// Generated with:
+    /// `ffmpeg -f lavfi -i testsrc2=size=160x120:rate=25 -t 0.4 -c:v libvpx-vp9 -b:v 200k out.mp4`
+    /// then reading the 20-byte `vpcC` box body (`01000000...` — FullBox
+    /// version 1, flags 0). Fields: profile 0, level 10, byte 2 = `0x82`
+    /// (bitDepth 8, chromaSubsampling 1, videoFullRangeFlag 0), CICP 2/2/2,
+    /// `codecInitializationDataSize` 0.
+    const FFMPEG_VPCC_BODY: [u8; 12] = [
+        0x01, 0x00, 0x00, 0x00, // FullBox version 1, flags 0
+        0x00, 0x0A, // profile 0, level 10
+        0x82, // bitDepth 8 | chromaSubsampling 1 | videoFullRangeFlag 0
+        0x02, // colourPrimaries
+        0x02, // transferCharacteristics
+        0x02, // matrixCoefficients
+        0x00, 0x00, // codecInitializationDataSize
+    ];
+
+    /// The v1 record parses the real ffmpeg bytes and round-trips byte-exactly.
+    #[test]
+    fn version_1_ffmpeg_oracle_parses_and_round_trips() {
+        let cfg = Vp9ConfigurationBox::parse(&FFMPEG_VPCC_BODY).expect("parse real vpcC");
+        assert_eq!(cfg.version, 1);
+        assert_eq!(cfg.flags, 0);
+        assert_eq!(cfg.profile, 0);
+        assert_eq!(cfg.level, 10);
+        assert_eq!(cfg.bit_depth, 8);
+        assert_eq!(cfg.chroma_subsampling, 1);
+        assert!(!cfg.video_full_range_flag);
+        assert_eq!(cfg.colour_primaries, 2);
+        assert_eq!(cfg.transfer_characteristics, 2);
+        assert_eq!(cfg.matrix_coefficients, 2);
+        assert!(cfg.codec_initialization_data.is_empty());
+        assert_eq!(cfg.rfc6381(), "vp09.00.10.08");
+        assert_eq!(
+            cfg.try_to_bytes().unwrap(),
+            FFMPEG_VPCC_BODY,
+            "the real vpcC must round-trip byte-identically"
+        );
+    }
+
+    /// `codec_initialization_data` of 65 536 bytes cannot fit the 16-bit
+    /// `codecIntializationDataSize` field (#1129): unfixed, `(len as u16)`
+    /// silently wrapped 65536 to 0.
+    #[test]
+    fn oversized_init_data_length_errors() {
+        let cfg = config(alloc::vec![0u8; 65536]);
+        let err = cfg.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "codecIntializationDataSize",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for codecIntializationDataSize, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 bytes (u16::MAX) still round-trips.
+    #[test]
+    fn max_init_data_length_round_trips() {
+        let cfg = config(alloc::vec![0xABu8; 65535]);
+        let bytes = cfg.try_to_bytes().unwrap();
+        let parsed = Vp9ConfigurationBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.codec_initialization_data.len(), 65535);
+    }
+
+    /// The binding (v1.0, 2017-03-31) defines only `version = 1`; it states
+    /// "Version 0 is deprecated and should not be used" and publishes no v0
+    /// syntax. A version other than 1 must be rejected — guessing at an
+    /// undocumented layout would report wrong depth/chroma/colour values.
+    #[test]
+    fn non_version_1_records_are_rejected() {
+        for version in [0u8, 2, 0xFF] {
+            let mut body = FFMPEG_VPCC_BODY;
+            body[0] = version;
+            assert!(
+                matches!(
+                    Vp9ConfigurationBox::parse(&body),
+                    Err(Error::InvalidValue(InvalidValue {
+                        field: "vpcC FullBox version",
+                        ..
+                    }))
+                ),
+                "version {version} must be rejected"
+            );
+        }
+    }
+
+    /// Serialize must not emit a version it cannot lay out: a struct whose
+    /// `version` is not 1 is an error rather than silently-written v1 bytes.
+    #[test]
+    fn serialize_rejects_a_non_version_1_record() {
+        let mut cfg = config(Vec::new());
+        cfg.version = 0;
+        assert!(matches!(
+            cfg.try_to_bytes(),
+            Err(Error::InvalidValue(InvalidValue {
+                field: "vpcC FullBox version",
+                ..
+            }))
+        ));
+    }
+
+    /// `bitDepth` is a 4-bit field: a value above 15 is an error rather than a
+    /// shifted-out byte.
+    #[test]
+    fn bit_depth_over_4_bits_errors() {
+        let mut cfg = config(Vec::new());
+        cfg.bit_depth = 16;
+        assert!(
+            matches!(
+                cfg.try_to_bytes(),
+                Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "bitDepth",
+                    ..
+                }))
+            ),
+            "bitDepth = 16 must be a FieldOverflow"
+        );
+        // 15 (the largest 4-bit value) still serializes.
+        cfg.bit_depth = 15;
+        assert!(cfg.try_to_bytes().is_ok());
+    }
+
+    /// `chromaSubsampling` is a 3-bit field: an out-of-range value is an error,
+    /// not a silently-folded byte (it would otherwise corrupt
+    /// `videoFullRangeFlag`).
+    #[test]
+    fn chroma_subsampling_over_3_bits_errors() {
+        let mut cfg = config(Vec::new());
+        cfg.chroma_subsampling = 8; // needs 4 bits
+        assert!(
+            matches!(
+                cfg.try_to_bytes(),
+                Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "chromaSubsampling",
+                    ..
+                }))
+            ),
+            "chromaSubsampling = 8 must be a FieldOverflow"
+        );
+        // 7 (the largest 3-bit value) still serializes.
+        cfg.chroma_subsampling = 7;
+        assert!(cfg.try_to_bytes().is_ok());
+    }
+
+    /// Hostile input: a `codecInitializationDataSize` past the box is an error
+    /// rather than a silent truncation.
+    #[test]
+    fn short_init_data_and_truncated_body_are_errors() {
+        // v1 record declaring 4 bytes of init data but carrying 2.
+        let short: &[u8] = &[
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x14, 0x82, 0x02, 0x02, 0x02, 0x00, 0x04, 0xAA, 0xBB,
+        ];
+        assert!(matches!(
+            Vp9ConfigurationBox::parse(short),
+            Err(Error::BufferTooShort(..))
+        ));
+        // A body too short for the fixed record.
+        assert!(matches!(
+            Vp9ConfigurationBox::parse(&[0x01, 0x00, 0x00, 0x00, 0x00]),
+            Err(Error::BufferTooShort(BufferTooShort {
+                what: "vpcC body",
+                ..
+            }))
+        ));
+    }
+}

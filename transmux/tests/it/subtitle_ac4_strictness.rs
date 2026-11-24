@@ -31,8 +31,9 @@ use test_fixtures::vectors::DAC4_ORACLE;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use isobmff::Ac4SpecificBox;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, build_init_segment};
-use transmux::{Ac4SpecificBox, CmafMux, Fmp4Demux, Media, Sample, Track, TrackSpec};
+use transmux::{CmafMux, Fmp4Demux, Media, Sample, Track, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

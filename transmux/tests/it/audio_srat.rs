@@ -24,12 +24,13 @@ use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use isobmff::FlacSpecificBox;
 use transmux::init_segment::{
     AudioSampleEntryV1, FlacSampleEntry, Mp4aSampleEntry, SampleDescriptionBox, SampleEntryVariant,
     SamplingRateBox,
 };
 use transmux::ir::CodecConfig;
-use transmux::{FlacSpecificBox, ProgressiveDemux, TrackSpec};
+use transmux::{ProgressiveDemux, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

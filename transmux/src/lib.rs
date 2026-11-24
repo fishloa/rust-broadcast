@@ -149,18 +149,13 @@ extern crate alloc;
 struct ReadmeDoctests;
 
 pub mod aac_asc;
-pub mod ac3;
 pub mod ac3_syncframe;
-pub mod ac4;
 pub mod annexb;
 pub mod au;
 pub mod audio_profile;
 pub mod av1;
-pub mod avc_config;
 pub mod avc_parameter_set;
-pub mod avs2;
 pub mod avs3;
-pub mod avs3_audio;
 pub mod bitreader;
 pub mod caption_detect;
 #[cfg(feature = "cenc")]
@@ -177,21 +172,16 @@ pub mod container;
 #[cfg(feature = "std")]
 pub mod dash;
 pub(crate) mod display_track;
-pub mod dovi;
 pub mod dovi_descriptor;
 pub mod drm;
-pub mod dts;
 pub mod dts_core;
 pub mod error;
-pub mod flac;
 pub mod flv;
 pub mod flv_stream;
 pub mod fragment_build;
 pub mod h262;
 pub mod hdr;
 pub mod hdr10plus;
-pub mod hdr_boxes;
-pub mod hevc_config;
 pub mod init_segment;
 pub mod interlace;
 pub mod ir;
@@ -202,14 +192,10 @@ pub mod ll_hls;
 pub mod media;
 pub mod mhas;
 pub mod mkv_mux;
-pub mod mp4esds;
 pub mod mpeg2_display;
 pub mod mpeg_legacy;
-pub mod mpegh;
 pub mod nal;
 pub mod nalu_ext;
-pub mod nalu_types;
-pub mod opus;
 pub mod pipeline;
 pub mod progressive;
 pub mod progressive_demux;
@@ -253,7 +239,6 @@ pub(crate) mod units;
 pub mod user_data;
 pub mod validate;
 pub mod vp9;
-pub mod vvc_config;
 pub mod webm_demux;
 
 /// Serialize a [`Timescale`](broadcast_common::timescale::Timescale) as the
@@ -271,22 +256,14 @@ pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
     HeAacSignaling, SamplingFrequencyIndex, build_adts_header, parse_adts_header,
 };
-pub use ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream};
 pub use ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
-pub use ac4::{AC4_FOURCC, Ac4SpecificBox, DAC4_FOURCC};
 pub use annexb::{
     NAL_LENGTH_SIZE, annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
     iter_length_prefixed_nals_with, length_prefixed_to_annexb, normalise_nal_length_size,
 };
 pub use au::{AccessUnitSplitter, split_access_units};
-pub use av1::{AV01_FOURCC, AV1C_FOURCC, Av1ConfigurationBox, Av1SampleEntry};
-pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-pub use avs2::Avs2ConfigurationBox;
-pub use avs3::{
-    Avs3ConfigurationBox, AvsVideoConfig, AvsVideoEntryKind, AvsVideoSampleEntry,
-    LAvsConfigurationBox, LibraryDependencyIdc, TemporalLayerEntry, VisualLrapEntry,
-};
-pub use avs3_audio::{AV3A_FOURCC, Ca3SpecificBox, DCA3_FOURCC};
+pub use av1::{AV01_FOURCC, Av1SampleEntry};
+pub use avs3::{AvsVideoConfig, AvsVideoEntryKind, AvsVideoSampleEntry};
 pub use broadcast_common::CencScheme;
 pub use broadcast_common::klv::KlvItem;
 pub use caption_detect::{CaptionDetector, DetectedCaption, declared_caption_services};
@@ -309,20 +286,13 @@ pub use drm::{
 };
 #[cfg(feature = "std")]
 pub use drm::{playready_pro, playready_pssh, playready_wrmheader};
-pub use dts::{
-    DDTS_BODY_LEN, DDTS_FOURCC, DTSC_FOURCC, DTSE_FOURCC, DTSH_FOURCC, DTSL_FOURCC, DtsSpecificBox,
-};
 pub use error::{Error, Result};
-pub use flac::{
-    BLOCK_TYPE_STREAMINFO, DFLA_FOURCC, FLAC_FOURCC, FlacMetadataBlock, FlacSpecificBox,
-};
 pub use flv::{
     FlvDemux, FlvError, FlvMux, FlvPayload, FlvPayloadKind, flv_frame_payloads,
     flv_sequence_header_payloads, flv_track_kind, on_metadata_body,
 };
 pub use flv_stream::StreamingFlvDemux;
 pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
-pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntry,
     DataEntryImdaBox, DataEntrySeqNumImdaBox, DataEntryUrlBox, DataEntryUrnBox, DataInformationBox,
@@ -356,25 +326,15 @@ pub use media::{
     CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackEncryption,
 };
 pub use mkv_mux::MkvMux;
-pub use mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
-    SLConfigDescriptor, StreamType,
-};
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
 };
 pub use mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
-pub use mpegh::{
-    MHA1_FOURCC, MHA2_FOURCC, MHAC_CONFIGURATION_VERSION, MHAC_FOURCC, MHAC_RECORD_FIXED_LEN,
-    MHADecoderConfigurationRecord, MHM1_FOURCC, MHM2_FOURCC,
-};
 pub use nal::{
     NalCodec, access_unit_is_idr, access_unit_is_keyframe, access_unit_is_rap,
     avc_access_unit_dimensions, avc_access_unit_parameter_sets, avc_sps_dimensions,
     caption_cc_data, is_idr_nal, is_keyframe_nal, nal_unit_type, recovery_point_sei,
 };
-pub use nalu_types::{AvcNalUnit, AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
-pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use pipeline::{
     CodecConfig, FragmentTrackData, FrameRateBasis, Provenance, Sample, SampleFlags, TrackSpec,
     build_init_segment, build_media_segment, build_media_segment_with_events, nominal_frame_rate,
@@ -434,10 +394,8 @@ pub use timeline::{
 // Note: `broadcast_smooth::StreamType` (the Smooth `StreamIndex@Type`) is not
 // re-exported at the crate root — it would collide with `mp4esds::StreamType`
 // (an unrelated ES descriptor field); reach it via `broadcast_smooth`.
-pub use dovi::{DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord, DoviSampleEntryKind};
 pub use dovi_descriptor::DoviVideoStreamDescriptor;
 pub use hdr::HdrStaticMetadata;
-pub use hdr_boxes::{ChromaticityXy, ContentLightLevel, MasteringDisplayColourVolume};
 pub use hdr10plus::{
     AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
     Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
@@ -467,8 +425,5 @@ pub use ts_mux::{DEFAULT_PSI_INTERVAL, StreamingTsMux, TsContinuity, TsMux};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };
-pub use vp9::{VP09_FOURCC, VPCC_FOURCC, Vp9ConfigurationBox, Vp9SampleEntry};
-pub use vvc_config::{
-    VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,
-};
+pub use vp9::{VP09_FOURCC, Vp9SampleEntry};
 pub use webm_demux::{IR_TIMESCALE, WebmDemux};

@@ -1,19 +1,19 @@
 //! `DOVI_video_stream_descriptor` — MPEG-2 TS carriage of a Dolby Vision
 //! configuration record.
 //!
-//! The record itself and its ISOBMFF boxes live in [`crate::dovi`].
+//! The record itself and its ISOBMFF boxes live in [`isobmff::dovi`].
 
-use crate::dovi::{
-    BL_FLAG, CCID_MASK, CCID_OFFSET, CCID_SHIFT, CONFIG_WORD_OFFSET, DOVI_RESERVED_ZERO,
-    DoviDecoderConfigurationRecord, LEVEL_MASK, PROFILE_BITS, RESERVED_OFFSET, RESERVED_TAIL_LEN,
-    invalid, pack_config_word, unpack_config_word,
-};
 use crate::error::{Error, Result};
 use crate::ts_demux::DESCRIPTOR_HEADER_LEN;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::u16_at;
 use broadcast_common::{Parse, Serialize};
+use isobmff::dovi::{
+    BL_FLAG, CCID_MASK, CCID_OFFSET, CCID_SHIFT, CONFIG_WORD_OFFSET, DOVI_RESERVED_ZERO,
+    DoviDecoderConfigurationRecord, LEVEL_MASK, PROFILE_BITS, RESERVED_OFFSET, RESERVED_TAIL_LEN,
+    invalid, pack_config_word, unpack_config_word,
+};
 
 /// MPEG-2 TS `DOVI_video_stream_descriptor` tag (TS spec Table 3-2).
 pub const DOVI_VIDEO_STREAM_DESCRIPTOR_TAG: u8 = 0xB0;
@@ -120,7 +120,8 @@ impl Serialize for DoviVideoStreamDescriptor {
                 "DOVI_video_stream_descriptor",
                 u64::from(ccid),
                 "field does not fit its bit width",
-            ));
+            )
+            .into());
         }
         buf[0] = self.record.version_major;
         buf[1] = self.record.version_minor;
@@ -134,7 +135,8 @@ impl Serialize for DoviVideoStreamDescriptor {
                         "dependency_reserved",
                         u64::from(self.dependency_reserved),
                         "does not fit 3 bits",
-                    ));
+                    )
+                    .into());
                 }
                 buf[CCID_OFFSET..CCID_OFFSET + TS_DESCRIPTOR_DEPENDENCY_LEN].copy_from_slice(
                     &((pid << PID_SHIFT) | u16::from(self.dependency_reserved)).to_be_bytes(),
@@ -146,7 +148,8 @@ impl Serialize for DoviVideoStreamDescriptor {
                     "dependency_pid",
                     self.dependency_pid.map_or(0, u64::from),
                     "present exactly when bl_present_flag is 0, and 13 bits",
-                ));
+                )
+                .into());
             }
         };
         if self.reserved > CCID_MASK {
@@ -154,7 +157,8 @@ impl Serialize for DoviVideoStreamDescriptor {
                 "DOVI_video_stream_descriptor.reserved",
                 u64::from(self.reserved),
                 "does not fit 4 bits",
-            ));
+            )
+            .into());
         }
         buf[tail] = (ccid << CCID_SHIFT) | self.reserved;
         buf[tail + 1..need].copy_from_slice(&self.extension);
@@ -209,7 +213,7 @@ fn descriptor_bodies(es_info: &[u8]) -> impl Iterator<Item = (u8, &[u8])> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dovi::*;
+    use isobmff::dovi::*;
 
     const P81_RECORD: [u8; 24] = [
         0x01, 0x00, 0x10, 0x1D, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -244,13 +248,13 @@ mod tests {
     fn lengths_are_rejected() {
         assert!(matches!(
             DoviDecoderConfigurationRecord::parse(&P81_RECORD[..23]),
-            Err(crate::error::Error::BufferTooShort(..))
+            Err(isobmff::Error::BufferTooShort(..))
         ));
         let mut long = P81_RECORD.to_vec();
         long.push(0);
         assert!(matches!(
             DoviDecoderConfigurationRecord::parse(&long),
-            Err(crate::error::Error::InvalidValue(..))
+            Err(isobmff::Error::InvalidValue(..))
         ));
     }
 
@@ -354,7 +358,7 @@ mod tests {
         r.level = 64;
         assert!(matches!(
             r.try_to_bytes(),
-            Err(crate::error::Error::InvalidValue(..))
+            Err(isobmff::Error::InvalidValue(..))
         ));
     }
 
@@ -364,7 +368,7 @@ mod tests {
         r.bl_signal_compatibility_id = DoviBlSignalCompatibilityId::Reserved(16);
         assert!(matches!(
             r.try_to_bytes(),
-            Err(crate::error::Error::InvalidValue(..))
+            Err(isobmff::Error::InvalidValue(..))
         ));
     }
 

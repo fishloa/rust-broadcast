@@ -1010,8 +1010,8 @@ const AAC_CHANNELS: u16 = 2;
 const TTML_NAMESPACE: &str = "http://www.w3.org/ns/ttml";
 
 /// An `esds` carrying `dsi` as its DecoderSpecificInfo (or none when `None`).
-fn esds(dsi: Option<Vec<u8>>) -> transmux::EsdsBox {
-    use transmux::{
+fn esds(dsi: Option<Vec<u8>>) -> isobmff::EsdsBox {
+    use isobmff::{
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };
     const SL_CONFIG_PREDEFINED_MP4: u8 = 2;

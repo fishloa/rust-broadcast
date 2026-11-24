@@ -32,10 +32,10 @@ use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
+use isobmff::{Ac3SpecificBox, HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::pipeline::CodecConfig;
 use transmux::{
-    Ac3SpecificBox, HEVCConfigurationBox, HEVCDecoderConfigurationRecord, Media, Sample,
-    StreamingTsHlsSegmenter, Track, TrackSpec, TsDemux, TsHlsPackager, TsMux,
+    Media, Sample, StreamingTsHlsSegmenter, Track, TrackSpec, TsDemux, TsHlsPackager, TsMux,
 };
 
 // ── Fixture loading (mirrors tests/it/ts_hevc.rs) ──────────────────────────────

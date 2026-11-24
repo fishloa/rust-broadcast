@@ -14,14 +14,14 @@ use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
 use core::time::Duration;
 use isobmff::movie_fragment::MovieFragmentBox;
+use isobmff::{
+    AVCConfigurationBox, AVCDecoderConfigurationRecord, DecoderConfigDescriptor,
+    DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+};
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
 use transmux::TrackId;
-use transmux::{
-    AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, DecoderConfigDescriptor,
-    DecoderSpecificInfo, ESDescriptor, EsdsBox, FragmentTrackData, SLConfigDescriptor, Sample,
-    Segmenter, TrackSpec, build_media_segment,
-};
+use transmux::{CodecConfig, FragmentTrackData, Sample, Segmenter, TrackSpec, build_media_segment};
 
 /// Wire value of a sync (random-access) `sample_flags`, per ISO/IEC 14496-12:2026
 /// §8.8.3.1 (`sample_is_non_sync_sample == 0`, `sample_depends_on == 2`).
@@ -381,8 +381,8 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         profile_compatibility: sps[2],
         level_indication: sps[3],
         length_size_minus_one: 3,
-        sps: vec![transmux::AvcSps(sps.clone())],
-        pps: vec![transmux::AvcPps(pps.clone())],
+        sps: vec![isobmff::AvcSps(sps.clone())],
+        pps: vec![isobmff::AvcPps(pps.clone())],
         chroma_format: None,
         bit_depth_luma_minus8: None,
         bit_depth_chroma_minus8: None,

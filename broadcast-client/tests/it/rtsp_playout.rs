@@ -222,7 +222,7 @@ fn rtsp_no_sprop_announces_video_with_inband_avcc() {
     // parse it back with transmux's avcC parser
     let mut buf = vec![0u8; cfg.serialized_len()];
     cfg.serialize_into(&mut buf).expect("serialize avcC");
-    let parsed = transmux::AVCConfigurationBox::parse_body(&buf[8..]).expect("parse avcC");
+    let parsed = isobmff::AVCConfigurationBox::parse_body(&buf[8..]).expect("parse avcC");
     assert_eq!(parsed, cfg);
 
     let mut ref_cfg = None;

@@ -271,7 +271,7 @@ fixture.** Root cause, isolated:
 - `dash/v300/init.mp4`'s `avc1` sample entry declares
   `AVCProfileIndication = 100` (H.264 High Profile).
 - `transmux::avc_config::AVCDecoderConfigurationRecord::parse`
-  (`transmux/src/avc_config.rs`, `has_high_profile_ext`/`is_high_profile`
+  (`isobmff/src/avc_config.rs`, `has_high_profile_ext`/`is_high_profile`
   gate around line 162) treats the ISO/IEC 14496-15:2017 §5.3.3.1.2
   backward-compatibility extension (`chroma_format` /
   `bit_depth_luma_minus8` / `bit_depth_chroma_minus8` /

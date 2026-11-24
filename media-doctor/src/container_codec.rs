@@ -264,7 +264,7 @@ fn check_media(media: &Media, report: &mut Report) {
 
 fn check_avc_track(
     track_id: TrackId,
-    record: &transmux::AVCDecoderConfigurationRecord,
+    record: &isobmff::AVCDecoderConfigurationRecord,
     width: u16,
     height: u16,
     report: &mut Report,
@@ -347,7 +347,7 @@ fn check_avc_track(
 
 fn check_hevc_track(
     track_id: TrackId,
-    record: &transmux::HEVCDecoderConfigurationRecord,
+    record: &isobmff::HEVCDecoderConfigurationRecord,
     width: u16,
     height: u16,
     report: &mut Report,

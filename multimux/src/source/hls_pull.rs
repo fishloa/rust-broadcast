@@ -164,6 +164,7 @@ mod tests {
     use broadcast_auth::Credentials;
     use broadcast_common::timeouts::Timeouts;
     use broadcast_hls::{MediaPlaylist, MediaSegment};
+    use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
     use media_plane::ingress::{HandshakePolicy, ProgramId};
     use media_plane::trunk::{SampleCursorItem, TrunkConfig};
     use std::collections::HashMap;
@@ -171,13 +172,11 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+    use transmux::CodecConfig;
     use transmux::TrackId;
     use transmux::TrackSpec;
     use transmux::ll_hls::LlHlsSegmenter;
     use transmux::pipeline::Sample;
-    use transmux::{
-        AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig,
-    };
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")

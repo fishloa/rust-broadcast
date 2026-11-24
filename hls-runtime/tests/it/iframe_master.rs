@@ -340,8 +340,8 @@ fn iframe_master_plain_byte_identical() {
 // ----- VIDEO-RANGE on the I-frame variant (Apple 9.16 covers variants AND I-frame variants) -----
 
 fn hdr_spec(transfer_code: u8) -> TrackSpec {
+    use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
     use transmux::ir::{ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType};
-    use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
     let config = AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication: 66,

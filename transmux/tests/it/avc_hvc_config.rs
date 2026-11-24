@@ -6,11 +6,11 @@
 //! byte-identical output.
 
 use broadcast_common::{Parse, Serialize};
-use transmux::codec_config_ext::HevcRecordCodecInfo;
-use transmux::{
+use isobmff::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, AvcSpsExt,
     HEVCDecoderConfigurationRecord,
 };
+use transmux::codec_config_ext::HevcRecordCodecInfo;
 
 /// Find the first box of a given type within `body` bytes.
 fn find_box<'a>(body: &'a [u8], four_cc: &[u8; 4]) -> Option<(&'a [u8], usize)> {

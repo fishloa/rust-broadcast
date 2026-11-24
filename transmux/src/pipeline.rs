@@ -24,11 +24,8 @@ use isobmff::box_types::BOX_TYPE_SIZE;
 
 use broadcast_common::Serialize;
 
-use crate::ac4::DAC4_FOURCC;
 use crate::av1::Av1SampleEntry;
-use crate::dts::DDTS_FOURCC;
 use crate::error::{Error, Result};
-use crate::flac::DFLA_FOURCC;
 use crate::fragment_build::{MediaRunSample, media_fragment_run};
 use crate::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntry, DataEntryUrlBox, DataInformationBox,
@@ -38,16 +35,19 @@ use crate::init_segment::{
     SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, TrackBox, TrackExtendsBox,
     TrackHeaderBox, VideoMediaHeaderBox,
 };
-use crate::mpegh::MHAC_FOURCC;
-use crate::nalu_types::{HEVC_SPS_NUT, HEVC_VPS_NUT};
-use crate::opus::DOPS_FOURCC;
 use crate::sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
 };
+use isobmff::ac4::DAC4_FOURCC;
 use isobmff::box_support::OpaqueBox;
+use isobmff::dts::DDTS_FOURCC;
+use isobmff::flac::DFLA_FOURCC;
 use isobmff::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentBox,
 };
+use isobmff::mpegh::MHAC_FOURCC;
+use isobmff::nalu_types::{HEVC_SPS_NUT, HEVC_VPS_NUT};
+use isobmff::opus::DOPS_FOURCC;
 use isobmff::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 use isobmff::visual_ext::{ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 
@@ -185,7 +185,7 @@ fn unmuxable_track_error(t: &TrackSpec) -> crate::error::Error {
 
 /// Serialize a typed config box body and wrap it as an [`OpaqueBox`] under the
 /// given four-CC (mirrors the `esds`/`dac3` embedding for audio sample entries).
-fn config_box<C: Serialize<Error = crate::error::Error>>(
+fn config_box<C: Serialize<Error = isobmff::Error>>(
     fourcc: &[u8; BOX_TYPE_SIZE],
     config: &C,
 ) -> Result<OpaqueBox> {
@@ -264,7 +264,7 @@ fn srat_opaque(rate: crate::init_segment::SamplingRateBox) -> Result<OpaqueBox> 
 fn avc_hevc_display_extra_boxes(
     display: Option<&crate::ir::DisplayGeometry>,
     hdr: Option<&crate::hdr::HdrStaticMetadata>,
-    dovi: Option<&crate::dovi::DoviDecoderConfigurationRecord>,
+    dovi: Option<&isobmff::dovi::DoviDecoderConfigurationRecord>,
 ) -> Result<Vec<crate::sample_entries::OpaqueBox>> {
     let mut extra_boxes = Vec::new();
     if let Some(display) = display {

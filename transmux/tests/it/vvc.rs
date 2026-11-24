@@ -7,12 +7,12 @@
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
+use isobmff::vvc_config::{
+    VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,
+};
 use transmux::codec_config_ext::VvcRecordCodecInfo;
 use transmux::media::{CmafMux, Fmp4Demux};
 use transmux::pipeline::CodecConfig;
-use transmux::vvc_config::{
-    VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,
-};
 
 const FIXTURE: &str = "mp4/frag/vvc.frag.mp4";
 
@@ -349,7 +349,7 @@ fn vvc_rejects_length_size_minus_one_two() {
     // reserved(5) '11111' + LengthSizeMinusOne(2) '10' + ptl_present(1) '0',
     // then num_of_arrays = 0.
     match VvcDecoderConfigurationRecord::parse(&[0xFC, 0x00]) {
-        Err(transmux::error::Error::InvalidValue(e)) => {
+        Err(isobmff::Error::InvalidValue(e)) => {
             assert_eq!(e.field, "LengthSizeMinusOne");
             assert_eq!(e.value, 2);
         }

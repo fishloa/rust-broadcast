@@ -9,15 +9,13 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use isobmff::dovi::{DVCC_FOURCC, DVH1_FOURCC, DVVC_FOURCC};
 use std::time::Duration;
-use transmux::dovi::{DVCC_FOURCC, DVH1_FOURCC, DVVC_FOURCC};
 use transmux::ir::{CodecConfig, TrackSpec};
 
+use isobmff::{DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord};
 use transmux::ts_demux::TsDemux;
-use transmux::{
-    CmafMux, DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord, Fmp4Demux, Media,
-    ProgressiveDemux, build_init_segment,
-};
+use transmux::{CmafMux, Fmp4Demux, Media, ProgressiveDemux, build_init_segment};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -515,7 +513,7 @@ fn a_non_hevc_config_suppresses_the_companion_set() {
     let Some(mut media) = ts_media(P81_TS) else {
         return;
     };
-    let record = transmux::AVCDecoderConfigurationRecord {
+    let record = isobmff::AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication: 66,
         profile_compatibility: 0,
@@ -529,7 +527,7 @@ fn a_non_hevc_config_suppresses_the_companion_set() {
         sps_ext: Vec::new(),
     };
     hevc_spec_mut(&mut media).config = CodecConfig::Avc {
-        config: transmux::AVCConfigurationBox::new(record),
+        config: isobmff::AVCConfigurationBox::new(record),
         width: 1_920,
         height: 1_080,
     };

@@ -57,6 +57,7 @@ use axum::routing::get;
 use crate::support::hls_pull_probe::{Activity, Probe, observed, pull_samples};
 use broadcast_hls::{DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 use hls_runtime::server::DEFAULT_TRACK_ID;
+use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
 use media_plane::ProgramId;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
@@ -64,10 +65,7 @@ use multimux::output::hls::HlsOutput as MmHlsOutput;
 use multimux::route::RouteHandle;
 use transmux::TrackId;
 use transmux::ll_hls::LlHlsSegmenter;
-use transmux::{
-    AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Sample,
-    TrackSpec,
-};
+use transmux::{CodecConfig, Sample, TrackSpec};
 
 const TRACK_ID: u32 = DEFAULT_TRACK_ID.value();
 /// Matches `multimux::pipeline`'s own fixed CMAF movie timescale.

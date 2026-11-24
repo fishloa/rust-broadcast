@@ -3,7 +3,7 @@
 //!
 //! The same byte layouts are the H.265 `mastering_display_colour_volume`
 //! (D.2.28) and `content_light_level_info` (D.2.35) SEI payloads. The SEI
-//! carrier that absorbs and emits them lives in [`crate::hdr`].
+//! carrier that absorbs and emits them lives in `transmux::hdr`.
 
 use crate::error::{Error, Result};
 use broadcast_common::error::{BufferTooShort, InvalidValue};
@@ -17,11 +17,11 @@ pub const MDCV_FOURCC: [u8; 4] = *b"mdcv";
 pub const CLLI_FOURCC: [u8; 4] = *b"clli";
 
 const CIE_PRIMARY_COUNT: usize = 3;
-pub(crate) const MDCV_PAYLOAD_LEN: usize = 24;
-pub(crate) const CLLI_PAYLOAD_LEN: usize = 4;
+pub const MDCV_PAYLOAD_LEN: usize = 24;
+pub const CLLI_PAYLOAD_LEN: usize = 4;
 
 /// Width of a box type / four-character code in bytes.
-pub(crate) const BOX_TYPE_LEN: usize = 4;
+pub const BOX_TYPE_LEN: usize = 4;
 /// A `ChromaticityXy` pair is two 16-bit coordinates (H.265 D.2.28).
 const CHROMATICITY_LEN: usize = 2;
 /// Stride of one `display_primaries` entry: `x` then `y`.

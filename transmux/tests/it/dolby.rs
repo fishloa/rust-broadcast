@@ -9,10 +9,8 @@ use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
 
 use isobmff::box_types::box_iter;
-use transmux::{
-    Ac3SpecificBox, Ac3SyncframeInfo, CodecConfig, Ec3SpecificBox, Ec3SyncframeInfo, TrackSpec,
-    build_init_segment,
-};
+use isobmff::{Ac3SpecificBox, Ec3SpecificBox};
+use transmux::{Ac3SyncframeInfo, CodecConfig, Ec3SyncframeInfo, TrackSpec, build_init_segment};
 
 // Oracle bytes from dolby-oracle.md
 fn timescale(value: u32) -> Timescale {

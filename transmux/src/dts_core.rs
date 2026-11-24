@@ -4,13 +4,13 @@
 //! [`DtsCoreFrameInfo`] parses the core frame header and builds a `ddts` box
 //! via [`DtsCoreFrameInfo::into_ddts`]; [`split_dts_core_frames`] splits a
 //! concatenated PES payload into core frames. The `ddts` box itself lives in
-//! [`crate::dts`].
+//! [`isobmff::dts`].
 
 use crate::bitreader::read_bits_checked as read_bits;
-use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
+use isobmff::dts::DtsSpecificBox;
 
 pub(crate) const DTS_CORE_SYNC_WORD: u32 = 0x7FFE_8001;
 
@@ -379,9 +379,9 @@ pub fn split_dts_core_frames(payload: &[u8]) -> Vec<DtsCoreFrame<'_>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dts::*;
     use crate::test_bits::BitWriter;
     use broadcast_common::{Parse, Serialize};
+    use isobmff::dts::*;
 
     /// Spec-derived test vector: hand-computed from §E.2.2.3.1 field layout.
     ///

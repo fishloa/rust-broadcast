@@ -413,11 +413,11 @@ impl TrackAligner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     use crate::pipeline::CodecConfig;
     use crate::rtp::RtpMediaKind;
     use crate::rtp_stream::RtpStreamTrack;
     use broadcast_common::Serialize;
+    use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
     const VIDEO: TrackId = TrackId::new(1);
     const OTHER: TrackId = TrackId::new(2);

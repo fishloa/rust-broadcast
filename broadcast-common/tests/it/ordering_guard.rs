@@ -462,7 +462,7 @@ fn named_const_blocks_ascending() {
     );
     consts_ascending(
         &r,
-        "transmux/src/mp4esds.rs",
+        "isobmff/src/mp4esds.rs",
         "const OTI_MPEG4_AUDIO",
         "const OTI_MPEG2_AUDIO",
     );

@@ -33,15 +33,14 @@ use transmux::TrackId;
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Stage, Unpackage};
+use isobmff::HEVCConfigurationBox;
 use isobmff::movie_fragment::MovieFragmentBox;
 use transmux::ll_dash::LlSegmenter;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::pipeline::DataCarriage;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::ts_hls::{StreamingTsHlsSegmenter, TsHlsPackager, TsSegment};
-use transmux::{
-    CodecConfig, HEVCConfigurationBox, Media, Sample, Segmenter, Track, TrackSpec, TsDemux,
-};
+use transmux::{CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, TsDemux};
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

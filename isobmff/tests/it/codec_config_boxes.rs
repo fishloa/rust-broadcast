@@ -7,7 +7,7 @@
 //! Fixtures: `fixtures/mp4/h264-high.mp4` (avcC), `fixtures/mp4/hevc-main.mp4` (hvcC).
 
 use broadcast_common::{Parse, Serialize};
-use transmux::{
+use isobmff::{
     AVCDecoderConfigurationRecord, HEVCConfigurationBox, HEVCDecoderConfigurationRecord,
 };
 

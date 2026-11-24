@@ -2,8 +2,8 @@
 //!
 //! Decodes the fields needed by the transmux pipeline — profile / level /
 //! dimensions / chroma / bit-depth / frame rate — from the raw NAL unit bytes
-//! stored in [`AvcSps`](crate::nalu_types::AvcSps) and
-//! [`HevcNalUnit`](crate::nalu_types::HevcNalUnit).
+//! stored in [`AvcSps`](isobmff::nalu_types::AvcSps) and
+//! [`HevcNalUnit`](isobmff::nalu_types::HevcNalUnit).
 //!
 //! # Spec citations
 //!
@@ -4004,8 +4004,8 @@ mod tests {
 
     fn hevc_cfg_for_sps(sps: Vec<u8>) -> crate::pipeline::CodecConfig {
         crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(
-                crate::hevc_config::HEVCDecoderConfigurationRecord {
+            config: isobmff::hevc_config::HEVCConfigurationBox::new(
+                isobmff::hevc_config::HEVCDecoderConfigurationRecord {
                     configuration_version: 1,
                     general_profile_space: 0,
                     general_tier_flag: false,
@@ -4023,10 +4023,10 @@ mod tests {
                     num_temporal_layers: 1,
                     temporal_id_nested: true,
                     length_size_minus_one: 3,
-                    arrays: vec![crate::nalu_types::HevcNalArray {
+                    arrays: vec![isobmff::nalu_types::HevcNalArray {
                         array_completeness: true,
                         nal_unit_type: 33,
-                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                        nalus: vec![isobmff::nalu_types::HevcNalUnit(sps)],
                     }],
                 },
             ),
@@ -4145,8 +4145,8 @@ mod tests {
     fn hevc_field_seq_one_ffip_zero_no_hrd_is_none() {
         let sps = hevc_sps_vui_hrd(true, false, 1, 25, None);
         let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: crate::hevc_config::HEVCConfigurationBox::new(
-                crate::hevc_config::HEVCDecoderConfigurationRecord {
+            config: isobmff::hevc_config::HEVCConfigurationBox::new(
+                isobmff::hevc_config::HEVCDecoderConfigurationRecord {
                     configuration_version: 1,
                     general_profile_space: 0,
                     general_tier_flag: false,
@@ -4164,10 +4164,10 @@ mod tests {
                     num_temporal_layers: 1,
                     temporal_id_nested: true,
                     length_size_minus_one: 3,
-                    arrays: vec![crate::nalu_types::HevcNalArray {
+                    arrays: vec![isobmff::nalu_types::HevcNalArray {
                         array_completeness: true,
                         nal_unit_type: 33,
-                        nalus: vec![crate::nalu_types::HevcNalUnit(sps)],
+                        nalus: vec![isobmff::nalu_types::HevcNalUnit(sps)],
                     }],
                 },
             ),

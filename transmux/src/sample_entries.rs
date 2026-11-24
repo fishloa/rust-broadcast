@@ -15,15 +15,15 @@
 //! | `hvc1`        | hvc1    | yes (`array_completeness=1`) | no      |
 //! | `hev1`        | hev1    | yes                   | yes            |
 
-use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
-use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{be_u16, be_u32};
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE};
+use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 
 /// Length of the VisualSampleEntry fixed fields (ISO/IEC 14496-12:2026 §12.1.3).
 /// 6+2(data_ref_index)+8+2(width)+2(height)+4(horiz)+4(vert)+4(reserved)+2(frame_count)+
@@ -394,7 +394,7 @@ pub struct AVCSampleEntry {
 impl AVCSampleEntry {
     /// Parse an AVC sample entry from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        use crate::avc_config::AVCConfigurationBox;
+        use isobmff::avc_config::AVCConfigurationBox;
         need_in(bytes, BARE_ENTRY_MIN_LEN, "avc1 bare")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
         codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
@@ -646,7 +646,7 @@ pub struct HEVCSampleEntry {
 impl HEVCSampleEntry {
     /// Parse an HEVC sample entry from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        use crate::hevc_config::HEVCConfigurationBox;
+        use isobmff::hevc_config::HEVCConfigurationBox;
         need_in(bytes, BARE_ENTRY_MIN_LEN, "hvc1 bare")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
         codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
@@ -692,7 +692,7 @@ impl HEVCSampleEntry {
     /// so a caller that wants the rule enforced asks here.
     pub fn array_completeness_violations(
         &self,
-    ) -> impl Iterator<Item = &crate::nalu_types::HevcNalArray> {
+    ) -> impl Iterator<Item = &isobmff::nalu_types::HevcNalArray> {
         let is_hvc1 = self.codec_type == HVC1_FOURCC;
         self.config
             .config
@@ -774,7 +774,7 @@ pub struct VVCSampleEntry {
     /// Visual sample entry fields.
     pub visual: VisualSampleEntryFields,
     /// VVC configuration box (`vvcC`).
-    pub config: crate::vvc_config::VvcConfigurationBox,
+    pub config: isobmff::vvc_config::VvcConfigurationBox,
     /// Additional config boxes preserved verbatim.
     pub extra_boxes: Vec<OpaqueBox>,
 }
@@ -784,7 +784,7 @@ impl VVCSampleEntry {
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         let compact = isobmff::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        use crate::vvc_config::VvcConfigurationBox;
+        use isobmff::vvc_config::VvcConfigurationBox;
         need_in(bytes, BARE_ENTRY_MIN_LEN, "vvc1 bare")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
         codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
@@ -818,7 +818,7 @@ impl VVCSampleEntry {
     }
 
     /// Create a new `vvc1` sample entry.
-    pub fn new_vvc1(config: crate::vvc_config::VvcConfigurationBox) -> Self {
+    pub fn new_vvc1(config: isobmff::vvc_config::VvcConfigurationBox) -> Self {
         let compressorname = {
             let mut c = [0u8; COMPRESSOR_NAME_LEN];
             c[0] = VVC_COMPRESSOR_NAME_FIELD_LEN as u8;
@@ -872,10 +872,10 @@ impl Serialize for VVCSampleEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::avc_config::AVCDecoderConfigurationRecord;
-    use crate::hevc_config::HEVCDecoderConfigurationRecord;
     use alloc::vec;
     use broadcast_common::Serialize;
+    use isobmff::avc_config::AVCDecoderConfigurationRecord;
+    use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
 
     fn make_avc_config() -> AVCDecoderConfigurationRecord {
         AVCDecoderConfigurationRecord {
@@ -884,8 +884,8 @@ mod tests {
             profile_compatibility: 0,
             level_indication: 30,
             length_size_minus_one: 3,
-            sps: alloc::vec![crate::nalu_types::AvcSps(vec![0x67, 0x64, 0x00, 0x1E])],
-            pps: alloc::vec![crate::nalu_types::AvcPps(vec![0x68, 0xEE, 0x3C])],
+            sps: alloc::vec![isobmff::nalu_types::AvcSps(vec![0x67, 0x64, 0x00, 0x1E])],
+            pps: alloc::vec![isobmff::nalu_types::AvcPps(vec![0x68, 0xEE, 0x3C])],
             chroma_format: Some(1),
             bit_depth_luma_minus8: Some(0),
             bit_depth_chroma_minus8: Some(0),
@@ -912,10 +912,10 @@ mod tests {
             num_temporal_layers: 1,
             temporal_id_nested: false,
             length_size_minus_one: 3,
-            arrays: alloc::vec![crate::nalu_types::HevcNalArray {
+            arrays: alloc::vec![isobmff::nalu_types::HevcNalArray {
                 array_completeness: true,
                 nal_unit_type: 32,
-                nalus: alloc::vec![crate::nalu_types::HevcNalUnit(vec![
+                nalus: alloc::vec![isobmff::nalu_types::HevcNalUnit(vec![
                     0x40, 0x01, 0x0C, 0x01, 0xFF
                 ])],
             }],
@@ -964,8 +964,8 @@ mod tests {
     /// The same for the VVC sample entry.
     #[test]
     fn vvc_entry_keeps_every_sibling_box() {
-        use crate::vvc_config::VvcConfigurationBox;
-        use crate::vvc_config::VvcDecoderConfigurationRecord;
+        use isobmff::vvc_config::VvcConfigurationBox;
+        use isobmff::vvc_config::VvcDecoderConfigurationRecord;
         let entry =
             VVCSampleEntry::new_vvc1(VvcConfigurationBox::new(VvcDecoderConfigurationRecord {
                 length_size_minus_one: 3,
@@ -1159,9 +1159,9 @@ mod tests {
         );
     }
 
-    fn make_vvc_config() -> crate::vvc_config::VvcConfigurationBox {
-        use crate::vvc_config::VvcConfigurationBox;
-        use crate::vvc_config::VvcDecoderConfigurationRecord;
+    fn make_vvc_config() -> isobmff::vvc_config::VvcConfigurationBox {
+        use isobmff::vvc_config::VvcConfigurationBox;
+        use isobmff::vvc_config::VvcDecoderConfigurationRecord;
         VvcConfigurationBox::new(VvcDecoderConfigurationRecord {
             length_size_minus_one: 3,
             ptl_present: false,

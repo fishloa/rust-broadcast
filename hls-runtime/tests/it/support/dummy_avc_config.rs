@@ -1,4 +1,4 @@
-use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
 
 pub fn dummy_avc_config() -> AVCConfigurationBox {
     AVCConfigurationBox::new(AVCDecoderConfigurationRecord {

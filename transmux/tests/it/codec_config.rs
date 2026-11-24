@@ -9,12 +9,13 @@
 //!    profile/compat/level bytes match SPS bytes exactly.
 
 use broadcast_common::Serialize;
+use isobmff::{AVCDecoderConfigurationRecord, AvcSps, HevcNalUnit};
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
 use mpeg_ts::pid::Pid;
 use transmux::annexb::iter_annexb_nals;
 use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
-use transmux::{AVCDecoderConfigurationRecord, AvcSps, AvcSpsInfo, HevcNalUnit, HevcSpsInfo};
+use transmux::{AvcSpsInfo, HevcSpsInfo};
 
 // ---- Helpers -----------------------------------------------------------------
 
@@ -358,7 +359,7 @@ fn avcc_round_trip_from_sps_decode() {
         level_indication: info.level_idc,
         length_size_minus_one: 3,
         sps: vec![AvcSps(sps_nal.to_vec())],
-        pps: vec![transmux::AvcPps(pps_nal.to_vec())],
+        pps: vec![isobmff::AvcPps(pps_nal.to_vec())],
         chroma_format: if info.profile_idc >= 100 {
             Some(info.chroma_format_idc)
         } else {

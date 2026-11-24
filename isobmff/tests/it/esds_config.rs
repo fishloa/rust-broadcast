@@ -9,7 +9,7 @@
 //! DecoderConfigDescriptor, DecoderSpecificInfo for AAC, SLConfigDescriptor).
 
 use broadcast_common::{Parse, Serialize};
-use transmux::{ESDescriptor, EsdsBox, ObjectTypeIndication, StreamType};
+use isobmff::{ESDescriptor, EsdsBox, ObjectTypeIndication, StreamType};
 
 /// Find the first `esds` box in the byte stream by scanning for the four-CC.
 fn find_esds_box(data: &[u8]) -> &[u8] {

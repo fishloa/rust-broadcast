@@ -16,13 +16,13 @@
 //! demux produced no track.
 
 use broadcast_common::{Package, Serialize, Unpackage};
+use isobmff::Ec3SpecificBox;
 use transmux::ac3_syncframe::{
     Ec3SyncframeInfo, ec3_specific_box_from_syncframes, split_eac3_syncframes,
 };
 use transmux::pipeline::CodecConfig;
 use transmux::{
-    CmafMux, DemuxEvent, Ec3SpecificBox, Fmp4Demux, Media, ProgressiveDemux, StreamingTsDemux,
-    TsDemux,
+    CmafMux, DemuxEvent, Fmp4Demux, Media, ProgressiveDemux, StreamingTsDemux, TsDemux,
 };
 
 const AU_COUNT: usize = 157;

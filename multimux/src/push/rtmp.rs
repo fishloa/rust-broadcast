@@ -467,7 +467,7 @@ mod tests {
 
     fn avc_config() -> CodecConfig {
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
+            config: isobmff::AVCConfigurationBox::new(isobmff::AVCDecoderConfigurationRecord {
                 configuration_version: 1,
                 profile_indication: 0x42,
                 profile_compatibility: 0,

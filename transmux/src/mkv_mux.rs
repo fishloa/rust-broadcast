@@ -80,8 +80,8 @@ use broadcast_common::{Package, Serialize};
 
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
-use crate::opus::OpusSpecificBox;
 use crate::pipeline::CodecConfig;
+use isobmff::opus::OpusSpecificBox;
 
 // ---------------------------------------------------------------------------
 // EBML header elements (RFC 8794 §11)
@@ -966,8 +966,8 @@ mod tests {
     /// the Matroska CodecPrivate build must return `Err`, not panic.
     #[test]
     fn avc_codec_private_over_range_errors_not_panics() {
-        use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-        use crate::nalu_types::AvcSps;
+        use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+        use isobmff::nalu_types::AvcSps;
         let config = CodecConfig::Avc {
             config: AVCConfigurationBox {
                 config: AVCDecoderConfigurationRecord {

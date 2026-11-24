@@ -9,14 +9,12 @@
 
 use broadcast_common::Parse;
 use broadcast_common::timescale::Timescale;
+use isobmff::{AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord};
 use transmux::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType,
 };
 use transmux::pipeline;
-use transmux::{
-    AVCDecoderConfigurationRecord, AVCSampleEntry, HEVCDecoderConfigurationRecord, HEVCSampleEntry,
-    TrackId, TrackSpec,
-};
+use transmux::{AVCSampleEntry, HEVCSampleEntry, TrackId, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -126,7 +124,7 @@ fn sar_64_45_writes_pasp() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -147,7 +145,7 @@ fn sar_16_11_writes_pasp() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -167,7 +165,7 @@ fn sar_1_1_writes_no_pasp() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -187,7 +185,7 @@ fn sar_unspecified_writes_no_pasp() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -212,7 +210,7 @@ fn colour_5_5_5_limited_writes_colr() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -238,7 +236,7 @@ fn colour_bt709_full_range_writes_colr() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -271,7 +269,7 @@ fn colr_writes_primaries_transfer_matrix_in_order() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -297,7 +295,7 @@ fn colr_writes_primaries_transfer_matrix_in_order() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -320,7 +318,7 @@ fn video_signal_present_colour_none_writes_no_colr() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -339,7 +337,7 @@ fn no_display_writes_neither() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -365,7 +363,7 @@ fn neither_is_byte_identical_to_display_none() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -379,7 +377,7 @@ fn neither_is_byte_identical_to_display_none() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -409,7 +407,7 @@ fn order_pasp_then_colr_after_config() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Avc {
-            config: transmux::AVCConfigurationBox {
+            config: isobmff::AVCConfigurationBox {
                 config: avc_config(),
             },
             width: 720,
@@ -441,7 +439,7 @@ fn hevc_writes_pasp_and_colr() {
         TrackId::new(1),
         timescale(90000),
         CodecConfig::Hevc {
-            config: transmux::HEVCConfigurationBox {
+            config: isobmff::HEVCConfigurationBox {
                 config: hevc_config(),
             },
             width: 1920,

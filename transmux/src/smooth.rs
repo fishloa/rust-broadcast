@@ -610,7 +610,7 @@ pub struct SmoothCodec {
 
 /// The `CodecPrivateData` bytes for a video track: start-code-prefixed
 /// SPS+PPS NAL units (§2.2.2.5).
-fn avc_codec_private_data(config: &crate::avc_config::AVCConfigurationBox) -> Vec<u8> {
+fn avc_codec_private_data(config: &isobmff::avc_config::AVCConfigurationBox) -> Vec<u8> {
     let mut out = Vec::new();
     for sps in &config.config.sps {
         out.extend_from_slice(&START_CODE);
@@ -627,7 +627,7 @@ fn avc_codec_private_data(config: &crate::avc_config::AVCConfigurationBox) -> Ve
 /// carried in the `esds` (§2.2.2.5). An `esds` without a
 /// DecoderSpecificInfo describes no decoder, so it is refused rather than
 /// advertised as an empty `CodecPrivateData` a client cannot initialise from.
-fn aac_codec_private_data(esds: &crate::mp4esds::EsdsBox) -> Result<Vec<u8>> {
+fn aac_codec_private_data(esds: &isobmff::mp4esds::EsdsBox) -> Result<Vec<u8>> {
     let dsi = esds.require_decoder_specific_info()?;
     Ok(dsi.to_vec())
 }

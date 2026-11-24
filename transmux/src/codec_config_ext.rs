@@ -7,12 +7,12 @@
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::Result;
-use crate::hevc_config::HEVCDecoderConfigurationRecord;
-use crate::mp4esds::EsdsBox;
 use crate::sps::rfc6381_vvc1;
-use crate::vvc_config::VvcDecoderConfigurationRecord;
 use alloc::string::String;
 use broadcast_common::Parse;
+use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
+use isobmff::mp4esds::EsdsBox;
+use isobmff::vvc_config::VvcDecoderConfigurationRecord;
 
 /// `pcmSampleDepth` is `bit_depth_minus8 + 8` — ISO/IEC 14496-15:2017 §E.3.
 const BIT_DEPTH_OFFSET: u8 = 8;
@@ -87,5 +87,68 @@ pub trait EsdsBoxCodecInfo {
 impl EsdsBoxCodecInfo for EsdsBox {
     fn audio_specific_config(&self) -> Result<AudioSpecificConfig> {
         AudioSpecificConfig::parse(self.require_decoder_specific_info()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    fn fixture_vvcc_body() -> Vec<u8> {
+        let hex = "00000000ff00655f010220800000014000f00000028f00010044\
+007900ab02208000008028203c46a00527ffac2136563040827004a1164883521e8\
+f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
+88900001000c0081000014101e22241f4100";
+        test_fixtures::hex_bytes(hex)
+    }
+
+    #[test]
+    fn vvcc_dimensions_come_from_the_first_sps() {
+        let body = fixture_vvcc_body();
+        let record = VvcDecoderConfigurationRecord::parse(&body[4..]).unwrap();
+        assert_eq!(record.dimensions(), Some((320, 240)));
+    }
+
+    #[test]
+    fn vvcc_rfc6381_cta_suffix_prints_the_constraint_payload() {
+        let payload = [
+            0x00u8, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xFC,
+        ];
+        assert_eq!(
+            crate::sps::rfc6381_vvc1(1, false, 32, &payload, 12),
+            "vvc1.1.L32.CTA-00112233445566778899AAFC"
+        );
+    }
+
+    #[test]
+    fn vvcc_record_rfc6381_uses_the_ptl_record() {
+        let body = fixture_vvcc_body();
+        let record = VvcDecoderConfigurationRecord::parse(&body[4..]).unwrap();
+        assert!(record.rfc6381().starts_with("vvc1."));
+
+        let mut without_ptl = record.clone();
+        without_ptl.ptl = None;
+        assert_eq!(without_ptl.rfc6381(), "vvc1");
+    }
+
+    #[test]
+    fn esds_audio_specific_config_reads_the_decoder_specific_info() {
+        let esds = EsdsBox::new(isobmff::mp4esds::ESDescriptor::new(
+            1,
+            0,
+            Some(isobmff::mp4esds::DecoderConfigDescriptor::new(
+                0x40,
+                5,
+                false,
+                0,
+                0,
+                0,
+                Some(isobmff::mp4esds::DecoderSpecificInfo::new(vec![0x12, 0x10])),
+            )),
+            Some(isobmff::mp4esds::SLConfigDescriptor::predefined_two()),
+        ));
+        assert_eq!(esds.decoder_specific_info_data(), Some(&[0x12u8, 0x10][..]));
+        assert!(esds.audio_specific_config().is_ok());
     }
 }

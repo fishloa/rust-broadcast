@@ -8,21 +8,21 @@ use alloc::vec::Vec;
 use broadcast_common::Serialize;
 
 use crate::aac_asc::HeAacProfile;
-use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
-use crate::ac4::Ac4SpecificBox;
-use crate::av1::Av1ConfigurationBox;
-use crate::avc_config::AVCConfigurationBox;
 use crate::codec_config_ext::EsdsBoxCodecInfo;
-use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
-use crate::flac::FlacSpecificBox;
-use crate::hevc_config::HEVCConfigurationBox;
-use crate::mp4esds::{DecoderSpecificInfo, EsdsBox};
-use crate::opus::OpusSpecificBox;
 use crate::units::BITS_PER_KILOBIT;
-use crate::vp9::Vp9ConfigurationBox;
-use crate::vvc_config::VvcConfigurationBox;
+use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
+use isobmff::ac4::Ac4SpecificBox;
+use isobmff::av1::Av1ConfigurationBox;
+use isobmff::avc_config::AVCConfigurationBox;
 use isobmff::box_types::BOX_TYPE_SIZE;
+use isobmff::dts::DtsSpecificBox;
+use isobmff::flac::FlacSpecificBox;
+use isobmff::hevc_config::HEVCConfigurationBox;
+use isobmff::mp4esds::{DecoderSpecificInfo, EsdsBox};
+use isobmff::opus::OpusSpecificBox;
+use isobmff::vp9::Vp9ConfigurationBox;
+use isobmff::vvc_config::VvcConfigurationBox;
 
 /// Whether a [`CodecConfig::Data`] elementary stream carries PES packets or
 /// PSI/private sections on its PID.
@@ -232,7 +232,7 @@ pub enum CodecConfig {
     /// `build_trak` always emits `mha1`.
     MpegH {
         /// The `MHADecoderConfigurationRecord` carried in the `mhaC` box.
-        config: crate::mpegh::MHADecoderConfigurationRecord,
+        config: isobmff::mpegh::MHADecoderConfigurationRecord,
         /// Channel count.
         channel_count: u16,
         /// Sampling rate in Hz.
@@ -276,7 +276,7 @@ pub enum CodecConfig {
     /// `codec_fourcc` selects the sample-entry FourCC:
     /// `dtsc` (core only), `dtsh` (core + extension / multi-asset),
     /// `dtsl` (LBR only), or `dtse` (extension substream only).
-    /// Use [`crate::dts::DTSC_FOURCC`] etc. for the named constants.
+    /// Use [`isobmff::dts::DTSC_FOURCC`] etc. for the named constants.
     Dts {
         /// The `ddts` DTSSpecificBox.
         config: DtsSpecificBox,

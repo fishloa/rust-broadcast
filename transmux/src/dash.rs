@@ -636,7 +636,7 @@ impl DashPackager {
             CodecConfig::Vp9 { config, .. } => Ok(config.rfc6381()),
             CodecConfig::MpegH { config, .. } => Ok(config.rfc6381()),
             CodecConfig::Dts { codec_fourcc, .. } => {
-                Ok(crate::dts::DtsSpecificBox::rfc6381(codec_fourcc).to_string())
+                Ok(isobmff::dts::DtsSpecificBox::rfc6381(codec_fourcc).to_string())
             }
             // RFC 6381 §3.3: MP4 registration uses the sample-entry FourCC plus
             // the ObjectTypeIndication (e.g. `mp4v.61`, `mp4a.6B`).
@@ -1206,7 +1206,7 @@ impl DashPackager {
 
 /// The `objectTypeIndication` carried in an `esds` (0 if the DecoderConfig is
 /// absent) — used to build the RFC 6381 `mp4v.<OTI>` / `mp4a.<OTI>` codec string.
-fn oti_of(esds: &crate::mp4esds::EsdsBox) -> u8 {
+fn oti_of(esds: &isobmff::mp4esds::EsdsBox) -> u8 {
     esds.es_descriptor
         .decoder_config
         .as_ref()

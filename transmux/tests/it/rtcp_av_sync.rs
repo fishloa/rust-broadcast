@@ -17,8 +17,8 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::timescale::Timescale;
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::TrackId;
-use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::pipeline::{CodecConfig, Sample};
 use transmux::rtcp::SenderReport;
 use transmux::rtp::RtpMediaKind;

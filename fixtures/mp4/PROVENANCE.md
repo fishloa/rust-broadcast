@@ -173,7 +173,7 @@ ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" -c:a libopus -f mp4 fixtur
 ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" -c:a flac   -f mp4 fixtures/mp4/flac.mp4
 # vp9.mp4: `-t 0.4` (10 frames at 25 fps). Its `vpcC` box body is the vpcC
 # oracle used by transmux/tests/it/codecs_new.rs::vpcc_round_trip_and_fields and
-# transmux/src/vp9.rs::version_1_ffmpeg_oracle_parses_and_round_trips:
+# isobmff/src/vp9.rs::version_1_ffmpeg_oracle_parses_and_round_trips:
 #   010000000014820202020000
 # (FullBox version 1; profile 0, level 20, bitDepth 8, chromaSubsampling 1,
 #  CICP 2/2/2, codecInitializationDataSize 0).
