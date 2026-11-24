@@ -47,7 +47,9 @@ use broadcast_common::timescale::{Rounding, rescale_i64, rescale_u64};
 use broadcast_common::{Parse, Serialize};
 
 use crate::aac_asc::AudioSpecificConfig;
-use crate::box_types::{BoxHeader, BoxType, UUID_TYPE_SIZE};
+use crate::box_types::{
+    BOX_HEADER_MIN_SIZE, BoxHeader, BoxType, FULLBOX_EXTRA_SIZE, UUID_TYPE_SIZE,
+};
 use crate::error::{Error, Result};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::movie_fragment::{
@@ -55,6 +57,7 @@ use crate::movie_fragment::{
 };
 use crate::pipeline::{CodecConfig, Sample};
 use crate::segments::{MediaDataBox, SegmentTypeBox, starts_with_moof};
+use crate::wire_cursor::{be_u32, be_u64};
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
@@ -103,6 +106,15 @@ const AAC_BITS_PER_SAMPLE: u16 = 16;
 
 /// Annex B start code prefixing each parameter-set NAL in `CodecPrivateData`.
 const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
+
+/// Default target fragment duration, in whole seconds.
+const DEFAULT_TARGET_SECS: u64 = 2;
+/// The `2` that halves a divisor for a rounded quotient.
+const ROUNDING_DIVISOR: u64 = 2;
+/// Offset of a box's type (FourCC) within its header: after the 32-bit size.
+const BOX_TYPE_OFFSET: usize = core::mem::size_of::<u32>();
+/// Length of one `tfxd` 64-bit time field.
+const TFXD_TIME_LEN: usize = core::mem::size_of::<u64>();
 
 /// The `styp` brand emitted ahead of a self-contained Smooth fragment (kept
 /// consistent with the crate's CMAF media segments).
@@ -171,13 +183,11 @@ impl TfxdBox {
     /// and the 16-byte `usertype`, i.e. the FullBox header + payload).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         // version(1) + flags(3) + AbsoluteTime(8) + Duration(8)
-        let need = 4 + Self::PAYLOAD_LEN;
+        let need = FULLBOX_EXTRA_SIZE + Self::PAYLOAD_LEN;
         need_in(body, need, "tfxd body")?;
-        let p = &body[4..];
-        let fragment_absolute_time =
-            u64::from_be_bytes([p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]]);
-        let fragment_duration =
-            u64::from_be_bytes([p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15]]);
+        let p = &body[FULLBOX_EXTRA_SIZE..];
+        let fragment_absolute_time = be_u64(p, 0, "tfxd body")?;
+        let fragment_duration = be_u64(p, TFXD_TIME_LEN, "tfxd body")?;
         Ok(Self {
             fragment_absolute_time,
             fragment_duration,
@@ -191,7 +201,7 @@ impl Serialize for TfxdBox {
     fn serialized_len(&self) -> usize {
         // box header(8) + usertype(16) + FullBox version/flags(4) + payload(16).
         let hdr = BoxHeader::new(0, BoxType::from_bytes(*b"uuid"), Some(TFXD_UUID));
-        hdr.serialized_len() + 4 + Self::PAYLOAD_LEN
+        hdr.serialized_len() + FULLBOX_EXTRA_SIZE + Self::PAYLOAD_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -201,15 +211,13 @@ impl Serialize for TfxdBox {
         let hdr = BoxHeader::new(need as u64, BoxType::from_bytes(*b"uuid"), Some(TFXD_UUID));
         let mut c = hdr.serialize_into(buf)?;
         // FullBox header: version + 24-bit flags(0).
-        buf[c] = Self::VERSION;
-        buf[c + 1] = 0;
-        buf[c + 2] = 0;
-        buf[c + 3] = 0;
-        c += 4;
-        buf[c..c + 8].copy_from_slice(&self.fragment_absolute_time.to_be_bytes());
-        c += 8;
-        buf[c..c + 8].copy_from_slice(&self.fragment_duration.to_be_bytes());
-        c += 8;
+        let fullbox = [Self::VERSION, 0, 0, 0];
+        buf[c..c + fullbox.len()].copy_from_slice(&fullbox);
+        c += fullbox.len();
+        buf[c..c + TFXD_TIME_LEN].copy_from_slice(&self.fragment_absolute_time.to_be_bytes());
+        c += TFXD_TIME_LEN;
+        buf[c..c + TFXD_TIME_LEN].copy_from_slice(&self.fragment_duration.to_be_bytes());
+        c += TFXD_TIME_LEN;
         Ok(c)
     }
 }
@@ -258,7 +266,7 @@ pub struct SmoothPackager {
 impl Default for SmoothPackager {
     fn default() -> Self {
         Self {
-            target_duration: core::time::Duration::from_secs(2),
+            target_duration: core::time::Duration::from_secs(DEFAULT_TARGET_SECS),
         }
     }
 }
@@ -364,9 +372,9 @@ impl SmoothPackager {
         // checked_div guards the zero-duration case (→ 0).
         let bitrate = {
             let bits_ts = total_bytes
-                .saturating_mul(8)
+                .saturating_mul(u64::from(u8::BITS))
                 .saturating_mul(SMOOTH_TIMESCALE);
-            (bits_ts + total_duration / 2)
+            (bits_ts + total_duration / ROUNDING_DIVISOR)
                 .checked_div(total_duration)
                 .unwrap_or(0)
         }
@@ -909,21 +917,18 @@ fn build_smooth_fragment(
 /// `traf` is the last child of the `moof`, so appending the `tfxd` at the very
 /// end of the buffer places it as the last child of that `traf`.
 fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
-    if moof.len() < 8 || !starts_with_moof(&moof[4..]) {
+    if moof.len() < BOX_HEADER_MIN_SIZE || !starts_with_moof(&moof[BOX_TYPE_OFFSET..]) {
         return Err(Error::UnexpectedBox { expected: "moof" });
     }
     // Locate the traf: walk moof children, it is the box after mfhd.
-    let mfhd_size = u32::from_be_bytes([moof[8], moof[9], moof[10], moof[11]]) as usize;
-    let traf_off = 8 + mfhd_size;
-    if moof.len() < traf_off + 8 || &moof[traf_off + 4..traf_off + 8] != b"traf" {
+    let mfhd_size = be_u32(moof, BOX_HEADER_MIN_SIZE, "moof box header")? as usize;
+    let traf_off = BOX_HEADER_MIN_SIZE + mfhd_size;
+    if moof.len() < traf_off + BOX_HEADER_MIN_SIZE
+        || &moof[traf_off + BOX_TYPE_OFFSET..traf_off + BOX_HEADER_MIN_SIZE] != b"traf"
+    {
         return Err(Error::UnexpectedBox { expected: "traf" });
     }
-    let old_traf_size = u32::from_be_bytes([
-        moof[traf_off],
-        moof[traf_off + 1],
-        moof[traf_off + 2],
-        moof[traf_off + 3],
-    ]) as usize;
+    let old_traf_size = be_u32(moof, traf_off, "traf box header")? as usize;
 
     let tfxd_bytes = tfxd.try_to_bytes()?;
     let mut out = Vec::with_capacity(moof.len() + tfxd_bytes.len());
@@ -944,7 +949,8 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
     out[0..4].copy_from_slice(&new_moof_size.to_be_bytes());
     let traf_size = old_traf_size + tfxd_bytes.len();
     let new_traf_size = u32::try_from(traf_size).map_err(|_| too_big(traf_size))?;
-    out[traf_off..traf_off + 4].copy_from_slice(&new_traf_size.to_be_bytes());
+    out[traf_off..traf_off + core::mem::size_of::<u32>()]
+        .copy_from_slice(&new_traf_size.to_be_bytes());
     Ok(out)
 }
 

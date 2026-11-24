@@ -16,6 +16,14 @@ use broadcast_common::Serialize;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 
+const BOX_HEADER_SIZE: usize = 8;
+const LARGESIZE_SIZE: usize = 8;
+const FOURCC_LEN: usize = 4;
+const U32_LEN: usize = core::mem::size_of::<u32>();
+const BRAND_BOX_FIXED_LEN: usize = FOURCC_LEN + U32_LEN;
+const MINOR_VERSION_OFFSET: usize = FOURCC_LEN;
+const BRANDS_START_OFFSET: usize = BRAND_BOX_FIXED_LEN;
+
 /// Four-CC of the File Type Box.
 pub const FTYP: [u8; 4] = *b"ftyp";
 /// Four-CC of the Segment Type Box.
@@ -30,26 +38,30 @@ pub const MDAT: [u8; 4] = *b"mdat";
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 struct BrandBox {
-    major_brand: [u8; 4],
+    major_brand: [u8; FOURCC_LEN],
     minor_version: u32,
-    compatible_brands: Vec<[u8; 4]>,
+    compatible_brands: Vec<[u8; FOURCC_LEN]>,
 }
 
 impl BrandBox {
     fn body_len(&self) -> usize {
         // major_brand(4) + minor_version(4) + N compatible brands (4 each)
-        4 + 4 + self.compatible_brands.len() * 4
+        BRAND_BOX_FIXED_LEN + self.compatible_brands.len() * FOURCC_LEN
     }
 
     fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, 8, "ftyp/styp body")?;
-        let major_brand = [body[0], body[1], body[2], body[3]];
-        let minor_version = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
+        need_in(body, BRAND_BOX_FIXED_LEN, "ftyp/styp body")?;
+        let mut major_brand = [0u8; FOURCC_LEN];
+        major_brand.copy_from_slice(&body[..FOURCC_LEN]);
+        let minor_version =
+            crate::wire_cursor::be_u32(body, MINOR_VERSION_OFFSET, "ftyp/styp body")?;
         let mut compatible_brands = Vec::new();
-        let mut off = 8;
-        while off + 4 <= body.len() {
-            compatible_brands.push([body[off], body[off + 1], body[off + 2], body[off + 3]]);
-            off += 4;
+        let mut off = BRANDS_START_OFFSET;
+        while off + FOURCC_LEN <= body.len() {
+            let mut brand = [0u8; FOURCC_LEN];
+            brand.copy_from_slice(&body[off..off + FOURCC_LEN]);
+            compatible_brands.push(brand);
+            off += FOURCC_LEN;
         }
         Ok(Self {
             major_brand,
@@ -58,21 +70,22 @@ impl BrandBox {
         })
     }
 
-    fn serialize_into(&self, four_cc: &[u8; 4], buf: &mut [u8]) -> Result<usize> {
-        let need = 8 + self.body_len();
+    fn serialize_into(&self, four_cc: &[u8; FOURCC_LEN], buf: &mut [u8]) -> Result<usize> {
+        let need = BOX_HEADER_SIZE + self.body_len();
         need_out(buf, need)?;
         // `ftyp`/`styp` are brand lists and their reader takes the compact
         // form only; a size past 32 bits is a typed error, never a wrap
         // (#1147).
         let size = broadcast_common::len::fit_u32(need, "ftyp/styp size")?;
-        buf[0..4].copy_from_slice(&size.to_be_bytes());
-        buf[4..8].copy_from_slice(four_cc);
-        buf[8..12].copy_from_slice(&self.major_brand);
-        buf[12..16].copy_from_slice(&self.minor_version.to_be_bytes());
-        let mut off = 16;
+        buf[..U32_LEN].copy_from_slice(&size.to_be_bytes());
+        buf[U32_LEN..BOX_HEADER_SIZE].copy_from_slice(four_cc);
+        buf[BOX_HEADER_SIZE..BOX_HEADER_SIZE + FOURCC_LEN].copy_from_slice(&self.major_brand);
+        buf[BOX_HEADER_SIZE + FOURCC_LEN..BOX_HEADER_SIZE + BRAND_BOX_FIXED_LEN]
+            .copy_from_slice(&self.minor_version.to_be_bytes());
+        let mut off = BOX_HEADER_SIZE + BRANDS_START_OFFSET;
         for brand in &self.compatible_brands {
-            buf[off..off + 4].copy_from_slice(brand);
-            off += 4;
+            buf[off..off + FOURCC_LEN].copy_from_slice(brand);
+            off += FOURCC_LEN;
         }
         Ok(need)
     }
@@ -86,11 +99,11 @@ impl BrandBox {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FileTypeBox {
     /// Best-use brand (e.g. `iso5`).
-    pub major_brand: [u8; 4],
+    pub major_brand: [u8; FOURCC_LEN],
     /// Minor version of the major brand.
     pub minor_version: u32,
     /// Brands the file is compatible with.
-    pub compatible_brands: Vec<[u8; 4]>,
+    pub compatible_brands: Vec<[u8; FOURCC_LEN]>,
 }
 
 impl FileTypeBox {
@@ -116,7 +129,7 @@ impl FileTypeBox {
 impl Serialize for FileTypeBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        8 + self.brand().body_len()
+        BOX_HEADER_SIZE + self.brand().body_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.brand().serialize_into(&FTYP, buf)
@@ -131,11 +144,11 @@ impl Serialize for FileTypeBox {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SegmentTypeBox {
     /// Best-use brand (e.g. `msdh`).
-    pub major_brand: [u8; 4],
+    pub major_brand: [u8; FOURCC_LEN],
     /// Minor version of the major brand.
     pub minor_version: u32,
     /// Brands the segment is compatible with.
-    pub compatible_brands: Vec<[u8; 4]>,
+    pub compatible_brands: Vec<[u8; FOURCC_LEN]>,
 }
 
 impl SegmentTypeBox {
@@ -161,7 +174,7 @@ impl SegmentTypeBox {
 impl Serialize for SegmentTypeBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        8 + self.brand().body_len()
+        BOX_HEADER_SIZE + self.brand().body_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.brand().serialize_into(&STYP, buf)
@@ -182,33 +195,35 @@ pub struct MediaDataBox {
 impl MediaDataBox {
     /// Whether this box must use the 64-bit `largesize` form.
     fn needs_large(&self) -> bool {
-        8 + self.data.len() > u32::MAX as usize
+        BOX_HEADER_SIZE + self.data.len() > u32::MAX as usize
     }
 
     /// Parse a whole `mdat` box (including the header), handling both the
     /// compact 32-bit and the 64-bit `largesize` forms.
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        need_in(bytes, 8, "mdat")?;
-        if bytes[4..8] != MDAT {
+        need_in(bytes, BOX_HEADER_SIZE, "mdat")?;
+        if bytes[U32_LEN..BOX_HEADER_SIZE] != MDAT {
             return Err(Error::UnexpectedBox { expected: "mdat" });
         }
-        let size32 = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let size32 = crate::wire_cursor::be_u32(bytes, 0, "mdat")?;
         let (size, hdr) = if size32 == 1 {
-            need_in(bytes, 16, "mdat largesize")?;
+            let large_header = BOX_HEADER_SIZE + LARGESIZE_SIZE;
+            need_in(bytes, large_header, "mdat largesize")?;
             (
                 // A `largesize` beyond `usize` can never fit `bytes`: saturate so
                 // the size check below rejects it instead of truncating.
-                usize::try_from(u64::from_be_bytes([
-                    bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
-                    bytes[15],
-                ]))
+                usize::try_from(crate::wire_cursor::be_u64(
+                    bytes,
+                    BOX_HEADER_SIZE,
+                    "mdat largesize",
+                )?)
                 .unwrap_or(usize::MAX),
-                16usize,
+                large_header,
             )
         } else if size32 == 0 {
-            (bytes.len(), 8usize)
+            (bytes.len(), BOX_HEADER_SIZE)
         } else {
-            (size32 as usize, 8usize)
+            (size32 as usize, BOX_HEADER_SIZE)
         };
         if size < hdr || size > bytes.len() {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -227,23 +242,24 @@ impl Serialize for MediaDataBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         if self.needs_large() {
-            16 + self.data.len()
+            BOX_HEADER_SIZE + LARGESIZE_SIZE + self.data.len()
         } else {
-            8 + self.data.len()
+            BOX_HEADER_SIZE + self.data.len()
         }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let hdr = if self.needs_large() {
-            buf[0..4].copy_from_slice(&1u32.to_be_bytes());
-            buf[4..8].copy_from_slice(&MDAT);
-            buf[8..16].copy_from_slice(&(need as u64).to_be_bytes());
-            16
+            buf[..U32_LEN].copy_from_slice(&1u32.to_be_bytes());
+            buf[U32_LEN..BOX_HEADER_SIZE].copy_from_slice(&MDAT);
+            let large_header = BOX_HEADER_SIZE + LARGESIZE_SIZE;
+            buf[BOX_HEADER_SIZE..large_header].copy_from_slice(&(need as u64).to_be_bytes());
+            large_header
         } else {
-            buf[0..4].copy_from_slice(&(need as u32).to_be_bytes());
-            buf[4..8].copy_from_slice(&MDAT);
-            8
+            buf[..U32_LEN].copy_from_slice(&(need as u32).to_be_bytes());
+            buf[U32_LEN..BOX_HEADER_SIZE].copy_from_slice(&MDAT);
+            BOX_HEADER_SIZE
         };
         buf[hdr..hdr + self.data.len()].copy_from_slice(&self.data);
         Ok(need)
@@ -253,22 +269,22 @@ impl Serialize for MediaDataBox {
 /// Validate a whole box's four-CC and return its body (bytes after the 8-byte
 /// header). Only the compact 32-bit size form is supported here (`ftyp`/`styp`
 /// are always small).
-fn box_body<'a>(bytes: &'a [u8], four_cc: &[u8; 4]) -> Result<&'a [u8]> {
-    need_in(bytes, 8, "box header")?;
-    if bytes[4..8] != *four_cc {
+fn box_body<'a>(bytes: &'a [u8], four_cc: &[u8; FOURCC_LEN]) -> Result<&'a [u8]> {
+    need_in(bytes, BOX_HEADER_SIZE, "box header")?;
+    if bytes[U32_LEN..BOX_HEADER_SIZE] != *four_cc {
         return Err(Error::UnexpectedBox {
             expected: "ftyp/styp",
         });
     }
-    let size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-    if size < 8 || size > bytes.len() {
+    let size = crate::wire_cursor::be_u32(bytes, 0, "box header")? as usize;
+    if size < BOX_HEADER_SIZE || size > bytes.len() {
         return Err(Error::BufferTooShort(BufferTooShort {
             need: size,
             have: bytes.len(),
             what: "box size",
         }));
     }
-    Ok(&bytes[8..size])
+    Ok(&bytes[BOX_HEADER_SIZE..size])
 }
 
 /// Four-CC of the Movie Fragment Box.
@@ -278,7 +294,7 @@ pub const MOOF: [u8; 4] = *b"moof";
 /// place a caller asks "does this stream begin with a `moof`/`styp` box?"
 /// instead of comparing four raw bytes itself.
 #[must_use]
-pub fn starts_with_box_type(bytes: &[u8], box_type: [u8; 4]) -> bool {
+pub fn starts_with_box_type(bytes: &[u8], box_type: [u8; FOURCC_LEN]) -> bool {
     bytes.starts_with(&box_type)
 }
 

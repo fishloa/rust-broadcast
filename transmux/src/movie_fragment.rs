@@ -13,6 +13,7 @@
 
 use crate::TrackId;
 use crate::error::{Error, Result};
+use crate::wire_cursor::{be_u32, be_u64, read_u32};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
 use broadcast_common::error::BufferTooShort;
@@ -24,6 +25,14 @@ const BOX_HEADER_SIZE: usize = 8;
 /// (ISO/IEC 14496-12:2026 §4.2).
 const LARGESIZE_SIZE: usize = 8;
 const FULLBOX_EXTRA_SIZE: usize = 4;
+const U32_LEN: usize = core::mem::size_of::<u32>();
+const U64_LEN: usize = core::mem::size_of::<u64>();
+const FOURCC_LEN: usize = 4;
+const FULLBOX_FLAGS_MASK: u32 = 0x00FF_FFFF;
+const TRUN_SAMPLE_FIELD_COUNT: usize = 4;
+const CENC_AUX_INFO_TYPE_COUNT: usize = 4;
+const TRAF_FIXED_CHILD_COUNT: usize = 2;
+const AUX_INFO_TYPE_PRESENT_FLAG: u32 = 0x01;
 
 // tfhd flags — ISO/IEC 14496-12:2026 §8.8.7.1 (public: builders set these).
 /// `tfhd` flag: `base_data_offset` field present.
@@ -139,9 +148,9 @@ pub(crate) fn media_fragment_run(
 
 /// Read version(8) and flags(24) from the body bytes (first 4 bytes of a FullBox payload).
 fn read_ver_flags(body: &[u8]) -> Result<(u8, u32)> {
-    need_in(body, 4, "FullBox version/flags")?;
+    need_in(body, U32_LEN, "FullBox version/flags")?;
     let ver = body[0];
-    let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
+    let flags = be_u32(body, 0, "FullBox version/flags")? & FULLBOX_FLAGS_MASK;
     Ok((ver, flags))
 }
 
@@ -158,9 +167,9 @@ impl MovieFragmentHeaderBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         let (_ver, _flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
-        need_in(payload, 4, "mfhd.seq")?;
+        need_in(payload, U32_LEN, "mfhd.seq")?;
         Ok(Self {
-            sequence_number: u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]),
+            sequence_number: be_u32(payload, 0, "mfhd.seq")?,
         })
     }
 }
@@ -168,17 +177,17 @@ impl MovieFragmentHeaderBox {
 impl Serialize for MovieFragmentHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4
+        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0;
         c += crate::box_types::write_compact_box_header(buf, b"mfhd", need)?;
-        buf[c..c + 4].copy_from_slice(&[0, 0, 0, 0]);
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.sequence_number.to_be_bytes());
-        Ok(c + 4)
+        buf[c..c + U32_LEN].copy_from_slice(&[0u8; U32_LEN]);
+        c += U32_LEN;
+        buf[c..c + U32_LEN].copy_from_slice(&self.sequence_number.to_be_bytes());
+        Ok(c + U32_LEN)
     }
 }
 
@@ -198,56 +207,42 @@ impl TrackFragmentHeaderBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         let (_ver, flags) = read_ver_flags(body)?;
         let mut c = FULLBOX_EXTRA_SIZE;
-        need_in(body, c + 4, "tfhd.track_id")?;
-        let tid = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
-        c += 4;
+        need_in(body, c + U32_LEN, "tfhd.track_id")?;
+        let tid = read_u32(body, &mut c, "tfhd.track_id")?;
 
         let v_bdo = if flags & TFHD_BASE_DATA_OFFSET_PRESENT != 0 {
-            need_in(body, c + 8, "tfhd.bdo")?;
-            let v = u64::from_be_bytes([
-                body[c],
-                body[c + 1],
-                body[c + 2],
-                body[c + 3],
-                body[c + 4],
-                body[c + 5],
-                body[c + 6],
-                body[c + 7],
-            ]);
-            c += 8;
+            need_in(body, c + U64_LEN, "tfhd.bdo")?;
+            let v = be_u64(body, c, "tfhd.bdo")?;
+            c += U64_LEN;
             Some(v)
         } else {
             None
         };
         let v_sdi = if flags & TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT != 0 {
-            need_in(body, c + 4, "tfhd.sdi")?;
-            let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
-            c += 4;
+            need_in(body, c + U32_LEN, "tfhd.sdi")?;
+            let v = read_u32(body, &mut c, "tfhd.sdi")?;
             Some(v)
         } else {
             None
         };
         let v_dsd = if flags & TFHD_DEFAULT_SAMPLE_DURATION_PRESENT != 0 {
-            need_in(body, c + 4, "tfhd.dsd")?;
-            let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
-            c += 4;
+            need_in(body, c + U32_LEN, "tfhd.dsd")?;
+            let v = read_u32(body, &mut c, "tfhd.dsd")?;
             Some(v)
         } else {
             None
         };
         let v_dss = if flags & TFHD_DEFAULT_SAMPLE_SIZE_PRESENT != 0 {
-            need_in(body, c + 4, "tfhd.dss")?;
-            let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
-            c += 4;
+            need_in(body, c + U32_LEN, "tfhd.dss")?;
+            let v = read_u32(body, &mut c, "tfhd.dss")?;
             Some(v)
         } else {
             None
         };
         let v_dsf = if flags & TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT != 0 {
-            need_in(body, c + 4, "tfhd.dsf")?;
-            let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
+            need_in(body, c + U32_LEN, "tfhd.dsf")?;
             // last tfhd field — no further cursor use
-            Some(v)
+            Some(read_u32(body, &mut c, "tfhd.dsf")?)
         } else {
             None
         };
@@ -313,21 +308,21 @@ impl TrackFragmentHeaderBox {
 impl Serialize for TrackFragmentHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4;
+        let mut n = BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN;
         if self.base_data_offset.is_some() {
-            n += 8;
+            n += U64_LEN;
         }
         if self.sample_description_index.is_some() {
-            n += 4;
+            n += U32_LEN;
         }
         if self.default_sample_duration.is_some() {
-            n += 4;
+            n += U32_LEN;
         }
         if self.default_sample_size.is_some() {
-            n += 4;
+            n += U32_LEN;
         }
         if self.default_sample_flags.is_some() {
-            n += 4;
+            n += U32_LEN;
         }
         n
     }
@@ -336,27 +331,27 @@ impl Serialize for TrackFragmentHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = crate::box_types::write_full_box_header(buf, b"tfhd", need, 0, flags, true)?;
-        buf[c..c + 4].copy_from_slice(&self.track_id.value().to_be_bytes());
-        c += 4;
+        buf[c..c + U32_LEN].copy_from_slice(&self.track_id.value().to_be_bytes());
+        c += U32_LEN;
         if let Some(v) = self.base_data_offset {
-            buf[c..c + 8].copy_from_slice(&v.to_be_bytes());
-            c += 8;
+            buf[c..c + U64_LEN].copy_from_slice(&v.to_be_bytes());
+            c += U64_LEN;
         }
         if let Some(v) = self.sample_description_index {
-            buf[c..c + 4].copy_from_slice(&v.to_be_bytes());
-            c += 4;
+            buf[c..c + U32_LEN].copy_from_slice(&v.to_be_bytes());
+            c += U32_LEN;
         }
         if let Some(v) = self.default_sample_duration {
-            buf[c..c + 4].copy_from_slice(&v.to_be_bytes());
-            c += 4;
+            buf[c..c + U32_LEN].copy_from_slice(&v.to_be_bytes());
+            c += U32_LEN;
         }
         if let Some(v) = self.default_sample_size {
-            buf[c..c + 4].copy_from_slice(&v.to_be_bytes());
-            c += 4;
+            buf[c..c + U32_LEN].copy_from_slice(&v.to_be_bytes());
+            c += U32_LEN;
         }
         if let Some(v) = self.default_sample_flags {
-            buf[c..c + 4].copy_from_slice(&v.to_be_bytes());
-            c += 4;
+            buf[c..c + U32_LEN].copy_from_slice(&v.to_be_bytes());
+            c += U32_LEN;
         }
         Ok(c)
     }
@@ -396,19 +391,16 @@ impl TrackFragmentBaseMediaDecodeTimeBox {
         let (ver, _flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
         if ver == 0 {
-            need_in(payload, 4, "tfdt.v0")?;
-            let v = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+            need_in(payload, U32_LEN, "tfdt.v0")?;
+            let v = be_u32(payload, 0, "tfdt.v0")?;
             Ok(Self {
                 version: ver,
                 v0: v,
                 v1: v as u64,
             })
         } else {
-            need_in(payload, 8, "tfdt.v1")?;
-            let v = u64::from_be_bytes([
-                payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
-                payload[7],
-            ]);
+            need_in(payload, U64_LEN, "tfdt.v1")?;
+            let v = be_u64(payload, 0, "tfdt.v1")?;
             Ok(Self {
                 version: ver,
                 v0: v as u32,
@@ -427,7 +419,7 @@ pub const MAX_ZERO_WIDTH_TRUN_SAMPLES: usize = 1 << 20;
 impl Serialize for TrackFragmentBaseMediaDecodeTimeBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + if self.version == 0 { 4 } else { 8 }
+        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + if self.version == 0 { U32_LEN } else { U64_LEN }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -435,11 +427,11 @@ impl Serialize for TrackFragmentBaseMediaDecodeTimeBox {
         let mut c = 0;
         c += crate::box_types::write_full_box_header(buf, b"tfdt", need, self.version, 0, true)?;
         if self.version == 0 {
-            buf[c..c + 4].copy_from_slice(&self.v0.to_be_bytes());
-            c += 4;
+            buf[c..c + U32_LEN].copy_from_slice(&self.v0.to_be_bytes());
+            c += U32_LEN;
         } else {
-            buf[c..c + 8].copy_from_slice(&self.v1.to_be_bytes());
-            c += 8;
+            buf[c..c + U64_LEN].copy_from_slice(&self.v1.to_be_bytes());
+            c += U64_LEN;
         }
         Ok(c)
     }
@@ -498,25 +490,21 @@ impl TrackFragmentRunBox {
     pub(crate) fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
         let (ver, tr_flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
-        need_in(payload, 4, "trun.sc")?;
+        need_in(payload, U32_LEN, "trun.sc")?;
         let mut c = 0usize;
-        let sc = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
-        c += 4;
+        let sc = be_u32(payload, 0, "trun.sc")? as usize;
+        c += U32_LEN;
 
         let data_offset = if tr_flags & TRUN_DATA_OFFSET_PRESENT != 0 {
-            need_in(payload, c + 4, "trun.do")?;
-            let v =
-                i32::from_be_bytes([payload[c], payload[c + 1], payload[c + 2], payload[c + 3]]);
-            c += 4;
+            need_in(payload, c + U32_LEN, "trun.do")?;
+            let v = read_u32(payload, &mut c, "trun.do")? as i32;
             Some(v)
         } else {
             None
         };
         let fsf = if tr_flags & TRUN_FIRST_SAMPLE_FLAGS_PRESENT != 0 {
-            need_in(payload, c + 4, "trun.fsf")?;
-            let v =
-                u32::from_be_bytes([payload[c], payload[c + 1], payload[c + 2], payload[c + 3]]);
-            c += 4;
+            need_in(payload, c + U32_LEN, "trun.fsf")?;
+            let v = read_u32(payload, &mut c, "trun.fsf")?;
             Some(v)
         } else {
             None
@@ -537,7 +525,7 @@ impl TrackFragmentRunBox {
             .iter()
             .filter(|&&present| present)
             .count()
-            * 4;
+            * U32_LEN;
         // With no per-sample field present every entry is ZERO bytes wide, so
         // the remaining-bytes bound above cannot limit `sc` at all: a 20-byte
         // `trun` declaring 2^32-1 samples would push ~170 GB of `TrunSample`s
@@ -559,55 +547,25 @@ impl TrackFragmentRunBox {
         for _ in 0..sc {
             let mut s = TrunSample::new();
             if has_dur {
-                need_in(payload, c + 4, "trun.dur")?;
-                s.sample_duration = Some(u32::from_be_bytes([
-                    payload[c],
-                    payload[c + 1],
-                    payload[c + 2],
-                    payload[c + 3],
-                ]));
-                c += 4;
+                need_in(payload, c + U32_LEN, "trun.dur")?;
+                s.sample_duration = Some(read_u32(payload, &mut c, "trun.dur")?);
             }
             if has_sz {
-                need_in(payload, c + 4, "trun.sz")?;
-                s.sample_size = Some(u32::from_be_bytes([
-                    payload[c],
-                    payload[c + 1],
-                    payload[c + 2],
-                    payload[c + 3],
-                ]));
-                c += 4;
+                need_in(payload, c + U32_LEN, "trun.sz")?;
+                s.sample_size = Some(read_u32(payload, &mut c, "trun.sz")?);
             }
             if has_flg {
-                need_in(payload, c + 4, "trun.flg")?;
-                s.sample_flags = Some(u32::from_be_bytes([
-                    payload[c],
-                    payload[c + 1],
-                    payload[c + 2],
-                    payload[c + 3],
-                ]));
-                c += 4;
+                need_in(payload, c + U32_LEN, "trun.flg")?;
+                s.sample_flags = Some(read_u32(payload, &mut c, "trun.flg")?);
             }
             if has_cto {
-                need_in(payload, c + 4, "trun.cto")?;
-                if ver == 1 {
-                    s.sample_composition_time_offset = Some(i64::from(i32::from_be_bytes([
-                        payload[c],
-                        payload[c + 1],
-                        payload[c + 2],
-                        payload[c + 3],
-                    ])));
+                need_in(payload, c + U32_LEN, "trun.cto")?;
+                let raw = read_u32(payload, &mut c, "trun.cto")?;
+                s.sample_composition_time_offset = Some(if ver == 1 {
+                    i64::from(raw as i32)
                 } else {
-                    // Version 0's field is unsigned (§8.8.8.2), so the full
-                    // 32-bit range is a legal positive offset.
-                    s.sample_composition_time_offset = Some(i64::from(u32::from_be_bytes([
-                        payload[c],
-                        payload[c + 1],
-                        payload[c + 2],
-                        payload[c + 3],
-                    ])));
-                }
-                c += 4;
+                    i64::from(raw)
+                });
             }
             samples.push(s);
         }
@@ -634,7 +592,7 @@ impl TrackFragmentRunBox {
         if flags & TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT != 0 {
             n += 1;
         }
-        (n * 4) as usize
+        n as usize * U32_LEN
     }
 }
 
@@ -698,7 +656,7 @@ impl TrackFragmentRunBox {
     /// r05-W16).
     fn check_sample_fields(&self, flags: u32) -> Result<()> {
         type FieldCheck = (u32, fn(&TrunSample) -> bool);
-        let checks: [FieldCheck; 4] = [
+        let checks: [FieldCheck; TRUN_SAMPLE_FIELD_COUNT] = [
             (TRUN_SAMPLE_DURATION_PRESENT, |s: &TrunSample| {
                 s.sample_duration.is_some()
             }),
@@ -739,12 +697,12 @@ impl Serialize for TrackFragmentRunBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let flags = self.effective_flags();
-        let mut n = BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4;
+        let mut n = BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN;
         if flags & TRUN_DATA_OFFSET_PRESENT != 0 {
-            n += 4;
+            n += U32_LEN;
         }
         if flags & TRUN_FIRST_SAMPLE_FLAGS_PRESENT != 0 {
-            n += 4;
+            n += U32_LEN;
         }
         crate::box_types::box_len(n + self.samples.len() * Self::record_stride(flags))
     }
@@ -767,15 +725,15 @@ impl Serialize for TrackFragmentRunBox {
         let mut c =
             crate::box_types::write_full_box_header(buf, b"trun", need, version, flags, false)?;
         let sample_count = broadcast_common::len::fit_u32(self.samples.len(), "sample_count")?;
-        buf[c..c + 4].copy_from_slice(&sample_count.to_be_bytes());
-        c += 4;
+        buf[c..c + U32_LEN].copy_from_slice(&sample_count.to_be_bytes());
+        c += U32_LEN;
         if let Some(v) = self.data_offset {
-            buf[c..c + 4].copy_from_slice(&v.to_be_bytes());
-            c += 4;
+            buf[c..c + U32_LEN].copy_from_slice(&v.to_be_bytes());
+            c += U32_LEN;
         }
         if let Some(v) = self.first_sample_flags {
-            buf[c..c + 4].copy_from_slice(&v.to_be_bytes());
-            c += 4;
+            buf[c..c + U32_LEN].copy_from_slice(&v.to_be_bytes());
+            c += U32_LEN;
         }
         let has_dur = flags & TRUN_SAMPLE_DURATION_PRESENT != 0;
         let has_sz = flags & TRUN_SAMPLE_SIZE_PRESENT != 0;
@@ -783,16 +741,16 @@ impl Serialize for TrackFragmentRunBox {
         let has_cto = flags & TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT != 0;
         for s in &self.samples {
             if has_dur {
-                buf[c..c + 4].copy_from_slice(&s.sample_duration.unwrap_or(0).to_be_bytes());
-                c += 4;
+                buf[c..c + U32_LEN].copy_from_slice(&s.sample_duration.unwrap_or(0).to_be_bytes());
+                c += U32_LEN;
             }
             if has_sz {
-                buf[c..c + 4].copy_from_slice(&s.sample_size.unwrap_or(0).to_be_bytes());
-                c += 4;
+                buf[c..c + U32_LEN].copy_from_slice(&s.sample_size.unwrap_or(0).to_be_bytes());
+                c += U32_LEN;
             }
             if has_flg {
-                buf[c..c + 4].copy_from_slice(&s.sample_flags.unwrap_or(0).to_be_bytes());
-                c += 4;
+                buf[c..c + U32_LEN].copy_from_slice(&s.sample_flags.unwrap_or(0).to_be_bytes());
+                c += U32_LEN;
             }
             if has_cto {
                 let offset = s.sample_composition_time_offset.unwrap_or(0);
@@ -802,16 +760,16 @@ impl Serialize for TrackFragmentRunBox {
                             "trun v1 sample_composition_time_offset leaves the signed 32-bit range",
                         )
                     })?;
-                    buf[c..c + 4].copy_from_slice(&signed.to_be_bytes());
+                    buf[c..c + U32_LEN].copy_from_slice(&signed.to_be_bytes());
                 } else {
                     let unsigned = u32::try_from(offset).map_err(|_| {
                         Error::InvalidInput(
                             "trun v0 sample_composition_time_offset leaves the unsigned 32-bit range",
                         )
                     })?;
-                    buf[c..c + 4].copy_from_slice(&unsigned.to_be_bytes());
+                    buf[c..c + U32_LEN].copy_from_slice(&unsigned.to_be_bytes());
                 }
-                c += 4;
+                c += U32_LEN;
             }
         }
         Ok(c)
@@ -829,7 +787,7 @@ impl Serialize for TrackFragmentRunBox {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct OpaqueChild {
     /// The child's four-CC.
-    pub box_type: [u8; 4],
+    pub box_type: [u8; FOURCC_LEN],
     /// The child's payload after `size`/`type`: the `usertype` of a `uuid`
     /// included, an 8-byte `largesize` field excluded (its form is
     /// [`OpaqueChild::largesize`]).
@@ -859,7 +817,7 @@ impl OpaqueChild {
     /// Build one from a child's four-CC and payload (everything after
     /// `size`/`type` — the usertype of a `uuid` included; the compact header
     /// form is used).
-    pub fn new(box_type: [u8; 4], data: Vec<u8>) -> Self {
+    pub fn new(box_type: [u8; FOURCC_LEN], data: Vec<u8>) -> Self {
         Self {
             box_type,
             data,
@@ -892,23 +850,23 @@ impl OpaqueChild {
         // usertype.
         let mut c = 0usize;
         if self.to_end && is_last {
-            buf[c..c + 4].copy_from_slice(&0u32.to_be_bytes());
-            c += 4;
-            buf[c..c + 4].copy_from_slice(&self.box_type);
-            c += 4;
+            buf[c..c + U32_LEN].copy_from_slice(&0u32.to_be_bytes());
+            c += U32_LEN;
+            buf[c..c + U32_LEN].copy_from_slice(&self.box_type);
+            c += U32_LEN;
         } else if self.wide() {
-            buf[c..c + 4].copy_from_slice(&1u32.to_be_bytes());
-            c += 4;
-            buf[c..c + 4].copy_from_slice(&self.box_type);
-            c += 4;
-            buf[c..c + 8].copy_from_slice(&(need as u64).to_be_bytes());
-            c += 8;
+            buf[c..c + U32_LEN].copy_from_slice(&1u32.to_be_bytes());
+            c += U32_LEN;
+            buf[c..c + U32_LEN].copy_from_slice(&self.box_type);
+            c += U32_LEN;
+            buf[c..c + U64_LEN].copy_from_slice(&(need as u64).to_be_bytes());
+            c += U64_LEN;
         } else {
             let len = broadcast_common::len::fit_u32(need, "opaque child size")?;
-            buf[c..c + 4].copy_from_slice(&len.to_be_bytes());
-            c += 4;
-            buf[c..c + 4].copy_from_slice(&self.box_type);
-            c += 4;
+            buf[c..c + U32_LEN].copy_from_slice(&len.to_be_bytes());
+            c += U32_LEN;
+            buf[c..c + U32_LEN].copy_from_slice(&self.box_type);
+            c += U32_LEN;
         }
         buf[c..c + self.data.len()].copy_from_slice(&self.data);
         Ok(c + self.data.len())
@@ -1062,7 +1020,7 @@ impl TrackFragmentBox {
         if !self.order.is_empty() {
             return self.order.clone();
         }
-        let mut out = Vec::with_capacity(2 + self.trun.len());
+        let mut out = Vec::with_capacity(TRAF_FIXED_CHILD_COUNT + self.trun.len());
         out.push(TrafChild::Tfhd);
         if self.tfdt.is_some() {
             out.push(TrafChild::Tfdt);
@@ -1287,25 +1245,28 @@ const SAIZ_SUBSAMPLE_ENTRY_SIZE: usize = 6;
 /// The `aux_info_type` values that name a CENC scheme. ISO/IEC 23001-7 §12.3's
 /// `aux_info_type` defaults to `cenc`, and the four-CCs below are the schemes
 /// that specification defines.
-const CENC_AUX_INFO_TYPES: [[u8; 4]; 4] = [*b"cenc", *b"cens", *b"cbc1", *b"cbcs"];
+const CENC_AUX_INFO_TYPES: [[u8; FOURCC_LEN]; CENC_AUX_INFO_TYPE_COUNT] =
+    [*b"cenc", *b"cens", *b"cbc1", *b"cbcs"];
 
 /// The `aux_info_type` of a `saiz`/`saio` box's opaque payload (the bytes
 /// after its 8-byte header), or `None` when absent.
 ///
 /// Both are FullBoxes: a version-0 box carries the field only when flag bit 0
 /// is set (§8.7.8.2, §8.7.9.2); version 1 always carries it.
-fn aux_info_type_of(payload: &[u8], box_type: &[u8; 4]) -> Option<[u8; 4]> {
+fn aux_info_type_of(payload: &[u8], box_type: &[u8; FOURCC_LEN]) -> Option<[u8; FOURCC_LEN]> {
     let _ = box_type;
-    if payload.len() < 4 {
+    if payload.len() < FOURCC_LEN {
         return None;
     }
     let version = payload[0];
-    let flags = u32::from_be_bytes([0, payload[1], payload[2], payload[3]]);
-    if version == 0 && flags & 0x01 == 0 {
+    let flags = be_u32(payload, 0, "aux_info_type").ok()? & FULLBOX_FLAGS_MASK;
+    if version == 0 && flags & AUX_INFO_TYPE_PRESENT_FLAG == 0 {
         return None;
     }
-    let ty = payload.get(4..8)?;
-    Some([ty[0], ty[1], ty[2], ty[3]])
+    let ty = payload.get(FOURCC_LEN..BOX_HEADER_SIZE)?;
+    let mut aux_info_type = [0u8; FOURCC_LEN];
+    aux_info_type.copy_from_slice(ty);
+    Some(aux_info_type)
 }
 
 /// One protected track's per-sample CENC aux info for a single movie
@@ -1617,7 +1578,7 @@ pub fn protect_media_segment(
                     c += b.saiz.serialize_into(&mut moof_out[c..])?;
                     c += b.saio.serialize_into(&mut moof_out[c..])?;
                     let final_len = broadcast_common::len::fit_u32(c - start, "traf size")?;
-                    moof_out[start..start + 4].copy_from_slice(&final_len.to_be_bytes());
+                    moof_out[start..start + U32_LEN].copy_from_slice(&final_len.to_be_bytes());
                 }
             }
             MoofChild::Opaque(ref o) => c += o.serialize_into(&mut moof_out[c..])?,
