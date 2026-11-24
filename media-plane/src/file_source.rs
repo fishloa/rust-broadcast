@@ -1547,9 +1547,10 @@ mod tests {
         }
     }
 
-    /// The ISOBMFF layout the probe reports selects exactly one demuxer: a
-    /// fragmented file gets `Fmp4`, a progressive one `Progressive`, and an
-    /// undetermined layout is refused rather than guessed.
+    /// The ISOBMFF layout the probe reports selects exactly one streaming
+    /// demuxer: a fragmented file gets `Fmp4`, a progressive one
+    /// `Progressive`, and an unsettled layout gets the one `Mp4` stage, which
+    /// decides the layout while reading.
     #[test]
     fn select_demuxer_maps_the_probed_isobmff_layout() {
         let frag = test_fixtures::read("mp4/h264-aac-frag.mp4");
@@ -1569,16 +1570,13 @@ mod tests {
         );
 
         // A prefix holding only `ftyp` identifies as ISOBMFF but cannot settle
-        // the layout — that must be refused, never answered with a demuxer.
+        // the layout; the unified stage still reads it.
         let head = test_fixtures::read("mp4/cmaf/av-frag.mp4");
         let (format, detail) = identify(&head[..64]);
         assert_eq!(format, Format::Isobmff);
-        assert!(
-            matches!(
-                select_demuxer(format, detail),
-                Err(FileReaderError::UndeterminedLayout)
-            ),
-            "an undetermined ISOBMFF layout must not pick a demuxer"
+        assert_eq!(
+            select_demuxer(format, detail).expect("an unsettled ISOBMFF layout is supported"),
+            DemuxerKind::Mp4
         );
 
         // An ISOBMFF verdict paired with a non-ISOBMFF detail cannot name a

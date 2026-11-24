@@ -57,14 +57,14 @@
 //! as [`StreamLocator::Track`] (never a TS PID — there is none for this
 //! input).
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use broadcast_common::{Parse, Stage, Timestamp};
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::TrackId;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::{CodecConfig, DemuxEvent, Sample, TrackSpec, iter_length_prefixed_nals_with};
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 use transmux::{Media, Track};
 
 use crate::report::{Finding, Location, Report, Severity};
@@ -288,7 +288,7 @@ fn nal_length_size(config: &CodecConfig) -> Option<usize> {
 /// prefixes (ISO/IEC 14496-15:2017 §5.3.3.1.1).
 const AVCC_LENGTH_SIZES: [usize; 3] = [1, 2, 4];
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 fn check_media(media: &Media, report: &mut Report) {
     for track in &media.tracks {
         check_track_spec(&track.spec, report);
@@ -530,9 +530,12 @@ fn check_hevc_track(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "std")]
+    use alloc::vec::Vec;
 
     /// Demux a whole in-memory MP4 image into a [`Media`] via the streaming
     /// stage, for the checks that need a `Media` to mutate.
+    #[cfg(feature = "std")]
     fn test_media(bytes: &[u8]) -> Media {
         let total = u64::try_from(bytes.len()).expect("image fits u64");
         let mut demux = Mp4Demux::seekable(Mp4DemuxConfig::default().with_total_len(Some(total)));

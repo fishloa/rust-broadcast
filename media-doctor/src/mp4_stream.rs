@@ -1,5 +1,5 @@
 //! Stream an MP4 file's container checks through
-//! [`Mp4Demux`](transmux::mp4_demux::Mp4Demux).
+//! [`Mp4Demux`].
 //!
 //! The caller owns the open file; this module reads exactly the byte ranges the
 //! stage asks for, one bounded buffer at a time, so the file is never held

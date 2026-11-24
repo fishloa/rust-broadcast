@@ -3,7 +3,7 @@
 //!
 //! One `#[test]` per binary because `test_alloc::ProcessPeak` is process-wide.
 
-#![cfg(target_pointer_width = "64")]
+#![cfg(all(target_pointer_width = "64", feature = "std"))]
 
 use std::fs::File;
 
