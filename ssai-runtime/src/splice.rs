@@ -22,7 +22,7 @@
 //! beside it was tried and dropped (audit 19, issue #2726): a caller picking
 //! it measured a cue just before the wrap against a boundary just after it
 //! as ~8.6 × 10⁹ ticks away and dropped the break. This module does not
-//! decode SCTE-35 or emsg (that's `scte35-splice` / `mp4-emsg`'s job).
+//! decode SCTE-35 or emsg (that's `scte35-splice` / `isobmff`'s job).
 
 use broadcast_common::clock33::{Clock33, WRAP_33BIT};
 use broadcast_common::timescale::{self, Rounding, Timescale};

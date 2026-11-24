@@ -246,7 +246,7 @@ def test_dry_run_still_refuses_lockstep_arg(env):
 def test_plan_dry_run_prints_the_release_order_from_the_pair_list(tmp_path):
     """The real repo, the real plan: broadcast-common first, the lockstep slot
     after mpeg-ts and flagged MANUAL, every pair exactly once."""
-    absorbed = ("rtcp-packet=", "tshttp-runtime=")  # merged away since the wave shipped; no manifest to plan from
+    absorbed = ("rtcp-packet=", "tshttp-runtime=", "mp4-emsg=")  # merged away since the wave shipped; no manifest to plan from
     pairs = [t for t in (REPO / "docs" / "release-plan-2026-10.pairs").read_text().split() if not t.startswith(absorbed)]
     plan = tmp_path / "plan.pairs"
     plan.write_text("\n".join(pairs) + "\n")
@@ -255,7 +255,7 @@ def test_plan_dry_run_prints_the_release_order_from_the_pair_list(tmp_path):
     tags = [l.split()[1] for l in r.stdout.splitlines() if l[:4].strip().rstrip(".").isdigit()]
     assert tags[0] == "broadcast-common-v10.0.0"
     assert len(tags) == len(set(tags)) == len(pairs) - 4  # the lockstep five share one slot
-    assert tags.index("mp4-emsg-v0.5.0") < tags.index("mpeg-ts-v0.6.0") < tags.index("v12.0.0") < tags.index("transmux-v0.27.0")
+    assert tags.index("mpeg-ts-v0.6.0") < tags.index("v12.0.0") < tags.index("transmux-v0.27.0")
     assert tags[-1] == "multimux-cli-v0.11.0"
     assert "v12.0.0  MANUAL" in r.stdout
 

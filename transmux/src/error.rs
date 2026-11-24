@@ -203,7 +203,7 @@ pub enum Error {
     /// An `emsg` (Event Message Box, ISO/IEC 23009-1 §5.10.3.3) could not be
     /// serialized (e.g. the box would exceed the 4-byte `size` field range).
     #[error("emsg serialize: {0}")]
-    EmsgSerialize(#[from] mp4_emsg::Error),
+    EmsgSerialize(isobmff::Error),
 
     /// A demuxed ISOBMFF sample entry (`stsd` entry, ISO/IEC 14496-12:2026
     /// §8.5.2) describes a codec this crate has no
@@ -369,15 +369,13 @@ impl From<isobmff::Error> for Error {
             I::SampleDataBudgetExceeded { limit } => Error::SampleDataBudgetExceeded { limit },
             I::FieldOverflow(v) => Error::FieldOverflow(v),
             I::UnsupportedFeature(s) => Error::UnsupportedFeature(s),
-            I::UnsupportedVersion(v) => {
-                Error::EmsgSerialize(mp4_emsg::Error::UnsupportedVersion(v))
-            }
-            I::NotEmsg { found } => Error::EmsgSerialize(mp4_emsg::Error::NotEmsg { found }),
+            I::UnsupportedVersion(v) => Error::EmsgSerialize(I::UnsupportedVersion(v)),
+            I::NotEmsg { found } => Error::EmsgSerialize(I::NotEmsg { found }),
             I::InvalidSize { size, reason } => {
-                Error::EmsgSerialize(mp4_emsg::Error::InvalidSize { size, reason })
+                Error::EmsgSerialize(I::InvalidSize { size, reason })
             }
             I::InvalidString { field, reason } => {
-                Error::EmsgSerialize(mp4_emsg::Error::InvalidString { field, reason })
+                Error::EmsgSerialize(I::InvalidString { field, reason })
             }
             _ => Error::UnsupportedFeature("unrecognised ISO BMFF box error"),
         }

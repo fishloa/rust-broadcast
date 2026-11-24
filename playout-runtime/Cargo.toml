@@ -32,7 +32,7 @@ test-fixtures = { path = "../test-fixtures" }
 # Real-fixture tests/examples only (`fixtures/scte35/`): decode the real
 # emsg-carried cue this crate's transition/emission logic is verified
 # against. Not a runtime dependency of the core itself.
-mp4-emsg = { path = "../mp4-emsg", version = "0.9.0", default-features = false }
+isobmff  = { path = "../isobmff",  version = "0.1.0", default-features = false }
 
 [features]
 default = ["std"]

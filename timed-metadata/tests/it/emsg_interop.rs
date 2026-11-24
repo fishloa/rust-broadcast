@@ -1,7 +1,7 @@
 //! Real SCTE-35-carrying emsg fixtures (incl. DASH-IF livesim2): extract the
 //! splice and re-wrap it, asserting byte-identical round-trip.
 
-use mp4_emsg::EmsgBox;
+use isobmff::emsg::EmsgBox;
 use timed_metadata::convert::{EmsgConfig, emsg_to_scte35, scte35_to_emsg};
 
 fn read_fixture(name: &str) -> Vec<u8> {

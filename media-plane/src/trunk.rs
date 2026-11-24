@@ -381,7 +381,7 @@
 //! owned, lossless, `#[non_exhaustive]`, and already published (0.4.0, live
 //! on crates.io) — [`EventEntry::event`] stores it verbatim rather than
 //! re-deriving a second event representation this crate would then have to
-//! keep in sync by hand. `mp4_emsg::EmsgBox<'a>` is *borrowed* and cannot
+//! keep in sync by hand. `isobmff::emsg::EmsgBox<'a>` is *borrowed* and cannot
 //! outlive the buffer it was parsed from, so it cannot sit in a `'static`
 //! ring; [`timed_metadata::SourcePayload::Emsg`] is already its owned form
 //! (scheme/value/verbatim `message_data`), and is what ends up inside the

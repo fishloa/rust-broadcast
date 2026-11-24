@@ -45,8 +45,8 @@ use axum::routing::get;
 use bytes::Bytes;
 use futures_util::stream;
 use hls_runtime::server::{HlsBody, HlsRequest};
+use isobmff::emsg::{EmsgBox, PresentationTime};
 use media_plane::trunk::{EventAnchor, Trunk};
-use transmux::{EmsgBox, PresentationTime};
 
 /// The DASH `emsg` `schemeIdUri` for a binary SCTE-35 section — the value
 /// `crate::output::dash` also declares with `<InbandEventStream>`
@@ -456,7 +456,7 @@ fn inject_segment_events(
         };
         let id = unique_emsg_id(entry.event.id, media_time.0, &mut used_ids);
         let emsg = EmsgBox {
-            flags: 0, // mandated 0 for emsg (mp4_emsg::EMSG_FLAGS)
+            flags: 0, // mandated 0 for emsg (isobmff::emsg::EMSG_FLAGS)
             scheme_id_uri: EMSG_SCHEME_ID_URI,
             value: "",
             timescale: EMSG_TIMESCALE, // Trunk's 90 kHz event clock

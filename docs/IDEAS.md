@@ -28,7 +28,7 @@ backlog; promote any to an epic when ready.
 
 3. **SSAI ad-stitcher.** SCTE-35 cues → splice ad CMAF → per-session manifest
    rewrites (HLS DATERANGE / DASH emsg). transmux splice/concat + scte35 +
-   timed-metadata + mp4-emsg already do the hard parts. Ad-tech value.
+   timed-metadata + isobmff already do the hard parts. Ad-tech value.
 
 4. **Live 24/7 compliance probe.** media-doctor + dvb-conformance + streaming
    demux → watch an SRT/UDP feed, continuously assert TR 101 290 + codec

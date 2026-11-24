@@ -1,7 +1,8 @@
 //! `OutputBufferTooSmall { need, have }` for every buffer shorter than the real
 //! v0 and v1 SCTE 35 `emsg` fixtures.
 
-use mp4_emsg::{EmsgBox, Error};
+use isobmff::Error;
+use isobmff::emsg::EmsgBox;
 
 #[test]
 fn real_emsg_boxes_reject_every_short_buffer() {

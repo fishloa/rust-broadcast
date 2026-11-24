@@ -167,7 +167,7 @@ cargo run -p playout-runtime --example emit_splice_from_real_cue
 ## Related crates
 
 Depends on `broadcast-common`, `ssai-runtime` (splice-point conditioning) and
-`scte35-splice` (the cue); dev-depends on `mp4-emsg` for the real-fixture tests.
+`scte35-splice` (the cue); dev-depends on `isobmff` for the real-fixture tests.
 `transmux` applies the rebase; `multimux` would drive it.
 
 ## Spec references

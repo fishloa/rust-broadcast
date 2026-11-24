@@ -3,6 +3,11 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Breaking
+- `Error::Emsg` carries `isobmff::Error` (was `mp4_emsg::Error`): the `emsg`
+  box crate was absorbed into `isobmff`, and the crate now depends on
+  `isobmff` instead of `mp4-emsg`.
+
 ### Added
 - `webvtt::teletext::TXT_DATA_BLOCK_LEN`, the length of the `txt_data_block` that `PageHeader::parse` takes, so a caller can declare its own buffer from it.
 

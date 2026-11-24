@@ -611,7 +611,7 @@ async fn iframe_scte35_emsg_shift() {
     use media_plane::trunk::EventAnchor;
     use timed_metadata::{MediaTime, TimeAnchor, Timeline};
 
-    fn parse_emsg_boxes(bytes: &[u8]) -> Vec<transmux::EmsgBox<'_>> {
+    fn parse_emsg_boxes(bytes: &[u8]) -> Vec<isobmff::emsg::EmsgBox<'_>> {
         let mut out = Vec::new();
         let mut i = 0usize;
         while i + 8 <= bytes.len() {
@@ -621,7 +621,7 @@ async fn iframe_scte35_emsg_shift() {
                 break;
             }
             if &bytes[i + 4..i + 8] == b"emsg"
-                && let Ok(e) = transmux::EmsgBox::parse(&bytes[i..i + size])
+                && let Ok(e) = isobmff::emsg::EmsgBox::parse(&bytes[i..i + size])
             {
                 out.push(e);
             }

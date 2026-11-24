@@ -4,10 +4,10 @@
 /// the v0/v1 field-ordering difference.
 ///
 /// ```sh
-/// cargo run -p mp4-emsg --example build_emsg
+/// cargo run -p isobmff --example build_emsg
 /// ```
 use broadcast_common::timescale::Timescale;
-use mp4_emsg::{EmsgBox, PresentationTime};
+use isobmff::emsg::{EmsgBox, PresentationTime};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -32,7 +32,7 @@ fn main() {
 
     // version 0 — segment-relative (presentation_time_delta). Strings first.
     let v0 = EmsgBox {
-        flags: mp4_emsg::EMSG_FLAGS,
+        flags: isobmff::emsg::EMSG_FLAGS,
         scheme_id_uri: "urn:scte:scte35:2013:bin",
         value: "",
         timescale: timescale(90_000),
@@ -47,7 +47,7 @@ fn main() {
     // version 1 — representation-relative (presentation_time u64). Integers
     // first, then the strings.
     let v1 = EmsgBox {
-        flags: mp4_emsg::EMSG_FLAGS,
+        flags: isobmff::emsg::EMSG_FLAGS,
         scheme_id_uri: "https://aomedia.org/emsg/ID3",
         value: "0",
         timescale: timescale(1000),

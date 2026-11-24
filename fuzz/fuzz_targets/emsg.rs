@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use mp4_emsg::EmsgBox;
+use isobmff::emsg::EmsgBox;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(parsed) = EmsgBox::parse(data) else {

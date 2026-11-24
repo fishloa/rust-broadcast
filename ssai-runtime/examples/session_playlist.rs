@@ -10,7 +10,7 @@
 use broadcast_common::Parse;
 use broadcast_common::clock33::Clock33;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
-use mp4_emsg::{EmsgBox, PresentationTime};
+use isobmff::emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::AnyCommand;
 use ssai_runtime::decision::{AdBreakDecision, AdDecisionProvider, BreakContext, RestrictMode};

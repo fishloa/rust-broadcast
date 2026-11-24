@@ -35,7 +35,7 @@ below); for SRT/TTML conversion use `caption-convert`, which wraps these extract
 | ANSI/SCTE 35 | 2023r1 (via `scte35-splice`) | `splice_info_section` carried verbatim and parsed for id/time/duration | Full | |
 | IETF RFC 8216 / draft-pantos-hls-rfc8216bis | draft -22 (1 May 2026, `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`) | §4.4.5.1 `EXT-X-DATERANGE` attributes incl. `SCTE35-CMD/OUT/IN` | Partial | SCTE-35 to DATERANGE and DATERANGE tag-line parse/render; no DATERANGE to SCTE-35 event conversion. |
 | ANSI/SCTE 214-3 | unverified (not vendored) | §8.3.3 inband `emsg`, scheme `urn:scte:scte35:2013:bin` | Full for the binary scheme | Part number settled from DASH-IF IOP v4.3 §5.4.3 (see `convert/emsg.rs`). The MPD `EventStream` XML form (SCTE 214-1) is not implemented. |
-| ISO/IEC 23009-1 (via `mp4-emsg`) | unverified | §5.10.3.3 Event Message Box, v0 <-> v1 re-timing | Full | `emsg_to_v0` / `emsg_to_v1` |
+| ISO/IEC 23009-1 (via `isobmff`) | unverified | §5.10.3.3 Event Message Box, v0 <-> v1 re-timing | Full | `emsg_to_v0` / `emsg_to_v1` |
 | W3C WebVTT + RFC 8216 §3.5 | curated rules: `private/specs-verified/rules/webvtt-rules.md` | cue syntax, `X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:<n>` | Partial | No cue settings (`line`/`position`/`align`), no styling tags. |
 | ANSI/CTA-608-E, CTA-708-E (decode in `cc-data`) | CTA-608-E, CTA-708-E (CTA not vendored; 708 cross-source: GY/T 270-2013, vendored, a Chinese adaptation) | CC1 pop-on/roll-up/paint-on, 708 service windows | Partial | feature `cc-data`; documented losses in `webvtt` module docs. |
 | ETSI EN 300 706 Enhanced Teletext (decode here) / EN 301 775 §4.5 (carriage in `dvb-vbi`) | V1.2.1 of each (`private/specs-md/INDEX.md`) | Level-1 subtitle pages, Hamming-8/4, odd parity, English national option | Partial | feature `teletext`; no enhancement packets, no styling, English-only national option (`private/specs-verified/dvb/timed-metadata/teletext-subtitles.md`). |
@@ -74,7 +74,7 @@ timed-metadata = { version = "0.12", features = ["serde"] }
 
 ```rust
 use broadcast_common::timescale::Timescale;
-use mp4_emsg::PresentationTime;
+use isobmff::emsg::PresentationTime;
 use timed_metadata::convert::{EmsgConfig, emsg_to_scte35};
 use timed_metadata::{TimeAnchor, Timeline};
 
@@ -133,7 +133,7 @@ assert_eq!(emsg_to_scte35(&emsg).unwrap(), raw);
 
 ## Related crates
 
-Depends on `scte35-splice`, `mp4-emsg`, `broadcast-hls`, `broadcast-common`, and
+Depends on `scte35-splice`, `isobmff`, `broadcast-hls`, `broadcast-common`, and
 optionally `cc-data` / `dvb-vbi`. Used by `caption-convert` (caption half),
 `transmux`, `hls-runtime`, `media-plane`, `multimux`, `media-doctor` and
 `compliance-probe`.

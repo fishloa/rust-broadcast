@@ -113,15 +113,15 @@ useful for track/timescale/codec context; it is **not** re-playable as-is
 (dynamic MPD, wall-clock `$Number$` addressing tied to the moment of
 capture), kept for reference only.
 
-### Verified with our own tools (mp4-emsg + scte35-splice)
+### Verified with our own tools (isobmff + scte35-splice)
 
 The raw `emsg` box was located and extracted byte-for-byte from
 `dash/v300/3.m4s` (box starts 24 bytes into the fragment; `size=98`,
 matches GPAC `MP4Box -diso`'s independent box-tree dump) and committed as
-`emsg-splice-insert.bin`. Decoded with this workspace's own `mp4-emsg`:
+`emsg-splice-insert.bin`. Decoded with this workspace's own `isobmff`:
 
 ```
-$ cargo run -q -p mp4-emsg --example <parse> -- fixtures/scte35/emsg-splice-insert.bin
+$ cargo run -q -p isobmff --example parse_emsg
 version           : RepresentationRelative
 scheme_id_uri     : urn:scte:scte35:2013:bin
 value             : ""

@@ -4,7 +4,7 @@
 //! captures.
 
 use broadcast_common::timescale::Timescale;
-use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
+use isobmff::emsg::{EmsgBox, EmsgVersion, PresentationTime};
 use timed_metadata::Error;
 use timed_metadata::convert::{SegmentTiming, emsg_to_v0, emsg_to_v1};
 

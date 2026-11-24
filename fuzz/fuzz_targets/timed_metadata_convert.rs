@@ -2,7 +2,7 @@
 
 use broadcast_common::timescale::Timescale;
 use libfuzzer_sys::fuzz_target;
-use mp4_emsg::EmsgBox;
+use isobmff::emsg::EmsgBox;
 use timed_metadata::DateRange;
 use timed_metadata::convert::emsg_to_scte35;
 use timed_metadata::convert::{SegmentTiming, emsg_to_v0, emsg_to_v1};

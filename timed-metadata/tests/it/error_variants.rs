@@ -1,7 +1,7 @@
 //! Exact error variants (and fields) of the converters and the DATERANGE parser.
 
 use broadcast_common::timescale::Timescale;
-use mp4_emsg::{EMSG_FLAGS, EmsgBox, PresentationTime};
+use isobmff::emsg::{EMSG_FLAGS, EmsgBox, PresentationTime};
 use timed_metadata::convert::{SegmentTiming, emsg_to_scte35, emsg_to_v0, emsg_to_v1};
 use timed_metadata::{DateRange, Error};
 

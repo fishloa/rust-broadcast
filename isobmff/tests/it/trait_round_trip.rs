@@ -1,7 +1,7 @@
 //! `EmsgBox` through `broadcast_common::{Parse, Serialize}` on the real v0 and v1 fixtures.
 
 use broadcast_common::{Parse, Serialize};
-use mp4_emsg::EmsgBox;
+use isobmff::emsg::EmsgBox;
 
 #[test]
 fn real_emsg_boxes_round_trip_through_the_traits() {

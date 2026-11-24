@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which prints as a bare integer and serialises transparently).
 - `ser_timescale` (feature `serde`): serialise a `Timescale` as the plain
   ticks-per-second integer the wire box carries.
+- `emsg` (ISO/IEC 23009-1 §5.10.3.3, DASH-IF IOP Part 10): `EmsgBox`,
+  `PresentationTime`, `EmsgVersion` and the box constants, moved from the
+  absorbed `mp4-emsg` crate, plus its real-fixture tests and examples. The
+  emsg parse/serialize errors are variants of this crate's `Error`.
 
 ### Breaking
 

@@ -49,7 +49,7 @@
 //! `pssh` box — see [`ContentProtectionSystem::pssh`]), and
 //! [`DashPackager::inband_event_streams`] emits `<InbandEventStream>`
 //! (§5.3.3 / §5.10.3.3) on the video `AdaptationSet` for an inband `emsg`
-//! scheme the caller flags (mp4-emsg's [`crate::EmsgBox`] already carries the
+//! scheme the caller flags ([`isobmff::emsg::EmsgBox`] already carries the
 //! wire box; this only advertises it).
 //!
 //! # Display geometry (ETSI TS 103 285 v1.4.1 §4.4)

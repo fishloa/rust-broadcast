@@ -16,7 +16,7 @@
 //! ```
 use broadcast_common::Parse;
 use broadcast_common::clock33::Clock33;
-use mp4_emsg::{EmsgBox, PresentationTime};
+use isobmff::emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;
 use ssai_runtime::splice::condition_splice_point;
 use std::fs;

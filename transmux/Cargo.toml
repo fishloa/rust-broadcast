@@ -30,7 +30,6 @@ broadcast-dash = { path = "../broadcast-dash", version = "0.3.0", optional = tru
 # set, sample tables, CENC boxes). It sits below transmux (broadcast-common +
 # thiserror only), so a box-only consumer need not pull in the muxing hub.
 isobmff    = { path = "../isobmff", version = "0.1.0", default-features = false }
-mp4-emsg   = { path = "../mp4-emsg",  version = "0.9.0", default-features = false }
 mpeg-ts    = { path = "../mpeg-ts",  version = "0.10.0", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.10.0", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.10.0", default-features = false }
@@ -91,7 +90,7 @@ required-features = ["std"]
 
 [features]
 default = ["std", "cenc"]
-std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "broadcast-common/xml", "broadcast-common/lang", "thiserror/std", "serde?/std", "broadcast-hls/std", "isobmff/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "dep:quick-xml", "dep:jiff", "dep:sdp-types", "dep:broadcast-smooth", "broadcast-smooth/manifest", "dep:broadcast-dash"]
+std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "broadcast-common/xml", "broadcast-common/lang", "thiserror/std", "serde?/std", "broadcast-hls/std", "isobmff/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "dep:quick-xml", "dep:jiff", "dep:sdp-types", "dep:broadcast-smooth", "broadcast-smooth/manifest", "dep:broadcast-dash"]
 serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "isobmff/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc", "dep:zeroize", "dep:subtle"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)

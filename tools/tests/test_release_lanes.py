@@ -22,7 +22,13 @@ LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
 ABANDONED = {"atsc3"}  # lane fails safe by design; never in the pair list
 # absorbed crate -> absorbing crate: the 2026-10 wave records still plan these, but the crate
 # directories are gone (merged into the absorbing crate), so they have no lane, tag or manifest today.
-ABSORBED: dict[str, str] = {"rtcp-packet": "rtp-packet", "tshttp-runtime": "broadcast-client"}
+ABSORBED: dict[str, str] = {
+    "rtcp-packet": "rtp-packet",
+    "tshttp-runtime": "broadcast-client",
+    "mp4-emsg": "isobmff",
+}
+# An absorbing crate that is itself new and has no release lane yet.
+UNLANED_ABSORBERS = {"isobmff"}
 UNRELEASED: set[str] = {
     "broadcast-client",
     "dash-runtime",
@@ -141,7 +147,7 @@ def _planned():
 
 
 def test_lane_set_is_not_vacuous():
-    assert len(LANES) == 56, [p.name for p in LANES]
+    assert len(LANES) == 55, [p.name for p in LANES]
 
 
 REUSABLE = WF / "publish-crate.yml"
@@ -215,7 +221,7 @@ def test_reusable_build_gate_values_each_select_one_step(gate, expected):
 def test_every_plan_crate_has_exactly_one_lane_and_the_lockstep_has_none_of_its_own():
     lane_crates = {_glob(p)[: -len("-v*")] for p in LANES}
     planned = _planned() - set(ABSORBED)
-    assert set(ABSORBED.values()) <= lane_crates, "an absorbing crate must keep its own lane"
+    assert set(ABSORBED.values()) - UNLANED_ABSORBERS <= lane_crates, "an absorbing crate must keep its own lane"
     assert planned - set(LOCKSTEP) <= lane_crates, f"no lane for: {sorted(planned - set(LOCKSTEP) - lane_crates)}"
     assert not (lane_crates & set(LOCKSTEP)), "a lockstep crate has its own lane: it would publish twice"
     assert lane_crates - planned == ABANDONED | UNRELEASED, f"unplanned lanes: {sorted(lane_crates - planned - ABANDONED - UNRELEASED)}"
@@ -233,7 +239,7 @@ def test_every_planned_tag_matches_exactly_one_lane_glob():
         capture_output=True, text=True, check=True,
     ).stdout.split()
     globs = [_glob(p) for p in LANES] + [_glob(WF / "release.yml")]
-    assert len(tags) == 49
+    assert len(tags) == 48
     for t in tags:
         hits = [g for g in globs if fnmatch.fnmatchcase(t, g)]
         assert len(hits) == 1, f"tag {t} matches {hits}"

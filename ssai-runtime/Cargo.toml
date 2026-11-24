@@ -33,7 +33,7 @@ test-alloc = { path = "../test-alloc" }
 # against. Neither is a runtime dependency of the sans-IO core itself — the
 # core takes plain tick counts, never SCTE-35/emsg wire types.
 scte35-splice = { path = "../scte35-splice", version = "8.0.0",   default-features = false }
-mp4-emsg      = { path = "../mp4-emsg",      version = "0.9.0", default-features = false }
+isobmff       = { path = "../isobmff",       version = "0.1.0", default-features = false }
 
 [features]
 default = ["std"]

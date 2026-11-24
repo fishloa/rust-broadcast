@@ -23,7 +23,7 @@ serde  = ["dep:serde", "broadcast-common/serde"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-mp4-emsg = { path = "../mp4-emsg", version = "0.9.0", default-features = false }
+isobmff  = { path = "../isobmff",  version = "0.1.0", default-features = false }
 test-alloc = { path = "../test-alloc" }
 
 [package.metadata.docs.rs]
