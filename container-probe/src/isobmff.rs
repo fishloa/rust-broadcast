@@ -55,9 +55,8 @@ const TYPE_SKIP: [u8; 4] = *b"skip";
 const TYPE_FREE: [u8; 4] = *b"free";
 /// The `mdat` box type (§8.1.1).
 pub(crate) const TYPE_MDAT: [u8; 4] = *b"mdat";
-/// The major brand field of an ISO file (its 4-byte brand), which is what the
-/// leading `ftyp`/`styp` box reports.
-pub(crate) const BRAND_LEN: usize = 4;
+/// Bytes in the major-brand field a leading `ftyp`/`styp` box reports (ISO/IEC 14496-12:2026 §8.14.2).
+pub const BRAND_LEN: usize = 4;
 
 /// Byte positions of a box's 32-bit `size` field.
 const SIZE_BYTES: [usize; BRAND_LEN] = [0, 1, 2, 3];

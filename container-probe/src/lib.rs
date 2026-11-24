@@ -27,7 +27,7 @@ mod ts;
 
 use alloc::vec::Vec;
 
-use crate::isobmff::BRAND_LEN;
+pub use isobmff::BRAND_LEN;
 
 /// Divisor of the geometric growth a need estimate takes when no structural
 /// need can be named.
