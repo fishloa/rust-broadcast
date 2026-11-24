@@ -140,6 +140,7 @@ pub const TABLE: &[Crate] = &[
     runtime("media-doctor", &["Report"], &[]),
     plain("media-plane"),
     plain("mp4-emsg"),
+    plain("isobmff"),
     plain("mpeg-pes"),
     plain("mpeg-ps"),
     plain("mpeg-ts"),

@@ -81,7 +81,7 @@
 //!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]);
 //!   the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
-//!   ([`frag_offsets`]).
+//!   ([`isobmff::frag_offsets`]).
 //!
 //! **Codec config coverage** (header parse → container box; no en/decode):
 //! H.264/AVC, H.265/HEVC, H.266/VVC, AV1, VP9, VP8*, MPEG-2 video (H.262); AAC,
@@ -99,9 +99,9 @@
 //! runnable end-to-end walkthroughs.
 //!
 //! This crate root also exposes the low-level ISOBMFF framing it is built on:
-//! [`BoxHeader`] (optional 64-bit `largesize` / `uuid` extended type),
-//! [`FullBoxHeader`] (`version` + `flags`), and a size-driven box walker
-//! ([`BoxIter`]) that skips unknown box types by advancing by `size`.
+//! [`isobmff::BoxHeader`] (optional 64-bit `largesize` / `uuid` extended type),
+//! [`isobmff::FullBoxHeader`] (`version` + `flags`), and a size-driven box walker
+//! ([`isobmff::BoxIter`]) that skips unknown box types by advancing by `size`.
 //!
 //! # Quick start
 //!

@@ -129,7 +129,7 @@ existing paths (`TrackSpec`, `DemuxEvent`, `Sample`), the same way
   opaque `extra_boxes`, but `CodecConfig` never carries them, so they are lost
   in the IR. `tfhd.sample_description_index` is parsed but a track has one
   `CodecConfig`. Typed `PixelAspectRatioBox` / `CleanApertureBox` /
-  `ColourInformationBox` exist (`transmux/src/visual_ext.rs`) but no mux or
+  `ColourInformationBox` exist (`isobmff/src/visual_ext.rs`) but no mux or
   demux path uses them; `pipeline::build_trak` writes `extra_boxes: vec![]`
   and `tkhd` width/height = coded width/height.
 - `transmux/src/nal.rs` already has an SEI message walker (`sei_messages`) and

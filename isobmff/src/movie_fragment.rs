@@ -1091,8 +1091,8 @@ impl MovieFragmentBox {
         out
     }
 
-    /// [`MovieFragmentBox::child_order`] for a rewriting caller (it has to be
-    /// visible to [`protect_media_segment`], which lives outside this impl).
+    /// The `child_order` of a rewriting caller (it has to be
+    /// visible to the CENC media-segment protection pass, which lives outside this impl).
     pub fn child_order_for_rewrite(&self) -> Vec<MoofChild> {
         self.child_order()
     }

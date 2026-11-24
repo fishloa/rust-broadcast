@@ -802,6 +802,7 @@ name = "container-probe"
 version = "0.6.0"
 dependencies = [
  "broadcast-common",
+ "isobmff",
  "mpeg-ps",
  "mpeg-ts",
  "st377-1",

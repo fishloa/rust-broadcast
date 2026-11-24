@@ -26,7 +26,7 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 # syntax itself no longer lives in this crate.
 broadcast-hls = { path = "../broadcast-hls", version = "0.9.0", default-features = false }
 broadcast-dash = { path = "../broadcast-dash", version = "0.3.0", optional = true, default-features = false }
-# ISO/IEC 14496-12 box syntax (box headers, the top-level/movie-fragment box
+# ISO/IEC 14496-12:2026 box syntax (box headers, the top-level/movie-fragment box
 # set, sample tables, CENC boxes). It sits below transmux (broadcast-common +
 # thiserror only), so a box-only consumer need not pull in the muxing hub.
 isobmff    = { path = "../isobmff", version = "0.1.0", default-features = false }

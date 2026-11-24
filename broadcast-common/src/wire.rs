@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(be_u16(&b, 0, "t").unwrap(), 0x1234);
         assert_eq!(be_u32(&b, 0, "t").unwrap(), 0x1234_5678);
         assert_eq!(u16_at(&b, 2), 0x5678);
-        assert_eq!(u24_at(&b, 1), 0x3456_78);
+        assert_eq!(u24_at(&b, 1), 0x0034_5678);
         assert_eq!(u32_at(&b, 0), 0x1234_5678);
         assert_eq!(fourcc_at(&b, 0), [0x12, 0x34, 0x56, 0x78]);
     }

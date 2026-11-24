@@ -71,9 +71,14 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
     let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(body).ok()?;
 
     let mdats = isobmff::frag_offsets::mdat_ranges(segment);
-    let samples =
-        isobmff::frag_offsets::sample_ranges_in(segment, &mdats, moof_off, &moof, video_track_id)
-            .ok()?;
+    let samples = isobmff::frag_offsets::sample_ranges_in(
+        segment,
+        &mdats,
+        moof_off,
+        &moof,
+        video_track_id.into(),
+    )
+    .ok()?;
     if samples.is_empty() {
         return None;
     }

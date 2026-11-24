@@ -2,7 +2,7 @@
 name    = "isobmff"
 version = "0.1.0"
 edition = "2024"
-description = "ISO/IEC 14496-12 (ISO BMFF) box syntax — box/FullBox headers, the top-level and movie-fragment box set, and the sample-table boxes, no_std."
+description = "ISO/IEC 14496-12:2026 (ISO BMFF) box syntax — box/FullBox headers, the top-level and movie-fragment box set, and the sample-table boxes, no_std."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["isobmff", "mp4", "bmff", "iso14496", "no-std"]
@@ -36,3 +36,11 @@ serde = ["dep:serde", "broadcast-common/serde"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "parse_boxes"
+required-features = ["std"]
+
+[[example]]
+name = "build_ftyp"
+required-features = ["std"]

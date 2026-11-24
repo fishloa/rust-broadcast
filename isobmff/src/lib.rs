@@ -16,8 +16,8 @@
 //!
 //! # Layout
 //!
-//! - [`box_types`] — box / FullBox headers, [`BoxType`](box_types::BoxType),
-//!   the size-driven [`box_iter`](box_types::box_iter) walker, the header
+//! - [`box_types`] — box / FullBox headers, [`BoxType`],
+//!   the size-driven [`box_iter`] walker, the header
 //!   writers, and the opaque round-trip carriers.
 //! - [`box_support`] — the shared flat-table and container-child helpers every
 //!   box module builds on.

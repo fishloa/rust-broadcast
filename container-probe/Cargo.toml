@@ -26,6 +26,7 @@ broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-f
 mpeg-ts  = { path = "../mpeg-ts",  version = "0.10.0" }
 mpeg-ps  = { path = "../mpeg-ps",  version = "0.10.0" }
 st377-1  = { path = "../st377-1",  version = "0.9.0" }
+isobmff  = { path = "../isobmff",  version = "0.1.0", default-features = false }
 test-alloc = { path = "../test-alloc" }
 test-fixtures = { path = "../test-fixtures" }
 

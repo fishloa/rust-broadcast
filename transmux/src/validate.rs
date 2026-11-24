@@ -8,8 +8,8 @@
 //! only inspects box structure, presence, ordering, and the sample-size /
 //! `data_offset` arithmetic.
 //!
-//! Parsing is done with the crate's own box walker ([`crate::box_iter`] /
-//! [`crate::parse_box`]) and the `movie_fragment` field parsers, so malformed
+//! Parsing is done with the crate's own box walker ([`isobmff::box_iter`] /
+//! [`isobmff::parse_box`]) and the `movie_fragment` field parsers, so malformed
 //! input yields issues rather than panics: every fallible read is matched, and
 //! nothing is `unwrap`ped on parsed lengths.
 //!

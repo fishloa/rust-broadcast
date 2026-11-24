@@ -105,6 +105,7 @@ mod init_segment_sweep;
 mod interlace_facts;
 mod ir_labels;
 mod ir_timing;
+mod isobmff_bridge;
 mod issue_952_avcc_no_trailer;
 mod key_hygiene;
 mod klv;

@@ -247,7 +247,7 @@ vice versa (5.3.9.1), violation drops the Representation. The result per Represe
 
 `Representation` with `BaseURL` + `SegmentBase@indexRange` (+ `Initialization@range`): init = `FetchInit` with the byte range; `FetchIndex` fetches `indexRange`; `SegmentIndexBox::parse_body`
 gives references (type 0 only; a hierarchical type-1 reference => `SegmentSequenceUnsupported`) which become `SegmentRef`s whose byte range is `first_offset + sum(referenced_size)`, anchored at the first byte
-after the sidx box (14496-12:2026 8.14.3 as noted in `transmux/src/timing.rs`); `presentation_us = earliest_presentation_time + cumulative duration - PTO`. Responses honour the shared range rules (206 + exact `Content-Range`, or a 200 sliced
+after the sidx box (14496-12:2026 8.14.3 as noted in `isobmff/src/timing.rs`); `presentation_us = earliest_presentation_time + cumulative duration - PTO`. Responses honour the shared range rules (206 + exact `Content-Range`, or a 200 sliced
 after the whole body, W-a `body.rs`). Static MPDs only in practice; the dynamic variant works identically.
 
 ## 5. Client algorithms (live and VOD)

@@ -40,6 +40,6 @@ fuzz_target!(|data: &[u8]| {
         let _ = transmux::SampleDescriptionBox::parse(&stsd(entry));
     }
     let _ = transmux::TrackExtendsBox::parse(data);
-    let _ = transmux::SchemeInformationBox::parse(data);
-    let _ = transmux::ProtectionSchemeInfoBox::parse(data);
+    let _ = isobmff::cenc::SchemeInformationBox::parse(data);
+    let _ = isobmff::cenc::ProtectionSchemeInfoBox::parse(data);
 });

@@ -1,4 +1,4 @@
-//! The ISO/IEC 14496-12 box-level track identity.
+//! The ISO/IEC 14496-12:2026 box-level track identity.
 //!
 //! [`TrackId`] is the `track_ID` the file carries (`tkhd`, `tfhd`, `trex`,
 //! `prft`'s `reference_track_ID`). It is a thin newtype over the integer the

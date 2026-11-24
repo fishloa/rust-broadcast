@@ -1747,9 +1747,6 @@ pub const TABLE: &[Crate] = &[
             // boxes (`url `, `urn `, `imdt`, `snim`), each variant wrapping a full
             // structured box, not a flat spec code.
             "DataEntry",
-            // `sample_groups::SubsV2Source` (#1905): a data-carrying ADT
-            // (`Reference { reference_idx }` / `Explicit(SubsampleProperties)`).
-            "SubsV2Source",
             // `slice_header::AvcPicture` (issue #1161): a data-carrying classification
             // ADT (`Field(AvcFieldInfo)`), not a spec-token label.
             "AvcPicture",
@@ -1828,7 +1825,6 @@ pub const TABLE: &[Crate] = &[
             "StblChild",
             "ProtocolControl",
             "AmfValue",
-            "SgpdEntry",
             // `cenc_encrypt` (#564) config enums: `IvGen` carries either a scalar
             // counter base or a full caller-supplied IV list (data-carrying ADT, like
             // `CodecConfig` above); `SubsamplePolicy` is a plain behaviour switch, not
@@ -1836,17 +1832,27 @@ pub const TABLE: &[Crate] = &[
             // fabricated rather than transcribed from a spec table.
             "IvGen",
             "SubsamplePolicy",
-            // `movie_fragment::TrafChild`/`MoofChild` (audit r05-W11): dispatch
-            // enums the parser records wire order into — each variant either names a
-            // typed child that lives on the owning box or wraps an `OpaqueChild`, so
-            // a flat spec-token label would be lossy and add nothing (the same reason
-            // `StblChild` above is skipped).
-            "TrafChild",
-            "MoofChild",
             // `sample_entries::SampleEntryChild` (audit item 3, round 3): the same
             // shape again — either an opaque child's full bytes, or a marker for the
             // codec config box at its wire position.
             "SampleEntryChild",
+        ],
+        expected: None,
+        min_enums: None,
+    },
+    Crate {
+        name: "isobmff",
+        scope: Scope::Crate,
+        matcher: Matcher::Loose,
+        skip: &[
+            // errors: Display comes from thiserror, not a spec-token label.
+            "Error",
+            // data-carrying ADTs (a full box body or a subsample descriptor in a
+            // variant), not flat spec codes.
+            "SgpdEntry",
+            "SubsV2Source",
+            "TrafChild",
+            "MoofChild",
         ],
         expected: None,
         min_enums: None,

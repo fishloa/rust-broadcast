@@ -1,7 +1,7 @@
 //! Multi-DRM `pssh` init-data payload generation.
 //!
 //! The [`ProtectionSystemSpecificHeaderBox`] container (`pssh`,
-//! ISO/IEC 23001-7 §12.1) is reused from [`crate::cenc`]; this module builds
+//! ISO/IEC 23001-7 §12.1) is reused from [`isobmff::cenc`]; this module builds
 //! the **system-specific `Data` payloads** and the convenience builders that
 //! assemble a complete `pssh` box per DRM system.
 //!

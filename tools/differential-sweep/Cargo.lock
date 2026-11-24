@@ -332,6 +332,7 @@ dependencies = [
  "container-probe",
  "headers",
  "http",
+ "isobmff",
  "jiff",
  "media-plane",
  "thiserror",
@@ -692,6 +693,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad7d3f647f560b2e5c7d7da6d9326223893247feb3e086a388a14654683aa2f2"
 
 [[package]]
+name = "isobmff"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -768,6 +778,7 @@ dependencies = [
  "broadcast-hls",
  "dvb-conformance",
  "dvb-si",
+ "isobmff",
  "mpeg-pes",
  "mpeg-ts",
  "scte35-splice",
@@ -1246,6 +1257,7 @@ dependencies = [
  "container-probe",
  "ctr",
  "dvb-si",
+ "isobmff",
  "jiff",
  "memchr",
  "mp4-emsg",

@@ -172,7 +172,7 @@ fn iframe_geometry_oracle() {
             &mdats,
             moof_off,
             &moof,
-            TrackId::new(1),
+            TrackId::new(1).into(),
         )
         .expect("sample ranges");
         assert!(!samples.is_empty());

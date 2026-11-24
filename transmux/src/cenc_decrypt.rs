@@ -2,7 +2,7 @@
 //!
 //! Turns a CENC-encrypted ISOBMFF/CMAF file back into cleartext coded samples,
 //! implementing the hub [`broadcast_common::Decrypt`] trait. Only the box
-//! *parsers* (in [`crate::cenc`]) are reused here; this module adds the
+//! *parsers* (in [`isobmff::cenc`]) are reused here; this module adds the
 //! `sinf`/`frma` unwrap and dispatches AES sample-decryption (both ciphers) to
 //! the shared cipher core in `cenc_crypto` (factored out so an
 //! encrypt path can reuse it — see that module's docs for the `cbcs` CBC

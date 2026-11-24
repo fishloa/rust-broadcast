@@ -40,6 +40,7 @@ st337        = { path = "../st337" }
 rdd29        = { path = "../rdd29" }
 st377-1      = { path = "../st377-1" }
 transmux      = { path = "../transmux" }
+isobmff       = { path = "../isobmff" }
 broadcast-hls = { path = "../broadcast-hls" }
 broadcast-smooth = { path = "../broadcast-smooth" }
 media-doctor  = { path = "../media-doctor" }
@@ -334,8 +335,8 @@ test = false
 doc  = false
 
 [[bin]]
-name = "transmux_cenc_boxes"
-path = "fuzz_targets/transmux_cenc_boxes.rs"
+name = "isobmff_cenc_boxes"
+path = "fuzz_targets/isobmff_cenc_boxes.rs"
 test = false
 doc  = false
 
