@@ -663,6 +663,14 @@ impl Reader {
         self.warnings.push(warning);
     }
 
+    fn finish_step(&mut self) -> Result<Step<'_>> {
+        self.done = true;
+        if let Some(warning) = self.take_warning() {
+            return Ok(Step::Warning(warning));
+        }
+        Ok(Step::Done)
+    }
+
     fn take_warning(&mut self) -> Option<Warning> {
         if self.warnings.is_empty() {
             return None;
@@ -821,6 +829,34 @@ impl Reader {
     }
 }
 
+/// Whether an opaque `stsd` holds an entry with a body, which means a known
+/// four-CC failed to parse. A header-only entry is a caller's raw sample entry
+/// and stays legal in both modes.
+fn opaque_stsd_has_body(stsd: &[u8]) -> bool {
+    let Some(body) = stsd.get(BOX_HEADER_MIN_SIZE..) else {
+        return false;
+    };
+    if body.len() < FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() {
+        return false;
+    }
+    let count = broadcast_common::wire::u32_at(body, FULLBOX_EXTRA_SIZE);
+    let mut at = FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
+    for _ in 0..count {
+        let Some(header) = body.get(at..at + BOX_HEADER_MIN_SIZE) else {
+            return false;
+        };
+        let size = usize::try_from(broadcast_common::wire::u32_at(header, 0)).unwrap_or(0);
+        if size > BOX_HEADER_MIN_SIZE {
+            return true;
+        }
+        if size < BOX_HEADER_MIN_SIZE {
+            return false;
+        }
+        at = at.saturating_add(size);
+    }
+    false
+}
+
 /// Whether a fragment parse failure is one the permissive mode tolerates.
 ///
 /// A `LimitExceeded` is never tolerated: the caps bind both modes.
@@ -912,8 +948,7 @@ impl Reader {
                 return Ok(Step::Sample(sample));
             }
             if !self.fragmented {
-                self.done = true;
-                return Ok(Step::Done);
+                return self.finish_step();
             }
         }
         self.walk_step()
@@ -950,8 +985,7 @@ impl Reader {
                         FragmentStep::Sample(sample) => Step::Sample(sample),
                     });
                 }
-                self.done = true;
-                Ok(Step::Done)
+                self.finish_step()
             }
         }
     }
@@ -1205,10 +1239,9 @@ impl Reader {
 
     fn accept_moov(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
         let mut owned = Vec::new();
-        let mut renames = Vec::new();
         let source: &[u8] = if self.tolerated() {
             owned.extend_from_slice(bytes);
-            renames = sanitize_moov(&mut owned, range.offset, &mut self.warnings);
+            sanitize_moov(&mut owned, range.offset, &mut self.warnings);
             &owned
         } else {
             bytes
@@ -1220,7 +1253,8 @@ impl Reader {
         let mut decode_times = Vec::with_capacity(movie.tracks.len());
         let mut sample_counts = Vec::with_capacity(movie.tracks.len());
         for (index, trak) in movie.tracks.iter().enumerate() {
-            let raw = raw_stsd_entries(source, index, &self.config.limits, range.offset, &renames)?;
+            let raw = raw_stsd_entries(source, index, &self.config.limits, range.offset)?;
+            self.check_opaque_stsd(trak, &raw)?;
             self.check_wave_esds(trak, &raw)?;
             let track_crypto = track_crypto(trak, &raw)?;
             let info = build_track_info(trak, raw)?;
@@ -1754,7 +1788,6 @@ fn raw_stsd_entries(
     track_index: usize,
     limits: &Limits,
     base_offset: u64,
-    renames: &[(u64, [u8; BOX_TYPE_SIZE])],
 ) -> Result<Vec<RawEntry>> {
     let movie = parse_box(moov)?.0;
     let Some(trak) = nth_child(movie.body, b"trak", track_index, TRAK_DEPTH, limits)? else {
@@ -1789,12 +1822,8 @@ fn raw_stsd_entries(
         };
         let offset = base_offset
             .saturating_add(u64::try_from(item.bytes.as_ptr() as usize - base).unwrap_or(u64::MAX));
-        let fourcc = renames
-            .iter()
-            .find(|(at, _)| *at == offset)
-            .map_or_else(|| item.four_cc(), |(_, fourcc)| *fourcc);
         out.push(RawEntry {
-            fourcc,
+            fourcc: item.four_cc(),
             body: item.bytes.to_vec(),
             offset,
         });
@@ -1857,7 +1886,39 @@ fn rescale_floor(value: u64, from: Timescale, to: Timescale) -> u64 {
     u64::try_from(scaled).unwrap_or(u64::MAX)
 }
 
+/// Four-CC of the sample description box.
+const STSD: [u8; BOX_TYPE_SIZE] = *b"stsd";
+
 impl Reader {
+    fn check_opaque_stsd(&mut self, trak: &TrackBox, raw: &[RawEntry]) -> Result<()> {
+        let Some(stbl) = sample_table(trak) else {
+            return Ok(());
+        };
+        let failed = stbl.children.iter().any(|child| match child {
+            StblChild::Opaque(bytes)
+                if bytes.len() >= BOX_HEADER_MIN_SIZE
+                    && bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] == STSD =>
+            {
+                opaque_stsd_has_body(bytes)
+            }
+            _ => false,
+        });
+        if !failed {
+            return Ok(());
+        }
+        if self.tolerated() {
+            let (fourcc, offset) = raw.first().map_or(([0u8; BOX_TYPE_SIZE], 0), |entry| {
+                (entry.fourcc, entry.offset)
+            });
+            self.warn(Warning::UnparseableSampleEntry { fourcc, offset });
+            Ok(())
+        } else {
+            Err(Error::InvalidInput(
+                "a known sample-entry four-CC did not parse",
+            ))
+        }
+    }
+
     fn check_wave_esds(&mut self, trak: &TrackBox, raw: &[RawEntry]) -> Result<()> {
         let Some(stsd) = trak
             .mdia
@@ -1899,24 +1960,16 @@ const SANITIZE_CONTAINERS: &[[u8; BOX_TYPE_SIZE]] = &[
     *b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"dinf", *b"edts", *b"udta", *b"mvex",
 ];
 
-/// Ascend from every `stsd` the sanitizer can find.
-const STSD: [u8; BOX_TYPE_SIZE] = *b"stsd";
 /// The `meta` box that carries a four-byte FullBox header before its children.
 const META: [u8; BOX_TYPE_SIZE] = *b"meta";
 
-/// Repair the faults a permissive `moov` walk tolerates, returning the entries
-/// whose four-CC was zeroed so they keep their original name on a sample entry.
-fn sanitize_moov(
-    data: &mut [u8],
-    base: u64,
-    warnings: &mut Vec<Warning>,
-) -> Vec<(u64, [u8; BOX_TYPE_SIZE])> {
+/// Repair the faults a permissive `moov` walk tolerates.
+fn sanitize_moov(data: &mut [u8], base: u64, warnings: &mut Vec<Warning>) {
     let body_start = crate::box_types::BoxHeader::parse(data)
         .map(|header| header.header_size())
         .unwrap_or(BOX_HEADER_MIN_SIZE);
     clamp_children(data, body_start, data.len(), base, warnings, 0);
     patch_zero_mvhd(data, body_start, base, warnings);
-    disable_unparseable_entries(data, body_start, base, warnings)
 }
 
 fn clamp_children(
@@ -2011,70 +2064,4 @@ fn patch_zero_mvhd(data: &mut [u8], start: usize, base: u64, warnings: &mut Vec<
     warnings.push(Warning::ZeroMovieTimescale {
         offset: base.saturating_add(u64::try_from(at).unwrap_or(u64::MAX)),
     });
-}
-
-fn disable_unparseable_entries(
-    data: &mut [u8],
-    start: usize,
-    base: u64,
-    warnings: &mut Vec<Warning>,
-) -> Vec<(u64, [u8; BOX_TYPE_SIZE])> {
-    let mut stsds = Vec::new();
-    find_stsd(data, start, data.len(), &mut stsds);
-    let mut renames = Vec::new();
-    for stsd in stsds {
-        let Some((size, mut at)) = stsd_entries_start(data, stsd) else {
-            continue;
-        };
-        let count = broadcast_common::wire::u32_at(data, stsd + BOX_HEADER_MIN_SIZE + 4);
-        let end = stsd.saturating_add(size);
-        for _ in 0..count {
-            if at + BOX_HEADER_MIN_SIZE > end {
-                break;
-            }
-            let entry_size =
-                usize::try_from(broadcast_common::wire::u32_at(data, at)).unwrap_or(usize::MAX);
-            if entry_size < BOX_HEADER_MIN_SIZE || at.saturating_add(entry_size) > end {
-                break;
-            }
-            let mut fourcc = [0u8; BOX_TYPE_SIZE];
-            fourcc.copy_from_slice(&data[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE]);
-            if crate::init_segment::sample_entry_variant(&data[at..at + entry_size]).is_err() {
-                let offset = base.saturating_add(u64::try_from(at).unwrap_or(u64::MAX));
-                warnings.push(Warning::UnparseableSampleEntry { fourcc, offset });
-                renames.push((offset, fourcc));
-                data[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE].fill(0);
-            }
-            at = at.saturating_add(entry_size);
-        }
-    }
-    renames
-}
-
-fn stsd_entries_start(data: &[u8], stsd: usize) -> Option<(usize, usize)> {
-    let size = usize::try_from(broadcast_common::wire::u32_at(data, stsd)).ok()?;
-    let start = stsd
-        .checked_add(BOX_HEADER_MIN_SIZE)?
-        .checked_add(FULLBOX_EXTRA_SIZE)?
-        .checked_add(core::mem::size_of::<u32>())?;
-    Some((size, start))
-}
-
-fn find_stsd(data: &[u8], start: usize, end: usize, out: &mut Vec<usize>) {
-    let mut at = start;
-    while at + BOX_HEADER_MIN_SIZE <= end {
-        let size = usize::try_from(broadcast_common::wire::u32_at(data, at)).unwrap_or(usize::MAX);
-        if size < BOX_HEADER_MIN_SIZE || at.saturating_add(size) > end {
-            return;
-        }
-        let mut fourcc = [0u8; BOX_TYPE_SIZE];
-        fourcc.copy_from_slice(&data[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE]);
-        if fourcc == STSD {
-            out.push(at);
-        } else if SANITIZE_CONTAINERS.contains(&fourcc) {
-            let body = at + BOX_HEADER_MIN_SIZE;
-            find_stsd(data, body, at + size, out);
-        }
-        at = at.saturating_add(size);
-    }
 }

@@ -3133,6 +3133,70 @@ pub struct SampleDescriptionBox {
     pub entries: Vec<SampleEntryVariant>,
 }
 
+/// Parse one `stsd` entry's bytes into its typed variant.
+///
+/// The permissive reader uses this to tell a known four-CC that fails to parse
+/// from one this crate has no typed form for.
+pub(crate) fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
+    let codec = &box_bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
+    Ok(match codec {
+        b"avc1" | b"avc3" | b"avc2" | b"avc4" => SampleEntryVariant::Avc1(
+            crate::sample_entries::AVCSampleEntry::bare_parse(box_bytes)?,
+        ),
+        b"avcp" => SampleEntryVariant::AvcParameterSet(Box::new(
+            crate::avc_parameter_set::AVCParameterSampleEntry::bare_parse(box_bytes)?,
+        )),
+        b"hvc1" | b"hev1" | b"dvh1" | b"dvhe" => SampleEntryVariant::Hevc1(
+            crate::sample_entries::HEVCSampleEntry::bare_parse(box_bytes)?,
+        ),
+        b"vvc1" | b"vvi1" => SampleEntryVariant::Vvc(Box::new(
+            crate::sample_entries::VVCSampleEntry::bare_parse(box_bytes)?,
+        )),
+        b"mp4v" => SampleEntryVariant::Mp4v(Box::new(
+            crate::sample_entries::Mp4vSampleEntry::bare_parse(box_bytes)?,
+        )),
+        b"mp4a" | b"enca" => SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry::parse(box_bytes)?)),
+        b"ac-3" => SampleEntryVariant::Ac3(Box::new(Ac3SampleEntry::parse(box_bytes)?)),
+        b"ec-3" => SampleEntryVariant::Ec3(Box::new(Ec3SampleEntry::parse(box_bytes)?)),
+        b"stpp" => SampleEntryVariant::Stpp(Box::new(
+            crate::subtitle_entries::XmlSubtitleSampleEntry::bare_parse(box_bytes)?,
+        )),
+        b"wvtt" => SampleEntryVariant::Wvtt(Box::new(
+            crate::subtitle_entries::WvttSampleEntry::bare_parse(box_bytes)?,
+        )),
+        b"av01" => SampleEntryVariant::Av01(Box::new(crate::av1::Av1SampleEntry::parse_entry(
+            box_bytes,
+        )?)),
+        b"vp09" => SampleEntryVariant::Vp09(Box::new(crate::vp9::Vp9SampleEntry::parse_entry(
+            box_bytes,
+        )?)),
+        b"ac-4" => SampleEntryVariant::Ac4(Box::new(Ac4SampleEntry::parse(box_bytes)?)),
+        b"Opus" => SampleEntryVariant::Opus(Box::new(OpusSampleEntry::parse(box_bytes)?)),
+        b"fLaC" => SampleEntryVariant::Flac(Box::new(FlacSampleEntry::parse(box_bytes)?)),
+        b"mha1" | b"mha2" | b"mhm1" | b"mhm2" => {
+            SampleEntryVariant::Mha(Box::new(MhaSampleEntry::parse(box_bytes)?))
+        }
+        b"dtsc" | b"dtsh" | b"dtsl" | b"dtse" => {
+            SampleEntryVariant::Dts(Box::new(DtsSampleEntry::parse(box_bytes)?))
+        }
+        b"tmcd" => {
+            SampleEntryVariant::Tmcd(Box::new(crate::quicktime::TimecodeEntry::parse(box_bytes)?))
+        }
+        b"lpcm" | b"in24" | b"in32" | b"sowt" | b"twos" | b"raw " | b"fl32" | b"fl64" | b"ima4"
+        | b"MAC3 " | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" => SampleEntryVariant::QuickTimeSound(
+            Box::new(crate::quicktime::SoundEntry::parse(box_bytes)?),
+        ),
+        _ => {
+            let mut c4 = [0u8; BOX_TYPE_SIZE];
+            c4.copy_from_slice(&codec[..BOX_TYPE_SIZE.min(codec.len())]);
+            SampleEntryVariant::Unknown(OpaqueBox::new(
+                c4,
+                crate::box_types::parse_box(box_bytes)?.0.payload().to_vec(),
+            ))
+        }
+    })
+}
+
 impl<'a> Parse<'a> for SampleDescriptionBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -3158,67 +3222,7 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 break;
             };
             let box_bytes = item.bytes;
-            let codec = &box_bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
-            let entry = match codec {
-                b"avc1" | b"avc3" | b"avc2" | b"avc4" => SampleEntryVariant::Avc1(
-                    crate::sample_entries::AVCSampleEntry::bare_parse(box_bytes)?,
-                ),
-                b"avcp" => SampleEntryVariant::AvcParameterSet(Box::new(
-                    crate::avc_parameter_set::AVCParameterSampleEntry::bare_parse(box_bytes)?,
-                )),
-                b"hvc1" | b"hev1" | b"dvh1" | b"dvhe" => SampleEntryVariant::Hevc1(
-                    crate::sample_entries::HEVCSampleEntry::bare_parse(box_bytes)?,
-                ),
-                b"vvc1" | b"vvi1" => SampleEntryVariant::Vvc(Box::new(
-                    crate::sample_entries::VVCSampleEntry::bare_parse(box_bytes)?,
-                )),
-                b"mp4v" => SampleEntryVariant::Mp4v(Box::new(
-                    crate::sample_entries::Mp4vSampleEntry::bare_parse(box_bytes)?,
-                )),
-                b"mp4a" | b"enca" => {
-                    SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry::parse(box_bytes)?))
-                }
-                b"ac-3" => SampleEntryVariant::Ac3(Box::new(Ac3SampleEntry::parse(box_bytes)?)),
-                b"ec-3" => SampleEntryVariant::Ec3(Box::new(Ec3SampleEntry::parse(box_bytes)?)),
-                b"stpp" => SampleEntryVariant::Stpp(Box::new(
-                    crate::subtitle_entries::XmlSubtitleSampleEntry::bare_parse(box_bytes)?,
-                )),
-                b"wvtt" => SampleEntryVariant::Wvtt(Box::new(
-                    crate::subtitle_entries::WvttSampleEntry::bare_parse(box_bytes)?,
-                )),
-                b"av01" => SampleEntryVariant::Av01(Box::new(
-                    crate::av1::Av1SampleEntry::parse_entry(box_bytes)?,
-                )),
-                b"vp09" => SampleEntryVariant::Vp09(Box::new(
-                    crate::vp9::Vp9SampleEntry::parse_entry(box_bytes)?,
-                )),
-                b"ac-4" => SampleEntryVariant::Ac4(Box::new(Ac4SampleEntry::parse(box_bytes)?)),
-                b"Opus" => SampleEntryVariant::Opus(Box::new(OpusSampleEntry::parse(box_bytes)?)),
-                b"fLaC" => SampleEntryVariant::Flac(Box::new(FlacSampleEntry::parse(box_bytes)?)),
-                b"mha1" | b"mha2" | b"mhm1" | b"mhm2" => {
-                    SampleEntryVariant::Mha(Box::new(MhaSampleEntry::parse(box_bytes)?))
-                }
-                b"dtsc" | b"dtsh" | b"dtsl" | b"dtse" => {
-                    SampleEntryVariant::Dts(Box::new(DtsSampleEntry::parse(box_bytes)?))
-                }
-                b"tmcd" => SampleEntryVariant::Tmcd(Box::new(
-                    crate::quicktime::TimecodeEntry::parse(box_bytes)?,
-                )),
-                b"lpcm" | b"in24" | b"in32" | b"sowt" | b"twos" | b"raw " | b"fl32" | b"fl64"
-                | b"ima4" | b"MAC3 " | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" => {
-                    SampleEntryVariant::QuickTimeSound(Box::new(
-                        crate::quicktime::SoundEntry::parse(box_bytes)?,
-                    ))
-                }
-                _ => {
-                    let mut c4 = [0u8; BOX_TYPE_SIZE];
-                    c4.copy_from_slice(&codec[..BOX_TYPE_SIZE.min(codec.len())]);
-                    SampleEntryVariant::Unknown(OpaqueBox::new(
-                        c4,
-                        crate::box_types::parse_box(box_bytes)?.0.payload().to_vec(),
-                    ))
-                }
-            };
+            let entry = sample_entry_variant(box_bytes)?;
             entries.push(entry);
         }
         Ok(Self {

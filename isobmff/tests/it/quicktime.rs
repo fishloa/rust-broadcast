@@ -320,3 +320,22 @@ fn a_chapter_title_sample_decodes() {
         "Intro"
     );
 }
+
+#[test]
+fn the_writer_refuses_a_typed_quicktime_entry() {
+    use broadcast_common::Serialize;
+    let tmcd = SampleEntryVariant::Tmcd(Box::new(TimecodeEntry {
+        flags: 0,
+        timescale: 12800,
+        frame_duration: 512,
+        number_of_frames: 25,
+        name: None,
+        others: Vec::new(),
+    }));
+    let mut buffer = vec![0u8; tmcd.serialized_len()];
+    let error = tmcd.serialize_into(&mut buffer).expect_err("refused");
+    assert!(matches!(
+        error,
+        isobmff::Error::QuickTimeOnly { atom } if atom == *b"tmcd"
+    ));
+}
