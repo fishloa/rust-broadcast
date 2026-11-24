@@ -1,6 +1,6 @@
 # Streaming-first containers: bounded memory, one MP4 crate
 
-Status: draft for owner approval (2026-11-24). Builder review questions Q1–Q7 are answered in §10.
+Status: approved by owner 2026-11-24.
 Tracking: #4057 (whole-file inputs), #4056 (MP4 metadata tracks), #953 (closed without a fix; same defect).
 
 ## 1. Why
@@ -268,3 +268,13 @@ Separate owner decisions, not blocking this design:
 - Crate names `isobmff` and `broadcast-matroska` (both free on crates.io) are assumed throughout; a name is permanent once published, so it is confirmed with the Milestone 1 release sign-off.
 - Telemetry: normalised type in `motion-imagery-metadata`; DJI `djmd` decoding (no published spec); telemetry-parser outreach (§5 Phase 7).
 - A future `codec` crate for the container-independent bitstream parsers.
+
+### Owner approvals (2026-11-24)
+
+- The design as written, including every decision above.
+- Progressive MP4 from non-replayable input is refused with a typed error pointing to fragmented MP4. Single-pass progressive output can be added later as its own tested feature.
+- `examples/` are under the `bounded_input` guard.
+- The capped-read helper lives in broadcast-common behind `std`.
+- The broadcast-common major and the workspace re-release at Milestone 2.
+- Crate names `isobmff` and `broadcast-matroska`.
+- The §4.5 defaults are starting estimates, confirmed by measurement in Phase 2.
