@@ -79,7 +79,9 @@ const SUBTYPE_OFFSET: usize = 0;
 const SUBTYPE_AUX1_OFFSET: usize = SUBTYPE_OFFSET + 1;
 const SUBTYPE_AUX2_OFFSET: usize = SUBTYPE_AUX1_OFFSET + 1;
 const SUBTYPE_AUX3_OFFSET: usize = SUBTYPE_AUX2_OFFSET + 1;
-const SUBTYPE_TRAILING_LEN: usize = SUBTYPE_AUX3_OFFSET - SUBTYPE_OFFSET;
+/// Width in bytes of the reserved trailing bytes of a NORM_CMD sub-type word
+/// (RFC 5740 §4.2.3).
+pub const SUBTYPE_TRAILING_LEN: usize = SUBTYPE_AUX3_OFFSET - SUBTYPE_OFFSET;
 /// NORM_CMD(CC) `send_time_sec` + `send_time_usec`.
 const SEND_TIME_FIELD_LEN: usize = core::mem::size_of::<u32>();
 const CC_SEND_TIME_LEN: usize = SEND_TIME_FIELD_LEN * 2;

@@ -26,8 +26,8 @@
 //! The *box layouts* that carry this scheme (`tenc`, `senc`, `sinf`, `schm`,
 //! …) are ISOBMFF-specific and stay in `transmux`.
 
-/// Width of an ISOBMFF FourCC (`schm.scheme_type`).
-const FOURCC_LEN: usize = 4;
+/// Width in bytes of an ISOBMFF FourCC (`schm.scheme_type`), ISO/IEC 23001-7 §4.
+pub const FOURCC_LEN: usize = 4;
 /// Four-CC identifying the `cenc` (AES-128 full-block counter, CTR)
 /// protection scheme, as it appears in `schm.scheme_type`.
 pub const SCHEME_CENC: [u8; FOURCC_LEN] = *b"cenc";

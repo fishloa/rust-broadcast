@@ -107,7 +107,8 @@ const PACKET_START_CODE_PREFIX_VALUE: u32 = 0x00_0001;
 /// Field widths inside the optional PES header (Table 2-21).
 const PTS_FIELD_LEN: usize = timestamp::FIELD_LEN;
 const PTS_DTS_FIELD_LEN: usize = 2 * PTS_FIELD_LEN;
-const ESCR_FIELD_LEN: usize = 6;
+/// Width in bytes of the `ESCR` field (ISO/IEC 13818-1 §2.4.3.7, Table 2-21).
+pub const ESCR_FIELD_LEN: usize = 6;
 const ES_RATE_FIELD_LEN: usize = 3;
 const PES_PRIVATE_DATA_LEN: usize = 16;
 const ES_RATE_HI_OFFSET: usize = 0;

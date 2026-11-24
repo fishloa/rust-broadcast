@@ -28,9 +28,11 @@ const MJD_16_MSB: u16 = 0x8000;
 /// EN 300 468 v1.20.1 clause 5.2.4).
 const MJD_WRAP_OFFSET: u32 = 0x1_0000;
 
-/// Wire widths of the DVB time fields (EN 300 468 Annex C).
-const MJD_BCD_LEN: usize = 5;
-const BCD_DURATION_LEN: usize = 3;
+/// Width in bytes of a DVB UTC time (16-bit MJD + 24-bit BCD `HHMMSS`),
+/// EN 300 468 Annex C.
+pub const MJD_BCD_LEN: usize = 5;
+/// Width in bytes of a DVB BCD `HHMMSS` duration, EN 300 468 Annex C.
+pub const BCD_DURATION_LEN: usize = 3;
 /// Width of the 16-bit MJD field within the 5-byte time.
 const MJD_BYTES: usize = 2;
 /// Byte offsets of HH, MM, SS within the 5-byte time (after the MJD).

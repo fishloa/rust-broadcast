@@ -1016,8 +1016,9 @@ const PIECEWISE_RATE_MID_OFFSET: usize = PIECEWISE_RATE_HI_OFFSET + 1;
 const PIECEWISE_RATE_LO_OFFSET: usize = PIECEWISE_RATE_MID_OFFSET + 1;
 /// Bit shift of the `piecewise_rate` high byte within its 3-byte field.
 const PIECEWISE_RATE_HI_SHIFT: u32 = 16;
-/// Wire width of the `seamless_splice` `DTS_next_AU` field.
-const DTS_NEXT_AU_FIELD_LEN: usize = 5;
+/// Width in bytes of the `seamless_splice` `DTS_next_AU` field (ISO/IEC
+/// 13818-1 §2.4.3.5, Table 2-6).
+pub const DTS_NEXT_AU_FIELD_LEN: usize = 5;
 /// Length of the `adaptation_field_extension_length` byte plus the extension
 /// flags byte.
 const AFE_PREFIX_LEN: usize = 2;

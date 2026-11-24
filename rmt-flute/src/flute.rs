@@ -27,9 +27,9 @@ pub const FLUTE_VERSION: u8 = 2;
 /// Maximum FDT Instance ID (20-bit field).
 pub const FDT_INSTANCE_ID_MAX: u32 = (1 << 20) - 1;
 
-/// Content bytes of a fixed-length extension: one 32-bit word minus the HET
-/// byte (RFC 6726 §3.4.1/§3.4.3).
-const EXT_CONTENT_LEN: usize = 3;
+/// Width in bytes of a fixed-length header extension's content: one 32-bit
+/// word minus the HET byte (RFC 6726 §3.4.1/§3.4.3).
+pub const EXT_CONTENT_LEN: usize = 3;
 /// Byte offsets within those content bytes.
 const CONTENT_VERSION_OFFSET: usize = 0;
 const CONTENT_MID_OFFSET: usize = CONTENT_VERSION_OFFSET + 1;

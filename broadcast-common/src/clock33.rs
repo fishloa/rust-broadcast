@@ -220,9 +220,9 @@ pub fn pcr_signed_distance(from: u64, to: u64) -> i64 {
 /// every PES `PTS`/`DTS` must carry, ISO/IEC 13818-1 §2.4.3.7).
 pub const MARKERS_ALL_SET: u8 = 0b111;
 
-/// Bit layout of the 5-byte marker-bit timestamp field (ISO/IEC 13818-1
-/// §2.4.3.7 Table 2-21).
-const MARKED_FIELD_LEN: usize = 5;
+/// Width in bytes of the marker-bit timestamp field, ISO/IEC 13818-1 §2.4.3.7
+/// Table 2-21.
+pub const MARKED_FIELD_LEN: usize = 5;
 /// Bit shift of the 4-bit `prefix`.
 const MARKED_PREFIX_SHIFT: u32 = 4;
 /// Mask of the 4-bit `prefix`.
