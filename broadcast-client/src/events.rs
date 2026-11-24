@@ -1199,11 +1199,13 @@ pub struct Config {
     /// delivered sample) but cannot progress past the cap: it must report
     /// positions for [`Action::ResumeRead`] to release the pause.
     pub read_ahead_max: Option<Duration>,
-    /// TS-over-HTTP read-ahead cap in bytes accepted since the playback position
-    /// last changed. A source whose timestamps cannot be measured is still held
-    /// by this cap; bytes fed while reads are paused are accepted and counted,
-    /// never dropped. `None` leaves the byte measure uncapped. Must be non-zero
-    /// when set. Applies to the TS-over-HTTP source only.
+    /// TS-over-HTTP read-ahead cap in bytes of media still ahead of the playback
+    /// position: accepted bytes are attributed to delivered samples in 100 ms
+    /// presentation slices, and slices the position has passed stop counting. A
+    /// source whose timestamps cannot be measured is still held by this cap;
+    /// bytes fed while reads are paused are accepted and counted, never dropped.
+    /// `None` leaves the byte measure uncapped. Must be non-zero when set.
+    /// Applies to the TS-over-HTTP source only.
     pub read_ahead_max_bytes: Option<usize>,
     /// Record every call the session makes into its buffering controller so the host can drain
     /// them with [`crate::Session::drain_buffer_inputs`] and replay them offline through a

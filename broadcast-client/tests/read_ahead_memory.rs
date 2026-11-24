@@ -12,6 +12,7 @@
 
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session, Status};
@@ -21,6 +22,8 @@ use url::Url;
 
 #[global_allocator]
 static A: test_alloc::ProcessPeak = test_alloc::ProcessPeak::new();
+/// The allocator is process-wide, so the two measuring windows must not overlap.
+static WINDOW: Mutex<()> = Mutex::new(());
 
 /// The generated capture's size: big enough that reading it whole blows the
 /// budget several times over.
@@ -40,6 +43,8 @@ const MAX_TICKS: usize = 4_000_000;
 /// to queue the whole capture when the host ignores the pause.
 const QUEUE_EVENTS: usize = 2_000_000;
 const QUEUE_BYTES: usize = 1 << 30;
+/// Byte-only case: the read-ahead cap alone must keep the peak under `BUDGET`.
+const BYTE_CAP: usize = 32 << 20;
 
 fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
@@ -75,15 +80,35 @@ fn drain_actions(session: &mut Session, now: Timestamp, conn: ConnId, paused: &m
 
 /// Run the play loop, returning the live bytes held above the entry total and
 /// the number of samples delivered.
-fn play(path: &std::path::Path, honour_pause: bool, expected_bytes: u64) -> (usize, u64) {
-    let config = Config::default()
-        .with_read_ahead_max(Some(Duration::from_secs(30)))
-        .with_read_ahead_max_bytes(Some(64 << 20));
-    let mut config = config;
+fn capped(mut config: Config) -> Config {
     config.max_queued_events = QUEUE_EVENTS;
     config.max_queued_bytes = QUEUE_BYTES;
     config.timeline_jump = None;
+    config
+}
 
+fn time_capped() -> Config {
+    capped(
+        Config::default()
+            .with_read_ahead_max(Some(Duration::from_secs(30)))
+            .with_read_ahead_max_bytes(Some(64 << 20)),
+    )
+}
+
+fn byte_capped() -> Config {
+    capped(
+        Config::default()
+            .with_read_ahead_max(None)
+            .with_read_ahead_max_bytes(Some(BYTE_CAP)),
+    )
+}
+
+fn play(
+    path: &std::path::Path,
+    config: Config,
+    honour_pause: bool,
+    expected_bytes: u64,
+) -> (usize, u64) {
     let mut session = Session::open(
         Url::parse("http://example.invalid/record.ts").unwrap(),
         config,
@@ -151,6 +176,7 @@ fn play(path: &std::path::Path, honour_pause: bool, expected_bytes: u64) -> (usi
 
 #[test]
 fn a_big_ts_plays_in_bounded_memory_with_backpressure() {
+    let _window = WINDOW.lock().unwrap();
     let honour_pause = std::env::var_os("READ_AHEAD_IGNORE_PAUSE").is_none();
     let dir = std::env::temp_dir().join(format!(
         "broadcast-client-read-ahead-{}",
@@ -165,7 +191,7 @@ fn a_big_ts_plays_in_bounded_memory_with_backpressure() {
     );
     let expected: u64 = made.samples_per_track.iter().map(|(_, n)| *n).sum();
 
-    let (held, samples) = play(&path, honour_pause, made.bytes);
+    let (held, samples) = play(&path, time_capped(), honour_pause, made.bytes);
     eprintln!(
         "peak {held} bytes above baseline for a {} -byte TS capture ({samples} samples, honour={honour_pause})",
         made.bytes
@@ -179,5 +205,38 @@ fn a_big_ts_plays_in_bounded_memory_with_backpressure() {
         "playing a {}-byte file held {held} live bytes, over the {BUDGET} budget \
          (set READ_AHEAD_IGNORE_PAUSE to see the unbounded peak)",
         made.bytes
+    );
+}
+
+#[test]
+fn a_big_ts_plays_in_bounded_memory_with_only_the_byte_cap() {
+    let _window = WINDOW.lock().unwrap();
+    let honour_pause = std::env::var_os("READ_AHEAD_IGNORE_PAUSE").is_none();
+    let dir = std::env::temp_dir().join(format!(
+        "broadcast-client-read-ahead-bytes-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let path = dir.join("big.ts");
+    let made = test_harness::big_media::write_big_ts(
+        &path,
+        &test_fixtures::path("ts/h264-aac-40s.ts"),
+        FILE_BYTES,
+    );
+    let expected: u64 = made.samples_per_track.iter().map(|(_, n)| *n).sum();
+
+    let (held, samples) = play(&path, byte_capped(), honour_pause, made.bytes);
+    eprintln!(
+        "peak {held} bytes above baseline for a {} -byte TS capture with only the {BYTE_CAP}-byte cap ({samples} samples, honour={honour_pause})",
+        made.bytes
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(samples, expected, "every sample of the capture must play");
+    assert!(
+        held < BUDGET,
+        "byte-only read-ahead held {held} live bytes, over the {BUDGET} budget \
+         (set READ_AHEAD_IGNORE_PAUSE to see the unbounded peak)"
     );
 }

@@ -999,15 +999,27 @@ source carries an explicit read-ahead cap and tells the host when to stop readin
 
 ### Measure
 
-`read_ahead.rs` keeps two O(1) measures of how far ahead the session is:
+`read_ahead.rs` keeps two bounded measures of how far ahead the session is:
 
 - **Media time**: the latest delivered presentation end (PTS plus duration, per track, converted
   to the 27 MHz clock and compared with `broadcast_common::clock33::pcr_signed_distance`) minus
   the position from `Session::on_playback_position`. Before the first position is known the
   baseline is the first delivered sample.
-- **Bytes**: body bytes accepted since the playback position last *changed* (a host that reports
-  the same position every tick does not reset the window). This is the fallback when timestamps
-  cannot be measured.
+- **Bytes ahead of the player**: accepted body bytes split into *pending* bytes (accepted after
+  the last delivered sample: a partial PES plus container overhead) and bytes attributed to
+  delivered samples, grouped into presentation-time slices of `READ_AHEAD_SLICE` (100 ms) by each
+  sample's presentation end. Every pending byte is attributed in full to the next delivered
+  sample, so TS/PES overhead cannot accumulate past the cap; bytes accepted after the last sample
+  of a feed stay pending until the next one. `bytes_ahead` is pending plus the slices still
+  ahead. When the position advances, every slice whose end is at or behind it is dropped and its
+  bytes subtracted; a position that does not move drops nothing, and before the first position
+  nothing is dropped. Pending bytes always count, so a stream that delivers bytes but no timed
+  sample (PSI and null packets) is still capped; bytes the player has passed stop counting, so
+  playback progress releases the cap even while the position is reported many times a second.
+  The slice queue is bounded by the configured time cap (`cap / 100 ms + 1` entries) when one is
+  set, otherwise by `MAX_READ_AHEAD_SLICES` (4096); past that the two oldest slices merge into
+  one ending at the later of their ends. Queue length is never proportional to the file or the
+  sample count.
 
 ### Actions
 

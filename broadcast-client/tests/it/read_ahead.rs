@@ -93,32 +93,85 @@ fn ticks(pts: i64, timescale: u32) -> i128 {
 
 impl Media {
     fn observe(&mut self, event: &Event) {
-        match event {
-            Event::Tracks(specs) => {
-                for spec in specs {
-                    self.timescales
-                        .insert(spec.track_id.value(), spec.timescale.get());
+        if let Event::Tracks(specs) = event {
+            for spec in specs {
+                self.timescales
+                    .insert(spec.track_id.value(), spec.timescale.get());
+            }
+        }
+    }
+
+    fn sample_end(&self, track: u32, sample: &broadcast_client::Sample) -> Option<i128> {
+        let timescale = self.timescales.get(&track).copied()?;
+        let pts = sample.timing.and_then(|t| t.pts())?;
+        let duration = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
+        Some(ticks(pts.saturating_add(duration), timescale))
+    }
+
+    fn drain_each(&mut self, session: &mut Session, mut on_sample: impl FnMut(i128)) {
+        while let Some(event) = session.next_event() {
+            match &event {
+                Event::Sample { track, sample, .. } => {
+                    if let Some(end) = self.sample_end(track.value(), sample) {
+                        self.latest_end =
+                            Some(self.latest_end.map_or(end, |latest| latest.max(end)));
+                        on_sample(end);
+                    }
                 }
+                other => self.observe(other),
             }
-            Event::Sample { track, sample, .. } => {
-                let Some(timescale) = self.timescales.get(&track.value()).copied() else {
-                    return;
-                };
-                let Some(pts) = sample.timing.and_then(|t| t.pts()) else {
-                    return;
-                };
-                let duration = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
-                let end = ticks(pts.saturating_add(duration), timescale);
-                self.latest_end = Some(self.latest_end.map_or(end, |latest| latest.max(end)));
-            }
-            _ => {}
         }
     }
 
     fn drain(&mut self, session: &mut Session) {
-        while let Some(event) = session.next_event() {
-            self.observe(&event);
+        self.drain_each(session, |_| {});
+    }
+}
+
+/// Presentation width of one read-ahead byte entry.
+const SLICE_TICKS: i128 = (PCR_HZ / 10) as i128;
+
+/// Mirrors the session's byte accounting so a test can assert what is ahead.
+#[derive(Default)]
+struct ByteLedger {
+    pending: u64,
+    entries: Vec<(i128, u64)>,
+    fed: u64,
+}
+
+impl ByteLedger {
+    fn accept(&mut self, len: usize) {
+        self.fed = self.fed.saturating_add(len as u64);
+        self.pending = self.pending.saturating_add(len as u64);
+    }
+
+    fn sample(&mut self, end: i128) {
+        let take = self.pending;
+        self.pending = 0;
+        if take == 0 {
+            return;
         }
+        // The session coalesces samples into 100 ms presentation slices.
+        if let Some((last_end, last_bytes)) = self.entries.last_mut()
+            && end / SLICE_TICKS <= *last_end / SLICE_TICKS
+        {
+            *last_bytes = last_bytes.saturating_add(take);
+            if end > *last_end {
+                *last_end = end;
+            }
+            return;
+        }
+        self.entries.push((end, take));
+    }
+
+    fn ahead(&self, position: i128) -> u64 {
+        let queued: u64 = self
+            .entries
+            .iter()
+            .filter(|(end, _)| *end > position)
+            .map(|(_, bytes)| *bytes)
+            .sum();
+        self.pending.saturating_add(queued)
     }
 }
 
@@ -351,6 +404,148 @@ fn a_real_time_source_is_never_paused() {
         );
     }
     assert!(!session.read_paused(conn));
+}
+
+#[test]
+fn the_byte_cap_holds_while_the_position_advances() {
+    let cap = 300_000usize;
+    let config = Config::default()
+        .with_read_ahead_max(None)
+        .with_read_ahead_max_bytes(Some(cap));
+    let mut session = open(config);
+    let conn = connect(&mut session);
+    session.on_playback_position(ts(0), Some(clock(0)));
+
+    let bytes = fixture();
+    let mut media = Media::default();
+    let mut ledger = ByteLedger::default();
+    let mut position = 0u64;
+    let mut pauses = 0;
+    for chunk in bytes.chunks(CHUNK) {
+        ledger.accept(chunk.len());
+        session.on_data(conn, chunk, ts(0));
+        media.drain_each(&mut session, |end| ledger.sample(end));
+        let ahead = ledger.ahead(i128::from(position));
+        position = position.saturating_add(PCR_HZ / 25);
+        session.on_playback_position(ts(0), Some(clock(position)));
+        let actions = pump(&mut session, ts(0));
+        if pause_read(&actions, conn) {
+            pauses += 1;
+            assert!(
+                ahead >= cap as u64,
+                "paused with {ahead} bytes ahead, under the {cap}-byte cap"
+            );
+            break;
+        }
+    }
+    assert_eq!(
+        pauses, 1,
+        "the byte cap pauses even though the position advances every chunk"
+    );
+    assert!(session.read_paused(conn));
+}
+
+#[test]
+fn bytes_behind_the_position_stop_counting() {
+    let cap = 300_000usize;
+    let config = Config::default()
+        .with_read_ahead_max(None)
+        .with_read_ahead_max_bytes(Some(cap));
+    let mut session = open(config);
+    let conn = connect(&mut session);
+    session.on_playback_position(ts(0), Some(clock(0)));
+
+    let bytes = fixture();
+    let mut media = Media::default();
+    let mut ledger = ByteLedger::default();
+    for chunk in bytes.chunks(CHUNK) {
+        ledger.accept(chunk.len());
+        session.on_data(conn, chunk, ts(0));
+        media.drain_each(&mut session, |end| ledger.sample(end));
+        if pause_read(&pump(&mut session, ts(0)), conn) {
+            break;
+        }
+    }
+    assert!(session.read_paused(conn));
+
+    let latest = u64::try_from(media.latest_end.unwrap()).unwrap();
+    let half = cap as u64 / 2;
+    let step = PCR_HZ / 10;
+    let mut position = 0u64;
+    let mut resumed = false;
+    while position < latest {
+        position = (position + step).min(latest);
+        let ahead = ledger.ahead(i128::from(position));
+        session.on_playback_position(ts(0), Some(clock(position)));
+        let actions = pump(&mut session, ts(0));
+        if resume_read(&actions, conn) {
+            assert!(
+                ahead < half,
+                "resumed with {ahead} bytes ahead, at or over the {half}-byte threshold"
+            );
+            resumed = true;
+            break;
+        }
+        assert!(
+            ahead >= half,
+            "no resume although only {ahead} bytes were ahead, under the {half}-byte threshold"
+        );
+    }
+    assert!(
+        resumed,
+        "the position passing the queued media did not resume"
+    );
+    assert!(!session.read_paused(conn));
+
+    let past_half = latest / 2 + step;
+    if position < past_half {
+        session.on_playback_position(ts(0), Some(clock(past_half)));
+        let actions = pump(&mut session, ts(0));
+        assert!(
+            !resume_read(&actions, conn),
+            "past half the media the resumed connection announced a second resume"
+        );
+        assert!(!session.read_paused(conn));
+    }
+}
+
+#[test]
+fn a_stream_without_timed_samples_is_still_capped() {
+    let cap = 300_000usize;
+    let config = Config::default()
+        .with_read_ahead_max(None)
+        .with_read_ahead_max_bytes(Some(cap));
+    let mut session = open(config);
+    let conn = connect(&mut session);
+    session.on_playback_position(ts(0), Some(clock(0)));
+
+    let mut packet = [0xFFu8; 188];
+    packet[0] = 0x47;
+    packet[1] = 0x1F;
+    packet[2] = 0xFF;
+    packet[3] = 0x10;
+    let chunk = packet.repeat(CHUNK / 188);
+
+    let mut position = 0u64;
+    let mut fed = 0usize;
+    let mut pauses = 0;
+    for _ in 0..20 {
+        fed += chunk.len();
+        session.on_data(conn, &chunk, ts(0));
+        position = position.saturating_add(PCR_HZ / 10);
+        session.on_playback_position(ts(0), Some(clock(position)));
+        let actions = pump(&mut session, ts(0));
+        if pause_read(&actions, conn) {
+            pauses += 1;
+            assert!(
+                fed >= cap,
+                "paused after {fed} bytes, before the {cap}-byte cap"
+            );
+            break;
+        }
+    }
+    assert_eq!(pauses, 1, "a stream with no samples is still capped");
+    assert!(session.read_paused(conn));
 }
 
 fn sample_sequence(session: &mut Session) -> Vec<(u32, Option<i64>, usize)> {
