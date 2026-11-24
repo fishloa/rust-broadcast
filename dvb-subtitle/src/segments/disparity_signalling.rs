@@ -4,6 +4,14 @@
 //! to be ascribed to regions or subregions.
 
 use crate::error::{Error, Result};
+use crate::segments::{
+    PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+};
+
+/// Offsets of the three bytes of `interval_duration`.
+const INTERVAL_DURATION_HIGH_OFFSET: usize = 1;
+const INTERVAL_DURATION_MID_OFFSET: usize = 2;
+const INTERVAL_DURATION_LOW_OFFSET: usize = 3;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -13,6 +21,61 @@ pub const SEGMENT_TYPE: u8 = 0x15;
 pub const HEADER_LEN: usize = 6;
 /// Fixed body: dss_version_number(4b)+page_flag(1b)+reserved(3b) + page_default_disparity_shift(1) = 2 bytes.
 pub const FIXED_LEN: usize = 2;
+
+/// Bytes of the `interval_duration` field.
+const INTERVAL_DURATION_LEN: usize = 3;
+/// Bytes of the fixed update-sequence header (length + duration + count).
+const UPDATE_SEQUENCE_HEADER_LEN: usize = 5;
+/// Bytes of one interval entry.
+const INTERVAL_LEN: usize = 2;
+/// Bit width of `interval_duration`.
+const INTERVAL_DURATION_BITS: u32 = 24;
+/// Offset of `interval_duration` within the update sequence.
+const INTERVAL_DURATION_OFFSET: usize = INTERVAL_DURATION_HIGH_OFFSET;
+/// Offset of `division_period_count` within the update sequence.
+const DIVISION_PERIOD_COUNT_OFFSET: usize = 4;
+/// Offset of the first interval within the update sequence.
+const INTERVALS_OFFSET: usize = UPDATE_SEQUENCE_HEADER_LEN;
+/// Shifts placing each byte of `interval_duration`.
+const INTERVAL_DURATION_SHIFT_HIGH: u32 = 16;
+const INTERVAL_DURATION_SHIFT_MID: u32 = 8;
+
+/// Bytes of a subregion entry without its optional position fields.
+const SUBREGION_BASE_LEN: usize = 2;
+/// Bytes of the subregion position fields (horizontal position + width).
+const SUBREGION_POSITION_LEN: usize = 4;
+/// Offsets within a subregion entry.
+const SUBREGION_HORIZONTAL_OFFSET: usize = 0;
+const SUBREGION_WIDTH_OFFSET: usize = 2;
+/// Shift placing `subregion_disparity_shift_fractional` above the reserved
+/// nibble.
+const SUBREGION_FRACTIONAL_SHIFT: u32 = 4;
+/// Mask of a nibble-sized subregion field.
+const SUBREGION_NIBBLE_MASK: u8 = 0x0F;
+
+/// Bytes of a region entry header.
+const REGION_HEADER_LEN: usize = 2;
+/// Largest `number_of_subregions_minus_1` a region can express (Table 29).
+const MAX_SUBREGIONS: usize = 4;
+/// Shift placing `update_sequence_region_flag`.
+const REGION_FLAG_SHIFT: u32 = 7;
+/// Mask of the region's reserved flag bits.
+const REGION_RFU_MASK: u8 = 0x7C;
+/// Mask of `number_of_subregions_minus_1`.
+const SUBREGION_COUNT_MASK: u8 = 0x03;
+
+/// Shift placing `dss_version_number` at the top of its byte.
+const DSS_VERSION_SHIFT: u32 = 4;
+/// Mask of `update_sequence_page_flag`.
+const UPDATE_SEQUENCE_PAGE_FLAG_MASK: u8 = 0x08;
+/// Shift placing `update_sequence_page_flag`.
+const UPDATE_SEQUENCE_PAGE_FLAG_SHIFT: u32 = 3;
+/// Mask of the segment's reserved bits.
+const DSS_RFU_MASK: u8 = 0x07;
+/// Offset of `page_default_disparity_shift` within the segment body.
+const PAGE_DEFAULT_SHIFT_OFFSET: usize = 1;
+/// Mask of the region's `update_sequence_region_flag`.
+const REGION_FLAG_MASK: u8 = 0x80;
 
 /// A disparity shift update sequence as defined in Table 30.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,23 +103,26 @@ pub struct DisparityShiftInterval {
 
 impl DisparityShiftUpdateSequence {
     fn serialized_len(&self) -> usize {
-        1 + 3 + 1 + self.intervals.len() * 2
+        UPDATE_SEQUENCE_HEADER_LEN + self.intervals.len() * INTERVAL_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
-        let body_len = 3 + 1 + self.intervals.len() * 2;
+        let body_len = INTERVAL_DURATION_LEN + 1 + self.intervals.len() * INTERVAL_LEN;
         buf[0] = broadcast_common::len::fit_u8(body_len, "disparity_shift_update_sequence_length")?;
         broadcast_common::len::fit_bits(
             u64::from(self.interval_duration),
-            24,
+            INTERVAL_DURATION_BITS,
             "interval_duration",
         )?;
-        buf[1] = (self.interval_duration >> 16) as u8;
-        buf[2] = (self.interval_duration >> 8) as u8;
-        buf[3] = self.interval_duration as u8;
-        buf[4] = broadcast_common::len::fit_u8(self.intervals.len(), "division_period_count")?;
+        buf[INTERVAL_DURATION_OFFSET] =
+            (self.interval_duration >> INTERVAL_DURATION_SHIFT_HIGH) as u8;
+        buf[INTERVAL_DURATION_MID_OFFSET] =
+            (self.interval_duration >> INTERVAL_DURATION_SHIFT_MID) as u8;
+        buf[INTERVAL_DURATION_LOW_OFFSET] = self.interval_duration as u8;
+        buf[DIVISION_PERIOD_COUNT_OFFSET] =
+            broadcast_common::len::fit_u8(self.intervals.len(), "division_period_count")?;
         for (i, interval) in self.intervals.iter().enumerate() {
-            let off = 5 + i * 2;
+            let off = INTERVALS_OFFSET + i * INTERVAL_LEN;
             buf[off] = interval.interval_count;
             buf[off + 1] = interval.disparity_shift_integer as u8;
         }
@@ -64,19 +130,25 @@ impl DisparityShiftUpdateSequence {
     }
 
     fn parse(bytes: &[u8]) -> Result<(Self, usize)> {
-        need_in(bytes, 5, "disparity_shift_update_sequence")?;
+        need_in(
+            bytes,
+            UPDATE_SEQUENCE_HEADER_LEN,
+            "disparity_shift_update_sequence",
+        )?;
         let seq_len = bytes[0] as usize;
         need_in(bytes, 1 + seq_len, "disparity_shift_update_sequence data")?;
-        let dur = ((bytes[1] as u32) << 16) | ((bytes[2] as u32) << 8) | (bytes[3] as u32);
-        let count = bytes[4];
+        let dur = (u32::from(bytes[INTERVAL_DURATION_OFFSET]) << INTERVAL_DURATION_SHIFT_HIGH)
+            | (u32::from(bytes[INTERVAL_DURATION_MID_OFFSET]) << INTERVAL_DURATION_SHIFT_MID)
+            | u32::from(bytes[INTERVAL_DURATION_LOW_OFFSET]);
+        let count = bytes[DIVISION_PERIOD_COUNT_OFFSET];
         let total = 1 + seq_len;
         let mut intervals = alloc::vec::Vec::new();
-        let mut ipos = 5;
+        let mut ipos = INTERVALS_OFFSET;
         for _ in 0..count {
-            if ipos + 2 > total {
+            if ipos + INTERVAL_LEN > total {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: ipos + 2,
+                        need: ipos + INTERVAL_LEN,
                         have: total,
                         what: "disparity_shift_update_sequence interval",
                     },
@@ -86,7 +158,7 @@ impl DisparityShiftUpdateSequence {
                 interval_count: bytes[ipos],
                 disparity_shift_integer: bytes[ipos + 1] as i8,
             });
-            ipos += 2;
+            ipos += INTERVAL_LEN;
         }
         Ok((
             DisparityShiftUpdateSequence {
@@ -119,9 +191,9 @@ pub struct Subregion {
 impl Subregion {
     fn serialized_len(&self) -> usize {
         let base = if self.subregion_horizontal_position.is_some() {
-            4 + 2
+            SUBREGION_POSITION_LEN + SUBREGION_BASE_LEN
         } else {
-            2
+            SUBREGION_BASE_LEN
         };
         base + self
             .update_sequence
@@ -143,18 +215,19 @@ impl Subregion {
         }
         let mut off = 0;
         if let (Some(h), Some(w)) = (self.subregion_horizontal_position, self.subregion_width) {
-            buf[0..2].copy_from_slice(&h.to_be_bytes());
-            buf[2..4].copy_from_slice(&w.to_be_bytes());
-            off = 4;
+            buf[SUBREGION_HORIZONTAL_OFFSET..SUBREGION_WIDTH_OFFSET]
+                .copy_from_slice(&h.to_be_bytes());
+            buf[SUBREGION_WIDTH_OFFSET..SUBREGION_POSITION_LEN].copy_from_slice(&w.to_be_bytes());
+            off = SUBREGION_POSITION_LEN;
         }
         buf[off] = self.subregion_disparity_shift_integer as u8;
         buf[off + 1] = (broadcast_common::len::fit_mask(
             self.subregion_disparity_shift_fractional,
-            0x0F,
+            SUBREGION_NIBBLE_MASK,
             "subregion_disparity_shift_fractional",
-        )? << 4)
-            | broadcast_common::len::fit_mask(self.reserved, 0x0F, "reserved")?;
-        off += 2;
+        )? << SUBREGION_FRACTIONAL_SHIFT)
+            | broadcast_common::len::fit_mask(self.reserved, SUBREGION_NIBBLE_MASK, "reserved")?;
+        off += SUBREGION_BASE_LEN;
         if let Some(ref seq) = self.update_sequence {
             seq.serialize_into(&mut buf[off..])?;
         }
@@ -178,11 +251,12 @@ pub struct DisparityRegion {
 
 impl DisparityRegion {
     fn serialized_len(&self) -> usize {
-        2 + self
-            .subregions
-            .iter()
-            .map(|s| s.serialized_len())
-            .sum::<usize>()
+        REGION_HEADER_LEN
+            + self
+                .subregions
+                .iter()
+                .map(|s| s.serialized_len())
+                .sum::<usize>()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
@@ -190,19 +264,23 @@ impl DisparityRegion {
         // number_of_subregions_minus_1 is 2 bits (Table 29): only 1..=4
         // subregions are representable. Pre-fix, `as u8` + `& 0x03` silently
         // wrapped an out-of-range count instead of rejecting it (#1108/DS-W3).
-        if count == 0 || count > 4 {
+        if count == 0 || count > MAX_SUBREGIONS {
             return Err(Error::InvalidSubregionCount(count));
         }
         let num = (count - 1) as u8;
         buf[0] = self.region_id;
-        buf[1] = (u8::from(self.update_sequence_region_flag) << 7)
-            | broadcast_common::len::fit_mask(self.reserved_flags, 0x7C, "reserved_flags")?
-            | (num & 0x03);
+        buf[1] = (u8::from(self.update_sequence_region_flag) << REGION_FLAG_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.reserved_flags,
+                REGION_RFU_MASK,
+                "reserved_flags",
+            )?
+            | (num & SUBREGION_COUNT_MASK);
         // Position fields are present for every subregion, or none, per
         // whether the region itself has more than one (Table 29's
         // `if (number_of_subregions_minus_1 > 0)` guards the whole `for` body).
         let has_pos = count > 1;
-        let mut off = 2;
+        let mut off = REGION_HEADER_LEN;
         for sub in &self.subregions {
             sub.serialize_into(&mut buf[off..], has_pos)?;
             off += sub.serialized_len();
@@ -247,19 +325,22 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
                 found: u32::from(bytes[0]),
             }));
         }
-        if bytes[1] != SEGMENT_TYPE {
-            return Err(Error::UnknownSegmentType(bytes[1]));
+        if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
+            return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
+        let segment_length = u16::from_be_bytes([
+            bytes[SEGMENT_LENGTH_OFFSET],
+            bytes[SEGMENT_LENGTH_OFFSET + 1],
+        ]) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "disparity_signalling_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
         need_in(body, FIXED_LEN, "disparity_signalling_segment body")?;
-        let dss_version_number = body[0] >> 4;
-        let update_sequence_page_flag = (body[0] & 0x08) != 0;
-        let reserved = body[0] & 0x07;
-        let page_default_disparity_shift = body[1] as i8;
+        let dss_version_number = body[0] >> DSS_VERSION_SHIFT;
+        let update_sequence_page_flag = (body[0] & UPDATE_SEQUENCE_PAGE_FLAG_MASK) != 0;
+        let reserved = body[0] & DSS_RFU_MASK;
+        let page_default_disparity_shift = body[PAGE_DEFAULT_SHIFT_OFFSET] as i8;
 
         let mut pos = FIXED_LEN;
         let page_update_sequence = if update_sequence_page_flag {
@@ -276,33 +357,44 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
             // segment_length)` with no stuffing provision, so 1 leftover
             // byte means the segment is malformed, not that it should be
             // silently dropped (#1108/DS-W6: this used to just `break`).
-            need_in(body, pos + 2, "disparity_signalling_segment region header")?;
+            need_in(
+                body,
+                pos + REGION_HEADER_LEN,
+                "disparity_signalling_segment region header",
+            )?;
             let region_id = body[pos];
             pos += 1;
-            let update_flag = (body[pos] & 0x80) != 0;
-            let reserved_flags = body[pos] & 0x7C;
-            let num_subregions_minus_1 = body[pos] & 0x03;
+            let update_flag = (body[pos] & REGION_FLAG_MASK) != 0;
+            let reserved_flags = body[pos] & REGION_RFU_MASK;
+            let num_subregions_minus_1 = body[pos] & SUBREGION_COUNT_MASK;
             pos += 1;
 
             let mut subregions = alloc::vec::Vec::new();
             for _n in 0..=num_subregions_minus_1 {
                 let has_pos = num_subregions_minus_1 > 0;
-                let entry_len = if has_pos { 4 + 2 } else { 2 };
+                let entry_len = if has_pos {
+                    SUBREGION_POSITION_LEN + SUBREGION_BASE_LEN
+                } else {
+                    SUBREGION_BASE_LEN
+                };
                 need_in(body, pos + entry_len, "subregion entry")?;
 
                 let (hpos, width) = if has_pos {
                     let h = u16::from_be_bytes([body[pos], body[pos + 1]]);
-                    let w = u16::from_be_bytes([body[pos + 2], body[pos + 3]]);
-                    pos += 4;
+                    let w = u16::from_be_bytes([
+                        body[pos + SUBREGION_WIDTH_OFFSET],
+                        body[pos + SUBREGION_WIDTH_OFFSET + 1],
+                    ]);
+                    pos += SUBREGION_POSITION_LEN;
                     (Some(h), Some(w))
                 } else {
                     (None, None)
                 };
 
                 let shift_int = body[pos] as i8;
-                let shift_frac = body[pos + 1] >> 4;
-                let reserved = body[pos + 1] & 0x0F;
-                pos += 2;
+                let shift_frac = body[pos + 1] >> SUBREGION_FRACTIONAL_SHIFT;
+                let reserved = body[pos + 1] & SUBREGION_NIBBLE_MASK;
+                pos += SUBREGION_BASE_LEN;
 
                 let sub_update = if update_flag {
                     let (seq, seq_len) = DisparityShiftUpdateSequence::parse(&body[pos..])?;
@@ -362,18 +454,22 @@ impl Serialize for DisparitySignallingSegment {
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = 0x0F;
-        buf[1] = SEGMENT_TYPE;
-        buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
+        buf[0] = crate::pes_data_field::SYNC_BYTE;
+        buf[SEGMENT_TYPE_OFFSET] = SEGMENT_TYPE;
+        buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]
+            .copy_from_slice(&self.page_id.to_be_bytes());
         let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
-        buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
+        buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
+            .copy_from_slice(&seg_len.to_be_bytes());
 
-        buf[6] =
-            (broadcast_common::len::fit_mask(self.dss_version_number, 0x0F, "dss_version_number")?
-                << 4)
-                | (u8::from(self.update_sequence_page_flag) << 3)
-                | broadcast_common::len::fit_mask(self.reserved, 0x07, "reserved")?;
-        buf[7] = self.page_default_disparity_shift as u8;
+        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
+            self.dss_version_number,
+            DSS_RFU_MASK,
+            "dss_version_number",
+        )? << DSS_VERSION_SHIFT)
+            | (u8::from(self.update_sequence_page_flag) << UPDATE_SEQUENCE_PAGE_FLAG_SHIFT)
+            | broadcast_common::len::fit_mask(self.reserved, DSS_RFU_MASK, "reserved")?;
+        buf[HEADER_LEN + PAGE_DEFAULT_SHIFT_OFFSET] = self.page_default_disparity_shift as u8;
 
         let mut off = HEADER_LEN + FIXED_LEN;
         if let Some(ref seq) = self.page_update_sequence {
