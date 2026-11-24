@@ -3072,9 +3072,8 @@ pub fn render_attribute_list(s: &mut String, attrs: &[(String, AttrValue)]) {
 /// issue #1111).
 const QUOTED_STRING_FORBIDDEN: &[char] = &['"', '\r', '\n'];
 
-/// Bytes in a CENC key id (ISO/IEC 23001-7 §8.1) and in an `#EXT-X-KEY` `IV`
-/// (RFC 8216 §4.3.2.4): both are 128-bit.
-const KEY_MATERIAL_LEN: usize = 16;
+/// Bytes in a CENC key id (ISO/IEC 23001-7 §8.1) and an `#EXT-X-KEY` `IV` (RFC 8216 §4.3.2.4): both are 128-bit.
+pub const KEY_MATERIAL_LEN: usize = 16;
 
 /// Fields of the serde struct `AttrValue` renders: `value` and `quoted`.
 const ATTR_VALUE_FIELDS: usize = 2;
