@@ -140,3 +140,94 @@ fn a_multi_gigabyte_mp4_costs_only_its_headers() {
         }
     }
 }
+
+/// Peak live bytes allowed beyond the parsed `moov`, independent of how many
+/// fragments the file holds: one `moof`, one sample descriptor per fragment
+/// sample in flight, and the test harness.
+const FRAGMENTED_PEAK_SLACK: usize = 8 << 20;
+
+/// Bytes the reader may request per fragment beyond its `moof` and one box
+/// header: the `mdat` header plus a `styp`/`mfra` allowance.
+#[cfg(feature = "scan-counters")]
+const FRAGMENTED_HEADER_ALLOWANCE: u64 = 64;
+
+/// Drive a fragmented file, returning `(samples, fragments, requested bytes,
+/// requests)`.
+fn drive_fragments(path: &std::path::Path) -> (u64, u64, u64, Vec<ByteRange>) {
+    let file = File::open(path).expect("open generated fragmented mp4");
+    let length = file.metadata().expect("metadata").len();
+    let mut source = FileSource { file, length };
+    let config = ReaderConfig::default()
+        .with_total_len(Some(length))
+        .with_order(SampleOrder::DecodeTime);
+    let mut reader = Reader::new(config);
+    let mut samples = 0u64;
+    let mut fragments = 0u64;
+    let mut requests = Vec::new();
+    loop {
+        match reader.step().expect("reader step") {
+            Step::Need(range) => {
+                requests.push(range);
+                source
+                    .supply(&mut reader, range.offset, range.len)
+                    .expect("supply");
+            }
+            Step::Tracks(tracks) => assert_eq!(tracks.len(), 1),
+            Step::Fragment(_) => fragments += 1,
+            Step::Sample(_) => samples += 1,
+            Step::Done => break,
+            _ => break,
+        }
+    }
+    #[cfg(feature = "scan-counters")]
+    let requested = reader.bytes_requested();
+    #[cfg(not(feature = "scan-counters"))]
+    let requested = 0u64;
+    (samples, fragments, requested, requests)
+}
+
+#[test]
+fn a_multi_gigabyte_fragmented_mp4_holds_one_moof() {
+    let options = test_harness::big_media::BigFmp4Options::default();
+    let path = std::env::temp_dir().join(format!(
+        "isobmff-reader-big-frag-{}.mp4",
+        std::process::id()
+    ));
+    let written = test_harness::big_media::write_big_fmp4(&path, &options);
+    PEAK.reset();
+    let (peak, (samples, fragments, requested, requests)) =
+        PEAK.peak_during(|| drive_fragments(&path));
+    std::fs::remove_file(&path).expect("remove generated file");
+
+    assert_eq!(samples, u64::from(written.fragment_count));
+    assert_eq!(fragments, u64::from(written.fragment_count));
+    let budget = usize::try_from(written.moov_bytes).unwrap_or(usize::MAX) * PEAK_PER_MOOV
+        + FRAGMENTED_PEAK_SLACK;
+    assert!(
+        peak < budget,
+        "peak {peak} bytes, budget {budget} (moov {}, {} fragments)",
+        written.moov_bytes,
+        written.fragment_count
+    );
+    #[cfg(feature = "scan-counters")]
+    assert!(
+        requested
+            < written.moov_bytes
+                + u64::from(written.fragment_count)
+                    * (written.moof_bytes + FRAGMENTED_HEADER_ALLOWANCE),
+        "requested {requested} bytes for {} fragments",
+        written.fragment_count
+    );
+    #[cfg(not(feature = "scan-counters"))]
+    let _ = requested;
+    for (index, offset) in written.moof_offsets.iter().enumerate() {
+        let payload_start = offset + written.moof_bytes + 8;
+        let payload_end = payload_start + u64::from(written.sample_bytes);
+        for range in &requests {
+            assert!(
+                range.end() <= payload_start || range.offset >= payload_end,
+                "fragment {index}: request {range:?} overlaps the mdat payload [{payload_start}, {payload_end})"
+            );
+        }
+    }
+}

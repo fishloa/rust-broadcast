@@ -102,7 +102,8 @@ fuzz_target!(|data: &[u8]| {
     // `traf`; every track we did push into has exactly one.
     assert_eq!(moof.traf.len(), metas.len());
     let mdats = isobmff::frag_offsets::mdat_ranges(&fragment.bytes);
-    let mut copied = 0usize;
+    let budget = isobmff::frag_offsets::sample_bytes_budget(fragment.bytes.len() as u64);
+    let mut copied = 0u64;
     let mut seen: Vec<u32> = Vec::with_capacity(metas.len());
     for traf in &moof.traf {
         let track = usize::try_from(traf.tfhd.track_id.value())
@@ -121,11 +122,11 @@ fuzz_target!(|data: &[u8]| {
         // assertion does not depend on which optional `trun` field the writer
         // chose to emit.
         let ranges = isobmff::frag_offsets::sample_ranges_in_run(
-            &fragment.bytes,
-            &mdats,
-            moof_item.start,
+            moof_item.start as u64,
             &moof,
             traf.tfhd.track_id,
+            &mdats,
+            budget,
             &mut copied,
         )
         .expect("resolve sample ranges");
@@ -146,8 +147,10 @@ fuzz_target!(|data: &[u8]| {
                 meta.sync,
                 "sync flag"
             );
+            let start = usize::try_from(range.start).expect("sample start");
+            let end = usize::try_from(range.end).expect("sample end");
             assert_eq!(
-                &fragment.bytes[range.start..range.end],
+                &fragment.bytes[start..end],
                 expected.as_slice(),
                 "sample bytes"
             );

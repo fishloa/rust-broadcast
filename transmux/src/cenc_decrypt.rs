@@ -96,7 +96,7 @@ use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::media::Media;
 pub use broadcast_common::cenc::CencScheme;
-use isobmff::cenc::{KEY_LEN, SENC, SINF, SampleEncryptionEntry, TrackEncryptionBox};
+use isobmff::cenc::{KEY_LEN, SENC, SampleEncryptionEntry, TrackEncryptionBox};
 use isobmff::init_segment::{MDIA, MINF, MOOV, MVHD, STBL, STSD, SampleTableBox, TKHD, TRAK};
 use isobmff::movie_fragment::{
     MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TFHD, TRAF, TRUN, TrackFragmentHeaderBox,
@@ -466,9 +466,6 @@ impl Decrypt for CencDecryptor {
 /// `creation_time` and `modification_time` precede `timescale` in `mdhd`
 /// (ISO/IEC 14496-12:2026 §8.4.2).
 const MDHD_TIMES_BEFORE_TIMESCALE: usize = 2;
-/// Fixed part of an `AudioSampleEntry` before its child boxes
-/// (ISO/IEC 14496-12:2026 §12.2.3).
-const AUDIO_SAMPLE_ENTRY_HDR: usize = 28;
 /// `stsd` fixed header after the FullBox: `entry_count`.
 const STSD_ENTRY_COUNT: usize = 4;
 /// A `VisualSampleEntry` fixed body length before its child boxes
@@ -723,33 +720,13 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
     if body_start > stsd.len() {
         return None;
     }
-    for entry in BoxIter::new(&stsd[body_start..]).filter_map(|b| b.ok()) {
-        let ty = entry.four_cc();
-        if ty == *b"encv" || ty == *b"enca" {
-            // Sample-entry child boxes start after the fixed VisualSampleEntry /
-            // AudioSampleEntry header. We only support protected video (encv)
-            // here; the sinf is a child box, located by scanning.
-            let child_start = if ty == *b"encv" {
-                BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR
-            } else {
-                // enca: 8 reserved + 2 channelcount + 2 samplesize + 4 predefined
-                // + 2 reserved + 2 timescale-hi... just scan from a safe minimum
-                // (AudioSampleEntry fixed part is 28 bytes past the box header).
-                BOX_HEADER_MIN_SIZE + AUDIO_SAMPLE_ENTRY_HDR
-            };
-            if child_start <= entry.bytes.len() {
-                // The child boxes start directly at `child_start` (no container
-                // header to skip), so scan them with the one walker.
-                if let Some(sinf) = BoxIter::new(&entry.bytes[child_start..])
-                    .filter_map(|b| b.ok())
-                    .find(|b| b.header.box_type.is(&SINF))
-                {
-                    return Some(sinf.bytes);
-                }
-            }
-        }
-    }
-    None
+    BoxIter::new(&stsd[body_start..])
+        .filter_map(|b| b.ok())
+        .find(|entry| {
+            let ty = entry.four_cc();
+            ty == *b"encv" || ty == *b"enca"
+        })
+        .and_then(|entry| isobmff::cenc::sinf_of_sample_entry(entry.bytes))
 }
 
 /// The FourCC of the first sample entry in an `stsd` box, as text
@@ -918,8 +895,8 @@ fn collect_fragment_samples(
     // Sample bytes copied so far, for the whole file and never refilled: many
     // `moof`s each claiming one `mdat` would otherwise copy it once per
     // fragment (audit 20 finding 13).
-    let mut copied_bytes: usize = 0;
-    let mut pending_moof: Option<(usize, MovieFragmentBox)> = None;
+    let mut copied_bytes: u64 = 0;
+    let mut pending_moof: Option<(u64, MovieFragmentBox)> = None;
     // Running absolute decode-time cursor (media plane step 2c), seeded from
     // the first fragment's `tfdt` for this track (mirrors
     // `crate::media::Fmp4Demux`'s `TrackBuilder`); `Track::new` below anchors
@@ -934,7 +911,7 @@ fn collect_fragment_samples(
         let (bx, consumed) = parse_box(&file[offset..])?;
         if bx.header.box_type.is(&MOOF) {
             let moof = MovieFragmentBox::parse_body(bx.body)?;
-            pending_moof = Some((offset, moof));
+            pending_moof = Some((offset as u64, moof));
         } else if bx.header.box_type.is(&MDAT)
             && let Some((moof_off, moof)) = pending_moof.take()
         {
@@ -998,30 +975,35 @@ fn collect_fragment_samples(
 fn absorb_protected_fragment(
     file: &bytes::Bytes,
     mdats: &[isobmff::frag_offsets::MdatRange],
-    moof_off: usize,
+    moof_off: u64,
     moof: &MovieFragmentBox,
     target_track_id: TrackId,
     next_dts: &mut i64,
-    copied_bytes: &mut usize,
+    copied_bytes: &mut u64,
     out: &mut Vec<crate::pipeline::Sample>,
 ) -> Result<()> {
     use crate::pipeline::Sample;
 
     // All §8.8.7/§8.8.8 addressing and bounds live in `frag_offsets`, shared
     // with `Fmp4Demux` so the two cannot drift (audit r05-W7).
+    let budget = isobmff::frag_offsets::sample_bytes_budget(file.len() as u64);
     for r in isobmff::frag_offsets::sample_ranges_in_run(
-        file,
-        mdats,
         moof_off,
         moof,
         target_track_id.into(),
+        mdats,
+        budget,
         copied_bytes,
     )? {
         let dts = *next_dts;
         let pts = isobmff::frag_offsets::add_offset(dts, r.composition_offset)?;
         let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
+        let start = usize::try_from(r.start)
+            .map_err(|_| Error::InvalidInput("sample offset does not fit the address space"))?;
+        let end = usize::try_from(r.end)
+            .map_err(|_| Error::InvalidInput("sample end does not fit the address space"))?;
         out.push(Sample {
-            data: file.slice(r.start..r.end),
+            data: file.slice(start..end),
             timing: Some(crate::ir::SampleTiming::timed_with_duration(
                 dts, pts, r.duration,
             )),

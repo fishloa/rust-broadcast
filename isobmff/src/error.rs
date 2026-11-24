@@ -119,7 +119,7 @@ pub enum Error {
     )]
     SampleDataBudgetExceeded {
         /// The aggregate allowance for this run, in bytes.
-        limit: usize,
+        limit: u64,
     },
 
     /// A length or count did not fit the wire field it is written to (#1129):

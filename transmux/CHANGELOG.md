@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (chunk boundaries, interleave order, `stco`/`co64`, the `mdat` header form)
   moved into the box crate and the sample bytes go straight to their planned
   offset. Output is byte-identical (every golden unchanged).
+- `Error::SampleDataBudgetExceeded { limit }` carries a `u64` allowance, matching
+  the `u64` sample offsets and byte counts it bounds (it mirrors
+  `isobmff::Error::SampleDataBudgetExceeded`).
+- Internal: the fMP4 demuxer, the protected-fragment collector and the fMP4
+  validator address a fragment through `isobmff::frag_offsets` with the
+  `moof`, its offset and the `mdat` payload ranges instead of a file slice;
+  the parsed ranges are `u64` and indexed after a checked conversion.
 - Internal: the progressive demuxer and the protected-progressive path read
   their sample tables through `isobmff::sample_table::TrackCursor` instead of
   local expanders, and the progressive muxer uses `isobmff::sample_table`'s

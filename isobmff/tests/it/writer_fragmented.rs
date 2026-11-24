@@ -175,7 +175,8 @@ struct ReadSample {
 
 fn read_back(bytes: &[u8]) -> std::collections::BTreeMap<u32, Vec<ReadSample>> {
     let mdats = isobmff::frag_offsets::mdat_ranges(bytes);
-    let mut copied = 0usize;
+    let budget = isobmff::frag_offsets::sample_bytes_budget(bytes.len() as u64);
+    let mut copied = 0u64;
     let mut tracks: std::collections::BTreeMap<u32, Vec<ReadSample>> =
         std::collections::BTreeMap::new();
     for item in BoxIter::new(bytes).filter_map(|b| b.ok()) {
@@ -190,11 +191,11 @@ fn read_back(bytes: &[u8]) -> std::collections::BTreeMap<u32, Vec<ReadSample>> {
                 .map(|t| t.base_media_decode_time())
                 .unwrap_or(0);
             let ranges = isobmff::frag_offsets::sample_ranges_in_run(
-                bytes,
-                &mdats,
-                item.start,
+                item.start as u64,
                 &moof,
                 traf.tfhd.track_id,
+                &mdats,
+                budget,
                 &mut copied,
             )
             .expect("resolve sample ranges");
@@ -206,7 +207,9 @@ fn read_back(bytes: &[u8]) -> std::collections::BTreeMap<u32, Vec<ReadSample>> {
                     duration: range.duration,
                     composition_offset: range.composition_offset,
                     sync: range.flags & isobmff::movie_fragment::SAMPLE_FLAG_IS_NON_SYNC == 0,
-                    data: bytes[range.start..range.end].to_vec(),
+                    data: bytes[usize::try_from(range.start).expect("start")
+                        ..usize::try_from(range.end).expect("end")]
+                        .to_vec(),
                 });
                 decode_time = decode_time
                     .checked_add(u64::from(range.duration))

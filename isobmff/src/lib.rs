@@ -51,6 +51,9 @@
 //!   time, and hands out a [`SamplePlan`] from the index alone. [`plan`] also
 //!   holds [`OwnedPlan`], the same tables with no borrow, and [`PlanBuilder`],
 //!   which builds one from pushed sample descriptors.
+//! - [`reader`] over a fragmented file — the same state machine reads one
+//!   `moof` at a time, addresses its samples from the following `mdat`
+//!   headers, and seeks through a `sidx` or the trailing `mfra`/`tfra`.
 //! - [`avc_config`], [`hevc_config`], [`vvc_config`], [`nalu_types`], [`av1`],
 //!   [`vp9`], [`mp4esds`], [`ac3`], [`ac4`], [`dts`], [`flac`], [`opus`],
 //!   [`mpegh`], [`dovi`], [`hdr_boxes`], [`avs2`], [`avs3`], [`avs3_audio`] —
@@ -179,6 +182,7 @@ pub use plan::{
     DEFAULT_DESCRIPTION_INDEX, DescriptionRun, OwnedPlan, PlanBuilder, PlanSample, PlannedTrack,
     SamplePlan, SampleSizes, SampleTables, SourceChunks,
 };
+pub use reader::FragmentInfo;
 pub use reader::{
     ByteRange, Mode, Reader, ReaderConfig, SampleEntryInfo, SampleOrder, Source, Step, TrackInfo,
 };

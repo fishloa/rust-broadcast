@@ -138,7 +138,7 @@ pub enum Error {
     )]
     SampleDataBudgetExceeded {
         /// The aggregate allowance for this run, in bytes.
-        limit: usize,
+        limit: u64,
     },
 
     /// A count or size read from the input exceeded a configured

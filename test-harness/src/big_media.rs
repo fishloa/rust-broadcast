@@ -806,6 +806,270 @@ fn first_sample_entry(
         })
 }
 
+/// Number of fragments in the default generated fragmented MP4.
+const BIG_FMP4_FRAGMENTS: u32 = 1_024;
+/// Nominal bytes in the generated fragmented MP4's one sample per fragment.
+const BIG_FMP4_SAMPLE_BYTES: u32 = 4 * 1024 * 1024;
+/// The generated fragment's sample duration, in the video timescale.
+const BIG_FMP4_SAMPLE_DELTA: u32 = 3_000;
+/// Bytes of a 32-bit `mdat` header.
+const BIG_FMP4_MDAT_HEADER_BYTES: u64 = 8;
+/// Entries written into the generated `tfra`: one per evenly spaced fragment.
+const BIG_FMP4_MFRA_ENTRIES: u32 = 16;
+
+/// Knobs for [`write_big_fmp4`].
+#[derive(Debug, Clone)]
+pub struct BigFmp4Options {
+    /// Minimum file size; the sample count is raised until it is reached.
+    pub target_bytes: u64,
+    /// Fragments to write (at least).
+    pub fragment_count: u32,
+    /// Bytes in each fragment's one sample (sparse, never written).
+    pub sample_bytes: u32,
+    /// Write a trailing `mfra` with `tfra` entries for evenly spaced fragments.
+    pub with_mfra: bool,
+}
+
+impl Default for BigFmp4Options {
+    fn default() -> Self {
+        Self {
+            target_bytes: 4 * GIB,
+            fragment_count: BIG_FMP4_FRAGMENTS,
+            sample_bytes: BIG_FMP4_SAMPLE_BYTES,
+            with_mfra: true,
+        }
+    }
+}
+
+/// What [`write_big_fmp4`] produced.
+#[derive(Debug, Clone)]
+pub struct BigFmp4 {
+    /// Exact file length in bytes.
+    pub bytes: u64,
+    /// Serialized `moov` length in bytes.
+    pub moov_bytes: u64,
+    /// Fragments written.
+    pub fragment_count: u32,
+    /// Bytes in each sample (the sparse `mdat` payload).
+    pub sample_bytes: u32,
+    /// Whether a trailing `mfra` was written.
+    pub with_mfra: bool,
+    /// Bytes of each fragment's `moof`.
+    pub moof_bytes: u64,
+    /// Each fragment's `moof` offset, in file order.
+    pub moof_offsets: Vec<u64>,
+}
+
+/// Write a real fragmented MP4 of at least [`BigFmp4Options::target_bytes`]: a
+/// real `ftyp`, a real `moov` with `mvex`/`trex` and empty sample tables, then
+/// `fragment_count` `moof`+`mdat` pairs whose payloads are never written, and
+/// optionally the trailing `mfra`.
+pub fn write_big_fmp4(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
+    use broadcast_common::timescale::Timescale;
+    use isobmff::init_segment::{MovieExtendsBox, TrackExtendsBox};
+    use isobmff::movie_fragment::{
+        MovieFragmentBox, MovieFragmentHeaderBox, SAMPLE_FLAGS_SYNC, TFHD_DEFAULT_BASE_IS_MOOF,
+        TRUN_DATA_OFFSET_PRESENT, TRUN_SAMPLE_DURATION_PRESENT, TRUN_SAMPLE_FLAGS_PRESENT,
+        TRUN_SAMPLE_SIZE_PRESENT, TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentBox,
+        TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
+    };
+    use isobmff::sample_table::{build_stsc, build_stts};
+    use isobmff::segments::FileTypeBox;
+    use isobmff::timing::{
+        MovieFragmentRandomAccessBox, MovieFragmentRandomAccessOffsetBox,
+        TrackFragmentRandomAccessBox, TrackFragmentRandomAccessEntry,
+    };
+    use isobmff::{MovieBox, MovieHeaderBox, TrackId};
+
+    let (video_entry, audio_entry) = big_mp4_source_entries();
+    let _ = &audio_entry;
+    let sample_bytes = opts.sample_bytes;
+    let per_fragment = BIG_FMP4_MDAT_HEADER_BYTES + u64::from(sample_bytes);
+    let needed = opts.target_bytes / per_fragment.max(1);
+    let count = opts
+        .fragment_count
+        .max(u32::try_from(needed).unwrap_or(u32::MAX));
+    let movie_timescale = expect(
+        "movie timescale",
+        Timescale::try_new(BIG_MP4_MOVIE_TIMESCALE),
+    );
+    let total_duration = u64::from(count) * u64::from(BIG_FMP4_SAMPLE_DELTA);
+    let mvhd = MovieHeaderBox {
+        version: 0,
+        flags: 0,
+        creation_time: 0,
+        modification_time: 0,
+        timescale: movie_timescale,
+        duration: rescale_ceil(total_duration, 90_000, BIG_MP4_MOVIE_TIMESCALE),
+        rate: BIG_MP4_RATE_UNITY,
+        volume: BIG_MP4_VOLUME_UNITY,
+        matrix: BIG_MP4_IDENTITY_MATRIX,
+        next_track_id: TrackId::new(BIG_MP4_VIDEO_TRACK + 1),
+    };
+    let empty_stts = build_stts(&[]);
+    let empty_stsc = expect("empty stsc", build_stsc(&[]));
+    let trak = big_mp4_track(BigMp4Track {
+        track_id: BIG_MP4_VIDEO_TRACK,
+        handler: *BIG_MP4_VIDEO_HANDLER,
+        timescale: 90_000,
+        delta: 0,
+        sample_bytes: 0,
+        sample_count: 0,
+        entry: &video_entry,
+        stts: &empty_stts,
+        stsc: &empty_stsc,
+        chunk_offsets: &[],
+        audio: false,
+    });
+    let mvex = MovieExtendsBox::new(
+        vec![TrackExtendsBox {
+            version: 0,
+            flags: 0,
+            track_id: TrackId::new(BIG_MP4_VIDEO_TRACK),
+            default_sample_description_index: 1,
+            default_sample_duration: BIG_FMP4_SAMPLE_DELTA,
+            default_sample_size: sample_bytes,
+            default_sample_flags: SAMPLE_FLAGS_SYNC,
+        }],
+        vec![],
+    );
+    let movie = MovieBox::new(mvhd, vec![trak], Some(mvex), vec![]);
+    let moov_bytes = expect("serialize fragmented moov", movie.try_to_bytes());
+    let ftyp = FileTypeBox {
+        major_brand: *b"iso5",
+        minor_version: BIG_MP4_FTYP_MINOR,
+        compatible_brands: vec![*b"iso5", *b"iso6", *b"mp41"],
+    };
+    let ftyp_bytes = expect("serialize ftyp", ftyp.try_to_bytes());
+
+    let mut moof = MovieFragmentBox::new(
+        MovieFragmentHeaderBox::new(1),
+        vec![TrackFragmentBox::new(
+            TrackFragmentHeaderBox {
+                flags: TFHD_DEFAULT_BASE_IS_MOOF,
+                track_id: TrackId::new(BIG_MP4_VIDEO_TRACK),
+                base_data_offset: None,
+                sample_description_index: None,
+                default_sample_duration: None,
+                default_sample_size: None,
+                default_sample_flags: None,
+            },
+            Some(TrackFragmentBaseMediaDecodeTimeBox::new_v1(0)),
+            vec![TrackFragmentRunBox {
+                version: 1,
+                tr_flags: TRUN_DATA_OFFSET_PRESENT
+                    | TRUN_SAMPLE_DURATION_PRESENT
+                    | TRUN_SAMPLE_SIZE_PRESENT
+                    | TRUN_SAMPLE_FLAGS_PRESENT,
+                data_offset: Some(0),
+                first_sample_flags: None,
+                samples: vec![TrunSample {
+                    sample_duration: Some(BIG_FMP4_SAMPLE_DELTA),
+                    sample_size: Some(sample_bytes),
+                    sample_flags: Some(SAMPLE_FLAGS_SYNC),
+                    sample_composition_time_offset: None,
+                }],
+            }],
+        )],
+    );
+    let moof_len = moof.serialized_len();
+    let data_offset = u32::try_from(moof_len)
+        .ok()
+        .and_then(|len| len.checked_add(BIG_FMP4_MDAT_HEADER_BYTES as u32))
+        .and_then(|offset| i32::try_from(offset).ok())
+        .expect("the generated moof fits an i32 data offset");
+    for traf in &mut moof.traf {
+        for run in &mut traf.trun {
+            run.data_offset = Some(data_offset);
+        }
+    }
+
+    let mut file = expect("create big fmp4", std::fs::File::create(path));
+    expect("write ftyp", file.write_all(&ftyp_bytes));
+    expect("write moov", file.write_all(&moov_bytes));
+    let mut offset = u64::try_from(ftyp_bytes.len() + moov_bytes.len()).expect("header lengths");
+    let mut moof_offsets = Vec::with_capacity(count as usize);
+    let mut mdat_header = [0u8; BIG_FMP4_MDAT_HEADER_BYTES as usize];
+    mdat_header[..BIG_MP4_WORD].copy_from_slice(
+        &u32::try_from(BIG_FMP4_MDAT_HEADER_BYTES + u64::from(sample_bytes))
+            .unwrap_or(u32::MAX)
+            .to_be_bytes(),
+    );
+    mdat_header[BIG_MP4_WORD..BIG_MP4_DOUBLE_WORD].copy_from_slice(&isobmff::segments::MDAT);
+    for index in 0..count {
+        if let Some(slot) = moof.traf.first_mut().and_then(|traf| traf.tfdt.as_mut()) {
+            *slot = TrackFragmentBaseMediaDecodeTimeBox::new_v1(
+                u64::from(index) * u64::from(BIG_FMP4_SAMPLE_DELTA),
+            );
+        }
+        let bytes = expect("serialize moof", moof.try_to_bytes());
+        moof_offsets.push(offset);
+        expect("write moof", file.write_all(&bytes));
+        expect("write mdat header", file.write_all(&mdat_header));
+        let next = offset
+            .saturating_add(u64::try_from(bytes.len()).unwrap_or(0))
+            .saturating_add(per_fragment);
+        expect("extend sparse mdat", file.seek(SeekFrom::Start(next)));
+        offset = next;
+    }
+    if opts.with_mfra {
+        let stride = (count / BIG_FMP4_MFRA_ENTRIES).max(1);
+        let entries: Vec<TrackFragmentRandomAccessEntry> = (0..count)
+            .step_by(stride as usize)
+            .take(BIG_FMP4_MFRA_ENTRIES as usize)
+            .filter_map(|index| {
+                Some(TrackFragmentRandomAccessEntry {
+                    time: u64::from(index) * u64::from(BIG_FMP4_SAMPLE_DELTA),
+                    moof_offset: *moof_offsets.get(index as usize)?,
+                    traf_number: 1,
+                    trun_number: 1,
+                    sample_number: 1,
+                })
+            })
+            .collect();
+        let tfra = TrackFragmentRandomAccessBox {
+            version: 1,
+            flags: 0,
+            track_id: TrackId::new(BIG_MP4_VIDEO_TRACK),
+            length_size_of_traf_num: 0,
+            length_size_of_trun_num: 0,
+            length_size_of_sample_num: 0,
+            entries,
+        };
+        let mfra_len = 8
+            + tfra.serialized_len()
+            + MovieFragmentRandomAccessOffsetBox {
+                version: 0,
+                flags: 0,
+                parent_size: 0,
+            }
+            .serialized_len();
+        let mfra = MovieFragmentRandomAccessBox {
+            tfra: vec![tfra],
+            mfro: MovieFragmentRandomAccessOffsetBox {
+                version: 0,
+                flags: 0,
+                parent_size: u32::try_from(mfra_len).expect("mfra length fits u32"),
+            },
+        };
+        let bytes = expect("serialize mfra", mfra.try_to_bytes());
+        expect("write mfra", file.write_all(&bytes));
+        offset = offset.saturating_add(u64::try_from(bytes.len()).unwrap_or(0));
+    }
+    expect("set final length", file.set_len(offset));
+    expect("flush big fmp4", file.flush());
+    let bytes = expect("file length", file.metadata()).len();
+    BigFmp4 {
+        bytes,
+        moov_bytes: u64::try_from(moov_bytes.len()).unwrap_or(0),
+        fragment_count: count,
+        sample_bytes,
+        with_mfra: opts.with_mfra,
+        moof_bytes: moof_len as u64,
+        moof_offsets,
+    }
+}
+
 #[cfg(test)]
 mod big_mp4_tests {
     use super::*;

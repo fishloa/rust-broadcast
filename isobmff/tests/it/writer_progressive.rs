@@ -369,7 +369,7 @@ fn committed_progressive_fixtures_keep_their_sample_tables() {
 /// this crate rewrites may be a different size, so the offsets legitimately
 /// move.
 fn descriptor(sample: &SampleRef) -> SampleRef {
-    let mut keyed = *sample;
+    let mut keyed = sample.clone();
     keyed.offset = 0;
     keyed
 }
@@ -377,7 +377,7 @@ fn descriptor(sample: &SampleRef) -> SampleRef {
 fn by_sample(samples: &[SampleRef]) -> BTreeMap<(u32, u32), SampleRef> {
     samples
         .iter()
-        .map(|sample| ((sample.track.value(), sample.index), *sample))
+        .map(|sample| ((sample.track.value(), sample.index), sample.clone()))
         .collect()
 }
 
@@ -456,7 +456,7 @@ fn a_reversed_push_order_writes_the_same_file() {
     let plan = plan.expect("plan");
     let layout = Layout::new(header.faststart, Interleave::AsPlanned, Sink::Seekable);
     let forward = write_all(&header, plan.clone(), layout, &source, &samples);
-    let reversed: Vec<SampleRef> = samples.iter().rev().copied().collect();
+    let reversed: Vec<SampleRef> = samples.iter().rev().cloned().collect();
     let backward = write_all(&header, plan, layout, &source, &reversed);
     assert_eq!(forward, backward, "the sink is seekable");
 }

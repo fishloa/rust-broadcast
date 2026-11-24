@@ -224,19 +224,19 @@ fn first_sample_end(seg: &[u8]) -> u64 {
         .filter_map(|b| b.ok())
         .find(|b| b.header.box_type.is(b"moof"))
         .expect("moof");
-    let moof_off = found.start;
+    let moof_off = found.start as u64;
     let body = &seg[found.payload_start()..found.end];
     let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(body).expect("moof parse");
     let mdats = isobmff::frag_offsets::mdat_ranges(seg);
     let samples = isobmff::frag_offsets::sample_ranges_in(
-        seg,
-        &mdats,
         moof_off,
         &moof,
         TrackId::new(1).into(),
+        &mdats,
+        isobmff::frag_offsets::sample_bytes_budget(seg.len() as u64),
     )
     .expect("sample ranges");
-    samples[0].end as u64
+    samples[0].end
 }
 
 #[tokio::test]
