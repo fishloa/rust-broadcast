@@ -11,7 +11,9 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
-use crate::types::{U16_LEN, U32_LEN, UL_LEN};
+use crate::types::{
+    REGISTRY_VERSION_BYTE, RESERVED_KEY_BYTE, STRUCTURE_KIND_BYTE, U16_LEN, U32_LEN, UL_LEN, be,
+};
 use crate::types::{UlBytes, ul_bytes_from_prefix};
 
 /// Fixed bytes 1-13 of the Primer Pack Key (Table 13), i.e. everything
@@ -24,15 +26,10 @@ const PRIMER_KEY_TAIL: [u8; U16_LEN] = [0x05, 0x01];
 /// The size in bytes of one `LocalTagEntry` (Table 15): a 2-byte tag plus a
 /// 16-byte AUID.
 const LOCAL_TAG_ENTRY_LEN: u32 = 18;
-const REGISTRY_VERSION_BYTE: u8 = 0x01;
-const STRUCTURE_KIND_BYTE: u8 = 0x01;
-const RESERVED_KEY_BYTE: u8 = 0x00;
 // Byte offsets within the 16-byte Primer Pack Key (0-based).
 const PRIMER_KEY_REGISTRY_VERSION_OFFSET: usize = 7;
 const PRIMER_KEY_STRUCTURE_KIND_OFFSET: usize = 12;
 const PRIMER_KEY_RESERVED_OFFSET: usize = 15;
-/// Offset of the second 32-bit word within an 8-byte big-endian pair.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 /// Wire size of the Batch header (`count: u32`, `item_len: u32`).
 const PRIMER_HEADER_LEN: usize = U32_LEN + U32_LEN;
 /// Window size for an adjacent-pair duplicate scan.
@@ -159,18 +156,8 @@ impl PrimerPack {
                 buffer_len: v.len(),
             });
         }
-        let count = u32::from_be_bytes([
-            v[0],
-            v[1],
-            v[U32_SECOND_WORD_OFFSET],
-            v[U32_SECOND_WORD_OFFSET + 1],
-        ]);
-        let item_len = u32::from_be_bytes([
-            v[U32_LEN],
-            v[U32_LEN + 1],
-            v[U32_LEN + U32_SECOND_WORD_OFFSET],
-            v[U32_LEN + U32_SECOND_WORD_OFFSET + 1],
-        ]);
+        let count = u32::from_be_bytes(be::<U32_LEN>(v, 0)?);
+        let item_len = u32::from_be_bytes(be::<U32_LEN>(v, U32_LEN)?);
         let body = &v[PRIMER_HEADER_LEN..];
         // #1108/MX-W1: `count as usize * 18` wraps on a 32-bit target for a
         // large enough `count`, which could make an attacker-chosen count
@@ -189,7 +176,7 @@ impl PrimerPack {
         }
         let mut entries = Vec::with_capacity(body.len() / entry_len);
         for chunk in body.chunks_exact(entry_len) {
-            let tag = u16::from_be_bytes([chunk[0], chunk[1]]);
+            let tag = u16::from_be_bytes(be::<U16_LEN>(chunk, 0)?);
             let uid: UlBytes = ul_bytes_from_prefix(&chunk[U16_LEN..]);
             entries.push(LocalTagEntry { tag, uid });
         }

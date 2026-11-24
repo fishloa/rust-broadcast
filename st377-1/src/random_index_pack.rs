@@ -12,21 +12,19 @@ use broadcast_common::{Parse, Serialize};
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
 use crate::types::ul_bytes_from_prefix;
-use crate::types::{U16_LEN, U32_LEN, U64_LEN, UL_LEN};
+use crate::types::{
+    REGISTRY_VERSION_BYTE, RESERVED_KEY_BYTE, STRUCTURE_KIND_BYTE, U16_LEN, U32_LEN, U64_LEN,
+    UL_LEN, be,
+};
 
 const RIP_KEY_PREFIX: [u8; 7] = [0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01];
 const RIP_KEY_MID: [u8; 4] = [0x0D, 0x01, 0x02, 0x01];
 /// Byte 14 (Set/Pack Kind = Random Index Pack) and byte 15 (RIP version).
 const RIP_KEY_TAIL: [u8; U16_LEN] = [0x11, 0x01];
-const REGISTRY_VERSION_BYTE: u8 = 0x01;
-const STRUCTURE_KIND_BYTE: u8 = 0x01;
-const RESERVED_KEY_BYTE: u8 = 0x00;
 // Byte offsets within the 16-byte Random Index Pack Key (0-based).
 const RIP_KEY_REGISTRY_VERSION_OFFSET: usize = 7;
 const RIP_KEY_STRUCTURE_KIND_OFFSET: usize = 12;
 const RIP_KEY_RESERVED_OFFSET: usize = 15;
-/// Offset of the second 32-bit word within an 8-byte big-endian pair.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 /// Wire size of one `{BodySID: u32, ByteOffset: u64}` pair (Table 30).
 const PARTITION_LOCATION_LEN: usize = U32_LEN + U64_LEN;
 
@@ -143,22 +141,8 @@ impl RandomIndexPack {
         let pairs_len = v.len() - U32_LEN;
         let mut partitions = Vec::with_capacity(pairs_len / PARTITION_LOCATION_LEN);
         for chunk in v[..pairs_len].chunks_exact(PARTITION_LOCATION_LEN) {
-            let body_sid = u32::from_be_bytes([
-                chunk[0],
-                chunk[1],
-                chunk[U32_SECOND_WORD_OFFSET],
-                chunk[U32_SECOND_WORD_OFFSET + 1],
-            ]);
-            let byte_offset = u64::from_be_bytes([
-                chunk[U32_LEN],
-                chunk[U32_LEN + 1],
-                chunk[U32_LEN + U32_SECOND_WORD_OFFSET],
-                chunk[U32_LEN + U32_SECOND_WORD_OFFSET + 1],
-                chunk[U32_LEN + U32_LEN],
-                chunk[U32_LEN + U32_LEN + 1],
-                chunk[U32_LEN + U32_LEN + U32_SECOND_WORD_OFFSET],
-                chunk[U32_LEN + U32_LEN + U32_SECOND_WORD_OFFSET + 1],
-            ]);
+            let body_sid = u32::from_be_bytes(be::<U32_LEN>(chunk, 0)?);
+            let byte_offset = u64::from_be_bytes(be::<U64_LEN>(chunk, U32_LEN)?);
             partitions.push(PartitionLocation {
                 body_sid,
                 byte_offset,
@@ -167,12 +151,7 @@ impl RandomIndexPack {
         // Trailing Length field is a redundant seek-optimization value
         // (recomputed on serialize, not stored) — validated against the
         // pack's own actual total length.
-        let trailing = u32::from_be_bytes([
-            v[pairs_len],
-            v[pairs_len + 1],
-            v[pairs_len + U32_SECOND_WORD_OFFSET],
-            v[pairs_len + U32_SECOND_WORD_OFFSET + 1],
-        ]);
+        let trailing = u32::from_be_bytes(be::<U32_LEN>(v, pairs_len)?);
         let actual_total = value_end as u64;
         if u64::from(trailing) != actual_total {
             return Err(Error::InvalidPropertyLength {

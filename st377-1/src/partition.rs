@@ -11,7 +11,10 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
-use crate::types::{U16_LEN, U32_LEN, U64_LEN, UID_BATCH_HEADER_LEN, UL_LEN};
+use crate::types::{
+    REGISTRY_VERSION_BYTE, RESERVED_KEY_BYTE, STRUCTURE_KIND_BYTE, U16_LEN, U32_LEN, U64_LEN,
+    UID_BATCH_HEADER_LEN, UL_LEN, be,
+};
 use crate::types::{UidBatch, UlBytes, serialize_uid_batch, ul_bytes_from_prefix};
 
 /// Fixed bytes 1-13 of every Partition Pack Key (Table 4), i.e. everything
@@ -20,17 +23,12 @@ use crate::types::{UidBatch, UlBytes, serialize_uid_batch, ul_bytes_from_prefix}
 /// (reserved, must be `0x00`).
 const PARTITION_KEY_PREFIX: [u8; 7] = [0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01];
 const PARTITION_KEY_MID: [u8; 4] = [0x0D, 0x01, 0x02, 0x01];
-const REGISTRY_VERSION_BYTE: u8 = 0x01;
-const STRUCTURE_KIND_BYTE: u8 = 0x01;
-const RESERVED_KEY_BYTE: u8 = 0x00;
 // Byte offsets within the 16-byte Partition Pack Key (0-based).
 const PARTITION_KEY_REGISTRY_VERSION_OFFSET: usize = 7;
 const PARTITION_KEY_STRUCTURE_KIND_OFFSET: usize = 12;
 const PARTITION_KEY_KIND_OFFSET: usize = 13;
 const PARTITION_KEY_STATUS_OFFSET: usize = 14;
 const PARTITION_KEY_RESERVED_OFFSET: usize = 15;
-/// Offset of the second 32-bit word within an 8-byte big-endian pair.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 // Field byte offsets within the Partition Pack value (§7.1, Table 5).
 const MAJOR_VERSION_OFFSET: usize = 0;
 const MINOR_VERSION_OFFSET: usize = 2;
@@ -330,39 +328,21 @@ impl<'a> Parse<'a> for PartitionPack {
 
         const FIXED_FIELDS_LEN: usize = 2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16;
         need_in(v, FIXED_FIELDS_LEN, "Partition Pack fixed fields")?;
-        let u16_at = |o: usize| u16::from_be_bytes([v[o], v[o + 1]]);
-        let u32_at = |o: usize| {
-            u32::from_be_bytes([
-                v[o],
-                v[o + 1],
-                v[o + U32_SECOND_WORD_OFFSET],
-                v[o + U32_SECOND_WORD_OFFSET + 1],
-            ])
-        };
-        let u64_at = |o: usize| {
-            u64::from_be_bytes([
-                v[o],
-                v[o + 1],
-                v[o + U32_SECOND_WORD_OFFSET],
-                v[o + U32_SECOND_WORD_OFFSET + 1],
-                v[o + U32_LEN],
-                v[o + U32_LEN + 1],
-                v[o + U32_LEN + U32_SECOND_WORD_OFFSET],
-                v[o + U32_LEN + U32_SECOND_WORD_OFFSET + 1],
-            ])
-        };
+        let u16_at = |o: usize| be::<U16_LEN>(v, o).map(u16::from_be_bytes);
+        let u32_at = |o: usize| be::<U32_LEN>(v, o).map(u32::from_be_bytes);
+        let u64_at = |o: usize| be::<U64_LEN>(v, o).map(u64::from_be_bytes);
 
-        let major_version = u16_at(MAJOR_VERSION_OFFSET);
-        let minor_version = u16_at(MINOR_VERSION_OFFSET);
-        let kag_size = u32_at(KAG_SIZE_OFFSET);
-        let this_partition = u64_at(THIS_PARTITION_OFFSET);
-        let previous_partition = u64_at(PREVIOUS_PARTITION_OFFSET);
-        let footer_partition = u64_at(FOOTER_PARTITION_OFFSET);
-        let header_byte_count = u64_at(HEADER_BYTE_COUNT_OFFSET);
-        let index_byte_count = u64_at(INDEX_BYTE_COUNT_OFFSET);
-        let index_sid = u32_at(INDEX_SID_OFFSET);
-        let body_offset = u64_at(BODY_OFFSET_FIELD);
-        let body_sid = u32_at(BODY_SID_OFFSET);
+        let major_version = u16_at(MAJOR_VERSION_OFFSET)?;
+        let minor_version = u16_at(MINOR_VERSION_OFFSET)?;
+        let kag_size = u32_at(KAG_SIZE_OFFSET)?;
+        let this_partition = u64_at(THIS_PARTITION_OFFSET)?;
+        let previous_partition = u64_at(PREVIOUS_PARTITION_OFFSET)?;
+        let footer_partition = u64_at(FOOTER_PARTITION_OFFSET)?;
+        let header_byte_count = u64_at(HEADER_BYTE_COUNT_OFFSET)?;
+        let index_byte_count = u64_at(INDEX_BYTE_COUNT_OFFSET)?;
+        let index_sid = u32_at(INDEX_SID_OFFSET)?;
+        let body_offset = u64_at(BODY_OFFSET_FIELD)?;
+        let body_sid = u32_at(BODY_SID_OFFSET)?;
         let operational_pattern: UlBytes = ul_bytes_from_prefix(&v[OPERATIONAL_PATTERN_OFFSET..]);
         let essence_containers_batch = UidBatch::parse(&v[ESSENCE_CONTAINERS_OFFSET..])?;
         let essence_containers = essence_containers_batch.items().to_vec();

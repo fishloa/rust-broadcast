@@ -10,11 +10,11 @@ use broadcast_common::len::{fit_u32, need_out};
 use crate::error::{Error, Result};
 
 /// Wire width of a SMPTE Universal Label (§4.2), in bytes.
-pub(crate) const UL_LEN: usize = 16;
+pub const UL_LEN: usize = 16;
 /// Wire width of a Package ID (§4.2), in bytes.
-pub(crate) const PACKAGE_ID_LEN: usize = 32;
+pub const PACKAGE_ID_LEN: usize = 32;
 /// Wire width of a `UInt16`/`Int16` field, in bytes.
-pub(crate) const U16_LEN: usize = core::mem::size_of::<u16>();
+pub const U16_LEN: usize = core::mem::size_of::<u16>();
 /// Wire width of a `UInt32`/`Int32` field, in bytes.
 pub(crate) const U32_LEN: usize = core::mem::size_of::<u32>();
 /// Wire width of a `UInt64`/`Int64` field, in bytes.
@@ -25,8 +25,28 @@ const AUID_UL_FLAG_MASK: u8 = 0x80;
 
 const RATIONAL_NUMERATOR_OFFSET: usize = 0;
 const RATIONAL_DENOMINATOR_OFFSET: usize = RATIONAL_NUMERATOR_OFFSET + core::mem::size_of::<i32>();
-/// Offset of the second 32-bit word within an 8-byte big-endian pair.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
+
+/// Registry-version byte shared by Set/Pack Keys (§9.2/§7.1).
+pub(crate) const REGISTRY_VERSION_BYTE: u8 = 0x01;
+/// Structure-kind byte shared by Set/Pack Keys.
+pub(crate) const STRUCTURE_KIND_BYTE: u8 = 0x01;
+/// Zero reserved byte at the end of a Set/Pack Key.
+pub(crate) const RESERVED_KEY_BYTE: u8 = 0x00;
+
+/// Copy `N` big-endian bytes at `offset` into an array.
+pub(crate) fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
+    bytes
+        .get(offset..offset + N)
+        .and_then(|s| s.first_chunk::<N>())
+        .copied()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: offset + N,
+                have: bytes.len(),
+                what: "fixed-width big-endian field",
+            },
+        ))
+}
 
 const TIMESTAMP_MONTH_OFFSET: usize = core::mem::size_of::<i16>();
 const TIMESTAMP_DAY_OFFSET: usize = TIMESTAMP_MONTH_OFFSET + 1;
@@ -178,18 +198,8 @@ impl Rational {
             });
         }
         Ok(Rational {
-            numerator: i32::from_be_bytes([
-                bytes[RATIONAL_NUMERATOR_OFFSET],
-                bytes[RATIONAL_NUMERATOR_OFFSET + 1],
-                bytes[RATIONAL_NUMERATOR_OFFSET + U32_SECOND_WORD_OFFSET],
-                bytes[RATIONAL_NUMERATOR_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            ]),
-            denominator: i32::from_be_bytes([
-                bytes[RATIONAL_DENOMINATOR_OFFSET],
-                bytes[RATIONAL_DENOMINATOR_OFFSET + 1],
-                bytes[RATIONAL_DENOMINATOR_OFFSET + U32_SECOND_WORD_OFFSET],
-                bytes[RATIONAL_DENOMINATOR_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            ]),
+            numerator: i32::from_be_bytes(be::<U32_LEN>(bytes, RATIONAL_NUMERATOR_OFFSET)?),
+            denominator: i32::from_be_bytes(be::<U32_LEN>(bytes, RATIONAL_DENOMINATOR_OFFSET)?),
         })
     }
 
@@ -371,7 +381,7 @@ impl MxfTimestamp {
             });
         }
         Ok(MxfTimestamp {
-            year: i16::from_be_bytes([bytes[0], bytes[1]]),
+            year: i16::from_be_bytes(be::<U16_LEN>(bytes, 0)?),
             month: bytes[TIMESTAMP_MONTH_OFFSET],
             day: bytes[TIMESTAMP_DAY_OFFSET],
             hour: bytes[TIMESTAMP_HOUR_OFFSET],
@@ -510,13 +520,13 @@ impl ProductVersion {
                 expected: PRODUCT_VERSION_LEN,
             });
         }
-        let u16_at = |i: usize| u16::from_be_bytes([bytes[i], bytes[i + 1]]);
+        let u16_at = |i: usize| be::<U16_LEN>(bytes, i).map(u16::from_be_bytes);
         Ok(ProductVersion {
-            major: u16_at(0),
-            minor: u16_at(PRODUCT_VERSION_MINOR_OFFSET),
-            tertiary: u16_at(PRODUCT_VERSION_TERTIARY_OFFSET),
-            patch: u16_at(PRODUCT_VERSION_PATCH_OFFSET),
-            release: ReleaseType::from_u16(u16_at(PRODUCT_VERSION_RELEASE_OFFSET)),
+            major: u16_at(0)?,
+            minor: u16_at(PRODUCT_VERSION_MINOR_OFFSET)?,
+            tertiary: u16_at(PRODUCT_VERSION_TERTIARY_OFFSET)?,
+            patch: u16_at(PRODUCT_VERSION_PATCH_OFFSET)?,
+            release: ReleaseType::from_u16(u16_at(PRODUCT_VERSION_RELEASE_OFFSET)?),
         })
     }
 
@@ -564,8 +574,8 @@ pub fn decode_utf16_be(bytes: &[u8]) -> Result<String> {
     }
     let units: Vec<u16> = bytes
         .chunks_exact(U16_LEN)
-        .map(|c| u16::from_be_bytes([c[0], c[1]]))
-        .collect();
+        .map(|c| be::<U16_LEN>(c, 0).map(u16::from_be_bytes))
+        .collect::<Result<Vec<u16>>>()?;
     char::decode_utf16(units)
         .collect::<core::result::Result<String, _>>()
         .map_err(|_| Error::InvalidUtf16 {
@@ -600,7 +610,8 @@ pub struct UidBatch {
 }
 
 /// The 8-byte Batch/Array header (`count: u32`, `item_len: u32`).
-pub(crate) const UID_BATCH_HEADER_LEN: usize = 8;
+/// Wire width of a Batch/Array header (`count: u32`, `item_len: u32`).
+pub const UID_BATCH_HEADER_LEN: usize = 8;
 
 impl UidBatch {
     /// The elements.
@@ -643,28 +654,9 @@ impl UidBatch {
                 buffer_len: bytes.len(),
             });
         }
-        let count = u32::from_be_bytes([
-            bytes[UID_BATCH_COUNT_OFFSET],
-            bytes[UID_BATCH_COUNT_OFFSET + 1],
-            bytes[UID_BATCH_COUNT_OFFSET + U32_SECOND_WORD_OFFSET],
-            bytes[UID_BATCH_COUNT_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-        ]);
-        let item_len = u32::from_be_bytes([
-            bytes[UID_BATCH_ITEM_LEN_OFFSET],
-            bytes[UID_BATCH_ITEM_LEN_OFFSET + 1],
-            bytes[UID_BATCH_ITEM_LEN_OFFSET + U32_SECOND_WORD_OFFSET],
-            bytes[UID_BATCH_ITEM_LEN_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-        ]);
-        let header = [
-            bytes[UID_BATCH_COUNT_OFFSET],
-            bytes[UID_BATCH_COUNT_OFFSET + 1],
-            bytes[UID_BATCH_COUNT_OFFSET + U32_SECOND_WORD_OFFSET],
-            bytes[UID_BATCH_COUNT_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            bytes[UID_BATCH_ITEM_LEN_OFFSET],
-            bytes[UID_BATCH_ITEM_LEN_OFFSET + 1],
-            bytes[UID_BATCH_ITEM_LEN_OFFSET + U32_SECOND_WORD_OFFSET],
-            bytes[UID_BATCH_ITEM_LEN_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-        ];
+        let count = u32::from_be_bytes(be::<U32_LEN>(bytes, UID_BATCH_COUNT_OFFSET)?);
+        let item_len = u32::from_be_bytes(be::<U32_LEN>(bytes, UID_BATCH_ITEM_LEN_OFFSET)?);
+        let header = be::<UID_BATCH_HEADER_LEN>(bytes, 0)?;
         let body = &bytes[UID_BATCH_HEADER_LEN..];
         // `item_len` only describes the size of an actual element, so it is only
         // meaningful (and validated against 16) when `count > 0`. A real
@@ -715,18 +707,9 @@ impl UidBatch {
                 out.extend_from_slice(&(UL_LEN as u32).to_be_bytes());
             }
             Some(header) => {
-                let declared = u32::from_be_bytes([
-                    header[UID_BATCH_COUNT_OFFSET],
-                    header[UID_BATCH_COUNT_OFFSET + 1],
-                    header[UID_BATCH_COUNT_OFFSET + U32_SECOND_WORD_OFFSET],
-                    header[UID_BATCH_COUNT_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-                ]);
-                let item_len = u32::from_be_bytes([
-                    header[UID_BATCH_ITEM_LEN_OFFSET],
-                    header[UID_BATCH_ITEM_LEN_OFFSET + 1],
-                    header[UID_BATCH_ITEM_LEN_OFFSET + U32_SECOND_WORD_OFFSET],
-                    header[UID_BATCH_ITEM_LEN_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-                ]);
+                let declared = u32::from_be_bytes(be::<U32_LEN>(&header, UID_BATCH_COUNT_OFFSET)?);
+                let item_len =
+                    u32::from_be_bytes(be::<U32_LEN>(&header, UID_BATCH_ITEM_LEN_OFFSET)?);
                 if declared != count {
                     return Err(Error::InvalidBatchHeader {
                         count: declared,

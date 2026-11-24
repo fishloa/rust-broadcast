@@ -19,7 +19,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
-use crate::types::{U16_LEN, UL_LEN};
+use crate::types::{U16_LEN, UL_LEN, be};
 use crate::types::{UlBytes, ul_bytes_from_prefix};
 
 /// Byte 6 of a Local Set Key (§9.3 Note 1): which length encoding its
@@ -87,8 +87,10 @@ const SET_KEY_FIXED: [(usize, u8); 8] = [
 // byte 10 doubles as part of the Application field family shared with
 // Abstract Group ULs (Table 18) which also uses `0x01`; kept explicit
 // below for clarity rather than folded into the table above.
-const SET_KEY_BYTE10: u8 = 0x01;
-const SET_KEY_BYTE12: u8 = 0x01;
+/// Value of the Set Key organization byte (wire byte 10).
+const SET_KEY_ORGANIZATION_VALUE: u8 = 0x01;
+/// Value of the Set Key structure-kind byte (wire byte 13).
+const SET_KEY_STRUCTURE_KIND_VALUE: u8 = 0x01;
 /// UL prefix bytes 0-4 of every Structural Metadata Set Key (Table 16).
 const SET_KEY_UL_PREFIX: [u8; 5] = [0x06, 0x0E, 0x2B, 0x34, 0x02];
 /// The fixed `0x01` filler byte used throughout the Set Key.
@@ -118,9 +120,9 @@ pub fn is_local_set_key(key: &UlBytes) -> bool {
         && ItemLengthMode::from_registry_designator_byte(bytes[SET_KEY_REGISTRY_DESIGNATOR_OFFSET])
             .is_some()
         && bytes[SET_KEY_DESIGNATOR_OFFSET] == SET_KEY_DESIGNATOR_BYTE
-        && bytes[SET_KEY_ORGANIZATION_OFFSET] == SET_KEY_BYTE10
+        && bytes[SET_KEY_ORGANIZATION_OFFSET] == SET_KEY_ORGANIZATION_VALUE
         && bytes[SET_KEY_APPLICATION_OFFSET] == SET_KEY_FIXED_BYTE
-        && bytes[SET_KEY_STRUCTURE_KIND_OFFSET] == SET_KEY_BYTE12
+        && bytes[SET_KEY_STRUCTURE_KIND_OFFSET] == SET_KEY_STRUCTURE_KIND_VALUE
 }
 
 /// Set Kind (Table 17 — this crate's byte 14/15 identification list for
@@ -424,10 +426,10 @@ impl<'a> LocalSet<'a> {
             SET_KEY_FIXED_BYTE,
             SET_KEY_FIXED_BYTE, // registry version
             SET_KEY_DESIGNATOR_BYTE,
-            SET_KEY_BYTE10,
+            SET_KEY_ORGANIZATION_VALUE,
             SET_KEY_FIXED_BYTE,
             SET_KEY_FIXED_BYTE,
-            SET_KEY_BYTE12,
+            SET_KEY_STRUCTURE_KIND_VALUE,
             b14,
             b15,
             SET_KEY_RESERVED_BYTE,
@@ -475,12 +477,15 @@ impl<'a> LocalSet<'a> {
         let mut items = Vec::new();
         while !cursor.is_empty() {
             need_in(cursor, U16_LEN, "Local Set item tag")?;
-            let tag = u16::from_be_bytes([cursor[0], cursor[1]]);
+            let tag = u16::from_be_bytes(be::<U16_LEN>(cursor, 0)?);
             let rest = &cursor[2..];
             let (item_len, item_len_size) = match mode {
                 ItemLengthMode::TwoByte => {
                     need_in(rest, U16_LEN, "Local Set item 2-byte length")?;
-                    (u64::from(u16::from_be_bytes([rest[0], rest[1]])), U16_LEN)
+                    (
+                        u64::from(u16::from_be_bytes(be::<U16_LEN>(rest, 0)?)),
+                        U16_LEN,
+                    )
                 }
                 ItemLengthMode::Ber => decode_ber_length(rest)?,
             };
