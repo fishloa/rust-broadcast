@@ -14,6 +14,12 @@ use core::net::Ipv6Addr;
 pub const TAG: u8 = 0x12;
 const ENTRY_LEN: usize = 34;
 const ADDR_LEN: usize = 16;
+/// Offset of `IPv6_source_slash_mask` in an entry.
+const SOURCE_SLASH_MASK_OFFSET: usize = ADDR_LEN;
+/// Offset of `IPv6_dest_addr` in an entry.
+const DEST_ADDR_OFFSET: usize = ADDR_LEN + 1;
+/// Offset of `IPv6_dest_slash_mask` in an entry.
+const DEST_SLASH_MASK_OFFSET: usize = 2 * ADDR_LEN + 1;
 
 /// One source/destination address pair with slash masks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,19 +40,19 @@ impl Entry<ENTRY_LEN> for Ipv6SourceDestSlash {
         let mut s = [0u8; ADDR_LEN];
         let mut d = [0u8; ADDR_LEN];
         s.copy_from_slice(&b[..ADDR_LEN]);
-        d.copy_from_slice(&b[ADDR_LEN + 1..2 * ADDR_LEN + 1]);
+        d.copy_from_slice(&b[DEST_ADDR_OFFSET..DEST_SLASH_MASK_OFFSET]);
         Self {
             source_addr: Ipv6Addr::from(s),
-            source_slash_mask: b[ADDR_LEN],
+            source_slash_mask: b[SOURCE_SLASH_MASK_OFFSET],
             dest_addr: Ipv6Addr::from(d),
-            dest_slash_mask: b[2 * ADDR_LEN + 1],
+            dest_slash_mask: b[DEST_SLASH_MASK_OFFSET],
         }
     }
     fn write(&self, b: &mut [u8; ENTRY_LEN]) {
         b[..ADDR_LEN].copy_from_slice(&self.source_addr.octets());
-        b[ADDR_LEN] = self.source_slash_mask;
-        b[ADDR_LEN + 1..2 * ADDR_LEN + 1].copy_from_slice(&self.dest_addr.octets());
-        b[2 * ADDR_LEN + 1] = self.dest_slash_mask;
+        b[SOURCE_SLASH_MASK_OFFSET] = self.source_slash_mask;
+        b[DEST_ADDR_OFFSET..DEST_SLASH_MASK_OFFSET].copy_from_slice(&self.dest_addr.octets());
+        b[DEST_SLASH_MASK_OFFSET] = self.dest_slash_mask;
     }
 }
 

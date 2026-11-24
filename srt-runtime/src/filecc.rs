@@ -221,6 +221,16 @@ impl XorShift64 {
     /// (see the module doc).
     const DEFAULT_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
+    /// Marsaglia xorshift64 shifts and multiplier.
+    const XORSHIFT_SHIFT_A: u32 = 13;
+    const XORSHIFT_SHIFT_B: u32 = 7;
+    const XORSHIFT_SHIFT_C: u32 = 17;
+    const XORSHIFT_MULTIPLIER: u64 = 0x2545_F491_4F6C_DD1D;
+
+    /// Mantissa bits a `f64` can hold exactly, taken from the top of the
+    /// 64-bit draw.
+    const MANTISSA_BITS: u32 = 53;
+
     fn new(seed: u64) -> Self {
         XorShift64(if seed == 0 { Self::DEFAULT_SEED } else { seed })
     }
@@ -228,15 +238,22 @@ impl XorShift64 {
     /// Next pseudo-random value, uniform in `[0.0, 1.0)`.
     fn next_unit(&mut self) -> f64 {
         let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
+        x ^= x << Self::XORSHIFT_SHIFT_A;
+        x ^= x >> Self::XORSHIFT_SHIFT_B;
+        x ^= x << Self::XORSHIFT_SHIFT_C;
         self.0 = x;
-        let r = x.wrapping_mul(0x2545_F491_4F6C_DD1D);
+        let r = x.wrapping_mul(Self::XORSHIFT_MULTIPLIER);
         // Top 53 bits as a double in [0, 1).
-        (r >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
+        (r >> (u64::BITS - Self::MANTISSA_BITS)) as f64
+            * (1.0 / (1u64 << Self::MANTISSA_BITS) as f64)
     }
 }
+
+/// Half-distance at which [`fround`] rounds away from zero.
+const ROUNDING_THRESHOLD: f64 = 0.5;
+
+/// Radix of the decimal powers [`next_power_of_10`] walks.
+const DECIMAL_BASE: f64 = 10.0;
 
 /// `min(a, b)` for `f64`, without relying on `f64::min` (kept as a plain
 /// comparison so this module has no dependency on any transcendental-math
@@ -260,9 +277,9 @@ fn fmax(a: f64, b: f64) -> f64 {
 fn fround(x: f64) -> f64 {
     let truncated = x as i64 as f64;
     let diff = x - truncated;
-    if diff >= 0.5 {
+    if diff >= ROUNDING_THRESHOLD {
         truncated + 1.0
-    } else if diff <= -0.5 {
+    } else if diff <= -ROUNDING_THRESHOLD {
         truncated - 1.0
     } else {
         truncated
@@ -282,10 +299,10 @@ fn next_power_of_10(x: f64) -> f64 {
     debug_assert!(x > 0.0, "next_power_of_10 is only defined for x > 0");
     let mut p = 1.0_f64;
     while p < x {
-        p *= 10.0;
+        p *= DECIMAL_BASE;
     }
-    while p / 10.0 >= x {
-        p /= 10.0;
+    while p / DECIMAL_BASE >= x {
+        p /= DECIMAL_BASE;
     }
     p
 }

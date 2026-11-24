@@ -26,6 +26,12 @@ use crate::{
 
 const TAG: &str = "#EXT-X-DATERANGE:";
 
+/// Milliseconds in one second.
+const MILLIS_PER_SEC: f64 = 1000.0;
+
+/// Rounding term for a millisecond conversion.
+const ROUND_TO_NEAREST: f64 = 0.5;
+
 /// Attributes in the canonical order a newly built tag uses.
 const KNOWN_ORDER: &[&str] = &[
     "ID",
@@ -785,9 +791,9 @@ impl DateRange {
         if let (Some(start), Some(end), Some(duration)) =
             (self.start(), self.end(), self.duration())
         {
-            let millis = duration.get() * 1000.0;
+            let millis = duration.get() * MILLIS_PER_SEC;
             let delta = if millis.is_finite() && millis >= 0.0 && millis <= i64::MAX as f64 {
-                Some((millis + 0.5) as i64)
+                Some((millis + ROUND_TO_NEAREST) as i64)
             } else {
                 None
             };

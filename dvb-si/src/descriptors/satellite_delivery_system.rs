@@ -13,6 +13,48 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x43;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 11;
+/// Mask of a 2-bit field (`polarization`, `roll_off`, `modulation_type`).
+const FIELD_PAIR_MASK: u8 = 0x03;
+/// Mask of a 1-bit field (`modulation_system`).
+const SINGLE_BIT_MASK: u8 = 0x01;
+/// `west_east_flag` bit of the flags byte.
+const WEST_EAST_FLAG: u8 = 0x80;
+/// Shift of `polarization` in the flags byte.
+const POLARIZATION_SHIFT: u8 = 5;
+/// Shift of `roll_off` in the flags byte.
+const ROLL_OFF_SHIFT: u8 = 3;
+/// Shift of `modulation_system` in the flags byte.
+const MODULATION_SYSTEM_SHIFT: u8 = 2;
+/// Body offset of the flags byte.
+const FLAGS_OFFSET: usize = 6;
+/// Body offset of `symbol_rate` / `FEC_inner`.
+const SYMBOL_RATE_OFFSET: usize = 7;
+/// Wire width of the BCD `frequency` field.
+const FREQUENCY_LEN: usize = size_of::<u32>();
+/// Wire width of the BCD `orbital_position` field.
+const ORBITAL_POSITION_LEN: usize = size_of::<u16>();
+/// Digit count of the BCD `frequency` field.
+const FREQUENCY_BCD_DIGITS: u8 = 8;
+/// Resolution of `frequency` in Hz.
+const FREQUENCY_RESOLUTION_HZ: u64 = 10_000;
+/// Digit count of the BCD `symbol_rate` field.
+const SYMBOL_RATE_BCD_DIGITS: u8 = 7;
+/// Resolution of `symbol_rate` in symbols per second.
+const SYMBOL_RATE_RESOLUTION: u64 = 100;
+/// Digit count of the BCD `orbital_position` field.
+const ORBITAL_POSITION_BCD_DIGITS: u8 = 4;
+/// Degrees-to-tenths scale of `orbital_position`.
+const ORBITAL_POSITION_SCALE: f64 = 10.0;
+/// Largest representable `orbital_position` in degrees.
+const ORBITAL_POSITION_MAX_DEG: f64 = 6_553.5;
+/// Mask of the 28-bit BCD `symbol_rate` field.
+const SYMBOL_RATE_MASK: u32 = 0x0FFF_FFFF;
+/// Shift of `symbol_rate` within `symbol_rate_and_fec`.
+const SYMBOL_RATE_SHIFT: u32 = 4;
+/// Mask of the 4-bit `FEC_inner` field.
+const FEC_INNER_MASK: u8 = 0x0F;
+/// Fractional threshold for round-half-away-from-zero.
+const ROUNDING_THRESHOLD: f64 = 0.5;
 
 /// Polarization (§6.2.13.2 Table 38).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +86,7 @@ impl Polarization {
     #[must_use]
     /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & FIELD_PAIR_MASK {
             0 => Polarization::LinearHorizontal,
             1 => Polarization::LinearVertical,
             2 => Polarization::CircularLeft,
@@ -205,7 +247,8 @@ impl SatelliteDeliverySystemDescriptor {
     /// e.g. `0x0117_2500` → `11_725_000_000` Hz (11.72500 GHz).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|v| v * 10_000)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), FREQUENCY_BCD_DIGITS)
+            .map(|v| v * FREQUENCY_RESOLUTION_HZ)
     }
 
     /// Set `frequency` from Hz, encoding to the 8-digit BCD field at the field's
@@ -216,8 +259,8 @@ impl SatelliteDeliverySystemDescriptor {
     /// exceeds the 8-digit BCD field.
     pub fn set_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
         self.frequency_bcd = super::encode_bcd_field(
-            hz / 10_000,
-            8,
+            hz / FREQUENCY_RESOLUTION_HZ,
+            FREQUENCY_BCD_DIGITS,
             "SatelliteDeliverySystemDescriptor::frequency",
         )? as u32;
         Ok(())
@@ -229,7 +272,11 @@ impl SatelliteDeliverySystemDescriptor {
     /// e.g. `0x027_5000` → `27_500_000` (27.5 Msym/s).
     #[must_use]
     pub fn symbol_rate_sps(&self) -> Option<u64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate_bcd), 7).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(
+            u64::from(self.symbol_rate_bcd),
+            SYMBOL_RATE_BCD_DIGITS,
+        )
+        .map(|v| v * SYMBOL_RATE_RESOLUTION)
     }
 
     /// Set `symbol_rate` from symbols/second (100 sym/s field resolution).
@@ -239,8 +286,8 @@ impl SatelliteDeliverySystemDescriptor {
     /// the 7-digit BCD field.
     pub fn set_symbol_rate_sps(&mut self, sps: u64) -> crate::Result<()> {
         self.symbol_rate_bcd = super::encode_bcd_field(
-            sps / 100,
-            7,
+            sps / SYMBOL_RATE_RESOLUTION,
+            SYMBOL_RATE_BCD_DIGITS,
             "SatelliteDeliverySystemDescriptor::symbol_rate",
         )? as u32;
         Ok(())
@@ -250,8 +297,11 @@ impl SatelliteDeliverySystemDescriptor {
     /// `None` if the BCD nibbles are out of range. e.g. `0x1920` → `192.0`.
     #[must_use]
     pub fn orbital_position_deg(&self) -> Option<f64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.orbital_position_bcd), 4)
-            .map(|tenths| tenths as f64 / 10.0)
+        broadcast_common::bcd::bcd_to_decimal(
+            u64::from(self.orbital_position_bcd),
+            ORBITAL_POSITION_BCD_DIGITS,
+        )
+        .map(|tenths| tenths as f64 / ORBITAL_POSITION_SCALE)
     }
 
     /// Set `orbital_position` in degrees, rounded to the field's tenth-degree
@@ -261,16 +311,16 @@ impl SatelliteDeliverySystemDescriptor {
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if negative or
     /// beyond the 4-digit BCD field.
     pub fn set_orbital_position_deg(&mut self, deg: f64) -> crate::Result<()> {
-        if !(0.0..=6_553.5).contains(&deg) {
+        if !(0.0..=ORBITAL_POSITION_MAX_DEG).contains(&deg) {
             return Err(crate::Error::ValueOutOfRange {
                 field: "SatelliteDeliverySystemDescriptor::orbital_position",
                 reason: "degrees must be in 0.0..=6553.5",
             });
         }
-        let tenths = round_half_away(deg * 10.0);
+        let tenths = round_half_away(deg * ORBITAL_POSITION_SCALE);
         self.orbital_position_bcd = super::encode_bcd_field(
             tenths,
-            4,
+            ORBITAL_POSITION_BCD_DIGITS,
             "SatelliteDeliverySystemDescriptor::orbital_position",
         )? as u16;
         Ok(())
@@ -294,25 +344,29 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
             });
         }
 
-        let (hdr, _) = body
-            .split_first_chunk::<11>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "descriptor_length must equal 11",
-            })?;
+        let (hdr, _) =
+            body.split_first_chunk::<{ BODY_LEN as usize }>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "descriptor_length must equal 11",
+                })?;
 
         // Frequency: 4 bytes BCD (GHz.MMMM)
-        let frequency_bcd = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+        let frequency_bcd = u32::from_be_bytes(hdr[..FREQUENCY_LEN].try_into().unwrap_or_default());
 
         // Orbital position: 2 bytes BCD (tenths of a degree)
-        let orbital_position_bcd = u16::from_be_bytes([hdr[4], hdr[5]]);
+        let orbital_position_bcd = u16::from_be_bytes(
+            hdr[FREQUENCY_LEN..FREQUENCY_LEN + ORBITAL_POSITION_LEN]
+                .try_into()
+                .unwrap_or_default(),
+        );
 
         // Flags byte 6: bit 7 = west_east_flag, bits 5-6 = polarization,
         // bits 3-4 = roll_off, bit 2 = modulation_system, bits 1-0 = modulation_type
-        let flags = hdr[6];
-        let east = (flags & 0x80) != 0;
+        let flags = hdr[FLAGS_OFFSET];
+        let east = (flags & WEST_EAST_FLAG) != 0;
 
-        let pol_raw = (flags >> 5) & 0x03;
+        let pol_raw = (flags >> POLARIZATION_SHIFT) & FIELD_PAIR_MASK;
         let polarization = match pol_raw {
             0 => Polarization::LinearHorizontal,
             1 => Polarization::LinearVertical,
@@ -320,7 +374,7 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
             _ => Polarization::CircularRight,
         };
 
-        let roll_raw = (flags >> 3) & 0x03;
+        let roll_raw = (flags >> ROLL_OFF_SHIFT) & FIELD_PAIR_MASK;
         let roll_off = match roll_raw {
             0 => RollOff::Alpha035,
             1 => RollOff::Alpha025,
@@ -328,13 +382,13 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
             v => RollOff::Reserved(v),
         };
 
-        let mod_sys_raw = (flags >> 2) & 0x01;
+        let mod_sys_raw = (flags >> MODULATION_SYSTEM_SHIFT) & SINGLE_BIT_MASK;
         let modulation_system = match mod_sys_raw {
             0 => ModulationSystem::DvbS,
             _ => ModulationSystem::DvbS2,
         };
 
-        let mod_type_raw = flags & 0x03;
+        let mod_type_raw = flags & FIELD_PAIR_MASK;
         let modulation_type = match mod_type_raw {
             0 => ModulationType::Auto,
             1 => ModulationType::Qpsk,
@@ -343,9 +397,10 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
         };
 
         // Symbol rate: 28-bit BCD packed into 4 bytes (3.5 bytes + 4-bit FEC)
-        let symbol_rate_and_fec = u32::from_be_bytes([hdr[7], hdr[8], hdr[9], hdr[10]]);
-        let symbol_rate_bcd = symbol_rate_and_fec >> 4;
-        let fec_inner = FecInner::from_u8((symbol_rate_and_fec & 0x0F) as u8);
+        let symbol_rate_and_fec =
+            u32::from_be_bytes(hdr[SYMBOL_RATE_OFFSET..].try_into().unwrap_or_default());
+        let symbol_rate_bcd = symbol_rate_and_fec >> SYMBOL_RATE_SHIFT;
+        let fec_inner = FecInner::from_u8((symbol_rate_and_fec & u32::from(FEC_INNER_MASK)) as u8);
 
         Ok(SatelliteDeliverySystemDescriptor {
             frequency_bcd,
@@ -376,16 +431,17 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
 
         // Frequency: 4 bytes BCD
         let freq_bytes = self.frequency_bcd.to_be_bytes();
-        buf[2..6].copy_from_slice(&freq_bytes);
+        buf[HEADER_LEN..HEADER_LEN + FREQUENCY_LEN].copy_from_slice(&freq_bytes);
 
         // Orbital position: 2 bytes BCD
         let orb_bytes = self.orbital_position_bcd.to_be_bytes();
-        buf[6..8].copy_from_slice(&orb_bytes);
+        buf[HEADER_LEN + FREQUENCY_LEN..HEADER_LEN + FREQUENCY_LEN + ORBITAL_POSITION_LEN]
+            .copy_from_slice(&orb_bytes);
 
         // Flags byte: combine west_east, polarization, roll_off, modulation_system, modulation_type
         let mut flags: u8 = 0;
         if self.east {
-            flags |= 0x80;
+            flags |= WEST_EAST_FLAG;
         }
         flags |= match self.polarization {
             Polarization::LinearHorizontal => 0x00,
@@ -402,7 +458,9 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
             RollOff::Alpha035 => 0x00,
             RollOff::Alpha025 => 0x08,
             RollOff::Alpha020 => 0x10,
-            RollOff::Reserved(v) => broadcast_common::len::fit_mask(v, 0x03, "v")? << 3,
+            RollOff::Reserved(v) => {
+                broadcast_common::len::fit_mask(v, FIELD_PAIR_MASK, "v")? << ROLL_OFF_SHIFT
+            }
         };
         flags |= match self.modulation_system {
             ModulationSystem::DvbS => 0x00,
@@ -414,22 +472,23 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
             ModulationType::Psk8 => 0x02,
             ModulationType::Qam16 => 0x03,
         };
-        buf[8] = flags;
+        buf[HEADER_LEN + FLAGS_OFFSET] = flags;
 
         // Symbol rate + FEC_inner: 28-bit BCD shifted left 4 bits, then OR with FEC.
         // Mask to 28 bits so an over-range value can't spill past the field.
         let sym_freq = (broadcast_common::len::fit_mask(
             self.symbol_rate_bcd,
-            0x0FFF_FFFF,
+            SYMBOL_RATE_MASK,
             "symbol_rate_bcd",
-        )? << 4)
+        )? << SYMBOL_RATE_SHIFT)
             | u32::from(broadcast_common::len::fit_mask(
                 self.fec_inner.to_u8(),
-                0x0F,
+                FEC_INNER_MASK,
                 "fec_inner",
             )?);
         let sym_bytes = sym_freq.to_be_bytes();
-        buf[9..13].copy_from_slice(&sym_bytes);
+        buf[HEADER_LEN + SYMBOL_RATE_OFFSET..HEADER_LEN + usize::from(BODY_LEN)]
+            .copy_from_slice(&sym_bytes);
 
         Ok(len)
     }
@@ -445,7 +504,7 @@ impl crate::traits::DescriptorDef<'_> for SatelliteDeliverySystemDescriptor {
 /// `>= 0.5` test sees the true fraction and the result equals `f64::round`.
 fn round_half_away(x: f64) -> u64 {
     let whole = x as u64;
-    if x - whole as f64 >= 0.5 {
+    if x - whole as f64 >= ROUNDING_THRESHOLD {
         whole + 1
     } else {
         whole

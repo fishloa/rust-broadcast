@@ -54,6 +54,37 @@ const COPIED_BITS: usize = 44;
 const RESERVED_1_BITS: u32 = 1;
 const RESERVED_2_BITS: u32 = 2;
 const RESERVED_4_BITS: u32 = 4;
+/// Wire width of a byte-sized field.
+const BYTE_BITS: usize = u8::BITS as usize;
+/// Wire width of a 16-bit word.
+const WORD_BITS: usize = u16::BITS as usize;
+/// Wire width of a 32-bit double word.
+const DWORD_BITS: usize = u32::BITS as usize;
+/// Width of a `reserved(2)` run in reader terms.
+const RESERVED_2_READ_BITS: usize = RESERVED_2_BITS as usize;
+/// Width of a `reserved(4)` run in reader terms.
+const RESERVED_4_READ_BITS: usize = RESERVED_4_BITS as usize;
+/// Width of `general_profile_space` (2 bits).
+const PROFILE_SPACE_BITS: usize = 2;
+/// Width of `general_profile_idc` (5 bits).
+const GENERAL_PROFILE_IDC_BITS: usize = 5;
+/// Width of the narrow 6-bit count/reference fields.
+const NARROW_FIELD_BITS: usize = 6;
+/// Width of the 7-bit substream identifier fields.
+const SUBSTREAM_ID_BITS: usize = 7;
+/// Width of a temporal id (3 bits).
+const TEMPORAL_ID_BITS: usize = 3;
+/// Width of `constant_frame_rate_info_idc` (2 bits).
+const FRAME_RATE_INFO_IDC_BITS: usize = 2;
+/// Width of `frame_rate_indicator` (12 bits).
+const FRAME_RATE_INDICATOR_BITS: usize = 12;
+/// Width of an average/maximum bit rate (24 bits).
+const BIT_RATE_BITS: usize = 24;
+/// Smallest present `constant_frame_rate_info_idc` value (one less than the
+/// wire value is absent).
+const CONSTANT_FRAME_RATE_IDC_MIN: u8 = 1;
+/// Largest present `constant_frame_rate_info_idc` value.
+const CONSTANT_FRAME_RATE_IDC_MAX: u8 = 3;
 
 /// `profile_tier_level_info[i]` — the 96-bit `profile_tier_level()` of H.265
 /// §7.3.3 with `profilePresentFlag = 1` (H.222.0 §2.6.101).
@@ -118,16 +149,16 @@ impl ProfileTierLevelInfo {
     fn parse(r: &mut BitReader<'_>) -> Result<Self> {
         let general_profile_space = r.u8(2)?;
         let general_tier_flag = r.flag()?;
-        let general_profile_idc = r.u8(5)?;
-        let general_profile_compatibility_flags = r.bits(32)?;
+        let general_profile_idc = r.u8(GENERAL_PROFILE_IDC_BITS)?;
+        let general_profile_compatibility_flags = r.bits(DWORD_BITS)?;
         let general_progressive_source_flag = r.flag()?;
         let general_interlaced_source_flag = r.flag()?;
         let general_non_packed_constraint_flag = r.flag()?;
         let general_frame_only_constraint_flag = r.flag()?;
-        let hi = u64::from(r.bits(COPIED_BITS - 32)?);
-        let lo = u64::from(r.bits(32)?);
-        let copied_44bits = (hi << 32) | lo;
-        let general_level_idc = r.u8(8)?;
+        let hi = u64::from(r.bits(COPIED_BITS - DWORD_BITS)?);
+        let lo = u64::from(r.bits(DWORD_BITS)?);
+        let copied_44bits = (hi << DWORD_BITS) | lo;
+        let general_level_idc = r.u8(BYTE_BITS)?;
         Ok(Self {
             general_profile_space,
             general_tier_flag,
@@ -145,18 +176,18 @@ impl ProfileTierLevelInfo {
     fn write(&self, w: &mut BitWriter) -> Result<()> {
         w.put(
             u64::from(self.general_profile_space),
-            2,
+            PROFILE_SPACE_BITS,
             "general_profile_space",
         )?;
         w.flag(self.general_tier_flag, "general_tier_flag")?;
         w.put(
             u64::from(self.general_profile_idc),
-            5,
+            GENERAL_PROFILE_IDC_BITS,
             "general_profile_idc",
         )?;
         w.put(
             u64::from(self.general_profile_compatibility_flags),
-            32,
+            DWORD_BITS,
             "general_profile_compatibility_flag",
         )?;
         w.flag(
@@ -176,7 +207,11 @@ impl ProfileTierLevelInfo {
             "general_frame_only_constraint_flag",
         )?;
         w.put(self.copied_44bits, COPIED_BITS, "copied_44bits")?;
-        w.put(u64::from(self.general_level_idc), 8, "general_level_idc")
+        w.put(
+            u64::from(self.general_level_idc),
+            BYTE_BITS,
+            "general_level_idc",
+        )
     }
 }
 
@@ -343,51 +378,60 @@ impl HevcOperationPoint {
 
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "HevcOperationPoint");
-        let reserved = ReservedOnes::from_bits(u64::from(r.u8(2)?));
-        let num_ptl = r.bits(6)?;
+        let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_2_READ_BITS)?));
+        let num_ptl = r.bits(NARROW_FIELD_BITS)?;
         let mut profile_tier_levels = Vec::new();
         for _ in 0..num_ptl {
             profile_tier_levels.push(ProfileTierLevelInfo::parse(&mut r)?);
         }
-        let count = r.bits(8)?;
+        let count = r.bits(BYTE_BITS)?;
         let mut operation_points = Vec::new();
         for _ in 0..count {
-            let target_ols = r.u8(8)?;
-            let es_count = r.bits(8)?;
+            let target_ols = r.u8(BYTE_BITS)?;
+            let es_count = r.bits(BYTE_BITS)?;
             let mut es = Vec::new();
             for _ in 0..es_count {
                 es.push(HevcOpEs {
                     reserved: ReservedOnes::from_bits(u64::from(r.u8(1)?)),
                     prepend_dependencies: r.flag()?,
-                    es_reference: r.u8(6)?,
+                    es_reference: r.u8(NARROW_FIELD_BITS)?,
                 });
             }
-            let reserved_before_layers = ReservedOnes::from_bits(u64::from(r.u8(2)?));
-            let num_es_in_op = r.bits(6)?;
+            let reserved_before_layers =
+                ReservedOnes::from_bits(u64::from(r.u8(RESERVED_2_READ_BITS)?));
+            let num_es_in_op = r.bits(NARROW_FIELD_BITS)?;
             let mut layers = Vec::new();
             for _ in 0..num_es_in_op {
                 layers.push(HevcOpLayer {
                     necessary_layer_flag: r.flag()?,
                     output_layer_flag: r.flag()?,
-                    ptl_ref_idx: r.u8(6)?,
+                    ptl_ref_idx: r.u8(NARROW_FIELD_BITS)?,
                 });
             }
             let reserved_before_flags = ReservedOnes::from_bits(u64::from(r.u8(1)?));
             let avg_flag = r.flag()?;
             let max_flag = r.flag()?;
-            let idc = r.u8(2)?;
-            let applicable_temporal_id = r.u8(3)?;
+            let idc = r.u8(FRAME_RATE_INFO_IDC_BITS)?;
+            let applicable_temporal_id = r.u8(TEMPORAL_ID_BITS)?;
             let frame_rate = if idc > 0 {
                 Some(HevcOpFrameRate {
                     constant_frame_rate_info_idc: idc,
-                    reserved: ReservedOnes::from_bits(u64::from(r.u8(4)?)),
-                    frame_rate_indicator: r.u16(12)?,
+                    reserved: ReservedOnes::from_bits(u64::from(r.u8(RESERVED_4_READ_BITS)?)),
+                    frame_rate_indicator: r.u16(FRAME_RATE_INDICATOR_BITS)?,
                 })
             } else {
                 None
             };
-            let avg_bit_rate = if avg_flag { Some(r.bits(24)?) } else { None };
-            let max_bit_rate = if max_flag { Some(r.bits(24)?) } else { None };
+            let avg_bit_rate = if avg_flag {
+                Some(r.bits(BIT_RATE_BITS)?)
+            } else {
+                None
+            };
+            let max_bit_rate = if max_flag {
+                Some(r.bits(BIT_RATE_BITS)?)
+            } else {
+                None
+            };
             operation_points.push(HevcOperationPointEntry {
                 target_ols,
                 es,
@@ -410,37 +454,48 @@ impl HevcOperationPoint {
 
     pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(self.reserved.get(), 2, "reserved")?;
-        w.put(self.profile_tier_levels.len() as u64, 6, "num_ptl")?;
+        w.put(self.reserved.get(), RESERVED_2_READ_BITS, "reserved")?;
+        w.put(
+            self.profile_tier_levels.len() as u64,
+            NARROW_FIELD_BITS,
+            "num_ptl",
+        )?;
         for ptl in &self.profile_tier_levels {
             ptl.write(&mut w)?;
         }
         w.put(
             self.operation_points.len() as u64,
-            8,
+            BYTE_BITS,
             "operation_points_count",
         )?;
         for op in &self.operation_points {
-            w.put(u64::from(op.target_ols), 8, "target_ols")?;
-            w.put(op.es.len() as u64, 8, "ES_count")?;
+            w.put(u64::from(op.target_ols), BYTE_BITS, "target_ols")?;
+            w.put(op.es.len() as u64, BYTE_BITS, "ES_count")?;
             for e in &op.es {
                 w.put(e.reserved.get(), 1, "reserved")?;
                 w.flag(e.prepend_dependencies, "prepend_dependencies")?;
-                w.put(u64::from(e.es_reference), 6, "ES_reference")?;
+                w.put(u64::from(e.es_reference), NARROW_FIELD_BITS, "ES_reference")?;
             }
-            w.put(op.reserved_before_layers.get(), 2, "reserved")?;
-            w.put(op.layers.len() as u64, 6, "numEsInOp")?;
+            w.put(
+                op.reserved_before_layers.get(),
+                RESERVED_2_READ_BITS,
+                "reserved",
+            )?;
+            w.put(op.layers.len() as u64, NARROW_FIELD_BITS, "numEsInOp")?;
             for l in &op.layers {
                 w.flag(l.necessary_layer_flag, "necessary_layer_flag")?;
                 w.flag(l.output_layer_flag, "output_layer_flag")?;
-                w.put(u64::from(l.ptl_ref_idx), 6, "ptl_ref_idx")?;
+                w.put(u64::from(l.ptl_ref_idx), NARROW_FIELD_BITS, "ptl_ref_idx")?;
             }
             w.put(op.reserved_before_flags.get(), 1, "reserved")?;
             w.flag(op.avg_bit_rate.is_some(), "avg_bit_rate_info_flag")?;
             w.flag(op.max_bit_rate.is_some(), "max_bit_rate_info_flag")?;
             let idc = match &op.frame_rate {
                 None => 0,
-                Some(f) if (1..=3).contains(&f.constant_frame_rate_info_idc) => {
+                Some(f)
+                    if (CONSTANT_FRAME_RATE_IDC_MIN..=CONSTANT_FRAME_RATE_IDC_MAX)
+                        .contains(&f.constant_frame_rate_info_idc) =>
+                {
                     f.constant_frame_rate_info_idc
                 }
                 Some(_) => {
@@ -450,25 +505,29 @@ impl HevcOperationPoint {
                     ));
                 }
             };
-            w.put(u64::from(idc), 2, "constant_frame_rate_info_idc")?;
+            w.put(
+                u64::from(idc),
+                FRAME_RATE_INFO_IDC_BITS,
+                "constant_frame_rate_info_idc",
+            )?;
             w.put(
                 u64::from(op.applicable_temporal_id),
-                3,
+                TEMPORAL_ID_BITS,
                 "applicable_temporal_id",
             )?;
             if let Some(f) = &op.frame_rate {
-                w.put(f.reserved.get(), 4, "reserved")?;
+                w.put(f.reserved.get(), RESERVED_4_READ_BITS, "reserved")?;
                 w.put(
                     u64::from(f.frame_rate_indicator),
-                    12,
+                    FRAME_RATE_INDICATOR_BITS,
                     "frame_rate_indicator",
                 )?;
             }
             if let Some(v) = op.avg_bit_rate {
-                w.put(u64::from(v), 24, "avg_bit_rate")?;
+                w.put(u64::from(v), BIT_RATE_BITS, "avg_bit_rate")?;
             }
             if let Some(v) = op.max_bit_rate {
-                w.put(u64::from(v), 24, "max_bit_rate")?;
+                w.put(u64::from(v), BIT_RATE_BITS, "max_bit_rate")?;
             }
         }
         w.bytes(&self.trailing)?;
@@ -559,20 +618,20 @@ impl HevcHierarchyExtension {
 
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "HevcHierarchyExtension");
-        let extension_dimension_bits = r.u16(16)?;
-        let hierarchy_layer_index = r.u8(6)?;
-        let temporal_id = r.u8(3)?;
-        let nuh_layer_id = r.u8(6)?;
+        let extension_dimension_bits = r.u16(WORD_BITS)?;
+        let hierarchy_layer_index = r.u8(NARROW_FIELD_BITS)?;
+        let temporal_id = r.u8(TEMPORAL_ID_BITS)?;
+        let nuh_layer_id = r.u8(NARROW_FIELD_BITS)?;
         let tref_present_flag = r.flag()?;
-        let reserved_a = ReservedOnes::from_bits(u64::from(r.u8(2)?));
-        let num = r.bits(6)?;
-        let reserved_b = ReservedOnes::from_bits(u64::from(r.u8(2)?));
-        let hierarchy_channel = r.u8(6)?;
+        let reserved_a = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_2_READ_BITS)?));
+        let num = r.bits(NARROW_FIELD_BITS)?;
+        let reserved_b = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_2_READ_BITS)?));
+        let hierarchy_channel = r.u8(NARROW_FIELD_BITS)?;
         let mut embedded_layers = Vec::new();
         for _ in 0..num {
             embedded_layers.push(HevcEmbeddedLayer {
-                reserved: ReservedOnes::from_bits(u64::from(r.u8(2)?)),
-                index: r.u8(6)?,
+                reserved: ReservedOnes::from_bits(u64::from(r.u8(RESERVED_2_READ_BITS)?)),
+                index: r.u8(NARROW_FIELD_BITS)?,
             });
         }
         Ok(Self {
@@ -593,24 +652,40 @@ impl HevcHierarchyExtension {
         let mut w = BitWriter::new();
         w.put(
             u64::from(self.extension_dimension_bits),
-            16,
+            WORD_BITS,
             "extension_dimension_bits",
         )?;
         w.put(
             u64::from(self.hierarchy_layer_index),
-            6,
+            NARROW_FIELD_BITS,
             "hierarchy_layer_index",
         )?;
-        w.put(u64::from(self.temporal_id), 3, "temporal_id")?;
-        w.put(u64::from(self.nuh_layer_id), 6, "nuh_layer_id")?;
+        w.put(u64::from(self.temporal_id), TEMPORAL_ID_BITS, "temporal_id")?;
+        w.put(
+            u64::from(self.nuh_layer_id),
+            NARROW_FIELD_BITS,
+            "nuh_layer_id",
+        )?;
         w.flag(self.tref_present_flag, "tref_present_flag")?;
-        w.put(self.reserved_a.get(), 2, "reserved")?;
-        w.put(self.embedded_layers.len() as u64, 6, "num_embedded_layers")?;
-        w.put(self.reserved_b.get(), 2, "reserved")?;
-        w.put(u64::from(self.hierarchy_channel), 6, "hierarchy_channel")?;
+        w.put(self.reserved_a.get(), RESERVED_2_READ_BITS, "reserved")?;
+        w.put(
+            self.embedded_layers.len() as u64,
+            NARROW_FIELD_BITS,
+            "num_embedded_layers",
+        )?;
+        w.put(self.reserved_b.get(), RESERVED_2_READ_BITS, "reserved")?;
+        w.put(
+            u64::from(self.hierarchy_channel),
+            NARROW_FIELD_BITS,
+            "hierarchy_channel",
+        )?;
         for l in &self.embedded_layers {
-            w.put(l.reserved.get(), 2, "reserved")?;
-            w.put(u64::from(l.index), 6, "hierarchy_ext_embedded_layer_index")?;
+            w.put(l.reserved.get(), RESERVED_2_READ_BITS, "reserved")?;
+            w.put(
+                u64::from(l.index),
+                NARROW_FIELD_BITS,
+                "hierarchy_ext_embedded_layer_index",
+            )?;
         }
         w.bytes(&self.trailing)?;
         Ok(w.into_vec())
@@ -686,7 +761,7 @@ impl HevcTileSubstream {
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "HevcTileSubstream");
         let reference_flag = r.flag()?;
-        let substream_id = r.u8(7)?;
+        let substream_id = r.u8(SUBSTREAM_ID_BITS)?;
         let detail = if r.remaining_bytes() == 0 {
             HevcTileSubstreamDetail::Single {
                 reserved_reference_flag: reference_flag,
@@ -694,7 +769,7 @@ impl HevcTileSubstream {
         } else if reference_flag {
             HevcTileSubstreamDetail::Pattern {
                 preamble_flag: r.flag()?,
-                pattern_reference: r.u8(7)?,
+                pattern_reference: r.u8(SUBSTREAM_ID_BITS)?,
                 trailing: r.rest()?.to_vec(),
             }
         } else {
@@ -702,7 +777,7 @@ impl HevcTileSubstream {
             while r.remaining_bytes() > 0 {
                 v.push(AdditionalSubstream {
                     flag: r.flag()?,
-                    substream_id: r.u8(7)?,
+                    substream_id: r.u8(SUBSTREAM_ID_BITS)?,
                 });
             }
             HevcTileSubstreamDetail::Additional(v)
@@ -731,7 +806,11 @@ impl HevcTileSubstream {
             }
         };
         w.flag(reference_flag, "ReferenceFlag")?;
-        w.put(u64::from(self.substream_id), 7, "SubstreamID")?;
+        w.put(
+            u64::from(self.substream_id),
+            SUBSTREAM_ID_BITS,
+            "SubstreamID",
+        )?;
         match &self.detail {
             HevcTileSubstreamDetail::Single { .. } => {}
             HevcTileSubstreamDetail::Pattern {
@@ -740,13 +819,21 @@ impl HevcTileSubstream {
                 trailing,
             } => {
                 w.flag(*preamble_flag, "PreambleFlag")?;
-                w.put(u64::from(*pattern_reference), 7, "PatternReference")?;
+                w.put(
+                    u64::from(*pattern_reference),
+                    SUBSTREAM_ID_BITS,
+                    "PatternReference",
+                )?;
                 w.bytes(trailing)?;
             }
             HevcTileSubstreamDetail::Additional(v) => {
                 for a in v {
                     w.flag(a.flag, "Flag")?;
-                    w.put(u64::from(a.substream_id), 7, "AdditionalSubstreamID")?;
+                    w.put(
+                        u64::from(a.substream_id),
+                        SUBSTREAM_ID_BITS,
+                        "AdditionalSubstreamID",
+                    )?;
                 }
             }
         }
@@ -865,30 +952,30 @@ impl HevcSubregion {
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "HevcSubregion");
         let substream_marking_flag = r.flag()?;
-        let substream_ids_per_line = r.u8(7)?;
-        let total_substream_ids = r.u8(8)?;
-        let level_full_panorama = r.u8(8)?;
+        let substream_ids_per_line = r.u8(SUBSTREAM_ID_BITS)?;
+        let total_substream_ids = r.u8(BYTE_BITS)?;
+        let level_full_panorama = r.u8(BYTE_BITS)?;
         let mut layouts = Vec::new();
         while r.remaining_bytes() > 0 {
             let preamble = if substream_marking_flag {
                 Some(HevcSubregionPreamble {
                     reserved: r.flag()?,
-                    preamble_substream_id: r.u8(7)?,
+                    preamble_substream_id: r.u8(SUBSTREAM_ID_BITS)?,
                 })
             } else {
                 None
             };
-            let substream_count_minus_1 = r.u8(8)?;
-            let level = r.u8(8)?;
-            let picture_size_hor = r.u16(16)?;
-            let picture_size_vert = r.u16(16)?;
+            let substream_count_minus_1 = r.u8(BYTE_BITS)?;
+            let level = r.u8(BYTE_BITS)?;
+            let picture_size_hor = r.u16(WORD_BITS)?;
+            let picture_size_vert = r.u16(WORD_BITS)?;
             let reserved = r.flag()?;
-            let pattern_count = r.u8(7)?;
+            let pattern_count = r.u8(SUBSTREAM_ID_BITS)?;
             let mut patterns = Vec::new();
             for _ in 0..pattern_count {
                 let mut offsets = Vec::new();
                 for _ in 0..substream_count_minus_1 {
-                    offsets.push(i8::from_be_bytes([r.u8(8)?]));
+                    offsets.push(i8::from_be_bytes([r.u8(BYTE_BITS)?]));
                 }
                 patterns.push(offsets);
             }
@@ -916,16 +1003,28 @@ impl HevcSubregion {
         w.flag(self.substream_marking_flag, "SubstreamMarkingFlag")?;
         w.put(
             u64::from(self.substream_ids_per_line),
-            7,
+            SUBSTREAM_ID_BITS,
             "SubstreamIDsPerLine",
         )?;
-        w.put(u64::from(self.total_substream_ids), 8, "TotalSubstreamIDs")?;
-        w.put(u64::from(self.level_full_panorama), 8, "LevelFullPanorama")?;
+        w.put(
+            u64::from(self.total_substream_ids),
+            BYTE_BITS,
+            "TotalSubstreamIDs",
+        )?;
+        w.put(
+            u64::from(self.level_full_panorama),
+            BYTE_BITS,
+            "LevelFullPanorama",
+        )?;
         for l in &self.layouts {
             match (self.substream_marking_flag, &l.preamble) {
                 (true, Some(p)) => {
                     w.flag(p.reserved, "reserved")?;
-                    w.put(u64::from(p.preamble_substream_id), 7, "PreambleSubstreamID")?;
+                    w.put(
+                        u64::from(p.preamble_substream_id),
+                        SUBSTREAM_ID_BITS,
+                        "PreambleSubstreamID",
+                    )?;
                 }
                 (false, None) => {}
                 _ => {
@@ -937,14 +1036,14 @@ impl HevcSubregion {
             }
             w.put(
                 u64::from(l.substream_count_minus_1),
-                8,
+                BYTE_BITS,
                 "SubstreamCountMinus1",
             )?;
-            w.put(u64::from(l.level), 8, "Level")?;
-            w.put(u64::from(l.picture_size_hor), 16, "PictureSizeHor")?;
-            w.put(u64::from(l.picture_size_vert), 16, "PictureSizeVert")?;
+            w.put(u64::from(l.level), BYTE_BITS, "Level")?;
+            w.put(u64::from(l.picture_size_hor), WORD_BITS, "PictureSizeHor")?;
+            w.put(u64::from(l.picture_size_vert), WORD_BITS, "PictureSizeVert")?;
             w.flag(l.reserved, "reserved")?;
-            w.put(l.patterns.len() as u64, 7, "PatternCount")?;
+            w.put(l.patterns.len() as u64, SUBSTREAM_ID_BITS, "PatternCount")?;
             for pattern in &l.patterns {
                 if pattern.len() != usize::from(l.substream_count_minus_1) {
                     return Err(invalid(
@@ -953,7 +1052,7 @@ impl HevcSubregion {
                     ));
                 }
                 for o in pattern {
-                    w.put(u64::from(o.to_be_bytes()[0]), 8, "SubstreamOffset")?;
+                    w.put(u64::from(o.to_be_bytes()[0]), BYTE_BITS, "SubstreamOffset")?;
                 }
             }
         }

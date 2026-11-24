@@ -37,6 +37,9 @@
 use crate::report::{Finding, Location, Report, Severity};
 use alloc::vec::Vec;
 
+/// Rounding term for a seconds value that must land on a whole number.
+const ROUND_TO_NEAREST: f64 = 0.5;
+
 /// Validate an HLS playlist text, appending findings for each violation.
 ///
 /// Line numbers in [`Location`] are 1-based; the stream is
@@ -392,7 +395,7 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
             let Some(dur) = *dur else {
                 continue;
             };
-            let rounded = (dur + 0.5) as u64;
+            let rounded = (dur + ROUND_TO_NEAREST) as u64;
             if rounded > targetduration_val {
                 report.push(Finding::new(
                     Severity::Error,

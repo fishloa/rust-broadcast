@@ -26,6 +26,14 @@ use crate::ops::{Op, StreamModel};
 /// Null packet PID (ISO/IEC 13818-1 §2.4.1).
 const NULL_PID: Pid = Pid::from_const(0x1FFF);
 
+/// Mask of the 5 high PID bits in a TS packet header's second byte
+/// (ISO/IEC 13818-1 §2.4.3.2).
+const TS_PID_HIGH_MASK: u8 = 0x1F;
+/// Shift of those 5 high PID bits above the low byte.
+const TS_PID_HIGH_SHIFT: u16 = 8;
+/// Byte offset of the low byte of the 13-bit PID.
+const TS_PID_LOW_OFFSET: usize = 2;
+
 /// Configuration for [`TsFixBuilder::stuffing`](crate::TsFixBuilder::stuffing).
 ///
 /// `#[non_exhaustive]` — future modes may be added without a breaking change.
@@ -145,10 +153,11 @@ impl StuffingOp {
 
     /// Check if a packet is a null packet (PID 0x1FFF).
     fn is_null_packet(packet: &[u8]) -> bool {
-        if packet.len() < 3 {
+        if packet.len() <= TS_PID_LOW_OFFSET {
             return false;
         }
-        let pid = (((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16;
+        let pid = (((packet[1] & TS_PID_HIGH_MASK) as u16) << TS_PID_HIGH_SHIFT)
+            | packet[TS_PID_LOW_OFFSET] as u16;
         pid == NULL_PID.value()
     }
 }

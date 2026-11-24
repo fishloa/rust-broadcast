@@ -19,6 +19,15 @@ pub const ACK_CIF_LEN_SMALL: usize = 16;
 /// CIF length, in bytes, of a Light ACK (§3.2.4).
 pub const ACK_CIF_LEN_LIGHT: usize = 4;
 
+/// Byte offsets of the ACK CIF fields, in the Full/Small order of
+/// §3.2.4 Figure 13.
+const CIF_RTT_OFFSET: usize = 4;
+const CIF_RTT_VAR_OFFSET: usize = 8;
+const CIF_AVAIL_BUF_OFFSET: usize = 12;
+const CIF_PKT_RECV_RATE_OFFSET: usize = 16;
+const CIF_EST_LINK_CAPACITY_OFFSET: usize = 20;
+const CIF_RECV_RATE_OFFSET: usize = 24;
+
 /// The ACK Control Information Field — its shape (Full/Small/Light) is
 /// selected by which fields are present on the wire (§3.2.4). Data-carrying
 /// ADT: see [`AckPacket`] for the label convention rationale.
@@ -89,18 +98,18 @@ impl AckPacket {
         let parsed = match cif.len() {
             ACK_CIF_LEN_FULL => AckCif::Full {
                 last_ack_seq: SeqNo::from_wire_masked(be32(cif, 0)),
-                rtt_us: be32(cif, 4),
-                rtt_var_us: be32(cif, 8),
-                avail_buf_size: be32(cif, 12),
-                pkt_recv_rate: be32(cif, 16),
-                est_link_capacity: be32(cif, 20),
-                recv_rate_bps: be32(cif, 24),
+                rtt_us: be32(cif, CIF_RTT_OFFSET),
+                rtt_var_us: be32(cif, CIF_RTT_VAR_OFFSET),
+                avail_buf_size: be32(cif, CIF_AVAIL_BUF_OFFSET),
+                pkt_recv_rate: be32(cif, CIF_PKT_RECV_RATE_OFFSET),
+                est_link_capacity: be32(cif, CIF_EST_LINK_CAPACITY_OFFSET),
+                recv_rate_bps: be32(cif, CIF_RECV_RATE_OFFSET),
             },
             ACK_CIF_LEN_SMALL => AckCif::Small {
                 last_ack_seq: SeqNo::from_wire_masked(be32(cif, 0)),
-                rtt_us: be32(cif, 4),
-                rtt_var_us: be32(cif, 8),
-                avail_buf_size: be32(cif, 12),
+                rtt_us: be32(cif, CIF_RTT_OFFSET),
+                rtt_var_us: be32(cif, CIF_RTT_VAR_OFFSET),
+                avail_buf_size: be32(cif, CIF_AVAIL_BUF_OFFSET),
             },
             ACK_CIF_LEN_LIGHT => AckCif::Light {
                 last_ack_seq: SeqNo::from_wire_masked(be32(cif, 0)),
@@ -135,12 +144,12 @@ impl AckPacket {
                 recv_rate_bps,
             } => {
                 put_be32(buf, 0, last_ack_seq.value());
-                put_be32(buf, 4, rtt_us);
-                put_be32(buf, 8, rtt_var_us);
-                put_be32(buf, 12, avail_buf_size);
-                put_be32(buf, 16, pkt_recv_rate);
-                put_be32(buf, 20, est_link_capacity);
-                put_be32(buf, 24, recv_rate_bps);
+                put_be32(buf, CIF_RTT_OFFSET, rtt_us);
+                put_be32(buf, CIF_RTT_VAR_OFFSET, rtt_var_us);
+                put_be32(buf, CIF_AVAIL_BUF_OFFSET, avail_buf_size);
+                put_be32(buf, CIF_PKT_RECV_RATE_OFFSET, pkt_recv_rate);
+                put_be32(buf, CIF_EST_LINK_CAPACITY_OFFSET, est_link_capacity);
+                put_be32(buf, CIF_RECV_RATE_OFFSET, recv_rate_bps);
             }
             AckCif::Small {
                 last_ack_seq,
@@ -149,9 +158,9 @@ impl AckPacket {
                 avail_buf_size,
             } => {
                 put_be32(buf, 0, last_ack_seq.value());
-                put_be32(buf, 4, rtt_us);
-                put_be32(buf, 8, rtt_var_us);
-                put_be32(buf, 12, avail_buf_size);
+                put_be32(buf, CIF_RTT_OFFSET, rtt_us);
+                put_be32(buf, CIF_RTT_VAR_OFFSET, rtt_var_us);
+                put_be32(buf, CIF_AVAIL_BUF_OFFSET, avail_buf_size);
             }
             AckCif::Light { last_ack_seq } => {
                 put_be32(buf, 0, last_ack_seq.value());

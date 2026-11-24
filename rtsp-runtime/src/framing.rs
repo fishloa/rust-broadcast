@@ -24,8 +24,8 @@ pub(crate) fn head_end(buf: &[u8], scanned: usize) -> Result<Option<usize>> {
         .saturating_sub(TERMINATOR_MAX_LEN - 1)
         .min(buf.len());
     let window = &buf[from..];
-    let crlf = memmem::find(window, b"\r\n\r\n").map(|i| from + i + 4);
-    let lf = memmem::find(window, b"\n\n").map(|i| from + i + 2);
+    let crlf = memmem::find(window, b"\r\n\r\n").map(|i| from + i + b"\r\n\r\n".len());
+    let lf = memmem::find(window, b"\n\n").map(|i| from + i + b"\n\n".len());
     let end = match (crlf, lf) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),

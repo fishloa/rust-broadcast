@@ -10,12 +10,16 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::buffer::{lowest_id_per_kind, negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::{BufferEvent, Event, PauseReason};
-use broadcast_common::clock33::{Clock27, PCR_WRAP_27MHZ, pcr_forward_distance};
+use broadcast_common::clock33::{Clock27, PCR_HZ, PCR_WRAP_27MHZ, pcr_forward_distance};
 use broadcast_common::timescale::Timescale;
 use broadcast_common::units::MICROS_PER_SEC;
 
-const HALF_CLOCK_27MHZ: u64 = PCR_WRAP_27MHZ / 2;
+/// Largest forward 27 MHz distance that is unambiguous: beyond half the wrap
+/// the nearer direction is backwards.
+const CLOCK_27MHZ_MAX_FORWARD: u64 = PCR_WRAP_27MHZ / 2;
 const CLOCK_COVER_27MHZ: u64 = PCR_WRAP_27MHZ - 1;
+/// 27 MHz ticks in one microsecond.
+const TICKS_PER_MICRO: u64 = PCR_HZ / MICROS_PER_SEC;
 
 /// Default start lead for VOD sources (HLS with `EXT-X-ENDLIST`, finite TS).
 pub const DEFAULT_VOD_START_LEAD: Duration = Duration::from_secs(1);
@@ -44,7 +48,7 @@ impl LeadTicks {
     /// The later of two leads.
     #[must_use]
     pub fn max(self, other: Self) -> Self {
-        if pcr_forward_distance(self.0.ticks(), other.0.ticks()) < HALF_CLOCK_27MHZ {
+        if pcr_forward_distance(self.0.ticks(), other.0.ticks()) < CLOCK_27MHZ_MAX_FORWARD {
             other
         } else {
             self
@@ -54,7 +58,7 @@ impl LeadTicks {
     /// The earlier of two leads.
     #[must_use]
     pub fn min(self, other: Self) -> Self {
-        if pcr_forward_distance(self.0.ticks(), other.0.ticks()) < HALF_CLOCK_27MHZ {
+        if pcr_forward_distance(self.0.ticks(), other.0.ticks()) < CLOCK_27MHZ_MAX_FORWARD {
             self
         } else {
             other
@@ -76,7 +80,8 @@ impl LeadTicks {
 impl From<Duration> for LeadTicks {
     fn from(lead: Duration) -> Self {
         let micros = lead.as_micros().min(u128::from(u64::MAX));
-        let ticks = u64::try_from(micros).map_or(u64::MAX, |micros| micros.saturating_mul(27));
+        let ticks =
+            u64::try_from(micros).map_or(u64::MAX, |micros| micros.saturating_mul(TICKS_PER_MICRO));
         Self(Clock27::from_27mhz_wrapping(ticks))
     }
 }

@@ -80,6 +80,30 @@ use supervisor::Backoff;
 /// per-config, since it names the origin itself, not any individual camera.
 const OUTPUT_AUTH_REALM: &str = "multimux";
 
+/// `Cache-Control: max-age` for an immutable, instance-named media resource:
+/// one year.
+const IMMUTABLE_MAX_AGE: Duration = Duration::from_secs(31_536_000);
+
+/// `Cache-Control: max-age` for a token-less (catch-up) media resource.
+const TOKENLESS_MAX_AGE: Duration = Duration::from_secs(10);
+
+/// Numeric fields separating an instance-named media resource's parts, and a
+/// token-less one's.
+const INSTANCE_NAMED_FIELDS: usize = 3;
+const TOKEN_LESS_FIELDS: usize = 2;
+
+/// Split count that splits a string exactly once.
+const SPLIT_ONCE: usize = 2;
+
+/// Target duration, part target, window and init length of the
+/// `limit_budget_test_app` harness route.
+const HARNESS_TARGET_DURATION: Duration = Duration::from_secs(4);
+const HARNESS_PART_TARGET: Duration = Duration::from_millis(500);
+const HARNESS_WINDOW_SEGMENTS: usize = 4;
+const HARNESS_INIT_LEN: usize = 4;
+/// Byte the harness init is filled with: any non-empty init will do.
+const HARNESS_INIT_BYTE: u8 = 0xAA;
+
 /// HTTP-layer resource limits applied process-wide by [`router`] (issue #663
 /// P5, audit-concurrency #3: "slow-loris kills all routes" — with no cap
 /// anywhere, one client opening many connections and never completing a
@@ -374,12 +398,15 @@ pub(crate) fn router_with_budget(state: Arc<AppState>, budget: limit::BudgetLimi
 pub fn limit_budget_test_app(ordinary: usize, queue: Duration) -> Router {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration(std::time::Duration::from_secs(4))
-            .with_part_target(Duration::from_millis(500))
-            .with_window_segments(4),
+            .with_target_duration(HARNESS_TARGET_DURATION)
+            .with_part_target(HARNESS_PART_TARGET)
+            .with_window_segments(HARNESS_WINDOW_SEGMENTS),
     ));
     store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-    store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+    store.set_init(
+        crate::route::SPTS_PROGRAM_ID,
+        vec![HARNESS_INIT_BYTE; HARNESS_INIT_LEN],
+    );
     let mut streams = HashMap::new();
     streams.insert(
         "cam1".to_string(),
@@ -1114,8 +1141,6 @@ async fn add_response_headers(req: Request, next: Next) -> Response {
 /// `503`) is `no-cache`: a year-long `immutable` on a transient error let a
 /// CDN keep serving it after the resource appeared.
 fn cache_control_for(path: &str, status: StatusCode) -> headers::CacheControl {
-    use std::time::Duration;
-
     let file = path.rsplit('/').next().unwrap_or(path);
     let manifest = file.ends_with(".m3u8") || file.ends_with(".mpd") || !status.is_success();
     let kind = if manifest {
@@ -1126,8 +1151,8 @@ fn cache_control_for(path: &str, status: StatusCode) -> headers::CacheControl {
     match kind {
         MediaName::InstanceNamed => headers::CacheControl::new()
             .with_immutable()
-            .with_max_age(Duration::from_secs(31_536_000)),
-        MediaName::TokenLess => headers::CacheControl::new().with_max_age(Duration::from_secs(10)),
+            .with_max_age(IMMUTABLE_MAX_AGE),
+        MediaName::TokenLess => headers::CacheControl::new().with_max_age(TOKENLESS_MAX_AGE),
         MediaName::Other => headers::CacheControl::new().with_no_cache(),
     }
 }
@@ -1151,9 +1176,9 @@ fn media_name_kind(path: &str) -> MediaName {
     // `seg-{t}-{msn}` / `seg-{t}-{instance}-{msn}` (any extension).
     if let Some(rest) = file.strip_prefix("seg-") {
         let stem = rest.rsplit_once('.').map_or(rest, |(s, _)| s);
-        return if numeric(stem, 3) {
+        return if numeric(stem, INSTANCE_NAMED_FIELDS) {
             MediaName::InstanceNamed
-        } else if numeric(stem, 2) || path.contains("/catchup/") {
+        } else if numeric(stem, TOKEN_LESS_FIELDS) || path.contains("/catchup/") {
             MediaName::TokenLess
         } else {
             MediaName::Other
@@ -1161,11 +1186,11 @@ fn media_name_kind(path: &str) -> MediaName {
     }
     // `part-{t}-{msn}.{i}.ext` / `part-{t}-{instance}-{msn}.{i}.ext`.
     if let Some(rest) = file.strip_prefix("part-") {
-        let mut it = rest.splitn(2, '.');
+        let mut it = rest.splitn(SPLIT_ONCE, '.');
         let names = it.next().unwrap_or("");
-        return if numeric(names, 3) {
+        return if numeric(names, INSTANCE_NAMED_FIELDS) {
             MediaName::InstanceNamed
-        } else if numeric(names, 2) {
+        } else if numeric(names, TOKEN_LESS_FIELDS) {
             MediaName::TokenLess
         } else {
             MediaName::Other
@@ -1173,7 +1198,7 @@ fn media_name_kind(path: &str) -> MediaName {
     }
     if let Some(rest) = file.strip_prefix("init-")
         && let Some(stem) = rest.strip_suffix(".mp4")
-        && numeric(stem, 3)
+        && numeric(stem, INSTANCE_NAMED_FIELDS)
     {
         return MediaName::InstanceNamed;
     }
@@ -1246,7 +1271,7 @@ fn classify_path(state: &AppState, path: &str) -> (String, &'static str) {
         "/healthz" | "/readyz" => return ("-".to_string(), "health"),
         _ => {}
     }
-    let mut segments = path.trim_start_matches('/').splitn(2, '/');
+    let mut segments = path.trim_start_matches('/').splitn(SPLIT_ONCE, '/');
     let first = segments.next().unwrap_or("");
     let rest = segments.next().unwrap_or("");
     let route = if state.streams.contains_key(first) {

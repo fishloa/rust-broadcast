@@ -55,6 +55,12 @@ pub(crate) fn next_message_number(n: u32) -> u32 {
 }
 
 /// `PP` (Packet Position Flag) wire values (§3.1).
+/// Mask of the 2-bit `PP`/`KK` fields of the second header word (§3.1).
+const FIELD_MASK: u8 = 0b11;
+
+/// Bit width of a data packet's 31-bit Packet Sequence Number (§3.1).
+const SEQ_NUMBER_BITS: u32 = 31;
+
 const PP_MIDDLE: u8 = 0b00;
 const PP_LAST: u8 = 0b01;
 const PP_FIRST: u8 = 0b10;
@@ -87,7 +93,7 @@ pub enum PacketPosition {
 impl PacketPosition {
     /// Decode the 2-bit `PP` field.
     pub fn from_bits(v: u8) -> Self {
-        match v & 0b11 {
+        match v & FIELD_MASK {
             PP_FIRST => PacketPosition::First,
             PP_LAST => PacketPosition::Last,
             PP_SOLO => PacketPosition::Solo,
@@ -139,7 +145,7 @@ pub enum EncryptionKeyField {
 impl EncryptionKeyField {
     /// Decode the 2-bit `KK` field.
     pub fn from_bits(v: u8) -> Self {
-        match v & 0b11 {
+        match v & FIELD_MASK {
             KK_NOT_ENCRYPTED => EncryptionKeyField::NotEncrypted,
             KK_EVEN => EncryptionKeyField::Even,
             KK_ODD => EncryptionKeyField::Odd,
@@ -153,7 +159,7 @@ impl EncryptionKeyField {
             EncryptionKeyField::NotEncrypted => KK_NOT_ENCRYPTED,
             EncryptionKeyField::Even => KK_EVEN,
             EncryptionKeyField::Odd => KK_ODD,
-            EncryptionKeyField::Reserved(v) => v & 0b11,
+            EncryptionKeyField::Reserved(v) => v & FIELD_MASK,
         }
     }
 
@@ -214,15 +220,15 @@ impl<'a> DataPacket<'a> {
                 expected: "data packet (F=0)",
             });
         }
-        let word1 = be32(bytes, 4);
+        let word1 = be32(bytes, super::WORD1_OFFSET);
         let seq_number = word0 & SEQ_NUMBER_MASK;
         let position = PacketPosition::from_bits((word1 >> PP_SHIFT) as u8);
         let in_order = (word1 >> O_SHIFT) & 1 != 0;
         let key_flag = EncryptionKeyField::from_bits((word1 >> KK_SHIFT) as u8);
         let retransmitted = (word1 >> R_SHIFT) & 1 != 0;
         let message_number = word1 & MESSAGE_NUMBER_MASK;
-        let timestamp = SrtTimestamp::from_wire(be32(bytes, 8));
-        let dest_socket_id = SocketId::from_wire(be32(bytes, 12));
+        let timestamp = SrtTimestamp::from_wire(be32(bytes, super::TIMESTAMP_OFFSET));
+        let dest_socket_id = SocketId::from_wire(be32(bytes, super::DEST_SOCKET_ID_OFFSET));
         let data = &bytes[SRT_HEADER_LEN..];
         Ok(DataPacket {
             seq_number,
@@ -246,7 +252,11 @@ impl<'a> DataPacket<'a> {
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        broadcast_common::len::fit_bits(u64::from(self.seq_number), 31, "Packet Sequence Number")?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.seq_number),
+            SEQ_NUMBER_BITS,
+            "Packet Sequence Number",
+        )?;
         broadcast_common::len::fit_bits(
             u64::from(self.message_number),
             MESSAGE_NUMBER_BITS,
@@ -259,9 +269,13 @@ impl<'a> DataPacket<'a> {
             | (u32::from(self.retransmitted) << R_SHIFT)
             | self.message_number;
         put_be32(buf, 0, word0);
-        put_be32(buf, 4, word1);
-        put_be32(buf, 8, self.timestamp.value());
-        put_be32(buf, 12, self.dest_socket_id.value());
+        put_be32(buf, super::WORD1_OFFSET, word1);
+        put_be32(buf, super::TIMESTAMP_OFFSET, self.timestamp.value());
+        put_be32(
+            buf,
+            super::DEST_SOCKET_ID_OFFSET,
+            self.dest_socket_id.value(),
+        );
         buf[SRT_HEADER_LEN..len].copy_from_slice(self.data);
         Ok(len)
     }

@@ -57,7 +57,30 @@ const TYPE_FREE: [u8; 4] = *b"free";
 pub(crate) const TYPE_MDAT: [u8; 4] = *b"mdat";
 /// The major brand field of an ISO file (its 4-byte brand), which is what the
 /// leading `ftyp`/`styp` box reports.
-const BRAND_LEN: usize = 4;
+pub(crate) const BRAND_LEN: usize = 4;
+
+/// Byte positions of a box's 32-bit `size` field.
+const SIZE_BYTES: [usize; BRAND_LEN] = [0, 1, 2, 3];
+/// Byte positions of a box's `type` Four-CC.
+const TYPE_OFFSET: usize = 4;
+const TYPE_BYTES: [usize; BRAND_LEN] = [
+    TYPE_OFFSET,
+    TYPE_OFFSET + 1,
+    TYPE_OFFSET + 2,
+    TYPE_OFFSET + 3,
+];
+/// Byte positions of the major brand a `ftyp`/`styp` box carries.
+const BRAND_BYTES: [usize; BRAND_LEN] = [
+    BRAND_OFFSET,
+    BRAND_OFFSET + 1,
+    BRAND_OFFSET + 2,
+    BRAND_OFFSET + 3,
+];
+/// Byte positions of the 64-bit `largesize` field.
+const LARGESIZE_BYTES: [usize; 8] = [8, 9, 10, 11, 12, 13, 14, 15];
+
+/// Boxes a clean chain needs before it counts as structural evidence.
+const MIN_BOXES_FOR_STRUCTURE: u64 = 2;
 
 /// The 4-byte box types accepted as the FILE's first box (§4.4 / §8.2 / §8.8):
 /// a standalone init segment begins `ftyp`, a CMAF/fMP4 segment `styp`/`moof`,
@@ -88,7 +111,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         return Outcome::Insufficient(BOX_HEADER_MIN_SIZE);
     }
 
-    let leading_type = [region[4], region[5], region[6], region[7]];
+    let leading_type = TYPE_BYTES.map(|i| region[i]);
     if !LEADING_BOX_TYPES.contains(&leading_type) {
         return Outcome::None;
     }
@@ -96,7 +119,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 
     let mut offset = 0usize;
     let mut boxes = 0u64;
-    let mut brand: Option<[u8; 4]> = None;
+    let mut brand: Option<[u8; BRAND_LEN]> = None;
     // Which structural box the file uses to carry sample metadata. `moof`
     // means fragmented (ISO/IEC 14496-12:2026 §8.8 movie fragments, the CMAF/fMP4
     // shape); `moov` alone means a progressive file with sample tables. The
@@ -155,9 +178,9 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         };
         if size_u32 == SIZE_TO_EOF || eff >= min_header {
             if offset == 0 && leading_is_ftyp && rem.len() >= BRAND_OFFSET + BRAND_LEN {
-                brand = Some([rem[8], rem[9], rem[10], rem[11]]);
+                brand = Some(BRAND_BYTES.map(|i| rem[i]));
             }
-            let this_type = [rem[4], rem[5], rem[6], rem[7]];
+            let this_type = TYPE_BYTES.map(|i| rem[i]);
             if this_type == TYPE_MOOF || this_type == TYPE_COMPRESSED_MOOF {
                 saw_moof = true;
             } else if this_type == TYPE_MOOV || this_type == TYPE_COMPRESSED_MOOV {
@@ -225,7 +248,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         },
     };
 
-    let confidence = if clean && boxes >= 2 {
+    let confidence = if clean && boxes >= MIN_BOXES_FOR_STRUCTURE {
         Confidence::STRUCTURAL
     } else if clean && boxes == 1 {
         Confidence::HEURISTIC
@@ -261,8 +284,8 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 /// smaller figure for a largesize header asks the caller for bytes that still
 /// leave the header unreadable, so it returns immediately for more.
 fn header_len_required(rem: &[u8]) -> usize {
-    if rem.len() >= 4 {
-        let size32 = u32::from_be_bytes([rem[0], rem[1], rem[2], rem[3]]);
+    if rem.len() >= BRAND_LEN {
+        let size32 = u32::from_be_bytes(SIZE_BYTES.map(|i| rem[i]));
         if size32 == SIZE_INDICATES_LARGESIZE {
             return BOX_HEADER_LARGESIZE_SIZE;
         }
@@ -301,14 +324,12 @@ fn decode_header(rem: &[u8]) -> Option<(u32, usize)> {
     if rem.len() < BOX_HEADER_MIN_SIZE {
         return None;
     }
-    let size32 = u32::from_be_bytes([rem[0], rem[1], rem[2], rem[3]]);
+    let size32 = u32::from_be_bytes(SIZE_BYTES.map(|i| rem[i]));
     if size32 == SIZE_INDICATES_LARGESIZE {
         if rem.len() < BOX_HEADER_LARGESIZE_SIZE {
             return None;
         }
-        let ls = u64::from_be_bytes([
-            rem[8], rem[9], rem[10], rem[11], rem[12], rem[13], rem[14], rem[15],
-        ]);
+        let ls = u64::from_be_bytes(LARGESIZE_BYTES.map(|i| rem[i]));
         Some((size32, largesize_to_len(ls, usize::BITS)?))
     } else if size32 == SIZE_TO_EOF {
         Some((size32, 0))

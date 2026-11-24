@@ -23,7 +23,7 @@ use crate::read::{
     ArchiveScan, ArchivedSegment, PeriodPlaylist, PlaylistError, ReadError, SeqConflict,
     checked_range, parse_period_playlist,
 };
-use crate::recover::{RecoveredBox, scan_fmp4_data};
+use crate::recover::{BOX_HEADER_MAX, Fmp4Scan, RecoverError, RecoveredBox, ScanStep};
 use crate::writer::{
     ArchiveWriter, InitGeneration, Plan, PlanOutcome, Step, StoreFailure, StoreOp,
 };
@@ -789,8 +789,28 @@ impl FsArchive {
         let path = self
             .dir
             .join(layout::media_file_name(period, self.container));
-        let data = fs::read(path).map_err(|e| io_read_error(period, e))?;
-        Ok(scan_fmp4_data(&data)?)
+        let mut file = File::open(&path).map_err(|e| io_read_error(period, e))?;
+        let file_len = file
+            .metadata()
+            .map_err(|e| ReadError::Io { kind: e.kind() })?
+            .len();
+        let mut scan = Fmp4Scan::new(file_len);
+        let mut header = [0u8; BOX_HEADER_MAX];
+        loop {
+            match scan.step()? {
+                ScanStep::Need { offset, len } => {
+                    let Some(bytes) = header.get_mut(..len) else {
+                        return Err(ReadError::Recover(RecoverError::UnexpectedSupply));
+                    };
+                    file.seek(SeekFrom::Start(offset))
+                        .map_err(|e| ReadError::Io { kind: e.kind() })?;
+                    file.read_exact(bytes)
+                        .map_err(|e| ReadError::Io { kind: e.kind() })?;
+                    scan.supply(offset, bytes)?;
+                }
+                ScanStep::Done(spans) => return Ok(spans),
+            }
+        }
     }
 
     /// How many period playlists the cache holds.

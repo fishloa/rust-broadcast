@@ -69,6 +69,9 @@ const MAX_INIT_SLOTS: usize = 64;
 /// Longest the non-blocking reload cadence may wait, however large the
 /// untrusted `EXT-X-TARGETDURATION` says the target duration is.
 const MAX_RELOAD_WAIT_MS: u64 = 60_000;
+/// Half the Target Duration: the non-blocking reload cadence (RFC 8216
+/// §4.3.3.1), expressed as the divisor of the Target Duration.
+const RELOAD_WAIT_DIVISOR: u64 = 2;
 
 /// `EXT-X-VERSION` of the one-segment playlist a single `EXT-X-MAP` line is
 /// parsed in: the lowest version that allows `EXT-X-MAP` without
@@ -98,7 +101,8 @@ fn index_u64(i: usize) -> u64 {
 /// §4.3.3.1: no more often than once per Target Duration), clamped because
 /// the Target Duration is untrusted.
 fn reload_wait(target_duration: u32) -> Duration {
-    let ms = (u64::from(target_duration.max(1)).saturating_mul(MILLIS_PER_SEC) / 2)
+    let ms = (u64::from(target_duration.max(1)).saturating_mul(MILLIS_PER_SEC)
+        / RELOAD_WAIT_DIVISOR)
         .min(MAX_RELOAD_WAIT_MS);
     Duration::from_millis(ms)
 }

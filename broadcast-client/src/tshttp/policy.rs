@@ -17,6 +17,9 @@ const RETRY_SEED: u64 = 0x5EED_2471;
 
 const STALL_NOTICE_REPEAT: Duration = Duration::from_secs(1);
 
+/// Window size for comparing every value a repeated header carries.
+const PAIR_WINDOW: usize = 2;
+
 /// How much longer each repeat of a stall notice waits than the one before: a stalled stream
 /// reports once a second, then doubles.
 const NOTICE_STEP_GROWTH: u32 = 2;
@@ -219,7 +222,7 @@ impl TsHttpPolicy {
                     None => return (false, 0),
                 }
             }
-            if parsed.windows(2).any(|w| w[0] != w[1]) {
+            if parsed.windows(PAIR_WINDOW).any(|w| w[0] != w[1]) {
                 return (false, 0);
             }
             (true, parsed[0])

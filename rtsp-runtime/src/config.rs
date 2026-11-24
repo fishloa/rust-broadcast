@@ -3,6 +3,8 @@
 //! role's [`ClientSession::new`](crate::ClientSession::new) or
 //! [`ServerSession::new`](crate::ServerSession::new).
 
+use core::mem::size_of;
+
 #[cfg(feature = "tokio")]
 use crate::client::ClientSession;
 use crate::error::{Error, Result};
@@ -99,7 +101,7 @@ impl SessionIdSource {
 
 /// Reads one id from the OS cryptographically secure random source.
 fn os_random_id() -> Result<SessionId> {
-    let mut bytes = [0u8; 8];
+    let mut bytes = [0u8; size_of::<u64>()];
     getrandom::fill(&mut bytes).map_err(|_| Error::RandomSource)?;
     Ok(SessionId::new(u64::from_ne_bytes(bytes)))
 }

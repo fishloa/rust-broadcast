@@ -36,6 +36,7 @@ required-features = ["fs"]
 
 [dev-dependencies]
 test-fixtures    = { path = "../test-fixtures" }
+test-alloc       = { path = "../test-alloc" }
 mpeg-ts          = { path = "../mpeg-ts", version = "0.10.0" }
 
 [features]

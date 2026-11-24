@@ -26,6 +26,21 @@ const YEAR_DIGITS: usize = 4;
 pub const NTP_RESOLUTION_US: u64 = 1_000;
 const NTP_FRACTION_BITS: u32 = 32;
 const NTP_TIMESTAMP_LEN: usize = 8;
+/// Radix of the decimal fields.
+const DECIMAL_BASE: u32 = 10;
+/// Radix of the nanosecond accumulator.
+const DECIMAL_BASE_I32: i32 = 10;
+/// Digits of every fixed-width two-digit field: month, day, hour, minute,
+/// second and a zone offset's hours and minutes.
+const FIELD_DIGITS: usize = 2;
+/// Months in a year: the upper bound of `xs:dateTime`'s month field.
+const MONTHS_PER_YEAR: u8 = 12;
+/// Byte positions of NTP's 32-bit `seconds` field (RFC 5905 Figure 3).
+const NTP_SECONDS_BYTES: [usize; 4] = [0, 1, 2, 3];
+/// Byte positions of NTP's 32-bit binary fraction.
+const NTP_FRACTION_BYTES: [usize; 4] = [4, 5, 6, 7];
+/// Year of the NTP prime epoch (RFC 5905 §6).
+const NTP_EPOCH_YEAR: i16 = 1900;
 
 /// Why a time string or timestamp was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -97,7 +112,7 @@ impl Cursor<'_> {
         self.i = end;
         Ok(slice
             .iter()
-            .fold(0u32, |acc, d| acc * 10 + u32::from(d - b'0')))
+            .fold(0u32, |acc, d| acc * DECIMAL_BASE + u32::from(d - b'0')))
     }
 
     fn expect(&mut self, c: u8, what: &'static str) -> Result<(), DateTimeError> {
@@ -128,15 +143,15 @@ pub fn parse_xs_datetime(text: &str) -> Result<XsDateTime, DateTimeError> {
         return Err(DateTimeError::Field("year"));
     }
     c.expect(b'-', "expected '-' after the year")?;
-    let month: u8 = narrow(c.digits(2)?)?;
+    let month: u8 = narrow(c.digits(FIELD_DIGITS)?)?;
     c.expect(b'-', "expected '-' after the month")?;
-    let day: u8 = narrow(c.digits(2)?)?;
+    let day: u8 = narrow(c.digits(FIELD_DIGITS)?)?;
     c.expect(b'T', "expected upper-case 'T'")?;
-    let hour: u8 = narrow(c.digits(2)?)?;
+    let hour: u8 = narrow(c.digits(FIELD_DIGITS)?)?;
     c.expect(b':', "expected ':' after the hour")?;
-    let minute: u8 = narrow(c.digits(2)?)?;
+    let minute: u8 = narrow(c.digits(FIELD_DIGITS)?)?;
     c.expect(b':', "expected ':' after the minute")?;
-    let second: u8 = narrow(c.digits(2)?)?;
+    let second: u8 = narrow(c.digits(FIELD_DIGITS)?)?;
 
     let mut fraction_digits = 0usize;
     let mut nanos: i32 = 0;
@@ -153,10 +168,10 @@ pub fn parse_xs_datetime(text: &str) -> Result<XsDateTime, DateTimeError> {
         fraction_digits = frac.len();
         fraction_zero = frac.iter().all(|d| *d == b'0');
         for d in frac.iter().take(NANOS_DIGITS) {
-            nanos = nanos * 10 + i32::from(d - b'0');
+            nanos = nanos * DECIMAL_BASE_I32 + i32::from(d - b'0');
         }
         for _ in frac.len().min(NANOS_DIGITS)..NANOS_DIGITS {
-            nanos *= 10;
+            nanos *= DECIMAL_BASE_I32;
         }
     }
 
@@ -165,7 +180,7 @@ pub fn parse_xs_datetime(text: &str) -> Result<XsDateTime, DateTimeError> {
         return Err(DateTimeError::Syntax("trailing characters"));
     }
 
-    if month == 0 || month > 12 {
+    if month == 0 || month > MONTHS_PER_YEAR {
         return Err(DateTimeError::Field("month"));
     }
     let date = Date::new(
@@ -219,9 +234,9 @@ fn parse_zone(c: &mut Cursor<'_>) -> Result<Offset, DateTimeError> {
     } else {
         return Err(DateTimeError::Syntax("unexpected character after the time"));
     };
-    let h: u8 = narrow(c.digits(2)?)?;
+    let h: u8 = narrow(c.digits(FIELD_DIGITS)?)?;
     c.expect(b':', "zone offset needs 'hh:mm'")?;
-    let m: u8 = narrow(c.digits(2)?)?;
+    let m: u8 = narrow(c.digits(FIELD_DIGITS)?)?;
     if h > MAX_ZONE_HOUR || m > MAX_MINUTE || (h == MAX_ZONE_HOUR && m != 0) {
         return Err(DateTimeError::Field("zone offset"));
     }
@@ -237,12 +252,12 @@ fn parse_zone(c: &mut Cursor<'_>) -> Result<Offset, DateTimeError> {
 /// [`DateTimeError::Ntp`] unless `bytes` is exactly eight bytes.
 pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<jiff::Timestamp, DateTimeError> {
     let arr: [u8; NTP_TIMESTAMP_LEN] = bytes.try_into().map_err(|_| DateTimeError::Ntp)?;
-    let seconds = u32::from_be_bytes([arr[0], arr[1], arr[2], arr[3]]);
-    let fraction = u32::from_be_bytes([arr[4], arr[5], arr[6], arr[7]]);
+    let seconds = u32::from_be_bytes(NTP_SECONDS_BYTES.map(|i| arr[i]));
+    let fraction = u32::from_be_bytes(NTP_FRACTION_BYTES.map(|i| arr[i]));
     let micros = (u128::from(fraction) * u128::from((MICROS_PER_SEC as i64).unsigned_abs()))
         >> NTP_FRACTION_BITS;
     let micros = i64::try_from(micros).map_err(|_| DateTimeError::Ntp)?;
-    let prime_epoch = Date::new(1900, 1, 1)
+    let prime_epoch = Date::new(NTP_EPOCH_YEAR, 1, 1)
         .map_err(|_| DateTimeError::Ntp)?
         .at(0, 0, 0, 0)
         .to_zoned_datetime(TimeZone::UTC)

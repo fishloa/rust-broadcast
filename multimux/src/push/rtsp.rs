@@ -50,6 +50,9 @@ use transmux::rtp::{MP2T_CLOCK_RATE, MP2T_MAX_PAYLOAD, MP2T_PT, MP2T_TS_PACKETS_
 const INITIAL_SEQ: u16 = 0;
 /// The session name (`s=`) the push's SDP carries.
 const SESSION_NAME: &str = "multimux push";
+
+/// Default RTSP port when a push URL names none (RFC 2326 §3.2).
+const RTSP_DEFAULT_PORT: u16 = 554;
 /// Bound on the best-effort `TEARDOWN` sent from [`RtspTransport::close`].
 const TEARDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -182,7 +185,7 @@ impl PushTransport for RtspTransport {
             return Err(RtspPushError::Connect(RtspConnectError::NoHost));
         };
         let host = host.to_string();
-        let port = parsed.port().unwrap_or(554);
+        let port = parsed.port().unwrap_or(RTSP_DEFAULT_PORT);
         let addr = format!("{host}:{port}");
 
         // Config credentials win over the URL's own userinfo (the same

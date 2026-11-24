@@ -17,7 +17,8 @@ use crate::amf0::{Amf0Value, Command};
 use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
 use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::{
-    EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RTMP_VERSION, Version, default_random_fill,
+    EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RANDOM_LEN, RTMP_VERSION, Version,
+    default_random_fill,
 };
 use crate::ids::{ChunkStreamId, MessageStreamId, SequenceNumber, Timestamp};
 use crate::message::{ChunkSize, MessageTypeId, ProtocolControl, UserControl};
@@ -29,6 +30,20 @@ use alloc::vec::Vec;
 type Result<T> = core::result::Result<T, RtmpError>;
 
 const COMMAND_CHUNK_STREAM_ID: u32 = 3;
+/// Chunk stream audio and data messages are sent on.
+const PAYLOAD_CHUNK_STREAM_ID: u32 = 4;
+/// Chunk stream video messages are sent on, kept apart from audio so the two
+/// never interleave on one chunk stream.
+const VIDEO_CHUNK_STREAM_ID: u32 = 5;
+/// Default `chunk_size` the client announces.
+const DEFAULT_CLIENT_CHUNK_SIZE: u32 = 4096;
+/// Default `window_ack_size` the client announces (RTMP §5.4.4).
+const DEFAULT_WINDOW_ACK_SIZE: u32 = 2_500_000;
+/// Tolerance comparing an echoed AMF0 transaction id with the one sent: AMP0
+/// carries them as doubles.
+const TRANSACTION_ID_TOLERANCE: f64 = 0.5;
+/// Mask of the 32-bit sequence number an acknowledgement carries (§5.4.3).
+const SEQUENCE_NUMBER_MASK: u64 = u32::MAX as u64;
 const VERSION_LEN: usize = 1;
 /// `flashVer` announced in `connect`: the Flash Media Live Encoder
 /// identity that ingest services key their publisher-compatibility
@@ -123,8 +138,8 @@ impl Default for RtmpClientConfig {
         Self {
             mode: ClientMode::Publish,
             play_buffer: DEFAULT_PLAY_BUFFER,
-            chunk_size: 4096,
-            window_ack_size: 2_500_000,
+            chunk_size: DEFAULT_CLIENT_CHUNK_SIZE,
+            window_ack_size: DEFAULT_WINDOW_ACK_SIZE,
             app: String::new(),
             stream_key: String::new(),
             tc_url: None,
@@ -195,7 +210,7 @@ enum ClientState {
 struct ClientHandshake {
     state: ClientHandshakeState,
     local_time: u32,
-    local_random: [u8; 1528],
+    local_random: [u8; RANDOM_LEN],
 }
 
 #[derive(Debug)]
@@ -361,7 +376,7 @@ impl ClientSession {
             });
         }
         let msg = Message {
-            chunk_stream_id: ChunkStreamId::new(4),
+            chunk_stream_id: ChunkStreamId::new(PAYLOAD_CHUNK_STREAM_ID),
             timestamp,
             message_type_id: MessageTypeId::Audio,
             message_stream_id: self.stream_id.unwrap_or(MessageStreamId::new(1)),
@@ -381,7 +396,7 @@ impl ClientSession {
             });
         }
         let msg = Message {
-            chunk_stream_id: ChunkStreamId::new(5),
+            chunk_stream_id: ChunkStreamId::new(VIDEO_CHUNK_STREAM_ID),
             timestamp,
             message_type_id: MessageTypeId::Video,
             message_stream_id: self.stream_id.unwrap_or(MessageStreamId::new(1)),
@@ -402,7 +417,7 @@ impl ClientSession {
         let obj = Amf0Value::Object(metadata.to_vec());
         payload.extend(obj.try_to_bytes()?);
         let msg = Message {
-            chunk_stream_id: ChunkStreamId::new(4),
+            chunk_stream_id: ChunkStreamId::new(PAYLOAD_CHUNK_STREAM_ID),
             timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::DataAmf0,
             message_stream_id: self.stream_id.unwrap_or(MessageStreamId::new(1)),
@@ -758,7 +773,9 @@ impl ClientSession {
         events: &mut Vec<ClientEvent>,
     ) -> Result<()> {
         match self.state {
-            ClientState::ConnectSent { txn_id } if (cmd.transaction_id - txn_id).abs() < 0.5 => {
+            ClientState::ConnectSent { txn_id }
+                if (cmd.transaction_id - txn_id).abs() < TRANSACTION_ID_TOLERANCE =>
+            {
                 let props = match cmd.arguments.first() {
                     Some(Amf0Value::Object(pairs)) => pairs.clone(),
                     _ => Vec::new(),
@@ -771,7 +788,7 @@ impl ClientSession {
                 }
             }
             ClientState::CreateStreamSent { txn_id }
-                if (cmd.transaction_id - txn_id).abs() < 0.5 =>
+                if (cmd.transaction_id - txn_id).abs() < TRANSACTION_ID_TOLERANCE =>
             {
                 let sid = MessageStreamId::new(match cmd.arguments.last() {
                     Some(Amf0Value::Number(n)) => *n as u32,
@@ -830,7 +847,7 @@ impl ClientSession {
             return Ok(());
         }
         if self.bytes_received.wrapping_sub(self.bytes_acked) >= u64::from(self.ack_threshold) {
-            let seq = SequenceNumber::new((self.bytes_received & 0xFFFF_FFFF) as u32);
+            let seq = SequenceNumber::new((self.bytes_received & SEQUENCE_NUMBER_MASK) as u32);
             let ack = ProtocolControl::Acknowledgement(seq);
             out.extend_from_slice(&self.writer.write(&ack.to_message())?);
             self.bytes_acked = self.bytes_received;

@@ -80,7 +80,11 @@ pub const CENC_KEYFORMATVERSIONS: &str = "1";
 /// LF — RFC 8216 §4.2; issue #1140 / audit r05-W10: a key-server URL
 /// assembled from request data previously went straight into the tag
 /// unvalidated, an attribute-list-injection vector).
-pub fn cenc_ext_x_key(scheme: CencScheme, kid: &[u8; 16], key_uri: &str) -> Result<Option<String>> {
+pub fn cenc_ext_x_key(
+    scheme: CencScheme,
+    kid: &[u8; KEY_MATERIAL_LEN],
+    key_uri: &str,
+) -> Result<Option<String>> {
     // Audit BH-W1 (issue #1111): `cenc` used to return `None` on the claim
     // that "CTR is not a valid HLS METHOD". RFC 8216bis §4.4.4.4 defines
     // exactly that method — SAMPLE-AES-CTR — for `cenc`-protected fMP4.
@@ -145,7 +149,7 @@ impl ByteRange {
 
     /// Parse the `<n>[@<o>]` wire notation.
     fn parse(s: &str, line_no: usize, line: &str) -> Result<Self> {
-        let mut split = s.splitn(2, '@');
+        let mut split = s.splitn(ATTR_VALUE_FIELDS, '@');
         let n = split.next().unwrap_or("");
         let length = parse_decimal_int::<u64>(n, line_no, line, "BYTERANGE length")?;
         let offset = match split.next() {
@@ -707,7 +711,7 @@ pub struct SessionKey {
     /// `URI` — REQUIRED unless `method` is [`EncryptionMethod::None`].
     pub uri: Option<String>,
     /// `IV` — 128-bit Initialization Vector.
-    pub iv: Option<[u8; 16]>,
+    pub iv: Option<[u8; KEY_MATERIAL_LEN]>,
     /// `KEYFORMAT` — absence on the wire implies `"identity"`.
     pub keyformat: Option<String>,
     /// `KEYFORMATVERSIONS` — absence on the wire implies `"1"`.
@@ -1059,7 +1063,7 @@ impl LowLatencyConfig {
         let Some(part_target) = self.part_target else {
             return self.part_hold_back;
         };
-        let floor = 3.0 * part_target.get();
+        let floor = HOLD_BACK_PART_TARGETS * part_target.get();
         // `floor` and `self.part_hold_back.get()` are both finite and
         // non-negative, so their max is too.
         Some(DecimalSeconds::new_unchecked(
@@ -2962,7 +2966,7 @@ impl serde::Serialize for AttrValue {
         serializer: S,
     ) -> core::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("AttrValue", 2)?;
+        let mut s = serializer.serialize_struct("AttrValue", ATTR_VALUE_FIELDS)?;
         s.serialize_field("value", &self.value)?;
         s.serialize_field("quoted", &self.quoted)?;
         s.end()
@@ -3068,6 +3072,47 @@ pub fn render_attribute_list(s: &mut String, attrs: &[(String, AttrValue)]) {
 /// issue #1111).
 const QUOTED_STRING_FORBIDDEN: &[char] = &['"', '\r', '\n'];
 
+/// Bytes in a CENC key id (ISO/IEC 23001-7 §8.1) and in an `#EXT-X-KEY` `IV`
+/// (RFC 8216 §4.3.2.4): both are 128-bit.
+const KEY_MATERIAL_LEN: usize = 16;
+
+/// Fields of the serde struct `AttrValue` renders: `value` and `quoted`.
+const ATTR_VALUE_FIELDS: usize = 2;
+
+/// First `u32` code point after C0 that a playlist forbids: `SPACE`
+/// (RFC 8216bis §4.1).
+const CONTROL_MAX_C0: u32 = 0x20;
+
+/// `DEL`, the next forbidden code point (RFC 8216bis §4.1).
+const DEL_CODE_POINT: u32 = 0x7F;
+
+/// Last C1 code point, `U+009F` (RFC 8216bis §4.1).
+const CONTROL_MAX_C1: u32 = 0x9F;
+
+/// Hold-back floor as a multiple of `PART-TARGET` (RFC 8216bis §6.2.4).
+const HOLD_BACK_PART_TARGETS: f64 = 3.0;
+
+/// Fractional digits in a millihertz value: 1000 mHz per Hz.
+const MILLIHERTZ_PER_HZ_DECIMAL: u32 = 1000;
+
+/// Radix of the decimal integers a `FRAME-RATE` value carries.
+const DECIMAL_BASE: u32 = 10;
+
+/// Decimal hundreds and tens weights of the same radix.
+const DECIMAL_HUNDREDS: u32 = 100;
+
+/// Digit at or above which the same-radix rounding term carries.
+const ROUND_UP_DIGIT: u32 = 5;
+
+/// Hexadecimal digits per byte: an `SCTE35-CMD` value must hold whole bytes.
+const HEX_DIGITS_PER_BYTE: usize = 2;
+
+/// Rounding term for a value converted to whole milliseconds.
+const ROUND_TO_NEAREST: f64 = 0.5;
+
+/// Window size for walking consecutive entries.
+const PAIR_WINDOW: usize = 2;
+
 /// A control character RFC 8216bis §4.1 forbids in a playlist: C0
 /// (U+0000..=U+001F), DEL (U+007F) or C1 (U+0080..=U+009F).
 ///
@@ -3075,9 +3120,10 @@ const QUOTED_STRING_FORBIDDEN: &[char] = &['"', '\r', '\n'];
 /// [`AttrValue`] used by whole-playlist parsing deliberately keeps its
 /// historical tolerance, so an unknown attribute carrying a tab still parses.
 pub(crate) fn has_forbidden_control(value: &str) -> bool {
-    value
-        .chars()
-        .any(|c| (c as u32) < 0x20 || (0x7f..=0x9f).contains(&(c as u32)))
+    value.chars().any(|c| {
+        let code = c as u32;
+        code < CONTROL_MAX_C0 || (DEL_CODE_POINT..=CONTROL_MAX_C1).contains(&code)
+    })
 }
 
 /// Reject a value that cannot be rendered as an RFC 8216 §4.2
@@ -3331,8 +3377,8 @@ fn parse_key_attributes(
 /// Parse a `0x`-prefixed hexadecimal-sequence attribute value into
 /// exactly 16 bytes — the 128-bit IV of `#EXT-X-KEY`/`#EXT-X-SESSION-KEY`
 /// (RFC 8216bis §4.4.4.4).
-fn parse_iv(s: &str) -> Result<[u8; 16]> {
-    let mut out = [0u8; 16];
+fn parse_iv(s: &str) -> Result<[u8; KEY_MATERIAL_LEN]> {
+    let mut out = [0u8; KEY_MATERIAL_LEN];
     s.strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .and_then(|hex| broadcast_common::hex::hex_decode_into(hex, &mut out).ok())
@@ -3377,9 +3423,9 @@ fn format_secs(v: DecimalSeconds) -> String {
     // and non-negative, so there is no NaN/inf/negative case left to guard
     // against here — the validation lives entirely at construction.
     let v = v.get();
-    let millis = (v * 1000.0 + 0.5) as u64;
-    let whole = millis / 1000;
-    let frac = millis % 1000;
+    let millis = (v * f64::from(MILLIHERTZ_PER_HZ_DECIMAL) + ROUND_TO_NEAREST) as u64;
+    let whole = millis / u64::from(MILLIHERTZ_PER_HZ_DECIMAL);
+    let frac = millis % u64::from(MILLIHERTZ_PER_HZ_DECIMAL);
     let compact = if frac == 0 {
         format!("{whole}")
     } else {
@@ -3902,7 +3948,7 @@ fn is_scte35_hexadecimal_sequence(value: &str) -> bool {
         return false;
     };
     !digits.is_empty()
-        && digits.len() % 2 == 0
+        && digits.len() % HEX_DIGITS_PER_BYTE == 0
         && digits
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
@@ -4077,8 +4123,8 @@ impl FrameRate {
 
 impl core::fmt::Display for FrameRate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let whole = self.0 / 1000;
-        let frac = self.0 % 1000;
+        let whole = self.0 / MILLIHERTZ_PER_HZ_DECIMAL;
+        let frac = self.0 % MILLIHERTZ_PER_HZ_DECIMAL;
         write!(f, "{whole}.{frac:03}")
     }
 }
@@ -5203,10 +5249,10 @@ fn parse_frame_rate(v: &str, line_no: usize, line: &str) -> Result<FrameRate> {
     let int_value: u32 = int_part.parse().map_err(|_| out_of_range())?;
     let mut digits = frac_part.unwrap_or("").bytes().map(|b| u32::from(b - b'0'));
     let mut next = || digits.next().unwrap_or(0);
-    let milli = next() * 100 + next() * 10 + next();
-    let round_up = u32::from(next() >= 5);
+    let milli = next() * DECIMAL_HUNDREDS + next() * DECIMAL_BASE + next();
+    let round_up = u32::from(next() >= ROUND_UP_DIGIT);
     let total = int_value
-        .checked_mul(1000)
+        .checked_mul(MILLIHERTZ_PER_HZ_DECIMAL)
         .and_then(|i| i.checked_add(milli + round_up))
         .ok_or_else(out_of_range)?;
     Ok(FrameRate::from_millihertz(total))
@@ -5214,7 +5260,7 @@ fn parse_frame_rate(v: &str, line_no: usize, line: &str) -> Result<FrameRate> {
 
 /// Parse a `RESOLUTION=<w>x<h>` attribute value.
 fn parse_resolution(v: &str, line_no: usize, line: &str) -> Result<(u32, u32)> {
-    let mut split = v.splitn(2, 'x');
+    let mut split = v.splitn(ATTR_VALUE_FIELDS, 'x');
     let w = split.next().unwrap_or("");
     let h = split.next().ok_or_else(|| Error::HlsParse {
         line_no,
@@ -5504,7 +5550,7 @@ fn parse_media_rendition(rest: &str, line_no: usize, line: &str) -> Result<Media
 /// assert!(!entries[2].1.discontinuous);  // same init
 /// ```
 pub fn mark_init_discontinuities(entries: &mut [(&[u8], &mut MediaSegment)]) {
-    if entries.len() < 2 {
+    if entries.len() < PAIR_WINDOW {
         return;
     }
     // Walk the slice as a sliding window: [prev | cur..].

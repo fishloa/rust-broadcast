@@ -19,6 +19,12 @@ use broadcast_common::reserved::ReservedOnes;
 pub const TAG: u8 = 0x2E;
 /// Width of the `reserved` field after `ASC_flag` (3 bits).
 const RESERVED_BITS: u32 = 3;
+/// Width of `reserved` in reader units.
+const RESERVED_READ_BITS: usize = RESERVED_BITS as usize;
+/// Width of `num_of_loops` (4 bits).
+const NUM_OF_LOOPS_BITS: usize = 4;
+/// Width of a byte-sized field (`audioProfileLevelIndication`, `ASC_size`).
+const BYTE_BITS: usize = u8::BITS as usize;
 /// Default of the 3-bit `reserved` (H.222.0 clause 2.1: all ones).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 
@@ -59,14 +65,14 @@ impl Mpeg4AudioExtensionDescriptor {
     fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "Mpeg4AudioExtensionDescriptor");
         let asc_flag = r.flag()?;
-        let reserved = ReservedOnes::from_bits(u64::from(r.u8(3)?));
-        let n = r.bits(4)?;
+        let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_READ_BITS)?));
+        let n = r.bits(NUM_OF_LOOPS_BITS)?;
         let mut indications = Vec::new();
         for _ in 0..n {
-            indications.push(r.u8(8)?);
+            indications.push(r.u8(BYTE_BITS)?);
         }
         let audio_specific_config = if asc_flag {
-            let size = usize::from(r.u8(8)?);
+            let size = usize::from(r.u8(BYTE_BITS)?);
             Some(r.bytes(size)?.to_vec())
         } else {
             None
@@ -82,15 +88,15 @@ impl Mpeg4AudioExtensionDescriptor {
     fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
         w.flag(self.audio_specific_config.is_some(), "ASC_flag")?;
-        w.put(self.reserved.get(), 3, "reserved")?;
+        w.put(self.reserved.get(), RESERVED_READ_BITS, "reserved")?;
         w.put(
             self.audio_profile_level_indications.len() as u64,
-            4,
+            NUM_OF_LOOPS_BITS,
             "num_of_loops",
         )?;
         w.bytes(&self.audio_profile_level_indications)?;
         if let Some(asc) = &self.audio_specific_config {
-            w.put(asc.len() as u64, 8, "ASC_size")?;
+            w.put(asc.len() as u64, BYTE_BITS, "ASC_size")?;
             w.bytes(asc)?;
         }
         w.bytes(&self.trailing)?;

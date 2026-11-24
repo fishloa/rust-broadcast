@@ -3,6 +3,9 @@
 //! 2-bit field in the metadata_pointer_descriptor that indicates where
 //! the referenced metadata service is carried.
 
+/// Mask of the `MPEG_carriage_flags` field (2 bits, Table 2-88).
+const MPEG_CARRIAGE_FLAGS_MASK: u8 = 0x03;
+
 /// MPEG_carriage_flags values (Table 2-88).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -22,7 +25,7 @@ impl MpegCarriageFlags {
     /// Construct from a raw 2-bit value.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & MPEG_CARRIAGE_FLAGS_MASK {
             0 => Self::SameTs,
             1 => Self::DifferentTs,
             2 => Self::ProgramStream,

@@ -1,14 +1,14 @@
 //! MPEG-H 3D audio descriptors — Rec. ITU-T H.222.0 (06/2021 | 08/2023) |
 //! ISO/IEC 13818-1 clauses 2.6.106–2.6.118, Tables 2-121…2-127. They are the
-//! bodies of the MPEG-2 `Extension_descriptor` (tag 0x3F, clause 2.6.90, see
+//! bodies of the MPEG-2 `Extension_descriptor` (tag LOW_6_BITS, clause 2.6.90, see
 //! [`super::mpeg2_extension`]) selected by `extension_descriptor_tag`
-//! 0x08…0x0E (Table 2-110), and are carried in the PMT ES_info loop of an
+//! LOW_BIT_MASK…0x0E (Table 2-110), and are carried in the PMT ES_info loop of an
 //! MPEG-H 3D audio stream (`stream_type` 0x2D main / 0x2E auxiliary, see
 //! [`crate::tables::pmt::StreamType`]; ETSI TS 101 154 V2.10.1 §6.8, §4.1.8.31).
 //!
 //! | `extension_descriptor_tag` | Descriptor | Type |
 //! |---|---|---|
-//! | 0x08 | `MPEG-H_3dAudio_descriptor` | [`MpegH3dAudio`] |
+//! | LOW_BIT_MASK | `MPEG-H_3dAudio_descriptor` | [`MpegH3dAudio`] |
 //! | 0x09 | `MPEG-H_3dAudio_config_descriptor` | [`MpegH3dAudioConfig`] (opaque `mpegh3daConfig()`) |
 //! | 0x0A | `MPEG-H_3dAudio_scene_descriptor` | [`MpegH3dAudioScene`] |
 //! | 0x0B | `MPEG-H_3dAudio_text_label_descriptor` | [`MpegH3dAudioTextLabel`] |
@@ -31,9 +31,9 @@
 //! * **Table 2-121**: the printed `reserved` run is 8 bits between
 //!   `compatibleProfileSetsPresent` and `referenceChannelLayout`: it spans the
 //!   low 6 bits of the second byte and the top 2 bits of the third (real data:
-//!   `0x7F`/`0x3F` then `0xC1`). `compatibleProfileSetsPresent == '0'` means
+//!   `LOW_7_BITS`/`LOW_6_BITS` then `0xC1`). `compatibleProfileSetsPresent == '0'` means
 //!   the compatible-sets list **is present** (confirmed by real data:
-//!   `3F C1 01 10` carries `numCompatibleSets = 1`, `CompatibleSetIndication = 0x10`).
+//!   `3F C1 01 10` carries `numCompatibleSets = 1`, `CompatibleSetIndication = LOWER_BIT_MASK`).
 //! * **Table 2-125**: the printed condition `if (thisIsMainStream == '0')` inside
 //!   the `mae_numGroups` loop (itself inside `if (thisIsMainStream)`) can never be
 //!   true; the auxiliary-stream fields (`isInTS`, `auxiliaryStreamID`) are
@@ -51,6 +51,70 @@ use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{fit_bits, fit_u8};
 use broadcast_common::reserved::ReservedOnes;
+
+/// Bit width of a 1-bit field.
+const WIDTH_1: u32 = 1;
+/// Bit width of a 2-bit field.
+const WIDTH_2: u32 = 2;
+/// Bit width of a 3-bit field.
+const WIDTH_3: u32 = 3;
+/// Bit width of a 4-bit field.
+const WIDTH_4: u32 = 4;
+/// Bit width of a 5-bit field.
+const WIDTH_5: u32 = 5;
+/// Bit width of a 6-bit field.
+const WIDTH_6: u32 = 6;
+/// Bit width of a 7-bit field.
+const WIDTH_7: u32 = 7;
+/// Bit width of a byte-sized field.
+const WIDTH_8: u32 = u8::BITS;
+/// Mask of a single low bit.
+const LOW_1_BITS: u8 = 0x01;
+/// Mask of the two low bits.
+const LOW_2_BITS: u8 = 0x03;
+/// Mask of the three low bits.
+const LOW_3_BITS: u8 = 0x07;
+/// Mask of the four low bits (a nibble).
+const LOW_4_BITS: u8 = 0x0F;
+/// Mask of the five low bits.
+const LOW_5_BITS: u8 = 0x1F;
+/// Mask of the six low bits.
+const LOW_6_BITS: u8 = 0x3F;
+/// Mask of the seven low bits.
+const LOW_7_BITS: u8 = 0x7F;
+/// Bit position 7 of a packed byte.
+const HIGH_BIT_SHIFT: u8 = 7;
+/// Bit position 6 of a packed byte.
+const UPPER_BIT_SHIFT: u8 = 6;
+/// Bit position 5 of a packed byte.
+const MID_BIT_SHIFT: u8 = 5;
+/// Bit position 4 of a packed byte.
+const LOWER_BIT_SHIFT: u8 = 4;
+/// Bit position 3 of a packed byte.
+const LOW_BIT_SHIFT: u8 = 3;
+/// Bit position 2 of a packed byte.
+const SUB_LOW_BIT_SHIFT: u8 = 2;
+/// Bit position 1 of a packed byte.
+const LEAST_BIT_SHIFT: u8 = 1;
+/// The most significant bit of a packed byte.
+const HIGH_BIT_MASK: u8 = 0x80;
+/// Bit 6 of a packed byte.
+const UPPER_BIT_MASK: u8 = 0x40;
+/// Bit 5 of a packed byte.
+const MID_BIT_MASK: u8 = 0x20;
+/// Bit 4 of a packed byte.
+const LOWER_BIT_MASK: u8 = 0x10;
+/// Bit 3 of a packed byte.
+const LOW_BIT_MASK: u8 = 0x08;
+/// Bit 2 of a packed byte.
+const SUB_LOW_BIT_MASK: u8 = 0x04;
+/// Bit 1 of a packed byte.
+const LEAST_BIT_MASK: u8 = 0x02;
+/// `mae_groupPreset` scope type (Table 2-126).
+/// Wire width of an `ISO_639_language_code`.
+const LANGUAGE_CODE_LEN: usize = 3;
+/// Scope type whose payload is `reserved(3) mae_groupPresetID(5)`.
+const PRESET_SCOPE_TYPE: u8 = 3;
 
 /// Checked bit-field value: `v` must fit `bits` bits.
 fn f(v: u8, bits: u32, name: &'static str) -> Result<u8> {
@@ -105,7 +169,7 @@ impl<'a> Reader<'a> {
 
 // ───────────────────────── 2.6.106  MPEG-H_3dAudio_descriptor ──────────────
 
-/// `MPEG-H_3dAudio_descriptor()` (Table 2-121), `extension_descriptor_tag` 0x08.
+/// `MPEG-H_3dAudio_descriptor()` (Table 2-121), `extension_descriptor_tag` LOW_BIT_MASK.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -117,12 +181,12 @@ pub struct MpegH3dAudio {
     /// `CompatibleSetIndication` list: `Some` iff `compatibleProfileSetsPresent == '0'`
     /// (the flag is inverted, see the module docs); the list length is `numCompatibleSets`.
     pub compatible_sets: Option<Vec<u8>>,
-    /// First 6 bits of the printed 8-bit `reserved` run (right-aligned), default `0x3F`.
+    /// First 6 bits of the printed 8-bit `reserved` run (right-aligned), default `LOW_6_BITS`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_flags: ReservedOnes<6>,
+    pub reserved_flags: ReservedOnes<WIDTH_6>,
     /// Last 2 bits of the printed 8-bit `reserved` run (right-aligned), default `0x3`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_layout: ReservedOnes<2>,
+    pub reserved_layout: ReservedOnes<WIDTH_2>,
     /// `referenceChannelLayout` (6 bits, ISO/IEC 23001-8 `ChannelConfiguration`).
     pub reference_channel_layout: u8,
     /// Trailing `reserved(8)` bytes, verbatim.
@@ -153,7 +217,7 @@ impl MpegH3dAudio {
         let profile_level_indication = r.u8()?;
         let b1 = r.u8()?;
         let b2 = r.u8()?;
-        let present = b1 & 0x40 == 0;
+        let present = b1 & UPPER_BIT_MASK == 0;
         let compatible_sets = if present {
             let cnt = r.u8()? as usize;
             Some(r.take(cnt)?.to_vec())
@@ -162,11 +226,11 @@ impl MpegH3dAudio {
         };
         Ok(Self {
             profile_level_indication,
-            interactivity_enabled: b1 & 0x80 != 0,
+            interactivity_enabled: b1 & HIGH_BIT_MASK != 0,
             compatible_sets,
-            reserved_flags: ReservedOnes::from_bits(u64::from(b1 & 0x3F)),
-            reserved_layout: ReservedOnes::from_bits(u64::from(b2 >> 6)),
-            reference_channel_layout: b2 & 0x3F,
+            reserved_flags: ReservedOnes::from_bits(u64::from(b1 & LOW_6_BITS)),
+            reserved_layout: ReservedOnes::from_bits(u64::from(b2 >> UPPER_BIT_SHIFT)),
+            reference_channel_layout: b2 & LOW_6_BITS,
             trailing: r.rest().to_vec(),
         })
     }
@@ -174,13 +238,17 @@ impl MpegH3dAudio {
     pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<()> {
         out.push(self.profile_level_indication);
         out.push(
-            (u8::from(self.interactivity_enabled) << 7)
-                | (u8::from(self.compatible_sets.is_none()) << 6)
+            (u8::from(self.interactivity_enabled) << HIGH_BIT_SHIFT)
+                | (u8::from(self.compatible_sets.is_none()) << UPPER_BIT_SHIFT)
                 | (self.reserved_flags.get() as u8),
         );
         out.push(
-            ((self.reserved_layout.get() as u8) << 6)
-                | f(self.reference_channel_layout, 6, "referenceChannelLayout")?,
+            ((self.reserved_layout.get() as u8) << UPPER_BIT_SHIFT)
+                | f(
+                    self.reference_channel_layout,
+                    WIDTH_6,
+                    "referenceChannelLayout",
+                )?,
         );
         if let Some(sets) = &self.compatible_sets {
             out.push(fit_u8(sets.len(), "numCompatibleSets")?);
@@ -213,22 +281,22 @@ pub struct MpegH3dAudioConfig {
 pub struct PositionInteractivity {
     /// `reserved(1)`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_min_az: ReservedOnes<1>,
+    pub reserved_min_az: ReservedOnes<WIDTH_1>,
     /// `mae_interactivityMinAzOffset` (7).
     pub min_az_offset: u8,
     /// `reserved(1)`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_max_az: ReservedOnes<1>,
+    pub reserved_max_az: ReservedOnes<WIDTH_1>,
     /// `mae_interactivityMaxAzOffset` (7).
     pub max_az_offset: u8,
     /// `reserved(3)`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_min_el: ReservedOnes<3>,
+    pub reserved_min_el: ReservedOnes<WIDTH_3>,
     /// `mae_interactivityMinElOffset` (5).
     pub min_el_offset: u8,
     /// `reserved(3)`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_max_el: ReservedOnes<3>,
+    pub reserved_max_el: ReservedOnes<WIDTH_3>,
     /// `mae_interactivityMaxElOffset` (5).
     pub max_el_offset: u8,
     /// `mae_interactivityMinDistOffset` (4).
@@ -270,12 +338,12 @@ impl PositionInteractivity {
 pub struct GainInteractivity {
     /// `reserved(2)`, default 3.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_min: ReservedOnes<2>,
+    pub reserved_min: ReservedOnes<WIDTH_2>,
     /// `mae_interactivityMinGain` (6).
     pub min_gain: u8,
     /// `reserved(3)`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_max: ReservedOnes<3>,
+    pub reserved_max: ReservedOnes<WIDTH_3>,
     /// `mae_interactivityMaxGain` (5).
     pub max_gain: u8,
 }
@@ -300,19 +368,19 @@ impl GainInteractivity {
 pub struct SceneGroup {
     /// `reserved(1)`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_id: ReservedOnes<1>,
+    pub reserved_id: ReservedOnes<WIDTH_1>,
     /// `mae_groupID` (7).
     pub group_id: u8,
     /// `reserved(3)`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_flags: ReservedOnes<3>,
+    pub reserved_flags: ReservedOnes<WIDTH_3>,
     /// `mae_allowOnOff`.
     pub allow_on_off: bool,
     /// `mae_defaultOnOff`.
     pub default_on_off: bool,
     /// `reserved(4)`, default 15.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_kind: ReservedOnes<4>,
+    pub reserved_kind: ReservedOnes<WIDTH_4>,
     /// `mae_contentKind` (4).
     pub content_kind: u8,
     /// Present iff `mae_allowPositionInteractivity`.
@@ -354,7 +422,7 @@ impl SceneGroup {
 pub struct SwitchGroupMember {
     /// `reserved(1)`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<1>,
+    pub reserved: ReservedOnes<WIDTH_1>,
     /// `mae_switchGroupMemberID` (7).
     pub member_id: u8,
 }
@@ -377,7 +445,7 @@ impl SwitchGroupMember {
 pub struct SwitchGroup {
     /// `reserved(1)`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_id: ReservedOnes<1>,
+    pub reserved_id: ReservedOnes<WIDTH_1>,
     /// `mae_switchGroupID` (5).
     pub switch_group_id: u8,
     /// `mae_switchGroupAllowOnOff`.
@@ -386,12 +454,12 @@ pub struct SwitchGroup {
     pub default_on_off: bool,
     /// `reserved(3)`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_members: ReservedOnes<3>,
+    pub reserved_members: ReservedOnes<WIDTH_3>,
     /// Members; `mae_bsSwitchGroupNumMembers` = len − 1 (so 1..=32 entries).
     pub members: Vec<SwitchGroupMember>,
     /// `reserved(1)`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_default: ReservedOnes<1>,
+    pub reserved_default: ReservedOnes<WIDTH_1>,
     /// `mae_switchGroupDefaultGroupID` (7).
     pub default_group_id: u8,
 }
@@ -403,7 +471,7 @@ pub struct SwitchGroup {
 pub struct PresetConditionDetail {
     /// `reserved(4)`, default 15.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<4>,
+    pub reserved: ReservedOnes<WIDTH_4>,
     /// `mae_groupPresetDisableGainInteractivity`.
     pub disable_gain_interactivity: bool,
     /// `mae_groupPresetDisablePositionInteractivity`.
@@ -423,12 +491,12 @@ pub struct PresetPosition {
     pub az_offset: u8,
     /// `reserved(2)`, default 3.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_el: ReservedOnes<2>,
+    pub reserved_el: ReservedOnes<WIDTH_2>,
     /// `mae_groupPresetElOffset` (6).
     pub el_offset: u8,
     /// `reserved(4)`, default 15.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_dist: ReservedOnes<4>,
+    pub reserved_dist: ReservedOnes<WIDTH_4>,
     /// `mae_groupPresetDistFactor` (4).
     pub dist_factor: u8,
 }
@@ -465,17 +533,17 @@ pub struct PresetCondition {
 pub struct GroupPreset {
     /// `reserved(3)`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_id: ReservedOnes<3>,
+    pub reserved_id: ReservedOnes<WIDTH_3>,
     /// `mae_groupPresetID` (5).
     pub preset_id: u8,
     /// `reserved(3)`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_kind: ReservedOnes<3>,
+    pub reserved_kind: ReservedOnes<WIDTH_3>,
     /// `mae_groupPresetKind` (5).
     pub preset_kind: u8,
     /// `reserved(4)`, default 15.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_conditions: ReservedOnes<4>,
+    pub reserved_conditions: ReservedOnes<WIDTH_4>,
     /// Conditions; `mae_numGroupPresetConditions` = len − 1 (so 1..=16 entries).
     pub conditions: Vec<PresetCondition>,
 }
@@ -487,24 +555,24 @@ pub struct GroupPreset {
 pub struct MpegH3dAudioScene {
     /// `reserved(5)` after the three presence flags, default 31.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_flags: ReservedOnes<5>,
+    pub reserved_flags: ReservedOnes<WIDTH_5>,
     /// `3dAudioSceneInfoID` (8, `mae_audioSceneInfoID`).
     pub scene_info_id: u8,
     /// Groups, present iff `groupDefinitionPresent`.
     pub groups: Option<Vec<SceneGroup>>,
     /// `reserved(3)` before `numSwitchGroups` (kept only when switch groups are present), default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_switch_groups: ReservedOnes<3>,
+    pub reserved_switch_groups: ReservedOnes<WIDTH_3>,
     /// Switch groups, present iff `switchGroupDefinitionPresent`.
     pub switch_groups: Option<Vec<SwitchGroup>>,
     /// `reserved(3)` before `mae_numGroupPresets` (kept only when presets are present), default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_presets: ReservedOnes<3>,
+    pub reserved_presets: ReservedOnes<WIDTH_3>,
     /// Group presets, present iff `groupPresetDefinitionPresent`.
     pub presets: Option<Vec<GroupPreset>>,
     /// `reserved(1)` before `numGroups` (kept only when groups are present), default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_groups: ReservedOnes<1>,
+    pub reserved_groups: ReservedOnes<WIDTH_1>,
     /// Trailing `reserved(8)` bytes, verbatim.
     pub trailing: Vec<u8>,
 }
@@ -534,13 +602,16 @@ impl MpegH3dAudioScene {
     pub(crate) fn parse(r: &mut Reader<'_>) -> Result<Self> {
         let flags = r.u8()?;
         let scene_info_id = r.u8()?;
-        let (group_present, switch_present, preset_present) =
-            (flags & 0x80 != 0, flags & 0x40 != 0, flags & 0x20 != 0);
+        let (group_present, switch_present, preset_present) = (
+            flags & HIGH_BIT_MASK != 0,
+            flags & UPPER_BIT_MASK != 0,
+            flags & MID_BIT_MASK != 0,
+        );
         let mut reserved_groups = ReservedOnes::FILL;
         let groups = if group_present {
             let b = r.u8()?;
-            reserved_groups = ReservedOnes::from_bits(u64::from(b >> 7));
-            let count = usize::from(b & 0x7F);
+            reserved_groups = ReservedOnes::from_bits(u64::from(b >> HIGH_BIT_SHIFT));
+            let count = usize::from(b & LOW_7_BITS);
             let mut v = Vec::with_capacity(count);
             for _ in 0..count {
                 v.push(parse_group(r)?);
@@ -552,8 +623,8 @@ impl MpegH3dAudioScene {
         let mut reserved_switch_groups = ReservedOnes::FILL;
         let switch_groups = if switch_present {
             let b = r.u8()?;
-            reserved_switch_groups = ReservedOnes::from_bits(u64::from(b >> 5));
-            let count = usize::from(b & 0x1F);
+            reserved_switch_groups = ReservedOnes::from_bits(u64::from(b >> MID_BIT_SHIFT));
+            let count = usize::from(b & LOW_5_BITS);
             let mut v = Vec::with_capacity(count);
             for _ in 0..count {
                 v.push(parse_switch_group(r)?);
@@ -565,8 +636,8 @@ impl MpegH3dAudioScene {
         let mut reserved_presets = ReservedOnes::FILL;
         let presets = if preset_present {
             let b = r.u8()?;
-            reserved_presets = ReservedOnes::from_bits(u64::from(b >> 5));
-            let count = usize::from(b & 0x1F);
+            reserved_presets = ReservedOnes::from_bits(u64::from(b >> MID_BIT_SHIFT));
+            let count = usize::from(b & LOW_5_BITS);
             let mut v = Vec::with_capacity(count);
             for _ in 0..count {
                 v.push(parse_preset(r)?);
@@ -576,7 +647,7 @@ impl MpegH3dAudioScene {
             None
         };
         Ok(Self {
-            reserved_flags: ReservedOnes::from_bits(u64::from(flags & 0x1F)),
+            reserved_flags: ReservedOnes::from_bits(u64::from(flags & LOW_5_BITS)),
             scene_info_id,
             groups,
             reserved_switch_groups,
@@ -590,22 +661,25 @@ impl MpegH3dAudioScene {
 
     pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<()> {
         out.push(
-            (u8::from(self.groups.is_some()) << 7)
-                | (u8::from(self.switch_groups.is_some()) << 6)
-                | (u8::from(self.presets.is_some()) << 5)
+            (u8::from(self.groups.is_some()) << HIGH_BIT_SHIFT)
+                | (u8::from(self.switch_groups.is_some()) << UPPER_BIT_SHIFT)
+                | (u8::from(self.presets.is_some()) << MID_BIT_SHIFT)
                 | (self.reserved_flags.get() as u8),
         );
         out.push(self.scene_info_id);
         if let Some(groups) = &self.groups {
-            out.push(((self.reserved_groups.get() as u8) << 7) | n(groups.len(), 7, "numGroups")?);
+            out.push(
+                ((self.reserved_groups.get() as u8) << HIGH_BIT_SHIFT)
+                    | n(groups.len(), WIDTH_7, "numGroups")?,
+            );
             for g in groups {
                 write_group(g, out)?;
             }
         }
         if let Some(sgs) = &self.switch_groups {
             out.push(
-                ((self.reserved_switch_groups.get() as u8) << 5)
-                    | n(sgs.len(), 5, "numSwitchGroups")?,
+                ((self.reserved_switch_groups.get() as u8) << MID_BIT_SHIFT)
+                    | n(sgs.len(), WIDTH_5, "numSwitchGroups")?,
             );
             for sg in sgs {
                 write_switch_group(sg, out)?;
@@ -613,7 +687,8 @@ impl MpegH3dAudioScene {
         }
         if let Some(ps) = &self.presets {
             out.push(
-                ((self.reserved_presets.get() as u8) << 5) | n(ps.len(), 5, "mae_numGroupPresets")?,
+                ((self.reserved_presets.get() as u8) << MID_BIT_SHIFT)
+                    | n(ps.len(), WIDTH_5, "mae_numGroupPresets")?,
             );
             for p in ps {
                 write_preset(p, out)?;
@@ -628,7 +703,11 @@ fn parse_group(r: &mut Reader<'_>) -> Result<SceneGroup> {
     let b0 = r.u8()?;
     let b1 = r.u8()?;
     let b2 = r.u8()?;
-    let (allow_pos, allow_gain, has_lang) = (b1 & 0x04 != 0, b1 & 0x02 != 0, b1 & 0x01 != 0);
+    let (allow_pos, allow_gain, has_lang) = (
+        b1 & SUB_LOW_BIT_MASK != 0,
+        b1 & LEAST_BIT_MASK != 0,
+        b1 & LOW_1_BITS != 0,
+    );
     let position = if allow_pos {
         let a = r.u8()?;
         let b = r.u8()?;
@@ -636,16 +715,16 @@ fn parse_group(r: &mut Reader<'_>) -> Result<SceneGroup> {
         let d = r.u8()?;
         let e = r.u8()?;
         Some(PositionInteractivity {
-            reserved_min_az: ReservedOnes::from_bits(u64::from(a >> 7)),
-            min_az_offset: a & 0x7F,
-            reserved_max_az: ReservedOnes::from_bits(u64::from(b >> 7)),
-            max_az_offset: b & 0x7F,
-            reserved_min_el: ReservedOnes::from_bits(u64::from(c >> 5)),
-            min_el_offset: c & 0x1F,
-            reserved_max_el: ReservedOnes::from_bits(u64::from(d >> 5)),
-            max_el_offset: d & 0x1F,
-            min_dist_offset: e >> 4,
-            max_dist_offset: e & 0x0F,
+            reserved_min_az: ReservedOnes::from_bits(u64::from(a >> HIGH_BIT_SHIFT)),
+            min_az_offset: a & LOW_7_BITS,
+            reserved_max_az: ReservedOnes::from_bits(u64::from(b >> HIGH_BIT_SHIFT)),
+            max_az_offset: b & LOW_7_BITS,
+            reserved_min_el: ReservedOnes::from_bits(u64::from(c >> MID_BIT_SHIFT)),
+            min_el_offset: c & LOW_5_BITS,
+            reserved_max_el: ReservedOnes::from_bits(u64::from(d >> MID_BIT_SHIFT)),
+            max_el_offset: d & LOW_5_BITS,
+            min_dist_offset: e >> LOWER_BIT_SHIFT,
+            max_dist_offset: e & LOW_4_BITS,
         })
     } else {
         None
@@ -654,28 +733,28 @@ fn parse_group(r: &mut Reader<'_>) -> Result<SceneGroup> {
         let a = r.u8()?;
         let b = r.u8()?;
         Some(GainInteractivity {
-            reserved_min: ReservedOnes::from_bits(u64::from(a >> 6)),
-            min_gain: a & 0x3F,
-            reserved_max: ReservedOnes::from_bits(u64::from(b >> 5)),
-            max_gain: b & 0x1F,
+            reserved_min: ReservedOnes::from_bits(u64::from(a >> UPPER_BIT_SHIFT)),
+            min_gain: a & LOW_6_BITS,
+            reserved_max: ReservedOnes::from_bits(u64::from(b >> MID_BIT_SHIFT)),
+            max_gain: b & LOW_5_BITS,
         })
     } else {
         None
     };
     let content_language = if has_lang {
-        let l = r.take(3)?;
-        Some([l[0], l[1], l[2]])
+        let l = r.take(LANGUAGE_CODE_LEN)?;
+        Some(l.try_into().unwrap_or_default())
     } else {
         None
     };
     Ok(SceneGroup {
-        reserved_id: ReservedOnes::from_bits(u64::from(b0 >> 7)),
-        group_id: b0 & 0x7F,
-        reserved_flags: ReservedOnes::from_bits(u64::from(b1 >> 5)),
-        allow_on_off: b1 & 0x10 != 0,
-        default_on_off: b1 & 0x08 != 0,
-        reserved_kind: ReservedOnes::from_bits(u64::from(b2 >> 4)),
-        content_kind: b2 & 0x0F,
+        reserved_id: ReservedOnes::from_bits(u64::from(b0 >> HIGH_BIT_SHIFT)),
+        group_id: b0 & LOW_7_BITS,
+        reserved_flags: ReservedOnes::from_bits(u64::from(b1 >> MID_BIT_SHIFT)),
+        allow_on_off: b1 & LOWER_BIT_MASK != 0,
+        default_on_off: b1 & LOW_BIT_MASK != 0,
+        reserved_kind: ReservedOnes::from_bits(u64::from(b2 >> LOWER_BIT_SHIFT)),
+        content_kind: b2 & LOW_4_BITS,
         position,
         gain,
         content_language,
@@ -683,44 +762,51 @@ fn parse_group(r: &mut Reader<'_>) -> Result<SceneGroup> {
 }
 
 fn write_group(g: &SceneGroup, out: &mut Vec<u8>) -> Result<()> {
-    out.push(((g.reserved_id.get() as u8) << 7) | f(g.group_id, 7, "mae_groupID")?);
     out.push(
-        ((g.reserved_flags.get() as u8) << 5)
-            | (u8::from(g.allow_on_off) << 4)
-            | (u8::from(g.default_on_off) << 3)
-            | (u8::from(g.position.is_some()) << 2)
-            | (u8::from(g.gain.is_some()) << 1)
+        ((g.reserved_id.get() as u8) << HIGH_BIT_SHIFT) | f(g.group_id, WIDTH_7, "mae_groupID")?,
+    );
+    out.push(
+        ((g.reserved_flags.get() as u8) << MID_BIT_SHIFT)
+            | (u8::from(g.allow_on_off) << LOWER_BIT_SHIFT)
+            | (u8::from(g.default_on_off) << LOW_BIT_SHIFT)
+            | (u8::from(g.position.is_some()) << SUB_LOW_BIT_SHIFT)
+            | (u8::from(g.gain.is_some()) << LEAST_BIT_SHIFT)
             | u8::from(g.content_language.is_some()),
     );
-    out.push(((g.reserved_kind.get() as u8) << 4) | f(g.content_kind, 4, "mae_contentKind")?);
+    out.push(
+        ((g.reserved_kind.get() as u8) << LOWER_BIT_SHIFT)
+            | f(g.content_kind, WIDTH_4, "mae_contentKind")?,
+    );
     if let Some(p) = &g.position {
         out.push(
-            ((p.reserved_min_az.get() as u8) << 7)
-                | f(p.min_az_offset, 7, "mae_interactivityMinAzOffset")?,
+            ((p.reserved_min_az.get() as u8) << HIGH_BIT_SHIFT)
+                | f(p.min_az_offset, WIDTH_7, "mae_interactivityMinAzOffset")?,
         );
         out.push(
-            ((p.reserved_max_az.get() as u8) << 7)
-                | f(p.max_az_offset, 7, "mae_interactivityMaxAzOffset")?,
+            ((p.reserved_max_az.get() as u8) << HIGH_BIT_SHIFT)
+                | f(p.max_az_offset, WIDTH_7, "mae_interactivityMaxAzOffset")?,
         );
         out.push(
-            ((p.reserved_min_el.get() as u8) << 5)
-                | f(p.min_el_offset, 5, "mae_interactivityMinElOffset")?,
+            ((p.reserved_min_el.get() as u8) << MID_BIT_SHIFT)
+                | f(p.min_el_offset, WIDTH_5, "mae_interactivityMinElOffset")?,
         );
         out.push(
-            ((p.reserved_max_el.get() as u8) << 5)
-                | f(p.max_el_offset, 5, "mae_interactivityMaxElOffset")?,
+            ((p.reserved_max_el.get() as u8) << MID_BIT_SHIFT)
+                | f(p.max_el_offset, WIDTH_5, "mae_interactivityMaxElOffset")?,
         );
         out.push(
-            (f(p.min_dist_offset, 4, "mae_interactivityMinDistOffset")? << 4)
-                | f(p.max_dist_offset, 4, "mae_interactivityMaxDistOffset")?,
+            (f(p.min_dist_offset, WIDTH_4, "mae_interactivityMinDistOffset")? << LOWER_BIT_SHIFT)
+                | f(p.max_dist_offset, WIDTH_4, "mae_interactivityMaxDistOffset")?,
         );
     }
     if let Some(gn) = &g.gain {
         out.push(
-            ((gn.reserved_min.get() as u8) << 6) | f(gn.min_gain, 6, "mae_interactivityMinGain")?,
+            ((gn.reserved_min.get() as u8) << UPPER_BIT_SHIFT)
+                | f(gn.min_gain, WIDTH_6, "mae_interactivityMinGain")?,
         );
         out.push(
-            ((gn.reserved_max.get() as u8) << 5) | f(gn.max_gain, 5, "mae_interactivityMaxGain")?,
+            ((gn.reserved_max.get() as u8) << MID_BIT_SHIFT)
+                | f(gn.max_gain, WIDTH_5, "mae_interactivityMaxGain")?,
         );
     }
     if let Some(l) = &g.content_language {
@@ -732,25 +818,25 @@ fn write_group(g: &SceneGroup, out: &mut Vec<u8>) -> Result<()> {
 fn parse_switch_group(r: &mut Reader<'_>) -> Result<SwitchGroup> {
     let b0 = r.u8()?;
     let b1 = r.u8()?;
-    let members_n = usize::from(b1 & 0x1F) + 1;
+    let members_n = usize::from(b1 & LOW_5_BITS) + 1;
     let mut members = Vec::with_capacity(members_n);
     for _ in 0..members_n {
         let m = r.u8()?;
         members.push(SwitchGroupMember {
-            reserved: ReservedOnes::from_bits(u64::from(m >> 7)),
-            member_id: m & 0x7F,
+            reserved: ReservedOnes::from_bits(u64::from(m >> HIGH_BIT_SHIFT)),
+            member_id: m & LOW_7_BITS,
         });
     }
     let d = r.u8()?;
     Ok(SwitchGroup {
-        reserved_id: ReservedOnes::from_bits(u64::from(b0 >> 7)),
-        switch_group_id: (b0 >> 2) & 0x1F,
-        allow_on_off: b0 & 0x02 != 0,
-        default_on_off: b0 & 0x01 != 0,
-        reserved_members: ReservedOnes::from_bits(u64::from(b1 >> 5)),
+        reserved_id: ReservedOnes::from_bits(u64::from(b0 >> HIGH_BIT_SHIFT)),
+        switch_group_id: (b0 >> SUB_LOW_BIT_SHIFT) & LOW_5_BITS,
+        allow_on_off: b0 & LEAST_BIT_MASK != 0,
+        default_on_off: b0 & LOW_1_BITS != 0,
+        reserved_members: ReservedOnes::from_bits(u64::from(b1 >> MID_BIT_SHIFT)),
         members,
-        reserved_default: ReservedOnes::from_bits(u64::from(d >> 7)),
-        default_group_id: d & 0x7F,
+        reserved_default: ReservedOnes::from_bits(u64::from(d >> HIGH_BIT_SHIFT)),
+        default_group_id: d & LOW_7_BITS,
     })
 }
 
@@ -762,21 +848,28 @@ fn write_switch_group(sg: &SwitchGroup, out: &mut Vec<u8>) -> Result<()> {
         });
     }
     out.push(
-        ((sg.reserved_id.get() as u8) << 7)
-            | (f(sg.switch_group_id, 5, "mae_switchGroupID")? << 2)
-            | (u8::from(sg.allow_on_off) << 1)
+        ((sg.reserved_id.get() as u8) << HIGH_BIT_SHIFT)
+            | (f(sg.switch_group_id, WIDTH_5, "mae_switchGroupID")? << SUB_LOW_BIT_SHIFT)
+            | (u8::from(sg.allow_on_off) << LEAST_BIT_SHIFT)
             | u8::from(sg.default_on_off),
     );
     out.push(
-        ((sg.reserved_members.get() as u8) << 5)
-            | n(sg.members.len() - 1, 5, "mae_bsSwitchGroupNumMembers")?,
+        ((sg.reserved_members.get() as u8) << MID_BIT_SHIFT)
+            | n(sg.members.len() - 1, WIDTH_5, "mae_bsSwitchGroupNumMembers")?,
     );
     for m in &sg.members {
-        out.push(((m.reserved.get() as u8) << 7) | f(m.member_id, 7, "mae_switchGroupMemberID")?);
+        out.push(
+            ((m.reserved.get() as u8) << HIGH_BIT_SHIFT)
+                | f(m.member_id, WIDTH_7, "mae_switchGroupMemberID")?,
+        );
     }
     out.push(
-        ((sg.reserved_default.get() as u8) << 7)
-            | f(sg.default_group_id, 7, "mae_switchGroupDefaultGroupID")?,
+        ((sg.reserved_default.get() as u8) << HIGH_BIT_SHIFT)
+            | f(
+                sg.default_group_id,
+                WIDTH_7,
+                "mae_switchGroupDefaultGroupID",
+            )?,
     );
     Ok(())
 }
@@ -785,13 +878,13 @@ fn parse_preset(r: &mut Reader<'_>) -> Result<GroupPreset> {
     let b0 = r.u8()?;
     let b1 = r.u8()?;
     let b2 = r.u8()?;
-    let cond_n = usize::from(b2 & 0x0F) + 1;
+    let cond_n = usize::from(b2 & LOW_4_BITS) + 1;
     let mut conditions = Vec::with_capacity(cond_n);
     for _ in 0..cond_n {
         let c = r.u8()?;
         let detail = if c & 1 != 0 {
             let d = r.u8()?;
-            let (gain_flag, pos_flag) = (d & 0x04 != 0, d & 0x01 != 0);
+            let (gain_flag, pos_flag) = (d & SUB_LOW_BIT_MASK != 0, d & LOW_1_BITS != 0);
             let gain = if gain_flag { Some(r.u8()?) } else { None };
             let position = if pos_flag {
                 let az = r.u8()?;
@@ -799,18 +892,18 @@ fn parse_preset(r: &mut Reader<'_>) -> Result<GroupPreset> {
                 let dist = r.u8()?;
                 Some(PresetPosition {
                     az_offset: az,
-                    reserved_el: ReservedOnes::from_bits(u64::from(el >> 6)),
-                    el_offset: el & 0x3F,
-                    reserved_dist: ReservedOnes::from_bits(u64::from(dist >> 4)),
-                    dist_factor: dist & 0x0F,
+                    reserved_el: ReservedOnes::from_bits(u64::from(el >> UPPER_BIT_SHIFT)),
+                    el_offset: el & LOW_6_BITS,
+                    reserved_dist: ReservedOnes::from_bits(u64::from(dist >> LOWER_BIT_SHIFT)),
+                    dist_factor: dist & LOW_4_BITS,
                 })
             } else {
                 None
             };
             Some(PresetConditionDetail {
-                reserved: ReservedOnes::from_bits(u64::from(d >> 4)),
-                disable_gain_interactivity: d & 0x08 != 0,
-                disable_position_interactivity: d & 0x02 != 0,
+                reserved: ReservedOnes::from_bits(u64::from(d >> LOWER_BIT_SHIFT)),
+                disable_gain_interactivity: d & LOW_BIT_MASK != 0,
+                disable_position_interactivity: d & LEAST_BIT_MASK != 0,
                 gain,
                 position,
             })
@@ -818,16 +911,16 @@ fn parse_preset(r: &mut Reader<'_>) -> Result<GroupPreset> {
             None
         };
         conditions.push(PresetCondition {
-            group_id: c >> 1,
+            group_id: c >> LEAST_BIT_SHIFT,
             detail,
         });
     }
     Ok(GroupPreset {
-        reserved_id: ReservedOnes::from_bits(u64::from(b0 >> 5)),
-        preset_id: b0 & 0x1F,
-        reserved_kind: ReservedOnes::from_bits(u64::from(b1 >> 5)),
-        preset_kind: b1 & 0x1F,
-        reserved_conditions: ReservedOnes::from_bits(u64::from(b2 >> 4)),
+        reserved_id: ReservedOnes::from_bits(u64::from(b0 >> MID_BIT_SHIFT)),
+        preset_id: b0 & LOW_5_BITS,
+        reserved_kind: ReservedOnes::from_bits(u64::from(b1 >> MID_BIT_SHIFT)),
+        preset_kind: b1 & LOW_5_BITS,
+        reserved_conditions: ReservedOnes::from_bits(u64::from(b2 >> LOWER_BIT_SHIFT)),
         conditions,
     })
 }
@@ -839,20 +932,33 @@ fn write_preset(p: &GroupPreset, out: &mut Vec<u8>) -> Result<()> {
             reason: "group preset needs at least one condition (mae_numGroupPresetConditions + 1)",
         });
     }
-    out.push(((p.reserved_id.get() as u8) << 5) | f(p.preset_id, 5, "mae_groupPresetID")?);
-    out.push(((p.reserved_kind.get() as u8) << 5) | f(p.preset_kind, 5, "mae_groupPresetKind")?);
     out.push(
-        ((p.reserved_conditions.get() as u8) << 4)
-            | n(p.conditions.len() - 1, 4, "mae_numGroupPresetConditions")?,
+        ((p.reserved_id.get() as u8) << MID_BIT_SHIFT)
+            | f(p.preset_id, WIDTH_5, "mae_groupPresetID")?,
+    );
+    out.push(
+        ((p.reserved_kind.get() as u8) << MID_BIT_SHIFT)
+            | f(p.preset_kind, WIDTH_5, "mae_groupPresetKind")?,
+    );
+    out.push(
+        ((p.reserved_conditions.get() as u8) << LOWER_BIT_SHIFT)
+            | n(
+                p.conditions.len() - 1,
+                WIDTH_4,
+                "mae_numGroupPresetConditions",
+            )?,
     );
     for c in &p.conditions {
-        out.push((f(c.group_id, 7, "mae_groupPresetGroupID")? << 1) | u8::from(c.detail.is_some()));
+        out.push(
+            (f(c.group_id, WIDTH_7, "mae_groupPresetGroupID")? << LEAST_BIT_SHIFT)
+                | u8::from(c.detail.is_some()),
+        );
         if let Some(d) = &c.detail {
             out.push(
-                ((d.reserved.get() as u8) << 4)
-                    | (u8::from(d.disable_gain_interactivity) << 3)
-                    | (u8::from(d.gain.is_some()) << 2)
-                    | (u8::from(d.disable_position_interactivity) << 1)
+                ((d.reserved.get() as u8) << LOWER_BIT_SHIFT)
+                    | (u8::from(d.disable_gain_interactivity) << LOW_BIT_SHIFT)
+                    | (u8::from(d.gain.is_some()) << SUB_LOW_BIT_SHIFT)
+                    | (u8::from(d.disable_position_interactivity) << LEAST_BIT_SHIFT)
                     | u8::from(d.position.is_some()),
             );
             if let Some(g) = d.gain {
@@ -861,12 +967,12 @@ fn write_preset(p: &GroupPreset, out: &mut Vec<u8>) -> Result<()> {
             if let Some(pos) = &d.position {
                 out.push(pos.az_offset);
                 out.push(
-                    ((pos.reserved_el.get() as u8) << 6)
-                        | f(pos.el_offset, 6, "mae_groupPresetElOffset")?,
+                    ((pos.reserved_el.get() as u8) << UPPER_BIT_SHIFT)
+                        | f(pos.el_offset, WIDTH_6, "mae_groupPresetElOffset")?,
                 );
                 out.push(
-                    ((pos.reserved_dist.get() as u8) << 4)
-                        | f(pos.dist_factor, 4, "mae_groupPresetDistFactor")?,
+                    ((pos.reserved_dist.get() as u8) << LOWER_BIT_SHIFT)
+                        | f(pos.dist_factor, WIDTH_4, "mae_groupPresetDistFactor")?,
                 );
             }
         }
@@ -896,20 +1002,20 @@ pub struct TextLabelEntry {
 #[non_exhaustive]
 pub struct TextLabelLanguage {
     /// `descriptionLanguage` (24 bits, ISO 639-2 characters).
-    pub language: [u8; 3],
+    pub language: [u8; LANGUAGE_CODE_LEN],
     /// `reserved(1)` before `numGroupDescriptions`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_groups: ReservedOnes<1>,
+    pub reserved_groups: ReservedOnes<WIDTH_1>,
     /// Group descriptions (`numGroupDescriptions`, 7 bits).
     pub groups: Vec<TextLabelEntry>,
     /// `reserved(3)` before `numSwitchGroupDescriptions`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_switch_groups: ReservedOnes<3>,
+    pub reserved_switch_groups: ReservedOnes<WIDTH_3>,
     /// Switch-group descriptions (`numSwitchGroupDescriptions`, 5 bits).
     pub switch_groups: Vec<TextLabelEntry>,
     /// `reserved(3)` before `numGroupPresetsDescriptions`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_presets: ReservedOnes<3>,
+    pub reserved_presets: ReservedOnes<WIDTH_3>,
     /// Group-preset descriptions (`numGroupPresetsDescriptions`, 5 bits).
     pub presets: Vec<TextLabelEntry>,
 }
@@ -923,7 +1029,7 @@ pub struct MpegH3dAudioTextLabel {
     pub scene_info_id: u8,
     /// `reserved(4)` before `numDescLanguages`, default 15.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<4>,
+    pub reserved: ReservedOnes<WIDTH_4>,
     /// Languages (`numDescLanguages`, 4 bits).
     pub languages: Vec<TextLabelLanguage>,
     /// Trailing `reserved(8)` bytes, verbatim.
@@ -952,7 +1058,9 @@ fn write_entries(
     out: &mut Vec<u8>,
 ) -> Result<()> {
     for e in entries {
-        out.push((f(e.reserved, 8 - id_bits, "reserved")? << id_bits) | f(e.id, id_bits, id_name)?);
+        out.push(
+            (f(e.reserved, WIDTH_8 - id_bits, "reserved")? << id_bits) | f(e.id, id_bits, id_name)?,
+        );
         out.push(fit_u8(e.data.len(), len_name)?);
         out.extend_from_slice(&e.data);
     }
@@ -963,30 +1071,30 @@ impl MpegH3dAudioTextLabel {
     pub(crate) fn parse(r: &mut Reader<'_>) -> Result<Self> {
         let scene_info_id = r.u8()?;
         let b = r.u8()?;
-        let langs = usize::from(b & 0x0F);
+        let langs = usize::from(b & LOW_4_BITS);
         let mut languages = Vec::with_capacity(langs);
         for _ in 0..langs {
-            let l = r.take(3)?;
-            let language = [l[0], l[1], l[2]];
+            let l = r.take(LANGUAGE_CODE_LEN)?;
+            let language: [u8; LANGUAGE_CODE_LEN] = l.try_into().unwrap_or_default();
             let g = r.u8()?;
-            let groups = parse_entries(r, usize::from(g & 0x7F), 7)?;
+            let groups = parse_entries(r, usize::from(g & LOW_7_BITS), WIDTH_7)?;
             let s = r.u8()?;
-            let switch_groups = parse_entries(r, usize::from(s & 0x1F), 5)?;
+            let switch_groups = parse_entries(r, usize::from(s & LOW_5_BITS), WIDTH_5)?;
             let p = r.u8()?;
-            let presets = parse_entries(r, usize::from(p & 0x1F), 5)?;
+            let presets = parse_entries(r, usize::from(p & LOW_5_BITS), WIDTH_5)?;
             languages.push(TextLabelLanguage {
                 language,
-                reserved_groups: ReservedOnes::from_bits(u64::from(g >> 7)),
+                reserved_groups: ReservedOnes::from_bits(u64::from(g >> HIGH_BIT_SHIFT)),
                 groups,
-                reserved_switch_groups: ReservedOnes::from_bits(u64::from(s >> 5)),
+                reserved_switch_groups: ReservedOnes::from_bits(u64::from(s >> MID_BIT_SHIFT)),
                 switch_groups,
-                reserved_presets: ReservedOnes::from_bits(u64::from(p >> 5)),
+                reserved_presets: ReservedOnes::from_bits(u64::from(p >> MID_BIT_SHIFT)),
                 presets,
             });
         }
         Ok(Self {
             scene_info_id,
-            reserved: ReservedOnes::from_bits(u64::from(b >> 4)),
+            reserved: ReservedOnes::from_bits(u64::from(b >> LOWER_BIT_SHIFT)),
             languages,
             trailing: r.rest().to_vec(),
         })
@@ -995,39 +1103,40 @@ impl MpegH3dAudioTextLabel {
     pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<()> {
         out.push(self.scene_info_id);
         out.push(
-            ((self.reserved.get() as u8) << 4) | n(self.languages.len(), 4, "numDescLanguages")?,
+            ((self.reserved.get() as u8) << LOWER_BIT_SHIFT)
+                | n(self.languages.len(), WIDTH_4, "numDescLanguages")?,
         );
         for l in &self.languages {
             out.extend_from_slice(&l.language);
             out.push(
-                ((l.reserved_groups.get() as u8) << 7)
-                    | n(l.groups.len(), 7, "numGroupDescriptions")?,
+                ((l.reserved_groups.get() as u8) << HIGH_BIT_SHIFT)
+                    | n(l.groups.len(), WIDTH_7, "numGroupDescriptions")?,
             );
             write_entries(
                 &l.groups,
-                7,
+                WIDTH_7,
                 "mae_descriptionGroupID",
                 "groupDescriptionDataLength",
                 out,
             )?;
             out.push(
-                ((l.reserved_switch_groups.get() as u8) << 5)
-                    | n(l.switch_groups.len(), 5, "numSwitchGroupDescriptions")?,
+                ((l.reserved_switch_groups.get() as u8) << MID_BIT_SHIFT)
+                    | n(l.switch_groups.len(), WIDTH_5, "numSwitchGroupDescriptions")?,
             );
             write_entries(
                 &l.switch_groups,
-                5,
+                WIDTH_5,
                 "mae_descriptionSwitchGroupID",
                 "switchGroupDescriptionDataLength",
                 out,
             )?;
             out.push(
-                ((l.reserved_presets.get() as u8) << 5)
-                    | n(l.presets.len(), 5, "numGroupPresetsDescriptions")?,
+                ((l.reserved_presets.get() as u8) << MID_BIT_SHIFT)
+                    | n(l.presets.len(), WIDTH_5, "numGroupPresetsDescriptions")?,
             );
             write_entries(
                 &l.presets,
-                5,
+                WIDTH_5,
                 "mae_descriptionGroupPresetID",
                 "groupPresetDescriptionDataLength",
                 out,
@@ -1071,12 +1180,12 @@ pub struct AuxiliaryLocation {
 pub struct MultiStreamMain {
     /// `reserved(1)` before `numAuxiliaryStreams`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_aux: ReservedOnes<1>,
+    pub reserved_aux: ReservedOnes<WIDTH_1>,
     /// `numAuxiliaryStreams` (7).
     pub num_auxiliary_streams: u8,
     /// `reserved(1)` before `mae_numGroups`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_groups: ReservedOnes<1>,
+    pub reserved_groups: ReservedOnes<WIDTH_1>,
     /// Groups (`mae_numGroups`, 7 bits).
     pub groups: Vec<MultiStreamGroup>,
 }
@@ -1097,10 +1206,10 @@ pub struct MpegH3dAudioMultiStream {
 impl MpegH3dAudioMultiStream {
     pub(crate) fn parse(r: &mut Reader<'_>) -> Result<Self> {
         let b0 = r.u8()?;
-        let main = if b0 & 0x80 != 0 {
+        let main = if b0 & HIGH_BIT_MASK != 0 {
             let a = r.u8()?;
             let g = r.u8()?;
-            let count = usize::from(g & 0x7F);
+            let count = usize::from(g & LOW_7_BITS);
             let mut groups = Vec::with_capacity(count);
             for _ in 0..count {
                 let e = r.u8()?;
@@ -1110,41 +1219,45 @@ impl MpegH3dAudioMultiStream {
                 } else {
                     let x = r.u8()?;
                     Some(AuxiliaryLocation {
-                        is_in_ts: x & 0x80 != 0,
-                        auxiliary_stream_id: x & 0x7F,
+                        is_in_ts: x & HIGH_BIT_MASK != 0,
+                        auxiliary_stream_id: x & LOW_7_BITS,
                     })
                 };
                 groups.push(MultiStreamGroup {
-                    group_id: e >> 1,
+                    group_id: e >> LEAST_BIT_SHIFT,
                     is_in_main_stream: in_main,
                     auxiliary,
                 });
             }
             Some(MultiStreamMain {
-                reserved_aux: ReservedOnes::from_bits(u64::from(a >> 7)),
-                num_auxiliary_streams: a & 0x7F,
-                reserved_groups: ReservedOnes::from_bits(u64::from(g >> 7)),
+                reserved_aux: ReservedOnes::from_bits(u64::from(a >> HIGH_BIT_SHIFT)),
+                num_auxiliary_streams: a & LOW_7_BITS,
+                reserved_groups: ReservedOnes::from_bits(u64::from(g >> HIGH_BIT_SHIFT)),
                 groups,
             })
         } else {
             None
         };
         Ok(Self {
-            this_stream_id: b0 & 0x7F,
+            this_stream_id: b0 & LOW_7_BITS,
             main,
             trailing: r.rest().to_vec(),
         })
     }
 
     pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<()> {
-        out.push((u8::from(self.main.is_some()) << 7) | f(self.this_stream_id, 7, "thisStreamID")?);
+        out.push(
+            (u8::from(self.main.is_some()) << HIGH_BIT_SHIFT)
+                | f(self.this_stream_id, WIDTH_7, "thisStreamID")?,
+        );
         if let Some(m) = &self.main {
             out.push(
-                ((m.reserved_aux.get() as u8) << 7)
-                    | f(m.num_auxiliary_streams, 7, "numAuxiliaryStreams")?,
+                ((m.reserved_aux.get() as u8) << HIGH_BIT_SHIFT)
+                    | f(m.num_auxiliary_streams, WIDTH_7, "numAuxiliaryStreams")?,
             );
             out.push(
-                ((m.reserved_groups.get() as u8) << 7) | n(m.groups.len(), 7, "mae_numGroups")?,
+                ((m.reserved_groups.get() as u8) << HIGH_BIT_SHIFT)
+                    | n(m.groups.len(), WIDTH_7, "mae_numGroups")?,
             );
             for g in &m.groups {
                 if g.is_in_main_stream != g.auxiliary.is_none() {
@@ -1153,11 +1266,14 @@ impl MpegH3dAudioMultiStream {
                         reason: "multi-stream group: auxiliary location must be present iff isInMainStream == 0",
                     });
                 }
-                out.push((f(g.group_id, 7, "mae_groupID")? << 1) | u8::from(g.is_in_main_stream));
+                out.push(
+                    (f(g.group_id, WIDTH_7, "mae_groupID")? << LEAST_BIT_SHIFT)
+                        | u8::from(g.is_in_main_stream),
+                );
                 if let Some(a) = &g.auxiliary {
                     out.push(
-                        (u8::from(a.is_in_ts) << 7)
-                            | f(a.auxiliary_stream_id, 7, "auxiliaryStreamID")?,
+                        (u8::from(a.is_in_ts) << HIGH_BIT_SHIFT)
+                            | f(a.auxiliary_stream_id, WIDTH_7, "auxiliaryStreamID")?,
                     );
                 }
             }
@@ -1183,14 +1299,14 @@ pub enum DrcScope {
         /// The 2-bit type value.
         kind: u8,
         /// `reserved(1)`, default 1.
-        reserved: ReservedOnes<1>,
+        reserved: ReservedOnes<WIDTH_1>,
         /// `mae_groupID` (7).
         group_id: u8,
     },
     /// An `mae_groupPresetID` follows (type 3); carries the `reserved(3)` bits and the 5-bit ID.
     Preset {
         /// `reserved(3)`, default 7.
-        reserved: ReservedOnes<3>,
+        reserved: ReservedOnes<WIDTH_3>,
         /// `mae_groupPresetID` (5).
         preset_id: u8,
     },
@@ -1216,22 +1332,22 @@ broadcast_common::impl_spec_display!(DrcScope);
 pub struct DrcInstructions {
     /// `reserved(6)` before `drcInstructionsType`, default 63.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_type: ReservedOnes<6>,
+    pub reserved_type: ReservedOnes<WIDTH_6>,
     /// Type and its dependent ID (`drcInstructionsType` 0/1 plain, 2 group, 3 preset).
     pub scope: DrcScope,
     /// `reserved(2)` before `drcSetId`, default 3.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_set: ReservedOnes<2>,
+    pub reserved_set: ReservedOnes<WIDTH_2>,
     /// `drcSetId` (6).
     pub drc_set_id: u8,
     /// `reserved(1)` before `downmixId`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_downmix: ReservedOnes<1>,
+    pub reserved_downmix: ReservedOnes<WIDTH_1>,
     /// `downmixId` (7).
     pub downmix_id: u8,
     /// `reserved(3)` before `additionalDownmixIdCount`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_additional: ReservedOnes<3>,
+    pub reserved_additional: ReservedOnes<WIDTH_3>,
     /// `additionalDownmixId` list (count: 3 bits); each `(reserved(1), id(7))`.
     pub additional_downmix_ids: Vec<(u8, u8)>,
     /// `drcSetEffect` (16).
@@ -1249,14 +1365,14 @@ pub struct DrcInstructions {
 pub struct DrcTargetLoudness {
     /// `reserved(1)` before `bsDrcSetTargetLoudnessValueUpper`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_upper: ReservedOnes<1>,
+    pub reserved_upper: ReservedOnes<WIDTH_1>,
     /// `bsDrcSetTargetLoudnessValueUpper` (6).
     pub upper: u8,
     /// `(reserved(2), bsDrcSetTargetLoudnessValueLower(6))` iff `drcSetTargetLoudnessValueLowerPresent`.
     pub lower: Option<(u8, u8)>,
     /// `reserved(1)` before `dependsOnDrcSet`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_depends: ReservedOnes<1>,
+    pub reserved_depends: ReservedOnes<WIDTH_1>,
     /// `dependsOnDrcSet` (6).
     pub depends_on_drc_set: u8,
     /// `noIndependentUse` when `dependsOnDrcSet == 0`; otherwise the `reserved(1)` bit.
@@ -1270,7 +1386,7 @@ pub struct DrcTargetLoudness {
 pub struct LoudnessInfoEntry {
     /// `reserved(6)` before `loudnessInfoType`, default 63.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_type: ReservedOnes<6>,
+    pub reserved_type: ReservedOnes<WIDTH_6>,
     /// Type and its dependent ID (`loudnessInfoType` 0 plain, 1/2 group, 3 preset).
     pub scope: DrcScope,
     /// The `loudnessInfo()` structure (ISO/IEC 23003-4), `loudnessInfo_size` bytes, opaque.
@@ -1284,7 +1400,7 @@ pub struct LoudnessInfoEntry {
 pub struct DownmixDefinition {
     /// `reserved(1)`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<1>,
+    pub reserved: ReservedOnes<WIDTH_1>,
     /// `downmixId` (7).
     pub downmix_id: u8,
     /// `downmixType` (2).
@@ -1300,13 +1416,13 @@ pub struct DownmixDefinition {
 pub struct DrcLoudnessInfo {
     /// `reserved(2)` before `drcInstructionsUniDrcCount`, default 3.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_drc: ReservedOnes<2>,
+    pub reserved_drc: ReservedOnes<WIDTH_2>,
     /// `reserved(2)` before `loudnessInfoCount`, default 3.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_loudness: ReservedOnes<2>,
+    pub reserved_loudness: ReservedOnes<WIDTH_2>,
     /// `reserved(3)` before `downmixIdCount`, default 7.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_downmix: ReservedOnes<3>,
+    pub reserved_downmix: ReservedOnes<WIDTH_3>,
     /// DRC instructions (`drcInstructionsUniDrcCount`, 6 bits).
     pub drc_instructions: Vec<DrcInstructions>,
     /// Loudness info blocks (`loudnessInfoCount`, 6 bits).
@@ -1322,7 +1438,7 @@ pub struct DrcLoudnessInfo {
 pub struct MpegH3dAudioDrcLoudness {
     /// `reserved(7)` before `mpegh3daDrcAndLoudnessInfoPresent`, default 127.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<7>,
+    pub reserved: ReservedOnes<WIDTH_7>,
     /// Present iff `mpegh3daDrcAndLoudnessInfoPresent == 1`.
     pub info: Option<DrcLoudnessInfo>,
     /// Trailing `reserved(8)` bytes, verbatim.
@@ -1337,14 +1453,14 @@ fn parse_scope(r: &mut Reader<'_>, kind: u8, group_types: &[u8]) -> Result<DrcSc
         let b = r.u8()?;
         Ok(DrcScope::Group {
             kind,
-            reserved: ReservedOnes::from_bits(u64::from(b >> 7)),
-            group_id: b & 0x7F,
+            reserved: ReservedOnes::from_bits(u64::from(b >> HIGH_BIT_SHIFT)),
+            group_id: b & LOW_7_BITS,
         })
-    } else if kind == 3 {
+    } else if kind == PRESET_SCOPE_TYPE {
         let b = r.u8()?;
         Ok(DrcScope::Preset {
-            reserved: ReservedOnes::from_bits(u64::from(b >> 5)),
-            preset_id: b & 0x1F,
+            reserved: ReservedOnes::from_bits(u64::from(b >> MID_BIT_SHIFT)),
+            preset_id: b & LOW_5_BITS,
         })
     } else {
         Ok(DrcScope::Plain(kind))
@@ -1356,8 +1472,8 @@ fn parse_scope(r: &mut Reader<'_>, kind: u8, group_types: &[u8]) -> Result<DrcSc
 fn write_scope(s: &DrcScope, group_types: &[u8], out_tail: &mut Vec<u8>) -> Result<u8> {
     match *s {
         DrcScope::Plain(k) => {
-            f(k, 2, "type")?;
-            if group_types.contains(&k) || k == 3 {
+            f(k, WIDTH_2, "type")?;
+            if group_types.contains(&k) || k == PRESET_SCOPE_TYPE {
                 return Err(Error::InvalidDescriptor {
                     tag: super::mpeg2_extension::TAG,
                     reason: "DrcScope::Plain used with a type that requires an ID",
@@ -1376,15 +1492,20 @@ fn write_scope(s: &DrcScope, group_types: &[u8], out_tail: &mut Vec<u8>) -> Resu
                     reason: "DrcScope::Group type does not carry an mae_groupID here",
                 });
             }
-            out_tail.push(((reserved.get() as u8) << 7) | f(group_id, 7, "mae_groupID")?);
+            out_tail.push(
+                ((reserved.get() as u8) << HIGH_BIT_SHIFT) | f(group_id, WIDTH_7, "mae_groupID")?,
+            );
             Ok(kind)
         }
         DrcScope::Preset {
             reserved,
             preset_id,
         } => {
-            out_tail.push(((reserved.get() as u8) << 5) | f(preset_id, 5, "mae_groupPresetID")?);
-            Ok(3)
+            out_tail.push(
+                ((reserved.get() as u8) << MID_BIT_SHIFT)
+                    | f(preset_id, WIDTH_5, "mae_groupPresetID")?,
+            );
+            Ok(PRESET_SCOPE_TYPE)
         }
     }
 }
@@ -1400,35 +1521,35 @@ impl MpegH3dAudioDrcLoudness {
             let l = r.u8()?;
             let d = r.u8()?;
             let mut drc_instructions = Vec::new();
-            for _ in 0..(a & 0x3F) {
+            for _ in 0..(a & LOW_6_BITS) {
                 drc_instructions.push(parse_drc_instructions(r)?);
             }
             let mut loudness_infos = Vec::new();
-            for _ in 0..(l & 0x3F) {
+            for _ in 0..(l & LOW_6_BITS) {
                 let t = r.u8()?;
-                let scope = parse_scope(r, t & 0x03, LOUDNESS_GROUP_TYPES)?;
+                let scope = parse_scope(r, t & LOW_2_BITS, LOUDNESS_GROUP_TYPES)?;
                 let size = usize::from(r.u8()?);
                 loudness_infos.push(LoudnessInfoEntry {
-                    reserved_type: ReservedOnes::from_bits(u64::from(t >> 2)),
+                    reserved_type: ReservedOnes::from_bits(u64::from(t >> SUB_LOW_BIT_SHIFT)),
                     scope,
                     loudness_info: r.take(size)?.to_vec(),
                 });
             }
             let mut downmix_definitions = Vec::new();
-            for _ in 0..(d & 0x1F) {
+            for _ in 0..(d & LOW_5_BITS) {
                 let x = r.u8()?;
                 let y = r.u8()?;
                 downmix_definitions.push(DownmixDefinition {
-                    reserved: ReservedOnes::from_bits(u64::from(x >> 7)),
-                    downmix_id: x & 0x7F,
-                    downmix_type: y >> 6,
-                    cicp_speaker_layout_idx: y & 0x3F,
+                    reserved: ReservedOnes::from_bits(u64::from(x >> HIGH_BIT_SHIFT)),
+                    downmix_id: x & LOW_7_BITS,
+                    downmix_type: y >> UPPER_BIT_SHIFT,
+                    cicp_speaker_layout_idx: y & LOW_6_BITS,
                 });
             }
             Some(DrcLoudnessInfo {
-                reserved_drc: ReservedOnes::from_bits(u64::from(a >> 6)),
-                reserved_loudness: ReservedOnes::from_bits(u64::from(l >> 6)),
-                reserved_downmix: ReservedOnes::from_bits(u64::from(d >> 5)),
+                reserved_drc: ReservedOnes::from_bits(u64::from(a >> UPPER_BIT_SHIFT)),
+                reserved_loudness: ReservedOnes::from_bits(u64::from(l >> UPPER_BIT_SHIFT)),
+                reserved_downmix: ReservedOnes::from_bits(u64::from(d >> MID_BIT_SHIFT)),
                 drc_instructions,
                 loudness_infos,
                 downmix_definitions,
@@ -1437,26 +1558,30 @@ impl MpegH3dAudioDrcLoudness {
             None
         };
         Ok(Self {
-            reserved: ReservedOnes::from_bits(u64::from(b0 >> 1)),
+            reserved: ReservedOnes::from_bits(u64::from(b0 >> LEAST_BIT_SHIFT)),
             info,
             trailing: r.rest().to_vec(),
         })
     }
 
     pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<()> {
-        out.push(((self.reserved.get() as u8) << 1) | u8::from(self.info.is_some()));
+        out.push(((self.reserved.get() as u8) << LEAST_BIT_SHIFT) | u8::from(self.info.is_some()));
         if let Some(i) = &self.info {
             out.push(
-                ((i.reserved_drc.get() as u8) << 6)
-                    | n(i.drc_instructions.len(), 6, "drcInstructionsUniDrcCount")?,
+                ((i.reserved_drc.get() as u8) << UPPER_BIT_SHIFT)
+                    | n(
+                        i.drc_instructions.len(),
+                        WIDTH_6,
+                        "drcInstructionsUniDrcCount",
+                    )?,
             );
             out.push(
-                ((i.reserved_loudness.get() as u8) << 6)
-                    | n(i.loudness_infos.len(), 6, "loudnessInfoCount")?,
+                ((i.reserved_loudness.get() as u8) << UPPER_BIT_SHIFT)
+                    | n(i.loudness_infos.len(), WIDTH_6, "loudnessInfoCount")?,
             );
             out.push(
-                ((i.reserved_downmix.get() as u8) << 5)
-                    | n(i.downmix_definitions.len(), 5, "downmixIdCount")?,
+                ((i.reserved_downmix.get() as u8) << MID_BIT_SHIFT)
+                    | n(i.downmix_definitions.len(), WIDTH_5, "downmixIdCount")?,
             );
             for d in &i.drc_instructions {
                 write_drc_instructions(d, out)?;
@@ -1464,16 +1589,19 @@ impl MpegH3dAudioDrcLoudness {
             for e in &i.loudness_infos {
                 let mut tail = Vec::new();
                 let kind = write_scope(&e.scope, LOUDNESS_GROUP_TYPES, &mut tail)?;
-                out.push(((e.reserved_type.get() as u8) << 2) | kind);
+                out.push(((e.reserved_type.get() as u8) << SUB_LOW_BIT_SHIFT) | kind);
                 out.extend_from_slice(&tail);
                 out.push(fit_u8(e.loudness_info.len(), "loudnessInfo_size")?);
                 out.extend_from_slice(&e.loudness_info);
             }
             for m in &i.downmix_definitions {
-                out.push(((m.reserved.get() as u8) << 7) | f(m.downmix_id, 7, "downmixId")?);
                 out.push(
-                    (f(m.downmix_type, 2, "downmixType")? << 6)
-                        | f(m.cicp_speaker_layout_idx, 6, "CICPspeakerLayoutIdx")?,
+                    ((m.reserved.get() as u8) << HIGH_BIT_SHIFT)
+                        | f(m.downmix_id, WIDTH_7, "downmixId")?,
+                );
+                out.push(
+                    (f(m.downmix_type, WIDTH_2, "downmixType")? << UPPER_BIT_SHIFT)
+                        | f(m.cicp_speaker_layout_idx, WIDTH_6, "CICPspeakerLayoutIdx")?,
                 );
             }
         }
@@ -1484,15 +1612,15 @@ impl MpegH3dAudioDrcLoudness {
 
 fn parse_drc_instructions(r: &mut Reader<'_>) -> Result<DrcInstructions> {
     let t = r.u8()?;
-    let scope = parse_scope(r, t & 0x03, DRC_GROUP_TYPES)?;
+    let scope = parse_scope(r, t & LOW_2_BITS, DRC_GROUP_TYPES)?;
     let s = r.u8()?;
     let dm = r.u8()?;
     let c = r.u8()?;
-    let (limiter_present, loud_present) = (c & 0x02 != 0, c & 0x01 != 0);
+    let (limiter_present, loud_present) = (c & LEAST_BIT_MASK != 0, c & LOW_1_BITS != 0);
     let mut additional_downmix_ids = Vec::new();
-    for _ in 0..((c >> 2) & 0x07) {
+    for _ in 0..((c >> SUB_LOW_BIT_SHIFT) & LOW_3_BITS) {
         let x = r.u8()?;
-        additional_downmix_ids.push((x >> 7, x & 0x7F));
+        additional_downmix_ids.push((x >> HIGH_BIT_SHIFT, x & LOW_7_BITS));
     }
     let hi = r.u8()?;
     let lo = r.u8()?;
@@ -1501,30 +1629,30 @@ fn parse_drc_instructions(r: &mut Reader<'_>) -> Result<DrcInstructions> {
         let u = r.u8()?;
         let lower = if u & 1 != 0 {
             let x = r.u8()?;
-            Some((x >> 6, x & 0x3F))
+            Some((x >> UPPER_BIT_SHIFT, x & LOW_6_BITS))
         } else {
             None
         };
         let dep = r.u8()?;
         Some(DrcTargetLoudness {
-            reserved_upper: ReservedOnes::from_bits(u64::from(u >> 7)),
-            upper: (u >> 1) & 0x3F,
+            reserved_upper: ReservedOnes::from_bits(u64::from(u >> HIGH_BIT_SHIFT)),
+            upper: (u >> LEAST_BIT_SHIFT) & LOW_6_BITS,
             lower,
-            reserved_depends: ReservedOnes::from_bits(u64::from(dep >> 7)),
-            depends_on_drc_set: (dep >> 1) & 0x3F,
+            reserved_depends: ReservedOnes::from_bits(u64::from(dep >> HIGH_BIT_SHIFT)),
+            depends_on_drc_set: (dep >> LEAST_BIT_SHIFT) & LOW_6_BITS,
             no_independent_use_or_reserved: dep & 1,
         })
     } else {
         None
     };
     Ok(DrcInstructions {
-        reserved_type: ReservedOnes::from_bits(u64::from(t >> 2)),
+        reserved_type: ReservedOnes::from_bits(u64::from(t >> SUB_LOW_BIT_SHIFT)),
         scope,
-        reserved_set: ReservedOnes::from_bits(u64::from(s >> 6)),
-        drc_set_id: s & 0x3F,
-        reserved_downmix: ReservedOnes::from_bits(u64::from(dm >> 7)),
-        downmix_id: dm & 0x7F,
-        reserved_additional: ReservedOnes::from_bits(u64::from(c >> 5)),
+        reserved_set: ReservedOnes::from_bits(u64::from(s >> UPPER_BIT_SHIFT)),
+        drc_set_id: s & LOW_6_BITS,
+        reserved_downmix: ReservedOnes::from_bits(u64::from(dm >> HIGH_BIT_SHIFT)),
+        downmix_id: dm & LOW_7_BITS,
+        reserved_additional: ReservedOnes::from_bits(u64::from(c >> MID_BIT_SHIFT)),
         additional_downmix_ids,
         drc_set_effect: u16::from_be_bytes([hi, lo]),
         limiter_peak_target,
@@ -1535,22 +1663,30 @@ fn parse_drc_instructions(r: &mut Reader<'_>) -> Result<DrcInstructions> {
 fn write_drc_instructions(d: &DrcInstructions, out: &mut Vec<u8>) -> Result<()> {
     let mut tail = Vec::new();
     let kind = write_scope(&d.scope, DRC_GROUP_TYPES, &mut tail)?;
-    out.push(((d.reserved_type.get() as u8) << 2) | kind);
+    out.push(((d.reserved_type.get() as u8) << SUB_LOW_BIT_SHIFT) | kind);
     out.extend_from_slice(&tail);
-    out.push(((d.reserved_set.get() as u8) << 6) | f(d.drc_set_id, 6, "drcSetId")?);
-    out.push(((d.reserved_downmix.get() as u8) << 7) | f(d.downmix_id, 7, "downmixId")?);
     out.push(
-        ((d.reserved_additional.get() as u8) << 5)
+        ((d.reserved_set.get() as u8) << UPPER_BIT_SHIFT) | f(d.drc_set_id, WIDTH_6, "drcSetId")?,
+    );
+    out.push(
+        ((d.reserved_downmix.get() as u8) << HIGH_BIT_SHIFT)
+            | f(d.downmix_id, WIDTH_7, "downmixId")?,
+    );
+    out.push(
+        ((d.reserved_additional.get() as u8) << MID_BIT_SHIFT)
             | (n(
                 d.additional_downmix_ids.len(),
-                3,
+                WIDTH_3,
                 "additionalDownmixIdCount",
-            )? << 2)
-            | (u8::from(d.limiter_peak_target.is_some()) << 1)
+            )? << SUB_LOW_BIT_SHIFT)
+            | (u8::from(d.limiter_peak_target.is_some()) << LEAST_BIT_SHIFT)
             | u8::from(d.target_loudness.is_some()),
     );
     for &(res, id) in &d.additional_downmix_ids {
-        out.push((f(res, 1, "reserved")? << 7) | f(id, 7, "additionalDownmixId")?);
+        out.push(
+            (f(res, WIDTH_1, "reserved")? << HIGH_BIT_SHIFT)
+                | f(id, WIDTH_7, "additionalDownmixId")?,
+        );
     }
     out.extend_from_slice(&d.drc_set_effect.to_be_bytes());
     if let Some(p) = d.limiter_peak_target {
@@ -1558,19 +1694,24 @@ fn write_drc_instructions(d: &DrcInstructions, out: &mut Vec<u8>) -> Result<()> 
     }
     if let Some(t) = &d.target_loudness {
         out.push(
-            ((t.reserved_upper.get() as u8) << 7)
-                | (f(t.upper, 6, "bsDrcSetTargetLoudnessValueUpper")? << 1)
+            ((t.reserved_upper.get() as u8) << HIGH_BIT_SHIFT)
+                | (f(t.upper, WIDTH_6, "bsDrcSetTargetLoudnessValueUpper")? << LEAST_BIT_SHIFT)
                 | u8::from(t.lower.is_some()),
         );
         if let Some((res, lower)) = t.lower {
             out.push(
-                (f(res, 2, "reserved")? << 6) | f(lower, 6, "bsDrcSetTargetLoudnessValueLower")?,
+                (f(res, WIDTH_2, "reserved")? << UPPER_BIT_SHIFT)
+                    | f(lower, WIDTH_6, "bsDrcSetTargetLoudnessValueLower")?,
             );
         }
         out.push(
-            ((t.reserved_depends.get() as u8) << 7)
-                | (f(t.depends_on_drc_set, 6, "dependsOnDrcSet")? << 1)
-                | f(t.no_independent_use_or_reserved, 1, "noIndependentUse")?,
+            ((t.reserved_depends.get() as u8) << HIGH_BIT_SHIFT)
+                | (f(t.depends_on_drc_set, WIDTH_6, "dependsOnDrcSet")? << LEAST_BIT_SHIFT)
+                | f(
+                    t.no_independent_use_or_reserved,
+                    WIDTH_1,
+                    "noIndependentUse",
+                )?,
         );
     }
     Ok(())
@@ -1676,7 +1817,7 @@ impl TextLabelEntry {
     #[must_use]
     pub fn group(id: u8, data: Vec<u8>) -> Self {
         Self {
-            reserved: 0x01,
+            reserved: LOW_1_BITS,
             id,
             data,
         }
@@ -1686,7 +1827,7 @@ impl TextLabelEntry {
     #[must_use]
     pub fn switch_group_or_preset(id: u8, data: Vec<u8>) -> Self {
         Self {
-            reserved: 0x07,
+            reserved: LOW_3_BITS,
             id,
             data,
         }
