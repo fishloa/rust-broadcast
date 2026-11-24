@@ -118,8 +118,8 @@ impl HEVCDecoderConfigurationRecord {
             general_constraint_indicator_flags: self.general_constraint_indicator_flags,
             general_level_idc: self.general_level_idc,
             chroma_format_idc: self.chroma_format_idc,
-            bit_depth_luma: self.bit_depth_luma_minus8 + 8,
-            bit_depth_chroma: self.bit_depth_chroma_minus8 + 8,
+            bit_depth_luma: self.bit_depth_luma_minus8 + BIT_DEPTH_OFFSET,
+            bit_depth_chroma: self.bit_depth_chroma_minus8 + BIT_DEPTH_OFFSET,
             width: 0,
             height: 0,
             num_units_in_tick: None,
@@ -135,6 +135,56 @@ const ARRAY_MIN_LEN: usize = 3;
 /// Smallest encoded NAL unit entry: its 16-bit `nalUnitLength`.
 const NALU_MIN_LEN: usize = 2;
 
+/// The fixed record fields before `numOfArrays` (ISO/IEC 14496-15:2017 §8.3.3.1.1).
+const RECORD_FIXED_HEADER_LEN: usize = 23;
+/// `general_constraint_indicator_flags` is a 48-bit field.
+const CONSTRAINT_FLAGS_LEN: usize = 6;
+/// `bit_depth_luma`/`bit_depth_chroma` are signalled as `*_minus8`.
+const BIT_DEPTH_OFFSET: u8 = 8;
+
+/// Bit layout of the `general_profile_space`/tier/`profile_idc` byte.
+const PROFILE_SPACE_SHIFT: u32 = 6;
+const PROFILE_SPACE_MASK: u8 = 0x03;
+const TIER_FLAG_SHIFT: u32 = 5;
+const TIER_FLAG_MASK: u8 = 0x01;
+const TIER_FLAG_BIT: u8 = 0x20;
+const PROFILE_IDC_MASK: u8 = 0x1F;
+/// Bit layout of the `min_spatial_segmentation_idc` word.
+const MIN_SPATIAL_SEGMENTATION_SHIFT: u32 = 12;
+const MIN_SPATIAL_SEGMENTATION_RESERVED_MASK: u16 = 0x0F;
+const MIN_SPATIAL_SEGMENTATION_RESERVED_BITS: u16 = 0xF000;
+const MIN_SPATIAL_SEGMENTATION_MASK: u16 = 0x0FFF;
+/// Bit layout of the `parallelismType` byte.
+const PARALLELISM_SHIFT: u32 = 2;
+const PARALLELISM_RESERVED_MASK: u8 = 0x3F;
+const PARALLELISM_RESERVED_BITS: u8 = 0xFC;
+const PARALLELISM_MASK: u8 = 0x03;
+/// Bit layout of the `chroma_format_idc` byte.
+const CHROMA_FORMAT_SHIFT: u32 = 2;
+const CHROMA_FORMAT_RESERVED_MASK: u8 = 0x3F;
+const CHROMA_FORMAT_RESERVED_BITS: u8 = 0xFC;
+const CHROMA_FORMAT_MASK: u8 = 0x03;
+/// Bit layout of the `bit_depth_*_minus8` bytes.
+const BIT_DEPTH_SHIFT: u32 = 3;
+const BIT_DEPTH_RESERVED_MASK: u8 = 0x1F;
+const BIT_DEPTH_RESERVED_BITS: u8 = 0xF8;
+const BIT_DEPTH_MASK: u8 = 0x07;
+/// Bit layout of the `constantFrameRate`/temporal/length-size byte.
+const CONSTANT_FRAME_RATE_SHIFT: u32 = 6;
+const CONSTANT_FRAME_RATE_MASK: u8 = 0x03;
+const NUM_TEMPORAL_LAYERS_SHIFT: u32 = 3;
+const NUM_TEMPORAL_LAYERS_MASK: u8 = 0x07;
+const TEMPORAL_ID_NESTED_SHIFT: u32 = 2;
+const TEMPORAL_ID_NESTED_MASK: u8 = 0x01;
+const TEMPORAL_ID_NESTED_BIT: u8 = 0x04;
+const LENGTH_SIZE_MASK: u8 = 0x03;
+/// Bit layout of a NAL array header byte.
+const ARRAY_COMPLETENESS_SHIFT: u32 = 7;
+const ARRAY_COMPLETENESS_BIT: u8 = 0x80;
+const ARRAY_RESERVED_SHIFT: u32 = 6;
+const ARRAY_RESERVED_MASK: u8 = 0x01;
+const NAL_UNIT_TYPE_MASK: u8 = 0x3F;
+
 impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
     type Error = Error;
 
@@ -146,9 +196,9 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
 
         // general_profile_space(2) + general_tier_flag(1) + general_profile_idc(5)
         let b1 = read_u8(bytes, &mut cursor, "general_profile_space/tier/idc")?;
-        let general_profile_space = (b1 >> 6) & 0x03;
-        let general_tier_flag = ((b1 >> 5) & 0x01) != 0;
-        let general_profile_idc = b1 & 0x1F;
+        let general_profile_space = (b1 >> PROFILE_SPACE_SHIFT) & PROFILE_SPACE_MASK;
+        let general_tier_flag = ((b1 >> TIER_FLAG_SHIFT) & TIER_FLAG_MASK) != 0;
+        let general_profile_idc = b1 & PROFILE_IDC_MASK;
 
         // general_profile_compatibility_flags (32)
         let general_profile_compatibility_flags =
@@ -163,38 +213,40 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
 
         // reserved(4) + min_spatial_segmentation_idc(12)
         let msid_bytes = read_u16(bytes, &mut cursor, "min_spatial_segmentation_idc")?;
-        let _reserved_msid = (msid_bytes >> 12) & 0x0F;
-        let min_spatial_segmentation_idc = msid_bytes & 0x0FFF;
+        let _reserved_msid =
+            (msid_bytes >> MIN_SPATIAL_SEGMENTATION_SHIFT) & MIN_SPATIAL_SEGMENTATION_RESERVED_MASK;
+        let min_spatial_segmentation_idc = msid_bytes & MIN_SPATIAL_SEGMENTATION_MASK;
 
         // reserved(6) + parallelismType(2)
         let b_pt = read_u8(bytes, &mut cursor, "parallelismType")?;
-        let _reserved_pt = (b_pt >> 2) & 0x3F;
-        let parallelism_type = b_pt & 0x03;
+        let _reserved_pt = (b_pt >> PARALLELISM_SHIFT) & PARALLELISM_RESERVED_MASK;
+        let parallelism_type = b_pt & PARALLELISM_MASK;
 
         // reserved(6) + chroma_format_idc(2)
         let b_cf = read_u8(bytes, &mut cursor, "chroma_format_idc")?;
-        let _reserved_cf = (b_cf >> 2) & 0x3F;
-        let chroma_format_idc = b_cf & 0x03;
+        let _reserved_cf = (b_cf >> CHROMA_FORMAT_SHIFT) & CHROMA_FORMAT_RESERVED_MASK;
+        let chroma_format_idc = b_cf & CHROMA_FORMAT_MASK;
 
         // reserved(5) + bit_depth_luma_minus8(3)
         let b_bdl = read_u8(bytes, &mut cursor, "bit_depth_luma_minus8")?;
-        let _reserved_bdl = (b_bdl >> 3) & 0x1F;
-        let bit_depth_luma_minus8 = b_bdl & 0x07;
+        let _reserved_bdl = (b_bdl >> BIT_DEPTH_SHIFT) & BIT_DEPTH_RESERVED_MASK;
+        let bit_depth_luma_minus8 = b_bdl & BIT_DEPTH_MASK;
 
         // reserved(5) + bit_depth_chroma_minus8(3)
         let b_bdc = read_u8(bytes, &mut cursor, "bit_depth_chroma_minus8")?;
-        let _reserved_bdc = (b_bdc >> 3) & 0x1F;
-        let bit_depth_chroma_minus8 = b_bdc & 0x07;
+        let _reserved_bdc = (b_bdc >> BIT_DEPTH_SHIFT) & BIT_DEPTH_RESERVED_MASK;
+        let bit_depth_chroma_minus8 = b_bdc & BIT_DEPTH_MASK;
 
         // avgFrameRate (16)
         let avg_frame_rate = read_u16(bytes, &mut cursor, "avgFrameRate")?;
 
         // constantFrameRate(2) + numTemporalLayers(3) + temporalIdNested(1) + lengthSizeMinusOne(2)
         let b_cfr = read_u8(bytes, &mut cursor, "constantFrameRate/temporal")?;
-        let constant_frame_rate = (b_cfr >> 6) & 0x03;
-        let num_temporal_layers = (b_cfr >> 3) & 0x07;
-        let temporal_id_nested = ((b_cfr >> 2) & 0x01) != 0;
-        let length_size_minus_one = b_cfr & 0x03;
+        let constant_frame_rate = (b_cfr >> CONSTANT_FRAME_RATE_SHIFT) & CONSTANT_FRAME_RATE_MASK;
+        let num_temporal_layers = (b_cfr >> NUM_TEMPORAL_LAYERS_SHIFT) & NUM_TEMPORAL_LAYERS_MASK;
+        let temporal_id_nested =
+            ((b_cfr >> TEMPORAL_ID_NESTED_SHIFT) & TEMPORAL_ID_NESTED_MASK) != 0;
+        let length_size_minus_one = b_cfr & LENGTH_SIZE_MASK;
         if !VALID_LENGTH_SIZES.contains(&length_size_minus_one) {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "lengthSizeMinusOne",
@@ -217,9 +269,9 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
         for _ in 0..num_arrays {
             // byte: array_completeness(1) + reserved(1)=0 + NAL_unit_type(6)
             let b_arr = read_u8(bytes, &mut cursor, "NAL array header")?;
-            let array_completeness = (b_arr >> 7) != 0;
-            let _reserved_arr = (b_arr >> 6) & 0x01;
-            let nal_unit_type = b_arr & 0x3F;
+            let array_completeness = (b_arr >> ARRAY_COMPLETENESS_SHIFT) != 0;
+            let _reserved_arr = (b_arr >> ARRAY_RESERVED_SHIFT) & ARRAY_RESERVED_MASK;
+            let nal_unit_type = b_arr & NAL_UNIT_TYPE_MASK;
 
             // numNalus (16)
             let num_nalus = read_u16(bytes, &mut cursor, "numNalus")? as usize;
@@ -272,25 +324,16 @@ impl Serialize for HEVCDecoderConfigurationRecord {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        // 23 bytes fixed before numOfArrays, then the arrays
-        1 + 1
-            + 4
-            + 6
-            + 1
-            + 2
-            + 1
-            + 1
-            + 1
-            + 1
-            + 2
-            + 1
-            + 1
+        RECORD_FIXED_HEADER_LEN
             + self
                 .arrays
                 .iter()
                 .map(|a| {
-                    // 1 (array_completeness/reserved/nal_unit_type) + 2 (numNalus) + per-nalu: 2 (len) + data
-                    3 + a.nalus.iter().map(|n| 2 + n.0.len()).sum::<usize>()
+                    ARRAY_MIN_LEN
+                        + a.nalus
+                            .iter()
+                            .map(|n| NALU_MIN_LEN + n.0.len())
+                            .sum::<usize>()
                 })
                 .sum::<usize>()
     }
@@ -306,62 +349,67 @@ impl Serialize for HEVCDecoderConfigurationRecord {
         cursor += 1;
 
         // general_profile_space(2) + general_tier_flag(1) + general_profile_idc(5)
-        buf[cursor] = ((self.general_profile_space & 0x03) << 6)
-            | (if self.general_tier_flag { 0x20 } else { 0 })
-            | (self.general_profile_idc & 0x1F);
+        buf[cursor] = ((self.general_profile_space & PROFILE_SPACE_MASK) << PROFILE_SPACE_SHIFT)
+            | (if self.general_tier_flag {
+                TIER_FLAG_BIT
+            } else {
+                0
+            })
+            | (self.general_profile_idc & PROFILE_IDC_MASK);
         cursor += 1;
 
         // general_profile_compatibility_flags (32)
-        buf[cursor..cursor + 4]
+        buf[cursor..cursor + core::mem::size_of::<u32>()]
             .copy_from_slice(&self.general_profile_compatibility_flags.to_be_bytes());
-        cursor += 4;
+        cursor += core::mem::size_of::<u32>();
 
         // general_constraint_indicator_flags (48) — u64 stored as 6 bytes big-endian
-        let ciflags = self.general_constraint_indicator_flags;
-        buf[cursor..cursor + 6].copy_from_slice(&[
-            ((ciflags >> 40) & 0xFF) as u8,
-            ((ciflags >> 32) & 0xFF) as u8,
-            ((ciflags >> 24) & 0xFF) as u8,
-            ((ciflags >> 16) & 0xFF) as u8,
-            ((ciflags >> 8) & 0xFF) as u8,
-            (ciflags & 0xFF) as u8,
-        ]);
-        cursor += 6;
+        let ciflags = self.general_constraint_indicator_flags.to_be_bytes();
+        buf[cursor..cursor + CONSTRAINT_FLAGS_LEN]
+            .copy_from_slice(&ciflags[core::mem::size_of::<u64>() - CONSTRAINT_FLAGS_LEN..]);
+        cursor += CONSTRAINT_FLAGS_LEN;
 
         // general_level_idc
         buf[cursor] = self.general_level_idc;
         cursor += 1;
 
         // reserved(4)=1s + min_spatial_segmentation_idc(12)
-        let msid = 0xF000 | (self.min_spatial_segmentation_idc & 0x0FFF);
-        buf[cursor..cursor + 2].copy_from_slice(&msid.to_be_bytes());
-        cursor += 2;
+        let msid = MIN_SPATIAL_SEGMENTATION_RESERVED_BITS
+            | (self.min_spatial_segmentation_idc & MIN_SPATIAL_SEGMENTATION_MASK);
+        buf[cursor..cursor + core::mem::size_of::<u16>()].copy_from_slice(&msid.to_be_bytes());
+        cursor += core::mem::size_of::<u16>();
 
         // reserved(6)=1s + parallelismType(2)
-        buf[cursor] = 0xFC | (self.parallelism_type & 0x03);
+        buf[cursor] = PARALLELISM_RESERVED_BITS | (self.parallelism_type & PARALLELISM_MASK);
         cursor += 1;
 
         // reserved(6)=1s + chroma_format_idc(2)
-        buf[cursor] = 0xFC | (self.chroma_format_idc & 0x03);
+        buf[cursor] = CHROMA_FORMAT_RESERVED_BITS | (self.chroma_format_idc & CHROMA_FORMAT_MASK);
         cursor += 1;
 
         // reserved(5)=1s + bit_depth_luma_minus8(3)
-        buf[cursor] = 0xF8 | (self.bit_depth_luma_minus8 & 0x07);
+        buf[cursor] = BIT_DEPTH_RESERVED_BITS | (self.bit_depth_luma_minus8 & BIT_DEPTH_MASK);
         cursor += 1;
 
         // reserved(5)=1s + bit_depth_chroma_minus8(3)
-        buf[cursor] = 0xF8 | (self.bit_depth_chroma_minus8 & 0x07);
+        buf[cursor] = BIT_DEPTH_RESERVED_BITS | (self.bit_depth_chroma_minus8 & BIT_DEPTH_MASK);
         cursor += 1;
 
         // avgFrameRate (16)
-        buf[cursor..cursor + 2].copy_from_slice(&self.avg_frame_rate.to_be_bytes());
-        cursor += 2;
+        buf[cursor..cursor + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.avg_frame_rate.to_be_bytes());
+        cursor += core::mem::size_of::<u16>();
 
         // constantFrameRate(2) + numTemporalLayers(3) + temporalIdNested(1) + lengthSizeMinusOne(2)
-        buf[cursor] = ((self.constant_frame_rate & 0x03) << 6)
-            | ((self.num_temporal_layers & 0x07) << 3)
-            | (if self.temporal_id_nested { 0x04 } else { 0x00 })
-            | (self.length_size_minus_one & 0x03);
+        buf[cursor] = ((self.constant_frame_rate & CONSTANT_FRAME_RATE_MASK)
+            << CONSTANT_FRAME_RATE_SHIFT)
+            | ((self.num_temporal_layers & NUM_TEMPORAL_LAYERS_MASK) << NUM_TEMPORAL_LAYERS_SHIFT)
+            | (if self.temporal_id_nested {
+                TEMPORAL_ID_NESTED_BIT
+            } else {
+                0
+            })
+            | (self.length_size_minus_one & LENGTH_SIZE_MASK);
         cursor += 1;
 
         // numOfArrays
@@ -370,19 +418,23 @@ impl Serialize for HEVCDecoderConfigurationRecord {
 
         // NAL arrays
         for arr in &self.arrays {
-            let first_byte =
-                (if arr.array_completeness { 0x80u8 } else { 0 }) | (arr.nal_unit_type & 0x3F);
+            let first_byte = (if arr.array_completeness {
+                ARRAY_COMPLETENESS_BIT
+            } else {
+                0
+            }) | (arr.nal_unit_type & NAL_UNIT_TYPE_MASK);
             buf[cursor] = first_byte;
             cursor += 1;
 
             let num = broadcast_common::len::fit_u16(arr.nalus.len(), "numNalus")?;
-            buf[cursor..cursor + 2].copy_from_slice(&num.to_be_bytes());
-            cursor += 2;
+            buf[cursor..cursor + core::mem::size_of::<u16>()].copy_from_slice(&num.to_be_bytes());
+            cursor += core::mem::size_of::<u16>();
 
             for nalu in &arr.nalus {
                 let len = broadcast_common::len::fit_u16(nalu.0.len(), "nalUnitLength")?;
-                buf[cursor..cursor + 2].copy_from_slice(&len.to_be_bytes());
-                cursor += 2;
+                buf[cursor..cursor + core::mem::size_of::<u16>()]
+                    .copy_from_slice(&len.to_be_bytes());
+                cursor += core::mem::size_of::<u16>();
                 buf[cursor..cursor + nalu.0.len()].copy_from_slice(&nalu.0);
                 cursor += nalu.0.len();
             }
@@ -439,7 +491,9 @@ impl Serialize for HEVCConfigurationBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(8 + self.config.serialized_len())
+        crate::box_types::box_len(
+            crate::box_types::BOX_HEADER_MIN_SIZE + self.config.serialized_len(),
+        )
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {

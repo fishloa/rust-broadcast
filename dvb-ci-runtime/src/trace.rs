@@ -9,10 +9,45 @@
 //! [`RecordingCaDevice`]: crate::device::RecordingCaDevice
 
 use crate::device::LinkEvent;
+use crate::resource::APDU_TAG_LEN;
 use dvb_ci::resource::ResourceId;
 use dvb_ci::spdu::tags as spdu_tags;
 use dvb_ci::tag::ApduTag;
 use dvb_ci::tpdu::{SbValue, tags as tpdu_tags};
+
+/// Offset of `t_c_id` within a TPDU frame with a one-byte `length_field`.
+const TPDU_TCID_OFFSET: usize = 2;
+
+/// Offset of the data-available byte appended to a `T_SB` TPDU.
+const TPDU_SB_DATA_AVAILABLE_OFFSET: usize = 3;
+
+/// Offset of the `length_field` within a TPDU frame.
+const TPDU_LENGTH_FIELD_OFFSET: usize = 1;
+
+/// Bytes of `t_c_id` in a data TPDU.
+const TPDU_TCID_LEN: usize = 1;
+
+/// Maximum frame bytes shown in the unknown-tag preview.
+const FRAME_PREVIEW_LEN: usize = 8;
+
+/// Offset of the `session_number` field within a `session_number` SPDU.
+const SPDU_SESSION_NUMBER_OFFSET: usize = 2;
+/// Offset of `resource_id` within an `open_session_request` / `create_session`
+/// SPDU.
+const SPDU_RESOURCE_ID_OFFSET: usize = 2;
+/// Offset of `nb` within a `create_session` SPDU.
+const SPDU_CREATE_SESSION_NB_OFFSET: usize = 6;
+/// Offset of `status` within a session-response SPDU.
+const SPDU_STATUS_OFFSET: usize = 2;
+/// Offset of `resource_id` within a session-response SPDU.
+const SPDU_RESPONSE_RESOURCE_ID_OFFSET: usize = 3;
+/// Offset of `nb` within a session-response SPDU.
+const SPDU_RESPONSE_NB_OFFSET: usize = 7;
+
+/// Bytes in a big-endian `u16` field.
+const U16_LEN: usize = core::mem::size_of::<u16>();
+/// Bytes in a big-endian `u32` field.
+const U32_LEN: usize = core::mem::size_of::<u32>();
 
 /// Name of a TPDU tag (Table A.16), or `"T_?"` for an unknown one.
 fn tpdu_name(tag: u8) -> &'static str {
@@ -48,7 +83,7 @@ fn spdu_name(tag: u8) -> &'static str {
 
 /// Decode the APDU at the start of `apdu` (3-byte tag) into `name (9F80xx)`.
 fn apdu_label(apdu: &[u8]) -> String {
-    match apdu.first_chunk::<3>() {
+    match apdu.first_chunk::<APDU_TAG_LEN>() {
         Some(&[a, b, c]) => {
             let tag = ApduTag::from_bytes(a, b, c);
             format!("{} ({:02X}{:02X}{:02X})", tag.name(), a, b, c)
@@ -61,9 +96,12 @@ fn apdu_label(apdu: &[u8]) -> String {
 /// when the SPDU is a `session_number` wrapper.
 fn spdu_label(spdu: &[u8]) -> String {
     match spdu.first().copied() {
-        Some(spdu_tags::SESSION_NUMBER) if spdu.len() >= 4 => {
-            let nb = u16::from_be_bytes([spdu[2], spdu[3]]);
-            let rest = &spdu[4..];
+        Some(spdu_tags::SESSION_NUMBER) if spdu.len() >= SPDU_SESSION_NUMBER_OFFSET + U16_LEN => {
+            let nb = u16::from_be_bytes([
+                spdu[SPDU_SESSION_NUMBER_OFFSET],
+                spdu[SPDU_SESSION_NUMBER_OFFSET + 1],
+            ]);
+            let rest = &spdu[SPDU_SESSION_NUMBER_OFFSET + U16_LEN..];
             if rest.is_empty() {
                 format!("session {nb}")
             } else {
@@ -72,21 +110,46 @@ fn spdu_label(spdu: &[u8]) -> String {
         }
         // Session-management SPDUs: surface the resource_id (+ status/nb) so a
         // live trace shows *which* resource each create/open targets.
-        Some(spdu_tags::OPEN_SESSION_REQUEST) if spdu.len() >= 6 => {
-            let r = ResourceId(u32::from_be_bytes([spdu[2], spdu[3], spdu[4], spdu[5]]));
+        Some(spdu_tags::OPEN_SESSION_REQUEST)
+            if spdu.len() >= SPDU_RESOURCE_ID_OFFSET + U32_LEN =>
+        {
+            let r = ResourceId(u32::from_be_bytes([
+                spdu[SPDU_RESOURCE_ID_OFFSET],
+                spdu[SPDU_RESOURCE_ID_OFFSET + 1],
+                spdu[SPDU_RESOURCE_ID_OFFSET + U16_LEN],
+                spdu[SPDU_RESOURCE_ID_OFFSET + U16_LEN + 1],
+            ]));
             format!("open_session_request {}", r.name())
         }
-        Some(spdu_tags::CREATE_SESSION) if spdu.len() >= 8 => {
-            let r = ResourceId(u32::from_be_bytes([spdu[2], spdu[3], spdu[4], spdu[5]]));
-            let nb = u16::from_be_bytes([spdu[6], spdu[7]]);
+        Some(spdu_tags::CREATE_SESSION)
+            if spdu.len() >= SPDU_CREATE_SESSION_NB_OFFSET + U16_LEN =>
+        {
+            let r = ResourceId(u32::from_be_bytes([
+                spdu[SPDU_RESOURCE_ID_OFFSET],
+                spdu[SPDU_RESOURCE_ID_OFFSET + 1],
+                spdu[SPDU_RESOURCE_ID_OFFSET + U16_LEN],
+                spdu[SPDU_RESOURCE_ID_OFFSET + U16_LEN + 1],
+            ]));
+            let nb = u16::from_be_bytes([
+                spdu[SPDU_CREATE_SESSION_NB_OFFSET],
+                spdu[SPDU_CREATE_SESSION_NB_OFFSET + 1],
+            ]);
             format!("create_session {} (nb {nb})", r.name())
         }
         Some(t @ (spdu_tags::CREATE_SESSION_RESPONSE | spdu_tags::OPEN_SESSION_RESPONSE))
-            if spdu.len() >= 9 =>
+            if spdu.len() >= SPDU_RESPONSE_NB_OFFSET + U16_LEN =>
         {
-            let status = spdu[2];
-            let r = ResourceId(u32::from_be_bytes([spdu[3], spdu[4], spdu[5], spdu[6]]));
-            let nb = u16::from_be_bytes([spdu[7], spdu[8]]);
+            let status = spdu[SPDU_STATUS_OFFSET];
+            let r = ResourceId(u32::from_be_bytes([
+                spdu[SPDU_RESPONSE_RESOURCE_ID_OFFSET],
+                spdu[SPDU_RESPONSE_RESOURCE_ID_OFFSET + 1],
+                spdu[SPDU_RESPONSE_RESOURCE_ID_OFFSET + U16_LEN],
+                spdu[SPDU_RESPONSE_RESOURCE_ID_OFFSET + U16_LEN + 1],
+            ]));
+            let nb = u16::from_be_bytes([
+                spdu[SPDU_RESPONSE_NB_OFFSET],
+                spdu[SPDU_RESPONSE_NB_OFFSET + 1],
+            ]);
             format!("{} {} status={status:#04x} nb={nb}", spdu_name(t), r.name())
         }
         Some(t) => spdu_name(t).to_string(),
@@ -104,10 +167,10 @@ pub fn decode_frame(frame: &[u8]) -> String {
         return "empty frame".to_string();
     };
     match tag {
-        tpdu_tags::SB => match frame.get(3) {
+        tpdu_tags::SB => match frame.get(TPDU_SB_DATA_AVAILABLE_OFFSET) {
             Some(&sb) => format!(
                 "T_SB tcid={} DA={}",
-                frame.get(2).copied().unwrap_or(0),
+                frame.get(TPDU_TCID_OFFSET).copied().unwrap_or(0),
                 u8::from(SbValue(sb).data_available())
             ),
             None => "T_SB (short)".to_string(),
@@ -123,28 +186,32 @@ pub fn decode_frame(frame: &[u8]) -> String {
             format!(
                 "{} tcid={}",
                 tpdu_name(tag),
-                frame.get(2).copied().unwrap_or(0)
+                frame.get(TPDU_TCID_OFFSET).copied().unwrap_or(0)
             )
         }
         tpdu_tags::DATA_LAST | tpdu_tags::DATA_MORE => {
             // tag · length_field · t_c_id · data(=SPDU) · [appended T_SB].
             // length_field uses the Table-1 codec (long-form for >127 bytes), so
             // decode it rather than assuming a single byte.
-            let Ok((len, hdr)) = dvb_ci::length::decode(&frame[1..]) else {
+            let Ok((len, hdr)) = dvb_ci::length::decode(&frame[TPDU_LENGTH_FIELD_OFFSET..]) else {
                 return format!("{} (bad length_field)", tpdu_name(tag));
             };
-            let start = 1 + hdr; // t_c_id offset
+            let start = TPDU_LENGTH_FIELD_OFFSET + hdr; // t_c_id offset
             let tcid = frame.get(start).copied().unwrap_or(0);
             // `length` counts t_c_id + data; the SPDU is the data after t_c_id.
             let data_end = (start + len).min(frame.len());
-            let spdu = frame.get(start + 1..data_end).unwrap_or(&[]);
+            let spdu = frame.get(start + TPDU_TCID_LEN..data_end).unwrap_or(&[]);
             if spdu.is_empty() {
                 format!("{} tcid={} (poll)", tpdu_name(tag), tcid)
             } else {
                 format!("{} tcid={} · {}", tpdu_name(tag), tcid, spdu_label(spdu))
             }
         }
-        _ => format!("{} {:02X?}", tpdu_name(tag), &frame[..frame.len().min(8)]),
+        _ => format!(
+            "{} {:02X?}",
+            tpdu_name(tag),
+            &frame[..frame.len().min(FRAME_PREVIEW_LEN)]
+        ),
     }
 }
 

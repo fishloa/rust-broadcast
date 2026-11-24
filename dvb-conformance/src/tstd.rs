@@ -72,6 +72,7 @@
 //!
 //! - **No arrival-time validation**: the model trusts the caller's timestamps.
 
+use broadcast_common::units::MICROS_PER_SEC;
 use core::time::Duration;
 
 // ── T-STD buffer constants ──────────────────────────────────────────────────
@@ -243,10 +244,10 @@ impl StdBuffer {
     /// `occupancy` — which the drain must actually reach, so the bound is
     /// clamped by occupancy rather than by the buffer capacity.
     fn drain_bytes(&self, elapsed_us: u64) -> u64 {
-        if elapsed_us >= self.occupancy.saturating_mul(1_000_000) / self.leak_rate.max(1) {
+        if elapsed_us >= self.occupancy.saturating_mul(MICROS_PER_SEC) / self.leak_rate.max(1) {
             return self.occupancy;
         }
-        (elapsed_us * self.leak_rate) / 1_000_000
+        (elapsed_us * self.leak_rate) / MICROS_PER_SEC
     }
 
     /// Maximum data delay (in seconds) for bytes currently in this buffer.

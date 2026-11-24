@@ -49,6 +49,17 @@ use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264};
 use crate::subtitle_entries::{WvttSampleEntry, XmlSubtitleSampleEntry};
 
+/// `AudioSpecificConfig` core body length in bytes (13 packed bits).
+const ASC_BODY_LEN: usize = 2;
+/// Shift of the low `audioObjectType`/`channelConfiguration` fields.
+const ASC_FIELD_SHIFT: u8 = 3;
+/// Shift of the low `samplingFrequencyIndex` bit within the first byte.
+const SF_INDEX_CROSS_SHIFT: u8 = 1;
+/// Mask of the one `samplingFrequencyIndex` bit carried into the second byte.
+const SF_INDEX_LOW_MASK: u8 = 0x01;
+/// Shift of that bit to the top of the second byte.
+const SF_INDEX_HIGH_SHIFT: u8 = 7;
+
 /// The TTML namespace a synthesised `stpp` sample entry names (W3C TTML2).
 const TTML_NAMESPACE: &str = "http://www.w3.org/ns/ttml";
 /// The bare WebVTT file-header block a synthesised `wvtt` `vttC` carries
@@ -270,9 +281,10 @@ fn synthesise_asc(aot: u8, quality: &QualityLevel) -> CrateResult<Vec<u8>> {
     // audioObjectType(5) | samplingFrequencyIndex(4) | channelConfiguration(4)
     // → 13 bits → 2 bytes, the remaining 3 bits zero. Only the core AAC-LC
     // object type is written (see the doc above).
-    let mut out = alloc::vec![0u8; 2];
-    out[0] = (aot << 3) | (sf_index >> 1);
-    out[1] = ((sf_index & 0x01) << 7) | (channel_raw << 3);
+    let mut out = alloc::vec![0u8; ASC_BODY_LEN];
+    out[0] = (aot << ASC_FIELD_SHIFT) | (sf_index >> SF_INDEX_CROSS_SHIFT);
+    out[1] =
+        ((sf_index & SF_INDEX_LOW_MASK) << SF_INDEX_HIGH_SHIFT) | (channel_raw << ASC_FIELD_SHIFT);
     Ok(out)
 }
 

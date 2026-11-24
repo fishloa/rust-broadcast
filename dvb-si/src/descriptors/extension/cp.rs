@@ -15,14 +15,18 @@ impl<'a> ExtensionBodyDef<'a> for Cp<'a> {
 const CP_HEADER_LEN: usize = 4; // CP_system_id(2) + reserved(3)/CP_PID(13)
 /// Shift of `reserved_future_use(3)` in the CP_PID word.
 const RESERVED_SHIFT: u16 = 13;
+/// Offset of the byte holding `reserved_future_use` and `CP_PID`.
+const CP_PID_BYTE_OFFSET: usize = 2;
+/// Shift of `reserved_future_use(3)` within the CP_PID byte.
+const RESERVED_BYTE_SHIFT: u32 = 5;
 /// Width of `reserved_future_use` ahead of `CP_PID` (3 bits).
-const RESERVED_BITS: u32 = 3;
+pub const CP_RESERVED_BITS: u32 = 3;
 
 /// Spec default of `reserved_future_use(3)` ahead of `CP_PID`: `111`
 /// (EN 300 468 Table 113; `reserved` in V1.9.1-V1.15.1, `reserved_future_use`
 /// in V1.17.1+, value 1 throughout; audit §6.1 class B).
-pub const CP_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
-    ReservedOnes::<RESERVED_BITS>::FILL;
+pub const CP_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<CP_RESERVED_BITS> =
+    ReservedOnes::<CP_RESERVED_BITS>::FILL;
 
 /// CP descriptor body (Table 113, §6.4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +39,7 @@ pub struct Cp<'a> {
     /// `reserved_future_use(3)` ahead of `CP_PID` (3 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; [`Cp::new`] defaults to
     /// [`CP_RESERVED_FUTURE_USE_DEFAULT`] (`0b111`).
-    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
+    pub reserved_future_use: ReservedOnes<CP_RESERVED_BITS>,
     /// CP_PID(13) — the PID carrying the CP stream.
     pub cp_pid: Pid,
     /// private_data_byte run (the rest of the descriptor).
@@ -62,8 +66,10 @@ impl<'a> Parse<'a> for Cp<'a> {
         need_in(sel, CP_HEADER_LEN, "CP body")?;
         Ok(Cp {
             cp_system_id: u16::from_be_bytes([sel[0], sel[1]]),
-            reserved_future_use: ReservedOnes::from_bits(u64::from(sel[2] >> 5)),
-            cp_pid: Pid::from_wire_masked(u16::from_be_bytes([sel[2], sel[3]])),
+            reserved_future_use: ReservedOnes::from_bits(u64::from(
+                sel[CP_PID_BYTE_OFFSET] >> RESERVED_BYTE_SHIFT,
+            )),
+            cp_pid: Pid::from_wire_masked(crate::wire::be_u16(sel, CP_PID_BYTE_OFFSET, "CP_PID")?),
             private_data: &sel[CP_HEADER_LEN..],
         })
     }

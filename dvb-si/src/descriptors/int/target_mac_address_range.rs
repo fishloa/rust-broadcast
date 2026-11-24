@@ -13,6 +13,8 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for target_MAC_address_range_descriptor.
 pub const TAG: u8 = 0x0E;
 const ENTRY_LEN: usize = 12;
+/// Wire width of one `MAC_addr` field.
+const MAC_ADDRESS_LEN: usize = 6;
 
 /// One `MAC_addr_low` / `MAC_addr_high` pair (inclusive range).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,15 +28,15 @@ pub struct MacAddressRange {
 
 impl Entry<ENTRY_LEN> for MacAddressRange {
     fn read(b: &[u8; ENTRY_LEN]) -> Self {
-        let (low, high) = b.split_at(6);
+        let (low, high) = b.split_at(MAC_ADDRESS_LEN);
         Self {
             low: low.try_into().unwrap_or_default(),
             high: high.try_into().unwrap_or_default(),
         }
     }
     fn write(&self, b: &mut [u8; ENTRY_LEN]) {
-        b[..6].copy_from_slice(&self.low);
-        b[6..].copy_from_slice(&self.high);
+        b[..MAC_ADDRESS_LEN].copy_from_slice(&self.low);
+        b[MAC_ADDRESS_LEN..].copy_from_slice(&self.high);
     }
 }
 

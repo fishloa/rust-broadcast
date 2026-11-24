@@ -15,17 +15,51 @@ const HEADER_LEN: usize = 2;
 /// Default of the 5-bit `reserved` after `dependency_id` (H.222.0 Table 2-99):
 /// clause 2.1 "reserved" = `1` (all editions 06/2012-08/2023, audit §5;
 /// confirmed by the TSDuck oracle PMT).
-pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_AFTER_DEPENDENCY_ID_BITS> =
+    ReservedOnes::<RESERVED_AFTER_DEPENDENCY_ID_BITS>::FILL;
 /// Width of the `reserved` field after `dependency_id` (5 bits).
-const RESERVED_5_BITS: u32 = 5;
+pub const RESERVED_AFTER_DEPENDENCY_ID_BITS: u32 = 5;
 /// Default of the trailing 1-bit `reserved` after `no_sei_nal_unit_present`
 /// (same rule).
-pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_TRAILING_BITS>::FILL;
 /// Width of the trailing `reserved` field (1 bit).
-const RESERVED_1_BITS: u32 = 1;
-const RESERVED_5_MASK: u8 = 0x1F;
-const RESERVED_1_MASK: u8 = 0x01;
+pub const RESERVED_TRAILING_BITS: u32 = 1;
+const RESERVED_AFTER_DEPENDENCY_ID_MASK: u8 = 0x1F;
+const RESERVED_TRAILING_MASK: u8 = 0x01;
 const BODY_LEN: u8 = 13;
+/// Body offset of `height`.
+const HEIGHT_OFFSET: usize = 2;
+/// Body offset of `frame_rate`.
+const FRAME_RATE_OFFSET: usize = 4;
+/// Body offset of `average_bitrate`.
+const AVERAGE_BITRATE_OFFSET: usize = 6;
+/// Body offset of `maximum_bitrate`.
+const MAXIMUM_BITRATE_OFFSET: usize = 8;
+/// Body offset of the `dependency_id`/reserved byte.
+const DEPENDENCY_FLAGS_OFFSET: usize = 10;
+/// Body offset of the quality-id byte.
+const QUALITY_FLAGS_OFFSET: usize = 11;
+/// Body offset of the temporal-id byte.
+const TEMPORAL_FLAGS_OFFSET: usize = 12;
+/// Shift of `dependency_id` in its byte.
+const DEPENDENCY_ID_SHIFT: u8 = 5;
+/// Mask of the 3-bit `dependency_id`.
+const DEPENDENCY_ID_MASK: u8 = 0x07;
+/// Shift of `quality_id_start` in its byte.
+const QUALITY_ID_START_SHIFT: u8 = 4;
+/// Mask of a 4-bit quality id.
+const QUALITY_ID_MASK: u8 = 0x0F;
+/// Shift of `temporal_id_start` in its byte.
+const TEMPORAL_ID_START_SHIFT: u8 = 5;
+/// Shift of `temporal_id_end` in its byte.
+const TEMPORAL_ID_END_SHIFT: u8 = 2;
+/// Mask of a 3-bit temporal id.
+const TEMPORAL_ID_MASK: u8 = 0x07;
+/// `no_sei_nal_unit_present` bit of the temporal-id byte.
+const NO_SEI_MASK: u8 = 0x02;
+/// Shift of `no_sei_nal_unit_present` in the temporal-id byte.
+const NO_SEI_SHIFT: u8 = 1;
 
 /// SVC Extension Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,11 +91,11 @@ pub struct SvcExtensionDescriptor {
     /// `reserved(5)` after `dependency_id` (5 bits). Captured on parse,
     /// re-emitted verbatim; defaults to [`RESERVED_5_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_5: ReservedOnes<RESERVED_AFTER_DEPENDENCY_ID_BITS>,
     /// Trailing `reserved(1)` (1 bit). Captured on parse, re-emitted verbatim;
     /// defaults to [`RESERVED_1_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_1: ReservedOnes<RESERVED_1_BITS>,
+    pub reserved_1: ReservedOnes<RESERVED_TRAILING_BITS>,
 }
 
 impl SvcExtensionDescriptor {
@@ -111,20 +145,23 @@ impl<'a> Parse<'a> for SvcExtensionDescriptor {
             });
         }
         let width = u16::from_be_bytes([body[0], body[1]]);
-        let height = u16::from_be_bytes([body[2], body[3]]);
-        let frame_rate = u16::from_be_bytes([body[4], body[5]]);
-        let average_bitrate = u16::from_be_bytes([body[6], body[7]]);
-        let maximum_bitrate = u16::from_be_bytes([body[8], body[9]]);
-        let b10 = body[10];
-        let dependency_id = (b10 >> 5) & 0x07;
+        let height = crate::wire::be_u16(body, HEIGHT_OFFSET, "height")?;
+        let frame_rate = crate::wire::be_u16(body, FRAME_RATE_OFFSET, "frame_rate")?;
+        let average_bitrate = crate::wire::be_u16(body, AVERAGE_BITRATE_OFFSET, "average_bitrate")?;
+        let maximum_bitrate = u16::from_be_bytes([
+            body[MAXIMUM_BITRATE_OFFSET],
+            body[MAXIMUM_BITRATE_OFFSET + 1],
+        ]);
+        let b10 = body[DEPENDENCY_FLAGS_OFFSET];
+        let dependency_id = (b10 >> DEPENDENCY_ID_SHIFT) & DEPENDENCY_ID_MASK;
         // reserved: top 5 bits are reserved — we accept any value for round-trip
-        let b11 = body[11];
-        let quality_id_start = (b11 >> 4) & 0x0F;
-        let quality_id_end = b11 & 0x0F;
-        let b12 = body[12];
-        let temporal_id_start = (b12 >> 5) & 0x07;
-        let temporal_id_end = (b12 >> 2) & 0x07;
-        let no_sei_nal_unit_present = (b12 & 0x02) != 0;
+        let b11 = body[QUALITY_FLAGS_OFFSET];
+        let quality_id_start = (b11 >> QUALITY_ID_START_SHIFT) & QUALITY_ID_MASK;
+        let quality_id_end = b11 & QUALITY_ID_MASK;
+        let b12 = body[TEMPORAL_FLAGS_OFFSET];
+        let temporal_id_start = (b12 >> TEMPORAL_ID_START_SHIFT) & TEMPORAL_ID_MASK;
+        let temporal_id_end = (b12 >> TEMPORAL_ID_END_SHIFT) & TEMPORAL_ID_MASK;
+        let no_sei_nal_unit_present = (b12 & NO_SEI_MASK) != 0;
         // reserved: bit 0 is reserved
         Ok(Self {
             width,
@@ -138,8 +175,8 @@ impl<'a> Parse<'a> for SvcExtensionDescriptor {
             temporal_id_start,
             temporal_id_end,
             no_sei_nal_unit_present,
-            reserved_5: ReservedOnes::from_bits(u64::from(b10 & RESERVED_5_MASK)),
-            reserved_1: ReservedOnes::from_bits(u64::from(b12 & RESERVED_1_MASK)),
+            reserved_5: ReservedOnes::from_bits(u64::from(b10 & RESERVED_AFTER_DEPENDENCY_ID_MASK)),
+            reserved_1: ReservedOnes::from_bits(u64::from(b12 & RESERVED_TRAILING_MASK)),
         })
     }
 }
@@ -156,25 +193,45 @@ impl Serialize for SvcExtensionDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN..HEADER_LEN + 2].copy_from_slice(&self.width.to_be_bytes());
-        buf[HEADER_LEN + 2..HEADER_LEN + 4].copy_from_slice(&self.height.to_be_bytes());
-        buf[HEADER_LEN + 4..HEADER_LEN + 6].copy_from_slice(&self.frame_rate.to_be_bytes());
-        buf[HEADER_LEN + 6..HEADER_LEN + 8].copy_from_slice(&self.average_bitrate.to_be_bytes());
-        buf[HEADER_LEN + 8..HEADER_LEN + 10].copy_from_slice(&self.maximum_bitrate.to_be_bytes());
-        buf[HEADER_LEN + 10] =
-            (broadcast_common::len::fit_mask(self.dependency_id, 0x07, "dependency_id")? << 5)
-                | (self.reserved_5.get() as u8);
-        buf[HEADER_LEN + 11] =
-            (broadcast_common::len::fit_mask(self.quality_id_start, 0x0F, "quality_id_start")?
-                << 4)
-                | broadcast_common::len::fit_mask(self.quality_id_end, 0x0F, "quality_id_end")?;
-        buf[HEADER_LEN + 12] =
-            (broadcast_common::len::fit_mask(self.temporal_id_start, 0x07, "temporal_id_start")?
-                << 5)
-                | (broadcast_common::len::fit_mask(self.temporal_id_end, 0x07, "temporal_id_end")?
-                    << 2)
-                | ((self.no_sei_nal_unit_present as u8) << 1)
-                | (self.reserved_1.get() as u8);
+        buf[HEADER_LEN..HEADER_LEN + size_of::<u16>()].copy_from_slice(&self.width.to_be_bytes());
+        buf[HEADER_LEN + HEIGHT_OFFSET..HEADER_LEN + HEIGHT_OFFSET + size_of::<u16>()]
+            .copy_from_slice(&self.height.to_be_bytes());
+        buf[HEADER_LEN + FRAME_RATE_OFFSET..HEADER_LEN + FRAME_RATE_OFFSET + size_of::<u16>()]
+            .copy_from_slice(&self.frame_rate.to_be_bytes());
+        buf[HEADER_LEN + AVERAGE_BITRATE_OFFSET
+            ..HEADER_LEN + AVERAGE_BITRATE_OFFSET + size_of::<u16>()]
+            .copy_from_slice(&self.average_bitrate.to_be_bytes());
+        buf[HEADER_LEN + MAXIMUM_BITRATE_OFFSET
+            ..HEADER_LEN + MAXIMUM_BITRATE_OFFSET + size_of::<u16>()]
+            .copy_from_slice(&self.maximum_bitrate.to_be_bytes());
+        buf[HEADER_LEN + DEPENDENCY_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+            self.dependency_id,
+            DEPENDENCY_ID_MASK,
+            "dependency_id",
+        )? << DEPENDENCY_ID_SHIFT)
+            | (self.reserved_5.get() as u8);
+        buf[HEADER_LEN + QUALITY_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+            self.quality_id_start,
+            QUALITY_ID_MASK,
+            "quality_id_start",
+        )? << QUALITY_ID_START_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.quality_id_end,
+                QUALITY_ID_MASK,
+                "quality_id_end",
+            )?;
+        buf[HEADER_LEN + TEMPORAL_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+            self.temporal_id_start,
+            TEMPORAL_ID_MASK,
+            "temporal_id_start",
+        )? << TEMPORAL_ID_START_SHIFT)
+            | (broadcast_common::len::fit_mask(
+                self.temporal_id_end,
+                TEMPORAL_ID_MASK,
+                "temporal_id_end",
+            )? << TEMPORAL_ID_END_SHIFT)
+            | ((self.no_sei_nal_unit_present as u8) << NO_SEI_SHIFT)
+            | (self.reserved_1.get() as u8);
         Ok(len)
     }
 }

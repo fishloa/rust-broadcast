@@ -11,6 +11,10 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
+use crate::types::{
+    REGISTRY_VERSION_BYTE, RESERVED_KEY_BYTE, STRUCTURE_KIND_BYTE, U16_LEN, U32_LEN, U64_LEN,
+    UID_BATCH_HEADER_LEN, UL_LEN, be,
+};
 use crate::types::{UidBatch, UlBytes, serialize_uid_batch, ul_bytes_from_prefix};
 
 /// Fixed bytes 1-13 of every Partition Pack Key (Table 4), i.e. everything
@@ -19,6 +23,26 @@ use crate::types::{UidBatch, UlBytes, serialize_uid_batch, ul_bytes_from_prefix}
 /// (reserved, must be `0x00`).
 const PARTITION_KEY_PREFIX: [u8; 7] = [0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01];
 const PARTITION_KEY_MID: [u8; 4] = [0x0D, 0x01, 0x02, 0x01];
+// Byte offsets within the 16-byte Partition Pack Key (0-based).
+const PARTITION_KEY_REGISTRY_VERSION_OFFSET: usize = 7;
+const PARTITION_KEY_STRUCTURE_KIND_OFFSET: usize = 12;
+const PARTITION_KEY_KIND_OFFSET: usize = 13;
+const PARTITION_KEY_STATUS_OFFSET: usize = 14;
+const PARTITION_KEY_RESERVED_OFFSET: usize = 15;
+// Field byte offsets within the Partition Pack value (§7.1, Table 5).
+const MAJOR_VERSION_OFFSET: usize = 0;
+const MINOR_VERSION_OFFSET: usize = 2;
+const KAG_SIZE_OFFSET: usize = 4;
+const THIS_PARTITION_OFFSET: usize = 8;
+const PREVIOUS_PARTITION_OFFSET: usize = 16;
+const FOOTER_PARTITION_OFFSET: usize = 24;
+const HEADER_BYTE_COUNT_OFFSET: usize = 32;
+const INDEX_BYTE_COUNT_OFFSET: usize = 40;
+const INDEX_SID_OFFSET: usize = 48;
+const BODY_OFFSET_FIELD: usize = 52;
+const BODY_SID_OFFSET: usize = 60;
+const OPERATIONAL_PATTERN_OFFSET: usize = 64;
+const ESSENCE_CONTAINERS_OFFSET: usize = 80;
 
 /// Which kind of Partition a Partition Pack Key identifies (Table 4 byte
 /// 14; Tables 6-8).
@@ -219,14 +243,14 @@ impl PartitionPack {
     /// byte 16 = reserved (`0x00`).
     #[must_use]
     pub fn key(kind: PartitionKind, status: PartitionStatus) -> UlBytes {
-        let mut key = [0u8; 16];
+        let mut key = [0u8; UL_LEN];
         key[0..7].copy_from_slice(&PARTITION_KEY_PREFIX);
-        key[7] = 0x01;
+        key[PARTITION_KEY_REGISTRY_VERSION_OFFSET] = REGISTRY_VERSION_BYTE;
         key[8..12].copy_from_slice(&PARTITION_KEY_MID);
-        key[12] = 0x01; // Structure Kind
-        key[13] = kind.to_byte();
-        key[14] = status.to_byte();
-        key[15] = 0x00;
+        key[PARTITION_KEY_STRUCTURE_KIND_OFFSET] = STRUCTURE_KIND_BYTE;
+        key[PARTITION_KEY_KIND_OFFSET] = kind.to_byte();
+        key[PARTITION_KEY_STATUS_OFFSET] = status.to_byte();
+        key[PARTITION_KEY_RESERVED_OFFSET] = RESERVED_KEY_BYTE;
         UlBytes(key)
     }
 
@@ -247,24 +271,26 @@ impl PartitionPack {
         let key = key.as_bytes();
         key[0..7] == PARTITION_KEY_PREFIX
             && key[8..12] == PARTITION_KEY_MID
-            && key[12] == 0x01
-            && PartitionKind::from_byte(key[13]).is_ok()
+            && key[PARTITION_KEY_STRUCTURE_KIND_OFFSET] == STRUCTURE_KIND_BYTE
+            && PartitionKind::from_byte(key[PARTITION_KEY_KIND_OFFSET]).is_ok()
     }
 
     fn parse_key(key: &UlBytes) -> Result<(PartitionKind, PartitionStatus)> {
         let bytes = key.as_bytes();
         if bytes[0..7] != PARTITION_KEY_PREFIX
             || bytes[8..12] != PARTITION_KEY_MID
-            || bytes[12] != 0x01
+            || bytes[PARTITION_KEY_STRUCTURE_KIND_OFFSET] != STRUCTURE_KIND_BYTE
         {
             return Err(Error::KeyPrefixMismatch {
                 what: "Partition Pack (Table 4)",
             });
         }
-        let kind = PartitionKind::from_byte(bytes[13])?;
-        let status = PartitionStatus::from_byte(bytes[14])?;
+        let kind = PartitionKind::from_byte(bytes[PARTITION_KEY_KIND_OFFSET])?;
+        let status = PartitionStatus::from_byte(bytes[PARTITION_KEY_STATUS_OFFSET])?;
         if kind == PartitionKind::Footer && status.is_open() {
-            return Err(Error::OpenFooterPartition { byte: bytes[14] });
+            return Err(Error::OpenFooterPartition {
+                byte: bytes[PARTITION_KEY_STATUS_OFFSET],
+            });
         }
         Ok((kind, status))
     }
@@ -274,12 +300,12 @@ impl<'a> Parse<'a> for PartitionPack {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 16, "Partition Pack key")?;
+        need_in(bytes, UL_LEN, "Partition Pack key")?;
         let key: UlBytes = ul_bytes_from_prefix(bytes);
         let (kind, status) = Self::parse_key(&key)?;
 
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
-        let value_start = 16 + len_token_size;
+        let value_start = UL_LEN + len_token_size;
         // #1108/MX-W1: `len` is a 64-bit BER length; a bare `as usize`
         // truncates it on a 32-bit target instead of rejecting an
         // over-range value.
@@ -302,34 +328,23 @@ impl<'a> Parse<'a> for PartitionPack {
 
         const FIXED_FIELDS_LEN: usize = 2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16;
         need_in(v, FIXED_FIELDS_LEN, "Partition Pack fixed fields")?;
-        let u16_at = |o: usize| u16::from_be_bytes([v[o], v[o + 1]]);
-        let u32_at = |o: usize| u32::from_be_bytes([v[o], v[o + 1], v[o + 2], v[o + 3]]);
-        let u64_at = |o: usize| {
-            u64::from_be_bytes([
-                v[o],
-                v[o + 1],
-                v[o + 2],
-                v[o + 3],
-                v[o + 4],
-                v[o + 5],
-                v[o + 6],
-                v[o + 7],
-            ])
-        };
+        let u16_at = |o: usize| be::<U16_LEN>(v, o).map(u16::from_be_bytes);
+        let u32_at = |o: usize| be::<U32_LEN>(v, o).map(u32::from_be_bytes);
+        let u64_at = |o: usize| be::<U64_LEN>(v, o).map(u64::from_be_bytes);
 
-        let major_version = u16_at(0);
-        let minor_version = u16_at(2);
-        let kag_size = u32_at(4);
-        let this_partition = u64_at(8);
-        let previous_partition = u64_at(16);
-        let footer_partition = u64_at(24);
-        let header_byte_count = u64_at(32);
-        let index_byte_count = u64_at(40);
-        let index_sid = u32_at(48);
-        let body_offset = u64_at(52);
-        let body_sid = u32_at(60);
-        let operational_pattern: UlBytes = ul_bytes_from_prefix(&v[64..]);
-        let essence_containers_batch = UidBatch::parse(&v[80..])?;
+        let major_version = u16_at(MAJOR_VERSION_OFFSET)?;
+        let minor_version = u16_at(MINOR_VERSION_OFFSET)?;
+        let kag_size = u32_at(KAG_SIZE_OFFSET)?;
+        let this_partition = u64_at(THIS_PARTITION_OFFSET)?;
+        let previous_partition = u64_at(PREVIOUS_PARTITION_OFFSET)?;
+        let footer_partition = u64_at(FOOTER_PARTITION_OFFSET)?;
+        let header_byte_count = u64_at(HEADER_BYTE_COUNT_OFFSET)?;
+        let index_byte_count = u64_at(INDEX_BYTE_COUNT_OFFSET)?;
+        let index_sid = u32_at(INDEX_SID_OFFSET)?;
+        let body_offset = u64_at(BODY_OFFSET_FIELD)?;
+        let body_sid = u32_at(BODY_SID_OFFSET)?;
+        let operational_pattern: UlBytes = ul_bytes_from_prefix(&v[OPERATIONAL_PATTERN_OFFSET..]);
+        let essence_containers_batch = UidBatch::parse(&v[ESSENCE_CONTAINERS_OFFSET..])?;
         let essence_containers = essence_containers_batch.items().to_vec();
 
         Ok(PartitionPack {
@@ -358,9 +373,10 @@ impl Serialize for PartitionPack {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let value_len =
-            2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16 + 8 + self.essence_containers.len() * 16;
-        16 + ber_length_size_for(value_len as u64, self.len_size) + value_len
+        let value_len = ESSENCE_CONTAINERS_OFFSET
+            + UID_BATCH_HEADER_LEN
+            + self.essence_containers.len() * UL_LEN;
+        UL_LEN + ber_length_size_for(value_len as u64, self.len_size) + value_len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -378,34 +394,34 @@ impl Serialize for PartitionPack {
             }
             _ => serialize_uid_batch(&self.essence_containers)?,
         };
-        let value_len = 2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16 + batch.len();
+        let value_len = ESSENCE_CONTAINERS_OFFSET + batch.len();
         let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
-        let mut pos = 16 + len_size;
+        let mut pos = UL_LEN + len_size;
 
-        buf[pos..pos + 2].copy_from_slice(&self.major_version.to_be_bytes());
-        pos += 2;
-        buf[pos..pos + 2].copy_from_slice(&self.minor_version.to_be_bytes());
-        pos += 2;
-        buf[pos..pos + 4].copy_from_slice(&self.kag_size.to_be_bytes());
-        pos += 4;
-        buf[pos..pos + 8].copy_from_slice(&self.this_partition.to_be_bytes());
-        pos += 8;
-        buf[pos..pos + 8].copy_from_slice(&self.previous_partition.to_be_bytes());
-        pos += 8;
-        buf[pos..pos + 8].copy_from_slice(&self.footer_partition.to_be_bytes());
-        pos += 8;
-        buf[pos..pos + 8].copy_from_slice(&self.header_byte_count.to_be_bytes());
-        pos += 8;
-        buf[pos..pos + 8].copy_from_slice(&self.index_byte_count.to_be_bytes());
-        pos += 8;
-        buf[pos..pos + 4].copy_from_slice(&self.index_sid.to_be_bytes());
-        pos += 4;
-        buf[pos..pos + 8].copy_from_slice(&self.body_offset.to_be_bytes());
-        pos += 8;
-        buf[pos..pos + 4].copy_from_slice(&self.body_sid.to_be_bytes());
-        pos += 4;
-        buf[pos..pos + 16].copy_from_slice(self.operational_pattern.as_ref());
-        pos += 16;
+        buf[pos..pos + U16_LEN].copy_from_slice(&self.major_version.to_be_bytes());
+        pos += U16_LEN;
+        buf[pos..pos + U16_LEN].copy_from_slice(&self.minor_version.to_be_bytes());
+        pos += U16_LEN;
+        buf[pos..pos + U32_LEN].copy_from_slice(&self.kag_size.to_be_bytes());
+        pos += U32_LEN;
+        buf[pos..pos + U64_LEN].copy_from_slice(&self.this_partition.to_be_bytes());
+        pos += U64_LEN;
+        buf[pos..pos + U64_LEN].copy_from_slice(&self.previous_partition.to_be_bytes());
+        pos += U64_LEN;
+        buf[pos..pos + U64_LEN].copy_from_slice(&self.footer_partition.to_be_bytes());
+        pos += U64_LEN;
+        buf[pos..pos + U64_LEN].copy_from_slice(&self.header_byte_count.to_be_bytes());
+        pos += U64_LEN;
+        buf[pos..pos + U64_LEN].copy_from_slice(&self.index_byte_count.to_be_bytes());
+        pos += U64_LEN;
+        buf[pos..pos + U32_LEN].copy_from_slice(&self.index_sid.to_be_bytes());
+        pos += U32_LEN;
+        buf[pos..pos + U64_LEN].copy_from_slice(&self.body_offset.to_be_bytes());
+        pos += U64_LEN;
+        buf[pos..pos + U32_LEN].copy_from_slice(&self.body_sid.to_be_bytes());
+        pos += U32_LEN;
+        buf[pos..pos + UL_LEN].copy_from_slice(self.operational_pattern.as_ref());
+        pos += UL_LEN;
         buf[pos..pos + batch.len()].copy_from_slice(&batch);
         pos += batch.len();
         Ok(pos)

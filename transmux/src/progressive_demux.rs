@@ -40,6 +40,7 @@ use core::marker::PhantomData;
 
 use broadcast_common::{Demand, Parse, Stage, Timestamp, Unpackage};
 
+use crate::box_types::BOX_HEADER_MIN_SIZE;
 use crate::error::{Error, Result};
 use crate::init_segment::{
     ChunkLargeOffsetBox, ChunkOffsetBox, MovieBox, SampleSizeBox, SampleToChunkBox, StblChild,
@@ -51,6 +52,9 @@ use crate::media::{
 };
 use crate::pipeline::Sample;
 use crate::timing::{CompositionOffsetBox, TimeToSampleBox};
+
+/// Width of an ISOBMFF four-character box type (ISO/IEC 14496-12:2026 §4.2).
+const FOURCC_LEN: usize = 4;
 
 /// Demux a non-fragmented ISOBMFF/MP4 byte stream into a [`Media`].
 ///
@@ -345,7 +349,7 @@ impl Stage for ProgressiveDemux<'_> {
 /// [`Media::skipped`](crate::media::Media::skipped).
 fn find_stbl_child<'a, T>(
     children: &'a [StblChild],
-    fourcc: &[u8; 4],
+    fourcc: &[u8; FOURCC_LEN],
     variant: impl Fn(&'a StblChild) -> Option<&'a T>,
     reparse_err: impl Fn(&'a [u8]) -> Error,
 ) -> Result<Option<&'a T>> {
@@ -356,8 +360,8 @@ fn find_stbl_child<'a, T>(
     }
     for child in children {
         if let StblChild::Opaque(bytes) = child
-            && bytes.len() >= 8
-            && &bytes[4..8] == fourcc
+            && bytes.len() >= BOX_HEADER_MIN_SIZE
+            && &bytes[FOURCC_LEN..BOX_HEADER_MIN_SIZE] == fourcc
         {
             return Err(reparse_err(bytes));
         }

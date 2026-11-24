@@ -13,6 +13,9 @@ use broadcast_common::{Parse, Serialize};
 /// `opID` for insert_descriptor_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0108;
 
+/// `descriptor_tag` + `descriptor_length` header length of one image.
+const DESCRIPTOR_HEADER_LEN: usize = 2;
+
 /// insert_descriptor_request_data() — §9.8.5, Table 9-27.
 ///
 /// `descriptor_count` is not a stored field: it is always
@@ -49,9 +52,13 @@ impl<'a> Parse<'a> for InsertDescriptor<'a> {
         let mut pos = 1;
         let mut images = Vec::with_capacity(count);
         for _ in 0..count {
-            need_in(bytes, pos + 2, "insert_descriptor tag+length")?;
+            need_in(
+                bytes,
+                pos + DESCRIPTOR_HEADER_LEN,
+                "insert_descriptor tag+length",
+            )?;
             let desc_len = bytes[pos + 1] as usize;
-            let total = 2 + desc_len;
+            let total = DESCRIPTOR_HEADER_LEN + desc_len;
             need_in(bytes, pos + total, "insert_descriptor image")?;
             images.push(&bytes[pos..pos + total]);
             pos += total;

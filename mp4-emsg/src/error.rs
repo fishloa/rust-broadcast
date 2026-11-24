@@ -17,7 +17,7 @@ pub enum Error {
     #[error("not an emsg box: type {found:?}")]
     NotEmsg {
         /// The 4-byte box type actually found.
-        found: [u8; 4],
+        found: [u8; crate::emsg::BOX_TYPE_LEN],
     },
     /// The `size` field is inconsistent with the available bytes (it must be at
     /// least the fixed header + cover the box, and 0 / 1 large-size forms are

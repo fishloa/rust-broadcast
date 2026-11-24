@@ -21,6 +21,12 @@ use crate::error::{Error, Result};
 /// (RFC 5651 §5.1), so the widest TOI is `4*3 + 2*1` = 14 bytes; the TSI is at
 /// most `4*1 + 2*1` = 6.
 pub const ID_MAX_LEN: usize = 14;
+/// The granularity of a TSI/TOI wire width: whole 16-bit half-words (RFC 5651
+/// §5.1).
+const ID_WIDTH_GRANULE: usize = 2;
+/// Bit width of one octet, and the value width a `u64` always holds.
+const OCTET_BITS: usize = 8;
+const U64_LEN: usize = core::mem::size_of::<u64>();
 
 /// The shared body of [`Tsi`] and [`Toi`]: a value and the field width it
 /// occupies on the wire.
@@ -36,18 +42,18 @@ impl IdValue {
     /// describe and a value the width cannot hold.
     fn new(field: &'static str, value: u64, len: u8) -> Result<Self> {
         let len = usize::from(len);
-        if len % 2 != 0 || len > ID_MAX_LEN {
+        if !len.is_multiple_of(ID_WIDTH_GRANULE) || len > ID_MAX_LEN {
             return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                 field,
                 reason: "wire width must be a whole number of 16-bit half-words, 0..=14 bytes",
             }));
         }
-        if len < 8 && value > (1u64 << (8 * len)) - 1 {
+        if len < U64_LEN && value > (1u64 << (OCTET_BITS * len)) - 1 {
             return Err(Error::FieldOverflow(
                 broadcast_common::error::FieldOverflow {
                     field,
                     value,
-                    max: (1u64 << (8 * len)) - 1,
+                    max: (1u64 << (OCTET_BITS * len)) - 1,
                 },
             ));
         }
@@ -62,7 +68,7 @@ impl IdValue {
         need_in(data, len, field)?;
         let mut v = 0u64;
         for &b in &data[..len] {
-            v = (v << 8) | u64::from(b);
+            v = (v << OCTET_BITS) | u64::from(b);
         }
         IdValue::new(field, v, len as u8)
     }
@@ -77,7 +83,7 @@ impl IdValue {
         while i > 0 {
             i -= 1;
             tmp[i] = v as u8;
-            v >>= 8;
+            v >>= OCTET_BITS;
         }
         out[..len].copy_from_slice(&tmp[..len]);
         Ok(len)

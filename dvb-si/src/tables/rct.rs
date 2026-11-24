@@ -87,9 +87,9 @@ const DESC_LOOP_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
 
 /// Width of the `reserved` header fields.
-const RCT_RESERVED_BITS: u32 = 2;
+pub const RCT_RESERVED_BITS: u32 = 2;
 /// Width of the `reserved_future_use` entry fields.
-const RCT_RESERVED_FUTURE_USE_BITS: u32 = 4;
+pub const RCT_RESERVED_FUTURE_USE_BITS: u32 = 4;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 

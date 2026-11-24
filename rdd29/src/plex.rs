@@ -36,7 +36,7 @@ pub(crate) fn read_plex(
             // this far, and re-serializing this value gives different bytes
             // than were read (RD-W2, #1114).
             if width > start_width {
-                let prev_max_direct = all_ones_for_width(width / 2) - 1;
+                let prev_max_direct = all_ones_for_width(width >> 1) - 1;
                 if value <= prev_max_direct {
                     return Err(Error::NonMinimalPlex {
                         field,
@@ -47,10 +47,10 @@ pub(crate) fn read_plex(
             }
             return Ok(value);
         }
-        if width >= 32 {
+        if width >= u32::BITS {
             return Err(Error::PlexUnrepresentable { field });
         }
-        width *= 2;
+        width <<= 1;
     }
 }
 
@@ -76,12 +76,12 @@ pub(crate) fn write_plex(
         // Largest value this width can carry directly (all-ones is reserved
         // as the escape code, so the direct range tops out one below it).
         let max_direct = all_ones - 1;
-        if width >= 32 || value <= max_direct {
+        if width >= u32::BITS || value <= max_direct {
             w.write_bits(value, width).ctx(field)?;
             return Ok(());
         }
         w.write_bits(all_ones, width).ctx(field)?;
-        width *= 2;
+        width <<= 1;
     }
 }
 
@@ -98,15 +98,15 @@ pub(crate) fn plex_bits(value: u64, start_width: u32) -> u32 {
     loop {
         total += width;
         let all_ones = all_ones_for_width(width);
-        if width >= 32 || value < all_ones {
+        if width >= u32::BITS || value < all_ones {
             return total;
         }
-        width *= 2;
+        width <<= 1;
     }
 }
 
 fn all_ones_for_width(width: u32) -> u64 {
-    if width >= 64 {
+    if width >= u64::BITS {
         u64::MAX
     } else {
         (1u64 << width) - 1

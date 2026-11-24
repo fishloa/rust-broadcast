@@ -5,6 +5,7 @@
 //! `ISO_639_language_code` followed by `text_char`s coded per EN 300 468
 //! Annex A. Allowed in the INT platform loop only (Table 19).
 
+use crate::descriptors::lang_text::LANG_LEN;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
@@ -14,7 +15,6 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for IP/MAC_platform_name_descriptor.
 pub const TAG: u8 = 0x0C;
 const HEADER_LEN: usize = 2;
-const LANG_LEN: usize = 3;
 
 /// IP/MAC_platform_name_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

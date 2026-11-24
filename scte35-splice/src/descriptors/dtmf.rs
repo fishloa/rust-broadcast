@@ -47,25 +47,31 @@ impl DtmfDescriptor {
     }
 }
 
+const DTMF_COUNT_OFFSET: usize = 1;
+const DTMF_HEADER_LEN: usize = 2;
+const DTMF_COUNT_SHIFT: u32 = 5;
+const DTMF_COUNT_MAX: usize = 7;
+const DTMF_RESERVED_BITS: u8 = 0x1F;
+
 impl<'a> Parse<'a> for DtmfDescriptor {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "DTMF_descriptor")?;
-        if body.len() < 2 {
+        if body.len() < DTMF_HEADER_LEN {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: HEADER_LEN + 2,
+                    need: HEADER_LEN + DTMF_HEADER_LEN,
                     have: bytes.len(),
                     what: "DTMF_descriptor preroll/count",
                 },
             ));
         }
         let preroll = body[0];
-        let dtmf_count = (body[1] >> 5) as usize; // 3-bit count, 5 reserved
-        if body.len() < 2 + dtmf_count {
+        let dtmf_count = (body[DTMF_COUNT_OFFSET] >> DTMF_COUNT_SHIFT) as usize; // 3-bit count, 5 reserved
+        if body.len() < DTMF_HEADER_LEN + dtmf_count {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: HEADER_LEN + 2 + dtmf_count,
+                    need: HEADER_LEN + DTMF_HEADER_LEN + dtmf_count,
                     have: bytes.len(),
                     what: "DTMF_descriptor chars",
                 },
@@ -82,22 +88,28 @@ impl<'a> Parse<'a> for DtmfDescriptor {
 impl Serialize for DtmfDescriptor {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + 2 + self.dtmf_chars.len()
+        HEADER_LEN + DTMF_HEADER_LEN + self.dtmf_chars.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        if self.dtmf_chars.len() > 7 {
+        if self.dtmf_chars.len() > DTMF_COUNT_MAX {
             return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "DTMF_descriptor.dtmf_count",
                 value: self.dtmf_chars.len() as u64,
-                max: 7,
+                max: DTMF_COUNT_MAX as u64,
             }));
         }
-        header::write_header(buf, TAG, self.identifier, 2 + self.dtmf_chars.len())?;
+        header::write_header(
+            buf,
+            TAG,
+            self.identifier,
+            DTMF_HEADER_LEN + self.dtmf_chars.len(),
+        )?;
         buf[HEADER_LEN] = self.preroll;
         // 3-bit dtmf_count, 5 reserved bits = 1.
-        buf[HEADER_LEN + 1] = ((self.dtmf_chars.len() as u8) << 5) | 0x1F;
+        buf[HEADER_LEN + DTMF_COUNT_OFFSET] =
+            ((self.dtmf_chars.len() as u8) << DTMF_COUNT_SHIFT) | DTMF_RESERVED_BITS;
         buf[HEADER_LEN + 2..need].copy_from_slice(&self.dtmf_chars);
         Ok(need)
     }

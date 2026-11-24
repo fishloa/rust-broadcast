@@ -61,6 +61,9 @@ pub const MAX_EXTENSION_UNITS: u8 = 0x0F;
 /// `private/specs-verified/smpte/st2022/st2022-6-framing.md` §3.4).
 pub const EXTENSION_TAG_PAD: u8 = 0;
 
+/// Byte length of an extension element's Tag/Length header (§6.4).
+const EXTENSION_TLV_HEADER_LEN: usize = 2;
+
 /// One element of a [`HeaderExtension`]'s Tag/Length/Value chain
 /// (§6.4, `private/specs-verified/smpte/st2022/st2022-6-framing.md` §3.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +164,7 @@ impl<'a> Iterator for ExtensionItems<'a> {
             self.rest = &[];
             return Some(Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: 2,
+                    need: EXTENSION_TLV_HEADER_LEN,
                     have: 1,
                     what: "header extension TLV length",
                 },
@@ -191,6 +194,7 @@ const F_BIT: u8 = 0x08;
 const VSID_MASK: u8 = 0x07;
 
 // -- bytes 2..4, big-endian u16: R(2) | S(2) | FEC(3) | CF(4) | RESERVE(5) --
+const TIMESTAMP_REF_WORD_OFFSET: usize = 2;
 const R_SHIFT: u32 = 14;
 const R_MASK: u16 = 0x0003;
 const S_SHIFT: u32 = 12;
@@ -214,6 +218,24 @@ const FRATE_MASK: u32 = 0x0000_00FF;
 const SAMPLE_SHIFT: u32 = 8;
 const SAMPLE_MASK: u32 = 0x0000_000F;
 const FMT_RESERVE_MASK: u32 = 0x0000_00FF;
+
+/// Byte width of a 16-bit field.
+const U16_LEN: usize = core::mem::size_of::<u16>();
+
+/// Copy `N` big-endian bytes at `offset` into an array.
+fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
+    bytes
+        .get(offset..offset + N)
+        .and_then(|s| s.first_chunk::<N>())
+        .copied()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: offset + N,
+                have: bytes.len(),
+                what: "fixed-width big-endian field",
+            },
+        ))
+}
 
 // ---------------------------------------------------------------------------
 // VideoSourceId — VSID field, §6.4
@@ -1144,7 +1166,7 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
         let vsid = VideoSourceId::from_bits(byte0 & VSID_MASK);
         let fr_count = bytes[1];
 
-        let word = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let word = u16::from_be_bytes(be::<U16_LEN>(bytes, TIMESTAMP_REF_WORD_OFFSET)?);
         let timestamp_ref = TimestampRef::from_bits((word >> R_SHIFT) & R_MASK);
         let scrambling = Scrambling::from_bits((word >> S_SHIFT) & S_MASK);
         let fec_usage = FecUsage::from_bits((word >> FEC_SHIFT) & FEC_MASK);
@@ -1157,8 +1179,7 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
         let video_source_format = if f {
             let end = pos + VIDEO_SOURCE_FORMAT_LEN;
             need_in(bytes, end, "video source format row")?;
-            let vsf_word =
-                u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
+            let vsf_word = u32::from_be_bytes(be::<VIDEO_SOURCE_FORMAT_LEN>(bytes, pos)?);
             pos = end;
             Some(VideoSourceFormat::from_bits(vsf_word))
         } else {
@@ -1168,12 +1189,7 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
         let video_timestamp = if clock_frequency != ClockFrequency::NoTimestamp {
             let end = pos + VIDEO_TIMESTAMP_LEN;
             need_in(bytes, end, "video timestamp")?;
-            let ts = VideoTimestamp(u32::from_be_bytes([
-                bytes[pos],
-                bytes[pos + 1],
-                bytes[pos + 2],
-                bytes[pos + 3],
-            ]));
+            let ts = VideoTimestamp(u32::from_be_bytes(be::<VIDEO_TIMESTAMP_LEN>(bytes, pos)?));
             pos = end;
             Some(ts)
         } else {

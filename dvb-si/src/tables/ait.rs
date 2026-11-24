@@ -28,7 +28,7 @@ const APPLICATION_TYPE_HI_MASK: u8 = 0x7F;
 use super::CRC_LEN;
 
 /// Width of the `reserved_future_use` fields (16-bit applications_control).
-const AIT_RESERVED_BITS: u32 = 4;
+pub const AIT_RESERVED_BITS: u32 = 4;
 const APP_HEADER_LEN: usize = 9;
 
 /// Width of the `reserved` length fields and application_type.
@@ -42,8 +42,6 @@ const COMMON_DESC_LEN_END: usize = 10;
 
 /// Byte layout of one application header.
 const ORGANISATION_ID_LEN: usize = 4;
-const ORGANISATION_ID_BYTE_2_OFFSET: usize = 2;
-const ORGANISATION_ID_BYTE_3_OFFSET: usize = 3;
 const APP_ID_OFFSET: usize = 4;
 const APPLICATION_ID_LEN: usize = 2;
 const APP_CONTROL_CODE_OFFSET: usize = 6;
@@ -407,12 +405,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
         let mut applications = Vec::new();
         let mut pos = app_loop_start;
         while pos + APP_HEADER_LEN <= app_loop_actual_end {
-            let organisation_id = u32::from_be_bytes([
-                bytes[pos],
-                bytes[pos + 1],
-                bytes[pos + ORGANISATION_ID_BYTE_2_OFFSET],
-                bytes[pos + ORGANISATION_ID_BYTE_3_OFFSET],
-            ]);
+            let organisation_id = crate::wire::be_u32(bytes, pos, "ait")?;
             let application_id = crate::wire::be_u16(bytes, pos + APP_ID_OFFSET, "ait")?;
             let control_code = ControlCode::from_u8(bytes[pos + APP_CONTROL_CODE_OFFSET]);
             let app_desc_length = super::desc_loop_len_of(

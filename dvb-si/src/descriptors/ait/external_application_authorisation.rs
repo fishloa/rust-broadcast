@@ -15,6 +15,12 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x05;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 7;
+/// Width of the `organisation_id` field at the head of an entry.
+const ORGANISATION_ID_LEN: usize = core::mem::size_of::<u32>();
+/// Width of the `application_id` field that follows `organisation_id`.
+const APPLICATION_ID_LEN: usize = core::mem::size_of::<u16>();
+/// Offset of `application_priority` in an entry.
+const APPLICATION_PRIORITY_OFFSET: usize = ORGANISATION_ID_LEN + APPLICATION_ID_LEN;
 
 /// One external application authorisation entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,9 +59,12 @@ impl<'a> Parse<'a> for ExternalApplicationAuthorisationDescriptor {
         for chunk in body.chunks_exact(ENTRY_LEN) {
             let organisation_id =
                 crate::wire::be_u32(chunk, 0, "external_application_authorisation")?;
-            let application_id =
-                crate::wire::be_u16(chunk, 4, "external_application_authorisation")?;
-            let application_priority = chunk[6];
+            let application_id = crate::wire::be_u16(
+                chunk,
+                ORGANISATION_ID_LEN,
+                "external_application_authorisation",
+            )?;
+            let application_priority = chunk[APPLICATION_PRIORITY_OFFSET];
             entries.push(ExternalAppEntry {
                 identifier: ApplicationIdentifier {
                     organisation_id,
@@ -86,9 +95,11 @@ impl Serialize for ExternalApplicationAuthorisationDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, self.entries.len() * ENTRY_LEN)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + 4].copy_from_slice(&e.identifier.organisation_id.to_be_bytes());
-            buf[pos + 4..pos + 6].copy_from_slice(&e.identifier.application_id.to_be_bytes());
-            buf[pos + 6] = e.application_priority;
+            buf[pos..pos + ORGANISATION_ID_LEN]
+                .copy_from_slice(&e.identifier.organisation_id.to_be_bytes());
+            buf[pos + ORGANISATION_ID_LEN..pos + APPLICATION_PRIORITY_OFFSET]
+                .copy_from_slice(&e.identifier.application_id.to_be_bytes());
+            buf[pos + APPLICATION_PRIORITY_OFFSET] = e.application_priority;
             pos += ENTRY_LEN;
         }
         Ok(len)

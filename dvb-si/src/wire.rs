@@ -5,13 +5,18 @@
 
 use crate::error::{Error, Result};
 
+/// Size in bytes of a big-endian `u16` field.
+pub(crate) const U16_LEN: usize = core::mem::size_of::<u16>();
+/// Size in bytes of a big-endian `u32` field.
+pub(crate) const U32_LEN: usize = core::mem::size_of::<u32>();
+
 /// Read a big-endian `u16` at `off`, or `BufferTooShort` naming `what`.
 pub(crate) fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16> {
-    match bytes.get(off..).and_then(|s| s.first_chunk::<2>()) {
+    match bytes.get(off..).and_then(|s| s.first_chunk::<U16_LEN>()) {
         Some(b) => Ok(u16::from_be_bytes(*b)),
         None => Err(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: off.saturating_add(2),
+                need: off.saturating_add(U16_LEN),
                 have: bytes.len(),
                 what,
             },
@@ -21,11 +26,11 @@ pub(crate) fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16
 
 /// Read a big-endian `u32` at `off`, or `BufferTooShort` naming `what`.
 pub(crate) fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32> {
-    match bytes.get(off..).and_then(|s| s.first_chunk::<4>()) {
+    match bytes.get(off..).and_then(|s| s.first_chunk::<U32_LEN>()) {
         Some(b) => Ok(u32::from_be_bytes(*b)),
         None => Err(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: off.saturating_add(4),
+                need: off.saturating_add(U32_LEN),
                 have: bytes.len(),
                 what,
             },

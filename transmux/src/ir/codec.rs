@@ -278,7 +278,7 @@ pub enum CodecConfig {
         /// The `ddts` DTSSpecificBox.
         config: DtsSpecificBox,
         /// Sample-entry FourCC: one of `dtsc`, `dtsh`, `dtsl`, `dtse`.
-        codec_fourcc: [u8; 4],
+        codec_fourcc: [u8; SAMPLE_ENTRY_CODE_LEN],
         /// Channel count.
         channel_count: u16,
         /// Sampling rate in Hz (48000, 44100, or 32000 per §E.2.2.2).
@@ -379,6 +379,12 @@ pub enum CodecConfig {
 /// Output channels of HE-AAC v2: Parametric Stereo upmixes the mono core
 /// (ISO/IEC 14496-3 §8.6.4).
 const HE_AAC_V2_OUTPUT_CHANNELS: u16 = 2;
+
+/// Bits per kilobit, converting a stated kbit/s rate to bits per second.
+const BITS_PER_KILOBIT: u32 = 1000;
+
+/// Width of a sample-entry four-character code in bytes.
+const SAMPLE_ENTRY_CODE_LEN: usize = 4;
 
 impl CodecConfig {
     /// Rewrite an AAC-LC `CodecConfig::Aac` as explicit hierarchical HE-AAC
@@ -522,8 +528,12 @@ impl CodecConfig {
     /// - DTS: the core `ddts` `avgBitrate` (`None` for open/unspecified rate).
     pub fn nominal_bitrate(&self) -> Option<u32> {
         let bps = match self {
-            CodecConfig::Ac3 { config, .. } => config.nominal_bitrate_kbps()?.checked_mul(1000)?,
-            CodecConfig::Eac3 { config, .. } => config.nominal_bitrate_kbps().checked_mul(1000)?,
+            CodecConfig::Ac3 { config, .. } => config
+                .nominal_bitrate_kbps()?
+                .checked_mul(BITS_PER_KILOBIT)?,
+            CodecConfig::Eac3 { config, .. } => config
+                .nominal_bitrate_kbps()
+                .checked_mul(BITS_PER_KILOBIT)?,
             CodecConfig::Aac { esds, .. } | CodecConfig::MpegAudio { esds, .. } => esds
                 .es_descriptor
                 .decoder_config

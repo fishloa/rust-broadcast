@@ -97,6 +97,10 @@ const VVC_EOB: u8 = 22;
 const VVC_SUFFIX_SEI: u8 = 24;
 /// VVC `FD_NUT` (filler data) — ITU-T H.266 Table 5; likewise trailing.
 const VVC_FD: u8 = 25;
+/// Top bit of the first RBSP byte, carrying the first-slice-of-picture flag.
+const RBSP_TOP_BIT_MASK: u8 = 0x80;
+/// Annex B start-code prefix length in bytes (`00 00 01`).
+const START_CODE_PREFIX_LEN: usize = 3;
 
 /// Upper bound on bytes buffered for a single still-open NAL, and on the size
 /// of one assembled access unit.
@@ -178,7 +182,9 @@ fn is_suffix(codec: NalCodec, t: u8) -> bool {
 fn first_slice_of_picture(codec: NalCodec, nal_body: &[u8]) -> bool {
     let hl = header_len(codec);
     match codec {
-        NalCodec::Avc | NalCodec::Hevc => nal_body.get(hl).is_some_and(|b| b & 0x80 != 0),
+        NalCodec::Avc | NalCodec::Hevc => {
+            nal_body.get(hl).is_some_and(|b| b & RBSP_TOP_BIT_MASK != 0)
+        }
         NalCodec::Vvc => false,
     }
 }
@@ -342,7 +348,7 @@ impl AccessUnitSplitter {
         // is still incomplete.
         let mut starts: Vec<usize> = Vec::new();
         let n = buf.len();
-        let mut p = self.scanned.min(n.saturating_sub(3));
+        let mut p = self.scanned.min(n.saturating_sub(START_CODE_PREFIX_LEN));
         #[cfg(test)]
         let scan_start = p;
         while let Some(at) = find_start_code_prefix(buf, p) {
@@ -351,7 +357,7 @@ impl AccessUnitSplitter {
         }
         // No further prefix: every position up to `n - 2` was proven not to
         // begin one (the last two bytes may still start one on the next push).
-        p = p.max(n.saturating_sub(2));
+        p = p.max(n.saturating_sub(START_CODE_PREFIX_LEN - 1));
         #[cfg(test)]
         {
             self.scanned_bytes += p.saturating_sub(scan_start);
@@ -359,7 +365,9 @@ impl AccessUnitSplitter {
         // Positions at or past `n - 2` could still be the first two bytes of a
         // start code completed by the next push, so the cursor stops short of
         // them — but it must never move backwards.
-        self.scanned = self.scanned.max(p.min(n.saturating_sub(2)));
+        self.scanned = self
+            .scanned
+            .max(p.min(n.saturating_sub(START_CODE_PREFIX_LEN - 1)));
         if starts.is_empty() {
             // A single start code with nothing after it: that NAL is the whole
             // buffer, still open.
@@ -429,7 +437,8 @@ impl AccessUnitSplitter {
 /// of leading `zero_byte`s followed by `00 00 01`): the offset of the first NAL
 /// header byte. Falls back to the full length if no `00 00 01` is present.
 fn start_code_len(nal_with_code: &[u8]) -> usize {
-    find_start_code_prefix(nal_with_code, 0).map_or(nal_with_code.len(), |i| i + 3)
+    find_start_code_prefix(nal_with_code, 0)
+        .map_or(nal_with_code.len(), |i| i + START_CODE_PREFIX_LEN)
 }
 
 /// Split a complete Annex B byte stream into access units in one call.

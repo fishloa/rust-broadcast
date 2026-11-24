@@ -16,7 +16,7 @@ use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 
 /// `ISO_639_language_code` width, bytes.
-pub(super) const LANG_LEN: usize = 3;
+pub(super) const LANG_LEN: usize = crate::text::LANG_CODE_LEN;
 /// Width of the 8-bit `text_length` prefix, bytes.
 pub(super) const LEN_FIELD: usize = 1;
 
@@ -59,7 +59,9 @@ impl<'a> EntryReader<'a> {
         let b = self.body;
         let p = self.pos;
         self.pos += LANG_LEN;
-        Ok(LangCode([b[p], b[p + 1], b[p + 2]]))
+        let mut code = [0u8; LANG_LEN];
+        code.copy_from_slice(&b[p..p + LANG_LEN]);
+        Ok(LangCode(code))
     }
 
     /// Read one length-prefixed text. `reserve` is the number of bytes that

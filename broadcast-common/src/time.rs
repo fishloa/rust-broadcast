@@ -28,6 +28,51 @@ const MJD_16_MSB: u16 = 0x8000;
 /// EN 300 468 v1.20.1 clause 5.2.4).
 const MJD_WRAP_OFFSET: u32 = 0x1_0000;
 
+/// Width in bytes of a DVB UTC time (16-bit MJD + 24-bit BCD `HHMMSS`),
+/// EN 300 468 Annex C.
+pub const MJD_BCD_LEN: usize = 5;
+/// Width in bytes of a DVB BCD `HHMMSS` duration, EN 300 468 Annex C.
+pub const BCD_DURATION_LEN: usize = 3;
+/// Width of the 16-bit MJD field within the 5-byte time.
+const MJD_BYTES: usize = 2;
+/// Byte offsets of HH, MM, SS within the 5-byte time (after the MJD).
+const HOUR_OFFSET: usize = MJD_BYTES;
+const MINUTE_OFFSET: usize = HOUR_OFFSET + 1;
+const SECOND_OFFSET: usize = MINUTE_OFFSET + 1;
+/// Byte offsets of HH, MM, SS within the 3-byte duration.
+const DURATION_HOUR: usize = 0;
+const DURATION_MINUTE: usize = DURATION_HOUR + 1;
+const DURATION_SECOND: usize = DURATION_MINUTE + 1;
+/// Field bounds the codec enforces.
+const MIN_MONTH: u8 = 1;
+const MAX_MONTH: u8 = 12;
+const MIN_DAY: u8 = 1;
+const MAX_DAY: u8 = 31;
+const MAX_HOUR: u8 = 23;
+const MAX_MINUTE: u8 = 59;
+const MAX_SECOND: u8 = 59;
+/// Largest whole-hour duration the two BCD hour digits hold.
+const MAX_DURATION_HOUR: u64 = 99;
+/// Seconds per minute and per hour.
+const SECONDS_PER_MINUTE: u64 = 60;
+const SECONDS_PER_HOUR: u64 = 3600;
+
+/// Richards / Fliegel & Van Flandern Julian-Day-Number coefficients.
+const JDN_LEAP_YEARS: i64 = 4;
+const JDN_CENTURY_YEARS: i64 = 100;
+const JDN_LEAP_CENTURY_YEARS: i64 = 400;
+const JDN_DAYS_PER_YEAR: i64 = 365;
+const JDN_MONTHS_PER_YEAR: i64 = 12;
+const JDN_MONTH_DAYS: i64 = 153;
+const JDN_MONTH_CORRECTION: i64 = 5;
+const JDN_MONTH_BIAS: i64 = 2;
+const JDN_GREGORIAN_CORRECTION: i64 = 3;
+const JDN_ERA_DAYS: i64 = 146_097;
+const JDN_CYCLE_DAYS: i64 = 1461;
+const JDN_YEAR_OFFSET: i64 = 14;
+const JDN_YEAR_BASE: i64 = 4800;
+const JDN_GREGORIAN_OFFSET: i64 = 32_045;
+
 /// Recover the full MJD from the 16-bit wire field (v1.20.1 clause 5.2.4).
 fn full_mjd(field: u16) -> u32 {
     if field & MJD_16_MSB != 0 {
@@ -78,13 +123,13 @@ pub struct MjdBcdDateTime {
 /// or the minute/second fields exceed 59. The MJD→calendar conversion
 /// is proleptic Gregorian (EN 300 468 Annex C's formula is only valid to 2100-02-28; see `mjd_to_ymd_core`).
 #[must_use]
-pub fn decode_mjd_bcd(raw: [u8; 5]) -> Option<MjdBcdDateTime> {
-    let (mjd_bytes, _) = raw.split_first_chunk::<2>().unwrap();
+pub fn decode_mjd_bcd(raw: [u8; MJD_BCD_LEN]) -> Option<MjdBcdDateTime> {
+    let (mjd_bytes, _) = raw.split_first_chunk::<MJD_BYTES>().unwrap();
     let mjd = u16::from_be_bytes(*mjd_bytes);
-    let h = from_bcd_byte(raw[2])?;
-    let mi = from_bcd_byte(raw[3])?;
-    let s = from_bcd_byte(raw[4])?;
-    if mi > 59 || s > 59 || h > 23 {
+    let h = from_bcd_byte(raw[HOUR_OFFSET])?;
+    let mi = from_bcd_byte(raw[MINUTE_OFFSET])?;
+    let s = from_bcd_byte(raw[SECOND_OFFSET])?;
+    if mi > MAX_MINUTE || s > MAX_SECOND || h > MAX_HOUR {
         return None;
     }
     let (year, month, day) = mjd_to_ymd_nogate(mjd)?;
@@ -105,8 +150,8 @@ pub fn decode_mjd_bcd(raw: [u8; 5]) -> Option<MjdBcdDateTime> {
 /// (0–23 / 0–59 / 0–59) — `to_bcd_byte` alone would accept e.g. `90` (it only
 /// rejects values above 99), producing bytes `decode_mjd_bcd` then rejects.
 #[must_use]
-pub fn encode_mjd_bcd(dt: MjdBcdDateTime) -> Option<[u8; 5]> {
-    if dt.hour > 23 || dt.minute > 59 || dt.second > 59 {
+pub fn encode_mjd_bcd(dt: MjdBcdDateTime) -> Option<[u8; MJD_BCD_LEN]> {
+    if dt.hour > MAX_HOUR || dt.minute > MAX_MINUTE || dt.second > MAX_SECOND {
         return None;
     }
     let mjd = ymd_to_mjd_nogate(i32::from(dt.year), u32::from(dt.month), u32::from(dt.day))?;
@@ -139,13 +184,18 @@ fn mjd_to_ymd_core(field: u16) -> (i64, i64, i64) {
     const B_OFFSET: i64 = 274_277;
     const C_CORR: i64 = -38;
     let jdn = i64::from(full_mjd(field)) + JDN_OF_MJD_0;
-    let f = jdn + J_OFFSET + (((4 * jdn + B_OFFSET) / 146_097) * 3) / 4 + C_CORR;
-    let e = 4 * f + 3;
-    let g = (e % 1461) / 4;
-    let h = 5 * g + 2;
-    let d = (h % 153) / 5 + 1;
-    let m = (h / 153 + 2) % 12 + 1;
-    let y = e / 1461 - Y_BASE + (12 + 2 - m) / 12;
+    let f = jdn
+        + J_OFFSET
+        + (((JDN_LEAP_YEARS * jdn + B_OFFSET) / JDN_ERA_DAYS) * JDN_GREGORIAN_CORRECTION)
+            / JDN_LEAP_YEARS
+        + C_CORR;
+    let e = JDN_LEAP_YEARS * f + JDN_GREGORIAN_CORRECTION;
+    let g = (e % JDN_CYCLE_DAYS) / JDN_LEAP_YEARS;
+    let h = JDN_MONTH_CORRECTION * g + JDN_MONTH_BIAS;
+    let d = (h % JDN_MONTH_DAYS) / JDN_MONTH_CORRECTION + 1;
+    let m = (h / JDN_MONTH_DAYS + JDN_MONTH_BIAS) % JDN_MONTHS_PER_YEAR + 1;
+    let y = e / JDN_CYCLE_DAYS - Y_BASE
+        + (JDN_MONTHS_PER_YEAR + JDN_MONTH_BIAS - m) / JDN_MONTHS_PER_YEAR;
     (y, m, d)
 }
 
@@ -158,7 +208,7 @@ fn mjd_to_ymd_nogate(mjd: u16) -> Option<(u16, u8, u8)> {
     let y_u16 = u16::try_from(y).ok()?;
     let m_u8 = u8::try_from(m).ok()?;
     let d_u8 = u8::try_from(d).ok()?;
-    if !(1..=12).contains(&m_u8) || !(1..=31).contains(&d_u8) {
+    if !(MIN_MONTH..=MAX_MONTH).contains(&m_u8) || !(MIN_DAY..=MAX_DAY).contains(&d_u8) {
         return None;
     }
     Some((y_u16, m_u8, d_u8))
@@ -170,10 +220,16 @@ fn mjd_to_ymd_nogate(mjd: u16) -> Option<(u16, u8, u8)> {
 /// Total over `day` 1..=31 (e.g. `31 Feb` lands on March); callers validate
 /// by round-tripping.
 fn ymd_to_mjd_core(year: i32, month: u32, day: u32) -> i64 {
-    let a = (14 - i64::from(month)) / 12;
-    let y = i64::from(year) + 4800 - a;
-    let m = i64::from(month) + 12 * a - 3;
-    let jdn = i64::from(day) + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32_045;
+    let a = (JDN_YEAR_OFFSET - i64::from(month)) / JDN_MONTHS_PER_YEAR;
+    let y = i64::from(year) + JDN_YEAR_BASE - a;
+    let m = i64::from(month) + JDN_MONTHS_PER_YEAR * a - JDN_GREGORIAN_CORRECTION;
+    let jdn = i64::from(day)
+        + (JDN_MONTH_DAYS * m + JDN_MONTH_BIAS) / JDN_MONTH_CORRECTION
+        + JDN_DAYS_PER_YEAR * y
+        + y / JDN_LEAP_YEARS
+        - y / JDN_CENTURY_YEARS
+        + y / JDN_LEAP_CENTURY_YEARS
+        - JDN_GREGORIAN_OFFSET;
     jdn - JDN_OF_MJD_0
 }
 
@@ -182,7 +238,9 @@ fn ymd_to_mjd_core(year: i32, month: u32, day: u32) -> i64 {
 /// Calendar→MJD per ETSI EN 300 468 Annex C; [`ymd_to_mjd`] is its public
 /// face.
 fn ymd_to_mjd_nogate(year: i32, month: u32, day: u32) -> Option<u16> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    if !(u32::from(MIN_MONTH)..=u32::from(MAX_MONTH)).contains(&month)
+        || !(u32::from(MIN_DAY)..=u32::from(MAX_DAY)).contains(&day)
+    {
         return None;
     }
     let full = ymd_to_mjd_core(year, month, day);
@@ -204,14 +262,16 @@ fn ymd_to_mjd_nogate(year: i32, month: u32, day: u32) -> Option<u16> {
 /// Returns `None` if any nibble is non-decimal or the minute/second fields
 /// exceed 59.
 #[must_use]
-pub fn decode_bcd_duration(raw: [u8; 3]) -> Option<Duration> {
-    let h = u64::from(from_bcd_byte(raw[0])?);
-    let m = u64::from(from_bcd_byte(raw[1])?);
-    let s = u64::from(from_bcd_byte(raw[2])?);
-    if m > 59 || s > 59 {
+pub fn decode_bcd_duration(raw: [u8; BCD_DURATION_LEN]) -> Option<Duration> {
+    let h = u64::from(from_bcd_byte(raw[DURATION_HOUR])?);
+    let m = u64::from(from_bcd_byte(raw[DURATION_MINUTE])?);
+    let s = u64::from(from_bcd_byte(raw[DURATION_SECOND])?);
+    if m > u64::from(MAX_MINUTE) || s > u64::from(MAX_SECOND) {
         return None;
     }
-    Some(Duration::from_secs(h * 3600 + m * 60 + s))
+    Some(Duration::from_secs(
+        h * SECONDS_PER_HOUR + m * SECONDS_PER_MINUTE + s,
+    ))
 }
 
 /// Encode a whole-second [`Duration`] to a 24-bit BCD `HHMMSS` (`[HH, MM, SS]`).
@@ -219,14 +279,14 @@ pub fn decode_bcd_duration(raw: [u8; 3]) -> Option<Duration> {
 /// Sub-second precision is truncated. Returns `None` if the duration is 100
 /// hours or longer (`HH` only holds two BCD digits).
 #[must_use]
-pub fn encode_bcd_duration(duration: Duration) -> Option<[u8; 3]> {
+pub fn encode_bcd_duration(duration: Duration) -> Option<[u8; BCD_DURATION_LEN]> {
     let secs = duration.as_secs();
-    let h = secs / 3600;
-    if h > 99 {
+    let h = secs / SECONDS_PER_HOUR;
+    if h > MAX_DURATION_HOUR {
         return None;
     }
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
+    let m = (secs % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
+    let s = secs % SECONDS_PER_MINUTE;
     Some([
         to_bcd_byte(h as u8)?,
         to_bcd_byte(m as u8)?,
@@ -262,7 +322,7 @@ pub fn ymd_to_mjd(year: i32, month: u32, day: u32) -> Option<u16> {
 #[cfg(feature = "jiff")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[must_use]
-pub fn decode_mjd_bcd_utc(raw: [u8; 5]) -> Option<jiff::Timestamp> {
+pub fn decode_mjd_bcd_utc(raw: [u8; MJD_BCD_LEN]) -> Option<jiff::Timestamp> {
     let [m0, m1, h, mi, s] = raw;
     let (y, m, d) = mjd_to_ymd(u16::from_be_bytes([m0, m1]));
     let dt = jiff::civil::DateTime::new(
@@ -286,7 +346,7 @@ pub fn decode_mjd_bcd_utc(raw: [u8; 5]) -> Option<jiff::Timestamp> {
 #[cfg(feature = "jiff")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[must_use]
-pub fn encode_mjd_bcd_utc(ts: jiff::Timestamp) -> Option<[u8; 5]> {
+pub fn encode_mjd_bcd_utc(ts: jiff::Timestamp) -> Option<[u8; MJD_BCD_LEN]> {
     let dt = jiff::tz::TimeZone::UTC.to_datetime(ts);
     let mjd = ymd_to_mjd(
         i32::from(dt.year()),

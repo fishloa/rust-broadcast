@@ -8,12 +8,22 @@ impl<'a> ExtensionBodyDef<'a> for SupplementaryAudio<'a> {
     const NAME: &'static str = "SUPPLEMENTARY_AUDIO";
 }
 /// Width of the `reserved_future_use` bit (1 bit).
-const RESERVED_BITS: u32 = 1;
+pub const SUPPLEMENTARY_AUDIO_RESERVED_BITS: u32 = 1;
+/// `mix_type` bit mask.
+const MIX_TYPE_MASK: u8 = 0x80;
+/// `mix_type` bit shift.
+const MIX_TYPE_SHIFT: u32 = 7;
+/// `editorial_classification` mask.
+const EDITORIAL_CLASSIFICATION_MASK: u8 = 0x1F;
+/// `editorial_classification` shift.
+const EDITORIAL_CLASSIFICATION_SHIFT: u32 = 2;
+/// `language_code_present` bit mask.
+const LANGUAGE_CODE_PRESENT_MASK: u8 = 0x01;
 /// Default of the 1-bit `reserved_future_use` (Table 153 bit 1): `1` in every
 /// edition (V1.13.1 `reserved` ... V1.20.1 `reserved_future_use`, audit §3.3).
 /// 37 of 47 real descriptors write `0` (cause unexplained), so parse keeps it.
-pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
-    ReservedOnes::<RESERVED_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<SUPPLEMENTARY_AUDIO_RESERVED_BITS> =
+    ReservedOnes::<SUPPLEMENTARY_AUDIO_RESERVED_BITS>::FILL;
 
 /// supplementary_audio body (Table 153).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,7 +35,7 @@ pub struct SupplementaryAudio<'a> {
     /// `language_code_present` (1 bit, right-aligned): captured on parse and
     /// re-emitted verbatim; [`SupplementaryAudio::new`] defaults to
     /// [`RESERVED_FUTURE_USE_DEFAULT`] (1).
-    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
+    pub reserved_future_use: ReservedOnes<SUPPLEMENTARY_AUDIO_RESERVED_BITS>,
     /// mix_type(1) — Table 154.
     pub mix_type: bool,
     /// editorial_classification(5) — Table 155.
@@ -72,15 +82,18 @@ impl<'a> Parse<'a> for SupplementaryAudio<'a> {
             ));
         }
         let flags = sel[0];
-        let mix_type = (flags & 0x80) != 0;
-        let editorial_classification = (flags >> 2) & 0x1F;
-        let language_code_present = (flags & 0x01) != 0;
+        let mix_type = (flags & MIX_TYPE_MASK) != 0;
+        let editorial_classification =
+            (flags >> EDITORIAL_CLASSIFICATION_SHIFT) & EDITORIAL_CLASSIFICATION_MASK;
+        let language_code_present = (flags & LANGUAGE_CODE_PRESENT_MASK) != 0;
         let mut pos = 1;
         let iso_639_language_code = if language_code_present {
             need_in(sel, pos + ISO_639_LEN, "supplementary_audio body")?;
             let lc = &sel[pos..pos + ISO_639_LEN];
             pos += ISO_639_LEN;
-            Some(LangCode([lc[0], lc[1], lc[2]]))
+            let mut language_code = [0u8; ISO_639_LEN];
+            language_code.copy_from_slice(lc);
+            Some(LangCode(language_code))
         } else {
             None
         };
@@ -104,12 +117,12 @@ impl Serialize for SupplementaryAudio<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         // Table 153 bit 1 reserved_future_use: preserved, default 1.
-        buf[0] = (u8::from(self.mix_type) << 7)
+        buf[0] = (u8::from(self.mix_type) << MIX_TYPE_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.editorial_classification,
-                0x1F,
+                EDITORIAL_CLASSIFICATION_MASK,
                 "editorial_classification",
-            )? << 2)
+            )? << EDITORIAL_CLASSIFICATION_SHIFT)
             | ((self.reserved_future_use.get() as u8) << 1)
             | u8::from(self.iso_639_language_code.is_some());
         let mut p = 1;

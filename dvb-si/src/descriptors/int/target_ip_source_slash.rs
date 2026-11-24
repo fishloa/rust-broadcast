@@ -13,6 +13,14 @@ use core::net::Ipv4Addr;
 /// Descriptor tag for target_IP_source_slash_descriptor.
 pub const TAG: u8 = 0x10;
 const ENTRY_LEN: usize = 10;
+/// Wire width of one IPv4 address.
+const ADDR_LEN: usize = size_of::<u32>();
+/// Offset of `IPv4_source_slash_mask` in an entry.
+const SOURCE_SLASH_MASK_OFFSET: usize = ADDR_LEN;
+/// Offset of `IPv4_dest_addr` in an entry.
+const DEST_ADDR_OFFSET: usize = SOURCE_SLASH_MASK_OFFSET + 1;
+/// Offset of `IPv4_dest_slash_mask` in an entry.
+const DEST_SLASH_MASK_OFFSET: usize = DEST_ADDR_OFFSET + ADDR_LEN;
 
 /// One source/destination address pair with slash masks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,18 +38,22 @@ pub struct Ipv4SourceDestSlash {
 
 impl Entry<ENTRY_LEN> for Ipv4SourceDestSlash {
     fn read(b: &[u8; ENTRY_LEN]) -> Self {
+        let source: [u8; ADDR_LEN] = b[..ADDR_LEN].try_into().unwrap_or_default();
+        let dest: [u8; ADDR_LEN] = b[DEST_ADDR_OFFSET..DEST_SLASH_MASK_OFFSET]
+            .try_into()
+            .unwrap_or_default();
         Self {
-            source_addr: Ipv4Addr::new(b[0], b[1], b[2], b[3]),
-            source_slash_mask: b[4],
-            dest_addr: Ipv4Addr::new(b[5], b[6], b[7], b[8]),
-            dest_slash_mask: b[9],
+            source_addr: Ipv4Addr::from(source),
+            source_slash_mask: b[SOURCE_SLASH_MASK_OFFSET],
+            dest_addr: Ipv4Addr::from(dest),
+            dest_slash_mask: b[DEST_SLASH_MASK_OFFSET],
         }
     }
     fn write(&self, b: &mut [u8; ENTRY_LEN]) {
-        b[..4].copy_from_slice(&self.source_addr.octets());
-        b[4] = self.source_slash_mask;
-        b[5..9].copy_from_slice(&self.dest_addr.octets());
-        b[9] = self.dest_slash_mask;
+        b[..ADDR_LEN].copy_from_slice(&self.source_addr.octets());
+        b[SOURCE_SLASH_MASK_OFFSET] = self.source_slash_mask;
+        b[DEST_ADDR_OFFSET..DEST_SLASH_MASK_OFFSET].copy_from_slice(&self.dest_addr.octets());
+        b[DEST_SLASH_MASK_OFFSET] = self.dest_slash_mask;
     }
 }
 

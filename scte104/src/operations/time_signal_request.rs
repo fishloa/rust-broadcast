@@ -3,6 +3,7 @@
 //! Normal usage request. Generates an SCTE 35 time_signal operation at the
 //! time indicated by the timestamp. Carries a single `pre_roll_time` field.
 
+use super::{U16_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -27,7 +28,7 @@ impl<'a> Parse<'a> for TimeSignalRequest {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, LEN, "time_signal_request_data")?;
         Ok(Self {
-            pre_roll_time: u16::from_be_bytes([bytes[0], bytes[1]]),
+            pre_roll_time: u16::from_be_bytes(be::<U16_LEN>(bytes, 0)?),
         })
     }
 }

@@ -7,7 +7,17 @@ use broadcast_common::reserved::ReservedOnes;
 /// Shift of `reserved_future_use(5)` in the per-entry flags byte.
 const ENTRY_RESERVED_SHIFT: u8 = 3;
 /// Width of the `reserved_future_use` in the per-entry flags byte (5 bits).
-const ENTRY_RESERVED_BITS: u32 = 5;
+pub const ENTRY_RESERVED_BITS: u32 = 5;
+/// Shift of `country_code_flag` in the per-entry flags byte.
+const COUNTRY_CODE_FLAG_SHIFT: u8 = 2;
+/// Mask of `region_depth` in the per-entry flags byte.
+const REGION_DEPTH_MASK: u8 = 0x03;
+/// Bytes the region codes occupy at depth 1.
+const REGION_DEPTH_1_CODES_LEN: usize = 1;
+/// Bytes the region codes occupy at depth 2.
+const REGION_DEPTH_2_CODES_LEN: usize = 2;
+/// Bytes the region codes occupy at depth 3.
+const REGION_DEPTH_3_CODES_LEN: usize = 4;
 
 /// Spec default of the per-entry `reserved_future_use(5)` ahead of
 /// `country_code_flag`: all ones (EN 300 468 Table 156; `reserved` in
@@ -92,7 +102,7 @@ impl<'a> Parse<'a> for TargetRegion {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         need_in(sel, ISO_639_LEN, "target_region body")?;
-        let country_code = LangCode([sel[0], sel[1], sel[2]]);
+        let country_code = decode_lang_code(sel, 0);
         let regions = parse_region_entries(sel, ISO_639_LEN)?;
         Ok(TargetRegion {
             country_code,
@@ -106,6 +116,12 @@ impl<'a> Parse<'a> for TargetRegion {
 /// [`TargetRegion::parse`] and
 /// [`ServiceProminence`](super::service_prominence::ServiceProminence)
 /// target_region sub-loop parsing.
+fn decode_lang_code(bytes: &[u8], offset: usize) -> LangCode {
+    let mut code = [0u8; ISO_639_LEN];
+    code.copy_from_slice(&bytes[offset..offset + ISO_639_LEN]);
+    LangCode(code)
+}
+
 pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<TargetRegionEntry>> {
     let mut regions = Vec::new();
     let mut pos = start;
@@ -113,11 +129,11 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
         let flags = sel[pos];
         pos += 1;
         let reserved_future_use = ReservedOnes::from_bits(u64::from(flags >> ENTRY_RESERVED_SHIFT));
-        let country_code_flag = (flags >> 2) & 1;
-        let region_depth = flags & 0x03;
+        let country_code_flag = (flags >> COUNTRY_CODE_FLAG_SHIFT) & 1;
+        let region_depth = flags & REGION_DEPTH_MASK;
         let country_code = if country_code_flag == 1 {
             need_in(sel, pos + ISO_639_LEN, "target_region body")?;
-            let cc = LangCode([sel[pos], sel[pos + 1], sel[pos + 2]]);
+            let cc = decode_lang_code(sel, pos);
             pos += ISO_639_LEN;
             Some(cc)
         } else {
@@ -126,7 +142,7 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
         let region_codes = match region_depth {
             0 => RegionCodes::None,
             1 => {
-                if pos >= sel.len() {
+                if pos + REGION_DEPTH_1_CODES_LEN > sel.len() {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
                             need: pos + 1,
@@ -142,47 +158,46 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
                 }
             }
             2 => {
-                if pos + 1 >= sel.len() {
+                if pos + REGION_DEPTH_2_CODES_LEN > sel.len() {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: pos + 2,
+                            need: pos + REGION_DEPTH_2_CODES_LEN,
                             have: sel.len(),
                             what: "target_region body",
                         },
                     ));
                 }
                 let primary = sel[pos];
-                let secondary = sel[pos + 1];
-                pos += 2;
+                let secondary = sel[pos + REGION_DEPTH_1_CODES_LEN];
+                pos += REGION_DEPTH_2_CODES_LEN;
                 RegionCodes::PrimarySecondary {
                     primary_region_code: primary,
                     secondary_region_code: secondary,
                 }
             }
             3 => {
-                if pos + 3 >= sel.len() {
+                if pos + REGION_DEPTH_3_CODES_LEN > sel.len() {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: pos + 4,
+                            need: pos + REGION_DEPTH_3_CODES_LEN,
                             have: sel.len(),
                             what: "target_region body",
                         },
                     ));
                 }
                 let primary = sel[pos];
-                let secondary = sel[pos + 1];
-                let (tert_bytes, _) =
-                    sel[pos + 2..]
-                        .split_first_chunk::<2>()
-                        .ok_or(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
-                                need: pos + 4,
-                                have: sel.len(),
-                                what: "target_region body",
-                            },
-                        ))?;
+                let secondary = sel[pos + REGION_DEPTH_1_CODES_LEN];
+                let (tert_bytes, _) = sel[pos + REGION_DEPTH_2_CODES_LEN..]
+                    .split_first_chunk::<{ core::mem::size_of::<u16>() }>()
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + REGION_DEPTH_3_CODES_LEN,
+                            have: sel.len(),
+                            what: "target_region body",
+                        },
+                    ))?;
                 let tertiary = u16::from_be_bytes(*tert_bytes);
-                pos += 4;
+                pos += REGION_DEPTH_3_CODES_LEN;
                 RegionCodes::Full {
                     primary_region_code: primary,
                     secondary_region_code: secondary,
@@ -236,7 +251,7 @@ pub(crate) fn write_region_entries(
             RegionCodes::Full { .. } => 3,
         };
         buf[pos] = ((region.reserved_future_use.get() as u8) << ENTRY_RESERVED_SHIFT)
-            | ((region.country_code.is_some() as u8) << 2)
+            | ((region.country_code.is_some() as u8) << COUNTRY_CODE_FLAG_SHIFT)
             | depth;
         pos += 1;
         if let Some(cc) = &region.country_code {
@@ -257,7 +272,7 @@ pub(crate) fn write_region_entries(
             } => {
                 buf[pos] = *primary_region_code;
                 buf[pos + 1] = *secondary_region_code;
-                pos += 2;
+                pos += REGION_DEPTH_2_CODES_LEN;
             }
             RegionCodes::Full {
                 primary_region_code,
@@ -266,8 +281,9 @@ pub(crate) fn write_region_entries(
             } => {
                 buf[pos] = *primary_region_code;
                 buf[pos + 1] = *secondary_region_code;
-                buf[pos + 2..pos + 4].copy_from_slice(&tertiary_region_code.to_be_bytes());
-                pos += 4;
+                buf[pos + REGION_DEPTH_2_CODES_LEN..pos + REGION_DEPTH_3_CODES_LEN]
+                    .copy_from_slice(&tertiary_region_code.to_be_bytes());
+                pos += REGION_DEPTH_3_CODES_LEN;
             }
         }
     }

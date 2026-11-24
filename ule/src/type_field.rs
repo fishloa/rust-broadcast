@@ -17,6 +17,14 @@ pub const ETHERTYPE_IPV4: u16 = 0x0800;
 /// IPv6 EtherType (RFC 4326 §4.7.3).
 pub const ETHERTYPE_IPV6: u16 = 0x86DD;
 
+/// Bit shift of the `H-LEN` field within the 16-bit Type word (RFC 4326 §5,
+/// Figure 7).
+const H_LEN_SHIFT: u32 = 8;
+/// Mask of the 3-bit `H-LEN` field in the 16-bit Type word.
+const H_LEN_MASK: u16 = 0x0007;
+/// Mask of the 8-bit `H-Type` field in the 16-bit Type word.
+const H_TYPE_MASK: u16 = 0x00FF;
+
 /// A decoded ULE Type field (RFC 4326 §4.4).
 ///
 /// `Type < 0x0600` is a [`TypeField::NextHeader`] (the start of an extension
@@ -44,8 +52,8 @@ impl TypeField {
     pub fn from_u16(raw: u16) -> Self {
         if raw < ETHERTYPE_BOUNDARY {
             // 5-bit zero | 3-bit H-LEN | 8-bit H-Type.
-            let h_len = ((raw >> 8) & 0x07) as u8;
-            let h_type = (raw & 0x00FF) as u8;
+            let h_len = ((raw >> H_LEN_SHIFT) & H_LEN_MASK) as u8;
+            let h_type = (raw & H_TYPE_MASK) as u8;
             TypeField::NextHeader { h_len, h_type }
         } else {
             TypeField::EtherType(raw)
@@ -55,7 +63,9 @@ impl TypeField {
     /// Encode back to the raw 16-bit wire value.
     pub fn to_u16(self) -> u16 {
         match self {
-            TypeField::NextHeader { h_len, h_type } => ((h_len as u16 & 0x07) << 8) | h_type as u16,
+            TypeField::NextHeader { h_len, h_type } => {
+                ((h_len as u16 & H_LEN_MASK) << H_LEN_SHIFT) | h_type as u16
+            }
             TypeField::EtherType(et) => et,
         }
     }

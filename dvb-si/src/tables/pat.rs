@@ -23,7 +23,7 @@ const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
 
 /// Width of the `reserved` above the entry PID.
-const PAT_RESERVED_BITS: u32 = 3;
+pub const PAT_RESERVED_BITS: u32 = 3;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 const ENTRY_LEN: usize = 4;
 

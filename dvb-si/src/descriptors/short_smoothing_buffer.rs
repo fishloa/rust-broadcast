@@ -14,6 +14,12 @@ pub const TAG: u8 = 0x61;
 const HEADER_LEN: usize = 2;
 /// Minimum payload: the packed sb_size/sb_leak_rate byte (EN 300 468 Table 94).
 const FIXED_LEN: usize = 1;
+/// Shift of `sb_size` in the packed byte.
+const SB_SIZE_SHIFT: u8 = 6;
+/// Mask of the 2-bit `sb_size` (Table 95).
+const SB_SIZE_MASK: u8 = 0x03;
+/// Mask of the 6-bit `sb_leak_rate` (Table 96).
+const SB_LEAK_RATE_MASK: u8 = 0x3F;
 
 /// Short Smoothing Buffer Descriptor (tag 0x61).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,8 +50,8 @@ impl<'a> Parse<'a> for ShortSmoothingBufferDescriptor<'a> {
             });
         }
         let packed = body[0];
-        let sb_size = packed >> 6;
-        let sb_leak_rate = packed & 0x3F;
+        let sb_size = packed >> SB_SIZE_SHIFT;
+        let sb_leak_rate = packed & SB_LEAK_RATE_MASK;
         let dvb_reserved = &body[FIXED_LEN..];
         Ok(Self {
             sb_size,
@@ -72,8 +78,13 @@ impl Serialize for ShortSmoothingBufferDescriptor<'_> {
         }
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body)?;
-        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(self.sb_size, 0x03, "sb_size")? << 6)
-            | broadcast_common::len::fit_mask(self.sb_leak_rate, 0x3F, "sb_leak_rate")?;
+        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(self.sb_size, SB_SIZE_MASK, "sb_size")?
+            << SB_SIZE_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.sb_leak_rate,
+                SB_LEAK_RATE_MASK,
+                "sb_leak_rate",
+            )?;
         let tail_start = HEADER_LEN + FIXED_LEN;
         buf[tail_start..tail_start + self.dvb_reserved.len()].copy_from_slice(self.dvb_reserved);
         Ok(len)

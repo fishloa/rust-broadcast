@@ -16,10 +16,37 @@ use broadcast_common::len::{need_in, need_out};
 use crate::error::{Error, Result};
 use crate::time::{BreakDuration, SpliceTime};
 use crate::traits::CommandDef;
+use crate::{CANCEL_INDICATOR_MASK, U16_LEN, U32_LEN, be};
 use broadcast_common::{Parse, Serialize};
 
 /// `splice_command_type` for splice_insert (§9.6.1, Table 7).
 pub const COMMAND_TYPE: u8 = 0x05;
+
+const SPLICE_EVENT_ID_LEN: usize = core::mem::size_of::<u32>();
+/// `splice_event_id` + cancel/compliance byte.
+const SPLICE_INSERT_HEADER_LEN: usize = SPLICE_EVENT_ID_LEN + 1;
+const FLAGS_OFFSET: usize = SPLICE_INSERT_HEADER_LEN;
+/// `splice_event_id` + cancel byte + flags byte.
+const FIXED_HEADER_LEN: usize = SPLICE_INSERT_HEADER_LEN + 1;
+/// `unique_program_id` (2) + `avail_num` (1) + `avails_expected` (1).
+const TRAILER_LEN: usize = U16_LEN + U16_LEN;
+const TRAILER_UNIQUE_PROGRAM_ID_OFFSET: usize = 0;
+const TRAILER_AVAIL_NUM_OFFSET: usize = U16_LEN;
+const TRAILER_AVAILS_EXPECTED_OFFSET: usize = U16_LEN + 1;
+const OUT_OF_NETWORK_MASK: u8 = 0x80;
+const PROGRAM_SPLICE_MASK: u8 = 0x40;
+/// Mask of the `duration_flag` bit (splice_insert flags byte).
+const DURATION_FLAG_MASK: u8 = 0x20;
+const SPLICE_IMMEDIATE_MASK: u8 = 0x10;
+const EVENT_ID_COMPLIANCE_MASK: u8 = 0x08;
+const TOP_BIT_SHIFT: u32 = 7;
+const PROGRAM_SPLICE_SHIFT: u32 = 6;
+/// Bit position of `duration_flag` (splice_insert flags byte).
+const DURATION_FLAG_SHIFT: u32 = 5;
+const SPLICE_IMMEDIATE_SHIFT: u32 = 4;
+const EVENT_ID_COMPLIANCE_SHIFT: u32 = 3;
+const CANCEL_RESERVED_BITS: u8 = 0x7F;
+const FLAGS_RESERVED_BITS: u8 = 0x07;
 
 /// Program Splice Mode (`program_splice_flag == 1`): the whole program splices
 /// at one point, chosen now (immediate) or at a stated `pts_time`.
@@ -240,16 +267,18 @@ impl<'a> Parse<'a> for SpliceInsert {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // splice_event_id (4) + flags byte (1).
-        let (hdr, _) = bytes.split_first_chunk::<5>().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
-                need: 5,
-                have: bytes.len(),
-                what: "splice_insert header",
-            },
-        ))?;
-        let splice_event_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
-        let cancel = hdr[4] & 0x80 != 0;
-        let mut pos = 5;
+        let (hdr, _) = bytes
+            .split_first_chunk::<SPLICE_INSERT_HEADER_LEN>()
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: SPLICE_INSERT_HEADER_LEN,
+                    have: bytes.len(),
+                    what: "splice_insert header",
+                },
+            ))?;
+        let splice_event_id = u32::from_be_bytes(be::<U32_LEN>(hdr, 0)?);
+        let cancel = hdr[SPLICE_EVENT_ID_LEN] & CANCEL_INDICATOR_MASK != 0;
+        let mut pos = SPLICE_INSERT_HEADER_LEN;
 
         let mut out = Self {
             splice_event_id,
@@ -264,11 +293,11 @@ impl<'a> Parse<'a> for SpliceInsert {
         need_in(bytes, pos + 1, "splice_insert flags")?;
         let flags = bytes[pos];
         pos += 1;
-        out.out_of_network_indicator = flags & 0x80 != 0;
-        let program_splice_flag = flags & 0x40 != 0;
-        let duration_flag = flags & 0x20 != 0;
-        let splice_immediate_flag = flags & 0x10 != 0;
-        out.event_id_compliance_flag = flags & 0x08 != 0;
+        out.out_of_network_indicator = flags & OUT_OF_NETWORK_MASK != 0;
+        let program_splice_flag = flags & PROGRAM_SPLICE_MASK != 0;
+        let duration_flag = flags & DURATION_FLAG_MASK != 0;
+        let splice_immediate_flag = flags & SPLICE_IMMEDIATE_MASK != 0;
+        out.event_id_compliance_flag = flags & EVENT_ID_COMPLIANCE_MASK != 0;
 
         out.mode = if program_splice_flag {
             if splice_immediate_flag {
@@ -312,18 +341,20 @@ impl<'a> Parse<'a> for SpliceInsert {
             out.break_duration = Some(bd);
         }
 
-        let (trailer, _) = bytes[pos..]
-            .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: pos + 4,
-                    have: bytes.len(),
-                    what: "splice_insert trailer",
-                },
-            ))?;
-        out.unique_program_id = u16::from_be_bytes([trailer[0], trailer[1]]);
-        out.avail_num = trailer[2];
-        out.avails_expected = trailer[3];
+        let (trailer, _) =
+            bytes[pos..]
+                .split_first_chunk::<TRAILER_LEN>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + TRAILER_LEN,
+                        have: bytes.len(),
+                        what: "splice_insert trailer",
+                    },
+                ))?;
+        out.unique_program_id =
+            u16::from_be_bytes(be::<U16_LEN>(trailer, TRAILER_UNIQUE_PROGRAM_ID_OFFSET)?);
+        out.avail_num = trailer[TRAILER_AVAIL_NUM_OFFSET];
+        out.avails_expected = trailer[TRAILER_AVAILS_EXPECTED_OFFSET];
         Ok(out)
     }
 }
@@ -332,23 +363,24 @@ impl Serialize for SpliceInsert {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         if self.cancel.is_some() {
-            return 5;
+            return SPLICE_INSERT_HEADER_LEN;
         }
-        let mut len = 6; // event_id (4) + cancel/reserved (1) + flags (1)
+        let mut len = FIXED_HEADER_LEN; // event_id (4) + cancel/reserved (1) + flags (1)
         len += self.mode.serialized_len();
         if self.break_duration.is_some() {
             len += BreakDuration::LEN;
         }
-        len += 4; // unique_program_id (2) + avail_num (1) + avails_expected (1)
+        len += TRAILER_LEN; // unique_program_id (2) + avail_num (1) + avails_expected (1)
         len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        buf[0..4].copy_from_slice(&self.splice_event_id.to_be_bytes());
+        buf[..SPLICE_EVENT_ID_LEN].copy_from_slice(&self.splice_event_id.to_be_bytes());
         // cancel (1) + 7 reserved bits = 1.
-        buf[4] = (u8::from(self.cancel.is_some()) << 7) | 0x7F;
+        buf[SPLICE_EVENT_ID_LEN] =
+            (u8::from(self.cancel.is_some()) << TOP_BIT_SHIFT) | CANCEL_RESERVED_BITS;
         if let Some(cancelled) = self.cancel {
             if cancelled != self.splice_event_id {
                 return Err(Error::InvalidField(broadcast_common::error::InvalidField {
@@ -356,28 +388,28 @@ impl Serialize for SpliceInsert {
                     reason: "a cancel names one event, so splice_event_id and the cancelled id must agree",
                 }));
             }
-            return Ok(5);
+            return Ok(SPLICE_INSERT_HEADER_LEN);
         }
 
         // flags byte: out_of_network, program_splice, duration, immediate,
         // compliance, then 3 reserved bits = 1.
         let duration_flag = self.break_duration.is_some();
-        buf[5] = (u8::from(self.out_of_network_indicator) << 7)
-            | (u8::from(self.mode.program_splice_flag()) << 6)
-            | (u8::from(duration_flag) << 5)
-            | (u8::from(self.mode.splice_immediate_flag()) << 4)
-            | (u8::from(self.event_id_compliance_flag) << 3)
-            | 0x07;
-        let mut pos = 6;
+        buf[FLAGS_OFFSET] = (u8::from(self.out_of_network_indicator) << TOP_BIT_SHIFT)
+            | (u8::from(self.mode.program_splice_flag()) << PROGRAM_SPLICE_SHIFT)
+            | (u8::from(duration_flag) << DURATION_FLAG_SHIFT)
+            | (u8::from(self.mode.splice_immediate_flag()) << SPLICE_IMMEDIATE_SHIFT)
+            | (u8::from(self.event_id_compliance_flag) << EVENT_ID_COMPLIANCE_SHIFT)
+            | FLAGS_RESERVED_BITS;
+        let mut pos = FIXED_HEADER_LEN;
         pos += self.mode.serialize_into(&mut buf[pos..])?;
 
         if let Some(bd) = self.break_duration {
             pos += bd.serialize_into(&mut buf[pos..])?;
         }
 
-        buf[pos..pos + 2].copy_from_slice(&self.unique_program_id.to_be_bytes());
-        buf[pos + 2] = self.avail_num;
-        buf[pos + 3] = self.avails_expected;
+        buf[pos..pos + U16_LEN].copy_from_slice(&self.unique_program_id.to_be_bytes());
+        buf[pos + TRAILER_AVAIL_NUM_OFFSET] = self.avail_num;
+        buf[pos + TRAILER_AVAILS_EXPECTED_OFFSET] = self.avails_expected;
         Ok(need)
     }
 }

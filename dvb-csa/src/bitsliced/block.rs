@@ -103,43 +103,63 @@ impl BitslicedBlock {
     /// `m` is the transposed form: `m[byte * 8 + bit]` holds that bit of that
     /// byte for every lane.
     pub(super) fn encrypt(&self, m: &mut [Word; BLOCK_BITS]) {
-        let mut b = unpack(m);
+        let b = unpack(m);
+        let [
+            mut b0,
+            mut b1,
+            mut b2,
+            mut b3,
+            mut b4,
+            mut b5,
+            mut b6,
+            mut b7,
+        ] = b;
         for round in 0..ROUNDS {
-            let s = keyed_sbox(&b[7], self.sch[round]);
+            let s = keyed_sbox(&b7, self.sch[round]);
             let ps = permute(&s);
-            // Every right-hand side below reads the pre-round value; b[0] and
-            // b[1] are the only ones overwritten before their last use.
-            let old0 = b[0];
-            let old1 = b[1];
-            b[1] = xor(&b[2], &old0);
-            b[2] = xor(&b[3], &old0);
-            b[3] = xor(&b[4], &old0);
-            b[4] = b[5];
-            b[5] = xor(&b[6], &ps);
-            b[6] = b[7];
-            b[7] = xor(&old0, &s);
-            b[0] = old1;
+            // Every right-hand side below reads the pre-round value; b0 and
+            // b1 are the only ones overwritten before their last use.
+            let old0 = b0;
+            let old1 = b1;
+            b1 = xor(&b2, &old0);
+            b2 = xor(&b3, &old0);
+            b3 = xor(&b4, &old0);
+            b4 = b5;
+            b5 = xor(&b6, &ps);
+            b6 = b7;
+            b7 = xor(&old0, &s);
+            b0 = old1;
         }
-        pack(&b, m);
+        pack(&[b0, b1, b2, b3, b4, b5, b6, b7], m);
     }
 
     /// Decrypt [`LANES`](super::LANES) blocks in place, rounds 55..0 in reverse.
     pub(super) fn decrypt(&self, m: &mut [Word; BLOCK_BITS]) {
-        let mut b = unpack(m);
+        let b = unpack(m);
+        let [
+            mut b0,
+            mut b1,
+            mut b2,
+            mut b3,
+            mut b4,
+            mut b5,
+            mut b6,
+            mut b7,
+        ] = b;
         for round in (0..ROUNDS).rev() {
-            let s = keyed_sbox(&b[6], self.sch[round]);
+            let s = keyed_sbox(&b6, self.sch[round]);
             let ps = permute(&s);
-            let out = xor(&b[7], &s);
-            b[7] = b[6];
-            b[6] = xor(&b[5], &ps);
-            b[5] = b[4];
-            b[4] = xor(&b[3], &out);
-            b[3] = xor(&b[2], &out);
-            b[2] = xor(&b[1], &out);
-            b[1] = b[0];
-            b[0] = out;
+            let out = xor(&b7, &s);
+            b7 = b6;
+            b6 = xor(&b5, &ps);
+            b5 = b4;
+            b4 = xor(&b3, &out);
+            b3 = xor(&b2, &out);
+            b2 = xor(&b1, &out);
+            b1 = b0;
+            b0 = out;
         }
-        pack(&b, m);
+        pack(&[b0, b1, b2, b3, b4, b5, b6, b7], m);
     }
 }
 

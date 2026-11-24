@@ -23,6 +23,37 @@ const RESERVED_BITS: u32 = 5;
 /// Largest `pack_stuffing_length` (3-bit field, Table 2-39).
 const STUFFING_LENGTH_MAX: u8 = 7;
 
+/// Byte offsets in the pack header (ISO/IEC 13818-1 §2.5.3.3, Table 2-39).
+const START_CODE_OFFSET: usize = 0;
+const SCR_OFFSET: usize = START_CODE_OFFSET + core::mem::size_of::<u32>();
+/// Byte width of the 6-byte SCR field.
+const SCR_FIELD_LEN: usize = 6;
+const MUX_RATE_OFFSET: usize = SCR_OFFSET + SCR_FIELD_LEN;
+/// Byte offset of the `program_mux_rate` low bits, which share byte 12 with the
+/// two marker bits.
+const MUX_RATE_LO_OFFSET: usize = MUX_RATE_OFFSET + 2;
+/// Byte offset of the `reserved` + `pack_stuffing_length` byte.
+const RESERVED_STUFFING_OFFSET: usize = MUX_RATE_LO_OFFSET + 1;
+/// Bit shifts of the 22-bit `program_mux_rate` across bytes 10..12.
+const MUX_RATE_HI_SHIFT: u32 = 14;
+const MUX_RATE_MID_SHIFT: u32 = 6;
+const MUX_RATE_LO_SHIFT: u32 = 2;
+/// Mask of the `program_mux_rate` low bits in byte 12.
+const MUX_RATE_LO_MASK: u32 = 0x3F;
+/// Mask of the two marker bits at the bottom of byte 12.
+const MARKER_BITS_MASK: u8 = 0x03;
+/// Bit shift of the `reserved` field within byte 13.
+const RESERVED_SHIFT: u32 = 3;
+/// Mask of the `reserved` field within byte 13.
+const RESERVED_MASK: u8 = 0x1F;
+
+/// Read the big-endian `u32` at `off`.
+fn read_u32_at(b: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; core::mem::size_of::<u32>()];
+    raw.copy_from_slice(&b[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(raw)
+}
+
 /// A parsed pack header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -55,13 +86,11 @@ impl<'a> Parse<'a> for PackHeader<'a> {
     fn parse(b: &'a [u8]) -> Result<Self> {
         need_in(b, FIXED_LEN, "pack_header")?;
 
-        if u32::from_be_bytes([b[0], b[1], b[2], b[3]]) != PACK_START_CODE {
-            return Err(Error::BadPackStartCode(u32::from_be_bytes([
-                b[0], b[1], b[2], b[3],
-            ])));
+        if read_u32_at(b, START_CODE_OFFSET) != PACK_START_CODE {
+            return Err(Error::BadPackStartCode(read_u32_at(b, START_CODE_OFFSET)));
         }
 
-        let scr = scr::read_scr_field(&b[4..10], "SCR")?;
+        let scr = scr::read_scr_field(&b[SCR_OFFSET..MUX_RATE_OFFSET], "SCR")?;
 
         // Bytes 10..13 (Table 2-39, ISO/IEC 13818-1 §2.5.3.3): unlike the SCR
         // field, there is no `'01'` prefix before `program_mux_rate` — the
@@ -72,19 +101,20 @@ impl<'a> Parse<'a> for PackHeader<'a> {
         // byte 12: mux[5:0](6, bits[7:2]) | marker_bit(2, bits[1:0])
         // byte 13: reserved(5, bits[7:3]) | stuffing(3, bits[2:0])
 
-        if b[12] & 0x03 != 0x03 {
+        if b[MUX_RATE_LO_OFFSET] & MARKER_BITS_MASK != MARKER_BITS_MASK {
             return Err(Error::BadMarker("program_mux_rate markers"));
         }
 
-        let program_mux_rate =
-            (u32::from(b[10]) << 14) | (u32::from(b[11]) << 6) | (u32::from(b[12]) >> 2);
+        let program_mux_rate = (u32::from(b[MUX_RATE_OFFSET]) << MUX_RATE_HI_SHIFT)
+            | (u32::from(b[MUX_RATE_OFFSET + 1]) << MUX_RATE_MID_SHIFT)
+            | (u32::from(b[MUX_RATE_LO_OFFSET]) >> MUX_RATE_LO_SHIFT);
 
         if program_mux_rate == 0 {
             return Err(Error::ZeroMuxRate);
         }
 
-        let reserved = (b[13] >> 3) & 0x1F;
-        let stuffing_length = b[13] & 0x07;
+        let reserved = (b[RESERVED_STUFFING_OFFSET] >> RESERVED_SHIFT) & RESERVED_MASK;
+        let stuffing_length = b[RESERVED_STUFFING_OFFSET] & STUFFING_LENGTH_MAX;
 
         let total = FIXED_LEN + stuffing_length as usize;
         need_in(b, total, "pack_header stuffing bytes")?;
@@ -133,21 +163,22 @@ impl Serialize for PackHeader<'_> {
         need_out(buf, len)?;
 
         // pack_start_code
-        buf[0..4].copy_from_slice(&PACK_START_CODE.to_be_bytes());
+        buf[START_CODE_OFFSET..SCR_OFFSET].copy_from_slice(&PACK_START_CODE.to_be_bytes());
 
         // SCR field (6 bytes)
-        buf[4..10].copy_from_slice(&scr::encode_scr_field(self.scr)?);
+        buf[SCR_OFFSET..MUX_RATE_OFFSET].copy_from_slice(&scr::encode_scr_field(self.scr)?);
 
         // program_mux_rate: 22 bits across bytes 10..12, no '01' prefix
         // (Table 2-39; see the parse-side comment above).
         // byte 10: mux[21:14]
-        buf[10] = (mux >> 14) as u8;
+        buf[MUX_RATE_OFFSET] = (mux >> MUX_RATE_HI_SHIFT) as u8;
         // byte 11: mux[13:6]
-        buf[11] = (mux >> 6) as u8;
+        buf[MUX_RATE_OFFSET + 1] = (mux >> MUX_RATE_MID_SHIFT) as u8;
         // byte 12: mux[5:0] + marker bits (always '11') at bits[1:0]
-        buf[12] = (((mux & 0x3F) as u8) << 2) | 0x03;
+        buf[MUX_RATE_LO_OFFSET] =
+            (((mux & MUX_RATE_LO_MASK) as u8) << MUX_RATE_LO_SHIFT) | MARKER_BITS_MASK;
         // byte 13: reserved(5) + stuffing(3)
-        buf[13] = reserved << 3 | self.stuffing_length;
+        buf[RESERVED_STUFFING_OFFSET] = reserved << RESERVED_SHIFT | self.stuffing_length;
 
         // stuffing bytes: `stuffing_byte` is spec-fixed `0xFF` (Table 2-39),
         // but parse does not reject a non-conformant value (it stores

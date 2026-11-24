@@ -8,7 +8,7 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use crate::text::{DvbText, LangCode};
+use crate::text::{DvbText, LANG_CODE_LEN, LangCode};
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
@@ -18,7 +18,8 @@ const HEADER_LEN: usize = 2;
 const FIXED_LEN: usize = 4;
 const NIBBLE_MASK: u8 = 0x0F;
 const NUMBER_SHIFT: u8 = 4;
-
+/// Offset of `language_code` within the fixed fields.
+const LANGUAGE_CODE_OFFSET: usize = 1;
 /// message_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -53,7 +54,11 @@ impl<'a> Parse<'a> for MessageDescriptor<'a> {
         Ok(Self {
             descriptor_number: f[0] >> NUMBER_SHIFT,
             last_descriptor_number: f[0] & NIBBLE_MASK,
-            language_code: LangCode([f[1], f[2], f[3]]),
+            language_code: LangCode(
+                f[LANGUAGE_CODE_OFFSET..LANGUAGE_CODE_OFFSET + LANG_CODE_LEN]
+                    .try_into()
+                    .unwrap_or_default(),
+            ),
             text: DvbText::new(text),
         })
     }
@@ -78,7 +83,7 @@ impl Serialize for MessageDescriptor<'_> {
             "last_descriptor_number",
         )?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = (number << NUMBER_SHIFT) | last;
+        buf[HEADER_LEN] = (number << NUMBER_SHIFT) | last;
         buf[3..6].copy_from_slice(&self.language_code.0);
         buf[6..len].copy_from_slice(self.text.raw());
         Ok(len)

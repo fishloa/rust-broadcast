@@ -30,6 +30,7 @@
 //! multi-track), matching a file whose essence is internal, streamable, and
 //! carries more than one track (issue #1048).
 
+use crate::types::UL_LEN;
 use crate::types::UlBytes;
 
 /// Bytes 1-14 of the OP1a UL (everything except the qualifier byte 15
@@ -119,6 +120,9 @@ impl Op1aQualifier {
     }
 }
 
+/// Byte offset of the qualifier flags within the 16-byte OP1a UL.
+const OP1A_QUALIFIER_OFFSET: usize = 14;
+
 /// True if `operational_pattern` is an OP1a UL (bytes 1-14 match
 /// [`OP1A_UL_PREFIX`], byte 16 ignored).
 #[must_use]
@@ -129,9 +133,9 @@ pub fn is_op1a(operational_pattern: &UlBytes) -> bool {
 /// Build a complete 16-byte OP1a UL with the given qualifier flags.
 #[must_use]
 pub fn op1a_ul(qualifier: Op1aQualifier) -> UlBytes {
-    let mut ul = [0u8; 16];
+    let mut ul = [0u8; UL_LEN];
     ul[..14].copy_from_slice(&OP1A_UL_PREFIX);
-    ul[14] = qualifier.to_byte();
+    ul[OP1A_QUALIFIER_OFFSET] = qualifier.to_byte();
     // byte 15 (index 15) is reserved, left as 0x00.
     UlBytes(ul)
 }

@@ -36,8 +36,10 @@ use crate::pump::{Stats, T2miPump};
 /// Every DVB-T2 PLP id fits in a byte (EN 302 755 MATYPE-2 / TS 102 773
 /// `plp_id`); one [`CarryOverExtractor`] slot per possible id.
 const MAX_PLPS: usize = 256;
-/// `u64` words in the seen-PLP bitmap (`MAX_PLPS / 64`).
-const PLP_BITMAP_WORDS: usize = MAX_PLPS / 64;
+/// PLP ids whose seen-bit lives in one bitmap word.
+const PLP_BITS_PER_WORD: u8 = 64;
+/// `u64` words in the seen-PLP bitmap (`MAX_PLPS / PLP_BITS_PER_WORD`).
+const PLP_BITMAP_WORDS: usize = MAX_PLPS / PLP_BITS_PER_WORD as usize;
 
 /// Recovers the inner MPEG-TS carried inside a T2-MI stream.
 ///
@@ -118,7 +120,8 @@ impl InnerTsRecovery {
             let Ok(AnyPayload::Bbframe(bb)) = event.payload() else {
                 continue;
             };
-            self.seen_plps[(bb.plp_id / 64) as usize] |= 1u64 << (bb.plp_id % 64);
+            self.seen_plps[(bb.plp_id / PLP_BITS_PER_WORD) as usize] |=
+                1u64 << (bb.plp_id % PLP_BITS_PER_WORD);
             if self.target_plp.is_some_and(|t| bb.plp_id != t) {
                 self.filtered_out += 1;
                 continue;
@@ -168,7 +171,10 @@ impl InnerTsRecovery {
     /// instead. `dvb-tools t2mi --inner` uses this to refuse a multi-PLP feed
     /// unless `--plp` is given.
     pub fn plps_seen(&self) -> impl Iterator<Item = u8> + '_ {
-        (0..=u8::MAX).filter(|id| self.seen_plps[(id / 64) as usize] & (1u64 << (id % 64)) != 0)
+        (0..=u8::MAX).filter(|id| {
+            self.seen_plps[(id / PLP_BITS_PER_WORD) as usize] & (1u64 << (id % PLP_BITS_PER_WORD))
+                != 0
+        })
     }
 
     /// Number of BBFrames filtered out because their PLP did not match the

@@ -10,7 +10,10 @@
 //! `sample_entries`.
 
 use crate::TrackId;
-use crate::box_types::box_iter;
+use crate::box_types::{
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, LARGESIZE_SIZE,
+    SIZE_INDICATES_LARGESIZE, box_iter,
+};
 use crate::error::{Error, Result};
 use crate::media::TrackEncryption;
 use alloc::boxed::Box;
@@ -21,8 +24,60 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 
-const BOX_HDR: usize = 8;
-const FULL_HDR: usize = 4;
+/// Byte offset of a FullBox `version` field.
+const FULLBOX_VERSION_OFFSET: usize = BOX_HEADER_MIN_SIZE;
+/// Byte offset of a FullBox 24-bit `flags` field.
+const FULLBOX_FLAGS_OFFSET: usize = BOX_HEADER_MIN_SIZE + 1;
+/// Width of a FullBox `version` field in bytes.
+const FULLBOX_VERSION_LEN: usize = 1;
+/// Width of a FullBox `flags` field in bytes.
+const FULLBOX_FLAGS_WIDTH: usize = FULLBOX_EXTRA_SIZE - FULLBOX_VERSION_LEN;
+fn be_u16_at(bytes: &[u8], off: usize) -> u16 {
+    let mut field = [0u8; core::mem::size_of::<u16>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u16>()]);
+    u16::from_be_bytes(field)
+}
+
+fn be_u32_at(bytes: &[u8], off: usize) -> u32 {
+    let mut field = [0u8; core::mem::size_of::<u32>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(field)
+}
+
+fn be_u64_at(bytes: &[u8], off: usize) -> u64 {
+    let mut field = [0u8; core::mem::size_of::<u64>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u64>()]);
+    u64::from_be_bytes(field)
+}
+
+fn be_u24_at(bytes: &[u8], off: usize) -> u32 {
+    let mut field = [0u8; core::mem::size_of::<u32>()];
+    field[FULLBOX_VERSION_LEN..].copy_from_slice(&bytes[off..off + FULLBOX_FLAGS_WIDTH]);
+    u32::from_be_bytes(field)
+}
+
+fn read_fourcc_at(bytes: &[u8], off: usize) -> [u8; BOX_TYPE_SIZE] {
+    let mut field = [0u8; BOX_TYPE_SIZE];
+    field.copy_from_slice(&bytes[off..off + BOX_TYPE_SIZE]);
+    field
+}
+
+/// Wire width of one transformation-matrix value.
+const MATRIX_VALUE_LEN: usize = core::mem::size_of::<i32>();
+/// Number of values in a transformation matrix.
+const MATRIX_VALUES: usize = 9;
+/// Wire length of a transformation matrix.
+const MATRIX_WIRE_LEN: usize = MATRIX_VALUES * MATRIX_VALUE_LEN;
+
+/// Prefix length of a flat FullBox table: header + version/flags + count.
+const FLAT_TABLE_HEADER_LEN: usize =
+    BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
+/// Byte offset of a flat table's `version` field.
+const FLAT_TABLE_VERSION_OFFSET: usize = BOX_HEADER_MIN_SIZE;
+/// Byte offset of a flat table's `flags` field.
+const FLAT_TABLE_FLAGS_OFFSET: usize = FULLBOX_FLAGS_OFFSET;
+/// Byte offset of a flat table's `entry_count` field.
+const FLAT_TABLE_COUNT_OFFSET: usize = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE;
 
 /// Bound an untrusted wire entry `count` (the FullBox array-count fields of
 /// ISO/IEC 14496-12:2026 §8.5.2.3, §8.6.1.2.3, §8.7.4.3, e.g.
@@ -94,29 +149,29 @@ pub(crate) fn parse_flat_table<E>(
 ) -> Result<(u8, u32, Vec<E>)> {
     let compact = crate::box_types::compact_form(bytes)?;
     let bytes: &[u8] = &compact;
-    if bytes.len() < 16 {
+    if bytes.len() < FLAT_TABLE_HEADER_LEN {
         return Err(Error::BufferTooShort(BufferTooShort {
-            need: 16,
+            need: FLAT_TABLE_HEADER_LEN,
             have: bytes.len(),
             what,
         }));
     }
-    let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-    let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-    let body = &bytes[16..];
+    let flags = be_u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
+    let count = be_u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
+    let body = &bytes[FLAT_TABLE_HEADER_LEN..];
     check_entry_count(body.len(), entry_len, count, count_field)?;
     let mut entries = Vec::with_capacity(bounded_entry_count(body.len(), entry_len, count));
     entries.extend(body.chunks_exact(entry_len).take(count).map(read));
-    Ok((bytes[8], flags, entries))
+    Ok((bytes[FLAT_TABLE_VERSION_OFFSET], flags, entries))
 }
 
 pub(crate) fn flat_table_len(entries: usize, entry_len: usize) -> usize {
-    crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + entries * entry_len)
+    crate::box_types::box_len(FLAT_TABLE_HEADER_LEN + entries * entry_len)
 }
 
 pub(crate) fn serialize_flat_table<E>(
     buf: &mut [u8],
-    fourcc: &[u8; 4],
+    fourcc: &[u8; BOX_TYPE_SIZE],
     (version, flags): (u8, u32),
     entries: &[E],
     entry_len: usize,
@@ -126,8 +181,8 @@ pub(crate) fn serialize_flat_table<E>(
     need_out(buf, need)?;
     let mut c = crate::box_types::write_full_box_header(buf, fourcc, need, version, flags, false)?;
     let entry_count = broadcast_common::len::fit_u32(entries.len(), "entry_count")?;
-    buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-    c += 4;
+    buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&entry_count.to_be_bytes());
+    c += BOX_TYPE_SIZE;
     for entry in entries {
         c += write(entry, &mut buf[c..])?;
     }
@@ -138,17 +193,10 @@ pub(crate) fn serialize_flat_table<E>(
 // Container child walker — ISO/IEC 14496-12:2026 §4.2
 // ---------------------------------------------------------------------------
 
-/// Size of the smallest legal box header (`size` + `type`), §4.2.
-const MIN_BOX_HEADER: usize = 8;
-
-/// Size of the optional 64-bit `largesize` field that follows a `size` of 1
-/// (§4.2).
-const LARGESIZE_LEN: usize = 8;
-
 /// One child box of a container, borrowed from the container's body.
 pub(crate) struct ChildBox<'a> {
     /// The child's four-CC (`type`).
-    pub four_cc: [u8; 4],
+    pub four_cc: [u8; BOX_TYPE_SIZE],
     /// The child's whole bytes, header included.
     pub bytes: &'a [u8],
     /// The child's *opaque payload*: the 16-byte `usertype` of a `uuid` box
@@ -176,7 +224,7 @@ pub(crate) struct ChildBox<'a> {
 
 impl ChildBox<'_> {
     /// Whether this child's four-CC is `four_cc`.
-    pub(crate) fn is(&self, four_cc: &[u8; 4]) -> bool {
+    pub(crate) fn is(&self, four_cc: &[u8; BOX_TYPE_SIZE]) -> bool {
         self.four_cc == *four_cc
     }
 }
@@ -210,9 +258,9 @@ where
 {
     let mut off = 0usize;
     while off < body.len() {
-        if body.len() - off < MIN_BOX_HEADER {
+        if body.len() - off < BOX_HEADER_MIN_SIZE {
             return Err(Error::BufferTooShort(BufferTooShort {
-                need: off + MIN_BOX_HEADER,
+                need: off + BOX_HEADER_MIN_SIZE,
                 have: body.len(),
                 what: "container child header",
             }));
@@ -222,9 +270,9 @@ where
         // The payload starts after `size`+`type` plus the 8 `largesize` bytes
         // *only when that form was used*; the serializer re-emits the header
         // itself (see `ChildBox::payload`).
-        let payload_start = MIN_BOX_HEADER
+        let payload_start = BOX_HEADER_MIN_SIZE
             + if bx.header.has_largesize() {
-                LARGESIZE_LEN
+                LARGESIZE_SIZE
             } else {
                 0
             };
@@ -242,7 +290,7 @@ where
 
 /// The four-CC is the key a container's parse and serialize directions use to
 /// line a child back up with the typed field (or opaque blob) it came from.
-fn is_four_cc(four_cc: &[u8; 4], expected: &[u8; 4]) -> bool {
+fn is_four_cc(four_cc: &[u8; BOX_TYPE_SIZE], expected: &[u8; BOX_TYPE_SIZE]) -> bool {
     four_cc == expected
 }
 
@@ -275,7 +323,7 @@ pub(crate) fn box_body(bytes: &[u8]) -> Result<&[u8]> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ChildOrder {
     /// One entry per child, in wire order.
-    entries: Vec<[u8; 4]>,
+    entries: Vec<[u8; BOX_TYPE_SIZE]>,
     /// `true` where the corresponding entry was stored in the container's
     /// `opaque` list rather than in a typed field.
     opaque: Vec<bool>,
@@ -283,13 +331,13 @@ pub struct ChildOrder {
 
 impl ChildOrder {
     /// Record one typed child's four-CC, in wire order.
-    fn push(&mut self, four_cc: [u8; 4]) {
+    fn push(&mut self, four_cc: [u8; BOX_TYPE_SIZE]) {
         self.entries.push(four_cc);
         self.opaque.push(false);
     }
 
     /// Record one opaque child's four-CC, in wire order.
-    fn push_opaque(&mut self, four_cc: [u8; 4]) {
+    fn push_opaque(&mut self, four_cc: [u8; BOX_TYPE_SIZE]) {
         self.entries.push(four_cc);
         self.opaque.push(true);
     }
@@ -307,7 +355,7 @@ impl ChildOrder {
     /// Nth opaque child. (A container whose `order` is empty emits its typed
     /// children first and then its opaque ones, so a hand-built container
     /// needs only the `opaque` push.)
-    pub fn append_opaque(&mut self, four_cc: [u8; 4]) {
+    pub fn append_opaque(&mut self, four_cc: [u8; BOX_TYPE_SIZE]) {
         self.push_opaque(four_cc);
     }
 
@@ -321,7 +369,7 @@ impl ChildOrder {
     /// container, as `protect_init_segment` does when it rewrites a sample
     /// entry — is appended in declaration order, so a rewrite can never drop
     /// a child.
-    fn resolve(&self, typed_four_ccs: &[&[u8; 4]]) -> Vec<Option<usize>> {
+    fn resolve(&self, typed_four_ccs: &[&[u8; BOX_TYPE_SIZE]]) -> Vec<Option<usize>> {
         if self.entries.is_empty() {
             return (0..typed_four_ccs.len()).map(Some).collect();
         }
@@ -412,7 +460,7 @@ fn typed_child_bytes(children: &[&dyn SerializeBox]) -> Result<Vec<Vec<u8>>> {
 
 /// Serialize a container box: header, then its children in wire order.
 fn serialize_container(
-    fourcc: &[u8; 4],
+    fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,
     order: &[Option<usize>],
     typed_children: &[&dyn SerializeBox],
@@ -466,7 +514,7 @@ impl<T: Serialize<Error = Error>> SerializeBox for T {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct OpaqueBox {
-    pub box_type: [u8; 4],
+    pub box_type: [u8; BOX_TYPE_SIZE],
     pub data: Vec<u8>,
     /// Whether the wire used the `size == 0` form ("extends to the end of the
     /// enclosing container", §4.2). Writing the length out instead makes the
@@ -482,7 +530,7 @@ pub struct OpaqueBox {
 impl OpaqueBox {
     /// Build one from a child's four-CC and payload (both form flags clear —
     /// the box states its own 32-bit length).
-    pub fn new(box_type: [u8; 4], data: Vec<u8>) -> Self {
+    pub fn new(box_type: [u8; BOX_TYPE_SIZE], data: Vec<u8>) -> Self {
         Self {
             box_type,
             data,
@@ -496,14 +544,15 @@ impl OpaqueBox {
     /// The header this box writes. 8 bytes, or 16 under
     /// [`OpaqueBox::largesize`] (§4.2).
     fn header_len(&self) -> usize {
-        BOX_HDR + if self.wide() { LARGESIZE_LEN } else { 0 }
+        BOX_HEADER_MIN_SIZE + if self.wide() { LARGESIZE_SIZE } else { 0 }
     }
 
     /// Whether the header uses the 64-bit `largesize` form: either the wire
     /// had it ([`OpaqueBox::largesize`]) or the box is too big for the 32-bit
     /// `size` field (§4.2, #1147) — never a silently wrapped size.
     fn wide(&self) -> bool {
-        self.largesize || (BOX_HDR as u64 + self.data.len() as u64) > u64::from(u32::MAX)
+        self.largesize
+            || (BOX_HEADER_MIN_SIZE as u64 + self.data.len() as u64) > u64::from(u32::MAX)
     }
 
     /// The size this box declares.
@@ -545,18 +594,18 @@ impl OpaqueBox {
         // duplicate it.
         let mut c = 0usize;
         if self.wide() {
-            buf[c..c + 4].copy_from_slice(&1u32.to_be_bytes());
-            c += 4;
-            buf[c..c + 4].copy_from_slice(&self.box_type);
-            c += 4;
-            buf[c..c + 8].copy_from_slice(&size.to_be_bytes());
-            c += 8;
+            buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&SIZE_INDICATES_LARGESIZE.to_be_bytes());
+            c += BOX_TYPE_SIZE;
+            buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&self.box_type);
+            c += BOX_TYPE_SIZE;
+            buf[c..c + LARGESIZE_SIZE].copy_from_slice(&size.to_be_bytes());
+            c += LARGESIZE_SIZE;
         } else {
             let size32 = broadcast_common::len::fit_u32(size as usize, "opaque box size")?;
-            buf[c..c + 4].copy_from_slice(&size32.to_be_bytes());
-            c += 4;
-            buf[c..c + 4].copy_from_slice(&self.box_type);
-            c += 4;
+            buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&size32.to_be_bytes());
+            c += BOX_TYPE_SIZE;
+            buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&self.box_type);
+            c += BOX_TYPE_SIZE;
         }
         buf[c..c + self.data.len()].copy_from_slice(&self.data);
         Ok(c + self.data.len())
@@ -566,6 +615,51 @@ impl OpaqueBox {
 // ---------------------------------------------------------------------------
 // MovieHeaderBox — mvhd (ISO/IEC 14496-12:2026 §8.2.2)
 // ---------------------------------------------------------------------------
+
+/// Byte offset just past the FullBox `version`/`flags` fields.
+const FULLBOX_BODY_OFFSET: usize = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE;
+/// Shortest `mvhd` prefix before its version-dependent fields.
+const MVHD_MIN_LEN: usize = FULLBOX_BODY_OFFSET;
+/// `mvhd` v0 creation_time offset (§8.2.2.2).
+const MVHD_V0_CREATION_TIME_OFFSET: usize = 12;
+/// `mvhd` v0 modification_time offset (§8.2.2.2).
+const MVHD_V0_MODIFICATION_TIME_OFFSET: usize = 16;
+/// `mvhd` v0 timescale offset (§8.2.2.2).
+const MVHD_V0_TIMESCALE_OFFSET: usize = 20;
+/// `mvhd` v0 duration offset (§8.2.2.2).
+const MVHD_V0_DURATION_OFFSET: usize = 24;
+/// `mvhd` v0 rate offset (§8.2.2.2).
+const MVHD_V0_RATE_OFFSET: usize = 28;
+/// `mvhd` v0 volume offset (§8.2.2.2).
+const MVHD_V0_VOLUME_OFFSET: usize = 32;
+/// `mvhd` v0 matrix offset (§8.2.2.2).
+const MVHD_V0_MATRIX_OFFSET: usize = 44;
+/// `mvhd` v0 next_track_ID offset (§8.2.2.2).
+const MVHD_V0_NEXT_TRACK_ID_OFFSET: usize = 104;
+/// `mvhd` v0 box length (§8.2.2.2).
+const MVHD_V0_LEN: usize = 108;
+/// `mvhd` v1 creation_time offset (§8.2.2.2).
+const MVHD_V1_CREATION_TIME_OFFSET: usize = 12;
+/// `mvhd` v1 modification_time offset (§8.2.2.2).
+const MVHD_V1_MODIFICATION_TIME_OFFSET: usize = 20;
+/// `mvhd` v1 timescale offset (§8.2.2.2).
+const MVHD_V1_TIMESCALE_OFFSET: usize = 28;
+/// `mvhd` v1 duration offset (§8.2.2.2).
+const MVHD_V1_DURATION_OFFSET: usize = 32;
+/// `mvhd` v1 rate offset (§8.2.2.2).
+const MVHD_V1_RATE_OFFSET: usize = 40;
+/// `mvhd` v1 volume offset (§8.2.2.2).
+const MVHD_V1_VOLUME_OFFSET: usize = 44;
+/// `mvhd` v1 matrix offset (§8.2.2.2).
+const MVHD_V1_MATRIX_OFFSET: usize = 56;
+/// `mvhd` v1 next_track_ID offset (§8.2.2.2).
+const MVHD_V1_NEXT_TRACK_ID_OFFSET: usize = 116;
+/// `mvhd` v1 box length (§8.2.2.2).
+const MVHD_V1_LEN: usize = 120;
+/// Reserved bytes between `volume` and `matrix` (§8.2.2.2).
+const MVHD_RESERVED_LEN: usize = 10;
+/// `pre_defined` bytes at the end of `mvhd` (§8.2.2.2).
+const MVHD_PRE_DEFINED_LEN: usize = 24;
 
 /// Movie Header Box (`mvhd`) — §8.2.2.
 /// v0: 32-bit creation_time, modification_time, duration.
@@ -582,46 +676,31 @@ pub struct MovieHeaderBox {
     pub duration: u64,
     pub rate: u32,
     pub volume: u16,
-    pub matrix: [i32; 9],
+    pub matrix: [i32; MATRIX_VALUES],
     pub next_track_id: TrackId,
 }
 
 impl<'a> Parse<'a> for MovieHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 12, "mvhd")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
+        need_in(bytes, MVHD_MIN_LEN, "mvhd")?;
+        let ver = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
         if ver == 0 {
-            let need = 108;
-            need_in(bytes, need, "mvhd v0")?;
+            need_in(bytes, MVHD_V0_LEN, "mvhd v0")?;
             Ok(Self {
                 version: 0,
                 flags,
-                creation_time: u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]])
-                    as u64,
-                modification_time: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]])
-                    as u64,
-                timescale: Timescale::try_new(u32::from_be_bytes([
-                    bytes[20], bytes[21], bytes[22], bytes[23],
-                ]))?,
-                duration: u32::from_be_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]) as u64,
-                rate: u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]),
-                volume: u16::from_be_bytes([bytes[32], bytes[33]]),
-                matrix: [
-                    i32::from_be_bytes([bytes[44], bytes[45], bytes[46], bytes[47]]),
-                    i32::from_be_bytes([bytes[48], bytes[49], bytes[50], bytes[51]]),
-                    i32::from_be_bytes([bytes[52], bytes[53], bytes[54], bytes[55]]),
-                    i32::from_be_bytes([bytes[56], bytes[57], bytes[58], bytes[59]]),
-                    i32::from_be_bytes([bytes[60], bytes[61], bytes[62], bytes[63]]),
-                    i32::from_be_bytes([bytes[64], bytes[65], bytes[66], bytes[67]]),
-                    i32::from_be_bytes([bytes[68], bytes[69], bytes[70], bytes[71]]),
-                    i32::from_be_bytes([bytes[72], bytes[73], bytes[74], bytes[75]]),
-                    i32::from_be_bytes([bytes[76], bytes[77], bytes[78], bytes[79]]),
-                ],
-                next_track_id: TrackId::new(u32::from_be_bytes([
-                    bytes[104], bytes[105], bytes[106], bytes[107],
-                ])),
+                creation_time: u64::from(be_u32_at(bytes, MVHD_V0_CREATION_TIME_OFFSET)),
+                modification_time: u64::from(be_u32_at(bytes, MVHD_V0_MODIFICATION_TIME_OFFSET)),
+                timescale: Timescale::try_new(be_u32_at(bytes, MVHD_V0_TIMESCALE_OFFSET))?,
+                duration: u64::from(be_u32_at(bytes, MVHD_V0_DURATION_OFFSET)),
+                rate: be_u32_at(bytes, MVHD_V0_RATE_OFFSET),
+                volume: be_u16_at(bytes, MVHD_V0_VOLUME_OFFSET),
+                matrix: matrix_from_bytes(
+                    &bytes[MVHD_V0_MATRIX_OFFSET..MVHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN],
+                ),
+                next_track_id: TrackId::new(be_u32_at(bytes, MVHD_V0_NEXT_TRACK_ID_OFFSET)),
             })
         } else {
             // v1 body (ISO/IEC 14496-12:2026 §8.2.2.2): the 8-byte creation/
@@ -629,42 +708,28 @@ impl<'a> Parse<'a> for MovieHeaderBox {
             // the ONLY size change — `pre_defined[6]` still ends at byte 116,
             // so `next_track_id` sits at `116..120` and the whole box is
             // **120** bytes, not 124 (issue #1015).
-            let need = 120;
-            need_in(bytes, need, "mvhd v1")?;
+            need_in(bytes, MVHD_V1_LEN, "mvhd v1")?;
             Ok(Self {
                 version: 1,
                 flags,
-                creation_time: u64::from_be_bytes([
-                    bytes[12], bytes[13], bytes[14], bytes[15], bytes[16], bytes[17], bytes[18],
-                    bytes[19],
-                ]),
-                modification_time: u64::from_be_bytes([
-                    bytes[20], bytes[21], bytes[22], bytes[23], bytes[24], bytes[25], bytes[26],
-                    bytes[27],
-                ]),
-                timescale: Timescale::try_new(u32::from_be_bytes([
-                    bytes[28], bytes[29], bytes[30], bytes[31],
-                ]))?,
-                duration: u64::from_be_bytes([
-                    bytes[32], bytes[33], bytes[34], bytes[35], bytes[36], bytes[37], bytes[38],
-                    bytes[39],
-                ]),
-                rate: u32::from_be_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]),
-                volume: u16::from_be_bytes([bytes[44], bytes[45]]),
-                matrix: [
-                    i32::from_be_bytes([bytes[56], bytes[57], bytes[58], bytes[59]]),
-                    i32::from_be_bytes([bytes[60], bytes[61], bytes[62], bytes[63]]),
-                    i32::from_be_bytes([bytes[64], bytes[65], bytes[66], bytes[67]]),
-                    i32::from_be_bytes([bytes[68], bytes[69], bytes[70], bytes[71]]),
-                    i32::from_be_bytes([bytes[72], bytes[73], bytes[74], bytes[75]]),
-                    i32::from_be_bytes([bytes[76], bytes[77], bytes[78], bytes[79]]),
-                    i32::from_be_bytes([bytes[80], bytes[81], bytes[82], bytes[83]]),
-                    i32::from_be_bytes([bytes[84], bytes[85], bytes[86], bytes[87]]),
-                    i32::from_be_bytes([bytes[88], bytes[89], bytes[90], bytes[91]]),
-                ],
-                next_track_id: TrackId::new(u32::from_be_bytes([
-                    bytes[116], bytes[117], bytes[118], bytes[119],
-                ])),
+                creation_time: crate::wire_cursor::be_u64(
+                    bytes,
+                    MVHD_V1_CREATION_TIME_OFFSET,
+                    "mvhd v1",
+                )?,
+                modification_time: crate::wire_cursor::be_u64(
+                    bytes,
+                    MVHD_V1_MODIFICATION_TIME_OFFSET,
+                    "mvhd v1",
+                )?,
+                timescale: Timescale::try_new(be_u32_at(bytes, MVHD_V1_TIMESCALE_OFFSET))?,
+                duration: crate::wire_cursor::be_u64(bytes, MVHD_V1_DURATION_OFFSET, "mvhd v1")?,
+                rate: be_u32_at(bytes, MVHD_V1_RATE_OFFSET),
+                volume: be_u16_at(bytes, MVHD_V1_VOLUME_OFFSET),
+                matrix: matrix_from_bytes(
+                    &bytes[MVHD_V1_MATRIX_OFFSET..MVHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN],
+                ),
+                next_track_id: TrackId::new(be_u32_at(bytes, MVHD_V1_NEXT_TRACK_ID_OFFSET)),
             })
         }
     }
@@ -674,7 +739,11 @@ impl Serialize for MovieHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         // v1 is 120 bytes, not 124 — see the parse-side comment above (#1015).
-        if self.version == 0 { 108 } else { 120 }
+        if self.version == 0 {
+            MVHD_V0_LEN
+        } else {
+            MVHD_V1_LEN
+        }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -688,24 +757,26 @@ impl Serialize for MovieHeaderBox {
             self.flags,
             true,
         )?;
+        let u32_len = core::mem::size_of::<u32>();
+        let u64_len = core::mem::size_of::<u64>();
         let (ct_sz, mt_sz, dur_sz) = if self.version == 0 {
-            (4u8, 4u8, 4u8)
+            (u32_len, u32_len, u32_len)
         } else {
-            (8u8, 8u8, 8u8)
+            (u64_len, u64_len, u64_len)
         };
         // Version 0 stores these as 32-bit: an over-range value is an error,
         // never a silent wrap (#1129).
-        let write_u64 = |buf: &mut [u8], off: usize, sz: u8, v: u64, field: &'static str| {
-            if sz == 4 {
-                let v32 = broadcast_common::len::fit_bits(v, 32, field)? as u32;
-                buf[off..off + 4].copy_from_slice(&v32.to_be_bytes());
+        let write_u64 = |buf: &mut [u8], off: usize, sz: usize, v: u64, field: &'static str| {
+            if sz == u32_len {
+                let v32 = broadcast_common::len::fit_bits(v, u32::BITS, field)? as u32;
+                buf[off..off + sz].copy_from_slice(&v32.to_be_bytes());
             } else {
-                buf[off..off + 8].copy_from_slice(&v.to_be_bytes());
+                buf[off..off + sz].copy_from_slice(&v.to_be_bytes());
             }
             Ok::<(), Error>(())
         };
         write_u64(buf, c, ct_sz, self.creation_time, "mvhd creation_time")?;
-        c += ct_sz as usize;
+        c += ct_sz;
         write_u64(
             buf,
             c,
@@ -713,25 +784,26 @@ impl Serialize for MovieHeaderBox {
             self.modification_time,
             "mvhd modification_time",
         )?;
-        c += mt_sz as usize;
-        buf[c..c + 4].copy_from_slice(&self.timescale.get().to_be_bytes());
-        c += 4;
+        c += mt_sz;
+        buf[c..c + u32_len].copy_from_slice(&self.timescale.get().to_be_bytes());
+        c += u32_len;
         write_u64(buf, c, dur_sz, self.duration, "mvhd duration")?;
-        c += dur_sz as usize;
-        buf[c..c + 4].copy_from_slice(&self.rate.to_be_bytes());
-        c += 4;
-        buf[c..c + 2].copy_from_slice(&self.volume.to_be_bytes());
-        c += 2;
-        buf[c..c + 10].fill(0);
-        c += 10; // reserved
+        c += dur_sz;
+        buf[c..c + u32_len].copy_from_slice(&self.rate.to_be_bytes());
+        c += u32_len;
+        let u16_len = core::mem::size_of::<u16>();
+        buf[c..c + u16_len].copy_from_slice(&self.volume.to_be_bytes());
+        c += u16_len;
+        buf[c..c + MVHD_RESERVED_LEN].fill(0);
+        c += MVHD_RESERVED_LEN; // reserved
         for &m in &self.matrix {
-            buf[c..c + 4].copy_from_slice(&m.to_be_bytes());
-            c += 4;
+            buf[c..c + MATRIX_VALUE_LEN].copy_from_slice(&m.to_be_bytes());
+            c += MATRIX_VALUE_LEN;
         }
-        buf[c..c + 24].fill(0);
-        c += 24; // pre_defined
-        buf[c..c + 4].copy_from_slice(&self.next_track_id.value().to_be_bytes());
-        c += 4;
+        buf[c..c + MVHD_PRE_DEFINED_LEN].fill(0);
+        c += MVHD_PRE_DEFINED_LEN; // pre_defined
+        buf[c..c + u32_len].copy_from_slice(&self.next_track_id.value().to_be_bytes());
+        c += u32_len;
         Ok(c)
     }
 }
@@ -739,6 +811,59 @@ impl Serialize for MovieHeaderBox {
 // ---------------------------------------------------------------------------
 // TrackHeaderBox — tkhd (ISO/IEC 14496-12:2026 §8.3.2)
 // ---------------------------------------------------------------------------
+
+/// Shortest `tkhd` prefix before its version-dependent fields.
+const TKHD_MIN_LEN: usize = FULLBOX_BODY_OFFSET;
+/// `tkhd` v0 creation_time offset (§8.3.2.2).
+const TKHD_V0_CREATION_TIME_OFFSET: usize = 12;
+/// `tkhd` v0 modification_time offset (§8.3.2.2).
+const TKHD_V0_MODIFICATION_TIME_OFFSET: usize = 16;
+/// `tkhd` v0 track_ID offset (§8.3.2.2).
+const TKHD_V0_TRACK_ID_OFFSET: usize = 20;
+/// `tkhd` v0 duration offset (§8.3.2.2).
+const TKHD_V0_DURATION_OFFSET: usize = 28;
+/// `tkhd` v0 layer offset (§8.3.2.2).
+const TKHD_V0_LAYER_OFFSET: usize = 40;
+/// `tkhd` v0 alternate_group offset (§8.3.2.2).
+const TKHD_V0_ALTERNATE_GROUP_OFFSET: usize = 42;
+/// `tkhd` v0 volume offset (§8.3.2.2).
+const TKHD_V0_VOLUME_OFFSET: usize = 44;
+/// `tkhd` v0 matrix offset (§8.3.2.2).
+const TKHD_V0_MATRIX_OFFSET: usize = 48;
+/// `tkhd` v0 width offset (§8.3.2.2).
+const TKHD_V0_WIDTH_OFFSET: usize = 84;
+/// `tkhd` v0 height offset (§8.3.2.2).
+const TKHD_V0_HEIGHT_OFFSET: usize = 88;
+/// `tkhd` v0 box length (§8.3.2.2).
+const TKHD_V0_LEN: usize = 92;
+/// `tkhd` v1 creation_time offset (§8.3.2.2).
+const TKHD_V1_CREATION_TIME_OFFSET: usize = 12;
+/// `tkhd` v1 modification_time offset (§8.3.2.2).
+const TKHD_V1_MODIFICATION_TIME_OFFSET: usize = 20;
+/// `tkhd` v1 track_ID offset (§8.3.2.2).
+const TKHD_V1_TRACK_ID_OFFSET: usize = 28;
+/// `tkhd` v1 duration offset (§8.3.2.2).
+const TKHD_V1_DURATION_OFFSET: usize = 36;
+/// `tkhd` v1 layer offset (§8.3.2.2).
+const TKHD_V1_LAYER_OFFSET: usize = 52;
+/// `tkhd` v1 alternate_group offset (§8.3.2.2).
+const TKHD_V1_ALTERNATE_GROUP_OFFSET: usize = 54;
+/// `tkhd` v1 volume offset (§8.3.2.2).
+const TKHD_V1_VOLUME_OFFSET: usize = 56;
+/// `tkhd` v1 matrix offset (§8.3.2.2).
+const TKHD_V1_MATRIX_OFFSET: usize = 60;
+/// `tkhd` v1 width offset (§8.3.2.2).
+const TKHD_V1_WIDTH_OFFSET: usize = 96;
+/// `tkhd` v1 height offset (§8.3.2.2).
+const TKHD_V1_HEIGHT_OFFSET: usize = 100;
+/// `tkhd` v1 box length (§8.3.2.2).
+const TKHD_V1_LEN: usize = 104;
+/// Single reserved word in `tkhd` (§8.3.2.2).
+const TKHD_RESERVED_LEN: usize = 4;
+/// The two reserved words after `duration` in `tkhd` (§8.3.2.2).
+const TKHD_RESERVED_PAIR_LEN: usize = 8;
+/// The reserved field after `volume` in `tkhd` (§8.3.2.2).
+const TKHD_TRAILING_RESERVED_LEN: usize = 2;
 
 /// Track Header Box (`tkhd`) — §8.3.2.
 /// v0: 32-bit creation_time, modification_time, duration.
@@ -755,7 +880,7 @@ pub struct TrackHeaderBox {
     pub layer: i16,
     pub alternate_group: i16,
     pub volume: i16,
-    pub matrix: [i32; 9],
+    pub matrix: [i32; MATRIX_VALUES],
     pub width: u32,
     pub height: u32,
 }
@@ -763,16 +888,15 @@ pub struct TrackHeaderBox {
 impl<'a> Parse<'a> for TrackHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 12, "tkhd")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
+        need_in(bytes, TKHD_MIN_LEN, "tkhd")?;
+        let ver = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
         if ver == 0 {
-            let need = 92;
-            need_in(bytes, need, "tkhd v0")?;
-            let ct = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as u64;
-            let mt = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as u64;
-            let tid = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
-            let dur = u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]) as u64;
+            need_in(bytes, TKHD_V0_LEN, "tkhd v0")?;
+            let ct = u64::from(be_u32_at(bytes, TKHD_V0_CREATION_TIME_OFFSET));
+            let mt = u64::from(be_u32_at(bytes, TKHD_V0_MODIFICATION_TIME_OFFSET));
+            let tid = be_u32_at(bytes, TKHD_V0_TRACK_ID_OFFSET);
+            let dur = u64::from(be_u32_at(bytes, TKHD_V0_DURATION_OFFSET));
             Ok(Self {
                 version: 0,
                 flags,
@@ -780,25 +904,27 @@ impl<'a> Parse<'a> for TrackHeaderBox {
                 modification_time: mt,
                 track_id: TrackId::new(tid),
                 duration: dur,
-                layer: i16::from_be_bytes([bytes[40], bytes[41]]),
-                alternate_group: i16::from_be_bytes([bytes[42], bytes[43]]),
-                volume: i16::from_be_bytes([bytes[44], bytes[45]]),
-                matrix: matrix_from_bytes(&bytes[48..84]),
-                width: u32::from_be_bytes([bytes[84], bytes[85], bytes[86], bytes[87]]),
-                height: u32::from_be_bytes([bytes[88], bytes[89], bytes[90], bytes[91]]),
+                layer: read_i16(bytes, TKHD_V0_LAYER_OFFSET),
+                alternate_group: read_i16(bytes, TKHD_V0_ALTERNATE_GROUP_OFFSET),
+                volume: read_i16(bytes, TKHD_V0_VOLUME_OFFSET),
+                matrix: matrix_from_bytes(
+                    &bytes[TKHD_V0_MATRIX_OFFSET..TKHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN],
+                ),
+                width: be_u32_at(bytes, TKHD_V0_WIDTH_OFFSET),
+                height: be_u32_at(bytes, TKHD_V0_HEIGHT_OFFSET),
             })
         } else {
-            let need = 104;
-            need_in(bytes, need, "tkhd v1")?;
+            need_in(bytes, TKHD_V1_LEN, "tkhd v1")?;
             // v1 body (ISO/IEC 14496-12:2026 §8.3.2): track_ID(32) + a single
             // 32-bit `reserved` (not 8) sit between modification_time and
             // duration, so duration starts at byte 36, not 40 — every field
             // from `duration` on was previously read 4 bytes early
             // (issue #1016).
-            let ct = crate::wire_cursor::be_u64(bytes, 12, "tkhd v1")?;
-            let mt = crate::wire_cursor::be_u64(bytes, 20, "tkhd v1")?;
-            let tid = u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]);
-            let dur = crate::wire_cursor::be_u64(bytes, 36, "tkhd v1")?;
+            let ct = crate::wire_cursor::be_u64(bytes, TKHD_V1_CREATION_TIME_OFFSET, "tkhd v1")?;
+            let mt =
+                crate::wire_cursor::be_u64(bytes, TKHD_V1_MODIFICATION_TIME_OFFSET, "tkhd v1")?;
+            let tid = be_u32_at(bytes, TKHD_V1_TRACK_ID_OFFSET);
+            let dur = crate::wire_cursor::be_u64(bytes, TKHD_V1_DURATION_OFFSET, "tkhd v1")?;
             Ok(Self {
                 version: 1,
                 flags,
@@ -806,21 +932,31 @@ impl<'a> Parse<'a> for TrackHeaderBox {
                 modification_time: mt,
                 track_id: TrackId::new(tid),
                 duration: dur,
-                layer: i16::from_be_bytes([bytes[52], bytes[53]]),
-                alternate_group: i16::from_be_bytes([bytes[54], bytes[55]]),
-                volume: i16::from_be_bytes([bytes[56], bytes[57]]),
-                matrix: matrix_from_bytes(&bytes[60..96]),
-                width: u32::from_be_bytes([bytes[96], bytes[97], bytes[98], bytes[99]]),
-                height: u32::from_be_bytes([bytes[100], bytes[101], bytes[102], bytes[103]]),
+                layer: read_i16(bytes, TKHD_V1_LAYER_OFFSET),
+                alternate_group: read_i16(bytes, TKHD_V1_ALTERNATE_GROUP_OFFSET),
+                volume: read_i16(bytes, TKHD_V1_VOLUME_OFFSET),
+                matrix: matrix_from_bytes(
+                    &bytes[TKHD_V1_MATRIX_OFFSET..TKHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN],
+                ),
+                width: be_u32_at(bytes, TKHD_V1_WIDTH_OFFSET),
+                height: be_u32_at(bytes, TKHD_V1_HEIGHT_OFFSET),
             })
         }
     }
 }
 
-fn matrix_from_bytes(b: &[u8]) -> [i32; 9] {
-    let mut m = [0i32; 9];
-    for i in 0..9 {
-        m[i] = i32::from_be_bytes([b[i * 4], b[i * 4 + 1], b[i * 4 + 2], b[i * 4 + 3]]);
+fn read_i16(bytes: &[u8], off: usize) -> i16 {
+    let mut field = [0u8; core::mem::size_of::<i16>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<i16>()]);
+    i16::from_be_bytes(field)
+}
+
+fn matrix_from_bytes(b: &[u8]) -> [i32; MATRIX_VALUES] {
+    let mut m = [0i32; MATRIX_VALUES];
+    for (i, slot) in m.iter_mut().enumerate() {
+        let mut field = [0u8; MATRIX_VALUE_LEN];
+        field.copy_from_slice(&b[i * MATRIX_VALUE_LEN..i * MATRIX_VALUE_LEN + MATRIX_VALUE_LEN]);
+        *slot = i32::from_be_bytes(field);
     }
     m
 }
@@ -828,7 +964,11 @@ fn matrix_from_bytes(b: &[u8]) -> [i32; 9] {
 impl Serialize for TrackHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        if self.version == 0 { 92 } else { 104 }
+        if self.version == 0 {
+            TKHD_V0_LEN
+        } else {
+            TKHD_V1_LEN
+        }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -842,71 +982,78 @@ impl Serialize for TrackHeaderBox {
             self.flags,
             true,
         )?;
+        let u32_len = core::mem::size_of::<u32>();
+        let u64_len = core::mem::size_of::<u64>();
+        let i16_len = core::mem::size_of::<i16>();
         if self.version == 0 {
-            buf[c..c + 4].copy_from_slice(
-                &(broadcast_common::len::fit_bits(self.creation_time, 32, "tkhd creation_time")?
-                    as u32)
+            buf[c..c + u32_len].copy_from_slice(
+                &(broadcast_common::len::fit_bits(
+                    self.creation_time,
+                    u32::BITS,
+                    "tkhd creation_time",
+                )? as u32)
                     .to_be_bytes(),
             );
-            c += 4;
-            buf[c..c + 4].copy_from_slice(
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(
                 &(broadcast_common::len::fit_bits(
                     self.modification_time,
-                    32,
+                    u32::BITS,
                     "tkhd modification_time",
                 )? as u32)
                     .to_be_bytes(),
             );
-            c += 4;
-            buf[c..c + 4].copy_from_slice(&self.track_id.value().to_be_bytes());
-            c += 4;
-            buf[c..c + 4].fill(0);
-            c += 4; // reserved
-            buf[c..c + 4].copy_from_slice(
-                &(broadcast_common::len::fit_bits(self.duration, 32, "tkhd duration")? as u32)
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(&self.track_id.value().to_be_bytes());
+            c += u32_len;
+            buf[c..c + TKHD_RESERVED_LEN].fill(0);
+            c += TKHD_RESERVED_LEN; // reserved
+            buf[c..c + u32_len].copy_from_slice(
+                &(broadcast_common::len::fit_bits(self.duration, u32::BITS, "tkhd duration")?
+                    as u32)
                     .to_be_bytes(),
             );
-            c += 4;
-            buf[c..c + 8].fill(0);
-            c += 8; // reserved * 2
-            buf[c..c + 2].copy_from_slice(&self.layer.to_be_bytes());
-            c += 2;
-            buf[c..c + 2].copy_from_slice(&self.alternate_group.to_be_bytes());
-            c += 2;
-            buf[c..c + 2].copy_from_slice(&self.volume.to_be_bytes());
-            c += 2;
-            buf[c..c + 2].fill(0);
-            c += 2; // reserved
+            c += u32_len;
+            buf[c..c + TKHD_RESERVED_PAIR_LEN].fill(0);
+            c += TKHD_RESERVED_PAIR_LEN; // reserved * 2
+            buf[c..c + i16_len].copy_from_slice(&self.layer.to_be_bytes());
+            c += i16_len;
+            buf[c..c + i16_len].copy_from_slice(&self.alternate_group.to_be_bytes());
+            c += i16_len;
+            buf[c..c + i16_len].copy_from_slice(&self.volume.to_be_bytes());
+            c += i16_len;
+            buf[c..c + TKHD_TRAILING_RESERVED_LEN].fill(0);
+            c += TKHD_TRAILING_RESERVED_LEN; // reserved
         } else {
-            buf[c..c + 8].copy_from_slice(&self.creation_time.to_be_bytes());
-            c += 8;
-            buf[c..c + 8].copy_from_slice(&self.modification_time.to_be_bytes());
-            c += 8;
-            buf[c..c + 4].copy_from_slice(&self.track_id.value().to_be_bytes());
-            c += 4;
-            buf[c..c + 4].fill(0);
-            c += 4; // reserved
-            buf[c..c + 8].copy_from_slice(&self.duration.to_be_bytes());
-            c += 8;
-            buf[c..c + 8].fill(0);
-            c += 8; // reserved * 2
-            buf[c..c + 2].copy_from_slice(&self.layer.to_be_bytes());
-            c += 2;
-            buf[c..c + 2].copy_from_slice(&self.alternate_group.to_be_bytes());
-            c += 2;
-            buf[c..c + 2].copy_from_slice(&self.volume.to_be_bytes());
-            c += 2;
-            buf[c..c + 2].fill(0);
-            c += 2; // reserved
+            buf[c..c + u64_len].copy_from_slice(&self.creation_time.to_be_bytes());
+            c += u64_len;
+            buf[c..c + u64_len].copy_from_slice(&self.modification_time.to_be_bytes());
+            c += u64_len;
+            buf[c..c + u32_len].copy_from_slice(&self.track_id.value().to_be_bytes());
+            c += u32_len;
+            buf[c..c + TKHD_RESERVED_LEN].fill(0);
+            c += TKHD_RESERVED_LEN; // reserved
+            buf[c..c + u64_len].copy_from_slice(&self.duration.to_be_bytes());
+            c += u64_len;
+            buf[c..c + TKHD_RESERVED_PAIR_LEN].fill(0);
+            c += TKHD_RESERVED_PAIR_LEN; // reserved * 2
+            buf[c..c + i16_len].copy_from_slice(&self.layer.to_be_bytes());
+            c += i16_len;
+            buf[c..c + i16_len].copy_from_slice(&self.alternate_group.to_be_bytes());
+            c += i16_len;
+            buf[c..c + i16_len].copy_from_slice(&self.volume.to_be_bytes());
+            c += i16_len;
+            buf[c..c + TKHD_TRAILING_RESERVED_LEN].fill(0);
+            c += TKHD_TRAILING_RESERVED_LEN; // reserved
         }
         for &m in &self.matrix {
-            buf[c..c + 4].copy_from_slice(&m.to_be_bytes());
-            c += 4;
+            buf[c..c + MATRIX_VALUE_LEN].copy_from_slice(&m.to_be_bytes());
+            c += MATRIX_VALUE_LEN;
         }
-        buf[c..c + 4].copy_from_slice(&self.width.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.height.to_be_bytes());
-        c += 4;
+        buf[c..c + u32_len].copy_from_slice(&self.width.to_be_bytes());
+        c += u32_len;
+        buf[c..c + u32_len].copy_from_slice(&self.height.to_be_bytes());
+        c += u32_len;
         Ok(c)
     }
 }
@@ -914,6 +1061,35 @@ impl Serialize for TrackHeaderBox {
 // ---------------------------------------------------------------------------
 // MediaHeaderBox — mdhd (ISO/IEC 14496-12:2026 §8.4.2)
 // ---------------------------------------------------------------------------
+
+/// Shortest `mdhd` prefix before its version-dependent fields.
+const MDHD_MIN_LEN: usize = FULLBOX_BODY_OFFSET;
+/// `mdhd` v0 creation_time offset (§8.4.2.2).
+const MDHD_V0_CREATION_TIME_OFFSET: usize = 12;
+/// `mdhd` v0 modification_time offset (§8.4.2.2).
+const MDHD_V0_MODIFICATION_TIME_OFFSET: usize = 16;
+/// `mdhd` v0 timescale offset (§8.4.2.2).
+const MDHD_V0_TIMESCALE_OFFSET: usize = 20;
+/// `mdhd` v0 duration offset (§8.4.2.2).
+const MDHD_V0_DURATION_OFFSET: usize = 24;
+/// `mdhd` v0 language offset (§8.4.2.2).
+const MDHD_V0_LANGUAGE_OFFSET: usize = 28;
+/// `mdhd` v0 box length (§8.4.2.2).
+const MDHD_V0_LEN: usize = 32;
+/// `mdhd` v1 creation_time offset (§8.4.2.2).
+const MDHD_V1_CREATION_TIME_OFFSET: usize = 12;
+/// `mdhd` v1 modification_time offset (§8.4.2.2).
+const MDHD_V1_MODIFICATION_TIME_OFFSET: usize = 20;
+/// `mdhd` v1 timescale offset (§8.4.2.2).
+const MDHD_V1_TIMESCALE_OFFSET: usize = 28;
+/// `mdhd` v1 duration offset (§8.4.2.2).
+const MDHD_V1_DURATION_OFFSET: usize = 32;
+/// `mdhd` v1 language offset (§8.4.2.2).
+const MDHD_V1_LANGUAGE_OFFSET: usize = 40;
+/// `mdhd` v1 box length (§8.4.2.2).
+const MDHD_V1_LEN: usize = 44;
+/// `quality` and reserved fields after `language` (§8.4.2.2).
+const MDHD_QUALITY_RESERVED_LEN: usize = 2;
 
 /// Media Header Box (`mdhd`) — §8.4.2.
 /// v0: 32-bit creation/modification/duration; v1: 64-bit.
@@ -933,36 +1109,38 @@ pub struct MediaHeaderBox {
 impl<'a> Parse<'a> for MediaHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 12, "mdhd")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
+        need_in(bytes, MDHD_MIN_LEN, "mdhd")?;
+        let ver = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
         if ver == 0 {
-            need_in(bytes, 32, "mdhd v0")?;
+            need_in(bytes, MDHD_V0_LEN, "mdhd v0")?;
             Ok(Self {
                 version: 0,
                 flags,
-                creation_time: u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]])
-                    as u64,
-                modification_time: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]])
-                    as u64,
-                timescale: Timescale::try_new(u32::from_be_bytes([
-                    bytes[20], bytes[21], bytes[22], bytes[23],
-                ]))?,
-                duration: u32::from_be_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]) as u64,
-                language: u16::from_be_bytes([bytes[28], bytes[29]]),
+                creation_time: u64::from(be_u32_at(bytes, MDHD_V0_CREATION_TIME_OFFSET)),
+                modification_time: u64::from(be_u32_at(bytes, MDHD_V0_MODIFICATION_TIME_OFFSET)),
+                timescale: Timescale::try_new(be_u32_at(bytes, MDHD_V0_TIMESCALE_OFFSET))?,
+                duration: u64::from(be_u32_at(bytes, MDHD_V0_DURATION_OFFSET)),
+                language: be_u16_at(bytes, MDHD_V0_LANGUAGE_OFFSET),
             })
         } else {
-            need_in(bytes, 44, "mdhd v1")?;
+            need_in(bytes, MDHD_V1_LEN, "mdhd v1")?;
             Ok(Self {
                 version: 1,
                 flags,
-                creation_time: crate::wire_cursor::be_u64(bytes, 12, "mdhd v1")?,
-                modification_time: crate::wire_cursor::be_u64(bytes, 20, "mdhd v1")?,
-                timescale: Timescale::try_new(u32::from_be_bytes([
-                    bytes[28], bytes[29], bytes[30], bytes[31],
-                ]))?,
-                duration: crate::wire_cursor::be_u64(bytes, 32, "mdhd v1")?,
-                language: u16::from_be_bytes([bytes[40], bytes[41]]),
+                creation_time: crate::wire_cursor::be_u64(
+                    bytes,
+                    MDHD_V1_CREATION_TIME_OFFSET,
+                    "mdhd v1",
+                )?,
+                modification_time: crate::wire_cursor::be_u64(
+                    bytes,
+                    MDHD_V1_MODIFICATION_TIME_OFFSET,
+                    "mdhd v1",
+                )?,
+                timescale: Timescale::try_new(be_u32_at(bytes, MDHD_V1_TIMESCALE_OFFSET))?,
+                duration: crate::wire_cursor::be_u64(bytes, MDHD_V1_DURATION_OFFSET, "mdhd v1")?,
+                language: be_u16_at(bytes, MDHD_V1_LANGUAGE_OFFSET),
             })
         }
     }
@@ -971,7 +1149,11 @@ impl<'a> Parse<'a> for MediaHeaderBox {
 impl Serialize for MediaHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        if self.version == 0 { 32 } else { 44 }
+        if self.version == 0 {
+            MDHD_V0_LEN
+        } else {
+            MDHD_V1_LEN
+        }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -985,53 +1167,73 @@ impl Serialize for MediaHeaderBox {
             self.flags,
             true,
         )?;
+        let u32_len = core::mem::size_of::<u32>();
+        let u64_len = core::mem::size_of::<u64>();
+        let u16_len = core::mem::size_of::<u16>();
         if self.version == 0 {
-            buf[c..c + 4].copy_from_slice(
-                &(broadcast_common::len::fit_bits(self.creation_time, 32, "mdhd creation_time")?
-                    as u32)
+            buf[c..c + u32_len].copy_from_slice(
+                &(broadcast_common::len::fit_bits(
+                    self.creation_time,
+                    u32::BITS,
+                    "mdhd creation_time",
+                )? as u32)
                     .to_be_bytes(),
             );
-            c += 4;
-            buf[c..c + 4].copy_from_slice(
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(
                 &(broadcast_common::len::fit_bits(
                     self.modification_time,
-                    32,
+                    u32::BITS,
                     "mdhd modification_time",
                 )? as u32)
                     .to_be_bytes(),
             );
-            c += 4;
-            buf[c..c + 4].copy_from_slice(&self.timescale.get().to_be_bytes());
-            c += 4;
-            buf[c..c + 4].copy_from_slice(
-                &(broadcast_common::len::fit_bits(self.duration, 32, "mdhd duration")? as u32)
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(&self.timescale.get().to_be_bytes());
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(
+                &(broadcast_common::len::fit_bits(self.duration, u32::BITS, "mdhd duration")?
+                    as u32)
                     .to_be_bytes(),
             );
-            c += 4;
-            buf[c..c + 2].copy_from_slice(&self.language.to_be_bytes());
-            c += 2;
+            c += u32_len;
+            buf[c..c + u16_len].copy_from_slice(&self.language.to_be_bytes());
+            c += u16_len;
         } else {
-            buf[c..c + 8].copy_from_slice(&self.creation_time.to_be_bytes());
-            c += 8;
-            buf[c..c + 8].copy_from_slice(&self.modification_time.to_be_bytes());
-            c += 8;
-            buf[c..c + 4].copy_from_slice(&self.timescale.get().to_be_bytes());
-            c += 4;
-            buf[c..c + 8].copy_from_slice(&self.duration.to_be_bytes());
-            c += 8;
-            buf[c..c + 2].copy_from_slice(&self.language.to_be_bytes());
-            c += 2;
+            buf[c..c + u64_len].copy_from_slice(&self.creation_time.to_be_bytes());
+            c += u64_len;
+            buf[c..c + u64_len].copy_from_slice(&self.modification_time.to_be_bytes());
+            c += u64_len;
+            buf[c..c + u32_len].copy_from_slice(&self.timescale.get().to_be_bytes());
+            c += u32_len;
+            buf[c..c + u64_len].copy_from_slice(&self.duration.to_be_bytes());
+            c += u64_len;
+            buf[c..c + u16_len].copy_from_slice(&self.language.to_be_bytes());
+            c += u16_len;
         }
         // quality(16), reserved = 0 — written, not just counted, so a reused
         // caller buffer cannot keep garbage there (r04-W45).
-        buf[c..c + 2].fill(0);
-        Ok(c + 2)
+        buf[c..c + MDHD_QUALITY_RESERVED_LEN].fill(0);
+        Ok(c + MDHD_QUALITY_RESERVED_LEN)
     }
 }
 
 // ---------------------------------------------------------------------------
 // HandlerBox — hdlr (ISO/IEC 14496-12:2026 §8.4.3)
 // ---------------------------------------------------------------------------
+
+/// Shortest `hdlr` prefix ending at `handler_type` (§8.4.3.2).
+const HDLR_MIN_LEN: usize = 24;
+/// Byte offset of `handler_type` (§8.4.3.2).
+const HDLR_HANDLER_TYPE_OFFSET: usize = 16;
+/// Byte offset of the handler `name` string (§8.4.3.2).
+const HDLR_NAME_OFFSET: usize = 32;
+/// Fixed `hdlr` body after the FullBox fields (§8.4.3.2).
+const HDLR_FIXED_BODY_LEN: usize = 20;
+/// Width of the `pre_defined` field (§8.4.3.2).
+const HDLR_PRE_DEFINED_LEN: usize = 4;
+/// Reserved bytes after `handler_type` (§8.4.3.2).
+const HDLR_RESERVED_LEN: usize = 12;
 
 /// Handler Box (`hdlr`) — §8.4.3.
 /// Declares the media handler type (`vide`, `soun`, etc.) and an optional name.
@@ -1040,7 +1242,7 @@ impl Serialize for MediaHeaderBox {
 pub struct HandlerBox {
     pub version: u8,
     pub flags: u32,
-    pub handler_type: [u8; 4],
+    pub handler_type: [u8; BOX_TYPE_SIZE],
     pub name: Vec<u8>,
 }
 
@@ -1049,12 +1251,12 @@ impl<'a> Parse<'a> for HandlerBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        need_in(bytes, 24, "hdlr")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let handler_type = [bytes[16], bytes[17], bytes[18], bytes[19]];
-        let name = if bytes.len() > 32 {
-            bytes[32..].to_vec()
+        need_in(bytes, HDLR_MIN_LEN, "hdlr")?;
+        let ver = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let handler_type = read_fourcc_at(bytes, HDLR_HANDLER_TYPE_OFFSET);
+        let name = if bytes.len() > HDLR_NAME_OFFSET {
+            bytes[HDLR_NAME_OFFSET..].to_vec()
         } else {
             Vec::new()
         };
@@ -1070,7 +1272,9 @@ impl<'a> Parse<'a> for HandlerBox {
 impl Serialize for HandlerBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + FULL_HDR + 20 + self.name.len())
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + HDLR_FIXED_BODY_LEN + self.name.len(),
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1085,13 +1289,13 @@ impl Serialize for HandlerBox {
             false,
         )?;
         // pre_defined(32) = 0, written rather than skipped (r04-W45).
-        buf[c..c + 4].fill(0);
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.handler_type);
-        c += 4;
+        buf[c..c + HDLR_PRE_DEFINED_LEN].fill(0);
+        c += HDLR_PRE_DEFINED_LEN;
+        buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&self.handler_type);
+        c += BOX_TYPE_SIZE;
         // reserved[3] (12 bytes) = 0, written rather than skipped (r04-W45).
-        buf[c..c + 12].fill(0);
-        c += 12;
+        buf[c..c + HDLR_RESERVED_LEN].fill(0);
+        c += HDLR_RESERVED_LEN;
         if !self.name.is_empty() {
             buf[c..c + self.name.len()].copy_from_slice(&self.name);
         }
@@ -1103,6 +1307,17 @@ impl Serialize for HandlerBox {
 // VideoMediaHeaderBox — vmhd (ISO/IEC 14496-12:2026 §12.1.2)
 // ---------------------------------------------------------------------------
 
+/// Shortest `vmhd` body (§12.1.2).
+const VMHD_MIN_LEN: usize = 20;
+/// Byte offset of `graphicsmode` (§12.1.2).
+const VMHD_GRAPHICSMODE_OFFSET: usize = 12;
+/// Byte offset of `opcolor` (§12.1.2).
+const VMHD_OPCOLOR_OFFSET: usize = 14;
+/// Number of `opcolor` components (§12.1.2).
+pub const OPCOLOR_VALUES: usize = 3;
+/// `vmhd` body length after the FullBox fields (§12.1.2).
+const VMHD_BODY_LEN: usize = 8;
+
 /// Video Media Header Box (`vmhd`) — §12.1.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -1110,24 +1325,24 @@ pub struct VideoMediaHeaderBox {
     pub version: u8,
     pub flags: u32,
     pub graphicsmode: u16,
-    pub opcolor: [u16; 3],
+    pub opcolor: [u16; OPCOLOR_VALUES],
 }
 
 impl<'a> Parse<'a> for VideoMediaHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 20, "vmhd")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
+        need_in(bytes, VMHD_MIN_LEN, "vmhd")?;
+        let ver = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let mut opcolor = [0u16; OPCOLOR_VALUES];
+        for (i, slot) in opcolor.iter_mut().enumerate() {
+            *slot = be_u16_at(bytes, VMHD_OPCOLOR_OFFSET + i * core::mem::size_of::<u16>());
+        }
         Ok(Self {
             version: ver,
             flags,
-            graphicsmode: u16::from_be_bytes([bytes[12], bytes[13]]),
-            opcolor: [
-                u16::from_be_bytes([bytes[14], bytes[15]]),
-                u16::from_be_bytes([bytes[16], bytes[17]]),
-                u16::from_be_bytes([bytes[18], bytes[19]]),
-            ],
+            graphicsmode: be_u16_at(bytes, VMHD_GRAPHICSMODE_OFFSET),
+            opcolor,
         })
     }
 }
@@ -1135,7 +1350,7 @@ impl<'a> Parse<'a> for VideoMediaHeaderBox {
 impl Serialize for VideoMediaHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + FULL_HDR + 8
+        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + VMHD_BODY_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1149,20 +1364,29 @@ impl Serialize for VideoMediaHeaderBox {
             self.flags,
             true,
         )?;
-        buf[c..c + 2].copy_from_slice(&self.graphicsmode.to_be_bytes());
-        c += 2;
-        buf[c..c + 2].copy_from_slice(&self.opcolor[0].to_be_bytes());
-        c += 2;
-        buf[c..c + 2].copy_from_slice(&self.opcolor[1].to_be_bytes());
-        c += 2;
-        buf[c..c + 2].copy_from_slice(&self.opcolor[2].to_be_bytes());
-        Ok(c + 2)
+        let u16_len = core::mem::size_of::<u16>();
+        buf[c..c + u16_len].copy_from_slice(&self.graphicsmode.to_be_bytes());
+        c += u16_len;
+        for color in &self.opcolor {
+            buf[c..c + u16_len].copy_from_slice(&color.to_be_bytes());
+            c += u16_len;
+        }
+        Ok(c)
     }
 }
 
 // ---------------------------------------------------------------------------
 // SoundMediaHeaderBox — smhd (ISO/IEC 14496-12:2026 §12.2.2)
 // ---------------------------------------------------------------------------
+
+/// Shortest `smhd` body (§12.2.2).
+const SMHD_MIN_LEN: usize = 16;
+/// Byte offset of `balance` (§12.2.2).
+const SMHD_BALANCE_OFFSET: usize = 12;
+/// `smhd` body length after the FullBox fields (§12.2.2).
+const SMHD_BODY_LEN: usize = 4;
+/// Reserved field after `balance` (§12.2.2).
+const SMHD_RESERVED_LEN: usize = 2;
 
 /// Sound Media Header Box (`smhd`) — §12.2.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1176,13 +1400,13 @@ pub struct SoundMediaHeaderBox {
 impl<'a> Parse<'a> for SoundMediaHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 16, "smhd")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
+        need_in(bytes, SMHD_MIN_LEN, "smhd")?;
+        let ver = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
         Ok(Self {
             version: ver,
             flags,
-            balance: i16::from_be_bytes([bytes[12], bytes[13]]),
+            balance: read_i16(bytes, SMHD_BALANCE_OFFSET),
         })
     }
 }
@@ -1190,7 +1414,7 @@ impl<'a> Parse<'a> for SoundMediaHeaderBox {
 impl Serialize for SoundMediaHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + FULL_HDR + 4
+        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + SMHD_BODY_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1204,11 +1428,12 @@ impl Serialize for SoundMediaHeaderBox {
             self.flags,
             true,
         )?;
-        buf[c..c + 2].copy_from_slice(&self.balance.to_be_bytes());
-        c += 2;
+        let i16_len = core::mem::size_of::<i16>();
+        buf[c..c + i16_len].copy_from_slice(&self.balance.to_be_bytes());
+        c += i16_len;
         // reserved(16) = 0, written rather than skipped (r04-W45).
-        buf[c..c + 2].fill(0);
-        c += 2;
+        buf[c..c + SMHD_RESERVED_LEN].fill(0);
+        c += SMHD_RESERVED_LEN;
         Ok(c)
     }
 }
@@ -1217,10 +1442,14 @@ impl Serialize for SoundMediaHeaderBox {
 // DataReferenceBox — dref (ISO/IEC 14496-12:2026 §8.7.2)
 // ---------------------------------------------------------------------------
 
-const URL_ENTRY_TYPE: [u8; 4] = *b"url ";
-const URN_ENTRY_TYPE: [u8; 4] = *b"urn ";
-const IMDA_ENTRY_TYPE: [u8; 4] = *b"imdt";
-const SEQ_NUM_IMDA_ENTRY_TYPE: [u8; 4] = *b"snim";
+const URL_ENTRY_TYPE: [u8; BOX_TYPE_SIZE] = *b"url ";
+const URN_ENTRY_TYPE: [u8; BOX_TYPE_SIZE] = *b"urn ";
+const IMDA_ENTRY_TYPE: [u8; BOX_TYPE_SIZE] = *b"imdt";
+const SEQ_NUM_IMDA_ENTRY_TYPE: [u8; BOX_TYPE_SIZE] = *b"snim";
+/// Byte offset of a box `type` field (§4.2).
+const BOX_TYPE_OFFSET: usize = BOX_HEADER_MIN_SIZE - BOX_TYPE_SIZE;
+/// Length of the NUL terminator after a `urn ` entry name (§8.7.2.2).
+const URN_NAME_TERMINATOR_LEN: usize = 1;
 
 /// Data Reference Box (`dref`) — §8.7.2.
 /// Contains a list of data entry boxes ([`DataEntry`]).
@@ -1259,8 +1488,8 @@ impl From<DataEntryUrlBox> for DataEntry {
 
 impl DataEntry {
     fn parse(bytes: &[u8]) -> Result<Self> {
-        need_in(bytes, BOX_HDR, "dref entry")?;
-        let ty = [bytes[4], bytes[5], bytes[6], bytes[7]];
+        need_in(bytes, BOX_HEADER_MIN_SIZE, "dref entry")?;
+        let ty = read_fourcc_at(bytes, BOX_TYPE_OFFSET);
         match ty {
             URL_ENTRY_TYPE => Ok(Self::Url(DataEntryUrlBox::parse(bytes)?)),
             URN_ENTRY_TYPE => Ok(Self::Urn(DataEntryUrnBox::parse(bytes)?)),
@@ -1268,7 +1497,10 @@ impl DataEntry {
             SEQ_NUM_IMDA_ENTRY_TYPE => Ok(Self::SeqNumImda(DataEntrySeqNumImdaBox::parse(bytes)?)),
             _ => {
                 let compact = crate::box_types::compact_form(bytes)?;
-                Ok(Self::Other(OpaqueBox::new(ty, compact[BOX_HDR..].to_vec())))
+                Ok(Self::Other(OpaqueBox::new(
+                    ty,
+                    compact[BOX_HEADER_MIN_SIZE..].to_vec(),
+                )))
             }
         }
     }
@@ -1301,19 +1533,24 @@ impl<'a> Parse<'a> for DataReferenceBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        need_in(bytes, 16, "dref")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        check_entry_count(bytes.len().saturating_sub(16), 8, count, "dref.entry_count")?;
+        need_in(bytes, FLAT_TABLE_HEADER_LEN, "dref")?;
+        let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
+        let count = be_u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
+        check_entry_count(
+            bytes.len().saturating_sub(FLAT_TABLE_HEADER_LEN),
+            BOX_HEADER_MIN_SIZE,
+            count,
+            "dref.entry_count",
+        )?;
         let mut entries = Vec::with_capacity(bounded_entry_count(
-            bytes.len().saturating_sub(16),
-            8,
+            bytes.len().saturating_sub(FLAT_TABLE_HEADER_LEN),
+            BOX_HEADER_MIN_SIZE,
             count,
         ));
-        let mut off = 16usize;
+        let mut off = FLAT_TABLE_HEADER_LEN;
         for _ in 0..count {
-            if off + 8 > bytes.len() {
+            if off + BOX_HEADER_MIN_SIZE > bytes.len() {
                 break;
             }
             let Some(sz) = crate::box_types::child_extent_in(&bytes[off..]) else {
@@ -1334,7 +1571,7 @@ impl<'a> Parse<'a> for DataReferenceBox {
 impl Serialize for DataReferenceBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR + FULL_HDR + 4;
+        let mut n = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
         for e in &self.entries {
             n += e.serialized_len();
         }
@@ -1353,8 +1590,9 @@ impl Serialize for DataReferenceBox {
             false,
         )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-        c += 4;
+        let u32_len = core::mem::size_of::<u32>();
+        buf[c..c + u32_len].copy_from_slice(&entry_count.to_be_bytes());
+        c += u32_len;
         for entry in &self.entries {
             c += entry.serialize_into(&mut buf[c..])?;
         }
@@ -1381,11 +1619,11 @@ impl<'a> Parse<'a> for DataEntryUrlBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        need_in(bytes, 12, "url")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let location = if bytes.len() > 12 {
-            bytes[12..].to_vec()
+        need_in(bytes, FULLBOX_BODY_OFFSET, "url")?;
+        let ver = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let location = if bytes.len() > FULLBOX_BODY_OFFSET {
+            bytes[FULLBOX_BODY_OFFSET..].to_vec()
         } else {
             Vec::new()
         };
@@ -1400,7 +1638,7 @@ impl<'a> Parse<'a> for DataEntryUrlBox {
 impl Serialize for DataEntryUrlBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + FULL_HDR + self.location.len())
+        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.location.len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1429,27 +1667,29 @@ impl Serialize for DataEntryUrlBox {
 
 fn parse_data_entry_header(
     bytes: &[u8],
-    expected: [u8; 4],
+    expected: [u8; BOX_TYPE_SIZE],
     what: &'static str,
 ) -> Result<(u8, u32, Vec<u8>)> {
     let compact = crate::box_types::compact_form(bytes)?;
-    need_in(&compact, BOX_HDR + FULL_HDR, what)?;
-    if compact[4..8] != expected {
+    need_in(&compact, FULLBOX_BODY_OFFSET, what)?;
+    if compact[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != expected {
         return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "box_type",
-            value: u64::from(u32::from_be_bytes([
-                compact[4], compact[5], compact[6], compact[7],
-            ])),
+            value: u64::from(be_u32_at(&compact, BOX_TYPE_OFFSET)),
             reason: what,
         }));
     }
-    let flags = u32::from_be_bytes([0, compact[9], compact[10], compact[11]]);
-    Ok((compact[8], flags, compact[BOX_HDR + FULL_HDR..].to_vec()))
+    let flags = be_u24_at(&compact, FULLBOX_FLAGS_OFFSET);
+    Ok((
+        compact[FULLBOX_VERSION_OFFSET],
+        flags,
+        compact[FULLBOX_BODY_OFFSET..].to_vec(),
+    ))
 }
 
 fn write_data_entry_header(
     buf: &mut [u8],
-    ty: &[u8; 4],
+    ty: &[u8; BOX_TYPE_SIZE],
     need: usize,
     version: u8,
     flags: u32,
@@ -1487,7 +1727,7 @@ impl<'a> Parse<'a> for DataEntryUrnBox {
             version,
             flags,
             name: rest[..nul].to_vec(),
-            location: rest[nul + 1..].to_vec(),
+            location: rest[nul + URN_NAME_TERMINATOR_LEN..].to_vec(),
         })
     }
 }
@@ -1495,7 +1735,13 @@ impl<'a> Parse<'a> for DataEntryUrnBox {
 impl Serialize for DataEntryUrnBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + FULL_HDR + self.name.len() + 1 + self.location.len())
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE
+                + FULLBOX_EXTRA_SIZE
+                + self.name.len()
+                + URN_NAME_TERMINATOR_LEN
+                + self.location.len(),
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.name.contains(&0) {
@@ -1507,7 +1753,7 @@ impl Serialize for DataEntryUrnBox {
         buf[c..c + self.name.len()].copy_from_slice(&self.name);
         c += self.name.len();
         buf[c] = 0;
-        c += 1;
+        c += URN_NAME_TERMINATOR_LEN;
         buf[c..c + self.location.len()].copy_from_slice(&self.location);
         c += self.location.len();
         Ok(c)
@@ -1529,11 +1775,15 @@ impl<'a> Parse<'a> for DataEntryImdaBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (version, flags, rest) =
             parse_data_entry_header(bytes, IMDA_ENTRY_TYPE, "expected imdt")?;
-        need_in(&rest, 4, "imdt imda_ref_identifier")?;
+        need_in(
+            &rest,
+            core::mem::size_of::<u32>(),
+            "imdt imda_ref_identifier",
+        )?;
         Ok(Self {
             version,
             flags,
-            imda_ref_identifier: u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]),
+            imda_ref_identifier: be_u32_at(&rest, 0),
         })
     }
 }
@@ -1541,14 +1791,17 @@ impl<'a> Parse<'a> for DataEntryImdaBox {
 impl Serialize for DataEntryImdaBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4)
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = write_data_entry_header(buf, &IMDA_ENTRY_TYPE, need, self.version, self.flags)?;
-        buf[c..c + 4].copy_from_slice(&self.imda_ref_identifier.to_be_bytes());
-        c += 4;
+        let u32_len = core::mem::size_of::<u32>();
+        buf[c..c + u32_len].copy_from_slice(&self.imda_ref_identifier.to_be_bytes());
+        c += u32_len;
         Ok(c)
     }
 }
@@ -1575,7 +1828,7 @@ impl<'a> Parse<'a> for DataEntrySeqNumImdaBox {
 impl Serialize for DataEntrySeqNumImdaBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + FULL_HDR)
+        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1593,6 +1846,15 @@ impl Serialize for DataEntrySeqNumImdaBox {
 // ---------------------------------------------------------------------------
 // SampleToChunkBox — stsc (ISO/IEC 14496-12:2026 §8.7.4)
 // ---------------------------------------------------------------------------
+
+/// `stsc` `first_chunk` offset within an entry (§8.7.4.3).
+const STSC_FIRST_CHUNK_OFFSET: usize = 0;
+/// `stsc` `samples_per_chunk` offset within an entry (§8.7.4.3).
+const STSC_SAMPLES_PER_CHUNK_OFFSET: usize = core::mem::size_of::<u32>();
+/// `stsc` `sample_description_index` offset within an entry (§8.7.4.3).
+const STSC_SAMPLE_DESCRIPTION_INDEX_OFFSET: usize = 2 * core::mem::size_of::<u32>();
+/// Wire length of one `stsc` entry (§8.7.4.3).
+const STSC_ENTRY_LEN: usize = 3 * core::mem::size_of::<u32>();
 
 /// Entry in the stsc chunk-to-sample table (§8.7.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1617,47 +1879,35 @@ impl<'a> Parse<'a> for SampleToChunkBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        need_in(bytes, 16, "stsc")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsc")?;
+        let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
+        let count = be_u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
         check_entry_count(
-            bytes.len().saturating_sub(16),
-            12,
+            bytes.len().saturating_sub(FLAT_TABLE_HEADER_LEN),
+            STSC_ENTRY_LEN,
             count,
             "SampleToChunkBox.entry_count",
         )?;
         let mut entries = Vec::with_capacity(bounded_entry_count(
-            bytes.len().saturating_sub(16),
-            12,
+            bytes.len().saturating_sub(FLAT_TABLE_HEADER_LEN),
+            STSC_ENTRY_LEN,
             count,
         ));
-        let mut off = 16usize;
+        let mut off = FLAT_TABLE_HEADER_LEN;
         for _ in 0..count {
-            if off + 12 > bytes.len() {
+            if off + STSC_ENTRY_LEN > bytes.len() {
                 break;
             }
             entries.push(StscEntry {
-                first_chunk: u32::from_be_bytes([
-                    bytes[off],
-                    bytes[off + 1],
-                    bytes[off + 2],
-                    bytes[off + 3],
-                ]),
-                samples_per_chunk: u32::from_be_bytes([
-                    bytes[off + 4],
-                    bytes[off + 5],
-                    bytes[off + 6],
-                    bytes[off + 7],
-                ]),
-                sample_description_index: u32::from_be_bytes([
-                    bytes[off + 8],
-                    bytes[off + 9],
-                    bytes[off + 10],
-                    bytes[off + 11],
-                ]),
+                first_chunk: be_u32_at(bytes, off + STSC_FIRST_CHUNK_OFFSET),
+                samples_per_chunk: be_u32_at(bytes, off + STSC_SAMPLES_PER_CHUNK_OFFSET),
+                sample_description_index: be_u32_at(
+                    bytes,
+                    off + STSC_SAMPLE_DESCRIPTION_INDEX_OFFSET,
+                ),
             });
-            off += 12;
+            off += STSC_ENTRY_LEN;
         }
         Ok(Self {
             version: ver,
@@ -1670,7 +1920,7 @@ impl<'a> Parse<'a> for SampleToChunkBox {
 impl Serialize for SampleToChunkBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + self.entries.len() * 12)
+        crate::box_types::box_len(FLAT_TABLE_HEADER_LEN + self.entries.len() * STSC_ENTRY_LEN)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1685,13 +1935,19 @@ impl Serialize for SampleToChunkBox {
             false,
         )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-        c += 4;
+        let u32_len = core::mem::size_of::<u32>();
+        buf[c..c + u32_len].copy_from_slice(&entry_count.to_be_bytes());
+        c += u32_len;
         for entry in &self.entries {
-            buf[c..c + 4].copy_from_slice(&entry.first_chunk.to_be_bytes());
-            buf[c + 4..c + 8].copy_from_slice(&entry.samples_per_chunk.to_be_bytes());
-            buf[c + 8..c + 12].copy_from_slice(&entry.sample_description_index.to_be_bytes());
-            c += 12;
+            let entry_start = c;
+            buf[entry_start..entry_start + u32_len]
+                .copy_from_slice(&entry.first_chunk.to_be_bytes());
+            let samples = entry_start + STSC_SAMPLES_PER_CHUNK_OFFSET;
+            buf[samples..samples + u32_len].copy_from_slice(&entry.samples_per_chunk.to_be_bytes());
+            let description = entry_start + STSC_SAMPLE_DESCRIPTION_INDEX_OFFSET;
+            buf[description..description + u32_len]
+                .copy_from_slice(&entry.sample_description_index.to_be_bytes());
+            c += STSC_ENTRY_LEN;
         }
         Ok(c)
     }
@@ -1700,6 +1956,13 @@ impl Serialize for SampleToChunkBox {
 // ---------------------------------------------------------------------------
 // SampleSizeBox — stsz (ISO/IEC 14496-12:2026 §8.7.3)
 // ---------------------------------------------------------------------------
+
+/// Byte offset of `stsz` `sample_size` (§8.7.3.2).
+const STSZ_SAMPLE_SIZE_OFFSET: usize = FULLBOX_BODY_OFFSET;
+/// Byte offset of `stsz` `sample_count` (§8.7.3.2).
+const STSZ_SAMPLE_COUNT_OFFSET: usize = FLAT_TABLE_HEADER_LEN;
+/// Length of the `stsz` header before its per-sample size entries (§8.7.3.2).
+const STSZ_PREFIX_LEN: usize = FLAT_TABLE_HEADER_LEN + core::mem::size_of::<u32>();
 
 /// Sample Size Box (`stsz`) — §8.7.3.
 /// If `sample_size > 0`, all samples have that uniform size and the entries vec
@@ -1725,15 +1988,15 @@ impl<'a> Parse<'a> for SampleSizeBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        need_in(bytes, 20, "stsz")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let sample_size = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
-        let count = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize;
+        need_in(bytes, STSZ_PREFIX_LEN, "stsz")?;
+        let ver = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let sample_size = be_u32_at(bytes, STSZ_SAMPLE_SIZE_OFFSET);
+        let count = be_u32_at(bytes, STSZ_SAMPLE_COUNT_OFFSET) as usize;
         if sample_size == 0 {
             check_entry_count(
-                bytes.len().saturating_sub(20),
-                4,
+                bytes.len().saturating_sub(STSZ_PREFIX_LEN),
+                core::mem::size_of::<u32>(),
                 count,
                 "SampleSizeBox sample_count",
             )?;
@@ -1742,25 +2005,25 @@ impl<'a> Parse<'a> for SampleSizeBox {
         // (per-sample sizes) — a nonzero uniform `sample_size` means the loop
         // never runs, so a wire `count` in that branch mustn't drive any
         // allocation at all, not merely a bounded one.
+        let entry_len = core::mem::size_of::<u32>();
         let capacity = if sample_size == 0 {
-            bounded_entry_count(bytes.len().saturating_sub(20), 4, count)
+            bounded_entry_count(
+                bytes.len().saturating_sub(STSZ_PREFIX_LEN),
+                entry_len,
+                count,
+            )
         } else {
             0
         };
         let mut entries = Vec::with_capacity(capacity);
         if sample_size == 0 {
-            let mut off = 20usize;
+            let mut off = STSZ_PREFIX_LEN;
             for _ in 0..count {
-                if off + 4 > bytes.len() {
+                if off + entry_len > bytes.len() {
                     break;
                 }
-                entries.push(u32::from_be_bytes([
-                    bytes[off],
-                    bytes[off + 1],
-                    bytes[off + 2],
-                    bytes[off + 3],
-                ]));
-                off += 4;
+                entries.push(be_u32_at(bytes, off));
+                off += entry_len;
             }
         }
         Ok(Self {
@@ -1781,7 +2044,7 @@ impl Serialize for SampleSizeBox {
         } else {
             0
         };
-        crate::box_types::box_len(BOX_HDR + FULL_HDR + 8 + count * 4)
+        crate::box_types::box_len(STSZ_PREFIX_LEN + count * core::mem::size_of::<u32>())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.sample_size == 0 && self.entries.len() != self.sample_count as usize {
@@ -1800,13 +2063,14 @@ impl Serialize for SampleSizeBox {
             self.flags,
             false,
         )?;
-        buf[c..c + 4].copy_from_slice(&self.sample_size.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.sample_count.to_be_bytes());
-        c += 4;
+        let u32_len = core::mem::size_of::<u32>();
+        buf[c..c + u32_len].copy_from_slice(&self.sample_size.to_be_bytes());
+        c += u32_len;
+        buf[c..c + u32_len].copy_from_slice(&self.sample_count.to_be_bytes());
+        c += u32_len;
         for &sz in &self.entries {
-            buf[c..c + 4].copy_from_slice(&sz.to_be_bytes());
-            c += 4;
+            buf[c..c + u32_len].copy_from_slice(&sz.to_be_bytes());
+            c += u32_len;
         }
         Ok(c)
     }
@@ -1829,10 +2093,13 @@ pub struct ChunkOffsetBox {
 impl<'a> Parse<'a> for ChunkOffsetBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (version, flags, entries) =
-            parse_flat_table(bytes, "stco", "ChunkOffsetBox.entry_count", 4, |b| {
-                u32::from_be_bytes([b[0], b[1], b[2], b[3]])
-            })?;
+        let (version, flags, entries) = parse_flat_table(
+            bytes,
+            "stco",
+            "ChunkOffsetBox.entry_count",
+            core::mem::size_of::<u32>(),
+            |b| be_u32_at(b, 0),
+        )?;
         Ok(Self {
             version,
             flags,
@@ -1844,7 +2111,7 @@ impl<'a> Parse<'a> for ChunkOffsetBox {
 impl Serialize for ChunkOffsetBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        flat_table_len(self.entries.len(), 4)
+        flat_table_len(self.entries.len(), core::mem::size_of::<u32>())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_flat_table(
@@ -1852,10 +2119,11 @@ impl Serialize for ChunkOffsetBox {
             b"stco",
             (self.version, self.flags),
             &self.entries,
-            4,
+            core::mem::size_of::<u32>(),
             |entry, out| {
-                out[..4].copy_from_slice(&entry.to_be_bytes());
-                Ok(4)
+                let u32_len = core::mem::size_of::<u32>();
+                out[..u32_len].copy_from_slice(&entry.to_be_bytes());
+                Ok(u32_len)
             },
         )
     }
@@ -1881,10 +2149,13 @@ pub struct ChunkLargeOffsetBox {
 impl<'a> Parse<'a> for ChunkLargeOffsetBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (version, flags, entries) =
-            parse_flat_table(bytes, "co64", "ChunkLargeOffsetBox.entry_count", 8, |b| {
-                u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-            })?;
+        let (version, flags, entries) = parse_flat_table(
+            bytes,
+            "co64",
+            "ChunkLargeOffsetBox.entry_count",
+            core::mem::size_of::<u64>(),
+            |b| be_u64_at(b, 0),
+        )?;
         Ok(Self {
             version,
             flags,
@@ -1896,7 +2167,7 @@ impl<'a> Parse<'a> for ChunkLargeOffsetBox {
 impl Serialize for ChunkLargeOffsetBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        flat_table_len(self.entries.len(), 8)
+        flat_table_len(self.entries.len(), core::mem::size_of::<u64>())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_flat_table(
@@ -1904,10 +2175,11 @@ impl Serialize for ChunkLargeOffsetBox {
             b"co64",
             (self.version, self.flags),
             &self.entries,
-            8,
+            core::mem::size_of::<u64>(),
             |entry, out| {
-                out[..8].copy_from_slice(&entry.to_be_bytes());
-                Ok(8)
+                let u64_len = core::mem::size_of::<u64>();
+                out[..u64_len].copy_from_slice(&entry.to_be_bytes());
+                Ok(u64_len)
             },
         )
     }
@@ -1934,10 +2206,13 @@ pub struct SyncSampleBox {
 impl<'a> Parse<'a> for SyncSampleBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (version, flags, entries) =
-            parse_flat_table(bytes, "stss", "SyncSampleBox.entry_count", 4, |b| {
-                u32::from_be_bytes([b[0], b[1], b[2], b[3]])
-            })?;
+        let (version, flags, entries) = parse_flat_table(
+            bytes,
+            "stss",
+            "SyncSampleBox.entry_count",
+            core::mem::size_of::<u32>(),
+            |b| be_u32_at(b, 0),
+        )?;
         Ok(Self {
             version,
             flags,
@@ -1949,7 +2224,7 @@ impl<'a> Parse<'a> for SyncSampleBox {
 impl Serialize for SyncSampleBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        flat_table_len(self.entries.len(), 4)
+        flat_table_len(self.entries.len(), core::mem::size_of::<u32>())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_flat_table(
@@ -1957,10 +2232,11 @@ impl Serialize for SyncSampleBox {
             b"stss",
             (self.version, self.flags),
             &self.entries,
-            4,
+            core::mem::size_of::<u32>(),
             |entry, out| {
-                out[..4].copy_from_slice(&entry.to_be_bytes());
-                Ok(4)
+                let u32_len = core::mem::size_of::<u32>();
+                out[..u32_len].copy_from_slice(&entry.to_be_bytes());
+                Ok(u32_len)
             },
         )
     }
@@ -2038,9 +2314,9 @@ pub struct SamplingRateBox {
 
 impl SamplingRateBox {
     /// FourCC of this box.
-    pub const FOURCC: [u8; 4] = *b"srat";
+    pub const FOURCC: [u8; BOX_TYPE_SIZE] = *b"srat";
     /// Box size in bytes (8-byte header + FullBox header + one `u32`).
-    pub const SIZE: usize = BOX_HDR + FULL_HDR + 4;
+    pub const SIZE: usize = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
 
     /// Build a version-0/flags-0 `srat` for the given rate.
     pub fn new(sampling_rate: u32) -> Self {
@@ -2060,12 +2336,13 @@ impl Serialize for SamplingRateBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = Self::SIZE;
         need_out(buf, need)?;
-        buf[0..4].copy_from_slice(&(need as u32).to_be_bytes());
-        buf[4..8].copy_from_slice(&Self::FOURCC);
-        buf[8] = self.version;
+        buf[0..BOX_TYPE_SIZE].copy_from_slice(&(need as u32).to_be_bytes());
+        buf[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE].copy_from_slice(&Self::FOURCC);
+        buf[FULLBOX_VERSION_OFFSET] = self.version;
         let fb = self.flags.to_be_bytes();
-        buf[9..12].copy_from_slice(&fb[1..]);
-        buf[12..16].copy_from_slice(&self.sampling_rate.to_be_bytes());
+        buf[FULLBOX_FLAGS_OFFSET..FULLBOX_BODY_OFFSET].copy_from_slice(&fb[FULLBOX_VERSION_LEN..]);
+        buf[FULLBOX_BODY_OFFSET..FULLBOX_BODY_OFFSET + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.sampling_rate.to_be_bytes());
         Ok(need)
     }
 }
@@ -2078,12 +2355,12 @@ impl<'a> Parse<'a> for SamplingRateBox {
         // from a raw child-box walk, where the bytes preceding it may belong to
         // any box at all (a wrong box parsed as an `srat` would silently supply
         // a bogus rate).
-        if bytes[4..8] != Self::FOURCC {
+        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != Self::FOURCC {
             return Err(Error::InvalidInput("SamplingRateBox: not an 'srat' box"));
         }
-        let version = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let sampling_rate = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+        let version = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FULLBOX_FLAGS_OFFSET);
+        let sampling_rate = be_u32_at(bytes, FULLBOX_BODY_OFFSET);
         Ok(Self {
             version,
             flags,
@@ -2107,15 +2384,18 @@ pub fn sampling_rate_override(config_boxes: &[OpaqueBox]) -> Option<u32> {
         .find(|b| b.box_type == SamplingRateBox::FOURCC)?;
     // The body was captured without its 8-byte header; rebuild the FullBox
     // bytes so the typed parser sees a complete box.
-    let mut full = vec![0u8; 8 + b.data.len()];
-    full[4..8].copy_from_slice(&b.box_type);
-    full[8..].copy_from_slice(&b.data);
+    let mut full = vec![0u8; BOX_HEADER_MIN_SIZE + b.data.len()];
+    full[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE].copy_from_slice(&b.box_type);
+    full[BOX_HEADER_MIN_SIZE..].copy_from_slice(&b.data);
     let srat = SamplingRateBox::parse(&full).ok()?;
     if srat.sampling_rate == 0 {
         return None;
     }
     Some(srat.sampling_rate)
 }
+
+/// Width of the `reserved[3]` block in an audio sample entry (§12.2.3.2).
+pub const AUDIO_SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
 
 /// AAC audio sample entry (`mp4a`) — ISO/IEC 14496-12:2026 §12.2.3.
 ///
@@ -2132,7 +2412,7 @@ pub struct Mp4aSampleEntry {
     /// `frma`). Previously hard-coded to `mp4a` on serialize, which silently
     /// re-labelled a protected audio track as clear on any parse -> serialize
     /// round trip (issue #1017).
-    pub codec_type: [u8; 4],
+    pub codec_type: [u8; BOX_TYPE_SIZE],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
     /// [`AudioSampleEntryV1`] (§12.2.3.2) whose real rate lives in a
     /// [`SamplingRateBox`] among `config_boxes`, or any other value a
@@ -2145,7 +2425,7 @@ pub struct Mp4aSampleEntry {
     /// The six bytes following `entry_version` in the fixed 8-byte block
     /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
-    pub reserved_1: [u8; 6],
+    pub reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
@@ -2153,7 +2433,7 @@ pub struct Mp4aSampleEntry {
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
-    pub compression_id_and_packet_size: [u8; 4],
+    pub compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     pub samplerate: u32,
     pub config_boxes: Vec<OpaqueBox>,
 }
@@ -2181,7 +2461,7 @@ pub struct Ac3SampleEntry {
     /// The six bytes following `entry_version` in the fixed 8-byte block
     /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
-    pub reserved_1: [u8; 6],
+    pub reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
@@ -2189,7 +2469,7 @@ pub struct Ac3SampleEntry {
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
-    pub compression_id_and_packet_size: [u8; 4],
+    pub compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     pub samplerate: u32,
     pub config_boxes: Vec<OpaqueBox>,
 }
@@ -2240,7 +2520,7 @@ pub struct Ec3SampleEntry {
     /// The six bytes following `entry_version` in the fixed 8-byte block
     /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
-    pub reserved_1: [u8; 6],
+    pub reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
@@ -2248,7 +2528,7 @@ pub struct Ec3SampleEntry {
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
-    pub compression_id_and_packet_size: [u8; 4],
+    pub compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     pub samplerate: u32,
     pub config_boxes: Vec<OpaqueBox>,
 }
@@ -2298,7 +2578,7 @@ pub struct OpusSampleEntry {
     /// The six bytes following `entry_version` in the fixed 8-byte block
     /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
-    pub reserved_1: [u8; 6],
+    pub reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
@@ -2306,7 +2586,7 @@ pub struct OpusSampleEntry {
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
-    pub compression_id_and_packet_size: [u8; 4],
+    pub compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     pub samplerate: u32,
     pub config_boxes: Vec<OpaqueBox>,
 }
@@ -2369,7 +2649,7 @@ pub struct FlacSampleEntry {
     /// The six bytes following `entry_version` in the fixed 8-byte block
     /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
-    pub reserved_1: [u8; 6],
+    pub reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
@@ -2377,7 +2657,7 @@ pub struct FlacSampleEntry {
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
-    pub compression_id_and_packet_size: [u8; 4],
+    pub compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     pub samplerate: u32,
     pub config_boxes: Vec<OpaqueBox>,
 }
@@ -2440,7 +2720,7 @@ pub struct Ac4SampleEntry {
     /// The six bytes following `entry_version` in the fixed 8-byte block
     /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
-    pub reserved_1: [u8; 6],
+    pub reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
@@ -2448,7 +2728,7 @@ pub struct Ac4SampleEntry {
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
-    pub compression_id_and_packet_size: [u8; 4],
+    pub compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     pub samplerate: u32,
     pub config_boxes: Vec<OpaqueBox>,
 }
@@ -2506,7 +2786,7 @@ impl<'a> Parse<'a> for Ac4SampleEntry {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DtsSampleEntry {
     /// The FourCC of this sample entry — one of `dtsc`, `dtsh`, `dtsl`, `dtse`.
-    pub codec_type: [u8; 4],
+    pub codec_type: [u8; BOX_TYPE_SIZE],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
     /// [`AudioSampleEntryV1`] (§12.2.3.2) whose real rate lives in a
     /// [`SamplingRateBox`] among `config_boxes`, or any other value a
@@ -2519,7 +2799,7 @@ pub struct DtsSampleEntry {
     /// The six bytes following `entry_version` in the fixed 8-byte block
     /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
-    pub reserved_1: [u8; 6],
+    pub reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
@@ -2527,7 +2807,7 @@ pub struct DtsSampleEntry {
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
-    pub compression_id_and_packet_size: [u8; 4],
+    pub compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     pub samplerate: u32,
     /// Config and any extra child boxes (typically one `ddts`).
     pub config_boxes: Vec<OpaqueBox>,
@@ -2561,9 +2841,9 @@ impl<'a> Parse<'a> for DtsSampleEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        need_in(bytes, 8, "DtsSampleEntry")?;
-        let mut codec_type = [0u8; 4];
-        codec_type.copy_from_slice(&bytes[4..8]);
+        need_in(bytes, BOX_HEADER_MIN_SIZE, "DtsSampleEntry")?;
+        let mut codec_type = [0u8; BOX_TYPE_SIZE];
+        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
         let e = parse_audio_sample_entry(bytes, "DtsSampleEntry")?;
         Ok(Self {
             codec_type,
@@ -2591,7 +2871,7 @@ impl<'a> Parse<'a> for DtsSampleEntry {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MhaSampleEntry {
     /// The FourCC of this sample entry — one of `mha1`, `mha2`, `mhm1`, `mhm2`.
-    pub codec_type: [u8; 4],
+    pub codec_type: [u8; BOX_TYPE_SIZE],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
     /// [`AudioSampleEntryV1`] (§12.2.3.2) whose real rate lives in a
     /// [`SamplingRateBox`] among `config_boxes`, or any other value a
@@ -2604,7 +2884,7 @@ pub struct MhaSampleEntry {
     /// The six bytes following `entry_version` in the fixed 8-byte block
     /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
-    pub reserved_1: [u8; 6],
+    pub reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
@@ -2612,7 +2892,7 @@ pub struct MhaSampleEntry {
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
-    pub compression_id_and_packet_size: [u8; 4],
+    pub compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     pub samplerate: u32,
     /// Config and any extra child boxes (typically one `mhaC`).
     pub config_boxes: Vec<OpaqueBox>,
@@ -2646,9 +2926,9 @@ impl<'a> Parse<'a> for MhaSampleEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        need_in(bytes, 8, "MhaSampleEntry")?;
-        let mut codec_type = [0u8; 4];
-        codec_type.copy_from_slice(&bytes[4..8]);
+        need_in(bytes, BOX_HEADER_MIN_SIZE, "MhaSampleEntry")?;
+        let mut codec_type = [0u8; BOX_TYPE_SIZE];
+        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
         let e = parse_audio_sample_entry(bytes, "MhaSampleEntry")?;
         Ok(Self {
             codec_type,
@@ -2668,6 +2948,23 @@ impl<'a> Parse<'a> for MhaSampleEntry {
 // Shared audio sample entry parse/serialize helpers
 // ---------------------------------------------------------------------------
 
+/// Fixed bytes of an audio sample entry body after the box header (§12.2.3.2).
+const AUDIO_SAMPLE_ENTRY_FIXED_LEN: usize = 28;
+/// Offset of `data_reference_index` in an audio sample entry body (§12.2.3.2).
+const AUDIO_SAMPLE_ENTRY_DATA_REFERENCE_INDEX_OFFSET: usize = 6;
+/// Offset of `entry_version` in an audio sample entry body (§12.2.3.2).
+const AUDIO_SAMPLE_ENTRY_ENTRY_VERSION_OFFSET: usize = 8;
+/// Offset of `reserved[3]` in an audio sample entry body (§12.2.3.2).
+const AUDIO_SAMPLE_ENTRY_RESERVED_OFFSET: usize = 10;
+/// Offset of `channelcount` in an audio sample entry body (§12.2.3.2).
+const AUDIO_SAMPLE_ENTRY_CHANNELCOUNT_OFFSET: usize = 16;
+/// Offset of `samplesize` in an audio sample entry body (§12.2.3.2).
+const AUDIO_SAMPLE_ENTRY_SAMPLESIZE_OFFSET: usize = 18;
+/// Offset of `pre_defined`/`reserved` in an audio sample entry body (§12.2.3.2).
+const AUDIO_SAMPLE_ENTRY_COMPRESSION_OFFSET: usize = 20;
+/// Offset of `samplerate` in an audio sample entry body (§12.2.3.2).
+const AUDIO_SAMPLE_ENTRY_SAMPLERATE_OFFSET: usize = 24;
+
 /// Parse an AudioSampleEntry-derived box (28-byte fixed prefix + config boxes).
 ///
 /// The fixed fields parsed out of an audio sample entry, plus its config
@@ -2682,38 +2979,43 @@ impl<'a> Parse<'a> for MhaSampleEntry {
 /// byte-exactly.
 struct ParsedAudioSampleEntry {
     entry_version: u16,
-    reserved_1: [u8; 6],
+    reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
     channelcount: u16,
     samplesize: u16,
-    compression_id_and_packet_size: [u8; 4],
+    compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     samplerate: u32,
     config_boxes: Vec<OpaqueBox>,
 }
 
 fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAudioSampleEntry> {
-    let body = crate::box_types::box_body(bytes, 28, what)?;
-    let entry_version = u16::from_be_bytes([body[8], body[9]]);
-    let mut reserved_1 = [0u8; 6];
-    reserved_1.copy_from_slice(&body[10..16]);
-    let dri = u16::from_be_bytes([body[6], body[7]]);
-    let chan = u16::from_be_bytes([body[16], body[17]]);
-    let samp_sz = u16::from_be_bytes([body[18], body[19]]);
-    let mut compression_id_and_packet_size = [0u8; 4];
-    compression_id_and_packet_size.copy_from_slice(&body[20..24]);
-    let sr = u32::from_be_bytes([body[24], body[25], body[26], body[27]]);
+    let body = crate::box_types::box_body(bytes, AUDIO_SAMPLE_ENTRY_FIXED_LEN, what)?;
+    let entry_version = be_u16_at(body, AUDIO_SAMPLE_ENTRY_ENTRY_VERSION_OFFSET);
+    let mut reserved_1 = [0u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN];
+    reserved_1.copy_from_slice(
+        &body[AUDIO_SAMPLE_ENTRY_RESERVED_OFFSET
+            ..AUDIO_SAMPLE_ENTRY_RESERVED_OFFSET + AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
+    );
+    let dri = be_u16_at(body, AUDIO_SAMPLE_ENTRY_DATA_REFERENCE_INDEX_OFFSET);
+    let chan = be_u16_at(body, AUDIO_SAMPLE_ENTRY_CHANNELCOUNT_OFFSET);
+    let samp_sz = be_u16_at(body, AUDIO_SAMPLE_ENTRY_SAMPLESIZE_OFFSET);
+    let mut compression_id_and_packet_size = [0u8; core::mem::size_of::<u32>()];
+    compression_id_and_packet_size.copy_from_slice(
+        &body[AUDIO_SAMPLE_ENTRY_COMPRESSION_OFFSET
+            ..AUDIO_SAMPLE_ENTRY_COMPRESSION_OFFSET + core::mem::size_of::<u32>()],
+    );
+    let sr = be_u32_at(body, AUDIO_SAMPLE_ENTRY_SAMPLERATE_OFFSET);
 
     let mut config_boxes = Vec::new();
-    let mut off = 28usize;
-    while off + 8 <= body.len() {
-        let sz =
-            u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]]) as usize;
-        if sz < 8 {
+    let mut off = AUDIO_SAMPLE_ENTRY_FIXED_LEN;
+    while off + BOX_HEADER_MIN_SIZE <= body.len() {
+        let sz = be_u32_at(body, off) as usize;
+        if sz < BOX_HEADER_MIN_SIZE {
             break;
         }
         let end = off.saturating_add(sz).min(body.len());
-        let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
-        let data = body[off + 8..end].to_vec();
+        let boxtype = read_fourcc_at(body, off + BOX_TYPE_OFFSET);
+        let data = body[off + BOX_HEADER_MIN_SIZE..end].to_vec();
         config_boxes.push(OpaqueBox {
             box_type: boxtype,
             data,
@@ -2769,7 +3071,7 @@ impl<'a> Parse<'a> for Ec3SampleEntry {
 }
 
 fn audio_sample_entry_serialized_len(config_boxes: &[OpaqueBox]) -> usize {
-    let mut n = BOX_HDR + 28;
+    let mut n = BOX_HEADER_MIN_SIZE + AUDIO_SAMPLE_ENTRY_FIXED_LEN;
     for c in config_boxes {
         n += c.serialized_len();
     }
@@ -2779,13 +3081,13 @@ fn audio_sample_entry_serialized_len(config_boxes: &[OpaqueBox]) -> usize {
 /// The shared fixed fields of an audio sample entry, grouped so the writer
 /// stays within the argument-count lint.
 struct AudioSampleEntryFields<'a> {
-    fourcc: &'a [u8; 4],
+    fourcc: &'a [u8; BOX_TYPE_SIZE],
     entry_version: u16,
-    reserved_1: [u8; 6],
+    reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
     channelcount: u16,
     samplesize: u16,
-    compression_id_and_packet_size: [u8; 4],
+    compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
     samplerate: u32,
     config_boxes: &'a [OpaqueBox],
 }
@@ -2798,29 +3100,32 @@ fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -
     c += crate::box_types::write_box_header(buf, f.fourcc, need)?;
     // SampleEntry: reserved(6) zeros + data_reference_index(2). Written, not
     // skipped, so a reused caller buffer cannot keep garbage (r04-W45).
-    buf[c..c + 6].fill(0);
-    c += 6;
-    buf[c..c + 2].copy_from_slice(&f.data_reference_index.to_be_bytes());
-    c += 2;
+    let u16_len = core::mem::size_of::<u16>();
+    let u32_len = core::mem::size_of::<u32>();
+    buf[c..c + AUDIO_SAMPLE_ENTRY_RESERVED_LEN].fill(0);
+    c += AUDIO_SAMPLE_ENTRY_RESERVED_LEN;
+    buf[c..c + u16_len].copy_from_slice(&f.data_reference_index.to_be_bytes());
+    c += u16_len;
     // The 8-byte block: `entry_version` (0 for a plain AudioSampleEntry
     // §12.2.3, 1 for an AudioSampleEntryV1 §12.2.3.2, or whatever a QuickTime
     // sound description carried) followed by 6 bytes that are
     // `reserved[3]`/`revision_level`+`vendor`. Both are written back verbatim:
     // re-deriving them rewrote a QuickTime entry as v0 on re-serialize.
-    buf[c..c + 2].copy_from_slice(&f.entry_version.to_be_bytes());
-    buf[c + 2..c + 8].copy_from_slice(&f.reserved_1);
-    c += 8;
-    buf[c..c + 2].copy_from_slice(&f.channelcount.to_be_bytes());
-    c += 2;
-    buf[c..c + 2].copy_from_slice(&f.samplesize.to_be_bytes());
-    c += 2;
+    buf[c..c + u16_len].copy_from_slice(&f.entry_version.to_be_bytes());
+    let reserved_at = c + u16_len;
+    buf[reserved_at..reserved_at + AUDIO_SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&f.reserved_1);
+    c += u16_len + AUDIO_SAMPLE_ENTRY_RESERVED_LEN;
+    buf[c..c + u16_len].copy_from_slice(&f.channelcount.to_be_bytes());
+    c += u16_len;
+    buf[c..c + u16_len].copy_from_slice(&f.samplesize.to_be_bytes());
+    c += u16_len;
     // `pre_defined`(16) + `reserved`(16) — QuickTime's `compression_ID` +
     // `packet_size`. Written from the parsed value, not zeroed: QuickTime marks
     // VBR audio with `compression_ID = -2`, so zeroing would corrupt it.
-    buf[c..c + 4].copy_from_slice(&f.compression_id_and_packet_size);
-    c += 4;
-    buf[c..c + 4].copy_from_slice(&f.samplerate.to_be_bytes());
-    c += 4;
+    buf[c..c + u32_len].copy_from_slice(&f.compression_id_and_packet_size);
+    c += u32_len;
+    buf[c..c + u32_len].copy_from_slice(&f.samplerate.to_be_bytes());
+    c += u32_len;
     for cb in config_boxes {
         c += cb.serialize_into(&mut buf[c..])?;
     }
@@ -2837,9 +3142,13 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         // bytes is a full box with 8-byte header; fields start at bytes[8]
-        need_in(bytes, 8 + 28, "mp4a")?;
-        let mut codec_type = [0u8; 4];
-        codec_type.copy_from_slice(&bytes[4..8]);
+        need_in(
+            bytes,
+            BOX_HEADER_MIN_SIZE + AUDIO_SAMPLE_ENTRY_FIXED_LEN,
+            "mp4a",
+        )?;
+        let mut codec_type = [0u8; BOX_TYPE_SIZE];
+        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
         let e = parse_audio_sample_entry(bytes, "mp4a")?;
         Ok(Self {
             codec_type,
@@ -3009,24 +3318,24 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        need_in(bytes, 16, "stsd")?;
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsd")?;
+        let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
+        let flags = be_u24_at(bytes, FLAT_TABLE_FLAGS_OFFSET);
+        let count = be_u32_at(bytes, FLAT_TABLE_COUNT_OFFSET) as usize;
         check_entry_count(
-            bytes.len().saturating_sub(16),
-            8,
+            bytes.len().saturating_sub(FLAT_TABLE_HEADER_LEN),
+            BOX_HEADER_MIN_SIZE,
             count,
             "SampleDescriptionBox.entry_count",
         )?;
         let mut entries = Vec::with_capacity(bounded_entry_count(
-            bytes.len().saturating_sub(16),
-            8,
+            bytes.len().saturating_sub(FLAT_TABLE_HEADER_LEN),
+            BOX_HEADER_MIN_SIZE,
             count,
         ));
-        let mut off = 16usize;
+        let mut off = FLAT_TABLE_HEADER_LEN;
         for _ in 0..count {
-            if off + 8 > bytes.len() {
+            if off + BOX_HEADER_MIN_SIZE > bytes.len() {
                 break;
             }
             let Some(sz) = crate::box_types::child_extent_in(&bytes[off..]) else {
@@ -3034,7 +3343,7 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
             };
             let end = off + sz;
             let box_bytes = &bytes[off..end];
-            let codec = &box_bytes[4..8];
+            let codec = &box_bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
             let entry = match codec {
                 b"avc1" | b"avc3" | b"avc2" | b"avc4" => SampleEntryVariant::Avc1(
                     crate::sample_entries::AVCSampleEntry::bare_parse(box_bytes)?,
@@ -3078,8 +3387,8 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                     SampleEntryVariant::Dts(Box::new(DtsSampleEntry::parse(box_bytes)?))
                 }
                 _ => {
-                    let mut c4 = [0u8; 4];
-                    c4.copy_from_slice(&codec[..4.min(codec.len())]);
+                    let mut c4 = [0u8; BOX_TYPE_SIZE];
+                    c4.copy_from_slice(&codec[..BOX_TYPE_SIZE.min(codec.len())]);
                     SampleEntryVariant::Unknown(OpaqueBox::new(
                         c4,
                         box_bytes[crate::box_types::box_header_len(box_bytes)?..].to_vec(),
@@ -3100,7 +3409,7 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
 impl Serialize for SampleDescriptionBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR + FULL_HDR + 4;
+        let mut n = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
         for e in &self.entries {
             n += e.serialized_len();
         }
@@ -3119,8 +3428,9 @@ impl Serialize for SampleDescriptionBox {
             false,
         )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-        c += 4;
+        let u32_len = core::mem::size_of::<u32>();
+        buf[c..c + u32_len].copy_from_slice(&entry_count.to_be_bytes());
+        c += u32_len;
         for e in &self.entries {
             c += e.serialize_into(&mut buf[c..])?;
         }
@@ -3282,7 +3592,7 @@ impl<'a> Parse<'a> for SampleTableBox {
 impl Serialize for SampleTableBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + stbl_children_len(&self.children))
+        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + stbl_children_len(&self.children))
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3329,10 +3639,10 @@ impl DataInformationBox {
     }
 
     /// This container's typed children in declaration order, as four-CCs.
-    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; BOX_TYPE_SIZE]> {
         let mut out = Vec::with_capacity(1);
         if self.dref.is_some() {
-            out.push(b"dref" as &'static [u8; 4]);
+            out.push(b"dref" as &'static [u8; BOX_TYPE_SIZE]);
         }
         out
     }
@@ -3375,7 +3685,7 @@ impl<'a> Parse<'a> for DataInformationBox {
 impl Serialize for DataInformationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR;
+        let mut n = BOX_HEADER_MIN_SIZE;
         for b in self.typed_children() {
             n += b.box_len();
         }
@@ -3399,6 +3709,9 @@ impl Serialize for DataInformationBox {
 // ---------------------------------------------------------------------------
 // MediaInformationBox — minf (container: vmhd/smhd, dinf, stbl)
 // ---------------------------------------------------------------------------
+
+/// Typed child slots in a `minf` (§8.4.4).
+const MINF_TYPED_CHILDREN_MAX: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -3460,7 +3773,7 @@ impl MediaInformationBox {
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
     fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(4);
+        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(MINF_TYPED_CHILDREN_MAX);
         if let Some(ref b) = self.vmhd {
             out.push(b);
         }
@@ -3477,19 +3790,19 @@ impl MediaInformationBox {
     }
 
     /// This container's typed children in declaration order, as four-CCs.
-    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
-        let mut out = Vec::with_capacity(4);
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; BOX_TYPE_SIZE]> {
+        let mut out = Vec::with_capacity(MINF_TYPED_CHILDREN_MAX);
         if self.vmhd.is_some() {
-            out.push(b"vmhd" as &'static [u8; 4]);
+            out.push(b"vmhd" as &'static [u8; BOX_TYPE_SIZE]);
         }
         if self.smhd.is_some() {
-            out.push(b"smhd" as &'static [u8; 4]);
+            out.push(b"smhd" as &'static [u8; BOX_TYPE_SIZE]);
         }
         if self.dinf.is_some() {
-            out.push(b"dinf" as &'static [u8; 4]);
+            out.push(b"dinf" as &'static [u8; BOX_TYPE_SIZE]);
         }
         if self.stbl.is_some() {
-            out.push(b"stbl" as &'static [u8; 4]);
+            out.push(b"stbl" as &'static [u8; BOX_TYPE_SIZE]);
         }
         out
     }
@@ -3558,7 +3871,7 @@ impl<'a> Parse<'a> for MediaInformationBox {
 impl Serialize for MediaInformationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR;
+        let mut n = BOX_HEADER_MIN_SIZE;
         for b in self.typed_children() {
             n += b.box_len();
         }
@@ -3582,6 +3895,9 @@ impl Serialize for MediaInformationBox {
 // ---------------------------------------------------------------------------
 // MediaBox — mdia (container: mdhd, hdlr, minf)
 // ---------------------------------------------------------------------------
+
+/// Typed child slots in an `mdia` (§8.4.1).
+const MDIA_TYPED_CHILDREN_MAX: usize = 3;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -3617,7 +3933,7 @@ impl MediaBox {
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
     fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(3);
+        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(MDIA_TYPED_CHILDREN_MAX);
         if let Some(ref b) = self.mdhd {
             out.push(b);
         }
@@ -3631,16 +3947,16 @@ impl MediaBox {
     }
 
     /// This container's typed children in declaration order, as four-CCs.
-    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
-        let mut out = Vec::with_capacity(3);
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; BOX_TYPE_SIZE]> {
+        let mut out = Vec::with_capacity(MDIA_TYPED_CHILDREN_MAX);
         if self.mdhd.is_some() {
-            out.push(b"mdhd" as &'static [u8; 4]);
+            out.push(b"mdhd" as &'static [u8; BOX_TYPE_SIZE]);
         }
         if self.hdlr.is_some() {
-            out.push(b"hdlr" as &'static [u8; 4]);
+            out.push(b"hdlr" as &'static [u8; BOX_TYPE_SIZE]);
         }
         if self.minf.is_some() {
-            out.push(b"minf" as &'static [u8; 4]);
+            out.push(b"minf" as &'static [u8; BOX_TYPE_SIZE]);
         }
         out
     }
@@ -3698,7 +4014,7 @@ impl<'a> Parse<'a> for MediaBox {
 impl Serialize for MediaBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR;
+        let mut n = BOX_HEADER_MIN_SIZE;
         for b in self.typed_children() {
             n += b.box_len();
         }
@@ -3754,10 +4070,10 @@ impl EditBox {
     }
 
     /// This container's typed children in declaration order, as four-CCs.
-    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; BOX_TYPE_SIZE]> {
         let mut out = Vec::with_capacity(1);
         if self.elst.is_some() {
-            out.push(b"elst" as &'static [u8; 4]);
+            out.push(b"elst" as &'static [u8; BOX_TYPE_SIZE]);
         }
         out
     }
@@ -3799,7 +4115,7 @@ impl<'a> Parse<'a> for EditBox {
 impl Serialize for EditBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR;
+        let mut n = BOX_HEADER_MIN_SIZE;
         for b in self.typed_children() {
             n += b.box_len();
         }
@@ -3823,6 +4139,9 @@ impl Serialize for EditBox {
 // ---------------------------------------------------------------------------
 // TrackBox — trak (container: tkhd, edts?, mdia, …)
 // ---------------------------------------------------------------------------
+
+/// Typed child slots in a `trak` (§8.3.1).
+const TRAK_TYPED_CHILDREN_MAX: usize = 3;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -3866,7 +4185,7 @@ impl TrackBox {
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
     fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(3);
+        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(TRAK_TYPED_CHILDREN_MAX);
         out.push(&self.tkhd);
         if let Some(ref b) = self.edts {
             out.push(b);
@@ -3878,9 +4197,9 @@ impl TrackBox {
     }
 
     /// This container's typed children in declaration order, as four-CCs.
-    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
-        let mut out = Vec::with_capacity(3);
-        out.push(b"tkhd" as &'static [u8; 4]);
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; BOX_TYPE_SIZE]> {
+        let mut out = Vec::with_capacity(TRAK_TYPED_CHILDREN_MAX);
+        out.push(b"tkhd" as &'static [u8; BOX_TYPE_SIZE]);
         if self.edts.is_some() {
             out.push(b"edts");
         }
@@ -3947,7 +4266,7 @@ impl<'a> Parse<'a> for TrackBox {
 impl Serialize for TrackBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR;
+        let mut n = BOX_HEADER_MIN_SIZE;
         for b in self.typed_children() {
             n += b.box_len();
         }
@@ -3971,6 +4290,26 @@ impl Serialize for TrackBox {
 // ---------------------------------------------------------------------------
 // MovieBox — moov (container: mvhd, trak*, …) — THE TOP-LEVEL TYPE
 // ---------------------------------------------------------------------------
+
+/// Fixed typed children of a `moov` before its `trak`s (§8.2.1).
+const MOOV_FIXED_TYPED_CHILDREN: usize = 2;
+
+/// `trex` fixed body length after the box header (§8.8.3).
+const TREX_BODY_LEN: usize = 24;
+/// `trex` box length (§8.8.3).
+const TREX_LEN: usize = BOX_HEADER_MIN_SIZE + TREX_BODY_LEN;
+/// Offset of `trex` `flags` within its body (§8.8.3).
+const TREX_FLAGS_OFFSET: usize = FULLBOX_VERSION_LEN;
+/// Offset of `trex` `track_ID` within its body (§8.8.3).
+const TREX_TRACK_ID_OFFSET: usize = 4;
+/// Offset of `trex` `default_sample_description_index` within its body (§8.8.3).
+const TREX_SAMPLE_DESCRIPTION_INDEX_OFFSET: usize = 8;
+/// Offset of `trex` `default_sample_duration` within its body (§8.8.3).
+const TREX_SAMPLE_DURATION_OFFSET: usize = 12;
+/// Offset of `trex` `default_sample_size` within its body (§8.8.3).
+const TREX_SAMPLE_SIZE_OFFSET: usize = 16;
+/// Offset of `trex` `default_sample_flags` within its body (§8.8.3).
+const TREX_SAMPLE_FLAGS_OFFSET: usize = 20;
 
 /// Track Extends Box (`trex`) — ISO/IEC 14496-12:2026 §8.8.3.
 ///
@@ -3998,19 +4337,17 @@ pub struct TrackExtendsBox {
 impl<'a> Parse<'a> for TrackExtendsBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = crate::box_types::box_body(bytes, 24, "trex")?;
+        let body = crate::box_types::box_body(bytes, TREX_BODY_LEN, "trex")?;
         let version = body[0];
-        let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
+        let flags = be_u24_at(body, TREX_FLAGS_OFFSET);
         Ok(Self {
             version,
             flags,
-            track_id: TrackId::new(u32::from_be_bytes([body[4], body[5], body[6], body[7]])),
-            default_sample_description_index: u32::from_be_bytes([
-                body[8], body[9], body[10], body[11],
-            ]),
-            default_sample_duration: u32::from_be_bytes([body[12], body[13], body[14], body[15]]),
-            default_sample_size: u32::from_be_bytes([body[16], body[17], body[18], body[19]]),
-            default_sample_flags: u32::from_be_bytes([body[20], body[21], body[22], body[23]]),
+            track_id: TrackId::new(be_u32_at(body, TREX_TRACK_ID_OFFSET)),
+            default_sample_description_index: be_u32_at(body, TREX_SAMPLE_DESCRIPTION_INDEX_OFFSET),
+            default_sample_duration: be_u32_at(body, TREX_SAMPLE_DURATION_OFFSET),
+            default_sample_size: be_u32_at(body, TREX_SAMPLE_SIZE_OFFSET),
+            default_sample_flags: be_u32_at(body, TREX_SAMPLE_FLAGS_OFFSET),
         })
     }
 }
@@ -4018,21 +4355,32 @@ impl<'a> Parse<'a> for TrackExtendsBox {
 impl Serialize for TrackExtendsBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        32
+        TREX_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        need_out(buf, 32)?;
-        buf[0..4].copy_from_slice(&32u32.to_be_bytes());
-        buf[4..8].copy_from_slice(b"trex");
-        buf[8] = self.version;
+        need_out(buf, TREX_LEN)?;
+        let u32_len = core::mem::size_of::<u32>();
+        let mut c = 0usize;
+        buf[c..c + u32_len].copy_from_slice(&(TREX_LEN as u32).to_be_bytes());
+        c += u32_len;
+        buf[c..c + BOX_TYPE_SIZE].copy_from_slice(b"trex");
+        c += BOX_TYPE_SIZE;
+        buf[c] = self.version;
+        c += FULLBOX_VERSION_LEN;
         let fb = self.flags.to_be_bytes();
-        buf[9..12].copy_from_slice(&fb[1..]);
-        buf[12..16].copy_from_slice(&self.track_id.value().to_be_bytes());
-        buf[16..20].copy_from_slice(&self.default_sample_description_index.to_be_bytes());
-        buf[20..24].copy_from_slice(&self.default_sample_duration.to_be_bytes());
-        buf[24..28].copy_from_slice(&self.default_sample_size.to_be_bytes());
-        buf[28..32].copy_from_slice(&self.default_sample_flags.to_be_bytes());
-        Ok(32)
+        buf[c..c + FULLBOX_FLAGS_WIDTH].copy_from_slice(&fb[FULLBOX_VERSION_LEN..]);
+        c += FULLBOX_FLAGS_WIDTH;
+        buf[c..c + u32_len].copy_from_slice(&self.track_id.value().to_be_bytes());
+        c += u32_len;
+        buf[c..c + u32_len].copy_from_slice(&self.default_sample_description_index.to_be_bytes());
+        c += u32_len;
+        buf[c..c + u32_len].copy_from_slice(&self.default_sample_duration.to_be_bytes());
+        c += u32_len;
+        buf[c..c + u32_len].copy_from_slice(&self.default_sample_size.to_be_bytes());
+        c += u32_len;
+        buf[c..c + u32_len].copy_from_slice(&self.default_sample_flags.to_be_bytes());
+        c += u32_len;
+        Ok(c)
     }
 }
 
@@ -4071,8 +4419,8 @@ impl MovieExtendsBox {
     }
 
     /// This container's typed children in declaration order, as four-CCs.
-    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
-        alloc::vec![b"trex" as &'static [u8; 4]; self.trex.len()]
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; BOX_TYPE_SIZE]> {
+        alloc::vec![b"trex" as &'static [u8; BOX_TYPE_SIZE]; self.trex.len()]
     }
 
     fn child_order(&self) -> Vec<Option<usize>> {
@@ -4116,7 +4464,7 @@ impl<'a> Parse<'a> for MovieExtendsBox {
 impl Serialize for MovieExtendsBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR;
+        let mut n = BOX_HEADER_MIN_SIZE;
         for b in self.typed_children() {
             n += b.box_len();
         }
@@ -4171,7 +4519,8 @@ impl MovieBox {
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
     fn typed_children(&self) -> Vec<&dyn SerializeBox> {
-        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(2 + self.tracks.len());
+        let mut out: Vec<&dyn SerializeBox> =
+            Vec::with_capacity(MOOV_FIXED_TYPED_CHILDREN + self.tracks.len());
         out.push(&self.mvhd);
         for t in &self.tracks {
             out.push(t);
@@ -4183,8 +4532,8 @@ impl MovieBox {
     }
 
     /// This container's typed children in declaration order, as four-CCs.
-    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
-        let mut out: Vec<&'static [u8; 4]> = alloc::vec![b"mvhd"; 1];
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; BOX_TYPE_SIZE]> {
+        let mut out: Vec<&'static [u8; BOX_TYPE_SIZE]> = alloc::vec![b"mvhd"; 1];
         out.resize(1 + self.tracks.len(), b"trak");
         if self.mvex.is_some() {
             out.push(b"mvex");
@@ -4254,7 +4603,7 @@ impl<'a> Parse<'a> for MovieBox {
 impl Serialize for MovieBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR;
+        let mut n = BOX_HEADER_MIN_SIZE;
         for b in self.typed_children() {
             n += b.box_len();
         }
@@ -4348,7 +4697,7 @@ pub fn protect_sample_entry(
     scheme: crate::cenc::CencScheme,
     tenc: &crate::cenc::TrackEncryptionBox,
 ) -> Result<SampleEntryVariant> {
-    let wrapper_fourcc: [u8; 4] = match sample_entry_media_kind(original) {
+    let wrapper_fourcc: [u8; BOX_TYPE_SIZE] = match sample_entry_media_kind(original) {
         SampleEntryMediaKind::Video => *b"encv",
         SampleEntryMediaKind::Audio => *b"enca",
         SampleEntryMediaKind::Unsupported => {
@@ -4359,12 +4708,12 @@ pub fn protect_sample_entry(
     };
 
     let original_bytes = sample_entry_bytes(original)?;
-    need_in(&original_bytes, BOX_HDR, "sample entry")?;
-    let mut original_format = [0u8; 4];
+    need_in(&original_bytes, BOX_HEADER_MIN_SIZE, "sample entry")?;
+    let mut original_format = [0u8; BOX_TYPE_SIZE];
     original_format.copy_from_slice(&original_bytes[4..8]);
 
     let scheme_name = scheme.name().as_bytes();
-    let mut scheme_type = [0u8; 4];
+    let mut scheme_type = [0u8; BOX_TYPE_SIZE];
     scheme_type.copy_from_slice(&scheme_name[..4]);
 
     let sinf = crate::cenc::ProtectionSchemeInfoBox {
@@ -4388,7 +4737,8 @@ pub fn protect_sample_entry(
     let n = sinf.serialize_into(&mut sinf_bytes)?;
     sinf_bytes.truncate(n);
 
-    let mut body = Vec::with_capacity(original_bytes.len() - BOX_HDR + sinf_bytes.len());
+    let mut body =
+        Vec::with_capacity(original_bytes.len() - BOX_HEADER_MIN_SIZE + sinf_bytes.len());
     body.extend_from_slice(&original_bytes[crate::box_types::box_header_len(&original_bytes)?..]);
     body.extend_from_slice(&sinf_bytes);
 

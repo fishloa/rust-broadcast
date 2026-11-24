@@ -20,6 +20,15 @@ pub const OP_ID: u16 = 0x0111;
 /// `Bit_Stream_Mode` 1 + `Num_Channels` 1 + `Full_Srvc_Audio` 1).
 pub const ENTRY_LEN: usize = 7;
 
+// Field byte offsets within one audio entry (ANSI/SCTE 104 2023 §9.8.11, Table 9-33).
+const COMPONENT_TAG_OFFSET: usize = 0;
+/// Byte width of the `ISO_code` field (ANSI/SCTE 104 2023 §9.8.11, Table 9-33).
+pub const ISO_CODE_LEN: usize = 3;
+const ISO_CODE_OFFSET: usize = 1;
+const BIT_STREAM_MODE_OFFSET: usize = ISO_CODE_OFFSET + ISO_CODE_LEN;
+const NUM_CHANNELS_OFFSET: usize = 5;
+const FULL_SRVC_AUDIO_OFFSET: usize = 6;
+
 /// One `for (i<audio_count)` entry of Table 9-33.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -27,7 +36,7 @@ pub struct AudioEntry {
     /// `component_tag` — 1 byte.
     pub component_tag: u8,
     /// `ISO_code` — 3 bytes (the ISO 639 language code of SCTE 35 Table 28).
-    pub iso_code: [u8; 3],
+    pub iso_code: [u8; ISO_CODE_LEN],
     /// `Bit_Stream_Mode` — 1 byte.
     pub bit_stream_mode: u8,
     /// `Num_Channels` — 1 byte.
@@ -70,11 +79,15 @@ impl<'a> Parse<'a> for InsertAudioDescriptor {
         let entries = rest[..need]
             .chunks_exact(ENTRY_LEN)
             .map(|e| AudioEntry {
-                component_tag: e[0],
-                iso_code: [e[1], e[2], e[3]],
-                bit_stream_mode: e[4],
-                num_channels: e[5],
-                full_srvc_audio: e[6],
+                component_tag: e[COMPONENT_TAG_OFFSET],
+                iso_code: [
+                    e[ISO_CODE_OFFSET],
+                    e[ISO_CODE_OFFSET + 1],
+                    e[BIT_STREAM_MODE_OFFSET - 1],
+                ],
+                bit_stream_mode: e[BIT_STREAM_MODE_OFFSET],
+                num_channels: e[NUM_CHANNELS_OFFSET],
+                full_srvc_audio: e[FULL_SRVC_AUDIO_OFFSET],
             })
             .collect();
         Ok(Self { entries })
@@ -94,11 +107,11 @@ impl Serialize for InsertAudioDescriptor {
             "insert_audio_descriptor.audio_count",
         )?;
         for (chunk, e) in buf[1..need].chunks_exact_mut(ENTRY_LEN).zip(&self.entries) {
-            chunk[0] = e.component_tag;
+            chunk[COMPONENT_TAG_OFFSET] = e.component_tag;
             chunk[1..4].copy_from_slice(&e.iso_code);
-            chunk[4] = e.bit_stream_mode;
-            chunk[5] = e.num_channels;
-            chunk[6] = e.full_srvc_audio;
+            chunk[BIT_STREAM_MODE_OFFSET] = e.bit_stream_mode;
+            chunk[NUM_CHANNELS_OFFSET] = e.num_channels;
+            chunk[FULL_SRVC_AUDIO_OFFSET] = e.full_srvc_audio;
         }
         Ok(need)
     }

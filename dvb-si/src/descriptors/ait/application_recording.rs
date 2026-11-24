@@ -19,6 +19,12 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for application_recording_descriptor (AIT namespace).
 pub const TAG: u8 = 0x06;
 const HEADER_LEN: usize = 2;
+/// Offset of `label_count` in the descriptor body.
+const LABEL_COUNT_OFFSET: usize = 1;
+/// Offset of the first label in the descriptor body.
+const FIRST_LABEL_OFFSET: usize = LABEL_COUNT_OFFSET + 1;
+/// Wire overhead of one recording label: `label_length` + `storage_properties`.
+const LABEL_OVERHEAD_LEN: usize = 2;
 
 const SCHEDULED_RECORDING_FLAG: u8 = 0x80;
 const TRICK_MODE_AWARE_FLAG: u8 = 0x40;
@@ -29,9 +35,9 @@ const INITIATING_REPLAY_FLAG: u8 = 0x04;
 const RESERVED_MASK: u8 = 0x03;
 const LABEL_RESERVED_MASK: u8 = 0x3F;
 /// Width of the 2-bit `reserved` after the flags.
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 /// Width of the 6-bit per-label `reserved`.
-const LABEL_RESERVED_BITS: u32 = 6;
+pub const LABEL_RESERVED_BITS: u32 = 6;
 const STORAGE_PROPERTIES_SHIFT: u32 = 6;
 
 /// Spec default of the 2-bit `reserved` after the flags (all ones, TS 102 809
@@ -201,7 +207,7 @@ impl<'a> Parse<'a> for ApplicationRecordingDescriptor<'a> {
             tag: TAG,
             reason: "application_recording_descriptor missing label_count",
         })? as usize;
-        let mut pos = 2;
+        let mut pos = FIRST_LABEL_OFFSET;
         let mut labels = Vec::with_capacity(label_count);
         for _ in 0..label_count {
             let (label, next) = take_prefixed(
@@ -250,8 +256,12 @@ impl Serialize for ApplicationRecordingDescriptor<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
         HEADER_LEN
-            + 2
-            + self.labels.iter().map(|l| 2 + l.label.len()).sum::<usize>()
+            + FIRST_LABEL_OFFSET
+            + self
+                .labels
+                .iter()
+                .map(|l| LABEL_OVERHEAD_LEN + l.label.len())
+                .sum::<usize>()
             + 1
             + self.component_tags.len()
             + 1
@@ -268,15 +278,15 @@ impl Serialize for ApplicationRecordingDescriptor<'_> {
         let private_len = broadcast_common::len::fit_u8(self.private.len(), "private_length")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = reserved
+        buf[HEADER_LEN] = reserved
             | (u8::from(self.scheduled_recording_flag) * SCHEDULED_RECORDING_FLAG)
             | (u8::from(self.trick_mode_aware_flag) * TRICK_MODE_AWARE_FLAG)
             | (u8::from(self.time_shift_flag) * TIME_SHIFT_FLAG)
             | (u8::from(self.dynamic_flag) * DYNAMIC_FLAG)
             | (u8::from(self.av_synced_flag) * AV_SYNCED_FLAG)
             | (u8::from(self.initiating_replay_flag) * INITIATING_REPLAY_FLAG);
-        buf[3] = label_count;
-        let mut pos = 4;
+        buf[HEADER_LEN + LABEL_COUNT_OFFSET] = label_count;
+        let mut pos = HEADER_LEN + FIRST_LABEL_OFFSET;
         for l in &self.labels {
             buf[pos] = broadcast_common::len::fit_u8(l.label.len(), "label_length")?;
             pos += 1;

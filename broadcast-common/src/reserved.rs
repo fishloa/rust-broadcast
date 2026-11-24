@@ -29,7 +29,7 @@ impl<const BITS: u32, const ONES: bool> Reserved<BITS, ONES> {
     /// Mask of the field's `BITS` bits.
     pub const MASK: u64 = {
         assert!(BITS >= 1 && BITS <= 64, "Reserved is 1..=64 bits wide");
-        u64::MAX >> (64 - BITS)
+        u64::MAX >> (u64::BITS - BITS)
     };
 
     /// The spec fill: all ones or all zeros.

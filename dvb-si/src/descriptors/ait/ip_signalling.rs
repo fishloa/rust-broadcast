@@ -40,8 +40,10 @@ impl<'a> Parse<'a> for IpSignallingDescriptor {
                 reason: "ip_signalling_descriptor body must be 3 bytes",
             });
         }
+        let mut platform_id_bytes = [0u8; core::mem::size_of::<u32>()];
+        platform_id_bytes[core::mem::size_of::<u32>() - BODY_LEN..].copy_from_slice(body);
         Ok(Self {
-            platform_id: u32::from_be_bytes([0, body[0], body[1], body[2]]),
+            platform_id: u32::from_be_bytes(platform_id_bytes),
         })
     }
 }

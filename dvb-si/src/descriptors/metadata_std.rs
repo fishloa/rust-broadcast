@@ -18,7 +18,19 @@ const BODY_LEN: u8 = 9;
 /// §5).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of each `reserved` field ahead of a 22-bit value (2 bits).
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
+/// Width of each `metadata_*` uimsbf field (22 bits, Table 2-91).
+const METADATA_RATE_BITS: u32 = 22;
+/// Mask of one 22-bit `metadata_*` field.
+const METADATA_RATE_MASK: u32 = (1 << METADATA_RATE_BITS) - 1;
+/// Shift of the 2-bit `reserved` run in a field's first wire byte.
+const RESERVED_SHIFT: u32 = 6;
+/// Wire width of one 22-bit field in bytes.
+const FIELD_LEN: usize = 3;
+/// Body offset of `metadata_buffer_size`.
+const BUFFER_SIZE_OFFSET: usize = FIELD_LEN;
+/// Body offset of `metadata_output_leak_rate`.
+const OUTPUT_LEAK_RATE_OFFSET: usize = 2 * FIELD_LEN;
 
 /// Metadata STD Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,15 +80,14 @@ impl MetadataStdDescriptor {
 /// bits ahead of each 22-bit field (top 2 bits of the first byte), which
 /// must be masked off, not folded into the value.
 fn read_u22(bytes: &[u8]) -> u32 {
-    (((bytes[0] & 0x3F) as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[2] as u32)
+    u32::from_be_bytes([0, bytes[0], bytes[1], bytes[FIELD_LEN - 1]]) & METADATA_RATE_MASK
 }
 
 /// Write a 22-bit value into a 3-byte slice behind its 2 reserved bits.
 fn write_u22(reserved: ReservedOnes<RESERVED_BITS>, val: u32, buf: &mut [u8]) -> Result<()> {
-    let masked = val & 0x003F_FFFF;
-    buf[0] = ((reserved.get() as u8) << 6) | ((masked >> 16) & 0x3F) as u8;
-    buf[1] = ((masked >> 8) & 0xFF) as u8;
-    buf[2] = (masked & 0xFF) as u8;
+    let masked = val & METADATA_RATE_MASK;
+    let packed = ((reserved.get() as u32) << METADATA_RATE_BITS) | masked;
+    buf.copy_from_slice(&packed.to_be_bytes()[1..]);
     Ok(())
 }
 
@@ -97,12 +108,16 @@ impl<'a> Parse<'a> for MetadataStdDescriptor {
             });
         }
         Ok(Self {
-            metadata_input_leak_rate: read_u22(&body[0..3]),
-            metadata_buffer_size: read_u22(&body[3..6]),
-            metadata_output_leak_rate: read_u22(&body[6..9]),
-            reserved_input_leak_rate: ReservedOnes::from_bits(u64::from(body[0] >> 6)),
-            reserved_buffer_size: ReservedOnes::from_bits(u64::from(body[3] >> 6)),
-            reserved_output_leak_rate: ReservedOnes::from_bits(u64::from(body[6] >> 6)),
+            metadata_input_leak_rate: read_u22(&body[0..FIELD_LEN]),
+            metadata_buffer_size: read_u22(&body[BUFFER_SIZE_OFFSET..OUTPUT_LEAK_RATE_OFFSET]),
+            metadata_output_leak_rate: read_u22(&body[OUTPUT_LEAK_RATE_OFFSET..BODY_LEN as usize]),
+            reserved_input_leak_rate: ReservedOnes::from_bits(u64::from(body[0] >> RESERVED_SHIFT)),
+            reserved_buffer_size: ReservedOnes::from_bits(u64::from(
+                body[BUFFER_SIZE_OFFSET] >> RESERVED_SHIFT,
+            )),
+            reserved_output_leak_rate: ReservedOnes::from_bits(u64::from(
+                body[OUTPUT_LEAK_RATE_OFFSET] >> RESERVED_SHIFT,
+            )),
         })
     }
 }
@@ -121,17 +136,17 @@ impl Serialize for MetadataStdDescriptor {
         // (audit r03-W3 class).
         broadcast_common::len::fit_bits(
             u64::from(self.metadata_input_leak_rate),
-            22,
+            METADATA_RATE_BITS,
             "metadata_input_leak_rate",
         )?;
         broadcast_common::len::fit_bits(
             u64::from(self.metadata_buffer_size),
-            22,
+            METADATA_RATE_BITS,
             "metadata_buffer_size",
         )?;
         broadcast_common::len::fit_bits(
             u64::from(self.metadata_output_leak_rate),
-            22,
+            METADATA_RATE_BITS,
             "metadata_output_leak_rate",
         )?;
         buf[0] = TAG;
@@ -139,17 +154,17 @@ impl Serialize for MetadataStdDescriptor {
         write_u22(
             self.reserved_input_leak_rate,
             self.metadata_input_leak_rate,
-            &mut buf[HEADER_LEN..HEADER_LEN + 3],
+            &mut buf[HEADER_LEN..HEADER_LEN + FIELD_LEN],
         )?;
         write_u22(
             self.reserved_buffer_size,
             self.metadata_buffer_size,
-            &mut buf[HEADER_LEN + 3..HEADER_LEN + 6],
+            &mut buf[HEADER_LEN + BUFFER_SIZE_OFFSET..HEADER_LEN + OUTPUT_LEAK_RATE_OFFSET],
         )?;
         write_u22(
             self.reserved_output_leak_rate,
             self.metadata_output_leak_rate,
-            &mut buf[HEADER_LEN + 6..HEADER_LEN + 9],
+            &mut buf[HEADER_LEN + OUTPUT_LEAK_RATE_OFFSET..HEADER_LEN + usize::from(BODY_LEN)],
         )?;
         Ok(len)
     }

@@ -18,16 +18,47 @@ const COORDINATE_SYSTEM_MASK: u8 = 0x07;
 /// and the one that follows `position_flag == 0`): all ones, EN 300 468 Table
 /// 145 in every edition V1.9.1-V1.20.1
 /// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> =
-    ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_REGION_BITS> =
+    ReservedOnes::<RESERVED_FUTURE_USE_REGION_BITS>::FILL;
 /// Spec default of the 2-bit `reserved_future_use` after `coordinate_system`:
 /// all ones (same source as [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`]).
-pub const IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> =
-    ReservedOnes::<RESERVED_2_BITS>::FILL;
+pub const IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<
+    RESERVED_FUTURE_USE_AFTER_COORDINATE_BITS,
+> = ReservedOnes::<RESERVED_FUTURE_USE_AFTER_COORDINATE_BITS>::FILL;
 /// Width of the 5-bit `reserved_future_use` regions.
-const RESERVED_5_BITS: u32 = 5;
+pub const RESERVED_FUTURE_USE_REGION_BITS: u32 = 5;
 /// Width of the 2-bit `reserved_future_use` region.
-const RESERVED_2_BITS: u32 = 2;
+pub const RESERVED_FUTURE_USE_AFTER_COORDINATE_BITS: u32 = 2;
+/// Bytes before the segment payload.
+const IMAGE_ICON_PREFIX_LEN: usize = 2;
+/// Offset of the packed first-segment byte.
+const PACKED_BYTE_OFFSET: usize = 2;
+/// Offset of a segment's payload after the two prefix bytes.
+const SEGMENT_DATA_OFFSET: usize = 3;
+/// Width of the packed icon position.
+const ORIGIN_LEN: usize = 3;
+/// Offset of the third origin byte.
+const ORIGIN_THIRD_OFFSET: usize = 2;
+/// Mask of a 12-bit origin coordinate.
+const ORIGIN_MASK: u16 = 0x0FFF;
+/// Shift of an origin coordinate's high bits.
+const ORIGIN_HIGH_SHIFT: u16 = 4;
+/// Mask of an origin coordinate's low nibble.
+const ORIGIN_NIBBLE_MASK: u16 = 0x000F;
+/// Shift of an origin coordinate's second byte.
+const ORIGIN_SECOND_SHIFT: u16 = 8;
+/// Shift of `descriptor_number`.
+const DESCRIPTOR_NUMBER_SHIFT: u32 = 4;
+/// Shift of the icon `reserved_future_use`.
+const ICON_RESERVED_SHIFT: u32 = 3;
+/// Shift of `icon_transport_mode`.
+const TRANSPORT_MODE_SHIFT: u32 = 6;
+/// Shift of `position_flag`.
+const POSITION_FLAG_SHIFT: u32 = 5;
+/// Mask of `position_flag`.
+const POSITION_FLAG_MASK: u8 = 0x01;
+/// Shift of `coordinate_system`.
+const COORDINATE_SYSTEM_SHIFT: u32 = 2;
 
 /// Icon transport mode — ETSI EN 300 468 §6.4.8 Table 146
 /// (`private/specs-verified/dvb/dvb-si/enums/en_300_468/146-icon-transport-mode-coding.md`).
@@ -51,7 +82,7 @@ impl IconTransportMode {
     /// Creates a value from a 2-bit wire nibble (upper bits masked off),
     /// preserving every possible value for lossless round-trip.
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & TRANSPORT_MODE_VALUE_MASK {
             0 => Self::InlineData,
             1 => Self::Url,
             v => Self::Reserved(v),
@@ -106,7 +137,7 @@ pub struct ImageIcon<'a> {
     /// `reserved_future_use` (5 bits, right-aligned) — `[7:3]` of byte 1.
     /// Preserved on parse; [`ImageIcon::new`] uses
     /// [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`] (all ones).
-    pub reserved_future_use: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_future_use: ReservedOnes<RESERVED_FUTURE_USE_REGION_BITS>,
     /// `icon_id` (3 bits) — `[2:0]` of byte 1.
     pub icon_id: u8,
     /// First-segment metadata vs. continuation payload (keyed by `descriptor_number == 0`).
@@ -161,7 +192,7 @@ pub struct ImageIconFirst<'a> {
     /// `position_flag == 0`; `Some` iff `position` is `None`. Preserved on
     /// parse; a hand-built `None` serializes as
     /// [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`].
-    pub reserved_future_use: Option<ReservedOnes<RESERVED_5_BITS>>,
+    pub reserved_future_use: Option<ReservedOnes<RESERVED_FUTURE_USE_REGION_BITS>>,
     /// `icon_type_char` text run (length-delimited in the wire).
     pub icon_type: crate::text::DvbText<'a>,
     /// Transport-mode-dependent payload (Table 146):
@@ -219,7 +250,7 @@ pub struct IconPosition {
     /// `reserved_future_use` (2 bits, right-aligned) after `coordinate_system`.
     /// Preserved on parse; [`IconPosition::new`] uses
     /// [`IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT`] (all ones).
-    pub reserved_future_use: ReservedOnes<RESERVED_2_BITS>,
+    pub reserved_future_use: ReservedOnes<RESERVED_FUTURE_USE_AFTER_COORDINATE_BITS>,
     /// `icon_horizontal_origin` (12 bits).
     pub icon_horizontal_origin: u16,
     /// `icon_vertical_origin` (12 bits).
@@ -248,30 +279,33 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         // Need at least byte0 (descriptor_number / last_descriptor_number)
         // and byte1 (reserved + icon_id).
-        need_in(sel, 2, "image_icon body")?;
-        let descriptor_number = sel[0] >> 4;
-        let last_descriptor_number = sel[0] & 0x0F;
+        need_in(sel, IMAGE_ICON_PREFIX_LEN, "image_icon body")?;
+        let descriptor_number = sel[0] >> DESCRIPTOR_NUMBER_SHIFT;
+        let last_descriptor_number = sel[0] & DESCRIPTOR_NUMBER_MASK;
         let icon_id = sel[1] & ICON_ID_MASK;
-        let reserved_future_use = ReservedOnes::from_bits(u64::from(sel[1] >> 3));
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(sel[1] >> ICON_RESERVED_SHIFT));
 
-        let body = if descriptor_number == 0x00 {
-            need_in(sel, 3, "image_icon body")?;
-            let packed = sel[2];
-            let icon_transport_mode = IconTransportMode::from_u8(packed >> 6);
-            let position_flag = (packed >> 5) & 0x01;
-            let mut pos = 3usize;
+        let body = if descriptor_number == 0 {
+            need_in(sel, SEGMENT_DATA_OFFSET, "image_icon body")?;
+            let packed = sel[PACKED_BYTE_OFFSET];
+            let icon_transport_mode = IconTransportMode::from_u8(packed >> TRANSPORT_MODE_SHIFT);
+            let position_flag = (packed >> POSITION_FLAG_SHIFT) & POSITION_FLAG_MASK;
+            let mut pos = SEGMENT_DATA_OFFSET;
 
             let mut no_position_reserved = None;
             let position = if position_flag == 1 {
-                let coordinate_system = (packed >> 2) & 0x07;
+                let coordinate_system =
+                    (packed >> COORDINATE_SYSTEM_SHIFT) & COORDINATE_SYSTEM_MASK;
                 let position_reserved = ReservedOnes::from_bits(u64::from(packed));
-                need_in(sel, pos + 3, "image_icon body")?;
+                need_in(sel, pos + ORIGIN_LEN, "image_icon body")?;
                 let b0 = sel[pos];
                 let b1 = sel[pos + 1];
-                let b2 = sel[pos + 2];
-                let icon_horizontal_origin = (u16::from(b0) << 4) | (u16::from(b1) >> 4);
-                let icon_vertical_origin = ((u16::from(b1) & 0x0F) << 8) | u16::from(b2);
-                pos += 3;
+                let b2 = sel[pos + ORIGIN_THIRD_OFFSET];
+                let icon_horizontal_origin =
+                    (u16::from(b0) << ORIGIN_HIGH_SHIFT) | (u16::from(b1) >> ORIGIN_HIGH_SHIFT);
+                let icon_vertical_origin =
+                    ((u16::from(b1) & ORIGIN_NIBBLE_MASK) << ORIGIN_SECOND_SHIFT) | u16::from(b2);
+                pos += ORIGIN_LEN;
                 Some(IconPosition {
                     coordinate_system,
                     reserved_future_use: position_reserved,
@@ -327,11 +361,15 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             })
         } else {
             // Continuation segment.
-            need_in(sel, 3, "image_icon body")?;
-            let icon_data_length = sel[2] as usize;
-            need_in(sel, 3 + icon_data_length, "image_icon body")?;
-            let icon_data = &sel[3..3 + icon_data_length];
-            if 3 + icon_data_length != sel.len() {
+            need_in(sel, SEGMENT_DATA_OFFSET, "image_icon body")?;
+            let icon_data_length = sel[PACKED_BYTE_OFFSET] as usize;
+            need_in(
+                sel,
+                SEGMENT_DATA_OFFSET + icon_data_length,
+                "image_icon body",
+            )?;
+            let icon_data = &sel[SEGMENT_DATA_OFFSET..SEGMENT_DATA_OFFSET + icon_data_length];
+            if SEGMENT_DATA_OFFSET + icon_data_length != sel.len() {
                 return Err(invalid("image_icon: trailing bytes"));
             }
             ImageIconBody::Continuation { icon_data }
@@ -350,10 +388,11 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
 impl Serialize for ImageIcon<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        2 + match &self.body {
-            ImageIconBody::First(f) => {
-                1 // packed byte
-                    + if f.position.is_some() { 3 } else { 0 }
+        IMAGE_ICON_PREFIX_LEN
+            + match &self.body {
+                ImageIconBody::First(f) => {
+                    1 // packed byte
+                    + if f.position.is_some() { ORIGIN_LEN } else { 0 }
                     + 1 // icon_type_length
                     + f.icon_type.len()
                     + match &f.payload {
@@ -361,9 +400,9 @@ impl Serialize for ImageIcon<'_> {
                         IconLocation::Url(u) => 1 + u.len(),
                         IconLocation::None => 0,
                     }
+                }
+                ImageIconBody::Continuation { icon_data } => 1 + icon_data.len(),
             }
-            ImageIconBody::Continuation { icon_data } => 1 + icon_data.len(),
-        }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
@@ -373,16 +412,16 @@ impl Serialize for ImageIcon<'_> {
             self.descriptor_number,
             DESCRIPTOR_NUMBER_MASK,
             "descriptor_number",
-        )? << 4)
+        )? << DESCRIPTOR_NUMBER_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.last_descriptor_number,
                 DESCRIPTOR_NUMBER_MASK,
                 "last_descriptor_number",
             )?;
         // byte1: reserved_future_use(5) (preserved) | icon_id(3)
-        buf[1] = ((self.reserved_future_use.get() as u8) << 3)
+        buf[1] = ((self.reserved_future_use.get() as u8) << ICON_RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(self.icon_id, ICON_ID_MASK, "icon_id")?;
-        let mut p = 2;
+        let mut p = IMAGE_ICON_PREFIX_LEN;
         match &self.body {
             ImageIconBody::First(f) => {
                 // Packed byte: icon_transport_mode(2) | position_flag(1) | ...
@@ -394,34 +433,36 @@ impl Serialize for ImageIcon<'_> {
                 )?;
                 if let Some(pos) = &f.position {
                     // ... | coordinate_system(3) | reserved_future_use(2) (preserved)
-                    buf[p] = (itm << 6)
-                        | (position_flag << 5)
+                    buf[p] = (itm << TRANSPORT_MODE_SHIFT)
+                        | (position_flag << POSITION_FLAG_SHIFT)
                         | (broadcast_common::len::fit_mask(
                             pos.coordinate_system,
                             COORDINATE_SYSTEM_MASK,
                             "coordinate_system",
-                        )? << 2)
+                        )? << COORDINATE_SYSTEM_SHIFT)
                         | pos.reserved_future_use.get() as u8;
                     p += 1;
                     // 3 origin bytes: 12+12 bits packed
                     let h = broadcast_common::len::fit_mask(
                         pos.icon_horizontal_origin,
-                        0x0FFF,
+                        ORIGIN_MASK,
                         "icon_horizontal_origin",
                     )?;
                     let v = broadcast_common::len::fit_mask(
                         pos.icon_vertical_origin,
-                        0x0FFF,
+                        ORIGIN_MASK,
                         "icon_vertical_origin",
                     )?;
-                    buf[p] = (h >> 4) as u8;
-                    buf[p + 1] = (((h & 0x0F) << 4) | ((v >> 8) & 0x0F)) as u8;
-                    buf[p + 2] = v as u8;
-                    p += 3;
+                    buf[p] = (h >> ORIGIN_HIGH_SHIFT) as u8;
+                    buf[p + 1] = (((h & ORIGIN_NIBBLE_MASK) << ORIGIN_HIGH_SHIFT)
+                        | ((v >> ORIGIN_SECOND_SHIFT) & ORIGIN_NIBBLE_MASK))
+                        as u8;
+                    buf[p + ORIGIN_THIRD_OFFSET] = v as u8;
+                    p += ORIGIN_LEN;
                 } else {
                     // ... | position_flag(1) | reserved_future_use(5) (preserved)
-                    buf[p] = (itm << 6)
-                        | (position_flag << 5)
+                    buf[p] = (itm << TRANSPORT_MODE_SHIFT)
+                        | (position_flag << POSITION_FLAG_SHIFT)
                         | f.reserved_future_use
                             .unwrap_or(IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT)
                             .get() as u8;

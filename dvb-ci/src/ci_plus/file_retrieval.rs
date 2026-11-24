@@ -142,7 +142,7 @@ impl Serialize for FileSystemOffer<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(
             self.domain_identifier.len() as u64,
-            8,
+            u8::BITS,
             "FileSystemOffer DomainIdentifierLength",
         )?;
         let body_len = OFFER_PREFIX + self.domain_identifier.len();

@@ -52,6 +52,28 @@ const EXTENSION_WORD_LEN: usize = 4;
 /// Maximum extension length in words — `length` is a 16-bit field (§5.3.1).
 const MAX_EXTENSION_WORDS: usize = u16::MAX as usize;
 
+/// Byte offsets within the RTP fixed header (RFC 3550 §5.1).
+const SEQUENCE_NUMBER_OFFSET: usize = 2;
+const TIMESTAMP_OFFSET: usize = SEQUENCE_NUMBER_OFFSET + core::mem::size_of::<u16>();
+const SSRC_OFFSET: usize = TIMESTAMP_OFFSET + core::mem::size_of::<u32>();
+/// Byte offsets within the §5.3.1 extension header.
+const PROFILE_ID_OFFSET: usize = 0;
+const EXTENSION_LENGTH_OFFSET: usize = PROFILE_ID_OFFSET + core::mem::size_of::<u16>();
+
+/// Read the big-endian `u16` at `off`.
+fn read_u16_at(bytes: &[u8], off: usize) -> u16 {
+    let mut raw = [0_u8; core::mem::size_of::<u16>()];
+    raw.copy_from_slice(&bytes[off..off + core::mem::size_of::<u16>()]);
+    u16::from_be_bytes(raw)
+}
+
+/// Read the big-endian `u32` at `off`.
+fn read_u32_at(bytes: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; core::mem::size_of::<u32>()];
+    raw.copy_from_slice(&bytes[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(raw)
+}
+
 /// Maximum padding-octet count — the trailing count byte is 8 bits (§5.1:
 /// "the last octet of the padding contains a count of how many padding
 /// octets should be ignored, including itself").
@@ -176,11 +198,9 @@ impl<'a> Parse<'a> for RtpPacket<'a> {
         let marker = byte1 & MARKER_BIT_MASK != 0;
         let payload_type = byte1 & PAYLOAD_TYPE_MASK;
 
-        let sequence_number = SeqNo::new(u16::from_be_bytes([bytes[2], bytes[3]]));
-        let timestamp = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let ssrc = Ssrc::new(u32::from_be_bytes([
-            bytes[8], bytes[9], bytes[10], bytes[11],
-        ]));
+        let sequence_number = SeqNo::new(read_u16_at(bytes, SEQUENCE_NUMBER_OFFSET));
+        let timestamp = read_u32_at(bytes, TIMESTAMP_OFFSET);
+        let ssrc = Ssrc::new(read_u32_at(bytes, SSRC_OFFSET));
 
         let mut pos = FIXED_HEADER_LEN;
 
@@ -190,12 +210,7 @@ impl<'a> Parse<'a> for RtpPacket<'a> {
         let mut csrc = Vec::with_capacity(cc);
         for i in 0..cc {
             let off = pos + i * CSRC_ITEM_LEN;
-            csrc.push(u32::from_be_bytes([
-                bytes[off],
-                bytes[off + 1],
-                bytes[off + 2],
-                bytes[off + 3],
-            ]));
+            csrc.push(read_u32_at(bytes, off));
         }
         pos += csrc_bytes_len;
 
@@ -206,8 +221,8 @@ impl<'a> Parse<'a> for RtpPacket<'a> {
                 pos + EXTENSION_HEADER_LEN,
                 "header extension profile-id/length",
             )?;
-            let profile_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
-            let length_words = usize::from(u16::from_be_bytes([bytes[pos + 2], bytes[pos + 3]]));
+            let profile_id = read_u16_at(bytes, pos + PROFILE_ID_OFFSET);
+            let length_words = usize::from(read_u16_at(bytes, pos + EXTENSION_LENGTH_OFFSET));
             let data_len = length_words * EXTENSION_WORD_LEN;
             let data_start = pos + EXTENSION_HEADER_LEN;
             let data_end = data_start + data_len;
@@ -350,9 +365,10 @@ impl Serialize for RtpPacket<'_> {
         }
         buf[1] = byte1;
 
-        buf[2..4].copy_from_slice(&self.sequence_number.get().to_be_bytes());
-        buf[4..8].copy_from_slice(&self.timestamp.to_be_bytes());
-        buf[8..12].copy_from_slice(&self.ssrc.get().to_be_bytes());
+        buf[SEQUENCE_NUMBER_OFFSET..TIMESTAMP_OFFSET]
+            .copy_from_slice(&self.sequence_number.get().to_be_bytes());
+        buf[TIMESTAMP_OFFSET..SSRC_OFFSET].copy_from_slice(&self.timestamp.to_be_bytes());
+        buf[SSRC_OFFSET..FIXED_HEADER_LEN].copy_from_slice(&self.ssrc.get().to_be_bytes());
 
         let mut pos = FIXED_HEADER_LEN;
         for &c in &self.csrc {
@@ -361,9 +377,11 @@ impl Serialize for RtpPacket<'_> {
         }
 
         if let Some(ext) = &self.extension {
-            buf[pos..pos + 2].copy_from_slice(&ext.profile_id.to_be_bytes());
+            buf[pos + PROFILE_ID_OFFSET..pos + EXTENSION_LENGTH_OFFSET]
+                .copy_from_slice(&ext.profile_id.to_be_bytes());
             let words = ext.length_words() as u16;
-            buf[pos + 2..pos + EXTENSION_HEADER_LEN].copy_from_slice(&words.to_be_bytes());
+            buf[pos + EXTENSION_LENGTH_OFFSET..pos + EXTENSION_HEADER_LEN]
+                .copy_from_slice(&words.to_be_bytes());
             pos += EXTENSION_HEADER_LEN;
             buf[pos..pos + ext.data.len()].copy_from_slice(ext.data);
             pos += ext.data.len();

@@ -9,6 +9,9 @@ use crate::traits::ApduDef;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
+/// Bytes of one `CA_system_id` (Table 24).
+const CA_SYSTEM_ID_LEN: usize = core::mem::size_of::<u16>();
+
 /// `ca_info_enq()` — header-only enquiry (Table 23).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -59,14 +62,14 @@ impl<'a> Parse<'a> for CaInfo {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::CA_INFO, "ca_info")?;
-        if body.len() % 2 != 0 {
+        if !body.len().is_multiple_of(CA_SYSTEM_ID_LEN) {
             return Err(Error::InvalidObject {
                 what: "ca_info",
                 reason: "body length is not a multiple of 2",
             });
         }
         let ca_system_ids = body
-            .chunks_exact(2)
+            .chunks_exact(CA_SYSTEM_ID_LEN)
             .map(|c| u16::from_be_bytes([c[0], c[1]]))
             .collect();
         Ok(Self {
@@ -79,14 +82,17 @@ impl<'a> Parse<'a> for CaInfo {
 impl Serialize for CaInfo {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(self.ca_system_ids.len() * 2, self.length_form)
+        super::apdu_len(
+            self.ca_system_ids.len() * CA_SYSTEM_ID_LEN,
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let body_len = self.ca_system_ids.len() * 2;
+        let body_len = self.ca_system_ids.len() * CA_SYSTEM_ID_LEN;
         let mut pos = super::write_apdu_header(tag::CA_INFO, body_len, self.length_form, buf)?;
         for id in &self.ca_system_ids {
-            buf[pos..pos + 2].copy_from_slice(&id.to_be_bytes());
-            pos += 2;
+            buf[pos..pos + CA_SYSTEM_ID_LEN].copy_from_slice(&id.to_be_bytes());
+            pos += CA_SYSTEM_ID_LEN;
         }
         Ok(pos)
     }

@@ -22,7 +22,41 @@ const REGION_ID_BITS: u32 = 6;
 const RESERVED_BIT_MASK: u8 = 0x02;
 const RESERVED_BIT_SHIFT: u8 = 1;
 /// Width of the entry's `reserved_future_use` (1 bit).
-const RESERVED_BITS: u32 = 1;
+pub const RESERVED_BITS: u32 = 1;
+/// Width of the `time_of_change` field (MJD + BCD HHMMSS), bytes.
+pub const TIME_OF_CHANGE_LEN: usize = 5;
+/// Width of the MJD part of `time_of_change`, bytes.
+const TIME_OF_CHANGE_MJD_LEN: usize = core::mem::size_of::<u16>();
+/// Offset of the hour byte within `time_of_change`.
+const TIME_OF_CHANGE_HOURS_OFFSET: usize = TIME_OF_CHANGE_MJD_LEN;
+/// Offset of the minute byte within `time_of_change`.
+const TIME_OF_CHANGE_MINUTES_OFFSET: usize = TIME_OF_CHANGE_HOURS_OFFSET + 1;
+/// Offset of the second byte within `time_of_change`.
+const TIME_OF_CHANGE_SECONDS_OFFSET: usize = TIME_OF_CHANGE_MINUTES_OFFSET + 1;
+/// Width of `ISO_639_language_code` in an entry.
+const COUNTRY_CODE_LEN: usize = 3;
+/// Offset of the flags byte in an entry.
+const FLAGS_OFFSET: usize = COUNTRY_CODE_LEN;
+/// Offset of `local_time_offset` in an entry.
+const LOCAL_TIME_OFFSET_BCD_OFFSET: usize = FLAGS_OFFSET + 1;
+/// Offset of `time_of_change` in an entry.
+const TIME_OF_CHANGE_OFFSET: usize = LOCAL_TIME_OFFSET_BCD_OFFSET + core::mem::size_of::<u16>();
+/// Offset of `next_time_offset` in an entry.
+const NEXT_TIME_OFFSET_BCD_OFFSET: usize = TIME_OF_CHANGE_OFFSET + TIME_OF_CHANGE_LEN;
+/// Shift of `country_region_id` in the flags byte.
+const REGION_ID_SHIFT: u8 = 2;
+/// Shift between the two bytes of a BCD `HHMM` offset.
+#[cfg(feature = "jiff")]
+const BCD_HI_BYTE_SHIFT: u8 = 8;
+/// Mask of the low byte of a BCD `HHMM` offset.
+#[cfg(feature = "jiff")]
+const BCD_LO_BYTE_MASK: u16 = 0xFF;
+/// Minutes in one hour.
+#[cfg(feature = "jiff")]
+const MINUTES_PER_HOUR: u32 = 60;
+/// Largest `HH` value a BCD offset can carry.
+#[cfg(feature = "jiff")]
+const MAX_OFFSET_HOURS: u64 = 99;
 /// Spec default of the entry's 1-bit `reserved_future_use` (`reserved` before
 /// V1.17.1): `1` (EN 300 468 V1.3.1-V1.20.1 Table 29; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
@@ -50,7 +84,7 @@ pub struct LocalTimeOffsetEntry {
     /// 40-bit MJD+BCD UTC raw bytes of the DST/offset transition moment.
     /// Private: use [`Self::time_of_change_parts`] for decoded access, or
     /// [`Self::time_of_change`] (feature `jiff`) for a `jiff::Timestamp`.
-    time_of_change_raw: [u8; 5],
+    time_of_change_raw: [u8; TIME_OF_CHANGE_LEN],
     /// 16-bit BCD HHMM next offset (applied after `time_of_change`).
     pub next_time_offset_bcd: u16,
 }
@@ -63,7 +97,7 @@ impl LocalTimeOffsetEntry {
         country_region_id: u8,
         local_time_offset_negative: bool,
         local_time_offset_bcd: u16,
-        time_of_change_raw: [u8; 5],
+        time_of_change_raw: [u8; TIME_OF_CHANGE_LEN],
         next_time_offset_bcd: u16,
     ) -> Self {
         Self {
@@ -84,21 +118,30 @@ impl LocalTimeOffsetEntry {
     /// its nibbles are non-decimal.
     #[must_use]
     pub fn time_of_change_parts(&self) -> (u16, Option<u8>, Option<u8>, Option<u8>) {
-        let mjd = u16::from_be_bytes([self.time_of_change_raw[0], self.time_of_change_raw[1]]);
-        let h = broadcast_common::bcd::from_bcd_byte(self.time_of_change_raw[2]);
-        let m = broadcast_common::bcd::from_bcd_byte(self.time_of_change_raw[3]);
-        let s = broadcast_common::bcd::from_bcd_byte(self.time_of_change_raw[4]);
+        let mjd = u16::from_be_bytes([
+            self.time_of_change_raw[0],
+            self.time_of_change_raw[TIME_OF_CHANGE_HOURS_OFFSET - 1],
+        ]);
+        let h = broadcast_common::bcd::from_bcd_byte(
+            self.time_of_change_raw[TIME_OF_CHANGE_HOURS_OFFSET],
+        );
+        let m = broadcast_common::bcd::from_bcd_byte(
+            self.time_of_change_raw[TIME_OF_CHANGE_MINUTES_OFFSET],
+        );
+        let s = broadcast_common::bcd::from_bcd_byte(
+            self.time_of_change_raw[TIME_OF_CHANGE_SECONDS_OFFSET],
+        );
         (mjd, h, m, s)
     }
 
     /// The raw 5-byte MJD+BCD time-of-change field (for serialization).
     #[must_use]
-    pub fn time_of_change_raw(&self) -> [u8; 5] {
+    pub fn time_of_change_raw(&self) -> [u8; TIME_OF_CHANGE_LEN] {
         self.time_of_change_raw
     }
 
     /// Set the `time_of_change_raw` field directly.
-    pub fn set_time_of_change_raw(&mut self, raw: [u8; 5]) {
+    pub fn set_time_of_change_raw(&mut self, raw: [u8; TIME_OF_CHANGE_LEN]) {
         self.time_of_change_raw = raw;
     }
 }
@@ -107,9 +150,9 @@ impl LocalTimeOffsetEntry {
 /// `negative`). `None` if a BCD nibble is out of range.
 #[cfg(feature = "jiff")]
 fn decode_hhmm(bcd: u16, negative: bool) -> Option<jiff::SignedDuration> {
-    let h = broadcast_common::bcd::from_bcd_byte((bcd >> 8) as u8)?;
-    let m = broadcast_common::bcd::from_bcd_byte((bcd & 0xFF) as u8)?;
-    let mins = i64::from(h) * 60 + i64::from(m);
+    let h = broadcast_common::bcd::from_bcd_byte((bcd >> BCD_HI_BYTE_SHIFT) as u8)?;
+    let m = broadcast_common::bcd::from_bcd_byte((bcd & BCD_LO_BYTE_MASK) as u8)?;
+    let mins = i64::from(h) * i64::from(MINUTES_PER_HOUR) + i64::from(m);
     Some(jiff::SignedDuration::from_mins(if negative {
         -mins
     } else {
@@ -123,14 +166,17 @@ fn decode_hhmm(bcd: u16, negative: bool) -> Option<jiff::SignedDuration> {
 fn encode_hhmm(offset: jiff::SignedDuration) -> Option<(bool, u16)> {
     let negative = offset.is_negative();
     let total_min = offset.as_mins().unsigned_abs();
-    let h = total_min / 60;
-    let m = total_min % 60;
-    if h > 99 {
+    let h = total_min / u64::from(MINUTES_PER_HOUR);
+    let m = total_min % u64::from(MINUTES_PER_HOUR);
+    if h > MAX_OFFSET_HOURS {
         return None;
     }
     let hb = broadcast_common::bcd::to_bcd_byte(h as u8)?;
     let mb = broadcast_common::bcd::to_bcd_byte(m as u8)?;
-    Some((negative, (u16::from(hb) << 8) | u16::from(mb)))
+    Some((
+        negative,
+        (u16::from(hb) << BCD_HI_BYTE_SHIFT) | u16::from(mb),
+    ))
 }
 
 #[cfg(feature = "jiff")]
@@ -228,14 +274,19 @@ impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            let country_code = LangCode([chunk[0], chunk[1], chunk[2]]);
-            let flags = chunk[3];
-            let country_region_id = (flags & REGION_ID_MASK) >> 2;
+            let mut country_code_bytes = [0u8; COUNTRY_CODE_LEN];
+            country_code_bytes.copy_from_slice(&chunk[..COUNTRY_CODE_LEN]);
+            let country_code = LangCode(country_code_bytes);
+            let flags = chunk[FLAGS_OFFSET];
+            let country_region_id = (flags & REGION_ID_MASK) >> REGION_ID_SHIFT;
             let local_time_offset_negative = flags & POLARITY_MASK != 0;
-            let local_time_offset_bcd = crate::wire::be_u16(chunk, 4, "local_time_offset")?;
-            let mut time_of_change_raw = [0u8; 5];
-            time_of_change_raw.copy_from_slice(&chunk[6..11]);
-            let next_time_offset_bcd = crate::wire::be_u16(chunk, 11, "local_time_offset")?;
+            let local_time_offset_bcd =
+                crate::wire::be_u16(chunk, LOCAL_TIME_OFFSET_BCD_OFFSET, "local_time_offset")?;
+            let mut time_of_change_raw = [0u8; TIME_OF_CHANGE_LEN];
+            time_of_change_raw
+                .copy_from_slice(&chunk[TIME_OF_CHANGE_OFFSET..NEXT_TIME_OFFSET_BCD_OFFSET]);
+            let next_time_offset_bcd =
+                crate::wire::be_u16(chunk, NEXT_TIME_OFFSET_BCD_OFFSET, "local_time_offset")?;
             entries.push(LocalTimeOffsetEntry {
                 reserved_future_use: ReservedOnes::from_bits(u64::from(
                     (flags & RESERVED_BIT_MASK) >> RESERVED_BIT_SHIFT,
@@ -264,25 +315,29 @@ impl Serialize for LocalTimeOffsetDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut offset = HEADER_LEN;
         for entry in &self.entries {
-            buf[offset..offset + 3].copy_from_slice(&entry.country_code.0);
+            buf[offset..offset + COUNTRY_CODE_LEN].copy_from_slice(&entry.country_code.0);
             let region_id = broadcast_common::len::fit_bits(
                 u64::from(entry.country_region_id),
                 REGION_ID_BITS,
                 "country_region_id",
             )? as u8;
-            let flags =
-                (broadcast_common::len::fit_mask(region_id, REGION_ID_MASK >> 2, "region_id")?
-                    << 2)
-                    | ((entry.reserved_future_use.get() as u8) << RESERVED_BIT_SHIFT)
-                    | if entry.local_time_offset_negative {
-                        POLARITY_MASK
-                    } else {
-                        0
-                    };
-            buf[offset + 3] = flags;
-            buf[offset + 4..offset + 6].copy_from_slice(&entry.local_time_offset_bcd.to_be_bytes());
-            buf[offset + 6..offset + 11].copy_from_slice(&entry.time_of_change_raw);
-            buf[offset + 11..offset + 13]
+            let flags = (broadcast_common::len::fit_mask(
+                region_id,
+                REGION_ID_MASK >> REGION_ID_SHIFT,
+                "region_id",
+            )? << REGION_ID_SHIFT)
+                | ((entry.reserved_future_use.get() as u8) << RESERVED_BIT_SHIFT)
+                | if entry.local_time_offset_negative {
+                    POLARITY_MASK
+                } else {
+                    0
+                };
+            buf[offset + FLAGS_OFFSET] = flags;
+            buf[offset + LOCAL_TIME_OFFSET_BCD_OFFSET..offset + TIME_OF_CHANGE_OFFSET]
+                .copy_from_slice(&entry.local_time_offset_bcd.to_be_bytes());
+            buf[offset + TIME_OF_CHANGE_OFFSET..offset + NEXT_TIME_OFFSET_BCD_OFFSET]
+                .copy_from_slice(&entry.time_of_change_raw);
+            buf[offset + NEXT_TIME_OFFSET_BCD_OFFSET..offset + ENTRY_LEN]
                 .copy_from_slice(&entry.next_time_offset_bcd.to_be_bytes());
             offset += ENTRY_LEN;
         }

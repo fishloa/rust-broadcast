@@ -187,6 +187,19 @@ pub const DOVI_RESERVED_LEN: usize = DOVI_RECORD_LEN - RESERVED_OFFSET;
 pub const DOVI_RESERVED_ZERO: [u8; DOVI_RESERVED_LEN] = [0; DOVI_RESERVED_LEN];
 const RESERVED_OFFSET: usize = 4;
 
+/// Width of a four-character code in bytes.
+const DOVI_FOURCC_LEN: usize = 4;
+/// Byte offset of the `dv_profile`/`dv_level`/flag word in the record.
+const CONFIG_WORD_OFFSET: usize = 2;
+/// Byte offset of `dv_bl_signal_compatibility_id` in the record.
+const CCID_OFFSET: usize = RESERVED_OFFSET;
+/// Width of `dv_profile` once the record's word layout is accounted for.
+const PROFILE_BITS: u32 = u16::BITS - PROFILE_SHIFT;
+/// Bytes a bare `descriptor_tag` + `descriptor_length` header occupies.
+const DESCRIPTOR_HEADER_LEN: usize = 2;
+/// Bytes of the reserved tail that closes each descriptor variant.
+const RESERVED_TAIL_LEN: usize = 1;
+
 fn invalid(field: &'static str, value: u64, reason: &'static str) -> Error {
     Error::InvalidValue(InvalidValue {
         field,
@@ -225,7 +238,7 @@ fn unpack_config_word(
 
 impl DoviDecoderConfigurationRecord {
     /// The configuration box FourCC the record belongs in (ISOBMFF spec 3.1).
-    pub fn box_fourcc(&self) -> [u8; 4] {
+    pub fn box_fourcc(&self) -> [u8; DOVI_FOURCC_LEN] {
         if self.profile <= MAX_DVCC_PROFILE {
             DVCC_FOURCC
         } else {
@@ -278,7 +291,7 @@ impl DoviDecoderConfigurationRecord {
     /// The record found in a `dvcC` / `dvvC` sample-entry child box
     /// (`(fourcc, body)`); the first that parses wins.
     pub fn from_sample_entry_boxes<'a>(
-        boxes: impl IntoIterator<Item = (&'a [u8; 4], &'a [u8])>,
+        boxes: impl IntoIterator<Item = (&'a [u8; DOVI_FOURCC_LEN], &'a [u8])>,
     ) -> Option<Self> {
         boxes
             .into_iter()
@@ -319,7 +332,7 @@ impl<'a> Parse<'a> for DoviDecoderConfigurationRecord {
                 "longer than the defined syntax",
             ));
         }
-        let word = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let word = u16::from_be_bytes([bytes[CONFIG_WORD_OFFSET], bytes[CONFIG_WORD_OFFSET + 1]]);
         let mut reserved = [0u8; DOVI_RESERVED_LEN];
         reserved.copy_from_slice(&bytes[RESERVED_OFFSET..]);
         reserved[0] &= CCID_MASK;
@@ -327,7 +340,7 @@ impl<'a> Parse<'a> for DoviDecoderConfigurationRecord {
             bytes[0],
             bytes[1],
             word,
-            bytes[4] >> CCID_SHIFT,
+            bytes[CCID_OFFSET] >> CCID_SHIFT,
             reserved,
         ))
     }
@@ -342,7 +355,7 @@ impl Serialize for DoviDecoderConfigurationRecord {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, DOVI_RECORD_LEN)?;
-        if self.profile >= 1 << (16 - PROFILE_SHIFT) {
+        if self.profile >= 1 << PROFILE_BITS {
             return Err(invalid(
                 "dv_profile",
                 u64::from(self.profile),
@@ -373,9 +386,10 @@ impl Serialize for DoviDecoderConfigurationRecord {
         }
         buf[0] = self.version_major;
         buf[1] = self.version_minor;
-        buf[2..4].copy_from_slice(&pack_config_word(self).to_be_bytes());
+        buf[CONFIG_WORD_OFFSET..RESERVED_OFFSET]
+            .copy_from_slice(&pack_config_word(self).to_be_bytes());
         buf[RESERVED_OFFSET..DOVI_RECORD_LEN].copy_from_slice(&self.reserved);
-        buf[4] |= ccid << CCID_SHIFT;
+        buf[CCID_OFFSET] |= ccid << CCID_SHIFT;
         Ok(DOVI_RECORD_LEN)
     }
 }
@@ -409,22 +423,29 @@ impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
             TS_DESCRIPTOR_BASE_LEN,
             "DOVI_video_stream_descriptor",
         )?;
-        let word = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let word = u16::from_be_bytes([bytes[CONFIG_WORD_OFFSET], bytes[CONFIG_WORD_OFFSET + 1]]);
         let bl_present = word & BL_FLAG != 0;
         let mut dependency_reserved = 0u8;
         let (dependency_pid, tail) = if bl_present {
-            (None, 4)
+            (None, TS_DESCRIPTOR_BASE_LEN - RESERVED_TAIL_LEN)
         } else {
             need_in(
                 bytes,
                 TS_DESCRIPTOR_BASE_LEN + TS_DESCRIPTOR_DEPENDENCY_LEN,
                 "DOVI_video_stream_descriptor dependency_pid",
             )?;
-            let raw = u16::from_be_bytes([bytes[4], bytes[5]]);
+            let raw = u16::from_be_bytes([bytes[CCID_OFFSET], bytes[CCID_OFFSET + 1]]);
             dependency_reserved = (raw & ((1 << PID_SHIFT) - 1)) as u8;
-            (Some(raw >> PID_SHIFT), 6)
+            (
+                Some(raw >> PID_SHIFT),
+                TS_DESCRIPTOR_BASE_LEN + TS_DESCRIPTOR_DEPENDENCY_LEN - RESERVED_TAIL_LEN,
+            )
         };
-        need_in(bytes, tail + 1, "DOVI_video_stream_descriptor")?;
+        need_in(
+            bytes,
+            tail + RESERVED_TAIL_LEN,
+            "DOVI_video_stream_descriptor",
+        )?;
         Ok(Self {
             record: unpack_config_word(
                 bytes[0],
@@ -458,7 +479,9 @@ impl Serialize for DoviVideoStreamDescriptor {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let ccid = self.record.bl_signal_compatibility_id.code();
-        if ccid > CCID_MASK || self.record.level > LEVEL_MASK as u8 || self.record.profile >= 1 << 7
+        if ccid > CCID_MASK
+            || self.record.level > LEVEL_MASK as u8
+            || self.record.profile >= 1 << PROFILE_BITS
         {
             return Err(invalid(
                 "DOVI_video_stream_descriptor",
@@ -468,9 +491,10 @@ impl Serialize for DoviVideoStreamDescriptor {
         }
         buf[0] = self.record.version_major;
         buf[1] = self.record.version_minor;
-        buf[2..4].copy_from_slice(&pack_config_word(&self.record).to_be_bytes());
+        buf[CONFIG_WORD_OFFSET..RESERVED_OFFSET]
+            .copy_from_slice(&pack_config_word(&self.record).to_be_bytes());
         let tail = match (self.record.bl_present, self.dependency_pid) {
-            (true, None) => 4,
+            (true, None) => TS_DESCRIPTOR_BASE_LEN - RESERVED_TAIL_LEN,
             (false, Some(pid)) if pid <= PID_MAX => {
                 if self.dependency_reserved >= 1 << PID_SHIFT {
                     return Err(invalid(
@@ -479,10 +503,10 @@ impl Serialize for DoviVideoStreamDescriptor {
                         "does not fit 3 bits",
                     ));
                 }
-                buf[4..6].copy_from_slice(
+                buf[CCID_OFFSET..CCID_OFFSET + TS_DESCRIPTOR_DEPENDENCY_LEN].copy_from_slice(
                     &((pid << PID_SHIFT) | u16::from(self.dependency_reserved)).to_be_bytes(),
                 );
-                6
+                TS_DESCRIPTOR_BASE_LEN + TS_DESCRIPTOR_DEPENDENCY_LEN - RESERVED_TAIL_LEN
             }
             _ => {
                 return Err(invalid(
@@ -521,7 +545,7 @@ pub fn find_video_stream_descriptor(es_info: &[u8]) -> Option<DoviVideoStreamDes
 pub fn video_stream_descriptor_bytes(d: &DoviVideoStreamDescriptor) -> Result<Vec<u8>> {
     let body = d.try_to_bytes()?;
     let length = broadcast_common::len::fit_u8(body.len(), "descriptor_length")?;
-    let mut out = Vec::with_capacity(2 + body.len());
+    let mut out = Vec::with_capacity(DESCRIPTOR_HEADER_LEN + body.len());
     out.push(DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
     out.push(length);
     out.extend_from_slice(&body);
@@ -538,13 +562,13 @@ pub fn has_registration_descriptor(es_info: &[u8]) -> bool {
 fn descriptor_bodies(es_info: &[u8]) -> impl Iterator<Item = (u8, &[u8])> {
     let mut off = 0usize;
     core::iter::from_fn(move || {
-        if off + 2 > es_info.len() {
+        if off + DESCRIPTOR_HEADER_LEN > es_info.len() {
             return None;
         }
         let tag = es_info[off];
         let len = usize::from(es_info[off + 1]);
-        let body = es_info.get(off + 2..off + 2 + len)?;
-        off += 2 + len;
+        let body = es_info.get(off + DESCRIPTOR_HEADER_LEN..off + DESCRIPTOR_HEADER_LEN + len)?;
+        off += DESCRIPTOR_HEADER_LEN + len;
         Some((tag, body))
     })
 }

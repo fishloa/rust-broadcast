@@ -77,6 +77,8 @@ use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738) to
 /// validate the header incrementally without duplicating the constant.
 pub(crate) const FLV_SIGNATURE: [u8; 3] = rtmp_runtime::flv::FLV_SIGNATURE;
+/// Width of the FLV file signature `FLV` (§E.4.1).
+pub(crate) const FLV_SIGNATURE_LEN: usize = 3;
 /// FLV header length in bytes (§E.2), from the shared FLV codec.
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
@@ -179,6 +181,56 @@ const SI24_MIN: i32 = -(1 << 23);
 /// Largest `CompositionTime` representable as the signed 24-bit field
 /// `SI24` of an `AVCVIDEOPACKET` (§E.4.3.2).
 const SI24_MAX: i32 = (1 << 23) - 1;
+/// Byte offset of the `L` of the FLV signature (§E.4.1).
+const SIGNATURE_L_OFFSET: usize = 1;
+/// Byte offset of the `V` of the FLV signature (§E.4.1).
+const SIGNATURE_V_OFFSET: usize = 2;
+/// `FrameType` shift in the first `VideoTagHeader` byte (§E.4.3).
+const FRAME_TYPE_SHIFT: u32 = 4;
+/// `CodecID` mask in the first `VideoTagHeader` byte (§E.4.3).
+const CODEC_ID_MASK: u8 = 0x0F;
+/// `SoundFormat` shift in the first `AudioTagHeader` byte (§E.4.2).
+const SOUND_FORMAT_SHIFT: u32 = 4;
+/// `SoundRate` shift in the first `AudioTagHeader` byte (§E.4.2).
+const SOUND_RATE_SHIFT: u32 = 2;
+/// `SoundSize` shift in the first `AudioTagHeader` byte (§E.4.2).
+const SOUND_SIZE_SHIFT: u32 = 1;
+/// `SoundType` mask in the first `AudioTagHeader` byte (§E.4.2).
+const SOUND_TYPE_MASK: u8 = 0x01;
+/// `AudioTagHeader` before `AACAUDIODATA`: sound fields byte + `AACPacketType`.
+const AUDIO_TAG_HEADER_LEN: usize = 2;
+/// Bytes needed before both `CodecID` and `AVCPacketType` are readable.
+const VIDEO_TAG_MIN_LEN: usize = AVC_PACKET_TYPE_OFFSET + 1;
+/// Whole AVC video tag body header: `Videodata` byte + `AVCPacketType` +
+/// `CompositionTime` (§E.4.3.2).
+const VIDEO_TAG_BODY_HEADER_LEN: usize = AVC_PACKET_DATA_OFFSET;
+/// Byte offset of `AVCPacketType` in `Videodata`.
+const AVC_PACKET_TYPE_OFFSET: usize = 1;
+/// Byte offset of `CompositionTime` in `Videodata`.
+const COMPOSITION_TIME_OFFSET: usize = 2;
+/// `CompositionTime` is a signed 24-bit field (§E.4.3.2).
+const COMPOSITION_TIME_LEN: usize = 3;
+/// Byte offset of the first coded byte after the AVC packet header.
+const AVC_PACKET_DATA_OFFSET: usize = COMPOSITION_TIME_OFFSET + COMPOSITION_TIME_LEN;
+/// Byte offset of `AACPacketType` in `Audiodata`.
+const AAC_PACKET_TYPE_OFFSET: usize = 1;
+/// Byte offset of the first coded byte after the AAC packet header.
+const AAC_PACKET_DATA_OFFSET: usize = AAC_PACKET_TYPE_OFFSET + 1;
+
+/// Shift of the most significant byte of the signed 24-bit `CompositionTime`.
+const SI24_TOP_BYTE_SHIFT: u32 = 16;
+/// Shift of the middle byte of the signed 24-bit `CompositionTime`.
+const SI24_MIDDLE_BYTE_SHIFT: u32 = 8;
+/// Index of the least significant byte of the signed 24-bit `CompositionTime`.
+const SI24_LAST_BYTE: usize = 2;
+/// Sign bit of the signed 24-bit `CompositionTime`.
+const SI24_SIGN_BIT: u32 = 0x0080_0000;
+/// Mask that sign-extends the signed 24-bit `CompositionTime` to 32 bits.
+const SI24_SIGN_EXTEND_MASK: u32 = 0xFF00_0000;
+/// Index counted back from the end to the sample before the last.
+const PREV_SAMPLE_BACK: usize = 2;
+/// Index counted back from the end to the last sample.
+const LAST_SAMPLE_BACK: usize = 1;
 
 // `esds` construction constants (mirroring `ts_demux`).
 /// MPEG-4 Audio object type indication for AAC (ISO/IEC 14496-1 §7.2.6.6 Table 5).
@@ -235,7 +287,7 @@ pub(crate) fn aac_channel_count(config: &AudioSpecificConfig) -> u16 {
 pub enum FlvError {
     /// The 3-byte signature was not `"FLV"` (§E.2).
     #[error("bad FLV signature: {0:02X?} (expected \"FLV\")")]
-    BadSignature([u8; 3]),
+    BadSignature([u8; FLV_SIGNATURE_LEN]),
     /// A tag's declared `DataSize` ran past the end of the buffer (§E.4.1).
     #[error("FLV tag at offset {offset} overruns buffer: need {need}, have {have}")]
     TagOverrun {
@@ -411,7 +463,9 @@ fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
             have: w.have,
         })),
         _ => Error::from(FlvErrorAsError(FlvError::BadSignature([
-            input[0], input[1], input[2],
+            input[0],
+            input[SIGNATURE_L_OFFSET],
+            input[SIGNATURE_V_OFFSET],
         ]))),
     })?;
     let overrun = |need| {
@@ -681,7 +735,11 @@ impl<'a> Unpackage for FlvDemux<'a> {
             })));
         }
         if input[0..3] != FLV_SIGNATURE {
-            return Err(FlvError::BadSignature([input[0], input[1], input[2]]));
+            return Err(FlvError::BadSignature([
+                input[0],
+                input[SIGNATURE_L_OFFSET],
+                input[SIGNATURE_V_OFFSET],
+            ]));
         }
 
         let walk = iter_tags(input).map_err(FlvError::Codec)?;
@@ -711,21 +769,22 @@ impl<'a> Unpackage for FlvDemux<'a> {
         for tag in &tags {
             match tag.tag_type {
                 TagType::Video => {
-                    if tag.body.len() < 2 {
+                    if tag.body.len() < VIDEO_TAG_MIN_LEN {
                         continue;
                     }
-                    let frame_type = tag.body[0] >> 4;
-                    let codec_id = tag.body[0] & 0x0F;
+                    let frame_type = tag.body[0] >> FRAME_TYPE_SHIFT;
+                    let codec_id = tag.body[0] & CODEC_ID_MASK;
                     if codec_id != CODEC_ID_AVC {
                         continue; // non-AVC video is out of scope
                     }
-                    let avc_packet_type = tag.body[1];
+                    let avc_packet_type = tag.body[AVC_PACKET_TYPE_OFFSET];
                     // AVCVIDEOPACKET: AVCPacketType(1) + CompositionTime(SI24=3) + Data.
-                    if tag.body.len() < 5 {
+                    if tag.body.len() < VIDEO_TAG_BODY_HEADER_LEN {
                         continue;
                     }
-                    let composition_time = read_si24(&tag.body[2..5]);
-                    let data = &tag.body[5..];
+                    let composition_time =
+                        read_si24(&tag.body[COMPOSITION_TIME_OFFSET..AVC_PACKET_DATA_OFFSET]);
+                    let data = &tag.body[AVC_PACKET_DATA_OFFSET..];
                     match avc_packet_type {
                         avc_packet_type::SEQUENCE_HEADER
                             if avc_config.is_none() && !data.is_empty() =>
@@ -795,16 +854,16 @@ impl<'a> Unpackage for FlvDemux<'a> {
                     if tag.body.is_empty() {
                         continue;
                     }
-                    let sound_format = tag.body[0] >> 4;
+                    let sound_format = tag.body[0] >> SOUND_FORMAT_SHIFT;
                     if sound_format != SOUND_FORMAT_AAC {
                         continue; // non-AAC audio is out of scope
                     }
                     // AACAUDIODATA: AACPacketType(1) + Data.
-                    if tag.body.len() < 2 {
+                    if tag.body.len() < AUDIO_TAG_HEADER_LEN {
                         continue;
                     }
-                    let aac_pkt_type = tag.body[1];
-                    let data = &tag.body[2..];
+                    let aac_pkt_type = tag.body[AAC_PACKET_TYPE_OFFSET];
+                    let data = &tag.body[AAC_PACKET_DATA_OFFSET..];
                     match aac_pkt_type {
                         // Some muxers emit a spurious empty AAC sequence
                         // header; keep looking until a non-empty ASC arrives.
@@ -904,10 +963,12 @@ impl<'a> Unpackage for FlvDemux<'a> {
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738) so
 /// the two demuxers agree byte-for-byte on `CompositionTime` decoding.
 pub(crate) fn read_si24(b: &[u8]) -> i32 {
-    let raw = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
+    let raw = ((b[0] as u32) << SI24_TOP_BYTE_SHIFT)
+        | ((b[SIGNATURE_L_OFFSET] as u32) << SI24_MIDDLE_BYTE_SHIFT)
+        | (b[SI24_LAST_BYTE] as u32);
     // Sign-extend from 24 bits.
-    if raw & 0x0080_0000 != 0 {
-        (raw | 0xFF00_0000) as i32
+    if raw & SI24_SIGN_BIT != 0 {
+        (raw | SI24_SIGN_EXTEND_MASK) as i32
     } else {
         raw as i32
     }
@@ -942,9 +1003,11 @@ fn backfill_last_duration(samples: &mut [Sample]) {
             *a = a.with_duration(d);
         }
     }
-    if n >= 2 {
-        let dur = samples[n - 2].timing.and_then(|t| t.duration());
-        if let (Some(a), Some(d)) = (samples[n - 1].timing.as_mut(), dur)
+    if n >= PREV_SAMPLE_BACK {
+        let dur = samples[n - PREV_SAMPLE_BACK]
+            .timing
+            .and_then(|t| t.duration());
+        if let (Some(a), Some(d)) = (samples[n - LAST_SAMPLE_BACK].timing.as_mut(), dur)
             && let Ok(d) = NonZeroU32::try_from(d)
         {
             *a = a.with_duration(d);
@@ -1122,8 +1185,8 @@ fn video_sequence_header_body(vt: &Track) -> core::result::Result<Option<Vec<u8>
         .serialize_into(&mut avcc)
         .map_err(FlvError::Codec)?;
     avcc.truncate(n);
-    let mut body = Vec::with_capacity(5 + avcc.len());
-    body.push((FRAME_TYPE_KEYFRAME << 4) | CODEC_ID_AVC);
+    let mut body = Vec::with_capacity(VIDEO_TAG_BODY_HEADER_LEN + avcc.len());
+    body.push((FRAME_TYPE_KEYFRAME << FRAME_TYPE_SHIFT) | CODEC_ID_AVC);
     body.push(avc_packet_type::SEQUENCE_HEADER);
     body.extend_from_slice(&[0, 0, 0]); // CompositionTime = 0
     body.extend_from_slice(&avcc);
@@ -1147,7 +1210,7 @@ fn audio_sequence_header_body(at: &Track) -> core::result::Result<Option<Vec<u8>
         return Ok(None);
     };
     let asc = esds_asc_bytes(esds)?;
-    let mut body = Vec::with_capacity(2 + asc.len());
+    let mut body = Vec::with_capacity(AUDIO_TAG_HEADER_LEN + asc.len());
     body.push(audio_tag_header_byte(audio_sound_type(at)));
     body.push(aac_packet_type::SEQUENCE_HEADER);
     body.extend_from_slice(&asc);
@@ -1158,16 +1221,16 @@ fn audio_sequence_header_body(at: &Track) -> core::result::Result<Option<Vec<u8>
 /// `FrameType`/`CodecID` nibble + `AVCPacketType::NALU` + `CompositionTime`
 /// (`SI24`, already in FLV's millisecond clock) + the coded NAL data.
 fn video_frame_body(is_sync: bool, composition_time_ms: i32, data: &[u8]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(5 + data.len());
+    let mut body = Vec::with_capacity(VIDEO_TAG_BODY_HEADER_LEN + data.len());
     let ft = if is_sync {
         FRAME_TYPE_KEYFRAME
     } else {
         FRAME_TYPE_INTER
     };
-    body.push((ft << 4) | CODEC_ID_AVC);
+    body.push((ft << FRAME_TYPE_SHIFT) | CODEC_ID_AVC);
     body.push(avc_packet_type::NALU);
-    body.push((composition_time_ms >> 16) as u8);
-    body.push((composition_time_ms >> 8) as u8);
+    body.push((composition_time_ms >> SI24_TOP_BYTE_SHIFT) as u8);
+    body.push((composition_time_ms >> SI24_MIDDLE_BYTE_SHIFT) as u8);
     body.push(composition_time_ms as u8);
     body.extend_from_slice(data);
     body
@@ -1176,7 +1239,7 @@ fn video_frame_body(is_sync: bool, composition_time_ms: i32, data: &[u8]) -> Vec
 /// Build one AAC `AudioTagHeader`+`AACAUDIODATA` frame body (§E.4.2):
 /// `AudioTagHeader` byte + `AACPacketType::RAW` + the raw AAC access unit.
 fn audio_frame_body(sound_type: u8, data: &[u8]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(2 + data.len());
+    let mut body = Vec::with_capacity(AUDIO_TAG_HEADER_LEN + data.len());
     body.push(audio_tag_header_byte(sound_type));
     body.push(aac_packet_type::RAW);
     body.extend_from_slice(data);
@@ -1508,7 +1571,10 @@ impl Package for FlvMux {
 /// The `AudioTagHeader` first byte for AAC (§E.4.2): SoundFormat(4)=10,
 /// SoundRate(2)=3, SoundSize(1)=1, SoundType(1).
 fn audio_tag_header_byte(sound_type: u8) -> u8 {
-    (SOUND_FORMAT_AAC << 4) | (SOUND_RATE_44K << 2) | (SOUND_SIZE_16BIT << 1) | (sound_type & 1)
+    (SOUND_FORMAT_AAC << SOUND_FORMAT_SHIFT)
+        | (SOUND_RATE_44K << SOUND_RATE_SHIFT)
+        | (SOUND_SIZE_16BIT << SOUND_SIZE_SHIFT)
+        | (sound_type & SOUND_TYPE_MASK)
 }
 
 /// Extract the raw `AudioSpecificConfig` bytes from an `esds`'s DecoderSpecificInfo.

@@ -19,15 +19,42 @@ const BODY_MPEG1_LEN: u8 = 1;
 /// Table 2-46): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023,
 /// audit §5; confirmed by the TSDuck oracle PMT and the real
 /// `si/tsduck-mpeg-descriptors-pmt.bin` capture).
-pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_TRAILING_BITS>::FILL;
 /// Width of the trailing `reserved` field of the MPEG-2 branch (5 bits).
-const RESERVED_5_BITS: u32 = 5;
-const RESERVED_5_MASK: u8 = 0x1F;
+pub const RESERVED_TRAILING_BITS: u32 = 5;
+const RESERVED_TRAILING_MASK: u8 = 0x1F;
 
 /// `frame_rate_code(4)` field mask inside byte 0: bits `[6:3]`; masks the
 /// `Reserved(v)` payload so it cannot bleed into `multiple_frame_rate_flag`
 /// when shifted (r03-W2).
 const FRAME_RATE_CODE_MASK: u8 = 0x0F;
+/// `multiple_frame_rate_flag` bit of byte 0.
+const MULTIPLE_FRAME_RATE_FLAG_MASK: u8 = 0x80;
+/// Shift of `frame_rate_code` in byte 0.
+const FRAME_RATE_CODE_SHIFT: u8 = 3;
+/// `mpeg_1_only_flag` bit of byte 0.
+const MPEG_1_ONLY_FLAG_MASK: u8 = 0x04;
+/// `constrained_parameter_flag` bit of byte 0.
+const CONSTRAINED_PARAMETER_FLAG_MASK: u8 = 0x02;
+/// `still_picture_flag` bit of byte 0.
+const STILL_PICTURE_FLAG_MASK: u8 = 0x01;
+/// Body offset of the second MPEG-2 byte.
+const MPEG2_BYTE_OFFSET: usize = 2;
+/// Shift of `chroma_format` in the second MPEG-2 byte.
+const CHROMA_FORMAT_SHIFT: u8 = 6;
+/// Mask of the 2-bit `chroma_format` field.
+const CHROMA_FORMAT_MASK: u8 = 0x03;
+/// `frame_rate_extension_flag` bit of the second MPEG-2 byte.
+const FRAME_RATE_EXTENSION_FLAG_MASK: u8 = 0x20;
+/// Shift of `multiple_frame_rate_flag` in byte 0.
+const MULTIPLE_FRAME_RATE_FLAG_SHIFT: u8 = 7;
+/// Shift of `mpeg_1_only_flag` in byte 0.
+const MPEG_1_ONLY_FLAG_SHIFT: u8 = 2;
+/// Shift of `constrained_parameter_flag` in byte 0.
+const CONSTRAINED_PARAMETER_FLAG_SHIFT: u8 = 1;
+/// Shift of `frame_rate_extension_flag` in the second MPEG-2 byte.
+const FRAME_RATE_EXTENSION_FLAG_SHIFT: u8 = 5;
 
 /// Frame rate code — ISO/IEC 13818-1 Table 2-47.
 ///
@@ -146,7 +173,7 @@ pub struct VideoStreamDescriptor {
     /// `mpeg_1_only_flag` is set. Captured on parse, re-emitted verbatim; the
     /// constructors use [`RESERVED_5_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_5: ReservedOnes<RESERVED_TRAILING_BITS>,
     /// Body bytes after the defined fields (after byte 0 in the MPEG-1 branch,
     /// after byte 2 otherwise): tolerated on parse and re-emitted verbatim.
     pub trailing: Vec<u8>,
@@ -219,11 +246,12 @@ impl<'a> Parse<'a> for VideoStreamDescriptor {
             });
         }
         let b0 = body[0];
-        let multiple_frame_rate_flag = (b0 & 0x80) != 0;
-        let frame_rate_code = FrameRateCode::from_u8((b0 >> 3) & 0x0F);
-        let mpeg_1_only_flag = (b0 & 0x04) != 0;
-        let constrained_parameter_flag = (b0 & 0x02) != 0;
-        let still_picture_flag = (b0 & 0x01) != 0;
+        let multiple_frame_rate_flag = (b0 & MULTIPLE_FRAME_RATE_FLAG_MASK) != 0;
+        let frame_rate_code =
+            FrameRateCode::from_u8((b0 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK);
+        let mpeg_1_only_flag = (b0 & MPEG_1_ONLY_FLAG_MASK) != 0;
+        let constrained_parameter_flag = (b0 & CONSTRAINED_PARAMETER_FLAG_MASK) != 0;
+        let still_picture_flag = (b0 & STILL_PICTURE_FLAG_MASK) != 0;
 
         if mpeg_1_only_flag {
             Ok(Self {
@@ -246,10 +274,10 @@ impl<'a> Parse<'a> for VideoStreamDescriptor {
                 });
             }
             let b1 = body[1];
-            let b2 = body[2];
+            let b2 = body[MPEG2_BYTE_OFFSET];
             let profile_and_level_indication = b1;
-            let chroma_format = (b2 >> 6) & 0x03;
-            let frame_rate_extension_flag = (b2 & 0x20) != 0;
+            let chroma_format = (b2 >> CHROMA_FORMAT_SHIFT) & CHROMA_FORMAT_MASK;
+            let frame_rate_extension_flag = (b2 & FRAME_RATE_EXTENSION_FLAG_MASK) != 0;
             Ok(Self {
                 multiple_frame_rate_flag,
                 frame_rate_code,
@@ -259,7 +287,7 @@ impl<'a> Parse<'a> for VideoStreamDescriptor {
                 profile_and_level_indication: Some(profile_and_level_indication),
                 chroma_format: Some(chroma_format),
                 frame_rate_extension_flag: Some(frame_rate_extension_flag),
-                reserved_5: ReservedOnes::from_bits(u64::from(b2 & RESERVED_5_MASK)),
+                reserved_5: ReservedOnes::from_bits(u64::from(b2 & RESERVED_TRAILING_MASK)),
                 trailing: body[BODY_LEN as usize..].to_vec(),
             })
         }
@@ -281,14 +309,14 @@ impl Serialize for VideoStreamDescriptor {
         let len = self.serialized_len();
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        let b0 = ((self.multiple_frame_rate_flag as u8) << 7)
+        let b0 = ((self.multiple_frame_rate_flag as u8) << MULTIPLE_FRAME_RATE_FLAG_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.frame_rate_code.to_u8(),
                 FRAME_RATE_CODE_MASK,
                 "frame_rate_code",
-            )? << 3)
-            | ((self.mpeg_1_only_flag as u8) << 2)
-            | ((self.constrained_parameter_flag as u8) << 1)
+            )? << FRAME_RATE_CODE_SHIFT)
+            | ((self.mpeg_1_only_flag as u8) << MPEG_1_ONLY_FLAG_SHIFT)
+            | ((self.constrained_parameter_flag as u8) << CONSTRAINED_PARAMETER_FLAG_SHIFT)
             | (self.still_picture_flag as u8);
         buf[HEADER_LEN] = b0;
         if !self.mpeg_1_only_flag {
@@ -306,7 +334,7 @@ impl Serialize for VideoStreamDescriptor {
                     field: "chroma_format",
                     reason: "required when mpeg_1_only_flag is false",
                 })?,
-                0x03,
+                CHROMA_FORMAT_MASK,
                 "chroma_format",
             )?;
             let fre = self
@@ -316,7 +344,9 @@ impl Serialize for VideoStreamDescriptor {
                     reason: "required when mpeg_1_only_flag is false",
                 })? as u8;
             buf[HEADER_LEN + 1] = pal;
-            buf[HEADER_LEN + 2] = (chroma << 6) | (fre << 5) | (self.reserved_5.get() as u8);
+            buf[HEADER_LEN + MPEG2_BYTE_OFFSET] = (chroma << CHROMA_FORMAT_SHIFT)
+                | (fre << FRAME_RATE_EXTENSION_FLAG_SHIFT)
+                | (self.reserved_5.get() as u8);
         }
         let fixed = if self.mpeg_1_only_flag {
             BODY_MPEG1_LEN as usize

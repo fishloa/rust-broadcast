@@ -162,7 +162,11 @@ impl<'a> Parse<'a> for DisplayControl {
         ))?;
         let cmd = DisplayControlCmd::from_u8(cmd_byte);
         let mmi_mode = if cmd == DisplayControlCmd::SetMmiMode {
-            need_in(body, 2, "display_control mmi_mode")?;
+            need_in(
+                body,
+                DISPLAY_CONTROL_WITH_MODE_LEN,
+                "display_control mmi_mode",
+            )?;
             Some(MmiMode::from_u8(body[1]))
         } else {
             None
@@ -290,7 +294,7 @@ pub struct PixelDepth {
     /// The 2-bit `reserved` field closing the entry as received, preserved
     /// so the object re-serializes byte-for-byte; `0b11` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<2>,
+    pub reserved: ReservedOnes<NARROW_RESERVED_FIELD_BITS>,
 }
 
 /// The graphics-characteristics profile body of a [`DisplayReply`] (Table 35,
@@ -320,6 +324,70 @@ pub struct GraphicsCharacteristics {
 
 // Fixed part of the graphics body: h(2)+v(2)+packed(1)+display/comp/obj/n(4).
 const GFX_FIXED: usize = 9;
+
+/// Bytes of the `display_control` body when it carries `mmi_mode`.
+const DISPLAY_CONTROL_WITH_MODE_LEN: usize = 2;
+/// Bits of a reserved field that is neither a nibble nor a single bit.
+pub const NARROW_RESERVED_FIELD_BITS: u32 = 2;
+/// Bytes of one `pixel_depth` entry.
+const PIXEL_DEPTH_ENTRY_LEN: usize = 2;
+
+/// Offsets within the graphics-characteristics body.
+const DISPLAY_HORIZONTAL_SIZE_OFFSET: usize = 0;
+const DISPLAY_VERTICAL_SIZE_OFFSET: usize = 2;
+const GFX_FLAGS_OFFSET: usize = 4;
+const DISPLAY_BYTES_OFFSET: usize = 5;
+const COMPOSITION_BUFFER_OFFSET: usize = 6;
+const OBJECT_CACHE_OFFSET: usize = 7;
+const NUM_PIXEL_DEPTHS_OFFSET: usize = 8;
+
+/// Shift placing `aspect_ratio_information` at the top of its byte.
+const ASPECT_RATIO_SHIFT: u32 = 4;
+/// Mask of `aspect_ratio_information`.
+const ASPECT_RATIO_MASK: u8 = 0x0F;
+/// Bit width of `aspect_ratio_information`.
+const ASPECT_RATIO_BITS: u32 = 4;
+/// Shift placing `graphics_relation_to_video`.
+const GRAPHICS_RELATION_SHIFT: u32 = 1;
+/// Mask of `graphics_relation_to_video`.
+const GRAPHICS_RELATION_MASK: u8 = 0x07;
+/// Bit width of `graphics_relation_to_video`.
+const GRAPHICS_RELATION_BITS: u32 = 3;
+/// Mask of `multiple_depths`.
+const MULTIPLE_DEPTHS_MASK: u8 = 0x01;
+/// Mask of a nibble.
+const NIBBLE_MASK: u8 = 0x0F;
+/// Shift placing/selecting a nibble-packed field.
+const NIBBLE_SHIFT: u32 = 4;
+/// Mask of the 12-bit `display_bytes`.
+const DISPLAY_BYTES_MASK: u16 = 0x0FFF;
+/// Bit width of `display_bytes`.
+const DISPLAY_BYTES_BITS: u32 = 12;
+/// Bit width of `number_pixel_depths`.
+const NUM_PIXEL_DEPTHS_BITS: u32 = 4;
+/// Shift placing `display_depth` at the top of its byte.
+const DISPLAY_DEPTH_SHIFT: u32 = 5;
+/// Mask of `display_depth` / `pixels_per_byte`.
+const DEPTH_FIELD_MASK: u8 = 0x07;
+/// Bit width of `display_depth` / `pixels_per_byte`.
+const DEPTH_FIELD_BITS: u32 = 3;
+/// Shift placing `pixels_per_byte`.
+const PIXELS_PER_BYTE_SHIFT: u32 = 2;
+
+/// `scene_end_mark` / `scene_done_message` flag masks and shifts.
+const DECODER_CONTINUE_FLAG_MASK: u8 = 0x80;
+const SCENE_REVEAL_FLAG_MASK: u8 = 0x40;
+const SEND_SCENE_DONE_MASK: u8 = 0x20;
+const SCENE_TAG_MASK: u8 = 0x0F;
+const DECODER_CONTINUE_SHIFT: u32 = 7;
+const SCENE_REVEAL_SHIFT: u32 = 6;
+const SEND_SCENE_DONE_SHIFT: u32 = 5;
+const SCENE_FLAGS_RESERVED_SHIFT: u32 = 4;
+
+/// Offset of `reply_id` within a `download_reply` body.
+const DOWNLOAD_REPLY_ID_OFFSET: usize = 2;
+/// Offset of `object_id` within a `download_reply` body.
+const DOWNLOAD_OBJECT_ID_OFFSET: usize = 0;
 
 /// The branch-dependent body of a [`DisplayReply`] (Table 35).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,28 +424,41 @@ pub struct DisplayReply {
 impl DisplayReply {
     fn parse_graphics(b: &[u8]) -> Result<GraphicsCharacteristics> {
         need_in(b, GFX_FIXED, "display_reply graphics")?;
-        let display_horizontal_size = u16::from_be_bytes([b[0], b[1]]);
-        let display_vertical_size = u16::from_be_bytes([b[2], b[3]]);
-        let aspect_ratio_information = (b[4] >> 4) & 0x0F;
-        let graphics_relation_to_video = (b[4] >> 1) & 0x07;
-        let multiple_depths = (b[4] & 0x01) != 0;
+        let display_horizontal_size = u16::from_be_bytes([
+            b[DISPLAY_HORIZONTAL_SIZE_OFFSET],
+            b[DISPLAY_HORIZONTAL_SIZE_OFFSET + 1],
+        ]);
+        let display_vertical_size = u16::from_be_bytes([
+            b[DISPLAY_VERTICAL_SIZE_OFFSET],
+            b[DISPLAY_VERTICAL_SIZE_OFFSET + 1],
+        ]);
+        let aspect_ratio_information =
+            (b[GFX_FLAGS_OFFSET] >> ASPECT_RATIO_SHIFT) & ASPECT_RATIO_MASK;
+        let graphics_relation_to_video =
+            (b[GFX_FLAGS_OFFSET] >> GRAPHICS_RELATION_SHIFT) & GRAPHICS_RELATION_MASK;
+        let multiple_depths = (b[GFX_FLAGS_OFFSET] & MULTIPLE_DEPTHS_MASK) != 0;
         // display_bytes(12) | composition_buffer_bytes(8) | object_cache_bytes(8)
         // | number_pixel_depths(4), packed across b[5..9].
-        let display_bytes = (((b[5] as u16) << 4) | ((b[6] >> 4) as u16)) & 0x0FFF;
-        let composition_buffer_bytes = ((b[6] & 0x0F) << 4) | (b[7] >> 4);
-        let object_cache_bytes = ((b[7] & 0x0F) << 4) | (b[8] >> 4);
-        let number_pixel_depths = (b[8] & 0x0F) as usize;
+        let display_bytes = ((u16::from(b[DISPLAY_BYTES_OFFSET]) << NIBBLE_SHIFT)
+            | u16::from(b[COMPOSITION_BUFFER_OFFSET] >> NIBBLE_SHIFT))
+            & DISPLAY_BYTES_MASK;
+        let composition_buffer_bytes = ((b[COMPOSITION_BUFFER_OFFSET] & NIBBLE_MASK)
+            << NIBBLE_SHIFT)
+            | (b[OBJECT_CACHE_OFFSET] >> NIBBLE_SHIFT);
+        let object_cache_bytes = ((b[OBJECT_CACHE_OFFSET] & NIBBLE_MASK) << NIBBLE_SHIFT)
+            | (b[NUM_PIXEL_DEPTHS_OFFSET] >> NIBBLE_SHIFT);
+        let number_pixel_depths = (b[NUM_PIXEL_DEPTHS_OFFSET] & NIBBLE_MASK) as usize;
         let mut depths = Vec::with_capacity(number_pixel_depths);
         let mut pos = GFX_FIXED;
         for _ in 0..number_pixel_depths {
-            need_in(b, pos + 2, "display_reply pixel_depth")?;
+            need_in(b, pos + PIXEL_DEPTH_ENTRY_LEN, "display_reply pixel_depth")?;
             depths.push(PixelDepth {
-                display_depth: (b[pos] >> 5) & 0x07,
-                pixels_per_byte: (b[pos] >> 2) & 0x07,
+                display_depth: (b[pos] >> DISPLAY_DEPTH_SHIFT) & DEPTH_FIELD_MASK,
+                pixels_per_byte: (b[pos] >> PIXELS_PER_BYTE_SHIFT) & DEPTH_FIELD_MASK,
                 region_overhead: b[pos + 1],
                 reserved: ReservedOnes::from_bits(u64::from(b[pos])),
             });
-            pos += 2;
+            pos += PIXEL_DEPTH_ENTRY_LEN;
         }
         super::reject_trailing_body(b, pos, "display_reply graphics")?;
         Ok(GraphicsCharacteristics {
@@ -396,58 +477,65 @@ impl DisplayReply {
     fn write_graphics(g: &GraphicsCharacteristics, buf: &mut [u8]) -> Result<usize> {
         super::fit_bits(
             u64::from(g.aspect_ratio_information),
-            4,
+            ASPECT_RATIO_BITS,
             "display_reply aspect_ratio_information",
         )?;
         super::fit_bits(
             u64::from(g.graphics_relation_to_video),
-            3,
+            GRAPHICS_RELATION_BITS,
             "display_reply graphics_relation_to_video",
         )?;
         super::fit_bits(
             u64::from(g.display_bytes),
-            12,
+            DISPLAY_BYTES_BITS,
             "display_reply display_bytes",
         )?;
         let n = super::fit_bits(
             g.depths.len() as u64,
-            4,
+            NUM_PIXEL_DEPTHS_BITS,
             "display_reply number_pixel_depths",
         )? as u8;
         for d in &g.depths {
             super::fit_bits(
                 u64::from(d.display_depth),
-                3,
+                DEPTH_FIELD_BITS,
                 "display_reply pixel_depth display_depth",
             )?;
             super::fit_bits(
                 u64::from(d.pixels_per_byte),
-                3,
+                DEPTH_FIELD_BITS,
                 "display_reply pixel_depth pixels_per_byte",
             )?;
         }
 
-        buf[0..2].copy_from_slice(&g.display_horizontal_size.to_be_bytes());
-        buf[2..4].copy_from_slice(&g.display_vertical_size.to_be_bytes());
-        buf[4] = (g.aspect_ratio_information << 4)
-            | (g.graphics_relation_to_video << 1)
+        buf[DISPLAY_HORIZONTAL_SIZE_OFFSET..DISPLAY_VERTICAL_SIZE_OFFSET]
+            .copy_from_slice(&g.display_horizontal_size.to_be_bytes());
+        buf[DISPLAY_VERTICAL_SIZE_OFFSET..GFX_FLAGS_OFFSET]
+            .copy_from_slice(&g.display_vertical_size.to_be_bytes());
+        buf[GFX_FLAGS_OFFSET] = (g.aspect_ratio_information << ASPECT_RATIO_SHIFT)
+            | (g.graphics_relation_to_video << GRAPHICS_RELATION_SHIFT)
             | u8::from(g.multiple_depths);
-        buf[5] = (g.display_bytes >> 4) as u8;
-        buf[6] = (((g.display_bytes & 0x0F) as u8) << 4) | (g.composition_buffer_bytes >> 4);
-        buf[7] = ((g.composition_buffer_bytes & 0x0F) << 4) | (g.object_cache_bytes >> 4);
-        buf[8] = ((g.object_cache_bytes & 0x0F) << 4) | n;
+        buf[DISPLAY_BYTES_OFFSET] = (g.display_bytes >> NIBBLE_SHIFT) as u8;
+        buf[COMPOSITION_BUFFER_OFFSET] = (((g.display_bytes & u16::from(NIBBLE_MASK)) as u8)
+            << NIBBLE_SHIFT)
+            | (g.composition_buffer_bytes >> NIBBLE_SHIFT);
+        buf[OBJECT_CACHE_OFFSET] = ((g.composition_buffer_bytes & NIBBLE_MASK) << NIBBLE_SHIFT)
+            | (g.object_cache_bytes >> NIBBLE_SHIFT);
+        buf[NUM_PIXEL_DEPTHS_OFFSET] = ((g.object_cache_bytes & NIBBLE_MASK) << NIBBLE_SHIFT) | n;
         let mut pos = GFX_FIXED;
         for d in &g.depths {
-            buf[pos] = (d.display_depth << 5) | (d.pixels_per_byte << 2) | d.reserved.get() as u8;
+            buf[pos] = (d.display_depth << DISPLAY_DEPTH_SHIFT)
+                | (d.pixels_per_byte << PIXELS_PER_BYTE_SHIFT)
+                | d.reserved.get() as u8;
             buf[pos + 1] = d.region_overhead;
-            pos += 2;
+            pos += PIXEL_DEPTH_ENTRY_LEN;
         }
         Ok(pos)
     }
 
     fn body_len(&self) -> usize {
         1 + match &self.body {
-            DisplayReplyBody::Graphics(g) => GFX_FIXED + g.depths.len() * 2,
+            DisplayReplyBody::Graphics(g) => GFX_FIXED + g.depths.len() * PIXEL_DEPTH_ENTRY_LEN,
             DisplayReplyBody::CharacterTables(t) => t.len(),
             DisplayReplyBody::MmiModeAck(_) => 1,
             DisplayReplyBody::None => 0,
@@ -762,8 +850,8 @@ impl SubtitleSegment<'_> {
 impl<'a> Parse<'a> for SubtitleSegment<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "subtitle_segment tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "subtitle_segment tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let (expected, more) = match t {
             tag::SUBTITLE_SEGMENT_MORE => (tag::SUBTITLE_SEGMENT_MORE, true),
             _ => (tag::SUBTITLE_SEGMENT_LAST, false),
@@ -972,12 +1060,12 @@ impl<'a> Parse<'a> for SceneEndMark {
         super::reject_trailing_body(body, 1, "scene_end_mark")?;
         Ok(Self {
             length_form,
-            decoder_continue_flag: (b & 0x80) != 0,
-            scene_reveal_flag: (b & 0x40) != 0,
-            send_scene_done: (b & 0x20) != 0,
+            decoder_continue_flag: (b & DECODER_CONTINUE_FLAG_MASK) != 0,
+            scene_reveal_flag: (b & SCENE_REVEAL_FLAG_MASK) != 0,
+            send_scene_done: (b & SEND_SCENE_DONE_MASK) != 0,
             // bit `[4]` reserved, scene_tag in `[3:0]`.
-            scene_tag: b & 0x0F,
-            reserved: ReservedOnes::from_bits(u64::from(b >> 4)),
+            scene_tag: b & SCENE_TAG_MASK,
+            reserved: ReservedOnes::from_bits(u64::from(b >> SCENE_FLAGS_RESERVED_SHIFT)),
         })
     }
 }
@@ -990,11 +1078,11 @@ impl Serialize for SceneEndMark {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = super::write_apdu_header(tag::SCENE_END_MARK, 1, self.length_form, buf)?;
         // decoder_continue(1) reveal(1) send_done(1) reserved(1) scene_tag(4).
-        buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
-            | (u8::from(self.scene_reveal_flag) << 6)
-            | (u8::from(self.send_scene_done) << 5)
-            | ((self.reserved.get() << 4) as u8)
-            | (self.scene_tag & 0x0F);
+        buf[pos] = (u8::from(self.decoder_continue_flag) << DECODER_CONTINUE_SHIFT)
+            | (u8::from(self.scene_reveal_flag) << SCENE_REVEAL_SHIFT)
+            | (u8::from(self.send_scene_done) << SEND_SCENE_DONE_SHIFT)
+            | ((self.reserved.get() << SCENE_FLAGS_RESERVED_SHIFT) as u8)
+            | (self.scene_tag & SCENE_TAG_MASK);
         pos += 1;
         Ok(pos)
     }
@@ -1028,7 +1116,7 @@ pub struct SceneDoneMessage {
     /// object re-serializes byte-for-byte; `0b11` (the all-ones fill) when
     /// hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<2>,
+    pub reserved: ReservedOnes<NARROW_RESERVED_FIELD_BITS>,
 }
 
 impl<'a> Parse<'a> for SceneDoneMessage {
@@ -1046,11 +1134,11 @@ impl<'a> Parse<'a> for SceneDoneMessage {
         super::reject_trailing_body(body, 1, "scene_done_message")?;
         Ok(Self {
             length_form,
-            decoder_continue_flag: (b & 0x80) != 0,
-            scene_reveal_flag: (b & 0x40) != 0,
+            decoder_continue_flag: (b & DECODER_CONTINUE_FLAG_MASK) != 0,
+            scene_reveal_flag: (b & SCENE_REVEAL_FLAG_MASK) != 0,
             // bits `[5:4]` reserved, scene_tag in `[3:0]`.
-            scene_tag: b & 0x0F,
-            reserved: ReservedOnes::from_bits(u64::from(b >> 4)),
+            scene_tag: b & SCENE_TAG_MASK,
+            reserved: ReservedOnes::from_bits(u64::from(b >> SCENE_FLAGS_RESERVED_SHIFT)),
         })
     }
 }
@@ -1063,10 +1151,10 @@ impl Serialize for SceneDoneMessage {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = super::write_apdu_header(tag::SCENE_DONE, 1, self.length_form, buf)?;
         // decoder_continue(1) reveal(1) reserved(2) scene_tag(4).
-        buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
-            | (u8::from(self.scene_reveal_flag) << 6)
-            | ((self.reserved.get() << 4) as u8)
-            | (self.scene_tag & 0x0F);
+        buf[pos] = (u8::from(self.decoder_continue_flag) << DECODER_CONTINUE_SHIFT)
+            | (u8::from(self.scene_reveal_flag) << SCENE_REVEAL_SHIFT)
+            | ((self.reserved.get() << SCENE_FLAGS_RESERVED_SHIFT) as u8)
+            | (self.scene_tag & SCENE_TAG_MASK);
         pos += 1;
         Ok(pos)
     }
@@ -1097,7 +1185,7 @@ pub struct SceneControl {
     /// object re-serializes byte-for-byte; `0b11` (the all-ones fill) when
     /// hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<2>,
+    pub reserved: ReservedOnes<NARROW_RESERVED_FIELD_BITS>,
 }
 
 impl<'a> Parse<'a> for SceneControl {
@@ -1115,10 +1203,10 @@ impl<'a> Parse<'a> for SceneControl {
         super::reject_trailing_body(body, 1, "scene_control")?;
         Ok(Self {
             length_form,
-            decoder_continue_flag: (b & 0x80) != 0,
-            scene_reveal_flag: (b & 0x40) != 0,
-            scene_tag: b & 0x0F,
-            reserved: ReservedOnes::from_bits(u64::from(b >> 4)),
+            decoder_continue_flag: (b & DECODER_CONTINUE_FLAG_MASK) != 0,
+            scene_reveal_flag: (b & SCENE_REVEAL_FLAG_MASK) != 0,
+            scene_tag: b & SCENE_TAG_MASK,
+            reserved: ReservedOnes::from_bits(u64::from(b >> SCENE_FLAGS_RESERVED_SHIFT)),
         })
     }
 }
@@ -1131,10 +1219,10 @@ impl Serialize for SceneControl {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = super::write_apdu_header(tag::SCENE_CONTROL, 1, self.length_form, buf)?;
         // decoder_continue(1) reveal(1) reserved(2) scene_tag(4).
-        buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
-            | (u8::from(self.scene_reveal_flag) << 6)
-            | ((self.reserved.get() << 4) as u8)
-            | (self.scene_tag & 0x0F);
+        buf[pos] = (u8::from(self.decoder_continue_flag) << DECODER_CONTINUE_SHIFT)
+            | (u8::from(self.scene_reveal_flag) << SCENE_REVEAL_SHIFT)
+            | ((self.reserved.get() << SCENE_FLAGS_RESERVED_SHIFT) as u8)
+            | (self.scene_tag & SCENE_TAG_MASK);
         pos += 1;
         Ok(pos)
     }
@@ -1181,8 +1269,8 @@ impl SubtitleDownload<'_> {
 impl<'a> Parse<'a> for SubtitleDownload<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "subtitle_download tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "subtitle_download tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let (expected, more) = match t {
             tag::SUBTITLE_DOWNLOAD_MORE => (tag::SUBTITLE_DOWNLOAD_MORE, true),
             _ => (tag::SUBTITLE_DOWNLOAD_LAST, false),
@@ -1327,7 +1415,7 @@ impl<'a> Parse<'a> for DownloadReply {
         Ok(Self {
             length_form,
             object_id: u16::from_be_bytes([body[0], body[1]]),
-            reply_id: DownloadReplyId::from_u8(body[2]),
+            reply_id: DownloadReplyId::from_u8(body[DOWNLOAD_REPLY_ID_OFFSET]),
         })
     }
 }
@@ -1344,8 +1432,9 @@ impl Serialize for DownloadReply {
             self.length_form,
             buf,
         )?;
-        buf[pos..pos + 2].copy_from_slice(&self.object_id.to_be_bytes());
-        buf[pos + 2] = self.reply_id.to_u8();
+        buf[pos + DOWNLOAD_OBJECT_ID_OFFSET..pos + DOWNLOAD_REPLY_ID_OFFSET]
+            .copy_from_slice(&self.object_id.to_be_bytes());
+        buf[pos + DOWNLOAD_REPLY_ID_OFFSET] = self.reply_id.to_u8();
         pos += DOWNLOAD_REPLY_BODY;
         Ok(pos)
     }

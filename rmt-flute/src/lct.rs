@@ -39,6 +39,35 @@ const RES_SHIFT: u16 = 2;
 /// Mask of the two `Res` bits once shifted down.
 const RES_MASK: u16 = 0x03;
 
+/// Byte length the `H` flag's half-word contributes to both TSI and TOI
+/// (RFC 5651 §5.1).
+const H_HALFWORD_LEN: usize = 2;
+/// Bounds of the CCI word count (`C + 1`, RFC 5651 §5.1).
+const CCI_WORDS_MIN: usize = 1;
+const CCI_WORDS_MAX: usize = 4;
+/// Bit widths of the first-word fields (RFC 5651 §5.1).
+const VERSION_BITS: u32 = 4;
+const PSI_BITS: u32 = 2;
+const RES_BITS: u32 = 2;
+const HDR_LEN_BITS: u32 = 8;
+/// Bit shifts of the first-word fields, most significant first.
+const VERSION_SHIFT: u32 = 12;
+const C_FLAG_SHIFT: u32 = 10;
+const PSI_SHIFT: u32 = 8;
+const S_FLAG_SHIFT: u32 = 7;
+const O_FLAG_SHIFT: u32 = 5;
+const H_FLAG_SHIFT: u32 = 4;
+/// Masks of the first-word fields.
+const VERSION_MASK: u16 = 0x0F;
+const C_FLAG_MASK: u16 = 0x03;
+const PSI_MASK: u16 = 0x03;
+const S_FLAG_MASK: u16 = 0x01;
+const O_FLAG_MASK: u16 = 0x03;
+const H_FLAG_MASK: u16 = 0x01;
+/// Byte offsets of `HDR_LEN` and the Codepoint (RFC 5651 §5.1).
+const HDR_LEN_OFFSET: usize = core::mem::size_of::<u16>();
+const CODEPOINT_OFFSET: usize = HDR_LEN_OFFSET + 1;
+
 /// A decoded LCT header (RFC 5651 §5.1).
 ///
 /// The flag-driven field widths are reconstructed from the typed fields on
@@ -84,7 +113,7 @@ fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8,
         }));
     }
     let words = cci / WORD;
-    if !(1..=4).contains(&words) {
+    if !(CCI_WORDS_MIN..=CCI_WORDS_MAX).contains(&words) {
         return Err(Error::InvalidField(broadcast_common::error::InvalidField {
             field: "CCI",
             reason: "CCI length must be 4, 8, 12 or 16 bytes (C in 0..=3)",
@@ -102,15 +131,15 @@ fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8,
             reason: "TSI and TOI must agree on the shared half-word (H) bit",
         }));
     }
-    if !tsi.is_multiple_of(2) || !toi.is_multiple_of(2) {
+    if !tsi.is_multiple_of(H_HALFWORD_LEN) || !toi.is_multiple_of(H_HALFWORD_LEN) {
         return Err(Error::InvalidField(broadcast_common::error::InvalidField {
             field: "TSI/TOI",
             reason: "TSI and TOI lengths must be a whole number of 16-bit half-words",
         }));
     }
     let h = u8::from(h_tsi);
-    let s_bytes = tsi - (2 * h as usize);
-    let o_bytes = toi - (2 * h as usize);
+    let s_bytes = tsi - (H_HALFWORD_LEN * h as usize);
+    let o_bytes = toi - (H_HALFWORD_LEN * h as usize);
     let s = (s_bytes / WORD) as u8;
     let o = (o_bytes / WORD) as u8;
     if s > 1 {
@@ -131,7 +160,7 @@ fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8,
     // reparse read the surplus as a header-extension chain. That breaks the
     // workspace's byte-exact round-trip invariant, and it is reachable by a
     // well-behaved sender: wide TOIs are legitimate in FLUTE.
-    if o > 3 {
+    if o > O_FLAG_MASK as u8 {
         return Err(Error::InvalidField(broadcast_common::error::InvalidField {
             field: "O",
             reason: "TOI 32-bit-word count (O) must be 0..=3 (2-bit field)",
@@ -147,11 +176,11 @@ impl<'a> LctHeader<'a> {
     }
     /// TSI length in bytes = `4*S + 2*H`.
     fn tsi_len(s: u8, h: u8) -> usize {
-        WORD * s as usize + 2 * h as usize
+        WORD * s as usize + H_HALFWORD_LEN * h as usize
     }
     /// TOI length in bytes = `4*O + 2*H`.
     fn toi_len(o: u8, h: u8) -> usize {
-        WORD * o as usize + 2 * h as usize
+        WORD * o as usize + H_HALFWORD_LEN * h as usize
     }
 
     /// The `C` flag value (CCI words − 1), derived from the CCI length.
@@ -198,24 +227,26 @@ impl<'a> LctHeader<'a> {
     pub fn parse(data: &'a [u8]) -> Result<(Self, usize)> {
         need_in(data, FIXED_HEADER_LEN, "LCT fixed header")?;
         // First 16 bits: V(4) C(2) PSI(2) S(1) O(2) H(1) Res(2) A(1) B(1).
-        let w = u16::from_be_bytes([data[0], data[1]]);
-        let version = (w >> 12) as u8 & 0x0F;
+        let mut first = [0_u8; core::mem::size_of::<u16>()];
+        first.copy_from_slice(&data[..HDR_LEN_OFFSET]);
+        let w = u16::from_be_bytes(first);
+        let version = (w >> VERSION_SHIFT) as u8 & VERSION_MASK as u8;
         if version != LCT_VERSION {
             return Err(Error::UnsupportedVersion(UnsupportedVersion {
                 what: "LCT",
                 found: version,
             }));
         }
-        let c = (w >> 10) as u8 & 0x03;
-        let psi = (w >> 8) as u8 & 0x03;
-        let s = (w >> 7) as u8 & 0x01;
-        let o = (w >> 5) as u8 & 0x03;
-        let h = (w >> 4) as u8 & 0x01;
+        let c = (w >> C_FLAG_SHIFT) as u8 & C_FLAG_MASK as u8;
+        let psi = (w >> PSI_SHIFT) as u8 & PSI_MASK as u8;
+        let s = (w >> S_FLAG_SHIFT) as u8 & S_FLAG_MASK as u8;
+        let o = (w >> O_FLAG_SHIFT) as u8 & O_FLAG_MASK as u8;
+        let h = (w >> H_FLAG_SHIFT) as u8 & H_FLAG_MASK as u8;
         let reserved = ((w >> RES_SHIFT) & RES_MASK) as u8;
         let close_session = (w & FLAG_A) != 0;
         let close_object = (w & FLAG_B) != 0;
-        let hdr_len = data[2];
-        let codepoint = data[3];
+        let hdr_len = data[HDR_LEN_OFFSET];
+        let codepoint = data[CODEPOINT_OFFSET];
 
         let total = hdr_len as usize * WORD;
         if total < FIXED_HEADER_LEN {
@@ -269,15 +300,15 @@ impl<'a> LctHeader<'a> {
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
         need_out(out, total)?;
-        broadcast_common::len::fit_bits(self.version as u64, 4, "version")?;
+        broadcast_common::len::fit_bits(self.version as u64, VERSION_BITS, "version")?;
         if self.version != LCT_VERSION {
             return Err(Error::UnsupportedVersion(UnsupportedVersion {
                 what: "LCT",
                 found: self.version,
             }));
         }
-        broadcast_common::len::fit_bits(self.psi as u64, 2, "PSI")?;
-        broadcast_common::len::fit_bits(self.reserved as u64, 2, "Res")?;
+        broadcast_common::len::fit_bits(self.psi as u64, PSI_BITS, "PSI")?;
+        broadcast_common::len::fit_bits(self.reserved as u64, RES_BITS, "Res")?;
         // Validate the flag-derived widths (also yields C/S/O/H).
         let (c, s, o, h) = flags_from_lengths(self.cci.len(), self.tsi.len(), self.toi.len())?;
 
@@ -288,17 +319,17 @@ impl<'a> LctHeader<'a> {
                 reason: "total LCT header length is not a multiple of 4 bytes",
             }));
         }
-        broadcast_common::len::fit_bits(words as u64, 8, "HDR_LEN")?;
+        broadcast_common::len::fit_bits(words as u64, HDR_LEN_BITS, "HDR_LEN")?;
 
         // Pack the first 16-bit word MSB-first:
         // V(4) C(2) PSI(2) S(1) O(2) H(1) Res(2) A(1) B(1).
         let mut w: u16 = 0;
-        w |= (self.version as u16 & 0x0F) << 12;
-        w |= (c as u16 & 0x03) << 10;
-        w |= (self.psi as u16 & 0x03) << 8;
-        w |= (s as u16 & 0x01) << 7;
-        w |= (o as u16 & 0x03) << 5;
-        w |= (h as u16 & 0x01) << 4;
+        w |= (self.version as u16 & VERSION_MASK) << VERSION_SHIFT;
+        w |= (c as u16 & C_FLAG_MASK) << C_FLAG_SHIFT;
+        w |= (self.psi as u16 & PSI_MASK) << PSI_SHIFT;
+        w |= (s as u16 & S_FLAG_MASK) << S_FLAG_SHIFT;
+        w |= (o as u16 & O_FLAG_MASK) << O_FLAG_SHIFT;
+        w |= (h as u16 & H_FLAG_MASK) << H_FLAG_SHIFT;
         w |= (self.reserved as u16 & RES_MASK) << RES_SHIFT;
         if self.close_session {
             w |= FLAG_A;
@@ -306,9 +337,9 @@ impl<'a> LctHeader<'a> {
         if self.close_object {
             w |= FLAG_B;
         }
-        out[0..2].copy_from_slice(&w.to_be_bytes());
-        out[2] = words as u8;
-        out[3] = self.codepoint;
+        out[..HDR_LEN_OFFSET].copy_from_slice(&w.to_be_bytes());
+        out[HDR_LEN_OFFSET] = words as u8;
+        out[CODEPOINT_OFFSET] = self.codepoint;
 
         let mut off = FIXED_HEADER_LEN;
         out[off..off + self.cci.len()].copy_from_slice(self.cci);

@@ -97,8 +97,28 @@ pub struct UriMessage {
 // EMI case selectors.
 const EMI_COPY_NOT_RESTRICTED: u8 = 0b00;
 const EMI_COPY_ONCE: u8 = 0b01;
-const EMI_ONE_GEN_COPY: u8 = 0b10;
+const EMI_SINGLE_GENERATION_COPY: u8 = 0b10;
 const EMI_NO_MORE_COPIES: u8 = 0b11;
+
+/// Bits in the `copy_control_info` field (Table 91).
+const COPY_CONTROL_BITS: u32 = 56;
+
+/// Bit positions and widths of the `copy_control_info` fields, MSB-first from
+/// the top of the 56-bit field.
+const APS_POSITION: u32 = 0;
+const APS_BITS: u32 = 2;
+const EMI_POSITION: u32 = 2;
+const EMI_BITS: u32 = 2;
+const ICT_POSITION: u32 = 4;
+const ICT_BITS: u32 = 1;
+const RCT_POSITION: u32 = 5;
+const RCT_BITS: u32 = 1;
+const DOT_POSITION: u32 = 7;
+const DOT_BITS: u32 = 1;
+const RL_POSITION: u32 = 8;
+const RL_BITS: u32 = 8;
+const TRICK_MODE_POSITION: u32 = 16;
+const TRICK_MODE_BITS: u32 = 1;
 
 impl<'a> Parse<'a> for UriMessage {
     type Error = Error;
@@ -107,29 +127,29 @@ impl<'a> Parse<'a> for UriMessage {
         let protocol_version = bytes[0];
         let mut acc: u64 = 0;
         for &b in &bytes[1..URI_MESSAGE_LEN] {
-            acc = (acc << 8) | b as u64;
+            acc = (acc << u8::BITS) | u64::from(b);
         }
         // acc holds 56 bits. Bit 55 is the first field bit (aps MSB).
         let take = |hi_from_top: u32, width: u32| -> u64 {
-            let shift = 56 - hi_from_top - width;
+            let shift = COPY_CONTROL_BITS - hi_from_top - width;
             (acc >> shift) & ((1u64 << width) - 1)
         };
-        let aps = take(0, 2) as u8;
-        let emi = take(2, 2) as u8;
-        let ict = take(4, 1) != 0;
+        let aps = take(APS_POSITION, APS_BITS) as u8;
+        let emi = take(EMI_POSITION, EMI_BITS) as u8;
+        let ict = take(ICT_POSITION, ICT_BITS) != 0;
         // bit position 5: rct (emi==00) else reserved.
-        let rct = take(5, 1) != 0;
+        let rct = take(RCT_POSITION, RCT_BITS) != 0;
         // bit position 6: reserved.
         // bits 7..16 (9 bits): dot(1)+rl(8) when emi==11 else reserved.
-        let dot = take(7, 1) != 0;
-        let rl = take(8, 8) as u8;
+        let dot = take(DOT_POSITION, DOT_BITS) != 0;
+        let rl = take(RL_POSITION, RL_BITS) as u8;
         // bit position 16: trick_mode when emi==10 else reserved.
-        let trick_mode = take(16, 1) != 0;
+        let trick_mode = take(TRICK_MODE_POSITION, TRICK_MODE_BITS) != 0;
         // bits 17..56 reserved (39).
         let emi_data = match emi {
             EMI_COPY_NOT_RESTRICTED => EmiData::CopyingNotRestricted { rct },
             EMI_COPY_ONCE => EmiData::CopyOnce,
-            EMI_ONE_GEN_COPY => EmiData::OneGenerationCopy { trick_mode },
+            EMI_SINGLE_GENERATION_COPY => EmiData::OneGenerationCopy { trick_mode },
             // `emi` is a 2-bit field, so the one value left after the three arms
             // above is `EMI_NO_MORE_COPIES` (0b11): no unreachable arm needed.
             _ => {
@@ -155,25 +175,27 @@ impl Serialize for UriMessage {
         need_out(buf, URI_MESSAGE_LEN)?;
         let mut acc: u64 = 0;
         let mut put = |value: u64, hi_from_top: u32, width: u32| {
-            let shift = 56 - hi_from_top - width;
+            let shift = COPY_CONTROL_BITS - hi_from_top - width;
             acc |= (value & ((1u64 << width) - 1)) << shift;
         };
-        put(self.aps as u64, 0, 2);
-        put(self.emi_data.emi() as u64, 2, 2);
-        put(u64::from(self.ict), 4, 1);
+        put(u64::from(self.aps), APS_POSITION, APS_BITS);
+        put(u64::from(self.emi_data.emi()), EMI_POSITION, EMI_BITS);
+        put(u64::from(self.ict), ICT_POSITION, ICT_BITS);
         match self.emi_data {
-            EmiData::CopyingNotRestricted { rct } => put(u64::from(rct), 5, 1),
+            EmiData::CopyingNotRestricted { rct } => put(u64::from(rct), RCT_POSITION, RCT_BITS),
             EmiData::CopyOnce => {}
-            EmiData::OneGenerationCopy { trick_mode } => put(u64::from(trick_mode), 16, 1),
+            EmiData::OneGenerationCopy { trick_mode } => {
+                put(u64::from(trick_mode), TRICK_MODE_POSITION, TRICK_MODE_BITS);
+            }
             EmiData::NoMoreCopies { dot, rl } => {
-                put(u64::from(dot), 7, 1);
-                put(rl as u64, 8, 8);
+                put(u64::from(dot), DOT_POSITION, DOT_BITS);
+                put(u64::from(rl), RL_POSITION, RL_BITS);
             }
         }
         buf[0] = self.protocol_version;
         // acc holds 56 bits; emit big-endian into bytes 1..8.
         for (i, slot) in buf[1..URI_MESSAGE_LEN].iter_mut().enumerate() {
-            let shift = 56 - 8 * (i as u32 + 1);
+            let shift = COPY_CONTROL_BITS - u8::BITS * (i as u32 + 1);
             *slot = (acc >> shift) as u8;
         }
         Ok(URI_MESSAGE_LEN)

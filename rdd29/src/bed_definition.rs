@@ -16,11 +16,23 @@ use broadcast_common::len::need_out;
 /// unbounded-allocation fix.
 const BITS_PER_CHANNEL_DESCRIPTION: u64 = 4 + 8 + 3;
 
+/// Plex(8) container width for `MetaID` and `AudioDataID`.
+const PLEX_BASE_WIDTH: u32 = 8;
+/// Plex(4) container width for `ChannelCount` and `ChannelID`.
+const CHANNEL_PLEX_WIDTH: u32 = 4;
+/// Width of the 3-bit per-channel reserved field.
+const RESERVED_PER_CHANNEL_BITS: u32 = 3;
+/// Width of the 10-bit trailer-1 reserved field.
+const RESERVED_TRAILER_1_BITS: u32 = 10;
+/// Width of each 8-bit trailer reserved field (`trailer2`/`trailer3`).
+const RESERVED_TRAILER_OCTET_BITS: u32 = 8;
+/// Bits per byte, for bit<->byte length conversions.
 use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::plex::{plex_bits, read_plex, write_plex};
+use crate::util::BITS_PER_BYTE;
 use crate::util::{
     expect_fully_consumed, read_align_bits, read_reserved, write_align_bits, write_reserved,
 };
@@ -190,14 +202,14 @@ impl<'a> Parse<'a> for BedDefinition1 {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut r = BitReader::new(bytes);
-        let meta_id = read_plex(&mut r, 8, "BedDefinition1.MetaID")? as u32;
+        let meta_id = read_plex(&mut r, PLEX_BASE_WIDTH, "BedDefinition1.MetaID")? as u32;
         read_reserved(
             &mut r,
             1,
             RESERVED_PRE_CHANNEL_COUNT,
             "BedDefinition1.Reserved(pre-ChannelCount)",
         )?;
-        let channel_count = read_plex(&mut r, 4, "BedDefinition1.ChannelCount")?;
+        let channel_count = read_plex(&mut r, CHANNEL_PLEX_WIDTH, "BedDefinition1.ChannelCount")?;
         // `channel_count` is a Plex field read from the input and is therefore
         // unbounded — see the same hazard in `atmos_frame.rs`. Each channel
         // consumes at least `BITS_PER_CHANNEL_DESCRIPTION` bits, so that
@@ -218,12 +230,16 @@ impl<'a> Parse<'a> for BedDefinition1 {
         }
         let mut channels = Vec::with_capacity(channel_count as usize);
         for _ in 0..channel_count {
-            let channel_id =
-                ChannelId::from_bits(read_plex(&mut r, 4, "BedDefinition1.ChannelID")?);
-            let audio_data_id = read_plex(&mut r, 8, "BedDefinition1.AudioDataID")? as u32;
+            let channel_id = ChannelId::from_bits(read_plex(
+                &mut r,
+                CHANNEL_PLEX_WIDTH,
+                "BedDefinition1.ChannelID",
+            )?);
+            let audio_data_id =
+                read_plex(&mut r, PLEX_BASE_WIDTH, "BedDefinition1.AudioDataID")? as u32;
             read_reserved(
                 &mut r,
-                3,
+                RESERVED_PER_CHANNEL_BITS,
                 RESERVED_PER_CHANNEL,
                 "BedDefinition1.Reserved(per-channel)",
             )?;
@@ -234,20 +250,20 @@ impl<'a> Parse<'a> for BedDefinition1 {
         }
         read_reserved(
             &mut r,
-            10,
+            RESERVED_TRAILER_1_BITS,
             RESERVED_TRAILER_1,
             "BedDefinition1.Reserved(trailer1)",
         )?;
         let align_bits = read_align_bits(&mut r, "BedDefinition1.AlignBits")?;
         read_reserved(
             &mut r,
-            8,
+            RESERVED_TRAILER_OCTET_BITS,
             RESERVED_TRAILER_2,
             "BedDefinition1.Reserved(trailer2)",
         )?;
         read_reserved(
             &mut r,
-            8,
+            RESERVED_TRAILER_OCTET_BITS,
             RESERVED_TRAILER_3,
             "BedDefinition1.Reserved(trailer3)",
         )?;
@@ -264,15 +280,15 @@ impl Serialize for BedDefinition1 {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut bits = plex_bits(u64::from(self.meta_id), 8) + 1;
-        bits += plex_bits(self.channels.len() as u64, 4);
+        let mut bits = plex_bits(u64::from(self.meta_id), PLEX_BASE_WIDTH) + 1;
+        bits += plex_bits(self.channels.len() as u64, CHANNEL_PLEX_WIDTH);
         for ch in &self.channels {
-            bits += plex_bits(ch.channel_id.to_bits(), 4);
-            bits += plex_bits(u64::from(ch.audio_data_id), 8);
-            bits += 3;
+            bits += plex_bits(ch.channel_id.to_bits(), CHANNEL_PLEX_WIDTH);
+            bits += plex_bits(u64::from(ch.audio_data_id), PLEX_BASE_WIDTH);
+            bits += RESERVED_PER_CHANNEL_BITS;
         }
-        bits += 10;
-        let pre_trailer_bytes = (bits as usize).div_ceil(8);
+        bits += RESERVED_TRAILER_1_BITS;
+        let pre_trailer_bytes = (bits as usize).div_ceil(BITS_PER_BYTE);
         pre_trailer_bytes + 1 + 1
     }
 
@@ -280,7 +296,12 @@ impl Serialize for BedDefinition1 {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut w = BitWriter::new(&mut buf[..need]);
-        write_plex(&mut w, u64::from(self.meta_id), 8, "BedDefinition1.MetaID")?;
+        write_plex(
+            &mut w,
+            u64::from(self.meta_id),
+            PLEX_BASE_WIDTH,
+            "BedDefinition1.MetaID",
+        )?;
         write_reserved(
             &mut w,
             1,
@@ -290,45 +311,45 @@ impl Serialize for BedDefinition1 {
         write_plex(
             &mut w,
             self.channels.len() as u64,
-            4,
+            CHANNEL_PLEX_WIDTH,
             "BedDefinition1.ChannelCount",
         )?;
         for ch in &self.channels {
             write_plex(
                 &mut w,
                 ch.channel_id.to_bits(),
-                4,
+                CHANNEL_PLEX_WIDTH,
                 "BedDefinition1.ChannelID",
             )?;
             write_plex(
                 &mut w,
                 u64::from(ch.audio_data_id),
-                8,
+                PLEX_BASE_WIDTH,
                 "BedDefinition1.AudioDataID",
             )?;
             write_reserved(
                 &mut w,
-                3,
+                RESERVED_PER_CHANNEL_BITS,
                 RESERVED_PER_CHANNEL,
                 "BedDefinition1.Reserved(per-channel)",
             )?;
         }
         write_reserved(
             &mut w,
-            10,
+            RESERVED_TRAILER_1_BITS,
             RESERVED_TRAILER_1,
             "BedDefinition1.Reserved(trailer1)",
         )?;
         write_align_bits(&mut w, self.align_bits, "BedDefinition1.AlignBits")?;
         write_reserved(
             &mut w,
-            8,
+            RESERVED_TRAILER_OCTET_BITS,
             RESERVED_TRAILER_2,
             "BedDefinition1.Reserved(trailer2)",
         )?;
         write_reserved(
             &mut w,
-            8,
+            RESERVED_TRAILER_OCTET_BITS,
             RESERVED_TRAILER_3,
             "BedDefinition1.Reserved(trailer3)",
         )?;

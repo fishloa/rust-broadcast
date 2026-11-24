@@ -15,6 +15,19 @@ pub mod stuffing;
 
 use crate::error::Error;
 
+/// Bytes of the generic subtitling_segment header (EN 300 743 §7.2, Table 2).
+pub(crate) const HEADER_LEN: usize = 6;
+/// Offset of `segment_type` within a segment header.
+pub(crate) const SEGMENT_TYPE_OFFSET: usize = 1;
+/// Offset of `page_id` within a segment header.
+pub(crate) const PAGE_ID_OFFSET: usize = 2;
+/// Bytes of `page_id`.
+pub(crate) const PAGE_ID_LEN: usize = 2;
+/// Offset of `segment_length` within a segment header.
+pub(crate) const SEGMENT_LENGTH_OFFSET: usize = 4;
+/// Bytes of `segment_length`.
+pub(crate) const SEGMENT_LENGTH_LEN: usize = 2;
+
 /// Range-check a segment body length against the generic segment header's
 /// 16-bit `segment_length` field before it is narrowed and written, so a
 /// body of 64 KiB or more is rejected instead of silently wrapped (see

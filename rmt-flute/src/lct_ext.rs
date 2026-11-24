@@ -83,6 +83,15 @@ pub const USE_SLC: u16 = 0x1000;
 const USE_PI_SPECIFIC_MASK: u16 = 0x00FF;
 /// Mask for the reserved-by-LCT bits in the Use field (bits 8..=11).
 const USE_RESERVED_MASK: u16 = 0x0F00;
+/// Byte length of the EXT_TIME Use field (RFC 5651 §5.2.2).
+const USE_FIELD_LEN: usize = 2;
+
+/// Read the big-endian `u32` at `off`.
+fn read_u32_at(content: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; core::mem::size_of::<u32>()];
+    raw.copy_from_slice(&content[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(raw)
+}
 
 /// A decoded EXT_TIME header extension (RFC 5651 §5.2.2, HET = 2).
 ///
@@ -159,7 +168,7 @@ impl ExtTime {
     /// is [`HET_EXT_TIME`] (the content is everything after HET+HEL: the 2-byte
     /// Use field followed by the time values).
     pub fn parse(content: &[u8]) -> Result<Self> {
-        need_in(content, 2, "EXT_TIME Use field")?;
+        need_in(content, USE_FIELD_LEN, "EXT_TIME Use field")?;
         let use_field = u16::from_be_bytes([content[0], content[1]]);
         let pi_specific = (use_field & USE_PI_SPECIFIC_MASK) as u8;
         // Reserved-by-LCT bits (Use & USE_RESERVED_MASK): RFC 5651 makes
@@ -174,18 +183,13 @@ impl ExtTime {
             }));
         }
 
-        let mut off = 2;
+        let mut off = USE_FIELD_LEN;
         let mut take = |present: bool| -> Result<Option<u32>> {
             if !present {
                 return Ok(None);
             }
             need_in(content, off + WORD, "EXT_TIME time value")?;
-            let v = u32::from_be_bytes([
-                content[off],
-                content[off + 1],
-                content[off + 2],
-                content[off + 3],
-            ]);
+            let v = read_u32_at(content, off);
             off += WORD;
             Ok(Some(v))
         };

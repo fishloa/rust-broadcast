@@ -14,13 +14,21 @@ pub const fn has_odd_parity(byte: u8) -> bool {
     byte.count_ones() & 1 == 1
 }
 
+/// Mask of the 7-bit data value and the parity bit itself.
+const DATA_MASK: u8 = 0x7F;
+const PARITY_BIT: u8 = 0x80;
+
 /// Protect a 7-bit data value with odd parity: only the low 7 bits of `data7`
 /// are used, and bit 8 (`0x80`) is set exactly when needed to make the total
 /// number of set bits odd.
 #[must_use]
 pub const fn set_odd_parity(data7: u8) -> u8 {
-    let d = data7 & 0x7F;
-    if d.count_ones() & 1 == 0 { d | 0x80 } else { d }
+    let d = data7 & DATA_MASK;
+    if d.count_ones() & 1 == 0 {
+        d | PARITY_BIT
+    } else {
+        d
+    }
 }
 
 /// Check and strip the parity bit: the 7-bit data value if `byte` has odd

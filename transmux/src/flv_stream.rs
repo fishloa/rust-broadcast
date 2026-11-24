@@ -123,9 +123,32 @@ struct PendingSample {
     timing: SampleTiming,
 }
 
-/// One tick: the span a track's only sample is flushed with, the smallest span
-/// a sample can declare.
-const ONE_TICK: NonZeroU32 = NonZeroU32::MIN;
+/// The smallest span a sample can declare, used for a track's only sample.
+const MIN_SAMPLE_SPAN: NonZeroU32 = NonZeroU32::MIN;
+
+/// Offsets of the `F`, `L`, `V` signature bytes in the FLV file header
+/// (FLV §E.4.1).
+const SIGNATURE_F_OFFSET: usize = 0;
+const SIGNATURE_L_OFFSET: usize = 1;
+const SIGNATURE_V_OFFSET: usize = 2;
+/// `FrameType` occupies the high four bits of the first `Videodata` byte.
+const FRAME_TYPE_SHIFT: u32 = 4;
+/// `CodecID` occupies the low four bits of the first `Videodata` byte.
+const CODEC_ID_MASK: u8 = 0x0F;
+/// `SoundFormat` occupies the high four bits of the first `Audiodata` byte.
+const SOUND_FORMAT_SHIFT: u32 = 4;
+/// Byte offset of `AVCPacketType` in `Videodata`.
+const AVC_PACKET_TYPE_OFFSET: usize = 1;
+/// Byte offset of `CompositionTime` in `Videodata`.
+const COMPOSITION_TIME_OFFSET: usize = 2;
+/// `CompositionTime` is a signed 24-bit value.
+const COMPOSITION_TIME_LEN: usize = 3;
+/// Byte offset of the first coded byte after the AVC packet header.
+const AVC_PACKET_DATA_OFFSET: usize = COMPOSITION_TIME_OFFSET + COMPOSITION_TIME_LEN;
+/// Byte offset of `AACPacketType` in `Audiodata`.
+const AAC_PACKET_TYPE_OFFSET: usize = 1;
+/// Byte offset of the first coded byte after the AAC packet header.
+const AAC_PACKET_DATA_OFFSET: usize = AAC_PACKET_TYPE_OFFSET + 1;
 
 /// Unrolls the 32-bit millisecond FLV tag timestamp (`Timestamp` +
 /// `TimestampExtended`, FLV spec §E.4.1) into a monotonic 64-bit clock: a
@@ -183,7 +206,7 @@ impl Default for TrackState {
         Self {
             track_id: None,
             pending: None,
-            last_duration: ONE_TICK,
+            last_duration: MIN_SAMPLE_SPAN,
             config_bytes: Vec::new(),
             nal_length_size: None,
         }
@@ -386,9 +409,9 @@ impl StreamingFlvDemux {
                         Ok(declared) => declared,
                         Err(_) => {
                             return Err(FlvError::BadSignature([
-                                self.pending[0],
-                                self.pending[1],
-                                self.pending[2],
+                                self.pending[SIGNATURE_F_OFFSET],
+                                self.pending[SIGNATURE_L_OFFSET],
+                                self.pending[SIGNATURE_V_OFFSET],
                             ]));
                         }
                     };
@@ -415,9 +438,9 @@ impl StreamingFlvDemux {
                     Err(err @ RtmpError::FieldOverflow(_)) => return Err(FlvError::Header(err)),
                     Err(_) => {
                         return Err(FlvError::BadSignature([
-                            self.pending[0],
-                            self.pending[1],
-                            self.pending[2],
+                            self.pending[SIGNATURE_F_OFFSET],
+                            self.pending[SIGNATURE_L_OFFSET],
+                            self.pending[SIGNATURE_V_OFFSET],
                         ]));
                     }
                 };
@@ -552,21 +575,21 @@ impl StreamingFlvDemux {
         body: &[u8],
         events: &mut VecDeque<DemuxEvent>,
     ) -> Result<(), FlvError> {
-        if body.len() < 2 {
+        if body.len() < AVC_PACKET_TYPE_OFFSET + 1 {
             return Ok(());
         }
-        let frame_type = body[0] >> 4;
-        let codec_id = body[0] & 0x0F;
+        let frame_type = body[0] >> FRAME_TYPE_SHIFT;
+        let codec_id = body[0] & CODEC_ID_MASK;
         if codec_id != CODEC_ID_AVC {
             return Ok(()); // non-AVC video is out of scope (mirrors FlvDemux)
         }
-        let avc_packet_type_byte = body[1];
+        let avc_packet_type_byte = body[AVC_PACKET_TYPE_OFFSET];
         // AVCVIDEOPACKET: AVCPacketType(1) + CompositionTime(SI24=3) + Data.
-        if body.len() < 5 {
+        if body.len() < AVC_PACKET_DATA_OFFSET {
             return Ok(());
         }
-        let composition_time = read_si24(&body[2..5]);
-        let data = &body[5..];
+        let composition_time = read_si24(&body[COMPOSITION_TIME_OFFSET..AVC_PACKET_DATA_OFFSET]);
+        let data = &body[AVC_PACKET_DATA_OFFSET..];
         match avc_packet_type_byte {
             avc_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
                 let mut record = AVCDecoderConfigurationRecord::parse(data)?;
@@ -675,16 +698,16 @@ impl StreamingFlvDemux {
         if body.is_empty() {
             return Ok(());
         }
-        let sound_format = body[0] >> 4;
+        let sound_format = body[0] >> SOUND_FORMAT_SHIFT;
         if sound_format != crate::flv::SOUND_FORMAT_AAC {
             return Ok(()); // non-AAC audio is out of scope (mirrors FlvDemux)
         }
         // AACAUDIODATA: AACPacketType(1) + Data.
-        if body.len() < 2 {
+        if body.len() < AAC_PACKET_DATA_OFFSET {
             return Ok(());
         }
-        let aac_pkt_type = body[1];
-        let data = &body[2..];
+        let aac_pkt_type = body[AAC_PACKET_TYPE_OFFSET];
+        let data = &body[AAC_PACKET_DATA_OFFSET..];
         match aac_pkt_type {
             aac_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
                 let asc = AudioSpecificConfig::parse(data)?;

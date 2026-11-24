@@ -34,8 +34,16 @@ pub struct Tune {
     pub service_id: u16,
 }
 
+/// Bytes of one identifier field in `tune()`.
+const TUNE_ID_LEN: usize = core::mem::size_of::<u16>();
 // network_id(2) + original_network_id(2) + transport_stream_id(2) + service_id(2).
-const TUNE_BODY: usize = 8;
+const TUNE_BODY: usize = 4 * TUNE_ID_LEN;
+
+/// Offsets of the `tune()` identifier fields.
+const NETWORK_ID_OFFSET: usize = 0;
+const ORIGINAL_NETWORK_ID_OFFSET: usize = NETWORK_ID_OFFSET + TUNE_ID_LEN;
+const TRANSPORT_STREAM_ID_OFFSET: usize = ORIGINAL_NETWORK_ID_OFFSET + TUNE_ID_LEN;
+const SERVICE_ID_OFFSET: usize = TRANSPORT_STREAM_ID_OFFSET + TUNE_ID_LEN;
 
 impl<'a> Parse<'a> for Tune {
     type Error = Error;
@@ -45,10 +53,16 @@ impl<'a> Parse<'a> for Tune {
         super::reject_trailing_body(body, TUNE_BODY, "tune")?;
         Ok(Self {
             length_form,
-            network_id: u16::from_be_bytes([body[0], body[1]]),
-            original_network_id: u16::from_be_bytes([body[2], body[3]]),
-            transport_stream_id: u16::from_be_bytes([body[4], body[5]]),
-            service_id: u16::from_be_bytes([body[6], body[7]]),
+            network_id: u16::from_be_bytes([body[NETWORK_ID_OFFSET], body[NETWORK_ID_OFFSET + 1]]),
+            original_network_id: u16::from_be_bytes([
+                body[ORIGINAL_NETWORK_ID_OFFSET],
+                body[ORIGINAL_NETWORK_ID_OFFSET + 1],
+            ]),
+            transport_stream_id: u16::from_be_bytes([
+                body[TRANSPORT_STREAM_ID_OFFSET],
+                body[TRANSPORT_STREAM_ID_OFFSET + 1],
+            ]),
+            service_id: u16::from_be_bytes([body[SERVICE_ID_OFFSET], body[SERVICE_ID_OFFSET + 1]]),
         })
     }
 }
@@ -60,10 +74,14 @@ impl Serialize for Tune {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = super::write_apdu_header(tag::TUNE, TUNE_BODY, self.length_form, buf)?;
-        buf[pos..pos + 2].copy_from_slice(&self.network_id.to_be_bytes());
-        buf[pos + 2..pos + 4].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[pos + 4..pos + 6].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[pos + 6..pos + 8].copy_from_slice(&self.service_id.to_be_bytes());
+        buf[pos + NETWORK_ID_OFFSET..pos + ORIGINAL_NETWORK_ID_OFFSET]
+            .copy_from_slice(&self.network_id.to_be_bytes());
+        buf[pos + ORIGINAL_NETWORK_ID_OFFSET..pos + TRANSPORT_STREAM_ID_OFFSET]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
+        buf[pos + TRANSPORT_STREAM_ID_OFFSET..pos + SERVICE_ID_OFFSET]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        buf[pos + SERVICE_ID_OFFSET..pos + TUNE_BODY]
+            .copy_from_slice(&self.service_id.to_be_bytes());
         pos += TUNE_BODY;
         Ok(pos)
     }
@@ -95,15 +113,31 @@ pub struct Replace {
     /// preserved so the object re-serializes byte-for-byte; `0b111` (the
     /// all-ones fill) when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub replaced_reserved: ReservedOnes<3>,
+    pub replaced_reserved: ReservedOnes<REPLACE_PID_RESERVED_BITS>,
     /// The 3-bit `reserved` field in front of `replacement_PID` as received
     /// (see [`Replace::replaced_reserved`]).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub replacement_reserved: ReservedOnes<3>,
+    pub replacement_reserved: ReservedOnes<REPLACE_PID_RESERVED_BITS>,
 }
 
 // replacement_ref(1) + reserved/replaced_PID(2) + reserved/replacement_PID(2).
 const REPLACE_BODY: usize = 5;
+
+/// Reserved bits in front of a PID in `replace()`.
+pub const REPLACE_PID_RESERVED_BITS: u32 = 3;
+/// Shift selecting the reserved bits in front of a PID.
+const REPLACE_PID_RESERVED_SHIFT: u32 = 5;
+/// Mask of a PID's high bits.
+const PID_HIGH_MASK: u8 = 0x1F;
+/// Shift placing a PID's high bits.
+const PID_HIGH_SHIFT: u32 = 8;
+
+/// Offsets within a `replace()` body.
+const REPLACEMENT_REF_OFFSET: usize = 0;
+const REPLACED_PID_HIGH_OFFSET: usize = 1;
+const REPLACED_PID_LOW_OFFSET: usize = 2;
+const REPLACEMENT_PID_HIGH_OFFSET: usize = 3;
+const REPLACEMENT_PID_LOW_OFFSET: usize = 4;
 
 impl<'a> Parse<'a> for Replace {
     type Error = Error;
@@ -111,17 +145,26 @@ impl<'a> Parse<'a> for Replace {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::REPLACE, "replace")?;
         need_in(body, REPLACE_BODY, "replace")?;
         super::reject_trailing_body(body, REPLACE_BODY, "replace")?;
-        let replacement_ref = body[0];
-        let replaced_pid = Pid::from_wire_masked((((body[1] & 0x1F) as u16) << 8) | body[2] as u16);
-        let replacement_pid =
-            Pid::from_wire_masked((((body[3] & 0x1F) as u16) << 8) | body[4] as u16);
+        let replacement_ref = body[REPLACEMENT_REF_OFFSET];
+        let replaced_pid = Pid::from_wire_masked(
+            (u16::from(body[REPLACED_PID_HIGH_OFFSET] & PID_HIGH_MASK) << PID_HIGH_SHIFT)
+                | u16::from(body[REPLACED_PID_LOW_OFFSET]),
+        );
+        let replacement_pid = Pid::from_wire_masked(
+            (u16::from(body[REPLACEMENT_PID_HIGH_OFFSET] & PID_HIGH_MASK) << PID_HIGH_SHIFT)
+                | u16::from(body[REPLACEMENT_PID_LOW_OFFSET]),
+        );
         Ok(Self {
             length_form,
             replacement_ref,
             replaced_pid,
             replacement_pid,
-            replaced_reserved: ReservedOnes::from_bits(u64::from(body[1] >> 5)),
-            replacement_reserved: ReservedOnes::from_bits(u64::from(body[3] >> 5)),
+            replaced_reserved: ReservedOnes::from_bits(u64::from(
+                body[REPLACED_PID_HIGH_OFFSET] >> REPLACE_PID_RESERVED_SHIFT,
+            )),
+            replacement_reserved: ReservedOnes::from_bits(u64::from(
+                body[REPLACEMENT_PID_HIGH_OFFSET] >> REPLACE_PID_RESERVED_SHIFT,
+            )),
         })
     }
 }
@@ -133,17 +176,19 @@ impl Serialize for Replace {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = super::write_apdu_header(tag::REPLACE, REPLACE_BODY, self.length_form, buf)?;
-        buf[pos] = self.replacement_ref;
+        buf[pos + REPLACEMENT_REF_OFFSET] = self.replacement_ref;
         // reserved(3), replaced_PID(13).
-        buf[pos + 1] = ((self.replaced_reserved.get() << 5)
-            | u64::from((self.replaced_pid.value() >> 8) as u8 & 0x1F))
+        buf[pos + REPLACED_PID_HIGH_OFFSET] = ((self.replaced_reserved.get()
+            << REPLACE_PID_RESERVED_SHIFT)
+            | u64::from((self.replaced_pid.value() >> PID_HIGH_SHIFT) as u8 & PID_HIGH_MASK))
             as u8;
-        buf[pos + 2] = self.replaced_pid.value() as u8;
+        buf[pos + REPLACED_PID_LOW_OFFSET] = self.replaced_pid.value() as u8;
         // reserved(3), replacement_PID(13).
-        buf[pos + 3] = ((self.replacement_reserved.get() << 5)
-            | u64::from((self.replacement_pid.value() >> 8) as u8 & 0x1F))
+        buf[pos + REPLACEMENT_PID_HIGH_OFFSET] = ((self.replacement_reserved.get()
+            << REPLACE_PID_RESERVED_SHIFT)
+            | u64::from((self.replacement_pid.value() >> PID_HIGH_SHIFT) as u8 & PID_HIGH_MASK))
             as u8;
-        buf[pos + 4] = self.replacement_pid.value() as u8;
+        buf[pos + REPLACEMENT_PID_LOW_OFFSET] = self.replacement_pid.value() as u8;
         pos += REPLACE_BODY;
         Ok(pos)
     }

@@ -86,7 +86,7 @@ impl Serialize for SsuLocationDescriptor<'_> {
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2..4].copy_from_slice(&self.data_broadcast_id.to_be_bytes());
-        let mut off = 4;
+        let mut off = HEADER_LEN + ID_LEN;
         if let Some(at) = self.association_tag {
             buf[off..off + TAG_LEN].copy_from_slice(&at.to_be_bytes());
             off += TAG_LEN;

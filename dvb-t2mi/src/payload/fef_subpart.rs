@@ -117,6 +117,47 @@ const FEF_SUBPART_HEADER_LEN: usize = 15;
 /// Mask for 22-bit subpart_length field.
 const SUBPART_LENGTH_MASK: u32 = 0x003F_FFFF;
 
+/// Offset of the high byte of `tx_identifier`.
+const TX_IDENTIFIER_OFFSET: usize = 1;
+/// Offset of the 32-bit reserved field.
+const RFU1_OFFSET: usize = 3;
+/// Bytes in the 32-bit reserved field.
+const RFU1_LEN: usize = 4;
+/// Offset of the high byte of `subpart_idx`.
+const SUBPART_IDX_OFFSET: usize = 7;
+/// Offset of the high byte of `subpart_variety`.
+const VARIETY_OFFSET: usize = 9;
+/// Offset of the second reserved byte.
+const RFU2_BYTE_OFFSET: usize = 11;
+/// Offset of the byte carrying the reserved prefix and the length's high bits.
+const LENGTH_HIGH_OFFSET: usize = 12;
+/// Offset of the middle byte of `subpart_length`.
+const LENGTH_MID_OFFSET: usize = 13;
+/// Offset of the low byte of `subpart_length`.
+const LENGTH_LOW_OFFSET: usize = 14;
+
+/// Mask of the two reserved bits at the top of the length's high byte.
+const RFU2_PREFIX_MASK: u8 = 0xC0;
+/// Shift placing the reserved prefix in the length's high byte.
+const RFU2_PREFIX_SHIFT: u32 = 6;
+/// Shift assembling the 10-bit reserved value for the error report.
+const RFU2_HIGH_SHIFT: u32 = 2;
+
+/// Mask of the six length bits carried in the length's high byte.
+const LENGTH_HIGH_BYTE_MASK: u32 = 0x3F;
+/// Shift placing the length's high byte.
+const LENGTH_HIGH_SHIFT: u32 = 16;
+/// Shift placing the length's middle byte.
+const LENGTH_MID_SHIFT: u32 = 8;
+/// Mask of one byte.
+const BYTE_MASK: u32 = 0xFF;
+/// Shift placing the high byte of `subpart_variety`.
+const VARIETY_HIGH_SHIFT: u32 = 8;
+/// Max value of the 22-bit `subpart_length`.
+const SUBPART_LENGTH_MAX: u32 = SUBPART_LENGTH_MASK;
+/// Bytes in a big-endian `u16`.
+const U16_LEN: usize = core::mem::size_of::<u16>();
+
 impl<'a> Parse<'a> for FefSubPartPayload<'a> {
     type Error = crate::error::Error;
 
@@ -130,37 +171,51 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
         )?;
 
         // rfu1: bytes 3-6 (32 bits) — must be 0
-        if hdr[3] != 0 || hdr[4] != 0 || hdr[5] != 0 || hdr[6] != 0 {
+        if hdr[RFU1_OFFSET..RFU1_OFFSET + RFU1_LEN]
+            .iter()
+            .any(|b| *b != 0)
+        {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "32-bit RFU (rfu1)",
                     expected: 0,
-                    found: u64::from(u32::from_be_bytes([hdr[3], hdr[4], hdr[5], hdr[6]])),
+                    found: u64::from(u32::from_be_bytes(
+                        hdr[RFU1_OFFSET..RFU1_OFFSET + RFU1_LEN].try_into().unwrap(),
+                    )),
                 },
             ));
         }
 
-        let variety = SubpartVariety::try_from(u16::from_be_bytes([hdr[9], hdr[10]]))?;
+        let variety = SubpartVariety::try_from(u16::from_be_bytes([
+            hdr[VARIETY_OFFSET],
+            hdr[VARIETY_OFFSET + 1],
+        ]))?;
 
         // rfu2: byte 11 (8 bits) + byte 12 [7:6] (2 bits) = 10 bits — must be 0
-        if hdr[11] != 0 || (hdr[12] & 0xC0 != 0) {
+        if hdr[RFU2_BYTE_OFFSET] != 0 || (hdr[LENGTH_HIGH_OFFSET] & RFU2_PREFIX_MASK != 0) {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "10-bit RFU (rfu2)",
                     expected: 0,
-                    found: (u64::from(hdr[11]) << 2) | u64::from(hdr[12] >> 6),
+                    found: (u64::from(hdr[RFU2_BYTE_OFFSET]) << RFU2_HIGH_SHIFT)
+                        | u64::from(hdr[LENGTH_HIGH_OFFSET] >> RFU2_PREFIX_SHIFT),
                 },
             ));
         }
 
         // subpart_length: byte 12 [5:0] (6 bits) + byte 13 (8 bits) + byte 14 (8 bits) = 22 bits
-        let subpart_length =
-            ((hdr[12] & 0x3F) as u32) << 16 | (hdr[13] as u32) << 8 | (hdr[14] as u32);
+        let subpart_length = ((hdr[LENGTH_HIGH_OFFSET] as u32 & LENGTH_HIGH_BYTE_MASK)
+            << LENGTH_HIGH_SHIFT)
+            | (hdr[LENGTH_MID_OFFSET] as u32) << LENGTH_MID_SHIFT
+            | (hdr[LENGTH_LOW_OFFSET] as u32);
 
         Ok(FefSubPartPayload {
             fef_idx: hdr[0],
-            tx_identifier: u16::from_be_bytes([hdr[1], hdr[2]]),
-            subpart_idx: u16::from_be_bytes([hdr[7], hdr[8]]),
+            tx_identifier: u16::from_be_bytes([
+                hdr[TX_IDENTIFIER_OFFSET],
+                hdr[TX_IDENTIFIER_OFFSET + 1],
+            ]),
+            subpart_idx: u16::from_be_bytes([hdr[SUBPART_IDX_OFFSET], hdr[SUBPART_IDX_OFFSET + 1]]),
             subpart_variety: variety,
             subpart_length,
             subpart_data: rest,
@@ -183,37 +238,33 @@ impl Serialize for FefSubPartPayload<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
         need_out(buf, self.serialized_len())?;
 
-        if self.subpart_length > SUBPART_LENGTH_MASK {
+        if self.subpart_length > SUBPART_LENGTH_MAX {
             return Err(crate::Error::FieldOverflow(
                 broadcast_common::len::FieldOverflow {
                     field: "subpart_length",
                     value: u64::from(self.subpart_length),
-                    max: u64::from(SUBPART_LENGTH_MASK),
+                    max: u64::from(SUBPART_LENGTH_MAX),
                 },
             ));
         }
 
         buf[0] = self.fef_idx;
         let tx_id = self.tx_identifier.to_be_bytes();
-        buf[1] = tx_id[0];
-        buf[2] = tx_id[1];
+        buf[TX_IDENTIFIER_OFFSET..TX_IDENTIFIER_OFFSET + U16_LEN].copy_from_slice(&tx_id);
         // rfu1 = 0
-        buf[3] = 0;
-        buf[4] = 0;
-        buf[5] = 0;
-        buf[6] = 0;
+        buf[RFU1_OFFSET..RFU1_OFFSET + RFU1_LEN].fill(0);
         let sub_idx = self.subpart_idx.to_be_bytes();
-        buf[7] = sub_idx[0];
-        buf[8] = sub_idx[1];
+        buf[SUBPART_IDX_OFFSET..SUBPART_IDX_OFFSET + U16_LEN].copy_from_slice(&sub_idx);
         let variety = u16::from(self.subpart_variety);
-        buf[9] = (variety >> 8) as u8;
-        buf[10] = (variety & 0xFF) as u8;
+        buf[VARIETY_OFFSET] = (variety >> VARIETY_HIGH_SHIFT) as u8;
+        buf[VARIETY_OFFSET + 1] = (variety & BYTE_MASK as u16) as u8;
         // rfu2 = 0 (top 2 bits byte 12) + rfu2 = 0 (byte 11)
-        buf[11] = 0;
+        buf[RFU2_BYTE_OFFSET] = 0;
         // subpart_length: 22 bits → byte 12 [5:0] = top 6, byte 13 = mid 8, byte 14 = bot 8
-        buf[12] = ((self.subpart_length >> 16) & 0x3F) as u8;
-        buf[13] = (self.subpart_length >> 8) as u8;
-        buf[14] = (self.subpart_length & 0xFF) as u8;
+        buf[LENGTH_HIGH_OFFSET] =
+            ((self.subpart_length >> LENGTH_HIGH_SHIFT) & LENGTH_HIGH_BYTE_MASK) as u8;
+        buf[LENGTH_MID_OFFSET] = (self.subpart_length >> LENGTH_MID_SHIFT) as u8;
+        buf[LENGTH_LOW_OFFSET] = (self.subpart_length & BYTE_MASK) as u8;
 
         if !self.subpart_data.is_empty() {
             buf[FEF_SUBPART_HEADER_LEN..FEF_SUBPART_HEADER_LEN + self.subpart_data.len()]

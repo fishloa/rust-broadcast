@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `ts::DTS_NEXT_AU_FIELD_LEN`: the `seamless_splice` `DTS_next_AU` field width (ISO/IEC 13818-1 §2.4.3.5, Table 2-6) that `SeamlessSplice::to_marked_field` names, so its published signature resolves to a documented constant.
+
 ## [0.10.0] - 2026-11-22
 ### Breaking
 

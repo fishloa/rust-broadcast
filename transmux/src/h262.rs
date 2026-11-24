@@ -83,6 +83,22 @@ const EXTENSION_ID_BITS: usize = 4;
 const VIDEO_FORMAT_BITS: usize = 3;
 /// `display_horizontal_size` / `display_vertical_size` are `u(14)`.
 const DISPLAY_SIZE_BITS: usize = 14;
+/// `chroma_format` is `u(2)` (§6.3.3).
+const CHROMA_FORMAT_BITS: usize = 2;
+/// Byte-wide fields: `profile_and_level_indication`, `colour_primaries`,
+/// `transfer_characteristics`, `matrix_coefficients` (§6.3.3).
+const BYTE_BITS: usize = u8::BITS as usize;
+/// Right shift that isolates `extension_start_code_identifier`.
+const EXTENSION_ID_SHIFT: u32 = u8::BITS - EXTENSION_ID_BITS as u32;
+/// Bytes in a `0x000001` start-code prefix.
+const START_CODE_PREFIX_LEN: usize = 3;
+
+/// `display_aspect_ratio` 4:3, as width:height (Table 6-3).
+const DAR_RATIO_4_3: (u64, u64) = (4, 3);
+/// `display_aspect_ratio` 16:9, as width:height (Table 6-3).
+const DAR_RATIO_16_9: (u64, u64) = (16, 9);
+/// `display_aspect_ratio` 2.21:1, as width:height (Table 6-3).
+const DAR_RATIO_2_21: (u64, u64) = (221, 100);
 
 /// Longest start-code-delimited section scanned for a `sequence_header()`
 /// plus its extensions. A `sequence_header()` with both quantiser matrices is
@@ -93,9 +109,9 @@ const SEQUENCE_SECTION_MAX: usize = 256;
 /// as width:height (the notation caveat is in `private/specs-verified/mpeg/transmux/codec/mpeg2-video-display.md`).
 fn dar_ratio(aspect: u8) -> Option<(u64, u64)> {
     match aspect {
-        ASPECT_DAR_4_3 => Some((4, 3)),
-        ASPECT_DAR_16_9 => Some((16, 9)),
-        ASPECT_DAR_2_21 => Some((221, 100)),
+        ASPECT_DAR_4_3 => Some(DAR_RATIO_4_3),
+        ASPECT_DAR_16_9 => Some(DAR_RATIO_16_9),
+        ASPECT_DAR_2_21 => Some(DAR_RATIO_2_21),
         _ => None,
     }
 }
@@ -226,7 +242,7 @@ impl SequenceHeaderGeometry {
 /// whichever code it is.
 fn find_any_start_code(data: &[u8], from: usize) -> Option<(usize, u8)> {
     let at = find_start_code_prefix(data, from)?;
-    Some((at, *data.get(at + 3)?))
+    Some((at, *data.get(at + START_CODE_PREFIX_LEN)?))
 }
 
 /// The body of the start-code section that begins at `start` (after the
@@ -262,9 +278,9 @@ fn parse_sequence_extension_body(body: &[u8]) -> Result<(u32, u32)> {
     let id = r.read_bits(EXTENSION_ID_BITS, "extension_start_code_identifier")?;
     debug_assert_eq!(u8::try_from(id).unwrap_or(u8::MAX), SEQUENCE_EXTENSION_ID);
     // profile_and_level_indication(8) progressive_sequence(1) chroma_format(2)
-    let _ = r.read_bits(8, "profile_and_level_indication")?;
+    let _ = r.read_bits(BYTE_BITS, "profile_and_level_indication")?;
     let _ = r.read_flag("progressive_sequence")?;
-    let _ = r.read_bits(2, "chroma_format")?;
+    let _ = r.read_bits(CHROMA_FORMAT_BITS, "chroma_format")?;
     let hx = r.read_bits(SIZE_EXTENSION_BITS, "horizontal_size_extension")?;
     let vx = r.read_bits(SIZE_EXTENSION_BITS, "vertical_size_extension")?;
     Ok((
@@ -284,9 +300,9 @@ fn parse_sequence_display_extension_body(body: &[u8]) -> Result<SequenceDisplayE
     let video_format = r.read_bits(VIDEO_FORMAT_BITS, "video_format")?;
     let colour = r.read_flag("colour_description")?;
     let colour_description = if colour {
-        let p = r.read_bits(8, "colour_primaries")?;
-        let t = r.read_bits(8, "transfer_characteristics")?;
-        let m = r.read_bits(8, "matrix_coefficients")?;
+        let p = r.read_bits(BYTE_BITS, "colour_primaries")?;
+        let t = r.read_bits(BYTE_BITS, "transfer_characteristics")?;
+        let m = r.read_bits(BYTE_BITS, "matrix_coefficients")?;
         Some((
             u8::try_from(p).unwrap_or(u8::MAX),
             u8::try_from(t).unwrap_or(u8::MAX),
@@ -338,7 +354,7 @@ pub(crate) fn parse_sequence_at(es: &[u8], start: usize) -> Result<SequenceHeade
         let Some(&id) = body.first() else {
             break;
         };
-        match id >> (8 - EXTENSION_ID_BITS) {
+        match id >> EXTENSION_ID_SHIFT {
             SEQUENCE_EXTENSION_ID => {
                 if let Ok((hx, vx)) = parse_sequence_extension_body(body) {
                     geometry.coded_width |= hx << SIZE_EXTENSION_SHIFT;

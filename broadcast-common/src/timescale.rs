@@ -221,7 +221,7 @@ pub fn rescale(ticks: i128, from: Timescale, to: Timescale, rounding: Rounding) 
         }
         Rounding::TowardZero => num / den,
         Rounding::Nearest => {
-            let half = den / 2;
+            let half = den >> 1;
             if num >= 0 {
                 num.saturating_add(half) / den
             } else {

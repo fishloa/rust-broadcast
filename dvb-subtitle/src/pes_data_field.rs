@@ -22,6 +22,17 @@ const MIN_FIELD_LEN: usize = 3;
 /// Generic segment header: sync_byte(1) + segment_type(1) + page_id(2) + segment_length(2) = 6 bytes.
 const SEGMENT_HEADER_LEN: usize = 6;
 
+/// Offset of `data_identifier` in the PES data field.
+const DATA_IDENTIFIER_OFFSET: usize = 0;
+/// Offset of `subtitle_stream_id` in the PES data field.
+const SUBTITLE_STREAM_ID_OFFSET: usize = 1;
+/// Bytes before the first segment: `data_identifier` + `subtitle_stream_id`.
+const PES_HEADER_LEN: usize = 2;
+/// Offset of `page_id` within a segment header.
+const PAGE_ID_OFFSET: usize = 2;
+/// Offset of `segment_length` within a segment header.
+const SEGMENT_LENGTH_OFFSET: usize = 4;
+
 /// The top-level PES data field structure for DVB subtitles.
 ///
 /// Contains the data_identifier, subtitle_stream_id, one or more
@@ -45,15 +56,15 @@ impl<'a> Parse<'a> for PesDataField<'a> {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, MIN_FIELD_LEN, "PES_data_field")?;
-        if bytes[0] != DATA_IDENTIFIER {
-            return Err(Error::BadDataIdentifier(bytes[0]));
+        if bytes[DATA_IDENTIFIER_OFFSET] != DATA_IDENTIFIER {
+            return Err(Error::BadDataIdentifier(bytes[DATA_IDENTIFIER_OFFSET]));
         }
-        let subtitle_stream_id = bytes[1];
+        let subtitle_stream_id = bytes[SUBTITLE_STREAM_ID_OFFSET];
         if subtitle_stream_id != SUBTITLE_STREAM_ID {
             // Per spec it must be 0x00 but we parse it anyway
         }
 
-        let mut pos: usize = 2;
+        let mut pos: usize = PES_HEADER_LEN;
         let mut segments = alloc::vec::Vec::new();
 
         // Read segments: each starts with sync_byte 0x0F
@@ -62,7 +73,10 @@ impl<'a> Parse<'a> for PesDataField<'a> {
                 // Truncated segment header — stop and let suffix capture
                 break;
             }
-            let segment_length = u16::from_be_bytes([bytes[pos + 4], bytes[pos + 5]]) as usize;
+            let segment_length = u16::from_be_bytes([
+                bytes[pos + SEGMENT_LENGTH_OFFSET],
+                bytes[pos + SEGMENT_LENGTH_OFFSET + 1],
+            ]) as usize;
             let segment_end = pos + SEGMENT_HEADER_LEN + segment_length;
             if segment_end > bytes.len() {
                 // Segment data exceeds available bytes (truncated PES) —
@@ -71,7 +85,7 @@ impl<'a> Parse<'a> for PesDataField<'a> {
             }
 
             let seg_bytes = &bytes[pos..segment_end];
-            let segment_type = bytes[pos + 1];
+            let segment_type = bytes[pos + SUBTITLE_STREAM_ID_OFFSET];
 
             match AnySegment::dispatch(segment_type, seg_bytes) {
                 Some(Ok(seg)) => segments.push(seg),
@@ -85,7 +99,10 @@ impl<'a> Parse<'a> for PesDataField<'a> {
                     // segment_type was broken.
                     segments.push(AnySegment::Malformed {
                         segment_type,
-                        page_id: u16::from_be_bytes([seg_bytes[2], seg_bytes[3]]),
+                        page_id: u16::from_be_bytes([
+                            seg_bytes[PAGE_ID_OFFSET],
+                            seg_bytes[PAGE_ID_OFFSET + 1],
+                        ]),
                         data: &seg_bytes[SEGMENT_HEADER_LEN..],
                         err: e,
                     });
@@ -94,7 +111,10 @@ impl<'a> Parse<'a> for PesDataField<'a> {
                     // Unknown segment_type: preserve as raw
                     segments.push(AnySegment::Unknown {
                         segment_type,
-                        page_id: u16::from_be_bytes([seg_bytes[2], seg_bytes[3]]),
+                        page_id: u16::from_be_bytes([
+                            seg_bytes[PAGE_ID_OFFSET],
+                            seg_bytes[PAGE_ID_OFFSET + 1],
+                        ]),
                         data: &seg_bytes[SEGMENT_HEADER_LEN..],
                     });
                 }
@@ -123,7 +143,8 @@ impl Serialize for PesDataField<'_> {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        2 + self.suffix.len()
+        PES_HEADER_LEN
+            + self.suffix.len()
             + self
                 .segments
                 .iter()
@@ -134,9 +155,9 @@ impl Serialize for PesDataField<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = DATA_IDENTIFIER;
-        buf[1] = self.subtitle_stream_id;
-        let mut off = 2;
+        buf[DATA_IDENTIFIER_OFFSET] = DATA_IDENTIFIER;
+        buf[SUBTITLE_STREAM_ID_OFFSET] = self.subtitle_stream_id;
+        let mut off = PES_HEADER_LEN;
         for seg in &self.segments {
             let seg_len = seg.serialized_len();
             seg.serialize_into(&mut buf[off..off + seg_len])?;

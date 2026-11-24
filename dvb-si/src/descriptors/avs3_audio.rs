@@ -55,8 +55,36 @@ pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
 
 const NIBBLE: u32 = 4;
 const ALL_ONES_1: ReservedOnes<1> = ReservedOnes::<1>::FILL;
-const ALL_ONES_4: ReservedOnes<4> = ReservedOnes::<4>::FILL;
-const ALL_ONES_6: ReservedOnes<6> = ReservedOnes::<6>::FILL;
+/// Width of a per-body `reserved` field.
+pub const BODY_RESERVED_BITS: u32 = 4;
+/// Width of the descriptor-level `reserved` field.
+pub const DESCRIPTOR_RESERVED_BITS: u32 = 6;
+const ALL_ONES_4: ReservedOnes<BODY_RESERVED_BITS> = ReservedOnes::<BODY_RESERVED_BITS>::FILL;
+const ALL_ONES_6: ReservedOnes<DESCRIPTOR_RESERVED_BITS> =
+    ReservedOnes::<DESCRIPTOR_RESERVED_BITS>::FILL;
+/// Mask of the low nibble of a packed byte.
+const NIBBLE_MASK: u8 = 0x0F;
+/// Shift of `anc_data_index` in its byte.
+const ANC_DATA_INDEX_SHIFT: u32 = 7;
+/// Mask of `coding_profile` in its byte.
+const CODING_PROFILE_MASK: u8 = 0x07;
+const CODING_PROFILE_BITS: u32 = 3;
+/// Shift of `bitstream_type` in its byte.
+const BITSTREAM_TYPE_SHIFT: u32 = 7;
+/// Mask of `channel_number_index` in its byte.
+const CHANNEL_NUMBER_INDEX_MASK: u8 = 0x7F;
+/// Width of a content channel/object index, bits.
+const CONTENT_INDEX_BITS: u32 = 7;
+/// Shift of `nn_type` in its byte.
+const NN_TYPE_SHIFT: u32 = 5;
+const NN_TYPE_BITS: u32 = 3;
+/// Width of `sampling_frequency`, bits.
+const SAMPLING_FREQUENCY_BITS: u32 = 24;
+/// Shift of `resolution` in its byte.
+const RESOLUTION_SHIFT: u32 = 6;
+const RESOLUTION_BITS: u32 = 2;
+/// Width of the `reserved` field that follows `resolution`, bits.
+const ADDITIONAL_RESERVED_BITS: u32 = 6;
 
 /// `audio_codec_id == 0` body: channel-based coding (Table 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +118,7 @@ pub struct Avs3AudioCodec1 {
     /// `coding_profile` (3 bits).
     pub coding_profile: u8,
     /// `reserved` (4 bits, right-aligned); captured on parse, default `0xF`.
-    pub reserved: ReservedOnes<4>,
+    pub reserved: ReservedOnes<BODY_RESERVED_BITS>,
     /// `channel_number` (8 bits).
     pub channel_number: u8,
 }
@@ -130,7 +158,7 @@ pub enum Avs3AudioContent {
         /// `hoa_order` (4 bits).
         hoa_order: u8,
         /// `reserved` (4 bits).
-        reserved: ReservedOnes<4>,
+        reserved: ReservedOnes<BODY_RESERVED_BITS>,
     },
     /// 4..=15 — reserved `content_type`, no dependent fields; carries the value.
     Reserved(u8),
@@ -230,7 +258,7 @@ pub struct Avs3AudioDescriptor {
     /// `resolution` (2 bits, T/AI 109.3 Annex A).
     pub resolution: u8,
     /// `reserved` (6 bits) after `resolution`; captured on parse, default `0x3F`.
-    pub reserved: ReservedOnes<6>,
+    pub reserved: ReservedOnes<DESCRIPTOR_RESERVED_BITS>,
     /// `addition_info[N]`: the optional trailing additional information (opaque
     /// per Table 4: "可选字段，附加信息").
     pub addition_info: Vec<u8>,
@@ -271,7 +299,7 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
         let mut c = Cursor { body, pos: 0 };
         let b0 = c.u8()?;
         let audio_codec_id = b0 >> NIBBLE;
-        let sampling_frequency_index = b0 & 0x0F;
+        let sampling_frequency_index = b0 & NIBBLE_MASK;
         let parsed = match audio_codec_id {
             0 => {
                 let b1 = c.u8()?;
@@ -279,11 +307,11 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
                 let hi = c.u8()?;
                 let lo = c.u8()?;
                 Avs3AudioBody::Codec0(Avs3AudioCodec0 {
-                    anc_data_index: bit(b1, 7),
-                    coding_profile: (b1 >> 4) & 0x07,
-                    bitrate_index: b1 & 0x0F,
-                    bitstream_type: bit(b2, 7),
-                    channel_number_index: b2 & 0x7F,
+                    anc_data_index: bit(b1, ANC_DATA_INDEX_SHIFT),
+                    coding_profile: (b1 >> NIBBLE) & CODING_PROFILE_MASK,
+                    bitrate_index: b1 & NIBBLE_MASK,
+                    bitstream_type: bit(b2, BITSTREAM_TYPE_SHIFT),
+                    channel_number_index: b2 & CHANNEL_NUMBER_INDEX_MASK,
                     raw_frame_length: u16::from_be_bytes([hi, lo]),
                 })
             }
@@ -301,15 +329,15 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
                 let channel_number = c.u8()?;
                 Avs3AudioBody::Codec1(Avs3AudioCodec1 {
                     sampling_frequency,
-                    anc_data_index: bit(b1, 7),
-                    coding_profile: (b1 >> 4) & 0x07,
+                    anc_data_index: bit(b1, ANC_DATA_INDEX_SHIFT),
+                    coding_profile: (b1 >> NIBBLE) & CODING_PROFILE_MASK,
                     reserved: ReservedOnes::from_bits(u64::from(b1)),
                     channel_number,
                 })
             }
             2 => {
                 let b1 = c.u8()?;
-                let content_type = b1 & 0x0F;
+                let content_type = b1 & NIBBLE_MASK;
                 let content = match content_type {
                     0 => {
                         let v = c.u8()?;
@@ -347,7 +375,7 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
                 let hi = c.u8()?;
                 let lo = c.u8()?;
                 Avs3AudioBody::Codec2(Avs3AudioCodec2 {
-                    nn_type: b1 >> 5,
+                    nn_type: b1 >> NN_TYPE_SHIFT,
                     reserved: ReservedOnes::from_bits(u64::from(b1 >> NIBBLE)),
                     content,
                     total_bitrate: u16::from_be_bytes([hi, lo]),
@@ -359,7 +387,7 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
         Ok(Self {
             sampling_frequency_index,
             body: parsed,
-            resolution: r >> 6,
+            resolution: r >> RESOLUTION_SHIFT,
             reserved: ReservedOnes::from_bits(u64::from(r)),
             addition_info: body[c.pos..].to_vec(),
         })
@@ -447,26 +475,41 @@ impl Avs3AudioDescriptor {
         let mut out = alloc::vec::Vec::new();
         let sfi = fit_bits(
             u64::from(self.sampling_frequency_index),
-            4,
+            NIBBLE,
             "sampling_frequency_index",
         )? as u8;
-        let id = fit_bits(u64::from(self.body.audio_codec_id()), 4, "audio_codec_id")? as u8;
+        let id = fit_bits(
+            u64::from(self.body.audio_codec_id()),
+            NIBBLE,
+            "audio_codec_id",
+        )? as u8;
         out.push((id << NIBBLE) | sfi);
         match &self.body {
             Avs3AudioBody::Codec0(b) => {
-                let prof = fit_bits(u64::from(b.coding_profile), 3, "coding_profile")? as u8;
-                let rate = fit_bits(u64::from(b.bitrate_index), 4, "bitrate_index")? as u8;
-                out.push((u8::from(b.anc_data_index) << 7) | (prof << 4) | rate);
-                let ch =
-                    fit_bits(u64::from(b.channel_number_index), 7, "channel_number_index")? as u8;
-                out.push((u8::from(b.bitstream_type) << 7) | ch);
+                let prof = fit_bits(
+                    u64::from(b.coding_profile),
+                    CODING_PROFILE_BITS,
+                    "coding_profile",
+                )? as u8;
+                let rate = fit_bits(u64::from(b.bitrate_index), NIBBLE, "bitrate_index")? as u8;
+                out.push(
+                    (u8::from(b.anc_data_index) << ANC_DATA_INDEX_SHIFT) | (prof << NIBBLE) | rate,
+                );
+                let ch = fit_bits(
+                    u64::from(b.channel_number_index),
+                    CONTENT_INDEX_BITS,
+                    "channel_number_index",
+                )? as u8;
+                out.push((u8::from(b.bitstream_type) << BITSTREAM_TYPE_SHIFT) | ch);
                 out.extend_from_slice(&b.raw_frame_length.to_be_bytes());
             }
             Avs3AudioBody::Codec1(b) => {
                 let explicit = sfi == SAMPLING_FREQUENCY_INDEX_EXPLICIT;
                 match (explicit, b.sampling_frequency) {
                     (true, Some(f)) => {
-                        let f = fit_bits(u64::from(f), 24, "sampling_frequency")? as u32;
+                        let f =
+                            fit_bits(u64::from(f), SAMPLING_FREQUENCY_BITS, "sampling_frequency")?
+                                as u32;
                         out.extend_from_slice(&f.to_be_bytes()[1..]);
                     }
                     (false, None) => {}
@@ -477,23 +520,30 @@ impl Avs3AudioDescriptor {
                         });
                     }
                 }
-                let prof = fit_bits(u64::from(b.coding_profile), 3, "coding_profile")? as u8;
+                let prof = fit_bits(
+                    u64::from(b.coding_profile),
+                    CODING_PROFILE_BITS,
+                    "coding_profile",
+                )? as u8;
                 let res = b.reserved.get() as u8;
-                out.push((u8::from(b.anc_data_index) << 7) | (prof << 4) | res);
+                out.push(
+                    (u8::from(b.anc_data_index) << ANC_DATA_INDEX_SHIFT) | (prof << NIBBLE) | res,
+                );
                 out.push(b.channel_number);
             }
             Avs3AudioBody::Codec2(b) => {
-                let nn = fit_bits(u64::from(b.nn_type), 3, "nn_type")? as u8;
+                let nn = fit_bits(u64::from(b.nn_type), NN_TYPE_BITS, "nn_type")? as u8;
                 let res = b.reserved.get() as u8;
-                let ct = fit_bits(u64::from(b.content.content_type()), 4, "content_type")? as u8;
-                out.push((nn << 5) | (res << 4) | ct);
+                let ct =
+                    fit_bits(u64::from(b.content.content_type()), NIBBLE, "content_type")? as u8;
+                out.push((nn << NN_TYPE_SHIFT) | (res << NIBBLE) | ct);
                 match &b.content {
                     Avs3AudioContent::Channel {
                         channel_number_index,
                         reserved,
                     } => out.push(pack(
                         *channel_number_index,
-                        7,
+                        CONTENT_INDEX_BITS,
                         reserved.get() as u8,
                         1,
                         "channel_number_index",
@@ -503,7 +553,7 @@ impl Avs3AudioDescriptor {
                         reserved,
                     } => out.push(pack(
                         *object_channel_number,
-                        7,
+                        CONTENT_INDEX_BITS,
                         reserved.get() as u8,
                         1,
                         "object_channel_number",
@@ -516,14 +566,14 @@ impl Avs3AudioDescriptor {
                     } => {
                         out.push(pack(
                             *channel_number_index,
-                            7,
+                            CONTENT_INDEX_BITS,
                             reserved_channel.get() as u8,
                             1,
                             "channel_number_index",
                         )?);
                         out.push(pack(
                             *object_channel_number,
-                            7,
+                            CONTENT_INDEX_BITS,
                             reserved_object.get() as u8,
                             1,
                             "object_channel_number",
@@ -533,7 +583,13 @@ impl Avs3AudioDescriptor {
                         hoa_order,
                         reserved,
                     } => {
-                        out.push(pack(*hoa_order, 4, reserved.get() as u8, 4, "hoa_order")?);
+                        out.push(pack(
+                            *hoa_order,
+                            NIBBLE,
+                            reserved.get() as u8,
+                            NIBBLE,
+                            "hoa_order",
+                        )?);
                     }
                     Avs3AudioContent::Reserved(_) => {}
                 }
@@ -543,9 +599,9 @@ impl Avs3AudioDescriptor {
         }
         out.push(pack(
             self.resolution,
-            2,
+            RESOLUTION_BITS,
             self.reserved.get() as u8,
-            6,
+            ADDITIONAL_RESERVED_BITS,
             "resolution",
         )?);
         out.extend_from_slice(&self.addition_info);

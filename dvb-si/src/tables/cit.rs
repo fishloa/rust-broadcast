@@ -30,7 +30,7 @@ const EXTENSION_LEN: usize = 10;
 use super::CRC_LEN;
 
 /// Width of the `reserved` header fields.
-const CIT_RESERVED_BITS: u32 = 2;
+pub const CIT_RESERVED_BITS: u32 = 2;
 const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 
 const CRID_REF_LEN: usize = 2;

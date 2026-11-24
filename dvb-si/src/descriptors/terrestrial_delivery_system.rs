@@ -25,10 +25,10 @@ const RESERVED_FU_MASK: u8 = 0b0000_0011;
 /// `11` (EN 300 468 Table 46, V1.6.1-V1.20.1; audit §4 row 6). V1.3.1-V1.5.1
 /// had `reserved_future_use(5)` there, now `priority`/`Time_Slicing`/`MPE-FEC`
 /// (typed) + these 2 bits.
-pub const RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<RESERVED_FU_2_BITS> =
-    ReservedOnes::<RESERVED_FU_2_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<RESERVED_FU_AFTER_MPE_FEC_INDICATOR_BITS> =
+    ReservedOnes::<RESERVED_FU_AFTER_MPE_FEC_INDICATOR_BITS>::FILL;
 /// Width of the `reserved_future_use` after `MPE-FEC_indicator` (2 bits).
-const RESERVED_FU_2_BITS: u32 = 2;
+pub const RESERVED_FU_AFTER_MPE_FEC_INDICATOR_BITS: u32 = 2;
 const BW_MASK: u8 = 0b1110_0000;
 
 const CONSTELLATION_SHIFT: u8 = 6;
@@ -43,14 +43,24 @@ const TRANSMISSION_MODE_SHIFT: u8 = 1;
 const CODE_RATE_LP_MASK: u8 = 0b1110_0000;
 const GUARD_INTERVAL_MASK: u8 = 0b0001_1000;
 const TRANSMISSION_MODE_MASK: u8 = 0b0000_0110;
+/// Resolution of `centre_frequency_10hz` in Hz.
+const CENTRE_FREQUENCY_UNIT_HZ: u64 = 10;
+/// Body offset of the bandwidth/flags byte.
+const BANDWIDTH_BYTE_OFFSET: usize = 4;
+/// Body offset of the constellation/hierarchy byte.
+const CONSTELLATION_BYTE_OFFSET: usize = 5;
+/// Body offset of the guard-interval/transmission-mode byte.
+const GUARD_INTERVAL_BYTE_OFFSET: usize = 6;
+/// Body offset of the trailing `reserved_future_use(32)`.
+const RESERVED_FU_32_OFFSET: usize = 7;
 const OTHER_FREQ_FLAG_MASK: u8 = 0b0000_0001;
 
 /// Spec default of the trailing `reserved_future_use(32)`: all ones
 /// (EN 300 468 Table 46, every edition V1.3.1-V1.20.1).
-pub const RESERVED_FUTURE_USE_32_DEFAULT: ReservedOnes<RESERVED_FU_32_BITS> =
-    ReservedOnes::<RESERVED_FU_32_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_32_DEFAULT: ReservedOnes<RESERVED_FU_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_FU_TRAILING_BITS>::FILL;
 /// Width of the trailing `reserved_future_use` (32 bits).
-const RESERVED_FU_32_BITS: u32 = 32;
+pub const RESERVED_FU_TRAILING_BITS: u32 = 32;
 
 /// Channel bandwidth (§6.2.13.4 Table 52).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,12 +293,12 @@ pub struct TerrestrialDeliverySystemDescriptor {
     /// parse, re-emitted verbatim; `Default` is
     /// [`RESERVED_FUTURE_USE_2_DEFAULT`] (`0b11`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use_2: ReservedOnes<RESERVED_FU_2_BITS>,
+    pub reserved_future_use_2: ReservedOnes<RESERVED_FU_AFTER_MPE_FEC_INDICATOR_BITS>,
     /// Trailing `reserved_future_use(32)` (descriptor bytes 10-13). Captured on
     /// parse, re-emitted verbatim; `Default` is
     /// [`RESERVED_FUTURE_USE_32_DEFAULT`] (`0xFFFF_FFFF`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use_32: ReservedOnes<RESERVED_FU_32_BITS>,
+    pub reserved_future_use_32: ReservedOnes<RESERVED_FU_TRAILING_BITS>,
 }
 
 impl Default for TerrestrialDeliverySystemDescriptor {
@@ -318,7 +328,7 @@ impl TerrestrialDeliverySystemDescriptor {
     /// 10 Hz (EN 300 468 §6.2.13.4), so this conversion is exact.
     #[must_use]
     pub fn centre_frequency_hz(&self) -> u64 {
-        u64::from(self.centre_frequency_10hz) * 10
+        u64::from(self.centre_frequency_10hz) * CENTRE_FREQUENCY_UNIT_HZ
     }
 
     /// Set the centre frequency from Hz, encoding to the field's 10 Hz
@@ -328,7 +338,7 @@ impl TerrestrialDeliverySystemDescriptor {
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the value
     /// exceeds the 32-bit (×10 Hz) field.
     pub fn set_centre_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
-        let units = hz / 10;
+        let units = hz / CENTRE_FREQUENCY_UNIT_HZ;
         if units > u64::from(u32::MAX) {
             return Err(crate::Error::ValueOutOfRange {
                 field: "TerrestrialDeliverySystemDescriptor::centre_frequency",
@@ -494,19 +504,19 @@ impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
 
         let centre_frequency_10hz = crate::wire::be_u32(body, 0, "terrestrial_delivery_system")?;
 
-        let byte4 = body[4];
+        let byte4 = body[BANDWIDTH_BYTE_OFFSET];
         let bw_raw = (byte4 & BW_MASK) >> BW_SHIFT;
         let priority = (byte4 & PRIORITY_MASK) != 0;
         let time_slicing_used = (byte4 & TIME_SLICING_MASK) == 0;
         let mpe_fec_used = (byte4 & MPE_FEC_MASK) == 0;
         let reserved_future_use_2 = ReservedOnes::from_bits(u64::from(byte4 & RESERVED_FU_MASK));
 
-        let byte5 = body[5];
+        let byte5 = body[CONSTELLATION_BYTE_OFFSET];
         let constellation_raw = (byte5 & CONSTELLATION_MASK) >> CONSTELLATION_SHIFT;
         let hierarchy_raw = (byte5 & HIERARCHY_MASK) >> HIERARCHY_SHIFT;
         let code_rate_hp_raw = byte5 & CODE_RATE_HP_MASK;
 
-        let byte6 = body[6];
+        let byte6 = body[GUARD_INTERVAL_BYTE_OFFSET];
         let code_rate_lp_raw = (byte6 & CODE_RATE_LP_MASK) >> CODE_RATE_LP_SHIFT;
         let guard_interval_raw = (byte6 & GUARD_INTERVAL_MASK) >> GUARD_INTERVAL_SHIFT;
         let transmission_mode_raw = (byte6 & TRANSMISSION_MODE_MASK) >> TRANSMISSION_MODE_SHIFT;
@@ -514,7 +524,7 @@ impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
 
         let reserved_future_use_32 = ReservedOnes::from_bits(u64::from(crate::wire::be_u32(
             body,
-            7,
+            RESERVED_FU_32_OFFSET,
             "terrestrial_delivery_system",
         )?));
 
@@ -560,12 +570,12 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
             }
             | if !self.mpe_fec_used { MPE_FEC_MASK } else { 0 }
             | (self.reserved_future_use_2.get() as u8);
-        buf[6] = byte6;
+        buf[HEADER_LEN + BANDWIDTH_BYTE_OFFSET] = byte6;
 
         let byte7 = (serialize_constellation(self.constellation)? << CONSTELLATION_SHIFT)
             | (serialize_hierarchy(self.hierarchy)? << HIERARCHY_SHIFT)
             | serialize_code_rate(self.code_rate_hp)?;
-        buf[7] = byte7;
+        buf[HEADER_LEN + CONSTELLATION_BYTE_OFFSET] = byte7;
 
         let byte8 = (serialize_code_rate(self.code_rate_lp)? << CODE_RATE_LP_SHIFT)
             | (serialize_guard_interval(self.guard_interval) << GUARD_INTERVAL_SHIFT)
@@ -575,7 +585,7 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
             } else {
                 0
             };
-        buf[8] = byte8;
+        buf[HEADER_LEN + GUARD_INTERVAL_BYTE_OFFSET] = byte8;
 
         buf[9..13].copy_from_slice(&(self.reserved_future_use_32.get() as u32).to_be_bytes());
 

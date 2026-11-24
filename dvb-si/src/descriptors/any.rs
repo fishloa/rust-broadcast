@@ -396,11 +396,11 @@ pub(crate) fn next_loop_entry<'a>(
         return None;
     }
     let rem = &bytes[*pos..];
-    if rem.len() < 2 {
+    if rem.len() < DESC_HEADER_LEN {
         *fused = true;
         return Some(Err(crate::Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: 2,
+                need: DESC_HEADER_LEN,
                 have: rem.len(),
                 what: "descriptor header in loop",
             },
@@ -408,7 +408,7 @@ pub(crate) fn next_loop_entry<'a>(
     }
     let tag = rem[0];
     let len = rem[1] as usize;
-    let total = 2 + len;
+    let total = DESC_HEADER_LEN + len;
     if rem.len() < total {
         *fused = true;
         return Some(Err(crate::Error::BufferTooShort(

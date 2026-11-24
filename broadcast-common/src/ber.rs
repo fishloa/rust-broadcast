@@ -27,6 +27,12 @@ pub(crate) const BER_MAX_TOKEN_LEN: usize = 9;
 /// Longest long form: the following length bytes of a full-width token.
 pub(crate) const BER_MAX_LONG_FORM_BYTES: usize = BER_MAX_TOKEN_LEN - 1;
 
+/// Width of the short-form token: the single length byte.
+const BER_SHORT_FORM_LEN: usize = 1;
+/// Bits per octet, and octets in a `u64`.
+const OCTET_BITS: u32 = 8;
+const U64_BYTES: usize = core::mem::size_of::<u64>();
+
 /// The short-form length byte for `len`: the caller has already checked
 /// `len <= `[`BER_SHORT_FORM_MAX`], so a value that does not fit the one
 /// length byte is reported instead of being clamped into the wire.
@@ -67,13 +73,17 @@ pub fn decode_ber_length(bytes: &[u8]) -> Result<(u64, usize)> {
     if following > BER_MAX_LONG_FORM_BYTES {
         return Err(KlvError::BerLengthTooLong { bytes: following });
     }
-    need_in(bytes, 1 + following, "BER long-form length bytes")?;
+    need_in(
+        bytes,
+        BER_SHORT_FORM_LEN + following,
+        "BER long-form length bytes",
+    )?;
 
     let mut value: u64 = 0;
-    for &b in &bytes[1..1 + following] {
-        value = (value << 8) | u64::from(b);
+    for &b in &bytes[BER_SHORT_FORM_LEN..BER_SHORT_FORM_LEN + following] {
+        value = (value << OCTET_BITS) | u64::from(b);
     }
-    Ok((value, 1 + following))
+    Ok((value, BER_SHORT_FORM_LEN + following))
 }
 
 /// Number of bytes [`encode_ber_length`] will write for `len`, using the
@@ -84,9 +94,9 @@ pub fn ber_length_size(len: u64) -> usize {
     if len <= BER_SHORT_FORM_MAX {
         1
     } else {
-        let bytes_needed =
-            usize::try_from((64 - len.leading_zeros()).div_ceil(8)).unwrap_or(usize::MAX);
-        1 + bytes_needed
+        let bytes_needed = usize::try_from((u64::BITS - len.leading_zeros()).div_ceil(OCTET_BITS))
+            .unwrap_or(usize::MAX);
+        BER_SHORT_FORM_LEN + bytes_needed
     }
 }
 
@@ -98,10 +108,10 @@ pub fn encode_ber_length(len: u64, buf: &mut [u8]) -> Result<usize> {
     if len <= BER_SHORT_FORM_MAX {
         buf[0] = fit_short_form(len)?;
     } else {
-        let following = size - 1;
+        let following = size - BER_SHORT_FORM_LEN;
         buf[0] = BER_LONG_FORM_FLAG | fit_long_form_count(following)?;
         let be = len.to_be_bytes();
-        buf[1..size].copy_from_slice(&be[8 - following..]);
+        buf[BER_SHORT_FORM_LEN..size].copy_from_slice(&be[U64_BYTES - following..]);
     }
     Ok(size)
 }
@@ -141,7 +151,7 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
                 return Err(KlvError::BerLengthTooLong { bytes: size - 1 });
             }
             need_out(buf, size)?;
-            if size == 1 {
+            if size == BER_SHORT_FORM_LEN {
                 if len > BER_SHORT_FORM_MAX {
                     return Err(KlvError::FixedBerLengthTooSmall {
                         len,
@@ -150,8 +160,10 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
                 }
                 buf[0] = fit_short_form(len)?;
             } else {
-                let following = size - 1;
-                if following < BER_MAX_LONG_FORM_BYTES && len >= (1u64 << (following * 8)) {
+                let following = size - BER_SHORT_FORM_LEN;
+                if following < BER_MAX_LONG_FORM_BYTES
+                    && len >= (1u64 << (following * OCTET_BITS as usize))
+                {
                     return Err(KlvError::FixedBerLengthTooSmall {
                         len,
                         width: n.get(),
@@ -159,7 +171,7 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
                 }
                 buf[0] = BER_LONG_FORM_FLAG | fit_long_form_count(following)?;
                 let be = len.to_be_bytes();
-                buf[1..size].copy_from_slice(&be[8 - following..]);
+                buf[BER_SHORT_FORM_LEN..size].copy_from_slice(&be[U64_BYTES - following..]);
             }
             Ok(size)
         }

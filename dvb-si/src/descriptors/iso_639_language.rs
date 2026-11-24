@@ -2,7 +2,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::text::LangCode;
+use crate::text::{LANG_CODE_LEN, LangCode};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
@@ -11,7 +11,6 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x0A;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 4;
-
 /// Audio type — ISO/IEC 13818-1 §2.6.18 Table 2-63.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -134,9 +133,11 @@ impl<'a> Parse<'a> for Iso639LanguageDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
+            let mut language_bytes = [0u8; LANG_CODE_LEN];
+            language_bytes.copy_from_slice(&chunk[..LANG_CODE_LEN]);
             entries.push(LanguageEntry {
-                language_code: LangCode([chunk[0], chunk[1], chunk[2]]),
-                audio_type: AudioType::from_u8(chunk[3]),
+                language_code: LangCode(language_bytes),
+                audio_type: AudioType::from_u8(chunk[LANG_CODE_LEN]),
             });
         }
         Ok(Self { entries })
@@ -155,8 +156,8 @@ impl Serialize for Iso639LanguageDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, self.entries.len() * ENTRY_LEN)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + 3].copy_from_slice(&e.language_code.0);
-            buf[pos + 3] = e.audio_type.to_u8();
+            buf[pos..pos + LANG_CODE_LEN].copy_from_slice(&e.language_code.0);
+            buf[pos + LANG_CODE_LEN] = e.audio_type.to_u8();
             pos += ENTRY_LEN;
         }
         Ok(len)

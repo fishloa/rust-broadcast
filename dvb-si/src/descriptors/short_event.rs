@@ -4,6 +4,7 @@
 //! single language.
 
 use super::descriptor_body;
+use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
@@ -13,7 +14,12 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for short_event_descriptor.
 pub const TAG: u8 = 0x4D;
 const HEADER_LEN: usize = 2;
-const LANG_LEN: usize = 3;
+/// Smallest body: language code plus the two 1-byte length prefixes.
+const MIN_BODY_LEN: usize = LANG_LEN + 2;
+/// Offset of `event_name_length` in the body.
+const NAME_LENGTH_OFFSET: usize = LANG_LEN;
+/// Offset of `event_name_char`s in the body.
+const NAME_START: usize = NAME_LENGTH_OFFSET + 1;
 
 /// Short Event Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,15 +48,15 @@ impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
             "ShortEventDescriptor",
             "unexpected tag for short_event_descriptor",
         )?;
-        if body.len() < LANG_LEN + 2 {
+        if body.len() < MIN_BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "short_event_descriptor body shorter than minimum 5 bytes",
             });
         }
-        let language_code = LangCode([body[0], body[1], body[2]]);
-        let name_len = body[LANG_LEN] as usize;
-        let name_start = LANG_LEN + 1;
+        let language_code = LangCode(body[..LANG_LEN].try_into().unwrap_or_default());
+        let name_len = body[NAME_LENGTH_OFFSET] as usize;
+        let name_start = NAME_START;
         let name_end = name_start + name_len;
         if name_end + 1 > body.len() {
             return Err(Error::InvalidDescriptor {
@@ -94,9 +100,10 @@ impl Serialize for ShortEventDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2..5].copy_from_slice(&self.language_code.0);
-        buf[5] = broadcast_common::len::fit_u8(self.event_name.len(), "event_name_length")?;
-        let n_start = 6;
+        buf[HEADER_LEN..HEADER_LEN + LANG_LEN].copy_from_slice(&self.language_code.0);
+        buf[HEADER_LEN + NAME_LENGTH_OFFSET] =
+            broadcast_common::len::fit_u8(self.event_name.len(), "event_name_length")?;
+        let n_start = HEADER_LEN + NAME_START;
         let n_end = n_start + self.event_name.len();
         buf[n_start..n_end].copy_from_slice(self.event_name.raw());
         buf[n_end] = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;

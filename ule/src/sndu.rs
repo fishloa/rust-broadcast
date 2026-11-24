@@ -33,6 +33,25 @@ pub(crate) const D_BIT_MASK: u16 = 0x8000;
 /// Mask for the 15-bit `Length` field in the first 16-bit word (RFC 4326 §4.2).
 pub(crate) const LENGTH_MASK: u16 = 0x7FFF;
 
+/// Bit width of the `Length` field (RFC 4326 §4.2).
+const LENGTH_BITS: u32 = 15;
+/// Byte offset of the 16-bit `D` + `Length` word (RFC 4326 §4.2).
+const D_LENGTH_OFFSET: usize = 0;
+/// Byte offset of the base-header `Type` field (RFC 4326 §4.2).
+const TYPE_FIELD_OFFSET: usize = D_LENGTH_OFFSET + core::mem::size_of::<u16>();
+
+fn read_u16_at(data: &[u8], at: usize) -> u16 {
+    let mut bytes = [0_u8; core::mem::size_of::<u16>()];
+    bytes.copy_from_slice(&data[at..at + core::mem::size_of::<u16>()]);
+    u16::from_be_bytes(bytes)
+}
+
+fn read_u32_at(data: &[u8], at: usize) -> u32 {
+    let mut bytes = [0_u8; core::mem::size_of::<u32>()];
+    bytes.copy_from_slice(&data[at..at + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(bytes)
+}
+
 /// A parsed/owned SubNetwork Data Unit (RFC 4326 §4).
 ///
 /// Holds typed header fields plus a borrowed view of the PDU. `Length` and the
@@ -108,10 +127,10 @@ impl<'a> Sndu<'a> {
     /// CRC-32 trailer against a recomputed value (§4.6).
     pub fn parse(data: &'a [u8]) -> Result<Self> {
         need_in(data, BASE_HEADER_LEN, "SNDU base header")?;
-        let first = u16::from_be_bytes([data[0], data[1]]);
+        let first = read_u16_at(data, D_LENGTH_OFFSET);
         let d_bit = (first & D_BIT_MASK) != 0;
         let length = first & LENGTH_MASK;
-        let raw_type = u16::from_be_bytes([data[2], data[3]]);
+        let raw_type = read_u16_at(data, TYPE_FIELD_OFFSET);
         let type_field = TypeField::from_u16(raw_type);
 
         if first == END_INDICATOR {
@@ -161,12 +180,7 @@ impl<'a> Sndu<'a> {
 
         // CRC covers the whole SNDU from byte 0 up to (not including) the CRC.
         let computed = broadcast_common::crc32_mpeg2::compute(&data[..crc_start]);
-        let found = u32::from_be_bytes([
-            data[crc_start],
-            data[crc_start + 1],
-            data[crc_start + 2],
-            data[crc_start + 3],
-        ]);
+        let found = read_u32_at(data, crc_start);
         if computed != found {
             return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
                 what: "SNDU",
@@ -190,7 +204,7 @@ impl<'a> Sndu<'a> {
         need_out(out, total)?;
 
         let length = self.length_field();
-        broadcast_common::len::fit_bits(length as u64, 15, "Length")?;
+        broadcast_common::len::fit_bits(length as u64, LENGTH_BITS, "Length")?;
         // D=1 with Length=0x7FFF is the reserved End Indicator (0xFFFF on the
         // wire, §6), not a real SNDU header — every receiver (including this
         // crate's own `ts::maybe_finish`) stops the packet there (ULE-W2,
@@ -210,9 +224,9 @@ impl<'a> Sndu<'a> {
         if self.d_bit() {
             first |= D_BIT_MASK;
         }
-        out[0..2].copy_from_slice(&first.to_be_bytes());
+        out[D_LENGTH_OFFSET..TYPE_FIELD_OFFSET].copy_from_slice(&first.to_be_bytes());
         // Byte 2..4: Type.
-        out[2..4].copy_from_slice(&base_type.to_u16().to_be_bytes());
+        out[TYPE_FIELD_OFFSET..BASE_HEADER_LEN].copy_from_slice(&base_type.to_u16().to_be_bytes());
 
         let mut off = BASE_HEADER_LEN;
         if let Some(npa) = self.dest_address {
@@ -256,7 +270,7 @@ impl broadcast_common::Serialize for Sndu<'_> {
 /// (`0xFFFF`: `D = 1`, `Length = 0x7FFF`) — no further SNDUs in this TS packet
 /// (RFC 4326 §4.3).
 pub fn is_end_indicator(data: &[u8]) -> bool {
-    data.len() >= 2 && data[0] == PADDING_BYTE && data[1] == PADDING_BYTE
+    data.len() >= core::mem::size_of::<u16>() && data[0] == PADDING_BYTE && data[1] == PADDING_BYTE
 }
 
 #[cfg(test)]

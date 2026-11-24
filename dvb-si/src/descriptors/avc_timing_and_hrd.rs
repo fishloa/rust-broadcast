@@ -8,6 +8,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use crate::wire::U32_LEN;
 use broadcast_common::len::need_out;
 use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
@@ -18,19 +19,46 @@ const HEADER_LEN: usize = 2;
 /// Default of the 6-bit `reserved` in byte 0 (H.222.0 Table 2-93): clause 2.1
 /// "reserved" = `1` (all editions 06/2012-08/2023, audit §5; confirmed by the
 /// TSDuck oracle PMT).
-pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
+pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_FIRST_BYTE_BITS> =
+    ReservedOnes::<RESERVED_FIRST_BYTE_BITS>::FILL;
 /// Default of the 7-bit `reserved` after `90kHz_flag` (same rule).
-pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
+pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_AFTER_90KHZ_FLAG_BITS> =
+    ReservedOnes::<RESERVED_AFTER_90KHZ_FLAG_BITS>::FILL;
 /// Default of the trailing 5-bit `reserved` after the frame-rate flags (same
 /// rule).
-pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_TRAILING_BITS>::FILL;
 /// Width of the `reserved` in the first body byte (6 bits).
-const RESERVED_6_BITS: u32 = 6;
+pub const RESERVED_FIRST_BYTE_BITS: u32 = 6;
 /// Width of the `reserved` after `90kHz_flag` (7 bits).
-const RESERVED_7_BITS: u32 = 7;
+pub const RESERVED_AFTER_90KHZ_FLAG_BITS: u32 = 7;
 /// Width of the trailing `reserved` after the frame-rate flags (5 bits).
-const RESERVED_5_BITS: u32 = 5;
+pub const RESERVED_TRAILING_BITS: u32 = 5;
 const FIXED_BODY_LEN: u8 = 1; // first byte always present (hrd_management_valid_flag..picture_and_timing_info_present)
+/// Width of a 32-bit wire field, bytes.
+/// Width of the `N` + `K` pair, bytes.
+const N_AND_K_LEN: usize = U32_LEN + U32_LEN;
+/// Width of the `90kHz_flag`/reserved byte, bytes.
+const PICTURE_TIMING_PREFIX_LEN: usize = 2;
+/// Shortest picture-timing block that carries `N`/`K`.
+const PICTURE_TIMING_NK_LEN: usize = PICTURE_TIMING_PREFIX_LEN + N_AND_K_LEN;
+/// Offset of `N` in the descriptor body.
+const N_OFFSET: usize = PICTURE_TIMING_PREFIX_LEN;
+/// Offset of `K` in the descriptor body.
+const K_OFFSET: usize = N_OFFSET + U32_LEN;
+/// Offset of `num_units_in_tick` after an explicit `N`/`K` pair.
+const NUM_UNITS_IN_TICK_OFFSET: usize = K_OFFSET + U32_LEN;
+const HRD_MANAGEMENT_VALID_FLAG_MASK: u8 = 0x80;
+const HRD_MANAGEMENT_VALID_FLAG_SHIFT: u8 = 7;
+const PICTURE_AND_TIMING_INFO_PRESENT_MASK: u8 = 0x01;
+const RESERVED_6_SHIFT: u8 = 1;
+const CLOCK_90KHZ_FLAG_MASK: u8 = 0x80;
+const FIXED_FRAME_RATE_FLAG_MASK: u8 = 0x80;
+const FIXED_FRAME_RATE_FLAG_SHIFT: u8 = 7;
+const TEMPORAL_POC_FLAG_MASK: u8 = 0x40;
+const TEMPORAL_POC_FLAG_SHIFT: u8 = 6;
+const PICTURE_TO_DISPLAY_CONVERSION_FLAG_MASK: u8 = 0x20;
+const PICTURE_TO_DISPLAY_CONVERSION_FLAG_SHIFT: u8 = 5;
 
 /// Picture and timing info block — present when `picture_and_timing_info_present` is true.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +76,7 @@ pub struct AvcPictureTiming {
     /// `reserved(7)` after `90kHz_flag` (7 bits, right-aligned). Captured on
     /// parse, re-emitted verbatim; [`AvcPictureTiming::new`] uses
     /// [`RESERVED_7_DEFAULT`].
-    pub reserved_7: ReservedOnes<RESERVED_7_BITS>,
+    pub reserved_7: ReservedOnes<RESERVED_AFTER_90KHZ_FLAG_BITS>,
 }
 
 impl AvcPictureTiming {
@@ -89,11 +117,11 @@ pub struct AvcTimingAndHrdDescriptor {
     /// `reserved(6)` in byte 0 (6 bits, right-aligned). Captured on parse,
     /// re-emitted verbatim; [`AvcTimingAndHrdDescriptor::new`] uses
     /// [`RESERVED_6_DEFAULT`].
-    pub reserved_6: ReservedOnes<RESERVED_6_BITS>,
+    pub reserved_6: ReservedOnes<RESERVED_FIRST_BYTE_BITS>,
     /// Trailing `reserved(5)` after the flags (5 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_5_DEFAULT`].
-    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_5: ReservedOnes<RESERVED_TRAILING_BITS>,
 }
 
 impl AvcTimingAndHrdDescriptor {
@@ -136,47 +164,48 @@ impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
         }
 
         let b0 = body[0];
-        let hrd_management_valid_flag = (b0 & 0x80) != 0;
-        let picture_and_timing_info_present = (b0 & 0x01) != 0;
+        let hrd_management_valid_flag = (b0 & HRD_MANAGEMENT_VALID_FLAG_MASK) != 0;
+        let picture_and_timing_info_present = (b0 & PICTURE_AND_TIMING_INFO_PRESENT_MASK) != 0;
 
         let (picture_timing, flags_offset) = if picture_and_timing_info_present {
             // picture_and_timing block: 1 byte (90kHz_flag + reserved) + optional 8 bytes (N+K)
-            if body.len() < 2 {
+            if body.len() < PICTURE_TIMING_PREFIX_LEN {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "AVC_timing_and_HRD_descriptor too short for picture_timing block",
                 });
             }
-            let b1 = body[1];
-            let _90khz_flag = (b1 & 0x80) != 0;
+            let b1 = body[FIXED_BODY_LEN as usize];
+            let _90khz_flag = (b1 & CLOCK_90KHZ_FLAG_MASK) != 0;
 
             let (n, k, nk_len) = if _90khz_flag {
                 (None, None, 0)
             } else {
-                if body.len() < 10 {
+                if body.len() < PICTURE_TIMING_NK_LEN {
                     return Err(Error::InvalidDescriptor {
                         tag: TAG,
                         reason: "AVC_timing_and_HRD_descriptor too short for N/K fields",
                     });
                 }
-                let n = u32::from_be_bytes([body[2], body[3], body[4], body[5]]);
-                let k = u32::from_be_bytes([body[6], body[7], body[8], body[9]]);
-                (Some(n), Some(k), 8)
+                let mut n_bytes = [0u8; U32_LEN];
+                n_bytes.copy_from_slice(&body[N_OFFSET..K_OFFSET]);
+                let mut k_bytes = [0u8; U32_LEN];
+                k_bytes.copy_from_slice(&body[K_OFFSET..NUM_UNITS_IN_TICK_OFFSET]);
+                let n = u32::from_be_bytes(n_bytes);
+                let k = u32::from_be_bytes(k_bytes);
+                (Some(n), Some(k), N_AND_K_LEN)
             };
 
-            let num_units_offset = 2 + nk_len;
-            if body.len() < num_units_offset + 4 {
+            let num_units_offset = PICTURE_TIMING_PREFIX_LEN + nk_len;
+            if body.len() < num_units_offset + U32_LEN {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "AVC_timing_and_HRD_descriptor too short for num_units_in_tick",
                 });
             }
-            let num_units_in_tick = u32::from_be_bytes([
-                body[num_units_offset],
-                body[num_units_offset + 1],
-                body[num_units_offset + 2],
-                body[num_units_offset + 3],
-            ]);
+            let mut num_units_bytes = [0u8; U32_LEN];
+            num_units_bytes.copy_from_slice(&body[num_units_offset..num_units_offset + U32_LEN]);
+            let num_units_in_tick = u32::from_be_bytes(num_units_bytes);
 
             let timing = AvcPictureTiming {
                 _90khz_flag,
@@ -185,9 +214,9 @@ impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
                 num_units_in_tick,
                 reserved_7: ReservedOnes::from_bits(u64::from(b1)),
             };
-            (Some(timing), num_units_offset + 4)
+            (Some(timing), num_units_offset + U32_LEN)
         } else {
-            (None, 1)
+            (None, FIXED_BODY_LEN as usize)
         };
 
         if body.len() != flags_offset + 1 {
@@ -200,9 +229,10 @@ impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
             });
         }
         let flags_byte = body[flags_offset];
-        let fixed_frame_rate_flag = (flags_byte & 0x80) != 0;
-        let temporal_poc_flag = (flags_byte & 0x40) != 0;
-        let picture_to_display_conversion_flag = (flags_byte & 0x20) != 0;
+        let fixed_frame_rate_flag = (flags_byte & FIXED_FRAME_RATE_FLAG_MASK) != 0;
+        let temporal_poc_flag = (flags_byte & TEMPORAL_POC_FLAG_MASK) != 0;
+        let picture_to_display_conversion_flag =
+            (flags_byte & PICTURE_TO_DISPLAY_CONVERSION_FLAG_MASK) != 0;
 
         Ok(Self {
             hrd_management_valid_flag,
@@ -210,7 +240,7 @@ impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
             fixed_frame_rate_flag,
             temporal_poc_flag,
             picture_to_display_conversion_flag,
-            reserved_6: ReservedOnes::from_bits(u64::from(b0 >> 1)),
+            reserved_6: ReservedOnes::from_bits(u64::from(b0 >> RESERVED_6_SHIFT)),
             reserved_5: ReservedOnes::from_bits(u64::from(flags_byte)),
         })
     }
@@ -223,9 +253,9 @@ impl Serialize for AvcTimingAndHrdDescriptor {
         let body_len = 1u8
             + if let Some(ref pt) = self.picture_timing {
                 if pt._90khz_flag {
-                    1u8 + 4 // 90kHz_flag byte + num_units_in_tick
+                    FIXED_BODY_LEN + U32_LEN as u8 // 90kHz_flag byte + num_units_in_tick
                 } else {
-                    1u8 + 8 + 4 // 90kHz_flag byte + N(4) + K(4) + num_units_in_tick
+                    FIXED_BODY_LEN + N_AND_K_LEN as u8 + U32_LEN as u8 // 90kHz_flag byte + N(4) + K(4) + num_units_in_tick
                 }
             } else {
                 0
@@ -241,8 +271,9 @@ impl Serialize for AvcTimingAndHrdDescriptor {
         buf[1] = body_len;
 
         let picture_and_timing_info_present = self.picture_timing.is_some();
-        buf[HEADER_LEN] = ((self.hrd_management_valid_flag as u8) << 7)
-            | ((self.reserved_6.get() as u8) << 1)
+        buf[HEADER_LEN] = (u8::from(self.hrd_management_valid_flag)
+            << HRD_MANAGEMENT_VALID_FLAG_SHIFT)
+            | ((self.reserved_6.get() as u8) << RESERVED_6_SHIFT)
             | (if picture_and_timing_info_present {
                 1
             } else {
@@ -251,7 +282,11 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         let mut pos = HEADER_LEN + 1;
         if let Some(ref pt) = self.picture_timing {
-            buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 } | pt.reserved_7.get() as u8;
+            buf[pos] = if pt._90khz_flag {
+                CLOCK_90KHZ_FLAG_MASK
+            } else {
+                0
+            } | pt.reserved_7.get() as u8;
             pos += 1;
             if !pt._90khz_flag {
                 // N and K are both on the wire whenever the 90 kHz flag is
@@ -264,17 +299,18 @@ impl Serialize for AvcTimingAndHrdDescriptor {
                     field: "K",
                     reason: "required when _90khz_flag is false",
                 })?;
-                buf[pos..pos + 4].copy_from_slice(&n.to_be_bytes());
-                buf[pos + 4..pos + 8].copy_from_slice(&k.to_be_bytes());
-                pos += 8;
+                buf[pos..pos + U32_LEN].copy_from_slice(&n.to_be_bytes());
+                buf[pos + U32_LEN..pos + N_AND_K_LEN].copy_from_slice(&k.to_be_bytes());
+                pos += N_AND_K_LEN;
             }
-            buf[pos..pos + 4].copy_from_slice(&pt.num_units_in_tick.to_be_bytes());
-            pos += 4;
+            buf[pos..pos + U32_LEN].copy_from_slice(&pt.num_units_in_tick.to_be_bytes());
+            pos += U32_LEN;
         }
 
-        buf[pos] = ((self.fixed_frame_rate_flag as u8) << 7)
-            | ((self.temporal_poc_flag as u8) << 6)
-            | ((self.picture_to_display_conversion_flag as u8) << 5)
+        buf[pos] = (u8::from(self.fixed_frame_rate_flag) << FIXED_FRAME_RATE_FLAG_SHIFT)
+            | (u8::from(self.temporal_poc_flag) << TEMPORAL_POC_FLAG_SHIFT)
+            | (u8::from(self.picture_to_display_conversion_flag)
+                << PICTURE_TO_DISPLAY_CONVERSION_FLAG_SHIFT)
             | self.reserved_5.get() as u8;
         Ok(len)
     }

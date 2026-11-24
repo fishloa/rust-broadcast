@@ -6,7 +6,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::text::{DvbText, LangCode};
+use crate::text::{DvbText, LANG_CODE_LEN, LangCode};
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
@@ -16,6 +16,13 @@ const HEADER_LEN: usize = 2;
 /// stream_content(1) + component_type(1) + component_tag(1) + language_code(3) = 6
 const PRE_TEXT_LEN: usize = 6;
 const STREAM_CONTENT_MASK: u8 = 0x0F;
+/// Shift of `stream_content_ext` in the first body byte.
+const STREAM_CONTENT_EXT_SHIFT: u8 = 4;
+/// `ISO_639_language_code` width.
+/// Offset of `component_tag` in the descriptor body.
+const COMPONENT_TAG_OFFSET: usize = 2;
+/// Offset of `ISO_639_language_code` in the descriptor body.
+const LANGUAGE_CODE_OFFSET: usize = PRE_TEXT_LEN - LANG_CODE_LEN;
 
 /// Component Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,11 +59,14 @@ impl<'a> Parse<'a> for ComponentDescriptor<'a> {
                 reason: "component_descriptor body shorter than minimum 6 bytes",
             });
         }
-        let stream_content_ext = body[0] >> 4;
+        let stream_content_ext = body[0] >> STREAM_CONTENT_EXT_SHIFT;
         let stream_content = body[0] & STREAM_CONTENT_MASK;
         let component_type = body[1];
-        let component_tag = body[2];
-        let language_code = LangCode([body[3], body[4], body[5]]);
+        let component_tag = body[COMPONENT_TAG_OFFSET];
+        let mut language_bytes = [0u8; LANG_CODE_LEN];
+        language_bytes
+            .copy_from_slice(&body[LANGUAGE_CODE_OFFSET..LANGUAGE_CODE_OFFSET + LANG_CODE_LEN]);
+        let language_code = LangCode(language_bytes);
         let text = DvbText::new(&body[PRE_TEXT_LEN..]);
         Ok(Self {
             stream_content_ext,
@@ -86,15 +96,16 @@ impl Serialize for ComponentDescriptor<'_> {
             self.stream_content_ext,
             STREAM_CONTENT_MASK,
             "stream_content_ext",
-        )? << 4)
+        )? << STREAM_CONTENT_EXT_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.stream_content,
                 STREAM_CONTENT_MASK,
                 "stream_content",
             )?;
         buf[HEADER_LEN + 1] = self.component_type;
-        buf[HEADER_LEN + 2] = self.component_tag;
-        buf[HEADER_LEN + 3..HEADER_LEN + 6].copy_from_slice(&self.language_code.0);
+        buf[HEADER_LEN + COMPONENT_TAG_OFFSET] = self.component_tag;
+        buf[HEADER_LEN + LANGUAGE_CODE_OFFSET..HEADER_LEN + PRE_TEXT_LEN]
+            .copy_from_slice(&self.language_code.0);
         buf[HEADER_LEN + PRE_TEXT_LEN..len].copy_from_slice(self.text.raw());
         Ok(len)
     }

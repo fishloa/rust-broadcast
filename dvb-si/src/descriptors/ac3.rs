@@ -13,6 +13,8 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for AC-3 audio.
 pub const TAG: u8 = 0x6A;
 const HEADER_LEN: usize = 2;
+/// Width of the flags byte that follows the descriptor header.
+const FLAGS_LEN: usize = 1;
 
 const FLAG_COMPONENT_TYPE: u8 = 0x80;
 const FLAG_BSID: u8 = 0x40;
@@ -20,7 +22,9 @@ const FLAG_MAINID: u8 = 0x20;
 const FLAG_ASVC: u8 = 0x10;
 
 const COMPONENT_TYPE_ENHANCED_AC3_MASK: u8 = 0x80;
+const COMPONENT_TYPE_ENHANCED_AC3_SHIFT: u8 = 7;
 const COMPONENT_TYPE_FULL_SERVICE_MASK: u8 = 0x40;
+const COMPONENT_TYPE_FULL_SERVICE_SHIFT: u8 = 6;
 const COMPONENT_TYPE_SERVICE_TYPE_SHIFT: u8 = 3;
 const COMPONENT_TYPE_SERVICE_TYPE_MASK: u8 = 0x07;
 const COMPONENT_TYPE_CHANNELS_MASK: u8 = 0x07;
@@ -232,8 +236,8 @@ impl Ac3ComponentType {
     /// Encode back to the wire byte. Lossless: `from_byte(b).to_byte() == b`.
     #[must_use]
     pub fn to_byte(self) -> u8 {
-        (self.enhanced_ac3 as u8) << 7
-            | (self.full_service as u8) << 6
+        (self.enhanced_ac3 as u8) << COMPONENT_TYPE_ENHANCED_AC3_SHIFT
+            | (self.full_service as u8) << COMPONENT_TYPE_FULL_SERVICE_SHIFT
             | (self.service_type.to_u8() & COMPONENT_TYPE_SERVICE_TYPE_MASK)
                 << COMPONENT_TYPE_SERVICE_TYPE_SHIFT
             | (self.channels.to_u8() & COMPONENT_TYPE_CHANNELS_MASK)
@@ -247,7 +251,7 @@ impl Ac3ComponentType {
 pub const RESERVED_FLAGS_DEFAULT: ReservedZero<RESERVED_FLAGS_BITS> =
     ReservedZero::<RESERVED_FLAGS_BITS>::FILL;
 /// Width of the `reserved_flags` field (4 bits).
-const RESERVED_FLAGS_BITS: u32 = 4;
+pub const RESERVED_FLAGS_BITS: u32 = 4;
 const RESERVED_FLAGS_MASK: u8 = 0x0F;
 
 /// AC-3 Descriptor.
@@ -382,8 +386,8 @@ impl Serialize for Ac3Descriptor<'_> {
             flags |= FLAG_ASVC;
         }
         // reserved_flags: preserved from parse, spec default 0 when constructed.
-        buf[2] = flags | self.reserved_flags.get() as u8;
-        let mut pos = 3;
+        buf[HEADER_LEN] = flags | self.reserved_flags.get() as u8;
+        let mut pos = HEADER_LEN + FLAGS_LEN;
         for b in [self.component_type, self.bsid, self.mainid, self.asvc]
             .into_iter()
             .flatten()

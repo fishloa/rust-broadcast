@@ -34,6 +34,8 @@ pub const VANC_FORMAT_IDENTIFIER_BYTES: [u8; 4] = *b"VANC";
 
 /// Minimum wire size: `descriptor_tag` + `descriptor_length`.
 const HEADER_LEN: usize = 2;
+/// Wire bit width of `descriptor_length` (ISO/IEC 13818-1 §2.6).
+const DESCRIPTOR_LENGTH_BITS: u32 = 8;
 
 /// One entry of an [`AncDataDescriptor`]'s inner descriptor loop
 /// (ISO/IEC 13818-1 §2.6 `descriptor()`: an 8-bit `descriptor_tag`, an 8-bit
@@ -116,7 +118,7 @@ impl<'a> Descriptor<'a> {
     /// (an 8-bit `descriptor_length` caps the body at 255 octets).
     fn checked_length(&self) -> Result<u8> {
         let len = self.body().len();
-        broadcast_common::len::fit_bits(len as u64, 8, "descriptor_length")?;
+        broadcast_common::len::fit_bits(len as u64, DESCRIPTOR_LENGTH_BITS, "descriptor_length")?;
         Ok(len as u8)
     }
 }
@@ -212,7 +214,7 @@ impl<'a> AncDataDescriptor<'a> {
         need_out(buf, len)?;
         let body_len = broadcast_common::len::fit_bits(
             self.body_len() as u64,
-            8,
+            DESCRIPTOR_LENGTH_BITS,
             "anc_data_descriptor descriptor_length",
         )? as u8;
         buf[0] = ANC_DATA_DESCRIPTOR_TAG;
