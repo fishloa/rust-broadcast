@@ -68,7 +68,7 @@ impl Serialize for ApplicationUsageDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = 1;
-        buf[2] = self.usage_type;
+        buf[HEADER_LEN] = self.usage_type;
         Ok(len)
     }
 }

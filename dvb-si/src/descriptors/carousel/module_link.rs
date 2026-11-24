@@ -15,6 +15,8 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x04;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: usize = 3;
+/// Offset of `moduleId` in the descriptor body.
+const MODULE_ID_OFFSET: usize = 1;
 
 /// `position` of a module / group description in its chain
 /// (EN 301 192 §10.2.5 / §10.2.9).
@@ -95,7 +97,7 @@ impl<'a> Parse<'a> for ModuleLinkDescriptor {
         }
         Ok(Self {
             position: LinkPosition::from_u8(body[0]),
-            module_id: u16::from_be_bytes([body[1], body[2]]),
+            module_id: u16::from_be_bytes([body[MODULE_ID_OFFSET], body[MODULE_ID_OFFSET + 1]]),
         })
     }
 }
@@ -110,8 +112,9 @@ impl Serialize for ModuleLinkDescriptor {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
-        buf[2] = self.position.to_u8();
-        buf[3..5].copy_from_slice(&self.module_id.to_be_bytes());
+        buf[HEADER_LEN] = self.position.to_u8();
+        buf[HEADER_LEN + MODULE_ID_OFFSET..HEADER_LEN + BODY_LEN]
+            .copy_from_slice(&self.module_id.to_be_bytes());
         Ok(len)
     }
 }

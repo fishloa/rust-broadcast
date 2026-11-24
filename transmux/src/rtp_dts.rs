@@ -80,6 +80,8 @@ pub(crate) use crate::rtp_stream::MAX_REORDER_DEPTH;
 pub(crate) const PROBE_AUS: usize = 8;
 
 const AUS_PER_FIELD_PAIR: usize = 2;
+/// Two consecutive samples, for the arrival-step estimate.
+const CONSECUTIVE_SAMPLE_PAIR: usize = 2;
 
 fn field_coded_depth(frames: usize) -> usize {
     (frames * AUS_PER_FIELD_PAIR + 1).min(MAX_REORDER_DEPTH)
@@ -257,7 +259,7 @@ impl DtsDeriver {
             .filter(|&p| p > 0)
             .or_else(|| {
                 self.window
-                    .windows(2)
+                    .windows(CONSECUTIVE_SAMPLE_PAIR)
                     .map(|w| w[1] - w[0])
                     .filter(|&g| g > 0)
                     .min()

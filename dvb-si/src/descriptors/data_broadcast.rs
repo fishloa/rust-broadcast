@@ -87,7 +87,9 @@ impl<'a> Parse<'a> for DataBroadcastDescriptor<'a> {
         let selector = &body[pos..selector_end];
         pos = selector_end;
 
-        let language_code = LangCode([body[pos], body[pos + 1], body[pos + 2]]);
+        let mut language_code_bytes = [0u8; LANG_LEN];
+        language_code_bytes.copy_from_slice(&body[pos..pos + LANG_LEN]);
+        let language_code = LangCode(language_code_bytes);
         pos += LANG_LEN;
 
         let text_length = body[pos] as usize;

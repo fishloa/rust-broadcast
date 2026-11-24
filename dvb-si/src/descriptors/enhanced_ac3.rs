@@ -15,6 +15,8 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for Enhanced AC-3 (E-AC-3, Dolby Digital Plus).
 pub const TAG: u8 = 0x7A;
 const HEADER_LEN: usize = 2;
+/// Width of the flags byte that follows the descriptor header.
+const FLAGS_LEN: usize = 1;
 
 const FLAG_COMPONENT_TYPE: u8 = 0x80;
 const FLAG_BSID: u8 = 0x40;
@@ -160,8 +162,8 @@ impl Serialize for EnhancedAc3Descriptor<'_> {
         if self.substream3.is_some() {
             flags |= FLAG_SUBSTREAM3;
         }
-        buf[2] = flags;
-        let mut pos = 3;
+        buf[HEADER_LEN] = flags;
+        let mut pos = HEADER_LEN + FLAGS_LEN;
         for b in [
             self.component_type,
             self.bsid,

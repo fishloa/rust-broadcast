@@ -106,10 +106,13 @@ const TFHD: [u8; 4] = *b"tfhd";
 const TFDT: [u8; 4] = *b"tfdt";
 const TRUN: [u8; 4] = *b"trun";
 const MDAT: [u8; 4] = *b"mdat";
+const BOX_HEADER_SIZE: usize = 8;
+const PAIR_WINDOW_LEN: usize = 2;
+const FOURCC_LEN: usize = 4;
 
 /// CMAF/DASH segment brands accepted for the `styp` box (CMAF §7.3.2.3): the
 /// DASH segment brands `msdh`/`msix` and any CMAF `cmf*` brand.
-fn is_segment_brand(b: &[u8; 4]) -> bool {
+fn is_segment_brand(b: &[u8; FOURCC_LEN]) -> bool {
     b == b"msdh" || b == b"msix" || &b[..3] == b"cmf"
 }
 
@@ -178,7 +181,7 @@ impl ConformanceIssue {
 /// Walk the direct children of a container `body`, collecting `(fourcc, BoxRef)`
 /// pairs. Stops cleanly at the first malformed child (so a truncated tail does
 /// not panic and does not abort the whole walk with an error).
-fn children(body: &[u8]) -> Vec<([u8; 4], BoxRef<'_>)> {
+fn children(body: &[u8]) -> Vec<([u8; FOURCC_LEN], BoxRef<'_>)> {
     box_iter(body)
         .map_while(|step| step.ok())
         .map(|(bx, _)| (bx.header.box_type.0, bx))
@@ -186,12 +189,12 @@ fn children(body: &[u8]) -> Vec<([u8; 4], BoxRef<'_>)> {
 }
 
 /// Whether a container `body` has a direct child of the given four-CC.
-fn has_child(body: &[u8], fourcc: &[u8; 4]) -> bool {
+fn has_child(body: &[u8], fourcc: &[u8; FOURCC_LEN]) -> bool {
     children(body).iter().any(|(t, _)| t == fourcc)
 }
 
 /// Return the body of the first direct child with the given four-CC.
-fn child_body<'a>(body: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+fn child_body<'a>(body: &'a [u8], fourcc: &[u8; FOURCC_LEN]) -> Option<&'a [u8]> {
     children(body)
         .into_iter()
         .find(|(t, _)| t == fourcc)
@@ -270,16 +273,14 @@ fn validate_moov(moov: &[u8], issues: &mut Vec<ConformanceIssue>) {
     match child_body(moov, &MVEX) {
         None => issues.push(ConformanceIssue::warning(
             "init.mvex.missing",
-            "moov has no mvex: the init segment is not marked as a fragmented movie \
-             (ISO/IEC 14496-12:2026 §8.8.1) — required for a fragmented (CMAF/DASH) workflow"
+            "moov has no mvex: the init segment is not marked as a fragmented movie (ISO/IEC 14496-12:2026 §8.8.1) — required for a fragmented (CMAF/DASH) workflow"
                 .to_string(),
         )),
         Some(mvex) => {
             if !has_child(mvex, &TREX) {
                 issues.push(ConformanceIssue::warning(
                     "init.mvex.missing",
-                    "mvex has no trex: fragmented tracks need per-track defaults \
-                     (ISO/IEC 14496-12:2026 §8.8.3)"
+                    "mvex has no trex: fragmented tracks need per-track defaults (ISO/IEC 14496-12:2026 §8.8.3)"
                         .to_string(),
                 ));
             }
@@ -320,8 +321,7 @@ fn validate_trak(trak: &[u8], track_no: usize, issues: &mut Vec<ConformanceIssue
         issues.push(ConformanceIssue::error(
             "init.trak.incomplete",
             format!(
-                "trak #{track_no} is missing required box(es): {} \
-                 (ISO/IEC 14496-12:2026 §8.3.2/§8.4)",
+                "trak #{track_no} is missing required box(es): {} (ISO/IEC 14496-12:2026 §8.3.2/§8.4)",
                 missing.join(", ")
             ),
         ));
@@ -421,8 +421,7 @@ fn validate_media_inner(
     match top.iter().find(|(t, _)| t == &STYP) {
         None => issues.push(ConformanceIssue::warning(
             "media.styp.missing",
-            "no styp box: a CMAF media segment begins with styp \
-             (ISO/IEC 14496-12:2026 §8.14.2, ISO/IEC 23000-19 §7.3.2.3)"
+            "no styp box: a CMAF media segment begins with styp (ISO/IEC 14496-12:2026 §8.14.2, ISO/IEC 23000-19 §7.3.2.3)"
                 .to_string(),
         )),
         Some((_, bx)) => {
@@ -435,8 +434,7 @@ fn validate_media_inner(
                     if !ok {
                         issues.push(ConformanceIssue::warning(
                             "media.styp.brand",
-                            "styp carries no recognised segment brand (msdh/msix/cmf*) \
-                             (ISO/IEC 23000-19 §7.3.2.3)"
+                            "styp carries no recognised segment brand (msdh/msix/cmf*) (ISO/IEC 23000-19 §7.3.2.3)"
                                 .to_string(),
                         ));
                     }
@@ -477,8 +475,7 @@ fn validate_media_inner(
             issues.push(ConformanceIssue::error(
                 "media.mdat.orphan",
                 format!(
-                    "mdat (box #{}) is not immediately preceded by a moof \
-                     (ISO/IEC 14496-12:2026 §8.1.1/§8.8.4)",
+                    "mdat (box #{}) is not immediately preceded by a moof (ISO/IEC 14496-12:2026 §8.1.1/§8.8.4)",
                     mp + 1
                 ),
             ));
@@ -524,8 +521,7 @@ fn validate_media_inner(
                 issues.push(ConformanceIssue::error(
                     "media.mdat.missing",
                     format!(
-                        "moof (box #{}) is not followed by an mdat box \
-                         (ISO/IEC 14496-12:2026 §8.8.4)",
+                        "moof (box #{}) is not followed by an mdat box (ISO/IEC 14496-12:2026 §8.8.4)",
                         mp + 1
                     ),
                 ));
@@ -582,7 +578,7 @@ fn validate_media_inner(
         // Two runs must not claim the same bytes: overlapping ranges would read
         // one sample's data twice and leave another's unreachable.
         checked.sort_unstable();
-        for w in checked.windows(2) {
+        for w in checked.windows(PAIR_WINDOW_LEN) {
             let ((a_lo, a_hi), (b_lo, b_hi)) = (w[0], w[1]);
             if a_hi > b_lo && b_hi > a_lo {
                 issues.push(ConformanceIssue::error(
@@ -692,8 +688,7 @@ fn validate_moof(
         issues.push(ConformanceIssue::warning(
             "media.moof.multi-traf",
             format!(
-                "moof #{moof_no} carries {} traf boxes; a CMAF fragment SHOULD be single-track \
-                 (ISO/IEC 23000-19 §7.3.2.3)",
+                "moof #{moof_no} carries {} traf boxes; a CMAF fragment SHOULD be single-track (ISO/IEC 23000-19 §7.3.2.3)",
                 trafs.len()
             ),
         ));
@@ -768,8 +763,7 @@ fn validate_traf(
             issues.push(ConformanceIssue::error(
                 "media.tfdt.missing",
                 format!(
-                    "moof #{moof_no}, traf #{traf_no} has no tfdt: CMAF requires the \
-                     baseMediaDecodeTime (ISO/IEC 14496-12:2026 §8.8.12, ISO/IEC 23000-19 §7.5.19)"
+                    "moof #{moof_no}, traf #{traf_no} has no tfdt: CMAF requires the baseMediaDecodeTime (ISO/IEC 14496-12:2026 §8.8.12, ISO/IEC 23000-19 §7.5.19)"
                 ),
             ));
             None
@@ -832,8 +826,7 @@ fn validate_traf(
         issues.push(ConformanceIssue::error(
             "media.sample.zero-duration",
             format!(
-                "moof #{moof_no}, traf #{traf_no}: {zero_duration_samples} sample(s) have \
-                 zero duration (ISO/IEC 14496-12:2026 §8.8.8)"
+                "moof #{moof_no}, traf #{traf_no}: {zero_duration_samples} sample(s) have zero duration (ISO/IEC 14496-12:2026 §8.8.8)"
             ),
         ));
     }
@@ -841,8 +834,7 @@ fn validate_traf(
         issues.push(ConformanceIssue::warning(
             "media.sample.timing",
             format!(
-                "moof #{moof_no}, traf #{traf_no}: {unstated_duration_samples} sample(s) carry \
-                 no stated span, written as a zero duration (ISO/IEC 14496-12:2026 §8.8.8)"
+                "moof #{moof_no}, traf #{traf_no}: {unstated_duration_samples} sample(s) carry no stated span, written as a zero duration (ISO/IEC 14496-12:2026 §8.8.8)"
             ),
         ));
     }
@@ -850,12 +842,7 @@ fn validate_traf(
         issues.push(ConformanceIssue::warning(
             "media.sample.timing",
             format!(
-                "moof #{moof_no}, traf #{traf_no}: {untyped} sample(s) carry no stated span, \
-                 written as a zero duration by this crate's fragment writer \
-                 (ISO/IEC 14496-12:2026 §8.8.8); without an initialization segment the track \
-                 cannot be typed, so a video track's unstated span and a declared zero-length \
-                 sample are indistinguishable here, and `validate_cmaf_track` with the init \
-                 segment resolves it"
+                "moof #{moof_no}, traf #{traf_no}: {untyped} sample(s) carry no stated span, written as a zero duration by this crate's fragment writer (ISO/IEC 14496-12:2026 §8.8.8); without an initialization segment the track cannot be typed, so a video track's unstated span and a declared zero-length sample are indistinguishable here, and `validate_cmaf_track` with the init segment resolves it"
             ),
         ));
     }
@@ -897,9 +884,7 @@ fn validate_traf(
             issues.push(ConformanceIssue::warning(
                 "media.sample.non-sync-first",
                 format!(
-                    "moof #{moof_no}, traf #{traf_no}: the fragment's first sample is not a \
-                     sync sample; a CMAF segment must begin at a random-access point, an \
-                     LL part/chunk need not (ISO/IEC 23000-19 §7.3.2.3)"
+                    "moof #{moof_no}, traf #{traf_no}: the fragment's first sample is not a sync sample; a CMAF segment must begin at a random-access point, an LL part/chunk need not (ISO/IEC 23000-19 §7.3.2.3)"
                 ),
             ));
         }
@@ -925,7 +910,11 @@ const SAMPLE_FLAGS_IS_NON_SYNC: u32 = 1 << 16;
 /// `child_body` yields only the body, which is right for the `*Box::parse_body`
 /// parsers but not for a type whose [`Parse`](broadcast_common::Parse) impl
 /// takes the whole box (e.g. [`TrackHeaderBox`]).
-fn child_whole<'a>(owner: &'a [u8], parent_body: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+fn child_whole<'a>(
+    owner: &'a [u8],
+    parent_body: &'a [u8],
+    fourcc: &[u8; FOURCC_LEN],
+) -> Option<&'a [u8]> {
     let bx_body = child_body(parent_body, fourcc)?;
     let base = owner.as_ptr() as usize;
     let body_ptr = bx_body.as_ptr() as usize;
@@ -935,7 +924,7 @@ fn child_whole<'a>(owner: &'a [u8], parent_body: &'a [u8], fourcc: &[u8; 4]) -> 
     let body_off = body_ptr - base;
     // The box header is 8 bytes, or 16 for a largesize box; a `tkhd` inside a
     // `moov` is never largesize, and `parse` revalidates the size itself.
-    let start = body_off.checked_sub(8)?;
+    let start = body_off.checked_sub(BOX_HEADER_SIZE)?;
     let end = body_off.checked_add(bx_body.len())?;
     owner.get(start..end)
 }
@@ -1039,8 +1028,7 @@ pub fn validate_cmaf_track(
                     issues.push(ConformanceIssue::error(
                         "track.tfhd.unknown-track",
                         format!(
-                            "media segment names track_id {} which the init segment's moov \
-                             does not declare (ISO/IEC 14496-12:2026 §8.8.7)",
+                            "media segment names track_id {} which the init segment's moov does not declare (ISO/IEC 14496-12:2026 §8.8.7)",
                             track.track_id
                         ),
                     ));
@@ -1050,7 +1038,7 @@ pub fn validate_cmaf_track(
         }
     }
 
-    for pair in infos.windows(2) {
+    for pair in infos.windows(PAIR_WINDOW_LEN) {
         let (prev, next) = (&pair[0], &pair[1]);
 
         // mfhd sequence_number strictly increasing (§8.8.5).
@@ -1060,8 +1048,7 @@ pub fn validate_cmaf_track(
             issues.push(ConformanceIssue::warning(
                 "track.mfhd.sequence",
                 format!(
-                    "mfhd sequence_number not strictly increasing: {a} then {b} \
-                     (ISO/IEC 14496-12:2026 §8.8.5)"
+                    "mfhd sequence_number not strictly increasing: {a} then {b} (ISO/IEC 14496-12:2026 §8.8.5)"
                 ),
             ));
         }
@@ -1086,9 +1073,7 @@ pub fn validate_cmaf_track(
                 issues.push(ConformanceIssue::error(
                     "track.tfdt.discontinuity",
                     format!(
-                        "track {}: tfdt baseMediaDecodeTime discontinuity - expected {} \
-                         (prev first tfdt {} + sum durations), got {} \
-                         (ISO/IEC 14496-12:2026 §8.8.12, ISO/IEC 23000-19 §7.5.19)",
+                        "track {}: tfdt baseMediaDecodeTime discontinuity - expected {} (prev first tfdt {} + sum durations), got {} (ISO/IEC 14496-12:2026 §8.8.12, ISO/IEC 23000-19 §7.5.19)",
                         cur.track_id, prev_end, prev_first, cur_first
                     ),
                 ));
