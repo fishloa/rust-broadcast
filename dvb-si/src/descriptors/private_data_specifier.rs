@@ -66,12 +66,12 @@ impl<'a> Parse<'a> for PrivateDataSpecifierDescriptor {
                 reason: "private_data_specifier_descriptor length must equal 4",
             });
         }
-        let (hdr, _) = body
-            .split_first_chunk::<4>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "private_data_specifier_descriptor length must equal 4",
-            })?;
+        let (hdr, _) =
+            body.split_first_chunk::<{ size_of::<u32>() }>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "private_data_specifier_descriptor length must equal 4",
+                })?;
         let private_data_specifier = u32::from_be_bytes(*hdr);
         Ok(Self {
             private_data_specifier,
@@ -90,7 +90,8 @@ impl Serialize for PrivateDataSpecifierDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN..HEADER_LEN + 4].copy_from_slice(&self.private_data_specifier.to_be_bytes());
+        buf[HEADER_LEN..HEADER_LEN + usize::from(BODY_LEN)]
+            .copy_from_slice(&self.private_data_specifier.to_be_bytes());
         Ok(len)
     }
 }

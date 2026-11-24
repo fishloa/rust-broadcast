@@ -14,6 +14,8 @@ use core::net::Ipv4Addr;
 /// Descriptor tag for target_IP_slash_descriptor.
 pub const TAG: u8 = 0x0F;
 const ENTRY_LEN: usize = 5;
+/// Offset of `IPv4_slash_mask`; also the wire width of `IPv4_addr`.
+const SLASH_MASK_OFFSET: usize = size_of::<u32>();
 
 /// One `IPv4_addr` / `IPv4_slash_mask` entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,14 +29,16 @@ pub struct Ipv4Slash {
 
 impl Entry<ENTRY_LEN> for Ipv4Slash {
     fn read(b: &[u8; ENTRY_LEN]) -> Self {
+        let (addr, mask) = b.split_at(SLASH_MASK_OFFSET);
+        let addr: [u8; size_of::<u32>()] = addr.try_into().unwrap_or_default();
         Self {
-            addr: Ipv4Addr::new(b[0], b[1], b[2], b[3]),
-            slash_mask: b[4],
+            addr: Ipv4Addr::from(addr),
+            slash_mask: mask[0],
         }
     }
     fn write(&self, b: &mut [u8; ENTRY_LEN]) {
-        b[..4].copy_from_slice(&self.addr.octets());
-        b[4] = self.slash_mask;
+        b[..SLASH_MASK_OFFSET].copy_from_slice(&self.addr.octets());
+        b[SLASH_MASK_OFFSET] = self.slash_mask;
     }
 }
 

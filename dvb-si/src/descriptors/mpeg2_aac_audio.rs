@@ -13,6 +13,8 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x2B;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 3;
+/// Offset of `MPEG-2_AAC_additional_information` within the body.
+const ADDITIONAL_INFORMATION_OFFSET: usize = 2;
 
 /// MPEG-2 AAC Audio Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +48,9 @@ impl<'a> Parse<'a> for Mpeg2AacAudioDescriptor {
         Ok(Self {
             mpeg_2_aac_profile: body[0],
             mpeg_2_aac_channel_configuration: body[1],
-            mpeg_2_aac_additional_information: AacAdditionalInfo::from_u8(body[2]),
+            mpeg_2_aac_additional_information: AacAdditionalInfo::from_u8(
+                body[ADDITIONAL_INFORMATION_OFFSET],
+            ),
         })
     }
 }
@@ -65,7 +69,8 @@ impl Serialize for Mpeg2AacAudioDescriptor {
         buf[1] = BODY_LEN;
         buf[HEADER_LEN] = self.mpeg_2_aac_profile;
         buf[HEADER_LEN + 1] = self.mpeg_2_aac_channel_configuration;
-        buf[HEADER_LEN + 2] = self.mpeg_2_aac_additional_information.to_u8();
+        buf[HEADER_LEN + ADDITIONAL_INFORMATION_OFFSET] =
+            self.mpeg_2_aac_additional_information.to_u8();
         Ok(len)
     }
 }

@@ -30,6 +30,18 @@ pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
     ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved_future_use` field (4 bits).
 const RESERVED_BITS: u32 = 4;
+/// Packing shift of `day` within `programme_identification_label`.
+const DAY_SHIFT: u32 = 15;
+/// Packing shift of `month` within `programme_identification_label`.
+const MONTH_SHIFT: u32 = 11;
+/// Packing shift of `hour` within `programme_identification_label`.
+const HOUR_SHIFT: u32 = 6;
+/// Body offset of the most significant wire byte.
+const TOP_BYTE_OFFSET: usize = 0;
+/// Body offset of the middle wire byte.
+const MID_BYTE_OFFSET: usize = 1;
+/// Body offset of the least significant wire byte.
+const LOW_BYTE_OFFSET: usize = 2;
 
 /// PDC Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,9 +106,9 @@ impl PdcDescriptor {
                 reason: "a day/month/hour/minute component exceeds its bit field",
             });
         }
-        self.programme_identification_label = (u32::from(day) << 15)
-            | (u32::from(month) << 11)
-            | (u32::from(hour) << 6)
+        self.programme_identification_label = (u32::from(day) << DAY_SHIFT)
+            | (u32::from(month) << MONTH_SHIFT)
+            | (u32::from(hour) << HOUR_SHIFT)
             | u32::from(minute);
         Ok(())
     }
@@ -117,7 +129,12 @@ impl<'a> Parse<'a> for PdcDescriptor {
                 reason: "PDC_descriptor length must be exactly 3",
             });
         }
-        let raw = (u32::from(body[0]) << 16) | (u32::from(body[1]) << 8) | u32::from(body[2]);
+        let raw = u32::from_be_bytes([
+            0,
+            body[TOP_BYTE_OFFSET],
+            body[MID_BYTE_OFFSET],
+            body[LOW_BYTE_OFFSET],
+        ]);
         Ok(Self {
             reserved_future_use: ReservedOnes::from_bits(u64::from(
                 ((raw >> RESERVED_SHIFT) as u8) & RESERVED_MASK,
@@ -150,9 +167,7 @@ impl Serialize for PdcDescriptor {
                 PIL_MASK,
                 "programme_identification_label",
             )?;
-        buf[HEADER_LEN] = (raw >> 16) as u8;
-        buf[HEADER_LEN + 1] = (raw >> 8) as u8;
-        buf[HEADER_LEN + 2] = raw as u8;
+        buf[HEADER_LEN..HEADER_LEN + BODY_LEN].copy_from_slice(&raw.to_be_bytes()[1..]);
         Ok(len)
     }
 }

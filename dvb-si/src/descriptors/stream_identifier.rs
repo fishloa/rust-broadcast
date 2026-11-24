@@ -53,7 +53,7 @@ impl Serialize for StreamIdentifierDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[2] = self.component_tag;
+        buf[HEADER_LEN] = self.component_tag;
         Ok(len)
     }
 }

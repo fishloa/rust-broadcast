@@ -20,6 +20,16 @@ pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVE
 /// Width of each `reserved` field ahead of a 22-bit value (2 bits).
 const RESERVED_BITS: u32 = 2;
 const BODY_LEN: u8 = 6;
+/// Width of each 22-bit uimsbf field (H.222.0 Table 2-69).
+const FIELD_BITS: u32 = 22;
+/// Mask of each 22-bit field.
+const FIELD_MASK: u32 = (1 << FIELD_BITS) - 1;
+/// Wire width of each field in bytes.
+const FIELD_LEN: usize = 3;
+/// Body offset of `sb_size`.
+const SIZE_OFFSET: usize = FIELD_LEN;
+/// Shift of the 2-bit `reserved` run in a field's first wire byte.
+const RESERVED_SHIFT: u32 = 6;
 
 /// Smoothing Buffer Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,15 +80,16 @@ impl<'a> Parse<'a> for SmoothingBufferDescriptor {
                 reason: "smoothing_buffer_descriptor length must equal 6",
             });
         }
-        let sb_leak_rate =
-            ((u32::from(body[0]) & 0x3F) << 16) | (u32::from(body[1]) << 8) | u32::from(body[2]);
-        let sb_size =
-            ((u32::from(body[3]) & 0x3F) << 16) | (u32::from(body[4]) << 8) | u32::from(body[5]);
+        let mut raw = [0u8; size_of::<u32>()];
+        raw[1..].copy_from_slice(&body[..FIELD_LEN]);
+        let sb_leak_rate = u32::from_be_bytes(raw) & FIELD_MASK;
+        raw[1..].copy_from_slice(&body[SIZE_OFFSET..SIZE_OFFSET + FIELD_LEN]);
+        let sb_size = u32::from_be_bytes(raw) & FIELD_MASK;
         Ok(Self {
             sb_leak_rate,
             sb_size,
-            reserved_leak_rate: ReservedOnes::from_bits(u64::from(body[0] >> 6)),
-            reserved_size: ReservedOnes::from_bits(u64::from(body[3] >> 6)),
+            reserved_leak_rate: ReservedOnes::from_bits(u64::from(body[0] >> RESERVED_SHIFT)),
+            reserved_size: ReservedOnes::from_bits(u64::from(body[SIZE_OFFSET] >> RESERVED_SHIFT)),
         })
     }
 }
@@ -95,17 +106,20 @@ impl Serialize for SmoothingBufferDescriptor {
         need_out(buf, len)?;
         // 22-bit fields: a wider value used to be masked down silently
         // (audit r03-W3 class).
-        let slr = broadcast_common::len::fit_bits(u64::from(self.sb_leak_rate), 22, "sb_leak_rate")?
-            as u32;
-        let ss = broadcast_common::len::fit_bits(u64::from(self.sb_size), 22, "sb_size")? as u32;
+        let slr = broadcast_common::len::fit_bits(
+            u64::from(self.sb_leak_rate),
+            FIELD_BITS,
+            "sb_leak_rate",
+        )? as u32;
+        let ss =
+            broadcast_common::len::fit_bits(u64::from(self.sb_size), FIELD_BITS, "sb_size")? as u32;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = ((self.reserved_leak_rate.get() as u8) << 6) | ((slr >> 16) & 0x3F) as u8;
-        buf[HEADER_LEN + 1] = ((slr >> 8) & 0xFF) as u8;
-        buf[HEADER_LEN + 2] = (slr & 0xFF) as u8;
-        buf[HEADER_LEN + 3] = ((self.reserved_size.get() as u8) << 6) | ((ss >> 16) & 0x3F) as u8;
-        buf[HEADER_LEN + 4] = ((ss >> 8) & 0xFF) as u8;
-        buf[HEADER_LEN + 5] = (ss & 0xFF) as u8;
+        let packed = ((self.reserved_leak_rate.get() as u32) << FIELD_BITS) | slr;
+        buf[HEADER_LEN..HEADER_LEN + FIELD_LEN].copy_from_slice(&packed.to_be_bytes()[1..]);
+        let packed = ((self.reserved_size.get() as u32) << FIELD_BITS) | ss;
+        buf[HEADER_LEN + SIZE_OFFSET..HEADER_LEN + SIZE_OFFSET + FIELD_LEN]
+            .copy_from_slice(&packed.to_be_bytes()[1..]);
         Ok(len)
     }
 }

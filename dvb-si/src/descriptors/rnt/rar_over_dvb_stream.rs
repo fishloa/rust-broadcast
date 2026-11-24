@@ -19,6 +19,16 @@ const HEADER_LEN: usize = 2;
 /// first/last valid date, weighting+flags byte, tsid, onid, service_id,
 /// component_tag.
 const FIXED_LEN: usize = 2 * MJD_BCD_LEN + 1 + 2 + 2 + 2 + 1;
+/// Offset of the weighting+flags byte in the body.
+const FLAGS_OFFSET: usize = 2 * MJD_BCD_LEN;
+/// Offset of `transport_stream_id` in the body.
+const TRANSPORT_STREAM_ID_OFFSET: usize = FLAGS_OFFSET + 1;
+/// Offset of `original_network_id` in the body.
+const ORIGINAL_NETWORK_ID_OFFSET: usize = TRANSPORT_STREAM_ID_OFFSET + size_of::<u16>();
+/// Offset of `service_id` in the body.
+const SERVICE_ID_OFFSET: usize = ORIGINAL_NETWORK_ID_OFFSET + size_of::<u16>();
+/// Offset of `component_tag` in the body.
+const COMPONENT_TAG_OFFSET: usize = SERVICE_ID_OFFSET + size_of::<u16>();
 /// download_start_time(40) + download_period_duration(8) + download_cycle_time(8).
 const SCHEDULE_LEN: usize = MJD_BCD_LEN + 2;
 const WEIGHTING_SHIFT: u8 = 2;
@@ -87,9 +97,8 @@ impl<'a> Parse<'a> for RarOverDvbStreamDescriptor<'a> {
                 reason: "RAR_over_DVB_stream_descriptor body shorter than 18 bytes",
             });
         }
-        let flags = body[2 * MJD_BCD_LEN];
+        let flags = body[FLAGS_OFFSET];
         let be16 = |o: usize| u16::from_be_bytes([body[o], body[o + 1]]);
-        let o = 2 * MJD_BCD_LEN + 1;
         let (schedule, trailing_start) = if flags & SCHEDULED_FLAG != 0 {
             if body.len() < FIXED_LEN + SCHEDULE_LEN {
                 return Err(Error::InvalidDescriptor {
@@ -113,10 +122,10 @@ impl<'a> Parse<'a> for RarOverDvbStreamDescriptor<'a> {
             last_valid_date: MjdBcdTime::read(body, MJD_BCD_LEN, "last_valid_date")?,
             weighting: flags >> WEIGHTING_SHIFT,
             complete_flag: flags & COMPLETE_FLAG != 0,
-            transport_stream_id: be16(o),
-            original_network_id: be16(o + 2),
-            service_id: be16(o + 4),
-            component_tag: body[o + 6],
+            transport_stream_id: be16(TRANSPORT_STREAM_ID_OFFSET),
+            original_network_id: be16(ORIGINAL_NETWORK_ID_OFFSET),
+            service_id: be16(SERVICE_ID_OFFSET),
+            component_tag: body[COMPONENT_TAG_OFFSET],
             schedule,
             trailing: &body[trailing_start..],
         })
@@ -144,12 +153,13 @@ impl Serialize for RarOverDvbStreamDescriptor<'_> {
         if self.schedule.is_some() {
             flags |= SCHEDULED_FLAG;
         }
-        let o = 2 * MJD_BCD_LEN;
-        b[o] = flags;
-        b[o + 1..o + 3].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        b[o + 3..o + 5].copy_from_slice(&self.original_network_id.to_be_bytes());
-        b[o + 5..o + 7].copy_from_slice(&self.service_id.to_be_bytes());
-        b[o + 7] = self.component_tag;
+        b[FLAGS_OFFSET] = flags;
+        b[TRANSPORT_STREAM_ID_OFFSET..ORIGINAL_NETWORK_ID_OFFSET]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        b[ORIGINAL_NETWORK_ID_OFFSET..SERVICE_ID_OFFSET]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
+        b[SERVICE_ID_OFFSET..COMPONENT_TAG_OFFSET].copy_from_slice(&self.service_id.to_be_bytes());
+        b[COMPONENT_TAG_OFFSET] = self.component_tag;
         let mut end = FIXED_LEN;
         if let Some(s) = self.schedule {
             s.download_start_time.write(b, end);

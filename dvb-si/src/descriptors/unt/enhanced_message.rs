@@ -28,6 +28,12 @@ const NIBBLE_MASK: u8 = 0x0F;
 const NUMBER_SHIFT: u8 = 4;
 const RESERVED_SHIFT: u8 = 5;
 const MESSAGE_INDEX_MASK: u8 = 0x1F;
+/// Offset of `language_code` within the fixed fields.
+const LANGUAGE_CODE_OFFSET: usize = 1;
+/// Width of `language_code` in bytes.
+const LANGUAGE_CODE_LEN: usize = 3;
+/// Offset of `reserved_for_future_use` / `message_index` within the fixed fields.
+const RESERVED_AND_INDEX_OFFSET: usize = LANGUAGE_CODE_OFFSET + LANGUAGE_CODE_LEN;
 /// Default of the 3-bit `reserved_for_future_use`: `0b111` (all-ones
 /// reserved convention; `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`).
 pub const RESERVED_FOR_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
@@ -96,9 +102,15 @@ impl<'a> Parse<'a> for EnhancedMessageDescriptor<'a> {
         Ok(Self {
             descriptor_number: f[0] >> NUMBER_SHIFT,
             last_descriptor_number: f[0] & NIBBLE_MASK,
-            language_code: LangCode([f[1], f[2], f[3]]),
-            reserved_for_future_use: ReservedOnes::from_bits(u64::from(f[4] >> RESERVED_SHIFT)),
-            message_index: f[4] & MESSAGE_INDEX_MASK,
+            language_code: LangCode(
+                f[LANGUAGE_CODE_OFFSET..RESERVED_AND_INDEX_OFFSET]
+                    .try_into()
+                    .unwrap_or_default(),
+            ),
+            reserved_for_future_use: ReservedOnes::from_bits(u64::from(
+                f[RESERVED_AND_INDEX_OFFSET] >> RESERVED_SHIFT,
+            )),
+            message_index: f[RESERVED_AND_INDEX_OFFSET] & MESSAGE_INDEX_MASK,
             text: DvbText::new(text),
         })
     }
@@ -129,10 +141,11 @@ impl Serialize for EnhancedMessageDescriptor<'_> {
             "message_index",
         )?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = (number << NUMBER_SHIFT) | last;
-        buf[3..6].copy_from_slice(&self.language_code.0);
-        buf[6] = (reserved << RESERVED_SHIFT) | index;
-        buf[7..len].copy_from_slice(self.text.raw());
+        buf[HEADER_LEN] = (number << NUMBER_SHIFT) | last;
+        buf[HEADER_LEN + LANGUAGE_CODE_OFFSET..HEADER_LEN + RESERVED_AND_INDEX_OFFSET]
+            .copy_from_slice(&self.language_code.0);
+        buf[HEADER_LEN + RESERVED_AND_INDEX_OFFSET] = (reserved << RESERVED_SHIFT) | index;
+        buf[HEADER_LEN + RESERVED_AND_INDEX_OFFSET + 1..len].copy_from_slice(self.text.raw());
         Ok(len)
     }
 }
