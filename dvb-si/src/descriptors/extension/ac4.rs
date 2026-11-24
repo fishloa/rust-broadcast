@@ -66,9 +66,9 @@ broadcast_common::impl_spec_display!(Ac4ChannelMode, Reserved);
 pub const AC4_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<AC4_CONFIG_RESERVED_BITS> =
     ReservedZero::<AC4_CONFIG_RESERVED_BITS>::FILL;
 /// Width of the first-byte `reserved_zero_future_use` (6 bits).
-const AC4_FLAGS_RESERVED_BITS: u32 = 6;
+pub const AC4_FLAGS_RESERVED_BITS: u32 = 6;
 /// Width of the config-byte `reserved_zero_future_use` (5 bits).
-const AC4_CONFIG_RESERVED_BITS: u32 = 5;
+pub const AC4_CONFIG_RESERVED_BITS: u32 = 5;
 /// Mask of `ac4_config_flag` in the first byte.
 const AC4_CONFIG_FLAG_MASK: u8 = 0x80;
 /// Shift of `ac4_config_flag`.

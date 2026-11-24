@@ -15,6 +15,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use crate::wire::U16_LEN;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::reserved::ReservedOnes;
@@ -34,7 +35,7 @@ const ORIGIN_TYPE_MASK: u8 = 0x01;
 const RESERVED_HANDOVER_MASK: u8 = 0x0E;
 const RESERVED_HANDOVER_SHIFT: u8 = 1;
 /// Width of the mobile hand-over `reserved_future_use` (3 bits).
-const RESERVED_HANDOVER_BITS: u32 = 3;
+pub const RESERVED_HANDOVER_BITS: u32 = 3;
 /// Spec default of the mobile hand-over `reserved_future_use`(3): all ones
 /// (EN 300 468 V1.12.1-V1.20.1 Table 61; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A).
@@ -45,7 +46,7 @@ const TARGET_LISTED_MASK: u8 = 0x80;
 const EVENT_SIMULCAST_MASK: u8 = 0x40;
 const RESERVED_EVENT_MASK: u8 = 0x3F;
 /// Width of the event-linkage `reserved_future_use` (6 bits).
-const RESERVED_EVENT_BITS: u32 = 6;
+pub const RESERVED_EVENT_BITS: u32 = 6;
 /// Spec default of the event-linkage `reserved_future_use`(6) (`reserved`
 /// before V1.17.1): all ones (EN 300 468 V1.12.1-V1.20.1 Table 64; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
@@ -59,7 +60,6 @@ const EXT_TARGET_ID_TYPE_MASK: u8 = 0x0C;
 const EXT_ONID_FLAG_MASK: u8 = 0x02;
 const EXT_SID_FLAG_MASK: u8 = 0x01;
 /// Width of a 16-bit wire field, bytes.
-const U16_LEN: usize = core::mem::size_of::<u16>();
 /// Width of a one-byte flags field.
 const FLAGS_LEN: usize = 1;
 /// Offset of the flags byte that follows `target_event_id`.
@@ -991,12 +991,9 @@ impl<'a> Parse<'a> for LinkageDescriptor<'a> {
                     reason: "linkage_descriptor body shorter than minimum 7 bytes",
                 })?;
         let transport_stream_id = u16::from_be_bytes([fixed[0], fixed[1]]);
-        let original_network_id = u16::from_be_bytes([
-            fixed[ORIGINAL_NETWORK_ID_OFFSET],
-            fixed[ORIGINAL_NETWORK_ID_OFFSET + 1],
-        ]);
-        let service_id =
-            u16::from_be_bytes([fixed[SERVICE_ID_OFFSET], fixed[SERVICE_ID_OFFSET + 1]]);
+        let original_network_id =
+            crate::wire::be_u16(fixed, ORIGINAL_NETWORK_ID_OFFSET, "original_network_id")?;
+        let service_id = crate::wire::be_u16(fixed, SERVICE_ID_OFFSET, "service_id")?;
         let linkage_type_raw = fixed[LINKAGE_TYPE_OFFSET];
         let linkage_type = LinkageType::from_u8(linkage_type_raw);
         let tail_len = tail.len();

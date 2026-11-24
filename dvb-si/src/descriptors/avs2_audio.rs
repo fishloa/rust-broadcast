@@ -41,7 +41,7 @@ pub const TAG: u8 = 0xD3;
 const HEADER_LEN: usize = 2;
 const LANG_LEN: usize = 3;
 /// Width of `reserved` in the codec-0 block.
-const RESERVED3_BITS: u32 = 3;
+pub const RESERVED3_BITS: u32 = 3;
 /// Width of `reserved` in the version block.
 const RESERVED6_BITS: u32 = 6;
 const RESERVED6_ONES: ReservedOnes<RESERVED6_BITS> = ReservedOnes::<RESERVED6_BITS>::FILL;

@@ -19,9 +19,9 @@ impl<'a> ExtensionBodyDef<'a> for TtmlSubtitling<'a> {
 pub const TTML_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<FONT_RESERVED_BITS> =
     ReservedZero::<FONT_RESERVED_BITS>::FILL;
 /// Width of the `reserved_zero_future_use` in byte 4 (2 bits).
-const RESERVED_FUTURE_USE_BITS: u32 = 2;
+pub const TTML_RESERVED_FUTURE_USE_BITS: u32 = 2;
 /// Width of the per-font `reserved_zero_future_use` (1 bit).
-const FONT_RESERVED_BITS: u32 = 1;
+pub const FONT_RESERVED_BITS: u32 = 1;
 const FONT_ID_MASK: u8 = 0x7F;
 /// Mask of `subtitle_purpose`.
 const SUBTITLE_PURPOSE_MASK: u8 = 0x3F;
@@ -93,7 +93,7 @@ pub struct TtmlSubtitling<'a> {
     /// `reserved_zero_future_use` (2 bits, right-aligned) in byte 4, between
     /// `qualifier_present_flag` and `dvb_ttml_profile_count`. Preserved on
     /// parse; defaults to [`TTML_RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use: ReservedZero<RESERVED_FUTURE_USE_BITS>,
+    pub reserved_zero_future_use: ReservedZero<TTML_RESERVED_FUTURE_USE_BITS>,
     /// dvb_ttml_profile codes (one `Vec` entry per profile byte, EN 303 560).
     pub dvb_ttml_profiles: Vec<u8>,
     /// qualifier(32), present iff qualifier_present_flag.
@@ -124,7 +124,7 @@ impl<'a> TtmlSubtitling<'a> {
             iso_639_language_code,
             subtitle_purpose,
             tts_suitability,
-            reserved_zero_future_use: ReservedZero::<RESERVED_FUTURE_USE_BITS>::FILL,
+            reserved_zero_future_use: ReservedZero::<TTML_RESERVED_FUTURE_USE_BITS>::FILL,
             dvb_ttml_profiles,
             qualifier,
             font_ids,

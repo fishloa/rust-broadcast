@@ -69,17 +69,17 @@ const CORE_NUMBER_LENGTH_BITS: u32 = 4;
 pub const RESERVED_FUTURE_USE_FIRST_BYTE_DEFAULT: ReservedOnes<FIRST_BYTE_RESERVED_BITS> =
     ReservedOnes::<FIRST_BYTE_RESERVED_BITS>::FILL;
 /// Width of the `reserved_future_use` in byte 0 (2 bits).
-const FIRST_BYTE_RESERVED_BITS: u32 = 2;
+pub const FIRST_BYTE_RESERVED_BITS: u32 = 2;
 /// Spec default of the 1-bit `reserved_future_use` in byte 1: `1`.
 pub const RESERVED_FUTURE_USE_SECOND_BYTE_DEFAULT: ReservedOnes<SECOND_BYTE_RESERVED_BITS> =
     ReservedOnes::<SECOND_BYTE_RESERVED_BITS>::FILL;
 /// Width of the `reserved_future_use` in byte 1 (1 bit).
-const SECOND_BYTE_RESERVED_BITS: u32 = 1;
+pub const SECOND_BYTE_RESERVED_BITS: u32 = 1;
 /// Spec default of the 1-bit `reserved_future_use` in byte 2: `1`.
 pub const RESERVED_FUTURE_USE_THIRD_BYTE_DEFAULT: ReservedOnes<THIRD_BYTE_RESERVED_BITS> =
     ReservedOnes::<THIRD_BYTE_RESERVED_BITS>::FILL;
 /// Width of the `reserved_future_use` in byte 2 (1 bit).
-const THIRD_BYTE_RESERVED_BITS: u32 = 1;
+pub const THIRD_BYTE_RESERVED_BITS: u32 = 1;
 
 /// Telephone Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -40,26 +40,25 @@
 //! ones; `zero_bits` of the JPEG XS descriptor defaults to zero as the spec says).
 
 use crate::error::Result;
-use crate::h222_bits::{BitReader, BitWriter, invalid};
+use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, invalid};
 use alloc::vec::Vec;
 use broadcast_common::reserved::ReservedOnes;
 
-/// Wire width of a byte-sized field.
-const BYTE_BITS: usize = u8::BITS as usize;
 /// Wire width of a 16-bit word.
 const WORD_BITS: usize = u16::BITS as usize;
 /// Wire width of a 32-bit double word.
 const DWORD_BITS: usize = u32::BITS as usize;
 /// Width of a `reserved(6)` run in reader terms.
-const RESERVED_6_READ_BITS: usize = RESERVED_6_BITS as usize;
+const GREEN_RESERVED_READ_BITS: usize = GREEN_RESERVED_BITS as usize;
 /// Width of a `reserved(4)` run in reader terms.
-const RESERVED_4_READ_BITS: usize = RESERVED_4_BITS as usize;
+const VIRTUAL_SEGMENTATION_RESERVED_READ_BITS: usize = VIRTUAL_SEGMENTATION_RESERVED_BITS as usize;
 /// Width of a `reserved(5)` run in reader terms.
-const RESERVED_5_READ_BITS: usize = RESERVED_5_BITS as usize;
+const RESERVED_BEFORE_BOUNDARY_PID_READ_BITS: usize = RESERVED_BEFORE_BOUNDARY_PID_BITS as usize;
 /// Width of a `reserved(3)` run in reader terms.
-const RESERVED_3_READ_BITS: usize = RESERVED_3_BITS as usize;
+const RESERVED_AFTER_BOUNDARY_PID_READ_BITS: usize = RESERVED_AFTER_BOUNDARY_PID_BITS as usize;
 /// Width of a `reserved(7)` run in reader terms.
-const RESERVED_7_READ_BITS: usize = RESERVED_7_BITS as usize;
+const RESERVED_AFTER_VIDEO_RANGE_FLAG_READ_BITS: usize =
+    RESERVED_AFTER_VIDEO_RANGE_FLAG_BITS as usize;
 /// Width of the `num_*` variation counters (2 bits).
 const NUM_VARIATIONS_BITS: usize = 2;
 /// Width of `maximum_duration_length_minus_1` (2 bits).
@@ -73,11 +72,12 @@ const SAP_TYPE_MAX_BITS: usize = 3;
 /// Width of `boundary_PID` (13 bits).
 const BOUNDARY_PID_BITS: usize = 13;
 /// Number of colour primaries in the mastering-display block.
-const COLOUR_PRIMARY_COUNT: usize = 6;
+pub const COLOUR_PRIMARY_COUNT: usize = 6;
 
-const RESERVED_6_BITS: u32 = 6;
+/// Width of the `reserved(6)` fields in `Green_extension_descriptor`.
+pub const GREEN_RESERVED_BITS: u32 = 6;
 /// Width of the `reserved(7)` field.
-const RESERVED_7_BITS: u32 = 7;
+pub const RESERVED_AFTER_VIDEO_RANGE_FLAG_BITS: u32 = 7;
 /// `buffer_model_type`: "only 2 is allowed" (Table 2-132).
 const JXS_BUFFER_MODEL_TYPE: u8 = 2;
 
@@ -137,12 +137,12 @@ pub struct GreenExtension {
     pub constant_backlight_voltage_time_intervals: Vec<u16>,
     /// `reserved(6)` after the first count, default `0x3F`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_a: ReservedOnes<RESERVED_6_BITS>,
+    pub reserved_a: ReservedOnes<GREEN_RESERVED_BITS>,
     /// `max_variation[j]` (16 bits each; at most 3).
     pub max_variations: Vec<u16>,
     /// `reserved(6)` after the second count, default `0x3F`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b: ReservedOnes<RESERVED_6_BITS>,
+    pub reserved_b: ReservedOnes<GREEN_RESERVED_BITS>,
     /// Bytes after the syntax, preserved verbatim.
     pub trailing: Vec<u8>,
 }
@@ -166,13 +166,13 @@ impl GreenExtension {
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "GreenExtension");
         let n1 = r.bits(NUM_VARIATIONS_BITS)?;
-        let reserved_a = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_6_READ_BITS)?));
+        let reserved_a = ReservedOnes::from_bits(u64::from(r.u8(GREEN_RESERVED_READ_BITS)?));
         let mut intervals = Vec::new();
         for _ in 0..n1 {
             intervals.push(r.u16(WORD_BITS)?);
         }
         let n2 = r.bits(NUM_VARIATIONS_BITS)?;
-        let reserved_b = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_6_READ_BITS)?));
+        let reserved_b = ReservedOnes::from_bits(u64::from(r.u8(GREEN_RESERVED_READ_BITS)?));
         let mut max_variations = Vec::new();
         for _ in 0..n2 {
             max_variations.push(r.u16(WORD_BITS)?);
@@ -193,7 +193,7 @@ impl GreenExtension {
             NUM_VARIATIONS_BITS,
             "num_constant_backlight_voltage_time_intervals",
         )?;
-        w.put(self.reserved_a.get(), RESERVED_6_READ_BITS, "reserved")?;
+        w.put(self.reserved_a.get(), GREEN_RESERVED_READ_BITS, "reserved")?;
         for v in &self.constant_backlight_voltage_time_intervals {
             w.put(
                 u64::from(*v),
@@ -206,7 +206,7 @@ impl GreenExtension {
             NUM_VARIATIONS_BITS,
             "num_max_variations",
         )?;
-        w.put(self.reserved_b.get(), RESERVED_6_READ_BITS, "reserved")?;
+        w.put(self.reserved_b.get(), GREEN_RESERVED_READ_BITS, "reserved")?;
         for v in &self.max_variations {
             w.put(u64::from(*v), WORD_BITS, "max_variation")?;
         }
@@ -243,8 +243,8 @@ impl QualityExtension {
 
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "QualityExtension");
-        let field_size_bytes = r.u8(BYTE_BITS)?;
-        let n = r.bits(BYTE_BITS)?;
+        let field_size_bytes = r.u8(BITS_PER_BYTE)?;
+        let n = r.bits(BITS_PER_BYTE)?;
         let mut metric_codes = Vec::new();
         for _ in 0..n {
             metric_codes.push(r.bits(DWORD_BITS)?);
@@ -260,10 +260,14 @@ impl QualityExtension {
         let mut w = BitWriter::new();
         w.put(
             u64::from(self.field_size_bytes),
-            BYTE_BITS,
+            BITS_PER_BYTE,
             "field_size_bytes",
         )?;
-        w.put(self.metric_codes.len() as u64, BYTE_BITS, "metric_count")?;
+        w.put(
+            self.metric_codes.len() as u64,
+            BITS_PER_BYTE,
+            "metric_count",
+        )?;
         for c in &self.metric_codes {
             w.put(u64::from(*c), DWORD_BITS, "metric_code")?;
         }
@@ -275,14 +279,13 @@ impl QualityExtension {
 // ───────────────────────── 0x10 Virtual_segmentation_descriptor ─────────────
 
 /// Width of the `reserved(5)` field.
-const RESERVED_5_BITS: u32 = 5;
+const RESERVED_BEFORE_BOUNDARY_PID_BITS: u32 = 5;
 /// Width of the `reserved(3)` field.
-const RESERVED_3_BITS: u32 = 3;
+const RESERVED_AFTER_BOUNDARY_PID_BITS: u32 = 3;
 /// Width of the `reserved(4)` field.
-const RESERVED_4_BITS: u32 = 4;
+pub const VIRTUAL_SEGMENTATION_RESERVED_BITS: u32 = 4;
 /// Bits of `maximum_duration` before the `MDL * 8` extension (Table 2-129).
 const MAX_DURATION_BASE_BITS: usize = 5;
-const BITS_PER_BYTE: usize = 8;
 /// Width of `num_partitions` (3 bits).
 const NUM_PARTITIONS_BITS: usize = 3;
 
@@ -328,11 +331,11 @@ pub enum VirtualSegmentationBoundary {
     /// the reference partition carried on `boundary_pid`.
     Reference {
         /// `reserved(5)`, default all ones.
-        reserved_before: ReservedOnes<RESERVED_5_BITS>,
+        reserved_before: ReservedOnes<RESERVED_BEFORE_BOUNDARY_PID_BITS>,
         /// `boundary_PID` (13 bits).
         boundary_pid: u16,
         /// `reserved(3)`, default all ones.
-        reserved_after: ReservedOnes<RESERVED_3_BITS>,
+        reserved_after: ReservedOnes<RESERVED_AFTER_BOUNDARY_PID_BITS>,
     },
     /// `explicit_boundary_flag == 1`: this PID carries the boundary
     /// descriptors; `maximum_duration` is `MDL*8 + 5` bits in
@@ -376,7 +379,7 @@ pub struct VirtualSegmentationPartition {
     pub partition_id: u8,
     /// `reserved(4)`, default all ones.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_4_BITS>,
+    pub reserved: ReservedOnes<VIRTUAL_SEGMENTATION_RESERVED_BITS>,
     /// `SAP_type_max` (3 bits): 0 means any SAP type may appear.
     pub sap_type_max: u8,
     /// Boundary signalling (`explicit_boundary_flag` and what it selects).
@@ -407,7 +410,7 @@ impl VirtualSegmentationPartition {
 pub struct VirtualSegmentationConfig {
     /// `reserved(4)` after `timescale_flag`, default all ones.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_4_BITS>,
+    pub reserved: ReservedOnes<VIRTUAL_SEGMENTATION_RESERVED_BITS>,
     /// The timescale block (`timescale_flag == 1`); `None` infers
     /// `ticks_per_second = 1` and `MDL = 0` (a 5-bit `maximum_duration`).
     pub timescale: Option<VirtualSegmentationTimescale>,
@@ -471,7 +474,8 @@ impl VirtualSegmentation {
         let mut r = BitReader::new(body, "VirtualSegmentation");
         let num_partitions = r.bits(NUM_PARTITIONS_BITS)?;
         let timescale_flag = r.flag()?;
-        let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_4_READ_BITS)?));
+        let reserved =
+            ReservedOnes::from_bits(u64::from(r.u8(VIRTUAL_SEGMENTATION_RESERVED_READ_BITS)?));
         let timescale = if timescale_flag {
             Some(VirtualSegmentationTimescale {
                 ticks_per_second: r.bits(TICKS_PER_SECOND_BITS)?,
@@ -490,7 +494,8 @@ impl VirtualSegmentation {
         for _ in 0..num_partitions {
             let explicit = r.flag()?;
             let partition_id = r.u8(PARTITION_ID_BITS)?;
-            let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_4_READ_BITS)?));
+            let reserved =
+                ReservedOnes::from_bits(u64::from(r.u8(VIRTUAL_SEGMENTATION_RESERVED_READ_BITS)?));
             let sap_type_max = r.u8(SAP_TYPE_MAX_BITS)?;
             let boundary = if explicit {
                 VirtualSegmentationBoundary::Explicit {
@@ -499,10 +504,12 @@ impl VirtualSegmentation {
             } else {
                 VirtualSegmentationBoundary::Reference {
                     reserved_before: ReservedOnes::from_bits(u64::from(
-                        r.u8(RESERVED_5_READ_BITS)?,
+                        r.u8(RESERVED_BEFORE_BOUNDARY_PID_READ_BITS)?,
                     )),
                     boundary_pid: r.u16(BOUNDARY_PID_BITS)?,
-                    reserved_after: ReservedOnes::from_bits(u64::from(r.u8(RESERVED_3_READ_BITS)?)),
+                    reserved_after: ReservedOnes::from_bits(u64::from(
+                        r.u8(RESERVED_AFTER_BOUNDARY_PID_READ_BITS)?,
+                    )),
                 }
             };
             cfg.partitions.push(VirtualSegmentationPartition {
@@ -527,7 +534,11 @@ impl VirtualSegmentation {
                 "num_partitions",
             )?;
             w.flag(cfg.timescale.is_some(), "timescale_flag")?;
-            w.put(cfg.reserved.get(), RESERVED_4_READ_BITS, "reserved")?;
+            w.put(
+                cfg.reserved.get(),
+                VIRTUAL_SEGMENTATION_RESERVED_READ_BITS,
+                "reserved",
+            )?;
             if let Some(t) = &cfg.timescale {
                 w.put(
                     u64::from(t.ticks_per_second),
@@ -548,7 +559,11 @@ impl VirtualSegmentation {
                     "explicit_boundary_flag",
                 )?;
                 w.put(u64::from(p.partition_id), PARTITION_ID_BITS, "partition_id")?;
-                w.put(p.reserved.get(), RESERVED_4_READ_BITS, "reserved")?;
+                w.put(
+                    p.reserved.get(),
+                    VIRTUAL_SEGMENTATION_RESERVED_READ_BITS,
+                    "reserved",
+                )?;
                 w.put(u64::from(p.sap_type_max), SAP_TYPE_MAX_BITS, "SAP_type_max")?;
                 match p.boundary {
                     VirtualSegmentationBoundary::Reference {
@@ -556,9 +571,17 @@ impl VirtualSegmentation {
                         boundary_pid,
                         reserved_after,
                     } => {
-                        w.put(reserved_before.get(), RESERVED_5_READ_BITS, "reserved")?;
+                        w.put(
+                            reserved_before.get(),
+                            RESERVED_BEFORE_BOUNDARY_PID_READ_BITS,
+                            "reserved",
+                        )?;
                         w.put(u64::from(boundary_pid), BOUNDARY_PID_BITS, "boundary_PID")?;
-                        w.put(reserved_after.get(), RESERVED_3_READ_BITS, "reserved")?;
+                        w.put(
+                            reserved_after.get(),
+                            RESERVED_AFTER_BOUNDARY_PID_READ_BITS,
+                            "reserved",
+                        )?;
                     }
                     VirtualSegmentationBoundary::Explicit { maximum_duration } => {
                         w.put(maximum_duration, duration_bits, "maximum_duration")?;
@@ -664,7 +687,7 @@ pub struct JxsVideo {
     pub video_full_range_flag: bool,
     /// `reserved(7)` after `video_full_range_flag`, default `0x7F`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_7_BITS>,
+    pub reserved: ReservedOnes<RESERVED_AFTER_VIDEO_RANGE_FLAG_BITS>,
     /// `still_mode`.
     pub still_mode: bool,
     /// `zero_bits(6)`: "shall be all set to '0'"; re-emitted verbatim, default 0.
@@ -719,7 +742,7 @@ impl JxsVideo {
 
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "JxsVideo");
-        let descriptor_version = r.u8(BYTE_BITS)?;
+        let descriptor_version = r.u8(BITS_PER_BYTE)?;
         let horizontal_size = r.u16(WORD_BITS)?;
         let vertical_size = r.u16(WORD_BITS)?;
         let brat = r.bits(DWORD_BITS)?;
@@ -728,15 +751,16 @@ impl JxsVideo {
         let ppih = r.u16(WORD_BITS)?;
         let plev = r.u16(WORD_BITS)?;
         let max_buffer_size = r.bits(DWORD_BITS)?;
-        let buffer_model_type = r.u8(BYTE_BITS)?;
-        let colour_primaries = r.u8(BYTE_BITS)?;
-        let transfer_characteristics = r.u8(BYTE_BITS)?;
-        let matrix_coefficients = r.u8(BYTE_BITS)?;
+        let buffer_model_type = r.u8(BITS_PER_BYTE)?;
+        let colour_primaries = r.u8(BITS_PER_BYTE)?;
+        let transfer_characteristics = r.u8(BITS_PER_BYTE)?;
+        let matrix_coefficients = r.u8(BITS_PER_BYTE)?;
         let video_full_range_flag = r.flag()?;
-        let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_7_READ_BITS)?));
+        let reserved =
+            ReservedOnes::from_bits(u64::from(r.u8(RESERVED_AFTER_VIDEO_RANGE_FLAG_READ_BITS)?));
         let still_mode = r.flag()?;
         let mdm_flag = r.flag()?;
-        let zero_bits = r.u8(RESERVED_6_READ_BITS)?;
+        let zero_bits = r.u8(GREEN_RESERVED_READ_BITS)?;
         let mastering_display = if mdm_flag {
             let mut primaries = [0u16; COLOUR_PRIMARY_COUNT];
             for p in &mut primaries {
@@ -781,7 +805,7 @@ impl JxsVideo {
         let mut w = BitWriter::new();
         w.put(
             u64::from(self.descriptor_version),
-            BYTE_BITS,
+            BITS_PER_BYTE,
             "descriptor_version",
         )?;
         w.put(
@@ -802,29 +826,37 @@ impl JxsVideo {
         )?;
         w.put(
             u64::from(self.buffer_model_type),
-            BYTE_BITS,
+            BITS_PER_BYTE,
             "buffer_model_type",
         )?;
         w.put(
             u64::from(self.colour_primaries),
-            BYTE_BITS,
+            BITS_PER_BYTE,
             "colour_primaries",
         )?;
         w.put(
             u64::from(self.transfer_characteristics),
-            BYTE_BITS,
+            BITS_PER_BYTE,
             "transfer_characteristics",
         )?;
         w.put(
             u64::from(self.matrix_coefficients),
-            BYTE_BITS,
+            BITS_PER_BYTE,
             "matrix_coefficients",
         )?;
         w.flag(self.video_full_range_flag, "video_full_range_flag")?;
-        w.put(self.reserved.get(), RESERVED_7_READ_BITS, "reserved")?;
+        w.put(
+            self.reserved.get(),
+            RESERVED_AFTER_VIDEO_RANGE_FLAG_READ_BITS,
+            "reserved",
+        )?;
         w.flag(self.still_mode, "still_mode")?;
         w.flag(self.mastering_display.is_some(), "mdm_flag")?;
-        w.put(u64::from(self.zero_bits), RESERVED_6_READ_BITS, "zero_bits")?;
+        w.put(
+            u64::from(self.zero_bits),
+            GREEN_RESERVED_READ_BITS,
+            "zero_bits",
+        )?;
         if let Some(m) = &self.mastering_display {
             for p in &m.primaries {
                 w.put(u64::from(*p), WORD_BITS, "X_c/Y_c")?;

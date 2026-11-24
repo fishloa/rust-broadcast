@@ -15,16 +15,18 @@ const HEADER_LEN: usize = 2;
 /// Default of the 5-bit `reserved` after `dependency_id` (H.222.0 Table 2-99):
 /// clause 2.1 "reserved" = `1` (all editions 06/2012-08/2023, audit §5;
 /// confirmed by the TSDuck oracle PMT).
-pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_AFTER_DEPENDENCY_ID_BITS> =
+    ReservedOnes::<RESERVED_AFTER_DEPENDENCY_ID_BITS>::FILL;
 /// Width of the `reserved` field after `dependency_id` (5 bits).
-const RESERVED_5_BITS: u32 = 5;
+pub const RESERVED_AFTER_DEPENDENCY_ID_BITS: u32 = 5;
 /// Default of the trailing 1-bit `reserved` after `no_sei_nal_unit_present`
 /// (same rule).
-pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_TRAILING_BITS>::FILL;
 /// Width of the trailing `reserved` field (1 bit).
-const RESERVED_1_BITS: u32 = 1;
-const RESERVED_5_MASK: u8 = 0x1F;
-const RESERVED_1_MASK: u8 = 0x01;
+pub const RESERVED_TRAILING_BITS: u32 = 1;
+const RESERVED_AFTER_DEPENDENCY_ID_MASK: u8 = 0x1F;
+const RESERVED_TRAILING_MASK: u8 = 0x01;
 const BODY_LEN: u8 = 13;
 /// Body offset of `height`.
 const HEIGHT_OFFSET: usize = 2;
@@ -89,11 +91,11 @@ pub struct SvcExtensionDescriptor {
     /// `reserved(5)` after `dependency_id` (5 bits). Captured on parse,
     /// re-emitted verbatim; defaults to [`RESERVED_5_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_5: ReservedOnes<RESERVED_AFTER_DEPENDENCY_ID_BITS>,
     /// Trailing `reserved(1)` (1 bit). Captured on parse, re-emitted verbatim;
     /// defaults to [`RESERVED_1_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_1: ReservedOnes<RESERVED_1_BITS>,
+    pub reserved_1: ReservedOnes<RESERVED_TRAILING_BITS>,
 }
 
 impl SvcExtensionDescriptor {
@@ -143,12 +145,9 @@ impl<'a> Parse<'a> for SvcExtensionDescriptor {
             });
         }
         let width = u16::from_be_bytes([body[0], body[1]]);
-        let height = u16::from_be_bytes([body[HEIGHT_OFFSET], body[HEIGHT_OFFSET + 1]]);
-        let frame_rate = u16::from_be_bytes([body[FRAME_RATE_OFFSET], body[FRAME_RATE_OFFSET + 1]]);
-        let average_bitrate = u16::from_be_bytes([
-            body[AVERAGE_BITRATE_OFFSET],
-            body[AVERAGE_BITRATE_OFFSET + 1],
-        ]);
+        let height = crate::wire::be_u16(body, HEIGHT_OFFSET, "height")?;
+        let frame_rate = crate::wire::be_u16(body, FRAME_RATE_OFFSET, "frame_rate")?;
+        let average_bitrate = crate::wire::be_u16(body, AVERAGE_BITRATE_OFFSET, "average_bitrate")?;
         let maximum_bitrate = u16::from_be_bytes([
             body[MAXIMUM_BITRATE_OFFSET],
             body[MAXIMUM_BITRATE_OFFSET + 1],
@@ -176,8 +175,8 @@ impl<'a> Parse<'a> for SvcExtensionDescriptor {
             temporal_id_start,
             temporal_id_end,
             no_sei_nal_unit_present,
-            reserved_5: ReservedOnes::from_bits(u64::from(b10 & RESERVED_5_MASK)),
-            reserved_1: ReservedOnes::from_bits(u64::from(b12 & RESERVED_1_MASK)),
+            reserved_5: ReservedOnes::from_bits(u64::from(b10 & RESERVED_AFTER_DEPENDENCY_ID_MASK)),
+            reserved_1: ReservedOnes::from_bits(u64::from(b12 & RESERVED_TRAILING_MASK)),
         })
     }
 }

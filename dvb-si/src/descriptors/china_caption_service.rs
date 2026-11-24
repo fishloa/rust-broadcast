@@ -26,7 +26,7 @@
 
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use crate::text::LangCode;
+use crate::text::{LANG_CODE_LEN, LangCode};
 use alloc::vec::Vec;
 use broadcast_common::len::{fit_bits, fit_u8, need_in, need_out};
 use broadcast_common::reserved::ReservedOnes;
@@ -45,9 +45,8 @@ const SERVICE_COUNT_MASK: u8 = 0x1F;
 /// Shift of `reserved` in the count byte.
 const RESERVED_HEAD_SHIFT: u8 = 5;
 /// Width of the language code in a service entry.
-const LANGUAGE_LEN: usize = 3;
 /// Offset of the `reserved`/caption-service-number byte in a service entry.
-const RESERVED_A_OFFSET: usize = LANGUAGE_LEN;
+const RESERVED_A_OFFSET: usize = LANG_CODE_LEN;
 /// Offset of the `reserved`/wide-aspect/char-set byte in a service entry.
 const RESERVED_B_OFFSET: usize = RESERVED_A_OFFSET + 1;
 /// Offset of `reserved_c` in a service entry.
@@ -65,9 +64,9 @@ const RESERVED_PID_SHIFT: u8 = 5;
 const PID_HI_MASK: u8 = 0x1F;
 const RESERVED3_ONES: ReservedOnes<3> = ReservedOnes::<3>::FILL;
 /// Width of `reserved_a` in a service entry.
-const RESERVED_A_BITS: u32 = 2;
+pub const RESERVED_A_BITS: u32 = 2;
 /// Width of `reserved_c` in a service entry.
-const RESERVED_C_BITS: u32 = 8;
+pub const RESERVED_C_BITS: u32 = 8;
 const RESERVED2_ONES: ReservedOnes<RESERVED_A_BITS> = ReservedOnes::<RESERVED_A_BITS>::FILL;
 const RESERVED1_ONES: ReservedOnes<1> = ReservedOnes::<1>::FILL;
 const RESERVED8_ONES: ReservedOnes<RESERVED_C_BITS> = ReservedOnes::<RESERVED_C_BITS>::FILL;
@@ -221,8 +220,8 @@ impl<'a> Parse<'a> for ChinaCaptionServiceDescriptor {
         {
             services.push(ChinaCaptionService {
                 language: LangCode({
-                    let mut code = [0u8; LANGUAGE_LEN];
-                    code.copy_from_slice(&chunk[..LANGUAGE_LEN]);
+                    let mut code = [0u8; LANG_CODE_LEN];
+                    code.copy_from_slice(&chunk[..LANG_CODE_LEN]);
                     code
                 }),
                 reserved_a: ReservedOnes::from_bits(u64::from(
@@ -279,7 +278,7 @@ impl Serialize for ChinaCaptionServiceDescriptor {
             )? as u8;
             let rb = s.reserved_b.get() as u8;
             let cs = fit_bits(u64::from(s.char_set.to_u8()), CHAR_SET_BITS, "char_set")? as u8;
-            buf[i..i + LANGUAGE_LEN].copy_from_slice(&s.language.0);
+            buf[i..i + LANG_CODE_LEN].copy_from_slice(&s.language.0);
             buf[i + RESERVED_A_OFFSET] = (ra << RESERVED_A_SHIFT) | num;
             buf[i + RESERVED_B_OFFSET] =
                 (rb << RESERVED_B_SHIFT) | (u8::from(s.wide_aspect_ratio) << RESERVED_A_SHIFT) | cs;

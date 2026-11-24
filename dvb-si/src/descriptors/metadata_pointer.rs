@@ -22,7 +22,7 @@ const HEADER_LEN: usize = 2;
 /// fixture carries the descriptor).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved` field in the flags byte (5 bits).
-const RESERVED_BITS: u32 = 5;
+pub const RESERVED_BITS: u32 = 5;
 /// Minimum body: application_format(2) + format(1) + service_id(1) + flags(1).
 const MIN_BODY_LEN: usize = 5;
 /// `metadata_application_format` value that introduces an identifier.
@@ -234,7 +234,7 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
                     reason: "metadata_pointer_descriptor too short for program_number",
                 });
             }
-            let pn = u16::from_be_bytes([body[pos], body[pos + 1]]);
+            let pn = crate::wire::be_u16(body, pos, "program_number")?;
             pos += size_of::<u16>();
             Some(pn)
         } else {
@@ -250,11 +250,8 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
                     reason: "metadata_pointer_descriptor too short for transport_stream_location+id",
                 });
             }
-            let tsl = u16::from_be_bytes([body[pos], body[pos + 1]]);
-            let tsi = u16::from_be_bytes([
-                body[pos + size_of::<u16>()],
-                body[pos + size_of::<u16>() + 1],
-            ]);
+            let tsl = crate::wire::be_u16(body, pos, "transport_stream_location")?;
+            let tsi = crate::wire::be_u16(body, pos + size_of::<u16>(), "transport_stream_id")?;
             pos += TRANSPORT_STREAM_LOCATION_LEN;
             (Some(tsl), Some(tsi), pos)
         } else {

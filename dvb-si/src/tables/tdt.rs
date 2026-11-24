@@ -13,7 +13,8 @@ pub const TABLE_ID: u8 = 0x70;
 pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0014);
 
 const HEADER_LEN: usize = 3;
-const UTC_TIME_LEN: usize = 5;
+/// Width of the 40-bit `UTC_time` field.
+pub const UTC_TIME_LEN: usize = 5;
 
 /// Time and Date Table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

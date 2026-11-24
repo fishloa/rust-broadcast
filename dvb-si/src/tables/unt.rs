@@ -82,7 +82,7 @@ const COMMON_DESC_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
 
 /// Width of the `reserved_common_descriptor_loop_length` field.
-const UNT_RESERVED_BITS: u32 = 4;
+pub const UNT_RESERVED_BITS: u32 = 4;
 /// Shift of the high `OUI` byte.
 const OUI_HIGH_SHIFT: u32 = 16;
 /// Shift of the middle `OUI` byte.

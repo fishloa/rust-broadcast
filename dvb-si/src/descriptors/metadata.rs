@@ -42,7 +42,7 @@ const HIGH_BYTE_SHIFT: u32 = 8;
 /// fixture carries the descriptor).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved` field in the flags byte (4 bits).
-const RESERVED_BITS: u32 = 4;
+pub const RESERVED_BITS: u32 = 4;
 
 /// Decoder configuration carried in this descriptor (decoder_config_flags == 0b001).
 #[derive(Debug, Clone, PartialEq, Eq)]

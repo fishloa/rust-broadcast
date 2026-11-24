@@ -20,9 +20,9 @@ pub const TAG_PROGRAM_INFO: u8 = 0x35;
 /// Tag of `Stereoscopic_video_info_descriptor` (Table 2-45: 54).
 pub const TAG_VIDEO_INFO: u8 = 0x36;
 /// Width of a `reserved(7)` field.
-const RESERVED_7_BITS: u32 = 7;
+pub const VIDEO_INFO_RESERVED_BITS: u32 = 7;
 /// Width of a `reserved(5)` field.
-const RESERVED_5_BITS: u32 = 5;
+pub const PROGRAM_INFO_RESERVED_FIELD_BITS: u32 = 5;
 
 /// Width of `arrangement_type` (7 bits).
 const ARRANGEMENT_TYPE_BITS: usize = 7;
@@ -49,7 +49,7 @@ pub struct Mpeg2StereoscopicVideoFormatDescriptor {
     /// `reserved(7)` carried when no `arrangement_type` is present (default
     /// `0x7F`); ignored when `arrangement_type` is `Some`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_7_BITS>,
+    pub reserved: ReservedOnes<VIDEO_INFO_RESERVED_BITS>,
     /// Bytes after the syntax, preserved verbatim.
     pub trailing: Vec<u8>,
 }
@@ -168,7 +168,7 @@ broadcast_common::impl_spec_display!(StereoscopicServiceType, Reserved);
 pub struct StereoscopicProgramInfoDescriptor {
     /// `reserved(5)`, default `0x1F`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved: ReservedOnes<PROGRAM_INFO_RESERVED_FIELD_BITS>,
     /// `stereoscopic_service_type` (Table 2-106).
     pub stereoscopic_service_type: StereoscopicServiceType,
     /// Bytes after the syntax (`descriptor_length` shall be 1, so none are
@@ -296,14 +296,14 @@ pub enum StereoscopicVideoView {
     /// `base_video_flag == '1'`: the base view video stream.
     Base {
         /// `reserved(7)` before `leftview_flag`, default `0x7F`.
-        reserved: ReservedOnes<RESERVED_7_BITS>,
+        reserved: ReservedOnes<VIDEO_INFO_RESERVED_BITS>,
         /// `leftview_flag`: the stream is the left (true) or right view.
         leftview_flag: bool,
     },
     /// `base_video_flag == '0'`: the additional view video stream.
     Additional {
         /// `reserved(7)` before `usable_as_2D`, default `0x7F`.
-        reserved: ReservedOnes<RESERVED_7_BITS>,
+        reserved: ReservedOnes<VIDEO_INFO_RESERVED_BITS>,
         /// `usable_as_2D`: the additional view may also serve a 2D service.
         usable_as_2d: bool,
         /// `horizontal_upsampling_factor` (Table 2-108).
@@ -321,7 +321,7 @@ pub enum StereoscopicVideoView {
 pub struct StereoscopicVideoInfoDescriptor {
     /// `reserved(7)` before `base_video_flag`, default `0x7F`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<RESERVED_7_BITS>,
+    pub reserved: ReservedOnes<VIDEO_INFO_RESERVED_BITS>,
     /// The part selected by `base_video_flag`.
     pub view: StereoscopicVideoView,
     /// Bytes after the syntax, preserved verbatim.

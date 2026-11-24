@@ -97,7 +97,7 @@ impl<'a> Parse<'a> for ModuleLinkDescriptor {
         }
         Ok(Self {
             position: LinkPosition::from_u8(body[0]),
-            module_id: u16::from_be_bytes([body[MODULE_ID_OFFSET], body[MODULE_ID_OFFSET + 1]]),
+            module_id: crate::wire::be_u16(body, MODULE_ID_OFFSET, "module_id")?,
         })
     }
 }

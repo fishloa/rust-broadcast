@@ -25,7 +25,7 @@ const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
 
 /// Width of the `reserved` header byte.
-const METADATA_RESERVED_BITS: u32 = 8;
+pub const METADATA_RESERVED_BITS: u32 = 8;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 /// Default of the 8-bit `reserved` (all ones, H.222.0 clause 2.1).
 pub const RESERVED_DEFAULT: ReservedOnes<METADATA_RESERVED_BITS> =

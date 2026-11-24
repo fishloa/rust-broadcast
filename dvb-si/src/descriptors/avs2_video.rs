@@ -52,7 +52,7 @@ const CHROMA_FORMAT_MASK: u8 = 0x03;
 const SAMPLE_PRECISION_BITS: u32 = 3;
 const SAMPLE_PRECISION_SHIFT: u8 = 5;
 /// Width of the `reserved` tail (5 bits).
-const RESERVED_BITS: u32 = 5;
+pub const RESERVED_BITS: u32 = 5;
 /// Spec/default of the 5-bit `reserved` field: all ones when hand-built
 /// (the standard states no value; parse preserves whatever was sent).
 const RESERVED5_ONES: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;

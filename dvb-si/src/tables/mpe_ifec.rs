@@ -60,7 +60,7 @@ const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
 
 /// Width of the `reserved` header fields.
-const MPE_IFEC_RESERVED_BITS: u32 = 2;
+pub const MPE_IFEC_RESERVED_BITS: u32 = 2;
 
 /// Minimum total encoded length: header + extension + RTP + CRC.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + RTP_LEN + CRC_LEN;

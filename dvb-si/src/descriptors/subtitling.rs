@@ -6,7 +6,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::text::LangCode;
+use crate::text::{LANG_CODE_LEN, LangCode};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
@@ -16,9 +16,8 @@ pub const TAG: u8 = 0x59;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 8;
 /// Width of `language_code` in bytes.
-const LANGUAGE_CODE_LEN: usize = 3;
 /// Offset of `subtitling_type` in an entry.
-const SUBTITLING_TYPE_OFFSET: usize = LANGUAGE_CODE_LEN;
+const SUBTITLING_TYPE_OFFSET: usize = LANG_CODE_LEN;
 /// Offset of `composition_page_id` in an entry.
 const COMPOSITION_PAGE_ID_OFFSET: usize = SUBTITLING_TYPE_OFFSET + 1;
 /// Offset of `ancillary_page_id` in an entry.
@@ -215,7 +214,7 @@ impl<'a> Parse<'a> for SubtitlingDescriptor {
             let ancillary_page_id =
                 crate::wire::be_u16(chunk, ANCILLARY_PAGE_ID_OFFSET, "subtitling")?;
             entries.push(SubtitlingEntry {
-                language_code: LangCode(chunk[..LANGUAGE_CODE_LEN].try_into().unwrap_or_default()),
+                language_code: LangCode(chunk[..LANG_CODE_LEN].try_into().unwrap_or_default()),
                 subtitling_type: SubtitlingType::from_u8(chunk[SUBTITLING_TYPE_OFFSET]),
                 composition_page_id,
                 ancillary_page_id,
@@ -237,7 +236,7 @@ impl Serialize for SubtitlingDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, self.entries.len() * ENTRY_LEN)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANGUAGE_CODE_LEN].copy_from_slice(&e.language_code.0);
+            buf[pos..pos + LANG_CODE_LEN].copy_from_slice(&e.language_code.0);
             buf[pos + SUBTITLING_TYPE_OFFSET] = e.subtitling_type.to_u8();
             buf[pos + COMPOSITION_PAGE_ID_OFFSET..pos + ANCILLARY_PAGE_ID_OFFSET]
                 .copy_from_slice(&e.composition_page_id.to_be_bytes());

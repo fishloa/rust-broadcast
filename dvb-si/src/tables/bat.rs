@@ -17,7 +17,7 @@ use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Width of the `reserved` length fields.
-const BAT_RESERVED_BITS: u32 = 4;
+pub const BAT_RESERVED_BITS: u32 = 4;
 
 /// table_id value for BAT.
 pub const TABLE_ID: u8 = 0x4A;

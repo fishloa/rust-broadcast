@@ -28,11 +28,11 @@ const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
 
 /// Width of the `reserved` header fields.
-const DSMCC_RESERVED_BITS: u32 = 2;
+pub const DSMCC_RESERVED_BITS: u32 = 2;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
 /// Trailer checksum length and reserved header-field width.
-const CHECKSUM_LEN: usize = 4;
+pub const CHECKSUM_LEN: usize = 4;
 
 /// Byte offsets in the DSM-CC section header.
 const EXTENSION_ID_OFFSET: usize = 3;

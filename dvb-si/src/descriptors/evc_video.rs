@@ -19,20 +19,22 @@
 use super::hdr_wcg_idc::HdrWcgIdc;
 use super::vvc_video::TemporalIdRange;
 use crate::error::Result;
-use crate::h222_bits::{BitReader, BitWriter, impl_h222_descriptor};
+use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
 use broadcast_common::reserved::ReservedOnes;
 
 /// Descriptor tag of `EVC_video_descriptor` (Table 2-45: 58).
 pub const TAG: u8 = 0x3A;
-const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
-const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> = ReservedOnes::<RESERVED_2_BITS>::FILL;
+/// Spec-default fill of the `reserved(1)` before `temporal_layer_subset_flag`.
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_BEFORE_TEMPORAL_SUBSET_FLAG_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_TEMPORAL_SUBSET_FLAG_BITS>::FILL;
+/// Spec-default fill of the `reserved(2)` before `video_properties_tag`.
+pub const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_BEFORE_VIDEO_PROPERTIES_TAG_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_VIDEO_PROPERTIES_TAG_BITS>::FILL;
 /// Width of the `reserved(1)` before `temporal_layer_subset_flag`.
-const RESERVED_1_BITS: u32 = 1;
+pub const RESERVED_BEFORE_TEMPORAL_SUBSET_FLAG_BITS: u32 = 1;
 /// Width of the `reserved(2)` before `video_properties_tag`.
-const RESERVED_2_BITS: u32 = 2;
-/// Width of an 8-bit wire byte field, bits.
-const BYTE_BITS: usize = 8;
+pub const RESERVED_BEFORE_VIDEO_PROPERTIES_TAG_BITS: u32 = 2;
 /// Width of a 32-bit wire word field, bits.
 const WORD_BITS: usize = 32;
 /// Width of `HDR_WCG_idc`, bits.
@@ -63,7 +65,7 @@ pub struct EvcVideoDescriptor {
     /// `frame_only_constraint_flag`.
     pub frame_only_constraint_flag: bool,
     /// `reserved(1)` before `temporal_layer_subset_flag`, default 1.
-    pub reserved_1: ReservedOnes<RESERVED_1_BITS>,
+    pub reserved_1: ReservedOnes<RESERVED_BEFORE_TEMPORAL_SUBSET_FLAG_BITS>,
     /// `EVC_still_present_flag`.
     pub still_present_flag: bool,
     /// `EVC_24hr_picture_present_flag`.
@@ -71,7 +73,7 @@ pub struct EvcVideoDescriptor {
     /// `HDR_WCG_idc` (Table 2-134).
     pub hdr_wcg_idc: HdrWcgIdc,
     /// `reserved(2)` before `video_properties_tag`, default 3.
-    pub reserved_2: ReservedOnes<RESERVED_2_BITS>,
+    pub reserved_2: ReservedOnes<RESERVED_BEFORE_VIDEO_PROPERTIES_TAG_BITS>,
     /// `video_properties_tag` (4 bits; Tables 2-135…2-138 select its meaning by
     /// `HDR_WCG_idc`).
     pub video_properties_tag: u8,
@@ -116,14 +118,16 @@ impl EvcVideoDescriptor {
     }
 
     /// Default of `reserved(1)` (all ones).
-    pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = RESERVED_1_DEFAULT;
+    pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_BEFORE_TEMPORAL_SUBSET_FLAG_BITS> =
+        RESERVED_1_DEFAULT;
     /// Default of `reserved(2)` (all ones).
-    pub const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> = RESERVED_2_DEFAULT;
+    pub const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_BEFORE_VIDEO_PROPERTIES_TAG_BITS> =
+        RESERVED_2_DEFAULT;
 
     fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "EvcVideoDescriptor");
-        let profile_idc = r.u8(BYTE_BITS)?;
-        let level_idc = r.u8(BYTE_BITS)?;
+        let profile_idc = r.u8(BITS_PER_BYTE)?;
+        let level_idc = r.u8(BITS_PER_BYTE)?;
         let toolset_idc_h = r.bits(WORD_BITS)?;
         let toolset_idc_l = r.bits(WORD_BITS)?;
         let progressive_source_flag = r.flag()?;
@@ -135,7 +139,9 @@ impl EvcVideoDescriptor {
         let still_present_flag = r.flag()?;
         let picture_24hr_present_flag = r.flag()?;
         let hdr_wcg_idc = HdrWcgIdc::from_u8(r.u8(HDR_WCG_IDC_BITS)?);
-        let reserved_2 = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_2_BITS as usize)?));
+        let reserved_2 = ReservedOnes::from_bits(u64::from(
+            r.u8(RESERVED_BEFORE_VIDEO_PROPERTIES_TAG_BITS as usize)?,
+        ));
         let video_properties_tag = r.u8(VIDEO_PROPERTIES_TAG_BITS)?;
         let temporal_layer_subset = if subset {
             Some(TemporalIdRange::read(&mut r)?)
@@ -164,8 +170,8 @@ impl EvcVideoDescriptor {
 
     fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.profile_idc), BYTE_BITS, "profile_idc")?;
-        w.put(u64::from(self.level_idc), BYTE_BITS, "level_idc")?;
+        w.put(u64::from(self.profile_idc), BITS_PER_BYTE, "profile_idc")?;
+        w.put(u64::from(self.level_idc), BITS_PER_BYTE, "level_idc")?;
         w.put(u64::from(self.toolset_idc_h), WORD_BITS, "toolset_idc_h")?;
         w.put(u64::from(self.toolset_idc_l), WORD_BITS, "toolset_idc_l")?;
         w.flag(self.progressive_source_flag, "progressive_source_flag")?;
@@ -193,7 +199,11 @@ impl EvcVideoDescriptor {
             HDR_WCG_IDC_BITS,
             "HDR_WCG_idc",
         )?;
-        w.put(self.reserved_2.get(), RESERVED_2_BITS as usize, "reserved")?;
+        w.put(
+            self.reserved_2.get(),
+            RESERVED_BEFORE_VIDEO_PROPERTIES_TAG_BITS as usize,
+            "reserved",
+        )?;
         w.put(
             u64::from(self.video_properties_tag),
             VIDEO_PROPERTIES_TAG_BITS,

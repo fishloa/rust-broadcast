@@ -5,8 +5,10 @@
 
 use crate::error::{Error, Result};
 
-const U16_LEN: usize = core::mem::size_of::<u16>();
-const U32_LEN: usize = core::mem::size_of::<u32>();
+/// Size in bytes of a big-endian `u16` field.
+pub(crate) const U16_LEN: usize = core::mem::size_of::<u16>();
+/// Size in bytes of a big-endian `u32` field.
+pub(crate) const U32_LEN: usize = core::mem::size_of::<u32>();
 
 /// Read a big-endian `u16` at `off`, or `BufferTooShort` naming `what`.
 pub(crate) fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16> {

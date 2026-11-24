@@ -42,7 +42,7 @@ const DATA_SERVICE_ID_MONOCHROME: u8 = 0x07;
 pub const LINE_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<LINE_RESERVED_BITS> =
     ReservedOnes::<LINE_RESERVED_BITS>::FILL;
 /// Width of the per-line `reserved_future_use` (2 bits).
-const LINE_RESERVED_BITS: u32 = 2;
+pub const LINE_RESERVED_BITS: u32 = 2;
 
 /// Per-service-descriptor content, keyed by `data_service_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]

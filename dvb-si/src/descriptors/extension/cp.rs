@@ -20,13 +20,13 @@ const CP_PID_BYTE_OFFSET: usize = 2;
 /// Shift of `reserved_future_use(3)` within the CP_PID byte.
 const RESERVED_BYTE_SHIFT: u32 = 5;
 /// Width of `reserved_future_use` ahead of `CP_PID` (3 bits).
-const RESERVED_BITS: u32 = 3;
+pub const CP_RESERVED_BITS: u32 = 3;
 
 /// Spec default of `reserved_future_use(3)` ahead of `CP_PID`: `111`
 /// (EN 300 468 Table 113; `reserved` in V1.9.1-V1.15.1, `reserved_future_use`
 /// in V1.17.1+, value 1 throughout; audit §6.1 class B).
-pub const CP_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
-    ReservedOnes::<RESERVED_BITS>::FILL;
+pub const CP_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<CP_RESERVED_BITS> =
+    ReservedOnes::<CP_RESERVED_BITS>::FILL;
 
 /// CP descriptor body (Table 113, §6.4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub struct Cp<'a> {
     /// `reserved_future_use(3)` ahead of `CP_PID` (3 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; [`Cp::new`] defaults to
     /// [`CP_RESERVED_FUTURE_USE_DEFAULT`] (`0b111`).
-    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
+    pub reserved_future_use: ReservedOnes<CP_RESERVED_BITS>,
     /// CP_PID(13) — the PID carrying the CP stream.
     pub cp_pid: Pid,
     /// private_data_byte run (the rest of the descriptor).

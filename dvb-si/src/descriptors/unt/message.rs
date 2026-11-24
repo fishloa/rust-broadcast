@@ -8,7 +8,7 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use crate::text::{DvbText, LangCode};
+use crate::text::{DvbText, LANG_CODE_LEN, LangCode};
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
@@ -20,9 +20,6 @@ const NIBBLE_MASK: u8 = 0x0F;
 const NUMBER_SHIFT: u8 = 4;
 /// Offset of `language_code` within the fixed fields.
 const LANGUAGE_CODE_OFFSET: usize = 1;
-/// Width of `language_code` in bytes.
-const LANGUAGE_CODE_LEN: usize = 3;
-
 /// message_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -58,7 +55,7 @@ impl<'a> Parse<'a> for MessageDescriptor<'a> {
             descriptor_number: f[0] >> NUMBER_SHIFT,
             last_descriptor_number: f[0] & NIBBLE_MASK,
             language_code: LangCode(
-                f[LANGUAGE_CODE_OFFSET..LANGUAGE_CODE_OFFSET + LANGUAGE_CODE_LEN]
+                f[LANGUAGE_CODE_OFFSET..LANGUAGE_CODE_OFFSET + LANG_CODE_LEN]
                     .try_into()
                     .unwrap_or_default(),
             ),

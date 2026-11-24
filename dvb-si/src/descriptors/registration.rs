@@ -12,7 +12,8 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for registration_descriptor.
 pub const TAG: u8 = 0x05;
 const HEADER_LEN: usize = 2;
-const FORMAT_IDENTIFIER_LEN: usize = 4;
+/// Width of the `format_identifier` four-character code.
+pub const FORMAT_IDENTIFIER_LEN: usize = 4;
 
 /// Registration Descriptor.
 ///

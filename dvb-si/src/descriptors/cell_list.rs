@@ -229,12 +229,9 @@ impl<'a> Parse<'a> for CellListDescriptor {
                     reason: "cell_list outer entry truncated",
                 })?;
             let cell_id = u16::from_be_bytes([outer[0], outer[1]]);
-            let cell_latitude =
-                u16::from_be_bytes([outer[CELL_LATITUDE_OFFSET], outer[CELL_LATITUDE_OFFSET + 1]]);
-            let cell_longitude = u16::from_be_bytes([
-                outer[CELL_LONGITUDE_OFFSET],
-                outer[CELL_LONGITUDE_OFFSET + 1],
-            ]);
+            let cell_latitude = crate::wire::be_u16(outer, CELL_LATITUDE_OFFSET, "cell_latitude")?;
+            let cell_longitude =
+                crate::wire::be_u16(outer, CELL_LONGITUDE_OFFSET, "cell_longitude")?;
             let (cell_extent_of_latitude, cell_extent_of_longitude) =
                 read_extents(&outer[CELL_EXTENT_OFFSET..SUBCELL_INFO_LOOP_LENGTH_OFFSET]);
             let subcell_info_loop_length = outer[SUBCELL_INFO_LOOP_LENGTH_OFFSET] as usize;

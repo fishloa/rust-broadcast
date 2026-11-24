@@ -39,8 +39,9 @@ const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTE
 const EVENT_HEADER_LEN: usize = 12;
 
 /// Raw BCD field sizes.
-const START_TIME_LEN: usize = 5;
-const DURATION_LEN: usize = 3;
+pub const START_TIME_LEN: usize = 5;
+/// Width of the BCD `duration` field.
+pub const DURATION_LEN: usize = 3;
 
 /// Byte offsets in the EIT section header.
 const SEGMENT_LAST_SECTION_NUMBER_OFFSET: usize = 12;

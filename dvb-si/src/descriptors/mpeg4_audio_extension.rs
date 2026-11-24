@@ -11,20 +11,18 @@
 //! carried as an opaque byte run of `ASC_size` bytes, by design.
 
 use crate::error::Result;
-use crate::h222_bits::{BitReader, BitWriter, impl_h222_descriptor};
+use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
 use broadcast_common::reserved::ReservedOnes;
 
 /// Descriptor tag of `MPEG-4_audio_extension_descriptor` (Table 2-45: 46).
 pub const TAG: u8 = 0x2E;
 /// Width of the `reserved` field after `ASC_flag` (3 bits).
-const RESERVED_BITS: u32 = 3;
+pub const RESERVED_BITS: u32 = 3;
 /// Width of `reserved` in reader units.
 const RESERVED_READ_BITS: usize = RESERVED_BITS as usize;
 /// Width of `num_of_loops` (4 bits).
 const NUM_OF_LOOPS_BITS: usize = 4;
-/// Width of a byte-sized field (`audioProfileLevelIndication`, `ASC_size`).
-const BYTE_BITS: usize = u8::BITS as usize;
 /// Default of the 3-bit `reserved` (H.222.0 clause 2.1: all ones).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 
@@ -69,10 +67,10 @@ impl Mpeg4AudioExtensionDescriptor {
         let n = r.bits(NUM_OF_LOOPS_BITS)?;
         let mut indications = Vec::new();
         for _ in 0..n {
-            indications.push(r.u8(BYTE_BITS)?);
+            indications.push(r.u8(BITS_PER_BYTE)?);
         }
         let audio_specific_config = if asc_flag {
-            let size = usize::from(r.u8(BYTE_BITS)?);
+            let size = usize::from(r.u8(BITS_PER_BYTE)?);
             Some(r.bytes(size)?.to_vec())
         } else {
             None
@@ -96,7 +94,7 @@ impl Mpeg4AudioExtensionDescriptor {
         )?;
         w.bytes(&self.audio_profile_level_indications)?;
         if let Some(asc) = &self.audio_specific_config {
-            w.put(asc.len() as u64, BYTE_BITS, "ASC_size")?;
+            w.put(asc.len() as u64, BITS_PER_BYTE, "ASC_size")?;
             w.bytes(asc)?;
         }
         w.bytes(&self.trailing)?;

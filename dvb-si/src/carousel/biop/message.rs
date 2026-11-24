@@ -100,7 +100,7 @@ const OBJECT_KEY_LEN_FIELD: usize = 1;
 /// `objectKind_length` (4 bytes) field size.
 const OBJECT_KIND_LEN_FIELD: usize = 4;
 /// `objectKind_data` is always 4 bytes in DVB.
-const OBJECT_KIND_DATA_LEN: usize = 4;
+pub const OBJECT_KIND_DATA_LEN: usize = 4;
 /// `objectInfo_length` (2 bytes) field size.
 const OBJECT_INFO_LEN_FIELD: usize = 2;
 /// `serviceContextList_count` (1 byte) field size.
