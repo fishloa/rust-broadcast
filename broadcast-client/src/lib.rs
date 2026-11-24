@@ -12,6 +12,7 @@ pub mod events;
 mod headers;
 pub mod identity;
 mod join;
+pub mod mp4_range;
 pub mod playout;
 mod queue;
 mod read_ahead;

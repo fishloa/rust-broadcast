@@ -9,7 +9,7 @@ use crate::one_box_home::Crate;
 /// Members with no ISO BMFF box syntax and no reason to be scanned: `isobmff`
 /// is the one home of the box syntax itself; `test-alloc` and `test-fixtures`
 /// are shared test helpers holding an allocator and fixture resolution only.
-pub const EXEMPT: &[&str] = &["isobmff", "test-alloc", "test-fixtures"];
+pub const EXEMPT: &[&str] = &["isobmff", "isobmff-tokio", "test-alloc", "test-fixtures"];
 
 const fn plain(name: &'static str) -> Crate {
     Crate { name, allow: &[] }

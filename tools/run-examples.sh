@@ -83,6 +83,9 @@ example_args() {
             echo "fixtures/ts/h264-aac.ts" ;;
         isobmff/parse_boxes)  echo "fixtures/mp4/progressive/av-faststart.mp4" ;;
         isobmff/parse_emsg)   echo "fixtures/scte35/scte35-emsg-v0.bin" ;;
+        isobmff/list_samples) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
+        isobmff-tokio/list_samples) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
+        isobmff-tokio/read_sample) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff/read_tags)    echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff/write_tags)   echo "fixtures/mp4/progressive/av-prog.mp4 $WORKDIR/tags.udta" ;;
         dvr-runtime/list_programmes)

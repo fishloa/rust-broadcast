@@ -99,6 +99,8 @@ pub mod box_support;
 pub mod box_types;
 pub mod cenc;
 pub mod dovi;
+#[cfg(feature = "std")]
+pub mod driver;
 pub mod dts;
 pub mod emsg;
 pub mod error;
@@ -148,6 +150,8 @@ pub use dovi::{
     DVH1_FOURCC, DVHE_FOURCC, DVVC_FOURCC, DoviBlSignalCompatibilityId,
     DoviDecoderConfigurationRecord, DoviSampleEntryKind, MAX_DVCC_PROFILE,
 };
+#[cfg(feature = "std")]
+pub use driver::{Advance, DriverError, DriverStep, FileReader, ForwardReader, advance};
 pub use dts::{
     DDTS_BODY_LEN, DDTS_FOURCC, DTSC_FOURCC, DTSE_FOURCC, DTSH_FOURCC, DTSL_FOURCC, DtsSpecificBox,
 };

@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `driver` (feature `std`): `FileReader<R: Read + Seek>` and
+  `ForwardReader<R: Read>` answer the sans-IO `Reader`'s structure demands
+  themselves and yield `DriverStep::{Tracks, Fragment, Sample, Done}`.
+  `read_sample` fetches one sample's bytes under `Limits::max_sample_bytes`;
+  the forward-only form retains one header's tail so a `largesize`/`uuid`
+  re-read needs no backward seek, and reports a sample behind its position as
+  `DriverError::SampleBehindPosition`. `Error::MoovAfterMdatForwardOnly` is
+  unchanged and reaches `DriverError::Format`.
+- `examples/list_samples`: print every track of an MP4 and its sample count
+  through `FileReader`.
 - `metadata`, typed MP4 metadata in both directions: `udta` user-data text
   (QuickTime international text and the 3GPP null-terminated form), `©xyz` as
   an `Iso6709` with `latitude()`/`longitude()`/`altitude()`, the 3GPP `loci`
