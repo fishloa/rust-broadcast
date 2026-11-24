@@ -8,7 +8,12 @@ use core::fmt;
 
 use broadcast_common::{Parse, Serialize};
 
-use super::fef_null::{S1Field, S2Field1};
+use super::RFU_TOP_BIT_SHIFT;
+use super::fef_null::{
+    S1_MASK, S1_S2_RFU_MASK, S1_SHIFT, S1Field, S2_FIELD1_SHIFT, S2_MASK, S2_MIXED_FLAG_MASK,
+    S2Field1,
+};
+use crate::packet::be_u16;
 
 /// FEF part: composite payload (type 0x32) per ETSI TS 102 773 §5.2.11.
 ///
@@ -56,25 +61,9 @@ const RFU2_OFFSET: usize = 2;
 const NUM_SUBPARTS_OFFSET: usize = 6;
 /// Bytes in the 32-bit reserved field.
 const RFU2_LEN: usize = 4;
-/// Bytes in a big-endian `u16`.
-const U16_LEN: usize = core::mem::size_of::<u16>();
 
-/// Mask of the reserved top bit of the S1/S2 byte.
-const RFU1_MASK: u8 = 0x80;
-/// Mask of the three-bit `s1_field`.
-const S1_MASK: u8 = 0x07;
-/// Mask of the four-bit `s2_field`.
-const S2_MASK: u8 = 0x0F;
 /// Mask of `s1_field`'s position within the S1/S2 byte.
 const S1_POSITION_MASK: u8 = 0x70;
-/// Shift placing `s1_field` above `s2_field` in the S1/S2 byte.
-const S1_SHIFT: u32 = 4;
-/// Shift selecting S2 field 1 from `s2_field`.
-const S2_FIELD1_SHIFT: u32 = 1;
-/// Mask of the mixed flag (S2 field 2) inside `s2_field`.
-const S2_MIXED_FLAG_MASK: u8 = 0x01;
-/// Shift placing the reserved top bit for the error report.
-const RFU1_SHIFT: u32 = 7;
 
 impl<'a> Parse<'a> for FefCompositePayload {
     type Error = crate::error::Error;
@@ -92,12 +81,12 @@ impl<'a> Parse<'a> for FefCompositePayload {
                 ))?;
 
         // byte 1 [7]: rfu1 — must be 0
-        if hdr[S1_S2_BYTE_OFFSET] & RFU1_MASK != 0 {
+        if hdr[S1_S2_BYTE_OFFSET] & S1_S2_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "byte 1 [7] rfu1",
                     expected: 0,
-                    found: u64::from(hdr[S1_S2_BYTE_OFFSET] >> RFU1_SHIFT),
+                    found: u64::from(hdr[S1_S2_BYTE_OFFSET] >> RFU_TOP_BIT_SHIFT),
                 },
             ));
         }
@@ -121,10 +110,7 @@ impl<'a> Parse<'a> for FefCompositePayload {
             fef_idx: hdr[0],
             s1_field: S1Field::try_from((hdr[S1_S2_BYTE_OFFSET] >> S1_SHIFT) & S1_MASK)?,
             s2_field: hdr[S1_S2_BYTE_OFFSET] & S2_MASK,
-            num_subparts: u16::from_be_bytes([
-                hdr[NUM_SUBPARTS_OFFSET],
-                hdr[NUM_SUBPARTS_OFFSET + 1],
-            ]),
+            num_subparts: be_u16(hdr, NUM_SUBPARTS_OFFSET),
         })
     }
 }
@@ -160,7 +146,8 @@ impl Serialize for FefCompositePayload {
         // rfu2 = 0
         buf[RFU2_OFFSET..RFU2_OFFSET + RFU2_LEN].fill(0);
         let ns = self.num_subparts.to_be_bytes();
-        buf[NUM_SUBPARTS_OFFSET..NUM_SUBPARTS_OFFSET + U16_LEN].copy_from_slice(&ns);
+        buf[NUM_SUBPARTS_OFFSET..NUM_SUBPARTS_OFFSET + core::mem::size_of::<u16>()]
+            .copy_from_slice(&ns);
 
         Ok(self.serialized_len())
     }

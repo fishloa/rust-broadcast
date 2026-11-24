@@ -23,7 +23,6 @@ use super::enums::{
 // ── field widths: Configurable L1-post (Figure 27) ───────────────────────────
 
 /// Bits in a byte, for the bit- to byte-length rounding and byte-chunk reads.
-const BITS_PER_BYTE: usize = 8;
 /// Bytes in a big-endian `u16` length field.
 const LENGTH_FIELD_BYTES: usize = 2;
 
@@ -700,14 +699,14 @@ impl L1ExtBlock {
         let block_type = r.read_bits(L1_EXT_BLOCK_TYPE_BITS)? as u8;
         let data_bit_len = r.read_bits(L1_EXT_DATA_LEN_BITS)? as u16;
         let n = data_bit_len as usize;
-        let mut data = vec![0u8; n.div_ceil(BITS_PER_BYTE)];
+        let mut data = vec![0u8; n.div_ceil(u8::BITS as usize)];
         let mut done = 0usize;
         for byte in data.iter_mut() {
-            let take = (n - done).min(BITS_PER_BYTE) as u32;
+            let take = (n - done).min(u8::BITS as usize) as u32;
             let v = r.read_bits(take)? as u8;
             // MSB-first: a short final field sits in the high bits.
-            *byte = if take < BITS_PER_BYTE as u32 {
-                v << (BITS_PER_BYTE as u32 - take)
+            *byte = if take < u8::BITS {
+                v << (u8::BITS - take)
             } else {
                 v
             };
@@ -727,7 +726,7 @@ impl L1ExtBlock {
         // and in release a wraparound that makes `take` clamp back to 8 and
         // write bits beyond the declared length, misframing the L1EXT
         // region (W-T2-5).
-        let expected_bytes = (self.data_bit_len as usize).div_ceil(BITS_PER_BYTE);
+        let expected_bytes = (self.data_bit_len as usize).div_ceil(u8::BITS as usize);
         if self.data.len() != expected_bytes {
             return Err(crate::Error::LengthMismatch(
                 broadcast_common::error::LengthMismatch {
@@ -743,9 +742,9 @@ impl L1ExtBlock {
         let n = self.data_bit_len as usize;
         let mut done = 0usize;
         for &byte in &self.data {
-            let take = (n - done).min(BITS_PER_BYTE) as u32;
-            let v = if take < BITS_PER_BYTE as u32 {
-                u64::from(byte >> (BITS_PER_BYTE as u32 - take))
+            let take = (n - done).min(u8::BITS as usize) as u32;
+            let v = if take < u8::BITS {
+                u64::from(byte >> (u8::BITS - take))
             } else {
                 u64::from(byte)
             };
@@ -838,7 +837,7 @@ pub(crate) fn parse_l1_post_from_framed(
         ))?;
     let l1conf_len_bits = u16::from_be_bytes(*b) as usize;
     pos += LENGTH_FIELD_BYTES;
-    let l1conf_bytes = l1conf_len_bits.div_ceil(BITS_PER_BYTE);
+    let l1conf_bytes = l1conf_len_bits.div_ceil(u8::BITS as usize);
     need_in(framed, pos + l1conf_bytes, "L1CONF")?;
     let configurable =
         L1PostConfigurable::parse(&framed[pos..pos + l1conf_bytes], num_rf, fef_present)?;
@@ -860,7 +859,7 @@ pub(crate) fn parse_l1_post_from_framed(
         ))?;
     let l1dyn_len_bits = u16::from_be_bytes(*b) as usize;
     pos += LENGTH_FIELD_BYTES;
-    let l1dyn_bytes = l1dyn_len_bits.div_ceil(BITS_PER_BYTE);
+    let l1dyn_bytes = l1dyn_len_bits.div_ceil(u8::BITS as usize);
     need_in(framed, pos + l1dyn_bytes, "L1DYN_CURR")?;
     let dynamic_current = L1PostDynamic::parse(&framed[pos..pos + l1dyn_bytes], num_plp, num_aux)?;
     pos += l1dyn_bytes;
@@ -878,7 +877,7 @@ pub(crate) fn parse_l1_post_from_framed(
         ))?;
     let l1ext_len_bits = u16::from_be_bytes(*b) as usize;
     pos += LENGTH_FIELD_BYTES;
-    let l1ext_bytes = l1ext_len_bits.div_ceil(BITS_PER_BYTE);
+    let l1ext_bytes = l1ext_len_bits.div_ceil(u8::BITS as usize);
     need_in(framed, pos + l1ext_bytes, "L1EXT")?;
     let extension = if l1ext_bytes > 0 {
         parse_ext_blocks(&framed[pos..pos + l1ext_bytes], l1ext_len_bits)?
@@ -903,7 +902,7 @@ where
     let bit_len_field = broadcast_common::len::fit_u16(bit_len, "framed_block bit_len")?;
     out.extend_from_slice(&bit_len_field.to_be_bytes());
     let start = out.len();
-    out.resize(start + bit_len.div_ceil(BITS_PER_BYTE), 0);
+    out.resize(start + bit_len.div_ceil(u8::BITS as usize), 0);
     let mut w = BitWriter::new(&mut out[start..]);
     write(&mut w)?;
     Ok(())

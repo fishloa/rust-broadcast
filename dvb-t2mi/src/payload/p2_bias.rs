@@ -3,6 +3,8 @@
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
+use super::{BYTE_MASK_U16, RFU_TOP_BIT_SHIFT};
+
 /// P2 bias balancing payload (type 0x12), ETSI TS 102 773 §5.2.6 Figure 9.
 ///
 /// Layout: `frame_idx(8) | rfu(17) | num_active_bias_cells_per_p2(15)` = 40 bits
@@ -29,8 +31,6 @@ const COUNT_LOW_OFFSET: usize = 4;
 
 /// Mask of the reserved top bit of the count's high byte.
 const RFU_TOP_BIT_MASK: u8 = 0x80;
-/// Shift placing the reserved top bit for the error report.
-const RFU_TOP_BIT_SHIFT: u32 = 7;
 /// Shifts assembling the 17-bit reserved value for the error report.
 const RFU_HIGH_SHIFT: u32 = 9;
 const RFU_MID_SHIFT: u32 = 1;
@@ -39,8 +39,6 @@ const RFU_MID_SHIFT: u32 = 1;
 const COUNT_HIGH_BYTE_MASK: u16 = 0x7F;
 /// Shift placing the cell count's high bits.
 const COUNT_HIGH_SHIFT: u32 = 8;
-/// Mask of one byte.
-const BYTE_MASK: u16 = 0xFF;
 /// Max value of the 15-bit cell count.
 const COUNT_MAX: u16 = 0x7FFF;
 impl<'a> Parse<'a> for P2BiasPayload {
@@ -107,7 +105,7 @@ impl Serialize for P2BiasPayload {
         buf[RFU_SECOND_OFFSET] = 0; // rfu
         buf[COUNT_HIGH_OFFSET] = ((self.num_active_bias_cells_per_p2 >> COUNT_HIGH_SHIFT) as u8)
             & COUNT_HIGH_BYTE_MASK as u8;
-        buf[COUNT_LOW_OFFSET] = (self.num_active_bias_cells_per_p2 & BYTE_MASK) as u8;
+        buf[COUNT_LOW_OFFSET] = (self.num_active_bias_cells_per_p2 & BYTE_MASK_U16) as u8;
 
         Ok(self.serialized_len())
     }

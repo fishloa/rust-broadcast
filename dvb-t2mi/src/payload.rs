@@ -1,5 +1,16 @@
 //! T2-MI payload types (§5.2.1 - §5.2.12).
 
+/// Shift placing the reserved top bit of a byte for a `ReservedBits` report.
+///
+/// The payload headers of ETSI TS 102 773 §5.2 pack a few reserved bits above
+/// the highest real field of a byte; reporting them means shifting the byte's
+/// top bit down.
+pub(crate) const RFU_TOP_BIT_SHIFT: u32 = 7;
+/// Mask selecting one byte of a 16-bit value.
+pub(crate) const BYTE_MASK_U16: u16 = 0xFF;
+/// Mask selecting one byte of a 32-bit value.
+pub(crate) const BYTE_MASK_U32: u32 = 0xFF;
+
 pub mod any;
 pub mod arbitrary_cells;
 pub mod aux_iq;
