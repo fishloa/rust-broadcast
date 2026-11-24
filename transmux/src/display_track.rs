@@ -96,6 +96,16 @@ const HEVC_IDR_N_LP: u8 = 20;
 /// base-layer 2-D id and reference counts before the id.
 const BASE_LAYER: u8 = 0;
 
+/// Bit of the H.265 NAL header byte 0 carrying the low bit of `nuh_layer_id`
+/// (ITU-T H.265 §7.3.1.2).
+const HEVC_NAL_LAYER_ID_BIT_MASK: u8 = 0x01;
+/// Bytes of the H.265 NAL unit header (§7.3.1.2).
+const HEVC_NAL_HEADER_LEN: usize = 2;
+/// Width of `sps_video_parameter_set_id` (H.265 §7.3.2.2).
+const SPS_VIDEO_PARAMETER_SET_ID_BITS: usize = 4;
+/// Width of `sps_max_sub_layers_minus1` (H.265 §7.3.2.2).
+const SPS_MAX_SUB_LAYERS_MINUS1_BITS: usize = 3;
+
 /// How a slice's parameter sets resolved.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum PpsCoverage {
@@ -168,9 +178,15 @@ fn avc_pps_ids(nal: &[u8]) -> Option<(u8, u8)> {
 
 /// `sps_seq_parameter_set_id` (H.265 §7.3.2.2) of a base-layer SPS.
 fn hevc_sps_id(nal: &[u8]) -> Option<u8> {
-    let mut r = BitReader::with_unescape(nal.get(2..)?, "H.265 SPS").ok()?;
-    r.read_bits(4, "sps_video_parameter_set_id").ok()?;
-    let max_sub = r.read_bits(3, "sps_max_sub_layers_minus1").ok()? as u8;
+    let mut r = BitReader::with_unescape(nal.get(HEVC_NAL_HEADER_LEN..)?, "H.265 SPS").ok()?;
+    r.read_bits(
+        SPS_VIDEO_PARAMETER_SET_ID_BITS,
+        "sps_video_parameter_set_id",
+    )
+    .ok()?;
+    let max_sub = r
+        .read_bits(SPS_MAX_SUB_LAYERS_MINUS1_BITS, "sps_max_sub_layers_minus1")
+        .ok()? as u8;
     r.read_flag("sps_temporal_id_nesting_flag").ok()?;
     let _ = crate::sps::decode_ptl(&mut r, true, max_sub).ok()?;
     u8::try_from(r.read_ue("sps_seq_parameter_set_id").ok()?).ok()
@@ -189,11 +205,12 @@ fn hevc_pps_ids(nal: &[u8]) -> Option<(u8, u8)> {
 /// independent slice segment; `None` for anything else.
 fn hevc_slice_pps_id(nal: &[u8]) -> Option<u8> {
     let t = crate::nal::nal_unit_type(NalCodec::Hevc, nal)?;
-    if t > HEVC_LAST_VCL || (nal[0] & 0x01) != BASE_LAYER {
+    if t > HEVC_LAST_VCL || (nal[0] & HEVC_NAL_LAYER_ID_BIT_MASK) != BASE_LAYER {
         return None;
     }
-    let end = nal.len().min(2 + SLICE_PREFIX_BYTES);
-    let mut r = BitReader::with_unescape(nal.get(2..end)?, "H.265 slice header").ok()?;
+    let end = nal.len().min(HEVC_NAL_HEADER_LEN + SLICE_PREFIX_BYTES);
+    let mut r =
+        BitReader::with_unescape(nal.get(HEVC_NAL_HEADER_LEN..end)?, "H.265 slice header").ok()?;
     if !r.read_flag("first_slice_segment_in_pic_flag").ok()? {
         // A dependent segment carries overrides instead of the 2-D id and the
         // reference counts (H.265 §7.3.6.1). The picture's first segment is
@@ -365,7 +382,7 @@ impl SpsTracker {
         let Some(t) = crate::nal::nal_unit_type(NalCodec::Hevc, nal) else {
             return;
         };
-        if (nal[0] & 0x01) != BASE_LAYER {
+        if (nal[0] & HEVC_NAL_LAYER_ID_BIT_MASK) != BASE_LAYER {
             return;
         }
         match t {

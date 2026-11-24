@@ -64,6 +64,16 @@ pub const T35_HEADER_V1: [u8; T35_HEADER_LEN] = [
 ];
 
 const BITS_PER_BYTE: u32 = 8;
+/// Bytes the T.35 header spends on `application_identifier` and
+/// `application_version`, after the country/provider/oriented prefix
+/// (SMPTE ST 2094-40 §5).
+const T35_APPLICATION_SUFFIX_LEN: usize = 2;
+/// Length of the country/provider/oriented prefix of the T.35 header.
+const T35_PREFIX_LEN: usize = T35_HEADER_LEN - T35_APPLICATION_SUFFIX_LEN;
+/// Offset of `application_identifier` in the T.35 header.
+const APPLICATION_IDENTIFIER_OFFSET: usize = T35_PREFIX_LEN;
+/// Offset of `application_version` in the T.35 header.
+const APPLICATION_VERSION_OFFSET: usize = T35_APPLICATION_SUFFIX_LEN + T35_PREFIX_LEN - 1;
 const HEVC_NAL_HEADER_LEN: usize = 2;
 const NAL_LENGTH_PREFIX_LEN: usize = 4;
 
@@ -78,6 +88,8 @@ const OVERLAP_PROCESS_OPTION_BITS: u32 = 1;
 const TARGETED_MAX_LUMINANCE_BITS: u32 = 27;
 const FLAG_BITS: u32 = 1;
 const LUT_DIMENSION_BITS: u32 = 5;
+/// A peak-luminance table carries one extent per dimension (rows, columns).
+const LUT_DIMENSION_COUNT: usize = 2;
 const LUT_MAX_DIMENSION: u8 = 25;
 const LUT_VALUE_BITS: u32 = 4;
 const MAXSCL_BITS: u32 = 17;
@@ -87,6 +99,8 @@ const DISTRIBUTION_COUNT_BITS: u32 = 4;
 const DISTRIBUTION_PERCENTAGE_BITS: u32 = 7;
 const DISTRIBUTION_PERCENTILE_BITS: u32 = 17;
 const FRACTION_BRIGHT_PIXELS_BITS: u32 = 10;
+/// Knee points bounding the bezier curve (SMPTE ST 2094-40 §9.5).
+const KNEE_POINT_COUNT: usize = 2;
 const KNEE_POINT_BITS: u32 = 12;
 const BEZIER_ANCHOR_COUNT_BITS: u32 = 4;
 const BEZIER_ANCHOR_BITS: u32 = 10;
@@ -270,7 +284,7 @@ fn read_lut(r: &mut BitReader<'_>, what: &'static str) -> Result<PeakLuminanceTa
 
 fn lut_bits(lut: &Option<PeakLuminanceTable>) -> usize {
     lut.as_ref().map_or(0, |l| {
-        2 * LUT_DIMENSION_BITS as usize + l.values.len() * LUT_VALUE_BITS as usize
+        LUT_DIMENSION_COUNT * LUT_DIMENSION_BITS as usize + l.values.len() * LUT_VALUE_BITS as usize
     })
 }
 
@@ -409,7 +423,7 @@ fn read_transform_tail(r: &mut BitReader<'_>, c: &mut ColorVolumeTransform) -> R
 fn transform_tail_bits(c: &ColorVolumeTransform) -> usize {
     let tone = c.tone_mapping.as_ref().map_or(FLAG_BITS as usize, |t| {
         FLAG_BITS as usize
-            + 2 * KNEE_POINT_BITS as usize
+            + KNEE_POINT_COUNT * KNEE_POINT_BITS as usize
             + BEZIER_ANCHOR_COUNT_BITS as usize
             + t.anchors.len() * BEZIER_ANCHOR_BITS as usize
     });
@@ -597,7 +611,7 @@ impl Hdr10PlusMetadata {
     }
 
     fn padding_bits(&self) -> u32 {
-        (self.payload_bits().next_multiple_of(8) - self.payload_bits()) as u32
+        (self.payload_bits().next_multiple_of(BITS_PER_BYTE as usize) - self.payload_bits()) as u32
     }
 
     /// Whether `payload` (a `user_data_registered_itu_t_t35` payload, starting at
@@ -687,21 +701,21 @@ impl<'a> Parse<'a> for Hdr10PlusMetadata {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, T35_HEADER_LEN, "HDR10+ T.35 header")?;
-        if bytes[..T35_HEADER_LEN - 2] != T35_HEADER_V1[..T35_HEADER_LEN - 2] {
+        if bytes[..T35_PREFIX_LEN] != T35_HEADER_V1[..T35_PREFIX_LEN] {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "itu_t_t35 header",
                 value: u64::from(bytes[0]),
                 reason: "not the HDR10+ country/provider/oriented code",
             }));
         }
-        if bytes[T35_HEADER_LEN - 2] != APPLICATION_IDENTIFIER {
+        if bytes[APPLICATION_IDENTIFIER_OFFSET] != APPLICATION_IDENTIFIER {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "application_identifier",
-                value: u64::from(bytes[T35_HEADER_LEN - 2]),
+                value: u64::from(bytes[APPLICATION_IDENTIFIER_OFFSET]),
                 reason: "ST 2094-40 clause 5 requires 4",
             }));
         }
-        let application_version = bytes[T35_HEADER_LEN - 1];
+        let application_version = bytes[APPLICATION_VERSION_OFFSET];
         if application_version > APPLICATION_VERSION_MAX {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "application_version",

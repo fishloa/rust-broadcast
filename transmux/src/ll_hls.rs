@@ -454,8 +454,9 @@ impl LlHlsSegmenter {
         let anchor_timescale = tracks[anchor].timescale.get() as f64;
         let target_ticks = ((target_duration_secs * anchor_timescale) as u64).max(1);
         // part_target_ms / 1000 * timescale, integer-safe.
-        let part_target_ticks =
-            ((part_target_ms as u64 * tracks[anchor].timescale.get() as u64) / 1000).max(1);
+        let part_target_ticks = ((part_target_ms as u64 * tracks[anchor].timescale.get() as u64)
+            / MILLIS_PER_SEC)
+            .max(1);
 
         let tracks = tracks
             .into_iter()
@@ -1124,7 +1125,7 @@ impl LlHlsSegmenter {
                 - i128::from(origin) * i128::from(t.spec.timescale.get());
             let ticks = offset / i128::from(origin_ts.get())
                 + i128::from(self.start_time_ns) * i128::from(t.spec.timescale.get())
-                    / 1_000_000_000;
+                    / i128::from(NANOS_PER_SEC);
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(0);
             t.part_base_decode = t.seg_base_decode;
         }
@@ -1210,7 +1211,7 @@ impl LlHlsSegmenter {
             let ticks = start
                 .as_nanos()
                 .saturating_mul(u128::from(t.spec.timescale.get()))
-                / 1_000_000_000;
+                / u128::from(NANOS_PER_SEC);
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
             t.part_base_decode = t.seg_base_decode;
         }
@@ -1677,6 +1678,9 @@ fn take_span(t: &TrackState, target_ticks: u64) -> usize {
 
 const PERCENT_SCALE: u64 = 100;
 
+/// Divisor that turns a truncating `a / d` into round-to-nearest.
+const ROUND_NEAREST_DIVISOR: u128 = 2;
+
 /// RFC 8216bis §4.4.4.9: a non-terminal Partial Segment lasts at least this
 /// percentage of the Part Target Duration.
 const PART_MIN_PERCENT: u64 = 85;
@@ -1759,7 +1763,8 @@ fn follower_dts(sample: &Sample) -> i64 {
 /// Convert a media-timescale tick count to whole nanoseconds of wall-clock time.
 fn ticks_duration(ticks: u64, timescale: Timescale) -> Duration {
     let denom = u128::from(timescale.get());
-    let nanos = (u128::from(ticks) * u128::from(NANOS_PER_SEC) + denom / 2) / denom;
+    let nanos =
+        (u128::from(ticks) * u128::from(NANOS_PER_SEC) + denom / ROUND_NEAREST_DIVISOR) / denom;
     Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 

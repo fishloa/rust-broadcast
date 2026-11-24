@@ -62,6 +62,36 @@ pub const UUID_TYPE_SIZE: usize = 16;
 /// Size of the FullBox extension fields: `version`(8) + `flags`(24) = 4 bytes.
 pub const FULLBOX_EXTRA_SIZE: usize = 4;
 
+/// Size of a box type / four-CC field in bytes (§4.2).
+pub const BOX_TYPE_SIZE: usize = 4;
+
+/// Size of the widest fixed header: `size` + `type` + 64-bit `largesize`.
+pub const BOX_HEADER_LARGESIZE_SIZE: usize = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
+
+/// Byte offset of the `largesize` field after the fixed header (§4.2).
+const LARGESIZE_OFFSET: usize = BOX_HEADER_MIN_SIZE;
+
+/// Byte offsets of the four `size` field bytes in a box header.
+const SIZE_BYTE_OFFSETS: [usize; BOX_TYPE_SIZE] = [0, 1, 2, 3];
+
+/// Byte offsets of the `type` field bytes in a box header.
+const BOX_TYPE_OFFSETS: [usize; BOX_TYPE_SIZE] = [4, 5, 6, 7];
+
+/// Byte offsets of the eight `largesize` field bytes.
+const LARGESIZE_BYTE_OFFSETS: [usize; LARGESIZE_SIZE] = [0, 1, 2, 3, 4, 5, 6, 7];
+
+/// Width of the FullBox `flags` field (§4.2).
+const FULLBOX_FLAGS_BITS: u32 = 24;
+
+/// Mask of the FullBox `flags` field.
+const FULLBOX_FLAGS_MASK: u32 = (1 << FULLBOX_FLAGS_BITS) - 1;
+
+/// Byte offset of the three `flags` bytes inside the FullBox extension.
+const FULLBOX_FLAGS_OFFSET: usize = 1;
+
+/// Bytes the 24-bit `flags` field occupies.
+const FULLBOX_FLAGS_LEN: usize = FULLBOX_EXTRA_SIZE - FULLBOX_FLAGS_OFFSET;
+
 // ---------------------------------------------------------------------------
 // BoxType — 4-byte four-CC newtype
 // ---------------------------------------------------------------------------
@@ -73,7 +103,7 @@ pub const FULLBOX_EXTRA_SIZE: usize = 4;
 /// Renders the ASCII four-CC with underscores for non-printable bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct BoxType(pub [u8; 4]);
+pub struct BoxType(pub [u8; BOX_TYPE_SIZE]);
 
 impl BoxType {
     /// Create a `BoxType` from a 4-byte array.
@@ -323,16 +353,19 @@ pub(crate) fn box_len(compact_len: usize) -> usize {
 /// (ISO/IEC 14496-12:2026 §4.2). `total` must come from [`box_len`] (it
 /// counts the 8 `largesize` bytes). Pure: touches no payload, so tests can
 /// exercise a multi-GiB `total` without allocating it.
-pub(crate) fn encode_box_header(fourcc: &[u8; 4], total: u64) -> ([u8; 16], usize) {
-    let mut out = [0u8; 16];
-    out[4..8].copy_from_slice(fourcc);
+pub(crate) fn encode_box_header(
+    fourcc: &[u8; BOX_TYPE_SIZE],
+    total: u64,
+) -> ([u8; BOX_HEADER_LARGESIZE_SIZE], usize) {
+    let mut out = [0u8; BOX_HEADER_LARGESIZE_SIZE];
+    out[BOX_TYPE_RANGE].copy_from_slice(fourcc);
     if force_largesize() || total > u32::MAX as u64 {
-        out[0..4].copy_from_slice(&SIZE_INDICATES_LARGESIZE.to_be_bytes());
-        out[8..16].copy_from_slice(&total.to_be_bytes());
+        out[0..BOX_TYPE_SIZE].copy_from_slice(&SIZE_INDICATES_LARGESIZE.to_be_bytes());
+        out[LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE].copy_from_slice(&total.to_be_bytes());
         (out, BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE)
     } else {
         // `total <= u32::MAX` was just checked.
-        out[0..4].copy_from_slice(&(total as u32).to_be_bytes());
+        out[0..BOX_TYPE_SIZE].copy_from_slice(&(total as u32).to_be_bytes());
         (out, BOX_HEADER_MIN_SIZE)
     }
 }
@@ -342,7 +375,11 @@ pub(crate) fn encode_box_header(fourcc: &[u8; 4], total: u64) -> ([u8; 16], usiz
 /// `largesize` form). The single place a box writer's `size` is derived —
 /// replaces the per-box `need as u32` that silently wrapped a >4 GiB box
 /// (#1147).
-pub(crate) fn write_box_header(buf: &mut [u8], fourcc: &[u8; 4], need: usize) -> Result<usize> {
+pub(crate) fn write_box_header(
+    buf: &mut [u8],
+    fourcc: &[u8; BOX_TYPE_SIZE],
+    need: usize,
+) -> Result<usize> {
     let (hdr, len) = encode_box_header(fourcc, need as u64);
     need_out(buf, len)?;
     buf[..len].copy_from_slice(&hdr[..len]);
@@ -356,13 +393,13 @@ pub(crate) fn write_box_header(buf: &mut [u8], fourcc: &[u8; 4], need: usize) ->
 /// offsets, so unlike [`write_box_header`] this never switches to `largesize`.
 pub(crate) fn write_compact_box_header(
     buf: &mut [u8],
-    fourcc: &[u8; 4],
+    fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,
 ) -> Result<usize> {
     let size = broadcast_common::len::fit_u32(need, "box size")?;
     need_out(buf, BOX_HEADER_MIN_SIZE)?;
-    buf[0..4].copy_from_slice(&size.to_be_bytes());
-    buf[4..8].copy_from_slice(fourcc);
+    buf[0..BOX_TYPE_SIZE].copy_from_slice(&size.to_be_bytes());
+    buf[BOX_TYPE_RANGE].copy_from_slice(fourcc);
     Ok(BOX_HEADER_MIN_SIZE)
 }
 
@@ -371,7 +408,7 @@ pub(crate) fn write_compact_box_header(
 /// bytes written. Replaces the per-box copy of this sequence (#2004).
 pub(crate) fn write_full_box_header(
     buf: &mut [u8],
-    fourcc: &[u8; 4],
+    fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,
     version: u8,
     flags: u32,
@@ -386,8 +423,8 @@ pub(crate) fn write_full_box_header(
     buf[c] = version;
     c += 1;
     let fb = flags.to_be_bytes();
-    buf[c..c + 3].copy_from_slice(&fb[1..]);
-    c += 3;
+    buf[c..c + FULLBOX_FLAGS_LEN].copy_from_slice(&fb[FULLBOX_FLAGS_OFFSET..]);
+    c += FULLBOX_FLAGS_LEN;
     Ok(c)
 }
 
@@ -446,9 +483,14 @@ pub(crate) fn box_body<'a>(
 /// clamped to `region`.
 pub(crate) fn child_extent(region: &[u8]) -> Option<usize> {
     let hdr = box_header_len(region).ok()?;
-    let size = u32::from_be_bytes([region[0], region[1], region[2], region[3]]);
+    let size = u32::from_be_bytes(SIZE_BYTE_OFFSETS.map(|i| region[i]));
     let total = if size == SIZE_INDICATES_LARGESIZE {
-        usize::try_from(u64::from_be_bytes(region[8..16].try_into().ok()?)).ok()?
+        usize::try_from(u64::from_be_bytes(
+            region[LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE]
+                .try_into()
+                .ok()?,
+        ))
+        .ok()?
     } else if size == SIZE_TO_EOF {
         region.len()
     } else {
@@ -472,7 +514,7 @@ pub(crate) fn child_extent_in(region: &[u8]) -> Option<usize> {
 /// `uuid` `usertype` is left to the callers that handle `uuid` boxes.
 pub(crate) fn box_header_len(bytes: &[u8]) -> Result<usize> {
     need_in(bytes, BOX_HEADER_MIN_SIZE, "box header")?;
-    let size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let size = u32::from_be_bytes(SIZE_BYTE_OFFSETS.map(|i| bytes[i]));
     if size == SIZE_INDICATES_LARGESIZE {
         let need = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
         if bytes.len() < need {
@@ -497,8 +539,8 @@ impl<'a> Parse<'a> for BoxHeader {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "BoxHeader")?;
 
-        let raw_size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let box_type = BoxType::from_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let raw_size = u32::from_be_bytes(SIZE_BYTE_OFFSETS.map(|i| bytes[i]));
+        let box_type = BoxType::from_bytes(BOX_TYPE_OFFSETS.map(|i| bytes[i]));
 
         let mut cursor = BOX_HEADER_MIN_SIZE;
 
@@ -509,16 +551,7 @@ impl<'a> Parse<'a> for BoxHeader {
                     have: bytes.len(),
                 });
             }
-            let v = u64::from_be_bytes([
-                bytes[cursor],
-                bytes[cursor + 1],
-                bytes[cursor + 2],
-                bytes[cursor + 3],
-                bytes[cursor + 4],
-                bytes[cursor + 5],
-                bytes[cursor + 6],
-                bytes[cursor + 7],
-            ]);
+            let v = u64::from_be_bytes(LARGESIZE_BYTE_OFFSETS.map(|i| bytes[cursor + i]));
             cursor += LARGESIZE_SIZE;
             v
         } else {
@@ -577,12 +610,13 @@ impl Serialize for BoxHeader {
         // stale (r04-W8).
         let mut cursor = 0usize;
         if self.has_largesize {
-            buf[0..4].copy_from_slice(&SIZE_INDICATES_LARGESIZE.to_be_bytes());
-            cursor += 4;
-            buf[cursor..cursor + 4].copy_from_slice(&self.box_type.to_u32().to_be_bytes());
-            cursor += 4;
-            buf[cursor..cursor + 8].copy_from_slice(&self.size.to_be_bytes());
-            cursor += 8;
+            buf[0..BOX_TYPE_SIZE].copy_from_slice(&SIZE_INDICATES_LARGESIZE.to_be_bytes());
+            cursor += BOX_TYPE_SIZE;
+            buf[cursor..cursor + BOX_TYPE_SIZE]
+                .copy_from_slice(&self.box_type.to_u32().to_be_bytes());
+            cursor += BOX_TYPE_SIZE;
+            buf[cursor..cursor + LARGESIZE_SIZE].copy_from_slice(&self.size.to_be_bytes());
+            cursor += LARGESIZE_SIZE;
         } else {
             // A `size` of 1 without `has_largesize` would be written as the
             // largesize marker with no largesize following, so a header that
@@ -604,10 +638,11 @@ impl Serialize for BoxHeader {
                     reason: "size exceeds the 32-bit field and has_largesize is false",
                 })
             })?;
-            buf[0..4].copy_from_slice(&size32.to_be_bytes());
-            cursor += 4;
-            buf[cursor..cursor + 4].copy_from_slice(&self.box_type.to_u32().to_be_bytes());
-            cursor += 4;
+            buf[0..BOX_TYPE_SIZE].copy_from_slice(&size32.to_be_bytes());
+            cursor += BOX_TYPE_SIZE;
+            buf[cursor..cursor + BOX_TYPE_SIZE]
+                .copy_from_slice(&self.box_type.to_u32().to_be_bytes());
+            cursor += BOX_TYPE_SIZE;
         }
 
         // usertype for uuid. `header_size()` counts these 16 bytes, so a `uuid`
@@ -649,7 +684,7 @@ pub struct FullBoxHeader {
 impl FullBoxHeader {
     /// Build a FullBoxHeader from a BoxHeader + version/flags.
     pub fn new(box_header: BoxHeader, version: u8, flags: u32) -> Self {
-        debug_assert!(flags <= 0xFFFFFF, "flags must fit in 24 bits");
+        debug_assert!(flags <= FULLBOX_FLAGS_MASK, "flags must fit in 24 bits");
         Self {
             box_header,
             version,
@@ -668,8 +703,10 @@ impl<'a> Parse<'a> for FullBoxHeader {
         need_in(bytes, hdr_sz + FULLBOX_EXTRA_SIZE, "FullBoxHeader")?;
 
         let version = bytes[hdr_sz];
-        let flags =
-            u32::from_be_bytes([0, bytes[hdr_sz + 1], bytes[hdr_sz + 2], bytes[hdr_sz + 3]]);
+        let mut flag_word = [0u8; BOX_TYPE_SIZE];
+        flag_word[FULLBOX_FLAGS_OFFSET..]
+            .copy_from_slice(&bytes[hdr_sz + FULLBOX_FLAGS_OFFSET..hdr_sz + FULLBOX_EXTRA_SIZE]);
+        let flags = u32::from_be_bytes(flag_word);
 
         Ok(Self {
             box_header,
@@ -694,9 +731,8 @@ impl Serialize for FullBoxHeader {
         let cursor = self.box_header.serialize_into(buf)?;
         buf[cursor] = self.version;
         let flag_bytes = self.flags.to_be_bytes();
-        buf[cursor + 1] = flag_bytes[1];
-        buf[cursor + 2] = flag_bytes[2];
-        buf[cursor + 3] = flag_bytes[3];
+        buf[cursor + FULLBOX_FLAGS_OFFSET..cursor + FULLBOX_EXTRA_SIZE]
+            .copy_from_slice(&flag_bytes[FULLBOX_FLAGS_OFFSET..]);
         Ok(cursor + FULLBOX_EXTRA_SIZE)
     }
 }
@@ -893,7 +929,7 @@ pub(crate) fn box_slices(data: &[u8]) -> impl Iterator<Item = &[u8]> {
 }
 
 /// Find a top-level box by four-CC, returning its full bytes (header + body).
-pub(crate) fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+pub(crate) fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&'a [u8]> {
     box_slices(data).find(|b| b[BOX_TYPE_RANGE] == *fourcc)
 }
 
@@ -917,21 +953,27 @@ fn container_body(container: &[u8]) -> &[u8] {
 #[cfg(feature = "cenc")]
 pub(crate) fn child_boxes<'a>(
     container: &'a [u8],
-    fourcc: &'a [u8; 4],
+    fourcc: &'a [u8; BOX_TYPE_SIZE],
 ) -> impl Iterator<Item = &'a [u8]> {
     box_slices(container_body(container)).filter(move |b| b[BOX_TYPE_RANGE] == *fourcc)
 }
 
 /// The first child of `container` with four-CC `fourcc` (full box bytes).
 #[cfg(feature = "cenc")]
-pub(crate) fn find_child_box<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+pub(crate) fn find_child_box<'a>(
+    container: &'a [u8],
+    fourcc: &[u8; BOX_TYPE_SIZE],
+) -> Option<&'a [u8]> {
     box_slices(container_body(container)).find(|b| b[BOX_TYPE_RANGE] == *fourcc)
 }
 
 /// Descend a chain of container four-CCs from `start`, returning the innermost
 /// box's full bytes (or `None` if any link is missing).
 #[cfg(feature = "cenc")]
-pub(crate) fn descend_boxes<'a>(start: &'a [u8], path: &[&[u8; 4]]) -> Option<&'a [u8]> {
+pub(crate) fn descend_boxes<'a>(
+    start: &'a [u8],
+    path: &[&[u8; BOX_TYPE_SIZE]],
+) -> Option<&'a [u8]> {
     let mut cur = start;
     for fourcc in path {
         cur = find_child_box(cur, fourcc)?;

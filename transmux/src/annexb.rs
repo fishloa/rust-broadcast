@@ -18,6 +18,17 @@ use broadcast_common::len::need_in;
 
 use crate::error::{Error, Result};
 
+/// Bytes in the `00 00 01` Annex B start-code prefix (ITU-T H.264 Annex B).
+const START_CODE_PREFIX_LEN: usize = 3;
+/// Offset of the `01` marker inside the start-code prefix.
+const START_CODE_MARKER_OFFSET: usize = 2;
+/// Offset of the second byte of the prefix, counted from its first byte.
+const START_CODE_SECOND_BYTE_OFFSET: usize = 1;
+/// The `01` byte that ends a start-code prefix.
+const START_CODE_MARKER: u8 = 1;
+/// Bits in one byte, the shift for a big-endian length prefix.
+const BITS_PER_BYTE: usize = u8::BITS as usize;
+
 /// Length in bytes of the fixed NAL length prefix used in `mdat` (4 → `lengthSizeMinusOne = 3`).
 pub const NAL_LENGTH_SIZE: usize = 4;
 
@@ -62,10 +73,14 @@ pub fn iter_annexb_nals(annexb: &[u8]) -> AnnexBNalIter<'_> {
 pub(crate) fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
     let n = data.len();
     let mut p = from;
-    while p + 3 <= n {
-        let i = p + 2 + memchr::memchr(1, &data[p + 2..])?;
-        if data[i - 1] == 0 && data[i - 2] == 0 {
-            return Some(i - 2);
+    while p + START_CODE_PREFIX_LEN <= n {
+        let i = p
+            + START_CODE_MARKER_OFFSET
+            + memchr::memchr(START_CODE_MARKER, &data[p + START_CODE_MARKER_OFFSET..])?;
+        if data[i - START_CODE_MARKER_OFFSET] == 0
+            && data[i - START_CODE_MARKER_OFFSET + START_CODE_SECOND_BYTE_OFFSET] == 0
+        {
+            return Some(i - START_CODE_MARKER_OFFSET);
         }
         p = i - 1;
     }
@@ -84,7 +99,7 @@ pub(crate) fn start_code_positions(data: &[u8]) -> Vec<usize> {
     let mut p = 0usize;
     while let Some(at) = find_start_code_prefix(data, p) {
         positions.push(at);
-        p = at + 3;
+        p = at + START_CODE_PREFIX_LEN;
     }
     positions
 }
@@ -109,7 +124,7 @@ impl<'a> Iterator for AnnexBNalIter<'a> {
                 return None;
             }
             // NAL body starts just after this `00 00 01`.
-            let start = self.code_positions[self.idx] + 3;
+            let start = self.code_positions[self.idx] + START_CODE_PREFIX_LEN;
             // ...and ends at the next start code's first `00` (so an extra leading
             // `00` of a 4-byte code lands in the trailing bytes and is stripped),
             // or at end of buffer for the last NAL.
@@ -193,7 +208,7 @@ pub fn iter_length_prefixed_nals_with(lp: &[u8], length_size: usize) -> Result<V
         need_in(lp, prefix_end, "NAL length prefix")?;
         let mut len: usize = 0;
         for &byte in &lp[off..prefix_end] {
-            len = (len << 8) | usize::from(byte);
+            len = (len << BITS_PER_BYTE) | usize::from(byte);
         }
         let start = prefix_end;
         // As in [`iter_length_prefixed_nals`]: the length is attacker-controlled,

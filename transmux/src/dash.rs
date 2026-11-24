@@ -181,6 +181,24 @@ const MIN_BUFFER_TIME: Duration = Duration::from_secs(2);
 /// `Period@id` of the single Period this packager emits.
 const PERIOD_ID: &str = "0";
 
+/// A key ID / KID is 16 bytes (AES-128, ISO/IEC 23001-7).
+const KEY_ID_LEN: usize = 16;
+/// Bits in one byte, converting a coded size to a bit count.
+const BITS_PER_BYTE: u64 = u8::BITS as u64;
+/// Tenths of a second in one second.
+const TENTHS_PER_SEC: u64 = 10;
+/// Milliseconds in one tenth of a second.
+const MILLIS_PER_TENTH: u64 = 100;
+/// Divisor that turns a truncating `a / d` into round-to-nearest.
+const ROUND_NEAREST_DIVISOR: u64 = 2;
+/// Ends of the RFC 9562 §4 UUID text groups in hex digits (8-4-4-4-12).
+const UUID_GROUP_1_END: usize = 8;
+const UUID_GROUP_2_END: usize = 12;
+const UUID_GROUP_3_END: usize = 16;
+const UUID_GROUP_4_END: usize = 20;
+/// Hex digits in a 16-byte key ID.
+const KEY_ID_HEX_LEN: usize = KEY_ID_LEN * 2;
+
 /// `AdaptationSet@startWithSAP` (ISO/IEC 23009-1 §5.3.3.2): every segment starts
 /// with a stream access point of type 1.
 const START_WITH_SAP: u8 = 1;
@@ -259,7 +277,7 @@ pub struct ContentProtectionSystem {
     pub value: Option<String>,
     /// Optional default key ID (ISO/IEC 23001-7 `cenc:default_KID`), rendered
     /// as the canonical dashed hex UUID form.
-    pub default_kid: Option<[u8; 16]>,
+    pub default_kid: Option<[u8; KEY_ID_LEN]>,
     /// Optional `cenc:pssh` child (ISO/IEC 23001-7 §12.1) — base64 of a
     /// caller-supplied, fully-serialized `pssh` box (e.g.
     /// [`crate::cenc::ProtectionSystemSpecificHeaderBox::to_vec`], or one of
@@ -521,7 +539,7 @@ struct ReprInfo {
     encryption_scheme: Option<crate::cenc::CencScheme>,
     /// The track's [`crate::cenc::TrackEncryptionBox::default_kid`], if
     /// protected (issue #564).
-    encryption_kid: Option<[u8; 16]>,
+    encryption_kid: Option<[u8; KEY_ID_LEN]>,
     // Video geometry.
     width: Option<u32>,
     height: Option<u32>,
@@ -667,7 +685,7 @@ impl DashPackager {
         // so the MPD is always valid.
         let bandwidth = if total_duration > 0 {
             let bits_times_ts = total_bytes
-                .saturating_mul(8)
+                .saturating_mul(BITS_PER_BYTE)
                 .saturating_mul(timescale.as_u64());
             div_round(bits_times_ts, total_duration)
         } else {
@@ -884,11 +902,17 @@ impl DashPackager {
         } else {
             let max_tenths = reprs
                 .iter()
-                .map(|r| div_round(r.total_duration.saturating_mul(10), r.timescale.as_u64()))
+                .map(|r| {
+                    div_round(
+                        r.total_duration.saturating_mul(TENTHS_PER_SEC),
+                        r.timescale.as_u64(),
+                    )
+                })
                 .max()
                 .unwrap_or(0);
-            mpd.media_presentation_duration =
-                Some(Duration::from_millis(max_tenths.saturating_mul(100)));
+            mpd.media_presentation_duration = Some(Duration::from_millis(
+                max_tenths.saturating_mul(MILLIS_PER_TENTH),
+            ));
         }
 
         let mut period = Period::default();
@@ -1232,7 +1256,7 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
 /// Divide `num / den` rounding to the nearest integer (ties up). `den` is
 /// assumed non-zero by the caller.
 fn div_round(num: u64, den: u64) -> u64 {
-    (num + den / 2) / den
+    (num + den / ROUND_NEAREST_DIVISOR) / den
 }
 
 /// First `ISO_639_language_code` of a track's PMT ES_info loop (carried
@@ -1375,15 +1399,15 @@ fn parse_span(field: &'static str, value: &str) -> Result<Duration> {
 
 /// Format a 16-byte key ID as the canonical dashed-hex UUID form
 /// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, ISO/IEC 23001-7 `cenc:default_KID`).
-fn format_kid(kid: &[u8; 16]) -> String {
+fn format_kid(kid: &[u8; KEY_ID_LEN]) -> String {
     let hex = broadcast_common::hex::hex_encode(kid);
     format!(
         "{}-{}-{}-{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..32]
+        &hex[..UUID_GROUP_1_END],
+        &hex[UUID_GROUP_1_END..UUID_GROUP_2_END],
+        &hex[UUID_GROUP_2_END..UUID_GROUP_3_END],
+        &hex[UUID_GROUP_3_END..UUID_GROUP_4_END],
+        &hex[UUID_GROUP_4_END..KEY_ID_HEX_LEN]
     )
 }
 

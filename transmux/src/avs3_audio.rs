@@ -38,6 +38,37 @@ pub const AV3A_FOURCC: [u8; 4] = *b"av3a";
 /// `sampling_frequency_index` value that adds an explicit 24-bit `sampling_frequency`.
 pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
 
+/// Field widths of the AVS3 `dca3` config syntax (GY/T 358-2022).
+const BITS_PER_BYTE: usize = u8::BITS as usize;
+/// `audio_codec_id` of a General High config.
+const AUDIO_CODEC_ID_GENERAL_HIGH: u8 = 0;
+/// `audio_codec_id` of a General Bitrate config.
+const AUDIO_CODEC_ID_GENERAL_BITRATE: u8 = 2;
+const AUDIO_CODEC_ID_BITS: u32 = 4;
+const AUDIO_CODEC_ID_SHIFT: u32 = 4;
+const SAMPLING_FREQUENCY_INDEX_BITS: u32 = 4;
+const SAMPLING_FREQUENCY_BITS: u32 = 24;
+const NN_TYPE_BITS: u32 = 3;
+const CONTENT_TYPE_BITS: u32 = 4;
+const CHANNEL_NUMBER_INDEX_BITS: u32 = 7;
+const NUMBER_OBJECTS_BITS: u32 = 7;
+const HOA_ORDER_BITS: u32 = 4;
+const TOTAL_BITRATE_BITS: u32 = 16;
+const RESOLUTION_BITS: u32 = 2;
+const CODING_PROFILE_BITS: u32 = 3;
+const BITRATE_INDEX_BITS: u32 = 4;
+const RAW_FRAME_LENGTH_BITS: u32 = 16;
+const CHANNEL_NUMBER_BITS: u32 = 8;
+const ADDITION_INFO_LENGTH_BITS: u32 = 16;
+const GH_RESERVED_BITS: u32 = 6;
+const LL_RESERVED_BITS: u32 = 2;
+/// `content_type` of the HOA payload.
+const CONTENT_TYPE_HOA: u8 = 3;
+/// Reserved tail after a HOA `content_type`.
+const GA_TAIL_HOA_BITS: u32 = 2;
+/// Reserved tail after any non-HOA `content_type`.
+const GA_TAIL_OTHER_BITS: u32 = 6;
+
 fn short(what: &'static str) -> Error {
     Error::BufferTooShort(BufferTooShort {
         need: 0,
@@ -243,33 +274,37 @@ broadcast_common::impl_spec_display!(Ca3Config);
 fn parse_ga(r: &mut BitReader<'_>) -> Result<Avs3AudioGaConfig> {
     let w = "dca3 GA config";
     let rd = |r: &mut BitReader<'_>, n: u32| r.read_bits(n).map_err(|_| short(w));
-    let sampling_frequency_index = rd(r, 4)? as u8;
-    let nn_type = rd(r, 3)? as u8;
+    let sampling_frequency_index = rd(r, SAMPLING_FREQUENCY_INDEX_BITS)? as u8;
+    let nn_type = rd(r, NN_TYPE_BITS)? as u8;
     let reserved = rd(r, 1)? as u8;
-    let content_type = rd(r, 4)? as u8;
+    let content_type = rd(r, CONTENT_TYPE_BITS)? as u8;
     let content = match content_type {
         0 => Avs3AudioContent::Channel {
-            channel_number_index: rd(r, 7)? as u8,
+            channel_number_index: rd(r, CHANNEL_NUMBER_INDEX_BITS)? as u8,
             reserved: rd(r, 1)? as u8,
         },
         1 => Avs3AudioContent::Object {
-            number_objects: rd(r, 7)? as u8,
+            number_objects: rd(r, NUMBER_OBJECTS_BITS)? as u8,
             reserved: rd(r, 1)? as u8,
         },
         2 => Avs3AudioContent::ChannelAndObject {
-            channel_number_index: rd(r, 7)? as u8,
+            channel_number_index: rd(r, CHANNEL_NUMBER_INDEX_BITS)? as u8,
             reserved_channel: rd(r, 1)? as u8,
-            number_objects: rd(r, 7)? as u8,
+            number_objects: rd(r, NUMBER_OBJECTS_BITS)? as u8,
             reserved_object: rd(r, 1)? as u8,
         },
         3 => Avs3AudioContent::Hoa {
-            hoa_order: rd(r, 4)? as u8,
+            hoa_order: rd(r, HOA_ORDER_BITS)? as u8,
         },
         other => Avs3AudioContent::Reserved(other),
     };
-    let total_bitrate = rd(r, 16)? as u16;
-    let resolution = rd(r, 2)? as u8;
-    let tail_bits = if content_type == 3 { 2 } else { 6 };
+    let total_bitrate = rd(r, TOTAL_BITRATE_BITS)? as u16;
+    let resolution = rd(r, RESOLUTION_BITS)? as u8;
+    let tail_bits = if content_type == CONTENT_TYPE_HOA {
+        GA_TAIL_HOA_BITS
+    } else {
+        GA_TAIL_OTHER_BITS
+    };
     let reserved_tail = rd(r, tail_bits)? as u8;
     Ok(Avs3AudioGaConfig {
         sampling_frequency_index,
@@ -285,20 +320,20 @@ fn parse_ga(r: &mut BitReader<'_>) -> Result<Avs3AudioGaConfig> {
 fn parse_gh(r: &mut BitReader<'_>) -> Result<Avs3AudioGhConfig> {
     let w = "dca3 GH config";
     let rd = |r: &mut BitReader<'_>, n: u32| r.read_bits(n).map_err(|_| short(w));
-    let sampling_frequency_index = rd(r, 4)? as u8;
+    let sampling_frequency_index = rd(r, SAMPLING_FREQUENCY_INDEX_BITS)? as u8;
     let anc_data_index = rd(r, 1)? != 0;
-    let coding_profile = rd(r, 3)? as u8;
+    let coding_profile = rd(r, CODING_PROFILE_BITS)? as u8;
     let bitstream_type = rd(r, 1)? != 0;
-    let channel_number_index = rd(r, 7)? as u8;
-    let bitrate_index = rd(r, 4)? as u8;
-    let raw_frame_length = rd(r, 16)? as u16;
-    let resolution = rd(r, 2)? as u8;
-    let n = rd(r, 16)? as usize;
-    let mut addition_info = Vec::with_capacity(n.min(r.bits_remaining() / 8));
+    let channel_number_index = rd(r, CHANNEL_NUMBER_INDEX_BITS)? as u8;
+    let bitrate_index = rd(r, BITRATE_INDEX_BITS)? as u8;
+    let raw_frame_length = rd(r, RAW_FRAME_LENGTH_BITS)? as u16;
+    let resolution = rd(r, RESOLUTION_BITS)? as u8;
+    let n = rd(r, ADDITION_INFO_LENGTH_BITS)? as usize;
+    let mut addition_info = Vec::with_capacity(n.min(r.bits_remaining() / BITS_PER_BYTE));
     for _ in 0..n {
-        addition_info.push(rd(r, 8)? as u8);
+        addition_info.push(rd(r, BITS_PER_BYTE as u32)? as u8);
     }
-    let reserved = rd(r, 6)? as u8;
+    let reserved = rd(r, GH_RESERVED_BITS)? as u8;
     Ok(Avs3AudioGhConfig {
         sampling_frequency_index,
         anc_data_index,
@@ -316,22 +351,22 @@ fn parse_gh(r: &mut BitReader<'_>) -> Result<Avs3AudioGhConfig> {
 fn parse_ll(r: &mut BitReader<'_>) -> Result<Avs3AudioLlConfig> {
     let w = "dca3 LL config";
     let rd = |r: &mut BitReader<'_>, n: u32| r.read_bits(n).map_err(|_| short(w));
-    let sampling_frequency_index = rd(r, 4)? as u8;
+    let sampling_frequency_index = rd(r, SAMPLING_FREQUENCY_INDEX_BITS)? as u8;
     let sampling_frequency = if sampling_frequency_index == SAMPLING_FREQUENCY_INDEX_EXPLICIT {
-        Some(rd(r, 24)? as u32)
+        Some(rd(r, SAMPLING_FREQUENCY_BITS)? as u32)
     } else {
         None
     };
     let anc_data_index = rd(r, 1)? != 0;
-    let coding_profile = rd(r, 3)? as u8;
-    let channel_number = rd(r, 8)? as u8;
-    let resolution = rd(r, 2)? as u8;
-    let n = rd(r, 16)? as usize;
-    let mut addition_info = Vec::with_capacity(n.min(r.bits_remaining() / 8));
+    let coding_profile = rd(r, CODING_PROFILE_BITS)? as u8;
+    let channel_number = rd(r, CHANNEL_NUMBER_BITS)? as u8;
+    let resolution = rd(r, RESOLUTION_BITS)? as u8;
+    let n = rd(r, ADDITION_INFO_LENGTH_BITS)? as usize;
+    let mut addition_info = Vec::with_capacity(n.min(r.bits_remaining() / BITS_PER_BYTE));
     for _ in 0..n {
-        addition_info.push(rd(r, 8)? as u8);
+        addition_info.push(rd(r, BITS_PER_BYTE as u32)? as u8);
     }
-    let reserved = rd(r, 2)? as u8;
+    let reserved = rd(r, LL_RESERVED_BITS)? as u8;
     Ok(Avs3AudioLlConfig {
         sampling_frequency_index,
         sampling_frequency,
@@ -352,9 +387,10 @@ impl<'a> Parse<'a> for Ca3SpecificBox {
             have: 0,
             what: "dca3 body",
         }))?;
-        let id = first >> 4;
+        let id = first >> AUDIO_CODEC_ID_SHIFT;
         let mut r = BitReader::new(bytes);
-        r.skip_bits(4).map_err(|_| short("dca3 body"))?;
+        r.skip_bits(AUDIO_CODEC_ID_BITS as usize)
+            .map_err(|_| short("dca3 body"))?;
         let config = match id {
             2 => Ca3Config::GeneralBitrate(parse_ga(&mut r)?),
             1 => Ca3Config::Lossless(parse_ll(&mut r)?),
@@ -368,7 +404,7 @@ impl<'a> Parse<'a> for Ca3SpecificBox {
                 });
             }
         };
-        if r.bits_remaining() >= 8 {
+        if r.bits_remaining() >= BITS_PER_BYTE {
             return Err(Error::InvalidInput("dca3 body has trailing bytes"));
         }
         Ok(Self { config })
@@ -385,21 +421,50 @@ impl Ca3SpecificBox {
                     Avs3AudioContent::Hoa { .. } => 4,
                     Avs3AudioContent::Reserved(_) => 0,
                 };
-                let tail = if g.content.content_type() == 3 { 2 } else { 6 };
-                4 + 4 + 3 + 1 + 4 + content + 16 + 2 + tail
+                let tail = if g.content.content_type() == CONTENT_TYPE_HOA {
+                    GA_TAIL_HOA_BITS
+                } else {
+                    GA_TAIL_OTHER_BITS
+                };
+                SAMPLING_FREQUENCY_INDEX_BITS as usize
+                    + NN_TYPE_BITS as usize
+                    + 1
+                    + CONTENT_TYPE_BITS as usize
+                    + content
+                    + TOTAL_BITRATE_BITS as usize
+                    + RESOLUTION_BITS as usize
+                    + tail as usize
             }
             Ca3Config::Lossless(l) => {
                 let sf = if l.sampling_frequency.is_some() {
-                    24
+                    SAMPLING_FREQUENCY_BITS as usize
                 } else {
                     0
                 };
-                4 + 4 + sf + 1 + 3 + 8 + 2 + 16 + 8 * l.addition_info.len() + 2
+                SAMPLING_FREQUENCY_INDEX_BITS as usize
+                    + sf
+                    + 1
+                    + CODING_PROFILE_BITS as usize
+                    + CHANNEL_NUMBER_BITS as usize
+                    + RESOLUTION_BITS as usize
+                    + ADDITION_INFO_LENGTH_BITS as usize
+                    + BITS_PER_BYTE * l.addition_info.len()
+                    + LL_RESERVED_BITS as usize
             }
             Ca3Config::GeneralHigh(g) => {
-                4 + 4 + 1 + 3 + 1 + 7 + 4 + 16 + 2 + 16 + 8 * g.addition_info.len() + 6
+                SAMPLING_FREQUENCY_INDEX_BITS as usize
+                    + 1
+                    + CODING_PROFILE_BITS as usize
+                    + 1
+                    + CHANNEL_NUMBER_INDEX_BITS as usize
+                    + BITRATE_INDEX_BITS as usize
+                    + RAW_FRAME_LENGTH_BITS as usize
+                    + RESOLUTION_BITS as usize
+                    + ADDITION_INFO_LENGTH_BITS as usize
+                    + BITS_PER_BYTE * g.addition_info.len()
+                    + GH_RESERVED_BITS as usize
             }
-            Ca3Config::Other { body, .. } => 8 * body.len(),
+            Ca3Config::Other { body, .. } => BITS_PER_BYTE * body.len(),
         }
     }
 }
@@ -407,7 +472,7 @@ impl Ca3SpecificBox {
 impl Serialize for Ca3SpecificBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        self.bits().div_ceil(8)
+        self.bits().div_ceil(BITS_PER_BYTE)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -417,8 +482,11 @@ impl Serialize for Ca3SpecificBox {
             audio_codec_id,
         } = &self.config
         {
-            if body.first().map(|b| b >> 4) != Some(*audio_codec_id)
-                || matches!(*audio_codec_id, 0..=2)
+            if body.first().map(|b| b >> AUDIO_CODEC_ID_SHIFT) != Some(*audio_codec_id)
+                || matches!(
+                    *audio_codec_id,
+                    AUDIO_CODEC_ID_GENERAL_HIGH..=AUDIO_CODEC_ID_GENERAL_BITRATE
+                )
             {
                 return Err(Error::InvalidInput(
                     "dca3 Other body must start with a non-1/2 audio_codec_id",
@@ -432,7 +500,7 @@ impl Serialize for Ca3SpecificBox {
         write_bits_checked(
             &mut w,
             u64::from(self.config.audio_codec_id()),
-            4,
+            AUDIO_CODEC_ID_BITS,
             "audio_codec_id",
         )?;
         match &self.config {
@@ -440,15 +508,15 @@ impl Serialize for Ca3SpecificBox {
                 write_bits_checked(
                     &mut w,
                     u64::from(g.sampling_frequency_index),
-                    4,
+                    SAMPLING_FREQUENCY_INDEX_BITS,
                     "sampling_frequency_index",
                 )?;
-                write_bits_checked(&mut w, u64::from(g.nn_type), 3, "nn_type")?;
+                write_bits_checked(&mut w, u64::from(g.nn_type), NN_TYPE_BITS, "nn_type")?;
                 write_bits_checked(&mut w, u64::from(g.reserved), 1, "reserved")?;
                 write_bits_checked(
                     &mut w,
                     u64::from(g.content.content_type()),
-                    4,
+                    CONTENT_TYPE_BITS,
                     "content_type",
                 )?;
                 match g.content {
@@ -459,7 +527,7 @@ impl Serialize for Ca3SpecificBox {
                         write_bits_checked(
                             &mut w,
                             u64::from(channel_number_index),
-                            7,
+                            CHANNEL_NUMBER_INDEX_BITS,
                             "channel_number_index",
                         )?;
                         write_bits_checked(&mut w, u64::from(reserved), 1, "reserved")?;
@@ -468,7 +536,12 @@ impl Serialize for Ca3SpecificBox {
                         number_objects,
                         reserved,
                     } => {
-                        write_bits_checked(&mut w, u64::from(number_objects), 7, "number_objects")?;
+                        write_bits_checked(
+                            &mut w,
+                            u64::from(number_objects),
+                            NUMBER_OBJECTS_BITS,
+                            "number_objects",
+                        )?;
                         write_bits_checked(&mut w, u64::from(reserved), 1, "reserved")?;
                     }
                     Avs3AudioContent::ChannelAndObject {
@@ -480,21 +553,45 @@ impl Serialize for Ca3SpecificBox {
                         write_bits_checked(
                             &mut w,
                             u64::from(channel_number_index),
-                            7,
+                            CHANNEL_NUMBER_INDEX_BITS,
                             "channel_number_index",
                         )?;
                         write_bits_checked(&mut w, u64::from(reserved_channel), 1, "reserved")?;
-                        write_bits_checked(&mut w, u64::from(number_objects), 7, "number_objects")?;
+                        write_bits_checked(
+                            &mut w,
+                            u64::from(number_objects),
+                            NUMBER_OBJECTS_BITS,
+                            "number_objects",
+                        )?;
                         write_bits_checked(&mut w, u64::from(reserved_object), 1, "reserved")?;
                     }
                     Avs3AudioContent::Hoa { hoa_order } => {
-                        write_bits_checked(&mut w, u64::from(hoa_order), 4, "hoa_order")?;
+                        write_bits_checked(
+                            &mut w,
+                            u64::from(hoa_order),
+                            HOA_ORDER_BITS,
+                            "hoa_order",
+                        )?;
                     }
                     Avs3AudioContent::Reserved(_) => {}
                 }
-                write_bits_checked(&mut w, u64::from(g.total_bitrate), 16, "total_bitrate")?;
-                write_bits_checked(&mut w, u64::from(g.resolution), 2, "resolution")?;
-                let tail_bits = if g.content.content_type() == 3 { 2 } else { 6 };
+                write_bits_checked(
+                    &mut w,
+                    u64::from(g.total_bitrate),
+                    TOTAL_BITRATE_BITS,
+                    "total_bitrate",
+                )?;
+                write_bits_checked(
+                    &mut w,
+                    u64::from(g.resolution),
+                    RESOLUTION_BITS,
+                    "resolution",
+                )?;
+                let tail_bits = if g.content.content_type() == CONTENT_TYPE_HOA {
+                    GA_TAIL_HOA_BITS
+                } else {
+                    GA_TAIL_OTHER_BITS
+                };
                 write_bits_checked(&mut w, u64::from(g.reserved_tail), tail_bits, "reserved")?;
             }
             Ca3Config::Lossless(l) => {
@@ -502,13 +599,16 @@ impl Serialize for Ca3SpecificBox {
                 write_bits_checked(
                     &mut w,
                     u64::from(l.sampling_frequency_index),
-                    4,
+                    SAMPLING_FREQUENCY_INDEX_BITS,
                     "sampling_frequency_index",
                 )?;
                 match (explicit, l.sampling_frequency) {
-                    (true, Some(f)) => {
-                        write_bits_checked(&mut w, u64::from(f), 24, "sampling_frequency")?
-                    }
+                    (true, Some(f)) => write_bits_checked(
+                        &mut w,
+                        u64::from(f),
+                        SAMPLING_FREQUENCY_BITS,
+                        "sampling_frequency",
+                    )?,
                     (false, None) => {}
                     _ => {
                         return Err(Error::InvalidInput(
@@ -517,46 +617,96 @@ impl Serialize for Ca3SpecificBox {
                     }
                 }
                 write_bits_checked(&mut w, u64::from(l.anc_data_index), 1, "anc_data_index")?;
-                write_bits_checked(&mut w, u64::from(l.coding_profile), 3, "coding_profile")?;
-                write_bits_checked(&mut w, u64::from(l.channel_number), 8, "channel_number")?;
-                write_bits_checked(&mut w, u64::from(l.resolution), 2, "resolution")?;
+                write_bits_checked(
+                    &mut w,
+                    u64::from(l.coding_profile),
+                    CODING_PROFILE_BITS,
+                    "coding_profile",
+                )?;
+                write_bits_checked(
+                    &mut w,
+                    u64::from(l.channel_number),
+                    CHANNEL_NUMBER_BITS,
+                    "channel_number",
+                )?;
+                write_bits_checked(
+                    &mut w,
+                    u64::from(l.resolution),
+                    RESOLUTION_BITS,
+                    "resolution",
+                )?;
                 let n = fit_u16(l.addition_info.len(), "addition_info_length")?;
-                write_bits_checked(&mut w, u64::from(n), 16, "addition_info_length")?;
+                write_bits_checked(
+                    &mut w,
+                    u64::from(n),
+                    ADDITION_INFO_LENGTH_BITS,
+                    "addition_info_length",
+                )?;
                 for b in &l.addition_info {
-                    write_bits_checked(&mut w, u64::from(*b), 8, "addition_info")?;
+                    write_bits_checked(
+                        &mut w,
+                        u64::from(*b),
+                        BITS_PER_BYTE as u32,
+                        "addition_info",
+                    )?;
                 }
-                write_bits_checked(&mut w, u64::from(l.reserved), 2, "reserved")?;
+                write_bits_checked(&mut w, u64::from(l.reserved), LL_RESERVED_BITS, "reserved")?;
             }
             Ca3Config::GeneralHigh(g) => {
                 write_bits_checked(
                     &mut w,
                     u64::from(g.sampling_frequency_index),
-                    4,
+                    SAMPLING_FREQUENCY_INDEX_BITS,
                     "sampling_frequency_index",
                 )?;
                 write_bits_checked(&mut w, u64::from(g.anc_data_index), 1, "anc_data_index")?;
-                write_bits_checked(&mut w, u64::from(g.coding_profile), 3, "coding_profile")?;
+                write_bits_checked(
+                    &mut w,
+                    u64::from(g.coding_profile),
+                    CODING_PROFILE_BITS,
+                    "coding_profile",
+                )?;
                 write_bits_checked(&mut w, u64::from(g.bitstream_type), 1, "bitstream_type")?;
                 write_bits_checked(
                     &mut w,
                     u64::from(g.channel_number_index),
-                    7,
+                    CHANNEL_NUMBER_INDEX_BITS,
                     "channel_number_index",
                 )?;
-                write_bits_checked(&mut w, u64::from(g.bitrate_index), 4, "bitrate_index")?;
+                write_bits_checked(
+                    &mut w,
+                    u64::from(g.bitrate_index),
+                    BITRATE_INDEX_BITS,
+                    "bitrate_index",
+                )?;
                 write_bits_checked(
                     &mut w,
                     u64::from(g.raw_frame_length),
-                    16,
+                    RAW_FRAME_LENGTH_BITS,
                     "raw_frame_length",
                 )?;
-                write_bits_checked(&mut w, u64::from(g.resolution), 2, "resolution")?;
+                write_bits_checked(
+                    &mut w,
+                    u64::from(g.resolution),
+                    RESOLUTION_BITS,
+                    "resolution",
+                )?;
                 let n = fit_u16(g.addition_info.len(), "addition_info_length")?;
-                write_bits_checked(&mut w, u64::from(n), 16, "addition_info_length")?;
+                write_bits_checked(
+                    &mut w,
+                    u64::from(n),
+                    ADDITION_INFO_LENGTH_BITS,
+                    "addition_info_length",
+                )?;
                 for b in &g.addition_info {
-                    write_bits_checked(&mut w, u64::from(*b), 8, "addition_info")?;
+                    write_bits_checked(
+                        &mut w,
+                        u64::from(*b),
+                        BITS_PER_BYTE as u32,
+                        "addition_info",
+                    )?;
                 }
-                write_bits_checked(&mut w, u64::from(g.reserved), 6, "reserved")?;
+                write_bits_checked(&mut w, u64::from(g.reserved), GH_RESERVED_BITS, "reserved")?;
             }
             Ca3Config::Other { .. } => {}
         }

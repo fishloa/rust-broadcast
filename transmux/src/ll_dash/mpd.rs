@@ -20,6 +20,11 @@ use broadcast_common::units::MILLIS_PER_SEC;
 /// `ServiceDescription@id` of the one description this packager emits.
 const SERVICE_DESCRIPTION_ID: u64 = 0;
 
+/// [`MILLIS_PER_SEC`] in the `f64` domain used by the seconds formatting.
+const MILLIS_PER_SEC_F64: f64 = MILLIS_PER_SEC as f64;
+/// Round-half-up bias applied before truncating milliseconds to an integer.
+const MILLIS_ROUNDING_BIAS: f64 = 0.5;
+
 // ===========================================================================
 // LlDashPackager — low-latency DASH MPD
 // ===========================================================================
@@ -206,9 +211,9 @@ fn round_millis(v: f64) -> f64 {
 /// zeros trimmed (e.g. `1.5`, `2`, `0.033`). Integer math only — no `std` float
 /// formatting intrinsic beyond core `Display`.
 fn format_secs(v: f64) -> String {
-    let millis = (v * 1000.0 + 0.5) as u64;
-    let whole = millis / 1000;
-    let frac = millis % 1000;
+    let millis = (v * MILLIS_PER_SEC_F64 + MILLIS_ROUNDING_BIAS) as u64;
+    let whole = millis / MILLIS_PER_SEC;
+    let frac = millis % MILLIS_PER_SEC;
     if frac == 0 {
         return whole.to_string();
     }
