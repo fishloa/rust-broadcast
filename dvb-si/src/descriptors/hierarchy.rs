@@ -23,6 +23,30 @@ const HIERARCHY_TYPE_MASK: u8 = 0x0F;
 const RESERVED_2_BITS: u32 = 2;
 /// Width of the `reserved` after `tref_present_flag` (1 bit).
 const RESERVED_1_BITS: u32 = 1;
+/// Offset of the `hierarchy_layer_index` byte in the descriptor body.
+const LAYER_INDEX_OFFSET: usize = 1;
+/// Offset of the `hierarchy_embedded_layer_index` byte in the descriptor body.
+const EMBEDDED_LAYER_INDEX_OFFSET: usize = 2;
+/// Offset of the `hierarchy_channel` byte in the descriptor body.
+const CHANNEL_OFFSET: usize = 3;
+/// First reserved `hierarchy_type` value (11).
+const HIERARCHY_TYPE_RESERVED_FIRST: u8 = 11;
+/// Last reserved `hierarchy_type` value (14).
+const HIERARCHY_TYPE_RESERVED_LAST: u8 = 14;
+const NO_VIEW_SCALABILITY_FLAG_MASK: u8 = 0x80;
+const NO_VIEW_SCALABILITY_FLAG_SHIFT: u8 = 7;
+const NO_TEMPORAL_SCALABILITY_FLAG_MASK: u8 = 0x40;
+const NO_TEMPORAL_SCALABILITY_FLAG_SHIFT: u8 = 6;
+const NO_SPATIAL_SCALABILITY_FLAG_MASK: u8 = 0x20;
+const NO_SPATIAL_SCALABILITY_FLAG_SHIFT: u8 = 5;
+const NO_QUALITY_SCALABILITY_FLAG_MASK: u8 = 0x10;
+const NO_QUALITY_SCALABILITY_FLAG_SHIFT: u8 = 4;
+const LAYER_INDEX_MASK: u8 = 0x3F;
+const EMBEDDED_LAYER_INDEX_MASK: u8 = 0x3F;
+const CHANNEL_MASK: u8 = 0x3F;
+const RESERVED_SHIFT: u8 = 6;
+const TREF_PRESENT_FLAG_MASK: u8 = 0x80;
+const TREF_PRESENT_FLAG_SHIFT: u8 = 7;
 /// Default of the 2-bit `reserved` above `hierarchy_layer_index` and above
 /// `hierarchy_channel` (H.222.0 Table 2-49): clause 2.1 "reserved" = `1` (all
 /// 9 editions 07/1995-08/2023, audit §4 row 7 / §5).
@@ -75,7 +99,7 @@ impl HierarchyType {
     /// any caller that passes an unmasked byte).
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x0F {
+        match v & HIERARCHY_TYPE_MASK {
             0 => Self::Reserved0,
             1 => Self::SpatialScalability,
             2 => Self::SnrScalability,
@@ -87,7 +111,9 @@ impl HierarchyType {
             8 => Self::CombinedScalabilityOrMvHevc,
             9 => Self::MvcOrMvcdVideoSubBitstream,
             10 => Self::AuxiliaryPictureLayer,
-            v @ 11..=14 => Self::Reserved11To14(v),
+            v @ HIERARCHY_TYPE_RESERVED_FIRST..=HIERARCHY_TYPE_RESERVED_LAST => {
+                Self::Reserved11To14(v)
+            }
             15 => Self::BaseLayerOrMvcBaseView,
             _ => unreachable!("v & 0x0F is always <= 15"),
         }
@@ -230,18 +256,18 @@ impl<'a> Parse<'a> for HierarchyDescriptor {
             });
         }
         let b0 = body[0];
-        let no_view_scalability_flag = (b0 & 0x80) != 0;
-        let no_temporal_scalability_flag = (b0 & 0x40) != 0;
-        let no_spatial_scalability_flag = (b0 & 0x20) != 0;
-        let no_quality_scalability_flag = (b0 & 0x10) != 0;
-        let hierarchy_type = HierarchyType::from_u8(b0 & 0x0F);
-        let b1 = body[1];
-        let hierarchy_layer_index = b1 & 0x3F;
-        let b2 = body[2];
-        let tref_present_flag = (b2 & 0x80) != 0;
-        let hierarchy_embedded_layer_index = b2 & 0x3F;
-        let b3 = body[3];
-        let hierarchy_channel = b3 & 0x3F;
+        let no_view_scalability_flag = (b0 & NO_VIEW_SCALABILITY_FLAG_MASK) != 0;
+        let no_temporal_scalability_flag = (b0 & NO_TEMPORAL_SCALABILITY_FLAG_MASK) != 0;
+        let no_spatial_scalability_flag = (b0 & NO_SPATIAL_SCALABILITY_FLAG_MASK) != 0;
+        let no_quality_scalability_flag = (b0 & NO_QUALITY_SCALABILITY_FLAG_MASK) != 0;
+        let hierarchy_type = HierarchyType::from_u8(b0 & HIERARCHY_TYPE_MASK);
+        let b1 = body[LAYER_INDEX_OFFSET];
+        let hierarchy_layer_index = b1 & LAYER_INDEX_MASK;
+        let b2 = body[EMBEDDED_LAYER_INDEX_OFFSET];
+        let tref_present_flag = (b2 & TREF_PRESENT_FLAG_MASK) != 0;
+        let hierarchy_embedded_layer_index = b2 & EMBEDDED_LAYER_INDEX_MASK;
+        let b3 = body[CHANNEL_OFFSET];
+        let hierarchy_channel = b3 & CHANNEL_MASK;
         Ok(Self {
             no_view_scalability_flag,
             no_temporal_scalability_flag,
@@ -252,9 +278,9 @@ impl<'a> Parse<'a> for HierarchyDescriptor {
             tref_present_flag,
             hierarchy_embedded_layer_index,
             hierarchy_channel,
-            reserved_layer_index: ReservedOnes::from_bits(u64::from(b1 >> 6)),
-            reserved_embedded: ReservedOnes::from_bits(u64::from(b2 >> 6)),
-            reserved_channel: ReservedOnes::from_bits(u64::from(b3 >> 6)),
+            reserved_layer_index: ReservedOnes::from_bits(u64::from(b1 >> RESERVED_SHIFT)),
+            reserved_embedded: ReservedOnes::from_bits(u64::from(b2 >> RESERVED_SHIFT)),
+            reserved_channel: ReservedOnes::from_bits(u64::from(b3 >> RESERVED_SHIFT)),
         })
     }
 }
@@ -271,30 +297,37 @@ impl Serialize for HierarchyDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = ((self.no_view_scalability_flag as u8) << 7)
-            | ((self.no_temporal_scalability_flag as u8) << 6)
-            | ((self.no_spatial_scalability_flag as u8) << 5)
-            | ((self.no_quality_scalability_flag as u8) << 4)
+        buf[HEADER_LEN] = (u8::from(self.no_view_scalability_flag)
+            << NO_VIEW_SCALABILITY_FLAG_SHIFT)
+            | (u8::from(self.no_temporal_scalability_flag) << NO_TEMPORAL_SCALABILITY_FLAG_SHIFT)
+            | (u8::from(self.no_spatial_scalability_flag) << NO_SPATIAL_SCALABILITY_FLAG_SHIFT)
+            | (u8::from(self.no_quality_scalability_flag) << NO_QUALITY_SCALABILITY_FLAG_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.hierarchy_type.to_u8(),
                 HIERARCHY_TYPE_MASK,
                 "hierarchy_type",
             )?;
-        buf[HEADER_LEN + 1] = ((self.reserved_layer_index.get() as u8) << 6)
+        buf[HEADER_LEN + LAYER_INDEX_OFFSET] = ((self.reserved_layer_index.get() as u8)
+            << RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.hierarchy_layer_index,
-                0x3F,
+                LAYER_INDEX_MASK,
                 "hierarchy_layer_index",
             )?;
-        buf[HEADER_LEN + 2] = ((self.tref_present_flag as u8) << 7)
-            | ((self.reserved_embedded.get() as u8) << 6)
+        buf[HEADER_LEN + EMBEDDED_LAYER_INDEX_OFFSET] = (u8::from(self.tref_present_flag)
+            << TREF_PRESENT_FLAG_SHIFT)
+            | ((self.reserved_embedded.get() as u8) << RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.hierarchy_embedded_layer_index,
-                0x3F,
+                EMBEDDED_LAYER_INDEX_MASK,
                 "hierarchy_embedded_layer_index",
             )?;
-        buf[HEADER_LEN + 3] = ((self.reserved_channel.get() as u8) << 6)
-            | broadcast_common::len::fit_mask(self.hierarchy_channel, 0x3F, "hierarchy_channel")?;
+        buf[HEADER_LEN + CHANNEL_OFFSET] = ((self.reserved_channel.get() as u8) << RESERVED_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.hierarchy_channel,
+                CHANNEL_MASK,
+                "hierarchy_channel",
+            )?;
         Ok(len)
     }
 }
