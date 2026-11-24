@@ -51,7 +51,7 @@ pub const HANDSHAKE_EXT_WORD_LEN: usize = 4;
 const HS_EXT_BLOCK_LEN_OFFSET: usize = 2;
 
 /// Byte offsets of the Handshake CIF fields (§3.2.1, Figure 5).
-const CIF_WORD1_OFFSET: usize = 4;
+const CIF_ENCRYPTION_OFFSET: usize = 4;
 const CIF_INITIAL_SEQ_OFFSET: usize = 8;
 const CIF_MTU_OFFSET: usize = 12;
 const CIF_FLOW_WINDOW_OFFSET: usize = 16;
@@ -77,7 +77,7 @@ const HS_EXT_SENDER_DELAY_OFFSET: usize = 10;
 
 /// Byte offset of a group membership extension's second word, and the shifts
 /// and mask of the fields packed into it (§3.2.1.4, Figure 10).
-const GROUP_MEMBERSHIP_WORD1_OFFSET: usize = 4;
+const GROUP_MEMBERSHIP_FIELDS_OFFSET: usize = 4;
 const GROUP_TYPE_SHIFT: u32 = 24;
 const GROUP_FLAGS_SHIFT: u32 = 16;
 const GROUP_WEIGHT_MASK: u32 = 0xFFFF;
@@ -613,7 +613,7 @@ impl GroupMembershipExtension {
             }));
         }
         let group_id = be32(bytes, 0);
-        let word1 = be32(bytes, GROUP_MEMBERSHIP_WORD1_OFFSET);
+        let word1 = be32(bytes, GROUP_MEMBERSHIP_FIELDS_OFFSET);
         Ok(GroupMembershipExtension {
             group_id,
             group_type: GroupType::from_bits((word1 >> GROUP_TYPE_SHIFT) as u8),
@@ -629,7 +629,7 @@ impl GroupMembershipExtension {
             | (u32::from(self.flags.0) << GROUP_FLAGS_SHIFT)
             | u32::from(self.weight);
         put_be32(&mut buf, 0, self.group_id);
-        put_be32(&mut buf, GROUP_MEMBERSHIP_WORD1_OFFSET, word1);
+        put_be32(&mut buf, GROUP_MEMBERSHIP_FIELDS_OFFSET, word1);
         buf
     }
 }
@@ -855,7 +855,7 @@ impl<'a> HandshakePacket<'a> {
     ) -> Result<Self> {
         need_in(cif, HANDSHAKE_CIF_FIXED_LEN, "handshake CIF")?;
         let version = be32(cif, 0);
-        let word1 = be32(cif, CIF_WORD1_OFFSET);
+        let word1 = be32(cif, CIF_ENCRYPTION_OFFSET);
         let encryption_field = EncryptionField::from_bits((word1 >> CIF_ENCRYPTION_SHIFT) as u16);
         let extension_field = HandshakeExtensionFlags((word1 & CIF_EXTENSION_MASK) as u16);
         let initial_seq_number = be32(cif, CIF_INITIAL_SEQ_OFFSET);
@@ -900,7 +900,7 @@ impl<'a> HandshakePacket<'a> {
         let word1 = (u32::from(self.encryption_field.to_bits()) << CIF_ENCRYPTION_SHIFT)
             | u32::from(self.extension_field.0);
         put_be32(buf, 0, self.version);
-        put_be32(buf, CIF_WORD1_OFFSET, word1);
+        put_be32(buf, CIF_ENCRYPTION_OFFSET, word1);
         put_be32(buf, CIF_INITIAL_SEQ_OFFSET, self.initial_seq_number);
         put_be32(buf, CIF_MTU_OFFSET, self.mtu);
         put_be32(buf, CIF_FLOW_WINDOW_OFFSET, self.max_flow_window_size);

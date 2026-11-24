@@ -6,6 +6,9 @@
 
 extern crate alloc;
 
+/// Key lengths (bytes) AES key wrap accepts: AES-128/192/256 (FIPS 197).
+pub(crate) const AES_KEY_LENS: [usize; 3] = [16, 24, 32];
+
 pub mod arq;
 pub mod caller;
 #[cfg(feature = "crypto")]

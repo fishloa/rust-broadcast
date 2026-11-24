@@ -5,6 +5,9 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- `crypto::AES_BLOCK_LEN`, `crypto::WRAP_ICV_LEN` and `handshake_sm::IPV4_ADDR_WORDS`: the lengths these modules expose in their public function signatures and public field types, so a caller can size its own buffers from them.
 
 ## [0.12.0] - 2026-11-22
 ### Breaking
