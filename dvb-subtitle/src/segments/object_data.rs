@@ -4,6 +4,9 @@
 //! a character string, or a progressive (zlib-compressed) pixel block.
 
 use crate::error::{Error, Result};
+use crate::segments::{
+    PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -20,6 +23,71 @@ pub const PROGRESSIVE_HEADER_LEN: usize = 6;
 /// 7-bit `run_length` field mask in the 8-bit pixel-data run codes
 /// (EN 300 743 §7.2.5.2.3, Table 22).
 const RUN_LENGTH_7BIT_MASK: u8 = 0x7F;
+
+/// Bits in a byte, for the bit-offset arithmetic of the pixel-run reader.
+const BITS_PER_BYTE: usize = 8;
+/// Bit width of the 2-bit depth's pixel code.
+const NARROW_CODE_BITS: usize = 2;
+/// Bit width of a 3-bit run count.
+const RUN_COUNT_NARROW_BITS: usize = 3;
+/// Bit width of a 4-bit run count or 4-bit pixel code.
+const WIDE_CODE_BITS: usize = 4;
+/// Bit width of an 8-bit run count or pixel code.
+const BYTE_CODE_BITS: usize = 8;
+/// Bit width of a single switch bit.
+const SWITCH_BITS: usize = 1;
+/// Shift selecting the 8-bit code string's switch bit.
+const SWITCH_SHIFT: u32 = 7;
+/// Bytes of the 8-bit code string's two-byte run header.
+const RUN_HEADER_BYTES: usize = 2;
+/// Bytes of the 8-bit code string's three-byte coloured-run header.
+const COLOURED_RUN_BYTES: usize = 3;
+
+/// Run-length bias of a two-pixel zero-colour run (Tables 22-25).
+const RUN_LENGTH_PIXEL_PAIR: u32 = 2;
+/// Run-length biases of the 2-bit-depth codes (Tables 22-23).
+const RUN_LENGTH_2BIT_COLOURED: u32 = 3;
+const RUN_LENGTH_2BIT_MEDIUM: u32 = 12;
+const RUN_LENGTH_2BIT_LONG: u32 = 29;
+/// Run-length biases of the 4-bit-depth codes (Tables 24-25).
+const RUN_LENGTH_4BIT_SHORT: u32 = 2;
+const RUN_LENGTH_4BIT_NARROW: u32 = 4;
+const RUN_LENGTH_4BIT_MEDIUM: u32 = 9;
+const RUN_LENGTH_4BIT_LONG: u32 = 25;
+
+/// Offset of `object_id` within the segment body.
+const OBJECT_ID_OFFSET: usize = 0;
+/// Offset of the version/coding-method/flags byte within the segment body.
+const OBJECT_FLAGS_OFFSET: usize = 2;
+/// Shift placing `object_version_number` at the top of its byte.
+const OBJECT_VERSION_SHIFT: u32 = 4;
+/// Mask of `object_version_number`.
+const OBJECT_VERSION_MASK: u8 = 0x0F;
+/// Shift placing `object_coding_method` below the version nibble.
+const CODING_METHOD_SHIFT: u32 = 2;
+/// Mask of `object_coding_method`.
+const CODING_METHOD_MASK: u8 = 0x03;
+/// Mask of `non_modifying_colour_flag`.
+const NON_MODIFYING_COLOUR_FLAG_MASK: u8 = 0x02;
+/// Shift placing `non_modifying_colour_flag`.
+const NON_MODIFYING_COLOUR_FLAG_SHIFT: u32 = 1;
+/// Mask of the object_data reserved bit.
+const OBJECT_RFU_MASK: u8 = 0x01;
+/// Offset of the top field length within an interlaced payload.
+const TOP_FIELD_LEN_OFFSET: usize = 0;
+/// Offset of the bottom field length within an interlaced payload.
+const BOTTOM_FIELD_LEN_OFFSET: usize = 2;
+/// Bytes of the `number_of_codes` field.
+const CHARACTER_CODE_COUNT_LEN: usize = 1;
+/// Bytes of one `character_code`.
+const CHARACTER_CODE_LEN: usize = 2;
+
+/// Offset of `bitmap_width` within a progressive pixel block.
+const BITMAP_WIDTH_OFFSET: usize = 0;
+/// Offset of `bitmap_height` within a progressive pixel block.
+const BITMAP_HEIGHT_OFFSET: usize = 2;
+/// Offset of `compressed_data_length` within a progressive pixel block.
+const COMPRESSED_LEN_OFFSET: usize = 4;
 
 /// Object coding method as defined in Table 18.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,18 +356,18 @@ impl PixelRunIter<'_> {
     /// Read `n` (<= 8) bits starting at bit offset `bp`, big-endian,
     /// zero-padded past the end of `data` (never panics/reads out of bounds).
     fn bits(&self, bp: usize, n: usize) -> u8 {
-        let byte_idx = bp / 8;
-        let bit_idx = bp % 8;
+        let byte_idx = bp / BITS_PER_BYTE;
+        let bit_idx = bp % BITS_PER_BYTE;
         if byte_idx >= self.data.len() {
             return 0;
         }
-        if bit_idx + n <= 8 {
-            (self.data[byte_idx] >> (8 - bit_idx - n)) & ((1u16 << n) - 1) as u8
+        if bit_idx + n <= BITS_PER_BYTE {
+            (self.data[byte_idx] >> (BITS_PER_BYTE - bit_idx - n)) & ((1u16 << n) - 1) as u8
         } else {
-            let first_bits = 8 - bit_idx;
+            let first_bits = BITS_PER_BYTE - bit_idx;
             let v1 = ((self.data[byte_idx] & ((1u8 << first_bits) - 1)) as u16) << (n - first_bits);
             let v2 = if byte_idx + 1 < self.data.len() {
-                (self.data[byte_idx + 1] >> (8 - (n - first_bits))) as u16
+                (self.data[byte_idx + 1] >> (BITS_PER_BYTE - (n - first_bits))) as u16
             } else {
                 0
             };
@@ -309,59 +377,59 @@ impl PixelRunIter<'_> {
 
     /// Table 22/23.
     fn next_2bit(&mut self) -> Option<PixelRun> {
-        let b2 = self.bits(self.bitpos, 2);
-        self.bitpos += 2;
+        let b2 = self.bits(self.bitpos, NARROW_CODE_BITS);
+        self.bitpos += NARROW_CODE_BITS;
         if b2 != 0 {
             return Some(PixelRun {
                 pixel_code: b2,
                 run_length: 1,
             });
         }
-        let s1 = self.bits(self.bitpos, 1);
-        self.bitpos += 1;
+        let s1 = self.bits(self.bitpos, SWITCH_BITS);
+        self.bitpos += SWITCH_BITS;
         if s1 == 1 {
-            let n = self.bits(self.bitpos, 3);
-            self.bitpos += 3;
-            let code = self.bits(self.bitpos, 2);
-            self.bitpos += 2;
+            let n = self.bits(self.bitpos, RUN_COUNT_NARROW_BITS);
+            self.bitpos += RUN_COUNT_NARROW_BITS;
+            let code = self.bits(self.bitpos, NARROW_CODE_BITS);
+            self.bitpos += NARROW_CODE_BITS;
             return Some(PixelRun {
                 pixel_code: code,
-                run_length: u32::from(n) + 3,
+                run_length: u32::from(n) + RUN_LENGTH_2BIT_COLOURED,
             });
         }
-        let s2 = self.bits(self.bitpos, 1);
-        self.bitpos += 1;
+        let s2 = self.bits(self.bitpos, SWITCH_BITS);
+        self.bitpos += SWITCH_BITS;
         if s2 == 1 {
             return Some(PixelRun {
                 pixel_code: 0,
                 run_length: 1,
             });
         }
-        let s3 = self.bits(self.bitpos, 2);
-        self.bitpos += 2;
+        let s3 = self.bits(self.bitpos, NARROW_CODE_BITS);
+        self.bitpos += NARROW_CODE_BITS;
         match s3 {
             0b01 => Some(PixelRun {
                 pixel_code: 0,
-                run_length: 2,
+                run_length: RUN_LENGTH_PIXEL_PAIR,
             }),
             0b10 => {
-                let n = self.bits(self.bitpos, 4);
-                self.bitpos += 4;
-                let code = self.bits(self.bitpos, 2);
-                self.bitpos += 2;
+                let n = self.bits(self.bitpos, WIDE_CODE_BITS);
+                self.bitpos += WIDE_CODE_BITS;
+                let code = self.bits(self.bitpos, NARROW_CODE_BITS);
+                self.bitpos += NARROW_CODE_BITS;
                 Some(PixelRun {
                     pixel_code: code,
-                    run_length: u32::from(n) + 12,
+                    run_length: u32::from(n) + RUN_LENGTH_2BIT_MEDIUM,
                 })
             }
             0b11 => {
-                let n = self.bits(self.bitpos, 8);
-                self.bitpos += 8;
-                let code = self.bits(self.bitpos, 2);
-                self.bitpos += 2;
+                let n = self.bits(self.bitpos, BYTE_CODE_BITS);
+                self.bitpos += BYTE_CODE_BITS;
+                let code = self.bits(self.bitpos, NARROW_CODE_BITS);
+                self.bitpos += NARROW_CODE_BITS;
                 Some(PixelRun {
                     pixel_code: code,
-                    run_length: u32::from(n) + 29,
+                    run_length: u32::from(n) + RUN_LENGTH_2BIT_LONG,
                 })
             }
             _ => {
@@ -374,42 +442,42 @@ impl PixelRunIter<'_> {
 
     /// Table 24/25.
     fn next_4bit(&mut self) -> Option<PixelRun> {
-        let b4 = self.bits(self.bitpos, 4);
-        self.bitpos += 4;
+        let b4 = self.bits(self.bitpos, WIDE_CODE_BITS);
+        self.bitpos += WIDE_CODE_BITS;
         if b4 != 0 {
             return Some(PixelRun {
                 pixel_code: b4,
                 run_length: 1,
             });
         }
-        let s1 = self.bits(self.bitpos, 1);
-        self.bitpos += 1;
+        let s1 = self.bits(self.bitpos, SWITCH_BITS);
+        self.bitpos += SWITCH_BITS;
         if s1 == 0 {
-            let n3 = self.bits(self.bitpos, 3);
-            self.bitpos += 3;
+            let n3 = self.bits(self.bitpos, RUN_COUNT_NARROW_BITS);
+            self.bitpos += RUN_COUNT_NARROW_BITS;
             if n3 == 0 {
                 self.done = true;
                 return None;
             }
             return Some(PixelRun {
                 pixel_code: 0,
-                run_length: u32::from(n3) + 2,
+                run_length: u32::from(n3) + RUN_LENGTH_4BIT_SHORT,
             });
         }
-        let s2 = self.bits(self.bitpos, 1);
-        self.bitpos += 1;
+        let s2 = self.bits(self.bitpos, SWITCH_BITS);
+        self.bitpos += SWITCH_BITS;
         if s2 == 0 {
-            let n2 = self.bits(self.bitpos, 2);
-            self.bitpos += 2;
-            let code = self.bits(self.bitpos, 4);
-            self.bitpos += 4;
+            let n2 = self.bits(self.bitpos, NARROW_CODE_BITS);
+            self.bitpos += NARROW_CODE_BITS;
+            let code = self.bits(self.bitpos, WIDE_CODE_BITS);
+            self.bitpos += WIDE_CODE_BITS;
             return Some(PixelRun {
                 pixel_code: code,
-                run_length: u32::from(n2) + 4,
+                run_length: u32::from(n2) + RUN_LENGTH_4BIT_NARROW,
             });
         }
-        let s3 = self.bits(self.bitpos, 2);
-        self.bitpos += 2;
+        let s3 = self.bits(self.bitpos, NARROW_CODE_BITS);
+        self.bitpos += NARROW_CODE_BITS;
         match s3 {
             0b00 => Some(PixelRun {
                 pixel_code: 0,
@@ -417,27 +485,27 @@ impl PixelRunIter<'_> {
             }),
             0b01 => Some(PixelRun {
                 pixel_code: 0,
-                run_length: 2,
+                run_length: RUN_LENGTH_PIXEL_PAIR,
             }),
             0b10 => {
-                let n = self.bits(self.bitpos, 4);
-                self.bitpos += 4;
-                let code = self.bits(self.bitpos, 4);
-                self.bitpos += 4;
+                let n = self.bits(self.bitpos, WIDE_CODE_BITS);
+                self.bitpos += WIDE_CODE_BITS;
+                let code = self.bits(self.bitpos, WIDE_CODE_BITS);
+                self.bitpos += WIDE_CODE_BITS;
                 Some(PixelRun {
                     pixel_code: code,
-                    run_length: u32::from(n) + 9,
+                    run_length: u32::from(n) + RUN_LENGTH_4BIT_MEDIUM,
                 })
             }
             _ => {
                 // 0b11
-                let n = self.bits(self.bitpos, 8);
-                self.bitpos += 8;
-                let code = self.bits(self.bitpos, 4);
-                self.bitpos += 4;
+                let n = self.bits(self.bitpos, BYTE_CODE_BITS);
+                self.bitpos += BYTE_CODE_BITS;
+                let code = self.bits(self.bitpos, WIDE_CODE_BITS);
+                self.bitpos += WIDE_CODE_BITS;
                 Some(PixelRun {
                     pixel_code: code,
-                    run_length: u32::from(n) + 25,
+                    run_length: u32::from(n) + RUN_LENGTH_4BIT_LONG,
                 })
             }
         }
@@ -446,14 +514,14 @@ impl PixelRunIter<'_> {
     /// Table 26. Always byte-aligned, so this indexes `data` directly rather
     /// than going through the bit reader.
     fn next_8bit(&mut self) -> Option<PixelRun> {
-        let pos = self.bitpos / 8;
+        let pos = self.bitpos / BITS_PER_BYTE;
         if pos >= self.data.len() {
             self.done = true;
             return None;
         }
         let b0 = self.data[pos];
         if b0 != 0 {
-            self.bitpos += 8;
+            self.bitpos += BYTE_CODE_BITS;
             return Some(PixelRun {
                 pixel_code: b0,
                 run_length: 1,
@@ -464,9 +532,9 @@ impl PixelRunIter<'_> {
             return None;
         }
         let b1 = self.data[pos + 1];
-        if (b1 >> 7) & 1 == 0 {
+        if (b1 >> SWITCH_SHIFT) & 1 == 0 {
             let rl = b1 & RUN_LENGTH_7BIT_MASK;
-            self.bitpos += 16;
+            self.bitpos += RUN_HEADER_BYTES * BITS_PER_BYTE;
             if rl == 0 {
                 self.done = true;
                 return None;
@@ -477,13 +545,13 @@ impl PixelRunIter<'_> {
             });
         }
         // switch_1 == 1: run_length_3-127 + 8-bit pixel-code.
-        if pos + 2 >= self.data.len() {
+        if pos + RUN_HEADER_BYTES >= self.data.len() {
             self.done = true;
             return None;
         }
         let rl = b1 & RUN_LENGTH_7BIT_MASK;
-        let code = self.data[pos + 2];
-        self.bitpos += 24;
+        let code = self.data[pos + RUN_HEADER_BYTES];
+        self.bitpos += COLOURED_RUN_BYTES * BITS_PER_BYTE;
         Some(PixelRun {
             pixel_code: code,
             run_length: u32::from(rl),
@@ -512,18 +580,18 @@ impl Iterator for PixelRunIter<'_> {
 fn scan_2bit_code_string(data: &[u8]) -> usize {
     let mut bitpos: usize = 0;
     let bits = |bp: usize, n: usize| -> u8 {
-        let byte_idx = bp / 8;
-        let bit_idx = bp % 8;
+        let byte_idx = bp / BITS_PER_BYTE;
+        let bit_idx = bp % BITS_PER_BYTE;
         if byte_idx >= data.len() {
             return 0;
         }
-        if bit_idx + n <= 8 {
-            (data[byte_idx] >> (8 - bit_idx - n)) & ((1u16 << n) - 1) as u8
+        if bit_idx + n <= BITS_PER_BYTE {
+            (data[byte_idx] >> (BITS_PER_BYTE - bit_idx - n)) & ((1u16 << n) - 1) as u8
         } else {
-            let first_bits = 8 - bit_idx;
+            let first_bits = BITS_PER_BYTE - bit_idx;
             let v1 = ((data[byte_idx] & ((1u8 << first_bits) - 1)) as u16) << (n - first_bits);
             let v2 = if byte_idx + 1 < data.len() {
-                (data[byte_idx + 1] >> (8 - (n - first_bits))) as u16
+                (data[byte_idx + 1] >> (BITS_PER_BYTE - (n - first_bits))) as u16
             } else {
                 0
             };
@@ -531,41 +599,41 @@ fn scan_2bit_code_string(data: &[u8]) -> usize {
         }
     };
     loop {
-        let b2 = bits(bitpos, 2);
-        bitpos += 2;
+        let b2 = bits(bitpos, NARROW_CODE_BITS);
+        bitpos += NARROW_CODE_BITS;
         if b2 != 0 {
             continue;
         }
         // 2-bit_zero, check switch_1
-        let s1 = bits(bitpos, 1);
-        bitpos += 1;
+        let s1 = bits(bitpos, SWITCH_BITS);
+        bitpos += SWITCH_BITS;
         if s1 == 1 {
             // run_length_3-10 (3 bits) + 2-bitpixel-code (2 bits)
-            bitpos += 3 + 2;
+            bitpos += RUN_COUNT_NARROW_BITS + NARROW_CODE_BITS;
             continue;
         }
-        let s2 = bits(bitpos, 1);
-        bitpos += 1;
+        let s2 = bits(bitpos, SWITCH_BITS);
+        bitpos += SWITCH_BITS;
         if s2 == 1 {
             // 1 pixel in colour 0
             continue;
         }
-        let s3 = bits(bitpos, 2);
-        bitpos += 2;
+        let s3 = bits(bitpos, NARROW_CODE_BITS);
+        bitpos += NARROW_CODE_BITS;
         match s3 {
             0b00 => break,    // end of string
             0b01 => continue, // 2 pixels in colour 0
             0b10 => {
-                bitpos += 4 + 2; // run_length_12-27 + pixel-code
+                bitpos += WIDE_CODE_BITS + NARROW_CODE_BITS; // run_length_12-27 + pixel-code
             }
             0b11 => {
-                bitpos += 8 + 2; // run_length_29-284 + pixel-code
+                bitpos += BYTE_CODE_BITS + NARROW_CODE_BITS; // run_length_29-284 + pixel-code
             }
             _ => {}
         }
     }
     // Byte-align: the sub-block includes 2_stuff_bits if not byte-aligned
-    let byte_len = bitpos.div_ceil(8);
+    let byte_len = bitpos.div_ceil(BITS_PER_BYTE);
     byte_len.min(data.len())
 }
 
@@ -575,18 +643,18 @@ fn scan_2bit_code_string(data: &[u8]) -> usize {
 fn scan_4bit_code_string(data: &[u8]) -> usize {
     let mut bitpos: usize = 0;
     let bits = |bp: usize, n: usize| -> u8 {
-        let byte_idx = bp / 8;
-        let bit_idx = bp % 8;
+        let byte_idx = bp / BITS_PER_BYTE;
+        let bit_idx = bp % BITS_PER_BYTE;
         if byte_idx >= data.len() {
             return 0;
         }
-        if bit_idx + n <= 8 {
-            (data[byte_idx] >> (8 - bit_idx - n)) & ((1u16 << n) - 1) as u8
+        if bit_idx + n <= BITS_PER_BYTE {
+            (data[byte_idx] >> (BITS_PER_BYTE - bit_idx - n)) & ((1u16 << n) - 1) as u8
         } else {
-            let first_bits = 8 - bit_idx;
+            let first_bits = BITS_PER_BYTE - bit_idx;
             let v1 = ((data[byte_idx] & ((1u8 << first_bits) - 1)) as u16) << (n - first_bits);
             let v2 = if byte_idx + 1 < data.len() {
-                (data[byte_idx + 1] >> (8 - (n - first_bits))) as u16
+                (data[byte_idx + 1] >> (BITS_PER_BYTE - (n - first_bits))) as u16
             } else {
                 0
             };
@@ -594,17 +662,17 @@ fn scan_4bit_code_string(data: &[u8]) -> usize {
         }
     };
     loop {
-        let b4 = bits(bitpos, 4);
-        bitpos += 4;
+        let b4 = bits(bitpos, WIDE_CODE_BITS);
+        bitpos += WIDE_CODE_BITS;
         if b4 != 0 {
             continue;
         }
         // 4-bit_zero
-        let s1 = bits(bitpos, 1);
-        bitpos += 1;
+        let s1 = bits(bitpos, SWITCH_BITS);
+        bitpos += SWITCH_BITS;
         if s1 == 0 {
-            let n3 = bits(bitpos, 3);
-            bitpos += 3;
+            let n3 = bits(bitpos, RUN_COUNT_NARROW_BITS);
+            bitpos += RUN_COUNT_NARROW_BITS;
             if n3 == 0 {
                 // end_of_string_signal
                 break;
@@ -612,28 +680,28 @@ fn scan_4bit_code_string(data: &[u8]) -> usize {
             // run_length_3-9 in colour 0
             continue;
         }
-        let s2 = bits(bitpos, 1);
-        bitpos += 1;
+        let s2 = bits(bitpos, SWITCH_BITS);
+        bitpos += SWITCH_BITS;
         if s2 == 0 {
             // run_length_4-7 (2 bits) + 4-bit_pixel-code
-            bitpos += 2 + 4;
+            bitpos += NARROW_CODE_BITS + WIDE_CODE_BITS;
             continue;
         }
-        let s3 = bits(bitpos, 2);
-        bitpos += 2;
+        let s3 = bits(bitpos, NARROW_CODE_BITS);
+        bitpos += NARROW_CODE_BITS;
         match s3 {
             0b00 | 0b01 => continue, // 1 or 2 pixels in colour 0
             0b10 => {
-                bitpos += 4 + 4; // run_length_9-24 + pixel-code
+                bitpos += WIDE_CODE_BITS + WIDE_CODE_BITS; // run_length_9-24 + pixel-code
             }
             0b11 => {
-                bitpos += 8 + 4; // run_length_25-280 + pixel-code
+                bitpos += BYTE_CODE_BITS + WIDE_CODE_BITS; // run_length_25-280 + pixel-code
             }
             _ => {}
         }
     }
     // Byte-align: if not byte-aligned, 4_stuff_bits are implied
-    let byte_len = bitpos.div_ceil(8);
+    let byte_len = bitpos.div_ceil(BITS_PER_BYTE);
     byte_len.min(data.len())
 }
 
@@ -645,7 +713,7 @@ fn scan_8bit_code_string(data: &[u8]) -> usize {
         if pos >= data.len() {
             break;
         }
-        if data[pos] != 0x00 {
+        if data[pos] != 0 {
             pos += 1;
             continue;
         }
@@ -654,19 +722,19 @@ fn scan_8bit_code_string(data: &[u8]) -> usize {
             break;
         }
         let b = data[pos + 1];
-        let s1 = (b >> 7) & 1;
+        let s1 = (b >> SWITCH_SHIFT) & 1;
         if s1 == 0 {
             let rl = b & RUN_LENGTH_7BIT_MASK;
             if rl == 0 {
                 // end_of_string_signal
-                pos += 2;
+                pos += RUN_HEADER_BYTES;
                 break;
             }
             // run_length_1-127 in colour 0
-            pos += 2;
+            pos += RUN_HEADER_BYTES;
         } else {
             // run_length_3-127 + 8-bitpixel-code
-            pos += 3;
+            pos += COLOURED_RUN_BYTES;
         }
     }
     pos.min(data.len())
@@ -749,20 +817,25 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 found: u32::from(bytes[0]),
             }));
         }
-        if bytes[1] != SEGMENT_TYPE {
-            return Err(Error::UnknownSegmentType(bytes[1]));
+        if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
+            return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
+        let segment_length = u16::from_be_bytes([
+            bytes[SEGMENT_LENGTH_OFFSET],
+            bytes[SEGMENT_LENGTH_OFFSET + 1],
+        ]) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "object_data_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
         need_in(body, FIXED_LEN, "object_data_segment body")?;
-        let object_id = u16::from_be_bytes([body[0], body[1]]);
-        let object_version_number = body[2] >> 4;
-        let coding_method_bits = (body[2] >> 2) & 0x03;
-        let non_modifying_colour_flag = (body[2] & 0x02) != 0;
-        let reserved = body[2] & 0x01;
+        let object_id = u16::from_be_bytes([body[OBJECT_ID_OFFSET], body[OBJECT_ID_OFFSET + 1]]);
+        let object_version_number = body[OBJECT_FLAGS_OFFSET] >> OBJECT_VERSION_SHIFT;
+        let coding_method_bits =
+            (body[OBJECT_FLAGS_OFFSET] >> CODING_METHOD_SHIFT) & CODING_METHOD_MASK;
+        let non_modifying_colour_flag =
+            (body[OBJECT_FLAGS_OFFSET] & NON_MODIFYING_COLOUR_FLAG_MASK) != 0;
+        let reserved = body[OBJECT_FLAGS_OFFSET] & OBJECT_RFU_MASK;
         // reserved bit tolerated per §7.2.0.2 forward compatibility
         let _ = reserved;
 
@@ -782,8 +855,14 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                     INTERLACE_LEN_LEN,
                     "object_data interlace lengths",
                 )?;
-                let top_len = u16::from_be_bytes([payload_data[0], payload_data[1]]) as usize;
-                let bottom_len = u16::from_be_bytes([payload_data[2], payload_data[3]]) as usize;
+                let top_len = u16::from_be_bytes([
+                    payload_data[TOP_FIELD_LEN_OFFSET],
+                    payload_data[TOP_FIELD_LEN_OFFSET + 1],
+                ]) as usize;
+                let bottom_len = u16::from_be_bytes([
+                    payload_data[BOTTOM_FIELD_LEN_OFFSET],
+                    payload_data[BOTTOM_FIELD_LEN_OFFSET + 1],
+                ]) as usize;
 
                 let top_start = INTERLACE_LEN_LEN;
                 let top_end = top_start + top_len;
@@ -802,7 +881,7 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 // first one) to keep the round-trip byte-exact (#1108/DS-W6).
                 let stuffing = &payload_data[bottom_end..];
                 if let Some(&b) = stuffing.first()
-                    && b != 0x00
+                    && b != 0
                 {
                     return Err(Error::BadStuffingByte(b));
                 }
@@ -829,13 +908,13 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 })
             }
             0x01 => {
-                need_in(payload_data, 1, "character count")?;
+                need_in(payload_data, CHARACTER_CODE_COUNT_LEN, "character count")?;
                 let number_of_codes = payload_data[0] as usize;
-                let codes_len = 1 + number_of_codes * 2;
+                let codes_len = CHARACTER_CODE_COUNT_LEN + number_of_codes * CHARACTER_CODE_LEN;
                 need_in(payload_data, codes_len, "character codes")?;
                 let mut codes = alloc::vec::Vec::with_capacity(number_of_codes);
                 for i in 0..number_of_codes {
-                    let ci = 1 + i * 2;
+                    let ci = CHARACTER_CODE_COUNT_LEN + i * CHARACTER_CODE_LEN;
                     codes.push(u16::from_be_bytes([payload_data[ci], payload_data[ci + 1]]));
                 }
                 ObjectDataPayload::Characters {
@@ -848,10 +927,18 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                     PROGRESSIVE_HEADER_LEN,
                     "progressive pixel block",
                 )?;
-                let bitmap_width = u16::from_be_bytes([payload_data[0], payload_data[1]]);
-                let bitmap_height = u16::from_be_bytes([payload_data[2], payload_data[3]]);
-                let compressed_len =
-                    u16::from_be_bytes([payload_data[4], payload_data[5]]) as usize;
+                let bitmap_width = u16::from_be_bytes([
+                    payload_data[BITMAP_WIDTH_OFFSET],
+                    payload_data[BITMAP_WIDTH_OFFSET + 1],
+                ]);
+                let bitmap_height = u16::from_be_bytes([
+                    payload_data[BITMAP_HEIGHT_OFFSET],
+                    payload_data[BITMAP_HEIGHT_OFFSET + 1],
+                ]);
+                let compressed_len = u16::from_be_bytes([
+                    payload_data[COMPRESSED_LEN_OFFSET],
+                    payload_data[COMPRESSED_LEN_OFFSET + 1],
+                ]) as usize;
                 need_in(
                     payload_data,
                     PROGRESSIVE_HEADER_LEN + compressed_len,
@@ -898,7 +985,7 @@ impl Serialize for ObjectDataSegment<'_> {
                 }
                 ObjectDataPayload::Characters {
                     character_codes, ..
-                } => 1 + character_codes.len() * 2,
+                } => CHARACTER_CODE_COUNT_LEN + character_codes.len() * CHARACTER_CODE_LEN,
                 ObjectDataPayload::ProgressivePixels(pp) => {
                     PROGRESSIVE_HEADER_LEN + pp.compressed_data.len()
                 }
@@ -910,24 +997,27 @@ impl Serialize for ObjectDataSegment<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = 0x0F;
-        buf[1] = SEGMENT_TYPE;
-        buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
+        buf[0] = crate::pes_data_field::SYNC_BYTE;
+        buf[SEGMENT_TYPE_OFFSET] = SEGMENT_TYPE;
+        buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]
+            .copy_from_slice(&self.page_id.to_be_bytes());
         let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
-        buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
+        buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
+            .copy_from_slice(&seg_len.to_be_bytes());
 
-        buf[6..8].copy_from_slice(&self.object_id.to_be_bytes());
-        buf[8] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + OBJECT_ID_OFFSET..HEADER_LEN + OBJECT_FLAGS_OFFSET]
+            .copy_from_slice(&self.object_id.to_be_bytes());
+        buf[HEADER_LEN + OBJECT_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
             self.object_version_number,
-            0x0F,
+            OBJECT_VERSION_MASK,
             "object_version_number",
-        )? << 4)
+        )? << OBJECT_VERSION_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.object_coding_method.to_bits(),
-                0x03,
+                CODING_METHOD_MASK,
                 "object_coding_method",
-            )? << 2)
-            | (u8::from(self.non_modifying_colour_flag) << 1);
+            )? << CODING_METHOD_SHIFT)
+            | (u8::from(self.non_modifying_colour_flag) << NON_MODIFYING_COLOUR_FLAG_SHIFT);
 
         let mut off = HEADER_LEN + FIXED_LEN;
         match &self.payload {
@@ -941,8 +1031,10 @@ impl Serialize for ObjectDataSegment<'_> {
                 let top_len = broadcast_common::len::fit_u16(top_len, "top_field_data_length")?;
                 let bottom_len =
                     broadcast_common::len::fit_u16(bottom_len, "bottom_field_data_length")?;
-                buf[off..off + 2].copy_from_slice(&top_len.to_be_bytes());
-                buf[off + 2..off + 4].copy_from_slice(&bottom_len.to_be_bytes());
+                buf[off + TOP_FIELD_LEN_OFFSET..off + BOTTOM_FIELD_LEN_OFFSET]
+                    .copy_from_slice(&top_len.to_be_bytes());
+                buf[off + BOTTOM_FIELD_LEN_OFFSET..off + INTERLACE_LEN_LEN]
+                    .copy_from_slice(&bottom_len.to_be_bytes());
                 off += INTERLACE_LEN_LEN;
                 for sub in &ip.top_sub_blocks {
                     sub.serialize_into(&mut buf[off..]);
@@ -957,20 +1049,23 @@ impl Serialize for ObjectDataSegment<'_> {
             }
             ObjectDataPayload::Characters { character_codes } => {
                 buf[off] = broadcast_common::len::fit_u8(character_codes.len(), "number_of_codes")?;
-                off += 1;
+                off += CHARACTER_CODE_COUNT_LEN;
                 for code in character_codes {
-                    buf[off..off + 2].copy_from_slice(&code.to_be_bytes());
-                    off += 2;
+                    buf[off..off + CHARACTER_CODE_LEN].copy_from_slice(&code.to_be_bytes());
+                    off += CHARACTER_CODE_LEN;
                 }
             }
             ObjectDataPayload::ProgressivePixels(pp) => {
-                buf[off..off + 2].copy_from_slice(&pp.bitmap_width.to_be_bytes());
-                buf[off + 2..off + 4].copy_from_slice(&pp.bitmap_height.to_be_bytes());
+                buf[off + BITMAP_WIDTH_OFFSET..off + BITMAP_HEIGHT_OFFSET]
+                    .copy_from_slice(&pp.bitmap_width.to_be_bytes());
+                buf[off + BITMAP_HEIGHT_OFFSET..off + COMPRESSED_LEN_OFFSET]
+                    .copy_from_slice(&pp.bitmap_height.to_be_bytes());
                 let clen = broadcast_common::len::fit_u16(
                     pp.compressed_data.len(),
                     "compressed_data_length",
                 )?;
-                buf[off + 4..off + 6].copy_from_slice(&clen.to_be_bytes());
+                buf[off + COMPRESSED_LEN_OFFSET..off + PROGRESSIVE_HEADER_LEN]
+                    .copy_from_slice(&clen.to_be_bytes());
                 off += PROGRESSIVE_HEADER_LEN;
                 buf[off..off + pp.compressed_data.len()].copy_from_slice(pp.compressed_data);
                 off += pp.compressed_data.len();

@@ -25,13 +25,34 @@ pub const PTS_MAX: u64 = PTS_MODULUS - 1;
 /// `duration` range.
 pub const DURATION_40_MAX: u64 = (1 << 40) - 1;
 
+/// Nanoseconds per second.
+const NANOS_PER_SECOND: u128 = 1_000_000_000;
+const PTS_FLAG_MASK: u8 = 0x80;
+/// The 6 reserved bits set to 1 after the pts_time flag.
+const PTS_RESERVED_BITS: u8 = 0x7E;
+/// The 7 reserved bits set to 1 when no pts_time follows.
+const NO_TIME_RESERVED_BITS: u8 = 0x7F;
+const PTS_TOP_MASK: u8 = 0x01;
+const PTS_TOP_SHIFT: u32 = 32;
+const PTS_HIGH_SHIFT: u32 = 24;
+const PTS_MID_SHIFT: u32 = 16;
+const PTS_LOW_SHIFT: u32 = 8;
+const AUTO_RETURN_MASK: u8 = 0x80;
+const AUTO_RETURN_SHIFT: u32 = 7;
+// Byte offsets of the 5-byte pts_time/duration placeholders.
+const PTS_TOP_OFFSET: usize = 0;
+const PTS_HIGH_OFFSET: usize = 1;
+const PTS_MID_OFFSET: usize = 2;
+const PTS_LOW_OFFSET: usize = 3;
+const PTS_BOTTOM_OFFSET: usize = 4;
+
 /// Convert a 90 kHz tick count to a [`Duration`](core::time::Duration).
 ///
 /// Nanosecond-exact: `ticks * 1e9 / 90_000`. Computed in `u128` so the full
 /// 40-bit `break_duration` range cannot overflow.
 #[must_use]
 pub fn ticks_to_duration(ticks: u64) -> core::time::Duration {
-    let nanos = (ticks as u128) * 1_000_000_000 / (TICKS_PER_SECOND as u128);
+    let nanos = (ticks as u128) * NANOS_PER_SECOND / (TICKS_PER_SECOND as u128);
     // nanos fits u64 for the whole 40-bit range (2^40/90000 s ≈ 12_725_000 s);
     // an out-of-field u64 tick count saturates instead of silently wrapping.
     core::time::Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
@@ -43,7 +64,7 @@ pub fn ticks_to_duration(ticks: u64) -> core::time::Duration {
 #[must_use]
 pub fn duration_to_ticks(d: core::time::Duration, max: u64) -> Option<u64> {
     let nanos = d.as_nanos();
-    let ticks = nanos * (TICKS_PER_SECOND as u128) / 1_000_000_000;
+    let ticks = nanos * (TICKS_PER_SECOND as u128) / NANOS_PER_SECOND;
     if ticks > max as u128 {
         None
     } else {
@@ -102,15 +123,15 @@ impl<'a> Parse<'a> for SpliceTime {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, 1, "splice_time")?;
-        let time_specified = bytes[0] & 0x80 != 0;
+        let time_specified = bytes[PTS_TOP_OFFSET] & PTS_FLAG_MASK != 0;
         if time_specified {
             need_in(bytes, Self::LEN_WITH_TIME, "splice_time pts_time")?;
             // 1 bit flag, 6 reserved, then 33 bits of pts_time.
-            let pts = ((u64::from(bytes[0] & 0x01)) << 32)
-                | (u64::from(bytes[1]) << 24)
-                | (u64::from(bytes[2]) << 16)
-                | (u64::from(bytes[3]) << 8)
-                | u64::from(bytes[4]);
+            let pts = ((u64::from(bytes[PTS_TOP_OFFSET] & PTS_TOP_MASK)) << PTS_TOP_SHIFT)
+                | (u64::from(bytes[PTS_HIGH_OFFSET]) << PTS_HIGH_SHIFT)
+                | (u64::from(bytes[PTS_MID_OFFSET]) << PTS_MID_SHIFT)
+                | (u64::from(bytes[PTS_LOW_OFFSET]) << PTS_LOW_SHIFT)
+                | u64::from(bytes[PTS_BOTTOM_OFFSET]);
             let pts_time = Clock33::try_new(pts).map_err(|e| {
                 Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "splice_time.pts_time",
@@ -143,15 +164,17 @@ impl Serialize for SpliceTime {
             Some(clock) => {
                 let pts = clock.ticks();
                 // time_specified_flag=1, 6 reserved bits = 1, top pts bit.
-                buf[0] = 0x80 | 0x7E | ((pts >> 32) as u8 & 0x01);
-                buf[1] = (pts >> 24) as u8;
-                buf[2] = (pts >> 16) as u8;
-                buf[3] = (pts >> 8) as u8;
-                buf[4] = pts as u8;
+                buf[PTS_TOP_OFFSET] = PTS_FLAG_MASK
+                    | PTS_RESERVED_BITS
+                    | ((pts >> PTS_TOP_SHIFT) as u8 & PTS_TOP_MASK);
+                buf[PTS_HIGH_OFFSET] = (pts >> PTS_HIGH_SHIFT) as u8;
+                buf[PTS_MID_OFFSET] = (pts >> PTS_MID_SHIFT) as u8;
+                buf[PTS_LOW_OFFSET] = (pts >> PTS_LOW_SHIFT) as u8;
+                buf[PTS_BOTTOM_OFFSET] = pts as u8;
             }
             None => {
                 // time_specified_flag=0, 7 reserved bits = 1.
-                buf[0] = 0x7F;
+                buf[PTS_TOP_OFFSET] = NO_TIME_RESERVED_BITS;
             }
         }
         Ok(need)
@@ -179,12 +202,12 @@ impl<'a> Parse<'a> for BreakDuration {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, Self::LEN, "break_duration")?;
-        let auto_return = bytes[0] & 0x80 != 0;
-        let duration = ((u64::from(bytes[0] & 0x01)) << 32)
-            | (u64::from(bytes[1]) << 24)
-            | (u64::from(bytes[2]) << 16)
-            | (u64::from(bytes[3]) << 8)
-            | u64::from(bytes[4]);
+        let auto_return = bytes[PTS_TOP_OFFSET] & AUTO_RETURN_MASK != 0;
+        let duration = ((u64::from(bytes[PTS_TOP_OFFSET] & PTS_TOP_MASK)) << PTS_TOP_SHIFT)
+            | (u64::from(bytes[PTS_HIGH_OFFSET]) << PTS_HIGH_SHIFT)
+            | (u64::from(bytes[PTS_MID_OFFSET]) << PTS_MID_SHIFT)
+            | (u64::from(bytes[PTS_LOW_OFFSET]) << PTS_LOW_SHIFT)
+            | u64::from(bytes[PTS_BOTTOM_OFFSET]);
         Ok(Self {
             auto_return,
             duration,
@@ -209,11 +232,13 @@ impl Serialize for BreakDuration {
         }
         let d = self.duration;
         // auto_return, 6 reserved bits = 1, top duration bit.
-        buf[0] = (u8::from(self.auto_return) << 7) | 0x7E | ((d >> 32) as u8 & 0x01);
-        buf[1] = (d >> 24) as u8;
-        buf[2] = (d >> 16) as u8;
-        buf[3] = (d >> 8) as u8;
-        buf[4] = d as u8;
+        buf[PTS_TOP_OFFSET] = (u8::from(self.auto_return) << AUTO_RETURN_SHIFT)
+            | PTS_RESERVED_BITS
+            | ((d >> PTS_TOP_SHIFT) as u8 & PTS_TOP_MASK);
+        buf[PTS_HIGH_OFFSET] = (d >> PTS_HIGH_SHIFT) as u8;
+        buf[PTS_MID_OFFSET] = (d >> PTS_MID_SHIFT) as u8;
+        buf[PTS_LOW_OFFSET] = (d >> PTS_LOW_SHIFT) as u8;
+        buf[PTS_BOTTOM_OFFSET] = d as u8;
         Ok(Self::LEN)
     }
 }

@@ -38,6 +38,24 @@ pub const HEADER_LEN: usize = 5;
 /// parameter_length (2).
 pub const PARAMETER_HEADER_LEN: usize = 4;
 
+/// High byte of `message_type` within the generic_message header.
+const MESSAGE_TYPE_HI_OFFSET: usize = 1;
+/// Low byte of `message_type` within the generic_message header.
+const MESSAGE_TYPE_LO_OFFSET: usize = 2;
+/// High byte of `message_length` within the generic_message header.
+const MESSAGE_LENGTH_HI_OFFSET: usize = 3;
+/// Low byte of `message_length` within the generic_message header.
+const MESSAGE_LENGTH_LO_OFFSET: usize = 4;
+
+/// High byte of `parameter_type` within a parameter TLV.
+const PARAMETER_TYPE_HI_OFFSET: usize = 0;
+/// Low byte of `parameter_type` within a parameter TLV.
+const PARAMETER_TYPE_LO_OFFSET: usize = 1;
+/// High byte of `parameter_length` within a parameter TLV.
+const PARAMETER_LENGTH_HI_OFFSET: usize = 2;
+/// Low byte of `parameter_length` within a parameter TLV.
+const PARAMETER_LENGTH_LO_OFFSET: usize = 3;
+
 /// One TLV parameter of a [`SimulcryptMessage`] (Table 1b): a typed
 /// `parameter_type` plus a borrowed, **opaque** `parameter_value`.
 ///
@@ -140,7 +158,10 @@ impl<'a> SimulcryptMessage<'a> {
         if bytes.len() < HEADER_LEN {
             return None;
         }
-        let message_length = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
+        let message_length = u16::from_be_bytes([
+            bytes[MESSAGE_LENGTH_HI_OFFSET],
+            bytes[MESSAGE_LENGTH_LO_OFFSET],
+        ]) as usize;
         Some(HEADER_LEN + message_length)
     }
 
@@ -158,8 +179,12 @@ impl<'a> SimulcryptMessage<'a> {
     pub fn parse_on(iface: Interface, bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN, "generic_message header")?;
         let protocol_version = bytes[0];
-        let raw_message_type = u16::from_be_bytes([bytes[1], bytes[2]]);
-        let message_length = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
+        let raw_message_type =
+            u16::from_be_bytes([bytes[MESSAGE_TYPE_HI_OFFSET], bytes[MESSAGE_TYPE_LO_OFFSET]]);
+        let message_length = u16::from_be_bytes([
+            bytes[MESSAGE_LENGTH_HI_OFFSET],
+            bytes[MESSAGE_LENGTH_LO_OFFSET],
+        ]) as usize;
 
         let body = &bytes[HEADER_LEN..];
         if body.len() < message_length {
@@ -184,8 +209,14 @@ impl<'a> SimulcryptMessage<'a> {
                     },
                 ));
             }
-            let raw_ptype = u16::from_be_bytes([body[off], body[off + 1]]);
-            let plen = u16::from_be_bytes([body[off + 2], body[off + 3]]) as usize;
+            let raw_ptype = u16::from_be_bytes([
+                body[off + PARAMETER_TYPE_HI_OFFSET],
+                body[off + PARAMETER_TYPE_LO_OFFSET],
+            ]);
+            let plen = u16::from_be_bytes([
+                body[off + PARAMETER_LENGTH_HI_OFFSET],
+                body[off + PARAMETER_LENGTH_LO_OFFSET],
+            ]) as usize;
             let vstart = off + PARAMETER_HEADER_LEN;
             let remaining = body.len() - vstart;
             if remaining < plen {
@@ -226,15 +257,18 @@ impl Serialize for SimulcryptMessage<'_> {
         let message_length = broadcast_common::len::fit_u16(body_len, "message_length")?;
 
         buf[0] = self.protocol_version;
-        buf[1..3].copy_from_slice(&self.message_type.to_u16().to_be_bytes());
-        buf[3..5].copy_from_slice(&message_length.to_be_bytes());
+        buf[MESSAGE_TYPE_HI_OFFSET..MESSAGE_LENGTH_HI_OFFSET]
+            .copy_from_slice(&self.message_type.to_u16().to_be_bytes());
+        buf[MESSAGE_LENGTH_HI_OFFSET..HEADER_LEN].copy_from_slice(&message_length.to_be_bytes());
 
         let mut off = HEADER_LEN;
         for p in &self.parameters {
             let plen = p.value.len();
             let parameter_length = broadcast_common::len::fit_u16(plen, "parameter_length")?;
-            buf[off..off + 2].copy_from_slice(&p.ptype.to_u16().to_be_bytes());
-            buf[off + 2..off + 4].copy_from_slice(&parameter_length.to_be_bytes());
+            buf[off + PARAMETER_TYPE_HI_OFFSET..off + PARAMETER_LENGTH_HI_OFFSET]
+                .copy_from_slice(&p.ptype.to_u16().to_be_bytes());
+            buf[off + PARAMETER_LENGTH_HI_OFFSET..off + PARAMETER_HEADER_LEN]
+                .copy_from_slice(&parameter_length.to_be_bytes());
             off += PARAMETER_HEADER_LEN;
             buf[off..off + plen].copy_from_slice(p.value);
             off += plen;

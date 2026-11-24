@@ -55,18 +55,43 @@ pub const MAX_DATA_STREAM_NUMBER: u8 = 0x07;
 /// byte-stream abstraction — see `private/specs-verified/smpte/st337/st337.md` scope decision 1.
 const PREAMBLE_WORD_LEN: usize = 2;
 
+/// Bits per octet, used to convert a payload bit count to/from bytes.
+const BITS_PER_OCTET: u32 = 8;
+
+// Byte offsets of the preamble words' little-endian 16-bit reads.
+const PB_WORD_OFFSET: usize = PREAMBLE_WORD_LEN;
+const PC_WORD_OFFSET: usize = 2 * PREAMBLE_WORD_LEN;
+const LENGTH_CODE_OFFSET: usize = 3 * PREAMBLE_WORD_LEN;
+const PE_WORD_OFFSET: usize = 4 * PREAMBLE_WORD_LEN;
+const PF_WORD_OFFSET: usize = 5 * PREAMBLE_WORD_LEN;
+
+/// Copy `N` little-endian bytes at `offset` into an array.
+fn le<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
+    bytes
+        .get(offset..offset + N)
+        .and_then(|s| s.first_chunk::<N>())
+        .copied()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: offset + N,
+                have: bytes.len(),
+                what: "ST 337 preamble word",
+            },
+        ))
+}
+
 /// Byte length of the four-word preamble (`Pa`,`Pb`,`Pc`,`Pd`).
-const FOUR_WORD_PREAMBLE_LEN: usize = 4 * PREAMBLE_WORD_LEN;
+const BASE_PREAMBLE_LEN: usize = 4 * PREAMBLE_WORD_LEN;
 
 /// Byte length of the six-word preamble (`Pa`..`Pf`).
-const SIX_WORD_PREAMBLE_LEN: usize = 6 * PREAMBLE_WORD_LEN;
+const EXTENDED_PREAMBLE_LEN: usize = 6 * PREAMBLE_WORD_LEN;
 
 /// Bits contributed to `length_code` by `Pe`+`Pf` when the six-word preamble
 /// is used: "Pe and Pf shall be counted as payload bytes" (Table 6, §7.2.5) —
 /// so the wire `length_code` is `payload_bits + 32` in that case even though
 /// `Pe`/`Pf` are structurally part of the preamble, not the payload.
 const EXTENDED_PREAMBLE_LENGTH_CODE_BITS: u32 =
-    (SIX_WORD_PREAMBLE_LEN - FOUR_WORD_PREAMBLE_LEN) as u32 * 8;
+    (EXTENDED_PREAMBLE_LEN - BASE_PREAMBLE_LEN) as u32 * BITS_PER_OCTET;
 
 // `Pc` (burst_info) bit layout, 16-bit mode column of Table 7 (§7.2.4):
 // bits 0-4 = data_type, 5-6 = data_mode, 7 = error_flag, 8-12 =
@@ -267,9 +292,9 @@ impl BurstPreamble {
     #[must_use]
     pub fn wire_len(&self) -> usize {
         if self.extended.is_some() {
-            SIX_WORD_PREAMBLE_LEN
+            EXTENDED_PREAMBLE_LEN
         } else {
-            FOUR_WORD_PREAMBLE_LEN
+            BASE_PREAMBLE_LEN
         }
     }
 
@@ -358,7 +383,8 @@ impl<'a> Burst<'a> {
         } else {
             0
         };
-        let payload_bits = (payload.len() as u64) * 8 + u64::from(extended_offset_bits);
+        let payload_bits =
+            (payload.len() as u64) * u64::from(BITS_PER_OCTET) + u64::from(extended_offset_bits);
         if payload_bits > u64::from(MAX_LENGTH_CODE_BITS) {
             return Err(Error::PayloadTooLarge {
                 payload_bits: payload_bits as u32,
@@ -387,8 +413,8 @@ impl<'a> Parse<'a> for Burst<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, FOUR_WORD_PREAMBLE_LEN, "burst_preamble (Pa-Pd)")?;
-        let pa = u16::from_le_bytes([bytes[0], bytes[1]]);
+        need_in(bytes, BASE_PREAMBLE_LEN, "burst_preamble (Pa-Pd)")?;
+        let pa = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, 0)?);
         if pa != SYNC_WORD_PA {
             return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
                 what: "Pa",
@@ -396,7 +422,7 @@ impl<'a> Parse<'a> for Burst<'a> {
                 found: u32::from(pa),
             }));
         }
-        let pb = u16::from_le_bytes([bytes[2], bytes[3]]);
+        let pb = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, PB_WORD_OFFSET)?);
         if pb != SYNC_WORD_PB {
             return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
                 what: "Pb",
@@ -404,32 +430,32 @@ impl<'a> Parse<'a> for Burst<'a> {
                 found: u32::from(pb),
             }));
         }
-        let pc = u16::from_le_bytes([bytes[4], bytes[5]]);
+        let pc = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, PC_WORD_OFFSET)?);
         let (data_type, data_mode, error_flag, data_type_dependent, data_stream_number) =
             BurstPreamble::unpack_pc(pc);
         if data_mode != DataMode::Mode16 {
             return Err(Error::UnsupportedDataMode(data_mode));
         }
-        let length_code = u16::from_le_bytes([bytes[6], bytes[7]]);
+        let length_code = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, LENGTH_CODE_OFFSET)?);
 
         let is_extended = data_type == EXTENDED_DATA_TYPE_MARKER;
         let (extended, preamble_len) = if is_extended {
             need_in(
                 bytes,
-                SIX_WORD_PREAMBLE_LEN,
+                EXTENDED_PREAMBLE_LEN,
                 "burst_preamble (Pa-Pf, six-word form)",
             )?;
-            let pe = u16::from_le_bytes([bytes[8], bytes[9]]);
-            let pf = u16::from_le_bytes([bytes[10], bytes[11]]);
+            let pe = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, PE_WORD_OFFSET)?);
+            let pf = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, PF_WORD_OFFSET)?);
             (
                 Some(ExtendedPreamble {
                     extended_data_type: pe,
                     reserved_pf: pf,
                 }),
-                SIX_WORD_PREAMBLE_LEN,
+                EXTENDED_PREAMBLE_LEN,
             )
         } else {
-            (None, FOUR_WORD_PREAMBLE_LEN)
+            (None, BASE_PREAMBLE_LEN)
         };
 
         let extended_offset_bits = if is_extended {
@@ -444,7 +470,7 @@ impl<'a> Parse<'a> for Burst<'a> {
                 value: u64::from(length_code),
                 reason: "shorter than the six-word preamble's own 32 extended-preamble bits",
             }))?;
-        let payload_len = payload_bits.div_ceil(8) as usize;
+        let payload_len = payload_bits.div_ceil(BITS_PER_OCTET) as usize;
 
         let total_len = preamble_len + payload_len;
         need_in(bytes, total_len, "burst_payload")?;
@@ -488,7 +514,7 @@ impl Serialize for Burst<'_> {
                 value: u64::from(self.preamble.length_code),
                 reason: "shorter than the six-word preamble's own 32 extended-preamble bits",
             }))?;
-        let expected_payload_len = payload_bits.div_ceil(8) as usize;
+        let expected_payload_len = payload_bits.div_ceil(BITS_PER_OCTET) as usize;
         if self.payload.len() != expected_payload_len {
             return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "length_code",
@@ -504,9 +530,9 @@ impl Serialize for Burst<'_> {
         let preamble_len = if let Some(ext) = self.preamble.extended {
             buf[8..10].copy_from_slice(&ext.extended_data_type.to_le_bytes());
             buf[10..12].copy_from_slice(&ext.reserved_pf.to_le_bytes());
-            SIX_WORD_PREAMBLE_LEN
+            EXTENDED_PREAMBLE_LEN
         } else {
-            FOUR_WORD_PREAMBLE_LEN
+            BASE_PREAMBLE_LEN
         };
         buf[preamble_len..preamble_len + self.payload.len()].copy_from_slice(self.payload);
 

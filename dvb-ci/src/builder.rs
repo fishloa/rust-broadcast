@@ -45,10 +45,14 @@ struct BuiltStream {
     ca_descriptors: Vec<u8>,
 }
 
+/// Bytes of `CA_system_id` (ISO/IEC 13818-1 §2.6.16).
+const CA_SYSTEM_ID_LEN: usize = core::mem::size_of::<u16>();
+
 /// The `CA_system_id` is the first two bytes of a `CA_descriptor` body
 /// (ISO/IEC 13818-1 §2.6.16), big-endian.
 fn ca_system_id(body: &[u8]) -> Option<u16> {
-    body.first_chunk::<2>().map(|b| u16::from_be_bytes(*b))
+    body.first_chunk::<CA_SYSTEM_ID_LEN>()
+        .map(|b| u16::from_be_bytes(*b))
 }
 
 /// Filter a descriptor loop to its `CA_descriptor()` entries (tag `0x09`),

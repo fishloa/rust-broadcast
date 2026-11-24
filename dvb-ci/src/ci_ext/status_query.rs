@@ -43,8 +43,24 @@ pub mod tag {
 /// Width of the `StatusItem` / `StartStatusItem` / `NextStatusItem` field (32 bits).
 const STATUS_ITEM_LEN: usize = 4;
 
+/// Bytes of a port entry's `port_id` + length prefix.
+const PORT_PREFIX_LEN: usize = 2;
+/// Bytes of `service_id` + `number_components` in a `ViewedService`.
+const VIEWED_SERVICE_PREFIX_LEN: usize = 3;
+/// Offsets within a `ViewedService`.
+const SERVICE_ID_OFFSET: usize = 0;
+const NUMBER_COMPONENTS_OFFSET: usize = 2;
+/// Mask of the 12-bit `length_outputs`.
+const LENGTH_OUTPUTS_MASK: usize = 0x0FFF;
+/// Shift placing the 12-bit `length_outputs` beneath its reserved nibble.
+const LENGTH_OUTPUTS_SHIFT: u32 = 8;
+/// Mask of the reserved nibble above `length_outputs`.
+const LENGTH_OUTPUTS_HIGH_MASK: usize = 0x0F;
+/// Mask of one byte of `length_outputs`.
+const LENGTH_OUTPUTS_LOW_MASK: usize = 0xFF;
+
 fn read_u32(b: &[u8]) -> u32 {
-    u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+    u32::from_be_bytes([b[0], b[1], b[PORT_PREFIX_LEN], b[PORT_PREFIX_LEN + 1]])
 }
 
 /// `StatusItem` (Table 36) — the host status item a query refers to.
@@ -329,30 +345,35 @@ impl<'a> Parse<'a> for SelectionInformation<'a> {
         let mut ports = Vec::new();
         while !rest.is_empty() {
             // in_port_id(1) + length_in_signal_desc(1).
-            need_in(rest, 2, "SelectionInformation.in_port")?;
+            need_in(rest, PORT_PREFIX_LEN, "SelectionInformation.in_port")?;
             let in_port_id = rest[0];
             let in_len = rest[1] as usize;
-            let after_in = 2 + in_len;
-            need_in(rest, after_in + 2, "SelectionInformation.in_signal_desc")?;
-            let in_signal_desc = &rest[2..after_in];
+            let after_in = PORT_PREFIX_LEN + in_len;
+            need_in(
+                rest,
+                after_in + PORT_PREFIX_LEN,
+                "SelectionInformation.in_signal_desc",
+            )?;
+            let in_signal_desc = &rest[PORT_PREFIX_LEN..after_in];
             // reserved(4) + length_outputs(12) packed into 2 bytes.
-            let length_outputs =
-                (((rest[after_in] & 0x0F) as usize) << 8) | rest[after_in + 1] as usize;
-            let outputs_start = after_in + 2;
+            let length_outputs = ((rest[after_in] & LENGTH_OUTPUTS_HIGH_MASK as u8) as usize)
+                << LENGTH_OUTPUTS_SHIFT
+                | rest[after_in + 1] as usize;
+            let outputs_start = after_in + PORT_PREFIX_LEN;
             let outputs_end = outputs_start + length_outputs;
             need_in(rest, outputs_end, "SelectionInformation.outputs")?;
             let mut out_rest = &rest[outputs_start..outputs_end];
             let mut outputs = Vec::new();
             while !out_rest.is_empty() {
                 // out_port_id(1) + length_out_signal_desc(1).
-                need_in(out_rest, 2, "SelectionInformation.out_port")?;
+                need_in(out_rest, PORT_PREFIX_LEN, "SelectionInformation.out_port")?;
                 let out_port_id = out_rest[0];
                 let out_len = out_rest[1] as usize;
-                let out_end = 2 + out_len;
+                let out_end = PORT_PREFIX_LEN + out_len;
                 need_in(out_rest, out_end, "SelectionInformation.out_signal_desc")?;
                 outputs.push(OutputSignal {
                     out_port_id,
-                    out_signal_desc: &out_rest[2..out_end],
+                    out_signal_desc: &out_rest[PORT_PREFIX_LEN..out_end],
                 });
                 out_rest = &out_rest[out_end..];
             }
@@ -371,9 +392,9 @@ impl Serialize for SelectionInformation<'_> {
     fn serialized_len(&self) -> usize {
         let mut n = SELECTION_TIME_LEN;
         for p in &self.ports {
-            n += 2 + p.in_signal_desc.len() + 2;
+            n += PORT_PREFIX_LEN + p.in_signal_desc.len() + PORT_PREFIX_LEN;
             for o in &p.outputs {
-                n += 2 + o.out_signal_desc.len();
+                n += PORT_PREFIX_LEN + o.out_signal_desc.len();
             }
         }
         n
@@ -399,24 +420,24 @@ impl Serialize for SelectionInformation<'_> {
             }
             buf[pos] = p.in_port_id;
             buf[pos + 1] = p.in_signal_desc.len() as u8;
-            pos += 2;
+            pos += PORT_PREFIX_LEN;
             buf[pos..pos + p.in_signal_desc.len()].copy_from_slice(p.in_signal_desc);
             pos += p.in_signal_desc.len();
             // length_outputs = total bytes of the output entries.
             let mut length_outputs = 0usize;
             for o in &p.outputs {
-                length_outputs += 2 + o.out_signal_desc.len();
+                length_outputs += PORT_PREFIX_LEN + o.out_signal_desc.len();
             }
-            if length_outputs > 0x0FFF {
+            if length_outputs > LENGTH_OUTPUTS_MASK {
                 return Err(Error::InvalidObject {
                     what: "SelectionInformation",
                     reason: "length_outputs exceeds 12-bit maximum",
                 });
             }
             // reserved(4) = 0, length_outputs(12).
-            buf[pos] = ((length_outputs >> 8) & 0x0F) as u8;
-            buf[pos + 1] = (length_outputs & 0xFF) as u8;
-            pos += 2;
+            buf[pos] = ((length_outputs >> LENGTH_OUTPUTS_SHIFT) & LENGTH_OUTPUTS_HIGH_MASK) as u8;
+            buf[pos + 1] = (length_outputs & LENGTH_OUTPUTS_LOW_MASK) as u8;
+            pos += PORT_PREFIX_LEN;
             for o in &p.outputs {
                 if o.out_signal_desc.len() > u8::MAX as usize {
                     return Err(Error::InvalidObject {
@@ -426,7 +447,7 @@ impl Serialize for SelectionInformation<'_> {
                 }
                 buf[pos] = o.out_port_id;
                 buf[pos + 1] = o.out_signal_desc.len() as u8;
-                pos += 2;
+                pos += PORT_PREFIX_LEN;
                 buf[pos..pos + o.out_signal_desc.len()].copy_from_slice(o.out_signal_desc);
                 pos += o.out_signal_desc.len();
             }
@@ -475,22 +496,22 @@ impl<'a> Parse<'a> for PortProfile<'a> {
         let mut ports = Vec::new();
         while !rest.is_empty() {
             // in_port_id(1) + length_in_port_desc(1).
-            need_in(rest, 2, "PortProfile.in_port")?;
+            need_in(rest, PORT_PREFIX_LEN, "PortProfile.in_port")?;
             let in_port_id = rest[0];
             let in_len = rest[1] as usize;
-            let after_in = 2 + in_len;
+            let after_in = PORT_PREFIX_LEN + in_len;
             // + out_port_id(1) + length_out_port_desc(1).
-            need_in(rest, after_in + 2, "PortProfile.out_port")?;
-            let in_port_desc = &rest[2..after_in];
+            need_in(rest, after_in + PORT_PREFIX_LEN, "PortProfile.out_port")?;
+            let in_port_desc = &rest[PORT_PREFIX_LEN..after_in];
             let out_port_id = rest[after_in];
             let out_len = rest[after_in + 1] as usize;
-            let after_out = after_in + 2 + out_len;
+            let after_out = after_in + PORT_PREFIX_LEN + out_len;
             need_in(rest, after_out, "PortProfile.out_port_desc")?;
             ports.push(PortDescription {
                 in_port_id,
                 in_port_desc,
                 out_port_id,
-                out_port_desc: &rest[after_in + 2..after_out],
+                out_port_desc: &rest[after_in + PORT_PREFIX_LEN..after_out],
             });
             rest = &rest[after_out..];
         }
@@ -505,7 +526,7 @@ impl Serialize for PortProfile<'_> {
     fn serialized_len(&self) -> usize {
         let mut n = 1 + self.receiver_identification.len();
         for p in &self.ports {
-            n += 2 + p.in_port_desc.len() + 2 + p.out_port_desc.len();
+            n += PORT_PREFIX_LEN + p.in_port_desc.len() + PORT_PREFIX_LEN + p.out_port_desc.len();
         }
         n
     }
@@ -533,12 +554,12 @@ impl Serialize for PortProfile<'_> {
             }
             buf[pos] = p.in_port_id;
             buf[pos + 1] = p.in_port_desc.len() as u8;
-            pos += 2;
+            pos += PORT_PREFIX_LEN;
             buf[pos..pos + p.in_port_desc.len()].copy_from_slice(p.in_port_desc);
             pos += p.in_port_desc.len();
             buf[pos] = p.out_port_id;
             buf[pos + 1] = p.out_port_desc.len() as u8;
-            pos += 2;
+            pos += PORT_PREFIX_LEN;
             buf[pos..pos + p.out_port_desc.len()].copy_from_slice(p.out_port_desc);
             pos += p.out_port_desc.len();
         }
@@ -560,20 +581,24 @@ impl<'a> Parse<'a> for ViewedService {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         // service_id(2) + number_components(1).
-        need_in(body, 3, "ViewedService")?;
-        let service_id = u16::from_be_bytes([body[0], body[1]]);
-        let n = body[2] as usize;
-        need_in(body, 3 + n, "ViewedService.component_tags")?;
+        need_in(body, VIEWED_SERVICE_PREFIX_LEN, "ViewedService")?;
+        let service_id = u16::from_be_bytes([body[SERVICE_ID_OFFSET], body[SERVICE_ID_OFFSET + 1]]);
+        let n = body[NUMBER_COMPONENTS_OFFSET] as usize;
+        need_in(
+            body,
+            VIEWED_SERVICE_PREFIX_LEN + n,
+            "ViewedService.component_tags",
+        )?;
         Ok(Self {
             service_id,
-            component_tags: body[3..3 + n].to_vec(),
+            component_tags: body[VIEWED_SERVICE_PREFIX_LEN..VIEWED_SERVICE_PREFIX_LEN + n].to_vec(),
         })
     }
 }
 impl Serialize for ViewedService {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        3 + self.component_tags.len()
+        VIEWED_SERVICE_PREFIX_LEN + self.component_tags.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
@@ -584,9 +609,11 @@ impl Serialize for ViewedService {
                 reason: "more than 255 component tags",
             });
         }
-        buf[0..2].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[2] = self.component_tags.len() as u8;
-        buf[3..3 + self.component_tags.len()].copy_from_slice(&self.component_tags);
+        buf[SERVICE_ID_OFFSET..NUMBER_COMPONENTS_OFFSET]
+            .copy_from_slice(&self.service_id.to_be_bytes());
+        buf[NUMBER_COMPONENTS_OFFSET] = self.component_tags.len() as u8;
+        buf[VIEWED_SERVICE_PREFIX_LEN..VIEWED_SERVICE_PREFIX_LEN + self.component_tags.len()]
+            .copy_from_slice(&self.component_tags);
         Ok(total)
     }
 }

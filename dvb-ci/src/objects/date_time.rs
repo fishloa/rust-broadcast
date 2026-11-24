@@ -79,6 +79,11 @@ impl Serialize for DateTimeEnq {
     }
 }
 
+/// Bytes of `local_time_offset` (EN 50221 §8.5.2).
+const LOCAL_OFFSET_LEN: usize = core::mem::size_of::<i16>();
+/// Body length of a `date_time()` carrying `local_time_offset`.
+const LOCAL_OFFSET_BODY_LEN: usize = UTC_TIME_LEN + LOCAL_OFFSET_LEN;
+
 impl ApduDef<'_> for DateTimeEnq {
     const TAG: ApduTag = tag::DATE_TIME_ENQ;
     const NAME: &'static str = "DATE_TIME_ENQ";
@@ -89,7 +94,7 @@ impl<'a> Parse<'a> for DateTime {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::DATE_TIME, "date_time")?;
         let utc_time: [u8; UTC_TIME_LEN] = match (body.len(), body.first_chunk::<UTC_TIME_LEN>()) {
-            (UTC_TIME_LEN | 7, Some(utc)) => *utc,
+            (UTC_TIME_LEN | LOCAL_OFFSET_BODY_LEN, Some(utc)) => *utc,
             _ => {
                 return Err(Error::InvalidObject {
                     what: "date_time",
@@ -97,8 +102,11 @@ impl<'a> Parse<'a> for DateTime {
                 });
             }
         };
-        let local_offset = if body.len() == 7 {
-            Some(i16::from_be_bytes([body[5], body[6]]))
+        let local_offset = if body.len() == LOCAL_OFFSET_BODY_LEN {
+            Some(i16::from_be_bytes([
+                body[UTC_TIME_LEN],
+                body[UTC_TIME_LEN + 1],
+            ]))
         } else {
             None
         };
@@ -113,17 +121,25 @@ impl<'a> Parse<'a> for DateTime {
 impl Serialize for DateTime {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let body = if self.local_offset.is_some() { 7 } else { 5 };
+        let body = if self.local_offset.is_some() {
+            LOCAL_OFFSET_BODY_LEN
+        } else {
+            UTC_TIME_LEN
+        };
         super::apdu_len(body, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let body_len = if self.local_offset.is_some() { 7 } else { 5 };
+        let body_len = if self.local_offset.is_some() {
+            LOCAL_OFFSET_BODY_LEN
+        } else {
+            UTC_TIME_LEN
+        };
         let mut pos = super::write_apdu_header(tag::DATE_TIME, body_len, self.length_form, buf)?;
         buf[pos..pos + UTC_TIME_LEN].copy_from_slice(&self.utc_time);
         pos += UTC_TIME_LEN;
         if let Some(off) = self.local_offset {
-            buf[pos..pos + 2].copy_from_slice(&off.to_be_bytes());
-            pos += 2;
+            buf[pos..pos + LOCAL_OFFSET_LEN].copy_from_slice(&off.to_be_bytes());
+            pos += LOCAL_OFFSET_LEN;
         }
         Ok(pos)
     }

@@ -28,6 +28,22 @@ pub const MAX_LENGTH_OCTETS: u8 = 4;
 /// up to 65535").
 pub const MAX_LENGTH: usize = 0xFFFF;
 
+/// Mask of the low seven bits of a `length_field` byte: the short-form length,
+/// or the `length_field_size` in the long form.
+const LENGTH_LOW_BITS_MASK: u8 = 0x7F;
+/// Largest length the short form can carry.
+const SHORT_FORM_MAX: usize = 0x7F;
+/// Largest length one long-form octet can carry.
+const SINGLE_OCTET_MAX: usize = 0xFF;
+/// Bits in one length octet.
+const OCTET_BITS: u32 = 8;
+/// Offset of the first length octet following the size-indicator byte.
+const LONG_FORM_FIRST_OCTET: usize = 1;
+/// Length octets in the minimal long form of a length above [`SINGLE_OCTET_MAX`].
+const NARROW_LENGTH_OCTETS: usize = 1;
+/// Length octets in the minimal long form of a 16-bit length.
+const WIDE_LENGTH_OCTETS: usize = 2;
+
 /// How a `length_field` is — or is to be — coded on the wire.
 ///
 /// A CAM may code a length in a longer form than necessary (`82 00 09` for the
@@ -92,10 +108,14 @@ pub fn decode_form(bytes: &[u8]) -> Result<(usize, usize, LengthForm)> {
         .ok_or(Error::InvalidLength("empty length_field"))?;
     if first & SIZE_INDICATOR_MASK == 0 {
         // Short form: 7-bit length in this byte.
-        return Ok(((first & 0x7F) as usize, 1, LengthForm::Minimal));
+        return Ok((
+            usize::from(first & LENGTH_LOW_BITS_MASK),
+            1,
+            LengthForm::Minimal,
+        ));
     }
     // Long form: low 7 bits = number of subsequent length bytes.
-    let n = (first & 0x7F) as usize;
+    let n = usize::from(first & LENGTH_LOW_BITS_MASK);
     if n == 0 {
         // size_indicator==1 with zero following bytes is the indefinite form,
         // which the spec forbids.
@@ -106,10 +126,10 @@ pub fn decode_form(bytes: &[u8]) -> Result<(usize, usize, LengthForm)> {
             "length_field_size exceeds 4 length octets",
         ));
     }
-    need_in(bytes, 1 + n, "length_field (long form)")?;
+    need_in(bytes, LONG_FORM_FIRST_OCTET + n, "length_field (long form)")?;
     let mut value = 0usize;
-    for &b in &bytes[1..1 + n] {
-        value = (value << 8) | b as usize;
+    for &b in &bytes[LONG_FORM_FIRST_OCTET..LONG_FORM_FIRST_OCTET + n] {
+        value = (value << OCTET_BITS) | usize::from(b);
     }
     if value > MAX_LENGTH {
         return Err(Error::LengthTooLarge(value));
@@ -117,17 +137,21 @@ pub fn decode_form(bytes: &[u8]) -> Result<(usize, usize, LengthForm)> {
     // Record the coding only when it is NOT the minimal one, so a parsed object
     // compares equal to one built with the default form whenever the wire used
     // the shortest legal coding.
-    let form = if n == minimal_octets(value) && value >= 0x80 {
+    let form = if n == minimal_octets(value) && value > SHORT_FORM_MAX {
         LengthForm::Minimal
     } else {
         LengthForm::Long { octets: n as u8 }
     };
-    Ok((value, 1 + n, form))
+    Ok((value, LONG_FORM_FIRST_OCTET + n, form))
 }
 
 /// Length octets of the minimal long form of `value` (`value >= 0x80`).
 const fn minimal_octets(value: usize) -> usize {
-    if value <= 0xFF { 1 } else { 2 }
+    if value <= SINGLE_OCTET_MAX {
+        NARROW_LENGTH_OCTETS
+    } else {
+        WIDE_LENGTH_OCTETS
+    }
 }
 
 /// Number of bytes [`encode_into`] will write for `value`.
@@ -181,7 +205,7 @@ pub fn encode_with(value: usize, form: LengthForm, buf: &mut [u8]) -> Result<usi
         return Err(Error::InvalidLength("length_field_size must be 1..=4"));
     }
     let n = octets as usize;
-    if n < 4 && value >> (8 * n) != 0 {
+    if n < MAX_LENGTH_OCTETS as usize && value >> (OCTET_BITS as usize * n) != 0 {
         return Err(Error::InvalidLength(
             "length value does not fit the recorded length_field_size",
         ));
@@ -191,16 +215,16 @@ pub fn encode_with(value: usize, form: LengthForm, buf: &mut [u8]) -> Result<usi
     // (`81 80` for 128, `82 01 00` for 256) is the same bytes as `Minimal`, so
     // it would parse back as `Minimal` and `serialize -> parse` would change
     // the value; refuse the alias instead of writing it.
-    if value >= 0x80 && n == minimal_octets(value) {
+    if value > SHORT_FORM_MAX && n == minimal_octets(value) {
         return Err(Error::InvalidLength(
             "Long form with the minimal number of octets is LengthForm::Minimal",
         ));
     }
-    let need = 1 + n;
+    let need = LONG_FORM_FIRST_OCTET + n;
     need_out(buf, need)?;
     buf[0] = SIZE_INDICATOR_MASK | octets;
-    for (i, slot) in buf[1..need].iter_mut().enumerate() {
-        let shift = 8 * (n - 1 - i);
+    for (i, slot) in buf[LONG_FORM_FIRST_OCTET..need].iter_mut().enumerate() {
+        let shift = OCTET_BITS as usize * (n - 1 - i);
         *slot = (value >> shift) as u8;
     }
     Ok(need)
@@ -212,19 +236,19 @@ pub fn encode_with(value: usize, form: LengthForm, buf: &mut [u8]) -> Result<usi
 /// above 65535 are rejected ([`Error::LengthTooLarge`]) per the spec cap.
 pub fn encode_into(value: usize, buf: &mut [u8]) -> Result<usize> {
     let need = encoded_len(value);
-    if value > 0xFFFF {
+    if value > MAX_LENGTH {
         return Err(Error::LengthTooLarge(value));
     }
     need_out(buf, need)?;
-    if value < 0x80 {
+    if value <= SHORT_FORM_MAX {
         buf[0] = value as u8;
-    } else if value <= 0xFF {
-        buf[0] = SIZE_INDICATOR_MASK | 1;
-        buf[1] = value as u8;
+    } else if value <= SINGLE_OCTET_MAX {
+        buf[0] = SIZE_INDICATOR_MASK | NARROW_LENGTH_OCTETS as u8;
+        buf[LONG_FORM_FIRST_OCTET] = value as u8;
     } else {
-        buf[0] = SIZE_INDICATOR_MASK | 2;
-        buf[1] = (value >> 8) as u8;
-        buf[2] = value as u8;
+        buf[0] = SIZE_INDICATOR_MASK | WIDE_LENGTH_OCTETS as u8;
+        buf[LONG_FORM_FIRST_OCTET] = (value >> OCTET_BITS) as u8;
+        buf[LONG_FORM_FIRST_OCTET + 1] = value as u8;
     }
     Ok(need)
 }

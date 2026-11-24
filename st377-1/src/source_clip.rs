@@ -18,6 +18,7 @@ use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed,
     get_required_fixed,
 };
+use crate::types::{PACKAGE_ID_LEN, U32_LEN, U64_LEN, UL_LEN};
 use crate::types::{PackageId, UlBytes};
 
 // ── Structural Component base tags (B.8) — shared with sequence.rs ──────
@@ -84,27 +85,27 @@ impl<'a> Parse<'a> for SourceClip {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Source Clip")?;
-        let data_definition = UlBytes(get_required_fixed::<16>(
+        let data_definition = UlBytes(get_required_fixed::<UL_LEN>(
             items,
             TAG_DATA_DEFINITION,
             "Data Definition",
             "Source Clip",
         )?);
         let duration =
-            get_optional_fixed::<8>(items, TAG_DURATION, "Duration")?.map(i64::from_be_bytes);
-        let start_position = i64::from_be_bytes(get_required_fixed::<8>(
+            get_optional_fixed::<U64_LEN>(items, TAG_DURATION, "Duration")?.map(i64::from_be_bytes);
+        let start_position = i64::from_be_bytes(get_required_fixed::<U64_LEN>(
             items,
             TAG_START_POSITION,
             "Start Position",
             "Source Clip",
         )?);
-        let source_package_id = PackageId(get_required_fixed::<32>(
+        let source_package_id = PackageId(get_required_fixed::<PACKAGE_ID_LEN>(
             items,
             TAG_SOURCE_PACKAGE_ID,
             "Source Package ID",
             "Source Clip",
         )?);
-        let source_track_id = u32::from_be_bytes(get_required_fixed::<4>(
+        let source_track_id = u32::from_be_bytes(get_required_fixed::<U32_LEN>(
             items,
             TAG_SOURCE_TRACK_ID,
             "Source Track ID",

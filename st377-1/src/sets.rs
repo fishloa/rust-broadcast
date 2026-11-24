@@ -16,6 +16,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::local_set::{ItemLengthMode, LocalSet, LocalSetItem, StructuralSetKind};
+use crate::types::UL_LEN;
 use crate::types::{StrongRef, UidBatch, UlBytes, serialize_uid_batch_owned};
 
 /// The two Interchange Object (Annex A.1) properties with a static local
@@ -43,16 +44,16 @@ impl InterchangeObjectFields {
     /// three tags it doesn't recognize is not this function's job — the
     /// caller removes the tags it consumes from its own dark-item pass.
     pub fn decode(items: &[LocalSetItem<'_>], set_name: &'static str) -> Result<Self> {
-        let instance_uid = UlBytes(get_required_fixed::<16>(
+        let instance_uid = UlBytes(get_required_fixed::<UL_LEN>(
             items,
             TAG_INSTANCE_UID,
             "Instance UID",
             set_name,
         )?);
         let generation_uid =
-            get_optional_fixed::<16>(items, TAG_GENERATION_UID, "Generation UID")?.map(UlBytes);
+            get_optional_fixed::<UL_LEN>(items, TAG_GENERATION_UID, "Generation UID")?.map(UlBytes);
         let object_class =
-            get_optional_fixed::<16>(items, TAG_OBJECT_CLASS, "Object Class")?.map(UlBytes);
+            get_optional_fixed::<UL_LEN>(items, TAG_OBJECT_CLASS, "Object Class")?.map(UlBytes);
         Ok(Self {
             instance_uid,
             generation_uid,
@@ -204,7 +205,7 @@ pub fn strong_ref_batch_bytes(batch: Option<&UidBatch>, items: &[StrongRef]) -> 
 }
 
 /// Largest value a two-byte local length can carry (§9.3): 65535.
-const TWO_BYTE_LOCAL_LENGTH_MAX: usize = 0xFFFF;
+const LOCAL_LENGTH_FIELD_MAX: usize = 0xFFFF;
 
 /// Build the final [`LocalSet`]-shaped byte layout for a typed Set: choose
 /// [`ItemLengthMode::TwoByte`] unless any item's value exceeds 65535 bytes
@@ -224,7 +225,7 @@ pub fn finish_owned_set(
     }
     let mode = if owned_items
         .iter()
-        .any(|i| i.value.len() > TWO_BYTE_LOCAL_LENGTH_MAX)
+        .any(|i| i.value.len() > LOCAL_LENGTH_FIELD_MAX)
     {
         ItemLengthMode::Ber
     } else {

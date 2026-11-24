@@ -460,6 +460,10 @@ const CA_PID_BODY_OFFSET: usize = 2;
 const CA_PID_FIELD_LEN: usize = 2;
 /// Mask for the `CA_PID`'s upper byte (top 3 bits are reserved, set to `1`).
 const CA_PID_HIGH_MASK: u8 = 0x1F;
+/// Byte offset of the `CA_PID`'s lower byte within the field.
+const CA_PID_LOW_BYTE_OFFSET: usize = 1;
+/// Shift placing the `CA_PID` high byte above the low byte.
+const CA_PID_HIGH_SHIFT: u32 = 8;
 
 /// The `CA_PID` carried by one `CA_descriptor` body (tag + length already
 /// stripped by [`DescriptorLoop::raw_tags`]), if the body is long enough to
@@ -467,7 +471,8 @@ const CA_PID_HIGH_MASK: u8 = 0x1F;
 fn ca_pid_of(body: &[u8]) -> Option<Pid> {
     let field = body.get(CA_PID_BODY_OFFSET..CA_PID_BODY_OFFSET + CA_PID_FIELD_LEN)?;
     Some(Pid::from_wire_masked(
-        (u16::from(field[0] & CA_PID_HIGH_MASK) << 8) | u16::from(field[1]),
+        (u16::from(field[0] & CA_PID_HIGH_MASK) << CA_PID_HIGH_SHIFT)
+            | u16::from(field[CA_PID_LOW_BYTE_OFFSET]),
     ))
 }
 

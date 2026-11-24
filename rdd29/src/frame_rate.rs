@@ -30,6 +30,13 @@ pub enum FrameRate {
     Reserved(u8),
 }
 
+/// `NumPanSubBlocks` for 24/25/30-frame rates (RDD 29 §5.4.1 Table 7).
+const PAN_SUB_BLOCKS_24_30: u8 = 8;
+/// `NumPanSubBlocks` for 48/50/60-frame rates (RDD 29 §5.4.1 Table 7).
+const PAN_SUB_BLOCKS_48_60: u8 = 4;
+/// `NumPanSubBlocks` for 96/100/120-frame rates (RDD 29 §5.4.1 Table 7).
+const PAN_SUB_BLOCKS_96_120: u8 = 2;
+
 impl FrameRate {
     /// The spec token for this value ("reserved" for the reserved arm) —
     /// see the workspace's #204 label convention.
@@ -91,9 +98,9 @@ impl FrameRate {
     /// determined.
     pub fn num_pan_sub_blocks(self) -> Result<u8> {
         match self {
-            Self::Fps24 | Self::Fps25 | Self::Fps30 => Ok(8),
-            Self::Fps48 | Self::Fps50 | Self::Fps60 => Ok(4),
-            Self::Fps96 | Self::Fps100 | Self::Fps120 => Ok(2),
+            Self::Fps24 | Self::Fps25 | Self::Fps30 => Ok(PAN_SUB_BLOCKS_24_30),
+            Self::Fps48 | Self::Fps50 | Self::Fps60 => Ok(PAN_SUB_BLOCKS_48_60),
+            Self::Fps96 | Self::Fps100 | Self::Fps120 => Ok(PAN_SUB_BLOCKS_96_120),
             Self::Reserved(v) => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "FrameRate",
                 value: u64::from(v),

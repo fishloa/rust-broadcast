@@ -44,3 +44,27 @@ pub use rtp::{
     ANC_RTP_DEFAULT_CLOCK_RATE, ANC_RTP_MEDIA_TYPE, ANC_RTP_PAYLOAD_HEADER_LEN, AncRtpPayload,
     ExtendedSequenceNumber, FieldSense, RtpAncPacket,
 };
+
+/// Bits per byte, for bit<->byte length conversions.
+#[cfg(any(feature = "ts", feature = "rtp"))]
+pub(crate) const BITS_PER_BYTE: usize = u8::BITS as usize;
+
+/// Byte width of a 16-bit field.
+#[cfg(feature = "rtp")]
+pub(crate) const U16_LEN: usize = core::mem::size_of::<u16>();
+
+/// Copy `N` big-endian bytes at `offset` into an array.
+#[cfg(feature = "rtp")]
+pub(crate) fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
+    bytes
+        .get(offset..offset + N)
+        .and_then(|s| s.first_chunk::<N>())
+        .copied()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: offset + N,
+                have: bytes.len(),
+                what: "fixed-width big-endian field",
+            },
+        ))
+}
