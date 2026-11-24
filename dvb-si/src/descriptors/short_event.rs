@@ -4,6 +4,7 @@
 //! single language.
 
 use super::descriptor_body;
+use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
@@ -13,7 +14,6 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for short_event_descriptor.
 pub const TAG: u8 = 0x4D;
 const HEADER_LEN: usize = 2;
-const LANG_LEN: usize = 3;
 /// Smallest body: language code plus the two 1-byte length prefixes.
 const MIN_BODY_LEN: usize = LANG_LEN + 2;
 /// Offset of `event_name_length` in the body.

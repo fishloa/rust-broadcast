@@ -45,7 +45,8 @@ const EMPTY_WITH_COUNT_FORM: [u8; COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD] =
 const DESC_HEADER_LEN: usize = 2;
 const SPECIFIER_TYPE_OFFSET: usize = 0;
 const SPECIFIER_DATA_OFFSET: usize = 1;
-const SPECIFIER_DATA_LEN: usize = 3;
+/// Width of the `specifier_data` field in a compatibility descriptor.
+pub const SPECIFIER_DATA_LEN: usize = 3;
 const MODEL_OFFSET: usize = SPECIFIER_DATA_OFFSET + SPECIFIER_DATA_LEN;
 const VERSION_OFFSET: usize = MODEL_OFFSET + core::mem::size_of::<u16>();
 const SUB_DESC_COUNT_OFFSET: usize = VERSION_OFFSET + core::mem::size_of::<u16>();

@@ -50,7 +50,7 @@ use alloc::borrow::Cow;
 use alloc::string::String;
 
 /// A 3-byte ISO 639-2 / ISO 3166 code.
-const LANG_CODE_LEN: usize = 3;
+pub const LANG_CODE_LEN: usize = 3;
 /// Table A.3: first byte at or above this is default-Latin text with no selector.
 const DEFAULT_TABLE_MIN: u8 = 0x20;
 /// Table A.3 selector for the extended ISO 8859 form.

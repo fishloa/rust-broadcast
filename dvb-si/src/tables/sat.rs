@@ -60,18 +60,24 @@ const MAX_TYPED_SAT_TABLE_ID: u8 = SatTableId::PositionV3 as u8;
 
 /// Bit-field widths of the SAT layouts, named for the spec field each carries
 /// (ETSI EN 300 468 §5.2.11).
-const HEADER_RESERVED_BITS: u8 = 2;
+pub const HEADER_RESERVED_BITS: u8 = 2;
 const TIME_PLAN_MODE_BITS: u8 = 2;
 const POSITION_V3_FLAGS_BITS: u8 = 5;
-const POSITION_V3_RESERVED_BITS: u8 = 3;
+/// Width of the `reserved` field in the position-v3 layout.
+pub const POSITION_V3_RESERVED_BITS: u8 = 3;
 const INTERPOLATION_BITS: u8 = 3;
-const RESERVED_FIELD_BITS: u8 = 4;
+/// Width of a `reserved` field in the SAT layouts.
+pub const RESERVED_FIELD_BITS: u8 = 4;
 const ASSOCIATION_TYPE_BITS: u8 = 4;
 const OEM_VERSION_BITS: u8 = 4;
-const CELL_CENTRE_RESERVED_BITS: u8 = 5;
-const RESERVED_FUTURE_USE_BITS: u8 = 6;
-const TRAILING_RESERVED_BITS: u8 = 7;
-const HEADER_RESERVED_BYTE_BITS: u8 = 8;
+/// Width of the `reserved` field in the cell-centre layout.
+pub const CELL_CENTRE_RESERVED_BITS: u8 = 5;
+/// Width of a `reserved_future_use` field in the SAT layouts.
+pub const RESERVED_FUTURE_USE_BITS: u8 = 6;
+/// Width of a trailing `reserved` field in the SAT layouts.
+pub const TRAILING_RESERVED_BITS: u8 = 7;
+/// Width of the reserved section-header byte in a SAT section.
+pub const HEADER_RESERVED_BYTE_BITS: u8 = 8;
 const YEAR_BITS: u8 = 8;
 const EXTENSION_BITS: u8 = 9;
 const DAY_BITS: u8 = 9;
@@ -133,7 +139,8 @@ const EPHEMERIS_VECTOR_FIELDS: usize = 6;
 const EPHEMERIS_ACCEL_FIELDS: usize = 3;
 const COV_HEADER_BITS: usize =
     YEAR_BITS as usize + TRAILING_RESERVED_BITS as usize + DAY_BITS as usize + WORD_BITS as usize;
-const COVARIANCE_ELEMENTS: usize = 21;
+/// Number of covariance-matrix elements in the ephemeris block.
+pub const COVARIANCE_ELEMENTS: usize = 21;
 const COV_ELEMENTS_BITS: usize = COVARIANCE_ELEMENTS * WORD_BITS as usize;
 const COV_BITS: usize = COV_HEADER_BITS + COV_ELEMENTS_BITS;
 const PLAN_FIELDS_BITS: usize = RESERVED_FUTURE_USE_BITS as usize

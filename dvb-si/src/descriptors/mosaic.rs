@@ -73,17 +73,17 @@ const LINKAGE_SERVICE: u8 = 0x02;
 pub const GRID_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<GRID_RESERVED_BITS> =
     ReservedOnes::<GRID_RESERVED_BITS>::FILL;
 /// Width of the grid header `reserved_future_use` (1 bit).
-const GRID_RESERVED_BITS: u32 = 1;
+pub const GRID_RESERVED_BITS: u32 = 1;
 /// Spec default of the per-logical-cell `reserved_future_use`(7): all ones.
 pub const CELL_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<CELL_RESERVED_BITS> =
     ReservedOnes::<CELL_RESERVED_BITS>::FILL;
 /// Width of the per-logical-cell `reserved_future_use` (7 bits).
-const CELL_RESERVED_BITS: u32 = 7;
+pub const CELL_RESERVED_BITS: u32 = 7;
 /// Spec default of the per-elementary-cell `reserved_future_use`(2): all ones.
 pub const ELEMENTARY_CELL_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<ELEM_RESERVED_BITS> =
     ReservedOnes::<ELEM_RESERVED_BITS>::FILL;
 /// Width of the per-elementary-cell `reserved_future_use` (2 bits).
-const ELEM_RESERVED_BITS: u32 = 2;
+pub const ELEM_RESERVED_BITS: u32 = 2;
 
 /// Conditional linkage payload selected by `cell_linkage_info` (Table 75).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

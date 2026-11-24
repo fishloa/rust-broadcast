@@ -13,7 +13,7 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x28;
 const HEADER_LEN: usize = 2;
 /// Width of the `reserved` tail of body byte 3 (5 bits).
-const RESERVED_BITS: u32 = 5;
+pub const RESERVED_BITS: u32 = 5;
 /// Default of the 5-bit `reserved` tail of body byte 3 (H.222.0 Table 2-105):
 /// clause 2.1 "reserved" = `1` (all editions that carry the descriptor,
 /// 06/2012-08/2023, audit §4 row 8 / §5; the 2012 edition carved

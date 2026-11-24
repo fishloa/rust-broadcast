@@ -34,7 +34,7 @@ const LAUNCHABLE_COMPLETELY_FROM_CACHE: u8 = 0x40;
 const IS_LAUNCHABLE_WITH_OLDER_VERSION: u8 = 0x20;
 const RESERVED_FLAGS_MASK: u8 = 0x1F;
 /// Width of the `reserved_flags` field (5 bits).
-const RESERVED_FLAGS_BITS: u32 = 5;
+pub const RESERVED_FLAGS_BITS: u32 = 5;
 const RESERVED_BIT_AFTER_FLAGS: u8 = 0x80;
 /// Shift that places `reserved` at the top of the 32-bit version word.
 const RESERVED_BIT_AFTER_FLAGS_SHIFT: u32 = 24;

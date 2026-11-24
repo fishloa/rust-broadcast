@@ -22,10 +22,11 @@ pub struct VvcSubpicture {
 /// Spec default of the 5-bit `reserved_zero_future_use` before
 /// `processing_mode`: 0 (EN 300 468 Table 162a, V1.18.1-V1.20.1;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const VVC_SUBPICTURES_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_FUTURE_USE_BITS> =
-    ReservedZero::<RESERVED_FUTURE_USE_BITS>::FILL;
+pub const VVC_SUBPICTURES_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<
+    VVC_SUBPICTURES_RESERVED_FUTURE_USE_BITS,
+> = ReservedZero::<VVC_SUBPICTURES_RESERVED_FUTURE_USE_BITS>::FILL;
 /// Width of the `reserved_zero_future_use` before `processing_mode` (5 bits).
-const RESERVED_FUTURE_USE_BITS: u32 = 5;
+pub const VVC_SUBPICTURES_RESERVED_FUTURE_USE_BITS: u32 = 5;
 const PROCESSING_MODE_MASK: u8 = 0x07;
 /// Shift of `reserved_zero_future_use` in the processing-mode byte.
 const RESERVED_FUTURE_USE_SHIFT: u32 = 3;
@@ -59,7 +60,7 @@ pub struct VvcSubpictures<'a> {
     /// `reserved_zero_future_use` (5 bits, right-aligned) — byte after the
     /// subpicture loop, bits `[7:3]`. Preserved on parse;
     /// [`VvcSubpictures::new`] uses [`VVC_SUBPICTURES_RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use: ReservedZero<RESERVED_FUTURE_USE_BITS>,
+    pub reserved_zero_future_use: ReservedZero<VVC_SUBPICTURES_RESERVED_FUTURE_USE_BITS>,
     /// processing_mode(3) — byte after the subpicture loop, bits `[2:0]`.
     pub processing_mode: u8,
     /// Length-delimited service_description text, present iff

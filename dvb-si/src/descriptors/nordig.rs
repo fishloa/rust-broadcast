@@ -51,7 +51,7 @@ const LCN_HI_SHIFT: u16 = 8;
 pub const V1_RESERVED_DEFAULT: ReservedOnes<V1_RESERVED_BITS> =
     ReservedOnes::<V1_RESERVED_BITS>::FILL;
 /// Width of the v1 per-entry `reserved` field (1 bit).
-const V1_RESERVED_BITS: u32 = 1;
+pub const V1_RESERVED_BITS: u32 = 1;
 
 /// One NorDig LCD v1 LCN assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,7 +204,7 @@ const V2_LCN_MAX: u16 = ((V2_LCN_HI_MASK as u16) << 8) | 0xFF;
 pub const V2_RESERVED_DEFAULT: ReservedOnes<V2_RESERVED_BITS> =
     ReservedOnes::<V2_RESERVED_BITS>::FILL;
 /// Width of the v2 per-service `reserved` field (5 bits).
-const V2_RESERVED_BITS: u32 = 5;
+pub const V2_RESERVED_BITS: u32 = 5;
 
 /// One service entry inside a NorDig LCD v2 channel list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

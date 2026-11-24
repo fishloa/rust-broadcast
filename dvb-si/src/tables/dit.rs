@@ -10,7 +10,7 @@ use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Width of the `reserved_future_use` body field.
-const DIT_RESERVED_BITS: u32 = 7;
+pub const DIT_RESERVED_BITS: u32 = 7;
 
 /// table_id for the Discontinuity Information Table.
 pub const TABLE_ID: u8 = 0x7E;

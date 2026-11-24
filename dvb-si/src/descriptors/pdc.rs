@@ -29,7 +29,7 @@ const RESERVED_MASK: u8 = 0x0F;
 pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
     ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved_future_use` field (4 bits).
-const RESERVED_BITS: u32 = 4;
+pub const RESERVED_BITS: u32 = 4;
 /// Packing shift of `day` within `programme_identification_label`.
 const DAY_SHIFT: u32 = 15;
 /// Packing shift of `month` within `programme_identification_label`.

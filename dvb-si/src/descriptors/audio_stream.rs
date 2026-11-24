@@ -12,7 +12,7 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x03;
 const HEADER_LEN: usize = 2;
 /// Width of the `reserved` tail of the body byte (3 bits).
-const TAIL_RESERVED_BITS: u32 = 3;
+pub const TAIL_RESERVED_BITS: u32 = 3;
 /// Default of the 3-bit `reserved` tail of the body byte: H.222.0 clause
 /// 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023; audit §5 — layout
 /// unchanged in every edition). Parse keeps whatever a sender wrote.

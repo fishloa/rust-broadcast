@@ -36,18 +36,18 @@ const S2XV2_SUPERFRAME_BH_LEN: usize = 12;
 /// introduction in V1.18.1, audit §6.1 row C): all zeros. (V1.19.1 carved
 /// `NCR_reference` out of a 3-bit region; that bit is typed, the remaining 2
 /// bits are `reserved_zero_future_use_2`.)
-pub const S2XV2_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RZFU_1_BITS> =
-    ReservedZero::<RZFU_1_BITS>::FILL;
+pub const S2XV2_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<S2XV2_RZFU_SINGLE_BIT> =
+    ReservedZero::<S2XV2_RZFU_SINGLE_BIT>::FILL;
 /// Width of the `reserved_zero_future_use(1)` bit.
-const RZFU_1_BITS: u32 = 1;
+pub const S2XV2_RZFU_SINGLE_BIT: u32 = 1;
 /// Width of the `reserved_zero_future_use(2)` regions.
-const RZFU_2_BITS: u32 = 2;
+pub const RZFU_SELECTOR_BITS: u32 = 2;
 /// Width of the `reserved_zero_future_use(4)` region.
-const RZFU_4_BITS: u32 = 4;
+pub const RZFU_SFFI_BITS: u32 = 4;
 /// Width of the 6-bit region ahead of the scrambling index.
-const RZFU_6_BITS: u32 = 6;
+pub const S2XV2_RZFU_SCRAMBLING_BITS: u32 = 6;
 /// Width of the 7-bit region ahead of `num_channel_bonds_minus_one`.
-const RZFU_7_BITS: u32 = 7;
+pub const S2XV2_RZFU_BOND_BITS: u32 = 7;
 /// Offset of byte 4 (mode/multiple-input/roll-off).
 const B4_OFFSET: usize = core::mem::size_of::<u32>();
 /// Offset of byte 5 (reserved/NCR/channel-bond/polarization).
@@ -266,7 +266,7 @@ pub struct S2Xv2Superframe {
     /// `reserved_zero_future_use(2)` after the two selectors (2 bits,
     /// right-aligned). Captured on parse, re-emitted verbatim; `Default` is
     /// [`S2XV2_RESERVED_FUTURE_USE_DEFAULT`] (`0`).
-    pub reserved_zero_future_use_2: ReservedZero<RZFU_2_BITS>,
+    pub reserved_zero_future_use_2: ReservedZero<RZFU_SELECTOR_BITS>,
     /// `reference_scrambling_index` (20 bits).
     pub reference_scrambling_index: u32,
     /// `SFFI` (4 bits), present iff `sffi_selector == 1`; stored as raw nibble.
@@ -274,7 +274,7 @@ pub struct S2Xv2Superframe {
     /// `reserved_zero_future_use(4)` taking the `SFFI` nibble's place when
     /// `sffi_selector == 0` (4 bits); ignored on serialize when `sffi` is
     /// present. Same policy as above.
-    pub reserved_zero_future_use_4: ReservedZero<RZFU_4_BITS>,
+    pub reserved_zero_future_use_4: ReservedZero<RZFU_SFFI_BITS>,
     /// `payload_scrambling_index` (20 bits).
     pub payload_scrambling_index: u32,
     /// `beamhopping_time_plan_id` (32 bits), present iff
@@ -334,7 +334,7 @@ pub struct S2Xv2SatelliteDeliverySystem<'a> {
     /// `reserved_zero_future_use(2)` at the top of byte 5 (2 bits,
     /// right-aligned). Captured on parse, re-emitted verbatim; `Default` is
     /// [`S2XV2_RESERVED_FUTURE_USE_DEFAULT`] (`0`).
-    pub reserved_zero_future_use_2: ReservedZero<RZFU_2_BITS>,
+    pub reserved_zero_future_use_2: ReservedZero<RZFU_SELECTOR_BITS>,
     /// `NCR_reference` (1 bit) — Table 144c1.
     pub ncr_reference: bool,
     /// `NCR_version` (1 bit).
@@ -350,7 +350,7 @@ pub struct S2Xv2SatelliteDeliverySystem<'a> {
     /// `scrambling_sequence_selector` (i.e. `scrambling_sequence_selector` is
     /// `None`, `s2xv2_mode` outside `{1, 2}`); ignored on serialize when the
     /// selector is `Some`. Same policy as above.
-    pub reserved_zero_future_use_1: ReservedZero<RZFU_1_BITS>,
+    pub reserved_zero_future_use_1: ReservedZero<S2XV2_RZFU_SINGLE_BIT>,
     /// `TS_GS_S2X_mode` (2 bits) — Table 143 (raw value).
     pub ts_gs_s2x_mode: u8,
     /// `receiver_profiles` (5 bits) — raw bitmask (Table 141 semantics apply).
@@ -365,7 +365,7 @@ pub struct S2Xv2SatelliteDeliverySystem<'a> {
     pub input_stream_identifier: Option<u8>,
     /// `reserved_zero_future_use(6)` ahead of `scrambling_sequence_index`
     /// (6 bits); on the wire only together with the index. Same policy as above.
-    pub reserved_zero_future_use_6: ReservedZero<RZFU_6_BITS>,
+    pub reserved_zero_future_use_6: ReservedZero<S2XV2_RZFU_SCRAMBLING_BITS>,
     /// `scrambling_sequence_index` (18 bits), present iff
     /// `s2xv2_mode ∈ {1, 2}` **and** `scrambling_sequence_selector == 1`.
     pub scrambling_sequence_index: Option<u32>,
@@ -373,7 +373,7 @@ pub struct S2Xv2SatelliteDeliverySystem<'a> {
     pub timeslice_number: Option<u8>,
     /// `reserved_zero_future_use(7)` ahead of `num_channel_bonds_minus_one`
     /// (7 bits); on the wire only when `channel_bond == 1`. Same policy as above.
-    pub reserved_zero_future_use_7: ReservedZero<RZFU_7_BITS>,
+    pub reserved_zero_future_use_7: ReservedZero<S2XV2_RZFU_BOND_BITS>,
     /// Secondary delivery system IDs from the `channel_bond` loop (one per
     /// entry, 32 bits each), present iff `channel_bond == 1`.
     pub secondary_delivery_system_ids: Vec<u32>,
@@ -500,7 +500,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         };
 
         // Conditional: scrambling_sequence_index (mode 1 or 2, selector == 1).
-        let mut reserved_zero_future_use_6 = ReservedZero::<RZFU_6_BITS>::default();
+        let mut reserved_zero_future_use_6 = ReservedZero::<S2XV2_RZFU_SCRAMBLING_BITS>::default();
         let scrambling_sequence_index = if scrambling_sequence_selector == Some(true) {
             need_in(
                 sel,
@@ -533,7 +533,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         };
 
         // Conditional: channel_bond loop.
-        let mut reserved_zero_future_use_7 = ReservedZero::<RZFU_7_BITS>::default();
+        let mut reserved_zero_future_use_7 = ReservedZero::<S2XV2_RZFU_BOND_BITS>::default();
         let secondary_delivery_system_ids = if channel_bond == 1 {
             need_in(sel, pos + 1, "S2Xv2 body (channel_bond header)")?;
             let bond_byte = sel[pos];

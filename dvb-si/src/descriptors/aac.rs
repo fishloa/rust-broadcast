@@ -25,7 +25,7 @@ const HEADER_LEN: usize = 2;
 const FLAG_AAC_TYPE: u8 = 0x80;
 const FLAG_SAOC_DE: u8 = 0x40;
 /// Width of `reserved_zero_future_use` (6 bits).
-const RESERVED_FUTURE_USE_BITS: u32 = 6;
+pub const RESERVED_FUTURE_USE_BITS: u32 = 6;
 /// Spec default of the 6-bit `reserved_zero_future_use` field: EN 300 468
 /// V1.16.1+ Table H.1 says 0 (V1.15.1 `reserved_future_use`, V1.11-V1.14
 /// `reserved`(7) = 1 with `SAOC_DE_flag` inside it; audit §4 row 1 carve-out).

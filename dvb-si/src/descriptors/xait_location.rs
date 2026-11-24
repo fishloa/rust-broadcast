@@ -72,8 +72,7 @@ impl<'a> Parse<'a> for XaitLocationDescriptor {
             });
         }
         let xait_original_network_id = u16::from_be_bytes([hdr[0], hdr[1]]);
-        let xait_service_id =
-            u16::from_be_bytes([hdr[XAIT_SERVICE_ID_OFFSET], hdr[XAIT_SERVICE_ID_OFFSET + 1]]);
+        let xait_service_id = crate::wire::be_u16(hdr, XAIT_SERVICE_ID_OFFSET, "xait_service_id")?;
         let xait_version_number =
             (hdr[VERSION_NUMBER_OFFSET] >> VERSION_NUMBER_SHIFT) & VERSION_MAX;
         let xait_update_policy = hdr[VERSION_NUMBER_OFFSET] & UPDATE_POLICY_MAX;

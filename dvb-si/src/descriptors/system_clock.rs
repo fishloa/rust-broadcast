@@ -15,15 +15,17 @@ const BODY_LEN: u8 = 2;
 /// Default of the 1-bit `reserved` after `external_clock_reference_indicator`
 /// (H.222.0 Table 2-64): clause 2.1 "reserved" = `1` (all 9 editions
 /// 07/1995-08/2023, audit §5; layout unchanged; confirmed by the TSDuck oracle PMT).
-pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_AFTER_INDICATOR_BITS> =
+    ReservedOnes::<RESERVED_AFTER_INDICATOR_BITS>::FILL;
 /// Width of the `reserved` field after the indicator (1 bit).
-const RESERVED_1_BITS: u32 = 1;
+pub const RESERVED_AFTER_INDICATOR_BITS: u32 = 1;
 /// Default of the trailing 5-bit `reserved` (same rule): `11111`.
-pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_TRAILING_BITS>::FILL;
 /// Width of the trailing `reserved` field (5 bits).
-const RESERVED_5_BITS: u32 = 5;
-const RESERVED_1_MASK: u8 = 0x01;
-const RESERVED_5_MASK: u8 = 0x1F;
+pub const RESERVED_TRAILING_BITS: u32 = 5;
+const RESERVED_AFTER_INDICATOR_MASK: u8 = 0x01;
+const RESERVED_TRAILING_MASK: u8 = 0x1F;
 /// `external_clock_reference_indicator` bit of byte 0.
 const EXTERNAL_CLOCK_REFERENCE_INDICATOR_MASK: u8 = 0x80;
 /// Shift of `external_clock_reference_indicator` in byte 0.
@@ -52,11 +54,11 @@ pub struct SystemClockDescriptor {
     /// `reserved(1)` after the indicator (1 bit). Captured on parse, re-emitted
     /// verbatim; [`SystemClockDescriptor::new`] uses [`RESERVED_1_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_1: ReservedOnes<RESERVED_1_BITS>,
+    pub reserved_1: ReservedOnes<RESERVED_AFTER_INDICATOR_BITS>,
     /// Trailing `reserved(5)` (5 bits). Captured on parse, re-emitted verbatim;
     /// [`SystemClockDescriptor::new`] uses [`RESERVED_5_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
+    pub reserved_5: ReservedOnes<RESERVED_TRAILING_BITS>,
 }
 
 impl SystemClockDescriptor {
@@ -104,9 +106,9 @@ impl<'a> Parse<'a> for SystemClockDescriptor {
             clock_accuracy_integer,
             clock_accuracy_exponent,
             reserved_1: ReservedOnes::from_bits(u64::from(
-                (b0 >> RESERVED_1_SHIFT) & RESERVED_1_MASK,
+                (b0 >> RESERVED_1_SHIFT) & RESERVED_AFTER_INDICATOR_MASK,
             )),
-            reserved_5: ReservedOnes::from_bits(u64::from(b1 & RESERVED_5_MASK)),
+            reserved_5: ReservedOnes::from_bits(u64::from(b1 & RESERVED_TRAILING_MASK)),
         })
     }
 }

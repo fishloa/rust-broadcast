@@ -62,16 +62,18 @@ impl<'a> Parse<'a> for IpMacStreamLocationDescriptor<'a> {
                     reason: "IP/MAC_stream_location_descriptor body shorter than 9 bytes",
                 })?;
         Ok(Self {
-            network_id: u16::from_be_bytes([f[NETWORK_ID_OFFSET], f[NETWORK_ID_OFFSET + 1]]),
-            original_network_id: u16::from_be_bytes([
-                f[ORIGINAL_NETWORK_ID_OFFSET],
-                f[ORIGINAL_NETWORK_ID_OFFSET + 1],
-            ]),
-            transport_stream_id: u16::from_be_bytes([
-                f[TRANSPORT_STREAM_ID_OFFSET],
-                f[TRANSPORT_STREAM_ID_OFFSET + 1],
-            ]),
-            service_id: u16::from_be_bytes([f[SERVICE_ID_OFFSET], f[SERVICE_ID_OFFSET + 1]]),
+            network_id: crate::wire::be_u16(f, NETWORK_ID_OFFSET, "network_id")?,
+            original_network_id: crate::wire::be_u16(
+                f,
+                ORIGINAL_NETWORK_ID_OFFSET,
+                "original_network_id",
+            )?,
+            transport_stream_id: crate::wire::be_u16(
+                f,
+                TRANSPORT_STREAM_ID_OFFSET,
+                "transport_stream_id",
+            )?,
+            service_id: crate::wire::be_u16(f, SERVICE_ID_OFFSET, "service_id")?,
             component_tag: f[COMPONENT_TAG_OFFSET],
             trailing,
         })

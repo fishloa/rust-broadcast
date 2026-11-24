@@ -70,17 +70,18 @@ const FLAG_RESERVED_BIT_SHIFT: u8 = 5;
 pub const RESERVED_FUTURE_USE_BIT_DEFAULT: ReservedZero<RESERVED_FUTURE_USE_BIT_WIDTH> =
     ReservedZero::<RESERVED_FUTURE_USE_BIT_WIDTH>::FILL;
 /// Width of the `reserved_zero_future_use` bit (1 bit).
-const RESERVED_FUTURE_USE_BIT_WIDTH: u32 = 1;
+pub const RESERVED_FUTURE_USE_BIT_WIDTH: u32 = 1;
 /// Spec default of `reserved_future_use(2)` (bits 3..2): `11` (all editions).
-pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_FU_2_BITS> =
-    ReservedOnes::<RESERVED_FU_2_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_FIELD_BITS> =
+    ReservedOnes::<RESERVED_FUTURE_USE_FIELD_BITS>::FILL;
 /// Width of the `reserved_future_use` field (2 bits).
-const RESERVED_FU_2_BITS: u32 = 2;
+pub const RESERVED_FUTURE_USE_FIELD_BITS: u32 = 2;
 /// Default of the 6-bit `reserved` ahead of `scrambling_sequence_index`:
 /// all ones (EN 300 468 Table 42, global "reserved = 1" rule).
-pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
+pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_BEFORE_SCRAMBLING_INDEX_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_SCRAMBLING_INDEX_BITS>::FILL;
 /// Width of the `reserved` ahead of `scrambling_sequence_index` (6 bits).
-const RESERVED_6_BITS: u32 = 6;
+pub const RESERVED_BEFORE_SCRAMBLING_INDEX_BITS: u32 = 6;
 
 const SCRAMBLING_INDEX_HI_MASK: u8 = 0x03;
 const SCRAMBLING_INDEX_MAX: u32 = 0x3FFFF;
@@ -149,12 +150,12 @@ pub struct S2SatelliteDeliverySystemDescriptor {
     /// `reserved_future_use(2)` (flags bits 3..2). Parsed verbatim; `Default` is
     /// [`RESERVED_FUTURE_USE_DEFAULT`] (`0b11`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<RESERVED_FU_2_BITS>,
+    pub reserved_future_use: ReservedOnes<RESERVED_FUTURE_USE_FIELD_BITS>,
     /// `reserved(6)` ahead of `scrambling_sequence_index` (6 bits); only on the
     /// wire when `scrambling_sequence_selector` is set. Parsed verbatim;
     /// `Default` is [`RESERVED_6_DEFAULT`] (`0x3F`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_6: ReservedOnes<RESERVED_6_BITS>,
+    pub reserved_6: ReservedOnes<RESERVED_BEFORE_SCRAMBLING_INDEX_BITS>,
     /// Bytes after the last defined field inside the descriptor body
     /// (tolerated and previously dropped); re-emitted verbatim. Empty for a
     /// conformant descriptor.

@@ -18,7 +18,7 @@ const HEADER_LEN: usize = 2;
 /// §5; confirmed by the TSDuck oracle PMT).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of each `reserved` field ahead of a 22-bit value (2 bits).
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 const BODY_LEN: u8 = 6;
 /// Width of each 22-bit uimsbf field (H.222.0 Table 2-69).
 const FIELD_BITS: u32 = 22;

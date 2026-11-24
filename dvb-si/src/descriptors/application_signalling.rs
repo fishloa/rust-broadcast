@@ -36,16 +36,16 @@ const AIT_VERSION_MAX: u8 = 0x1F;
 /// set to 1"). Older MHP editions (TS 101 812 V1.1.1-V1.3.2) have no such bit
 /// — `application_type` is 16 bits there — so MHP-era senders write 0 here
 /// (audit §3.2); parse keeps whatever the sender wrote.
-pub const RESERVED_FUTURE_USE_1_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_1_BITS> =
-    ReservedOnes::<RESERVED_FUTURE_USE_1_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_1_DEFAULT: ReservedOnes<RESERVED_BEFORE_APPLICATION_TYPE_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_APPLICATION_TYPE_BITS>::FILL;
 /// Width of `reserved_future_use_1` (1 bit).
-const RESERVED_FUTURE_USE_1_BITS: u32 = 1;
+pub const RESERVED_BEFORE_APPLICATION_TYPE_BITS: u32 = 1;
 /// Width of `reserved_future_use_3` (3 bits).
-const RESERVED_FUTURE_USE_3_BITS: u32 = 3;
+pub const RESERVED_BEFORE_AIT_VERSION_BITS: u32 = 3;
 /// Default of the 3-bit `reserved_future_use` before `AIT_version_number`
 /// (TS 102 809 §5.3.3.2: `1`s).
-pub const RESERVED_FUTURE_USE_3_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_3_BITS> =
-    ReservedOnes::<RESERVED_FUTURE_USE_3_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_3_DEFAULT: ReservedOnes<RESERVED_BEFORE_AIT_VERSION_BITS> =
+    ReservedOnes::<RESERVED_BEFORE_AIT_VERSION_BITS>::FILL;
 
 /// One application-signalling loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,10 +55,10 @@ pub struct ApplicationSignallingEntry {
     /// `reserved_future_use(1)` ahead of `application_type` (TS 102 809
     /// Table 17), captured on parse and re-emitted verbatim. 0 on MHP-era
     /// (TS 101 812) senders, 1 per TS 102 809.
-    pub reserved_future_use_1: ReservedOnes<RESERVED_FUTURE_USE_1_BITS>,
+    pub reserved_future_use_1: ReservedOnes<RESERVED_BEFORE_APPLICATION_TYPE_BITS>,
     /// `reserved_future_use(3)` ahead of `AIT_version_number` (3 bits,
     /// right-aligned), captured on parse and re-emitted verbatim.
-    pub reserved_future_use_3: ReservedOnes<RESERVED_FUTURE_USE_3_BITS>,
+    pub reserved_future_use_3: ReservedOnes<RESERVED_BEFORE_AIT_VERSION_BITS>,
     /// 15-bit application_type — reuses [`crate::tables::ait::ApplicationType`]
     /// (ETSI TS 102 809 §5.3.5.1 / DVB Services registry).
     pub application_type: ApplicationType,

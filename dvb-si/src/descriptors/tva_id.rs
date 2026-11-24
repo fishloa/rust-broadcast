@@ -105,7 +105,7 @@ broadcast_common::impl_spec_display!(TvaRunningStatus, Unallocated);
 /// to '1'" (V1.1.1-V1.5.1). Parse keeps whatever a sender wrote.
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `Reserved` field ahead of `running_status` (5 bits).
-const RESERVED_BITS: u32 = 5;
+pub const RESERVED_BITS: u32 = 5;
 
 /// One TVA_id loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]

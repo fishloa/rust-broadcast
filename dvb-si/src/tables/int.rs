@@ -72,7 +72,7 @@ const LOOP_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
 
 /// Width of the `reserved_platform_descriptor_loop_length` field.
-const INT_RESERVED_BITS: u32 = 4;
+pub const INT_RESERVED_BITS: u32 = 4;
 /// Shift of the high `platform_id` byte.
 const PLATFORM_ID_HIGH_SHIFT: u32 = 16;
 /// Shift of the middle `platform_id` byte.

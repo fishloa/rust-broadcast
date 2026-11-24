@@ -8,7 +8,7 @@ impl<'a> ExtensionBodyDef<'a> for SupplementaryAudio<'a> {
     const NAME: &'static str = "SUPPLEMENTARY_AUDIO";
 }
 /// Width of the `reserved_future_use` bit (1 bit).
-const RESERVED_BITS: u32 = 1;
+pub const SUPPLEMENTARY_AUDIO_RESERVED_BITS: u32 = 1;
 /// `mix_type` bit mask.
 const MIX_TYPE_MASK: u8 = 0x80;
 /// `mix_type` bit shift.
@@ -22,8 +22,8 @@ const LANGUAGE_CODE_PRESENT_MASK: u8 = 0x01;
 /// Default of the 1-bit `reserved_future_use` (Table 153 bit 1): `1` in every
 /// edition (V1.13.1 `reserved` ... V1.20.1 `reserved_future_use`, audit §3.3).
 /// 37 of 47 real descriptors write `0` (cause unexplained), so parse keeps it.
-pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
-    ReservedOnes::<RESERVED_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<SUPPLEMENTARY_AUDIO_RESERVED_BITS> =
+    ReservedOnes::<SUPPLEMENTARY_AUDIO_RESERVED_BITS>::FILL;
 
 /// supplementary_audio body (Table 153).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +35,7 @@ pub struct SupplementaryAudio<'a> {
     /// `language_code_present` (1 bit, right-aligned): captured on parse and
     /// re-emitted verbatim; [`SupplementaryAudio::new`] defaults to
     /// [`RESERVED_FUTURE_USE_DEFAULT`] (1).
-    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
+    pub reserved_future_use: ReservedOnes<SUPPLEMENTARY_AUDIO_RESERVED_BITS>,
     /// mix_type(1) — Table 154.
     pub mix_type: bool,
     /// editorial_classification(5) — Table 155.

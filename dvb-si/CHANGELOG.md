@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- The reserved-field widths, lengths and offsets that appear in the type of a public field or signature are now `pub const` with docs, so a consumer can name the `ReservedOnes`/`ReservedZero` and array types they parameterise (`LANG_CODE_LEN` included). No wire or behavioural change.
+
+### Changed
+- Internal: value-named constants were renamed for the field or role they describe, one definition now covers the shared bits-per-byte and integer-width concepts, and multi-byte fields are read through slices (`wire::be_u16`) instead of index arithmetic. No output byte change.
+
 ## [16.0.1] - 2026-11-23
 ### Changed
 - Version-only lockstep patch with `dvb-bbframe` 16.0.1; no change in this crate.

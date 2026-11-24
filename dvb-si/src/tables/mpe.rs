@@ -101,10 +101,11 @@ const HEADER_LEN: usize = 3;
 const EXTENSION_LEN: usize = 9;
 
 /// MAC address and checksum field sizes.
-const MAC_ADDRESS_LEN: usize = 6;
-const CHECKSUM_LEN: usize = 4;
+pub const MAC_ADDRESS_LEN: usize = 6;
+/// Width of the MPE `checksum` field.
+pub const CHECKSUM_LEN: usize = 4;
 /// Width of the two `reserved` header fields.
-const RESERVED_FIELD_BITS: u32 = 2;
+pub const RESERVED_FIELD_BITS: u32 = 2;
 
 /// Wire byte offsets of the extension fields (ETSI EN 301 192 Figure 1).
 const MAC_6_OFFSET: usize = 3;

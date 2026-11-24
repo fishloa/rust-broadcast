@@ -45,7 +45,7 @@ const SYMBOL_RATE_LOW_NIBBLE_MASK: u32 = 0x0F;
 const SYMBOL_RATE_MASK: u32 = 0x0FFF_FFFF;
 
 /// Width of `reserved_future_use` (12 bits, top of body bytes 4-5).
-const RESERVED_FU_BITS: u32 = 12;
+pub const RESERVED_FU_BITS: u32 = 12;
 
 /// Spec default of the 12-bit `reserved_future_use` ahead of `FEC_outer`:
 /// all ones (EN 300 468 Table 33, V1.3.1-V1.20.1, audit §6.1 class A).
@@ -392,7 +392,7 @@ impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
         frequency_bytes.copy_from_slice(&hdr[FREQUENCY_BCD_OFFSET..RESERVED_FU_OFFSET]);
         let frequency_bcd = u32::from_be_bytes(frequency_bytes);
 
-        let bytes_4_5 = u16::from_be_bytes([hdr[RESERVED_FU_OFFSET], hdr[RESERVED_FU_OFFSET + 1]]);
+        let bytes_4_5 = crate::wire::be_u16(hdr, RESERVED_FU_OFFSET, "reserved_future_use")?;
         let reserved_future_use =
             ReservedOnes::from_bits(u64::from(bytes_4_5 >> RESERVED_FU_SHIFT));
         let fec_outer_raw = (bytes_4_5 & u16::from(FEC_OUTER_MASK)) as u8;

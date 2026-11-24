@@ -25,10 +25,10 @@ const RESERVED_FU_MASK: u8 = 0b0000_0011;
 /// `11` (EN 300 468 Table 46, V1.6.1-V1.20.1; audit §4 row 6). V1.3.1-V1.5.1
 /// had `reserved_future_use(5)` there, now `priority`/`Time_Slicing`/`MPE-FEC`
 /// (typed) + these 2 bits.
-pub const RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<RESERVED_FU_2_BITS> =
-    ReservedOnes::<RESERVED_FU_2_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<RESERVED_FU_AFTER_MPE_FEC_INDICATOR_BITS> =
+    ReservedOnes::<RESERVED_FU_AFTER_MPE_FEC_INDICATOR_BITS>::FILL;
 /// Width of the `reserved_future_use` after `MPE-FEC_indicator` (2 bits).
-const RESERVED_FU_2_BITS: u32 = 2;
+pub const RESERVED_FU_AFTER_MPE_FEC_INDICATOR_BITS: u32 = 2;
 const BW_MASK: u8 = 0b1110_0000;
 
 const CONSTELLATION_SHIFT: u8 = 6;
@@ -57,10 +57,10 @@ const OTHER_FREQ_FLAG_MASK: u8 = 0b0000_0001;
 
 /// Spec default of the trailing `reserved_future_use(32)`: all ones
 /// (EN 300 468 Table 46, every edition V1.3.1-V1.20.1).
-pub const RESERVED_FUTURE_USE_32_DEFAULT: ReservedOnes<RESERVED_FU_32_BITS> =
-    ReservedOnes::<RESERVED_FU_32_BITS>::FILL;
+pub const RESERVED_FUTURE_USE_32_DEFAULT: ReservedOnes<RESERVED_FU_TRAILING_BITS> =
+    ReservedOnes::<RESERVED_FU_TRAILING_BITS>::FILL;
 /// Width of the trailing `reserved_future_use` (32 bits).
-const RESERVED_FU_32_BITS: u32 = 32;
+pub const RESERVED_FU_TRAILING_BITS: u32 = 32;
 
 /// Channel bandwidth (§6.2.13.4 Table 52).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,12 +293,12 @@ pub struct TerrestrialDeliverySystemDescriptor {
     /// parse, re-emitted verbatim; `Default` is
     /// [`RESERVED_FUTURE_USE_2_DEFAULT`] (`0b11`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use_2: ReservedOnes<RESERVED_FU_2_BITS>,
+    pub reserved_future_use_2: ReservedOnes<RESERVED_FU_AFTER_MPE_FEC_INDICATOR_BITS>,
     /// Trailing `reserved_future_use(32)` (descriptor bytes 10-13). Captured on
     /// parse, re-emitted verbatim; `Default` is
     /// [`RESERVED_FUTURE_USE_32_DEFAULT`] (`0xFFFF_FFFF`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use_32: ReservedOnes<RESERVED_FU_32_BITS>,
+    pub reserved_future_use_32: ReservedOnes<RESERVED_FU_TRAILING_BITS>,
 }
 
 impl Default for TerrestrialDeliverySystemDescriptor {

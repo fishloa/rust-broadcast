@@ -56,7 +56,7 @@ const RESERVED_BYTE: u8 = 0xFF;
 /// adaptation header.
 const MESSAGE_HEADER_LEN: usize = MESSAGE_LENGTH_OFFSET + MESSAGE_LENGTH_LEN;
 /// serverId is a fixed 20-byte field in the DSI (DVB: all 0xFF).
-const SERVER_ID_LEN: usize = 20;
+pub const SERVER_ID_LEN: usize = 20;
 /// 16-bit privateDataLength field.
 const PRIVATE_LEN_FIELD: usize = 2;
 /// A 16-bit length field.

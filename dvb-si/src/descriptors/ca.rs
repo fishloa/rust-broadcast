@@ -30,7 +30,7 @@ pub fn ca_system_name(ca_system_id: u16) -> Option<&'static str> {
 }
 
 /// Width of the `reserved` field ahead of `CA_PID` (3 bits).
-const RESERVED_BITS: u32 = 3;
+pub const RESERVED_BITS: u32 = 3;
 /// Default of the 3-bit `reserved` ahead of `CA_PID`: H.222.0 clause 2.1
 /// "reserved" = `1` (all 9 editions 07/1995-08/2023, Table 2-46). Never given
 /// a meaning; 2/715 real descriptors (test-128) write `000`, so parse keeps it.

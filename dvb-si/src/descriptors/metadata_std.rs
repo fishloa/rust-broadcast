@@ -18,7 +18,7 @@ const BODY_LEN: u8 = 9;
 /// §5).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of each `reserved` field ahead of a 22-bit value (2 bits).
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 /// Width of each `metadata_*` uimsbf field (22 bits, Table 2-91).
 const METADATA_RATE_BITS: u32 = 22;
 /// Mask of one 22-bit `metadata_*` field.

@@ -20,9 +20,9 @@ const BODY_LEN: u8 = 4;
 /// the four scalability flags (r03-W2).
 const HIERARCHY_TYPE_MASK: u8 = 0x0F;
 /// Width of the `reserved` above `hierarchy_layer_index` / `hierarchy_channel` (2 bits).
-const RESERVED_2_BITS: u32 = 2;
+pub const RESERVED_ABOVE_HIERARCHY_INDEX_BITS: u32 = 2;
 /// Width of the `reserved` after `tref_present_flag` (1 bit).
-const RESERVED_1_BITS: u32 = 1;
+pub const RESERVED_AFTER_TREF_FLAG_BITS: u32 = 1;
 /// Offset of the `hierarchy_layer_index` byte in the descriptor body.
 const LAYER_INDEX_OFFSET: usize = 1;
 /// Offset of the `hierarchy_embedded_layer_index` byte in the descriptor body.
@@ -50,11 +50,13 @@ const TREF_PRESENT_FLAG_SHIFT: u8 = 7;
 /// Default of the 2-bit `reserved` above `hierarchy_layer_index` and above
 /// `hierarchy_channel` (H.222.0 Table 2-49): clause 2.1 "reserved" = `1` (all
 /// 9 editions 07/1995-08/2023, audit §4 row 7 / §5).
-pub const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> = ReservedOnes::<RESERVED_2_BITS>::FILL;
+pub const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_ABOVE_HIERARCHY_INDEX_BITS> =
+    ReservedOnes::<RESERVED_ABOVE_HIERARCHY_INDEX_BITS>::FILL;
 /// Default of the 1-bit `reserved` between `tref_present_flag` and
 /// `hierarchy_embedded_layer_index` (same rule; carved from `reserved(2)` in
 /// the 06/2012 edition, the remaining bit stays reserved = `1`).
-pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_AFTER_TREF_FLAG_BITS> =
+    ReservedOnes::<RESERVED_AFTER_TREF_FLAG_BITS>::FILL;
 
 /// Hierarchy type — ISO/IEC 13818-1 Table 2-50.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,15 +196,15 @@ pub struct HierarchyDescriptor {
     /// `reserved(2)` above `hierarchy_layer_index` (2 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_2_DEFAULT`].
-    pub reserved_layer_index: ReservedOnes<RESERVED_2_BITS>,
+    pub reserved_layer_index: ReservedOnes<RESERVED_ABOVE_HIERARCHY_INDEX_BITS>,
     /// `reserved(1)` after `tref_present_flag` (1 bit, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_1_DEFAULT`].
-    pub reserved_embedded: ReservedOnes<RESERVED_1_BITS>,
+    pub reserved_embedded: ReservedOnes<RESERVED_AFTER_TREF_FLAG_BITS>,
     /// `reserved(2)` above `hierarchy_channel` (2 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_2_DEFAULT`].
-    pub reserved_channel: ReservedOnes<RESERVED_2_BITS>,
+    pub reserved_channel: ReservedOnes<RESERVED_ABOVE_HIERARCHY_INDEX_BITS>,
 }
 
 impl HierarchyDescriptor {

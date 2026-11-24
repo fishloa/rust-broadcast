@@ -251,7 +251,7 @@ impl Ac3ComponentType {
 pub const RESERVED_FLAGS_DEFAULT: ReservedZero<RESERVED_FLAGS_BITS> =
     ReservedZero::<RESERVED_FLAGS_BITS>::FILL;
 /// Width of the `reserved_flags` field (4 bits).
-const RESERVED_FLAGS_BITS: u32 = 4;
+pub const RESERVED_FLAGS_BITS: u32 = 4;
 const RESERVED_FLAGS_MASK: u8 = 0x0F;
 
 /// AC-3 Descriptor.

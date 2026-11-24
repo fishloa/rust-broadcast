@@ -30,7 +30,7 @@ const RESERVED_MASK: u8 = 0x03;
 pub const RESERVED_FOR_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
     ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of `reserved_for_future_use` (2 bits).
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 
 /// Largest representable 2-bit mpe_fec.
 const MPE_FEC_MAX: u8 = 0x03;

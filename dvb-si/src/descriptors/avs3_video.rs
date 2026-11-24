@@ -66,9 +66,9 @@ const TD_MODE_FLAG_SHIFT: u32 = 4;
 const LIBRARY_STREAM_FLAG_SHIFT: u32 = 3;
 const LIBRARY_PICTURE_ENABLE_FLAG_SHIFT: u32 = 2;
 /// Width of the `reserved` tail of body byte 3 (2 bits).
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 /// Width of the final `reserved` byte (8 bits).
-const RESERVED_TAIL_BITS: u32 = 8;
+pub const RESERVED_TAIL_BITS: u32 = 8;
 const RESERVED2_ONES: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 const RESERVED8_ONES: ReservedOnes<RESERVED_TAIL_BITS> = ReservedOnes::<RESERVED_TAIL_BITS>::FILL;
 

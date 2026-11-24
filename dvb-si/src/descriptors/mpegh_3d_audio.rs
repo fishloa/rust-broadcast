@@ -48,24 +48,25 @@
 //!   against the printed syntax only (round-trip + hand-derived vectors).
 
 use crate::error::{Error, Result};
+use crate::text::LANG_CODE_LEN;
 use alloc::vec::Vec;
 use broadcast_common::len::{fit_bits, fit_u8};
 use broadcast_common::reserved::ReservedOnes;
 
 /// Bit width of a 1-bit field.
-const WIDTH_1: u32 = 1;
+pub const WIDTH_1: u32 = 1;
 /// Bit width of a 2-bit field.
-const WIDTH_2: u32 = 2;
+pub const WIDTH_2: u32 = 2;
 /// Bit width of a 3-bit field.
-const WIDTH_3: u32 = 3;
+pub const WIDTH_3: u32 = 3;
 /// Bit width of a 4-bit field.
-const WIDTH_4: u32 = 4;
+pub const WIDTH_4: u32 = 4;
 /// Bit width of a 5-bit field.
-const WIDTH_5: u32 = 5;
+pub const WIDTH_5: u32 = 5;
 /// Bit width of a 6-bit field.
-const WIDTH_6: u32 = 6;
+pub const WIDTH_6: u32 = 6;
 /// Bit width of a 7-bit field.
-const WIDTH_7: u32 = 7;
+pub const WIDTH_7: u32 = 7;
 /// Bit width of a byte-sized field.
 const WIDTH_8: u32 = u8::BITS;
 /// Mask of a single low bit.
@@ -112,7 +113,6 @@ const SUB_LOW_BIT_MASK: u8 = 0x04;
 const LEAST_BIT_MASK: u8 = 0x02;
 /// `mae_groupPreset` scope type (Table 2-126).
 /// Wire width of an `ISO_639_language_code`.
-const LANGUAGE_CODE_LEN: usize = 3;
 /// Scope type whose payload is `reserved(3) mae_groupPresetID(5)`.
 const PRESET_SCOPE_TYPE: u8 = 3;
 
@@ -742,7 +742,7 @@ fn parse_group(r: &mut Reader<'_>) -> Result<SceneGroup> {
         None
     };
     let content_language = if has_lang {
-        let l = r.take(LANGUAGE_CODE_LEN)?;
+        let l = r.take(LANG_CODE_LEN)?;
         Some(l.try_into().unwrap_or_default())
     } else {
         None
@@ -1002,7 +1002,7 @@ pub struct TextLabelEntry {
 #[non_exhaustive]
 pub struct TextLabelLanguage {
     /// `descriptionLanguage` (24 bits, ISO 639-2 characters).
-    pub language: [u8; LANGUAGE_CODE_LEN],
+    pub language: [u8; LANG_CODE_LEN],
     /// `reserved(1)` before `numGroupDescriptions`, default 1.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub reserved_groups: ReservedOnes<WIDTH_1>,
@@ -1074,8 +1074,8 @@ impl MpegH3dAudioTextLabel {
         let langs = usize::from(b & LOW_4_BITS);
         let mut languages = Vec::with_capacity(langs);
         for _ in 0..langs {
-            let l = r.take(LANGUAGE_CODE_LEN)?;
-            let language: [u8; LANGUAGE_CODE_LEN] = l.try_into().unwrap_or_default();
+            let l = r.take(LANG_CODE_LEN)?;
+            let language: [u8; LANG_CODE_LEN] = l.try_into().unwrap_or_default();
             let g = r.u8()?;
             let groups = parse_entries(r, usize::from(g & LOW_7_BITS), WIDTH_7)?;
             let s = r.u8()?;

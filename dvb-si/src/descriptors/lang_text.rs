@@ -16,7 +16,7 @@ use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 
 /// `ISO_639_language_code` width, bytes.
-pub(super) const LANG_LEN: usize = 3;
+pub(super) const LANG_LEN: usize = crate::text::LANG_CODE_LEN;
 /// Width of the 8-bit `text_length` prefix, bytes.
 pub(super) const LEN_FIELD: usize = 1;
 
