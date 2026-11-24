@@ -43,6 +43,28 @@ pub const TAG: u8 = 0xD1;
 const HEADER_LEN: usize = 2;
 const BODY_LEN_NO_COLOUR_PRIMARIES: usize = 7;
 const BODY_LEN_WITH_COLOUR_PRIMARIES: usize = 8;
+/// Offset of the frame-rate/precision byte in the descriptor body.
+const FLAGS_HI_OFFSET: usize = 2;
+/// Offset of the chroma/temporal-id byte in the descriptor body.
+const FLAGS_LO_OFFSET: usize = 3;
+/// Width of the fixed body prefix that precedes the transfer/matrix tail.
+const FIXED_PREFIX_LEN: usize = 4;
+/// Offset of `colour_primaries` in the colour-primaries variant.
+const COLOUR_PRIMARIES_OFFSET: usize = 4;
+/// Offset of the `reserved` byte after `matrix_coefficients` in the tail.
+const RESERVED_TAIL_OFFSET: usize = 2;
+const MULTIPLE_FRAME_RATE_FLAG_SHIFT: u32 = 7;
+const FRAME_RATE_CODE_BITS: u32 = 4;
+const FRAME_RATE_CODE_SHIFT: u32 = 3;
+const FRAME_RATE_CODE_MASK: u8 = 0x0F;
+const SAMPLE_PRECISION_BITS: u32 = 3;
+const SAMPLE_PRECISION_MASK: u8 = 0x07;
+const CHROMA_FORMAT_BITS: u32 = 2;
+const CHROMA_FORMAT_SHIFT: u32 = 6;
+const TEMPORAL_ID_FLAG_SHIFT: u32 = 5;
+const TD_MODE_FLAG_SHIFT: u32 = 4;
+const LIBRARY_STREAM_FLAG_SHIFT: u32 = 3;
+const LIBRARY_PICTURE_ENABLE_FLAG_SHIFT: u32 = 2;
 /// Width of the `reserved` tail of body byte 3 (2 bits).
 const RESERVED_BITS: u32 = 2;
 /// Width of the final `reserved` byte (8 bits).
@@ -272,29 +294,32 @@ impl<'a> Parse<'a> for Avs3VideoDescriptor {
                 });
             }
         };
-        let b2 = body[2];
-        let b3 = body[3];
+        let b2 = body[FLAGS_HI_OFFSET];
+        let b3 = body[FLAGS_LO_OFFSET];
         let (colour_primaries, rest) = if with_cp {
-            (Some(body[4]), &body[5..])
+            (
+                Some(body[COLOUR_PRIMARIES_OFFSET]),
+                &body[COLOUR_PRIMARIES_OFFSET + 1..],
+            )
         } else {
-            (None, &body[4..])
+            (None, &body[FIXED_PREFIX_LEN..])
         };
         Ok(Self {
             profile_id: body[0],
             level_id: body[1],
-            multiple_frame_rate_flag: bit(b2, 7),
-            frame_rate_code: Avs3FrameRateCode::from_u8((b2 >> 3) & 0x0F),
-            sample_precision: b2 & 0x07,
-            chroma_format: b3 >> 6,
-            temporal_id_flag: bit(b3, 5),
-            td_mode_flag: bit(b3, 4),
-            library_stream_flag: bit(b3, 3),
-            library_picture_enable_flag: bit(b3, 2),
+            multiple_frame_rate_flag: bit(b2, MULTIPLE_FRAME_RATE_FLAG_SHIFT),
+            frame_rate_code: Avs3FrameRateCode::from_u8((b2 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK),
+            sample_precision: b2 & SAMPLE_PRECISION_MASK,
+            chroma_format: b3 >> CHROMA_FORMAT_SHIFT,
+            temporal_id_flag: bit(b3, TEMPORAL_ID_FLAG_SHIFT),
+            td_mode_flag: bit(b3, TD_MODE_FLAG_SHIFT),
+            library_stream_flag: bit(b3, LIBRARY_STREAM_FLAG_SHIFT),
+            library_picture_enable_flag: bit(b3, LIBRARY_PICTURE_ENABLE_FLAG_SHIFT),
             reserved: ReservedOnes::from_bits(u64::from(b3)),
             colour_primaries,
             transfer_characteristics: rest[0],
             matrix_coefficients: rest[1],
-            reserved_tail: ReservedOnes::from_bits(u64::from(rest[2])),
+            reserved_tail: ReservedOnes::from_bits(u64::from(rest[RESERVED_TAIL_OFFSET])),
         })
     }
 }
@@ -310,18 +335,28 @@ impl Serialize for Avs3VideoDescriptor {
         need_out(buf, len)?;
         let frc = fit_bits(
             u64::from(self.frame_rate_code.to_u8()),
-            4,
+            FRAME_RATE_CODE_BITS,
             "frame_rate_code",
         )? as u8;
-        let sp = fit_bits(u64::from(self.sample_precision), 3, "sample_precision")? as u8;
-        let cf = fit_bits(u64::from(self.chroma_format), 2, "chroma_format")? as u8;
+        let sp = fit_bits(
+            u64::from(self.sample_precision),
+            SAMPLE_PRECISION_BITS,
+            "sample_precision",
+        )? as u8;
+        let cf = fit_bits(
+            u64::from(self.chroma_format),
+            CHROMA_FORMAT_BITS,
+            "chroma_format",
+        )? as u8;
         let rsv = self.reserved.get() as u8;
-        let b2 = (u8::from(self.multiple_frame_rate_flag) << 7) | (frc << 3) | sp;
-        let b3 = (cf << 6)
-            | (u8::from(self.temporal_id_flag) << 5)
-            | (u8::from(self.td_mode_flag) << 4)
-            | (u8::from(self.library_stream_flag) << 3)
-            | (u8::from(self.library_picture_enable_flag) << 2)
+        let b2 = (u8::from(self.multiple_frame_rate_flag) << MULTIPLE_FRAME_RATE_FLAG_SHIFT)
+            | (frc << FRAME_RATE_CODE_SHIFT)
+            | sp;
+        let b3 = (cf << CHROMA_FORMAT_SHIFT)
+            | (u8::from(self.temporal_id_flag) << TEMPORAL_ID_FLAG_SHIFT)
+            | (u8::from(self.td_mode_flag) << TD_MODE_FLAG_SHIFT)
+            | (u8::from(self.library_stream_flag) << LIBRARY_STREAM_FLAG_SHIFT)
+            | (u8::from(self.library_picture_enable_flag) << LIBRARY_PICTURE_ENABLE_FLAG_SHIFT)
             | rsv;
         write_descriptor_header(buf, TAG, self.body_len())?;
         let mut i = HEADER_LEN;
