@@ -14,6 +14,7 @@ use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_raw, get_required_fixed,
     get_required_raw,
 };
+use crate::types::UL_LEN;
 use crate::types::{MxfTimestamp, ProductVersion, UlBytes, decode_utf16_be, encode_utf16_be};
 
 // ORDER: Annex A.3 property-table order (spec clause order), not numeric.
@@ -100,7 +101,7 @@ impl<'a> Parse<'a> for Identification {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Identification")?;
-        let this_generation_uid = UlBytes(get_required_fixed::<16>(
+        let this_generation_uid = UlBytes(get_required_fixed::<UL_LEN>(
             items,
             TAG_THIS_GENERATION_UID,
             "This Generation UID",
@@ -139,7 +140,7 @@ impl<'a> Parse<'a> for Identification {
             tag: TAG_VERSION_STRING,
             name: "Version String",
         })?;
-        let product_uid = UlBytes(get_required_fixed::<16>(
+        let product_uid = UlBytes(get_required_fixed::<UL_LEN>(
             items,
             TAG_PRODUCT_UID,
             "Product UID",

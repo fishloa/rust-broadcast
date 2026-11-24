@@ -19,6 +19,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
+use crate::types::{U16_LEN, UL_LEN};
 use crate::types::{UlBytes, ul_bytes_from_prefix};
 
 /// Byte 6 of a Local Set Key (§9.3 Note 1): which length encoding its
@@ -88,6 +89,23 @@ const SET_KEY_FIXED: [(usize, u8); 8] = [
 // below for clarity rather than folded into the table above.
 const SET_KEY_BYTE10: u8 = 0x01;
 const SET_KEY_BYTE12: u8 = 0x01;
+/// UL prefix bytes 0-4 of every Structural Metadata Set Key (Table 16).
+const SET_KEY_UL_PREFIX: [u8; 5] = [0x06, 0x0E, 0x2B, 0x34, 0x02];
+/// The fixed `0x01` filler byte used throughout the Set Key.
+const SET_KEY_FIXED_BYTE: u8 = 0x01;
+/// The `0x0D` designator byte (wire byte 9).
+const SET_KEY_DESIGNATOR_BYTE: u8 = 0x0D;
+/// The zero reserved byte (wire byte 16).
+const SET_KEY_RESERVED_BYTE: u8 = 0x00;
+// Byte offsets within a 16-byte Set Key (0-based).
+const SET_KEY_REGISTRY_DESIGNATOR_OFFSET: usize = 5;
+const SET_KEY_DESIGNATOR_OFFSET: usize = 8;
+const SET_KEY_ORGANIZATION_OFFSET: usize = 9;
+const SET_KEY_APPLICATION_OFFSET: usize = 10;
+const SET_KEY_STRUCTURE_KIND_OFFSET: usize = 12;
+const SET_KEY_KIND_OFFSET: usize = 13;
+/// Window size for an adjacent-pair duplicate scan.
+const ADJACENT_WINDOW: usize = 2;
 
 /// True if `key` matches the common Local Set Key structure (Table 16):
 /// fixed prefix bytes, byte 6 a valid [`ItemLengthMode`], and the fixed
@@ -97,11 +115,12 @@ const SET_KEY_BYTE12: u8 = 0x01;
 pub fn is_local_set_key(key: &UlBytes) -> bool {
     let bytes = key.as_bytes();
     SET_KEY_FIXED.iter().all(|&(i, v)| bytes[i] == v)
-        && ItemLengthMode::from_registry_designator_byte(bytes[5]).is_some()
-        && bytes[8] == 0x0D
-        && bytes[9] == SET_KEY_BYTE10
-        && bytes[10] == 0x01
-        && bytes[12] == SET_KEY_BYTE12
+        && ItemLengthMode::from_registry_designator_byte(bytes[SET_KEY_REGISTRY_DESIGNATOR_OFFSET])
+            .is_some()
+        && bytes[SET_KEY_DESIGNATOR_OFFSET] == SET_KEY_DESIGNATOR_BYTE
+        && bytes[SET_KEY_ORGANIZATION_OFFSET] == SET_KEY_BYTE10
+        && bytes[SET_KEY_APPLICATION_OFFSET] == SET_KEY_FIXED_BYTE
+        && bytes[SET_KEY_STRUCTURE_KIND_OFFSET] == SET_KEY_BYTE12
 }
 
 /// Set Kind (Table 17 — this crate's byte 14/15 identification list for
@@ -172,7 +191,7 @@ pub enum StructuralSetKind {
     /// Any byte 14/15 pair not in Table 17 (private/dark extension, or a
     /// Set defined by another SMPTE document, e.g. an Essence Container or
     /// Operational Pattern spec — §9.6.1 Note 3).
-    Unknown([u8; 2]),
+    Unknown([u8; U16_LEN]),
 }
 
 impl StructuralSetKind {
@@ -249,7 +268,7 @@ impl StructuralSetKind {
 
     /// Encode to a Set Key's bytes 14/15.
     #[must_use]
-    pub fn to_bytes(self) -> [u8; 2] {
+    pub fn to_bytes(self) -> [u8; U16_LEN] {
         match self {
             Self::Preface => [0x01, 0x2F],
             Self::Identification => [0x01, 0x30],
@@ -362,7 +381,10 @@ impl<'a> LocalSet<'a> {
     /// This Set's Kind (Table 17), from its Key's bytes 14/15.
     #[must_use]
     pub fn kind(&self) -> StructuralSetKind {
-        StructuralSetKind::from_bytes(self.key.as_bytes()[13], self.key.as_bytes()[14])
+        StructuralSetKind::from_bytes(
+            self.key.as_bytes()[SET_KEY_KIND_OFFSET],
+            self.key.as_bytes()[SET_KEY_KIND_OFFSET + 1],
+        )
     }
 
     /// This Set's item length mode (Table 16 byte 6).
@@ -374,8 +396,10 @@ impl<'a> LocalSet<'a> {
     /// self-constructed `LocalSet` with an invalid key.
     #[must_use]
     pub fn item_length_mode(&self) -> ItemLengthMode {
-        ItemLengthMode::from_registry_designator_byte(self.key.as_bytes()[5])
-            .unwrap_or(ItemLengthMode::TwoByte)
+        ItemLengthMode::from_registry_designator_byte(
+            self.key.as_bytes()[SET_KEY_REGISTRY_DESIGNATOR_OFFSET],
+        )
+        .unwrap_or(ItemLengthMode::TwoByte)
     }
 
     /// The first item with local tag `tag`, if any.
@@ -389,23 +413,24 @@ impl<'a> LocalSet<'a> {
     #[must_use]
     pub fn build_key(kind: StructuralSetKind, mode: ItemLengthMode) -> UlBytes {
         let [b14, b15] = kind.to_bytes();
+        let [b0, b1, b2, b3, b4] = SET_KEY_UL_PREFIX;
         UlBytes([
-            0x06,
-            0x0E,
-            0x2B,
-            0x34,
-            0x02,
+            b0,
+            b1,
+            b2,
+            b3,
+            b4,
             mode.registry_designator_byte(),
-            0x01,
-            0x01, // registry version
-            0x0D,
-            0x01,
-            0x01,
-            0x01,
-            0x01,
+            SET_KEY_FIXED_BYTE,
+            SET_KEY_FIXED_BYTE, // registry version
+            SET_KEY_DESIGNATOR_BYTE,
+            SET_KEY_BYTE10,
+            SET_KEY_FIXED_BYTE,
+            SET_KEY_FIXED_BYTE,
+            SET_KEY_BYTE12,
             b14,
             b15,
-            0x00,
+            SET_KEY_RESERVED_BYTE,
         ])
     }
 
@@ -413,7 +438,7 @@ impl<'a> LocalSet<'a> {
     /// `bytes`, returning it with the total bytes consumed — use this to
     /// walk a sequence of Header Metadata Sets in a stream.
     pub fn parse_prefix(bytes: &'a [u8]) -> Result<(Self, usize)> {
-        need_in(bytes, 16, "Local Set key")?;
+        need_in(bytes, UL_LEN, "Local Set key")?;
         let key: UlBytes = ul_bytes_from_prefix(bytes);
         if !is_local_set_key(&key) {
             return Err(Error::KeyPrefixMismatch {
@@ -423,11 +448,13 @@ impl<'a> LocalSet<'a> {
         // is_local_set_key already confirmed key[5] is a valid mode byte;
         // TwoByte is unreachable here but kept as the same documented
         // fallback item_length_mode() uses, rather than a second code path.
-        let mode = ItemLengthMode::from_registry_designator_byte(key.as_bytes()[5])
-            .unwrap_or(ItemLengthMode::TwoByte);
+        let mode = ItemLengthMode::from_registry_designator_byte(
+            key.as_bytes()[SET_KEY_REGISTRY_DESIGNATOR_OFFSET],
+        )
+        .unwrap_or(ItemLengthMode::TwoByte);
 
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
-        let value_start = 16 + len_token_size;
+        let value_start = UL_LEN + len_token_size;
         let len = usize::try_from(len).map_err(|_| {
             Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: usize::MAX,
@@ -447,13 +474,13 @@ impl<'a> LocalSet<'a> {
         let mut cursor = &bytes[value_start..value_end];
         let mut items = Vec::new();
         while !cursor.is_empty() {
-            need_in(cursor, 2, "Local Set item tag")?;
+            need_in(cursor, U16_LEN, "Local Set item tag")?;
             let tag = u16::from_be_bytes([cursor[0], cursor[1]]);
             let rest = &cursor[2..];
             let (item_len, item_len_size) = match mode {
                 ItemLengthMode::TwoByte => {
-                    need_in(rest, 2, "Local Set item 2-byte length")?;
-                    (u64::from(u16::from_be_bytes([rest[0], rest[1]])), 2)
+                    need_in(rest, U16_LEN, "Local Set item 2-byte length")?;
+                    (u64::from(u16::from_be_bytes([rest[0], rest[1]])), U16_LEN)
                 }
                 ItemLengthMode::Ber => decode_ber_length(rest)?,
             };
@@ -495,7 +522,7 @@ impl<'a> LocalSet<'a> {
         // dropping the duplicate's value on every round-trip.
         let mut tags: alloc::vec::Vec<u16> = items.iter().map(|i| i.tag).collect();
         tags.sort_unstable();
-        if let Some(w) = tags.windows(2).find(|w| w[0] == w[1]) {
+        if let Some(w) = tags.windows(ADJACENT_WINDOW).find(|w| w[0] == w[1]) {
             return Err(Error::DuplicateLocalTag(w[0]));
         }
 
@@ -537,13 +564,17 @@ impl Serialize for LocalSet<'_> {
             .items
             .iter()
             .map(|i| {
-                2 + match mode {
-                    ItemLengthMode::TwoByte => 2,
-                    ItemLengthMode::Ber => ber_length_size_for(i.value.len() as u64, i.len_size),
-                } + i.value.len()
+                U16_LEN
+                    + match mode {
+                        ItemLengthMode::TwoByte => U16_LEN,
+                        ItemLengthMode::Ber => {
+                            ber_length_size_for(i.value.len() as u64, i.len_size)
+                        }
+                    }
+                    + i.value.len()
             })
             .sum();
-        16 + ber_length_size_for(items_len as u64, self.len_size) + items_len
+        UL_LEN + ber_length_size_for(items_len as u64, self.len_size) + items_len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -565,17 +596,21 @@ impl Serialize for LocalSet<'_> {
             .items
             .iter()
             .map(|i| {
-                2 + match mode {
-                    ItemLengthMode::TwoByte => 2,
-                    ItemLengthMode::Ber => ber_length_size_for(i.value.len() as u64, i.len_size),
-                } + i.value.len()
+                U16_LEN
+                    + match mode {
+                        ItemLengthMode::TwoByte => U16_LEN,
+                        ItemLengthMode::Ber => {
+                            ber_length_size_for(i.value.len() as u64, i.len_size)
+                        }
+                    }
+                    + i.value.len()
             })
             .sum();
         let len_size = encode_ber_length_as(items_len as u64, self.len_size, &mut buf[16..])?;
-        let mut pos = 16 + len_size;
+        let mut pos = UL_LEN + len_size;
         for item in &self.items {
-            buf[pos..pos + 2].copy_from_slice(&item.tag.to_be_bytes());
-            pos += 2;
+            buf[pos..pos + U16_LEN].copy_from_slice(&item.tag.to_be_bytes());
+            pos += U16_LEN;
             match mode {
                 ItemLengthMode::TwoByte => {
                     let len = u16::try_from(item.value.len()).map_err(|_| {
@@ -586,8 +621,8 @@ impl Serialize for LocalSet<'_> {
                             expected: usize::from(u16::MAX),
                         }
                     })?;
-                    buf[pos..pos + 2].copy_from_slice(&len.to_be_bytes());
-                    pos += 2;
+                    buf[pos..pos + U16_LEN].copy_from_slice(&len.to_be_bytes());
+                    pos += U16_LEN;
                 }
                 ItemLengthMode::Ber => {
                     pos += encode_ber_length_as(

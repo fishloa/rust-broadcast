@@ -25,6 +25,7 @@ use crate::sets::{
     get_required_fixed, get_required_raw,
 };
 use crate::types::{Rational, StrongRef, decode_utf16_be, encode_utf16_be};
+use crate::types::{U32_LEN, U64_LEN, UL_LEN};
 
 // ── Generic Track local tags (B.6) ─────────────────────────────────────
 
@@ -127,13 +128,13 @@ impl<'a> Parse<'a> for TimelineTrack {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Timeline Track")?;
-        let track_id = u32::from_be_bytes(get_required_fixed::<4>(
+        let track_id = u32::from_be_bytes(get_required_fixed::<U32_LEN>(
             items,
             TAG_TRACK_ID,
             "Track ID",
             "Timeline Track",
         )?);
-        let track_number = u32::from_be_bytes(get_required_fixed::<4>(
+        let track_number = u32::from_be_bytes(get_required_fixed::<U32_LEN>(
             items,
             TAG_TRACK_NUMBER,
             "Track Number",
@@ -146,7 +147,7 @@ impl<'a> Parse<'a> for TimelineTrack {
                 tag: TAG_TRACK_NAME,
                 name: "Track Name",
             })?;
-        let sequence = StrongRef(get_required_fixed::<16>(
+        let sequence = StrongRef(get_required_fixed::<UL_LEN>(
             items,
             TAG_SEQUENCE,
             "Sequence",
@@ -158,7 +159,7 @@ impl<'a> Parse<'a> for TimelineTrack {
             "Edit Rate",
             "Timeline Track",
         )?)?;
-        let origin = i64::from_be_bytes(get_required_fixed::<8>(
+        let origin = i64::from_be_bytes(get_required_fixed::<U64_LEN>(
             items,
             TAG_ORIGIN,
             "Origin",
@@ -248,13 +249,13 @@ impl<'a> Parse<'a> for EventTrack {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Event Track")?;
-        let track_id = u32::from_be_bytes(get_required_fixed::<4>(
+        let track_id = u32::from_be_bytes(get_required_fixed::<U32_LEN>(
             items,
             TAG_TRACK_ID,
             "Track ID",
             "Event Track",
         )?);
-        let track_number = u32::from_be_bytes(get_required_fixed::<4>(
+        let track_number = u32::from_be_bytes(get_required_fixed::<U32_LEN>(
             items,
             TAG_TRACK_NUMBER,
             "Track Number",
@@ -267,7 +268,7 @@ impl<'a> Parse<'a> for EventTrack {
                 tag: TAG_TRACK_NAME,
                 name: "Track Name",
             })?;
-        let sequence = StrongRef(get_required_fixed::<16>(
+        let sequence = StrongRef(get_required_fixed::<UL_LEN>(
             items,
             TAG_SEQUENCE,
             "Sequence",
@@ -279,7 +280,7 @@ impl<'a> Parse<'a> for EventTrack {
             "Event Edit Rate",
             "Event Track",
         )?)?;
-        let event_origin = get_optional_fixed::<8>(items, TAG_EVENT_ORIGIN, "Event Origin")?
+        let event_origin = get_optional_fixed::<U64_LEN>(items, TAG_EVENT_ORIGIN, "Event Origin")?
             .map(i64::from_be_bytes);
         let dark = collect_dark(items, &EVENT_KNOWN_TAGS);
 
@@ -360,13 +361,13 @@ impl<'a> Parse<'a> for StaticTrack {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Static Track")?;
-        let track_id = u32::from_be_bytes(get_required_fixed::<4>(
+        let track_id = u32::from_be_bytes(get_required_fixed::<U32_LEN>(
             items,
             TAG_TRACK_ID,
             "Track ID",
             "Static Track",
         )?);
-        let track_number = u32::from_be_bytes(get_required_fixed::<4>(
+        let track_number = u32::from_be_bytes(get_required_fixed::<U32_LEN>(
             items,
             TAG_TRACK_NUMBER,
             "Track Number",
@@ -379,7 +380,7 @@ impl<'a> Parse<'a> for StaticTrack {
                 tag: TAG_TRACK_NAME,
                 name: "Track Name",
             })?;
-        let sequence = StrongRef(get_required_fixed::<16>(
+        let sequence = StrongRef(get_required_fixed::<UL_LEN>(
             items,
             TAG_SEQUENCE,
             "Sequence",
