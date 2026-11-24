@@ -27,6 +27,23 @@ pub const FLUTE_VERSION: u8 = 2;
 /// Maximum FDT Instance ID (20-bit field).
 pub const FDT_INSTANCE_ID_MAX: u32 = (1 << 20) - 1;
 
+/// Content bytes of a fixed-length extension: one 32-bit word minus the HET
+/// byte (RFC 6726 §3.4.1/§3.4.3).
+const EXT_CONTENT_LEN: usize = 3;
+/// Byte offsets within those content bytes.
+const CONTENT_VERSION_OFFSET: usize = 0;
+const CONTENT_MID_OFFSET: usize = CONTENT_VERSION_OFFSET + 1;
+const CONTENT_LO_OFFSET: usize = CONTENT_MID_OFFSET + 1;
+/// Bit widths of the EXT_FDT fields (`V(4) | FDT Instance ID(20)`).
+const FDT_VERSION_BITS: u32 = 4;
+const FDT_INSTANCE_ID_BITS: u32 = 20;
+/// Bit shifts of those fields.
+const FDT_VERSION_SHIFT: u32 = 4;
+const FDT_INSTANCE_ID_HI_SHIFT: u32 = 16;
+const FDT_INSTANCE_ID_MID_SHIFT: u32 = 8;
+/// Mask of the 4-bit `V` field.
+const FDT_VERSION_MASK: u8 = 0x0F;
+
 /// EXT_FDT — FDT Instance Header (RFC 6726 §3.4.1, HET = 192, fixed-length).
 ///
 /// Layout (one 32-bit word): `HET(8) | V(4) | FDT Instance ID(20)`.
@@ -43,19 +60,21 @@ impl ExtFdt {
     /// Decode from the 3 content bytes of a fixed-length [`HeaderExtension`]
     /// whose HET is [`HET_EXT_FDT`] (the 24 bits after the HET byte).
     pub fn parse(content: &[u8]) -> Result<Self> {
-        if content.len() != 3 {
+        if content.len() != EXT_CONTENT_LEN {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: 3,
+                    need: EXT_CONTENT_LEN,
                     have: content.len(),
                     what: "EXT_FDT content",
                 },
             ));
         }
         // 24 bits: V(4) | instance_id(20).
-        let v = content[0] >> 4;
-        let instance_id =
-            ((content[0] as u32 & 0x0F) << 16) | ((content[1] as u32) << 8) | content[2] as u32;
+        let v = content[CONTENT_VERSION_OFFSET] >> FDT_VERSION_SHIFT;
+        let instance_id = (u32::from(content[CONTENT_VERSION_OFFSET] & FDT_VERSION_MASK)
+            << FDT_INSTANCE_ID_HI_SHIFT)
+            | (u32::from(content[CONTENT_MID_OFFSET]) << FDT_INSTANCE_ID_MID_SHIFT)
+            | u32::from(content[CONTENT_LO_OFFSET]);
         Ok(ExtFdt {
             version: v,
             instance_id,
@@ -63,19 +82,27 @@ impl ExtFdt {
     }
 
     /// Encode the 3 content bytes (the 24 bits after HET).
-    pub fn to_content(&self) -> Result<[u8; 3]> {
-        broadcast_common::len::fit_bits(self.version as u64, 4, "EXT_FDT V")?;
-        broadcast_common::len::fit_bits(self.instance_id as u64, 20, "FDT Instance ID")?;
+    pub fn to_content(&self) -> Result<[u8; EXT_CONTENT_LEN]> {
+        broadcast_common::len::fit_bits(self.version as u64, FDT_VERSION_BITS, "EXT_FDT V")?;
+        broadcast_common::len::fit_bits(
+            self.instance_id as u64,
+            FDT_INSTANCE_ID_BITS,
+            "FDT Instance ID",
+        )?;
         Ok([
-            (self.version << 4) | ((self.instance_id >> 16) as u8 & 0x0F),
-            (self.instance_id >> 8) as u8,
+            (self.version << FDT_VERSION_SHIFT)
+                | ((self.instance_id >> FDT_INSTANCE_ID_HI_SHIFT) as u8 & FDT_VERSION_MASK),
+            (self.instance_id >> FDT_INSTANCE_ID_MID_SHIFT) as u8,
             self.instance_id as u8,
         ])
     }
 
     /// Build a fixed-length [`HeaderExtension`] (HET = 192) for this EXT_FDT,
     /// writing the 3 content bytes into `scratch`.
-    pub fn to_extension<'a>(&self, scratch: &'a mut [u8; 3]) -> Result<HeaderExtension<'a>> {
+    pub fn to_extension<'a>(
+        &self,
+        scratch: &'a mut [u8; EXT_CONTENT_LEN],
+    ) -> Result<HeaderExtension<'a>> {
         *scratch = self.to_content()?;
         Ok(HeaderExtension::new(HET_EXT_FDT, &scratch[..]))
     }
@@ -93,13 +120,13 @@ impl broadcast_common::Serialize for ExtFdt {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
-        3
+        EXT_CONTENT_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
-        broadcast_common::len::need_out(buf, 3)?;
-        buf[..3].copy_from_slice(&self.to_content()?);
-        Ok(3)
+        broadcast_common::len::need_out(buf, EXT_CONTENT_LEN)?;
+        buf[..EXT_CONTENT_LEN].copy_from_slice(&self.to_content()?);
+        Ok(EXT_CONTENT_LEN)
     }
 }
 
@@ -180,30 +207,30 @@ impl ExtCenc {
     /// Decode from the 3 content bytes of a fixed-length [`HeaderExtension`]
     /// whose HET is [`HET_EXT_CENC`]: `CENC(8) | Reserved(16)`.
     pub fn parse(content: &[u8]) -> Result<Self> {
-        if content.len() != 3 {
+        if content.len() != EXT_CONTENT_LEN {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: 3,
+                    need: EXT_CONTENT_LEN,
                     have: content.len(),
                     what: "EXT_CENC content",
                 },
             ));
         }
         Ok(ExtCenc {
-            algorithm: CencAlgorithm::from_u8(content[0]),
-            reserved: u16::from_be_bytes([content[1], content[2]]),
+            algorithm: CencAlgorithm::from_u8(content[CONTENT_VERSION_OFFSET]),
+            reserved: u16::from_be_bytes([content[CONTENT_MID_OFFSET], content[CONTENT_LO_OFFSET]]),
         })
     }
 
     /// Encode the 3 content bytes (`CENC | Reserved`, preserved verbatim).
-    pub fn to_content(&self) -> [u8; 3] {
+    pub fn to_content(&self) -> [u8; EXT_CONTENT_LEN] {
         let r = self.reserved.to_be_bytes();
         [self.algorithm.to_u8(), r[0], r[1]]
     }
 
     /// Build a fixed-length [`HeaderExtension`] (HET = 193) for this EXT_CENC,
     /// writing the 3 content bytes into `scratch`.
-    pub fn to_extension<'a>(&self, scratch: &'a mut [u8; 3]) -> HeaderExtension<'a> {
+    pub fn to_extension<'a>(&self, scratch: &'a mut [u8; EXT_CONTENT_LEN]) -> HeaderExtension<'a> {
         *scratch = self.to_content();
         HeaderExtension::new(HET_EXT_CENC, &scratch[..])
     }
@@ -221,13 +248,13 @@ impl broadcast_common::Serialize for ExtCenc {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
-        3
+        EXT_CONTENT_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
-        broadcast_common::len::need_out(buf, 3)?;
-        buf[..3].copy_from_slice(&self.to_content());
-        Ok(3)
+        broadcast_common::len::need_out(buf, EXT_CONTENT_LEN)?;
+        buf[..EXT_CONTENT_LEN].copy_from_slice(&self.to_content());
+        Ok(EXT_CONTENT_LEN)
     }
 }
 
