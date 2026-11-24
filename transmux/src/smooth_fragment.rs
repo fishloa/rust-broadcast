@@ -19,7 +19,7 @@ use broadcast_common::xml_chars::{XmlBudget, namespace_of};
 use quick_xml::NsReader;
 use quick_xml::events::Event;
 
-use crate::box_types::{box_iter, parse_box};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, box_iter, parse_box};
 use crate::error::{Error, Result};
 use crate::ir::TrackId;
 use crate::movie_fragment::MovieFragmentBox;
@@ -33,7 +33,6 @@ const BOX_UUID: [u8; 4] = *b"uuid";
 const BOX_SENC: [u8; 4] = *b"senc";
 const BOX_SAIZ: [u8; 4] = *b"saiz";
 const BOX_SAIO: [u8; 4] = *b"saio";
-const BOX_HEADER_LEN: usize = 8;
 const BOX_SIZE_LEN: usize = 4;
 
 /// The PIFF "UUID Sample Encryption Box" extended type
@@ -127,19 +126,19 @@ pub fn manifest_declares_protection(xml: &str) -> bool {
 pub fn fragment_state(bytes: &[u8]) -> FragmentState {
     let mut offset = 0usize;
     let mut saw_moof = false;
-    while offset + BOX_HEADER_LEN <= bytes.len() {
+    while offset + BOX_HEADER_MIN_SIZE <= bytes.len() {
         let size = u32::from_be_bytes(
             bytes[offset..offset + BOX_SIZE_LEN]
                 .try_into()
                 .unwrap_or([0; BOX_SIZE_LEN]),
         );
-        let box_type = &bytes[offset + BOX_SIZE_LEN..offset + BOX_HEADER_LEN];
+        let box_type = &bytes[offset + BOX_SIZE_LEN..offset + BOX_HEADER_MIN_SIZE];
         let is_moof = box_type == MOOF;
         if is_moof {
             saw_moof = true;
         }
         let size = size as usize;
-        if size < BOX_HEADER_LEN || offset + size > bytes.len() {
+        if size < BOX_HEADER_MIN_SIZE || offset + size > bytes.len() {
             return if saw_moof {
                 FragmentState::Undetermined
             } else {
@@ -147,7 +146,7 @@ pub fn fragment_state(bytes: &[u8]) -> FragmentState {
             };
         }
         if is_moof {
-            match moof_is_encrypted(&bytes[offset + BOX_HEADER_LEN..offset + size]) {
+            match moof_is_encrypted(&bytes[offset + BOX_HEADER_MIN_SIZE..offset + size]) {
                 Some(true) => return FragmentState::Encrypted,
                 None => return FragmentState::Undetermined,
                 Some(false) => {}
@@ -198,7 +197,7 @@ fn moof_is_encrypted(moof_body: &[u8]) -> Option<bool> {
 /// parser's own error for a malformed box.
 pub fn fragment_track_id(fragment: &[u8]) -> Result<TrackId> {
     let mut offset = 0usize;
-    while offset + BOX_HEADER_LEN <= fragment.len() {
+    while offset + BOX_HEADER_MIN_SIZE <= fragment.len() {
         let (bx, consumed) = parse_box(&fragment[offset..])?;
         if bx.header.box_type.is(&MOOF) {
             let moof = MovieFragmentBox::parse_body(bx.body)?;

@@ -13,6 +13,7 @@
 use crate::annexb::iter_annexb_nals;
 use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
+use crate::nal::NAL_TYPE_MASK;
 use crate::sps::{AvcSliceSps, decode_avc_slice_sps};
 use alloc::collections::BTreeMap;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
@@ -27,8 +28,6 @@ const NAL_SPS: u8 = 7;
 const NAL_PPS: u8 = 8;
 /// `nal_unit_type` of an access unit delimiter.
 pub(crate) const NAL_AUD: u8 = 9;
-/// Low five bits of the NAL header byte.
-const NAL_TYPE_MASK: u8 = 0x1F;
 /// `nal_ref_idc` bits of the NAL header byte.
 const NAL_REF_IDC_MASK: u8 = 0x60;
 /// Shift of `nal_ref_idc` in the NAL header byte.

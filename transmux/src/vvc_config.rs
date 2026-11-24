@@ -67,10 +67,11 @@
 //! ITU-T H.266 Table 5 and are validated against the committed real fixture.)
 
 use crate::bitreader::{bit_error, bytes_needed, write_bits_checked};
-use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 use crate::error::{Error, Result};
 use crate::nalu_types::VALID_LENGTH_SIZES;
 use crate::sps::rfc6381_vvc1;
+use crate::wire_cursor::u24_at;
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::bits::BitWriter;
@@ -89,10 +90,8 @@ const U3_BITS: usize = 3;
 const U5_BITS: usize = 5;
 const U6_BITS: usize = 6;
 const U7_BITS: usize = 7;
-const U8_BITS: usize = u8::BITS as usize;
 const U9_BITS: usize = 9;
 const U16_BITS: usize = u16::BITS as usize;
-const U32_BITS: usize = u32::BITS as usize;
 
 /// Masks for the fixed-width fields written below.
 const U2_MASK: u64 = 0x3;
@@ -106,12 +105,6 @@ const U9_MASK: u64 = 0x1FF;
 const VVC_RESERVED_5_BITS: u64 = 0x1F;
 /// Byte width of a `num_nalus` / `nalUnitLength` field.
 const NALU_LENGTH_FIELD_LEN: usize = core::mem::size_of::<u16>();
-/// Byte offsets of the three FullBox flags bytes (after `version`).
-const FULLBOX_FLAGS_OFFSET: usize = 1;
-const FULLBOX_FLAGS_SECOND_OFFSET: usize = 2;
-const FULLBOX_FLAGS_THIRD_OFFSET: usize = 3;
-/// Bits in one byte.
-const BITS_PER_BYTE: usize = u8::BITS as usize;
 /// Fixed `VvcPTLRecord` bytes before `general_constraint_info`.
 const VVC_PTL_FIELDS_LEN: usize = 3;
 /// Bytes of `max_picture_width` + `max_picture_height` + `avg_frame_rate`.
@@ -439,7 +432,7 @@ impl<'a> Parse<'a> for VvcDecoderConfigurationRecord {
         };
 
         // num_of_arrays(8), then the arrays (byte-aligned here).
-        let num_arrays = r.bits(U8_BITS, "num_of_arrays")? as usize;
+        let num_arrays = r.bits(u8::BITS as usize, "num_of_arrays")? as usize;
         let mut arrays = Vec::with_capacity(num_arrays);
         for _ in 0..num_arrays {
             // array_completeness(1) + reserved(2) + NAL_unit_type(5)
@@ -629,12 +622,7 @@ impl VvcConfigurationBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(body, FULLBOX_EXTRA_SIZE, "vvcC FullBox header")?;
         let version = body[0];
-        let flags = u32::from_be_bytes([
-            0,
-            body[FULLBOX_FLAGS_OFFSET],
-            body[FULLBOX_FLAGS_SECOND_OFFSET],
-            body[FULLBOX_FLAGS_THIRD_OFFSET],
-        ]);
+        let flags = u24_at(body, FULLBOX_FLAGS_OFFSET);
         let config = VvcDecoderConfigurationRecord::parse(&body[4..])?;
         Ok(Self {
             version,
@@ -692,7 +680,7 @@ fn parse_ptl(r: &mut VvcBitReader, num_sublayers: u8) -> Result<VvcPtlRecord> {
     // general_profile_idc(7) + general_tier_flag(1)
     let general_profile_idc = r.bits(U7_BITS, "general_profile_idc")? as u8;
     let general_tier_flag = r.flag("general_tier_flag")?;
-    let general_level_idc = r.bits(U8_BITS, "general_level_idc")? as u8;
+    let general_level_idc = r.bits(u8::BITS as usize, "general_level_idc")? as u8;
     let ptl_frame_only_constraint_flag = r.flag("ptl_frame_only_constraint_flag")?;
     let ptl_multilayer_enabled_flag = r.flag("ptl_multilayer_enabled_flag")?;
 
@@ -700,7 +688,7 @@ fn parse_ptl(r: &mut VvcBitReader, num_sublayers: u8) -> Result<VvcPtlRecord> {
     // constraint-info block, so the remaining payload is 8*n - 2 bits and the
     // payload bytes are MSB-first, left-aligned into n bytes.
     let general_constraint_info = if num_bytes_constraint_info > 0 {
-        let bits = (num_bytes_constraint_info as usize) * BITS_PER_BYTE
+        let bits = (num_bytes_constraint_info as usize) * u8::BITS as usize
             - CONSTRAINT_INFO_LEADING_FLAGS_BITS;
         r.bits_bytes(bits, "general_constraint_info")?
     } else {
@@ -721,15 +709,15 @@ fn parse_ptl(r: &mut VvcBitReader, num_sublayers: u8) -> Result<VvcPtlRecord> {
         r.align()?;
         for &present in &sublayer_level_present {
             if present {
-                sublayer_level_idc.push(r.bits(U8_BITS, "sublayer_level_idc[i]")? as u8);
+                sublayer_level_idc.push(r.bits(u8::BITS as usize, "sublayer_level_idc[i]")? as u8);
             }
         }
     }
 
-    let num_sub_profiles = r.bits(U8_BITS, "ptl_num_sub_profiles")? as usize;
+    let num_sub_profiles = r.bits(u8::BITS as usize, "ptl_num_sub_profiles")? as usize;
     let mut sub_profile_idc = Vec::with_capacity(num_sub_profiles);
     for _ in 0..num_sub_profiles {
-        sub_profile_idc.push(r.bits(U32_BITS, "general_sub_profile_idc[j]")? as u32);
+        sub_profile_idc.push(r.bits(u32::BITS as usize, "general_sub_profile_idc[j]")? as u32);
     }
 
     Ok(VvcPtlRecord {
@@ -759,7 +747,7 @@ fn write_ptl(w: &mut VvcBitWriter, ptl: &VvcPtlRecord) -> Result<()> {
     w.flag(ptl.ptl_multilayer_enabled_flag)?;
 
     if ptl.num_bytes_constraint_info > 0 {
-        let bits = (ptl.num_bytes_constraint_info as usize) * BITS_PER_BYTE
+        let bits = (ptl.num_bytes_constraint_info as usize) * u8::BITS as usize
             - CONSTRAINT_INFO_LEADING_FLAGS_BITS;
         w.bits_from_bytes(&ptl.general_constraint_info, bits)?;
     } else {
@@ -796,22 +784,22 @@ fn ptl_serialized_len(ptl: &VvcPtlRecord) -> usize {
     // general_profile_idc(7)+general_tier_flag(1)=1 byte, general_level_idc(8)=1 byte.
     // Then 2 flags + (8*n-2) constraint bits (n>0) OR 2 flags + 6 reserved (n==0):
     //   both cases = n bytes when n>0, else 1 byte.
-    let mut bits = VVC_PTL_FIELDS_LEN * BITS_PER_BYTE;
+    let mut bits = VVC_PTL_FIELDS_LEN * u8::BITS as usize;
     if ptl.num_bytes_constraint_info > 0 {
         bits += CONSTRAINT_INFO_LEADING_FLAGS_BITS
-            + ((ptl.num_bytes_constraint_info as usize) * BITS_PER_BYTE
+            + ((ptl.num_bytes_constraint_info as usize) * u8::BITS as usize
                 - CONSTRAINT_INFO_LEADING_FLAGS_BITS);
     } else {
-        bits += BITS_PER_BYTE;
+        bits += u8::BITS as usize;
     }
     if !ptl.sublayer_level_present.is_empty() {
         // sublayer flags padded to a byte, then one byte per present sublayer.
-        bits += ptl.sublayer_level_present.len().div_ceil(BITS_PER_BYTE) * BITS_PER_BYTE;
-        bits += ptl.sublayer_level_idc.len() * BITS_PER_BYTE;
+        bits += ptl.sublayer_level_present.len().div_ceil(u8::BITS as usize) * u8::BITS as usize;
+        bits += ptl.sublayer_level_idc.len() * u8::BITS as usize;
     }
-    bits += BITS_PER_BYTE; // ptl_num_sub_profiles
-    bits += ptl.sub_profile_idc.len() * U32_BITS;
-    bits / BITS_PER_BYTE
+    bits += u8::BITS as usize; // ptl_num_sub_profiles
+    bits += ptl.sub_profile_idc.len() * u32::BITS as usize;
+    bits / u8::BITS as usize
 }
 
 // ---------------------------------------------------------------------------
@@ -861,10 +849,11 @@ impl<'a> VvcBitReader<'a> {
     /// a field wider than any integer width (`general_constraint_info`, whose
     /// `num_bytes_constraint_info`-derived size can reach 502 bits).
     fn bits_bytes(&mut self, n: usize, what: &'static str) -> Result<Vec<u8>> {
-        let mut out = alloc::vec![0u8; n.div_ceil(BITS_PER_BYTE)];
+        let mut out = alloc::vec![0u8; n.div_ceil(u8::BITS as usize)];
         for i in 0..n {
             if self.bits(1, what)? != 0 {
-                out[i / BITS_PER_BYTE] |= 1 << (BITS_PER_BYTE - 1 - (i % BITS_PER_BYTE));
+                out[i / u8::BITS as usize] |=
+                    1 << (u8::BITS as usize - 1 - (i % u8::BITS as usize));
             }
         }
         Ok(out)
@@ -885,7 +874,7 @@ impl<'a> VvcBitReader<'a> {
             self.inner.is_byte_aligned(),
             "take_bytes requires byte alignment"
         );
-        let start = self.inner.bits_read() / BITS_PER_BYTE;
+        let start = self.inner.bits_read() / u8::BITS as usize;
         let end = start.saturating_add(len);
         if end > self.data.len() {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -895,7 +884,7 @@ impl<'a> VvcBitReader<'a> {
             }));
         }
         self.inner
-            .skip_bits(len * BITS_PER_BYTE)
+            .skip_bits(len * u8::BITS as usize)
             .map_err(|e| bit_error(what, e))?;
         Ok(self.data[start..end].to_vec())
     }
@@ -930,15 +919,15 @@ impl<'a> VvcBitWriter<'a> {
     /// `bits_bytes` writes back identically.
     fn bits_from_bytes(&mut self, data: &[u8], n: usize) -> Result<()> {
         for i in 0..n {
-            let byte =
-                data.get(i / BITS_PER_BYTE)
-                    .ok_or(Error::BufferTooShort(BufferTooShort {
-                        need: n.div_ceil(BITS_PER_BYTE),
-                        have: data.len(),
-                        what: "general_constraint_info",
-                    }))?;
+            let byte = data
+                .get(i / u8::BITS as usize)
+                .ok_or(Error::BufferTooShort(BufferTooShort {
+                    need: n.div_ceil(u8::BITS as usize),
+                    have: data.len(),
+                    what: "general_constraint_info",
+                }))?;
             self.bits(
-                u64::from((byte >> (BITS_PER_BYTE - 1 - (i % BITS_PER_BYTE))) & 1),
+                u64::from((byte >> (u8::BITS as usize - 1 - (i % u8::BITS as usize))) & 1),
                 1,
             )?;
         }
@@ -964,7 +953,7 @@ impl<'a> VvcBitWriter<'a> {
     }
 
     fn finish(&self) -> usize {
-        self.inner.bits_written().div_ceil(BITS_PER_BYTE)
+        self.inner.bits_written().div_ceil(u8::BITS as usize)
     }
 }
 

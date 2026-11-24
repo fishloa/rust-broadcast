@@ -93,6 +93,7 @@
 //! `dash-runtime` owns the one MPD reader (issue #2340).
 
 use crate::TrackId;
+use crate::units::ROUNDING_DIVISOR;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -182,14 +183,10 @@ const MIN_BUFFER_TIME: Duration = Duration::from_secs(2);
 /// `Period@id` of the single Period this packager emits.
 const PERIOD_ID: &str = "0";
 
-/// Bits in one byte, converting a coded size to a bit count.
-const BITS_PER_BYTE: u64 = u8::BITS as u64;
 /// Tenths of a second in one second.
 const TENTHS_PER_SEC: u64 = 10;
 /// Milliseconds in one tenth of a second.
 const MILLIS_PER_TENTH: u64 = 100;
-/// Divisor that turns a truncating `a / d` into round-to-nearest.
-const ROUND_NEAREST_DIVISOR: u64 = 2;
 /// Ends of the RFC 9562 §4 UUID text groups in hex digits (8-4-4-4-12).
 const UUID_GROUP_1_END: usize = 8;
 const UUID_GROUP_2_END: usize = 12;
@@ -684,7 +681,7 @@ impl DashPackager {
         // so the MPD is always valid.
         let bandwidth = if total_duration > 0 {
             let bits_times_ts = total_bytes
-                .saturating_mul(BITS_PER_BYTE)
+                .saturating_mul(u8::BITS as u64)
                 .saturating_mul(timescale.as_u64());
             div_round(bits_times_ts, total_duration)
         } else {
@@ -1255,7 +1252,7 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
 /// Divide `num / den` rounding to the nearest integer (ties up). `den` is
 /// assumed non-zero by the caller.
 fn div_round(num: u64, den: u64) -> u64 {
-    (num + den / ROUND_NEAREST_DIVISOR) / den
+    (num + den / ROUNDING_DIVISOR) / den
 }
 
 /// First `ISO_639_language_code` of a track's PMT ES_info loop (carried

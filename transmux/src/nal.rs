@@ -41,27 +41,31 @@ use alloc::vec::Vec;
 
 use crate::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
 use crate::bitreader::BitReader;
+use crate::nalu_types::{HEVC_PPS_NUT, HEVC_SPS_NUT, HEVC_SUFFIX_SEI_NUT, HEVC_VPS_NUT};
 use crate::rbsp::{EMULATION_BYTE_RUN_LEN, EMULATION_PREVENTION_BYTE};
 use crate::wire_cursor::{be_u16, be_u32};
 
 // ── AVC (ITU-T H.264 §7.3.1, Table 7-1) ─────────────────────────────────────
 
-/// Mask for the H.264 5-bit `nal_unit_type` in header byte 0 (bits `[4:0]`).
-const AVC_NAL_TYPE_MASK: u8 = 0x1F;
+/// Mask for the H.264 5-bit `nal_unit_type` in header byte 0 (bits `[4:0]`)
+/// — ITU-T H.264 §7.3.1.
+pub const NAL_TYPE_MASK: u8 = 0x1F;
 /// H.264 `nal_unit_type` for a coded slice of an **IDR** picture (Table 7-1).
-const AVC_NAL_IDR: u8 = 5;
+pub(crate) const AVC_NAL_IDR: u8 = 5;
 /// H.264 `nal_unit_type` for a supplemental enhancement information (SEI)
 /// message (Table 7-1).
-const AVC_NAL_SEI: u8 = 6;
+pub(crate) const AVC_NAL_SEI: u8 = 6;
 /// H.264 `nal_unit_type` for a sequence parameter set (SPS) (Table 7-1).
-const AVC_NAL_SPS: u8 = 7;
+pub(crate) const AVC_NAL_SPS: u8 = 7;
+/// H.264 `nal_unit_type` for a picture parameter set (PPS) (Table 7-1).
+pub(crate) const AVC_NAL_PPS: u8 = 8;
 /// Shortest AVC NAL that can carry a body: the 1-byte NAL header plus at
 /// least one body byte.
 const AVC_NAL_MIN_LEN: usize = 2;
 
 /// Byte width of every HEVC/VVC NAL header (ITU-T H.265 §7.3.1.2 /
 /// ITU-T H.266 §7.3.1.2).
-const HEVC_NAL_HEADER_LEN: usize = 2;
+pub(crate) const HEVC_NAL_HEADER_LEN: usize = 2;
 /// Shortest HEVC NAL that can carry a parameter set: the 2-byte NAL header
 /// plus at least one body byte.
 const HEVC_NAL_MIN_LEN: usize = HEVC_NAL_HEADER_LEN + 1;
@@ -76,7 +80,7 @@ const AVC_SEI_PAYLOAD_TYPE_RECOVERY_POINT: u32 = 6;
 /// Right shift to reach the HEVC 6-bit `nal_unit_type` in header byte 0.
 const HEVC_NAL_TYPE_SHIFT: u8 = 1;
 /// Mask for the HEVC 6-bit `nal_unit_type` after the shift.
-const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
+pub(crate) const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
 /// First HEVC IRAP `nal_unit_type` (`BLA_W_LP`) — Table 7-1.
 const HEVC_IRAP_FIRST: u8 = 16;
 /// Last HEVC IRAP `nal_unit_type` (`RSV_IRAP_VCL23`) — Table 7-1.
@@ -87,8 +91,6 @@ const HEVC_NAL_IDR_W_RADL: u8 = 19;
 const HEVC_NAL_IDR_N_LP: u8 = 20;
 /// HEVC `nal_unit_type` for a prefix SEI NAL unit (`PREFIX_SEI_NUT`) — Table 7-1.
 const HEVC_NAL_SEI_PREFIX: u8 = 39;
-/// HEVC `nal_unit_type` for a suffix SEI NAL unit (`SUFFIX_SEI_NUT`) — Table 7-1.
-const HEVC_NAL_SEI_SUFFIX: u8 = 40;
 
 // ── VVC (ITU-T H.266 §7.3.1.2, Table 5) ─────────────────────────────────────
 
@@ -151,7 +153,7 @@ pub fn nal_unit_type(codec: NalCodec, nal: &[u8]) -> Option<u8> {
         return None;
     }
     Some(match codec {
-        NalCodec::Avc => nal[0] & AVC_NAL_TYPE_MASK,
+        NalCodec::Avc => nal[0] & NAL_TYPE_MASK,
         NalCodec::Hevc => (nal[0] >> HEVC_NAL_TYPE_SHIFT) & HEVC_NAL_TYPE_MASK,
         NalCodec::Vvc => (nal[1] >> VVC_NAL_TYPE_SHIFT) & VVC_NAL_TYPE_MASK,
     })
@@ -594,7 +596,7 @@ pub(crate) fn is_sei_nal(codec: NalCodec, nal: &[u8]) -> bool {
         NalCodec::Avc => nal_unit_type(codec, nal) == Some(AVC_NAL_SEI),
         NalCodec::Hevc => matches!(
             nal_unit_type(codec, nal),
-            Some(HEVC_NAL_SEI_PREFIX) | Some(HEVC_NAL_SEI_SUFFIX)
+            Some(HEVC_NAL_SEI_PREFIX) | Some(HEVC_SUFFIX_SEI_NUT)
         ),
         NalCodec::Vvc => false,
     }
@@ -745,13 +747,6 @@ pub(crate) const MAX_PARAMETER_SET_LEN: usize = u16::MAX as usize;
 /// `forbidden_zero_bit` of the first NAL-header byte, H.264 §7.3.1 and H.265
 /// §7.3.1.2 — must be 0 in a conforming NAL unit.
 const NAL_FORBIDDEN_BIT_MASK: u8 = 0x80;
-/// H.264 `nal_unit_type` for a picture parameter set (Table 7-1).
-const AVC_NAL_PPS: u8 = 8;
-/// H.265 `nal_unit_type` for VPS / SPS / PPS (`VPS_NUT`, `SPS_NUT`, `PPS_NUT`,
-/// ITU-T H.265 Table 7-1).
-const HEVC_NAL_VPS: u8 = 32;
-const HEVC_NAL_SPS: u8 = 33;
-const HEVC_NAL_PPS: u8 = 34;
 /// H.265 NAL header byte 1 low 3 bits: `nuh_temporal_id_plus1`, which shall
 /// not be 0 (ITU-T H.265 §7.4.2.2).
 const HEVC_TEMPORAL_ID_PLUS1_MASK: u8 = 0x07;
@@ -801,7 +796,7 @@ pub(crate) fn parameter_set_is_valid(codec: NalCodec, kind: ParamKind, nal: &[u8
                 ParamKind::Pps => AVC_NAL_PPS,
                 ParamKind::Vps => return false,
             };
-            if first & AVC_NAL_TYPE_MASK != want || nal.len() < AVC_NAL_MIN_LEN {
+            if first & NAL_TYPE_MASK != want || nal.len() < AVC_NAL_MIN_LEN {
                 return false;
             }
             kind != ParamKind::Sps
@@ -809,9 +804,9 @@ pub(crate) fn parameter_set_is_valid(codec: NalCodec, kind: ParamKind, nal: &[u8
         }
         NalCodec::Hevc => {
             let want = match kind {
-                ParamKind::Vps => HEVC_NAL_VPS,
-                ParamKind::Sps => HEVC_NAL_SPS,
-                ParamKind::Pps => HEVC_NAL_PPS,
+                ParamKind::Vps => HEVC_VPS_NUT,
+                ParamKind::Sps => HEVC_SPS_NUT,
+                ParamKind::Pps => HEVC_PPS_NUT,
             };
             if nal_unit_type(NalCodec::Hevc, nal) != Some(want)
                 || nal.len() < HEVC_NAL_MIN_LEN
@@ -1480,7 +1475,7 @@ mod tests {
         let t35_and_cc_data = &REAL_A53_SEI_NAL[6..]; // payload bytes only (after payloadSize)
         for (label, nal_type) in [
             ("prefix", HEVC_NAL_SEI_PREFIX),
-            ("suffix", HEVC_NAL_SEI_SUFFIX),
+            ("suffix", HEVC_SUFFIX_SEI_NUT),
         ] {
             let mut au = alloc::vec::Vec::new();
             au.extend_from_slice(&[0x00, 0x00, 0x01]);

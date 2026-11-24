@@ -41,7 +41,7 @@ use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 
 use crate::ac4::Ac4SpecificBox;
-use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, parse_box};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
@@ -56,7 +56,7 @@ use crate::ir::{
     TrackSpec, VideoFormat, VideoSignalType,
 };
 use crate::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
-use crate::mp4esds::EsdsBox;
+use crate::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use crate::opus::OpusSpecificBox;
@@ -69,14 +69,6 @@ use alloc::sync::Arc;
 /// `crate::media::`/`transmux::media::` path keeps resolving unchanged.
 pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackEncryption};
 
-/// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 13818-3) —
-/// ISO/IEC 14496-1 §7.2.6.6 Table 5.
-const OTI_MPEG2_AUDIO: u8 = 0x69;
-/// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 11172-3) — Table 5.
-const OTI_MPEG1_AUDIO: u8 = 0x6B;
-
-/// Width of an ISOBMFF four-character box type (ISO/IEC 14496-12:2026 §4.2).
-const FOURCC_LEN: usize = 4;
 /// `#EXT-X-VERSION` for the fMP4 playlists [`HlsPackager`] writes (RFC 8216 §7).
 const DEFAULT_HLS_VERSION: u8 = 7;
 
@@ -814,7 +806,7 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
             StblChild::Stsd(s) => Some(Ok(s.clone())),
             StblChild::Opaque(bytes)
                 if bytes.len() >= BOX_HEADER_MIN_SIZE
-                    && &bytes[FOURCC_LEN..BOX_HEADER_MIN_SIZE] == b"stsd" =>
+                    && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == b"stsd" =>
             {
                 Some(SampleDescriptionBox::parse(bytes.as_slice()))
             }
@@ -1002,7 +994,7 @@ fn track_entry_inband_and_extras(trak: &TrackBox) -> (bool, Vec<crate::sample_en
         StblChild::Stsd(s) => Some(Ok(s.clone())),
         StblChild::Opaque(bytes)
             if bytes.len() >= BOX_HEADER_MIN_SIZE
-                && &bytes[FOURCC_LEN..BOX_HEADER_MIN_SIZE] == b"stsd" =>
+                && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == b"stsd" =>
         {
             Some(SampleDescriptionBox::parse(bytes.as_slice()))
         }
@@ -1443,7 +1435,7 @@ fn esds_from_config_boxes(boxes: &[OpaqueBox]) -> Result<EsdsBox> {
 /// Locate a config box by FourCC among a sample entry's `config_boxes` and
 /// return its body bytes (the [`OpaqueBox`] holds the box body, no 8-byte
 /// header), so a codec-specific `Parse` can re-parse the decoder config record.
-fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; FOURCC_LEN]) -> Result<&'b [u8]> {
+fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; BOX_TYPE_SIZE]) -> Result<&'b [u8]> {
     boxes
         .iter()
         .find(|b| &b.box_type == fourcc)

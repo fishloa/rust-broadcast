@@ -25,6 +25,7 @@ use crate::error::{Error, Result};
 use crate::ir::{
     AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, VideoFormat, VideoSignalType,
 };
+use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
@@ -41,9 +42,7 @@ const U4_BITS: usize = 4;
 const U5_BITS: usize = 5;
 const U6_BITS: usize = 6;
 const U7_BITS: usize = 7;
-const U8_BITS: usize = u8::BITS as usize;
 const U16_BITS: usize = u16::BITS as usize;
-const U32_BITS: usize = u32::BITS as usize;
 const U48_BITS: usize = 48;
 
 /// Byte width of an H.264 SPS header: NAL header + `profile_idc` +
@@ -53,8 +52,6 @@ const AVC_SPS_HEADER_LEN: usize = 4;
 const AVC_SPS_CONSTRAINT_FLAGS_OFFSET: usize = 2;
 /// Offset of `level_idc` in an H.264 SPS NAL unit.
 const AVC_SPS_LEVEL_IDC_OFFSET: usize = 3;
-/// Byte width of an HEVC NAL header (ITU-T H.265 §7.3.1.2).
-const HEVC_NAL_HEADER_LEN: usize = 2;
 /// Byte width of a VVC NAL header (ITU-T H.266 §7.3.1.2).
 const VVC_NAL_HEADER_LEN: usize = 2;
 
@@ -877,8 +874,8 @@ fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::err
     // timing_info_present_flag  u(1)
     let timing_present = r.read_flag("timing_info_present_flag")?;
     if timing_present {
-        let num_units = r.read_bits(U32_BITS, "num_units_in_tick")? as u32;
-        let ts = r.read_bits(U32_BITS, "time_scale")? as u32;
+        let num_units = r.read_bits(u32::BITS as usize, "num_units_in_tick")? as u32;
+        let ts = r.read_bits(u32::BITS as usize, "time_scale")? as u32;
         let fixed = r.read_flag("fixed_frame_rate_flag")?;
         let fps = if num_units > 0 {
             Some(ts as f32 / (AVC_TICKS_PER_FRAME * num_units as f32))
@@ -1174,8 +1171,8 @@ pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
     if !timing_present {
         return Ok(None);
     }
-    let num_units = r.read_bits(U32_BITS, "vps_num_units_in_tick")? as u32;
-    let ts = r.read_bits(U32_BITS, "vps_time_scale")? as u32;
+    let num_units = r.read_bits(u32::BITS as usize, "vps_num_units_in_tick")? as u32;
+    let ts = r.read_bits(u32::BITS as usize, "vps_time_scale")? as u32;
     if num_units == 0 || ts == 0 {
         return Ok(None);
     }
@@ -1389,7 +1386,7 @@ fn parse_hevc_hrd(r: &mut BitReader, max_sub_layers_minus1: u8) -> Result<Option
     if nal_hrd || vcl_hrd {
         sub_pic = r.read_flag("sub_pic_hrd_params_present_flag")?;
         if sub_pic {
-            let _ = r.read_bits(U8_BITS, "tick_divisor_minus2")?;
+            let _ = r.read_bits(u8::BITS as usize, "tick_divisor_minus2")?;
             let _ = r.read_bits(U5_BITS, "du_cpb_removal_delay_increment_length_minus1")?;
             let _ = r.read_flag("sub_pic_cpb_params_in_pic_timing_sei_flag")?;
             let _ = r.read_bits(U5_BITS, "dpb_output_delay_du_length_minus1")?;
@@ -1801,8 +1798,8 @@ fn parse_hevc_sps_to_vui_timing_inner(
         return Ok(HevcWalkTiming::default());
     }
 
-    let num_units = r.read_bits(U32_BITS, "vui_num_units_in_tick")? as u32;
-    let ts = r.read_bits(U32_BITS, "vui_time_scale")? as u32;
+    let num_units = r.read_bits(u32::BITS as usize, "vui_num_units_in_tick")? as u32;
+    let ts = r.read_bits(u32::BITS as usize, "vui_time_scale")? as u32;
 
     // vui_poc_proportional_to_timing_flag  u(1) — parsed past, not used for
     // frame rate (private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md §2.7).
@@ -1939,7 +1936,7 @@ fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bo
     // general_profile_idc u(7), general_tier_flag u(1), general_level_idc u(8)
     let general_profile_idc = r.read_bits(U7_BITS, "general_profile_idc")? as u8;
     let general_tier_flag = r.read_flag("general_tier_flag")?;
-    let general_level_idc = r.read_bits(U8_BITS, "general_level_idc")? as u8;
+    let general_level_idc = r.read_bits(u8::BITS as usize, "general_level_idc")? as u8;
     // ptl_frame_only_constraint_flag u(1), ptl_multilayer_enabled_flag u(1)
     let _ = r.read_flag("ptl_frame_only_constraint_flag")?;
     let _ = r.read_flag("ptl_multilayer_enabled_flag")?;
@@ -1965,13 +1962,13 @@ fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bo
     }
     for i in (0..max_sublayers_minus1).rev() {
         if sublayer_present[i as usize] {
-            let _ = r.read_bits(U8_BITS, "sublayer_level_idc[i]")?;
+            let _ = r.read_bits(u8::BITS as usize, "sublayer_level_idc[i]")?;
         }
     }
     // ptl_num_sub_profiles u(8)
-    let num_sub_profiles = r.read_bits(U8_BITS, "ptl_num_sub_profiles")?;
+    let num_sub_profiles = r.read_bits(u8::BITS as usize, "ptl_num_sub_profiles")?;
     for _ in 0..num_sub_profiles {
-        let _ = r.read_bits(U32_BITS, "general_sub_profile_idc[j]")?;
+        let _ = r.read_bits(u32::BITS as usize, "general_sub_profile_idc[j]")?;
     }
 
     Ok((general_profile_idc, general_tier_flag, general_level_idc))
@@ -2001,7 +1998,7 @@ fn skip_general_constraints_info(r: &mut BitReader) -> Result<()> {
         for bits in GCI_FLAG_BLOCK_BITS {
             let _ = r.read_bits(bits, "general_constraints_info flag")?;
         }
-        let additional = r.read_bits(U8_BITS, "gci_num_additional_bits")?;
+        let additional = r.read_bits(u8::BITS as usize, "gci_num_additional_bits")?;
         // §7.3.3.2: `numAdditionalBitsUsed = 6` when the count exceeds five
         // (the six extra constraint flags), else 0; then
         // `gci_num_additional_bits - numAdditionalBitsUsed` `gci_reserved_bit`s.
@@ -2175,12 +2172,12 @@ pub(crate) fn decode_ptl(
     };
 
     let general_profile_compatibility_flags =
-        r.read_bits(U32_BITS, "general_profile_compatibility_flags")? as u32;
+        r.read_bits(u32::BITS as usize, "general_profile_compatibility_flags")? as u32;
 
     let general_constraint_indicator_flags =
         r.read_bits(U48_BITS, "general_constraint_indicator_flags")?;
 
-    let general_level_idc = r.read_bits(U8_BITS, "general_level_idc")? as u8;
+    let general_level_idc = r.read_bits(u8::BITS as usize, "general_level_idc")? as u8;
 
     let mut sub_layer_profile_present_flag = [false; HEVC_MAX_SUB_LAYERS - 1];
     let mut sub_layer_level_present_flag = [false; HEVC_MAX_SUB_LAYERS - 1];
@@ -2202,11 +2199,11 @@ pub(crate) fn decode_ptl(
             let _ = r.read_bits(U2_BITS, "sub_layer_profile_space")?;
             let _ = r.read_flag("sub_layer_tier_flag")?;
             let _ = r.read_bits(U5_BITS, "sub_layer_profile_idc")?;
-            let _ = r.read_bits(U32_BITS, "sub_layer_profile_compatibility_flags")?;
+            let _ = r.read_bits(u32::BITS as usize, "sub_layer_profile_compatibility_flags")?;
             let _ = r.read_bits(U48_BITS, "sub_layer_constraint_indicator_flags")?;
         }
         if sub_layer_level_present_flag[i as usize] {
-            let _ = r.read_bits(U8_BITS, "sub_layer_level_idc")?;
+            let _ = r.read_bits(u8::BITS as usize, "sub_layer_level_idc")?;
         }
     }
 

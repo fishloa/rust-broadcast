@@ -51,7 +51,7 @@ pub const SIZE_TO_EOF: u32 = 0;
 pub const BOX_HEADER_MIN_SIZE: usize = 8;
 
 /// Byte range of the four-CC within a box's header (ISO/IEC 14496-12:2026 §4.2).
-const BOX_TYPE_RANGE: core::ops::Range<usize> = 4..8;
+const BOX_TYPE_RANGE: core::ops::Range<usize> = BOX_TYPE_OFFSET..BOX_TYPE_OFFSET + BOX_TYPE_SIZE;
 
 /// Size of the 64-bit `largesize` field (ISO/IEC 14496-12:2026 §4.2).
 pub const LARGESIZE_SIZE: usize = 8;
@@ -72,26 +72,28 @@ pub const KEY_ID_LEN: usize = 16;
 /// Size of the widest fixed header: `size` + `type` + 64-bit `largesize`.
 pub const BOX_HEADER_LARGESIZE_SIZE: usize = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
 
+/// Byte offset of the `size` field, which starts every box (ISO/IEC 14496-12:2026 §4.2).
+pub(crate) const BOX_SIZE_OFFSET: usize = 0;
+
+/// Byte offset of the four-CC `type` field inside a box header (§4.2).
+pub(crate) const BOX_TYPE_OFFSET: usize = core::mem::size_of::<u32>();
+
 /// Byte offset of the `largesize` field after the fixed header (§4.2).
 const LARGESIZE_OFFSET: usize = BOX_HEADER_MIN_SIZE;
 
-/// Byte offsets of the four `size` field bytes in a box header.
-const SIZE_BYTE_OFFSETS: [usize; BOX_TYPE_SIZE] = [0, 1, 2, 3];
-
-/// Byte offsets of the `type` field bytes in a box header.
-const BOX_TYPE_OFFSETS: [usize; BOX_TYPE_SIZE] = [4, 5, 6, 7];
-
-/// Byte offsets of the eight `largesize` field bytes.
-const LARGESIZE_BYTE_OFFSETS: [usize; LARGESIZE_SIZE] = [0, 1, 2, 3, 4, 5, 6, 7];
+/// Byte offset of a FullBox's `version` byte, which follows the 8-byte box
+/// header (§4.2).
+pub(crate) const FULLBOX_VERSION_OFFSET: usize = BOX_HEADER_MIN_SIZE;
 
 /// Width of the FullBox `flags` field (§4.2).
 const FULLBOX_FLAGS_BITS: u32 = 24;
 
 /// Mask of the FullBox `flags` field.
-const FULLBOX_FLAGS_MASK: u32 = (1 << FULLBOX_FLAGS_BITS) - 1;
+pub(crate) const FULLBOX_FLAGS_MASK: u32 = (1 << FULLBOX_FLAGS_BITS) - 1;
 
-/// Byte offset of the three `flags` bytes inside the FullBox extension.
-const FULLBOX_FLAGS_OFFSET: usize = 1;
+/// Byte offset of the first of the three `flags` bytes inside the FullBox
+/// extension, i.e. just past its `version` byte (§4.2).
+pub(crate) const FULLBOX_FLAGS_OFFSET: usize = 1;
 
 /// Bytes the 24-bit `flags` field occupies.
 const FULLBOX_FLAGS_LEN: usize = FULLBOX_EXTRA_SIZE - FULLBOX_FLAGS_OFFSET;
@@ -487,7 +489,7 @@ pub(crate) fn box_body<'a>(
 /// clamped to `region`.
 pub(crate) fn child_extent(region: &[u8]) -> Option<usize> {
     let hdr = box_header_len(region).ok()?;
-    let size = u32::from_be_bytes(SIZE_BYTE_OFFSETS.map(|i| region[i]));
+    let size = crate::wire_cursor::u32_at(region, BOX_SIZE_OFFSET);
     let total = if size == SIZE_INDICATES_LARGESIZE {
         usize::try_from(u64::from_be_bytes(
             region[LARGESIZE_OFFSET..BOX_HEADER_LARGESIZE_SIZE]
@@ -518,7 +520,7 @@ pub(crate) fn child_extent_in(region: &[u8]) -> Option<usize> {
 /// `uuid` `usertype` is left to the callers that handle `uuid` boxes.
 pub(crate) fn box_header_len(bytes: &[u8]) -> Result<usize> {
     need_in(bytes, BOX_HEADER_MIN_SIZE, "box header")?;
-    let size = u32::from_be_bytes(SIZE_BYTE_OFFSETS.map(|i| bytes[i]));
+    let size = crate::wire_cursor::u32_at(bytes, BOX_SIZE_OFFSET);
     if size == SIZE_INDICATES_LARGESIZE {
         let need = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
         if bytes.len() < need {
@@ -543,8 +545,8 @@ impl<'a> Parse<'a> for BoxHeader {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "BoxHeader")?;
 
-        let raw_size = u32::from_be_bytes(SIZE_BYTE_OFFSETS.map(|i| bytes[i]));
-        let box_type = BoxType::from_bytes(BOX_TYPE_OFFSETS.map(|i| bytes[i]));
+        let raw_size = crate::wire_cursor::u32_at(bytes, BOX_SIZE_OFFSET);
+        let box_type = BoxType::from_bytes(crate::wire_cursor::fourcc_at(bytes, BOX_TYPE_OFFSET));
 
         let mut cursor = BOX_HEADER_MIN_SIZE;
 
@@ -555,7 +557,7 @@ impl<'a> Parse<'a> for BoxHeader {
                     have: bytes.len(),
                 });
             }
-            let v = u64::from_be_bytes(LARGESIZE_BYTE_OFFSETS.map(|i| bytes[cursor + i]));
+            let v = crate::wire_cursor::u64_at(bytes, cursor);
             cursor += LARGESIZE_SIZE;
             v
         } else {

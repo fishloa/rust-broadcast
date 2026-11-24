@@ -21,8 +21,9 @@
 //!   §7.2.6.6 Table 5 — 0x60–0x65 (MPEG-2 Visual profiles, 0x61 = Main),
 //!   0x6A (MPEG-1 Visual), 0x69 (MPEG-2 Audio), 0x6B (MPEG-1 Audio).
 
-use crate::annexb::find_start_code_prefix;
+use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result};
+use crate::units::BITS_PER_KILOBIT;
 use crate::wire_cursor::be_u32;
 use broadcast_common::len::need_in;
 
@@ -35,9 +36,6 @@ pub const SEQUENCE_HEADER_CODE: [u8; 4] = [0x00, 0x00, 0x01, 0xB3];
 /// Bytes of `horizontal_size_value` + `vertical_size_value` following the
 /// 4-byte start code: 12 + 12 = 24 bits = 3 bytes (§6.2.2.1).
 const SEQ_SIZE_FIELD_BYTES: usize = 3;
-
-/// Bytes in a `00 00 01` start-code prefix, before the code byte itself.
-const START_CODE_PREFIX_LEN: usize = 3;
 
 /// Half a byte: the two 12-bit sizes of `sequence_header()` straddle a byte
 /// boundary at four bits (§6.2.2.1).
@@ -248,8 +246,6 @@ const PADDING_MASK: u32 = 0x1;
 const MPEG2_RATE_DIVISOR: u32 = 2;
 /// MPEG-2.5 sampling frequencies are a quarter of them.
 const MPEG25_RATE_DIVISOR: u32 = 4;
-/// Bits per kilobit, converting the table's kbit/s to bit/s.
-const BITS_PER_KILOBIT: usize = 1000;
 /// Channels in a non-`single_channel` frame (stereo, or the two-channel
 /// joint/dual modes of §2.4.2.3).
 const STEREO_CHANNELS: u16 = 2;
@@ -329,7 +325,7 @@ impl MpegAudioFrameHeader {
                 "MPEG audio frame header: free-format or forbidden bitrate_index",
             ));
         }
-        let bitrate = bitrate_kbps as usize * BITS_PER_KILOBIT;
+        let bitrate = bitrate_kbps as usize * BITS_PER_KILOBIT as usize;
 
         let channels: u16 = if mode == MODE_SINGLE_CHANNEL {
             1

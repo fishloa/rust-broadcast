@@ -63,6 +63,7 @@ pub use audio_meta::{
     AudioLanguage, AudioMetadata, AudioRole, AudioType, EditorialClassification, MixType,
     SupplementaryAudio,
 };
+pub(crate) use codec::AUDIO_SAMPLE_SIZE_BITS;
 pub use codec::{CodecConfig, DataCarriage, SubtitleFormat, SubtitleSampleEntry};
 pub use display::{
     ActiveFormat, ActiveFormatDescription, AfdPersistence, AspectRatioIdc, BarData,

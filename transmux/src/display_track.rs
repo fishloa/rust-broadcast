@@ -53,7 +53,7 @@ use crate::ir::{
     ActiveFormat, ActiveFormatDescription, AfdPersistence, BarData, DisplayChangeSet,
     DisplayGeometry, DisplayInfo, UserDataCarriage,
 };
-use crate::nal::NalCodec;
+use crate::nal::{HEVC_NAL_HEADER_LEN, NAL_TYPE_MASK, NalCodec};
 use crate::nalu_types::HEVC_SPS_NUT;
 use crate::sps::decode_avc_slice_sps;
 use crate::user_data;
@@ -69,9 +69,6 @@ const AVC_IDR: u8 = 5;
 const AVC_SPS: u8 = 7;
 /// `nal_unit_type` of a PPS (H.264 Table 7-1).
 const AVC_PPS: u8 = 8;
-/// Low five bits of the H.264 NAL header byte (`forbidden_zero_bit |
-/// nal_ref_idc | nal_unit_type`).
-const AVC_NAL_TYPE_MASK: u8 = 0x1F;
 /// Bytes of a slice NAL whose RBSP prefix is walked: the slice-header prefix
 /// is a handful of Exp-Golomb codes, and a multi-megabyte I slice must not be
 /// unescaped and copied per access unit (the bound `slice_header.rs` uses).
@@ -99,8 +96,6 @@ const BASE_LAYER: u8 = 0;
 /// Bit of the H.265 NAL header byte 0 carrying the low bit of `nuh_layer_id`
 /// (ITU-T H.265 §7.3.1.2).
 const HEVC_NAL_LAYER_ID_BIT_MASK: u8 = 0x01;
-/// Bytes of the H.265 NAL unit header (§7.3.1.2).
-const HEVC_NAL_HEADER_LEN: usize = 2;
 /// Width of `sps_video_parameter_set_id` (H.265 §7.3.2.2).
 const SPS_VIDEO_PARAMETER_SET_ID_BITS: usize = 4;
 /// Width of `sps_max_sub_layers_minus1` (H.265 §7.3.2.2).
@@ -350,7 +345,7 @@ impl SpsTracker {
         let Some(&header) = nal.first() else {
             return;
         };
-        match header & AVC_NAL_TYPE_MASK {
+        match header & NAL_TYPE_MASK {
             AVC_SPS => {
                 if let (Some(id), Some(g)) = (avc_sps_id(nal), avc_geometry(nal)) {
                     self.sps.insert(id, g);
@@ -362,7 +357,7 @@ impl SpsTracker {
                 }
             }
             AVC_SLICE | AVC_IDR => {
-                activation.random_access |= header & AVC_NAL_TYPE_MASK == AVC_IDR;
+                activation.random_access |= header & NAL_TYPE_MASK == AVC_IDR;
                 slice_pps.push(avc_slice_pps_id(nal));
             }
             // SEI: collect AFD / bar data (first wins).

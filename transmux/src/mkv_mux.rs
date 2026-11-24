@@ -166,8 +166,6 @@ const SIMPLE_BLOCK_FIXED_LEN: usize = 2 + 1;
 /// default, and the value that makes a [`crate::webm_demux::WebmDemux`]-sourced
 /// [`Media`] — whose IR timescale is also milliseconds — rescale losslessly).
 const TIMESTAMP_SCALE_NS: u64 = 1_000_000;
-/// Nanoseconds per second (track-timescale → `TimestampScale`-tick conversion).
-const NS_PER_SECOND: u64 = 1_000_000_000;
 /// `MuxingApp` / `WritingApp` value this writer emits.
 const APP_NAME: &[u8] = b"transmux";
 
@@ -606,7 +604,8 @@ fn to_matroska_ticks(
     track_timescale: broadcast_common::timescale::Timescale,
     timestamp_scale_ns: u64,
 ) -> i64 {
-    let ns = (ticks as i128) * (NS_PER_SECOND as i128) / i128::from(track_timescale.get());
+    let ns = (ticks as i128) * (broadcast_common::units::NANOS_PER_SEC as i128)
+        / i128::from(track_timescale.get());
     (ns / timestamp_scale_ns as i128) as i64
 }
 

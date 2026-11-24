@@ -20,6 +20,7 @@
 //! `0` in the sample groups); they are captured on parse and re-emitted verbatim,
 //! hand-built values use the spec value.
 
+use crate::box_types::BOX_HEADER_MIN_SIZE;
 use crate::error::{Error, Result};
 use crate::sample_entries::{SampleEntryChild, VisualSampleEntryFields};
 use alloc::vec::Vec;
@@ -43,7 +44,6 @@ pub const LRAP_FOURCC: [u8; 4] = *b"lrap";
 /// `grouping_type` of the library-picture sample group (T/AI 109.6,
 /// `LibrarySampleGroupEntry`).
 pub const A3LG_FOURCC: [u8; 4] = *b"a3lg";
-const BOX_HDR: usize = 8;
 const CONFIGURATION_VERSION: u8 = 1;
 const RESERVED6_ONES: u8 = 0x3F;
 const RESERVED1_BITS: u8 = 1;
@@ -614,7 +614,7 @@ pub struct AvsVideoSampleEntry {
 impl AvsVideoSampleEntry {
     /// Parse a full sample-entry box (including the 8-byte header).
     pub fn parse_entry(bytes: &[u8]) -> Result<Self> {
-        need_in(bytes, BOX_HDR, "AVS sample entry")?;
+        need_in(bytes, BOX_HEADER_MIN_SIZE, "AVS sample entry")?;
         let mut cursor = crate::box_types::BOX_TYPE_SIZE;
         let fourcc = crate::wire_cursor::read_u32(bytes, &mut cursor, "AVS sample entry type")?
             .to_be_bytes();
@@ -686,9 +686,9 @@ impl AvsVideoSampleEntry {
 impl Serialize for AvsVideoSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let config_len = BOX_HDR + self.config_body_len();
+        let config_len = BOX_HEADER_MIN_SIZE + self.config_body_len();
         crate::box_types::box_len(
-            BOX_HDR
+            BOX_HEADER_MIN_SIZE
                 + VisualSampleEntryFields::serialized_len()
                 + crate::sample_entries::entry_children_len(&self.children, config_len),
         )
@@ -701,7 +701,7 @@ impl Serialize for AvsVideoSampleEntry {
         c += self.visual.serialize_body_into(&mut buf[c..])?;
         let cfg_fourcc = self.kind.config_fourcc();
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
-            let len = BOX_HDR + self.config_body_len();
+            let len = BOX_HEADER_MIN_SIZE + self.config_body_len();
             let len = broadcast_common::len::fit_u32(len, "config box size")?;
             buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&len.to_be_bytes());
             *c += crate::box_types::BOX_TYPE_SIZE;

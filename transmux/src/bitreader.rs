@@ -15,8 +15,6 @@ use broadcast_common::error::{BufferTooShort, InvalidValue};
 
 /// Widest field [`read_bits_at`] and [`BitReader::read_bits`] accept.
 const MAX_READ_BITS: usize = u64::BITS as usize;
-/// Bits in one byte, the unit of the RBSP buffer length.
-const BITS_PER_BYTE: usize = u8::BITS as usize;
 
 /// Read `n` (<= 64) bits MSB-first from `data` at `*bit_pos`, advancing it.
 ///
@@ -62,7 +60,7 @@ pub(crate) fn read_bits_checked(
 /// Bytes needed to hold `n` more bits starting at `bit_pos` (saturating, for
 /// the `need` field of a `BufferTooShort`).
 pub(crate) fn bytes_needed(bit_pos: usize, n: usize) -> usize {
-    bit_pos.saturating_add(n).div_ceil(BITS_PER_BYTE)
+    bit_pos.saturating_add(n).div_ceil(u8::BITS as usize)
 }
 
 /// Maps a shared [`BitError`] onto this crate's typed errors: a short buffer
@@ -152,7 +150,7 @@ impl BitReader {
     }
 
     fn has_bits(&self, n: usize) -> bool {
-        self.bit_pos + n <= self.data.len() * BITS_PER_BYTE
+        self.bit_pos + n <= self.data.len() * u8::BITS as usize
     }
 
     /// Read `n` bits as an unsigned integer (`u(n)` / `f(n)`).
@@ -194,7 +192,7 @@ impl BitReader {
     /// named for `what`.
     fn short(&self, n: usize, what: &'static str) -> Error {
         Error::BufferTooShort(BufferTooShort {
-            need: self.bit_pos.saturating_add(n).div_ceil(BITS_PER_BYTE),
+            need: self.bit_pos.saturating_add(n).div_ceil(u8::BITS as usize),
             have: self.data.len(),
             what,
         })
@@ -208,7 +206,7 @@ impl BitReader {
     /// Consume padding bits up to the next byte boundary (e.g.
     /// `gci_alignment_zero_bit` / `ptl_reserved_zero_bit`, H.266 §7.3.3).
     pub fn align_to_byte(&mut self, what: &'static str) -> Result<()> {
-        while !self.bit_pos.is_multiple_of(BITS_PER_BYTE) {
+        while !self.bit_pos.is_multiple_of(u8::BITS as usize) {
             let _ = self.read_bits(1, what)?;
         }
         Ok(())

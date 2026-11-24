@@ -34,24 +34,28 @@
 //! (`private/specs-verified/mpeg/transmux/codec/es-descriptor-14496-1.md`) and byte-exact round-tripped
 //! against a real ffmpeg-authored `esds` (see `real_esds_box_round_trips_byte_exact`).
 
-use crate::box_types::BoxHeader;
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, FULLBOX_EXTRA_SIZE};
 use crate::error::{Error, Result};
-use crate::wire_cursor::{read_u16, read_u32, take};
+use crate::wire_cursor::{U24_LEN, read_u16, read_u32, take};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
-/// Size of a 32-bit box size field + 32-bit four-CC.
-const BOX_HEADER_SIZE: usize = 8;
-
-/// Size of FullBox extension: version(8) + flags(24) = 4 bytes.
-const FULLBOX_EXTRA: usize = 4;
-
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+/// `esds` `objectTypeIndication` for MPEG-4 Audio (ISO/IEC 14496-3) —
+/// ISO/IEC 14496-1 §7.2.6.6 Table 5.
+pub(crate) const OTI_MPEG4_AUDIO: u8 = 0x40;
+/// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 13818-3) — Table 5.
+pub(crate) const OTI_MPEG2_AUDIO: u8 = 0x69;
+/// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 11172-3) — Table 5.
+pub(crate) const OTI_MPEG1_AUDIO: u8 = 0x6B;
+/// `esds` `streamType` for an AudioStream — ISO/IEC 14496-1 §7.2.6.6.2 Table 6.
+pub(crate) const STREAM_TYPE_AUDIO: u8 = 5;
 
 /// Tag for `ES_Descriptor` (§7.2.6.5).
 const TAG_ES_DESCRIPTOR: u8 = 0x03;
@@ -74,9 +78,6 @@ const VARINT_WIDTH_FIXED: usize = 4;
 /// Size of the DecoderConfigDescriptor fixed fields
 /// (OTI 1 + streamType/upStream/reserved 1 + bufferSizeDB 3 + maxBitrate 4 + avgBitrate 4 = 13).
 const DECODER_CONFIG_FIXED: usize = 13;
-const U16_LEN: usize = core::mem::size_of::<u16>();
-const U24_LEN: usize = 3;
-const U32_LEN: usize = core::mem::size_of::<u32>();
 const U24_BITS: u32 = 24;
 const ES_FLAGS_LEN: usize = 1;
 const VARINT_BITS_PER_BYTE: u32 = 7;
@@ -665,10 +666,12 @@ impl Serialize for DecoderConfigDescriptor {
             self.buffer_size_db as u8,
         ]);
         cursor += U24_LEN;
-        buf[cursor..cursor + U32_LEN].copy_from_slice(&self.max_bitrate.to_be_bytes());
-        cursor += U32_LEN;
-        buf[cursor..cursor + U32_LEN].copy_from_slice(&self.avg_bitrate.to_be_bytes());
-        cursor += U32_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.max_bitrate.to_be_bytes());
+        cursor += core::mem::size_of::<u32>();
+        buf[cursor..cursor + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.avg_bitrate.to_be_bytes());
+        cursor += core::mem::size_of::<u32>();
         for ud in &self.unknown_descriptors {
             if ud.position == 0 {
                 cursor += ud.serialize_into(&mut buf[cursor..])?;
@@ -805,7 +808,7 @@ impl<'a> Parse<'a> for ESDescriptor {
         let mut unknown_descriptors = Vec::new();
 
         // ES_ID (16)
-        need_in(body, cursor + U16_LEN, "ES_ID")?;
+        need_in(body, cursor + core::mem::size_of::<u16>(), "ES_ID")?;
         let es_id = read_u16(body, &mut cursor, "ES_ID")?;
 
         // flags byte: streamDependenceFlag(1) + URL_Flag(1) + OCRstreamFlag(1) + streamPriority(5)
@@ -825,7 +828,11 @@ impl<'a> Parse<'a> for ESDescriptor {
 
         // Optional: dependsOn_ES_ID
         let depends_on_es_id = if stream_dependence_flag {
-            need_in(body, cursor + U16_LEN, "dependsOn_ES_ID")?;
+            need_in(
+                body,
+                cursor + core::mem::size_of::<u16>(),
+                "dependsOn_ES_ID",
+            )?;
             Some(read_u16(body, &mut cursor, "dependsOn_ES_ID")?)
         } else {
             None
@@ -861,7 +868,7 @@ impl<'a> Parse<'a> for ESDescriptor {
 
         // Optional: OCR_ES_Id
         let ocr_es_id = if ocr_stream_flag {
-            need_in(body, cursor + U16_LEN, "OCR_ES_Id")?;
+            need_in(body, cursor + core::mem::size_of::<u16>(), "OCR_ES_Id")?;
             Some(read_u16(body, &mut cursor, "OCR_ES_Id")?)
         } else {
             None
@@ -929,15 +936,19 @@ impl Serialize for ESDescriptor {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let body_size = U16_LEN
+        let body_size = core::mem::size_of::<u16>()
             + ES_FLAGS_LEN
             + if self.depends_on_es_id.is_some() {
-                U16_LEN
+                core::mem::size_of::<u16>()
             } else {
                 0
             }
             + self.url.as_ref().map_or(0, |u| 1 + u.len())
-            + if self.ocr_es_id.is_some() { U16_LEN } else { 0 };
+            + if self.ocr_es_id.is_some() {
+                core::mem::size_of::<u16>()
+            } else {
+                0
+            };
 
         1 // tag
             + self.size_width
@@ -988,15 +999,15 @@ impl Serialize for ESDescriptor {
             }));
         }
 
-        let mut body_size = U16_LEN + ES_FLAGS_LEN;
+        let mut body_size = core::mem::size_of::<u16>() + ES_FLAGS_LEN;
         if self.depends_on_es_id.is_some() {
-            body_size += U16_LEN;
+            body_size += core::mem::size_of::<u16>();
         }
         if let Some(u) = &self.url {
             body_size += 1 + u.len();
         }
         if self.ocr_es_id.is_some() {
-            body_size += U16_LEN;
+            body_size += core::mem::size_of::<u16>();
         }
         body_size += self
             .decoder_config
@@ -1012,8 +1023,9 @@ impl Serialize for ESDescriptor {
         write_varint_width(buf, &mut cursor, body_size, self.size_width)?;
 
         // ES_ID
-        buf[cursor..cursor + U16_LEN].copy_from_slice(&self.es_id.to_be_bytes());
-        cursor += U16_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.es_id.to_be_bytes());
+        cursor += core::mem::size_of::<u16>();
 
         // flags
         let mut flags = self.stream_priority & STREAM_PRIORITY_MASK;
@@ -1031,8 +1043,8 @@ impl Serialize for ESDescriptor {
 
         // dependsOn_ES_ID
         if let Some(dep) = self.depends_on_es_id {
-            buf[cursor..cursor + U16_LEN].copy_from_slice(&dep.to_be_bytes());
-            cursor += U16_LEN;
+            buf[cursor..cursor + core::mem::size_of::<u16>()].copy_from_slice(&dep.to_be_bytes());
+            cursor += core::mem::size_of::<u16>();
         }
 
         // URL
@@ -1045,8 +1057,8 @@ impl Serialize for ESDescriptor {
 
         // OCR_ES_Id
         if let Some(ocr) = self.ocr_es_id {
-            buf[cursor..cursor + U16_LEN].copy_from_slice(&ocr.to_be_bytes());
-            cursor += U16_LEN;
+            buf[cursor..cursor + core::mem::size_of::<u16>()].copy_from_slice(&ocr.to_be_bytes());
+            cursor += core::mem::size_of::<u16>();
         }
 
         // Sub-descriptors: emit each unmodelled descriptor after the modelled
@@ -1148,8 +1160,8 @@ impl EsdsBox {
     /// Parse from the box body bytes (after the BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         // FullBox header: version(1) + flags(3)
-        need_in(body, FULLBOX_EXTRA, "esds FullBox header")?;
-        let payload = &body[FULLBOX_EXTRA..];
+        need_in(body, FULLBOX_EXTRA_SIZE, "esds FullBox header")?;
+        let payload = &body[FULLBOX_EXTRA_SIZE..];
 
         // The payload is a single ES_Descriptor: tag + expandable size + body.
         // `ESDescriptor::parse` now reads that framing itself (the same bytes
@@ -1171,7 +1183,7 @@ impl Serialize for EsdsBox {
 
     fn serialized_len(&self) -> usize {
         crate::box_types::box_len(
-            BOX_HEADER_SIZE + FULLBOX_EXTRA + self.es_descriptor.serialized_len(),
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.es_descriptor.serialized_len(),
         )
     }
 
@@ -1182,8 +1194,9 @@ impl Serialize for EsdsBox {
         // Box header
         cursor += crate::box_types::write_box_header(buf, b"esds", need)?;
         // FullBox: version=0, flags=0
-        buf[cursor..cursor + U32_LEN].copy_from_slice(&[0u8; U32_LEN]);
-        cursor += U32_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u32>()]
+            .copy_from_slice(&[0u8; core::mem::size_of::<u32>()]);
+        cursor += core::mem::size_of::<u32>();
         // ES_Descriptor
         cursor += self.es_descriptor.serialize_into(&mut buf[cursor..])?;
         Ok(cursor)

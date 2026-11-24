@@ -35,7 +35,7 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
 
-use crate::annexb::find_start_code_prefix;
+use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result as AuResult};
 use crate::nal::{NalCodec, nal_unit_type};
 
@@ -99,8 +99,6 @@ const VVC_SUFFIX_SEI: u8 = 24;
 const VVC_FD: u8 = 25;
 /// Top bit of the first RBSP byte, carrying the first-slice-of-picture flag.
 const RBSP_TOP_BIT_MASK: u8 = 0x80;
-/// Annex B start-code prefix length in bytes (`00 00 01`).
-const START_CODE_PREFIX_LEN: usize = 3;
 
 /// Upper bound on bytes buffered for a single still-open NAL, and on the size
 /// of one assembled access unit.

@@ -28,6 +28,7 @@
 //! [`into_ddts`]: DtsCoreFrameInfo::into_ddts
 
 use crate::bitreader::read_bits_checked as read_bits;
+use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
@@ -68,12 +69,6 @@ const DTS_CORE_LAYOUT_USE_CHANNEL_LAYOUT: u8 = 31;
 
 /// `RATE` code for open/variable bit rate — ETSI TS 102 114 Table 5-7 (`0b11101`).
 const DTS_RATE_OPEN: u8 = 0b11101;
-/// Byte length of a 32-bit big-endian word.
-const U32_LEN: usize = core::mem::size_of::<u32>();
-/// Byte length of a 16-bit big-endian word.
-const U16_LEN: usize = core::mem::size_of::<u16>();
-/// Byte length of a FourCC code.
-const FOURCC_LEN: usize = 4;
 
 /// Width of `SHORT`.
 const DTS_SHORT_BITS: usize = 5;
@@ -223,7 +218,7 @@ fn dts_rate_bps(rate: u8) -> u32 {
 /// Read a big-endian `u32` at `offset`.
 fn read_be_u32(bytes: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes(
-        bytes[offset..offset + U32_LEN]
+        bytes[offset..offset + core::mem::size_of::<u32>()]
             .try_into()
             .expect("u32 length"),
     )
@@ -232,7 +227,7 @@ fn read_be_u32(bytes: &[u8], offset: usize) -> u32 {
 /// Read a big-endian `u16` at `offset`.
 fn read_be_u16(bytes: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes(
-        bytes[offset..offset + U16_LEN]
+        bytes[offset..offset + core::mem::size_of::<u16>()]
             .try_into()
             .expect("u16 length"),
     )
@@ -240,7 +235,7 @@ fn read_be_u16(bytes: &[u8], offset: usize) -> u16 {
 
 /// Find the byte offset of the [`DTS_CORE_SYNC_WORD`] in a buffer.
 fn find_dts_sync(data: &[u8]) -> Result<usize> {
-    for i in 0..data.len().saturating_sub(U32_LEN - 1) {
+    for i in 0..data.len().saturating_sub(core::mem::size_of::<u32>() - 1) {
         let word = read_be_u32(data, i);
         if word == DTS_CORE_SYNC_WORD {
             return Ok(i);
@@ -445,7 +440,7 @@ pub struct DtsCoreFrame<'a> {
 pub fn split_dts_core_frames(payload: &[u8]) -> Vec<DtsCoreFrame<'_>> {
     let mut frames = Vec::new();
     let mut off = 0usize;
-    while off + U32_LEN <= payload.len() {
+    while off + core::mem::size_of::<u32>() <= payload.len() {
         let word = read_be_u32(payload, off);
         if word != DTS_CORE_SYNC_WORD {
             break;
@@ -548,7 +543,7 @@ impl DtsSpecificBox {
     /// Returns the fourcc as a UTF-8 string. For the four defined DTS FourCCs
     /// (`dtsc`, `dtsh`, `dtsl`, `dtse`) the result is the codec identifier used
     /// in `Content-Type` and HLS `CODECS=` attributes.
-    pub fn rfc6381(codec_fourcc: &[u8; FOURCC_LEN]) -> &'static str {
+    pub fn rfc6381(codec_fourcc: &[u8; BOX_TYPE_SIZE]) -> &'static str {
         match codec_fourcc {
             b"dtsc" => "dtsc",
             b"dtsh" => "dtsh",

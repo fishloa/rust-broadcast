@@ -222,7 +222,7 @@
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
 use crate::display_track::{ActivationOutcome, SpsTracker, TrackCodec};
-use crate::ir::{AfdPersistence, DisplayChangeSet, DisplayInfo};
+use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, AfdPersistence, DisplayChangeSet, DisplayInfo};
 use crate::mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 use crate::{ProgramNumber, TrackId};
 use alloc::boxed::Box;
@@ -250,7 +250,7 @@ use crate::ac3::{
     AC3_SAMPLES_PER_SYNCFRAME, AC3_SYNCWORD, Ac3SyncframeInfo, EAC3_STRMTYP_DEPENDENT,
     Ec3SpecificBox, Ec3SyncframeInfo,
 };
-use crate::annexb::{annexb_to_length_prefixed, iter_annexb_nals};
+use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_annexb_nals};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::dts::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
 use crate::error::{Error, Result};
@@ -258,16 +258,18 @@ use crate::hdr::{HEVC_PREFIX_SEI_NUT, HdrStaticMetadata};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::media::{Media, PcrSample, Track};
 use crate::mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,
+    OTI_MPEG2_AUDIO, OTI_MPEG4_AUDIO, SLConfigDescriptor, STREAM_TYPE_AUDIO,
 };
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::mpegh::{MHADecoderConfigurationRecord, find_mpegh3da_config};
 use crate::nal::{
-    NalCodec, ParamKind, access_unit_is_rap, is_keyframe_nal, nal_unit_type, parameter_set_is_valid,
+    AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, ParamKind, access_unit_is_rap,
+    is_keyframe_nal, nal_unit_type, parameter_set_is_valid,
 };
 use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
-use crate::wire_cursor::be_u16;
+use crate::wire_cursor::{be_u16, u16_at};
 
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
 
@@ -307,9 +309,6 @@ const SECTION_LENGTH_FIELD_END: usize = 3;
 /// Offset of the `version_number`/`current_next_indicator` byte in a long-form
 /// PSI section (§2.4.4.1).
 const CURRENT_NEXT_INDICATOR_OFFSET: usize = 5;
-/// Bytes of a descriptor's `descriptor_tag` + `descriptor_length` header
-/// (ISO/IEC 13818-1 §2.6).
-const DESCRIPTOR_HEADER_LEN: usize = 2;
 /// Mask for the 13-bit PID low byte's high 5 bits.
 #[cfg(test)]
 const PID_HI_MASK: u8 = 0x1F;
@@ -448,15 +447,6 @@ const STREAM_TYPE_SCTE35: u8 = 0x86;
 
 // ── Codec-config recovery constants ─────────────────────────────────────────
 
-/// NAL length-field width for `mdat` samples: 4-byte prefixes → `lengthSizeMinusOne = 3`.
-const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
-/// H.264 `nal_unit_type` for SPS (ISO/IEC 14496-10 Table 7-1).
-const H264_NAL_SPS: u8 = 7;
-/// H.264 `nal_unit_type` for PPS (Table 7-1).
-const H264_NAL_PPS: u8 = 8;
-/// Mask for the H.264 5-bit `nal_unit_type` in the NAL header byte.
-const H264_NAL_TYPE_MASK: u8 = 0x1F;
-
 /// H.265 `nal_unit_type` for VPS (`VPS_NUT`) — ITU-T H.265 Table 7-1 (type 32).
 const H265_NAL_VPS: u8 = 32;
 /// H.265 `nal_unit_type` for SPS (`SPS_NUT`) — ITU-T H.265 Table 7-1 (type 33).
@@ -476,17 +466,13 @@ const HVCC_AVG_FRAME_RATE_UNSPEC: u16 = 0;
 /// `min_spatial_segmentation_idc = 0` (no constraint) — §8.3.3.1.2.
 const HVCC_MIN_SPATIAL_SEGMENTATION_UNSPEC: u16 = 0;
 
-/// `esds` `objectTypeIndication` for MPEG-4 Audio (ISO/IEC 14496-1 Table 5).
-const OTI_MPEG4_AUDIO: u8 = 0x40;
+/// Bytes of an MPEG-2 descriptor header: `descriptor_tag`(8) +
+/// `descriptor_length`(8) (ISO/IEC 13818-1 §2.6).
+pub(crate) const DESCRIPTOR_HEADER_LEN: usize = 2;
+
 /// `esds` `objectTypeIndication` for MPEG-2 Main Visual (ISO/IEC 14496-1 Table 5).
 /// `pub(crate)`: also used by `ps_demux` (C6, #1009) to build the same `esds`.
 pub(crate) const OTI_MPEG2_VIDEO_MAIN: u8 = 0x61;
-/// `esds` `objectTypeIndication` for MPEG-2 Audio, ISO/IEC 13818-3 (Table 5).
-const OTI_MPEG2_AUDIO: u8 = 0x69;
-/// `esds` `objectTypeIndication` for MPEG-1 Audio, ISO/IEC 11172-3 (Table 5).
-const OTI_MPEG1_AUDIO: u8 = 0x6B;
-/// `esds` `streamType` for an AudioStream (ISO/IEC 14496-1 Table 6).
-const STREAM_TYPE_AUDIO: u8 = 0x05;
 /// `esds` `streamType` for a VisualStream (ISO/IEC 14496-1 Table 6).
 /// `pub(crate)`: also used by `ps_demux` (C6, #1009).
 pub(crate) const STREAM_TYPE_VISUAL: u8 = 0x04;
@@ -495,11 +481,6 @@ const ESDS_ES_ID: u16 = 1;
 /// `esds` `ES_ID` assigned to the single video elementary stream.
 /// `pub(crate)`: also used by `ps_demux` (C6, #1009).
 pub(crate) const ESDS_VIDEO_ES_ID: u16 = 2;
-/// `SLConfigDescriptor` predefined body for MP4 file SL packaging
-/// (ISO/IEC 14496-1 §7.3.2.3 — `predefined = 0x02`).
-/// `pub(crate)`: also used by `ps_demux` (C6, #1009).
-/// Audio sample size in bits carried in the sample entry (PCM-equivalent; 16).
-const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
 
 /// `MHADecoderConfigurationRecord.reference_channel_layout` placeholder for
 /// TS carriage: the real CICP `ChannelConfiguration` is a field *inside* the
@@ -1220,7 +1201,7 @@ fn adts_frame_payload<'a>(
     starts.extend(
         positions
             .chunks_exact(ADTS_BLOCK_POSITION_SIZE)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]) as usize),
+            .map(|c| u16_at(c, 0) as usize),
     );
     // Block i occupies plain[starts[i] .. end_i - CRC]; end_i = starts[i+1].
     let ends = starts[1..].iter().copied().chain([plain.len()]);
@@ -3060,9 +3041,9 @@ fn count_invalid_parameter_sets(codec: Codec, data: &[u8]) -> usize {
     match codec {
         Codec::H264 => {
             for nal in iter_annexb_nals(data) {
-                let kind = match nal[0] & H264_NAL_TYPE_MASK {
-                    H264_NAL_SPS => ParamKind::Sps,
-                    H264_NAL_PPS => ParamKind::Pps,
+                let kind = match nal[0] & NAL_TYPE_MASK {
+                    AVC_NAL_SPS => ParamKind::Sps,
+                    AVC_NAL_PPS => ParamKind::Pps,
                     _ => continue,
                 };
                 n += usize::from(!parameter_set_is_valid(nal_codec_of(codec), kind, nal));
@@ -3175,13 +3156,13 @@ impl ParameterSets {
         match codec {
             Codec::H264 => {
                 for nal in iter_annexb_nals(data) {
-                    match nal[0] & H264_NAL_TYPE_MASK {
-                        H264_NAL_SPS
+                    match nal[0] & NAL_TYPE_MASK {
+                        AVC_NAL_SPS
                             if parameter_set_is_valid(nal_codec_of(codec), ParamKind::Sps, nal) =>
                         {
                             changed |= self.sps.record_current(nal)
                         }
-                        H264_NAL_PPS
+                        AVC_NAL_PPS
                             if parameter_set_is_valid(nal_codec_of(codec), ParamKind::Pps, nal) =>
                         {
                             changed |= self.pps.record_pps(pps_id(codec, nal), nal)
@@ -3385,14 +3366,14 @@ fn finalize_probe(
             // unit is scanned — so the field that held the SPS two access
             // units ago is what carries it forward.
             for nal in iter_annexb_nals(latest) {
-                match nal[0] & H264_NAL_TYPE_MASK {
-                    H264_NAL_SPS
+                match nal[0] & NAL_TYPE_MASK {
+                    AVC_NAL_SPS
                         if sps.is_none()
                             && parameter_set_is_valid(nal_codec_of(codec), ParamKind::Sps, nal) =>
                     {
                         *sps = Some(nal.to_vec())
                     }
-                    H264_NAL_PPS
+                    AVC_NAL_PPS
                         if pps.is_none()
                             && parameter_set_is_valid(nal_codec_of(codec), ParamKind::Pps, nal) =>
                     {
@@ -9765,11 +9746,11 @@ pub(crate) mod tests {
             .expect("TsMux writes valid NAL prefixes");
         let sps = nals
             .iter()
-            .find(|n| (n[0] & H264_NAL_TYPE_MASK) == H264_NAL_SPS)
+            .find(|n| (n[0] & NAL_TYPE_MASK) == AVC_NAL_SPS)
             .expect("the first access unit carries an SPS");
         let pps = nals
             .iter()
-            .find(|n| (n[0] & H264_NAL_TYPE_MASK) == H264_NAL_PPS)
+            .find(|n| (n[0] & NAL_TYPE_MASK) == AVC_NAL_PPS)
             .expect("the first access unit carries a PPS");
         (sps.to_vec(), pps.to_vec(), width)
     }
@@ -9871,7 +9852,7 @@ pub(crate) mod tests {
                 crate::annexb::iter_length_prefixed_nals(&s.data)
                     .unwrap_or_default()
                     .into_iter()
-                    .filter(|n| (n[0] & H264_NAL_TYPE_MASK) == H264_NAL_SPS)
+                    .filter(|n| (n[0] & NAL_TYPE_MASK) == AVC_NAL_SPS)
                     .map(|n| n.to_vec())
                     .collect::<Vec<_>>()
             })

@@ -22,7 +22,10 @@
 //! box and profile 10, the RPU payload syntax, the EL configuration boxes
 //! (`hvcE`/`avcE`) and dual-PID/dual-track carriage.
 
+use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
+use crate::ts_demux::DESCRIPTOR_HEADER_LEN;
+use crate::wire_cursor::u16_at;
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
@@ -188,15 +191,12 @@ pub const DOVI_RESERVED_ZERO: [u8; DOVI_RESERVED_LEN] = [0; DOVI_RESERVED_LEN];
 const RESERVED_OFFSET: usize = 4;
 
 /// Width of a four-character code in bytes.
-const DOVI_FOURCC_LEN: usize = 4;
 /// Byte offset of the `dv_profile`/`dv_level`/flag word in the record.
 const CONFIG_WORD_OFFSET: usize = 2;
 /// Byte offset of `dv_bl_signal_compatibility_id` in the record.
 const CCID_OFFSET: usize = RESERVED_OFFSET;
 /// Width of `dv_profile` once the record's word layout is accounted for.
 const PROFILE_BITS: u32 = u16::BITS - PROFILE_SHIFT;
-/// Bytes a bare `descriptor_tag` + `descriptor_length` header occupies.
-const DESCRIPTOR_HEADER_LEN: usize = 2;
 /// Bytes of the reserved tail that closes each descriptor variant.
 const RESERVED_TAIL_LEN: usize = 1;
 
@@ -238,7 +238,7 @@ fn unpack_config_word(
 
 impl DoviDecoderConfigurationRecord {
     /// The configuration box FourCC the record belongs in (ISOBMFF spec 3.1).
-    pub fn box_fourcc(&self) -> [u8; DOVI_FOURCC_LEN] {
+    pub fn box_fourcc(&self) -> [u8; BOX_TYPE_SIZE] {
         if self.profile <= MAX_DVCC_PROFILE {
             DVCC_FOURCC
         } else {
@@ -291,7 +291,7 @@ impl DoviDecoderConfigurationRecord {
     /// The record found in a `dvcC` / `dvvC` sample-entry child box
     /// (`(fourcc, body)`); the first that parses wins.
     pub fn from_sample_entry_boxes<'a>(
-        boxes: impl IntoIterator<Item = (&'a [u8; DOVI_FOURCC_LEN], &'a [u8])>,
+        boxes: impl IntoIterator<Item = (&'a [u8; BOX_TYPE_SIZE], &'a [u8])>,
     ) -> Option<Self> {
         boxes
             .into_iter()
@@ -332,7 +332,7 @@ impl<'a> Parse<'a> for DoviDecoderConfigurationRecord {
                 "longer than the defined syntax",
             ));
         }
-        let word = u16::from_be_bytes([bytes[CONFIG_WORD_OFFSET], bytes[CONFIG_WORD_OFFSET + 1]]);
+        let word = u16_at(bytes, CONFIG_WORD_OFFSET);
         let mut reserved = [0u8; DOVI_RESERVED_LEN];
         reserved.copy_from_slice(&bytes[RESERVED_OFFSET..]);
         reserved[0] &= CCID_MASK;
@@ -423,7 +423,7 @@ impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
             TS_DESCRIPTOR_BASE_LEN,
             "DOVI_video_stream_descriptor",
         )?;
-        let word = u16::from_be_bytes([bytes[CONFIG_WORD_OFFSET], bytes[CONFIG_WORD_OFFSET + 1]]);
+        let word = u16_at(bytes, CONFIG_WORD_OFFSET);
         let bl_present = word & BL_FLAG != 0;
         let mut dependency_reserved = 0u8;
         let (dependency_pid, tail) = if bl_present {
@@ -434,7 +434,7 @@ impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
                 TS_DESCRIPTOR_BASE_LEN + TS_DESCRIPTOR_DEPENDENCY_LEN,
                 "DOVI_video_stream_descriptor dependency_pid",
             )?;
-            let raw = u16::from_be_bytes([bytes[CCID_OFFSET], bytes[CCID_OFFSET + 1]]);
+            let raw = u16_at(bytes, CCID_OFFSET);
             dependency_reserved = (raw & ((1 << PID_SHIFT) - 1)) as u8;
             (
                 Some(raw >> PID_SHIFT),

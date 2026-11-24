@@ -16,6 +16,7 @@
 //! | `hev1`        | hev1    | yes                   | yes            |
 
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE};
 use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::wire_cursor::{be_u16, be_u32};
@@ -32,13 +33,9 @@ const VISUAL_SAMPLE_ENTRY_SIZE: usize = 78;
 /// Fewest bytes a bare `avc1`/`hvc1` entry can have: the 8-byte box header, the
 /// fixed VisualSampleEntry fields, and the 8-byte header of its config box.
 const BARE_ENTRY_MIN_LEN: usize = 8 + VISUAL_SAMPLE_ENTRY_SIZE + 8;
-const U16_LEN: usize = core::mem::size_of::<u16>();
-const U32_LEN: usize = core::mem::size_of::<u32>();
-const FOURCC_LEN: usize = 4;
-const BOX_HEADER_SIZE: usize = 8;
-const BOX_TYPE_OFFSET: usize = U32_LEN;
 const COMPRESSOR_NAME_LEN: usize = 32;
-const SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
+/// `SampleEntry` `reserved[6]` (ISO/IEC 14496-12:2026 §8.5.2.2).
+pub(crate) const SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
 const VISUAL_RESERVED_FIELDS_LEN: usize = 16;
 const VISUAL_DATA_REFERENCE_INDEX_OFFSET: usize = 6;
 const VISUAL_WIDTH_OFFSET: usize = 24;
@@ -162,38 +159,47 @@ impl VisualSampleEntryFields {
         buf[cursor..cursor + SAMPLE_ENTRY_RESERVED_LEN].fill(0);
         cursor += SAMPLE_ENTRY_RESERVED_LEN;
         // data_reference_index (16)
-        buf[cursor..cursor + U16_LEN].copy_from_slice(&self.data_reference_index.to_be_bytes());
-        cursor += U16_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.data_reference_index.to_be_bytes());
+        cursor += core::mem::size_of::<u16>();
         // pre_defined(16) + reserved(16) + pre_defined[3]×32 = 16 bytes (zero) — §12.1.3
         buf[cursor..cursor + VISUAL_RESERVED_FIELDS_LEN].fill(0);
         cursor += VISUAL_RESERVED_FIELDS_LEN;
         // width (16)
-        buf[cursor..cursor + U16_LEN].copy_from_slice(&self.width.to_be_bytes());
-        cursor += U16_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.width.to_be_bytes());
+        cursor += core::mem::size_of::<u16>();
         // height (16)
-        buf[cursor..cursor + U16_LEN].copy_from_slice(&self.height.to_be_bytes());
-        cursor += U16_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.height.to_be_bytes());
+        cursor += core::mem::size_of::<u16>();
         // horizontal resolution (32, fixed-16.16)
-        buf[cursor..cursor + U32_LEN].copy_from_slice(&self.horizontal_resolution.to_be_bytes());
-        cursor += U32_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.horizontal_resolution.to_be_bytes());
+        cursor += core::mem::size_of::<u32>();
         // vertical resolution (32, fixed-16.16)
-        buf[cursor..cursor + U32_LEN].copy_from_slice(&self.vertical_resolution.to_be_bytes());
-        cursor += U32_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.vertical_resolution.to_be_bytes());
+        cursor += core::mem::size_of::<u32>();
         // data size (32, reserved = 0)
-        buf[cursor..cursor + U32_LEN].copy_from_slice(&self.data_size.to_be_bytes());
-        cursor += U32_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.data_size.to_be_bytes());
+        cursor += core::mem::size_of::<u32>();
         // frame count (16)
-        buf[cursor..cursor + U16_LEN].copy_from_slice(&self.frame_count.to_be_bytes());
-        cursor += U16_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.frame_count.to_be_bytes());
+        cursor += core::mem::size_of::<u16>();
         // compressorname (32 bytes)
         buf[cursor..cursor + COMPRESSOR_NAME_LEN].copy_from_slice(&self.compressorname);
         cursor += COMPRESSOR_NAME_LEN;
         // depth (16)
-        buf[cursor..cursor + U16_LEN].copy_from_slice(&self.depth.to_be_bytes());
-        cursor += U16_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.depth.to_be_bytes());
+        cursor += core::mem::size_of::<u16>();
         // predefined (16)
-        buf[cursor..cursor + U16_LEN].copy_from_slice(&self.predefined.to_be_bytes());
-        cursor += U16_LEN;
+        buf[cursor..cursor + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.predefined.to_be_bytes());
+        cursor += core::mem::size_of::<u16>();
 
         Ok(cursor)
     }
@@ -203,13 +209,13 @@ impl VisualSampleEntryFields {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct OpaqueBox {
-    pub box_type: [u8; FOURCC_LEN],
+    pub box_type: [u8; BOX_TYPE_SIZE],
     pub data: Vec<u8>,
 }
 
 impl OpaqueBox {
     fn serialized_len(&self) -> usize {
-        BOX_HEADER_SIZE + self.data.len()
+        BOX_HEADER_MIN_SIZE + self.data.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -217,9 +223,9 @@ impl OpaqueBox {
         // This opaque child is compact-form only (its reader is too): a size
         // past 32 bits is a typed error, never a wrap (#1147).
         let size = broadcast_common::len::fit_u32(need, "opaque child size")?;
-        buf[..U32_LEN].copy_from_slice(&size.to_be_bytes());
-        buf[BOX_TYPE_OFFSET..BOX_HEADER_SIZE].copy_from_slice(&self.box_type);
-        buf[BOX_HEADER_SIZE..BOX_HEADER_SIZE + self.data.len()].copy_from_slice(&self.data);
+        buf[..core::mem::size_of::<u32>()].copy_from_slice(&size.to_be_bytes());
+        buf[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE].copy_from_slice(&self.box_type);
+        buf[BOX_HEADER_MIN_SIZE..BOX_HEADER_MIN_SIZE + self.data.len()].copy_from_slice(&self.data);
         Ok(need)
     }
 }
@@ -230,7 +236,7 @@ impl OpaqueBox {
 /// `avc1`/`hvc1`/`vvc1` entries (#2005).
 pub(crate) fn serialize_visual_sample_entry(
     buf: &mut [u8],
-    codec_type: &[u8; FOURCC_LEN],
+    codec_type: &[u8; BOX_TYPE_SIZE],
     need: usize,
     visual: &VisualSampleEntryFields,
     config: &[u8],
@@ -257,16 +263,19 @@ pub(crate) fn serialize_visual_sample_entry(
 /// used to slice — the same bound `init_segment::parse_stbl_children` applies
 /// — rather than trusted outright: a child box declaring `size = 0xFFFFFFFF`
 /// would otherwise panic on the out-of-bounds slice (audit finding #2).
-pub(crate) fn find_config_box<'a>(region: &'a [u8], fourcc: &[u8; FOURCC_LEN]) -> Option<&'a [u8]> {
+pub(crate) fn find_config_box<'a>(
+    region: &'a [u8],
+    fourcc: &[u8; BOX_TYPE_SIZE],
+) -> Option<&'a [u8]> {
     let mut off = 0usize;
-    while off + BOX_HEADER_SIZE <= region.len() {
+    while off + BOX_HEADER_MIN_SIZE <= region.len() {
         // §4.2: `size`, the 64-bit `largesize` when `size == 1`, or to the end
         // of the region when `size == 0`; shorter than its own header ends
         // the walk.
         let Some(size) = crate::box_types::child_extent_in(&region[off..]) else {
             break;
         };
-        let ty = &region[off + BOX_TYPE_OFFSET..off + BOX_HEADER_SIZE];
+        let ty = &region[off + BOX_TYPE_OFFSET..off + BOX_HEADER_MIN_SIZE];
         if ty == fourcc {
             return Some(&region[off..off + size]);
         }
@@ -306,7 +315,7 @@ pub enum SampleEntryChild {
 /// item 3, round 3).
 pub(crate) fn entry_children(
     region: &[u8],
-    fourcc: &[u8; FOURCC_LEN],
+    fourcc: &[u8; BOX_TYPE_SIZE],
 ) -> Result<Vec<SampleEntryChild>> {
     let mut out = Vec::new();
     let mut off = 0usize;
@@ -373,7 +382,7 @@ pub(crate) fn entry_children_len(children: &[SampleEntryChild], config_len: usiz
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AVCSampleEntry {
     /// The four-CC (avc1 or avc3).
-    pub codec_type: [u8; FOURCC_LEN],
+    pub codec_type: [u8; BOX_TYPE_SIZE],
     /// Visual sample entry fields.
     pub visual: VisualSampleEntryFields,
     /// AVC configuration box (avcC).
@@ -387,18 +396,18 @@ impl AVCSampleEntry {
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         use crate::avc_config::AVCConfigurationBox;
         need_in(bytes, BARE_ENTRY_MIN_LEN, "avc1 bare")?;
-        let mut codec_type = [0u8; FOURCC_LEN];
-        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_SIZE]);
+        let mut codec_type = [0u8; BOX_TYPE_SIZE];
+        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let visual = VisualSampleEntryFields::parse_body(bytes, "avc1 bare")?;
         let config_region = &body[VISUAL_SAMPLE_ENTRY_SIZE..];
         if let Some(avcc) = find_config_box(config_region, b"avcC") {
             // avcc is the full box (header+body); parse_body expects only the body
-            let config = if avcc.len() > BOX_HEADER_SIZE {
+            let config = if avcc.len() > BOX_HEADER_MIN_SIZE {
                 AVCConfigurationBox::parse_body(&avcc[crate::box_types::box_header_len(avcc)?..])?
             } else {
                 return Err(Error::BufferTooShort(BufferTooShort {
-                    need: BOX_HEADER_SIZE,
+                    need: BOX_HEADER_MIN_SIZE,
                     have: avcc.len(),
                     what: "avcC body",
                 }));
@@ -453,7 +462,7 @@ impl Serialize for AVCSampleEntry {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HEADER_SIZE
+        let mut n = BOX_HEADER_MIN_SIZE
             + VisualSampleEntryFields::serialized_len()
             + self.config.serialized_len();
         for eb in &self.extra_boxes {
@@ -509,7 +518,7 @@ impl Mp4vSampleEntry {
         let bytes: &[u8] = &compact;
         let visual = VisualSampleEntryFields::parse_body(bytes, "mp4v")?;
         // Child boxes start after the 8-byte box header + visual fixed fields.
-        let region = &bytes[BOX_HEADER_SIZE + VISUAL_SAMPLE_ENTRY_SIZE..];
+        let region = &bytes[BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_SIZE..];
         let config_boxes = parse_trailing_boxes(region);
         Ok(Self {
             visual,
@@ -522,7 +531,7 @@ impl Serialize for Mp4vSampleEntry {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HEADER_SIZE + VisualSampleEntryFields::serialized_len();
+        let mut n = BOX_HEADER_MIN_SIZE + VisualSampleEntryFields::serialized_len();
         for b in &self.config_boxes {
             n += b.serialized_len();
         }
@@ -559,10 +568,10 @@ impl Serialize for Mp4vSampleEntry {
 /// before the damage rather than losing all of them or panicking. (The entry's
 /// config box is located by [`find_config_box`] independently, so a truncated
 /// tail never costs the codec config.)
-fn capture_extra_boxes(region: &[u8], skip: &[&[u8; FOURCC_LEN]]) -> Vec<OpaqueBox> {
+fn capture_extra_boxes(region: &[u8], skip: &[&[u8; BOX_TYPE_SIZE]]) -> Vec<OpaqueBox> {
     let mut out = Vec::new();
     let mut off = 0usize;
-    while off + BOX_HEADER_SIZE <= region.len() {
+    while off + BOX_HEADER_MIN_SIZE <= region.len() {
         // A malformed length ends the walk rather than losing earlier boxes.
         let Some(sz) = crate::box_types::child_extent(&region[off..]) else {
             break;
@@ -570,9 +579,9 @@ fn capture_extra_boxes(region: &[u8], skip: &[&[u8; FOURCC_LEN]]) -> Vec<OpaqueB
         if sz > region.len() - off {
             break;
         }
-        let hdr = crate::box_types::box_header_len(&region[off..]).unwrap_or(BOX_HEADER_SIZE);
-        let mut bt = [0u8; FOURCC_LEN];
-        bt.copy_from_slice(&region[off + BOX_TYPE_OFFSET..off + BOX_HEADER_SIZE]);
+        let hdr = crate::box_types::box_header_len(&region[off..]).unwrap_or(BOX_HEADER_MIN_SIZE);
+        let mut bt = [0u8; BOX_TYPE_SIZE];
+        bt.copy_from_slice(&region[off + BOX_TYPE_OFFSET..off + BOX_HEADER_MIN_SIZE]);
         if !skip.iter().any(|k| **k == bt) {
             out.push(OpaqueBox {
                 box_type: bt,
@@ -591,21 +600,21 @@ fn capture_extra_boxes(region: &[u8], skip: &[&[u8; FOURCC_LEN]]) -> Vec<OpaqueB
 fn parse_trailing_boxes(region: &[u8]) -> Vec<crate::init_segment::OpaqueBox> {
     let mut out = Vec::new();
     let mut off = 0usize;
-    while off + BOX_HEADER_SIZE <= region.len() {
+    while off + BOX_HEADER_MIN_SIZE <= region.len() {
         let Some(sz) = crate::box_types::child_extent(&region[off..]) else {
             break;
         };
         if sz > region.len() - off {
             break;
         }
-        let hdr = crate::box_types::box_header_len(&region[off..]).unwrap_or(BOX_HEADER_SIZE);
-        let mut bt = [0u8; FOURCC_LEN];
-        bt.copy_from_slice(&region[off + BOX_TYPE_OFFSET..off + BOX_HEADER_SIZE]);
+        let hdr = crate::box_types::box_header_len(&region[off..]).unwrap_or(BOX_HEADER_MIN_SIZE);
+        let mut bt = [0u8; BOX_TYPE_SIZE];
+        bt.copy_from_slice(&region[off + BOX_TYPE_OFFSET..off + BOX_HEADER_MIN_SIZE]);
         let mut child =
             crate::init_segment::OpaqueBox::new(bt, region[off + hdr..off + sz].to_vec());
         // Keep the `size = 1` + `largesize` form so a parse -> serialize trip
         // re-emits the header it read (§4.2).
-        child.largesize = hdr != BOX_HEADER_SIZE;
+        child.largesize = hdr != BOX_HEADER_MIN_SIZE;
         out.push(child);
         off += sz;
     }
@@ -625,7 +634,7 @@ const HVC1_FOURCC: [u8; 4] = *b"hvc1";
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HEVCSampleEntry {
     /// The four-CC (hvc1 or hev1).
-    pub codec_type: [u8; FOURCC_LEN],
+    pub codec_type: [u8; BOX_TYPE_SIZE],
     /// Visual sample entry fields.
     pub visual: VisualSampleEntryFields,
     /// HEVC configuration box (hvcC).
@@ -639,17 +648,17 @@ impl HEVCSampleEntry {
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         use crate::hevc_config::HEVCConfigurationBox;
         need_in(bytes, BARE_ENTRY_MIN_LEN, "hvc1 bare")?;
-        let mut codec_type = [0u8; FOURCC_LEN];
-        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_SIZE]);
+        let mut codec_type = [0u8; BOX_TYPE_SIZE];
+        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let visual = VisualSampleEntryFields::parse_body(bytes, "hvc1 bare")?;
         let config_region = &body[VISUAL_SAMPLE_ENTRY_SIZE..];
         if let Some(hvcc) = find_config_box(config_region, b"hvcC") {
-            let config = if hvcc.len() > BOX_HEADER_SIZE {
+            let config = if hvcc.len() > BOX_HEADER_MIN_SIZE {
                 HEVCConfigurationBox::parse_body(&hvcc[crate::box_types::box_header_len(hvcc)?..])?
             } else {
                 return Err(Error::BufferTooShort(BufferTooShort {
-                    need: BOX_HEADER_SIZE,
+                    need: BOX_HEADER_MIN_SIZE,
                     have: hvcc.len(),
                     what: "hvcC body",
                 }));
@@ -722,7 +731,7 @@ impl Serialize for HEVCSampleEntry {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HEADER_SIZE
+        let mut n = BOX_HEADER_MIN_SIZE
             + VisualSampleEntryFields::serialized_len()
             + self.config.serialized_len();
         for eb in &self.extra_boxes {
@@ -759,7 +768,7 @@ impl Serialize for HEVCSampleEntry {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VVCSampleEntry {
     /// The four-CC (`vvc1` or `vvi1`).
-    pub codec_type: [u8; FOURCC_LEN],
+    pub codec_type: [u8; BOX_TYPE_SIZE],
     /// Visual sample entry fields.
     pub visual: VisualSampleEntryFields,
     /// VVC configuration box (`vvcC`).
@@ -775,16 +784,16 @@ impl VVCSampleEntry {
         let bytes: &[u8] = &compact;
         use crate::vvc_config::VvcConfigurationBox;
         need_in(bytes, BARE_ENTRY_MIN_LEN, "vvc1 bare")?;
-        let mut codec_type = [0u8; FOURCC_LEN];
-        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_SIZE]);
+        let mut codec_type = [0u8; BOX_TYPE_SIZE];
+        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
         let visual = VisualSampleEntryFields::parse_body(bytes, "vvc1")?;
-        let config_region = &bytes[BOX_HEADER_SIZE + VISUAL_SAMPLE_ENTRY_SIZE..];
+        let config_region = &bytes[BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_SIZE..];
         if let Some(vvcc) = find_config_box(config_region, b"vvcC") {
-            let config = if vvcc.len() > BOX_HEADER_SIZE {
+            let config = if vvcc.len() > BOX_HEADER_MIN_SIZE {
                 VvcConfigurationBox::parse_body(&vvcc[crate::box_types::box_header_len(vvcc)?..])?
             } else {
                 return Err(Error::BufferTooShort(BufferTooShort {
-                    need: BOX_HEADER_SIZE,
+                    need: BOX_HEADER_MIN_SIZE,
                     have: vvcc.len(),
                     what: "vvcC body",
                 }));
@@ -830,7 +839,7 @@ impl Serialize for VVCSampleEntry {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HEADER_SIZE
+        let mut n = BOX_HEADER_MIN_SIZE
             + VisualSampleEntryFields::serialized_len()
             + self.config.serialized_len();
         for eb in &self.extra_boxes {

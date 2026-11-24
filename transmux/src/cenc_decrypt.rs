@@ -86,14 +86,14 @@ use alloc::vec::Vec;
 use broadcast_common::{Decrypt, Parse};
 
 use crate::box_types::{
-    BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, box_slices, child_boxes, descend_boxes, find_child_box,
-    find_top_box, parse_box,
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET, box_slices,
+    child_boxes, descend_boxes, find_child_box, find_top_box, parse_box,
 };
 // Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
 // resolving for existing callers even though the type now lives in
 // `crate::cenc` (issue #564 — one shared definition for decrypt/encrypt/IR).
 pub use crate::cenc::CencScheme;
-use crate::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
+use crate::cenc::{KEY_LEN, SampleEncryptionEntry, TrackEncryptionBox};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::init_segment::{ChunkLargeOffsetBox, ChunkOffsetBox, SampleSizeBox, SampleToChunkBox};
@@ -103,10 +103,6 @@ use crate::movie_fragment::{
 };
 use crate::progressive_demux::sample_layout;
 use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
-
-/// Size of a KID / content key / AES-128 key **or block**, in bytes (AES-128's
-/// key length and block length coincide).
-const KEY_LEN: usize = 16;
 
 /// A map of content keys, keyed by 16-byte Key ID (KID).
 ///
@@ -465,10 +461,6 @@ impl Decrypt for CencDecryptor {
 // fMP4 harvesting: recover per-track crypto metadata + encrypted samples.
 // ---------------------------------------------------------------------------
 
-/// Full-box header size (`version` + `flags`).
-const FULL_HDR: usize = 4;
-/// Offset of the three `flags` bytes inside a FullBox extension.
-const FULLBOX_FLAGS_OFFSET: usize = 1;
 /// `creation_time` and `modification_time` precede `timescale` in `mdhd`
 /// (ISO/IEC 14496-12:2026 §8.4.2).
 const MDHD_TIMES_BEFORE_TIMESCALE: usize = 2;
@@ -583,15 +575,19 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
 /// Parse a full `senc` box (header + FullBox + body) into its typed form,
 /// given the track's `tenc.default_per_sample_iv_size`.
 fn parse_senc_box(senc: &[u8], per_sample_iv_size: u8) -> Result<crate::cenc::SampleEncryptionBox> {
-    need_in(senc, BOX_HEADER_MIN_SIZE + FULL_HDR, "senc header")?;
+    need_in(
+        senc,
+        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE,
+        "senc header",
+    )?;
     let version = senc[BOX_HEADER_MIN_SIZE];
     let mut flag_word = [0u8; BOX_TYPE_SIZE];
     flag_word[FULLBOX_FLAGS_OFFSET..].copy_from_slice(
-        &senc[BOX_HEADER_MIN_SIZE + FULLBOX_FLAGS_OFFSET..BOX_HEADER_MIN_SIZE + FULL_HDR],
+        &senc[BOX_HEADER_MIN_SIZE + FULLBOX_FLAGS_OFFSET..BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE],
     );
     let flags = u32::from_be_bytes(flag_word);
     crate::cenc::SampleEncryptionBox::parse_body(
-        &senc[BOX_HEADER_MIN_SIZE + FULL_HDR..],
+        &senc[BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE..],
         version,
         flags,
         per_sample_iv_size,
@@ -632,7 +628,11 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
             let Some(tfhd) = find_child_box(traf, b"tfhd") else {
                 continue;
             };
-            need_in(tfhd, BOX_HEADER_MIN_SIZE + FULL_HDR, "tfhd header")?;
+            need_in(
+                tfhd,
+                BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE,
+                "tfhd header",
+            )?;
             let tfhd_parsed = TrackFragmentHeaderBox::parse_body(
                 &tfhd[crate::box_types::box_header_len(tfhd)?..],
             )?;
@@ -701,7 +701,7 @@ fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
 /// an `stsd` box.
 fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
     // stsd body: FullBox(4) + entry_count(4), then sample entries.
-    let body_start = BOX_HEADER_MIN_SIZE + FULL_HDR + STSD_ENTRY_COUNT;
+    let body_start = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT;
     if body_start > stsd.len() {
         return None;
     }
@@ -735,7 +735,7 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
 /// The FourCC of the first sample entry in an `stsd` box, as text
 /// (`"unknown"` when the box is too short to hold one).
 fn stsd_entry_fourcc(stsd: &[u8]) -> &'static str {
-    let body_start = BOX_HEADER_MIN_SIZE + FULL_HDR + STSD_ENTRY_COUNT;
+    let body_start = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT;
     let Some(first) = stsd.get(body_start..body_start + BOX_HEADER_MIN_SIZE) else {
         return "unknown";
     };
@@ -1011,7 +1011,7 @@ fn absorb_protected_fragment(
 
 /// Parse the avcC record from the (first) encv entry of an stsd.
 fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigurationRecord> {
-    let body_start = BOX_HEADER_MIN_SIZE + FULL_HDR + STSD_ENTRY_COUNT;
+    let body_start = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT;
     for entry in box_slices(&stsd[body_start.min(stsd.len())..]) {
         if &entry[4..8] == b"encv" {
             let child_start = BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR;
@@ -1070,9 +1070,13 @@ fn header_timescale(header: &[u8], expected: &'static str) -> Result<Timescale> 
     // version 0: after FullBox(4): creation(4) modification(4) timescale(4)
     // version 1: after FullBox(4): creation(8) modification(8) timescale(4)
     let ts_off = if *version == 1 {
-        BOX_HEADER_MIN_SIZE + FULL_HDR + MDHD_TIMES_BEFORE_TIMESCALE * core::mem::size_of::<u64>()
+        BOX_HEADER_MIN_SIZE
+            + FULLBOX_EXTRA_SIZE
+            + MDHD_TIMES_BEFORE_TIMESCALE * core::mem::size_of::<u64>()
     } else {
-        BOX_HEADER_MIN_SIZE + FULL_HDR + MDHD_TIMES_BEFORE_TIMESCALE * core::mem::size_of::<u32>()
+        BOX_HEADER_MIN_SIZE
+            + FULLBOX_EXTRA_SIZE
+            + MDHD_TIMES_BEFORE_TIMESCALE * core::mem::size_of::<u32>()
     };
     let bytes = header
         .get(ts_off..ts_off + core::mem::size_of::<u32>())
@@ -1124,10 +1128,10 @@ mod tests {
 
     fn full_box(fourcc: &[u8; 4], entries: &[u8], count: u32) -> Vec<u8> {
         let mut b = Vec::new();
-        let len = (BOX_HEADER_MIN_SIZE + FULL_HDR + 4 + entries.len()) as u32;
+        let len = (BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 4 + entries.len()) as u32;
         b.extend_from_slice(&len.to_be_bytes());
         b.extend_from_slice(fourcc);
-        b.extend_from_slice(&[0; FULL_HDR]);
+        b.extend_from_slice(&[0; FULLBOX_EXTRA_SIZE]);
         b.extend_from_slice(&count.to_be_bytes());
         b.extend_from_slice(entries);
         b
@@ -1143,9 +1147,9 @@ mod tests {
 
     fn stsz_box(size: u32, count: u32) -> Vec<u8> {
         let mut b = Vec::new();
-        b.extend_from_slice(&((BOX_HEADER_MIN_SIZE + FULL_HDR + 8) as u32).to_be_bytes());
+        b.extend_from_slice(&((BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 8) as u32).to_be_bytes());
         b.extend_from_slice(b"stsz");
-        b.extend_from_slice(&[0; FULL_HDR]);
+        b.extend_from_slice(&[0; FULLBOX_EXTRA_SIZE]);
         b.extend_from_slice(&size.to_be_bytes());
         b.extend_from_slice(&count.to_be_bytes());
         b
@@ -1277,7 +1281,7 @@ mod tests {
                 trun.extend_from_slice(&SAMPLE_SIZE.to_be_bytes());
             }
             let mut mfhd = Vec::new();
-            mfhd.extend_from_slice(&[0u8; FULL_HDR]);
+            mfhd.extend_from_slice(&[0u8; FULLBOX_EXTRA_SIZE]);
             mfhd.extend_from_slice(&1u32.to_be_bytes());
             kids(
                 b"moof",
@@ -1886,7 +1890,9 @@ mod tests {
     /// than slicing past the end (the `>` guard is what stops the slice).
     #[test]
     fn find_sinf_in_stsd_on_a_truncated_stsd_returns_none() {
-        for len in BOX_HEADER_MIN_SIZE..(BOX_HEADER_MIN_SIZE + FULL_HDR + STSD_ENTRY_COUNT) {
+        for len in
+            BOX_HEADER_MIN_SIZE..(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT)
+        {
             let mut stsd = vec![0u8; len];
             stsd[..4].copy_from_slice(&(len as u32).to_be_bytes());
             stsd[4..8].copy_from_slice(b"stsd");
@@ -1957,7 +1963,7 @@ mod tests {
     #[test]
     fn parse_senc_box_rejects_every_truncated_prefix() {
         let full = full_box(b"senc", &0u32.to_be_bytes(), 0);
-        for len in 0..(BOX_HEADER_MIN_SIZE + FULL_HDR + 4) {
+        for len in 0..(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 4) {
             assert!(
                 parse_senc_box(&full[..len], 8).is_err(),
                 "a {len}-byte senc must be rejected"
@@ -1971,7 +1977,7 @@ mod tests {
 
     fn header_box(fourcc: &[u8; 4], version: u8, fields: &[u8]) -> Vec<u8> {
         let mut b = Vec::new();
-        let len = (BOX_HEADER_MIN_SIZE + FULL_HDR + fields.len()) as u32;
+        let len = (BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + fields.len()) as u32;
         b.extend_from_slice(&len.to_be_bytes());
         b.extend_from_slice(fourcc);
         b.extend_from_slice(&[version, 0, 0, 0]);

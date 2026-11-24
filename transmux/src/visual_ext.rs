@@ -19,7 +19,9 @@ use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
+use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
+use crate::units::ROUNDING_DIVISOR;
 use crate::wire_cursor::{be_u16, be_u32};
 
 // ---------------------------------------------------------------------------
@@ -43,7 +45,7 @@ impl<'a> Parse<'a> for PixelAspectRatioBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, PASP_BODY_LEN, "pasp body")?;
         let h_spacing = be_u32(bytes, 0, "pasp body")?;
-        let v_spacing = be_u32(bytes, U32_LEN, "pasp body")?;
+        let v_spacing = be_u32(bytes, core::mem::size_of::<u32>(), "pasp body")?;
         Ok(Self {
             h_spacing,
             v_spacing,
@@ -60,8 +62,9 @@ impl Serialize for PixelAspectRatioBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, PASP_BODY_LEN)?;
-        buf[..U32_LEN].copy_from_slice(&self.h_spacing.to_be_bytes());
-        buf[U32_LEN..PASP_BODY_LEN].copy_from_slice(&self.v_spacing.to_be_bytes());
+        buf[..core::mem::size_of::<u32>()].copy_from_slice(&self.h_spacing.to_be_bytes());
+        buf[core::mem::size_of::<u32>()..PASP_BODY_LEN]
+            .copy_from_slice(&self.v_spacing.to_be_bytes());
         Ok(PASP_BODY_LEN)
     }
 }
@@ -90,10 +93,6 @@ pub struct CleanApertureBox {
     pub vert_off_d: i32,
 }
 
-/// The `/ 2` of `pcX = horizOff + (width - 1)/2` and the clean aperture edges
-/// `pcX ± (cleanApertureWidth - 1)/2` (ISO/IEC 14496-12:2026 §12.1.4.1).
-const ROUNDING_DIVISOR: i128 = 2;
-
 /// One axis of [`CleanApertureBox::aperture_within`]: the first sample and the
 /// length of the aperture inside a frame of `frame` samples.
 ///
@@ -110,8 +109,8 @@ fn aperture_axis(size: (i32, i32), offset: (i32, i32), frame: u32) -> Option<(u3
     }
     let size = size_n / size_d;
     let frame = i128::from(frame);
-    let first_num = ROUNDING_DIVISOR * off_n + off_d * (frame - size);
-    let first_den = ROUNDING_DIVISOR * off_d;
+    let first_num = i128::from(ROUNDING_DIVISOR) * off_n + off_d * (frame - size);
+    let first_den = i128::from(ROUNDING_DIVISOR) * off_d;
     if first_num % first_den != 0 {
         return None;
     }
@@ -178,21 +177,25 @@ impl Serialize for CleanApertureBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, CLAP_BODY_LEN)?;
         let mut c = 0usize;
-        buf[c..c + U32_LEN].copy_from_slice(&self.clean_aperture_width_n.to_be_bytes());
-        c += U32_LEN;
-        buf[c..c + U32_LEN].copy_from_slice(&self.clean_aperture_width_d.to_be_bytes());
-        c += U32_LEN;
-        buf[c..c + U32_LEN].copy_from_slice(&self.clean_aperture_height_n.to_be_bytes());
-        c += U32_LEN;
-        buf[c..c + U32_LEN].copy_from_slice(&self.clean_aperture_height_d.to_be_bytes());
-        c += U32_LEN;
-        buf[c..c + U32_LEN].copy_from_slice(&self.horiz_off_n.to_be_bytes());
-        c += U32_LEN;
-        buf[c..c + U32_LEN].copy_from_slice(&self.horiz_off_d.to_be_bytes());
-        c += U32_LEN;
-        buf[c..c + U32_LEN].copy_from_slice(&self.vert_off_n.to_be_bytes());
-        c += U32_LEN;
-        buf[c..c + U32_LEN].copy_from_slice(&self.vert_off_d.to_be_bytes());
+        buf[c..c + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.clean_aperture_width_n.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.clean_aperture_width_d.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.clean_aperture_height_n.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.clean_aperture_height_d.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.horiz_off_n.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.horiz_off_d.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.vert_off_n.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.vert_off_d.to_be_bytes());
         Ok(CLAP_BODY_LEN)
     }
 }
@@ -209,7 +212,7 @@ pub enum ColourType {
     Nclx,
     RIcc,
     Prof,
-    Unknown([u8; FOURCC_LEN]),
+    Unknown([u8; BOX_TYPE_SIZE]),
 }
 
 impl ColourType {
@@ -239,8 +242,8 @@ impl core::fmt::Display for ColourType {
                     self.name(),
                     code[0],
                     code[1],
-                    code[U16_LEN],
-                    code[U32_LEN - 1]
+                    code[core::mem::size_of::<u16>()],
+                    code[core::mem::size_of::<u32>() - 1]
                 )
             }
             other => f.write_str(other.name()),
@@ -253,11 +256,8 @@ impl core::fmt::Display for ColourType {
 /// `transfer_characteristics(16)`, `matrix_coefficients(16)`,
 /// `full_range_flag(1)` + `reserved(7)`.
 const NCLX_PARAMS_LEN: usize = 7;
-const U16_LEN: usize = core::mem::size_of::<u16>();
-const U32_LEN: usize = core::mem::size_of::<u32>();
-const FOURCC_LEN: usize = 4;
-const PASP_BODY_LEN: usize = U32_LEN * 2;
-const CLAP_FIELD_LEN: usize = U32_LEN;
+const PASP_BODY_LEN: usize = core::mem::size_of::<u32>() * 2;
+const CLAP_FIELD_LEN: usize = core::mem::size_of::<u32>();
 const CLAP_FIELD_COUNT: usize = 8;
 const CLAP_BODY_LEN: usize = CLAP_FIELD_LEN * CLAP_FIELD_COUNT;
 const CLAP_WIDTH_N_OFFSET: usize = 0;
@@ -268,9 +268,9 @@ const CLAP_HORIZ_OFF_N_OFFSET: usize = CLAP_FIELD_LEN * 4;
 const CLAP_HORIZ_OFF_D_OFFSET: usize = CLAP_FIELD_LEN * 5;
 const CLAP_VERT_OFF_N_OFFSET: usize = CLAP_FIELD_LEN * 6;
 const CLAP_VERT_OFF_D_OFFSET: usize = CLAP_FIELD_LEN * 7;
-const NCLX_TRANSFER_OFFSET: usize = U16_LEN;
-const NCLX_MATRIX_OFFSET: usize = U16_LEN * 2;
-const NCLX_RANGE_BYTE_OFFSET: usize = U16_LEN * 3;
+const NCLX_TRANSFER_OFFSET: usize = core::mem::size_of::<u16>();
+const NCLX_MATRIX_OFFSET: usize = core::mem::size_of::<u16>() * 2;
+const NCLX_RANGE_BYTE_OFFSET: usize = core::mem::size_of::<u16>() * 3;
 const NCLX_FULL_RANGE_SHIFT: u8 = 7;
 const NCLX_RESERVED_MASK: u8 = 0x7F;
 
@@ -332,7 +332,7 @@ impl NclxColourInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ColourInformationBox {
-    pub colour_type: [u8; FOURCC_LEN],
+    pub colour_type: [u8; BOX_TYPE_SIZE],
     pub nclx: Option<NclxColourInfo>,
     /// Every byte after the type-specific body. For `rICC`/`prof`/unknown that
     /// is the ICC profile or opaque payload; for `nclx` it is trailing padding
@@ -345,10 +345,10 @@ impl<'a> Parse<'a> for ColourInformationBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, FOURCC_LEN, "colr body")?;
-        let mut colour_type = [0u8; FOURCC_LEN];
-        colour_type.copy_from_slice(&bytes[..FOURCC_LEN]);
-        let rest = &bytes[FOURCC_LEN..];
+        need_in(bytes, BOX_TYPE_SIZE, "colr body")?;
+        let mut colour_type = [0u8; BOX_TYPE_SIZE];
+        colour_type.copy_from_slice(&bytes[..BOX_TYPE_SIZE]);
+        let rest = &bytes[BOX_TYPE_SIZE..];
 
         match &colour_type {
             b"nclx" => {
@@ -395,8 +395,8 @@ impl Serialize for ColourInformationBox {
         // 4-byte `colour_type`, then either the 7 spec'd `nclx` bytes plus any
         // trailing pad, or the opaque payload.
         match &self.colour_type {
-            b"nclx" => FOURCC_LEN + NCLX_PARAMS_LEN + self.icc_profile.len(),
-            _ => FOURCC_LEN + self.icc_profile.len(),
+            b"nclx" => BOX_TYPE_SIZE + NCLX_PARAMS_LEN + self.icc_profile.len(),
+            _ => BOX_TYPE_SIZE + self.icc_profile.len(),
         }
     }
 
@@ -404,8 +404,8 @@ impl Serialize for ColourInformationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        buf[c..c + U32_LEN].copy_from_slice(&self.colour_type);
-        c += U32_LEN;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.colour_type);
+        c += core::mem::size_of::<u32>();
         if &self.colour_type == b"nclx" {
             // `serialized_len` always budgets the 7 `nclx` bytes for a `nclx`
             // colour type, so a missing `nclx` must be an error — otherwise the
@@ -417,12 +417,15 @@ impl Serialize for ColourInformationBox {
                     reason: "colour_type is nclx but no nclx params are set",
                 }));
             };
-            buf[c..c + U16_LEN].copy_from_slice(&nclx.colour_primaries.to_be_bytes());
-            c += U16_LEN;
-            buf[c..c + U16_LEN].copy_from_slice(&nclx.transfer_characteristics.to_be_bytes());
-            c += U16_LEN;
-            buf[c..c + U16_LEN].copy_from_slice(&nclx.matrix_coefficients.to_be_bytes());
-            c += U16_LEN;
+            buf[c..c + core::mem::size_of::<u16>()]
+                .copy_from_slice(&nclx.colour_primaries.to_be_bytes());
+            c += core::mem::size_of::<u16>();
+            buf[c..c + core::mem::size_of::<u16>()]
+                .copy_from_slice(&nclx.transfer_characteristics.to_be_bytes());
+            c += core::mem::size_of::<u16>();
+            buf[c..c + core::mem::size_of::<u16>()]
+                .copy_from_slice(&nclx.matrix_coefficients.to_be_bytes());
+            c += core::mem::size_of::<u16>();
             buf[c] = ((nclx.full_range_flag as u8) << NCLX_FULL_RANGE_SHIFT)
                 | broadcast_common::len::fit_mask(
                     nclx.reserved,
