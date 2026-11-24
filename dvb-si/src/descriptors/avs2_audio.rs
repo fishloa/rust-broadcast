@@ -29,6 +29,7 @@
 //! `'0'`; the others state no value and default to all ones when hand-built).
 
 use super::{descriptor_body, write_descriptor_header};
+use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
@@ -39,7 +40,6 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for AVS2_audio_descriptor (T/AI 109.7 Table 9: 211).
 pub const TAG: u8 = 0xD3;
 const HEADER_LEN: usize = 2;
-const LANG_LEN: usize = 3;
 /// Width of `reserved` in the codec-0 block.
 pub const RESERVED3_BITS: u32 = 3;
 /// Width of `reserved` in the version block.

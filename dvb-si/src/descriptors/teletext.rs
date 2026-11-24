@@ -4,6 +4,7 @@
 //! entry per 3-char language code + type/magazine/page triple (5 bytes).
 
 use super::descriptor_body;
+use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
@@ -14,7 +15,6 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x56;
 pub(super) const HEADER_LEN: usize = 2;
 pub(super) const ENTRY_LEN: usize = 5;
-const LANG_LEN: usize = 3;
 /// Shift of `teletext_type` in the packed type/magazine byte.
 const TYPE_AND_MAGAZINE_SHIFT: u8 = 3;
 /// Mask of the 5-bit `teletext_type` (Table 102).
