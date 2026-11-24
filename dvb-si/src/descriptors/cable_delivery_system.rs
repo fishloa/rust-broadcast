@@ -13,6 +13,34 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x44;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 11;
+/// Hz/symbols per unit of the BCD frequency and symbol-rate fields.
+const BCD_UNIT: u64 = 100;
+/// BCD digits in the 32-bit `frequency` field.
+const FREQUENCY_BCD_DIGITS: u8 = 8;
+/// BCD digits in the 28-bit `symbol_rate` field.
+const SYMBOL_RATE_BCD_DIGITS: u8 = 7;
+/// Offset of `frequency` in the descriptor body.
+const FREQUENCY_BCD_OFFSET: usize = 0;
+/// Width of the BCD `frequency` field, bytes.
+const FREQUENCY_BCD_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of the reserved/fec_outer word in the descriptor body.
+const RESERVED_FU_OFFSET: usize = FREQUENCY_BCD_LEN;
+/// Offset of `modulation` in the descriptor body.
+const MODULATION_OFFSET: usize = RESERVED_FU_OFFSET + core::mem::size_of::<u16>();
+/// Offset of the first byte of the BCD `symbol_rate` field.
+const SYMBOL_RATE_BCD_OFFSET: usize = MODULATION_OFFSET + 1;
+/// Bytes of the BCD `symbol_rate` field that precede `fec_inner`.
+const SYMBOL_RATE_BCD_BYTES: usize = 3;
+/// Offset of `fec_inner` in the descriptor body.
+const FEC_INNER_OFFSET: usize = SYMBOL_RATE_BCD_OFFSET + SYMBOL_RATE_BCD_BYTES;
+/// Shift of the reserved bits within the reserved/fec_outer word.
+const RESERVED_FU_SHIFT: u16 = 4;
+/// Mask of `fec_outer` within its word.
+const FEC_OUTER_MASK: u16 = 0x000F;
+/// Shift of the `symbol_rate` low nibble in the packed 28-bit field.
+const SYMBOL_RATE_LOW_NIBBLE_SHIFT: u32 = 4;
+/// Mask of the `symbol_rate` low nibble.
+const SYMBOL_RATE_LOW_NIBBLE_MASK: u32 = 0x0F;
 
 /// Width of `reserved_future_use` (12 bits, top of body bytes 4-5).
 const RESERVED_FU_BITS: u32 = 12;
@@ -228,7 +256,8 @@ impl CableDeliverySystemDescriptor {
     /// e.g. `0x0346_0000` → `346_000_000` Hz (346.0000 MHz).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), FREQUENCY_BCD_DIGITS)
+            .map(|v| v * BCD_UNIT)
     }
 
     /// Set `frequency` from Hz, encoding to the 8-digit BCD field at the field's
@@ -239,8 +268,11 @@ impl CableDeliverySystemDescriptor {
     /// the 8-digit BCD field.
     pub fn set_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
         self.frequency_bcd =
-            super::encode_bcd_field(hz / 100, 8, "CableDeliverySystemDescriptor::frequency")?
-                as u32;
+            super::encode_bcd_field(
+                hz / BCD_UNIT,
+                FREQUENCY_BCD_DIGITS,
+                "CableDeliverySystemDescriptor::frequency",
+            )? as u32;
         Ok(())
     }
 
@@ -248,7 +280,11 @@ impl CableDeliverySystemDescriptor {
     /// resolution). `None` if the BCD nibbles are out of range.
     #[must_use]
     pub fn symbol_rate_sps(&self) -> Option<u64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate_bcd), 7).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(
+            u64::from(self.symbol_rate_bcd),
+            SYMBOL_RATE_BCD_DIGITS,
+        )
+        .map(|v| v * BCD_UNIT)
     }
 
     /// Set `symbol_rate` from symbols/second (100 sym/s field resolution).
@@ -258,8 +294,11 @@ impl CableDeliverySystemDescriptor {
     /// the 7-digit BCD field.
     pub fn set_symbol_rate_sps(&mut self, sps: u64) -> crate::Result<()> {
         self.symbol_rate_bcd =
-            super::encode_bcd_field(sps / 100, 7, "CableDeliverySystemDescriptor::symbol_rate")?
-                as u32;
+            super::encode_bcd_field(
+                sps / BCD_UNIT,
+                SYMBOL_RATE_BCD_DIGITS,
+                "CableDeliverySystemDescriptor::symbol_rate",
+            )? as u32;
         Ok(())
     }
 }
@@ -343,24 +382,29 @@ impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
         }
 
         let (hdr, _) = body
-            .split_first_chunk::<11>()
+            .split_first_chunk::<{ BODY_LEN as usize }>()
             .ok_or(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "body length must equal 11",
             })?;
 
-        let frequency_bcd = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+        let mut frequency_bytes = [0u8; FREQUENCY_BCD_LEN];
+        frequency_bytes.copy_from_slice(&hdr[FREQUENCY_BCD_OFFSET..RESERVED_FU_OFFSET]);
+        let frequency_bcd = u32::from_be_bytes(frequency_bytes);
 
-        let bytes_4_5 = u16::from_be_bytes([hdr[4], hdr[5]]);
-        let reserved_future_use = ReservedOnes::from_bits(u64::from(bytes_4_5 >> 4));
-        let fec_outer_raw = (bytes_4_5 & 0x000F) as u8;
+        let bytes_4_5 = u16::from_be_bytes([hdr[RESERVED_FU_OFFSET], hdr[RESERVED_FU_OFFSET + 1]]);
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(bytes_4_5 >> RESERVED_FU_SHIFT));
+        let fec_outer_raw = (bytes_4_5 & FEC_OUTER_MASK) as u8;
 
-        let modulation_byte = hdr[6];
+        let modulation_byte = hdr[MODULATION_OFFSET];
 
-        let spec_value = u32::from_be_bytes([0, hdr[7], hdr[8], hdr[9]]);
-        let symbol_rate_bcd = (spec_value << 4) | ((hdr[10] >> 4) & 0x0F) as u32;
+        let mut spec_bytes = [0u8; FREQUENCY_BCD_LEN];
+        spec_bytes[1..].copy_from_slice(&hdr[SYMBOL_RATE_BCD_OFFSET..FEC_INNER_OFFSET]);
+        let spec_value = u32::from_be_bytes(spec_bytes);
+        let symbol_rate_bcd = (spec_value << SYMBOL_RATE_LOW_NIBBLE_SHIFT)
+            | u32::from((hdr[FEC_INNER_OFFSET] >> SYMBOL_RATE_LOW_NIBBLE_SHIFT) & FEC_INNER_MASK);
 
-        let fec_inner_raw = hdr[10] & 0x0F;
+        let fec_inner_raw = hdr[FEC_INNER_OFFSET] & FEC_INNER_MASK;
 
         Ok(Self {
             frequency_bcd,
@@ -386,27 +430,31 @@ impl Serialize for CableDeliverySystemDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
 
-        buf[2..6].copy_from_slice(&self.frequency_bcd.to_be_bytes());
+        buf[HEADER_LEN..HEADER_LEN + FREQUENCY_BCD_LEN]
+            .copy_from_slice(&self.frequency_bcd.to_be_bytes());
 
-        let reserved_fu = (self.reserved_future_use.get() as u16) << 4;
+        let reserved_fu = (self.reserved_future_use.get() as u16) << RESERVED_FU_SHIFT;
         let fec_outer_byte = reserved_fu
             | (broadcast_common::len::fit_mask(
                 serialize_fec_outer(self.fec_outer),
-                0x0F,
+                FEC_OUTER_MASK,
                 "fec_outer",
             )? as u16);
         let [fu_hi, fec_lo] = fec_outer_byte.to_be_bytes();
-        buf[6] = fu_hi;
-        buf[7] = fec_lo;
+        buf[HEADER_LEN + RESERVED_FU_OFFSET] = fu_hi;
+        buf[HEADER_LEN + RESERVED_FU_OFFSET + 1] = fec_lo;
 
-        buf[8] = serialize_modulation(self.modulation);
+        buf[HEADER_LEN + MODULATION_OFFSET] = serialize_modulation(self.modulation);
 
-        let spec_value = self.symbol_rate_bcd >> 4;
-        buf[9] = (spec_value >> 16) as u8;
-        buf[10] = (spec_value >> 8) as u8;
-        buf[11] = spec_value as u8;
+        let spec_value = self.symbol_rate_bcd >> SYMBOL_RATE_LOW_NIBBLE_SHIFT;
+        let spec_bytes = spec_value.to_be_bytes();
+        buf[HEADER_LEN + SYMBOL_RATE_BCD_OFFSET..HEADER_LEN + FEC_INNER_OFFSET]
+            .copy_from_slice(&spec_bytes[FREQUENCY_BCD_LEN - SYMBOL_RATE_BCD_BYTES..]);
 
-        buf[12] = ((self.symbol_rate_bcd & 0x0F) as u8) << 4 | serialize_fec_inner(self.fec_inner)?;
+        buf[HEADER_LEN + FEC_INNER_OFFSET] =
+            (((self.symbol_rate_bcd & SYMBOL_RATE_LOW_NIBBLE_MASK) as u8)
+                << SYMBOL_RATE_LOW_NIBBLE_SHIFT)
+                | serialize_fec_inner(self.fec_inner)?;
 
         Ok(len)
     }
