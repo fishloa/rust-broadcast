@@ -66,6 +66,8 @@ const SUBREGION_COUNT_MASK: u8 = 0x03;
 
 /// Shift placing `dss_version_number` at the top of its byte.
 const DSS_VERSION_SHIFT: u32 = 4;
+/// Mask of `dss_version_number`.
+const DSS_VERSION_MASK: u8 = 0x0F;
 /// Mask of `update_sequence_page_flag`.
 const UPDATE_SEQUENCE_PAGE_FLAG_MASK: u8 = 0x08;
 /// Shift placing `update_sequence_page_flag`.
@@ -464,7 +466,7 @@ impl Serialize for DisparitySignallingSegment {
 
         buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
             self.dss_version_number,
-            DSS_RFU_MASK,
+            DSS_VERSION_MASK,
             "dss_version_number",
         )? << DSS_VERSION_SHIFT)
             | (u8::from(self.update_sequence_page_flag) << UPDATE_SEQUENCE_PAGE_FLAG_SHIFT)
