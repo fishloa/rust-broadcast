@@ -97,20 +97,29 @@ fuzz_target!(|data: &[u8]| {
         .find(|b| b.four_cc() == *b"moof")
         .expect("moof");
     let moof = MovieFragmentBox::parse_body(moof_item.body).expect("parse moof");
-    assert_eq!(moof.traf.len(), track_count);
+
+    // A track that never received a sample was never activated, so it has no
+    // `traf`; every track we did push into has exactly one.
+    assert_eq!(moof.traf.len(), metas.len());
     let mdats = isobmff::frag_offsets::mdat_ranges(&fragment.bytes);
     let mut copied = 0usize;
-    for (track, traf) in moof.traf.iter().enumerate() {
-        assert_eq!(traf.tfhd.track_id, TrackId::new(track as u32 + 1));
-        let samples = &traf.trun[0].samples;
-        assert_eq!(samples.len(), metas[track].len());
-        for (sample, meta) in samples.iter().zip(&metas[track]) {
-            assert_eq!(sample.sample_duration, Some(meta.duration));
-            assert_eq!(
-                sample.sample_composition_time_offset,
-                Some(i64::from(meta.composition_offset))
-            );
-        }
+    let mut seen: Vec<u32> = Vec::with_capacity(metas.len());
+    for traf in &moof.traf {
+        let track = usize::try_from(traf.tfhd.track_id.value())
+            .ok()
+            .and_then(|id| id.checked_sub(1))
+            .expect("a track id the writer was given");
+        assert!(track < metas.len(), "traf for a track with no samples");
+        assert!(
+            !seen.contains(&traf.tfhd.track_id.value()),
+            "one traf per track"
+        );
+        seen.push(traf.tfhd.track_id.value());
+
+        // Resolve through `frag_offsets`, the same reader a demuxer uses: it
+        // applies the effective duration, flags and composition offset, so the
+        // assertion does not depend on which optional `trun` field the writer
+        // chose to emit.
         let ranges = isobmff::frag_offsets::sample_ranges_in_run(
             &fragment.bytes,
             &mdats,
@@ -120,13 +129,34 @@ fuzz_target!(|data: &[u8]| {
             &mut copied,
         )
         .expect("resolve sample ranges");
-        assert_eq!(ranges.len(), payloads[track].len());
-        for ((range, expected), meta) in ranges.iter().zip(&payloads[track]).zip(&metas[track]) {
-            assert_eq!(&fragment.bytes[range.start..range.end], expected.as_slice());
+        assert_eq!(ranges.len(), metas[track].len(), "sample count");
+        for ((range, meta), expected) in ranges
+            .iter()
+            .zip(&metas[track])
+            .zip(&payloads[track])
+        {
+            assert_eq!(range.duration, meta.duration, "duration");
+            assert_eq!(
+                range.composition_offset,
+                i64::from(meta.composition_offset),
+                "composition offset"
+            );
             assert_eq!(
                 range.flags & isobmff::movie_fragment::SAMPLE_FLAG_IS_NON_SYNC == 0,
-                meta.sync
+                meta.sync,
+                "sync flag"
+            );
+            assert_eq!(
+                &fragment.bytes[range.start..range.end],
+                expected.as_slice(),
+                "sample bytes"
             );
         }
+    }
+    for track in 0..metas.len() {
+        assert!(
+            seen.contains(&(u32::try_from(track).expect("bounded") + 1)),
+            "every pushed track has a traf"
+        );
     }
 });
