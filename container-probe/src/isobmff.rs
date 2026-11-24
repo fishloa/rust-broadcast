@@ -580,8 +580,32 @@ mod tests {
 /// what this crate was written against) lives in `tests/it/drift_guard.rs`.
 #[cfg(test)]
 mod drift {
-    use super::{BOX_HEADER_MIN_SIZE, SIZE_INDICATES_LARGESIZE, SIZE_TO_EOF, decode_header};
+    use super::{
+        BOX_HEADER_MIN_SIZE, SIZE_INDICATES_LARGESIZE, SIZE_TO_EOF, TYPE_OFFSET, decode_header,
+    };
     use isobmff::box_types::BOX_HEADER_MIN_SIZE as UPSTREAM_MIN;
+
+    /// Every committed ISO BMFF fixture, workspace-relative under `fixtures/`.
+    const FIXTURES: &[&str] = &[
+        "mp4/h264-high.mp4",
+        "mp4/hevc-main.mp4",
+        "mp4/av1.mp4",
+        "mp4/vp9.mp4",
+        "mp4/opus.mp4",
+        "mp4/flac.mp4",
+        "mp4/cenc.mp4",
+        "mp4/stpp.mp4",
+        "mp4/prft.mp4",
+        "mp4/colr-hdr.mp4",
+        "mp4/aac-sgpd.mp4",
+        "mp4/cmaf/av-frag.mp4",
+        "mp4/progressive/av-prog.mp4",
+        "mp4/progressive/av-faststart.mp4",
+        "mp4/frag/av1.frag.mp4",
+        "mp4/frag/vvc.frag.mp4",
+        "mp4/llcmaf/ll-chunked.mp4",
+        "mp4/h264-aac-prog.mp4",
+    ];
 
     #[test]
     fn header_constants_match_isobmff() {
@@ -599,19 +623,36 @@ mod drift {
     }
 
     /// The prober's own header decode agrees with `isobmff` on every top-level
-    /// box of a real fixture (sizes and header lengths).
+    /// box of every ISO BMFF fixture: the same `(type, offset, size)` sequence.
     #[test]
-    fn header_decode_agrees_with_isobmff_on_a_fixture() {
-        let data = test_fixtures::read("mp4/h264-aac-prog.mp4");
-        let mut checked = 0usize;
-        let mut start = 0usize;
-        for step in isobmff::BoxIter::new(&data) {
-            let boxref = step.expect("isobmff walks the fixture");
-            let (_size_field, total) = decode_header(&data[start..]).expect("prober decodes it");
-            assert_eq!(total as u64, boxref.header.size);
-            checked += 1;
-            start = boxref.end;
+    fn header_decode_agrees_with_isobmff_on_every_fixture() {
+        for &rel in FIXTURES {
+            let data = test_fixtures::read(rel);
+            let mut checked = 0usize;
+            let mut start = 0usize;
+            for step in isobmff::BoxIter::new(&data) {
+                let boxref = step.expect("isobmff walks the fixture");
+                let (size_field, total) = decode_header(&data[start..])
+                    .unwrap_or_else(|| panic!("{rel}: prober decodes box {checked}"));
+                assert_eq!(
+                    crate::fourcc(&data[start..], TYPE_OFFSET),
+                    boxref.four_cc(),
+                    "{rel}: box {checked} type"
+                );
+                assert_eq!(start, boxref.start, "{rel}: box {checked} offset");
+                if boxref.to_end() {
+                    assert_eq!(size_field, SIZE_TO_EOF, "{rel}: box {checked} size 0");
+                } else {
+                    assert_eq!(
+                        total,
+                        boxref.end - boxref.start,
+                        "{rel}: box {checked} size"
+                    );
+                }
+                checked += 1;
+                start = boxref.end;
+            }
+            assert!(checked > 0, "{rel} holds at least one box");
         }
-        assert!(checked > 0, "the fixture holds at least one box");
     }
 }

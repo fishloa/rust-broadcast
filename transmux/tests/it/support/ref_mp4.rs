@@ -1,37 +1,29 @@
-use crate::box_iter::{Box4, iter_boxes};
-
-fn find_box<'a>(buf: &'a [u8], base: usize, want: &[u8; 4]) -> Option<Box4<'a>> {
-    for b in iter_boxes(buf, base) {
-        if &b.ty == want {
-            // Re-borrow with correct lifetimes.
-            return Some(Box4 {
-                ty: b.ty,
-                offset: b.offset,
-                size: b.size,
-                header: b.header,
-                body: b.body,
-            });
+pub fn find_box<'a>(buf: &'a [u8], want: &[u8; 4]) -> Option<isobmff::BoxItem<'a>> {
+    for b in isobmff::BoxIter::new(buf) {
+        let Ok(b) = b else { break };
+        if b.four_cc() == *want {
+            return Some(b);
         }
         let containers: &[[u8; 4]] = &[
             *b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"mvex", *b"edts",
         ];
-        if containers.contains(&b.ty)
-            && let Some(found) = find_box(b.body, b.offset + b.header, want)
+        if containers.contains(&b.four_cc())
+            && let Some(found) = find_box(b.body, want)
         {
             return Some(found);
         }
-        if &b.ty == b"stsd" {
+        if b.four_cc() == *b"stsd" {
             // stsd: 8 bytes (version/flags + entry_count) before entries.
             if b.body.len() > 8
-                && let Some(found) = find_box(&b.body[8..], b.offset + b.header + 8, want)
+                && let Some(found) = find_box(&b.body[8..], want)
             {
                 return Some(found);
             }
         }
-        if &b.ty == b"avc1" || &b.ty == b"mp4a" {
-            let skip = if &b.ty == b"avc1" { 78 } else { 28 };
+        if b.four_cc() == *b"avc1" || b.four_cc() == *b"mp4a" {
+            let skip = if b.four_cc() == *b"avc1" { 78 } else { 28 };
             if b.body.len() > skip
-                && let Some(found) = find_box(&b.body[skip..], b.offset + b.header + skip, want)
+                && let Some(found) = find_box(&b.body[skip..], want)
             {
                 return Some(found);
             }
@@ -43,22 +35,21 @@ fn find_box<'a>(buf: &'a [u8], base: usize, want: &[u8; 4]) -> Option<Box4<'a>> 
 pub struct RefTrack<'a> {
     pub handler: [u8; 4],
     pub trak_body: &'a [u8],
-    pub trak_base: usize,
 }
 
 /// Collect every `trak` in the ref moov with its `hdlr` handler type.
 pub fn ref_tracks(mp4: &[u8]) -> Vec<RefTrack<'_>> {
-    let moov = find_box(mp4, 0, b"moov").expect("ref mp4 must have moov");
+    let moov = find_box(mp4, b"moov").expect("ref mp4 must have moov");
     let mut tracks = Vec::new();
-    for b in iter_boxes(moov.body, moov.offset + moov.header) {
-        if &b.ty == b"trak" {
-            let hdlr = find_box(b.body, b.offset + b.header, b"hdlr").expect("trak has hdlr");
+    for b in isobmff::BoxIter::new(moov.body) {
+        let Ok(b) = b else { break };
+        if b.four_cc() == *b"trak" {
+            let hdlr = find_box(b.body, b"hdlr").expect("trak has hdlr");
             // hdlr body: version/flags(4) + pre_defined(4) + handler_type(4).
             let handler = [hdlr.body[8], hdlr.body[9], hdlr.body[10], hdlr.body[11]];
             tracks.push(RefTrack {
                 handler,
                 trak_body: b.body,
-                trak_base: b.offset + b.header,
             });
         }
     }
@@ -67,10 +58,10 @@ pub fn ref_tracks(mp4: &[u8]) -> Vec<RefTrack<'_>> {
 
 /// Resolve the sample byte ranges of a track from stsz/stsc/stco (+ mdat), in
 /// file order, returning each sample's bytes. Progressive-mp4 sample walk.
-pub fn ref_track_samples(mp4: &[u8], trak_body: &[u8], trak_base: usize) -> Vec<Vec<u8>> {
-    let stsz = find_box(trak_body, trak_base, b"stsz").expect("stsz");
-    let stsc = find_box(trak_body, trak_base, b"stsc").expect("stsc");
-    let stco = find_box(trak_body, trak_base, b"stco").expect("stco");
+pub fn ref_track_samples(mp4: &[u8], trak_body: &[u8]) -> Vec<Vec<u8>> {
+    let stsz = find_box(trak_body, b"stsz").expect("stsz");
+    let stsc = find_box(trak_body, b"stsc").expect("stsc");
+    let stco = find_box(trak_body, b"stco").expect("stco");
 
     // stsz: version/flags(4) + sample_size(4) + sample_count(4) + [size]*count.
     let default_size = u32::from_be_bytes([stsz.body[4], stsz.body[5], stsz.body[6], stsz.body[7]]);

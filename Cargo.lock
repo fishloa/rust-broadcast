@@ -4050,6 +4050,7 @@ dependencies = [
  "broadcast-common",
  "dash-runtime",
  "headers",
+ "isobmff",
  "jiff",
  "rtmp-runtime",
  "test-alloc",

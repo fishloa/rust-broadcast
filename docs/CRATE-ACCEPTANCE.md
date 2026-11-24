@@ -96,7 +96,7 @@ Independent crates version on their own cadence; lockstep crates move together. 
 - [ ] Reserved-bit / trailing-byte policy followed (section 1): tolerant parse, reserved bits preserved on serialize (typed fields), edition-value defaults for constructed values, explicit reserved writes
 - [ ] Committed **real fixture**; per-op **biting** test (fault-inject→assert-known-good for transforms)
 - [ ] 6-gate CI suite + MSRV 1.95.0 (+ thumbv7em if no_std) — run by the orchestrator
-- [ ] #204 labels + a `workspace-guards` table line for every guard that applies (`non_exhaustive`, `label`, `truncation`, `clock33`, `magic_numbers`, de-hand-roll, `secret_debug`) · fuzz target · ≥2 examples · CLI-STANDARD (if CLI)
+- [ ] #204 labels + a `workspace-guards` table line for every guard that applies (`non_exhaustive`, `label`, `truncation`, `clock33`, `magic_numbers`, `one_box_home` when it touches ISO BMFF boxes, de-hand-roll, `secret_debug`) · fuzz target · ≥2 examples · CLI-STANDARD (if CLI)
 - [ ] No-hand-roll tripwire (`tests/*guard*.rs`) with a reasoned, line-pinned allowlist (protocol/runtime crate)
 - [ ] RELEASE-DOCS complete (CHANGELOG/release-note/README/crate-root/docs.rs metadata)
 - [ ] Versioning + dep-refs consistent; publish staged for owner sign-off

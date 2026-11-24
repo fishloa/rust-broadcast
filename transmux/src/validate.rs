@@ -76,36 +76,22 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxItem, BoxIter};
+use isobmff::init_segment::{MDIA, MINF, MOOV, MVHD, STBL, STSD, TKHD, TRAK};
 use isobmff::movie_fragment::{
-    MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF,
+    MovieFragmentBox, MovieFragmentHeaderBox, TFDT, TFHD, TFHD_DEFAULT_BASE_IS_MOOF, TRAF, TRUN,
     TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox, TrackFragmentRunBox,
 };
-use isobmff::segments::{MOOF, SegmentTypeBox};
+use isobmff::segments::{FTYP, MDAT, MOOF, STYP, SegmentTypeBox};
 
 // ---------------------------------------------------------------------------
-// Box four-CCs (named constants — no magic numbers)
+// Box four-CCs not exported by isobmff
 // ---------------------------------------------------------------------------
 
-const FTYP: [u8; 4] = *b"ftyp";
-const MOOV: [u8; 4] = *b"moov";
-const MVHD: [u8; 4] = *b"mvhd";
-const TRAK: [u8; 4] = *b"trak";
-const TKHD: [u8; 4] = *b"tkhd";
-const MDIA: [u8; 4] = *b"mdia";
 const MDHD: [u8; 4] = *b"mdhd";
 const HDLR: [u8; 4] = *b"hdlr";
-const MINF: [u8; 4] = *b"minf";
-const STBL: [u8; 4] = *b"stbl";
-const STSD: [u8; 4] = *b"stsd";
 const MVEX: [u8; 4] = *b"mvex";
 const TREX: [u8; 4] = *b"trex";
-const STYP: [u8; 4] = *b"styp";
 const MFHD: [u8; 4] = *b"mfhd";
-const TRAF: [u8; 4] = *b"traf";
-const TFHD: [u8; 4] = *b"tfhd";
-const TFDT: [u8; 4] = *b"tfdt";
-const TRUN: [u8; 4] = *b"trun";
-const MDAT: [u8; 4] = *b"mdat";
 const PAIR_WINDOW_LEN: usize = 2;
 
 /// CMAF/DASH segment brands accepted for the `styp` box (CMAF §7.3.2.3): the
@@ -939,7 +925,7 @@ fn init_video_track_ids(init: &[u8]) -> Vec<TrackId> {
     };
     let mut ids = Vec::new();
     for (t, trak) in children(moov) {
-        if &t != b"trak" {
+        if t != TRAK {
             continue;
         }
         let Some(bytes) = child_whole(moov, trak.body, &TKHD) else {
@@ -970,7 +956,7 @@ fn init_track_ids(init: &[u8]) -> Vec<TrackId> {
     };
     let mut ids = Vec::new();
     for (t, trak) in children(moov) {
-        if &t != b"trak" {
+        if t != TRAK {
             continue;
         }
         if let Some(bytes) = child_whole(moov, trak.body, &TKHD)

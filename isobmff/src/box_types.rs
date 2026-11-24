@@ -59,6 +59,10 @@ pub const LARGESIZE_SIZE: usize = 8;
 /// Size of the 128-bit `usertype` field for `uuid` boxes (§4.2).
 pub const UUID_TYPE_SIZE: usize = 16;
 
+/// Four-CC of a `uuid` box, whose header carries a 128-bit `usertype`
+/// (ISO/IEC 14496-12:2026 §4.2).
+pub const UUID: [u8; 4] = *b"uuid";
+
 /// Size of the FullBox extension fields: `version`(8) + `flags`(24) = 4 bytes.
 pub const FULLBOX_EXTRA_SIZE: usize = 4;
 

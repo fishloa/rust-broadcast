@@ -1,0 +1,26 @@
+name: Release isobmff
+
+# Publishes the isobmff crate to crates.io on an `isobmff-v*` tag. isobmff is
+# versioned and released INDEPENDENTLY of the DVB lockstep: it is the ISO BMFF
+# box layer below transmux, with its own API surface and cadence. CI is the
+# only source of published artifacts — never `cargo publish` from a
+# workstation. Requires the CARGO_REGISTRY_TOKEN secret.
+#
+# DEPENDENCY ORDER: isobmff depends on broadcast-common only, so that version
+# must already be live. Downstream, transmux, dvr-runtime, dash-runtime,
+# hls-runtime, media-doctor and media-plane depend on isobmff, so this tag
+# must land before any of them that names the new version.
+
+on:
+  push:
+    tags: ["isobmff-v*"]
+
+jobs:
+  publish:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-crate.yml
+    secrets: inherit
+    with:
+      crate: isobmff
+      build-gate: no-default

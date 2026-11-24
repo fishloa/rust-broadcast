@@ -82,6 +82,7 @@ example_args() {
         dvr-runtime/record_ts_file)
             echo "fixtures/ts/h264-aac.ts" ;;
         isobmff/parse_boxes)  echo "fixtures/mp4/progressive/av-faststart.mp4" ;;
+        isobmff/parse_emsg)   echo "fixtures/scte35/scte35-emsg-v0.bin" ;;
         dvr-runtime/list_programmes)
             echo "fixtures/ts/tnt-5w-12732v-isi6-10s.ts" ;;
         *) echo "" ;;

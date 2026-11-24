@@ -87,6 +87,9 @@ const MVHD_RESERVED_LEN: usize = 10;
 /// `pre_defined` bytes at the end of `mvhd` (§8.2.2.2).
 const MVHD_PRE_DEFINED_LEN: usize = 24;
 
+/// Four-CC of the Movie Header Box (`mvhd`, ISO/IEC 14496-12:2026 §8.2.2).
+pub const MVHD: [u8; 4] = *b"mvhd";
+
 /// Movie Header Box (`mvhd`) — §8.2.2.
 /// v0: 32-bit creation_time, modification_time, duration.
 /// v1: 64-bit equivalents.
@@ -294,6 +297,9 @@ const TKHD_RESERVED_LEN: usize = 4;
 const TKHD_RESERVED_PAIR_LEN: usize = 8;
 /// The reserved field after `volume` in `tkhd` (§8.3.2.2).
 const TKHD_TRAILING_RESERVED_LEN: usize = 2;
+
+/// Four-CC of the Track Header Box (`tkhd`, ISO/IEC 14496-12:2026 §8.3.2).
+pub const TKHD: [u8; 4] = *b"tkhd";
 
 /// Track Header Box (`tkhd`) — §8.3.2.
 /// v0: 32-bit creation_time, modification_time, duration.
@@ -2720,6 +2726,9 @@ impl Serialize for SampleEntryVariant {
     }
 }
 
+/// Four-CC of the Sample Description Box (`stsd`, ISO/IEC 14496-12:2026 §8.5.2).
+pub const STSD: [u8; 4] = *b"stsd";
+
 /// Sample Description Box (`stsd`) — §8.5.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -2982,6 +2991,9 @@ fn stbl_children_len(children: &[StblChild]) -> usize {
 // SampleTableBox — stbl (container)
 // ---------------------------------------------------------------------------
 
+/// Four-CC of the Sample Table Box (`stbl`, ISO/IEC 14496-12:2026 §8.5.1).
+pub const STBL: [u8; 4] = *b"stbl";
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SampleTableBox {
@@ -3119,6 +3131,9 @@ impl Serialize for DataInformationBox {
 // ---------------------------------------------------------------------------
 // MediaInformationBox — minf (container: vmhd/smhd, dinf, stbl)
 // ---------------------------------------------------------------------------
+
+/// Four-CC of the Media Information Box (`minf`, ISO/IEC 14496-12:2026 §8.4.4).
+pub const MINF: [u8; 4] = *b"minf";
 
 /// Typed child slots in a `minf` (§8.4.4).
 const MINF_TYPED_CHILDREN_MAX: usize = 4;
@@ -3306,6 +3321,9 @@ impl Serialize for MediaInformationBox {
 // ---------------------------------------------------------------------------
 // MediaBox — mdia (container: mdhd, hdlr, minf)
 // ---------------------------------------------------------------------------
+
+/// Four-CC of the Media Box (`mdia`, ISO/IEC 14496-12:2026 §8.4.1).
+pub const MDIA: [u8; 4] = *b"mdia";
 
 /// Typed child slots in an `mdia` (§8.4.1).
 const MDIA_TYPED_CHILDREN_MAX: usize = 3;
@@ -3551,6 +3569,9 @@ impl Serialize for EditBox {
 // ---------------------------------------------------------------------------
 // TrackBox — trak (container: tkhd, edts?, mdia, …)
 // ---------------------------------------------------------------------------
+
+/// Four-CC of the Track Box (`trak`, ISO/IEC 14496-12:2026 §8.3.1).
+pub const TRAK: [u8; 4] = *b"trak";
 
 /// Typed child slots in a `trak` (§8.3.1).
 const TRAK_TYPED_CHILDREN_MAX: usize = 3;
@@ -3900,6 +3921,9 @@ impl Serialize for MovieExtendsBox {
         )
     }
 }
+
+/// Four-CC of the Movie Box (`moov`, ISO/IEC 14496-12:2026 §8.2.1).
+pub const MOOV: [u8; 4] = *b"moov";
 
 /// Movie Box (`moov`) — §8.2.1.  The top-level init-segment container.
 #[derive(Debug, Clone, PartialEq)]

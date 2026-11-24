@@ -16,12 +16,32 @@ It never knows the media IR or a codec bitstream.
 | Module | Boxes (four-CC) |
 |---|---|
 | `box_types` | `size`/`type` header, `largesize`, `uuid` usertype, the `BoxIter` walker |
+| `box_support` | shared opaque-child and container building helpers |
 | `segments` | `ftyp`, `styp`, `mdat` |
 | `init_segment` | `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`/`smhd`, `dinf`/`dref`, `stbl`, `stsd`, `edts`/`elst`, `mvex`/`trex`, the audio sample entries |
 | `sample_entries` | `avc1`/`avc3`, `hvc1`/`hev1`, `vvc1`/`vvi1`, `mp4v`, `VisualSampleEntry` |
 | `subtitle_entries` | `stpp`, `wvtt`, `vttc`/`vtte`/`vtta`/`payl`/`sttg`/`iden` |
 | `avc_parameter_set` | `avcp` sample entry and parameter set sample |
 | `track_reference` | `tref` |
+| `track_id` | `track_ID` newtype (ISO/IEC 14496-12:2026 §8.3.2) |
+| `avc_config` | `avcC` |
+| `hevc_config` | `hvcC` |
+| `vvc_config` | `vvcC` |
+| `nalu_types` | `AvcSps`/`AvcPps`/`HevcNalUnit` newtypes over parameter-set NAL units |
+| `mp4esds` | `esds` (ES/DecoderConfig/DecoderSpecificInfo/SLConfig descriptors) |
+| `ac3` | `dac3`, `dec3` |
+| `ac4` | `dac4` (`ac-4` entry) |
+| `av1` | `av1C`, `av01` |
+| `vp9` | `vpcC`, `vp09` |
+| `opus` | `dOps`, `Opus` |
+| `flac` | `dfLa`, `fLaC` |
+| `dts` | `ddts`, `dtsc`/`dtsh`/`dtsl`/`dtse` |
+| `mpegh` | `mhaC`, `mha1`/`mha2`/`mhm1`/`mhm2` |
+| `dovi` | `dvcC`, `dvvC` |
+| `avs2` | `av2c`, `la2c`, `avst`, `lav2` |
+| `avs3` | `av3c`, `lavc`, `avs3`, `lav3`, plus its sample-group entries |
+| `avs3_audio` | `dca3`, `av3a` |
+| `hdr_boxes` | `mdcv`, `clli` |
 | `timing` | `stts`, `ctts`, `cslg`, `elst`, `sidx` |
 | `visual_ext` | `pasp`, `clap`, `colr` |
 | `cenc` | `tenc`, `senc`, `pssh`, `saiz`, `saio`, `sinf`, `frma`, `schm`, `schi` |

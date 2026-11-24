@@ -9,6 +9,7 @@ use crate::ir::TrackId;
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
 use isobmff::box_types::BOX_HEADER_MIN_SIZE;
+use isobmff::cenc::{SAIO, SAIZ, SENC};
 use isobmff::movie_fragment::{
     CENC_AUX_INFO_TYPES, MoofChild, MovieFragmentBox, SAIZ_SUBSAMPLE_COUNT_SIZE,
     SAIZ_SUBSAMPLE_ENTRY_SIZE, SAMPLE_FLAGS_NON_SYNC, SAMPLE_FLAGS_SYNC, SENC_ENTRIES_OFFSET,
@@ -17,6 +18,7 @@ use isobmff::movie_fragment::{
     TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT, TrackFragmentHeaderBox,
     TrackFragmentRunBox, TrafChild, TrunSample, aux_info_type_of,
 };
+use isobmff::segments::MOOF;
 
 /// One sample of a media fragment's `trun`, as the segment writers describe it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,7 +246,7 @@ pub fn protect_media_segment(
     for step in isobmff::BoxIter::new(media_segment) {
         let box_ref = step?;
         let size = box_ref.end - box_ref.start;
-        if box_ref.header.box_type.is(b"moof") {
+        if box_ref.header.box_type.is(&MOOF) {
             moof_len = Some(size);
             break;
         }
@@ -288,9 +290,9 @@ pub fn protect_media_segment(
             let TrafChild::Opaque(o) = child else {
                 continue;
             };
-            let collides = match &o.box_type {
-                b"senc" => true,
-                b"saiz" | b"saio" => aux_info_type_of(&o.data, &o.box_type)
+            let collides = match o.box_type {
+                SENC => true,
+                SAIZ | SAIO => aux_info_type_of(&o.data, &o.box_type)
                     .is_none_or(|ty| CENC_AUX_INFO_TYPES.contains(&ty)),
                 _ => false,
             };
@@ -384,7 +386,7 @@ pub fn protect_media_segment(
     let mut moof_out = alloc::vec![0u8; new_moof_len];
     let moof_size = broadcast_common::len::fit_u32(new_moof_len, "moof size")?;
     moof_out[0..4].copy_from_slice(&moof_size.to_be_bytes());
-    moof_out[4..8].copy_from_slice(b"moof");
+    moof_out[4..8].copy_from_slice(&MOOF);
     let mut c = BOX_HEADER_MIN_SIZE;
     for child in moof.child_order_for_rewrite() {
         match child {

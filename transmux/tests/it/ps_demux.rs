@@ -17,7 +17,6 @@
 
 use std::path::PathBuf;
 
-use crate::box_iter::{Box4, iter_boxes};
 use broadcast_common::Unpackage;
 use test_fixtures::ffprobe;
 use transmux::PsDemux;
@@ -44,44 +43,7 @@ fn ref_mp4() -> Vec<u8> {
 
 // ── Minimal ISOBMFF box walking for the ref mp4 (progressive, non-fragmented) ─
 
-use crate::ref_mp4::{ref_track_samples, ref_tracks};
-
-fn find_box<'a>(buf: &'a [u8], base: usize, want: &[u8; 4]) -> Option<Box4<'a>> {
-    for b in iter_boxes(buf, base) {
-        if &b.ty == want {
-            return Some(Box4 {
-                ty: b.ty,
-                offset: b.offset,
-                size: b.size,
-                header: b.header,
-                body: b.body,
-            });
-        }
-        let containers: &[[u8; 4]] = &[
-            *b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"mvex", *b"edts",
-        ];
-        if containers.contains(&b.ty)
-            && let Some(found) = find_box(b.body, b.offset + b.header, want)
-        {
-            return Some(found);
-        }
-        if &b.ty == b"stsd"
-            && b.body.len() > 8
-            && let Some(found) = find_box(&b.body[8..], b.offset + b.header + 8, want)
-        {
-            return Some(found);
-        }
-        if &b.ty == b"avc1" || &b.ty == b"mp4a" {
-            let skip = if &b.ty == b"avc1" { 78 } else { 28 };
-            if b.body.len() > skip
-                && let Some(found) = find_box(&b.body[skip..], b.offset + b.header + skip, want)
-            {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
+use crate::ref_mp4::{find_box, ref_track_samples, ref_tracks};
 
 /// Split length-prefixed (4-byte) NAL data into its coded NAL payloads.
 fn split_length_prefixed(lp: &[u8]) -> Vec<Vec<u8>> {
@@ -102,7 +64,7 @@ fn split_length_prefixed(lp: &[u8]) -> Vec<Vec<u8>> {
 /// Extract the `avcC` box body (the full `AVCDecoderConfigurationRecord`) from
 /// the ref mp4's video track.
 fn ref_avcc_body(mp4: &[u8]) -> Vec<u8> {
-    let avcc = find_box(mp4, 0, b"avcC").expect("ref mp4 must have an avcC box");
+    let avcc = find_box(mp4, b"avcC").expect("ref mp4 must have an avcC box");
     avcc.body.to_vec()
 }
 
@@ -305,7 +267,7 @@ fn video_sample_fidelity() {
         .iter()
         .find(|t| &t.handler == b"vide")
         .expect("ref mp4 must have a video track");
-    let ref_samples = ref_track_samples(&mp4, vtrack.trak_body, vtrack.trak_base);
+    let ref_samples = ref_track_samples(&mp4, vtrack.trak_body);
     assert_eq!(ref_samples.len(), 75, "ref mp4 has 75 video samples");
     assert_eq!(
         media.tracks[0].samples.len(),

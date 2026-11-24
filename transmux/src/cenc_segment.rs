@@ -11,7 +11,7 @@ use crate::media::TrackEncryption;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use isobmff::BoxIter;
-use isobmff::init_segment::{MovieBox, StblChild, protect_sample_entry};
+use isobmff::init_segment::{MOOV, MovieBox, StblChild, protect_sample_entry};
 
 /// Rewrite an already-built CMAF/fMP4 init segment (`ftyp` + `moov`) so the
 /// given track's sample entry becomes CENC-protected (issue #564 Task 3):
@@ -42,7 +42,7 @@ pub fn protect_init_segment(
     for step in BoxIter::new(init_segment) {
         let box_ref = step?;
         let size = box_ref.end - box_ref.start;
-        if box_ref.header.box_type.is(b"moov") {
+        if box_ref.header.box_type.is(&MOOV) {
             moov_len = Some(size);
             break;
         }

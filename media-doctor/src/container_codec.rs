@@ -57,7 +57,6 @@
 //! input).
 
 use broadcast_common::{Parse, Unpackage};
-use isobmff::BoxIter;
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::TrackId;
 use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals_with};
@@ -99,13 +98,10 @@ pub fn check_container_codec(bytes: &[u8], report: &mut Report) {
 }
 
 fn check_hevc_sample_entries(bytes: &[u8], report: &mut Report) {
-    let Some(moov) = BoxIter::clamped(bytes)
-        .filter_map(|b| b.ok())
-        .find(|b| b.header.box_type.is(b"moov"))
-    else {
+    let Some(moov) = isobmff::box_types::find_box(bytes, &isobmff::init_segment::MOOV) else {
         return;
     };
-    let Ok(movie) = MovieBox::parse(&bytes[moov.start..moov.end]) else {
+    let Ok(movie) = MovieBox::parse(moov) else {
         return;
     };
     for track in &movie.tracks {
@@ -164,13 +160,18 @@ fn check_hevc_sample_entries(bytes: &[u8], report: &mut Report) {
 /// naming a top-level box type every ISOBMFF/CMAF/DASH file starts with,
 /// including the compressed `!mov` / `!mof` (ISO/IEC 14496-12:2026 §8.16).
 fn looks_like_isobmff(bytes: &[u8]) -> bool {
-    if bytes.len() < BOX_HEADER_LEN {
+    if bytes.len() < isobmff::box_types::BOX_HEADER_MIN_SIZE {
         return false;
     }
-    matches!(
-        &bytes[4..8],
-        b"ftyp" | b"styp" | b"moov" | b"moof" | b"!mov" | b"!mof" | b"free" | b"skip"
-    )
+    let four_cc = &bytes[4..8];
+    four_cc == isobmff::segments::FTYP.as_slice()
+        || four_cc == isobmff::segments::STYP.as_slice()
+        || four_cc == isobmff::init_segment::MOOV.as_slice()
+        || four_cc == isobmff::segments::MOOF.as_slice()
+        || four_cc == b"!mov"
+        || four_cc == b"!mof"
+        || four_cc == isobmff::segments::FREE.as_slice()
+        || four_cc == isobmff::segments::SKIP.as_slice()
 }
 
 /// The NAL length-prefix width a track's codec configuration declares, in
@@ -190,10 +191,6 @@ fn nal_length_size(config: &CodecConfig) -> Option<usize> {
     let width = usize::from(length_size_minus_one) + 1;
     AVCC_LENGTH_SIZES.contains(&width).then_some(width)
 }
-
-/// Bytes of an ISO BMFF box header: `size` plus `type`
-/// (ISO/IEC 14496-12:2026 §4.2).
-const BOX_HEADER_LEN: usize = 8;
 
 /// `lengthSizeMinusOne` values a well-formed avcC/hvcC may declare, as byte
 /// prefixes (ISO/IEC 14496-15:2017 §5.3.3.1.1).

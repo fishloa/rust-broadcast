@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- Four-CC constants for the boxes the crate already modelled but had not
+  named: `segments::{FREE, SKIP}`, `init_segment::{MOOV, MVHD, TRAK, TKHD,
+  MDIA, MINF, STBL, STSD}`, `movie_fragment::{TRAF, TFHD, TFDT, TRUN}`,
+  `cenc::{TENC, SENC, SAIZ, SAIO, SINF}`, `sample_groups::PRFT`, and
+  `box_types::UUID` — so a consumer names a box type through `isobmff` instead
+  of a raw literal (enforced by the `one_box_home` guard).
+
 - `BoxItem` (one box: header, offset, whole bytes and body), `BoxIter::clamped`
   (the tolerant mode of the one walker), `BoxItem::children`, and the
   one-level `box_types::find_box` lookup. Strict iteration is `BoxIter::new`;

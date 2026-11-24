@@ -7,5 +7,6 @@ mod fixture_structural;
 mod fixture_ts;
 mod insufficient_contract;
 mod insufficient_terminates;
+mod isobmff_drift;
 mod no_panic_on_arbitrary_input;
 mod prefix_sweep;

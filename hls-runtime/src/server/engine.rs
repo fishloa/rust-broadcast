@@ -845,7 +845,7 @@ fn channel_count_string(config: &transmux::CodecConfig) -> Option<String> {
 fn first_moof(segment: &[u8]) -> Option<(usize, isobmff::movie_fragment::MovieFragmentBox)> {
     let found = isobmff::BoxIter::clamped(segment)
         .filter_map(|b| b.ok())
-        .find(|b| b.header.box_type.is(b"moof"))?;
+        .find(|b| b.header.box_type.is(&isobmff::segments::MOOF))?;
     let moof_off = found.start;
     let body = &segment[found.payload_start()..found.end];
     let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(body).ok()?;
@@ -942,7 +942,7 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
 fn mdat_payload_start_for(segment: &[u8], sample_start: usize) -> Option<usize> {
     isobmff::BoxIter::clamped(segment)
         .filter_map(|b| b.ok())
-        .filter(|b| b.header.box_type.is(b"mdat"))
+        .filter(|b| b.header.box_type.is(&isobmff::segments::MDAT))
         .find(|b| (b.payload_start()..b.end).contains(&sample_start))
         .map(|b| b.payload_start())
 }

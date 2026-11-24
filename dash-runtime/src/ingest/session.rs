@@ -369,21 +369,12 @@ impl DashifIngestSession {
             // Swallow complete box groups (detect lmsg on a leading styp) but
             // emit nothing.
             loop {
-                let mut i = 0usize;
                 let mut end = None;
-                while i < handle.buf.len() {
-                    match isobmff::parse_box(&handle.buf[i..]) {
-                        Ok((bx, consumed)) => {
-                            i += consumed;
-                            if bx.header.box_type.is(b"mdat") {
-                                end = Some(i);
-                                break;
-                            }
-                            if consumed == 0 {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
+                for step in isobmff::BoxIter::new(&handle.buf) {
+                    let Ok(bx) = step else { break };
+                    if bx.header.box_type.is(&isobmff::segments::MDAT) {
+                        end = Some(bx.end);
+                        break;
                     }
                 }
                 match end {
@@ -398,21 +389,12 @@ impl DashifIngestSession {
         }
 
         loop {
-            let mut i = 0usize;
             let mut end = None;
-            while i < handle.buf.len() {
-                match isobmff::parse_box(&handle.buf[i..]) {
-                    Ok((bx, consumed)) => {
-                        i += consumed;
-                        if bx.header.box_type.is(b"mdat") {
-                            end = Some(i);
-                            break;
-                        }
-                        if consumed == 0 {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+            for step in isobmff::BoxIter::new(&handle.buf) {
+                let Ok(bx) = step else { break };
+                if bx.header.box_type.is(&isobmff::segments::MDAT) {
+                    end = Some(bx.end);
+                    break;
                 }
             }
             let Some(e) = end else {
@@ -505,7 +487,7 @@ impl DashifIngestSession {
 
     fn detect_styp_lmsg(&mut self, rep_id: &str, bytes: &[u8]) {
         if let Ok((boxref, _)) = isobmff::parse_box(bytes)
-            && boxref.header.box_type.is(b"styp")
+            && boxref.header.box_type.is(&isobmff::segments::STYP)
         {
             let body = boxref.body;
             if body.len() >= STYP_BRANDS_OFFSET {

@@ -9,8 +9,6 @@ mod avc_hvc_config;
 mod base64_lenient;
 #[path = "support/bit_writer.rs"]
 mod bit_writer;
-#[path = "support/box_iter.rs"]
-mod box_iter;
 #[path = "support/box_walk.rs"]
 mod box_walk;
 mod caption_detect;

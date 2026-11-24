@@ -42,10 +42,10 @@ use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::{Sample, build_init_segment};
 use isobmff::box_types::{BoxHeader, BoxType, find_box};
 use isobmff::init_segment::{
-    ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MovieBox, SampleSizeBox, SampleToChunkBox,
+    ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MOOV, MovieBox, SampleSizeBox, SampleToChunkBox,
     StblChild, StscEntry, SyncSampleBox,
 };
-use isobmff::segments::FileTypeBox;
+use isobmff::segments::{FileTypeBox, MDAT};
 use isobmff::timing::{
     CompositionOffsetBox, CttsEntry, EditListBox, EditListEntry, SttsEntry, TimeToSampleBox,
 };
@@ -54,8 +54,6 @@ use isobmff::timing::{
 const FTYP_MAJOR_BRAND: [u8; 4] = *b"isom";
 /// `ftyp` minor version.
 const FTYP_MINOR_VERSION: u32 = 512;
-/// The `mdat` box type (ISO/IEC 14496-12:2026 §8.1.1).
-const MDAT_TYPE: [u8; 4] = *b"mdat";
 /// The `default_sample_description_index` referenced by the single `stsd` entry.
 const SAMPLE_DESCRIPTION_INDEX: u32 = 1;
 /// `elst` `media_time` of an empty edit (ISO/IEC 14496-12:2026 §8.6.6).
@@ -492,8 +490,7 @@ impl Package for ProgressiveMux {
         // with the full progressive tables and drop the fragmentation (`mvex`).
         let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let init = build_init_segment(&specs, movie_timescale)?;
-        let moov_bytes =
-            find_box(&init, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+        let moov_bytes = find_box(&init, &MOOV).ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let mut moov = MovieBox::parse(moov_bytes)?;
         moov.mvex = None; // not a fragmented movie
         let timings = track_timings(media, movie_timescale)?;
@@ -511,7 +508,7 @@ impl Package for ProgressiveMux {
         };
         let ftyp_len = ftyp.serialized_len();
         let mdat_len = layout.payload_len;
-        let mdat_header = BoxHeader::for_payload(BoxType::from_bytes(MDAT_TYPE), None, mdat_len);
+        let mdat_header = BoxHeader::for_payload(BoxType::from_bytes(MDAT), None, mdat_len);
 
         // Compute the absolute file offset of the mdat *payload* under each box
         // ordering, then set the final chunk offsets and build the full tables.
@@ -638,7 +635,7 @@ fn mdat_payload_offset(
     } else {
         ftyp_len
     };
-    let header = BoxHeader::for_payload(BoxType::from_bytes(MDAT_TYPE), None, mdat_payload_len);
+    let header = BoxHeader::for_payload(BoxType::from_bytes(MDAT), None, mdat_payload_len);
     before + header.header_size() as u64
 }
 

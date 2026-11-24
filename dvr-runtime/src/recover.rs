@@ -15,23 +15,14 @@ use std::num::NonZeroU64;
 use broadcast_common::Parse;
 use broadcast_common::range::ByteSpan;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, LARGESIZE_SIZE, SIZE_TO_EOF};
+use isobmff::emsg::EMSG_BOX_TYPE as EMSG;
+use isobmff::init_segment::MOOV;
+use isobmff::sample_groups::PRFT;
 use isobmff::segments::{FTYP, MDAT, MOOF, STYP};
-
-/// Width of a box Four-CC (ISO/IEC 14496-12:2026 §4.2).
-const FOURCC_LEN: usize = 4;
-
-/// Four-CC of the Movie Box: the init's box when there is no `ftyp`.
-const MOOV: [u8; FOURCC_LEN] = *b"moov";
-/// Four-CC of the Event Message Box, which a CMAF segment may lead with
-/// (ISO/IEC 23009-1 §5.3.9.7).
-const EMSG: [u8; FOURCC_LEN] = *b"emsg";
-/// Four-CC of the Producer Reference Time Box, which a CMAF segment may lead
-/// with (ISO/IEC 14496-12:2026 §8.16.5).
-const PRFT: [u8; FOURCC_LEN] = *b"prft";
 
 /// Whether a top-level box belongs to the segment a following `moof` opens
 /// rather than to the init.
-fn leads_a_fragment(kind: &[u8; FOURCC_LEN]) -> bool {
+fn leads_a_fragment(kind: &[u8; isobmff::box_types::BOX_TYPE_SIZE]) -> bool {
     kind == &STYP || kind == &EMSG || kind == &PRFT
 }
 

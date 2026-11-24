@@ -77,9 +77,6 @@ const RELOAD_WAIT_DIVISOR: u64 = 2;
 /// `EXT-X-VERSION` of the one-segment playlist a single `EXT-X-MAP` line is
 /// parsed in: the lowest version that allows `EXT-X-MAP` without
 /// `EXT-X-I-FRAMES-ONLY` (RFC 8216 §4.3.3.6).
-/// `moov` (ISO/IEC 14496-12:2026 §8.2.1).
-const MOVIE_BOX: [u8; 4] = *b"moov";
-
 const MAP_PROBE_VERSION: u32 = 6;
 
 /// [`StreamingTsDemux`] with a `Debug` impl (the transmux type has none), so
@@ -142,18 +139,6 @@ fn keys_at_maps(text: &str) -> Vec<(MapTag, Option<MediaKey>)> {
         }
     }
     out
-}
-
-/// `true` when `bytes` holds a complete `moov` box: what every Media
-/// Initialization Section of fragmented MP4 carries.
-fn has_movie_box(bytes: &[u8]) -> bool {
-    for step in isobmff::BoxIter::new(bytes) {
-        let Ok(boxed) = step else { return false };
-        if boxed.header.box_type.0 == MOVIE_BOX {
-            return true;
-        }
-    }
-    false
 }
 
 /// `uri` up to its query string: a CDN that re-signs a segment URL on every
@@ -1391,7 +1376,9 @@ impl HlsClient {
         let Some(slot) = self.inits.get_mut(&target) else {
             return Ok(());
         };
-        if slot.crypto.is_none() && !has_movie_box(bytes) {
+        if slot.crypto.is_none()
+            && isobmff::box_types::find_box(bytes, &isobmff::init_segment::MOOV).is_none()
+        {
             slot.fetch = InitFetch::Failed;
             return Err(Error::InitUndecodable);
         }
@@ -1464,7 +1451,9 @@ impl HlsClient {
         cipher: &[u8],
     ) -> Result<()> {
         match decrypt_segment(ResourceId::Init, crypto, key, cipher) {
-            Ok(plain) if !has_movie_box(&plain) => {
+            Ok(plain)
+                if isobmff::box_types::find_box(&plain, &isobmff::init_segment::MOOV).is_none() =>
+            {
                 if let Some(slot) = self.inits.get_mut(&target) {
                     slot.fetch = InitFetch::Failed;
                 }
@@ -4364,15 +4353,6 @@ mod tests {
         assert_eq!(client.continuity(&decreased), Continuity::Restart);
         decreased.discontinuity_sequence = 3;
         assert_eq!(client.continuity(&decreased), Continuity::Continues);
-    }
-
-    #[test]
-    fn has_movie_box_needs_the_moov_box() {
-        let moov = [0u8, 0, 0, 8, b'm', b'o', b'o', b'v'];
-        let mdat = [0u8, 0, 0, 8, b'm', b'd', b'a', b't'];
-        assert!(has_movie_box(&moov));
-        assert!(!has_movie_box(&mdat));
-        assert!(!has_movie_box(&[]));
     }
 
     #[test]
