@@ -88,6 +88,7 @@ pub mod nalu_types;
 pub mod opus;
 pub mod sample_entries;
 pub mod sample_groups;
+pub mod sample_table;
 pub mod segments;
 pub mod subtitle_entries;
 pub mod timing;
@@ -156,6 +157,7 @@ pub use sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VVCSampleEntry,
     VisualSampleEntryFields,
 };
+pub use sample_table::{SampleRef, TrackCursor};
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
     WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, XmlSubtitleSampleEntry,
