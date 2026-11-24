@@ -14,7 +14,8 @@ use std::collections::BTreeMap;
 use isobmff::plan::OwnedPlan;
 use isobmff::sample_table::SampleRef;
 use isobmff::writer::{
-    FileType, Interleave, Layout, MovieHeader, SampleMeta, Sink, TrackSetup, Write, Writer,
+    FileType, Interleave, Layout, MovieHeader, SampleEntry, SampleMeta, Sink, TrackSetup, Write,
+    Writer,
 };
 use isobmff::{Limits, Reader, ReaderConfig, SampleOrder, Step, TrackId, TrackInfo};
 use libfuzzer_sys::fuzz_target;
@@ -107,6 +108,7 @@ fn file_type(data: &[u8]) -> FileType {
             major_brand: ftyp.major_brand,
             minor_version: ftyp.minor_version,
             compatible_brands: ftyp.compatible_brands.clone(),
+            emit_ftyp: true,
         },
         Err(_) => FileType::default(),
     }
@@ -120,8 +122,50 @@ fn rewrite(data: &[u8], run: &Run) -> Option<Vec<u8>> {
     }
 }
 
+/// Whether a sample entry carries a QuickTime form whose serialisers this
+/// target exercises.
+fn is_quicktime_entry(entry: &isobmff::init_segment::SampleEntryVariant) -> bool {
+    use isobmff::init_segment::SampleEntryVariant as E;
+    match entry {
+        E::Tmcd(_) | E::QuickTimeSound(_) => true,
+        E::Mp4a(e) => e.quicktime.is_some(),
+        E::Ac3(e) => e.quicktime.is_some(),
+        E::Ec3(e) => e.quicktime.is_some(),
+        E::Opus(e) => e.quicktime.is_some(),
+        E::Flac(e) => e.quicktime.is_some(),
+        E::Ac4(e) => e.quicktime.is_some(),
+        E::Mha(e) => e.quicktime.is_some(),
+        E::Dts(e) => e.quicktime.is_some(),
+        _ => false,
+    }
+}
+
+/// The plan with every QuickTime `stsd` entry rebuilt from its typed parse.
+fn typed_plan(run: &Run) -> Option<OwnedPlan> {
+    let mut tracks = run.plan.tracks().to_vec();
+    for (track, info) in tracks.iter_mut().zip(&run.tracks) {
+        if track.entries.len() != info.entries.len() {
+            return None;
+        }
+        for (entry, sample_entry) in track.entries.iter_mut().zip(&info.entries) {
+            if let Some(typed) = &sample_entry.typed
+                && is_quicktime_entry(typed)
+            {
+                *entry = SampleEntry::Typed(typed.clone());
+            }
+        }
+        if let Some(first) = track.entries.first() {
+            track.setup.entry = first.clone();
+        }
+    }
+    let mut plan = OwnedPlan::new(tracks);
+    plan.set_shell(run.plan.shell().cloned());
+    Some(plan)
+}
+
 fn rewrite_progressive(data: &[u8], run: &Run) -> Option<Vec<u8>> {
-    let shell = run.plan.shell()?;
+    let plan = typed_plan(run)?;
+    let shell = plan.shell()?;
     let layout = Layout::new(true, Interleave::AsPlanned, Sink::Seekable);
     let header = MovieHeader::with_times(
         shell.mvhd.timescale,
@@ -129,7 +173,7 @@ fn rewrite_progressive(data: &[u8], run: &Run) -> Option<Vec<u8>> {
         shell.mvhd.modification_time,
     );
     let mut writer = Writer::progressive(
-        run.plan.clone(),
+        plan.clone(),
         layout,
         file_type(data),
         header,
@@ -157,13 +201,9 @@ fn rewrite_progressive(data: &[u8], run: &Run) -> Option<Vec<u8>> {
 }
 
 fn rewrite_fragmented(data: &[u8], run: &Run) -> Option<Vec<u8>> {
-    let shell = run.plan.shell()?.clone();
-    let setups: Vec<TrackSetup> = run
-        .plan
-        .tracks()
-        .iter()
-        .map(|track| track.setup.clone())
-        .collect();
+    let plan = typed_plan(run)?;
+    let shell = plan.shell()?.clone();
+    let setups: Vec<TrackSetup> = plan.tracks().iter().map(|track| track.setup.clone()).collect();
     let mut writer = Writer::fragmented(setups, shell.mvhd.timescale, fuzz_limits()).ok()?;
     writer.set_file_type(file_type(data));
     writer.set_movie_shell(shell);
