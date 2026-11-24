@@ -52,8 +52,8 @@ impl<'a> Text<'a> {
     /// Parse a nested `TEXT()` component at the front of `bytes`, returning the
     /// object and the number of bytes it consumed (tag + length + chars).
     pub(crate) fn parse_component(bytes: &'a [u8]) -> Result<(Self, usize)> {
-        need_in(bytes, 3, "text component tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "text component tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let more = match t {
             tag::TEXT_LAST => false,
             tag::TEXT_MORE => true,
@@ -66,7 +66,7 @@ impl<'a> Text<'a> {
             }
         };
         let (len_value, len_hdr, length_form) = length::decode_form(&bytes[3..])?;
-        let body_start = 3 + len_hdr;
+        let body_start = crate::objects::LENGTH_FIELD_OFFSET + len_hdr;
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
             return Err(Error::LengthMismatch(
@@ -156,11 +156,17 @@ pub struct Enq<'a> {
     /// re-serializes byte-for-byte; `0b111_1111` (the all-ones fill) when
     /// hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<7>,
+    pub reserved: ReservedOnes<ENQ_RESERVED_BITS>,
 }
 
 // reserved/blind_answer(1) + answer_text_length(1).
 const ENQ_PREFIX: usize = 2;
+/// Reserved bits in front of the `enq` `blind_answer_flag`.
+pub const ENQ_RESERVED_BITS: u32 = 7;
+/// Shift selecting the reserved bits of the `enq` flags byte.
+const ENQ_RESERVED_SHIFT: u32 = 1;
+/// Mask of `blind_answer_flag`.
+const BLIND_ANSWER_FLAG_MASK: u8 = 0x01;
 
 impl<'a> Parse<'a> for Enq<'a> {
     type Error = Error;
@@ -169,8 +175,8 @@ impl<'a> Parse<'a> for Enq<'a> {
         need_in(body, ENQ_PREFIX, "enq")?;
         Ok(Self {
             length_form,
-            reserved: ReservedOnes::from_bits(u64::from(body[0] >> 1)),
-            blind_answer: (body[0] & 0x01) != 0,
+            reserved: ReservedOnes::from_bits(u64::from(body[0] >> ENQ_RESERVED_SHIFT)),
+            blind_answer: (body[0] & BLIND_ANSWER_FLAG_MASK) != 0,
             answer_text_length: body[1],
             text_chars: &body[ENQ_PREFIX..],
         })
@@ -478,8 +484,8 @@ impl<'a> Menu<'a> {
 
     /// Parse a `list()` object (Tables 51) from a complete APDU.
     pub fn parse_list(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "list tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "list tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let expected = if t == tag::LIST_MORE {
             tag::LIST_MORE
         } else {
@@ -503,8 +509,8 @@ impl<'a> Menu<'a> {
 impl<'a> Parse<'a> for Menu<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "menu tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "menu tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let expected = if t == tag::MENU_MORE {
             tag::MENU_MORE
         } else {

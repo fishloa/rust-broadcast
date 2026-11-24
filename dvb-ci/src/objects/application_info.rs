@@ -154,16 +154,30 @@ impl ApduDef<'_> for EnterMenu {
 /// menu_string_length(1).
 const APP_INFO_PREFIX: usize = 6;
 
+/// Offsets of the `application_info()` fixed-prefix fields (Table 21).
+const APPLICATION_TYPE_OFFSET: usize = 0;
+const APPLICATION_MANUFACTURER_OFFSET: usize = 1;
+const MANUFACTURER_CODE_OFFSET: usize = 3;
+const MENU_STRING_LENGTH_OFFSET: usize = 5;
+/// Bytes of `application_manufacturer` / `manufacturer_code`.
+const MANUFACTURER_FIELD_LEN: usize = core::mem::size_of::<u16>();
+
 impl<'a> Parse<'a> for ApplicationInfo<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::APPLICATION_INFO, "application_info")?;
         need_in(body, APP_INFO_PREFIX, "application_info")?;
-        let application_type = ApplicationType::from_u8(body[0]);
-        let application_manufacturer = u16::from_be_bytes([body[1], body[2]]);
-        let manufacturer_code = u16::from_be_bytes([body[3], body[4]]);
-        let menu_string_length = body[5] as usize;
+        let application_type = ApplicationType::from_u8(body[APPLICATION_TYPE_OFFSET]);
+        let application_manufacturer = u16::from_be_bytes([
+            body[APPLICATION_MANUFACTURER_OFFSET],
+            body[APPLICATION_MANUFACTURER_OFFSET + 1],
+        ]);
+        let manufacturer_code = u16::from_be_bytes([
+            body[MANUFACTURER_CODE_OFFSET],
+            body[MANUFACTURER_CODE_OFFSET + 1],
+        ]);
+        let menu_string_length = body[MENU_STRING_LENGTH_OFFSET] as usize;
         let menu_end = APP_INFO_PREFIX + menu_string_length;
         if body.len() < menu_end {
             return Err(Error::LengthMismatch(
@@ -201,10 +215,14 @@ impl Serialize for ApplicationInfo<'_> {
         let body_len = APP_INFO_PREFIX + self.menu_string.len();
         let mut pos =
             super::write_apdu_header(tag::APPLICATION_INFO, body_len, self.length_form, buf)?;
-        buf[pos] = self.application_type.to_u8();
-        buf[pos + 1..pos + 3].copy_from_slice(&self.application_manufacturer.to_be_bytes());
-        buf[pos + 3..pos + 5].copy_from_slice(&self.manufacturer_code.to_be_bytes());
-        buf[pos + 5] = self.menu_string.len() as u8;
+        buf[pos + APPLICATION_TYPE_OFFSET] = self.application_type.to_u8();
+        buf[pos + APPLICATION_MANUFACTURER_OFFSET
+            ..pos + APPLICATION_MANUFACTURER_OFFSET + MANUFACTURER_FIELD_LEN]
+            .copy_from_slice(&self.application_manufacturer.to_be_bytes());
+        buf[pos + MANUFACTURER_CODE_OFFSET
+            ..pos + MANUFACTURER_CODE_OFFSET + MANUFACTURER_FIELD_LEN]
+            .copy_from_slice(&self.manufacturer_code.to_be_bytes());
+        buf[pos + MENU_STRING_LENGTH_OFFSET] = self.menu_string.len() as u8;
         pos += APP_INFO_PREFIX;
         buf[pos..pos + self.menu_string.len()].copy_from_slice(self.menu_string);
         Ok(pos + self.menu_string.len())

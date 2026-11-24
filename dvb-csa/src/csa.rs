@@ -18,12 +18,15 @@ use crate::key::ControlWord;
 use crate::stream::StreamCipher;
 use crate::zeroize::Zeroizing;
 
+/// Bytes in one CSA block (64 bits).
+const BLOCK_BYTES: usize = 8;
+
 /// Scramble (encrypt) `data` in-place with the given control word.
 ///
 /// Payloads shorter than 8 bytes are not scrambled.
 pub fn scramble(cw: &ControlWord, data: &mut [u8]) {
     let len = data.len();
-    if len < 8 {
+    if len < BLOCK_BYTES {
         return;
     }
 
@@ -35,22 +38,22 @@ pub fn scramble(cw: &ControlWord, data: &mut [u8]) {
     let cws = Zeroizing(cw.expand_stream());
     let bc = BlockCipher::new(sch.0);
 
-    let nblocks = len / 8;
+    let nblocks = len / BLOCK_BYTES;
 
-    bc.encrypt_block(&mut data[(nblocks - 1) * 8..nblocks * 8]);
+    bc.encrypt_block(&mut data[(nblocks - 1) * BLOCK_BYTES..nblocks * BLOCK_BYTES]);
 
     // Work backward: XOR (already-encrypted) block i+1 INTO block i, then encrypt block i
     for i in (0..nblocks - 1).rev() {
-        for j in 0..8 {
-            data[i * 8 + j] ^= data[(i + 1) * 8 + j];
+        for j in 0..BLOCK_BYTES {
+            data[i * BLOCK_BYTES + j] ^= data[(i + 1) * BLOCK_BYTES + j];
         }
-        bc.encrypt_block(&mut data[i * 8..(i + 1) * 8]);
+        bc.encrypt_block(&mut data[i * BLOCK_BYTES..(i + 1) * BLOCK_BYTES]);
     }
 
     // Phase 2: Stream cipher XOR bytes 8..len
-    let iv: [u8; 8] = data[0..8].try_into().unwrap();
+    let iv: [u8; BLOCK_BYTES] = data[0..BLOCK_BYTES].try_into().unwrap();
     let mut sc = StreamCipher::new(&cws.0, &iv);
-    sc.xor_stream(&mut data[8..]);
+    sc.xor_stream(&mut data[BLOCK_BYTES..]);
 }
 
 /// Descramble (decrypt) `data` in-place with the given control word.
@@ -58,7 +61,7 @@ pub fn scramble(cw: &ControlWord, data: &mut [u8]) {
 /// Payloads shorter than 8 bytes are not descrambled.
 pub fn descramble(cw: &ControlWord, data: &mut [u8]) {
     let len = data.len();
-    if len < 8 {
+    if len < BLOCK_BYTES {
         return;
     }
 
@@ -67,22 +70,22 @@ pub fn descramble(cw: &ControlWord, data: &mut [u8]) {
     let bc = BlockCipher::new(sch.0);
 
     // Phase 1: Stream cipher XOR bytes 8..len (using encrypted first block as IV)
-    let iv: [u8; 8] = data[0..8].try_into().unwrap();
+    let iv: [u8; BLOCK_BYTES] = data[0..BLOCK_BYTES].try_into().unwrap();
     let mut sc = StreamCipher::new(&cws.0, &iv);
-    sc.xor_stream(&mut data[8..]);
+    sc.xor_stream(&mut data[BLOCK_BYTES..]);
 
     // Phase 2: Block cipher, forward CBC undo
-    let nblocks = len / 8;
+    let nblocks = len / BLOCK_BYTES;
 
     // Decrypt first block (ECB)
-    bc.decrypt_block(&mut data[0..8]);
+    bc.decrypt_block(&mut data[0..BLOCK_BYTES]);
 
     // Work forward: XOR current (still encrypted) block INTO previous (decrypted), then decrypt current
     for i in 1..nblocks {
-        for j in 0..8 {
-            data[(i - 1) * 8 + j] ^= data[i * 8 + j];
+        for j in 0..BLOCK_BYTES {
+            data[(i - 1) * BLOCK_BYTES + j] ^= data[i * BLOCK_BYTES + j];
         }
-        bc.decrypt_block(&mut data[i * 8..(i + 1) * 8]);
+        bc.decrypt_block(&mut data[i * BLOCK_BYTES..(i + 1) * BLOCK_BYTES]);
     }
 }
 

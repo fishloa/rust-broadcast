@@ -145,8 +145,12 @@ impl<'a> ConnectionDescriptor<'a> {
     /// Parse a nested `connection_descriptor()` at the front of `bytes`, returning
     /// the object and how many bytes it consumed (tag + length + body).
     pub(crate) fn parse_component(bytes: &'a [u8]) -> Result<(Self, usize)> {
-        need_in(bytes, 3, "connection_descriptor tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(
+            bytes,
+            crate::objects::APDU_TAG_LEN,
+            "connection_descriptor tag",
+        )?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         if t != tag::CONNECTION_DESCRIPTOR {
             return Err(Error::UnexpectedApduTag {
                 got: t.as_u24(),
@@ -155,7 +159,7 @@ impl<'a> ConnectionDescriptor<'a> {
             });
         }
         let (len_value, len_hdr, length_form) = length::decode_form(&bytes[3..])?;
-        let body_start = 3 + len_hdr;
+        let body_start = crate::objects::LENGTH_FIELD_OFFSET + len_hdr;
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
             return Err(Error::LengthMismatch(
@@ -303,7 +307,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
             CommsCommandId::ConnectOnChannel => {
                 let (cd, consumed) = ConnectionDescriptor::parse_component(rest)?;
                 let tail = &rest[consumed..];
-                need_in(tail, 2, "comms_cmd connect retry/timeout")?;
+                need_in(tail, COMMS_CONNECT_TAIL, "comms_cmd connect retry/timeout")?;
                 super::reject_trailing_body(tail, COMMS_CONNECT_TAIL, "comms_cmd connect")?;
                 CommsCmdParams::Connect {
                     connection_descriptor: cd,
@@ -312,7 +316,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
                 }
             }
             CommsCommandId::SetParams => {
-                need_in(rest, 2, "comms_cmd set_params")?;
+                need_in(rest, COMMS_SET_PARAMS_BODY, "comms_cmd set_params")?;
                 super::reject_trailing_body(rest, COMMS_SET_PARAMS_BODY, "comms_cmd set_params")?;
                 CommsCmdParams::SetParams {
                     buffer_size: rest[0],
@@ -349,8 +353,8 @@ impl CommsCmd<'_> {
             CommsCmdParams::Connect {
                 connection_descriptor,
                 ..
-            } => connection_descriptor.component_len() + 2,
-            CommsCmdParams::SetParams { .. } => 2,
+            } => connection_descriptor.component_len() + COMMS_CONNECT_TAIL,
+            CommsCmdParams::SetParams { .. } => COMMS_SET_PARAMS_BODY,
             CommsCmdParams::GetNextBuffer { .. } => 1,
             CommsCmdParams::None => 0,
         }
@@ -414,7 +418,7 @@ impl Serialize for CommsCmd<'_> {
                 pos += connection_descriptor.serialize_component(&mut buf[pos..])?;
                 buf[pos] = *retry_count;
                 buf[pos + 1] = *timeout;
-                pos += 2;
+                pos += COMMS_CONNECT_TAIL;
             }
             CommsCmdParams::SetParams {
                 buffer_size,
@@ -422,7 +426,7 @@ impl Serialize for CommsCmd<'_> {
             } => {
                 buf[pos] = *buffer_size;
                 buf[pos + 1] = *timeout;
-                pos += 2;
+                pos += COMMS_SET_PARAMS_BODY;
             }
             CommsCmdParams::GetNextBuffer { comms_phase_id } => {
                 buf[pos] = *comms_phase_id;
@@ -593,8 +597,8 @@ impl CommsSend<'_> {
 impl<'a> Parse<'a> for CommsSend<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "comms_send tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "comms_send tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let (expected, more) = match t {
             tag::COMMS_SEND_MORE => (tag::COMMS_SEND_MORE, true),
             _ => (tag::COMMS_SEND_LAST, false),
@@ -674,8 +678,8 @@ impl CommsRcv<'_> {
 impl<'a> Parse<'a> for CommsRcv<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 3, "comms_rcv tag")?;
-        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+        need_in(bytes, crate::objects::APDU_TAG_LEN, "comms_rcv tag")?;
+        let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[crate::objects::APDU_TAG_LEN - 1]);
         let (expected, more) = match t {
             tag::COMMS_RCV_MORE => (tag::COMMS_RCV_MORE, true),
             _ => (tag::COMMS_RCV_LAST, false),

@@ -25,6 +25,12 @@ const SDT_TABLE_IDS: [u8; 2] = [
     TableId::ServiceDescriptionOther as u8,
 ];
 
+/// Seconds in one hour, for the `HhMMmSSs` duration rendering.
+const SECONDS_PER_HOUR: u64 = 3_600;
+
+/// Seconds in one minute, for the `HhMMmSSs` duration rendering.
+const SECONDS_PER_MINUTE: u64 = 60;
+
 pub fn run(path: &str, json: bool) -> ExitCode {
     let mut packets = match PacketReader::open(path, "dvb-tools epg") {
         Ok(p) => p,
@@ -87,9 +93,9 @@ pub fn run(path: &str, json: bool) -> ExitCode {
                             .map(|d| {
                                 format!(
                                     "{}h{:02}m{:02}s",
-                                    d.as_secs() / 3600,
-                                    (d.as_secs() / 60) % 60,
-                                    d.as_secs() % 60
+                                    d.as_secs() / SECONDS_PER_HOUR,
+                                    (d.as_secs() / SECONDS_PER_MINUTE) % SECONDS_PER_MINUTE,
+                                    d.as_secs() % SECONDS_PER_MINUTE
                                 )
                             })
                             .unwrap_or_else(|| "?".to_string());

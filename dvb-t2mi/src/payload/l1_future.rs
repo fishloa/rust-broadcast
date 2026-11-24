@@ -28,6 +28,8 @@ pub struct L1FuturePayload<'a> {
 
 const L1_FUTURE_HEADER_LEN: usize = 2;
 const LENGTH_FIELD_BYTES: usize = 2;
+/// Bits in a byte, for the bit- to byte-length rounding.
+const BITS_PER_BYTE: usize = 8;
 
 /// One `LEN(16) | block(8 x ceil(LEN/8))` pair of Table 3 starting at
 /// `data[pos..]`: the block bytes and the position after them.
@@ -45,7 +47,7 @@ fn length_prefixed_block<'d>(
             have: data.len(),
             what: len_what,
         })?;
-    let block_len = usize::from(u16::from_be_bytes(*len_field)).div_ceil(8);
+    let block_len = usize::from(u16::from_be_bytes(*len_field)).div_ceil(BITS_PER_BYTE);
     let start = pos + LENGTH_FIELD_BYTES;
     let end = start.saturating_add(block_len);
     let block = data.get(start..end).ok_or(BufferTooShort {
@@ -74,23 +76,23 @@ impl L1FuturePayload<'_> {
         num_aux: u8,
     ) -> crate::error::Result<Option<L1PostDynamic>> {
         let data = self.l1_future_data;
-        let (b, _) = data
-            .split_first_chunk::<2>()
-            .ok_or(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: 2,
-                    have: data.len(),
-                    what: "L1DYN_NEXT_LEN",
-                },
-            ))?;
+        let (b, _) =
+            data.split_first_chunk::<LENGTH_FIELD_BYTES>()
+                .ok_or(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: LENGTH_FIELD_BYTES,
+                        have: data.len(),
+                        what: "L1DYN_NEXT_LEN",
+                    },
+                ))?;
         let len_bits = u16::from_be_bytes(*b) as usize;
         if len_bits == 0 {
             return Ok(None);
         }
-        let len_bytes = len_bits.div_ceil(8);
-        need_in(data, 2 + len_bytes, "L1DYN_NEXT")?;
+        let len_bytes = len_bits.div_ceil(BITS_PER_BYTE);
+        need_in(data, LENGTH_FIELD_BYTES + len_bytes, "L1DYN_NEXT")?;
         Ok(Some(L1PostDynamic::parse(
-            &data[2..2 + len_bytes],
+            &data[LENGTH_FIELD_BYTES..LENGTH_FIELD_BYTES + len_bytes],
             num_plp,
             num_aux,
         )?))

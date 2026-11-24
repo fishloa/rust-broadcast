@@ -36,17 +36,45 @@ impl FefCompositePayload {
     /// Decode S2 field 1 (3 bits, upper nibble minus rfu) per EN 302 755 §7.2.3.
     #[must_use]
     pub fn s2_field1(&self) -> S2Field1 {
-        S2Field1::from_u8(self.s2_field >> 1)
+        S2Field1::from_u8(self.s2_field >> S2_FIELD1_SHIFT)
     }
 
     /// S2 field 2: mixed flag (1 bit, bit 0) per EN 302 755 §7.2.3.
     #[must_use]
     pub fn is_mixed(&self) -> bool {
-        (self.s2_field & 0x01) != 0
+        (self.s2_field & S2_MIXED_FLAG_MASK) != 0
     }
 }
 
 const FEF_COMPOSITE_LEN: usize = 8;
+
+/// Offset of the byte carrying the reserved bit and `s1_field` / `s2_field`.
+const S1_S2_BYTE_OFFSET: usize = 1;
+/// Offset of the 32-bit reserved field.
+const RFU2_OFFSET: usize = 2;
+/// Offset of `num_subparts`.
+const NUM_SUBPARTS_OFFSET: usize = 6;
+/// Bytes in the 32-bit reserved field.
+const RFU2_LEN: usize = 4;
+/// Bytes in a big-endian `u16`.
+const U16_LEN: usize = core::mem::size_of::<u16>();
+
+/// Mask of the reserved top bit of the S1/S2 byte.
+const RFU1_MASK: u8 = 0x80;
+/// Mask of the three-bit `s1_field`.
+const S1_MASK: u8 = 0x07;
+/// Mask of the four-bit `s2_field`.
+const S2_MASK: u8 = 0x0F;
+/// Mask of `s1_field`'s position within the S1/S2 byte.
+const S1_POSITION_MASK: u8 = 0x70;
+/// Shift placing `s1_field` above `s2_field` in the S1/S2 byte.
+const S1_SHIFT: u32 = 4;
+/// Shift selecting S2 field 1 from `s2_field`.
+const S2_FIELD1_SHIFT: u32 = 1;
+/// Mask of the mixed flag (S2 field 2) inside `s2_field`.
+const S2_MIXED_FLAG_MASK: u8 = 0x01;
+/// Shift placing the reserved top bit for the error report.
+const RFU1_SHIFT: u32 = 7;
 
 impl<'a> Parse<'a> for FefCompositePayload {
     type Error = crate::error::Error;
@@ -64,31 +92,39 @@ impl<'a> Parse<'a> for FefCompositePayload {
                 ))?;
 
         // byte 1 [7]: rfu1 — must be 0
-        if hdr[1] & 0x80 != 0 {
+        if hdr[S1_S2_BYTE_OFFSET] & RFU1_MASK != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "byte 1 [7] rfu1",
                     expected: 0,
-                    found: u64::from(hdr[1] >> 7),
+                    found: u64::from(hdr[S1_S2_BYTE_OFFSET] >> RFU1_SHIFT),
                 },
             ));
         }
         // bytes 2-5: 32-bit rfu2 — must be 0
-        if hdr[2] != 0 || hdr[3] != 0 || hdr[4] != 0 || hdr[5] != 0 {
+        if hdr[RFU2_OFFSET..RFU2_OFFSET + RFU2_LEN]
+            .iter()
+            .any(|b| *b != 0)
+        {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "32-bit RFU (rfu2)",
                     expected: 0,
-                    found: u64::from(u32::from_be_bytes([hdr[2], hdr[3], hdr[4], hdr[5]])),
+                    found: u64::from(u32::from_be_bytes(
+                        hdr[RFU2_OFFSET..RFU2_OFFSET + RFU2_LEN].try_into().unwrap(),
+                    )),
                 },
             ));
         }
 
         Ok(FefCompositePayload {
             fef_idx: hdr[0],
-            s1_field: S1Field::try_from((hdr[1] >> 4) & 0x07)?,
-            s2_field: hdr[1] & 0x0F,
-            num_subparts: u16::from_be_bytes([hdr[6], hdr[7]]),
+            s1_field: S1Field::try_from((hdr[S1_S2_BYTE_OFFSET] >> S1_SHIFT) & S1_MASK)?,
+            s2_field: hdr[S1_S2_BYTE_OFFSET] & S2_MASK,
+            num_subparts: u16::from_be_bytes([
+                hdr[NUM_SUBPARTS_OFFSET],
+                hdr[NUM_SUBPARTS_OFFSET + 1],
+            ]),
         })
     }
 }
@@ -108,26 +144,23 @@ impl Serialize for FefCompositePayload {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
         need_out(buf, self.serialized_len())?;
 
-        if self.s2_field > 0x0F {
+        if self.s2_field > S2_MASK {
             return Err(crate::Error::FieldOverflow(
                 broadcast_common::len::FieldOverflow {
                     field: "s2_field",
                     value: u64::from(self.s2_field),
-                    max: 0x0F,
+                    max: u64::from(S2_MASK),
                 },
             ));
         }
 
         buf[0] = self.fef_idx;
-        buf[1] = ((u8::from(self.s1_field) << 4) & 0x70) | (self.s2_field & 0x0F);
+        buf[S1_S2_BYTE_OFFSET] =
+            ((u8::from(self.s1_field) << S1_SHIFT) & S1_POSITION_MASK) | (self.s2_field & S2_MASK);
         // rfu2 = 0
-        buf[2] = 0;
-        buf[3] = 0;
-        buf[4] = 0;
-        buf[5] = 0;
+        buf[RFU2_OFFSET..RFU2_OFFSET + RFU2_LEN].fill(0);
         let ns = self.num_subparts.to_be_bytes();
-        buf[6] = ns[0];
-        buf[7] = ns[1];
+        buf[NUM_SUBPARTS_OFFSET..NUM_SUBPARTS_OFFSET + U16_LEN].copy_from_slice(&ns);
 
         Ok(self.serialized_len())
     }

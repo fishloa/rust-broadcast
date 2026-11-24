@@ -21,6 +21,12 @@ use broadcast_common::clock33::{self, PCR_HZ as PCR_CLOCK_HZ};
 /// Bits carried by one 188-byte TS packet (`TS_PACKET_SIZE * 8`).
 const BITS_PER_PACKET: u64 = (TS_PACKET_SIZE as u64) * 8;
 
+/// Bits in one megabit, converting bits per second to Mbit/s.
+const BITS_PER_MEGABIT: f64 = 1_000_000.0;
+
+/// Scale factor converting a packet share to a percentage.
+const PERCENT_SCALE: f64 = 100.0;
+
 /// One per-PID row in the output table.
 #[derive(Clone)]
 struct PidRow {
@@ -46,7 +52,7 @@ fn estimate_bitrate_mbps(first: Option<(u64, i128)>, last: Option<(u64, i128)>) 
             let delta = last_v - first_v;
             let bps =
                 (packets_between * BITS_PER_PACKET) as f64 * (PCR_CLOCK_HZ as f64) / (delta as f64);
-            Some(bps / 1_000_000.0)
+            Some(bps / BITS_PER_MEGABIT)
         }
         _ => None,
     }
@@ -170,7 +176,7 @@ pub fn run(path: &str) -> ExitCode {
     rows.sort_by(|a, b| b.packets.cmp(&a.packets).then(a.pid.cmp(&b.pid)));
 
     for row in &rows {
-        let pct = (row.packets as f64) * 100.0 / (total_packets as f64);
+        let pct = (row.packets as f64) * PERCENT_SCALE / (total_packets as f64);
         println!(
             "pid=0x{:04X}  packets={}  {:.2}%",
             row.pid, row.packets, pct

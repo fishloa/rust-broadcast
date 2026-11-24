@@ -29,6 +29,36 @@ pub struct ArbitraryCellsPayload<'a> {
 const ARB_CELLS_HEADER_LEN: usize = 8;
 const CELL_ADDR_MASK: u32 = 0x003F_FFFF; // 22 bits
 
+/// Offset of `tx_identifier` within the payload header.
+const TX_IDENTIFIER_OFFSET: usize = 1;
+/// Offsets of the two reserved header bytes.
+const RFU_FIRST_OFFSET: usize = 3;
+const RFU_SECOND_OFFSET: usize = 4;
+/// Offset of the byte carrying the reserved prefix and the cell address's
+/// high bits.
+const START_CELL_HIGH_OFFSET: usize = 5;
+/// Offset of the middle cell-address byte.
+const START_CELL_MID_OFFSET: usize = 6;
+/// Offset of the low cell-address byte.
+const START_CELL_LOW_OFFSET: usize = 7;
+
+/// Mask of the two reserved bits at the top of the high cell-address byte.
+const RFU_PREFIX_MASK: u8 = 0xC0;
+/// Shift placing the reserved prefix in the high cell-address byte.
+const RFU_PREFIX_SHIFT: u32 = 6;
+/// Shifts assembling the 18-bit reserved value for the error report.
+const RFU_HIGH_SHIFT: u32 = 10;
+const RFU_MID_SHIFT: u32 = 2;
+
+/// Shift placing the cell address's high byte.
+const CELL_ADDR_HIGH_SHIFT: u32 = 16;
+/// Shift placing the cell address's middle byte.
+const CELL_ADDR_MID_SHIFT: u32 = 8;
+/// Mask of the six cell-address bits carried in its high byte.
+const CELL_ADDR_HIGH_BYTE_MASK: u32 = 0x3F;
+/// Mask of one byte.
+const BYTE_MASK: u32 = 0xFF;
+
 impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
     type Error = crate::error::Error;
 
@@ -42,24 +72,30 @@ impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
         )?;
 
         let frame_idx = hdr[0];
-        let tx_identifier = u16::from_be_bytes([hdr[1], hdr[2]]);
+        let tx_identifier =
+            u16::from_be_bytes([hdr[TX_IDENTIFIER_OFFSET], hdr[TX_IDENTIFIER_OFFSET + 1]]);
 
         // RFU: bytes 3-4 (16 bits) + byte 5 top 2 bits = 18 bits total, must be 0
-        if hdr[3] != 0 || hdr[4] != 0 || (hdr[5] & 0xC0 != 0) {
+        if hdr[RFU_FIRST_OFFSET] != 0
+            || hdr[RFU_SECOND_OFFSET] != 0
+            || (hdr[START_CELL_HIGH_OFFSET] & RFU_PREFIX_MASK != 0)
+        {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "18-bit RFU",
                     expected: 0,
-                    found: (u64::from(hdr[3]) << 10)
-                        | (u64::from(hdr[4]) << 2)
-                        | u64::from(hdr[5] >> 6),
+                    found: (u64::from(hdr[RFU_FIRST_OFFSET]) << RFU_HIGH_SHIFT)
+                        | (u64::from(hdr[RFU_SECOND_OFFSET]) << RFU_MID_SHIFT)
+                        | u64::from(hdr[START_CELL_HIGH_OFFSET] >> RFU_PREFIX_SHIFT),
                 },
             ));
         }
 
         // start_cell_address: byte 5 bottom 6 bits + bytes 6-7 = 22 bits
-        let start_cell_address =
-            ((hdr[5] as u32 & 0x3F) << 16) | ((hdr[6] as u32) << 8) | (hdr[7] as u32);
+        let start_cell_address = ((hdr[START_CELL_HIGH_OFFSET] as u32 & CELL_ADDR_HIGH_BYTE_MASK)
+            << CELL_ADDR_HIGH_SHIFT)
+            | ((hdr[START_CELL_MID_OFFSET] as u32) << CELL_ADDR_MID_SHIFT)
+            | (hdr[START_CELL_LOW_OFFSET] as u32);
 
         Ok(ArbitraryCellsPayload {
             frame_idx,
@@ -97,13 +133,15 @@ impl Serialize for ArbitraryCellsPayload<'_> {
 
         buf[0] = self.frame_idx;
         let tx_id = self.tx_identifier.to_be_bytes();
-        buf[1] = tx_id[0];
-        buf[2] = tx_id[1];
-        buf[3] = 0; // RFU byte 1
-        buf[4] = 0; // RFU byte 2
-        buf[5] = ((self.start_cell_address >> 16) & 0x3F) as u8; // RFU top 2 bits = 0, cell addr top 6
-        buf[6] = ((self.start_cell_address >> 8) & 0xFF) as u8;
-        buf[7] = (self.start_cell_address & 0xFF) as u8;
+        buf[TX_IDENTIFIER_OFFSET] = tx_id[0];
+        buf[TX_IDENTIFIER_OFFSET + 1] = tx_id[1];
+        buf[RFU_FIRST_OFFSET] = 0; // RFU byte 1
+        buf[RFU_SECOND_OFFSET] = 0; // RFU byte 2
+        buf[START_CELL_HIGH_OFFSET] =
+            ((self.start_cell_address >> CELL_ADDR_HIGH_SHIFT) & CELL_ADDR_HIGH_BYTE_MASK) as u8;
+        buf[START_CELL_MID_OFFSET] =
+            ((self.start_cell_address >> CELL_ADDR_MID_SHIFT) & BYTE_MASK) as u8;
+        buf[START_CELL_LOW_OFFSET] = (self.start_cell_address & BYTE_MASK) as u8;
 
         if !self.arbitrary_cell_data.is_empty() {
             buf[ARB_CELLS_HEADER_LEN..ARB_CELLS_HEADER_LEN + self.arbitrary_cell_data.len()]

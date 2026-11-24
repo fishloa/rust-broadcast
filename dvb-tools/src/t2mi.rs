@@ -19,6 +19,9 @@ use crate::util::{PacketReader, READ_CHUNK, open_file, read_chunk};
 /// data-piping PID for T2-MI in TS).
 const DEFAULT_T2MI_PID: Pid = Pid::from_const(0x0006);
 
+/// Radix of a `0x`-prefixed numeric `--pid` argument.
+const HEX_RADIX: u32 = 16;
+
 /// `--pid` value: a TS-encapsulated target PID, or raw bytes.
 enum PidArg {
     Ts(Pid),
@@ -31,7 +34,7 @@ fn parse_pid(s: &str) -> Option<PidArg> {
         return Some(PidArg::Raw);
     }
     let value = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u16::from_str_radix(hex, 16).ok()?
+        u16::from_str_radix(hex, HEX_RADIX).ok()?
     } else {
         s.parse::<u16>().ok()?
     };

@@ -159,11 +159,11 @@ pub struct CaPmtStream<'a> {
     /// preserved so the object re-serializes byte-for-byte; `0b111` when
     /// hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pid: ReservedOnes<3>,
+    pub reserved_pid: ReservedOnes<ES_PID_RESERVED_BITS>,
     /// The 4-bit `reserved` field in front of `ES_info_length` as received
     /// (see [`CaPmtStream::reserved_pid`]); `0b1111` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_es_info: ReservedOnes<4>,
+    pub reserved_es_info: ReservedOnes<ES_INFO_RESERVED_BITS>,
 }
 
 /// `ca_pmt()` object (Table 25).
@@ -196,11 +196,11 @@ pub struct CaPmt<'a> {
     /// preserved so the object re-serializes byte-for-byte; `0b11` (the all-ones
     /// fill) when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_version: ReservedOnes<2>,
+    pub reserved_version: ReservedOnes<VERSION_RESERVED_BITS>,
     /// The 4-bit `reserved` field in front of `program_info_length` as
     /// received (see [`CaPmt::reserved_version`]); `0b1111` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_program_info: ReservedOnes<4>,
+    pub reserved_program_info: ReservedOnes<ES_INFO_RESERVED_BITS>,
 }
 
 // Fixed prefix after the header: list_management(1) + program_number(2) +
@@ -210,16 +210,67 @@ const CA_PMT_PREFIX: usize = 6;
 // reserved/ES_info_length(2).
 const ES_PREFIX: usize = 5;
 
+/// Reserved bits in front of `elementary_PID` (Table 25).
+pub const ES_PID_RESERVED_BITS: u32 = 3;
+/// Reserved bits in front of `ES_info_length` / `program_info_length`.
+pub const ES_INFO_RESERVED_BITS: u32 = 4;
+/// Reserved bits in front of `version_number`.
+pub const VERSION_RESERVED_BITS: u32 = 2;
+
+/// Offsets of the `ca_pmt()` fixed prefix fields.
+const LIST_MANAGEMENT_OFFSET: usize = 0;
+const PROGRAM_NUMBER_OFFSET: usize = 1;
+const VERSION_BYTE_OFFSET: usize = 3;
+const PROGRAM_INFO_LENGTH_HIGH_OFFSET: usize = 4;
+const PROGRAM_INFO_LENGTH_LOW_OFFSET: usize = 5;
+
+/// Offsets of the per-ES fixed prefix fields.
+const ES_STREAM_TYPE_OFFSET: usize = 0;
+const ES_PID_HIGH_OFFSET: usize = 1;
+const ES_PID_LOW_OFFSET: usize = 2;
+const ES_INFO_LENGTH_HIGH_OFFSET: usize = 3;
+const ES_INFO_LENGTH_LOW_OFFSET: usize = 4;
+
+/// Bit width of `version_number`.
+const VERSION_NUMBER_BITS: u32 = 5;
+/// Shift placing `version_number` below the reserved bits.
+const VERSION_NUMBER_SHIFT: u32 = 1;
+/// Mask of `version_number`.
+const VERSION_NUMBER_MASK: u8 = 0x1F;
+/// Shift selecting the reserved bits of the version byte.
+const VERSION_RESERVED_SHIFT: u32 = 6;
+/// Mask of `current_next_indicator`.
+const CURRENT_NEXT_INDICATOR_MASK: u8 = 0x01;
+/// Shift placing a 12-bit info length's high nibble.
+const INFO_LENGTH_SHIFT: u32 = 8;
+/// Mask of a 12-bit info length's high nibble.
+const INFO_LENGTH_HIGH_MASK: usize = 0x0F;
+/// Bit width of `program_info_length` / `ES_info_length`.
+const INFO_LENGTH_BITS: u32 = 12;
+/// Shift selecting the reserved bits in front of `elementary_PID`.
+const ES_PID_RESERVED_SHIFT: u32 = 5;
+/// Mask of `elementary_PID`'s high bits.
+const ES_PID_HIGH_MASK: u8 = 0x1F;
+/// Shift selecting the reserved bits in front of `ES_info_length`.
+const ES_INFO_RESERVED_SHIFT: u32 = 4;
+/// Shift packing a 12-bit info length's high nibble.
+const INFO_LENGTH_PACK_SHIFT: u32 = 8;
+
 impl<'a> Parse<'a> for CaPmt<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::CA_PMT, "ca_pmt")?;
         need_in(body, CA_PMT_PREFIX, "ca_pmt prefix")?;
-        let list_management = CaPmtListManagement::from_u8(body[0]);
-        let program_number = u16::from_be_bytes([body[1], body[2]]);
-        let version_number = (body[3] >> 1) & 0x1F;
-        let current_next_indicator = (body[3] & 0x01) != 0;
-        let program_info_length = (((body[4] & 0x0F) as usize) << 8) | body[5] as usize;
+        let list_management = CaPmtListManagement::from_u8(body[LIST_MANAGEMENT_OFFSET]);
+        let program_number =
+            u16::from_be_bytes([body[PROGRAM_NUMBER_OFFSET], body[PROGRAM_NUMBER_OFFSET + 1]]);
+        let version_number =
+            (body[VERSION_BYTE_OFFSET] >> VERSION_NUMBER_SHIFT) & VERSION_NUMBER_MASK;
+        let current_next_indicator = (body[VERSION_BYTE_OFFSET] & CURRENT_NEXT_INDICATOR_MASK) != 0;
+        let program_info_length =
+            (usize::from(body[PROGRAM_INFO_LENGTH_HIGH_OFFSET] & INFO_LENGTH_HIGH_MASK as u8)
+                << INFO_LENGTH_SHIFT)
+                | usize::from(body[PROGRAM_INFO_LENGTH_LOW_OFFSET]);
 
         let mut pos = CA_PMT_PREFIX;
         let (cmd_id, program_ca_descriptors) =
@@ -236,8 +287,12 @@ impl<'a> Parse<'a> for CaPmt<'a> {
             cmd_id,
             program_ca_descriptors,
             streams,
-            reserved_version: ReservedOnes::from_bits(u64::from(body[3] >> 6)),
-            reserved_program_info: ReservedOnes::from_bits(u64::from(body[4] >> 4)),
+            reserved_version: ReservedOnes::from_bits(u64::from(
+                body[VERSION_BYTE_OFFSET] >> VERSION_RESERVED_SHIFT,
+            )),
+            reserved_program_info: ReservedOnes::from_bits(u64::from(
+                body[PROGRAM_INFO_LENGTH_HIGH_OFFSET] >> ES_INFO_RESERVED_SHIFT,
+            )),
         })
     }
 }
@@ -290,12 +345,21 @@ pub(crate) fn parse_streams<'a>(
     let mut streams = Vec::new();
     while pos < body.len() {
         need_in(body, pos + ES_PREFIX, prefix_what)?;
-        let stream_type = body[pos];
-        let reserved_pid = ReservedOnes::from_bits(u64::from(body[pos + 1] >> 5));
-        let reserved_es_info = ReservedOnes::from_bits(u64::from(body[pos + 3] >> 4));
-        let elementary_pid =
-            Pid::from_wire_masked((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
-        let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
+        let stream_type = body[pos + ES_STREAM_TYPE_OFFSET];
+        let reserved_pid = ReservedOnes::from_bits(u64::from(
+            body[pos + ES_PID_HIGH_OFFSET] >> ES_PID_RESERVED_SHIFT,
+        ));
+        let reserved_es_info = ReservedOnes::from_bits(u64::from(
+            body[pos + ES_INFO_LENGTH_HIGH_OFFSET] >> ES_INFO_RESERVED_SHIFT,
+        ));
+        let elementary_pid = Pid::from_wire_masked(
+            (u16::from(body[pos + ES_PID_HIGH_OFFSET] & ES_PID_HIGH_MASK) << INFO_LENGTH_SHIFT)
+                | u16::from(body[pos + ES_PID_LOW_OFFSET]),
+        );
+        let es_info_length =
+            (usize::from(body[pos + ES_INFO_LENGTH_HIGH_OFFSET] & INFO_LENGTH_HIGH_MASK as u8)
+                << INFO_LENGTH_SHIFT)
+                | usize::from(body[pos + ES_INFO_LENGTH_LOW_OFFSET]);
         pos += ES_PREFIX;
         let (cmd_id, ca_descriptors) =
             parse_cmd_and_descriptors(body, &mut pos, es_info_length, info_what)?;
@@ -327,7 +391,7 @@ pub(crate) fn checked_streams_len(
     for s in streams {
         super::fit_bits(
             info_block_len(s.cmd_id, s.ca_descriptors) as u64,
-            12,
+            INFO_LENGTH_BITS,
             length_what,
         )?;
     }
@@ -342,11 +406,14 @@ pub(crate) fn write_streams(
 ) -> Result<usize> {
     for s in streams {
         let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
-        buf[pos] = s.stream_type;
-        buf[pos + 1] = ((s.reserved_pid.get() << 5) as u8) | (s.elementary_pid.value() >> 8) as u8;
-        buf[pos + 2] = s.elementary_pid.value() as u8;
-        buf[pos + 3] = ((s.reserved_es_info.get() << 4) as u8) | (es_info_length >> 8) as u8;
-        buf[pos + 4] = es_info_length as u8;
+        buf[pos + ES_STREAM_TYPE_OFFSET] = s.stream_type;
+        buf[pos + ES_PID_HIGH_OFFSET] = ((s.reserved_pid.get() << ES_PID_RESERVED_SHIFT) as u8)
+            | (s.elementary_pid.value() >> INFO_LENGTH_SHIFT) as u8;
+        buf[pos + ES_PID_LOW_OFFSET] = s.elementary_pid.value() as u8;
+        buf[pos + ES_INFO_LENGTH_HIGH_OFFSET] = ((s.reserved_es_info.get()
+            << ES_INFO_RESERVED_SHIFT) as u8)
+            | (es_info_length >> INFO_LENGTH_SHIFT) as u8;
+        buf[pos + ES_INFO_LENGTH_LOW_OFFSET] = es_info_length as u8;
         pos += ES_PREFIX;
         pos += write_info_block(s.cmd_id, s.ca_descriptors, &mut buf[pos..])?;
     }
@@ -363,25 +430,36 @@ impl Serialize for CaPmt<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        super::fit_bits(u64::from(self.version_number), 5, "ca_pmt version_number")?;
+        super::fit_bits(
+            u64::from(self.version_number),
+            VERSION_NUMBER_BITS,
+            "ca_pmt version_number",
+        )?;
         let program_info_length = info_block_len(self.cmd_id, self.program_ca_descriptors);
-        super::fit_bits(program_info_length as u64, 12, "ca_pmt program_info_length")?;
+        super::fit_bits(
+            program_info_length as u64,
+            INFO_LENGTH_BITS,
+            "ca_pmt program_info_length",
+        )?;
         let body = CA_PMT_PREFIX
             + program_info_length
             + checked_streams_len(&self.streams, "ca_pmt ES_info_length")?;
         let mut pos = super::write_apdu_header(tag::CA_PMT, body, self.length_form, buf)?;
 
-        buf[pos] = self.list_management.to_u8();
-        buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
+        buf[pos + LIST_MANAGEMENT_OFFSET] = self.list_management.to_u8();
+        buf[pos + PROGRAM_NUMBER_OFFSET..pos + VERSION_BYTE_OFFSET]
+            .copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). version_number was
         // range-checked above, so no mask is needed to fit the field.
-        buf[pos + 3] = ((self.reserved_version.get() << 6) as u8)
-            | (self.version_number << 1)
+        buf[pos + VERSION_BYTE_OFFSET] = ((self.reserved_version.get() << VERSION_RESERVED_SHIFT)
+            as u8)
+            | (self.version_number << VERSION_NUMBER_SHIFT)
             | u8::from(self.current_next_indicator);
         // reserved(4)='1111', program_info_length(12). Range-checked above.
-        buf[pos + 4] =
-            ((self.reserved_program_info.get() << 4) as u8) | (program_info_length >> 8) as u8;
-        buf[pos + 5] = program_info_length as u8;
+        buf[pos + PROGRAM_INFO_LENGTH_HIGH_OFFSET] = ((self.reserved_program_info.get()
+            << ES_INFO_RESERVED_SHIFT) as u8)
+            | (program_info_length >> INFO_LENGTH_PACK_SHIFT) as u8;
+        buf[pos + PROGRAM_INFO_LENGTH_LOW_OFFSET] = program_info_length as u8;
         pos += CA_PMT_PREFIX;
         pos += write_info_block(self.cmd_id, self.program_ca_descriptors, &mut buf[pos..])?;
 
