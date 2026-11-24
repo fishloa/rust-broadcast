@@ -304,6 +304,7 @@ async fn mp4_file_playout_holds_less_than_the_budget() {
     }
     let pass1_peak = play(&looping, Some(1)).await;
     let pass2_peak = play(&looping, Some(2)).await;
+    eprintln!("looping pass 1 peak {pass1_peak} bytes, pass 2 peak {pass2_peak} bytes");
     assert!(
         pass2_peak <= pass1_peak.saturating_add(LOOP_PEAK_SLACK),
         "pass 2 peaked at {pass2_peak}, pass 1 at {pass1_peak} (slack {LOOP_PEAK_SLACK})"
