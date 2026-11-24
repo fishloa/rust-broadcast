@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- Optional TS-over-HTTP read-ahead backpressure: `ReadAhead` selects a media-time bound, an accepted-byte bound, both, or `ReadAhead::Unlimited` (the default), set with `TsHttpConfig::with_read_ahead`. The session measures how far delivered media runs ahead of the playback position, in media time and in bytes of media still ahead of it (accepted bytes attributed to delivered samples in 100 ms presentation slices, so bytes the player has passed stop counting), and emits `Action::PauseRead`/`Action::ResumeRead` so a host stops and restarts reading the socket (TCP flow control then holds a recording's server). `Session::read_paused` answers the same question. The library chooses no numbers and imposes no maximum or minimum beyond non-zero; the default `Unlimited` never pauses, so memory is bounded only by the host's own buffering. A deliberate pause suppresses the stall timers and causes no buffer pause or reconnect (#4085).
 
 ## [0.8.0] - 2026-11-22
 ### Breaking

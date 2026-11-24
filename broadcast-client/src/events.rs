@@ -92,6 +92,102 @@ impl StreamKind {
 }
 broadcast_common::impl_spec_display!(StreamKind);
 
+/// Read-ahead limit for the TS-over-HTTP source: how far media may run ahead of
+/// the player's reported position before the session asks the host to stop
+/// reading the connection.
+///
+/// The library chooses no numbers: [`Self::Unlimited`] is the default, and a
+/// host that wants a bound sets one with [`Self::time`], [`Self::bytes`] or
+/// [`Self::time_and_bytes`] on the TS-over-HTTP configuration
+/// ([`crate::TsHttpConfig::with_read_ahead`]). `time` measures the latest
+/// delivered presentation time minus the playback position; `bytes` measures
+/// accepted body bytes attributed to delivered samples whose presentation end
+/// is still ahead of that position (100 ms slices, so bytes the player has
+/// passed stop counting). A pause is emitted once either bound is reached and
+/// released once both fall under half of it.
+///
+/// [`Self::Unlimited`] means the session never emits
+/// [`Action::PauseRead`]: memory is then bounded only
+/// by the host's own buffering.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ReadAhead {
+    /// No cap: the session never asks the host to pause reading.
+    #[default]
+    Unlimited,
+    /// Pause reading once media ahead of the playback position reaches either
+    /// bound; at least one must be set.
+    Limit {
+        /// Media-time bound.
+        time: Option<Duration>,
+        /// Accepted-byte bound.
+        bytes: Option<u64>,
+    },
+}
+
+impl ReadAhead {
+    /// A media-time bound only.
+    #[must_use]
+    pub const fn time(time: Duration) -> Self {
+        Self::Limit {
+            time: Some(time),
+            bytes: None,
+        }
+    }
+
+    /// An accepted-byte bound only.
+    #[must_use]
+    pub const fn bytes(bytes: u64) -> Self {
+        Self::Limit {
+            time: None,
+            bytes: Some(bytes),
+        }
+    }
+
+    /// Both bounds; the earlier one pauses.
+    #[must_use]
+    pub const fn time_and_bytes(time: Duration, bytes: u64) -> Self {
+        Self::Limit {
+            time: Some(time),
+            bytes: Some(bytes),
+        }
+    }
+
+    /// Spec label for this limit.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Unlimited => "unlimited",
+            Self::Limit {
+                time: Some(_),
+                bytes: None,
+            } => "time",
+            Self::Limit {
+                time: None,
+                bytes: Some(_),
+            } => "bytes",
+            Self::Limit {
+                time: Some(_),
+                bytes: Some(_),
+            } => "time-and-bytes",
+            Self::Limit {
+                time: None,
+                bytes: None,
+            } => "invalid",
+        }
+    }
+
+    pub(crate) fn bounds(self) -> (Option<Duration>, Option<u64>) {
+        match self {
+            Self::Unlimited => (None, None),
+            Self::Limit { time, bytes } => (time, bytes),
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ReadAhead);
+
 pub use transmux::AvSync;
 
 /// Status values carried by [`Event::Status`].
@@ -679,6 +775,24 @@ pub enum Action {
         /// Connection id.
         conn: ConnId,
     },
+    /// Stop reading this connection's socket: the media already accepted runs
+    /// at least the configured read-ahead cap ahead of the playback position.
+    /// Stop read calls (leaving TCP flow control to hold the server) until
+    /// [`Self::ResumeRead`] for the same connection. Bytes already in flight may
+    /// still be delivered to [`crate::Session::on_data`]; they are accepted and
+    /// count toward the cap. Emitted once per pause, only by the TS-over-HTTP
+    /// source; [`crate::Session::read_paused`] answers the same question.
+    PauseRead {
+        /// Connection id.
+        conn: ConnId,
+    },
+    /// Resume reading this connection's socket: the lead fell back under half
+    /// the cap that paused it. Emitted once per pause. A reconnect, a close or
+    /// a new connection clears the paused state without this action.
+    ResumeRead {
+        /// Connection id.
+        conn: ConnId,
+    },
     /// Call [`crate::Session::poll`] at or after the given host clock instant (`now`); the
     /// session drops a `WakeAt` whose time is not after the `now` of the poll that would
     /// return it, so a past value is never delivered.
@@ -748,6 +862,8 @@ impl core::fmt::Debug for Action {
                 .field("len", &bytes.len())
                 .finish(),
             Self::Close { conn } => f.debug_struct("Close").field("conn", conn).finish(),
+            Self::PauseRead { conn } => f.debug_struct("PauseRead").field("conn", conn).finish(),
+            Self::ResumeRead { conn } => f.debug_struct("ResumeRead").field("conn", conn).finish(),
             Self::WakeAt(at) => f.debug_tuple("WakeAt").field(at).finish(),
         }
     }
@@ -1331,6 +1447,17 @@ impl Config {
         }
         if self.max_queued_bytes == 0 {
             return invalid(ConfigField::MaxQueuedBytes);
+        }
+        match self.ts_http.read_ahead {
+            ReadAhead::Unlimited => {}
+            ReadAhead::Limit { time, bytes } => {
+                if (time.is_none() && bytes.is_none())
+                    || time.is_some_and(|time| time.is_zero())
+                    || bytes == Some(0)
+                {
+                    return invalid(ConfigField::ReadAhead);
+                }
+            }
         }
         if self.max_recorded_buffer_inputs == 0 {
             return invalid(ConfigField::MaxRecordedBufferInputs);

@@ -65,6 +65,7 @@ mod r6_rtsp_codecs;
 #[cfg(feature = "test-seams")]
 mod r6_ts_tracks;
 mod r6_video_kinds;
+mod read_ahead;
 mod redirect;
 mod relay_mode;
 mod rendered_redeclare_start;
