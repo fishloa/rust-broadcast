@@ -12,6 +12,9 @@ pub const EXEMPT: &[&str] = &[
     "multimux-cli",
     "dvb-stream",
     "isobmff-tokio",
+    // A worked example of extending `isobmff` from outside: two private wire
+    // types (a `udta` FullBox and a `meta` sample entry), no public enums.
+    "examples/isobmff-private-format",
     "test-alloc",
     "test-fixtures",
     "test-harness",

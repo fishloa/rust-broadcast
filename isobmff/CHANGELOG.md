@@ -8,6 +8,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `registry`: `BoxRegistry` registers a private box or sample entry from outside
+  the crate. `BoxDef` names its four-CC (or `uuid` extended type) and an
+  optional parent scope; `register` refuses a key this crate already types, or
+  one already registered, unless `register_override` is used. A matching `stsd`
+  entry comes back typed in `SampleEntryInfo::registered`,
+  `BoxRegistry::parse_children` types the children of an opaque box, and
+  `SampleEntry::from_registered` gives the writer the entry bytes it carries.
+  `ReaderConfig::with_registry` attaches one; an unregistered box stays an
+  `OpaqueBox` and writes back unchanged.
+- A whole-file byte-identical round trip: a plan read from a file now carries
+  the parsed `trak` shells, the `moov`'s extra children (`udta`/`meta`,
+  `iods`, `mvex`), each `stbl` child a plan does not rebuild (`sgpd`/`sbgp`/
+  `sdtp`) in its wire position, and the top-level boxes outside
+  `ftyp`/`moov`/`mdat` (`free`, `wide`, `uuid`, `skip`) with their positions.
+  `MovieShell`, `TopLevelBox` and `BoxPosition` are the plan-side types;
+  `TrackSetup::shell` carries the per-track half, `FragmentedWriter::
+  set_movie_shell`/`trailer` the fragmented one. A `PlanBuilder` plan carries
+  none and writes exactly the previous layout, so every golden is unchanged.
+- `HandlerBox::pre_defined` and `HandlerBox::reserved` are parsed and written
+  back: a QuickTime file keeps its component type (`mhlr`/`dhlr`) and
+  manufacturer code there, so a `.mov` round-trips byte for byte.
+
+### Fixed
+
+- `TrackId::next` saturates at `u32::MAX` instead of panicking on a crafted
+  `track_ID` (fuzz finding on `isobmff_whole_file`).
+- A `SampleEntry::Raw` whose bytes use the `size == 0` ("to end of container",
+  §4.2) or `largesize` forms is written back in that form instead of being given
+  an explicit 32-bit length (fuzz finding).
+- A progressive rewrite keeps the `tkhd`/`mdhd` version the source stated
+  instead of normalizing it to 0 (fuzz finding).
+- A fragment run that uses a non-default `stsd` entry states it in
+  `tfhd.sample_description_index`, so a reader sees the same
+  `description_index` it started with (fuzz finding). `SampleMeta` gains
+  `description_index` (default 1, which omits the field and keeps every
+  existing golden byte-identical), and `media_fragment_run` takes it as the
+  optional per-`traf` value; a run whose samples disagree is an error.
+
+### Changed
+
+- A sample plan's `stsd` entries are carried as their exact box bytes
+  (`SampleEntry::Raw`) rather than re-serialized from the typed parse, so a
+  `colr` ahead of `avcC`, or a QuickTime `vendor` field, survives a rewrite.
+  The typed parse is unchanged on `TrackInfo`.
+- The reader walks the boxes after the sample data for a seekable source, so
+  a trailing `free`/`skip`/`uuid` box is carried; a forward-only source still
+  finishes as soon as its samples are exhausted.
+- A truncated final `mdat` is reported once, not once per fault site.
+
+## [Unreleased]
+### Added
+
 - `quicktime`, read-only QuickTime atoms a camera or editing `.mov` carries:
   sound description versions 1 and 2 (including the 64-bit version 2 sample
   rate and the four version 1 fields), the `wave` decompression container and

@@ -151,6 +151,7 @@ pub const TABLE: &[Crate] = &[
         struct_extra: &[],
     },
     plain("isobmff-tokio"),
+    plain("examples/isobmff-private-format"),
     plain("mpeg-pes"),
     plain("mpeg-ps"),
     plain("mpeg-ts"),

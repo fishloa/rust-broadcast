@@ -46,6 +46,11 @@
 //! - [`sample_table`] — [`TrackCursor`]/[`CursorState`], the lazy per-track
 //!   walk over the `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss`
 //!   tables, and the run-length table builders.
+//! - [`registry`] — [`BoxRegistry`](registry::BoxRegistry) and
+//!   [`BoxDef`](registry::BoxDef): a third party registers its own private box
+//!   or sample entry, so a private `stsd` entry and a private `udta` atom come
+//!   back typed without this crate changing. An unregistered box stays
+//!   [`OpaqueBox`](box_support::OpaqueBox) and writes back unchanged.
 //! - [`reader`], [`plan`] — the sans-IO progressive [`Reader`]: it asks for
 //!   structure byte ranges, surfaces every track and one [`SampleRef`] at a
 //!   time, and hands out a [`SamplePlan`] from the index alone. [`plan`] also
@@ -125,6 +130,7 @@ pub mod opus;
 pub mod plan;
 pub mod quicktime;
 pub mod reader;
+pub mod registry;
 pub mod sample_entries;
 pub mod sample_groups;
 pub mod sample_table;

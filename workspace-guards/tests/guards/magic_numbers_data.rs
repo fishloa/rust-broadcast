@@ -754,6 +754,10 @@ pub const TABLE: &[Crate] = &[
         allow: &[],
     },
     Crate {
+        name: "examples/isobmff-private-format",
+        allow: &[],
+    },
+    Crate {
         name: "rtsp-runtime",
         allow: &[],
     },

@@ -860,6 +860,7 @@ fn build_smooth_fragment(
             sync: s.flags.is_sync,
             composition_offset: t.composition_offset,
         }),
+        None,
     )?;
     let tfxd = TfxdBox::new(start_smooth, dur_smooth);
 

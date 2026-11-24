@@ -34,7 +34,7 @@ fn drive(data: &[u8], config: ReaderConfig) -> isobmff::Result<Drive> {
         match reader.step()? {
             Step::Need(ByteRange { offset, len }) => {
                 let start = usize::try_from(offset).expect("offset");
-                let end = usize::try_from(offset + len).expect("end");
+                let end = usize::try_from(offset + len).expect("end").min(data.len());
                 reader.supply(offset, &data[start..end])?;
             }
             Step::Tracks(tracks) => drive.tracks = tracks.to_vec(),
