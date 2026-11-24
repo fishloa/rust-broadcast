@@ -80,6 +80,7 @@ pub mod frag_offsets;
 pub mod hdr_boxes;
 pub mod hevc_config;
 pub mod init_segment;
+pub mod limits;
 pub mod movie_fragment;
 pub mod mp4esds;
 pub mod mpegh;
@@ -136,6 +137,7 @@ pub use init_segment::{
     SoundMediaHeaderBox, StblChild, StscEntry, SyncSampleBox, TrackBox, TrackExtendsBox,
     TrackHeaderBox, VideoMediaHeaderBox,
 };
+pub use limits::Limits;
 pub use mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,
     OTI_MPEG2_AUDIO, OTI_MPEG4_AUDIO, ObjectTypeIndication, SLConfigDescriptor, STREAM_TYPE_AUDIO,
