@@ -29,9 +29,13 @@ const START_CODE_3: [u8; 3] = [0x00, 0x00, 0x01];
 const START_CODE_4: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 /// `forbidden_zero_bit` must be **`0`** (clear) in a conformant H.264 NAL header
 /// (ITU-T H.264 §7.4.1); this mask is what rejects MPEG-PS's `00 00 01 BA`.
-const NAL_FORBIDDEN_ZERO: u8 = 0x80;
+const NAL_FORBIDDEN_MASK: u8 = 0x80;
 /// Mask to extract `nal_unit_type` (low 5 bits of the header byte).
 const NAL_TYPE_MASK: u8 = 0x1F;
+/// Bytes a start code needs to be recognisable: the short prefix plus the
+/// NAL header byte that follows it.
+const START_CODE_PROBE_BYTES: usize = 3;
+
 /// Lowest `nal_unit_type` that is a plain NAL unit (1 = non-IDR slice, H.264;
 /// 0 is reserved/unspecified). Types 24-31 are RTP aggregation/filler forms
 /// with their own 3-byte headers and do not occur as single-header byte-stream
@@ -145,7 +149,7 @@ fn valid_nal(data: &[u8], i: usize) -> bool {
     };
     // forbidden_zero_bit must be clear; nar_ref_idc is 2 bits (ignored);
     // nal_unit_type must be a plausible non-aggregation value.
-    if header & NAL_FORBIDDEN_ZERO != 0 {
+    if header & NAL_FORBIDDEN_MASK != 0 {
         return false;
     }
     let nal_type = header & NAL_TYPE_MASK;
@@ -190,10 +194,10 @@ fn annexb_nal_chain(data: &[u8]) -> (usize, bool) {
             return (cnt, false);
         }
         let mut next = i + sc + 1;
-        while next + 2 <= n && start_code_len(data, next) == 0 {
+        while next + START_CODE_PROBE_BYTES - 1 <= n && start_code_len(data, next) == 0 {
             next += 1;
         }
-        if next + 2 > n {
+        if next + START_CODE_PROBE_BYTES - 1 > n {
             // Fewer than three bytes remain: no terminating start code is
             // visible, so the buffer ended mid-NAL.
             return (cnt, true);

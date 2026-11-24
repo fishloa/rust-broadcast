@@ -1318,6 +1318,7 @@ dependencies = [
  "jiff",
  "media-plane",
  "mpeg-ts",
+ "test-alloc",
  "test-fixtures",
  "thiserror 2.0.21",
  "transmux",

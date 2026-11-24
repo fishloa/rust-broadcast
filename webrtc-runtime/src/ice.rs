@@ -47,6 +47,9 @@ impl core::fmt::Debug for IceServer {
 /// ICE server Link header relation value (RFC 9725 section 4.4).
 const ICE_SERVER_REL: &str = "ice-server";
 
+/// Quote delimiters around an RFC 8288 `quoted-string`.
+const QUOTED_STRING_DELIMITERS: usize = 2;
+
 /// Parse ICE server entries from one or more `Link` header values.
 ///
 /// Each `Link` value may contain multiple comma-separated link entries.
@@ -164,7 +167,7 @@ fn checked_quoted(value: &str) -> Result<(), Error> {
 /// HMAC), so `format -> parse` must round-trip it rather than silently
 /// truncating or corrupting the value.
 fn quote_escape(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
+    let mut out = String::with_capacity(value.len() + QUOTED_STRING_DELIMITERS);
     out.push('"');
     for c in value.chars() {
         if c == '"' || c == '\\' {

@@ -985,6 +985,8 @@ pub const AUDIO_TRACK_ID_OFFSET: u32 = 1000;
 pub const MAX_SERVER_REFUSED_REASON_BYTES: usize = 256;
 /// Default maximum accepted manifest (playlist) body size.
 pub const DEFAULT_MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
+/// Default maximum redirects a single request may follow.
+pub const DEFAULT_MAX_REDIRECTS: u32 = 5;
 /// Default maximum accepted HLS media resource body size.
 pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
 /// Default per-request timeout for manifests (playlists).
@@ -1410,7 +1412,7 @@ impl Default for Config {
         Self {
             kind: SourceKind::Auto,
             ts_http: crate::tshttp::TsHttpConfig::default(),
-            max_redirects: 5,
+            max_redirects: DEFAULT_MAX_REDIRECTS,
             extra_headers: Vec::new(),
             initial_cookies: Vec::new(),
             buffer: buffering_runtime::ControllerConfig::default(),

@@ -649,8 +649,8 @@ mod tests {
     /// and mark the route `Failed`, rather than retrying forever — the task
     /// itself must end with NO shutdown signal ever sent.
     ///
-    /// MUTATION VERIFIED: removing the `if let Err(e) = &result && ...
-    /// return; }` permanence block (so the loop falls straight through to
+    /// MUTATION VERIFIED: removing the permanence block (`if let Err(e) =
+    /// &result && ... return;`) so the loop falls straight through to
     /// the unconditional backoff+retry, i.e. the pre-fix behaviour) makes
     /// this test fail: the `tokio::time::timeout(..., handle)` on the join
     /// elapses (`Elapsed`) because the loop keeps retrying forever exactly

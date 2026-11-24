@@ -28,6 +28,9 @@ use media_plane::Trunk;
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use tokio::sync::Semaphore;
 
+/// Ranges a response may carry for partial-content answering: exactly one.
+const SINGLE_RANGE: usize = 1;
+
 use crate::route::ProgramServing;
 
 /// Upper bound on how long [`resolve_blocking`] parks a caller waiting for a
@@ -487,7 +490,7 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
 
     // Multiple ranges -> answer 200 with the full body (§14.2; multipart/
     // byteranges deliberately not implemented).
-    if collected.len() >= 2 {
+    if collected.len() > SINGLE_RANGE {
         return full_response(bytes);
     }
 

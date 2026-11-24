@@ -29,6 +29,9 @@ use crate::error::Error;
 /// "11-sample zero tail" `finish()` flushes below.
 const TAP_COUNT: usize = 12;
 
+/// dBTP numerator (BS.1770-5 Annex 2): `20·log10(max)`.
+const DB_PER_LOG10: f64 = 20.0;
+
 /// Polyphase FIR coefficients for the BS.1770‑5 Annex 2 true‑peak interpolation filter.
 ///
 /// The 48 coefficients are stored in **phase‑major** order:
@@ -269,7 +272,7 @@ fn dbtp(max_sample: f64) -> f64 {
     if max_sample <= 0.0 {
         f64::NEG_INFINITY
     } else {
-        20.0 * libm::log10(max_sample)
+        DB_PER_LOG10 * libm::log10(max_sample)
     }
 }
 

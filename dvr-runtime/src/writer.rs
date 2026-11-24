@@ -41,6 +41,12 @@ use crate::format;
 use crate::layout::{self, ArchiveFile, SeedFile};
 use crate::{ArchiveConfig, ArchiveContainer, ArchiveError, PeriodNum};
 
+/// Store operations a period removal plans: its playlist, then its media.
+const REMOVAL_OPS_PER_PERIOD: usize = 2;
+
+/// First numeric suffix [`unique_daterange_id`] tries after the bare base id.
+const FIRST_DATERANGE_ID_SUFFIX: u64 = 2;
+
 /// One fMP4 init segment and the first Trunk segment number closed under it.
 ///
 /// Generations are queued with [`ArchiveWriter::on_inits`]; a segment is
@@ -830,7 +836,7 @@ impl ArchiveWriter {
                 if record_committed {
                     let reached = done >= post.first_remove_op;
                     let applied = if reached {
-                        (done - post.first_remove_op) / 2
+                        (done - post.first_remove_op) / REMOVAL_OPS_PER_PERIOD
                     } else {
                         0
                     };
@@ -1234,7 +1240,7 @@ impl ArchiveWriter {
     }
 
     fn removal_ops(evicted: &[EvictedPeriod]) -> Vec<StoreOp> {
-        let mut ops = Vec::with_capacity(evicted.len() * 2);
+        let mut ops = Vec::with_capacity(evicted.len() * REMOVAL_OPS_PER_PERIOD);
         for period in evicted {
             ops.push(StoreOp::Remove {
                 file: ArchiveFile::Playlist(period.period),
@@ -1640,7 +1646,7 @@ fn unique_daterange_id(base: &str, used: &[String]) -> String {
     if !used.iter().any(|id| id == base) {
         return base.to_owned();
     }
-    let mut suffix = 2u64;
+    let mut suffix = FIRST_DATERANGE_ID_SUFFIX;
     loop {
         let candidate = format!("{base}-{suffix}");
         if !used.contains(&candidate) {

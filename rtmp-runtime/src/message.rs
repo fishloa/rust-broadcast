@@ -166,8 +166,15 @@ const SET_CHUNK_SIZE_RESERVED_MASK: u32 = 0x8000_0000;
 /// payload.
 const SET_CHUNK_SIZE_VALUE_MASK: u32 = 0x7FFF_FFFF;
 
+/// Byte positions of a big-endian u32 field.
+const U32_BYTES: [usize; U32_LEN] = [0, 1, 2, 3];
+
+/// Payload length of a Set Buffer Length user-control event: stream id and
+/// buffer length, both u32 (RTMP §5.4.3).
+const SET_BUFFER_LENGTH_LEN: usize = 2 * U32_LEN;
+
 fn read_u32_be(b: &[u8]) -> u32 {
-    u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+    u32::from_be_bytes(U32_BYTES.map(|i| b[i]))
 }
 
 fn need_u32(bytes: &[u8], what: &'static str) -> Result<u32> {
@@ -670,11 +677,11 @@ impl<'a> Parse<'a> for UserControl {
                 "stream dry event data",
             )?)),
             event_type::SET_BUFFER_LENGTH => {
-                need_in(data, 2 * U32_LEN, "set buffer length event data")?;
+                need_in(data, SET_BUFFER_LENGTH_LEN, "set buffer length event data")?;
                 Ok(UserControl::SetBufferLength {
                     stream_id: read_u32_be(&data[0..U32_LEN]),
                     buffer: Duration::from_millis(u64::from(read_u32_be(
-                        &data[U32_LEN..2 * U32_LEN],
+                        &data[U32_LEN..SET_BUFFER_LENGTH_LEN],
                     ))),
                 })
             }
@@ -700,7 +707,7 @@ impl Serialize for UserControl {
 
     fn serialized_len(&self) -> usize {
         let data_len = match self {
-            UserControl::SetBufferLength { .. } => 2 * U32_LEN,
+            UserControl::SetBufferLength { .. } => SET_BUFFER_LENGTH_LEN,
             _ => U32_LEN,
         };
         EVENT_TYPE_LEN + data_len

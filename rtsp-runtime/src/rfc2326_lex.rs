@@ -249,13 +249,16 @@ pub(crate) fn digits_u64(s: &str, max_digits: usize, what: &str) -> Result<u64, 
         .or_else(|_| err(format!("{what}: {s:?} out of range")))
 }
 
+/// Radix of the hex fields RFC 2326 §15.1 defines.
+const HEX_RADIX: u32 = 16;
+
 /// Exactly `digits` hex digits (`ssrc = 8*8(HEX)`), as a `u32`.
 pub(crate) fn hex_exact(s: &str, digits: usize, what: &str) -> Result<u32, LexError> {
     let s = trim_lws(s);
     if s.len() != digits || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return err(format!("{what} must be {digits} hex digits, got {s:?}"));
     }
-    u32::from_str_radix(s, 16).or_else(|_| err(format!("{what}: bad hex {s:?}")))
+    u32::from_str_radix(s, HEX_RADIX).or_else(|_| err(format!("{what}: bad hex {s:?}")))
 }
 
 /// `value [ "-" value ]` -> (lo, hi); a missing `hi` is `lo`.

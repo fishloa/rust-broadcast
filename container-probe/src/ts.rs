@@ -48,6 +48,9 @@ const TS_PACKET_SIZE_208: usize = 208;
 /// Consecutive sync confirmations that lift a TS lattice to
 /// [`crate::Confidence::LATTICE_STRONG`] (design §"MPEG-2 TS").
 const TS_CONFIRM_FOR_STRONG: usize = 8;
+
+/// Percentages are reported per hundred positions.
+const PERCENT: u64 = 100;
 /// Minimum consecutive sync confirmations for a positive match; below this the
 /// lattice is either noise or too short to prove.
 const TS_CONFIRM_FOR_WEAK: usize = 3;
@@ -144,7 +147,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             let coverage = if possible == 0 {
                 0
             } else {
-                (total_syncs as u64 * 100) / possible as u64
+                (total_syncs as u64 * PERCENT) / possible as u64
             };
             if longest >= TS_CONFIRM_FOR_WEAK && coverage >= TS_MIN_COVERAGE_PCT {
                 let better = match best_stride {

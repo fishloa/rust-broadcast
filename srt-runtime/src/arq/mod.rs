@@ -100,9 +100,13 @@ pub(crate) fn timestamp_to_wire_us(ts: Timestamp) -> SrtTimestamp {
 /// `NAKInterval = max((RTT + 4 * RTTVar) / 2, 20 ms)` (`private/specs-verified/rules/srt-arq.md`
 /// rule 22, verbatim from `draft-sharabayko-srt-01` L2953-2960, unit
 /// resolution cross-referenced from §5.2's L3276 restatement).
+/// Weight of `RTTVar` in the NAK interval, and the divisor of the sum.
+const RTT_VAR_WEIGHT: u32 = 4;
+const NAK_INTERVAL_DIVISOR: u32 = 2;
+
 pub(crate) fn nak_interval(rtt: Duration, rtt_var: Duration) -> Duration {
-    let sum = rtt + rtt_var * 4;
-    let half = sum / 2;
+    let sum = rtt + rtt_var * RTT_VAR_WEIGHT;
+    let half = sum / NAK_INTERVAL_DIVISOR;
     if half < NAK_INTERVAL_FLOOR {
         NAK_INTERVAL_FLOOR
     } else {

@@ -7,6 +7,7 @@
 
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
+use core::mem::size_of;
 use core::time::Duration;
 
 use broadcast_common::stage::Timestamp;
@@ -37,7 +38,10 @@ const LABEL_ISN: &[u8] = b"srt-isn";
 const LABEL_SALT: &[u8] = b"srt-salt";
 const LABEL_SEK: &[u8] = b"srt-sek";
 
-fn derive(seed: &[u8; 32], label: &[u8], attempt: u64) -> [u8; 32] {
+/// Width of a derived key: a SHA-256 digest.
+const KEY_LEN: usize = 32;
+
+fn derive(seed: &[u8; KEY_LEN], label: &[u8], attempt: u64) -> [u8; KEY_LEN] {
     let mut h = Sha256::new();
     h.update(seed);
     h.update(label);
@@ -45,8 +49,10 @@ fn derive(seed: &[u8; 32], label: &[u8], attempt: u64) -> [u8; 32] {
     h.finalize().into()
 }
 
-fn first_u32(bytes: &[u8; 32]) -> u32 {
-    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+fn first_u32(bytes: &[u8; KEY_LEN]) -> u32 {
+    let mut head = [0u8; size_of::<u32>()];
+    head.copy_from_slice(&bytes[..size_of::<u32>()]);
+    u32::from_be_bytes(head)
 }
 
 pub(crate) enum Notice {
@@ -126,11 +132,11 @@ impl SrtCaller {
         core::mem::take(&mut self.out)
     }
 
-    fn seed(&self) -> [u8; 32] {
+    fn seed(&self) -> [u8; KEY_LEN] {
         self.config
             .entropy_seed
             .as_ref()
-            .map_or([0; 32], |s| *s.bytes())
+            .map_or([0; KEY_LEN], |s| *s.bytes())
     }
 
     pub(crate) fn on_connected(&mut self, now_us: u64) {

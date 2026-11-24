@@ -5,6 +5,9 @@ use core::fmt;
 
 use crate::error::{Error, Result};
 
+/// Radix of the hex digits a `Session` id token carries (RFC 2326 §3.4).
+const HEX_RADIX: u32 = 16;
+
 /// One RTSP `Session` id: 64 bits of the server's random source, rendered on
 /// the wire as 16 lower-case hex digits (RFC 2326 §3.4).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -41,7 +44,7 @@ impl SessionId {
                 text: text.to_string(),
             });
         }
-        u64::from_str_radix(text, 16)
+        u64::from_str_radix(text, HEX_RADIX)
             .map(SessionId)
             .map_err(|_| Error::SessionIdParse {
                 text: text.to_string(),

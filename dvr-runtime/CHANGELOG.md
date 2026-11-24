@@ -6,6 +6,25 @@ All notable changes to this crate are documented here. The format follows
 
 ## [Unreleased]
 
+### Breaking
+
+- `recover::scan_fmp4_data` is replaced by the sans-IO `recover::Fmp4Scan`
+  (`step`/`supply`), which reads box headers only: each `step` names the next
+  header to read and `supply` answers it, so a caller seeks over the payloads
+  and recovery never holds the period file (#4057).
+
+### Added
+
+- `RecoverError::TooManyFragments` and `RecoverError::UnexpectedSupply`;
+  `recover::BOX_HEADER_MAX` and `recover::DEFAULT_MAX_FRAGMENTS`, the cap a
+  corrupt period file cannot grow the recovered span list past.
+
+### Fixed
+
+- `FsArchive::recover_spans` no longer reads the period file into memory: it
+  opens the file, seeks between box headers and reads only those, so a large
+  period costs the same memory as a small one (#4057).
+
 ## [0.1.0] - 2026-11-22
 
 First release: the DVR on-disk format, the sans-IO roll/retention writer, the

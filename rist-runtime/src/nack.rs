@@ -131,6 +131,30 @@ const GENERIC_NACK_MIN_LEN: usize = RTCP_HEADER_LEN + WORD_LEN + WORD_LEN;
 /// Size of one Generic NACK FCI entry: PID(2) + BLP(2) = 4 bytes.
 const NACK_FCI_LEN: usize = 4;
 
+/// Shift of the 2-bit `version` field in the common header's first byte
+/// (RFC 3550 §6.1).
+const VERSION_SHIFT: u32 = 6;
+
+/// Byte positions of the 16-bit `length` field.
+const LENGTH_BYTES: [usize; 2] = [2, 3];
+
+/// Byte positions of the sender SSRC (RFC 4585 §6.2.1).
+const SSRC_SENDER_BYTES: [usize; WORD_LEN] = [4, 5, 6, 7];
+
+/// Byte positions of the media-source SSRC.
+const SSRC_MEDIA_BYTES: [usize; WORD_LEN] = [8, 9, 10, 11];
+
+/// Byte positions of the media SSRC in a range NACK, whose header carries no
+/// sender SSRC, and of the `APP` name after it (TR-06-1 §5.2.1).
+const RANGE_SSRC_MEDIA_BYTES: [usize; WORD_LEN] = [4, 5, 6, 7];
+const RANGE_APP_NAME_BYTES: [usize; WORD_LEN] = [8, 9, 10, 11];
+
+/// Offset of `PID` within a NACK FCI entry.
+const FCI_PID_OFFSET: usize = 0;
+
+/// Offset of `BLP` within a NACK FCI entry.
+const FCI_BLP_OFFSET: usize = 2;
+
 /// Width of the BLP bitmask window: bit *i* (1..=16) signals that `PID + i`
 /// is also lost (RFC 4585 §6.2.1). `pub(crate)` so `crate::arq`'s
 /// bitmask-format conversion helpers (`seqs_to_fci`/`expand_fci`) share this
@@ -141,6 +165,9 @@ pub(crate) const BLP_BIT_WIDTH: u32 = 16;
 const RANGE_NACK_MIN_LEN: usize = RTCP_HEADER_LEN + WORD_LEN + APP_NAME_LEN;
 /// Size of one Range NACK entry: start(2) + additional(2) = 4 bytes.
 const RANGE_ENTRY_LEN: usize = 4;
+
+/// Offset of the additional-count field within a range-NACK entry.
+const RANGE_ADDITIONAL_OFFSET: usize = 2;
 
 // ---------------------------------------------------------------------------
 // GenericNack — RFC 4585 §6.2.1, PT 205, FMT 1
@@ -210,7 +237,7 @@ impl<'a> Parse<'a> for GenericNack {
             }));
         }
 
-        let version = bytes[0] >> 6;
+        let version = bytes[0] >> VERSION_SHIFT;
         if version != RTCP_VERSION {
             return Err(Error::UnsupportedVersion(UnsupportedVersion {
                 what: "RTCP",
@@ -234,7 +261,7 @@ impl<'a> Parse<'a> for GenericNack {
             });
         }
 
-        let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
+        let length_field = u16::from_be_bytes(LENGTH_BYTES.map(|i| bytes[i])) as usize;
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -252,8 +279,8 @@ impl<'a> Parse<'a> for GenericNack {
             }));
         }
 
-        let ssrc_sender = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let ssrc_media = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        let ssrc_sender = u32::from_be_bytes(SSRC_SENDER_BYTES.map(|i| bytes[i]));
+        let ssrc_media = u32::from_be_bytes(SSRC_MEDIA_BYTES.map(|i| bytes[i]));
 
         let end = unpadded_end(bytes, total_len)?;
         if end < GENERIC_NACK_MIN_LEN {
@@ -269,7 +296,8 @@ impl<'a> Parse<'a> for GenericNack {
         let mut off = GENERIC_NACK_MIN_LEN;
         for _ in 0..fci_count {
             let pid = u16::from_be_bytes([bytes[off], bytes[off + 1]]);
-            let blp = u16::from_be_bytes([bytes[off + 2], bytes[off + 3]]);
+            let blp =
+                u16::from_be_bytes([bytes[off + FCI_BLP_OFFSET], bytes[off + FCI_BLP_OFFSET + 1]]);
             nacks.push(NackFci { pid, blp });
             off += NACK_FCI_LEN;
         }
@@ -313,7 +341,7 @@ impl GenericNack {
 
         // Header: V=2, P=0, FMT=1.
         let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
-        buf[0] = (RTCP_VERSION << 6) | FMT_GENERIC_NACK;
+        buf[0] = (RTCP_VERSION << VERSION_SHIFT) | FMT_GENERIC_NACK;
         buf[1] = PT_RTPFB;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
 
@@ -324,8 +352,8 @@ impl GenericNack {
         // FCI entries.
         let mut off = GENERIC_NACK_MIN_LEN;
         for fci in &self.nacks {
-            buf[off..off + 2].copy_from_slice(&fci.pid.to_be_bytes());
-            buf[off + 2..off + 4].copy_from_slice(&fci.blp.to_be_bytes());
+            buf[off + FCI_PID_OFFSET..off + FCI_BLP_OFFSET].copy_from_slice(&fci.pid.to_be_bytes());
+            buf[off + FCI_BLP_OFFSET..off + NACK_FCI_LEN].copy_from_slice(&fci.blp.to_be_bytes());
             off += NACK_FCI_LEN;
         }
 
@@ -398,7 +426,7 @@ impl<'a> Parse<'a> for RangeNack {
             }));
         }
 
-        let version = bytes[0] >> 6;
+        let version = bytes[0] >> VERSION_SHIFT;
         if version != RTCP_VERSION {
             return Err(Error::UnsupportedVersion(UnsupportedVersion {
                 what: "RTCP",
@@ -419,7 +447,7 @@ impl<'a> Parse<'a> for RangeNack {
             });
         }
 
-        let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
+        let length_field = u16::from_be_bytes(LENGTH_BYTES.map(|i| bytes[i])) as usize;
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -438,9 +466,9 @@ impl<'a> Parse<'a> for RangeNack {
         }
 
         // SSRC of media source.
-        let ssrc_media = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let ssrc_media = u32::from_be_bytes(RANGE_SSRC_MEDIA_BYTES.map(|i| bytes[i]));
 
-        let name = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        let name = u32::from_be_bytes(RANGE_APP_NAME_BYTES.map(|i| bytes[i]));
         if name != RIST_APP_NAME_U32 {
             return Err(Error::InvalidAppName(name));
         }
@@ -465,7 +493,10 @@ impl<'a> Parse<'a> for RangeNack {
         let mut off = RANGE_NACK_MIN_LEN;
         for _ in 0..range_count {
             let start = u16::from_be_bytes([bytes[off], bytes[off + 1]]);
-            let additional = u16::from_be_bytes([bytes[off + 2], bytes[off + 3]]);
+            let additional = u16::from_be_bytes([
+                bytes[off + RANGE_ADDITIONAL_OFFSET],
+                bytes[off + RANGE_ADDITIONAL_OFFSET + 1],
+            ]);
             ranges.push(PacketRange { start, additional });
             off += RANGE_ENTRY_LEN;
         }
@@ -516,7 +547,7 @@ impl RangeNack {
         // (#1108/RIST-W4) rather than relying on that invariant never
         // changing out from under this cast.
         let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
-        buf[0] = (RTCP_VERSION << 6) | SUBTYPE_RANGE_NACK;
+        buf[0] = (RTCP_VERSION << VERSION_SHIFT) | SUBTYPE_RANGE_NACK;
         buf[1] = PT_APP;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
 
@@ -529,8 +560,9 @@ impl RangeNack {
         // Range entries.
         let mut off = RANGE_NACK_MIN_LEN;
         for range in &self.ranges {
-            buf[off..off + 2].copy_from_slice(&range.start.to_be_bytes());
-            buf[off + 2..off + 4].copy_from_slice(&range.additional.to_be_bytes());
+            buf[off..off + RANGE_ADDITIONAL_OFFSET].copy_from_slice(&range.start.to_be_bytes());
+            buf[off + RANGE_ADDITIONAL_OFFSET..off + RANGE_ENTRY_LEN]
+                .copy_from_slice(&range.additional.to_be_bytes());
             off += RANGE_ENTRY_LEN;
         }
 

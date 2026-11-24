@@ -135,12 +135,19 @@ broadcast_common::impl_spec_display!(MaxBwConfig);
 
 /// Apply `'MAX_BW = bw * (1 + overhead / 100)'` (`private/specs-verified/rules/srt-livecc.md`
 /// L3143/L3154, verbatim).
+/// Percent divisor of the overhead formula.
+const PERCENT: u128 = 100;
+
+/// Weights of the payload-size EWMA: 7/8 old, 1/8 new (§5.1.2).
+const EWMA_NUM: u64 = 7;
+const EWMA_DEN: u64 = 8;
+
 fn apply_overhead(bw: u64, overhead: u64) -> u64 {
     // `overhead / 100` is truncated integer division, but the spec formula
     // `(1 + OVERHEAD / 100)` is a real multiplier — we lose precision with
     // integer arithmetic. Compute as `bw + bw * overhead / 100` instead, in
     // 128 bits and saturating at `u64::MAX`.
-    let scaled = u128::from(bw) + u128::from(bw) * u128::from(overhead) / 100;
+    let scaled = u128::from(bw) + u128::from(bw) * u128::from(overhead) / PERCENT;
     u64::try_from(scaled).unwrap_or(u64::MAX)
 }
 
@@ -191,7 +198,7 @@ impl LiveCC {
     pub fn on_data_packet(&mut self, packet_payload_size: u64) {
         // L3219: AvgPayloadSize = 7/8 * AvgPayloadSize + 1/8 * PacketPayloadSize
         let old = self.avg_payload_size;
-        self.avg_payload_size = (7 * old + packet_payload_size) / 8;
+        self.avg_payload_size = (EWMA_NUM * old + packet_payload_size) / EWMA_DEN;
     }
 
     /// The current average payload size estimate, in bytes.
@@ -245,7 +252,7 @@ impl LiveCC {
         //
         // pkt_size is in bytes, MAX_BW in bytes/sec. The factor 1_000_000
         // converts seconds to microseconds (L3237-3238).
-        let period_us = pkt_size * 1_000_000 / max_bw;
+        let period_us = pkt_size * broadcast_common::units::MICROS_PER_SEC / max_bw;
         Duration::from_micros(period_us)
     }
 
