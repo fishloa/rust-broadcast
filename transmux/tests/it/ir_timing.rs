@@ -263,7 +263,7 @@ fn ac3_syncframe_splitting_exact_pts_and_duration() {
     for s in &track.samples {
         assert_eq!(
             s.timing.and_then(|t| t.duration()),
-            Some(transmux::ac3::AC3_SAMPLES_PER_SYNCFRAME),
+            Some(transmux::ac3_syncframe::AC3_SAMPLES_PER_SYNCFRAME),
             "every AC-3 sample duration must be 1536 (6 blocks x 256 samples)"
         );
     }

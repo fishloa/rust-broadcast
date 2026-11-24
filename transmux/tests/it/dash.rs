@@ -27,6 +27,7 @@ use transmux::ts_demux::TsDemux;
 // ---------------------------------------------------------------------------
 
 use crate::xml::{Element, parse_xml};
+use transmux::nalu_ext::AvcSpsCodecInfo;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

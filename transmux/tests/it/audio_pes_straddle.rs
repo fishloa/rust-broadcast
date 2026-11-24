@@ -302,11 +302,11 @@ fn sintel_ac3_and_eac3_straddling_pes_recover_every_syncframe() {
     // splitter over ONE contiguous buffer (no PES boundary to cross).
     let ac3_es = es_of(&aligned, AC3_PID);
     let eac3_es = es_of(&aligned, EAC3_PID);
-    let ac3_frames: Vec<Vec<u8>> = transmux::ac3::split_ac3_syncframes(&ac3_es)
+    let ac3_frames: Vec<Vec<u8>> = transmux::ac3_syncframe::split_ac3_syncframes(&ac3_es)
         .into_iter()
         .map(<[u8]>::to_vec)
         .collect();
-    let eac3_frames: Vec<Vec<u8>> = transmux::ac3::split_eac3_syncframes(&eac3_es)
+    let eac3_frames: Vec<Vec<u8>> = transmux::ac3_syncframe::split_eac3_syncframes(&eac3_es)
         .into_iter()
         .map(|f| f.data)
         .collect();

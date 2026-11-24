@@ -7,6 +7,7 @@
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
+use transmux::codec_config_ext::VvcRecordCodecInfo;
 use transmux::media::{CmafMux, Fmp4Demux};
 use transmux::pipeline::CodecConfig;
 use transmux::vvc_config::{

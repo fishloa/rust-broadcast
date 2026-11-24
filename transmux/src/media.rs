@@ -38,6 +38,7 @@ use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
+use crate::codec_config_ext::VvcRecordCodecInfo;
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 
 use crate::ac4::Ac4SpecificBox;

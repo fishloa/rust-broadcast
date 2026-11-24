@@ -16,7 +16,9 @@
 //! demux produced no track.
 
 use broadcast_common::{Package, Serialize, Unpackage};
-use transmux::ac3::{Ec3SyncframeInfo, split_eac3_syncframes};
+use transmux::ac3_syncframe::{
+    Ec3SyncframeInfo, ec3_specific_box_from_syncframes, split_eac3_syncframes,
+};
 use transmux::pipeline::CodecConfig;
 use transmux::{
     CmafMux, DemuxEvent, Ec3SpecificBox, Fmp4Demux, Media, ProgressiveDemux, StreamingTsDemux,
@@ -146,7 +148,7 @@ fn dec3_for_the_real_access_unit_matches_mp4box() {
     let ffmpeg = need!("gw-ffmpeg.mp4");
     let first = split_eac3_syncframes(&es).remove(0);
     let frames = Ec3SyncframeInfo::from_es_all(&first.data);
-    let ours = Ec3SpecificBox::from_syncframes(&frames)
+    let ours = ec3_specific_box_from_syncframes(&frames)
         .expect("dec3")
         .try_to_bytes()
         .expect("serialize");

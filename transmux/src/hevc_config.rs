@@ -102,31 +102,6 @@ impl HEVCDecoderConfigurationRecord {
             .iter()
             .filter(|a| !a.has_permitted_nal_unit_type())
     }
-
-    /// RFC 6381 codec string (`hvc1.A.B.C.constraints`) built from the profile/
-    /// tier/level fields carried in this record — ISO/IEC 14496-15:2017 §E.3.
-    ///
-    /// Delegates to [`crate::sps::rfc6381_hvc1`]; the profile-space/idc,
-    /// compatibility flags, tier flag, level_idc and constraint-indicator flags
-    /// carried here are the same values the decoder derives from the SPS.
-    pub fn rfc6381(&self) -> alloc::string::String {
-        crate::sps::rfc6381_hvc1(&crate::sps::HevcSpsInfo {
-            general_profile_space: self.general_profile_space,
-            general_tier_flag: self.general_tier_flag,
-            general_profile_idc: self.general_profile_idc,
-            general_profile_compatibility_flags: self.general_profile_compatibility_flags,
-            general_constraint_indicator_flags: self.general_constraint_indicator_flags,
-            general_level_idc: self.general_level_idc,
-            chroma_format_idc: self.chroma_format_idc,
-            bit_depth_luma: self.bit_depth_luma_minus8 + BIT_DEPTH_OFFSET,
-            bit_depth_chroma: self.bit_depth_chroma_minus8 + BIT_DEPTH_OFFSET,
-            width: 0,
-            height: 0,
-            num_units_in_tick: None,
-            time_scale: None,
-            fps: None,
-        })
-    }
 }
 
 /// Smallest encoded NAL array: `array_completeness`/`NAL_unit_type` byte plus
@@ -139,8 +114,6 @@ const NALU_MIN_LEN: usize = 2;
 const RECORD_FIXED_HEADER_LEN: usize = 23;
 /// `general_constraint_indicator_flags` is a 48-bit field.
 const CONSTRAINT_FLAGS_LEN: usize = 6;
-/// `bit_depth_luma`/`bit_depth_chroma` are signalled as `*_minus8`.
-const BIT_DEPTH_OFFSET: u8 = 8;
 
 /// Bit layout of the `general_profile_space`/tier/`profile_idc` byte.
 const PROFILE_SPACE_SHIFT: u32 = 6;

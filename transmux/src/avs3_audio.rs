@@ -22,13 +22,48 @@
 //! done here. The `reserved` bits state no value in the standard: captured on
 //! parse and re-emitted verbatim; hand-built values are 0 (ISOBMFF convention).
 
-use crate::bitreader::write_bits_checked;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_common::bits::{BitError, BitReader, BitWriter};
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{fit_u16, need_out};
 use broadcast_common::{Parse, Serialize};
+
+/// Maps a shared [`BitError`] onto this crate's typed errors.
+fn bit_error(what: &'static str, e: BitError) -> Error {
+    match e {
+        BitError::OutOfBounds { .. } => {
+            let mut short: BufferTooShort = e.into();
+            short.what = what;
+            Error::BufferTooShort(short)
+        }
+        BitError::TooManyBits { requested } => {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: what,
+                value: u64::from(requested),
+                reason: "field wider than 64 bits",
+            })
+        }
+        BitError::ValueTooWide { value, .. } => {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: what,
+                value,
+                reason: "value does not fit the field width",
+            })
+        }
+        _ => Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: what,
+            value: 0,
+            reason: "bit reader error",
+        }),
+    }
+}
+
+/// Writes the low `n` bits of `value` after a `fit_bits` range check.
+fn write_bits_checked(w: &mut BitWriter<'_>, value: u64, n: u32, what: &'static str) -> Result<()> {
+    let value = broadcast_common::len::fit_bits(value, n, what)?;
+    w.write_bits(value, n).map_err(|e| bit_error(what, e))
+}
 
 /// FourCC of the Audio Vivid decoder configuration box.
 pub const DCA3_FOURCC: [u8; 4] = *b"dca3";

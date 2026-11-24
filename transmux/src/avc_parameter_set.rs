@@ -11,14 +11,13 @@
 //!
 //! Spec input: `private/specs-verified/mpeg/isobmff/iso-iec-14496-15-2017-avc-hevc-config.md`.
 
-use crate::annexb::iter_length_prefixed_nals_with;
 use crate::error::{Error, Result};
 use crate::nalu_types::{AvcNalUnit, VALID_LENGTH_SIZES};
 use crate::sample_entries::AVCSampleEntry;
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::{fit_bits, need_out};
+use broadcast_common::error::{BufferTooShort, InvalidValue};
+use broadcast_common::len::{fit_bits, need_in, need_out};
 
 /// Sample entry four-CC of an AVC parameter set stream (§5.4.3.1).
 pub const AVCP_SAMPLE_ENTRY: [u8; 4] = *b"avcp";
@@ -97,11 +96,27 @@ impl AVCParameterSample {
                 reason: "must be 0, 1, or 3 (ISO/IEC 14496-15:2017 §5.3.3.1.3)",
             }));
         }
-        let nal_units =
-            iter_length_prefixed_nals_with(bytes, usize::from(length_size_minus_one) + 1)?
-                .into_iter()
-                .map(|nal| AvcNalUnit(nal.to_vec()))
-                .collect();
+        let width = usize::from(length_size_minus_one) + 1;
+        let mut nal_units = Vec::new();
+        let mut off = 0usize;
+        while off < bytes.len() {
+            let prefix_end = off + width;
+            need_in(bytes, prefix_end, "NAL length prefix")?;
+            let mut len = 0usize;
+            for &byte in &bytes[off..prefix_end] {
+                len = (len << u8::BITS as usize) | usize::from(byte);
+            }
+            let end = prefix_end
+                .checked_add(len)
+                .ok_or(Error::BufferTooShort(BufferTooShort {
+                    need: usize::MAX,
+                    have: bytes.len(),
+                    what: "NAL length prefix overflows the buffer offset",
+                }))?;
+            need_in(bytes, end, "NAL payload")?;
+            nal_units.push(AvcNalUnit(bytes[prefix_end..end].to_vec()));
+            off = end;
+        }
         Ok(Self {
             length_size_minus_one,
             nal_units,

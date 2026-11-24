@@ -101,8 +101,10 @@ use core::time::Duration;
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::box_types::KEY_ID_LEN;
+use crate::codec_config_ext::{EsdsBoxCodecInfo, HevcRecordCodecInfo, VvcRecordCodecInfo};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
+use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::pipeline::{CodecConfig, TrackSpec};
 use crate::sps::rfc6381_avc1;
 use broadcast_common::error::InvalidField;

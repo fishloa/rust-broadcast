@@ -1,6 +1,6 @@
 //! CMAF muxer CENC box-emission tests (issue #564 Task 3).
 //!
-//! Verifies `transmux::init_segment::protect_init_segment` and
+//! Verifies `transmux::cenc_segment::protect_init_segment` and
 //! `transmux::movie_fragment::protect_media_segment` — the post-processing
 //! passes that turn an already-muxed clear CMAF `CmafMux` output into a
 //! standards-compliant CENC-protected one, reading the crypto metadata
@@ -23,8 +23,10 @@ use broadcast_common::{Decrypt, Encrypt, Package, Parse, Serialize, Unpackage};
 use transmux::cenc::{
     ProtectionSchemeInfoBox, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox,
 };
-use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild, protect_init_segment};
-use transmux::movie_fragment::{FragmentProtection, MovieFragmentBox, protect_media_segment};
+use transmux::cenc_segment::protect_init_segment;
+use transmux::fragment_build::{FragmentProtection, protect_media_segment};
+use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
+use transmux::movie_fragment::MovieFragmentBox;
 use transmux::{
     CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
 };

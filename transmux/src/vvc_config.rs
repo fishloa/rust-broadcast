@@ -66,15 +66,12 @@
 //! predates the final H.266 assignments; the values here follow the published
 //! ITU-T H.266 Table 5 and are validated against the committed real fixture.)
 
-use crate::bitreader::{bit_error, bytes_needed, write_bits_checked};
 use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 use crate::error::{Error, Result};
 use crate::nalu_types::VALID_LENGTH_SIZES;
-use crate::sps::rfc6381_vvc1;
 use crate::wire_cursor::u24_at;
-use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::bits::BitWriter;
+use broadcast_common::bits::{BitError, BitWriter};
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -344,34 +341,6 @@ impl VvcDecoderConfigurationRecord {
             .find(|a| a.kind() == VvcNalUnitType::Sps)
             .and_then(|a| a.nalus.first())
             .map(|n| n.as_slice())
-    }
-
-    /// Coded dimensions from the first SPS, if one is present and decodable.
-    ///
-    /// `u32`: `sps_pic_width_max_in_luma_samples`/`..._height...` are `ue(v)`
-    /// (ITU-T H.266 §7.3.2.4), so they are unbounded and a truncating `u16`
-    /// cast would report a wrapped geometry (e.g. 65 536 → 0). A caller that
-    /// needs the sample entry's `u16` field converts with `try_from`.
-    pub fn dimensions(&self) -> Option<(u32, u32)> {
-        let sps = self.sps()?;
-        let info = crate::sps::decode_vvc_sps(sps).ok()?;
-        Some((info.width, info.height))
-    }
-
-    /// RFC 6381 codec string (`vvc1.…`) built from the profile/tier/level fields
-    /// carried in this record — see [`crate::sps::rfc6381_vvc1`].
-    pub fn rfc6381(&self) -> String {
-        match &self.ptl {
-            Some(ptl) => rfc6381_vvc1(
-                ptl.general_profile_idc,
-                ptl.general_tier_flag,
-                ptl.general_level_idc,
-                &ptl.general_constraint_info,
-                ptl.num_bytes_constraint_info,
-            ),
-            // No PTL record: emit the bare sample-entry FourCC (RFC 6381 §3.3).
-            None => String::from("vvc1"),
-        }
     }
 }
 
@@ -806,6 +775,43 @@ fn ptl_serialized_len(ptl: &VvcPtlRecord) -> usize {
 // Bit reader / writer (MSB-first, over the raw record bytes — no RBSP unescape)
 // ---------------------------------------------------------------------------
 
+/// Maps a shared [`BitError`] onto this crate's typed errors.
+fn bit_error(what: &'static str, e: BitError) -> Error {
+    match e {
+        BitError::OutOfBounds { .. } => {
+            let mut short: BufferTooShort = e.into();
+            short.what = what;
+            Error::BufferTooShort(short)
+        }
+        BitError::TooManyBits { requested } => Error::InvalidValue(InvalidValue {
+            field: what,
+            value: u64::from(requested),
+            reason: "field wider than 64 bits",
+        }),
+        BitError::ValueTooWide { value, .. } => Error::InvalidValue(InvalidValue {
+            field: what,
+            value,
+            reason: "value does not fit the field width",
+        }),
+        _ => Error::InvalidValue(InvalidValue {
+            field: what,
+            value: 0,
+            reason: "bit reader error",
+        }),
+    }
+}
+
+/// Bytes needed to hold `n` more bits starting at `bit_pos`.
+fn bytes_needed(bit_pos: usize, n: usize) -> usize {
+    bit_pos.saturating_add(n).div_ceil(u8::BITS as usize)
+}
+
+/// Writes the low `n` bits of `value` after a `fit_bits` range check.
+fn write_bits_checked(w: &mut BitWriter<'_>, value: u64, n: u32, what: &'static str) -> Result<()> {
+    let value = broadcast_common::len::fit_bits(value, n, what)?;
+    w.write_bits(value, n).map_err(|e| bit_error(what, e))
+}
+
 /// MSB-first bit reader over the `vvcC` record bytes: the shared
 /// [`broadcast_common::bits::BitReader`] with this crate's typed errors.
 struct VvcBitReader<'a> {
@@ -966,6 +972,7 @@ mod tests {
     use broadcast_common::error::{BufferTooShort, InvalidValue};
 
     use super::*;
+    use crate::codec_config_ext::VvcRecordCodecInfo;
 
     #[test]
     fn the_record_bit_reader_keeps_its_cursor_and_typed_errors() {

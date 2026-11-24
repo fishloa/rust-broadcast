@@ -246,23 +246,24 @@ use crate::aac_asc::{
     ADTS_BLOCK_POSITION_SIZE, ADTS_CRC_SIZE, ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig,
     SamplingFrequencyIndex, adts_header_len, parse_adts_header,
 };
-use crate::ac3::{
+use crate::ac3_syncframe::{
     AC3_SAMPLES_PER_SYNCFRAME, AC3_SYNCWORD, Ac3SyncframeInfo, EAC3_STRMTYP_DEPENDENT,
-    Ec3SpecificBox, Ec3SyncframeInfo,
+    Ec3SyncframeInfo, ec3_specific_box_from_syncframes,
 };
 use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_annexb_nals};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-use crate::dts::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
+use crate::dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
 use crate::error::{Error, Result};
 use crate::hdr::{HEVC_PREFIX_SEI_NUT, HdrStaticMetadata};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::media::{Media, PcrSample, Track};
+use crate::mhas::find_mpegh3da_config;
 use crate::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,
     OTI_MPEG2_AUDIO, OTI_MPEG4_AUDIO, SLConfigDescriptor, STREAM_TYPE_AUDIO,
 };
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
-use crate::mpegh::{MHADecoderConfigurationRecord, find_mpegh3da_config};
+use crate::mpegh::MHADecoderConfigurationRecord;
 use crate::nal::{
     AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, ParamKind, access_unit_is_rap,
     is_keyframe_nal, nal_unit_type, parameter_set_is_valid,
@@ -644,8 +645,8 @@ impl Codec {
             return self;
         }
         if stream_type == STREAM_TYPE_PES_PRIVATE
-            && crate::dovi::has_registration_descriptor(descriptors)
-            && let Some(d) = crate::dovi::find_video_stream_descriptor(descriptors)
+            && crate::dovi_descriptor::has_registration_descriptor(descriptors)
+            && let Some(d) = crate::dovi_descriptor::find_video_stream_descriptor(descriptors)
             && d.record.bl_present
             && d.record.is_hevc_profile()
         {
@@ -1313,11 +1314,11 @@ enum ConfigProbe {
     Ac3,
     Eac3,
     /// DTS core substream (issue #560): resolves from the first frame whose
-    /// header parses — see [`crate::dts::DtsCoreFrameInfo`].
+    /// header parses — see [`crate::dts_core::DtsCoreFrameInfo`].
     Dts,
     /// MPEG-H 3D Audio (issue #579): resolves from the first access unit
     /// whose MHAS packets contain a `PACTYP_MPEGH3DACFG` — see
-    /// [`crate::mpegh::find_mpegh3da_config`].
+    /// [`crate::mhas::find_mpegh3da_config`].
     MpegH,
     /// Opaque PES data (#557): the config (`stream_type` + descriptors) is
     /// already fully known from the PMT, so this probe finalizes on the very
@@ -4278,7 +4279,7 @@ fn first_eac3_independent_offset(data: &[u8], crc: bool) -> Option<usize> {
                 && (!crc
                     || data
                         .get(at..at + len)
-                        .is_some_and(crate::ac3::eac3_frame_crc_ok))
+                        .is_some_and(crate::ac3_syncframe::eac3_frame_crc_ok))
         }
         _ => false,
     })
@@ -4355,7 +4356,7 @@ fn eac3_probe_result(
     let sample_rate = info.sample_rate;
     let timescale = Timescale::try_new(sample_rate).ok()?;
     let channel_count = info.channel_count() as u16;
-    let config = Ec3SpecificBox::from_syncframes(&frames).ok()?;
+    let config = ec3_specific_box_from_syncframes(&frames).ok()?;
     Some((
         CodecConfig::Eac3 {
             config,
@@ -7825,7 +7826,7 @@ pub(crate) mod tests {
     /// first. Unfixed (the first header-valid frame was used) this is 5.
     #[test]
     fn eac3_probe_skips_a_damaged_frame_in_front_of_an_intact_one() {
-        use crate::ac3::tests::{damaged_for_tests, eac3_bsi};
+        use crate::ac3_syncframe::tests::{damaged_for_tests, eac3_bsi};
         let bad = damaged_for_tests(eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(5)));
         let good = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(0));
         let pes = [bad, good.clone(), good].concat();
@@ -7839,7 +7840,7 @@ pub(crate) mod tests {
     /// is 0, the value `m6-single`'s second track wrongly had before #1315.
     #[test]
     fn eac3_bsmod_comes_from_the_first_intact_frame_that_carries_it() {
-        use crate::ac3::tests::eac3_bsi;
+        use crate::ac3_syncframe::tests::eac3_bsi;
         let none = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, None);
         let two = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(2));
         let pes = [none.clone(), two, none].concat();
@@ -7851,7 +7852,7 @@ pub(crate) mod tests {
     /// header-valid frame rather than never, as in #1315.
     #[test]
     fn eac3_probe_with_no_intact_frame_still_announces_the_track() {
-        use crate::ac3::tests::{damaged_for_tests, eac3_bsi};
+        use crate::ac3_syncframe::tests::{damaged_for_tests, eac3_bsi};
         let bad = damaged_for_tests(eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(2)));
         let pes = [bad.clone(), bad].concat();
         assert_eq!(live_eac3_bsmod(&eac3_pes_ts(&[pes.clone(), pes])), Some(2));
@@ -7865,8 +7866,8 @@ pub(crate) mod tests {
     /// it must still be waiting.
     #[test]
     fn eac3_probe_that_never_completes_resolves_after_the_bound() {
-        use crate::ac3::Ec3SyncframeInfo;
-        use crate::ac3::tests::seven_one_eac3_es;
+        use crate::ac3_syncframe::Ec3SyncframeInfo;
+        use crate::ac3_syncframe::tests::seven_one_eac3_es;
 
         let au = seven_one_eac3_es();
         let frames = Ec3SyncframeInfo::from_es_all(&au);
@@ -7894,7 +7895,7 @@ pub(crate) mod tests {
     /// #1186) is still waited on.
     #[test]
     fn eac3_probe_on_lossy_capture_settles_for_a_broken_chain() {
-        use crate::ac3::tests::seven_one_eac3_es;
+        use crate::ac3_syncframe::tests::seven_one_eac3_es;
 
         let clean = seven_one_eac3_es();
         let mut lossy = clean.clone();
@@ -8353,7 +8354,7 @@ pub(crate) mod tests {
     /// #1186) must emit that whole access unit before `TrackRemoved`.
     #[test]
     fn removing_an_eac3_track_flushes_the_held_final_access_unit() {
-        let au = crate::ac3::tests::seven_one_eac3_es();
+        let au = crate::ac3_syncframe::tests::seven_one_eac3_es();
         let k = 6usize;
         let mut ts = eac3_pes_ts(&vec![au; k]);
         // PMT version 1 declaring nothing: the track is removed. The first PMT
@@ -8429,7 +8430,7 @@ pub(crate) mod tests {
     /// begins a later PES joins its access unit instead of being orphaned.
     #[test]
     fn observed_dependent_substream_enables_the_hold_back() {
-        let au = crate::ac3::tests::seven_one_eac3_es();
+        let au = crate::ac3_syncframe::tests::seven_one_eac3_es();
         let ind_len = {
             let f = Ec3SyncframeInfo::from_es_all(&au);
             (f[0].frmsiz as usize + 1) * 2
@@ -11928,7 +11929,7 @@ pub(crate) mod tests {
             body.extend_from_slice(&(pid << 3).to_be_bytes());
         }
         body.push(0x10);
-        es.push(crate::dovi::DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
+        es.push(crate::dovi_descriptor::DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
         es.push(body.len() as u8);
         es.extend_from_slice(&body);
         es
@@ -13633,7 +13634,7 @@ pub(crate) mod tests {
         assert_eq!(h.len(), len);
         // Every real frame carries a valid `crc2` (§E.2.2), and the probe
         // chooses frames by it.
-        crate::ac3::tests::stamp_crc2(&mut h);
+        crate::ac3_syncframe::tests::stamp_crc2(&mut h);
         let info = Ec3SyncframeInfo::parse_at(&h, 0).unwrap();
         assert_eq!(info.strmtyp, EAC3_STRMTYP_DEPENDENT);
         h
@@ -15862,7 +15863,7 @@ pub(crate) mod tests {
         );
 
         let mut good = eac3_frame(0);
-        crate::ac3::tests::stamp_crc2(&mut good);
+        crate::ac3_syncframe::tests::stamp_crc2(&mut good);
         let mut bad = good.clone();
         let at = bad.len() - 10;
         bad[at] ^= 0xFF;
@@ -16915,7 +16916,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_split_eac3_header_resolves_from_the_joined_window() {
-        let au = crate::ac3::tests::seven_one_eac3_es();
+        let au = crate::ac3_syncframe::tests::seven_one_eac3_es();
         let mut demux = StreamingTsDemux::new();
         demux
             .feed(&eac3_pes_ts(&[

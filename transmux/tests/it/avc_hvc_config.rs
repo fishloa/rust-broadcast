@@ -6,6 +6,7 @@
 //! byte-identical output.
 
 use broadcast_common::{Parse, Serialize};
+use transmux::codec_config_ext::HevcRecordCodecInfo;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, AvcSpsExt,
     HEVCDecoderConfigurationRecord,

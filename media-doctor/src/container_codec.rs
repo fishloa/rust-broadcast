@@ -63,6 +63,7 @@ use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals_with};
 
 use crate::report::{Finding, Location, Report, Severity};
+use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
 
 /// H.265 `NAL_unit_type` for a sequence parameter set (ITU-T H.265 §7.3.1.2
 /// Table 7-1) — used to pick the SPS array out of `hvcC`'s `numOfArrays`

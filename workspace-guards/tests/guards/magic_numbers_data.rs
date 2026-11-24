@@ -739,8 +739,8 @@ pub const TABLE: &[Crate] = &[
                 "public API constant naming the spec's all-reserved-bits-zero value, not a magic number; renaming it is a breaking API change; reserved zero fill, not a magic number",
             ),
             (
-                "src/init_segment.rs",
-                "const ZERO_WIDTH_PREALLOC: usize = 1024;",
+                "src/box_support.rs",
+                "pub(crate) const ZERO_WIDTH_PREALLOC: usize = 1024;",
                 "names zero-width entries, not the number; referenced by test code; preallocation bound, role-named",
             ),
             (

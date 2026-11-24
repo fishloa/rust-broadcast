@@ -375,7 +375,7 @@ pub fn ac3_decrypt_frame(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], frame: &[u8]
 /// The protected block of an E-AC-3 stream is a **single syncframe**.
 ///
 /// `eac3_encrypt_frame`/`eac3_decrypt_frame` walk the syncframes of a frame via
-/// `crate::ac3::split_eac3_syncframe_ranges` (ETSI TS 102 366 §E.1.3.1.3
+/// `crate::ac3_syncframe::split_eac3_syncframe_ranges` (ETSI TS 102 366 §E.1.3.1.3
 /// `frmsiz`), applying a 16-byte clear leader and a whole-block CBC pass to
 /// each, with the **IV reset at every syncframe**.
 ///
@@ -406,7 +406,7 @@ fn eac3_transform(
     frame: &[u8],
     encrypt: bool,
 ) -> Result<Vec<u8>> {
-    let ranges = crate::ac3::split_eac3_syncframe_ranges(frame);
+    let ranges = crate::ac3_syncframe::split_eac3_syncframe_ranges(frame);
     if ranges.is_empty() {
         return Err(Error::InvalidInput(
             "E-AC-3 frame does not start with a valid syncframe",
@@ -938,7 +938,7 @@ mod tests {
         else {
             panic!("eac3 fixture missing");
         };
-        let ranges = crate::ac3::split_eac3_syncframe_ranges(&clear);
+        let ranges = crate::ac3_syncframe::split_eac3_syncframe_ranges(&clear);
         let (s, e) = ranges[0];
         let one = &clear[s..e];
         let via_frame = eac3_encrypt_frame(&NIST_KEY, &NIST_IV, one).expect("encrypt one");

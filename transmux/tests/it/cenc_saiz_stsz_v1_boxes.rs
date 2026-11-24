@@ -208,7 +208,7 @@ fn tkhd_v1_matches_mp4box_diso() {
 #[test]
 fn protect_media_segment_anchors_each_saio_at_its_own_senc() {
     use transmux::cenc::SampleAuxInfoOffsetsBox;
-    use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
+    use transmux::fragment_build::{FragmentProtection, protect_media_segment};
 
     fn boxed(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
         let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();

@@ -4,11 +4,6 @@
 //! Arrays carry them in wire order and compute their own serialized length.
 
 use crate::error::{Error, Result};
-use crate::nal::{HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK};
-use crate::sps::{
-    AvcSpsInfo, HevcSpsInfo, decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1,
-};
-use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
 use broadcast_common::len::need_out;
@@ -16,6 +11,11 @@ use broadcast_common::len::need_out;
 /// `lengthSizeMinusOne` of an AVC/HEVC/VVC decoder configuration record must be 0, 1, or 3
 /// (value 2 is invalid).
 pub(crate) const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
+
+/// H.265 `PREFIX_SEI_NUT` — ITU-T H.265 Table 7-1 (type 39).
+pub const HEVC_PREFIX_SEI_NUT: u8 = 39;
+/// Mask of `nal_unit_type` in the two-byte HEVC NAL header (H.265 §7.3.1.2).
+const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
 
 /// One-byte `array_completeness` flag in an `hvcC` NAL-array header.
 const ARRAY_COMPLETENESS_FLAG: u8 = 0x80;
@@ -41,26 +41,6 @@ pub const HEVC_SUFFIX_SEI_NUT: u8 = 40;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AvcSps(pub Vec<u8>);
-
-impl AvcSps {
-    /// Decode the SPS fields needed for codec configuration.
-    ///
-    /// Returns profile, level, dimensions, chroma, bit-depth, and
-    /// frame-type information.
-    pub fn decode(&self) -> Result<AvcSpsInfo> {
-        decode_avc_sps(&self.0)
-    }
-
-    /// Build the RFC 6381 codec string (e.g. `"avc1.4D400D"`).
-    pub fn rfc6381(&self) -> Result<String> {
-        let info = self.decode()?;
-        Ok(rfc6381_avc1(
-            info.profile_idc,
-            info.constraint_flags,
-            info.level_idc,
-        ))
-    }
-}
 
 /// A single AVC picture parameter set (PPS) NAL unit — raw bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,29 +76,6 @@ impl HevcNalUnit {
     /// Build a new HEVC NAL unit from raw bytes.
     pub fn new(data: Vec<u8>) -> Self {
         Self(data)
-    }
-
-    /// Decode the SPS fields if this NAL unit is an SPS (NAL unit type 33).
-    ///
-    /// Returns `None` if the NAL unit type is not SPS.
-    pub fn decode_sps(&self) -> Result<Option<HevcSpsInfo>> {
-        if self.0.len() < HEVC_NAL_HEADER_LEN {
-            return Ok(None);
-        }
-        let nal_type = (self.0[0] >> 1) & HEVC_NAL_TYPE_MASK;
-        if nal_type != HEVC_SPS_NUT {
-            return Ok(None);
-        }
-        decode_hevc_sps(&self.0).map(Some)
-    }
-
-    /// Build the RFC 6381 `hvc1.…` codec string if this is an SPS NAL unit.
-    pub fn rfc6381(&self) -> Result<Option<String>> {
-        if let Some(info) = self.decode_sps()? {
-            Ok(Some(rfc6381_hvc1(&info)))
-        } else {
-            Ok(None)
-        }
     }
 }
 
@@ -179,7 +136,7 @@ impl HevcNalArray {
         self.is_parameter_set()
             || matches!(
                 self.nal_unit_type,
-                crate::hdr::HEVC_PREFIX_SEI_NUT | HEVC_SUFFIX_SEI_NUT
+                HEVC_PREFIX_SEI_NUT | HEVC_SUFFIX_SEI_NUT
             )
     }
 }
@@ -270,31 +227,6 @@ mod tests {
             ),
             "expected FieldOverflow for numNalus, got {err:?}"
         );
-    }
-
-    /// A 0- or 1-byte NAL is too short to carry even an HEVC header, so it is
-    /// `Ok(None)`; a 2-byte SPS-typed NAL does reach the SPS decoder and its
-    /// failure is an error, not `None`.
-    #[test]
-    fn hevc_nal_unit_decode_sps_distinguishes_short_from_sps_typed() {
-        assert!(matches!(
-            HevcNalUnit::new(alloc::vec![]).decode_sps(),
-            Ok(None)
-        ));
-        assert!(matches!(
-            HevcNalUnit::new(alloc::vec![0x42]).decode_sps(),
-            Ok(None)
-        ));
-        assert!(
-            HevcNalUnit::new(alloc::vec![0x42, 0x01])
-                .decode_sps()
-                .is_err(),
-            "a 2-byte SPS-typed NAL reaches the decoder and fails there"
-        );
-        assert!(matches!(
-            HevcNalUnit::new(alloc::vec![0x40, 0x01, 0x0C]).decode_sps(),
-            Ok(None)
-        ));
     }
 
     /// The boundary: exactly 65 535 NAL units still round-trips.
