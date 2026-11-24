@@ -106,7 +106,7 @@ impl Serialize for SsuModuleTypeDescriptor {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
-        buf[2] = self.ssu_module_type.to_u8();
+        buf[HEADER_LEN] = self.ssu_module_type.to_u8();
         Ok(len)
     }
 }

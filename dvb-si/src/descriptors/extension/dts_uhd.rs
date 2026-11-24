@@ -14,6 +14,18 @@ const DTS_UHD_PROFILE_CODE_MASK: u8 = 0x3F;
 const DTS_UHD_MAX_PAYLOAD_MASK: u8 = 0x07;
 /// `StreamIndex`(3) raw field mask.
 const DTS_UHD_STREAM_INDEX_MASK: u8 = 0x07;
+/// `DecoderProfileCode` shift.
+const DTS_UHD_PROFILE_CODE_SHIFT: u32 = 2;
+/// `FrameDurationCode`(2) mask.
+const DTS_UHD_FRAME_DURATION_MASK: u8 = 0x03;
+/// `MaxPayloadCode` shift.
+const DTS_UHD_MAX_PAYLOAD_SHIFT: u32 = 5;
+/// `DTS_reserved`(2) mask.
+const DTS_UHD_RESERVED_MASK: u8 = 0x03;
+/// `DTS_reserved` shift.
+const DTS_UHD_RESERVED_SHIFT: u32 = 3;
+/// Decoder profile value offset from `DecoderProfileCode`.
+const DTS_UHD_DECODER_PROFILE_OFFSET: u8 = 2;
 
 /// DTS-UHD descriptor body (Table G.15, Annex G.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +51,7 @@ impl DtsUhd<'_> {
     /// `DecoderProfile = DecoderProfileCode + 2`.
     #[must_use]
     pub fn decoder_profile(&self) -> u8 {
-        self.decoder_profile_code + 2
+        self.decoder_profile_code + DTS_UHD_DECODER_PROFILE_OFFSET
     }
 }
 
@@ -173,11 +185,14 @@ impl<'a> Parse<'a> for DtsUhd<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         need_in(sel, DTS_UHD_FIXED_LEN, "DTS-UHD descriptor body")?;
-        let decoder_profile_code = (sel[0] >> 2) & 0x3F;
-        let frame_duration_code = FrameDurationCode::from_u8(sel[0] & 0x03);
-        let max_payload_code = MaxPayloadCode::from_u8((sel[1] >> 5) & 0x07);
-        let dts_reserved = (sel[1] >> 3) & 0x03;
-        let stream_index = sel[1] & 0x07;
+        let decoder_profile_code =
+            (sel[0] >> DTS_UHD_PROFILE_CODE_SHIFT) & DTS_UHD_PROFILE_CODE_MASK;
+        let frame_duration_code = FrameDurationCode::from_u8(sel[0] & DTS_UHD_FRAME_DURATION_MASK);
+        let max_payload_code = MaxPayloadCode::from_u8(
+            (sel[1] >> DTS_UHD_MAX_PAYLOAD_SHIFT) & DTS_UHD_MAX_PAYLOAD_MASK,
+        );
+        let dts_reserved = (sel[1] >> DTS_UHD_RESERVED_SHIFT) & DTS_UHD_RESERVED_MASK;
+        let stream_index = sel[1] & DTS_UHD_STREAM_INDEX_MASK;
         Ok(DtsUhd {
             decoder_profile_code,
             frame_duration_code,
@@ -201,18 +216,22 @@ impl Serialize for DtsUhd<'_> {
             self.decoder_profile_code,
             DTS_UHD_PROFILE_CODE_MASK,
             "decoder_profile_code",
-        )? << 2)
+        )? << DTS_UHD_PROFILE_CODE_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.frame_duration_code.to_u8(),
-                0x03,
+                DTS_UHD_FRAME_DURATION_MASK,
                 "frame_duration_code",
             )?;
         buf[1] = (broadcast_common::len::fit_mask(
             self.max_payload_code.to_u8(),
             DTS_UHD_MAX_PAYLOAD_MASK,
             "max_payload_code",
-        )? << 5)
-            | (broadcast_common::len::fit_mask(self.dts_reserved, 0x03, "dts_reserved")? << 3)
+        )? << DTS_UHD_MAX_PAYLOAD_SHIFT)
+            | (broadcast_common::len::fit_mask(
+                self.dts_reserved,
+                DTS_UHD_RESERVED_MASK,
+                "dts_reserved",
+            )? << DTS_UHD_RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.stream_index,
                 DTS_UHD_STREAM_INDEX_MASK,

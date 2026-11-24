@@ -10,6 +10,10 @@ impl<'a> ExtensionBodyDef<'a> for ProtectionMessage<'a> {
 
 /// Width of the `reserved` field (4 bits).
 const RESERVED_BITS: u32 = 4;
+/// Width of the `component_count` field (4 bits).
+const COMPONENT_COUNT_BITS: u32 = 4;
+/// Mask of the right-aligned `component_count` field.
+const COMPONENT_COUNT_MASK: u8 = 0x0F;
 /// Spec default of the 4-bit `reserved` field: all ones (ETSI TS 102 809
 /// Table 40, V1.3.1 and earlier editions;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
@@ -60,8 +64,8 @@ impl<'a> Parse<'a> for ProtectionMessage<'a> {
                 what: "protection_message body",
             },
         ))?;
-        let reserved = ReservedOnes::from_bits(u64::from(first >> 4));
-        let component_count = usize::from(first & 0x0F);
+        let reserved = ReservedOnes::from_bits(u64::from(first >> RESERVED_BITS));
+        let component_count = usize::from(first & COMPONENT_COUNT_MASK);
         let component_tags = sel
             .get(1..1 + component_count)
             .ok_or(Error::BufferTooShort(
@@ -94,10 +98,10 @@ impl Serialize for ProtectionMessage<'_> {
         need_out(buf, len)?;
         let component_count = broadcast_common::len::fit_bits(
             self.component_tags.len() as u64,
-            4,
+            COMPONENT_COUNT_BITS,
             "component_count",
         )? as u8;
-        buf[0] = ((self.reserved.get() as u8) << 4) | component_count;
+        buf[0] = ((self.reserved.get() as u8) << RESERVED_BITS) | component_count;
         let tags_end = 1 + self.component_tags.len();
         buf[1..tags_end].copy_from_slice(self.component_tags);
         buf[tags_end..len].copy_from_slice(self.trailing);

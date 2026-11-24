@@ -7,6 +7,7 @@
 //! carry **no** magic signature.
 
 use crate::error::{Error, Result};
+use crate::wire_cursor::{be_u16, be_u32};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -17,6 +18,30 @@ pub const DOPS_FOURCC: [u8; 4] = *b"dOps";
 pub const OPUS_FOURCC: [u8; 4] = *b"Opus";
 /// Fixed length of the `dOps` body up to (and excluding) the channel-mapping table.
 const DOPS_FIXED_LEN: usize = 11;
+
+/// Offset of `PreSkip` in the `dOps` body.
+const PRE_SKIP_OFFSET: usize = 2;
+/// Byte width of `PreSkip`.
+const PRE_SKIP_LEN: usize = core::mem::size_of::<u16>();
+/// Offset of `InputSampleRate` in the `dOps` body.
+const INPUT_SAMPLE_RATE_OFFSET: usize = 4;
+/// Byte width of `InputSampleRate`.
+const INPUT_SAMPLE_RATE_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of `OutputGain` in the `dOps` body.
+const OUTPUT_GAIN_OFFSET: usize = 8;
+/// Byte width of `OutputGain`.
+const OUTPUT_GAIN_LEN: usize = core::mem::size_of::<i16>();
+/// Offset of `ChannelMappingFamily` in the `dOps` body.
+const CHANNEL_MAPPING_FAMILY_OFFSET: usize = DOPS_FIXED_LEN - 1;
+/// Byte width of the `StreamCount` + `CoupledCount` prefix of the channel-mapping
+/// table.
+const CHANNEL_MAPPING_TABLE_LEN: usize = core::mem::size_of::<u16>();
+/// Offset of `StreamCount` in the `dOps` body.
+const STREAM_COUNT_OFFSET: usize = DOPS_FIXED_LEN;
+/// Offset of `CoupledCount` in the `dOps` body.
+const COUPLED_COUNT_OFFSET: usize = STREAM_COUNT_OFFSET + 1;
+/// Offset of `ChannelMapping[OutputChannelCount]` in the `dOps` body.
+const CHANNEL_MAPPING_OFFSET: usize = DOPS_FIXED_LEN + CHANNEL_MAPPING_TABLE_LEN;
 
 /// OpusSpecificBox (`dOps` box body) — Opus-in-ISOBMFF §4.3.2.
 ///
@@ -69,15 +94,20 @@ impl<'a> Parse<'a> for OpusSpecificBox {
         need_in(bytes, DOPS_FIXED_LEN, "dOps body")?;
         let version = bytes[0];
         let output_channel_count = bytes[1];
-        let pre_skip = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let input_sample_rate = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let output_gain = i16::from_be_bytes([bytes[8], bytes[9]]);
-        let channel_mapping_family = bytes[10];
+        let pre_skip = be_u16(bytes, PRE_SKIP_OFFSET, "dOps body")?;
+        let input_sample_rate = be_u32(bytes, INPUT_SAMPLE_RATE_OFFSET, "dOps body")?;
+        let output_gain =
+            i16::from_be_bytes([bytes[OUTPUT_GAIN_OFFSET], bytes[OUTPUT_GAIN_OFFSET + 1]]);
+        let channel_mapping_family = bytes[CHANNEL_MAPPING_FAMILY_OFFSET];
         let channel_mapping = if channel_mapping_family != 0 {
-            need_in(bytes, DOPS_FIXED_LEN + 2, "dOps channel mapping")?;
-            let stream_count = bytes[11];
-            let coupled_count = bytes[12];
-            let map_start = DOPS_FIXED_LEN + 2;
+            need_in(
+                bytes,
+                DOPS_FIXED_LEN + CHANNEL_MAPPING_TABLE_LEN,
+                "dOps channel mapping",
+            )?;
+            let stream_count = bytes[STREAM_COUNT_OFFSET];
+            let coupled_count = bytes[COUPLED_COUNT_OFFSET];
+            let map_start = CHANNEL_MAPPING_OFFSET;
             // `ChannelMapping[OutputChannelCount]` (Opus-in-ISOBMFF §4.3.2):
             // the table's width is derived from `OutputChannelCount`, so a short
             // tail is truncated input — accepting it would parse a shorter map
@@ -109,7 +139,7 @@ impl Serialize for OpusSpecificBox {
     fn serialized_len(&self) -> usize {
         let mut n = DOPS_FIXED_LEN;
         if let Some(ref m) = self.channel_mapping {
-            n += 2 + m.channel_mapping.len();
+            n += CHANNEL_MAPPING_TABLE_LEN + m.channel_mapping.len();
         }
         n
     }
@@ -118,14 +148,18 @@ impl Serialize for OpusSpecificBox {
         need_out(buf, need)?;
         buf[0] = self.version;
         buf[1] = self.output_channel_count;
-        buf[2..4].copy_from_slice(&self.pre_skip.to_be_bytes());
-        buf[4..8].copy_from_slice(&self.input_sample_rate.to_be_bytes());
-        buf[8..10].copy_from_slice(&self.output_gain.to_be_bytes());
-        buf[10] = self.channel_mapping_family;
+        buf[PRE_SKIP_OFFSET..PRE_SKIP_OFFSET + PRE_SKIP_LEN]
+            .copy_from_slice(&self.pre_skip.to_be_bytes());
+        buf[INPUT_SAMPLE_RATE_OFFSET..INPUT_SAMPLE_RATE_OFFSET + INPUT_SAMPLE_RATE_LEN]
+            .copy_from_slice(&self.input_sample_rate.to_be_bytes());
+        buf[OUTPUT_GAIN_OFFSET..OUTPUT_GAIN_OFFSET + OUTPUT_GAIN_LEN]
+            .copy_from_slice(&self.output_gain.to_be_bytes());
+        buf[CHANNEL_MAPPING_FAMILY_OFFSET] = self.channel_mapping_family;
         if let Some(ref m) = self.channel_mapping {
-            buf[11] = m.stream_count;
-            buf[12] = m.coupled_count;
-            buf[13..13 + m.channel_mapping.len()].copy_from_slice(&m.channel_mapping);
+            buf[STREAM_COUNT_OFFSET] = m.stream_count;
+            buf[COUPLED_COUNT_OFFSET] = m.coupled_count;
+            buf[CHANNEL_MAPPING_OFFSET..CHANNEL_MAPPING_OFFSET + m.channel_mapping.len()]
+                .copy_from_slice(&m.channel_mapping);
         }
         Ok(need)
     }

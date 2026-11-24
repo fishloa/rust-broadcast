@@ -3,6 +3,7 @@
 //! `user_data()` (ETSI TS 101 154 Annex B, SMPTE ST 2016-1).
 
 use crate::ir::{ActiveFormatDescription, BarData};
+use crate::wire_cursor::{be_u16, be_u32};
 
 /// `user_identifier` of `afd_data()` (TS 101 154 Table B.1).
 pub const DTG1_USER_IDENTIFIER: u32 = 0x4454_4731;
@@ -25,6 +26,23 @@ pub const USER_IDENTIFIER_LEN: usize = 4;
 /// A bar value is a 14-bit line / pixel number (TS 101 154 Table B.7:
 /// `marker_bits` `'11'` then `u(14)`).
 const BAR_VALUE_MASK: u16 = 0x3FFF;
+/// Offset of `itu_t_t35_provider_code` in a T.35 header.
+const T35_PROVIDER_CODE_OFFSET: usize = 1;
+/// Offset of `user_identifier` in a T.35 header.
+const T35_USER_IDENTIFIER_OFFSET: usize = T35_HEADER_LEN - USER_IDENTIFIER_LEN;
+/// Bytes of an `afd_data()` body: `active_format_flag` then `active_format`.
+const AFD_MESSAGE_LEN: usize = 2;
+/// Bytes of `bar_data()` before the optional bar offsets: the bar flags byte
+/// plus the `user_data_type_code`.
+const BAR_DATA_FLAGS_LEN: usize = 2;
+/// `bar_data()` `top_bar_flag` (bit 7 of the flags byte).
+const BAR_TOP_FLAG_BIT: u8 = 0x80;
+/// `bar_data()` `bottom_bar_flag` (bit 6).
+const BAR_BOTTOM_FLAG_BIT: u8 = 0x40;
+/// `bar_data()` `left_bar_flag` (bit 5).
+const BAR_LEFT_FLAG_BIT: u8 = 0x20;
+/// `bar_data()` `right_bar_flag` (bit 4).
+const BAR_RIGHT_FLAG_BIT: u8 = 0x10;
 
 /// AFD signal carried by an `afd_data()` message: either no active format
 /// (`active_format_flag == 0`) or a concrete format code.
@@ -60,33 +78,33 @@ pub struct PictureUserData {
 /// when present with the flag set, and `None` when the payload is not a DTG1
 /// AFD message or is too short.
 pub fn afd_from_t35_payload(payload: &[u8]) -> Option<AfdSignal> {
-    if payload.len() < 7 {
+    if payload.len() < T35_HEADER_LEN {
         return None;
     }
     if payload[0] != ITU_T_T35_COUNTRY_CODE_USA {
         return None;
     }
-    let provider = u16::from_be_bytes([payload[1], payload[2]]);
+    let provider = be_u16(payload, T35_PROVIDER_CODE_OFFSET, "T.35 header").ok()?;
     if provider != ATSC_T35_PROVIDER_CODE {
         return None;
     }
-    let user_id = u32::from_be_bytes([payload[3], payload[4], payload[5], payload[6]]);
+    let user_id = be_u32(payload, T35_USER_IDENTIFIER_OFFSET, "T.35 header").ok()?;
     if user_id != DTG1_USER_IDENTIFIER {
         return None;
     }
-    let rest = &payload[7..];
+    let rest = &payload[T35_HEADER_LEN..];
     if rest.is_empty() {
         return None;
     }
-    let active_format_flag = rest[0] & 0x40 != 0;
+    let active_format_flag = rest[0] & AFD_ACTIVE_FORMAT_FLAG_BIT != 0;
     if !active_format_flag {
         return Some(AfdSignal::NoFormat);
     }
-    if rest.len() < 2 {
+    if rest.len() < AFD_MESSAGE_LEN {
         return None;
     }
     Some(AfdSignal::Format(ActiveFormatDescription::from_code(
-        rest[1] & 0x0F,
+        rest[1] & AFD_CODE_MASK,
     )))
 }
 
@@ -94,13 +112,13 @@ pub fn afd_from_t35_payload(payload: &[u8]) -> Option<AfdSignal> {
 /// GA94 bar-data message is present and at least one bar flag is set (with
 /// enough bytes for the signalled fields); `None` otherwise.
 pub fn bar_data_from_t35_payload(payload: &[u8]) -> Option<BarData> {
-    if payload.len() < T35_HEADER_LEN + 2 {
+    if payload.len() < T35_HEADER_LEN + BAR_DATA_FLAGS_LEN {
         return None;
     }
     if payload[0] != ITU_T_T35_COUNTRY_CODE_USA {
         return None;
     }
-    let provider = u16::from_be_bytes([payload[1], payload[2]]);
+    let provider = be_u16(payload, T35_PROVIDER_CODE_OFFSET, "T.35 header").ok()?;
     if provider != ATSC_T35_PROVIDER_CODE {
         return None;
     }
@@ -125,10 +143,10 @@ pub fn bar_data_from_ga94_payload(payload: &[u8]) -> Option<BarData> {
         return None;
     }
     let (&flags, payload) = rest.split_first()?;
-    let top = flags & 0x80 != 0;
-    let bottom = flags & 0x40 != 0;
-    let left = flags & 0x20 != 0;
-    let right = flags & 0x10 != 0;
+    let top = flags & BAR_TOP_FLAG_BIT != 0;
+    let bottom = flags & BAR_BOTTOM_FLAG_BIT != 0;
+    let left = flags & BAR_LEFT_FLAG_BIT != 0;
+    let right = flags & BAR_RIGHT_FLAG_BIT != 0;
     if !top && !bottom && !left && !right {
         return Some(BarData {
             top_bar_end_line: None,

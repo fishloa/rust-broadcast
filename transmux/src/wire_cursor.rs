@@ -6,6 +6,11 @@ use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::error::BufferTooShort;
 
+const U16_LEN: usize = core::mem::size_of::<u16>();
+const U32_LEN: usize = core::mem::size_of::<u32>();
+const U48_LEN: usize = 6;
+const U64_LEN: usize = core::mem::size_of::<u64>();
+
 /// Take the next `n` bytes at `*cursor`, advancing it. `BufferTooShort` (with the
 /// byte count needed) if fewer remain.
 pub(crate) fn take<'a>(
@@ -31,19 +36,34 @@ pub(crate) fn read_u8(bytes: &[u8], cursor: &mut usize, what: &'static str) -> R
 }
 
 pub(crate) fn read_u16(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u16> {
-    let b = take(bytes, cursor, 2, what)?;
+    let b = take(bytes, cursor, U16_LEN, what)?;
     Ok(u16::from_be_bytes([b[0], b[1]]))
 }
 
 pub(crate) fn read_u32(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u32> {
-    let b = take(bytes, cursor, 4, what)?;
-    Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    let b = take(bytes, cursor, U32_LEN, what)?;
+    let mut arr = [0u8; U32_LEN];
+    arr.copy_from_slice(b);
+    Ok(u32::from_be_bytes(arr))
 }
 
 /// A 48-bit big-endian value (the `hvcC` `general_constraint_indicator_flags`).
 pub(crate) fn read_u48(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u64> {
-    let b = take(bytes, cursor, 6, what)?;
-    Ok(b.iter().fold(0u64, |acc, &x| (acc << 8) | u64::from(x)))
+    let b = take(bytes, cursor, U48_LEN, what)?;
+    Ok(b.iter()
+        .fold(0u64, |acc, &x| (acc << u8::BITS) | u64::from(x)))
+}
+
+/// A big-endian `u16` at absolute offset `off`.
+pub(crate) fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16> {
+    let mut cursor = off;
+    read_u16(bytes, &mut cursor, what)
+}
+
+/// A big-endian `u32` at absolute offset `off`.
+pub(crate) fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32> {
+    let mut cursor = off;
+    read_u32(bytes, &mut cursor, what)
 }
 
 /// A 16-bit-length-prefixed byte string (an `avcC` SPS/PPS entry).
@@ -61,8 +81,9 @@ pub(crate) fn read_nalu_16(
 /// instead of a panic when fewer than 8 bytes remain at `off`.
 pub(crate) fn be_u64(bytes: &[u8], off: usize, what: &'static str) -> Result<u64> {
     let mut cursor = off;
-    let b = take(bytes, &mut cursor, 8, what)?;
-    Ok(b.iter().fold(0u64, |acc, &x| (acc << 8) | u64::from(x)))
+    let b = take(bytes, &mut cursor, U64_LEN, what)?;
+    Ok(b.iter()
+        .fold(0u64, |acc, &x| (acc << u8::BITS) | u64::from(x)))
 }
 
 #[cfg(test)]
