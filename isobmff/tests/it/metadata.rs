@@ -504,3 +504,229 @@ fn metadata_writes_back_to_a_udta_box() {
     assert_eq!(pair(&read, b"trkn"), (3, 12));
     assert_eq!(text(&read, b"\xa9ART"), "rust-broadcast");
 }
+
+/// Every `ilst` item box of a `udta` box's bytes, header included, in order.
+fn ilst_item_bytes(udta: &[u8]) -> Vec<Vec<u8>> {
+    let udta = Udta::parse(udta).expect("udta parses");
+    let meta = udta
+        .children
+        .iter()
+        .find_map(|child| match child {
+            isobmff::metadata::UdtaChild::Meta(meta) => Some(meta),
+            _ => None,
+        })
+        .expect("a meta box");
+    let ilst = meta.ilst().expect("an ilst box");
+    ilst.items
+        .iter()
+        .map(|item| item.try_to_bytes().expect("item writes"))
+        .collect()
+}
+
+#[test]
+fn the_accessors_read_every_lavf_tag() {
+    let Some(bytes) = fixture("tags/lavf-tagged.m4a") else {
+        return;
+    };
+    let metadata = movie(&bytes)
+        .metadata(&Limits::default())
+        .expect("metadata parses")
+        .expect("metadata present");
+    assert_eq!(metadata.title(), Some("Test Tone"));
+    assert_eq!(metadata.artist(), Some("rust-broadcast"));
+    assert_eq!(metadata.album(), Some("Fixtures"));
+    assert_eq!(metadata.date(), Some("2026"));
+    assert_eq!(metadata.genre(), Some("Test"));
+    assert_eq!(metadata.comment(), Some("generated"));
+    assert!(metadata.encoder().is_some_and(|value| !value.is_empty()));
+    assert_eq!(metadata.track(), Some((3, 12)));
+    assert_eq!(metadata.disc(), Some((1, 2)));
+    assert_eq!(metadata.text(&ItemKey::TITLE), Some("Test Tone"));
+    assert_eq!(
+        metadata.get(&ItemKey::TRACK_NUMBER).and_then(|item| {
+            match item {
+                MetadataItem::Pair { index, total, .. } => Some((*index, *total)),
+                _ => None,
+            }
+        }),
+        Some((3, 12))
+    );
+    assert!(metadata.cover_art().is_none());
+    assert!(metadata.chapters().is_empty());
+    assert!(metadata.location().is_none());
+}
+
+#[test]
+fn chapters_are_the_first_chapter_item() {
+    let Some(bytes) = fixture("tags/mp4box-chapters-nero.m4a") else {
+        return;
+    };
+    let metadata = movie(&bytes)
+        .metadata(&Limits::default())
+        .expect("metadata parses")
+        .expect("metadata present");
+    let chapters = metadata.chapters();
+    assert_eq!(chapters.len(), 2);
+    assert_eq!(chapters[0].title, "Intro");
+    assert_eq!(chapters[1].title, "Tone");
+}
+
+#[test]
+fn the_iphone_location_is_the_keyed_value() {
+    let Some(bytes) = fixture("quicktime/iphone-x-live-photo.mov") else {
+        return;
+    };
+    let metadata = movie(&bytes)
+        .metadata(&Limits::default())
+        .expect("metadata parses")
+        .expect("metadata present");
+    let location = metadata.location().expect("a keyed location");
+    assert_eq!(location.as_str(), "+24.0742-076.3873+002.009/");
+    assert!((location.latitude().expect("latitude") - 24.0742).abs() < 0.001);
+    assert!((location.longitude().expect("longitude") + 76.3873).abs() < 0.001);
+}
+
+#[test]
+fn the_gopro_xyz_location_is_the_four_character_value() {
+    let Some(bytes) = fixture("camera/gopro-max-heromode.mp4") else {
+        return;
+    };
+    let metadata = movie(&bytes)
+        .metadata(&Limits::default())
+        .expect("metadata parses")
+        .expect("metadata present");
+    let location = metadata.location().expect("a ©xyz location");
+    assert!((location.latitude().expect("latitude") - 33.1268).abs() < 0.001);
+}
+
+#[test]
+fn every_named_key_prints_as_text() {
+    let named = [
+        (ItemKey::TITLE, "\u{a9}nam"),
+        (ItemKey::ARTIST, "\u{a9}ART"),
+        (ItemKey::ALBUM, "\u{a9}alb"),
+        (ItemKey::DATE, "\u{a9}day"),
+        (ItemKey::GENRE, "\u{a9}gen"),
+        (ItemKey::COMMENT, "\u{a9}cmt"),
+        (ItemKey::ENCODER, "\u{a9}too"),
+        (ItemKey::COMPOSER, "\u{a9}wrt"),
+        (ItemKey::TRACK_NUMBER, "trkn"),
+        (ItemKey::DISC_NUMBER, "disk"),
+        (ItemKey::COVER_ART, "covr"),
+    ];
+    for (key, text) in named {
+        assert_eq!(key.to_string(), text);
+        assert_eq!(format!("{key:?}"), format!("FourCc({text})"));
+    }
+    let keyed = [
+        (ItemKey::APPLE_MAKE, "com.apple.quicktime.make"),
+        (ItemKey::APPLE_MODEL, "com.apple.quicktime.model"),
+        (ItemKey::APPLE_SOFTWARE, "com.apple.quicktime.software"),
+        (
+            ItemKey::APPLE_CREATION_DATE,
+            "com.apple.quicktime.creationdate",
+        ),
+        (
+            ItemKey::APPLE_LOCATION_ISO6709,
+            "com.apple.quicktime.location.ISO6709",
+        ),
+    ];
+    for (text, expected) in keyed {
+        let key = ItemKey::Mdta(text.into());
+        assert_eq!(key.to_string(), expected);
+        assert_eq!(format!("{key:?}"), format!("Mdta({expected:?})"));
+    }
+    let unprintable = ItemKey::FourCc([0x01, b'a', 0x7f, b' ']);
+    assert_eq!(unprintable.to_string(), "\\x01a\\x7f ");
+}
+
+#[test]
+fn setting_the_title_changes_only_that_item() {
+    let Some(bytes) = fixture("tags/lavf-tagged.m4a") else {
+        return;
+    };
+    let (udtas, _) = metadata_boxes(&bytes);
+    let before = ilst_item_bytes(udtas.first().expect("a udta").as_slice());
+    let mut metadata = movie(&bytes)
+        .metadata(&Limits::default())
+        .expect("metadata parses")
+        .expect("metadata present");
+    metadata.set_text(&ItemKey::TITLE, "Written");
+    let written = metadata.to_udta_bytes().expect("metadata writes");
+    let after = ilst_item_bytes(&written);
+    assert_eq!(before.len(), after.len(), "no item was added");
+    let changed: Vec<usize> = before
+        .iter()
+        .zip(&after)
+        .enumerate()
+        .filter(|(_, (old, new))| old != new)
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(changed.len(), 1, "exactly one item changed: {changed:?}");
+    let index = changed[0];
+    assert_eq!(&after[index][4..8], b"\xa9nam", "the title item changed");
+    let read = Metadata::from_udta(&Udta::parse(&written).expect("the written udta parses"));
+    assert_eq!(read.title(), Some("Written"));
+    assert_eq!(read.artist(), Some("rust-broadcast"));
+    assert_eq!(read.track(), Some((3, 12)));
+    assert_eq!(read.items.len(), before.len());
+}
+
+#[test]
+fn the_setters_replace_or_append_one_item() {
+    let Some(bytes) = fixture("tags/lavf-tagged.m4a") else {
+        return;
+    };
+    let movie = movie(&bytes);
+    let mut metadata = movie
+        .metadata(&Limits::default())
+        .expect("metadata parses")
+        .expect("metadata present");
+    let order: Vec<Option<ItemKey>> = metadata
+        .items
+        .iter()
+        .map(|item| item.key().cloned())
+        .collect();
+    metadata.set_track(9, 10);
+    metadata.set_disc(2, 3);
+    assert_eq!(metadata.track(), Some((9, 10)));
+    assert_eq!(metadata.disc(), Some((2, 3)));
+    assert_eq!(metadata.items.len(), order.len(), "no item was added");
+    assert_eq!(
+        metadata
+            .items
+            .iter()
+            .map(|item| item.key().cloned())
+            .collect::<Vec<_>>(),
+        order,
+        "the item order is untouched"
+    );
+    metadata.remove(&ItemKey::COMMENT);
+    assert_eq!(metadata.comment(), None);
+    assert_eq!(metadata.title(), Some("Test Tone"));
+    assert_eq!(metadata.items.len(), order.len() - 1);
+    metadata.set_text(&ItemKey::COMPOSER, "Nobody");
+    assert_eq!(metadata.text(&ItemKey::COMPOSER), Some("Nobody"));
+    assert_eq!(metadata.items.len(), order.len());
+    let written = metadata.to_udta_bytes().expect("metadata writes");
+    let read = Metadata::from_udta(&Udta::parse(&written).expect("the written udta parses"));
+    assert_eq!(read.track(), Some((9, 10)));
+    assert_eq!(read.disc(), Some((2, 3)));
+    assert_eq!(read.comment(), None);
+    assert_eq!(read.text(&ItemKey::COMPOSER), Some("Nobody"));
+    assert_eq!(read.title(), Some("Test Tone"));
+}
+
+#[test]
+fn cover_art_carries_its_data_type() {
+    let mut metadata = Metadata::default();
+    metadata.items.push(MetadataItem::Binary {
+        key: ItemKey::COVER_ART,
+        data_type: 13,
+        locale: 0,
+        bytes: vec![0xff, 0xd8, 0xff],
+    });
+    let art = metadata.cover_art().expect("cover art");
+    assert_eq!(art.data_type, 13);
+    assert_eq!(art.bytes, &[0xff, 0xd8, 0xff]);
+}

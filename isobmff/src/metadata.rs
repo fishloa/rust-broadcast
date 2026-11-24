@@ -30,6 +30,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt::Write as _;
 
 use broadcast_common::Serialize;
 
@@ -72,7 +73,12 @@ const LOCALE_LANGUAGE_MASK: u32 = 0xffff;
 pub const XYZ_KEY: [u8; BOX_TYPE_SIZE] = [COPYRIGHT_SIGN, b'x', b'y', b'z'];
 
 /// The key an [`MetadataItem`] is stored under.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// [`Display`](core::fmt::Display) and [`Debug`](core::fmt::Debug) print a
+/// four-character key as its text (`©nam`, `trkn`; a byte that is not printable
+/// as `\xNN`) and a keyed item as its reverse-DNS string, so a tag never has to
+/// be spelled as the bytes of `©nam`.
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum ItemKey {
@@ -83,6 +89,52 @@ pub enum ItemKey {
 }
 
 impl ItemKey {
+    /// `©nam`, the title (`User data list entry types`).
+    pub const TITLE: Self = Self::FourCc([COPYRIGHT_SIGN, b'n', b'a', b'm']);
+    /// `©ART`, the artist: the de-facto iTunes `ilst` atom carried by
+    /// `private/fixtures/mp4/tags/lavf-tagged.m4a`.
+    pub const ARTIST: Self = Self::FourCc([COPYRIGHT_SIGN, b'A', b'R', b'T']);
+    /// `©alb`, the album: the de-facto iTunes `ilst` atom carried by
+    /// `private/fixtures/mp4/tags/lavf-tagged.m4a`.
+    pub const ALBUM: Self = Self::FourCc([COPYRIGHT_SIGN, b'a', b'l', b'b']);
+    /// `©day`, the date the content was created (`User data list entry
+    /// types`).
+    pub const DATE: Self = Self::FourCc([COPYRIGHT_SIGN, b'd', b'a', b'y']);
+    /// `©gen`, the genre: the de-facto iTunes `ilst` atom carried by
+    /// `private/fixtures/mp4/tags/lavf-tagged.m4a`.
+    pub const GENRE: Self = Self::FourCc([COPYRIGHT_SIGN, b'g', b'e', b'n']);
+    /// `©cmt`, the comment: the de-facto iTunes `ilst` atom carried by
+    /// `private/fixtures/mp4/tags/lavf-tagged.m4a`.
+    pub const COMMENT: Self = Self::FourCc([COPYRIGHT_SIGN, b'c', b'm', b't']);
+    /// `©too`, the encoder: the de-facto iTunes `ilst` atom carried by
+    /// `private/fixtures/mp4/tags/lavf-tagged.m4a`.
+    pub const ENCODER: Self = Self::FourCc([COPYRIGHT_SIGN, b't', b'o', b'o']);
+    /// `©wrt`, the name of the movie's writer (`User data list entry types`).
+    pub const COMPOSER: Self = Self::FourCc([COPYRIGHT_SIGN, b'w', b'r', b't']);
+    /// `trkn`, the track index and total: the de-facto iTunes `ilst` atom
+    /// carried by `private/fixtures/mp4/tags/lavf-tagged.m4a`.
+    pub const TRACK_NUMBER: Self = Self::FourCc(*b"trkn");
+    /// `disk`, the disc index and total: the de-facto iTunes `ilst` atom
+    /// carried by `private/fixtures/mp4/tags/lavf-tagged.m4a`.
+    pub const DISC_NUMBER: Self = Self::FourCc(*b"disk");
+    /// `covr`, cover art: the de-facto iTunes `ilst` atom, decoded as a binary
+    /// item.
+    pub const COVER_ART: Self = Self::FourCc(*b"covr");
+
+    /// Apple's `com.apple.quicktime.make` key
+    /// (`private/fixtures/mp4/quicktime/iphone-x-live-photo.mov`).
+    pub const APPLE_MAKE: &'static str = "com.apple.quicktime.make";
+    /// Apple's `com.apple.quicktime.model` key (same fixture).
+    pub const APPLE_MODEL: &'static str = "com.apple.quicktime.model";
+    /// Apple's `com.apple.quicktime.software` key (`QuickTime metadata keys`).
+    pub const APPLE_SOFTWARE: &'static str = "com.apple.quicktime.software";
+    /// Apple's `com.apple.quicktime.creationdate` key (`QuickTime metadata
+    /// keys`).
+    pub const APPLE_CREATION_DATE: &'static str = "com.apple.quicktime.creationdate";
+    /// Apple's `com.apple.quicktime.location.ISO6709` key (`QuickTime metadata
+    /// keys`).
+    pub const APPLE_LOCATION_ISO6709: &'static str = "com.apple.quicktime.location.ISO6709";
+
     /// The four-CC form, when this key is one.
     #[must_use]
     pub fn as_four_cc(&self) -> Option<&[u8; BOX_TYPE_SIZE]> {
@@ -100,6 +152,44 @@ impl ItemKey {
             Self::Mdta(key) => Some(key),
         }
     }
+}
+
+impl core::fmt::Display for ItemKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::FourCc(fourcc) => write_four_cc(f, fourcc),
+            Self::Mdta(key) => f.write_str(key),
+        }
+    }
+}
+
+impl core::fmt::Debug for ItemKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::FourCc(fourcc) => {
+                f.write_str("FourCc(")?;
+                write_four_cc(f, fourcc)?;
+                f.write_str(")")
+            }
+            Self::Mdta(key) => f.debug_tuple("Mdta").field(key).finish(),
+        }
+    }
+}
+
+/// Write a four-character atom type as text: the `©` byte and printable
+/// ASCII as themselves, every other byte as `\xNN`.
+fn write_four_cc(
+    f: &mut core::fmt::Formatter<'_>,
+    fourcc: &[u8; BOX_TYPE_SIZE],
+) -> core::fmt::Result {
+    for byte in fourcc {
+        match *byte {
+            COPYRIGHT_SIGN => f.write_char('©')?,
+            b' '..=b'~' => f.write_char(char::from(*byte))?,
+            other => write!(f, "\\x{other:02x}")?,
+        }
+    }
+    Ok(())
 }
 
 /// Where a text value's language/locale was carried.
@@ -236,6 +326,18 @@ impl MetadataItem {
     }
 }
 
+/// One cover-art value: its well-known `data` type and its untouched bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct CoverArt<'a> {
+    /// The well-known `data` type (`Value atom`): 13 for JPEG, 14 for PNG, 27
+    /// for BMP.
+    pub data_type: u32,
+    /// The image bytes.
+    pub bytes: &'a [u8],
+}
+
 /// The logical metadata of one movie or track.
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -290,10 +392,197 @@ impl Metadata {
 
     /// The first item stored under `key`.
     #[must_use]
-    pub fn item(&self, key: &ItemKey) -> Option<&MetadataItem> {
+    pub fn get(&self, key: &ItemKey) -> Option<&MetadataItem> {
         self.items
             .iter()
             .find(|item| item.key().is_some_and(|k| k == key))
+    }
+
+    /// The title ([`ItemKey::TITLE`]).
+    #[must_use]
+    pub fn title(&self) -> Option<&str> {
+        self.text(&ItemKey::TITLE)
+    }
+
+    /// The artist ([`ItemKey::ARTIST`]).
+    #[must_use]
+    pub fn artist(&self) -> Option<&str> {
+        self.text(&ItemKey::ARTIST)
+    }
+
+    /// The album ([`ItemKey::ALBUM`]).
+    #[must_use]
+    pub fn album(&self) -> Option<&str> {
+        self.text(&ItemKey::ALBUM)
+    }
+
+    /// The date the content was created ([`ItemKey::DATE`]).
+    #[must_use]
+    pub fn date(&self) -> Option<&str> {
+        self.text(&ItemKey::DATE)
+    }
+
+    /// The genre ([`ItemKey::GENRE`]).
+    #[must_use]
+    pub fn genre(&self) -> Option<&str> {
+        self.text(&ItemKey::GENRE)
+    }
+
+    /// The comment ([`ItemKey::COMMENT`]).
+    #[must_use]
+    pub fn comment(&self) -> Option<&str> {
+        self.text(&ItemKey::COMMENT)
+    }
+
+    /// The encoder ([`ItemKey::ENCODER`]).
+    #[must_use]
+    pub fn encoder(&self) -> Option<&str> {
+        self.text(&ItemKey::ENCODER)
+    }
+
+    /// The track index and total ([`ItemKey::TRACK_NUMBER`]).
+    #[must_use]
+    pub fn track(&self) -> Option<(u16, u16)> {
+        self.pair(&ItemKey::TRACK_NUMBER)
+    }
+
+    /// The disc index and total ([`ItemKey::DISC_NUMBER`]).
+    #[must_use]
+    pub fn disc(&self) -> Option<(u16, u16)> {
+        self.pair(&ItemKey::DISC_NUMBER)
+    }
+
+    /// The cover art ([`ItemKey::COVER_ART`]).
+    #[must_use]
+    pub fn cover_art(&self) -> Option<CoverArt<'_>> {
+        self.items.iter().find_map(|item| match item {
+            MetadataItem::Binary {
+                key,
+                data_type,
+                bytes,
+                ..
+            } if *key == ItemKey::COVER_ART => Some(CoverArt {
+                data_type: *data_type,
+                bytes,
+            }),
+            _ => None,
+        })
+    }
+
+    /// The location: a `©xyz` item or, when the file carries no such item, the
+    /// `com.apple.quicktime.location.ISO6709` keyed item.
+    ///
+    /// The keyed form is a text value, so it is parsed here instead of the two
+    /// forms sharing one borrowed value.
+    #[must_use]
+    pub fn location(&self) -> Option<Iso6709> {
+        let mut keyed = None;
+        for item in &self.items {
+            match item {
+                MetadataItem::Location(location) => return Some(location.clone()),
+                MetadataItem::Text { key, value, .. }
+                    if key.as_mdta() == Some(ItemKey::APPLE_LOCATION_ISO6709) =>
+                {
+                    keyed.get_or_insert_with(|| Iso6709::new(value.clone()));
+                }
+                _ => {}
+            }
+        }
+        keyed
+    }
+
+    /// The Nero chapter list, empty when the file carries none.
+    #[must_use]
+    pub fn chapters(&self) -> &[Chapter] {
+        self.items
+            .iter()
+            .find_map(|item| match item {
+                MetadataItem::Chapters(chapters) => Some(chapters.as_slice()),
+                _ => None,
+            })
+            .unwrap_or(&[])
+    }
+
+    /// Replace the text stored under `key`, or append it when the key is not
+    /// present.
+    ///
+    /// Every other item and the item order are left untouched. A new item goes
+    /// into the `ilst` form with an empty locale; a replaced one keeps its own.
+    pub fn set_text(&mut self, key: &ItemKey, value: impl Into<String>) {
+        let value = value.into();
+        for item in &mut self.items {
+            if let MetadataItem::Text {
+                key: item_key,
+                value: slot,
+                ..
+            } = item
+                && item_key == key
+            {
+                *slot = value;
+                return;
+            }
+        }
+        self.items.push(MetadataItem::Text {
+            key: key.clone(),
+            value,
+            locale: TextLocale::Itunes {
+                data_type: ilst::DATA_TYPE_UTF8,
+                country: 0,
+                language: 0,
+            },
+        });
+    }
+
+    /// Replace the track index and total ([`ItemKey::TRACK_NUMBER`]), or append
+    /// them.
+    pub fn set_track(&mut self, index: u16, total: u16) {
+        self.set_pair(&ItemKey::TRACK_NUMBER, index, total);
+    }
+
+    /// Replace the disc index and total ([`ItemKey::DISC_NUMBER`]), or append
+    /// them.
+    pub fn set_disc(&mut self, index: u16, total: u16) {
+        self.set_pair(&ItemKey::DISC_NUMBER, index, total);
+    }
+
+    /// Remove every item stored under `key`, leaving the others in order.
+    pub fn remove(&mut self, key: &ItemKey) {
+        self.items
+            .retain(|item| item.key().is_none_or(|item_key| item_key != key));
+    }
+
+    /// The first `trkn`/`disk` pair stored under `key`.
+    fn pair(&self, key: &ItemKey) -> Option<(u16, u16)> {
+        self.items.iter().find_map(|item| match item {
+            MetadataItem::Pair {
+                key: item_key,
+                index,
+                total,
+            } if item_key == key => Some((*index, *total)),
+            _ => None,
+        })
+    }
+
+    /// Replace the first pair stored under `key`, or append it.
+    fn set_pair(&mut self, key: &ItemKey, index: u16, total: u16) {
+        for item in &mut self.items {
+            if let MetadataItem::Pair {
+                key: item_key,
+                index: slot_index,
+                total: slot_total,
+            } = item
+                && item_key == key
+            {
+                *slot_index = index;
+                *slot_total = total;
+                return;
+            }
+        }
+        self.items.push(MetadataItem::Pair {
+            key: key.clone(),
+            index,
+            total,
+        });
     }
 
     /// Build the `udta` box that carries this item list.

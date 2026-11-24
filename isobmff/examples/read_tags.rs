@@ -1,4 +1,5 @@
-//! Print every metadata item of an MP4/MOV file, reading only box structure.
+//! Print every metadata item of an MP4/MOV file through the blocking driver,
+//! then a summary block built from the typed accessors.
 //!
 //! ```bash
 //! cargo run -p isobmff --example read_tags -- fixtures/mp4/progressive/av-prog.mp4
@@ -6,34 +7,26 @@
 
 use std::env;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 
-use isobmff::metadata::{MetadataItem, MovieMetadata};
-use isobmff::{Reader, ReaderConfig, Step};
+use isobmff::ReaderConfig;
+use isobmff::driver::{DriverStep, FileReader};
+use isobmff::metadata::{Metadata, MetadataItem, MovieMetadata};
 
 fn main() {
     let path = env::args().nth(1).unwrap_or_else(|| {
         eprintln!("usage: read_tags <FILE>");
         std::process::exit(2);
     });
-    let mut file = File::open(&path).expect("open the input file");
-    let len = file.metadata().expect("stat the input file").len();
-    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(len)));
+    let file = File::open(&path).expect("open the input file");
+    let mut reader = FileReader::new(file, ReaderConfig::default()).expect("wrap the input file");
     let mut metadata = None;
     loop {
-        match reader.step().expect("reader step") {
-            Step::Need(range) => {
-                let size = usize::try_from(range.len).expect("range length");
-                let mut buf = vec![0u8; size];
-                file.seek(SeekFrom::Start(range.offset)).expect("seek");
-                let read = file.read(&mut buf).expect("read");
-                reader.supply(range.offset, &buf[..read]).expect("supply");
-            }
-            Step::Metadata(found) => {
+        match reader.step().expect("driver step") {
+            DriverStep::Metadata(found) => {
                 metadata = Some(found.clone());
                 break;
             }
-            Step::Done => break,
+            DriverStep::Done => break,
             _ => {}
         }
     }
@@ -44,22 +37,66 @@ fn main() {
 }
 
 fn print(metadata: &MovieMetadata) {
-    for item in &metadata.movie.items {
-        println!("movie: {}", describe(item));
+    describe_scope("movie", &metadata.movie);
+    for (track, track_metadata) in &metadata.tracks {
+        describe_scope(&format!("track {track}"), track_metadata);
     }
-    for (track, metadata) in &metadata.tracks {
-        for item in &metadata.items {
-            println!("track {track}: {}", describe(item));
-        }
+    let movie = &metadata.movie;
+    println!();
+    if let Some(title) = movie.title() {
+        println!("Title: {title}");
+    }
+    if let Some(artist) = movie.artist() {
+        println!("Artist: {artist}");
+    }
+    if let Some(album) = movie.album() {
+        println!("Album: {album}");
+    }
+    if let Some(date) = movie.date() {
+        println!("Date: {date}");
+    }
+    if let Some(genre) = movie.genre() {
+        println!("Genre: {genre}");
+    }
+    if let Some(comment) = movie.comment() {
+        println!("Comment: {comment}");
+    }
+    if let Some(encoder) = movie.encoder() {
+        println!("Encoder: {encoder}");
+    }
+    if let Some((index, total)) = movie.track() {
+        println!("Track: {index}/{total}");
+    }
+    if let Some((index, total)) = movie.disc() {
+        println!("Disc: {index}/{total}");
+    }
+    if let Some(art) = movie.cover_art() {
+        println!(
+            "Cover art: {} bytes of type {}",
+            art.bytes.len(),
+            art.data_type
+        );
+    }
+    if let Some(location) = movie.location() {
+        println!("Location: {}", location.as_str());
+    }
+    if !movie.chapters().is_empty() {
+        println!("Chapters: {}", movie.chapters().len());
+    }
+}
+
+fn describe_scope(scope: &str, metadata: &Metadata) {
+    for item in &metadata.items {
+        println!("{scope}: {}", describe(item));
     }
 }
 
 fn describe(item: &MetadataItem) -> String {
     match item {
-        MetadataItem::Text { key, value, .. } => format!("{key:?} = {value:?}"),
-        MetadataItem::Number { key, value, .. } => format!("{key:?} = {value}"),
+        MetadataItem::Text { key, value, .. } => format!("{key} = {value:?}"),
+        MetadataItem::Number { key, value, .. } => format!("{key} = {value}"),
         MetadataItem::Pair { key, index, total } => {
-            format!("{key:?} = {index}/{total}")
+            format!("{key} = {index}/{total}")
         }
         MetadataItem::Binary {
             key,
@@ -67,7 +104,7 @@ fn describe(item: &MetadataItem) -> String {
             bytes,
             ..
         } => {
-            format!("{key:?} = {} bytes of type {data_type}", bytes.len())
+            format!("{key} = {} bytes of type {data_type}", bytes.len())
         }
         MetadataItem::Freeform { mean, name, values } => {
             format!("{mean}/{name} = {} value(s)", values.len())

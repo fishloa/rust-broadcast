@@ -503,3 +503,196 @@ fn a_file_with_no_index_reports_no_index() {
         "a file with neither sidx nor mfra is NoIndex, got {seek_error:?}"
     );
 }
+
+/// One event of the walk, in the order the reader produced it.
+#[derive(Debug, Clone, Copy)]
+enum Event {
+    Need(ByteRange),
+    Fragment,
+    Sample,
+    Other,
+}
+
+/// Drive `bytes`, recording every event in order.
+fn record(bytes: &[u8], order: SampleOrder) -> Vec<Event> {
+    let mut reader = Reader::new(config(bytes, order));
+    let mut events = Vec::new();
+    for _ in 0..1_000_000 {
+        match reader.step() {
+            Ok(Step::Need(range)) => {
+                events.push(Event::Need(range));
+                let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
+                let end = usize::try_from(range.end()).unwrap_or(usize::MAX);
+                if reader
+                    .supply(range.offset, bytes.get(start..end).unwrap_or(&[]))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(Step::Fragment(_)) => events.push(Event::Fragment),
+            Ok(Step::Sample(_)) => events.push(Event::Sample),
+            Ok(Step::Done) | Err(_) => break,
+            Ok(_) => events.push(Event::Other),
+        }
+    }
+    events
+}
+
+/// Every top-level `mdat`'s box start and payload start.
+fn mdat_starts(bytes: &[u8]) -> Vec<(u64, u64)> {
+    isobmff::BoxIter::clamped(bytes)
+        .filter_map(|b| b.ok())
+        .filter(|b| b.header.box_type.is(b"mdat"))
+        .map(|b| (b.start as u64, b.payload_start() as u64))
+        .collect()
+}
+
+#[test]
+fn a_fragment_is_emitted_before_the_walk_leaves_its_mdat() {
+    let mut exercised = 0usize;
+    for (key, bytes) in fragments_fixtures() {
+        let events = record(&bytes, SampleOrder::DecodeTime);
+        if !events.iter().any(|event| matches!(event, Event::Fragment)) {
+            continue;
+        }
+        let mdats = mdat_starts(&bytes);
+        let mut fragments = 0usize;
+        for (index, event) in events.iter().enumerate() {
+            if !matches!(event, Event::Fragment) {
+                continue;
+            }
+            let Some((anchor_index, anchor)) =
+                events[..index]
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find_map(|(at, earlier)| match earlier {
+                        Event::Need(range) => Some((at, *range)),
+                        _ => None,
+                    })
+            else {
+                continue;
+            };
+            let Some((_, payload_start)) = mdats
+                .iter()
+                .find(|(box_start, _)| *box_start == anchor.offset)
+            else {
+                panic!(
+                    "{key}: fragment {fragments} was emitted after a need at {} that is not an \
+                     mdat header: the mdat payload was already passed",
+                    anchor.offset
+                );
+            };
+            let last_sample = events[index + 1..]
+                .iter()
+                .position(|later| !matches!(later, Event::Sample))
+                .map_or(events.len() - 1, |offset| index + offset);
+            for later in &events[anchor_index + 1..=last_sample] {
+                if let Event::Need(range) = later {
+                    assert!(
+                        range.offset < *payload_start,
+                        "{key}: fragment {fragments} asked for {} before its samples, past the \
+                         mdat payload start {payload_start}",
+                        range.offset
+                    );
+                }
+            }
+            fragments += 1;
+        }
+        if fragments > 0 {
+            exercised += 1;
+        }
+    }
+    assert!(
+        exercised >= MIN_FRAGMENTED_FIXTURES,
+        "only {exercised} fragmented fixtures exercised"
+    );
+}
+
+/// The absolute offset of the first `trun`'s `data_offset` field inside `moof`.
+fn first_trun_data_offset(moof: &isobmff::BoxItem<'_>) -> Option<usize> {
+    const DATA_OFFSET_PRESENT: u32 = 1;
+    const TRUN_FIXED_BODY: usize = 8;
+    let moof_body = moof.start + (moof.bytes.len() - moof.body.len());
+    for traf in moof.children().filter_map(|child| child.ok()) {
+        if traf.four_cc() != *b"traf" {
+            continue;
+        }
+        let traf_body = moof_body + traf.start + (traf.bytes.len() - traf.body.len());
+        for trun in traf.children().filter_map(|child| child.ok()) {
+            if trun.four_cc() != *b"trun" {
+                continue;
+            }
+            let flags = broadcast_common::wire::u32_at(trun.body, 0) & 0x00ff_ffff;
+            if flags & DATA_OFFSET_PRESENT == 0 {
+                return None;
+            }
+            let header = trun.bytes.len() - trun.body.len();
+            return Some(traf_body + trun.start + header + TRUN_FIXED_BODY);
+        }
+    }
+    None
+}
+
+#[test]
+fn a_run_pointing_into_the_second_mdat_after_the_moof_still_resolves() {
+    const PAYLOAD_LEN: usize = 16;
+    let bytes = test_fixtures::read("mp4/frag/h264-high.frag.mp4");
+    let moof = isobmff::BoxIter::clamped(&bytes)
+        .filter_map(|b| b.ok())
+        .find(|b| b.header.box_type.is(b"moof"))
+        .expect("the fixture has a moof");
+    let mdat = isobmff::BoxIter::clamped(&bytes)
+        .filter_map(|b| b.ok())
+        .find(|b| b.header.box_type.is(b"mdat"))
+        .expect("the fixture has an mdat");
+    let field = first_trun_data_offset(&moof).expect("the fixture's trun carries a data_offset");
+    let payload_start = mdat.payload_start();
+
+    // The decoy `mdat` sits between the `moof` and the media the run addresses,
+    // so a reader that stops resolving at the first `mdat` after the `moof`
+    // cannot address the samples at all.
+    let decoy_size = 8 + PAYLOAD_LEN;
+    let mut file = bytes[..moof.end].to_vec();
+    let data_offset = i32::from_be_bytes(
+        file[field..field + 4]
+            .try_into()
+            .expect("four bytes of data_offset"),
+    );
+    let shifted = data_offset + i32::try_from(decoy_size).expect("decoy size");
+    file[field..field + 4].copy_from_slice(&shifted.to_be_bytes());
+    assert_eq!(
+        i32::from_be_bytes(file[field..field + 4].try_into().expect("four bytes")),
+        shifted
+    );
+    let mut decoy = Vec::new();
+    decoy.extend_from_slice(&u32::try_from(decoy_size).expect("size").to_be_bytes());
+    decoy.extend_from_slice(b"mdat");
+    decoy.resize(decoy_size, 0);
+    file.extend_from_slice(&decoy);
+    file.extend_from_slice(&bytes[mdat.start..]);
+    let shifted_payload =
+        u64::try_from(payload_start + decoy_size).expect("the shifted payload start");
+
+    let outcome = drive(&file, config(&file, SampleOrder::File)).expect("drive the synthetic file");
+    assert!(!outcome.samples.is_empty(), "the fragments carry samples");
+    for sample in &outcome.samples {
+        let start = usize::try_from(sample.offset).expect("offset");
+        assert!(
+            sample.offset >= shifted_payload,
+            "sample at {} is not in the second mdat (payload starts {shifted_payload})",
+            sample.offset
+        );
+        let end = start + usize::try_from(sample.size).expect("size");
+        let original = usize::try_from(sample.offset - u64::try_from(decoy_size).expect("decoy"))
+            .expect("original offset");
+        assert_eq!(
+            &file[start..end],
+            &bytes[original..original + (end - start)],
+            "the sample bytes come from the media the run addresses"
+        );
+    }
+    let expected = expected(&file);
+    assert_eq!(outcome.fragments.len(), expected.len());
+}

@@ -12,6 +12,11 @@
 //! media it has not read, so that file is the reader's typed
 //! [`Error::MoovAfterMdatForwardOnly`].
 //!
+//! Both drivers report the movie's and each track's typed metadata as
+//! [`DriverStep::Metadata`], and [`ForwardReader::read_sample`] reads the
+//! samples of a fragmented file in file order, which is what makes a pipe or a
+//! socket source work.
+//!
 //! See the streaming-first design §4.2 and ISO/IEC 14496-12:2026 §4.2, §8.2
 //! (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`).
 
@@ -155,6 +160,9 @@ pub enum DriverStep<'a> {
     Fragment(crate::reader::FragmentInfo),
     /// One sample descriptor, in the configured order.
     Sample(SampleRef),
+    /// The movie's and each track's typed metadata. Emitted once, after
+    /// [`DriverStep::Tracks`], only when the file carries `udta` or `meta`.
+    Metadata(&'a crate::metadata::MovieMetadata),
     /// No more steps.
     Done,
 }
@@ -166,6 +174,7 @@ pub struct FileReader<R> {
     reader: Reader,
     config: ReaderConfig,
     tracks: Vec<TrackInfo>,
+    metadata: Option<crate::metadata::MovieMetadata>,
     buffer: Vec<u8>,
 }
 
@@ -185,6 +194,7 @@ impl<R: Read + Seek> FileReader<R> {
             reader: Reader::new(config.clone()),
             config,
             tracks: Vec::new(),
+            metadata: None,
             buffer: Vec::new(),
         })
     }
@@ -201,7 +211,9 @@ impl<R: Read + Seek> FileReader<R> {
                 }
                 Advance::Fragment(info) => return Ok(DriverStep::Fragment(info)),
                 Advance::Sample(sample) => return Ok(DriverStep::Sample(sample)),
-                Advance::Metadata(_) => {}
+                Advance::Metadata(metadata) => {
+                    return Ok(DriverStep::Metadata(self.metadata.insert(metadata)));
+                }
                 Advance::Done => return Ok(DriverStep::Done),
             }
         }
@@ -268,12 +280,19 @@ impl<R: Read + Seek> FileReader<R> {
 /// reached by reading and discarding through one fixed [`DISCARD_CHUNK_BYTES`]
 /// buffer. A demand behind it is the reader's typed
 /// [`Error::MoovAfterMdatForwardOnly`].
+///
+/// Samples are handed out in file order whatever `config` asked for: the reader
+/// then emits each sample's data at or after the bytes already consumed, which
+/// is what makes [`ForwardReader::read_sample`] work over a pipe on a
+/// fragmented input. A `SampleOrder::DecodeTime` order across the tracks of one
+/// fragment is not file order, so this driver replaces it.
 #[derive(Debug)]
 pub struct ForwardReader<R> {
     inner: R,
     reader: Reader,
     config: ReaderConfig,
     tracks: Vec<TrackInfo>,
+    metadata: Option<crate::metadata::MovieMetadata>,
     pos: u64,
     buffer: Vec<u8>,
     scratch: Vec<u8>,
@@ -281,15 +300,19 @@ pub struct ForwardReader<R> {
 }
 
 impl<R: Read> ForwardReader<R> {
-    /// Wrap `inner`, forcing the reader to a forward-only source.
+    /// Wrap `inner`, forcing the reader to a forward-only source and to
+    /// file-order samples.
     #[must_use]
     pub fn new(inner: R, config: ReaderConfig) -> Self {
-        let config = config.with_source(Source::ForwardOnly);
+        let config = config
+            .with_source(Source::ForwardOnly)
+            .with_order(SampleOrder::File);
         Self {
             inner,
             reader: Reader::new(config.clone()),
             config,
             tracks: Vec::new(),
+            metadata: None,
             pos: 0,
             buffer: Vec::new(),
             scratch: vec![0u8; DISCARD_CHUNK_BYTES],
@@ -309,7 +332,9 @@ impl<R: Read> ForwardReader<R> {
                 }
                 Advance::Fragment(info) => return Ok(DriverStep::Fragment(info)),
                 Advance::Sample(sample) => return Ok(DriverStep::Sample(sample)),
-                Advance::Metadata(_) => {}
+                Advance::Metadata(metadata) => {
+                    return Ok(DriverStep::Metadata(self.metadata.insert(metadata)));
+                }
                 Advance::Done => return Ok(DriverStep::Done),
             }
         }

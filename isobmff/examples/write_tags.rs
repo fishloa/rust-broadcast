@@ -6,10 +6,11 @@
 
 use std::env;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Write;
 
-use isobmff::metadata::{ItemKey, Metadata, MetadataItem, TextLocale};
-use isobmff::{Reader, ReaderConfig, Step};
+use isobmff::ReaderConfig;
+use isobmff::driver::{DriverStep, FileReader};
+use isobmff::metadata::{ItemKey, Metadata};
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -21,20 +22,8 @@ fn main() {
         eprintln!("usage: write_tags <INPUT> <OUTPUT>");
         std::process::exit(2);
     });
-    let metadata = read_metadata(&input);
-    let mut metadata = metadata.unwrap_or_default();
-    metadata
-        .items
-        .retain(|item| item.key() != Some(&ItemKey::FourCc(*b"\xa9nam")));
-    metadata.items.push(MetadataItem::Text {
-        key: ItemKey::FourCc(*b"\xa9nam"),
-        value: "Written by isobmff".into(),
-        locale: TextLocale::Itunes {
-            data_type: isobmff::metadata::ilst::DATA_TYPE_UTF8,
-            country: 0,
-            language: 0,
-        },
-    });
+    let mut metadata = read_metadata(&input).unwrap_or_default();
+    metadata.set_text(&ItemKey::TITLE, "Written by isobmff");
     let bytes = metadata.to_udta_bytes().expect("metadata writes");
     File::create(&output)
         .and_then(|mut file| file.write_all(&bytes))
@@ -43,20 +32,12 @@ fn main() {
 }
 
 fn read_metadata(path: &str) -> Option<Metadata> {
-    let mut file = File::open(path).expect("open the input file");
-    let len = file.metadata().expect("stat the input file").len();
-    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(len)));
+    let file = File::open(path).expect("open the input file");
+    let mut reader = FileReader::new(file, ReaderConfig::default()).expect("wrap the input file");
     loop {
-        match reader.step().expect("reader step") {
-            Step::Need(range) => {
-                let size = usize::try_from(range.len).expect("range length");
-                let mut buf = vec![0u8; size];
-                file.seek(SeekFrom::Start(range.offset)).expect("seek");
-                let read = file.read(&mut buf).expect("read");
-                reader.supply(range.offset, &buf[..read]).expect("supply");
-            }
-            Step::Metadata(found) => return Some(found.movie.clone()),
-            Step::Done => return None,
+        match reader.step().expect("driver step") {
+            DriverStep::Metadata(found) => return Some(found.movie.clone()),
+            DriverStep::Done => return None,
             _ => {}
         }
     }

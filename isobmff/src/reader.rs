@@ -11,11 +11,15 @@
 //!
 //! A fragmented file (a `moov` with `mvex`) is walked one `moof` at a time:
 //! the fragment's box is read under [`Limits::max_fragment_bytes`], its `trex`
-//! defaults applied, the following `mdat` payload ranges learned from their
-//! headers, and [`Step::Fragment`] followed by one [`Step::Sample`] per sample
-//! is emitted before that `moof` is dropped. Fragment sample data is addressed
-//! by [`crate::frag_offsets`] with those ranges, never with a slice of the
-//! file, so no byte inside an `mdat` payload is ever requested.
+//! defaults applied, and the following `mdat` payload ranges learned from their
+//! headers. [`Step::Fragment`] followed by one [`Step::Sample`] per sample is
+//! emitted as soon as every run of the fragment's `traf`s resolves inside the
+//! payloads located so far, before the walk asks for anything past that media,
+//! so a forward-only source still has the sample bytes ahead of it. A run that
+//! addresses a later `mdat` keeps the fragment pending until that box is
+//! located. Fragment sample data is addressed by [`crate::frag_offsets`] with
+//! those ranges, never with a slice of the file, so no byte inside an `mdat`
+//! payload is ever requested.
 //!
 //! Driving is [`Reader::step`] / [`Reader::supply`]: each `step` returns either
 //! a [`Step::Need`] range to supply or a typed step, and `supply` accepts
@@ -370,6 +374,29 @@ struct SeekRequest {
 enum FragmentStep {
     Fragment(FragmentInfo),
     Sample(SampleRef),
+}
+
+/// One fragment resolved against the `mdat` payloads located so far, before
+/// the reader's per-track cursors are advanced.
+#[derive(Debug)]
+struct ResolvedFragment {
+    info: FragmentInfo,
+    samples: Vec<SampleRef>,
+    /// Per track: the `moov` track index, the decode time after the fragment
+    /// and the sample count after it.
+    cursors: Vec<(usize, u64, u32)>,
+}
+
+/// What the walk does with a fragment whose runs do not all resolve inside the
+/// `mdat` payloads located so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unresolved {
+    /// A `mdat` later in the file may still hold the data: leave the fragment
+    /// pending and keep walking.
+    Keep,
+    /// Nothing more can arrive for it, so the resolver's own error is the
+    /// caller's.
+    Fail,
 }
 
 /// A fragment whose samples are resolved and waiting to be handed out.
@@ -795,7 +822,7 @@ impl Reader {
                         return Ok(Step::Need(pending.range()));
                     }
                 }
-                self.finish_fragment()?;
+                self.finish_fragment(Unresolved::Fail)?;
                 if let Some(step) = self.next_fragment_step() {
                     return Ok(match step {
                         FragmentStep::Fragment(info) => Step::Fragment(info),
@@ -936,7 +963,7 @@ impl Reader {
             // The fragments a demuxer holds before their `mdat` share one
             // zero-width `trun` allowance; this reader holds one `moof` at a
             // time, so each gets a fresh one.
-            self.finish_fragment()?;
+            self.finish_fragment(Unresolved::Fail)?;
             if size > self.config.limits.max_fragment_bytes() {
                 return Err(Error::LimitExceeded {
                     what: "fragment size",
@@ -969,11 +996,18 @@ impl Reader {
             // A box other than `mdat`/`free` after a fragment's media ends that
             // fragment; nothing is consumed here, so the walk reads this header
             // again as the next step's first box.
-            self.finish_fragment()?;
+            self.finish_fragment(Unresolved::Fail)?;
             self.pos = offset;
             return Ok(());
         }
         self.pos = end;
+        if header.box_type.is(b"mdat") {
+            // Every run of a fragment that resolves inside the `mdat` payloads
+            // located so far is complete now: hand it out before the walk asks
+            // for the header after its media, so a forward-only source has not
+            // yet passed that payload.
+            self.finish_fragment(Unresolved::Keep)?;
+        }
         Ok(())
     }
 
@@ -1059,17 +1093,52 @@ impl Reader {
 
     /// Resolve the pending fragment's samples into [`Reader::ready`].
     ///
-    /// Nothing is resolved until the `moof` box has been supplied; a fragment
-    /// with no `moof` yet (its body was never supplied because the input ended
-    /// inside it) leaves [`Reader::ready`] empty, and a truncated fragment's
-    /// samples fail the resolver's own bounds.
-    fn finish_fragment(&mut self) -> Result<()> {
+    /// A fragment with no `moof` yet (its body was never supplied because the
+    /// input ended inside it) leaves [`Reader::ready`] empty. When a run does
+    /// not resolve inside the `mdat` payloads located so far, `unresolved`
+    /// decides whether that is the end of the fragment ([`Unresolved::Fail`])
+    /// or a fragment still waiting for a later `mdat` ([`Unresolved::Keep`]).
+    fn finish_fragment(&mut self, unresolved: Unresolved) -> Result<()> {
         let Some(state) = self.fragment.take() else {
             return Ok(());
         };
-        let Some(moof) = state.moof else {
+        let Some(moof) = state.moof.as_ref() else {
             return Ok(());
         };
+        let resolved = match self.resolve_fragment(&state, moof) {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                if unresolved == Unresolved::Keep {
+                    self.fragment = Some(state);
+                    return Ok(());
+                }
+                return Err(err);
+            }
+        };
+        for (index, decode_time, count) in resolved.cursors {
+            self.decode_times[index] = decode_time;
+            self.sample_counts[index] = count;
+        }
+        self.ready = Some(ReadyFragment {
+            info: resolved.info,
+            samples: resolved.samples,
+            next: 0,
+            emitted: false,
+        });
+        Ok(())
+    }
+
+    /// One fragment's samples, addressed through [`sample_ranges_in_run`]
+    /// against the `mdat` payloads located so far, in the configured order.
+    ///
+    /// A run whose data a later `mdat` may hold is the resolver's own
+    /// `InvalidInput`, which [`Reader::finish_fragment`] decides whether to
+    /// treat as "not yet".
+    fn resolve_fragment(
+        &self,
+        state: &FragmentState,
+        moof: &MovieFragmentBox,
+    ) -> Result<ResolvedFragment> {
         // The fragment's own media: a sample must live inside one of these
         // payloads, so non-overlapping samples cannot total more than they do.
         let budget = state.mdats.iter().fold(0u64, |total, range| {
@@ -1078,6 +1147,7 @@ impl Reader {
         let mut copied_bytes = 0u64;
         let mut rows: Vec<(usize, SampleRef)> = Vec::new();
         let mut present: Vec<TrackId> = Vec::new();
+        let mut cursors: Vec<(usize, u64, u32)> = Vec::new();
         for traf in &moof.traf {
             let track_id = traf.tfhd.track_id;
             let Some(index) = self
@@ -1090,11 +1160,14 @@ impl Reader {
             present.push(track_id);
             let base = match &traf.tfdt {
                 Some(tfdt) => tfdt.base_media_decode_time(),
-                None => self.decode_times[index],
+                None => cursors
+                    .iter()
+                    .find(|slot| slot.0 == index)
+                    .map_or(self.decode_times[index], |slot| slot.1),
             };
             let ranges = sample_ranges_in_run(
                 state.offset,
-                &moof,
+                moof,
                 track_id,
                 &state.mdats,
                 budget,
@@ -1112,13 +1185,17 @@ impl Reader {
                 })
                 .unwrap_or(DEFAULT_DESCRIPTION_INDEX);
             let mut decode_time = base;
+            let mut count = cursors
+                .iter()
+                .find(|slot| slot.0 == index)
+                .map_or(self.sample_counts[index], |slot| slot.2);
             for (range, aux) in ranges.into_iter().zip(auxes) {
                 let composition_offset = i32::try_from(range.composition_offset).map_err(|_| {
                     Error::InvalidInput("sample composition offset leaves the signed 32-bit range")
                 })?;
                 let sample = SampleRef {
                     track: track_id,
-                    index: self.sample_counts[index],
+                    index: count,
                     decode_time,
                     composition_offset,
                     duration: range.duration,
@@ -1129,11 +1206,17 @@ impl Reader {
                     description_index,
                     aux,
                 };
-                self.sample_counts[index] = self.sample_counts[index].saturating_add(1);
+                count = count.saturating_add(1);
                 rows.push((index, sample));
                 decode_time = decode_time.saturating_add(u64::from(range.duration));
             }
-            self.decode_times[index] = decode_time;
+            match cursors.iter_mut().find(|slot| slot.0 == index) {
+                Some(slot) => {
+                    slot.1 = decode_time;
+                    slot.2 = count;
+                }
+                None => cursors.push((index, decode_time, count)),
+            }
         }
         let order = self.config.order;
         let tracks = &self.tracks;
@@ -1148,17 +1231,15 @@ impl Reader {
                 *right_index,
             )
         });
-        self.ready = Some(ReadyFragment {
+        Ok(ResolvedFragment {
             info: FragmentInfo {
                 sequence_number: moof.mfhd.sequence_number,
                 moof: state.range,
                 tracks: present,
             },
             samples: rows.into_iter().map(|(_, sample)| sample).collect(),
-            next: 0,
-            emitted: false,
-        });
-        Ok(())
+            cursors,
+        })
     }
 
     /// The next step of a resolved fragment, clearing it once its samples are

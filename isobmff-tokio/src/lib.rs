@@ -11,6 +11,10 @@
 //! [`ReaderConfig`] names none, [`AsyncFileReader::new`]
 //! seeks to the end to learn it, so a box of size 0 can run to the end of the
 //! file.
+//!
+//! There is no forward-only form here: the driver requires `AsyncSeek`, so
+//! every demand and every sample is reached directly and
+//! [`AsyncFileReader::read_sample`] works on a fragmented file.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -29,6 +33,7 @@ pub struct AsyncFileReader<R> {
     reader: Reader,
     config: ReaderConfig,
     tracks: Vec<TrackInfo>,
+    metadata: Option<isobmff::metadata::MovieMetadata>,
     buffer: Vec<u8>,
 }
 
@@ -48,6 +53,7 @@ impl<R: AsyncRead + AsyncSeek + Unpin> AsyncFileReader<R> {
             reader: Reader::new(config.clone()),
             config,
             tracks: Vec::new(),
+            metadata: None,
             buffer: Vec::new(),
         })
     }
@@ -64,7 +70,9 @@ impl<R: AsyncRead + AsyncSeek + Unpin> AsyncFileReader<R> {
                 }
                 Advance::Fragment(info) => return Ok(DriverStep::Fragment(info)),
                 Advance::Sample(sample) => return Ok(DriverStep::Sample(sample)),
-                Advance::Metadata(_) => {}
+                Advance::Metadata(metadata) => {
+                    return Ok(DriverStep::Metadata(self.metadata.insert(metadata)));
+                }
                 Advance::Done => return Ok(DriverStep::Done),
             }
         }

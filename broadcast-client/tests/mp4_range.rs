@@ -206,3 +206,40 @@ fn the_window_never_exceeds_the_stated_bound() {
     }
     assert!(bound >= MIN_FETCH);
 }
+
+#[test]
+fn a_range_driver_reports_the_movie_metadata() {
+    let Some(bytes) = test_fixtures::require_bytes("mp4/tags/lavf-tagged.m4a", "mp4_range") else {
+        return;
+    };
+    let config = ReaderConfig::default().with_order(SampleOrder::File);
+    let mut reader = RangeReader::new(config, MIN_FETCH);
+    let mut server = Server {
+        bytes: &bytes,
+        requests: 0,
+    };
+    let mut title = None;
+    loop {
+        let fetch = match reader.poll().expect("poll") {
+            RangeAction::Fetch { offset, len } => ByteRange { offset, len },
+            RangeAction::Step(DriverStep::Metadata(metadata)) => {
+                title = metadata
+                    .movie
+                    .text(&isobmff::metadata::ItemKey::TITLE)
+                    .map(str::to_string);
+                continue;
+            }
+            RangeAction::Step(_) => continue,
+            RangeAction::Done => break,
+            _ => continue,
+        };
+        let (body, total) = server.get(fetch);
+        reader
+            .on_status(StatusCode::PARTIAL_CONTENT)
+            .expect("partial content");
+        reader
+            .on_range(fetch.offset, &body, total)
+            .expect("range body");
+    }
+    assert_eq!(title.as_deref(), Some("Test Tone"));
+}
