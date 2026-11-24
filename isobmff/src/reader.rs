@@ -326,7 +326,7 @@ impl Reader {
             self.bytes_requested = self.bytes_requested.saturating_add(got.len);
         }
         match pending {
-            Pending::Header(range) => self.accept_header(range.offset, bytes),
+            Pending::Header(range) => self.accept_header(range, bytes),
             Pending::Moov(_) => self.accept_moov(bytes),
         }
     }
@@ -429,18 +429,9 @@ impl Reader {
     fn next_header_range(&mut self) -> Result<Option<ByteRange>> {
         let len = match self.config.total_len {
             Some(total) if self.pos >= total => return Ok(None),
-            Some(total) => (total - self.pos).min(MAX_BOX_HEADER_BYTES),
-            None => MAX_BOX_HEADER_BYTES,
+            Some(total) => (total - self.pos).min(MIN_BOX_HEADER_BYTES),
+            None => MIN_BOX_HEADER_BYTES,
         };
-        if len < MIN_BOX_HEADER_BYTES {
-            return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: BOX_HEADER_MIN_SIZE,
-                    have: usize::try_from(len).unwrap_or(usize::MAX),
-                    what: "top-level box header",
-                },
-            ));
-        }
         self.request(self.pos, len).map(Some)
     }
 
@@ -453,7 +444,8 @@ impl Reader {
         Ok(range)
     }
 
-    fn accept_header(&mut self, offset: u64, bytes: &[u8]) -> Result<()> {
+    fn accept_header(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
+        let offset = range.offset;
         if bytes.len() < BOX_HEADER_MIN_SIZE {
             if bytes.is_empty() && self.at_end(offset) {
                 self.done = true;
@@ -466,6 +458,32 @@ impl Reader {
                     what: "top-level box header",
                 },
             ));
+        }
+        let raw_size = broadcast_common::wire::u32_at(bytes, 0);
+        let uuid = &bytes[4..8] == b"uuid";
+        let largesize = raw_size == crate::box_types::SIZE_INDICATES_LARGESIZE;
+        let required = MIN_BOX_HEADER_BYTES
+            .saturating_add(if largesize {
+                crate::box_types::LARGESIZE_SIZE as u64
+            } else {
+                0
+            })
+            .saturating_add(if uuid {
+                crate::box_types::UUID_TYPE_SIZE as u64
+            } else {
+                0
+            })
+            .min(MAX_BOX_HEADER_BYTES);
+        let supplied = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        if supplied < required && range.len < required {
+            let len = match self.config.total_len {
+                Some(total) => total.saturating_sub(offset).min(required),
+                None => required,
+            };
+            if len > range.len {
+                self.pending = Some(Pending::Header(ByteRange { offset, len }));
+                return Ok(());
+            }
         }
         let header = BoxHeader::parse(bytes)?;
         let size = if header.size == 0 {

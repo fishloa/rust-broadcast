@@ -5,7 +5,8 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
-use isobmff::{ReadStep, Reader, ReaderConfig, SampleOrder, Step};
+use broadcast_common::Parse;
+use isobmff::{ByteRange, ReadStep, Reader, ReaderConfig, SampleOrder, Step};
 
 #[global_allocator]
 static PEAK: test_alloc::ProcessPeak = test_alloc::ProcessPeak::new();
@@ -43,7 +44,7 @@ impl FileSource {
     }
 }
 
-fn drive(path: &std::path::Path, order: SampleOrder) -> (u64, u64) {
+fn drive(path: &std::path::Path, order: SampleOrder) -> (u64, u64, Vec<ByteRange>) {
     let file = File::open(path).expect("open generated mp4");
     let length = file.metadata().expect("metadata").len();
     let mut source = FileSource { file, length };
@@ -52,11 +53,15 @@ fn drive(path: &std::path::Path, order: SampleOrder) -> (u64, u64) {
         .with_order(order);
     let mut reader = Reader::new(config);
     let mut samples = 0u64;
+    let mut requests = Vec::new();
     loop {
         match reader.next().expect("reader step") {
-            Step::Need(range) => source
-                .supply(&mut reader, range.offset, range.len)
-                .expect("supply"),
+            Step::Need(range) => {
+                requests.push(range);
+                source
+                    .supply(&mut reader, range.offset, range.len)
+                    .expect("supply");
+            }
             Step::Tracks(tracks) => assert_eq!(tracks.len(), 2),
             Step::Sample(_) => samples += 1,
             Step::Done => break,
@@ -67,7 +72,31 @@ fn drive(path: &std::path::Path, order: SampleOrder) -> (u64, u64) {
     let requested = reader.bytes_requested();
     #[cfg(not(feature = "scan-counters"))]
     let requested = 0u64;
-    (samples, requested)
+    (samples, requested, requests)
+}
+
+/// `(payload start, box end)` of the file's `mdat`, found from its header.
+fn mdat_payload(path: &std::path::Path) -> (u64, u64) {
+    let mut file = File::open(path).expect("open generated mp4");
+    let length = file.metadata().expect("metadata").len();
+    let mut offset = 0u64;
+    while offset.saturating_add(8) <= length {
+        let mut head = [0u8; 32];
+        file.seek(SeekFrom::Start(offset)).expect("seek header");
+        let read = file.read(&mut head).expect("read header");
+        let header = isobmff::BoxHeader::parse(&head[..read]).expect("header");
+        let size = if header.size == 0 {
+            length - offset
+        } else {
+            header.size
+        };
+        if header.box_type.is(b"mdat") {
+            let payload = offset.saturating_add(header.header_size() as u64);
+            return (payload, offset.saturating_add(size));
+        }
+        offset = offset.saturating_add(size);
+    }
+    panic!("generated file has no mdat");
 }
 
 #[test]
@@ -83,8 +112,9 @@ fn a_multi_gigabyte_mp4_costs_only_its_headers() {
         options.moov_first = moov_first;
         let written = test_harness::big_media::write_big_mp4(&path, &options);
         PEAK.reset();
-        let (peak, (samples, requested)) =
+        let (peak, (samples, requested, requests)) =
             PEAK.peak_during(|| drive(&path, SampleOrder::DecodeTime));
+        let (payload_start, mdat_end) = mdat_payload(&path);
         std::fs::remove_file(&path).expect("remove generated file");
         assert_eq!(samples, u64::from(base.sample_count) * 2);
         let budget =
@@ -102,5 +132,11 @@ fn a_multi_gigabyte_mp4_costs_only_its_headers() {
         );
         #[cfg(not(feature = "scan-counters"))]
         let _ = requested;
+        for range in requests {
+            assert!(
+                range.end() <= payload_start || range.offset >= mdat_end,
+                "request {range:?} overlaps the mdat payload [{payload_start}, {mdat_end})"
+            );
+        }
     }
 }
