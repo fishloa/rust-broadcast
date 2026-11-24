@@ -819,15 +819,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5848f5a9e8117cf94f2f90faac24a87ff81600ff8628c1e3deaab572e76bfa1"
 
 [[package]]
-name = "mp4-emsg"
-version = "0.9.0"
-dependencies = [
- "broadcast-common",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "mpeg-pes"
 version = "0.10.0"
 dependencies = [
@@ -1193,8 +1184,8 @@ dependencies = [
  "broadcast-hls",
  "cc-data",
  "dvb-vbi",
+ "isobmff",
  "jiff",
- "mp4-emsg",
  "scte35-splice",
  "serde",
  "thiserror",
@@ -1260,7 +1251,6 @@ dependencies = [
  "isobmff",
  "jiff",
  "memchr",
- "mp4-emsg",
  "mpeg-pes",
  "mpeg-ps",
  "mpeg-ts",
