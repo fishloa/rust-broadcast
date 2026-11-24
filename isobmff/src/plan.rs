@@ -637,13 +637,19 @@ fn entries_of(info: &TrackInfo) -> Vec<SampleEntry> {
     info.entries
         .iter()
         .map(|entry| match &entry.typed {
-            Some(typed) => SampleEntry::Typed(typed.clone()),
-            None => SampleEntry::Raw {
+            Some(typed) if !quicktime_only(typed) => SampleEntry::Typed(typed.clone()),
+            Some(_) | None => SampleEntry::Raw {
                 fourcc: entry.fourcc,
                 body: entry.body.clone(),
             },
         })
         .collect()
+}
+
+/// Whether a typed entry is QuickTime-only: the writer carries it as its raw
+/// bytes rather than refusing the whole plan (design §4.9).
+fn quicktime_only(entry: &crate::init_segment::SampleEntryVariant) -> bool {
+    entry.is_quicktime_only()
 }
 
 fn track_setup(trak: &TrackBox, info: &TrackInfo, entries: &[SampleEntry]) -> Result<TrackSetup> {

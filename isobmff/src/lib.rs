@@ -117,6 +117,7 @@ pub mod mpegh;
 pub mod nalu_types;
 pub mod opus;
 pub mod plan;
+pub mod quicktime;
 pub mod reader;
 pub mod sample_entries;
 pub mod sample_groups;

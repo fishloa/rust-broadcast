@@ -255,6 +255,8 @@ pub struct TrackInfo {
     /// The `stsd` entries in wire order; `description_index` on a sample is
     /// one-based into this list.
     pub entries: Vec<SampleEntryInfo>,
+    /// The QuickTime track aperture dimensions (`tapt`), when present.
+    pub tapt: Option<crate::quicktime::TrackApertureModeDimensionsBox>,
 }
 
 /// One fragment (`moof`) the reader is about to hand out samples for.
@@ -1514,6 +1516,11 @@ fn build_track_info(trak: &TrackBox, raw: Vec<RawEntry>) -> Result<TrackInfo> {
         Some(elst) => elst.entries.clone(),
         None => Vec::new(),
     };
+    let tapt = trak
+        .opaque
+        .iter()
+        .find(|b| b.box_type == crate::quicktime::aperture::TAPT)
+        .and_then(|b| crate::quicktime::TrackApertureModeDimensionsBox::parse_body(&b.data).ok());
     Ok(TrackInfo {
         track_id: trak.tkhd.track_id,
         handler: hdlr.handler_type,
@@ -1523,6 +1530,7 @@ fn build_track_info(trak: &TrackBox, raw: Vec<RawEntry>) -> Result<TrackInfo> {
         references,
         edits,
         entries,
+        tapt,
     })
 }
 
