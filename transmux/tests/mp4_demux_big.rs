@@ -123,6 +123,7 @@ fn expected_samples(per_track: &[(u32, u64)]) -> u64 {
 }
 
 fn assert_peak(peak: usize, tag: &str) {
+    eprintln!("mp4 demux peak [{tag}]: {peak} bytes");
     assert!(
         peak <= PEAK_BUDGET,
         "{tag}: peak {peak} bytes exceeds the {PEAK_BUDGET}-byte budget for a \
