@@ -16,12 +16,12 @@ use broadcast_common::len::{need_in, need_out};
 use crate::error::{Error, Result};
 use crate::time::{BreakDuration, SpliceTime};
 use crate::traits::CommandDef;
+use crate::{CANCEL_INDICATOR_MASK, U16_LEN, U32_LEN, be};
 use broadcast_common::{Parse, Serialize};
 
 /// `splice_command_type` for splice_insert (§9.6.1, Table 7).
 pub const COMMAND_TYPE: u8 = 0x05;
 
-const U16_LEN: usize = core::mem::size_of::<u16>();
 const SPLICE_EVENT_ID_LEN: usize = core::mem::size_of::<u32>();
 /// `splice_event_id` + cancel/compliance byte.
 const SPLICE_INSERT_HEADER_LEN: usize = SPLICE_EVENT_ID_LEN + 1;
@@ -33,14 +33,15 @@ const TRAILER_LEN: usize = U16_LEN + U16_LEN;
 const TRAILER_UNIQUE_PROGRAM_ID_OFFSET: usize = 0;
 const TRAILER_AVAIL_NUM_OFFSET: usize = U16_LEN;
 const TRAILER_AVAILS_EXPECTED_OFFSET: usize = U16_LEN + 1;
-const CANCEL_INDICATOR_MASK: u8 = 0x80;
 const OUT_OF_NETWORK_MASK: u8 = 0x80;
 const PROGRAM_SPLICE_MASK: u8 = 0x40;
+/// Mask of the `duration_flag` bit (splice_insert flags byte).
 const DURATION_FLAG_MASK: u8 = 0x20;
 const SPLICE_IMMEDIATE_MASK: u8 = 0x10;
 const EVENT_ID_COMPLIANCE_MASK: u8 = 0x08;
 const TOP_BIT_SHIFT: u32 = 7;
 const PROGRAM_SPLICE_SHIFT: u32 = 6;
+/// Bit position of `duration_flag` (splice_insert flags byte).
 const DURATION_FLAG_SHIFT: u32 = 5;
 const SPLICE_IMMEDIATE_SHIFT: u32 = 4;
 const EVENT_ID_COMPLIANCE_SHIFT: u32 = 3;
@@ -275,7 +276,7 @@ impl<'a> Parse<'a> for SpliceInsert {
                     what: "splice_insert header",
                 },
             ))?;
-        let splice_event_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[U16_LEN], hdr[U16_LEN + 1]]);
+        let splice_event_id = u32::from_be_bytes(be::<U32_LEN>(hdr, 0)?);
         let cancel = hdr[SPLICE_EVENT_ID_LEN] & CANCEL_INDICATOR_MASK != 0;
         let mut pos = SPLICE_INSERT_HEADER_LEN;
 
@@ -350,10 +351,8 @@ impl<'a> Parse<'a> for SpliceInsert {
                         what: "splice_insert trailer",
                     },
                 ))?;
-        out.unique_program_id = u16::from_be_bytes([
-            trailer[TRAILER_UNIQUE_PROGRAM_ID_OFFSET],
-            trailer[TRAILER_UNIQUE_PROGRAM_ID_OFFSET + 1],
-        ]);
+        out.unique_program_id =
+            u16::from_be_bytes(be::<U16_LEN>(trailer, TRAILER_UNIQUE_PROGRAM_ID_OFFSET)?);
         out.avail_num = trailer[TRAILER_AVAIL_NUM_OFFSET];
         out.avails_expected = trailer[TRAILER_AVAILS_EXPECTED_OFFSET];
         Ok(out)

@@ -23,6 +23,7 @@ use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::section::SpliceInfoSection;
+use crate::{NIBBLE_MASK, U32_LEN, be};
 use broadcast_common::len::{fit_bits, fit_u8};
 use broadcast_common::{Parse, Serialize};
 
@@ -33,13 +34,11 @@ const TEMI_ID_OFFSET: usize = 3;
 const TEMI_DVB_DATA_LEN: usize = 3;
 const TEMI_TOTAL_LEN: usize = 4;
 const TEMI_FIELDS_LEN: usize = 2;
-const NIBBLE_MASK: u8 = 0x0F;
 const EVENT_TYPE_SHIFT: u32 = 4;
 const EVENT_TYPE_MASK: u8 = 0x01;
 const TIMELINE_TYPE_BITS: u32 = 4;
 const RESERVED_BITS: u8 = 0xE0;
 const PRIVATE_DATA_SPECIFIER_LEN: usize = core::mem::size_of::<u32>();
-const U16_LEN: usize = core::mem::size_of::<u16>();
 
 /// `event_type` value for inline carriage (`SCTE_35_section()` follows).
 pub const EVENT_TYPE_INLINE: u8 = 0;
@@ -271,12 +270,7 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
                     what: "DSM-CC_stream_event_payload_binary private_data",
                 });
             }
-            let specifier = u32::from_be_bytes([
-                bytes[pos],
-                bytes[pos + 1],
-                bytes[pos + U16_LEN],
-                bytes[pos + U16_LEN + 1],
-            ]);
+            let specifier = u32::from_be_bytes(be::<U32_LEN>(bytes, pos)?);
             let pd_bytes = &bytes[pos + 4..pos + private_data_length];
             pos += private_data_length;
             Some(PrivateData {

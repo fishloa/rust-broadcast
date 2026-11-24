@@ -14,6 +14,7 @@
 //! `break_num` (8), `breaks_expected` (8), a reserved nibble + 4-bit
 //! [`EquivalentSegmentationType`], and a trailing variable-length `upid`.
 
+use crate::NIBBLE_MASK;
 use crate::descriptors::header::{self, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
@@ -55,7 +56,6 @@ pub enum EquivalentSegmentationType {
     Reserved(u8),
 }
 
-const NIBBLE_MASK: u8 = 0x0F;
 const NIBBLE_SHIFT: u32 = 4;
 const DAS_TYPE_NIBBLE_OFFSET: usize = 2;
 const MAX_DAS_BODY_LEN: usize = u8::MAX as usize - core::mem::size_of::<u32>();

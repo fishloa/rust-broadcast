@@ -6,6 +6,7 @@
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
+use crate::{U16_LEN, U32_LEN, be};
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
@@ -19,8 +20,6 @@ const TAI_SECONDS_OFFSET: usize = 0;
 const TAI_SECONDS_LEN: usize = 6;
 const TAI_NS_OFFSET: usize = TAI_SECONDS_OFFSET + TAI_SECONDS_LEN;
 const UTC_OFFSET_OFFSET: usize = TAI_NS_OFFSET + core::mem::size_of::<u32>();
-const U16_LEN: usize = core::mem::size_of::<u16>();
-const U32_LEN: usize = core::mem::size_of::<u32>();
 const TAI_SECONDS_MAX: u64 = (1u64 << (TAI_SECONDS_LEN as u32 * u8::BITS)) - 1;
 const TAI_SECONDS_TOP_SHIFT: u32 = 40;
 const TAI_SECONDS_HIGH_SHIFT: u32 = 32;
@@ -78,21 +77,8 @@ impl<'a> Parse<'a> for TimeDescriptor {
             | (u64::from(body[TAI_SECONDS_BYTE_LOW]) << TAI_SECONDS_LOW_SHIFT)
             | (u64::from(body[TAI_SECONDS_BYTE_BOTTOM]) << TAI_SECONDS_BOTTOM_SHIFT)
             | u64::from(body[TAI_SECONDS_BYTE_LAST]);
-        let tai_ns = u32::from_be_bytes(*body[TAI_NS_OFFSET..].first_chunk::<U32_LEN>().ok_or(
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-                need: HEADER_LEN + BODY_LEN,
-                have: bytes.len(),
-                what: "time_descriptor body",
-            }),
-        )?);
-        let utc_offset =
-            u16::from_be_bytes(*body[UTC_OFFSET_OFFSET..].first_chunk::<U16_LEN>().ok_or(
-                Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-                    need: HEADER_LEN + BODY_LEN,
-                    have: bytes.len(),
-                    what: "time_descriptor body",
-                }),
-            )?);
+        let tai_ns = u32::from_be_bytes(be::<U32_LEN>(body, TAI_NS_OFFSET)?);
+        let utc_offset = u16::from_be_bytes(be::<U16_LEN>(body, UTC_OFFSET_OFFSET)?);
         Ok(Self {
             identifier,
             tai_seconds,

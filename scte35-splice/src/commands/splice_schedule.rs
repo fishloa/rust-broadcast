@@ -11,12 +11,12 @@ use broadcast_common::len::{need_in, need_out};
 use crate::error::{Error, Result};
 use crate::time::BreakDuration;
 use crate::traits::CommandDef;
+use crate::{CANCEL_INDICATOR_MASK, U16_LEN, U32_LEN, be};
 use broadcast_common::{Parse, Serialize};
 
 /// `splice_command_type` for splice_schedule (§9.6.1, Table 7).
 pub const COMMAND_TYPE: u8 = 0x04;
 
-const U16_LEN: usize = core::mem::size_of::<u16>();
 const SPLICE_EVENT_ID_LEN: usize = core::mem::size_of::<u32>();
 /// `splice_event_id` + cancel/compliance byte.
 const EVENT_HEADER_LEN: usize = SPLICE_EVENT_ID_LEN + 1;
@@ -29,14 +29,15 @@ const TRAILER_LEN: usize = U16_LEN + U16_LEN;
 const TRAILER_UNIQUE_PROGRAM_ID_OFFSET: usize = 0;
 const TRAILER_AVAIL_NUM_OFFSET: usize = U16_LEN;
 const TRAILER_AVAILS_EXPECTED_OFFSET: usize = U16_LEN + 1;
-const CANCEL_INDICATOR_MASK: u8 = 0x80;
 const COMPLIANCE_INDICATOR_MASK: u8 = 0x40;
 const OUT_OF_NETWORK_MASK: u8 = 0x80;
 const PROGRAM_SPLICE_MASK: u8 = 0x40;
+/// Mask of the `duration_flag` bit (splice_schedule flags byte).
 const DURATION_FLAG_MASK: u8 = 0x20;
 const TOP_BIT_SHIFT: u32 = 7;
 const COMPLIANCE_SHIFT: u32 = 6;
 const PROGRAM_SPLICE_SHIFT: u32 = 6;
+/// Bit position of `duration_flag` (splice_schedule flags byte).
 const DURATION_FLAG_SHIFT: u32 = 5;
 const HEADER_RESERVED_BITS: u8 = 0x3F;
 const FLAGS_RESERVED_BITS: u8 = 0x1F;
@@ -129,7 +130,7 @@ impl SpliceScheduleEvent {
                     what: "splice_schedule event header",
                 },
             ))?;
-        let splice_event_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[U16_LEN], hdr[U16_LEN + 1]]);
+        let splice_event_id = u32::from_be_bytes(be::<U32_LEN>(hdr, 0)?);
         let b = hdr[SPLICE_EVENT_ID_LEN];
         *pos += EVENT_HEADER_LEN;
         let cancel = b & CANCEL_INDICATOR_MASK != 0;
@@ -177,12 +178,8 @@ impl SpliceScheduleEvent {
                     }),
                 )?;
                 let component_tag = comp[0];
-                let utc_splice_time = u32::from_be_bytes([
-                    comp[COMPONENT_UTC_OFFSET],
-                    comp[COMPONENT_UTC_OFFSET + 1],
-                    comp[COMPONENT_UTC_OFFSET + U16_LEN],
-                    comp[COMPONENT_UTC_OFFSET + U16_LEN + 1],
-                ]);
+                let utc_splice_time =
+                    u32::from_be_bytes(be::<U32_LEN>(comp, COMPONENT_UTC_OFFSET)?);
                 *pos += COMPONENT_LEN;
                 ev.components.push(SpliceScheduleComponent {
                     component_tag,
@@ -206,10 +203,8 @@ impl SpliceScheduleEvent {
                         what: "splice_schedule event trailer",
                     },
                 ))?;
-        ev.unique_program_id = u16::from_be_bytes([
-            trailer[TRAILER_UNIQUE_PROGRAM_ID_OFFSET],
-            trailer[TRAILER_UNIQUE_PROGRAM_ID_OFFSET + 1],
-        ]);
+        ev.unique_program_id =
+            u16::from_be_bytes(be::<U16_LEN>(trailer, TRAILER_UNIQUE_PROGRAM_ID_OFFSET)?);
         ev.avail_num = trailer[TRAILER_AVAIL_NUM_OFFSET];
         ev.avails_expected = trailer[TRAILER_AVAILS_EXPECTED_OFFSET];
         *pos += TRAILER_LEN;

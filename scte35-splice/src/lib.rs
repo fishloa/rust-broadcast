@@ -26,6 +26,29 @@ pub mod tracker;
 pub mod traits;
 
 pub use error::{Error, Result};
+
+/// Byte width of a 16-bit field.
+pub(crate) const U16_LEN: usize = core::mem::size_of::<u16>();
+/// Byte width of a 32-bit field.
+pub(crate) const U32_LEN: usize = core::mem::size_of::<u32>();
+/// Mask of a four-bit nibble.
+pub(crate) const NIBBLE_MASK: u8 = 0x0F;
+/// Mask of a `splice_event_cancel_indicator` bit.
+pub(crate) const CANCEL_INDICATOR_MASK: u8 = 0x80;
+/// Copy `N` big-endian bytes at `offset` into an array.
+pub(crate) fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
+    bytes
+        .get(offset..offset + N)
+        .and_then(|s| s.first_chunk::<N>())
+        .copied()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: offset + N,
+                have: bytes.len(),
+                what: "fixed-width big-endian field",
+            },
+        ))
+}
 pub use section::{ClearPayload, SpliceInfoSection};
 pub use tracker::{
     FeedOutcome, MAX_OPEN_EVENTS, NoCue, SpliceEvent, SpliceObservation, SpliceSanity,

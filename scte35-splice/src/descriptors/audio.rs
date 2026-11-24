@@ -53,7 +53,8 @@ impl Default for AudioDescriptor {
     }
 }
 
-const ISO_CODE_LEN: usize = 3;
+/// Byte width of an audio descriptor component's `ISO_code` field (ANSI/SCTE 35 §10.3.4.1, Table 18).
+pub const ISO_CODE_LEN: usize = 3;
 const COMPONENT_TAG_OFFSET: usize = 0;
 const ISO_CODE_OFFSET: usize = 1;
 const PACKED_OFFSET: usize = ISO_CODE_OFFSET + ISO_CODE_LEN;

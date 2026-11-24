@@ -29,6 +29,7 @@ use broadcast_common::len::need_out;
 
 use super::header::{self, CUEI, HEADER_LEN};
 use super::segmentation_enums::{DeviceRestrictions, SegmentationTypeId, SegmentationUpidType};
+use crate::CANCEL_INDICATOR_MASK;
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
 use broadcast_common::{Parse, Serialize};
@@ -48,10 +49,12 @@ const EVENT_ID_AND_FLAGS_LEN: usize = SEGMENTATION_EVENT_ID_LEN + CANCEL_AND_COM
 /// Event ID, cancel/compliance byte, and the program flags byte.
 const SEGMENTATION_HEADER_LEN: usize = EVENT_ID_AND_FLAGS_LEN + 1;
 const FLAGS_OFFSET: usize = EVENT_ID_AND_FLAGS_LEN;
-const CANCEL_INDICATOR_MASK: u8 = 0x80;
 const COMPLIANCE_INDICATOR_MASK: u8 = 0x40;
 const PROGRAM_SEGMENTATION_MASK: u8 = 0x80;
+/// Mask of the segmentation descriptor `duration_flag` bit.
 const DURATION_FLAG_MASK: u8 = 0x40;
+/// Bit position of the segmentation descriptor `duration_flag`.
+const DURATION_FLAG_SHIFT: u32 = 6;
 const DELIVERY_NOT_RESTRICTED_MASK: u8 = 0x20;
 const WEB_DELIVERY_ALLOWED_MASK: u8 = 0x10;
 const NO_REGIONAL_BLACKOUT_MASK: u8 = 0x08;
@@ -60,7 +63,6 @@ const DEVICE_RESTRICTIONS_MASK: u8 = 0x03;
 const CANCEL_INDICATOR_SHIFT: u32 = 7;
 const COMPLIANCE_INDICATOR_SHIFT: u32 = 6;
 const PROGRAM_SEGMENTATION_SHIFT: u32 = 7;
-const DURATION_FLAG_SHIFT: u32 = 6;
 const WEB_DELIVERY_ALLOWED_SHIFT: u32 = 4;
 const NO_REGIONAL_BLACKOUT_SHIFT: u32 = 3;
 const ARCHIVE_ALLOWED_SHIFT: u32 = 2;

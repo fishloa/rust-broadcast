@@ -20,6 +20,7 @@ use crate::descriptor_loop::SpliceDescriptorLoop;
 use crate::descriptors::SpliceDescriptorIter;
 use crate::error::{Error, Result};
 use crate::time::PTS_MAX;
+use crate::{NIBBLE_MASK, U16_LEN, be};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -63,7 +64,6 @@ const DESCRIPTOR_LOOP_LENGTH_LEN: usize = 2;
 const DESCRIPTOR_LOOP_LENGTH_HIGH_SHIFT: u32 = u8::BITS;
 const SPLICE_COMMAND_LENGTH_BITS: u32 = 12;
 const SECTION_LENGTH_MAX: usize = 4093;
-const NIBBLE_MASK: u8 = 0x0F;
 /// Modulus that extracts the low nibble of `tier` (16).
 const TIER_NIBBLE_MODULUS: u16 = 1 << TIER_SHIFT;
 const LOW_BYTE_MASK_U16: u16 = u8::MAX as u16;
@@ -217,10 +217,10 @@ impl<'a> SpliceInfoSection<'a> {
 /// a fixed minimum size, so the first hit is the real length.
 fn derive_command_length(command_type: u8, payload: &[u8]) -> Result<usize> {
     for n in 0..=payload.len().saturating_sub(SECTION_LENGTH_HEADER_LEN) {
-        let Some(dll_bytes) = payload.get(1 + n..1 + n + DESCRIPTOR_LOOP_LENGTH_LEN) else {
+        let Ok(dll_bytes) = be::<U16_LEN>(payload, 1 + n) else {
             break;
         };
-        let dll = usize::from(u16::from_be_bytes([dll_bytes[0], dll_bytes[1]]));
+        let dll = usize::from(u16::from_be_bytes(dll_bytes));
         if 1 + n + DESCRIPTOR_LOOP_LENGTH_LEN + dll != payload.len() {
             continue;
         }
