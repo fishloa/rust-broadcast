@@ -7,6 +7,31 @@ impl<'a> ExtensionBodyDef<'a> for TargetRegionName<'a> {
     const TAG_EXTENSION: u8 = 0x0A;
     const NAME: &'static str = "TARGET_REGION_NAME";
 }
+
+/// Bytes of the leading country_code + ISO_639_language_code header.
+const HEADER_LEN: usize = 2 * ISO_639_LEN;
+/// Offset of the ISO_639_language_code.
+const LANGUAGE_CODE_OFFSET: usize = ISO_639_LEN;
+/// Shift of `region_depth` in the entry flags byte.
+const REGION_DEPTH_SHIFT: u32 = 6;
+/// Mask of `region_name_length` in the entry flags byte.
+const REGION_NAME_LENGTH_MASK: u8 = 0x3F;
+/// Width of `region_name_length`.
+const REGION_NAME_LENGTH_BITS: u32 = 6;
+/// Mask of `region_depth`.
+const REGION_DEPTH_MASK: u8 = 0x03;
+/// Lowest `region_depth` that carries a secondary region code.
+const SECONDARY_REGION_MIN_DEPTH: u8 = 2;
+/// `region_depth` that carries a tertiary region code.
+const TERTIARY_REGION_DEPTH: u8 = 3;
+/// Width of `tertiary_region_code`.
+const TERTIARY_REGION_CODE_LEN: usize = core::mem::size_of::<u16>();
+
+fn decode_lang_code(bytes: &[u8], offset: usize) -> LangCode {
+    let mut code = [0u8; ISO_639_LEN];
+    code.copy_from_slice(&bytes[offset..offset + ISO_639_LEN]);
+    LangCode(code)
+}
 /// target_region_name body (Table 157, §6.4.13). The region loop is unfolded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -40,16 +65,16 @@ pub struct TargetRegionNameEntry<'a> {
 impl<'a> Parse<'a> for TargetRegionName<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        need_in(sel, 2 * ISO_639_LEN, "target_region_name body")?;
-        let country_code = LangCode([sel[0], sel[1], sel[2]]);
-        let iso_639_language_code = LangCode([sel[3], sel[4], sel[5]]);
+        need_in(sel, HEADER_LEN, "target_region_name body")?;
+        let country_code = decode_lang_code(sel, 0);
+        let iso_639_language_code = decode_lang_code(sel, LANGUAGE_CODE_OFFSET);
         let mut regions = Vec::new();
-        let mut pos = 2 * ISO_639_LEN;
+        let mut pos = HEADER_LEN;
         while pos < sel.len() {
             let byte = sel[pos];
             pos += 1;
-            let region_depth = byte >> 6;
-            let name_length = (byte & 0x3F) as usize;
+            let region_depth = byte >> REGION_DEPTH_SHIFT;
+            let name_length = (byte & REGION_NAME_LENGTH_MASK) as usize;
             need_in(sel, pos + name_length, "target_region_name body")?;
             let region_name = DvbText::new(&sel[pos..pos + name_length]);
             pos += name_length;
@@ -64,7 +89,7 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             }
             let primary_region_code = sel[pos];
             pos += 1;
-            let secondary_region_code = if region_depth >= 2 {
+            let secondary_region_code = if region_depth >= SECONDARY_REGION_MIN_DEPTH {
                 if pos >= sel.len() {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
@@ -80,11 +105,11 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             } else {
                 None
             };
-            let tertiary_region_code = if region_depth == 3 {
+            let tertiary_region_code = if region_depth == TERTIARY_REGION_DEPTH {
                 if pos + 1 >= sel.len() {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: pos + 2,
+                            need: pos + TERTIARY_REGION_CODE_LEN,
                             have: sel.len(),
                             what: "target_region_name body",
                         },
@@ -92,16 +117,16 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
                 }
                 let (b, _) = sel
                     .get(pos..)
-                    .and_then(|s| s.split_first_chunk::<2>())
+                    .and_then(|s| s.split_first_chunk::<{ TERTIARY_REGION_CODE_LEN }>())
                     .ok_or(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: pos + 2,
+                            need: pos + TERTIARY_REGION_CODE_LEN,
                             have: sel.len(),
                             what: "target_region_name body",
                         },
                     ))?;
                 let val = u16::from_be_bytes(*b);
-                pos += 2;
+                pos += TERTIARY_REGION_CODE_LEN;
                 Some(val)
             } else {
                 None
@@ -125,7 +150,7 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
 impl Serialize for TargetRegionName<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        2 * ISO_639_LEN
+        HEADER_LEN
             + self
                 .regions
                 .iter()
@@ -136,7 +161,7 @@ impl Serialize for TargetRegionName<'_> {
                     1 + r.region_name.raw().len()
                         + 1
                         + usize::from(r.secondary_region_code.is_some())
-                        + usize::from(r.tertiary_region_code.is_some()) * 2
+                        + usize::from(r.tertiary_region_code.is_some()) * TERTIARY_REGION_CODE_LEN
                 })
                 .sum::<usize>()
     }
@@ -144,14 +169,22 @@ impl Serialize for TargetRegionName<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         buf[..ISO_639_LEN].copy_from_slice(&self.country_code.0);
-        buf[ISO_639_LEN..2 * ISO_639_LEN].copy_from_slice(&self.iso_639_language_code.0);
-        let mut pos = 2 * ISO_639_LEN;
+        buf[ISO_639_LEN..HEADER_LEN].copy_from_slice(&self.iso_639_language_code.0);
+        let mut pos = HEADER_LEN;
         for region in &self.regions {
             let raw = region.region_name.raw();
             let region_name_length =
-                broadcast_common::len::fit_bits(raw.len() as u64, 6, "region_name_length")? as u8;
+                broadcast_common::len::fit_bits(
+                raw.len() as u64,
+                REGION_NAME_LENGTH_BITS,
+                "region_name_length",
+            )? as u8;
             buf[pos] =
-                (broadcast_common::len::fit_mask(region.region_depth, 0x03, "region_depth")? << 6)
+                (broadcast_common::len::fit_mask(
+                    region.region_depth,
+                    REGION_DEPTH_MASK,
+                    "region_depth",
+                )? << REGION_DEPTH_SHIFT)
                     | region_name_length;
             pos += 1;
             buf[pos..pos + raw.len()].copy_from_slice(raw);
@@ -163,8 +196,8 @@ impl Serialize for TargetRegionName<'_> {
                 pos += 1;
             }
             if let Some(tert) = region.tertiary_region_code {
-                buf[pos..pos + 2].copy_from_slice(&tert.to_be_bytes());
-                pos += 2;
+                buf[pos..pos + TERTIARY_REGION_CODE_LEN].copy_from_slice(&tert.to_be_bytes());
+                pos += TERTIARY_REGION_CODE_LEN;
             }
         }
         Ok(len)
