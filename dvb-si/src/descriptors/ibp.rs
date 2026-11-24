@@ -14,6 +14,15 @@ const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 2;
 /// Largest value of the 14-bit `max_gop_length` field.
 const MAX_GOP_LENGTH_MAX: u16 = 0x3FFF;
+/// Mask of `closed_gop_flag` in the first body byte.
+const CLOSED_GOP_FLAG_MASK: u8 = 0x80;
+/// Mask of `identical_gop_flag` in the first body byte.
+const IDENTICAL_GOP_FLAG_MASK: u8 = 0x40;
+/// Mask of the high bits of `max_gop_length` in the first body byte.
+const MAX_GOP_LENGTH_HI_MASK: u16 = 0x3F;
+const CLOSED_GOP_FLAG_SHIFT: u8 = 7;
+const IDENTICAL_GOP_FLAG_SHIFT: u8 = 6;
+const MAX_GOP_LENGTH_HI_SHIFT: u16 = 8;
 
 /// IBP Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,9 +54,11 @@ impl<'a> Parse<'a> for IbpDescriptor {
                 reason: "ibp_descriptor length must equal 2",
             });
         }
-        let closed_gop_flag = (body[0] & 0x80) != 0;
-        let identical_gop_flag = (body[0] & 0x40) != 0;
-        let max_gop_length = ((u16::from(body[0]) & 0x3F) << 8) | u16::from(body[1]);
+        let closed_gop_flag = (body[0] & CLOSED_GOP_FLAG_MASK) != 0;
+        let identical_gop_flag = (body[0] & IDENTICAL_GOP_FLAG_MASK) != 0;
+        let max_gop_length = ((u16::from(body[0]) & MAX_GOP_LENGTH_HI_MASK)
+            << MAX_GOP_LENGTH_HI_SHIFT)
+            | u16::from(body[1]);
         Ok(Self {
             closed_gop_flag,
             identical_gop_flag,
@@ -78,10 +89,11 @@ impl Serialize for IbpDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = ((self.closed_gop_flag as u8) << 7)
-            | ((self.identical_gop_flag as u8) << 6)
-            | ((self.max_gop_length >> 8) as u8 & 0x3F);
-        buf[HEADER_LEN + 1] = (self.max_gop_length & 0xFF) as u8;
+        let max_gop = self.max_gop_length.to_be_bytes();
+        buf[HEADER_LEN] = ((self.closed_gop_flag as u8) << CLOSED_GOP_FLAG_SHIFT)
+            | ((self.identical_gop_flag as u8) << IDENTICAL_GOP_FLAG_SHIFT)
+            | max_gop[0];
+        buf[HEADER_LEN + 1] = max_gop[1];
         Ok(len)
     }
 }

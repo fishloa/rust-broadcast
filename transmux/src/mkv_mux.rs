@@ -212,6 +212,33 @@ const CODEC_A_EAC3: &[u8] = b"A_EAC3";
 
 /// `OpusHead` identification-header magic (RFC 7845 §5.1).
 const OPUS_HEAD_MAGIC: &[u8; 8] = b"OpusHead";
+/// Fixed `OpusHead` header bytes before the optional channel mapping table
+/// (RFC 7845 §5.1).
+const OPUS_HEAD_HEADER_LEN: usize = 19;
+
+/// Largest entry **size** a one-byte EBML VINT holds (RFC 8794 §4).
+const VINT1_MAX: u64 = 0x7E;
+/// Largest entry size a two-byte EBML VINT holds.
+const VINT2_MAX: u64 = 0x3FFE;
+/// Largest entry size a three-byte EBML VINT holds.
+const VINT3_MAX: u64 = 0x1F_FFFE;
+/// Largest entry size a four-byte EBML VINT holds.
+const VINT4_MAX: u64 = 0x0FFF_FFFE;
+/// Largest entry size a five-byte EBML VINT holds.
+const VINT5_MAX: u64 = 0x07_FFFF_FFFE;
+/// Byte width of the VINT encoding selected for sizes above [`VINT1_MAX`].
+const VINT2_WIDTH: usize = 2;
+/// Byte width of the VINT encoding selected for sizes above [`VINT2_MAX`].
+const VINT3_WIDTH: usize = 3;
+/// Byte width of the VINT encoding selected for sizes above [`VINT3_MAX`].
+const VINT4_WIDTH: usize = 4;
+/// Byte width of the VINT encoding selected for sizes above [`VINT4_MAX`].
+const VINT5_WIDTH: usize = 5;
+/// Byte width of the widest VINT this module writes: one `u64` (RFC 8794 §4
+/// caps a VINT at 8 bytes).
+const VINT_MAX_WIDTH: usize = core::mem::size_of::<u64>();
+/// Bits each VINT byte contributes to the encoded value (RFC 8794 §4).
+const VINT_DATA_BITS_PER_BYTE: usize = 7;
 
 // ---------------------------------------------------------------------------
 // EBML element write helpers (RFC 8794 §4)
@@ -228,22 +255,22 @@ const OPUS_HEAD_MAGIC: &[u8; 8] = b"OpusHead";
 /// unreachable for anything this module writes — element sizes, byte offsets,
 /// and track numbers all stay far below that bound in practice).
 fn encode_vint_size(value: u64) -> Vec<u8> {
-    let width: usize = if value <= 0x7E {
+    let width: usize = if value <= VINT1_MAX {
         1
-    } else if value <= 0x3FFE {
-        2
-    } else if value <= 0x1F_FFFE {
-        3
-    } else if value <= 0x0FFF_FFFE {
-        4
-    } else if value <= 0x07_FFFF_FFFE {
-        5
+    } else if value <= VINT2_MAX {
+        VINT2_WIDTH
+    } else if value <= VINT3_MAX {
+        VINT3_WIDTH
+    } else if value <= VINT4_MAX {
+        VINT4_WIDTH
+    } else if value <= VINT5_MAX {
+        VINT5_WIDTH
     } else {
-        8
+        VINT_MAX_WIDTH
     };
-    let marker = 1u64 << (width * 7);
+    let marker = 1u64 << (width * VINT_DATA_BITS_PER_BYTE);
     let encoded = marker | value;
-    encoded.to_be_bytes()[8 - width..].to_vec()
+    encoded.to_be_bytes()[VINT_MAX_WIDTH - width..].to_vec()
 }
 
 /// The VINT size field for a body of `len` bytes (a `usize` length can only
@@ -286,7 +313,10 @@ fn uint_bytes(value: u64) -> Vec<u8> {
         return vec![0u8];
     }
     let full = value.to_be_bytes();
-    let first_nonzero = full.iter().position(|&b| b != 0).unwrap_or(7);
+    let first_nonzero = full
+        .iter()
+        .position(|&b| b != 0)
+        .unwrap_or(VINT_MAX_WIDTH - 1);
     full[first_nonzero..].to_vec()
 }
 
@@ -299,7 +329,7 @@ fn uint_elem(id: &[u8], value: u64) -> Vec<u8> {
 /// zero bytes) — see [`SEEK_POSITION_FIXED_WIDTH`] for why this exists.
 fn fixed_uint_elem(id: &[u8], value: u64, width: usize) -> Vec<u8> {
     let full = value.to_be_bytes();
-    element(id, &full[8 - width..])
+    element(id, &full[VINT_MAX_WIDTH - width..])
 }
 
 /// Write a string/UTF-8 element (verbatim ASCII/UTF-8 bytes, no terminator).
@@ -409,7 +439,7 @@ fn audio_elem(channels: u16, sample_rate: u32) -> Vec<u8> {
 /// decoded [`OpusSpecificBox`] — the exact inverse of
 /// `webm_demux::opus_config`'s parse.
 fn build_opus_head(dops: &OpusSpecificBox) -> Vec<u8> {
-    let mut out = Vec::with_capacity(19);
+    let mut out = Vec::with_capacity(OPUS_HEAD_HEADER_LEN);
     out.extend_from_slice(OPUS_HEAD_MAGIC);
     out.push(dops.version);
     out.push(dops.output_channel_count);

@@ -112,6 +112,12 @@ pub enum UpdateTrackOutcome {
 /// is the floor for floating-point `#EXTINF` durations (RFC 8216 §7).
 const DEFAULT_HLS_VERSION: u8 = 3;
 
+/// Default segment target duration, in whole seconds.
+const DEFAULT_TARGET_SECS: u32 = 6;
+
+/// The `2` that halves a denominator to round a quotient to nearest.
+const ROUNDING_DIVISOR: u128 = 2;
+
 // Test-only count of `MediaClock::tick` calls `TsHlsPackager::package` makes on
 // the *current thread*.
 //
@@ -185,7 +191,7 @@ pub struct TsHlsPackager {
 
 impl Default for TsHlsPackager {
     fn default() -> Self {
-        Self::new(6)
+        Self::new(DEFAULT_TARGET_SECS)
     }
 }
 
@@ -438,7 +444,7 @@ fn target_ticks_for(target_secs: u32, ts_scale: u32) -> u64 {
 fn segment_duration(anchor_ticks: u64, ts_scale: Timescale) -> (Duration, u32) {
     let denom = u128::from(ts_scale.get());
     let nanos = (u128::from(anchor_ticks) * u128::from(broadcast_common::units::NANOS_PER_SEC)
-        + denom / 2)
+        + denom / ROUNDING_DIVISOR)
         / denom;
     let duration = Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX));
     let ceil_secs = anchor_ticks.div_ceil(ts_scale.as_u64()) as u32;
@@ -851,7 +857,7 @@ impl StreamingTsHlsSegmenter {
             let ticks = start
                 .as_nanos()
                 .saturating_mul(u128::from(t.spec.timescale.get()))
-                / 1_000_000_000;
+                / u128::from(broadcast_common::units::NANOS_PER_SEC);
             t.base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
         }
     }

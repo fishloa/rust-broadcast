@@ -51,7 +51,7 @@ use crate::init_segment::{
     sampling_rate_override,
 };
 use crate::ir::{
-    AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, DisplayInfo,
+    AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC,
     FragmentTrackData, InputDegradation, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry,
     TrackSpec, VideoFormat, VideoSignalType,
 };
@@ -74,6 +74,11 @@ pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackEncryption};
 const OTI_MPEG2_AUDIO: u8 = 0x69;
 /// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 11172-3) — Table 5.
 const OTI_MPEG1_AUDIO: u8 = 0x6B;
+
+/// Width of an ISOBMFF four-character box type (ISO/IEC 14496-12:2026 §4.2).
+const FOURCC_LEN: usize = 4;
+/// `#EXT-X-VERSION` for the fMP4 playlists [`HlsPackager`] writes (RFC 8216 §7).
+const DEFAULT_HLS_VERSION: u8 = 7;
 
 // ---------------------------------------------------------------------------
 // Fmp4Demux — Unpackage<Input = &[u8]>
@@ -652,7 +657,7 @@ pub struct HlsPackager {
 impl Default for HlsPackager {
     fn default() -> Self {
         Self {
-            version: 7,
+            version: DEFAULT_HLS_VERSION,
             msn: broadcast_hls::MediaSequence::new(0),
             uri_prefix: String::from("seg"),
         }
@@ -807,7 +812,10 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
         .iter()
         .find_map(|c| match c {
             StblChild::Stsd(s) => Some(Ok(s.clone())),
-            StblChild::Opaque(bytes) if bytes.len() >= 8 && &bytes[4..8] == b"stsd" => {
+            StblChild::Opaque(bytes)
+                if bytes.len() >= BOX_HEADER_MIN_SIZE
+                    && &bytes[FOURCC_LEN..BOX_HEADER_MIN_SIZE] == b"stsd" =>
+            {
                 Some(SampleDescriptionBox::parse(bytes.as_slice()))
             }
             _ => None,
@@ -900,7 +908,7 @@ pub(crate) fn overlay_sample_entry_geometry(
         Some(if rw == rh {
             AspectRatioIdc::from_wire(1, None)
         } else {
-            AspectRatioIdc::from_wire(255, Some((rw, rh)))
+            AspectRatioIdc::from_wire(EXTENDED_SAR_IDC, Some((rw, rh)))
         })
     });
 
@@ -992,7 +1000,10 @@ fn track_entry_inband_and_extras(trak: &TrackBox) -> (bool, Vec<crate::sample_en
     };
     let stsd: SampleDescriptionBox = match stbl.children.iter().find_map(|c| match c {
         StblChild::Stsd(s) => Some(Ok(s.clone())),
-        StblChild::Opaque(bytes) if bytes.len() >= 8 && &bytes[4..8] == b"stsd" => {
+        StblChild::Opaque(bytes)
+            if bytes.len() >= BOX_HEADER_MIN_SIZE
+                && &bytes[FOURCC_LEN..BOX_HEADER_MIN_SIZE] == b"stsd" =>
+        {
             Some(SampleDescriptionBox::parse(bytes.as_slice()))
         }
         _ => None,
@@ -1143,7 +1154,7 @@ pub(crate) fn skipped_track(err: Error, track_id: crate::TrackId) -> SkippedTrac
 /// samplerate field and documents the actual sampling rate". Without it,
 /// `192000 << 16` reads back as 60928 Hz.
 fn entry_sampling_rate(samplerate_16_16: u32, config_boxes: &[OpaqueBox]) -> u32 {
-    sampling_rate_override(config_boxes).unwrap_or(samplerate_16_16 >> 16)
+    sampling_rate_override(config_boxes).unwrap_or(samplerate_16_16 >> u16::BITS)
 }
 
 /// Reconstruct a [`CodecConfig`] from an `stsd` sample entry.
@@ -1432,7 +1443,7 @@ fn esds_from_config_boxes(boxes: &[OpaqueBox]) -> Result<EsdsBox> {
 /// Locate a config box by FourCC among a sample entry's `config_boxes` and
 /// return its body bytes (the [`OpaqueBox`] holds the box body, no 8-byte
 /// header), so a codec-specific `Parse` can re-parse the decoder config record.
-fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; 4]) -> Result<&'b [u8]> {
+fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; FOURCC_LEN]) -> Result<&'b [u8]> {
     boxes
         .iter()
         .find(|b| &b.box_type == fourcc)

@@ -36,6 +36,7 @@
 
 use crate::box_types::BoxHeader;
 use crate::error::{Error, Result};
+use crate::wire_cursor::{read_u16, read_u32, take};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
@@ -73,40 +74,37 @@ const VARINT_WIDTH_FIXED: usize = 4;
 /// Size of the DecoderConfigDescriptor fixed fields
 /// (OTI 1 + streamType/upStream/reserved 1 + bufferSizeDB 3 + maxBitrate 4 + avgBitrate 4 = 13).
 const DECODER_CONFIG_FIXED: usize = 13;
+const U16_LEN: usize = core::mem::size_of::<u16>();
+const U24_LEN: usize = 3;
+const U32_LEN: usize = core::mem::size_of::<u32>();
+const U24_BITS: u32 = 24;
+const ES_FLAGS_LEN: usize = 1;
+const VARINT_BITS_PER_BYTE: u32 = 7;
+const VARINT_VALUE_MASK: u8 = 0x7F;
+const VARINT_CONTINUATION_BIT: u8 = 0x80;
+const STREAM_TYPE_SHIFT: u32 = 2;
+const STREAM_TYPE_MASK: u8 = 0x3F;
+const UP_STREAM_SHIFT: u32 = 1;
+const UP_STREAM_MASK: u8 = 0x01;
+const RESERVED_FLAG: u8 = 0x01;
+const STREAM_PRIORITY_MASK: u8 = 0x1F;
+const STREAM_DEPENDENCE_FLAG: u8 = 0x80;
+const URL_FLAG: u8 = 0x40;
+const OCR_STREAM_FLAG: u8 = 0x20;
+const SL_PREDEFINED_FORM: u8 = 2;
 
 // ---------------------------------------------------------------------------
 // Helper: read big-endian integers
 // ---------------------------------------------------------------------------
 
 fn read_u24_be(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u32> {
-    if *cursor + 3 > bytes.len() {
-        return Err(Error::BufferTooShort(BufferTooShort {
-            need: *cursor + 3,
-            have: bytes.len(),
-            what,
-        }));
-    }
-    let v = u32::from_be_bytes([0, bytes[*cursor], bytes[*cursor + 1], bytes[*cursor + 2]]);
-    *cursor += 3;
-    Ok(v)
+    let b = take(bytes, cursor, U24_LEN, what)?;
+    Ok(b.iter()
+        .fold(0u32, |acc, &x| (acc << u8::BITS) | u32::from(x)))
 }
 
 fn read_u32_be(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u32> {
-    if *cursor + 4 > bytes.len() {
-        return Err(Error::BufferTooShort(BufferTooShort {
-            need: *cursor + 4,
-            have: bytes.len(),
-            what,
-        }));
-    }
-    let v = u32::from_be_bytes([
-        bytes[*cursor],
-        bytes[*cursor + 1],
-        bytes[*cursor + 2],
-        bytes[*cursor + 3],
-    ]);
-    *cursor += 4;
-    Ok(v)
+    read_u32(bytes, cursor, what)
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +127,7 @@ fn parse_varint(bytes: &[u8], cursor: &mut usize) -> Result<(usize, usize)> {
         }
         let b = bytes[*cursor];
         *cursor += 1;
-        value = (value << 7) | (b & 0x7F) as usize;
+        value = (value << VARINT_BITS_PER_BYTE) | usize::from(b & VARINT_VALUE_MASK);
         let bytes_so_far = *cursor - start;
         if bytes_so_far > MAX_VARINT_BYTES {
             return Err(Error::InvalidValue(InvalidValue {
@@ -138,7 +136,7 @@ fn parse_varint(bytes: &[u8], cursor: &mut usize) -> Result<(usize, usize)> {
                 reason: "varint longer than 4 bytes",
             }));
         }
-        if (b & 0x80) == 0 {
+        if (b & VARINT_CONTINUATION_BIT) == 0 {
             break;
         }
     }
@@ -157,10 +155,10 @@ fn parse_varint(bytes: &[u8], cursor: &mut usize) -> Result<(usize, usize)> {
 /// descriptor.
 fn varint_width(value: usize) -> usize {
     let mut w = 1;
-    let mut v = value >> 7;
+    let mut v = value >> VARINT_BITS_PER_BYTE;
     while v != 0 {
         w += 1;
-        v >>= 7;
+        v >>= VARINT_BITS_PER_BYTE;
     }
     w
 }
@@ -201,10 +199,10 @@ fn write_varint_width(
     }
     need_out(buf, *cursor + width)?;
     for i in 0..width {
-        let shift = 7 * (width - 1 - i);
-        let mut b = ((value >> shift) & 0x7F) as u8;
+        let shift = VARINT_BITS_PER_BYTE as usize * (width - 1 - i);
+        let mut b = ((value >> shift) & usize::from(VARINT_VALUE_MASK)) as u8;
         if i + 1 < width {
-            b |= 0x80;
+            b |= VARINT_CONTINUATION_BIT;
         }
         buf[*cursor + i] = b;
     }
@@ -433,7 +431,7 @@ impl SLConfigDescriptor {
 
     /// The MP4-storage `predefined = 2` form (ISO/IEC 14496-14 §3.1.2).
     pub fn predefined_two() -> Self {
-        Self::new(alloc::vec![2])
+        Self::new(alloc::vec![SL_PREDEFINED_FORM])
     }
 }
 
@@ -555,9 +553,9 @@ impl<'a> Parse<'a> for DecoderConfigDescriptor {
             }));
         }
         let st_byte = body[cursor];
-        let stream_type_val = (st_byte >> 2) & 0x3F;
-        let up_stream = ((st_byte >> 1) & 0x01) != 0;
-        let _reserved = (st_byte & 0x01) != 0;
+        let stream_type_val = (st_byte >> STREAM_TYPE_SHIFT) & STREAM_TYPE_MASK;
+        let up_stream = ((st_byte >> UP_STREAM_SHIFT) & UP_STREAM_MASK) != 0;
+        let _reserved = (st_byte & RESERVED_FLAG) != 0;
         cursor += 1;
 
         // bufferSizeDB (24)
@@ -656,19 +654,21 @@ impl Serialize for DecoderConfigDescriptor {
         buf[cursor] = self.object_type_indication.0;
         cursor += 1;
         // streamType(6) + upStream(1) + reserved=1(1) — one byte (14496-1 §7.2.6.6)
-        buf[cursor] = ((self.stream_type.0 & 0x3F) << 2) | ((self.up_stream as u8) << 1) | 0x01;
+        buf[cursor] = ((self.stream_type.0 & STREAM_TYPE_MASK) << STREAM_TYPE_SHIFT)
+            | ((self.up_stream as u8) << UP_STREAM_SHIFT)
+            | RESERVED_FLAG;
         cursor += 1;
-        broadcast_common::len::fit_bits(u64::from(self.buffer_size_db), 24, "bufferSizeDB")?;
-        buf[cursor..cursor + 3].copy_from_slice(&[
-            (self.buffer_size_db >> 16) as u8,
-            (self.buffer_size_db >> 8) as u8,
+        broadcast_common::len::fit_bits(u64::from(self.buffer_size_db), U24_BITS, "bufferSizeDB")?;
+        buf[cursor..cursor + U24_LEN].copy_from_slice(&[
+            (self.buffer_size_db >> u16::BITS) as u8,
+            (self.buffer_size_db >> u8::BITS) as u8,
             self.buffer_size_db as u8,
         ]);
-        cursor += 3;
-        buf[cursor..cursor + 4].copy_from_slice(&self.max_bitrate.to_be_bytes());
-        cursor += 4;
-        buf[cursor..cursor + 4].copy_from_slice(&self.avg_bitrate.to_be_bytes());
-        cursor += 4;
+        cursor += U24_LEN;
+        buf[cursor..cursor + U32_LEN].copy_from_slice(&self.max_bitrate.to_be_bytes());
+        cursor += U32_LEN;
+        buf[cursor..cursor + U32_LEN].copy_from_slice(&self.avg_bitrate.to_be_bytes());
+        cursor += U32_LEN;
         for ud in &self.unknown_descriptors {
             if ud.position == 0 {
                 cursor += ud.serialize_into(&mut buf[cursor..])?;
@@ -805,9 +805,8 @@ impl<'a> Parse<'a> for ESDescriptor {
         let mut unknown_descriptors = Vec::new();
 
         // ES_ID (16)
-        need_in(body, cursor + 2, "ES_ID")?;
-        let es_id = u16::from_be_bytes([body[cursor], body[cursor + 1]]);
-        cursor += 2;
+        need_in(body, cursor + U16_LEN, "ES_ID")?;
+        let es_id = read_u16(body, &mut cursor, "ES_ID")?;
 
         // flags byte: streamDependenceFlag(1) + URL_Flag(1) + OCRstreamFlag(1) + streamPriority(5)
         if cursor >= body.len() {
@@ -819,17 +818,15 @@ impl<'a> Parse<'a> for ESDescriptor {
         }
         let flags = body[cursor];
         cursor += 1;
-        let stream_dependence_flag = (flags & 0x80) != 0;
-        let url_flag = (flags & 0x40) != 0;
-        let ocr_stream_flag = (flags & 0x20) != 0;
-        let stream_priority = flags & 0x1F;
+        let stream_dependence_flag = (flags & STREAM_DEPENDENCE_FLAG) != 0;
+        let url_flag = (flags & URL_FLAG) != 0;
+        let ocr_stream_flag = (flags & OCR_STREAM_FLAG) != 0;
+        let stream_priority = flags & STREAM_PRIORITY_MASK;
 
         // Optional: dependsOn_ES_ID
         let depends_on_es_id = if stream_dependence_flag {
-            need_in(body, cursor + 2, "dependsOn_ES_ID")?;
-            let v = u16::from_be_bytes([body[cursor], body[cursor + 1]]);
-            cursor += 2;
-            Some(v)
+            need_in(body, cursor + U16_LEN, "dependsOn_ES_ID")?;
+            Some(read_u16(body, &mut cursor, "dependsOn_ES_ID")?)
         } else {
             None
         };
@@ -864,10 +861,8 @@ impl<'a> Parse<'a> for ESDescriptor {
 
         // Optional: OCR_ES_Id
         let ocr_es_id = if ocr_stream_flag {
-            need_in(body, cursor + 2, "OCR_ES_Id")?;
-            let v = u16::from_be_bytes([body[cursor], body[cursor + 1]]);
-            cursor += 2;
-            Some(v)
+            need_in(body, cursor + U16_LEN, "OCR_ES_Id")?;
+            Some(read_u16(body, &mut cursor, "OCR_ES_Id")?)
         } else {
             None
         };
@@ -934,10 +929,15 @@ impl Serialize for ESDescriptor {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let body_size = 2 + 1 // ES_ID + flags
-            + if self.depends_on_es_id.is_some() { 2 } else { 0 }
+        let body_size = U16_LEN
+            + ES_FLAGS_LEN
+            + if self.depends_on_es_id.is_some() {
+                U16_LEN
+            } else {
+                0
+            }
             + self.url.as_ref().map_or(0, |u| 1 + u.len())
-            + if self.ocr_es_id.is_some() { 2 } else { 0 };
+            + if self.ocr_es_id.is_some() { U16_LEN } else { 0 };
 
         1 // tag
             + self.size_width
@@ -988,15 +988,15 @@ impl Serialize for ESDescriptor {
             }));
         }
 
-        let mut body_size = 2 + 1; // ES_ID + flags
+        let mut body_size = U16_LEN + ES_FLAGS_LEN;
         if self.depends_on_es_id.is_some() {
-            body_size += 2;
+            body_size += U16_LEN;
         }
         if let Some(u) = &self.url {
             body_size += 1 + u.len();
         }
         if self.ocr_es_id.is_some() {
-            body_size += 2;
+            body_size += U16_LEN;
         }
         body_size += self
             .decoder_config
@@ -1012,27 +1012,27 @@ impl Serialize for ESDescriptor {
         write_varint_width(buf, &mut cursor, body_size, self.size_width)?;
 
         // ES_ID
-        buf[cursor..cursor + 2].copy_from_slice(&self.es_id.to_be_bytes());
-        cursor += 2;
+        buf[cursor..cursor + U16_LEN].copy_from_slice(&self.es_id.to_be_bytes());
+        cursor += U16_LEN;
 
         // flags
-        let mut flags = self.stream_priority & 0x1F;
+        let mut flags = self.stream_priority & STREAM_PRIORITY_MASK;
         if self.depends_on_es_id.is_some() {
-            flags |= 0x80;
+            flags |= STREAM_DEPENDENCE_FLAG;
         }
         if self.url.is_some() {
-            flags |= 0x40;
+            flags |= URL_FLAG;
         }
         if self.ocr_es_id.is_some() {
-            flags |= 0x20;
+            flags |= OCR_STREAM_FLAG;
         }
         buf[cursor] = flags;
         cursor += 1;
 
         // dependsOn_ES_ID
         if let Some(dep) = self.depends_on_es_id {
-            buf[cursor..cursor + 2].copy_from_slice(&dep.to_be_bytes());
-            cursor += 2;
+            buf[cursor..cursor + U16_LEN].copy_from_slice(&dep.to_be_bytes());
+            cursor += U16_LEN;
         }
 
         // URL
@@ -1045,8 +1045,8 @@ impl Serialize for ESDescriptor {
 
         // OCR_ES_Id
         if let Some(ocr) = self.ocr_es_id {
-            buf[cursor..cursor + 2].copy_from_slice(&ocr.to_be_bytes());
-            cursor += 2;
+            buf[cursor..cursor + U16_LEN].copy_from_slice(&ocr.to_be_bytes());
+            cursor += U16_LEN;
         }
 
         // Sub-descriptors: emit each unmodelled descriptor after the modelled
@@ -1182,8 +1182,8 @@ impl Serialize for EsdsBox {
         // Box header
         cursor += crate::box_types::write_box_header(buf, b"esds", need)?;
         // FullBox: version=0, flags=0
-        buf[cursor..cursor + 4].copy_from_slice(&[0, 0, 0, 0]);
-        cursor += 4;
+        buf[cursor..cursor + U32_LEN].copy_from_slice(&[0u8; U32_LEN]);
+        cursor += U32_LEN;
         // ES_Descriptor
         cursor += self.es_descriptor.serialize_into(&mut buf[cursor..])?;
         Ok(cursor)

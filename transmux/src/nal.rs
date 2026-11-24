@@ -41,6 +41,8 @@ use alloc::vec::Vec;
 
 use crate::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
 use crate::bitreader::BitReader;
+use crate::rbsp::{EMULATION_BYTE_RUN_LEN, EMULATION_PREVENTION_BYTE};
+use crate::wire_cursor::{be_u16, be_u32};
 
 // ── AVC (ITU-T H.264 §7.3.1, Table 7-1) ─────────────────────────────────────
 
@@ -53,6 +55,16 @@ const AVC_NAL_IDR: u8 = 5;
 const AVC_NAL_SEI: u8 = 6;
 /// H.264 `nal_unit_type` for a sequence parameter set (SPS) (Table 7-1).
 const AVC_NAL_SPS: u8 = 7;
+/// Shortest AVC NAL that can carry a body: the 1-byte NAL header plus at
+/// least one body byte.
+const AVC_NAL_MIN_LEN: usize = 2;
+
+/// Byte width of every HEVC/VVC NAL header (ITU-T H.265 §7.3.1.2 /
+/// ITU-T H.266 §7.3.1.2).
+const HEVC_NAL_HEADER_LEN: usize = 2;
+/// Shortest HEVC NAL that can carry a parameter set: the 2-byte NAL header
+/// plus at least one body byte.
+const HEVC_NAL_MIN_LEN: usize = HEVC_NAL_HEADER_LEN + 1;
 
 /// `payloadType` for the `recovery_point` SEI message — ITU-T H.264 Annex D
 /// Table D-1 (syntax D.1.7, semantics D.2.7). Broadcast open-GOP H.264 sends
@@ -277,7 +289,7 @@ impl Iterator for EbspBytes<'_> {
         while self.pos < self.nal.len() {
             let b = self.nal[self.pos];
             self.pos += 1;
-            if self.zero_run >= 2 && b == 0x03 {
+            if self.zero_run >= EMULATION_BYTE_RUN_LEN as u8 && b == EMULATION_PREVENTION_BYTE {
                 // emulation_prevention_three_byte: dropped, run resets.
                 self.zero_run = 0;
                 continue;
@@ -300,7 +312,7 @@ fn read_sei_varint(bytes: &mut impl Iterator<Item = u8>) -> Option<u32> {
     loop {
         let b = bytes.next()?;
         value = value.checked_add(u32::from(b))?;
-        if b != 0xFF {
+        if b != SEI_SIZE_ESCAPE_BYTE {
             return Some(value);
         }
     }
@@ -352,7 +364,7 @@ pub fn recovery_point_sei(nal: &[u8]) -> bool {
 /// (H.264 §7.3.2.11).
 const SEI_RBSP_TRAILING_BYTE: u8 = 0x80;
 const SEI_SIZE_ESCAPE_BYTE: u8 = 0xFF;
-const HEVC_PREFIX_SEI_LAYER_ZERO_TID_PLUS1: u8 = 1;
+const HEVC_PREFIX_SEI_DEFAULT_TID_PLUS1: u8 = 1;
 
 /// An HEVC prefix SEI NAL unit (2-byte header, the given `(payloadType,
 /// payload)` messages, `rbsp_trailing_bits`, emulation prevention applied) —
@@ -376,9 +388,9 @@ pub(crate) fn hevc_prefix_sei_nal(messages: &[(u32, &[u8])]) -> Vec<u8> {
     }
     rbsp.push(SEI_RBSP_TRAILING_BYTE);
     let escaped = crate::rbsp::escape(&rbsp);
-    let mut nal = Vec::with_capacity(escaped.len() + 2);
+    let mut nal = Vec::with_capacity(escaped.len() + HEVC_NAL_HEADER_LEN);
     nal.push(crate::hdr::HEVC_PREFIX_SEI_NUT << HEVC_NAL_TYPE_SHIFT);
-    nal.push(HEVC_PREFIX_SEI_LAYER_ZERO_TID_PLUS1);
+    nal.push(HEVC_PREFIX_SEI_DEFAULT_TID_PLUS1);
     nal.extend_from_slice(&escaped);
     nal
 }
@@ -390,7 +402,7 @@ fn sei_varint(rbsp: &[u8], pos: &mut usize) -> Option<u32> {
         let b = *rbsp.get(*pos)?;
         *pos += 1;
         v = v.checked_add(u32::from(b))?;
-        if b != 0xFF {
+        if b != SEI_SIZE_ESCAPE_BYTE {
             return Some(v);
         }
     }
@@ -485,6 +497,13 @@ pub fn access_unit_is_rap(codec: NalCodec, au: &[u8], length_prefixed: bool) -> 
 /// enough for its two `ue(v)`s whatever they hold (see there).
 const SLICE_HEADER_PREFIX: usize = 32;
 
+/// `slice_type` values repeat every 5 in Table 7-6: 0..=4 then 5..=9.
+const SLICE_TYPE_COUNT: u64 = 5;
+/// `slice_type` of an I slice (Table 7-6).
+const SLICE_TYPE_I: u64 = 2;
+/// `slice_type` of an SI slice (Table 7-6).
+const SLICE_TYPE_SI: u64 = 4;
+
 /// Whether an AVC NAL is an I-slice (or SI-slice) — `slice_type` 2 or 7 modulo
 /// 5, ITU-T H.264 §7.4.3 Table 7-6.
 ///
@@ -492,7 +511,7 @@ const SLICE_HEADER_PREFIX: usize = 32;
 /// `first_mb_in_slice`. Both are read from the RBSP after the 1-byte NAL header,
 /// with `emulation_prevention_three_byte` removed (§7.4.1).
 fn avc_is_i_slice(nal: &[u8]) -> bool {
-    if !matches!(nal_unit_type(NalCodec::Avc, nal), Some(t) if (1..=5).contains(&t)) {
+    if !matches!(nal_unit_type(NalCodec::Avc, nal), Some(t) if (1..=AVC_NAL_IDR).contains(&t)) {
         return false;
     }
     // `with_unescape` both skips the 1-byte NAL header and strips
@@ -518,7 +537,7 @@ fn avc_is_i_slice(nal: &[u8]) -> bool {
     }
     match r.read_ue("slice_type") {
         // Table 7-6: 2 = I, 4 = SI (values 5..=9 repeat those modulo 5).
-        Ok(v) => matches!(v % 5, 2 | 4),
+        Ok(v) => matches!(v % SLICE_TYPE_COUNT, SLICE_TYPE_I | SLICE_TYPE_SI),
         Err(_) => false,
     }
 }
@@ -557,6 +576,11 @@ pub(crate) const ATSC_USER_IDENTIFIER_GA94: u32 = 0x4741_3934;
 /// trailing `marker_bits` byte) — ATSC A/53 Part 4 §6.2.3 Table 6.9/6.10.
 const ATSC_USER_DATA_TYPE_CODE_CC_DATA: u8 = 0x03;
 
+/// Offset of `itu_t_t35_provider_code` in the T.35 header.
+const ATSC_T35_PROVIDER_CODE_OFFSET: usize = 1;
+/// Offset of `user_identifier` in the T.35 header.
+const ATSC_T35_USER_IDENTIFIER_OFFSET: usize = 3;
+
 /// Length in bytes of the T.35/ATSC header preceding `MPEG_cc_data()`:
 /// `itu_t_t35_country_code`(1) + `itu_t_t35_provider_code`(2) +
 /// `user_identifier`(4) + `user_data_type_code`(1).
@@ -592,15 +616,21 @@ fn append_if_atsc_cc_data(payload: &[u8], out: &mut Vec<u8>) {
     if payload[0] != ITU_T_T35_COUNTRY_CODE_USA && payload[0] != ITU_T_T35_COUNTRY_CODE_CHINA {
         return;
     }
-    let provider_code = u16::from_be_bytes([payload[1], payload[2]]);
+    let Ok(provider_code) = be_u16(payload, ATSC_T35_PROVIDER_CODE_OFFSET, "ATSC T.35 header")
+    else {
+        return;
+    };
     if provider_code != ATSC_T35_PROVIDER_CODE {
         return;
     }
-    let user_identifier = u32::from_be_bytes([payload[3], payload[4], payload[5], payload[6]]);
+    let Ok(user_identifier) = be_u32(payload, ATSC_T35_USER_IDENTIFIER_OFFSET, "ATSC T.35 header")
+    else {
+        return;
+    };
     if user_identifier != ATSC_USER_IDENTIFIER_GA94 {
         return;
     }
-    if payload[7] != ATSC_USER_DATA_TYPE_CODE_CC_DATA {
+    if payload[ATSC_T35_HEADER_LEN - 1] != ATSC_USER_DATA_TYPE_CODE_CC_DATA {
         return;
     }
     let cc = &payload[ATSC_T35_HEADER_LEN..];
@@ -714,7 +744,7 @@ pub fn caption_cc_data(codec: NalCodec, au: &[u8], length_prefixed: bool) -> Vec
 pub(crate) const MAX_PARAMETER_SET_LEN: usize = u16::MAX as usize;
 /// `forbidden_zero_bit` of the first NAL-header byte, H.264 §7.3.1 and H.265
 /// §7.3.1.2 — must be 0 in a conforming NAL unit.
-const NAL_FORBIDDEN_ZERO_BIT: u8 = 0x80;
+const NAL_FORBIDDEN_BIT_MASK: u8 = 0x80;
 /// H.264 `nal_unit_type` for a picture parameter set (Table 7-1).
 const AVC_NAL_PPS: u8 = 8;
 /// H.265 `nal_unit_type` for VPS / SPS / PPS (`VPS_NUT`, `SPS_NUT`, `PPS_NUT`,
@@ -761,7 +791,7 @@ pub(crate) fn parameter_set_is_valid(codec: NalCodec, kind: ParamKind, nal: &[u8
     let (Some(&first), Some(&last)) = (nal.first(), nal.last()) else {
         return false;
     };
-    if nal.len() > MAX_PARAMETER_SET_LEN || last == 0 || first & NAL_FORBIDDEN_ZERO_BIT != 0 {
+    if nal.len() > MAX_PARAMETER_SET_LEN || last == 0 || first & NAL_FORBIDDEN_BIT_MASK != 0 {
         return false;
     }
     match codec {
@@ -771,7 +801,7 @@ pub(crate) fn parameter_set_is_valid(codec: NalCodec, kind: ParamKind, nal: &[u8
                 ParamKind::Pps => AVC_NAL_PPS,
                 ParamKind::Vps => return false,
             };
-            if first & AVC_NAL_TYPE_MASK != want || nal.len() < 2 {
+            if first & AVC_NAL_TYPE_MASK != want || nal.len() < AVC_NAL_MIN_LEN {
                 return false;
             }
             kind != ParamKind::Sps
@@ -784,7 +814,7 @@ pub(crate) fn parameter_set_is_valid(codec: NalCodec, kind: ParamKind, nal: &[u8
                 ParamKind::Pps => HEVC_NAL_PPS,
             };
             if nal_unit_type(NalCodec::Hevc, nal) != Some(want)
-                || nal.len() < 3
+                || nal.len() < HEVC_NAL_MIN_LEN
                 || nal[1] & HEVC_TEMPORAL_ID_PLUS1_MASK == 0
             {
                 return false;

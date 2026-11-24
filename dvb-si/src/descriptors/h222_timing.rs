@@ -30,6 +30,8 @@ const RESERVED_7_BITS: u32 = 7;
 /// Width of the `reserved(6)` after `hrd_management_valid_flag`.
 const RESERVED_6_BITS: u32 = 6;
 const TARGET_SCHEDULE_IDX_BITS: usize = 5;
+/// Width of a 32-bit wire word, bits.
+const WORD_BITS: usize = u32::BITS as usize;
 
 /// `N` / `K` of the time-base mapping `time_scale = N × system_clock_frequency / K`,
 /// present only when `90kHz_flag == '0'` (N = 1, K = 300 otherwise).
@@ -78,30 +80,34 @@ impl PictureAndTimingInfo {
 
     fn read(r: &mut BitReader<'_>) -> Result<Self> {
         let is_90khz = r.flag()?;
-        let reserved = ReservedOnes::from_bits(u64::from(r.u8(7)?));
+        let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_7_BITS as usize)?));
         let nk = if is_90khz {
             None
         } else {
             Some(TimeScaleNk {
-                n: r.bits(32)?,
-                k: r.bits(32)?,
+                n: r.bits(WORD_BITS)?,
+                k: r.bits(WORD_BITS)?,
             })
         };
         Ok(Self {
             nk,
-            num_units_in_tick: r.bits(32)?,
+            num_units_in_tick: r.bits(WORD_BITS)?,
             reserved,
         })
     }
 
     fn write(&self, w: &mut BitWriter) -> Result<()> {
         w.flag(self.nk.is_none(), "90kHz_flag")?;
-        w.put(self.reserved.get(), 7, "reserved")?;
+        w.put(self.reserved.get(), RESERVED_7_BITS as usize, "reserved")?;
         if let Some(nk) = &self.nk {
-            w.put(u64::from(nk.n), 32, "N")?;
-            w.put(u64::from(nk.k), 32, "K")?;
+            w.put(u64::from(nk.n), WORD_BITS, "N")?;
+            w.put(u64::from(nk.k), WORD_BITS, "K")?;
         }
-        w.put(u64::from(self.num_units_in_tick), 32, "num_units_in_tick")
+        w.put(
+            u64::from(self.num_units_in_tick),
+            WORD_BITS,
+            "num_units_in_tick",
+        )
     }
 }
 
@@ -202,7 +208,7 @@ fn read_flag_block(
     Option<PictureAndTimingInfo>,
 )> {
     let hrd_management_valid_flag = r.flag()?;
-    let reserved = ReservedOnes::from_bits(u64::from(r.u8(6)?));
+    let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_6_BITS as usize)?));
     let picture_timing = if r.flag()? {
         Some(PictureAndTimingInfo::read(r)?)
     } else {
@@ -218,7 +224,7 @@ fn write_flag_block(
     picture_timing: Option<&PictureAndTimingInfo>,
 ) -> Result<()> {
     w.flag(hrd_management_valid_flag, "hrd_management_valid_flag")?;
-    w.put(reserved.get(), 6, "reserved")?;
+    w.put(reserved.get(), RESERVED_6_BITS as usize, "reserved")?;
     w.flag(
         picture_timing.is_some(),
         "picture_and_timing_info_present_flag",

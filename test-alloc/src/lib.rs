@@ -16,6 +16,8 @@
 //!
 //! * [`ProcessCounting`] — process-global (all threads). For a test binary
 //!   with a single `#[test]`, since a sibling test would pollute it.
+//! * [`ProcessPeak`] — process-global live bytes plus their high-water mark, so
+//!   a test can bound a writer's whole footprint, not one allocation.
 //! * [`ThreadCounting`] — per-thread counters, so parallel `#[test]` fns
 //!   cannot pollute each other's measurement window.
 //! * [`ThreadCapped`] — per-thread live-byte budget; an allocation that would
@@ -113,6 +115,108 @@ unsafe impl GlobalAlloc for ProcessCounting {
         self.record(n);
         // SAFETY: `p`/`l` came from this allocator (i.e. `System`); `n` is the caller's.
         unsafe { System.realloc(p, l, n) }
+    }
+}
+
+/// Process-global **live bytes** and their high-water mark (all threads).
+///
+/// A test that asserts "this writer never holds more than N bytes" needs the
+/// whole footprint across every thread the writer uses (a muxer, a buffered
+/// file writer and a demuxer can sit on different threads), which
+/// [`ProcessCounting`] does not track. The counters are process-wide, so tests
+/// that each measure a window must serialise those windows themselves (a
+/// `static Mutex` is enough).
+#[derive(Debug)]
+pub struct ProcessPeak {
+    live: AtomicUsize,
+    peak: AtomicUsize,
+}
+
+impl ProcessPeak {
+    /// A zeroed tracker, usable in a `static`.
+    pub const fn new() -> Self {
+        Self {
+            live: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+        }
+    }
+
+    /// Lower the high-water mark to the current live total, so
+    /// [`peak`](Self::peak) reports from this point on. Outstanding allocations
+    /// are still counted, so live bytes are never misreported.
+    pub fn reset(&self) {
+        self.peak.store(self.live(), Ordering::SeqCst);
+    }
+
+    /// Bytes currently allocated and not yet freed, process-wide.
+    pub fn live(&self) -> usize {
+        self.live.load(Ordering::SeqCst)
+    }
+
+    /// Largest live total seen since process start or the last
+    /// [`reset`](Self::reset).
+    pub fn peak(&self) -> usize {
+        self.peak.load(Ordering::SeqCst)
+    }
+
+    /// Run `f`, returning `(bytes_above_entry, result)`: the high-water mark of
+    /// live bytes during `f` over the live total at entry. A writer that
+    /// allocates nothing above what was already held reports `0`.
+    pub fn peak_during<R>(&self, f: impl FnOnce() -> R) -> (usize, R) {
+        let entry = self.live();
+        self.peak.store(entry, Ordering::SeqCst);
+        let result = f();
+        (
+            self.peak.load(Ordering::SeqCst).saturating_sub(entry),
+            result,
+        )
+    }
+
+    fn record_alloc(&self, size: usize) {
+        let live = self
+            .live
+            .fetch_add(size, Ordering::SeqCst)
+            .saturating_add(size);
+        self.peak.fetch_max(live, Ordering::SeqCst);
+    }
+
+    fn record_free(&self, size: usize) {
+        self.live.fetch_sub(size, Ordering::SeqCst);
+    }
+}
+
+impl Default for ProcessPeak {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// SAFETY: every method forwards its arguments unchanged to `System`, which
+// upholds the `GlobalAlloc` contract; only atomic counters are touched around it.
+unsafe impl GlobalAlloc for ProcessPeak {
+    unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        // SAFETY: same `Layout` the caller gave us; the caller's contract passes through.
+        let ptr = unsafe { System.alloc(l) };
+        if !ptr.is_null() {
+            self.record_alloc(l.size());
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+        self.record_free(l.size());
+        // SAFETY: `p`/`l` came from a prior call on this allocator, i.e. `System`.
+        unsafe { System.dealloc(p, l) }
+    }
+
+    unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
+        // SAFETY: `p`/`l` came from this allocator (i.e. `System`); `n` is the caller's.
+        let ptr = unsafe { System.realloc(p, l, n) };
+        if !ptr.is_null() {
+            self.record_alloc(n);
+            self.record_free(l.size());
+        }
+        ptr
     }
 }
 
