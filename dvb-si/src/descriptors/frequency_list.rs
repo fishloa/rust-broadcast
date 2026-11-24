@@ -77,7 +77,7 @@ pub struct FrequencyListDescriptor {
     pub coding_type: CodingType,
     /// Raw 4-byte centre_frequency entries in wire order. Interpretation
     /// depends on `coding_type`: BCD for Satellite/Cable, binary for Terrestrial.
-    pub centre_frequencies_bcd: Vec<[u8; 4]>,
+    pub centre_frequencies_bcd: Vec<[u8; ENTRY_LEN]>,
 }
 
 impl FrequencyListDescriptor {

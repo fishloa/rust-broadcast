@@ -51,7 +51,7 @@ const ASSOCIATION_TAG_LEN: usize = 2;
 /// `transport_stream_id` + `program_number` (2 × 16-bit uimsbf).
 const SERVICE_ID_LEN: usize = 4;
 /// Width of each of the two service identifier fields (TS id, programme number).
-const SERVICE_ID_FIELD_LEN: usize = SERVICE_ID_LEN / 2;
+const SERVICE_ID_FIELD_LEN: usize = core::mem::size_of::<u16>();
 /// `org_network_id` field width in bytes (16-bit uimsbf).
 const ORG_NETWORK_ID_LEN: usize = 2;
 

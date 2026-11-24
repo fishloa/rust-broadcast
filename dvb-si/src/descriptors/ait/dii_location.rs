@@ -17,7 +17,7 @@ pub const TAG: u8 = 0x0D;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 4;
 /// Width of the `DII_identification` word at the head of an entry.
-const DII_IDENTIFICATION_LEN: usize = ENTRY_LEN / 2;
+const DII_IDENTIFICATION_LEN: usize = core::mem::size_of::<u16>();
 /// Width of the `transport_protocol_label` byte after the descriptor header.
 const TRANSPORT_PROTOCOL_LABEL_LEN: usize = 1;
 const DII_IDENTIFICATION_MASK: u16 = 0x7FFF;

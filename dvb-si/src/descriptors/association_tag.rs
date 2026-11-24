@@ -68,8 +68,8 @@ pub const USE_DVB_RESERVED_DEFAULT: u16 = 0x0100;
 /// Selector length (bytes) mandated when `use == 0x0000`: `transaction_id` (4)
 /// + `timeout` (4).
 const DSI_SELECTOR_LEN: usize = 8;
-/// Width of each half of the DSI selector (transaction id / timeout).
-const DSI_SELECTOR_HALF_LEN: usize = DSI_SELECTOR_LEN / 2;
+/// Width of the DSI selector's `transaction_id` and `timeout` fields.
+const DSI_SELECTOR_FIELD_LEN: usize = core::mem::size_of::<u32>();
 /// Offset of `usage` in the descriptor body prefix.
 const USAGE_OFFSET: usize = ASSOCIATION_TAG_LEN;
 
@@ -104,7 +104,7 @@ impl AssociationTagDescriptor<'_> {
     #[must_use]
     pub fn transaction_id(&self) -> Option<u32> {
         if self.usage == USE_DSI_IOR && self.selector.len() == DSI_SELECTOR_LEN {
-            let (transaction_id, _) = self.selector.split_at(DSI_SELECTOR_HALF_LEN);
+            let (transaction_id, _) = self.selector.split_at(DSI_SELECTOR_FIELD_LEN);
             Some(u32::from_be_bytes(transaction_id.try_into().ok()?))
         } else {
             None
@@ -118,7 +118,7 @@ impl AssociationTagDescriptor<'_> {
     #[must_use]
     pub fn timeout(&self) -> Option<u32> {
         if self.usage == USE_DSI_IOR && self.selector.len() == DSI_SELECTOR_LEN {
-            let (_, timeout) = self.selector.split_at(DSI_SELECTOR_HALF_LEN);
+            let (_, timeout) = self.selector.split_at(DSI_SELECTOR_FIELD_LEN);
             Some(u32::from_be_bytes(timeout.try_into().ok()?))
         } else {
             None

@@ -37,7 +37,7 @@ const ORIGINAL_NETWORK_ID_OFFSET: usize = 0;
 /// Offset of `transport_stream_id` in `remote_connection_info`.
 const TRANSPORT_STREAM_ID_OFFSET: usize = SERVICE_ID_FIELD_LEN;
 /// Offset of `service_id` in `remote_connection_info`.
-const SERVICE_ID_OFFSET: usize = SERVICE_ID_FIELD_LEN * 2;
+const SERVICE_ID_OFFSET: usize = TRANSPORT_STREAM_ID_OFFSET + SERVICE_ID_FIELD_LEN;
 /// Shortest OC selector: the `remote_connection` byte + `component_tag`.
 const MIN_OC_SELECTOR_LEN: usize = REMOTE_CONNECTION_BYTE_LEN + 1;
 
