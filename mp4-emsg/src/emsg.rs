@@ -54,7 +54,7 @@ pub const STRING_TERMINATOR: u8 = 0x00;
 
 const U32_LEN: usize = 4;
 const U64_LEN: usize = 8;
-/// Width of the `FullBox` `version` field (ISO/IEC 14496-12 §4.2).
+/// Width of the `FullBox` `version` field (ISO/IEC 14496-12:2026 §4.2.2).
 const VERSION_LEN: usize = 1;
 /// Width of the `FullBox` `flags` field (a `u24`).
 const FLAGS_LEN: usize = 3;
