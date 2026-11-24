@@ -132,7 +132,7 @@ impl LcevcVideo {
         w.put(self.reserved_zero_2bit.get(), PAIR_BITS, "reserved_zero_2bit")?;
         w.put(
             u64::from(self.video_properties_tag),
-            4,
+            NIBBLE_BITS,
             "video_properties_tag",
         )?;
         w.bytes(&self.trailing)?;

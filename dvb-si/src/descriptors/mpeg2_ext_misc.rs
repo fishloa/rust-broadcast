@@ -44,6 +44,37 @@ use crate::h222_bits::{BitReader, BitWriter, invalid};
 use alloc::vec::Vec;
 use broadcast_common::reserved::ReservedOnes;
 
+/// Wire width of a byte-sized field.
+const BYTE_BITS: usize = u8::BITS as usize;
+/// Wire width of a 16-bit word.
+const WORD_BITS: usize = u16::BITS as usize;
+/// Wire width of a 32-bit double word.
+const DWORD_BITS: usize = u32::BITS as usize;
+/// Width of a `reserved(6)` run in reader terms.
+const RESERVED_6_READ_BITS: usize = RESERVED_6_BITS as usize;
+/// Width of a `reserved(4)` run in reader terms.
+const RESERVED_4_READ_BITS: usize = RESERVED_4_BITS as usize;
+/// Width of a `reserved(5)` run in reader terms.
+const RESERVED_5_READ_BITS: usize = RESERVED_5_BITS as usize;
+/// Width of a `reserved(3)` run in reader terms.
+const RESERVED_3_READ_BITS: usize = RESERVED_3_BITS as usize;
+/// Width of a `reserved(7)` run in reader terms.
+const RESERVED_7_READ_BITS: usize = RESERVED_7_BITS as usize;
+/// Width of the `num_*` variation counters (2 bits).
+const NUM_VARIATIONS_BITS: usize = 2;
+/// Width of `maximum_duration_length_minus_1` (2 bits).
+const MAX_DURATION_LENGTH_BITS: usize = 2;
+/// Width of `ticks_per_second` (21 bits).
+const TICKS_PER_SECOND_BITS: usize = 21;
+/// Width of `partition_id` (3 bits).
+const PARTITION_ID_BITS: usize = 3;
+/// Width of `SAP_type_max` (3 bits).
+const SAP_TYPE_MAX_BITS: usize = 3;
+/// Width of `boundary_PID` (13 bits).
+const BOUNDARY_PID_BITS: usize = 13;
+/// Number of colour primaries in the mastering-display block.
+const COLOUR_PRIMARY_COUNT: usize = 6;
+
 const RESERVED_6_BITS: u32 = 6;
 /// Width of the `reserved(7)` field.
 const RESERVED_7_BITS: u32 = 7;
@@ -134,17 +165,17 @@ impl GreenExtension {
 
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "GreenExtension");
-        let n1 = r.bits(2)?;
-        let reserved_a = ReservedOnes::from_bits(u64::from(r.u8(6)?));
+        let n1 = r.bits(NUM_VARIATIONS_BITS)?;
+        let reserved_a = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_6_READ_BITS)?));
         let mut intervals = Vec::new();
         for _ in 0..n1 {
-            intervals.push(r.u16(16)?);
+            intervals.push(r.u16(WORD_BITS)?);
         }
-        let n2 = r.bits(2)?;
-        let reserved_b = ReservedOnes::from_bits(u64::from(r.u8(6)?));
+        let n2 = r.bits(NUM_VARIATIONS_BITS)?;
+        let reserved_b = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_6_READ_BITS)?));
         let mut max_variations = Vec::new();
         for _ in 0..n2 {
-            max_variations.push(r.u16(16)?);
+            max_variations.push(r.u16(WORD_BITS)?);
         }
         Ok(Self {
             constant_backlight_voltage_time_intervals: intervals,
@@ -159,21 +190,25 @@ impl GreenExtension {
         let mut w = BitWriter::new();
         w.put(
             self.constant_backlight_voltage_time_intervals.len() as u64,
-            2,
+            NUM_VARIATIONS_BITS,
             "num_constant_backlight_voltage_time_intervals",
         )?;
-        w.put(self.reserved_a.get(), 6, "reserved")?;
+        w.put(self.reserved_a.get(), RESERVED_6_READ_BITS, "reserved")?;
         for v in &self.constant_backlight_voltage_time_intervals {
             w.put(
                 u64::from(*v),
-                16,
+                WORD_BITS,
                 "constant_backlight_voltage_time_interval",
             )?;
         }
-        w.put(self.max_variations.len() as u64, 2, "num_max_variations")?;
-        w.put(self.reserved_b.get(), 6, "reserved")?;
+        w.put(
+            self.max_variations.len() as u64,
+            NUM_VARIATIONS_BITS,
+            "num_max_variations",
+        )?;
+        w.put(self.reserved_b.get(), RESERVED_6_READ_BITS, "reserved")?;
         for v in &self.max_variations {
-            w.put(u64::from(*v), 16, "max_variation")?;
+            w.put(u64::from(*v), WORD_BITS, "max_variation")?;
         }
         w.bytes(&self.trailing)?;
         Ok(w.into_vec())
@@ -208,11 +243,11 @@ impl QualityExtension {
 
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "QualityExtension");
-        let field_size_bytes = r.u8(8)?;
-        let n = r.bits(8)?;
+        let field_size_bytes = r.u8(BYTE_BITS)?;
+        let n = r.bits(BYTE_BITS)?;
         let mut metric_codes = Vec::new();
         for _ in 0..n {
-            metric_codes.push(r.bits(32)?);
+            metric_codes.push(r.bits(DWORD_BITS)?);
         }
         Ok(Self {
             field_size_bytes,
@@ -223,10 +258,10 @@ impl QualityExtension {
 
     pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.field_size_bytes), 8, "field_size_bytes")?;
-        w.put(self.metric_codes.len() as u64, 8, "metric_count")?;
+        w.put(u64::from(self.field_size_bytes), BYTE_BITS, "field_size_bytes")?;
+        w.put(self.metric_codes.len() as u64, BYTE_BITS, "metric_count")?;
         for c in &self.metric_codes {
-            w.put(u64::from(*c), 32, "metric_code")?;
+            w.put(u64::from(*c), DWORD_BITS, "metric_code")?;
         }
         w.bytes(&self.trailing)?;
         Ok(w.into_vec())
@@ -432,11 +467,11 @@ impl VirtualSegmentation {
         let mut r = BitReader::new(body, "VirtualSegmentation");
         let num_partitions = r.bits(NUM_PARTITIONS_BITS)?;
         let timescale_flag = r.flag()?;
-        let reserved = ReservedOnes::from_bits(u64::from(r.u8(4)?));
+        let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_4_READ_BITS)?));
         let timescale = if timescale_flag {
             Some(VirtualSegmentationTimescale {
-                ticks_per_second: r.bits(21)?,
-                maximum_duration_length_minus_1: r.u8(2)?,
+                ticks_per_second: r.bits(TICKS_PER_SECOND_BITS)?,
+                maximum_duration_length_minus_1: r.u8(MAX_DURATION_LENGTH_BITS)?,
                 reserved: r.flag()?,
             })
         } else {
@@ -450,18 +485,18 @@ impl VirtualSegmentation {
         let duration_bits = cfg.duration_bits();
         for _ in 0..num_partitions {
             let explicit = r.flag()?;
-            let partition_id = r.u8(3)?;
-            let reserved = ReservedOnes::from_bits(u64::from(r.u8(4)?));
-            let sap_type_max = r.u8(3)?;
+            let partition_id = r.u8(PARTITION_ID_BITS)?;
+            let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_4_READ_BITS)?));
+            let sap_type_max = r.u8(SAP_TYPE_MAX_BITS)?;
             let boundary = if explicit {
                 VirtualSegmentationBoundary::Explicit {
                     maximum_duration: r.bits64(duration_bits)?,
                 }
             } else {
                 VirtualSegmentationBoundary::Reference {
-                    reserved_before: ReservedOnes::from_bits(u64::from(r.u8(5)?)),
-                    boundary_pid: r.u16(13)?,
-                    reserved_after: ReservedOnes::from_bits(u64::from(r.u8(3)?)),
+                    reserved_before: ReservedOnes::from_bits(u64::from(r.u8(RESERVED_5_READ_BITS)?)),
+                    boundary_pid: r.u16(BOUNDARY_PID_BITS)?,
+                    reserved_after: ReservedOnes::from_bits(u64::from(r.u8(RESERVED_3_READ_BITS)?)),
                 }
             };
             cfg.partitions.push(VirtualSegmentationPartition {
@@ -486,12 +521,16 @@ impl VirtualSegmentation {
                 "num_partitions",
             )?;
             w.flag(cfg.timescale.is_some(), "timescale_flag")?;
-            w.put(cfg.reserved.get(), 4, "reserved")?;
+            w.put(cfg.reserved.get(), RESERVED_4_READ_BITS, "reserved")?;
             if let Some(t) = &cfg.timescale {
-                w.put(u64::from(t.ticks_per_second), 21, "ticks_per_second")?;
+                w.put(
+                    u64::from(t.ticks_per_second),
+                    TICKS_PER_SECOND_BITS,
+                    "ticks_per_second",
+                )?;
                 w.put(
                     u64::from(t.maximum_duration_length_minus_1),
-                    2,
+                    MAX_DURATION_LENGTH_BITS,
                     "maximum_duration_length_minus_1",
                 )?;
                 w.flag(t.reserved, "reserved")?;
@@ -502,18 +541,18 @@ impl VirtualSegmentation {
                     matches!(p.boundary, VirtualSegmentationBoundary::Explicit { .. }),
                     "explicit_boundary_flag",
                 )?;
-                w.put(u64::from(p.partition_id), 3, "partition_id")?;
-                w.put(p.reserved.get(), 4, "reserved")?;
-                w.put(u64::from(p.sap_type_max), 3, "SAP_type_max")?;
+                w.put(u64::from(p.partition_id), PARTITION_ID_BITS, "partition_id")?;
+                w.put(p.reserved.get(), RESERVED_4_READ_BITS, "reserved")?;
+                w.put(u64::from(p.sap_type_max), SAP_TYPE_MAX_BITS, "SAP_type_max")?;
                 match p.boundary {
                     VirtualSegmentationBoundary::Reference {
                         reserved_before,
                         boundary_pid,
                         reserved_after,
                     } => {
-                        w.put(reserved_before.get(), 5, "reserved")?;
-                        w.put(u64::from(boundary_pid), 13, "boundary_PID")?;
-                        w.put(reserved_after.get(), 3, "reserved")?;
+                        w.put(reserved_before.get(), RESERVED_5_READ_BITS, "reserved")?;
+                        w.put(u64::from(boundary_pid), BOUNDARY_PID_BITS, "boundary_PID")?;
+                        w.put(reserved_after.get(), RESERVED_3_READ_BITS, "reserved")?;
                     }
                     VirtualSegmentationBoundary::Explicit { maximum_duration } => {
                         w.put(maximum_duration, duration_bits, "maximum_duration")?;
@@ -545,7 +584,7 @@ impl VirtualSegmentation {
 #[non_exhaustive]
 pub struct JxsMasteringDisplay {
     /// `X_c0, Y_c0, X_c1, Y_c1, X_c2, Y_c2` (increments of 0.00002).
-    pub primaries: [u16; 6],
+    pub primaries: [u16; COLOUR_PRIMARY_COUNT],
     /// `X_wp`.
     pub white_point_x: u16,
     /// `Y_wp`.
@@ -564,7 +603,7 @@ impl JxsMasteringDisplay {
     /// Build from every field of the block (all are spec values, no reserved bits).
     #[must_use]
     pub fn new(
-        primaries: [u16; 6],
+        primaries: [u16; COLOUR_PRIMARY_COUNT],
         white_point_x: u16,
         white_point_y: u16,
         l_max: u32,
@@ -674,37 +713,37 @@ impl JxsVideo {
 
     pub(crate) fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "JxsVideo");
-        let descriptor_version = r.u8(8)?;
-        let horizontal_size = r.u16(16)?;
-        let vertical_size = r.u16(16)?;
-        let brat = r.bits(32)?;
-        let frat = r.bits(32)?;
-        let schar = r.u16(16)?;
-        let ppih = r.u16(16)?;
-        let plev = r.u16(16)?;
-        let max_buffer_size = r.bits(32)?;
-        let buffer_model_type = r.u8(8)?;
-        let colour_primaries = r.u8(8)?;
-        let transfer_characteristics = r.u8(8)?;
-        let matrix_coefficients = r.u8(8)?;
+        let descriptor_version = r.u8(BYTE_BITS)?;
+        let horizontal_size = r.u16(WORD_BITS)?;
+        let vertical_size = r.u16(WORD_BITS)?;
+        let brat = r.bits(DWORD_BITS)?;
+        let frat = r.bits(DWORD_BITS)?;
+        let schar = r.u16(WORD_BITS)?;
+        let ppih = r.u16(WORD_BITS)?;
+        let plev = r.u16(WORD_BITS)?;
+        let max_buffer_size = r.bits(DWORD_BITS)?;
+        let buffer_model_type = r.u8(BYTE_BITS)?;
+        let colour_primaries = r.u8(BYTE_BITS)?;
+        let transfer_characteristics = r.u8(BYTE_BITS)?;
+        let matrix_coefficients = r.u8(BYTE_BITS)?;
         let video_full_range_flag = r.flag()?;
-        let reserved = ReservedOnes::from_bits(u64::from(r.u8(7)?));
+        let reserved = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_7_READ_BITS)?));
         let still_mode = r.flag()?;
         let mdm_flag = r.flag()?;
-        let zero_bits = r.u8(6)?;
+        let zero_bits = r.u8(RESERVED_6_READ_BITS)?;
         let mastering_display = if mdm_flag {
-            let mut primaries = [0u16; 6];
+            let mut primaries = [0u16; COLOUR_PRIMARY_COUNT];
             for p in &mut primaries {
-                *p = r.u16(16)?;
+                *p = r.u16(WORD_BITS)?;
             }
             Some(JxsMasteringDisplay {
                 primaries,
-                white_point_x: r.u16(16)?,
-                white_point_y: r.u16(16)?,
-                l_max: r.bits(32)?,
-                l_min: r.bits(32)?,
-                max_cll: r.u16(16)?,
-                max_fall: r.u16(16)?,
+                white_point_x: r.u16(WORD_BITS)?,
+                white_point_y: r.u16(WORD_BITS)?,
+                l_max: r.bits(DWORD_BITS)?,
+                l_min: r.bits(DWORD_BITS)?,
+                max_cll: r.u16(WORD_BITS)?,
+                max_fall: r.u16(WORD_BITS)?,
             })
         } else {
             None
@@ -734,42 +773,42 @@ impl JxsVideo {
 
     pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.descriptor_version), 8, "descriptor_version")?;
-        w.put(u64::from(self.horizontal_size), 16, "horizontal_size")?;
-        w.put(u64::from(self.vertical_size), 16, "vertical_size")?;
-        w.put(u64::from(self.brat), 32, "brat")?;
-        w.put(u64::from(self.frat), 32, "frat")?;
-        w.put(u64::from(self.schar), 16, "schar")?;
-        w.put(u64::from(self.ppih), 16, "Ppih")?;
-        w.put(u64::from(self.plev), 16, "Plev")?;
-        w.put(u64::from(self.max_buffer_size), 32, "max_buffer_size")?;
-        w.put(u64::from(self.buffer_model_type), 8, "buffer_model_type")?;
-        w.put(u64::from(self.colour_primaries), 8, "colour_primaries")?;
+        w.put(u64::from(self.descriptor_version), BYTE_BITS, "descriptor_version")?;
+        w.put(u64::from(self.horizontal_size), WORD_BITS, "horizontal_size")?;
+        w.put(u64::from(self.vertical_size), WORD_BITS, "vertical_size")?;
+        w.put(u64::from(self.brat), DWORD_BITS, "brat")?;
+        w.put(u64::from(self.frat), DWORD_BITS, "frat")?;
+        w.put(u64::from(self.schar), WORD_BITS, "schar")?;
+        w.put(u64::from(self.ppih), WORD_BITS, "Ppih")?;
+        w.put(u64::from(self.plev), WORD_BITS, "Plev")?;
+        w.put(u64::from(self.max_buffer_size), DWORD_BITS, "max_buffer_size")?;
+        w.put(u64::from(self.buffer_model_type), BYTE_BITS, "buffer_model_type")?;
+        w.put(u64::from(self.colour_primaries), BYTE_BITS, "colour_primaries")?;
         w.put(
             u64::from(self.transfer_characteristics),
-            8,
+            BYTE_BITS,
             "transfer_characteristics",
         )?;
         w.put(
             u64::from(self.matrix_coefficients),
-            8,
+            BYTE_BITS,
             "matrix_coefficients",
         )?;
         w.flag(self.video_full_range_flag, "video_full_range_flag")?;
-        w.put(self.reserved.get(), 7, "reserved")?;
+        w.put(self.reserved.get(), RESERVED_7_READ_BITS, "reserved")?;
         w.flag(self.still_mode, "still_mode")?;
         w.flag(self.mastering_display.is_some(), "mdm_flag")?;
-        w.put(u64::from(self.zero_bits), 6, "zero_bits")?;
+        w.put(u64::from(self.zero_bits), RESERVED_6_READ_BITS, "zero_bits")?;
         if let Some(m) = &self.mastering_display {
             for p in &m.primaries {
-                w.put(u64::from(*p), 16, "X_c/Y_c")?;
+                w.put(u64::from(*p), WORD_BITS, "X_c/Y_c")?;
             }
-            w.put(u64::from(m.white_point_x), 16, "X_wp")?;
-            w.put(u64::from(m.white_point_y), 16, "Y_wp")?;
-            w.put(u64::from(m.l_max), 32, "L_max")?;
-            w.put(u64::from(m.l_min), 32, "L_min")?;
-            w.put(u64::from(m.max_cll), 16, "MaxCLL")?;
-            w.put(u64::from(m.max_fall), 16, "MaxFALL")?;
+            w.put(u64::from(m.white_point_x), WORD_BITS, "X_wp")?;
+            w.put(u64::from(m.white_point_y), WORD_BITS, "Y_wp")?;
+            w.put(u64::from(m.l_max), DWORD_BITS, "L_max")?;
+            w.put(u64::from(m.l_min), DWORD_BITS, "L_min")?;
+            w.put(u64::from(m.max_cll), WORD_BITS, "MaxCLL")?;
+            w.put(u64::from(m.max_fall), WORD_BITS, "MaxFALL")?;
         }
         w.bytes(&self.private_data)?;
         Ok(w.into_vec())
