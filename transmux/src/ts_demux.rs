@@ -564,8 +564,8 @@ const MAX_FRAME_PERIOD_TICKS: u64 = VIDEO_TIMESCALE.as_u64();
 /// dominate the middle value.
 const FRAME_PERIOD_WINDOW: usize = 5;
 
-/// The `2` that halves a length to index the middle element of a sorted window.
-const HALF: usize = 2;
+/// Divisor that indexes the middle element of a sorted window.
+const MEDIAN_INDEX_DIVISOR: usize = 2;
 
 // ── AVC SPS config offsets (ISO/IEC 14496-15:2017 §5.3.3.1) ────────────────
 
@@ -4563,7 +4563,7 @@ fn on_completed_pes(
                 stream.recent_steps.push(period);
                 let mut sorted = stream.recent_steps.clone();
                 sorted.sort_unstable();
-                let median = sorted[sorted.len() / HALF];
+                let median = sorted[sorted.len() / MEDIAN_INDEX_DIVISOR];
                 stream.frame_period = Some(median);
                 stream.last_frame_period = median as i128;
             }
