@@ -906,7 +906,7 @@ fn derive_dts(
 /// ticks (ITU-T H.264 §E.2.1, `time_scale / (2 * num_units_in_tick)`).
 const VUI_UNITS_PER_FRAME: u64 = 2;
 /// Round-to-nearest bias for a truncating float-to-integer cast.
-const ROUND_HALF_UP: f64 = 0.5;
+const ROUND_TO_NEAREST_BIAS: f64 = 0.5;
 
 /// The truthful per-AU duration for a track, in order: the last real
 /// per-AU duration, the smallest positive timestamp step seen, then the
@@ -1118,7 +1118,7 @@ impl RtpStreamDepacketiser {
                 // libm), unavailable in this crate's `no_std` core build —
                 // round-half-up via a truncating cast instead, which is
                 // exact for `round()`'s behaviour given `raw_ticks >= 0.0`.
-                let ticks = (raw_ticks + ROUND_HALF_UP) as u64;
+                let ticks = (raw_ticks + ROUND_TO_NEAREST_BIAS) as u64;
                 (id, ticks)
             })
             .collect())

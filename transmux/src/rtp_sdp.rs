@@ -48,6 +48,12 @@ const STREAM_TYPE_AUDIO: u8 = 5;
 /// `SLConfigDescriptor` `predefined = 2` (MP4 storage) — ISO/IEC 14496-14 §3.1.2.
 /// AAC sample size is always 16 bits in the sample entry (fMP4/CMAF convention).
 const AAC_SAMPLE_SIZE_BITS: u16 = 16;
+const SPS_PROFILE_LEVEL_LEN: usize = 4;
+const SPS_PROFILE_IDC_OFFSET: usize = 1;
+const SPS_PROFILE_COMPATIBILITY_OFFSET: usize = 2;
+const SPS_LEVEL_IDC_OFFSET: usize = 3;
+const BIT_DEPTH_LUMA_BIAS: u8 = 8;
+const BIT_DEPTH_CHROMA_BIAS: u8 = 8;
 
 /// Sample rate from the ASC: the explicit escape value if present, otherwise
 /// the ISO/IEC 14496-3 Table 1.10 frequency for the index — taken from the
@@ -171,8 +177,12 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
     let first_sps = sps
         .first()
         .ok_or(Error::InvalidInput("no SPS NAL unit supplied"))?;
-    need_in(&first_sps.0, 4, "SPS profile/level bytes")?;
-    let profile_indication = first_sps.0[1];
+    need_in(
+        &first_sps.0,
+        SPS_PROFILE_LEVEL_LEN,
+        "SPS profile/level bytes",
+    )?;
+    let profile_indication = first_sps.0[SPS_PROFILE_IDC_OFFSET];
     // Gate on the serializer's own emission set (the ISO/IEC 14496-15:2017
     // §5.3.3.1.2 condition for `profile_idc` 100/110/122/244), reached through
     // the shared `sps::is_high_profile` source of truth so the record and the
@@ -195,14 +205,18 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
     let record = AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication,
-        profile_compatibility: first_sps.0[2],
-        level_indication: first_sps.0[3],
+        profile_compatibility: first_sps.0[SPS_PROFILE_COMPATIBILITY_OFFSET],
+        level_indication: first_sps.0[SPS_LEVEL_IDC_OFFSET],
         length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
         sps,
         pps,
         chroma_format: ext.as_ref().map(|i| i.chroma_format_idc),
-        bit_depth_luma_minus8: ext.as_ref().map(|i| i.bit_depth_luma.saturating_sub(8)),
-        bit_depth_chroma_minus8: ext.as_ref().map(|i| i.bit_depth_chroma.saturating_sub(8)),
+        bit_depth_luma_minus8: ext
+            .as_ref()
+            .map(|i| i.bit_depth_luma.saturating_sub(BIT_DEPTH_LUMA_BIAS)),
+        bit_depth_chroma_minus8: ext
+            .as_ref()
+            .map(|i| i.bit_depth_chroma.saturating_sub(BIT_DEPTH_CHROMA_BIAS)),
         sps_ext: Vec::new(),
     };
     Ok(AVCConfigurationBox::new(record))

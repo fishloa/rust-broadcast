@@ -126,6 +126,12 @@ pub const KLV_ENCODING_NAME: &str = "smpte336m";
 const NAL_TYPE_MASK: u8 = 0x1F;
 /// NAL unit `F|NRI` field mask (top 3 bits of the NAL octet).
 const NAL_FNRI_MASK: u8 = 0xE0;
+const NAL_NRI_MASK: u8 = 0x60;
+const NAL_FORBIDDEN_MASK: u8 = 0x80;
+const BITS_PER_BYTE: usize = u8::BITS as usize;
+const FU_HEADER_PAIR_LEN: usize = 2;
+const PAIR_WINDOW_LEN: usize = 2;
+const DEFAULT_SSRC: u32 = 0x1234_5678;
 /// STAP-A aggregation NAL type (RFC 6184 §5.7.1).
 const NAL_TYPE_STAP_A: u8 = 24;
 /// FU-A fragmentation NAL type (RFC 6184 §5.8).
@@ -274,7 +280,7 @@ impl Default for RtpPacketiser {
             mtu: DEFAULT_MTU,
             video_pt: DEFAULT_VIDEO_PT,
             audio_pt: DEFAULT_AUDIO_PT,
-            ssrc: 0x1234_5678,
+            ssrc: DEFAULT_SSRC,
             stap_a_parameter_sets: true,
         }
     }
@@ -600,7 +606,7 @@ impl RtpPacketiser {
             // AU-headers-length is in BITS: one 2-byte header = 16 bits. One
             // header per packet, and it always states the AU's full size
             // (§3.2.3.2), whether or not this packet carries all of it.
-            let au_headers_len_bits = (AAC_AU_HEADER_LEN * 8) as u16;
+            let au_headers_len_bits = (AAC_AU_HEADER_LEN * BITS_PER_BYTE) as u16;
             // AU-header: AU-size(13) | AU-Index(3). AU-Index = 0 (single AU).
             let hdr = (au.len() as u16) << AAC_INDEX_LENGTH;
             // Fragmentation (§3.2.3.1): the marker is set on the last fragment
@@ -710,8 +716,8 @@ fn build_stap_a(
     let mut forbidden = 0u8;
     for nal in nals {
         if let Some(&octet) = nal.first() {
-            max_nri = max_nri.max(octet & 0x60);
-            forbidden |= octet & 0x80;
+            max_nri = max_nri.max(octet & NAL_NRI_MASK);
+            forbidden |= octet & NAL_FORBIDDEN_MASK;
         }
     }
     let stap_hdr = forbidden | max_nri | NAL_TYPE_STAP_A;
@@ -766,7 +772,7 @@ fn fragment_fu_a(
 
     // Payload budget per packet: MTU minus RTP header, FU indicator, FU header.
     let per_packet = mtu
-        .checked_sub(RTP_HEADER_LEN + 2)
+        .checked_sub(RTP_HEADER_LEN + FU_HEADER_PAIR_LEN)
         .filter(|&b| b > 0)
         .ok_or(Error::InvalidInput("MTU too small for FU-A fragmentation"))?;
 
@@ -789,7 +795,7 @@ fn fragment_fu_a(
         // Marker set only on the last fragment of the AU's last NAL.
         let marker = is_end && au_is_last_nal;
         let rtp_hdr = rtp_header(pt, marker, seq.next(), timestamp, ssrc);
-        let mut header_buf = bytes::BytesMut::with_capacity(rtp_hdr.len() + 2);
+        let mut header_buf = bytes::BytesMut::with_capacity(rtp_hdr.len() + FU_HEADER_PAIR_LEN);
         header_buf.extend_from_slice(&rtp_hdr);
         header_buf.extend_from_slice(&[fu_indicator, fu_header]);
         let header = header_buf.freeze();
@@ -881,9 +887,7 @@ fn sdp_audio(pt: u8, clock: u32, channels: u16, asc: &[u8]) -> sdp_types::Media 
     media.add_attribute_with_value(
         "fmtp",
         format!(
-            "{pt} streamtype=5; profile-level-id=1; mode=AAC-hbr; config={config}; \
-             sizeLength={AAC_SIZE_LENGTH}; indexLength={AAC_INDEX_LENGTH}; \
-             indexDeltaLength={AAC_INDEX_DELTA_LENGTH}"
+            "{pt} streamtype=5; profile-level-id=1; mode=AAC-hbr; config={config}; sizeLength={AAC_SIZE_LENGTH}; indexLength={AAC_INDEX_LENGTH}; indexDeltaLength={AAC_INDEX_DELTA_LENGTH}"
         ),
     );
     media
@@ -1006,9 +1010,7 @@ impl RtpInputStream {
                     return Err(Error::InvalidValue(InvalidValue {
                         field: "rtp_clock_rate",
                         value: u64::from(self.clock_rate),
-                        reason: "an MPEG-4 audio stream's RTP clock rate is its \
-                                 sampling rate (RFC 3640 §3.1), so it must equal the \
-                                 AudioSpecificConfig's sample rate",
+                        reason: "an MPEG-4 audio stream's RTP clock rate is its sampling rate (RFC 3640 §3.1), so it must equal the AudioSpecificConfig's sample rate",
                     }));
                 }
                 Ok(Timescale::try_new(*sample_rate)?)
@@ -1035,8 +1037,7 @@ impl RtpInputStream {
             Some(_) | None => {
                 if self.clock_rate == 0 {
                     return Err(Error::InvalidInput(
-                        "RTP stream has no clock rate: an RTP timestamp's unit is the \
-stream's own clock (RFC 3550 §5.1), so a track cannot be timed without it",
+                        "RTP stream has no clock rate: an RTP timestamp's unit is the stream's own clock (RFC 3550 §5.1), so a track cannot be timed without it",
                     ));
                 }
                 Ok(Timescale::try_new(self.clock_rate)?)
@@ -1315,7 +1316,7 @@ impl RtpWrapState {
 ///
 /// Returns `(dts, pts)` per sample, in wire order.
 fn decode_timeline(pts: &[i64]) -> (Vec<i64>, Vec<i64>) {
-    if pts.windows(2).all(|w| w[1] >= w[0]) {
+    if pts.windows(PAIR_WINDOW_LEN).all(|w| w[1] >= w[0]) {
         return (pts.to_vec(), pts.to_vec());
     }
     // The decode instants are the *presentation* instants, re-laid in wire
@@ -1427,8 +1428,10 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
                 // instants (the latch can clamp several frames onto the same tick)
                 // and the frames before the first positive step still need a
                 // duration. `None` only when the whole series is one instant.
-                let mut previous_nonzero_duration: Option<i64> =
-                    dts_series.windows(2).map(|w| w[1] - w[0]).find(|d| *d > 0);
+                let mut previous_nonzero_duration: Option<i64> = dts_series
+                    .windows(PAIR_WINDOW_LEN)
+                    .map(|w| w[1] - w[0])
+                    .find(|d| *d > 0);
                 let samples: Vec<Sample> = t
                     .samples
                     .iter()
@@ -1457,7 +1460,7 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
                             } else {
                                 previous_nonzero_duration
                             }
-                        } else if n >= 2 {
+                        } else if n >= PAIR_WINDOW_LEN {
                             let d = dts - dts_series[i - 1];
                             if d > 0 {
                                 Some(d)
@@ -1711,9 +1714,9 @@ fn reassemble_video_impl(
                 cur_nals.extend(stap_nals);
             }
             NAL_TYPE_FU_A => {
-                if payload.len() < 2 {
+                if payload.len() < FU_HEADER_PAIR_LEN {
                     bad!(Error::BufferTooShort(BufferTooShort {
-                        need: 2,
+                        need: FU_HEADER_PAIR_LEN,
                         have: payload.len(),
                         what: "FU-A header",
                     }));
@@ -1868,8 +1871,8 @@ fn reassemble_audio_impl(
             }));
         }
         let au_headers_len_bits = u16::from_be_bytes([payload[0], payload[1]]) as usize;
-        let header_bytes = au_headers_len_bits.div_ceil(8);
-        let num_headers = au_headers_len_bits / (AAC_AU_HEADER_LEN * 8);
+        let header_bytes = au_headers_len_bits.div_ceil(BITS_PER_BYTE);
+        let num_headers = au_headers_len_bits / (AAC_AU_HEADER_LEN * BITS_PER_BYTE);
         let mut off = AAC_AU_HEADERS_LENGTH_LEN;
         if off + header_bytes > payload.len() {
             bad!(Error::BufferTooShort(BufferTooShort {
@@ -2240,7 +2243,7 @@ use broadcast_common::hex::hex_encode;
 /// Hex-decode a string; rejects odd lengths and invalid nibbles.
 pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>> {
     broadcast_common::hex::hex_decode(s).ok_or_else(|| {
-        if !s.len().is_multiple_of(2) {
+        if !s.len().is_multiple_of(PAIR_WINDOW_LEN) {
             return Error::InvalidValue(InvalidValue {
                 field: "hex",
                 value: s.len() as u64,
@@ -2566,7 +2569,7 @@ mod tests {
         let (dts, shifted) = decode_timeline(&pts);
 
         assert!(
-            !pts.windows(2).all(|w| w[1] >= w[0]),
+            !pts.windows(PAIR_WINDOW_LEN).all(|w| w[1] >= w[0]),
             "the fixture must actually be reordered"
         );
         assert!(
