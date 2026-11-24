@@ -32,9 +32,9 @@ const EIT_PRESENT_FOLLOWING_FLAG: u8 = 0x01;
 use super::CRC_LEN;
 
 /// Width of the `reserved_future_use` in a service entry.
-const SDT_SERVICE_RESERVED_BITS: u32 = 6;
+pub const SDT_SERVICE_RESERVED_BITS: u32 = 6;
 /// Width of the `reserved_future_use` after the extension header.
-const SDT_EXTENSION_RESERVED_BITS: u32 = 8;
+pub const SDT_EXTENSION_RESERVED_BITS: u32 = 8;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
 const SERVICE_HEADER_LEN: usize = 5;
 

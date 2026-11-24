@@ -22,9 +22,9 @@ const REGION_ID_BITS: u32 = 6;
 const RESERVED_BIT_MASK: u8 = 0x02;
 const RESERVED_BIT_SHIFT: u8 = 1;
 /// Width of the entry's `reserved_future_use` (1 bit).
-const RESERVED_BITS: u32 = 1;
+pub const RESERVED_BITS: u32 = 1;
 /// Width of the `time_of_change` field (MJD + BCD HHMMSS), bytes.
-const TIME_OF_CHANGE_LEN: usize = 5;
+pub const TIME_OF_CHANGE_LEN: usize = 5;
 /// Width of the MJD part of `time_of_change`, bytes.
 const TIME_OF_CHANGE_MJD_LEN: usize = core::mem::size_of::<u16>();
 /// Offset of the hour byte within `time_of_change`.

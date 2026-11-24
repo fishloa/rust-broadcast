@@ -17,7 +17,7 @@ const HEADER_LEN: usize = 2;
 /// audit §5; no fixture carries the descriptor).
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved` field ahead of the upper bound (1 bit).
-const RESERVED_BITS: u32 = 1;
+pub const RESERVED_BITS: u32 = 1;
 const BODY_LEN: u8 = 4;
 /// `bound_valid_flag` bit of the first body byte.
 const BOUND_VALID_FLAG: u8 = 0x80;

@@ -52,7 +52,7 @@ const ANNOUNCEMENT_TYPE_SHIFT: u8 = 4;
 const RESERVED_BIT_MASK: u8 = 0x08;
 const RESERVED_BIT_SHIFT: u8 = 3;
 /// Width of the entry's `reserved_future_use` (1 bit).
-const RESERVED_BITS: u32 = 1;
+pub const RESERVED_BITS: u32 = 1;
 /// Spec default of the entry's 1-bit `reserved_future_use`: `1` (EN 300 468
 /// V1.4.1-V1.20.1 Table 17, global convention; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A, stable).

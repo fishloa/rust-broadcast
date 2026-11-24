@@ -28,9 +28,9 @@ const PROG_INFO_LEN_BYTES: usize = 2;
 use super::CRC_LEN;
 
 /// Width of the `reserved` above a PID.
-const PMT_RESERVED_PID_BITS: u32 = 3;
+pub const PMT_RESERVED_PID_BITS: u32 = 3;
 /// Width of the `reserved` above a 12-bit length.
-const PMT_RESERVED_LENGTH_BITS: u32 = 4;
+pub const PMT_RESERVED_LENGTH_BITS: u32 = 4;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES + CRC_LEN;
 const STREAM_HEADER_LEN: usize = 5;

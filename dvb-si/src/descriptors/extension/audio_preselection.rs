@@ -39,12 +39,13 @@ impl<'a> ExtensionBodyDef<'a> for AudioPreselection<'a> {
 /// component tags count, 3-bit before `future_extension_length`): 0 since the
 /// descriptor's introduction in EN 300 468 V1.16.1
 /// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const AUDIO_PRESELECTION_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_FUTURE_USE_BITS> =
-    ReservedZero::<RESERVED_FUTURE_USE_BITS>::FILL;
+pub const AUDIO_PRESELECTION_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<
+    AUDIO_PRESELECTION_RESERVED_FUTURE_USE_BITS,
+> = ReservedZero::<AUDIO_PRESELECTION_RESERVED_FUTURE_USE_BITS>::FILL;
 /// Width of the 3-bit `reserved_zero_future_use` regions.
-const RESERVED_FUTURE_USE_BITS: u32 = 3;
+pub const AUDIO_PRESELECTION_RESERVED_FUTURE_USE_BITS: u32 = 3;
 /// Width of the 5-bit `reserved_zero_future_use` region.
-const AUX_RESERVED_FUTURE_USE_BITS: u32 = 5;
+pub const AUX_RESERVED_FUTURE_USE_BITS: u32 = 5;
 /// Width of `num_preselections`.
 const NUM_PRESELECTIONS_BITS: u32 = 5;
 /// Shift of `num_preselections`.
@@ -160,7 +161,7 @@ pub struct AudioPreselection<'a> {
     /// `reserved_zero_future_use` (3 bits, right-aligned) after
     /// `num_preselections`. Preserved on parse; defaults to
     /// [`AUDIO_PRESELECTION_RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use_3: ReservedZero<RESERVED_FUTURE_USE_BITS>,
+    pub reserved_zero_future_use_3: ReservedZero<AUDIO_PRESELECTION_RESERVED_FUTURE_USE_BITS>,
     /// Preselection entries (num_preselections is their count).
     pub preselections: Vec<Preselection<'a>>,
     /// Bytes after the last preselection inside the declared descriptor
@@ -206,7 +207,8 @@ pub struct Preselection<'a> {
     /// `future_extension_length`; `Some` iff `future_extension` is. Preserved on
     /// parse; a hand-built `None` serializes as
     /// [`AUDIO_PRESELECTION_RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use_3: Option<ReservedZero<RESERVED_FUTURE_USE_BITS>>,
+    pub reserved_zero_future_use_3:
+        Option<ReservedZero<AUDIO_PRESELECTION_RESERVED_FUTURE_USE_BITS>>,
 }
 
 impl<'a> Parse<'a> for AudioPreselection<'a> {

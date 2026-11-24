@@ -15,7 +15,7 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use crate::text::{DvbText, LangCode};
+use crate::text::{DvbText, LANG_CODE_LEN, LangCode};
 use broadcast_common::len::need_out;
 use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
@@ -31,15 +31,14 @@ const MESSAGE_INDEX_MASK: u8 = 0x1F;
 /// Offset of `language_code` within the fixed fields.
 const LANGUAGE_CODE_OFFSET: usize = 1;
 /// Width of `language_code` in bytes.
-const LANGUAGE_CODE_LEN: usize = 3;
 /// Offset of `reserved_for_future_use` / `message_index` within the fixed fields.
-const RESERVED_AND_INDEX_OFFSET: usize = LANGUAGE_CODE_OFFSET + LANGUAGE_CODE_LEN;
+const RESERVED_AND_INDEX_OFFSET: usize = LANGUAGE_CODE_OFFSET + LANG_CODE_LEN;
 /// Default of the 3-bit `reserved_for_future_use`: `0b111` (all-ones
 /// reserved convention; `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`).
 pub const RESERVED_FOR_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
     ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved_for_future_use` field (3 bits).
-const RESERVED_BITS: u32 = 3;
+pub const RESERVED_BITS: u32 = 3;
 
 /// enhanced_message_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

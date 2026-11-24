@@ -35,7 +35,7 @@ const RESERVED_BITS_MASK: u8 = 0x7C;
 const RESERVED_SHIFT: u8 = 2;
 const LCN_HI_MASK: u8 = 0x03;
 /// Width of the per-entry `reserved` (5 bits).
-const RESERVED_BITS: u32 = 5;
+pub const RESERVED_BITS: u32 = 5;
 
 /// Default of the 5-bit per-entry `reserved` between `visible_service_flag`
 /// and the LCN: all ones (`0x1F`). EACEM/D-Book private layout (PDS 0x28; the

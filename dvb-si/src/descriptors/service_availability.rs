@@ -30,7 +30,7 @@ const RESERVED_MASK: u8 = 0b0111_1111;
 pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
     ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved_future_use` field (7 bits).
-const RESERVED_BITS: u32 = 7;
+pub const RESERVED_BITS: u32 = 7;
 
 /// Service Availability Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

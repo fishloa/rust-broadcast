@@ -232,12 +232,8 @@ impl<'a> Parse<'a> for CarouselIdentifierDescriptor<'a> {
                 // [5..9]=module_size, [9]=compression_method, [10..14]=original_size,
                 // [14]=timeout, [15]=object_key_length
                 let module_version = fs1[0];
-                let module_id =
-                    u16::from_be_bytes([fs1[FS1_MODULE_ID_OFFSET], fs1[FS1_MODULE_ID_OFFSET + 1]]);
-                let block_size = u16::from_be_bytes([
-                    fs1[FS1_BLOCK_SIZE_OFFSET],
-                    fs1[FS1_BLOCK_SIZE_OFFSET + 1],
-                ]);
+                let module_id = crate::wire::be_u16(fs1, FS1_MODULE_ID_OFFSET, "module_id")?;
+                let block_size = crate::wire::be_u16(fs1, FS1_BLOCK_SIZE_OFFSET, "block_size")?;
                 let mut module_size_bytes = [0u8; FS1_MODULE_SIZE_LEN];
                 module_size_bytes
                     .copy_from_slice(&fs1[FS1_MODULE_SIZE_OFFSET..FS1_COMPRESSION_METHOD_OFFSET]);

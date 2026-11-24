@@ -41,7 +41,7 @@ const MIN_SECTION_LEN: usize =
 const RESERVED_SHIFT: u32 = 7;
 
 /// Width of the `reserved_transmission_info_loop_length` field.
-const FOUR_BITS: u32 = 4;
+pub const RESERVED_TRANSMISSION_INFO_LEN_BITS: u32 = 4;
 
 /// `running_status(3)` mask and shift in the service flags byte.
 const RUNNING_STATUS_MASK: u8 = 0x07;
@@ -118,7 +118,7 @@ pub struct SitSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `transmission_info_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_transmission_info_loop_length: ReservedOnes<FOUR_BITS>,
+    pub reserved_transmission_info_loop_length: ReservedOnes<RESERVED_TRANSMISSION_INFO_LEN_BITS>,
 }
 
 impl<'a> SitSection<'a> {

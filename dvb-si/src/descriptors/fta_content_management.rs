@@ -23,7 +23,7 @@ const USER_DEFINED_MASK: u8 = 0b1000_0000;
 const RESERVED_MASK: u8 = 0b0111_0000;
 const RESERVED_SHIFT: u8 = 4;
 /// Width of the `reserved_future_use` after `user_defined` (3 bits).
-const RESERVED_BITS: u32 = 3;
+pub const RESERVED_BITS: u32 = 3;
 /// Spec default of `reserved_future_use`(3): all ones (EN 300 468 V1.12.1-V1.20.1
 /// Table 57; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §4 row 3 / §6.1:
 /// `user_defined`(1) was carved out of the old `reserved_future_use`(4) in V1.12.1,

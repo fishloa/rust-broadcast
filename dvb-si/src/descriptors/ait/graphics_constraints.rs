@@ -20,7 +20,7 @@ const HEADER_LEN: usize = 2;
 const FLAGS_LEN: usize = 1;
 
 /// Width of the `reserved_future_use` field (5 bits).
-const RESERVED_BITS: u32 = 5;
+pub const RESERVED_BITS: u32 = 5;
 /// Bit position of the 5-bit `reserved_future_use` (the top five bits).
 const RESERVED_SHIFT: u32 = 3;
 const CAN_RUN_WITHOUT_VISIBLE_UI: u8 = 0x04;

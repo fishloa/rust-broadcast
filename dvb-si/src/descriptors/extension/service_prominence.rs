@@ -36,7 +36,7 @@ const SOGI_PRIORITY_HIGH_MASK: u8 = 0x0F;
 /// Width of an 8-bit loop length field.
 const LOOP_LENGTH_BITS: u32 = 8;
 /// Width of the per-entry `reserved_future_use` (1 bit).
-const SOGI_RESERVED_BITS: u32 = 1;
+pub const SOGI_RESERVED_BITS: u32 = 1;
 /// Spec default of the 1-bit `reserved_future_use` in each SOGI entry (bit 4
 /// of its first byte): 1 (EN 300 468 Table 162c, V1.19.1/V1.20.1;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).

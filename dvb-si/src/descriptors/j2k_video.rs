@@ -9,6 +9,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use crate::wire::{U16_LEN, U32_LEN};
 use broadcast_common::len::need_out;
 use broadcast_common::reserved::{ReservedOnes, ReservedZero};
 use broadcast_common::{Parse, Serialize};
@@ -20,24 +21,24 @@ const HEADER_LEN: usize = 2;
 /// (H.222.0 Table 2-101, 08/2018-08/2023, audit §4 row 14): the table says
 /// "reserved (all bits to be set to '0')", an explicit exception to the
 /// clause 2.1 "reserved = 1" rule.
-pub const RESERVED_5_EXTENDED_DEFAULT: ReservedZero<RESERVED_5_BITS> =
-    ReservedZero::<RESERVED_5_BITS>::FILL;
+pub const RESERVED_5_EXTENDED_DEFAULT: ReservedZero<RESERVED_AFTER_MDM_FLAGS_BITS> =
+    ReservedZero::<RESERVED_AFTER_MDM_FLAGS_BITS>::FILL;
 /// Default of the 6-bit `reserved` after `still_mode`/`interlaced_video`
 /// (both branches) — plain `reserved`, clause 2.1 = `1` (all ones).
-pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
+pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_AFTER_INTERLACED_FLAG_BITS> =
+    ReservedOnes::<RESERVED_AFTER_INTERLACED_FLAG_BITS>::FILL;
 /// Default of the 7-bit `reserved` after `video_full_range_flag` — plain
 /// `reserved`, clause 2.1 = `1` (all ones).
-pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
+pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_AFTER_VIDEO_RANGE_FLAG_BITS> =
+    ReservedOnes::<RESERVED_AFTER_VIDEO_RANGE_FLAG_BITS>::FILL;
 /// Width of the `reserved` after the `stripe/block/mdm` flags (5 bits).
-const RESERVED_5_BITS: u32 = 5;
+pub const RESERVED_AFTER_MDM_FLAGS_BITS: u32 = 5;
 /// Width of the `reserved` after `still_mode`/`interlaced_video` (6 bits).
-const RESERVED_6_BITS: u32 = 6;
+pub const RESERVED_AFTER_INTERLACED_FLAG_BITS: u32 = 6;
 /// Width of the `reserved` after `video_full_range_flag` (7 bits).
-const RESERVED_7_BITS: u32 = 7;
+pub const RESERVED_AFTER_VIDEO_RANGE_FLAG_BITS: u32 = 7;
 /// Width of a 16-bit wire field, bytes.
-const U16_LEN: usize = core::mem::size_of::<u16>();
 /// Width of a 32-bit wire field, bytes.
-const U32_LEN: usize = core::mem::size_of::<u32>();
 const EXTENDED_CAPABILITY_FLAG_MASK: u16 = 0x8000;
 const PROFILE_AND_LEVEL_MASK: u16 = 0x7FFF;
 /// Shift of the high byte of the flags/profile word.
@@ -229,11 +230,11 @@ pub struct J2kExtendedCapability {
     /// `reserved(5)` after the `mdm_flag` (5 bits, right-aligned; the spec
     /// says "all bits to be set to '0'"). Captured on parse, re-emitted
     /// verbatim; defaults to [`RESERVED_5_EXTENDED_DEFAULT`] (0).
-    pub reserved_5: ReservedZero<RESERVED_5_BITS>,
+    pub reserved_5: ReservedZero<RESERVED_AFTER_MDM_FLAGS_BITS>,
     /// `reserved(7)` after `video_full_range_flag` (7 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_7_DEFAULT`].
-    pub reserved_7: ReservedOnes<RESERVED_7_BITS>,
+    pub reserved_7: ReservedOnes<RESERVED_AFTER_VIDEO_RANGE_FLAG_BITS>,
 }
 
 impl J2kExtendedCapability {
@@ -306,7 +307,7 @@ pub struct J2kVideoDescriptor<'a> {
     /// right-aligned; present in both the extended and the legacy branch).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_6_DEFAULT`].
-    pub reserved_6: ReservedOnes<RESERVED_6_BITS>,
+    pub reserved_6: ReservedOnes<RESERVED_AFTER_INTERLACED_FLAG_BITS>,
 }
 
 impl<'a> J2kVideoDescriptor<'a> {
@@ -347,7 +348,7 @@ fn parse_extended_capability(
     J2kExtendedCapability,
     bool,
     bool,
-    ReservedOnes<RESERVED_6_BITS>,
+    ReservedOnes<RESERVED_AFTER_INTERLACED_FLAG_BITS>,
     usize,
 )> {
     // stripe_flag(1) + block_flag(1) + mdm_flag(1) + reserved(5) = 1 byte
@@ -468,24 +469,22 @@ fn parse_extended_capability(
                 reason: "J2K_video_descriptor too short for MDM sub-block",
             });
         }
-        let x_c0 = u16::from_be_bytes([body[pos + X_C0_OFFSET], body[pos + X_C0_OFFSET + 1]]);
-        let y_c0 = u16::from_be_bytes([body[pos + Y_C0_OFFSET], body[pos + Y_C0_OFFSET + 1]]);
-        let x_c1 = u16::from_be_bytes([body[pos + X_C1_OFFSET], body[pos + X_C1_OFFSET + 1]]);
-        let y_c1 = u16::from_be_bytes([body[pos + Y_C1_OFFSET], body[pos + Y_C1_OFFSET + 1]]);
-        let x_c2 = u16::from_be_bytes([body[pos + X_C2_OFFSET], body[pos + X_C2_OFFSET + 1]]);
-        let y_c2 = u16::from_be_bytes([body[pos + Y_C2_OFFSET], body[pos + Y_C2_OFFSET + 1]]);
-        let x_wp = u16::from_be_bytes([body[pos + X_WP_OFFSET], body[pos + X_WP_OFFSET + 1]]);
-        let y_wp = u16::from_be_bytes([body[pos + Y_WP_OFFSET], body[pos + Y_WP_OFFSET + 1]]);
+        let x_c0 = crate::wire::be_u16(body, pos + X_C0_OFFSET, "x_c0")?;
+        let y_c0 = crate::wire::be_u16(body, pos + Y_C0_OFFSET, "y_c0")?;
+        let x_c1 = crate::wire::be_u16(body, pos + X_C1_OFFSET, "x_c1")?;
+        let y_c1 = crate::wire::be_u16(body, pos + Y_C1_OFFSET, "y_c1")?;
+        let x_c2 = crate::wire::be_u16(body, pos + X_C2_OFFSET, "x_c2")?;
+        let y_c2 = crate::wire::be_u16(body, pos + Y_C2_OFFSET, "y_c2")?;
+        let x_wp = crate::wire::be_u16(body, pos + X_WP_OFFSET, "x_wp")?;
+        let y_wp = crate::wire::be_u16(body, pos + Y_WP_OFFSET, "y_wp")?;
         let mut l_max_bytes = [0u8; U32_LEN];
         l_max_bytes.copy_from_slice(&body[pos + L_MAX_OFFSET..pos + L_MIN_OFFSET]);
         let l_max = u32::from_be_bytes(l_max_bytes);
         let mut l_min_bytes = [0u8; U32_LEN];
         l_min_bytes.copy_from_slice(&body[pos + L_MIN_OFFSET..pos + MAX_CLL_OFFSET]);
         let l_min = u32::from_be_bytes(l_min_bytes);
-        let max_cll =
-            u16::from_be_bytes([body[pos + MAX_CLL_OFFSET], body[pos + MAX_CLL_OFFSET + 1]]);
-        let max_fall =
-            u16::from_be_bytes([body[pos + MAX_FALL_OFFSET], body[pos + MAX_FALL_OFFSET + 1]]);
+        let max_cll = crate::wire::be_u16(body, pos + MAX_CLL_OFFSET, "MaxCLL")?;
+        let max_fall = crate::wire::be_u16(body, pos + MAX_FALL_OFFSET, "MaxFALL")?;
         pos += MDM_SUB_BLOCK_LEN;
         Some(J2kMdm {
             x_c0,
@@ -531,7 +530,7 @@ fn serialize_extended_capability(
     ext: &J2kExtendedCapability,
     still_mode: bool,
     interlaced_video: bool,
-    reserved_6: ReservedOnes<RESERVED_6_BITS>,
+    reserved_6: ReservedOnes<RESERVED_AFTER_INTERLACED_FLAG_BITS>,
     buf: &mut [u8],
     mut pos: usize,
 ) -> Result<usize> {
@@ -668,10 +667,8 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
         let mut buffer_bytes = [0u8; U32_LEN];
         buffer_bytes.copy_from_slice(&body[MAX_BUFFER_SIZE_OFFSET..DEN_FRAME_RATE_OFFSET]);
         let max_buffer_size = u32::from_be_bytes(buffer_bytes);
-        let den_frame_rate =
-            u16::from_be_bytes([body[DEN_FRAME_RATE_OFFSET], body[DEN_FRAME_RATE_OFFSET + 1]]);
-        let num_frame_rate =
-            u16::from_be_bytes([body[NUM_FRAME_RATE_OFFSET], body[NUM_FRAME_RATE_OFFSET + 1]]);
+        let den_frame_rate = crate::wire::be_u16(body, DEN_FRAME_RATE_OFFSET, "den_frame_rate")?;
+        let num_frame_rate = crate::wire::be_u16(body, NUM_FRAME_RATE_OFFSET, "num_frame_rate")?;
         let pos = PREAMBLE_LEN;
 
         let (

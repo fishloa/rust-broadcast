@@ -6,6 +6,7 @@
 //! length-prefixed `name_char` string and a length-prefixed `text_char`
 //! string (EN 300 468 Annex A). UNT common and operational loops (Table 19).
 
+use crate::descriptors::lang_text::LANG_LEN;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
@@ -15,7 +16,6 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for SSU_event_name_descriptor.
 pub const TAG: u8 = 0x05;
 const HEADER_LEN: usize = 2;
-const LANG_LEN: usize = 3;
 /// Smallest body: language code plus the two 1-byte length prefixes.
 const MIN_BODY_LEN: usize = LANG_LEN + 2;
 /// Offset of `name_length` in the body.

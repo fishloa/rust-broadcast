@@ -5,6 +5,7 @@
 //! A plain-text description of a module or group: `ISO_639_language_code`(24)
 //! then the `text_char` string (EN 300 468 Annex A character sets).
 
+use crate::descriptors::lang_text::LANG_LEN;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
@@ -14,7 +15,6 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for info_descriptor (data-carousel namespace).
 pub const TAG: u8 = 0x03;
 const HEADER_LEN: usize = 2;
-const LANG_LEN: usize = 3;
 
 /// Info Descriptor (carousel tag 0x03).
 #[derive(Debug, Clone, PartialEq, Eq)]

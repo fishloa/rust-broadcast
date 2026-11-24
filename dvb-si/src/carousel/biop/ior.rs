@@ -19,6 +19,7 @@ use super::{
     TAG_OBJECT_LOCATION, TAG_SERVICE_LOCATION,
 };
 use crate::error::{Error, Result};
+use crate::wire::{U16_LEN, U32_LEN};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
@@ -26,11 +27,9 @@ use broadcast_common::{Parse, Serialize};
 // ── wire-layout byte counts ────────────────────────────────────────────────────
 
 /// Width of a 16-bit wire field.
-const U16_LEN: usize = core::mem::size_of::<u16>();
 /// Width of a 32-bit wire field.
-const U32_LEN: usize = core::mem::size_of::<u32>();
 /// DVB alias `type_id` / `objectKind` width.
-const OBJECT_KIND_LEN: usize = U32_LEN;
+pub const OBJECT_KIND_LEN: usize = U32_LEN;
 
 /// `type_id_length` field in the IOR header.
 const IOR_TYPE_ID_LENGTH_LEN: usize = U32_LEN;
@@ -118,7 +117,7 @@ const NSAP_SPECIFIER_TYPE_OFFSET: usize = NSAP_CAROUSEL_ID_OFFSET + NSAP_CAROUSE
 /// `specifierData` offset in the NSAP address.
 const NSAP_SPECIFIER_DATA_OFFSET: usize = NSAP_SPECIFIER_TYPE_OFFSET + 1;
 /// `specifierData` width in the NSAP address.
-const NSAP_SPECIFIER_DATA_LEN: usize = 3;
+pub const NSAP_SPECIFIER_DATA_LEN: usize = 3;
 /// `transport_stream_id` offset in the NSAP address.
 const NSAP_TSID_OFFSET: usize = NSAP_SPECIFIER_DATA_OFFSET + NSAP_SPECIFIER_DATA_LEN;
 /// 16-bit id field width in the NSAP address.

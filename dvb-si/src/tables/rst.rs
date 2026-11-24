@@ -17,7 +17,7 @@ use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Width of the `reserved_future_use` entry field.
-const RST_RESERVED_BITS: u32 = 5;
+pub const RST_RESERVED_BITS: u32 = 5;
 
 /// table_id for the Running Status Table.
 pub const TABLE_ID: u8 = 0x71;

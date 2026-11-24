@@ -5,6 +5,7 @@
 //! contributes text plus an optional list of (item_description, item) pairs.
 
 use super::descriptor_body;
+use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
@@ -15,7 +16,6 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x4E;
 const HEADER_LEN: usize = 2;
 const NUMBERS_LEN: usize = 1;
-const LANG_LEN: usize = 3;
 const ITEMS_LEN_FIELD: usize = 1;
 const TEXT_LEN_FIELD: usize = 1;
 const FIXED_PREFIX_LEN: usize = NUMBERS_LEN + LANG_LEN + ITEMS_LEN_FIELD + TEXT_LEN_FIELD;

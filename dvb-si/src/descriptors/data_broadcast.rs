@@ -5,6 +5,7 @@
 //! selector tail, plus a localised text description in one language.
 
 use super::descriptor_body;
+use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use broadcast_common::len::need_out;
@@ -16,7 +17,6 @@ const HEADER_LEN: usize = 2;
 const ID_LEN: usize = 2;
 const COMPONENT_TAG_LEN: usize = 1;
 const SELECTOR_LEN_FIELD: usize = 1;
-const LANG_LEN: usize = 3;
 const TEXT_LEN_FIELD: usize = 1;
 
 /// Returns the well-known name for a `data_broadcast_id`, or `None` if the

@@ -5,7 +5,7 @@ use crate::descriptors::scoped::ScopedDescriptorLoop;
 use broadcast_common::reserved::ReservedOnes;
 
 /// Width of the `reserved` length fields.
-const TARGET_LOOP_RESERVED_BITS: u32 = 4;
+pub const TARGET_LOOP_RESERVED_BITS: u32 = 4;
 
 /// A target/operational descriptor-loop pair — the loop element shared by the
 /// INT body (ETSI EN 301 192 §8.4.4.1 Tables 17/18) and the UNT platform loop

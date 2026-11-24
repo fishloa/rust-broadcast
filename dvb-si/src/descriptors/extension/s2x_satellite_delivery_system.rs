@@ -152,18 +152,18 @@ const TSGS_S2X_MODE_VALUE_MASK: u8 = 0x03;
 /// Spec default of every `reserved_zero_future_use` region of the S2X
 /// descriptor (Table 140; `reserved_zero_future_use` since its introduction in
 /// V1.16.1, audit §6.1 class A): all zeros.
-pub const S2X_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RZFU_1_BITS> =
-    ReservedZero::<RZFU_1_BITS>::FILL;
+pub const S2X_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<S2X_RZFU_SINGLE_BIT> =
+    ReservedZero::<S2X_RZFU_SINGLE_BIT>::FILL;
 /// Width of the `reserved_zero_future_use(1)` bit.
-const RZFU_1_BITS: u32 = 1;
+pub const S2X_RZFU_SINGLE_BIT: u32 = 1;
 /// Width of the `reserved_zero_future_use(3)` regions.
-const RZFU_3_BITS: u32 = 3;
+pub const RZFU_MODE_BITS: u32 = 3;
 /// Width of the `reserved_zero_future_use(4)` region.
-const RZFU_4_BITS: u32 = 4;
+pub const RZFU_CHANNEL_BITS: u32 = 4;
 /// Width of the `reserved_zero_future_use(6)` region.
-const RZFU_6_BITS: u32 = 6;
+pub const S2X_RZFU_SCRAMBLING_BITS: u32 = 6;
 /// Width of the `reserved_zero_future_use(7)` region.
-const RZFU_7_BITS: u32 = 7;
+pub const S2X_RZFU_BOND_BITS: u32 = 7;
 /// Shift of the 3-bit reserved region in byte 1 (above `TS_GS_S2X_mode`).
 const RZFU_3B_SHIFT: u8 = 2;
 /// Shift of the 6-bit reserved region in the first scrambling byte.
@@ -268,10 +268,10 @@ pub struct S2XChannelBond {
     /// `reserved_zero_future_use(1)` between `multiple_input_stream_flag` and
     /// `roll_off` (1 bit, right-aligned). Captured on parse, re-emitted
     /// verbatim; `Default` is [`S2X_RESERVED_FUTURE_USE_DEFAULT`] (`0`).
-    pub reserved_zero_future_use_1: ReservedZero<RZFU_1_BITS>,
+    pub reserved_zero_future_use_1: ReservedZero<S2X_RZFU_SINGLE_BIT>,
     /// `reserved_zero_future_use(4)` ahead of `symbol_rate` (4 bits). Same
     /// policy as above.
-    pub reserved_zero_future_use_4: ReservedZero<RZFU_4_BITS>,
+    pub reserved_zero_future_use_4: ReservedZero<RZFU_CHANNEL_BITS>,
 }
 
 impl Default for S2XChannelBond {
@@ -330,20 +330,20 @@ pub struct S2XSatelliteDeliverySystem<'a> {
     /// `reserved_zero_future_use(3)` after `receiver_profiles` (byte 0 low
     /// bits, right-aligned). Captured on parse, re-emitted verbatim; `Default`
     /// is [`S2X_RESERVED_FUTURE_USE_DEFAULT`] (`0`).
-    pub reserved_zero_future_use_3a: ReservedZero<RZFU_3_BITS>,
+    pub reserved_zero_future_use_3a: ReservedZero<RZFU_MODE_BITS>,
     /// S2X_mode(2) — Table 142.
     pub s2x_mode: S2XMode,
     /// scrambling_sequence_selector(1).
     pub scrambling_sequence_selector: bool,
     /// `reserved_zero_future_use(3)` ahead of `TS_GS_S2X_mode` (byte 1 bits
     /// 4:2, right-aligned). Same policy as above.
-    pub reserved_zero_future_use_3b: ReservedZero<RZFU_3_BITS>,
+    pub reserved_zero_future_use_3b: ReservedZero<RZFU_MODE_BITS>,
     /// TS_GS_S2X_mode(2) — Table 143.
     pub ts_gs_s2x_mode: TsGsS2XMode,
     /// `reserved_zero_future_use(6)` ahead of `scrambling_sequence_index`
     /// (6 bits); on the wire only when `scrambling_sequence_selector` is set.
     /// Same policy as above.
-    pub reserved_zero_future_use_6: ReservedZero<RZFU_6_BITS>,
+    pub reserved_zero_future_use_6: ReservedZero<S2X_RZFU_SCRAMBLING_BITS>,
     /// scrambling_sequence_index(18), present iff `scrambling_sequence_selector`.
     pub scrambling_sequence_index: Option<u32>,
     /// frequency(32) — primary channel, 32-bit BCD (10 kHz resolution, §6.2.13.2).
@@ -362,17 +362,17 @@ pub struct S2XSatelliteDeliverySystem<'a> {
     pub symbol_rate: u32,
     /// `reserved_zero_future_use(1)` between `multiple_input_stream_flag` and
     /// `roll_off` (1 bit). Same policy as above.
-    pub reserved_zero_future_use_1: ReservedZero<RZFU_1_BITS>,
+    pub reserved_zero_future_use_1: ReservedZero<S2X_RZFU_SINGLE_BIT>,
     /// `reserved_zero_future_use(4)` ahead of `symbol_rate` (4 bits). Same
     /// policy as above.
-    pub reserved_zero_future_use_4: ReservedZero<RZFU_4_BITS>,
+    pub reserved_zero_future_use_4: ReservedZero<RZFU_CHANNEL_BITS>,
     /// input_stream_identifier(8), present iff `multiple_input_stream_flag`.
     pub input_stream_identifier: Option<u8>,
     /// timeslice_number(8), present iff `s2x_mode == 2`.
     pub timeslice_number: Option<u8>,
     /// `reserved_zero_future_use(7)` ahead of `num_channel_bonds_minus_one`
     /// (7 bits); on the wire only when `s2x_mode == 3`. Same policy as above.
-    pub reserved_zero_future_use_7: ReservedZero<RZFU_7_BITS>,
+    pub reserved_zero_future_use_7: ReservedZero<S2X_RZFU_BOND_BITS>,
     /// S2X_mode==3 channel-bond entries (empty unless s2x_mode==3).
     pub channel_bonds: Vec<S2XChannelBond>,
     /// Trailing reserved_future_use bytes (opaque), preserved verbatim.
@@ -479,8 +479,8 @@ struct ChannelCommon {
     multiple_input_stream_flag: bool,
     roll_off: RollOff,
     symbol_rate: u32,
-    reserved_zero_future_use_1: ReservedZero<RZFU_1_BITS>,
-    reserved_zero_future_use_4: ReservedZero<RZFU_4_BITS>,
+    reserved_zero_future_use_1: ReservedZero<S2X_RZFU_SINGLE_BIT>,
+    reserved_zero_future_use_4: ReservedZero<RZFU_CHANNEL_BITS>,
 }
 
 fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
@@ -512,7 +512,7 @@ fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
     let roll_off = RollOff::from_u8(pb & ROLL_OFF_MASK);
     let reserved_zero_future_use_1 = ReservedZero::from_bits(u64::from(pb >> PACKED_RZFU_1_SHIFT));
     let reserved_zero_future_use_4 = ReservedZero::from_bits(u64::from(
-        sel[*pos + CHANNEL_RESERVED_SYMBOL_OFFSET] >> RZFU_4_BITS,
+        sel[*pos + CHANNEL_RESERVED_SYMBOL_OFFSET] >> RZFU_CHANNEL_BITS,
     ));
     let symbol_rate =
         crate::wire::be_u32(sel, *pos + CHANNEL_RESERVED_SYMBOL_OFFSET, "symbol_rate")?
@@ -537,7 +537,7 @@ fn write_channel_common(
     frequency: u32,
     orbital_position: u16,
     packed: u8,
-    reserved_zero_future_use_4: ReservedZero<RZFU_4_BITS>,
+    reserved_zero_future_use_4: ReservedZero<RZFU_CHANNEL_BITS>,
     symbol_rate: u32,
 ) -> Result<()> {
     buf[*p + CHANNEL_FREQUENCY_OFFSET..*p + CHANNEL_FREQUENCY_OFFSET + CHANNEL_FREQUENCY_LEN]
@@ -547,7 +547,7 @@ fn write_channel_common(
     buf[*p + CHANNEL_PACKED_OFFSET] = packed;
     let sr = broadcast_common::len::fit_mask(symbol_rate, SYMBOL_RATE_MASK, "symbol_rate")?;
     buf[*p + CHANNEL_RESERVED_SYMBOL_OFFSET] = ((reserved_zero_future_use_4.get() as u8)
-        << RZFU_4_BITS)
+        << RZFU_CHANNEL_BITS)
         | ((sr >> SYMBOL_RATE_HIGH_SHIFT) as u8 & SYMBOL_RATE_HIGH_MASK);
     let tail_start = *p + CHANNEL_RESERVED_SYMBOL_OFFSET + SYMBOL_RATE_TAIL_OFFSET;
     buf[tail_start..tail_start + SYMBOL_RATE_TAIL_LEN]
@@ -560,7 +560,7 @@ fn pack_we_pol_mis_ro(
     we: bool,
     pol: Polarization,
     mis: bool,
-    reserved_zero_future_use_1: ReservedZero<RZFU_1_BITS>,
+    reserved_zero_future_use_1: ReservedZero<S2X_RZFU_SINGLE_BIT>,
     ro: RollOff,
 ) -> Result<u8> {
     Ok((u8::from(we) << WEST_EAST_FLAG_SHIFT)
@@ -586,7 +586,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         let scrambling_sequence_selector = (b1 & SCRAMBLING_SELECTOR_MASK) != 0;
         let ts_gs_s2x_mode = TsGsS2XMode::from_u8(b1 & TSGS_S2X_MODE_VALUE_MASK);
         let mut pos = S2X_HEADER_LEN;
-        let mut reserved_zero_future_use_6 = ReservedZero::<RZFU_6_BITS>::default();
+        let mut reserved_zero_future_use_6 = ReservedZero::<S2X_RZFU_SCRAMBLING_BITS>::default();
         let scrambling_sequence_index = if scrambling_sequence_selector {
             need_in(sel, pos + S2X_SCRAMBLING_LEN, "S2X body")?;
             reserved_zero_future_use_6 =
@@ -633,7 +633,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         } else {
             None
         };
-        let mut reserved_zero_future_use_7 = ReservedZero::<RZFU_7_BITS>::default();
+        let mut reserved_zero_future_use_7 = ReservedZero::<S2X_RZFU_BOND_BITS>::default();
         let (channel_bonds, reserved_tail) = if s2x_mode == S2XMode::S2XChannelBonding {
             // --- channel bonding loop (Table 140) ---
             need_in(sel, pos + 1, "S2X body")?;

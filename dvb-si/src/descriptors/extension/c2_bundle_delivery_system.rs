@@ -11,7 +11,7 @@ impl ExtensionBodyDef<'_> for C2BundleDeliverySystem {
     const NAME: &'static str = "C2_BUNDLE_DELIVERY_SYSTEM";
 }
 /// Width of the `reserved_zero_future_use` after `primary_channel` (7 bits).
-const RESERVED_FUTURE_USE_BITS: u32 = 7;
+pub const C2_BUNDLE_RESERVED_FUTURE_USE_BITS: u32 = 7;
 /// Offset of `C2_System_tuning_frequency` in an entry.
 const C2_BUNDLE_FREQUENCY_OFFSET: usize = 2;
 /// Width of `C2_System_tuning_frequency`.
@@ -38,8 +38,8 @@ const C2_BUNDLE_PRIMARY_SHIFT: u32 = 7;
 /// Spec default of `reserved_zero_future_use(7)` after `primary_channel`: all
 /// zeros (EN 300 468 V1.16.1-V1.20.1 Table 139, audit §6.1 class B; V1.15.1
 /// printed it as `reserved_0_future_use`(7) with the same value 0).
-pub const C2_BUNDLE_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_FUTURE_USE_BITS> =
-    ReservedZero::<RESERVED_FUTURE_USE_BITS>::FILL;
+pub const C2_BUNDLE_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<C2_BUNDLE_RESERVED_FUTURE_USE_BITS> =
+    ReservedZero::<C2_BUNDLE_RESERVED_FUTURE_USE_BITS>::FILL;
 
 /// One C2 bundle entry (Table 139 inner loop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +64,7 @@ pub struct C2BundleEntry {
     /// right-aligned). Captured on parse and re-emitted verbatim;
     /// [`C2BundleEntry::new`] defaults to
     /// [`C2_BUNDLE_RESERVED_FUTURE_USE_DEFAULT`] (`0`).
-    pub reserved_zero_future_use: ReservedZero<RESERVED_FUTURE_USE_BITS>,
+    pub reserved_zero_future_use: ReservedZero<C2_BUNDLE_RESERVED_FUTURE_USE_BITS>,
 }
 
 impl C2BundleEntry {

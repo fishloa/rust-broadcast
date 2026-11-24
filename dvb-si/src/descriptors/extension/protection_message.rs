@@ -9,7 +9,7 @@ impl<'a> ExtensionBodyDef<'a> for ProtectionMessage<'a> {
 }
 
 /// Width of the `reserved` field (4 bits).
-const RESERVED_BITS: u32 = 4;
+pub const PROTECTION_MESSAGE_RESERVED_BITS: u32 = 4;
 /// Width of the `component_count` field (4 bits).
 const COMPONENT_COUNT_BITS: u32 = 4;
 /// Mask of the right-aligned `component_count` field.
@@ -17,8 +17,8 @@ const COMPONENT_COUNT_MASK: u8 = 0x0F;
 /// Spec default of the 4-bit `reserved` field: all ones (ETSI TS 102 809
 /// Table 40, V1.3.1 and earlier editions;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const PROTECTION_MESSAGE_RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> =
-    ReservedOnes::<RESERVED_BITS>::FILL;
+pub const PROTECTION_MESSAGE_RESERVED_DEFAULT: ReservedOnes<PROTECTION_MESSAGE_RESERVED_BITS> =
+    ReservedOnes::<PROTECTION_MESSAGE_RESERVED_BITS>::FILL;
 
 /// protection_message body (Table 40, §9.3.3): the list of protected
 /// `component_tag`s. `component_count` is a 4-bit field, so at most 15 tags.
@@ -29,7 +29,7 @@ pub const PROTECTION_MESSAGE_RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> =
 pub struct ProtectionMessage<'a> {
     /// `reserved` (4 bits, right-aligned) — preserved on parse;
     /// [`ProtectionMessage::new`] uses [`PROTECTION_MESSAGE_RESERVED_DEFAULT`] (all ones).
-    pub reserved: ReservedOnes<RESERVED_BITS>,
+    pub reserved: ReservedOnes<PROTECTION_MESSAGE_RESERVED_BITS>,
     /// The `component_tag` list (one `u8` per protected component;
     /// `component_count` is its length).
     #[cfg_attr(feature = "serde", serde(borrow))]
@@ -64,7 +64,8 @@ impl<'a> Parse<'a> for ProtectionMessage<'a> {
                 what: "protection_message body",
             },
         ))?;
-        let reserved = ReservedOnes::from_bits(u64::from(first >> RESERVED_BITS));
+        let reserved =
+            ReservedOnes::from_bits(u64::from(first >> PROTECTION_MESSAGE_RESERVED_BITS));
         let component_count = usize::from(first & COMPONENT_COUNT_MASK);
         let component_tags = sel
             .get(1..1 + component_count)
@@ -101,7 +102,8 @@ impl Serialize for ProtectionMessage<'_> {
             COMPONENT_COUNT_BITS,
             "component_count",
         )? as u8;
-        buf[0] = ((self.reserved.get() as u8) << RESERVED_BITS) | component_count;
+        buf[0] =
+            ((self.reserved.get() as u8) << PROTECTION_MESSAGE_RESERVED_BITS) | component_count;
         let tags_end = 1 + self.component_tags.len();
         buf[1..tags_end].copy_from_slice(self.component_tags);
         buf[tags_end..len].copy_from_slice(self.trailing);

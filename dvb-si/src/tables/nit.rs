@@ -14,7 +14,7 @@ use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Width of the `reserved` length fields.
-const NIT_RESERVED_BITS: u32 = 4;
+pub const NIT_RESERVED_BITS: u32 = 4;
 
 /// table_id value for NIT actual (current TS).
 pub const TABLE_ID_ACTUAL: u8 = 0x40;

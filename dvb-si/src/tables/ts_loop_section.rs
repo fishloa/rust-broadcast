@@ -11,7 +11,7 @@ use broadcast_common::len::need_out;
 use broadcast_common::reserved::ReservedOnes;
 
 /// Width of the `reserved_future_use` length fields.
-const TS_LOOP_RESERVED_BITS: u32 = 4;
+pub const TS_LOOP_RESERVED_BITS: u32 = 4;
 
 pub(super) const MIN_HEADER_LEN: usize = 3;
 pub(super) const EXTENSION_HEADER_LEN: usize = 5;

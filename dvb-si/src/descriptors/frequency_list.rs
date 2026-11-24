@@ -28,7 +28,7 @@ pub const CODING_TYPE_MASK: u8 = 0x03;
 /// Shift of `reserved_future_use(6)` in the coding byte (top 6 bits).
 const RESERVED_SHIFT: u8 = 2;
 /// Width of the `reserved_future_use` ahead of `coding_type` (6 bits).
-const RESERVED_BITS: u32 = 6;
+pub const RESERVED_BITS: u32 = 6;
 /// Spec default of the 6-bit `reserved_future_use` ahead of `coding_type`:
 /// all ones (EN 300 468 Table 31, V1.3.1-V1.20.1, audit §6.1 class A).
 pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =

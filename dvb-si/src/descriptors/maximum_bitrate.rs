@@ -16,7 +16,7 @@ const MAXIMUM_BITRATE_BITS: u32 = 22;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 3;
 /// Width of the `reserved` field ahead of `maximum_bitrate` (2 bits).
-const RESERVED_BITS: u32 = 2;
+pub const RESERVED_BITS: u32 = 2;
 /// Mask of the 22-bit `maximum_bitrate` field.
 const MAXIMUM_BITRATE_MASK: u32 = (1 << MAXIMUM_BITRATE_BITS) - 1;
 /// Shift of the 2-bit `reserved` field in the first body byte.

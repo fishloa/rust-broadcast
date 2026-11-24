@@ -181,12 +181,12 @@ const DISABLE_ANALOGUE_SD_CONSUMPTION_SHIFT: u32 = 3;
 const DISABLE_ANALOGUE_HD_EXPORT_SHIFT: u32 = 2;
 /// Shift of `disable_analogue_hd_consumption`.
 const DISABLE_ANALOGUE_HD_CONSUMPTION_SHIFT: u32 = 1;
-/// Offset of the third USI flags byte within `body`.
-const FLAGS_BYTE3_OFFSET: usize = 2;
-/// Offset of the second USI flags byte in the output buffer.
-const USI_BYTE2_OFFSET: usize = 2;
-/// Offset of the third USI flags byte in the output buffer.
-const USI_BYTE3_OFFSET: usize = 3;
+/// Offset of the USI control-flags byte within `body`.
+const USI_CONTROL_FLAGS_OFFSET: usize = 2;
+/// Offset of the move/view flags byte in the output buffer.
+const USI_MOVE_VIEW_FLAGS_OFFSET: usize = 2;
+/// Offset of the remote-access/export flags byte in the output buffer.
+const USI_REMOTE_EXPORT_FLAGS_OFFSET: usize = 3;
 
 /// `move_and_copy_propagation_information` — ETSI TS 102 825-4 Table 10.
 ///
@@ -303,11 +303,11 @@ pub struct CpsVectorEntry {
 /// Byte width of the 3 flag bytes (bytes 1–3 after `length`).
 const USI_FLAGS_LEN: usize = 3;
 /// Byte width of `CPCM_date_time` (40-bit opaque timestamp, Table 8).
-const CPCM_DATE_TIME_LEN: usize = 5;
+pub const CPCM_DATE_TIME_LEN: usize = 5;
 /// Two contiguous `CPCM_date_time` values.
 const CPCM_DATE_TIME_PAIR_LEN: usize = CPCM_DATE_TIME_LEN * 2;
 /// Byte width of `CPCM_playback_period` (16-bit opaque value, Table 8).
-const CPCM_PLAYBACK_PERIOD_LEN: usize = 2;
+pub const CPCM_PLAYBACK_PERIOD_LEN: usize = 2;
 /// Byte width of `simultaneous_view_count` (8-bit uimsbf).
 const SIMULTANEOUS_VIEW_COUNT_LEN: usize = 1;
 /// Byte width of the per-CPS-entry header before the variable payload
@@ -439,7 +439,7 @@ impl<'a> Parse<'a> for CpcmUsi {
         let remote_access_date_immediate_flag = b2 & 1 != 0;
 
         // ── byte 3 ─────────────────────────────────────────────────────────
-        let b3 = body[FLAGS_BYTE3_OFFSET];
+        let b3 = body[USI_CONTROL_FLAGS_OFFSET];
         let remote_access_record_flag = (b3 >> REMOTE_ACCESS_RECORD_SHIFT) & 1 != 0;
         let export_controlled_cps = (b3 >> EXPORT_CONTROLLED_CPS_SHIFT) & 1 != 0;
         let export_beyond_trust = (b3 >> EXPORT_BEYOND_TRUST_SHIFT) & 1 != 0;
@@ -647,7 +647,7 @@ impl Serialize for CpcmUsi {
             | u8::from(self.simultaneous_view_count_activated);
 
         // ── byte 2 ─────────────────────────────────────────────────────────
-        buf[USI_BYTE2_OFFSET] = ((u8::from(self.move_local)) << MOVE_LOCAL_SHIFT)
+        buf[USI_MOVE_VIEW_FLAGS_OFFSET] = ((u8::from(self.move_local)) << MOVE_LOCAL_SHIFT)
             | ((u8::from(self.view_local)) << VIEW_LOCAL_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.move_and_copy_propagation_information.to_u8(),
@@ -664,7 +664,7 @@ impl Serialize for CpcmUsi {
             | u8::from(self.remote_access_date_immediate_flag);
 
         // ── byte 3 ─────────────────────────────────────────────────────────
-        buf[USI_BYTE3_OFFSET] = ((u8::from(self.remote_access_record_flag))
+        buf[USI_REMOTE_EXPORT_FLAGS_OFFSET] = ((u8::from(self.remote_access_record_flag))
             << REMOTE_ACCESS_RECORD_SHIFT)
             | ((u8::from(self.export_controlled_cps)) << EXPORT_CONTROLLED_CPS_SHIFT)
             | ((u8::from(self.export_beyond_trust)) << EXPORT_BEYOND_TRUST_SHIFT)
