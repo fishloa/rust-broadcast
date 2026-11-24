@@ -11,6 +11,7 @@ pub const EXEMPT: &[&str] = &[
     "dvb-tools",
     "multimux-cli",
     "dvb-stream",
+    "isobmff-tokio",
     "test-alloc",
     "test-fixtures",
     "test-harness",
@@ -133,6 +134,10 @@ pub const TABLE: &[Crate] = &[
             "AuthDecision",
             // `thiserror` error: `#[error]` text carries the host's reason.
             "TransportError",
+            // The sans-IO MP4 range driver: `RangeError` is a structured error
+            // and `RangeAction` is a data-carrying step ADT, not spec codes.
+            "RangeError",
+            "RangeAction",
         ],
         expected: None,
         min_enums: None,
@@ -1852,6 +1857,11 @@ pub const TABLE: &[Crate] = &[
             "Interleave",
             "Sink",
             "SampleSizes",
+            // Blocking driver errors and steps: a structured error (Display
+            // from thiserror) and a data-carrying step ADT, not spec codes.
+            "Advance",
+            "DriverError",
+            "DriverStep",
         ],
         expected: None,
         min_enums: None,

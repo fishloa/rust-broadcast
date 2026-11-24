@@ -65,3 +65,7 @@ required-features = ["std"]
 [[example]]
 name = "build_emsg"
 required-features = ["std"]
+
+[[example]]
+name = "list_samples"
+required-features = ["std"]

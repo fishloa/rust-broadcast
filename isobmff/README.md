@@ -54,6 +54,7 @@ It never knows the media IR or a codec bitstream.
 | `plan` | `SamplePlan`, the progressive index a `Reader` hands out without reading media; `OwnedPlan` and `PlanBuilder`, its owned form |
 | `frag_offsets` | ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 sample-data addressing rules |
 | `reader` (fragmented) | the same `Reader` reads a fragmented file one `moof` at a time and seeks through `sidx` or the trailing `tfra` |
+| `driver` | blocking drivers over the reader: `FileReader` (`Read + Seek`) and `ForwardReader` (`Read` only), with a bounded reusable buffer |
 | `timing` (random access) | `tfra`, `mfra`, `mfro` |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
 
@@ -61,6 +62,25 @@ Every type implements the workspace `Parse` / `Serialize` pair, so a parse →
 serialize round-trip is byte-identical.
 
 ## Example
+
+Open a file and iterate its samples in five lines:
+
+```rust,no_run
+use std::fs::File;
+use isobmff::driver::{DriverStep, FileReader};
+use isobmff::ReaderConfig;
+
+let mut reader = FileReader::new(File::open("movie.mp4")?, ReaderConfig::default())?;
+loop {
+    match reader.step()? {
+        DriverStep::Sample(sample) => println!("track {} at {}", sample.track, sample.decode_time),
+        DriverStep::Done => break,
+        _ => {}
+    }
+}
+```
+
+A box builder still works the same way:
 
 ```rust,ignore
 use broadcast_common::Serialize;
@@ -81,7 +101,44 @@ cargo run -p isobmff --example parse_boxes -- fixtures/mp4/h264-aac-prog.mp4
 cargo run -p isobmff --example build_ftyp
 cargo run -p isobmff --example parse_emsg
 cargo run -p isobmff --example build_emsg
+cargo run -p isobmff --example list_samples -- fixtures/mp4/progressive/av-prog.mp4
 ```
+
+## Drivers
+
+`Reader` is sans-IO: it asks for structure byte ranges and yields descriptors.
+`isobmff::driver` answers those demands for the two blocking source shapes.
+
+- `FileReader<R: Read + Seek>` seeks to each demand. A `moov` after a
+  multi-gigabyte `mdat` costs only its headers, and `read_sample` reads one
+  sample's bytes on demand.
+- `ForwardReader<R: Read>` never seeks: a demand ahead of the current position
+  is reached by reading and discarding through one fixed buffer, and a header
+  the reader must re-read with a `largesize`/`uuid` extension is answered from
+  a retained header tail. A `moov` after an `mdat` is
+  `Error::MoovAfterMdatForwardOnly`. A fragmented walk has already consumed an
+  `mdat` payload by the time its samples are emitted, so `read_sample` for
+  those samples is the typed `DriverError::SampleBehindPosition`; their
+  descriptors still arrive.
+
+Neither driver holds a whole file: each keeps one `moov`/`moof` buffer bounded
+by the reader's own `Limits`. For async sources see the `isobmff-tokio` crate;
+for HTTP range requests see `broadcast-client`'s `mp4_range` module.
+
+## Coming from `mp4` or `mp4parse`
+
+Those crates expose a whole-item parse: read a header, then read samples by
+index from the same in-memory or seekable source. This crate keeps the same
+two jobs but splits them into a sans-IO state machine and a driver:
+
+- open the file once with `FileReader::new` (or `ForwardReader::new` for a
+  source that cannot seek);
+- call `step` until it returns `DriverStep::Done`, handling
+  `DriverStep::Tracks`, `DriverStep::Fragment` and `DriverStep::Sample`;
+- call `read_sample` when you want one sample's bytes.
+
+The track table and the sample descriptors are plain data, so a consumer that
+only needs an index never reads media.
 
 ## Features
 

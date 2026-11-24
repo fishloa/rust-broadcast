@@ -81,7 +81,7 @@ builds (see the table above against the in-tree versions below).
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**65 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**66 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -114,6 +114,7 @@ builds (see the table above against the in-tree versions below).
 | [`broadcast-smooth`](#broadcast-smooth) | Containers and adaptive streaming | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-smooth.svg)](https://crates.io/crates/broadcast-smooth) | no | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
 | [`isobmff`](#isobmff) | Containers and adaptive streaming | 0.1.0 | [![crates.io](https://img.shields.io/crates/v/isobmff.svg)](https://crates.io/crates/isobmff) | yes | 1 | on crates.io |
+| [`isobmff-tokio`](#isobmff-tokio) | Containers and adaptive streaming | 0.1.0 | — | no | 2 | not on crates.io |
 | [`transmux`](#transmux) | Containers and adaptive streaming | 0.33.0 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
 | [`broadcast-dash`](#broadcast-dash) | Live transport protocols | 0.3.0 | — | no | 1 | not on crates.io |
 | [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
@@ -475,8 +476,19 @@ Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` hea
 - **Cargo description:** ISO/IEC 14496-12:2026 (ISO BMFF) box syntax — box/FullBox headers, the top-level, sample-table, movie-fragment and CENC boxes, and DASH emsg, no_std.
 - **Version (in-tree):** 0.1.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`test-harness`](#test-harness), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`isobmff-tokio`](#isobmff-tokio), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`test-harness`](#test-harness), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Links:** [README](../isobmff/README.md) · [CHANGELOG](../isobmff/CHANGELOG.md) · [crates.io](https://crates.io/crates/isobmff) · [docs.rs](https://docs.rs/isobmff)
+
+#### isobmff-tokio
+
+Wraps an `AsyncRead + AsyncSeek` source, answers the `isobmff` reader's structure demands itself, and yields `DriverStep::{Tracks, Fragment, Sample, Done}`; `read_sample` fetches one sample's bytes. It reuses the blocking driver's buffer-sizing helpers and error type, so the two cannot drift, and holds one `moov`/`moof` at a time, never a whole file.
+
+- **Standards:** ISO/IEC 14496-12:2026 (via `isobmff`)
+- **Cargo description:** Async (tokio) driver over the isobmff sans-IO MP4 reader.
+- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 2
+- **Depends on (workspace):** [`isobmff`](#isobmff)
+- **Used by (workspace):** none
+- **Links:** [README](../isobmff-tokio/README.md) · [CHANGELOG](../isobmff-tokio/CHANGELOG.md)
 
 #### transmux
 
@@ -643,7 +655,7 @@ Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (`t
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
 - **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH, Smooth, RTMP, RTSP, UDP/RTP and SRT sources.
 - **Version (in-tree):** 0.8.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 7
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`smooth-runtime`](#smooth-runtime), [`srt-runtime`](#srt-runtime), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`isobmff`](#isobmff), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`smooth-runtime`](#smooth-runtime), [`srt-runtime`](#srt-runtime), [`transmux`](#transmux)
 - **Used by (workspace):** [`multimux`](#multimux)
 - **Links:** [README](../broadcast-client/README.md) · [CHANGELOG](../broadcast-client/CHANGELOG.md) · [docs + spec pointer](../broadcast-client/docs/)
 
@@ -923,7 +935,7 @@ Layer 0 has no workspace dependencies; every other crate sits one layer above it
 ```text
 layer 0: broadcast-common, test-alloc, test-fixtures, workspace-guards
 layer 1: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, isobmff, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
-layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
+layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, isobmff-tokio, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 3: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
 layer 4: caption-convert, dvb-ci-runtime, media-doctor, ts-fix
 layer 5: media-plane
@@ -976,6 +988,7 @@ flowchart BT
     dvb_csa["dvb-csa"]
     dvb_si["dvb-si"]
     dvb_t2mi["dvb-t2mi"]
+    isobmff_tokio["isobmff-tokio"]
     mpeg_ps["mpeg-ps"]
     rist_runtime["rist-runtime"]
     rtsp_runtime["rtsp-runtime"]
@@ -1058,6 +1071,7 @@ flowchart BT
   dvr_runtime --> media_plane
   hls_runtime --> media_plane
   isobmff --> broadcast_common
+  isobmff_tokio --> isobmff
   media_doctor --> dvb_conformance
   media_doctor --> dvb_stream
   media_doctor --> timed_metadata

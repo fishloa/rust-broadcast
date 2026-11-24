@@ -449,6 +449,7 @@ dependencies = [
  "jiff",
  "quick-xml",
  "serde",
+ "test-alloc",
  "thiserror 2.0.21",
  "url",
 ]
@@ -2018,6 +2019,15 @@ dependencies = [
  "test-harness",
  "thiserror 2.0.21",
  "transmux",
+]
+
+[[package]]
+name = "isobmff-tokio"
+version = "0.1.0"
+dependencies = [
+ "isobmff",
+ "test-fixtures",
+ "tokio",
 ]
 
 [[package]]

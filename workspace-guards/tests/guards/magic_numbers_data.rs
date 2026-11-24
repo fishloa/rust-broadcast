@@ -750,6 +750,10 @@ pub const TABLE: &[Crate] = &[
         ],
     },
     Crate {
+        name: "isobmff-tokio",
+        allow: &[],
+    },
+    Crate {
         name: "rtsp-runtime",
         allow: &[],
     },

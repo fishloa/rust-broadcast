@@ -317,6 +317,14 @@ what = "Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`t
 crates_io = true
 lifecycle = "active"
 
+[crate.isobmff-tokio]
+domain = "containers"
+summary = "Async (tokio) driver over the isobmff sans-IO MP4 reader."
+standards = "ISO/IEC 14496-12:2026 (via `isobmff`)"
+what = "Wraps an `AsyncRead + AsyncSeek` source, answers the `isobmff` reader's structure demands itself, and yields `DriverStep::{Tracks, Fragment, Sample, Done}`; `read_sample` fetches one sample's bytes. It reuses the blocking driver's buffer-sizing helpers and error type, so the two cannot drift, and holds one `moov`/`moof` at a time, never a whole file."
+crates_io = false
+lifecycle = "active"
+
 [crate.transmux]
 domain = "containers"
 summary = "Any-to-any container remux hub: TS/fMP4/PS/WebM/FLV/RTMP in, CMAF/MP4/TS/HLS/DASH/LL-*/Smooth out."

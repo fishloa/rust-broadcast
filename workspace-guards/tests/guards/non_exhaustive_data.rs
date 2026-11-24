@@ -139,7 +139,18 @@ pub const TABLE: &[Crate] = &[
     // match the suffix rule meaningfully.
     runtime("media-doctor", &["Report"], &[]),
     plain("media-plane"),
-    plain("isobmff"),
+    // `Advance` is the closed classification of one reader `Step` shared by the
+    // blocking and async drivers; every driver matches every variant, so a new
+    // arm must be a deliberate, reviewed change rather than a silent fall-through.
+    Crate {
+        name: "isobmff",
+        skip: &["Advance"],
+        variants: false,
+        structs: false,
+        struct_skip: &[],
+        struct_extra: &[],
+    },
+    plain("isobmff-tokio"),
     plain("mpeg-pes"),
     plain("mpeg-ps"),
     plain("mpeg-ts"),
