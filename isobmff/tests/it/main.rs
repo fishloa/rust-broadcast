@@ -12,6 +12,7 @@ mod hevc_array_rules;
 mod init_segment;
 mod init_segment_sweep;
 mod largesize_truncation;
+mod metadata;
 mod reader_fragmented;
 mod reader_progressive;
 mod sample_bytes_budget;
