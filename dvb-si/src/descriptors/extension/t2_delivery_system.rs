@@ -22,6 +22,30 @@ const T2_GUARD_INTERVAL_VALUE_MASK: u8 = 0x07;
 const T2_TRANSMISSION_MODE_VALUE_MASK: u8 = 0x07;
 /// Width mask of `reserved_future_use(2)` (low 2 bits of the first flags byte).
 const T2_RESERVED_MASK: u8 = 0x03;
+/// Frequency field resolution in Hz.
+const FREQUENCY_STEP_HZ: u64 = 10;
+/// Width of `t2_system_id`.
+const T2_SYSTEM_ID_LEN: usize = core::mem::size_of::<u16>();
+/// Width of `cell_id`.
+const CELL_ID_LEN: usize = core::mem::size_of::<u16>();
+/// Width of a centre-frequency word.
+const CENTRE_FREQUENCY_LEN: usize = core::mem::size_of::<u32>();
+/// Width of one subcell entry.
+const SUBCELL_LEN: usize = 1 + core::mem::size_of::<u32>();
+/// Offset of `transposer_frequency` in a subcell entry.
+const SUBCELL_TRANSPOSER_OFFSET: usize = 1;
+/// Shift of `siso_miso`.
+const T2_SISO_MISO_SHIFT: u32 = 6;
+/// Shift of `bandwidth`.
+const T2_BANDWIDTH_SHIFT: u32 = 2;
+/// Shift of `guard_interval`.
+const T2_GUARD_INTERVAL_SHIFT: u32 = 5;
+/// Shift of `transmission_mode`.
+const T2_TRANSMISSION_MODE_SHIFT: u32 = 2;
+/// Mask of `other_frequency_flag`.
+const T2_OTHER_FREQUENCY_FLAG_MASK: u8 = 0x02;
+/// Mask of `tfs_flag`.
+const T2_TFS_FLAG_MASK: u8 = 0x01;
 
 /// Spec default of `reserved_future_use(2)` after `bandwidth`: `11`
 /// (EN 300 468 Table 133, V1.13.1-V1.20.1, audit §6.1 class E: same layout in
@@ -304,7 +328,7 @@ impl T2Cell {
     pub fn centre_frequencies_hz(&self) -> Vec<u64> {
         self.centre_frequencies
             .iter()
-            .map(|&f| u64::from(f) * 10)
+            .map(|&f| u64::from(f) * FREQUENCY_STEP_HZ)
             .collect()
     }
 }
@@ -323,7 +347,7 @@ impl T2Subcell {
     /// Decode transposer_frequency to Hz (×10 Hz field resolution).
     #[must_use]
     pub fn transposer_frequency_hz(&self) -> u64 {
-        u64::from(self.transposer_frequency) * 10
+        u64::from(self.transposer_frequency) * FREQUENCY_STEP_HZ
     }
 }
 
@@ -389,7 +413,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
         need_in(sel, T2_FIXED_PREFIX_LEN, "T2_delivery_system body")?;
         let plp_id = sel[0];
         let (t2_id_bytes, _) = sel[1..]
-            .split_first_chunk::<2>()
+            .split_first_chunk::<{ T2_SYSTEM_ID_LEN }>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: T2_FIXED_PREFIX_LEN,
@@ -418,12 +442,16 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             pos += T2_FLAGS_BLOCK_LEN;
             reserved_future_use = b0 & T2_RESERVED_MASK;
             (
-                Some(T2SisoMiso::from_u8(b0 >> 6)),
-                Some(T2Bandwidth::from_u8((b0 >> 2) & 0x0F)),
-                Some(T2GuardInterval::from_u8(b1 >> 5)),
-                Some(T2TransmissionMode::from_u8((b1 >> 2) & 0x07)),
-                Some((b1 & 0x02) != 0),
-                Some((b1 & 0x01) != 0),
+                Some(T2SisoMiso::from_u8(b0 >> T2_SISO_MISO_SHIFT)),
+                Some(T2Bandwidth::from_u8(
+                    (b0 >> T2_BANDWIDTH_SHIFT) & T2_BANDWIDTH_VALUE_MASK,
+                )),
+                Some(T2GuardInterval::from_u8(b1 >> T2_GUARD_INTERVAL_SHIFT)),
+                Some(T2TransmissionMode::from_u8(
+                    (b1 >> T2_TRANSMISSION_MODE_SHIFT) & T2_TRANSMISSION_MODE_VALUE_MASK,
+                )),
+                Some((b1 & T2_OTHER_FREQUENCY_FLAG_MASK) != 0),
+                Some((b1 & T2_TFS_FLAG_MASK) != 0),
             )
         } else {
             (None, None, None, None, None, None)
@@ -432,19 +460,19 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             let tfs = tfs_flag.unwrap();
             let mut cells = Vec::new();
             while pos < sel.len() {
-                need_in(sel, pos + 2, "T2_delivery_system body")?;
+                need_in(sel, pos + CELL_ID_LEN, "T2_delivery_system body")?;
                 let (cell_id_bytes, _) = sel
                     .get(pos..)
-                    .and_then(|s| s.split_first_chunk::<2>())
+                    .and_then(|s| s.split_first_chunk::<{ CELL_ID_LEN }>())
                     .ok_or(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: pos + 2,
+                            need: pos + CELL_ID_LEN,
                             have: sel.len(),
                             what: "T2_delivery_system body",
                         },
                     ))?;
                 let cell_id = u16::from_be_bytes(*cell_id_bytes);
-                pos += 2;
+                pos += CELL_ID_LEN;
                 let centre_frequencies = if tfs {
                     if pos >= sel.len() {
                         return Err(Error::BufferTooShort(
@@ -457,43 +485,43 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                     }
                     let freq_loop_len = sel[pos] as usize;
                     pos += 1;
-                    if !freq_loop_len.is_multiple_of(4) {
+                    if !freq_loop_len.is_multiple_of(CENTRE_FREQUENCY_LEN) {
                         return Err(invalid(
                             "T2_delivery_system: frequency_loop_length not a multiple of 4",
                         ));
                     }
                     need_in(sel, pos + freq_loop_len, "T2_delivery_system body")?;
                     let end = pos + freq_loop_len;
-                    let mut freqs = Vec::with_capacity(freq_loop_len / 4);
+                    let mut freqs = Vec::with_capacity(freq_loop_len / CENTRE_FREQUENCY_LEN);
                     while pos < end {
                         let (fb, _) = sel
                             .get(pos..)
-                            .and_then(|s| s.split_first_chunk::<4>())
+                            .and_then(|s| s.split_first_chunk::<{ CENTRE_FREQUENCY_LEN }>())
                             .ok_or(Error::BufferTooShort(
                                 broadcast_common::error::BufferTooShort {
-                                    need: pos + 4,
+                                    need: pos + CENTRE_FREQUENCY_LEN,
                                     have: sel.len(),
                                     what: "T2_delivery_system body",
                                 },
                             ))?;
                         freqs.push(u32::from_be_bytes(*fb));
-                        pos += 4;
+                        pos += CENTRE_FREQUENCY_LEN;
                     }
                     freqs
                 } else {
-                    need_in(sel, pos + 4, "T2_delivery_system body")?;
+                    need_in(sel, pos + CENTRE_FREQUENCY_LEN, "T2_delivery_system body")?;
                     let (freq_bytes, _) = sel
                         .get(pos..)
-                        .and_then(|s| s.split_first_chunk::<4>())
+                        .and_then(|s| s.split_first_chunk::<{ CENTRE_FREQUENCY_LEN }>())
                         .ok_or(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: pos + 4,
+                            need: pos + CENTRE_FREQUENCY_LEN,
                             have: sel.len(),
                             what: "T2_delivery_system body",
                         },
                     ))?;
                     let freq = u32::from_be_bytes(*freq_bytes);
-                    pos += 4;
+                    pos += CENTRE_FREQUENCY_LEN;
                     vec![freq]
                 };
                 if pos >= sel.len() {
@@ -507,21 +535,21 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                 }
                 let subcell_loop_len = sel[pos] as usize;
                 pos += 1;
-                if !subcell_loop_len.is_multiple_of(5) {
+                if !subcell_loop_len.is_multiple_of(SUBCELL_LEN) {
                     return Err(invalid(
                         "T2_delivery_system: subcell_info_loop_length not a multiple of 5",
                     ));
                 }
                 need_in(sel, pos + subcell_loop_len, "T2_delivery_system body")?;
                 let end = pos + subcell_loop_len;
-                let mut subcells = Vec::with_capacity(subcell_loop_len / 5);
+                let mut subcells = Vec::with_capacity(subcell_loop_len / SUBCELL_LEN);
                 while pos < end {
                     let (tf_bytes, _) = sel
-                        .get(pos + 1..)
-                        .and_then(|s| s.split_first_chunk::<4>())
+                        .get(pos + SUBCELL_TRANSPOSER_OFFSET..)
+                        .and_then(|s| s.split_first_chunk::<{ CENTRE_FREQUENCY_LEN }>())
                         .ok_or(Error::BufferTooShort(
                             broadcast_common::error::BufferTooShort {
-                                need: pos + 5,
+                                need: pos + SUBCELL_LEN,
                                 have: sel.len(),
                                 what: "T2_delivery_system body",
                             },
@@ -530,7 +558,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                         cell_id_extension: sel[pos],
                         transposer_frequency: u32::from_be_bytes(*tf_bytes),
                     });
-                    pos += 5;
+                    pos += SUBCELL_LEN;
                 }
                 cells.push(T2Cell {
                     cell_id,
@@ -568,13 +596,13 @@ impl Serialize for T2DeliverySystem {
             // empty cell is rejected below rather than fabricated (r03-W6).
             let tfs = self.tfs_flag.unwrap_or(false);
             for cell in &self.cells {
-                len += 2; // cell_id
+                len += CELL_ID_LEN; // cell_id
                 if tfs {
-                    len += 1 + cell.centre_frequencies.len() * 4;
+                    len += 1 + cell.centre_frequencies.len() * CENTRE_FREQUENCY_LEN;
                 } else {
-                    len += 4;
+                    len += CENTRE_FREQUENCY_LEN;
                 }
-                len += 1 + cell.subcells.len() * 5;
+                len += 1 + cell.subcells.len() * SUBCELL_LEN;
             }
         }
         len
@@ -594,9 +622,9 @@ impl Serialize for T2DeliverySystem {
             self.tfs_flag,
         ) {
             buf[p] = (broadcast_common::len::fit_mask(sm.to_u8(), T2_SISO_MISO_VALUE_MASK, "sm")?
-                << 6)
+                << T2_SISO_MISO_SHIFT)
                 | (broadcast_common::len::fit_mask(bw.to_u8(), T2_BANDWIDTH_VALUE_MASK, "bw")?
-                    << 2)
+                    << T2_BANDWIDTH_SHIFT)
                 | broadcast_common::len::fit_mask(
                     self.reserved_future_use,
                     T2_RESERVED_MASK,
@@ -604,28 +632,28 @@ impl Serialize for T2DeliverySystem {
                 )?;
             buf[p + 1] =
                 (broadcast_common::len::fit_mask(gi.to_u8(), T2_GUARD_INTERVAL_VALUE_MASK, "gi")?
-                    << 5)
+                    << T2_GUARD_INTERVAL_SHIFT)
                     | (broadcast_common::len::fit_mask(
                         tm.to_u8(),
                         T2_TRANSMISSION_MODE_VALUE_MASK,
                         "tm",
-                    )? << 2)
+                    )? << T2_TRANSMISSION_MODE_SHIFT)
                     | (u8::from(off) << 1)
                     | u8::from(tfs);
             p += T2_FLAGS_BLOCK_LEN;
             for cell in &self.cells {
-                buf[p..p + 2].copy_from_slice(&cell.cell_id.to_be_bytes());
-                p += 2;
+                buf[p..p + CELL_ID_LEN].copy_from_slice(&cell.cell_id.to_be_bytes());
+                p += CELL_ID_LEN;
                 if tfs {
                     let freq_len = broadcast_common::len::fit_u8(
-                        cell.centre_frequencies.len() * 4,
+                        cell.centre_frequencies.len() * CENTRE_FREQUENCY_LEN,
                         "frequency_loop_length",
                     )?;
                     buf[p] = freq_len;
                     p += 1;
                     for &freq in &cell.centre_frequencies {
-                        buf[p..p + 4].copy_from_slice(&freq.to_be_bytes());
-                        p += 4;
+                        buf[p..p + CENTRE_FREQUENCY_LEN].copy_from_slice(&freq.to_be_bytes());
+                        p += CENTRE_FREQUENCY_LEN;
                     }
                 } else {
                     let freq =
@@ -636,19 +664,21 @@ impl Serialize for T2DeliverySystem {
                                 field: "centre_frequencies",
                                 reason: "cell must carry one frequency when tfs_flag is false",
                             })?;
-                    buf[p..p + 4].copy_from_slice(&freq.to_be_bytes());
-                    p += 4;
+                    buf[p..p + CENTRE_FREQUENCY_LEN].copy_from_slice(&freq.to_be_bytes());
+                    p += CENTRE_FREQUENCY_LEN;
                 }
                 let subcell_len = broadcast_common::len::fit_u8(
-                    cell.subcells.len() * 5,
+                    cell.subcells.len() * SUBCELL_LEN,
                     "subcell_info_loop_length",
                 )?;
                 buf[p] = subcell_len;
                 p += 1;
                 for sc in &cell.subcells {
                     buf[p] = sc.cell_id_extension;
-                    buf[p + 1..p + 5].copy_from_slice(&sc.transposer_frequency.to_be_bytes());
-                    p += 5;
+                    buf[p + SUBCELL_TRANSPOSER_OFFSET
+                        ..p + SUBCELL_TRANSPOSER_OFFSET + CENTRE_FREQUENCY_LEN]
+                        .copy_from_slice(&sc.transposer_frequency.to_be_bytes());
+                    p += SUBCELL_LEN;
                 }
             }
         }
