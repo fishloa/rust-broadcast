@@ -139,6 +139,28 @@ pub enum Error {
         limit: u64,
     },
 
+    /// A progressive file's `moov` follows its `mdat`, which a forward-only
+    /// source cannot reach without discarding the media it has not read.
+    #[error("moov follows mdat and the source is forward-only")]
+    MoovAfterMdatForwardOnly,
+
+    /// Bytes supplied to a [`Reader`](crate::reader::Reader) did not match the
+    /// outstanding [`ByteRange`](crate::reader::ByteRange) demand.
+    #[error("supplied bytes {got:?} do not match the outstanding need {expected:?}")]
+    SupplyMismatch {
+        /// The range the reader asked for.
+        expected: crate::reader::ByteRange,
+        /// The range the caller supplied.
+        got: crate::reader::ByteRange,
+    },
+
+    /// A seek needs a `stss`, `sidx` or `tfra` index and the file carries none.
+    #[error("track {track} has no random-access index to seek on")]
+    NoIndex {
+        /// The track that was to be sought.
+        track: crate::TrackId,
+    },
+
     /// The input needs a feature this crate does not implement yet.
     ///
     /// Distinct from a codec/scheme this crate has no handling for at all:

@@ -132,7 +132,7 @@ impl ChunkOffsets<'_> {
     }
 }
 
-/// The iteration state, small enough to snapshot for [`TrackCursor::seek_sync`].
+/// The iteration state, small enough to snapshot for [`CursorState::seek_sync`].
 #[derive(Debug, Clone, Copy)]
 struct Pos {
     sample: u32,
@@ -149,39 +149,22 @@ struct Pos {
     stss_pos: usize,
 }
 
-/// One track's sample tables, walked lazily in decode order.
-///
-/// Borrows the typed boxes out of [`SampleTableBox`]; it allocates nothing
-/// proportional to the sample count. Construct with [`TrackCursor::new`],
-/// which validates the tables up front, then iterate it one [`SampleRef`] at a time.
-#[derive(Debug)]
-pub struct TrackCursor<'a> {
-    track: TrackId,
-    stts: &'a TimeToSampleBox,
-    ctts: Option<&'a CompositionOffsetBox>,
-    stsc: &'a SampleToChunkBox,
-    size_table: SizeTable<'a>,
-    chunk_offsets: ChunkOffsets<'a>,
-    stss: Option<&'a SyncSampleBox>,
-    total_samples: u32,
-    file_len: Option<u64>,
-    pos: Pos,
-    done: bool,
+/// Where one track's typed sample-table children sit inside its
+/// [`SampleTableBox`], resolved once by [`CursorState::new`].
+#[derive(Debug, Clone, Copy)]
+struct Layout {
+    stts: usize,
+    ctts: Option<usize>,
+    stsc: usize,
+    stsz: Option<usize>,
+    stz2: Option<usize>,
+    stco: Option<usize>,
+    co64: Option<usize>,
+    stss: Option<usize>,
 }
 
-impl<'a> TrackCursor<'a> {
-    /// Resolve and validate one track's sample tables.
-    ///
-    /// `file_len`, when known, bounds every sample range and the aggregate
-    /// sample bytes; pass `Some` for a whole-file read, `None` for a stream
-    /// whose length is unknown.
-    pub fn new(
-        stbl: &'a SampleTableBox,
-        track: TrackId,
-        limits: &Limits,
-        file_len: Option<u64>,
-    ) -> Result<Self> {
-        let children = &stbl.children;
+impl Layout {
+    fn resolve(children: &[StblChild]) -> Result<Self> {
         let stts = find_child(
             children,
             b"stts",
@@ -228,18 +211,17 @@ impl<'a> TrackCursor<'a> {
             },
             |b| CompactSampleSizeBox::parse(b),
         )?;
-        let size_table = match (stsz, stz2) {
-            (Some(b), None) => SizeTable::Stsz(b),
-            (None, Some(b)) => SizeTable::Stz2(b),
+        match (stsz, stz2) {
+            (Some(_), Some(_)) => {
+                return Err(Error::InvalidInput("both stsz and stz2 are present"));
+            }
             (None, None) => {
                 return Err(Error::UnexpectedBox {
                     expected: "stsz or stz2",
                 });
             }
-            (Some(_), Some(_)) => {
-                return Err(Error::InvalidInput("both stsz and stz2 are present"));
-            }
-        };
+            _ => {}
+        }
         let stsc = find_child(
             children,
             b"stsc",
@@ -268,16 +250,120 @@ impl<'a> TrackCursor<'a> {
             },
             |b| ChunkOffsetBox::parse(b),
         )?;
-        let chunk_offsets = match (co64, stco) {
-            (Some(b), _) => ChunkOffsets::Co64(b),
-            (None, Some(b)) => ChunkOffsets::Stco(b),
-            (None, None) => {
-                return Err(Error::UnexpectedBox {
-                    expected: "stco or co64",
-                });
-            }
-        };
+        if co64.is_none() && stco.is_none() {
+            return Err(Error::UnexpectedBox {
+                expected: "stco or co64",
+            });
+        }
+        Ok(Self {
+            stts,
+            ctts,
+            stsc,
+            stsz,
+            stz2,
+            stco,
+            co64,
+            stss,
+        })
+    }
 
+    fn stts<'a>(&self, stbl: &'a SampleTableBox) -> Result<&'a TimeToSampleBox> {
+        match stbl.children.get(self.stts) {
+            Some(StblChild::Stts(b)) => Ok(b),
+            _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+        }
+    }
+
+    fn ctts<'a>(&self, stbl: &'a SampleTableBox) -> Result<Option<&'a CompositionOffsetBox>> {
+        match self.ctts {
+            None => Ok(None),
+            Some(index) => match stbl.children.get(index) {
+                Some(StblChild::Ctts(b)) => Ok(Some(b)),
+                _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+            },
+        }
+    }
+
+    fn stsc<'a>(&self, stbl: &'a SampleTableBox) -> Result<&'a SampleToChunkBox> {
+        match stbl.children.get(self.stsc) {
+            Some(StblChild::Stsc(b)) => Ok(b),
+            _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+        }
+    }
+
+    fn stss<'a>(&self, stbl: &'a SampleTableBox) -> Result<Option<&'a SyncSampleBox>> {
+        match self.stss {
+            None => Ok(None),
+            Some(index) => match stbl.children.get(index) {
+                Some(StblChild::Stss(b)) => Ok(Some(b)),
+                _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+            },
+        }
+    }
+
+    fn size_table<'a>(&self, stbl: &'a SampleTableBox) -> Result<SizeTable<'a>> {
+        match (self.stsz, self.stz2) {
+            (Some(index), None) => match stbl.children.get(index) {
+                Some(StblChild::Stsz(b)) => Ok(SizeTable::Stsz(b)),
+                _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+            },
+            (None, Some(index)) => match stbl.children.get(index) {
+                Some(StblChild::Stz2(b)) => Ok(SizeTable::Stz2(b)),
+                _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+            },
+            _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+        }
+    }
+
+    fn chunk_offsets<'a>(&self, stbl: &'a SampleTableBox) -> Result<ChunkOffsets<'a>> {
+        if let Some(index) = self.co64 {
+            match stbl.children.get(index) {
+                Some(StblChild::Co64(b)) => return Ok(ChunkOffsets::Co64(b)),
+                _ => return Err(Error::InvalidInput("sample table changed under its cursor")),
+            }
+        }
+        match self.stco {
+            Some(index) => match stbl.children.get(index) {
+                Some(StblChild::Stco(b)) => Ok(ChunkOffsets::Stco(b)),
+                _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+            },
+            None => Err(Error::InvalidInput("sample table changed under its cursor")),
+        }
+    }
+}
+
+/// One track's position in its sample tables, as plain integers.
+///
+/// A reader that owns its `moov` bytes keeps one of these per track and lends
+/// it the parsed [`SampleTableBox`] on every step, so no cursor borrows from
+/// the structure it walks. [`TrackCursor`] is this same state paired with the
+/// table it was built from; there is one implementation of the walk.
+#[derive(Debug, Clone, Copy)]
+pub struct CursorState {
+    track: TrackId,
+    layout: Layout,
+    total_samples: u32,
+    file_len: Option<u64>,
+    pos: Pos,
+    done: bool,
+}
+
+impl CursorState {
+    /// Resolve and validate one track's sample tables.
+    ///
+    /// `file_len`, when known, bounds every sample range and the aggregate
+    /// sample bytes; pass `Some` for a whole-file read, `None` for a stream
+    /// whose length is unknown.
+    pub fn new(
+        stbl: &SampleTableBox,
+        track: TrackId,
+        limits: &Limits,
+        file_len: Option<u64>,
+    ) -> Result<Self> {
+        let layout = Layout::resolve(&stbl.children)?;
+        let stsc = layout.stsc(stbl)?;
+        let size_table = layout.size_table(stbl)?;
+        let chunk_offsets = layout.chunk_offsets(stbl)?;
         let total_samples = size_table.count();
         if let Some(len) = file_len
             && u64::from(total_samples) > len
@@ -311,15 +397,9 @@ impl<'a> TrackCursor<'a> {
                 "stsc/stco sample-to-chunk mapping did not cover all samples",
             ));
         }
-
-        let mut cursor = Self {
+        let mut state = Self {
             track,
-            stts,
-            ctts,
-            stsc,
-            size_table,
-            chunk_offsets,
-            stss,
+            layout,
             total_samples,
             file_len,
             pos: Pos {
@@ -338,18 +418,28 @@ impl<'a> TrackCursor<'a> {
             },
             done: false,
         };
-        cursor.pos = cursor.reset()?;
-        Ok(cursor)
+        state.pos = state.start(stbl)?;
+        Ok(state)
+    }
+
+    /// The track this cursor walks.
+    pub fn track(&self) -> TrackId {
+        self.track
     }
 
     /// Samples not yet yielded.
-    pub fn len(&self) -> u32 {
+    pub fn remaining(&self) -> u32 {
         self.total_samples.saturating_sub(self.pos.sample)
     }
 
     /// Whether every sample has been yielded.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.remaining() == 0
+    }
+
+    /// Zero-based index of the next sample.
+    pub fn position(&self) -> u32 {
+        self.pos.sample
     }
 
     /// The decode time of the next sample, without consuming it.
@@ -359,38 +449,85 @@ impl<'a> TrackCursor<'a> {
 
     /// Position on the last sync sample whose decode time is at or before
     /// `decode_time`; the first sample when none is earlier.
-    ///
-    /// Walks the tables run by run and allocates nothing per sample.
-    pub fn seek_sync(&mut self, decode_time: u64) -> Result<()> {
-        let start = self.reset()?;
+    pub fn seek_sync(&mut self, stbl: &SampleTableBox, decode_time: u64) -> Result<()> {
+        let start = self.start(stbl)?;
         self.pos = start;
         self.done = false;
         let mut best = None;
         while self.pos.sample < self.total_samples {
-            let sample = self.sample_ref()?;
+            let sample = self.sample_ref(stbl)?;
             if sample.decode_time > decode_time {
                 break;
             }
             if sample.sync {
                 best = Some(self.pos);
             }
-            self.advance()?;
+            self.advance_inner(stbl)?;
         }
         self.pos = best.unwrap_or(start);
         self.done = false;
         Ok(())
     }
 
-    fn reset(&self) -> Result<Pos> {
+    /// The next sample descriptor, or `None` when the track is exhausted.
+    pub fn peek(&mut self, stbl: &SampleTableBox) -> Result<Option<SampleRef>> {
+        match self.peek_inner(stbl) {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                self.done = true;
+                Err(err)
+            }
+        }
+    }
+
+    fn peek_inner(&mut self, stbl: &SampleTableBox) -> Result<Option<SampleRef>> {
+        if self.done {
+            return Ok(None);
+        }
+        if self.pos.sample >= self.total_samples {
+            self.done = true;
+            let stts = self.layout.stts(stbl)?;
+            if self.stts_remainder(stts) != 0 {
+                return Err(Error::InvalidInput(
+                    "stts sample count does not match chunk layout",
+                ));
+            }
+            if let Some(ctts) = self.layout.ctts(stbl)?
+                && self.ctts_remainder(ctts) != 0
+            {
+                return Err(Error::InvalidInput(
+                    "ctts sample count does not match chunk layout",
+                ));
+            }
+            return Ok(None);
+        }
+        self.sample_ref(stbl).map(Some)
+    }
+
+    /// Consume the next sample, which must have been seen through
+    /// [`CursorState::peek`].
+    pub fn advance(&mut self, stbl: &SampleTableBox) -> Result<()> {
+        match self.advance_inner(stbl) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                self.done = true;
+                Err(err)
+            }
+        }
+    }
+
+    fn start(&self, stbl: &SampleTableBox) -> Result<Pos> {
+        let stts = self.layout.stts(stbl)?;
+        let ctts = self.layout.ctts(stbl)?;
+        let stss = self.layout.stss(stbl)?;
         let mut pos = Pos {
             sample: 0,
             decode_time: 0,
             total_bytes: 0,
             stts_run: 0,
-            stts_left: self.stts.entries.first().map_or(0, |e| e.sample_count),
+            stts_left: stts.entries.first().map_or(0, |e| e.sample_count),
             ctts_run: 0,
-            ctts_left: self
-                .ctts
+            ctts_left: ctts
                 .and_then(|c| c.entries.first())
                 .map_or(0, |e| e.sample_count),
             chunk_no: 0,
@@ -399,12 +536,14 @@ impl<'a> TrackCursor<'a> {
             stsc_run: 0,
             stss_pos: 0,
         };
-        self.advance_stts_run(&mut pos);
-        self.advance_ctts_run(&mut pos);
-        if self.total_samples > 0 {
-            self.open_next_chunk(&mut pos)?;
+        self.advance_stts_run(stts, &mut pos);
+        if let Some(ctts) = ctts {
+            self.advance_ctts_run(ctts, &mut pos);
         }
-        if let Some(stss) = self.stss {
+        if self.total_samples > 0 {
+            self.open_next_chunk(stbl, &mut pos)?;
+        }
+        if let Some(stss) = stss {
             while pos.stss_pos < stss.entries.len() && stss.entries[pos.stss_pos] < SYNC_INDEX_BIAS
             {
                 pos.stss_pos += 1;
@@ -413,24 +552,17 @@ impl<'a> TrackCursor<'a> {
         Ok(pos)
     }
 
-    fn advance_stts_run(&self, pos: &mut Pos) {
+    fn advance_stts_run(&self, stts: &TimeToSampleBox, pos: &mut Pos) {
         while pos.stts_left == 0 {
-            if pos.stts_run >= self.stts.entries.len() {
+            if pos.stts_run >= stts.entries.len() {
                 break;
             }
             pos.stts_run += 1;
-            pos.stts_left = self
-                .stts
-                .entries
-                .get(pos.stts_run)
-                .map_or(0, |e| e.sample_count);
+            pos.stts_left = stts.entries.get(pos.stts_run).map_or(0, |e| e.sample_count);
         }
     }
 
-    fn advance_ctts_run(&self, pos: &mut Pos) {
-        let Some(ctts) = self.ctts else {
-            return;
-        };
+    fn advance_ctts_run(&self, ctts: &CompositionOffsetBox, pos: &mut Pos) {
         while pos.ctts_left == 0 {
             if pos.ctts_run >= ctts.entries.len() {
                 break;
@@ -440,37 +572,39 @@ impl<'a> TrackCursor<'a> {
         }
     }
 
-    fn open_next_chunk(&self, pos: &mut Pos) -> Result<()> {
+    fn open_next_chunk(&self, stbl: &SampleTableBox, pos: &mut Pos) -> Result<()> {
+        let stsc = self.layout.stsc(stbl)?;
+        let chunk_offsets = self.layout.chunk_offsets(stbl)?;
         loop {
             pos.chunk_no = pos
                 .chunk_no
                 .checked_add(1)
                 .ok_or(Error::InvalidInput("chunk index overflow"))?;
-            if pos.chunk_no as usize > self.chunk_offsets.len() {
+            if pos.chunk_no as usize > chunk_offsets.len() {
                 return Err(Error::InvalidInput(
                     "stsc/stco sample-to-chunk mapping did not cover all samples",
                 ));
             }
-            while pos.stsc_run + 1 < self.stsc.entries.len()
-                && u64::from(self.stsc.entries[pos.stsc_run + 1].first_chunk)
-                    <= u64::from(pos.chunk_no)
+            while pos.stsc_run + 1 < stsc.entries.len()
+                && u64::from(stsc.entries[pos.stsc_run + 1].first_chunk) <= u64::from(pos.chunk_no)
             {
                 pos.stsc_run += 1;
             }
-            let per_chunk = match self.stsc.entries.get(pos.stsc_run) {
+            let per_chunk = match stsc.entries.get(pos.stsc_run) {
                 Some(e) if e.first_chunk <= pos.chunk_no => e.samples_per_chunk,
                 _ => 0,
             };
             if per_chunk != 0 {
                 pos.chunk_remaining = per_chunk;
-                pos.chunk_cursor = self.chunk_offsets.get(pos.chunk_no - 1);
+                pos.chunk_cursor = chunk_offsets.get(pos.chunk_no - 1);
                 return Ok(());
             }
         }
     }
 
-    fn current_duration(&self) -> Result<u32> {
-        self.stts
+    fn current_duration(&self, stbl: &SampleTableBox) -> Result<u32> {
+        self.layout
+            .stts(stbl)?
             .entries
             .get(self.pos.stts_run)
             .map(|e| e.sample_delta)
@@ -479,8 +613,8 @@ impl<'a> TrackCursor<'a> {
             ))
     }
 
-    fn current_composition_offset(&self) -> Result<i32> {
-        let Some(ctts) = self.ctts else {
+    fn current_composition_offset(&self, stbl: &SampleTableBox) -> Result<i32> {
+        let Some(ctts) = self.layout.ctts(stbl)? else {
             return Ok(0);
         };
         ctts.entries
@@ -491,43 +625,48 @@ impl<'a> TrackCursor<'a> {
             ))
     }
 
-    fn current_description_index(&self) -> u32 {
-        match self.stsc.entries.get(self.pos.stsc_run) {
+    fn current_description_index(&self, stbl: &SampleTableBox) -> Result<u32> {
+        let stsc = self.layout.stsc(stbl)?;
+        Ok(match stsc.entries.get(self.pos.stsc_run) {
             Some(e) if e.first_chunk <= self.pos.chunk_no => e.sample_description_index,
             _ => DEFAULT_SAMPLE_DESCRIPTION_INDEX,
-        }
+        })
     }
 
-    fn current_sync(&self) -> bool {
-        let Some(stss) = self.stss else {
-            return true;
+    fn current_sync(&self, stbl: &SampleTableBox) -> Result<bool> {
+        let Some(stss) = self.layout.stss(stbl)? else {
+            return Ok(true);
         };
         let Some(index) = self.pos.sample.checked_add(SYNC_INDEX_BIAS) else {
-            return false;
+            return Ok(false);
         };
-        stss.entries.get(self.pos.stss_pos).copied() == Some(index)
+        Ok(stss.entries.get(self.pos.stss_pos).copied() == Some(index))
     }
 
-    fn sample_ref(&self) -> Result<SampleRef> {
-        let size = self.size_table.size(self.pos.sample)?;
+    fn sample_ref(&self, stbl: &SampleTableBox) -> Result<SampleRef> {
+        let size = self.layout.size_table(stbl)?.size(self.pos.sample)?;
         let offset = self.pos.chunk_cursor;
         Ok(SampleRef {
             track: self.track,
             index: self.pos.sample,
             decode_time: self.pos.decode_time,
-            composition_offset: self.current_composition_offset()?,
-            duration: self.current_duration()?,
-            sync: self.current_sync(),
+            composition_offset: self.current_composition_offset(stbl)?,
+            duration: self.current_duration(stbl)?,
+            sync: self.current_sync(stbl)?,
             offset,
             size,
-            description_index: self.current_description_index(),
+            description_index: self.current_description_index(stbl)?,
         })
     }
 
-    fn advance(&mut self) -> Result<()> {
+    fn advance_inner(&mut self, stbl: &SampleTableBox) -> Result<()> {
+        let size_table = self.layout.size_table(stbl)?;
+        let stts = self.layout.stts(stbl)?;
+        let ctts = self.layout.ctts(stbl)?;
+        let stss = self.layout.stss(stbl)?;
         let mut pos = self.pos;
-        let size = self.size_table.size(pos.sample)?;
-        let duration = self.current_duration()?;
+        let size = size_table.size(pos.sample)?;
+        let duration = self.current_duration(stbl)?;
         let limit = self
             .file_len
             .map_or(usize::MAX, |len| usize::try_from(len).unwrap_or(usize::MAX));
@@ -559,35 +698,34 @@ impl<'a> TrackCursor<'a> {
         if pos.stts_left > 0 {
             pos.stts_left -= 1;
         }
-        self.advance_stts_run(&mut pos);
-        if self.ctts.is_some() {
+        self.advance_stts_run(stts, &mut pos);
+        if let Some(ctts) = ctts {
             if pos.ctts_left > 0 {
                 pos.ctts_left -= 1;
             }
-            self.advance_ctts_run(&mut pos);
+            self.advance_ctts_run(ctts, &mut pos);
         }
         pos.chunk_remaining = pos.chunk_remaining.saturating_sub(1);
         pos.chunk_cursor = pos
             .chunk_cursor
             .checked_add(u64::from(size))
             .ok_or(Error::InvalidInput("chunk cursor overflow"))?;
-        if let Some(stss) = self.stss {
+        if let Some(stss) = stss {
             let next_index = pos.sample.saturating_add(SYNC_INDEX_BIAS);
             while pos.stss_pos < stss.entries.len() && stss.entries[pos.stss_pos] < next_index {
                 pos.stss_pos += 1;
             }
         }
         if pos.chunk_remaining == 0 && pos.sample < self.total_samples {
-            self.open_next_chunk(&mut pos)?;
+            self.open_next_chunk(stbl, &mut pos)?;
         }
         self.pos = pos;
         Ok(())
     }
 
-    fn stts_remainder(&self) -> u64 {
+    fn stts_remainder(&self, stts: &TimeToSampleBox) -> u64 {
         let mut remainder = u64::from(self.pos.stts_left);
-        for entry in self
-            .stts
+        for entry in stts
             .entries
             .iter()
             .skip(self.pos.stts_run.saturating_add(1))
@@ -597,10 +735,7 @@ impl<'a> TrackCursor<'a> {
         remainder
     }
 
-    fn ctts_remainder(&self) -> u64 {
-        let Some(ctts) = self.ctts else {
-            return 0;
-        };
+    fn ctts_remainder(&self, ctts: &CompositionOffsetBox) -> u64 {
         let mut remainder = u64::from(self.pos.ctts_left);
         for entry in ctts
             .entries
@@ -613,39 +748,70 @@ impl<'a> TrackCursor<'a> {
     }
 }
 
+/// One track's sample tables, walked lazily in decode order.
+///
+/// Borrows the typed boxes out of [`SampleTableBox`]; it allocates nothing
+/// proportional to the sample count. Construct with [`TrackCursor::new`],
+/// which validates the tables up front, then iterate it one [`SampleRef`] at a time.
+#[derive(Debug)]
+pub struct TrackCursor<'a> {
+    stbl: &'a SampleTableBox,
+    state: CursorState,
+}
+
+impl<'a> TrackCursor<'a> {
+    /// Resolve and validate one track's sample tables.
+    ///
+    /// `file_len`, when known, bounds every sample range and the aggregate
+    /// sample bytes; pass `Some` for a whole-file read, `None` for a stream
+    /// whose length is unknown.
+    pub fn new(
+        stbl: &'a SampleTableBox,
+        track: TrackId,
+        limits: &Limits,
+        file_len: Option<u64>,
+    ) -> Result<Self> {
+        Ok(Self {
+            stbl,
+            state: CursorState::new(stbl, track, limits, file_len)?,
+        })
+    }
+
+    /// Samples not yet yielded.
+    pub fn len(&self) -> u32 {
+        self.state.remaining()
+    }
+
+    /// Whether every sample has been yielded.
+    pub fn is_empty(&self) -> bool {
+        self.state.is_empty()
+    }
+
+    /// The decode time of the next sample, without consuming it.
+    pub fn peek_decode_time(&self) -> Option<u64> {
+        self.state.peek_decode_time()
+    }
+
+    /// Position on the last sync sample whose decode time is at or before
+    /// `decode_time`; the first sample when none is earlier.
+    ///
+    /// Walks the tables run by run and allocates nothing per sample.
+    pub fn seek_sync(&mut self, decode_time: u64) -> Result<()> {
+        self.state.seek_sync(self.stbl, decode_time)
+    }
+}
+
 impl Iterator for TrackCursor<'_> {
     type Item = Result<SampleRef>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
-        if self.pos.sample >= self.total_samples {
-            self.done = true;
-            if self.stts_remainder() != 0 {
-                return Some(Err(Error::InvalidInput(
-                    "stts sample count does not match chunk layout",
-                )));
-            }
-            if self.ctts_remainder() != 0 {
-                return Some(Err(Error::InvalidInput(
-                    "ctts sample count does not match chunk layout",
-                )));
-            }
-            return None;
-        }
-        match self.sample_ref() {
-            Ok(sample) => match self.advance() {
+        match self.state.peek(self.stbl) {
+            Ok(None) => None,
+            Ok(Some(sample)) => match self.state.advance(self.stbl) {
                 Ok(()) => Some(Ok(sample)),
-                Err(err) => {
-                    self.done = true;
-                    Some(Err(err))
-                }
+                Err(err) => Some(Err(err)),
             },
-            Err(err) => {
-                self.done = true;
-                Some(Err(err))
-            }
+            Err(err) => Some(Err(err)),
         }
     }
 }
@@ -710,15 +876,15 @@ fn chunks_needed(entries: &[StscEntry], total_samples: u32) -> Result<u32> {
 
 /// Find a typed `stbl` child, recovering the real parse error from a same
 /// four-CC [`StblChild::Opaque`] (a box that was present but failed to parse).
-fn find_child<'a, T>(
-    children: &'a [StblChild],
+fn find_child<T>(
+    children: &[StblChild],
     fourcc: &[u8; BOX_TYPE_SIZE],
-    get: impl Fn(&'a StblChild) -> Option<&'a T>,
+    get: impl Fn(&StblChild) -> Option<&T>,
     parse: impl Fn(&[u8]) -> Result<T>,
-) -> Result<Option<&'a T>> {
-    for child in children {
-        if let Some(value) = get(child) {
-            return Ok(Some(value));
+) -> Result<Option<usize>> {
+    for (index, child) in children.iter().enumerate() {
+        if get(child).is_some() {
+            return Ok(Some(index));
         }
     }
     for child in children {

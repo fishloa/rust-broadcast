@@ -1835,6 +1835,12 @@ pub const TABLE: &[Crate] = &[
             "SampleEntryChild",
             "SampleEntryVariant",
             "StblChild",
+            // Reader configuration choices (`SampleOrder`, `Source`, `Mode`)
+            // and the reader's data-carrying step ADT (`Step`), not wire codes.
+            "SampleOrder",
+            "Source",
+            "Mode",
+            "Step",
         ],
         expected: None,
         min_enums: None,

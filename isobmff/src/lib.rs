@@ -34,9 +34,12 @@
 //!   fragment sample-offset resolver.
 //! - [`limits`] — the hostile-input caps every count or size read from a file
 //!   is checked against before anything is allocated.
-//! - [`sample_table`] — [`TrackCursor`], the lazy per-track walk over the
-//!   `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss` tables, and the
-//!   run-length table builders.
+//! - [`sample_table`] — [`TrackCursor`]/[`CursorState`], the lazy per-track
+//!   walk over the `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss`
+//!   tables, and the run-length table builders.
+//! - [`reader`], [`plan`] — the sans-IO progressive [`Reader`]: it asks for
+//!   structure byte ranges, surfaces every track and one [`SampleRef`] at a
+//!   time, and hands out a [`SamplePlan`] from the index alone.
 //! - [`avc_config`], [`hevc_config`], [`vvc_config`], [`nalu_types`], [`av1`],
 //!   [`vp9`], [`mp4esds`], [`ac3`], [`ac4`], [`dts`], [`flac`], [`opus`],
 //!   [`mpegh`], [`dovi`], [`hdr_boxes`], [`avs2`], [`avs3`], [`avs3_audio`] —
@@ -91,6 +94,8 @@ pub mod mp4esds;
 pub mod mpegh;
 pub mod nalu_types;
 pub mod opus;
+pub mod plan;
+pub mod reader;
 pub mod sample_entries;
 pub mod sample_groups;
 pub mod sample_table;
@@ -158,11 +163,18 @@ pub use nalu_types::{
     HEVC_SUFFIX_SEI_NUT, HEVC_VPS_NUT, HevcNalArray, HevcNalUnit, VALID_LENGTH_SIZES,
 };
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
+pub use plan::SamplePlan;
+pub use reader::{
+    ByteRange, Mode, ReadStep, Reader, ReaderConfig, SampleEntryInfo, SampleOrder, Source, Step,
+    TrackInfo,
+};
 pub use sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VVCSampleEntry,
     VisualSampleEntryFields,
 };
-pub use sample_table::{SampleRef, TrackCursor, build_ctts, build_stsc, build_stss, build_stts};
+pub use sample_table::{
+    CursorState, SampleRef, TrackCursor, build_ctts, build_stsc, build_stss, build_stts,
+};
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
     WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, XmlSubtitleSampleEntry,

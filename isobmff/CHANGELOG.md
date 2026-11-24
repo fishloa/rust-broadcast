@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `reader::Reader`, the sans-IO progressive-file reader: it asks the caller
+  for structure byte ranges with `Step::Need`, surfaces every track
+  (`Step::Tracks`, including handlers and sample entries transmux cannot map,
+  with each `stsd` entry's raw bytes), then yields one `SampleRef` at a time in
+  decode-time or file order, and `seek_to` lands every track on its sync sample
+  at or before a time. It owns the supplied `moov` and nothing else, so a
+  `moov` after a multi-gigabyte `mdat` costs headers only; a forward-only
+  source gets a typed `Error::MoovAfterMdatForwardOnly` instead.
+- `plan::SamplePlan`, the read plan `Reader::plan()` returns from the parsed
+  index, with a per-track `cursor(&Limits)` and no per-sample storage.
+- `sample_table::CursorState`, the walk's owning state (plain integers) that
+  `TrackCursor` is now expressed over, so a reader that owns its `moov` bytes
+  can keep a position per track without a self-referential borrow.
+- `Error::{MoovAfterMdatForwardOnly, SupplyMismatch, NoIndex}`, and
+  `Reader::bytes_requested()` under `scan-counters`.
+
 - `Limits`, the hostile-input caps for the Phase 2 reader: walk depth, `moov`
   size, samples per track, one sample, one fragment and one metadata item,
   each with a named default and a `with_*` builder.

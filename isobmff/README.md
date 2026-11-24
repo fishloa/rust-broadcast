@@ -48,7 +48,9 @@ It never knows the media IR or a codec bitstream.
 | `sample_groups` | `prft`, `sgpd`, `sbgp`, `subs`, `ssrt` |
 | `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
 | `limits` | hostile-input caps (`Limits`) for the Phase 2 reader |
-| `sample_table` | lazy per-track sample cursor and the run-length table builders |
+| `sample_table` | lazy per-track sample cursor (`TrackCursor`/`CursorState`) and the run-length table builders |
+| `reader` | sans-IO progressive-file `Reader`: asks for structure byte ranges, yields every track and one sample descriptor at a time, `seek_to` over `stss` |
+| `plan` | `SamplePlan`, the progressive index a `Reader` hands out without reading media |
 | `frag_offsets` | ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 sample-data addressing rules |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
 
@@ -84,6 +86,7 @@ cargo run -p isobmff --example build_emsg
 |---------|---------|-------------|
 | `std` | yes | `std` glue; without it the crate is `no_std` + `alloc` |
 | `serde` | no | `serde::Serialize` on the box types |
+| `scan-counters` | no | test instrumentation: `Reader::bytes_requested()` counts the bytes a run asked for |
 
 ## Spec citations
 
