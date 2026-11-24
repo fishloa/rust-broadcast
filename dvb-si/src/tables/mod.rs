@@ -221,11 +221,16 @@ pub struct SectionBits {
     /// definable) = `reserved_future_use` (ETSI EN 300 468 §5.1.1).
     pub private_indicator: bool,
     /// Byte 1 bits `[5:4]`: `reserved(2)`.
-    pub reserved_b1: ReservedOnes<2>,
+    pub reserved_b1: ReservedOnes<SECTION_HEADER_RESERVED_BITS>,
     /// Byte 5 bits `[7:6]`: `reserved(2)` before `version_number` (long-form
     /// sections only; unused by short-form sections).
-    pub reserved_b5: ReservedOnes<2>,
+    pub reserved_b5: ReservedOnes<SECTION_HEADER_RESERVED_BITS>,
 }
+
+/// Width in bits of the `reserved(2)` field in the section header's bytes 1
+/// and 5 (ISO/IEC 13818-1 §2.4.4.1), the `ReservedOnes` width of
+/// [`SectionBits::reserved_b1`] and [`SectionBits::reserved_b5`].
+pub const SECTION_HEADER_RESERVED_BITS: u32 = 2;
 
 /// Value of an all-ones 2-bit reserved field.
 pub(crate) const RESERVED_2: u8 = 0x03;

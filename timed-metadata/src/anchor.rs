@@ -25,8 +25,11 @@ const PRINTED_YEAR_DIGITS: usize = 6;
 /// `None` outside years -9999..=9999. (`jiff::Timestamp` is deliberately NOT
 /// used: its range stops at 9999-12-30T22:00Z, which would break the
 /// byte-identical output for the last day of year 9999.)
+/// The Unix epoch's calendar year (month and day are `1`, which needs no name).
+const UNIX_EPOCH_YEAR: i16 = 1970;
+
 fn civil_from_epoch_ms(epoch_ms: i64) -> Option<DateTime> {
-    date(1970, 1, 1)
+    date(UNIX_EPOCH_YEAR, 1, 1)
         .at(0, 0, 0, 0)
         .checked_add(SignedDuration::from_millis(epoch_ms))
         .ok()

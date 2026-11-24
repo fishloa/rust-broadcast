@@ -83,13 +83,20 @@ const W_STREAM_NUM: u32 = 7;
 const PLACEMENT_BITS: usize =
     (W_C + W_LINE_NUMBER + W_HORIZONTAL_OFFSET + W_S + W_STREAM_NUM) as usize;
 
+/// Bits in the 32-bit word `word_align` pads to (RFC 8331 §2.1).
+const WORD_BITS: usize = u32::BITS as usize;
+
 /// Bits needed to pad `bits_so_far` up to the next 32-bit (word) boundary —
 /// RFC 8331 §2.1 `word_align`: "enough '0' bits ... to complete the last
 /// 32-bit word ... If ... already ... aligned with a word boundary, there is
 /// no need to add any word alignment bits."
 fn bits_to_word_boundary(bits_so_far: usize) -> u32 {
-    let rem = bits_so_far % 32;
-    if rem == 0 { 0 } else { (32 - rem) as u32 }
+    let rem = bits_so_far % WORD_BITS;
+    if rem == 0 {
+        0
+    } else {
+        (WORD_BITS - rem) as u32
+    }
 }
 
 // ---------------------------------------------------------------------------

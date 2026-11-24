@@ -16,6 +16,8 @@ mod label;
 mod label_data;
 mod lint_suppressions;
 mod lint_suppressions_data;
+mod magic_numbers;
+mod magic_numbers_data;
 mod msv_runner;
 mod no_dom;
 mod no_dom_data;

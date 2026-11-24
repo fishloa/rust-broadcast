@@ -1309,9 +1309,7 @@ async fn send_sample(
             tracing::error!(
                 len = pkt.header.len() + pkt.payload.len(),
                 min = rtp_packet::FIXED_HEADER_LEN,
-                "whep: packetiser emitted a packet shorter than the RFC 3550 §5.1 fixed \
-                 header; dropping it rather than sending one still carrying the \
-                 packetiser's own sequence number/timestamp"
+                "whep: packetiser emitted a packet shorter than the RFC 3550 §5.1 fixed header; dropping it rather than sending one still carrying the packetiser's own sequence number/timestamp"
             );
             continue;
         };

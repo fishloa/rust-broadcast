@@ -74,6 +74,7 @@ Plus **MSRV 1.95.0** (`rust-toolchain.toml`, single source) and, for `no_std` cr
 ## 5. `no_std`, labels, fuzz, examples, CLI
 - **`no_std` + `alloc`** where practical; `--no-default-features` + bare-metal build green.
 - **#204 label convention**: every public spec/field enum gets `name() -> &'static str` (hand-written) + `broadcast_common::impl_spec_display!`; a line in the `label` table of `workspace-guards` (`workspace-guards/tests/guards/label_data.rs`; a documented SKIP list in that line for non-label enums). Do not copy a per-crate `label_coverage.rs`.
+- **Magic numbers**: a line in the `magic_numbers` table of `workspace-guards` (`workspace-guards/tests/guards/magic_numbers_data.rs`) with its allowlist — every numeric literal other than `0`/`1` in production code is a named constant (the field or role, never the value) or a std form (`u8::BITS`, `size_of::<T>()`); each allow entry pins the exact trimmed source line with its reason, and a stale entry fails.
 - **No-hand-roll tripwire** (protocol/runtime crate): a line in the de-hand-roll tables of `workspace-guards` (`workspace-guards/tests/guards/handroll_data.rs`, pick the scanner shape that fits; do not copy a per-crate `no_handroll_guard.rs`) — a lexical tripwire scanning `src/**/*.rs` outside `#[cfg(test)] mod` bodies for the de-hand-roll spec **§5** pattern list (`"HTTP/1.`, `"\r\n\r\n"`, `find("://")`, `strip_prefix("<scheme>://")`, SDP `"a=`/`"m=`/`"v=0` building, `civil_from_days`/`days_from_civil`, a base64 alphabet literal, `thread::sleep`/`sleep(` in non-test async code), with a **reasoned allowlist**. Each allow entry names the file, pins the exact source line (so a new occurrence of the same needle elsewhere still fails) and gives the reason; a genuinely-infeasible site is a **documented exception** in the de-hand-roll spec §9, not a silent allow. The module doc states it is a lexical tripwire and that review is the real control.
 - **Fuzz target** added (the workspace fuzzes every parser crate; nightly fuzz-build gate).
 - **≥2 runnable examples** (`cargo run -p <crate> --example …`), fixtures via `std::fs` at runtime.
@@ -89,13 +90,13 @@ Independent crates version on their own cadence; lockstep crates move together. 
 ---
 ### Acceptance checklist (tick before any publish -- new crate or new version)
 - [ ] Symmetric parse/serialize + round-trip test (**byte-identical** for binary; **equal re-parse + mutation-bites** for text/markup)
-- [ ] No `self.raw` passthrough · no raw-byte public API · no magic numbers · `#[non_exhaustive]`
+- [ ] No `self.raw` passthrough · no raw-byte public API · no numeric literal other than `0`/`1` outside a constant (`magic_numbers` guard) · `#[non_exhaustive]`
 - [ ] Spec-cited modules; sources verified (no fabrication; pdf2md exit 0 / cross-checked)
 - [ ] Round-trip is **byte-exact against the original fixture slice**; an **independent oracle** is named; a fixture per spec branch and >= 2 entities for uniqueness invariants (section 3 test-integrity gates)
 - [ ] Reserved-bit / trailing-byte policy followed (section 1): tolerant parse, reserved bits preserved on serialize (typed fields), edition-value defaults for constructed values, explicit reserved writes
 - [ ] Committed **real fixture**; per-op **biting** test (fault-inject→assert-known-good for transforms)
 - [ ] 6-gate CI suite + MSRV 1.95.0 (+ thumbv7em if no_std) — run by the orchestrator
-- [ ] #204 labels + a `workspace-guards` table line for every guard that applies (`non_exhaustive`, `label`, `truncation`, `clock33`, de-hand-roll, `secret_debug`) · fuzz target · ≥2 examples · CLI-STANDARD (if CLI)
+- [ ] #204 labels + a `workspace-guards` table line for every guard that applies (`non_exhaustive`, `label`, `truncation`, `clock33`, `magic_numbers`, de-hand-roll, `secret_debug`) · fuzz target · ≥2 examples · CLI-STANDARD (if CLI)
 - [ ] No-hand-roll tripwire (`tests/*guard*.rs`) with a reasoned, line-pinned allowlist (protocol/runtime crate)
 - [ ] RELEASE-DOCS complete (CHANGELOG/release-note/README/crate-root/docs.rs metadata)
 - [ ] Versioning + dep-refs consistent; publish staged for owner sign-off

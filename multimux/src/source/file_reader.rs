@@ -10,28 +10,33 @@
 //!
 //! # Pipeline
 //!
-//! 1. **Read** the whole file into memory.
-//! 2. **Identify** the container with [`container_probe::probe_with_budget`]
-//!    over the **entire** file (not a prefix — the default 64 KiB budget
-//!    identifies the format but does not always settle the ISOBMFF layout,
-//!    and a file reader holds the whole file anyway). The verdict maps to a
-//!    [`transmux`] demuxer exactly per the design spec's table; a
-//!    [`container_probe::Probe`] that is `Ambiguous`/`Insufficient`/`Unknown`,
-//!    or a format [`transmux`] cannot demux as a playout source, **fails the
-//!    source** — a file is never fed to a guessed demuxer, and the ISOBMFF
-//!    layout is never re-derived here (the probe already did it; two
-//!    implementations of one rule that can disagree is the bug class this
-//!    workspace keeps finding).
-//! 3. **Demux** the file into the neutral `Media`/`Track`/`Sample` IR. The
-//!    whole-buffer demuxers ([`transmux::PsDemux`], [`transmux::Fmp4Demux`],
-//!    [`transmux::ProgressiveDemux`], [`transmux::WebmDemux`]) run once over
-//!    the buffer; the streaming demuxers ([`transmux::StreamingTsDemux`],
-//!    [`transmux::StreamingFlvDemux`]) are fed and their [`transmux::DemuxEvent`]s
-//!    drained into the same IR.
-//! 4. **Announce the tracks** on the Trunk the same way every other ingest
+//! The file is identified from a bounded leading prefix, then played down one
+//! of two paths by container:
+//!
+//! * **TS and FLV stream.** [`media_plane::file_stream::StreamingFileSession`]
+//!   drives an incremental demuxer; the reader feeds it 64 KiB reads until it
+//!   asks for end of input, then rewinds to offset 0 for the next pass. Live memory is a function of the
+//!   session's [`FileStreamLimits`] and never of the file's length, so
+//!   [`FileReaderConfig::max_file_bytes`] does not apply.
+//! * **MP4, PS and WebM keep today's whole-file path.** The whole file is
+//!   read under the [`FileReaderConfig::max_file_bytes`] cap, the whole-buffer
+//!   demuxers ([`transmux::PsDemux`], [`transmux::Fmp4Demux`],
+//!   [`transmux::ProgressiveDemux`], [`transmux::WebmDemux`]) run once over
+//!   the buffer, and the parsed tracks are replayed.
+//!
+//! 1. **Identify** the container from a bounded prefix with
+//!    [`media_plane::file_source::probe_prefix`]. The verdict maps to a
+//!    [`transmux`] demuxer exactly per the design spec's table; an
+//!    `Ambiguous`/`Insufficient`/`Unknown` verdict, or a format [`transmux`]
+//!    cannot demux as a playout source, **fails the source** — a file is never
+//!    fed to a guessed demuxer, and the ISOBMFF layout is never re-derived
+//!    here (the probe already did it; two implementations of one rule that can
+//!    disagree is the bug class this workspace keeps finding).
+//! 2. **Demux and play** down the path the container selects (above).
+//! 3. **Announce the tracks** on the Trunk the same way every other ingest
 //!    does ([`TrunkWriter::set_tracks`]), **before** the first sample — and
 //!    again on any loop where the codec configuration differs.
-//! 5. **Pace and write** each sample at its natural PTS cadence relative to a
+//! 4. **Pace and write** each sample at its natural PTS cadence relative to a
 //!    wall-clock start instant — without pacing the whole file lands in the
 //!    ring instantly and overflows it. Pacing is off the sample PTS delta,
 //!    never a fixed per-sample sleep.
@@ -48,6 +53,10 @@
 //! to the same continuous `(pts + offset)` timeline. This is the property the
 //! loop tests assert (and a mutation hides it; see
 //! `multimux/tests/it/file_reader.rs`'s `loop_preserves_dts_monotonicity_across_boundary`).
+//! The streaming path re-opens and re-probes the file for each pass: a file
+//! replaced by a different container is
+//! [`FileReaderError::FileChangedContainer`], while a longer file simply plays
+//! longer.
 //!
 //! With `loop_file: false`, the reader stops after the first pass and reports
 //! no further samples.
@@ -61,7 +70,7 @@
 //! ([`FileReaderConfig::max_retries`]) and the final failure is surfaced rather
 //! than spinning forever at growing intervals.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -71,11 +80,28 @@ const DEFAULT_MAX_RETRIES: u32 = 3;
 /// Default interval between those attempts.
 const DEFAULT_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
+/// Bytes read from the file per streaming feed: 64 KiB. Large enough that the
+/// demuxer always has whole TS packets or FLV tags to work on, small enough
+/// that the read buffer never dominates a bounded-memory playout.
+const FILE_READ_CHUNK: usize = 64 << 10;
+
+/// The program a standalone [`FileReader`] names in the session events it
+/// consumes itself — the caller-supplied [`Trunk`] carries the tracks and
+/// samples, so the id never reaches an output.
+const STANDALONE_PROGRAM: media_plane::ingress::ProgramId = media_plane::ingress::ProgramId(0);
+
+use broadcast_common::Stage as _;
+use container_probe::DEFAULT_BUDGET;
 use media_plane::file_source::{
-    FILE_TIMED_RING, FileIngestSession, FileReaderError, ParsedFile, PublishItem, advance_offsets,
-    probe_and_demux, secs_to_duration,
+    DemuxerKind, FILE_TIMED_RING, FileIngestSession, FileReaderError, PROBE_PREFIX_MAX, ParsedFile,
+    ProbeStep, PublishItem, advance_offsets, probe_and_demux, probe_prefix, secs_to_duration,
 };
+use media_plane::file_stream::{
+    FileDemand, FileInput, FileStreamLimits, StreamContainer, StreamingFileSession,
+};
+use media_plane::ingress::SessionEvent;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkWriter};
+use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 use tokio::task::JoinHandle;
 use transmux::TrackSpec;
 
@@ -111,16 +137,19 @@ pub struct FileReaderConfig {
     /// reader bounded without changing its semantics. `None` (the runtime
     /// default) loops forever.
     pub max_loops: Option<u32>,
-    /// Cap on the file's size in bytes, enforced **before** the read — an
-    /// operator-supplied path (e.g. a character device or FIFO) is never read
-    /// unbounded. Defaults to [`DEFAULT_MAX_FILE_BYTES`].
+    /// Cap on the file's size in bytes, enforced **before** a whole-file read
+    /// — an operator-supplied path (e.g. a character device or FIFO) is never
+    /// read unbounded. Applies to MP4, PS and WebM files only: TS and FLV
+    /// stream from disk under bounded buffers, so their size is never capped.
+    /// Defaults to [`DEFAULT_MAX_FILE_BYTES`].
     pub max_file_bytes: usize,
 }
 
 /// The default [`FileReaderConfig::max_file_bytes`]: 1 GiB. Generous enough for
 /// any real slate/filler/loop asset, small enough that a misconfigured path
 /// fails cleanly ([`FileReaderError::FileTooLarge`]) long before an unbounded
-/// read could exhaust process memory.
+/// read could exhaust process memory. TS and FLV stream from disk and are not
+/// subject to it.
 pub const DEFAULT_MAX_FILE_BYTES: usize = 1 << 30;
 
 impl FileReaderConfig {
@@ -164,7 +193,8 @@ impl FileReaderConfig {
         self
     }
 
-    /// Set [`Self::max_file_bytes`].
+    /// Set [`Self::max_file_bytes`], the whole-file cap that applies to MP4,
+    /// PS and WebM only.
     pub fn with_max_file_bytes(mut self, max_file_bytes: usize) -> Self {
         self.max_file_bytes = max_file_bytes;
         self
@@ -216,16 +246,32 @@ impl FileReader {
         FileReader { config }
     }
 
-    /// Run the reader to completion on the current task: read+probe+demux the
-    /// file (retrying read failures up to `max_retries`), then announce, pace,
-    /// and write the samples, looping per `loop_file`/`max_loops`. Returns
-    /// success when the pass(es) ended cleanly, or the first unrecoverable
-    /// `FileReaderError`.
+    /// Run the reader to completion on the current task, retrying a read
+    /// failure up to `max_retries` at `retry_interval`: the pass restarts from
+    /// the beginning of the file, then announces, paces, and writes the
+    /// samples, looping per `loop_file`/`max_loops`. Returns success when the
+    /// pass(es) ended cleanly, or the first unrecoverable `FileReaderError`.
     pub async fn run(self) -> Result<(), FileReaderError> {
-        // Read + probe + demux once (retriable: a local read failure could
-        // plausibly clear), then publish (not retriable mid-pass).
-        let demuxed = self.read_probe_demux().await?;
-        self.publish_looping(demuxed).await
+        let schedule = broadcast_common::backoff::RetrySchedule::new(
+            self.config.retry_interval,
+            self.config.retry_interval,
+            1.0,
+            crate::source::seed_entropy(),
+        )
+        .ok();
+        for attempt in 0..self.config.max_retries {
+            match self.run_once().await {
+                Ok(()) => return Ok(()),
+                Err(FileReaderError::Read { .. }) => {
+                    let interval = schedule
+                        .as_ref()
+                        .map_or(self.config.retry_interval, |s| s.delay_for_attempt(attempt));
+                    tokio::time::sleep(interval).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        self.run_once().await
     }
 
     /// Spawn the reader as an independent tokio task; returns a
@@ -243,87 +289,100 @@ impl FileReader {
         SpawnedReader { handle, cancel }
     }
 
-    /// One read+probe+demux attempt, retried on a [`FileReaderError::Read`]
-    /// up to `max_retries` times at `retry_interval`.
-    async fn read_probe_demux(&self) -> Result<ParsedFile, FileReaderError> {
-        // A constant retry interval (factor 1.0), as before: the schedule is
-        // the workspace's one backoff implementation, so even the flat case
-        // goes through it (SP1.5).
-        let schedule = broadcast_common::backoff::RetrySchedule::new(
-            self.config.retry_interval,
-            self.config.retry_interval,
-            1.0,
-            crate::source::seed_entropy(),
-        )
-        .ok();
-        for attempt in 0..self.config.max_retries {
-            match self.read_probe_demux_once().await {
-                Ok(parsed) => return Ok(parsed),
-                Err(FileReaderError::Read { .. }) => {
-                    let interval = schedule
-                        .as_ref()
-                        .map_or(self.config.retry_interval, |s| s.delay_for_attempt(attempt));
-                    tokio::time::sleep(interval).await;
-                }
-                Err(e) => return Err(e),
+    /// One open/probe/play attempt: TS and FLV stream from disk, every other
+    /// container takes the whole-file path.
+    async fn run_once(&self) -> Result<(), FileReaderError> {
+        let probed = open_probed(&self.config.path).await?;
+        match stream_container(probed.demuxer) {
+            Some(container) => self.publish_streaming(probed, container).await,
+            None => {
+                let parsed = self.read_capped_whole(probed).await?;
+                self.publish_looping(parsed).await
             }
         }
-        // The final attempt's own error propagates (there is no attempt left
-        // to sleep before).
-        self.read_probe_demux_once().await
     }
 
     /// Read the whole file, probe it, and demux it into the playable tracks —
-    /// no pacing, no publishing.
-    async fn read_probe_demux_once(&self) -> Result<ParsedFile, FileReaderError> {
-        // Open once and check the handle's own metadata — reject a
-        // non-regular file (character device / FIFO / socket / directory) and
-        // an over-cap file *before* the read, so an operator-supplied path can
-        // never trigger an unbounded read that grows until the process dies.
-        // The read itself is tied to this handle, so a path swapped or a file
-        // grown after the check cannot bypass either bound.
-        let file = tokio::fs::File::open(&self.config.path)
-            .await
-            .map_err(|source| FileReaderError::Read {
-                path: self.config.path.clone(),
-                source,
-            })?;
-        let metadata = file
-            .metadata()
-            .await
-            .map_err(|source| FileReaderError::Read {
-                path: self.config.path.clone(),
-                source,
-            })?;
-        let kind = file_type_label(metadata.file_type());
-        if !metadata.is_file() {
-            return Err(FileReaderError::NotARegularFile {
-                path: self.config.path.clone(),
-                kind,
-            });
-        }
+    /// the capped path for MP4, PS and WebM.
+    async fn read_capped_whole(&self, probed: OpenFile) -> Result<ParsedFile, FileReaderError> {
         let cap = self.config.max_file_bytes;
-        if metadata.len() > cap as u64 {
+        if probed.len > cap as u64 {
             return Err(FileReaderError::FileTooLarge {
                 path: self.config.path.clone(),
-                size: metadata.len(),
+                size: probed.len,
                 max: cap,
             });
         }
 
-        let bytes = read_capped(&self.config.path, file, cap).await?;
+        let path = self.config.path.clone();
+        let bytes = read_capped(&path, probed.file, cap).await?;
 
-        // Identify + demux — whole file, never a prefix. Both are CPU-heavy
-        // (a `container-probe` lattice search over the whole buffer, then a
-        // full container demux) and synchronous, so they run on the blocking
-        // pool (issue #1083, W3) rather than pinning a runtime worker on every
-        // supervisor retry.
+        // Both are CPU-heavy (a `container-probe` lattice search over the whole
+        // buffer, then a full container demux) and synchronous, so they run on
+        // the blocking pool (issue #1083, W3) rather than pinning a runtime
+        // worker on every supervisor retry.
         tokio::task::spawn_blocking(move || probe_and_demux(&bytes))
             .await
             .map_err(|e| FileReaderError::Read {
                 path: self.config.path.clone(),
                 source: std::io::Error::other(format!("probe/demux task failed: {e}")),
             })?
+    }
+
+    /// Play a TS/FLV file by feeding [`StreamingFileSession`] the bytes it asks
+    /// for, one bounded read at a time — the file is never held whole.
+    async fn publish_streaming(
+        &self,
+        probed: OpenFile,
+        container: StreamContainer,
+    ) -> Result<(), FileReaderError> {
+        let writer = self
+            .config
+            .trunk
+            .writer()
+            .ok_or(FileReaderError::WriterUnavailable)?;
+        let mut session = StreamingFileSession::new(
+            container,
+            STANDALONE_PROGRAM,
+            self.config.loop_file,
+            self.config.max_loops,
+            self.config.pace,
+            FileStreamLimits::default(),
+        );
+        let mut file = probed.file;
+        let mut buffer = vec![0u8; FILE_READ_CHUNK];
+
+        while !session.drained() {
+            match session.file_demand() {
+                FileDemand::Bytes => {
+                    let read = read_chunk(&self.config.path, &mut file, &mut buffer).await?;
+                    feed_read(&mut session, &buffer[..read])?;
+                }
+                FileDemand::Rewind => {
+                    let next = reprobe_stream_file(&self.config.path, container).await?;
+                    file = next.file;
+                    let read = read_chunk(&self.config.path, &mut file, &mut buffer).await?;
+                    feed_read(&mut session, &buffer[..read])?;
+                }
+                FileDemand::Wait => {
+                    if let Some(due) = session.next_due() {
+                        let now = std::time::Instant::now();
+                        if due > now {
+                            tokio::time::sleep(due - now).await;
+                        } else {
+                            tokio::task::yield_now().await;
+                        }
+                    } else {
+                        tokio::task::yield_now().await;
+                    }
+                }
+                _ => break,
+            }
+            while let Some(event) = session.poll() {
+                publish_standalone(&writer, event);
+            }
+        }
+        Ok(())
     }
 
     /// Publish the parsed file into the trunk: announce tracks, then
@@ -410,6 +469,149 @@ impl FileReader {
             }
         }
         Ok(())
+    }
+}
+
+/// One opened and identified playout file, positioned at offset 0.
+struct OpenFile {
+    file: tokio::fs::File,
+    len: u64,
+    demuxer: DemuxerKind,
+}
+
+/// The streaming container a probed demuxer selects, or `None` for the
+/// containers that still take the whole-file path.
+fn stream_container(demuxer: DemuxerKind) -> Option<StreamContainer> {
+    match demuxer {
+        DemuxerKind::StreamingTs => Some(StreamContainer::MpegTs),
+        DemuxerKind::StreamingFlv => Some(StreamContainer::Flv),
+        _ => None,
+    }
+}
+
+/// Open `path`, reject anything that is not a regular file, and identify its
+/// container from a bounded leading prefix.
+async fn open_probed(path: &Path) -> Result<OpenFile, FileReaderError> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|source| read_error(path, source))?;
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|source| read_error(path, source))?;
+    if !metadata.is_file() {
+        return Err(FileReaderError::NotARegularFile {
+            path: path.to_path_buf(),
+            kind: file_type_label(metadata.file_type()),
+        });
+    }
+    let len = metadata.len();
+    let demuxer = probe_from_prefix(path, &mut file, len).await?;
+    file.seek(std::io::SeekFrom::Start(0))
+        .await
+        .map_err(|source| read_error(path, source))?;
+    Ok(OpenFile { file, len, demuxer })
+}
+
+/// Re-open and re-identify `path` for the next loop pass, failing when the
+/// file has become a different container.
+async fn reprobe_stream_file(
+    path: &Path,
+    expected: StreamContainer,
+) -> Result<OpenFile, FileReaderError> {
+    let open = open_probed(path).await?;
+    match stream_container(open.demuxer) {
+        Some(container) if container == expected => Ok(open),
+        _ => Err(FileReaderError::FileChangedContainer {
+            path: path.to_path_buf(),
+        }),
+    }
+}
+
+/// Drive [`probe_prefix`] over the open file, growing the prefix from
+/// [`DEFAULT_BUDGET`] until the container is identified or the probe cap is
+/// reached.
+async fn probe_from_prefix(
+    path: &Path,
+    file: &mut tokio::fs::File,
+    len: u64,
+) -> Result<DemuxerKind, FileReaderError> {
+    let limit = usize::try_from(len).unwrap_or(usize::MAX);
+    let mut prefix = Vec::new();
+    let mut want = limit.min(DEFAULT_BUDGET);
+    loop {
+        fill_prefix(path, file, &mut prefix, want).await?;
+        match probe_prefix(&prefix, len)? {
+            ProbeStep::Identified(demuxer) => return Ok(demuxer),
+            ProbeStep::NeedPrefix { prefix_len } => {
+                want = prefix_len.min(PROBE_PREFIX_MAX);
+            }
+            _ => return Err(FileReaderError::UnknownProbe),
+        }
+    }
+}
+
+/// Read into `prefix` until it holds `want` bytes or the file ends.
+async fn fill_prefix(
+    path: &Path,
+    file: &mut tokio::fs::File,
+    prefix: &mut Vec<u8>,
+    want: usize,
+) -> Result<(), FileReaderError> {
+    while prefix.len() < want {
+        let start = prefix.len();
+        prefix.resize(want, 0);
+        let read = file
+            .read(&mut prefix[start..])
+            .await
+            .map_err(|source| read_error(path, source))?;
+        prefix.truncate(start + read);
+        if read == 0 {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Read up to one [`FILE_READ_CHUNK`]; a zero-length read is end of file.
+async fn read_chunk(
+    path: &Path,
+    file: &mut tokio::fs::File,
+    buffer: &mut [u8],
+) -> Result<usize, FileReaderError> {
+    file.read(buffer)
+        .await
+        .map_err(|source| read_error(path, source))
+}
+
+/// Feed a read: the bytes just read, or end of input for a zero-length read.
+fn feed_read(session: &mut StreamingFileSession, bytes: &[u8]) -> Result<(), FileReaderError> {
+    if bytes.is_empty() {
+        session.feed(FileInput::Eof, broadcast_common::Timestamp::ZERO)
+    } else {
+        session.feed(FileInput::Bytes(bytes), broadcast_common::Timestamp::ZERO)
+    }
+}
+
+/// Publish one session event into the standalone reader's caller-supplied
+/// trunk: a track announcement, or a sample.
+fn publish_standalone(writer: &TrunkWriter, event: SessionEvent) {
+    match event {
+        SessionEvent::NewProgram { tracks, .. } => announce_tracks(writer, &tracks),
+        SessionEvent::Sample {
+            track_id,
+            retention,
+            sample,
+            ..
+        } => writer.publish(track_id, retention, sample),
+        _ => {}
+    }
+}
+
+fn read_error(path: &Path, source: std::io::Error) -> FileReaderError {
+    FileReaderError::Read {
+        path: path.to_path_buf(),
+        source,
     }
 }
 
@@ -556,19 +758,21 @@ fn file_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig 
         .with_part_capacity(live.part_capacity)
 }
 
-/// Run a `InputSpec::File` route to completion on the current task: demux the
-/// file, replay it through a single-program [`IngestDriver`] over a
-/// [`FileIngestSession`], and pump `crate::source::advance_route` once per
-/// iteration so samples become servable segments/parts. Mirrors
+/// Run a `InputSpec::File` route to completion on the current task: identify
+/// the file from a bounded prefix, then replay it through a single-program
+/// [`IngestDriver`] and pump `crate::source::advance_route` once per iteration
+/// so samples become servable segments/parts. TS and FLV stream from disk
+/// through a [`StreamingFileSession`]; MP4, PS and WebM keep the whole-file
+/// [`FileIngestSession`] path under the configured size cap. Mirrors
 /// [`crate::source::ts_udp::run_ts_udp`]'s shape; returns `Err` only on a
 /// failure (a bad/unreadable file), which the route's supervisor retries.
 ///
-/// The drive loop is **paced**: it sleeps until the next sample is due on the
-/// wall clock (`FileIngestSession::next_due`), never a fixed 10 ms spin — the
-/// earlier fixed-tick loop dumped the whole file every tick, ~300× realtime.
-/// A finite `loop_file: false` file that has fully drained parks (zero CPU)
-/// holding its trunk, so its served segments stay servable until shutdown
-/// rather than spinning or triggering a supervisor re-serve.
+/// Both drive loops are **paced**: they sleep until the next sample is due on
+/// the wall clock, never a fixed 10 ms spin — the earlier fixed-tick loop
+/// dumped the whole file every tick, ~300× realtime. A finite `loop_file:
+/// false` file that has fully drained parks (zero CPU) holding its trunk, so
+/// its served segments stay servable until shutdown rather than spinning or
+/// triggering a supervisor re-serve.
 pub(crate) async fn run_file_source(
     path: &str,
     loop_file: bool,
@@ -576,10 +780,8 @@ pub(crate) async fn run_file_source(
     handshake: media_plane::ingress::HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> crate::MultimuxError {
-    // Demux the file eagerly (the same probe->demux path the standalone
-    // FileReader uses); a failure surfaces through the supervisor's retry.
-    // `FileReaderConfig` wants a `Trunk` to publish into; `read_probe_demux`
-    // never publishes, so the smallest possible one is all this needs.
+    // `FileReaderConfig` wants a `Trunk` to publish into; the identification
+    // helpers never publish, so the smallest possible one is all this needs.
     let one = std::num::NonZeroUsize::MIN;
     let scratch = media_plane::trunk::Trunk::new(
         media_plane::trunk::TrunkConfig::default()
@@ -595,13 +797,43 @@ pub(crate) async fn run_file_source(
             .with_max_retries(0)
             .with_retry_interval(std::time::Duration::ZERO),
     );
-    let parsed = match reader.read_probe_demux().await {
-        Ok(p) => p,
+    let probed = match open_probed(std::path::Path::new(path)).await {
+        Ok(probed) => probed,
         Err(e) => return e.into(),
     };
 
-    let trunk_config = file_trunk_config(window_segments);
+    match stream_container(probed.demuxer) {
+        Some(container) => {
+            run_streaming_file_route(
+                std::path::Path::new(path),
+                probed,
+                container,
+                loop_file,
+                window_segments,
+                handshake,
+                route_handle,
+            )
+            .await
+        }
+        None => {
+            let parsed = match reader.read_capped_whole(probed).await {
+                Ok(parsed) => parsed,
+                Err(e) => return e.into(),
+            };
+            run_whole_file_route(parsed, loop_file, window_segments, handshake, route_handle).await
+        }
+    }
+}
 
+/// The whole-file route: replay an already-demuxed MP4/PS/WebM file through a
+/// [`FileIngestSession`].
+async fn run_whole_file_route(
+    parsed: ParsedFile,
+    loop_file: bool,
+    window_segments: usize,
+    handshake: media_plane::ingress::HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+) -> crate::MultimuxError {
     let session =
         match FileIngestSession::new(parsed, crate::route::SPTS_PROGRAM_ID, loop_file, true) {
             Ok(s) => s,
@@ -610,7 +842,7 @@ pub(crate) async fn run_file_source(
     let mut driver = IngestDriver::new(
         session,
         media_plane::IngestConfig::new(handshake)
-            .with_trunk(trunk_config)
+            .with_trunk(file_trunk_config(window_segments))
             .with_max_programs(
                 std::num::NonZeroUsize::new(1).unwrap_or(std::num::NonZeroUsize::MIN),
             ),
@@ -662,6 +894,181 @@ pub(crate) async fn run_file_source(
             None => tokio::task::yield_now().await,
         }
     }
+}
+
+/// The streaming route: read a TS/FLV file from disk in bounded chunks and
+/// drive the session through the route's [`IngestDriver`].
+async fn run_streaming_file_route(
+    path: &std::path::Path,
+    probed: OpenFile,
+    container: StreamContainer,
+    loop_file: bool,
+    window_segments: usize,
+    handshake: media_plane::ingress::HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+) -> crate::MultimuxError {
+    let mut driver = IngestDriver::new(
+        StreamingFileIngest::new(container, loop_file),
+        media_plane::IngestConfig::new(handshake)
+            .with_trunk(file_trunk_config(window_segments))
+            .with_max_programs(
+                std::num::NonZeroUsize::new(1).unwrap_or(std::num::NonZeroUsize::MIN),
+            ),
+    );
+    let start = std::time::Instant::now();
+    let mut progress = crate::source::DriverProgress::new();
+    let mut file = probed.file;
+    let mut buffer = vec![0u8; FILE_READ_CHUNK];
+
+    loop {
+        let now = broadcast_common::Timestamp::from_instant(start, std::time::Instant::now());
+        match driver.session().file_demand() {
+            FileDemand::Bytes => {
+                let read = match read_chunk(path, &mut file, &mut buffer).await {
+                    Ok(read) => read,
+                    Err(error) => return error.into(),
+                };
+                feed_route(&mut driver, &buffer[..read], now);
+            }
+            FileDemand::Rewind => {
+                let next = match reprobe_stream_file(path, container).await {
+                    Ok(next) => next,
+                    Err(error) => return error.into(),
+                };
+                file = next.file;
+                let read = match read_chunk(path, &mut file, &mut buffer).await {
+                    Ok(read) => read,
+                    Err(error) => return error.into(),
+                };
+                feed_route(&mut driver, &buffer[..read], now);
+            }
+            FileDemand::Wait => {
+                match driver.session().next_due() {
+                    Some(due) => {
+                        let now = std::time::Instant::now();
+                        if due > now {
+                            tokio::time::sleep(due - now).await;
+                        }
+                        // Even an already-due front needs this drain every
+                        // iteration: the driver only polls its session on a
+                        // feed, a deadline or a finish.
+                        driver.on_deadline(now_timestamp(start));
+                    }
+                    None => {
+                        driver.on_deadline(now_timestamp(start));
+                        tokio::task::yield_now().await;
+                    }
+                }
+            }
+            _ => {}
+        }
+        crate::source::advance_route(&driver, route_handle, &mut progress).await;
+
+        if driver.session().drained() {
+            // The finite, non-looping file has fully run: flush the
+            // segmenter's tail and park (zero CPU) holding the trunk, so the
+            // served segments stay servable until shutdown.
+            driver.finish();
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
+            std::future::pending::<()>().await;
+        }
+
+        if let media_plane::ingress::HealthState::Failed(_) = driver.health() {
+            return terminal_health(driver);
+        }
+    }
+}
+
+/// Feed one read into the route's session: the bytes, or end of input for a
+/// zero-length read.
+fn feed_route(
+    driver: &mut IngestDriver<StreamingFileIngest>,
+    bytes: &[u8],
+    now: broadcast_common::Timestamp,
+) {
+    let input = if bytes.is_empty() {
+        FileInput::Eof
+    } else {
+        FileInput::Bytes(bytes)
+    };
+    driver.feed(input, now);
+}
+
+fn now_timestamp(start: std::time::Instant) -> broadcast_common::Timestamp {
+    broadcast_common::Timestamp::from_instant(start, std::time::Instant::now())
+}
+
+/// Surface a driver's terminal failure as the route's typed error.
+fn terminal_health(driver: IngestDriver<StreamingFileIngest>) -> crate::MultimuxError {
+    match driver.into_health() {
+        media_plane::ingress::HealthState::Failed(error) => error.into(),
+        other => crate::MultimuxError::Connect {
+            reason: format!("file session ended: {:?}", std::mem::discriminant(&other)),
+        },
+    }
+}
+
+/// A [`StreamingFileSession`] as the [`IngestSession`] a file route's
+/// [`IngestDriver`] pumps: the session's own demand and next-due instant are
+/// the file-I/O schedule the route loop follows.
+struct StreamingFileIngest {
+    session: StreamingFileSession,
+}
+
+impl StreamingFileIngest {
+    fn new(container: StreamContainer, loop_file: bool) -> Self {
+        let session = StreamingFileSession::new(
+            container,
+            crate::route::SPTS_PROGRAM_ID,
+            loop_file,
+            None,
+            true,
+            FileStreamLimits::default(),
+        );
+        Self { session }
+    }
+
+    fn file_demand(&self) -> FileDemand {
+        self.session.file_demand()
+    }
+
+    fn next_due(&self) -> Option<std::time::Instant> {
+        self.session.next_due()
+    }
+
+    fn drained(&self) -> bool {
+        self.session.drained()
+    }
+}
+
+impl broadcast_common::Stage for StreamingFileIngest {
+    type In<'a> = FileInput<'a>;
+    type Out = SessionEvent;
+    type Error = FileReaderError;
+
+    fn feed(
+        &mut self,
+        input: Self::In<'_>,
+        now: broadcast_common::Timestamp,
+    ) -> Result<(), Self::Error> {
+        self.session.feed(input, now)
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.session.poll()
+    }
+
+    fn finish(&mut self) -> Result<(), Self::Error> {
+        self.session.finish()
+    }
+
+    fn demand(&self) -> broadcast_common::Demand {
+        self.session.demand()
+    }
+}
+
+impl media_plane::ingress::IngestSession for StreamingFileIngest {
+    type Request = ();
 }
 
 /// Unit tests for the playout invariants that need synthetic tracks (negative
@@ -797,7 +1204,9 @@ mod playout_tests {
     /// playout asset, and one byte over is refused with its real size.
     #[tokio::test]
     async fn a_file_exactly_at_the_size_cap_is_accepted_and_one_byte_over_is_refused() {
-        let path = test_fixtures::path("ts/h264-aac.ts");
+        // A capped whole-file container: TS and FLV stream from disk instead
+        // and are deliberately not subject to the cap.
+        let path = test_fixtures::path("mp4/h264-high.mp4");
         let len = std::fs::metadata(&path).expect("fixture metadata").len() as usize;
         assert!(len > 0);
 
