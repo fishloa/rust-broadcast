@@ -33,6 +33,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every existing init-segment golden stays byte-identical.
 - `Step::Metadata(&MovieMetadata)` from `reader::Reader`, emitted once after
   `Step::Tracks` when the movie or a track carries `udta` or `meta`.
+- `DriverStep::Metadata(&MovieMetadata)` from every driver: `FileReader` and
+  `ForwardReader` (and, above this crate, `isobmff-tokio`'s async driver and
+  `broadcast-client`'s range driver) store the owned value and return a borrow,
+  so a driver user sees the tags instead of the step being swallowed.
+  `read_tags` and `write_tags` now drive the file through `FileReader`.
+- `metadata::ItemKey`'s named keys: `TITLE`, `ARTIST`, `ALBUM`, `DATE`,
+  `GENRE`, `COMMENT`, `ENCODER`, `COMPOSER`, `TRACK_NUMBER`, `DISC_NUMBER`,
+  `COVER_ART`, and the Apple keyed names `APPLE_MAKE`, `APPLE_MODEL`,
+  `APPLE_SOFTWARE`, `APPLE_CREATION_DATE`, `APPLE_LOCATION_ISO6709` (the keyed
+  ones are `&'static str`, since a keyed `ItemKey` owns its `String`).
+  `ItemKey` prints as text: `Display`/`Debug` write `©nam` for the atom and the
+  reverse-DNS string for a keyed item, so a tag is never spelled as byte values.
+- `Metadata`'s readers: `get`, `title`, `artist`, `album`, `date`, `genre`,
+  `comment`, `encoder`, `track`, `disc`, `cover_art` (a `CoverArt` carrying the
+  `data` type), `location` (a `©xyz` item or the keyed
+  `com.apple.quicktime.location.ISO6709` text), and `chapters`. The setters
+  `set_text`, `set_track`, `set_disc` and `remove` replace or append one item
+  and leave every other item and the item order untouched.
 - `read_tags` and `write_tags` examples.
 
 - `writer::Writer::progressive`, the sans-IO progressive (single-file) writer:
@@ -176,6 +194,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The fragmented walk emits a fragment's `Fragment` step and samples as soon as
+  every run of its `traf`s resolves inside the `mdat` payloads it has located,
+  instead of first reading the box header after the media. A seekable source
+  sees the same `Need`s in a different order; a forward-only source now has the
+  `mdat` payload still ahead of it, so `ForwardReader::read_sample` works on a
+  fragmented file read from a pipe or socket. A run that addresses data in a
+  later `mdat` still resolves once that `mdat` is located.
+- `ForwardReader` forces `SampleOrder::File`, documented on the type: a
+  `DecodeTime` order across one fragment's tracks is not file order, and a
+  forward-only source can only read samples in file order.
 - `frag_offsets` addresses a fragment without a slice of the file:
   `sample_ranges_in` / `sample_ranges_in_run` take the parsed `moof`, its
   absolute offset, the `mdat` payload ranges and the run's sample-byte
@@ -188,6 +216,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `Metadata::item` is renamed `Metadata::get`.
 - `SampleRef` carries CENC per-sample data in `aux` (`Option<SampleAux>`), so
   it is no longer `Copy` (it stays `Clone`); `SampleRef::aux` is `None` for a
   progressive sample and for a constant-IV track.

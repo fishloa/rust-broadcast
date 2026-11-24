@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `mp4_range::RangeReader` yields `DriverStep::Metadata` with the movie's and
+  each track's typed metadata (`Metadata` is owned by the driver and borrowed
+  by the step), instead of dropping the reader's metadata step.
+
 - `mp4_range::RangeReader`, a sans-IO HTTP range driver over the `isobmff`
   reader: `poll` yields `RangeAction::{Fetch, Step, Done}`, and the caller
   reports each HTTP answer with `on_status`/`on_range`. A demand shorter than

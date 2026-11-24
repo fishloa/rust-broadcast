@@ -119,10 +119,14 @@ cargo run -p isobmff --example write_tags -- fixtures/mp4/progressive/av-prog.mp
   is reached by reading and discarding through one fixed buffer, and a header
   the reader must re-read with a `largesize`/`uuid` extension is answered from
   a retained header tail. A `moov` after an `mdat` is
-  `Error::MoovAfterMdatForwardOnly`. A fragmented walk has already consumed an
-  `mdat` payload by the time its samples are emitted, so `read_sample` for
-  those samples is the typed `DriverError::SampleBehindPosition`; their
-  descriptors still arrive.
+  `Error::MoovAfterMdatForwardOnly`. It forces `SampleOrder::File`, so a pipe
+  always reads samples in ascending file order, and the reader emits a
+  fragment's samples before it asks for anything past that fragment's `mdat`:
+  `read_sample` therefore works on a fragmented file read from a pipe or
+  socket.
+
+Each driver yields `DriverStep::Metadata` once, after the track table, so a
+driver user sees the tags as well as the tracks.
 
 Neither driver holds a whole file: each keeps one `moov`/`moof` buffer bounded
 by the reader's own `Limits`. For async sources see the `isobmff-tokio` crate;
