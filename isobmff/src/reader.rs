@@ -342,6 +342,7 @@ impl TrackInfo {
                     SampleEntryVariant::Unknown(_) => None,
                     known => Some(known.clone()),
                 },
+                registered: None,
             });
         }
         let references = match trak.track_references()? {
