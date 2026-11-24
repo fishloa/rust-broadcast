@@ -21,8 +21,14 @@ pub const PROGRAM_NUMBER_NIT: u16 = 0x0000;
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
+
+/// Width of the `reserved` above the entry PID.
+const PAT_RESERVED_BITS: u32 = 3;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 const ENTRY_LEN: usize = 4;
+
+/// Byte length of the entry `program_number`, before the PID field.
+const ENTRY_PROGRAM_NUMBER_LEN: usize = 2;
 
 /// One entry in the PAT program loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +42,7 @@ pub struct PatEntry {
     /// `reserved(3)` before the PID (ISO/IEC 13818-1 §2.4.4.4, `111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<3>,
+    pub reserved: ReservedOnes<PAT_RESERVED_BITS>,
 }
 
 impl PatEntry {
@@ -128,15 +134,16 @@ impl<'a> Parse<'a> for PatSection {
             MIN_SECTION_LEN,
         )?;
 
-        let transport_stream_id = crate::wire::be_u16(bytes, 3, "pat")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
+        let transport_stream_id =
+            crate::wire::be_u16(bytes, super::TABLE_ID_EXTENSION_OFFSET, "pat")?;
+        let version_number = super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let current_next_indicator = super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]);
+        let section_number = bytes[super::SECTION_NUMBER_OFFSET];
+        let last_section_number = bytes[super::LAST_SECTION_NUMBER_OFFSET];
 
         let end = total - CRC_LEN;
         let mut entries = Vec::new();
-        let mut pos = 8;
+        let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         while pos < end {
             if pos + ENTRY_LEN > end {
                 return Err(Error::BufferTooShort(
@@ -149,11 +156,16 @@ impl<'a> Parse<'a> for PatSection {
             }
             let chunk = &bytes[pos..pos + ENTRY_LEN];
             let program_number = crate::wire::be_u16(chunk, 0, "pat")?;
-            let pid = super::pid_of(chunk[2], chunk[3]);
+            let pid = super::pid_of(
+                chunk[ENTRY_PROGRAM_NUMBER_LEN],
+                chunk[ENTRY_PROGRAM_NUMBER_LEN + 1],
+            );
             entries.push(PatEntry {
                 program_number,
                 pid,
-                reserved: ReservedOnes::from_bits(u64::from(super::pid_reserved_of(chunk[2]))),
+                reserved: ReservedOnes::from_bits(u64::from(super::pid_reserved_of(
+                    chunk[ENTRY_PROGRAM_NUMBER_LEN],
+                ))),
             });
             pos += ENTRY_LEN;
         }
@@ -165,7 +177,7 @@ impl<'a> Parse<'a> for PatSection {
             section_number,
             last_section_number,
             entries,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
         })
     }
 }
@@ -185,18 +197,20 @@ impl Serialize for PatSection {
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, section_length)?;
-        buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[5] = self
+        buf[super::TABLE_ID_EXTENSION_OFFSET..super::VERSION_FLAGS_OFFSET]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        buf[super::VERSION_FLAGS_OFFSET] = self
             .bits
             .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
+        buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
-        let mut pos = 8;
+        let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         for entry in &self.entries {
-            buf[pos..pos + 2].copy_from_slice(&entry.program_number.to_be_bytes());
+            buf[pos..pos + ENTRY_PROGRAM_NUMBER_LEN]
+                .copy_from_slice(&entry.program_number.to_be_bytes());
             super::write_pid_r(
-                &mut buf[pos + 2..pos + 4],
+                &mut buf[pos + ENTRY_PROGRAM_NUMBER_LEN..pos + ENTRY_LEN],
                 entry.pid,
                 entry.reserved.get() as u8,
             )?;

@@ -19,6 +19,10 @@ use crate::join::VideoJoin;
 
 const SILENCE_MARGIN: Duration = Duration::from_millis(500);
 
+/// Divisor giving the half-slot tolerance a reordered picture may leave when
+/// abutting the contiguous run.
+const ABUT_TOLERANCE_DIVISOR: i64 = 2;
+
 /// A raw 27 MHz tick count as a playback position, reduced onto the clock.
 fn clock27(ticks: u64) -> Clock27 {
     Clock27::from_27mhz_wrapping(ticks)
@@ -53,7 +57,7 @@ impl ReorderEnd {
         self.ahead.insert(pts, pts.saturating_add(dur));
         while let Some((&first, &first_end)) = self.ahead.first_key_value() {
             let slot = first_end - first;
-            let abuts = first <= self.end.saturating_add(slot / 2);
+            let abuts = first <= self.end.saturating_add(slot / ABUT_TOLERANCE_DIVISOR);
             let unfillable = first.saturating_sub(slot) <= self.decoded;
             if !abuts && !unfillable {
                 break;

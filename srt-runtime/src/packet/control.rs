@@ -230,6 +230,13 @@ fn check_reserved_u32(what: &'static str, v: u32) -> Result<()> {
 /// 1.5.5 KEEPALIVE/ACKACK capture (`../fixtures/srt/libsrt-*.bin`).
 const LIBSRT_CIF_PAD_LEN: usize = 4;
 
+/// Shift, mask and bit width of the `Control Type` field of the first header
+/// word, and the mask of the `Subtype` field below it (§3.2, Figure 2).
+const CONTROL_TYPE_SHIFT: u32 = 16;
+const CONTROL_TYPE_MASK: u32 = 0x7FFF;
+const CONTROL_TYPE_BITS: u32 = 15;
+const SUBTYPE_MASK: u32 = 0xFFFF;
+
 /// Accept either the pure-spec empty CIF or libsrt's 4-byte zero pad (see
 /// [`LIBSRT_CIF_PAD_LEN`]); reject anything else. A non-zero 4-byte value is
 /// rejected the same way a defined reserved field is (`ReservedFieldNotZero`)
@@ -269,11 +276,11 @@ impl<'a> ControlPacket<'a> {
                 expected: "control packet (F=1)",
             });
         }
-        let control_type_bits = ((word0 >> 16) & 0x7FFF) as u16;
-        let subtype = (word0 & 0xFFFF) as u16;
-        let type_specific_info = be32(bytes, 4);
-        let timestamp = SrtTimestamp::from_wire(be32(bytes, 8));
-        let dest_socket_id = SocketId::from_wire(be32(bytes, 12));
+        let control_type_bits = ((word0 >> CONTROL_TYPE_SHIFT) & CONTROL_TYPE_MASK) as u16;
+        let subtype = (word0 & SUBTYPE_MASK) as u16;
+        let type_specific_info = be32(bytes, super::WORD1_OFFSET);
+        let timestamp = SrtTimestamp::from_wire(be32(bytes, super::TIMESTAMP_OFFSET));
+        let dest_socket_id = SocketId::from_wire(be32(bytes, super::DEST_SOCKET_ID_OFFSET));
         let cif = &bytes[SRT_HEADER_LEN..];
         let control_type = ControlType::from_bits(control_type_bits);
 
@@ -503,12 +510,22 @@ impl<'a> ControlPacket<'a> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let control_type_bits = self.control_type().to_bits();
-        broadcast_common::len::fit_bits(u64::from(control_type_bits), 15, "Control Type")?;
-        let word0 = super::F_BIT | (u32::from(control_type_bits) << 16) | u32::from(self.subtype());
+        broadcast_common::len::fit_bits(
+            u64::from(control_type_bits),
+            CONTROL_TYPE_BITS,
+            "Control Type",
+        )?;
+        let word0 = super::F_BIT
+            | (u32::from(control_type_bits) << CONTROL_TYPE_SHIFT)
+            | u32::from(self.subtype());
         put_be32(buf, 0, word0);
-        put_be32(buf, 4, self.word1()?);
-        put_be32(buf, 8, self.timestamp().value());
-        put_be32(buf, 12, self.dest_socket_id().value());
+        put_be32(buf, super::WORD1_OFFSET, self.word1()?);
+        put_be32(buf, super::TIMESTAMP_OFFSET, self.timestamp().value());
+        put_be32(
+            buf,
+            super::DEST_SOCKET_ID_OFFSET,
+            self.dest_socket_id().value(),
+        );
         let cif = &mut buf[SRT_HEADER_LEN..len];
         match self {
             ControlPacket::Handshake(h) => {

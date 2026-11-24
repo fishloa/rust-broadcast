@@ -21,6 +21,10 @@ pub const TAG: u8 = 0x41;
 const HEADER_LEN: usize = 2;
 /// first/last valid date, weighting+flags byte, url_length.
 const FIXED_LEN: usize = 2 * MJD_BCD_LEN + 2;
+/// Offset of the weighting+flags byte in the body.
+const FLAGS_OFFSET: usize = 2 * MJD_BCD_LEN;
+/// Offset of `url_length` in the body.
+const URL_LENGTH_OFFSET: usize = FLAGS_OFFSET + 1;
 const WEIGHTING_SHIFT: u8 = 2;
 const WEIGHTING_MASK: u8 = 0x3F;
 const COMPLETE_FLAG: u8 = 0x02;
@@ -91,8 +95,8 @@ impl<'a> Parse<'a> for RarOverIpDescriptor<'a> {
                 reason: "RAR_over_IP_descriptor body shorter than 12 bytes",
             });
         }
-        let flags = body[2 * MJD_BCD_LEN];
-        let url_len = usize::from(body[2 * MJD_BCD_LEN + 1]);
+        let flags = body[FLAGS_OFFSET];
+        let url_len = usize::from(body[URL_LENGTH_OFFSET]);
         let url_end = FIXED_LEN + url_len;
         if url_end > body.len() {
             return Err(Error::InvalidDescriptor {
@@ -132,8 +136,8 @@ impl Serialize for RarOverIpDescriptor<'_> {
         if self.complete_flag {
             flags |= COMPLETE_FLAG;
         }
-        b[2 * MJD_BCD_LEN] = flags;
-        b[2 * MJD_BCD_LEN + 1] = url_len;
+        b[FLAGS_OFFSET] = flags;
+        b[URL_LENGTH_OFFSET] = url_len;
         let url_end = FIXED_LEN + self.url.len();
         b[FIXED_LEN..url_end].copy_from_slice(self.url.raw());
         b[url_end..url_end + self.trailing.len()].copy_from_slice(self.trailing);

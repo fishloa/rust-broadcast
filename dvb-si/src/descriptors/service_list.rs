@@ -14,6 +14,8 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x41;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 3;
+/// Offset of `service_type` in an entry.
+const SERVICE_TYPE_OFFSET: usize = 2;
 
 /// One (service_id, service_type) pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +44,7 @@ impl<'a> Parse<'a> for ServiceListDescriptor {
             "ServiceListDescriptor",
             "unexpected tag for service_list_descriptor",
         )?;
-        if body.len() % 3 != 0 {
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_length must be a multiple of 3",
@@ -51,7 +53,7 @@ impl<'a> Parse<'a> for ServiceListDescriptor {
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             let service_id = crate::wire::be_u16(chunk, 0, "service_list")?;
-            let service_type = ServiceType::from_u8(chunk[2]);
+            let service_type = ServiceType::from_u8(chunk[SERVICE_TYPE_OFFSET]);
             entries.push(ServiceListEntry {
                 service_id,
                 service_type,
@@ -73,8 +75,9 @@ impl Serialize for ServiceListDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut offset = HEADER_LEN;
         for entry in &self.entries {
-            buf[offset..offset + 2].copy_from_slice(&entry.service_id.to_be_bytes());
-            buf[offset + 2] = entry.service_type.to_u8();
+            buf[offset..offset + SERVICE_TYPE_OFFSET]
+                .copy_from_slice(&entry.service_id.to_be_bytes());
+            buf[offset + SERVICE_TYPE_OFFSET] = entry.service_type.to_u8();
             offset += ENTRY_LEN;
         }
         Ok(len)

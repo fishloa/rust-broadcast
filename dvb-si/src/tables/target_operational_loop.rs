@@ -4,6 +4,9 @@
 use crate::descriptors::scoped::ScopedDescriptorLoop;
 use broadcast_common::reserved::ReservedOnes;
 
+/// Width of the `reserved` length fields.
+const TARGET_LOOP_RESERVED_BITS: u32 = 4;
+
 /// A target/operational descriptor-loop pair — the loop element shared by the
 /// INT body (ETSI EN 301 192 §8.4.4.1 Tables 17/18) and the UNT platform loop
 /// (ETSI TS 102 006 §9.4 Table 11). Both specs define the identical
@@ -28,11 +31,11 @@ pub struct TargetOperationalLoop<'a, L: ScopedDescriptorLoop<'a>> {
     /// `reserved(4)` before `target_descriptor_loop_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_target_length: ReservedOnes<4>,
+    pub reserved_target_length: ReservedOnes<TARGET_LOOP_RESERVED_BITS>,
     /// `reserved(4)` before `operational_descriptor_loop_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_operational_length: ReservedOnes<4>,
+    pub reserved_operational_length: ReservedOnes<TARGET_LOOP_RESERVED_BITS>,
     #[cfg_attr(feature = "serde", serde(skip))]
     _lt: core::marker::PhantomData<&'a ()>,
 }
@@ -54,8 +57,8 @@ impl<'a, L: ScopedDescriptorLoop<'a>> TargetOperationalLoop<'a, L> {
     pub(crate) fn from_parts(
         target_descriptors: L,
         operational_descriptors: L,
-        reserved_target_length: ReservedOnes<4>,
-        reserved_operational_length: ReservedOnes<4>,
+        reserved_target_length: ReservedOnes<TARGET_LOOP_RESERVED_BITS>,
+        reserved_operational_length: ReservedOnes<TARGET_LOOP_RESERVED_BITS>,
     ) -> Self {
         Self {
             target_descriptors,

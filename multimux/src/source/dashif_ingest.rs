@@ -30,6 +30,9 @@ use media_plane::ingress::IngestDriver;
 /// Bounded channel between HTTP handlers and the per-publishing-point pump.
 const CHANNEL_CAPACITY: usize = 64;
 
+/// Default per-object body timeout of a published object.
+const DEFAULT_BODY_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(30);
+
 /// A job handed from an HTTP handler to the pump task.
 enum Job {
     /// Buffered (non-segment) object: whole body at once.
@@ -156,7 +159,7 @@ impl DashifIngestRoute {
             timeouts: broadcast_common::timeouts::Timeouts::default(),
             auth: None,
             ingest: DashifIngestConfig::default(),
-            body_timeout: Some(tokio::time::Duration::from_secs(30)),
+            body_timeout: Some(DEFAULT_BODY_TIMEOUT),
         }
     }
 
@@ -177,7 +180,7 @@ impl DashifIngestRoute {
             timeouts: broadcast_common::timeouts::Timeouts::default(),
             auth: None,
             ingest: DashifIngestConfig::default(),
-            body_timeout: Some(tokio::time::Duration::from_secs(30)),
+            body_timeout: Some(DEFAULT_BODY_TIMEOUT),
         }
     }
 

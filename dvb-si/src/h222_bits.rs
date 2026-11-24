@@ -14,6 +14,7 @@ use broadcast_common::len::{FieldOverflow, fit_bits};
 
 const BITS_PER_BYTE: usize = 8;
 const MISALIGNED_BYTES: &str = "whole-byte access at a non-byte-aligned bit position";
+pub(crate) const DESCRIPTOR_HEADER_LEN: usize = 2;
 
 /// MSB-first bit reader over a descriptor body, a thin error-mapping adapter
 /// over [`broadcast_common::bits::BitReader`].
@@ -169,15 +170,16 @@ macro_rules! impl_h222_descriptor {
 
             fn serialized_len(&self) -> usize {
                 // An unencodable value is reported by `serialize_into`.
-                self.write_body().map_or(0, |b| 2 + b.len())
+                self.write_body()
+                    .map_or(0, |b| $crate::h222_bits::DESCRIPTOR_HEADER_LEN + b.len())
             }
 
             fn serialize_into(&self, buf: &mut [u8]) -> crate::error::Result<usize> {
                 let body = self.write_body()?;
-                let len = 2 + body.len();
+                let len = $crate::h222_bits::DESCRIPTOR_HEADER_LEN + body.len();
                 ::broadcast_common::len::need_out(buf, len)?;
                 $crate::descriptors::write_descriptor_header(buf, $tag, body.len())?;
-                buf[2..len].copy_from_slice(&body);
+                buf[$crate::h222_bits::DESCRIPTOR_HEADER_LEN..len].copy_from_slice(&body);
                 Ok(len)
             }
         }

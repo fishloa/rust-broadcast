@@ -35,6 +35,47 @@ const RESV1_FIXED: u8 = 0;
 const RESV2_FIXED: u8 = 0;
 const RESV3_FIXED: u16 = 0;
 
+/// Bytes of the Key Material message's fixed header, of its ICV, and of the
+/// 4-byte block `SLen`/`KLen` are counted in (§3.2.2, Figure 7).
+const FIXED_HEADER_LEN: usize = 16;
+const ICV_LEN: usize = 8;
+const KEY_BLOCK_LEN: usize = 4;
+
+/// Key lengths (bytes) AES key wrap accepts: AES-128/192/256.
+const VALID_KEY_LENS: [usize; 3] = [16, 24, 32];
+
+/// Keys a message with `KK = 11b` carries: the even and the odd SEK.
+const KEY_COUNT_BOTH: usize = 2;
+
+/// Byte offsets of the fixed header's four words.
+const KEKI_OFFSET: usize = 4;
+const WORD2_OFFSET: usize = 8;
+const WORD3_OFFSET: usize = 12;
+
+/// Shifts and masks of the first word's fields (§3.2.2, Figure 7).
+const S_SHIFT: u32 = 31;
+const V_SHIFT: u32 = 28;
+const V_MASK: u32 = 0b111;
+const PT_SHIFT: u32 = 24;
+const PT_MASK: u32 = 0b1111;
+const SIGN_SHIFT: u32 = 8;
+const SIGN_MASK: u32 = 0xFFFF;
+const RESV1_SHIFT: u32 = 2;
+const RESV1_MASK: u32 = 0b0011_1111;
+const KK_MASK: u32 = 0b11;
+
+/// Shifts and masks of the second and third words' fields.
+const CIPHER_SHIFT: u32 = 24;
+const AUTH_SHIFT: u32 = 16;
+const SE_SHIFT: u32 = 8;
+const RESV2_MASK: u32 = 0xFF;
+const RESV3_SHIFT: u32 = 16;
+const SLEN_SHIFT: u32 = 8;
+const LEN_MASK: u32 = 0xFF;
+
+/// Mask of a 2-bit `KK` value decoded from a byte.
+const KK_FIELD_MASK: u8 = 0b11;
+
 /// `KK` wire values of the Key Material message (§3.2.2). Distinct from the
 /// data-packet `KK` field ([`super::EncryptionKeyField`]) — same 2-bit shape,
 /// different meaning.
@@ -67,7 +108,7 @@ pub enum KmKeyFlag {
 impl KmKeyFlag {
     /// Decode the 2-bit `KK` field.
     pub fn from_bits(v: u8) -> Self {
-        match v & 0b11 {
+        match v & KK_FIELD_MASK {
             KM_KK_EVEN => KmKeyFlag::Even,
             KM_KK_ODD => KmKeyFlag::Odd,
             KM_KK_BOTH => KmKeyFlag::Both,
@@ -283,7 +324,7 @@ pub struct KeyMaterial<'a> {
     pub salt: &'a [u8],
     /// 64-bit AES key-wrap Integrity Check Vector. Not serialized by `serde`.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub icv: [u8; 8],
+    pub icv: [u8; ICV_LEN],
     /// The (even or odd, per [`Self::kk`]) SEK, wrapped. `KLen` bytes
     /// (16/24/32, matching the handshake's `Encryption Field`). Not serialized
     /// by `serde`.
@@ -326,14 +367,14 @@ impl<'a> KeyMaterial<'a> {
     /// either a handshake extension's contents or a User-Defined control
     /// packet's CIF).
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 16, "key material fixed header")?;
+        need_in(bytes, FIXED_HEADER_LEN, "key material fixed header")?;
         let word0 = be32(bytes, 0);
-        let s = (word0 >> 31) as u8;
-        let v = ((word0 >> 28) & 0b111) as u8;
-        let pt = ((word0 >> 24) & 0b1111) as u8;
-        let sign = ((word0 >> 8) & 0xFFFF) as u16;
-        let resv1 = ((word0 >> 2) & 0b0011_1111) as u8;
-        let kk_bits = (word0 & 0b11) as u8;
+        let s = (word0 >> S_SHIFT) as u8;
+        let v = ((word0 >> V_SHIFT) & V_MASK) as u8;
+        let pt = ((word0 >> PT_SHIFT) & PT_MASK) as u8;
+        let sign = ((word0 >> SIGN_SHIFT) & SIGN_MASK) as u16;
+        let resv1 = ((word0 >> RESV1_SHIFT) & RESV1_MASK) as u8;
+        let kk_bits = (word0 & KK_MASK) as u8;
 
         if s != S_FIXED {
             return Err(Error::InvalidKeyMaterial {
@@ -378,13 +419,13 @@ impl<'a> KeyMaterial<'a> {
             });
         }
 
-        let keki = be32(bytes, 4);
+        let keki = be32(bytes, KEKI_OFFSET);
 
-        let word2 = be32(bytes, 8);
-        let cipher = Cipher::from_bits((word2 >> 24) as u8);
-        let auth = KmAuth::from_bits((word2 >> 16) as u8);
-        let se = StreamEncapsulation::from_bits((word2 >> 8) as u8);
-        let resv2 = (word2 & 0xFF) as u8;
+        let word2 = be32(bytes, WORD2_OFFSET);
+        let cipher = Cipher::from_bits((word2 >> CIPHER_SHIFT) as u8);
+        let auth = KmAuth::from_bits((word2 >> AUTH_SHIFT) as u8);
+        let se = StreamEncapsulation::from_bits((word2 >> SE_SHIFT) as u8);
+        let resv2 = (word2 & RESV2_MASK) as u8;
         if resv2 != RESV2_FIXED {
             return Err(Error::InvalidKeyMaterial {
                 field: "Resv2",
@@ -392,10 +433,10 @@ impl<'a> KeyMaterial<'a> {
             });
         }
 
-        let word3 = be32(bytes, 12);
-        let resv3 = (word3 >> 16) as u16;
-        let slen4 = ((word3 >> 8) & 0xFF) as usize;
-        let klen4 = (word3 & 0xFF) as usize;
+        let word3 = be32(bytes, WORD3_OFFSET);
+        let resv3 = (word3 >> RESV3_SHIFT) as u16;
+        let slen4 = ((word3 >> SLEN_SHIFT) & LEN_MASK) as usize;
+        let klen4 = (word3 & LEN_MASK) as usize;
         if resv3 != RESV3_FIXED {
             return Err(Error::InvalidKeyMaterial {
                 field: "Resv3",
@@ -403,16 +444,16 @@ impl<'a> KeyMaterial<'a> {
             });
         }
 
-        let slen = slen4 * 4;
-        let klen = klen4 * 4;
-        if !matches!(klen, 16 | 24 | 32) {
+        let slen = slen4 * KEY_BLOCK_LEN;
+        let klen = klen4 * KEY_BLOCK_LEN;
+        if !VALID_KEY_LENS.contains(&klen) {
             return Err(Error::InvalidKeyMaterial {
                 field: "KLen",
                 reason: "must be 16, 24, or 32 bytes (AES-128/192/256)",
             });
         }
 
-        let mut offset = 16usize;
+        let mut offset = FIXED_HEADER_LEN;
         let salt = bytes
             .get(offset..offset + slen)
             .ok_or(Error::BufferTooShort(BufferTooShort {
@@ -423,7 +464,7 @@ impl<'a> KeyMaterial<'a> {
         offset += slen;
 
         let n = usize::from(kk.key_count());
-        let wrap_len = 8 + n * klen;
+        let wrap_len = ICV_LEN + n * klen;
         let wrap = bytes
             .get(offset..offset + wrap_len)
             .ok_or(Error::BufferTooShort(BufferTooShort {
@@ -440,12 +481,12 @@ impl<'a> KeyMaterial<'a> {
             });
         }
 
-        let mut icv = [0u8; 8];
-        icv.copy_from_slice(&wrap[0..8]);
+        let mut icv = [0u8; ICV_LEN];
+        icv.copy_from_slice(&wrap[0..ICV_LEN]);
         // `KK` is not `NoSek` (refused above), so there is always an xSEK.
-        let x_sek = &wrap[8..8 + klen];
-        let o_sek = if n == 2 {
-            Some(&wrap[8 + klen..8 + 2 * klen])
+        let x_sek = &wrap[ICV_LEN..ICV_LEN + klen];
+        let o_sek = if n == KEY_COUNT_BOTH {
+            Some(&wrap[ICV_LEN + klen..ICV_LEN + n * klen])
         } else {
             None
         };
@@ -465,14 +506,18 @@ impl<'a> KeyMaterial<'a> {
 
     /// Number of bytes [`Self::serialize_into`] will write.
     pub fn serialized_len(&self) -> usize {
-        16 + self.salt.len() + 8 + self.x_sek.len() + self.o_sek.map_or(0, <[u8]>::len)
+        FIXED_HEADER_LEN
+            + self.salt.len()
+            + ICV_LEN
+            + self.x_sek.len()
+            + self.o_sek.map_or(0, <[u8]>::len)
     }
 
     /// Serialize this Key Material message into `buf`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        if !self.salt.len().is_multiple_of(4) {
+        if !self.salt.len().is_multiple_of(KEY_BLOCK_LEN) {
             return Err(Error::InvalidKeyMaterial {
                 field: "Salt",
                 reason: "length must be a whole number of 4-byte words",
@@ -482,8 +527,8 @@ impl<'a> KeyMaterial<'a> {
         // would otherwise shift into the reserved `Resv3` bits, misframing
         // the message with `Ok` (#1129). Checked in `usize` before the
         // 8-bit field is packed below.
-        broadcast_common::len::fit_u8(self.salt.len() / 4, "Salt length / 4 (SLen)")?;
-        if !matches!(self.x_sek.len(), 16 | 24 | 32) {
+        broadcast_common::len::fit_u8(self.salt.len() / KEY_BLOCK_LEN, "Salt length / 4 (SLen)")?;
+        if !VALID_KEY_LENS.contains(&self.x_sek.len()) {
             return Err(Error::InvalidKeyMaterial {
                 field: "xSEK",
                 reason: "length must be 16, 24, or 32 bytes",
@@ -507,29 +552,29 @@ impl<'a> KeyMaterial<'a> {
             }
         }
 
-        let word0 = (u32::from(S_FIXED) << 31)
-            | (u32::from(V_FIXED) << 28)
-            | (u32::from(PT_KEYING_MATERIAL) << 24)
-            | (u32::from(SIGN_FIXED) << 8)
-            | (u32::from(RESV1_FIXED) << 2)
+        let word0 = (u32::from(S_FIXED) << S_SHIFT)
+            | (u32::from(V_FIXED) << V_SHIFT)
+            | (u32::from(PT_KEYING_MATERIAL) << PT_SHIFT)
+            | (u32::from(SIGN_FIXED) << SIGN_SHIFT)
+            | (u32::from(RESV1_FIXED) << RESV1_SHIFT)
             | u32::from(self.kk.to_bits());
         put_be32(buf, 0, word0);
-        put_be32(buf, 4, self.keki);
-        let word2 = (u32::from(self.cipher.to_bits()) << 24)
-            | (u32::from(self.auth.to_bits()) << 16)
-            | (u32::from(self.se.to_bits()) << 8)
+        put_be32(buf, KEKI_OFFSET, self.keki);
+        let word2 = (u32::from(self.cipher.to_bits()) << CIPHER_SHIFT)
+            | (u32::from(self.auth.to_bits()) << AUTH_SHIFT)
+            | (u32::from(self.se.to_bits()) << SE_SHIFT)
             | u32::from(RESV2_FIXED);
-        put_be32(buf, 8, word2);
-        let slen4 = (self.salt.len() / 4) as u32;
-        let klen4 = (self.x_sek.len() / 4) as u32;
-        let word3 = (u32::from(RESV3_FIXED) << 16) | (slen4 << 8) | klen4;
-        put_be32(buf, 12, word3);
+        put_be32(buf, WORD2_OFFSET, word2);
+        let slen4 = (self.salt.len() / KEY_BLOCK_LEN) as u32;
+        let klen4 = (self.x_sek.len() / KEY_BLOCK_LEN) as u32;
+        let word3 = (u32::from(RESV3_FIXED) << RESV3_SHIFT) | (slen4 << SLEN_SHIFT) | klen4;
+        put_be32(buf, WORD3_OFFSET, word3);
 
-        let mut off = 16;
+        let mut off = FIXED_HEADER_LEN;
         buf[off..off + self.salt.len()].copy_from_slice(self.salt);
         off += self.salt.len();
-        buf[off..off + 8].copy_from_slice(&self.icv);
-        off += 8;
+        buf[off..off + ICV_LEN].copy_from_slice(&self.icv);
+        off += ICV_LEN;
         buf[off..off + self.x_sek.len()].copy_from_slice(self.x_sek);
         off += self.x_sek.len();
         if let Some(o) = self.o_sek {

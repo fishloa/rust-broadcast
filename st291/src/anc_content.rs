@@ -69,6 +69,10 @@ const WORD_MASK: u16 = 0x3FF;
 const PAYLOAD_MASK: u16 = 0xFF;
 /// Mask of the low 9 bits (`b8..b0`) summed by the `Checksum_Word`.
 const LOW_9_BITS_MASK: u16 = 0x1FF;
+/// Bit position of the even-parity bit `b8`.
+const PARITY_BIT_SHIFT: u32 = 8;
+/// Bit position of the inverted-parity bit `b9`.
+const INVERTED_PARITY_BIT_SHIFT: u32 = 9;
 
 /// Result of [`AncContent::validate`]: one flag per ST 291-1:2011 rule,
 /// `true` = the rule holds.
@@ -148,7 +152,7 @@ impl AncContent {
     /// 8 bits** of `data_count`, independent of the stored `Vec`'s length.
     #[must_use]
     pub fn udw_loop_count(&self) -> usize {
-        usize::from(self.data_count & 0xFF)
+        usize::from(self.data_count & PAYLOAD_MASK)
     }
 
     /// Encode an 8-bit payload value into the ST 291-1 10-bit word form: an
@@ -158,9 +162,9 @@ impl AncContent {
     /// 8-bit value (S291-W1, #1116).
     #[must_use]
     pub fn with_parity(value: u8) -> u16 {
-        let b8 = u16::from((value.count_ones() % 2) as u8);
+        let b8 = u16::from((value.count_ones() & 1) as u8);
         let b9 = 1 - b8;
-        (b9 << 9) | (b8 << 8) | u16::from(value)
+        (b9 << INVERTED_PARITY_BIT_SHIFT) | (b8 << PARITY_BIT_SHIFT) | u16::from(value)
     }
 
     /// `true` if `word` is a well-formed ST 291-1 parity-protected word
@@ -308,8 +312,8 @@ impl AncContent {
             sum += u32::from(udw & LOW_9_BITS_MASK);
         }
         let checksum_value = (sum & u32::from(LOW_9_BITS_MASK)) as u16;
-        let b9 = 1 - (checksum_value >> 8);
-        (b9 << 9) | checksum_value
+        let b9 = 1 - (checksum_value >> PARITY_BIT_SHIFT);
+        (b9 << INVERTED_PARITY_BIT_SHIFT) | checksum_value
     }
 
     /// Write `DID`/`SDID`/`Data_Count`/`User_Data_Words`/`Checksum_Word` into
@@ -358,7 +362,7 @@ impl AncContent {
         let did = r.read_bits(W_DID)? as u16;
         let sdid = r.read_bits(W_SDID)? as u16;
         let data_count = r.read_bits(W_DATA_COUNT)? as u16;
-        let n = usize::from(data_count & 0xFF);
+        let n = usize::from(data_count & PAYLOAD_MASK);
         let mut user_data_words = Vec::with_capacity(n);
         for _ in 0..n {
             user_data_words.push(r.read_bits(W_USER_DATA_WORD)? as u16);

@@ -1,10 +1,7 @@
 //! One SDP media section read as a playable track (RFC 4566 §5.14/§6, RFC 3551 §3, RFC 6184 §8,
 //! RFC 3640 §4.1); `std` because the section is an `sdp_types::Media`.
 
-use super::{
-    NAL_LENGTH_SIZE_MINUS_ONE, aac_config_from_fmtp, avc_config_from_fmtp, fmtp_param,
-    rtpmap_clock_rate,
-};
+use super::{aac_config_from_fmtp, avc_config_from_fmtp, fmtp_param, rtpmap_clock_rate};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::pipeline::CodecConfig;
 use alloc::vec::Vec;
@@ -17,6 +14,8 @@ const UNKNOWN_DIMENSION: u16 = 0;
 /// Clock rate of an RTP video payload format (RFC 6184 §8.2.1) used when `a=rtpmap` is absent or
 /// unparsable.
 const DEFAULT_CLOCK_RATE_HZ: u32 = 90_000;
+/// Highest RTP payload type in the static/dynamic range (RFC 3551 §6).
+const RTP_PAYLOAD_TYPE_MAX: u8 = 127;
 const MEDIA_VIDEO: &str = "video";
 const MEDIA_AUDIO: &str = "audio";
 const ENCODING_H264: &str = "H264";
@@ -95,7 +94,7 @@ fn pending_avc_config() -> CodecConfig {
             profile_indication: 0,
             profile_compatibility: 0,
             level_indication: 0,
-            length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
+            length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
             sps: Vec::new(),
             pps: Vec::new(),
             chroma_format: None,
@@ -182,7 +181,10 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
         kind,
         config,
         clock_rate: Timescale::try_new(clock_rate).ok()?,
-        payload_type: payload_type.parse::<u8>().ok().filter(|&pt| pt <= 127),
+        payload_type: payload_type
+            .parse::<u8>()
+            .ok()
+            .filter(|&pt| pt <= RTP_PAYLOAD_TYPE_MAX),
         control: media
             .get_first_attribute_value("control")
             .flatten()

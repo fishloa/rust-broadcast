@@ -7,6 +7,10 @@
 //! `mpe_boundary`/`prev_burst_size`). The bit packing lived twice; it lives
 //! here once, and both tables' public structs keep their spec-named fields.
 
+/// Byte offset of the middle `tail` byte.
+const RTP_TAIL_MID_OFFSET: usize = 2;
+/// Byte offset of the low `tail` byte.
+const RTP_TAIL_LO_OFFSET: usize = 3;
 /// Wire width of the `real_time_parameters` block.
 pub(crate) const RTP_LEN: usize = 4;
 
@@ -21,6 +25,13 @@ const FRAME_BOUNDARY_BIT: u8 = 0x04;
 const TAIL_BITS: u32 = 18;
 #[cfg(test)]
 const TAIL_MASK: u32 = 0x0003_FFFF;
+
+/// Shift of the `delta_t` high nibble and of the tail low bytes.
+const NIBBLE_BITS: u32 = 4;
+const TAIL_HI_SHIFT: u32 = 16;
+const TAIL_HI_MASK: u8 = 0x03;
+const TABLE_BOUNDARY_SHIFT: u32 = 3;
+const FRAME_BOUNDARY_SHIFT: u32 = 2;
 
 /// The shared 32-bit bit layout behind both tables' `RealTimeParameters`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,11 +50,13 @@ impl RealTimeParametersBits {
     /// Decode the 4-byte real_time_parameters block.
     pub(crate) fn from_bytes(b: [u8; RTP_LEN]) -> Self {
         // delta_t(12) = b[0] | top 4 bits of b[1]
-        let delta_t = ((u16::from(b[0])) << 4) | ((b[1] >> 4) as u16);
+        let delta_t = ((u16::from(b[0])) << NIBBLE_BITS) | ((b[1] >> NIBBLE_BITS) as u16);
         let boundary = (b[1] & TABLE_BOUNDARY_BIT) != 0;
         let frame_boundary = (b[1] & FRAME_BOUNDARY_BIT) != 0;
         // tail(18) = bottom 2 bits of b[1] | b[2] | b[3]
-        let tail = ((u32::from(b[1] & 0x03)) << 16) | (u32::from(b[2]) << 8) | u32::from(b[3]);
+        let tail = ((u32::from(b[1] & TAIL_HI_MASK)) << TAIL_HI_SHIFT)
+            | (u32::from(b[RTP_TAIL_MID_OFFSET]) << u8::BITS)
+            | u32::from(b[RTP_TAIL_LO_OFFSET]);
         RealTimeParametersBits {
             delta_t,
             boundary,
@@ -71,13 +84,13 @@ impl RealTimeParametersBits {
             "real_time_parameters.address_or_prev_burst_size",
         )? as u32;
         Ok([
-            (dt >> 4) as u8,
-            (((dt & u16::from(crate::tables::LOW_NIBBLE_MASK)) as u8) << 4)
-                | (u8::from(self.boundary) << 3)
-                | (u8::from(self.frame_boundary) << 2)
-                | ((tail >> 16) as u8 & 0x03),
-            ((tail >> 8) & 0xFF) as u8,
-            (tail & 0xFF) as u8,
+            (dt >> NIBBLE_BITS) as u8,
+            (((dt & u16::from(crate::tables::LOW_NIBBLE_MASK)) as u8) << NIBBLE_BITS)
+                | (u8::from(self.boundary) << TABLE_BOUNDARY_SHIFT)
+                | (u8::from(self.frame_boundary) << FRAME_BOUNDARY_SHIFT)
+                | ((tail >> TAIL_HI_SHIFT) as u8 & TAIL_HI_MASK),
+            ((tail >> u8::BITS) & u32::from(u8::MAX)) as u8,
+            (tail & u32::from(u8::MAX)) as u8,
         ])
     }
 }

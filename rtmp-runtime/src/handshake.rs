@@ -48,7 +48,14 @@ const VERSION_LEN: usize = 1;
 const FIELD_LEN: usize = 4;
 /// Byte width of the `random bytes`/`random echo` field:
 /// `HANDSHAKE_PACKET_LEN` minus two 4-byte fields.
-const RANDOM_LEN: usize = HANDSHAKE_PACKET_LEN - FIELD_LEN - FIELD_LEN;
+pub(crate) const RANDOM_LEN: usize = HANDSHAKE_PACKET_LEN - FIELD_LEN - FIELD_LEN;
+
+/// Byte positions of the two u32 fields at the front of a C1/S1 packet.
+const TIME_BYTES: [usize; FIELD_LEN] = [0, 1, 2, 3];
+const RESERVED_FIELD_BYTES: [usize; FIELD_LEN] = [4, 5, 6, 7];
+
+/// Offset of the random block after the two u32 fields (RTMP §5.2.1).
+const RANDOM_OFFSET: usize = 2 * FIELD_LEN;
 
 /// C0 (client→server) or S0 (server→client): the 1-byte RTMP version
 /// (§5.2.2).
@@ -105,10 +112,10 @@ impl<'a> Parse<'a> for HandshakePacket {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HANDSHAKE_PACKET_LEN, "C1/S1")?;
-        let time = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let zero = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let time = u32::from_be_bytes(TIME_BYTES.map(|i| bytes[i]));
+        let zero = u32::from_be_bytes(RESERVED_FIELD_BYTES.map(|i| bytes[i]));
         let mut random = [0u8; RANDOM_LEN];
-        random.copy_from_slice(&bytes[2 * FIELD_LEN..HANDSHAKE_PACKET_LEN]);
+        random.copy_from_slice(&bytes[RANDOM_OFFSET..HANDSHAKE_PACKET_LEN]);
         Ok(HandshakePacket { time, zero, random })
     }
 }
@@ -123,8 +130,8 @@ impl Serialize for HandshakePacket {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_in(buf, HANDSHAKE_PACKET_LEN, "C1/S1 output")?;
         buf[0..FIELD_LEN].copy_from_slice(&self.time.to_be_bytes());
-        buf[FIELD_LEN..2 * FIELD_LEN].copy_from_slice(&self.zero.to_be_bytes());
-        buf[2 * FIELD_LEN..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random);
+        buf[FIELD_LEN..RANDOM_OFFSET].copy_from_slice(&self.zero.to_be_bytes());
+        buf[RANDOM_OFFSET..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random);
         Ok(HANDSHAKE_PACKET_LEN)
     }
 }
@@ -135,8 +142,8 @@ impl HandshakePacket {
     pub fn to_bytes(&self) -> [u8; HANDSHAKE_PACKET_LEN] {
         let mut buf = [0u8; HANDSHAKE_PACKET_LEN];
         buf[0..FIELD_LEN].copy_from_slice(&self.time.to_be_bytes());
-        buf[FIELD_LEN..2 * FIELD_LEN].copy_from_slice(&self.zero.to_be_bytes());
-        buf[2 * FIELD_LEN..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random);
+        buf[FIELD_LEN..RANDOM_OFFSET].copy_from_slice(&self.zero.to_be_bytes());
+        buf[RANDOM_OFFSET..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random);
         buf
     }
 }
@@ -161,10 +168,10 @@ impl<'a> Parse<'a> for EchoPacket {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HANDSHAKE_PACKET_LEN, "C2/S2")?;
-        let time = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let time2 = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let time = u32::from_be_bytes(TIME_BYTES.map(|i| bytes[i]));
+        let time2 = u32::from_be_bytes(RESERVED_FIELD_BYTES.map(|i| bytes[i]));
         let mut random_echo = [0u8; RANDOM_LEN];
-        random_echo.copy_from_slice(&bytes[2 * FIELD_LEN..HANDSHAKE_PACKET_LEN]);
+        random_echo.copy_from_slice(&bytes[RANDOM_OFFSET..HANDSHAKE_PACKET_LEN]);
         Ok(EchoPacket {
             time,
             time2,
@@ -183,8 +190,8 @@ impl Serialize for EchoPacket {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_in(buf, HANDSHAKE_PACKET_LEN, "C2/S2 output")?;
         buf[0..FIELD_LEN].copy_from_slice(&self.time.to_be_bytes());
-        buf[FIELD_LEN..2 * FIELD_LEN].copy_from_slice(&self.time2.to_be_bytes());
-        buf[2 * FIELD_LEN..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random_echo);
+        buf[FIELD_LEN..RANDOM_OFFSET].copy_from_slice(&self.time2.to_be_bytes());
+        buf[RANDOM_OFFSET..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random_echo);
         Ok(HANDSHAKE_PACKET_LEN)
     }
 }

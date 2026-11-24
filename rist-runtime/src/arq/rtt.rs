@@ -30,6 +30,9 @@ pub struct RttEstimator {
     eight_times_us: Option<u64>,
 }
 
+/// Taps of the smoothed RTT average (TR-06-1's 1/8 EWMA).
+const SMOOTHING_GAIN_DEN: u64 = 8;
+
 impl RttEstimator {
     /// A fresh estimator with no RTT estimate yet.
     pub const fn new() -> Self {
@@ -42,8 +45,8 @@ impl RttEstimator {
     pub fn update(&mut self, sample: Duration) {
         let sample_us = sample.as_micros().min(u128::from(u64::MAX)) as u64;
         self.eight_times_us = Some(match self.eight_times_us {
-            None => sample_us.saturating_mul(8),
-            Some(acc) => (acc - acc / 8).saturating_add(sample_us),
+            None => sample_us.saturating_mul(SMOOTHING_GAIN_DEN),
+            Some(acc) => (acc - acc / SMOOTHING_GAIN_DEN).saturating_add(sample_us),
         });
     }
 
@@ -51,7 +54,7 @@ impl RttEstimator {
     /// been called.
     pub fn smoothed(&self) -> Option<Duration> {
         self.eight_times_us
-            .map(|acc| Duration::from_micros(acc / 8))
+            .map(|acc| Duration::from_micros(acc / SMOOTHING_GAIN_DEN))
     }
 }
 

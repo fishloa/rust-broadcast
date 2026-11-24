@@ -9,6 +9,13 @@ use alloc::vec::Vec;
 
 use super::messages::{Dii, DownloadDataBlock};
 
+/// Bits in one `u64` bitset word.
+const BITS_PER_WORD: usize = u64::BITS as usize;
+/// Shift converting a bit index into a word index.
+const WORD_INDEX_SHIFT: usize = BITS_PER_WORD.trailing_zeros() as usize;
+/// Mask extracting the bit offset within a word.
+const WORD_INDEX_MASK: usize = BITS_PER_WORD - 1;
+
 /// Identifies one module instance on the carousel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -50,10 +57,10 @@ struct Slot {
 
 impl Slot {
     fn is_received(&self, n: usize) -> bool {
-        (self.received[n >> 6] >> (n & 63)) & 1 != 0
+        (self.received[n >> WORD_INDEX_SHIFT] >> (n & WORD_INDEX_MASK)) & 1 != 0
     }
     fn mark_received(&mut self, n: usize) {
-        self.received[n >> 6] |= 1 << (n & 63);
+        self.received[n >> WORD_INDEX_SHIFT] |= 1 << (n & WORD_INDEX_MASK);
     }
 }
 
@@ -202,7 +209,7 @@ impl ModuleReassembler {
                     module_version: m.module_version,
                     block_size,
                     data: vec![0u8; size],
-                    received: vec![0u64; n_blocks.div_ceil(64)],
+                    received: vec![0u64; n_blocks.div_ceil(BITS_PER_WORD)],
                     n_blocks,
                     remaining: n_blocks,
                 },

@@ -15,6 +15,9 @@
 use crate::error::Result;
 use broadcast_common::len::need_out;
 
+/// `splice_descriptor_tag` + `descriptor_length` header length.
+const DESCRIPTOR_HEADER_LEN: usize = 2;
+
 /// Declares [`AnySpliceDescriptor`] + its dispatcher from one tag list.
 macro_rules! declare_splice_descriptors {
     (
@@ -103,7 +106,7 @@ macro_rules! declare_splice_descriptors {
                     $(
                         Self::$variant(d) => d.serialized_len(),
                     )+
-                    Self::Unknown { body, .. } => 2 + body.len(),
+                    Self::Unknown { body, .. } => DESCRIPTOR_HEADER_LEN + body.len(),
                 }
             }
 
@@ -115,7 +118,7 @@ macro_rules! declare_splice_descriptors {
                         Self::$variant(d) => d.serialize_into(buf),
                     )+
                     Self::Unknown { tag, body } => {
-                        let need = 2 + body.len();
+                        let need = DESCRIPTOR_HEADER_LEN + body.len();
                         need_out(buf, need)?;
                         buf[0] = *tag;
                         buf[1] = broadcast_common::len::fit_u8(
@@ -187,11 +190,11 @@ impl<'a> Iterator for SpliceDescriptorIter<'a> {
             return None;
         }
         let rem = &self.bytes[self.pos..];
-        if rem.len() < 2 {
+        if rem.len() < DESCRIPTOR_HEADER_LEN {
             self.fused = true;
             return Some(Err(crate::error::Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: 2,
+                    need: DESCRIPTOR_HEADER_LEN,
                     have: rem.len(),
                     what: "splice_descriptor header in loop",
                 },
@@ -199,7 +202,7 @@ impl<'a> Iterator for SpliceDescriptorIter<'a> {
         }
         let tag = rem[0];
         let len = rem[1] as usize;
-        let total = 2 + len;
+        let total = DESCRIPTOR_HEADER_LEN + len;
         if rem.len() < total {
             self.fused = true;
             return Some(Err(crate::error::Error::BufferTooShort(

@@ -29,6 +29,10 @@ use broadcast_common::clock33::pcr_forward_distance;
 /// 27 MHz clock rate (ticks per second) — ISO/IEC 13818-1 §2.4.2.
 use broadcast_common::clock33::{PCR_HZ as CLOCK_27MHZ, PCR_WRAP_27MHZ as PCR_MODULUS_27MHZ};
 
+/// Largest forward PCR distance that is unambiguous: beyond half the wrap the
+/// nearer direction is backwards.
+const PCR_27MHZ_MAX_FORWARD: u64 = PCR_MODULUS_27MHZ / 2;
+
 /// 27 MHz ticks in one millisecond — every PCR interval below is rendered in
 /// ms by dividing by this.
 const TICKS_27MHZ_PER_MS: u64 = CLOCK_27MHZ / 1000;
@@ -120,7 +124,7 @@ impl Diagnostic for PcrCheck {
             // half the modulus is a backward step. See the module docs and
             // `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`.
             let signed_step = delta; // 2.3b is defined on the signed difference.
-            let backward = signed_step > PCR_MODULUS_27MHZ / 2;
+            let backward = signed_step > PCR_27MHZ_MAX_FORWARD;
             let forward_ms = delta_ms;
             // `backward` guarantees `signed_step > modulus/2`, so the
             // subtraction cannot underflow; `saturating_sub` states that

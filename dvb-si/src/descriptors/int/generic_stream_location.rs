@@ -22,6 +22,14 @@ const FIXED_LEN: usize = 8;
 const SELECTOR_LENGTH_FLAG: u8 = 0x80;
 const SELECTOR_VALUE_MASK: u8 = 0x7F;
 const SELECTOR_VALUE_BITS: u32 = 7;
+/// Body offset of `modulation_system_type`.
+const MODULATION_SYSTEM_TYPE_OFFSET: usize = 2;
+/// Body offset of `modulation_system_id`.
+const MODULATION_SYSTEM_ID_OFFSET: usize = 3;
+/// Body offset of `phy_stream_id`.
+const PHY_STREAM_ID_OFFSET: usize = 5;
+/// Body offset of `selector_byte`.
+const SELECTOR_BYTE_OFFSET: usize = 7;
 
 /// `modulation_system_type` — ETSI EN 301 192 §8.4.5.15 Table 34.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,8 +222,8 @@ impl<'a> Parse<'a> for IpMacGenericStreamLocationDescriptor<'a> {
                 tag: TAG,
                 reason: "IP/MAC_generic_stream_location_descriptor body shorter than 8 bytes",
             })?;
-        let value = f[7] & SELECTOR_VALUE_MASK;
-        let (selector, trailing) = if f[7] & SELECTOR_LENGTH_FLAG == 0 {
+        let value = f[SELECTOR_BYTE_OFFSET] & SELECTOR_VALUE_MASK;
+        let (selector, trailing) = if f[SELECTOR_BYTE_OFFSET] & SELECTOR_LENGTH_FLAG == 0 {
             (GenericStreamSelector::Flags(value), rest)
         } else {
             let n = usize::from(value);
@@ -230,9 +238,15 @@ impl<'a> Parse<'a> for IpMacGenericStreamLocationDescriptor<'a> {
         };
         Ok(Self {
             interactive_network_id: u16::from_be_bytes([f[0], f[1]]),
-            modulation_system_type: ModulationSystemType::from_u8(f[2]),
-            modulation_system_id: u16::from_be_bytes([f[3], f[4]]),
-            phy_stream_id: u16::from_be_bytes([f[5], f[6]]),
+            modulation_system_type: ModulationSystemType::from_u8(f[MODULATION_SYSTEM_TYPE_OFFSET]),
+            modulation_system_id: u16::from_be_bytes([
+                f[MODULATION_SYSTEM_ID_OFFSET],
+                f[MODULATION_SYSTEM_ID_OFFSET + 1],
+            ]),
+            phy_stream_id: u16::from_be_bytes([
+                f[PHY_STREAM_ID_OFFSET],
+                f[PHY_STREAM_ID_OFFSET + 1],
+            ]),
             selector,
             trailing,
         })
@@ -268,13 +282,16 @@ impl Serialize for IpMacGenericStreamLocationDescriptor<'_> {
             ),
         };
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2..4].copy_from_slice(&self.interactive_network_id.to_be_bytes());
-        buf[4] = self.modulation_system_type.to_u8();
-        buf[5..7].copy_from_slice(&self.modulation_system_id.to_be_bytes());
-        buf[7..9].copy_from_slice(&self.phy_stream_id.to_be_bytes());
-        buf[9] = flag | value;
-        let sel_end = 10 + sel.len();
-        buf[10..sel_end].copy_from_slice(sel);
+        buf[HEADER_LEN..HEADER_LEN + size_of::<u16>()]
+            .copy_from_slice(&self.interactive_network_id.to_be_bytes());
+        buf[HEADER_LEN + MODULATION_SYSTEM_TYPE_OFFSET] = self.modulation_system_type.to_u8();
+        buf[HEADER_LEN + MODULATION_SYSTEM_ID_OFFSET..HEADER_LEN + PHY_STREAM_ID_OFFSET]
+            .copy_from_slice(&self.modulation_system_id.to_be_bytes());
+        buf[HEADER_LEN + PHY_STREAM_ID_OFFSET..HEADER_LEN + SELECTOR_BYTE_OFFSET]
+            .copy_from_slice(&self.phy_stream_id.to_be_bytes());
+        buf[HEADER_LEN + SELECTOR_BYTE_OFFSET] = flag | value;
+        let sel_end = HEADER_LEN + FIXED_LEN + sel.len();
+        buf[HEADER_LEN + FIXED_LEN..sel_end].copy_from_slice(sel);
         buf[sel_end..len].copy_from_slice(self.trailing);
         Ok(len)
     }

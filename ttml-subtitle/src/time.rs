@@ -67,7 +67,7 @@ impl Default for TimeContext {
         // rate (here, frame_rate * 1:1 multiplier) x sub_frame_rate — kept
         // as an expression, not a second hardcoded literal, so it can't
         // drift from `frame_rate`/`sub_frame_rate` above (#1108/TT-W4).
-        let frame_rate = 30;
+        let frame_rate = DEFAULT_FRAME_RATE;
         let sub_frame_rate = 1;
         Self {
             time_base: TimeBase::Media,
@@ -329,6 +329,53 @@ pub fn parse_time_expression(
     }
 }
 
+/// Default `ttp:frameRate` when none is specified (TTML2 §7.2.6).
+pub(crate) const DEFAULT_FRAME_RATE: u32 = 30;
+
+/// Digits of every fixed-width two-digit field: minutes, seconds, months,
+/// days and wallclock hours/minutes/seconds.
+const FIELD_DIGITS: usize = 2;
+
+/// Fewest digits of a frames term (TTML2 §7.4.1).
+const FRAME_DIGITS_MIN: usize = 2;
+
+/// Digits of a calendar year.
+const YEAR_DIGITS: usize = 4;
+
+/// Hours below this must be zero-padded to [`FIELD_DIGITS`].
+const HOURS_PADDED_BELOW: u32 = 100;
+
+/// Component indices of a clock-time's seconds and frames.
+const CLOCK_SECONDS: usize = 2;
+const CLOCK_FRAMES: usize = 3;
+
+/// Index of the day component of `YYYY-MM-DD`.
+const DATE_DAYS: usize = 2;
+
+/// Colon-separated component counts of a clock-time: `HH:MM:SS` and
+/// `HH:MM:SS:FF`.
+const CLOCK_TIME_PARTS_MIN: usize = 3;
+const CLOCK_TIME_PARTS_MAX: usize = 4;
+
+/// Component count of `YYYY-MM-DD`.
+const DATE_COMPONENTS: usize = 3;
+
+/// Colon-separated component counts of a wallclock time: `hh:mm` and
+/// `hh:mm:ss`.
+const WALLCLOCK_PARTS_MIN: usize = 2;
+const WALLCLOCK_PARTS_MAX: usize = 3;
+
+/// Calendar field bounds (TTML2 §7.4.1).
+const MONTHS_MIN: u8 = 1;
+const MONTHS_MAX: u8 = 12;
+const DAYS_MIN: u8 = 1;
+const DAYS_MAX: u8 = 31;
+const HOURS_OF_DAY_MAX: u8 = 23;
+const MINUTES_MAX: u8 = 59;
+
+/// Upper bound of a seconds field: 60 allows a leap second.
+const SECONDS_MAX: u8 = 60;
+
 fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, crate::error::Error> {
     let err = |reason: &str| crate::error::Error::InvalidTimeExpression {
         value: input.to_string(),
@@ -338,7 +385,7 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
     let parts: Vec<&str> = input.split(':').collect();
 
     // Must have at least 3 parts (HH:MM:SS) or 4 (HH:MM:SS:FF) or 5 (HH:MM:SS:FF.SF)
-    if parts.len() < 3 || parts.len() > 4 {
+    if parts.len() < CLOCK_TIME_PARTS_MIN || parts.len() > CLOCK_TIME_PARTS_MAX {
         return Err(err(
             "clock-time must have exactly 3 or 4 colon-separated components",
         ));
@@ -352,7 +399,7 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
     // Hours
     let hours: u32 = parse_digits(parts[0], "hours", &err)?;
     // Must have at least 2 digits if < 100, or 3+ if >= 100
-    if hours < 100 && parts[0].len() < 2 {
+    if hours < HOURS_PADDED_BELOW && parts[0].len() < FIELD_DIGITS {
         return Err(err(
             "hours < 100 must have leading zero (at least 2 digits)",
         ));
@@ -360,16 +407,16 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
 
     // Minutes
     let minutes_raw = parts[1];
-    if minutes_raw.len() != 2 {
+    if minutes_raw.len() != FIELD_DIGITS {
         return Err(err("minutes must be exactly 2 digits"));
     }
     let minutes: u8 = parse_digits_u8(minutes_raw, "minutes", &err)?;
-    if minutes > 59 {
+    if minutes > MINUTES_MAX {
         return Err(err("minutes must be in [0, 59]"));
     }
 
     // Seconds (may have fraction)
-    let secs_part = parts[2];
+    let secs_part = parts[CLOCK_SECONDS];
     let (secs_str, fraction): (&str, Option<String>) = if let Some(dot_pos) = secs_part.find('.') {
         let (s, f) = secs_part.split_at(dot_pos);
         let frac = &f[1..]; // skip the '.'
@@ -381,15 +428,15 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
         (secs_part, None)
     };
 
-    if secs_str.len() != 2 {
+    if secs_str.len() != FIELD_DIGITS {
         return Err(err("seconds must be exactly 2 digits"));
     }
     let seconds: u8 = parse_digits_u8(secs_str, "seconds", &err)?;
-    if seconds > 60 {
+    if seconds > SECONDS_MAX {
         return Err(err("seconds must be in [0, 60]"));
     }
 
-    if parts.len() == 4 {
+    if parts.len() == CLOCK_TIME_PARTS_MAX {
         // Grammar: `seconds ( fraction | ":" frames (...)? )?` — a
         // seconds-fraction and a frames term are mutually exclusive
         // (#1108/TT-W5: this was previously accepted as both, producing a
@@ -400,7 +447,7 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
             ));
         }
         // Has frames component
-        let frames_part = parts[3];
+        let frames_part = parts[CLOCK_FRAMES];
 
         // Frames component is error when timeBase=clock
         if ctx.time_base == TimeBase::Clock {
@@ -435,14 +482,14 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
         // Grammar: `frames : <digit><digit> | <digit><digit><digit>+` — at
         // least 2 digits (#1108/TT-W5: a single digit, e.g. `"5"`, was
         // previously accepted).
-        if frames_str.len() < 2 {
+        if frames_str.len() < FRAME_DIGITS_MIN {
             return Err(err("frames must be at least 2 digits"));
         }
         let frames: u32 = parse_digits(frames_str, "frames", &err)?;
         let effective_frame_rate = if ctx.frame_rate > 0 {
             ctx.frame_rate
         } else {
-            30
+            DEFAULT_FRAME_RATE
         };
         if frames >= effective_frame_rate {
             return Err(err(&format!(
@@ -587,7 +634,7 @@ fn parse_wallclock_datetime(
     err: &impl Fn(&str) -> crate::error::Error,
 ) -> Result<TimeExpression, crate::error::Error> {
     let parts: Vec<&str> = input.split('T').collect();
-    if parts.len() != 2 {
+    if parts.len() != DATE_COMPONENTS - 1 {
         return Err(err("date-time must have exactly one 'T' separator"));
     }
 
@@ -595,17 +642,17 @@ fn parse_wallclock_datetime(
     let time_part = parts[1];
 
     let date_components: Vec<&str> = date_part.split('-').collect();
-    if date_components.len() != 3 {
+    if date_components.len() != DATE_COMPONENTS {
         return Err(err("date must have exactly 3 components: YYYY-MM-DD"));
     }
 
-    let years: u16 = parse_digits_exact(date_components[0], 4, "years", err)?;
-    let months: u8 = parse_digits_exact(date_components[1], 2, "months", err)?;
-    if !(1..=12).contains(&months) {
+    let years: u16 = parse_digits_exact(date_components[0], YEAR_DIGITS, "years", err)?;
+    let months: u8 = parse_digits_exact(date_components[1], FIELD_DIGITS, "months", err)?;
+    if !(MONTHS_MIN..=MONTHS_MAX).contains(&months) {
         return Err(err("months must be in [1, 12]"));
     }
-    let days: u8 = parse_digits_exact(date_components[2], 2, "days", err)?;
-    if !(1..=31).contains(&days) {
+    let days: u8 = parse_digits_exact(date_components[DATE_DAYS], FIELD_DIGITS, "days", err)?;
+    if !(DAYS_MIN..=DAYS_MAX).contains(&days) {
         return Err(err("days must be in [1, 31]"));
     }
 
@@ -629,17 +676,17 @@ fn parse_wallclock_date(
     err: &impl Fn(&str) -> crate::error::Error,
 ) -> Result<TimeExpression, crate::error::Error> {
     let date_components: Vec<&str> = input.split('-').collect();
-    if date_components.len() != 3 {
+    if date_components.len() != DATE_COMPONENTS {
         return Err(err("date must have exactly 3 components: YYYY-MM-DD"));
     }
 
-    let years: u16 = parse_digits_exact(date_components[0], 4, "years", err)?;
-    let months: u8 = parse_digits_exact(date_components[1], 2, "months", err)?;
-    if !(1..=12).contains(&months) {
+    let years: u16 = parse_digits_exact(date_components[0], YEAR_DIGITS, "years", err)?;
+    let months: u8 = parse_digits_exact(date_components[1], FIELD_DIGITS, "months", err)?;
+    if !(MONTHS_MIN..=MONTHS_MAX).contains(&months) {
         return Err(err("months must be in [1, 12]"));
     }
-    let days: u8 = parse_digits_exact(date_components[2], 2, "days", err)?;
-    if !(1..=31).contains(&days) {
+    let days: u8 = parse_digits_exact(date_components[DATE_DAYS], FIELD_DIGITS, "days", err)?;
+    if !(DAYS_MIN..=DAYS_MAX).contains(&days) {
         return Err(err("days must be in [1, 31]"));
     }
 
@@ -674,36 +721,36 @@ fn parse_wallclock_time_components(
 ) -> Result<(u8, u8, Option<u8>, Option<String>), crate::error::Error> {
     let parts: Vec<&str> = input.split(':').collect();
 
-    if parts.len() < 2 || parts.len() > 3 {
+    if parts.len() < WALLCLOCK_PARTS_MIN || parts.len() > WALLCLOCK_PARTS_MAX {
         return Err(err(
             "wallclock time must have 2 or 3 colon-separated components",
         ));
     }
 
-    let hours: u8 = parse_digits_exact(parts[0], 2, "wallclock hours", err)?;
-    if hours > 23 {
+    let hours: u8 = parse_digits_exact(parts[0], FIELD_DIGITS, "wallclock hours", err)?;
+    if hours > HOURS_OF_DAY_MAX {
         return Err(err("wallclock hours must be in [0, 23]"));
     }
 
-    let minutes: u8 = parse_digits_exact(parts[1], 2, "wallclock minutes", err)?;
-    if minutes > 59 {
+    let minutes: u8 = parse_digits_exact(parts[1], FIELD_DIGITS, "wallclock minutes", err)?;
+    if minutes > MINUTES_MAX {
         return Err(err("wallclock minutes must be in [0, 59]"));
     }
 
-    if parts.len() == 3 {
-        let (secs_str, fraction) = if let Some(dot_pos) = parts[2].find('.') {
-            let (s, f) = parts[2].split_at(dot_pos);
+    if parts.len() == WALLCLOCK_PARTS_MAX {
+        let (secs_str, fraction) = if let Some(dot_pos) = parts[CLOCK_SECONDS].find('.') {
+            let (s, f) = parts[CLOCK_SECONDS].split_at(dot_pos);
             let frac = &f[1..];
             if frac.is_empty() || !frac.chars().all(|c| c.is_ascii_digit()) {
                 return Err(err("fractional seconds must be digits"));
             }
             (s, Some(frac.to_string()))
         } else {
-            (parts[2], None)
+            (parts[CLOCK_SECONDS], None)
         };
 
-        let seconds: u8 = parse_digits_exact(secs_str, 2, "wallclock seconds", err)?;
-        if seconds > 60 {
+        let seconds: u8 = parse_digits_exact(secs_str, FIELD_DIGITS, "wallclock seconds", err)?;
+        if seconds > SECONDS_MAX {
             return Err(err("wallclock seconds must be in [0, 60]"));
         }
 

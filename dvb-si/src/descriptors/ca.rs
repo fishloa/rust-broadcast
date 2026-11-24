@@ -14,6 +14,12 @@ use mpeg_ts::pid::Pid;
 pub const TAG: u8 = 0x09;
 const HEADER_LEN: usize = 2;
 const MIN_BODY_LEN: usize = 4; // ca_system_id (2) + ca_pid (2)
+/// Offset of `CA_PID` in the descriptor body.
+const CA_PID_OFFSET: usize = core::mem::size_of::<u16>();
+/// Shift of the 3 reserved bits within the `CA_PID` word.
+const CA_PID_RESERVED_SHIFT: u8 = 5;
+/// Mask of the high bits of the 13-bit PID within the `CA_PID` word.
+const CA_PID_HI_MASK: u8 = 0x1F;
 
 /// Best-effort, non-exhaustive mapping from CA system ID to a human-readable
 /// name.  Generated at build time from vendored TSDuck `.names` data
@@ -88,11 +94,12 @@ impl<'a> Parse<'a> for CaDescriptor<'a> {
                     tag: TAG,
                     reason: "CA_descriptor length too short for mandatory fields",
                 })?;
-        let ca_system_id = u16::from_be_bytes([fixed[0], fixed[1]]);
+        let [ca_system_id_hi, ca_system_id_lo, ca_pid_hi, ca_pid_lo] = *fixed;
+        let ca_system_id = u16::from_be_bytes([ca_system_id_hi, ca_system_id_lo]);
         // ca_pid: upper 3 bits are reserved (should be 0b111), lower 13 bits are the PID
-        let ca_pid = Pid::from_wire_masked(u16::from_be_bytes([fixed[2], fixed[3]]));
+        let ca_pid = Pid::from_wire_masked(u16::from_be_bytes([ca_pid_hi, ca_pid_lo]));
         Ok(Self {
-            reserved: ReservedOnes::from_bits(u64::from(fixed[2] >> 5)),
+            reserved: ReservedOnes::from_bits(u64::from(ca_pid_hi >> CA_PID_RESERVED_SHIFT)),
             ca_system_id,
             ca_pid,
             private_data,
@@ -111,13 +118,14 @@ impl Serialize for CaDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = (self.ca_system_id >> 8) as u8;
-        buf[3] = (self.ca_system_id & 0xFF) as u8;
+        let system_id_bytes = self.ca_system_id.to_be_bytes();
+        buf[HEADER_LEN..HEADER_LEN + CA_PID_OFFSET].copy_from_slice(&system_id_bytes);
         // ca_pid is a 13-bit field (upper 3 bits reserved); `Pid` is 13-bit by
         // construction, so no out-of-range value can reach the wire.
-        let ca_pid = self.ca_pid.value();
-        buf[4] = ((self.reserved.get() as u8) << 5) | ((ca_pid >> 8) as u8 & 0x1F);
-        buf[5] = (ca_pid & 0xFF) as u8;
+        let ca_pid = self.ca_pid.value().to_be_bytes();
+        buf[HEADER_LEN + CA_PID_OFFSET] =
+            ((self.reserved.get() as u8) << CA_PID_RESERVED_SHIFT) | (ca_pid[0] & CA_PID_HI_MASK);
+        buf[HEADER_LEN + CA_PID_OFFSET + 1] = ca_pid[1];
         if !self.private_data.is_empty() {
             buf[HEADER_LEN + MIN_BODY_LEN..len].copy_from_slice(self.private_data);
         }

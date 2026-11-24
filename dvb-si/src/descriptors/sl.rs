@@ -54,7 +54,7 @@ impl Serialize for SlDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN..HEADER_LEN + 2].copy_from_slice(&self.es_id.to_be_bytes());
+        buf[HEADER_LEN..HEADER_LEN + size_of::<u16>()].copy_from_slice(&self.es_id.to_be_bytes());
         Ok(len)
     }
 }

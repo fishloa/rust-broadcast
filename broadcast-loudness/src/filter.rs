@@ -111,6 +111,20 @@ pub const MIN_SAMPLE_RATE: u32 = (2.0 * SHELF_FC) as u32 + 1;
 /// largest input magnitude.
 pub(crate) const K_WEIGHTING_MAX_GAIN: f64 = 3.5;
 
+/// Base of the decibel scale.
+const DECIBEL_BASE: f64 = 10.0;
+
+/// Decibels per base-10 logarithm: `10^(dB/20)` returns an amplitude ratio to
+/// linear (BS.1770-5 Annex 1).
+const DB_PER_LOG10: f64 = 20.0;
+
+/// The factor two in each biquad numerator and denominator coefficient.
+const BIQUAD_COEFF_SCALE: f64 = 2.0;
+
+/// Canonical second-order high-pass numerator's `z^-1` coefficient:
+/// `1 - 2z^-1 + z^-2` (libebur128's RLB high-pass).
+const HIGH_PASS_B1: f64 = -2.0;
+
 /// Derive the two K‑weighting stage coefficients for a given sample rate.
 ///
 /// Returns `(stage1_shelving, stage2_highpass)`.
@@ -147,15 +161,15 @@ pub fn k_weighting_coeffs(sample_rate: u32) -> crate::Result<(BiquadCoeffs, Biqu
     if sample_rate < MIN_SAMPLE_RATE {
         return Err(crate::Error::InvalidSampleRate { got: sample_rate });
     }
-    let vh = libm::pow(10.0, SHELF_GAIN_DB / 20.0);
+    let vh = libm::pow(DECIBEL_BASE, SHELF_GAIN_DB / DB_PER_LOG10);
     let vb = libm::pow(vh, SHELF_VB_EXP);
     let k = libm::tan(core::f64::consts::PI * SHELF_FC / sample_rate as f64);
     let a0 = 1.0 + k / SHELF_Q + k * k;
     let stage1 = BiquadCoeffs {
         b0: (vh + vb * (k / SHELF_Q) + k * k) / a0,
-        b1: (2.0 * (k * k - vh)) / a0,
+        b1: (BIQUAD_COEFF_SCALE * (k * k - vh)) / a0,
         b2: (vh - vb * (k / SHELF_Q) + k * k) / a0,
-        a1: (2.0 * (k * k - 1.0)) / a0,
+        a1: (BIQUAD_COEFF_SCALE * (k * k - 1.0)) / a0,
         a2: (1.0 - k / SHELF_Q + k * k) / a0,
     };
 
@@ -169,9 +183,9 @@ pub fn k_weighting_coeffs(sample_rate: u32) -> crate::Result<(BiquadCoeffs, Biqu
         // normalized by a0); only the denominator is normalized. This matches
         // the BS.1770-5 tabulated values exactly.
         b0: 1.0,
-        b1: -2.0,
+        b1: HIGH_PASS_B1,
         b2: 1.0,
-        a1: (2.0 * (k * k - 1.0)) / a0,
+        a1: (BIQUAD_COEFF_SCALE * (k * k - 1.0)) / a0,
         a2: (1.0 - k / HIGH_PASS_Q + k * k) / a0,
     };
 

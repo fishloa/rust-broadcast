@@ -117,9 +117,21 @@ const SHORT_TERM_SUB_BLOCKS: usize = 30;
 /// gain for a 997 Hz tone.
 const LOUDNESS_OFFSET: f64 = -0.691;
 
+/// Base of the decibel scale.
+const DECIBEL_BASE: f64 = 10.0;
+
+/// Log scale of BS.1770-5 Annex 1 eq. (2): `L_K = -0.691 + 10·log10(sum)`.
+const LOUDNESS_LOG_SCALE: f64 = 10.0;
+
+/// Divisor turning a percentage into a fraction (EBU Tech 3342 ranking).
+const PERCENT_DIVISOR: f64 = 100.0;
+
+/// Channels of the stereo shortcut (`push_stereo_planar_*`).
+const STEREO_CHANNELS: usize = 2;
+
 /// Inverse of [`mean_sq_to_lkfs`].
 fn lkfs_to_mean_sq(lkfs: f64) -> f64 {
-    libm::pow(10.0, (lkfs - LOUDNESS_OFFSET) / 10.0)
+    libm::pow(DECIBEL_BASE, (lkfs - LOUDNESS_OFFSET) / LOUDNESS_LOG_SCALE)
 }
 
 /// Largest sample magnitude for `layout` that keeps every block below
@@ -141,7 +153,7 @@ fn mean_sq_to_lkfs(mean_sq: f64) -> f64 {
     if mean_sq <= 0.0 {
         f64::NEG_INFINITY
     } else {
-        LOUDNESS_OFFSET + 10.0 * libm::log10(mean_sq)
+        LOUDNESS_OFFSET + LOUDNESS_LOG_SCALE * libm::log10(mean_sq)
     }
 }
 
@@ -513,7 +525,7 @@ impl LoudnessHistogram {
         }
         // Tech 3342 MATLAB: round((n-1)*PRC/100 + 1), 1-based -> 0-based rank.
         let rank = |percent: f64| {
-            let one_based = libm::round((n as f64 - 1.0) * percent / 100.0 + 1.0) as u64;
+            let one_based = libm::round((n as f64 - 1.0) * percent / PERCENT_DIVISOR + 1.0) as u64;
             one_based.saturating_sub(1).min(n - 1)
         };
         let low = self.percentile_loudness(cut, rank(LRA_LOW_PERCENT));
@@ -562,7 +574,8 @@ impl LoudnessHistogram {
         let n = self.exact.len();
         // Tech 3342 MATLAB: round((n-1)*PRC/100 + 1), 1-based -> 0-based rank.
         let rank = |percent: f64| {
-            let one_based = libm::round((n as f64 - 1.0) * percent / 100.0 + 1.0) as usize;
+            let one_based =
+                libm::round((n as f64 - 1.0) * percent / PERCENT_DIVISOR + 1.0) as usize;
             one_based.saturating_sub(1).min(n - 1)
         };
         self.exact[rank(LRA_HIGH_PERCENT)] - self.exact[rank(LRA_LOW_PERCENT)]
@@ -936,9 +949,9 @@ impl LoudnessMeter {
         if self.finished {
             return Err(crate::Error::Finished);
         }
-        if self.layout.channel_count() != 2 {
+        if self.layout.channel_count() != STEREO_CHANNELS {
             return Err(crate::Error::ChannelMismatch {
-                expected: 2,
+                expected: STEREO_CHANNELS,
                 got: self.layout.channel_count(),
             });
         }

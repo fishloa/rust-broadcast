@@ -13,6 +13,12 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for service_descriptor.
 pub const TAG: u8 = 0x48;
 const HEADER_LEN: usize = 2;
+/// Offset of `service_type` in the body.
+const SERVICE_TYPE_OFFSET: usize = 0;
+/// Offset of `service_provider_name_length` in the body.
+const PROVIDER_NAME_LENGTH_OFFSET: usize = 1;
+/// Offset of `service_provider_name_char`s in the body.
+const PROVIDER_NAME_START: usize = 2;
 
 /// Service type — ETSI EN 300 468 Table 89.
 ///
@@ -235,22 +241,22 @@ impl<'a> Parse<'a> for ServiceDescriptor<'a> {
             "ServiceDescriptor",
             "unexpected tag for service_descriptor",
         )?;
-        if body.len() < 3 {
+        if body.len() < PROVIDER_NAME_START + 1 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_descriptor body too short for service_type + two length fields",
             });
         }
-        let service_type = ServiceType::from_u8(body[0]);
-        let provider_len = body[1] as usize;
-        let provider_end = 2 + provider_len;
+        let service_type = ServiceType::from_u8(body[SERVICE_TYPE_OFFSET]);
+        let provider_len = body[PROVIDER_NAME_LENGTH_OFFSET] as usize;
+        let provider_end = PROVIDER_NAME_START + provider_len;
         if provider_end + 1 > body.len() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_provider_name_length runs past descriptor end",
             });
         }
-        let provider_name = DvbText::new(&body[2..provider_end]);
+        let provider_name = DvbText::new(&body[PROVIDER_NAME_START..provider_end]);
         let service_len = body[provider_end] as usize;
         let service_end = provider_end + 1 + service_len;
         if service_end > body.len() {
@@ -285,9 +291,10 @@ impl Serialize for ServiceDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = self.service_type.to_u8();
-        buf[3] = broadcast_common::len::fit_u8(self.provider_name.len(), "provider_name_length")?;
-        let p_start = 4;
+        buf[HEADER_LEN + SERVICE_TYPE_OFFSET] = self.service_type.to_u8();
+        buf[HEADER_LEN + PROVIDER_NAME_LENGTH_OFFSET] =
+            broadcast_common::len::fit_u8(self.provider_name.len(), "provider_name_length")?;
+        let p_start = HEADER_LEN + PROVIDER_NAME_START;
         let p_end = p_start + self.provider_name.len();
         buf[p_start..p_end].copy_from_slice(self.provider_name.raw());
         buf[p_end] = broadcast_common::len::fit_u8(self.service_name.len(), "service_name_length")?;

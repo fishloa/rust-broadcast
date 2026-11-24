@@ -21,6 +21,7 @@
 //! build and parse cue sample payloads.
 
 use crate::error::{Error, Result};
+use crate::wire_cursor::{be_u16, be_u32};
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
@@ -28,6 +29,15 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 const BOX_HDR: usize = 8;
+const U16_LEN: usize = core::mem::size_of::<u16>();
+const U32_LEN: usize = core::mem::size_of::<u32>();
+const FOURCC_LEN: usize = 4;
+const BOX_TYPE_OFFSET: usize = U32_LEN;
+const SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
+const SAMPLE_ENTRY_FIXED_LEN: usize = SAMPLE_ENTRY_RESERVED_LEN + U16_LEN;
+const DATA_REFERENCE_INDEX_OFFSET: usize = SAMPLE_ENTRY_RESERVED_LEN;
+const SUBTITLE_CSTRING_COUNT: usize = 3;
+const DUPLICATE_CHILD_ORDINAL: u64 = 2;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -110,23 +120,27 @@ impl XmlSubtitleSampleEntry {
     /// Parse from full box bytes (including the 8-byte box header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         // Minimum body: SampleEntry reserved+dri (8) + 3 NUL bytes = 11
-        let body = crate::box_types::box_body(bytes, 11, "stpp")?;
+        let body = crate::box_types::box_body(
+            bytes,
+            SAMPLE_ENTRY_FIXED_LEN + SUBTITLE_CSTRING_COUNT,
+            "stpp",
+        )?;
         // SampleEntry: reserved(6) + data_reference_index(2)
-        let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
-        let pos = 8usize; // into body
+        let data_reference_index = be_u16(body, DATA_REFERENCE_INDEX_OFFSET, "sample entry")?;
+        let pos = SAMPLE_ENTRY_FIXED_LEN; // into body
         let (namespace, pos) = parse_cstring(body, pos)?;
         let (schema_location, pos) = parse_cstring(body, pos)?;
         let (auxiliary_mime_types, mut pos) = parse_cstring(body, pos)?;
 
         let mut extra_boxes = Vec::new();
         while pos + BOX_HDR <= body.len() {
-            let sz = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]])
-                as usize;
+            let sz = be_u32(body, pos, "child box size")? as usize;
             if sz < BOX_HDR {
                 break;
             }
             let end = pos.saturating_add(sz).min(body.len());
-            let bt = [body[pos + 4], body[pos + 5], body[pos + 6], body[pos + 7]];
+            let mut bt = [0u8; FOURCC_LEN];
+            bt.copy_from_slice(&body[pos + BOX_TYPE_OFFSET..pos + BOX_HDR]);
             let data = body[pos + BOX_HDR..end].to_vec();
             extra_boxes.push(crate::init_segment::OpaqueBox::new(bt, data));
             pos = pos.saturating_add(sz);
@@ -155,7 +169,7 @@ impl Serialize for XmlSubtitleSampleEntry {
 
     fn serialized_len(&self) -> usize {
         // box header (8) + reserved(6) + dri(2)
-        let mut n = BOX_HDR + 8;
+        let mut n = BOX_HDR + SAMPLE_ENTRY_FIXED_LEN;
         // three null-terminated strings
         n += cstring_len(&self.namespace);
         n += cstring_len(&self.schema_location);
@@ -176,10 +190,10 @@ impl Serialize for XmlSubtitleSampleEntry {
         // SampleEntry: reserved(6) zeros + data_reference_index(16). The zeros
         // are written, not skipped: a reused/dirty caller buffer would
         // otherwise keep garbage there (r04-W45).
-        buf[c..c + 6].fill(0);
-        c += 6;
-        buf[c..c + 2].copy_from_slice(&self.data_reference_index.to_be_bytes());
-        c += 2;
+        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].fill(0);
+        c += SAMPLE_ENTRY_RESERVED_LEN;
+        buf[c..c + U16_LEN].copy_from_slice(&self.data_reference_index.to_be_bytes());
+        c += U16_LEN;
         // namespace (null-terminated)
         buf[c..c + self.namespace.len()].copy_from_slice(self.namespace.as_bytes());
         c += self.namespace.len();
@@ -390,14 +404,13 @@ impl VttCueBox {
         let mut child_order: Vec<CueChild> = Vec::new();
         let mut pos = 0usize;
         while pos + BOX_HDR <= body.len() {
-            let sz = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]])
-                as usize;
+            let sz = be_u32(body, pos, "child box size")? as usize;
             if sz < BOX_HDR {
                 break;
             }
             let end = pos.saturating_add(sz).min(body.len());
             let child = &body[pos..end];
-            let fourcc = &child[4..8];
+            let fourcc = &child[BOX_TYPE_OFFSET..BOX_HDR];
             // ISO/IEC 14496-30 `VTTCueBox` lists each of `iden`/`sttg`/`payl`
             // once (private/specs-verified/mpeg/transmux/codec/captions-14496-30.md): a repeat cannot be held
             // in the typed fields (the last would win while the order listed
@@ -426,7 +439,7 @@ impl VttCueBox {
                     child_order.push(CueChild::Iden);
                 }
                 other => {
-                    let mut bt = [0u8; 4];
+                    let mut bt = [0u8; FOURCC_LEN];
                     bt.copy_from_slice(other);
                     child_order.push(CueChild::Extra(extra_children.len()));
                     extra_children.push(crate::init_segment::OpaqueBox::new(
@@ -481,7 +494,7 @@ impl VttCueBox {
 fn duplicate_cue_child(field: &'static str) -> Error {
     Error::InvalidValue(InvalidValue {
         field,
-        value: 2,
+        value: DUPLICATE_CHILD_ORDINAL,
         reason: "vttc admits at most one such child (ISO/IEC 14496-30 VTTCueBox)",
     })
 }
@@ -611,7 +624,7 @@ pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
     while pos < sample.len() {
         let rest = &sample[pos..];
         need_in(rest, BOX_HDR, "wvtt sample box header")?;
-        let size = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+        let size = be_u32(rest, 0, "wvtt sample box header")? as usize;
         if size < BOX_HDR || size > rest.len() {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "wvtt sample box size",
@@ -620,12 +633,12 @@ pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
             }));
         }
         let boxed = &rest[..size];
-        out.push(match &boxed[4..8] {
+        out.push(match &boxed[BOX_TYPE_OFFSET..BOX_HDR] {
             b"vttc" => WvttSampleBox::Cue(VttCueBox::bare_parse(boxed)?),
             b"vtte" => WvttSampleBox::Empty(VttEmptyCueBox::bare_parse(boxed)?),
             b"vtta" => WvttSampleBox::AdditionalText(VttAdditionalTextBox::bare_parse(boxed)?),
             other => {
-                let mut bt = [0u8; 4];
+                let mut bt = [0u8; FOURCC_LEN];
                 bt.copy_from_slice(other);
                 WvttSampleBox::Other(crate::init_segment::OpaqueBox::new(
                     bt,
@@ -709,27 +722,26 @@ impl WvttSampleEntry {
     /// Parse from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         // Minimum: box header (8) + SampleEntry reserved+dri (8) + vttC header (8) = 24
-        need_in(bytes, 24, "wvtt")?;
+        need_in(bytes, BOX_HDR + SAMPLE_ENTRY_FIXED_LEN + BOX_HDR, "wvtt")?;
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
-        let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
+        let data_reference_index = be_u16(body, DATA_REFERENCE_INDEX_OFFSET, "sample entry")?;
 
-        let mut pos = 8usize;
+        let mut pos = SAMPLE_ENTRY_FIXED_LEN;
         let mut config: Option<WebVttConfigurationBox> = None;
         let mut extra_boxes: Vec<crate::init_segment::OpaqueBox> = Vec::new();
 
         while pos + BOX_HDR <= body.len() {
-            let sz = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]])
-                as usize;
+            let sz = be_u32(body, pos, "child box size")? as usize;
             if sz < BOX_HDR {
                 break;
             }
             let end = pos.saturating_add(sz).min(body.len());
             let child = &body[pos..end];
-            let fourcc = &child[4..8];
+            let fourcc = &child[BOX_TYPE_OFFSET..BOX_HDR];
             match fourcc {
                 b"vttC" => config = Some(WebVttConfigurationBox::bare_parse(child)?),
                 _ => {
-                    let mut bt = [0u8; 4];
+                    let mut bt = [0u8; FOURCC_LEN];
                     bt.copy_from_slice(fourcc);
                     extra_boxes.push(crate::init_segment::OpaqueBox::new(
                         bt,
@@ -766,7 +778,7 @@ impl Serialize for WvttSampleEntry {
 
     fn serialized_len(&self) -> usize {
         // box header (8) + SampleEntry reserved+dri (8) + vttC + extra boxes
-        let mut n = BOX_HDR + 8 + self.config.serialized_len();
+        let mut n = BOX_HDR + SAMPLE_ENTRY_FIXED_LEN + self.config.serialized_len();
         for eb in &self.extra_boxes {
             n += eb.serialized_len();
         }
@@ -781,10 +793,10 @@ impl Serialize for WvttSampleEntry {
         // SampleEntry: reserved(6) zeros + data_reference_index(16). Written
         // explicitly so a reused/dirty caller buffer cannot leave garbage in the
         // reserved bytes (r04-W45).
-        buf[c..c + 6].fill(0);
-        c += 6;
-        buf[c..c + 2].copy_from_slice(&self.data_reference_index.to_be_bytes());
-        c += 2;
+        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].fill(0);
+        c += SAMPLE_ENTRY_RESERVED_LEN;
+        buf[c..c + U16_LEN].copy_from_slice(&self.data_reference_index.to_be_bytes());
+        c += U16_LEN;
         // vttC configuration box
         c += self.config.serialize_into(&mut buf[c..])?;
         // optional extra boxes

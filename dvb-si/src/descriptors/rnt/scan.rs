@@ -15,6 +15,12 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for RNT_scan_descriptor (RNT namespace).
 pub const TAG: u8 = 0x42;
 const ENTRY_LEN: usize = 5;
+/// Offset of `transport_stream_id` in an entry.
+const TRANSPORT_STREAM_ID_OFFSET: usize = 0;
+/// Offset of `original_network_id` in an entry.
+const ORIGINAL_NETWORK_ID_OFFSET: usize = TRANSPORT_STREAM_ID_OFFSET + size_of::<u16>();
+/// Offset of `scan_weighting` in an entry.
+const SCAN_WEIGHTING_OFFSET: usize = ORIGINAL_NETWORK_ID_OFFSET + size_of::<u16>();
 
 /// One scan entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,15 +38,23 @@ pub struct RntScanEntry {
 impl Entry<ENTRY_LEN> for RntScanEntry {
     fn read(b: &[u8; ENTRY_LEN]) -> Self {
         Self {
-            transport_stream_id: u16::from_be_bytes([b[0], b[1]]),
-            original_network_id: u16::from_be_bytes([b[2], b[3]]),
-            scan_weighting: b[4],
+            transport_stream_id: u16::from_be_bytes([
+                b[TRANSPORT_STREAM_ID_OFFSET],
+                b[TRANSPORT_STREAM_ID_OFFSET + 1],
+            ]),
+            original_network_id: u16::from_be_bytes([
+                b[ORIGINAL_NETWORK_ID_OFFSET],
+                b[ORIGINAL_NETWORK_ID_OFFSET + 1],
+            ]),
+            scan_weighting: b[SCAN_WEIGHTING_OFFSET],
         }
     }
     fn write(&self, b: &mut [u8; ENTRY_LEN]) {
-        b[..2].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        b[2..4].copy_from_slice(&self.original_network_id.to_be_bytes());
-        b[4] = self.scan_weighting;
+        b[TRANSPORT_STREAM_ID_OFFSET..ORIGINAL_NETWORK_ID_OFFSET]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        b[ORIGINAL_NETWORK_ID_OFFSET..SCAN_WEIGHTING_OFFSET]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
+        b[SCAN_WEIGHTING_OFFSET] = self.scan_weighting;
     }
 }
 

@@ -39,6 +39,13 @@ impl Default for RttEstimator {
     }
 }
 
+/// Weights of the two smoothed averages (rules 29/30): RTT 7/8 old + 1/8
+/// sample, RTTVar 3/4 old + 1/4 deviation.
+const RTT_EWMA_NUM: i64 = 7;
+const RTT_EWMA_DEN: i64 = 8;
+const VAR_EWMA_NUM: i64 = 3;
+const VAR_EWMA_DEN: i64 = 4;
+
 impl RttEstimator {
     /// A fresh estimator at the spec-mandated initial values (rule 31).
     pub fn new() -> Self {
@@ -76,12 +83,15 @@ impl RttEstimator {
         let sample_us = micros(sample);
 
         // rule 29: RTT = 7/8 * RTT + 1/8 * rtt
-        let new_rtt_us = rtt_us.saturating_mul(7).saturating_add(sample_us) / 8;
+        let new_rtt_us = rtt_us
+            .saturating_mul(RTT_EWMA_NUM)
+            .saturating_add(sample_us)
+            / RTT_EWMA_DEN;
         // rule 30: RTTVar = 3/4 * RTTVar + 1/4 * abs(RTT - rtt)
         let new_rtt_var_us = rtt_var_us
-            .saturating_mul(3)
+            .saturating_mul(VAR_EWMA_NUM)
             .saturating_add(rtt_us.saturating_sub(sample_us).saturating_abs())
-            / 4;
+            / VAR_EWMA_DEN;
 
         self.rtt = Duration::from_micros(u64::try_from(new_rtt_us.max(0)).unwrap_or(0));
         self.rtt_var = Duration::from_micros(u64::try_from(new_rtt_var_us.max(0)).unwrap_or(0));

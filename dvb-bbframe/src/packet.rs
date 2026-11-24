@@ -40,6 +40,7 @@ use alloc::vec::Vec;
 use crate::crc::crc8;
 use crate::error::{Error, Result};
 use crate::header::{BBHEADER_LEN, Bbheader, Mode};
+use crate::issy::{ISSY_LONG_LEN, ISSY_SHORT_LEN};
 
 /// User packet size in Normal Mode (188 bytes = full MPEG-2 TS packet).
 pub const NM_UP_SIZE: usize = 188;
@@ -51,7 +52,7 @@ const TS_TEI_BIT: u8 = 0x80;
 pub const HEM_UP_SIZE: usize = 187;
 
 /// Longest ISSY field (long form / BUFS-TTO signalling, EN 302 755 Annex C).
-const NM_ISSY_MAX_LEN: usize = 3;
+const NM_ISSY_MAX_LEN: usize = ISSY_LONG_LEN;
 
 /// DNP counter length when NPD is active (EN 302 755 §5.1.5/§5.1.8).
 const NM_DNP_LEN: usize = 1;
@@ -61,6 +62,12 @@ const NM_MAX_STRIDE: usize = NM_UP_SIZE + NM_ISSY_MAX_LEN + NM_DNP_LEN;
 
 /// MPEG-2 sync byte that CRC-8 replaces in NM.
 pub const TS_SYNC_BYTE: u8 = 0x47;
+
+/// `SYNCD` value meaning no user packet starts in the data field, so all of
+/// it continues the carried-over partial packet (EN 302 755 Table 2).
+pub const SYNCD_NO_UP_START: u16 = 0xFFFF;
+
+const BITS_PER_BYTE: u16 = u8::BITS as u16;
 
 /// Derive the Normal-Mode per-UP stride (bytes) from a parsed BBHEADER, for
 /// Transport Stream input — EN 302 755 §5.1.8 ("Normal Mode, GFPS and TS").
@@ -80,15 +87,15 @@ pub const TS_SYNC_BYTE: u8 = 0x47;
 #[must_use]
 pub fn nm_stride_bytes(hdr: &Bbheader) -> Option<usize> {
     let upl = hdr.upl;
-    if upl == 0 || !upl.is_multiple_of(8) {
+    if upl == 0 || !upl.is_multiple_of(BITS_PER_BYTE) {
         return None;
     }
-    let stride = (upl / 8) as usize;
+    let stride = (upl / BITS_PER_BYTE) as usize;
     let extra = stride.checked_sub(NM_UP_SIZE)?;
     let dnp_len = usize::from(hdr.matype.npd);
     let issy_len = extra.checked_sub(dnp_len)?;
     let issy_ok = if hdr.matype.issyi {
-        issy_len == 2 || issy_len == 3
+        issy_len == ISSY_SHORT_LEN || issy_len == ISSY_LONG_LEN
     } else {
         issy_len == 0
     };
@@ -303,6 +310,9 @@ pub struct CarryOverExtractor {
     buf: [u8; NM_MAX_STRIDE],
     /// Bytes already written into `buf`.
     pos: usize,
+    /// Mode and stride the carried `pos` bytes were collected under. A frame
+    /// whose layout differs cannot continue that carry.
+    carry_layout: Option<(Mode, usize)>,
     /// Rolling NM UP-level CRC-8 chain state: the CRC-8 computed over the
     /// last fully-assembled NM UP's content, checked against the next UP's
     /// leading (CRC) byte. `None` when no chain is established yet, or right
@@ -317,6 +327,7 @@ impl Default for CarryOverExtractor {
         Self {
             buf: [0u8; NM_MAX_STRIDE],
             pos: 0,
+            carry_layout: None,
             nm_crc_state: None,
             stats: CarryOverStats::default(),
         }
@@ -423,16 +434,17 @@ impl CarryOverExtractor {
         }
 
         let stride = HEM_UP_SIZE;
+        self.drop_carry_on_layout_change(Mode::HighEfficiency, stride);
         // SYNCD=0xFFFF (65535) means "no UP starts in the DATA FIELD" — the
         // entire data field is a continuation of the carried-over partial UP.
         // EN 302 755 Table 2.
-        let all_continuation = hdr.syncd == 0xFFFF;
+        let all_continuation = hdr.syncd == SYNCD_NO_UP_START;
         let syncd_bytes = if all_continuation {
             0
         } else {
-            (hdr.syncd / 8) as usize
+            (hdr.syncd / BITS_PER_BYTE) as usize
         };
-        let dfl_bytes = (hdr.dfl / 8) as usize;
+        let dfl_bytes = (hdr.dfl / BITS_PER_BYTE) as usize;
         let data = &data_field[..dfl_bytes.min(data_field.len())];
 
         let mut i = syncd_bytes;
@@ -478,6 +490,7 @@ impl CarryOverExtractor {
             // Store at offset 1 (reserving byte 0 for the sync we prepend later).
             self.buf[1..1 + tail].copy_from_slice(&data[i..i + tail]);
             self.pos = 1 + tail;
+            self.carry_layout = Some((Mode::HighEfficiency, stride));
         } else {
             self.pos = 0;
         }
@@ -533,16 +546,17 @@ impl CarryOverExtractor {
                 return;
             }
         };
+        self.drop_carry_on_layout_change(Mode::Normal, stride);
         // SYNCD=0xFFFF (65535) means "no UP starts in the DATA FIELD" — the
         // entire data field is a continuation of the carried-over partial UP.
         // EN 302 755 Table 2.
-        let all_continuation = hdr.syncd == 0xFFFF;
+        let all_continuation = hdr.syncd == SYNCD_NO_UP_START;
         let syncd_bytes = if all_continuation {
             0
         } else {
-            (hdr.syncd / 8) as usize
+            (hdr.syncd / BITS_PER_BYTE) as usize
         };
-        let dfl_bytes = (hdr.dfl / 8) as usize;
+        let dfl_bytes = (hdr.dfl / BITS_PER_BYTE) as usize;
         let data = &data_field[..dfl_bytes.min(data_field.len())];
 
         let mut i = syncd_bytes;
@@ -584,6 +598,7 @@ impl CarryOverExtractor {
             let tail = (data.len() - i).min(stride);
             self.buf[..tail].copy_from_slice(&data[i..i + tail]);
             self.pos = tail;
+            self.carry_layout = Some((Mode::Normal, stride));
         } else {
             self.pos = 0;
         }
@@ -591,7 +606,15 @@ impl CarryOverExtractor {
 
     pub(crate) fn discard_carry(&mut self) {
         self.pos = 0;
+        self.carry_layout = None;
         self.nm_crc_state = None;
+    }
+
+    fn drop_carry_on_layout_change(&mut self, mode: Mode, stride: usize) {
+        if self.pos > 0 && self.carry_layout != Some((mode, stride)) {
+            self.stats.partial_discards += 1;
+            self.discard_carry();
+        }
     }
 
     /// Finish one fully-buffered NM UP of `stride` bytes in `self.buf`:
@@ -1403,5 +1426,75 @@ mod tests {
         assert_eq!(hem_iter.size_hint(), (3, Some(3)));
         assert!(hem_iter.next().is_some());
         assert_eq!(hem_iter.size_hint(), (2, Some(2)));
+    }
+
+    /// ISSYI=1 with the 2-byte short ISSY field (EN 302 755 §5.1.6).
+    const SHORT_ISSY_LEN: usize = 2;
+    const ISSY_STRIDE: usize = NM_UP_SIZE + SHORT_ISSY_LEN;
+    /// One byte short of a whole UP at `ISSY_STRIDE`, and longer than both
+    /// the plain NM stride and the HEM carry.
+    const CARRIED_LEN: usize = ISSY_STRIDE - 1;
+    const RESYNC_OFFSET: usize = 10;
+    const CARRY_FILL: u8 = 0x11;
+    const CONTINUATION_FILL: u8 = 0x22;
+    const UP_FILL: u8 = 0x33;
+    const LEAD_FILL: u8 = 0x44;
+
+    fn bits(bytes: usize) -> u16 {
+        u16::try_from(bytes * u8::BITS as usize).unwrap()
+    }
+
+    fn nm_hdr_bytes(issyi: bool, syncd_bits: u16, dfl_bits: u16) -> [u8; BBHEADER_LEN] {
+        let mut hdr = make_nm_header(syncd_bits);
+        hdr.matype.issyi = issyi;
+        hdr.upl = bits(if issyi { ISSY_STRIDE } else { NM_UP_SIZE });
+        hdr.dfl = dfl_bits;
+        hdr.serialize().unwrap()
+    }
+
+    fn carry_partial_at_issy_stride() -> CarryOverExtractor {
+        let mut ex = CarryOverExtractor::new();
+        let partial = vec![CARRY_FILL; CARRIED_LEN];
+        let out = ex.feed_nm(&nm_hdr_bytes(true, 0, bits(CARRIED_LEN)), &partial);
+        assert!(out.is_empty());
+        assert_eq!(ex.stats().partial_discards, 0);
+        ex
+    }
+
+    #[test]
+    fn nm_stride_shrink_with_all_continuation_discards_carry() {
+        let mut ex = carry_partial_at_issy_stride();
+        let cont = vec![CONTINUATION_FILL; NM_UP_SIZE];
+        let hdr = nm_hdr_bytes(false, SYNCD_NO_UP_START, bits(NM_UP_SIZE));
+        assert!(ex.feed_nm(&hdr, &cont).is_empty());
+        assert_eq!(ex.stats().partial_discards, 1);
+
+        let up = vec![UP_FILL; NM_UP_SIZE];
+        let out = ex.feed_nm(&nm_hdr_bytes(false, 0, bits(NM_UP_SIZE)), &up);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0][0], TS_SYNC_BYTE);
+        assert_eq!(ex.stats().partial_discards, 1);
+    }
+
+    #[test]
+    fn nm_stride_shrink_with_syncd_discards_carry_and_resyncs() {
+        let mut ex = carry_partial_at_issy_stride();
+        let mut data = vec![LEAD_FILL; RESYNC_OFFSET];
+        data.extend(vec![UP_FILL; NM_UP_SIZE]);
+        let hdr = nm_hdr_bytes(false, bits(RESYNC_OFFSET), bits(data.len()));
+        let out = ex.feed_nm(&hdr, &data);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0][0], TS_SYNC_BYTE);
+        assert_eq!(out[0][1], UP_FILL);
+        assert_eq!(ex.stats().partial_discards, 1);
+    }
+
+    #[test]
+    fn nm_carry_longer_than_hem_stride_is_discarded_by_hem() {
+        let mut ex = carry_partial_at_issy_stride();
+        let cont = vec![CONTINUATION_FILL; HEM_UP_SIZE];
+        let hdr = make_hem_hdr_bytes(SYNCD_NO_UP_START, bits(HEM_UP_SIZE));
+        assert!(ex.feed_hem(&hdr, &cont, false).is_empty());
+        assert_eq!(ex.stats().partial_discards, 1);
     }
 }

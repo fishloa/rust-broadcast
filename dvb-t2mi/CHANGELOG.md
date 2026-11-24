@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [16.0.1] - 2026-11-23
+### Changed
+- Version-only lockstep patch with `dvb-bbframe` 16.0.1; no change in this crate.
+
 ## [16.0.0] - 2026-11-22
 ### Breaking
 

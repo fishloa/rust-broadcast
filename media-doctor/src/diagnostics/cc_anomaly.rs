@@ -32,6 +32,11 @@ use mpeg_ts::ts::{ContinuityCounter, TS_PACKET_SIZE, TsPacket};
 /// (ISO/IEC 13818-1 §2.4.3.4).
 const AF_DISCONTINUITY_INDICATOR: u8 = 0x80;
 
+/// Byte offset of `adaptation_field_length` (ISO/IEC 13818-1 §2.4.3.4).
+const ADAPTATION_FIELD_LENGTH_OFFSET: usize = 4;
+/// Byte offset of the adaptation field flags byte (§2.4.3.5).
+const ADAPTATION_FIELD_FLAGS_OFFSET: usize = 5;
+
 /// Copy one TS packet into a fixed array: no heap allocation per packet
 /// (audit MD-O2, #1112). `raw` is always exactly `TS_PACKET_SIZE` here (it
 /// is sliced at that stride).
@@ -84,7 +89,7 @@ impl Diagnostic for CcAnomalyCheck {
             let pid = hdr.pid;
 
             // Skip null packets — CC is undefined (§2.4.3.3).
-            if pid == Pid::from_const(0x1FFF) {
+            if pid == mpeg_ts::pid::well_known::NULL {
                 continue;
             }
 
@@ -97,7 +102,8 @@ impl Diagnostic for CcAnomalyCheck {
                     && let Some(state) = pid_states.get_mut(&pid)
                     && state.initialized
                 {
-                    let discontinuity = raw[4] > 0 && (raw[5] & AF_DISCONTINUITY_INDICATOR) != 0;
+                    let discontinuity = raw[ADAPTATION_FIELD_LENGTH_OFFSET] > 0
+                        && (raw[ADAPTATION_FIELD_FLAGS_OFFSET] & AF_DISCONTINUITY_INDICATOR) != 0;
                     if discontinuity {
                         state.last_cc = cc;
                         state.dup_used = false;
@@ -132,8 +138,8 @@ impl Diagnostic for CcAnomalyCheck {
             }
 
             let has_discontinuity = if hdr.has_adaptation() {
-                let af_len = raw[4] as usize;
-                af_len > 0 && (raw[5] & AF_DISCONTINUITY_INDICATOR) != 0
+                let af_len = raw[ADAPTATION_FIELD_LENGTH_OFFSET] as usize;
+                af_len > 0 && (raw[ADAPTATION_FIELD_FLAGS_OFFSET] & AF_DISCONTINUITY_INDICATOR) != 0
             } else {
                 false
             };

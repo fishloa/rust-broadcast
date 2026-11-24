@@ -46,6 +46,42 @@ pub const HANDSHAKE_EXT_BLOCK_HEADER_LEN: usize = 4;
 /// length is "in a number of 32-bit words").
 pub const HANDSHAKE_EXT_WORD_LEN: usize = 4;
 
+/// Byte offset of the `Extension Length` field inside an extension block's
+/// header (§3.2.1, Figure 4).
+const HS_EXT_BLOCK_LEN_OFFSET: usize = 2;
+
+/// Byte offsets of the Handshake CIF fields (§3.2.1, Figure 5).
+const CIF_WORD1_OFFSET: usize = 4;
+const CIF_INITIAL_SEQ_OFFSET: usize = 8;
+const CIF_MTU_OFFSET: usize = 12;
+const CIF_FLOW_WINDOW_OFFSET: usize = 16;
+const CIF_HANDSHAKE_TYPE_OFFSET: usize = 20;
+const CIF_SOCKET_ID_OFFSET: usize = 24;
+const CIF_SYN_COOKIE_OFFSET: usize = 28;
+const CIF_PEER_IP_OFFSET: usize = 32;
+
+/// Bytes in one IPv4 address word of the peer-IP array, and words in it.
+const IPV4_ADDR_LEN: usize = 4;
+const PEER_IP_WORDS: usize = 4;
+
+/// Shifts and mask of the Handshake CIF's second word: `Encryption Field`
+/// above `Extension Field` (§3.2.1, Figure 5).
+const CIF_ENCRYPTION_SHIFT: u32 = 16;
+const CIF_EXTENSION_MASK: u32 = 0xFFFF;
+
+/// Byte offsets of the Handshake Extension Message fields (§3.2.1.1,
+/// Figure 6).
+const HS_EXT_FLAGS_OFFSET: usize = 4;
+const HS_EXT_RECEIVER_DELAY_OFFSET: usize = 8;
+const HS_EXT_SENDER_DELAY_OFFSET: usize = 10;
+
+/// Byte offset of a group membership extension's second word, and the shifts
+/// and mask of the fields packed into it (§3.2.1.4, Figure 10).
+const GROUP_MEMBERSHIP_WORD1_OFFSET: usize = 4;
+const GROUP_TYPE_SHIFT: u32 = 24;
+const GROUP_FLAGS_SHIFT: u32 = 16;
+const GROUP_WEIGHT_MASK: u32 = 0xFFFF;
+
 /// `Encryption Field` wire values (§3.2.1, Table 2). Crate-private: they back
 /// [`EncryptionField`]'s conversions, which the enum exposes.
 pub(crate) const ENCRYPTION_FIELD_NONE: u16 = 0;
@@ -402,9 +438,15 @@ impl HsExtMessage {
         }
         Ok(HsExtMessage {
             srt_version: be32(bytes, 0),
-            srt_flags: HandshakeExtensionMessageFlags(be32(bytes, 4)),
-            receiver_tsbpd_delay: Duration::from_millis(u64::from(be16(bytes, 8))),
-            sender_tsbpd_delay: Duration::from_millis(u64::from(be16(bytes, 10))),
+            srt_flags: HandshakeExtensionMessageFlags(be32(bytes, HS_EXT_FLAGS_OFFSET)),
+            receiver_tsbpd_delay: Duration::from_millis(u64::from(be16(
+                bytes,
+                HS_EXT_RECEIVER_DELAY_OFFSET,
+            ))),
+            sender_tsbpd_delay: Duration::from_millis(u64::from(be16(
+                bytes,
+                HS_EXT_SENDER_DELAY_OFFSET,
+            ))),
         })
     }
 
@@ -412,9 +454,17 @@ impl HsExtMessage {
     pub fn to_bytes(&self) -> [u8; HS_EXT_MESSAGE_LEN] {
         let mut buf = [0u8; HS_EXT_MESSAGE_LEN];
         put_be32(&mut buf, 0, self.srt_version);
-        put_be32(&mut buf, 4, self.srt_flags.0);
-        put_be16(&mut buf, 8, wire_delay_ms(self.receiver_tsbpd_delay));
-        put_be16(&mut buf, 10, wire_delay_ms(self.sender_tsbpd_delay));
+        put_be32(&mut buf, HS_EXT_FLAGS_OFFSET, self.srt_flags.0);
+        put_be16(
+            &mut buf,
+            HS_EXT_RECEIVER_DELAY_OFFSET,
+            wire_delay_ms(self.receiver_tsbpd_delay),
+        );
+        put_be16(
+            &mut buf,
+            HS_EXT_SENDER_DELAY_OFFSET,
+            wire_delay_ms(self.sender_tsbpd_delay),
+        );
         buf
     }
 }
@@ -563,23 +613,23 @@ impl GroupMembershipExtension {
             }));
         }
         let group_id = be32(bytes, 0);
-        let word1 = be32(bytes, 4);
+        let word1 = be32(bytes, GROUP_MEMBERSHIP_WORD1_OFFSET);
         Ok(GroupMembershipExtension {
             group_id,
-            group_type: GroupType::from_bits((word1 >> 24) as u8),
-            flags: GroupFlags((word1 >> 16) as u8),
-            weight: (word1 & 0xFFFF) as u16,
+            group_type: GroupType::from_bits((word1 >> GROUP_TYPE_SHIFT) as u8),
+            flags: GroupFlags((word1 >> GROUP_FLAGS_SHIFT) as u8),
+            weight: (word1 & GROUP_WEIGHT_MASK) as u16,
         })
     }
 
     /// Serialize into a fresh 8-byte buffer.
     pub fn to_bytes(&self) -> [u8; GROUP_MEMBERSHIP_EXT_LEN] {
         let mut buf = [0u8; GROUP_MEMBERSHIP_EXT_LEN];
-        let word1 = (u32::from(self.group_type.to_bits()) << 24)
-            | (u32::from(self.flags.0) << 16)
+        let word1 = (u32::from(self.group_type.to_bits()) << GROUP_TYPE_SHIFT)
+            | (u32::from(self.flags.0) << GROUP_FLAGS_SHIFT)
             | u32::from(self.weight);
         put_be32(&mut buf, 0, self.group_id);
-        put_be32(&mut buf, 4, word1);
+        put_be32(&mut buf, GROUP_MEMBERSHIP_WORD1_OFFSET, word1);
         buf
     }
 }
@@ -649,15 +699,15 @@ impl<'a> HandshakeExtensionBlock<'a> {
     /// each 4-byte word of `contents` is byte-reversed before concatenation,
     /// trailing NUL padding is trimmed, and the result is validated as UTF-8.
     pub fn as_stream_id(&self) -> Result<String> {
-        if !self.contents.len().is_multiple_of(4) {
+        if !self.contents.len().is_multiple_of(HANDSHAKE_EXT_WORD_LEN) {
             return Err(Error::BufferTooShort(BufferTooShort {
-                need: self.contents.len().div_ceil(4) * 4,
+                need: self.contents.len().div_ceil(HANDSHAKE_EXT_WORD_LEN) * HANDSHAKE_EXT_WORD_LEN,
                 have: self.contents.len(),
                 what: "stream ID extension (not a whole number of 4-byte words)",
             }));
         }
         let mut bytes = Vec::with_capacity(self.contents.len());
-        for word in self.contents.chunks_exact(4) {
+        for word in self.contents.chunks_exact(HANDSHAKE_EXT_WORD_LEN) {
             bytes.extend(word.iter().rev());
         }
         while bytes.last() == Some(&0u8) {
@@ -678,11 +728,11 @@ impl<'a> HandshakeExtensionBlock<'a> {
 /// the next 4-byte boundary. Inverse of [`HandshakeExtensionBlock::as_stream_id`].
 pub fn encode_stream_id(id: &str) -> Vec<u8> {
     let mut bytes = Vec::from(id.as_bytes());
-    while bytes.len() % 4 != 0 {
+    while bytes.len() % HANDSHAKE_EXT_WORD_LEN != 0 {
         bytes.push(0);
     }
     let mut out = Vec::with_capacity(bytes.len());
-    for word in bytes.chunks_exact(4) {
+    for word in bytes.chunks_exact(HANDSHAKE_EXT_WORD_LEN) {
         out.extend(word.iter().rev());
     }
     out
@@ -696,15 +746,15 @@ pub fn encode_stream_id(id: &str) -> Vec<u8> {
 /// [`Error::FieldOverflow`] if `contents` is not a whole number of 4-byte
 /// words, or has more than `0xFFFF` such words.
 pub fn build_extension_block(ext_type: ExtensionType, contents: &[u8]) -> Result<Vec<u8>> {
-    if !contents.len().is_multiple_of(4) {
+    if !contents.len().is_multiple_of(HANDSHAKE_EXT_WORD_LEN) {
         return Err(Error::InvalidField(InvalidField {
             field: "Extension Contents",
             reason: "length must be a whole number of 4-byte words",
         }));
     }
-    let words = contents.len() / 4;
+    let words = contents.len() / HANDSHAKE_EXT_WORD_LEN;
     let words_u16 = broadcast_common::len::fit_u16(words, "Extension Length")?;
-    let mut out = Vec::with_capacity(4 + contents.len());
+    let mut out = Vec::with_capacity(HANDSHAKE_EXT_BLOCK_HEADER_LEN + contents.len());
     out.extend_from_slice(&ext_type.to_bits().to_be_bytes());
     out.extend_from_slice(&words_u16.to_be_bytes());
     out.extend_from_slice(contents);
@@ -744,7 +794,7 @@ impl<'a> HandshakeExtensions<'a> {
                 }));
             }
             let ext_type_bits = be16(rest, 0);
-            let ext_len_words = be16(rest, 2);
+            let ext_len_words = be16(rest, HS_EXT_BLOCK_LEN_OFFSET);
             let ext_len_bytes = usize::from(ext_len_words) * HANDSHAKE_EXT_WORD_LEN;
             if rest.len() < HANDSHAKE_EXT_BLOCK_HEADER_LEN + ext_len_bytes {
                 return Err(Error::ExtensionOverrun {
@@ -792,7 +842,7 @@ pub struct HandshakePacket<'a> {
     pub syn_cookie: u32,
     /// IPv4 or IPv6 address of the packet's sender, as 4 wire words (IPv4:
     /// only the first word is non-zero).
-    pub peer_ip: [u32; 4],
+    pub peer_ip: [u32; PEER_IP_WORDS],
     /// The trailing Handshake Extension blocks (possibly empty).
     pub extensions: HandshakeExtensions<'a>,
 }
@@ -805,16 +855,19 @@ impl<'a> HandshakePacket<'a> {
     ) -> Result<Self> {
         need_in(cif, HANDSHAKE_CIF_FIXED_LEN, "handshake CIF")?;
         let version = be32(cif, 0);
-        let word1 = be32(cif, 4);
-        let encryption_field = EncryptionField::from_bits((word1 >> 16) as u16);
-        let extension_field = HandshakeExtensionFlags((word1 & 0xFFFF) as u16);
-        let initial_seq_number = be32(cif, 8);
-        let mtu = be32(cif, 12);
-        let max_flow_window_size = be32(cif, 16);
-        let handshake_type = HandshakeType::from_bits(be32(cif, 20));
-        let srt_socket_id = be32(cif, 24);
-        let syn_cookie = be32(cif, 28);
-        let peer_ip = [be32(cif, 32), be32(cif, 36), be32(cif, 40), be32(cif, 44)];
+        let word1 = be32(cif, CIF_WORD1_OFFSET);
+        let encryption_field = EncryptionField::from_bits((word1 >> CIF_ENCRYPTION_SHIFT) as u16);
+        let extension_field = HandshakeExtensionFlags((word1 & CIF_EXTENSION_MASK) as u16);
+        let initial_seq_number = be32(cif, CIF_INITIAL_SEQ_OFFSET);
+        let mtu = be32(cif, CIF_MTU_OFFSET);
+        let max_flow_window_size = be32(cif, CIF_FLOW_WINDOW_OFFSET);
+        let handshake_type = HandshakeType::from_bits(be32(cif, CIF_HANDSHAKE_TYPE_OFFSET));
+        let srt_socket_id = be32(cif, CIF_SOCKET_ID_OFFSET);
+        let syn_cookie = be32(cif, CIF_SYN_COOKIE_OFFSET);
+        let mut peer_ip = [0u32; PEER_IP_WORDS];
+        for (word, slot) in peer_ip.iter_mut().enumerate() {
+            *slot = be32(cif, CIF_PEER_IP_OFFSET + word * IPV4_ADDR_LEN);
+        }
         let extensions = HandshakeExtensions::parse(&cif[HANDSHAKE_CIF_FIXED_LEN..])?;
         Ok(HandshakePacket {
             timestamp,
@@ -844,20 +897,23 @@ impl<'a> HandshakePacket<'a> {
     }
 
     pub(crate) fn write_cif(&self, buf: &mut [u8]) -> Result<()> {
-        let word1 =
-            (u32::from(self.encryption_field.to_bits()) << 16) | u32::from(self.extension_field.0);
+        let word1 = (u32::from(self.encryption_field.to_bits()) << CIF_ENCRYPTION_SHIFT)
+            | u32::from(self.extension_field.0);
         put_be32(buf, 0, self.version);
-        put_be32(buf, 4, word1);
-        put_be32(buf, 8, self.initial_seq_number);
-        put_be32(buf, 12, self.mtu);
-        put_be32(buf, 16, self.max_flow_window_size);
-        put_be32(buf, 20, self.handshake_type.to_bits());
-        put_be32(buf, 24, self.srt_socket_id);
-        put_be32(buf, 28, self.syn_cookie);
-        put_be32(buf, 32, self.peer_ip[0]);
-        put_be32(buf, 36, self.peer_ip[1]);
-        put_be32(buf, 40, self.peer_ip[2]);
-        put_be32(buf, 44, self.peer_ip[3]);
+        put_be32(buf, CIF_WORD1_OFFSET, word1);
+        put_be32(buf, CIF_INITIAL_SEQ_OFFSET, self.initial_seq_number);
+        put_be32(buf, CIF_MTU_OFFSET, self.mtu);
+        put_be32(buf, CIF_FLOW_WINDOW_OFFSET, self.max_flow_window_size);
+        put_be32(
+            buf,
+            CIF_HANDSHAKE_TYPE_OFFSET,
+            self.handshake_type.to_bits(),
+        );
+        put_be32(buf, CIF_SOCKET_ID_OFFSET, self.srt_socket_id);
+        put_be32(buf, CIF_SYN_COOKIE_OFFSET, self.syn_cookie);
+        for (word, value) in self.peer_ip.iter().enumerate() {
+            put_be32(buf, CIF_PEER_IP_OFFSET + word * IPV4_ADDR_LEN, *value);
+        }
         let mut off = HANDSHAKE_CIF_FIXED_LEN;
         for block in &self.extensions.0 {
             let words = broadcast_common::len::fit_u16(
@@ -865,7 +921,7 @@ impl<'a> HandshakePacket<'a> {
                 "Extension Length",
             )?;
             put_be16(buf, off, block.ext_type.to_bits());
-            put_be16(buf, off + 2, words);
+            put_be16(buf, off + HS_EXT_BLOCK_LEN_OFFSET, words);
             off += HANDSHAKE_EXT_BLOCK_HEADER_LEN;
             buf[off..off + block.contents.len()].copy_from_slice(block.contents);
             off += block.contents.len();

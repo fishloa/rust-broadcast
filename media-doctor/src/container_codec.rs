@@ -160,7 +160,7 @@ fn check_hevc_sample_entries(bytes: &[u8], report: &mut Report) {
 /// naming a top-level box type every ISOBMFF/CMAF/DASH file starts with,
 /// including the compressed `!mov` / `!mof` (ISO/IEC 14496-12:2026 §8.16).
 fn looks_like_isobmff(bytes: &[u8]) -> bool {
-    if bytes.len() < 8 {
+    if bytes.len() < BOX_HEADER_LEN {
         return false;
     }
     matches!(
@@ -184,8 +184,16 @@ fn nal_length_size(config: &CodecConfig) -> Option<usize> {
     // The field is 2 bits; the crate's parsers already reject the reserved
     // value 2 (a 3-byte prefix), so this cannot be out of range.
     let width = usize::from(length_size_minus_one) + 1;
-    matches!(width, 1 | 2 | 4).then_some(width)
+    AVCC_LENGTH_SIZES.contains(&width).then_some(width)
 }
+
+/// Bytes of an ISO BMFF box header: `size` plus `type`
+/// (ISO/IEC 14496-12:2026 §4.2).
+const BOX_HEADER_LEN: usize = 8;
+
+/// `lengthSizeMinusOne` values a well-formed avcC/hvcC may declare, as byte
+/// prefixes (ISO/IEC 14496-15:2017 §5.3.3.1.1).
+const AVCC_LENGTH_SIZES: [usize; 3] = [1, 2, 4];
 
 fn check_media(media: &Media, report: &mut Report) {
     for track in &media.tracks {

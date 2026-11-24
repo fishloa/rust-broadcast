@@ -40,6 +40,10 @@ use crate::ops::{Op, StreamModel};
 /// (ISO/IEC 13818-1 §2.4.3.5), at byte offset 5 of the 188-byte packet.
 const AF_DISCONTINUITY: u8 = 0x80;
 
+/// Byte offset of the adaptation field flags byte, which carries
+/// `discontinuity_indicator` (ISO/IEC 13818-1 §2.4.3.5).
+const ADAPTATION_FIELD_FLAGS_OFFSET: usize = 5;
+
 /// PCR-discontinuity honor operation — flags genuine unflagged breaks without
 /// rewriting any timestamp.
 pub(crate) struct PcrHonorOp {
@@ -74,7 +78,7 @@ impl Op for PcrHonorOp {
         // byte — including the PCR value — is preserved.
         let mut buf = [0u8; TS_PACKET_SIZE];
         buf.copy_from_slice(packet);
-        buf[5] |= AF_DISCONTINUITY;
+        buf[ADAPTATION_FIELD_FLAGS_OFFSET] |= AF_DISCONTINUITY;
         out(&buf);
     }
 

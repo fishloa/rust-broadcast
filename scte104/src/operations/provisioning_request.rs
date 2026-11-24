@@ -12,6 +12,7 @@
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 
+use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::{Parse, Serialize};
@@ -27,6 +28,22 @@ pub const SERVICE_NAME_LEN: usize = 32;
 /// Fixed wire size of one `DPI_PID_index`/`shared_PID`/`event_id_compliance_flag`
 /// loop entry (Table 10-3).
 pub const DPI_PID_ENTRY_LEN: usize = 4;
+
+// Field byte offsets (ANSI/SCTE 104 2023 §10.5.1).
+const DPI_PID_INDEX_OFFSET: usize = 0;
+const SHARED_PID_OFFSET: usize = 2;
+const EVENT_ID_COMPLIANCE_FLAG_OFFSET: usize = 3;
+
+const VIDEO_COMPONENT_TAG_OFFSET: usize = 0;
+const NUMBER_OF_AUDIO_COMPONENTS_OFFSET: usize = 1;
+const COMPONENT_LIST_HEADER_LEN: usize = 2;
+const NUMBER_OF_DATA_COMPONENTS_LEN: usize = 1;
+
+const INJECTOR_IP_ADDRESS_OFFSET: usize = 0;
+const INJECTOR_SOCKET_NUMBER_OFFSET: usize = 4;
+const SERVICE_NAME_OFFSET: usize = 6;
+const NUMBER_OF_DPI_PIDS_OFFSET: usize = SERVICE_NAME_OFFSET + SERVICE_NAME_LEN;
+const SERVICE_HEADER_LEN: usize = NUMBER_OF_DPI_PIDS_OFFSET + 1;
 
 /// One entry in the `provisioning_request_data()` DPI-PID loop — Table 10-3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -48,16 +65,16 @@ impl DpiPidEntry {
             "provisioning_request_data DPI PID entry",
         )?;
         Ok(Self {
-            dpi_pid_index: u16::from_be_bytes([bytes[0], bytes[1]]),
-            shared_pid: bytes[2],
-            event_id_compliance_flag: bytes[3],
+            dpi_pid_index: u16::from_be_bytes(be::<U16_LEN>(bytes, DPI_PID_INDEX_OFFSET)?),
+            shared_pid: bytes[SHARED_PID_OFFSET],
+            event_id_compliance_flag: bytes[EVENT_ID_COMPLIANCE_FLAG_OFFSET],
         })
     }
 
     fn write_one(&self, buf: &mut [u8]) {
         buf[0..2].copy_from_slice(&self.dpi_pid_index.to_be_bytes());
-        buf[2] = self.shared_pid;
-        buf[3] = self.event_id_compliance_flag;
+        buf[SHARED_PID_OFFSET] = self.shared_pid;
+        buf[EVENT_ID_COMPLIANCE_FLAG_OFFSET] = self.event_id_compliance_flag;
     }
 }
 
@@ -78,10 +95,14 @@ impl InjectorComponentList {
     /// Parse from the front of `bytes`; returns the value and the number of
     /// bytes consumed (the caller has more fields possibly following).
     fn parse_prefix(bytes: &[u8]) -> Result<(Self, usize)> {
-        need_in(bytes, 2, "injector_component_list header")?;
-        let video_component_tag = bytes[0];
-        let n_audio = bytes[1] as usize;
-        let mut pos = 2;
+        need_in(
+            bytes,
+            COMPONENT_LIST_HEADER_LEN,
+            "injector_component_list header",
+        )?;
+        let video_component_tag = bytes[VIDEO_COMPONENT_TAG_OFFSET];
+        let n_audio = bytes[NUMBER_OF_AUDIO_COMPONENTS_OFFSET] as usize;
+        let mut pos = COMPONENT_LIST_HEADER_LEN;
         need_in(
             bytes,
             pos + n_audio + 1,
@@ -109,19 +130,22 @@ impl InjectorComponentList {
     }
 
     fn serialized_len(&self) -> usize {
-        2 + self.audio_component_tags.len() + 1 + self.data_component_tags.len()
+        COMPONENT_LIST_HEADER_LEN
+            + self.audio_component_tags.len()
+            + NUMBER_OF_DATA_COMPONENTS_LEN
+            + self.data_component_tags.len()
     }
 
     /// Write into the front of `buf`; returns bytes written.
     fn write_prefix(&self, buf: &mut [u8]) -> Result<usize> {
         let n_audio = self.audio_component_tags.len();
         let n_data = self.data_component_tags.len();
-        buf[0] = self.video_component_tag;
-        buf[1] = broadcast_common::len::fit_u8(
+        buf[VIDEO_COMPONENT_TAG_OFFSET] = self.video_component_tag;
+        buf[NUMBER_OF_AUDIO_COMPONENTS_OFFSET] = broadcast_common::len::fit_u8(
             n_audio,
             "injector_component_list.number_of_audio_components",
         )?;
-        let mut pos = 2;
+        let mut pos = COMPONENT_LIST_HEADER_LEN;
         buf[pos..pos + n_audio].copy_from_slice(&self.audio_component_tags);
         pos += n_audio;
         buf[pos] = broadcast_common::len::fit_u8(
@@ -171,14 +195,20 @@ impl Default for ProvisioningService {
 
 impl ProvisioningService {
     fn parse_prefix(bytes: &[u8]) -> Result<(Self, usize)> {
-        const HEAD_LEN: usize = 4 + 2 + SERVICE_NAME_LEN + 1; // up to number_of_DPI_PIDs
-        need_in(bytes, HEAD_LEN, "provisioning_request_data service header")?;
-        let injector_ip_address = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let injector_socket_number = u16::from_be_bytes([bytes[4], bytes[5]]);
+        need_in(
+            bytes,
+            SERVICE_HEADER_LEN,
+            "provisioning_request_data service header",
+        )?;
+        let injector_ip_address =
+            u32::from_be_bytes(be::<U32_LEN>(bytes, INJECTOR_IP_ADDRESS_OFFSET)?);
+        let injector_socket_number =
+            u16::from_be_bytes(be::<U16_LEN>(bytes, INJECTOR_SOCKET_NUMBER_OFFSET)?);
         let mut service_name = [0u8; SERVICE_NAME_LEN];
-        service_name.copy_from_slice(&bytes[6..6 + SERVICE_NAME_LEN]);
-        let number_of_dpi_pids = bytes[6 + SERVICE_NAME_LEN] as usize;
-        let mut pos = HEAD_LEN;
+        service_name
+            .copy_from_slice(&bytes[SERVICE_NAME_OFFSET..SERVICE_NAME_OFFSET + SERVICE_NAME_LEN]);
+        let number_of_dpi_pids = bytes[NUMBER_OF_DPI_PIDS_OFFSET] as usize;
+        let mut pos = SERVICE_HEADER_LEN;
 
         let mut dpi_pids = Vec::with_capacity(number_of_dpi_pids);
         for _ in 0..number_of_dpi_pids {
@@ -213,7 +243,7 @@ impl ProvisioningService {
     }
 
     fn serialized_len(&self) -> usize {
-        let mut len = 4 + 2 + SERVICE_NAME_LEN + 1 + self.dpi_pids.len() * DPI_PID_ENTRY_LEN + 1;
+        let mut len = SERVICE_HEADER_LEN + self.dpi_pids.len() * DPI_PID_ENTRY_LEN + 1;
         if let Some(list) = &self.injector_component_list {
             len += list.serialized_len();
         }
@@ -238,11 +268,11 @@ impl ProvisioningService {
         buf[0..4].copy_from_slice(&self.injector_ip_address.to_be_bytes());
         buf[4..6].copy_from_slice(&self.injector_socket_number.to_be_bytes());
         buf[6..6 + SERVICE_NAME_LEN].copy_from_slice(&self.service_name);
-        buf[6 + SERVICE_NAME_LEN] = broadcast_common::len::fit_u8(
+        buf[NUMBER_OF_DPI_PIDS_OFFSET] = broadcast_common::len::fit_u8(
             self.dpi_pids.len(),
             "provisioning_request_data.number_of_DPI_PIDs",
         )?;
-        let mut pos = 4 + 2 + SERVICE_NAME_LEN + 1;
+        let mut pos = SERVICE_HEADER_LEN;
         for entry in &self.dpi_pids {
             entry.write_one(&mut buf[pos..pos + DPI_PID_ENTRY_LEN]);
             pos += DPI_PID_ENTRY_LEN;

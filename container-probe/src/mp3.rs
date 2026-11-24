@@ -30,6 +30,7 @@ const ID3_FLAG_FOOTER: u8 = 0x10;
 const ID3_SYNCSAFE_MASK: u8 = 0x7F;
 /// An MPEG audio syncword is an 11-bit `1`s pattern: ``b[0] == 0xFF`` and the
 /// top 3 bits of `b[1]` set (ISO/IEC 11172-3 §2.4.2.3).
+const MP3_SYNC_B0: u8 = 0xFF;
 const MP3_SYNC_B1_MASK: u8 = 0xE0;
 /// The MPEG version field `b[1][4:3]`: `3` is MPEG-1 (`11`).
 const MP3_VERSION_MPEG1: u8 = 3;
@@ -50,6 +51,30 @@ const BITRATE_KILO_FACTOR: u32 = 1000;
 const MP3_MIN_CHAIN_WEAK: usize = 4;
 /// Chained frames that lift the verdict to `LATTICE_STRONG`.
 const MP3_MIN_CHAIN_STRONG: usize = 16;
+
+/// Byte offsets of the MPEG-1 Layer III header's second to fourth bytes.
+const HEADER_BYTE_B1: usize = 1;
+const HEADER_BYTE_B2: usize = 2;
+const HEADER_BYTE_B3: usize = 3;
+
+/// Wire bit positions and masks of the header fields (ISO/IEC 11172-3 §2.4.2.3).
+const VERSION_SHIFT: u32 = 3;
+const VERSION_MASK: u8 = 0x03;
+const LAYER_SHIFT: u32 = 1;
+const LAYER_MASK: u8 = 0x03;
+const BITRATE_INDEX_SHIFT: u32 = 4;
+const BITRATE_INDEX_MASK: u8 = 0x0F;
+const SAMPLE_RATE_INDEX_SHIFT: u32 = 2;
+const SAMPLE_RATE_INDEX_MASK: u8 = 0x03;
+const PADDING_SHIFT: u32 = 1;
+const PADDING_MASK: u8 = 0x01;
+
+/// Byte offset of the ID3v2 header's flags field.
+const ID3_FLAGS_OFFSET: usize = 5;
+/// Byte positions of the ID3v2 syncsafe size field.
+const ID3_SIZE_BYTES: [usize; 4] = [6, 7, 8, 9];
+/// Shifts of those four bytes: seven payload bits each, most significant first.
+const ID3_SIZE_SHIFTS: [u32; 4] = [21, 14, 7, 0];
 
 /// Bitrate table (kbps) for MPEG-1 Layer III by `bitrate_index`
 /// (`b[2][7:4]`); index 0 (free-format) and 15 (forbidden) are `0` and
@@ -144,23 +169,23 @@ fn longest_mp3_chain(data: &[u8]) -> crate::chain::Chain {
 /// `frame_length` for a valid MPEG-1 Layer III frame header at `i`, or `None`
 /// if the bytes are not a conformant MP3 frame header.
 fn mp3_frame_len(data: &[u8], i: usize) -> Option<usize> {
-    if i + 3 >= data.len() {
+    if data.len().saturating_sub(i) < MP3_HEADER_LEN {
         return None;
     }
     let b0 = data[i];
-    let b1 = data[i + 1];
-    let b2 = data[i + 2];
-    let b3 = data[i + 3];
-    if b0 != 0xFF || b1 & MP3_SYNC_B1_MASK != MP3_SYNC_B1_MASK {
+    let b1 = data[i + HEADER_BYTE_B1];
+    let b2 = data[i + HEADER_BYTE_B2];
+    let b3 = data[i + HEADER_BYTE_B3];
+    if b0 != MP3_SYNC_B0 || b1 & MP3_SYNC_B1_MASK != MP3_SYNC_B1_MASK {
         return None;
     }
-    let version = (b1 >> 3) & 0x03;
-    let layer = (b1 >> 1) & 0x03;
+    let version = (b1 >> VERSION_SHIFT) & VERSION_MASK;
+    let layer = (b1 >> LAYER_SHIFT) & LAYER_MASK;
     if version != MP3_VERSION_MPEG1 || layer != MP3_LAYER_III {
         return None;
     }
-    let br_idx = (b2 >> 4) & 0x0F;
-    let sr_idx = (b2 >> 2) & 0x03;
+    let br_idx = (b2 >> BITRATE_INDEX_SHIFT) & BITRATE_INDEX_MASK;
+    let sr_idx = (b2 >> SAMPLE_RATE_INDEX_SHIFT) & SAMPLE_RATE_INDEX_MASK;
     if usize::from(sr_idx) >= SAMPLE_RATE_MPEG1.len() {
         return None;
     }
@@ -168,7 +193,7 @@ fn mp3_frame_len(data: &[u8], i: usize) -> Option<usize> {
     if bitrate == 0 {
         return None; // reserved/free-format
     }
-    let padding = (b3 >> 1) & 0x01;
+    let padding = (b3 >> PADDING_SHIFT) & PADDING_MASK;
     let len = (FRAME_LENGTH_COEFF * u32::from(bitrate) * BITRATE_KILO_FACTOR)
         / SAMPLE_RATE_MPEG1[sr_idx as usize]
         + u32::from(padding);
@@ -185,11 +210,13 @@ fn id3_skip(data: &[u8]) -> Option<usize> {
     if data.len() < ID3_HEADER_LEN || data[..ID3_SIGNATURE.len()] != ID3_SIGNATURE {
         return None;
     }
-    let flags = data[5];
-    let size = ((u32::from(data[6]) & u32::from(ID3_SYNCSAFE_MASK)) << 21)
-        | ((u32::from(data[7]) & u32::from(ID3_SYNCSAFE_MASK)) << 14)
-        | ((u32::from(data[8]) & u32::from(ID3_SYNCSAFE_MASK)) << 7)
-        | (u32::from(data[9]) & u32::from(ID3_SYNCSAFE_MASK));
+    let flags = data[ID3_FLAGS_OFFSET];
+    let size = ID3_SIZE_BYTES
+        .iter()
+        .zip(ID3_SIZE_SHIFTS)
+        .fold(0u32, |acc, (i, shift)| {
+            acc | ((u32::from(data[*i]) & u32::from(ID3_SYNCSAFE_MASK)) << shift)
+        });
     let footer = if flags & ID3_FLAG_FOOTER != 0 {
         ID3_FOOTER_LEN as u32
     } else {

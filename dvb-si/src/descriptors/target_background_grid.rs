@@ -11,6 +11,28 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x07;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 4;
+/// Wire width of the two 14-bit fields.
+const SIZE_BITS: u32 = 14;
+/// Mask of the two 14-bit fields.
+const SIZE_MASK: u16 = (1 << SIZE_BITS) - 1;
+/// Mask of the 2-bit high part of the second field.
+const FIELD2_HI_MASK: u16 = 0x03;
+/// Mask of the 4-bit low nibble field.
+const NIBBLE_MASK: u8 = 0x0F;
+/// Shift of the 6-bit low part of the first field in its wire byte.
+const FIELD_HI_SHIFT: u16 = 6;
+/// Shift of the 2-bit high part of the second field.
+const FIELD2_HI_SHIFT: u16 = 12;
+/// Shift of the middle part of the second field.
+const FIELD2_MID_SHIFT: u16 = 4;
+/// Shift of the low nibble in its wire byte.
+const NIBBLE_SHIFT: u16 = 4;
+/// Shift of the first field's low bits in the serializer.
+const FIELD_LO_SHIFT: u16 = 2;
+/// Body offset of the middle byte of the second field.
+const MIDDLE_BYTE_OFFSET: usize = 2;
+/// Body offset of the low-nibble byte.
+const LOW_NIBBLE_OFFSET: usize = 3;
 
 /// Target Background Grid Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,11 +63,12 @@ impl<'a> Parse<'a> for TargetBackgroundGridDescriptor {
                 reason: "target_background_grid_descriptor length must equal 4",
             });
         }
-        let horizontal_size = (u16::from(body[0]) << 6) | (u16::from(body[1]) >> 2);
-        let vertical_size = ((u16::from(body[1]) & 0x03) << 12)
-            | (u16::from(body[2]) << 4)
-            | (u16::from(body[3]) >> 4);
-        let aspect_ratio_information = body[3] & 0x0F;
+        let horizontal_size =
+            (u16::from(body[0]) << FIELD_HI_SHIFT) | (u16::from(body[1]) >> FIELD_LO_SHIFT);
+        let vertical_size = ((u16::from(body[1]) & FIELD2_HI_MASK) << FIELD2_HI_SHIFT)
+            | (u16::from(body[MIDDLE_BYTE_OFFSET]) << FIELD2_MID_SHIFT)
+            | (u16::from(body[LOW_NIBBLE_OFFSET]) >> NIBBLE_SHIFT);
+        let aspect_ratio_information = body[LOW_NIBBLE_OFFSET] & NIBBLE_MASK;
         Ok(Self {
             horizontal_size,
             vertical_size,
@@ -70,22 +93,24 @@ impl Serialize for TargetBackgroundGridDescriptor {
         // silently (audit r03-W3 class).
         let hs = broadcast_common::len::fit_bits(
             u64::from(self.horizontal_size),
-            14,
+            SIZE_BITS,
             "horizontal_size",
         )? as u16;
-        broadcast_common::len::fit_bits(u64::from(self.vertical_size), 14, "vertical_size")?;
+        broadcast_common::len::fit_bits(u64::from(self.vertical_size), SIZE_BITS, "vertical_size")?;
         broadcast_common::len::fit_bits(
             u64::from(self.aspect_ratio_information),
-            4,
+            NIBBLE_MASK.count_ones(),
             "aspect_ratio_information",
         )?;
-        buf[HEADER_LEN] = (hs >> 6) as u8;
-        buf[HEADER_LEN + 1] = ((hs & 0x3F) << 2) as u8 | ((self.vertical_size >> 12) as u8 & 0x03);
-        buf[HEADER_LEN + 2] = (self.vertical_size >> 4) as u8;
-        buf[HEADER_LEN + 3] = ((self.vertical_size & 0x0F) << 4) as u8
+        buf[HEADER_LEN] = (hs >> FIELD_HI_SHIFT) as u8;
+        buf[HEADER_LEN + 1] = ((hs & SIZE_MASK) << FIELD_LO_SHIFT) as u8
+            | ((self.vertical_size >> FIELD2_HI_SHIFT) as u8 & FIELD2_HI_MASK as u8);
+        buf[HEADER_LEN + MIDDLE_BYTE_OFFSET] = (self.vertical_size >> FIELD2_MID_SHIFT) as u8;
+        buf[HEADER_LEN + LOW_NIBBLE_OFFSET] = ((self.vertical_size & u16::from(NIBBLE_MASK))
+            << NIBBLE_SHIFT) as u8
             | broadcast_common::len::fit_mask(
                 self.aspect_ratio_information,
-                0x0F,
+                NIBBLE_MASK,
                 "aspect_ratio_information",
             )?;
         Ok(len)
