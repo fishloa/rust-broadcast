@@ -1,4 +1,4 @@
-//! QuickTime chapter-list titles — read only.
+//! QuickTime chapter-list titles.
 //!
 //! A `chap` track reference points at a text track whose samples are chapter
 //! titles. Source: `private/specs-verified/apple/isobmff/quicktime-file-format-online.md`,

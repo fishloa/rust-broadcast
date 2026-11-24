@@ -2237,7 +2237,7 @@ pub struct Ac3SampleEntry {
 impl Serialize for Ac3SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
@@ -2299,7 +2299,7 @@ pub struct Ec3SampleEntry {
 impl Serialize for Ec3SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
@@ -2360,7 +2360,7 @@ pub struct OpusSampleEntry {
 impl Serialize for OpusSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
@@ -2435,7 +2435,7 @@ pub struct FlacSampleEntry {
 impl Serialize for FlacSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
@@ -2510,7 +2510,7 @@ pub struct Ac4SampleEntry {
 impl Serialize for Ac4SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
@@ -2593,7 +2593,7 @@ pub struct DtsSampleEntry {
 impl Serialize for DtsSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
@@ -2681,7 +2681,7 @@ pub struct MhaSampleEntry {
 impl Serialize for MhaSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
@@ -2733,9 +2733,6 @@ impl<'a> Parse<'a> for MhaSampleEntry {
 /// Fixed bytes of an audio sample entry body after the box header (§12.2.3.2).
 const AUDIO_SAMPLE_ENTRY_FIXED_LEN: usize = 28;
 
-/// Smallest body a QuickTime-only entry can declare, used only when a caller
-/// asks a QuickTime entry for its (refused) serialized length.
-const QUICKTIME_ENTRY_MIN_BODY: usize = 28;
 /// Offset of `data_reference_index` in an audio sample entry body (§12.2.3.2).
 const AUDIO_SAMPLE_ENTRY_DATA_REFERENCE_INDEX_OFFSET: usize = 6;
 /// Offset of `entry_version` in an audio sample entry body (§12.2.3.2).
@@ -2860,8 +2857,11 @@ impl<'a> Parse<'a> for Ec3SampleEntry {
     }
 }
 
-fn audio_sample_entry_serialized_len(config_boxes: &[OpaqueBox]) -> usize {
-    let mut n = BOX_HEADER_MIN_SIZE + AUDIO_SAMPLE_ENTRY_FIXED_LEN;
+fn audio_sample_entry_serialized_len(
+    quicktime: &Option<QuickTimeSound>,
+    config_boxes: &[OpaqueBox],
+) -> usize {
+    let mut n = BOX_HEADER_MIN_SIZE + crate::quicktime::sound::fixed_len(quicktime);
     for c in config_boxes {
         n += c.serialized_len();
     }
@@ -2884,18 +2884,14 @@ struct AudioSampleEntryFields<'a> {
 }
 
 fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -> Result<usize> {
-    if f.quicktime.is_some() {
-        return Err(Error::QuickTimeOnly { atom: *f.fourcc });
-    }
     let config_boxes = f.config_boxes;
-    let need = audio_sample_entry_serialized_len(config_boxes);
+    let need = audio_sample_entry_serialized_len(f.quicktime, config_boxes);
     need_out(buf, need)?;
     let mut c = 0usize;
     c += crate::box_types::write_box_header(buf, f.fourcc, need)?;
     // SampleEntry: reserved(6) zeros + data_reference_index(2). Written, not
     // skipped, so a reused caller buffer cannot keep garbage (r04-W45).
     let u16_len = core::mem::size_of::<u16>();
-    let u32_len = core::mem::size_of::<u32>();
     buf[c..c + AUDIO_SAMPLE_ENTRY_RESERVED_LEN].fill(0);
     c += AUDIO_SAMPLE_ENTRY_RESERVED_LEN;
     buf[c..c + u16_len].copy_from_slice(&f.data_reference_index.to_be_bytes());
@@ -2909,21 +2905,39 @@ fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -
     let reserved_at = c + u16_len;
     buf[reserved_at..reserved_at + AUDIO_SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&f.reserved_1);
     c += u16_len + AUDIO_SAMPLE_ENTRY_RESERVED_LEN;
-    buf[c..c + u16_len].copy_from_slice(&f.channelcount.to_be_bytes());
-    c += u16_len;
-    buf[c..c + u16_len].copy_from_slice(&f.samplesize.to_be_bytes());
-    c += u16_len;
-    // `pre_defined`(16) + `reserved`(16) — QuickTime's `compression_ID` +
-    // `packet_size`. Written from the parsed value, not zeroed: QuickTime marks
-    // VBR audio with `compression_ID = -2`, so zeroing would corrupt it.
-    buf[c..c + u32_len].copy_from_slice(&f.compression_id_and_packet_size);
-    c += u32_len;
-    buf[c..c + u32_len].copy_from_slice(&f.samplerate.to_be_bytes());
-    c += u32_len;
+    match f.quicktime {
+        Some(extension @ QuickTimeSound::V2(_)) => {
+            c += crate::quicktime::sound::write_extension(&mut buf[c..], extension)?;
+        }
+        extension => {
+            write_audio_fixed_fields(buf, &mut c, &f);
+            if let Some(extension) = extension {
+                c += crate::quicktime::sound::write_extension(&mut buf[c..], extension)?;
+            }
+        }
+    }
     for cb in config_boxes {
         c += cb.serialize_into(&mut buf[c..])?;
     }
     Ok(c)
+}
+
+/// Write the 12 bytes of ISO `AudioSampleEntry` fields that precede the
+/// version 1 extension or the children of a version 0 entry (§12.2.3).
+fn write_audio_fixed_fields(buf: &mut [u8], c: &mut usize, f: &AudioSampleEntryFields<'_>) {
+    let u16_len = core::mem::size_of::<u16>();
+    let u32_len = core::mem::size_of::<u32>();
+    buf[*c..*c + u16_len].copy_from_slice(&f.channelcount.to_be_bytes());
+    *c += u16_len;
+    buf[*c..*c + u16_len].copy_from_slice(&f.samplesize.to_be_bytes());
+    *c += u16_len;
+    // `pre_defined`(16) + `reserved`(16) — QuickTime's `compression_ID` +
+    // `packet_size`. Written from the parsed value, not zeroed: QuickTime marks
+    // VBR audio with `compression_ID = -2`, so zeroing would corrupt it.
+    buf[*c..*c + u32_len].copy_from_slice(&f.compression_id_and_packet_size);
+    *c += u32_len;
+    buf[*c..*c + u32_len].copy_from_slice(&f.samplerate.to_be_bytes());
+    *c += u32_len;
 }
 
 // ---------------------------------------------------------------------------
@@ -2962,7 +2976,7 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
 impl Serialize for Mp4aSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3038,32 +3052,14 @@ pub enum SampleEntryVariant {
     /// ETSI TS 102 114 §E.2.  The `codec_type` field on [`DtsSampleEntry`]
     /// records which FourCC was parsed.
     Dts(Box<DtsSampleEntry>),
-    /// QuickTime timecode sample entry (`tmcd`) — read only.
+    /// QuickTime timecode sample entry (`tmcd`).
     Tmcd(Box<crate::quicktime::TimecodeEntry>),
-    /// A QuickTime-only sound sample entry (`lpcm`, `in24`, `sowt`, …) — read only.
+    /// A QuickTime-only sound sample entry (`lpcm`, `in24`, `sowt`, …).
     QuickTimeSound(Box<crate::quicktime::SoundEntry>),
     Unknown(OpaqueBox),
 }
 
 impl SampleEntryVariant {
-    /// Whether this entry carries a QuickTime-only extension the writer has no
-    /// ISO form for, so a caller must carry it as its raw bytes.
-    #[must_use]
-    pub fn is_quicktime_only(&self) -> bool {
-        match self {
-            Self::Tmcd(_) | Self::QuickTimeSound(_) => true,
-            Self::Mp4a(e) => e.quicktime.is_some(),
-            Self::Ac3(e) => e.quicktime.is_some(),
-            Self::Ec3(e) => e.quicktime.is_some(),
-            Self::Opus(e) => e.quicktime.is_some(),
-            Self::Flac(e) => e.quicktime.is_some(),
-            Self::Ac4(e) => e.quicktime.is_some(),
-            Self::Mha(e) => e.quicktime.is_some(),
-            Self::Dts(e) => e.quicktime.is_some(),
-            _ => false,
-        }
-    }
-
     /// The `stsd` version this entry requires.
     ///
     /// An `AudioSampleEntryV1` (`entry_version == 1`) is valid only inside an
@@ -3110,10 +3106,8 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Flac(f) => f.serialized_len(),
             SampleEntryVariant::Mha(m) => m.serialized_len(),
             SampleEntryVariant::Dts(d) => d.serialized_len(),
-            SampleEntryVariant::Tmcd(_) => BOX_HEADER_MIN_SIZE + QUICKTIME_ENTRY_MIN_BODY,
-            SampleEntryVariant::QuickTimeSound(e) => {
-                BOX_HEADER_MIN_SIZE + QUICKTIME_ENTRY_MIN_BODY.max(e.codec_type.len())
-            }
+            SampleEntryVariant::Tmcd(e) => e.serialized_len(),
+            SampleEntryVariant::QuickTimeSound(e) => e.serialized_len(),
             SampleEntryVariant::Unknown(u) => u.serialized_len(),
         }
     }
@@ -3136,10 +3130,8 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Flac(f) => f.serialize_into(buf),
             SampleEntryVariant::Mha(m) => m.serialize_into(buf),
             SampleEntryVariant::Dts(d) => d.serialize_into(buf),
-            SampleEntryVariant::Tmcd(_) => Err(Error::QuickTimeOnly { atom: *b"tmcd" }),
-            SampleEntryVariant::QuickTimeSound(e) => {
-                Err(Error::QuickTimeOnly { atom: e.codec_type })
-            }
+            SampleEntryVariant::Tmcd(e) => e.serialize_into(buf),
+            SampleEntryVariant::QuickTimeSound(e) => e.serialize_into(buf),
             SampleEntryVariant::Unknown(u) => Ok(u.serialize_into(buf)?),
         }
     }
@@ -3496,13 +3488,8 @@ impl DataInformationBox {
         }
     }
 
-    /// The QuickTime base media information header (`gmhd`), when this `minf`
-    /// carries one.
-    ///
-    /// `gmhd` stays in [`MediaInformationBox::opaque`] so every ISO init-segment
-    /// golden re-serialises byte for byte; this parses it on demand. A media
-    /// header other than `vmhd`/`smhd`/`nmhd`/`sthd` is QuickTime-only, so the
-    /// writer has no ISO form for it (design §4.9).
+    /// The QuickTime base media information header (`gmhd`), when this
+    /// container reaches one.
     #[must_use]
     pub fn gmhd(&self) -> Option<crate::quicktime::gmhd::GmhdAtom> {
         self.opaque
@@ -3597,13 +3584,15 @@ impl Serialize for DataInformationBox {
 pub const MINF: [u8; 4] = *b"minf";
 
 /// Typed child slots in a `minf` (§8.4.4).
-const MINF_TYPED_CHILDREN_MAX: usize = 4;
+const MINF_TYPED_CHILDREN_MAX: usize = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MediaInformationBox {
     pub vmhd: Option<VideoMediaHeaderBox>,
     pub smhd: Option<SoundMediaHeaderBox>,
+    /// The QuickTime base media information header (`gmhd`), when present.
+    pub gmhd: Option<crate::quicktime::gmhd::GmhdAtom>,
     pub dinf: Option<DataInformationBox>,
     pub stbl: Option<SampleTableBox>,
     pub opaque: Vec<OpaqueBox>,
@@ -3624,6 +3613,7 @@ impl MediaInformationBox {
         Self {
             vmhd,
             smhd,
+            gmhd: None,
             dinf,
             stbl,
             opaque,
@@ -3646,6 +3636,9 @@ impl MediaInformationBox {
         if self.smhd.is_some() {
             order.push(*b"smhd");
         }
+        if self.gmhd.is_some() {
+            order.push(*b"gmhd");
+        }
         if self.dinf.is_some() {
             order.push(*b"dinf");
         }
@@ -3658,17 +3651,9 @@ impl MediaInformationBox {
 
     /// The QuickTime base media information header (`gmhd`), when this `minf`
     /// carries one.
-    ///
-    /// `gmhd` stays in [`MediaInformationBox::opaque`] so every ISO init-segment
-    /// golden re-serialises byte for byte; this parses it on demand. A media
-    /// header other than `vmhd`/`smhd`/`nmhd`/`sthd` is QuickTime-only, so the
-    /// writer has no ISO form for it (design §4.9).
     #[must_use]
     pub fn gmhd(&self) -> Option<crate::quicktime::gmhd::GmhdAtom> {
-        self.opaque
-            .iter()
-            .find(|b| b.box_type == crate::quicktime::gmhd::GMHD)
-            .and_then(|b| crate::quicktime::gmhd::GmhdAtom::parse_body(&b.data).ok())
+        self.gmhd.clone()
     }
 
     /// The container's typed children, in declaration order — the input
@@ -3680,6 +3665,9 @@ impl MediaInformationBox {
             out.push(b);
         }
         if let Some(ref b) = self.smhd {
+            out.push(b);
+        }
+        if let Some(ref b) = self.gmhd {
             out.push(b);
         }
         if let Some(ref b) = self.dinf {
@@ -3700,6 +3688,9 @@ impl MediaInformationBox {
         if self.smhd.is_some() {
             out.push(b"smhd" as &'static [u8; BOX_TYPE_SIZE]);
         }
+        if self.gmhd.is_some() {
+            out.push(b"gmhd" as &'static [u8; BOX_TYPE_SIZE]);
+        }
         if self.dinf.is_some() {
             out.push(b"dinf" as &'static [u8; BOX_TYPE_SIZE]);
         }
@@ -3719,6 +3710,7 @@ impl<'a> Parse<'a> for MediaInformationBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut vmhd = None;
         let mut smhd = None;
+        let mut gmhd = None;
         let mut dinf = None;
         let mut stbl = None;
         let mut opaque = Vec::new();
@@ -3733,6 +3725,10 @@ impl<'a> Parse<'a> for MediaInformationBox {
                 b"smhd" => {
                     order.push(child.four_cc());
                     smhd = Some(SoundMediaHeaderBox::parse(child.bytes)?);
+                }
+                b"gmhd" => {
+                    order.push(child.four_cc());
+                    gmhd = Some(crate::quicktime::gmhd::GmhdAtom::parse_box(child.bytes)?);
                 }
                 b"dinf" => {
                     order.push(child.four_cc());
@@ -3762,6 +3758,7 @@ impl<'a> Parse<'a> for MediaInformationBox {
         Ok(Self {
             vmhd,
             smhd,
+            gmhd,
             dinf,
             stbl,
             opaque,
@@ -3835,19 +3832,11 @@ impl MediaBox {
 }
 
 impl MediaBox {
-    /// The QuickTime base media information header (`gmhd`), when this `minf`
-    /// carries one.
-    ///
-    /// `gmhd` stays in [`MediaInformationBox::opaque`] so every ISO init-segment
-    /// golden re-serialises byte for byte; this parses it on demand. A media
-    /// header other than `vmhd`/`smhd`/`nmhd`/`sthd` is QuickTime-only, so the
-    /// writer has no ISO form for it (design §4.9).
+    /// The QuickTime base media information header (`gmhd`), when this
+    /// container reaches one.
     #[must_use]
     pub fn gmhd(&self) -> Option<crate::quicktime::gmhd::GmhdAtom> {
-        self.opaque
-            .iter()
-            .find(|b| b.box_type == crate::quicktime::gmhd::GMHD)
-            .and_then(|b| crate::quicktime::gmhd::GmhdAtom::parse_body(&b.data).ok())
+        self.minf.as_ref().and_then(|minf| minf.gmhd())
     }
 
     /// The container's typed children, in declaration order — the input
@@ -3980,13 +3969,8 @@ impl EditBox {
         }
     }
 
-    /// The QuickTime base media information header (`gmhd`), when this `minf`
-    /// carries one.
-    ///
-    /// `gmhd` stays in [`MediaInformationBox::opaque`] so every ISO init-segment
-    /// golden re-serialises byte for byte; this parses it on demand. A media
-    /// header other than `vmhd`/`smhd`/`nmhd`/`sthd` is QuickTime-only, so the
-    /// writer has no ISO form for it (design §4.9).
+    /// The QuickTime base media information header (`gmhd`), when this
+    /// container reaches one.
     #[must_use]
     pub fn gmhd(&self) -> Option<crate::quicktime::gmhd::GmhdAtom> {
         self.opaque
@@ -4130,19 +4114,11 @@ impl TrackBox {
         }
     }
 
-    /// The QuickTime base media information header (`gmhd`), when this `minf`
-    /// carries one.
-    ///
-    /// `gmhd` stays in [`MediaInformationBox::opaque`] so every ISO init-segment
-    /// golden re-serialises byte for byte; this parses it on demand. A media
-    /// header other than `vmhd`/`smhd`/`nmhd`/`sthd` is QuickTime-only, so the
-    /// writer has no ISO form for it (design §4.9).
+    /// The QuickTime base media information header (`gmhd`), when this
+    /// container reaches one.
     #[must_use]
     pub fn gmhd(&self) -> Option<crate::quicktime::gmhd::GmhdAtom> {
-        self.opaque
-            .iter()
-            .find(|b| b.box_type == crate::quicktime::gmhd::GMHD)
-            .and_then(|b| crate::quicktime::gmhd::GmhdAtom::parse_body(&b.data).ok())
+        self.mdia.as_ref().and_then(|mdia| mdia.gmhd())
     }
 
     /// The container's typed children, in declaration order — the input
@@ -4406,13 +4382,8 @@ impl MovieExtendsBox {
         }
     }
 
-    /// The QuickTime base media information header (`gmhd`), when this `minf`
-    /// carries one.
-    ///
-    /// `gmhd` stays in [`MediaInformationBox::opaque`] so every ISO init-segment
-    /// golden re-serialises byte for byte; this parses it on demand. A media
-    /// header other than `vmhd`/`smhd`/`nmhd`/`sthd` is QuickTime-only, so the
-    /// writer has no ISO form for it (design §4.9).
+    /// The QuickTime base media information header (`gmhd`), when this
+    /// container reaches one.
     #[must_use]
     pub fn gmhd(&self) -> Option<crate::quicktime::gmhd::GmhdAtom> {
         self.opaque
@@ -4539,13 +4510,8 @@ impl MovieBox {
         }
     }
 
-    /// The QuickTime base media information header (`gmhd`), when this `minf`
-    /// carries one.
-    ///
-    /// `gmhd` stays in [`MediaInformationBox::opaque`] so every ISO init-segment
-    /// golden re-serialises byte for byte; this parses it on demand. A media
-    /// header other than `vmhd`/`smhd`/`nmhd`/`sthd` is QuickTime-only, so the
-    /// writer has no ISO form for it (design §4.9).
+    /// The QuickTime base media information header (`gmhd`), when this
+    /// container reaches one.
     #[must_use]
     pub fn gmhd(&self) -> Option<crate::quicktime::gmhd::GmhdAtom> {
         self.opaque

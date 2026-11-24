@@ -1,18 +1,19 @@
-//! QuickTime sound sample descriptions, versions 0, 1 and 2 — read only.
+//! QuickTime sound sample descriptions, versions 0, 1 and 2 — read and written.
 //!
 //! ISO/IEC 14496-12:2026 §12.2.3 describes a sound sample entry as a 28-byte
 //! fixed part followed by children. QuickTime's versions 1 and 2 extend that
 //! fixed part; ffmpeg's QuickTime writer also emits version 1 without the
 //! extension, so the children offset is read from the bytes instead of assumed.
+//! The serializer writes the form the parser selected.
 //!
 //! Source: `private/specs-verified/apple/isobmff/quicktime-file-format-online.md`,
 //! "Sound sample description version 1 ('stsd')" and "Sound sample description
 //! version 2 ('stsd')".
 
 use alloc::vec::Vec;
-use broadcast_common::Parse;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{i16_at, u16_at, u32_at, u64_at};
+use broadcast_common::{Parse, Serialize};
 
 use crate::box_support::OpaqueBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter};
@@ -27,8 +28,14 @@ pub const V1_FIXED_LEN: usize = 44;
 /// Bytes of a QuickTime version 2 sound description before its children.
 pub const V2_FIXED_LEN: usize = 64;
 
+/// The SampleEntry `reserved[6]` width (ISO/IEC 14496-12:2026 §8.5.1.1).
+const SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
 /// QuickTime's `revision_level` + `vendor` width.
 const QT_RESERVED_LEN: usize = 6;
+/// Bytes a version 1 sound description adds.
+const V1_EXTRA_LEN: usize = 16;
+/// Bytes a version 2 sound description adds.
+const V2_EXTRA_LEN: usize = 48;
 /// `compression_ID` + `packet_size` width.
 const COMPRESSION_LEN: usize = BOX_TYPE_SIZE;
 
@@ -164,6 +171,8 @@ impl QuickTimeSound {
 pub struct SoundEntry {
     /// The entry's four-CC (`lpcm`, `in24`, …).
     pub codec_type: [u8; BOX_TYPE_SIZE],
+    /// The SampleEntry `reserved[6]` bytes, kept verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// `entry_version` verbatim.
     pub entry_version: u16,
     /// QuickTime's `revision_level` + `vendor` (ISO's `reserved[3]`).
@@ -243,6 +252,8 @@ impl<'a> Parse<'a> for SoundEntry {
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
         codec_type.copy_from_slice(&bytes[crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
         let body = crate::box_types::box_body(bytes, V0_FIXED_LEN, "QuickTime sound entry")?;
+        let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
+        reserved.copy_from_slice(&body[..SAMPLE_ENTRY_RESERVED_LEN]);
         let entry_version = u16_at(body, VERSION_OFFSET);
         let mut reserved_1 = [0u8; QT_RESERVED_LEN];
         reserved_1.copy_from_slice(&body[RESERVED_OFFSET..RESERVED_OFFSET + QT_RESERVED_LEN]);
@@ -269,10 +280,16 @@ impl<'a> Parse<'a> for SoundEntry {
             if item.to_end() || item.has_largesize() {
                 break;
             }
-            config_boxes.push(OpaqueBox::new(item.four_cc(), item.payload().to_vec()));
+            config_boxes.push(OpaqueBox {
+                box_type: item.four_cc(),
+                data: item.payload().to_vec(),
+                to_end: item.to_end(),
+                largesize: item.has_largesize(),
+            });
         }
         Ok(Self {
             codec_type,
+            reserved,
             entry_version,
             reserved_1,
             data_reference_index: u16_at(body, DATA_REFERENCE_INDEX_OFFSET),
@@ -284,6 +301,135 @@ impl<'a> Parse<'a> for SoundEntry {
             config_boxes,
         })
     }
+}
+
+impl Serialize for SoundEntry {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let mut n = BOX_HEADER_MIN_SIZE + fixed_len(&self.quicktime);
+        for child in &self.config_boxes {
+            n += child.serialized_len();
+        }
+        crate::box_types::box_len(n)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &self.codec_type, need)?;
+        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&self.reserved);
+        c += SAMPLE_ENTRY_RESERVED_LEN;
+        let u16_len = core::mem::size_of::<u16>();
+        buf[c..c + u16_len].copy_from_slice(&self.data_reference_index.to_be_bytes());
+        c += u16_len;
+        buf[c..c + u16_len].copy_from_slice(&self.entry_version.to_be_bytes());
+        c += u16_len;
+        buf[c..c + QT_RESERVED_LEN].copy_from_slice(&self.reserved_1);
+        c += QT_RESERVED_LEN;
+        match &self.quicktime {
+            None => {
+                write_audio_fixed_fields(buf, &mut c, self)?;
+            }
+            Some(extension @ QuickTimeSound::V1(_)) => {
+                write_audio_fixed_fields(buf, &mut c, self)?;
+                c += write_extension(&mut buf[c..], extension)?;
+            }
+            Some(extension @ QuickTimeSound::V2(_)) => {
+                c += write_extension(&mut buf[c..], extension)?;
+            }
+        }
+        for child in &self.config_boxes {
+            c += child.serialize_into(&mut buf[c..])?;
+        }
+        Ok(c)
+    }
+}
+
+/// Write the 12 bytes of ISO `AudioSampleEntry` fields that precede the
+/// version 1 extension or the children of a version 0 entry (§12.2.3).
+fn write_audio_fixed_fields(buf: &mut [u8], c: &mut usize, entry: &SoundEntry) -> Result<()> {
+    let u16_len = core::mem::size_of::<u16>();
+    let u32_len = core::mem::size_of::<u32>();
+    buf[*c..*c + u16_len].copy_from_slice(&entry.channelcount.to_be_bytes());
+    *c += u16_len;
+    buf[*c..*c + u16_len].copy_from_slice(&entry.samplesize.to_be_bytes());
+    *c += u16_len;
+    buf[*c..*c + u32_len].copy_from_slice(&entry.compression_id_and_packet_size);
+    *c += u32_len;
+    buf[*c..*c + u32_len].copy_from_slice(&entry.samplerate.to_be_bytes());
+    *c += u32_len;
+    Ok(())
+}
+
+/// The fixed-body length an entry with `quicktime` carries.
+pub(crate) fn fixed_len(quicktime: &Option<QuickTimeSound>) -> usize {
+    match quicktime {
+        None => V0_FIXED_LEN,
+        Some(QuickTimeSound::V1(_)) => V1_FIXED_LEN,
+        Some(QuickTimeSound::V2(_)) => V2_FIXED_LEN,
+    }
+}
+
+/// Bytes a QuickTime sound extension occupies.
+pub(crate) const fn extension_len(extension: &QuickTimeSound) -> usize {
+    match extension {
+        QuickTimeSound::V1(_) => V1_EXTRA_LEN,
+        QuickTimeSound::V2(_) => V2_EXTRA_LEN,
+    }
+}
+
+/// Write a version 1/2 sound extension into `buf`.
+pub(crate) fn write_extension(buf: &mut [u8], extension: &QuickTimeSound) -> Result<usize> {
+    let need = extension_len(extension);
+    need_out(buf, need)?;
+    let mut c = 0usize;
+    let u16_len = core::mem::size_of::<u16>();
+    let u32_len = core::mem::size_of::<u32>();
+    let u64_len = core::mem::size_of::<u64>();
+    match extension {
+        QuickTimeSound::V1(v1) => {
+            for value in [
+                v1.samples_per_packet,
+                v1.bytes_per_packet,
+                v1.bytes_per_frame,
+                v1.bytes_per_sample,
+            ] {
+                buf[c..c + u32_len].copy_from_slice(&value.to_be_bytes());
+                c += u32_len;
+            }
+        }
+        QuickTimeSound::V2(v2) => {
+            buf[c..c + u16_len].copy_from_slice(&v2.always3.to_be_bytes());
+            c += u16_len;
+            buf[c..c + u16_len].copy_from_slice(&v2.always16.to_be_bytes());
+            c += u16_len;
+            buf[c..c + u16_len].copy_from_slice(&v2.always_minus2.to_be_bytes());
+            c += u16_len;
+            buf[c..c + u16_len].copy_from_slice(&v2.always0.to_be_bytes());
+            c += u16_len;
+            buf[c..c + u32_len].copy_from_slice(&v2.always65536.to_be_bytes());
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(&v2.size_of_struct_only.to_be_bytes());
+            c += u32_len;
+            buf[c..c + u64_len].copy_from_slice(&v2.audio_sample_rate_bits.to_be_bytes());
+            c += u64_len;
+            buf[c..c + u32_len].copy_from_slice(&v2.num_audio_channels.to_be_bytes());
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(&v2.always_7f000000.to_be_bytes());
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(&v2.const_bits_per_channel.to_be_bytes());
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(&v2.format_specific_flags.to_be_bytes());
+            c += u32_len;
+            buf[c..c + u32_len].copy_from_slice(&v2.const_bytes_per_audio_packet.to_be_bytes());
+            c += u32_len;
+            buf[c..c + u32_len]
+                .copy_from_slice(&v2.const_lpcm_frames_per_audio_packet.to_be_bytes());
+            c += u32_len;
+        }
+    }
+    Ok(c)
 }
 
 /// Parse the version 1/2 extension of an audio sample entry and return it with

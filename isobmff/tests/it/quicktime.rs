@@ -4,11 +4,14 @@
 //! Fixtures live in `private/fixtures/mp4/quicktime/` and `camera/`; they are
 //! loaded only through `test_fixtures`.
 
-use broadcast_common::Parse;
+use broadcast_common::{Parse, Serialize};
 use isobmff::MovieBox;
 use isobmff::init_segment::{SampleEntryVariant, TrackBox};
 use isobmff::metadata::{ItemKey, MovieMetadata};
-use isobmff::quicktime::{TimecodeEntry, timecode_from_sample};
+use isobmff::quicktime::{
+    GmhdAtom, GminAtom, TcmiAtom, TimecodeEntry, TrackApertureModeDimensionsBox, WaveAtom,
+    timecode_from_sample,
+};
 use isobmff::reader::{ByteRange, Reader, ReaderConfig, SampleOrder, Step, TrackInfo, Warning};
 use isobmff::sample_table::SampleRef;
 use isobmff::segments::FileTypeBox;
@@ -321,21 +324,147 @@ fn a_chapter_title_sample_decodes() {
     );
 }
 
-#[test]
-fn the_writer_refuses_a_typed_quicktime_entry() {
-    use broadcast_common::Serialize;
-    let tmcd = SampleEntryVariant::Tmcd(Box::new(TimecodeEntry {
+fn sample_timecode() -> TimecodeEntry {
+    TimecodeEntry {
+        reserved: [0; 6],
+        data_reference_index: 1,
+        reserved_1: 0,
         flags: 0,
         timescale: 12800,
         frame_duration: 512,
         number_of_frames: 25,
+        reserved_tail: vec![0, 0, 0],
         name: None,
         others: Vec::new(),
-    }));
-    let mut buffer = vec![0u8; tmcd.serialized_len()];
-    let error = tmcd.serialize_into(&mut buffer).expect_err("refused");
-    assert!(matches!(
-        error,
-        isobmff::Error::QuickTimeOnly { atom } if atom == *b"tmcd"
-    ));
+    }
+}
+
+#[test]
+fn a_typed_quicktime_entry_serialises_back_to_its_bytes() {
+    let entry = sample_timecode();
+    let tmcd = SampleEntryVariant::Tmcd(Box::new(entry.clone()));
+    let bytes = tmcd.try_to_bytes().expect("writes");
+    assert_eq!(&bytes[4..8], b"tmcd");
+    assert_eq!(TimecodeEntry::parse(&bytes).expect("parses"), entry);
+    assert_eq!(tmcd.serialized_len(), bytes.len());
+}
+
+/// Every quicktime box of `fourcc` in `data`, cut out by its own size field.
+fn cut_boxes<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Vec<&'a [u8]> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while at + 8 <= data.len() {
+        let size = usize::try_from(u32::from_be_bytes([
+            data[at],
+            data[at + 1],
+            data[at + 2],
+            data[at + 3],
+        ]))
+        .unwrap_or(0);
+        if size >= 8 && at + size <= data.len() && &data[at + 4..at + 8] == fourcc {
+            out.push(&data[at..at + size]);
+            at += size;
+        } else {
+            at += 1;
+        }
+    }
+    out
+}
+
+const QUICKTIME_FIXTURES: &[&str] = &[
+    "quicktime/lavf-aac-tmcd.mov",
+    "quicktime/lavf-pcm24.mov",
+    "quicktime/iphone-x-live-photo.mov",
+    "camera/gopro-karma.mp4",
+    "camera/gopro-hero6-ble.mp4",
+    "camera/gopro-max-heromode.mp4",
+];
+
+#[test]
+fn every_quicktime_atom_serialises_back_to_its_bytes() {
+    for rel in QUICKTIME_FIXTURES {
+        let data = fixture(rel);
+        for box_bytes in cut_boxes(&data, b"gmhd") {
+            let atom = GmhdAtom::parse_box(box_bytes).expect("gmhd");
+            assert_eq!(atom.try_to_bytes().expect("gmhd bytes"), box_bytes, "{rel}");
+        }
+        for box_bytes in cut_boxes(&data, b"wave") {
+            let atom = WaveAtom::parse_box(box_bytes).expect("wave");
+            assert_eq!(atom.try_to_bytes().expect("wave bytes"), box_bytes, "{rel}");
+        }
+        for box_bytes in cut_boxes(&data, b"tapt") {
+            let atom = TrackApertureModeDimensionsBox::parse_box(box_bytes).expect("tapt");
+            assert_eq!(atom.try_to_bytes().expect("tapt bytes"), box_bytes, "{rel}");
+        }
+        for box_bytes in cut_boxes(&data, b"gmin") {
+            let atom = GminAtom::parse(box_bytes).expect("gmin");
+            assert_eq!(atom.try_to_bytes().expect("gmin bytes"), box_bytes, "{rel}");
+        }
+        for box_bytes in cut_boxes(&data, b"tcmi") {
+            let atom = TcmiAtom::parse(box_bytes).expect("tcmi");
+            assert_eq!(atom.try_to_bytes().expect("tcmi bytes"), box_bytes, "{rel}");
+        }
+    }
+}
+
+fn quicktime_entry(entry: &SampleEntryVariant) -> bool {
+    match entry {
+        SampleEntryVariant::Tmcd(_) | SampleEntryVariant::QuickTimeSound(_) => true,
+        SampleEntryVariant::Mp4a(e) => e.quicktime.is_some(),
+        SampleEntryVariant::Ac3(e) => e.quicktime.is_some(),
+        SampleEntryVariant::Ec3(e) => e.quicktime.is_some(),
+        SampleEntryVariant::Opus(e) => e.quicktime.is_some(),
+        SampleEntryVariant::Flac(e) => e.quicktime.is_some(),
+        SampleEntryVariant::Ac4(e) => e.quicktime.is_some(),
+        SampleEntryVariant::Mha(e) => e.quicktime.is_some(),
+        SampleEntryVariant::Dts(e) => e.quicktime.is_some(),
+        _ => false,
+    }
+}
+
+#[test]
+fn quicktime_sample_entries_serialise_back_to_the_file_bytes() {
+    for rel in QUICKTIME_FIXTURES {
+        let data = fixture(rel);
+        let drive = drive(&data, ReaderConfig::default()).expect("read");
+        let mut checked = 0usize;
+        for track in &drive.tracks {
+            for entry in &track.entries {
+                let Some(typed) = &entry.typed else {
+                    continue;
+                };
+                if !quicktime_entry(typed) {
+                    continue;
+                }
+                let bytes = typed.try_to_bytes().expect("serialise entry");
+                assert!(!bytes.is_empty(), "{rel} {:?}", entry.fourcc);
+                assert_eq!(bytes, entry.body, "{rel} {:?}", entry.fourcc);
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "{rel} carries no typed QuickTime entry");
+    }
+}
+
+#[test]
+fn track_info_bodies_match_the_file() {
+    for rel in QUICKTIME_FIXTURES {
+        let data = fixture(rel);
+        let drive = drive(&data, ReaderConfig::default()).expect("read");
+        let tracks = moov_tracks(&data);
+        assert_eq!(tracks.len(), drive.tracks.len(), "{rel}");
+        for (trak, info) in tracks.iter().zip(&drive.tracks) {
+            let built = TrackInfo::from_trak(trak).expect("track info");
+            assert_eq!(built.entries.len(), info.entries.len(), "{rel}");
+            for (built_entry, raw) in built.entries.iter().zip(&info.entries) {
+                assert!(
+                    !built_entry.body.is_empty(),
+                    "{rel} {:?} has an empty body",
+                    raw.fourcc
+                );
+                assert_eq!(built_entry.fourcc, raw.fourcc, "{rel}");
+                assert_eq!(built_entry.body, raw.body, "{rel} {:?}", raw.fourcc);
+            }
+        }
+    }
 }

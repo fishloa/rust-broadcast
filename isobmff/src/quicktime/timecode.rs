@@ -1,4 +1,4 @@
-//! The QuickTime timecode sample entry (`tmcd`) and its samples — read only.
+//! The QuickTime timecode sample entry (`tmcd`) and its samples — read and written.
 //!
 //! Source: `private/specs-verified/apple/isobmff/quicktime-file-format-online.md`,
 //! "Timecode sample description" and "Timecode media"; the sample-data record
@@ -7,7 +7,8 @@
 
 use alloc::vec::Vec;
 use broadcast_common::Parse;
-use broadcast_common::len::need_in;
+use broadcast_common::Serialize;
+use broadcast_common::len::{fit_u16, need_in, need_out};
 use broadcast_common::wire::{u16_at, u32_at};
 
 use crate::box_support::OpaqueBox;
@@ -19,6 +20,12 @@ pub const TMCD: [u8; BOX_TYPE_SIZE] = *b"tmcd";
 /// Four-CC of the optional source-tape name atom.
 pub const NAME: [u8; BOX_TYPE_SIZE] = *b"name";
 
+/// The SampleEntry `reserved[6]` width.
+const SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
+/// Offset of the `data_reference_index` field.
+const DATA_REFERENCE_INDEX_OFFSET: usize = 6;
+/// Offset of the reserved 32-bit field.
+const RESERVED_1_OFFSET: usize = 8;
 /// Bytes of a `tmcd` body through `number_of_frames`.
 const TMCD_FIXED_BODY_LEN: usize = 25;
 /// Bytes of a `tmcd` body including the 24-bit reserved field.
@@ -60,6 +67,12 @@ const LENGTH_PREFIX_LEN: usize = 2;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TimecodeEntry {
+    /// The SampleEntry `reserved[6]` bytes, kept verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
+    /// `data_reference_index`.
+    pub data_reference_index: u16,
+    /// The reserved 32-bit field before `flags`.
+    pub reserved_1: u32,
     /// The timecode characteristics flags.
     pub flags: u32,
     /// The timescale the frame duration is expressed in.
@@ -68,6 +81,9 @@ pub struct TimecodeEntry {
     pub frame_duration: u32,
     /// Frames per second of the timecode format.
     pub number_of_frames: u8,
+    /// The reserved bytes between `number_of_frames` and the first child.
+    /// QuickTime writers disagree on the count, so the wire length is kept.
+    pub reserved_tail: Vec<u8>,
     /// The optional `name` atom's string bytes.
     pub name: Option<Vec<u8>>,
     /// Every other child, verbatim.
@@ -102,9 +118,15 @@ impl<'a> Parse<'a> for TimecodeEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE + TMCD_FIXED_BODY_LEN, "tmcd")?;
         let body = crate::box_types::box_body(bytes, TMCD_FIXED_BODY_LEN, "tmcd")?;
+        let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
+        reserved.copy_from_slice(&body[..SAMPLE_ENTRY_RESERVED_LEN]);
         let mut name = None;
         let mut others = Vec::new();
         let child_at = TMCD_RESERVED_BODY_LEN.min(body.len());
+        let reserved_tail = body
+            .get(TMCD_FIXED_BODY_LEN..child_at)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default();
         for item in BoxIter::clamped(body.get(child_at..).unwrap_or(&[])) {
             let Ok(item) = item else {
                 break;
@@ -112,17 +134,78 @@ impl<'a> Parse<'a> for TimecodeEntry {
             if item.four_cc() == NAME {
                 name = Some(pascal_or_short_string(item.payload()));
             } else {
-                others.push(OpaqueBox::new(item.four_cc(), item.payload().to_vec()));
+                others.push(OpaqueBox {
+                    box_type: item.four_cc(),
+                    data: item.payload().to_vec(),
+                    to_end: item.to_end(),
+                    largesize: item.has_largesize(),
+                });
             }
         }
         Ok(Self {
+            reserved,
+            data_reference_index: u16_at(body, DATA_REFERENCE_INDEX_OFFSET),
+            reserved_1: u32_at(body, RESERVED_1_OFFSET),
             flags: u32_at(body, FLAGS_OFFSET),
             timescale: u32_at(body, TIMESCALE_OFFSET),
             frame_duration: u32_at(body, FRAME_DURATION_OFFSET),
             number_of_frames: body[NUMBER_OF_FRAMES_OFFSET],
+            reserved_tail,
             name,
             others,
         })
+    }
+}
+
+impl Serialize for TimecodeEntry {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let mut n = BOX_HEADER_MIN_SIZE + TMCD_FIXED_BODY_LEN + self.reserved_tail.len();
+        if let Some(name) = &self.name {
+            n += BOX_HEADER_MIN_SIZE + LENGTH_PREFIX_LEN + name.len();
+        }
+        for other in &self.others {
+            n += other.serialized_len();
+        }
+        crate::box_types::box_len(n)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &TMCD, need)?;
+        let u16_len = core::mem::size_of::<u16>();
+        let u32_len = core::mem::size_of::<u32>();
+        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&self.reserved);
+        c += SAMPLE_ENTRY_RESERVED_LEN;
+        buf[c..c + u16_len].copy_from_slice(&self.data_reference_index.to_be_bytes());
+        c += u16_len;
+        buf[c..c + u32_len].copy_from_slice(&self.reserved_1.to_be_bytes());
+        c += u32_len;
+        buf[c..c + u32_len].copy_from_slice(&self.flags.to_be_bytes());
+        c += u32_len;
+        buf[c..c + u32_len].copy_from_slice(&self.timescale.to_be_bytes());
+        c += u32_len;
+        buf[c..c + u32_len].copy_from_slice(&self.frame_duration.to_be_bytes());
+        c += u32_len;
+        buf[c] = self.number_of_frames;
+        c += 1;
+        buf[c..c + self.reserved_tail.len()].copy_from_slice(&self.reserved_tail);
+        c += self.reserved_tail.len();
+        if let Some(name) = &self.name {
+            let child_len = BOX_HEADER_MIN_SIZE + LENGTH_PREFIX_LEN + name.len();
+            c += crate::box_types::write_box_header(&mut buf[c..], &NAME, child_len)?;
+            buf[c..c + u16_len]
+                .copy_from_slice(&fit_u16(name.len(), "tmcd name length")?.to_be_bytes());
+            c += u16_len;
+            buf[c..c + name.len()].copy_from_slice(name);
+            c += name.len();
+        }
+        for other in &self.others {
+            c += other.serialize_into(&mut buf[c..])?;
+        }
+        Ok(c)
     }
 }
 
