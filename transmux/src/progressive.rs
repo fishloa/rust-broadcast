@@ -291,6 +291,7 @@ impl broadcast_common::Package for ProgressiveMux {
             major_brand: FTYP_MAJOR_BRAND,
             minor_version: FTYP_MINOR_VERSION,
             compatible_brands: vec![*b"isom", *b"iso2", *b"mp41", *b"avc1"],
+            emit_ftyp: true,
         };
         let layout = Layout::new(
             self.faststart,
