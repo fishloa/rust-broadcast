@@ -40,8 +40,41 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0xD3;
 const HEADER_LEN: usize = 2;
 const LANG_LEN: usize = 3;
-const RESERVED6_ONES: ReservedOnes<6> = ReservedOnes::<6>::FILL;
-const RESERVED3_ONES: ReservedOnes<3> = ReservedOnes::<3>::FILL;
+/// Width of `reserved` in the codec-0 block.
+const RESERVED3_BITS: u32 = 3;
+/// Width of `reserved` in the version block.
+const RESERVED6_BITS: u32 = 6;
+const RESERVED6_ONES: ReservedOnes<RESERVED6_BITS> = ReservedOnes::<RESERVED6_BITS>::FILL;
+const RESERVED3_ONES: ReservedOnes<RESERVED3_BITS> = ReservedOnes::<RESERVED3_BITS>::FILL;
+/// Shift between the two nibbles of a packed byte.
+const NIBBLE_SHIFT: u8 = 4;
+/// Width of a 4-bit field, bits.
+const NIBBLE_BITS: u32 = 4;
+/// Width of one 16-bit text character, bytes.
+const TEXT_CHAR_LEN: usize = 2;
+/// Mask of `avs_version_flag` in the flags byte.
+const AVS_VERSION_FLAG_MASK: u8 = 0x08;
+const AVS_VERSION_FLAG_SHIFT: u8 = 3;
+/// Mask of `text_present` in the flags byte.
+const TEXT_PRESENT_MASK: u8 = 0x04;
+const TEXT_PRESENT_SHIFT: u8 = 2;
+/// Mask of `language_present` in the flags byte.
+const LANGUAGE_PRESENT_MASK: u8 = 0x02;
+const LANGUAGE_PRESENT_SHIFT: u8 = 1;
+/// Mask of `anc_data_index` in the version byte.
+const ANC_DATA_INDEX_MASK: u8 = 0x08;
+const ANC_DATA_INDEX_SHIFT: u8 = 3;
+/// Mask of `coding_profile` in the version byte.
+const CODING_PROFILE_MASK: u8 = 0x07;
+const CODING_PROFILE_BITS: u32 = 3;
+/// Mask of `bitstream_type` in the codec-0 byte.
+const BITSTREAM_TYPE_MASK: u8 = 0x08;
+const BITSTREAM_TYPE_SHIFT: u8 = 3;
+/// Shift of `resolution` in its byte.
+const RESOLUTION_SHIFT: u8 = 6;
+const RESOLUTION_BITS: u32 = 2;
+/// Highest `audio_codec_id` value.
+const AUDIO_CODEC_ID_MAX: u8 = 15;
 
 /// `audio_codec_id == 0` body of the version block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +86,7 @@ pub struct Avs2AudioCodec0 {
     /// `bitstream_type` (1 bit).
     pub bitstream_type: bool,
     /// `reserved` (3 bits).
-    pub reserved: ReservedOnes<3>,
+    pub reserved: ReservedOnes<RESERVED3_BITS>,
     /// `raw_frame_length` (16 bits).
     pub raw_frame_length: u16,
 }
@@ -185,14 +218,14 @@ impl<'a> Parse<'a> for Avs2AudioDescriptor {
         let mut c = Cursor { body, pos: 0 };
         let num_channels = c.u8()?;
         let b1 = c.u8()?;
-        let avs_version_flag = b1 & 0x08 != 0;
-        let text_present = b1 & 0x04 != 0;
-        let language_present = b1 & 0x02 != 0;
+        let avs_version_flag = b1 & AVS_VERSION_FLAG_MASK != 0;
+        let text_present = b1 & TEXT_PRESENT_MASK != 0;
+        let language_present = b1 & LANGUAGE_PRESENT_MASK != 0;
         let text = if text_present {
             let n = usize::from(c.u8()?);
-            let raw = c.take(n * 2)?;
+            let raw = c.take(n * TEXT_CHAR_LEN)?;
             Some(
-                raw.chunks_exact(2)
+                raw.chunks_exact(TEXT_CHAR_LEN)
                     .map(|p| u16::from_be_bytes([p[0], p[1]]))
                     .collect(),
             )
@@ -201,20 +234,22 @@ impl<'a> Parse<'a> for Avs2AudioDescriptor {
         };
         let language = if language_present {
             let l = c.take(LANG_LEN)?;
-            Some(LangCode([l[0], l[1], l[2]]))
+            let mut code = [0u8; LANG_LEN];
+            code.copy_from_slice(l);
+            Some(LangCode(code))
         } else {
             None
         };
         let version = if avs_version_flag {
             let v0 = c.u8()?;
-            let audio_codec_id = v0 >> 4;
+            let audio_codec_id = v0 >> NIBBLE_SHIFT;
             let codec0 = if audio_codec_id == 0 {
                 let x = c.u8()?;
                 let hi = c.u8()?;
                 let lo = c.u8()?;
                 Some(Avs2AudioCodec0 {
-                    bitrate_index: x >> 4,
-                    bitstream_type: x & 0x08 != 0,
+                    bitrate_index: x >> NIBBLE_SHIFT,
+                    bitstream_type: x & BITSTREAM_TYPE_MASK != 0,
                     reserved: ReservedOnes::from_bits(u64::from(x)),
                     raw_frame_length: u16::from_be_bytes([hi, lo]),
                 })
@@ -224,10 +259,10 @@ impl<'a> Parse<'a> for Avs2AudioDescriptor {
             let r = c.u8()?;
             Some(Avs2AudioVersion {
                 audio_codec_id,
-                anc_data_index: v0 & 0x08 != 0,
-                coding_profile: v0 & 0x07,
+                anc_data_index: v0 & ANC_DATA_INDEX_MASK != 0,
+                coding_profile: v0 & CODING_PROFILE_MASK,
                 codec0,
-                resolution: r >> 6,
+                resolution: r >> RESOLUTION_SHIFT,
                 reserved: ReservedOnes::from_bits(u64::from(r)),
             })
         } else {
@@ -235,7 +270,7 @@ impl<'a> Parse<'a> for Avs2AudioDescriptor {
         };
         Ok(Self {
             num_channels,
-            sample_rate_index: b1 >> 4,
+            sample_rate_index: b1 >> NIBBLE_SHIFT,
             reserved: ReservedZero::from_bits(u64::from(b1)),
             text,
             language,
@@ -249,13 +284,13 @@ impl Avs2AudioDescriptor {
     fn body_bytes(&self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         out.push(self.num_channels);
-        let sri = fit_bits(u64::from(self.sample_rate_index), 4, "sample_rate_index")? as u8;
+        let sri = fit_bits(u64::from(self.sample_rate_index), NIBBLE_BITS, "sample_rate_index")? as u8;
         let rsv = self.reserved.get() as u8;
         out.push(
-            (sri << 4)
-                | (u8::from(self.version.is_some()) << 3)
-                | (u8::from(self.text.is_some()) << 2)
-                | (u8::from(self.language.is_some()) << 1)
+            (sri << NIBBLE_SHIFT)
+                | (u8::from(self.version.is_some()) << AVS_VERSION_FLAG_SHIFT)
+                | (u8::from(self.text.is_some()) << TEXT_PRESENT_SHIFT)
+                | (u8::from(self.language.is_some()) << LANGUAGE_PRESENT_SHIFT)
                 | rsv,
         );
         if let Some(text) = &self.text {
@@ -268,17 +303,17 @@ impl Avs2AudioDescriptor {
             out.extend_from_slice(&l.0);
         }
         if let Some(v) = &self.version {
-            let id = fit_bits(u64::from(v.audio_codec_id), 4, "audio_codec_id")? as u8;
-            let prof = fit_bits(u64::from(v.coding_profile), 3, "coding_profile")? as u8;
-            out.push((id << 4) | (u8::from(v.anc_data_index) << 3) | prof);
+            let id = fit_bits(u64::from(v.audio_codec_id), NIBBLE_BITS, "audio_codec_id")? as u8;
+            let prof = fit_bits(u64::from(v.coding_profile), CODING_PROFILE_BITS, "coding_profile")? as u8;
+            out.push((id << NIBBLE_SHIFT) | (u8::from(v.anc_data_index) << ANC_DATA_INDEX_SHIFT) | prof);
             match (id, &v.codec0) {
                 (0, Some(c)) => {
-                    let br = fit_bits(u64::from(c.bitrate_index), 4, "bitrate_index")? as u8;
+                    let br = fit_bits(u64::from(c.bitrate_index), NIBBLE_BITS, "bitrate_index")? as u8;
                     let rs = c.reserved.get() as u8;
-                    out.push((br << 4) | (u8::from(c.bitstream_type) << 3) | rs);
+                    out.push((br << NIBBLE_SHIFT) | (u8::from(c.bitstream_type) << BITSTREAM_TYPE_SHIFT) | rs);
                     out.extend_from_slice(&c.raw_frame_length.to_be_bytes());
                 }
-                (0, None) | (1..=15, Some(_)) => {
+                (0, None) | (1..=AUDIO_CODEC_ID_MAX, Some(_)) => {
                     return Err(Error::ValueOutOfRange {
                         field: "codec0",
                         reason: "present iff audio_codec_id == 0",
@@ -286,9 +321,9 @@ impl Avs2AudioDescriptor {
                 }
                 _ => {}
             }
-            let res = fit_bits(u64::from(v.resolution), 2, "resolution")? as u8;
+            let res = fit_bits(u64::from(v.resolution), RESOLUTION_BITS, "resolution")? as u8;
             let rs6 = v.reserved.get() as u8;
-            out.push((res << 6) | rs6);
+            out.push((res << RESOLUTION_SHIFT) | rs6);
         }
         out.extend_from_slice(&self.trailing);
         Ok(out)
