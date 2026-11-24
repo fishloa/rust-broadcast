@@ -35,14 +35,13 @@ impl<'a> Parse<'a> for CopyrightDescriptor<'a> {
             "CopyrightDescriptor",
             "unexpected tag for copyright_descriptor",
         )?;
-        if body.len() < COPYRIGHT_ID_LEN {
-            return Err(Error::InvalidDescriptor {
+        let (copyright_id, additional_copyright_info) = body
+            .split_first_chunk::<COPYRIGHT_ID_LEN>()
+            .ok_or(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "copyright_descriptor length too short for copyright_identifier",
-            });
-        }
-        let copyright_identifier = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
-        let additional_copyright_info = &body[COPYRIGHT_ID_LEN..];
+            })?;
+        let copyright_identifier = u32::from_be_bytes(*copyright_id);
         Ok(Self {
             copyright_identifier,
             additional_copyright_info,

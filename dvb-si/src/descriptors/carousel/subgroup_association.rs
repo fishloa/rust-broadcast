@@ -52,9 +52,10 @@ impl SubgroupTag {
     /// Decode the 5 wire bytes.
     #[must_use]
     pub const fn from_bytes(b: [u8; BODY_LEN]) -> Self {
+        let [oui_hi, oui_mid, oui_lo, subgroup_hi, subgroup_lo] = b;
         Self {
-            oui: u32::from_be_bytes([0, b[0], b[1], b[2]]),
-            subgroup: u16::from_be_bytes([b[3], b[4]]),
+            oui: u32::from_be_bytes([0, oui_hi, oui_mid, oui_lo]),
+            subgroup: u16::from_be_bytes([subgroup_hi, subgroup_lo]),
         }
     }
 
@@ -63,7 +64,9 @@ impl SubgroupTag {
         let oui = broadcast_common::len::fit_mask(self.oui, OUI_MASK, "subgroup_tag OUI")?;
         let o = oui.to_be_bytes();
         let s = self.subgroup.to_be_bytes();
-        Ok([o[1], o[2], o[3], s[0], s[1]])
+        let [_, oui_hi, oui_mid, oui_lo] = o;
+        let [subgroup_hi, subgroup_lo] = s;
+        Ok([oui_hi, oui_mid, oui_lo, subgroup_hi, subgroup_lo])
     }
 }
 
