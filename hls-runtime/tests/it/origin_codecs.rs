@@ -99,9 +99,9 @@ fn dv_master(fixture: &str) -> Option<String> {
 fn record(
     profile: u8,
     el_present: bool,
-    ccid: transmux::DoviBlSignalCompatibilityId,
-) -> transmux::DoviDecoderConfigurationRecord {
-    transmux::DoviDecoderConfigurationRecord {
+    ccid: isobmff::DoviBlSignalCompatibilityId,
+) -> isobmff::DoviDecoderConfigurationRecord {
+    isobmff::DoviDecoderConfigurationRecord {
         version_major: 1,
         version_minor: 0,
         profile,
@@ -110,7 +110,7 @@ fn record(
         el_present,
         bl_present: true,
         bl_signal_compatibility_id: ccid,
-        reserved: transmux::dovi::DOVI_RESERVED_ZERO,
+        reserved: isobmff::dovi::DOVI_RESERVED_ZERO,
     }
 }
 
@@ -168,11 +168,7 @@ fn a_non_single_layer_dolby_vision_record_is_not_signalled() {
     let (trunk, _writer) = new_trunk(8);
     let origin = origin(&trunk, 8);
     let mut spec = hevc_spec();
-    spec.dovi = Some(record(
-        8,
-        true,
-        transmux::DoviBlSignalCompatibilityId::Hdr10,
-    ));
+    spec.dovi = Some(record(8, true, isobmff::DoviBlSignalCompatibilityId::Hdr10));
     origin.set_track_specs(&[spec]).expect("specs");
     let body = master(&origin);
     assert!(!body.contains("dvh1"), "{body}");
@@ -187,7 +183,7 @@ fn an_avc_profile_dolby_vision_record_is_not_signalled() {
     spec.dovi = Some(record(
         9,
         false,
-        transmux::DoviBlSignalCompatibilityId::Hdr10,
+        isobmff::DoviBlSignalCompatibilityId::Hdr10,
     ));
     origin.set_track_specs(&[spec]).expect("specs");
     let body = master(&origin);
@@ -436,11 +432,7 @@ fn a_later_dolby_vision_track_keeps_its_own_base_codec() {
     first.dovi = None;
     let mut second = hevc_spec();
     second.track_id = transmux::TrackId::new(2);
-    second.dovi = Some(record(
-        5,
-        false,
-        transmux::DoviBlSignalCompatibilityId::None,
-    ));
+    second.dovi = Some(record(5, false, isobmff::DoviBlSignalCompatibilityId::None));
     origin.set_track_specs(&[first, second]).expect("specs");
     let body = master(&origin);
     assert!(

@@ -723,18 +723,11 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "transmux",
-        allow: &[
-            (
-                "src/annexb.rs",
-                "pub const NAL_LENGTH_SIZE_MINUS_ONE: u8 = (NAL_LENGTH_SIZE - 1) as u8;",
-                "public API naming the ISO/IEC 14496-15:2017 §5.3.3.1.3 field lengthSizeMinusOne; renaming it is a breaking API change; spec field name, value derived",
-            ),
-            (
-                "src/dovi.rs",
-                "pub const DOVI_RESERVED_ZERO: [u8; DOVI_RESERVED_LEN] = [0; DOVI_RESERVED_LEN];",
-                "public API constant naming the spec's all-reserved-bits-zero value, not a magic number; renaming it is a breaking API change; reserved zero fill, not a magic number",
-            ),
-        ],
+        allow: &[(
+            "src/annexb.rs",
+            "pub const NAL_LENGTH_SIZE_MINUS_ONE: u8 = (NAL_LENGTH_SIZE - 1) as u8;",
+            "public API naming the ISO/IEC 14496-15:2017 §5.3.3.1.3 field lengthSizeMinusOne; renaming it is a breaking API change; spec field name, value derived",
+        )],
     },
     Crate {
         name: "isobmff",
@@ -748,6 +741,11 @@ pub const TABLE: &[Crate] = &[
                 "src/movie_fragment.rs",
                 "pub const MAX_ZERO_WIDTH_TRUN_SAMPLES: usize = 1 << 20;",
                 "existing PUBLIC API constant (name predates this refactor; renaming would be a breaking change), not a magic literal; public cap on zero-width trun samples",
+            ),
+            (
+                "src/dovi.rs",
+                "pub const DOVI_RESERVED_ZERO: [u8; DOVI_RESERVED_LEN] = [0; DOVI_RESERVED_LEN];",
+                "public API constant naming the spec's all-reserved-bits-zero value, not a magic number; renaming it is a breaking API change; reserved zero fill, not a magic number",
             ),
         ],
     },

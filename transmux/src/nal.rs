@@ -41,9 +41,9 @@ use alloc::vec::Vec;
 
 use crate::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
 use crate::bitreader::BitReader;
-use crate::nalu_types::{HEVC_PPS_NUT, HEVC_SPS_NUT, HEVC_SUFFIX_SEI_NUT, HEVC_VPS_NUT};
 use crate::rbsp::{EMULATION_BYTE_RUN_LEN, EMULATION_PREVENTION_BYTE};
 use broadcast_common::wire::{be_u16, be_u32};
+use isobmff::nalu_types::{HEVC_PPS_NUT, HEVC_SPS_NUT, HEVC_SUFFIX_SEI_NUT, HEVC_VPS_NUT};
 
 // ── AVC (ITU-T H.264 §7.3.1, Table 7-1) ─────────────────────────────────────
 
@@ -186,13 +186,13 @@ pub fn avc_access_unit_dimensions(au: &[u8]) -> Option<(u16, u16)> {
 /// The in-band SPS (type 7) and PPS (type 8) NAL units of a 4-byte
 /// length-prefixed H.264 access unit, in order. Empty lists if the buffer is
 /// malformed or carries none.
-pub fn avc_access_unit_parameter_sets(au: &[u8]) -> (Vec<crate::AvcSps>, Vec<crate::AvcPps>) {
+pub fn avc_access_unit_parameter_sets(au: &[u8]) -> (Vec<isobmff::AvcSps>, Vec<isobmff::AvcPps>) {
     let mut sps = Vec::new();
     let mut pps = Vec::new();
     for nal in iter_length_prefixed_nals(au).unwrap_or_default() {
         match nal_unit_type(NalCodec::Avc, nal) {
-            Some(AVC_NAL_SPS) => sps.push(crate::AvcSps(nal.to_vec())),
-            Some(AVC_NAL_PPS) => pps.push(crate::AvcPps(nal.to_vec())),
+            Some(AVC_NAL_SPS) => sps.push(isobmff::AvcSps(nal.to_vec())),
+            Some(AVC_NAL_PPS) => pps.push(isobmff::AvcPps(nal.to_vec())),
             _ => {}
         }
     }
@@ -1550,8 +1550,8 @@ mod tests {
         );
 
         let (sps, pps_out) = avc_access_unit_parameter_sets(&au);
-        assert_eq!(sps, alloc::vec![crate::AvcSps(REAL_AVC_SPS.to_vec())]);
-        assert_eq!(pps_out, alloc::vec![crate::AvcPps(pps.to_vec())]);
+        assert_eq!(sps, alloc::vec![isobmff::AvcSps(REAL_AVC_SPS.to_vec())]);
+        assert_eq!(pps_out, alloc::vec![isobmff::AvcPps(pps.to_vec())]);
     }
 
     #[test]
@@ -1562,7 +1562,7 @@ mod tests {
         assert_eq!(avc_access_unit_dimensions(&au), None);
         let (sps, pps_out) = avc_access_unit_parameter_sets(&au);
         assert!(sps.is_empty());
-        assert_eq!(pps_out, alloc::vec![crate::AvcPps(pps.to_vec())]);
+        assert_eq!(pps_out, alloc::vec![isobmff::AvcPps(pps.to_vec())]);
     }
 
     #[test]

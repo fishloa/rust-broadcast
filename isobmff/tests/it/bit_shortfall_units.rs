@@ -10,8 +10,8 @@
 
 use broadcast_common::Parse;
 use broadcast_common::error::BufferTooShort;
-use transmux::error::Error;
-use transmux::vvc_config::VvcDecoderConfigurationRecord;
+use isobmff::error::Error;
+use isobmff::vvc_config::VvcDecoderConfigurationRecord;
 
 /// The `(need, have)` of a `BufferTooShort` from `result`, refusing any other
 /// outcome.

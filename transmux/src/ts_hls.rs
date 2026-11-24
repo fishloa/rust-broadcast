@@ -677,7 +677,7 @@ struct StreamTrackState {
 /// ```
 /// use transmux::{CodecConfig, Sample, TrackSpec};
 /// use transmux::ts_hls::StreamingTsHlsSegmenter;
-/// # use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+/// # use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
 /// # fn spec() -> TrackSpec {
 /// #     let record = AVCDecoderConfigurationRecord {
 /// #         configuration_version: 1,
@@ -829,7 +829,7 @@ fn audio_discontinuity_trigger(old: &CodecConfig, new: &CodecConfig) -> bool {
     }
     match (old, new) {
         (CodecConfig::Aac { esds: e1, .. }, CodecConfig::Aac { esds: e2, .. }) => {
-            let asc = |e: &crate::mp4esds::EsdsBox| {
+            let asc = |e: &isobmff::mp4esds::EsdsBox| {
                 e.es_descriptor
                     .decoder_config
                     .as_ref()
@@ -1647,11 +1647,11 @@ mod tests {
     // could never advance, `push` never returned a segment, and every
     // track's `pending` buffer grew without bound.
 
-    use crate::mp4esds::{
-        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
-    };
     use broadcast_common::Unpackage;
     use broadcast_common::timescale::Timescale;
+    use isobmff::mp4esds::{
+        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+    };
 
     fn timescale(value: u32) -> Timescale {
         Timescale::try_new(value).expect("a non-zero timescale")
@@ -1917,8 +1917,8 @@ mod tests {
     /// one-tick samples each, sync every `gop` on the anchor, so `package`
     /// cuts `count / gop` segments and both tracks contribute samples.
     fn countable_media(count: usize, gop: usize) -> Media {
-        use crate::nalu_types::{AvcPps, AvcSps};
-        let record = crate::avc_config::AVCDecoderConfigurationRecord {
+        use isobmff::nalu_types::{AvcPps, AvcSps};
+        let record = isobmff::avc_config::AVCDecoderConfigurationRecord {
             configuration_version: 1,
             profile_indication: 0x42,
             profile_compatibility: 0,
@@ -1935,7 +1935,7 @@ mod tests {
             TrackId::new(1),
             timescale(90_000),
             CodecConfig::Avc {
-                config: crate::avc_config::AVCConfigurationBox::new(record),
+                config: isobmff::avc_config::AVCConfigurationBox::new(record),
                 width: 320,
                 height: 240,
             },
@@ -1981,8 +1981,8 @@ mod tests {
     }
 
     fn avc_spec(track_id: u32) -> TrackSpec {
-        use crate::nalu_types::{AvcPps, AvcSps};
-        let record = crate::avc_config::AVCDecoderConfigurationRecord {
+        use isobmff::nalu_types::{AvcPps, AvcSps};
+        let record = isobmff::avc_config::AVCDecoderConfigurationRecord {
             configuration_version: 1,
             profile_indication: 0x42,
             profile_compatibility: 0,
@@ -1999,7 +1999,7 @@ mod tests {
             TrackId::new(track_id),
             timescale(90_000),
             CodecConfig::Avc {
-                config: crate::avc_config::AVCConfigurationBox::new(record),
+                config: isobmff::avc_config::AVCConfigurationBox::new(record),
                 width: 320,
                 height: 240,
             },

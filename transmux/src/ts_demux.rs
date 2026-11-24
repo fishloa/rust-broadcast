@@ -47,7 +47,7 @@
 //! `0x82`/`0x85`/`0x8A`) are carried: the core-substream frame header
 //! (`0x7FFE8001` sync) is parsed into a core-only `ddts` [`CodecConfig::Dts`]
 //! track, mirroring the AC-3/E-AC-3 recovery path (issue #560, see
-//! [`crate::dts`]).
+//! [`isobmff::dts`]).
 //!
 //! Every video and audio sample additionally carries **absolute** `dts`/`pts`
 //! (media plane step 2c) recovered from the PES clock (issue #556): the
@@ -59,7 +59,7 @@
 //! from (with per-frame interpolation when a PES payload splits into several
 //! frames); AC-3/E-AC-3/DTS elementary streams are additionally split into
 //! individual syncframes/core frames (rather than one zero-duration `Sample`
-//! per PES access unit — see [`crate::ac3`] / [`crate::dts`]) so real
+//! per PES access unit — see [`isobmff::ac3`] / [`isobmff::dts`]) so real
 //! durations and exact PES-boundary timestamps survive into the IR.
 //! **Field-coded (PAFF) H.264 (issue #1161).** Broadcast PAFF carries one coded
 //! field per PES, but an ISO/IEC 14496-15:2017 sample is a whole access unit; the
@@ -251,26 +251,26 @@ use crate::ac3_syncframe::{
     Ec3SyncframeInfo, ec3_specific_box_from_syncframes,
 };
 use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_annexb_nals};
-use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
 use crate::error::{Error, Result};
 use crate::hdr::{HEVC_PREFIX_SEI_NUT, HdrStaticMetadata};
-use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::media::{Media, PcrSample, Track};
 use crate::mhas::find_mpegh3da_config;
-use crate::mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,
-    OTI_MPEG2_AUDIO, OTI_MPEG4_AUDIO, SLConfigDescriptor, STREAM_TYPE_AUDIO,
-};
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
-use crate::mpegh::MHADecoderConfigurationRecord;
 use crate::nal::{
     AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, ParamKind, access_unit_is_rap,
     is_keyframe_nal, nal_unit_type, parameter_set_is_valid,
 };
-use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
 use broadcast_common::wire::{be_u16, u16_at};
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+use isobmff::mp4esds::{
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,
+    OTI_MPEG2_AUDIO, OTI_MPEG4_AUDIO, SLConfigDescriptor, STREAM_TYPE_AUDIO,
+};
+use isobmff::mpegh::MHADecoderConfigurationRecord;
+use isobmff::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
 
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
 
@@ -598,7 +598,7 @@ enum Codec {
     Eac3,
     Dts,
     /// MPEG-H 3D Audio main stream, MHAS-formatted (issue #579) — see
-    /// [`crate::mpegh`].
+    /// [`isobmff::mpegh`].
     MpegH,
     /// Opaque data stream (issue #557/#576): any `stream_type` this demuxer
     /// does not decode to a typed codec — carried losslessly instead of
@@ -3737,7 +3737,7 @@ fn finalize_probe(
             Some((
                 CodecConfig::Dts {
                     config,
-                    codec_fourcc: crate::dts::DTSC_FOURCC,
+                    codec_fourcc: isobmff::dts::DTSC_FOURCC,
                     channel_count,
                     sample_rate,
                     sample_size: AUDIO_SAMPLE_SIZE_BITS,

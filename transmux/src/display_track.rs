@@ -54,12 +54,12 @@ use crate::ir::{
     DisplayGeometry, DisplayInfo, UserDataCarriage,
 };
 use crate::nal::{HEVC_NAL_HEADER_LEN, NAL_TYPE_MASK, NalCodec};
-use crate::nalu_types::HEVC_SPS_NUT;
 use crate::sps::decode_avc_slice_sps;
 use crate::user_data;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use isobmff::nalu_types::HEVC_SPS_NUT;
 
 /// `nal_unit_type` of a non-IDR coded slice (H.264 Table 7-1).
 const AVC_SLICE: u8 = 1;

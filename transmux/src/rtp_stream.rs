@@ -1698,7 +1698,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+    use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
     fn dummy_avc() -> CodecConfig {
         CodecConfig::Avc {
@@ -1739,7 +1739,7 @@ mod tests {
         else {
             unreachable!()
         };
-        config.config.sps = alloc::vec![crate::nalu_types::AvcSps(sps.to_vec())];
+        config.config.sps = alloc::vec![isobmff::nalu_types::AvcSps(sps.to_vec())];
         CodecConfig::Avc {
             config,
             width,

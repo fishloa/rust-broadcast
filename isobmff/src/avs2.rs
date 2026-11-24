@@ -4,16 +4,15 @@
 //! |------|--------|------|
 //! | [`Avs2ConfigurationBox`] | `av2c` | A.2.2.2 / A.2.2.4 `Avs2DecoderConfigurationRecord` |
 //! | [`crate::avs3::LAvsConfigurationBox`] | `la2c` | A.2.2.3 / A.2.2.5 (same layout as AVS3's `lavc`) |
-//! | [`crate::avs3::AvsVideoSampleEntry`] | `avst` / `lav2` | A.2.3.1 / A.2.3.2 |
-//! | [`crate::avs3::TemporalLayerEntry`] | `telg` | A.2.3.4 (same as A.3.4.3) |
 //!
 //! The record is `configurationVersion(8)=1 sequence_header_length(16)
 //! sequence_header[]`; the `sequence_header()` of GY/T 299.1-2016 is preserved
 //! verbatim. The temporal-layer types are shared with [`crate::avs3`], the
-//! entry/box layouts being identical field for field.
+//! box layouts being identical field for field.
 //!
-//! Source note: A.2.3.1.1 prints the AVS2 sample entry type as `avsv` while its
-//! syntax and the rest of the document use `avst`; `avst` is implemented.
+//! The `avst` / `lav2` sample entry stays in `transmux`. Source note: A.2.3.1.1
+//! prints the AVS2 sample entry type as `avsv` while its syntax and the rest of
+//! the document use `avst`.
 
 use crate::avs3::parse_sequence_header_record;
 use crate::error::{Error, Result};
@@ -86,8 +85,6 @@ impl Serialize for Avs2ConfigurationBox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::avs3::{AvsVideoConfig, AvsVideoEntryKind, AvsVideoSampleEntry};
-    use crate::sample_entries::{SampleEntryChild, VisualSampleEntryFields};
     use alloc::vec;
 
     /// A.2.2.2: version 1, 3-byte sequence header.
@@ -117,30 +114,5 @@ mod tests {
             c.serialize_into(&mut vec![0u8; c.serialized_len()]),
             Err(crate::error::Error::FieldOverflow(..))
         ));
-    }
-
-    /// An `avst` entry with `av2c` round-trips; the fourcc constants agree with
-    /// the entry kinds.
-    #[test]
-    fn avst_sample_entry_round_trips() {
-        assert_eq!(AvsVideoEntryKind::Avs2.entry_fourcc(), AVST_FOURCC);
-        assert_eq!(AvsVideoEntryKind::Avs2.config_fourcc(), AV2C_FOURCC);
-        assert_eq!(AvsVideoEntryKind::LAvs2.entry_fourcc(), LAV2_FOURCC);
-        assert_eq!(AvsVideoEntryKind::LAvs2.config_fourcc(), LA2C_FOURCC);
-        let entry = AvsVideoSampleEntry {
-            kind: AvsVideoEntryKind::Avs2,
-            visual: VisualSampleEntryFields {
-                width: 1920,
-                height: 1080,
-                ..VisualSampleEntryFields::default()
-            },
-            config: AvsVideoConfig::Avs2(Avs2ConfigurationBox::new(vec![0, 0, 1, 0xB0, 0x20])),
-            children: vec![SampleEntryChild::Config],
-        };
-        let mut buf = vec![0u8; entry.serialized_len()];
-        entry.serialize_into(&mut buf).unwrap();
-        assert_eq!(&buf[4..8], b"avst");
-        let back = AvsVideoSampleEntry::parse_entry(&buf).unwrap();
-        assert_eq!(back, entry);
     }
 }

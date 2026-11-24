@@ -37,15 +37,12 @@ use core::marker::PhantomData;
 use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Package, Parse, Unpackage};
 
-use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::codec_config_ext::VvcRecordCodecInfo;
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
+use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 
-use crate::ac4::Ac4SpecificBox;
 use crate::display_track::{SpsTracker, TrackCodec};
-use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
-use crate::flac::FlacSpecificBox;
 use crate::init_segment::{
     MovieBox, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox, sampling_rate_override,
 };
@@ -54,15 +51,18 @@ use crate::ir::{
     FragmentTrackData, InputDegradation, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry,
     TrackSpec, VideoFormat, VideoSignalType,
 };
-use crate::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
-use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
-use crate::opus::OpusSpecificBox;
 use crate::pipeline::{build_init_segment, build_media_segment};
 use alloc::sync::Arc;
+use isobmff::ac4::Ac4SpecificBox;
 use isobmff::box_support::OpaqueBox;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, parse_box};
+use isobmff::dts::DtsSpecificBox;
+use isobmff::flac::FlacSpecificBox;
 use isobmff::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
+use isobmff::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
+use isobmff::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
+use isobmff::opus::OpusSpecificBox;
 use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
 /// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
@@ -974,7 +974,7 @@ fn overlay_sample_entry_display(
     ) {
         spec.hdr = Some(hdr);
     }
-    if let Some(dovi) = crate::dovi::DoviDecoderConfigurationRecord::from_sample_entry_boxes(
+    if let Some(dovi) = isobmff::dovi::DoviDecoderConfigurationRecord::from_sample_entry_boxes(
         extra_boxes.iter().map(|b| (&b.box_type, b.data.as_slice())),
     ) {
         spec.dovi = Some(dovi);
@@ -1016,7 +1016,7 @@ fn track_entry_inband_and_extras(trak: &TrackBox) -> (bool, Vec<crate::sample_en
             e.extra_boxes.clone(),
         ),
         SampleEntryVariant::Hevc1(e) => (
-            e.codec_type == *b"hev1" || e.codec_type == crate::dovi::DVHE_FOURCC,
+            e.codec_type == *b"hev1" || e.codec_type == isobmff::dovi::DVHE_FOURCC,
             e.extra_boxes.clone(),
         ),
         _ => (false, Vec::new()),
@@ -1316,7 +1316,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
         SampleEntryVariant::Ac4(ac4) => {
             let config = Ac4SpecificBox::parse(config_box_body(
                 &ac4.config_boxes,
-                &crate::ac4::DAC4_FOURCC,
+                &isobmff::ac4::DAC4_FOURCC,
             )?)?;
             Ok(CodecConfig::Ac4 {
                 config,
@@ -1433,7 +1433,7 @@ pub(crate) fn normalise_track_nal_lengths(
 fn esds_from_config_boxes(boxes: &[OpaqueBox]) -> Result<EsdsBox> {
     // `OpaqueBox.data` is the FullBox *body* (no size/type header); parse it
     // directly (EsdsBox is fully owned, so no lifetime is retained).
-    EsdsBox::parse_body(config_box_body(boxes, b"esds")?)
+    EsdsBox::parse_body(config_box_body(boxes, b"esds")?).map_err(Into::into)
 }
 
 /// Locate a config box by FourCC among a sample entry's `config_boxes` and
@@ -1497,9 +1497,9 @@ mod tests {
     /// A minimal but real `avcC` — the same Baseline SPS/PPS pair
     /// `avc_config::tests::make_minimal_avcc_body` builds, expressed
     /// structurally so this test needs no fixture file.
-    fn minimal_avc_config() -> crate::avc_config::AVCConfigurationBox {
-        use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-        use crate::nalu_types::{AvcPps, AvcSps};
+    fn minimal_avc_config() -> isobmff::avc_config::AVCConfigurationBox {
+        use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+        use isobmff::nalu_types::{AvcPps, AvcSps};
         AVCConfigurationBox {
             config: AVCDecoderConfigurationRecord {
                 configuration_version: 1,
@@ -1876,9 +1876,9 @@ mod tests {
     #[test]
     fn fmp4_demux_normalises_two_byte_nal_lengths_hevc() {
         use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
-        use crate::hevc_config::HEVCDecoderConfigurationRecord;
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
+        use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
         const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
 
         let record = HEVCDecoderConfigurationRecord {
@@ -1905,7 +1905,7 @@ mod tests {
             TrackId::new(1),
             TIMESCALE,
             CodecConfig::Hevc {
-                config: crate::hevc_config::HEVCConfigurationBox::new(record),
+                config: isobmff::hevc_config::HEVCConfigurationBox::new(record),
                 width: 320,
                 height: 240,
             },

@@ -2207,7 +2207,7 @@ impl<'a> Parse<'a> for Ac4SampleEntry {
 /// DTS audio sample entry (`dtsc`, `dtsh`, `dtsl`, `dtse`) — ETSI TS 102 114 §E.2.
 ///
 /// Same AudioSampleEntry fixed fields as [`Mp4aSampleEntry`], then a `ddts` box
-/// carrying the [`crate::dts::DtsSpecificBox`].  The `codec_type` field records
+/// carrying the [`isobmff::dts::DtsSpecificBox`].  The `codec_type` field records
 /// which of the four DTS FourCCs (`dtsc`/`dtsh`/`dtsl`/`dtse`) was parsed or built.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

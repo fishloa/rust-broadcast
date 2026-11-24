@@ -133,14 +133,14 @@ impl AVCDecoderConfigurationRecord {
     /// *record's* condition is `AVCProfileIndication ∈ {100, 110, 122, 244}`
     /// (144 was the draft's placeholder for High 4:4:4 Predictive, finalized as
     /// 244; #563), so this is deliberately narrower than
-    /// [`crate::sps::is_high_profile`], which is the wider H.264 Table A-1 list
+    /// `transmux::sps::is_high_profile`, which is the wider H.264 Table A-1 list
     /// that governs *parsing* an SPS's syntax.
     ///
     /// The one place both an `avcC`-building caller and the SPS decoder can
     /// reach, so the record and the wire cannot disagree about the trailer's
-    /// presence. `pub(crate)`: used by [`crate::rtp_sdp`]'s `avcC` builder as
-    /// well as this module's own constructors.
-    pub(crate) fn has_high_profile_ext(profile: u8) -> bool {
+    /// presence. Used by `transmux::rtp_sdp`'s `avcC` builder as well as this
+    /// module's own constructors.
+    pub fn has_high_profile_ext(profile: u8) -> bool {
         matches!(
             profile,
             AVC_PROFILE_HIGH
@@ -157,7 +157,7 @@ impl AVCDecoderConfigurationRecord {
     /// an in-band-parameter-set stream's, may carry none). A caller that must
     /// derive geometry or a codec string from the record itself, such as the
     /// FLV demuxers, calls this to refuse a record that gives it nothing.
-    pub(crate) fn require_sps(&self) -> Result<()> {
+    pub fn require_sps(&self) -> Result<()> {
         if self.sps.is_empty() {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "numOfSequenceParameterSets",
@@ -451,8 +451,8 @@ impl Serialize for AVCConfigurationBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        isobmff::box_types::box_len(
-            isobmff::box_types::BOX_HEADER_MIN_SIZE + self.config.serialized_len(),
+        crate::box_types::box_len(
+            crate::box_types::BOX_HEADER_MIN_SIZE + self.config.serialized_len(),
         )
     }
 
@@ -460,7 +460,7 @@ impl Serialize for AVCConfigurationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = 0usize;
-        cursor += isobmff::box_types::write_box_header(buf, b"avcC", need)?;
+        cursor += crate::box_types::write_box_header(buf, b"avcC", need)?;
         cursor += self.config.serialize_into(&mut buf[cursor..])?;
         Ok(cursor)
     }

@@ -154,10 +154,10 @@ mod tests {
     use crate::codec_config_ext::EsdsBoxCodecInfo;
     use crate::ir::{CodecConfig, DataCarriage};
     use crate::mpeg_legacy::MpegAudioLayer;
-    use crate::{
+    use broadcast_common::timescale::Timescale;
+    use isobmff::{
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };
-    use broadcast_common::timescale::Timescale;
 
     fn ids(ids: &[u32]) -> impl Iterator<Item = TrackId> + '_ {
         ids.iter().map(|&i| TrackId::new(i))

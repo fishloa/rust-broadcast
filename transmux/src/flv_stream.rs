@@ -97,7 +97,6 @@ use rtmp_runtime::RtmpError;
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
-use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::flv::{
     CODEC_ID_AVC, FLV_HEADER_LEN, FLV_TIMESCALE, FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN,
     PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz, avc_dimensions,
@@ -105,6 +104,7 @@ use crate::flv::{
 };
 use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, DemuxEvent, SampleTiming};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
 /// One track (video or audio)'s still-in-flight sample: buffered until the
 /// next same-kind tag's timestamp makes its forward-delta duration knowable,
@@ -592,8 +592,11 @@ impl StreamingFlvDemux {
         let data = &body[AVC_PACKET_DATA_OFFSET..];
         match avc_packet_type_byte {
             avc_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
-                let mut record = AVCDecoderConfigurationRecord::parse(data)?;
-                record.require_sps()?;
+                let mut record = AVCDecoderConfigurationRecord::parse(data)
+                    .map_err(|e| FlvError::Codec(e.into()))?;
+                record
+                    .require_sps()
+                    .map_err(|e| FlvError::Codec(e.into()))?;
                 let length_size = usize::from(record.length_size_minus_one) + 1;
                 // The NALU samples are normalised to 4-byte NAL prefixes below,
                 // so the emitted `avcC` must declare that size (r04-W43).

@@ -811,7 +811,7 @@ fn fragment_fu_a(
 }
 
 /// Extract the AudioSpecificConfig bytes from an `esds` box.
-fn asc_bytes(esds: &crate::mp4esds::EsdsBox) -> Result<&[u8]> {
+fn asc_bytes(esds: &isobmff::mp4esds::EsdsBox) -> Result<&[u8]> {
     esds.es_descriptor
         .decoder_config
         .as_ref()
@@ -830,7 +830,7 @@ fn asc_bytes(esds: &crate::mp4esds::EsdsBox) -> Result<&[u8]> {
 #[cfg(feature = "std")]
 fn sdp_video(
     pt: u8,
-    config: &crate::avc_config::AVCDecoderConfigurationRecord,
+    config: &isobmff::avc_config::AVCDecoderConfigurationRecord,
 ) -> sdp_types::Media {
     let profile_level_id = format!(
         "{:02X}{:02X}{:02X}",
@@ -1547,7 +1547,7 @@ fn track_spec(t: &RtpTrack) -> Result<crate::pipeline::TrackSpec> {
 /// carries none. The samples are the payload of interest; this is only a
 /// track identity, and is never serialized to a container here.
 fn placeholder_avc_config() -> CodecConfig {
-    use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+    use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     let record = AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication: 0,

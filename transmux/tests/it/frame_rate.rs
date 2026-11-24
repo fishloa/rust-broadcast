@@ -2,13 +2,11 @@
 //! `nominal_frame_rate_millihertz` — H.264 SPS VUI timing only.
 
 use broadcast_common::Parse;
+use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
+use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::CodecConfig;
-use transmux::nalu_types::{HevcNalArray, HevcNalUnit};
 use transmux::ts_demux::TsDemux;
-use transmux::{
-    HEVCConfigurationBox, HEVCDecoderConfigurationRecord, decode_hevc_vui_timing,
-    nominal_frame_rate,
-};
+use transmux::{decode_hevc_vui_timing, nominal_frame_rate};
 
 // Re-exported? nominal_frame_rate is in transmux root.
 
@@ -161,9 +159,9 @@ fn real_h264_fixture_with_vui_timing() {
 
 #[test]
 fn missing_sps_yields_none() {
-    use transmux::AVCConfigurationBox;
+    use isobmff::AVCConfigurationBox;
     let cfg = CodecConfig::Avc {
-        config: AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
+        config: AVCConfigurationBox::new(isobmff::AVCDecoderConfigurationRecord {
             configuration_version: 1,
             profile_indication: 66,
             profile_compatibility: 0,

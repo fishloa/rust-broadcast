@@ -12,9 +12,10 @@
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
+use isobmff::EsdsBox;
 use transmux::{
-    AudioObjectType, AudioSpecificConfig, CodecConfig, EsdsBox, HeAacProfile, Media,
-    SamplingFrequencyIndex, TrackSpec, TsDemux, TsMux, build_init_segment, rfc6381_codec_string,
+    AudioObjectType, AudioSpecificConfig, CodecConfig, HeAacProfile, Media, SamplingFrequencyIndex,
+    TrackSpec, TsDemux, TsMux, build_init_segment, rfc6381_codec_string,
 };
 
 const MOVIE_TIMESCALE: Timescale = broadcast_common::timescale!(1000);

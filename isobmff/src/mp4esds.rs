@@ -34,6 +34,7 @@
 //! (`private/specs-verified/mpeg/transmux/codec/es-descriptor-14496-1.md`) and byte-exact round-tripped
 //! against a real ffmpeg-authored `esds` (see `real_esds_box_round_trips_byte_exact`).
 
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, FULLBOX_EXTRA_SIZE};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
@@ -41,7 +42,6 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{U24_LEN, read_u16, read_u32, take};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
-use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, FULLBOX_EXTRA_SIZE};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -49,13 +49,13 @@ use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, FULLBOX_EXTRA_SIZE};
 
 /// `esds` `objectTypeIndication` for MPEG-4 Audio (ISO/IEC 14496-3) —
 /// ISO/IEC 14496-1 §7.2.6.6 Table 5.
-pub(crate) const OTI_MPEG4_AUDIO: u8 = 0x40;
+pub const OTI_MPEG4_AUDIO: u8 = 0x40;
 /// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 13818-3) — Table 5.
-pub(crate) const OTI_MPEG2_AUDIO: u8 = 0x69;
+pub const OTI_MPEG2_AUDIO: u8 = 0x69;
 /// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 11172-3) — Table 5.
-pub(crate) const OTI_MPEG1_AUDIO: u8 = 0x6B;
+pub const OTI_MPEG1_AUDIO: u8 = 0x6B;
 /// `esds` `streamType` for an AudioStream — ISO/IEC 14496-1 §7.2.6.6.2 Table 6.
-pub(crate) const STREAM_TYPE_AUDIO: u8 = 5;
+pub const STREAM_TYPE_AUDIO: u8 = 5;
 
 /// Tag for `ES_Descriptor` (§7.2.6.5).
 const TAG_ES_DESCRIPTOR: u8 = 0x03;
@@ -1108,7 +1108,7 @@ pub struct EsdsBox {
 impl EsdsBox {
     /// The `DecoderSpecificInfo` payload (for AAC, the `AudioSpecificConfig`
     /// bytes), if the `DecoderConfigDescriptor` carries one.
-    pub(crate) fn decoder_specific_info_data(&self) -> Option<&[u8]> {
+    pub fn decoder_specific_info_data(&self) -> Option<&[u8]> {
         self.es_descriptor
             .decoder_config
             .as_ref()
@@ -1177,7 +1177,7 @@ impl Serialize for EsdsBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        isobmff::box_types::box_len(
+        crate::box_types::box_len(
             BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.es_descriptor.serialized_len(),
         )
     }
@@ -1187,7 +1187,7 @@ impl Serialize for EsdsBox {
         need_out(buf, need)?;
         let mut cursor = 0usize;
         // Box header
-        cursor += isobmff::box_types::write_box_header(buf, b"esds", need)?;
+        cursor += crate::box_types::write_box_header(buf, b"esds", need)?;
         // FullBox: version=0, flags=0
         buf[cursor..cursor + core::mem::size_of::<u32>()]
             .copy_from_slice(&[0u8; core::mem::size_of::<u32>()]);

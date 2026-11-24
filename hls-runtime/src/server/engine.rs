@@ -760,7 +760,7 @@ struct DolbyVisionHls {
 /// section 3 examples). Other compatibility ids have no brand in the verified
 /// text and are not signalled.
 fn dolby_vision_hls(spec: &transmux::TrackSpec) -> Option<DolbyVisionHls> {
-    use transmux::DoviBlSignalCompatibilityId as Ccid;
+    use isobmff::DoviBlSignalCompatibilityId as Ccid;
     let record = spec.dovi.as_ref()?;
     if !record.is_single_layer() || !record.is_hevc_profile() {
         return None;

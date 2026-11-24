@@ -868,9 +868,9 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
 /// zero anchor and zero offsets would let a broken implementation pass.
 #[test]
 fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
-    use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+    use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+    use isobmff::nalu_types::{AvcPps, AvcSps};
     use transmux::media::{CmafMux, Fmp4Demux, Track};
-    use transmux::nalu_types::{AvcPps, AvcSps};
     use transmux::pipeline::{Sample, TrackSpec};
 
     const ANCHOR: u64 = 1_234_567;

@@ -27,6 +27,7 @@
 use broadcast_common::{Parse, Unpackage};
 use serde::Serialize;
 
+use transmux::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
 use transmux::ir::{CodecConfig, Media, Track};
 use transmux::sps::rfc6381_avc1;
 use isobmff::box_iter;
@@ -126,7 +127,7 @@ fn codec_label(config: &CodecConfig) -> &'static str {
 /// string (ISO/IEC 14496-1 §7.2.6.6), mirroring `transmux::dash`'s own
 /// private `oti_of` helper (not reachable from outside the crate) via the
 /// same public fields it reads.
-fn esds_oti(esds: &transmux::mp4esds::EsdsBox) -> u8 {
+fn esds_oti(esds: &isobmff::mp4esds::EsdsBox) -> u8 {
     esds.es_descriptor
         .decoder_config
         .as_ref()
@@ -155,7 +156,7 @@ fn codec_string(config: &CodecConfig) -> Option<String> {
         CodecConfig::Ac4 { config, .. } => Some(config.rfc6381().to_string()),
         CodecConfig::MpegH { config, .. } => Some(config.rfc6381()),
         CodecConfig::Dts { codec_fourcc, .. } => {
-            Some(transmux::DtsSpecificBox::rfc6381(codec_fourcc).to_string())
+            Some(isobmff::DtsSpecificBox::rfc6381(codec_fourcc).to_string())
         }
         CodecConfig::Aac { esds, .. } => esds
             .es_descriptor

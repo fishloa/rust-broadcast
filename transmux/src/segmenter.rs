@@ -297,7 +297,7 @@ struct TrackState {
 ///
 /// ```
 /// use transmux::{CodecConfig, Sample, Segmenter, TrackSpec};
-/// # use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+/// # use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
 /// # fn spec() -> TrackSpec {
 /// #     let record = AVCDecoderConfigurationRecord {
 /// #         configuration_version: 1,

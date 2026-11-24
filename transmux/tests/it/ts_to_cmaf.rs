@@ -17,17 +17,17 @@ use std::vec::Vec;
 use transmux::TrackId;
 
 use broadcast_common::{Parse, Serialize};
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::movie_fragment::MovieFragmentBox;
+use isobmff::mp4esds::{
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
+    SLConfigDescriptor, StreamType,
+};
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
 use transmux::StblChild;
 use transmux::annexb::{annexb_to_length_prefixed, iter_annexb_nals};
-use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::init_segment::{MovieBox, SampleEntryVariant};
-use transmux::mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
-    SLConfigDescriptor, StreamType,
-};
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
@@ -224,8 +224,8 @@ fn ts_to_cmaf_end_to_end() {
         profile_compatibility: sps[2],
         level_indication: sps[3],
         length_size_minus_one: 3,
-        sps: vec![transmux::nalu_types::AvcSps(sps.clone())],
-        pps: vec![transmux::nalu_types::AvcPps(pps.clone())],
+        sps: vec![isobmff::nalu_types::AvcSps(sps.clone())],
+        pps: vec![isobmff::nalu_types::AvcPps(pps.clone())],
         chroma_format: None,
         bit_depth_luma_minus8: None,
         bit_depth_chroma_minus8: None,

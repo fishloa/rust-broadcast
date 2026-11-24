@@ -86,11 +86,11 @@ use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals, length_prefixed_
 use crate::codec_config_ext::EsdsBoxCodecInfo;
 use crate::error::{Error, Result};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
-use crate::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use crate::nal::{AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, nal_unit_type};
-use crate::nalu_types::HEVC_SPS_NUT;
 use crate::pipeline::{CodecConfig, DataCarriage, Sample};
 use crate::ts_demux::DESCRIPTOR_HEADER_LEN;
+use isobmff::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
+use isobmff::nalu_types::HEVC_SPS_NUT;
 
 // ── PID / PSI constants (ISO/IEC 13818-1 §2.4.4) ────────────────────────────
 
@@ -943,7 +943,7 @@ fn descriptor_dedup_key(tag: u8, body: &[u8]) -> (u8, Option<u8>) {
 /// (which may list the three types in any order, one array per type). Used to
 /// prepend missing parameter sets to a keyframe TS access unit (issue #627).
 fn hevc_parameter_sets(
-    record: &crate::hevc_config::HEVCDecoderConfigurationRecord,
+    record: &isobmff::hevc_config::HEVCDecoderConfigurationRecord,
 ) -> Vec<Vec<u8>> {
     let mut vps = Vec::new();
     let mut sps = Vec::new();

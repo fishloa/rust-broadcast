@@ -525,7 +525,7 @@ fn clean_capture_emits_zero_loss_signals() {
 /// `RtpMediaKind::H264` dispatch and FU-A/single-NAL framing are exercised
 /// (never the SPS/PPS content).
 fn tiny_avc_config() -> CodecConfig {
-    use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+    use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     CodecConfig::Avc {
         config: AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
             configuration_version: 1,
@@ -1476,7 +1476,7 @@ fn zero_ntp_sender_reports_are_counted() {
 // ── audit 23: declared durations, reorder depth, known_duration precedence ──
 
 use crate::bit_writer::BitWriter;
-use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
 /// A Main-profile SPS with VUI `timing_info` and an optional
 /// `bitstream_restriction` declaring `max_num_reorder_frames`.
@@ -1531,7 +1531,7 @@ fn avc_cfg(sps: &[u8]) -> CodecConfig {
             profile_compatibility: 0,
             level_indication: 30,
             length_size_minus_one: 3,
-            sps: vec![transmux::AvcSps(sps.to_vec())],
+            sps: vec![isobmff::AvcSps(sps.to_vec())],
             pps: vec![],
             chroma_format: None,
             bit_depth_luma_minus8: None,

@@ -223,7 +223,7 @@ fn no_sequence_header_is_an_error() {
 
 #[test]
 fn codec_config_without_sequence_header_yields_none() {
-    use crate::mp4esds::{
+    use isobmff::mp4esds::{
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };
     let esds = EsdsBox::new(ESDescriptor::new(
@@ -277,7 +277,7 @@ fn real_capture_sequence_header_matches_the_ffprobe_oracle() {
 
 #[test]
 fn codec_config_sequence_header_gives_geometry() {
-    use crate::mp4esds::{
+    use isobmff::mp4esds::{
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };
     let es = sequence_header(704, 576, 3);

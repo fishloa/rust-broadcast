@@ -59,15 +59,15 @@ use broadcast_common::{Package, Parse, Serialize, Unpackage};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
-use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, InputDegradation};
 use crate::media::{Media, Track};
-use crate::mp4esds::{
+use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG4_AUDIO,
     SLConfigDescriptor, STREAM_TYPE_AUDIO,
 };
-use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 
 // ---------------------------------------------------------------------------
 // Spec constants (Adobe FLV v10.1 Annex E) — no magic numbers outside tests.
@@ -1175,7 +1175,7 @@ fn video_sequence_header_body(vt: &Track) -> core::result::Result<Option<Vec<u8>
     let n = config
         .config
         .serialize_into(&mut avcc)
-        .map_err(FlvError::Codec)?;
+        .map_err(|e| FlvError::Codec(e.into()))?;
     avcc.truncate(n);
     let mut body = Vec::with_capacity(VIDEO_TAG_BODY_HEADER_LEN + avcc.len());
     body.push((FRAME_TYPE_KEYFRAME << FRAME_TYPE_SHIFT) | CODEC_ID_AVC);
@@ -2026,7 +2026,7 @@ mod tests {
             profile_compatibility: 0,
             level_indication: 0,
             length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
-            sps: alloc::vec![crate::AvcSps(sps)],
+            sps: alloc::vec![isobmff::AvcSps(sps)],
             pps: Vec::new(),
             chroma_format: None,
             bit_depth_luma_minus8: None,

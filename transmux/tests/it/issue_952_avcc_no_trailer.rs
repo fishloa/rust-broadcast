@@ -16,9 +16,9 @@
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize, Unpackage};
-use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::nalu_types::{AvcPps, AvcSps};
 use transmux::media::Fmp4Demux;
-use transmux::nalu_types::{AvcPps, AvcSps};
 use transmux::pipeline::{CodecConfig, TrackSpec, build_init_segment};
 use transmux::{MovieBox, StblChild, TrackId};
 

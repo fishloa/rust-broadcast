@@ -3,15 +3,15 @@
 //! Implements the `DOVIDecoderConfigurationRecord`, the profile/compatibility
 //! enums and the sample-entry FourCCs of the Dolby Vision profiles/levels
 //! specification. The MPEG-2 TS `DOVI_video_stream_descriptor` lives in
-//! [`crate::dovi_descriptor`].
+//! `transmux::dovi_descriptor`.
 
+use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
 use alloc::string::String;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::u16_at;
 use broadcast_common::{Parse, Serialize};
-use isobmff::box_types::BOX_TYPE_SIZE;
 
 /// FourCC of the Dolby Vision configuration box for `dv_profile <= 7`.
 pub const DVCC_FOURCC: [u8; 4] = *b"dvcC";
@@ -35,14 +35,18 @@ pub(crate) const HEVC_PROFILES: [u8; 4] = [4, 5, 7, 8];
 pub const DOVI_RECORD_LEN: usize = 24;
 
 pub(crate) const LEVEL_BITS: u32 = 6;
-pub(crate) const LEVEL_MASK: u16 = (1 << LEVEL_BITS) - 1;
+/// Mask of `dv_level` in the configuration word.
+pub const LEVEL_MASK: u16 = (1 << LEVEL_BITS) - 1;
 pub(crate) const PROFILE_SHIFT: u32 = 9;
 pub(crate) const LEVEL_SHIFT: u32 = 3;
 pub(crate) const RPU_FLAG: u16 = 0b100;
 pub(crate) const EL_FLAG: u16 = 0b010;
-pub(crate) const BL_FLAG: u16 = 0b001;
-pub(crate) const CCID_SHIFT: u32 = 4;
-pub(crate) const CCID_MASK: u8 = 0x0F;
+/// `bl_present_flag` in the configuration word.
+pub const BL_FLAG: u16 = 0b001;
+/// Shift of `dv_bl_signal_compatibility_id` in the record's trailing byte.
+pub const CCID_SHIFT: u32 = 4;
+/// Mask of `dv_bl_signal_compatibility_id` (4 bits).
+pub const CCID_MASK: u8 = 0x0F;
 
 /// `dv_bl_signal_compatibility_id` (profiles-levels spec, Table 1 and the
 /// compatibility-ID list in section 2.1).
@@ -158,19 +162,21 @@ pub struct DoviDecoderConfigurationRecord {
 pub const DOVI_RESERVED_LEN: usize = DOVI_RECORD_LEN - RESERVED_OFFSET;
 /// The reserved bits as the spec defines them.
 pub const DOVI_RESERVED_ZERO: [u8; DOVI_RESERVED_LEN] = [0; DOVI_RESERVED_LEN];
-pub(crate) const RESERVED_OFFSET: usize = 4;
+/// Byte offset of the reserved run inside the record.
+pub const RESERVED_OFFSET: usize = 4;
 
 /// Width of a four-character code in bytes.
 /// Byte offset of the `dv_profile`/`dv_level`/flag word in the record.
-pub(crate) const CONFIG_WORD_OFFSET: usize = 2;
+pub const CONFIG_WORD_OFFSET: usize = 2;
 /// Byte offset of `dv_bl_signal_compatibility_id` in the record.
-pub(crate) const CCID_OFFSET: usize = RESERVED_OFFSET;
+pub const CCID_OFFSET: usize = RESERVED_OFFSET;
 /// Width of `dv_profile` once the record's word layout is accounted for.
-pub(crate) const PROFILE_BITS: u32 = u16::BITS - PROFILE_SHIFT;
+pub const PROFILE_BITS: u32 = u16::BITS - PROFILE_SHIFT;
 /// Bytes of the reserved tail that closes each descriptor variant.
-pub(crate) const RESERVED_TAIL_LEN: usize = 1;
+pub const RESERVED_TAIL_LEN: usize = 1;
 
-pub(crate) fn invalid(field: &'static str, value: u64, reason: &'static str) -> Error {
+/// Build the typed [`Error::InvalidValue`] the Dolby Vision parsers use.
+pub fn invalid(field: &'static str, value: u64, reason: &'static str) -> Error {
     Error::InvalidValue(InvalidValue {
         field,
         value,
@@ -178,7 +184,8 @@ pub(crate) fn invalid(field: &'static str, value: u64, reason: &'static str) -> 
     })
 }
 
-pub(crate) fn pack_config_word(r: &DoviDecoderConfigurationRecord) -> u16 {
+/// Pack the profile/level/flag word of a record.
+pub fn pack_config_word(r: &DoviDecoderConfigurationRecord) -> u16 {
     (u16::from(r.profile) << PROFILE_SHIFT)
         | ((u16::from(r.level) & LEVEL_MASK) << LEVEL_SHIFT)
         | if r.rpu_present { RPU_FLAG } else { 0 }
@@ -186,7 +193,8 @@ pub(crate) fn pack_config_word(r: &DoviDecoderConfigurationRecord) -> u16 {
         | if r.bl_present { BL_FLAG } else { 0 }
 }
 
-pub(crate) fn unpack_config_word(
+/// Unpack the profile/level/flag word into a record.
+pub fn unpack_config_word(
     version_major: u8,
     version_minor: u8,
     word: u16,

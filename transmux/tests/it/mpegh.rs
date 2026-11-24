@@ -23,10 +23,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
-use transmux::{
-    CmafMux, CodecConfig, Fmp4Demux, MHAC_CONFIGURATION_VERSION, MHAC_FOURCC,
-    MHADecoderConfigurationRecord, SampleDescriptionBox, SampleEntryVariant,
-};
+use isobmff::{MHAC_CONFIGURATION_VERSION, MHAC_FOURCC, MHADecoderConfigurationRecord};
+use transmux::{CmafMux, CodecConfig, Fmp4Demux, SampleDescriptionBox, SampleEntryVariant};
 
 static FIXTURE: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("mp4/frag/mpegh-stereo.frag.mp4"));
