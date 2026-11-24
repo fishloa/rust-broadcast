@@ -167,7 +167,7 @@ pub enum IvGen {
     Constant([u8; KEY_LEN]),
 }
 
-pub use super::cenc::ConstantIvSenc;
+pub use super::ir::ConstantIvSenc;
 
 /// How the protected byte ranges (subsample map) of each sample are chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -79,4 +79,4 @@ pub use event::{
 pub use ids::{ProgramNumber, TrackId};
 pub use media::{Media, PcrSample, SkippedTrack};
 pub use sample::{FragmentTrackData, Provenance, Sample, SampleFlags, SampleTiming};
-pub use track::{Track, TrackEncryption, TrackSpec};
+pub use track::{ConstantIvSenc, Track, TrackEncryption, TrackSpec};
