@@ -359,7 +359,9 @@ pub struct StreamingFileSession {
     /// The offsets the next pass starts with, computed at end of input.
     next_offsets: HashMap<TrackId, i64>,
     latest_seen: Option<f64>,
-    earliest_seen: Option<f64>,
+    /// Contiguous media time observed since the pass began: a jump larger
+    /// than the start window is a discontinuity and does not advance it.
+    start_progress: f64,
     bytes_fed: usize,
     tracks_resolved: bool,
     start_closed: bool,
@@ -398,7 +400,7 @@ impl StreamingFileSession {
             pass_offsets: HashMap::new(),
             next_offsets: HashMap::new(),
             latest_seen: None,
-            earliest_seen: None,
+            start_progress: 0.0,
             bytes_fed: 0,
             tracks_resolved: false,
             start_closed: false,
@@ -596,8 +598,14 @@ impl StreamingFileSession {
             },
         );
         track.max_due = Some(track.max_due.map_or(due, |max| max.max(due)));
-        self.latest_seen = Some(self.latest_seen.map_or(due, |latest| latest.max(due)));
-        self.earliest_seen = Some(self.earliest_seen.map_or(due, |earliest| earliest.min(due)));
+        let previous = self.latest_seen;
+        self.latest_seen = Some(previous.map_or(due, |latest| latest.max(due)));
+        if let Some(previous) = previous {
+            let step = due - previous;
+            if step > 0.0 && step <= self.limits.start_window.as_secs_f64() {
+                self.start_progress += step;
+            }
+        }
         Ok(())
     }
 
@@ -631,12 +639,7 @@ impl StreamingFileSession {
         if self.bytes_fed >= self.limits.start_window_bytes {
             return true;
         }
-        match (self.earliest_seen, self.latest_seen) {
-            (Some(earliest), Some(latest)) => {
-                (latest - earliest) >= self.limits.start_window.as_secs_f64()
-            }
-            _ => false,
-        }
+        self.start_progress >= self.limits.start_window.as_secs_f64()
     }
 }
 
@@ -725,7 +728,7 @@ impl StreamingFileSession {
         self.tracks_resolved = false;
         self.start_closed = false;
         self.latest_seen = None;
-        self.earliest_seen = None;
+        self.start_progress = 0.0;
         self.pass_first_due = None;
         self.drained_this_feed = 0;
         self.pass_wall_start = self.next_pass_wall_start.take();
@@ -777,6 +780,14 @@ impl StreamingFileSession {
             retention: RetentionClass::Timed,
             sample: item.sample,
         })
+    }
+}
+
+impl StreamingFileSession {
+    /// Sample bytes currently held in the per-track queues, the quantity
+    /// [`FileStreamLimits::max_queued_bytes`] bounds.
+    pub fn queued_sample_bytes(&self) -> usize {
+        self.queued_bytes()
     }
 }
 

@@ -3,6 +3,7 @@
 //! the behaviour decisions the session owns: start window, merge order, hold
 //! bounds, loop bookkeeping and 33-bit wrap handling (issue #4057).
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use broadcast_common::timescale::Timescale;
@@ -76,20 +77,6 @@ fn old_path(bytes: &[u8]) -> Vec<Emitted> {
     out
 }
 
-/// Limits for the whole-file equivalence tests: the merge sees the same
-/// sample set the reference path does, so a container that reveals a track
-/// late (a capture whose PIDs only resolve at end of input) cannot be
-/// reordered by an early start-window close. The fixtures are small; the
-/// bounded-memory behaviour is pinned separately by `file_stream_memory`.
-fn differential_limits() -> FileStreamLimits {
-    FileStreamLimits {
-        read_ahead: Duration::MAX,
-        start_window: Duration::MAX,
-        start_window_bytes: usize::MAX,
-        ..FileStreamLimits::default()
-    }
-}
-
 /// Drive the streaming session from a byte buffer, applying its demands.
 fn drive_passes(
     bytes: &[u8],
@@ -97,39 +84,34 @@ fn drive_passes(
     passes: Option<u32>,
     chunk: usize,
 ) -> Vec<Emitted> {
-    drive_passes_with(bytes, container, passes, chunk, FileStreamLimits::default())
-}
-
-fn drive_passes_with(
-    bytes: &[u8],
-    container: StreamContainer,
-    passes: Option<u32>,
-    chunk: usize,
-    limits: FileStreamLimits,
-) -> Vec<Emitted> {
-    let mut session =
-        StreamingFileSession::new(container, ProgramId(0), true, passes, false, limits);
+    let mut session = StreamingFileSession::new(
+        container,
+        ProgramId(0),
+        true,
+        passes,
+        false,
+        FileStreamLimits::default(),
+    );
     drive(&mut session, bytes, chunk)
 }
 
+/// Drive the session until `Done`. Every iteration must make progress: feed
+/// bytes, send end of input, rewind, drain an event, or change the session's
+/// demand; anything else is the stall the loop budget catches.
 fn drive(session: &mut StreamingFileSession, bytes: &[u8], chunk: usize) -> Vec<Emitted> {
     let mut out = Vec::new();
     let mut offset = 0usize;
     let mut eof_sent = false;
-    let mut iterations = 0u64;
-    loop {
-        iterations += 1;
-        if iterations > 5_000_000 {
-            panic!(
-                "drive stuck: demand {:?} offset {} len {} chunk {} samples {}",
-                session.file_demand(),
-                offset,
-                bytes.len(),
-                chunk,
-                out.len()
-            );
+    let budget = (bytes.len() + bytes.len() / chunk.max(1) + 8) * 4;
+    for _iteration in 0..budget {
+        let demand = session.file_demand();
+        if demand == FileDemand::Done {
+            return out;
         }
-        match session.file_demand() {
+        let before_offset = offset;
+        let before_eof = eof_sent;
+        let before_events = out.len();
+        match demand {
             FileDemand::Bytes => {
                 if offset >= bytes.len() {
                     session
@@ -145,7 +127,6 @@ fn drive(session: &mut StreamingFileSession, bytes: &[u8], chunk: usize) -> Vec<
             FileDemand::Wait => {
                 eof_sent = eof_when_exhausted(session, offset, bytes.len(), eof_sent);
             }
-            FileDemand::Done => break,
             _ => {}
         }
         while let Some(event) = session.poll() {
@@ -153,8 +134,23 @@ fn drive(session: &mut StreamingFileSession, bytes: &[u8], chunk: usize) -> Vec<
                 out.push(item);
             }
         }
+        let progressed = offset != before_offset
+            || eof_sent != before_eof
+            || out.len() != before_events
+            || session.file_demand() != demand;
+        assert!(
+            progressed,
+            "drive stalled: demand {demand:?}, offset {offset} of {}, chunk {chunk}, \
+             samples {}",
+            bytes.len(),
+            out.len()
+        );
     }
-    out
+    panic!(
+        "drive exceeded its budget for {} bytes in {chunk}-byte chunks ({} samples)",
+        bytes.len(),
+        out.len()
+    );
 }
 
 /// The session's hold can fill before its start window closes (a short
@@ -218,8 +214,58 @@ fn assert_same(label: &str, new: &[Emitted], old: &[Emitted]) {
     );
 }
 
+type TrackSequence = Vec<(i64, i64, Option<u32>, Vec<u8>)>;
+
+/// Each track's emitted samples in output order, keyed by track id.
+fn per_track(items: &[Emitted]) -> BTreeMap<u32, TrackSequence> {
+    let mut out: BTreeMap<u32, TrackSequence> = BTreeMap::new();
+    for item in items {
+        out.entry(item.track).or_default().push((
+            item.pts,
+            item.dts,
+            item.duration,
+            item.data.clone(),
+        ));
+    }
+    out
+}
+
+/// Compare the per-track sequences without printing their payload bytes.
+fn assert_per_track_same(label: &str, new: &[Emitted], old: &[Emitted]) {
+    let new_map = per_track(new);
+    let old_map = per_track(old);
+    assert_eq!(
+        new_map.keys().collect::<Vec<_>>(),
+        old_map.keys().collect::<Vec<_>>(),
+        "{label}: track set"
+    );
+    for (track, new_seq) in &new_map {
+        let old_seq = old_map.get(track).expect("track present in both");
+        if new_seq == old_seq {
+            continue;
+        }
+        let index = new_seq
+            .iter()
+            .zip(old_seq)
+            .position(|(a, b)| a != b)
+            .unwrap_or(new_seq.len().min(old_seq.len()));
+        let summary = |seq: &[(i64, i64, Option<u32>, Vec<u8>)]| {
+            seq.get(index)
+                .map(|item| (item.0, item.1, item.2, item.3.len()))
+        };
+        panic!(
+            "{label}: track {track} differs at {index} of {} new / {} old: \
+             new {:?}, old {:?}",
+            new_seq.len(),
+            old_seq.len(),
+            summary(new_seq),
+            summary(old_seq)
+        );
+    }
+}
+
 fn new_path(bytes: &[u8], container: StreamContainer) -> Vec<Emitted> {
-    drive_passes_with(bytes, container, Some(PASSES), CHUNK, differential_limits())
+    drive_passes(bytes, container, Some(PASSES), CHUNK)
 }
 
 #[test]
@@ -234,11 +280,17 @@ fn ts_streaming_session_matches_the_whole_file_session() {
     }
     if let Some((path, _)) = test_fixtures::find("ts/france-tnt-m6-eac3-zenith.ts") {
         let bytes = std::fs::read(path).expect("read private fixture");
-        assert_same(
-            "ts/france-tnt-m6-eac3-zenith.ts",
-            &new_path(&bytes, StreamContainer::MpegTs),
-            &old_path(&bytes),
-        );
+        let new = new_path(&bytes, StreamContainer::MpegTs);
+        let old = old_path(&bytes);
+        // This capture carries track 5 at pts 0 beside media at real 90 kHz
+        // timestamps: the whole-file sort puts those samples first, while a
+        // streaming merge cannot know a late-arriving zero belongs at the
+        // front. Per-track order and the timed-track interleave are the
+        // invariants that survive every ordering.
+        assert_per_track_same("zenith", &new, &old);
+        let timed_new: Vec<&Emitted> = new.iter().filter(|item| item.pts != 0).collect();
+        let timed_old: Vec<&Emitted> = old.iter().filter(|item| item.pts != 0).collect();
+        assert_eq!(timed_new, timed_old, "zenith: timed-track interleave");
     }
 }
 
@@ -261,11 +313,11 @@ fn chunk_size_does_not_change_the_output() {
         ("flv/av.flv", StreamContainer::Flv),
     ] {
         let bytes = test_fixtures::read(name);
-        let reference = drive_passes_with(&bytes, container, Some(1), CHUNK, differential_limits());
+        let reference = drive_passes(&bytes, container, Some(1), CHUNK);
         for chunk in [1usize, 187, 188, 4096, 1 << 20] {
             assert_same(
                 &format!("{name} with a {chunk}-byte chunk"),
-                &drive_passes_with(&bytes, container, Some(1), chunk, differential_limits()),
+                &drive_passes(&bytes, container, Some(1), chunk),
                 &reference,
             );
         }
@@ -322,6 +374,38 @@ fn sparse_ts() -> Vec<u8> {
     transmux::TsMux::new()
         .package(&media)
         .expect("mux sparse TS")
+}
+
+/// A TS whose video runs at real 90 kHz presentation times (0..5 s) and whose
+/// data track carries pts 0 while arriving at 1 s, 2 s and 6 s in decode
+/// order: a timestamp far behind the presentation frontier by the time the
+/// demuxer releases it.
+fn out_of_range_pts_ts() -> Vec<u8> {
+    let frame = 3_600u32;
+    let start = 0i64;
+    let video = (0..125)
+        .map(|i| timed_sample(1, i, start + i as i64 * i64::from(frame), frame))
+        .collect::<Vec<_>>();
+    let data = (0..10u32)
+        .map(|i| {
+            let dts = 90_000 + i64::from(i) * 45_000;
+            Sample::new(
+                vec![7, i as u8, 0xAB, 0xCD],
+                Some(start + dts),
+                Some(0),
+                Some(1_024),
+                true,
+            )
+            .expect("valid timing")
+        })
+        .collect::<Vec<_>>();
+    let media = Media::new(
+        vec![data_track(1, video), data_track(2, data)],
+        timescale(90_000),
+    );
+    transmux::TsMux::new()
+        .package(&media)
+        .expect("mux out-of-range TS")
 }
 
 /// A TS with a PAT/PMT (one declared track) and no access units at all.
@@ -411,7 +495,10 @@ fn events_start_established_then_new_program_then_samples() {
     let mut events = Vec::new();
     let mut offset = 0usize;
     let mut eof_sent = false;
-    loop {
+    let mut done = false;
+    let budget = (bytes.len() + bytes.len() / CHUNK + 8) * 4;
+    for _iteration in 0..budget {
+        let before = (offset, eof_sent, events.len(), session.file_demand());
         match session.file_demand() {
             FileDemand::Bytes => {
                 if offset >= bytes.len() {
@@ -426,13 +513,24 @@ fn events_start_established_then_new_program_then_samples() {
                 eof_sent = eof_when_exhausted(&mut session, offset, bytes.len(), eof_sent);
             }
             FileDemand::Rewind => panic!("a non-looping session never rewinds"),
-            FileDemand::Done => break,
+            FileDemand::Done => {
+                done = true;
+                break;
+            }
             _ => {}
         }
         while let Some(event) = session.poll() {
             events.push(event);
         }
+        assert!(
+            offset != before.0
+                || eof_sent != before.1
+                || events.len() != before.2
+                || session.file_demand() != before.3,
+            "events drive stalled at offset {offset}"
+        );
     }
+    assert!(done, "events drive exhausted its budget");
     assert!(matches!(events.first(), Some(SessionEvent::Established)));
     let Some(SessionEvent::NewProgram { program, tracks }) = events.get(1) else {
         panic!(
@@ -468,6 +566,105 @@ fn sparse_track_does_not_stall_the_merge_and_stays_in_order() {
         1_878,
         "every video sample is released without waiting for the sparse track"
     );
+}
+
+#[test]
+fn an_untimed_data_track_is_released_in_arrival_order_and_does_not_stall() {
+    let bytes = out_of_range_pts_ts();
+    let limits = FileStreamLimits {
+        max_queued_bytes: 4 << 10,
+        read_ahead: Duration::from_secs(600),
+        start_window: Duration::from_secs(600),
+        start_window_bytes: 4 << 10,
+        ..FileStreamLimits::default()
+    };
+    let chunk = 1 << 10;
+    let mut session = StreamingFileSession::new(
+        StreamContainer::MpegTs,
+        ProgramId(0),
+        false,
+        None,
+        false,
+        limits.clone(),
+    );
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    let mut eof_sent = false;
+    let budget = (bytes.len() + bytes.len() / chunk + 8) * 4;
+    for _iteration in 0..budget {
+        let demand = session.file_demand();
+        if demand == FileDemand::Done {
+            break;
+        }
+        let before_offset = offset;
+        let before_eof = eof_sent;
+        let before_events = out.len();
+        match demand {
+            FileDemand::Bytes => {
+                if offset >= bytes.len() {
+                    session
+                        .feed(FileInput::Eof, Timestamp::ZERO)
+                        .expect("end of input");
+                } else {
+                    offset = feed_chunk(&mut session, &bytes, offset, chunk);
+                    assert!(
+                        session.queued_sample_bytes() <= limits.max_queued_bytes + chunk,
+                        "held {} bytes after one {chunk}-byte chunk",
+                        session.queued_sample_bytes()
+                    );
+                }
+            }
+            FileDemand::Wait => {
+                eof_sent = eof_when_exhausted(&mut session, offset, bytes.len(), eof_sent);
+            }
+            _ => {}
+        }
+        while let Some(event) = session.poll() {
+            if let Some(item) = emitted(event) {
+                out.push(item);
+            }
+        }
+        let progressed = offset != before_offset
+            || eof_sent != before_eof
+            || out.len() != before_events
+            || session.file_demand() != demand;
+        assert!(
+            progressed,
+            "stalled: demand {demand:?}, offset {offset}, {} samples",
+            out.len()
+        );
+    }
+
+    let video = out.iter().filter(|item| item.track == 1).count();
+    assert_eq!(video, 125, "every video sample is released");
+    let data: Vec<(usize, i64, i64)> = out
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.track == 2)
+        .map(|(index, item)| (index, item.pts, item.dts))
+        .collect();
+    assert_eq!(data.len(), 10, "every data sample is released");
+    assert!(
+        data.iter().all(|entry| entry.1 == data[0].1),
+        "every data sample keeps its out-of-range presentation time"
+    );
+    assert!(
+        data.windows(2).all(|pair| pair[0].2 < pair[1].2),
+        "data samples keep arrival (decode) order"
+    );
+    for pair in data.windows(2) {
+        let (position, _, _) = pair[0];
+        let arrival = pair[1].2;
+        if let Some(after) = out
+            .iter()
+            .position(|later| later.track == 1 && later.dts > arrival)
+        {
+            assert!(
+                position < after,
+                "data sample at {position} was held past video arriving at {after}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -508,7 +705,16 @@ fn truncated_tail_plays_whole_samples_and_loops_cleanly() {
     let mut current = Vec::new();
     let mut offset = 0usize;
     let mut eof_sent = false;
-    loop {
+    let mut done = false;
+    let budget = (cut + cut / 4096 + 8) * 8;
+    for _iteration in 0..budget {
+        let before = (
+            offset,
+            eof_sent,
+            current.len(),
+            passes.len(),
+            session.file_demand(),
+        );
         match session.file_demand() {
             FileDemand::Bytes => {
                 if offset >= cut {
@@ -528,7 +734,8 @@ fn truncated_tail_plays_whole_samples_and_loops_cleanly() {
                 eof_sent = eof_when_exhausted(&mut session, offset, cut, eof_sent);
             }
             FileDemand::Done => {
-                passes.push(current);
+                passes.push(std::mem::take(&mut current));
+                done = true;
                 break;
             }
             _ => {}
@@ -538,7 +745,16 @@ fn truncated_tail_plays_whole_samples_and_loops_cleanly() {
                 current.push(item);
             }
         }
+        assert!(
+            offset != before.0
+                || eof_sent != before.1
+                || current.len() != before.2
+                || passes.len() != before.3
+                || session.file_demand() != before.4,
+            "looped drive stalled at offset {offset}"
+        );
     }
+    assert!(done, "looped drive exhausted its budget");
     assert_eq!(passes.len(), 2, "two passes");
     let (first, second) = (&passes[0], &passes[1]);
     assert!(!first.is_empty() && !second.is_empty());
@@ -577,13 +793,7 @@ fn pts_wrap_inside_a_pass_keeps_the_timeline_increasing() {
     let bytes = restamp_across_wrap(&test_fixtures::read("ts/h264-aac.ts"));
     assert_same(
         "wrap restamp",
-        &drive_passes_with(
-            &bytes,
-            StreamContainer::MpegTs,
-            Some(PASSES),
-            CHUNK,
-            differential_limits(),
-        ),
+        &drive_passes(&bytes, StreamContainer::MpegTs, Some(PASSES), CHUNK),
         &old_path(&bytes),
     );
     let out = drive_passes(&bytes, StreamContainer::MpegTs, Some(1), CHUNK);
@@ -657,7 +867,10 @@ fn a_track_set_change_between_passes_is_reannounced() {
     let mut bytes: &[u8] = &first;
     let mut offset = 0usize;
     let mut eof_sent = false;
-    loop {
+    let mut done = false;
+    let budget = (first.len() + second.len() + 8) * 4;
+    for _iteration in 0..budget {
+        let before = (offset, eof_sent, announced.len(), session.file_demand());
         match session.file_demand() {
             FileDemand::Bytes => {
                 if offset >= bytes.len() {
@@ -676,7 +889,10 @@ fn a_track_set_change_between_passes_is_reannounced() {
             FileDemand::Wait => {
                 eof_sent = eof_when_exhausted(&mut session, offset, bytes.len(), eof_sent);
             }
-            FileDemand::Done => break,
+            FileDemand::Done => {
+                done = true;
+                break;
+            }
             _ => {}
         }
         while let Some(event) = session.poll() {
@@ -684,7 +900,15 @@ fn a_track_set_change_between_passes_is_reannounced() {
                 announced.push(tracks);
             }
         }
+        assert!(
+            offset != before.0
+                || eof_sent != before.1
+                || announced.len() != before.2
+                || session.file_demand() != before.3,
+            "track-set drive stalled at offset {offset}"
+        );
     }
+    assert!(done, "track-set drive exhausted its budget");
     assert!(announced.len() >= 2, "the second pass re-announces");
     assert_ne!(announced.first(), announced.last());
 }
@@ -729,16 +953,18 @@ fn paced_sample_is_not_released_before_it_is_due() {
     let mut offset = 0usize;
     let mut eof_sent = false;
     let mut samples = 0usize;
-    while samples == 0 {
+    let budget = (bytes.len() + bytes.len() / CHUNK + 8) * 4;
+    for _iteration in 0..budget {
+        if samples > 0 {
+            break;
+        }
+        let before = (offset, eof_sent, samples, session.file_demand());
         match session.file_demand() {
             FileDemand::Bytes => {
                 if offset >= bytes.len() {
-                    if !eof_sent {
-                        session
-                            .feed(FileInput::Eof, Timestamp::ZERO)
-                            .expect("end of input");
-                        eof_sent = true;
-                    }
+                    session
+                        .feed(FileInput::Eof, Timestamp::ZERO)
+                        .expect("end of input");
                 } else {
                     offset = feed_chunk(&mut session, &bytes, offset, CHUNK);
                 }
@@ -755,6 +981,13 @@ fn paced_sample_is_not_released_before_it_is_due() {
                 break;
             }
         }
+        assert!(
+            offset != before.0
+                || eof_sent != before.1
+                || samples != before.2
+                || session.file_demand() != before.3,
+            "paced drive stalled at offset {offset}"
+        );
     }
     assert_eq!(samples, 1, "the first sample is due immediately");
     let due = session.next_due().expect("a paced session has a deadline");

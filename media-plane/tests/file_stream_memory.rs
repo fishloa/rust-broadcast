@@ -67,12 +67,18 @@ fn drive_from_disk(path: &Path, container: StreamContainer, chunk: usize, passes
     let mut buffer = vec![0u8; chunk];
     let mut offset = 0u64;
     let mut emitted = 0u64;
-    loop {
+    let mut eof_sent = false;
+    let mut done = false;
+    let feeds = usize::try_from(len).unwrap_or(usize::MAX) / chunk.max(1) + 8;
+    let budget = feeds * (usize::try_from(passes).unwrap_or(usize::MAX) + 2) * 2;
+    for _iteration in 0..budget {
         let demand = session.file_demand();
-        if demand == FileDemand::Wait && offset >= len {
+        let before = (offset, eof_sent, emitted, demand);
+        if demand == FileDemand::Wait && offset >= len && !eof_sent {
             session
                 .feed(FileInput::Eof, Timestamp::ZERO)
                 .expect("end of input");
+            eof_sent = true;
         }
         match demand {
             FileDemand::Bytes => {
@@ -80,6 +86,7 @@ fn drive_from_disk(path: &Path, container: StreamContainer, chunk: usize, passes
                     session
                         .feed(FileInput::Eof, Timestamp::ZERO)
                         .expect("end of input");
+                    eof_sent = true;
                 } else {
                     let want = usize::try_from(len - offset).unwrap_or(chunk).min(chunk);
                     let read = file.read(&mut buffer[..want]).expect("read capture");
@@ -99,7 +106,10 @@ fn drive_from_disk(path: &Path, container: StreamContainer, chunk: usize, passes
                     .expect("session feed");
             }
             FileDemand::Wait => {}
-            FileDemand::Done => break,
+            FileDemand::Done => {
+                done = true;
+                break;
+            }
             _ => {}
         }
         while let Some(event) = session.poll() {
@@ -107,12 +117,22 @@ fn drive_from_disk(path: &Path, container: StreamContainer, chunk: usize, passes
                 emitted += 1;
             }
         }
+        assert!(
+            offset != before.0
+                || eof_sent != before.1
+                || emitted != before.2
+                || session.file_demand() != before.3,
+            "drive stalled at offset {offset} of {len}"
+        );
     }
+    assert!(done, "drive exhausted its budget");
     emitted
 }
 
 fn run(name: &str, extension: &str, container: StreamContainer, source: &str) {
-    let _serial = PEAK_LOCK.lock().expect("peak lock");
+    let _serial = PEAK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let dir = temp_dir(name);
     let path = dir.join(format!("big.{extension}"));
     let target = target_bytes();
@@ -129,6 +149,7 @@ fn run(name: &str, extension: &str, container: StreamContainer, source: &str) {
             .map(|track| track.1)
             .sum::<u64>();
     let (peak, emitted) = A.peak_during(|| drive_from_disk(&path, container, CHUNK, PASSES));
+    eprintln!("{name}: peak {peak} bytes for a {target}-byte file");
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(emitted, expected, "{name}: every sample across every pass");
     assert!(
