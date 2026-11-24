@@ -34,6 +34,23 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x40;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: usize = 5;
+/// Offset of `extension_layer_number` in the descriptor body.
+const EXTENSION_LAYER_NUMBER_OFFSET: usize = 2;
+/// Offset of the frame-rate/still/chroma byte in the descriptor body.
+const FLAGS_HI_OFFSET: usize = 3;
+/// Offset of the sample-precision byte in the descriptor body.
+const FLAGS_LO_OFFSET: usize = 4;
+const MULTIPLE_FRAME_RATE_FLAG_MASK: u8 = 0x80;
+const MULTIPLE_FRAME_RATE_FLAG_SHIFT: u8 = 7;
+const FRAME_RATE_CODE_BITS: u32 = 4;
+const FRAME_RATE_CODE_SHIFT: u8 = 3;
+const FRAME_RATE_CODE_MASK: u8 = 0x0F;
+const AVS_STILL_PRESENT_MASK: u8 = 0x04;
+const AVS_STILL_PRESENT_SHIFT: u8 = 2;
+const CHROMA_FORMAT_BITS: u32 = 2;
+const CHROMA_FORMAT_MASK: u8 = 0x03;
+const SAMPLE_PRECISION_BITS: u32 = 3;
+const SAMPLE_PRECISION_SHIFT: u8 = 5;
 /// Width of the `reserved` tail (5 bits).
 const RESERVED_BITS: u32 = 5;
 /// Spec/default of the 5-bit `reserved` field: all ones when hand-built
@@ -106,16 +123,18 @@ impl<'a> Parse<'a> for Avs2VideoDescriptor {
                 reason: "AVS2_video_descriptor body must be 5 bytes",
             });
         }
-        let (b3, b4) = (body[3], body[4]);
+        let (b3, b4) = (body[FLAGS_HI_OFFSET], body[FLAGS_LO_OFFSET]);
         Ok(Self {
             profile_id: body[0],
             level_id: body[1],
-            extension_layer_number: body[2],
-            multiple_frame_rate_flag: b3 & 0x80 != 0,
-            frame_rate_code: Avs3FrameRateCode::from_u8((b3 >> 3) & 0x0F),
-            avs_still_present: b3 & 0x04 != 0,
-            chroma_format: b3 & 0x03,
-            sample_precision: b4 >> 5,
+            extension_layer_number: body[EXTENSION_LAYER_NUMBER_OFFSET],
+            multiple_frame_rate_flag: b3 & MULTIPLE_FRAME_RATE_FLAG_MASK != 0,
+            frame_rate_code: Avs3FrameRateCode::from_u8(
+                (b3 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK,
+            ),
+            avs_still_present: b3 & AVS_STILL_PRESENT_MASK != 0,
+            chroma_format: b3 & CHROMA_FORMAT_MASK,
+            sample_precision: b4 >> SAMPLE_PRECISION_SHIFT,
             reserved: ReservedOnes::from_bits(u64::from(b4)),
         })
     }
@@ -132,21 +151,30 @@ impl Serialize for Avs2VideoDescriptor {
         need_out(buf, len)?;
         let frc = fit_bits(
             u64::from(self.frame_rate_code.to_u8()),
-            4,
+            FRAME_RATE_CODE_BITS,
             "frame_rate_code",
         )? as u8;
-        let cf = fit_bits(u64::from(self.chroma_format), 2, "chroma_format")? as u8;
-        let sp = fit_bits(u64::from(self.sample_precision), 3, "sample_precision")? as u8;
+        let cf = fit_bits(
+            u64::from(self.chroma_format),
+            CHROMA_FORMAT_BITS,
+            "chroma_format",
+        )? as u8;
+        let sp = fit_bits(
+            u64::from(self.sample_precision),
+            SAMPLE_PRECISION_BITS,
+            "sample_precision",
+        )? as u8;
         let rsv = self.reserved.get() as u8;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
-        buf[2] = self.profile_id;
-        buf[3] = self.level_id;
-        buf[4] = self.extension_layer_number;
-        buf[5] = (u8::from(self.multiple_frame_rate_flag) << 7)
-            | (frc << 3)
-            | (u8::from(self.avs_still_present) << 2)
+        buf[HEADER_LEN] = self.profile_id;
+        buf[HEADER_LEN + 1] = self.level_id;
+        buf[HEADER_LEN + EXTENSION_LAYER_NUMBER_OFFSET] = self.extension_layer_number;
+        buf[HEADER_LEN + FLAGS_HI_OFFSET] = (u8::from(self.multiple_frame_rate_flag)
+            << MULTIPLE_FRAME_RATE_FLAG_SHIFT)
+            | (frc << FRAME_RATE_CODE_SHIFT)
+            | (u8::from(self.avs_still_present) << AVS_STILL_PRESENT_SHIFT)
             | cf;
-        buf[6] = (sp << 5) | rsv;
+        buf[HEADER_LEN + FLAGS_LO_OFFSET] = (sp << SAMPLE_PRECISION_SHIFT) | rsv;
         Ok(len)
     }
 }

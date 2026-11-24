@@ -113,7 +113,7 @@ impl Serialize for DataStreamAlignmentDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[2] = self.alignment_type.to_u8();
+        buf[HEADER_LEN] = self.alignment_type.to_u8();
         Ok(len)
     }
 }

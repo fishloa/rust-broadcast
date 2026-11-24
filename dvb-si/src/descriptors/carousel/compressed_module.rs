@@ -44,9 +44,10 @@ impl<'a> Parse<'a> for CompressedModuleDescriptor {
             tag: TAG,
             reason: "compressed_module_descriptor body must be 5 bytes",
         })?;
+        let [compression_method, size_b0, size_b1, size_b2, size_b3] = b;
         Ok(Self {
-            compression_method: b[0],
-            original_size: u32::from_be_bytes([b[1], b[2], b[3], b[4]]),
+            compression_method,
+            original_size: u32::from_be_bytes([size_b0, size_b1, size_b2, size_b3]),
         })
     }
 }
@@ -61,8 +62,9 @@ impl Serialize for CompressedModuleDescriptor {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
-        buf[2] = self.compression_method;
-        buf[3..7].copy_from_slice(&self.original_size.to_be_bytes());
+        buf[HEADER_LEN] = self.compression_method;
+        buf[HEADER_LEN + 1..HEADER_LEN + BODY_LEN]
+            .copy_from_slice(&self.original_size.to_be_bytes());
         Ok(len)
     }
 }

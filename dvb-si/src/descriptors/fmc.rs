@@ -12,6 +12,10 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for FMC_descriptor.
 pub const TAG: u8 = 0x1F;
 const HEADER_LEN: usize = 2;
+/// Width of the `ES_ID` field in an entry.
+const ES_ID_LEN: usize = 2;
+/// Width of one entry: `ES_ID` + the single `FMC` byte.
+const ENTRY_LEN: usize = ES_ID_LEN + 1;
 
 /// FMC Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,17 +35,17 @@ impl<'a> Parse<'a> for FmcDescriptor {
             "FmcDescriptor",
             "unexpected tag for FMC_descriptor",
         )?;
-        if body.len() % 3 != 0 {
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "FMC_descriptor body length must be a multiple of 3",
             });
         }
         let entries = body
-            .chunks_exact(3)
+            .chunks_exact(ENTRY_LEN)
             .map(|chunk| {
                 let es_id = u16::from_be_bytes([chunk[0], chunk[1]]);
-                (es_id, chunk[2])
+                (es_id, chunk[ES_ID_LEN])
             })
             .collect();
         Ok(Self { entries })
@@ -52,7 +56,7 @@ impl Serialize for FmcDescriptor {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + self.entries.len() * 3
+        HEADER_LEN + self.entries.len() * ENTRY_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -60,9 +64,9 @@ impl Serialize for FmcDescriptor {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         for (i, &(es_id, fmc)) in self.entries.iter().enumerate() {
-            let off = HEADER_LEN + i * 3;
-            buf[off..off + 2].copy_from_slice(&es_id.to_be_bytes());
-            buf[off + 2] = fmc;
+            let off = HEADER_LEN + i * ENTRY_LEN;
+            buf[off..off + ES_ID_LEN].copy_from_slice(&es_id.to_be_bytes());
+            buf[off + ES_ID_LEN] = fmc;
         }
         Ok(len)
     }

@@ -36,6 +36,9 @@
 //! ));
 //! ```
 
+/// Length of a descriptor loop entry's `tag` + `length` prefix (EN 301 192 §10.2).
+const ENTRY_HEADER_LEN: usize = 2;
+
 pub mod compressed_module;
 pub mod crc32;
 pub mod est_download_time;
@@ -183,7 +186,7 @@ impl<'a> CarouselDescriptorLoop<'a> {
             let (&tag, rem) = rem.split_first()?;
             let (&len, rem) = rem.split_first()?;
             let body = rem.get(..usize::from(len))?;
-            pos += 2 + usize::from(len);
+            pos += ENTRY_HEADER_LEN + usize::from(len);
             Some((tag, body))
         })
     }

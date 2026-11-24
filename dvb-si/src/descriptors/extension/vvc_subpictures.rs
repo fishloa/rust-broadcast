@@ -22,11 +22,29 @@ pub struct VvcSubpicture {
 /// Spec default of the 5-bit `reserved_zero_future_use` before
 /// `processing_mode`: 0 (EN 300 468 Table 162a, V1.18.1-V1.20.1;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_ZERO_BITS> =
-    ReservedZero::<RESERVED_ZERO_BITS>::FILL;
+pub const VVC_SUBPICTURES_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_FUTURE_USE_BITS> =
+    ReservedZero::<RESERVED_FUTURE_USE_BITS>::FILL;
 /// Width of the `reserved_zero_future_use` before `processing_mode` (5 bits).
-const RESERVED_ZERO_BITS: u32 = 5;
+const RESERVED_FUTURE_USE_BITS: u32 = 5;
 const PROCESSING_MODE_MASK: u8 = 0x07;
+/// Shift of `reserved_zero_future_use` in the processing-mode byte.
+const RESERVED_FUTURE_USE_SHIFT: u32 = 3;
+/// Mask of `default_service_mode`.
+const DEFAULT_SERVICE_MODE_MASK: u8 = 0x80;
+/// Shift of `default_service_mode`.
+const DEFAULT_SERVICE_MODE_SHIFT: u32 = 7;
+/// Mask of `service_description_present`.
+const SERVICE_DESCRIPTION_PRESENT_MASK: u8 = 0x40;
+/// Shift of `service_description_present`.
+const SERVICE_DESCRIPTION_PRESENT_SHIFT: u32 = 6;
+/// Mask of `number_of_vvc_subpictures`.
+const SUBPICTURE_COUNT_MASK: u8 = 0x3F;
+/// Width of `number_of_vvc_subpictures`.
+const SUBPICTURE_COUNT_BITS: u32 = 6;
+/// Width of one subpicture entry.
+const SUBPICTURE_ENTRY_LEN: usize = 2;
+/// Offset of `vvc_subpicture_id` in an entry.
+const SUBPICTURE_ID_OFFSET: usize = 1;
 
 /// vvc_subpictures body (Table 162a) — fully typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,8 +58,8 @@ pub struct VvcSubpictures<'a> {
     pub subpictures: Vec<VvcSubpicture>,
     /// `reserved_zero_future_use` (5 bits, right-aligned) — byte after the
     /// subpicture loop, bits `[7:3]`. Preserved on parse;
-    /// [`VvcSubpictures::new`] uses [`VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use: ReservedZero<RESERVED_ZERO_BITS>,
+    /// [`VvcSubpictures::new`] uses [`VVC_SUBPICTURES_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use: ReservedZero<RESERVED_FUTURE_USE_BITS>,
     /// processing_mode(3) — byte after the subpicture loop, bits `[2:0]`.
     pub processing_mode: u8,
     /// Length-delimited service_description text, present iff
@@ -61,7 +79,7 @@ impl<'a> VvcSubpictures<'a> {
         Self {
             default_service_mode,
             subpictures,
-            reserved_zero_future_use: VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use: VVC_SUBPICTURES_RESERVED_FUTURE_USE_DEFAULT,
             processing_mode,
             service_description,
         }
@@ -81,12 +99,12 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
             ));
         }
         let byte0 = sel[0];
-        let default_service_mode = (byte0 & 0x80) != 0;
-        let service_description_present = (byte0 & 0x40) != 0;
-        let n = (byte0 & 0x3F) as usize;
+        let default_service_mode = (byte0 & DEFAULT_SERVICE_MODE_MASK) != 0;
+        let service_description_present = (byte0 & SERVICE_DESCRIPTION_PRESENT_MASK) != 0;
+        let n = (byte0 & SUBPICTURE_COUNT_MASK) as usize;
 
         // Table 162a: 1 fixed byte + n*2 subpicture bytes + 1 processing_mode byte.
-        let subpicture_bytes = n * 2;
+        let subpicture_bytes = n * SUBPICTURE_ENTRY_LEN;
         let min_len = 1 + subpicture_bytes + 1;
         need_in(sel, min_len, "vvc_subpictures body")?;
 
@@ -94,16 +112,17 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
         let mut subpictures = Vec::with_capacity(n);
         for _ in 0..n {
             let component_tag = sel[pos];
-            let vvc_subpicture_id = sel[pos + 1];
+            let vvc_subpicture_id = sel[pos + SUBPICTURE_ID_OFFSET];
             subpictures.push(VvcSubpicture {
                 component_tag,
                 vvc_subpicture_id,
             });
-            pos += 2;
+            pos += SUBPICTURE_ENTRY_LEN;
         }
 
         let processing_mode = sel[pos] & PROCESSING_MODE_MASK;
-        let reserved_zero_future_use = ReservedZero::from_bits(u64::from(sel[pos] >> 3));
+        let reserved_zero_future_use =
+            ReservedZero::from_bits(u64::from(sel[pos] >> RESERVED_FUTURE_USE_SHIFT));
         pos += 1;
 
         let service_description = if service_description_present {
@@ -136,7 +155,7 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
 impl Serialize for VvcSubpictures<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        1 + self.subpictures.len() * 2
+        1 + self.subpictures.len() * SUBPICTURE_ENTRY_LEN
             + 1 // processing_mode
             + self
                 .service_description
@@ -150,19 +169,19 @@ impl Serialize for VvcSubpictures<'_> {
         let service_description_present = self.service_description.is_some();
         let number_of_vvc_subpictures = broadcast_common::len::fit_bits(
             self.subpictures.len() as u64,
-            6,
+            SUBPICTURE_COUNT_BITS,
             "number_of_vvc_subpictures",
         )? as u8;
-        buf[0] = (u8::from(self.default_service_mode) << 7)
-            | (u8::from(service_description_present) << 6)
+        buf[0] = (u8::from(self.default_service_mode) << DEFAULT_SERVICE_MODE_SHIFT)
+            | (u8::from(service_description_present) << SERVICE_DESCRIPTION_PRESENT_SHIFT)
             | number_of_vvc_subpictures;
         let mut p = 1;
         for sp in &self.subpictures {
             buf[p] = sp.component_tag;
-            buf[p + 1] = sp.vvc_subpicture_id;
-            p += 2;
+            buf[p + SUBPICTURE_ID_OFFSET] = sp.vvc_subpicture_id;
+            p += SUBPICTURE_ENTRY_LEN;
         }
-        buf[p] = ((self.reserved_zero_future_use.get() as u8) << 3)
+        buf[p] = ((self.reserved_zero_future_use.get() as u8) << RESERVED_FUTURE_USE_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.processing_mode,
                 PROCESSING_MODE_MASK,

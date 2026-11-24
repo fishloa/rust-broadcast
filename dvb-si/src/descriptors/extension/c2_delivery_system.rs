@@ -8,6 +8,23 @@ impl ExtensionBodyDef<'_> for C2DeliverySystem {
     const NAME: &'static str = "C2_DELIVERY_SYSTEM";
 }
 
+/// Offset of `c2_system_tuning_frequency`.
+const C2_FREQUENCY_OFFSET: usize = 2;
+/// Width of `c2_system_tuning_frequency`.
+const C2_FREQUENCY_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of the packed tuning byte.
+const C2_PACKED_OFFSET: usize = C2_FREQUENCY_OFFSET + C2_FREQUENCY_LEN;
+/// Mask of `c2_system_tuning_frequency_type`.
+const C2_FREQUENCY_TYPE_MASK: u8 = 0x03;
+/// Shift of `c2_system_tuning_frequency_type`.
+const C2_FREQUENCY_TYPE_SHIFT: u32 = 6;
+/// Mask of `active_ofdm_symbol_duration`.
+const C2_OFDM_DURATION_MASK: u8 = 0x07;
+/// Shift of `active_ofdm_symbol_duration`.
+const C2_OFDM_DURATION_SHIFT: u32 = 3;
+/// Mask of `guard_interval`.
+const C2_GUARD_INTERVAL_MASK: u8 = 0x07;
+
 /// C2 system tuning frequency type — ETSI EN 300 468 Table 116.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -204,9 +221,9 @@ impl<'a> Parse<'a> for C2DeliverySystem {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         need_in(sel, C2_LEN, "C2_delivery_system body")?;
-        let packed = sel[6];
-        let (freq_bytes, _) = sel[2..]
-            .split_first_chunk::<4>()
+        let packed = sel[C2_PACKED_OFFSET];
+        let (freq_bytes, _) = sel[C2_FREQUENCY_OFFSET..]
+            .split_first_chunk::<C2_FREQUENCY_LEN>()
             .ok_or(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
                     need: C2_LEN,
@@ -218,9 +235,13 @@ impl<'a> Parse<'a> for C2DeliverySystem {
             plp_id: sel[0],
             data_slice_id: sel[1],
             c2_system_tuning_frequency: u32::from_be_bytes(*freq_bytes),
-            c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(packed >> 6),
-            active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8((packed >> 3) & 0x07),
-            guard_interval: C2GuardInterval::from_u8(packed & 0x07),
+            c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(
+                packed >> C2_FREQUENCY_TYPE_SHIFT,
+            ),
+            active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8(
+                (packed >> C2_OFDM_DURATION_SHIFT) & C2_OFDM_DURATION_MASK,
+            ),
+            guard_interval: C2GuardInterval::from_u8(packed & C2_GUARD_INTERVAL_MASK),
             trailing: sel[C2_LEN..].to_vec(),
         })
     }
@@ -237,17 +258,21 @@ impl Serialize for C2DeliverySystem {
         buf[0] = self.plp_id;
         buf[1] = self.data_slice_id;
         buf[2..6].copy_from_slice(&self.c2_system_tuning_frequency.to_be_bytes());
-        buf[6] = (broadcast_common::len::fit_mask(
+        buf[C2_PACKED_OFFSET] = (broadcast_common::len::fit_mask(
             self.c2_system_tuning_frequency_type.to_u8(),
-            0x03,
+            C2_FREQUENCY_TYPE_MASK,
             "c2_system_tuning_frequency_type",
-        )? << 6)
+        )? << C2_FREQUENCY_TYPE_SHIFT)
             | (broadcast_common::len::fit_mask(
                 self.active_ofdm_symbol_duration.to_u8(),
-                0x07,
+                C2_OFDM_DURATION_MASK,
                 "active_ofdm_symbol_duration",
-            )? << 3)
-            | broadcast_common::len::fit_mask(self.guard_interval.to_u8(), 0x07, "guard_interval")?;
+            )? << C2_OFDM_DURATION_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.guard_interval.to_u8(),
+                C2_GUARD_INTERVAL_MASK,
+                "guard_interval",
+            )?;
         buf[C2_LEN..len].copy_from_slice(&self.trailing);
         Ok(len)
     }
