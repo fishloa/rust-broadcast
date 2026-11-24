@@ -45,13 +45,13 @@ pub fn write_big_ts(path: &Path, source_fixture: &Path, target_bytes: u64) -> Bi
         "demux TS source",
         TsDemux::new().unpackage(source.as_slice()),
     );
-    let spans = track_spans(&media);
+    let step = pass_step(&media);
     let mut mux = StreamingTsMux::new();
     let mut out = BufWriter::new(expect("create output", File::create(path)));
     let mut written = 0u64;
     let mut passes = 0u64;
     while written < target_bytes {
-        let shifted = media_at_pass(&media, &spans, passes);
+        let shifted = media_at_pass(&media, &step, passes);
         let chunk = expect("mux TS pass", mux.package(&shifted));
         expect("write TS pass", out.write_all(&chunk));
         written += expect("sum chunk length", u64::try_from(chunk.len()));
@@ -61,7 +61,7 @@ pub fn write_big_ts(path: &Path, source_fixture: &Path, target_bytes: u64) -> Bi
     BigMedia {
         bytes: written,
         samples_per_track: counts(&media, passes),
-        duration: duration_of(&media, &spans, passes),
+        duration: step.duration_for(passes),
     }
 }
 
@@ -73,12 +73,12 @@ pub fn write_big_flv(path: &Path, source_fixture: &Path, target_bytes: u64) -> B
         "demux FLV source",
         FlvDemux::new().unpackage(source.as_slice()),
     );
-    let spans = track_spans(&media);
+    let step = pass_step(&media);
     let mut out = BufWriter::new(expect("create output", File::create(path)));
     let mut written = write_flv_preamble(&mut out, &media);
     let mut passes = 0u64;
     while written < target_bytes {
-        let shifted = media_at_pass(&media, &spans, passes);
+        let shifted = media_at_pass(&media, &step, passes);
         for payload in expect("build FLV frame payloads", flv_frame_payloads(&shifted)) {
             written += write_flv_tag(
                 &mut out,
@@ -93,7 +93,7 @@ pub fn write_big_flv(path: &Path, source_fixture: &Path, target_bytes: u64) -> B
     BigMedia {
         bytes: written,
         samples_per_track: counts(&media, passes),
-        duration: duration_of(&media, &spans, passes),
+        duration: step.duration_for(passes),
     }
 }
 
@@ -158,9 +158,53 @@ fn read_source(path: &Path) -> Vec<u8> {
     expect("read source fixture", std::fs::read(path))
 }
 
-/// Each track's own span in ticks (`last end - first dts`), i.e. the offset one
-/// pass adds to that track's timestamps.
-fn track_spans(media: &Media) -> Vec<i64> {
+/// The one media-time step every pass advances by: the longest track's span,
+/// kept as an exact ticks/timescale rational.
+///
+/// Per-track spans differ (audio runs a frame past video, a 90 kHz and a 44.1
+/// kHz track round differently), so advancing each track by its *own* span
+/// makes the tracks drift apart by that difference on every pass — seconds of
+/// A/V skew across a few hundred passes. One file-wide step in seconds, applied
+/// to every track, keeps the source's A/V offset.
+#[derive(Debug, Clone, Copy)]
+struct PassStep {
+    ticks: u64,
+    timescale: u32,
+}
+
+impl PassStep {
+    /// `pass` steps expressed in `timescale` ticks: the step's exact rational
+    /// multiplied by the pass count first, then divided once, so the only
+    /// rounding is a single floor rather than an accumulated per-pass error.
+    fn offset_for(&self, pass: u64, timescale: u32) -> i64 {
+        let ticks = u128::from(self.ticks)
+            .checked_mul(u128::from(pass))
+            .and_then(|product| product.checked_mul(u128::from(timescale)))
+            .map(|product| product / u128::from(self.timescale))
+            .and_then(|ticks| i64::try_from(ticks).ok());
+        expect(
+            "pass offset fits i64",
+            ticks.ok_or("pass offset overflows i64"),
+        )
+    }
+
+    /// The media timeline `passes` passes span: `passes * step`, in the same
+    /// exact-rational form.
+    fn duration_for(&self, passes: u64) -> Duration {
+        let nanos = u128::from(self.ticks)
+            .checked_mul(u128::from(passes))
+            .and_then(|product| product.checked_mul(u128::from(NANOS_PER_SECOND)))
+            .map(|product| product / u128::from(self.timescale))
+            .and_then(|nanos| u64::try_from(nanos).ok());
+        Duration::from_nanos(expect(
+            "pass duration fits u64 nanoseconds",
+            nanos.ok_or("pass duration overflows u64 nanoseconds"),
+        ))
+    }
+}
+
+/// Each track's own span in ticks (`last end - first dts`).
+fn track_spans(media: &Media) -> Vec<u64> {
     media
         .tracks
         .iter()
@@ -179,22 +223,46 @@ fn track_spans(media: &Media) -> Vec<i64> {
                 last_end = Some(last_end.map_or(end, |e| e.max(end)));
             }
             match (first, last_end) {
-                (Some(first), Some(end)) => (end - first).max(0),
+                (Some(first), Some(end)) => u64::try_from(end.saturating_sub(first)).unwrap_or(0),
                 _ => 0,
             }
         })
         .collect()
 }
 
-/// `media` shifted by `pass` times each track's span, so successive passes
-/// continue one monotonic timeline.
-fn media_at_pass(media: &Media, spans: &[i64], pass: u64) -> Media {
+/// The longest track span as a [`PassStep`], comparing spans as seconds
+/// cross-multiplied so tracks with different timescales compare exactly.
+fn pass_step(media: &Media) -> PassStep {
+    let spans = track_spans(media);
+    let timescales: Vec<u32> = media
+        .tracks
+        .iter()
+        .map(|track| track.spec.timescale.get())
+        .collect();
+    let mut longest: Option<(u64, u32)> = None;
+    for (&span, &timescale) in spans.iter().zip(&timescales) {
+        longest = match longest {
+            Some((best_span, best_timescale))
+                if u128::from(span) * u128::from(best_timescale)
+                    <= u128::from(best_span) * u128::from(timescale) =>
+            {
+                Some((best_span, best_timescale))
+            }
+            _ => Some((span, timescale)),
+        };
+    }
+    let (ticks, timescale) = expect(
+        "source has a timed track",
+        longest.ok_or("source has no tracks"),
+    );
+    PassStep { ticks, timescale }
+}
+
+/// `media` shifted so pass `pass` continues the timeline `step` starts.
+fn media_at_pass(media: &Media, step: &PassStep, pass: u64) -> Media {
     let mut shifted = media.clone();
-    for (track, span) in shifted.tracks.iter_mut().zip(spans) {
-        let offset = i64::try_from(pass)
-            .ok()
-            .and_then(|pass| pass.checked_mul(*span))
-            .unwrap_or(i64::MAX);
+    for track in &mut shifted.tracks {
+        let offset = step.offset_for(pass, track.spec.timescale.get());
         if offset == 0 {
             continue;
         }
@@ -216,18 +284,6 @@ fn counts(media: &Media, passes: u64) -> Vec<(u32, u64)> {
             (track.spec.track_id.value(), per_pass * passes)
         })
         .collect()
-}
-
-/// The longest track timeline of the written file: each track's span in
-/// seconds times the number of passes.
-fn duration_of(media: &Media, spans: &[i64], passes: u64) -> Duration {
-    let mut nanos = 0u128;
-    for (track, span) in media.tracks.iter().zip(spans) {
-        let ticks = u128::try_from(*span).unwrap_or(0) * u128::from(passes);
-        let ticks = ticks * u128::from(NANOS_PER_SECOND);
-        nanos = nanos.max(ticks / u128::from(track.spec.timescale.get()));
-    }
-    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
 /// Unwrap one harness step, naming it in the failure message. The writers
