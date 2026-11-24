@@ -13,3 +13,4 @@ rtp-packet/src/rtcp/packet.rs:Reduced-Size RTCP packet (RFC 3550 §6.1 / RFC 550
 broadcast-common/src/clock33.rs:pub const WRAP_33BIT_HALF: u64 = WRAP_33BIT / 2; # public API constant name; renaming would break the published API
 broadcast-common/src/clock33.rs:pub const ZERO: Self = Self(0); # public API constant name; renaming would break the published API
 broadcast-common/src/stage.rs:pub const ZERO: Timestamp = Timestamp(0); # public API constant name; renaming would break the published API
+mpeg-ts/src/ts.rs:pub const ZERO: Self = Self(0); # public API constant name; renaming would break the published API
