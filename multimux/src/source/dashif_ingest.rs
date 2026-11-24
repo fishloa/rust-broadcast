@@ -10,7 +10,7 @@ use axum::extract::State;
 use axum::http::{Method, Request, StatusCode};
 use axum::response::IntoResponse;
 use broadcast_common::{Demand, Stage, Timestamp};
-use bytes::Bytes;
+use bytes::{Buf as _, Bytes};
 use media_plane::ingress::{HandshakePolicy, IngestSession, SessionEvent};
 use media_plane::trunk::TrunkConfig;
 use tokio::net::TcpListener;
@@ -301,6 +301,44 @@ enum ReadBodyError {
     Broken,
 }
 
+/// How much of a refused request's body this route reads and discards before
+/// it closes the connection.
+const REFUSED_DRAIN_BYTES: usize = 8 * 1024 * 1024;
+
+/// How long the route waits for those bytes to arrive.
+const REFUSED_DRAIN_TIME: tokio::time::Duration = tokio::time::Duration::from_secs(1);
+
+/// Read and discard whatever a refused request has left of its body, bounded
+/// in bytes and time.
+///
+/// Closing a connection that still has unread request body resets it, and the
+/// reset discards the answer the client has not read yet: a refused upload
+/// then never learns why it was refused. Draining first means the answer is
+/// followed by an orderly close. A client that keeps sending past either
+/// bound is cut off.
+async fn discard_refused_body<B>(mut body: std::pin::Pin<&mut B>)
+where
+    B: http_body::Body,
+{
+    let start = tokio::time::Instant::now();
+    let mut drained = 0usize;
+    while drained < REFUSED_DRAIN_BYTES {
+        let remaining = REFUSED_DRAIN_TIME.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            return;
+        }
+        let frame = std::future::poll_fn(|cx| http_body::Body::poll_frame(body.as_mut(), cx));
+        match tokio::time::timeout(remaining, frame).await {
+            Ok(Some(Ok(frame))) => {
+                if let Ok(data) = frame.into_data() {
+                    drained = drained.saturating_add(data.remaining());
+                }
+            }
+            Ok(Some(Err(_)) | None) | Err(_) => return,
+        }
+    }
+}
+
 /// The buffered bytes a request holds against its route's budget; dropping it
 /// returns them.
 struct BudgetHold(Option<OwnedSemaphorePermit>);
@@ -325,7 +363,8 @@ impl BudgetHold {
 /// Collect `body` into one buffer, refusing more than `max` bytes — checked
 /// per frame, so an oversized chunked body is rejected without buffering it —
 /// and more than `budget` allows across this route's concurrent requests.
-/// The returned hold keeps the bytes reserved until it is dropped.
+/// The returned hold keeps the bytes reserved until it is dropped. A refused
+/// body is drained (bounded) first, so the refusal is not lost to a reset.
 async fn read_limited(
     body: axum::body::Body,
     max: usize,
@@ -337,13 +376,21 @@ async fn read_limited(
     while let Some(frame) =
         std::future::poll_fn(|cx| http_body::Body::poll_frame(body.as_mut(), cx)).await
     {
-        let frame = frame.map_err(|_| ReadBodyError::Broken)?;
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(_) => return Err(ReadBodyError::Broken),
+        };
         if let Ok(data) = frame.into_data() {
-            if buf.len().saturating_add(data.len()) > max {
-                return Err(ReadBodyError::TooLarge);
-            }
-            if !hold.reserve(budget, data.len()) {
-                return Err(ReadBodyError::OverBudget);
+            let refusal = if buf.len().saturating_add(data.len()) > max {
+                Some(ReadBodyError::TooLarge)
+            } else if !hold.reserve(budget, data.len()) {
+                Some(ReadBodyError::OverBudget)
+            } else {
+                None
+            };
+            if let Some(refusal) = refusal {
+                discard_refused_body(body.as_mut()).await;
+                return Err(refusal);
             }
             buf.extend_from_slice(&data);
         }
@@ -552,45 +599,58 @@ pub async fn run_dashif_ingest(
     }
 }
 
-async fn dashif_handler(
-    State(state): State<HandlerState>,
-    req: Request<axum::body::Body>,
-) -> impl IntoResponse {
-    // Authenticate FIRST — before method/path/body handling. No unauthenticated
-    // object may be read, classified or fed.
+/// What the method, prefix and declared-length checks make of one request.
+enum Admission {
+    /// Serve it: its method, and its path inside the publishing point.
+    Serve(dash_runtime::ingest::IngestMethod, String),
+    /// Answer it with this, without reading its body.
+    Refuse(axum::response::Response),
+}
+
+/// The method and the path inside the publishing point this request carries,
+/// or the answer it is refused with.
+///
+/// Every refusal here is decided without reading a byte of the body, so the
+/// caller drains the body before it answers. Authentication comes FIRST —
+/// before method, path or body handling — because no unauthenticated object
+/// may be read, classified or fed.
+fn admit(
+    state: &HandlerState,
+    req: &Request<axum::body::Body>,
+    content_length: Option<u64>,
+) -> Admission {
     if let Some(verifier) = &state.auth
-        && let Some(resp) = crate::origin::check_output_auth(verifier, &req)
+        && let Some(resp) = crate::origin::check_output_auth(verifier, req)
     {
-        return resp;
+        return Admission::Refuse(resp);
     }
 
-    let method = req.method().clone();
-    if method != Method::POST && method != Method::PUT {
-        return (
-            StatusCode::METHOD_NOT_ALLOWED,
-            [("allow", "POST, PUT")],
-            Bytes::new(),
-        )
-            .into_response();
-    }
-    let ingest_method = if method == Method::POST {
-        dash_runtime::ingest::IngestMethod::Post
-    } else {
-        dash_runtime::ingest::IngestMethod::Put
+    let ingest_method = match *req.method() {
+        Method::POST => dash_runtime::ingest::IngestMethod::Post,
+        Method::PUT => dash_runtime::ingest::IngestMethod::Put,
+        _ => {
+            return Admission::Refuse(
+                (
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    [("allow", "POST, PUT")],
+                    Bytes::new(),
+                )
+                    .into_response(),
+            );
+        }
     };
 
-    let path = req.uri().path().to_string();
-    let pp = state.publishing_point.clone();
-    // prefix check
+    let path = req.uri().path();
+    let pp = state.publishing_point.as_str();
     let relative = if pp == "/" {
         if !path.starts_with('/') {
-            return StatusCode::NOT_FOUND.into_response();
+            return Admission::Refuse(StatusCode::NOT_FOUND.into_response());
         }
-        path.clone()
+        path.to_string()
     } else {
         let base = pp.trim_end_matches('/');
         if path != pp && !path.starts_with(&format!("{}/", base)) {
-            return StatusCode::NOT_FOUND.into_response();
+            return Admission::Refuse(StatusCode::NOT_FOUND.into_response());
         }
         let rel = &path[pp.len()..];
         if rel.is_empty() {
@@ -600,14 +660,27 @@ async fn dashif_handler(
         }
     };
 
+    if content_length.is_some_and(|n| n > state.max_object_bytes as u64) {
+        return Admission::Refuse(StatusCode::PAYLOAD_TOO_LARGE.into_response());
+    }
+
+    let relative = if relative == "/" {
+        relative
+    } else {
+        relative.trim_start_matches('/').to_string()
+    };
+    Admission::Serve(ingest_method, relative)
+}
+
+async fn dashif_handler(
+    State(state): State<HandlerState>,
+    req: Request<axum::body::Body>,
+) -> impl IntoResponse {
     let content_length = req
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
-    if content_length.is_some_and(|n| n > state.max_object_bytes as u64) {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
-    }
     let chunked = content_length.is_none()
         && req
             .headers()
@@ -616,10 +689,13 @@ async fn dashif_handler(
             .map(|s| s.to_ascii_lowercase().contains("chunked"))
             .unwrap_or(false);
 
-    let relative = if relative == "/" {
-        relative
-    } else {
-        relative.trim_start_matches('/').to_string()
+    let (ingest_method, relative) = match admit(&state, &req, content_length) {
+        Admission::Serve(ingest_method, relative) => (ingest_method, relative),
+        Admission::Refuse(refusal) => {
+            let mut body = std::pin::pin!(req.into_body());
+            discard_refused_body(body.as_mut()).await;
+            return refusal;
+        }
     };
 
     // Early classification (body assumed non-empty) to decide whether this is
@@ -652,23 +728,31 @@ async fn dashif_handler(
             kind: kind.clone(),
             resp: btx,
         };
-        if tx.try_send(begin_job).is_err() {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [("retry-after", "1")],
-                Bytes::new(),
+        let begin = if tx.try_send(begin_job).is_err() {
+            Some(
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [("retry-after", "1")],
+                    Bytes::new(),
+                )
+                    .into_response(),
             )
-                .into_response();
-        }
-        match wait_reply(brx, timeout).await {
-            Reply::Got(Ok(())) => {}
-            Reply::Got(Err(SessionError::Ingest(e))) => return e.status().into_response(),
-            Reply::Got(Err(SessionError::Demux(_))) => {
-                return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+        } else {
+            match wait_reply(brx, timeout).await {
+                Reply::Got(Ok(())) => None,
+                Reply::Got(Err(SessionError::Ingest(e))) => Some(e.status().into_response()),
+                Reply::Got(Err(SessionError::Demux(_))) => {
+                    Some(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response())
+                }
+                Reply::Got(Err(_)) => Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+                Reply::Timeout => Some(StatusCode::REQUEST_TIMEOUT.into_response()),
+                Reply::Closed => Some(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
             }
-            Reply::Got(Err(_)) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Reply::Timeout => return StatusCode::REQUEST_TIMEOUT.into_response(),
-            Reply::Closed => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        if let Some(refusal) = begin {
+            let mut body = std::pin::pin!(req.into_body());
+            discard_refused_body(body.as_mut()).await;
+            return refusal;
         }
         let mut guard = SegmentGuard::new(tx.clone(), rep_id.clone());
 
@@ -747,6 +831,7 @@ async fn dashif_handler(
         }
 
         if let Err(status) = read_result {
+            discard_refused_body(body.as_mut()).await;
             return status.into_response();
         }
 
