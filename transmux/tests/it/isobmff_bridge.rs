@@ -165,6 +165,34 @@ fn every_isobmff_error_maps_to_its_transmux_variant() {
             },
             "track 3 has no random-access index to seek on",
         ),
+        (
+            I::PlanMismatch {
+                track: isobmff::TrackId::new(2),
+                index: 7,
+                planned: 10,
+                got: 9,
+            },
+            |e| matches!(e, T::InvalidInput("planned sample size mismatch")),
+            "track 2 sample 7 is 9 bytes, the plan says 10",
+        ),
+        (
+            I::ReorderBufferFull { cap: 4096 },
+            |e| matches!(e, T::InvalidInput("reorder buffer full")),
+            "reorder buffer would exceed the caller's 4096-byte cap",
+        ),
+        (
+            I::PlanIncomplete {
+                track: isobmff::TrackId::new(2),
+                missing: 3,
+            },
+            |e| matches!(e, T::InvalidInput("planned sample missing")),
+            "track 2 sample 3 was planned but never pushed",
+        ),
+        (
+            I::NoPlan { what: "track" },
+            |e| matches!(e, T::InvalidInput("no plan entry")),
+            "no plan entry for track",
+        ),
     ];
     // A new `isobmff::Error` variant needs a case here and an arm in the
     // `From` impl; the fallback check below catches it if only the arm is

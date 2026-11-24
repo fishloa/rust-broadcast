@@ -7,47 +7,36 @@
 //! holding every track's sample data concatenated. This is the VOD/download
 //! counterpart to the fragmented [`crate::media::CmafMux`].
 //!
-//! Sample tables are derived directly from the sample stream (§8.6/§8.7):
-//! decode deltas — each sample's own `dts` to the next, so a gap survives —
-//! are run-length coded into `stts` (§8.6.1.2); each track is placed on the
-//! movie timeline, relative to the earliest track, by an `elst` (§8.6.6)
-//! whenever it starts later or opens with a composition lead-in; composition
-//! offsets go into `ctts` (§8.6.1.3) only when some sample has a non-zero
-//! offset; per-sample byte sizes fill `stsz` (§8.7.3); roughly
-//! half-second chunks, run-length coded into `stsc` (§8.7.4), map samples to
-//! chunks; each track's chunk byte offset lands
-//! in `stco` (§8.7.5) — promoted to the 64-bit `co64` when any offset exceeds
-//! [`u32::MAX`]; and the sync-sample list is emitted as `stss` (§8.6.2), omitted
-//! when every sample is a sync sample.
+//! This module's job is only the IR-to-plan mapping: it reads each sample's
+//! decode delta, composition offset, sync flag and size, and each track's
+//! `elst` and durations (`track_timings`), then hands the
+//! [`PlanBuilder`] a complete plan. The layout — chunk boundaries, the
+//! cross-track interleave, `stco`/`co64`, the `mdat` header form and every
+//! sample's absolute offset — is computed by
+//! [`isobmff::writer::Writer::progressive`] from that plan alone, before a
+//! sample byte is pushed. Sample bytes go straight from the IR to their planned
+//! file offset (a seekable sink), so there is no intermediate payload buffer.
 //!
 //! With [`ProgressiveMux::faststart`] set, `moov` is written **before** `mdat`
-//! for progressive-download friendliness. Because the `stco`/`co64` chunk
-//! offsets are absolute file offsets that depend on the `moov` size, the mux
-//! runs two passes: it lays out the `moov` (whose size is independent of the
-//! offset *values*), computes the final chunk offsets against the resulting
-//! `mdat` position, then re-serialises. When faststart is `false`, `mdat`
-//! precedes `moov` and the same offset arithmetic applies.
-//!
-//! The per-codec sample entries + config boxes are reused verbatim from
-//! [`crate::pipeline::build_init_segment`] (the record is rebuilt from the
-//! [`TrackSpec`](crate::pipeline::TrackSpec), never copied from an input file).
+//! for progressive-download friendliness; otherwise `mdat` precedes `moov`.
+//! The sample entries and `trak` skeleton are built by the same
+//! [`crate::pipeline::build_init_segment`] machinery the fragmented muxers use
+//! (the record is rebuilt from the [`TrackSpec`](crate::pipeline::TrackSpec),
+//! never copied from an input file).
 
 use alloc::vec;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, Timescale, rescale, rescale_i64, rescale_u64};
-use broadcast_common::{Package, Parse, Serialize};
+use broadcast_common::len::fit_u32;
+use broadcast_common::timescale::{Rounding, Timescale, rescale, rescale_u64};
 
 use crate::error::{Error, Result};
-use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
-use crate::pipeline::{Sample, build_init_segment};
-use isobmff::box_types::{BoxHeader, BoxType, find_box};
-use isobmff::init_segment::{
-    ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MOOV, MovieBox, SampleSizeBox, StblChild,
-};
-use isobmff::sample_table::{build_ctts, build_stsc, build_stss, build_stts};
-use isobmff::segments::{FileTypeBox, MDAT};
-use isobmff::timing::{EditListBox, EditListEntry};
+use crate::media::{Media, TimelineOrigin, relative_decode_times};
+use crate::pipeline::Sample;
+use isobmff::plan::{PlanBuilder, PlanSample};
+use isobmff::timing::EditListEntry;
+use isobmff::writer::{FileType, Interleave, Layout, MovieHeader, Sink, Write, Writer};
+use isobmff::{Limits, TrackId};
 
 /// `ftyp` major brand for a progressive (non-fragmented) MP4.
 const FTYP_MAJOR_BRAND: [u8; 4] = *b"isom";
@@ -57,8 +46,6 @@ const FTYP_MINOR_VERSION: u32 = 512;
 const ELST_EMPTY_EDIT: i64 = -1;
 /// `elst` `media_rate_integer` for normal-speed playback (§8.6.6).
 const ELST_NORMAL_RATE: i16 = 1;
-/// Position of `ctts` among the `stbl` children: after `stsd`/`stts` (§8.5.1).
-const STBL_CTTS_INDEX: usize = 2;
 /// Longest edit list this muxer emits: an optional empty edit plus the media edit.
 const EDIT_LIST_MAX_ENTRIES: usize = 2;
 
@@ -100,151 +87,6 @@ fn decode_deltas(samples: &[Sample], times: &[i64]) -> Vec<u32> {
         .collect()
 }
 
-/// Assemble the ordered `stbl` children for one track from its samples, given
-/// the already-resolved absolute `chunk_offset` (the file position of this
-/// track's chunks) and the existing `stsd` child (reused verbatim).
-///
-/// The interleaved ~500 ms chunks are run-length coded into `stsc` runs of
-/// equal chunk size (§8.7.4). `use_co64`
-/// selects the 64-bit `co64` chunk-offset box (§8.7.5) over the 32-bit `stco`;
-/// it is chosen once for the whole file so the `moov` size stays offset-stable.
-fn build_stbl_children(
-    stsd: StblChild,
-    samples: &[Sample],
-    deltas: &[u32],
-    chunk_offsets: &[u64],
-    samples_per_chunk: &[u32],
-    use_co64: bool,
-) -> Result<Vec<StblChild>> {
-    let stsz_entries: Vec<u32> = samples
-        .iter()
-        .map(|s| broadcast_common::len::fit_u32(s.data.len(), "stsz entry_size"))
-        .collect::<core::result::Result<_, _>>()?;
-    let stsz = SampleSizeBox {
-        version: 0,
-        flags: 0,
-        sample_size: 0,
-        sample_count: broadcast_common::len::fit_u32(stsz_entries.len(), "stsz sample_count")?,
-        entries: stsz_entries,
-    };
-    let stsc = build_stsc(samples_per_chunk)?;
-
-    let mut children = vec![
-        stsd,
-        StblChild::Stts(build_stts(deltas)),
-        StblChild::Stsc(stsc),
-        StblChild::Stsz(stsz),
-    ];
-    let composition_offsets: Vec<i32> = samples
-        .iter()
-        .map(|sample| Ok(sample.composition_offset()?.unwrap_or(0)))
-        .collect::<Result<_>>()?;
-    if let Some(ctts) = build_ctts(&composition_offsets) {
-        // ctts follows stts in the recommended stbl order (§8.5.1).
-        children.insert(STBL_CTTS_INDEX, StblChild::Ctts(ctts));
-    }
-    if use_co64 {
-        children.push(StblChild::Co64(ChunkLargeOffsetBox {
-            version: 0,
-            flags: 0,
-            entries: chunk_offsets.to_vec(),
-        }));
-    } else {
-        let entries: Vec<u32> = chunk_offsets
-            .iter()
-            .map(|&o| {
-                u32::try_from(o).map_err(|_| {
-                    Error::InvalidInput("progressive: a chunk offset exceeds the 32-bit stco field")
-                })
-            })
-            .collect::<Result<_>>()?;
-        children.push(StblChild::Stco(ChunkOffsetBox {
-            version: 0,
-            flags: 0,
-            entries,
-        }));
-    }
-    let sync_flags: Vec<bool> = samples.iter().map(|sample| sample.flags.is_sync).collect();
-    if let Some(stss) = build_stss(&sync_flags) {
-        children.push(StblChild::Stss(stss));
-    }
-    Ok(children)
-}
-
-/// Order the per-track chunks into the `mdat` interleave.
-///
-/// The cross-track order is by start tick; the per-track order is **sample
-/// order**, which the tick cannot express when a track's decode times step
-/// backwards (a TS discontinuity, a spliced `Media`) — keying on
-/// `(tick, track, first sample)` then reordered a track's own chunks and the
-/// merge rejected legal input (audit item 5, round 3). Ties break on
-/// `(track, first sample)` so the result is deterministic.
-fn interleave_order(pending: Vec<(i64, usize, usize, usize)>) -> Vec<(i64, usize, usize, usize)> {
-    // First give each track's own chunks their sample order, then interleave
-    // the tracks by tick. Two stable sorts: the first is a no-op for the
-    // sample-ordered list `plan_mdat_layout` builds, but pinning it here means
-    // the invariant holds no matter how the caller produced `pending`. The
-    // second (tick) is stable, so chunks with equal ticks keep the
-    // sample-ordered sequence the first pass established.
-    //
-    // The alternative — one key of `(tick, track, first)` — interleaves *and*
-    // orders per track in one step, so a track whose chunk-start ticks run
-    // backwards (a non-monotonic `dts`) has its own chunks reordered and the
-    // merge's cursor then rejects legal input (audit item 5, round 3).
-    // A tick-major order cannot express a track whose own chunk ticks run
-    // backwards, so the merge is built by *merging* the per-track sequences
-    // rather than sorting a flat list: each track is already in sample order,
-    // and the next chunk emitted is the one with the smallest start tick among
-    // the tracks' current cursors. Ties break on track index, so the result is
-    // deterministic.
-    let mut per_track: alloc::collections::BTreeMap<usize, Vec<(i64, usize, usize, usize)>> =
-        alloc::collections::BTreeMap::new();
-    for entry in pending {
-        per_track.entry(entry.1).or_default().push(entry);
-    }
-    let mut heads: alloc::vec::Vec<usize> = alloc::vec![0; per_track.len()];
-    let mut out = Vec::new();
-    loop {
-        let mut best: Option<(usize, i64)> = None;
-        for (&track, chunks) in &per_track {
-            let Some(head) = chunks.get(heads[track]) else {
-                continue;
-            };
-            // `per_track` is keyed by track index, so iteration is already in
-            // track order and a strict `<` keeps the lowest track on a tie.
-            if best.is_none_or(|(_, tick)| head.0 < tick) {
-                best = Some((track, head.0));
-            }
-        }
-        let Some((track, _)) = best else {
-            break;
-        };
-        out.push(per_track[&track][heads[track]]);
-        heads[track] += 1;
-    }
-    out
-}
-
-/// One chunk of one track: the samples it holds and where it lands in the
-/// `mdat` payload.
-struct Chunk {
-    /// Index of the chunk's first sample within its track.
-    first_sample: usize,
-    /// Number of consecutive samples in the chunk.
-    sample_count: u32,
-    /// Byte offset of the chunk's first sample, relative to the `mdat`
-    /// payload start.
-    rel_offset: u64,
-}
-
-/// The `mdat` payload layout: one `Vec<Chunk>` per track, in file order
-/// within each track (which is what `stco`/`co64` and `stsc` require).
-struct MdatLayout {
-    track_chunks: Vec<Vec<Chunk>>,
-    /// Total `mdat` payload length.
-    payload_len: u64,
-}
-
 /// The wall-clock length one interleaved chunk should hold — half a second.
 ///
 /// An interleaved file lets a player that can only read strictly forward start
@@ -253,349 +95,7 @@ struct MdatLayout {
 /// downloading essentially the whole video track before the first audio sample
 /// arrives, so `faststart` bought nothing on a simple HTTP-progressive client.
 /// Half a second is the usual trade (chunk headers are 4–8 bytes per chunk).
-const INTERLEAVE_CHUNK_MS: u64 = 500;
-
-/// Milliseconds per second, for converting [`INTERLEAVE_CHUNK_MS`] into a
-/// movie-timescale tick budget.
-const MS_PER_SECOND: Timescale = broadcast_common::timescale!(1_000);
-
-/// Lay the tracks' samples out in the `mdat` payload, interleaved in about
-/// [`INTERLEAVE_CHUNK_MS`]-sized runs.
-///
-/// Each track is cut into chunks of consecutive samples spanning one
-/// interleave interval, then the chunks of every track are merged by start
-/// time (ties broken by track order, so the result is deterministic). Every
-/// sample of a track still appears exactly once, in decode order.
-fn plan_mdat_layout(media: &Media, movie_timescale: Timescale) -> Result<MdatLayout> {
-    let to_movie =
-        |ticks: i64, ts: Timescale| rescale_i64(ticks, ts, movie_timescale, Rounding::Floor);
-    let chunk_ticks = rescale_u64(
-        INTERLEAVE_CHUNK_MS,
-        MS_PER_SECOND,
-        movie_timescale,
-        Rounding::Floor,
-    );
-    let chunk_ticks = i64::try_from(chunk_ticks).unwrap_or(i64::MAX).max(1);
-    let mut track_chunks: Vec<Vec<Chunk>> = Vec::with_capacity(media.tracks.len());
-    // (start tick, track index, first sample, count) for the global merge.
-    let mut pending: Vec<(i64, usize, usize, usize)> = Vec::new();
-    for (i, track) in media.tracks.iter().enumerate() {
-        let times = relative_decode_times(track, &TimelineOrigin::of(&media.tracks))?;
-        let mut chunks: Vec<Chunk> = Vec::new();
-        let mut start = 0usize;
-        while start < track.samples.len() {
-            let chunk_start_tick = to_movie(times[start], track.timescale());
-            let mut end = start;
-            while end < track.samples.len()
-                && to_movie(times[end], track.timescale()) - chunk_start_tick < chunk_ticks
-            {
-                end += 1;
-            }
-            let count = end - start;
-            pending.push((chunk_start_tick, i, start, count));
-            chunks.push(Chunk {
-                first_sample: start,
-                sample_count: broadcast_common::len::fit_u32(count, "samples_per_chunk")?,
-                rel_offset: 0,
-            });
-            start = end;
-        }
-        track_chunks.push(chunks);
-    }
-    // Merge the chunks across tracks by start time — the cross-track
-    // interleave criterion. A track's own chunk starts are *not* assumed to be
-    // non-decreasing: a source with a non-monotonic decode time (a TS
-    // discontinuity, a spliced `Media`) legitimately steps its timestamps
-    // backwards, and the old key `(tick, track, first)` then walked a track's
-    // chunks out of its own sample order and returned `InvalidInput` on legal
-    // input (audit item 5, round 3). Ties break on track then first sample, so
-    // the order is deterministic.
-    pending = interleave_order(pending);
-    let mut payload_len = 0u64;
-    // Each track's chunk list is in sample order, so one cursor per track
-    // walks it — an O(chunks) merge, not an O(chunks²) search.
-    let mut cursor: Vec<usize> = alloc::vec![0; track_chunks.len()];
-    for (_, track, first, count) in pending {
-        let index = cursor[track];
-        let chunk = track_chunks[track]
-            .get_mut(index)
-            .ok_or(Error::InvalidInput(
-                "progressive: chunk plan is inconsistent",
-            ))?;
-        if chunk.first_sample != first {
-            return Err(Error::InvalidInput(
-                "progressive: chunk plan is out of order",
-            ));
-        }
-        cursor[track] += 1;
-        chunk.rel_offset = payload_len;
-        for s in &media.tracks[track].samples[first..first + count] {
-            payload_len = payload_len.saturating_add(s.data.len() as u64);
-        }
-    }
-    Ok(MdatLayout {
-        track_chunks,
-        payload_len,
-    })
-}
-
-/// Replace a `trak`'s `stbl` children with `new_children`, in place.
-fn set_track_stbl(
-    moov: &mut MovieBox,
-    track_index: usize,
-    new_children: Vec<StblChild>,
-) -> Result<()> {
-    let trak = moov
-        .tracks
-        .get_mut(track_index)
-        .ok_or(Error::UnexpectedBox { expected: "trak" })?;
-    let stbl = trak
-        .mdia
-        .as_mut()
-        .and_then(|m| m.minf.as_mut())
-        .and_then(|m| m.stbl.as_mut())
-        .ok_or(Error::UnexpectedBox { expected: "stbl" })?;
-    stbl.children = new_children;
-    Ok(())
-}
-
-/// Extract the reusable `stsd` child from a `trak` (the per-codec sample entry
-/// built by [`build_init_segment`]).
-fn take_stsd(moov: &MovieBox, track_index: usize) -> Result<StblChild> {
-    let trak = moov
-        .tracks
-        .get(track_index)
-        .ok_or(Error::UnexpectedBox { expected: "trak" })?;
-    let stbl = trak
-        .mdia
-        .as_ref()
-        .and_then(|m| m.minf.as_ref())
-        .and_then(|m| m.stbl.as_ref())
-        .ok_or(Error::UnexpectedBox { expected: "stbl" })?;
-    stbl.children
-        .iter()
-        .find(|c| matches!(c, StblChild::Stsd(_)))
-        .cloned()
-        .ok_or(Error::UnexpectedBox { expected: "stsd" })
-}
-
-impl Package for ProgressiveMux {
-    type Media = Media;
-    type Output = Vec<u8>;
-    type Error = Error;
-
-    fn package(&mut self, media: &Media) -> Result<Vec<u8>> {
-        if media.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
-        }
-        // MUX = strict but filterable (media plane step-2 fix wave 1,
-        // B2-B4): a track `build_init_segment` (below) cannot place into an
-        // ISOBMFF `trak` (opaque `CodecConfig::Data` or
-        // `CodecConfig::Subtitle`) is no longer silently omitted here — it
-        // surfaces the same named error every other mux entry point does.
-        // The caller must pre-filter first, e.g. with
-        // `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`.
-        let movie_timescale = media.movie_timescale;
-
-        // Reuse the sample-entry + trak skeleton machinery: build the fragmented
-        // init moov, parse it back, then overwrite each track's sample tables
-        // with the full progressive tables and drop the fragmentation (`mvex`).
-        let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-        let init = build_init_segment(&specs, movie_timescale)?;
-        let moov_bytes = find_box(&init, &MOOV).ok_or(Error::UnexpectedBox { expected: "moov" })?;
-        let mut moov = MovieBox::parse(moov_bytes)?;
-        moov.mvex = None; // not a fragmented movie
-        let timings = track_timings(media, movie_timescale)?;
-        apply_track_timings(&mut moov, &timings);
-
-        // The mdat payload layout: each track is cut into ~0.5 s chunks and
-        // the chunks are interleaved in time order, so a forward-only client
-        // reaches the start of every track after a small prefix rather than
-        // after the whole video track (audit r05-W25).
-        let layout = plan_mdat_layout(media, movie_timescale)?;
-        let ftyp = FileTypeBox {
-            major_brand: FTYP_MAJOR_BRAND,
-            minor_version: FTYP_MINOR_VERSION,
-            compatible_brands: vec![*b"isom", *b"iso2", *b"mp41", *b"avc1"],
-        };
-        let ftyp_len = ftyp.serialized_len();
-        let mdat_len = layout.payload_len;
-        let mdat_header = BoxHeader::for_payload(BoxType::from_bytes(MDAT), None, mdat_len);
-
-        // Compute the absolute file offset of the mdat *payload* under each box
-        // ordering, then set the final chunk offsets and build the full tables.
-        //
-        // Pass 1: build the tables against a placeholder mdat offset so that the
-        // moov's serialized size is fixed (offset *values* do not change box
-        // sizes — stco entry width is fixed at 4 bytes, co64 at 8, and whether
-        // co64 is used depends only on whether the offset exceeds u32::MAX). To
-        // keep that decision stable we compute the true offsets up front, which
-        // requires the moov size; but the moov size depends on whether co64 is
-        // chosen. We break the cycle by assuming 32-bit stco first, measuring,
-        // and re-measuring once if any offset turns out to need co64.
-        let stsds: Vec<StblChild> = (0..media.tracks.len())
-            .map(|i| take_stsd(&moov, i))
-            .collect::<Result<_>>()?;
-
-        let mut use_co64 = false;
-        let (moov_out, mdat_payload_offset) = loop {
-            // Provisional moov size: build tables with the current co64 decision.
-            let provisional = assemble_moov(
-                &mut moov.clone(),
-                &stsds,
-                &media.tracks,
-                &timings,
-                &layout,
-                // Provisional payload offset only affects offset values, not the
-                // box structure once co64-vs-stco is fixed; pass 0 for sizing.
-                0,
-                use_co64,
-            )?;
-            let moov_size = provisional.len();
-
-            // Absolute mdat payload offset under the chosen ordering.
-            let mdat_payload_offset =
-                mdat_payload_offset(ftyp_len as u64, moov_size as u64, mdat_len, self.faststart);
-
-            // Does any track's absolute chunk offset need 64-bit offsets?
-            if needs_co64(mdat_payload_offset, &layout) && !use_co64 {
-                use_co64 = true;
-                continue;
-            }
-
-            let moov_out = assemble_moov(
-                &mut moov.clone(),
-                &stsds,
-                &media.tracks,
-                &timings,
-                &layout,
-                mdat_payload_offset,
-                use_co64,
-            )?;
-            debug_assert_eq!(moov_out.len(), moov_size, "moov size must be offset-stable");
-            break (moov_out, mdat_payload_offset);
-        };
-
-        // Verify the payload offset we baked into the tables matches the actual
-        // layout (guards the two-pass arithmetic).
-        let actual_payload_offset = ftyp_len as u64
-            + if self.faststart {
-                moov_out.len() as u64
-            } else {
-                0
-            }
-            + mdat_header.header_size() as u64;
-        debug_assert_eq!(actual_payload_offset, mdat_payload_offset);
-
-        // Emit ftyp, then moov/mdat in the requested order — straight into the
-        // one output buffer: the sample bytes are copied once, from the IR into
-        // their final position (r05-O4; they used to pass through an `mdat`
-        // payload `Vec`, a serialised `mdat` copy, and then the output).
-        let payload_len = usize::try_from(mdat_len)
-            .map_err(|_| Error::InvalidInput("progressive: mdat payload exceeds usize"))?;
-        let mdat_header_len = mdat_header.header_size();
-        let total = ftyp_len + moov_out.len() + mdat_header_len + payload_len;
-        let mut out = vec![0u8; ftyp_len];
-        ftyp.serialize_into(&mut out)?;
-        out.reserve_exact(total - ftyp_len);
-        if self.faststart {
-            out.extend_from_slice(&moov_out);
-        }
-        let header_at = out.len();
-        out.resize(header_at + mdat_header_len, 0);
-        mdat_header.serialize_into(&mut out[header_at..])?;
-        let payload_at = out.len();
-        out.resize(payload_at + payload_len, 0);
-        for (i, track) in media.tracks.iter().enumerate() {
-            for chunk in &layout.track_chunks[i] {
-                let first = chunk.first_sample;
-                let end = first + chunk.sample_count as usize;
-                let mut at = payload_at
-                    + usize::try_from(chunk.rel_offset).map_err(|_| {
-                        Error::InvalidInput("progressive: chunk offset exceeds usize")
-                    })?;
-                for s in &track.samples[first..end] {
-                    let next = at + s.data.len();
-                    if next > payload_at + payload_len {
-                        return Err(Error::InvalidInput(
-                            "progressive: chunk plan overflows the mdat payload",
-                        ));
-                    }
-                    out[at..next].copy_from_slice(&s.data);
-                    at = next;
-                }
-            }
-        }
-        if !self.faststart {
-            out.extend_from_slice(&moov_out);
-        }
-        Ok(out)
-    }
-}
-
-/// Absolute file offset of the `mdat` payload: after `ftyp` (and `moov` under
-/// faststart) and the `mdat` header, whose length depends on the payload size
-/// (16 bytes once the box needs `largesize`, §4.2 — issue #1019).
-fn mdat_payload_offset(
-    ftyp_len: u64,
-    moov_len: u64,
-    mdat_payload_len: u64,
-    faststart: bool,
-) -> u64 {
-    let before = if faststart {
-        ftyp_len + moov_len
-    } else {
-        ftyp_len
-    };
-    let header = BoxHeader::for_payload(BoxType::from_bytes(MDAT), None, mdat_payload_len);
-    before + header.header_size() as u64
-}
-
-/// Whether any chunk's absolute offset needs the 64-bit `co64` (§8.7.5).
-fn needs_co64(mdat_payload_offset: u64, layout: &MdatLayout) -> bool {
-    layout
-        .track_chunks
-        .iter()
-        .flatten()
-        .any(|c| mdat_payload_offset.saturating_add(c.rel_offset) > u64::from(u32::MAX))
-}
-
-/// Fill each track's `stbl` with the full sample tables and serialise the
-/// resulting `moov`. `mdat_payload_offset` is the absolute file offset of the
-/// mdat payload; per-track chunk offsets are `mdat_payload_offset + rel`.
-fn assemble_moov(
-    moov: &mut MovieBox,
-    stsds: &[StblChild],
-    tracks: &[Track],
-    timings: &[TrackTiming],
-    layout: &MdatLayout,
-    mdat_payload_offset: u64,
-    use_co64: bool,
-) -> Result<Vec<u8>> {
-    for (i, track) in tracks.iter().enumerate() {
-        let offsets: Vec<u64> = layout.track_chunks[i]
-            .iter()
-            .map(|c| mdat_payload_offset + c.rel_offset)
-            .collect();
-        let counts: Vec<u32> = layout.track_chunks[i]
-            .iter()
-            .map(|c| c.sample_count)
-            .collect();
-        let children = build_stbl_children(
-            stsds[i].clone(),
-            &track.samples,
-            &timings[i].deltas,
-            &offsets,
-            &counts,
-            use_co64,
-        )?;
-        set_track_stbl(moov, i, children)?;
-    }
-    let mut buf = vec![0u8; moov.serialized_len()];
-    let n = moov.serialize_into(&mut buf)?;
-    buf.truncate(n);
-    Ok(buf)
-}
+const INTERLEAVE_CHUNK_MS: u32 = 500;
 
 /// One track's progressive timing: its `stts` decode deltas, its media
 /// duration, and the edit list that places it on the movie timeline.
@@ -606,7 +106,14 @@ struct TrackTiming {
     /// `tkhd.timing.map(|t| t.duration)`: the presentation length on the movie timeline
     /// (including a leading empty edit), in the movie timescale.
     presentation_duration: u64,
-    edts: Option<EditBox>,
+    edits: Vec<EditListEntry>,
+}
+
+impl TrackTiming {
+    /// The `elst` entries the plan writes.
+    fn edit_list(&self) -> Vec<EditListEntry> {
+        self.edits.clone()
+    }
 }
 
 /// Build every track's [`TrackTiming`] over one origin common to all tracks
@@ -668,7 +175,7 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Result<Vec<TrackT
                     deltas,
                     media_duration,
                     presentation_duration: plain_duration,
-                    edts: None,
+                    edits: Vec::new(),
                 };
             };
             let empty = (to_movie(pres_start, ts) - movie_start).max(0) as u64;
@@ -680,7 +187,7 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Result<Vec<TrackT
                     deltas,
                     media_duration,
                     presentation_duration: plain_duration,
-                    edts: None,
+                    edits: Vec::new(),
                 };
             }
             let mut entries = Vec::with_capacity(EDIT_LIST_MAX_ENTRIES);
@@ -698,169 +205,127 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Result<Vec<TrackT
                 media_rate_integer: ELST_NORMAL_RATE,
                 media_rate_fraction: 0,
             });
-            // Version 1 carries 64-bit fields; version 0 only 32-bit (§8.6.6).
-            let wide = entries.iter().any(|e| {
-                u32::try_from(e.segment_duration).is_err() || i32::try_from(e.media_time).is_err()
-            });
             TrackTiming {
                 deltas,
                 media_duration,
                 presentation_duration: empty.saturating_add(segment_duration),
-                edts: Some(EditBox::new(
-                    Some(EditListBox {
-                        version: u8::from(wide),
-                        flags: 0,
-                        entries,
-                    }),
-                    Vec::new(),
-                )),
+                edits: entries,
             }
         })
         .collect::<Vec<_>>();
     Ok(result)
 }
 
-/// Set the `mvhd` and per-track `tkhd`/`mdhd` durations and `edts` from the
-/// resolved timings (a non-fragmented movie carries its duration in the
-/// header boxes, not in `trun`s).
-///
-/// A header box's version selects the width of its `duration` field — 32 bits
-/// at version 0, 64 at version 1 (ISO/IEC 14496-12:2026 §8.2.2.2, §8.3.2.2,
-/// §8.4.2.2). `build_init_segment` writes version-0 headers, so a duration
-/// past `u32::MAX` used to be truncated by the v0 serializer's `as u32`: a
-/// 10 MHz track (a Smooth-sourced timeline, `broadcast_smooth`) wrapped after
-/// 7.2 minutes and a 90 kHz one after 13.2 hours, so players reported a wrong
-/// length and sought wrongly (audit r05-W24). Each box is promoted to version
-/// 1 when its own duration does not fit version 0.
-fn apply_track_timings(moov: &mut MovieBox, timings: &[TrackTiming]) {
-    let mut max_movie_duration = 0u64;
-    for (i, timing) in timings.iter().enumerate() {
-        max_movie_duration = max_movie_duration.max(timing.presentation_duration);
-        if let Some(trak) = moov.tracks.get_mut(i) {
-            trak.tkhd.version = if duration_fits_v0(timing.presentation_duration) {
-                0
-            } else {
-                1
-            };
-            trak.tkhd.duration = timing.presentation_duration;
-            trak.edts = timing.edts.clone();
-            if let Some(mdhd) = trak.mdia.as_mut().and_then(|m| m.mdhd.as_mut()) {
-                mdhd.version = if duration_fits_v0(timing.media_duration) {
-                    0
-                } else {
-                    1
-                };
-                mdhd.duration = timing.media_duration;
+/// Place one writer output at its absolute offset in the output buffer.
+fn place(out: &mut Vec<u8>, write: Write<'_>) -> Result<()> {
+    let start = usize::try_from(write.offset)
+        .map_err(|_| Error::InvalidInput("progressive: offset exceeds the address space"))?;
+    let end = start
+        .checked_add(write.bytes.len())
+        .ok_or(Error::InvalidInput(
+            "progressive: write overflows the address space",
+        ))?;
+    if out.len() < end {
+        out.resize(end, 0);
+    }
+    out.get_mut(start..end)
+        .ok_or(Error::InvalidInput("progressive: write outside the file"))?
+        .copy_from_slice(&write.bytes);
+    Ok(())
+}
+
+impl broadcast_common::Package for ProgressiveMux {
+    type Media = Media;
+    type Output = Vec<u8>;
+    type Error = Error;
+
+    fn package(&mut self, media: &Media) -> Result<Vec<u8>> {
+        if media.tracks.is_empty() {
+            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+        }
+        // MUX = strict but filterable (media plane step-2 fix wave 1,
+        // B2-B4): a track `build_init_segment` (below) cannot place into an
+        // ISOBMFF `trak` (opaque `CodecConfig::Data` or
+        // `CodecConfig::Subtitle`) is no longer silently omitted here — it
+        // surfaces the same named error every other mux entry point does.
+        // The caller must pre-filter first, e.g. with
+        // `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`.
+        let movie_timescale = media.movie_timescale;
+
+        let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+        let setups = crate::pipeline::track_setups(&specs)?;
+        let timings = track_timings(media, movie_timescale)?;
+        let origin = TimelineOrigin::of(&media.tracks);
+
+        let mut builder = PlanBuilder::new(setups, Limits::default());
+        for (index, track) in media.tracks.iter().enumerate() {
+            let id = TrackId::new(track.spec.track_id.value());
+            let timing = timings
+                .get(index)
+                .ok_or(Error::InvalidInput("progressive: track timing is missing"))?;
+            let times = relative_decode_times(track, &origin)?;
+            let start = times.first().copied().unwrap_or(0);
+            let start = u64::try_from(start).map_err(|_| {
+                Error::InvalidInput("progressive: a track starts before the timeline origin")
+            })?;
+            builder.set_start_decode_time(id, start)?;
+            builder.set_durations(id, timing.media_duration, timing.presentation_duration)?;
+            builder.set_edits(id, timing.edit_list())?;
+            for (sample_index, sample) in track.samples.iter().enumerate() {
+                let duration = timing.deltas.get(sample_index).copied().unwrap_or(0);
+                builder.push(
+                    id,
+                    PlanSample {
+                        duration,
+                        composition_offset: sample.composition_offset()?.unwrap_or(0),
+                        sync: sample.flags.is_sync,
+                        size: fit_u32(sample.data.len(), "stsz entry_size")?,
+                        description_index: isobmff::plan::DEFAULT_DESCRIPTION_INDEX,
+                    },
+                )?;
             }
         }
-    }
-    moov.mvhd.version = if duration_fits_v0(max_movie_duration) {
-        0
-    } else {
-        1
-    };
-    moov.mvhd.duration = max_movie_duration;
-}
+        let plan = builder.finish()?;
 
-/// Whether a header box's `duration` fits the 32-bit version-0 field
-/// (ISO/IEC 14496-12:2026 §8.2.2.2).
-fn duration_fits_v0(duration: u64) -> bool {
-    duration <= u64::from(u32::MAX)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// ISO/IEC 14496-12:2026 §4.2: a box whose size does not fit 32 bits is
-    /// written `size = 1` + 64-bit `largesize`, a 16-byte header. Driven with a
-    /// synthetic payload length, no 4 GiB allocation.
-    /// The interleave must keep each track's own chunks in sample order even
-    /// when that track's chunk-start ticks run backwards (audit item 5,
-    /// round 3). Inputs are the exact `(tick, track, first_sample, count)`
-    /// tuples `plan_mdat_layout` produces.
-    #[test]
-    fn interleave_order_keeps_a_track_in_sample_order() {
-        // Track 0's chunk starts step 0, 1000, 2000, then *back* to 500 (a
-        // discontinuity), then on to 3000. Track 1 interleaves by tick.
-        let pending = alloc::vec![
-            (0i64, 0usize, 0usize, 1usize),
-            (1000, 0, 1, 1),
-            (2000, 0, 2, 1),
-            (500, 0, 3, 1),
-            (3000, 0, 4, 1),
-            (500, 1, 0, 1),
-            (1500, 1, 1, 1),
-        ];
-        let ordered = interleave_order(pending);
-
-        // The merge's invariant: consuming the merged order with one cursor
-        // per track must see each track's chunks in sample order.
-        let mut cursor = [0usize; 2];
-        for &(_, track, first, _) in &ordered {
-            assert_eq!(
-                first, cursor[track],
-                "track {track} chunk arrived out of sample order: {ordered:?}"
-            );
-            cursor[track] += 1;
-        }
-        assert_eq!(cursor, [5, 2], "every chunk was consumed");
-        // The cross-track property the merge exists for: the first chunk of a
-        // second track is not deferred behind every chunk of the first — the
-        // tracks interleave by tick where the ticks allow it. (The sequence is
-        // *not* globally tick-sorted, and cannot be: track 0's own ticks run
-        // backwards, and reordering to make them sorted is exactly the bug.)
-        let tracks: alloc::vec::Vec<usize> = ordered.iter().map(|&(_, t, ..)| t).collect();
-        assert_eq!(
-            tracks,
-            alloc::vec![0, 1, 0, 1, 0, 0, 0],
-            "tracks interleave by tick: {ordered:?}"
-        );
-    }
-
-    #[test]
-    fn mdat_payload_offset_accounts_for_largesize_header() {
-        let fits = u64::from(u32::MAX) - 8; // 8 + payload == u32::MAX
-        let over = fits + 1; // 8 + payload == u32::MAX + 1
-        assert_eq!(mdat_payload_offset(24, 1000, fits, true), 24 + 1000 + 8);
-        assert_eq!(mdat_payload_offset(24, 1000, fits, false), 24 + 8);
-        assert_eq!(mdat_payload_offset(24, 1000, over, true), 24 + 1000 + 16);
-        assert_eq!(mdat_payload_offset(24, 1000, over, false), 24 + 16);
-    }
-
-    #[test]
-    fn co64_chosen_once_an_offset_exceeds_u32() {
-        let base = 1024;
-        let layout = |offsets: &[u64]| MdatLayout {
-            track_chunks: alloc::vec![
-                offsets
-                    .iter()
-                    .map(|&rel_offset| Chunk {
-                        first_sample: 0,
-                        sample_count: 1,
-                        rel_offset,
-                    })
-                    .collect()
-            ],
-            payload_len: 0,
+        let file_type = FileType {
+            major_brand: FTYP_MAJOR_BRAND,
+            minor_version: FTYP_MINOR_VERSION,
+            compatible_brands: vec![*b"isom", *b"iso2", *b"mp41", *b"avc1"],
         };
-        assert!(!needs_co64(base, &layout(&[0, u64::from(u32::MAX) - base])));
-        assert!(needs_co64(
-            base,
-            &layout(&[0, u64::from(u32::MAX) - base + 1])
-        ));
-    }
-
-    /// On equal chunk-start ticks the lowest track index wins, so the mdat
-    /// order (and every `stco` offset) is deterministic for A/V files whose
-    /// first chunks start together.
-    #[test]
-    fn interleave_order_breaks_ties_on_the_lowest_track_index() {
-        let ordered = interleave_order(alloc::vec![(0i64, 1usize, 0usize, 1usize), (0, 0, 0, 1),]);
-        assert_eq!(
-            ordered,
-            alloc::vec![(0, 0, 0, 1), (0, 1, 0, 1)],
-            "track 0's chunk must come first on a tie"
+        let layout = Layout::new(
+            self.faststart,
+            Interleave::ByDuration {
+                millis: INTERLEAVE_CHUNK_MS,
+            },
+            Sink::Seekable,
         );
+        let mut writer = Writer::progressive(
+            plan,
+            layout,
+            file_type,
+            MovieHeader::new(movie_timescale),
+            Limits::default(),
+        )?;
+
+        let file_len = usize::try_from(writer.file_len())
+            .map_err(|_| Error::InvalidInput("progressive: the file exceeds the address space"))?;
+        let mut out = vec![0u8; file_len];
+        for write in writer.header() {
+            place(&mut out, write)?;
+        }
+        for track in &media.tracks {
+            let id = TrackId::new(track.spec.track_id.value());
+            for (sample_index, sample) in track.samples.iter().enumerate() {
+                let index = u32::try_from(sample_index)
+                    .map_err(|_| Error::InvalidInput("progressive: too many samples"))?;
+                for write in writer.push(id, index, &sample.data)? {
+                    place(&mut out, write)?;
+                }
+            }
+        }
+        for write in writer.finish()? {
+            place(&mut out, write)?;
+        }
+        Ok(out)
     }
 }

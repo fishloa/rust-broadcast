@@ -22,6 +22,11 @@ thiserror = { version = "2", default-features = false }
 serde     = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
 [dev-dependencies]
+# The round-trip test drives this crate's own muxer to produce a
+# transmux-written file, then rewrites it from its index alone. A dev-dependency
+# cycle (transmux depends on this crate) is legal in Cargo and never reaches a
+# published manifest.
+transmux      = { path = "../transmux", default-features = false }
 test-fixtures = { path = "../test-fixtures" }
 test-harness  = { path = "../test-harness" }
 # Counting/capping test allocator (path-only, publish = false; never published).

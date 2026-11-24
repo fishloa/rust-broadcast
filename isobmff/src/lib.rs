@@ -37,16 +37,20 @@
 //! - [`sample_table`] — [`TrackCursor`], the lazy per-track walk over the
 //!   `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss` tables, and the
 //!   run-length table builders.
-//! - [`writer`] — the sans-IO fragmented writer: [`writer::Writer::fragmented`]'s
-//!   init segment, the `moof`+`mdat` builder
-//!   ([`writer::fragmented_segment`]), and the CENC media-segment protection
-//!   pass ([`writer::fragmented::protect_media_segment`]).
+//! - [`writer`] — the sans-IO writers: [`writer::Writer::fragmented`]'s init
+//!   segment, the `moof`+`mdat` builder ([`writer::fragmented_segment`]), the
+//!   CENC media-segment protection pass
+//!   ([`writer::fragmented::protect_media_segment`]), and
+//!   [`writer::Writer::progressive`], which fixes a whole progressive file's
+//!   layout from an [`OwnedPlan`] before a sample byte arrives.
 //! - [`sample_table`] — [`TrackCursor`]/[`CursorState`], the lazy per-track
 //!   walk over the `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss`
 //!   tables, and the run-length table builders.
 //! - [`reader`], [`plan`] — the sans-IO progressive [`Reader`]: it asks for
 //!   structure byte ranges, surfaces every track and one [`SampleRef`] at a
-//!   time, and hands out a [`SamplePlan`] from the index alone.
+//!   time, and hands out a [`SamplePlan`] from the index alone. [`plan`] also
+//!   holds [`OwnedPlan`], the same tables with no borrow, and [`PlanBuilder`],
+//!   which builds one from pushed sample descriptors.
 //! - [`avc_config`], [`hevc_config`], [`vvc_config`], [`nalu_types`], [`av1`],
 //!   [`vp9`], [`mp4esds`], [`ac3`], [`ac4`], [`dts`], [`flac`], [`opus`],
 //!   [`mpegh`], [`dovi`], [`hdr_boxes`], [`avs2`], [`avs3`], [`avs3_audio`] —
@@ -171,7 +175,10 @@ pub use nalu_types::{
     HEVC_SUFFIX_SEI_NUT, HEVC_VPS_NUT, HevcNalArray, HevcNalUnit, VALID_LENGTH_SIZES,
 };
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
-pub use plan::SamplePlan;
+pub use plan::{
+    DEFAULT_DESCRIPTION_INDEX, DescriptionRun, OwnedPlan, PlanBuilder, PlanSample, PlannedTrack,
+    SamplePlan, SampleSizes, SampleTables, SourceChunks,
+};
 pub use reader::{
     ByteRange, Mode, Reader, ReaderConfig, SampleEntryInfo, SampleOrder, Source, Step, TrackInfo,
 };

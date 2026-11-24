@@ -159,4 +159,121 @@ fuzz_target!(|data: &[u8]| {
             "every pushed track has a traf"
         );
     }
+
+    progressive_arm(data);
 });
+
+/// Place one writer output at its absolute offset in the assembled file.
+fn place(out: &mut Vec<u8>, write: isobmff::writer::Write<'_>) {
+    let start = usize::try_from(write.offset).expect("offset");
+    let end = start + write.bytes.len();
+    if out.len() < end {
+        out.resize(end, 0);
+    }
+    out[start..end].copy_from_slice(&write.bytes);
+}
+
+/// The progressive arm: build a plan from the same input, write the whole
+/// file, and prove the reader recovers every pushed sample byte for byte.
+fn progressive_arm(data: &[u8]) {
+    use isobmff::plan::{PlanBuilder, PlanSample};
+
+    let setups = vec![TrackSetup::new(
+        TrackId::new(1),
+        *b"vide",
+        b"VideoHandler\0".to_vec(),
+        timescale(),
+        SampleEntry::Raw {
+            fourcc: *b"avc1",
+            body: RAW_ENTRY.to_vec(),
+        },
+    )];
+    let mut builder = PlanBuilder::new(setups, isobmff::Limits::default());
+    let mut samples: Vec<Vec<u8>> = Vec::new();
+    let mut cursor = data;
+    for _ in 0..MAX_SAMPLES_PER_TRACK {
+        let Some((&head, tail)) = cursor.split_first() else {
+            break;
+        };
+        cursor = tail;
+        let take = cursor.len().min(usize::from(head));
+        let payload = cursor[..take].to_vec();
+        cursor = &cursor[take..];
+        builder
+            .push(
+                TrackId::new(1),
+                PlanSample {
+                    duration: 1 + u32::from(head),
+                    composition_offset: 0,
+                    sync: head & 1 == 0,
+                    size: u32::try_from(take).expect("at most 255 bytes"),
+                    description_index: 1,
+                },
+            )
+            .expect("push within the sample cap");
+        samples.push(payload);
+    }
+    if samples.is_empty() {
+        return;
+    }
+    let count = u64::try_from(samples.len()).expect("bounded");
+    builder
+        .set_durations(TrackId::new(1), count, count)
+        .expect("durations");
+    let plan = builder.finish().expect("plan");
+    let layout = isobmff::writer::Layout::new(
+        true,
+        isobmff::writer::Interleave::ByDuration { millis: 500 },
+        isobmff::writer::Sink::Seekable,
+    );
+    let mut writer = isobmff::writer::Writer::progressive(
+        plan,
+        layout,
+        isobmff::writer::FileType::default(),
+        isobmff::writer::MovieHeader::new(timescale()),
+        isobmff::Limits::default(),
+    )
+    .expect("progressive writer");
+    let mut out = vec![0u8; usize::try_from(writer.file_len()).expect("length")];
+    for write in writer.header() {
+        place(&mut out, write);
+    }
+    for (index, sample) in samples.iter().enumerate() {
+        let index = u32::try_from(index).expect("bounded");
+        for write in writer.push(TrackId::new(1), index, sample).expect("push") {
+            place(&mut out, write);
+        }
+    }
+    for write in writer.finish().expect("finish") {
+        place(&mut out, write);
+    }
+
+    let mut reader = isobmff::Reader::new(
+        isobmff::ReaderConfig::default()
+            .with_total_len(Some(out.len() as u64))
+            .with_order(isobmff::SampleOrder::File),
+    );
+    let mut seen = Vec::new();
+    loop {
+        match reader.step().expect("reader step") {
+            isobmff::Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader.supply(range.offset, &out[start..end]).expect("supply");
+            }
+            isobmff::Step::Sample(sample) => seen.push(sample),
+            isobmff::Step::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(seen.len(), samples.len(), "every planned sample is indexed");
+    for (sample, pushed) in seen.iter().zip(&samples) {
+        let start = usize::try_from(sample.offset).expect("offset");
+        let end = start + usize::try_from(sample.size).expect("size");
+        assert_eq!(
+            &out[start..end],
+            pushed.as_slice(),
+            "progressive sample bytes"
+        );
+    }
+}
