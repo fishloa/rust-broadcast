@@ -129,13 +129,13 @@ pub use hdr_boxes::{
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, AudioSampleEntryV1, ChunkLargeOffsetBox, ChunkOffsetBox,
-    DataEntry, DataEntryImdaBox, DataEntrySeqNumImdaBox, DataEntryUrlBox, DataEntryUrnBox,
-    DataInformationBox, DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry,
-    HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox,
-    MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpusSampleEntry, SampleDescriptionBox,
-    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SamplingRateBox,
-    SoundMediaHeaderBox, StblChild, StscEntry, SyncSampleBox, TrackBox, TrackExtendsBox,
-    TrackHeaderBox, VideoMediaHeaderBox,
+    CompactSampleSizeBox, DataEntry, DataEntryImdaBox, DataEntrySeqNumImdaBox, DataEntryUrlBox,
+    DataEntryUrnBox, DataInformationBox, DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox,
+    FlacSampleEntry, HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry,
+    MovieBox, MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpusSampleEntry,
+    SampleDependencyTypeBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox,
+    SampleTableBox, SampleToChunkBox, SamplingRateBox, SoundMediaHeaderBox, StblChild, StscEntry,
+    SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use limits::Limits;
 pub use mp4esds::{
