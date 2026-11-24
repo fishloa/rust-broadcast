@@ -60,9 +60,11 @@ const CIF_SOCKET_ID_OFFSET: usize = 24;
 const CIF_SYN_COOKIE_OFFSET: usize = 28;
 const CIF_PEER_IP_OFFSET: usize = 32;
 
-/// Bytes in one IPv4 address word of the peer-IP array, and words in it.
+/// Bytes in one IPv4 address word of the peer-IP array.
 const IPV4_ADDR_LEN: usize = 4;
-const PEER_IP_WORDS: usize = 4;
+/// IPv4 address words a Handshake CIF's `SRTPeerIP` field carries
+/// (`draft-sharabayko-srt-01` §3.2.1, Figure 5).
+pub const PEER_IP_WORDS: usize = 4;
 
 /// Shifts and mask of the Handshake CIF's second word: `Encryption Field`
 /// above `Extension Field` (§3.2.1, Figure 5).

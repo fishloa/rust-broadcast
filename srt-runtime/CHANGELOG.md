@@ -7,7 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 ### Added
 
-- `crypto::AES_BLOCK_LEN`, `crypto::WRAP_ICV_LEN` and `handshake_sm::IPV4_ADDR_WORDS`: the lengths these modules expose in their public function signatures and public field types, so a caller can size its own buffers from them.
+- `crypto::AES_BLOCK_LEN`, `crypto::WRAP_ICV_LEN`, `handshake_sm::IPV4_ADDR_WORDS`, `packet::handshake::PEER_IP_WORDS` and `packet::key_material::ICV_LEN`: the lengths these modules expose in their public function signatures and public field types, so a caller can size its own buffers from them.
 
 ## [0.12.0] - 2026-11-22
 ### Breaking

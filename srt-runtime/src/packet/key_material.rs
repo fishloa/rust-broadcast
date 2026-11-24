@@ -35,10 +35,12 @@ const RESV1_FIXED: u8 = 0;
 const RESV2_FIXED: u8 = 0;
 const RESV3_FIXED: u16 = 0;
 
-/// Bytes of the Key Material message's fixed header, of its ICV, and of the
-/// 4-byte block `SLen`/`KLen` are counted in (§3.2.2, Figure 7).
+/// Bytes of the Key Material message's fixed header, and of the 4-byte block
+/// `SLen`/`KLen` are counted in (§3.2.2, Figure 7).
 const FIXED_HEADER_LEN: usize = 16;
-const ICV_LEN: usize = 8;
+/// Bytes of the Key Material message's ICV, the first half of a wrapped block
+/// (§3.2.2, Figure 7; RFC 3394 §2.2.3.1).
+pub const ICV_LEN: usize = 8;
 const KEY_BLOCK_LEN: usize = 4;
 
 /// Keys a message with `KK = 11b` carries: the even and the odd SEK.
