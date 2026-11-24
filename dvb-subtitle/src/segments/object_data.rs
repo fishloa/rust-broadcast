@@ -6,6 +6,7 @@
 use crate::error::{Error, Result};
 use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
+    be_u16,
 };
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -24,8 +25,6 @@ pub const PROGRESSIVE_HEADER_LEN: usize = 6;
 /// (EN 300 743 §7.2.5.2.3, Table 22).
 const RUN_LENGTH_7BIT_MASK: u8 = 0x7F;
 
-/// Bits in a byte, for the bit-offset arithmetic of the pixel-run reader.
-const BITS_PER_BYTE: usize = 8;
 /// Bit width of the 2-bit depth's pixel code.
 const NARROW_CODE_BITS: usize = 2;
 /// Bit width of a 3-bit run count.
@@ -356,18 +355,18 @@ impl PixelRunIter<'_> {
     /// Read `n` (<= 8) bits starting at bit offset `bp`, big-endian,
     /// zero-padded past the end of `data` (never panics/reads out of bounds).
     fn bits(&self, bp: usize, n: usize) -> u8 {
-        let byte_idx = bp / BITS_PER_BYTE;
-        let bit_idx = bp % BITS_PER_BYTE;
+        let byte_idx = bp / u8::BITS as usize;
+        let bit_idx = bp % u8::BITS as usize;
         if byte_idx >= self.data.len() {
             return 0;
         }
-        if bit_idx + n <= BITS_PER_BYTE {
-            (self.data[byte_idx] >> (BITS_PER_BYTE - bit_idx - n)) & ((1u16 << n) - 1) as u8
+        if bit_idx + n <= u8::BITS as usize {
+            (self.data[byte_idx] >> (u8::BITS as usize - bit_idx - n)) & ((1u16 << n) - 1) as u8
         } else {
-            let first_bits = BITS_PER_BYTE - bit_idx;
+            let first_bits = u8::BITS as usize - bit_idx;
             let v1 = ((self.data[byte_idx] & ((1u8 << first_bits) - 1)) as u16) << (n - first_bits);
             let v2 = if byte_idx + 1 < self.data.len() {
-                (self.data[byte_idx + 1] >> (BITS_PER_BYTE - (n - first_bits))) as u16
+                (self.data[byte_idx + 1] >> (u8::BITS as usize - (n - first_bits))) as u16
             } else {
                 0
             };
@@ -514,7 +513,7 @@ impl PixelRunIter<'_> {
     /// Table 26. Always byte-aligned, so this indexes `data` directly rather
     /// than going through the bit reader.
     fn next_8bit(&mut self) -> Option<PixelRun> {
-        let pos = self.bitpos / BITS_PER_BYTE;
+        let pos = self.bitpos / u8::BITS as usize;
         if pos >= self.data.len() {
             self.done = true;
             return None;
@@ -534,7 +533,7 @@ impl PixelRunIter<'_> {
         let b1 = self.data[pos + 1];
         if (b1 >> SWITCH_SHIFT) & 1 == 0 {
             let rl = b1 & RUN_LENGTH_7BIT_MASK;
-            self.bitpos += RUN_HEADER_BYTES * BITS_PER_BYTE;
+            self.bitpos += RUN_HEADER_BYTES * u8::BITS as usize;
             if rl == 0 {
                 self.done = true;
                 return None;
@@ -551,7 +550,7 @@ impl PixelRunIter<'_> {
         }
         let rl = b1 & RUN_LENGTH_7BIT_MASK;
         let code = self.data[pos + RUN_HEADER_BYTES];
-        self.bitpos += COLOURED_RUN_BYTES * BITS_PER_BYTE;
+        self.bitpos += COLOURED_RUN_BYTES * u8::BITS as usize;
         Some(PixelRun {
             pixel_code: code,
             run_length: u32::from(rl),
@@ -580,18 +579,18 @@ impl Iterator for PixelRunIter<'_> {
 fn scan_2bit_code_string(data: &[u8]) -> usize {
     let mut bitpos: usize = 0;
     let bits = |bp: usize, n: usize| -> u8 {
-        let byte_idx = bp / BITS_PER_BYTE;
-        let bit_idx = bp % BITS_PER_BYTE;
+        let byte_idx = bp / u8::BITS as usize;
+        let bit_idx = bp % u8::BITS as usize;
         if byte_idx >= data.len() {
             return 0;
         }
-        if bit_idx + n <= BITS_PER_BYTE {
-            (data[byte_idx] >> (BITS_PER_BYTE - bit_idx - n)) & ((1u16 << n) - 1) as u8
+        if bit_idx + n <= u8::BITS as usize {
+            (data[byte_idx] >> (u8::BITS as usize - bit_idx - n)) & ((1u16 << n) - 1) as u8
         } else {
-            let first_bits = BITS_PER_BYTE - bit_idx;
+            let first_bits = u8::BITS as usize - bit_idx;
             let v1 = ((data[byte_idx] & ((1u8 << first_bits) - 1)) as u16) << (n - first_bits);
             let v2 = if byte_idx + 1 < data.len() {
-                (data[byte_idx + 1] >> (BITS_PER_BYTE - (n - first_bits))) as u16
+                (data[byte_idx + 1] >> (u8::BITS as usize - (n - first_bits))) as u16
             } else {
                 0
             };
@@ -633,7 +632,7 @@ fn scan_2bit_code_string(data: &[u8]) -> usize {
         }
     }
     // Byte-align: the sub-block includes 2_stuff_bits if not byte-aligned
-    let byte_len = bitpos.div_ceil(BITS_PER_BYTE);
+    let byte_len = bitpos.div_ceil(u8::BITS as usize);
     byte_len.min(data.len())
 }
 
@@ -643,18 +642,18 @@ fn scan_2bit_code_string(data: &[u8]) -> usize {
 fn scan_4bit_code_string(data: &[u8]) -> usize {
     let mut bitpos: usize = 0;
     let bits = |bp: usize, n: usize| -> u8 {
-        let byte_idx = bp / BITS_PER_BYTE;
-        let bit_idx = bp % BITS_PER_BYTE;
+        let byte_idx = bp / u8::BITS as usize;
+        let bit_idx = bp % u8::BITS as usize;
         if byte_idx >= data.len() {
             return 0;
         }
-        if bit_idx + n <= BITS_PER_BYTE {
-            (data[byte_idx] >> (BITS_PER_BYTE - bit_idx - n)) & ((1u16 << n) - 1) as u8
+        if bit_idx + n <= u8::BITS as usize {
+            (data[byte_idx] >> (u8::BITS as usize - bit_idx - n)) & ((1u16 << n) - 1) as u8
         } else {
-            let first_bits = BITS_PER_BYTE - bit_idx;
+            let first_bits = u8::BITS as usize - bit_idx;
             let v1 = ((data[byte_idx] & ((1u8 << first_bits) - 1)) as u16) << (n - first_bits);
             let v2 = if byte_idx + 1 < data.len() {
-                (data[byte_idx + 1] >> (BITS_PER_BYTE - (n - first_bits))) as u16
+                (data[byte_idx + 1] >> (u8::BITS as usize - (n - first_bits))) as u16
             } else {
                 0
             };
@@ -701,7 +700,7 @@ fn scan_4bit_code_string(data: &[u8]) -> usize {
         }
     }
     // Byte-align: if not byte-aligned, 4_stuff_bits are implied
-    let byte_len = bitpos.div_ceil(BITS_PER_BYTE);
+    let byte_len = bitpos.div_ceil(u8::BITS as usize);
     byte_len.min(data.len())
 }
 
@@ -820,16 +819,13 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
         if bytes[SEGMENT_TYPE_OFFSET] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[SEGMENT_TYPE_OFFSET]));
         }
-        let page_id = u16::from_be_bytes([bytes[PAGE_ID_OFFSET], bytes[PAGE_ID_OFFSET + 1]]);
-        let segment_length = u16::from_be_bytes([
-            bytes[SEGMENT_LENGTH_OFFSET],
-            bytes[SEGMENT_LENGTH_OFFSET + 1],
-        ]) as usize;
+        let page_id = be_u16(bytes, PAGE_ID_OFFSET);
+        let segment_length = be_u16(bytes, SEGMENT_LENGTH_OFFSET) as usize;
         let total = HEADER_LEN + segment_length;
         need_in(bytes, total, "object_data_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
         need_in(body, FIXED_LEN, "object_data_segment body")?;
-        let object_id = u16::from_be_bytes([body[OBJECT_ID_OFFSET], body[OBJECT_ID_OFFSET + 1]]);
+        let object_id = be_u16(body, OBJECT_ID_OFFSET);
         let object_version_number = body[OBJECT_FLAGS_OFFSET] >> OBJECT_VERSION_SHIFT;
         let coding_method_bits =
             (body[OBJECT_FLAGS_OFFSET] >> CODING_METHOD_SHIFT) & CODING_METHOD_MASK;
@@ -855,14 +851,8 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                     INTERLACE_LEN_LEN,
                     "object_data interlace lengths",
                 )?;
-                let top_len = u16::from_be_bytes([
-                    payload_data[TOP_FIELD_LEN_OFFSET],
-                    payload_data[TOP_FIELD_LEN_OFFSET + 1],
-                ]) as usize;
-                let bottom_len = u16::from_be_bytes([
-                    payload_data[BOTTOM_FIELD_LEN_OFFSET],
-                    payload_data[BOTTOM_FIELD_LEN_OFFSET + 1],
-                ]) as usize;
+                let top_len = be_u16(payload_data, TOP_FIELD_LEN_OFFSET) as usize;
+                let bottom_len = be_u16(payload_data, BOTTOM_FIELD_LEN_OFFSET) as usize;
 
                 let top_start = INTERLACE_LEN_LEN;
                 let top_end = top_start + top_len;
@@ -915,7 +905,7 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 let mut codes = alloc::vec::Vec::with_capacity(number_of_codes);
                 for i in 0..number_of_codes {
                     let ci = CHARACTER_CODE_COUNT_LEN + i * CHARACTER_CODE_LEN;
-                    codes.push(u16::from_be_bytes([payload_data[ci], payload_data[ci + 1]]));
+                    codes.push(be_u16(payload_data, ci));
                 }
                 ObjectDataPayload::Characters {
                     character_codes: codes,
@@ -927,18 +917,9 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                     PROGRESSIVE_HEADER_LEN,
                     "progressive pixel block",
                 )?;
-                let bitmap_width = u16::from_be_bytes([
-                    payload_data[BITMAP_WIDTH_OFFSET],
-                    payload_data[BITMAP_WIDTH_OFFSET + 1],
-                ]);
-                let bitmap_height = u16::from_be_bytes([
-                    payload_data[BITMAP_HEIGHT_OFFSET],
-                    payload_data[BITMAP_HEIGHT_OFFSET + 1],
-                ]);
-                let compressed_len = u16::from_be_bytes([
-                    payload_data[COMPRESSED_LEN_OFFSET],
-                    payload_data[COMPRESSED_LEN_OFFSET + 1],
-                ]) as usize;
+                let bitmap_width = be_u16(payload_data, BITMAP_WIDTH_OFFSET);
+                let bitmap_height = be_u16(payload_data, BITMAP_HEIGHT_OFFSET);
+                let compressed_len = be_u16(payload_data, COMPRESSED_LEN_OFFSET) as usize;
                 need_in(
                     payload_data,
                     PROGRESSIVE_HEADER_LEN + compressed_len,
