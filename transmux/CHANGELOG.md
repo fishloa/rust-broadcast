@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `nal::NAL_TYPE_MASK` (the 5-bit H.264 `nal_unit_type` mask of ITU-T H.264 §7.3.1) and `cenc::KEY_LEN` (the AES-128 content-key width) are the one definitions of those values, exported from the modules that own them; `sample_aes::NAL_TYPE_MASK` keeps its existing path as a re-export; `sample_aes::KEY_LEN` no longer does (see Breaking).
 
 ### Changed
+- Internal: `ProgressiveMux::package` builds an `isobmff::plan::OwnedPlan` from
+  its `Media` and writes the file through
+  `isobmff::writer::Writer::progressive` with a seekable sink; the layout rules
+  (chunk boundaries, interleave order, `stco`/`co64`, the `mdat` header form)
+  moved into the box crate and the sample bytes go straight to their planned
+  offset. Output is byte-identical (every golden unchanged).
 - `Error::SampleDataBudgetExceeded { limit }` carries a `u64` allowance, matching
   the `u64` sample offsets and byte counts it bounds (it mirrors
   `isobmff::Error::SampleDataBudgetExceeded`).

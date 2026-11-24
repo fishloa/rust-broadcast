@@ -470,7 +470,6 @@ async fn ts_hls_no_iframe() {
 #[tokio::test]
 async fn iframe_validator_clean() {
     use std::fs;
-    use std::path::PathBuf;
     use std::time::Duration;
 
     // availability check
@@ -521,9 +520,7 @@ async fn iframe_validator_clean() {
     );
     let app = router(Arc::new(AppState::new(streams)));
 
-    let scratch = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/iframe-validator-tmp");
-    let _ = fs::remove_dir_all(&scratch);
-    fs::create_dir_all(&scratch).unwrap();
+    let scratch = test_fixtures::process::scratch_dir("iframe-validator");
 
     // fetch playlists
     for name in ["master.m3u8", "media.m3u8", "iframe.m3u8"] {

@@ -78,7 +78,15 @@ pub fn build_init_segment(
     movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
 ) -> Result<Vec<u8>> {
     let movie_timescale = movie_timescale.into();
+    let setups = track_setups(tracks)?;
+    let writer =
+        isobmff::writer::Writer::fragmented(setups, movie_timescale, isobmff::Limits::default())?;
+    Ok(writer.init()?)
+}
 
+/// The one IR-to-[`TrackSetup`](isobmff::writer::TrackSetup) list every mux
+/// entry point goes through.
+pub(crate) fn track_setups(tracks: &[TrackSpec]) -> Result<Vec<isobmff::writer::TrackSetup>> {
     let mut setups = Vec::with_capacity(tracks.len());
     for t in tracks {
         // MUX = strict but filterable (media plane step-2 fix wave 1,
@@ -96,10 +104,7 @@ pub fn build_init_segment(
         }
         setups.push(track_setup(t)?);
     }
-
-    let writer =
-        isobmff::writer::Writer::fragmented(setups, movie_timescale, isobmff::Limits::default())?;
-    Ok(writer.init()?)
+    Ok(setups)
 }
 
 /// The one IR-to-[`TrackSetup`](isobmff::writer::TrackSetup) mapping.

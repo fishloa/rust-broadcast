@@ -209,4 +209,44 @@ pub enum Error {
         /// Why it is invalid.
         reason: &'static str,
     },
+
+    /// A sample pushed to the progressive writer is a different length than its
+    /// plan entry recorded, so it would not land where the tables say.
+    #[error("track {track} sample {index} is {got} bytes, the plan says {planned}")]
+    PlanMismatch {
+        /// The track of the pushed sample.
+        track: crate::TrackId,
+        /// Zero-based sample index.
+        index: u32,
+        /// The planned size.
+        planned: u32,
+        /// The supplied size.
+        got: u64,
+    },
+
+    /// An out-of-turn sample would grow the append-only sink's reorder buffer
+    /// past the cap the caller chose.
+    #[error("reorder buffer would exceed the caller's {cap}-byte cap")]
+    ReorderBufferFull {
+        /// The caller's cap, in bytes.
+        cap: u64,
+    },
+
+    /// A planned sample was never pushed when the writer was finished.
+    #[error("track {track} sample {missing} was planned but never pushed")]
+    PlanIncomplete {
+        /// The track with the gap.
+        track: crate::TrackId,
+        /// The first sample index that was never pushed.
+        missing: u32,
+    },
+
+    /// The plan has no entry for what the caller asked for: an unknown track,
+    /// a sample index past the plan, or `Interleave::AsPlanned` over a plan
+    /// built without a source chunk table.
+    #[error("no plan entry for {what}")]
+    NoPlan {
+        /// What the plan could not supply.
+        what: &'static str,
+    },
 }

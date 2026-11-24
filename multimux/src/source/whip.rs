@@ -74,6 +74,7 @@
 //! split RTMP draws between `RtmpConnection::next_events` (I/O) and
 //! `RtmpIngestSession::feed` (sans-IO translation).
 
+#[cfg(feature = "test-hooks")]
 use crate::route::RouteConfig;
 use parking_lot::Mutex;
 use std::collections::HashMap;

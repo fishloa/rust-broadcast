@@ -219,11 +219,7 @@ pub async fn dump_route(app: &Router, dir: &std::path::Path) {
 }
 
 pub fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target")
-        .join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
+    test_fixtures::process::scratch_dir(name)
 }
 
 pub fn attribute(text: &str, name: &str) -> Option<String> {

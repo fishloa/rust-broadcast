@@ -237,9 +237,11 @@ whip        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
 # `webrtc-runtime`'s whole ICE/DTLS-SRTP tree. `test-hooks` implies it.
 test-seams  = []
 # WebRTC fault injection (`WhipRouteShared::force_next_timer_error`) that stages
-# a fatal transport timer error. Non-default; implies `test-seams` plus
+# a fatal transport timer error, plus the WHIP signalling seams `test_seam`
+# re-exports. Non-default; implies `test-seams`, `whip` (the seams it exposes
+# live in `source::whip`, which only compiles with that feature) and
 # `webrtc-runtime/test-seams`. `tests/it/whip_whep_timers.rs` requires it.
-test-hooks  = ["test-seams", "dep:webrtc-runtime", "webrtc-runtime/test-seams"]
+test-hooks  = ["test-seams", "whip", "dep:webrtc-runtime", "webrtc-runtime/test-seams"]
 # WHEP (draft-ietf-wish-whep) egress (issue #743): accepts a viewer's HTTP
 # `POST` + SDP offer, negotiates ICE/DTLS-SRTP, and pushes the route's
 # `Trunk` samples out as SRTP RTP — the mirror image of `whip` (see

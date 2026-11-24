@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `writer::Writer::progressive`, the sans-IO progressive (single-file) writer:
+  it fixes the whole layout from an `OwnedPlan` before a sample byte arrives
+  (interleaved chunks, `stco` or `co64`, the `mdat` header form and every
+  sample's absolute offset), then takes each sample with `push` and emits
+  `Write { offset, bytes }` values. A `Sink::Seekable` caller places them in
+  any order and the writer holds no sample bytes; a `Sink::AppendOnly` caller
+  gets file order enforced, with out-of-turn samples held in a buffer capped by
+  its own `reorder_bytes` (`Error::ReorderBufferFull`). A pushed length that
+  disagrees with the plan is `Error::PlanMismatch`, a missing one at `finish`
+  is `Error::PlanIncomplete`, and `Interleave::AsPlanned` without a source
+  chunk table is `Error::NoPlan`.
+- `plan::OwnedPlan` and `plan::PlanBuilder`: a progressive file's sample tables
+  in their compact wire form (no per-sample expansion), with the `stsd`
+  entries, `elst` entries, durations and source chunk layout, plus a builder
+  that run-length codes each table as samples are pushed.
+  `SamplePlan::to_owned_plan` turns a reader's index into one.
+- `sample_table::build_stsc_with_descriptions`, the `stsc` builder that keeps
+  one `stsd` entry per chunk (a plan read from a file writes back the runs it
+  was read with); `build_stsc` is the same builder with the first entry
+  everywhere.
+- `writer::TrackSetup::language` (`mdhd.language`), so a track read from a file
+  keeps its language when it is written back; a handler with no media header of
+  its own (`meta`, `text`, `tmcd`, …) now gets `nmhd` unless the caller named
+  another.
 - The `reader` walks fragmented files: after a `moov` with `mvex` it reads one
   `moof` at a time under `Limits::max_fragment_bytes`, applies the `trex`
   defaults, learns the following `mdat` payload ranges from their headers

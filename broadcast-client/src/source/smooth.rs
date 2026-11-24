@@ -31,7 +31,7 @@ const HTTP_UNAUTHORIZED: u16 = 401;
 const HTTP_PROXY_AUTH_REQUIRED: u16 = 407;
 const SMOOTH_MANIFEST_REASON: &str = "smooth_manifest";
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReqKind {
     Manifest,
     Fragment,
@@ -56,6 +56,8 @@ pub(crate) struct SmoothSource {
     client: SmoothClient,
     reqs: HashMap<ConnId, Req>,
     parked: Vec<Req>,
+    read_paused: bool,
+    held: Vec<(RequestId, Url)>,
     actions: VecDeque<HostAction>,
     events: VecDeque<Event>,
     armed_wake: Option<u64>,
@@ -106,6 +108,8 @@ impl SmoothSource {
             client: SmoothClient::new(engine_config(url, config, jitter_seed)),
             reqs: HashMap::new(),
             parked: Vec::new(),
+            read_paused: false,
+            held: Vec::new(),
             actions: VecDeque::new(),
             events: VecDeque::new(),
             armed_wake: None,
@@ -172,25 +176,22 @@ impl SmoothSource {
     }
 
     fn pump(&mut self, now: u64) {
+        if !self.read_paused {
+            for (id, url) in core::mem::take(&mut self.held) {
+                self.fetch(ReqKind::Fragment, id, url, now);
+            }
+        }
         while let Some(action) = self.client.poll(Timestamp::from_micros(now)) {
             let (kind, id, url) = match action {
                 Action::FetchManifest { id, url } => (ReqKind::Manifest, id, url),
                 Action::FetchFragment { id, url, .. } => (ReqKind::Fragment, id, url),
                 _ => continue,
             };
-            let req = Req {
-                kind,
-                id,
-                url,
-                body: Vec::new(),
-                status: None,
-                started_us: now,
-                last_activity_us: now,
-                authed: false,
-                redirects: 0,
-                stale_replayed: false,
-            };
-            self.start(req, Vec::new(), now);
+            if self.read_paused && kind == ReqKind::Fragment {
+                self.held.push((id, url));
+                continue;
+            }
+            self.fetch(kind, id, url, now);
         }
         while let Some(output) = self.client.next_output() {
             self.map_output(output);
@@ -203,6 +204,22 @@ impl SmoothSource {
                     .push_back(HostAction::WakeAt(Timestamp::from_micros(t)));
             }
         }
+    }
+
+    fn fetch(&mut self, kind: ReqKind, id: RequestId, url: Url, now: u64) {
+        let req = Req {
+            kind,
+            id,
+            url,
+            body: Vec::new(),
+            status: None,
+            started_us: now,
+            last_activity_us: now,
+            authed: false,
+            redirects: 0,
+            stale_replayed: false,
+        };
+        self.start(req, Vec::new(), now);
     }
 
     fn map_output(&mut self, output: Output) {
@@ -417,6 +434,12 @@ impl SmoothSource {
     }
 
     pub(crate) fn reconnect(&mut self, _now: u64, _auth: &mut AuthState) {}
+
+    /// Hold or release new fragment fetches for the read-ahead gate. A fragment already requested
+    /// completes; a held one is requested once the gate reopens.
+    pub(crate) fn set_read_paused(&mut self, paused: bool) {
+        self.read_paused = paused;
+    }
 
     pub(crate) fn resume(&mut self, now: u64, auth: &mut AuthState) {
         for req in core::mem::take(&mut self.parked) {

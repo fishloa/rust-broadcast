@@ -405,6 +405,10 @@ impl From<isobmff::Error> for Error {
             I::InvalidString { field, reason } => {
                 Error::EmsgSerialize(I::InvalidString { field, reason })
             }
+            I::PlanMismatch { .. } => Error::InvalidInput("planned sample size mismatch"),
+            I::ReorderBufferFull { .. } => Error::InvalidInput("reorder buffer full"),
+            I::PlanIncomplete { .. } => Error::InvalidInput("planned sample missing"),
+            I::NoPlan { .. } => Error::InvalidInput("no plan entry"),
             _ => Error::UnsupportedFeature("unrecognised ISO BMFF box error"),
         }
     }

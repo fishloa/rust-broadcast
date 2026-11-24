@@ -129,6 +129,7 @@ pub(crate) struct HlsSource {
     established: bool,
     live: bool,
     role: Role,
+    read_paused: bool,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
 }
@@ -193,6 +194,7 @@ impl HlsSource {
             established: false,
             live: false,
             role,
+            read_paused: false,
             actions: VecDeque::new(),
             events: VecDeque::new(),
         };
@@ -236,6 +238,12 @@ impl HlsSource {
     pub(crate) fn halt(&mut self) {
         self.fatal = true;
         self.reset_in_flight();
+    }
+
+    /// Hold or release new segment fetches for the read-ahead gate. A request already in flight
+    /// completes; the queued ones are issued once the gate reopens.
+    pub(crate) fn set_read_paused(&mut self, paused: bool) {
+        self.read_paused = paused;
     }
 
     pub(crate) fn poll(&mut self, now: u64, auth: &mut AuthState) {
@@ -833,7 +841,7 @@ impl HlsSource {
     }
 
     fn next_action(&mut self) -> Option<HlsAction> {
-        self.lanes.next(self.window.is_open())
+        self.lanes.next(self.window.is_open(), !self.read_paused)
     }
 
     fn advance(&mut self, now: u64, auth: &mut AuthState) {

@@ -136,6 +136,9 @@ pub(crate) struct RtspSource {
     starved_data_fired: bool,
     starved_nodata_fired: bool,
     wake_pending: Option<Timestamp>,
+    /// The host stopped reading this connection for the read-ahead gate: the
+    /// stall timers are held until it resumes.
+    read_paused: bool,
     loss_events: u64,
     malformed_frames: u64,
     rtcp_frames: u64,
@@ -222,6 +225,7 @@ impl RtspSource {
             starved_data_fired: false,
             starved_nodata_fired: false,
             wake_pending: None,
+            read_paused: false,
             loss_events: 0,
             malformed_frames: 0,
             rtcp_frames: 0,
@@ -257,6 +261,30 @@ impl RtspSource {
             .as_ref()
             .map_or(0, RtpStreamDepacketiser::rejected_sender_reports)
             .saturating_add(self.aligner.skew_rejections())
+    }
+
+    /// The one TCP connection this source's interleaved media arrives on.
+    pub(crate) fn conn(&self) -> Option<ConnId> {
+        self.conn
+    }
+
+    /// Hold or release the stall timers because the host stopped or resumed
+    /// reading this connection for the read-ahead gate. While held no stall
+    /// notice, no no-data starvation and no stall reconnect can fire;
+    /// releasing restarts them cleanly from `now`.
+    pub(crate) fn set_read_paused(&mut self, paused: bool, now: Timestamp) {
+        if self.read_paused == paused {
+            return;
+        }
+        self.read_paused = paused;
+        if !paused {
+            self.last_byte_at = now;
+            self.last_sample_at = now;
+            self.next_notice_at = None;
+            self.starved_data_fired = false;
+            self.starved_nodata_fired = false;
+            self.stalled = false;
+        }
     }
 
     pub(crate) fn poll(&mut self, now: Timestamp, auth: &AuthState) {
@@ -408,7 +436,9 @@ impl RtspSource {
                 // A deadline that does not fit the clock can never be reached: it is no
                 // deadline, so whoever sends this phase on (the start timeout, the stall
                 // reconnect) still owns the session; the keepalive is only ever a conjunction.
-                let deadline = if self.seen_first_sample {
+                let deadline = if self.read_paused {
+                    None
+                } else if self.seen_first_sample {
                     let notice = self.last_byte_at.checked_add(self.cfg.stall_notice);
                     let reconnect = self.last_byte_at.checked_add(self.cfg.stall_reconnect);
                     match (self.next_notice_at.or(notice), reconnect) {
@@ -1099,13 +1129,15 @@ impl RtspSource {
             Phase::Awaiting(_) | Phase::Playing => {}
             _ => return,
         }
-        if self.seen_first_sample {
-            if self.check_stall(now) {
+        if !self.read_paused {
+            if self.seen_first_sample {
+                if self.check_stall(now) {
+                    return;
+                }
+            } else if now.saturating_sub(self.connected_at) >= self.cfg.start_timeout {
+                self.fail_connection(now);
                 return;
             }
-        } else if now.saturating_sub(self.connected_at) >= self.cfg.start_timeout {
-            self.fail_connection(now);
-            return;
         }
         self.send_keepalive_if_due(now);
     }

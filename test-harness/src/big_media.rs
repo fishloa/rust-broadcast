@@ -26,6 +26,11 @@ use transmux::{
 /// timestamps.
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
+/// Bytes in one MPEG-2 TS packet: a segment boundary that is not on one splits
+/// a packet, which a demuxer fed the segments in order would still resync on but
+/// a fixture need not rely on.
+const TS_PACKET: usize = 188;
+
 /// What an incremental write produced.
 #[derive(Debug, Clone)]
 pub struct BigMedia {
@@ -94,6 +99,74 @@ pub fn write_big_flv(path: &Path, source_fixture: &Path, target_bytes: u64) -> B
         bytes: written,
         samples_per_track: counts(&media, passes),
         duration: step.duration_for(passes),
+    }
+}
+
+/// A long, continuous TS timeline cut into fixed-size segments, generated one
+/// pass at a time: a test server answers thousands of segment requests without
+/// holding the presentation, which is what a bounded-memory test needs.
+///
+/// Every segment is a whole number of TS packets, and consecutive segments
+/// continue one another, so a demuxer fed them in order sees exactly the stream
+/// [`write_big_ts`] would have written, only cut up.
+pub struct TsSegmentStream {
+    media: Media,
+    step: PassStep,
+    mux: StreamingTsMux,
+    segments: u64,
+    segment_bytes: usize,
+    emitted: u64,
+    next_pass: u64,
+    pending: Vec<u8>,
+}
+
+impl TsSegmentStream {
+    /// A stream of exactly `segments` segments over `source_fixture`, pass after
+    /// pass, each pass's timestamps advanced by that fixture's span, in segments
+    /// of at most `segment_bytes` rounded down to a whole number of TS packets.
+    pub fn new(source_fixture: &Path, segments: u64, segment_bytes: usize) -> Self {
+        let source = read_source(source_fixture);
+        let media = expect(
+            "demux TS source",
+            TsDemux::new().unpackage(source.as_slice()),
+        );
+        let step = pass_step(&media);
+        Self {
+            media,
+            step,
+            mux: StreamingTsMux::new(),
+            segments,
+            segment_bytes: (segment_bytes / TS_PACKET * TS_PACKET).max(TS_PACKET),
+            emitted: 0,
+            next_pass: 0,
+            pending: Vec::new(),
+        }
+    }
+
+    /// Bytes in one segment, as [`Self::new`] rounded it.
+    pub fn segment_bytes(&self) -> usize {
+        self.segment_bytes
+    }
+
+    /// Segments the stream produces in total.
+    pub fn segments(&self) -> u64 {
+        self.segments
+    }
+
+    /// The next segment, `None` once all of them have been produced.
+    pub fn next_segment(&mut self) -> Option<Vec<u8>> {
+        if self.emitted >= self.segments {
+            return None;
+        }
+        while self.pending.len() < self.segment_bytes {
+            let shifted = media_at_pass(&self.media, &self.step, self.next_pass);
+            let chunk = expect("mux TS pass", self.mux.package(&shifted));
+            self.pending.extend_from_slice(&chunk);
+            self.next_pass += 1;
+        }
+        let len = self.segment_bytes.min(self.pending.len());
+        self.emitted += 1;
+        Some(self.pending.drain(..len).collect())
     }
 }
 
