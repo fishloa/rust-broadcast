@@ -53,28 +53,6 @@ async fn read_samples<R: AsyncRead + AsyncSeek + Unpin>(
     (tracks, samples, fragments)
 }
 
-/// Count a fragmented source without reading sample bytes, which its forward
-/// walk has already passed.
-async fn count_fragments<R: AsyncRead + AsyncSeek + Unpin>(inner: R) -> (usize, u64, u64) {
-    let config = ReaderConfig::default().with_order(SampleOrder::File);
-    let mut reader = AsyncFileReader::new(inner, config)
-        .await
-        .expect("wrap source");
-    let mut tracks = 0usize;
-    let mut samples = 0u64;
-    let mut fragments = 0u64;
-    loop {
-        match reader.step().await.expect("step") {
-            DriverStep::Tracks(info) => tracks = info.len(),
-            DriverStep::Fragment(_) => fragments += 1,
-            DriverStep::Sample(_) => samples += 1,
-            DriverStep::Done => break,
-            _ => {}
-        }
-    }
-    (tracks, samples, fragments)
-}
-
 async fn read_moov_last<R: AsyncRead + AsyncSeek + Unpin>(inner: R) -> u64 {
     let config = ReaderConfig::default().with_order(SampleOrder::File);
     let mut reader = AsyncFileReader::new(inner, config)
@@ -106,8 +84,9 @@ async fn a_tokio_file_reads_every_progressive_sample_byte() {
 #[tokio::test]
 async fn a_tokio_file_reads_a_fragmented_fixture() {
     let path = test_fixtures::path("mp4/frag/h264-high.frag.mp4");
+    let fixture = read_file(&path).await;
     let file = tokio::fs::File::open(&path).await.expect("open fixture");
-    let (tracks, samples, fragments) = count_fragments(file).await;
+    let (tracks, samples, fragments) = read_samples(file, &fixture).await;
     assert!(tracks > 0);
     assert!(samples > 0);
     assert!(fragments > 0);
@@ -135,7 +114,7 @@ async fn an_in_memory_cursor_reads_every_progressive_sample_byte() {
 async fn an_in_memory_cursor_reads_a_fragmented_fixture() {
     let path = test_fixtures::path("mp4/frag/h264-high.frag.mp4");
     let fixture = read_file(&path).await;
-    let (tracks, samples, fragments) = count_fragments(Cursor::new(fixture)).await;
+    let (tracks, samples, fragments) = read_samples(Cursor::new(fixture.clone()), &fixture).await;
     assert!(tracks > 0);
     assert!(samples > 0);
     assert!(fragments > 0);
@@ -174,4 +153,30 @@ async fn an_in_memory_cursor_seeks_to_the_sync_sample_at_or_before_a_time() {
     };
     assert!(sample.sync);
     assert_eq!(sample.decode_time, 0);
+}
+
+#[tokio::test]
+async fn a_tokio_file_reports_the_movie_metadata() {
+    let Some(path) = test_fixtures::require("mp4/tags/lavf-tagged.m4a", "isobmff-tokio") else {
+        return;
+    };
+    let file = tokio::fs::File::open(&path).await.expect("open fixture");
+    let config = ReaderConfig::default().with_order(SampleOrder::File);
+    let mut reader = AsyncFileReader::new(file, config)
+        .await
+        .expect("wrap source");
+    let mut title = None;
+    loop {
+        match reader.step().await.expect("step") {
+            DriverStep::Metadata(metadata) => {
+                title = metadata
+                    .movie
+                    .text(&isobmff::metadata::ItemKey::FourCc(*b"\xa9nam"))
+                    .map(str::to_string);
+            }
+            DriverStep::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(title.as_deref(), Some("Test Tone"));
 }

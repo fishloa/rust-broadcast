@@ -88,6 +88,7 @@ pub struct RangeReader {
     config: ReaderConfig,
     min_fetch: u64,
     tracks: Vec<TrackInfo>,
+    metadata: Option<isobmff::metadata::MovieMetadata>,
     window: Option<Window>,
     need: Option<ByteRange>,
     pending: Option<ByteRange>,
@@ -104,6 +105,7 @@ impl RangeReader {
             config,
             min_fetch,
             tracks: Vec::new(),
+            metadata: None,
             window: None,
             need: None,
             pending: None,
@@ -146,7 +148,11 @@ impl RangeReader {
                 Advance::Sample(sample) => {
                     return Ok(RangeAction::Step(DriverStep::Sample(sample)));
                 }
-                Advance::Metadata(_) => {}
+                Advance::Metadata(metadata) => {
+                    return Ok(RangeAction::Step(DriverStep::Metadata(
+                        self.metadata.insert(metadata),
+                    )));
+                }
                 Advance::Done => return Ok(RangeAction::Done),
             }
         }

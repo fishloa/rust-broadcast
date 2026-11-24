@@ -139,11 +139,9 @@ fn a_multi_gigabyte_fragmented_file_holds_one_moof() {
     );
 }
 
-/// Drive a forward-only source. When `read_bytes` is set, read every sample and
-/// compare it with the fixture on disk; a fragmented walk has already consumed
-/// each `mdat` payload by the time its samples are emitted, so its samples are
-/// counted only. Returns `(tracks, samples, fragments)`.
-fn read_forward(path: &Path, order: SampleOrder, read_bytes: bool) -> (usize, u64, u64) {
+/// Drive a forward-only source over a `Read`-only wrapper, read every sample and
+/// compare it with the fixture on disk. Returns `(tracks, samples, fragments)`.
+fn read_forward(path: &Path, order: SampleOrder) -> (usize, u64, u64) {
     let bytes = std::fs::read(path).expect("read fixture");
     let mut reader = ForwardReader::new(
         ReadOnly(open(path)),
@@ -167,20 +165,18 @@ fn read_forward(path: &Path, order: SampleOrder, read_bytes: bool) -> (usize, u6
             DriverStep::Done => break,
             _ => continue,
         };
-        if read_bytes {
-            reader
-                .read_sample(&sample, &mut out)
-                .expect("read sample data");
-            let start = usize::try_from(sample.offset).unwrap_or(usize::MAX);
-            let end = start.saturating_add(usize::try_from(sample.size).unwrap_or(usize::MAX));
-            assert_eq!(
-                out.as_slice(),
-                bytes.get(start..end).expect("sample range"),
-                "sample {} of track {}",
-                sample.index,
-                sample.track.value()
-            );
-        }
+        reader
+            .read_sample(&sample, &mut out)
+            .expect("read sample data");
+        let start = usize::try_from(sample.offset).unwrap_or(usize::MAX);
+        let end = start.saturating_add(usize::try_from(sample.size).unwrap_or(usize::MAX));
+        assert_eq!(
+            out.as_slice(),
+            bytes.get(start..end).expect("sample range"),
+            "sample {} of track {}",
+            sample.index,
+            sample.track.value()
+        );
         samples += 1;
     }
     (tracks, samples, fragments)
@@ -189,7 +185,7 @@ fn read_forward(path: &Path, order: SampleOrder, read_bytes: bool) -> (usize, u6
 #[test]
 fn a_forward_only_source_reads_progressive_media_in_file_order() {
     let path = test_fixtures::path("mp4/progressive/av-faststart.mp4");
-    let (tracks, samples, fragments) = read_forward(&path, SampleOrder::File, true);
+    let (tracks, samples, fragments) = read_forward(&path, SampleOrder::File);
     assert!(tracks > 0);
     assert!(samples > 0);
     assert_eq!(fragments, 0);
@@ -198,10 +194,40 @@ fn a_forward_only_source_reads_progressive_media_in_file_order() {
 #[test]
 fn a_forward_only_source_reads_a_fragmented_fixture() {
     let path = test_fixtures::path("mp4/frag/h264-high.frag.mp4");
-    let (tracks, samples, fragments) = read_forward(&path, SampleOrder::File, false);
+    let (tracks, samples, fragments) = read_forward(&path, SampleOrder::File);
     assert!(tracks > 0);
     assert!(samples > 0);
     assert!(fragments > 0);
+}
+
+#[test]
+fn a_pipe_reads_every_fragmented_sample_byte() {
+    for name in [
+        "mp4/frag/h264-high.frag.mp4",
+        "mp4/cmaf/av-frag.mp4",
+        "mp4/llcmaf/ll-chunked.mp4",
+        "mp4/cenc-layouts/enc-default-explicit.mp4",
+        "mp4/h264-aac-frag.mp4",
+    ] {
+        let path = test_fixtures::path(name);
+        let (tracks, samples, fragments) = read_forward(&path, SampleOrder::File);
+        assert!(tracks > 0, "{name}: no tracks");
+        assert!(samples > 0, "{name}: no samples");
+        assert!(fragments > 0, "{name}: no fragments");
+    }
+}
+
+#[test]
+fn a_forward_only_source_emits_file_order_whatever_was_asked_for() {
+    let path = test_fixtures::path("mp4/cmaf/av-frag.mp4");
+    let reader = ForwardReader::new(
+        ReadOnly(open(&path)),
+        ReaderConfig::default().with_order(SampleOrder::DecodeTime),
+    );
+    assert_eq!(reader.order(), SampleOrder::File);
+    let (tracks, samples, _) = read_forward(&path, SampleOrder::DecodeTime);
+    assert!(tracks > 0);
+    assert!(samples > 0);
 }
 
 #[test]
@@ -361,4 +387,89 @@ fn a_seekable_driver_recovers_its_source() {
     let mut file = reader.into_inner();
     let after = file.seek(SeekFrom::End(0)).expect("seek recovered file");
     assert_eq!(before, after);
+}
+
+/// Drive a source to its metadata step and return the movie title.
+fn metadata_title(path: &Path) -> Option<String> {
+    let mut reader = FileReader::new(
+        open(path),
+        ReaderConfig::default().with_order(SampleOrder::File),
+    )
+    .expect("wrap file");
+    loop {
+        match reader.step().expect("driver step") {
+            DriverStep::Metadata(metadata) => {
+                return metadata
+                    .movie
+                    .text(&isobmff::metadata::ItemKey::FourCc(*b"\xa9nam"))
+                    .map(str::to_string);
+            }
+            DriverStep::Done => return None,
+            _ => {}
+        }
+    }
+}
+
+/// Drive a forward-only source to its metadata step and return its movie items.
+fn forward_metadata_items(path: &Path) -> Option<Vec<isobmff::metadata::MetadataItem>> {
+    let mut reader = ForwardReader::new(
+        ReadOnly(open(path)),
+        ReaderConfig::default().with_order(SampleOrder::File),
+    );
+    loop {
+        match reader.step().expect("forward step") {
+            DriverStep::Metadata(metadata) => return Some(metadata.movie.items.clone()),
+            DriverStep::Done => return None,
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn a_seekable_driver_reports_the_movie_metadata() {
+    let Some(path) = test_fixtures::require("mp4/tags/lavf-tagged.m4a", "driver") else {
+        return;
+    };
+    assert_eq!(metadata_title(&path).as_deref(), Some("Test Tone"));
+}
+
+#[test]
+fn a_forward_only_driver_reports_the_movie_metadata() {
+    // `lavf-tagged.m4a` puts its `moov` after its `mdat`, so a pipe cannot
+    // reach its tags at all: that file is the reader's typed refusal.
+    let Some(path) = test_fixtures::require("mp4/tags/lavf-tagged.m4a", "driver") else {
+        return;
+    };
+    let mut reader = ForwardReader::new(
+        ReadOnly(open(&path)),
+        ReaderConfig::default().with_order(SampleOrder::File),
+    );
+    let refused = loop {
+        match reader.step() {
+            Ok(DriverStep::Done) => panic!("a moov-last file completed on a pipe"),
+            Ok(_) => {}
+            Err(error) => break error,
+        }
+    };
+    assert!(
+        matches!(
+            refused,
+            DriverError::Format(Error::MoovAfterMdatForwardOnly)
+        ),
+        "{refused:?}"
+    );
+
+    // The moov-first fixture's freeform item is reported through the driver.
+    let Some(path) = test_fixtures::require("mp4/tags/afconvert-aac.m4a", "driver") else {
+        return;
+    };
+    let items = forward_metadata_items(&path).expect("a metadata step");
+    assert!(
+        items.iter().any(|item| matches!(
+            item,
+            isobmff::metadata::MetadataItem::Freeform { mean, name, .. }
+                if mean == "com.apple.iTunes" && name == "iTunSMPB"
+        )),
+        "{items:?}"
+    );
 }
