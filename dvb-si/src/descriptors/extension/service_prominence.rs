@@ -11,6 +11,30 @@ impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
 
 /// `sogi_priority` is 12 bits.
 const SOGI_PRIORITY_BITS: u32 = 12;
+/// Fixed bytes of a SOGI entry before its optional fields.
+const SOGI_ENTRY_FIXED_LEN: usize = 2;
+/// Width of a SOGI `service_id`.
+const SOGI_SERVICE_ID_LEN: usize = core::mem::size_of::<u16>();
+/// Shift of `SOGI_flag`.
+const SOGI_FLAG_SHIFT: u32 = 7;
+/// Mask of `target_region_flag`.
+const TARGET_REGION_FLAG_MASK: u8 = 0x01;
+/// Shift of `target_region_flag`.
+const TARGET_REGION_FLAG_SHIFT: u32 = 6;
+/// Mask of `service_flag`.
+const SERVICE_FLAG_MASK: u8 = 0x01;
+/// Shift of `service_flag`.
+const SERVICE_FLAG_SHIFT: u32 = 5;
+/// Shift of the SOGI-entry `reserved_future_use`.
+const SOGI_RESERVED_SHIFT: u32 = 4;
+/// Mask of the low nibble of `SOGI_priority`.
+const SOGI_PRIORITY_NIBBLE_MASK: u16 = 0x000F;
+/// Shift of the high byte of `SOGI_priority`.
+const SOGI_PRIORITY_HIGH_SHIFT: u16 = 8;
+/// Mask of the high byte of `SOGI_priority` in the flags byte.
+const SOGI_PRIORITY_HIGH_MASK: u8 = 0x0F;
+/// Width of an 8-bit loop length field.
+const LOOP_LENGTH_BITS: u32 = 8;
 /// Width of the per-entry `reserved_future_use` (1 bit).
 const SOGI_RESERVED_BITS: u32 = 1;
 /// Spec default of the 1-bit `reserved_future_use` in each SOGI entry (bit 4
@@ -89,10 +113,10 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
         let mut sogi_list = Vec::new();
         let mut k = 0;
         while k < sogi_slice.len() {
-            if sogi_slice.len() - k < 2 {
+            if sogi_slice.len() - k < SOGI_ENTRY_FIXED_LEN {
                 return Err(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: 1 + k + 2,
+                        need: 1 + k + SOGI_ENTRY_FIXED_LEN,
                         have: sel.len(),
                         what: "service_prominence body",
                     },
@@ -100,25 +124,27 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             }
             let byte0 = sogi_slice[k];
             let byte1 = sogi_slice[k + 1];
-            let sogi_flag = (byte0 >> 7) != 0;
-            let target_region_flag = ((byte0 >> 6) & 0x01) != 0;
-            let service_flag = ((byte0 >> 5) & 0x01) != 0;
-            let reserved_future_use = ReservedOnes::from_bits(u64::from(byte0 >> 4));
-            let sogi_priority = ((u16::from(byte0) & 0x0F) << 8) | u16::from(byte1);
-            k += 2;
+            let sogi_flag = (byte0 >> SOGI_FLAG_SHIFT) != 0;
+            let target_region_flag = ((byte0 >> TARGET_REGION_FLAG_SHIFT) & TARGET_REGION_FLAG_MASK) != 0;
+            let service_flag = ((byte0 >> SERVICE_FLAG_SHIFT) & SERVICE_FLAG_MASK) != 0;
+            let reserved_future_use = ReservedOnes::from_bits(u64::from(byte0 >> SOGI_RESERVED_SHIFT));
+            let sogi_priority =
+                ((u16::from(byte0) & SOGI_PRIORITY_NIBBLE_MASK) << SOGI_PRIORITY_HIGH_SHIFT)
+                    | u16::from(byte1);
+            k += SOGI_ENTRY_FIXED_LEN;
             let service_id = if service_flag {
                 let (b, _) =
                     sogi_slice[k..]
-                        .split_first_chunk::<2>()
+                        .split_first_chunk::<{ SOGI_SERVICE_ID_LEN }>()
                         .ok_or(Error::BufferTooShort(
                             broadcast_common::error::BufferTooShort {
-                                need: 1 + k + 2,
+                                need: 1 + k + SOGI_ENTRY_FIXED_LEN,
                                 have: sel.len(),
                                 what: "service_prominence body",
                             },
                         ))?;
                 let id = u16::from_be_bytes(*b);
-                k += 2;
+                k += SOGI_SERVICE_ID_LEN;
                 Some(id)
             } else {
                 None
@@ -173,7 +199,12 @@ impl Serialize for ServiceProminence<'_> {
             .sogi_list
             .iter()
             .map(|e| {
-                2 + if e.service_id.is_some() { 2 } else { 0 }
+                SOGI_ENTRY_FIXED_LEN
+                    + if e.service_id.is_some() {
+                        SOGI_SERVICE_ID_LEN
+                    } else {
+                        0
+                    }
                     + if e.target_region_loop.is_some() {
                         1 + e.target_region_loop.as_ref().map_or(0, |entries| {
                             super::target_region::region_entries_serialized_len(entries)
@@ -189,7 +220,11 @@ impl Serialize for ServiceProminence<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let sogi_len = len - 1 - self.private_data.len();
-        let sogi_len = broadcast_common::len::fit_bits(sogi_len as u64, 8, "sogi_list_length")?;
+        let sogi_len = broadcast_common::len::fit_bits(
+            sogi_len as u64,
+            LOOP_LENGTH_BITS,
+            "sogi_list_length",
+        )?;
         buf[0] = sogi_len as u8;
         let mut p = 1;
         for e in &self.sogi_list {
@@ -198,22 +233,22 @@ impl Serialize for ServiceProminence<'_> {
                 SOGI_PRIORITY_BITS,
                 "sogi_priority",
             )? as u16;
-            buf[p] = ((e.sogi_flag as u8) << 7)
-                | ((e.target_region_loop.is_some() as u8) << 6)
-                | ((e.service_id.is_some() as u8) << 5)
-                | ((e.reserved_future_use.get() as u8) << 4)
-                | ((priority >> 8) as u8 & 0x0F);
+            buf[p] = ((e.sogi_flag as u8) << SOGI_FLAG_SHIFT)
+                | ((e.target_region_loop.is_some() as u8) << TARGET_REGION_FLAG_SHIFT)
+                | ((e.service_id.is_some() as u8) << SERVICE_FLAG_SHIFT)
+                | ((e.reserved_future_use.get() as u8) << SOGI_RESERVED_SHIFT)
+                | ((priority >> SOGI_PRIORITY_HIGH_SHIFT) as u8 & SOGI_PRIORITY_HIGH_MASK);
             buf[p + 1] = priority as u8;
-            p += 2;
+            p += SOGI_ENTRY_FIXED_LEN;
             if let Some(id) = e.service_id {
-                buf[p..p + 2].copy_from_slice(&id.to_be_bytes());
-                p += 2;
+                buf[p..p + SOGI_SERVICE_ID_LEN].copy_from_slice(&id.to_be_bytes());
+                p += SOGI_SERVICE_ID_LEN;
             }
             if let Some(entries) = &e.target_region_loop {
                 let entries_len = super::target_region::region_entries_serialized_len(entries);
                 let entries_len = broadcast_common::len::fit_bits(
                     entries_len as u64,
-                    8,
+                    LOOP_LENGTH_BITS,
                     "target_region_loop_length",
                 )? as usize;
                 buf[p] = entries_len as u8;
