@@ -13,6 +13,15 @@ use super::{BITS_PER_BYTE, BLOCK_BITS, BLOCK_BYTES, Word};
 /// Rounds in the DVB-CSA2 block cipher; one round key byte each.
 const ROUNDS: usize = 56;
 
+/// Byte positions within the rotating block state.
+const STATE_BYTE_1: usize = 1;
+const STATE_BYTE_2: usize = 2;
+const STATE_BYTE_3: usize = 3;
+const STATE_BYTE_4: usize = 4;
+const STATE_BYTE_5: usize = 5;
+const STATE_BYTE_6: usize = 6;
+const STATE_BYTE_7: usize = 7;
+
 /// One byte of block state, sliced: `[bit][lane]`.
 type ByteSlice = [Word; BITS_PER_BYTE];
 /// A whole block, sliced: `[byte][bit][lane]`.
@@ -105,19 +114,19 @@ impl BitslicedBlock {
     pub(super) fn encrypt(&self, m: &mut [Word; BLOCK_BITS]) {
         let mut b = unpack(m);
         for round in 0..ROUNDS {
-            let s = keyed_sbox(&b[7], self.sch[round]);
+            let s = keyed_sbox(&b[STATE_BYTE_7], self.sch[round]);
             let ps = permute(&s);
             // Every right-hand side below reads the pre-round value; b[0] and
             // b[1] are the only ones overwritten before their last use.
             let old0 = b[0];
-            let old1 = b[1];
-            b[1] = xor(&b[2], &old0);
-            b[2] = xor(&b[3], &old0);
-            b[3] = xor(&b[4], &old0);
-            b[4] = b[5];
-            b[5] = xor(&b[6], &ps);
-            b[6] = b[7];
-            b[7] = xor(&old0, &s);
+            let old1 = b[STATE_BYTE_1];
+            b[STATE_BYTE_1] = xor(&b[STATE_BYTE_2], &old0);
+            b[STATE_BYTE_2] = xor(&b[STATE_BYTE_3], &old0);
+            b[STATE_BYTE_3] = xor(&b[STATE_BYTE_4], &old0);
+            b[STATE_BYTE_4] = b[STATE_BYTE_5];
+            b[STATE_BYTE_5] = xor(&b[STATE_BYTE_6], &ps);
+            b[STATE_BYTE_6] = b[STATE_BYTE_7];
+            b[STATE_BYTE_7] = xor(&old0, &s);
             b[0] = old1;
         }
         pack(&b, m);
@@ -127,16 +136,16 @@ impl BitslicedBlock {
     pub(super) fn decrypt(&self, m: &mut [Word; BLOCK_BITS]) {
         let mut b = unpack(m);
         for round in (0..ROUNDS).rev() {
-            let s = keyed_sbox(&b[6], self.sch[round]);
+            let s = keyed_sbox(&b[STATE_BYTE_6], self.sch[round]);
             let ps = permute(&s);
-            let out = xor(&b[7], &s);
-            b[7] = b[6];
-            b[6] = xor(&b[5], &ps);
-            b[5] = b[4];
-            b[4] = xor(&b[3], &out);
-            b[3] = xor(&b[2], &out);
-            b[2] = xor(&b[1], &out);
-            b[1] = b[0];
+            let out = xor(&b[STATE_BYTE_7], &s);
+            b[STATE_BYTE_7] = b[STATE_BYTE_6];
+            b[STATE_BYTE_6] = xor(&b[STATE_BYTE_5], &ps);
+            b[STATE_BYTE_5] = b[STATE_BYTE_4];
+            b[STATE_BYTE_4] = xor(&b[STATE_BYTE_3], &out);
+            b[STATE_BYTE_3] = xor(&b[STATE_BYTE_2], &out);
+            b[STATE_BYTE_2] = xor(&b[STATE_BYTE_1], &out);
+            b[STATE_BYTE_1] = b[0];
             b[0] = out;
         }
         pack(&b, m);

@@ -34,6 +34,22 @@ const ROUNDS_PER_IV_BYTE: usize = 4;
 /// Bits of the control word loaded into each shift register at reset.
 const KEY_BITS: usize = 32;
 
+/// Nibbles in a byte.
+const NIBBLES_PER_BYTE: usize = 2;
+/// Byte positions within the control-word seed.
+const CWS_BYTE_2: usize = 2;
+const CWS_BYTE_3: usize = 3;
+const CWS_BYTE_4: usize = 4;
+const CWS_BYTE_5: usize = 5;
+const CWS_BYTE_6: usize = 6;
+const CWS_BYTE_7: usize = 7;
+/// Position of the carried C bit in the `STREAM_CDEF` index.
+const CDEF_INDEX_C_BIT: usize = NIBBLE_BITS * NIBBLES_PER_BYTE;
+/// Position of the Q bit in the `STREAM_CDEF` index.
+const CDEF_INDEX_Q_BIT: usize = CDEF_INDEX_C_BIT + 1;
+/// Keystream bits each round yields.
+const KEYSTREAM_BITS_PER_ROUND: usize = 2;
+
 /// Nibble of A that feeds back into the register (`nbget(a, 10)` after the
 /// shift is nibble 9 before it).
 const A_FEEDBACK_NIBBLE: usize = 9;
@@ -98,8 +114,13 @@ impl BitslicedStream {
     ///
     /// `iv` is the transposed first block: `iv[byte * 8 + bit]`.
     pub(crate) fn new(cws: &[u8; BLOCK_BYTES], iv: &[Word; BLOCK_BITS]) -> Self {
-        let a = u32::from_le_bytes([cws[0], cws[1], cws[2], cws[3]]);
-        let b = u32::from_le_bytes([cws[4], cws[5], cws[6], cws[7]]);
+        let a = u32::from_le_bytes([cws[0], cws[1], cws[CWS_BYTE_2], cws[CWS_BYTE_3]]);
+        let b = u32::from_le_bytes([
+            cws[CWS_BYTE_4],
+            cws[CWS_BYTE_5],
+            cws[CWS_BYTE_6],
+            cws[CWS_BYTE_7],
+        ]);
         let mut sc = Self {
             a: broadcast(a),
             b: broadcast(b),
@@ -115,7 +136,7 @@ impl BitslicedStream {
             high.copy_from_slice(&iv[base + NIBBLE_BITS..base + BITS_PER_BYTE]);
             // The scalar path runs iv, swap_nbl(iv), iv, swap_nbl(iv); the
             // swap exchanges which nibble reaches which register.
-            for _ in 0..ROUNDS_PER_IV_BYTE / 2 {
+            for _ in 0..ROUNDS_PER_IV_BYTE / NIBBLES_PER_BYTE {
                 sc.round::<true>(&high, &low);
                 sc.round::<true>(&low, &high);
             }
@@ -194,10 +215,10 @@ impl BitslicedStream {
         // --- C/D/E/F feedback ------------------------------------------
         let mut index = [0 as Word; CDEF_IN_BITS];
         index[..NIBBLE_BITS].copy_from_slice(&self.cfed[E_BASE..E_BASE + NIBBLE_BITS]);
-        index[NIBBLE_BITS..2 * NIBBLE_BITS]
+        index[NIBBLE_BITS..CDEF_INDEX_C_BIT]
             .copy_from_slice(&self.pqzyx[Z_BASE..Z_BASE + NIBBLE_BITS]);
-        index[2 * NIBBLE_BITS] = self.cfed[C_BIT];
-        index[2 * NIBBLE_BITS + 1] = self.pqzyx[Q_BIT];
+        index[CDEF_INDEX_C_BIT] = self.cfed[C_BIT];
+        index[CDEF_INDEX_Q_BIT] = self.pqzyx[Q_BIT];
         let table = stream_cdef(&index);
         // `csa_stream_b_sel` reads the *post-shift* B register.
         let selected = stream_b_sel(&self.b);
@@ -233,8 +254,8 @@ impl BitslicedStream {
             let mut d = [0 as Word; NIBBLE_BITS];
             d.copy_from_slice(&self.cfed[D_BASE..D_BASE + NIBBLE_BITS]);
             let [high, low] = stream_out(&d);
-            out[BITS_PER_BYTE - 1 - 2 * phase] = high;
-            out[BITS_PER_BYTE - 2 - 2 * phase] = low;
+            out[BITS_PER_BYTE - 1 - KEYSTREAM_BITS_PER_ROUND * phase] = high;
+            out[BITS_PER_BYTE - KEYSTREAM_BITS_PER_ROUND - KEYSTREAM_BITS_PER_ROUND * phase] = low;
         }
         out
     }

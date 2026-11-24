@@ -5,9 +5,97 @@
 //! and output table STREAM_OUT.
 use super::tables::{STREAM_CDEF, STREAM_OUT, STREAM_SBOX};
 
+/// Bits in a nibble — the shift registers advance one nibble per round.
+const NIBBLE_BITS: u32 = 4;
+/// Mask of a nibble.
+const NIBBLE_MASK: u32 = 0xf;
+/// Bit of `pqzyx` selecting the B-register feedback rotation (`tstp`).
+const P_BIT_MASK: u32 = 0x1000;
+/// Nibble of A read back after the register shift (`nbget(a, 10)`).
+const A_FEEDBACK_NIBBLE: u32 = 10;
+/// First nibble of B XOR-folded into its feedback (`nbget(b, 6)`).
+const B_FEEDBACK_NIBBLE_0: u32 = 6;
+/// Second nibble of B XOR-folded into its feedback (`nbget(b, 9)`).
+const B_FEEDBACK_NIBBLE_1: u32 = 9;
+/// Bytes in the control-word seed and the initialisation vector.
+const SEED_BYTES: usize = 8;
+/// Byte positions within the control-word seed.
+const CWS_BYTE_2: usize = 2;
+const CWS_BYTE_3: usize = 3;
+const CWS_BYTE_4: usize = 4;
+const CWS_BYTE_5: usize = 5;
+const CWS_BYTE_6: usize = 6;
+const CWS_BYTE_7: usize = 7;
+/// Masks placing each round's keystream bit pair in the output byte, most
+/// significant pair first.
+const KEYSTREAM_PAIR_HI_MASK: u8 = 0xc0;
+const KEYSTREAM_PAIR_MID_HI_MASK: u8 = 0x30;
+const KEYSTREAM_PAIR_MID_LO_MASK: u8 = 0x0c;
+const KEYSTREAM_PAIR_LO_MASK: u8 = 0x03;
+/// Bits in a `STREAM_SBOX` index.
+const SBOX_INDEX_BITS: usize = 5;
+/// Mask of a five-bit `STREAM_SBOX` index.
+const SBOX_INDEX_MASK: u64 = 0x1f;
+/// Positions of the third, fourth and fifth index-bit shifts.
+const SHIFT_POS_2: usize = 2;
+const SHIFT_POS_3: usize = 3;
+const SHIFT_POS_4: usize = 4;
+/// `STREAM_SBOX` row each unrolled S-box indexes.
+const SBOX_0_ROW: usize = 0;
+const SBOX_1_ROW: usize = 1;
+const SBOX_2_ROW: usize = 2;
+const SBOX_3_ROW: usize = 3;
+const SBOX_4_ROW: usize = 4;
+const SBOX_5_ROW: usize = 5;
+const SBOX_6_ROW: usize = 6;
+/// A-register mask selecting the five bits of each `STREAM_SBOX` index.
+const SBOX_0_MASK: u64 = 0x1082010040;
+const SBOX_1_MASK: u64 = 0x2018004200;
+const SBOX_2_MASK: u64 = 0x0004a00180;
+const SBOX_3_MASK: u64 = 0x0100048820;
+const SBOX_4_MASK: u64 = 0x4201480000;
+const SBOX_5_MASK: u64 = 0x8040122000;
+const SBOX_6_MASK: u64 = 0x0c20001400;
+/// A-register shifts producing each of an S-box's five index bits.
+const SBOX_0_SHIFTS: [u32; SBOX_INDEX_BITS] = [36, 30, 23, 3, 12];
+const SBOX_1_SHIFTS: [u32; SBOX_INDEX_BITS] = [37, 27, 25, 11, 5];
+const SBOX_2_SHIFTS: [u32; SBOX_INDEX_BITS] = [26, 22, 19, 5, 3];
+const SBOX_3_SHIFTS: [u32; SBOX_INDEX_BITS] = [32, 17, 9, 2, 11];
+const SBOX_4_SHIFTS: [u32; SBOX_INDEX_BITS] = [38, 32, 22, 16, 18];
+const SBOX_5_SHIFTS: [u32; SBOX_INDEX_BITS] = [39, 29, 18, 14, 9];
+const SBOX_6_SHIFTS: [u32; SBOX_INDEX_BITS] = [35, 33, 27, 9, 6];
+/// Bits of `cfed` feeding the `STREAM_CDEF` index (D, E and the C bit).
+const CFED_INDEX_MASK: u32 = 0x10ff;
+/// Bits of `pqzyx` feeding the `STREAM_CDEF` index (the Z nibble and Q bit).
+const PQZYX_INDEX_MASK: u32 = 0x2f00;
+/// F nibble of `cfed`, carried down into the next round's E nibble.
+const CFED_F_MASK: u32 = 0x0f00;
+/// B-register right shift before `csa_stream_b_sel` folds its select bits.
+const B_SEL_SHIFT: u32 = 9;
+/// Select-term masks, named for the output bits they carry.
+const B_SEL_BIT0_MASK: u32 = 0x1;
+const B_SEL_BIT1_MASK: u32 = 0x2;
+const B_SEL_BIT2_MASK: u32 = 0x4;
+const B_SEL_BIT3_MASK: u32 = 0x8;
+const B_SEL_BIT20_MASK: u32 = 0x5;
+const B_SEL_BIT30_MASK: u32 = 0x9;
+const B_SEL_BIT321_MASK: u32 = 0xe;
+/// B-register shifts each select term folds.
+const B_SEL_BIT0_SHIFT_A: u32 = 29;
+const B_SEL_BIT0_SHIFT_B: u32 = 23;
+const B_SEL_BIT1_SHIFT_A: u32 = 24;
+const B_SEL_BIT1_SHIFT_B: u32 = 6;
+const B_SEL_BIT1_SHIFT_C: u32 = 11;
+const B_SEL_BIT2_SHIFT_A: u32 = 22;
+const B_SEL_BIT2_SHIFT_B: u32 = 7;
+const B_SEL_BIT3_SHIFT: u32 = 27;
+const B_SEL_BIT20_SHIFT: u32 = 4;
+const B_SEL_BIT30_SHIFT: u32 = 18;
+const B_SEL_BIT321_SHIFT: u32 = 13;
+
 /// Nibble from shift register at position n (nibble index)
-fn nbget(r: u64, n: u64) -> u64 {
-    r >> (n * 4)
+fn nbget(r: u64, n: u32) -> u64 {
+    r >> (n * NIBBLE_BITS)
 }
 
 /// The DVB-CSA2 stream cipher.
@@ -33,9 +121,19 @@ impl Drop for StreamCipher {
 
 impl StreamCipher {
     /// Initialize the stream cipher with the nibble-swapped CW and an 8-byte IV.
-    pub(crate) fn new(cws: &[u8; 8], iv: &[u8; 8]) -> Self {
-        let a = u64::from(u32::from_le_bytes([cws[0], cws[1], cws[2], cws[3]]));
-        let b = u64::from(u32::from_le_bytes([cws[4], cws[5], cws[6], cws[7]]));
+    pub(crate) fn new(cws: &[u8; SEED_BYTES], iv: &[u8; SEED_BYTES]) -> Self {
+        let a = u64::from(u32::from_le_bytes([
+            cws[0],
+            cws[1],
+            cws[CWS_BYTE_2],
+            cws[CWS_BYTE_3],
+        ]));
+        let b = u64::from(u32::from_le_bytes([
+            cws[CWS_BYTE_4],
+            cws[CWS_BYTE_5],
+            cws[CWS_BYTE_6],
+            cws[CWS_BYTE_7],
+        ]));
 
         let mut sc = Self {
             a,
@@ -78,47 +176,50 @@ impl StreamCipher {
         for byte in data.iter_mut() {
             // 4 rounds produce one keystream byte
             self.generate_round();
-            *byte ^= STREAM_OUT[self.getd() as usize & 0xf] & 0xc0;
+            *byte ^= STREAM_OUT[(self.getd() & NIBBLE_MASK) as usize] & KEYSTREAM_PAIR_HI_MASK;
 
             self.generate_round();
-            *byte ^= STREAM_OUT[self.getd() as usize & 0xf] & 0x30;
+            *byte ^= STREAM_OUT[(self.getd() & NIBBLE_MASK) as usize] & KEYSTREAM_PAIR_MID_HI_MASK;
 
             self.generate_round();
-            *byte ^= STREAM_OUT[self.getd() as usize & 0xf] & 0x0c;
+            *byte ^= STREAM_OUT[(self.getd() & NIBBLE_MASK) as usize] & KEYSTREAM_PAIR_MID_LO_MASK;
 
             self.generate_round();
-            *byte ^= STREAM_OUT[self.getd() as usize & 0xf] & 0x03;
+            *byte ^= STREAM_OUT[(self.getd() & NIBBLE_MASK) as usize] & KEYSTREAM_PAIR_LO_MASK;
         }
     }
 
     fn getx(&self) -> u32 {
-        self.pqzyx & 0xf
+        self.pqzyx & NIBBLE_MASK
     }
     fn gety(&self) -> u32 {
-        (self.pqzyx >> 4) & 0xf
+        (self.pqzyx >> NIBBLE_BITS) & NIBBLE_MASK
     }
     fn getd(&self) -> u32 {
-        self.cfed & 0xf
+        self.cfed & NIBBLE_MASK
     }
     fn tstp(&self) -> bool {
-        (self.pqzyx & 0x1000) != 0
+        (self.pqzyx & P_BIT_MASK) != 0
     }
 
     fn init_round(&mut self, iv_nibble: u8) {
         let iv = u32::from(iv_nibble);
 
-        self.a <<= 4;
-        self.a |= (nbget(self.a, 10)
+        self.a <<= NIBBLE_BITS;
+        self.a |= (nbget(self.a, A_FEEDBACK_NIBBLE)
             ^ u64::from(self.getx())
             ^ u64::from(self.getd())
-            ^ u64::from(iv >> 4))
-            & 0x0f;
+            ^ u64::from(iv >> NIBBLE_BITS))
+            & u64::from(NIBBLE_MASK);
 
-        let mut tmp =
-            (nbget(self.b, 6) ^ nbget(self.b, 9) ^ u64::from(self.gety()) ^ u64::from(iv)) & 0x0f;
+        let mut tmp = (nbget(self.b, B_FEEDBACK_NIBBLE_0)
+            ^ nbget(self.b, B_FEEDBACK_NIBBLE_1)
+            ^ u64::from(self.gety())
+            ^ u64::from(iv))
+            & u64::from(NIBBLE_MASK);
         tmp = csa_stream_rotate(self.tstp(), tmp as u32) as u64;
 
-        self.b <<= 4;
+        self.b <<= NIBBLE_BITS;
         self.b |= tmp;
 
         self.cfed = csa_stream_cfed(self.pqzyx, self.cfed) ^ csa_stream_b_sel(self.b);
@@ -127,13 +228,17 @@ impl StreamCipher {
     }
 
     fn generate_round(&mut self) {
-        self.a <<= 4;
-        self.a |= (nbget(self.a, 10) ^ u64::from(self.getx())) & 0xf;
+        self.a <<= NIBBLE_BITS;
+        self.a |=
+            (nbget(self.a, A_FEEDBACK_NIBBLE) ^ u64::from(self.getx())) & u64::from(NIBBLE_MASK);
 
-        let mut tmp = (nbget(self.b, 6) ^ nbget(self.b, 9) ^ u64::from(self.gety())) & 0xf;
+        let mut tmp = (nbget(self.b, B_FEEDBACK_NIBBLE_0)
+            ^ nbget(self.b, B_FEEDBACK_NIBBLE_1)
+            ^ u64::from(self.gety()))
+            & u64::from(NIBBLE_MASK);
         tmp = csa_stream_rotate(self.tstp(), tmp as u32) as u64;
 
-        self.b <<= 4;
+        self.b <<= NIBBLE_BITS;
         self.b |= tmp;
 
         self.cfed = csa_stream_cfed(self.pqzyx, self.cfed) ^ csa_stream_b_sel(self.b);
@@ -143,55 +248,86 @@ impl StreamCipher {
 }
 
 fn swap_nbl(byte: u8) -> u8 {
-    byte.rotate_left(4)
+    byte.rotate_left(NIBBLE_BITS)
 }
 
 fn csa_stream_rotate(p: bool, x: u32) -> u32 {
     if p {
-        ((x << 1) | ((x >> 3) & 1)) & 0xf
+        ((x << 1) | ((x >> (NIBBLE_BITS - 1)) & 1)) & NIBBLE_MASK
     } else {
         x
     }
 }
 
 pub(crate) fn csa_stream_sboxes(a: u64) -> u32 {
-    let mut t = a & 0x2018004200u64;
+    let mut t = a & SBOX_1_MASK;
     let mut res = u32::from(
-        STREAM_SBOX[1]
-            [(((t >> 37) ^ (t >> 27) ^ (t >> 25) ^ (t >> 11) ^ (t >> 5)) & 0x1f) as usize],
+        STREAM_SBOX[SBOX_1_ROW][(((t >> SBOX_1_SHIFTS[0])
+            ^ (t >> SBOX_1_SHIFTS[1])
+            ^ (t >> SBOX_1_SHIFTS[SHIFT_POS_2])
+            ^ (t >> SBOX_1_SHIFTS[SHIFT_POS_3])
+            ^ (t >> SBOX_1_SHIFTS[SHIFT_POS_4]))
+            & SBOX_INDEX_MASK) as usize],
     );
 
-    t = a & 0x4201480000u64;
+    t = a & SBOX_4_MASK;
     res |= u32::from(
-        STREAM_SBOX[4]
-            [(((t >> 38) ^ (t >> 32) ^ (t >> 22) ^ (t >> 16) ^ (t >> 18)) & 0x1f) as usize],
+        STREAM_SBOX[SBOX_4_ROW][(((t >> SBOX_4_SHIFTS[0])
+            ^ (t >> SBOX_4_SHIFTS[1])
+            ^ (t >> SBOX_4_SHIFTS[SHIFT_POS_2])
+            ^ (t >> SBOX_4_SHIFTS[SHIFT_POS_3])
+            ^ (t >> SBOX_4_SHIFTS[SHIFT_POS_4]))
+            & SBOX_INDEX_MASK) as usize],
     );
 
-    t = a & 0x8040122000u64;
+    t = a & SBOX_5_MASK;
     res |= u32::from(
-        STREAM_SBOX[5]
-            [(((t >> 39) ^ (t >> 29) ^ (t >> 18) ^ (t >> 14) ^ (t >> 9)) & 0x1f) as usize],
+        STREAM_SBOX[SBOX_5_ROW][(((t >> SBOX_5_SHIFTS[0])
+            ^ (t >> SBOX_5_SHIFTS[1])
+            ^ (t >> SBOX_5_SHIFTS[SHIFT_POS_2])
+            ^ (t >> SBOX_5_SHIFTS[SHIFT_POS_3])
+            ^ (t >> SBOX_5_SHIFTS[SHIFT_POS_4]))
+            & SBOX_INDEX_MASK) as usize],
     );
 
-    t = a & 0x1082010040u64;
+    t = a & SBOX_0_MASK;
     res |= u32::from(
-        STREAM_SBOX[0]
-            [(((t >> 36) ^ (t >> 30) ^ (t >> 23) ^ (t >> 3) ^ (t >> 12)) & 0x1f) as usize],
+        STREAM_SBOX[SBOX_0_ROW][(((t >> SBOX_0_SHIFTS[0])
+            ^ (t >> SBOX_0_SHIFTS[1])
+            ^ (t >> SBOX_0_SHIFTS[SHIFT_POS_2])
+            ^ (t >> SBOX_0_SHIFTS[SHIFT_POS_3])
+            ^ (t >> SBOX_0_SHIFTS[SHIFT_POS_4]))
+            & SBOX_INDEX_MASK) as usize],
     );
 
-    t = a & 0x0004a00180u64;
+    t = a & SBOX_2_MASK;
     res |= u32::from(
-        STREAM_SBOX[2][(((t >> 26) ^ (t >> 22) ^ (t >> 19) ^ (t >> 5) ^ (t >> 3)) & 0x1f) as usize],
+        STREAM_SBOX[SBOX_2_ROW][(((t >> SBOX_2_SHIFTS[0])
+            ^ (t >> SBOX_2_SHIFTS[1])
+            ^ (t >> SBOX_2_SHIFTS[SHIFT_POS_2])
+            ^ (t >> SBOX_2_SHIFTS[SHIFT_POS_3])
+            ^ (t >> SBOX_2_SHIFTS[SHIFT_POS_4]))
+            & SBOX_INDEX_MASK) as usize],
     );
 
-    t = a & 0x0100048820u64;
+    t = a & SBOX_3_MASK;
     res |= u32::from(
-        STREAM_SBOX[3][(((t >> 32) ^ (t >> 17) ^ (t >> 9) ^ (t >> 2) ^ (t >> 11)) & 0x1f) as usize],
+        STREAM_SBOX[SBOX_3_ROW][(((t >> SBOX_3_SHIFTS[0])
+            ^ (t >> SBOX_3_SHIFTS[1])
+            ^ (t >> SBOX_3_SHIFTS[SHIFT_POS_2])
+            ^ (t >> SBOX_3_SHIFTS[SHIFT_POS_3])
+            ^ (t >> SBOX_3_SHIFTS[SHIFT_POS_4]))
+            & SBOX_INDEX_MASK) as usize],
     );
 
-    t = a & 0x0c20001400u64;
+    t = a & SBOX_6_MASK;
     res |= u32::from(
-        STREAM_SBOX[6][(((t >> 35) ^ (t >> 33) ^ (t >> 27) ^ (t >> 9) ^ (t >> 6)) & 0x1f) as usize],
+        STREAM_SBOX[SBOX_6_ROW][(((t >> SBOX_6_SHIFTS[0])
+            ^ (t >> SBOX_6_SHIFTS[1])
+            ^ (t >> SBOX_6_SHIFTS[SHIFT_POS_2])
+            ^ (t >> SBOX_6_SHIFTS[SHIFT_POS_3])
+            ^ (t >> SBOX_6_SHIFTS[SHIFT_POS_4]))
+            & SBOX_INDEX_MASK) as usize],
     );
 
     res
@@ -199,20 +335,22 @@ pub(crate) fn csa_stream_sboxes(a: u64) -> u32 {
 
 pub(crate) fn csa_stream_b_sel(b: u64) -> u32 {
     // C code: `uint32_t t = B >> 9;` — truncation to 32 bits is load-bearing.
-    let t = (b >> 9) as u32;
+    let t = (b >> B_SEL_SHIFT) as u32;
 
-    ((t ^ (t >> 27)) & 0x8)
-        ^ ((t >> 18) & 0x9)
-        ^ (((t >> 22) ^ (t >> 7)) & 0x4)
-        ^ ((t >> 4) & 0x5)
-        ^ (((t >> 24) ^ (t >> 6) ^ (t >> 11)) & 0x2)
-        ^ (((t >> 29) ^ (t >> 23)) & 0x1)
-        ^ ((t >> 13) & 0xe)
+    ((t ^ (t >> B_SEL_BIT3_SHIFT)) & B_SEL_BIT3_MASK)
+        ^ ((t >> B_SEL_BIT30_SHIFT) & B_SEL_BIT30_MASK)
+        ^ (((t >> B_SEL_BIT2_SHIFT_A) ^ (t >> B_SEL_BIT2_SHIFT_B)) & B_SEL_BIT2_MASK)
+        ^ ((t >> B_SEL_BIT20_SHIFT) & B_SEL_BIT20_MASK)
+        ^ (((t >> B_SEL_BIT1_SHIFT_A) ^ (t >> B_SEL_BIT1_SHIFT_B) ^ (t >> B_SEL_BIT1_SHIFT_C))
+            & B_SEL_BIT1_MASK)
+        ^ (((t >> B_SEL_BIT0_SHIFT_A) ^ (t >> B_SEL_BIT0_SHIFT_B)) & B_SEL_BIT0_MASK)
+        ^ ((t >> B_SEL_BIT321_SHIFT) & B_SEL_BIT321_MASK)
 }
 
 fn csa_stream_cfed(pqzyx: u32, cfed: u32) -> u32 {
-    let cdef_idx = (((cfed & 0x10ff) | (pqzyx & 0x2f00)) >> 4) as usize;
-    ((cfed & 0x0f00) >> 4) | u32::from(STREAM_CDEF[cdef_idx])
+    let cdef_idx =
+        (((cfed & CFED_INDEX_MASK) | (pqzyx & PQZYX_INDEX_MASK)) >> NIBBLE_BITS) as usize;
+    ((cfed & CFED_F_MASK) >> NIBBLE_BITS) | u32::from(STREAM_CDEF[cdef_idx])
 }
 
 #[cfg(test)]
