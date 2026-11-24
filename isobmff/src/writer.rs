@@ -33,11 +33,13 @@ use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
 
 pub mod fragmented;
+pub mod progressive;
 
 pub use fragmented::{FragmentedWriter, RunSample, fragmented_segment, media_fragment_run};
+pub use progressive::{Interleave, Layout, MovieHeader, ProgressiveWriter, Sink, Write};
 
 /// ISO-639-2 packed language code `und` (undetermined).
-const LANG_UND: u16 = 0x55C4;
+pub(crate) const LANG_UND: u16 = 0x55C4;
 /// The ISOBMFF identity transformation matrix (§7.3.2), unity + `[2,30]` fixed.
 const IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
 /// `tkhd` flags: track_enabled | in_movie | in_preview.
@@ -52,6 +54,9 @@ const MVHD_VOLUME_UNITY: u16 = 0x0100;
 const TREX_DEFAULT_DESCRIPTION_INDEX: u32 = 1;
 /// The one `url ` data entry a self-contained track carries (§8.7.2).
 const SELF_CONTAINED_DATA_ENTRY_FLAGS: u32 = 1;
+/// The Null Media Header (`nmhd`, §8.4.5.2): the media header for a handler
+/// with no header of its own.
+const NMHD: &[u8; BOX_TYPE_SIZE] = b"nmhd";
 
 /// The `ftyp` brand set an initialization segment is written under.
 ///
@@ -158,6 +163,9 @@ pub struct TrackSetup {
     pub minf_header: Option<[u8; BOX_TYPE_SIZE]>,
     /// `mdhd.timescale`.
     pub timescale: Timescale,
+    /// `mdhd.language`, packed as ISO/IEC 14496-12:2026 §8.4.2.3 defines it
+    /// (three 5-bit letters); `und` when the caller has none.
+    pub language: u16,
     /// `tkhd.width`, 16.16 fixed point.
     pub width: u32,
     /// `tkhd.height`, 16.16 fixed point.
@@ -187,6 +195,7 @@ impl TrackSetup {
             handler_name,
             minf_header: None,
             timescale,
+            language: LANG_UND,
             width: 0,
             height: 0,
             volume: 0,
@@ -212,6 +221,21 @@ impl Writer {
         limits: Limits,
     ) -> Result<FragmentedWriter> {
         FragmentedWriter::new(tracks, movie_timescale, limits)
+    }
+
+    /// Start a progressive (non-fragmented) writer over a whole sample plan.
+    ///
+    /// The layout — chunk boundaries, `stco` or `co64`, the `mdat` header form
+    /// and every sample's absolute offset — is fixed here from `plan` alone,
+    /// before a sample byte is pushed.
+    pub fn progressive(
+        plan: crate::plan::OwnedPlan,
+        layout: Layout,
+        file_type: FileType,
+        movie: MovieHeader,
+        limits: Limits,
+    ) -> Result<ProgressiveWriter> {
+        ProgressiveWriter::new(plan, layout, file_type, movie, limits)
     }
 }
 
@@ -284,9 +308,17 @@ pub(crate) fn build_init_segment(
 fn build_trak(t: &TrackSetup) -> Result<TrackBox> {
     let entry = track_entry(t)?;
     let stbl = empty_sample_table(empty_sample_description(entry));
+    track_box(t, stbl)
+}
+
+/// One `trak` from its setup and a finished `stbl`.
+///
+/// The fragmented init and the progressive writer share this: only the sample
+/// table differs between them.
+pub(crate) fn track_box(t: &TrackSetup, stbl: SampleTableBox) -> Result<TrackBox> {
     let minf = track_media_information(&t.handler, stbl, t.minf_header);
     let mdia = MediaBox::new(
-        Some(track_media_header(t.timescale)),
+        Some(track_media_header(t.timescale, t.language)),
         Some(track_handler(t)),
         Some(minf),
         vec![],
@@ -298,13 +330,21 @@ fn build_trak(t: &TrackSetup) -> Result<TrackBox> {
 /// The sample entry the track's `stsd` carries, protecting it first when the
 /// setup asks for CENC.
 fn track_entry(t: &TrackSetup) -> Result<SampleEntryVariant> {
-    let entry = match &t.entry {
-        SampleEntry::Typed(v) => v.clone(),
-        SampleEntry::Raw { fourcc, body } => raw_entry_variant(*fourcc, body)?,
-    };
+    let entry = sample_entry_variant(&t.entry)?;
     match &t.protection {
         Some(p) => crate::init_segment::protect_sample_entry(&entry, p.scheme, &p.tenc),
         None => Ok(entry),
+    }
+}
+
+/// One caller-supplied sample entry as the typed variant the box tree writes.
+///
+/// A raw entry keeps its bytes: the `stsd` entry is written back exactly as the
+/// caller supplied it, header included (§8.5.2).
+pub(crate) fn sample_entry_variant(entry: &SampleEntry) -> Result<SampleEntryVariant> {
+    match entry {
+        SampleEntry::Typed(v) => Ok(v.clone()),
+        SampleEntry::Raw { fourcc, body } => raw_entry_variant(*fourcc, body),
     }
 }
 
@@ -408,15 +448,19 @@ fn track_media_information(
         Some(stbl),
         vec![],
     );
-    if let Some(header) = minf_header {
+    // A handler that implies no media header of its own (`meta`, `text`,
+    // `tmcd`, …) gets the null one (§8.4.5.2) unless the caller named another.
+    let header =
+        minf_header.or_else(|| (handler != b"vide" && handler != b"soun").then_some(*NMHD));
+    if let Some(header) = header {
         minf.set_leading_opaque_header(OpaqueBox::new(header, vec![0u8; FULLBOX_EXTRA_SIZE]));
     }
     minf
 }
 
-/// The `mdhd` of a fragmented init: zero timeline, the track's timescale, and
-/// the `und` language.
-fn track_media_header(timescale: Timescale) -> MediaHeaderBox {
+/// The `mdhd` of a written track: zero timeline (the caller sets the duration
+/// afterwards), the track's timescale and language.
+fn track_media_header(timescale: Timescale, language: u16) -> MediaHeaderBox {
     MediaHeaderBox {
         version: 0,
         flags: 0,
@@ -424,7 +468,7 @@ fn track_media_header(timescale: Timescale) -> MediaHeaderBox {
         modification_time: 0,
         timescale,
         duration: 0,
-        language: LANG_UND,
+        language,
     }
 }
 

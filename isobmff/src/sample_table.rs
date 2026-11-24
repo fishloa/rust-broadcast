@@ -901,20 +901,73 @@ fn find_child<T>(
 /// One-based `stsd` entry the builders place on every new `stsc` run.
 const SAMPLE_DESCRIPTION_INDEX: u32 = 1;
 
+/// Add one sample's decode delta to `stts` entries (ISO/IEC 14496-12:2026
+/// §8.6.1.2): consecutive equal deltas collapse into a single
+/// `(sample_count, sample_delta)` run.
+///
+/// The one run-length coder for `stts`: [`build_stts`] and
+/// [`crate::plan::PlanBuilder`] both append through it.
+pub(crate) fn append_stts(entries: &mut Vec<crate::timing::SttsEntry>, delta: u32) {
+    match entries.last_mut() {
+        Some(last) if last.sample_delta == delta => last.sample_count += 1,
+        _ => entries.push(crate::timing::SttsEntry {
+            sample_count: 1,
+            sample_delta: delta,
+        }),
+    }
+}
+
+/// Add one sample's composition offset to `ctts` entries (§8.6.1.3), collapsing
+/// an equal offset into the previous run.
+pub(crate) fn append_ctts(entries: &mut Vec<crate::timing::CttsEntry>, offset: i32) {
+    match entries.last_mut() {
+        Some(last) if last.sample_offset == offset => last.sample_count += 1,
+        _ => entries.push(crate::timing::CttsEntry {
+            sample_count: 1,
+            sample_offset: offset,
+        }),
+    }
+}
+
+/// Add one sample's sync flag to the `stss` entry list (§8.6.2), updating
+/// `all_sync` so a table with no non-sync sample can omit the box.
+pub(crate) fn append_stss(entries: &mut Vec<u32>, all_sync: &mut bool, index: u32, sync: bool) {
+    if !sync {
+        *all_sync = false;
+        return;
+    }
+    if let Some(one_based) = index.checked_add(SYNC_INDEX_BIAS) {
+        entries.push(one_based);
+    }
+}
+
+/// Add one chunk to the `stsc` run list (§8.7.4), collapsing a chunk whose
+/// sample count and description index equal the previous run.
+pub(crate) fn append_stsc(
+    entries: &mut Vec<StscEntry>,
+    first_chunk: u32,
+    samples_per_chunk: u32,
+    sample_description_index: u32,
+) {
+    match entries.last() {
+        Some(last)
+            if last.samples_per_chunk == samples_per_chunk
+                && last.sample_description_index == sample_description_index => {}
+        _ => entries.push(StscEntry {
+            first_chunk,
+            samples_per_chunk,
+            sample_description_index,
+        }),
+    }
+}
+
 /// Run-length code a per-sample decode-delta list into `stts` entries
-/// (ISO/IEC 14496-12:2026 §8.6.1.2): consecutive equal deltas collapse into a
-/// single `(sample_count, sample_delta)` run.
+/// (ISO/IEC 14496-12:2026 §8.6.1.2).
 #[must_use]
 pub fn build_stts(deltas: &[u32]) -> TimeToSampleBox {
     let mut entries: Vec<crate::timing::SttsEntry> = Vec::new();
     for &delta in deltas {
-        match entries.last_mut() {
-            Some(last) if last.sample_delta == delta => last.sample_count += 1,
-            _ => entries.push(crate::timing::SttsEntry {
-                sample_count: 1,
-                sample_delta: delta,
-            }),
-        }
+        append_stts(&mut entries, delta);
     }
     TimeToSampleBox {
         version: 0,
@@ -930,13 +983,7 @@ pub fn build_stts(deltas: &[u32]) -> TimeToSampleBox {
 pub fn build_ctts(offsets: &[i32]) -> Option<CompositionOffsetBox> {
     let mut entries: Vec<crate::timing::CttsEntry> = Vec::new();
     for &offset in offsets {
-        match entries.last_mut() {
-            Some(last) if last.sample_offset == offset => last.sample_count += 1,
-            _ => entries.push(crate::timing::CttsEntry {
-                sample_count: 1,
-                sample_offset: offset,
-            }),
-        }
+        append_ctts(&mut entries, offset);
     }
     if entries.iter().all(|entry| entry.sample_offset == 0) {
         return None;
@@ -952,18 +999,16 @@ pub fn build_ctts(offsets: &[i32]) -> Option<CompositionOffsetBox> {
 /// when every sample is a sync sample and the box is omitted.
 #[must_use]
 pub fn build_stss(sync: &[bool]) -> Option<SyncSampleBox> {
-    if sync.iter().all(|&is_sync| is_sync) {
+    let mut entries: Vec<u32> = Vec::new();
+    let mut all_sync = true;
+    for (index, &is_sync) in sync.iter().enumerate() {
+        if let Ok(index) = u32::try_from(index) {
+            append_stss(&mut entries, &mut all_sync, index, is_sync);
+        }
+    }
+    if all_sync {
         return None;
     }
-    let entries: Vec<u32> = sync
-        .iter()
-        .enumerate()
-        .filter_map(|(index, &is_sync)| {
-            is_sync
-                .then(|| u32::try_from(index.checked_add(1)?).ok())
-                .flatten()
-        })
-        .collect();
     Some(SyncSampleBox {
         version: 0,
         flags: 0,
@@ -973,18 +1018,32 @@ pub fn build_stss(sync: &[bool]) -> Option<SyncSampleBox> {
 
 /// Run-length code a per-chunk sample count into `stsc` runs (§8.7.4): one
 /// entry per distinct count, keyed by the one-based first chunk it applies to.
+/// Every run names the first `stsd` entry.
 pub fn build_stsc(samples_per_chunk: &[u32]) -> Result<SampleToChunkBox> {
+    let descriptions: Vec<u32> = alloc::vec![SAMPLE_DESCRIPTION_INDEX; samples_per_chunk.len()];
+    build_stsc_with_descriptions(samples_per_chunk, &descriptions)
+}
+
+/// Run-length code per-chunk sample counts and the `stsd` entry each chunk's
+/// samples use into `stsc` runs (§8.7.4).
+///
+/// A plan read from a file keeps one description index per chunk, so a track
+/// with several `stsd` entries writes back the runs it was read with.
+pub fn build_stsc_with_descriptions(
+    samples_per_chunk: &[u32],
+    description_index: &[u32],
+) -> Result<SampleToChunkBox> {
+    if samples_per_chunk.len() != description_index.len() {
+        return Err(Error::InvalidInput(
+            "stsc builders need one description index per chunk",
+        ));
+    }
     let mut entries: Vec<StscEntry> = Vec::new();
-    for (index, &count) in samples_per_chunk.iter().enumerate() {
+    for (index, (&count, &description)) in
+        samples_per_chunk.iter().zip(description_index).enumerate()
+    {
         let first_chunk = broadcast_common::len::fit_u32(index.saturating_add(1), "first_chunk")?;
-        match entries.last_mut() {
-            Some(last) if last.samples_per_chunk == count => {}
-            _ => entries.push(StscEntry {
-                first_chunk,
-                samples_per_chunk: count,
-                sample_description_index: SAMPLE_DESCRIPTION_INDEX,
-            }),
-        }
+        append_stsc(&mut entries, first_chunk, count, description);
     }
     Ok(SampleToChunkBox {
         version: 0,

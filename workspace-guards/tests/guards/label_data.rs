@@ -1845,6 +1845,13 @@ pub const TABLE: &[Crate] = &[
             "Source",
             "Mode",
             "Step",
+            // Progressive writer policy and data: `Interleave` and `Sink` are
+            // caller choices (a chunk length or a buffer cap), not spec codes;
+            // `SampleSizes` is a data-carrying ADT over the three `stsz`/`stz2`
+            // wire forms.
+            "Interleave",
+            "Sink",
+            "SampleSizes",
         ],
         expected: None,
         min_enums: None,
