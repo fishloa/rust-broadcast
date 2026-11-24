@@ -38,7 +38,7 @@ impl CaEnable {
     /// Decode the low 7 bits of a `CA_enable` byte.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x7F {
+        match v & CA_ENABLE_MASK {
             0x01 => Self::Possible,
             0x02 => Self::PossiblePurchaseDialogue,
             0x03 => Self::PossibleTechnicalDialogue,
@@ -86,12 +86,12 @@ pub struct CaPmtReplyStream {
     /// preserved so the object re-serializes byte-for-byte; `0b111` when
     /// hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pid: ReservedOnes<3>,
+    pub reserved_pid: ReservedOnes<ES_PID_RESERVED_BITS>,
     /// The 7-bit field after `CA_enable_flag` when the flag is clear (`reserved`),
     /// as received so the object re-serializes byte-for-byte; ignored on
     /// serialize when `ca_enable` is `Some`. `0b111_1111` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_ca_enable: ReservedOnes<7>,
+    pub reserved_ca_enable: ReservedOnes<CA_ENABLE_RESERVED_BITS>,
 }
 
 /// `ca_pmt_reply()` object (Table 26).
@@ -119,16 +119,54 @@ pub struct CaPmtReply {
     /// preserved so the object re-serializes byte-for-byte; `0b11` when
     /// hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_version: ReservedOnes<2>,
+    pub reserved_version: ReservedOnes<VERSION_RESERVED_BITS>,
     /// The 7-bit field after `CA_enable_flag` when the flag is clear (`reserved`),
     /// as received so the object re-serializes byte-for-byte; ignored on
     /// serialize when `ca_enable` is `Some`. `0b111_1111` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_ca_enable: ReservedOnes<7>,
+    pub reserved_ca_enable: ReservedOnes<CA_ENABLE_RESERVED_BITS>,
 }
 
 const REPLY_PREFIX: usize = 4; // program_number(2) + version/cni/flag/enable(2)
 const ES_LEN: usize = 3; // reserved/elem_pid(2) + flag/enable(1)
+
+/// Mask of the 7-bit `CA_enable` value in a `CA_enable` byte.
+const CA_ENABLE_MASK: u8 = 0x7F;
+/// Mask of the `CA_enable_flag`.
+const CA_ENABLE_FLAG_MASK: u8 = 0x80;
+/// Reserved bits in front of `elementary_PID`.
+const ES_PID_RESERVED_BITS: u32 = 3;
+/// Reserved bits beside a `CA_enable` value.
+const CA_ENABLE_RESERVED_BITS: u32 = 7;
+/// Reserved bits in front of `version_number`.
+const VERSION_RESERVED_BITS: u32 = 2;
+
+/// Offsets of the `ca_pmt_reply()` reply prefix fields.
+const PROGRAM_NUMBER_OFFSET: usize = 0;
+const VERSION_BYTE_OFFSET: usize = 2;
+const CA_ENABLE_OFFSET: usize = 3;
+
+/// Offsets of a per-ES reply entry.
+const ES_PID_HIGH_OFFSET: usize = 0;
+const ES_PID_LOW_OFFSET: usize = 1;
+const ES_CA_ENABLE_OFFSET: usize = 2;
+
+/// Shift placing `version_number` below the reserved bits.
+const VERSION_NUMBER_SHIFT: u32 = 1;
+/// Mask of `version_number`.
+const VERSION_NUMBER_MASK: u8 = 0x1F;
+/// Bit width of `version_number`.
+const VERSION_NUMBER_BITS: u32 = 5;
+/// Shift selecting the reserved bits of the version byte.
+const VERSION_RESERVED_SHIFT: u32 = 6;
+/// Mask of `current_next_indicator`.
+const CURRENT_NEXT_INDICATOR_MASK: u8 = 0x01;
+/// Shift selecting the reserved bits in front of `elementary_PID`.
+const ES_PID_RESERVED_SHIFT: u32 = 5;
+/// Mask of `elementary_PID`'s high bits.
+const ES_PID_HIGH_MASK: u8 = 0x1F;
+/// Shift placing `elementary_PID`'s high bits.
+const ES_PID_HIGH_SHIFT: u32 = 8;
 
 impl<'a> Parse<'a> for CaPmtReply {
     type Error = Error;
@@ -136,10 +174,12 @@ impl<'a> Parse<'a> for CaPmtReply {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::CA_PMT_REPLY, "ca_pmt_reply")?;
         need_in(body, REPLY_PREFIX, "ca_pmt_reply prefix")?;
-        let program_number = u16::from_be_bytes([body[0], body[1]]);
-        let version_number = (body[2] >> 1) & 0x1F;
-        let current_next_indicator = (body[2] & 0x01) != 0;
-        let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[3]);
+        let program_number =
+            u16::from_be_bytes([body[PROGRAM_NUMBER_OFFSET], body[PROGRAM_NUMBER_OFFSET + 1]]);
+        let version_number =
+            (body[VERSION_BYTE_OFFSET] >> VERSION_NUMBER_SHIFT) & VERSION_NUMBER_MASK;
+        let current_next_indicator = (body[VERSION_BYTE_OFFSET] & CURRENT_NEXT_INDICATOR_MASK) != 0;
+        let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[CA_ENABLE_OFFSET]);
 
         let streams = parse_reply_streams(body, REPLY_PREFIX, "ca_pmt_reply ES")?;
 
@@ -150,7 +190,9 @@ impl<'a> Parse<'a> for CaPmtReply {
             current_next_indicator,
             ca_enable,
             streams,
-            reserved_version: ReservedOnes::from_bits(u64::from(body[2] >> 6)),
+            reserved_version: ReservedOnes::from_bits(u64::from(
+                body[VERSION_BYTE_OFFSET] >> VERSION_RESERVED_SHIFT,
+            )),
             reserved_ca_enable,
         })
     }
@@ -173,13 +215,17 @@ pub(crate) fn parse_reply_streams(
                 },
             ));
         }
-        let elementary_pid =
-            Pid::from_wire_masked((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
-        let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[pos + 2]);
+        let elementary_pid = Pid::from_wire_masked(
+            (u16::from(body[pos + ES_PID_HIGH_OFFSET] & ES_PID_HIGH_MASK) << ES_PID_HIGH_SHIFT)
+                | u16::from(body[pos + ES_PID_LOW_OFFSET]),
+        );
+        let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[pos + ES_CA_ENABLE_OFFSET]);
         streams.push(CaPmtReplyStream {
             elementary_pid,
             ca_enable,
-            reserved_pid: ReservedOnes::from_bits(u64::from(body[pos] >> 5)),
+            reserved_pid: ReservedOnes::from_bits(u64::from(
+                body[pos + ES_PID_HIGH_OFFSET] >> ES_PID_RESERVED_SHIFT,
+            )),
             reserved_ca_enable,
         });
         pos += ES_LEN;
@@ -199,9 +245,10 @@ pub(crate) fn write_reply_streams(
     streams: &[CaPmtReplyStream],
 ) -> usize {
     for s in streams {
-        buf[pos] = ((s.reserved_pid.get() << 5) as u8) | (s.elementary_pid.value() >> 8) as u8;
-        buf[pos + 1] = s.elementary_pid.value() as u8;
-        buf[pos + 2] = encode_enable_byte(s.ca_enable, s.reserved_ca_enable);
+        buf[pos + ES_PID_HIGH_OFFSET] = ((s.reserved_pid.get() << ES_PID_RESERVED_SHIFT) as u8)
+            | (s.elementary_pid.value() >> ES_PID_HIGH_SHIFT) as u8;
+        buf[pos + ES_PID_LOW_OFFSET] = s.elementary_pid.value() as u8;
+        buf[pos + ES_CA_ENABLE_OFFSET] = encode_enable_byte(s.ca_enable, s.reserved_ca_enable);
         pos += ES_LEN;
     }
     pos
@@ -218,17 +265,19 @@ impl Serialize for CaPmtReply {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         super::fit_bits(
             u64::from(self.version_number),
-            5,
+            VERSION_NUMBER_BITS,
             "ca_pmt_reply version_number",
         )?;
         let body = REPLY_PREFIX + reply_streams_len(&self.streams);
         let mut pos = super::write_apdu_header(tag::CA_PMT_REPLY, body, self.length_form, buf)?;
-        buf[pos..pos + 2].copy_from_slice(&self.program_number.to_be_bytes());
+        buf[pos + PROGRAM_NUMBER_OFFSET..pos + VERSION_BYTE_OFFSET]
+            .copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). Range-checked above.
-        buf[pos + 2] = ((self.reserved_version.get() << 6) as u8)
-            | (self.version_number << 1)
+        buf[pos + VERSION_BYTE_OFFSET] = ((self.reserved_version.get() << VERSION_RESERVED_SHIFT)
+            as u8)
+            | (self.version_number << VERSION_NUMBER_SHIFT)
             | u8::from(self.current_next_indicator);
-        buf[pos + 3] = encode_enable_byte(self.ca_enable, self.reserved_ca_enable);
+        buf[pos + CA_ENABLE_OFFSET] = encode_enable_byte(self.ca_enable, self.reserved_ca_enable);
         pos += REPLY_PREFIX;
         Ok(write_reply_streams(buf, pos, &self.streams))
     }
@@ -236,9 +285,12 @@ impl Serialize for CaPmtReply {
 
 /// Encode a `CA_enable_flag` + 7-bit `CA_enable`/reserved byte. When `enable`
 /// is absent the flag is 0 and the 7 bits are the `reserved` field as parsed.
-pub(crate) fn encode_enable_byte(enable: Option<CaEnable>, reserved: ReservedOnes<7>) -> u8 {
+pub(crate) fn encode_enable_byte(
+    enable: Option<CaEnable>,
+    reserved: ReservedOnes<CA_ENABLE_RESERVED_BITS>,
+) -> u8 {
     match enable {
-        Some(e) => 0x80 | (e.to_u8() & 0x7F),
+        Some(e) => CA_ENABLE_FLAG_MASK | (e.to_u8() & CA_ENABLE_MASK),
         None => reserved.get() as u8,
     }
 }
@@ -246,9 +298,14 @@ pub(crate) fn encode_enable_byte(enable: Option<CaEnable>, reserved: ReservedOne
 /// Decode a `CA_enable_flag` + 7-bit `CA_enable`/reserved byte (the inverse of
 /// [`encode_enable_byte`]); the reserved bits are only meaningful (and only
 /// kept) when the flag is clear.
-pub(crate) fn decode_enable_byte(b: u8) -> (Option<CaEnable>, ReservedOnes<7>) {
-    if b & 0x80 != 0 {
-        (Some(CaEnable::from_u8(b & 0x7F)), ReservedOnes::default())
+pub(crate) fn decode_enable_byte(
+    b: u8,
+) -> (Option<CaEnable>, ReservedOnes<CA_ENABLE_RESERVED_BITS>) {
+    if b & CA_ENABLE_FLAG_MASK != 0 {
+        (
+            Some(CaEnable::from_u8(b & CA_ENABLE_MASK)),
+            ReservedOnes::default(),
+        )
     } else {
         (None, ReservedOnes::from_bits(u64::from(b)))
     }
