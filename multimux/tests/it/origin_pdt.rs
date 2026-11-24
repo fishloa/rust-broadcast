@@ -205,7 +205,6 @@ async fn ts_hls_route_carries_pdt() {
 #[tokio::test]
 async fn pdt_validator_clean() {
     use std::fs;
-    use std::path::PathBuf;
     use std::time::Duration;
 
     if !test_fixtures::process::msv::available() {
@@ -254,9 +253,7 @@ async fn pdt_validator_clean() {
     );
     let app = router(Arc::new(AppState::new(streams)));
 
-    let scratch = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/pdt-validator-tmp");
-    let _ = fs::remove_dir_all(&scratch);
-    fs::create_dir_all(&scratch).unwrap();
+    let scratch = test_fixtures::process::scratch_dir("pdt-validator");
 
     for name in ["master.m3u8", "media.m3u8", "iframe.m3u8"] {
         let resp = app

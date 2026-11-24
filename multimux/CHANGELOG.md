@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- The oracle tests that write a playlist/segment tree and run `mediastreamvalidator` or `ffprobe` over it use a scratch directory unique to the process and to the call (`test_fixtures::process::scratch_dir`), instead of a fixed `target/<tag>` path. Two suites running at once in one checkout (two loops, or a local gate beside CI's) deleted and rewrote each other's tree mid-run, which the oracle then reported as a stale playlist or a missing media file (#4072).
 - Every optional feature builds on its own with `RUSTFLAGS="-D warnings"`. `--features whip` no longer imports the test-seam-only `RouteConfig`, the test-seam helper `register_session_for_test` is gated on `whip` as well as `test-seams` (it is only ever called from `whip`'s `from_spec`), and `test-hooks` declares `whip`, whose signalling seams it re-exports (#4083).
 - TS and FLV `file` inputs stream from disk in bounded memory instead of being read whole, so a large slate/filler/loop asset no longer makes the origin's memory grow with the file. Each loop pass re-opens and re-identifies the file: a longer file simply plays longer, while a file replaced by a different container fails with `FileReaderError::FileChangedContainer` (#4057).
 - A DASH-IF ingest client that half-closes its write side once its request is sent still receives the answer. The origin serves HTTP/1 with half-close enabled, where hyper otherwise read the peer's FIN before the response was written and dropped the pending answer as an unexpected EOF, so the publisher lost the status code of its upload (#4063).
