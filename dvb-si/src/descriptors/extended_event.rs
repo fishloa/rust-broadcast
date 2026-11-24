@@ -19,6 +19,12 @@ const LANG_LEN: usize = 3;
 const ITEMS_LEN_FIELD: usize = 1;
 const TEXT_LEN_FIELD: usize = 1;
 const FIXED_PREFIX_LEN: usize = NUMBERS_LEN + LANG_LEN + ITEMS_LEN_FIELD + TEXT_LEN_FIELD;
+/// Shift of `descriptor_number` in the numbers byte.
+const DESCRIPTOR_NUMBER_SHIFT: u8 = 4;
+/// Mask of the two 4-bit number fields in the numbers byte.
+const NUMBER_MASK: u8 = 0x0F;
+/// Offset of `length_of_items` in the descriptor body.
+const ITEMS_LEN_OFFSET: usize = NUMBERS_LEN + LANG_LEN;
 
 /// One (description, value) item — e.g. "Director" → "Alice Smith".
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,11 +67,13 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
         )?;
         need_in(body, FIXED_PREFIX_LEN, "ExtendedEventDescriptor body")?;
         let numbers_byte = body[0];
-        let descriptor_number = numbers_byte >> 4;
-        let last_descriptor_number = numbers_byte & 0x0F;
-        let language_code = LangCode([body[1], body[2], body[3]]);
+        let descriptor_number = numbers_byte >> DESCRIPTOR_NUMBER_SHIFT;
+        let last_descriptor_number = numbers_byte & NUMBER_MASK;
+        let mut language_bytes = [0u8; LANG_LEN];
+        language_bytes.copy_from_slice(&body[NUMBERS_LEN..ITEMS_LEN_OFFSET]);
+        let language_code = LangCode(language_bytes);
 
-        let items_len_pos = NUMBERS_LEN + LANG_LEN;
+        let items_len_pos = ITEMS_LEN_OFFSET;
         let items_length = body[items_len_pos] as usize;
         let items_start = items_len_pos + ITEMS_LEN_FIELD;
         let items_end = items_start + items_length;
@@ -154,24 +162,26 @@ impl Serialize for ExtendedEventDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] =
-            (broadcast_common::len::fit_mask(self.descriptor_number, 0x0F, "descriptor_number")?
-                << 4)
+        buf[HEADER_LEN] =
+            (broadcast_common::len::fit_mask(self.descriptor_number, NUMBER_MASK, "descriptor_number")?
+                << DESCRIPTOR_NUMBER_SHIFT)
                 | broadcast_common::len::fit_mask(
                     self.last_descriptor_number,
-                    0x0F,
+                    NUMBER_MASK,
                     "last_descriptor_number",
                 )?;
-        buf[3..6].copy_from_slice(&self.language_code.0);
+        buf[HEADER_LEN + NUMBERS_LEN..HEADER_LEN + ITEMS_LEN_OFFSET]
+            .copy_from_slice(&self.language_code.0);
 
         let items_bytes: usize = self
             .items
             .iter()
             .map(|i| 1 + i.description.len() + 1 + i.value.len())
             .sum();
-        buf[6] = broadcast_common::len::fit_u8(items_bytes, "length_of_items")?;
+        buf[HEADER_LEN + ITEMS_LEN_OFFSET] =
+            broadcast_common::len::fit_u8(items_bytes, "length_of_items")?;
 
-        let mut pos = 7;
+        let mut pos = HEADER_LEN + ITEMS_LEN_OFFSET + ITEMS_LEN_FIELD;
         for item in &self.items {
             buf[pos] =
                 broadcast_common::len::fit_u8(item.description.len(), "item_description_length")?;

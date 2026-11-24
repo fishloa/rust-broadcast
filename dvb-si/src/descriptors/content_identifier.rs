@@ -20,6 +20,20 @@ const CRID_TYPE_MASK: u8 = 0xFC;
 /// bits set cannot bleed into the two `crid_location` bits (r03-W2).
 const CRID_TYPE_VALUE_MASK: u8 = 0x3F;
 const CRID_LOCATION_MASK: u8 = 0x03;
+/// Shift of `crid_type` in the entry header byte.
+const CRID_TYPE_SHIFT: u8 = 2;
+/// Width of `crid_ref` (an indirect CRID), bytes.
+const CRID_REFERENCE_LEN: usize = core::mem::size_of::<u16>();
+/// Width of an entry's `crid_type`/`crid_location` header byte.
+const CRID_HEADER_LEN: usize = 1;
+/// Width of the inline `crid_length` byte.
+const CRID_LENGTH_LEN: usize = 1;
+/// Offset of `crid_length` in an inline entry.
+const CRID_LENGTH_OFFSET: usize = CRID_HEADER_LEN;
+/// Offset of the inline `crid` bytes in an entry.
+const CRID_DATA_OFFSET: usize = CRID_HEADER_LEN + CRID_LENGTH_LEN;
+/// `crid_location` value selecting an indirect (reference) CRID.
+const CRID_LOCATION_REFERENCE: u8 = 0x01;
 
 /// CRID type — ETSI TS 102 323 Table 117.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,7 +151,7 @@ impl<'a> Parse<'a> for ContentIdentifierDescriptor<'a> {
         while pos < body.len() {
             let header_byte = body[pos];
             pos += 1;
-            let crid_type = CridType::from_u8((header_byte & CRID_TYPE_MASK) >> 2);
+            let crid_type = CridType::from_u8((header_byte & CRID_TYPE_MASK) >> CRID_TYPE_SHIFT);
             let crid_location = header_byte & CRID_LOCATION_MASK;
             let location = match crid_location {
                 0x00 => {
@@ -160,7 +174,7 @@ impl<'a> Parse<'a> for ContentIdentifierDescriptor<'a> {
                     CridLocation::Inline(crid_bytes)
                 }
                 0x01 => {
-                    if pos + 2 > body.len() {
+                    if pos + CRID_REFERENCE_LEN > body.len() {
                         return Err(Error::InvalidDescriptor {
                             tag: TAG,
                             reason: "CRID reference truncated",
@@ -168,13 +182,13 @@ impl<'a> Parse<'a> for ContentIdentifierDescriptor<'a> {
                     }
                     let (ref_bytes, _) = body
                         .get(pos..)
-                        .and_then(|s| s.split_first_chunk::<2>())
+                        .and_then(|s| s.split_first_chunk::<CRID_REFERENCE_LEN>())
                         .ok_or(Error::InvalidDescriptor {
                         tag: TAG,
                         reason: "CRID reference truncated",
                     })?;
                     let crid_ref = u16::from_be_bytes(*ref_bytes);
-                    pos += 2;
+                    pos += CRID_REFERENCE_LEN;
                     CridLocation::Reference(crid_ref)
                 }
                 _ => {
@@ -200,8 +214,8 @@ impl Serialize for ContentIdentifierDescriptor<'_> {
             .entries
             .iter()
             .map(|e| match &e.location {
-                CridLocation::Inline(data) => 2 + data.len(),
-                CridLocation::Reference(_) => 3,
+                CridLocation::Inline(data) => CRID_DATA_OFFSET + data.len(),
+                CridLocation::Reference(_) => CRID_HEADER_LEN + CRID_REFERENCE_LEN,
             })
             .sum();
         HEADER_LEN + body_len
@@ -217,20 +231,21 @@ impl Serialize for ContentIdentifierDescriptor<'_> {
                 entry.crid_type.to_u8(),
                 CRID_TYPE_VALUE_MASK,
                 "crid_type",
-            )? << 2;
+            )? << CRID_TYPE_SHIFT;
             match &entry.location {
                 CridLocation::Inline(data) => {
                     buf[pos] = header;
-                    buf[pos + 1] = broadcast_common::len::fit_u8(data.len(), "crid_length")?;
-                    buf[pos + 2..pos + 2 + data.len()].copy_from_slice(data);
-                    pos += 2 + data.len();
+                    buf[pos + CRID_LENGTH_OFFSET] =
+                        broadcast_common::len::fit_u8(data.len(), "crid_length")?;
+                    buf[pos + CRID_DATA_OFFSET..pos + CRID_DATA_OFFSET + data.len()].copy_from_slice(data);
+                    pos += CRID_DATA_OFFSET + data.len();
                 }
                 CridLocation::Reference(val) => {
-                    buf[pos] = header | 0x01;
+                    buf[pos] = header | CRID_LOCATION_REFERENCE;
                     let bytes = val.to_be_bytes();
-                    buf[pos + 1] = bytes[0];
-                    buf[pos + 2] = bytes[1];
-                    pos += 3;
+                    buf[pos + CRID_HEADER_LEN] = bytes[0];
+                    buf[pos + CRID_HEADER_LEN + 1] = bytes[1];
+                    pos += CRID_HEADER_LEN + CRID_REFERENCE_LEN;
                 }
             }
         }

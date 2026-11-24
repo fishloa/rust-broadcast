@@ -32,6 +32,14 @@ pub const HEADER_LEN: usize = 2;
 pub const OUTER_FIXED_LEN: usize = 7;
 /// Bytes per subcell entry: cell_id_extension(1)+transposer_frequency(4).
 pub const SUBCELL_LEN: usize = 5;
+/// Offset of `frequency` in an outer entry.
+const FREQUENCY_OFFSET: usize = core::mem::size_of::<u16>();
+/// Width of the 32-bit `frequency`/`transposer_frequency` fields, bytes.
+const FREQUENCY_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of `subcell_info_loop_length` in an outer entry.
+const SUBCELL_INFO_LOOP_LENGTH_OFFSET: usize = FREQUENCY_OFFSET + FREQUENCY_LEN;
+/// Hz per unit of the 32-bit frequency fields (10 Hz resolution).
+const FREQUENCY_HZ_PER_UNIT: u64 = 10;
 
 /// One transposer sub-cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +55,7 @@ impl CellFrequencyLinkSubcell {
     /// Decode transposer_frequency to Hz (10 Hz field resolution).
     #[must_use]
     pub fn transposer_frequency_hz(&self) -> u64 {
-        u64::from(self.transposer_frequency) * 10
+        u64::from(self.transposer_frequency) * FREQUENCY_HZ_PER_UNIT
     }
 }
 
@@ -67,7 +75,7 @@ impl CellFrequencyLinkEntry {
     /// Decode frequency to Hz (10 Hz field resolution).
     #[must_use]
     pub fn frequency_hz(&self) -> u64 {
-        u64::from(self.frequency) * 10
+        u64::from(self.frequency) * FREQUENCY_HZ_PER_UNIT
     }
 }
 
@@ -105,8 +113,11 @@ impl<'a> Parse<'a> for CellFrequencyLinkDescriptor {
                     reason: "cell_frequency_link outer entry truncated",
                 })?;
             let cell_id = u16::from_be_bytes([outer[0], outer[1]]);
-            let frequency = u32::from_be_bytes([outer[2], outer[3], outer[4], outer[5]]);
-            let subcell_info_loop_length = outer[6] as usize;
+            let mut frequency_bytes = [0u8; FREQUENCY_LEN];
+            frequency_bytes
+                .copy_from_slice(&outer[FREQUENCY_OFFSET..SUBCELL_INFO_LOOP_LENGTH_OFFSET]);
+            let frequency = u32::from_be_bytes(frequency_bytes);
+            let subcell_info_loop_length = outer[SUBCELL_INFO_LOOP_LENGTH_OFFSET] as usize;
             pos += OUTER_FIXED_LEN;
             if !subcell_info_loop_length.is_multiple_of(SUBCELL_LEN) {
                 return Err(Error::InvalidDescriptor {
@@ -130,9 +141,8 @@ impl<'a> Parse<'a> for CellFrequencyLinkDescriptor {
                         tag: TAG,
                         reason: "subcell_info_loop_length exceeds descriptor body",
                     })?;
-                let cell_id_extension = sub[0];
-                let transposer_frequency = u32::from_be_bytes([sub[1], sub[2], sub[3], sub[4]]);
-                subcells.push(CellFrequencyLinkSubcell {
+                let [cell_id_extension, t0, t1, t2, t3] = *sub;
+                let transposer_frequency = u32::from_be_bytes([t0, t1, t2, t3]);                subcells.push(CellFrequencyLinkSubcell {
                     cell_id_extension,
                     transposer_frequency,
                 });
@@ -176,16 +186,18 @@ impl Serialize for CellFrequencyLinkDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + 2].copy_from_slice(&e.cell_id.to_be_bytes());
-            buf[pos + 2..pos + 6].copy_from_slice(&e.frequency.to_be_bytes());
-            buf[pos + 6] = broadcast_common::len::fit_u8(
+            buf[pos..pos + FREQUENCY_OFFSET].copy_from_slice(&e.cell_id.to_be_bytes());
+            buf[pos + FREQUENCY_OFFSET..pos + SUBCELL_INFO_LOOP_LENGTH_OFFSET]
+                .copy_from_slice(&e.frequency.to_be_bytes());
+            buf[pos + SUBCELL_INFO_LOOP_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
                 e.subcells.len() * SUBCELL_LEN,
                 "subcell_info_loop_length",
             )?;
             pos += OUTER_FIXED_LEN;
             for sc in &e.subcells {
                 buf[pos] = sc.cell_id_extension;
-                buf[pos + 1..pos + 5].copy_from_slice(&sc.transposer_frequency.to_be_bytes());
+                buf[pos + 1..pos + SUBCELL_LEN]
+                    .copy_from_slice(&sc.transposer_frequency.to_be_bytes());
                 pos += SUBCELL_LEN;
             }
         }
