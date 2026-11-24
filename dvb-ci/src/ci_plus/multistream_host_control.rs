@@ -130,18 +130,69 @@ pub struct TuneTripletReq {
     /// The 5-bit `reserved` field in front of the three flags as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<5>,
+    pub reserved: ReservedZero<TRIPLET_RESERVED_BITS>,
     /// The `reserved(8)` byte that stands in for `descriptor_tag_extension` when
     /// `delivery_system_descriptor_tag != 0x7F`, as received (ignored on
     /// serialize when `descriptor_tag_extension` is `Some`); `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_ext: ReservedZero<8>,
+    pub reserved_ext: ReservedZero<RESERVED_BYTE_BITS>,
 }
 
 // flags/reserved(1) + onid(2) + tsid(2) + sid(2) + dsd_tag(1) + ext/reserved(1).
 const TRIPLET_BODY: usize = 1 + 2 + 2 + 2 + 1 + 1;
 // The descriptor_tag value that signals descriptor_tag_extension follows.
 const DSD_TAG_EXTENSION: u8 = 0x7F;
+
+/// Reserved bits in front of the `tune_triplet_req` flags.
+const TRIPLET_RESERVED_BITS: u32 = 5;
+/// Reserved bits of the `tune_ip_req` first byte.
+const TUNE_IP_RESERVED_BITS: u32 = 2;
+/// Reserved bits in front of the `tuner_status_reply` DSD flags.
+const DSD_RESERVED_BITS: u32 = 7;
+/// Width of the trailing `reserved(8)` byte.
+const RESERVED_BYTE_BITS: u32 = 8;
+
+/// Bytes of one identifier in `tune_triplet_req`.
+const TRIPLET_ID_LEN: usize = core::mem::size_of::<u16>();
+
+/// Offsets within a `tune_triplet_req` body.
+const TRIPLET_FLAGS_OFFSET: usize = 0;
+const TRIPLET_ONID_OFFSET: usize = TRIPLET_FLAGS_OFFSET + 1;
+const TRIPLET_TSID_OFFSET: usize = TRIPLET_ONID_OFFSET + TRIPLET_ID_LEN;
+const TRIPLET_SID_OFFSET: usize = TRIPLET_TSID_OFFSET + TRIPLET_ID_LEN;
+const TRIPLET_DSD_TAG_OFFSET: usize = TRIPLET_SID_OFFSET + TRIPLET_ID_LEN;
+const TRIPLET_EXT_OFFSET: usize = TRIPLET_DSD_TAG_OFFSET + 1;
+/// Shift selecting the reserved bits of the triplet flags byte.
+const TRIPLET_RESERVED_SHIFT: u32 = 3;
+
+/// Offsets within a `tune_lcn_req` body.
+const LCN_FLAGS_OFFSET: usize = 0;
+const LCN_HIGH_OFFSET: usize = 1;
+const LCN_LOW_OFFSET: usize = 2;
+/// Shift selecting the reserved bits of the `tune_lcn_req` first byte.
+const LCN_RESERVED_SHIFT: u32 = 1;
+/// Shift placing `logical_channel_number`'s low byte.
+const LCN_HIGH_SHIFT: u32 = 8;
+
+/// Offset of `service_location_length`'s low byte in a `tune_ip_req` body.
+const SLL_LOW_OFFSET: usize = 1;
+/// Bit width of `service_location_length`.
+const SLL_BITS: u32 = 12;
+/// Shift selecting the reserved bits of the `tune_ip_req` first byte.
+const TUNE_IP_RESERVED_SHIFT: u32 = 6;
+/// Mask of the multi-stream reserved bit within the first byte.
+const TUNE_IP_MS_RESERVED_BIT_MASK: u8 = 0b10;
+
+/// Offsets within a DSD entry.
+const DSD_FLAGS_OFFSET: usize = 0;
+const DSD_TAG_OFFSET: usize = 1;
+const DSD_EXT_OFFSET: usize = 2;
+/// Shift selecting the reserved bits of a DSD entry's first byte.
+const DSD_RESERVED_SHIFT: u32 = 1;
+/// Shift placing the DSD reserved bits.
+const DSD_RESERVED_PACK_SHIFT: u32 = 1;
+/// Bit width of `num_dsd`.
+const NUM_DSD_BITS: u32 = 7;
 
 // tune_triplet_req flag byte: reserved(5) + background(1) + quietly(1) + keep(1).
 const TRIPLET_BACKGROUND_BIT: u8 = 0x04;
@@ -155,10 +206,10 @@ impl<'a> Parse<'a> for TuneTripletReq {
             objects::parse_apdu_header(bytes, tag::TUNE_TRIPLET_REQ, "tune_triplet_req")?;
         need_in(body, TRIPLET_BODY, "tune_triplet_req")?;
         crate::objects::reject_trailing_body(body, TRIPLET_BODY, "tune_triplet_req")?;
-        let flags = body[0];
-        let dsd_tag = body[7];
+        let flags = body[TRIPLET_FLAGS_OFFSET];
+        let dsd_tag = body[TRIPLET_DSD_TAG_OFFSET];
         let descriptor_tag_extension = if dsd_tag == DSD_TAG_EXTENSION {
-            Some(body[8])
+            Some(body[TRIPLET_EXT_OFFSET])
         } else {
             None
         };
@@ -167,16 +218,25 @@ impl<'a> Parse<'a> for TuneTripletReq {
             background_tune: flags & TRIPLET_BACKGROUND_BIT != 0,
             tune_quietly: flags & TRIPLET_QUIETLY_BIT != 0,
             keep_app_running: flags & TRIPLET_KEEP_BIT != 0,
-            original_network_id: u16::from_be_bytes([body[1], body[2]]),
-            transport_stream_id: u16::from_be_bytes([body[3], body[4]]),
-            service_id: u16::from_be_bytes([body[5], body[6]]),
+            original_network_id: u16::from_be_bytes([
+                body[TRIPLET_ONID_OFFSET],
+                body[TRIPLET_ONID_OFFSET + 1],
+            ]),
+            transport_stream_id: u16::from_be_bytes([
+                body[TRIPLET_TSID_OFFSET],
+                body[TRIPLET_TSID_OFFSET + 1],
+            ]),
+            service_id: u16::from_be_bytes([
+                body[TRIPLET_SID_OFFSET],
+                body[TRIPLET_SID_OFFSET + 1],
+            ]),
             delivery_system_descriptor_tag: dsd_tag,
             descriptor_tag_extension,
-            reserved: ReservedZero::from_bits(u64::from(flags >> 3)),
+            reserved: ReservedZero::from_bits(u64::from(flags >> TRIPLET_RESERVED_SHIFT)),
             reserved_ext: if dsd_tag == DSD_TAG_EXTENSION {
                 ReservedZero::default()
             } else {
-                ReservedZero::from_bits(u64::from(body[8]))
+                ReservedZero::from_bits(u64::from(body[TRIPLET_EXT_OFFSET]))
             },
         })
     }
@@ -190,7 +250,7 @@ impl Serialize for TuneTripletReq {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let pos =
             objects::write_apdu_header(tag::TUNE_TRIPLET_REQ, TRIPLET_BODY, self.length_form, buf)?;
-        let mut flags = (self.reserved.get() << 3) as u8;
+        let mut flags = (self.reserved.get() << TRIPLET_RESERVED_SHIFT) as u8;
         if self.background_tune {
             flags |= TRIPLET_BACKGROUND_BIT;
         }
@@ -201,12 +261,15 @@ impl Serialize for TuneTripletReq {
             flags |= TRIPLET_KEEP_BIT;
         }
         buf[pos] = flags;
-        buf[pos + 1..pos + 3].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[pos + 3..pos + 5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[pos + 5..pos + 7].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[pos + 7] = self.delivery_system_descriptor_tag;
+        buf[pos + TRIPLET_ONID_OFFSET..pos + TRIPLET_TSID_OFFSET]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
+        buf[pos + TRIPLET_TSID_OFFSET..pos + TRIPLET_SID_OFFSET]
+            .copy_from_slice(&self.transport_stream_id.to_be_bytes());
+        buf[pos + TRIPLET_SID_OFFSET..pos + TRIPLET_DSD_TAG_OFFSET]
+            .copy_from_slice(&self.service_id.to_be_bytes());
+        buf[pos + TRIPLET_DSD_TAG_OFFSET] = self.delivery_system_descriptor_tag;
         // descriptor_tag_extension when tag==0x7F, else reserved(8).
-        buf[pos + 8] = self
+        buf[pos + TRIPLET_EXT_OFFSET] = self
             .descriptor_tag_extension
             .unwrap_or_else(|| self.reserved_ext.get() as u8);
         Ok(pos + TRIPLET_BODY)
@@ -235,7 +298,7 @@ pub struct TuneLcnReq {
     /// The 7-bit `reserved` field in front of `background_tune_flag` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<7>,
+    pub reserved: ReservedZero<DSD_RESERVED_BITS>,
 }
 
 // flags/reserved(1) + flags/lcn-hi(1) + lcn-lo(1).
@@ -260,17 +323,20 @@ impl<'a> Parse<'a> for TuneLcnReq {
             objects::parse_apdu_header(bytes, tag::TUNE_LCN_REQ, "tune_lcn_req")?;
         need_in(body, LCN_BODY, "tune_lcn_req")?;
         crate::objects::reject_trailing_body(body, LCN_BODY, "tune_lcn_req")?;
-        let background_tune = body[0] & LCN_BACKGROUND_BIT != 0;
-        let tune_quietly = body[1] & LCN_QUIETLY_BIT != 0;
-        let keep_app_running = body[1] & LCN_KEEP_BIT != 0;
-        let logical_channel_number = u16::from_be_bytes([body[1], body[2]]) & LCN_MASK;
+        let background_tune = body[LCN_FLAGS_OFFSET] & LCN_BACKGROUND_BIT != 0;
+        let tune_quietly = body[LCN_HIGH_OFFSET] & LCN_QUIETLY_BIT != 0;
+        let keep_app_running = body[LCN_HIGH_OFFSET] & LCN_KEEP_BIT != 0;
+        let logical_channel_number =
+            u16::from_be_bytes([body[LCN_HIGH_OFFSET], body[LCN_LOW_OFFSET]]) & LCN_MASK;
         Ok(Self {
             length_form,
             background_tune,
             tune_quietly,
             keep_app_running,
             logical_channel_number,
-            reserved: ReservedZero::from_bits(u64::from(body[0] >> 1)),
+            reserved: ReservedZero::from_bits(u64::from(
+                body[LCN_FLAGS_OFFSET] >> LCN_RESERVED_SHIFT,
+            )),
         })
     }
 }
@@ -289,21 +355,22 @@ impl Serialize for TuneLcnReq {
             "tune_lcn_req logical_channel_number",
         )?;
         let pos = objects::write_apdu_header(tag::TUNE_LCN_REQ, LCN_BODY, self.length_form, buf)?;
-        buf[pos] = ((self.reserved.get() << 1) as u8)
+        buf[pos + LCN_FLAGS_OFFSET] = ((self.reserved.get() << LCN_RESERVED_SHIFT) as u8)
             | if self.background_tune {
                 LCN_BACKGROUND_BIT
             } else {
                 0
             };
-        let mut hi = (self.logical_channel_number >> 8) as u8 & (LCN_MASK >> 8) as u8;
+        let mut hi = (self.logical_channel_number >> LCN_HIGH_SHIFT) as u8
+            & (LCN_MASK >> LCN_HIGH_SHIFT) as u8;
         if self.tune_quietly {
             hi |= LCN_QUIETLY_BIT;
         }
         if self.keep_app_running {
             hi |= LCN_KEEP_BIT;
         }
-        buf[pos + 1] = hi;
-        buf[pos + 2] = self.logical_channel_number as u8;
+        buf[pos + LCN_HIGH_OFFSET] = hi;
+        buf[pos + LCN_LOW_OFFSET] = self.logical_channel_number as u8;
         Ok(pos + LCN_BODY)
     }
 }
@@ -338,7 +405,7 @@ pub struct TuneIpReq<'a> {
     /// `background_tune_flag` — so the value is `0` or `2`); preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<2>,
+    pub reserved: ReservedZero<TUNE_IP_RESERVED_BITS>,
 }
 
 // flags/reserved+length(2) prefix, then service_location_data.
@@ -354,6 +421,10 @@ const IP_V3_QUIETLY_BIT: u8 = 0x20;
 const IP_V3_KEEP_BIT: u8 = 0x10;
 // service_location_length is 12 bits: high nibble in byte0, low 8 in byte1.
 const SLL_HI_MASK: u8 = 0x0F;
+/// Bits of `service_location_length` carried in the first byte.
+const SLL_HI_BITS: u32 = 4;
+/// Bits of `service_location_length` carried in the second byte.
+const SLL_LOW_BITS: u32 = SLL_BITS - SLL_HI_BITS;
 
 impl<'a> TuneIpReq<'a> {
     /// Parse a `tune_ip_req` body under the given [`HostControlMode`].
@@ -373,13 +444,16 @@ impl<'a> TuneIpReq<'a> {
                 body[0] & IP_V3_KEEP_BIT != 0,
             ),
         };
-        let sll = (((body[0] & SLL_HI_MASK) as usize) << 8) | body[1] as usize;
+        let sll = (usize::from(body[0] & SLL_HI_MASK) << SLL_LOW_BITS)
+            | usize::from(body[SLL_LOW_OFFSET]);
         let data = &body[TUNE_IP_PREFIX..];
         need_in(data, sll, "tune_ip_req service_location_data")?;
         objects::reject_trailing_body(data, sll, "tune_ip_req")?;
         let reserved_bits = match mode {
-            HostControlMode::MultiStream => (body[0] >> 6) & 0b10,
-            HostControlMode::BaseV3 => body[0] >> 6,
+            HostControlMode::MultiStream => {
+                (body[0] >> TUNE_IP_RESERVED_SHIFT) & TUNE_IP_MS_RESERVED_BIT_MASK
+            }
+            HostControlMode::BaseV3 => body[0] >> TUNE_IP_RESERVED_SHIFT,
         };
         Ok(Self {
             length_form,
@@ -403,15 +477,16 @@ impl Serialize for TuneIpReq<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let sll = self.service_location_data.len();
-        objects::fit_bits(sll as u64, 12, "tune_ip_req service_location_length")?;
+        objects::fit_bits(sll as u64, SLL_BITS, "tune_ip_req service_location_length")?;
         let body_len = TUNE_IP_PREFIX + sll;
         let pos = objects::write_apdu_header(tag::TUNE_IP_REQ, body_len, self.length_form, buf)?;
         // service_location_length(12) high nibble. Range-checked above.
-        let mut byte0 = (sll >> 8) as u8;
+        let mut byte0 = (sll >> SLL_LOW_BITS) as u8;
         match self.mode {
             HostControlMode::MultiStream => {
                 // Only bit `[7]` is reserved; bit `[6]` is background_tune_flag.
-                byte0 |= ((self.reserved.get() & 0b10) << 6) as u8;
+                byte0 |= ((self.reserved.get() & u64::from(TUNE_IP_MS_RESERVED_BIT_MASK))
+                    << TUNE_IP_RESERVED_SHIFT) as u8;
                 if self.background_tune {
                     byte0 |= IP_MS_BACKGROUND_BIT;
                 }
@@ -423,7 +498,7 @@ impl Serialize for TuneIpReq<'_> {
                 }
             }
             HostControlMode::BaseV3 => {
-                byte0 |= (self.reserved.get() << 6) as u8;
+                byte0 |= (self.reserved.get() << TUNE_IP_RESERVED_SHIFT) as u8;
                 // Table 100 has no `background_tune_flag`; silently dropping a
                 // `true` would emit bytes that parse back as `false`.
                 if self.background_tune {
@@ -441,8 +516,9 @@ impl Serialize for TuneIpReq<'_> {
             }
         }
         buf[pos] = byte0;
-        buf[pos + 1] = sll as u8;
-        buf[pos + 2..pos + 2 + sll].copy_from_slice(self.service_location_data);
+        buf[pos + SLL_LOW_OFFSET] = sll as u8;
+        buf[pos + TUNE_IP_PREFIX..pos + TUNE_IP_PREFIX + sll]
+            .copy_from_slice(self.service_location_data);
         Ok(pos + body_len)
     }
 }
@@ -495,12 +571,12 @@ pub struct TunerStatusDsd {
     /// The 7-bit `reserved` field in front of `connected_flag` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<7>,
+    pub reserved: ReservedZero<DSD_RESERVED_BITS>,
     /// The `reserved(8)` byte that stands in for `descriptor_tag_extension` when
     /// `delivery_system_descriptor_tag != 0x7F`, as received (ignored on
     /// serialize when `descriptor_tag_extension` is `Some`); `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_ext: ReservedZero<8>,
+    pub reserved_ext: ReservedZero<RESERVED_BYTE_BITS>,
 }
 
 /// `tuner_status_reply()` (Table 102): Host → CICAM.
@@ -539,10 +615,10 @@ impl<'a> Parse<'a> for TunerStatusReply {
         let mut dsds = Vec::with_capacity(num_dsd);
         for _ in 0..num_dsd {
             need_in(rest, DSD_ENTRY_LEN, "tuner_status_reply dsd")?;
-            let connected = rest[0] & DSD_CONNECTED_BIT != 0;
-            let dsd_tag = rest[1];
+            let connected = rest[DSD_FLAGS_OFFSET] & DSD_CONNECTED_BIT != 0;
+            let dsd_tag = rest[DSD_TAG_OFFSET];
             let descriptor_tag_extension = if dsd_tag == DSD_TAG_EXTENSION {
-                Some(rest[2])
+                Some(rest[DSD_EXT_OFFSET])
             } else {
                 None
             };
@@ -550,11 +626,13 @@ impl<'a> Parse<'a> for TunerStatusReply {
                 connected,
                 delivery_system_descriptor_tag: dsd_tag,
                 descriptor_tag_extension,
-                reserved: ReservedZero::from_bits(u64::from(rest[0] >> 1)),
+                reserved: ReservedZero::from_bits(u64::from(
+                    rest[DSD_FLAGS_OFFSET] >> DSD_RESERVED_SHIFT,
+                )),
                 reserved_ext: if dsd_tag == DSD_TAG_EXTENSION {
                     ReservedZero::default()
                 } else {
-                    ReservedZero::from_bits(u64::from(rest[2]))
+                    ReservedZero::from_bits(u64::from(rest[DSD_EXT_OFFSET]))
                 },
             });
             rest = &rest[DSD_ENTRY_LEN..];
@@ -574,7 +652,11 @@ impl Serialize for TunerStatusReply {
         objects::apdu_len(1 + self.dsds.len() * DSD_ENTRY_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::fit_bits(self.dsds.len() as u64, 7, "tuner_status_reply num_dsd")?;
+        objects::fit_bits(
+            self.dsds.len() as u64,
+            NUM_DSD_BITS,
+            "tuner_status_reply num_dsd",
+        )?;
         let body_len = 1 + self.dsds.len() * DSD_ENTRY_LEN;
         let mut pos =
             objects::write_apdu_header(tag::TUNER_STATUS_REPLY, body_len, self.length_form, buf)?;
@@ -586,9 +668,10 @@ impl Serialize for TunerStatusReply {
         buf[pos] = byte0;
         pos += 1;
         for dsd in &self.dsds {
-            buf[pos] = ((dsd.reserved.get() << 1) as u8) | u8::from(dsd.connected);
-            buf[pos + 1] = dsd.delivery_system_descriptor_tag;
-            buf[pos + 2] = dsd
+            buf[pos + DSD_FLAGS_OFFSET] =
+                ((dsd.reserved.get() << DSD_RESERVED_PACK_SHIFT) as u8) | u8::from(dsd.connected);
+            buf[pos + DSD_TAG_OFFSET] = dsd.delivery_system_descriptor_tag;
+            buf[pos + DSD_EXT_OFFSET] = dsd
                 .descriptor_tag_extension
                 .unwrap_or_else(|| dsd.reserved_ext.get() as u8);
             pos += DSD_ENTRY_LEN;
