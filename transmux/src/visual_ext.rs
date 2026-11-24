@@ -20,6 +20,7 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
+use crate::wire_cursor::{be_u16, be_u32};
 
 // ---------------------------------------------------------------------------
 // PixelAspectRatioBox — pasp (§12.1.4.2)
@@ -40,9 +41,9 @@ impl<'a> Parse<'a> for PixelAspectRatioBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 8, "pasp body")?;
-        let h_spacing = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let v_spacing = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        need_in(bytes, PASP_BODY_LEN, "pasp body")?;
+        let h_spacing = be_u32(bytes, 0, "pasp body")?;
+        let v_spacing = be_u32(bytes, U32_LEN, "pasp body")?;
         Ok(Self {
             h_spacing,
             v_spacing,
@@ -54,14 +55,14 @@ impl Serialize for PixelAspectRatioBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        8
+        PASP_BODY_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        need_out(buf, 8)?;
-        buf[..4].copy_from_slice(&self.h_spacing.to_be_bytes());
-        buf[4..8].copy_from_slice(&self.v_spacing.to_be_bytes());
-        Ok(8)
+        need_out(buf, PASP_BODY_LEN)?;
+        buf[..U32_LEN].copy_from_slice(&self.h_spacing.to_be_bytes());
+        buf[U32_LEN..PASP_BODY_LEN].copy_from_slice(&self.v_spacing.to_be_bytes());
+        Ok(PASP_BODY_LEN)
     }
 }
 
@@ -152,19 +153,17 @@ impl<'a> Parse<'a> for CleanApertureBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 32, "clap body")?;
-        let field = |at: usize| {
-            i32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
-        };
+        need_in(bytes, CLAP_BODY_LEN, "clap body")?;
+        let field = |at: usize| -> Result<i32> { Ok(be_u32(bytes, at, "clap field")? as i32) };
         Ok(Self {
-            clean_aperture_width_n: field(0),
-            clean_aperture_width_d: field(4),
-            clean_aperture_height_n: field(8),
-            clean_aperture_height_d: field(12),
-            horiz_off_n: field(16),
-            horiz_off_d: field(20),
-            vert_off_n: field(24),
-            vert_off_d: field(28),
+            clean_aperture_width_n: field(CLAP_WIDTH_N_OFFSET)?,
+            clean_aperture_width_d: field(CLAP_WIDTH_D_OFFSET)?,
+            clean_aperture_height_n: field(CLAP_HEIGHT_N_OFFSET)?,
+            clean_aperture_height_d: field(CLAP_HEIGHT_D_OFFSET)?,
+            horiz_off_n: field(CLAP_HORIZ_OFF_N_OFFSET)?,
+            horiz_off_d: field(CLAP_HORIZ_OFF_D_OFFSET)?,
+            vert_off_n: field(CLAP_VERT_OFF_N_OFFSET)?,
+            vert_off_d: field(CLAP_VERT_OFF_D_OFFSET)?,
         })
     }
 }
@@ -173,28 +172,28 @@ impl Serialize for CleanApertureBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        32
+        CLAP_BODY_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        need_out(buf, 32)?;
+        need_out(buf, CLAP_BODY_LEN)?;
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&self.clean_aperture_width_n.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.clean_aperture_width_d.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.clean_aperture_height_n.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.clean_aperture_height_d.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.horiz_off_n.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.horiz_off_d.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.vert_off_n.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.vert_off_d.to_be_bytes());
-        Ok(32)
+        buf[c..c + U32_LEN].copy_from_slice(&self.clean_aperture_width_n.to_be_bytes());
+        c += U32_LEN;
+        buf[c..c + U32_LEN].copy_from_slice(&self.clean_aperture_width_d.to_be_bytes());
+        c += U32_LEN;
+        buf[c..c + U32_LEN].copy_from_slice(&self.clean_aperture_height_n.to_be_bytes());
+        c += U32_LEN;
+        buf[c..c + U32_LEN].copy_from_slice(&self.clean_aperture_height_d.to_be_bytes());
+        c += U32_LEN;
+        buf[c..c + U32_LEN].copy_from_slice(&self.horiz_off_n.to_be_bytes());
+        c += U32_LEN;
+        buf[c..c + U32_LEN].copy_from_slice(&self.horiz_off_d.to_be_bytes());
+        c += U32_LEN;
+        buf[c..c + U32_LEN].copy_from_slice(&self.vert_off_n.to_be_bytes());
+        c += U32_LEN;
+        buf[c..c + U32_LEN].copy_from_slice(&self.vert_off_d.to_be_bytes());
+        Ok(CLAP_BODY_LEN)
     }
 }
 
@@ -210,7 +209,7 @@ pub enum ColourType {
     Nclx,
     RIcc,
     Prof,
-    Unknown([u8; 4]),
+    Unknown([u8; FOURCC_LEN]),
 }
 
 impl ColourType {
@@ -240,8 +239,8 @@ impl core::fmt::Display for ColourType {
                     self.name(),
                     code[0],
                     code[1],
-                    code[2],
-                    code[3]
+                    code[U16_LEN],
+                    code[U32_LEN - 1]
                 )
             }
             other => f.write_str(other.name()),
@@ -254,6 +253,26 @@ impl core::fmt::Display for ColourType {
 /// `transfer_characteristics(16)`, `matrix_coefficients(16)`,
 /// `full_range_flag(1)` + `reserved(7)`.
 const NCLX_PARAMS_LEN: usize = 7;
+const U16_LEN: usize = core::mem::size_of::<u16>();
+const U32_LEN: usize = core::mem::size_of::<u32>();
+const FOURCC_LEN: usize = 4;
+const PASP_BODY_LEN: usize = U32_LEN * 2;
+const CLAP_FIELD_LEN: usize = U32_LEN;
+const CLAP_FIELD_COUNT: usize = 8;
+const CLAP_BODY_LEN: usize = CLAP_FIELD_LEN * CLAP_FIELD_COUNT;
+const CLAP_WIDTH_N_OFFSET: usize = 0;
+const CLAP_WIDTH_D_OFFSET: usize = CLAP_FIELD_LEN;
+const CLAP_HEIGHT_N_OFFSET: usize = CLAP_FIELD_LEN * 2;
+const CLAP_HEIGHT_D_OFFSET: usize = CLAP_FIELD_LEN * 3;
+const CLAP_HORIZ_OFF_N_OFFSET: usize = CLAP_FIELD_LEN * 4;
+const CLAP_HORIZ_OFF_D_OFFSET: usize = CLAP_FIELD_LEN * 5;
+const CLAP_VERT_OFF_N_OFFSET: usize = CLAP_FIELD_LEN * 6;
+const CLAP_VERT_OFF_D_OFFSET: usize = CLAP_FIELD_LEN * 7;
+const NCLX_TRANSFER_OFFSET: usize = U16_LEN;
+const NCLX_MATRIX_OFFSET: usize = U16_LEN * 2;
+const NCLX_RANGE_BYTE_OFFSET: usize = U16_LEN * 3;
+const NCLX_FULL_RANGE_SHIFT: u8 = 7;
+const NCLX_RESERVED_MASK: u8 = 0x7F;
 
 /// On-screen colour parameters for colour_type 'nclx' — ISO/IEC 14496-12:2026 §12.1.5.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -313,7 +332,7 @@ impl NclxColourInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ColourInformationBox {
-    pub colour_type: [u8; 4],
+    pub colour_type: [u8; FOURCC_LEN],
     pub nclx: Option<NclxColourInfo>,
     /// Every byte after the type-specific body. For `rICC`/`prof`/unknown that
     /// is the ICC profile or opaque payload; for `nclx` it is trailing padding
@@ -326,18 +345,20 @@ impl<'a> Parse<'a> for ColourInformationBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, 4, "colr body")?;
-        let colour_type = [bytes[0], bytes[1], bytes[2], bytes[3]];
-        let rest = &bytes[4..];
+        need_in(bytes, FOURCC_LEN, "colr body")?;
+        let mut colour_type = [0u8; FOURCC_LEN];
+        colour_type.copy_from_slice(&bytes[..FOURCC_LEN]);
+        let rest = &bytes[FOURCC_LEN..];
 
         match &colour_type {
             b"nclx" => {
                 need_in(rest, NCLX_PARAMS_LEN, "colr nclx params")?;
-                let colour_primaries = u16::from_be_bytes([rest[0], rest[1]]);
-                let transfer_characteristics = u16::from_be_bytes([rest[2], rest[3]]);
-                let matrix_coefficients = u16::from_be_bytes([rest[4], rest[5]]);
-                let full_range_flag = (rest[6] >> 7) != 0;
-                let reserved = rest[6] & 0x7F;
+                let colour_primaries = be_u16(rest, 0, "colr nclx params")?;
+                let transfer_characteristics =
+                    be_u16(rest, NCLX_TRANSFER_OFFSET, "colr nclx params")?;
+                let matrix_coefficients = be_u16(rest, NCLX_MATRIX_OFFSET, "colr nclx params")?;
+                let full_range_flag = (rest[NCLX_RANGE_BYTE_OFFSET] >> NCLX_FULL_RANGE_SHIFT) != 0;
+                let reserved = rest[NCLX_RANGE_BYTE_OFFSET] & NCLX_RESERVED_MASK;
                 Ok(Self {
                     colour_type,
                     nclx: Some(NclxColourInfo::with_reserved(
@@ -374,8 +395,8 @@ impl Serialize for ColourInformationBox {
         // 4-byte `colour_type`, then either the 7 spec'd `nclx` bytes plus any
         // trailing pad, or the opaque payload.
         match &self.colour_type {
-            b"nclx" => 4 + NCLX_PARAMS_LEN + self.icc_profile.len(),
-            _ => 4 + self.icc_profile.len(),
+            b"nclx" => FOURCC_LEN + NCLX_PARAMS_LEN + self.icc_profile.len(),
+            _ => FOURCC_LEN + self.icc_profile.len(),
         }
     }
 
@@ -383,8 +404,8 @@ impl Serialize for ColourInformationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&self.colour_type);
-        c += 4;
+        buf[c..c + U32_LEN].copy_from_slice(&self.colour_type);
+        c += U32_LEN;
         if &self.colour_type == b"nclx" {
             // `serialized_len` always budgets the 7 `nclx` bytes for a `nclx`
             // colour type, so a missing `nclx` must be an error — otherwise the
@@ -396,14 +417,18 @@ impl Serialize for ColourInformationBox {
                     reason: "colour_type is nclx but no nclx params are set",
                 }));
             };
-            buf[c..c + 2].copy_from_slice(&nclx.colour_primaries.to_be_bytes());
-            c += 2;
-            buf[c..c + 2].copy_from_slice(&nclx.transfer_characteristics.to_be_bytes());
-            c += 2;
-            buf[c..c + 2].copy_from_slice(&nclx.matrix_coefficients.to_be_bytes());
-            c += 2;
-            buf[c] = ((nclx.full_range_flag as u8) << 7)
-                | broadcast_common::len::fit_mask(nclx.reserved, 0x7F, "colr.nclx.reserved")?;
+            buf[c..c + U16_LEN].copy_from_slice(&nclx.colour_primaries.to_be_bytes());
+            c += U16_LEN;
+            buf[c..c + U16_LEN].copy_from_slice(&nclx.transfer_characteristics.to_be_bytes());
+            c += U16_LEN;
+            buf[c..c + U16_LEN].copy_from_slice(&nclx.matrix_coefficients.to_be_bytes());
+            c += U16_LEN;
+            buf[c] = ((nclx.full_range_flag as u8) << NCLX_FULL_RANGE_SHIFT)
+                | broadcast_common::len::fit_mask(
+                    nclx.reserved,
+                    NCLX_RESERVED_MASK,
+                    "colr.nclx.reserved",
+                )?;
             c += 1;
         }
         // Trailing payload: the pad after an `nclx` body, or an ICC/opaque one.
