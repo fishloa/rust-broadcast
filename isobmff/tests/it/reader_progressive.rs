@@ -5,9 +5,15 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use isobmff::sample_table::{SampleRef, TrackCursor};
-use isobmff::{
-    ByteRange, Limits, ReadStep, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo,
-};
+use isobmff::{ByteRange, Limits, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo};
+
+/// Progressive fixtures the walk must exercise: enough that a checkout with
+/// no usable files fails rather than passing vacuously.
+const MIN_PROGRESSIVE_FIXTURES: usize = 10;
+/// Fixtures with a `moov` after an `mdat` the walk must find.
+const MIN_MOOV_AFTER_MDAT_FIXTURES: usize = 1;
+/// Fixtures with a `moov` before an `mdat` the walk must find.
+const MIN_MOOV_FIRST_FIXTURES: usize = 1;
 
 #[derive(Debug, Default)]
 struct Outcome {
@@ -20,7 +26,7 @@ fn drive(bytes: &[u8], config: ReaderConfig) -> isobmff::Result<Outcome> {
     let mut reader = Reader::new(config);
     let mut outcome = Outcome::default();
     loop {
-        match reader.next()? {
+        match reader.step()? {
             Step::Need(range) => {
                 outcome.requests.push(range);
                 let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
@@ -105,7 +111,7 @@ fn file_order_matches_the_lazy_cursor_per_track() {
         let mut reader = Reader::new(base_config(&bytes, SampleOrder::File));
         let mut plan = None;
         loop {
-            match reader.next().expect("reader step") {
+            match reader.step().expect("reader step") {
                 Step::Need(range) => {
                     let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
                     let end = usize::try_from(range.end()).unwrap_or(usize::MAX);
@@ -147,13 +153,14 @@ fn file_order_matches_the_lazy_cursor_per_track() {
         exercised += 1;
     }
     assert!(
-        exercised >= 10,
+        exercised >= MIN_PROGRESSIVE_FIXTURES,
         "only {exercised} progressive fixtures exercised"
     );
 }
 
 #[test]
 fn decode_time_order_is_non_decreasing_across_tracks() {
+    let mut exercised = 0usize;
     for (key, path) in fixtures() {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
@@ -164,6 +171,7 @@ fn decode_time_order_is_non_decreasing_across_tracks() {
         if outcome.samples.is_empty() {
             continue;
         }
+        exercised += 1;
         let timescales: BTreeMap<u32, u32> = outcome
             .tracks
             .iter()
@@ -204,6 +212,10 @@ fn decode_time_order_is_non_decreasing_across_tracks() {
             previous_track = Some(sample.track.value());
         }
     }
+    assert!(
+        exercised >= MIN_PROGRESSIVE_FIXTURES,
+        "only {exercised} progressive fixtures exercised"
+    );
 }
 
 fn top_level_offsets(bytes: &[u8]) -> BTreeMap<[u8; 4], u64> {
@@ -253,7 +265,10 @@ fn moov_after_mdat_is_refused_over_a_forward_only_source() {
             "{key}: {error:?}"
         );
     }
-    assert!(found >= 1, "no moov-after-mdat fixture was exercised");
+    assert!(
+        found >= MIN_MOOV_AFTER_MDAT_FIXTURES,
+        "no moov-after-mdat fixture was exercised"
+    );
 }
 
 #[test]
@@ -284,7 +299,10 @@ fn moov_first_never_requests_a_backward_range() {
             previous = range.offset;
         }
     }
-    assert!(found >= 1, "no moov-first fixture was exercised");
+    assert!(
+        found >= MIN_MOOV_FIRST_FIXTURES,
+        "no moov-first fixture was exercised"
+    );
 }
 
 // Sample counts per camera file, from
@@ -293,7 +311,7 @@ fn moov_first_never_requests_a_backward_range() {
 // is its `stsz` sample count).
 const GOPRO_COUNTS: &[(&str, &[(&str, u32)])] = &[
     (
-        "private/camera/gopro-karma.mp4",
+        "camera/gopro-karma.mp4",
         &[
             ("avc1", 362),
             ("mp4a", 566),
@@ -303,7 +321,7 @@ const GOPRO_COUNTS: &[(&str, &[(&str, u32)])] = &[
         ],
     ),
     (
-        "private/camera/gopro-max-heromode.mp4",
+        "camera/gopro-max-heromode.mp4",
         &[
             ("avc1", 315),
             ("mp4a", 493),
@@ -313,7 +331,7 @@ const GOPRO_COUNTS: &[(&str, &[(&str, u32)])] = &[
         ],
     ),
     (
-        "private/camera/gopro-hero6-ble.mp4",
+        "camera/gopro-hero6-ble.mp4",
         &[
             ("avc1", 279),
             ("mp4a", 546),
@@ -326,15 +344,11 @@ const GOPRO_COUNTS: &[(&str, &[(&str, u32)])] = &[
 
 #[test]
 fn the_camera_files_report_every_track() {
-    let Some(root) = test_fixtures::private("mp4") else {
-        eprintln!("private fixtures absent; skipping camera tracks");
-        return;
-    };
     for (name, expected) in GOPRO_COUNTS {
-        let file = root.join(name.trim_start_matches("private/"));
-        let Ok(bytes) = std::fs::read(&file) else {
-            eprintln!("{name} absent; skipping");
-            continue;
+        let Some(bytes) =
+            test_fixtures::require_bytes(&format!("mp4/{name}"), "reader_progressive")
+        else {
+            return;
         };
         let outcome = drive(&bytes, base_config(&bytes, SampleOrder::File)).expect("camera read");
         assert_eq!(outcome.tracks.len(), 5, "{name}: track count");
@@ -552,7 +566,7 @@ fn seek_lands_on_the_sync_sample_at_or_before_the_time() {
     let mut reader = Reader::new(base_config(&bytes, SampleOrder::File));
     let mut track = None;
     loop {
-        match reader.next().expect("step") {
+        match reader.step().expect("step") {
             Step::Need(range) => {
                 let start = usize::try_from(range.offset).expect("offset");
                 let end = usize::try_from(range.end()).expect("end");
@@ -569,7 +583,7 @@ fn seek_lands_on_the_sync_sample_at_or_before_the_time() {
     reader.seek_to(track, 80).expect("seek");
     let mut seen = Vec::new();
     loop {
-        match reader.next().expect("step") {
+        match reader.step().expect("step") {
             Step::Sample(sample) => seen.push(sample),
             Step::Done => break,
             _ => break,
@@ -584,7 +598,7 @@ fn seek_lands_on_the_sync_sample_at_or_before_the_time() {
 fn supply_must_match_the_outstanding_need() {
     let bytes = tiny_mp4();
     let mut reader = Reader::new(base_config(&bytes, SampleOrder::File));
-    let Step::Need(range) = reader.next().expect("need") else {
+    let Step::Need(range) = reader.step().expect("need") else {
         panic!("expected a need");
     };
     let error = reader

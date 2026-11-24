@@ -165,8 +165,7 @@ pub use nalu_types::{
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use plan::SamplePlan;
 pub use reader::{
-    ByteRange, Mode, ReadStep, Reader, ReaderConfig, SampleEntryInfo, SampleOrder, Source, Step,
-    TrackInfo,
+    ByteRange, Mode, Reader, ReaderConfig, SampleEntryInfo, SampleOrder, Source, Step, TrackInfo,
 };
 pub use sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VVCSampleEntry,

@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
 use broadcast_common::Parse;
-use isobmff::{ByteRange, ReadStep, Reader, ReaderConfig, SampleOrder, Step};
+use isobmff::{ByteRange, Reader, ReaderConfig, SampleOrder, Step};
 
 #[global_allocator]
 static PEAK: test_alloc::ProcessPeak = test_alloc::ProcessPeak::new();
@@ -55,7 +55,7 @@ fn drive(path: &std::path::Path, order: SampleOrder) -> (u64, u64, Vec<ByteRange
     let mut samples = 0u64;
     let mut requests = Vec::new();
     loop {
-        match reader.next().expect("reader step") {
+        match reader.step().expect("reader step") {
             Step::Need(range) => {
                 requests.push(range);
                 source

@@ -1,6 +1,6 @@
 #![no_main]
 
-use isobmff::{Limits, ReadStep, Reader, ReaderConfig, SampleOrder, Source, Step};
+use isobmff::{Limits, Reader, ReaderConfig, SampleOrder, Source, Step};
 use libfuzzer_sys::fuzz_target;
 
 /// Caps small enough that a hostile table cannot allocate its way out of the
@@ -26,7 +26,7 @@ fn drive(data: &[u8], order: SampleOrder, source: Source) {
         .with_limits(fuzz_limits());
     let mut reader = Reader::new(config);
     for _ in 0..MAX_STEPS {
-        match reader.next() {
+        match reader.step() {
             Ok(Step::Need(range)) => {
                 let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
                 let end = usize::try_from(range.end()).unwrap_or(usize::MAX);

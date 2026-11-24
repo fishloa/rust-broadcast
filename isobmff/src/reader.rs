@@ -10,7 +10,7 @@
 //! source that file is a typed
 //! [`Error::MoovAfterMdatForwardOnly`].
 //!
-//! Driving is [`Reader::next`] / [`Reader::supply`]: each `next` returns either
+//! Driving is [`Reader::step`] / [`Reader::supply`]: each `step` returns either
 //! a [`Step::Need`] range to supply or a typed step, and `supply` accepts
 //! exactly the outstanding range. See the streaming-first design §4.2 and §4.4
 //! (`docs/superpowers/specs/2026-11-24-streaming-first-containers-design.md`)
@@ -77,7 +77,7 @@ impl ByteRange {
     }
 }
 
-/// The order [`Reader::next`] yields [`Step::Sample`] steps in.
+/// The order [`Reader::step`] yields [`Step::Sample`] steps in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum SampleOrder {
@@ -285,7 +285,7 @@ pub struct Reader {
 
 impl Reader {
     /// Create a reader. It issues its first [`Step::Need`] from the first
-    /// [`Reader::next`].
+    /// [`Reader::step`].
     #[must_use]
     pub fn new(config: ReaderConfig) -> Self {
         Self {
@@ -380,19 +380,13 @@ impl Reader {
     }
 }
 
-/// The reader's one drive method.
-///
-/// It is a trait method rather than an inherent `next` so it cannot be
-/// mistaken for [`Iterator::next`]: each step borrows the reader (the
-/// [`Step::Tracks`] arm hands out its own track table), which `Iterator`'s
-/// signature cannot express.
-pub trait ReadStep {
+impl Reader {
     /// The next step.
-    fn next(&mut self) -> Result<Step<'_>>;
-}
-
-impl ReadStep for Reader {
-    fn next(&mut self) -> Result<Step<'_>> {
+    ///
+    /// Named `step`, not `next`: each step borrows the reader (the
+    /// [`Step::Tracks`] arm hands out its own track table), which
+    /// [`Iterator::next`]'s signature cannot express.
+    pub fn step(&mut self) -> Result<Step<'_>> {
         if let Some(pending) = self.pending {
             return Ok(Step::Need(pending.range()));
         }

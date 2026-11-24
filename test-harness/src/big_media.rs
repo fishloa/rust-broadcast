@@ -737,7 +737,7 @@ fn first_sample_entry(
 mod big_mp4_tests {
     use super::*;
     use isobmff::sample_table::SampleRef;
-    use isobmff::{ReadStep, Reader, ReaderConfig, SampleOrder, Step};
+    use isobmff::{Reader, ReaderConfig, SampleOrder, Step};
 
     const SMALL_TARGET: u64 = MIB;
     const SMALL_SAMPLE_COUNT: u32 = 20;
@@ -756,7 +756,7 @@ mod big_mp4_tests {
         let mut reader = Reader::new(config);
         let mut samples = Vec::new();
         loop {
-            match reader.next().expect("reader step") {
+            match reader.step().expect("reader step") {
                 Step::Need(range) => {
                     let start = usize::try_from(range.offset).expect("offset");
                     let end = usize::try_from(range.end()).expect("end");

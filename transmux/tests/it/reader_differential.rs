@@ -9,9 +9,15 @@ use std::path::{Path, PathBuf};
 
 use broadcast_common::Unpackage;
 use isobmff::sample_table::SampleRef;
-use isobmff::{ReadStep, Reader, ReaderConfig, SampleOrder, Step};
+use isobmff::{Reader, ReaderConfig, SampleOrder, Step};
 use transmux::pipeline::CodecConfig;
 use transmux::progressive_demux::ProgressiveDemux;
+
+/// Tracks the corpus walk must compare: a checkout with no usable files fails
+/// rather than passing vacuously.
+const MIN_DIFFERENTIAL_TRACKS: usize = 10;
+/// Samples the corpus walk must compare.
+const MIN_DIFFERENTIAL_SAMPLES: usize = 1000;
 
 /// Codecs whose sample bytes `normalise_track_nal_lengths` may rewrite (an
 /// AVC/HEVC `lengthSizeMinusOne` other than 3). Their per-sample timing still
@@ -65,7 +71,7 @@ fn reader_rows(bytes: &[u8]) -> isobmff::Result<(Vec<isobmff::TrackId>, Vec<Samp
     let mut samples = Vec::new();
     let mut tracks = Vec::new();
     loop {
-        match reader.next()? {
+        match reader.step()? {
             Step::Need(range) => {
                 let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
                 let end = usize::try_from(range.end()).unwrap_or(usize::MAX);
@@ -168,11 +174,11 @@ fn the_reader_agrees_with_the_progressive_demuxer() {
         }
     }
     assert!(
-        compared_tracks >= 10,
+        compared_tracks >= MIN_DIFFERENTIAL_TRACKS,
         "only {compared_tracks} tracks compared"
     );
     assert!(
-        compared_samples >= 1000,
+        compared_samples >= MIN_DIFFERENTIAL_SAMPLES,
         "only {compared_samples} samples compared"
     );
 }
