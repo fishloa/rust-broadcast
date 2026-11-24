@@ -232,13 +232,17 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
                 .map(|c| {
                     if id_type {
                         TuwaLibraryRef::Peid {
-                            pid: Pid::from_wire_masked(u16::from_be_bytes([c[0], c[1]]) >> PEID_SHIFT),
+                            pid: Pid::from_wire_masked(
+                                u16::from_be_bytes([c[0], c[1]]) >> PEID_SHIFT,
+                            ),
                             reserved: ReservedOnes::from_bits(u64::from(c[1] & TAIL_BITS_MASK)),
                         }
                     } else {
                         TuwaLibraryRef::StreamId {
                             stream_id: c[0],
-                            reserved_5: ReservedOnes::from_bits(u64::from(c[1] >> RESERVED_5_SHIFT)),
+                            reserved_5: ReservedOnes::from_bits(u64::from(
+                                c[1] >> RESERVED_5_SHIFT,
+                            )),
                             reserved_3: ReservedOnes::from_bits(u64::from(c[1] & TAIL_BITS_MASK)),
                         }
                     }
@@ -313,10 +317,10 @@ impl Serialize for TuwaAvs3VideoDescriptor {
         write_descriptor_header(buf, TAG, self.body_len())?;
         buf[HEADER_LEN] = self.profile_id;
         buf[HEADER_LEN + 1] = self.level_id;
-        buf[HEADER_LEN + FRAME_RATE_BYTE_OFFSET] =
-            (u8::from(self.multiple_frame_rate_flag) << MULTIPLE_FRAME_RATE_SHIFT)
-                | (frc << FRAME_RATE_CODE_SHIFT)
-                | sp;
+        buf[HEADER_LEN + FRAME_RATE_BYTE_OFFSET] = (u8::from(self.multiple_frame_rate_flag)
+            << MULTIPLE_FRAME_RATE_SHIFT)
+            | (frc << FRAME_RATE_CODE_SHIFT)
+            | sp;
         buf[HEADER_LEN + CHROMA_BYTE_OFFSET] = (cf << CHROMA_FORMAT_SHIFT)
             | (u8::from(self.temporal_id_flag) << TEMPORAL_ID_SHIFT)
             | (u8::from(self.td_mode_flag) << TD_MODE_SHIFT)
@@ -338,11 +342,7 @@ impl Serialize for TuwaAvs3VideoDescriptor {
                 Some(TuwaLibraryRef::StreamId { .. }) => false,
                 None => r.id_type_flag_if_empty,
             };
-            let n = fit_bits(
-                r.refs.len() as u64,
-                NUM_REFS_BITS,
-                "num_ref_library_stream",
-            )? as u8;
+            let n = fit_bits(r.refs.len() as u64, NUM_REFS_BITS, "num_ref_library_stream")? as u8;
             buf[i] = (n << NUM_REFS_SHIFT) | u8::from(id_type);
             i += 1;
             for entry in &r.refs {

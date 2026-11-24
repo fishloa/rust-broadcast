@@ -19,8 +19,10 @@ const BODY_LEN: u8 = 3;
 const RESERVED_BITS: u32 = 2;
 /// Mask of the 22-bit `maximum_bitrate` field.
 const MAXIMUM_BITRATE_MASK: u32 = (1 << MAXIMUM_BITRATE_BITS) - 1;
-/// Shift of the 2-bit `reserved` field in the three-byte wire value.
-const RESERVED_SHIFT: u32 = MAXIMUM_BITRATE_BITS;
+/// Shift of the 2-bit `reserved` field in the first body byte.
+const RESERVED_SHIFT: u32 = 6;
+/// Shift of the 2-bit `reserved` field in the packed three-byte wire value.
+const RESERVED_PACK_SHIFT: u32 = MAXIMUM_BITRATE_BITS;
 /// Body offset of the least significant wire byte.
 const LOW_BYTE_OFFSET: usize = 2;
 /// Default of the 2-bit `reserved` ahead of `maximum_bitrate` (H.222.0 Table
@@ -97,7 +99,7 @@ impl Serialize for MaximumBitrateDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         let mb = mb as u32;
-        let packed = ((self.reserved.get() as u32) << RESERVED_SHIFT) | mb;
+        let packed = ((self.reserved.get() as u32) << RESERVED_PACK_SHIFT) | mb;
         buf[HEADER_LEN..HEADER_LEN + usize::from(BODY_LEN)]
             .copy_from_slice(&packed.to_be_bytes()[1..]);
         Ok(len)

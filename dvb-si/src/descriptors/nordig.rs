@@ -43,8 +43,6 @@ const SERVICE_FLAGS_OFFSET: usize = 2;
 const SERVICE_LCN_LO_OFFSET: usize = 3;
 /// Shift of the high `logical_channel_number` bits.
 const LCN_HI_SHIFT: u16 = 8;
-/// Mask of the low `logical_channel_number` byte.
-const LCN_LO_MASK: u16 = 0xFF;
 
 /// Default of the 1-bit per-entry `reserved` of the v1 descriptor: `1`.
 /// NorDig Unified Requirements v3.2.2 §12.2.9.2, Table 12.12: "All 'reserved'
@@ -164,8 +162,7 @@ impl Serialize for NordigLogicalChannelV1 {
                 | ((entry.reserved.get() as u8) << V1_RESERVED_SHIFT)
                 | ((entry.logical_channel_number >> LCN_HI_SHIFT) as u8 & V1_LCN_HI_MASK);
             buf[offset + SERVICE_FLAGS_OFFSET] = flags;
-            buf[offset + SERVICE_LCN_LO_OFFSET] =
-                (entry.logical_channel_number & LCN_LO_MASK) as u8;
+            buf[offset + SERVICE_LCN_LO_OFFSET] = entry.logical_channel_number as u8;
             offset += V1_ENTRY_LEN;
         }
         Ok(len)
@@ -278,7 +275,11 @@ impl<'a> Parse<'a> for NordigLogicalChannelV2 {
         )?;
         let mut channel_lists = Vec::new();
         while !body.is_empty() {
-            need_in(body, V2_HEADER_LEN, "NordigLogicalChannelV2 channel_list header")?;
+            need_in(
+                body,
+                V2_HEADER_LEN,
+                "NordigLogicalChannelV2 channel_list header",
+            )?;
             let channel_list_id = body[0];
             let name_len = body[CHANNEL_LIST_NAME_LENGTH_OFFSET] as usize;
             let name_start = CHANNEL_LIST_NAME_START;
@@ -290,8 +291,11 @@ impl<'a> Parse<'a> for NordigLogicalChannelV2 {
             )?;
             let channel_list_name = body[name_start..name_end].to_vec();
             let cc_start = name_end;
-            let country_code =
-                LangCode(body[cc_start..cc_start + COUNTRY_CODE_LEN].try_into().unwrap_or_default());
+            let country_code = LangCode(
+                body[cc_start..cc_start + COUNTRY_CODE_LEN]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
             let desc_len = body[cc_start + COUNTRY_CODE_LEN] as usize;
             let svc_start = cc_start + COUNTRY_CODE_LEN + CHANNEL_LIST_DESCRIPTOR_LENGTH_LEN;
             let svc_end = svc_start + desc_len;
@@ -384,8 +388,7 @@ impl Serialize for NordigLogicalChannelV2 {
                     | ((svc.reserved.get() as u8) << V2_RESERVED_SHIFT)
                     | ((svc.logical_channel_number >> LCN_HI_SHIFT) as u8 & V2_LCN_HI_MASK);
                 buf[offset + SERVICE_FLAGS_OFFSET] = flags;
-                buf[offset + SERVICE_LCN_LO_OFFSET] =
-                    (svc.logical_channel_number & LCN_LO_MASK) as u8;
+                buf[offset + SERVICE_LCN_LO_OFFSET] = svc.logical_channel_number as u8;
                 offset += V2_SERVICE_ENTRY_LEN;
             }
         }

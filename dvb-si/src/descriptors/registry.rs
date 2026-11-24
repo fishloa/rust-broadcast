@@ -566,19 +566,24 @@ impl<'a> Iterator for ExtRegistryIter<'_, 'a> {
         if tag == crate::descriptors::extension::TAG && len >= 1 {
             let tag_extension = full[EXTENSION_TAG_OFFSET];
             if self.ext_reg.has_custom(tag_extension) {
-                return Some(match self.ext_reg.parse_body(tag_extension, &full[EXTENSION_BODY_OFFSET..]) {
-                    Ok(super::extension::registry::RegisteredExtension::Custom {
-                        tag_extension,
-                        value,
-                    }) => Ok(ExtIterItem::CustomExtension {
-                        tag_extension,
-                        value,
-                    }),
-                    Ok(super::extension::registry::RegisteredExtension::Builtin(d)) => {
-                        Ok(ExtIterItem::Descriptor(AnyDescriptor::Extension(d)))
-                    }
-                    Err(e) => Err(e),
-                });
+                return Some(
+                    match self
+                        .ext_reg
+                        .parse_body(tag_extension, &full[EXTENSION_BODY_OFFSET..])
+                    {
+                        Ok(super::extension::registry::RegisteredExtension::Custom {
+                            tag_extension,
+                            value,
+                        }) => Ok(ExtIterItem::CustomExtension {
+                            tag_extension,
+                            value,
+                        }),
+                        Ok(super::extension::registry::RegisteredExtension::Builtin(d)) => {
+                            Ok(ExtIterItem::Descriptor(AnyDescriptor::Extension(d)))
+                        }
+                        Err(e) => Err(e),
+                    },
+                );
             }
         }
 

@@ -43,12 +43,12 @@ impl<'a> Parse<'a> for TimeShiftedEventDescriptor {
                 reason: "time_shifted_event_descriptor length must be 4",
             });
         }
-        let (hdr, _) = body
-            .split_first_chunk::<{ size_of::<u32>() }>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "time_shifted_event_descriptor length must be 4",
-            })?;
+        let (hdr, _) =
+            body.split_first_chunk::<{ size_of::<u32>() }>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "time_shifted_event_descriptor length must be 4",
+                })?;
         Ok(Self {
             reference_service_id: u16::from_be_bytes([
                 hdr[REFERENCE_SERVICE_ID_OFFSET],

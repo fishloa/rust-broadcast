@@ -63,7 +63,8 @@ impl<'a> Parse<'a> for VideoWindowDescriptor {
                 reason: "video_window_descriptor length must equal 4",
             });
         }
-        let horizontal_offset = (u16::from(body[0]) << FIELD_HI_SHIFT) | (u16::from(body[1]) >> FIELD_LO_SHIFT);
+        let horizontal_offset =
+            (u16::from(body[0]) << FIELD_HI_SHIFT) | (u16::from(body[1]) >> FIELD_LO_SHIFT);
         let vertical_offset = ((u16::from(body[1]) & FIELD2_HI_MASK) << FIELD2_HI_SHIFT)
             | (u16::from(body[MIDDLE_BYTE_OFFSET]) << FIELD2_MID_SHIFT)
             | (u16::from(body[LOW_NIBBLE_OFFSET]) >> NIBBLE_SHIFT);
@@ -95,15 +96,27 @@ impl Serialize for VideoWindowDescriptor {
             SIZE_BITS,
             "horizontal_offset",
         )? as u16;
-        broadcast_common::len::fit_bits(u64::from(self.vertical_offset), SIZE_BITS, "vertical_offset")?;
-        broadcast_common::len::fit_bits(u64::from(self.window_priority), u32::from(NIBBLE_MASK.count_ones()), "window_priority")?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.vertical_offset),
+            SIZE_BITS,
+            "vertical_offset",
+        )?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.window_priority),
+            NIBBLE_MASK.count_ones(),
+            "window_priority",
+        )?;
         buf[HEADER_LEN] = (ho >> FIELD_HI_SHIFT) as u8;
-        buf[HEADER_LEN + 1] =
-            ((ho & SIZE_MASK) << FIELD_LO_SHIFT) as u8
+        buf[HEADER_LEN + 1] = ((ho & SIZE_MASK) << FIELD_LO_SHIFT) as u8
             | ((self.vertical_offset >> FIELD2_HI_SHIFT) as u8 & FIELD2_HI_MASK as u8);
         buf[HEADER_LEN + MIDDLE_BYTE_OFFSET] = (self.vertical_offset >> FIELD2_MID_SHIFT) as u8;
-        buf[HEADER_LEN + LOW_NIBBLE_OFFSET] = ((self.vertical_offset & u16::from(NIBBLE_MASK)) << NIBBLE_SHIFT) as u8
-            | broadcast_common::len::fit_mask(self.window_priority, NIBBLE_MASK, "window_priority")?;
+        buf[HEADER_LEN + LOW_NIBBLE_OFFSET] = ((self.vertical_offset & u16::from(NIBBLE_MASK))
+            << NIBBLE_SHIFT) as u8
+            | broadcast_common::len::fit_mask(
+                self.window_priority,
+                NIBBLE_MASK,
+                "window_priority",
+            )?;
         Ok(len)
     }
 }

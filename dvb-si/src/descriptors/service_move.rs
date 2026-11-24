@@ -17,8 +17,7 @@ const BODY_LEN: u8 = 6;
 /// Offset of `new_original_network_id` in the body.
 const NEW_ORIGINAL_NETWORK_ID_OFFSET: usize = 0;
 /// Offset of `new_transport_stream_id` in the body.
-const NEW_TRANSPORT_STREAM_ID_OFFSET: usize =
-    NEW_ORIGINAL_NETWORK_ID_OFFSET + size_of::<u16>();
+const NEW_TRANSPORT_STREAM_ID_OFFSET: usize = NEW_ORIGINAL_NETWORK_ID_OFFSET + size_of::<u16>();
 /// Offset of `new_service_id` in the body.
 const NEW_SERVICE_ID_OFFSET: usize = NEW_TRANSPORT_STREAM_ID_OFFSET + size_of::<u16>();
 
@@ -49,12 +48,12 @@ impl<'a> Parse<'a> for ServiceMoveDescriptor {
                 reason: "service_move_descriptor length must equal 6",
             });
         }
-        let (hdr, _) = body
-            .split_first_chunk::<{ BODY_LEN as usize }>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "service_move_descriptor length must equal 6",
-            })?;
+        let (hdr, _) =
+            body.split_first_chunk::<{ BODY_LEN as usize }>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "service_move_descriptor length must equal 6",
+                })?;
         Ok(Self {
             new_original_network_id: u16::from_be_bytes([
                 hdr[NEW_ORIGINAL_NETWORK_ID_OFFSET],
@@ -83,11 +82,13 @@ impl Serialize for ServiceMoveDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN + NEW_ORIGINAL_NETWORK_ID_OFFSET..HEADER_LEN + NEW_TRANSPORT_STREAM_ID_OFFSET]
+        buf[HEADER_LEN + NEW_ORIGINAL_NETWORK_ID_OFFSET
+            ..HEADER_LEN + NEW_TRANSPORT_STREAM_ID_OFFSET]
             .copy_from_slice(&self.new_original_network_id.to_be_bytes());
         buf[HEADER_LEN + NEW_TRANSPORT_STREAM_ID_OFFSET..HEADER_LEN + NEW_SERVICE_ID_OFFSET]
             .copy_from_slice(&self.new_transport_stream_id.to_be_bytes());
-        buf[HEADER_LEN + NEW_SERVICE_ID_OFFSET..HEADER_LEN + NEW_SERVICE_ID_OFFSET + size_of::<u16>()]
+        buf[HEADER_LEN + NEW_SERVICE_ID_OFFSET
+            ..HEADER_LEN + NEW_SERVICE_ID_OFFSET + size_of::<u16>()]
             .copy_from_slice(&self.new_service_id.to_be_bytes());
         Ok(len)
     }

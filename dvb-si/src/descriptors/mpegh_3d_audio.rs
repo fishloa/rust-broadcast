@@ -244,7 +244,11 @@ impl MpegH3dAudio {
         );
         out.push(
             ((self.reserved_layout.get() as u8) << UPPER_BIT_SHIFT)
-                | f(self.reference_channel_layout, WIDTH_6, "referenceChannelLayout")?,
+                | f(
+                    self.reference_channel_layout,
+                    WIDTH_6,
+                    "referenceChannelLayout",
+                )?,
         );
         if let Some(sets) = &self.compatible_sets {
             out.push(fit_u8(sets.len(), "numCompatibleSets")?);
@@ -598,8 +602,11 @@ impl MpegH3dAudioScene {
     pub(crate) fn parse(r: &mut Reader<'_>) -> Result<Self> {
         let flags = r.u8()?;
         let scene_info_id = r.u8()?;
-        let (group_present, switch_present, preset_present) =
-            (flags & HIGH_BIT_MASK != 0, flags & UPPER_BIT_MASK != 0, flags & MID_BIT_MASK != 0);
+        let (group_present, switch_present, preset_present) = (
+            flags & HIGH_BIT_MASK != 0,
+            flags & UPPER_BIT_MASK != 0,
+            flags & MID_BIT_MASK != 0,
+        );
         let mut reserved_groups = ReservedOnes::FILL;
         let groups = if group_present {
             let b = r.u8()?;
@@ -661,7 +668,10 @@ impl MpegH3dAudioScene {
         );
         out.push(self.scene_info_id);
         if let Some(groups) = &self.groups {
-            out.push(((self.reserved_groups.get() as u8) << HIGH_BIT_SHIFT) | n(groups.len(), WIDTH_7, "numGroups")?);
+            out.push(
+                ((self.reserved_groups.get() as u8) << HIGH_BIT_SHIFT)
+                    | n(groups.len(), WIDTH_7, "numGroups")?,
+            );
             for g in groups {
                 write_group(g, out)?;
             }
@@ -677,7 +687,8 @@ impl MpegH3dAudioScene {
         }
         if let Some(ps) = &self.presets {
             out.push(
-                ((self.reserved_presets.get() as u8) << MID_BIT_SHIFT) | n(ps.len(), WIDTH_5, "mae_numGroupPresets")?,
+                ((self.reserved_presets.get() as u8) << MID_BIT_SHIFT)
+                    | n(ps.len(), WIDTH_5, "mae_numGroupPresets")?,
             );
             for p in ps {
                 write_preset(p, out)?;
@@ -692,7 +703,11 @@ fn parse_group(r: &mut Reader<'_>) -> Result<SceneGroup> {
     let b0 = r.u8()?;
     let b1 = r.u8()?;
     let b2 = r.u8()?;
-    let (allow_pos, allow_gain, has_lang) = (b1 & SUB_LOW_BIT_MASK != 0, b1 & LEAST_BIT_MASK != 0, b1 & LOW_1_BITS != 0);
+    let (allow_pos, allow_gain, has_lang) = (
+        b1 & SUB_LOW_BIT_MASK != 0,
+        b1 & LEAST_BIT_MASK != 0,
+        b1 & LOW_1_BITS != 0,
+    );
     let position = if allow_pos {
         let a = r.u8()?;
         let b = r.u8()?;
@@ -747,7 +762,9 @@ fn parse_group(r: &mut Reader<'_>) -> Result<SceneGroup> {
 }
 
 fn write_group(g: &SceneGroup, out: &mut Vec<u8>) -> Result<()> {
-    out.push(((g.reserved_id.get() as u8) << HIGH_BIT_SHIFT) | f(g.group_id, WIDTH_7, "mae_groupID")?);
+    out.push(
+        ((g.reserved_id.get() as u8) << HIGH_BIT_SHIFT) | f(g.group_id, WIDTH_7, "mae_groupID")?,
+    );
     out.push(
         ((g.reserved_flags.get() as u8) << MID_BIT_SHIFT)
             | (u8::from(g.allow_on_off) << LOWER_BIT_SHIFT)
@@ -756,7 +773,10 @@ fn write_group(g: &SceneGroup, out: &mut Vec<u8>) -> Result<()> {
             | (u8::from(g.gain.is_some()) << LEAST_BIT_SHIFT)
             | u8::from(g.content_language.is_some()),
     );
-    out.push(((g.reserved_kind.get() as u8) << LOWER_BIT_SHIFT) | f(g.content_kind, WIDTH_4, "mae_contentKind")?);
+    out.push(
+        ((g.reserved_kind.get() as u8) << LOWER_BIT_SHIFT)
+            | f(g.content_kind, WIDTH_4, "mae_contentKind")?,
+    );
     if let Some(p) = &g.position {
         out.push(
             ((p.reserved_min_az.get() as u8) << HIGH_BIT_SHIFT)
@@ -781,10 +801,12 @@ fn write_group(g: &SceneGroup, out: &mut Vec<u8>) -> Result<()> {
     }
     if let Some(gn) = &g.gain {
         out.push(
-            ((gn.reserved_min.get() as u8) << UPPER_BIT_SHIFT) | f(gn.min_gain, WIDTH_6, "mae_interactivityMinGain")?,
+            ((gn.reserved_min.get() as u8) << UPPER_BIT_SHIFT)
+                | f(gn.min_gain, WIDTH_6, "mae_interactivityMinGain")?,
         );
         out.push(
-            ((gn.reserved_max.get() as u8) << MID_BIT_SHIFT) | f(gn.max_gain, WIDTH_5, "mae_interactivityMaxGain")?,
+            ((gn.reserved_max.get() as u8) << MID_BIT_SHIFT)
+                | f(gn.max_gain, WIDTH_5, "mae_interactivityMaxGain")?,
         );
     }
     if let Some(l) = &g.content_language {
@@ -836,11 +858,18 @@ fn write_switch_group(sg: &SwitchGroup, out: &mut Vec<u8>) -> Result<()> {
             | n(sg.members.len() - 1, WIDTH_5, "mae_bsSwitchGroupNumMembers")?,
     );
     for m in &sg.members {
-        out.push(((m.reserved.get() as u8) << HIGH_BIT_SHIFT) | f(m.member_id, WIDTH_7, "mae_switchGroupMemberID")?);
+        out.push(
+            ((m.reserved.get() as u8) << HIGH_BIT_SHIFT)
+                | f(m.member_id, WIDTH_7, "mae_switchGroupMemberID")?,
+        );
     }
     out.push(
         ((sg.reserved_default.get() as u8) << HIGH_BIT_SHIFT)
-            | f(sg.default_group_id, WIDTH_7, "mae_switchGroupDefaultGroupID")?,
+            | f(
+                sg.default_group_id,
+                WIDTH_7,
+                "mae_switchGroupDefaultGroupID",
+            )?,
     );
     Ok(())
 }
@@ -903,14 +932,27 @@ fn write_preset(p: &GroupPreset, out: &mut Vec<u8>) -> Result<()> {
             reason: "group preset needs at least one condition (mae_numGroupPresetConditions + 1)",
         });
     }
-    out.push(((p.reserved_id.get() as u8) << MID_BIT_SHIFT) | f(p.preset_id, WIDTH_5, "mae_groupPresetID")?);
-    out.push(((p.reserved_kind.get() as u8) << MID_BIT_SHIFT) | f(p.preset_kind, WIDTH_5, "mae_groupPresetKind")?);
+    out.push(
+        ((p.reserved_id.get() as u8) << MID_BIT_SHIFT)
+            | f(p.preset_id, WIDTH_5, "mae_groupPresetID")?,
+    );
+    out.push(
+        ((p.reserved_kind.get() as u8) << MID_BIT_SHIFT)
+            | f(p.preset_kind, WIDTH_5, "mae_groupPresetKind")?,
+    );
     out.push(
         ((p.reserved_conditions.get() as u8) << LOWER_BIT_SHIFT)
-            | n(p.conditions.len() - 1, WIDTH_4, "mae_numGroupPresetConditions")?,
+            | n(
+                p.conditions.len() - 1,
+                WIDTH_4,
+                "mae_numGroupPresetConditions",
+            )?,
     );
     for c in &p.conditions {
-        out.push((f(c.group_id, WIDTH_7, "mae_groupPresetGroupID")? << LEAST_BIT_SHIFT) | u8::from(c.detail.is_some()));
+        out.push(
+            (f(c.group_id, WIDTH_7, "mae_groupPresetGroupID")? << LEAST_BIT_SHIFT)
+                | u8::from(c.detail.is_some()),
+        );
         if let Some(d) = &c.detail {
             out.push(
                 ((d.reserved.get() as u8) << LOWER_BIT_SHIFT)
@@ -1016,7 +1058,9 @@ fn write_entries(
     out: &mut Vec<u8>,
 ) -> Result<()> {
     for e in entries {
-        out.push((f(e.reserved, WIDTH_8 - id_bits, "reserved")? << id_bits) | f(e.id, id_bits, id_name)?);
+        out.push(
+            (f(e.reserved, WIDTH_8 - id_bits, "reserved")? << id_bits) | f(e.id, id_bits, id_name)?,
+        );
         out.push(fit_u8(e.data.len(), len_name)?);
         out.extend_from_slice(&e.data);
     }
@@ -1059,7 +1103,8 @@ impl MpegH3dAudioTextLabel {
     pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<()> {
         out.push(self.scene_info_id);
         out.push(
-            ((self.reserved.get() as u8) << LOWER_BIT_SHIFT) | n(self.languages.len(), WIDTH_4, "numDescLanguages")?,
+            ((self.reserved.get() as u8) << LOWER_BIT_SHIFT)
+                | n(self.languages.len(), WIDTH_4, "numDescLanguages")?,
         );
         for l in &self.languages {
             out.extend_from_slice(&l.language);
@@ -1201,14 +1246,18 @@ impl MpegH3dAudioMultiStream {
     }
 
     pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<()> {
-        out.push((u8::from(self.main.is_some()) << HIGH_BIT_SHIFT) | f(self.this_stream_id, WIDTH_7, "thisStreamID")?);
+        out.push(
+            (u8::from(self.main.is_some()) << HIGH_BIT_SHIFT)
+                | f(self.this_stream_id, WIDTH_7, "thisStreamID")?,
+        );
         if let Some(m) = &self.main {
             out.push(
                 ((m.reserved_aux.get() as u8) << HIGH_BIT_SHIFT)
                     | f(m.num_auxiliary_streams, WIDTH_7, "numAuxiliaryStreams")?,
             );
             out.push(
-                ((m.reserved_groups.get() as u8) << HIGH_BIT_SHIFT) | n(m.groups.len(), WIDTH_7, "mae_numGroups")?,
+                ((m.reserved_groups.get() as u8) << HIGH_BIT_SHIFT)
+                    | n(m.groups.len(), WIDTH_7, "mae_numGroups")?,
             );
             for g in &m.groups {
                 if g.is_in_main_stream != g.auxiliary.is_none() {
@@ -1217,7 +1266,10 @@ impl MpegH3dAudioMultiStream {
                         reason: "multi-stream group: auxiliary location must be present iff isInMainStream == 0",
                     });
                 }
-                out.push((f(g.group_id, WIDTH_7, "mae_groupID")? << LEAST_BIT_SHIFT) | u8::from(g.is_in_main_stream));
+                out.push(
+                    (f(g.group_id, WIDTH_7, "mae_groupID")? << LEAST_BIT_SHIFT)
+                        | u8::from(g.is_in_main_stream),
+                );
                 if let Some(a) = &g.auxiliary {
                     out.push(
                         (u8::from(a.is_in_ts) << HIGH_BIT_SHIFT)
@@ -1440,14 +1492,19 @@ fn write_scope(s: &DrcScope, group_types: &[u8], out_tail: &mut Vec<u8>) -> Resu
                     reason: "DrcScope::Group type does not carry an mae_groupID here",
                 });
             }
-            out_tail.push(((reserved.get() as u8) << HIGH_BIT_SHIFT) | f(group_id, WIDTH_7, "mae_groupID")?);
+            out_tail.push(
+                ((reserved.get() as u8) << HIGH_BIT_SHIFT) | f(group_id, WIDTH_7, "mae_groupID")?,
+            );
             Ok(kind)
         }
         DrcScope::Preset {
             reserved,
             preset_id,
         } => {
-            out_tail.push(((reserved.get() as u8) << MID_BIT_SHIFT) | f(preset_id, WIDTH_5, "mae_groupPresetID")?);
+            out_tail.push(
+                ((reserved.get() as u8) << MID_BIT_SHIFT)
+                    | f(preset_id, WIDTH_5, "mae_groupPresetID")?,
+            );
             Ok(PRESET_SCOPE_TYPE)
         }
     }
@@ -1512,7 +1569,11 @@ impl MpegH3dAudioDrcLoudness {
         if let Some(i) = &self.info {
             out.push(
                 ((i.reserved_drc.get() as u8) << UPPER_BIT_SHIFT)
-                    | n(i.drc_instructions.len(), WIDTH_6, "drcInstructionsUniDrcCount")?,
+                    | n(
+                        i.drc_instructions.len(),
+                        WIDTH_6,
+                        "drcInstructionsUniDrcCount",
+                    )?,
             );
             out.push(
                 ((i.reserved_loudness.get() as u8) << UPPER_BIT_SHIFT)
@@ -1534,7 +1595,10 @@ impl MpegH3dAudioDrcLoudness {
                 out.extend_from_slice(&e.loudness_info);
             }
             for m in &i.downmix_definitions {
-                out.push(((m.reserved.get() as u8) << HIGH_BIT_SHIFT) | f(m.downmix_id, WIDTH_7, "downmixId")?);
+                out.push(
+                    ((m.reserved.get() as u8) << HIGH_BIT_SHIFT)
+                        | f(m.downmix_id, WIDTH_7, "downmixId")?,
+                );
                 out.push(
                     (f(m.downmix_type, WIDTH_2, "downmixType")? << UPPER_BIT_SHIFT)
                         | f(m.cicp_speaker_layout_idx, WIDTH_6, "CICPspeakerLayoutIdx")?,
@@ -1601,8 +1665,13 @@ fn write_drc_instructions(d: &DrcInstructions, out: &mut Vec<u8>) -> Result<()> 
     let kind = write_scope(&d.scope, DRC_GROUP_TYPES, &mut tail)?;
     out.push(((d.reserved_type.get() as u8) << SUB_LOW_BIT_SHIFT) | kind);
     out.extend_from_slice(&tail);
-    out.push(((d.reserved_set.get() as u8) << UPPER_BIT_SHIFT) | f(d.drc_set_id, WIDTH_6, "drcSetId")?);
-    out.push(((d.reserved_downmix.get() as u8) << HIGH_BIT_SHIFT) | f(d.downmix_id, WIDTH_7, "downmixId")?);
+    out.push(
+        ((d.reserved_set.get() as u8) << UPPER_BIT_SHIFT) | f(d.drc_set_id, WIDTH_6, "drcSetId")?,
+    );
+    out.push(
+        ((d.reserved_downmix.get() as u8) << HIGH_BIT_SHIFT)
+            | f(d.downmix_id, WIDTH_7, "downmixId")?,
+    );
     out.push(
         ((d.reserved_additional.get() as u8) << MID_BIT_SHIFT)
             | (n(
@@ -1614,7 +1683,10 @@ fn write_drc_instructions(d: &DrcInstructions, out: &mut Vec<u8>) -> Result<()> 
             | u8::from(d.target_loudness.is_some()),
     );
     for &(res, id) in &d.additional_downmix_ids {
-        out.push((f(res, WIDTH_1, "reserved")? << HIGH_BIT_SHIFT) | f(id, WIDTH_7, "additionalDownmixId")?);
+        out.push(
+            (f(res, WIDTH_1, "reserved")? << HIGH_BIT_SHIFT)
+                | f(id, WIDTH_7, "additionalDownmixId")?,
+        );
     }
     out.extend_from_slice(&d.drc_set_effect.to_be_bytes());
     if let Some(p) = d.limiter_peak_target {
@@ -1628,13 +1700,18 @@ fn write_drc_instructions(d: &DrcInstructions, out: &mut Vec<u8>) -> Result<()> 
         );
         if let Some((res, lower)) = t.lower {
             out.push(
-                (f(res, WIDTH_2, "reserved")? << UPPER_BIT_SHIFT) | f(lower, WIDTH_6, "bsDrcSetTargetLoudnessValueLower")?,
+                (f(res, WIDTH_2, "reserved")? << UPPER_BIT_SHIFT)
+                    | f(lower, WIDTH_6, "bsDrcSetTargetLoudnessValueLower")?,
             );
         }
         out.push(
             ((t.reserved_depends.get() as u8) << HIGH_BIT_SHIFT)
                 | (f(t.depends_on_drc_set, WIDTH_6, "dependsOnDrcSet")? << LEAST_BIT_SHIFT)
-                | f(t.no_independent_use_or_reserved, WIDTH_1, "noIndependentUse")?,
+                | f(
+                    t.no_independent_use_or_reserved,
+                    WIDTH_1,
+                    "noIndependentUse",
+                )?,
         );
     }
     Ok(())
@@ -1998,10 +2075,10 @@ mod tests {
             min_dist_offset: 0,
             max_dist_offset: 0,
         };
-        assert_eq!(pos_wide.reserved_min_az.get(), LOW_1_BITS);
-        assert_eq!(pos_wide.reserved_max_az.get(), LOW_1_BITS);
-        assert_eq!(pos_wide.reserved_min_el.get(), LOW_3_BITS);
-        assert_eq!(pos_wide.reserved_max_el.get(), LOW_3_BITS);
+        assert_eq!(pos_wide.reserved_min_az.get(), 0x01);
+        assert_eq!(pos_wide.reserved_max_az.get(), 0x01);
+        assert_eq!(pos_wide.reserved_min_el.get(), 0x07);
+        assert_eq!(pos_wide.reserved_max_el.get(), 0x07);
 
         let gain_wide = GainInteractivity {
             reserved_min: ReservedOnes::from_bits(0xFF),
@@ -2009,8 +2086,8 @@ mod tests {
             reserved_max: ReservedOnes::from_bits(0xFF),
             max_gain: 0,
         };
-        assert_eq!(gain_wide.reserved_min.get(), LOW_2_BITS);
-        assert_eq!(gain_wide.reserved_max.get(), LOW_3_BITS);
+        assert_eq!(gain_wide.reserved_min.get(), 0x03);
+        assert_eq!(gain_wide.reserved_max.get(), 0x07);
 
         let group_wide = SceneGroup {
             reserved_id: ReservedOnes::from_bits(0xFF),
@@ -2024,9 +2101,9 @@ mod tests {
             gain: None,
             content_language: None,
         };
-        assert_eq!(group_wide.reserved_id.get(), LOW_1_BITS);
-        assert_eq!(group_wide.reserved_flags.get(), LOW_3_BITS);
-        assert_eq!(group_wide.reserved_kind.get(), LOW_4_BITS);
+        assert_eq!(group_wide.reserved_id.get(), 0x01);
+        assert_eq!(group_wide.reserved_flags.get(), 0x07);
+        assert_eq!(group_wide.reserved_kind.get(), 0x0F);
     }
 
     #[test]
@@ -2048,7 +2125,7 @@ mod tests {
 
         // scene_info_id 5, one language, "eng", then the group-count byte is
         // missing: the reader stops at pos 5 of a 5-byte body.
-        let bytes = [LOW_6_BITS, 6, 0x0B, 0x05, LOW_1_BITS, b'e', b'n', b'g'];
+        let bytes = [0x3F, 6, 0x0B, 0x05, 0x01, b'e', b'n', b'g'];
         match Mpeg2ExtensionDescriptor::parse(&bytes) {
             Err(Error::BufferTooShort(b)) => {
                 assert_eq!(b.need, 6);
@@ -2136,7 +2213,7 @@ mod tests {
         ));
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
-        assert_eq!(buf[14], (1 << HIGH_BIT_SHIFT) | (0x2A << LEAST_BIT_SHIFT));
+        assert_eq!(buf[14], (1 << 7) | (0x2A << 1));
         let Mpeg2ExtensionBody::MpegH3dAudioDrcLoudness(back) =
             &Mpeg2ExtensionDescriptor::parse(&buf).unwrap().body
         else {

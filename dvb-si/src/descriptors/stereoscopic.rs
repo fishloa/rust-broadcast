@@ -352,8 +352,12 @@ impl StereoscopicVideoInfoDescriptor {
             StereoscopicVideoView::Additional {
                 reserved: ReservedOnes::from_bits(u64::from(r.u8(VIEW_RESERVED_BITS)?)),
                 usable_as_2d: r.flag()?,
-                horizontal_upsampling_factor: UpsamplingFactor::from_u8(r.u8(UPSAMPLING_FACTOR_BITS)?),
-                vertical_upsampling_factor: UpsamplingFactor::from_u8(r.u8(UPSAMPLING_FACTOR_BITS)?),
+                horizontal_upsampling_factor: UpsamplingFactor::from_u8(
+                    r.u8(UPSAMPLING_FACTOR_BITS)?,
+                ),
+                vertical_upsampling_factor: UpsamplingFactor::from_u8(
+                    r.u8(UPSAMPLING_FACTOR_BITS)?,
+                ),
             }
         };
         Ok(Self {

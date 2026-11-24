@@ -397,7 +397,8 @@ impl HevcOperationPoint {
                     es_reference: r.u8(NARROW_FIELD_BITS)?,
                 });
             }
-            let reserved_before_layers = ReservedOnes::from_bits(u64::from(r.u8(RESERVED_2_READ_BITS)?));
+            let reserved_before_layers =
+                ReservedOnes::from_bits(u64::from(r.u8(RESERVED_2_READ_BITS)?));
             let num_es_in_op = r.bits(NARROW_FIELD_BITS)?;
             let mut layers = Vec::new();
             for _ in 0..num_es_in_op {
@@ -421,8 +422,16 @@ impl HevcOperationPoint {
             } else {
                 None
             };
-            let avg_bit_rate = if avg_flag { Some(r.bits(BIT_RATE_BITS)?) } else { None };
-            let max_bit_rate = if max_flag { Some(r.bits(BIT_RATE_BITS)?) } else { None };
+            let avg_bit_rate = if avg_flag {
+                Some(r.bits(BIT_RATE_BITS)?)
+            } else {
+                None
+            };
+            let max_bit_rate = if max_flag {
+                Some(r.bits(BIT_RATE_BITS)?)
+            } else {
+                None
+            };
             operation_points.push(HevcOperationPointEntry {
                 target_ols,
                 es,
@@ -467,7 +476,11 @@ impl HevcOperationPoint {
                 w.flag(e.prepend_dependencies, "prepend_dependencies")?;
                 w.put(u64::from(e.es_reference), NARROW_FIELD_BITS, "ES_reference")?;
             }
-            w.put(op.reserved_before_layers.get(), RESERVED_2_READ_BITS, "reserved")?;
+            w.put(
+                op.reserved_before_layers.get(),
+                RESERVED_2_READ_BITS,
+                "reserved",
+            )?;
             w.put(op.layers.len() as u64, NARROW_FIELD_BITS, "numEsInOp")?;
             for l in &op.layers {
                 w.flag(l.necessary_layer_flag, "necessary_layer_flag")?;
@@ -493,10 +506,10 @@ impl HevcOperationPoint {
                 }
             };
             w.put(
-                    u64::from(idc),
-                    FRAME_RATE_INFO_IDC_BITS,
-                    "constant_frame_rate_info_idc",
-                )?;
+                u64::from(idc),
+                FRAME_RATE_INFO_IDC_BITS,
+                "constant_frame_rate_info_idc",
+            )?;
             w.put(
                 u64::from(op.applicable_temporal_id),
                 TEMPORAL_ID_BITS,
@@ -648,7 +661,11 @@ impl HevcHierarchyExtension {
             "hierarchy_layer_index",
         )?;
         w.put(u64::from(self.temporal_id), TEMPORAL_ID_BITS, "temporal_id")?;
-        w.put(u64::from(self.nuh_layer_id), NARROW_FIELD_BITS, "nuh_layer_id")?;
+        w.put(
+            u64::from(self.nuh_layer_id),
+            NARROW_FIELD_BITS,
+            "nuh_layer_id",
+        )?;
         w.flag(self.tref_present_flag, "tref_present_flag")?;
         w.put(self.reserved_a.get(), RESERVED_2_READ_BITS, "reserved")?;
         w.put(
@@ -789,7 +806,11 @@ impl HevcTileSubstream {
             }
         };
         w.flag(reference_flag, "ReferenceFlag")?;
-        w.put(u64::from(self.substream_id), SUBSTREAM_ID_BITS, "SubstreamID")?;
+        w.put(
+            u64::from(self.substream_id),
+            SUBSTREAM_ID_BITS,
+            "SubstreamID",
+        )?;
         match &self.detail {
             HevcTileSubstreamDetail::Single { .. } => {}
             HevcTileSubstreamDetail::Pattern {
@@ -799,20 +820,20 @@ impl HevcTileSubstream {
             } => {
                 w.flag(*preamble_flag, "PreambleFlag")?;
                 w.put(
-                u64::from(*pattern_reference),
-                SUBSTREAM_ID_BITS,
-                "PatternReference",
-            )?;
+                    u64::from(*pattern_reference),
+                    SUBSTREAM_ID_BITS,
+                    "PatternReference",
+                )?;
                 w.bytes(trailing)?;
             }
             HevcTileSubstreamDetail::Additional(v) => {
                 for a in v {
                     w.flag(a.flag, "Flag")?;
                     w.put(
-                u64::from(a.substream_id),
-                SUBSTREAM_ID_BITS,
-                "AdditionalSubstreamID",
-            )?;
+                        u64::from(a.substream_id),
+                        SUBSTREAM_ID_BITS,
+                        "AdditionalSubstreamID",
+                    )?;
                 }
             }
         }
@@ -1000,10 +1021,10 @@ impl HevcSubregion {
                 (true, Some(p)) => {
                     w.flag(p.reserved, "reserved")?;
                     w.put(
-                u64::from(p.preamble_substream_id),
-                SUBSTREAM_ID_BITS,
-                "PreambleSubstreamID",
-            )?;
+                        u64::from(p.preamble_substream_id),
+                        SUBSTREAM_ID_BITS,
+                        "PreambleSubstreamID",
+                    )?;
                 }
                 (false, None) => {}
                 _ => {

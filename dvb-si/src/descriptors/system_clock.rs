@@ -94,7 +94,8 @@ impl<'a> Parse<'a> for SystemClockDescriptor {
             });
         }
         let b0 = body[0];
-        let external_clock_reference_indicator = (b0 & EXTERNAL_CLOCK_REFERENCE_INDICATOR_MASK) != 0;
+        let external_clock_reference_indicator =
+            (b0 & EXTERNAL_CLOCK_REFERENCE_INDICATOR_MASK) != 0;
         let clock_accuracy_integer = b0 & CLOCK_ACCURACY_INTEGER_MASK;
         let b1 = body[1];
         let clock_accuracy_exponent = b1 >> CLOCK_ACCURACY_EXPONENT_SHIFT;
@@ -102,7 +103,9 @@ impl<'a> Parse<'a> for SystemClockDescriptor {
             external_clock_reference_indicator,
             clock_accuracy_integer,
             clock_accuracy_exponent,
-            reserved_1: ReservedOnes::from_bits(u64::from((b0 >> RESERVED_1_SHIFT) & RESERVED_1_MASK)),
+            reserved_1: ReservedOnes::from_bits(u64::from(
+                (b0 >> RESERVED_1_SHIFT) & RESERVED_1_MASK,
+            )),
             reserved_5: ReservedOnes::from_bits(u64::from(b1 & RESERVED_5_MASK)),
         })
     }

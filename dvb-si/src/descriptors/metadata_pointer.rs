@@ -139,24 +139,25 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
         let metadata_application_format = u16::from_be_bytes([body[0], body[1]]);
         let mut pos = METADATA_APPLICATION_FORMAT_LEN;
 
-        let metadata_application_format_identifier =
-            if metadata_application_format == METADATA_APPLICATION_FORMAT_IDENTIFIER_PRESENT {
-                if body.len() < pos + IDENTIFIER_LEN {
-                    return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "metadata_pointer_descriptor too short for metadata_application_format_identifier",
-                    });
-                }
-                let id = u32::from_be_bytes(
-                    body[pos..pos + IDENTIFIER_LEN]
-                        .try_into()
-                        .unwrap_or_default(),
-                );
-                pos += IDENTIFIER_LEN;
-                Some(id)
-            } else {
-                None
-            };
+        let metadata_application_format_identifier = if metadata_application_format
+            == METADATA_APPLICATION_FORMAT_IDENTIFIER_PRESENT
+        {
+            if body.len() < pos + IDENTIFIER_LEN {
+                return Err(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "metadata_pointer_descriptor too short for metadata_application_format_identifier",
+                });
+            }
+            let id = u32::from_be_bytes(
+                body[pos..pos + IDENTIFIER_LEN]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            pos += IDENTIFIER_LEN;
+            Some(id)
+        } else {
+            None
+        };
 
         if body.len() < pos + 1 {
             return Err(Error::InvalidDescriptor {
@@ -196,8 +197,9 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
 
         let flags = body[pos];
         let metadata_locator_record_flag = (flags & LOCATOR_RECORD_FLAG) != 0;
-        let mpeg_carriage_flags =
-            MpegCarriageFlags::from_u8((flags >> MPEG_CARRIAGE_FLAGS_SHIFT) & MPEG_CARRIAGE_FLAGS_MASK);
+        let mpeg_carriage_flags = MpegCarriageFlags::from_u8(
+            (flags >> MPEG_CARRIAGE_FLAGS_SHIFT) & MPEG_CARRIAGE_FLAGS_MASK,
+        );
         let reserved = ReservedOnes::from_bits(u64::from(flags));
         pos += 1;
 
@@ -239,20 +241,21 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
             None
         };
 
-        let (transport_stream_location, transport_stream_id, pos) =
-            if carriage_val == TRANSPORT_STREAM_LOCATION_CARRIAGE {
-                if body.len() < pos + TRANSPORT_STREAM_LOCATION_LEN {
-                    return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "metadata_pointer_descriptor too short for transport_stream_location+id",
-                    });
-                }
-                let tsl = u16::from_be_bytes([body[pos], body[pos + 1]]);
-                let tsi = u16::from_be_bytes([
-                    body[pos + size_of::<u16>()],
-                    body[pos + size_of::<u16>() + 1],
-                ]);
-                pos += TRANSPORT_STREAM_LOCATION_LEN;
+        let (transport_stream_location, transport_stream_id, pos) = if carriage_val
+            == TRANSPORT_STREAM_LOCATION_CARRIAGE
+        {
+            if body.len() < pos + TRANSPORT_STREAM_LOCATION_LEN {
+                return Err(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "metadata_pointer_descriptor too short for transport_stream_location+id",
+                });
+            }
+            let tsl = u16::from_be_bytes([body[pos], body[pos + 1]]);
+            let tsi = u16::from_be_bytes([
+                body[pos + size_of::<u16>()],
+                body[pos + size_of::<u16>() + 1],
+            ]);
+            pos += TRANSPORT_STREAM_LOCATION_LEN;
             (Some(tsl), Some(tsi), pos)
         } else {
             (None, None, pos)

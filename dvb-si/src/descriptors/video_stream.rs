@@ -246,7 +246,8 @@ impl<'a> Parse<'a> for VideoStreamDescriptor {
         }
         let b0 = body[0];
         let multiple_frame_rate_flag = (b0 & MULTIPLE_FRAME_RATE_FLAG_MASK) != 0;
-        let frame_rate_code = FrameRateCode::from_u8((b0 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK);
+        let frame_rate_code =
+            FrameRateCode::from_u8((b0 >> FRAME_RATE_CODE_SHIFT) & FRAME_RATE_CODE_MASK);
         let mpeg_1_only_flag = (b0 & MPEG_1_ONLY_FLAG_MASK) != 0;
         let constrained_parameter_flag = (b0 & CONSTRAINED_PARAMETER_FLAG_MASK) != 0;
         let still_picture_flag = (b0 & STILL_PICTURE_FLAG_MASK) != 0;
@@ -343,8 +344,8 @@ impl Serialize for VideoStreamDescriptor {
                 })? as u8;
             buf[HEADER_LEN + 1] = pal;
             buf[HEADER_LEN + MPEG2_BYTE_OFFSET] = (chroma << CHROMA_FORMAT_SHIFT)
-            | (fre << FRAME_RATE_EXTENSION_FLAG_SHIFT)
-            | (self.reserved_5.get() as u8);
+                | (fre << FRAME_RATE_EXTENSION_FLAG_SHIFT)
+                | (self.reserved_5.get() as u8);
         }
         let fixed = if self.mpeg_1_only_flag {
             BODY_MPEG1_LEN as usize

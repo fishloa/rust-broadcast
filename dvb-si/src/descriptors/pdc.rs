@@ -129,7 +129,12 @@ impl<'a> Parse<'a> for PdcDescriptor {
                 reason: "PDC_descriptor length must be exactly 3",
             });
         }
-        let raw = u32::from_be_bytes([0, body[TOP_BYTE_OFFSET], body[MID_BYTE_OFFSET], body[LOW_BYTE_OFFSET]]);
+        let raw = u32::from_be_bytes([
+            0,
+            body[TOP_BYTE_OFFSET],
+            body[MID_BYTE_OFFSET],
+            body[LOW_BYTE_OFFSET],
+        ]);
         Ok(Self {
             reserved_future_use: ReservedOnes::from_bits(u64::from(
                 ((raw >> RESERVED_SHIFT) as u8) & RESERVED_MASK,

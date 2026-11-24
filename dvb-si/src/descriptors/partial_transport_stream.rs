@@ -49,6 +49,13 @@ const BUFFER_OFFSET: usize = 2 * RATE_LEN;
 /// Shift of each 2-bit `reserved_future_use` run in a field's first byte.
 const RESERVED_SHIFT: u32 = 6;
 
+/// Decode a big-endian bit field from its wire bytes.
+fn read_field(bytes: &[u8]) -> u32 {
+    bytes
+        .iter()
+        .fold(0u32, |acc, &b| (acc << u8::BITS) | u32::from(b))
+}
+
 /// Partial Transport Stream Descriptor (tag 0x63).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -111,19 +118,10 @@ impl<'a> Parse<'a> for PartialTransportStreamDescriptor {
                 reason: "partial_transport_stream_descriptor length must equal 8",
             });
         }
-        let peak_rate = u32::from_be_bytes(
-            body[..RATE_LEN].try_into().unwrap_or_default(),
-        ) & MAX_22;
-        let minimum_overall_smoothing_rate = u32::from_be_bytes(
-            body[MIN_RATE_OFFSET..MIN_RATE_OFFSET + RATE_LEN]
-                .try_into()
-                .unwrap_or_default(),
-        ) & MAX_22;
-        let maximum_overall_smoothing_buffer = u16::from_be_bytes(
-            body[BUFFER_OFFSET..BUFFER_OFFSET + size_of::<u16>()]
-                .try_into()
-                .unwrap_or_default(),
-        ) & MAX_14;
+        let peak_rate = read_field(&body[..RATE_LEN]) & MAX_22;
+        let minimum_overall_smoothing_rate =
+            read_field(&body[MIN_RATE_OFFSET..MIN_RATE_OFFSET + RATE_LEN]) & MAX_22;
+        let maximum_overall_smoothing_buffer = (read_field(&body[BUFFER_OFFSET..]) as u16) & MAX_14;
         Ok(Self {
             peak_rate,
             minimum_overall_smoothing_rate,
@@ -167,15 +165,15 @@ impl Serialize for PartialTransportStreamDescriptor {
         let b = HEADER_LEN;
         // reserved_future_use bits re-emitted as captured (top 2 bits of each
         // high byte).
-        let peak = ((self.reserved_future_use_peak_rate.get() as u32) << RATE_BITS) | self.peak_rate;
+        let peak =
+            ((self.reserved_future_use_peak_rate.get() as u32) << RATE_BITS) | self.peak_rate;
         buf[b..b + RATE_LEN].copy_from_slice(&peak.to_be_bytes()[1..]);
         let min = ((self.reserved_future_use_min_rate.get() as u32) << RATE_BITS)
             | self.minimum_overall_smoothing_rate;
         buf[b + MIN_RATE_OFFSET..b + MIN_RATE_OFFSET + RATE_LEN]
             .copy_from_slice(&min.to_be_bytes()[1..]);
-        let buffer =
-            ((self.reserved_future_use_buffer.get() as u16) << BUFFER_BITS)
-                | self.maximum_overall_smoothing_buffer;
+        let buffer = ((self.reserved_future_use_buffer.get() as u16) << BUFFER_BITS)
+            | self.maximum_overall_smoothing_buffer;
         buf[b + BUFFER_OFFSET..b + BUFFER_OFFSET + size_of::<u16>()]
             .copy_from_slice(&buffer.to_be_bytes());
         Ok(len)

@@ -218,10 +218,9 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
 
         // Reserved bits are captured (EN 300 468 §5.1 tolerance) and re-emitted.
         let flags = body[0];
-        let reserved_zero_future_use =
-            ReservedZero::from_bits(u64::from(
-                (flags & FLAG_RESERVED_FUTURE_USE_BIT) >> FLAG_RESERVED_BIT_SHIFT,
-            ));
+        let reserved_zero_future_use = ReservedZero::from_bits(u64::from(
+            (flags & FLAG_RESERVED_FUTURE_USE_BIT) >> FLAG_RESERVED_BIT_SHIFT,
+        ));
         let reserved_future_use = ReservedOnes::from_bits(u64::from(
             (flags & FLAG_RESERVED_FU_MASK) >> FLAG_RESERVED_FU_SHIFT,
         ));
@@ -242,7 +241,8 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
             let b0 = body[pos];
             reserved_6 = ReservedOnes::from_bits(u64::from(b0 >> SCRAMBLING_RESERVED_SHIFT));
             let index = (u32::from(b0 & SCRAMBLING_INDEX_HI_MASK) << SCRAMBLING_INDEX_HI_SHIFT)
-                | (u32::from(body[pos + SCRAMBLING_INDEX_MID_OFFSET]) << SCRAMBLING_INDEX_MID_SHIFT)
+                | (u32::from(body[pos + SCRAMBLING_INDEX_MID_OFFSET])
+                    << SCRAMBLING_INDEX_MID_SHIFT)
                 | u32::from(body[pos + SCRAMBLING_INDEX_LO_OFFSET]);
             pos += SCRAMBLING_FIELD_LEN;
             Some(index)

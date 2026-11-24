@@ -188,24 +188,25 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
         let metadata_application_format = u16::from_be_bytes([body[0], body[1]]);
         let mut pos = METADATA_APPLICATION_FORMAT_LEN;
 
-        let metadata_application_format_identifier =
-            if metadata_application_format == METADATA_APPLICATION_FORMAT_IDENTIFIER_PRESENT {
-                if body.len() < pos + IDENTIFIER_LEN {
-                    return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "metadata_descriptor too short for metadata_application_format_identifier",
-                    });
-                }
-                let id = u32::from_be_bytes(
-                    body[pos..pos + IDENTIFIER_LEN]
-                        .try_into()
-                        .unwrap_or_default(),
-                );
-                pos += IDENTIFIER_LEN;
-                Some(id)
-            } else {
-                None
-            };
+        let metadata_application_format_identifier = if metadata_application_format
+            == METADATA_APPLICATION_FORMAT_IDENTIFIER_PRESENT
+        {
+            if body.len() < pos + IDENTIFIER_LEN {
+                return Err(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "metadata_descriptor too short for metadata_application_format_identifier",
+                });
+            }
+            let id = u32::from_be_bytes(
+                body[pos..pos + IDENTIFIER_LEN]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            pos += IDENTIFIER_LEN;
+            Some(id)
+        } else {
+            None
+        };
 
         if body.len() < pos + 1 {
             return Err(Error::InvalidDescriptor {
@@ -244,7 +245,8 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
         pos += 1;
 
         let flags = body[pos];
-        let decoder_config_raw = (flags & DECODER_CONFIG_FLAGS_RAW_MASK) >> DECODER_CONFIG_FLAGS_SHIFT;
+        let decoder_config_raw =
+            (flags & DECODER_CONFIG_FLAGS_RAW_MASK) >> DECODER_CONFIG_FLAGS_SHIFT;
         let decoder_config_flags = DecoderConfigFlags::from_u8(decoder_config_raw);
         let dsmcc_flag = (flags & DSMCC_FLAG_BIT) != 0;
         let reserved = ReservedOnes::from_bits(u64::from(flags));

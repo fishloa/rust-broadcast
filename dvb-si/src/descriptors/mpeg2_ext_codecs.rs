@@ -117,7 +117,11 @@ impl LcevcVideo {
 
     pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.lcevc_stream_tag), BYTE_BITS, "lcevc_stream_tag")?;
+        w.put(
+            u64::from(self.lcevc_stream_tag),
+            BYTE_BITS,
+            "lcevc_stream_tag",
+        )?;
         w.put(u64::from(self.profile_idc), NIBBLE_BITS, "profile_idc")?;
         w.put(u64::from(self.level_idc), NIBBLE_BITS, "level_idc")?;
         w.put(u64::from(self.sublevel_idc), PAIR_BITS, "sublevel_idc")?;
@@ -128,8 +132,16 @@ impl LcevcVideo {
         w.flag(self.picture_type_bit_flag, "picture_type_bit_flag")?;
         w.flag(self.field_type_bit_flag, "field_type_bit_flag")?;
         w.put(self.reserved.get(), TRIPLE_BITS, "reserved")?;
-        w.put(u64::from(self.hdr_wcg_idc.to_u8()), PAIR_BITS, "HDR_WCG_idc")?;
-        w.put(self.reserved_zero_2bit.get(), PAIR_BITS, "reserved_zero_2bit")?;
+        w.put(
+            u64::from(self.hdr_wcg_idc.to_u8()),
+            PAIR_BITS,
+            "HDR_WCG_idc",
+        )?;
+        w.put(
+            self.reserved_zero_2bit.get(),
+            PAIR_BITS,
+            "reserved_zero_2bit",
+        )?;
         w.put(
             u64::from(self.video_properties_tag),
             NIBBLE_BITS,
@@ -504,7 +516,11 @@ impl MediaServiceKind {
             w.flag(e.media_description_flag, "media_description_flag")?;
             w.flag(e.identifier.is_some(), "identifier_flag")?;
             w.put(e.languages.len() as u64, TRIPLE_BITS, "lang_pairs")?;
-            w.put(u64::from(e.media_type_idc.to_u8()), PAIR_BITS, "media_type_idc")?;
+            w.put(
+                u64::from(e.media_type_idc.to_u8()),
+                PAIR_BITS,
+                "media_type_idc",
+            )?;
             w.put(e.reserved.get(), 1, "reserved")?;
             if let Some(id) = &e.identifier {
                 w.put(u64::from(id.id_length_code), TRIPLE_BITS, "ID_length_code")?;
@@ -526,7 +542,11 @@ impl MediaServiceKind {
                     PAIR_BITS,
                     "configuration_type",
                 )?;
-                w.put(l.media_service_types.len() as u64, TRIPLE_BITS, "lang_purpose_cnt")?;
+                w.put(
+                    l.media_service_types.len() as u64,
+                    TRIPLE_BITS,
+                    "lang_purpose_cnt",
+                )?;
                 w.put(u64::from(l.lang_len_idc), PAIR_BITS, "lang_len_idc")?;
                 w.put(l.reserved.get(), 1, "reserved")?;
                 match (l.lang_len_idc, l.language_code.len()) {

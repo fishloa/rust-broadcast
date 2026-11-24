@@ -199,9 +199,11 @@ impl Serialize for SvcExtensionDescriptor {
             .copy_from_slice(&self.height.to_be_bytes());
         buf[HEADER_LEN + FRAME_RATE_OFFSET..HEADER_LEN + FRAME_RATE_OFFSET + size_of::<u16>()]
             .copy_from_slice(&self.frame_rate.to_be_bytes());
-        buf[HEADER_LEN + AVERAGE_BITRATE_OFFSET..HEADER_LEN + AVERAGE_BITRATE_OFFSET + size_of::<u16>()]
+        buf[HEADER_LEN + AVERAGE_BITRATE_OFFSET
+            ..HEADER_LEN + AVERAGE_BITRATE_OFFSET + size_of::<u16>()]
             .copy_from_slice(&self.average_bitrate.to_be_bytes());
-        buf[HEADER_LEN + MAXIMUM_BITRATE_OFFSET..HEADER_LEN + MAXIMUM_BITRATE_OFFSET + size_of::<u16>()]
+        buf[HEADER_LEN + MAXIMUM_BITRATE_OFFSET
+            ..HEADER_LEN + MAXIMUM_BITRATE_OFFSET + size_of::<u16>()]
             .copy_from_slice(&self.maximum_bitrate.to_be_bytes());
         buf[HEADER_LEN + DEPENDENCY_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
             self.dependency_id,
@@ -214,7 +216,11 @@ impl Serialize for SvcExtensionDescriptor {
             QUALITY_ID_MASK,
             "quality_id_start",
         )? << QUALITY_ID_START_SHIFT)
-            | broadcast_common::len::fit_mask(self.quality_id_end, QUALITY_ID_MASK, "quality_id_end")?;
+            | broadcast_common::len::fit_mask(
+                self.quality_id_end,
+                QUALITY_ID_MASK,
+                "quality_id_end",
+            )?;
         buf[HEADER_LEN + TEMPORAL_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
             self.temporal_id_start,
             TEMPORAL_ID_MASK,

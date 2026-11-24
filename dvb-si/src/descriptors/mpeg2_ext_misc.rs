@@ -258,7 +258,11 @@ impl QualityExtension {
 
     pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.field_size_bytes), BYTE_BITS, "field_size_bytes")?;
+        w.put(
+            u64::from(self.field_size_bytes),
+            BYTE_BITS,
+            "field_size_bytes",
+        )?;
         w.put(self.metric_codes.len() as u64, BYTE_BITS, "metric_count")?;
         for c in &self.metric_codes {
             w.put(u64::from(*c), DWORD_BITS, "metric_code")?;
@@ -494,7 +498,9 @@ impl VirtualSegmentation {
                 }
             } else {
                 VirtualSegmentationBoundary::Reference {
-                    reserved_before: ReservedOnes::from_bits(u64::from(r.u8(RESERVED_5_READ_BITS)?)),
+                    reserved_before: ReservedOnes::from_bits(u64::from(
+                        r.u8(RESERVED_5_READ_BITS)?,
+                    )),
                     boundary_pid: r.u16(BOUNDARY_PID_BITS)?,
                     reserved_after: ReservedOnes::from_bits(u64::from(r.u8(RESERVED_3_READ_BITS)?)),
                 }
@@ -773,17 +779,37 @@ impl JxsVideo {
 
     pub(crate) fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.descriptor_version), BYTE_BITS, "descriptor_version")?;
-        w.put(u64::from(self.horizontal_size), WORD_BITS, "horizontal_size")?;
+        w.put(
+            u64::from(self.descriptor_version),
+            BYTE_BITS,
+            "descriptor_version",
+        )?;
+        w.put(
+            u64::from(self.horizontal_size),
+            WORD_BITS,
+            "horizontal_size",
+        )?;
         w.put(u64::from(self.vertical_size), WORD_BITS, "vertical_size")?;
         w.put(u64::from(self.brat), DWORD_BITS, "brat")?;
         w.put(u64::from(self.frat), DWORD_BITS, "frat")?;
         w.put(u64::from(self.schar), WORD_BITS, "schar")?;
         w.put(u64::from(self.ppih), WORD_BITS, "Ppih")?;
         w.put(u64::from(self.plev), WORD_BITS, "Plev")?;
-        w.put(u64::from(self.max_buffer_size), DWORD_BITS, "max_buffer_size")?;
-        w.put(u64::from(self.buffer_model_type), BYTE_BITS, "buffer_model_type")?;
-        w.put(u64::from(self.colour_primaries), BYTE_BITS, "colour_primaries")?;
+        w.put(
+            u64::from(self.max_buffer_size),
+            DWORD_BITS,
+            "max_buffer_size",
+        )?;
+        w.put(
+            u64::from(self.buffer_model_type),
+            BYTE_BITS,
+            "buffer_model_type",
+        )?;
+        w.put(
+            u64::from(self.colour_primaries),
+            BYTE_BITS,
+            "colour_primaries",
+        )?;
         w.put(
             u64::from(self.transfer_characteristics),
             BYTE_BITS,

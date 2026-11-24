@@ -344,17 +344,15 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
             });
         }
 
-        let (hdr, _) = body
-            .split_first_chunk::<{ BODY_LEN as usize }>()
-            .ok_or(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "descriptor_length must equal 11",
-            })?;
+        let (hdr, _) =
+            body.split_first_chunk::<{ BODY_LEN as usize }>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "descriptor_length must equal 11",
+                })?;
 
         // Frequency: 4 bytes BCD (GHz.MMMM)
-        let frequency_bcd = u32::from_be_bytes(
-            hdr[..FREQUENCY_LEN].try_into().unwrap_or_default(),
-        );
+        let frequency_bcd = u32::from_be_bytes(hdr[..FREQUENCY_LEN].try_into().unwrap_or_default());
 
         // Orbital position: 2 bytes BCD (tenths of a degree)
         let orbital_position_bcd = u16::from_be_bytes(
@@ -460,7 +458,9 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
             RollOff::Alpha035 => 0x00,
             RollOff::Alpha025 => 0x08,
             RollOff::Alpha020 => 0x10,
-            RollOff::Reserved(v) => broadcast_common::len::fit_mask(v, FIELD_PAIR_MASK, "v")? << ROLL_OFF_SHIFT,
+            RollOff::Reserved(v) => {
+                broadcast_common::len::fit_mask(v, FIELD_PAIR_MASK, "v")? << ROLL_OFF_SHIFT
+            }
         };
         flags |= match self.modulation_system {
             ModulationSystem::DvbS => 0x00,

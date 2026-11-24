@@ -210,8 +210,10 @@ impl<'a> Parse<'a> for SubtitlingDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            let composition_page_id = crate::wire::be_u16(chunk, COMPOSITION_PAGE_ID_OFFSET, "subtitling")?;
-            let ancillary_page_id = crate::wire::be_u16(chunk, ANCILLARY_PAGE_ID_OFFSET, "subtitling")?;
+            let composition_page_id =
+                crate::wire::be_u16(chunk, COMPOSITION_PAGE_ID_OFFSET, "subtitling")?;
+            let ancillary_page_id =
+                crate::wire::be_u16(chunk, ANCILLARY_PAGE_ID_OFFSET, "subtitling")?;
             entries.push(SubtitlingEntry {
                 language_code: LangCode(chunk[..LANGUAGE_CODE_LEN].try_into().unwrap_or_default()),
                 subtitling_type: SubtitlingType::from_u8(chunk[SUBTITLING_TYPE_OFFSET]),

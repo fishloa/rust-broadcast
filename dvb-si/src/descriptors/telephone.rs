@@ -99,7 +99,8 @@ pub struct TelephoneDescriptor<'a> {
     /// `reserved_future_use`(1) ahead of `national_area_code_length` (1 bit).
     /// Default [`RESERVED_FUTURE_USE_THIRD_BYTE_DEFAULT`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use_before_national_area_code_length: ReservedOnes<THIRD_BYTE_RESERVED_BITS>,
+    pub reserved_future_use_before_national_area_code_length:
+        ReservedOnes<THIRD_BYTE_RESERVED_BITS>,
     /// When true, the number may be dialled from outside the prefix's country.
     pub foreign_availability: bool,
     /// 5-bit connection_type (meaning out of scope of EN 300 468).
@@ -135,8 +136,10 @@ impl<'a> TelephoneDescriptor<'a> {
     ) -> Self {
         Self {
             reserved_future_use_before_foreign_availability: RESERVED_FUTURE_USE_FIRST_BYTE_DEFAULT,
-            reserved_future_use_before_country_prefix_length: RESERVED_FUTURE_USE_SECOND_BYTE_DEFAULT,
-            reserved_future_use_before_national_area_code_length: RESERVED_FUTURE_USE_THIRD_BYTE_DEFAULT,
+            reserved_future_use_before_country_prefix_length:
+                RESERVED_FUTURE_USE_SECOND_BYTE_DEFAULT,
+            reserved_future_use_before_national_area_code_length:
+                RESERVED_FUTURE_USE_THIRD_BYTE_DEFAULT,
             foreign_availability,
             connection_type,
             country_prefix,
@@ -166,12 +169,13 @@ impl<'a> Parse<'a> for TelephoneDescriptor<'a> {
         }
         let foreign_availability = body[0] & FOREIGN_AVAIL_MASK != 0;
         let connection_type = body[0] & CONNECTION_TYPE_MASK;
-        let country_prefix_length = ((body[1] >> COUNTRY_PREFIX_LENGTH_SHIFT)
-            & COUNTRY_PREFIX_LENGTH_MASK) as usize;
-        let international_area_code_length = ((body[1] >> INTL_AREA_CODE_LENGTH_SHIFT)
-            & AREA_CODE_LENGTH_MASK) as usize;
+        let country_prefix_length =
+            ((body[1] >> COUNTRY_PREFIX_LENGTH_SHIFT) & COUNTRY_PREFIX_LENGTH_MASK) as usize;
+        let international_area_code_length =
+            ((body[1] >> INTL_AREA_CODE_LENGTH_SHIFT) & AREA_CODE_LENGTH_MASK) as usize;
         let operator_code_length = (body[1] & COUNTRY_PREFIX_LENGTH_MASK) as usize;
-        let national_area_code_length = ((body[THIRD_BYTE_OFFSET] >> NATIONAL_AREA_CODE_LENGTH_SHIFT)
+        let national_area_code_length = ((body[THIRD_BYTE_OFFSET]
+            >> NATIONAL_AREA_CODE_LENGTH_SHIFT)
             & AREA_CODE_LENGTH_MASK) as usize;
         let core_number_length = (body[THIRD_BYTE_OFFSET] & CORE_NUMBER_LENGTH_MASK) as usize;
         let total_chars = country_prefix_length
@@ -204,7 +208,10 @@ impl<'a> Parse<'a> for TelephoneDescriptor<'a> {
                 (body[1] & SECOND_BYTE_RESERVED_MASK) >> SECOND_BYTE_RESERVED_SHIFT,
             )),
             reserved_future_use_before_national_area_code_length: ReservedOnes::from_bits(
-                u64::from((body[THIRD_BYTE_OFFSET] & THIRD_BYTE_RESERVED_MASK) >> THIRD_BYTE_RESERVED_SHIFT),
+                u64::from(
+                    (body[THIRD_BYTE_OFFSET] & THIRD_BYTE_RESERVED_MASK)
+                        >> THIRD_BYTE_RESERVED_SHIFT,
+                ),
             ),
             foreign_availability,
             connection_type,
@@ -255,13 +262,11 @@ impl Serialize for TelephoneDescriptor<'_> {
             NATIONAL_AREA_CODE_LENGTH_BITS,
             "national_area_code",
         )? as u8;
-        let core_number_len =
-            broadcast_common::len::fit_bits(
-                self.core_number.raw().len() as u64,
-                CORE_NUMBER_LENGTH_BITS,
-                "core_number",
-            )?
-                as u8;
+        let core_number_len = broadcast_common::len::fit_bits(
+            self.core_number.raw().len() as u64,
+            CORE_NUMBER_LENGTH_BITS,
+            "core_number",
+        )? as u8;
         buf[HEADER_LEN] = ((self.reserved_future_use_before_foreign_availability.get() as u8)
             << FIRST_BYTE_RESERVED_SHIFT)
             | if self.foreign_availability {
@@ -403,7 +408,10 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf[2] & FIRST_BYTE_RESERVED_MASK, FIRST_BYTE_RESERVED_MASK);
-        assert_eq!(buf[3] & SECOND_BYTE_RESERVED_MASK, SECOND_BYTE_RESERVED_MASK);
+        assert_eq!(
+            buf[3] & SECOND_BYTE_RESERVED_MASK,
+            SECOND_BYTE_RESERVED_MASK
+        );
         assert_eq!(buf[4] & THIRD_BYTE_RESERVED_MASK, THIRD_BYTE_RESERVED_MASK);
     }
 
