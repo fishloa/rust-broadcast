@@ -79,6 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them, and both modes still fail every `Limits` violation.
 - `DriverStep::Warning` from every driver, `Advance::Warning` in the shared
   step classifier, and `broadcast-client`'s HTTP-range driver passes it too.
+- `reader::TrackInfo::from_trak(&TrackBox)`: the reader's per-track view built
+  from an already-parsed `trak`, for a caller that holds the whole `moov`.
+  `Reader::movie_timescale()` and `Reader::is_fragmented()` expose the movie
+  facts a demuxer needs without re-parsing it, and `Warning::position()`
+  returns the absolute offset a tolerated fault starts at.
 
 ## [Unreleased]
 ### Added

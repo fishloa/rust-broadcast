@@ -56,14 +56,12 @@ use isobmff::box_support::OpaqueBox;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, parse_box};
 use isobmff::dts::DtsSpecificBox;
 use isobmff::flac::FlacSpecificBox;
-use isobmff::init_segment::{
-    MOOV, MovieBox, STSD, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox,
-    sampling_rate_override,
-};
+use isobmff::init_segment::{MOOV, MovieBox, SampleEntryVariant, sampling_rate_override};
 use isobmff::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use isobmff::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use isobmff::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use isobmff::opus::OpusSpecificBox;
+use isobmff::reader::TrackInfo;
 use isobmff::segments::{MDAT, MOOF};
 use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
@@ -154,9 +152,20 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         let mut builders: Vec<TrackBuilder> = Vec::with_capacity(moov.tracks.len());
         let mut skipped: Vec<SkippedTrack> = Vec::new();
         for trak in &moov.tracks {
-            match track_spec_from_trak(trak) {
+            let info = match TrackInfo::from_trak(trak).map_err(Error::from) {
+                Ok(info) => info,
+                Err(err) => {
+                    skipped.push(skipped_track(err, trak.tkhd.track_id.into()));
+                    continue;
+                }
+            };
+            match track_spec_from_track_info(&info) {
                 Ok(spec) => {
-                    let (in_band, entry_extra_boxes) = track_entry_inband_and_extras(trak);
+                    let (in_band, entry_extra_boxes) = info
+                        .entries
+                        .first()
+                        .and_then(|entry| entry.typed.as_ref())
+                        .map_or((false, Vec::new()), track_entry_inband_and_extras);
                     builders.push(TrackBuilder {
                         spec,
                         samples: Vec::new(),
@@ -166,7 +175,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                         entry_extra_boxes,
                     })
                 }
-                Err(err) => skipped.push(skipped_track(err, trak.tkhd.track_id.into())),
+                Err(err) => skipped.push(skipped_track(err, info.track_id.into())),
             }
         }
 
@@ -266,8 +275,16 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         let tracks = builders
             .into_iter()
             .map(|mut b| {
-                refine_legacy_config(&mut b.spec.config, &b.samples);
-                normalise_track_nal_lengths(&mut b.spec, &mut b.samples)?;
+                if let Some(first) = b.samples.first() {
+                    refine_legacy_config(&mut b.spec.config, first);
+                }
+                let length_size = nal_length_size(&b.spec.config);
+                if let Some(length_size) = length_size {
+                    for sample in &mut b.samples {
+                        normalise_nal_lengths(length_size, sample)?;
+                    }
+                    normalise_spec_nal_length(&mut b.spec);
+                }
                 if b.in_band {
                     tag_fmp4_inband_display(&mut b);
                 }
@@ -744,62 +761,31 @@ impl Package for HlsPackager {
 /// [`isobmff::box_types::find_box`] (#1141).
 pub(crate) use isobmff::box_types::find_box;
 
-/// Rebuild a [`TrackSpec`] from a parsed `trak` box (identity + codec config).
+/// Rebuild a [`TrackSpec`] from the reader's per-track view (identity + codec
+/// config).
 ///
-/// `pub(crate)`: the single shared stsd → [`CodecConfig`] reconstruction path,
-/// reused verbatim by [`crate::progressive_demux::ProgressiveDemux`] (issue
-/// #561) so progressive and fragmented demux never diverge on codec-config
-/// recovery.
-pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
-    let track_id = trak.tkhd.track_id;
-    let mdia = trak
-        .mdia
-        .as_ref()
-        .ok_or(Error::UnexpectedBox { expected: "mdia" })?;
-    let timescale = mdia
-        .mdhd
-        .as_ref()
-        .ok_or(Error::UnexpectedBox { expected: "mdhd" })?
-        .timescale;
-    let minf = mdia
-        .minf
-        .as_ref()
-        .ok_or(Error::UnexpectedBox { expected: "minf" })?;
-    let stbl = minf
-        .stbl
-        .as_ref()
-        .ok_or(Error::UnexpectedBox { expected: "stbl" })?;
-    // A `stsd` that failed to parse during the init-moov walk survives as raw
-    // bytes (`StblChild::Opaque`, boxtype checked below) rather than an empty
-    // placeholder (`init_segment::parse_stbl_children`) — re-parse it here so
-    // the *real* error (e.g. a malformed `avcC` trailer) reaches
-    // `skipped_track`'s `SkippedTrack::reason` instead of the uninformative
-    // "no stsd entry" a blanked-out box would otherwise produce (#952).
-    let stsd: SampleDescriptionBox = stbl
-        .children
-        .iter()
-        .find_map(|c| match c {
-            StblChild::Stsd(s) => Some(Ok(s.clone())),
-            StblChild::Opaque(bytes)
-                if bytes.len() >= BOX_HEADER_MIN_SIZE
-                    && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == STSD.as_slice() =>
-            {
-                Some(SampleDescriptionBox::parse(bytes.as_slice()))
-            }
-            _ => None,
-        })
-        .ok_or(Error::UnexpectedBox { expected: "stsd" })??;
-    let entry = stsd.entries.first().ok_or(Error::UnexpectedBox {
+/// `pub(crate)`: the single shared sample-entry → [`CodecConfig`]
+/// reconstruction path, reused verbatim by
+/// [`crate::progressive_demux::ProgressiveDemux`] and
+/// [`crate::mp4_demux::Mp4Demux`] (issue #561) so progressive, fragmented and
+/// streaming demux never diverge on codec-config recovery.
+pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> {
+    let entry = info.entries.first().ok_or(Error::UnexpectedBox {
         expected: "stsd entry",
     })?;
-
-    let config = codec_config_from_entry(entry)?;
-    let spec = TrackSpec::new(track_id.into(), timescale, config);
+    let typed = entry
+        .typed
+        .as_ref()
+        .ok_or_else(|| Error::UnsupportedSampleEntry {
+            fourcc: String::from_utf8_lossy(&entry.fourcc).into_owned(),
+        })?;
+    let config = codec_config_from_entry(typed)?;
+    let spec = TrackSpec::new(info.track_id.into(), info.timescale, config);
     // Overlay container-level display geometry (pasp / colr nclx) from the
     // sample entry onto the SPS-derived display — ISO/IEC 14496-12:2026
     // §12.1.4.1 (pasp) / §12.1.5.1 (colr). AVC/HEVC entries only; see
     // `overlay_sample_entry_display`.
-    let spec = match entry {
+    let spec = match typed {
         SampleEntryVariant::Avc1(e) => overlay_sample_entry_display(spec, &e.extra_boxes),
         SampleEntryVariant::Hevc1(e) => overlay_sample_entry_display(spec, &e.extra_boxes),
         _ => spec,
@@ -954,36 +940,11 @@ fn overlay_sample_entry_display(
     spec
 }
 
-/// Whether a `trak`'s sample entry carries parameter sets in-band
-/// (avc3/avc4/hev1), plus its entry-level extra boxes for the display overlay.
-fn track_entry_inband_and_extras(
-    trak: &TrackBox,
+/// Whether a sample entry carries parameter sets in-band (avc3/avc4/hev1),
+/// plus its entry-level extra boxes for the display overlay.
+pub(crate) fn track_entry_inband_and_extras(
+    entry: &SampleEntryVariant,
 ) -> (bool, Vec<isobmff::sample_entries::OpaqueBox>) {
-    let Some(mdia) = trak.mdia.as_ref() else {
-        return (false, Vec::new());
-    };
-    let Some(minf) = mdia.minf.as_ref() else {
-        return (false, Vec::new());
-    };
-    let Some(stbl) = minf.stbl.as_ref() else {
-        return (false, Vec::new());
-    };
-    let stsd: SampleDescriptionBox = match stbl.children.iter().find_map(|c| match c {
-        StblChild::Stsd(s) => Some(Ok(s.clone())),
-        StblChild::Opaque(bytes)
-            if bytes.len() >= BOX_HEADER_MIN_SIZE
-                && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == STSD.as_slice() =>
-        {
-            Some(SampleDescriptionBox::parse(bytes.as_slice()))
-        }
-        _ => None,
-    }) {
-        Some(Ok(s)) => s,
-        _ => return (false, Vec::new()),
-    };
-    let Some(entry) = stsd.entries.first() else {
-        return (false, Vec::new());
-    };
     match entry {
         SampleEntryVariant::Avc1(e) => (
             e.codec_type == *b"avc3" || e.codec_type == *b"avc4",
@@ -1007,67 +968,103 @@ const PASP_FOURCC: [u8; 4] = *b"pasp";
 /// every access unit whose SPS declares that same ratio. An in-band SPS that
 /// declares a different ratio is a later declaration than the sample entry and
 /// is reported as it is; a conforming file starts a new sample entry there.
-fn tag_fmp4_inband_display(b: &mut TrackBuilder) {
-    let config = b.spec.config.clone();
-    let codec = match &config {
-        CodecConfig::Avc { .. } => TrackCodec::Avc,
-        CodecConfig::Hevc { .. } => TrackCodec::Hevc,
-        _ => return,
-    };
-    let mut tracker = SpsTracker::new(codec);
-    // Seed from the track's raw SPS geometry (before the container overlay).
-    let raw_seed = DisplayGeometry::from_codec_config(&config);
-    let seed_sar = raw_seed.as_ref().and_then(|g| g.sample_aspect_ratio());
-    tracker.seed_state(raw_seed);
+///
+/// The state is incremental: [`tag`](Self::tag) observes one access unit at a
+/// time in decode order, so a streaming demuxer (which never holds the whole
+/// track) produces exactly the tags the whole-input demuxer does.
+pub(crate) struct InbandDisplayTagger {
+    tracker: SpsTracker,
+    config: CodecConfig,
+    seed_sar: Option<(u16, u16)>,
+    extra: Vec<isobmff::sample_entries::OpaqueBox>,
+    extra_without_pasp: Vec<isobmff::sample_entries::OpaqueBox>,
+    cached_raw: Option<Arc<DisplayInfo>>,
+    cached_overlaid: Option<Arc<DisplayInfo>>,
+}
 
-    let extra = b.entry_extra_boxes.clone();
-    let extra_without_pasp: Vec<_> = extra
-        .iter()
-        .filter(|x| x.box_type != PASP_FOURCC)
-        .cloned()
-        .collect();
-    let mut cached_raw: Option<Arc<DisplayInfo>> = None;
-    let mut cached_overlaid: Option<Arc<DisplayInfo>> = None;
+impl InbandDisplayTagger {
+    /// A tagger for an AVC/HEVC track, or `None` for any other codec.
+    pub(crate) fn new(
+        config: &CodecConfig,
+        extra: &[isobmff::sample_entries::OpaqueBox],
+    ) -> Option<Self> {
+        let codec = match config {
+            CodecConfig::Avc { .. } => TrackCodec::Avc,
+            CodecConfig::Hevc { .. } => TrackCodec::Hevc,
+            _ => return None,
+        };
+        let mut tracker = SpsTracker::new(codec);
+        // Seed from the track's raw SPS geometry (before the container overlay).
+        let raw_seed = DisplayGeometry::from_codec_config(config);
+        let seed_sar = raw_seed.as_ref().and_then(|g| g.sample_aspect_ratio());
+        tracker.seed_state(raw_seed);
+        let extra = extra.to_vec();
+        let extra_without_pasp = extra
+            .iter()
+            .filter(|x| x.box_type != PASP_FOURCC)
+            .cloned()
+            .collect();
+        Some(Self {
+            tracker,
+            config: config.clone(),
+            seed_sar,
+            extra,
+            extra_without_pasp,
+            cached_raw: None,
+            cached_overlaid: None,
+        })
+    }
 
-    for sample in b.samples.iter_mut() {
+    /// Observe one access unit and set its display tag.
+    pub(crate) fn tag(&mut self, sample: &mut Sample) {
         // Convert length-prefixed -> Annex B for observation only; sample bytes
         // stay unchanged. A malformed length prefix must not panic and leaves
         // the previous tag in place.
-        let length_size = config_nal_length_size(&config).unwrap_or(crate::annexb::NAL_LENGTH_SIZE);
+        let length_size = nal_length_size(&self.config).unwrap_or(crate::annexb::NAL_LENGTH_SIZE);
         if let Ok(nals) = crate::annexb::iter_length_prefixed_nals_with(&sample.data, length_size) {
             let mut annexb = Vec::with_capacity(sample.data.len());
             for nal in nals {
                 annexb.extend_from_slice(&[0, 0, 0, 1]);
                 annexb.extend_from_slice(nal);
             }
-            let _ = tracker.observe(&annexb);
+            let _ = self.tracker.observe(&annexb);
         }
-        let raw_state = tracker.state().cloned();
+        let raw_state = self.tracker.state().cloned();
         let display_arc = match raw_state {
             None => None,
             Some(raw) => {
                 let overlaid = if let (Some(prev_raw), Some(prev_ov)) =
-                    (&cached_raw, &cached_overlaid)
+                    (&self.cached_raw, &self.cached_overlaid)
                     && Arc::ptr_eq(prev_raw, &raw)
                 {
                     prev_ov.clone()
                 } else {
-                    let pasp_in_force =
-                        raw.geometry.as_ref().and_then(|g| g.sample_aspect_ratio()) == seed_sar;
+                    let pasp_in_force = raw.geometry.as_ref().and_then(|g| g.sample_aspect_ratio())
+                        == self.seed_sar;
                     let boxes = if pasp_in_force {
-                        &extra
+                        &self.extra
                     } else {
-                        &extra_without_pasp
+                        &self.extra_without_pasp
                     };
-                    let ov = overlay_display_info(&raw, &config, boxes);
-                    cached_raw = Some(raw.clone());
-                    cached_overlaid = Some(ov.clone());
+                    let ov = overlay_display_info(&raw, &self.config, boxes);
+                    self.cached_raw = Some(raw.clone());
+                    self.cached_overlaid = Some(ov.clone());
                     ov
                 };
                 Some(overlaid)
             }
         };
         sample.display = display_arc;
+    }
+}
+
+/// Tag every sample of an in-band track, in one pass (the whole-input demuxers).
+fn tag_fmp4_inband_display(b: &mut TrackBuilder) {
+    let Some(mut tagger) = InbandDisplayTagger::new(&b.spec.config, &b.entry_extra_boxes) else {
+        return;
+    };
+    for sample in &mut b.samples {
+        tagger.tag(sample);
     }
 }
 
@@ -1326,17 +1323,17 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
     }
 }
 
-/// Refine the provisional geometry/layer of a legacy-codec config from the
-/// first coded sample's in-band header (the sample entry alone cannot carry it):
+/// Refine the provisional geometry/layer of a legacy-codec config from a
+/// coded sample's in-band header (the sample entry alone cannot carry it):
 /// MPEG-2 video takes width/height from the `sequence_header()`, MPEG audio
 /// takes its layer from the first frame header. A no-op for other codecs and
 /// when the header cannot be decoded (the provisional values then stand).
 ///
-/// `pub(crate)`: shared with [`crate::progressive_demux::ProgressiveDemux`].
-pub(crate) fn refine_legacy_config(config: &mut CodecConfig, samples: &[Sample]) {
-    let Some(first) = samples.first() else {
-        return;
-    };
+/// Only the **first** sample of a track is consulted; pass exactly that one.
+///
+/// `pub(crate)`: shared with [`crate::progressive_demux::ProgressiveDemux`] and
+/// [`crate::mp4_demux::Mp4Demux`].
+pub(crate) fn refine_legacy_config(config: &mut CodecConfig, first: &Sample) {
     match config {
         CodecConfig::Mpeg2Video { width, height, .. }
             if let Ok(sh) = Mpeg2SeqHeader::find(&first.data) =>
@@ -1356,7 +1353,7 @@ pub(crate) fn refine_legacy_config(config: &mut CodecConfig, samples: &[Sample])
 /// The NAL length-prefix size (bytes) an AVC/HEVC config declares, or `None`
 /// for a codec that is not length-prefixed. ISO/IEC 14496-15:2017 §4.3.3.1, §5.3.3.1.3:
 /// `lengthSizeMinusOne + 1`.
-fn config_nal_length_size(config: &CodecConfig) -> Option<usize> {
+pub(crate) fn nal_length_size(config: &CodecConfig) -> Option<usize> {
     match config {
         CodecConfig::Avc { config, .. } => {
             Some(usize::from(config.config.length_size_minus_one) + 1)
@@ -1368,31 +1365,37 @@ fn config_nal_length_size(config: &CodecConfig) -> Option<usize> {
     }
 }
 
-/// Rewrite a track's samples to the crate's canonical 4-byte NAL prefixes and
-/// set the config's `lengthSizeMinusOne` to match, when the source declared a
-/// different size (ISO/IEC 14496-15:2017 §4.3.3.1, §5.3.3.1.3: 1, 2 or 4 bytes).
+/// Rewrite one sample's NAL prefixes from `length_size` bytes to the crate's
+/// canonical 4, when the source declared a different size
+/// (ISO/IEC 14496-15:2017 §4.3.3.1, §5.3.3.1.3: 1, 2 or 4 bytes).
 ///
 /// The rest of the pipeline — [`crate::annexb::iter_length_prefixed_nals`],
 /// keyframe detection, the TS/RTP writers — is fixed at 4 bytes, so a 1- or
 /// 2-byte-length fMP4 would otherwise parse every sample as garbage (r04-W43).
-/// A `length_size_minus_one` of 2 (3-byte lengths) is reserved by §5.3.3, so
-/// such a track is rejected rather than guessed at.
-pub(crate) fn normalise_track_nal_lengths(
-    spec: &mut TrackSpec,
-    samples: &mut [Sample],
-) -> Result<()> {
-    let Some(length_size) = config_nal_length_size(&spec.config) else {
-        return Ok(());
-    };
+/// A `length_size` of 3 is reserved by §5.3.3, so such a track is rejected
+/// rather than guessed at. Callers take `length_size` from
+/// [`nal_length_size`] **before** [`normalise_spec_nal_length`] rewrites the
+/// config to canonical 4.
+pub(crate) fn normalise_nal_lengths(length_size: usize, sample: &mut Sample) -> Result<()> {
     if length_size == crate::annexb::NAL_LENGTH_SIZE {
         // Already canonical. Samples stay opaque here (this demuxer never
         // walks coded data for the common 4-byte case), so a container whose
         // sample bytes are not NAL-framed still demuxes as before.
         return Ok(());
     }
-    for sample in samples.iter_mut() {
-        let data = crate::annexb::normalise_nal_length_size(&sample.data, length_size)?;
-        sample.data = data.into();
+    let data = crate::annexb::normalise_nal_length_size(&sample.data, length_size)?;
+    sample.data = data.into();
+    Ok(())
+}
+
+/// Set an AVC/HEVC config's `lengthSizeMinusOne` to the crate's canonical 4-byte
+/// prefix, after every sample has been rewritten by [`normalise_nal_lengths`].
+pub(crate) fn normalise_spec_nal_length(spec: &mut TrackSpec) {
+    let Some(length_size) = nal_length_size(&spec.config) else {
+        return;
+    };
+    if length_size == crate::annexb::NAL_LENGTH_SIZE {
+        return;
     }
     match &mut spec.config {
         CodecConfig::Avc { config, .. } => {
@@ -1403,7 +1406,6 @@ pub(crate) fn normalise_track_nal_lengths(
         }
         _ => {}
     }
-    Ok(())
 }
 
 /// Re-parse the `esds` box body preserved as an [`OpaqueBox`] in an `mp4a`

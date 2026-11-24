@@ -595,3 +595,9 @@ name = "broadcast_dash_round_trip"
 path = "fuzz_targets/broadcast_dash_round_trip.rs"
 test = false
 doc  = false
+
+[[bin]]
+name = "transmux_mp4_demux"
+path = "fuzz_targets/transmux_mp4_demux.rs"
+test = false
+doc  = false

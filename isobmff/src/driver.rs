@@ -44,9 +44,7 @@ pub const MAX_HEADER_REWIND_BYTES: usize = 32;
 /// reusable buffer is bounded by it.
 #[must_use]
 pub fn max_need_bytes(limits: &Limits) -> u64 {
-    let moov = limits.max_moov_bytes();
-    let fragment = limits.max_fragment_bytes();
-    if moov > fragment { moov } else { fragment }
+    limits.max_need_bytes()
 }
 
 /// Resolve a structure [`Need`](Step::Need) to the number of bytes a driver

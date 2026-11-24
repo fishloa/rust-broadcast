@@ -140,6 +140,17 @@ impl Limits {
     pub const fn max_metadata_item_bytes(&self) -> u64 {
         self.max_metadata_item_bytes
     }
+
+    /// The largest structure range the reader can demand: the larger of a
+    /// whole `moov`/index box and a whole fragment.
+    #[must_use]
+    pub const fn max_need_bytes(&self) -> u64 {
+        if self.max_moov_bytes > self.max_fragment_bytes {
+            self.max_moov_bytes
+        } else {
+            self.max_fragment_bytes
+        }
+    }
 }
 
 #[cfg(test)]

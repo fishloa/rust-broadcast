@@ -1,4 +1,5 @@
 pub mod big_media;
+pub mod collect;
 pub mod dash;
 pub mod fmp4_split;
 pub mod rtmp_play_peer;
