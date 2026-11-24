@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `file_stream::StreamingFileSession`, a sans-IO bounded-memory TS/FLV file playout session (issue #4057): the caller feeds 64 KiB-scale reads it asks for (`FileInput`), answers `FileDemand::Rewind` by seeking to 0, and drains `SessionEvent`s; tracks are merged across a bounded window, paced against the wall clock when configured, and looped with per-track 33-bit PTS offsets. Memory is a function of `FileStreamLimits`, never of the file's length.
+- `file_source::probe_prefix`, the bounded-prefix companion of `probe_and_demux` (issue #4057): the caller starts at `container_probe::DEFAULT_BUDGET`, follows `ProbeStep::NeedPrefix` up to `PROBE_PREFIX_MAX`, and gets the selected `DemuxerKind` without reading the whole file.
+- `FileReaderError::FileChangedContainer`, raised when a looping streaming playout re-probes its file and finds a different container (issue #4057).
+
 ## [0.14.0] - 2026-11-22
 ### Breaking
 
