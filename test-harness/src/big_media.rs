@@ -10,11 +10,11 @@
 
 use std::fmt;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use transmux::{
     CodecConfig, FlvDemux, FlvPayloadKind, Media, StreamingTsMux, TsDemux, flv_frame_payloads,
@@ -294,5 +294,513 @@ fn expect<T, E: fmt::Display>(what: &str, result: Result<T, E>) -> T {
     match result {
         Ok(value) => value,
         Err(error) => panic!("big_media: {what}: {error}"),
+    }
+}
+
+/// Bytes in one kibibyte, for the default large-file target.
+const KIB: u64 = 1024;
+/// Bytes in one mebibyte.
+const MIB: u64 = KIB * KIB;
+/// Bytes in one gibibyte.
+const GIB: u64 = MIB * KIB;
+
+/// Samples per chunk in a generated MP4: enough chunks that `co64` carries
+/// more than one entry, small enough that its table stays a few KB.
+const BIG_MP4_CHUNK_SAMPLES: u32 = 10;
+/// Track id of the generated video track.
+const BIG_MP4_VIDEO_TRACK: u32 = 1;
+/// Track id of the generated audio track.
+const BIG_MP4_AUDIO_TRACK: u32 = 2;
+/// Movie timescale of a generated MP4.
+const BIG_MP4_MOVIE_TIMESCALE: u32 = 1000;
+/// `mvhd.rate` unity (16.16 fixed point).
+const BIG_MP4_RATE_UNITY: u32 = 0x0001_0000;
+/// `mvhd.volume` unity (8.8 fixed point).
+const BIG_MP4_VOLUME_UNITY: u16 = 0x0100;
+/// `tkhd.volume` unity (8.8 fixed point).
+const BIG_MP4_TRACK_VOLUME_UNITY: i16 = 0x0100;
+/// `mvhd.next_track_id` after the two generated tracks.
+const BIG_MP4_NEXT_TRACK_ID: u32 = BIG_MP4_AUDIO_TRACK + 1;
+/// Identity display matrix (§8.2.2.2).
+const BIG_MP4_IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
+/// Width of a 32-bit box field.
+const BIG_MP4_WORD: usize = 4;
+/// Width of two 32-bit box fields.
+const BIG_MP4_DOUBLE_WORD: usize = 8;
+/// Bytes in the forced 64-bit `mdat` header, as a slice length.
+const BIG_MP4_MDAT_HEADER_BYTES: usize = 16;
+/// `mdhd.language` undetermined (ISO 639-2 `und` packed per §8.4.2.3).
+const BIG_MP4_LANGUAGE_UNDETERMINED: u16 = 0x55c4;
+/// Generated video width, 16.16 fixed point.
+const BIG_MP4_VIDEO_WIDTH: u32 = 1920 << 16;
+/// Generated video height, 16.16 fixed point.
+const BIG_MP4_VIDEO_HEIGHT: u32 = 1080 << 16;
+/// `mdat` header written in the forced 64-bit `largesize` form: 4-byte size
+/// marker, 4-byte type, 8-byte largesize.
+const BIG_MP4_MDAT_HEADER_LEN: u64 = 16;
+/// `size` value that announces a 64-bit `largesize` (§4.2).
+const BIG_MP4_SIZE_MARKER: u32 = 1;
+/// Minor version of the generated `ftyp`.
+const BIG_MP4_FTYP_MINOR: u32 = 0;
+/// `hdlr.handler_type` of the generated video track.
+const BIG_MP4_VIDEO_HANDLER: &[u8; 4] = b"vide";
+/// `hdlr.handler_type` of the generated audio track.
+const BIG_MP4_AUDIO_HANDLER: &[u8; 4] = b"soun";
+/// The public fixture whose sample entries the generated tracks copy.
+const BIG_MP4_SOURCE_ENTRY: &str = "mp4/progressive/av-prog.mp4";
+
+/// Knobs for [`write_big_mp4`].
+#[derive(Debug, Clone)]
+pub struct BigMp4Options {
+    /// Minimum declared file size; a sparse `mdat` fills the difference.
+    pub target_bytes: u64,
+    /// Samples in each generated track.
+    pub sample_count: u32,
+    /// Write `moov` before `mdat` (fast start) or after it.
+    pub moov_first: bool,
+    /// Video track timescale.
+    pub video_timescale: u32,
+    /// Audio track timescale.
+    pub audio_timescale: u32,
+    /// Video sample duration, in the video timescale.
+    pub video_delta: u32,
+    /// Audio sample duration, in the audio timescale.
+    pub audio_delta: u32,
+    /// Nominal bytes in one video sample.
+    pub video_sample_bytes: u32,
+    /// Nominal bytes in one audio sample.
+    pub audio_sample_bytes: u32,
+}
+
+impl Default for BigMp4Options {
+    fn default() -> Self {
+        Self {
+            target_bytes: 4 * GIB,
+            sample_count: 200_000,
+            moov_first: true,
+            video_timescale: 90_000,
+            audio_timescale: 48_000,
+            video_delta: 3_000,
+            audio_delta: 1_024,
+            video_sample_bytes: 1_000,
+            audio_sample_bytes: 200,
+        }
+    }
+}
+
+/// What [`write_big_mp4`] produced.
+#[derive(Debug, Clone)]
+pub struct BigMp4 {
+    /// Exact file length in bytes.
+    pub bytes: u64,
+    /// Serialized `moov` length in bytes.
+    pub moov_bytes: u64,
+    /// Whether `moov` was written before `mdat`.
+    pub moov_first: bool,
+    /// `(track id, samples)` in track order.
+    pub samples_per_track: Vec<(u32, u64)>,
+}
+
+/// Write a real progressive MP4 of at least [`BigMp4Options::target_bytes`]:
+/// a real `ftyp`, a real `moov` with two tracks and full sample tables, and a
+/// sparse `mdat` whose body is never written.
+pub fn write_big_mp4(path: &Path, opts: &BigMp4Options) -> BigMp4 {
+    use broadcast_common::timescale::Timescale;
+    use isobmff::TrackId;
+    use isobmff::init_segment::{MovieBox, MovieHeaderBox};
+    use isobmff::sample_table::{build_stsc, build_stts};
+    use isobmff::segments::FileTypeBox;
+
+    let (video_entry, audio_entry) = big_mp4_source_entries();
+    let chunk_count = opts.sample_count.div_ceil(BIG_MP4_CHUNK_SAMPLES);
+    let chunk_samples = vec![BIG_MP4_CHUNK_SAMPLES; chunk_count as usize];
+    let video_deltas = vec![opts.video_delta; opts.sample_count as usize];
+    let audio_deltas = vec![opts.audio_delta; opts.sample_count as usize];
+    let video_stts = build_stts(&video_deltas);
+    let audio_stts = build_stts(&audio_deltas);
+    let video_stsc = expect("video stsc", build_stsc(&chunk_samples));
+    let audio_stsc = expect("audio stsc", build_stsc(&chunk_samples));
+    let video_duration = u64::from(opts.sample_count) * u64::from(opts.video_delta);
+    let audio_duration = u64::from(opts.sample_count) * u64::from(opts.audio_delta);
+    let video_chunk_bytes = u64::from(BIG_MP4_CHUNK_SAMPLES) * u64::from(opts.video_sample_bytes);
+    let audio_chunk_bytes = u64::from(BIG_MP4_CHUNK_SAMPLES) * u64::from(opts.audio_sample_bytes);
+    let video_total = u64::from(chunk_count) * video_chunk_bytes;
+    let audio_total = u64::from(chunk_count) * audio_chunk_bytes;
+    let required = video_total.saturating_add(audio_total);
+    let movie_timescale = expect(
+        "movie timescale",
+        Timescale::try_new(BIG_MP4_MOVIE_TIMESCALE),
+    );
+    let mvhd_duration = movie_duration(
+        video_duration,
+        opts.video_timescale,
+        audio_duration,
+        opts.audio_timescale,
+        BIG_MP4_MOVIE_TIMESCALE,
+    );
+    let mvhd = MovieHeaderBox {
+        version: 0,
+        flags: 0,
+        creation_time: 0,
+        modification_time: 0,
+        timescale: movie_timescale,
+        duration: mvhd_duration,
+        rate: BIG_MP4_RATE_UNITY,
+        volume: BIG_MP4_VOLUME_UNITY,
+        matrix: BIG_MP4_IDENTITY_MATRIX,
+        next_track_id: TrackId::new(BIG_MP4_NEXT_TRACK_ID),
+    };
+    let ftyp = FileTypeBox {
+        major_brand: *b"iso5",
+        minor_version: BIG_MP4_FTYP_MINOR,
+        compatible_brands: vec![*b"iso5", *b"iso6", *b"mp41"],
+    };
+    let ftyp_bytes = expect("serialize ftyp", ftyp.try_to_bytes());
+    let zero_video = vec![0u64; chunk_count as usize];
+    let zero_audio = vec![0u64; chunk_count as usize];
+    let build = |video_offsets: &[u64], audio_offsets: &[u64]| {
+        let video = big_mp4_track(BigMp4Track {
+            track_id: BIG_MP4_VIDEO_TRACK,
+            handler: *BIG_MP4_VIDEO_HANDLER,
+            timescale: opts.video_timescale,
+            delta: video_duration,
+            sample_bytes: opts.video_sample_bytes,
+            sample_count: opts.sample_count,
+            entry: &video_entry,
+            stts: &video_stts,
+            stsc: &video_stsc,
+            chunk_offsets: video_offsets,
+            audio: false,
+        });
+        let audio = big_mp4_track(BigMp4Track {
+            track_id: BIG_MP4_AUDIO_TRACK,
+            handler: *BIG_MP4_AUDIO_HANDLER,
+            timescale: opts.audio_timescale,
+            delta: audio_duration,
+            sample_bytes: opts.audio_sample_bytes,
+            sample_count: opts.sample_count,
+            entry: &audio_entry,
+            stts: &audio_stts,
+            stsc: &audio_stsc,
+            chunk_offsets: audio_offsets,
+            audio: true,
+        });
+        MovieBox::new(mvhd.clone(), vec![video, audio], None, vec![])
+    };
+    let provisional = build(&zero_video, &zero_audio);
+    let moov_len = provisional.serialized_len() as u64;
+    let payload_start = u64::try_from(ftyp_bytes.len()).unwrap_or(0)
+        + if opts.moov_first { moov_len } else { 0 }
+        + BIG_MP4_MDAT_HEADER_LEN;
+    let video_offsets: Vec<u64> = (0..chunk_count)
+        .map(|index| payload_start + u64::from(index) * video_chunk_bytes)
+        .collect();
+    let audio_offsets: Vec<u64> = (0..chunk_count)
+        .map(|index| payload_start + video_total + u64::from(index) * audio_chunk_bytes)
+        .collect();
+    let movie = build(&video_offsets, &audio_offsets);
+    let moov_bytes = expect("serialize moov", movie.try_to_bytes());
+    let overhead = u64::try_from(ftyp_bytes.len()).unwrap_or(0)
+        + u64::try_from(moov_bytes.len()).unwrap_or(0)
+        + BIG_MP4_MDAT_HEADER_LEN;
+    let body_len = opts.target_bytes.saturating_sub(overhead).max(required);
+    let mut file = expect("create big mp4", std::fs::File::create(path));
+    expect("write ftyp", file.write_all(&ftyp_bytes));
+    if opts.moov_first {
+        expect("write moov", file.write_all(&moov_bytes));
+        expect(
+            "write mdat header",
+            write_big_mp4_mdat_header(&mut file, body_len),
+        );
+        expect("extend sparse mdat", file.set_len(payload_start + body_len));
+    } else {
+        expect(
+            "write mdat header",
+            write_big_mp4_mdat_header(&mut file, body_len),
+        );
+        let mdat_end =
+            u64::try_from(ftyp_bytes.len()).unwrap_or(0) + BIG_MP4_MDAT_HEADER_LEN + body_len;
+        expect("extend sparse mdat", file.set_len(mdat_end));
+        expect("seek past mdat", file.seek(SeekFrom::Start(mdat_end)));
+        expect("write trailing moov", file.write_all(&moov_bytes));
+    }
+    let bytes = expect("file length", file.metadata()).len();
+    BigMp4 {
+        bytes,
+        moov_bytes: u64::try_from(moov_bytes.len()).unwrap_or(0),
+        moov_first: opts.moov_first,
+        samples_per_track: vec![
+            (BIG_MP4_VIDEO_TRACK, u64::from(opts.sample_count)),
+            (BIG_MP4_AUDIO_TRACK, u64::from(opts.sample_count)),
+        ],
+    }
+}
+
+struct BigMp4Track<'a> {
+    track_id: u32,
+    handler: [u8; 4],
+    timescale: u32,
+    delta: u64,
+    sample_bytes: u32,
+    sample_count: u32,
+    entry: &'a isobmff::SampleEntryVariant,
+    stts: &'a isobmff::timing::TimeToSampleBox,
+    stsc: &'a isobmff::init_segment::SampleToChunkBox,
+    chunk_offsets: &'a [u64],
+    audio: bool,
+}
+
+fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
+    use broadcast_common::timescale::Timescale;
+    use isobmff::init_segment::{
+        ChunkLargeOffsetBox, DataEntry, DataEntryUrlBox, DataInformationBox, DataReferenceBox,
+        HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, SampleSizeBox, SampleTableBox,
+        SoundMediaHeaderBox, StblChild, TrackBox, TrackHeaderBox, VideoMediaHeaderBox,
+    };
+    use isobmff::{SampleDescriptionBox, TrackId};
+
+    let stbl = SampleTableBox {
+        children: vec![
+            StblChild::Stsd(SampleDescriptionBox {
+                version: 0,
+                flags: 0,
+                entries: vec![spec.entry.clone()],
+            }),
+            StblChild::Stts(spec.stts.clone()),
+            StblChild::Stsc(spec.stsc.clone()),
+            StblChild::Stsz(SampleSizeBox {
+                version: 0,
+                flags: 0,
+                sample_size: spec.sample_bytes,
+                sample_count: spec.sample_count,
+                entries: vec![],
+            }),
+            StblChild::Co64(ChunkLargeOffsetBox {
+                version: 0,
+                flags: 0,
+                entries: spec.chunk_offsets.to_vec(),
+            }),
+        ],
+    };
+    let dinf = DataInformationBox::new(
+        Some(DataReferenceBox {
+            version: 0,
+            flags: 0,
+            entries: vec![DataEntry::Url(DataEntryUrlBox {
+                version: 0,
+                flags: 1,
+                location: vec![],
+            })],
+        }),
+        vec![],
+    );
+    let minf = if spec.audio {
+        MediaInformationBox::new(
+            None,
+            Some(SoundMediaHeaderBox {
+                version: 0,
+                flags: 0,
+                balance: 0,
+            }),
+            Some(dinf),
+            Some(stbl),
+            vec![],
+        )
+    } else {
+        MediaInformationBox::new(
+            Some(VideoMediaHeaderBox {
+                version: 0,
+                flags: 1,
+                graphicsmode: 0,
+                opcolor: [0, 0, 0],
+            }),
+            None,
+            Some(dinf),
+            Some(stbl),
+            vec![],
+        )
+    };
+    let mdia = MediaBox::new(
+        Some(MediaHeaderBox {
+            version: 0,
+            flags: 0,
+            creation_time: 0,
+            modification_time: 0,
+            timescale: expect("track timescale", Timescale::try_new(spec.timescale)),
+            duration: spec.delta,
+            language: BIG_MP4_LANGUAGE_UNDETERMINED,
+        }),
+        Some(HandlerBox {
+            version: 0,
+            flags: 0,
+            handler_type: spec.handler,
+            name: vec![],
+        }),
+        Some(minf),
+        vec![],
+    );
+    TrackBox::new(
+        TrackHeaderBox {
+            version: 0,
+            flags: 3,
+            creation_time: 0,
+            modification_time: 0,
+            track_id: TrackId::new(spec.track_id),
+            duration: spec.delta,
+            layer: 0,
+            alternate_group: 0,
+            volume: if spec.audio {
+                BIG_MP4_TRACK_VOLUME_UNITY
+            } else {
+                0
+            },
+            matrix: BIG_MP4_IDENTITY_MATRIX,
+            width: if spec.audio { 0 } else { BIG_MP4_VIDEO_WIDTH },
+            height: if spec.audio { 0 } else { BIG_MP4_VIDEO_HEIGHT },
+        },
+        None,
+        Some(mdia),
+        vec![],
+    )
+}
+
+fn movie_duration(
+    video_duration: u64,
+    video_timescale: u32,
+    audio_duration: u64,
+    audio_timescale: u32,
+    movie_timescale: u32,
+) -> u64 {
+    let video = rescale_ceil(video_duration, video_timescale, movie_timescale);
+    let audio = rescale_ceil(audio_duration, audio_timescale, movie_timescale);
+    video.max(audio)
+}
+
+fn rescale_ceil(value: u64, from: u32, to: u32) -> u64 {
+    if from == to {
+        return value;
+    }
+    let numerator = u128::from(value) * u128::from(to);
+    let scaled = numerator.div_ceil(u128::from(from));
+    u64::try_from(scaled).unwrap_or(u64::MAX)
+}
+
+fn write_big_mp4_mdat_header(out: &mut impl Write, body_len: u64) -> std::io::Result<()> {
+    let mut header = [0u8; BIG_MP4_MDAT_HEADER_BYTES];
+    header[..BIG_MP4_WORD].copy_from_slice(&BIG_MP4_SIZE_MARKER.to_be_bytes());
+    header[BIG_MP4_WORD..BIG_MP4_DOUBLE_WORD].copy_from_slice(&isobmff::segments::MDAT);
+    header[BIG_MP4_DOUBLE_WORD..]
+        .copy_from_slice(&(BIG_MP4_MDAT_HEADER_LEN + body_len).to_be_bytes());
+    out.write_all(&header)
+}
+
+fn big_mp4_source_entries() -> (isobmff::SampleEntryVariant, isobmff::SampleEntryVariant) {
+    let bytes = read_source(&test_fixtures::path(BIG_MP4_SOURCE_ENTRY));
+    let moov =
+        isobmff::box_types::find_box(&bytes, &isobmff::init_segment::MOOV).expect("source moov");
+    let movie = expect("parse source moov", isobmff::MovieBox::parse(moov));
+    let entry = |handler: &[u8; 4]| -> isobmff::SampleEntryVariant {
+        movie
+            .tracks
+            .iter()
+            .find(|trak| {
+                trak.mdia
+                    .as_ref()
+                    .and_then(|mdia| mdia.hdlr.as_ref())
+                    .is_some_and(|hdlr| &hdlr.handler_type == handler)
+            })
+            .and_then(first_sample_entry)
+            .cloned()
+            .expect("source sample entry")
+    };
+    (entry(BIG_MP4_VIDEO_HANDLER), entry(BIG_MP4_AUDIO_HANDLER))
+}
+
+fn first_sample_entry(
+    trak: &isobmff::init_segment::TrackBox,
+) -> Option<&isobmff::SampleEntryVariant> {
+    trak.mdia
+        .as_ref()?
+        .minf
+        .as_ref()?
+        .stbl
+        .as_ref()?
+        .children
+        .iter()
+        .find_map(|child| match child {
+            isobmff::init_segment::StblChild::Stsd(stsd) => stsd.entries.first(),
+            _ => None,
+        })
+}
+
+#[cfg(test)]
+mod big_mp4_tests {
+    use super::*;
+    use isobmff::sample_table::SampleRef;
+    use isobmff::{ReadStep, Reader, ReaderConfig, SampleOrder, Step};
+
+    const SMALL_TARGET: u64 = MIB;
+    const SMALL_SAMPLE_COUNT: u32 = 20;
+
+    fn temp_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "test-harness-big-mp4-{}-{tag}.mp4",
+            std::process::id()
+        ))
+    }
+
+    fn drive(bytes: &[u8]) -> Vec<SampleRef> {
+        let config = ReaderConfig::default()
+            .with_total_len(Some(bytes.len() as u64))
+            .with_order(SampleOrder::File);
+        let mut reader = Reader::new(config);
+        let mut samples = Vec::new();
+        loop {
+            match reader.next().expect("reader step") {
+                Step::Need(range) => {
+                    let start = usize::try_from(range.offset).expect("offset");
+                    let end = usize::try_from(range.end()).expect("end");
+                    reader
+                        .supply(range.offset, bytes.get(start..end).unwrap_or(&[]))
+                        .expect("supply");
+                }
+                Step::Sample(sample) => samples.push(sample),
+                Step::Tracks(_) => {}
+                Step::Done => break,
+                _ => break,
+            }
+        }
+        samples
+    }
+
+    #[test]
+    fn the_generated_mp4_reads_in_both_layouts() {
+        for moov_first in [true, false] {
+            let path = temp_path(if moov_first { "first" } else { "last" });
+            let opts = BigMp4Options {
+                target_bytes: SMALL_TARGET,
+                sample_count: SMALL_SAMPLE_COUNT,
+                moov_first,
+                ..BigMp4Options::default()
+            };
+            let written = write_big_mp4(&path, &opts);
+            let bytes = std::fs::read(&path).expect("read generated file");
+            std::fs::remove_file(&path).expect("remove generated file");
+            assert_eq!(written.bytes, bytes.len() as u64);
+            assert!(written.moov_bytes > 0);
+            let moov = isobmff::box_types::find_box(&bytes, b"moov").expect("moov");
+            let movie = expect("parse moov", isobmff::MovieBox::parse(moov));
+            assert_eq!(movie.tracks.len(), 2);
+            let samples = drive(&bytes);
+            assert_eq!(samples.len(), 40);
+            for track in [BIG_MP4_VIDEO_TRACK, BIG_MP4_AUDIO_TRACK] {
+                let count = samples
+                    .iter()
+                    .filter(|sample| sample.track.value() == track)
+                    .count();
+                assert_eq!(count, SMALL_SAMPLE_COUNT as usize);
+            }
+            assert!(samples.iter().all(|sample| sample.offset < written.bytes));
+        }
     }
 }
