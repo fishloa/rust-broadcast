@@ -508,6 +508,36 @@ while let Some(action) = session.poll(now) {
 }
 ```
 
+## HTTP range reads for remote MP4
+
+`mp4_range::RangeReader` drives the `isobmff` reader over HTTP byte ranges
+without an HTTP client of its own. It coalesces: a structure demand shorter
+than the caller's `min_fetch` fetches that many bytes, and later demands
+inside the window are answered from it, so a remote `moov` costs a bounded
+number of requests however far into the file it sits. The caller performs
+each `RangeAction::Fetch` request and reports the answer through `on_status`
+and `on_range`; a server that ignores `Range` (`200`) or refuses it (`416`) is
+the typed `RangeError::RangeNotSupported` / `RangeNotSatisfiable`.
+
+```rust,no_run
+use broadcast_client::mp4_range::{RangeAction, RangeReader};
+use isobmff::ReaderConfig;
+
+let mut reader = RangeReader::new(ReaderConfig::default(), 64 * 1024);
+loop {
+    match reader.poll().unwrap() {
+        RangeAction::Fetch { offset, len } => {
+            let _range = (offset, len); // the host performs the range GET here
+        }
+        RangeAction::Done => break,
+        _ => {}
+    }
+}
+```
+
+This is a standalone helper: it is not (yet) a `Session` source kind, so a
+host that wants a remote MP4 index drives `RangeReader` alongside its session.
+
 ## Feature flags
 
 | Feature | Default | Effect |

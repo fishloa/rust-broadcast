@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `mp4_range::RangeReader`, a sans-IO HTTP range driver over the `isobmff`
+  reader: `poll` yields `RangeAction::{Fetch, Step, Done}`, and the caller
+  reports each HTTP answer with `on_status`/`on_range`. A demand shorter than
+  the caller-supplied `min_fetch` is widened to it and later demands inside
+  the window are served from it, so a remote `moov` costs a bounded number of
+  requests; the held window is bounded by `min_fetch` plus the reader's
+  largest single demand. `200` (a full body) and `416` are the typed
+  `RangeError::RangeNotSupported`/`RangeNotSatisfiable`. It is a helper, not
+  yet a `Session` source kind. `isobmff` is now a direct dependency.
 - Optional read-ahead backpressure for every pull source: `ReadAhead` selects a media-time bound, an accepted-byte bound, both, or `ReadAhead::Unlimited` (the default), set with `TsHttpConfig::with_read_ahead`. The session measures how far delivered media runs ahead of the playback position, in media time and in bytes of media still ahead of it (accepted bytes attributed to delivered samples in 100 ms presentation slices, so bytes the player has passed stop counting), and stops pulling once either bound is reached, restarting once both fall under half. TS-over-HTTP and RTSP over interleaved TCP emit `Action::PauseRead`/`Action::ResumeRead` so a host stops and restarts reading the socket (TCP flow control then holds a recording's server), and `Session::read_paused` answers the same question; HLS, DASH and Smooth stop scheduling the next segment or fragment request instead, and a request already in flight completes. A DASH session with a limit configured issues one media request per representation at a time, because the runtime otherwise offers a static presentation's whole segment list at once and the gate could only close after the last request. The library chooses no numbers and imposes no maximum or minimum beyond non-zero; the default `Unlimited` never paces a source, so memory is bounded only by the host's own buffering. A deliberate pause suppresses the stall timers and causes no buffer pause or reconnect (#4085, #4086).
 
 ## [0.8.0] - 2026-11-22
