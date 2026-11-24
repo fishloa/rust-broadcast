@@ -12,6 +12,13 @@ use broadcast_common::{Parse, Serialize};
 use crate::error::{BitResultExt, Error, Result};
 use crate::plex::{plex_bits, read_plex, write_plex};
 
+/// Plex width of `AudioDataID` (RDD 29 §5.5.1 Table 8).
+const AUDIO_DATA_ID_BITS: u32 = 8;
+/// Bit width of `DLCSize` (RDD 29 §5.5.1 Table 8).
+const DLC_SIZE_BITS: u32 = 16;
+/// Bits per byte, for bit<->byte length conversions.
+const BITS_PER_BYTE: usize = 8;
+
 /// The `AudioDataDLC` element (§4.5/§5.5): one track's audio essence,
 /// referenced by [`crate::BedDefinition1`]/[`crate::ObjectDefinition1`] via
 /// `AudioDataID`.
@@ -63,10 +70,11 @@ impl<'a> Parse<'a> for AudioDataDlc<'a> {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut r = BitReader::new(bytes);
-        let audio_data_id = read_plex(&mut r, 8, "AudioDataDLC.AudioDataID")? as u32;
-        let dlc_size = r.read_bits(16).ctx("AudioDataDLC.DLCSize")? as usize;
+        let audio_data_id =
+            read_plex(&mut r, AUDIO_DATA_ID_BITS, "AudioDataDLC.AudioDataID")? as u32;
+        let dlc_size = r.read_bits(DLC_SIZE_BITS).ctx("AudioDataDLC.DLCSize")? as usize;
         debug_assert!(r.is_byte_aligned());
-        let payload_start = r.bits_read() / 8;
+        let payload_start = r.bits_read() / BITS_PER_BYTE;
         let payload_end = payload_start
             .checked_add(dlc_size)
             .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
@@ -96,8 +104,9 @@ impl Serialize for AudioDataDlc<'_> {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let header_bits = plex_bits(u64::from(self.audio_data_id), 8) + 16;
-        (header_bits as usize).div_ceil(8) + self.payload.len()
+        let header_bits =
+            plex_bits(u64::from(self.audio_data_id), AUDIO_DATA_ID_BITS) + DLC_SIZE_BITS;
+        (header_bits as usize).div_ceil(BITS_PER_BYTE) + self.payload.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -109,13 +118,13 @@ impl Serialize for AudioDataDlc<'_> {
             write_plex(
                 &mut w,
                 u64::from(self.audio_data_id),
-                8,
+                AUDIO_DATA_ID_BITS,
                 "AudioDataDLC.AudioDataID",
             )?;
-            w.write_bits(self.payload.len() as u64, 16)
+            w.write_bits(self.payload.len() as u64, DLC_SIZE_BITS)
                 .ctx("AudioDataDLC.DLCSize")?;
             debug_assert!(w.is_byte_aligned());
-            header_len = w.bits_written() / 8;
+            header_len = w.bits_written() / BITS_PER_BYTE;
         }
         buf[header_len..header_len + self.payload.len()].copy_from_slice(self.payload);
         Ok(need)

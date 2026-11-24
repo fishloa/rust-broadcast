@@ -122,6 +122,15 @@ pub struct AtmosFrame<'a> {
 /// protocol with ATMOSVersion = 1", §5.2.1).
 pub const ATMOS_VERSION: u8 = 1;
 
+/// Plex(8) container width of the element header and count fields (§5.1.1).
+const PLEX_BASE_WIDTH: u32 = 8;
+/// `SampleRate` and `BitDepth` are each a small sub-byte field (§5.2.1).
+const SMALL_FIELD_BITS: u32 = 2;
+/// `FrameRate` is a 4-bit field (§5.2.1).
+const FRAME_RATE_BITS: u32 = 4;
+/// Bits per byte, for bit<->byte length conversions.
+const BITS_PER_BYTE: usize = 8;
+
 impl<'a> AtmosFrame<'a> {
     /// Build a new `ATMOSFrame`.
     #[must_use]
@@ -145,10 +154,10 @@ impl<'a> AtmosFrame<'a> {
     fn body_len(&self) -> usize {
         // ATMOSVersion(8) + SampleRate(2) + BitDepth(2) + FrameRate(4) = 16
         // bits, already byte-aligned -- ByteAlign() is a genuine no-op here.
-        let mut bits: u32 = 8 + 2 + 2 + 4;
-        bits += plex_bits(u64::from(self.max_rendered), 8);
-        bits += plex_bits(self.elements.len() as u64, 8);
-        let mut bytes = (bits as usize) / 8;
+        let mut bits: u32 = u8::BITS + SMALL_FIELD_BITS + SMALL_FIELD_BITS + FRAME_RATE_BITS;
+        bits += plex_bits(u64::from(self.max_rendered), PLEX_BASE_WIDTH);
+        bits += plex_bits(self.elements.len() as u64, PLEX_BASE_WIDTH);
+        let mut bytes = (bits as usize) / BITS_PER_BYTE;
         for e in &self.elements {
             bytes += e.serialized_len();
         }
@@ -186,16 +195,16 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut r = BitReader::new(bytes);
-        let element_id = read_plex(&mut r, 8, "ElementID")? as u32;
+        let element_id = read_plex(&mut r, PLEX_BASE_WIDTH, "ElementID")? as u32;
         if element_id != ELEMENT_ID_ATMOS_FRAME {
             return Err(Error::UnexpectedElementId {
                 expected: ELEMENT_ID_ATMOS_FRAME,
                 found: element_id,
             });
         }
-        let element_size = read_plex(&mut r, 8, "ElementSize")?;
+        let element_size = read_plex(&mut r, PLEX_BASE_WIDTH, "ElementSize")?;
         debug_assert!(r.is_byte_aligned());
-        let header_len = r.bits_read() / 8;
+        let header_len = r.bits_read() / BITS_PER_BYTE;
         let element_size = usize::try_from(element_size).map_err(|_| {
             Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ElementSize",
@@ -214,18 +223,23 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
         let body = &bytes[header_len..body_end];
 
         let mut br = BitReader::new(body);
-        let version = br.read_bits(8).ctx("ATMOSFrame.ATMOSVersion")? as u8;
-        let sample_rate = SampleRate::from_bits(br.read_bits(2).ctx("ATMOSFrame.SampleRate")?);
-        let bit_depth = BitDepth::from_bits(br.read_bits(2).ctx("ATMOSFrame.BitDepth")?);
-        let frame_rate = FrameRate::from_bits(br.read_bits(4).ctx("ATMOSFrame.FrameRate")?);
-        let max_rendered = read_plex(&mut br, 8, "ATMOSFrame.MaxRendered")? as u32;
+        let version = br.read_bits(u8::BITS).ctx("ATMOSFrame.ATMOSVersion")? as u8;
+        let sample_rate = SampleRate::from_bits(
+            br.read_bits(SMALL_FIELD_BITS)
+                .ctx("ATMOSFrame.SampleRate")?,
+        );
+        let bit_depth =
+            BitDepth::from_bits(br.read_bits(SMALL_FIELD_BITS).ctx("ATMOSFrame.BitDepth")?);
+        let frame_rate =
+            FrameRate::from_bits(br.read_bits(FRAME_RATE_BITS).ctx("ATMOSFrame.FrameRate")?);
+        let max_rendered = read_plex(&mut br, PLEX_BASE_WIDTH, "ATMOSFrame.MaxRendered")? as u32;
         br.align_to_byte(); // ByteAlign() -- a no-op given the fixed 16-bit
         // header above, kept for parser symmetry with
         // the other elements' genuine AlignBits.
-        let sub_element_count = read_plex(&mut br, 8, "ATMOSFrame.SubElementCount")?;
+        let sub_element_count = read_plex(&mut br, PLEX_BASE_WIDTH, "ATMOSFrame.SubElementCount")?;
         debug_assert!(br.is_byte_aligned());
 
-        let mut offset = br.bits_read() / 8;
+        let mut offset = br.bits_read() / BITS_PER_BYTE;
         // `sub_element_count` is a Plex field read straight from the input, so
         // it is attacker-controlled and effectively unbounded — Plex escalates
         // 8 -> 16 -> 32 bits, so twelve bytes encode a count of 0x7FFF_FFFF.
@@ -291,29 +305,29 @@ impl Serialize for AtmosFrame<'_> {
         let fixed_part_bytes;
         {
             let mut w = BitWriter::new(&mut buf[header_len..need]);
-            w.write_bits(u64::from(self.version), 8)
+            w.write_bits(u64::from(self.version), u8::BITS)
                 .ctx("ATMOSFrame.ATMOSVersion")?;
-            w.write_bits(self.sample_rate.to_bits(), 2)
+            w.write_bits(self.sample_rate.to_bits(), SMALL_FIELD_BITS)
                 .ctx("ATMOSFrame.SampleRate")?;
-            w.write_bits(self.bit_depth.to_bits(), 2)
+            w.write_bits(self.bit_depth.to_bits(), SMALL_FIELD_BITS)
                 .ctx("ATMOSFrame.BitDepth")?;
-            w.write_bits(self.frame_rate.to_bits(), 4)
+            w.write_bits(self.frame_rate.to_bits(), FRAME_RATE_BITS)
                 .ctx("ATMOSFrame.FrameRate")?;
             write_plex(
                 &mut w,
                 u64::from(self.max_rendered),
-                8,
+                PLEX_BASE_WIDTH,
                 "ATMOSFrame.MaxRendered",
             )?;
             w.align_to_byte().ctx("ATMOSFrame.ByteAlign")?;
             write_plex(
                 &mut w,
                 self.elements.len() as u64,
-                8,
+                PLEX_BASE_WIDTH,
                 "ATMOSFrame.SubElementCount",
             )?;
             debug_assert!(w.is_byte_aligned());
-            fixed_part_bytes = w.bits_written() / 8;
+            fixed_part_bytes = w.bits_written() / BITS_PER_BYTE;
         }
 
         let mut offset = header_len + fixed_part_bytes;
