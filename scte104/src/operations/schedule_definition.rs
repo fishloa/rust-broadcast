@@ -3,6 +3,7 @@
 //! Supplemental request following start_schedule_download. Defines one
 //! avail/splice event in the schedule.
 
+use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::time::SpliceScheduleTime;
 use crate::traits::OperationDef;
@@ -22,8 +23,6 @@ const AUTO_RETURN_OFFSET: usize = 11;
 const BREAK_DURATION_OFFSET: usize = 12;
 const AVAIL_NUM_OFFSET: usize = 14;
 const AVAILS_EXPECTED_OFFSET: usize = 15;
-/// Offset of the second 16-bit word within a 4-byte big-endian word.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 // splice_schedule_command(1) + splice_event_id(4) + time(4) +
 // unique_program_id(2) + auto_return(1) + break_duration(2) +
 // avail_num(1) + avails_expected(1)
@@ -130,22 +129,11 @@ impl<'a> Parse<'a> for ScheduleDefinition {
             splice_schedule_command: SpliceScheduleCommand::from_byte(
                 bytes[SPLICE_SCHEDULE_COMMAND_OFFSET],
             ),
-            splice_event_id: u32::from_be_bytes([
-                bytes[SPLICE_EVENT_ID_OFFSET],
-                bytes[SPLICE_EVENT_ID_OFFSET + 1],
-                bytes[SPLICE_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET],
-                bytes[SPLICE_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            ]),
+            splice_event_id: u32::from_be_bytes(be::<U32_LEN>(bytes, SPLICE_EVENT_ID_OFFSET)?),
             time: SpliceScheduleTime::parse(&bytes[5..9])?,
-            unique_program_id: u16::from_be_bytes([
-                bytes[UNIQUE_PROGRAM_ID_OFFSET],
-                bytes[UNIQUE_PROGRAM_ID_OFFSET + 1],
-            ]),
+            unique_program_id: u16::from_be_bytes(be::<U16_LEN>(bytes, UNIQUE_PROGRAM_ID_OFFSET)?),
             auto_return: bytes[AUTO_RETURN_OFFSET],
-            break_duration: u16::from_be_bytes([
-                bytes[BREAK_DURATION_OFFSET],
-                bytes[BREAK_DURATION_OFFSET + 1],
-            ]),
+            break_duration: u16::from_be_bytes(be::<U16_LEN>(bytes, BREAK_DURATION_OFFSET)?),
             avail_num: bytes[AVAIL_NUM_OFFSET],
             avails_expected: bytes[AVAILS_EXPECTED_OFFSET],
         })

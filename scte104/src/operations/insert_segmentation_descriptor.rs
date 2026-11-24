@@ -3,6 +3,7 @@
 //! Supplemental usage. Creates a segmentation descriptor in the resulting
 //! SCTE 35 section.
 
+use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -68,8 +69,6 @@ const DURATION_OFFSET: usize = 5;
 const SEGMENTATION_UPID_TYPE_OFFSET: usize = 7;
 const SEGMENTATION_UPID_LENGTH_OFFSET: usize = 8;
 const SEGMENTATION_UPID_OFFSET: usize = 9;
-/// Offset of the second 16-bit word within a 4-byte big-endian word.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 
 // Offsets within the 12-byte tail, relative to `tail_off`.
 const SEGMENTATION_TYPE_ID_OFFSET: usize = 0;
@@ -93,14 +92,10 @@ impl<'a> Parse<'a> for InsertSegmentationDescriptor<'a> {
             FIXED_LEN + TAIL_LEN,
             "insert_segmentation_descriptor (minimum)",
         )?;
-        let segmentation_event_id = u32::from_be_bytes([
-            bytes[SEGMENTATION_EVENT_ID_OFFSET],
-            bytes[SEGMENTATION_EVENT_ID_OFFSET + 1],
-            bytes[SEGMENTATION_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET],
-            bytes[SEGMENTATION_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-        ]);
+        let segmentation_event_id =
+            u32::from_be_bytes(be::<U32_LEN>(bytes, SEGMENTATION_EVENT_ID_OFFSET)?);
         let segmentation_event_cancel_indicator = bytes[SEGMENTATION_EVENT_CANCEL_INDICATOR_OFFSET];
-        let duration = u16::from_be_bytes([bytes[DURATION_OFFSET], bytes[DURATION_OFFSET + 1]]);
+        let duration = u16::from_be_bytes(be::<U16_LEN>(bytes, DURATION_OFFSET)?);
         let segmentation_upid_type = bytes[SEGMENTATION_UPID_TYPE_OFFSET];
         let upid_len = bytes[SEGMENTATION_UPID_LENGTH_OFFSET] as usize;
         let need = SEGMENTATION_UPID_OFFSET + upid_len + TAIL_LEN;

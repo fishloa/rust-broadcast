@@ -3,6 +3,7 @@
 //! Supplemental usage. Adds a time_descriptor with PTP/TAI time to the
 //! resulting SCTE 35 section.
 
+use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -19,8 +20,6 @@ const TAI_SECONDS_OFFSET: usize = 0;
 const TAI_SECONDS_LEN: usize = 6;
 const TAI_NS_OFFSET: usize = TAI_SECONDS_OFFSET + TAI_SECONDS_LEN;
 const UTC_OFFSET_OFFSET: usize = TAI_NS_OFFSET + core::mem::size_of::<u32>();
-/// Offset of the second 16-bit word within a 4-byte big-endian word.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 /// Bits per byte, used to derive the 48-bit `TAI_seconds` bound.
 const BYTE_SHIFT: u32 = u8::BITS;
 
@@ -43,18 +42,12 @@ impl<'a> Parse<'a> for InsertTimeDescriptor {
         // TAI_seconds: 6 bytes (48-bit)
         let tai_seconds = {
             let src = &bytes[TAI_SECONDS_OFFSET..TAI_SECONDS_OFFSET + TAI_SECONDS_LEN];
-            let mut be = [0u8; core::mem::size_of::<u64>()];
-            be[U32_SECOND_WORD_OFFSET..].copy_from_slice(src);
-            u64::from_be_bytes(be)
+            let mut bytes_be = [0u8; core::mem::size_of::<u64>()];
+            bytes_be[core::mem::size_of::<u16>()..].copy_from_slice(src);
+            u64::from_be_bytes(bytes_be)
         };
-        let tai_ns = u32::from_be_bytes([
-            bytes[TAI_NS_OFFSET],
-            bytes[TAI_NS_OFFSET + 1],
-            bytes[TAI_NS_OFFSET + U32_SECOND_WORD_OFFSET],
-            bytes[TAI_NS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-        ]);
-        let utc_offset =
-            u16::from_be_bytes([bytes[UTC_OFFSET_OFFSET], bytes[UTC_OFFSET_OFFSET + 1]]);
+        let tai_ns = u32::from_be_bytes(be::<U32_LEN>(bytes, TAI_NS_OFFSET)?);
+        let utc_offset = u16::from_be_bytes(be::<U16_LEN>(bytes, UTC_OFFSET_OFFSET)?);
         Ok(Self {
             tai_seconds,
             tai_ns,
@@ -80,7 +73,7 @@ impl Serialize for InsertTimeDescriptor {
         // TAI_seconds: 6 bytes (48-bit)
         let tai_seconds_be = self.tai_seconds.to_be_bytes();
         buf[TAI_SECONDS_OFFSET..TAI_SECONDS_OFFSET + TAI_SECONDS_LEN]
-            .copy_from_slice(&tai_seconds_be[U32_SECOND_WORD_OFFSET..]);
+            .copy_from_slice(&tai_seconds_be[core::mem::size_of::<u16>()..]);
         buf[6..10].copy_from_slice(&self.tai_ns.to_be_bytes());
         buf[10..12].copy_from_slice(&self.utc_offset.to_be_bytes());
         Ok(LEN)

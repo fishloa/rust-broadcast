@@ -50,8 +50,25 @@ pub use any::AnyOperation;
 
 // Shared wire layout constants (ANSI/SCTE 104 2023 §8/§10).
 const PROVIDER_AVAIL_ID_LEN: usize = core::mem::size_of::<u32>();
-/// Offset of the second 16-bit word within a 4-byte big-endian word.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
+/// Byte width of a 16-bit field.
+pub(crate) const U16_LEN: usize = core::mem::size_of::<u16>();
+/// Byte width of a 32-bit field.
+pub(crate) const U32_LEN: usize = core::mem::size_of::<u32>();
+
+/// Copy `N` big-endian bytes at `offset` into an array.
+pub(crate) fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
+    bytes
+        .get(offset..offset + N)
+        .and_then(|s| s.first_chunk::<N>())
+        .copied()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: offset + N,
+                have: bytes.len(),
+                what: "fixed-width big-endian field",
+            },
+        ))
+}
 
 /// Fixed wire length of `inject_complete_response`.
 const INJECT_COMPLETE_RESPONSE_LEN: usize = 2;
@@ -109,17 +126,10 @@ pub(crate) fn parse_provider_avail_ids(
     let count = usize::from(count);
     let need = 1 + count * PROVIDER_AVAIL_ID_LEN;
     need_in(bytes, need, what_ids)?;
-    Ok(bytes[1..need]
+    bytes[1..need]
         .chunks_exact(PROVIDER_AVAIL_ID_LEN)
-        .map(|c| {
-            u32::from_be_bytes([
-                c[0],
-                c[1],
-                c[U32_SECOND_WORD_OFFSET],
-                c[U32_SECOND_WORD_OFFSET + 1],
-            ])
-        })
-        .collect())
+        .map(|c| be::<U32_LEN>(c, 0).map(u32::from_be_bytes))
+        .collect::<Result<Vec<u32>>>()
 }
 
 pub(crate) fn provider_avail_ids_len(ids: &[u32]) -> usize {
@@ -473,23 +483,15 @@ impl<'a> Parse<'a> for ConfigRequest {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, CONFIG_REQUEST_LEN, "config_request_data")?;
         Ok(Self {
-            as_ip_address: u32::from_be_bytes([
-                bytes[AS_IP_ADDRESS_OFFSET],
-                bytes[AS_IP_ADDRESS_OFFSET + 1],
-                bytes[AS_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET],
-                bytes[AS_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            ]),
-            as_socket_number: u16::from_be_bytes([
-                bytes[AS_SOCKET_NUMBER_OFFSET],
-                bytes[AS_SOCKET_NUMBER_OFFSET + 1],
-            ]),
+            as_ip_address: u32::from_be_bytes(be::<U32_LEN>(bytes, AS_IP_ADDRESS_OFFSET)?),
+            as_socket_number: u16::from_be_bytes(be::<U16_LEN>(bytes, AS_SOCKET_NUMBER_OFFSET)?),
             activeflag: bytes[ACTIVE_FLAG_OFFSET],
             protocol_version: bytes[PROTOCOL_VERSION_OFFSET],
             last_as_index: bytes[LAST_AS_INDEX_OFFSET],
-            last_injectorcount: u16::from_be_bytes([
-                bytes[LAST_INJECTOR_COUNT_OFFSET],
-                bytes[LAST_INJECTOR_COUNT_OFFSET + 1],
-            ]),
+            last_injectorcount: u16::from_be_bytes(be::<U16_LEN>(
+                bytes,
+                LAST_INJECTOR_COUNT_OFFSET,
+            )?),
             permanent_connection_requested: bytes[PERMANENT_CONNECTION_REQUESTED_OFFSET],
         })
     }
@@ -558,21 +560,13 @@ impl<'a> Parse<'a> for FaultRequest {
             &bytes[FAULT_SERVICE_NAME_OFFSET..FAULT_SERVICE_NAME_OFFSET + SERVICE_NAME_LEN],
         );
         Ok(Self {
-            injector_ip_address: u32::from_be_bytes([
-                bytes[FAULT_IP_ADDRESS_OFFSET],
-                bytes[FAULT_IP_ADDRESS_OFFSET + 1],
-                bytes[FAULT_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET],
-                bytes[FAULT_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            ]),
-            injector_socket_number: u16::from_be_bytes([
-                bytes[FAULT_SOCKET_NUMBER_OFFSET],
-                bytes[FAULT_SOCKET_NUMBER_OFFSET + 1],
-            ]),
+            injector_ip_address: u32::from_be_bytes(be::<U32_LEN>(bytes, FAULT_IP_ADDRESS_OFFSET)?),
+            injector_socket_number: u16::from_be_bytes(be::<U16_LEN>(
+                bytes,
+                FAULT_SOCKET_NUMBER_OFFSET,
+            )?),
             injector_service_name,
-            dpi_pid_index: u16::from_be_bytes([
-                bytes[FAULT_DPI_PID_INDEX_OFFSET],
-                bytes[FAULT_DPI_PID_INDEX_OFFSET + 1],
-            ]),
+            dpi_pid_index: u16::from_be_bytes(be::<U16_LEN>(bytes, FAULT_DPI_PID_INDEX_OFFSET)?),
         })
     }
 }

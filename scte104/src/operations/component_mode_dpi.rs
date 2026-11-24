@@ -6,6 +6,7 @@
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
 
+use super::{U16_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::{Parse, Serialize};
@@ -55,10 +56,10 @@ impl<'a> Parse<'a> for ComponentModeDpi {
             let off = i * ENTRY_LEN;
             components.push(ComponentModeEntry {
                 component_tag: bytes[off],
-                component_preroll: u16::from_be_bytes([
-                    bytes[off + COMPONENT_PREROLL_OFFSET],
-                    bytes[off + COMPONENT_PREROLL_OFFSET + 1],
-                ]),
+                component_preroll: u16::from_be_bytes(be::<U16_LEN>(
+                    bytes,
+                    off + COMPONENT_PREROLL_OFFSET,
+                )?),
             });
         }
         Ok(Self { components })

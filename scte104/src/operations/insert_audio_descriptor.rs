@@ -22,7 +22,8 @@ pub const ENTRY_LEN: usize = 7;
 
 // Field byte offsets within one audio entry (ANSI/SCTE 104 2023 §9.8.11, Table 9-33).
 const COMPONENT_TAG_OFFSET: usize = 0;
-const ISO_CODE_LEN: usize = 3;
+/// Byte width of the `ISO_code` field (ANSI/SCTE 104 2023 §9.8.11, Table 9-33).
+pub const ISO_CODE_LEN: usize = 3;
 const ISO_CODE_OFFSET: usize = 1;
 const BIT_STREAM_MODE_OFFSET: usize = ISO_CODE_OFFSET + ISO_CODE_LEN;
 const NUM_CHANNELS_OFFSET: usize = 5;

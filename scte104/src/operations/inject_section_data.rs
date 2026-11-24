@@ -3,6 +3,7 @@
 //! Normal usage request. Generates an SCTE 35 section directly from a binary
 //! image of the SCTE 35 command contents (following splice_command_type).
 
+use super::{U16_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -38,7 +39,7 @@ impl<'a> Parse<'a> for InjectSectionData<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, FIXED_LEN, "inject_section_data header")?;
-        let scte35_command_length = u16::from_be_bytes([bytes[0], bytes[1]]);
+        let scte35_command_length = u16::from_be_bytes(be::<U16_LEN>(bytes, 0)?);
         let scte35_protocol_version = bytes[SCTE35_PROTOCOL_VERSION_OFFSET];
         let scte35_command_type = bytes[SCTE35_COMMAND_TYPE_OFFSET];
         let contents_len = usize::from(scte35_command_length);

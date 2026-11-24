@@ -4,6 +4,7 @@
 //! Can be elaborated by Supplemental requests (descriptor inserts, encryption,
 //! component mode).
 
+use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -24,8 +25,6 @@ const AVAIL_NUM_OFFSET: usize = 11;
 const AVAILS_EXPECTED_OFFSET: usize = 12;
 const AUTO_RETURN_FLAG_OFFSET: usize = 13;
 const NOT_AN_ENTRY_FLAG_OFFSET: usize = 14;
-/// Offset of the second 16-bit word within a 4-byte big-endian word.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 // splice_insert_type(1) + splice_event_id(4) + unique_program_id(2) +
 // pre_roll_time(2) + break_duration(2) + avail_num(1) + avails_expected(1) +
 // auto_return_flag(1) + not_an_entry_flag(1)
@@ -143,24 +142,10 @@ impl<'a> Parse<'a> for SpliceRequest {
         need_in(bytes, LEN, "splice_request_data")?;
         Ok(Self {
             splice_insert_type: SpliceInsertType::from_byte(bytes[SPLICE_INSERT_TYPE_OFFSET]),
-            splice_event_id: u32::from_be_bytes([
-                bytes[SPLICE_EVENT_ID_OFFSET],
-                bytes[SPLICE_EVENT_ID_OFFSET + 1],
-                bytes[SPLICE_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET],
-                bytes[SPLICE_EVENT_ID_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            ]),
-            unique_program_id: u16::from_be_bytes([
-                bytes[UNIQUE_PROGRAM_ID_OFFSET],
-                bytes[UNIQUE_PROGRAM_ID_OFFSET + 1],
-            ]),
-            pre_roll_time: u16::from_be_bytes([
-                bytes[PRE_ROLL_TIME_OFFSET],
-                bytes[PRE_ROLL_TIME_OFFSET + 1],
-            ]),
-            break_duration: u16::from_be_bytes([
-                bytes[BREAK_DURATION_OFFSET],
-                bytes[BREAK_DURATION_OFFSET + 1],
-            ]),
+            splice_event_id: u32::from_be_bytes(be::<U32_LEN>(bytes, SPLICE_EVENT_ID_OFFSET)?),
+            unique_program_id: u16::from_be_bytes(be::<U16_LEN>(bytes, UNIQUE_PROGRAM_ID_OFFSET)?),
+            pre_roll_time: u16::from_be_bytes(be::<U16_LEN>(bytes, PRE_ROLL_TIME_OFFSET)?),
+            break_duration: u16::from_be_bytes(be::<U16_LEN>(bytes, BREAK_DURATION_OFFSET)?),
             avail_num: bytes[AVAIL_NUM_OFFSET],
             avails_expected: bytes[AVAILS_EXPECTED_OFFSET],
             auto_return_flag: bytes[AUTO_RETURN_FLAG_OFFSET],

@@ -3,6 +3,7 @@
 //! Normal usage request for vendor-specific extensions. Carries a 32-bit
 //! proprietary identifier + 8-bit command + variable-length data.
 
+use super::{U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -16,8 +17,6 @@ pub const FIXED_LEN: usize = 5;
 
 /// Byte offset of `proprietary_command` within the fixed portion.
 const PROPRIETARY_COMMAND_OFFSET: usize = 4;
-/// Offset of the second 16-bit word within a 4-byte big-endian word.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 
 /// proprietary_command_request_data() — §9.8.8, Table 9-30.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -37,12 +36,7 @@ impl<'a> Parse<'a> for ProprietaryCommand<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, FIXED_LEN, "proprietary_command_request_data")?;
         Ok(Self {
-            proprietary_id: u32::from_be_bytes([
-                bytes[0],
-                bytes[1],
-                bytes[U32_SECOND_WORD_OFFSET],
-                bytes[U32_SECOND_WORD_OFFSET + 1],
-            ]),
+            proprietary_id: u32::from_be_bytes(be::<U32_LEN>(bytes, 0)?),
             proprietary_command: bytes[PROPRIETARY_COMMAND_OFFSET],
             proprietary_data: &bytes[5..],
         })

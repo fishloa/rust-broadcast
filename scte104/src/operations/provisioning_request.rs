@@ -12,6 +12,7 @@
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 
+use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::{Parse, Serialize};
@@ -43,8 +44,6 @@ const INJECTOR_SOCKET_NUMBER_OFFSET: usize = 4;
 const SERVICE_NAME_OFFSET: usize = 6;
 const NUMBER_OF_DPI_PIDS_OFFSET: usize = SERVICE_NAME_OFFSET + SERVICE_NAME_LEN;
 const SERVICE_HEADER_LEN: usize = NUMBER_OF_DPI_PIDS_OFFSET + 1;
-/// Offset of the second 16-bit word within a 4-byte big-endian word.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 
 /// One entry in the `provisioning_request_data()` DPI-PID loop — Table 10-3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -66,10 +65,7 @@ impl DpiPidEntry {
             "provisioning_request_data DPI PID entry",
         )?;
         Ok(Self {
-            dpi_pid_index: u16::from_be_bytes([
-                bytes[DPI_PID_INDEX_OFFSET],
-                bytes[DPI_PID_INDEX_OFFSET + 1],
-            ]),
+            dpi_pid_index: u16::from_be_bytes(be::<U16_LEN>(bytes, DPI_PID_INDEX_OFFSET)?),
             shared_pid: bytes[SHARED_PID_OFFSET],
             event_id_compliance_flag: bytes[EVENT_ID_COMPLIANCE_FLAG_OFFSET],
         })
@@ -204,16 +200,10 @@ impl ProvisioningService {
             SERVICE_HEADER_LEN,
             "provisioning_request_data service header",
         )?;
-        let injector_ip_address = u32::from_be_bytes([
-            bytes[INJECTOR_IP_ADDRESS_OFFSET],
-            bytes[INJECTOR_IP_ADDRESS_OFFSET + 1],
-            bytes[INJECTOR_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET],
-            bytes[INJECTOR_IP_ADDRESS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-        ]);
-        let injector_socket_number = u16::from_be_bytes([
-            bytes[INJECTOR_SOCKET_NUMBER_OFFSET],
-            bytes[INJECTOR_SOCKET_NUMBER_OFFSET + 1],
-        ]);
+        let injector_ip_address =
+            u32::from_be_bytes(be::<U32_LEN>(bytes, INJECTOR_IP_ADDRESS_OFFSET)?);
+        let injector_socket_number =
+            u16::from_be_bytes(be::<U16_LEN>(bytes, INJECTOR_SOCKET_NUMBER_OFFSET)?);
         let mut service_name = [0u8; SERVICE_NAME_LEN];
         service_name
             .copy_from_slice(&bytes[SERVICE_NAME_OFFSET..SERVICE_NAME_OFFSET + SERVICE_NAME_LEN]);

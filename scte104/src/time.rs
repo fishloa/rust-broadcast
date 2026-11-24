@@ -10,6 +10,7 @@
 //!   `schedule_definition_data()` / `schedule_component_mode_request_data()`).
 
 use crate::error::{Error, Result};
+use crate::operations::{U16_LEN, U32_LEN, be};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -33,8 +34,6 @@ pub const TIME_LEN: usize = 8;
 const SECONDS_OFFSET: usize = 0;
 /// Byte offset of `microseconds` within `time()`.
 const MICROSECONDS_OFFSET: usize = 4;
-/// Offset of the second 16-bit word within a 4-byte big-endian word.
-const U32_SECOND_WORD_OFFSET: usize = core::mem::size_of::<u16>();
 
 impl Time {
     /// Construct a zero `Time` (signals unused / time sync not active).
@@ -52,18 +51,8 @@ impl<'a> Parse<'a> for Time {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, TIME_LEN, "time()")?;
         Ok(Self {
-            seconds: u32::from_be_bytes([
-                bytes[SECONDS_OFFSET],
-                bytes[SECONDS_OFFSET + 1],
-                bytes[SECONDS_OFFSET + U32_SECOND_WORD_OFFSET],
-                bytes[SECONDS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            ]),
-            microseconds: u32::from_be_bytes([
-                bytes[MICROSECONDS_OFFSET],
-                bytes[MICROSECONDS_OFFSET + 1],
-                bytes[MICROSECONDS_OFFSET + U32_SECOND_WORD_OFFSET],
-                bytes[MICROSECONDS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            ]),
+            seconds: u32::from_be_bytes(be::<U32_LEN>(bytes, SECONDS_OFFSET)?),
+            microseconds: u32::from_be_bytes(be::<U32_LEN>(bytes, MICROSECONDS_OFFSET)?),
         })
     }
 }
@@ -121,12 +110,7 @@ impl<'a> Parse<'a> for SpliceScheduleTime {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, SCHEDULE_TIME_LEN, "schedule time")?;
         Ok(Self {
-            seconds: u32::from_be_bytes([
-                bytes[SECONDS_OFFSET],
-                bytes[SECONDS_OFFSET + 1],
-                bytes[SECONDS_OFFSET + U32_SECOND_WORD_OFFSET],
-                bytes[SECONDS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-            ]),
+            seconds: u32::from_be_bytes(be::<U32_LEN>(bytes, SECONDS_OFFSET)?),
         })
     }
 }
@@ -274,16 +258,11 @@ impl<'a> Parse<'a> for Timestamp {
             1 => {
                 need_in(bytes, UTC_TIMESTAMP_LEN, "timestamp UTC")?;
                 Ok(Self::Utc(UtcTimestamp {
-                    seconds: u32::from_be_bytes([
-                        bytes[UTC_SECONDS_OFFSET],
-                        bytes[UTC_SECONDS_OFFSET + 1],
-                        bytes[UTC_SECONDS_OFFSET + U32_SECOND_WORD_OFFSET],
-                        bytes[UTC_SECONDS_OFFSET + U32_SECOND_WORD_OFFSET + 1],
-                    ]),
-                    microseconds: u16::from_be_bytes([
-                        bytes[UTC_MICROSECONDS_OFFSET],
-                        bytes[UTC_MICROSECONDS_OFFSET + 1],
-                    ]),
+                    seconds: u32::from_be_bytes(be::<U32_LEN>(bytes, UTC_SECONDS_OFFSET)?),
+                    microseconds: u16::from_be_bytes(be::<U16_LEN>(
+                        bytes,
+                        UTC_MICROSECONDS_OFFSET,
+                    )?),
                 }))
             }
             2 => {

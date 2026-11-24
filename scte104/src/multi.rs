@@ -8,6 +8,7 @@ use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::operations::{AnyOperation, Operation};
+use crate::operations::{U16_LEN, be};
 use crate::time::Timestamp;
 use broadcast_common::{Parse, Serialize};
 
@@ -82,7 +83,7 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN, "multiple_operation_message header")?;
-        let reserved = u16::from_be_bytes([bytes[0], bytes[1]]);
+        let reserved = u16::from_be_bytes(be::<U16_LEN>(bytes, 0)?);
         if reserved != RESERVED {
             return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
                 field: "reserved",
@@ -90,13 +91,11 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
                 found: u64::from(reserved),
             }));
         }
-        let message_size =
-            u16::from_be_bytes([bytes[MESSAGE_SIZE_OFFSET], bytes[MESSAGE_SIZE_OFFSET + 1]]);
+        let message_size = u16::from_be_bytes(be::<U16_LEN>(bytes, MESSAGE_SIZE_OFFSET)?);
         let protocol_version = bytes[PROTOCOL_VERSION_OFFSET];
         let as_index = bytes[AS_INDEX_OFFSET];
         let message_number = bytes[MESSAGE_NUMBER_OFFSET];
-        let dpi_pid_index =
-            u16::from_be_bytes([bytes[DPI_PID_INDEX_OFFSET], bytes[DPI_PID_INDEX_OFFSET + 1]]);
+        let dpi_pid_index = u16::from_be_bytes(be::<U16_LEN>(bytes, DPI_PID_INDEX_OFFSET)?);
         let scte35_protocol_version = bytes[SCTE35_PROTOCOL_VERSION_OFFSET];
 
         let mut pos = HEADER_LEN;
@@ -110,9 +109,8 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
         let mut operations = Vec::with_capacity(num_ops);
         for _ in 0..num_ops {
             need_in(bytes, pos + OP_HEADER_LEN, "operation opID+data_length")?;
-            let op_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
-            let data_length =
-                u16::from_be_bytes([bytes[pos + OP_ID_LEN], bytes[pos + OP_ID_LEN + 1]]) as usize;
+            let op_id = u16::from_be_bytes(be::<U16_LEN>(bytes, pos)?);
+            let data_length = u16::from_be_bytes(be::<U16_LEN>(bytes, pos + OP_ID_LEN)?) as usize;
             pos += OP_HEADER_LEN;
             need_in(bytes, pos + data_length, "operation data")?;
             let body = &bytes[pos..pos + data_length];
