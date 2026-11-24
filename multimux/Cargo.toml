@@ -267,6 +267,11 @@ required-features = ["whip", "whep", "test-hooks"]
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
 workspace-guards = { path = "../workspace-guards" }
+# Issue #4057: `tests/file_memory.rs` proves TS file playout holds a bounded
+# live-byte peak; `test-harness` generates the 256 MiB capture incrementally at
+# test time (it cannot be committed) and `test-alloc` reports the peak.
+test-harness = { path = "../test-harness" }
+test-alloc   = { path = "../test-alloc" }
 transmux = { path = "../transmux", version = "0.33.0", features = ["sample-aes"] }
 # `test-seams`: webrtc-runtime's hidden fault-injection hooks (inert without
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).

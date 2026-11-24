@@ -384,14 +384,14 @@ async fn timeline_dts_is_monotonic_and_matches_source_decode_order() {
 // The loop invariant — strictly monotonic across the loop point, boundary =
 // one frame. Includes the recorded mutation proof.
 //
-// MUTATION PROOF, recorded verbatim: removing the loop PTS offset (making
-// `advance_offsets` a no-op so loop N+1 restarts at the file's own first PTS)
-// makes this test FAIL with:
+// MUTATION PROOF, recorded verbatim: removing the loop PTS offset
+// (`StreamingFileSession::finish_pass` skipping its `advance_offsets` call, so
+// loop N+1 restarts at the file's own first DTS) makes this test FAIL with:
 //
-//     loop PTS must stay strictly monotonic for track 1: 399600 then 133200
+//     loop DTS must stay strictly monotonic for track 1: 392400 then 126000
 //
-// — loop 2's first video sample carries the file's *first* PTS (133200), far
-// below loop 1's last (399600), an unambiguous backwards step across the loop
+// — loop 2's first video sample carries the file's *first* DTS (126000), far
+// below loop 1's last (392400), an unambiguous backwards step across the loop
 // point. Restoring the offset (and `touch`ing the restored files so cargo
 // does not serve a stale binary) makes the test pass again. The monotonicity
 // assertion below is therefore the property the loop-offset exists to provide.
@@ -664,15 +664,15 @@ fn fixture_content_duration_secs(rel: &str) -> f64 {
 /// pass 1 alone and fail to distinguish the fixed baseline from the bug — the
 /// thing this test exists to prove. A 2-pass paced run must take ~2× content.
 ///
-/// MUTATION VERIFIED, recorded verbatim: reverting `publish_looping`'s pacing
-/// baseline advance (so `start` never grows past pass 1) makes this test FAIL
-/// with:
+/// MUTATION VERIFIED, recorded verbatim: removing the per-pass pacing gate in
+/// `StreamingFileSession::next_release` (`if base.elapsed() < wait { return
+/// None; }`) makes this test FAIL with:
 ///
-///     a paced 2-pass loop must take ~2× content duration (2.972 s each pass → 5.944 s), not 2.990257625s (baseline did not advance)
+///     a paced 2-pass loop must take ~2× content duration (2.972 s each pass → 5.944 s), not 10.9ms (pacing gate missing)
 ///
-/// — the run finishes in one content duration (~2.99 s) because pass 2's due
-/// instants are all already in the past and dump instantly. Restoring the
-/// advance (and a `touch`) makes it pass again.
+/// — every due instant is released the moment it is queued, so both passes
+/// dump instantly instead of pacing. Restoring the gate (and a `touch`) makes
+/// it pass again.
 #[tokio::test]
 async fn paced_loop_second_pass_waits_for_content_duration() {
     let content = fixture_content_duration_secs("fixtures/ts/h264-aac.ts");
@@ -698,7 +698,7 @@ async fn paced_loop_second_pass_waits_for_content_duration() {
     let two_contents = Duration::from_secs_f64(2.0 * content);
     assert!(
         elapsed >= two_contents,
-        "a paced 2-pass loop must take ~2× content duration ({content:.3} s each pass → {:.3} s), not {elapsed:?} (baseline did not advance)",
+        "a paced 2-pass loop must take ~2× content duration ({content:.3} s each pass → {:.3} s), not {elapsed:?} (pacing gate missing)",
         two_contents.as_secs_f64()
     );
 }
@@ -744,9 +744,12 @@ async fn oversized_file_yields_file_too_large() {
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let big = dir.join("big.bin");
-    // 1 KiB of bytes, under a 512-byte cap.
-    std::fs::write(&big, vec![0u8; 1024]).unwrap();
+    let big = dir.join("big.mp4");
+    // A real, identifiable whole-file container over a 512-byte cap: the cap
+    // still applies to MP4, PS and WebM (TS and FLV stream instead).
+    let bytes = std::fs::read(fixture("fixtures/mp4/h264-high.mp4")).unwrap();
+    let len = bytes.len() as u64;
+    std::fs::write(&big, &bytes).unwrap();
 
     let trunk = trunk();
     let config = FileReaderConfig::new(big.clone(), false, trunk)
@@ -757,11 +760,12 @@ async fn oversized_file_yields_file_too_large() {
     let result = FileReader::new(config).run().await;
     match result {
         Err(FileReaderError::FileTooLarge { size, max, .. }) => {
-            assert_eq!(size, 1024, "must report the file's actual size");
+            assert_eq!(size, len, "must report the file's actual size");
             assert_eq!(max, 512, "must report the configured cap");
         }
         other => panic!("over-cap file must be FileTooLarge, got {other:?}"),
     }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]
@@ -852,4 +856,236 @@ async fn b_frame_fixture_publishes_decode_order_dts() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The streaming path (issue #4057): TS and FLV play from disk in bounded
+// memory and are not subject to `max_file_bytes`; MP4/PS/WebM keep the
+// whole-file path and its cap.
+// ---------------------------------------------------------------------------
+
+/// One MPEG-2 TS packet, the granularity at which a truncated capture stays a
+/// valid stream.
+const TS_PACKET_LEN: usize = 188;
+
+/// A per-test scratch directory under the system temp dir.
+fn scratch(tag: &str) -> PathBuf {
+    let dir =
+        std::env::temp_dir().join(format!("multimux-file-stream-{}-{tag}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    dir
+}
+
+/// Total sample count a generated capture carries, across its tracks.
+fn total_samples(made: &test_harness::big_media::BigMedia) -> u64 {
+    made.samples_per_track.iter().map(|(_, n)| *n).sum()
+}
+
+/// `true` for a timed sample, `false` for a track-set change; any other cursor
+/// item is a loss the reader must never produce.
+fn is_timed(item: SampleCursorItem) -> bool {
+    match item {
+        SampleCursorItem::Timed { .. } => true,
+        SampleCursorItem::TracksChanged { .. } => false,
+        _ => panic!("unexpected sample-cursor item from the file reader"),
+    }
+}
+
+/// Run `reader`, draining its trunk concurrently (so the ring never lags), and
+/// report how many timed samples it published.
+async fn count_published(trunk: Arc<Trunk>, reader: FileReader) -> Result<usize, FileReaderError> {
+    let mut cursor = trunk.subscribe_from_backlog();
+    let handle = tokio::spawn(reader.run());
+    let mut published = 0usize;
+    loop {
+        while let Some(item) = cursor.poll() {
+            if is_timed(item) {
+                published += 1;
+            }
+        }
+        if handle.is_finished() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    handle
+        .await
+        .expect("the reader task must not panic")
+        .map(|()| published)
+}
+
+/// Every timed (PTS-carrying) sample `bytes` demuxes into.
+fn timed_sample_count(bytes: &[u8]) -> usize {
+    let mut demux = StreamingTsDemux::new();
+    demux.feed(bytes).expect("valid timing");
+    demux.finish().expect("valid timing");
+    let mut count = 0usize;
+    while let Some(event) = demux.poll_event() {
+        if let DemuxEvent::Sample { sample, .. } = event
+            && sample.timing.and_then(|timing| timing.pts()).is_some()
+        {
+            count += 1;
+        }
+    }
+    count
+}
+
+#[tokio::test]
+async fn a_ts_file_larger_than_the_cap_plays() {
+    const CAP: usize = 1 << 20;
+    const TARGET: u64 = 4 << 20;
+    let dir = scratch("ts-over-cap");
+    let path = dir.join("big.ts");
+    let made = test_harness::big_media::write_big_ts(
+        &path,
+        &test_fixtures::path("ts/h264-aac.ts"),
+        TARGET,
+    );
+    let expected = total_samples(&made);
+
+    let trunk = trunk();
+    let config = FileReaderConfig::new(path, false, trunk.clone())
+        .with_pace(false)
+        .with_max_retries(0)
+        .with_max_file_bytes(CAP);
+    let published = count_published(trunk, FileReader::new(config))
+        .await
+        .expect("a TS file over the cap must stream, not be refused");
+    assert_eq!(
+        published as u64, expected,
+        "every sample of the generated TS capture must play"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn an_flv_file_larger_than_the_cap_plays() {
+    const CAP: usize = 1 << 20;
+    const TARGET: u64 = 4 << 20;
+    let dir = scratch("flv-over-cap");
+    let path = dir.join("big.flv");
+    let made =
+        test_harness::big_media::write_big_flv(&path, &test_fixtures::path("flv/av.flv"), TARGET);
+    let expected = total_samples(&made);
+
+    let trunk = trunk();
+    let config = FileReaderConfig::new(path, false, trunk.clone())
+        .with_pace(false)
+        .with_max_retries(0)
+        .with_max_file_bytes(CAP);
+    let published = count_published(trunk, FileReader::new(config))
+        .await
+        .expect("an FLV file over the cap must stream, not be refused");
+    assert_eq!(
+        published as u64, expected,
+        "every sample of the generated FLV capture must play"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn an_mp4_file_larger_than_the_cap_is_still_refused() {
+    let trunk = trunk();
+    let config = FileReaderConfig::new(fixture("fixtures/mp4/h264-high.mp4"), false, trunk)
+        .with_pace(false)
+        .with_max_retries(0)
+        .with_max_file_bytes(1);
+    match FileReader::new(config).run().await {
+        Err(FileReaderError::FileTooLarge { max, .. }) => {
+            assert_eq!(max, 1, "the configured cap must be reported");
+        }
+        other => panic!("an MP4 over the cap must stay FileTooLarge, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_ts_file_replaced_by_an_mp4_between_passes_fails_with_file_changed_container() {
+    let dir = scratch("ts-replaced");
+    let live = dir.join("live.ts");
+    std::fs::copy(fixture("fixtures/ts/h264-aac.ts"), &live).expect("seed the live file");
+    let replacement = dir.join("replacement.mp4");
+    std::fs::copy(fixture("fixtures/mp4/h264-high.mp4"), &replacement)
+        .expect("seed the replacement");
+
+    let trunk = trunk();
+    let mut cursor = trunk.subscribe_from_backlog();
+    let handle = tokio::spawn(reader(live.clone(), true, true, None, trunk).run());
+
+    let mut seen = 0usize;
+    while seen < 3 {
+        if is_timed(cursor.next().await) {
+            seen += 1;
+        }
+    }
+    std::fs::rename(&replacement, &live).expect("replace the file between passes");
+
+    let outcome = tokio::time::timeout(Duration::from_secs(60), handle)
+        .await
+        .expect("the reader must notice the replacement at the next pass, not loop forever")
+        .expect("the reader task must not panic");
+    match outcome {
+        Err(FileReaderError::FileChangedContainer { path }) => {
+            assert_eq!(path, live, "the error must name the changed path");
+        }
+        other => {
+            panic!("a container swapped between passes must be FileChangedContainer, got {other:?}")
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_ts_file_that_grows_between_passes_plays_the_longer_file_on_the_next_pass() {
+    const TARGET: u64 = 128 << 10;
+    let dir = scratch("ts-grows");
+    let full_path = dir.join("full.ts");
+    test_harness::big_media::write_big_ts(
+        &full_path,
+        &test_fixtures::path("ts/h264-aac.ts"),
+        TARGET,
+    );
+    let full = std::fs::read(&full_path).expect("read the generated capture");
+    let prefix_len = {
+        let half = full.len() / 2;
+        half - half % TS_PACKET_LEN
+    };
+    assert!(prefix_len > 0, "premise: the generated capture has content");
+    let live = dir.join("live.ts");
+    std::fs::write(&live, &full[..prefix_len]).expect("seed the live file");
+    let prefix_samples = timed_sample_count(&full[..prefix_len]);
+    assert!(prefix_samples > 0, "premise: the prefix holds samples");
+
+    let trunk = trunk();
+    let mut cursor = trunk.subscribe_from_backlog();
+    let handle = tokio::spawn(reader(live.clone(), true, true, Some(2), trunk).run());
+
+    let mut published = 0usize;
+    while published < 3 {
+        if is_timed(cursor.next().await) {
+            published += 1;
+        }
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&live)
+        .expect("open the live file for growth");
+    std::io::Write::write_all(&mut file, &full[prefix_len..]).expect("grow the live file");
+    drop(file);
+
+    let outcome = tokio::time::timeout(Duration::from_secs(120), handle)
+        .await
+        .expect("a grown file must not hang the reader")
+        .expect("the reader task must not panic");
+    outcome.expect("a grown TS file must play cleanly");
+    while let Some(item) = cursor.poll() {
+        if is_timed(item) {
+            published += 1;
+        }
+    }
+    assert!(
+        published > 2 * prefix_samples,
+        "the longer file must play: {published} samples vs {} for two passes of the original prefix",
+        2 * prefix_samples
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
