@@ -56,7 +56,7 @@ const HOURS_TENS_OFFSET: usize = 7;
 const SYNC_WORD_OFFSET: usize = 8;
 
 /// Number of binary groups ("user bits") carried by one frame (§8.1/Table 4).
-const BINARY_GROUPS: usize = 8;
+pub const BINARY_GROUPS: usize = 8;
 // Zero-based indices of each binary group, in first..eighth order.
 const BINARY_GROUP_1: usize = 0;
 const BINARY_GROUP_2: usize = 1;
@@ -76,24 +76,26 @@ const TIME_FIELD_BCD_NIBBLES: u8 = 2;
 const NIBBLE_SHIFT: u32 = 4;
 /// Mask of a full 4-bit BCD nibble.
 const NIBBLE_MASK: u8 = (1 << NIBBLE_SHIFT) - 1;
-/// Shift of a flag in bit 2 of its byte.
-const BIT_2_SHIFT: u32 = 2;
-/// Shift of a flag in bit 3 of its byte.
-const BIT_3_SHIFT: u32 = 3;
-/// Mask of a flag in bit 2 of its byte.
-const BIT_2_MASK: u8 = 1 << BIT_2_SHIFT;
-/// Mask of a flag in bit 3 of its byte.
-const BIT_3_MASK: u8 = 1 << BIT_3_SHIFT;
-/// Mask of a 2-bit (tens) field.
-const LOW_2_BITS_MASK: u8 = (1 << BIT_2_SHIFT) - 1;
-/// Mask of a 3-bit (tens) field.
-const LOW_3_BITS_MASK: u8 = (1 << BIT_3_SHIFT) - 1;
+/// Shift of the lower flag bit within its byte.
+const LOWER_FLAG_SHIFT: u32 = 2;
+/// Shift of the upper flag bit within its byte.
+const UPPER_FLAG_SHIFT: u32 = 3;
+/// Mask of the lower flag bit within its byte.
+const LOWER_FLAG_MASK: u8 = 1 << LOWER_FLAG_SHIFT;
+/// Mask of the upper flag bit within its byte.
+const UPPER_FLAG_MASK: u8 = 1 << UPPER_FLAG_SHIFT;
+/// Mask of a narrow (two-bit) tens field.
+const NARROW_TENS_MASK: u8 = (1 << LOWER_FLAG_SHIFT) - 1;
+/// Mask of a wide (three-bit) tens field.
+const WIDE_TENS_MASK: u8 = (1 << UPPER_FLAG_SHIFT) - 1;
 
 /// The fixed synchronization word (§9.2.5, Table 5), as the two bytes it
 /// occupies under this crate's bit-to-byte packing (`private/specs-verified/smpte/st12-1/st12-1.md`'s "Byte
 /// packing convention"): byte 8 holds bits 64-71, byte 9 holds bits 72-79.
 /// This is the well-known LTC sync-word byte pair.
 pub const SYNC_WORD: [u8; 2] = [0xFC, 0xBF];
+/// Byte length of [`SYNC_WORD`].
+const SYNC_WORD_LEN: usize = SYNC_WORD.len();
 
 // ---------------------------------------------------------------------------
 // FrameRate — ST 12-1 Table 3's three counting-mode columns
@@ -383,45 +385,51 @@ impl<'a> Parse<'a> for LtcFrame {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, FRAME_LEN, "LTC codeword")?;
 
-        if [bytes[SYNC_WORD_OFFSET], bytes[SYNC_WORD_OFFSET + 1]] != SYNC_WORD {
+        let sync = bytes[SYNC_WORD_OFFSET..SYNC_WORD_OFFSET + SYNC_WORD_LEN]
+            .first_chunk::<SYNC_WORD_LEN>()
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: SYNC_WORD_OFFSET + SYNC_WORD_LEN,
+                    have: bytes.len(),
+                    what: "LTC sync word",
+                },
+            ))?;
+        if *sync != SYNC_WORD {
             return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
                 what: "sync word",
                 expected: u32::from(u16::from_be_bytes(SYNC_WORD)),
-                found: u32::from(u16::from_be_bytes([
-                    bytes[SYNC_WORD_OFFSET],
-                    bytes[SYNC_WORD_OFFSET + 1],
-                ])),
+                found: u32::from(u16::from_be_bytes(*sync)),
             }));
         }
 
         let frame_units = bytes[0] & NIBBLE_MASK;
         let user_bits_1 = bytes[0] >> NIBBLE_SHIFT;
 
-        let frame_tens = bytes[1] & LOW_2_BITS_MASK;
-        let drop_frame_flag = bytes[1] & BIT_2_MASK != 0;
-        let color_frame_flag = bytes[1] & BIT_3_MASK != 0;
+        let frame_tens = bytes[1] & NARROW_TENS_MASK;
+        let drop_frame_flag = bytes[1] & LOWER_FLAG_MASK != 0;
+        let color_frame_flag = bytes[1] & UPPER_FLAG_MASK != 0;
         let user_bits_2 = bytes[1] >> NIBBLE_SHIFT;
 
         let seconds_units = bytes[SECONDS_UNITS_OFFSET] & NIBBLE_MASK;
         let user_bits_3 = bytes[SECONDS_UNITS_OFFSET] >> NIBBLE_SHIFT;
 
-        let seconds_tens = bytes[SECONDS_TENS_OFFSET] & LOW_3_BITS_MASK;
-        let flag_bit_27 = bytes[SECONDS_TENS_OFFSET] & BIT_3_MASK != 0;
+        let seconds_tens = bytes[SECONDS_TENS_OFFSET] & WIDE_TENS_MASK;
+        let flag_bit_27 = bytes[SECONDS_TENS_OFFSET] & UPPER_FLAG_MASK != 0;
         let user_bits_4 = bytes[SECONDS_TENS_OFFSET] >> NIBBLE_SHIFT;
 
         let minutes_units = bytes[MINUTES_UNITS_OFFSET] & NIBBLE_MASK;
         let user_bits_5 = bytes[MINUTES_UNITS_OFFSET] >> NIBBLE_SHIFT;
 
-        let minutes_tens = bytes[MINUTES_TENS_OFFSET] & LOW_3_BITS_MASK;
-        let flag_bit_43 = bytes[MINUTES_TENS_OFFSET] & BIT_3_MASK != 0;
+        let minutes_tens = bytes[MINUTES_TENS_OFFSET] & WIDE_TENS_MASK;
+        let flag_bit_43 = bytes[MINUTES_TENS_OFFSET] & UPPER_FLAG_MASK != 0;
         let user_bits_6 = bytes[MINUTES_TENS_OFFSET] >> NIBBLE_SHIFT;
 
         let hours_units = bytes[HOURS_UNITS_OFFSET] & NIBBLE_MASK;
         let user_bits_7 = bytes[HOURS_UNITS_OFFSET] >> NIBBLE_SHIFT;
 
-        let hours_tens = bytes[HOURS_TENS_OFFSET] & LOW_2_BITS_MASK;
-        let flag_bit_58 = bytes[HOURS_TENS_OFFSET] & BIT_2_MASK != 0;
-        let flag_bit_59 = bytes[HOURS_TENS_OFFSET] & BIT_3_MASK != 0;
+        let hours_tens = bytes[HOURS_TENS_OFFSET] & NARROW_TENS_MASK;
+        let flag_bit_58 = bytes[HOURS_TENS_OFFSET] & LOWER_FLAG_MASK != 0;
+        let flag_bit_59 = bytes[HOURS_TENS_OFFSET] & UPPER_FLAG_MASK != 0;
         let user_bits_8 = bytes[HOURS_TENS_OFFSET] >> NIBBLE_SHIFT;
 
         let frame = Self {
@@ -473,26 +481,25 @@ impl Serialize for LtcFrame {
 
         buf[FRAME_UNITS_OFFSET] = frame_units | (self.user_bits[BINARY_GROUP_1] << NIBBLE_SHIFT);
         buf[FRAME_TENS_OFFSET] = frame_tens
-            | (u8::from(self.drop_frame_flag) << BIT_2_SHIFT)
-            | (u8::from(self.color_frame_flag) << BIT_3_SHIFT)
+            | (u8::from(self.drop_frame_flag) << LOWER_FLAG_SHIFT)
+            | (u8::from(self.color_frame_flag) << UPPER_FLAG_SHIFT)
             | (self.user_bits[BINARY_GROUP_2] << NIBBLE_SHIFT);
         buf[SECONDS_UNITS_OFFSET] =
             seconds_units | (self.user_bits[BINARY_GROUP_3] << NIBBLE_SHIFT);
         buf[SECONDS_TENS_OFFSET] = seconds_tens
-            | (u8::from(self.flag_bit_27) << BIT_3_SHIFT)
+            | (u8::from(self.flag_bit_27) << UPPER_FLAG_SHIFT)
             | (self.user_bits[BINARY_GROUP_4] << NIBBLE_SHIFT);
         buf[MINUTES_UNITS_OFFSET] =
             minutes_units | (self.user_bits[BINARY_GROUP_5] << NIBBLE_SHIFT);
         buf[MINUTES_TENS_OFFSET] = minutes_tens
-            | (u8::from(self.flag_bit_43) << BIT_3_SHIFT)
+            | (u8::from(self.flag_bit_43) << UPPER_FLAG_SHIFT)
             | (self.user_bits[BINARY_GROUP_6] << NIBBLE_SHIFT);
         buf[HOURS_UNITS_OFFSET] = hours_units | (self.user_bits[BINARY_GROUP_7] << NIBBLE_SHIFT);
         buf[HOURS_TENS_OFFSET] = hours_tens
-            | (u8::from(self.flag_bit_58) << BIT_2_SHIFT)
-            | (u8::from(self.flag_bit_59) << BIT_3_SHIFT)
+            | (u8::from(self.flag_bit_58) << LOWER_FLAG_SHIFT)
+            | (u8::from(self.flag_bit_59) << UPPER_FLAG_SHIFT)
             | (self.user_bits[BINARY_GROUP_8] << NIBBLE_SHIFT);
-        buf[SYNC_WORD_OFFSET] = SYNC_WORD[0];
-        buf[SYNC_WORD_OFFSET + 1] = SYNC_WORD[1];
+        buf[SYNC_WORD_OFFSET..SYNC_WORD_OFFSET + SYNC_WORD_LEN].copy_from_slice(&SYNC_WORD);
 
         Ok(FRAME_LEN)
     }
