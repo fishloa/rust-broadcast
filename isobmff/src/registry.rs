@@ -6,9 +6,9 @@
 //! usual `Parse`/`Serialize` pair), hand the registry to
 //! [`ReaderConfig::with_registry`](crate::reader::ReaderConfig::with_registry),
 //! and a matching `stsd` entry or child box comes back typed instead of as an
-//! opaque blob. Writing needs no registry: [`SampleEntry::from_registered`]
+//! opaque blob. Writing needs no registry: [`SampleEntry::from_registered`](crate::writer::SampleEntry::from_registered)
 //! and [`RegisteredEntry::try_to_bytes`](RegisteredEntry::try_to_bytes) turn the
-//! value back into the box bytes a [`SampleEntry::Raw`] or an opaque child
+//! value back into the box bytes a [`SampleEntry::Raw`](crate::writer::SampleEntry::Raw) or an opaque child
 //! carries.
 //!
 //! Modelled on `dvb_si::descriptors::DescriptorRegistry`: registration is keyed
