@@ -40,6 +40,7 @@ use crate::init_segment::{
     MediaBox, MovieBox, SampleEntryVariant, StblChild, TrackBox, TrackExtendsBox,
 };
 use crate::limits::Limits;
+use crate::metadata::MovieMetadata;
 use crate::movie_fragment::{
     MAX_ZERO_WIDTH_TRUN_SAMPLES, MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TrackFragmentBox,
     TrafChild, apply_trex_defaults,
@@ -272,6 +273,9 @@ pub enum Step<'a> {
     Need(ByteRange),
     /// Every track of the movie, in `moov` order. Emitted once.
     Tracks(&'a [TrackInfo]),
+    /// The movie's and each track's typed metadata. Emitted once, after
+    /// [`Step::Tracks`], only when the file carries `udta` or `meta`.
+    Metadata(&'a MovieMetadata),
     /// A fragment's samples follow.
     Fragment(FragmentInfo),
     /// One sample descriptor, in the configured order.
@@ -389,6 +393,8 @@ pub struct Reader {
     tracks: Vec<TrackInfo>,
     cursors: Vec<CursorSlot>,
     emitted_tracks: bool,
+    metadata: Option<MovieMetadata>,
+    emitted_metadata: bool,
     done: bool,
     fragmented: bool,
     trex: Vec<TrackExtendsBox>,
@@ -418,6 +424,8 @@ impl Reader {
             tracks: Vec::new(),
             cursors: Vec::new(),
             emitted_tracks: false,
+            metadata: None,
+            emitted_metadata: false,
             done: false,
             fragmented: false,
             trex: Vec::new(),
@@ -746,6 +754,12 @@ impl Reader {
                 self.emitted_tracks = true;
                 return Ok(Step::Tracks(&self.tracks));
             }
+            if !self.emitted_metadata {
+                self.emitted_metadata = true;
+                if self.metadata.is_some() {
+                    return self.metadata_step();
+                }
+            }
             if let Some(sample) = self.next_sample()? {
                 return Ok(Step::Sample(sample));
             }
@@ -755,6 +769,13 @@ impl Reader {
             }
         }
         self.walk_step()
+    }
+
+    fn metadata_step(&self) -> Result<Step<'_>> {
+        match self.metadata.as_ref() {
+            Some(metadata) => Ok(Step::Metadata(metadata)),
+            None => Err(Error::InvalidInput("metadata step without metadata")),
+        }
     }
 
     /// Read the next top-level box header, or finish at the end of the input.
@@ -1006,6 +1027,22 @@ impl Reader {
             .as_ref()
             .map(|mvex| mvex.trex.clone())
             .unwrap_or_default();
+        let mut movie_metadata = self.movie_metadata(&movie)?;
+        if let Some(metadata) = movie_metadata.take() {
+            self.metadata = Some(MovieMetadata {
+                movie: metadata,
+                tracks: Vec::new(),
+            });
+        }
+        for trak in &movie.tracks {
+            if let Some(metadata) = trak.metadata(&self.config.limits)? {
+                self.metadata
+                    .get_or_insert_with(MovieMetadata::default)
+                    .tracks
+                    .push((trak.tkhd.track_id, metadata));
+            }
+        }
+        self.emitted_metadata = false;
         self.movie = Some(movie);
         self.tracks = tracks;
         self.cursors = cursors;
@@ -1014,6 +1051,10 @@ impl Reader {
         self.sample_counts = sample_counts;
         self.emitted_tracks = false;
         Ok(())
+    }
+
+    fn movie_metadata(&self, movie: &MovieBox) -> Result<Option<crate::metadata::Metadata>> {
+        movie.metadata(&self.config.limits)
     }
 
     /// Resolve the pending fragment's samples into [`Reader::ready`].

@@ -30,6 +30,7 @@ use crate::box_support::{
     OpaqueBox, SerializeBox, bounded_entry_count, check_entry_count, flat_table_len,
     parse_flat_table, serialize_container, serialize_flat_table,
 };
+use crate::limits::Limits;
 
 /// Wire width of one transformation-matrix value.
 const MATRIX_VALUE_LEN: usize = core::mem::size_of::<i32>();
@@ -3919,6 +3920,15 @@ impl TrackBox {
             .transpose()
     }
 
+    /// The track's typed `udta`/`meta` metadata, when either is present.
+    ///
+    /// The boxes themselves stay in [`TrackBox::opaque`] so every existing
+    /// init-segment golden re-serialises byte for byte; this reads them on
+    /// demand under the caller's [`Limits`].
+    pub fn metadata(&self, limits: &Limits) -> Result<Option<crate::metadata::Metadata>> {
+        metadata_of_opaque(&self.opaque, limits)
+    }
+
     /// Build a `trak` from its typed parts, children in the conventional
     /// `tkhd`, `edts`, `mdia` sequence.
     pub fn new(
@@ -4040,6 +4050,36 @@ impl Serialize for TrackBox {
             buf,
         )
     }
+}
+
+/// Parse the `udta`/`meta` children of an opaque child list into the logical
+/// [`Metadata`](crate::metadata::Metadata) view.
+fn metadata_of_opaque(
+    opaque: &[OpaqueBox],
+    limits: &Limits,
+) -> Result<Option<crate::metadata::Metadata>> {
+    let mut metadata = crate::metadata::Metadata::default();
+    let mut any = false;
+    for child in opaque {
+        match &child.box_type {
+            b"udta" => {
+                let udta = crate::metadata::Udta::parse_body(&child.data, limits)?;
+                metadata
+                    .items
+                    .extend(crate::metadata::Metadata::from_udta(&udta).items);
+                any = true;
+            }
+            b"meta" => {
+                let meta = crate::metadata::Meta::parse_body(&child.data, limits)?;
+                metadata
+                    .items
+                    .extend(crate::metadata::Metadata::from_meta(&meta).items);
+                any = true;
+            }
+            _ => {}
+        }
+    }
+    Ok(any.then_some(metadata))
 }
 
 // ---------------------------------------------------------------------------
@@ -4260,6 +4300,14 @@ pub struct MovieBox {
 }
 
 impl MovieBox {
+    /// The movie's typed `udta`/`meta` metadata, when either is present.
+    ///
+    /// Both boxes stay in [`MovieBox::opaque`], so the typed tree and every
+    /// golden built from it are unchanged; this parses them on demand.
+    pub fn metadata(&self, limits: &Limits) -> Result<Option<crate::metadata::Metadata>> {
+        metadata_of_opaque(&self.opaque, limits)
+    }
+
     /// Build a `moov` from its typed parts, children in the conventional
     /// `mvhd`, `trak`…, `mvex` sequence.
     pub fn new(

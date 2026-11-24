@@ -38,6 +38,7 @@ fn drive(bytes: &[u8], config: ReaderConfig) -> isobmff::Result<Outcome> {
                 reader.supply(range.offset, bytes.get(start..end).unwrap_or(&[]))?;
             }
             Step::Tracks(tracks) => outcome.tracks = tracks.to_vec(),
+            Step::Metadata(_) => {}
             Step::Fragment(info) => outcome.fragments.push(info),
             Step::Sample(sample) => outcome.samples.push(sample),
             Step::Done => break,
@@ -342,6 +343,7 @@ fn drive_seek(
                 tracks += 1;
                 seek_now = tracks == 1;
             }
+            Step::Metadata(_) => {}
             Step::Fragment(info) => {
                 if sought {
                     return Ok(info);
