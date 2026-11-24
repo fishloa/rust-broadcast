@@ -1,0 +1,4 @@
+# Magic-number allow list for the mndvb lane.
+# Each line is `<path>:<exact trimmed source line> # <reason>`.
+# No literal in the in-scope crates was judged genuinely non-magic: every
+# one was named.

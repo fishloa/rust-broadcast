@@ -759,7 +759,11 @@ impl Serialize for MulticastDescriptor {
             .copy_from_slice(&self.multicast_port.to_be_bytes());
         // reserved(7)='0000000' + include_sources(1).
         buf[pos + MULTICAST_FLAGS_OFFSET] = u8::from(self.include_sources);
-        buf[pos + MULTICAST_COUNT_OFFSET] = self.source_addresses.len() as u8;
+        buf[pos + MULTICAST_COUNT_OFFSET] = objects::fit_bits(
+            self.source_addresses.len() as u64,
+            u8::BITS,
+            "num_source_addresses",
+        )? as u8;
         pos += MULTICAST_FIXED;
         for a in &self.source_addresses {
             buf[pos..pos + IP_ADDR_LEN].copy_from_slice(a);

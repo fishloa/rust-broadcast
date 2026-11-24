@@ -188,7 +188,6 @@ const PES_FLAGS_PREFIX_SHIFT: u32 = 6;
 /// The `'10'` marker prefix value of the PES flags byte.
 const PES_FLAGS_PREFIX: u8 = 0b10;
 
-
 /// Mask for the `PTS_DTS_flags` field within the PES header byte at offset 7
 /// (bits `[7:6]` — `0b10` means PTS present, `0b11` means PTS+DTS).
 const PES_PTS_DTS_FLAGS_MASK: u8 = 0b1100_0000;

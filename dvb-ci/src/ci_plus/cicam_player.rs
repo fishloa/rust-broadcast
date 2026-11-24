@@ -627,8 +627,12 @@ impl Serialize for PlayerCapabilitiesReply {
         let body_len = CAPABILITIES_PREFIX + self.component_types.len() * COMPONENT_TYPE_LEN;
         let mut pos =
             objects::write_apdu_header(tag::CAPABILITIES_REPLY, body_len, self.length_form, buf)?;
-        buf[pos..pos + COMPONENT_TYPE_COUNT_LEN]
-            .copy_from_slice(&(self.component_types.len() as u16).to_be_bytes());
+        let count = objects::fit_bits(
+            self.component_types.len() as u64,
+            u16::BITS,
+            "component_types",
+        )?;
+        buf[pos..pos + COMPONENT_TYPE_COUNT_LEN].copy_from_slice(&(count as u16).to_be_bytes());
         pos += CAPABILITIES_PREFIX;
         for c in &self.component_types {
             // stream_content(4) << 4 + reserved(4).
@@ -734,8 +738,9 @@ impl Serialize for PlayerStartReq<'_> {
                 } else {
                     0
                 };
+        let pmt_length = objects::fit_bits(self.pmt.len() as u64, u16::BITS, "PMT_length")?;
         buf[pos + START_PMT_LENGTH_OFFSET..pos + START_REQ_PREFIX]
-            .copy_from_slice(&(self.pmt.len() as u16).to_be_bytes());
+            .copy_from_slice(&(pmt_length as u16).to_be_bytes());
         buf[pos + START_REQ_PREFIX..pos + body_len].copy_from_slice(self.pmt);
         Ok(pos + body_len)
     }
@@ -1423,8 +1428,9 @@ impl Serialize for PlayerUpdateReq<'_> {
         let body_len = UPDATE_REQ_PREFIX + self.pmt.len();
         let pos = objects::write_apdu_header(tag::UPDATE_REQ, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
+        let pmt_length = objects::fit_bits(self.pmt.len() as u64, u16::BITS, "PMT_length")?;
         buf[pos + UPDATE_PMT_LENGTH_OFFSET..pos + UPDATE_REQ_PREFIX]
-            .copy_from_slice(&(self.pmt.len() as u16).to_be_bytes());
+            .copy_from_slice(&(pmt_length as u16).to_be_bytes());
         buf[pos + UPDATE_REQ_PREFIX..pos + body_len].copy_from_slice(self.pmt);
         Ok(pos + body_len)
     }

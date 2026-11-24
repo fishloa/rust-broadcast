@@ -48,12 +48,17 @@ pub const TABLE: &[Crate] = &[
         allow: &[
             (
                 "segments/clut_definition.rs",
-                "buf[2] = (self.y_value << 2) | (self.cr_value >> 2);",
+                "(self.y_value << REDUCED_Y_SHIFT) | (self.cr_value >> REDUCED_CR_SHIFT);",
                 "reduced-range entry: Y<=63, Cr<=15, Cb<=15, T<=3 are rejected with InvalidValue immediately above (REDUCED_*_MAX); this only packs the already-checked values",
             ),
             (
                 "segments/clut_definition.rs",
-                "buf[3] = (self.cr_value << 6) | (self.cb_value << 2) | self.t_value;",
+                "buf[ENTRY_CR_OFFSET] = (self.cr_value << REDUCED_CR_PACK_SHIFT)",
+                "same reduced-range check as the previous line",
+            ),
+            (
+                "segments/clut_definition.rs",
+                "| (self.cb_value << REDUCED_CB_SHIFT)",
                 "same reduced-range check as the previous line",
             ),
         ],
