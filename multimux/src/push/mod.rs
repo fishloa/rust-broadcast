@@ -67,6 +67,10 @@ use crate::config::PushFormat;
 use transmux::ir::{Media, TrackSpec};
 use transmux::{StreamingTsMux, TsMux};
 
+/// Longest wait for a trunk wake-up before the push loop re-checks its queued
+/// flush and renegotiation work, so a lost wake cannot stall an idle source.
+const TRUNK_WAKE_CAP: Duration = Duration::from_millis(250);
+
 pub use rtmp::{RtmpTransport, RtmpTransportConfig};
 pub use rtsp::{RtspPushError, RtspTransport, RtspTransportConfig};
 pub(crate) use srt::validate_srt_url;
@@ -583,7 +587,7 @@ pub async fn drive_push<T: PushTransport>(
             () = async {
                 match trunk.listen() {
                     Some(listener) => {
-                        let _ = tokio::time::timeout(Duration::from_millis(250), listener).await;
+                        let _ = tokio::time::timeout(TRUNK_WAKE_CAP, listener).await;
                     }
                     // No free waiter slot: park until one frees — never a
                     // fixed 50 ms sleep-poll (B10b). Still capped at the same
@@ -594,7 +598,7 @@ pub async fn drive_push<T: PushTransport>(
                     // an idle source.
                     None => {
                         if let Some(freed) = trunk.waiter_slot_freed() {
-                            let _ = tokio::time::timeout(Duration::from_millis(250), freed).await;
+                            let _ = tokio::time::timeout(TRUNK_WAKE_CAP, freed).await;
                         }
                     }
                 }

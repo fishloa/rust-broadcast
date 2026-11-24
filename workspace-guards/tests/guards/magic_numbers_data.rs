@@ -643,18 +643,7 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "multimux",
-        allow: &[
-            (
-                "src/push/mod.rs",
-                "let _ = tokio::time::timeout(Duration::from_millis(250), freed).await;",
-                "reported to the multimux lane (#4051): a real magic number to name, out of this lane's scope",
-            ),
-            (
-                "src/push/mod.rs",
-                "let _ = tokio::time::timeout(Duration::from_millis(250), listener).await;",
-                "reported to the multimux lane (#4051): a real magic number to name, out of this lane's scope",
-            ),
-        ],
+        allow: &[],
     },
     Crate {
         name: "multimux-cli",
