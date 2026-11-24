@@ -65,6 +65,21 @@ const LENGTH_CODE_OFFSET: usize = 3 * PREAMBLE_WORD_LEN;
 const PE_WORD_OFFSET: usize = 4 * PREAMBLE_WORD_LEN;
 const PF_WORD_OFFSET: usize = 5 * PREAMBLE_WORD_LEN;
 
+/// Copy `N` little-endian bytes at `offset` into an array.
+fn le<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
+    bytes
+        .get(offset..offset + N)
+        .and_then(|s| s.first_chunk::<N>())
+        .copied()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: offset + N,
+                have: bytes.len(),
+                what: "ST 337 preamble word",
+            },
+        ))
+}
+
 /// Byte length of the four-word preamble (`Pa`,`Pb`,`Pc`,`Pd`).
 const BASE_PREAMBLE_LEN: usize = 4 * PREAMBLE_WORD_LEN;
 
@@ -399,7 +414,7 @@ impl<'a> Parse<'a> for Burst<'a> {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BASE_PREAMBLE_LEN, "burst_preamble (Pa-Pd)")?;
-        let pa = u16::from_le_bytes([bytes[0], bytes[1]]);
+        let pa = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, 0)?);
         if pa != SYNC_WORD_PA {
             return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
                 what: "Pa",
@@ -407,7 +422,7 @@ impl<'a> Parse<'a> for Burst<'a> {
                 found: u32::from(pa),
             }));
         }
-        let pb = u16::from_le_bytes([bytes[PB_WORD_OFFSET], bytes[PB_WORD_OFFSET + 1]]);
+        let pb = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, PB_WORD_OFFSET)?);
         if pb != SYNC_WORD_PB {
             return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
                 what: "Pb",
@@ -415,14 +430,13 @@ impl<'a> Parse<'a> for Burst<'a> {
                 found: u32::from(pb),
             }));
         }
-        let pc = u16::from_le_bytes([bytes[PC_WORD_OFFSET], bytes[PC_WORD_OFFSET + 1]]);
+        let pc = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, PC_WORD_OFFSET)?);
         let (data_type, data_mode, error_flag, data_type_dependent, data_stream_number) =
             BurstPreamble::unpack_pc(pc);
         if data_mode != DataMode::Mode16 {
             return Err(Error::UnsupportedDataMode(data_mode));
         }
-        let length_code =
-            u16::from_le_bytes([bytes[LENGTH_CODE_OFFSET], bytes[LENGTH_CODE_OFFSET + 1]]);
+        let length_code = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, LENGTH_CODE_OFFSET)?);
 
         let is_extended = data_type == EXTENDED_DATA_TYPE_MARKER;
         let (extended, preamble_len) = if is_extended {
@@ -431,8 +445,8 @@ impl<'a> Parse<'a> for Burst<'a> {
                 EXTENDED_PREAMBLE_LEN,
                 "burst_preamble (Pa-Pf, six-word form)",
             )?;
-            let pe = u16::from_le_bytes([bytes[PE_WORD_OFFSET], bytes[PE_WORD_OFFSET + 1]]);
-            let pf = u16::from_le_bytes([bytes[PF_WORD_OFFSET], bytes[PF_WORD_OFFSET + 1]]);
+            let pe = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, PE_WORD_OFFSET)?);
+            let pf = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, PF_WORD_OFFSET)?);
             (
                 Some(ExtendedPreamble {
                     extended_data_type: pe,
