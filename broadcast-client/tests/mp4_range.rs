@@ -243,3 +243,39 @@ fn a_range_driver_reports_the_movie_metadata() {
     }
     assert_eq!(title.as_deref(), Some("Test Tone"));
 }
+
+#[test]
+fn the_range_driver_passes_a_warning_through() {
+    use isobmff::reader::{Mode, Warning};
+    let path = test_fixtures::path("mp4/progressive/av-faststart.mp4");
+    let mut bytes = std::fs::read(&path).expect("read fixture");
+    let mvhd = bytes.windows(4).position(|w| w == b"mvhd").expect("mvhd") - 4;
+    let timescale = mvhd + if bytes[mvhd + 8] == 1 { 28 } else { 20 };
+    bytes[timescale..timescale + 4].fill(0);
+    let config = ReaderConfig::default()
+        .with_order(SampleOrder::File)
+        .with_mode(Mode::Permissive);
+    let mut reader = RangeReader::new(config, MIN_FETCH);
+    let mut server = Server {
+        bytes: &bytes,
+        requests: 0,
+    };
+    loop {
+        match reader.poll().expect("poll") {
+            RangeAction::Fetch { offset, len } => {
+                let fetch = ByteRange { offset, len };
+                let (body, total) = server.get(fetch);
+                reader
+                    .on_status(StatusCode::PARTIAL_CONTENT)
+                    .expect("partial content");
+                reader
+                    .on_range(fetch.offset, &body, total)
+                    .expect("range body");
+            }
+            RangeAction::Step(DriverStep::Warning(Warning::ZeroMovieTimescale { .. })) => return,
+            RangeAction::Done => panic!("no warning"),
+            RangeAction::Step(_) => {}
+            _ => {}
+        }
+    }
+}
