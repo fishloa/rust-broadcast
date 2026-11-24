@@ -1835,6 +1835,10 @@ pub const TABLE: &[Crate] = &[
             "SampleEntryChild",
             "SampleEntryVariant",
             "StblChild",
+            // `writer::SampleEntry`: a typed sample entry or a raw entry's
+            // box bytes, a data-carrying ADT in the writer's input, not a
+            // spec/field value decoded from the wire.
+            "SampleEntry",
         ],
         expected: None,
         min_enums: None,

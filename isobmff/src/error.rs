@@ -139,6 +139,15 @@ pub enum Error {
         limit: u64,
     },
 
+    /// A buffered fragment would exceed
+    /// [`Limits::max_fragment_bytes`](crate::Limits::max_fragment_bytes), so
+    /// the writer refused the push before the buffer grew.
+    #[error("fragment exceeds the configured limit of {limit} bytes")]
+    FragmentTooLarge {
+        /// The cap it exceeded.
+        limit: u64,
+    },
+
     /// The input needs a feature this crate does not implement yet.
     ///
     /// Distinct from a codec/scheme this crate has no handling for at all:

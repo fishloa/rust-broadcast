@@ -49,6 +49,7 @@ It never knows the media IR or a codec bitstream.
 | `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
 | `limits` | hostile-input caps (`Limits`) for the Phase 2 reader |
 | `sample_table` | lazy per-track sample cursor and the run-length table builders |
+| `writer` | sans-IO fragmented writer: init segment, `moof`+`mdat`, CENC media-segment protection |
 | `frag_offsets` | ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 sample-data addressing rules |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
 

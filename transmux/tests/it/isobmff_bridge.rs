@@ -116,6 +116,11 @@ fn every_isobmff_error_maps_to_its_transmux_variant() {
             "samples per track exceeds the configured limit of 5",
         ),
         (
+            I::FragmentTooLarge { limit: 7 },
+            |e| matches!(e, T::FragmentTooLarge { limit: 7 }),
+            "fragment exceeds the configured limit of 7 bytes",
+        ),
+        (
             I::FieldOverflow(FieldOverflow {
                 field: "f",
                 value: 9,

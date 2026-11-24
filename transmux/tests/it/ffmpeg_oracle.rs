@@ -9,10 +9,10 @@
 
 #![cfg(feature = "cenc")]
 use broadcast_common::{Encrypt, Package, Unpackage};
+use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use std::path::PathBuf;
 use std::process::Command;
 use transmux::cenc_segment::protect_init_segment;
-use transmux::fragment_build::{FragmentProtection, protect_media_segment};
 use transmux::{
     CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
     SubsamplePolicy, TrackEncryption,
@@ -51,7 +51,7 @@ fn build_protected_fmp4(media: &mut Media, cfg: &EncryptConfig) -> Vec<u8> {
     let raw = CmafMux::new(1).package(&*media).expect("mux");
     let with_protected_init = protect_init_segment(&raw, track_id, &enc).expect("protect init");
     let fp = FragmentProtection {
-        track_id,
+        track_id: isobmff::TrackId::new(track_id.value()),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };

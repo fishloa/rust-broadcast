@@ -20,23 +20,6 @@ pub(super) enum MediaKind {
 }
 
 impl MediaKind {
-    pub(super) fn vmhd(&self) -> Option<VideoMediaHeaderBox> {
-        matches!(self, Self::Video).then_some(VideoMediaHeaderBox {
-            version: 0,
-            flags: 1,
-            graphicsmode: 0,
-            opcolor: [0, 0, 0],
-        })
-    }
-
-    pub(super) fn smhd(&self) -> Option<SoundMediaHeaderBox> {
-        matches!(self, Self::Audio).then_some(SoundMediaHeaderBox {
-            version: 0,
-            flags: 0,
-            balance: 0,
-        })
-    }
-
     pub(super) fn handler_type(&self) -> [u8; BOX_TYPE_SIZE] {
         match self {
             Self::Video => *b"vide",
@@ -53,15 +36,12 @@ impl MediaKind {
         }
     }
 
-    /// The headerless FullBox (version(8)+flags(24)) kept as the first `minf`
-    /// child of a subtitle track: `sthd` for `stpp`/`subt` (ISO/IEC 14496-12:2026
+    /// The headerless FullBox four-CC kept as the first `minf` child of a
+    /// subtitle track: `sthd` for `stpp`/`subt` (ISO/IEC 14496-12:2026
     /// §12.6.2), `nmhd` for `wvtt`/`text` (§8.4.5.2), see §7.3.4.
-    pub(super) fn minf_header(&self) -> Option<OpaqueBox> {
+    pub(super) fn minf_header_fourcc(&self) -> Option<[u8; BOX_TYPE_SIZE]> {
         match self {
-            Self::Subtitle { media_header, .. } => Some(OpaqueBox::new(
-                *media_header,
-                vec![0u8; isobmff::box_types::FULLBOX_EXTRA_SIZE],
-            )),
+            Self::Subtitle { media_header, .. } => Some(*media_header),
             _ => None,
         }
     }
