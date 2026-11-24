@@ -142,6 +142,33 @@ audio track ids are offset by `AUDIO_TRACK_ID_OFFSET` (1000; a main-playlist tra
 dropped and reported once as `ErrorKind::TrackIdReserved`), `Event::Tracks` carries the merged set
 and `Event::AudioRendition` reports the active rendition. Subtitle renditions are not implemented: a `SUBTITLES` rendition is listed in `Event::Variants` (`renditions`) but never fetched, and no event reports it; fetching and rendering it is the host's job.
 
+## Read-ahead backpressure
+
+A live source arrives at the rate it plays; a recording over HTTP arrives at network speed. Every
+pull source honours one optional, caller-set read-ahead limit (`ReadAhead` on
+`TsHttpConfig::with_read_ahead`): `ReadAhead::Unlimited` (the default) paces nothing, and
+`ReadAhead::time`, `ReadAhead::bytes` or `ReadAhead::time_and_bytes` bound how far delivered media
+may run ahead of the position reported with `Session::on_playback_position`.
+
+- **TS-over-HTTP** stops host reads: `Action::PauseRead { conn }` is emitted once either bound is
+  reached and `Action::ResumeRead { conn }` once both fall under half of it (TCP flow control then
+  holds the server). `Session::read_paused(conn)` answers the same question.
+- **RTSP over interleaved TCP** does the same for its one connection, and a deliberate pause is not
+  a stall: the stall notice, no-data starvation and stall reconnect do not run while reading is
+  paused.
+- **HLS, DASH, Smooth** stop scheduling the next segment or fragment request while the gate is
+  closed, and a request already in flight completes; nothing is emitted for a connection, so
+  `Session::read_paused` stays `false`. A DASH session with a limit configured issues one media
+  request per representation at a time, because the runtime otherwise offers a static
+  presentation's whole segment list at once.
+
+The measure and its hysteresis live in one place (`read_ahead.rs`) for every source: media time is
+the latest delivered presentation end minus the playback position, and bytes are the accepted body
+bytes attributed to delivered samples whose end is still ahead of that position (100 ms slices,
+so bytes the player has passed stop counting). A limit with no bound, or a zero bound, is
+`Error::InvalidConfig(ConfigField::ReadAhead)`. UDP, RTP, SRT and RTMP are not paced: a slow host
+drops datagrams at the socket and `srt-runtime` bounds what it holds.
+
 ## Buffer events
 
 `Event::Buffer(Start|Pause|Resume)` has two engines. Live TS-over-HTTP is driven by
