@@ -641,7 +641,7 @@ pub fn secs_to_duration(value: f64) -> Result<Duration, FileReaderError> {
 
 /// Convert a non-negative media-timescale tick count to a wall-clock
 /// [`Duration`] (`ticks / timescale`).
-fn ticks_to_duration(ticks: i64, timescale: Timescale) -> Duration {
+pub(crate) fn ticks_to_duration(ticks: i64, timescale: Timescale) -> Duration {
     let ticks = u128::try_from(ticks).unwrap_or(0);
     let denom = u128::from(timescale.get());
     let nanos = (ticks * u128::from(broadcast_common::units::NANOS_PER_SEC)

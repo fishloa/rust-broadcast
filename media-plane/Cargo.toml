@@ -36,6 +36,11 @@ broadcast-hls     = { path = "../broadcast-hls", version = "0.9.0", optional = t
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+# The bounded-memory file-playout tests generate their 256 MiB captures at test
+# time with `test_harness::big_media`'s incremental writers and measure the
+# session's live-byte peak with `test_alloc`'s counting allocator.
+test-harness = { path = "../test-harness" }
+test-alloc   = { path = "../test-alloc" }
 # Builds real, valid (Parse/Serialize round-tripping) SCTE-35 splice_insert()
 # fixtures in-test, to drive `timed_metadata::Timeline`'s 33-bit PTS
 # wrap-unroll across a genuine wrap boundary — see the event-log wrap test in
