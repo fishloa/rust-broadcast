@@ -4,7 +4,7 @@ use broadcast_common::len::need_out;
 use broadcast_common::wire_enum;
 
 /// T2-MI packet header size (ETSI TS 102 773 §5.1).
-const HEADER_LEN: usize = 6;
+pub(crate) const HEADER_LEN: usize = 6;
 
 /// Largest `superframe_idx` (4-bit field, byte 2 bits `[7:4]`, §5.1).
 const SUPERFRAME_IDX_MAX: u8 = 0x0F;
@@ -20,13 +20,23 @@ const PACKET_TYPE_OFFSET: usize = 0;
 /// Offset of `packet_count` in the T2-MI header.
 const PACKET_COUNT_OFFSET: usize = 1;
 /// Offset of the `superframe_idx`/`t2mi_stream_id` byte in the T2-MI header.
-const SUPERFRAME_BYTE_OFFSET: usize = 2;
+pub(crate) const SUPERFRAME_BYTE_OFFSET: usize = 2;
 /// Offset of the reserved byte in the T2-MI header.
-const RFU_BYTE_OFFSET: usize = 3;
+pub(crate) const RFU_BYTE_OFFSET: usize = 3;
 /// Offset of `payload_len_bits` in the T2-MI header.
-const PAYLOAD_LEN_BITS_OFFSET: usize = 4;
-/// Bits in a byte, for the bit- to byte-length rounding.
-const BITS_PER_BYTE: usize = 8;
+pub(crate) const PAYLOAD_LEN_BITS_OFFSET: usize = 4;
+
+/// Read the big-endian 16-bit field at `offset` of `bytes`.
+///
+/// Every multi-byte T2-MI field carries its most-significant byte first
+/// (ETSI TS 102 773 §5.1), so the field is copied into one sized array rather
+/// than read out one index at a time.
+pub(crate) fn be_u16(bytes: &[u8], offset: usize) -> u16 {
+    const FIELD_LEN: usize = core::mem::size_of::<u16>();
+    let mut field = [0u8; FIELD_LEN];
+    field.copy_from_slice(&bytes[offset..offset + FIELD_LEN]);
+    u16::from_be_bytes(field)
+}
 
 wire_enum! {
     /// Packet types per ETSI TS 102 773 Table 1.
@@ -165,10 +175,7 @@ impl<'a> broadcast_common::Parse<'a> for Header {
             ));
         }
 
-        let payload_len_bits = u16::from_be_bytes([
-            hdr[PAYLOAD_LEN_BITS_OFFSET],
-            hdr[PAYLOAD_LEN_BITS_OFFSET + 1],
-        ]);
+        let payload_len_bits = be_u16(hdr, PAYLOAD_LEN_BITS_OFFSET);
 
         Ok(Header {
             packet_type,
@@ -184,7 +191,7 @@ impl Header {
     /// Compute payload length in bytes (ceil(bits / 8)).
     #[must_use]
     pub fn payload_len_bytes(&self) -> usize {
-        (self.payload_len_bits as usize).div_ceil(BITS_PER_BYTE)
+        (self.payload_len_bits as usize).div_ceil(u8::BITS as usize)
     }
 
     /// Total packet size including header + payload + CRC-32 trailer, in bytes.
@@ -219,11 +226,8 @@ impl Header {
                         what: "T2MI Header",
                     },
                 ))?;
-        let payload_len_bits = u16::from_be_bytes([
-            hdr[PAYLOAD_LEN_BITS_OFFSET],
-            hdr[PAYLOAD_LEN_BITS_OFFSET + 1],
-        ]);
-        let payload_len_bytes = (payload_len_bits as usize).div_ceil(BITS_PER_BYTE);
+        let payload_len_bits = be_u16(hdr, PAYLOAD_LEN_BITS_OFFSET);
+        let payload_len_bytes = (payload_len_bits as usize).div_ceil(u8::BITS as usize);
         let end = HEADER_LEN + payload_len_bytes;
         if packet.len() < end {
             return Err(crate::error::Error::PayloadLengthMismatch {
@@ -286,9 +290,8 @@ impl broadcast_common::Serialize for Header {
         buf[SUPERFRAME_BYTE_OFFSET] =
             (self.superframe_idx << SUPERFRAME_IDX_SHIFT) | self.t2mi_stream_id;
         buf[RFU_BYTE_OFFSET] = 0; // RFU = 0
-        let len_be = self.payload_len_bits.to_be_bytes();
-        buf[PAYLOAD_LEN_BITS_OFFSET] = len_be[0];
-        buf[PAYLOAD_LEN_BITS_OFFSET + 1] = len_be[1];
+        buf[PAYLOAD_LEN_BITS_OFFSET..PAYLOAD_LEN_BITS_OFFSET + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.payload_len_bits.to_be_bytes());
 
         Ok(HEADER_LEN)
     }

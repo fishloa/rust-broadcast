@@ -13,8 +13,8 @@ use crate::pid::Pid;
 use crate::ts::{
     AF_OPCR_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK,
     ClockReferenceSlot, ContinuityCounter, PCR_RESERVED_BITS, PCR_RESERVED_BYTE_OFFSET,
-    PCR_RESERVED_SHIFT, Pcr, ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
-    adaptation_field_body_range, clock_reference_slot,
+    PCR_RESERVED_SHIFT, Pcr, SCRAMBLING_AFC_CC_OFFSET, ScramblingControl, TS_PACKET_SIZE,
+    TS_SYNC_BYTE, TsHeader, adaptation_field_body_range, clock_reference_slot,
 };
 
 /// The 13-bit PID value used for null packets — `0x1FFF`
@@ -23,10 +23,7 @@ const NULL_PID: Pid = crate::pid::well_known::NULL;
 
 /// Byte offset of `adaptation_field_length`, right after the 4-byte transport
 /// header (ISO/IEC 13818-1 §2.4.3.4).
-const AF_LEN_BYTE: usize = TsHeader::serialized_len();
-/// Byte offset of the header byte carrying `adaptation_field_control` and
-/// `continuity_counter` (ISO/IEC 13818-1 §2.4.3.3).
-const SCRAMBLING_AFC_CC_OFFSET: usize = 3;
+const AF_LEN_BYTE: usize = crate::ts::AF_LEN_BYTE;
 
 /// Owned 188-byte TS packet with pre-parsed header fields.
 ///

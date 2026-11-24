@@ -33,32 +33,15 @@ use crate::error::{Error, Result};
 use crate::nack::{GenericNack, RangeNack};
 use crate::rtt_echo::RttEcho;
 use crate::{
-    FMT_GENERIC_NACK, PT_RTPFB, RTCP_COUNT_MASK, SUBTYPE_RANGE_NACK, SUBTYPE_RTT_ECHO_REQUEST,
-    SUBTYPE_RTT_ECHO_RESPONSE,
+    FMT_GENERIC_NACK, PT_APP, PT_RTPFB, RTCP_COUNT_MASK, RTCP_HEADER_LEN, RTCP_LENGTH_OFFSET,
+    RTCP_PADDING_MASK, RTCP_VERSION, SUBTYPE_RANGE_NACK, SUBTYPE_RTT_ECHO_REQUEST,
+    SUBTYPE_RTT_ECHO_RESPONSE, VERSION_SHIFT, WORD_LEN, be_u16,
 };
 
 // ---------------------------------------------------------------------------
 // Wire constants
 // ---------------------------------------------------------------------------
 
-/// Common-header length in bytes.
-const RTCP_HEADER_LEN: usize = 4;
-/// One 32-bit word, in bytes.
-const WORD_LEN: usize = 4;
-/// PT for RTCP APP (RFC 3550 §6.7).
-const PT_APP: u8 = 204;
-/// RTCP protocol version — always 2 (RFC 3550 §6.4.1).
-const RTCP_VERSION: u8 = 2;
-/// Padding-bit mask within byte 0 (`P` — RFC 3550 §6.4.1): the bit right
-/// after the 2-bit version field.
-const RTCP_PADDING_MASK: u8 = 0x20;
-
-/// Shift of the 2-bit `version` field in the common header's first byte
-/// (RFC 3550 §6.1).
-const VERSION_SHIFT: u32 = 6;
-
-/// Byte positions of the 16-bit `length` field.
-const LENGTH_BYTES: [usize; 2] = [2, 3];
 /// Byte offset of the packet-type field within the common header.
 const PT_OFFSET: usize = 1;
 
@@ -77,7 +60,7 @@ fn peek_total_len(bytes: &[u8]) -> Result<usize> {
             what: "RTCP common header",
         }));
     }
-    let length_field = u16::from_be_bytes(LENGTH_BYTES.map(|i| bytes[i])) as usize;
+    let length_field = usize::from(be_u16(bytes, RTCP_LENGTH_OFFSET));
     let total = length_field
         .checked_add(1)
         .and_then(|words| words.checked_mul(WORD_LEN))

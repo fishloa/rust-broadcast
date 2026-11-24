@@ -337,7 +337,7 @@ use crate::time::TIME_LEN;
 use broadcast_common::{Parse, Serialize};
 
 macro_rules! impl_empty_body {
-    ($ty:ident, $what:literal, $oid:literal) => {
+    ($ty:ident, $what:literal, $oid:expr) => {
         impl<'a> Parse<'a> for $ty {
             type Error = Error;
             fn parse(_bytes: &'a [u8]) -> Result<Self> {
@@ -360,9 +360,19 @@ macro_rules! impl_empty_body {
     };
 }
 
-impl_empty_body!(GeneralResponse, "GENERAL_RESPONSE", 0x0000);
-impl_empty_body!(InitRequest, "INIT_REQUEST", 0x0001);
-impl_empty_body!(InitResponse, "INIT_RESPONSE", 0x0002);
+/// Operation ids of the empty-body operation types (ANSI/SCTE 104 2023
+/// Tables 8-3 and 8-4).
+const GENERAL_RESPONSE_OP_ID: u16 = 0x0000;
+const INIT_REQUEST_OP_ID: u16 = 0x0001;
+const INIT_RESPONSE_OP_ID: u16 = 0x0002;
+const PROVISIONING_RESPONSE_OP_ID: u16 = 0x000C;
+const FAULT_RESPONSE_OP_ID: u16 = 0x0010;
+const AS_ALIVE_REQUEST_OP_ID: u16 = 0x0011;
+const AS_ALIVE_RESPONSE_OP_ID: u16 = 0x0012;
+
+impl_empty_body!(GeneralResponse, "GENERAL_RESPONSE", GENERAL_RESPONSE_OP_ID);
+impl_empty_body!(InitRequest, "INIT_REQUEST", INIT_REQUEST_OP_ID);
+impl_empty_body!(InitResponse, "INIT_RESPONSE", INIT_RESPONSE_OP_ID);
 
 impl<'a> Parse<'a> for AliveRequest {
     type Error = Error;
@@ -549,7 +559,11 @@ impl crate::traits::OperationDef<'_> for ConfigResponse {
     const NAME: &'static str = "CONFIG_RESPONSE";
 }
 
-impl_empty_body!(ProvisioningResponse, "PROVISIONING_RESPONSE", 0x000C);
+impl_empty_body!(
+    ProvisioningResponse,
+    "PROVISIONING_RESPONSE",
+    PROVISIONING_RESPONSE_OP_ID
+);
 
 impl<'a> Parse<'a> for FaultRequest {
     type Error = Error;
@@ -591,9 +605,13 @@ impl crate::traits::OperationDef<'_> for FaultRequest {
     const NAME: &'static str = "FAULT_REQUEST";
 }
 
-impl_empty_body!(FaultResponse, "FAULT_RESPONSE", 0x0010);
-impl_empty_body!(AsAliveRequest, "AS_ALIVE_REQUEST", 0x0011);
-impl_empty_body!(AsAliveResponse, "AS_ALIVE_RESPONSE", 0x0012);
+impl_empty_body!(FaultResponse, "FAULT_RESPONSE", FAULT_RESPONSE_OP_ID);
+impl_empty_body!(AsAliveRequest, "AS_ALIVE_REQUEST", AS_ALIVE_REQUEST_OP_ID);
+impl_empty_body!(
+    AsAliveResponse,
+    "AS_ALIVE_RESPONSE",
+    AS_ALIVE_RESPONSE_OP_ID
+);
 
 // ── AnySingleOperation dispatch for single_operation_message ──
 

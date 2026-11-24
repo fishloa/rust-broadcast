@@ -8,6 +8,7 @@
 use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
+use crate::wire::be_u16;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
@@ -169,14 +170,8 @@ impl<'a> Parse<'a> for ApplicationInfo<'a> {
             super::parse_apdu_header(bytes, tag::APPLICATION_INFO, "application_info")?;
         need_in(body, APP_INFO_PREFIX, "application_info")?;
         let application_type = ApplicationType::from_u8(body[APPLICATION_TYPE_OFFSET]);
-        let application_manufacturer = u16::from_be_bytes([
-            body[APPLICATION_MANUFACTURER_OFFSET],
-            body[APPLICATION_MANUFACTURER_OFFSET + 1],
-        ]);
-        let manufacturer_code = u16::from_be_bytes([
-            body[MANUFACTURER_CODE_OFFSET],
-            body[MANUFACTURER_CODE_OFFSET + 1],
-        ]);
+        let application_manufacturer = be_u16(body, APPLICATION_MANUFACTURER_OFFSET);
+        let manufacturer_code = be_u16(body, MANUFACTURER_CODE_OFFSET);
         let menu_string_length = body[MENU_STRING_LENGTH_OFFSET] as usize;
         let menu_end = APP_INFO_PREFIX + menu_string_length;
         if body.len() < menu_end {

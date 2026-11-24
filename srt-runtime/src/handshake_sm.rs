@@ -560,7 +560,7 @@ const DEFAULT_FLOW_WINDOW: u32 = 8192;
 const DEFAULT_SRT_VERSION: u32 = 0x0105_0000;
 
 /// Words in an IPv4 address as the handshake carries it (§3.2.1).
-const IPV4_ADDR_WORDS: usize = 4;
+pub const IPV4_ADDR_WORDS: usize = 4;
 
 /// Bytes in one SipHash input word, and in the SYN-cookie and listener-id
 /// inputs, and the mask of the length byte SipHash's final block carries.

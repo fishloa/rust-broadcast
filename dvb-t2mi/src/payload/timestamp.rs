@@ -188,7 +188,7 @@ const SUBSECONDS_UTCO_OFFSET: usize = 9;
 const UTCO_LOW_OFFSET: usize = 10;
 
 /// Mask of the reserved top nibble of the first byte.
-const RFU_MASK: u8 = 0xF0;
+const RFU_AND_BW_RFU_MASK: u8 = 0xF0;
 /// Shift placing the reserved nibble for the error report.
 const RFU_SHIFT: u32 = 4;
 /// Mask of the four-bit `bw` code.
@@ -264,7 +264,7 @@ impl<'a> Parse<'a> for T2TimestampPayload {
         need_in(bytes, TIMESTAMP_HEADER_LEN, "T2TimestampPayload header")?;
 
         // byte 0 [7:4] = rfu
-        if bytes[RFU_AND_BW_OFFSET] & RFU_MASK != 0 {
+        if bytes[RFU_AND_BW_OFFSET] & RFU_AND_BW_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "4-bit RFU",

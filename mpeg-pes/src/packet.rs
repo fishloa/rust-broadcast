@@ -86,13 +86,23 @@ const ESCR_EXT_HI_MASK: u8 = 0x03;
 /// Mask of one whole byte of a multi-byte field.
 const BYTE_MASK: u64 = 0xFF;
 
-/// Bit shifts used to pack single bits into a header byte.
-const BIT7_SHIFT: u32 = 7;
-const BIT6_SHIFT: u32 = 6;
-const BIT5_SHIFT: u32 = 5;
-const BIT4_SHIFT: u32 = 4;
-const BIT3_SHIFT: u32 = 3;
-const BIT2_SHIFT: u32 = 2;
+/// Bit shifts of the single bits each field shares a byte with (Table 2-21,
+/// Table 2-24).
+const TRICK_FIELD_ID_SHIFT: u32 = 3;
+const TRICK_INTRA_SLICE_REFRESH_SHIFT: u32 = 2;
+const PPSC_MPEG_ID_SHIFT: u32 = 6;
+const P_STD_SCALE_SHIFT: u32 = 5;
+const PES_EXTENSION_STREAM_ID_FLAG_SHIFT: u32 = 7;
+const F1_SCRAMBLING_SHIFT: u32 = 4;
+const F1_PRIORITY_SHIFT: u32 = 3;
+const F1_ALIGNMENT_SHIFT: u32 = 2;
+const F2_ESCR_SHIFT: u32 = 5;
+const F2_ES_RATE_SHIFT: u32 = 4;
+const F2_TRICK_MODE_SHIFT: u32 = 3;
+const F2_ADDITIONAL_COPY_SHIFT: u32 = 2;
+/// Bit shift of the `ES_rate` value's top bit within its first byte.
+const ES_RATE_TOP_BIT_SHIFT: u32 = 7;
+/// Bit shift of one whole byte within a multi-byte value.
 const BYTE_SHIFT: u32 = 8;
 
 /// Byte offsets within the fixed PES packet header (Table 2-21).
@@ -464,18 +474,18 @@ impl TrickMode {
         let data = b & TRICK_DATA_MASK;
         match control {
             0b000 => TrickMode::FastForward {
-                field_id: (data >> BIT3_SHIFT) & TRICK_FIELD_ID_MASK,
-                intra_slice_refresh: (data >> BIT2_SHIFT) & 1 != 0,
+                field_id: (data >> TRICK_FIELD_ID_SHIFT) & TRICK_FIELD_ID_MASK,
+                intra_slice_refresh: (data >> TRICK_INTRA_SLICE_REFRESH_SHIFT) & 1 != 0,
                 frequency_truncation: data & TRICK_FREQUENCY_TRUNCATION_MASK,
             },
             0b001 => TrickMode::SlowMotion { rep_cntrl: data },
             0b010 => TrickMode::FreezeFrame {
-                field_id: (data >> BIT3_SHIFT) & TRICK_FIELD_ID_MASK,
+                field_id: (data >> TRICK_FIELD_ID_SHIFT) & TRICK_FIELD_ID_MASK,
                 reserved: data & TRICK_RESERVED_MASK,
             },
             0b011 => TrickMode::FastReverse {
-                field_id: (data >> BIT3_SHIFT) & TRICK_FIELD_ID_MASK,
-                intra_slice_refresh: (data >> BIT2_SHIFT) & 1 != 0,
+                field_id: (data >> TRICK_FIELD_ID_SHIFT) & TRICK_FIELD_ID_MASK,
+                intra_slice_refresh: (data >> TRICK_INTRA_SLICE_REFRESH_SHIFT) & 1 != 0,
                 frequency_truncation: data & TRICK_FREQUENCY_TRUNCATION_MASK,
             },
             0b100 => TrickMode::SlowReverse { rep_cntrl: data },
@@ -511,8 +521,8 @@ impl TrickMode {
                     TRICK_FREQUENCY_TRUNCATION_BITS,
                     "trick_mode.frequency_truncation",
                 )?;
-                Ok(((field_id as u8) << BIT3_SHIFT)
-                    | ((intra_slice_refresh as u8) << BIT2_SHIFT)
+                Ok(((field_id as u8) << TRICK_FIELD_ID_SHIFT)
+                    | ((intra_slice_refresh as u8) << TRICK_INTRA_SLICE_REFRESH_SHIFT)
                     | (frequency_truncation as u8))
             }
             TrickMode::SlowMotion { rep_cntrl } => {
@@ -532,7 +542,7 @@ impl TrickMode {
                 let reserved =
                     fit_mask(reserved, FREEZE_FRAME_RESERVED_VALUE, "trick_mode.reserved")?;
                 Ok((TRICK_FREEZE_FRAME << TRICK_MODE_CONTROL_SHIFT)
-                    | ((field_id as u8) << BIT3_SHIFT)
+                    | ((field_id as u8) << TRICK_FIELD_ID_SHIFT)
                     | reserved)
             }
             TrickMode::FastReverse {
@@ -551,8 +561,8 @@ impl TrickMode {
                     "trick_mode.frequency_truncation",
                 )?;
                 Ok((TRICK_FAST_REVERSE << TRICK_MODE_CONTROL_SHIFT)
-                    | ((field_id as u8) << BIT3_SHIFT)
-                    | ((intra_slice_refresh as u8) << BIT2_SHIFT)
+                    | ((field_id as u8) << TRICK_FIELD_ID_SHIFT)
+                    | ((intra_slice_refresh as u8) << TRICK_INTRA_SLICE_REFRESH_SHIFT)
                     | (frequency_truncation as u8))
             }
             TrickMode::SlowReverse { rep_cntrl } => {
@@ -913,7 +923,7 @@ impl<'a> PesExtension<'a> {
             buf[cursor] = PPSC_MARKER | counter;
             // byte 1: marker(1) | mpeg1_mpeg2_id(1) | original_stuff_length(6)
             buf[cursor + 1] = PPSC_MARKER
-                | ((ppsc.mpeg1_mpeg2_identifier as u8) << BIT6_SHIFT)
+                | ((ppsc.mpeg1_mpeg2_identifier as u8) << PPSC_MPEG_ID_SHIFT)
                 | original_stuff_length;
             cursor += core::mem::size_of::<u16>();
         }
@@ -926,7 +936,7 @@ impl<'a> PesExtension<'a> {
                 "PES_extension.P-STD_buffer_size",
             )? as u16;
             buf[cursor] = P_STD_PREFIX
-                | ((ps.scale as u8) << BIT5_SHIFT)
+                | ((ps.scale as u8) << P_STD_SCALE_SHIFT)
                 | ((size >> BYTE_SHIFT) as u8 & P_STD_SIZE_HI_MASK);
             buf[cursor + 1] = size.to_be_bytes()[1];
             cursor += core::mem::size_of::<u16>();
@@ -942,8 +952,9 @@ impl<'a> PesExtension<'a> {
             )?;
             buf[cursor] = MSB_FLAG | (checked as u8);
             cursor += 1;
-            buf[cursor] =
-                ((ef.stream_id_extension_flag as u8) << BIT7_SHIFT) | (ef.low_bits & LOW7_MASK);
+            buf[cursor] = ((ef.stream_id_extension_flag as u8)
+                << PES_EXTENSION_STREAM_ID_FLAG_SHIFT)
+                | (ef.low_bits & LOW7_MASK);
             cursor += 1;
             buf[cursor..cursor + ef.rest.len()].copy_from_slice(ef.rest);
             cursor += ef.rest.len();
@@ -1048,9 +1059,9 @@ impl PesHeader<'_> {
     pub fn flag_bytes(&self) -> [u8; 2] {
         // f1: marker '10' | scrambling(2) | priority(1) | align(1) | copyright(1) | orig(1)
         let f1 = F1_MARKER_VALUE
-            | (self.scrambling_control.to_bits() << BIT4_SHIFT)
-            | (u8::from(self.pes_priority) << BIT3_SHIFT)
-            | (u8::from(self.data_alignment_indicator) << BIT2_SHIFT)
+            | (self.scrambling_control.to_bits() << F1_SCRAMBLING_SHIFT)
+            | (u8::from(self.pes_priority) << F1_PRIORITY_SHIFT)
+            | (u8::from(self.data_alignment_indicator) << F1_ALIGNMENT_SHIFT)
             | (u8::from(self.copyright) << 1)
             | u8::from(self.original_or_copy);
         // f2: pts_dts_flags(2) | escr_flag(1) | es_rate_flag(1) |
@@ -1061,10 +1072,10 @@ impl PesHeader<'_> {
             _ => PTS_DTS_NONE,
         };
         let f2 = (pts_dts_flags << PTS_DTS_FLAGS_SHIFT)
-            | (u8::from(self.escr.is_some()) << BIT5_SHIFT)
-            | (u8::from(self.es_rate.is_some()) << BIT4_SHIFT)
-            | (u8::from(self.dsm_trick_mode.is_some()) << BIT3_SHIFT)
-            | (u8::from(self.additional_copy_info.is_some()) << BIT2_SHIFT)
+            | (u8::from(self.escr.is_some()) << F2_ESCR_SHIFT)
+            | (u8::from(self.es_rate.is_some()) << F2_ES_RATE_SHIFT)
+            | (u8::from(self.dsm_trick_mode.is_some()) << F2_TRICK_MODE_SHIFT)
+            | (u8::from(self.additional_copy_info.is_some()) << F2_ADDITIONAL_COPY_SHIFT)
             | (u8::from(self.pes_crc.is_some()) << 1)
             | u8::from(self.pes_extension.is_some());
         [f1, f2]
@@ -1395,7 +1406,7 @@ impl<'a> PesPacket<'a> {
         let mut es_rate_marker_bits = ES_RATE_MARKERS_VALUE;
         let es_rate = if f2 & F2_ES_RATE != 0 {
             need_in(opt, cursor + ES_RATE_FIELD_LEN, "ES_rate")?;
-            es_rate_marker_bits = ((opt[cursor + ES_RATE_HI_OFFSET] >> BIT7_SHIFT)
+            es_rate_marker_bits = ((opt[cursor + ES_RATE_HI_OFFSET] >> ES_RATE_TOP_BIT_SHIFT)
                 << ES_RATE_LO_SHIFT)
                 | (opt[cursor + ES_RATE_LO_OFFSET] & 1);
             let rate = (u32::from(opt[cursor + ES_RATE_HI_OFFSET] & LOW7_MASK) << ES_RATE_HI_SHIFT)
@@ -1457,7 +1468,7 @@ impl<'a> PesPacket<'a> {
         let header_stuffing = opt.get(cursor..).unwrap_or(&[]);
 
         let header = PesHeader {
-            scrambling_control: ScramblingControl::from_bits(f1 >> BIT4_SHIFT),
+            scrambling_control: ScramblingControl::from_bits(f1 >> F1_SCRAMBLING_SHIFT),
             pes_priority: f1 & F1_PRIORITY != 0,
             data_alignment_indicator: f1 & F1_DATA_ALIGNMENT != 0,
             copyright: f1 & F1_COPYRIGHT != 0,

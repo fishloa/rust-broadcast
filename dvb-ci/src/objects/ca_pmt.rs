@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -232,15 +233,20 @@ const ES_INFO_LENGTH_HIGH_OFFSET: usize = 3;
 const ES_INFO_LENGTH_LOW_OFFSET: usize = 4;
 
 /// Bit width of `version_number`.
-const VERSION_NUMBER_BITS: u32 = 5;
+///
+/// The `version_number` / `current_next_indicator` byte keeps this layout
+/// wherever CA signalling repeats it: this `ca_pmt()` (Table 25),
+/// `ca_pmt_reply()` (Table 26) and the multi-stream CA structures of the CA
+/// support resource.
+pub(crate) const VERSION_NUMBER_BITS: u32 = 5;
 /// Shift placing `version_number` below the reserved bits.
-const VERSION_NUMBER_SHIFT: u32 = 1;
+pub(crate) const VERSION_NUMBER_SHIFT: u32 = 1;
 /// Mask of `version_number`.
-const VERSION_NUMBER_MASK: u8 = 0x1F;
+pub(crate) const VERSION_NUMBER_MASK: u8 = 0x1F;
 /// Shift selecting the reserved bits of the version byte.
-const VERSION_RESERVED_SHIFT: u32 = 6;
+pub(crate) const VERSION_RESERVED_SHIFT: u32 = 6;
 /// Mask of `current_next_indicator`.
-const CURRENT_NEXT_INDICATOR_MASK: u8 = 0x01;
+pub(crate) const CURRENT_NEXT_INDICATOR_MASK: u8 = 0x01;
 /// Shift placing a 12-bit info length's high nibble.
 const INFO_LENGTH_SHIFT: u32 = 8;
 /// Mask of a 12-bit info length's high nibble.
@@ -262,8 +268,7 @@ impl<'a> Parse<'a> for CaPmt<'a> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::CA_PMT, "ca_pmt")?;
         need_in(body, CA_PMT_PREFIX, "ca_pmt prefix")?;
         let list_management = CaPmtListManagement::from_u8(body[LIST_MANAGEMENT_OFFSET]);
-        let program_number =
-            u16::from_be_bytes([body[PROGRAM_NUMBER_OFFSET], body[PROGRAM_NUMBER_OFFSET + 1]]);
+        let program_number = be_u16(body, PROGRAM_NUMBER_OFFSET);
         let version_number =
             (body[VERSION_BYTE_OFFSET] >> VERSION_NUMBER_SHIFT) & VERSION_NUMBER_MASK;
         let current_next_indicator = (body[VERSION_BYTE_OFFSET] & CURRENT_NEXT_INDICATOR_MASK) != 0;

@@ -15,6 +15,9 @@ use broadcast_common::wire_enum;
 
 use broadcast_common::{Parse, Serialize};
 
+use super::BYTE_MASK_U32;
+use crate::packet::be_u16;
+
 wire_enum! {
     /// Sub-part variety per §5.2.12 Table 13.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,14 +152,10 @@ const LENGTH_HIGH_BYTE_MASK: u32 = 0x3F;
 const LENGTH_HIGH_SHIFT: u32 = 16;
 /// Shift placing the length's middle byte.
 const LENGTH_MID_SHIFT: u32 = 8;
-/// Mask of one byte.
-const BYTE_MASK: u32 = 0xFF;
 /// Shift placing the high byte of `subpart_variety`.
 const VARIETY_HIGH_SHIFT: u32 = 8;
 /// Max value of the 22-bit `subpart_length`.
 const SUBPART_LENGTH_MAX: u32 = SUBPART_LENGTH_MASK;
-/// Bytes in a big-endian `u16`.
-const U16_LEN: usize = core::mem::size_of::<u16>();
 
 impl<'a> Parse<'a> for FefSubPartPayload<'a> {
     type Error = crate::error::Error;
@@ -186,10 +185,7 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
             ));
         }
 
-        let variety = SubpartVariety::try_from(u16::from_be_bytes([
-            hdr[VARIETY_OFFSET],
-            hdr[VARIETY_OFFSET + 1],
-        ]))?;
+        let variety = SubpartVariety::try_from(be_u16(hdr, VARIETY_OFFSET))?;
 
         // rfu2: byte 11 (8 bits) + byte 12 [7:6] (2 bits) = 10 bits — must be 0
         if hdr[RFU2_BYTE_OFFSET] != 0 || (hdr[LENGTH_HIGH_OFFSET] & RFU2_PREFIX_MASK != 0) {
@@ -211,11 +207,8 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
 
         Ok(FefSubPartPayload {
             fef_idx: hdr[0],
-            tx_identifier: u16::from_be_bytes([
-                hdr[TX_IDENTIFIER_OFFSET],
-                hdr[TX_IDENTIFIER_OFFSET + 1],
-            ]),
-            subpart_idx: u16::from_be_bytes([hdr[SUBPART_IDX_OFFSET], hdr[SUBPART_IDX_OFFSET + 1]]),
+            tx_identifier: be_u16(hdr, TX_IDENTIFIER_OFFSET),
+            subpart_idx: be_u16(hdr, SUBPART_IDX_OFFSET),
             subpart_variety: variety,
             subpart_length,
             subpart_data: rest,
@@ -250,21 +243,23 @@ impl Serialize for FefSubPartPayload<'_> {
 
         buf[0] = self.fef_idx;
         let tx_id = self.tx_identifier.to_be_bytes();
-        buf[TX_IDENTIFIER_OFFSET..TX_IDENTIFIER_OFFSET + U16_LEN].copy_from_slice(&tx_id);
+        buf[TX_IDENTIFIER_OFFSET..TX_IDENTIFIER_OFFSET + core::mem::size_of::<u16>()]
+            .copy_from_slice(&tx_id);
         // rfu1 = 0
         buf[RFU1_OFFSET..RFU1_OFFSET + RFU1_LEN].fill(0);
         let sub_idx = self.subpart_idx.to_be_bytes();
-        buf[SUBPART_IDX_OFFSET..SUBPART_IDX_OFFSET + U16_LEN].copy_from_slice(&sub_idx);
+        buf[SUBPART_IDX_OFFSET..SUBPART_IDX_OFFSET + core::mem::size_of::<u16>()]
+            .copy_from_slice(&sub_idx);
         let variety = u16::from(self.subpart_variety);
         buf[VARIETY_OFFSET] = (variety >> VARIETY_HIGH_SHIFT) as u8;
-        buf[VARIETY_OFFSET + 1] = (variety & BYTE_MASK as u16) as u8;
+        buf[VARIETY_OFFSET + 1] = (variety & BYTE_MASK_U32 as u16) as u8;
         // rfu2 = 0 (top 2 bits byte 12) + rfu2 = 0 (byte 11)
         buf[RFU2_BYTE_OFFSET] = 0;
         // subpart_length: 22 bits → byte 12 [5:0] = top 6, byte 13 = mid 8, byte 14 = bot 8
         buf[LENGTH_HIGH_OFFSET] =
             ((self.subpart_length >> LENGTH_HIGH_SHIFT) & LENGTH_HIGH_BYTE_MASK) as u8;
         buf[LENGTH_MID_OFFSET] = (self.subpart_length >> LENGTH_MID_SHIFT) as u8;
-        buf[LENGTH_LOW_OFFSET] = (self.subpart_length & BYTE_MASK) as u8;
+        buf[LENGTH_LOW_OFFSET] = (self.subpart_length & BYTE_MASK_U32) as u8;
 
         if !self.subpart_data.is_empty() {
             buf[FEF_SUBPART_HEADER_LEN..FEF_SUBPART_HEADER_LEN + self.subpart_data.len()]

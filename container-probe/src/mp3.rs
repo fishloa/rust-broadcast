@@ -71,10 +71,12 @@ const PADDING_MASK: u8 = 0x01;
 
 /// Byte offset of the ID3v2 header's flags field.
 const ID3_FLAGS_OFFSET: usize = 5;
-/// Byte positions of the ID3v2 syncsafe size field.
-const ID3_SIZE_BYTES: [usize; 4] = [6, 7, 8, 9];
-/// Shifts of those four bytes: seven payload bits each, most significant first.
-const ID3_SIZE_SHIFTS: [u32; 4] = [21, 14, 7, 0];
+/// Byte offset of the ID3v2 syncsafe size field.
+const ID3_SIZE_OFFSET: usize = 6;
+/// Width of the syncsafe size field, in bytes.
+const ID3_SIZE_LEN: usize = 4;
+/// Payload bits each of those bytes carries (the top bit is always clear).
+const ID3_SYNC_SAFE_BITS: u32 = 7;
 
 /// Bitrate table (kbps) for MPEG-1 Layer III by `bitrate_index`
 /// (`b[2][7:4]`); index 0 (free-format) and 15 (forbidden) are `0` and
@@ -211,11 +213,10 @@ fn id3_skip(data: &[u8]) -> Option<usize> {
         return None;
     }
     let flags = data[ID3_FLAGS_OFFSET];
-    let size = ID3_SIZE_BYTES
+    let size = data[ID3_SIZE_OFFSET..ID3_SIZE_OFFSET + ID3_SIZE_LEN]
         .iter()
-        .zip(ID3_SIZE_SHIFTS)
-        .fold(0u32, |acc, (i, shift)| {
-            acc | ((u32::from(data[*i]) & u32::from(ID3_SYNCSAFE_MASK)) << shift)
+        .fold(0u32, |acc, &byte| {
+            (acc << ID3_SYNC_SAFE_BITS) | u32::from(byte & ID3_SYNCSAFE_MASK)
         });
     let footer = if flags & ID3_FLAG_FOOTER != 0 {
         ID3_FOOTER_LEN as u32

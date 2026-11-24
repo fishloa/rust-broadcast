@@ -6,6 +6,7 @@
 use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -70,7 +71,7 @@ impl<'a> Parse<'a> for CaInfo {
         }
         let ca_system_ids = body
             .chunks_exact(CA_SYSTEM_ID_LEN)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .map(|c| be_u16(c, 0))
             .collect();
         Ok(Self {
             length_form,

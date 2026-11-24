@@ -28,8 +28,10 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::objects::ca_pmt::{
-    CaPmtCmdId, CaPmtListManagement, CaPmtStream, checked_streams_len, info_block_len,
-    parse_cmd_and_descriptors, parse_streams, streams_len, write_info_block, write_streams,
+    CURRENT_NEXT_INDICATOR_MASK, CaPmtCmdId, CaPmtListManagement, CaPmtStream, VERSION_NUMBER_BITS,
+    VERSION_NUMBER_MASK, VERSION_NUMBER_SHIFT, VERSION_RESERVED_SHIFT, checked_streams_len,
+    info_block_len, parse_cmd_and_descriptors, parse_streams, streams_len, write_info_block,
+    write_streams,
 };
 use crate::objects::ca_pmt_reply::{
     CaEnable, CaPmtReplyStream, decode_enable_byte, encode_enable_byte, parse_reply_streams,
@@ -37,6 +39,7 @@ use crate::objects::ca_pmt_reply::{
 };
 use crate::reserved::ReservedOnes;
 use crate::tag::{CA_PMT, CA_PMT_REPLY};
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
@@ -103,8 +106,7 @@ const MS_CA_PMT_PREFIX: usize = 1 + 1 + 2 + 2 + 1 + 2;
 
 /// Reserved bits in front of `PMT_PID`.
 pub const PMT_PID_RESERVED_BITS: u32 = 3;
-/// Reserved bits in front of `version_number`.
-pub const VERSION_RESERVED_BITS: u32 = 2;
+pub use crate::objects::ca_pmt::VERSION_RESERVED_BITS;
 /// Reserved bits in front of `program_info_length` / beside a `CA_enable`.
 pub const NIBBLE_RESERVED_BITS: u32 = 4;
 /// Reserved bits beside a `CA_enable` value.
@@ -127,20 +129,9 @@ const MS_REPLY_CA_ENABLE_OFFSET: usize = 4;
 
 /// Shifts selecting the reserved bits in the multi-stream prefixes.
 const PMT_PID_RESERVED_SHIFT: u32 = 5;
-const VERSION_RESERVED_SHIFT: u32 = 6;
 const PROGRAM_INFO_RESERVED_SHIFT: u32 = 4;
-/// Shift placing `version_number`.
-const VERSION_NUMBER_SHIFT: u32 = 1;
-/// Mask of `version_number`.
-const VERSION_NUMBER_MASK: u8 = 0x1F;
-/// Bit width of `version_number`.
-const VERSION_NUMBER_BITS: u32 = 5;
-/// Mask of `current_next_indicator`.
-const CURRENT_NEXT_INDICATOR_MASK: u8 = 0x01;
 /// Mask of `PMT_PID`'s high bits.
 const PMT_PID_HIGH_MASK: u8 = 0x1F;
-/// Shift placing `PMT_PID`'s high bits.
-const PID_HIGH_SHIFT: u32 = 8;
 /// Mask of `program_info_length`'s high nibble.
 const INFO_LENGTH_HIGH_MASK: u8 = 0x0F;
 /// Shift placing `program_info_length`'s low byte.
@@ -155,13 +146,10 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
         need_in(body, MS_CA_PMT_PREFIX, "ms ca_pmt prefix")?;
         let lts_id = body[MS_SET_LTS_ID_OFFSET];
         let list_management = CaPmtListManagement::from_u8(body[MS_SET_LIST_MANAGEMENT_OFFSET]);
-        let program_number = u16::from_be_bytes([
-            body[MS_SET_PROGRAM_NUMBER_OFFSET],
-            body[MS_SET_PROGRAM_NUMBER_OFFSET + 1],
-        ]);
+        let program_number = be_u16(body, MS_SET_PROGRAM_NUMBER_OFFSET);
         // reserved(3) + PMT_PID(13).
         let pmt_pid = Pid::from_wire_masked(
-            (u16::from(body[MS_SET_PMT_PID_HIGH_OFFSET] & PMT_PID_HIGH_MASK) << PID_HIGH_SHIFT)
+            (u16::from(body[MS_SET_PMT_PID_HIGH_OFFSET] & PMT_PID_HIGH_MASK) << u8::BITS)
                 | u16::from(body[MS_SET_PMT_PID_LOW_OFFSET]),
         );
         let reserved_pmt_pid = ReservedOnes::from_bits(u64::from(
@@ -243,7 +231,7 @@ impl Serialize for MsCaPmt<'_> {
         // reserved(3), PMT_PID(13). Range-checked above.
         buf[pos + MS_SET_PMT_PID_HIGH_OFFSET] = ((self.reserved_pmt_pid.get()
             << PMT_PID_RESERVED_SHIFT) as u8)
-            | (self.pmt_pid.value() >> PID_HIGH_SHIFT) as u8;
+            | (self.pmt_pid.value() >> u8::BITS) as u8;
         buf[pos + MS_SET_PMT_PID_LOW_OFFSET] = self.pmt_pid.value() as u8;
         // reserved(2), version(5), current_next(1). Range-checked above.
         buf[pos + MS_SET_VERSION_OFFSET] = ((self.reserved_version.get() << VERSION_RESERVED_SHIFT)
@@ -311,10 +299,7 @@ impl<'a> Parse<'a> for MsCaPmtReply {
             crate::objects::parse_apdu_header(bytes, CA_PMT_REPLY, "ms ca_pmt_reply")?;
         need_in(body, MS_REPLY_PREFIX, "ms ca_pmt_reply prefix")?;
         let lts_id = body[MS_REPLY_LTS_ID_OFFSET];
-        let program_number = u16::from_be_bytes([
-            body[MS_REPLY_PROGRAM_NUMBER_OFFSET],
-            body[MS_REPLY_PROGRAM_NUMBER_OFFSET + 1],
-        ]);
+        let program_number = be_u16(body, MS_REPLY_PROGRAM_NUMBER_OFFSET);
         let version_number =
             (body[MS_REPLY_VERSION_OFFSET] >> VERSION_NUMBER_SHIFT) & VERSION_NUMBER_MASK;
         let current_next_indicator =

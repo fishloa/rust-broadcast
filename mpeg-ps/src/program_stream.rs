@@ -11,16 +11,13 @@ use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::Result;
+use crate::PREFIX_LEN as SYSTEM_HEADER_PREFIX_LEN;
 use crate::error::Error;
 use crate::pack_header::{PACK_START_CODE, PackHeader};
 use crate::program_stream_map::{MAP_STREAM_ID, ProgramStreamMap, program_stream_map_wire_len};
-use crate::system_header::{
-    PREFIX_LEN as SYSTEM_HEADER_PREFIX_LEN, SYSTEM_HEADER_START_CODE, SystemHeader,
-};
-
-/// `MPEG_program_end_code` — `0x000001B9`.
-const PROGRAM_END_CODE: u32 = 0x0000_01B9;
+use crate::system_header::{SYSTEM_HEADER_START_CODE, SystemHeader};
+use crate::wire::{read_u16_at, read_u32_at};
+use crate::{PROGRAM_END_CODE, Result};
 
 /// Byte width of a start code (`0x000001` prefix + `stream_id`).
 const START_CODE_LEN: usize = core::mem::size_of::<u32>();
@@ -33,13 +30,6 @@ const SYSTEM_HEADER_LENGTH_OFFSET: usize = core::mem::size_of::<u32>();
 /// `PES_packet_length` (ISO/IEC 13818-1 §2.4.3.7).
 const PES_MIN_HEADER_LEN: usize =
     crate::PACKET_START_CODE_PREFIX.len() + 1 + core::mem::size_of::<u16>();
-
-/// Read the big-endian `u32` at `off`.
-fn read_u32_at(b: &[u8], off: usize) -> u32 {
-    let mut raw = [0_u8; core::mem::size_of::<u32>()];
-    raw.copy_from_slice(&b[off..off + core::mem::size_of::<u32>()]);
-    u32::from_be_bytes(raw)
-}
 
 /// A single pack within a Program Stream: a `pack_header()`, optionally a
 /// `system_header()`, an optional Program Stream Map, and zero or more PES
@@ -95,10 +85,7 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
             // encoder is free to pad with reserved bytes); starting PES
             // parsing early there feeds PES data into the system-header
             // parser's leftover bytes instead.
-            let header_length = u16::from_be_bytes([
-                rest[SYSTEM_HEADER_LENGTH_OFFSET],
-                rest[SYSTEM_HEADER_LENGTH_OFFSET + 1],
-            ]) as usize;
+            let header_length = usize::from(read_u16_at(rest, SYSTEM_HEADER_LENGTH_OFFSET));
             (Some(sh), SYSTEM_HEADER_PREFIX_LEN + header_length)
         } else {
             (None, 0)

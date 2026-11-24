@@ -107,6 +107,39 @@ const SET_KEY_APPLICATION_OFFSET: usize = 10;
 const SET_KEY_STRUCTURE_KIND_OFFSET: usize = 12;
 const SET_KEY_KIND_OFFSET: usize = 13;
 /// Window size for an adjacent-pair duplicate scan.
+/// Byte 14 of a Structural Metadata Set Key: the SMPTE UL registry version
+/// every such Key carries (Table 16).
+const SET_KEY_UL_VERSION: u8 = 0x01;
+
+/// Byte 15 of each Structural Metadata Set Key — the Set Kind (Table 16).
+const PREFACE_KIND_BYTE: u8 = 0x2F;
+const IDENTIFICATION_KIND_BYTE: u8 = 0x30;
+const CONTENT_STORAGE_KIND_BYTE: u8 = 0x18;
+const ESSENCE_CONTAINER_DATA_KIND_BYTE: u8 = 0x23;
+const MATERIAL_PACKAGE_KIND_BYTE: u8 = 0x36;
+const SOURCE_PACKAGE_KIND_BYTE: u8 = 0x37;
+const TIMELINE_TRACK_KIND_BYTE: u8 = 0x3B;
+const EVENT_TRACK_DM_KIND_BYTE: u8 = 0x39;
+const STATIC_TRACK_DM_KIND_BYTE: u8 = 0x3A;
+const SEQUENCE_KIND_BYTE: u8 = 0x0F;
+const SOURCE_CLIP_KIND_BYTE: u8 = 0x11;
+const TIMECODE_COMPONENT_KIND_BYTE: u8 = 0x14;
+const DM_SEGMENT_KIND_BYTE: u8 = 0x41;
+const DM_SOURCE_CLIP_KIND_BYTE: u8 = 0x45;
+const FILLER_KIND_BYTE: u8 = 0x09;
+const PACKAGE_MARKER_OBJECT_KIND_BYTE: u8 = 0x60;
+const FILE_DESCRIPTOR_KIND_BYTE: u8 = 0x25;
+const GENERIC_PICTURE_ESSENCE_DESCRIPTOR_KIND_BYTE: u8 = 0x27;
+const CDCI_ESSENCE_DESCRIPTOR_KIND_BYTE: u8 = 0x28;
+const RGBA_ESSENCE_DESCRIPTOR_KIND_BYTE: u8 = 0x29;
+const GENERIC_SOUND_ESSENCE_DESCRIPTOR_KIND_BYTE: u8 = 0x42;
+const GENERIC_DATA_ESSENCE_DESCRIPTOR_KIND_BYTE: u8 = 0x43;
+const MULTIPLE_DESCRIPTOR_KIND_BYTE: u8 = 0x44;
+const NETWORK_LOCATOR_KIND_BYTE: u8 = 0x32;
+const TEXT_LOCATOR_KIND_BYTE: u8 = 0x33;
+const APPLICATION_PLUG_IN_OBJECT_KIND_BYTE: u8 = 0x61;
+const APPLICATION_REFERENCED_OBJECT_KIND_BYTE: u8 = 0x62;
+
 const ADJACENT_WINDOW: usize = 2;
 
 /// True if `key` matches the common Local Set Key structure (Table 16):
@@ -237,33 +270,43 @@ impl StructuralSetKind {
     #[must_use]
     pub fn from_bytes(b14: u8, b15: u8) -> Self {
         match (b14, b15) {
-            (0x01, 0x2F) => Self::Preface,
-            (0x01, 0x30) => Self::Identification,
-            (0x01, 0x18) => Self::ContentStorage,
-            (0x01, 0x23) => Self::EssenceContainerData,
-            (0x01, 0x36) => Self::MaterialPackage,
-            (0x01, 0x37) => Self::SourcePackage,
-            (0x01, 0x3B) => Self::TimelineTrack,
-            (0x01, 0x39) => Self::EventTrackDm,
-            (0x01, 0x3A) => Self::StaticTrackDm,
-            (0x01, 0x0F) => Self::Sequence,
-            (0x01, 0x11) => Self::SourceClip,
-            (0x01, 0x14) => Self::TimecodeComponent,
-            (0x01, 0x41) => Self::DmSegment,
-            (0x01, 0x45) => Self::DmSourceClip,
-            (0x01, 0x09) => Self::Filler,
-            (0x01, 0x60) => Self::PackageMarkerObject,
-            (0x01, 0x25) => Self::FileDescriptor,
-            (0x01, 0x27) => Self::GenericPictureEssenceDescriptor,
-            (0x01, 0x28) => Self::CdciEssenceDescriptor,
-            (0x01, 0x29) => Self::RgbaEssenceDescriptor,
-            (0x01, 0x42) => Self::GenericSoundEssenceDescriptor,
-            (0x01, 0x43) => Self::GenericDataEssenceDescriptor,
-            (0x01, 0x44) => Self::MultipleDescriptor,
-            (0x01, 0x32) => Self::NetworkLocator,
-            (0x01, 0x33) => Self::TextLocator,
-            (0x01, 0x61) => Self::ApplicationPlugInObject,
-            (0x01, 0x62) => Self::ApplicationReferencedObject,
+            (SET_KEY_UL_VERSION, PREFACE_KIND_BYTE) => Self::Preface,
+            (SET_KEY_UL_VERSION, IDENTIFICATION_KIND_BYTE) => Self::Identification,
+            (SET_KEY_UL_VERSION, CONTENT_STORAGE_KIND_BYTE) => Self::ContentStorage,
+            (SET_KEY_UL_VERSION, ESSENCE_CONTAINER_DATA_KIND_BYTE) => Self::EssenceContainerData,
+            (SET_KEY_UL_VERSION, MATERIAL_PACKAGE_KIND_BYTE) => Self::MaterialPackage,
+            (SET_KEY_UL_VERSION, SOURCE_PACKAGE_KIND_BYTE) => Self::SourcePackage,
+            (SET_KEY_UL_VERSION, TIMELINE_TRACK_KIND_BYTE) => Self::TimelineTrack,
+            (SET_KEY_UL_VERSION, EVENT_TRACK_DM_KIND_BYTE) => Self::EventTrackDm,
+            (SET_KEY_UL_VERSION, STATIC_TRACK_DM_KIND_BYTE) => Self::StaticTrackDm,
+            (SET_KEY_UL_VERSION, SEQUENCE_KIND_BYTE) => Self::Sequence,
+            (SET_KEY_UL_VERSION, SOURCE_CLIP_KIND_BYTE) => Self::SourceClip,
+            (SET_KEY_UL_VERSION, TIMECODE_COMPONENT_KIND_BYTE) => Self::TimecodeComponent,
+            (SET_KEY_UL_VERSION, DM_SEGMENT_KIND_BYTE) => Self::DmSegment,
+            (SET_KEY_UL_VERSION, DM_SOURCE_CLIP_KIND_BYTE) => Self::DmSourceClip,
+            (SET_KEY_UL_VERSION, FILLER_KIND_BYTE) => Self::Filler,
+            (SET_KEY_UL_VERSION, PACKAGE_MARKER_OBJECT_KIND_BYTE) => Self::PackageMarkerObject,
+            (SET_KEY_UL_VERSION, FILE_DESCRIPTOR_KIND_BYTE) => Self::FileDescriptor,
+            (SET_KEY_UL_VERSION, GENERIC_PICTURE_ESSENCE_DESCRIPTOR_KIND_BYTE) => {
+                Self::GenericPictureEssenceDescriptor
+            }
+            (SET_KEY_UL_VERSION, CDCI_ESSENCE_DESCRIPTOR_KIND_BYTE) => Self::CdciEssenceDescriptor,
+            (SET_KEY_UL_VERSION, RGBA_ESSENCE_DESCRIPTOR_KIND_BYTE) => Self::RgbaEssenceDescriptor,
+            (SET_KEY_UL_VERSION, GENERIC_SOUND_ESSENCE_DESCRIPTOR_KIND_BYTE) => {
+                Self::GenericSoundEssenceDescriptor
+            }
+            (SET_KEY_UL_VERSION, GENERIC_DATA_ESSENCE_DESCRIPTOR_KIND_BYTE) => {
+                Self::GenericDataEssenceDescriptor
+            }
+            (SET_KEY_UL_VERSION, MULTIPLE_DESCRIPTOR_KIND_BYTE) => Self::MultipleDescriptor,
+            (SET_KEY_UL_VERSION, NETWORK_LOCATOR_KIND_BYTE) => Self::NetworkLocator,
+            (SET_KEY_UL_VERSION, TEXT_LOCATOR_KIND_BYTE) => Self::TextLocator,
+            (SET_KEY_UL_VERSION, APPLICATION_PLUG_IN_OBJECT_KIND_BYTE) => {
+                Self::ApplicationPlugInObject
+            }
+            (SET_KEY_UL_VERSION, APPLICATION_REFERENCED_OBJECT_KIND_BYTE) => {
+                Self::ApplicationReferencedObject
+            }
             other => Self::Unknown([other.0, other.1]),
         }
     }
@@ -272,33 +315,46 @@ impl StructuralSetKind {
     #[must_use]
     pub fn to_bytes(self) -> [u8; U16_LEN] {
         match self {
-            Self::Preface => [0x01, 0x2F],
-            Self::Identification => [0x01, 0x30],
-            Self::ContentStorage => [0x01, 0x18],
-            Self::EssenceContainerData => [0x01, 0x23],
-            Self::MaterialPackage => [0x01, 0x36],
-            Self::SourcePackage => [0x01, 0x37],
-            Self::TimelineTrack => [0x01, 0x3B],
-            Self::EventTrackDm => [0x01, 0x39],
-            Self::StaticTrackDm => [0x01, 0x3A],
-            Self::Sequence => [0x01, 0x0F],
-            Self::SourceClip => [0x01, 0x11],
-            Self::TimecodeComponent => [0x01, 0x14],
-            Self::DmSegment => [0x01, 0x41],
-            Self::DmSourceClip => [0x01, 0x45],
-            Self::Filler => [0x01, 0x09],
-            Self::PackageMarkerObject => [0x01, 0x60],
-            Self::FileDescriptor => [0x01, 0x25],
-            Self::GenericPictureEssenceDescriptor => [0x01, 0x27],
-            Self::CdciEssenceDescriptor => [0x01, 0x28],
-            Self::RgbaEssenceDescriptor => [0x01, 0x29],
-            Self::GenericSoundEssenceDescriptor => [0x01, 0x42],
-            Self::GenericDataEssenceDescriptor => [0x01, 0x43],
-            Self::MultipleDescriptor => [0x01, 0x44],
-            Self::NetworkLocator => [0x01, 0x32],
-            Self::TextLocator => [0x01, 0x33],
-            Self::ApplicationPlugInObject => [0x01, 0x61],
-            Self::ApplicationReferencedObject => [0x01, 0x62],
+            Self::Preface => [SET_KEY_UL_VERSION, PREFACE_KIND_BYTE],
+            Self::Identification => [SET_KEY_UL_VERSION, IDENTIFICATION_KIND_BYTE],
+            Self::ContentStorage => [SET_KEY_UL_VERSION, CONTENT_STORAGE_KIND_BYTE],
+            Self::EssenceContainerData => [SET_KEY_UL_VERSION, ESSENCE_CONTAINER_DATA_KIND_BYTE],
+            Self::MaterialPackage => [SET_KEY_UL_VERSION, MATERIAL_PACKAGE_KIND_BYTE],
+            Self::SourcePackage => [SET_KEY_UL_VERSION, SOURCE_PACKAGE_KIND_BYTE],
+            Self::TimelineTrack => [SET_KEY_UL_VERSION, TIMELINE_TRACK_KIND_BYTE],
+            Self::EventTrackDm => [SET_KEY_UL_VERSION, EVENT_TRACK_DM_KIND_BYTE],
+            Self::StaticTrackDm => [SET_KEY_UL_VERSION, STATIC_TRACK_DM_KIND_BYTE],
+            Self::Sequence => [SET_KEY_UL_VERSION, SEQUENCE_KIND_BYTE],
+            Self::SourceClip => [SET_KEY_UL_VERSION, SOURCE_CLIP_KIND_BYTE],
+            Self::TimecodeComponent => [SET_KEY_UL_VERSION, TIMECODE_COMPONENT_KIND_BYTE],
+            Self::DmSegment => [SET_KEY_UL_VERSION, DM_SEGMENT_KIND_BYTE],
+            Self::DmSourceClip => [SET_KEY_UL_VERSION, DM_SOURCE_CLIP_KIND_BYTE],
+            Self::Filler => [SET_KEY_UL_VERSION, FILLER_KIND_BYTE],
+            Self::PackageMarkerObject => [SET_KEY_UL_VERSION, PACKAGE_MARKER_OBJECT_KIND_BYTE],
+            Self::FileDescriptor => [SET_KEY_UL_VERSION, FILE_DESCRIPTOR_KIND_BYTE],
+            Self::GenericPictureEssenceDescriptor => [
+                SET_KEY_UL_VERSION,
+                GENERIC_PICTURE_ESSENCE_DESCRIPTOR_KIND_BYTE,
+            ],
+            Self::CdciEssenceDescriptor => [SET_KEY_UL_VERSION, CDCI_ESSENCE_DESCRIPTOR_KIND_BYTE],
+            Self::RgbaEssenceDescriptor => [SET_KEY_UL_VERSION, RGBA_ESSENCE_DESCRIPTOR_KIND_BYTE],
+            Self::GenericSoundEssenceDescriptor => [
+                SET_KEY_UL_VERSION,
+                GENERIC_SOUND_ESSENCE_DESCRIPTOR_KIND_BYTE,
+            ],
+            Self::GenericDataEssenceDescriptor => [
+                SET_KEY_UL_VERSION,
+                GENERIC_DATA_ESSENCE_DESCRIPTOR_KIND_BYTE,
+            ],
+            Self::MultipleDescriptor => [SET_KEY_UL_VERSION, MULTIPLE_DESCRIPTOR_KIND_BYTE],
+            Self::NetworkLocator => [SET_KEY_UL_VERSION, NETWORK_LOCATOR_KIND_BYTE],
+            Self::TextLocator => [SET_KEY_UL_VERSION, TEXT_LOCATOR_KIND_BYTE],
+            Self::ApplicationPlugInObject => {
+                [SET_KEY_UL_VERSION, APPLICATION_PLUG_IN_OBJECT_KIND_BYTE]
+            }
+            Self::ApplicationReferencedObject => {
+                [SET_KEY_UL_VERSION, APPLICATION_REFERENCED_OBJECT_KIND_BYTE]
+            }
             Self::Unknown([a, b]) => [a, b],
         }
     }

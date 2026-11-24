@@ -21,6 +21,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -48,7 +49,7 @@ const PORT_PREFIX_LEN: usize = 2;
 /// Bytes of `service_id` + `number_components` in a `ViewedService`.
 const VIEWED_SERVICE_PREFIX_LEN: usize = 3;
 /// Offsets within a `ViewedService`.
-const SERVICE_ID_OFFSET: usize = 0;
+const VIEWED_SERVICE_ID_OFFSET: usize = 0;
 const NUMBER_COMPONENTS_OFFSET: usize = 2;
 /// Mask of the 12-bit `length_outputs`.
 const LENGTH_OUTPUTS_MASK: usize = 0x0FFF;
@@ -582,7 +583,7 @@ impl<'a> Parse<'a> for ViewedService {
     fn parse(body: &'a [u8]) -> Result<Self> {
         // service_id(2) + number_components(1).
         need_in(body, VIEWED_SERVICE_PREFIX_LEN, "ViewedService")?;
-        let service_id = u16::from_be_bytes([body[SERVICE_ID_OFFSET], body[SERVICE_ID_OFFSET + 1]]);
+        let service_id = be_u16(body, VIEWED_SERVICE_ID_OFFSET);
         let n = body[NUMBER_COMPONENTS_OFFSET] as usize;
         need_in(
             body,
@@ -609,7 +610,7 @@ impl Serialize for ViewedService {
                 reason: "more than 255 component tags",
             });
         }
-        buf[SERVICE_ID_OFFSET..NUMBER_COMPONENTS_OFFSET]
+        buf[VIEWED_SERVICE_ID_OFFSET..NUMBER_COMPONENTS_OFFSET]
             .copy_from_slice(&self.service_id.to_be_bytes());
         buf[NUMBER_COMPONENTS_OFFSET] = self.component_tags.len() as u8;
         buf[VIEWED_SERVICE_PREFIX_LEN..VIEWED_SERVICE_PREFIX_LEN + self.component_tags.len()]

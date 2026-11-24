@@ -240,15 +240,16 @@ const MARKED_MID_HI_GROUP_SHIFT: u32 = 22;
 /// Mask of an 8-bit group and of a 7-bit group.
 const MARKED_BYTE_MASK: u8 = 0xFF;
 const MARKED_LOW_GROUP_MASK: u8 = 0x7F;
-/// Bit shifts of the three markers within `Marked::markers`.
-const MARKER_BYTE0_SHIFT: u32 = 2;
-const MARKER_BYTE2_SHIFT: u32 = 1;
+/// Bit shifts of the three markers within `Marked::markers`, from the
+/// `ts[32:30]` group's marker down to the `ts[14:0]` group's.
+const MARKER_AT_HI_SHIFT: u32 = 2;
+const MARKER_AT_MID_SHIFT: u32 = 1;
 /// Byte offsets within the marked timestamp field.
-const MARKED_BYTE0: usize = 0;
-const MARKED_BYTE1: usize = MARKED_BYTE0 + 1;
-const MARKED_BYTE2: usize = MARKED_BYTE1 + 1;
-const MARKED_BYTE3: usize = MARKED_BYTE2 + 1;
-const MARKED_BYTE4: usize = MARKED_BYTE3 + 1;
+const MARKED_HI_BYTE: usize = 0;
+const MARKED_MID_HI_BYTE: usize = MARKED_HI_BYTE + 1;
+const MARKED_MID_LO_BYTE: usize = MARKED_MID_HI_BYTE + 1;
+const MARKED_LOW_HI_BYTE: usize = MARKED_MID_LO_BYTE + 1;
+const MARKED_LOW_LO_BYTE: usize = MARKED_LOW_HI_BYTE + 1;
 
 /// A decoded 5-byte marker-bit timestamp field.
 ///
@@ -272,17 +273,17 @@ pub struct Marked {
 /// mismatch into its own error type.
 #[must_use]
 pub fn unpack_marked(b: &[u8; MARKED_FIELD_LEN]) -> Marked {
-    let hi = u64::from((b[MARKED_BYTE0] >> MARKED_HI_SHIFT) & MARKED_HI_MASK); // [32:30]
-    let mid = (u64::from(b[MARKED_BYTE1]) << MARKED_GROUP_SHIFT)
-        | u64::from(b[MARKED_BYTE2] >> MARKED_HI_SHIFT); // [29:15]
-    let lo = (u64::from(b[MARKED_BYTE3]) << MARKED_GROUP_SHIFT)
-        | u64::from(b[MARKED_BYTE4] >> MARKED_HI_SHIFT); // [14:0]
+    let hi = u64::from((b[MARKED_HI_BYTE] >> MARKED_HI_SHIFT) & MARKED_HI_MASK); // [32:30]
+    let mid = (u64::from(b[MARKED_MID_HI_BYTE]) << MARKED_GROUP_SHIFT)
+        | u64::from(b[MARKED_MID_LO_BYTE] >> MARKED_HI_SHIFT); // [29:15]
+    let lo = (u64::from(b[MARKED_LOW_HI_BYTE]) << MARKED_GROUP_SHIFT)
+        | u64::from(b[MARKED_LOW_LO_BYTE] >> MARKED_HI_SHIFT); // [14:0]
     Marked {
-        prefix: b[MARKED_BYTE0] >> MARKED_PREFIX_SHIFT,
+        prefix: b[MARKED_HI_BYTE] >> MARKED_PREFIX_SHIFT,
         timestamp: (hi << MARKED_HI_GROUP_SHIFT) | (mid << MARKED_MID_GROUP_SHIFT) | lo,
-        markers: ((b[MARKED_BYTE0] & 1) << MARKER_BYTE0_SHIFT)
-            | ((b[MARKED_BYTE2] & 1) << MARKER_BYTE2_SHIFT)
-            | (b[MARKED_BYTE4] & 1),
+        markers: ((b[MARKED_HI_BYTE] & 1) << MARKER_AT_HI_SHIFT)
+            | ((b[MARKED_MID_LO_BYTE] & 1) << MARKER_AT_MID_SHIFT)
+            | (b[MARKED_LOW_LO_BYTE] & 1),
     }
 }
 
@@ -296,11 +297,11 @@ pub fn pack_marked_with(timestamp: u64, prefix: u8, markers: u8) -> [u8; MARKED_
         ((prefix & MARKED_PREFIX_MASK) << MARKED_PREFIX_SHIFT)
             | ((((ts >> MARKED_HI_GROUP_SHIFT) & u64::from(MARKED_HI_MASK)) as u8)
                 << MARKED_HI_SHIFT)
-            | ((markers >> MARKER_BYTE0_SHIFT) & 1),
+            | ((markers >> MARKER_AT_HI_SHIFT) & 1),
         ((ts >> MARKED_MID_HI_GROUP_SHIFT) & u64::from(MARKED_BYTE_MASK)) as u8,
         ((((ts >> MARKED_MID_GROUP_SHIFT) & u64::from(MARKED_LOW_GROUP_MASK)) as u8)
             << MARKED_HI_SHIFT)
-            | ((markers >> MARKER_BYTE2_SHIFT) & 1),
+            | ((markers >> MARKER_AT_MID_SHIFT) & 1),
         ((ts >> MARKED_GROUP_SHIFT) & u64::from(MARKED_BYTE_MASK)) as u8,
         (((ts & u64::from(MARKED_LOW_GROUP_MASK)) as u8) << MARKED_HI_SHIFT) | (markers & 1),
     ]

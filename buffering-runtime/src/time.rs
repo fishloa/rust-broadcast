@@ -26,17 +26,15 @@
 
 use core::time::Duration;
 
-pub use broadcast_common::clock33::Clock27;
+use broadcast_common::units::NANOS_PER_MICRO;
 
-/// Nanoseconds in a microsecond: a span is carried in whole microseconds.
-const NANOS_PER_MICRO: u128 = 1_000;
-const NANOS_PER_MICRO_U64: u64 = 1_000;
+pub use broadcast_common::clock33::Clock27;
 
 /// The microsecond an instant names, truncated: the whole microsecond it falls
 /// in. A span too long for the microsecond range clamps to [`u64::MAX`].
 #[must_use]
 pub fn instant_micros(span: Duration) -> u64 {
-    let micros = span.as_nanos() / NANOS_PER_MICRO;
+    let micros = span.as_nanos() / u128::from(NANOS_PER_MICRO);
     u64::try_from(micros).unwrap_or(u64::MAX)
 }
 
@@ -48,7 +46,7 @@ pub fn instant_micros(span: Duration) -> u64 {
 /// [`u64::MAX`].
 #[must_use]
 pub fn window_micros(span: Duration) -> u64 {
-    let micros = span.as_nanos().div_ceil(NANOS_PER_MICRO);
+    let micros = span.as_nanos().div_ceil(u128::from(NANOS_PER_MICRO));
     u64::try_from(micros).unwrap_or(u64::MAX)
 }
 
@@ -61,7 +59,7 @@ pub fn micros_as_duration(micros: u64) -> Duration {
 /// The most a difference of two truncated readings can understate the real one:
 /// each reading is floored by up to one microsecond less than it, and the two
 /// roundings cannot exceed this together.
-pub const MAX_DIFFERENCE_ERROR: Duration = Duration::from_nanos(NANOS_PER_MICRO_U64 - 1);
+pub const MAX_DIFFERENCE_ERROR: Duration = Duration::from_nanos(NANOS_PER_MICRO - 1);
 
 /// `a + b` in whole microseconds, saturating at the end of the microsecond
 /// range rather than panicking on an overflow.

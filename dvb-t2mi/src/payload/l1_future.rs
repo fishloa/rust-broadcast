@@ -28,8 +28,6 @@ pub struct L1FuturePayload<'a> {
 
 const L1_FUTURE_HEADER_LEN: usize = 2;
 const LENGTH_FIELD_BYTES: usize = 2;
-/// Bits in a byte, for the bit- to byte-length rounding.
-const BITS_PER_BYTE: usize = 8;
 
 /// One `LEN(16) | block(8 x ceil(LEN/8))` pair of Table 3 starting at
 /// `data[pos..]`: the block bytes and the position after them.
@@ -47,7 +45,7 @@ fn length_prefixed_block<'d>(
             have: data.len(),
             what: len_what,
         })?;
-    let block_len = usize::from(u16::from_be_bytes(*len_field)).div_ceil(BITS_PER_BYTE);
+    let block_len = usize::from(u16::from_be_bytes(*len_field)).div_ceil(u8::BITS as usize);
     let start = pos + LENGTH_FIELD_BYTES;
     let end = start.saturating_add(block_len);
     let block = data.get(start..end).ok_or(BufferTooShort {
@@ -89,7 +87,7 @@ impl L1FuturePayload<'_> {
         if len_bits == 0 {
             return Ok(None);
         }
-        let len_bytes = len_bits.div_ceil(BITS_PER_BYTE);
+        let len_bytes = len_bits.div_ceil(u8::BITS as usize);
         need_in(data, LENGTH_FIELD_BYTES + len_bytes, "L1DYN_NEXT")?;
         Ok(Some(L1PostDynamic::parse(
             &data[LENGTH_FIELD_BYTES..LENGTH_FIELD_BYTES + len_bytes],

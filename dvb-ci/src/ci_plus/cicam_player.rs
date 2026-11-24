@@ -39,6 +39,7 @@ use crate::length::LengthForm;
 use crate::objects;
 use crate::reserved::{ReservedOnes, ReservedZero};
 use crate::tag::ApduTag;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
@@ -383,7 +384,7 @@ fn parse_service_location<'a>(body: &'a [u8], what: &'static str) -> Result<&'a 
             },
         ));
     }
-    let len = u16::from_be_bytes([body[0], body[1]]) as usize;
+    let len = be_u16(body, 0) as usize;
     let end = SERVICE_LOCATION_PREFIX + len;
     if body.len() < end {
         return Err(Error::LengthMismatch(
@@ -529,10 +530,6 @@ const CAPABILITIES_PREFIX: usize = 2;
 const COMPONENT_TYPE_LEN: usize = 2;
 const STREAM_CONTENT_MASK: u8 = 0x0F;
 
-/// Bytes of a `u16` field.
-const U16_LEN: usize = core::mem::size_of::<u16>();
-/// Bytes of a `u32` field.
-const U32_LEN: usize = core::mem::size_of::<u32>();
 /// Reserved bits in a nibble.
 pub const NIBBLE_RESERVED_BITS: u32 = 4;
 /// Reserved bits in a byte-wide reserved field.
@@ -544,17 +541,18 @@ const STREAM_CONTENT_SHIFT: u32 = 4;
 /// Shift selecting the reserved bits of a flag byte.
 const FLAG_RESERVED_SHIFT: u32 = 1;
 /// Bit width of the `component_types` count.
-const COMPONENT_TYPE_COUNT_LEN: usize = U16_LEN;
+const COMPONENT_TYPE_COUNT_LEN: usize = core::mem::size_of::<u16>();
 
 /// Offsets within the `CICAM_player_start_req()` prefix.
 const START_INPUT_BITRATE_OFFSET: usize = 0;
-const START_OUTPUT_BITRATE_OFFSET: usize = START_INPUT_BITRATE_OFFSET + U16_LEN;
-const START_LINEAR_CHANNEL_OFFSET: usize = START_OUTPUT_BITRATE_OFFSET + U16_LEN;
+const START_OUTPUT_BITRATE_OFFSET: usize = START_INPUT_BITRATE_OFFSET + core::mem::size_of::<u16>();
+const START_LINEAR_CHANNEL_OFFSET: usize =
+    START_OUTPUT_BITRATE_OFFSET + core::mem::size_of::<u16>();
 const START_PMT_LENGTH_OFFSET: usize = START_LINEAR_CHANNEL_OFFSET + 1;
 
 /// Offsets within the `CICAM_player_status_error()` body.
 const LTS_FLAG_OFFSET: usize = 0;
-const LTS_ID_OFFSET: usize = 1;
+const STATUS_ERROR_LTS_ID_OFFSET: usize = 1;
 const PLAYER_STATUS_OFFSET: usize = 2;
 
 /// Offsets within the `CICAM_player_control_req()` prefix.
@@ -566,8 +564,8 @@ const SEEK_SPEED_OFFSET: usize = 2;
 
 /// Offsets within the `CICAM_player_info_reply()` body.
 const INFO_DURATION_OFFSET: usize = 1;
-const INFO_POSITION_OFFSET: usize = INFO_DURATION_OFFSET + U32_LEN;
-const INFO_SPEED_OFFSET: usize = INFO_POSITION_OFFSET + U32_LEN;
+const INFO_POSITION_OFFSET: usize = INFO_DURATION_OFFSET + core::mem::size_of::<u32>();
+const INFO_SPEED_OFFSET: usize = INFO_POSITION_OFFSET + core::mem::size_of::<u32>();
 
 /// Offset of the flag byte within a `CICAM_player_asset_end()` body.
 const ASSET_END_FLAG_OFFSET: usize = 1;
@@ -584,7 +582,7 @@ impl<'a> Parse<'a> for PlayerCapabilitiesReply {
             "CICAM_player_capabilities_reply",
         )?;
         need_in(body, CAPABILITIES_PREFIX, "CICAM_player_capabilities_reply")?;
-        let n = u16::from_be_bytes([body[0], body[1]]) as usize;
+        let n = be_u16(body, 0) as usize;
         let mut pos = CAPABILITIES_PREFIX;
         // `n` is an untrusted 16-bit wire count: size the allocation from the
         // bytes actually present, never from `n` (audit r10-O-6).
@@ -675,7 +673,7 @@ pub struct PlayerStartReq<'a> {
 }
 
 // input_max_bitrate(2)+output_max_bitrate(2)+linearChannel/reserved(1)+PMT_length(2).
-const START_REQ_PREFIX: usize = START_PMT_LENGTH_OFFSET + U16_LEN;
+const START_REQ_PREFIX: usize = START_PMT_LENGTH_OFFSET + core::mem::size_of::<u16>();
 const LINEAR_CHANNEL_BIT: u8 = 0x80;
 
 impl<'a> Parse<'a> for PlayerStartReq<'a> {
@@ -684,19 +682,10 @@ impl<'a> Parse<'a> for PlayerStartReq<'a> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::START_REQ, "CICAM_player_start_req")?;
         need_in(body, START_REQ_PREFIX, "CICAM_player_start_req")?;
-        let input_max_bitrate = u16::from_be_bytes([
-            body[START_INPUT_BITRATE_OFFSET],
-            body[START_INPUT_BITRATE_OFFSET + 1],
-        ]);
-        let output_max_bitrate = u16::from_be_bytes([
-            body[START_OUTPUT_BITRATE_OFFSET],
-            body[START_OUTPUT_BITRATE_OFFSET + 1],
-        ]);
+        let input_max_bitrate = be_u16(body, START_INPUT_BITRATE_OFFSET);
+        let output_max_bitrate = be_u16(body, START_OUTPUT_BITRATE_OFFSET);
         let linear_channel = body[START_LINEAR_CHANNEL_OFFSET] & LINEAR_CHANNEL_BIT != 0;
-        let pmt_length = u16::from_be_bytes([
-            body[START_PMT_LENGTH_OFFSET],
-            body[START_PMT_LENGTH_OFFSET + 1],
-        ]) as usize;
+        let pmt_length = be_u16(body, START_PMT_LENGTH_OFFSET) as usize;
         let end = START_REQ_PREFIX + pmt_length;
         if body.len() < end {
             return Err(Error::LengthMismatch(
@@ -891,7 +880,7 @@ impl<'a> Parse<'a> for PlayerStatusError {
         Ok(Self {
             length_form,
             valid_lts_id: body[LTS_FLAG_OFFSET] & VALID_LTS_ID_BIT != 0,
-            lts_id: body[LTS_ID_OFFSET],
+            lts_id: body[STATUS_ERROR_LTS_ID_OFFSET],
             player_status: PlayStatus::from_u8(body[PLAYER_STATUS_OFFSET]),
             reserved: ReservedZero::from_bits(u64::from(
                 body[LTS_FLAG_OFFSET] >> FLAG_RESERVED_SHIFT,
@@ -914,7 +903,7 @@ impl Serialize for PlayerStatusError {
         // reserved(7) + valid_LTS_id(1).
         buf[pos + LTS_FLAG_OFFSET] =
             ((self.reserved.get() << FLAG_RESERVED_SHIFT) as u8) | u8::from(self.valid_lts_id);
-        buf[pos + LTS_ID_OFFSET] = self.lts_id;
+        buf[pos + STATUS_ERROR_LTS_ID_OFFSET] = self.lts_id;
         buf[pos + PLAYER_STATUS_OFFSET] = self.player_status.to_u8();
         Ok(pos + STATUS_ERROR_BODY)
     }
@@ -1015,8 +1004,8 @@ impl<'a> Parse<'a> for PlayerControlReq {
                     seek_position: i32::from_be_bytes([
                         body[SEEK_POSITION_OFFSET],
                         body[SEEK_POSITION_OFFSET + 1],
-                        body[SEEK_POSITION_OFFSET + U16_LEN],
-                        body[SEEK_POSITION_OFFSET + U16_LEN + 1],
+                        body[SEEK_POSITION_OFFSET + core::mem::size_of::<u16>()],
+                        body[SEEK_POSITION_OFFSET + core::mem::size_of::<u16>() + 1],
                     ]),
                 }
             }
@@ -1084,11 +1073,12 @@ impl Serialize for PlayerControlReq {
                 seek_position,
             } => {
                 buf[pos + SEEK_MODE_OFFSET] = seek_mode.to_u8();
-                buf[pos + SEEK_POSITION_OFFSET..pos + SEEK_POSITION_OFFSET + U32_LEN]
+                buf[pos + SEEK_POSITION_OFFSET
+                    ..pos + SEEK_POSITION_OFFSET + core::mem::size_of::<u32>()]
                     .copy_from_slice(&seek_position.to_be_bytes());
             }
             ControlCommand::SetSpeed { speed } => {
-                buf[pos + SEEK_SPEED_OFFSET..pos + SEEK_SPEED_OFFSET + U16_LEN]
+                buf[pos + SEEK_SPEED_OFFSET..pos + SEEK_SPEED_OFFSET + core::mem::size_of::<u16>()]
                     .copy_from_slice(&speed.to_be_bytes());
             }
             ControlCommand::Reserved(_) => {}
@@ -1208,14 +1198,14 @@ impl<'a> Parse<'a> for PlayerInfoReply {
             duration: u32::from_be_bytes([
                 body[INFO_DURATION_OFFSET],
                 body[INFO_DURATION_OFFSET + 1],
-                body[INFO_DURATION_OFFSET + U16_LEN],
-                body[INFO_DURATION_OFFSET + U16_LEN + 1],
+                body[INFO_DURATION_OFFSET + core::mem::size_of::<u16>()],
+                body[INFO_DURATION_OFFSET + core::mem::size_of::<u16>() + 1],
             ]),
             position: u32::from_be_bytes([
                 body[INFO_POSITION_OFFSET],
                 body[INFO_POSITION_OFFSET + 1],
-                body[INFO_POSITION_OFFSET + U16_LEN],
-                body[INFO_POSITION_OFFSET + U16_LEN + 1],
+                body[INFO_POSITION_OFFSET + core::mem::size_of::<u16>()],
+                body[INFO_POSITION_OFFSET + core::mem::size_of::<u16>() + 1],
             ]),
             speed: i16::from_be_bytes([body[INFO_SPEED_OFFSET], body[INFO_SPEED_OFFSET + 1]]),
         })
@@ -1234,7 +1224,7 @@ impl Serialize for PlayerInfoReply {
             .copy_from_slice(&self.duration.to_be_bytes());
         buf[pos + INFO_POSITION_OFFSET..pos + INFO_SPEED_OFFSET]
             .copy_from_slice(&self.position.to_be_bytes());
-        buf[pos + INFO_SPEED_OFFSET..pos + INFO_SPEED_OFFSET + U16_LEN]
+        buf[pos + INFO_SPEED_OFFSET..pos + INFO_SPEED_OFFSET + core::mem::size_of::<u16>()]
             .copy_from_slice(&self.speed.to_be_bytes());
         Ok(pos + INFO_REPLY_BODY)
     }
@@ -1394,7 +1384,7 @@ pub struct PlayerUpdateReq<'a> {
 }
 
 // LTS_id(1) + PMT_length(2) + PMT bytes.
-const UPDATE_REQ_PREFIX: usize = UPDATE_PMT_LENGTH_OFFSET + U16_LEN;
+const UPDATE_REQ_PREFIX: usize = UPDATE_PMT_LENGTH_OFFSET + core::mem::size_of::<u16>();
 
 impl<'a> Parse<'a> for PlayerUpdateReq<'a> {
     type Error = Error;
@@ -1403,10 +1393,7 @@ impl<'a> Parse<'a> for PlayerUpdateReq<'a> {
             objects::parse_apdu_header(bytes, tag::UPDATE_REQ, "CICAM_player_update_req")?;
         need_in(body, UPDATE_REQ_PREFIX, "CICAM_player_update_req")?;
         let lts_id = body[0];
-        let pmt_length = u16::from_be_bytes([
-            body[UPDATE_PMT_LENGTH_OFFSET],
-            body[UPDATE_PMT_LENGTH_OFFSET + 1],
-        ]) as usize;
+        let pmt_length = be_u16(body, UPDATE_PMT_LENGTH_OFFSET) as usize;
         let end = UPDATE_REQ_PREFIX + pmt_length;
         if body.len() < end {
             return Err(Error::LengthMismatch(

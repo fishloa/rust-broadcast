@@ -28,6 +28,18 @@ pub(crate) const SEGMENT_LENGTH_OFFSET: usize = 4;
 /// Bytes of `segment_length`.
 pub(crate) const SEGMENT_LENGTH_LEN: usize = 2;
 
+/// Read the big-endian 16-bit field at `offset` of `bytes`.
+///
+/// The segment header carries `page_id` and `segment_length` most-significant
+/// byte first (EN 300 743 §7.2, Table 2), so a field is copied into one sized
+/// array rather than read out one index at a time.
+pub(crate) fn be_u16(bytes: &[u8], offset: usize) -> u16 {
+    const FIELD_LEN: usize = core::mem::size_of::<u16>();
+    let mut field = [0u8; FIELD_LEN];
+    field.copy_from_slice(&bytes[offset..offset + FIELD_LEN]);
+    u16::from_be_bytes(field)
+}
+
 /// Range-check a segment body length against the generic segment header's
 /// 16-bit `segment_length` field before it is narrowed and written, so a
 /// body of 64 KiB or more is rejected instead of silently wrapped (see

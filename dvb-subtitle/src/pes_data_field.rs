@@ -5,6 +5,7 @@
 
 use crate::any::AnySegment;
 use crate::error::{Error, Result};
+use crate::segments::{HEADER_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_OFFSET, be_u16};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -19,8 +20,6 @@ pub const END_OF_PES_MARKER: u8 = 0xFF;
 
 /// The minimum PES data field: data_identifier(1) + subtitle_stream_id(1) + end_marker(1) = 3 bytes.
 const MIN_FIELD_LEN: usize = 3;
-/// Generic segment header: sync_byte(1) + segment_type(1) + page_id(2) + segment_length(2) = 6 bytes.
-const SEGMENT_HEADER_LEN: usize = 6;
 
 /// Offset of `data_identifier` in the PES data field.
 const DATA_IDENTIFIER_OFFSET: usize = 0;
@@ -28,10 +27,6 @@ const DATA_IDENTIFIER_OFFSET: usize = 0;
 const SUBTITLE_STREAM_ID_OFFSET: usize = 1;
 /// Bytes before the first segment: `data_identifier` + `subtitle_stream_id`.
 const PES_HEADER_LEN: usize = 2;
-/// Offset of `page_id` within a segment header.
-const PAGE_ID_OFFSET: usize = 2;
-/// Offset of `segment_length` within a segment header.
-const SEGMENT_LENGTH_OFFSET: usize = 4;
 
 /// The top-level PES data field structure for DVB subtitles.
 ///
@@ -69,15 +64,12 @@ impl<'a> Parse<'a> for PesDataField<'a> {
 
         // Read segments: each starts with sync_byte 0x0F
         while pos < bytes.len() && bytes[pos] == SYNC_BYTE {
-            if pos + SEGMENT_HEADER_LEN > bytes.len() {
+            if pos + HEADER_LEN > bytes.len() {
                 // Truncated segment header — stop and let suffix capture
                 break;
             }
-            let segment_length = u16::from_be_bytes([
-                bytes[pos + SEGMENT_LENGTH_OFFSET],
-                bytes[pos + SEGMENT_LENGTH_OFFSET + 1],
-            ]) as usize;
-            let segment_end = pos + SEGMENT_HEADER_LEN + segment_length;
+            let segment_length = be_u16(bytes, pos + SEGMENT_LENGTH_OFFSET) as usize;
+            let segment_end = pos + HEADER_LEN + segment_length;
             if segment_end > bytes.len() {
                 // Segment data exceeds available bytes (truncated PES) —
                 // stop the loop and let suffix capture the remainder verbatim
@@ -99,11 +91,8 @@ impl<'a> Parse<'a> for PesDataField<'a> {
                     // segment_type was broken.
                     segments.push(AnySegment::Malformed {
                         segment_type,
-                        page_id: u16::from_be_bytes([
-                            seg_bytes[PAGE_ID_OFFSET],
-                            seg_bytes[PAGE_ID_OFFSET + 1],
-                        ]),
-                        data: &seg_bytes[SEGMENT_HEADER_LEN..],
+                        page_id: be_u16(seg_bytes, PAGE_ID_OFFSET),
+                        data: &seg_bytes[HEADER_LEN..],
                         err: e,
                     });
                 }
@@ -111,11 +100,8 @@ impl<'a> Parse<'a> for PesDataField<'a> {
                     // Unknown segment_type: preserve as raw
                     segments.push(AnySegment::Unknown {
                         segment_type,
-                        page_id: u16::from_be_bytes([
-                            seg_bytes[PAGE_ID_OFFSET],
-                            seg_bytes[PAGE_ID_OFFSET + 1],
-                        ]),
-                        data: &seg_bytes[SEGMENT_HEADER_LEN..],
+                        page_id: be_u16(seg_bytes, PAGE_ID_OFFSET),
+                        data: &seg_bytes[HEADER_LEN..],
                     });
                 }
             }

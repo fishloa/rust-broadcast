@@ -84,8 +84,8 @@ broadcast_common::impl_spec_display!(AnchorPoint);
 const NUM_SERVICES: usize = 6;
 const MIN_SERVICE_NUMBER: u8 = 1;
 const MAX_SERVICE_NUMBER: u8 = 63;
-/// Windows per service (DF0–DF7).
-const NUM_WINDOWS: usize = 8;
+/// Windows per service (DF0–DF7), CEA-708 §8.
+pub const NUM_WINDOWS: usize = 8;
 /// Maximum rows in a window (rc field, virtual rows − 1, max 11 → 12 rows).
 const MAX_WINDOW_ROWS: usize = 12;
 /// Maximum columns in a window (cc field, virtual cols − 1, max 41 → 42 cols).

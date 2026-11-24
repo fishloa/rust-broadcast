@@ -26,9 +26,9 @@ const STUFFING_LENGTH_MAX: u8 = 7;
 /// Byte offsets in the pack header (ISO/IEC 13818-1 §2.5.3.3, Table 2-39).
 const START_CODE_OFFSET: usize = 0;
 const SCR_OFFSET: usize = START_CODE_OFFSET + core::mem::size_of::<u32>();
-/// Byte width of the 6-byte SCR field.
-const SCR_FIELD_LEN: usize = 6;
-const MUX_RATE_OFFSET: usize = SCR_OFFSET + SCR_FIELD_LEN;
+const MUX_RATE_OFFSET: usize = SCR_OFFSET + crate::scr::SCR_FIELD_LEN;
+/// Byte offset of `program_mux_rate`'s middle byte.
+const MUX_RATE_MID_OFFSET: usize = MUX_RATE_OFFSET + 1;
 /// Byte offset of the `program_mux_rate` low bits, which share byte 12 with the
 /// two marker bits.
 const MUX_RATE_LO_OFFSET: usize = MUX_RATE_OFFSET + 2;
@@ -106,7 +106,7 @@ impl<'a> Parse<'a> for PackHeader<'a> {
         }
 
         let program_mux_rate = (u32::from(b[MUX_RATE_OFFSET]) << MUX_RATE_HI_SHIFT)
-            | (u32::from(b[MUX_RATE_OFFSET + 1]) << MUX_RATE_MID_SHIFT)
+            | (u32::from(b[MUX_RATE_MID_OFFSET]) << MUX_RATE_MID_SHIFT)
             | (u32::from(b[MUX_RATE_LO_OFFSET]) >> MUX_RATE_LO_SHIFT);
 
         if program_mux_rate == 0 {
@@ -173,7 +173,7 @@ impl Serialize for PackHeader<'_> {
         // byte 10: mux[21:14]
         buf[MUX_RATE_OFFSET] = (mux >> MUX_RATE_HI_SHIFT) as u8;
         // byte 11: mux[13:6]
-        buf[MUX_RATE_OFFSET + 1] = (mux >> MUX_RATE_MID_SHIFT) as u8;
+        buf[MUX_RATE_MID_OFFSET] = (mux >> MUX_RATE_MID_SHIFT) as u8;
         // byte 12: mux[5:0] + marker bits (always '11') at bits[1:0]
         buf[MUX_RATE_LO_OFFSET] =
             (((mux & MUX_RATE_LO_MASK) as u8) << MUX_RATE_LO_SHIFT) | MARKER_BITS_MASK;

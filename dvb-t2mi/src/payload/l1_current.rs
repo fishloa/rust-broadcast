@@ -75,7 +75,7 @@ const FREQ_SOURCE_SHIFT: u32 = 6;
 /// Mask of the `freq_source` field inside its byte.
 const FREQ_SOURCE_MASK: u8 = 0xC0;
 /// Mask of the reserved bits beside `freq_source`.
-const RFU_MASK: u8 = 0x3F;
+const FREQ_SOURCE_RFU_MASK: u8 = 0x3F;
 /// Mask of the S2 LSB that signals FEF presence (EN 302 755 §7.2.3).
 const FEF_PRESENT_MASK: u8 = 0x01;
 
@@ -122,7 +122,7 @@ impl<'a> Parse<'a> for L1CurrentPayload<'a> {
             FrequencySource::try_from(bytes[FREQ_SOURCE_BYTE_OFFSET] >> FREQ_SOURCE_SHIFT)?;
 
         // RFU: byte 1 bottom 6 bits — must be 0
-        let rfu = bytes[FREQ_SOURCE_BYTE_OFFSET] & RFU_MASK;
+        let rfu = bytes[FREQ_SOURCE_BYTE_OFFSET] & FREQ_SOURCE_RFU_MASK;
         if rfu != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {

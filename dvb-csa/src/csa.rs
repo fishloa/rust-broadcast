@@ -13,13 +13,10 @@
 //!    XORing each decrypted block into the next before decrypting.
 //!
 //! Payloads shorter than 8 bytes are passed through unchanged.
-use crate::block::BlockCipher;
+use crate::block::{BLOCK_BYTES, BlockCipher};
 use crate::key::ControlWord;
 use crate::stream::StreamCipher;
 use crate::zeroize::Zeroizing;
-
-/// Bytes in one CSA block (64 bits).
-const BLOCK_BYTES: usize = 8;
 
 /// Scramble (encrypt) `data` in-place with the given control word.
 ///

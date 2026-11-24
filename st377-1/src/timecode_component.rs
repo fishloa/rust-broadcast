@@ -18,15 +18,11 @@ use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed,
     get_required_fixed,
 };
+use crate::sets::{TAG_DATA_DEFINITION, TAG_DURATION};
 use crate::types::UlBytes;
 use crate::types::{U16_LEN, U64_LEN, UL_LEN};
 
 // ── Structural Component base tags (B.8) ────────────────────────────────
-
-/// Local tag: Data Definition (B.8).
-pub const TAG_DATA_DEFINITION: u16 = 0x0201;
-/// Local tag: Duration (B.8).
-pub const TAG_DURATION: u16 = 0x0202;
 
 // ── Timecode Component own tags (B.17) ──────────────────────────────────
 

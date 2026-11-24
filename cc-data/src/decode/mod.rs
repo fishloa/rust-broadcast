@@ -31,9 +31,9 @@ mod screen;
 
 pub use cea608::{
     Cea608Channel, Cea608Color, Cea608Decoder, Cea608Mode, Cea608Row, Cea608Screen,
-    Cea608StyledChar,
+    Cea608StyledChar, SCREEN_ROWS,
 };
-pub use cea708::{AnchorPoint, Cea708Decoder, Window, WindowState};
+pub use cea708::{AnchorPoint, Cea708Decoder, NUM_WINDOWS, Window, WindowState};
 pub use screen::{
     Color, EdgeType, FontStyle, Justify, Opacity, PenOffset, PenSize, PrintDirection,
     ScrollDirection,

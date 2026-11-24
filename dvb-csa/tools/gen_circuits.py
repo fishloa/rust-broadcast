@@ -486,17 +486,49 @@ HEADER = '''//! Bitsliced boolean circuits for DVB-CSA2 — **generated code, do
 //! generated, so regeneration cannot regenerate its own gate — evaluates every
 //! circuit over its *entire* input domain and compares against the table it was
 //! generated from. A generator bug cannot ship.
-use super::Word;
-
 '''
+
+
+def preamble(sbox_index_bits, pair_bits, cdef_index_bits, cdef_out_count,
+             register_bits, a_taps, b_taps, d_taps):
+    """The header, imports and named widths the generated code is written in."""
+    parts = [HEADER]
+    parts.append("use super::{PQZYX_BITS, Word};\n")
+    parts.append("use crate::stream::NIBBLE_BITS;\n\n")
+    parts.append("/// Bits in a `STREAM_SBOX` row index — each row has 32 entries.\n")
+    parts.append("const SBOX_INDEX_BITS: usize = %d;\n\n" % sbox_index_bits)
+    parts.append("/// Bits in an output pair — every S-box and every keystream round yields two.\n")
+    parts.append("const PAIR_BITS: usize = %d;\n\n" % pair_bits)
+    parts.append("/// Index bits consumed by the `STREAM_CDEF` table.\n")
+    parts.append("const CDEF_INDEX_BITS: usize = %d;\n\n" % cdef_index_bits)
+    parts.append("/// Live output bits of the `STREAM_CDEF` table.\n")
+    parts.append("const CDEF_OUT_BITS_COUNT: usize = %d;\n\n" % cdef_out_count)
+    parts.append("/// Bits in each of the stream cipher's two shift registers.\n")
+    parts.append("const STREAM_REGISTER_BITS: usize = %d;\n\n" % register_bits)
+    parts.append("/// A-register bit positions selected by each stream S-box's index mask.\n")
+    for i in a_taps:
+        parts.append("const A_TAP_%d: usize = %d;\n" % (i, i))
+    parts.append("\n")
+    parts.append("/// B-register bit positions each `stream_b_sel` output bit XOR-folds.\n")
+    for i in b_taps:
+        parts.append("const B_TAP_%d: usize = %d;\n" % (i, i))
+    parts.append("\n")
+    parts.append("/// High bit of the D nibble `stream_out` folds.\n")
+    parts.append("const D_TAP_%d: usize = %d;\n" % (d_taps[0], d_taps[0]))
+    parts.append("/// Low bit of the D nibble `stream_out` folds.\n")
+    parts.append("const D_TAP_%d: usize = %d;\n\n" % (d_taps[1], d_taps[1]))
+    return "".join(parts)
+
+
+def tap_expr(arr, taps, prefix):
+    """XOR of the named tap constants (bare 0/1, which need no name)."""
+    return " ^ ".join(
+        "%s[%d]" % (arr, i) if i < 2 else "%s[%s_%d]" % (arr, prefix, i) for i in taps
+    )
 
 
 def emit_fn(doc, sig, lines, ret):
     return "%s#[inline]\n%s\n%s\n    %s\n}\n\n" % (doc, sig, "\n".join(lines), ret)
-
-
-def xor_expr(arr, taps):
-    return " ^ ".join("%s[%d]" % (arr, i) for i in taps)
 
 
 def main():
@@ -506,12 +538,29 @@ def main():
     sel = parse_sbox_sel(tables)
 
     a_bits, b_bits = 40, 40
-    print("synthesising circuits:", file=sys.stderr)
-    out = [HEADER]
-    budget = [0]
+    p = perm_bit_map(perm)
+    smap = stream_sbox_input_map(sel, a_bits)
+    bsel = b_sel_map(b_bits)
+    otaps = stream_out_map(sout)
+    sb_out = stream_sbox_out_bits(ssb)
+    cbits = sorted({k for v in cdef for k in range(16) if (v >> k) & 1})
 
-    def note(g):
-        budget[0] += g
+    a_taps = sorted({i for row in smap for tap in row for i in tap})
+    b_taps = sorted({i for tap in bsel for i in tap})
+    d_taps = sorted({i for tap in otaps for i in tap if i > 1})
+    assert len(d_taps) == 2, "stream_out needs exactly two named D taps"
+
+    print("synthesising circuits:", file=sys.stderr)
+    out = [preamble(
+        (len(ssb[0]) - 1).bit_length(),
+        len(sb_out[0]),
+        len(cdef).bit_length() - 1,
+        len(cbits),
+        a_bits,
+        a_taps,
+        b_taps,
+        d_taps,
+    )]
 
     # ---- block S-box: 8 -> 8 ------------------------------------------------
     invars = ["x%d" % k for k in range(8)]
@@ -525,12 +574,11 @@ def main():
         "///\n"
         "/// Synthesis: %s — %d gates.\n" % (how, gates)
     )
-    sig = "pub(super) fn block_sbox(x: &[Word; 8]) -> [Word; 8] {"
+    sig = "pub(super) fn block_sbox(x: &[Word; u8::BITS as usize]) -> [Word; u8::BITS as usize] {"
     pre = ["    let [%s] = *x;" % ", ".join(invars)]
     out.append(emit_fn(doc, sig, pre + lines, "[%s]" % ", ".join(outs)))
 
     # ---- stream S-boxes: 5 -> 2 each ---------------------------------------
-    sb_out = stream_sbox_out_bits(ssb)
     stotal = 0
     for n in range(7):
         invars = ["x%d" % k for k in range(5)]
@@ -544,13 +592,12 @@ def main():
             "/// Synthesis: %s — %d gates.\n"
             % (n, sb_out[n][0], sb_out[n][1], how, gates)
         )
-        sig = "fn stream_sbox_%d(x: &[Word; 5]) -> [Word; 2] {" % n
+        sig = "fn stream_sbox_%d(x: &[Word; SBOX_INDEX_BITS]) -> [Word; PAIR_BITS] {" % n
         pre = ["    let [%s] = *x;" % ", ".join(invars)]
         out.append(emit_fn(doc, sig, pre + lines, "[%s]" % ", ".join(outs)))
     print("  %-16s %-28s %4d gates" % ("(7 sboxes)", "total", stotal), file=sys.stderr)
 
     # ---- STREAM_CDEF: 10 -> 9 ----------------------------------------------
-    cbits = sorted({k for v in cdef for k in range(16) if (v >> k) & 1})
     invars = ["x%d" % k for k in range(10)]
     fs = truth_tables(cdef, cbits, 10)
     lines, outs, gates, how = synth("stream_cdef", fs, 10, invars, order_budget=4000)
@@ -561,34 +608,29 @@ def main():
         "///\n"
         "/// Synthesis: %s — %d gates.\n" % (how, gates)
     )
-    sig = "pub(super) fn stream_cdef(x: &[Word; 10]) -> [Word; 9] {"
+    sig = "pub(super) fn stream_cdef(x: &[Word; CDEF_INDEX_BITS]) -> [Word; CDEF_OUT_BITS_COUNT] {"
     pre = ["    let [%s] = *x;" % ", ".join(invars)]
     out.append(emit_fn(doc, sig, pre + lines, "[%s]" % ", ".join(outs)))
 
     # ---- linear structure ---------------------------------------------------
-    p = perm_bit_map(perm)
-    smap = stream_sbox_input_map(sel, a_bits)
-    bsel = b_sel_map(b_bits)
-    otaps = stream_out_map(sout)
-
     out.append(
         "/// Bit destinations of the block cipher's `PERM` table.\n"
         "///\n"
         "/// `PERM` is GF(2)-linear and maps each input bit to exactly one output\n"
         "/// bit, so bitsliced it is free: `PERM[s]` bit `PERM_BIT[k]` is `s` bit\n"
         "/// `k`.\n"
-        "pub(super) const PERM_BIT: [usize; 8] = %s;\n\n" % (list(p),)
+        "pub(super) const PERM_BIT: [usize; u8::BITS as usize] = %s;\n\n" % (list(p),)
     )
     out.append(
         "/// `pqzyx` bit positions written by [`stream_sboxes`], in the order it\n"
         "/// returns them.\n"
-        "pub(super) const STREAM_SBOX_OUT_BITS: [usize; 14] = %s;\n\n"
+        "pub(super) const STREAM_SBOX_OUT_BITS: [usize; PQZYX_BITS] = %s;\n\n"
         % ([b for pair in sb_out for b in pair],)
     )
     out.append(
         "/// `cfed` bit positions written by [`stream_cdef`], in the order it\n"
         "/// returns them.\n"
-        "pub(super) const CDEF_OUT_BITS: [usize; 9] = %s;\n\n" % (list(cbits),)
+        "pub(super) const CDEF_OUT_BITS: [usize; CDEF_OUT_BITS_COUNT] = %s;\n\n" % (list(cbits),)
     )
 
     # stream_sboxes: select inputs from A, then run the seven S-boxes
@@ -596,7 +638,7 @@ def main():
     for n in range(7):
         for k in range(5):
             lines.append(
-                "    let s%d_%d = %s;" % (n, k, xor_expr("a", smap[n][k]))
+                "    let s%d_%d = %s;" % (n, k, tap_expr("a", smap[n][k], "A_TAP"))
             )
     for n in range(7):
         lines.append(
@@ -612,15 +654,17 @@ def main():
         "/// (`STREAM_SBOX_SEL`'s mask-and-shift chain), so selecting it costs\n"
         "/// only XORs.\n"
     )
-    sig = "pub(super) fn stream_sboxes(a: &[Word; %d]) -> [Word; 14] {" % a_bits
+    sig = "pub(super) fn stream_sboxes(a: &[Word; STREAM_REGISTER_BITS]) -> [Word; PQZYX_BITS] {"
     out.append(emit_fn(doc, sig, lines, ret))
 
     doc = (
         "/// Bitsliced `csa_stream_b_sel` — four bits XOR-folded out of the B\n"
         "/// register. Linear, so it is pure XOR.\n"
     )
-    sig = "pub(super) fn stream_b_sel(b: &[Word; %d]) -> [Word; 4] {" % b_bits
-    lines = ["    let o%d = %s;" % (k, xor_expr("b", bsel[k])) for k in range(4)]
+    sig = "pub(super) fn stream_b_sel(b: &[Word; STREAM_REGISTER_BITS]) -> [Word; NIBBLE_BITS] {"
+    lines = [
+        "    let o%d = %s;" % (k, tap_expr("b", bsel[k], "B_TAP")) for k in range(4)
+    ]
     out.append(emit_fn(doc, sig, lines, "[o0, o1, o2, o3]"))
 
     doc = (
@@ -630,10 +674,10 @@ def main():
         "/// byte, and each of those bits is linear in the D nibble, so a round's\n"
         "/// keystream contribution is two XORs. Returns `[high, low]`.\n"
     )
-    sig = "pub(super) fn stream_out(d: &[Word; 4]) -> [Word; 2] {"
+    sig = "pub(super) fn stream_out(d: &[Word; NIBBLE_BITS]) -> [Word; PAIR_BITS] {"
     lines = [
-        "    let hi = %s;" % xor_expr("d", otaps[0]),
-        "    let lo = %s;" % xor_expr("d", otaps[1]),
+        "    let hi = %s;" % tap_expr("d", otaps[0], "D_TAP"),
+        "    let lo = %s;" % tap_expr("d", otaps[1], "D_TAP"),
     ]
     out.append(emit_fn(doc, sig, lines, "[hi, lo]"))
 

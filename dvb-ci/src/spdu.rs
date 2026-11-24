@@ -14,6 +14,7 @@
 use crate::error::{Error, Result};
 use crate::length::{self, LengthForm};
 use crate::resource::ResourceId;
+use crate::wire::be_u16;
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
@@ -254,7 +255,7 @@ impl<'a> Parse<'a> for OpenSessionResponse {
             length_form,
             status: SessionStatus::from_u8(v[SESSION_STATUS_OFFSET]),
             resource: ResourceId::parse(&v[RESOURCE_ID_OFFSET..SESSION_NB_OFFSET])?,
-            session_nb: u16::from_be_bytes([v[SESSION_NB_OFFSET], v[SESSION_NB_OFFSET + 1]]),
+            session_nb: be_u16(v, SESSION_NB_OFFSET),
         })
     }
 }
@@ -306,7 +307,7 @@ impl<'a> Parse<'a> for CreateSession {
         Ok(Self {
             length_form,
             resource: ResourceId::parse(&v[..RESOURCE_ID_LEN])?,
-            session_nb: u16::from_be_bytes([v[RESOURCE_ID_LEN], v[RESOURCE_ID_LEN + 1]]),
+            session_nb: be_u16(v, RESOURCE_ID_LEN),
         })
     }
 }
@@ -359,7 +360,7 @@ impl<'a> Parse<'a> for CreateSessionResponse {
             length_form,
             status: SessionStatus::from_u8(v[SESSION_STATUS_OFFSET]),
             resource: ResourceId::parse(&v[RESOURCE_ID_OFFSET..SESSION_NB_OFFSET])?,
-            session_nb: u16::from_be_bytes([v[SESSION_NB_OFFSET], v[SESSION_NB_OFFSET + 1]]),
+            session_nb: be_u16(v, SESSION_NB_OFFSET),
         })
     }
 }
@@ -408,7 +409,7 @@ impl<'a> Parse<'a> for CloseSessionRequest {
         )?;
         Ok(Self {
             length_form,
-            session_nb: u16::from_be_bytes([v[0], v[1]]),
+            session_nb: be_u16(v, 0),
         })
     }
 }
@@ -457,7 +458,7 @@ impl<'a> Parse<'a> for CloseSessionResponse {
         Ok(Self {
             length_form,
             status: SessionStatus::from_u8(v[0]),
-            session_nb: u16::from_be_bytes([v[1], v[1 + 1]]),
+            session_nb: be_u16(v, 1),
         })
     }
 }
@@ -526,7 +527,7 @@ impl<'a> Parse<'a> for SessionNumber {
         )?;
         Ok(Self {
             length_form,
-            session_nb: u16::from_be_bytes([v[0], v[1]]),
+            session_nb: be_u16(v, 0),
         })
     }
 }

@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Added
+- `webvtt::teletext::TXT_DATA_BLOCK_LEN`, the length of the `txt_data_block` that `PageHeader::parse` takes, so a caller can declare its own buffer from it.
 
 ## [0.12.0] - 2026-11-22
 ### Breaking

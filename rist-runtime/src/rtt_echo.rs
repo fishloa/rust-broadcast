@@ -16,48 +16,31 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::{
-    RIST_APP_NAME, RIST_APP_NAME_U32, RTCP_COUNT_MASK, RTCP_PADDING_MASK, SUBTYPE_RTT_ECHO_REQUEST,
-    SUBTYPE_RTT_ECHO_RESPONSE,
+    PT_APP, RIST_APP_NAME, RIST_APP_NAME_U32, RTCP_COUNT_MASK, RTCP_HEADER_LEN, RTCP_LENGTH_OFFSET,
+    RTCP_PADDING_MASK, RTCP_VERSION, SUBTYPE_RTT_ECHO_REQUEST, SUBTYPE_RTT_ECHO_RESPONSE,
+    VERSION_SHIFT, WORD_LEN, be_u16, be_u32,
 };
 
 // ---------------------------------------------------------------------------
 // Wire constants
 // ---------------------------------------------------------------------------
 
-/// RTCP protocol version — always 2 (RFC 3550 §6.4.1).
-const RTCP_VERSION: u8 = 2;
-/// Common-header length in bytes.
-const RTCP_HEADER_LEN: usize = 4;
-/// One 32-bit word, in bytes.
-const WORD_LEN: usize = 4;
-/// PT for RTCP APP (RFC 3550 §6.7).
-const PT_APP: u8 = 204;
-
 /// Fixed-payload length of an RTT Echo packet (excluding the common header):
 /// SSRC(4) + name(4) + timestamp(8) + processing_delay(4) = 20 bytes.
 const RTT_ECHO_BODY_LEN: usize = 20;
 
-/// Shift of the 2-bit `version` field in the common header's first byte
-/// (RFC 3550 §6.1).
-const VERSION_SHIFT: u32 = 6;
-
-/// Byte positions of the 16-bit `length` field.
-const LENGTH_BYTES: [usize; 2] = [2, 3];
-
-/// Byte positions of `SSRC of media source`, `name` and the timestamp
-/// halves and processing delay of the RTT Echo payload (VSF TR-06-1 §5.2.6).
-const SSRC_MEDIA_BYTES: [usize; WORD_LEN] = [4, 5, 6, 7];
-const NAME_BYTES: [usize; WORD_LEN] = [8, 9, 10, 11];
-const TS_MSW_BYTES: [usize; WORD_LEN] = [12, 13, 14, 15];
-const TS_LSW_BYTES: [usize; WORD_LEN] = [16, 17, 18, 19];
-const PROCESSING_DELAY_BYTES: [usize; WORD_LEN] = [20, 21, 22, 23];
+/// Byte offsets of `SSRC of media source`, `name` and the timestamp halves
+/// and processing delay of the RTT Echo payload (VSF TR-06-1 §5.2.6).
+const SSRC_MEDIA_OFFSET: usize = 4;
+const NAME_OFFSET: usize = 8;
+const TS_MSW_OFFSET: usize = 12;
+const TS_LSW_OFFSET: usize = 16;
+const PROCESSING_DELAY_OFFSET: usize = 20;
 
 /// Bits in one 32-bit word: the shift joining and splitting the timestamp's
 /// two halves.
 const WORD_SHIFT: u32 = 32;
 
-/// Offset of the timestamp's most significant word in the wire layout.
-const TS_MSW_OFFSET: usize = 12;
 /// Total minimum RTT Echo packet length (header + body, no padding):
 /// 4 + 20 = 24 bytes = 6 words.
 const RTT_ECHO_MIN_LEN: usize = RTCP_HEADER_LEN + RTT_ECHO_BODY_LEN;
@@ -188,7 +171,7 @@ impl<'a> Parse<'a> for RttEcho {
             });
         }
 
-        let length_field = u16::from_be_bytes(LENGTH_BYTES.map(|i| bytes[i])) as usize;
+        let length_field = usize::from(be_u16(bytes, RTCP_LENGTH_OFFSET));
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -207,20 +190,20 @@ impl<'a> Parse<'a> for RttEcho {
         }
 
         // SSRC of media source.
-        let ssrc_media = u32::from_be_bytes(SSRC_MEDIA_BYTES.map(|i| bytes[i]));
+        let ssrc_media = be_u32(bytes, SSRC_MEDIA_OFFSET);
 
-        let name = u32::from_be_bytes(NAME_BYTES.map(|i| bytes[i]));
+        let name = be_u32(bytes, NAME_OFFSET);
         if name != RIST_APP_NAME_U32 {
             return Err(Error::InvalidAppName(name));
         }
 
         // Timestamp (8 bytes, big-endian u64).
-        let ts_msw = u32::from_be_bytes(TS_MSW_BYTES.map(|i| bytes[i]));
-        let ts_lsw = u32::from_be_bytes(TS_LSW_BYTES.map(|i| bytes[i]));
+        let ts_msw = be_u32(bytes, TS_MSW_OFFSET);
+        let ts_lsw = be_u32(bytes, TS_LSW_OFFSET);
         let timestamp = (u64::from(ts_msw) << WORD_SHIFT) | u64::from(ts_lsw);
 
         // Processing delay (4 bytes).
-        let processing_delay_us = u32::from_be_bytes(PROCESSING_DELAY_BYTES.map(|i| bytes[i]));
+        let processing_delay_us = be_u32(bytes, PROCESSING_DELAY_OFFSET);
 
         // Padding (remaining bytes, if any).
         let padding = if total_len > RTT_ECHO_MIN_LEN {

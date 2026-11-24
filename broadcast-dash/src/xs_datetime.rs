@@ -35,10 +35,10 @@ const DECIMAL_BASE_I32: i32 = 10;
 const FIELD_DIGITS: usize = 2;
 /// Months in a year: the upper bound of `xs:dateTime`'s month field.
 const MONTHS_PER_YEAR: u8 = 12;
-/// Byte positions of NTP's 32-bit `seconds` field (RFC 5905 Figure 3).
-const NTP_SECONDS_BYTES: [usize; 4] = [0, 1, 2, 3];
-/// Byte positions of NTP's 32-bit binary fraction.
-const NTP_FRACTION_BYTES: [usize; 4] = [4, 5, 6, 7];
+/// Width of each of NTP's two 32-bit halves (RFC 5905 Figure 3).
+const NTP_WORD_LEN: usize = core::mem::size_of::<u32>();
+/// Byte offset of NTP's 32-bit binary fraction, after the `seconds` field.
+const NTP_FRACTION_OFFSET: usize = NTP_WORD_LEN;
 /// Year of the NTP prime epoch (RFC 5905 §6).
 const NTP_EPOCH_YEAR: i16 = 1900;
 
@@ -252,8 +252,11 @@ fn parse_zone(c: &mut Cursor<'_>) -> Result<Offset, DateTimeError> {
 /// [`DateTimeError::Ntp`] unless `bytes` is exactly eight bytes.
 pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<jiff::Timestamp, DateTimeError> {
     let arr: [u8; NTP_TIMESTAMP_LEN] = bytes.try_into().map_err(|_| DateTimeError::Ntp)?;
-    let seconds = u32::from_be_bytes(NTP_SECONDS_BYTES.map(|i| arr[i]));
-    let fraction = u32::from_be_bytes(NTP_FRACTION_BYTES.map(|i| arr[i]));
+    let mut word = [0_u8; NTP_WORD_LEN];
+    word.copy_from_slice(&arr[..NTP_WORD_LEN]);
+    let seconds = u32::from_be_bytes(word);
+    word.copy_from_slice(&arr[NTP_FRACTION_OFFSET..]);
+    let fraction = u32::from_be_bytes(word);
     let micros = (u128::from(fraction) * u128::from((MICROS_PER_SEC as i64).unsigned_abs()))
         >> NTP_FRACTION_BITS;
     let micros = i64::try_from(micros).map_err(|_| DateTimeError::Ntp)?;

@@ -18,15 +18,11 @@ use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed,
     get_required_fixed,
 };
+use crate::sets::{TAG_DATA_DEFINITION, TAG_DURATION};
 use crate::types::{PACKAGE_ID_LEN, U32_LEN, U64_LEN, UL_LEN};
 use crate::types::{PackageId, UlBytes};
 
 // ── Structural Component base tags (B.8) — shared with sequence.rs ──────
-
-/// Local tag: Data Definition (B.8).
-pub const TAG_DATA_DEFINITION: u16 = 0x0201;
-/// Local tag: Duration (B.8).
-pub const TAG_DURATION: u16 = 0x0202;
 
 // ── Source Clip own tags (B.10) ─────────────────────────────────────────
 
