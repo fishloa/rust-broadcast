@@ -12,7 +12,10 @@
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use isobmff::BoxIter;
-use isobmff::timing::{CompositionOffsetBox, EditListBox, SegmentIndexBox, TimeToSampleBox};
+use isobmff::timing::{
+    CompositionOffsetBox, EditListBox, MovieFragmentRandomAccessBox, SegmentIndexBox,
+    TimeToSampleBox, TrackFragmentRandomAccessBox,
+};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -294,5 +297,79 @@ fn sidx_mutation_changes_bytes() {
     assert_ne!(
         mutated, original,
         "mutating referenced_size must change serialized bytes"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Fixture: a fragmented MP4's trailing mfra (tfra + mfro)
+// ---------------------------------------------------------------------------
+
+/// The trailing `mfra` box of a fragmented fixture, header included.
+fn fixture_mfra(name: &str) -> Vec<u8> {
+    let data = std::fs::read(test_fixtures::path(name)).expect("fixture file");
+    BoxIter::new(&data)
+        .filter_map(|b| b.ok())
+        .find(|b| b.header.box_type.is(b"mfra"))
+        .map(|b| b.bytes.to_vec())
+        .expect("the fixture carries an mfra box")
+}
+
+#[test]
+fn mfra_real_fixture_round_trip() {
+    for name in ["mp4/h264-aac-frag.mp4", "mp4/llcmaf/ll-chunked.mp4"] {
+        let bytes = fixture_mfra(name);
+        let parsed =
+            MovieFragmentRandomAccessBox::parse(&bytes).expect("mfra parses from a real file");
+        assert!(!parsed.tfra.is_empty(), "{name}: tfra present");
+        assert_eq!(
+            parsed.mfro.parent_size as usize,
+            bytes.len(),
+            "{name}: mfro copies the mfra length"
+        );
+        for tfra in &parsed.tfra {
+            assert!(!tfra.entries.is_empty(), "{name}: tfra lists sync samples");
+            for entry in &tfra.entries {
+                assert!(entry.moof_offset > 0, "{name}: a moof offset is absolute");
+                assert!(entry.traf_number >= 1, "{name}: traf numbers are one-based");
+            }
+        }
+        let serialized = parsed.try_to_bytes().expect("mfra serializes");
+        assert_eq!(
+            serialized, bytes,
+            "{name}: mfra round-trip is byte-identical"
+        );
+    }
+}
+
+#[test]
+fn tfra_real_fixture_round_trip() {
+    let bytes = fixture_mfra("mp4/h264-aac-frag.mp4");
+    let mfra = MovieFragmentRandomAccessBox::parse(&bytes).expect("mfra");
+    for tfra in &mfra.tfra {
+        let original = tfra.try_to_bytes().expect("tfra serializes");
+        let reparsed = TrackFragmentRandomAccessBox::parse(&original).expect("tfra re-parses");
+        assert_eq!(&reparsed, tfra, "tfra round-trips through its own bytes");
+    }
+}
+
+#[test]
+fn tfra_mutation_changes_bytes() {
+    let bytes = fixture_mfra("mp4/h264-aac-frag.mp4");
+    let mfra = MovieFragmentRandomAccessBox::parse(&bytes).expect("mfra");
+    let mut tfra = mfra.tfra[0].clone();
+    let original = tfra.try_to_bytes().expect("tfra serializes");
+    tfra.entries[0].moof_offset = tfra.entries[0].moof_offset.saturating_add(1);
+    let mutated = tfra.try_to_bytes().expect("tfra serializes");
+    assert_ne!(mutated, original, "a changed offset changes the bytes");
+}
+
+#[test]
+fn mfra_rejects_a_parent_size_that_does_not_match() {
+    let bytes = fixture_mfra("mp4/h264-aac-frag.mp4");
+    let mut mfra = MovieFragmentRandomAccessBox::parse(&bytes).expect("mfra");
+    mfra.mfro.parent_size = mfra.mfro.parent_size.saturating_add(1);
+    assert!(
+        mfra.try_to_bytes().is_err(),
+        "a wrong mfro length is refused"
     );
 }
