@@ -142,7 +142,7 @@ impl Bandwidth {
             Bandwidth::Mhz8 => SUBSEC_DENOM_8MHZ,
             Bandwidth::Mhz10 => SUBSEC_DENOM_10MHZ,
         };
-        (1000, denom as u32)
+        (NANOS_PER_MICRO, denom as u32)
     }
 
     /// Return the number of subsecond ticks per second for this bandwidth.
@@ -151,15 +151,74 @@ impl Bandwidth {
     /// ETSI TS 102 773 §5.2.7 Table 4 (Tsub = 1/D µs).
     pub fn subseconds_per_second(self) -> u64 {
         match self {
-            Bandwidth::Mhz1_7 => SUBSEC_DENOM_1_7MHZ * 1_000_000,
-            Bandwidth::Mhz5 => SUBSEC_DENOM_5MHZ * 1_000_000,
-            Bandwidth::Mhz6 => SUBSEC_DENOM_6MHZ * 1_000_000,
-            Bandwidth::Mhz7 => SUBSEC_DENOM_7MHZ * 1_000_000,
-            Bandwidth::Mhz8 => SUBSEC_DENOM_8MHZ * 1_000_000,
-            Bandwidth::Mhz10 => SUBSEC_DENOM_10MHZ * 1_000_000,
+            Bandwidth::Mhz1_7 => SUBSEC_DENOM_1_7MHZ * TICKS_PER_SECOND,
+            Bandwidth::Mhz5 => SUBSEC_DENOM_5MHZ * TICKS_PER_SECOND,
+            Bandwidth::Mhz6 => SUBSEC_DENOM_6MHZ * TICKS_PER_SECOND,
+            Bandwidth::Mhz7 => SUBSEC_DENOM_7MHZ * TICKS_PER_SECOND,
+            Bandwidth::Mhz8 => SUBSEC_DENOM_8MHZ * TICKS_PER_SECOND,
+            Bandwidth::Mhz10 => SUBSEC_DENOM_10MHZ * TICKS_PER_SECOND,
         }
     }
 }
+
+/// Nanoseconds in one microsecond — `Tsub` numerator (`Tsub = 1/D µs`).
+const NANOS_PER_MICRO: u32 = 1_000;
+/// `Tsub` ticks in one second — `D × TICKS_PER_SECOND`.
+const TICKS_PER_SECOND: u64 = 1_000_000;
+/// Nanoseconds in one second.
+const NANOS_PER_SECOND: u128 = 1_000_000_000;
+
+/// Offset of the byte carrying the reserved bits and `bw`.
+const RFU_AND_BW_OFFSET: usize = 0;
+/// Offsets of the five bytes of `seconds_since_2000`.
+const SECONDS_HIGH_OFFSET: usize = 1;
+const SECONDS_SECOND_OFFSET: usize = 2;
+const SECONDS_THIRD_OFFSET: usize = 3;
+const SECONDS_FOURTH_OFFSET: usize = 4;
+const SECONDS_LOW_OFFSET: usize = 5;
+/// Offset of the high byte of `subseconds`.
+const SUBSECONDS_HIGH_OFFSET: usize = 6;
+/// Offset of the middle byte of `subseconds`.
+const SUBSECONDS_MID_OFFSET: usize = 7;
+/// Offset of the third byte of `subseconds`.
+const SUBSECONDS_LOW_OFFSET: usize = 8;
+/// Offset of the byte shared by `subseconds` and `utco`.
+const SUBSECONDS_UTCO_OFFSET: usize = 9;
+/// Offset of the low byte of `utco`.
+const UTCO_LOW_OFFSET: usize = 10;
+
+/// Mask of the reserved top nibble of the first byte.
+const RFU_MASK: u8 = 0xF0;
+/// Shift placing the reserved nibble for the error report.
+const RFU_SHIFT: u32 = 4;
+/// Mask of the four-bit `bw` code.
+const BW_MASK: u8 = 0x0F;
+
+/// Shifts placing each byte of the 40-bit `seconds_since_2000`.
+const SECONDS_SHIFT_FIRST_BYTE: u32 = 32;
+const SECONDS_SHIFT_SECOND_BYTE: u32 = 24;
+const SECONDS_SHIFT_THIRD_BYTE: u32 = 16;
+const SECONDS_SHIFT_FOURTH_BYTE: u32 = 8;
+/// Mask of one byte of `seconds_since_2000`.
+const SECONDS_BYTE_MASK: u64 = 0xFF;
+
+/// Shifts placing each byte of the 27-bit `subseconds`.
+const SUBSECONDS_SHIFT_FIRST_BYTE: u32 = 19;
+const SUBSECONDS_SHIFT_SECOND_BYTE: u32 = 11;
+const SUBSECONDS_SHIFT_THIRD_BYTE: u32 = 3;
+/// Mask of one byte of `subseconds`.
+const SUBSECONDS_BYTE_MASK: u32 = 0xFF;
+/// Mask of the three `subseconds` bits carried above `utco`.
+const SUBSECONDS_TAIL_MASK: u8 = 0x07;
+/// Shift placing the `subseconds` tail in the shared byte.
+const SUBSECONDS_TAIL_SHIFT: u32 = 5;
+
+/// Mask of the five `utco` bits carried below `subseconds`.
+const UTCO_HIGH_MASK: u16 = 0x1F;
+/// Shift placing the high byte of `utco`.
+const UTCO_HIGH_SHIFT: u32 = 8;
+/// Mask of one byte of `utco`.
+const UTCO_BYTE_MASK: u16 = 0xFF;
 
 /// Maximum value for the 40-bit `seconds_since_2000` field.
 const SECONDS_SINCE_2000_MAX: u64 = 0xFF_FFFF_FFFF;
@@ -205,35 +264,37 @@ impl<'a> Parse<'a> for T2TimestampPayload {
         need_in(bytes, TIMESTAMP_HEADER_LEN, "T2TimestampPayload header")?;
 
         // byte 0 [7:4] = rfu
-        if bytes[0] & 0xF0 != 0 {
+        if bytes[RFU_AND_BW_OFFSET] & RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "4-bit RFU",
                     expected: 0,
-                    found: u64::from(bytes[0] >> 4),
+                    found: u64::from(bytes[RFU_AND_BW_OFFSET] >> RFU_SHIFT),
                 },
             ));
         }
 
-        let bw = Bandwidth::try_from(bytes[0] & 0x0F)?;
+        let bw = Bandwidth::try_from(bytes[RFU_AND_BW_OFFSET] & BW_MASK)?;
 
         // bytes 1-5: seconds_since_2000 (40 bits)
-        let seconds_since_2000 = (bytes[1] as u64) << 32
-            | (bytes[2] as u64) << 24
-            | (bytes[3] as u64) << 16
-            | (bytes[4] as u64) << 8
-            | (bytes[5] as u64);
+        let seconds_since_2000 = (bytes[SECONDS_HIGH_OFFSET] as u64) << SECONDS_SHIFT_FIRST_BYTE
+            | (bytes[SECONDS_SECOND_OFFSET] as u64) << SECONDS_SHIFT_SECOND_BYTE
+            | (bytes[SECONDS_THIRD_OFFSET] as u64) << SECONDS_SHIFT_THIRD_BYTE
+            | (bytes[SECONDS_FOURTH_OFFSET] as u64) << SECONDS_SHIFT_FOURTH_BYTE
+            | (bytes[SECONDS_LOW_OFFSET] as u64);
 
         // bytes 6-8 [31:5]: subseconds (27 bits)
         // bytes 6-7-8 = 24 bits, but subseconds extends into byte 9
         // 27 bits: bytes 6-8 (24 bits) + byte 9 [7:5] (3 bits)
-        let subseconds = (bytes[6] as u32) << 19
-            | (bytes[7] as u32) << 11
-            | (bytes[8] as u32) << 3
-            | ((bytes[9] >> 5) as u32 & 0x7);
+        let subseconds = (bytes[SUBSECONDS_HIGH_OFFSET] as u32) << SUBSECONDS_SHIFT_FIRST_BYTE
+            | (bytes[SUBSECONDS_MID_OFFSET] as u32) << SUBSECONDS_SHIFT_SECOND_BYTE
+            | (bytes[SUBSECONDS_LOW_OFFSET] as u32) << SUBSECONDS_SHIFT_THIRD_BYTE
+            | ((bytes[SUBSECONDS_UTCO_OFFSET] >> SUBSECONDS_TAIL_SHIFT) as u32
+                & u32::from(SUBSECONDS_TAIL_MASK));
 
         // byte 9 [4:0] + byte 10: utco (13 bits)
-        let utco = ((bytes[9] as u16 & 0x1F) << 8) | (bytes[10] as u16);
+        let utco = ((bytes[SUBSECONDS_UTCO_OFFSET] as u16 & UTCO_HIGH_MASK) << UTCO_HIGH_SHIFT)
+            | (bytes[UTCO_LOW_OFFSET] as u16);
 
         Ok(T2TimestampPayload {
             bw,
@@ -259,45 +320,54 @@ impl Serialize for T2TimestampPayload {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
         need_out(buf, self.serialized_len())?;
 
-        if self.seconds_since_2000 > 0xFF_FFFF_FFFF {
+        if self.seconds_since_2000 > SECONDS_SINCE_2000_MAX {
             return Err(crate::Error::FieldOverflow(
                 broadcast_common::len::FieldOverflow {
                     field: "seconds_since_2000",
                     value: self.seconds_since_2000,
-                    max: 0xFF_FFFF_FFFF,
+                    max: SECONDS_SINCE_2000_MAX,
                 },
             ));
         }
-        if self.subseconds > 0x7FFFFFF {
+        if self.subseconds > SUBSECONDS_MAX {
             return Err(crate::Error::FieldOverflow(
                 broadcast_common::len::FieldOverflow {
                     field: "subseconds",
                     value: u64::from(self.subseconds),
-                    max: 0x7FF_FFFF,
+                    max: u64::from(SUBSECONDS_MAX),
                 },
             ));
         }
-        if self.utco > 0x1FFF {
+        if self.utco > UTCO_MAX {
             return Err(crate::Error::FieldOverflow(
                 broadcast_common::len::FieldOverflow {
                     field: "utco",
                     value: u64::from(self.utco),
-                    max: 0x1FFF,
+                    max: u64::from(UTCO_MAX),
                 },
             ));
         }
 
-        buf[0] = u8::from(self.bw) & 0x0F; // RFU = 0
-        buf[1] = (self.seconds_since_2000 >> 32 & 0xFF) as u8;
-        buf[2] = (self.seconds_since_2000 >> 24 & 0xFF) as u8;
-        buf[3] = (self.seconds_since_2000 >> 16 & 0xFF) as u8;
-        buf[4] = (self.seconds_since_2000 >> 8 & 0xFF) as u8;
-        buf[5] = (self.seconds_since_2000 & 0xFF) as u8;
-        buf[6] = (self.subseconds >> 19 & 0xFF) as u8;
-        buf[7] = (self.subseconds >> 11 & 0xFF) as u8;
-        buf[8] = (self.subseconds >> 3 & 0xFF) as u8;
-        buf[9] = ((self.subseconds & 0x7) as u8) << 5 | ((self.utco >> 8) as u8 & 0x1F);
-        buf[10] = (self.utco & 0xFF) as u8;
+        buf[RFU_AND_BW_OFFSET] = u8::from(self.bw) & BW_MASK; // RFU = 0
+        buf[SECONDS_HIGH_OFFSET] =
+            (self.seconds_since_2000 >> SECONDS_SHIFT_FIRST_BYTE & SECONDS_BYTE_MASK) as u8;
+        buf[SECONDS_SECOND_OFFSET] =
+            (self.seconds_since_2000 >> SECONDS_SHIFT_SECOND_BYTE & SECONDS_BYTE_MASK) as u8;
+        buf[SECONDS_THIRD_OFFSET] =
+            (self.seconds_since_2000 >> SECONDS_SHIFT_THIRD_BYTE & SECONDS_BYTE_MASK) as u8;
+        buf[SECONDS_FOURTH_OFFSET] =
+            (self.seconds_since_2000 >> SECONDS_SHIFT_FOURTH_BYTE & SECONDS_BYTE_MASK) as u8;
+        buf[SECONDS_LOW_OFFSET] = (self.seconds_since_2000 & SECONDS_BYTE_MASK) as u8;
+        buf[SUBSECONDS_HIGH_OFFSET] =
+            (self.subseconds >> SUBSECONDS_SHIFT_FIRST_BYTE & SUBSECONDS_BYTE_MASK) as u8;
+        buf[SUBSECONDS_MID_OFFSET] =
+            (self.subseconds >> SUBSECONDS_SHIFT_SECOND_BYTE & SUBSECONDS_BYTE_MASK) as u8;
+        buf[SUBSECONDS_LOW_OFFSET] =
+            (self.subseconds >> SUBSECONDS_SHIFT_THIRD_BYTE & SUBSECONDS_BYTE_MASK) as u8;
+        buf[SUBSECONDS_UTCO_OFFSET] = ((self.subseconds & u32::from(SUBSECONDS_TAIL_MASK)) as u8)
+            << SUBSECONDS_TAIL_SHIFT
+            | ((self.utco >> UTCO_HIGH_SHIFT) as u8 & UTCO_HIGH_MASK as u8);
+        buf[UTCO_LOW_OFFSET] = (self.utco & UTCO_BYTE_MASK) as u8;
 
         Ok(self.serialized_len())
     }
@@ -329,9 +399,9 @@ impl T2TimestampPayload {
             return None;
         }
         let sps = self.bw.subseconds_per_second();
-        let total_nanos: u128 = self.subseconds as u128 * 1_000_000_000u128 / sps as u128;
-        let secs = self.seconds_since_2000 + (total_nanos / 1_000_000_000) as u64;
-        let sub_nanos = (total_nanos % 1_000_000_000) as u32;
+        let total_nanos: u128 = self.subseconds as u128 * NANOS_PER_SECOND / sps as u128;
+        let secs = self.seconds_since_2000 + (total_nanos / NANOS_PER_SECOND) as u64;
+        let sub_nanos = (total_nanos % NANOS_PER_SECOND) as u32;
         Some(core::time::Duration::new(secs, sub_nanos))
     }
 
@@ -360,7 +430,7 @@ impl T2TimestampPayload {
             ));
         }
         let sps = u128::from(self.bw.subseconds_per_second());
-        let subseconds = u128::from(offset.subsec_nanos()) * sps / 1_000_000_000u128;
+        let subseconds = u128::from(offset.subsec_nanos()) * sps / NANOS_PER_SECOND;
         let subseconds = u32::try_from(subseconds)
             .ok()
             .filter(|&s| s <= SUBSECONDS_MAX)

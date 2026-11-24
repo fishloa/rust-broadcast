@@ -214,7 +214,10 @@ impl L1Pre {
     pub fn parse_with_crc(bytes: &[u8]) -> crate::error::Result<L1Pre> {
         need_in(bytes, L1PRE_WITH_CRC_BYTES, "L1Pre with CRC")?;
         let (info, crc) = bytes[..L1PRE_WITH_CRC_BYTES].split_at(L1PRE_BYTES);
-        let expected = u32::from_be_bytes([crc[0], crc[1], crc[2], crc[3]]);
+        let expected = u32::from_be_bytes(
+            *crc.first_chunk::<L1PRE_CRC_BYTES>()
+                .expect("split off exactly the CRC field"),
+        );
         let computed = broadcast_common::crc32_mpeg2::compute(info);
         if computed != expected {
             return Err(broadcast_common::error::CrcMismatch {

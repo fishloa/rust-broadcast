@@ -68,6 +68,17 @@ pub struct L1CurrentPayload<'a> {
 
 const L1_CURRENT_HEADER_LEN: usize = 2;
 
+/// Offset of the byte carrying `freq_source` and the reserved bits.
+const FREQ_SOURCE_BYTE_OFFSET: usize = 1;
+/// Shift placing `freq_source` at the top of its byte.
+const FREQ_SOURCE_SHIFT: u32 = 6;
+/// Mask of the `freq_source` field inside its byte.
+const FREQ_SOURCE_MASK: u8 = 0xC0;
+/// Mask of the reserved bits beside `freq_source`.
+const RFU_MASK: u8 = 0x3F;
+/// Mask of the S2 LSB that signals FEF presence (EN 302 755 §7.2.3).
+const FEF_PRESENT_MASK: u8 = 0x01;
+
 impl L1CurrentPayload<'_> {
     /// Parse the L1-pre block from the first 21 bytes of `l1_current_data`.
     ///
@@ -94,7 +105,7 @@ impl L1CurrentPayload<'_> {
     pub fn l1_post(&self) -> crate::error::Result<L1Post> {
         let pre = self.l1_pre()?;
         let num_rf = pre.num_rf;
-        let fef_present = (pre.s2 & 0x01) == 1;
+        let fef_present = (pre.s2 & FEF_PRESENT_MASK) == FEF_PRESENT_MASK;
         let framed = &self.l1_current_data[L1PRE_BYTES..];
         parse_l1_post_from_framed(framed, num_rf, fef_present)
     }
@@ -107,10 +118,11 @@ impl<'a> Parse<'a> for L1CurrentPayload<'a> {
         need_in(bytes, L1_CURRENT_HEADER_LEN, "L1CurrentPayload header")?;
 
         let frame_idx = bytes[0];
-        let freq_source = FrequencySource::try_from(bytes[1] >> 6)?;
+        let freq_source =
+            FrequencySource::try_from(bytes[FREQ_SOURCE_BYTE_OFFSET] >> FREQ_SOURCE_SHIFT)?;
 
         // RFU: byte 1 bottom 6 bits — must be 0
-        let rfu = bytes[1] & 0x3F;
+        let rfu = bytes[FREQ_SOURCE_BYTE_OFFSET] & RFU_MASK;
         if rfu != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
@@ -145,7 +157,8 @@ impl Serialize for L1CurrentPayload<'_> {
         need_out(buf, self.serialized_len())?;
 
         buf[0] = self.frame_idx;
-        buf[1] = (u8::from(self.freq_source) << 6) & 0xC0; // freq_source in top 2 bits, RFU = 0
+        buf[FREQ_SOURCE_BYTE_OFFSET] =
+            (u8::from(self.freq_source) << FREQ_SOURCE_SHIFT) & FREQ_SOURCE_MASK; // RFU = 0
 
         if !self.l1_current_data.is_empty() {
             buf[L1_CURRENT_HEADER_LEN..L1_CURRENT_HEADER_LEN + self.l1_current_data.len()]
