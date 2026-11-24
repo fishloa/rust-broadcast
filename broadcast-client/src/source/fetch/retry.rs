@@ -106,7 +106,7 @@ pub(crate) fn retry_after(
 /// How long a connection must stay up before the retry series restarts from its floor: a peer
 /// that accepts a connection and drops it seconds later, repeatedly, is a failing peer, so the
 /// backoff (and the attempt counter) only restarts after a connection at least this long.
-pub(crate) const HEALTHY_CONNECTION: Duration = Duration::from_millis(30_000);
+pub(crate) const HEALTHY_CONNECTION: Duration = Duration::from_secs(30);
 
 /// The reconnect timer (issue #2471: the workspace carried this rule once in multimux's origin
 /// supervisor and again in its push engine): a [`RetrySchedule`] plus the attempt counter, the
@@ -667,7 +667,7 @@ mod tests {
                     StatusCode::from_u16(503).unwrap(),
                     &date_pair(value, RESPONSE_DATE)
                 ),
-                us(Duration::from_millis(30_000)),
+                us(Duration::from_secs(30)),
                 "{value}"
             );
         }
@@ -683,7 +683,7 @@ mod tests {
                 at(NOW),
                 Some(&anchored())
             ),
-            Some(Duration::from_millis(30_000)),
+            Some(Duration::from_secs(30)),
             "no Date header needed"
         );
         let lying_date = date_pair(
@@ -697,7 +697,7 @@ mod tests {
                 at(NOW),
                 Some(&anchored())
             ),
-            Some(Duration::from_millis(30_000)),
+            Some(Duration::from_secs(30)),
             "the anchor wins over a skewed server Date"
         );
         assert_eq!(
@@ -920,7 +920,7 @@ mod tests {
     #[test]
     fn only_a_connection_that_stayed_up_for_the_healthy_span_restarts_the_series() {
         let mut timer = ReconnectTimer::new(
-            &steps(&[Duration::from_secs(1)], Duration::from_millis(30_000)),
+            &steps(&[Duration::from_secs(1)], Duration::from_secs(30)),
             0x5EED,
         )
         .expect("a one-step table under a larger cap");
@@ -950,7 +950,7 @@ mod tests {
     #[test]
     fn an_exhausted_attempt_series_saturates_instead_of_wrapping_to_a_fresh_series() {
         let mut timer = ReconnectTimer::new(
-            &steps(&[Duration::from_secs(1)], Duration::from_millis(30_000)),
+            &steps(&[Duration::from_secs(1)], Duration::from_secs(30)),
             0x5EED,
         )
         .expect("a one-step table under a larger cap");

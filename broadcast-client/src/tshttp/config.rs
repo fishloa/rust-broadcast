@@ -49,7 +49,7 @@ const DEFAULT_START_TIMEOUT: Duration = Duration::from_millis(15_000);
 /// Default stall notice: how long without progress before the stall event.
 const DEFAULT_STALL_NOTICE: Duration = Duration::from_millis(5_000);
 /// Default stall reconnect: how long a stalled pull waits before reconnecting.
-const DEFAULT_STALL_RECONNECT: Duration = Duration::from_millis(30_000);
+const DEFAULT_STALL_RECONNECT: Duration = Duration::from_secs(30);
 /// Default backoff steps.
 const DEFAULT_BACKOFF_STEPS: [Duration; 3] = [
     Duration::from_millis(2_000),

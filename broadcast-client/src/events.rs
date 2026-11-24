@@ -1104,7 +1104,7 @@ pub const DEFAULT_MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 /// Default maximum redirects a single request may follow.
 pub const DEFAULT_MAX_REDIRECTS: u32 = 5;
 /// Default maximum accepted HLS media resource body size.
-pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 1024 * 1024 * 64;
+pub const DEFAULT_MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
 /// Default per-request timeout for manifests (playlists).
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// Default per-request timeout for HLS media resources.
