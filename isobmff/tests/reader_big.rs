@@ -63,6 +63,7 @@ fn drive(path: &std::path::Path, order: SampleOrder) -> (u64, u64, Vec<ByteRange
                     .expect("supply");
             }
             Step::Tracks(tracks) => assert_eq!(tracks.len(), 2),
+            Step::Metadata(_) => {}
             Step::Sample(_) => samples += 1,
             Step::Done => break,
             _ => break,

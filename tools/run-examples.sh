@@ -86,6 +86,8 @@ example_args() {
         isobmff/list_samples) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff-tokio/list_samples) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff-tokio/read_sample) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
+        isobmff/read_tags)    echo "fixtures/mp4/progressive/av-prog.mp4" ;;
+        isobmff/write_tags)   echo "fixtures/mp4/progressive/av-prog.mp4 $WORKDIR/tags.udta" ;;
         dvr-runtime/list_programmes)
             echo "fixtures/ts/tnt-5w-12732v-isi6-10s.ts" ;;
         *) echo "" ;;

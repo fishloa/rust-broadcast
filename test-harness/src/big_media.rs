@@ -1103,6 +1103,7 @@ mod big_mp4_tests {
                 }
                 Step::Sample(sample) => samples.push(sample),
                 Step::Tracks(_) => {}
+                Step::Metadata(_) => {}
                 Step::Done => break,
                 _ => break,
             }

@@ -340,6 +340,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "isobmff_metadata"
+path = "fuzz_targets/isobmff_metadata.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "isobmff_reader_fragmented"
 path = "fuzz_targets/isobmff_reader_fragmented.rs"
 test = false

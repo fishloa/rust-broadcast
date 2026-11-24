@@ -61,6 +61,11 @@
 //!   sample entries, and the `esds` descriptor chain.
 //! - [`emsg`] — the MPEG-DASH Event Message Box (ISO/IEC 23009-1 §5.10.3.3,
 //!   version 0 and 1) and its version enum.
+//! - [`metadata`] — typed `udta`/`meta` metadata: QuickTime user-data text and
+//!   `©xyz`, 3GPP `loci`, `keys`/`ilst`/`data`/`mean`/`name` (iTunes
+//!   four-character and Apple `mdta` items), Nero `chpl`, and the logical
+//!   [`metadata::Metadata`] view. The reader emits it once as
+//!   [`reader::Step::Metadata`].
 //!
 //! # Spec citations
 //!
@@ -105,6 +110,7 @@ pub mod hdr_boxes;
 pub mod hevc_config;
 pub mod init_segment;
 pub mod limits;
+pub mod metadata;
 pub mod movie_fragment;
 pub mod mp4esds;
 pub mod mpegh;

@@ -64,6 +64,7 @@ impl<R: AsyncRead + AsyncSeek + Unpin> AsyncFileReader<R> {
                 }
                 Advance::Fragment(info) => return Ok(DriverStep::Fragment(info)),
                 Advance::Sample(sample) => return Ok(DriverStep::Sample(sample)),
+                Advance::Metadata(_) => {}
                 Advance::Done => return Ok(DriverStep::Done),
             }
         }

@@ -79,6 +79,7 @@ fn reader_rows(bytes: &[u8]) -> isobmff::Result<(Vec<isobmff::TrackId>, Vec<Samp
             }
             Step::Sample(sample) => samples.push(sample),
             Step::Tracks(infos) => tracks = infos.iter().map(|info| info.track_id).collect(),
+            Step::Metadata(_) => {}
             Step::Done => break,
             _ => break,
         }

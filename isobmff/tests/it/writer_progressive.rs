@@ -54,6 +54,7 @@ fn read_all(bytes: &[u8]) -> (Vec<TrackInfo>, Vec<SampleRef>, Option<OwnedPlan>)
                     .expect("supply");
             }
             Step::Tracks(step_tracks) => tracks = step_tracks.to_vec(),
+            Step::Metadata(_) => {}
             Step::Sample(sample) => samples.push(sample),
             Step::Done => break,
             _ => break,

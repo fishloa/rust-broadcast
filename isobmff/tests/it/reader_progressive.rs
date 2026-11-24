@@ -35,6 +35,7 @@ fn drive(bytes: &[u8], config: ReaderConfig) -> isobmff::Result<Outcome> {
                 reader.supply(range.offset, slice)?;
             }
             Step::Tracks(tracks) => outcome.tracks = tracks.to_vec(),
+            Step::Metadata(_) => {}
             Step::Sample(sample) => outcome.samples.push(sample),
             Step::Done => break,
             _ => break,
@@ -575,6 +576,7 @@ fn seek_lands_on_the_sync_sample_at_or_before_the_time() {
                     .expect("supply");
             }
             Step::Tracks(tracks) => track = tracks.first().map(|info| info.track_id),
+            Step::Metadata(_) => {}
             Step::Done | Step::Sample(_) => break,
             _ => break,
         }

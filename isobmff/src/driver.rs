@@ -123,6 +123,8 @@ pub enum Advance {
     Fragment(crate::reader::FragmentInfo),
     /// One sample descriptor.
     Sample(SampleRef),
+    /// The movie's and tracks' metadata.
+    Metadata(crate::metadata::MovieMetadata),
     /// No more steps.
     Done,
 }
@@ -134,6 +136,7 @@ pub fn advance(step: Step<'_>) -> core::result::Result<Advance, DriverError> {
         Step::Tracks(tracks) => Ok(Advance::Tracks(tracks.to_vec())),
         Step::Fragment(info) => Ok(Advance::Fragment(info)),
         Step::Sample(sample) => Ok(Advance::Sample(sample)),
+        Step::Metadata(metadata) => Ok(Advance::Metadata(metadata.clone())),
         Step::Done => Ok(Advance::Done),
     }
 }
@@ -198,6 +201,7 @@ impl<R: Read + Seek> FileReader<R> {
                 }
                 Advance::Fragment(info) => return Ok(DriverStep::Fragment(info)),
                 Advance::Sample(sample) => return Ok(DriverStep::Sample(sample)),
+                Advance::Metadata(_) => {}
                 Advance::Done => return Ok(DriverStep::Done),
             }
         }
@@ -305,6 +309,7 @@ impl<R: Read> ForwardReader<R> {
                 }
                 Advance::Fragment(info) => return Ok(DriverStep::Fragment(info)),
                 Advance::Sample(sample) => return Ok(DriverStep::Sample(sample)),
+                Advance::Metadata(_) => {}
                 Advance::Done => return Ok(DriverStep::Done),
             }
         }

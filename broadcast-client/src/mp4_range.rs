@@ -146,6 +146,7 @@ impl RangeReader {
                 Advance::Sample(sample) => {
                     return Ok(RangeAction::Step(DriverStep::Sample(sample)));
                 }
+                Advance::Metadata(_) => {}
                 Advance::Done => return Ok(RangeAction::Done),
             }
         }

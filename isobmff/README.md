@@ -57,6 +57,7 @@ It never knows the media IR or a codec bitstream.
 | `driver` | blocking drivers over the reader: `FileReader` (`Read + Seek`) and `ForwardReader` (`Read` only), with a bounded reusable buffer |
 | `timing` (random access) | `tfra`, `mfra`, `mfro` |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
+| `metadata` | `udta`, `meta`, `hdlr`, `keys`, `ilst`, `data`, `mean`, `name`, `chpl`, `loci`; QuickTime user-data text and `©xyz` ISO 6709 |
 
 Every type implements the workspace `Parse` / `Serialize` pair, so a parse →
 serialize round-trip is byte-identical.
@@ -94,7 +95,7 @@ let ftyp = FileTypeBox {
 let bytes = ftyp.try_to_bytes().unwrap();
 ```
 
-Four runnable examples ship with the crate:
+Six runnable examples ship with the crate:
 
 ```bash
 cargo run -p isobmff --example parse_boxes -- fixtures/mp4/h264-aac-prog.mp4
@@ -102,6 +103,8 @@ cargo run -p isobmff --example build_ftyp
 cargo run -p isobmff --example parse_emsg
 cargo run -p isobmff --example build_emsg
 cargo run -p isobmff --example list_samples -- fixtures/mp4/progressive/av-prog.mp4
+cargo run -p isobmff --example read_tags -- fixtures/mp4/progressive/av-prog.mp4
+cargo run -p isobmff --example write_tags -- fixtures/mp4/progressive/av-prog.mp4 /tmp/tags.udta
 ```
 
 ## Drivers
@@ -154,3 +157,7 @@ only needs an index never reads media.
 - **Skip-unknown rule**: §4.2 — unknown type → ignore + skip via `size`.
 - **CENC boxes**: ISO/IEC 23001-7 §12.
 - **`emsg`**: ISO/IEC 23009-1 §5.10.3.3; DASH-IF IOP Part 10 §6.1.
+- **Metadata (`udta`/`meta`/`keys`/`ilst`)**: QuickTime File Format
+  (`private/specs-verified/apple/isobmff/quicktime-file-format-online.md`),
+  ISO/IEC 14496-12:2026 §8.10.1/§8.11, and 3GPP TS 26.244 Table 8.10 for
+  `loci`.

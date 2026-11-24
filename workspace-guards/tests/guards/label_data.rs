@@ -1862,6 +1862,18 @@ pub const TABLE: &[Crate] = &[
             "Advance",
             "DriverError",
             "DriverStep",
+            // Typed metadata ADTs: every variant wraps a distinct structured
+            // value (a text value and its locale, a chapter list, an unknown
+            // box), so the variant *is* the label; `MetaFlavor` is a
+            // detection result (ISO full box vs QuickTime bare `meta`), not a
+            // spec/field code.
+            "ItemKey",
+            "TextLocale",
+            "MetadataItem",
+            "IlstItemChild",
+            "MetaChild",
+            "MetaFlavor",
+            "UdtaChild",
         ],
         expected: None,
         min_enums: None,

@@ -69,3 +69,11 @@ required-features = ["std"]
 [[example]]
 name = "list_samples"
 required-features = ["std"]
+
+[[example]]
+name = "read_tags"
+required-features = ["std"]
+
+[[example]]
+name = "write_tags"
+required-features = ["std"]
