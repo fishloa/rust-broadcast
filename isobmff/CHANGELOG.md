@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `metadata`, typed MP4 metadata in both directions: `udta` user-data text
+  (QuickTime international text and the 3GPP null-terminated form), `©xyz` as
+  an `Iso6709` with `latitude()`/`longitude()`/`altitude()`, the 3GPP `loci`
+  box, Nero `chpl` chapter lists, and `meta` with `hdlr`, `keys`, `ilst`
+  (both the iTunes four-character items and Apple's `mdta` keyed items),
+  `data`/`mean`/`name` and `----` freeform items. Every unknown atom, data
+  type, `free` pad and item order round-trips byte for byte as an
+  `OpaqueBox`. `Metadata`/`MetadataItem` is the logical view and
+  `Metadata::to_udta`/`to_meta` write it back; `MovieMetadata` carries the
+  movie's and each track's items.
+- `MovieBox::metadata`/`TrackBox::metadata` parse the preserved `udta`/`meta`
+  children under the caller's `Limits` without changing the typed tree, so
+  every existing init-segment golden stays byte-identical.
+- `Step::Metadata(&MovieMetadata)` from `reader::Reader`, emitted once after
+  `Step::Tracks` when the movie or a track carries `udta` or `meta`.
+- `read_tags` and `write_tags` examples.
+
 - `writer::Writer::progressive`, the sans-IO progressive (single-file) writer:
   it fixes the whole layout from an `OwnedPlan` before a sample byte arrives
   (interleaved chunks, `stco` or `co64`, the `mdat` header form and every
