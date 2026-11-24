@@ -13,6 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   onto.
 - `nal::NAL_TYPE_MASK` (the 5-bit H.264 `nal_unit_type` mask of ITU-T H.264 §7.3.1) and `cenc::KEY_LEN` (the AES-128 content-key width) are the one definitions of those values, exported from the modules that own them; `sample_aes::NAL_TYPE_MASK` keeps its existing path as a re-export; `sample_aes::KEY_LEN` no longer does (see Breaking).
 
+- `mp4_demux::Mp4Demux`, the one streaming MP4 demux stage: it drives
+  `isobmff::reader::Reader` through `Stage`, answering its byte demands itself
+  and emitting `DemuxEvent`s. `Mp4Demux::seekable` asks for one byte range per
+  structure or sample request (neighbouring samples coalesce up to the
+  caller's `Mp4DemuxConfig::read_window`, `None` by default), and
+  `Mp4Demux::sequential` takes forward-only input and holds at most one
+  bounded unit. `Mp4Input::{At, Next, Eof}` is the input shape; feeding the
+  wrong one is `Error::InvalidInput`. A second `moov` is a typed
+  `Error::InvalidInput` telling the caller to start a new stage.
+- `Error::InputRangeMismatch { expected_offset, expected_len, got_offset,
+  got_len }`: a caller-supplied byte range did not match the one the stage
+  asked for.
+- `AbandonReason::{UnsupportedSampleEntry { fourcc }, UnsupportedCodec,
+  MalformedTrack { expected }}` and `InputDegradation::TruncatedUnit
+  { position }`, the causes the streaming MP4 demux reports for a track it
+  cannot map and for a final unit cut short.
+
 ### Changed
 - Internal: `ProgressiveMux::package` builds an `isobmff::plan::OwnedPlan` from
   its `Media` and writes the file through
@@ -33,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table builders. Output is unchanged; the per-sample tables are no longer
   expanded into one vector entry per sample.
 - Internal: the crate keeps one definition of each shared constant instead of a per-module copy — the box/full-box header widths, four-CC length and flag mask in `box_types`, the NAL header widths, type masks and parameter-set types in `nal`/`nalu_types`, the key width in `cenc`, and a new crate-private `units` module for the kilobit and round-to-nearest divisors. Byte-width constants are now `size_of::<T>()`/`T::BITS` at the use site. No output, behaviour or public signature changes.
+
+- Internal: the shared MP4 conditioning helpers now take the reader's
+  `isobmff::reader::TrackInfo` view and one sample at a time
+  (`track_spec_from_track_info`, `refine_legacy_config(config, first_sample)`,
+  `normalise_nal_lengths`, `normalise_spec_nal_length`,
+  `InbandDisplayTagger`), so the streaming stage reuses the same code as the
+  whole-input demuxers; their output is unchanged.
 
 ### Breaking
 - **BREAKING:** `fragment_build` is gone. `FragmentProtection`,
