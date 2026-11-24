@@ -11,6 +11,8 @@ Tracking: #4057 (whole-file inputs), #4056 (MP4 metadata tracks), #953 (closed w
 
 **MP4 parsing has the wrong home.** The MP4 box code is mature (owner, 2026-11-24), but it lives inside `transmux`. To parse MP4 today, a consumer must depend on transmux and its 13 required dependencies (dvb-si, rtmp-runtime, cc-data, broadcast-hls, mpeg-ps, rtp-packet, …). Inside the workspace, seven crates walk MP4 boxes by hand (container-probe, dash-runtime, dvr-runtime, hls-runtime, media-plane, media-doctor, test-harness), and `mp4-emsg` is a separate MP4 box crate. Outside it, telemetry-parser maintains a fork of Mozilla's stalled `mp4parse` because nothing better exists. A lean, seekable, maintained MP4 crate fixes our duplication and becomes something other projects would want.
 
+**The aim is to be the default crates for this work** (owner, 2026-11-24). The widely used MP4 crates are abandoned: `mp4` (about 3.9M recent downloads) and Mozilla's `mp4parse` (about 2.2M) both last released in 2023. A maintained crate that reads and writes, seeks, bounds memory and is fuzzed can take that place, but only if outside projects can depend on it without churn (§4.6), it covers what those users do (§4.7), and it is easy to start with (§4.8).
+
 **Drone/camera telemetry** (DJI `djmd`, GoPro `gpmd`, Google `camm`, `tx3g` captions, `©xyz`) is a useful second goal. It needs the same reader to keep metadata tracks instead of dropping them.
 
 ## 2. Principles (binding)
@@ -22,6 +24,7 @@ Tracking: #4057 (whole-file inputs), #4056 (MP4 metadata tracks), #953 (closed w
 - **P5. One crate per purpose.** One MP4 box implementation in the workspace. Container syntax lives in crates below transmux that depend only on broadcast-common, following broadcast-hls, broadcast-dash and broadcast-smooth.
 - **P6. The whole-input API is deleted, not wrapped** (owner chose option B). `Unpackage`/`Package`/`Encrypt`/`Decrypt`, the `Media` and `Track` types, and every `&[u8]`-whole-file demux entry point go. `Media` does not survive as a carrier for one segment either: a type that can hold a segment can hold a file, and no guard can tell the two apart. A stage that must hold a bounded unit buffers it itself, under its own limit (§4.4). A `workspace-guards` family keeps the deleted names gone.
 - **P7. Output is byte-identical.** Every existing golden and fixture round-trip produces identical bytes at every phase. The rewrite changes how bytes are reached, not what is produced.
+- **P9. A foundation that does not break.** A crate meant for outside adoption depends only on a small frozen core, never on anything that majors for unrelated reasons (§4.6).
 - **P8. A fact about the whole input comes from a plan, never from held samples.** Timeline origin, total duration, sample sizes and counts are read from a *sample plan* (§4.4): sample descriptors without sample bytes. A seekable container gives one from its index. A replayable forward-only input gives one from a descriptor-only pass. An input that can give neither gets a bounded start window or a typed refusal, never a silent different answer.
 
 ## 3. Goals, non-goals, anti-goals
@@ -33,12 +36,16 @@ Tracking: #4057 (whole-file inputs), #4056 (MP4 metadata tracks), #953 (closed w
 - A standalone `isobmff` crate: complete box syntax, sans-IO seekable reader and writer, depends only on broadcast-common, good enough for external projects to adopt.
 - MP4 metadata tracks and clip location are surfaced, not dropped (#4056).
 - transmux's required dependencies shrink to what its core needs; everything else becomes a feature.
+- A frozen `broadcast-core` at 1.0 under `isobmff` and the other wire-format crates, so a consumer of one of them never takes a breaking release caused by an unrelated module (§4.6).
+- `isobmff` covers the common outside uses of an MP4 crate: iTunes-style tags, QuickTime `.mov` input, and real-world malformed files in a permissive mode (§4.7).
+- First-class streaming adapters for files, tokio and HTTP ranges, so the easy path is also the bounded one (§4.8).
 
 **Non-goals**
 - Decoding codec payloads (still opaque samples).
 - Decoding DJI `djmd` or other camera telemetry payloads (a separate owner decision, §10).
 - Moving codec *bitstream* parsers (SPS/PPS, AAC AudioSpecificConfig, AC-3, DTS, VVC, AVS3, Dolby Vision, HDR10+) out of transmux. They are container-independent and shared with TS; a future `codec` crate is noted in §10, not done here.
 - Performance work beyond bounded memory and a sane number of reads.
+- HEIF/AVIF still images (`iloc`/`iinf` item storage). A large area with its own users; noted in §11, not done here.
 - A single-pass progressive MP4 from an input that cannot be replayed. That file would need a second layout (64-bit `mdat` placeholder, arrival-order chunks, no fast start) that no golden covers. Fragmented MP4 is the format for that job. The writer refuses with a typed error (§4.3).
 
 **Anti-goals (a failure even if it "works")**
@@ -53,11 +60,12 @@ Tracking: #4057 (whole-file inputs), #4056 (MP4 metadata tracks), #953 (closed w
 
 | Crate | Owns | Depends on |
 |---|---|---|
-| `isobmff` (new) | All ISO/IEC 14496-12 box syntax, 14496-15 codec configuration boxes (`avcC`, `hvcC`, `vvcC`, `av1C`, `vpcC`, `dac3`, `dec3`, `dac4`, `dOps`, `dfLa`, `ddts`/`udts`, `mhaC`, `esds`), 14496-30 subtitle entries, 23001-7 CENC boxes (`tenc`, `senc`, `saiz`, `saio`, `pssh`, `sinf`, `schm`), `emsg` (absorbed from `mp4-emsg`, which is deleted), `udta`/`meta`/`©xyz`, sample groups. The sans-IO `Reader` and `Writer` (§4.2, §4.3). `Limits`. | broadcast-common |
-| `broadcast-matroska` (new, Phase 5) | EBML + Matroska/WebM syntax, sans-IO reader (Cues-driven seeking) and writer. Absorbs `transmux/src/webm_demux.rs` and `mkv_mux.rs` syntax. | broadcast-common |
+| `broadcast-core` (new, Milestone 2) | The frozen wire-format contract: `Parse`/`Serialize`, the checked length helpers (`len`), the bit reader/writer (`bits`), the shared error kinds, `impl_spec_display!`, `reserved`, `timescale`, `CencScheme`. `no_std`+`alloc`, no dependencies. Released at 1.0 and held there (§4.6). | — |
+| `isobmff` (new) | All ISO/IEC 14496-12 box syntax, 14496-15 codec configuration boxes (`avcC`, `hvcC`, `vvcC`, `av1C`, `vpcC`, `dac3`, `dec3`, `dac4`, `dOps`, `dfLa`, `ddts`/`udts`, `mhaC`, `esds`), 14496-30 subtitle entries, 23001-7 CENC boxes (`tenc`, `senc`, `saiz`, `saio`, `pssh`, `sinf`, `schm`), `emsg` (absorbed from `mp4-emsg`, which is deleted), `udta`/`meta`/`©xyz`, iTunes-style `ilst` metadata, QuickTime-specific atoms on read (§4.7), sample groups. The sans-IO `Reader` and `Writer` (§4.2, §4.3). `Limits`. The `std` adapter (§4.8). | broadcast-common in Milestone 1; `broadcast-core` only from Milestone 2 |
+| `broadcast-matroska` (new, Phase 5) | EBML + Matroska/WebM syntax, sans-IO reader (Cues-driven seeking) and writer. Absorbs `transmux/src/webm_demux.rs` and `mkv_mux.rs` syntax. | `broadcast-core` |
 | `mpeg-ts`, `mpeg-pes`, `mpeg-ps`, `rtmp-runtime` (FLV) | Unchanged ownership. PS gains a streaming front end (Phase 5). | as today |
 | `transmux` | The neutral IR (`TrackSpec`, `Sample`, `CodecConfig`, `DemuxEvent`, the sample plan), codec bitstream glue, mapping between container syntax and IR, the streaming demux and mux stages, pipelines, CLI. No `Media`, no `Track`. | broadcast-common, isobmff, mpeg-ts, mpeg-pes required; the rest behind features |
-| `broadcast-common` | `Stage` stays and `Demand` gains an optional absolute offset (§4.4). A `std`-gated capped-read helper (§6). The `mux` traits (`Unpackage`, `Package`, `Encrypt`, `Decrypt`) are deleted. | — |
+| `broadcast-common` | Everything not in `broadcast-core`: `Stage`, `clock33`, `klv`, `ber`, `xml`, `time`, `net`, `backoff` and the rest. It depends on `broadcast-core` and does not re-export it. `Stage` stays and `Demand` gains an optional absolute offset (§4.4). A `std`-gated capped-read helper (§6). The `mux` traits (`Unpackage`, `Package`, `Encrypt`, `Decrypt`) are deleted. | — |
 
 The seven hand-rolled box walkers move onto `isobmff` (Phase 1).
 
@@ -120,6 +128,39 @@ A thin `std` adapter (feature `std`) drives a `Reader` over `Read + Seek` for ca
 
 **Tests and tooling** that want "all samples of this small fixture" collect `DemuxEvent`s into per-track `Vec`s with a helper in the `publish = false` `test-harness` crate, taken as a path-only dev-dependency. It is never available to non-test code.
 
+### 4.6 `broadcast-core`: a foundation that does not break
+
+broadcast-common is at major 14 and holds about 35 modules, from the `Parse`/`Serialize` traits to an XML reader, a backoff policy and HTTP dates. Any break in any module is a major, and under epoch purity every crate above it then takes a major-class release. An outside project that adopts `isobmff` would get a breaking bump because an unrelated module changed. No project builds on that.
+
+The MP4 box code uses five things from broadcast-common: `len`, the error kinds, `timescale`, `impl_spec_display!` and `CencScheme`, plus the two traits. That set is small and settled.
+
+- `broadcast-core` holds exactly the wire-format contract listed in §4.1. It has no dependencies and no optional features beyond `std` and `serde`.
+- It is released at 1.0 and stays there. An addition is a minor. A break needs an owner decision recorded in this repo and is expected never to happen; a `workspace-guards` check pins its public API (the committed `cargo public-api` listing may only grow).
+- Every wire-format crate (`isobmff`, `broadcast-matroska`, `mpeg-ts`, `mpeg-pes`, `mpeg-ps`, `dvb-si` and the rest) depends on `broadcast-core`. Only crates that need the volatile helpers also depend on broadcast-common.
+- broadcast-common keeps its name and everything else. Items that moved are deleted from it, not re-exported, and every crate's imports change in the Milestone 2 re-release, which is breaking for all of them already.
+- It lands in Milestone 2 because that is the one planned workspace-wide break. `isobmff` 0.1 (Milestone 1) depends on broadcast-common; `isobmff` 0.2 (Milestone 2) depends only on `broadcast-core`. Outreach to outside projects (§11) starts from 0.2.
+- `isobmff` then has its own path to 1.0: after the reader, writer and §4.7 coverage have been used by transmux and at least one outside adopter for one release cycle without an API change.
+
+### 4.7 Coverage outside users need
+
+These shape the `isobmff` API, so they are in scope here rather than added later.
+
+- **iTunes-style metadata** (`moov/udta/meta/ilst`): typed read and write of the common atoms (title, artist, album, track and disc numbers, date, genre, cover art, encoder), freeform `----` items, and chapter lists (Nero `chpl` and QuickTime chapter tracks, read). Tag reading is the most common reason a project takes an MP4 crate. Cover art is a bounded unit under `Limits`.
+- **QuickTime `.mov` input**: the atoms camera and editing files carry that ISO files do not: `wave` and version 1/2 sound sample descriptions, `wide`, `mdta`-keyed metadata (`keys`/`ilst`), `tapt`/`clef`, `gmhd` and `tmcd` timecode tracks, a QuickTime-brand `ftyp` or none at all. Read support; writing `.mov` is not a goal.
+- **Permissive mode**: `Limits`-style configuration picks strict (today's behaviour: any violation is an error) or permissive. Permissive tolerates the known real-world faults and reports each as a typed warning event instead of failing: an unknown sample entry (kept as an opaque track, which #4056 needs anyway), a box that overruns its parent by trailing bytes, a `wave` atom without `esds`, a zero `mvhd` timescale, a truncated final `mdat`. It never guesses a field value and never relaxes a `Limits` bound. Strict stays the default inside the workspace; byte-identical round-trips are a strict-mode property.
+- Each of these gets real fixtures first (camera originals, an iTunes-tagged `.m4a`, a QuickTime `.mov`), in `private/fixtures/` with PROVENANCE, and the spec transcription where one exists (QuickTime File Format is Apple-published; the `ilst` atom set is documented by Apple and by long-standing convention, so each atom is cited to its source or left opaque).
+
+### 4.8 The easy path is the bounded path
+
+sans-IO is right for the core and too much ceremony for a first use. The crates ship drivers so that five lines open a file and iterate samples, and those five lines still stream.
+
+- `isobmff` feature `std`: a driver over `Read + Seek` (and over `Read` alone for forward-readable files), giving an iterator of steps and a `read_sample` that fills a caller buffer.
+- A tokio driver over `AsyncRead + AsyncSeek`, in a small adapter crate so `isobmff` itself never depends on tokio.
+- An HTTP range driver in broadcast-client, so a remote MP4 can be inspected without downloading it.
+- transmux gets the matching one-call drivers for "this file to that output".
+- Every driver is covered by the bounded-memory tests of §6. None of them offers a "read it all" call.
+- Each crate's README opens with the five-line example, and `isobmff` carries migration notes for users of `mp4` and `mp4parse`.
+
 ### 4.5 Limits and defaults (builder may tune with evidence)
 
 | Limit | Default | Reason |
@@ -164,6 +205,7 @@ Each phase lands on main green, with byte-identical goldens, before the next sta
 - §4.2 and §4.3, including metadata tracks and `©xyz` (#4056) and `Limits`.
 - broadcast-common minor: `Demand`'s optional offset and the capped-read helper (§6). Both additive.
 - Fuzz targets for the reader (progressive and fragmented) and writer round-trip.
+- The §4.7 coverage (tags, `.mov` input, permissive mode) and the §4.8 drivers, each behind its real fixtures.
 - Gate: peak-memory tests over generated multi-GB files; hostile-count/size tests; a remote-fixture test over an HTTP range adapter that bounds the number of requests.
 
 **Phase 3 – streaming MP4 demux in transmux and its consumers.**
@@ -190,6 +232,7 @@ Each phase lands on main green, with byte-identical goldens, before the next sta
 - Every binary and tool that takes a media file streams it: `dvb-tools`, `ts-fix`, `media-doctor`, `compliance-probe`, the `tools/` binaries.
 - transmux dependency diet: dvb-si, rtmp-runtime, cc-data, broadcast-hls, rtp-packet, mpeg-ps and mp4-emsg's successor become features where they are not core.
 - New `workspace-guards` family `bounded_input` (§6).
+- `broadcast-core` 1.0 is split out of broadcast-common (§4.6) and every wire-format crate moves onto it, in the same workspace-wide re-release.
 
 **Phase 7 – follow-ons (separate decisions, §10).**
 - Telemetry normalisation in `motion-imagery-metadata`.
@@ -210,7 +253,7 @@ Every phase, run by Claude on its own gate run, never on a delegate's word:
 
 - Phase 0 ships at once as multimux/media-plane/dvr-runtime patch or minor releases.
 - **Milestone 1 (Phases 1–3)**: `isobmff` 0.1 (new crate), broadcast-common minor (additive), transmux major-class (MP4 types move crates, whole-input MP4 demux deleted), consumers bumped under epoch purity. `mp4-emsg` gets no further release; its README points to `isobmff`, and every crate that used it moves in this wave so no graph holds both.
-- **Milestone 2 (Phases 4–6)**: broadcast-common major (mux traits deleted), transmux major-class (`Media`, `Track` and every `Package` impl deleted), every workspace crate re-released on the new broadcast-common, `broadcast-matroska` 0.1. broadcast-common is published first and goes live before anything else, so no graph ever holds two of it. Any other pending broadcast-common break rides this major rather than causing another.
+- **Milestone 2 (Phases 4–6)**: `broadcast-core` 1.0 (new, published first of all), broadcast-common major (mux traits deleted, core items moved out), transmux major-class (`Media`, `Track` and every `Package` impl deleted), every workspace crate re-released on the new broadcast-common, `broadcast-matroska` 0.1. broadcast-common is published first and goes live before anything else, so no graph ever holds two of it. Any other pending broadcast-common break rides this major rather than causing another.
 - Two breaking waves of transmux, not more: each one re-releases its 16 consumers.
 - **Python bindings** (outside the workspace, they build against published crates, so they follow each milestone after it is live):
   - `transmux-py`: `demux_ts(bytes) -> dict` is removed, not kept. It is replaced by a `Demuxer` class with `feed(bytes)` returning the events so far and `finish()`, the shape `dvb-si-py`'s `Demux` already has, plus a generator that reads a Python file object in chunks and yields track and sample events. A breaking release on PyPI after Milestone 2. It is not frozen on an old transmux: a frozen binding keeps publishing the whole-input philosophy and pins users to a dead line.
@@ -229,6 +272,16 @@ Every phase, run by Claude on its own gate run, never on a delegate's word:
 - **Seek count**: decode-time order over a file that is not interleaved alternates between tracks. Reads are coalesced per track up to the read-ahead limit, and the HTTP range test bounds request counts on both an interleaved and a non-interleaved fixture.
 - **Golden drift**: a move that silently changes bytes. Byte identity is the gate at every phase.
 - **Dev-dependency cycles** when tests move with the box code: cross-crate tests live in the highest crate.
+
+## 11. Adoption programme (starts when Milestone 1 ships)
+
+Not design work, but what turns good crates into the default ones. Tracked as issues, run alongside Phases 4 to 6.
+
+- **Public proof.** Differential runs against ffmpeg, Bento4 and Shaka Packager over public corpora (ffmpeg FATE samples, the GPAC test suite), with results published in the repo. OSS-Fuzz enrolment for `isobmff`, `mpeg-ts` and `dvb-si`. Published benchmarks: peak memory and throughput against Bento4 and Shaka on the #953 input.
+- **Tools people install.** Prebuilt binaries and a Homebrew formula for `media-doctor` and the `transmux` CLI, built by CI on tag. An `mp4dump`-style box inspector subcommand. A browser (WASM) inspector on the Pages site: drop a file, see its boxes, nothing uploaded.
+- **Project signals.** A CONTRIBUTING guide that says which tests run without the private fixtures (the public tier must be enough for an outside PR). A public roadmap. A docs site with a cookbook. Whether the repo moves to a GitHub organisation is an owner decision.
+- **Adopters.** Upstream PRs once `isobmff` 0.2 is live: telemetry-parser/Gyroflow (replace `mp4parse-patched`), Rerun (`re_mp4` exists because `mp4` died), `retina`. One well-known user is worth more than any README.
+- **Later coverage.** HEIF/AVIF items. A `codec` crate for the container-independent bitstream parsers. Single-pass progressive output as its own tested feature.
 
 ## 9. Left to the builder
 
@@ -277,4 +330,5 @@ Separate owner decisions, not blocking this design:
 - The capped-read helper lives in broadcast-common behind `std`.
 - The broadcast-common major and the workspace re-release at Milestone 2.
 - Crate names `isobmff` and `broadcast-matroska`.
+- The aim is to be the default crates for this work. Folded in: a frozen `broadcast-core` 1.0 (§4.6), tags, `.mov` input and permissive mode in `isobmff` (§4.7), streaming drivers (§4.8), and the adoption programme (§11). The name `broadcast-core` is free on crates.io and is confirmed at the Milestone 2 sign-off.
 - The §4.5 defaults are starting estimates, confirmed by measurement in Phase 2.
