@@ -670,7 +670,7 @@ const HDLR_PRE_DEFINED_LEN: usize = 4;
 /// Byte offset of `pre_defined` (§8.4.3.2).
 const HDLR_PRE_DEFINED_OFFSET: usize = 12;
 /// Reserved bytes after `handler_type` (§8.4.3.2).
-const HDLR_RESERVED_LEN: usize = 12;
+pub const HDLR_RESERVED_LEN: usize = 12;
 
 /// Handler Box (`hdlr`) — §8.4.3.
 /// Declares the media handler type (`vide`, `soun`, etc.) and an optional name.

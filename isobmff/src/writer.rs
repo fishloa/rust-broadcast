@@ -543,7 +543,7 @@ fn track_handler(t: &TrackSetup) -> HandlerBox {
         version: 0,
         flags: 0,
         pre_defined: 0,
-        reserved: [0u8; 12],
+        reserved: [0u8; crate::init_segment::HDLR_RESERVED_LEN],
         handler_type: t.handler,
         name: t.handler_name.clone(),
     }

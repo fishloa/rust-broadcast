@@ -70,7 +70,7 @@ use core::fmt;
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::box_types::{BOX_TYPE_SIZE, BoxIter, UUID, parse_box};
+use crate::box_types::{BOX_TYPE_SIZE, BoxIter, UUID, UUID_TYPE_SIZE, parse_box};
 use crate::error::{Error, Result};
 
 /// The parsed value of a registered box, cloneable and byte-comparable.
@@ -166,7 +166,7 @@ pub trait BoxDef:
     /// The box's four-CC.
     const FOURCC: [u8; BOX_TYPE_SIZE];
     /// The `uuid` extended type, when the box is a `uuid` box (§4.2).
-    const UUID: Option<[u8; 16]> = None;
+    const UUID: Option<[u8; UUID_TYPE_SIZE]> = None;
     /// The parent box this registration is scoped to, when it is scoped.
     const PARENT: Option<[u8; BOX_TYPE_SIZE]> = None;
 }
@@ -215,7 +215,7 @@ enum BoxKey {
     /// A box addressed by its four-CC.
     FourCc([u8; BOX_TYPE_SIZE]),
     /// A `uuid` box addressed by its extended type (§4.2).
-    Uuid([u8; 16]),
+    Uuid([u8; UUID_TYPE_SIZE]),
 }
 
 /// The parse closure type one registration holds.
@@ -790,7 +790,7 @@ mod tests {
 
         impl BoxDef for UuidBox {
             const FOURCC: [u8; BOX_TYPE_SIZE] = *b"uuid";
-            const UUID: Option<[u8; 16]> = Some([3u8; 16]);
+            const UUID: Option<[u8; UUID_TYPE_SIZE]> = Some([3u8; UUID_TYPE_SIZE]);
         }
 
         let mut registry = BoxRegistry::new();

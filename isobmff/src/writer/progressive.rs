@@ -48,6 +48,9 @@ const STBL_CTTS_INDEX: usize = 2;
 /// Writes [`ProgressiveWriter::header`] can return: `ftyp`, `moov` and the
 /// `mdat` header.
 const HEADER_WRITES: usize = 3;
+/// Writes [`ProgressiveWriter::finish`] reserves on top of the carried
+/// top-level boxes: the trailing `moov` and nothing else.
+const TRAILER_WRITES: usize = 2;
 
 /// Where a finished file's bytes go.
 #[non_exhaustive]
@@ -582,8 +585,9 @@ impl ProgressiveWriter {
                 .append(&self.extras.after_mdat, &mut offset, &mut out);
             return Ok(out);
         }
-        let mut out =
-            Vec::with_capacity(2 + self.extras.after_mdat.len() + self.extras.after_moov.len());
+        let mut out = Vec::with_capacity(
+            TRAILER_WRITES + self.extras.after_mdat.len() + self.extras.after_moov.len(),
+        );
         let mut offset = self.payload_offset.saturating_add(self.payload_len);
         self.extras
             .append(&self.extras.after_mdat, &mut offset, &mut out);
