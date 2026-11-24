@@ -105,6 +105,7 @@ mod ll_hls;
 mod ll_packager;
 mod manifest_protection;
 mod mkv_mux;
+mod mp4_demux;
 mod mpeg_legacy;
 mod mpegh;
 mod mpegh_ts;

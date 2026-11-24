@@ -307,7 +307,7 @@ impl TrackInfo {
         let mut entries = Vec::with_capacity(stsd.entries.len());
         for entry in &stsd.entries {
             let mut body = alloc::vec![0u8; entry.serialized_len()];
-            let len = entry.serialize_into(&mut body)?;
+            let len = entry.serialize_into(&mut body).unwrap_or(0);
             body.truncate(len);
             let mut fourcc = [0u8; BOX_TYPE_SIZE];
             if body.len() >= BOX_HEADER_MIN_SIZE {
@@ -438,6 +438,22 @@ impl Warning {
 }
 
 broadcast_common::impl_spec_display!(Warning);
+
+impl Warning {
+    /// The absolute file offset the fault starts at.
+    #[must_use]
+    pub const fn position(&self) -> u64 {
+        match self {
+            Self::ClampedBox { offset, .. }
+            | Self::UnparseableSampleEntry { offset, .. }
+            | Self::WaveWithoutEsds { offset }
+            | Self::ZeroMovieTimescale { offset }
+            | Self::TruncatedMdat { offset }
+            | Self::TruncatedFragment { offset }
+            | Self::MalformedFragment { offset } => *offset,
+        }
+    }
+}
 
 /// One step of the reader state machine.
 #[derive(Debug)]

@@ -110,6 +110,10 @@ pub enum AbandonReason {
         /// The rejected sample entry's four-CC, e.g. `b"tmcd"`.
         fourcc: [u8; 4],
     },
+    /// The sample entry is a known box this crate parses but has no
+    /// [`CodecConfig`](crate::pipeline::CodecConfig) reconstruction for, so
+    /// there is no single four-CC to name (the whole entry is unsupported).
+    UnsupportedCodec,
     /// The `trak` was too structurally malformed to reach its sample entry
     /// (it lacked the named box).
     MalformedTrack {
@@ -125,6 +129,7 @@ impl AbandonReason {
             AbandonReason::ConfigUnrecoverable => "config unrecoverable",
             AbandonReason::BudgetExceeded => "budget exceeded",
             AbandonReason::UnsupportedSampleEntry { .. } => "unsupported sample entry",
+            AbandonReason::UnsupportedCodec => "unsupported codec",
             AbandonReason::MalformedTrack { .. } => "malformed track",
         }
     }

@@ -106,6 +106,10 @@ fn skipped_from_reason(reason: AbandonReason, track_id: Option<TrackId>) -> Skip
                 format!("sample entry '{fourcc}' has no CodecConfig reconstruction in this crate");
             (fourcc, text)
         }
+        AbandonReason::UnsupportedCodec => (
+            String::from("unknown"),
+            "sample entry 'unknown' has no CodecConfig reconstruction in this crate".into(),
+        ),
         AbandonReason::MalformedTrack { expected } => (
             String::from("unknown"),
             format!("unexpected box: expected {expected}"),
@@ -115,4 +119,90 @@ fn skipped_from_reason(reason: AbandonReason, track_id: Option<TrackId>) -> Skip
     let mut skipped = SkippedTrack::new(fourcc, text);
     skipped.track_id = track_id;
     skipped
+}
+
+/// Drive [`Mp4Demux`](transmux::mp4_demux::Mp4Demux) over a whole in-memory
+/// MP4 image and fold its events into a [`Media`].
+///
+/// A whole small fixture in memory is fine **here only**: this crate is a test
+/// harness. The stage itself never holds more than the reader asks for.
+pub fn media_from_mp4(bytes: &[u8], mode: CollectMode) -> Result<Media, transmux::Error> {
+    let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let config = transmux::mp4_demux::Mp4DemuxConfig::default().with_total_len(Some(total_len));
+    match mode {
+        CollectMode::Seekable => {
+            let mut demux = transmux::mp4_demux::Mp4Demux::seekable(config);
+            drive_seekable(&mut demux, bytes)?;
+            media_from_stage(demux)
+        }
+        CollectMode::Sequential { chunk } => {
+            let mut demux = transmux::mp4_demux::Mp4Demux::sequential(config);
+            drive_sequential(&mut demux, bytes, chunk.max(1))?;
+            media_from_stage(demux)
+        }
+    }
+}
+
+fn drive_seekable(
+    demux: &mut transmux::mp4_demux::Mp4Demux,
+    bytes: &[u8],
+) -> Result<(), transmux::Error> {
+    loop {
+        let demand = demux.demand();
+        let Some(offset) = demand.offset else {
+            break;
+        };
+        let start = usize::try_from(offset).unwrap_or(usize::MAX);
+        let end = start.saturating_add(demand.want_bytes).min(bytes.len());
+        let slice = bytes.get(start..end).unwrap_or(&[]);
+        demux.feed(
+            transmux::mp4_demux::Mp4Input::At {
+                offset,
+                bytes: slice.to_vec().into(),
+            },
+            broadcast_common::stage::Timestamp::ZERO,
+        )?;
+    }
+    demux.finish()
+}
+
+fn drive_sequential(
+    demux: &mut transmux::mp4_demux::Mp4Demux,
+    bytes: &[u8],
+    chunk: usize,
+) -> Result<(), transmux::Error> {
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        let demand = demux.demand();
+        if demand.saturated {
+            break;
+        }
+        let want = demand.want_bytes.max(1);
+        let take = want.min(chunk).min(bytes.len() - offset);
+        demux.feed(
+            transmux::mp4_demux::Mp4Input::Next(&bytes[offset..offset + take]),
+            broadcast_common::stage::Timestamp::ZERO,
+        )?;
+        offset += take;
+    }
+    demux.finish()
+}
+
+fn media_from_stage(mut demux: transmux::mp4_demux::Mp4Demux) -> Result<Media, transmux::Error> {
+    let fragmented = demux.is_fragmented();
+    let movie_timescale = demux.movie_timescale();
+    let mut events = Vec::new();
+    while let Some(event) = demux.poll() {
+        events.push(event);
+    }
+    let mut media = media_from_events(events);
+    if let Some(timescale) = movie_timescale {
+        media.movie_timescale = timescale;
+    }
+    if fragmented == Some(false) {
+        for track in &mut media.tracks {
+            track.start_decode_time = 0;
+        }
+    }
+    Ok(media)
 }

@@ -187,6 +187,7 @@ pub mod ll_hls;
 pub mod media;
 pub mod mhas;
 pub mod mkv_mux;
+pub mod mp4_demux;
 pub mod mpeg2_display;
 pub mod mpeg_legacy;
 pub mod nal;
