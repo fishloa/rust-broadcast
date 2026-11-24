@@ -74,6 +74,21 @@ fn replay_allowed(lineage: ConnAuth, replay_is_authenticated: bool) -> bool {
     replay_is_authenticated || lineage.replays < MAX_UNAUTHENTICATED_REPLAYS
 }
 
+/// Where the read-ahead gate lands for this session's source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadGate {
+    /// Nothing to hold: a source that is not paced (RTMP, UDP, RTP, SRT) or a
+    /// connection not open yet.
+    Idle,
+    /// Hold the next segment or fragment fetch of a segment-pull source (HLS,
+    /// DASH, Smooth); the playback position is known here, the scheduling is
+    /// not.
+    Fetch,
+    /// Ask the host to stop reading this connection's socket (TS-over-HTTP,
+    /// RTSP over interleaved TCP).
+    Conn(ConnId),
+}
+
 /// Generic sans-IO client session.
 ///
 /// The host calls [`Session::poll`] until it returns `None` and drains [`Session::next_event`]
@@ -554,6 +569,7 @@ impl Session {
         if let Some(r) = self.rtsp.as_mut() {
             self.now_us = now_us;
             self.payload_bytes = self.payload_bytes.saturating_add(bytes.len() as u64);
+            self.read_ahead.on_bytes(bytes.len());
             let lost = r.on_data(conn, bytes, now, &mut self.auth);
             self.flush_rtsp();
             if !bytes.is_empty() {
@@ -584,6 +600,7 @@ impl Session {
         if let Some(h) = self.adaptive.as_mut() {
             self.now_us = now_us;
             self.payload_bytes = self.payload_bytes.saturating_add(bytes.len() as u64);
+            self.read_ahead.on_bytes(bytes.len());
             h.on_data(conn, bytes, now_us, &mut self.auth);
             self.flush_adaptive();
             return;
@@ -730,65 +747,106 @@ impl Session {
     /// should not read its socket until [`Action::ResumeRead`] names it. A host
     /// may ask this instead of tracking [`Action::PauseRead`] and
     /// [`Action::ResumeRead`]; the answer is `false` for a connection the
-    /// session no longer holds.
+    /// session no longer holds, and always `false` for a segment-pull session
+    /// (HLS, DASH, Smooth), which stops scheduling fetches instead of pausing a
+    /// connection.
     #[must_use]
     pub fn read_paused(&self, conn: ConnId) -> bool {
         self.paused_conn == Some(conn)
     }
 
     fn read_ahead_applies(&self) -> bool {
-        self.read_ahead.enabled()
-            && self.adaptive.is_none()
-            && self.rtsp.is_none()
-            && self.rtmp.is_none()
-            && self.datagram.is_none()
+        self.read_ahead.enabled() && self.rtmp.is_none() && self.datagram.is_none()
     }
 
-    fn note_track_specs(&mut self, specs: &[TrackSpec]) {
+    /// Where this source's read-ahead gate lands. A segment-pull source is held
+    /// before its next fetch is issued; a TS-over-HTTP or RTSP session stops the
+    /// host reading the connection the media arrives on.
+    fn read_gate(&self) -> ReadGate {
+        if self.adaptive.is_some() {
+            return ReadGate::Fetch;
+        }
+        if let Some(rtsp) = self.rtsp.as_ref() {
+            return rtsp.conn().map_or(ReadGate::Idle, ReadGate::Conn);
+        }
+        self.live_conn.map_or(ReadGate::Idle, ReadGate::Conn)
+    }
+
+    /// The read-ahead measure's view of one event: track timescales and sample
+    /// ends feed the time and byte leads, and a discontinuity re-baselines the
+    /// timeline the byte queue describes.
+    fn note_read_ahead(&mut self, event: &Event) {
         if !self.read_ahead_applies() {
             return;
         }
-        for spec in specs {
-            self.track_timescales.insert(spec.track_id, spec.timescale);
+        match event {
+            Event::Tracks(specs) => {
+                for spec in specs {
+                    self.track_timescales.insert(spec.track_id, spec.timescale);
+                }
+            }
+            Event::Sample { track, sample, .. } => {
+                let Some(&timescale) = self.track_timescales.get(track) else {
+                    return;
+                };
+                let Some(pts) = sample.timing.and_then(|t| t.pts()) else {
+                    return;
+                };
+                let duration = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
+                self.read_ahead
+                    .on_sample(pts, pts.saturating_add(duration), timescale);
+            }
+            Event::Discontinuity => self.read_ahead.reset_timeline(),
+            _ => {}
         }
-    }
-
-    fn note_sample(&mut self, track: TrackId, sample: &Sample) {
-        if !self.read_ahead_applies() {
-            return;
-        }
-        let Some(&timescale) = self.track_timescales.get(&track) else {
-            return;
-        };
-        let Some(pts) = sample.timing.and_then(|t| t.pts()) else {
-            return;
-        };
-        let duration = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
-        self.read_ahead
-            .on_sample(pts, pts.saturating_add(duration), timescale);
     }
 
     fn refresh_read_ahead(&mut self, now: Timestamp) {
         if !self.read_ahead_applies() {
             return;
         }
-        let Some(conn) = self.live_conn else {
+        let gate = self.read_gate();
+        if matches!(gate, ReadGate::Idle) {
             self.clear_read_ahead(now);
             return;
-        };
-        if self.paused_conn.is_some_and(|paused| paused != conn) {
+        }
+        if let ReadGate::Conn(conn) = gate
+            && self.paused_conn.is_some_and(|paused| paused != conn)
+        {
             self.clear_read_ahead(now);
         }
         if self.read_ahead.pause_due() {
             self.read_ahead.set_paused(true);
-            self.paused_conn = Some(conn);
-            self.source.set_read_paused(true, now.as_micros());
-            self.actions.push_back(Action::PauseRead { conn });
+            self.set_read_gate(gate, true, now);
         } else if self.read_ahead.is_paused() && self.read_ahead.resume_due() {
             self.read_ahead.set_paused(false);
-            self.paused_conn = None;
-            self.source.set_read_paused(false, now.as_micros());
-            self.actions.push_back(Action::ResumeRead { conn });
+            self.set_read_gate(gate, false, now);
+        }
+    }
+
+    /// Close or open `gate`: emit the action a host acts on and tell the source,
+    /// so the TS-over-HTTP and RTSP timers stop counting a deliberate pause as a
+    /// stall and a segment-pull source stops issuing media fetches.
+    fn set_read_gate(&mut self, gate: ReadGate, paused: bool, now: Timestamp) {
+        match gate {
+            ReadGate::Idle => {}
+            ReadGate::Fetch => {
+                if let Some(h) = self.adaptive.as_mut() {
+                    h.set_read_paused(paused);
+                }
+            }
+            ReadGate::Conn(conn) => {
+                match self.rtsp.as_mut() {
+                    Some(rtsp) => rtsp.set_read_paused(paused, now),
+                    None => self.source.set_read_paused(paused, now.as_micros()),
+                }
+                self.paused_conn = paused.then_some(conn);
+                self.actions.push_back(if paused {
+                    Action::PauseRead { conn }
+                } else {
+                    Action::ResumeRead { conn }
+                });
+            }
         }
     }
 
@@ -798,6 +856,12 @@ impl Session {
         let was_paused = self.paused_conn.take().is_some();
         if was_paused {
             self.source.set_read_paused(false, now.as_micros());
+            if let Some(rtsp) = self.rtsp.as_mut() {
+                rtsp.set_read_paused(false, now);
+            }
+        }
+        if let Some(h) = self.adaptive.as_mut() {
+            h.set_read_paused(false);
         }
         self.read_ahead.reset();
         self.track_timescales.clear();
@@ -1302,6 +1366,7 @@ impl Session {
             for e in evs {
                 self.events.push_back(e);
             }
+            self.refresh_read_ahead(Timestamp::from_micros(self.now_us));
         }
     }
 
@@ -1321,6 +1386,7 @@ impl Session {
     }
 
     fn screen_passthrough(&mut self, mut e: Event) {
+        self.note_read_ahead(&e);
         match &mut e {
             Event::Tracks(specs) => {
                 self.jump.on_tracks(specs);
@@ -1388,6 +1454,11 @@ impl Session {
     }
 
     fn flush_adaptive(&mut self) {
+        self.drain_adaptive();
+        self.refresh_read_ahead(Timestamp::from_micros(self.now_us));
+    }
+
+    fn drain_adaptive(&mut self) {
         let Some(h) = self.adaptive.as_mut() else {
             return;
         };
@@ -1423,6 +1494,7 @@ impl Session {
     }
 
     fn emit(&mut self, e: Event) {
+        self.note_read_ahead(&e);
         match &e {
             Event::Tracks(specs) => {
                 self.jump.on_tracks(specs);
@@ -1571,7 +1643,6 @@ impl Session {
                     self.emit(e);
                 }
                 Event::Tracks(specs) => {
-                    self.note_track_specs(&specs);
                     self.buffer_tracks(&specs);
                     self.emit(Event::Tracks(specs));
                 }
@@ -1579,7 +1650,6 @@ impl Session {
                     let Some(join) = self.buffer_sample(track, &sample) else {
                         continue;
                     };
-                    self.note_sample(track, &sample);
                     self.emit(Event::Sample {
                         track,
                         sample,
@@ -1588,7 +1658,6 @@ impl Session {
                 }
                 Event::Discontinuity => {
                     self.buffer_reconnected();
-                    self.read_ahead.reset_timeline();
                     self.emit(e);
                 }
                 other => {

@@ -990,12 +990,14 @@ A part is done only when every line of its list holds on a fresh run of the full
 
 Smooth: PlayReady/PIFF decryption, text and multi-video `StreamIndex`es, `tfrf` look-ahead addressing, `CustomAttributes`, byte-range resume of a stalled fragment. RTMP: RTMPE/RTMPT, Adobe challenge authentication, AMF3 data and shared-object messages, `play2`, sending media. Both: the Smooth `Manifest(format=...)` and RTMP-over-WebSocket renderings.
 
-## Read-ahead backpressure (#4085)
+## Read-ahead backpressure (#4085, #4086)
 
-A live source arrives at the rate it plays, but a recording served over HTTP arrives at
-network speed: a multi-GB `.ts` would be pulled whole into the session's queues and the
-player's buffer. Memory is bounded by configuration, never by input size, so the TS-over-HTTP
-source supports an optional caller-set read-ahead limit and tells the host when to stop reading.
+A live source arrives at the rate it plays, but a recording served over a file-based source arrives
+at network speed: a multi-GB `.ts`, or a VOD HLS/DASH/Smooth presentation, would be pulled whole
+into the session's queues and the player's buffer. Memory is bounded by configuration, never by
+input size, so every pull source honours one optional caller-set read-ahead limit: TS-over-HTTP and
+RTSP tell the host to stop reading the socket, and HLS, DASH and Smooth stop scheduling the next
+media fetch.
 
 ### Measure
 
@@ -1023,12 +1025,26 @@ source supports an optional caller-set read-ahead limit and tells the host when 
 
 ### Actions
 
-`Action::PauseRead { conn }` is emitted once when either configured bound is reached; the host
-stops reading that socket and lets TCP flow control hold the server. `Action::ResumeRead { conn }`
-is emitted once when both measures fall under half their bounds (hysteresis, so the two do not
-flap).
-`Session::read_paused(conn)` answers the same question. Bytes fed through `Session::on_data`
-while paused are accepted, never dropped, and count toward the measure.
+The tracker lives in one file and every source feeds it the same three things (accepted bytes,
+delivered samples, the playback position); what the gate closes differs by source
+(`Session::read_gate`):
+
+- **TS-over-HTTP and RTSP over interleaved TCP** — `Action::PauseRead { conn }` is emitted once
+  when either configured bound is reached; the host stops reading that socket and lets TCP flow
+  control hold the server. `Action::ResumeRead { conn }` is emitted once when both measures fall
+  under half their bounds (hysteresis, so the two do not flap). `Session::read_paused(conn)`
+  answers the same question. Bytes fed through `Session::on_data` while paused are accepted, never
+  dropped, and count toward the measure.
+- **HLS, DASH, Smooth** — the source stops issuing media requests while the gate is closed: HLS
+  skips the fresh and retry lanes of its queued segment actions, DASH and Smooth hold the segment
+  or fragment action they were about to issue. A request already in flight completes. No
+  connection-level action is emitted (a segment-pull session has no single connection to blame),
+  so `Session::read_paused` answers `false` for it.
+- **DASH pacing** — `dash-runtime` offers a static presentation's whole segment list at once, so a
+  gate checked only at delivery would close after the last request was already made. With a limit
+  configured, `DashSource` therefore issues one media request per representation at a time,
+  holding the rest until that one is delivered. `ReadAhead::Unlimited` (and so every session that
+  does not ask for pacing) keeps the unpaced behaviour exactly.
 
 ### Configuration
 
@@ -1044,24 +1060,24 @@ sample), but it must report positions for the pause to release again.
 
 ### Timers and lifecycle
 
-While reads are paused, the TS policy's stall notice, no-data starvation and stall reconnect do
-not run and arm no wake; releasing restarts them from the resume instant, so a deliberate pause
-is never reported as a stall or a reconnect and causes no `BufferEvent::Pause`/`Reprime`. A
-close, a reconnect, a redirect or a new connection clears the paused state without a
-`ResumeRead` for a connection that no longer exists; a same-connection discontinuity re-baselines
-the media measure but keeps the pause. A real-time source never reaches the cap in normal
-operation.
+While reads are paused, the TS-over-HTTP and RTSP stall notice, no-data starvation and stall
+reconnect do not run and arm no wake; releasing restarts them from the resume instant, so a
+deliberate pause is never reported as a stall or a reconnect and causes no
+`BufferEvent::Pause`/`Reprime`. A close, a reconnect, a redirect or a new connection clears the
+paused state without a `ResumeRead` for a connection that no longer exists, and also reopens a
+segment-pull gate; a same-connection discontinuity re-baselines the media measure but keeps the
+pause. A real-time source never reaches the cap in normal operation.
 
-### Other pull sources
-
-Only TS-over-HTTP got the cap in this change. The others were checked; the findings are:
+### Per source
 
 | Source | Read-ahead bound |
 | --- | --- |
-| TS-over-HTTP | this cap (new). |
-| HLS, DASH | the adapter's fetch window bounds *in-flight and held segment bodies* by `Config::max_inflight_segments` x `Config::max_segment_bytes`, but prefetch is not tied to the playback position: a host that drains events lets a VOD be pulled at network speed into its own buffer. Same gap; not changed here (it needs a pause action per segment connection, which is several hooks, not one line). |
-| Smooth | one fragment outstanding per stream, bounded by `Config::max_segment_bytes`; like HLS/DASH the fragment plan is not tied to playback, so the player-buffer gap remains. Not changed here. |
-| RTSP | the RTP depayloader's reorder window is bounded, but the session never asks the host to stop reading the TCP connection; a file-over-RTSP source has the same gap. Not changed here. |
+| TS-over-HTTP | the cap: `PauseRead`/`ResumeRead` for the body connection. |
+| HLS | the cap: the adapter stops issuing segment actions. The fetch window still bounds in-flight and held bodies by `Config::max_inflight_segments` x `Config::max_segment_bytes`; the gate is what ties prefetch to the playback position. |
+| DASH | the cap: `FetchSegment` actions are held, one media request per representation in flight while a limit is configured. |
+| Smooth | the cap: `FetchFragment` actions are held; the engine already keeps one fragment outstanding per stream. |
+| RTSP | the cap: `PauseRead`/`ResumeRead` for the interleaved-TCP connection, with the stall timers suppressed while paused. |
 | UDP/RTP | no pull to pause: a slow host drops datagrams at the socket, and `udp.reorder_*` bounds the reorder window. Memory cannot grow with input size. |
 | SRT | `srt-runtime`'s TSBPD scheduler and receive buffer bound what is held; the host socket keeps reading and late packets are dropped. No playback-tied pause action exists. |
+| RTMP | not paced: the session never asks the host to stop reading and the RTMP window bounds what is held. |
 

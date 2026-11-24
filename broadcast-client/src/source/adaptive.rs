@@ -118,6 +118,16 @@ impl Adaptive {
         }
     }
 
+    /// Hold or release new segment/fragment fetches for the read-ahead gate. A request already in
+    /// flight completes; the session's next poll of the source issues the held ones.
+    pub(crate) fn set_read_paused(&mut self, paused: bool) {
+        match self {
+            Self::Hls(s) => s.set_read_paused(paused),
+            Self::Dash(s) => s.set_read_paused(paused),
+            Self::Smooth(s) => s.set_read_paused(paused),
+        }
+    }
+
     pub(crate) fn is_ended(&self) -> bool {
         match self {
             Self::Hls(s) => s.is_ended(),

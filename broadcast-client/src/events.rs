@@ -92,23 +92,26 @@ impl StreamKind {
 }
 broadcast_common::impl_spec_display!(StreamKind);
 
-/// Read-ahead limit for the TS-over-HTTP source: how far media may run ahead of
-/// the player's reported position before the session asks the host to stop
-/// reading the connection.
+/// Read-ahead limit for every pull source: how far media may run ahead of the
+/// player's reported position before the session stops pulling it.
 ///
 /// The library chooses no numbers: [`Self::Unlimited`] is the default, and a
 /// host that wants a bound sets one with [`Self::time`], [`Self::bytes`] or
-/// [`Self::time_and_bytes`] on the TS-over-HTTP configuration
-/// ([`crate::TsHttpConfig::with_read_ahead`]). `time` measures the latest
-/// delivered presentation time minus the playback position; `bytes` measures
-/// accepted body bytes attributed to delivered samples whose presentation end
-/// is still ahead of that position (100 ms slices, so bytes the player has
-/// passed stop counting). A pause is emitted once either bound is reached and
-/// released once both fall under half of it.
+/// [`Self::time_and_bytes`] ([`crate::TsHttpConfig::with_read_ahead`]). `time`
+/// measures the latest delivered presentation time minus the playback position;
+/// `bytes` measures accepted body bytes attributed to delivered samples whose
+/// presentation end is still ahead of that position (100 ms slices, so bytes the
+/// player has passed stop counting). The gate closes once either bound is
+/// reached and reopens once both fall under half of it.
 ///
-/// [`Self::Unlimited`] means the session never emits
-/// [`Action::PauseRead`]: memory is then bounded only
-/// by the host's own buffering.
+/// What the gate closes differs by source: TS-over-HTTP and RTSP over
+/// interleaved TCP emit [`Action::PauseRead`] for the connection the media
+/// arrives on, so the host stops reading its socket; HLS, DASH and Smooth stop
+/// scheduling the next segment or fragment request, and a request already in
+/// flight completes. UDP, RTP, SRT and RTMP are not paced.
+///
+/// [`Self::Unlimited`] means the session never paces a source: memory is then
+/// bounded only by the host's own buffering.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -780,15 +783,18 @@ pub enum Action {
     /// Stop read calls (leaving TCP flow control to hold the server) until
     /// [`Self::ResumeRead`] for the same connection. Bytes already in flight may
     /// still be delivered to [`crate::Session::on_data`]; they are accepted and
-    /// count toward the cap. Emitted once per pause, only by the TS-over-HTTP
-    /// source; [`crate::Session::read_paused`] answers the same question.
+    /// count toward the cap. Emitted once per pause, by the TS-over-HTTP and
+    /// RTSP sources (a segment-pull source stops scheduling fetches instead and
+    /// emits nothing); [`crate::Session::read_paused`] answers the same
+    /// question.
     PauseRead {
         /// Connection id.
         conn: ConnId,
     },
     /// Resume reading this connection's socket: the lead fell back under half
-    /// the cap that paused it. Emitted once per pause. A reconnect, a close or
-    /// a new connection clears the paused state without this action.
+    /// the cap that paused it. Emitted once per pause, by the TS-over-HTTP and
+    /// RTSP sources. A reconnect, a close or a new connection clears the paused
+    /// state without this action.
     ResumeRead {
         /// Connection id.
         conn: ConnId,
@@ -1173,10 +1179,11 @@ pub const DEFAULT_MAX_RECORDED_BUFFER_INPUTS: usize = 1_000_000;
 pub struct Config {
     /// Source kind.
     pub kind: SourceKind,
-    /// TS-over-HTTP config (also the RTSP timers and the RTMP policy). An inconsistent value (a
-    /// zero timeout, an empty or zero-entry backoff, a stall reconnect not after the notice) is
-    /// replaced by the nearest valid one, see `crate::tshttp::TsHttpConfig::clamped`; it is not
-    /// rejected.
+    /// TS-over-HTTP config, which also carries the knobs every pull source shares: the RTSP
+    /// timers, the RTMP policy and the read-ahead limit (`TsHttpConfig::read_ahead`). An
+    /// inconsistent value (a zero timeout, an empty or zero-entry backoff, a stall reconnect not
+    /// after the notice) is replaced by the nearest valid one, see
+    /// `crate::tshttp::TsHttpConfig::clamped`; it is not rejected.
     pub ts_http: crate::tshttp::TsHttpConfig,
     /// Maximum redirects per open (per request for HLS). `0` follows none: a redirect response
     /// fails the connection.
