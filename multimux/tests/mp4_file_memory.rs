@@ -164,20 +164,21 @@ fn one_ll_hls_route(bind: SocketAddr, path: String) -> Config {
 const HANG_GUARD: Duration = Duration::from_secs(60);
 
 async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> String {
+    let blocking = format!("{playlist_url}?_HLS_msn=0");
     let deadline = tokio::time::Instant::now() + HANG_GUARD;
     loop {
-        if let Ok(resp) = client.get(playlist_url).send().await
+        let wait = deadline.saturating_duration_since(tokio::time::Instant::now());
+        assert!(
+            !wait.is_zero(),
+            "no #EXTINF: line appeared in {playlist_url} within the hang guard"
+        );
+        if let Ok(Ok(resp)) = tokio::time::timeout(wait, client.get(&blocking).send()).await
             && resp.status().is_success()
             && let Ok(body) = resp.text().await
             && body.contains("#EXTINF:")
         {
             return body;
         }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "no #EXTINF: line appeared in {playlist_url} within the hang guard"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
