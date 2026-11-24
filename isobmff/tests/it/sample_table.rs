@@ -420,12 +420,12 @@ fn a_zero_sample_description_index_is_a_typed_error() {
 #[test]
 fn a_chunk_offset_past_the_file_length_is_a_typed_error() {
     let stbl = table(vec![
-        stts(&[(2, 100)]),
-        stsc(&[(1, 2, 1)]),
-        stsz_uniform(10, 2),
-        stco(&[0]),
+        stts(&[(1, 100)]),
+        stsc(&[(1, 1, 1)]),
+        stsz_uniform(10, 1),
+        stco(&[1000]),
     ]);
-    let mut cursor = cursor(&stbl, Some(5)).expect("the tables resolve up front");
+    let mut cursor = cursor(&stbl, Some(100)).expect("the tables resolve up front");
     assert!(matches!(cursor.next(), Some(Err(Error::BufferTooShort(_)))));
 }
 
@@ -594,4 +594,157 @@ fn description_index_comes_from_the_stsc_run() {
         .unwrap();
     assert_eq!(rows[0].description_index, 3);
     assert_eq!(rows[1].description_index, 3);
+}
+
+fn stsz_entries(sizes: &[u32]) -> StblChild {
+    StblChild::Stsz(SampleSizeBox {
+        version: 0,
+        flags: 0,
+        sample_size: 0,
+        sample_count: sizes.len() as u32,
+        entries: sizes.to_vec(),
+    })
+}
+
+fn rows(stbl: &SampleTableBox, file_len: u64) -> Vec<Row> {
+    cursor(stbl, Some(file_len))
+        .expect("the tables resolve up front")
+        .map(|item| {
+            let sample = item.expect("the tables yield");
+            Row {
+                offset: sample.offset,
+                size: u64::from(sample.size),
+                decode_time: sample.decode_time,
+                composition_offset: i64::from(sample.composition_offset),
+                duration: sample.duration,
+                sync: sample.sync,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn surplus_chunk_capacity_is_tolerated_for_a_per_entry_stsz() {
+    let stbl = table(vec![
+        stts(&[(5, 10)]),
+        stsc(&[(1, 3, 1)]),
+        stsz_entries(&[10, 20, 30, 40, 50]),
+        stco(&[100, 1000]),
+    ]);
+    let got: Vec<(u64, u64)> = rows(&stbl, 1 << 20)
+        .iter()
+        .map(|r| (r.offset, r.size))
+        .collect();
+    assert_eq!(
+        got,
+        [(100, 10), (110, 20), (130, 30), (1000, 40), (1040, 50)]
+    );
+}
+
+#[test]
+fn surplus_chunk_capacity_is_tolerated_for_a_uniform_stsz() {
+    let stbl = table(vec![
+        stts(&[(4, 10)]),
+        stsc(&[(1, 3, 1)]),
+        stsz_uniform(8, 4),
+        stco(&[0, 100, 200]),
+    ]);
+    let got: Vec<(u64, u64)> = rows(&stbl, 1 << 20)
+        .iter()
+        .map(|r| (r.offset, r.size))
+        .collect();
+    assert_eq!(got, [(0, 8), (8, 8), (16, 8), (100, 8)]);
+}
+
+#[test]
+fn a_chunk_table_covering_fewer_samples_is_a_typed_error() {
+    for stsz in [stsz_uniform(8, 5), stsz_entries(&[8; 5])] {
+        let stbl = table(vec![
+            stts(&[(5, 10)]),
+            stsc(&[(1, 2, 1)]),
+            stsz,
+            stco(&[0, 100]),
+        ]);
+        assert!(matches!(
+            cursor(&stbl, Some(1 << 20)),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+}
+
+#[test]
+fn chunks_before_the_first_run_hold_no_samples() {
+    let stbl = table(vec![
+        stts(&[(1, 10)]),
+        stsc(&[(2, 1, 1)]),
+        stsz_entries(&[7]),
+        stco(&[100, 200]),
+    ]);
+    let got = rows(&stbl, 1 << 20);
+    assert_eq!(got.len(), 1);
+    assert_eq!((got[0].offset, got[0].size), (200, 7));
+}
+
+#[test]
+fn a_sample_count_equal_to_the_file_length_is_accepted() {
+    let stbl = table(vec![
+        stts(&[(3, 1)]),
+        stsc(&[(1, 1, 1)]),
+        stsz_uniform(1, 3),
+        stco(&[0, 1, 2]),
+    ]);
+    assert_eq!(rows(&stbl, 3).len(), 3);
+
+    let over = table(vec![
+        stts(&[(4, 1)]),
+        stsc(&[(1, 1, 1)]),
+        stsz_uniform(1, 4),
+        stco(&[0, 1, 2]),
+    ]);
+    assert!(matches!(
+        cursor(&over, Some(3)),
+        Err(Error::BufferTooShort(_))
+    ));
+}
+
+#[test]
+fn one_stsc_run_per_chunk_is_one_forward_pass() {
+    const CHUNKS: u32 = 400;
+    let stsc_runs: Vec<(u32, u32, u32)> = (1..=CHUNKS).map(|c| (c, 1, 1)).collect();
+    let stco_offsets: Vec<u32> = (1..=CHUNKS).map(|c| c * 100).collect();
+    let stbl = table(vec![
+        stts(&[(CHUNKS, 10)]),
+        stsc(&stsc_runs),
+        stsz_uniform(10, CHUNKS),
+        stco(&stco_offsets),
+    ]);
+    let got = rows(&stbl, 1 << 20);
+    assert_eq!(got.len(), CHUNKS as usize);
+    assert_eq!((got[0].offset, got[0].size), (100, 10));
+    assert_eq!(
+        (
+            got[CHUNKS as usize - 1].offset,
+            got[CHUNKS as usize - 1].size
+        ),
+        (u64::from(CHUNKS) * 100, 10)
+    );
+}
+
+#[test]
+fn a_malformed_opaque_stts_surfaces_its_real_parse_error() {
+    // A bare 8-byte header is below `TimeToSampleBox::parse`'s own minimum, so
+    // the box fails to parse and `parse_stbl_children` stores it as `Opaque`.
+    let mut raw = vec![0u8; 8];
+    raw[0..4].copy_from_slice(&8u32.to_be_bytes());
+    raw[4..8].copy_from_slice(b"stts");
+    let stbl = table(vec![
+        StblChild::Opaque(raw),
+        stsc(&[(1, 1, 1)]),
+        stsz_uniform(1, 1),
+        stco(&[0]),
+    ]);
+    assert!(matches!(
+        cursor(&stbl, Some(1 << 20)),
+        Err(Error::BufferTooShort(_))
+    ));
 }

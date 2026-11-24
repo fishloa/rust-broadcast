@@ -34,7 +34,6 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 
@@ -46,12 +45,8 @@ use crate::media::{
     skipped_track, track_spec_from_trak,
 };
 use crate::pipeline::Sample;
-use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
-use isobmff::init_segment::{
-    ChunkLargeOffsetBox, ChunkOffsetBox, MOOV, MovieBox, SampleSizeBox, SampleToChunkBox,
-    StblChild, SyncSampleBox, TrackBox,
-};
-use isobmff::timing::{CompositionOffsetBox, TimeToSampleBox};
+use isobmff::init_segment::{MOOV, MovieBox, TrackBox};
+use isobmff::sample_table::TrackCursor;
 
 /// Demux a non-fragmented ISOBMFF/MP4 byte stream into a [`Media`].
 ///
@@ -328,46 +323,14 @@ impl Stage for ProgressiveDemux<'_> {
     }
 }
 
-/// Look up a typed `stbl` child, e.g. `StblChild::Stts`.
-///
-/// Tries `variant` first. If that misses, checks whether there's a
-/// same-four-CC [`StblChild::Opaque`] instead — meaning the box is *present*
-/// but `init_segment::parse_stbl_children` couldn't parse it — and if so,
-/// re-parses those bytes to recover and return the real parse error, rather
-/// than falling through to the generic "absent" case. Without this, a
-/// corrupt `stts`/`ctts`/… would silently behave exactly like a well-formed
-/// empty or missing box (issue #952 for `stsd`; audit finding #3 for the
-/// remaining `stbl` children): a mandatory box (`stts`/`stsz`/`stsc`) would
-/// report a misleading "expected stts" instead of the actual cause, and an
-/// optional box (`ctts`/`stss`/`stco`/`co64`) would be treated as *legitimately
-/// absent* — e.g. a corrupt `ctts` silently presenting every composition
-/// offset as `0` instead of failing the track loud enough to reach
-/// [`Media::skipped`](crate::media::Media::skipped).
-fn find_stbl_child<'a, T>(
-    children: &'a [StblChild],
-    fourcc: &[u8; BOX_TYPE_SIZE],
-    variant: impl Fn(&'a StblChild) -> Option<&'a T>,
-    reparse_err: impl Fn(&'a [u8]) -> Error,
-) -> Result<Option<&'a T>> {
-    for child in children {
-        if let Some(t) = variant(child) {
-            return Ok(Some(t));
-        }
-    }
-    for child in children {
-        if let StblChild::Opaque(bytes) = child
-            && bytes.len() >= BOX_HEADER_MIN_SIZE
-            && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == fourcc
-        {
-            return Err(reparse_err(bytes));
-        }
-    }
-    Ok(None)
-}
-
 /// Build one track's decode-ordered [`Sample`]s from its `stbl` sample tables,
 /// slicing coded bytes directly out of `file` via the (file-absolute) chunk
 /// offsets.
+///
+/// The run-length sample tables are walked by
+/// [`isobmff::sample_table::TrackCursor`]; nothing here expands them to one
+/// entry per sample, and a hostile table is a typed `isobmff::Error` before a
+/// single byte is copied.
 fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
     let stbl = trak
         .mdia
@@ -375,326 +338,40 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
         .and_then(|m| m.minf.as_ref())
         .and_then(|m| m.stbl.as_ref())
         .ok_or(Error::UnexpectedBox { expected: "stbl" })?;
-
-    let stts = find_stbl_child(
-        &stbl.children,
-        b"stts",
-        |c| match c {
-            StblChild::Stts(b) => Some(b),
-            _ => None,
-        },
-        |bytes| TimeToSampleBox::parse(bytes).unwrap_err().into(),
-    )?
-    .ok_or(Error::UnexpectedBox { expected: "stts" })?;
-    let ctts = find_stbl_child(
-        &stbl.children,
-        b"ctts",
-        |c| match c {
-            StblChild::Ctts(b) => Some(b),
-            _ => None,
-        },
-        |bytes| CompositionOffsetBox::parse(bytes).unwrap_err().into(),
+    let file_len =
+        u64::try_from(file.len()).map_err(|_| Error::InvalidInput("input length exceeds u64"))?;
+    let cursor = TrackCursor::new(
+        stbl,
+        trak.tkhd.track_id,
+        &isobmff::Limits::default(),
+        Some(file_len),
     )?;
-    let stss = find_stbl_child(
-        &stbl.children,
-        b"stss",
-        |c| match c {
-            StblChild::Stss(b) => Some(b),
-            _ => None,
-        },
-        |bytes| SyncSampleBox::parse(bytes).unwrap_err().into(),
-    )?;
-    let stsz = find_stbl_child(
-        &stbl.children,
-        b"stsz",
-        |c| match c {
-            StblChild::Stsz(b) => Some(b),
-            _ => None,
-        },
-        |bytes| SampleSizeBox::parse(bytes).unwrap_err().into(),
-    )?
-    .ok_or(Error::UnexpectedBox { expected: "stsz" })?;
-    let stsc = find_stbl_child(
-        &stbl.children,
-        b"stsc",
-        |c| match c {
-            StblChild::Stsc(b) => Some(b),
-            _ => None,
-        },
-        |bytes| SampleToChunkBox::parse(bytes).unwrap_err().into(),
-    )?
-    .ok_or(Error::UnexpectedBox { expected: "stsc" })?;
-    let co64 = find_stbl_child(
-        &stbl.children,
-        b"co64",
-        |c| match c {
-            StblChild::Co64(b) => Some(b),
-            _ => None,
-        },
-        |bytes| ChunkLargeOffsetBox::parse(bytes).unwrap_err().into(),
-    )?;
-    let stco = find_stbl_child(
-        &stbl.children,
-        b"stco",
-        |c| match c {
-            StblChild::Stco(b) => Some(b),
-            _ => None,
-        },
-        |bytes| ChunkOffsetBox::parse(bytes).unwrap_err().into(),
-    )?;
-
-    let layout = sample_layout(stsz, stsc, co64, stco, file.len())?;
-    let total_samples = layout.len();
-    let durations = expand_stts(stts, total_samples)?;
-    let composition_offsets = expand_ctts(ctts, total_samples)?;
-    let sync_flags = expand_stss(stss, total_samples);
-
-    let mut samples = Vec::with_capacity(total_samples);
-    // Absolute decode time (media plane step 2c): a progressive movie's media
-    // timeline starts at 0 and `stts` carries per-sample decode *deltas*
-    // (ISO/IEC 14496-12:2026 §8.6.1.2), so sample `i`'s absolute DTS is the
-    // running sum of the preceding deltas; PTS folds in the `ctts`
-    // composition offset (§8.6.1.3).
-    let mut next_dts: i64 = 0;
-    for i in 0..total_samples {
-        let (start, size) = layout[i];
+    let capacity = usize::try_from(cursor.len()).unwrap_or(0);
+    let mut samples = Vec::with_capacity(capacity);
+    for item in cursor {
+        let sample = item?;
+        let start = usize::try_from(sample.offset)
+            .map_err(|_| Error::InvalidInput("sample offset exceeds addressable range"))?;
         let end = start
-            .checked_add(size)
+            .checked_add(sample.size as usize)
             .ok_or(Error::InvalidInput("sample byte range overflow"))?;
         need_in(file, end, "progressive sample data")?;
-        let dts = next_dts;
+        let dts = i64::try_from(sample.decode_time)
+            .map_err(|_| Error::InvalidInput("decode time exceeds i64"))?;
         samples.push(Sample::new(
             file[start..end].to_vec(),
             Some(dts),
-            Some(dts + composition_offsets[i] as i64),
-            Some(durations[i]),
-            sync_flags[i],
+            Some(dts + i64::from(sample.composition_offset)),
+            Some(sample.duration),
+            sample.sync,
         )?);
-        next_dts += durations[i] as i64;
     }
     Ok(samples)
 }
 
 #[cfg(test)]
-thread_local! {
-    /// Work counter for [`sample_layout`]'s single forward pass: chunks visited
-    /// plus `stsc` entries stepped over (tests pin it linear in both).
-    static LAYOUT_STEPS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
-}
-
-/// Resolve every sample's `(absolute_file_offset, size)` from the sample
-/// tables `stsz` + `stsc` + `stco`/`co64`.
-///
-/// The one stbl sample-layout expander: [`ProgressiveDemux`] and the
-/// protected-progressive path of `cenc_decrypt` both go through it (audit
-/// r05-O1 / #1141).
-///
-/// **One rule for uniform and per-sample `stsz`:** `stsz.sample_count` is
-/// authoritative. Surplus `stsc`/`stco` capacity (a last chunk shorter than
-/// `samples_per_chunk`, or more chunks than needed) is *tolerated* — the
-/// layout is clamped to `sample_count`. Only a *shortfall* (the chunk tables
-/// cover fewer samples than `stsz` declares) is an error. `sample_count` is
-/// bounded by `file_len` first (no sample occupies fewer than one byte,
-/// #987), so a hostile table cannot drive a large allocation.
-///
-/// `stsc.first_chunk` must be >= 1 and strictly ascending (ISO/IEC 14496-12:2026
-/// §8.7.4); anything else is a structured `InvalidValue`. That ordering is
-/// what lets the expansion be one forward pass, linear in chunks + entries.
-///
-/// The bound on the count alone is not enough: `stco` entries may all point at
-/// the same file region, and a uniform `stsz.sample_size` then makes
-/// `sample_count` samples each copy those same bytes again — `file_len^2`
-/// bytes from a `file_len` input. The running total is therefore capped at
-/// [`sample_bytes_budget`](isobmff::frag_offsets::sample_bytes_budget)
-/// (§8.7.3: a sample's data lies in the file, so samples that do not overlap
-/// never total more than it holds), reported as
-/// [`Error::SampleDataBudgetExceeded`] (audit 20 finding 6).
-pub fn sample_layout(
-    stsz: &SampleSizeBox,
-    stsc: &SampleToChunkBox,
-    co64: Option<&ChunkLargeOffsetBox>,
-    stco: Option<&ChunkOffsetBox>,
-    file_len: usize,
-) -> Result<Vec<(usize, usize)>> {
-    let chunk_offsets = chunk_offsets(co64, stco)?;
-    let declared = stsz.sample_count as usize;
-    if declared > file_len {
-        return Err(Error::BufferTooShort(BufferTooShort {
-            need: declared,
-            have: file_len,
-            what: "stsz sample_count vs file length",
-        }));
-    }
-    let entries = &stsc.entries;
-    let mut prev_first = 0u32;
-    for e in entries {
-        if e.first_chunk <= prev_first {
-            return Err(Error::InvalidValue(InvalidValue {
-                field: "stsc.first_chunk",
-                value: u64::from(e.first_chunk),
-                reason: "first_chunk must be >= 1 and strictly ascending (ISO/IEC 14496-12:2026 §8.7.4)",
-            }));
-        }
-        prev_first = e.first_chunk;
-    }
-
-    let mut layout = Vec::with_capacity(declared);
-    // Total sample bytes resolved so far, against the input's own length: an
-    // overlapping chunk layout would otherwise be copied once per claimant.
-    let mut total_bytes: usize = 0;
-    let budget = isobmff::frag_offsets::sample_bytes_budget(file_len);
-    // Index of the stsc run applying to the current chunk, once one starts.
-    let mut run = 0usize;
-    for (c, &chunk_base) in chunk_offsets.iter().enumerate() {
-        if layout.len() == declared {
-            break;
-        }
-        #[cfg(test)]
-        LAYOUT_STEPS.with(|n| n.set(n.get() + 1));
-        let chunk_no = c as u64 + 1;
-        while run + 1 < entries.len() && u64::from(entries[run + 1].first_chunk) <= chunk_no {
-            #[cfg(test)]
-            LAYOUT_STEPS.with(|n| n.set(n.get() + 1));
-            run += 1;
-        }
-        let per_chunk = match entries.get(run) {
-            Some(e) if u64::from(e.first_chunk) <= chunk_no => e.samples_per_chunk,
-            _ => 0,
-        };
-        let mut cursor = chunk_base;
-        for _ in 0..per_chunk {
-            if layout.len() == declared {
-                break;
-            }
-            let size = sample_size(stsz, layout.len())?;
-            total_bytes = total_bytes
-                .checked_add(size)
-                .ok_or(Error::SampleDataBudgetExceeded { limit: budget })?;
-            if total_bytes > budget {
-                return Err(Error::SampleDataBudgetExceeded { limit: budget });
-            }
-            let start = usize::try_from(cursor)
-                .map_err(|_| Error::InvalidInput("chunk offset exceeds addressable range"))?;
-            layout.push((start, size));
-            cursor = cursor.saturating_add(size as u64);
-        }
-    }
-    if layout.len() < declared {
-        return Err(Error::InvalidInput(
-            "stsc/stco sample-to-chunk mapping did not cover all samples",
-        ));
-    }
-    Ok(layout)
-}
-
-/// Resolve the per-chunk absolute file byte offsets, preferring `co64`
-/// (64-bit, §8.7.5) over `stco` (32-bit) when both are present (well-formed
-/// files carry exactly one).
-fn chunk_offsets(
-    co64: Option<&ChunkLargeOffsetBox>,
-    stco: Option<&ChunkOffsetBox>,
-) -> Result<Vec<u64>> {
-    if let Some(co64) = co64 {
-        Ok(co64.entries.clone())
-    } else if let Some(stco) = stco {
-        Ok(stco.entries.iter().map(|&o| o as u64).collect())
-    } else {
-        Err(Error::UnexpectedBox {
-            expected: "stco or co64",
-        })
-    }
-}
-
-/// Resolve one sample's byte size from `stsz` (§8.7.3): the uniform
-/// `sample_size` when non-zero, else the per-sample `entries[index]`.
-fn sample_size(stsz: &SampleSizeBox, index: usize) -> Result<usize> {
-    if stsz.sample_size != 0 {
-        Ok(stsz.sample_size as usize)
-    } else {
-        stsz.entries
-            .get(index)
-            .map(|&s| s as usize)
-            .ok_or(Error::InvalidInput("stsz has fewer entries than samples"))
-    }
-}
-
-/// Expand `stts`'s run-length `(sample_count, sample_delta)` table (§8.6.1.2)
-/// into an explicit per-sample duration.
-pub fn expand_stts(stts: &TimeToSampleBox, total_samples: usize) -> Result<Vec<u32>> {
-    let mut out = Vec::with_capacity(total_samples);
-    for entry in &stts.entries {
-        // A wire `sample_count` is untrusted: a run longer than the slots
-        // left can never be valid, so reject it before pushing rather than
-        // after the loop — a ~100-byte file declaring 0xFFFFFFFF here used
-        // to push ~17 GB first (r04-C5). Same error as the mismatch case
-        // below.
-        if entry.sample_count as usize > total_samples - out.len() {
-            return Err(Error::InvalidInput(
-                "stts sample count does not match chunk layout",
-            ));
-        }
-        for _ in 0..entry.sample_count {
-            out.push(entry.sample_delta);
-        }
-    }
-    if out.len() != total_samples {
-        return Err(Error::InvalidInput(
-            "stts sample count does not match chunk layout",
-        ));
-    }
-    Ok(out)
-}
-
-/// Expand `ctts`'s run-length `(sample_count, sample_offset)` table
-/// (§8.6.1.3) into an explicit per-sample composition offset; `None` (no
-/// `ctts`) yields all-zero offsets (every sample's CT == DT).
-pub fn expand_ctts(ctts: Option<&CompositionOffsetBox>, total_samples: usize) -> Result<Vec<i32>> {
-    let Some(ctts) = ctts else {
-        return Ok(alloc::vec![0i32; total_samples]);
-    };
-    let mut out = Vec::with_capacity(total_samples);
-    for entry in &ctts.entries {
-        // Same r04-C5 bound as `expand_stts`: reject an over-long run before
-        // pushing, not after the loop.
-        if entry.sample_count as usize > total_samples - out.len() {
-            return Err(Error::InvalidInput(
-                "ctts sample count does not match chunk layout",
-            ));
-        }
-        for _ in 0..entry.sample_count {
-            out.push(entry.sample_offset);
-        }
-    }
-    if out.len() != total_samples {
-        return Err(Error::InvalidInput(
-            "ctts sample count does not match chunk layout",
-        ));
-    }
-    Ok(out)
-}
-
-/// Resolve every sample's sync flag from `stss`'s 1-based index list
-/// (§8.6.2); absent ⇒ every sample is implicitly a sync sample.
-pub fn expand_stss(stss: Option<&SyncSampleBox>, total_samples: usize) -> Vec<bool> {
-    let Some(stss) = stss else {
-        return alloc::vec![true; total_samples];
-    };
-    let mut flags = alloc::vec![false; total_samples];
-    for &one_based in &stss.entries {
-        let idx = one_based as usize;
-        if idx >= 1 && idx <= total_samples {
-            flags[idx - 1] = true;
-        }
-    }
-    flags
-}
-
-#[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
-
     use super::*;
-    use isobmff::init_segment::StscEntry;
 
     /// `ProgressiveDemux::new(0)` must be rejected outright: a zero cap can
     /// never accept a byte, so a `Stage` built from it would be permanently
@@ -721,319 +398,5 @@ mod tests {
             !Stage::demand(&demux).saturated,
             "headroom remains under the cap"
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // find_stbl_child (audit finding #3)
-    // -----------------------------------------------------------------------
-
-    /// A genuinely malformed `stsc`: a bare 8-byte header, below
-    /// `SampleToChunkBox::parse`'s own 16-byte minimum, so it is guaranteed
-    /// to fail to parse.
-    fn malformed_stsc_opaque() -> StblChild {
-        let mut raw = alloc::vec![0u8; 8];
-        raw[0..4].copy_from_slice(&8u32.to_be_bytes());
-        raw[4..8].copy_from_slice(b"stsc");
-        StblChild::Opaque(raw)
-    }
-
-    fn stsc_variant(c: &StblChild) -> Option<&SampleToChunkBox> {
-        match c {
-            StblChild::Stsc(b) => Some(b),
-            _ => None,
-        }
-    }
-
-    fn stsc_reparse_err(bytes: &[u8]) -> Error {
-        SampleToChunkBox::parse(bytes).unwrap_err().into()
-    }
-
-    /// The typed variant, when present, is returned as-is — no Opaque
-    /// fallback is even consulted.
-    #[test]
-    fn find_stbl_child_returns_typed_when_present() {
-        let stsc = SampleToChunkBox {
-            version: 0,
-            flags: 0,
-            entries: Vec::new(),
-        };
-        let children = alloc::vec![StblChild::Stsc(stsc.clone())];
-        let found = find_stbl_child(&children, b"stsc", stsc_variant, stsc_reparse_err)
-            .expect("typed present must not error");
-        assert_eq!(found, Some(&stsc));
-    }
-
-    /// A same-fourcc `Opaque` box (present but failed to parse —
-    /// `init_segment::parse_stbl_children`'s outcome for a malformed box)
-    /// must surface its real parse error, not be treated as "absent". Before
-    /// this helper existed, `init_segment::parse_stbl_children` defaulted the
-    /// box to an empty typed box instead, so a corrupt `stsc` silently
-    /// behaved as a well-formed one with zero entries (audit finding #3).
-    #[test]
-    fn find_stbl_child_recovers_real_error_from_matching_opaque() {
-        let children = alloc::vec![malformed_stsc_opaque()];
-        let err = find_stbl_child(&children, b"stsc", stsc_variant, stsc_reparse_err)
-            .expect_err("a matching Opaque box must surface its real parse error");
-        assert!(
-            matches!(err, Error::BufferTooShort(..)),
-            "expected the real BufferTooShort from SampleToChunkBox::parse, got {err:?}"
-        );
-    }
-
-    /// An `Opaque` box for a *different* four-CC must not be mistaken for
-    /// this box's parse failure — a genuinely absent box still resolves to
-    /// `Ok(None)`.
-    #[test]
-    fn find_stbl_child_returns_none_for_non_matching_opaque() {
-        let mut raw = alloc::vec![0u8; 8];
-        raw[0..4].copy_from_slice(&8u32.to_be_bytes());
-        raw[4..8].copy_from_slice(b"stsz");
-        let children = alloc::vec![StblChild::Opaque(raw)];
-
-        let found = find_stbl_child(&children, b"stsc", stsc_variant, stsc_reparse_err)
-            .expect("a non-matching Opaque box must not be treated as this box's error");
-        assert!(found.is_none());
-    }
-
-    // -----------------------------------------------------------------------
-    // sample_layout
-    // -----------------------------------------------------------------------
-
-    fn run(first_chunk: u32, samples_per_chunk: u32) -> StscEntry {
-        StscEntry {
-            first_chunk,
-            samples_per_chunk,
-            sample_description_index: 1,
-        }
-    }
-
-    fn stsc_of(entries: Vec<StscEntry>) -> SampleToChunkBox {
-        SampleToChunkBox {
-            version: 0,
-            flags: 0,
-            entries,
-        }
-    }
-
-    fn stco_of(offsets: &[u32]) -> ChunkOffsetBox {
-        ChunkOffsetBox {
-            version: 0,
-            flags: 0,
-            entries: offsets.to_vec(),
-        }
-    }
-
-    fn per_sample_stsz(sizes: &[u32]) -> SampleSizeBox {
-        SampleSizeBox {
-            version: 0,
-            flags: 0,
-            sample_size: 0,
-            sample_count: sizes.len() as u32,
-            entries: sizes.to_vec(),
-        }
-    }
-
-    fn uniform_stsz(size: u32, count: u32) -> SampleSizeBox {
-        SampleSizeBox {
-            version: 0,
-            flags: 0,
-            sample_size: size,
-            sample_count: count,
-            entries: Vec::new(),
-        }
-    }
-
-    /// (a) The last chunk holds fewer samples than `samples_per_chunk`
-    /// (surplus capacity) with a per-sample `stsz`: tolerated.
-    #[test]
-    fn layout_tolerates_surplus_capacity_per_sample_stsz() {
-        // 3 per chunk x 2 chunks = capacity 6, but only 5 samples declared.
-        let stsz = per_sample_stsz(&[10, 20, 30, 40, 50]);
-        let layout = sample_layout(
-            &stsz,
-            &stsc_of(alloc::vec![run(1, 3)]),
-            None,
-            Some(&stco_of(&[100, 1000])),
-            1 << 20,
-        )
-        .unwrap();
-        assert_eq!(
-            layout,
-            [(100, 10), (110, 20), (130, 30), (1000, 40), (1040, 50)]
-        );
-    }
-
-    /// (b) Same surplus, uniform `stsz`: clamped to `sample_count`, same rule.
-    #[test]
-    fn layout_tolerates_surplus_capacity_uniform_stsz() {
-        let layout = sample_layout(
-            &uniform_stsz(8, 4),
-            &stsc_of(alloc::vec![run(1, 3)]),
-            None,
-            Some(&stco_of(&[0, 100, 200])),
-            1 << 20,
-        )
-        .unwrap();
-        assert_eq!(layout, [(0, 8), (8, 8), (16, 8), (100, 8)]);
-    }
-
-    /// Several chunks may point at the same file bytes; before the byte
-    /// budget existed, a uniform `stsz` then made `sample_count x sample_size`
-    /// samples (`file_len^2` bytes) out of a `file_len` file, each copying the
-    /// same input region (audit 20 findings 6 / 57).
-    #[test]
-    fn layout_rejects_overlapping_chunks_past_the_input_length() {
-        // Four chunks all at offset 0, one 64-byte sample each: 256 bytes
-        // claimed from a 100-byte file.
-        let err = sample_layout(
-            &uniform_stsz(64, 4),
-            &stsc_of(alloc::vec![run(1, 1)]),
-            None,
-            Some(&stco_of(&[0, 0, 0, 0])),
-            100,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::SampleDataBudgetExceeded { limit: 100 }),
-            "expected the byte budget error, got {err:?}"
-        );
-    }
-
-    /// The budget is exactly one container length: a layout totalling the file
-    /// length is accepted, and the same layout one byte over it is not.
-    #[test]
-    fn layout_budget_boundary_is_one_container_length() {
-        let at_cap = sample_layout(
-            &uniform_stsz(25, 4),
-            &stsc_of(alloc::vec![run(1, 4)]),
-            None,
-            Some(&stco_of(&[0])),
-            100,
-        )
-        .unwrap();
-        assert_eq!(at_cap.len(), 4);
-
-        let err = sample_layout(
-            &uniform_stsz(25, 4),
-            &stsc_of(alloc::vec![run(1, 4)]),
-            None,
-            Some(&stco_of(&[0])),
-            99,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::SampleDataBudgetExceeded { limit: 99 }),
-            "expected the byte budget error one byte past the cap, got {err:?}"
-        );
-    }
-
-    /// (c) The chunk tables cover fewer samples than `stsz` declares.
-    #[test]
-    fn layout_rejects_shortfall() {
-        for stsz in [uniform_stsz(8, 5), per_sample_stsz(&[8; 5])] {
-            let err = sample_layout(
-                &stsz,
-                &stsc_of(alloc::vec![run(1, 2)]),
-                None,
-                Some(&stco_of(&[0, 100])),
-                1 << 20,
-            )
-            .unwrap_err();
-            assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
-        }
-    }
-
-    /// `first_chunk` must be strictly ascending (§8.7.4): a repeat, a
-    /// descent and a zero are each a structured `InvalidValue` (this replaces
-    /// the W22 clamp test: the oversized/alternating entries it fed are now
-    /// rejected outright rather than iterated).
-    #[test]
-    fn layout_rejects_non_ascending_first_chunk() {
-        for entries in [
-            alloc::vec![run(1, 2), run(0xFFFF_FFFF, 3), run(1, 4)],
-            alloc::vec![run(2, 1), run(2, 1)],
-            alloc::vec![run(0, 1)],
-        ] {
-            let err = sample_layout(
-                &uniform_stsz(1, 1),
-                &stsc_of(entries),
-                None,
-                Some(&stco_of(&[0])),
-                1 << 20,
-            )
-            .unwrap_err();
-            assert!(
-                matches!(
-                    err,
-                    Error::InvalidValue(InvalidValue {
-                        field: "stsc.first_chunk",
-                        ..
-                    })
-                ),
-                "{err:?}"
-            );
-        }
-    }
-
-    /// (d) Work bound: one `stsc` run per chunk is one forward pass — steps
-    /// stay linear in chunks + entries (a per-chunk rescan of the run table
-    /// would be ~chunks^2/2 = 80 000 here).
-    #[test]
-    fn layout_work_is_linear_in_chunks_and_entries() {
-        const CHUNKS: u32 = 400;
-        let entries: Vec<StscEntry> = (1..=CHUNKS).map(|c| run(c, 1)).collect();
-        let offsets: Vec<u32> = (1..=CHUNKS).map(|c| c * 100).collect();
-        LAYOUT_STEPS.with(|n| n.set(0));
-        let layout = sample_layout(
-            &uniform_stsz(10, CHUNKS),
-            &stsc_of(entries),
-            None,
-            Some(&stco_of(&offsets)),
-            1 << 20,
-        )
-        .unwrap();
-        let steps = LAYOUT_STEPS.with(core::cell::Cell::get);
-        assert_eq!(layout[0], (100, 10));
-        assert_eq!(layout[CHUNKS as usize - 1], (CHUNKS as usize * 100, 10));
-        assert!(steps <= 2 * CHUNKS as usize, "steps {steps}");
-    }
-
-    /// The `file_len` bound on the wire-declared `sample_count` (#987) is a
-    /// *strict* one: no sample occupies fewer than one byte, so a count equal
-    /// to the file length is legal and one past it is not.
-    #[test]
-    fn a_sample_count_equal_to_the_file_length_is_accepted() {
-        let stsz = uniform_stsz(1, 3);
-        let stsc = stsc_of(alloc::vec![run(1, 1)]);
-        let stco = stco_of(&[0, 1, 2]);
-        assert_eq!(
-            sample_layout(&stsz, &stsc, None, Some(&stco), 3).unwrap(),
-            alloc::vec![(0, 1), (1, 1), (2, 1)]
-        );
-
-        let over = uniform_stsz(1, 4);
-        let err = sample_layout(&over, &stsc, None, Some(&stco), 3)
-            .expect_err("one sample more than the file has bytes");
-        assert!(
-            matches!(err, Error::BufferTooShort(..)),
-            "expected BufferTooShort, got {err:?}"
-        );
-    }
-
-    /// A first `stsc` run that starts at chunk 2 means chunk 1 holds no
-    /// samples at all (ISO/IEC 14496-12:2026 §8.7.4): only chunk 2 gets the
-    /// run's samples, so the sample maps to chunk 2's offset.
-    #[test]
-    fn chunks_before_the_first_run_hold_no_samples() {
-        let stsz = per_sample_stsz(&[7]);
-        let layout = sample_layout(
-            &stsz,
-            &stsc_of(alloc::vec![run(2, 1)]),
-            None,
-            Some(&stco_of(&[100, 200])),
-            1 << 20,
-        )
-        .unwrap();
-        assert_eq!(layout, alloc::vec![(200, 7)]);
     }
 }

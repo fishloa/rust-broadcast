@@ -278,12 +278,6 @@ impl<'a> TrackCursor<'a> {
         };
 
         let total_samples = size_table.count();
-        if u64::from(total_samples) > u64::from(limits.max_samples_per_track()) {
-            return Err(Error::LimitExceeded {
-                what: "samples per track",
-                limit: u64::from(limits.max_samples_per_track()),
-            });
-        }
         if let Some(len) = file_len
             && u64::from(total_samples) > len
         {
@@ -292,6 +286,12 @@ impl<'a> TrackCursor<'a> {
                 have: len as usize,
                 what: "stsz sample_count vs file length",
             }));
+        }
+        if u64::from(total_samples) > u64::from(limits.max_samples_per_track()) {
+            return Err(Error::LimitExceeded {
+                what: "samples per track",
+                limit: u64::from(limits.max_samples_per_track()),
+            });
         }
         size_table.walk_sizes(total_samples, |size| {
             if size > limits.max_sample_bytes() {
@@ -510,18 +510,6 @@ impl<'a> TrackCursor<'a> {
     fn sample_ref(&self) -> Result<SampleRef> {
         let size = self.size_table.size(self.pos.sample)?;
         let offset = self.pos.chunk_cursor;
-        if let Some(len) = self.file_len {
-            let end = offset
-                .checked_add(u64::from(size))
-                .ok_or(Error::InvalidInput("sample byte range overflow"))?;
-            if end > len {
-                return Err(Error::BufferTooShort(BufferTooShort {
-                    need: usize::try_from(end).unwrap_or(usize::MAX),
-                    have: usize::try_from(len).unwrap_or(usize::MAX),
-                    what: "progressive sample data",
-                }));
-            }
-        }
         Ok(SampleRef {
             track: self.track,
             index: self.pos.sample,
@@ -546,10 +534,21 @@ impl<'a> TrackCursor<'a> {
             .total_bytes
             .checked_add(u64::from(size))
             .ok_or(Error::SampleDataBudgetExceeded { limit })?;
-        if let Some(len) = self.file_len
-            && pos.total_bytes > len
-        {
-            return Err(Error::SampleDataBudgetExceeded { limit });
+        if let Some(len) = self.file_len {
+            if pos.total_bytes > len {
+                return Err(Error::SampleDataBudgetExceeded { limit });
+            }
+            let end = pos
+                .chunk_cursor
+                .checked_add(u64::from(size))
+                .ok_or(Error::InvalidInput("sample byte range overflow"))?;
+            if end > len {
+                return Err(Error::BufferTooShort(BufferTooShort {
+                    need: usize::try_from(end).unwrap_or(usize::MAX),
+                    have: usize::try_from(len).unwrap_or(usize::MAX),
+                    what: "progressive sample data",
+                }));
+            }
         }
         pos.decode_time = pos
             .decode_time

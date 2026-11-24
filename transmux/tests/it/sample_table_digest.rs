@@ -1,20 +1,16 @@
-//! Pin the per-sample output of the progressive sample tables before the
-//! layout code moves into `isobmff`.
+//! Pin the per-sample output through `isobmff`'s sample-table cursor.
 //!
-//! This test computes, from today's `sample_layout` + `expand_*`, the
-//! `(offset, size, decode_time, composition_offset, duration, sync)` sequence
-//! for every MP4 fixture that carries a non-empty `stbl`, and compares it with
-//! a digest table generated once from the same code. When the cursor replaces
-//! those functions the table must not change.
+//! The digest table was generated from transmux's pre-move layout and must
+//! stay identical now that the cursor produces the same sequence.
 
 use std::path::{Path, PathBuf};
 
 use broadcast_common::Parse;
-use isobmff::init_segment::{MOOV, MovieBox, StblChild, TrackBox};
-use isobmff::timing::CompositionOffsetBox;
-use transmux::progressive_demux::{expand_ctts, expand_stss, expand_stts, sample_layout};
+use isobmff::Limits;
+use isobmff::TrackId;
+use isobmff::init_segment::{MOOV, MovieBox, SampleTableBox, StblChild, TrackBox};
+use isobmff::sample_table::TrackCursor;
 
-/// One sample's digestable tuple, in file-decode order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Row {
     offset: u64,
@@ -25,7 +21,6 @@ struct Row {
     sync: bool,
 }
 
-/// Two filesystems-level fixture roots: committed and private.
 fn fixture_roots() -> Vec<(&'static str, PathBuf)> {
     let mut roots = vec![("public", test_fixtures::root().join("mp4"))];
     if let Some(private) = test_fixtures::private("mp4") {
@@ -52,7 +47,6 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Every fixture file with a stable key: `public/<rel>` or `private/<rel>`.
 fn fixtures() -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     for (tier, root) in fixture_roots() {
@@ -70,13 +64,13 @@ fn fixtures() -> Vec<(String, PathBuf)> {
 }
 
 fn find<'a, T>(
-    stbl: &'a isobmff::init_segment::SampleTableBox,
+    stbl: &'a SampleTableBox,
     get: impl Fn(&'a StblChild) -> Option<&'a T>,
 ) -> Option<&'a T> {
     stbl.children.iter().find_map(get)
 }
 
-/// Compute one track's rows with today's `sample_layout` + `expand_*`.
+/// Same inclusion gate the transmux digest test uses, then the cursor's rows.
 fn track_rows(file: &[u8], trak: &TrackBox) -> Option<Vec<Row>> {
     let stbl = trak.mdia.as_ref()?.minf.as_ref()?.stbl.as_ref()?;
     let stsz = find(stbl, |c| match c {
@@ -86,8 +80,6 @@ fn track_rows(file: &[u8], trak: &TrackBox) -> Option<Vec<Row>> {
     if stsz.sample_count == 0 {
         return None;
     }
-    // `stz2` is not handled by `sample_layout`; no fixture uses it, and the
-    // cursor test gates its tracks the same way.
     if stbl
         .children
         .iter()
@@ -95,53 +87,24 @@ fn track_rows(file: &[u8], trak: &TrackBox) -> Option<Vec<Row>> {
     {
         return None;
     }
-    let stsc = find(stbl, |c| match c {
-        StblChild::Stsc(b) => Some(b),
-        _ => None,
-    })?;
-    let co64 = find(stbl, |c| match c {
-        StblChild::Co64(b) => Some(b),
-        _ => None,
-    });
-    let stco = find(stbl, |c| match c {
-        StblChild::Stco(b) => Some(b),
-        _ => None,
-    });
-    let stts = find(stbl, |c| match c {
-        StblChild::Stts(b) => Some(b),
-        _ => None,
-    })?;
-    let ctts: Option<&CompositionOffsetBox> = find(stbl, |c| match c {
-        StblChild::Ctts(b) => Some(b),
-        _ => None,
-    });
-    let stss = find(stbl, |c| match c {
-        StblChild::Stss(b) => Some(b),
-        _ => None,
-    });
-
-    let layout = sample_layout(stsz, stsc, co64, stco, file.len()).ok()?;
-    let total = layout.len();
-    let durations = expand_stts(stts, total).ok()?;
-    let composition = expand_ctts(ctts, total).ok()?;
-    let sync = expand_stss(stss, total);
-    let mut rows = Vec::with_capacity(total);
-    let mut decode_time = 0u64;
-    for (index, &(offset, size)) in layout.iter().enumerate() {
+    let track = TrackId::new(trak.tkhd.track_id.value());
+    let mut cursor =
+        TrackCursor::new(stbl, track, &Limits::default(), Some(file.len() as u64)).ok()?;
+    let mut rows = Vec::new();
+    for item in &mut cursor {
+        let sample = item.ok()?;
         rows.push(Row {
-            offset: offset as u64,
-            size: size as u64,
-            decode_time,
-            composition_offset: i64::from(composition[index]),
-            duration: durations[index],
-            sync: sync[index],
+            offset: sample.offset,
+            size: u64::from(sample.size),
+            decode_time: sample.decode_time,
+            composition_offset: i64::from(sample.composition_offset),
+            duration: sample.duration,
+            sync: sample.sync,
         });
-        decode_time += u64::from(durations[index]);
     }
     Some(rows)
 }
 
-/// FNV-1a over every included track, in file order.
 fn file_digest(file: &[u8]) -> Option<(u32, u64)> {
     let moov_bytes = isobmff::box_types::find_box(file, &MOOV)?;
     let moov = MovieBox::parse(moov_bytes).ok()?;
@@ -183,8 +146,39 @@ fn fnv_u64(hash: u64, value: u64) -> u64 {
     value.to_le_bytes().iter().fold(hash, |h, &b| fnv_u8(h, b))
 }
 
-// Generated once from the pre-move layout code in commit 3; the cursor must
-// reproduce it exactly. Regenerating it is the signal of a behaviour change.
+#[test]
+fn cursor_matches_the_pre_move_digest_table() {
+    let mut generated = Vec::new();
+    for (key, path) in fixtures() {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if let Some((count, digest)) = file_digest(&bytes) {
+            generated.push((key, count, digest));
+        }
+    }
+    assert!(
+        generated.len() >= 20,
+        "only {} fixtures with a non-empty stbl were exercised; 20 are required",
+        generated.len()
+    );
+    let expected: std::collections::BTreeMap<&str, (u32, u64)> = DIGESTS
+        .iter()
+        .map(|&(name, count, digest)| (name, (count, digest)))
+        .collect();
+    for (key, count, digest) in &generated {
+        let Some(&(want_count, want_digest)) = expected.get(key.as_str()) else {
+            panic!("fixture {key} is missing from DIGESTS");
+        };
+        assert_eq!(
+            (*count, *digest),
+            (want_count, want_digest),
+            "fixture {key}: cursor output differs from the pre-move layout"
+        );
+    }
+    assert_eq!(generated.len(), expected.len());
+}
+
 const DIGESTS: &[(&str, u32, u64)] = &[
     ("public/aac-sgpd.mp4", 131, 0x9f808b3f4836a623),
     ("public/av1.mp4", 12, 0xdabde3d714765d4d),
@@ -244,53 +238,3 @@ const DIGESTS: &[(&str, u32, u64)] = &[
         0xe27361bec595ff4b,
     ),
 ];
-
-#[test]
-fn digest_table_matches_the_pre_move_layout() {
-    let mut generated = Vec::new();
-    for (key, path) in fixtures() {
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
-        };
-        if let Some((count, digest)) = file_digest(&bytes) {
-            generated.push((key, count, digest));
-        }
-    }
-    assert!(
-        generated.len() >= 20,
-        "only {} fixtures with a non-empty stbl were exercised; 20 are required",
-        generated.len()
-    );
-    let expected: std::collections::BTreeMap<&str, (u32, u64)> = DIGESTS
-        .iter()
-        .map(|&(name, count, digest)| (name, (count, digest)))
-        .collect();
-    for (key, count, digest) in &generated {
-        let Some(&(want_count, want_digest)) = expected.get(key.as_str()) else {
-            panic!("fixture {key} is missing from DIGESTS");
-        };
-        assert_eq!(
-            (*count, *digest),
-            (want_count, want_digest),
-            "fixture {key}: sample table output changed"
-        );
-    }
-    assert_eq!(
-        generated.len(),
-        expected.len(),
-        "DIGESTS has entries for fixtures that no longer produce a sample table"
-    );
-}
-
-#[test]
-#[ignore = "generates the digest table; run manually with --ignored --nocapture"]
-fn print_digest_table() {
-    for (key, path) in fixtures() {
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
-        };
-        if let Some((count, digest)) = file_digest(&bytes) {
-            println!("    (\"{key}\", {count}, 0x{digest:016x}),");
-        }
-    }
-}
