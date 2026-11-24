@@ -27,13 +27,12 @@ const RESERVED_TRAILER_1_BITS: u32 = 10;
 /// Width of each 8-bit trailer reserved field (`trailer2`/`trailer3`).
 const RESERVED_TRAILER_OCTET_BITS: u32 = 8;
 /// Bits per byte, for bit<->byte length conversions.
-const BITS_PER_BYTE: usize = 8;
-
 use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::plex::{plex_bits, read_plex, write_plex};
+use crate::util::BITS_PER_BYTE;
 use crate::util::{
     expect_fully_consumed, read_align_bits, read_reserved, write_align_bits, write_reserved,
 };

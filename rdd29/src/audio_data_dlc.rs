@@ -11,14 +11,12 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::error::{BitResultExt, Error, Result};
 use crate::plex::{plex_bits, read_plex, write_plex};
+use crate::util::BITS_PER_BYTE;
 
 /// Plex width of `AudioDataID` (RDD 29 §5.5.1 Table 8).
 const AUDIO_DATA_ID_BITS: u32 = 8;
 /// Bit width of `DLCSize` (RDD 29 §5.5.1 Table 8).
 const DLC_SIZE_BITS: u32 = 16;
-/// Bits per byte, for bit<->byte length conversions.
-const BITS_PER_BYTE: usize = 8;
-
 /// The `AudioDataDLC` element (§4.5/§5.5): one track's audio essence,
 /// referenced by [`crate::BedDefinition1`]/[`crate::ObjectDefinition1`] via
 /// `AudioDataID`.

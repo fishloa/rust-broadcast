@@ -5,7 +5,8 @@ use broadcast_common::bits::{BitReader, BitWriter};
 use crate::error::{BitResultExt, Error, Result};
 
 /// Bits per byte, for bit<->byte length conversions.
-const BITS_PER_BYTE: usize = 8;
+/// Bits per byte, for bit<->byte length conversions.
+pub(crate) const BITS_PER_BYTE: usize = u8::BITS as usize;
 
 /// Read and validate a "Reserved (set to `expected`)" field. RDD 29 gives an
 /// explicit literal value for every reserved field it defines (unlike, e.g.,

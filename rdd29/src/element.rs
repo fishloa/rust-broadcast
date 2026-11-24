@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::frame_rate::FrameRate;
 use crate::object_definition::ObjectDefinition1;
 use crate::plex::{plex_bits, read_plex, write_plex};
+use crate::util::BITS_PER_BYTE;
 
 /// `ATMOS_FRAME` (Table 1, §5.1.1): the frame-header element.
 pub const ELEMENT_ID_ATMOS_FRAME: u32 = 0x08;
@@ -23,9 +24,6 @@ pub const ELEMENT_ID_AUDIO_DATA_DLC: u32 = 0x200;
 /// Plex width of the `ReadElement()` `ElementID`/`ElementSize` fields
 /// (RDD 29 §5.1.1).
 const ELEMENT_HEADER_PLEX_WIDTH: u32 = 8;
-/// Bits per byte, for bit<->byte length conversions.
-const BITS_PER_BYTE: usize = 8;
-
 /// The `ElementID` field (Table 1, §5.1.1): identifies the kind and
 /// contents of a Dolby Atmos bitstream element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

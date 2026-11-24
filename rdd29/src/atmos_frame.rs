@@ -15,6 +15,7 @@ use crate::element::{ELEMENT_ID_ATMOS_FRAME, element_header_len, write_element_h
 use crate::error::{BitResultExt, Error, Result};
 use crate::frame_rate::FrameRate;
 use crate::plex::{plex_bits, read_plex, write_plex};
+use crate::util::BITS_PER_BYTE;
 
 /// The 2-bit `SampleRate` field (§5.2.2 Table 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -128,9 +129,6 @@ const PLEX_BASE_WIDTH: u32 = 8;
 const SMALL_FIELD_BITS: u32 = 2;
 /// `FrameRate` is a 4-bit field (§5.2.1).
 const FRAME_RATE_BITS: u32 = 4;
-/// Bits per byte, for bit<->byte length conversions.
-const BITS_PER_BYTE: usize = 8;
-
 impl<'a> AtmosFrame<'a> {
     /// Build a new `ATMOSFrame`.
     #[must_use]
