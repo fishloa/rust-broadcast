@@ -64,7 +64,8 @@ const DESCRIPTOR_LOOP_LENGTH_HIGH_SHIFT: u32 = u8::BITS;
 const SPLICE_COMMAND_LENGTH_BITS: u32 = 12;
 const SECTION_LENGTH_MAX: usize = 4093;
 const NIBBLE_MASK: u8 = 0x0F;
-const NIBBLE_MASK_U16: u16 = 0x0F;
+/// Modulus that extracts the low nibble of `tier` (16).
+const TIER_NIBBLE_MODULUS: u16 = 1 << TIER_SHIFT;
 const LOW_BYTE_MASK_U16: u16 = u8::MAX as u16;
 const SAP_TYPE_OFFSET: usize = 1;
 const SAP_TYPE_SHIFT: u32 = 4;
@@ -485,7 +486,7 @@ impl Serialize for SpliceInfoSection<'_> {
                 } else {
                     real_scl
                 };
-                buf[SPLICE_COMMAND_LENGTH_OFFSET] = (((self.tier & NIBBLE_MASK_U16) as u8)
+                buf[SPLICE_COMMAND_LENGTH_OFFSET] = (((self.tier % TIER_NIBBLE_MODULUS) as u8)
                     << TIER_SHIFT)
                     | ((scl >> SECTION_LENGTH_HIGH_SHIFT) as u8 & NIBBLE_MASK);
                 buf[SPLICE_COMMAND_LENGTH_LOW_OFFSET] = (scl & LOW_BYTE_MASK_U16) as u8;
@@ -525,7 +526,7 @@ impl Serialize for SpliceInfoSection<'_> {
                     SPLICE_COMMAND_LENGTH_BITS,
                     "splice_info_section.splice_command_length",
                 )? as u16;
-                buf[SPLICE_COMMAND_LENGTH_OFFSET] = (((self.tier & NIBBLE_MASK_U16) as u8)
+                buf[SPLICE_COMMAND_LENGTH_OFFSET] = (((self.tier % TIER_NIBBLE_MODULUS) as u8)
                     << TIER_SHIFT)
                     | ((scl >> SECTION_LENGTH_HIGH_SHIFT) as u8 & NIBBLE_MASK);
                 buf[SPLICE_COMMAND_LENGTH_LOW_OFFSET] = (scl & LOW_BYTE_MASK_U16) as u8;
@@ -534,7 +535,7 @@ impl Serialize for SpliceInfoSection<'_> {
             }
             (None, None) => {
                 buf[SPLICE_COMMAND_LENGTH_OFFSET] =
-                    ((self.tier & NIBBLE_MASK_U16) as u8) << TIER_SHIFT;
+                    ((self.tier % TIER_NIBBLE_MODULUS) as u8) << TIER_SHIFT;
                 buf[SPLICE_COMMAND_LENGTH_LOW_OFFSET] = 0;
                 // No command/payload: splice_command_type would be missing.
                 return Err(Error::InvalidField(broadcast_common::error::InvalidField {
