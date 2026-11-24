@@ -48,6 +48,7 @@ It never knows the media IR or a codec bitstream.
 | `sample_groups` | `prft`, `sgpd`, `sbgp`, `subs`, `ssrt` |
 | `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
 | `limits` | hostile-input caps (`Limits`) for the Phase 2 reader |
+| `writer` | sans-IO fragmented writer: init segment, `moof`+`mdat`, CENC media-segment protection |
 | `sample_table` | lazy per-track sample cursor (`TrackCursor`/`CursorState`) and the run-length table builders |
 | `reader` | sans-IO progressive-file `Reader`: asks for structure byte ranges, yields every track and one sample descriptor at a time, `seek_to` over `stss` |
 | `plan` | `SamplePlan`, the progressive index a `Reader` hands out without reading media |

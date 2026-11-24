@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `writer`, the sans-IO fragmented MP4 writer: `Writer::fragmented` returns a
+  `FragmentedWriter` whose `init()` assembles `ftyp`+`moov` from `TrackSetup`
+  values (a typed `SampleEntry` or a raw sample-entry box, so a track this
+  crate has no codec for still writes), and whose `push`/`flush` emit one
+  `[styp] [emsg]* moof mdat` fragment capped by `Limits::max_fragment_bytes`
+  (`Error::FragmentTooLarge`). `writer::fragmented_segment` is the same
+  builder for a caller that already holds its samples, and
+  `writer::fragmented::protect_media_segment` (with `FragmentProtection`) is
+  the CENC media-segment pass moved down from `transmux` — the
+  `senc`/`saiz`/`saio` boxes are emitted by the writer when a sample carries
+  `SampleAux`.
 - `reader::Reader`, the sans-IO progressive-file reader: it asks the caller
   for structure byte ranges with `Step::Need`, surfaces every track
   (`Step::Tracks`, including handlers and sample entries transmux cannot map,

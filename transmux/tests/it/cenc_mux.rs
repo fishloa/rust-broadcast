@@ -25,8 +25,8 @@ use isobmff::cenc::{
 };
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use isobmff::movie_fragment::MovieFragmentBox;
+use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use transmux::cenc_segment::protect_init_segment;
-use transmux::fragment_build::{FragmentProtection, protect_media_segment};
 use transmux::{
     CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
 };
@@ -151,7 +151,7 @@ fn protect(media: &Media, track_id: u32) -> Vec<u8> {
         protect_init_segment(&raw, TrackId::new(track_id), enc).expect("protect_init_segment");
 
     let fragment_protection = FragmentProtection {
-        track_id: TrackId::new(track_id),
+        track_id: isobmff::TrackId::new(track_id),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -385,12 +385,12 @@ fn protect_media_segment_unknown_track_errors() {
 
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let bogus_protection = FragmentProtection {
-        track_id: TrackId::new(9999),
+        track_id: isobmff::TrackId::new(9999),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
     let err = protect_media_segment(&raw, &[bogus_protection]).unwrap_err();
-    assert!(matches!(err, transmux::Error::InvalidInput(_)));
+    assert!(matches!(err, isobmff::Error::InvalidInput(_)));
 }
 
 /// An empty `protections` slice must return the input byte-identical
@@ -563,7 +563,7 @@ fn protect_media_segment_keeps_a_moof_level_opaque_child() {
     let spliced = splice_into_moof(&with_protected_init, &pssh);
 
     let fp = FragmentProtection {
-        track_id: TrackId::new(1),
+        track_id: isobmff::TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -647,14 +647,14 @@ fn protect_media_segment_rejects_a_traf_that_already_carries_senc() {
     let spliced = splice_into_traf(&with_protected_init, &senc);
 
     let fp = FragmentProtection {
-        track_id: TrackId::new(1),
+        track_id: isobmff::TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
     let err = protect_media_segment(&spliced, &[fp])
         .expect_err("a traf with an existing senc must be rejected");
     assert!(
-        matches!(err, transmux::Error::InvalidInput(_)),
+        matches!(err, isobmff::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
     );
 }
@@ -704,14 +704,14 @@ fn protect_media_segment_rejects_a_data_offset_that_would_overflow() {
     buf[at..at + 4].copy_from_slice(&i32::MAX.to_be_bytes());
 
     let fp = FragmentProtection {
-        track_id: TrackId::new(1),
+        track_id: isobmff::TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
     let err = protect_media_segment(&buf, &[fp])
         .expect_err("an overflowing data_offset must be rejected");
     assert!(
-        matches!(err, transmux::Error::InvalidInput(_)),
+        matches!(err, isobmff::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
     );
 }
@@ -754,7 +754,7 @@ fn protected_segment_with_an_opaque_moof_child_decrypts_to_the_clear_samples() {
     let spliced = splice_into_moof(&with_protected_init, &pssh);
 
     let fp = FragmentProtection {
-        track_id: TrackId::new(1),
+        track_id: isobmff::TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -820,7 +820,7 @@ fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
     let spliced = splice_into_moof(&with_protected_init, &pssh);
 
     let fp = FragmentProtection {
-        track_id: TrackId::new(1),
+        track_id: isobmff::TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -937,7 +937,7 @@ fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
         .map(|t| {
             let enc = t.encryption.as_ref().expect("encryption");
             FragmentProtection {
-                track_id: t.spec.track_id,
+                track_id: isobmff::TrackId::new(t.spec.track_id.value()),
                 entries: &enc.samples,
                 per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
             }
@@ -1022,7 +1022,7 @@ fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
     let with_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
     let fp = || FragmentProtection {
-        track_id: TrackId::new(1),
+        track_id: isobmff::TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -1041,7 +1041,7 @@ fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
     let err =
         protect_media_segment(&with_cenc, &[fp()]).expect_err("a CENC saiz must still be refused");
     assert!(
-        matches!(err, transmux::Error::InvalidInput(_)),
+        matches!(err, isobmff::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
     );
 }

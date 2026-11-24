@@ -47,8 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     use broadcast_common::{Encrypt, Package, Unpackage};
     use broadcast_hls::cenc_ext_x_key;
+    use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
     use transmux::cenc_segment::protect_init_segment;
-    use transmux::fragment_build::{FragmentProtection, protect_media_segment};
     use transmux::pipeline::CodecConfig;
     use transmux::{
         CencEncryptor, CencScheme, CmafMux, DashPackager, EncryptConfig, IvGen, Media,
@@ -121,7 +121,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw = CmafMux::new(1).package(&media)?;
     let with_protected_init = protect_init_segment(&raw, track_id, &encryption)?;
     let fragment_protection = FragmentProtection {
-        track_id,
+        track_id: isobmff::TrackId::new(track_id.value()),
         entries: &encryption.samples,
         per_sample_iv_size: encryption.tenc.default_per_sample_iv_size,
     };

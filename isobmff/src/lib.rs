@@ -34,6 +34,13 @@
 //!   fragment sample-offset resolver.
 //! - [`limits`] — the hostile-input caps every count or size read from a file
 //!   is checked against before anything is allocated.
+//! - [`sample_table`] — [`TrackCursor`], the lazy per-track walk over the
+//!   `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss` tables, and the
+//!   run-length table builders.
+//! - [`writer`] — the sans-IO fragmented writer: [`writer::Writer::fragmented`]'s
+//!   init segment, the `moof`+`mdat` builder
+//!   ([`writer::fragmented_segment`]), and the CENC media-segment protection
+//!   pass ([`writer::fragmented::protect_media_segment`]).
 //! - [`sample_table`] — [`TrackCursor`]/[`CursorState`], the lazy per-track
 //!   walk over the `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss`
 //!   tables, and the run-length table builders.
@@ -107,6 +114,7 @@ pub mod track_reference;
 pub mod visual_ext;
 pub mod vp9;
 pub mod vvc_config;
+pub mod writer;
 
 pub use ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream, acmod_channels};
 pub use ac4::{AC4_FOURCC, Ac4SpecificBox, DAC4_FOURCC};

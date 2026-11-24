@@ -22,3 +22,4 @@ mod trait_round_trip;
 mod trun_budget;
 mod visual_ext;
 mod walk_api;
+mod writer_fragmented;
