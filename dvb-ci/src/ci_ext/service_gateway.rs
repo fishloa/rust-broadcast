@@ -168,7 +168,7 @@ pub struct ServiceDescAck<'a> {
     /// The 6-bit `reserved` field (`reserved_future_use`) in front of `EIT_schedule_flag` as received, preserved so the
     /// object re-serializes byte-for-byte; `0b11_1111` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedOnes<6>,
+    pub reserved: ReservedOnes<SERVICE_DESC_RESERVED_BITS>,
 }
 
 /// `GetServiceReq()` (Table 29) — A → R: request the resource to provide a
@@ -212,7 +212,7 @@ pub struct GetServiceAck {
     /// The 5-bit `reserved` field in front of `ServiceTerminated` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<5>,
+    pub reserved: ReservedZero<GET_SERVICE_RESERVED_BITS>,
 }
 
 // --- header-only objects ---
@@ -272,14 +272,74 @@ const SERVICE_REF_LEN: usize = 4;
 // VersionNumber(1) + NumberOfServices(2).
 const SERVICE_LIST_ACK_PREFIX: usize = 3;
 
+/// Bytes of one identifier within a service reference.
+const SERVICE_REF_ID_LEN: usize = core::mem::size_of::<u16>();
+/// Offset of `service_id` within a service reference.
+const SERVICE_REF_SERVICE_ID_OFFSET: usize = SERVICE_REF_ID_LEN;
+/// Offset of the service-reference part of a `ServiceListAck` body.
+const SERVICE_LIST_VERSION_OFFSET: usize = 0;
+/// Offset of `number_of_services` within a `ServiceListAck` body.
+const SERVICE_COUNT_OFFSET: usize = 1;
+
+/// Reserved bits in front of the `EIT_schedule_flag`.
+const SERVICE_DESC_RESERVED_BITS: u32 = 6;
+/// Reserved bits in front of `ServiceTerminated`.
+const GET_SERVICE_RESERVED_BITS: u32 = 5;
+/// Shift selecting the reserved bits of the `ServiceDescAck` flags byte.
+const SERVICE_DESC_RESERVED_SHIFT: u32 = 2;
+/// Shift selecting the reserved bits of the `GetServiceAck` flags byte.
+const GET_SERVICE_RESERVED_SHIFT: u32 = 3;
+
+/// Offsets within a `ServiceDescAck` body.
+const DESC_ACK_FLAGS_OFFSET: usize = 4;
+const DESC_ACK_STATUS_OFFSET: usize = 5;
+const DESC_ACK_LOOP_LEN_LOW_OFFSET: usize = 6;
+/// Offsets within a `GetServiceAck` body.
+const GET_ACK_FLAGS_OFFSET: usize = 4;
+const GET_ACK_ACTUAL_SERVICE_OFFSET: usize = 5;
+
+/// Mask of `EIT_schedule_flag`.
+const EIT_SCHEDULE_FLAG_MASK: u8 = 0x02;
+/// Mask of `EIT_present_following_flag`.
+const EIT_PRESENT_FOLLOWING_FLAG_MASK: u8 = 0x01;
+/// Shift placing `service_terminated`.
+const SERVICE_TERMINATED_SHIFT: u32 = 2;
+/// Shift placing `service_not_available`.
+const SERVICE_NOT_AVAILABLE_SHIFT: u32 = 1;
+/// Shift placing `EIT_schedule_flag`.
+const EIT_SCHEDULE_FLAG_SHIFT: u32 = 1;
+/// Mask of `service_terminated`.
+const SERVICE_TERMINATED_MASK: u8 = 0x04;
+/// Mask of `service_not_available`.
+const SERVICE_NOT_AVAILABLE_MASK: u8 = 0x02;
+/// Mask of `ca_service_flag`.
+const CA_SERVICE_FLAG_MASK: u8 = 0x01;
+/// Mask of `free_CA_mode`.
+const FREE_CA_MODE_MASK: u8 = 0x10;
+/// Shift placing `free_CA_mode`.
+const FREE_CA_MODE_SHIFT: u32 = 4;
+/// Shift placing `running_status`.
+const RUNNING_STATUS_SHIFT: u32 = 5;
+/// Mask of `running_status`.
+const RUNNING_STATUS_MASK: u8 = 0x07;
+/// Bit width of `running_status`.
+const RUNNING_STATUS_BITS: u32 = 3;
+/// Mask of a 12-bit length's high nibble.
+const LENGTH_HIGH_MASK: u8 = 0x0F;
+/// Shift placing a 12-bit length's high bits.
+const LENGTH_SHIFT: u32 = 8;
+/// Largest 12-bit length.
+const LENGTH_MAX: usize = 0x0FFF;
+
 impl<'a> Parse<'a> for ServiceListAck {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::SERVICE_LIST_ACK, "ServiceListAck")?;
         need_in(body, SERVICE_LIST_ACK_PREFIX, "ServiceListAck")?;
-        let version_number = body[0];
-        let count = u16::from_be_bytes([body[1], body[2]]) as usize;
+        let version_number = body[SERVICE_LIST_VERSION_OFFSET];
+        let count = u16::from_be_bytes([body[SERVICE_COUNT_OFFSET], body[SERVICE_COUNT_OFFSET + 1]])
+            as usize;
         let list = &body[SERVICE_LIST_ACK_PREFIX..];
         if list.len() < count * SERVICE_REF_LEN {
             return Err(Error::LengthMismatch(
@@ -295,7 +355,10 @@ impl<'a> Parse<'a> for ServiceListAck {
         for chunk in list[..count * SERVICE_REF_LEN].chunks_exact(SERVICE_REF_LEN) {
             services.push(ServiceReference {
                 original_network_id: u16::from_be_bytes([chunk[0], chunk[1]]),
-                service_id: u16::from_be_bytes([chunk[2], chunk[3]]),
+                service_id: u16::from_be_bytes([
+                    chunk[SERVICE_REF_SERVICE_ID_OFFSET],
+                    chunk[SERVICE_REF_SERVICE_ID_OFFSET + 1],
+                ]),
             });
         }
         Ok(Self {
@@ -323,12 +386,15 @@ impl Serialize for ServiceListAck {
         let body_len = SERVICE_LIST_ACK_PREFIX + self.services.len() * SERVICE_REF_LEN;
         let mut pos =
             objects::write_apdu_header(tag::SERVICE_LIST_ACK, body_len, self.length_form, buf)?;
-        buf[pos] = self.version_number;
-        buf[pos + 1..pos + 3].copy_from_slice(&(self.services.len() as u16).to_be_bytes());
+        buf[pos + SERVICE_LIST_VERSION_OFFSET] = self.version_number;
+        buf[pos + SERVICE_COUNT_OFFSET..pos + SERVICE_LIST_ACK_PREFIX]
+            .copy_from_slice(&(self.services.len() as u16).to_be_bytes());
         pos += SERVICE_LIST_ACK_PREFIX;
         for s in &self.services {
-            buf[pos..pos + 2].copy_from_slice(&s.original_network_id.to_be_bytes());
-            buf[pos + 2..pos + 4].copy_from_slice(&s.service_id.to_be_bytes());
+            buf[pos..pos + SERVICE_REF_ID_LEN]
+                .copy_from_slice(&s.original_network_id.to_be_bytes());
+            buf[pos + SERVICE_REF_SERVICE_ID_OFFSET..pos + SERVICE_REF_LEN]
+                .copy_from_slice(&s.service_id.to_be_bytes());
             pos += SERVICE_REF_LEN;
         }
         Ok(pos)
@@ -348,7 +414,10 @@ impl<'a> Parse<'a> for ServiceDescReq {
             length_form,
             service: ServiceReference {
                 original_network_id: u16::from_be_bytes([body[0], body[1]]),
-                service_id: u16::from_be_bytes([body[2], body[3]]),
+                service_id: u16::from_be_bytes([
+                    body[SERVICE_REF_SERVICE_ID_OFFSET],
+                    body[SERVICE_REF_SERVICE_ID_OFFSET + 1],
+                ]),
             },
         })
     }
@@ -365,8 +434,10 @@ impl Serialize for ServiceDescReq {
             self.length_form,
             buf,
         )?;
-        buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
-        buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
+        buf[pos..pos + SERVICE_REF_ID_LEN]
+            .copy_from_slice(&self.service.original_network_id.to_be_bytes());
+        buf[pos + SERVICE_REF_SERVICE_ID_OFFSET..pos + SERVICE_REF_LEN]
+            .copy_from_slice(&self.service.service_id.to_be_bytes());
         Ok(pos + SERVICE_REF_LEN)
     }
 }
@@ -383,13 +454,14 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
             objects::parse_apdu_header(bytes, tag::SERVICE_DESC_ACK, "ServiceDescAck")?;
         need_in(body, SERVICE_DESC_ACK_PREFIX, "ServiceDescAck")?;
         // byte 4: reserved_future_use(6) + EIT_schedule(1) + EIT_present_following(1)
-        let flags = body[4];
+        let flags = body[DESC_ACK_FLAGS_OFFSET];
         // byte 5..6: running_status(3) + free_CA_mode(1) + descriptors_loop_length(12)
-        let b5 = body[5];
-        let b6 = body[6];
-        let running_status = (b5 >> 5) & 0x07;
-        let free_ca_mode = (b5 & 0x10) != 0;
-        let loop_len = ((u16::from(b5 & 0x0F) << 8) | u16::from(b6)) as usize;
+        let b5 = body[DESC_ACK_STATUS_OFFSET];
+        let b6 = body[DESC_ACK_LOOP_LEN_LOW_OFFSET];
+        let running_status = (b5 >> RUNNING_STATUS_SHIFT) & RUNNING_STATUS_MASK;
+        let free_ca_mode = (b5 & FREE_CA_MODE_MASK) != 0;
+        let loop_len =
+            ((u16::from(b5 & LENGTH_HIGH_MASK) << LENGTH_SHIFT) | u16::from(b6)) as usize;
         let desc_start = SERVICE_DESC_ACK_PREFIX;
         let desc_end = desc_start + loop_len;
         if body.len() < desc_end {
@@ -406,14 +478,17 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
             length_form,
             service: ServiceReference {
                 original_network_id: u16::from_be_bytes([body[0], body[1]]),
-                service_id: u16::from_be_bytes([body[2], body[3]]),
+                service_id: u16::from_be_bytes([
+                    body[SERVICE_REF_SERVICE_ID_OFFSET],
+                    body[SERVICE_REF_SERVICE_ID_OFFSET + 1],
+                ]),
             },
-            eit_schedule_flag: (flags & 0x02) != 0,
-            eit_present_following_flag: (flags & 0x01) != 0,
+            eit_schedule_flag: (flags & EIT_SCHEDULE_FLAG_MASK) != 0,
+            eit_present_following_flag: (flags & EIT_PRESENT_FOLLOWING_FLAG_MASK) != 0,
             running_status,
             free_ca_mode,
             descriptors: &body[desc_start..desc_end],
-            reserved: ReservedOnes::from_bits(u64::from(flags >> 2)),
+            reserved: ReservedOnes::from_bits(u64::from(flags >> SERVICE_DESC_RESERVED_SHIFT)),
         })
     }
 }
@@ -426,7 +501,7 @@ impl Serialize for ServiceDescAck<'_> {
         )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if self.descriptors.len() > 0x0FFF {
+        if self.descriptors.len() > LENGTH_MAX {
             return Err(Error::InvalidObject {
                 what: "ServiceDescAck",
                 reason: "descriptors loop longer than 4095 bytes",
@@ -434,25 +509,28 @@ impl Serialize for ServiceDescAck<'_> {
         }
         objects::fit_bits(
             u64::from(self.running_status),
-            3,
+            RUNNING_STATUS_BITS,
             "ServiceDescAck running_status",
         )?;
         let body_len = SERVICE_DESC_ACK_PREFIX + self.descriptors.len();
         let mut pos =
             objects::write_apdu_header(tag::SERVICE_DESC_ACK, body_len, self.length_form, buf)?;
-        buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
-        buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
+        buf[pos..pos + SERVICE_REF_ID_LEN]
+            .copy_from_slice(&self.service.original_network_id.to_be_bytes());
+        buf[pos + SERVICE_REF_SERVICE_ID_OFFSET..pos + SERVICE_REF_LEN]
+            .copy_from_slice(&self.service.service_id.to_be_bytes());
         // reserved_future_use(6), EIT_schedule(1), EIT_present_following(1).
-        buf[pos + 4] = ((self.reserved.get() << 2) as u8)
-            | (u8::from(self.eit_schedule_flag) << 1)
+        buf[pos + DESC_ACK_FLAGS_OFFSET] = ((self.reserved.get() << SERVICE_DESC_RESERVED_SHIFT)
+            as u8)
+            | (u8::from(self.eit_schedule_flag) << EIT_SCHEDULE_FLAG_SHIFT)
             | u8::from(self.eit_present_following_flag);
         let loop_len = self.descriptors.len() as u16;
         // running_status(3), free_CA_mode(1), descriptors_loop_length(12).
         // running_status range-checked above.
-        buf[pos + 5] = (self.running_status << 5)
-            | (u8::from(self.free_ca_mode) << 4)
-            | ((loop_len >> 8) as u8 & 0x0F);
-        buf[pos + 6] = loop_len as u8;
+        buf[pos + DESC_ACK_STATUS_OFFSET] = (self.running_status << RUNNING_STATUS_SHIFT)
+            | (u8::from(self.free_ca_mode) << FREE_CA_MODE_SHIFT)
+            | ((loop_len >> LENGTH_SHIFT) as u8 & LENGTH_HIGH_MASK);
+        buf[pos + DESC_ACK_LOOP_LEN_LOW_OFFSET] = loop_len as u8;
         pos += SERVICE_DESC_ACK_PREFIX;
         buf[pos..pos + self.descriptors.len()].copy_from_slice(self.descriptors);
         Ok(pos + self.descriptors.len())
@@ -473,7 +551,10 @@ impl<'a> Parse<'a> for GetServiceReq {
             objects::reject_trailing_body(body, SERVICE_REF_LEN, "GetServiceReq")?;
             Some(ServiceReference {
                 original_network_id: u16::from_be_bytes([body[0], body[1]]),
-                service_id: u16::from_be_bytes([body[2], body[3]]),
+                service_id: u16::from_be_bytes([
+                    body[SERVICE_REF_SERVICE_ID_OFFSET],
+                    body[SERVICE_REF_SERVICE_ID_OFFSET + 1],
+                ]),
             })
         };
         Ok(Self {
@@ -504,8 +585,10 @@ impl Serialize for GetServiceReq {
                     self.length_form,
                     buf,
                 )?;
-                buf[pos..pos + 2].copy_from_slice(&s.original_network_id.to_be_bytes());
-                buf[pos + 2..pos + 4].copy_from_slice(&s.service_id.to_be_bytes());
+                buf[pos..pos + SERVICE_REF_ID_LEN]
+                    .copy_from_slice(&s.original_network_id.to_be_bytes());
+                buf[pos + SERVICE_REF_SERVICE_ID_OFFSET..pos + SERVICE_REF_LEN]
+                    .copy_from_slice(&s.service_id.to_be_bytes());
                 Ok(pos + SERVICE_REF_LEN)
             }
         }
@@ -525,18 +608,24 @@ impl<'a> Parse<'a> for GetServiceAck {
         need_in(body, GET_SERVICE_ACK_BODY, "GetServiceAck")?;
         crate::objects::reject_trailing_body(body, GET_SERVICE_ACK_BODY, "GetServiceAck")?;
         // byte 4: Reserved(5) + ServiceTerminated(1) + ServiceNotAvailable(1) + CAServiceFlag(1)
-        let flags = body[4];
+        let flags = body[GET_ACK_FLAGS_OFFSET];
         Ok(Self {
             length_form,
             service: ServiceReference {
                 original_network_id: u16::from_be_bytes([body[0], body[1]]),
-                service_id: u16::from_be_bytes([body[2], body[3]]),
+                service_id: u16::from_be_bytes([
+                    body[SERVICE_REF_SERVICE_ID_OFFSET],
+                    body[SERVICE_REF_SERVICE_ID_OFFSET + 1],
+                ]),
             },
-            service_terminated: (flags & 0x04) != 0,
-            service_not_available: (flags & 0x02) != 0,
-            ca_service_flag: (flags & 0x01) != 0,
-            actual_service: u16::from_be_bytes([body[5], body[6]]),
-            reserved: ReservedZero::from_bits(u64::from(flags >> 3)),
+            service_terminated: (flags & SERVICE_TERMINATED_MASK) != 0,
+            service_not_available: (flags & SERVICE_NOT_AVAILABLE_MASK) != 0,
+            ca_service_flag: (flags & CA_SERVICE_FLAG_MASK) != 0,
+            actual_service: u16::from_be_bytes([
+                body[GET_ACK_ACTUAL_SERVICE_OFFSET],
+                body[GET_ACK_ACTUAL_SERVICE_OFFSET + 1],
+            ]),
+            reserved: ReservedZero::from_bits(u64::from(flags >> GET_SERVICE_RESERVED_SHIFT)),
         })
     }
 }
@@ -552,14 +641,18 @@ impl Serialize for GetServiceAck {
             self.length_form,
             buf,
         )?;
-        buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
-        buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
+        buf[pos..pos + SERVICE_REF_ID_LEN]
+            .copy_from_slice(&self.service.original_network_id.to_be_bytes());
+        buf[pos + SERVICE_REF_SERVICE_ID_OFFSET..pos + SERVICE_REF_LEN]
+            .copy_from_slice(&self.service.service_id.to_be_bytes());
         // Reserved(5), then the three flag bits.
-        buf[pos + 4] = ((self.reserved.get() << 3) as u8)
-            | (u8::from(self.service_terminated) << 2)
-            | (u8::from(self.service_not_available) << 1)
+        buf[pos + GET_ACK_FLAGS_OFFSET] = ((self.reserved.get() << GET_SERVICE_RESERVED_SHIFT)
+            as u8)
+            | (u8::from(self.service_terminated) << SERVICE_TERMINATED_SHIFT)
+            | (u8::from(self.service_not_available) << SERVICE_NOT_AVAILABLE_SHIFT)
             | u8::from(self.ca_service_flag);
-        buf[pos + 5..pos + 7].copy_from_slice(&self.actual_service.to_be_bytes());
+        buf[pos + GET_ACK_ACTUAL_SERVICE_OFFSET..pos + GET_SERVICE_ACK_BODY]
+            .copy_from_slice(&self.actual_service.to_be_bytes());
         Ok(pos + GET_SERVICE_ACK_BODY)
     }
 }
