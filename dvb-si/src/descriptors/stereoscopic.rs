@@ -24,6 +24,17 @@ const RESERVED_7_BITS: u32 = 7;
 /// Width of a `reserved(5)` field.
 const RESERVED_5_BITS: u32 = 5;
 
+/// Width of `arrangement_type` (7 bits).
+const ARRANGEMENT_TYPE_BITS: usize = 7;
+/// Width of the `reserved` run in the stereoscopic program info descriptor (5 bits).
+const PROGRAM_INFO_RESERVED_BITS: usize = 5;
+/// Width of `stereoscopic_service_type` (3 bits).
+const SERVICE_TYPE_BITS: usize = 3;
+/// Width of the per-view `reserved` run (7 bits).
+const VIEW_RESERVED_BITS: usize = 7;
+/// Width of an upsampling factor (4 bits).
+const UPSAMPLING_FACTOR_BITS: usize = 4;
+
 // ───────────────────────── 0x34 ─────────────────────────────────────────────
 
 /// `MPEG2_stereoscopic_video_format_descriptor()` — Table 2-104.
@@ -57,7 +68,7 @@ impl Mpeg2StereoscopicVideoFormatDescriptor {
     fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "Mpeg2StereoscopicVideoFormatDescriptor");
         let present = r.flag()?;
-        let v = r.u8(7)?;
+        let v = r.u8(ARRANGEMENT_TYPE_BITS)?;
         Ok(Self {
             arrangement_type: present.then_some(v),
             reserved: if present {
@@ -76,8 +87,8 @@ impl Mpeg2StereoscopicVideoFormatDescriptor {
             "stereo_video_arrangement_type_present",
         )?;
         match self.arrangement_type {
-            Some(a) => w.put(u64::from(a), 7, "arrangement_type")?,
-            None => w.put(self.reserved.get(), 7, "reserved")?,
+            Some(a) => w.put(u64::from(a), ARRANGEMENT_TYPE_BITS, "arrangement_type")?,
+            None => w.put(self.reserved.get(), ARRANGEMENT_TYPE_BITS, "reserved")?,
         }
         w.bytes(&self.trailing)?;
         Ok(w.into_vec())
@@ -179,18 +190,18 @@ impl StereoscopicProgramInfoDescriptor {
     fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "StereoscopicProgramInfoDescriptor");
         Ok(Self {
-            reserved: ReservedOnes::from_bits(u64::from(r.u8(5)?)),
-            stereoscopic_service_type: StereoscopicServiceType::from_u8(r.u8(3)?),
+            reserved: ReservedOnes::from_bits(u64::from(r.u8(PROGRAM_INFO_RESERVED_BITS)?)),
+            stereoscopic_service_type: StereoscopicServiceType::from_u8(r.u8(SERVICE_TYPE_BITS)?),
             trailing: r.rest()?.to_vec(),
         })
     }
 
     fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(self.reserved.get(), 5, "reserved")?;
+        w.put(self.reserved.get(), PROGRAM_INFO_RESERVED_BITS, "reserved")?;
         w.put(
             u64::from(self.stereoscopic_service_type.to_u8()),
-            3,
+            SERVICE_TYPE_BITS,
             "stereoscopic_service_type",
         )?;
         w.bytes(&self.trailing)?;
@@ -330,19 +341,19 @@ impl StereoscopicVideoInfoDescriptor {
 
     fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "StereoscopicVideoInfoDescriptor");
-        let reserved = ReservedOnes::from_bits(u64::from(r.u8(7)?));
+        let reserved = ReservedOnes::from_bits(u64::from(r.u8(VIEW_RESERVED_BITS)?));
         let base = r.flag()?;
         let view = if base {
             StereoscopicVideoView::Base {
-                reserved: ReservedOnes::from_bits(u64::from(r.u8(7)?)),
+                reserved: ReservedOnes::from_bits(u64::from(r.u8(VIEW_RESERVED_BITS)?)),
                 leftview_flag: r.flag()?,
             }
         } else {
             StereoscopicVideoView::Additional {
-                reserved: ReservedOnes::from_bits(u64::from(r.u8(7)?)),
+                reserved: ReservedOnes::from_bits(u64::from(r.u8(VIEW_RESERVED_BITS)?)),
                 usable_as_2d: r.flag()?,
-                horizontal_upsampling_factor: UpsamplingFactor::from_u8(r.u8(4)?),
-                vertical_upsampling_factor: UpsamplingFactor::from_u8(r.u8(4)?),
+                horizontal_upsampling_factor: UpsamplingFactor::from_u8(r.u8(UPSAMPLING_FACTOR_BITS)?),
+                vertical_upsampling_factor: UpsamplingFactor::from_u8(r.u8(UPSAMPLING_FACTOR_BITS)?),
             }
         };
         Ok(Self {
@@ -354,14 +365,14 @@ impl StereoscopicVideoInfoDescriptor {
 
     fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(self.reserved.get(), 7, "reserved")?;
+        w.put(self.reserved.get(), VIEW_RESERVED_BITS, "reserved")?;
         match &self.view {
             StereoscopicVideoView::Base {
                 reserved,
                 leftview_flag,
             } => {
                 w.flag(true, "base_video_flag")?;
-                w.put(reserved.get(), 7, "reserved")?;
+                w.put(reserved.get(), VIEW_RESERVED_BITS, "reserved")?;
                 w.flag(*leftview_flag, "leftview_flag")?;
             }
             StereoscopicVideoView::Additional {
@@ -371,16 +382,16 @@ impl StereoscopicVideoInfoDescriptor {
                 vertical_upsampling_factor,
             } => {
                 w.flag(false, "base_video_flag")?;
-                w.put(reserved.get(), 7, "reserved")?;
+                w.put(reserved.get(), VIEW_RESERVED_BITS, "reserved")?;
                 w.flag(*usable_as_2d, "usable_as_2D")?;
                 w.put(
                     u64::from(horizontal_upsampling_factor.to_u8()),
-                    4,
+                    UPSAMPLING_FACTOR_BITS,
                     "horizontal_upsampling_factor",
                 )?;
                 w.put(
                     u64::from(vertical_upsampling_factor.to_u8()),
-                    4,
+                    UPSAMPLING_FACTOR_BITS,
                     "vertical_upsampling_factor",
                 )?;
             }

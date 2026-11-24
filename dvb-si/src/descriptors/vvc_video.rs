@@ -37,6 +37,8 @@ const SUB_PROFILE_IDC_BITS: usize = u32::BITS as usize;
 const RESERVED_5_READ_BITS: usize = RESERVED_5_BITS as usize;
 /// Width of `reserved(2)` in reader terms.
 const RESERVED_2_READ_BITS: usize = RESERVED_2_BITS as usize;
+/// Width of `temporal_id_min` / `temporal_id_max` (3 bits).
+const TEMPORAL_ID_BITS: usize = 3;
 
 /// The `temporal_id_min` / `temporal_id_max` block (present iff
 /// `temporal_layer_subset_flag == '1'`), shared by the VVC and EVC descriptors.
@@ -78,10 +80,18 @@ impl TemporalIdRange {
     }
 
     pub(crate) fn write(&self, w: &mut BitWriter) -> Result<()> {
-        w.put(self.reserved_min.get(), 5, "reserved")?;
-        w.put(u64::from(self.temporal_id_min), 3, "temporal_id_min")?;
-        w.put(self.reserved_max.get(), 5, "reserved")?;
-        w.put(u64::from(self.temporal_id_max), 3, "temporal_id_max")
+        w.put(self.reserved_min.get(), RESERVED_5_READ_BITS, "reserved")?;
+        w.put(
+            u64::from(self.temporal_id_min),
+            TEMPORAL_ID_BITS,
+            "temporal_id_min",
+        )?;
+        w.put(self.reserved_max.get(), RESERVED_5_READ_BITS, "reserved")?;
+        w.put(
+            u64::from(self.temporal_id_max),
+            TEMPORAL_ID_BITS,
+            "temporal_id_max",
+        )
     }
 }
 

@@ -14,9 +14,9 @@ pub const TAG: u8 = 0x43;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 11;
 /// Mask of a 2-bit field (`polarization`, `roll_off`, `modulation_type`).
-const TWO_BIT_MASK: u8 = 0x03;
+const FIELD_PAIR_MASK: u8 = 0x03;
 /// Mask of a 1-bit field (`modulation_system`).
-const ONE_BIT_MASK: u8 = 0x01;
+const SINGLE_BIT_MASK: u8 = 0x01;
 /// `west_east_flag` bit of the flags byte.
 const WEST_EAST_FLAG: u8 = 0x80;
 /// Shift of `polarization` in the flags byte.
@@ -54,7 +54,7 @@ const SYMBOL_RATE_SHIFT: u32 = 4;
 /// Mask of the 4-bit `FEC_inner` field.
 const FEC_INNER_MASK: u8 = 0x0F;
 /// Fractional threshold for round-half-away-from-zero.
-const ROUND_HALF: f64 = 0.5;
+const ROUNDING_THRESHOLD: f64 = 0.5;
 
 /// Polarization (§6.2.13.2 Table 38).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +86,7 @@ impl Polarization {
     #[must_use]
     /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
     pub fn from_u8(v: u8) -> Self {
-        match v & TWO_BIT_MASK {
+        match v & FIELD_PAIR_MASK {
             0 => Polarization::LinearHorizontal,
             1 => Polarization::LinearVertical,
             2 => Polarization::CircularLeft,
@@ -368,7 +368,7 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
         let flags = hdr[FLAGS_OFFSET];
         let east = (flags & WEST_EAST_FLAG) != 0;
 
-        let pol_raw = (flags >> POLARIZATION_SHIFT) & TWO_BIT_MASK;
+        let pol_raw = (flags >> POLARIZATION_SHIFT) & FIELD_PAIR_MASK;
         let polarization = match pol_raw {
             0 => Polarization::LinearHorizontal,
             1 => Polarization::LinearVertical,
@@ -376,7 +376,7 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
             _ => Polarization::CircularRight,
         };
 
-        let roll_raw = (flags >> ROLL_OFF_SHIFT) & TWO_BIT_MASK;
+        let roll_raw = (flags >> ROLL_OFF_SHIFT) & FIELD_PAIR_MASK;
         let roll_off = match roll_raw {
             0 => RollOff::Alpha035,
             1 => RollOff::Alpha025,
@@ -384,13 +384,13 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
             v => RollOff::Reserved(v),
         };
 
-        let mod_sys_raw = (flags >> MODULATION_SYSTEM_SHIFT) & ONE_BIT_MASK;
+        let mod_sys_raw = (flags >> MODULATION_SYSTEM_SHIFT) & SINGLE_BIT_MASK;
         let modulation_system = match mod_sys_raw {
             0 => ModulationSystem::DvbS,
             _ => ModulationSystem::DvbS2,
         };
 
-        let mod_type_raw = flags & TWO_BIT_MASK;
+        let mod_type_raw = flags & FIELD_PAIR_MASK;
         let modulation_type = match mod_type_raw {
             0 => ModulationType::Auto,
             1 => ModulationType::Qpsk,
@@ -460,7 +460,7 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
             RollOff::Alpha035 => 0x00,
             RollOff::Alpha025 => 0x08,
             RollOff::Alpha020 => 0x10,
-            RollOff::Reserved(v) => broadcast_common::len::fit_mask(v, TWO_BIT_MASK, "v")? << ROLL_OFF_SHIFT,
+            RollOff::Reserved(v) => broadcast_common::len::fit_mask(v, FIELD_PAIR_MASK, "v")? << ROLL_OFF_SHIFT,
         };
         flags |= match self.modulation_system {
             ModulationSystem::DvbS => 0x00,
@@ -504,7 +504,7 @@ impl crate::traits::DescriptorDef<'_> for SatelliteDeliverySystemDescriptor {
 /// `>= 0.5` test sees the true fraction and the result equals `f64::round`.
 fn round_half_away(x: f64) -> u64 {
     let whole = x as u64;
-    if x - whole as f64 >= ROUND_HALF {
+    if x - whole as f64 >= ROUNDING_THRESHOLD {
         whole + 1
     } else {
         whole

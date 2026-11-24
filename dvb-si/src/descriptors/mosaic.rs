@@ -65,6 +65,8 @@ const EVENT_ID_OFFSET: usize = 3 * CELL_ID_LEN;
 const SERVICE_LINKAGE_LEN: usize = 3 * CELL_ID_LEN;
 /// Wire width of an event linkage payload.
 const EVENT_LINKAGE_LEN: usize = 4 * CELL_ID_LEN;
+/// `cell_linkage_info` value of a service linkage (Table 75).
+const LINKAGE_SERVICE: u8 = 0x02;
 /// Spec default of the grid header `reserved_future_use`(1): `1` (EN 300 468
 /// V1.3.1-V1.20.1 Table 71; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`
 /// §6.1, class A: stable in every edition).
@@ -354,7 +356,7 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                     let transport_stream_id = read_u16(body, pos + TRANSPORT_STREAM_ID_OFFSET)?;
                     let service_id = read_u16(body, pos + SERVICE_ID_OFFSET)?;
                     pos += SERVICE_LINKAGE_LEN;
-                    if info == 0x02 {
+                    if info == LINKAGE_SERVICE {
                         CellLinkage::Service {
                             original_network_id,
                             transport_stream_id,

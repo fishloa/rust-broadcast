@@ -37,6 +37,30 @@ const BYTE1_RESERVED_MASK: u8 = 0x80;
 const BYTE1_RESERVED_SHIFT: u8 = 7;
 const BYTE2_RESERVED_MASK: u8 = 0x80;
 const BYTE2_RESERVED_SHIFT: u8 = 7;
+/// Body offset of the third fixed byte.
+const BYTE2_OFFSET: usize = 2;
+/// Shift of `country_prefix_length` in byte 1.
+const COUNTRY_PREFIX_LENGTH_SHIFT: u8 = 5;
+/// Mask of the 2-bit `country_prefix_length`.
+const COUNTRY_PREFIX_LENGTH_MASK: u8 = 0x03;
+/// Mask of the 3-bit area-code length fields.
+const AREA_CODE_LENGTH_MASK: u8 = 0x07;
+/// Shift of `international_area_code_length` in byte 1.
+const INTL_AREA_CODE_LENGTH_SHIFT: u8 = 2;
+/// Shift of `national_area_code_length` in byte 2.
+const NATIONAL_AREA_CODE_LENGTH_SHIFT: u8 = 4;
+/// Mask of the 4-bit `core_number_length`.
+const CORE_NUMBER_LENGTH_MASK: u8 = 0x0F;
+/// Bit width of `country_prefix_length`.
+const COUNTRY_PREFIX_LENGTH_BITS: u32 = 2;
+/// Bit width of `international_area_code_length`.
+const INTL_AREA_CODE_LENGTH_BITS: u32 = 3;
+/// Bit width of `operator_code_length`.
+const OPERATOR_CODE_LENGTH_BITS: u32 = 2;
+/// Bit width of `national_area_code_length`.
+const NATIONAL_AREA_CODE_LENGTH_BITS: u32 = 3;
+/// Bit width of `core_number_length`.
+const CORE_NUMBER_LENGTH_BITS: u32 = 4;
 /// Spec default of the 2-bit `reserved_future_use` in byte 0: all ones
 /// (EN 300 468 V1.3.1-V1.20.1 Table 100, TS 102 006 V1.2.1-V1.4.1, EN 301 192
 /// V1.3.1-V1.8.1; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1,
@@ -142,11 +166,14 @@ impl<'a> Parse<'a> for TelephoneDescriptor<'a> {
         }
         let foreign_availability = body[0] & FOREIGN_AVAIL_MASK != 0;
         let connection_type = body[0] & CONNECTION_TYPE_MASK;
-        let country_prefix_length = ((body[1] >> 5) & 0x03) as usize;
-        let international_area_code_length = ((body[1] >> 2) & 0x07) as usize;
-        let operator_code_length = (body[1] & 0x03) as usize;
-        let national_area_code_length = ((body[2] >> 4) & 0x07) as usize;
-        let core_number_length = (body[2] & 0x0F) as usize;
+        let country_prefix_length = ((body[1] >> COUNTRY_PREFIX_LENGTH_SHIFT)
+            & COUNTRY_PREFIX_LENGTH_MASK) as usize;
+        let international_area_code_length = ((body[1] >> INTL_AREA_CODE_LENGTH_SHIFT)
+            & AREA_CODE_LENGTH_MASK) as usize;
+        let operator_code_length = (body[1] & COUNTRY_PREFIX_LENGTH_MASK) as usize;
+        let national_area_code_length = ((body[BYTE2_OFFSET] >> NATIONAL_AREA_CODE_LENGTH_SHIFT)
+            & AREA_CODE_LENGTH_MASK) as usize;
+        let core_number_length = (body[BYTE2_OFFSET] & CORE_NUMBER_LENGTH_MASK) as usize;
         let total_chars = country_prefix_length
             + international_area_code_length
             + operator_code_length
@@ -177,7 +204,7 @@ impl<'a> Parse<'a> for TelephoneDescriptor<'a> {
                 (body[1] & BYTE1_RESERVED_MASK) >> BYTE1_RESERVED_SHIFT,
             )),
             reserved_future_use_before_national_area_code_length: ReservedOnes::from_bits(
-                u64::from((body[2] & BYTE2_RESERVED_MASK) >> BYTE2_RESERVED_SHIFT),
+                u64::from((body[BYTE2_OFFSET] & BYTE2_RESERVED_MASK) >> BYTE2_RESERVED_SHIFT),
             ),
             foreign_availability,
             connection_type,
@@ -210,28 +237,32 @@ impl Serialize for TelephoneDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let country_prefix_len = broadcast_common::len::fit_bits(
             self.country_prefix.raw().len() as u64,
-            2,
+            COUNTRY_PREFIX_LENGTH_BITS,
             "country_prefix",
         )? as u8;
         let intl_area_len = broadcast_common::len::fit_bits(
             self.international_area_code.raw().len() as u64,
-            3,
+            INTL_AREA_CODE_LENGTH_BITS,
             "international_area_code",
         )? as u8;
         let operator_code_len = broadcast_common::len::fit_bits(
             self.operator_code.raw().len() as u64,
-            2,
+            OPERATOR_CODE_LENGTH_BITS,
             "operator_code",
         )? as u8;
         let national_area_len = broadcast_common::len::fit_bits(
             self.national_area_code.raw().len() as u64,
-            3,
+            NATIONAL_AREA_CODE_LENGTH_BITS,
             "national_area_code",
         )? as u8;
         let core_number_len =
-            broadcast_common::len::fit_bits(self.core_number.raw().len() as u64, 4, "core_number")?
+            broadcast_common::len::fit_bits(
+                self.core_number.raw().len() as u64,
+                CORE_NUMBER_LENGTH_BITS,
+                "core_number",
+            )?
                 as u8;
-        buf[2] = ((self.reserved_future_use_before_foreign_availability.get() as u8)
+        buf[HEADER_LEN] = ((self.reserved_future_use_before_foreign_availability.get() as u8)
             << BYTE0_RESERVED_SHIFT)
             | if self.foreign_availability {
                 FOREIGN_AVAIL_MASK
@@ -243,16 +274,16 @@ impl Serialize for TelephoneDescriptor<'_> {
                 CONNECTION_TYPE_MASK,
                 "connection_type",
             )?;
-        buf[3] = ((self.reserved_future_use_before_country_prefix_length.get() as u8)
+        buf[HEADER_LEN + 1] = ((self.reserved_future_use_before_country_prefix_length.get() as u8)
             << BYTE1_RESERVED_SHIFT)
-            | (country_prefix_len << 5)
-            | (intl_area_len << 2)
+            | (country_prefix_len << COUNTRY_PREFIX_LENGTH_SHIFT)
+            | (intl_area_len << INTL_AREA_CODE_LENGTH_SHIFT)
             | operator_code_len;
-        buf[4] = ((self
+        buf[HEADER_LEN + BYTE2_OFFSET] = ((self
             .reserved_future_use_before_national_area_code_length
             .get() as u8)
             << BYTE2_RESERVED_SHIFT)
-            | (national_area_len << 4)
+            | (national_area_len << NATIONAL_AREA_CODE_LENGTH_SHIFT)
             | core_number_len;
         let mut pos = HEADER_LEN + FIXED_LEN;
         for field in [

@@ -246,7 +246,7 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
         let flags = body[pos];
         let decoder_config_raw = (flags & DECODER_CONFIG_FLAGS_RAW_MASK) >> DECODER_CONFIG_FLAGS_SHIFT;
         let decoder_config_flags = DecoderConfigFlags::from_u8(decoder_config_raw);
-        let dsmcc_flag = (flags & 0x10) != 0;
+        let dsmcc_flag = (flags & DSMCC_FLAG_BIT) != 0;
         let reserved = ReservedOnes::from_bits(u64::from(flags));
         pos += 1;
 

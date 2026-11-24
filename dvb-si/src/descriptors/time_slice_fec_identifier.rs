@@ -40,6 +40,18 @@ const FRAME_SIZE_MAX: u8 = 0x07;
 const MAX_AVERAGE_RATE_MAX: u8 = 0x0F;
 /// Largest representable 4-bit time_slice_fec_id.
 const TIME_SLICE_FEC_ID_MAX: u8 = 0x0F;
+/// `time_slicing` bit of byte 0.
+const TIME_SLICING_FLAG: u8 = 0x80;
+/// `mpe_fec` bit mask (2 bits).
+const MPE_FEC_MASK: u8 = 0x03;
+/// Shift of `mpe_fec` in byte 0.
+const MPE_FEC_SHIFT: u8 = 5;
+/// Shift of `time_slicing` in byte 0.
+const TIME_SLICING_SHIFT: u8 = 7;
+/// Shift of `max_average_rate` in byte 2.
+const MAX_AVERAGE_RATE_SHIFT: u8 = 4;
+/// Body offset of `max_average_rate` / `time_slice_fec_id`.
+const MAX_AVERAGE_RATE_OFFSET: usize = 2;
 
 /// Time Slice and FEC Identifier Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,14 +123,15 @@ impl<'a> Parse<'a> for TimeSliceFecIdentifierDescriptor<'a> {
             });
         }
         let b0 = body[0];
-        let time_slicing = (b0 & 0x80) != 0;
-        let mpe_fec = (b0 >> 5) & MPE_FEC_MAX;
+        let time_slicing = (b0 & TIME_SLICING_FLAG) != 0;
+        let mpe_fec = (b0 >> MPE_FEC_SHIFT) & MPE_FEC_MASK;
         let reserved_for_future_use =
             ReservedOnes::from_bits(u64::from((b0 >> RESERVED_SHIFT) & RESERVED_MASK));
         let frame_size = b0 & FRAME_SIZE_MAX;
         let max_burst_duration = body[1];
-        let max_average_rate = (body[2] >> 4) & MAX_AVERAGE_RATE_MAX;
-        let time_slice_fec_id = body[2] & TIME_SLICE_FEC_ID_MAX;
+        let max_average_rate =
+            (body[MAX_AVERAGE_RATE_OFFSET] >> MAX_AVERAGE_RATE_SHIFT) & MAX_AVERAGE_RATE_MAX;
+        let time_slice_fec_id = body[MAX_AVERAGE_RATE_OFFSET] & TIME_SLICE_FEC_ID_MAX;
         let id_selector = &body[FIXED_LEN..];
         Ok(Self {
             time_slicing,
@@ -173,16 +186,16 @@ impl Serialize for TimeSliceFecIdentifierDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, FIXED_LEN + self.id_selector.len())?;
-        buf[2] = (u8::from(self.time_slicing) << 7)
-            | (broadcast_common::len::fit_mask(self.mpe_fec, MPE_FEC_MAX, "mpe_fec")? << 5)
+        buf[HEADER_LEN] = (u8::from(self.time_slicing) << TIME_SLICING_SHIFT)
+            | (broadcast_common::len::fit_mask(self.mpe_fec, MPE_FEC_MASK, "mpe_fec")? << MPE_FEC_SHIFT)
             | ((self.reserved_for_future_use.get() as u8) << RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(self.frame_size, FRAME_SIZE_MAX, "frame_size")?;
-        buf[3] = self.max_burst_duration;
-        buf[4] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + 1] = self.max_burst_duration;
+        buf[HEADER_LEN + MAX_AVERAGE_RATE_OFFSET] = (broadcast_common::len::fit_mask(
             self.max_average_rate,
             MAX_AVERAGE_RATE_MAX,
             "max_average_rate",
-        )? << 4)
+        )? << MAX_AVERAGE_RATE_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.time_slice_fec_id,
                 TIME_SLICE_FEC_ID_MAX,
