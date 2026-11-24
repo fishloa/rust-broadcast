@@ -977,6 +977,9 @@ impl Stage for Mp4Demux {
                 if self.finished {
                     return Err(Error::InvalidInput("Mp4Demux was fed after finish"));
                 }
+                if self.eof {
+                    return Err(Error::InvalidInput("Mp4Demux was fed after Eof"));
+                }
                 if self.source != SourceMode::Seekable {
                     return Err(Error::InvalidInput(
                         "Mp4Input::At was fed to a sequential Mp4Demux",
@@ -987,6 +990,9 @@ impl Stage for Mp4Demux {
             Mp4Input::Next(data) => {
                 if self.finished {
                     return Err(Error::InvalidInput("Mp4Demux was fed after finish"));
+                }
+                if self.eof {
+                    return Err(Error::InvalidInput("Mp4Demux was fed after Eof"));
                 }
                 if self.source != SourceMode::Sequential {
                     return Err(Error::InvalidInput(
