@@ -1,0 +1,4 @@
+# Genuine non-magic literals: prose inside multi-line error/doc strings, where the
+# checker's per-line string stripping does not apply. Format: <path>:<trimmed line> # reason
+st337/src/error.rs:see private/specs-verified/smpte/st337/st337.md scope decision 2)" # prose in a multi-line error message string
+st337/src/error.rs:included) exceeds the 16-bit-mode length_code maximum of 65535 bits" # prose in a multi-line error message string
