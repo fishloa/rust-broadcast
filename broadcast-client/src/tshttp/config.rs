@@ -37,6 +37,23 @@ pub struct Config {
 }
 
 /// Smallest start timeout [`Config::with_timeouts`] produces.
+/// Default start timeout: how long a pull waits for the first byte.
+const DEFAULT_START_TIMEOUT: Duration = Duration::from_millis(15_000);
+/// Default stall notice: how long without progress before the stall event.
+const DEFAULT_STALL_NOTICE: Duration = Duration::from_millis(5_000);
+/// Default stall reconnect: how long a stalled pull waits before reconnecting.
+const DEFAULT_STALL_RECONNECT: Duration = Duration::from_millis(30_000);
+/// Default backoff steps.
+const DEFAULT_BACKOFF_STEPS: [Duration; 3] = [
+    Duration::from_millis(2_000),
+    Duration::from_millis(4_000),
+    Duration::from_millis(8_000),
+];
+/// Default backoff cap.
+const DEFAULT_BACKOFF_CAP: Duration = Duration::from_millis(10_000);
+/// Default minimum interval between reconnect attempts.
+const DEFAULT_MIN_RECONNECT_INTERVAL: Duration = Duration::from_millis(1_000);
+
 const MIN_START_TIMEOUT: Duration = Duration::from_millis(1);
 /// Smallest stall-reconnect threshold [`Config::with_timeouts`] produces; the
 /// notice threshold is half of it, so the two stay ordered.
@@ -104,18 +121,14 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            start_timeout: Duration::from_millis(15_000),
-            stall_notice: Duration::from_millis(5_000),
-            stall_reconnect: Duration::from_millis(30_000),
+            start_timeout: DEFAULT_START_TIMEOUT,
+            stall_notice: DEFAULT_STALL_NOTICE,
+            stall_reconnect: DEFAULT_STALL_RECONNECT,
             backoff: BackoffSteps {
-                steps: vec![
-                    Duration::from_millis(2_000),
-                    Duration::from_millis(4_000),
-                    Duration::from_millis(8_000),
-                ],
-                cap: Duration::from_millis(10_000),
+                steps: DEFAULT_BACKOFF_STEPS.to_vec(),
+                cap: DEFAULT_BACKOFF_CAP,
             },
-            min_reconnect_interval: Duration::from_millis(1_000),
+            min_reconnect_interval: DEFAULT_MIN_RECONNECT_INTERVAL,
             max_reconnect_attempts: None,
         }
     }

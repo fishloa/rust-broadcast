@@ -34,6 +34,110 @@ const RESERVED_5_BITS: u32 = 5;
 const RESERVED_6_BITS: u32 = 6;
 /// Width of the `reserved` after `video_full_range_flag` (7 bits).
 const RESERVED_7_BITS: u32 = 7;
+/// Width of a 16-bit wire field, bytes.
+const U16_LEN: usize = core::mem::size_of::<u16>();
+/// Width of a 32-bit wire field, bytes.
+const U32_LEN: usize = core::mem::size_of::<u32>();
+const EXTENDED_CAPABILITY_FLAG_MASK: u16 = 0x8000;
+const PROFILE_AND_LEVEL_MASK: u16 = 0x7FFF;
+/// Shift of the high byte of the flags/profile word.
+const FLAGS_WORD_HI_SHIFT: u8 = 8;
+const STRIPE_FLAG_MASK: u8 = 0x80;
+const BLOCK_FLAG_MASK: u8 = 0x40;
+const MDM_FLAG_MASK: u8 = 0x20;
+const STILL_MODE_MASK: u8 = 0x80;
+const INTERLACED_VIDEO_MASK: u8 = 0x40;
+const VIDEO_FULL_RANGE_FLAG_MASK: u8 = 0x80;
+/// Offset of `extended_capability_flag`/`profile_and_level` in the body.
+const FLAGS_WORD_OFFSET: usize = 0;
+/// Width of the `extended_capability_flag`/`profile_and_level` word, bytes.
+const FLAGS_WORD_LEN: usize = U16_LEN;
+/// Offset of the low byte of the flags/profile word.
+const FLAGS_WORD_LO_OFFSET: usize = FLAGS_WORD_LEN - 1;
+/// Offset of `horizontal_size` in the body.
+const HORIZONTAL_SIZE_OFFSET: usize = FLAGS_WORD_LEN;
+/// Offset of `vertical_size` in the body.
+const VERTICAL_SIZE_OFFSET: usize = HORIZONTAL_SIZE_OFFSET + U32_LEN;
+/// Offset of `max_bit_rate` in the body.
+const MAX_BIT_RATE_OFFSET: usize = VERTICAL_SIZE_OFFSET + U32_LEN;
+/// Offset of `max_buffer_size` in the body.
+const MAX_BUFFER_SIZE_OFFSET: usize = MAX_BIT_RATE_OFFSET + U32_LEN;
+/// Offset of `DEN_frame_rate` in the body.
+const DEN_FRAME_RATE_OFFSET: usize = MAX_BUFFER_SIZE_OFFSET + U32_LEN;
+/// Offset of `NUM_frame_rate` in the body.
+const NUM_FRAME_RATE_OFFSET: usize = DEN_FRAME_RATE_OFFSET + U16_LEN;
+/// Length of the fixed body preamble, bytes.
+const PREAMBLE_LEN: usize = NUM_FRAME_RATE_OFFSET + U16_LEN;
+/// Width of each of `color_specification` and the still/interlaced byte, bytes.
+const COLOR_SPECIFICATION_BLOCK_LEN: usize = 2;
+/// Offset of `color_specification` after the preamble.
+const COLOR_SPECIFICATION_OFFSET: usize = 0;
+/// Offset of the still/interlaced byte after the preamble.
+const STILL_MODE_OFFSET: usize = 1;
+/// Width of the extended block's two leading flag bytes.
+const EXT_HEADER_FLAGS_LEN: usize = 2;
+/// Offset of `colour_primaries` in the colour-parameter block.
+const COLOUR_PRIMARIES_OFFSET: usize = 0;
+/// Offset of `transfer_characteristics` in the extended block.
+const TRANSFER_CHARACTERISTICS_OFFSET: usize = COLOUR_PRIMARIES_OFFSET + 1;
+/// Offset of `matrix_coefficients` in the extended block.
+const MATRIX_COEFFICIENTS_OFFSET: usize = TRANSFER_CHARACTERISTICS_OFFSET + 1;
+/// Offset of the video-full-range byte in the extended block.
+const VIDEO_FULL_RANGE_OFFSET: usize = MATRIX_COEFFICIENTS_OFFSET + 1;
+/// Width of the extended block's colour parameters, bytes.
+const COLOUR_PARAMETERS_LEN: usize = 4;
+/// Length of the extended block before any sub-block.
+const EXTENDED_HEADER_LEN: usize = EXT_HEADER_FLAGS_LEN + COLOUR_PARAMETERS_LEN;
+/// Offset of `strp_max_idx` in the stripe sub-block.
+const STRIPE_MAX_IDX_OFFSET: usize = 0;
+/// Offset of `strp_height` in the stripe sub-block.
+const STRIPE_HEIGHT_OFFSET: usize = 1;
+/// Length of the stripe sub-block, bytes.
+const STRIPE_SUB_BLOCK_LEN: usize = 3;
+/// Offset of `full_horizontal_size` in the block sub-block.
+const FULL_HORIZONTAL_SIZE_OFFSET: usize = 0;
+/// Offset of `full_vertical_size` in the block sub-block.
+const FULL_VERTICAL_SIZE_OFFSET: usize = FULL_HORIZONTAL_SIZE_OFFSET + U32_LEN;
+/// Offset of `blk_width` in the block sub-block.
+const BLK_WIDTH_OFFSET: usize = FULL_VERTICAL_SIZE_OFFSET + U32_LEN;
+/// Offset of `blk_height` in the block sub-block.
+const BLK_HEIGHT_OFFSET: usize = BLK_WIDTH_OFFSET + U16_LEN;
+/// Offset of `max_blk_idx_h` in the block sub-block.
+const MAX_BLK_IDX_H_OFFSET: usize = BLK_HEIGHT_OFFSET + U16_LEN;
+/// Offset of `max_blk_idx_v` in the block sub-block.
+const MAX_BLK_IDX_V_OFFSET: usize = MAX_BLK_IDX_H_OFFSET + 1;
+/// Offset of `blk_idx_h` in the block sub-block.
+const BLK_IDX_H_OFFSET: usize = MAX_BLK_IDX_V_OFFSET + 1;
+/// Offset of `blk_idx_v` in the block sub-block.
+const BLK_IDX_V_OFFSET: usize = BLK_IDX_H_OFFSET + 1;
+/// Length of the block sub-block, bytes.
+const BLOCK_SUB_BLOCK_LEN: usize = 16;
+/// Offset of `Xc0` in the MDM sub-block.
+const X_C0_OFFSET: usize = 0;
+/// Offset of `Yc0` in the MDM sub-block.
+const Y_C0_OFFSET: usize = X_C0_OFFSET + U16_LEN;
+/// Offset of `Xc1` in the MDM sub-block.
+const X_C1_OFFSET: usize = Y_C0_OFFSET + U16_LEN;
+/// Offset of `Yc1` in the MDM sub-block.
+const Y_C1_OFFSET: usize = X_C1_OFFSET + U16_LEN;
+/// Offset of `Xc2` in the MDM sub-block.
+const X_C2_OFFSET: usize = Y_C1_OFFSET + U16_LEN;
+/// Offset of `Yc2` in the MDM sub-block.
+const Y_C2_OFFSET: usize = X_C2_OFFSET + U16_LEN;
+/// Offset of `Xwp` in the MDM sub-block.
+const X_WP_OFFSET: usize = Y_C2_OFFSET + U16_LEN;
+/// Offset of `Ywp` in the MDM sub-block.
+const Y_WP_OFFSET: usize = X_WP_OFFSET + U16_LEN;
+/// Offset of `Lmax` in the MDM sub-block.
+const L_MAX_OFFSET: usize = Y_WP_OFFSET + U16_LEN;
+/// Offset of `Lmin` in the MDM sub-block.
+const L_MIN_OFFSET: usize = L_MAX_OFFSET + U32_LEN;
+/// Offset of `MaxCLL` in the MDM sub-block.
+const MAX_CLL_OFFSET: usize = L_MIN_OFFSET + U32_LEN;
+/// Offset of `MaxFALL` in the MDM sub-block.
+const MAX_FALL_OFFSET: usize = MAX_CLL_OFFSET + U16_LEN;
+/// Length of the MDM sub-block, bytes.
+const MDM_SUB_BLOCK_LEN: usize = MAX_FALL_OFFSET + U16_LEN;
 
 /// Stripe sub-block — present when extended_capability_flag AND stripe_flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -254,9 +358,9 @@ fn parse_extended_capability(
         });
     }
     let sb = body[pos];
-    let stripe_flag = (sb & 0x80) != 0;
-    let block_flag = (sb & 0x40) != 0;
-    let mdm_flag = (sb & 0x20) != 0;
+    let stripe_flag = (sb & STRIPE_FLAG_MASK) != 0;
+    let block_flag = (sb & BLOCK_FLAG_MASK) != 0;
+    let mdm_flag = (sb & MDM_FLAG_MASK) != 0;
     let reserved_5 = ReservedZero::from_bits(u64::from(sb));
     pos += 1;
 
@@ -270,37 +374,40 @@ fn parse_extended_capability(
         });
     }
     let sm_iv = body[pos];
-    let still_mode = (sm_iv & 0x80) != 0;
-    let interlaced_video = (sm_iv & 0x40) != 0;
+    let still_mode = (sm_iv & STILL_MODE_MASK) != 0;
+    let interlaced_video = (sm_iv & INTERLACED_VIDEO_MASK) != 0;
     let reserved_6 = ReservedOnes::from_bits(u64::from(sm_iv));
     pos += 1;
 
     // colour_primaries(1) + transfer(1) + matrix(1) + video_full_range(1) + reserved(7) = 4 bytes
-    if body.len() < pos + 4 {
+    if body.len() < pos + COLOUR_PARAMETERS_LEN {
         return Err(Error::InvalidDescriptor {
             tag: TAG,
             reason: "J2K_video_descriptor too short for colour parameters",
         });
     }
-    let colour_primaries = body[pos];
-    let transfer_characteristics = body[pos + 1];
-    let matrix_coefficients = body[pos + 2];
-    let vfr = body[pos + 3];
-    let video_full_range_flag = (vfr & 0x80) != 0;
+    let colour_primaries = body[pos + COLOUR_PRIMARIES_OFFSET];
+    let transfer_characteristics = body[pos + TRANSFER_CHARACTERISTICS_OFFSET];
+    let matrix_coefficients = body[pos + MATRIX_COEFFICIENTS_OFFSET];
+    let vfr = body[pos + VIDEO_FULL_RANGE_OFFSET];
+    let video_full_range_flag = (vfr & VIDEO_FULL_RANGE_FLAG_MASK) != 0;
     let reserved_7 = ReservedOnes::from_bits(u64::from(vfr));
-    pos += 4;
+    pos += COLOUR_PARAMETERS_LEN;
 
     // Stripe sub-block: strp_max_idx(1) + strp_height(2) = 3 bytes
     let stripe = if stripe_flag {
-        if body.len() < pos + 3 {
+        if body.len() < pos + STRIPE_SUB_BLOCK_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "J2K_video_descriptor too short for stripe sub-block",
             });
         }
-        let strp_max_idx = body[pos];
-        let strp_height = u16::from_be_bytes([body[pos + 1], body[pos + 2]]);
-        pos += 3;
+        let strp_max_idx = body[pos + STRIPE_MAX_IDX_OFFSET];
+        let strp_height = u16::from_be_bytes([
+            body[pos + STRIPE_HEIGHT_OFFSET],
+            body[pos + STRIPE_HEIGHT_OFFSET + 1],
+        ]);
+        pos += STRIPE_SUB_BLOCK_LEN;
         Some(J2kStripe {
             strp_max_idx,
             strp_height,
@@ -311,23 +418,34 @@ fn parse_extended_capability(
 
     // Block sub-block: full_h(4) + full_v(4) + blk_w(2) + blk_h(2) + max_idx_h(1) + max_idx_v(1) + blk_idx_h(1) + blk_idx_v(1) = 16
     let block = if block_flag {
-        if body.len() < pos + 16 {
+        if body.len() < pos + BLOCK_SUB_BLOCK_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "J2K_video_descriptor too short for block sub-block",
             });
         }
-        let full_horizontal_size =
-            u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
-        let full_vertical_size =
-            u32::from_be_bytes([body[pos + 4], body[pos + 5], body[pos + 6], body[pos + 7]]);
-        let blk_width = u16::from_be_bytes([body[pos + 8], body[pos + 9]]);
-        let blk_height = u16::from_be_bytes([body[pos + 10], body[pos + 11]]);
-        let max_blk_idx_h = body[pos + 12];
-        let max_blk_idx_v = body[pos + 13];
-        let blk_idx_h = body[pos + 14];
-        let blk_idx_v = body[pos + 15];
-        pos += 16;
+        let mut full_h_bytes = [0u8; U32_LEN];
+        full_h_bytes.copy_from_slice(
+            &body[pos + FULL_HORIZONTAL_SIZE_OFFSET..pos + FULL_VERTICAL_SIZE_OFFSET],
+        );
+        let full_horizontal_size = u32::from_be_bytes(full_h_bytes);
+        let mut full_v_bytes = [0u8; U32_LEN];
+        full_v_bytes
+            .copy_from_slice(&body[pos + FULL_VERTICAL_SIZE_OFFSET..pos + BLK_WIDTH_OFFSET]);
+        let full_vertical_size = u32::from_be_bytes(full_v_bytes);
+        let blk_width = u16::from_be_bytes([
+            body[pos + BLK_WIDTH_OFFSET],
+            body[pos + BLK_WIDTH_OFFSET + 1],
+        ]);
+        let blk_height = u16::from_be_bytes([
+            body[pos + BLK_HEIGHT_OFFSET],
+            body[pos + BLK_HEIGHT_OFFSET + 1],
+        ]);
+        let max_blk_idx_h = body[pos + MAX_BLK_IDX_H_OFFSET];
+        let max_blk_idx_v = body[pos + MAX_BLK_IDX_V_OFFSET];
+        let blk_idx_h = body[pos + BLK_IDX_H_OFFSET];
+        let blk_idx_v = body[pos + BLK_IDX_V_OFFSET];
+        pos += BLOCK_SUB_BLOCK_LEN;
         Some(J2kBlock {
             full_horizontal_size,
             full_vertical_size,
@@ -344,35 +462,31 @@ fn parse_extended_capability(
 
     // MDM sub-block: 6×u16(=12) + X_wp(2) + Y_wp(2) + L_max(4) + L_min(4) + MaxCLL(2) + MaxFALL(2) = 28
     let mdm = if mdm_flag {
-        if body.len() < pos + 28 {
+        if body.len() < pos + MDM_SUB_BLOCK_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "J2K_video_descriptor too short for MDM sub-block",
             });
         }
-        let x_c0 = u16::from_be_bytes([body[pos], body[pos + 1]]);
-        let y_c0 = u16::from_be_bytes([body[pos + 2], body[pos + 3]]);
-        let x_c1 = u16::from_be_bytes([body[pos + 4], body[pos + 5]]);
-        let y_c1 = u16::from_be_bytes([body[pos + 6], body[pos + 7]]);
-        let x_c2 = u16::from_be_bytes([body[pos + 8], body[pos + 9]]);
-        let y_c2 = u16::from_be_bytes([body[pos + 10], body[pos + 11]]);
-        let x_wp = u16::from_be_bytes([body[pos + 12], body[pos + 13]]);
-        let y_wp = u16::from_be_bytes([body[pos + 14], body[pos + 15]]);
-        let l_max = u32::from_be_bytes([
-            body[pos + 16],
-            body[pos + 17],
-            body[pos + 18],
-            body[pos + 19],
-        ]);
-        let l_min = u32::from_be_bytes([
-            body[pos + 20],
-            body[pos + 21],
-            body[pos + 22],
-            body[pos + 23],
-        ]);
-        let max_cll = u16::from_be_bytes([body[pos + 24], body[pos + 25]]);
-        let max_fall = u16::from_be_bytes([body[pos + 26], body[pos + 27]]);
-        pos += 28;
+        let x_c0 = u16::from_be_bytes([body[pos + X_C0_OFFSET], body[pos + X_C0_OFFSET + 1]]);
+        let y_c0 = u16::from_be_bytes([body[pos + Y_C0_OFFSET], body[pos + Y_C0_OFFSET + 1]]);
+        let x_c1 = u16::from_be_bytes([body[pos + X_C1_OFFSET], body[pos + X_C1_OFFSET + 1]]);
+        let y_c1 = u16::from_be_bytes([body[pos + Y_C1_OFFSET], body[pos + Y_C1_OFFSET + 1]]);
+        let x_c2 = u16::from_be_bytes([body[pos + X_C2_OFFSET], body[pos + X_C2_OFFSET + 1]]);
+        let y_c2 = u16::from_be_bytes([body[pos + Y_C2_OFFSET], body[pos + Y_C2_OFFSET + 1]]);
+        let x_wp = u16::from_be_bytes([body[pos + X_WP_OFFSET], body[pos + X_WP_OFFSET + 1]]);
+        let y_wp = u16::from_be_bytes([body[pos + Y_WP_OFFSET], body[pos + Y_WP_OFFSET + 1]]);
+        let mut l_max_bytes = [0u8; U32_LEN];
+        l_max_bytes.copy_from_slice(&body[pos + L_MAX_OFFSET..pos + L_MIN_OFFSET]);
+        let l_max = u32::from_be_bytes(l_max_bytes);
+        let mut l_min_bytes = [0u8; U32_LEN];
+        l_min_bytes.copy_from_slice(&body[pos + L_MIN_OFFSET..pos + MAX_CLL_OFFSET]);
+        let l_min = u32::from_be_bytes(l_min_bytes);
+        let max_cll =
+            u16::from_be_bytes([body[pos + MAX_CLL_OFFSET], body[pos + MAX_CLL_OFFSET + 1]]);
+        let max_fall =
+            u16::from_be_bytes([body[pos + MAX_FALL_OFFSET], body[pos + MAX_FALL_OFFSET + 1]]);
+        pos += MDM_SUB_BLOCK_LEN;
         Some(J2kMdm {
             x_c0,
             y_c0,
@@ -425,13 +539,13 @@ fn serialize_extended_capability(
     // stored flag can never promise bytes that are not written (r03-W5).
     let mut sb = ext.reserved_5.get() as u8;
     if ext.stripe.is_some() {
-        sb |= 0x80;
+        sb |= STRIPE_FLAG_MASK;
     }
     if ext.block.is_some() {
-        sb |= 0x40;
+        sb |= BLOCK_FLAG_MASK;
     }
     if ext.mdm.is_some() {
-        sb |= 0x20;
+        sb |= MDM_FLAG_MASK;
     }
     buf[pos] = sb;
     pos += 1;
@@ -439,71 +553,77 @@ fn serialize_extended_capability(
     // still_mode/interlaced_video precede the colour parameters here (Table 2-101).
     let mut sm_iv = reserved_6.get() as u8;
     if still_mode {
-        sm_iv |= 0x80;
+        sm_iv |= STILL_MODE_MASK;
     }
     if interlaced_video {
-        sm_iv |= 0x40;
+        sm_iv |= INTERLACED_VIDEO_MASK;
     }
     buf[pos] = sm_iv;
     pos += 1;
 
-    buf[pos] = ext.colour_primaries;
-    buf[pos + 1] = ext.transfer_characteristics;
-    buf[pos + 2] = ext.matrix_coefficients;
-    buf[pos + 3] = if ext.video_full_range_flag {
-        0x80
+    buf[pos + COLOUR_PRIMARIES_OFFSET] = ext.colour_primaries;
+    buf[pos + TRANSFER_CHARACTERISTICS_OFFSET] = ext.transfer_characteristics;
+    buf[pos + MATRIX_COEFFICIENTS_OFFSET] = ext.matrix_coefficients;
+    buf[pos + VIDEO_FULL_RANGE_OFFSET] = if ext.video_full_range_flag {
+        VIDEO_FULL_RANGE_FLAG_MASK
     } else {
-        0x00
+        0
     } | ext.reserved_7.get() as u8;
-    pos += 4;
+    pos += COLOUR_PARAMETERS_LEN;
 
     if let Some(ref s) = ext.stripe {
-        buf[pos] = s.strp_max_idx;
-        buf[pos + 1..pos + 3].copy_from_slice(&s.strp_height.to_be_bytes());
-        pos += 3;
+        buf[pos + STRIPE_MAX_IDX_OFFSET] = s.strp_max_idx;
+        buf[pos + STRIPE_HEIGHT_OFFSET..pos + STRIPE_SUB_BLOCK_LEN]
+            .copy_from_slice(&s.strp_height.to_be_bytes());
+        pos += STRIPE_SUB_BLOCK_LEN;
     }
 
     if let Some(ref b) = ext.block {
-        buf[pos..pos + 4].copy_from_slice(&b.full_horizontal_size.to_be_bytes());
-        buf[pos + 4..pos + 8].copy_from_slice(&b.full_vertical_size.to_be_bytes());
-        buf[pos + 8..pos + 10].copy_from_slice(&b.blk_width.to_be_bytes());
-        buf[pos + 10..pos + 12].copy_from_slice(&b.blk_height.to_be_bytes());
-        buf[pos + 12] = b.max_blk_idx_h;
-        buf[pos + 13] = b.max_blk_idx_v;
-        buf[pos + 14] = b.blk_idx_h;
-        buf[pos + 15] = b.blk_idx_v;
-        pos += 16;
+        buf[pos + FULL_HORIZONTAL_SIZE_OFFSET..pos + FULL_VERTICAL_SIZE_OFFSET]
+            .copy_from_slice(&b.full_horizontal_size.to_be_bytes());
+        buf[pos + FULL_VERTICAL_SIZE_OFFSET..pos + BLK_WIDTH_OFFSET]
+            .copy_from_slice(&b.full_vertical_size.to_be_bytes());
+        buf[pos + BLK_WIDTH_OFFSET..pos + BLK_HEIGHT_OFFSET]
+            .copy_from_slice(&b.blk_width.to_be_bytes());
+        buf[pos + BLK_HEIGHT_OFFSET..pos + MAX_BLK_IDX_H_OFFSET]
+            .copy_from_slice(&b.blk_height.to_be_bytes());
+        buf[pos + MAX_BLK_IDX_H_OFFSET] = b.max_blk_idx_h;
+        buf[pos + MAX_BLK_IDX_V_OFFSET] = b.max_blk_idx_v;
+        buf[pos + BLK_IDX_H_OFFSET] = b.blk_idx_h;
+        buf[pos + BLK_IDX_V_OFFSET] = b.blk_idx_v;
+        pos += BLOCK_SUB_BLOCK_LEN;
     }
 
     if let Some(ref m) = ext.mdm {
-        buf[pos..pos + 2].copy_from_slice(&m.x_c0.to_be_bytes());
-        buf[pos + 2..pos + 4].copy_from_slice(&m.y_c0.to_be_bytes());
-        buf[pos + 4..pos + 6].copy_from_slice(&m.x_c1.to_be_bytes());
-        buf[pos + 6..pos + 8].copy_from_slice(&m.y_c1.to_be_bytes());
-        buf[pos + 8..pos + 10].copy_from_slice(&m.x_c2.to_be_bytes());
-        buf[pos + 10..pos + 12].copy_from_slice(&m.y_c2.to_be_bytes());
-        buf[pos + 12..pos + 14].copy_from_slice(&m.x_wp.to_be_bytes());
-        buf[pos + 14..pos + 16].copy_from_slice(&m.y_wp.to_be_bytes());
-        buf[pos + 16..pos + 20].copy_from_slice(&m.l_max.to_be_bytes());
-        buf[pos + 20..pos + 24].copy_from_slice(&m.l_min.to_be_bytes());
-        buf[pos + 24..pos + 26].copy_from_slice(&m.max_cll.to_be_bytes());
-        buf[pos + 26..pos + 28].copy_from_slice(&m.max_fall.to_be_bytes());
-        pos += 28;
+        buf[pos + X_C0_OFFSET..pos + Y_C0_OFFSET].copy_from_slice(&m.x_c0.to_be_bytes());
+        buf[pos + Y_C0_OFFSET..pos + X_C1_OFFSET].copy_from_slice(&m.y_c0.to_be_bytes());
+        buf[pos + X_C1_OFFSET..pos + Y_C1_OFFSET].copy_from_slice(&m.x_c1.to_be_bytes());
+        buf[pos + Y_C1_OFFSET..pos + X_C2_OFFSET].copy_from_slice(&m.y_c1.to_be_bytes());
+        buf[pos + X_C2_OFFSET..pos + Y_C2_OFFSET].copy_from_slice(&m.x_c2.to_be_bytes());
+        buf[pos + Y_C2_OFFSET..pos + X_WP_OFFSET].copy_from_slice(&m.y_c2.to_be_bytes());
+        buf[pos + X_WP_OFFSET..pos + Y_WP_OFFSET].copy_from_slice(&m.x_wp.to_be_bytes());
+        buf[pos + Y_WP_OFFSET..pos + L_MAX_OFFSET].copy_from_slice(&m.y_wp.to_be_bytes());
+        buf[pos + L_MAX_OFFSET..pos + L_MIN_OFFSET].copy_from_slice(&m.l_max.to_be_bytes());
+        buf[pos + L_MIN_OFFSET..pos + MAX_CLL_OFFSET].copy_from_slice(&m.l_min.to_be_bytes());
+        buf[pos + MAX_CLL_OFFSET..pos + MAX_FALL_OFFSET].copy_from_slice(&m.max_cll.to_be_bytes());
+        buf[pos + MAX_FALL_OFFSET..pos + MDM_SUB_BLOCK_LEN]
+            .copy_from_slice(&m.max_fall.to_be_bytes());
+        pos += MDM_SUB_BLOCK_LEN;
     }
 
     Ok(pos)
 }
 
 fn extended_capability_serialized_len(ext: &J2kExtendedCapability) -> usize {
-    let mut len: usize = 6; // flags(1) + still_mode/interlaced(1) + colour_primaries(1) + transfer(1) + matrix(1) + vfr(1)
+    let mut len: usize = EXTENDED_HEADER_LEN;
     if ext.stripe.is_some() {
-        len += 3;
+        len += STRIPE_SUB_BLOCK_LEN;
     }
     if ext.block.is_some() {
-        len += 16;
+        len += BLOCK_SUB_BLOCK_LEN;
     }
     if ext.mdm.is_some() {
-        len += 28;
+        len += MDM_SUB_BLOCK_LEN;
     }
     len
 }
@@ -522,7 +642,7 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
         // Minimum before extended_capability decision:
         //   flag+profile_and_level(2) + h_size(4) + v_size(4) + max_bit_rate(4) + max_buf(4)
         //   + DEN(2) + NUM(2) = 22
-        if body.len() < 22 {
+        if body.len() < PREAMBLE_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "J2K_video_descriptor too short (< 22 body bytes)",
@@ -530,17 +650,29 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
         }
 
         // extended_capability_flag(1) | profile_and_level(15)
-        let b01 = u16::from_be_bytes([body[0], body[1]]);
-        let extended_capability_flag = (b01 & 0x8000) != 0;
-        let profile_and_level = b01 & 0x7FFF;
+        let mut flags_word_bytes = [0u8; FLAGS_WORD_LEN];
+        flags_word_bytes.copy_from_slice(&body[FLAGS_WORD_OFFSET..HORIZONTAL_SIZE_OFFSET]);
+        let b01 = u16::from_be_bytes(flags_word_bytes);
+        let extended_capability_flag = (b01 & EXTENDED_CAPABILITY_FLAG_MASK) != 0;
+        let profile_and_level = b01 & PROFILE_AND_LEVEL_MASK;
 
-        let horizontal_size = u32::from_be_bytes([body[2], body[3], body[4], body[5]]);
-        let vertical_size = u32::from_be_bytes([body[6], body[7], body[8], body[9]]);
-        let max_bit_rate = u32::from_be_bytes([body[10], body[11], body[12], body[13]]);
-        let max_buffer_size = u32::from_be_bytes([body[14], body[15], body[16], body[17]]);
-        let den_frame_rate = u16::from_be_bytes([body[18], body[19]]);
-        let num_frame_rate = u16::from_be_bytes([body[20], body[21]]);
-        let pos = 22;
+        let mut horizontal_bytes = [0u8; U32_LEN];
+        horizontal_bytes.copy_from_slice(&body[HORIZONTAL_SIZE_OFFSET..VERTICAL_SIZE_OFFSET]);
+        let horizontal_size = u32::from_be_bytes(horizontal_bytes);
+        let mut vertical_bytes = [0u8; U32_LEN];
+        vertical_bytes.copy_from_slice(&body[VERTICAL_SIZE_OFFSET..MAX_BIT_RATE_OFFSET]);
+        let vertical_size = u32::from_be_bytes(vertical_bytes);
+        let mut bit_rate_bytes = [0u8; U32_LEN];
+        bit_rate_bytes.copy_from_slice(&body[MAX_BIT_RATE_OFFSET..MAX_BUFFER_SIZE_OFFSET]);
+        let max_bit_rate = u32::from_be_bytes(bit_rate_bytes);
+        let mut buffer_bytes = [0u8; U32_LEN];
+        buffer_bytes.copy_from_slice(&body[MAX_BUFFER_SIZE_OFFSET..DEN_FRAME_RATE_OFFSET]);
+        let max_buffer_size = u32::from_be_bytes(buffer_bytes);
+        let den_frame_rate =
+            u16::from_be_bytes([body[DEN_FRAME_RATE_OFFSET], body[DEN_FRAME_RATE_OFFSET + 1]]);
+        let num_frame_rate =
+            u16::from_be_bytes([body[NUM_FRAME_RATE_OFFSET], body[NUM_FRAME_RATE_OFFSET + 1]]);
+        let pos = PREAMBLE_LEN;
 
         let (
             extended_capability,
@@ -562,23 +694,23 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
             )
         } else {
             // color_specification(1) then still_mode(1) | interlaced_video(1) | reserved(6)
-            if body.len() < pos + 2 {
+            if body.len() < pos + COLOR_SPECIFICATION_BLOCK_LEN {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "J2K_video_descriptor too short for color_specification/still_mode",
                 });
             }
-            let cs = body[pos];
-            let sm_iv = body[pos + 1];
-            let still_mode = (sm_iv & 0x80) != 0;
-            let interlaced_video = (sm_iv & 0x40) != 0;
+            let cs = body[pos + COLOR_SPECIFICATION_OFFSET];
+            let sm_iv = body[pos + STILL_MODE_OFFSET];
+            let still_mode = (sm_iv & STILL_MODE_MASK) != 0;
+            let interlaced_video = (sm_iv & INTERLACED_VIDEO_MASK) != 0;
             (
                 None,
                 Some(cs),
                 still_mode,
                 interlaced_video,
                 ReservedOnes::from_bits(u64::from(sm_iv)),
-                pos + 2,
+                pos + COLOR_SPECIFICATION_BLOCK_LEN,
             )
         };
 
@@ -607,11 +739,11 @@ impl Serialize for J2kVideoDescriptor<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        let mut len: usize = HEADER_LEN + 22; // pre-flag fields
+        let mut len: usize = HEADER_LEN + PREAMBLE_LEN;
         if let Some(ref ext) = self.extended_capability {
             len += extended_capability_serialized_len(ext); // includes still_mode/interlaced byte
         } else {
-            len += 2; // color_specification(1) + still_mode/interlaced byte(1)
+            len += COLOR_SPECIFICATION_BLOCK_LEN;
         }
         len += self.private_data.len();
         len
@@ -624,20 +756,29 @@ impl Serialize for J2kVideoDescriptor<'_> {
 
         // extended_capability_flag(1) | profile_and_level(15)
         // Derived from the Option, never the stored flag (r03-W5).
-        let mut b01 =
-            broadcast_common::len::fit_mask(self.profile_and_level, 0x7FFF, "profile_and_level")?;
+        let mut b01 = broadcast_common::len::fit_mask(
+            self.profile_and_level,
+            PROFILE_AND_LEVEL_MASK,
+            "profile_and_level",
+        )?;
         if self.extended_capability.is_some() {
-            b01 |= 0x8000;
+            b01 |= EXTENDED_CAPABILITY_FLAG_MASK;
         }
-        buf[HEADER_LEN] = (b01 >> 8) as u8;
-        buf[HEADER_LEN + 1] = b01 as u8;
-        buf[HEADER_LEN + 2..HEADER_LEN + 6].copy_from_slice(&self.horizontal_size.to_be_bytes());
-        buf[HEADER_LEN + 6..HEADER_LEN + 10].copy_from_slice(&self.vertical_size.to_be_bytes());
-        buf[HEADER_LEN + 10..HEADER_LEN + 14].copy_from_slice(&self.max_bit_rate.to_be_bytes());
-        buf[HEADER_LEN + 14..HEADER_LEN + 18].copy_from_slice(&self.max_buffer_size.to_be_bytes());
-        buf[HEADER_LEN + 18..HEADER_LEN + 20].copy_from_slice(&self.den_frame_rate.to_be_bytes());
-        buf[HEADER_LEN + 20..HEADER_LEN + 22].copy_from_slice(&self.num_frame_rate.to_be_bytes());
-        let mut pos = HEADER_LEN + 22;
+        buf[HEADER_LEN + FLAGS_WORD_OFFSET] = (b01 >> FLAGS_WORD_HI_SHIFT) as u8;
+        buf[HEADER_LEN + FLAGS_WORD_LO_OFFSET] = b01 as u8;
+        buf[HEADER_LEN + HORIZONTAL_SIZE_OFFSET..HEADER_LEN + VERTICAL_SIZE_OFFSET]
+            .copy_from_slice(&self.horizontal_size.to_be_bytes());
+        buf[HEADER_LEN + VERTICAL_SIZE_OFFSET..HEADER_LEN + MAX_BIT_RATE_OFFSET]
+            .copy_from_slice(&self.vertical_size.to_be_bytes());
+        buf[HEADER_LEN + MAX_BIT_RATE_OFFSET..HEADER_LEN + MAX_BUFFER_SIZE_OFFSET]
+            .copy_from_slice(&self.max_bit_rate.to_be_bytes());
+        buf[HEADER_LEN + MAX_BUFFER_SIZE_OFFSET..HEADER_LEN + DEN_FRAME_RATE_OFFSET]
+            .copy_from_slice(&self.max_buffer_size.to_be_bytes());
+        buf[HEADER_LEN + DEN_FRAME_RATE_OFFSET..HEADER_LEN + NUM_FRAME_RATE_OFFSET]
+            .copy_from_slice(&self.den_frame_rate.to_be_bytes());
+        buf[HEADER_LEN + NUM_FRAME_RATE_OFFSET..HEADER_LEN + PREAMBLE_LEN]
+            .copy_from_slice(&self.num_frame_rate.to_be_bytes());
+        let mut pos = HEADER_LEN + PREAMBLE_LEN;
 
         if let Some(ref ext) = self.extended_capability {
             pos = serialize_extended_capability(
@@ -655,15 +796,15 @@ impl Serialize for J2kVideoDescriptor<'_> {
                 field: "color_specification",
                 reason: "required when extended_capability is absent",
             })?;
-            buf[pos] = cs;
+            buf[pos + COLOR_SPECIFICATION_OFFSET] = cs;
             pos += 1;
 
             let mut sm_iv = self.reserved_6.get() as u8;
             if self.still_mode {
-                sm_iv |= 0x80;
+                sm_iv |= STILL_MODE_MASK;
             }
             if self.interlaced_video {
-                sm_iv |= 0x40;
+                sm_iv |= INTERLACED_VIDEO_MASK;
             }
             buf[pos] = sm_iv;
             pos += 1;

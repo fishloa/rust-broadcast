@@ -34,7 +34,10 @@ pub const SCHEME_DIRECT: &str = "urn:mpeg:dash:utc:direct:2014";
 pub const UTC_BODY_MAX_BYTES: usize = 4 * 1024;
 /// `Date` carries whole seconds (RFC 9110 5.6.7): the sample is taken at the
 /// middle of the second and the half second is added to the uncertainty.
-pub const DATE_HEADER_HALF_SECOND: Duration = Duration::from_millis(500);
+pub const DATE_HEADER_ROUNDING_TOLERANCE: Duration = Duration::from_millis(500);
+
+/// Divisor splitting a measured round trip into its outbound half.
+const RTT_HALVING_DIVISOR: u32 = 2;
 /// Resolution of an NTP timestamp read over HTTP.
 pub const HTTP_NTP_RESOLUTION: Duration = Duration::from_micros(1_000);
 
@@ -91,7 +94,7 @@ pub fn sample_from_exchange(
     if rtt > max_rtt {
         return Err(TimingError::RttTooLarge { rtt, max: max_rtt });
     }
-    let half = rtt / 2;
+    let half = rtt / RTT_HALVING_DIVISOR;
     let mono = Timestamp::from_micros(exchange.sent.as_micros() + micros(half));
     Ok(UtcSample {
         mono,
@@ -144,9 +147,9 @@ pub fn sample_from_date_header(
     max_rtt: Duration,
 ) -> Result<UtcSample, TimingError> {
     let server = date_to_epoch_us(date)?
-        .saturating_add(DATE_HEADER_HALF_SECOND)
+        .saturating_add(DATE_HEADER_ROUNDING_TOLERANCE)
         .unwrap_or(jiff::Timestamp::MAX);
-    sample_from_exchange(exchange, server, DATE_HEADER_HALF_SECOND, max_rtt)
+    sample_from_exchange(exchange, server, DATE_HEADER_ROUNDING_TOLERANCE, max_rtt)
 }
 
 /// Sample from a `direct` scheme `@value`, taken at the midpoint of the MPD
@@ -178,7 +181,7 @@ fn sample_from_datetime(
     }
     let server = dt
         .unix
-        .saturating_add(DATE_HEADER_HALF_SECOND)
+        .saturating_add(DATE_HEADER_ROUNDING_TOLERANCE)
         .unwrap_or(jiff::Timestamp::MAX);
-    sample_from_exchange(exchange, server, DATE_HEADER_HALF_SECOND, max_rtt)
+    sample_from_exchange(exchange, server, DATE_HEADER_ROUNDING_TOLERANCE, max_rtt)
 }

@@ -68,7 +68,7 @@ const RESYNC_CONFIRM_COUNT: u32 = 3;
 /// backward step, not forward progress. A resync candidate's timestamps must
 /// advance forward, so a run of guessed sequence numbers carrying an
 /// unrelated timestamp is dropped.
-const TIMESTAMP_HALF_SPACE: u32 = 1 << 31;
+const TIMESTAMP_WRAP_MIDPOINT: u32 = 1 << 31;
 
 /// Derive a [`Receiver`]'s [`Receiver::max_gap`] ceiling from its configured
 /// [`ArqConfig::receiver_buffer`]: [`BASE_MAX_GAP`] scaled proportionally to
@@ -383,7 +383,7 @@ impl Receiver {
         let candidate = match self.pending_resync {
             Some(mut p) if p.next_needed == seq_number && p.ssrc == ssrc => {
                 let step = timestamp.wrapping_sub(p.last_timestamp);
-                let plausible = step < TIMESTAMP_HALF_SPACE
+                let plausible = step < TIMESTAMP_WRAP_MIDPOINT
                     && p.step.is_none_or(|established| established == step);
                 if !plausible {
                     self.pending_resync = None;
@@ -543,11 +543,15 @@ fn elapsed(now: Duration, since: Duration) -> Duration {
     now.checked_sub(since).unwrap_or(Duration::ZERO)
 }
 
+/// Numerator and denominator of librist's `* 1.1` retry margin.
+const RETRY_MARGIN_NUM: u64 = 11;
+const RETRY_MARGIN_DEN: u64 = 10;
+
 /// Scale a duration by librist's `* 1.1` margin, in whole microseconds to
 /// avoid float drift.
 fn scale_1_1(d: Duration) -> Duration {
     let us = d.as_micros().min(u128::from(u64::MAX)) as u64;
-    Duration::from_micros(us.saturating_mul(11) / 10)
+    Duration::from_micros(us.saturating_mul(RETRY_MARGIN_NUM) / RETRY_MARGIN_DEN)
 }
 
 /// The delay before the *first* NACK for a newly-promoted loss
@@ -1382,7 +1386,7 @@ mod tests {
 
         let base = 20_000u16;
         feed_rtp(&mut r, base, 500_000);
-        feed_rtp(&mut r, base + 1, 500_000 + TIMESTAMP_HALF_SPACE);
+        feed_rtp(&mut r, base + 1, 500_000 + TIMESTAMP_WRAP_MIDPOINT);
         assert!(
             r.pending_resync.is_none(),
             "a half-space timestamp step is not forward progress"
@@ -1390,7 +1394,7 @@ mod tests {
         assert_eq!(r.next_expected(), Some(40_001));
 
         feed_rtp(&mut r, base + 2, 700_000);
-        feed_rtp(&mut r, base + 3, 700_000 + TIMESTAMP_HALF_SPACE - 1);
+        feed_rtp(&mut r, base + 3, 700_000 + TIMESTAMP_WRAP_MIDPOINT - 1);
         let pending = r
             .pending_resync
             .expect("a sub-half-space step continues the run");

@@ -15,6 +15,12 @@ pub const TAG: u8 = 0x56;
 pub(super) const HEADER_LEN: usize = 2;
 pub(super) const ENTRY_LEN: usize = 5;
 const LANG_LEN: usize = 3;
+/// Shift of `teletext_type` in the packed type/magazine byte.
+const TYPE_AND_MAGAZINE_SHIFT: u8 = 3;
+/// Mask of the 5-bit `teletext_type` (Table 102).
+const TELETEXT_TYPE_MASK: u8 = 0x1F;
+/// Mask of the 3-bit `magazine_number`.
+const MAGAZINE_NUMBER_MASK: u8 = 0x07;
 
 /// Teletext type — ETSI EN 300 468 Table 102.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,9 +127,11 @@ pub(super) fn parse_entries(
     for chunk in body.chunks_exact(ENTRY_LEN) {
         let type_and_mag = chunk[LANG_LEN];
         entries.push(TeletextEntry {
-            language_code: LangCode([chunk[0], chunk[1], chunk[2]]),
-            teletext_type: TeletextType::from_u8((type_and_mag >> 3) & 0x1F),
-            magazine_number: type_and_mag & 0x07,
+            language_code: LangCode(chunk[..LANG_LEN].try_into().unwrap_or_default()),
+            teletext_type: TeletextType::from_u8(
+                (type_and_mag >> TYPE_AND_MAGAZINE_SHIFT) & TELETEXT_TYPE_MASK,
+            ),
+            magazine_number: type_and_mag & MAGAZINE_NUMBER_MASK,
             page_number: chunk[LANG_LEN + 1],
         });
     }
@@ -146,9 +154,16 @@ pub(super) fn serialize_entries(
     let mut pos = HEADER_LEN;
     for e in entries {
         buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-        buf[pos + LANG_LEN] =
-            (broadcast_common::len::fit_mask(e.teletext_type.to_u8(), 0x1F, "teletext_type")? << 3)
-                | broadcast_common::len::fit_mask(e.magazine_number, 0x07, "magazine_number")?;
+        buf[pos + LANG_LEN] = (broadcast_common::len::fit_mask(
+            e.teletext_type.to_u8(),
+            TELETEXT_TYPE_MASK,
+            "teletext_type",
+        )? << TYPE_AND_MAGAZINE_SHIFT)
+            | broadcast_common::len::fit_mask(
+                e.magazine_number,
+                MAGAZINE_NUMBER_MASK,
+                "magazine_number",
+            )?;
         buf[pos + LANG_LEN + 1] = e.page_number;
         pos += ENTRY_LEN;
     }

@@ -18,6 +18,10 @@ const FLAG_MASK: u8 = 0x03;
 const METHOD_SHIFT: u8 = 2;
 const METHOD_MASK: u8 = 0x0F;
 const PRIORITY_MASK: u8 = 0x03;
+/// First `update_method` value in the `private use` range (Table 27).
+const PRIVATE_USE_MIN: u8 = 8;
+/// Last `update_method` value in the `private use` range (Table 27).
+const PRIVATE_USE_MAX: u8 = 14;
 
 /// `update_flag` — ETSI TS 102 006 §9.5.2.6 Table 26 (2 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +95,7 @@ impl UpdateMethod {
             0 => Self::Immediate,
             1 => Self::IrdAvailable,
             2 => Self::NextRestart,
-            p @ 8..=14 => Self::PrivateUse(p),
+            p @ PRIVATE_USE_MIN..=PRIVATE_USE_MAX => Self::PrivateUse(p),
             r => Self::Reserved(r),
         }
     }
@@ -179,7 +183,7 @@ impl Serialize for UpdateDescriptor<'_> {
             "update_priority",
         )?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[2] = (flag << FLAG_SHIFT) | (method << METHOD_SHIFT) | prio;
+        buf[HEADER_LEN] = (flag << FLAG_SHIFT) | (method << METHOD_SHIFT) | prio;
         buf[3..len].copy_from_slice(self.private_data);
         Ok(len)
     }

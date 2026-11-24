@@ -67,6 +67,7 @@ use crate::opus::OpusSpecificBox;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtp_sdp::aac_config_from_asc_bytes;
 use crate::vp9::Vp9ConfigurationBox;
+use crate::wire_cursor::be_u64;
 
 // ORDER: element-hierarchy order (EBML header, Segment, then each master's children), not numeric: IDs are variable-length marker-bit values.
 // --- EBML / Matroska element IDs (RFC 9559 §27; stored with marker bits) -----
@@ -214,9 +215,48 @@ const NS_PER_SECOND: u64 = 1_000_000_000;
 const NS_TIMESCALE: Timescale = broadcast_common::timescale!(1_000_000_000);
 /// OpusHead identification-header magic (RFC 7845 §5.1).
 const OPUS_HEAD_MAGIC: &[u8; 8] = b"OpusHead";
+
+/// Bits one EBML VINT byte contributes to the encoded value, after the marker
+/// bit (RFC 8794 §4).
+const VINT_DATA_BITS_PER_BYTE: usize = 7;
+/// Widest EBML VINT this parser accepts: 8 bytes (RFC 8794 §4).
+const VINT_MAX_WIDTH: usize = core::mem::size_of::<u64>();
+/// The high bit of a VINT's first byte, the length marker (RFC 8794 §4).
+const VINT_LENGTH_MARKER: u8 = 1 << (u8::BITS - 1);
+/// Widest EBML element ID: 4 bytes (RFC 8794 §4).
+const ELEMENT_ID_MAX_WIDTH: usize = 4;
+/// Longest EBML `uint` body this parser reads.
+const EBML_UINT_MAX_LEN: usize = core::mem::size_of::<u64>();
+
+/// Bytes of a Block's int16 relative timestamp plus its flags byte (RFC 9559 §12).
+const BLOCK_HEADER_TAIL_LEN: usize = core::mem::size_of::<i16>() + 1;
+/// Offset of the flags byte within that tail.
+const BLOCK_FLAGS_OFFSET: usize = core::mem::size_of::<i16>();
+/// Blocks per pair when deriving a frame cadence (`windows(2)`).
+const BLOCK_PAIR_LEN: usize = 2;
+/// Fewest blocks that give a sample duration from a neighbouring timestamp.
+const MIN_BLOCKS_FOR_DELTA: usize = 2;
 /// Minimum OpusHead length: magic(8) + version(1) + channels(1) + pre-skip(2) +
 /// input-rate(4) + output-gain(2) + mapping-family(1) = 19 bytes.
 const OPUS_HEAD_MIN_LEN: usize = 19;
+/// Offset of `OpusHead.version` (RFC 7845 §5.1).
+const OPUS_HEAD_VERSION_OFFSET: usize = OPUS_HEAD_MAGIC.len();
+/// Offset of `OpusHead.channel_count`.
+const OPUS_HEAD_CHANNELS_OFFSET: usize = OPUS_HEAD_VERSION_OFFSET + 1;
+/// Offset of the little-endian `OpusHead.pre_skip`.
+const OPUS_HEAD_PRE_SKIP_OFFSET: usize = OPUS_HEAD_CHANNELS_OFFSET + 1;
+/// Offset of the little-endian `OpusHead.input_sample_rate`.
+const OPUS_HEAD_INPUT_RATE_OFFSET: usize = OPUS_HEAD_PRE_SKIP_OFFSET + 2;
+/// Offset of the little-endian `OpusHead.output_gain`.
+const OPUS_HEAD_OUTPUT_GAIN_OFFSET: usize = OPUS_HEAD_INPUT_RATE_OFFSET + 4;
+/// Offset of `OpusHead.channel_mapping_family`.
+const OPUS_HEAD_MAPPING_FAMILY_OFFSET: usize = OPUS_HEAD_OUTPUT_GAIN_OFFSET + 2;
+/// Offset of the channel-mapping table's `stream_count` (RFC 7845 §5.1.1).
+const OPUS_HEAD_STREAM_COUNT_OFFSET: usize = OPUS_HEAD_MIN_LEN;
+/// Offset of the channel-mapping table's `coupled_count`.
+const OPUS_HEAD_COUPLED_COUNT_OFFSET: usize = OPUS_HEAD_STREAM_COUNT_OFFSET + 1;
+/// Offset of the channel-mapping table's `channel_mapping` array.
+const OPUS_HEAD_CHANNEL_MAPPING_OFFSET: usize = OPUS_HEAD_COUPLED_COUNT_OFFSET + 1;
 /// Opus playback rate is always 48 kHz (RFC 7845 §5.1 / Opus-in-ISOBMFF).
 const OPUS_OUTPUT_SAMPLE_RATE: u32 = 48_000;
 /// Audio sample size in bits carried in the sample entry (convention: 16).
@@ -232,9 +272,12 @@ const VP8_KEYFRAME_TAG_BIT: u8 = 0x01;
 /// Dimension mask: the width/height are the low 14 bits of each 16-bit word
 /// (the top 2 bits are the horizontal/vertical scale). RFC 6386 §9.1.
 const VP8_DIMENSION_MASK: u16 = 0x3FFF;
+/// Bytes of one VP8 dimension word (little-endian `u16`).
+const VP8_DIMENSION_LEN: usize = core::mem::size_of::<u16>();
 /// Minimum VP8 key-frame header length: frame tag(3) + start code(3) +
 /// width(2) + height(2) = 10 bytes.
-const VP8_KEYFRAME_HEADER_LEN: usize = VP8_FRAME_TAG_LEN + VP8_START_CODE.len() + 4;
+const VP8_KEYFRAME_HEADER_LEN: usize =
+    VP8_FRAME_TAG_LEN + VP8_START_CODE.len() + 2 * VP8_DIMENSION_LEN;
 
 // --- Vorbis CodecPrivate (Vorbis I §4.2.2; Xiph lacing) ----------------------
 /// Xiph-lacing header count byte value: `numPackets - 1` = 2 (three headers).
@@ -249,8 +292,13 @@ const VORBIS_ID_CHANNELS_OFFSET: usize = 1 + 6 + 4;
 /// Offset of `audio_sample_rate` (u32 LE) within the Identification header:
 /// after `audio_channels`. Vorbis I §4.2.2.
 const VORBIS_ID_SAMPLE_RATE_OFFSET: usize = VORBIS_ID_CHANNELS_OFFSET + 1;
+/// Bytes of the little-endian `audio_sample_rate`.
+const VORBIS_ID_SAMPLE_RATE_LEN: usize = core::mem::size_of::<u32>();
 /// Minimum Identification-header length to read channels + sample rate.
-const VORBIS_ID_MIN_LEN: usize = VORBIS_ID_SAMPLE_RATE_OFFSET + 4;
+const VORBIS_ID_MIN_LEN: usize = VORBIS_ID_SAMPLE_RATE_OFFSET + VORBIS_ID_SAMPLE_RATE_LEN;
+/// Laced header lengths stored explicitly: all but the last header, whose
+/// length is the remainder of the CodecPrivate (Vorbis I §4.2.2).
+const VORBIS_LACING_LEN_FIELDS: usize = VORBIS_LACE_COUNT as usize;
 
 // --- VP9 vpcC defaults (WebM VP9 "profile 0 / 8-bit" when not derivable) -----
 /// VPCodecConfigurationBox version (`FullBox` v1) — see [`Vp9ConfigurationBox`].
@@ -636,10 +684,14 @@ fn parse_block(
         "webm block: truncated track-number VINT",
     ))?;
     // int16 big-endian relative timestamp + 1 flags byte.
-    need_in(data, off + 3, "webm block header (rel-ts + flags)")?;
+    need_in(
+        data,
+        off + BLOCK_HEADER_TAIL_LEN,
+        "webm block header (rel-ts + flags)",
+    )?;
     let rel_ts = i16::from_be_bytes([data[off], data[off + 1]]) as i64;
-    let flags = data[off + 2];
-    off += 3;
+    let flags = data[off + BLOCK_FLAGS_OFFSET];
+    off += BLOCK_HEADER_TAIL_LEN;
 
     let is_sync = if is_simple_block {
         flags & BLOCK_FLAG_KEYFRAME != 0
@@ -833,12 +885,12 @@ fn read_vint_generic(buf: &[u8]) -> Option<(u64, usize)> {
 /// §4: the encoding is biased so it can carry negative numbers).
 fn read_signed_vint(buf: &[u8]) -> Option<(i64, usize)> {
     let first = *buf.first()?;
-    let mut mask = 0x80u8;
+    let mut mask = VINT_LENGTH_MARKER;
     let mut len = 1usize;
     while first & mask == 0 {
         mask >>= 1;
         len += 1;
-        if len > 8 {
+        if len > VINT_MAX_WIDTH {
             return None;
         }
     }
@@ -947,7 +999,7 @@ fn build_media(
             // absurd span is an error instead of a wrapped duration.
             let delta = if i + 1 < n {
                 pts[i + 1] - pts[i]
-            } else if n >= 2 {
+            } else if n >= MIN_BLOCKS_FOR_DELTA {
                 pts[i] - pts[i - 1]
             } else {
                 i64::try_from(nominal).unwrap_or(i64::MAX)
@@ -1034,7 +1086,7 @@ pub fn ns_to_ir_ticks(ns: u64) -> u64 {
 /// would be exactly the r04-W40 defect (a laced block collapsing onto one
 /// instant), and this crate's IR has no downstream parser to repair it.
 fn derive_nominal_frame_duration(timeline: &[BlockSpan]) -> u64 {
-    for pair in timeline.windows(2) {
+    for pair in timeline.windows(BLOCK_PAIR_LEN) {
         let (cur, next) = (&pair[0], &pair[1]);
         let frames = (next.first_frame - cur.first_frame) as u64;
         let gap = next.pts_ticks.saturating_sub(cur.pts_ticks);
@@ -1175,13 +1227,17 @@ fn vp8_config(first_frame: &[u8]) -> Result<CodecConfig> {
     if start != VP8_START_CODE {
         return Err(Error::InvalidValue(InvalidValue {
             field: "VP8 start code",
-            value: u32::from_be_bytes([0, start[0], start[1], start[2]]) as u64,
+            value: start
+                .iter()
+                .fold(0u32, |acc, &b| (acc << u8::BITS) | u32::from(b)) as u64,
             reason: "VP8 key-frame start code is not 0x9D012A",
         }));
     }
     let d = VP8_FRAME_TAG_LEN + VP8_START_CODE.len();
     let width = u16::from_le_bytes([first_frame[d], first_frame[d + 1]]) & VP8_DIMENSION_MASK;
-    let height = u16::from_le_bytes([first_frame[d + 2], first_frame[d + 3]]) & VP8_DIMENSION_MASK;
+    let height_at = d + VP8_DIMENSION_LEN;
+    let height = u16::from_le_bytes([first_frame[height_at], first_frame[height_at + 1]])
+        & VP8_DIMENSION_MASK;
     Ok(CodecConfig::Vp8 { width, height })
 }
 
@@ -1211,12 +1267,11 @@ fn vorbis_config(info: &TrackInfo) -> Result<CodecConfig> {
         ));
     }
     let channels = id[VORBIS_ID_CHANNELS_OFFSET] as u16;
-    let sample_rate = u32::from_le_bytes([
-        id[VORBIS_ID_SAMPLE_RATE_OFFSET],
-        id[VORBIS_ID_SAMPLE_RATE_OFFSET + 1],
-        id[VORBIS_ID_SAMPLE_RATE_OFFSET + 2],
-        id[VORBIS_ID_SAMPLE_RATE_OFFSET + 3],
-    ]);
+    let sample_rate = u32::from_le_bytes(
+        id[VORBIS_ID_SAMPLE_RATE_OFFSET..VORBIS_ID_MIN_LEN]
+            .try_into()
+            .unwrap_or_default(),
+    );
 
     Ok(CodecConfig::Vorbis {
         codec_private: cp.clone(),
@@ -1242,7 +1297,7 @@ fn vorbis_id_header(cp: &[u8]) -> Result<&[u8]> {
         }));
     }
     let mut pos = 1usize;
-    let mut lengths = [0usize; 2];
+    let mut lengths = [0usize; VORBIS_LACING_LEN_FIELDS];
     for len in lengths.iter_mut() {
         loop {
             let b = *cp.get(pos).ok_or(Error::BufferTooShort(BufferTooShort {
@@ -1252,7 +1307,7 @@ fn vorbis_id_header(cp: &[u8]) -> Result<&[u8]> {
             }))?;
             pos += 1;
             *len += b as usize;
-            if b != 0xFF {
+            if b != XIPH_LACE_CONTINUATION {
                 break;
             }
         }
@@ -1309,27 +1364,37 @@ fn opus_config(info: &TrackInfo) -> Result<CodecConfig> {
     if &cp[0..8] != OPUS_HEAD_MAGIC {
         return Err(Error::InvalidValue(InvalidValue {
             field: "OpusHead magic",
-            value: u64::from_be_bytes([cp[0], cp[1], cp[2], cp[3], cp[4], cp[5], cp[6], cp[7]]),
+            value: be_u64(cp, 0, "Opus CodecPrivate (OpusHead)")?,
             reason: "Opus CodecPrivate does not start with the \"OpusHead\" signature",
         }));
     }
     // OpusHead (RFC 7845 §5.1) is little-endian; dOps is big-endian but the
     // typed OpusSpecificBox holds decoded scalar values, so byte-order is handled
     // here on read.
-    let version = cp[8];
-    let output_channel_count = cp[9];
-    let pre_skip = u16::from_le_bytes([cp[10], cp[11]]);
-    let input_sample_rate = u32::from_le_bytes([cp[12], cp[13], cp[14], cp[15]]);
-    let output_gain = i16::from_le_bytes([cp[16], cp[17]]);
-    let channel_mapping_family = cp[18];
+    let version = cp[OPUS_HEAD_VERSION_OFFSET];
+    let output_channel_count = cp[OPUS_HEAD_CHANNELS_OFFSET];
+    let pre_skip = u16::from_le_bytes([
+        cp[OPUS_HEAD_PRE_SKIP_OFFSET],
+        cp[OPUS_HEAD_PRE_SKIP_OFFSET + 1],
+    ]);
+    let input_sample_rate = u32::from_le_bytes(
+        cp[OPUS_HEAD_INPUT_RATE_OFFSET..OPUS_HEAD_OUTPUT_GAIN_OFFSET]
+            .try_into()
+            .unwrap_or_default(),
+    );
+    let output_gain = i16::from_le_bytes([
+        cp[OPUS_HEAD_OUTPUT_GAIN_OFFSET],
+        cp[OPUS_HEAD_OUTPUT_GAIN_OFFSET + 1],
+    ]);
+    let channel_mapping_family = cp[OPUS_HEAD_MAPPING_FAMILY_OFFSET];
 
     let channel_mapping = if channel_mapping_family != 0 {
         // Channel-mapping table: StreamCount(1) CoupledCount(1) ChannelMapping[Nch].
-        let need = OPUS_HEAD_MIN_LEN + 2 + output_channel_count as usize;
+        let need = OPUS_HEAD_CHANNEL_MAPPING_OFFSET + output_channel_count as usize;
         need_in(cp, need, "OpusHead channel-mapping table")?;
-        let stream_count = cp[19];
-        let coupled_count = cp[20];
-        let map_start = 21;
+        let stream_count = cp[OPUS_HEAD_STREAM_COUNT_OFFSET];
+        let coupled_count = cp[OPUS_HEAD_COUPLED_COUNT_OFFSET];
+        let map_start = OPUS_HEAD_CHANNEL_MAPPING_OFFSET;
         let map_end = map_start + output_channel_count as usize;
         Some(crate::opus::ChannelMappingTable {
             stream_count,
@@ -1466,12 +1531,12 @@ fn read_element_id(buf: &[u8]) -> Option<(u32, usize)> {
         return None; // 4+ leading zero bytes: not a valid 1–4-byte ID.
     }
     let len = first.leading_zeros() as usize + 1;
-    if len > 4 || buf.len() < len {
+    if len > ELEMENT_ID_MAX_WIDTH || buf.len() < len {
         return None;
     }
     let mut id: u32 = 0;
     for &b in &buf[..len] {
-        id = (id << 8) | b as u32;
+        id = (id << u8::BITS) | u32::from(b);
     }
     Some((id, len))
 }
@@ -1502,14 +1567,18 @@ fn read_vint(buf: &[u8]) -> Option<(u64, usize, bool)> {
     }
     // Strip the marker bit (the highest set bit of the first byte). For width 8
     // the entire first byte is the marker, so its data contribution is 0.
-    let first_mask: u8 = if len >= 8 { 0 } else { 0xFF >> len };
+    let first_mask: u8 = if len >= VINT_MAX_WIDTH {
+        0
+    } else {
+        u8::MAX >> len
+    };
     let mut value = (first & first_mask) as u64;
     for &b in &buf[1..len] {
-        value = (value << 8) | b as u64;
+        value = (value << u8::BITS) | u64::from(b);
     }
     // Maximum representable data value for this width (all data bits set).
-    let data_bits = 7 * len; // 7 per byte after stripping one marker bit.
-    let max = if data_bits >= 64 {
+    let data_bits = VINT_DATA_BITS_PER_BYTE * len;
+    let max = if data_bits >= u64::BITS as usize {
         u64::MAX
     } else {
         (1u64 << data_bits) - 1
@@ -1530,8 +1599,8 @@ fn read_vint_value(buf: &[u8]) -> Option<(u64, usize)> {
 /// shorter body just means fewer significant bytes.
 fn read_uint(body: &[u8]) -> u64 {
     let mut v: u64 = 0;
-    for &b in body.iter().take(8) {
-        v = (v << 8) | b as u64;
+    for &b in body.iter().take(EBML_UINT_MAX_LEN) {
+        v = (v << u8::BITS) | u64::from(b);
     }
     v
 }
@@ -1543,9 +1612,7 @@ fn read_uint(body: &[u8]) -> u64 {
 fn read_float(body: &[u8]) -> f64 {
     match body.len() {
         4 => f32::from_be_bytes([body[0], body[1], body[2], body[3]]) as f64,
-        8 => f64::from_be_bytes([
-            body[0], body[1], body[2], body[3], body[4], body[5], body[6], body[7],
-        ]),
+        8 => f64::from_be_bytes(body.try_into().unwrap_or_default()),
         _ => 0.0,
     }
 }

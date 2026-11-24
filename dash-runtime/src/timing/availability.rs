@@ -12,6 +12,9 @@ use broadcast_common::timescale::{Rounding, Timescale, to_micros};
 use broadcast_common::units::MICROS_PER_SEC;
 use jiff::SignedDuration;
 
+/// Factor extending a duration into its availability window.
+const AVAILABILITY_WINDOW_FACTOR: i128 = 2;
+
 /// Convert `@availabilityTimeOffset` seconds (possibly `INF` or negative) to a
 /// signed duration, clamped so later sums stay in range. A NaN is zero.
 #[must_use]
@@ -71,7 +74,8 @@ pub(crate) fn segment_available_until_ticks(
     timescale: Timescale,
     tsb_us: Option<i128>,
 ) -> Option<i128> {
-    let end2 = start_ticks.saturating_add(duration_ticks.saturating_mul(2));
+    let end2 =
+        start_ticks.saturating_add(duration_ticks.saturating_mul(AVAILABILITY_WINDOW_FACTOR));
     segment_available_until(
         ast_us,
         period_start_us,
@@ -111,7 +115,7 @@ pub(crate) fn segment_available_until(
         ast_us
             .saturating_add(period_start_us)
             .saturating_add(mpd_start_us)
-            .saturating_add(mpd_duration_us.saturating_mul(2))
+            .saturating_add(mpd_duration_us.saturating_mul(AVAILABILITY_WINDOW_FACTOR))
             .saturating_add(tsb)
     })
 }

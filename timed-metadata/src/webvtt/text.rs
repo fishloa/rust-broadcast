@@ -57,6 +57,21 @@ fn all_digits(s: &str) -> bool {
 }
 
 /// Parse a `(hh:)?mm:ss<sep>ttt` timestamp into a [`MediaTime`], where
+/// Digits of the millisecond field in a timestamp.
+const MILLIS_DIGITS: usize = 3;
+
+/// Digits of every fixed-width two-digit timestamp field: minutes and
+/// seconds.
+const FIELD_DIGITS: usize = 2;
+
+/// Minutes (and seconds) in one hour: the exclusive upper bound of both
+/// fields.
+const SECONDS_PER_MINUTE: u64 = 60;
+
+/// Longest character reference this unescaper looks ahead for: `&amp;`'s
+/// four characters after the `&`.
+const MAX_ENTITY_LEN: usize = 4;
+
 /// `ms_sep` is the millisecond separator: `.` for WebVTT, `,` for SRT.
 /// Splitting on `ms_sep` in place avoids a per-timestamp `String` (#1109
 /// CV-O3).
@@ -67,7 +82,7 @@ fn all_digits(s: &str) -> bool {
 /// large that the to-milliseconds / to-ticks arithmetic would overflow.
 pub fn parse_timestamp(s: &str, ms_sep: char) -> Result<MediaTime, TimestampError> {
     let (rest, ms_str) = s.split_once(ms_sep).ok_or(TimestampError)?;
-    if ms_str.len() != 3 || !all_digits(ms_str) {
+    if ms_str.len() != MILLIS_DIGITS || !all_digits(ms_str) {
         return Err(TimestampError);
     }
     let ms: u64 = ms_str.parse().map_err(|_| TimestampError)?;
@@ -87,12 +102,12 @@ pub fn parse_timestamp(s: &str, ms_sep: char) -> Result<MediaTime, TimestampErro
         Some(_) => return Err(TimestampError),
         None => 0,
     };
-    if m.len() != 2 || sec.len() != 2 || !all_digits(m) || !all_digits(sec) {
+    if m.len() != FIELD_DIGITS || sec.len() != FIELD_DIGITS || !all_digits(m) || !all_digits(sec) {
         return Err(TimestampError);
     }
     let m: u64 = m.parse().map_err(|_| TimestampError)?;
     let s: u64 = sec.parse().map_err(|_| TimestampError)?;
-    if m >= 60 || s >= 60 {
+    if m >= SECONDS_PER_MINUTE || s >= SECONDS_PER_MINUTE {
         return Err(TimestampError);
     }
     // WebVTT's hour field has no digit-count cap (W3C WebVTT §4.3.1: "one or
@@ -149,7 +164,7 @@ pub fn unescape_payload(text: &str) -> String {
             out.push(c);
             continue;
         }
-        let rest: String = chars.clone().take(4).collect();
+        let rest: String = chars.clone().take(MAX_ENTITY_LEN).collect();
         if rest.starts_with("amp;") {
             out.push('&');
             for _ in 0..4 {

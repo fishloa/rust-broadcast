@@ -25,6 +25,9 @@ const DELAY_SEGMENT_MULTIPLE: i128 = 3;
 /// Segment durations kept free inside the time-shift buffer.
 const TSB_GUARD_SEGMENTS: i128 = 2;
 
+/// Standby bound used when the segment count is unknown.
+const UNBOUNDED_COUNT: u64 = u64::MAX / 2;
+
 /// The presentation delay `D`.
 #[must_use]
 pub fn presentation_delay(
@@ -104,7 +107,7 @@ pub fn newest_complete(plan: &SegmentPlan, utc_now: Timestamp) -> Option<u64> {
             plan.timescale(),
         ),
         (len, _) => {
-            let bound = len.unwrap_or(u64::MAX / 2);
+            let bound = len.unwrap_or(UNBOUNDED_COUNT);
             plan.leading_true(bound, |s| s.available_from.is_some_and(|a| a <= utc_now))
                 .unwrap_or(0)
         }

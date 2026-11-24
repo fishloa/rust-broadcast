@@ -721,6 +721,19 @@ const HDR10PLUS_BRAND: &str = "cdm4";
 /// ITU-T H.273 `transfer_characteristics` of SMPTE ST 2084 (PQ).
 const TRANSFER_PQ: u8 = 16;
 const MILLIHERTZ_PER_HZ: u128 = 1000;
+/// Bits in one byte, for the byte-to-bit rate conversions.
+const BITS_PER_BYTE: u128 = u8::BITS as u128;
+/// Divisor applied to the rounding term added before a ratio is truncated.
+const ROUNDING_DIVISOR: u128 = 2;
+/// Whole nanoseconds in one millisecond.
+const NANOS_PER_MILLI: u128 = (NANOS_PER_SEC / MILLIS_PER_SEC) as u128;
+/// Rounding term for a nanosecond-to-millisecond conversion: half a
+/// millisecond in nanoseconds.
+const MILLI_ROUNDING_NANOS: u128 = NANOS_PER_MILLI / ROUNDING_DIVISOR;
+
+/// `trun` sample flag `sample_is_non_sync_sample` (ISO/IEC 14496-12:2026
+/// §8.8.3.1, bit 16).
+const SAMPLE_FLAG_IS_NON_SYNC: u32 = 1 << 16;
 
 const MIN_SAMPLES_FOR_RATE: u64 = 2;
 
@@ -845,8 +858,9 @@ fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: Timescale)
         return None;
     }
     let ticks = u128::from(ticks);
-    let millihertz =
-        (u128::from(samples) * u128::from(timescale.get()) * MILLIHERTZ_PER_HZ + ticks / 2) / ticks;
+    let millihertz = (u128::from(samples) * u128::from(timescale.get()) * MILLIHERTZ_PER_HZ
+        + ticks / ROUNDING_DIVISOR)
+        / ticks;
     u32::try_from(millihertz)
         .ok()
         .filter(|mh| *mh <= MAX_PLAUSIBLE_FRAME_RATE_MILLIHERTZ)
@@ -901,7 +915,7 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
     }
     let first = samples[0];
     // A sample is a sync sample when bit 16 of its flags is clear.
-    if first.flags & (1 << 16) != 0 {
+    if first.flags & SAMPLE_FLAG_IS_NON_SYNC != 0 {
         return None;
     }
     // The first video sample must start exactly at an mdat payload start: no
@@ -934,9 +948,10 @@ fn average_bandwidth_bps(total_bytes: u64, total_duration_nanos: u128) -> Option
         return None;
     }
     let bits_nanos = u128::from(total_bytes)
-        .checked_mul(8)?
+        .checked_mul(BITS_PER_BYTE)?
         .checked_mul(NANOS_PER_SEC as u128)?;
-    let mean = bits_nanos.checked_add(total_duration_nanos / 2)? / total_duration_nanos;
+    let mean =
+        bits_nanos.checked_add(total_duration_nanos / ROUNDING_DIVISOR)? / total_duration_nanos;
     u32::try_from(mean).ok()
 }
 
@@ -948,7 +963,7 @@ fn segment_bandwidth_bps(len: usize, duration: Duration) -> Option<u64> {
     if nanos == 0 {
         return None;
     }
-    let bits = u128::try_from(len).ok()?.checked_mul(8)?;
+    let bits = u128::try_from(len).ok()?.checked_mul(BITS_PER_BYTE)?;
     let bps = bits.checked_mul(NANOS_PER_SEC as u128)?.div_ceil(nanos);
     u64::try_from(bps).ok()
 }
@@ -3049,7 +3064,7 @@ impl HlsOrigin {
                         {
                             let now_ms = clock();
                             let dur_nanos = entry.duration.as_nanos();
-                            let dur_ms = (dur_nanos + 500_000) / 1_000_000;
+                            let dur_ms = (dur_nanos + MILLI_ROUNDING_NANOS) / NANOS_PER_MILLI;
                             let dur_ms = i64::try_from(dur_ms).unwrap_or(i64::MAX);
                             let epoch_ms = now_ms.saturating_sub(dur_ms);
                             *origin = Some((
@@ -3194,8 +3209,9 @@ impl HlsOrigin {
         // (2) Arrival origin.
         let origin = *locked(&self.arrival_origin);
         if let Some((origin_start, origin_epoch_ms)) = origin {
-            let delta_ms =
-                (i128::from(start.0) - i128::from(origin_start.0)) * 1000 / i128::from(PTS_HZ);
+            let delta_ms = (i128::from(start.0) - i128::from(origin_start.0))
+                * i128::from(MILLIS_PER_SEC)
+                / i128::from(PTS_HZ);
             let epoch_ms = i128::from(origin_epoch_ms) + delta_ms;
             let epoch_ms: i64 = epoch_ms.try_into().ok()?;
             if let Ok(ts) = jiff::Timestamp::from_millisecond(epoch_ms) {

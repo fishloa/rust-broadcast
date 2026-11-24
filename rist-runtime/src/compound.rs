@@ -52,6 +52,13 @@ const RTCP_VERSION: u8 = 2;
 /// Padding-bit mask within byte 0 (`P` — RFC 3550 §6.4.1): the bit right
 /// after the 2-bit version field.
 const RTCP_PADDING_MASK: u8 = 0x20;
+
+/// Shift of the 2-bit `version` field in the common header's first byte
+/// (RFC 3550 §6.1).
+const VERSION_SHIFT: u32 = 6;
+
+/// Byte positions of the 16-bit `length` field.
+const LENGTH_BYTES: [usize; 2] = [2, 3];
 /// Byte offset of the packet-type field within the common header.
 const PT_OFFSET: usize = 1;
 
@@ -70,7 +77,7 @@ fn peek_total_len(bytes: &[u8]) -> Result<usize> {
             what: "RTCP common header",
         }));
     }
-    let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
+    let length_field = u16::from_be_bytes(LENGTH_BYTES.map(|i| bytes[i])) as usize;
     let total = length_field
         .checked_add(1)
         .and_then(|words| words.checked_mul(WORD_LEN))
@@ -90,7 +97,7 @@ fn peek_total_len(bytes: &[u8]) -> Result<usize> {
             what: "RTCP sub-packet",
         }));
     }
-    let version = bytes[0] >> 6;
+    let version = bytes[0] >> VERSION_SHIFT;
     if version != RTCP_VERSION {
         return Err(Error::UnsupportedVersion(UnsupportedVersion {
             what: "RTCP",
@@ -169,7 +176,7 @@ fn write_header(
     let length_words =
         broadcast_common::len::fit_u16(total / WORD_LEN - 1, "rtcp common-header length field")?;
     let p_bit = if padding > 0 { RTCP_PADDING_MASK } else { 0 };
-    buf[0] = (RTCP_VERSION << 6) | p_bit | byte0_low;
+    buf[0] = (RTCP_VERSION << VERSION_SHIFT) | p_bit | byte0_low;
     buf[PT_OFFSET] = packet_type;
     buf[2..4].copy_from_slice(&length_words.to_be_bytes());
     if padding > 0 {

@@ -17,6 +17,14 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x01;
 const HEADER_LEN: usize = 2;
 const FIXED_LEN: usize = 2 * MJD_BCD_LEN + 4;
+/// Offset of the flags byte in the body.
+const FLAGS_OFFSET: usize = 2 * MJD_BCD_LEN;
+/// Offset of `period` in the body.
+const UNITS_OFFSET: usize = FLAGS_OFFSET + 1;
+/// Offset of `duration` in the body.
+const DURATION_OFFSET: usize = UNITS_OFFSET + 1;
+/// Offset of `estimated_cycle_time` in the body.
+const ESTIMATED_CYCLE_TIME_OFFSET: usize = DURATION_OFFSET + 1;
 const FINAL_AVAILABILITY: u8 = 0x80;
 const PERIODICITY_FLAG: u8 = 0x40;
 const UNIT_MASK: u8 = 0x03;
@@ -122,8 +130,8 @@ impl<'a> Parse<'a> for SchedulingDescriptor<'a> {
                 reason: "scheduling_descriptor body shorter than 14 bytes",
             });
         }
-        let flags = body[2 * MJD_BCD_LEN];
-        let units = body[2 * MJD_BCD_LEN + 1];
+        let flags = body[FLAGS_OFFSET];
+        let units = body[UNITS_OFFSET];
         Ok(Self {
             start_date_time: MjdBcdTime::read(body, 0, "scheduling_descriptor start_date_time")?,
             end_date_time: MjdBcdTime::read(
@@ -139,8 +147,8 @@ impl<'a> Parse<'a> for SchedulingDescriptor<'a> {
             duration_unit: TimeUnit::from_u8(flags >> DURATION_UNIT_SHIFT),
             estimated_cycle_time_unit: TimeUnit::from_u8(flags),
             period: units,
-            duration: body[2 * MJD_BCD_LEN + 2],
-            estimated_cycle_time: body[2 * MJD_BCD_LEN + 3],
+            duration: body[DURATION_OFFSET],
+            estimated_cycle_time: body[ESTIMATED_CYCLE_TIME_OFFSET],
             private_data: &body[FIXED_LEN..],
         })
     }
@@ -179,10 +187,10 @@ impl Serialize for SchedulingDescriptor<'_> {
         if self.periodicity_flag {
             flags |= PERIODICITY_FLAG;
         }
-        b[2 * MJD_BCD_LEN] = flags;
-        b[2 * MJD_BCD_LEN + 1] = self.period;
-        b[2 * MJD_BCD_LEN + 2] = self.duration;
-        b[2 * MJD_BCD_LEN + 3] = self.estimated_cycle_time;
+        b[FLAGS_OFFSET] = flags;
+        b[UNITS_OFFSET] = self.period;
+        b[DURATION_OFFSET] = self.duration;
+        b[ESTIMATED_CYCLE_TIME_OFFSET] = self.estimated_cycle_time;
         b[FIXED_LEN..FIXED_LEN + self.private_data.len()].copy_from_slice(self.private_data);
         Ok(len)
     }

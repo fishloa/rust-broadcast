@@ -267,6 +267,7 @@ use crate::nal::{
 };
 use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
+use crate::wire_cursor::be_u16;
 
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
 
@@ -298,6 +299,17 @@ const CRC32_LEN: usize = 4;
 const SECTION_SYNTAX_INDICATOR_BIT: u8 = 0x80;
 /// Mask for the 12-bit `section_length` high nibble (byte 1 of a section).
 const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
+/// Offset of `section_length`'s low byte in a PSI section header (§2.4.4.1).
+const SECTION_LENGTH_LO_OFFSET: usize = 2;
+/// Bytes a PSI section's `section_length` counts from: `table_id` plus the
+/// 2-byte length field itself (§2.4.4.1).
+const SECTION_LENGTH_FIELD_END: usize = 3;
+/// Offset of the `version_number`/`current_next_indicator` byte in a long-form
+/// PSI section (§2.4.4.1).
+const CURRENT_NEXT_INDICATOR_OFFSET: usize = 5;
+/// Bytes of a descriptor's `descriptor_tag` + `descriptor_length` header
+/// (ISO/IEC 13818-1 §2.6).
+const DESCRIPTOR_HEADER_LEN: usize = 2;
 /// Mask for the 13-bit PID low byte's high 5 bits.
 #[cfg(test)]
 const PID_HI_MASK: u8 = 0x1F;
@@ -318,6 +330,16 @@ const MAX_UNATTRIBUTED_BYTES: usize = 4 * 1024 * 1024;
 /// this as the "one more worst-case packet" margin against
 /// [`MAX_UNATTRIBUTED_BYTES`] (see that impl's doc comment).
 const TS_MAX_PAYLOAD_BYTES: usize = TS_PACKET_SIZE - 4;
+/// Bytes of the fixed TS packet header before the adaptation field or payload
+/// (ISO/IEC 13818-1 §2.4.3.2 Table 2-4).
+const TS_HEADER_LEN: usize = 4;
+/// Offset of `adaptation_field_length` — the first adaptation-field byte.
+const AF_LENGTH_OFFSET: usize = TS_HEADER_LEN;
+/// Offset of the adaptation-field flags byte.
+const AF_FLAGS_OFFSET: usize = TS_HEADER_LEN + 1;
+/// `discontinuity_indicator` is the top bit of the adaptation-field flags byte
+/// (§2.4.3.5).
+const AF_DISCONTINUITY_INDICATOR: u8 = 0x80;
 /// Offset just past `PES_packet_length` within a PES packet — the first 6
 /// bytes are `packet_start_code_prefix`(3) + `stream_id`(1) +
 /// `PES_packet_length`(2) (ISO/IEC 13818-1 §2.4.3.7, Table 2-21).
@@ -507,6 +529,8 @@ const MPEGH_CONFIG_LEN_MAX: usize = u16::MAX as usize;
 const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
 /// Samples per AAC access unit (ISO/IEC 14496-3 — one frame = 1024 samples).
 const AAC_SAMPLES_PER_FRAME: u32 = 1024;
+/// Bytes of an MPEG audio frame header (ISO/IEC 11172-3 §2.4.1.3).
+const MPEG_AUDIO_FRAME_HEADER_LEN: usize = core::mem::size_of::<u32>();
 
 /// MPEG-2 video `picture_start_code` (0x00000100) — ISO/IEC 13818-2 §6.2.3.
 /// `pub(crate)`: also used by `ps_demux` (C6, #1009) to split/flag MPEG-2
@@ -514,6 +538,22 @@ const AAC_SAMPLES_PER_FRAME: u32 = 1024;
 pub(crate) const MPEG2_PICTURE_START_CODE: u8 = 0x00;
 /// `picture_coding_type` value for an intra-coded (I) picture — §6.3.9 Table 6-12.
 pub(crate) const MPEG2_PICTURE_CODING_TYPE_I: u8 = 0x01;
+
+/// A `00 00 01` start-code prefix (ITU-T H.264 Annex B).
+const START_CODE_PREFIX: [u8; 3] = [0x00, 0x00, 0x01];
+/// Bytes of a start code: the prefix plus its code byte.
+const START_CODE_LEN: usize = START_CODE_PREFIX.len() + 1;
+/// Offset of `picture_coding_type`'s byte from a `picture_start_code`: the
+/// start code, then `temporal_reference`'s high 8 bits (§6.2.3).
+const PICTURE_CODING_TYPE_OFFSET: usize = START_CODE_LEN + 1;
+/// Bytes from a `picture_start_code` through the byte carrying
+/// `picture_coding_type` (§6.2.3).
+const PICTURE_CODING_TYPE_HEADER_LEN: usize = START_CODE_LEN + 2;
+/// Bit position of `picture_coding_type` in its byte, below the 2-bit tail of
+/// `temporal_reference` (§6.3.9).
+const PICTURE_CODING_TYPE_SHIFT: u32 = 3;
+/// `picture_coding_type` occupies 3 bits (§6.3.9).
+const PICTURE_CODING_TYPE_MASK: u8 = 0x07;
 
 /// 33-bit PTS/DTS modulus, for wrap-around unrolling (§2.4.3.7, 90 kHz clock).
 /// Alias for [`broadcast_common::clock33::WRAP_33BIT`] — the actual
@@ -542,6 +582,23 @@ const MAX_FRAME_PERIOD_TICKS: u64 = VIDEO_TIMESCALE.as_u64();
 /// smallest window in which a single outlier (one late access unit) cannot
 /// dominate the middle value.
 const FRAME_PERIOD_WINDOW: usize = 5;
+
+/// The `2` that halves a length to index the middle element of a sorted window.
+const HALF: usize = 2;
+
+// ── AVC SPS config offsets (ISO/IEC 14496-15:2017 §5.3.3.1) ────────────────
+
+/// Offset of `constraint_set0..5_flag` + the 2 reserved bits in an SPS NAL
+/// unit, after the 1-byte NAL header and `profile_idc`.
+pub(crate) const AVC_SPS_CONSTRAINT_FLAGS_OFFSET: usize = 2;
+/// Offset of `level_idc` in an SPS NAL unit.
+pub(crate) const AVC_SPS_LEVEL_IDC_OFFSET: usize = 3;
+/// Shortest SPS that carries `profile_idc`, the constraint flags and
+/// `level_idc`: the NAL header plus three bytes.
+pub(crate) const AVC_SPS_CONFIG_MIN_LEN: usize = 4;
+/// `avcC`/`hvcC` store `bit_depth_{luma,chroma}_minus8`; an SPS decode returns
+/// the absolute depth, which is eight more than the wire field.
+const BIT_DEPTH_MINUS8_BASE: u8 = 8;
 
 /// Codec class recovered from a PMT `stream_type` (used to pick the sample /
 /// config-recovery path). Data-carrying dispatch discriminant, not a spec label
@@ -614,7 +671,7 @@ impl Codec {
             return Codec::Hevc;
         }
         let mut off = 0usize;
-        while off + 2 <= descriptors.len() {
+        while off + DESCRIPTOR_HEADER_LEN <= descriptors.len() {
             let tag = descriptors[off];
             let len = descriptors[off + 1] as usize;
             match tag {
@@ -623,7 +680,7 @@ impl Codec {
                 DESC_TAG_DTS => return Codec::Dts,
                 _ => {}
             }
-            off += 2 + len;
+            off += DESCRIPTOR_HEADER_LEN + len;
         }
         self
     }
@@ -694,16 +751,20 @@ fn rescale_to_track(anchor_90k: i128, timescale: broadcast_common::timescale::Ti
 /// (`picture_coding_type == 1`) — ISO/IEC 13818-2 §6.2.2.1 / §6.3.9.
 pub(crate) fn mpeg2_is_sync(au: &[u8]) -> bool {
     let mut i = 0usize;
-    while i + 4 <= au.len() {
-        if au[i] == 0x00 && au[i + 1] == 0x00 && au[i + 2] == 0x01 {
-            let code = au[i + 3];
-            if code == crate::mpeg_legacy::SEQUENCE_HEADER_CODE[3] {
+    while i + START_CODE_LEN <= au.len() {
+        if au[i..i + START_CODE_PREFIX.len()] == START_CODE_PREFIX {
+            let code = au[i + START_CODE_PREFIX.len()];
+            if code
+                == crate::mpeg_legacy::SEQUENCE_HEADER_CODE
+                    [crate::mpeg_legacy::SEQUENCE_HEADER_CODE.len() - 1]
+            {
                 return true;
             }
-            if code == MPEG2_PICTURE_START_CODE && i + 6 <= au.len() {
+            if code == MPEG2_PICTURE_START_CODE && i + PICTURE_CODING_TYPE_HEADER_LEN <= au.len() {
                 // picture_coding_type = bits [5:3] of the byte after temporal_ref
                 // high byte: header = temporal_reference(10) + coding_type(3).
-                let pct = (au[i + 5] >> 3) & 0x07;
+                let pct = (au[i + PICTURE_CODING_TYPE_OFFSET] >> PICTURE_CODING_TYPE_SHIFT)
+                    & PICTURE_CODING_TYPE_MASK;
                 return pct == MPEG2_PICTURE_CODING_TYPE_I;
             }
         }
@@ -789,7 +850,7 @@ fn sync_probes() -> u64 {
 /// ever sees it.
 fn find_mpeg_audio_sync(data: &[u8]) -> Option<(usize, MpegAudioFrameHeader)> {
     let mut off = 0usize;
-    while off + 4 <= data.len() {
+    while off + MPEG_AUDIO_FRAME_HEADER_LEN <= data.len() {
         record_sync_probe();
         if let Ok(hdr) = MpegAudioFrameHeader::parse(&data[off..]) {
             return Some((off, hdr));
@@ -956,6 +1017,13 @@ impl FrameSync for Ac3Sync {
     }
 }
 
+/// Bit position of `strmtyp`, the top two bits of the byte after the E-AC-3
+/// syncword (ETSI TS 102 366 §E.1.2.2).
+const EAC3_STRMTYP_SHIFT: u32 = 6;
+/// Bit position of `bsid`, the low 5 bits of an AC-3 syncframe's byte 5
+/// (ETSI TS 102 366 §4.3.1).
+const AC3_BSID_SHIFT: u32 = 3;
+
 /// E-AC-3 framing (ETSI TS 102 366 Annex E §E.1.2.2); a dependent substream
 /// (`strmtyp == 1`) folds into the access unit of the frame before it.
 struct Eac3Sync;
@@ -972,7 +1040,7 @@ impl FrameSync for Eac3Sync {
         }
         // `frmsiz` = "number of 16-bit words in the syncframe, minus 1".
         sync_from_parse(Ec3SyncframeInfo::parse_at(data, 0), |i| {
-            Some((i.frmsiz as usize + 1) * 2)
+            Some((i.frmsiz as usize + 1) * core::mem::size_of::<u16>())
         })
     }
     fn is_partial_sync(prefix: &[u8]) -> bool {
@@ -993,11 +1061,11 @@ impl FrameSync for Eac3Sync {
     fn tail_starts_new_unit(tail: &[u8]) -> bool {
         const BSID_BYTE: usize = 5;
         const AC3_MAX_BSID: u8 = 8;
-        if tail.len() > BSID_BYTE && tail[BSID_BYTE] >> 3 <= AC3_MAX_BSID {
+        if tail.len() > BSID_BYTE && tail[BSID_BYTE] >> AC3_BSID_SHIFT <= AC3_MAX_BSID {
             return true;
         }
         tail.len() > AC3_SYNC_BYTES.len()
-            && (tail[AC3_SYNC_BYTES.len()] >> 6) != EAC3_STRMTYP_DEPENDENT
+            && (tail[AC3_SYNC_BYTES.len()] >> EAC3_STRMTYP_SHIFT) != EAC3_STRMTYP_DEPENDENT
     }
 }
 
@@ -1203,14 +1271,17 @@ fn psi_section_crc_ok(section: &[u8]) -> bool {
     // `SectionReassembler` hands out exactly `3 + section_length` bytes, so
     // the declared length and the slice length already agree; re-deriving it
     // keeps this correct for any other caller and bounds the slice either way.
-    let section_length =
-        (((section[1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | section[2] as usize;
-    let total = 3 + section_length;
+    let section_length = (((section[1] & SECTION_LENGTH_HI_MASK) as usize) << u8::BITS)
+        | section[SECTION_LENGTH_LO_OFFSET] as usize;
+    let total = SECTION_LENGTH_FIELD_END + section_length;
     if total > section.len() || total < SECTION_HEADER_LEN + CRC32_LEN {
         return false;
     }
     let (covered, trailer) = section[..total].split_at(total - CRC32_LEN);
-    let declared = u32::from_be_bytes([trailer[0], trailer[1], trailer[2], trailer[3]]);
+    let Ok(declared_bytes) = <[u8; CRC32_LEN]>::try_from(trailer) else {
+        return false;
+    };
+    let declared = u32::from_be_bytes(declared_bytes);
     broadcast_common::crc32_mpeg2::compute(covered) == declared
 }
 
@@ -1220,7 +1291,7 @@ fn psi_section_crc_ok(section: &[u8]) -> bool {
 /// [`psi_section_crc_ok`], which guarantees byte 5 exists.
 fn section_current_next(section: &[u8]) -> bool {
     section
-        .get(5)
+        .get(CURRENT_NEXT_INDICATOR_OFFSET)
         .is_some_and(|b| b & CURRENT_NEXT_INDICATOR_BIT != 0)
 }
 
@@ -1384,6 +1455,9 @@ struct AudioAnchorSeed {
 /// see [`audio_discontinuity_threshold_90k`] for the derivation.
 const AUDIO_REANCHOR_THRESHOLD_MS: i128 = 20;
 
+/// Fewest intrinsic sample periods the re-anchor threshold may span.
+const MIN_THRESHOLD_SAMPLE_PERIODS: i128 = 2;
+
 /// Discontinuity threshold for the audio dts/pts anchor (issue B5): a wire PES
 /// timestamp further than this from where the frame-exact accumulator predicts
 /// it should be is a genuine gap (splice, encoder restart, PID reuse); anything
@@ -1426,8 +1500,9 @@ const AUDIO_REANCHOR_THRESHOLD_MS: i128 = 20;
 pub(crate) fn audio_discontinuity_threshold_90k(sample_rate: Timescale) -> i128 {
     let one_sample_period =
         u128::from(VIDEO_TIMESCALE.get()).div_ceil(u128::from(sample_rate.get())) as i128;
-    let ms_bound = (i128::from(VIDEO_TIMESCALE) * AUDIO_REANCHOR_THRESHOLD_MS) / 1000;
-    ms_bound.max(one_sample_period * 2)
+    let ms_bound = (i128::from(VIDEO_TIMESCALE) * AUDIO_REANCHOR_THRESHOLD_MS)
+        / i128::from(broadcast_common::units::MILLIS_PER_SEC);
+    ms_bound.max(one_sample_period * MIN_THRESHOLD_SAMPLE_PERIODS)
 }
 
 /// A completed-but-not-yet-durationed sample, held until the *next* access
@@ -3327,7 +3402,7 @@ fn finalize_probe(
                 }
             }
             let (sps_bytes, pps_bytes) = (sps.as_ref()?, pps.as_ref()?);
-            if sps_bytes.len() < 4 {
+            if sps_bytes.len() < AVC_SPS_CONFIG_MIN_LEN {
                 return None;
             }
             // Coded dimensions + high-profile chroma/bit-depth from the SPS
@@ -3358,14 +3433,16 @@ fn finalize_probe(
                 // profile_idc / constraint_flags / level_idc live at SPS bytes
                 // 1..=3 (after the 1-byte NAL header) — ISO/IEC 14496-15:2017 §5.3.3.1.
                 profile_indication: sps_bytes[1],
-                profile_compatibility: sps_bytes[2],
-                level_indication: sps_bytes[3],
+                profile_compatibility: sps_bytes[AVC_SPS_CONSTRAINT_FLAGS_OFFSET],
+                level_indication: sps_bytes[AVC_SPS_LEVEL_IDC_OFFSET],
                 length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
                 sps: alloc::vec![AvcSps(sps_bytes.clone())],
                 pps: alloc::vec![AvcPps(pps_bytes.clone())],
                 chroma_format: ext.map(|i| i.chroma_format_idc),
-                bit_depth_luma_minus8: ext.map(|i| i.bit_depth_luma.saturating_sub(8)),
-                bit_depth_chroma_minus8: ext.map(|i| i.bit_depth_chroma.saturating_sub(8)),
+                bit_depth_luma_minus8: ext
+                    .map(|i| i.bit_depth_luma.saturating_sub(BIT_DEPTH_MINUS8_BASE)),
+                bit_depth_chroma_minus8: ext
+                    .map(|i| i.bit_depth_chroma.saturating_sub(BIT_DEPTH_MINUS8_BASE)),
                 sps_ext: alloc::vec![],
             };
             Some((
@@ -3479,8 +3556,10 @@ fn finalize_probe(
                 // hvcC stores bit_depth_{luma,chroma}_minus8; the SPS decode
                 // returns the absolute bit depth (minus8 + 8), so subtract 8
                 // back out (saturating — an ES reporting < 8 would be malformed).
-                bit_depth_luma_minus8: info.bit_depth_luma.saturating_sub(8),
-                bit_depth_chroma_minus8: info.bit_depth_chroma.saturating_sub(8),
+                bit_depth_luma_minus8: info.bit_depth_luma.saturating_sub(BIT_DEPTH_MINUS8_BASE),
+                bit_depth_chroma_minus8: info
+                    .bit_depth_chroma
+                    .saturating_sub(BIT_DEPTH_MINUS8_BASE),
                 avg_frame_rate: HVCC_AVG_FRAME_RATE_UNSPEC,
                 constant_frame_rate: HVCC_CONSTANT_FRAME_RATE_UNSPEC,
                 num_temporal_layers: HVCC_NUM_TEMPORAL_LAYERS,
@@ -3928,7 +4007,8 @@ fn advance_track(
                 && !stream.probe_tail.is_empty()
                 && stream.probe_tail.len() + latest.data.len()
                     < stream.probe_walked_len
-                        + Eac3Sync::MIN_FRAME_LEN.max(stream.probe_walked_len / 8);
+                        + Eac3Sync::MIN_FRAME_LEN
+                            .max(stream.probe_walked_len / EAC3_PROBE_GROWTH_DIVISOR);
             let eac3_all: Option<Vec<u8>> = (stream.codec == Codec::Eac3 && !eac3_gated)
                 .then(|| [stream.probe_tail.as_slice(), latest.data.as_slice()].concat());
             if let Some(all) = &eac3_all
@@ -4049,6 +4129,10 @@ fn advance_track(
 /// longest), so a window this size across the boundary catches a header split
 /// there (issue #1160).
 const AUDIO_PROBE_BOUNDARY_BYTES: usize = 16;
+
+/// A re-walk is only worth it when the held window grew by at least an eighth
+/// since the last one.
+const EAC3_PROBE_GROWTH_DIVISOR: usize = 8;
 
 /// Syncframes an E-AC-3 probe may hold while waiting for its first access unit
 /// to complete (an independent frame, its dependent frames, then the next
@@ -4345,7 +4429,11 @@ fn feed_pes_bounded(
     if pusi {
         stream.pes_received = payload.len();
         stream.pes_declared_len = if payload.len() >= PES_LENGTH_FIELD_END {
-            u16::from_be_bytes([payload[4], payload[5]])
+            be_u16(
+                payload,
+                PES_LENGTH_FIELD_END - core::mem::size_of::<u16>(),
+                "PES header",
+            )?
         } else {
             0
         };
@@ -4494,7 +4582,7 @@ fn on_completed_pes(
                 stream.recent_steps.push(period);
                 let mut sorted = stream.recent_steps.clone();
                 sorted.sort_unstable();
-                let median = sorted[sorted.len() / 2];
+                let median = sorted[sorted.len() / HALF];
                 stream.frame_period = Some(median);
                 stream.last_frame_period = median as i128;
             }
@@ -5036,9 +5124,12 @@ impl StreamingTsDemux {
             // excluding signalled discontinuities (the adaptation-field check
             // that follows).
             let discontinuity_signalled = pkt.header.has_adaptation()
-                && raw
-                    .get(4)
-                    .is_some_and(|af_len| *af_len > 0 && raw.get(5).is_some_and(|b| b & 0x80 != 0));
+                && raw.get(AF_LENGTH_OFFSET).is_some_and(|af_len| {
+                    *af_len > 0
+                        && raw
+                            .get(AF_FLAGS_OFFSET)
+                            .is_some_and(|b| b & AF_DISCONTINUITY_INDICATOR != 0)
+                });
 
             // PCR / discontinuity — independent of PID classification, matches
             // every packet's adaptation field regardless of payload routing.

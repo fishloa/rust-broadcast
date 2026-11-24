@@ -22,7 +22,63 @@ pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVE
 const RESERVED_BITS: u32 = 2;
 /// Mask and shift of `reserved(2)` within byte 4.
 const RESERVED_MASK: u8 = 0x03;
+/// Shift of the 2-bit `reserved` run within its byte.
+const RESERVED_SHIFT: u8 = 4;
 const BODY_LEN: u8 = 8;
+/// Body offset of `maximum_bitrate`.
+const MAXIMUM_BITRATE_OFFSET: usize = 2;
+/// Body offset of the view-flags byte.
+const VIEW_FLAGS_OFFSET: usize = 4;
+/// Body offset of the `view_order_index` continuation byte.
+const VIEW_ORDER_CONTINUATION_OFFSET: usize = 5;
+/// Body offset of the high `view_order_index_max` byte.
+const VIEW_ORDER_MAX_HI_OFFSET: usize = 6;
+/// Body offset of the temporal/flags byte.
+const TEMPORAL_FLAGS_OFFSET: usize = 7;
+/// `view_association_not_present` bit of the view-flags byte.
+const VIEW_ASSOCIATION_MASK: u8 = 0x80;
+/// `base_view_is_left_eyeview` bit of the view-flags byte.
+const BASE_VIEW_LEFT_EYE_MASK: u8 = 0x40;
+/// Mask of the high `view_order_index_min` bits in the view-flags byte.
+const VIEW_ORDER_MIN_HI_MASK: u8 = 0x0F;
+/// Mask of the high `view_order_index_max` bits in the continuation byte.
+const VIEW_ORDER_MAX_HI_MASK: u8 = 0x03;
+/// Mask of the low `view_order_index_min` bits in the continuation byte.
+const VIEW_ORDER_MIN_LO_MASK: u8 = 0x3F;
+/// Wire width of `view_order_index_min` / `view_order_index_max`.
+const VIEW_ORDER_INDEX_BITS: u32 = 10;
+/// Shift of the high `view_order_index_min` bits.
+const VIEW_ORDER_MIN_HI_SHIFT: u16 = 6;
+/// Shift of the low `view_order_index_min` bits.
+const VIEW_ORDER_MIN_LO_SHIFT: u16 = 2;
+/// Shift of the high `view_order_index_max` bits.
+const VIEW_ORDER_MAX_HI_SHIFT: u16 = 8;
+/// Shift of the high bytes of both view order indices in the serializer.
+const VIEW_ORDER_HI_SHIFT: u16 = 6;
+/// Mask of the low `view_order_index_min` bits in the serializer.
+const VIEW_ORDER_MIN_LO_SERIALIZE_MASK: u16 = 0x3F;
+/// Shift of the packed view order index bytes in the serializer.
+const VIEW_ORDER_PACK_SHIFT: u16 = 2;
+/// Low-byte mask of the view order indices.
+const VIEW_ORDER_LOW_BYTE_MASK: u16 = 0xFF;
+/// `temporal_id_start` shift in the temporal/flags byte.
+const TEMPORAL_ID_START_SHIFT: u8 = 5;
+/// `temporal_id_end` shift in the temporal/flags byte.
+const TEMPORAL_ID_END_SHIFT: u8 = 2;
+/// Mask of a 3-bit `temporal_id`.
+const TEMPORAL_ID_MASK: u8 = 0x07;
+/// Wire width of a `temporal_id` (3 bits).
+const TEMPORAL_ID_BITS: u32 = 3;
+/// `no_sei_nal_unit_present` bit of the temporal/flags byte.
+const NO_SEI_MASK: u8 = 0x02;
+/// `no_prefix_nal_unit_present` bit of the temporal/flags byte.
+const NO_PREFIX_MASK: u8 = 0x01;
+/// Shift of `view_association_not_present` in the view-flags byte.
+const VIEW_ASSOCIATION_SHIFT: u8 = 7;
+/// Shift of `base_view_is_left_eyeview` in the view-flags byte.
+const BASE_VIEW_LEFT_EYE_SHIFT: u8 = 6;
+/// Shift of `no_sei_nal_unit_present` in the temporal/flags byte.
+const NO_SEI_SHIFT: u8 = 1;
 
 /// MVC Extension Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,20 +155,27 @@ impl<'a> Parse<'a> for MvcExtensionDescriptor {
             });
         }
         let average_bit_rate = u16::from_be_bytes([body[0], body[1]]);
-        let maximum_bitrate = u16::from_be_bytes([body[2], body[3]]);
-        let b4 = body[4];
-        let b5 = body[5];
-        let b6 = body[6];
-        let b7 = body[7];
-        let view_association_not_present = (b4 & 0x80) != 0;
-        let base_view_is_left_eyeview = (b4 & 0x40) != 0;
+        let maximum_bitrate = u16::from_be_bytes([
+            body[MAXIMUM_BITRATE_OFFSET],
+            body[MAXIMUM_BITRATE_OFFSET + 1],
+        ]);
+        let b4 = body[VIEW_FLAGS_OFFSET];
+        let b5 = body[VIEW_ORDER_CONTINUATION_OFFSET];
+        let b6 = body[VIEW_ORDER_MAX_HI_OFFSET];
+        let b7 = body[TEMPORAL_FLAGS_OFFSET];
+        let view_association_not_present = (b4 & VIEW_ASSOCIATION_MASK) != 0;
+        let base_view_is_left_eyeview = (b4 & BASE_VIEW_LEFT_EYE_MASK) != 0;
         // b4 bits 5-4: reserved
-        let view_order_index_min = ((b4 as u16 & 0x0F) << 6) | ((b5 as u16 >> 2) & 0x3F);
-        let view_order_index_max = ((b5 as u16 & 0x03) << 8) | (b6 as u16);
-        let temporal_id_start = (b7 >> 5) & 0x07;
-        let temporal_id_end = (b7 >> 2) & 0x07;
-        let no_sei_nal_unit_present = (b7 & 0x02) != 0;
-        let no_prefix_nal_unit_present = (b7 & 0x01) != 0;
+        let view_order_index_min = ((u16::from(b4) & u16::from(VIEW_ORDER_MIN_HI_MASK))
+            << VIEW_ORDER_MIN_HI_SHIFT)
+            | ((u16::from(b5) >> VIEW_ORDER_MIN_LO_SHIFT) & u16::from(VIEW_ORDER_MIN_LO_MASK));
+        let view_order_index_max = ((u16::from(b5) & u16::from(VIEW_ORDER_MAX_HI_MASK))
+            << VIEW_ORDER_MAX_HI_SHIFT)
+            | u16::from(b6);
+        let temporal_id_start = (b7 >> TEMPORAL_ID_START_SHIFT) & TEMPORAL_ID_MASK;
+        let temporal_id_end = (b7 >> TEMPORAL_ID_END_SHIFT) & TEMPORAL_ID_MASK;
+        let no_sei_nal_unit_present = (b7 & NO_SEI_MASK) != 0;
+        let no_prefix_nal_unit_present = (b7 & NO_PREFIX_MASK) != 0;
         Ok(Self {
             average_bit_rate,
             maximum_bitrate,
@@ -124,7 +187,7 @@ impl<'a> Parse<'a> for MvcExtensionDescriptor {
             temporal_id_end,
             no_sei_nal_unit_present,
             no_prefix_nal_unit_present,
-            reserved: ReservedOnes::from_bits(u64::from((b4 >> 4) & RESERVED_MASK)),
+            reserved: ReservedOnes::from_bits(u64::from((b4 >> RESERVED_SHIFT) & RESERVED_MASK)),
         })
     }
 }
@@ -141,35 +204,54 @@ impl Serialize for MvcExtensionDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN..HEADER_LEN + 2].copy_from_slice(&self.average_bit_rate.to_be_bytes());
-        buf[HEADER_LEN + 2..HEADER_LEN + 4].copy_from_slice(&self.maximum_bitrate.to_be_bytes());
+        buf[HEADER_LEN..HEADER_LEN + size_of::<u16>()]
+            .copy_from_slice(&self.average_bit_rate.to_be_bytes());
+        buf[HEADER_LEN + MAXIMUM_BITRATE_OFFSET
+            ..HEADER_LEN + MAXIMUM_BITRATE_OFFSET + size_of::<u16>()]
+            .copy_from_slice(&self.maximum_bitrate.to_be_bytes());
         // Over-wide values used to be masked down silently (audit r03-W3
         // class).
         let vmin = broadcast_common::len::fit_bits(
             u64::from(self.view_order_index_min),
-            10,
+            VIEW_ORDER_INDEX_BITS,
             "view_order_index_min",
         )? as u16;
         let vmax = broadcast_common::len::fit_bits(
             u64::from(self.view_order_index_max),
-            10,
+            VIEW_ORDER_INDEX_BITS,
             "view_order_index_max",
         )? as u16;
-        broadcast_common::len::fit_bits(u64::from(self.temporal_id_start), 3, "temporal_id_start")?;
-        broadcast_common::len::fit_bits(u64::from(self.temporal_id_end), 3, "temporal_id_end")?;
-        buf[HEADER_LEN + 4] = ((self.view_association_not_present as u8) << 7)
-            | ((self.base_view_is_left_eyeview as u8) << 6)
-            | ((self.reserved.get() as u8) << 4)
-            | ((vmin >> 6) as u8 & 0x0F);
-        buf[HEADER_LEN + 5] = (((vmin & 0x3F) << 2) as u8) | ((vmax >> 8) as u8 & 0x03);
-        buf[HEADER_LEN + 6] = (vmax & 0xFF) as u8;
-        buf[HEADER_LEN + 7] =
-            (broadcast_common::len::fit_mask(self.temporal_id_start, 0x07, "temporal_id_start")?
-                << 5)
-                | (broadcast_common::len::fit_mask(self.temporal_id_end, 0x07, "temporal_id_end")?
-                    << 2)
-                | ((self.no_sei_nal_unit_present as u8) << 1)
-                | (self.no_prefix_nal_unit_present as u8);
+        broadcast_common::len::fit_bits(
+            u64::from(self.temporal_id_start),
+            TEMPORAL_ID_BITS,
+            "temporal_id_start",
+        )?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.temporal_id_end),
+            TEMPORAL_ID_BITS,
+            "temporal_id_end",
+        )?;
+        buf[HEADER_LEN + VIEW_FLAGS_OFFSET] = ((self.view_association_not_present as u8)
+            << VIEW_ASSOCIATION_SHIFT)
+            | ((self.base_view_is_left_eyeview as u8) << BASE_VIEW_LEFT_EYE_SHIFT)
+            | ((self.reserved.get() as u8) << RESERVED_SHIFT)
+            | ((vmin >> VIEW_ORDER_HI_SHIFT) as u8 & VIEW_ORDER_MIN_HI_MASK);
+        buf[HEADER_LEN + VIEW_ORDER_CONTINUATION_OFFSET] =
+            (((vmin & VIEW_ORDER_MIN_LO_SERIALIZE_MASK) << VIEW_ORDER_PACK_SHIFT) as u8)
+                | ((vmax >> VIEW_ORDER_MAX_HI_SHIFT) as u8 & VIEW_ORDER_MAX_HI_MASK);
+        buf[HEADER_LEN + VIEW_ORDER_MAX_HI_OFFSET] = (vmax & VIEW_ORDER_LOW_BYTE_MASK) as u8;
+        buf[HEADER_LEN + TEMPORAL_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+            self.temporal_id_start,
+            TEMPORAL_ID_MASK,
+            "temporal_id_start",
+        )? << TEMPORAL_ID_START_SHIFT)
+            | (broadcast_common::len::fit_mask(
+                self.temporal_id_end,
+                TEMPORAL_ID_MASK,
+                "temporal_id_end",
+            )? << TEMPORAL_ID_END_SHIFT)
+            | ((self.no_sei_nal_unit_present as u8) << NO_SEI_SHIFT)
+            | (self.no_prefix_nal_unit_present as u8);
         Ok(len)
     }
 }

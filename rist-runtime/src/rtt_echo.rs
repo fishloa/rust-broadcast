@@ -36,6 +36,28 @@ const PT_APP: u8 = 204;
 /// Fixed-payload length of an RTT Echo packet (excluding the common header):
 /// SSRC(4) + name(4) + timestamp(8) + processing_delay(4) = 20 bytes.
 const RTT_ECHO_BODY_LEN: usize = 20;
+
+/// Shift of the 2-bit `version` field in the common header's first byte
+/// (RFC 3550 §6.1).
+const VERSION_SHIFT: u32 = 6;
+
+/// Byte positions of the 16-bit `length` field.
+const LENGTH_BYTES: [usize; 2] = [2, 3];
+
+/// Byte positions of `SSRC of media source`, `name` and the timestamp
+/// halves and processing delay of the RTT Echo payload (VSF TR-06-1 §5.2.6).
+const SSRC_MEDIA_BYTES: [usize; WORD_LEN] = [4, 5, 6, 7];
+const NAME_BYTES: [usize; WORD_LEN] = [8, 9, 10, 11];
+const TS_MSW_BYTES: [usize; WORD_LEN] = [12, 13, 14, 15];
+const TS_LSW_BYTES: [usize; WORD_LEN] = [16, 17, 18, 19];
+const PROCESSING_DELAY_BYTES: [usize; WORD_LEN] = [20, 21, 22, 23];
+
+/// Bits in one 32-bit word: the shift joining and splitting the timestamp's
+/// two halves.
+const WORD_SHIFT: u32 = 32;
+
+/// Offset of the timestamp's most significant word in the wire layout.
+const TS_MSW_OFFSET: usize = 12;
 /// Total minimum RTT Echo packet length (header + body, no padding):
 /// 4 + 20 = 24 bytes = 6 words.
 const RTT_ECHO_MIN_LEN: usize = RTCP_HEADER_LEN + RTT_ECHO_BODY_LEN;
@@ -140,7 +162,7 @@ impl<'a> Parse<'a> for RttEcho {
             }));
         }
 
-        let version = bytes[0] >> 6;
+        let version = bytes[0] >> VERSION_SHIFT;
         if version != RTCP_VERSION {
             return Err(Error::UnsupportedVersion(UnsupportedVersion {
                 what: "RTCP",
@@ -166,7 +188,7 @@ impl<'a> Parse<'a> for RttEcho {
             });
         }
 
-        let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
+        let length_field = u16::from_be_bytes(LENGTH_BYTES.map(|i| bytes[i])) as usize;
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -185,20 +207,20 @@ impl<'a> Parse<'a> for RttEcho {
         }
 
         // SSRC of media source.
-        let ssrc_media = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let ssrc_media = u32::from_be_bytes(SSRC_MEDIA_BYTES.map(|i| bytes[i]));
 
-        let name = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        let name = u32::from_be_bytes(NAME_BYTES.map(|i| bytes[i]));
         if name != RIST_APP_NAME_U32 {
             return Err(Error::InvalidAppName(name));
         }
 
         // Timestamp (8 bytes, big-endian u64).
-        let ts_msw = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
-        let ts_lsw = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
-        let timestamp = ((ts_msw as u64) << 32) | (ts_lsw as u64);
+        let ts_msw = u32::from_be_bytes(TS_MSW_BYTES.map(|i| bytes[i]));
+        let ts_lsw = u32::from_be_bytes(TS_LSW_BYTES.map(|i| bytes[i]));
+        let timestamp = (u64::from(ts_msw) << WORD_SHIFT) | u64::from(ts_lsw);
 
         // Processing delay (4 bytes).
-        let processing_delay_us = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+        let processing_delay_us = u32::from_be_bytes(PROCESSING_DELAY_BYTES.map(|i| bytes[i]));
 
         // Padding (remaining bytes, if any).
         let padding = if total_len > RTT_ECHO_MIN_LEN {
@@ -233,7 +255,7 @@ impl Serialize for RttEcho {
 
         // Header: V=2, P=0, Subtype.
         let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
-        buf[0] = (RTCP_VERSION << 6) | self.kind.subtype();
+        buf[0] = (RTCP_VERSION << VERSION_SHIFT) | self.kind.subtype();
         buf[1] = PT_APP;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
 
@@ -244,7 +266,8 @@ impl Serialize for RttEcho {
         buf[8..12].copy_from_slice(&RIST_APP_NAME);
 
         // Timestamp (8 bytes, big-endian).
-        buf[12..16].copy_from_slice(&((self.timestamp >> 32) as u32).to_be_bytes());
+        buf[TS_MSW_OFFSET..TS_MSW_OFFSET + WORD_LEN]
+            .copy_from_slice(&((self.timestamp >> WORD_SHIFT) as u32).to_be_bytes());
         buf[16..20].copy_from_slice(&(self.timestamp as u32).to_be_bytes());
 
         // Processing delay.

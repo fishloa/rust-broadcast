@@ -81,6 +81,7 @@ use std::time::{Duration, Instant};
 
 use broadcast_common::clock33::PTS_TIMESCALE;
 use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
+use broadcast_common::units::MILLIS_PER_SEC;
 use transmux::TrackId;
 
 use crate::ingress::ProgramId;
@@ -129,8 +130,9 @@ impl Default for SegmenterConfig {
             ts_cut_policy: transmux::SegmentCutPolicy::default(),
             ts_idr_fallback: TsHlsIdrFallback::default(),
             target_duration: Duration::from_secs(1),
-            part_target: Duration::from_millis(250),
-            window_segments_cap: std::num::NonZeroUsize::MIN.saturating_add(7),
+            part_target: Duration::from_millis(DEFAULT_PART_TARGET_MS),
+            window_segments_cap: std::num::NonZeroUsize::MIN
+                .saturating_add(DEFAULT_WINDOW_SEGMENTS_ABOVE_MIN),
             route_name: "unknown".to_string(),
             audio_rendition_sources: Vec::new(),
             audio_profiles: Vec::new(),
@@ -756,6 +758,14 @@ pub struct ProgramSegmenter {
 /// Media time of video examined for captions before a route that has found
 /// none declares `CLOSED-CAPTIONS=NONE`; a later detection replaces it.
 const CAPTION_SCAN_WINDOW_SECS: i64 = 10;
+/// Default part target duration.
+const DEFAULT_PART_TARGET_MS: u64 = 250;
+/// Window segment cap above `NonZeroUsize::MIN`: eight segments.
+const DEFAULT_WINDOW_SEGMENTS_ABOVE_MIN: usize = 7;
+/// One second in milliseconds, as the rounding base of a whole-second target.
+const MILLIS_PER_SEC_U128: u128 = MILLIS_PER_SEC as u128;
+/// Rounding term of a millisecond-to-second conversion: half a second.
+const MILLIS_ROUNDING: u128 = MILLIS_PER_SEC_U128 / 2;
 const IDR_HOLD_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 /// Maps this segmenter's internal per-segment timeline
@@ -853,7 +863,7 @@ fn gate_opens_on(
 /// (the classic-MPEG-TS segmenter's integer-second cut rule).
 fn round_secs_u32(duration: Duration) -> u32 {
     let millis = duration.as_millis();
-    u32::try_from(millis.saturating_add(500) / 1000)
+    u32::try_from(millis.saturating_add(MILLIS_ROUNDING) / MILLIS_PER_SEC_U128)
         .unwrap_or(u32::MAX)
         .max(1)
 }

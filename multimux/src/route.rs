@@ -160,6 +160,15 @@ pub const DEFAULT_MAX_CONCURRENT_WARMS: usize = 8;
 /// default segment capacity of every trunk a route builds.
 pub const DEFAULT_WINDOW_SEGMENTS: usize = 8;
 
+/// Default part target duration.
+const DEFAULT_PART_TARGET: Duration = Duration::from_millis(250);
+
+/// Track id of the first sibling audio origin: id 1 is the video track.
+const SIBLING_TRACK_ID_BASE: usize = 2;
+
+/// Factor the locked-out reconnect backoff grows by on each attempt.
+const BACKOFF_EXPANSION: u32 = 2;
+
 /// [`RouteHandle::name`]'s value until [`RouteHandle::with_name`] sets a real
 /// one — matches `crate::origin::mod`'s own `"unknown"` fallback token for an
 /// unrecognized route in its HTTP-path metrics labelling, so a route driven
@@ -1048,7 +1057,9 @@ impl ProgramServing {
             Vec::with_capacity(sibling_decls.len());
         for (idx, decl) in sibling_decls.iter().enumerate() {
             let sibling_trunk = Arc::new(Trunk::new(route.trunk_config));
-            let track_id = transmux::TrackId::new(u32::try_from(idx + 2).unwrap_or(u32::MAX));
+            let track_id = transmux::TrackId::new(
+                u32::try_from(idx + SIBLING_TRACK_ID_BASE).unwrap_or(u32::MAX),
+            );
             let mut ab =
                 HlsOriginConfig::new(Arc::clone(&sibling_trunk), target_duration, window_segments)
                     .with_container(Container::Fmp4)
@@ -2142,7 +2153,10 @@ impl PendingRecorder {
         );
         self.retry_at =
             now.saturating_add_nanos(u64::try_from(self.backoff.as_nanos()).unwrap_or(u64::MAX));
-        self.backoff = self.backoff.saturating_mul(2).min(LOCKED_RETRY_MAX);
+        self.backoff = self
+            .backoff
+            .saturating_mul(BACKOFF_EXPANSION)
+            .min(LOCKED_RETRY_MAX);
     }
 }
 
@@ -2275,7 +2289,7 @@ impl Default for RouteConfig {
     fn default() -> Self {
         RouteConfig {
             target_duration: Duration::from_secs(1),
-            part_target: Duration::from_millis(250),
+            part_target: DEFAULT_PART_TARGET,
             window_segments: DEFAULT_WINDOW_SEGMENTS,
             container: Container::default(),
             ts_cut_policy: transmux::SegmentCutPolicy::default(),

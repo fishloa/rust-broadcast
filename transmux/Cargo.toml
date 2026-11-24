@@ -71,7 +71,7 @@ rtmp-runtime = { path = "../rtmp-runtime", version = "0.12.0", default-features 
 container-probe = { path = "../container-probe", version = "0.6.0", default-features = false, optional = true }
 # Typed MISB ST 0601 item values (`LocalSetItem::value_typed`). The value
 # semantics live in that crate; transmux keeps only the KLV framing.
-motion-imagery-metadata = { version = "0.1", default-features = false, optional = true }
+motion-imagery-metadata = { version = "0.2", default-features = false, optional = true }
 
 [[bin]]
 name = "transmux"

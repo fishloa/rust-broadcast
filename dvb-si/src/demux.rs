@@ -121,6 +121,20 @@ const SECTION_NUMBER_OFFSET: usize = 6;
 const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 /// Trailing CRC-32 length.
 const CRC_LEN: usize = 4;
+/// Offset of the byte carrying `section_syntax_indicator`.
+const SYNTAX_INDICATOR_OFFSET: usize = 1;
+/// `section_syntax_indicator` bit in the length byte.
+const SECTION_SYNTAX_INDICATOR: u8 = 0x80;
+/// Offset of the high byte of `table_id_extension`.
+const TABLE_ID_EXTENSION_HIGH_OFFSET: usize = 3;
+/// Offset of the low byte of `table_id_extension`.
+const TABLE_ID_EXTENSION_LOW_OFFSET: usize = 4;
+/// Offset of the version byte.
+const VERSION_OFFSET: usize = 5;
+/// `version_number` occupies the top 5 bits of its byte.
+const VERSION_SHIFT: u32 = 1;
+/// 5-bit `version_number` mask.
+const VERSION_MASK: u8 = 0x1F;
 
 /// One complete, changed SI section. Owns its bytes — `'static`, cheap clone.
 ///
@@ -158,7 +172,7 @@ impl SectionEvent {
     /// (`section_syntax_indicator == 1`).
     #[must_use]
     fn is_long_form(&self) -> bool {
-        (self.bytes[1] & 0x80) != 0
+        (self.bytes[SYNTAX_INDICATOR_OFFSET] & SECTION_SYNTAX_INDICATOR) != 0
     }
 
     /// 5-bit `version_number`, or `None` for short-form sections (which carry
@@ -166,8 +180,8 @@ impl SectionEvent {
     /// version field either, so this is `None` for it.
     #[must_use]
     pub fn version(&self) -> Option<u8> {
-        if self.is_long_form() && self.bytes.len() > 5 {
-            Some((self.bytes[5] >> 1) & 0x1F)
+        if self.is_long_form() && self.bytes.len() > VERSION_OFFSET {
+            Some((self.bytes[VERSION_OFFSET] >> VERSION_SHIFT) & VERSION_MASK)
         } else {
             None
         }
@@ -176,8 +190,11 @@ impl SectionEvent {
     /// 16-bit `table_id_extension`, or `None` for short-form sections.
     #[must_use]
     pub fn table_id_extension(&self) -> Option<u16> {
-        if self.is_long_form() && self.bytes.len() > 4 {
-            Some(((self.bytes[3] as u16) << 8) | self.bytes[4] as u16)
+        if self.is_long_form() && self.bytes.len() > TABLE_ID_EXTENSION_LOW_OFFSET {
+            Some(
+                ((self.bytes[TABLE_ID_EXTENSION_HIGH_OFFSET] as u16) << u8::BITS)
+                    | self.bytes[TABLE_ID_EXTENSION_LOW_OFFSET] as u16,
+            )
         } else {
             None
         }
@@ -186,7 +203,7 @@ impl SectionEvent {
     /// `section_number`, or `None` for short-form sections.
     #[must_use]
     pub fn section_number(&self) -> Option<u8> {
-        if self.is_long_form() && self.bytes.len() > 6 {
+        if self.is_long_form() && self.bytes.len() > SECTION_NUMBER_OFFSET {
             Some(self.bytes[SECTION_NUMBER_OFFSET])
         } else {
             None
@@ -474,7 +491,7 @@ impl SiDemux {
         }
 
         let table_id = section[0];
-        let long_form = (section[1] & 0x80) != 0;
+        let long_form = (section[SYNTAX_INDICATOR_OFFSET] & SECTION_SYNTAX_INDICATOR) != 0;
         // The TOT is short-form by its SSI bit but uniquely carries a CRC.
         let has_crc = long_form || table_id == TOT_TABLE_ID;
 
@@ -495,10 +512,11 @@ impl SiDemux {
 
         let (ext, section_number, version, current, change_crc) =
             if long_form && section.len() >= MIN_SECTION_LEN + LONG_FORM_EXTRA + CRC_LEN {
-                let ext = ((section[3] as u16) << 8) | section[4] as u16;
-                let version = (section[5] >> 1) & 0x1F;
-                let current = section[5] & CURRENT_NEXT_MASK != 0;
-                let section_number = section[6];
+                let ext = ((section[TABLE_ID_EXTENSION_HIGH_OFFSET] as u16) << u8::BITS)
+                    | section[TABLE_ID_EXTENSION_LOW_OFFSET] as u16;
+                let version = (section[VERSION_OFFSET] >> VERSION_SHIFT) & VERSION_MASK;
+                let current = section[VERSION_OFFSET] & CURRENT_NEXT_MASK != 0;
+                let section_number = section[SECTION_NUMBER_OFFSET];
                 // For long-form the trailing CRC already uniquely fingerprints the
                 // payload; reuse it as the change hash.
                 let (_, crc_bytes) = section.split_last_chunk::<CRC_LEN>().unwrap();

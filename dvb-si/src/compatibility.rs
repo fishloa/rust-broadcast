@@ -43,8 +43,15 @@ const DESC_COUNT_FIELD: usize = 2;
 const EMPTY_WITH_COUNT_FORM: [u8; COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD] =
     [0x00, 0x02, 0x00, 0x00];
 const DESC_HEADER_LEN: usize = 2;
-const DESC_FIXED_LEN: usize = 9;
+const SPECIFIER_TYPE_OFFSET: usize = 0;
+const SPECIFIER_DATA_OFFSET: usize = 1;
+const SPECIFIER_DATA_LEN: usize = 3;
+const MODEL_OFFSET: usize = SPECIFIER_DATA_OFFSET + SPECIFIER_DATA_LEN;
+const VERSION_OFFSET: usize = MODEL_OFFSET + core::mem::size_of::<u16>();
+const SUB_DESC_COUNT_OFFSET: usize = VERSION_OFFSET + core::mem::size_of::<u16>();
+const DESC_FIXED_LEN: usize = SUB_DESC_COUNT_OFFSET + 1;
 const SUB_DESC_HEADER_LEN: usize = 2;
+const EMPTY_FORM: [u8; COMPAT_DESC_LEN_FIELD] = [0x00, 0x00];
 
 /// Compatibility descriptor type — TS 102 006 Table 16 / ISO/IEC 13818-6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,7 +228,7 @@ pub struct CompatibilityDescriptorEntry<'a> {
     /// `specifierType` — `0x01` = IEEE OUI (Table 15 remark).
     pub specifier_type: SpecifierType,
     /// `specifierData` — 3-byte IEEE OUI when `specifierType == 0x01`.
-    pub specifier_data: [u8; 3],
+    pub specifier_data: [u8; SPECIFIER_DATA_LEN],
     /// `model` — zero if transmitted in a manufacturer private location.
     pub model: u16,
     /// `version` — zero if transmitted in a manufacturer private location.
@@ -260,13 +267,16 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             COMPAT_DESC_LEN_FIELD,
             "CompatibilityDescriptor length field",
         )?;
-        let (b2, _) = bytes.split_first_chunk::<2>().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
-                need: COMPAT_DESC_LEN_FIELD,
-                have: bytes.len(),
-                what: "CompatibilityDescriptor length field",
-            },
-        ))?;
+        let (b2, _) =
+            bytes
+                .split_first_chunk::<COMPAT_DESC_LEN_FIELD>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: COMPAT_DESC_LEN_FIELD,
+                        have: bytes.len(),
+                        what: "CompatibilityDescriptor length field",
+                    },
+                ))?;
         let compat_desc_len = u16::from_be_bytes(*b2) as usize;
         let body_end = COMPAT_DESC_LEN_FIELD + compat_desc_len;
         if body_end > bytes.len() {
@@ -321,23 +331,16 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
                     reason: "descriptorLength shorter than fixed fields",
                 });
             }
-            let specifier_type = SpecifierType::from_u8(body[pos + DESC_HEADER_LEN]);
-            let specifier_data = [
-                body[pos + DESC_HEADER_LEN + 1],
-                body[pos + DESC_HEADER_LEN + 2],
-                body[pos + DESC_HEADER_LEN + 3],
-            ];
-            let model = crate::wire::be_u16(
-                body,
-                pos + DESC_HEADER_LEN + 4,
-                "CompatibilityDescriptor model",
-            )?;
-            let version = crate::wire::be_u16(
-                body,
-                pos + DESC_HEADER_LEN + 6,
-                "CompatibilityDescriptor version",
-            )?;
-            let sub_descriptor_count = body[pos + DESC_HEADER_LEN + 8] as usize;
+            let entry = &body[pos + DESC_HEADER_LEN..pos + DESC_HEADER_LEN + DESC_FIXED_LEN];
+            let specifier_type = SpecifierType::from_u8(entry[SPECIFIER_TYPE_OFFSET]);
+            let mut specifier_data = [0u8; SPECIFIER_DATA_LEN];
+            specifier_data.copy_from_slice(
+                &entry[SPECIFIER_DATA_OFFSET..SPECIFIER_DATA_OFFSET + SPECIFIER_DATA_LEN],
+            );
+            let model = crate::wire::be_u16(entry, MODEL_OFFSET, "CompatibilityDescriptor model")?;
+            let version =
+                crate::wire::be_u16(entry, VERSION_OFFSET, "CompatibilityDescriptor version")?;
+            let sub_descriptor_count = entry[SUB_DESC_COUNT_OFFSET] as usize;
             let sub_desc_start = pos + DESC_HEADER_LEN + DESC_FIXED_LEN;
             let sub_desc_end = entry_end;
             let sub_desc_region_len = sub_desc_end.saturating_sub(sub_desc_start);
@@ -424,8 +427,7 @@ impl Serialize for CompatibilityDescriptor<'_> {
                 buf[..EMPTY_WITH_COUNT_FORM.len()].copy_from_slice(&EMPTY_WITH_COUNT_FORM);
                 return Ok(COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD);
             }
-            buf[0] = 0x00;
-            buf[1] = 0x00;
+            buf[..COMPAT_DESC_LEN_FIELD].copy_from_slice(&EMPTY_FORM);
             return Ok(COMPAT_DESC_LEN_FIELD);
         }
         let overflow = |declared: usize, available: usize| Error::SectionLengthOverflow {
@@ -448,14 +450,17 @@ impl Serialize for CompatibilityDescriptor<'_> {
             .map_err(|e| overflow(e.value as usize, e.max as usize))?;
             buf[pos] = entry.descriptor_type.to_u8();
             buf[pos + 1] = entry_body_len;
-            buf[pos + DESC_HEADER_LEN] = entry.specifier_type.to_u8();
-            buf[pos + DESC_HEADER_LEN + 1..pos + DESC_HEADER_LEN + 4]
+            buf[pos + DESC_HEADER_LEN + SPECIFIER_TYPE_OFFSET] = entry.specifier_type.to_u8();
+            buf[pos + DESC_HEADER_LEN + SPECIFIER_DATA_OFFSET
+                ..pos + DESC_HEADER_LEN + SPECIFIER_DATA_OFFSET + SPECIFIER_DATA_LEN]
                 .copy_from_slice(&entry.specifier_data);
-            buf[pos + DESC_HEADER_LEN + 4..pos + DESC_HEADER_LEN + 6]
+            buf[pos + DESC_HEADER_LEN + MODEL_OFFSET
+                ..pos + DESC_HEADER_LEN + MODEL_OFFSET + core::mem::size_of::<u16>()]
                 .copy_from_slice(&entry.model.to_be_bytes());
-            buf[pos + DESC_HEADER_LEN + 6..pos + DESC_HEADER_LEN + 8]
+            buf[pos + DESC_HEADER_LEN + VERSION_OFFSET
+                ..pos + DESC_HEADER_LEN + VERSION_OFFSET + core::mem::size_of::<u16>()]
                 .copy_from_slice(&entry.version.to_be_bytes());
-            buf[pos + DESC_HEADER_LEN + 8] =
+            buf[pos + DESC_HEADER_LEN + SUB_DESC_COUNT_OFFSET] =
                 fit_u8(entry.sub_descriptors.len(), "subDescriptorCount")
                     .map_err(|e| overflow(e.value as usize, e.max as usize))?;
             pos += DESC_HEADER_LEN + DESC_FIXED_LEN;

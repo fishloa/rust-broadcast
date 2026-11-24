@@ -55,7 +55,7 @@ impl Serialize for LocationDescriptor {
         let len = self.serialized_len();
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
-        buf[2] = self.location_tag;
+        buf[HEADER_LEN] = self.location_tag;
         Ok(len)
     }
 }

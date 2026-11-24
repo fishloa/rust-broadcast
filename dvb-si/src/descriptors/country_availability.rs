@@ -86,7 +86,9 @@ impl<'a> Parse<'a> for CountryAvailabilityDescriptor {
         let loop_body = &body[FLAG_LEN..];
         let mut country_codes = Vec::with_capacity(loop_body.len() / COUNTRY_CODE_LEN);
         for chunk in loop_body.chunks_exact(COUNTRY_CODE_LEN) {
-            country_codes.push(LangCode([chunk[0], chunk[1], chunk[2]]));
+            let mut code = [0u8; COUNTRY_CODE_LEN];
+            code.copy_from_slice(chunk);
+            country_codes.push(LangCode(code));
         }
         Ok(Self {
             reserved_future_use: ReservedOnes::from_bits(u64::from(flags)),
