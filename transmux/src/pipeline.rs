@@ -15,6 +15,8 @@
 mod stsd;
 
 use crate::TrackId;
+use crate::box_types::BOX_TYPE_SIZE;
+use crate::units::ROUNDING_DIVISOR;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -70,8 +72,6 @@ const TKHD_VOLUME_UNITY: i16 = 0x0100;
 const FIXED_16_16_FRACTION_BITS: u32 = u16::BITS;
 /// Half of the 16.16 fixed-point unit, for round-to-nearest scaling.
 const FIXED_POINT_ROUND_BIAS: u64 = 1 << (u16::BITS - 1);
-/// Width of an ISOBMFF four-character box type (ISO/IEC 14496-12:2026 §4.2).
-const FOURCC_LEN: usize = 4;
 /// Millihartz per hertz, the unit [`FrameRateBasis`] rates are reported in.
 const MILLIHERTZ_PER_HERTZ: u128 = 1000;
 /// H.264 `time_scale` counts field intervals, so the frame period is twice
@@ -80,8 +80,6 @@ const H264_FIELD_PERIOD_FACTOR: u128 = 2;
 /// `field_seq_flag = 1` makes every coded picture a field: the frame period is
 /// twice the picture period (H.265 §E.3.2).
 const HEVC_FIELD_SEQ_FACTOR: u128 = 2;
-/// The `2` that halves a divisor for a rounded quotient.
-const ROUNDING_DIVISOR: u64 = 2;
 
 /// [`CodecConfig`], [`DataCarriage`], [`TrackSpec`], [`Sample`],
 /// [`SampleFlags`], [`Provenance`], [`FragmentTrackData`] moved to
@@ -187,7 +185,7 @@ fn unmuxable_track_error(t: &TrackSpec) -> crate::error::Error {
 /// Serialize a typed config box body and wrap it as an [`OpaqueBox`] under the
 /// given four-CC (mirrors the `esds`/`dac3` embedding for audio sample entries).
 fn config_box<C: Serialize<Error = crate::error::Error>>(
-    fourcc: &[u8; FOURCC_LEN],
+    fourcc: &[u8; BOX_TYPE_SIZE],
     config: &C,
 ) -> Result<OpaqueBox> {
     let mut body = vec![0u8; config.serialized_len()];

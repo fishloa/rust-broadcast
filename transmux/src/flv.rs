@@ -61,10 +61,11 @@ use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
-use crate::ir::InputDegradation;
+use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, InputDegradation};
 use crate::media::{Media, Track};
 use crate::mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG4_AUDIO,
+    SLConfigDescriptor, STREAM_TYPE_AUDIO,
 };
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 
@@ -233,17 +234,8 @@ const PREV_SAMPLE_BACK: usize = 2;
 const LAST_SAMPLE_BACK: usize = 1;
 
 // `esds` construction constants (mirroring `ts_demux`).
-/// MPEG-4 Audio object type indication for AAC (ISO/IEC 14496-1 §7.2.6.6 Table 5).
-const OTI_MPEG4_AUDIO: u8 = 0x40;
-/// `streamType` = AudioStream (ISO/IEC 14496-1 §7.2.6.6.2 Table 6).
-const STREAM_TYPE_AUDIO: u8 = 0x05;
 /// `ES_ID` assigned to the single audio elementary stream.
 const ESDS_AUDIO_ES_ID: u16 = 1;
-/// `SLConfigDescriptor.predefined = 2` (MP4 default; ISO/IEC 14496-1 §7.3.2.3).
-/// Audio sample size in bits carried in the sample entry (typically 16).
-///
-/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
-pub(crate) const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
 
 /// `CodecConfig::Aac.channel_count` for an `AudioSpecificConfig` whose
 /// `channelConfiguration` does not determine a channel count.

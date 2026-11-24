@@ -71,8 +71,6 @@ const MHAC_REFERENCE_CHANNEL_LAYOUT_OFFSET: usize = 2;
 const MHAC_CONFIG_LENGTH_OFFSET: usize = 3;
 /// Byte width of `mpegh3daConfigLength`.
 const MHAC_CONFIG_LENGTH_LEN: usize = core::mem::size_of::<u16>();
-/// Number of bits in one byte, for MHAS byte/bit position conversion.
-const BITS_PER_BYTE: usize = u8::BITS as usize;
 
 // ---------------------------------------------------------------------------
 // MHADecoderConfigurationRecord
@@ -263,7 +261,7 @@ impl<'a> BitReader<'a> {
     /// Jump forward to `byte_offset` (never backward — every call site here
     /// only ever advances past a just-located, already-consumed header).
     fn seek_to_byte(&mut self, byte_offset: usize) {
-        let target_bits = byte_offset * BITS_PER_BYTE;
+        let target_bits = byte_offset * u8::BITS as usize;
         let current_bits = self.inner.bits_read();
         if target_bits > current_bits {
             let _ = self.inner.skip_bits(target_bits - current_bits);
@@ -274,7 +272,7 @@ impl<'a> BitReader<'a> {
     fn byte_pos(&self) -> Option<usize> {
         self.inner
             .is_byte_aligned()
-            .then_some(self.inner.bits_read() / BITS_PER_BYTE)
+            .then_some(self.inner.bits_read() / u8::BITS as usize)
     }
 }
 

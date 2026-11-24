@@ -26,6 +26,8 @@
 
 use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
+use crate::units::BITS_PER_KILOBIT;
+use crate::wire_cursor::u16_at;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
@@ -125,8 +127,6 @@ const DAC3_BODY_LEN: usize = 3;
 const BIT_RATE_CODE_BITS: usize = 5;
 /// Width of the `dac3` reserved field.
 const DAC3_RESERVED_BITS: usize = 5;
-/// Bits per kbit/s in the `data_rate` formula.
-const BITS_PER_KILOBIT: u32 = 1000;
 /// Width of `num_ind_sub`.
 const NUM_IND_SUB_BITS: usize = 3;
 /// Width of `data_rate`.
@@ -143,8 +143,6 @@ const EC3_SUBSTREAM_RESERVED_BITS: usize = 3;
 const NUM_DEP_SUB_BITS: usize = 4;
 /// Width of `chan_loc`.
 const CHAN_LOC_BITS: usize = 9;
-/// Bits per byte.
-const BITS_PER_BYTE: usize = u8::BITS as usize;
 /// Width of `dialnorm`.
 const DIALNORM_BITS: usize = 5;
 /// Width of `compr`.
@@ -398,7 +396,7 @@ pub fn split_ac3_syncframe_ranges(payload: &[u8], resync: bool) -> Vec<(usize, u
     let mut ranges = Vec::new();
     let mut off = 0usize;
     while off + AC3_SYNCWORD_BYTES <= payload.len() {
-        if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
+        if u16_at(payload, off) != AC3_SYNCWORD {
             if !resync {
                 break;
             }
@@ -705,7 +703,7 @@ impl Ec3SyncframeInfo {
     pub fn first_crc_verified_bsmod(data: &[u8], substreamid: u8) -> Option<u8> {
         let mut off = 0usize;
         while off + AC3_SYNCWORD_BYTES <= data.len() {
-            if u16::from_be_bytes([data[off], data[off + 1]]) == AC3_SYNCWORD
+            if u16_at(data, off) == AC3_SYNCWORD
                 && let Ok((info, true)) = Self::parse_at_with_bsmod_presence(data, off)
                 && info.strmtyp != EAC3_STRMTYP_DEPENDENT
                 && info.substreamid == substreamid
@@ -768,7 +766,7 @@ impl Ec3SyncframeInfo {
         let mut out = Vec::new();
         let mut off = 0usize;
         while off + AC3_SYNCWORD_BYTES <= data.len() {
-            if u16::from_be_bytes([data[off], data[off + 1]]) != AC3_SYNCWORD {
+            if u16_at(data, off) != AC3_SYNCWORD {
                 return (out, true);
             }
             let info = match Self::parse_at(data, off) {
@@ -853,7 +851,7 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
     let mut out: Vec<Ec3SplitFrame> = Vec::new();
     let mut off = 0usize;
     while off + AC3_SYNCWORD_BYTES <= payload.len() {
-        if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
+        if u16_at(payload, off) != AC3_SYNCWORD {
             break;
         }
         let Ok(info) = Ec3SyncframeInfo::parse_at(payload, off) else {
@@ -902,7 +900,7 @@ pub fn split_eac3_syncframe_ranges(payload: &[u8]) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut off = 0usize;
     while off + AC3_SYNCWORD_BYTES <= payload.len() {
-        if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
+        if u16_at(payload, off) != AC3_SYNCWORD {
             break;
         }
         let Ok(info) = Ec3SyncframeInfo::parse_at(payload, off) else {
@@ -1355,7 +1353,7 @@ impl<'a> Parse<'a> for Ec3SpecificBox {
 
         // §F.6.2.14: whatever follows the last substream is reserved; keep it
         // byte-for-byte so a parsed box re-serializes identically.
-        let tail_start = (bit_pos.div_ceil(BITS_PER_BYTE)).min(bytes.len());
+        let tail_start = (bit_pos.div_ceil(u8::BITS as usize)).min(bytes.len());
         let reserved_tail = bytes[tail_start..].to_vec();
 
         Ok(Self {
@@ -1421,7 +1419,7 @@ impl Serialize for Ec3SpecificBox {
             }
         }
         // §F.6.2.14 reserved tail, verbatim.
-        let tail_start = bit_pos.div_ceil(BITS_PER_BYTE);
+        let tail_start = bit_pos.div_ceil(u8::BITS as usize);
         buf[tail_start..tail_start + self.reserved_tail.len()].copy_from_slice(&self.reserved_tail);
         Ok(need)
     }
@@ -1550,12 +1548,16 @@ fn parse_eac3_bsi_tail(
                     // §E.1.2.2: `mixdata` is `(8 * (mixdeflen + 2))` bits, then
                     // 0..=7 `mixdatafill` bits to the next byte boundary — the
                     // fixed-width part is byte-aligned, so the fill is implicit.
-                    skip_eac3_bits(es, bit_pos, BITS_PER_BYTE * (mixdeflen + MIXDEFLEN_BASE))?;
+                    skip_eac3_bits(
+                        es,
+                        bit_pos,
+                        u8::BITS as usize * (mixdeflen + MIXDEFLEN_BASE),
+                    )?;
                     // `mixdatafill`: "0 - 7" bits — the encoder pads to a byte
                     // boundary, so re-align rather than guessing a count.
-                    if !bit_pos.is_multiple_of(BITS_PER_BYTE) {
-                        *bit_pos +=
-                            (BITS_PER_BYTE - (*bit_pos).rem_euclid(BITS_PER_BYTE)) % BITS_PER_BYTE;
+                    if !bit_pos.is_multiple_of(u8::BITS as usize) {
+                        *bit_pos += (u8::BITS as usize - (*bit_pos).rem_euclid(u8::BITS as usize))
+                            % u8::BITS as usize;
                     }
                 }
                 _ => {}
@@ -1636,9 +1638,9 @@ fn skip_eac3_mixdata2(es: &[u8], bit_pos: &mut usize) -> Result<()> {
 /// Advance `bit_pos` by `n` bits, erroring if the buffer is too short.
 fn skip_eac3_bits(es: &[u8], bit_pos: &mut usize, n: usize) -> Result<()> {
     let end = bit_pos.saturating_add(n);
-    if end > es.len() * BITS_PER_BYTE {
+    if end > es.len() * u8::BITS as usize {
         return Err(Error::BufferTooShort(BufferTooShort {
-            need: end.div_ceil(BITS_PER_BYTE),
+            need: end.div_ceil(u8::BITS as usize),
             have: es.len(),
             what: "E-AC-3 bsi",
         }));
@@ -1650,7 +1652,7 @@ fn skip_eac3_bits(es: &[u8], bit_pos: &mut usize, n: usize) -> Result<()> {
 /// Find the byte offset of the `0x0B77` syncword in a buffer.
 fn find_syncword(data: &[u8]) -> Result<usize> {
     for i in 0..data.len().saturating_sub(1) {
-        let word = u16::from_be_bytes([data[i], data[i + 1]]);
+        let word = u16_at(data, i);
         if word == AC3_SYNCWORD {
             return Ok(i);
         }
@@ -1663,8 +1665,8 @@ fn find_syncword(data: &[u8]) -> Result<usize> {
 /// Write `n` bits from `val` MSB-first into `buf` at `bit_pos`, advancing it.
 fn write_bits(buf: &mut [u8], bit_pos: &mut usize, n: usize, val: u64) {
     for i in (0..n).rev() {
-        let byte_idx = *bit_pos / BITS_PER_BYTE;
-        let bit_in_byte = BITS_PER_BYTE - 1 - (*bit_pos % BITS_PER_BYTE);
+        let byte_idx = *bit_pos / u8::BITS as usize;
+        let bit_in_byte = u8::BITS as usize - 1 - (*bit_pos % u8::BITS as usize);
         let bit = ((val >> i) & 1) as u8;
         buf[byte_idx] = (buf[byte_idx] & !(1 << bit_in_byte)) | (bit << bit_in_byte);
         *bit_pos += 1;

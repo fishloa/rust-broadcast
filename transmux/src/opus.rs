@@ -7,7 +7,7 @@
 //! carry **no** magic signature.
 
 use crate::error::{Error, Result};
-use crate::wire_cursor::{be_u16, be_u32};
+use crate::wire_cursor::{be_u16, be_u32, i16_at};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -96,8 +96,7 @@ impl<'a> Parse<'a> for OpusSpecificBox {
         let output_channel_count = bytes[1];
         let pre_skip = be_u16(bytes, PRE_SKIP_OFFSET, "dOps body")?;
         let input_sample_rate = be_u32(bytes, INPUT_SAMPLE_RATE_OFFSET, "dOps body")?;
-        let output_gain =
-            i16::from_be_bytes([bytes[OUTPUT_GAIN_OFFSET], bytes[OUTPUT_GAIN_OFFSET + 1]]);
+        let output_gain = i16_at(bytes, OUTPUT_GAIN_OFFSET);
         let channel_mapping_family = bytes[CHANNEL_MAPPING_FAMILY_OFFSET];
         let channel_mapping = if channel_mapping_family != 0 {
             need_in(

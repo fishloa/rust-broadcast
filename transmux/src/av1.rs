@@ -13,6 +13,7 @@
 //! The record's `configOBUs` tail carries an optional Sequence Header OBU verbatim;
 //! it is preserved opaquely so the box round-trips byte-exact.
 
+use crate::box_types::BOX_HEADER_MIN_SIZE;
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
 use alloc::vec::Vec;
@@ -26,8 +27,6 @@ pub const AV1C_FOURCC: [u8; 4] = *b"av1C";
 pub const AV01_FOURCC: [u8; 4] = *b"av01";
 /// Fixed size of the `av1C` record before the trailing `configOBUs`.
 const AV1C_FIXED_LEN: usize = 4;
-/// 8-byte box header.
-const BOX_HDR: usize = 8;
 /// `marker(1)=1` in the high bit of byte 0.
 const MARKER_BIT: u8 = 0x80;
 /// Bit depths the binding signals (`high_bitdepth`/`twelve_bit`).
@@ -249,9 +248,9 @@ impl Av1SampleEntry {
 impl Serialize for Av1SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let config_len = BOX_HDR + self.config.serialized_len();
+        let config_len = BOX_HEADER_MIN_SIZE + self.config.serialized_len();
         crate::box_types::box_len(
-            BOX_HDR
+            BOX_HEADER_MIN_SIZE
                 + VisualSampleEntryFields::serialized_len()
                 + crate::sample_entries::entry_children_len(&self.children, config_len),
         )
@@ -265,7 +264,7 @@ impl Serialize for Av1SampleEntry {
         // The config box keeps its wire position: a real `vp09`/`av01` entry
         // often carries `pasp` *before* it (audit item 3, round 3).
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
-            let len = BOX_HDR + self.config.serialized_len();
+            let len = BOX_HEADER_MIN_SIZE + self.config.serialized_len();
             let len = broadcast_common::len::fit_u32(len, "config box size")?;
             buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&len.to_be_bytes());
             *c += crate::box_types::BOX_TYPE_SIZE;

@@ -28,7 +28,7 @@
 //! [`extension_and_user_data(2)`]: SequenceDisplayExtension
 //! [`DisplayGeometry`]: crate::ir::DisplayGeometry
 
-use crate::annexb::find_start_code_prefix;
+use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
 use crate::ir::{
@@ -90,8 +90,6 @@ const CHROMA_FORMAT_BITS: usize = 2;
 const BYTE_BITS: usize = u8::BITS as usize;
 /// Right shift that isolates `extension_start_code_identifier`.
 const EXTENSION_ID_SHIFT: u32 = u8::BITS - EXTENSION_ID_BITS as u32;
-/// Bytes in a `0x000001` start-code prefix.
-const START_CODE_PREFIX_LEN: usize = 3;
 
 /// `display_aspect_ratio` 4:3, as width:height (Table 6-3).
 const DAR_RATIO_4_3: (u64, u64) = (4, 3);

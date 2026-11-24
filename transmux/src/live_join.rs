@@ -59,12 +59,10 @@ use alloc::vec::Vec;
 use crate::annexb::{iter_length_prefixed_nals_with, normalise_nal_length_size};
 use crate::bitreader::BitReader;
 use crate::ir::{CodecConfig, Sample};
-use crate::nal::{NalCodec, access_unit_is_rap, nal_unit_type, sei_messages};
+use crate::nal::{
+    AVC_NAL_IDR, AVC_NAL_SEI, NalCodec, access_unit_is_rap, nal_unit_type, sei_messages,
+};
 
-/// H.264 `nal_unit_type` of an IDR slice (Table 7-1).
-const AVC_NAL_IDR: u8 = 5;
-/// H.264 `nal_unit_type` of an SEI NAL.
-const AVC_NAL_SEI: u8 = 6;
 /// `payloadType` of the `recovery_point` SEI (H.264 Table D-1, §D.1.8).
 const AVC_SEI_RECOVERY_POINT: u32 = 6;
 /// Length of the H.264 NAL header.

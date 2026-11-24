@@ -53,16 +53,13 @@ use alloc::vec::Vec;
 use broadcast_common::Encrypt;
 
 use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals};
-use crate::cenc::{CencScheme, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
+use crate::cenc::{CencScheme, KEY_LEN, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::media::{Media, TrackEncryption};
 use crate::nal::NalCodec;
 use crate::pipeline::CodecConfig;
 
-/// Size of a KID / content key / AES-128 key **or block**, in bytes (AES-128's
-/// key length and block length coincide).
-const KEY_LEN: usize = 16;
 /// Length of a constant `cbcs` IV: one AES block.
 const CONSTANT_IV_LEN: usize = 16;
 /// Adjacent range count for the overlap check between consecutive ranges.
