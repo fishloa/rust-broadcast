@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Breaking
+- **BREAKING:** the optional `motion-imagery-metadata` feature builds against `motion-imagery-metadata` 0.2 (was 0.1). `LocalSetItem::value_typed()` returns that crate's `St0601Value`, so a consumer naming its types moves to 0.2 with it; 0.2 types tag 81/115/116/121/122/127/128/130/138/139/141/142 packs through new accessors and drops the `St0903VmtiItem::AlgorithmSeries`/`OntologySeries` variants.
 
 ## [0.33.0] - 2026-11-22
 ### Breaking
