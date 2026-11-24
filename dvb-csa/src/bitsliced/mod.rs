@@ -83,6 +83,9 @@ pub const LANES: usize = Word::BITS as usize;
 const PQZYX_BITS: usize = 14;
 /// Bits in one CSA block; also the side length of the transpose matrix.
 const BLOCK_BITS: usize = BLOCK_BYTES * u8::BITS as usize;
+/// Side length of one off-diagonal quadrant of the transpose matrix, half the
+/// matrix side.
+const QUADRANT_LANES: usize = LANES / 2;
 
 const _: () = assert!(BLOCK_BITS == LANES, "the transpose is square");
 
@@ -101,8 +104,8 @@ const _: () = assert!(BLOCK_BITS == LANES, "the transpose is square");
 /// sub-matrix — `mask` selects the low `j` columns of each such block, and
 /// halves alongside `j`.
 fn transpose(m: &mut [Word; LANES]) {
-    let mut j = LANES / 2;
-    let mut mask: Word = !0 >> (LANES / 2);
+    let mut j = QUADRANT_LANES;
+    let mut mask: Word = !0 >> QUADRANT_LANES;
     while j != 0 {
         let mut k = 0;
         while k < LANES {
