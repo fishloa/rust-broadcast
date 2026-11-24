@@ -99,6 +99,7 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use crate::aac_asc::AudioSpecificConfig;
+use crate::box_types::KEY_ID_LEN;
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
 use crate::pipeline::{CodecConfig, TrackSpec};
@@ -181,8 +182,6 @@ const MIN_BUFFER_TIME: Duration = Duration::from_secs(2);
 /// `Period@id` of the single Period this packager emits.
 const PERIOD_ID: &str = "0";
 
-/// A key ID / KID is 16 bytes (AES-128, ISO/IEC 23001-7).
-const KEY_ID_LEN: usize = 16;
 /// Bits in one byte, converting a coded size to a bit count.
 const BITS_PER_BYTE: u64 = u8::BITS as u64;
 /// Tenths of a second in one second.

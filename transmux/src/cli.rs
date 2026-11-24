@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use broadcast_common::timescale::{Timescale, cmp_ticks};
 use broadcast_common::{Package, Unpackage};
 
+use crate::box_types::KEY_ID_LEN;
 use crate::dash::DashPackager;
 use crate::flv::FlvDemux;
 use crate::media::{CmafMux, Fmp4Demux, Media};
@@ -60,10 +61,8 @@ use std::time::Duration;
 const DEFAULT_SEGMENT_DURATION_SECS: u32 = 6;
 /// Chunks per segment in the LL-DASH profile: the chunk is half a segment.
 const LL_DASH_CHUNKS_PER_SEGMENT: u32 = 2;
-/// A CENC key and its KID are 16-byte AES-128 quantities.
-const CENC_KEY_LEN: usize = 16;
-/// Hex digits in the 16-byte KID half of a `--key` argument.
-const KEY_ID_HEX_LEN: usize = CENC_KEY_LEN * 2;
+/// Hex digits in the KID half of a `--key` argument.
+const KEY_ID_HEX_LEN: usize = KEY_ID_LEN * 2;
 
 /// Default LL-DASH target latency in milliseconds (`Latency@target`), used when
 /// `--ll` selects the DASH low-latency profile.
@@ -1354,7 +1353,7 @@ fn decrypt_input(input: &[u8], container: Container, keys: &[String]) -> CliResu
 
 /// Parse a `<32-hex-KID>:<32-hex-key>` string into a `(kid, key)` byte pair.
 #[cfg(feature = "cenc")]
-fn parse_key(spec: &str) -> CliResult<([u8; CENC_KEY_LEN], [u8; CENC_KEY_LEN])> {
+fn parse_key(spec: &str) -> CliResult<([u8; KEY_ID_LEN], [u8; KEY_ID_LEN])> {
     let (kid_hex, key_hex) = spec
         .split_once(':')
         .ok_or_else(|| CliError::BadKey(redact_key_spec(spec)))?;
@@ -1363,10 +1362,10 @@ fn parse_key(spec: &str) -> CliResult<([u8; CENC_KEY_LEN], [u8; CENC_KEY_LEN])> 
     Ok((kid, key))
 }
 
-/// Parse exactly [`KEY_ID_HEX_LEN`] hex chars into a [`CENC_KEY_LEN`]-byte array.
+/// Parse exactly [`KEY_ID_HEX_LEN`] hex chars into a [`KEY_ID_LEN`]-byte array.
 #[cfg(feature = "cenc")]
-fn parse_hex16(s: &str) -> Option<[u8; CENC_KEY_LEN]> {
-    let mut out = [0u8; CENC_KEY_LEN];
+fn parse_hex16(s: &str) -> Option<[u8; KEY_ID_LEN]> {
+    let mut out = [0u8; KEY_ID_LEN];
     broadcast_common::hex::hex_decode_into(s.trim(), &mut out).ok()?;
     Some(out)
 }

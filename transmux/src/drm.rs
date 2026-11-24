@@ -120,9 +120,11 @@ const PLAYREADY_ALGID_AESCTR: &str = "AESCTR";
 /// XML (private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §3.1).
 const PRO_RECORD_TYPE_HEADER: u16 = 0x0001;
 /// Width of the UTF-16LE code unit `WRMHEADER` values are encoded in.
+#[cfg(feature = "std")]
 const UTF16_CODE_UNIT_LEN: usize = 2;
 /// `fits_u16` fields in a PlayReady Object header: record count, record type,
 /// and record value length.
+#[cfg(feature = "std")]
 const PRO_HEADER_U16_FIELDS: usize = 3;
 /// Left shift of a protobuf field number in its tag byte.
 const PROTOBUF_FIELD_SHIFT: u32 = 3;
