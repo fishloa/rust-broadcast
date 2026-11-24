@@ -12,6 +12,7 @@
 
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
+use crate::wire_cursor::{be_u16, be_u32};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
@@ -34,10 +35,28 @@ const VPCC_RECORD_FIXED: usize = 8;
 /// version can be decoded or emitted (see `private/specs-verified/mpeg/transmux/codec/vp9-isobmff.md`).
 const VERSION_1: u8 = 1;
 /// A 4-bit field occupies the high nibble of its byte.
-const BITS_4: u8 = 4;
+const BIT_DEPTH_SHIFT: u8 = 4;
 /// `chromaSubsampling` is 3 bits, so 0..=7 (values 4..7 reserved); the record
 /// packs `bitDepth(4)` then `chromaSubsampling(3)` in one byte.
 const CHROMA_SUBSAMPLING_MASK: u8 = 0x07;
+/// Width of `chromaSubsampling`, `u(3)`.
+const CHROMA_SUBSAMPLING_BITS: u32 = 3;
+/// `videoFullRangeFlag` is the low bit of the packed nibble byte.
+const VIDEO_FULL_RANGE_MASK: u8 = 0x01;
+/// Offset of the `FullBox` `flags` field, after its 1-byte `version`.
+const FULLBOX_FLAGS_OFFSET: usize = 1;
+/// Offset of `level` in the VPCodecConfigurationRecord.
+const VPCC_LEVEL_OFFSET: usize = 1;
+/// Offset of the `bitDepth`/`chromaSubsampling`/`videoFullRangeFlag` byte.
+const VPCC_BIT_DEPTH_OFFSET: usize = 2;
+/// Offset of `colourPrimaries`.
+const VPCC_COLOUR_PRIMARIES_OFFSET: usize = 3;
+/// Offset of `transferCharacteristics`.
+const VPCC_TRANSFER_CHARACTERISTICS_OFFSET: usize = 4;
+/// Offset of `matrixCoefficients`.
+const VPCC_MATRIX_COEFFICIENTS_OFFSET: usize = 5;
+/// Offset of `codecInitializationDataSize`.
+const VPCC_INIT_SIZE_OFFSET: usize = 6;
 
 /// VPCodecConfigurationBox (`vpcC`) — a `FullBox(version=1, 0)` VP9 config record.
 ///
@@ -103,19 +122,19 @@ impl<'a> Parse<'a> for Vp9ConfigurationBox {
                          (version 0 is deprecated with no published syntax)",
             }));
         }
-        let flags = u32::from_be_bytes([0, bytes[1], bytes[2], bytes[3]]);
+        let flags = be_u32(bytes, FULLBOX_FLAGS_OFFSET, "vpcC body")?;
         let r = &bytes[FULL_HDR..];
         let profile = r[0];
-        let level = r[1];
+        let level = r[VPCC_LEVEL_OFFSET];
         // `bitDepth(4) chromaSubsampling(3) videoFullRangeFlag(1)`, then the
         // three 8-bit CICP fields (v1 `VPCodecConfigurationRecord`).
-        let bit_depth = r[2] >> BITS_4;
-        let chroma_subsampling = (r[2] >> 1) & CHROMA_SUBSAMPLING_MASK;
-        let video_full_range_flag = (r[2] & 0x01) != 0;
-        let colour_primaries = r[3];
-        let transfer_characteristics = r[4];
-        let matrix_coefficients = r[5];
-        let init_size = u16::from_be_bytes([r[6], r[7]]) as usize;
+        let bit_depth = r[VPCC_BIT_DEPTH_OFFSET] >> BIT_DEPTH_SHIFT;
+        let chroma_subsampling = (r[VPCC_BIT_DEPTH_OFFSET] >> 1) & CHROMA_SUBSAMPLING_MASK;
+        let video_full_range_flag = (r[VPCC_BIT_DEPTH_OFFSET] & VIDEO_FULL_RANGE_MASK) != 0;
+        let colour_primaries = r[VPCC_COLOUR_PRIMARIES_OFFSET];
+        let transfer_characteristics = r[VPCC_TRANSFER_CHARACTERISTICS_OFFSET];
+        let matrix_coefficients = r[VPCC_MATRIX_COEFFICIENTS_OFFSET];
+        let init_size = usize::from(be_u16(r, VPCC_INIT_SIZE_OFFSET, "vpcC body")?);
         let init_start = FULL_HDR + VPCC_RECORD_FIXED;
         // A `codecInitializationDataSize` that overruns the box is an error, not
         // a silent truncation: the size is the only length the record carries,
@@ -173,23 +192,28 @@ impl Serialize for Vp9ConfigurationBox {
         // and `chromaSubsampling` outside 0..=7 would fold into
         // `videoFullRangeFlag` — either way the wire would describe a different
         // stream than the struct.
-        let bit_depth = broadcast_common::len::fit_bits(u64::from(self.bit_depth), 4, "bitDepth")?;
+        let bit_depth = broadcast_common::len::fit_bits(
+            u64::from(self.bit_depth),
+            u32::from(BIT_DEPTH_SHIFT),
+            "bitDepth",
+        )?;
         let chroma = broadcast_common::len::fit_bits(
             u64::from(self.chroma_subsampling),
-            3,
+            CHROMA_SUBSAMPLING_BITS,
             "chromaSubsampling",
         )?;
-        r[2] = ((bit_depth as u8) << BITS_4)
+        r[VPCC_BIT_DEPTH_OFFSET] = ((bit_depth as u8) << BIT_DEPTH_SHIFT)
             | ((chroma as u8) << 1)
             | (self.video_full_range_flag as u8);
-        r[3] = self.colour_primaries;
-        r[4] = self.transfer_characteristics;
-        r[5] = self.matrix_coefficients;
+        r[VPCC_COLOUR_PRIMARIES_OFFSET] = self.colour_primaries;
+        r[VPCC_TRANSFER_CHARACTERISTICS_OFFSET] = self.transfer_characteristics;
+        r[VPCC_MATRIX_COEFFICIENTS_OFFSET] = self.matrix_coefficients;
         let size = broadcast_common::len::fit_u16(
             self.codec_initialization_data.len(),
             "codecIntializationDataSize",
         )?;
-        r[6..8].copy_from_slice(&size.to_be_bytes());
+        r[VPCC_INIT_SIZE_OFFSET..VPCC_INIT_SIZE_OFFSET + core::mem::size_of::<u16>()]
+            .copy_from_slice(&size.to_be_bytes());
         r[VPCC_RECORD_FIXED..VPCC_RECORD_FIXED + self.codec_initialization_data.len()]
             .copy_from_slice(&self.codec_initialization_data);
         Ok(need)
@@ -254,10 +278,10 @@ impl Serialize for Vp9SampleEntry {
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
             let len = BOX_HDR + self.config.serialized_len();
             let len = broadcast_common::len::fit_u32(len, "config box size")?;
-            buf[*c..*c + 4].copy_from_slice(&len.to_be_bytes());
-            *c += 4;
-            buf[*c..*c + 4].copy_from_slice(&VPCC_FOURCC);
-            *c += 4;
+            buf[*c..*c + core::mem::size_of::<u32>()].copy_from_slice(&len.to_be_bytes());
+            *c += core::mem::size_of::<u32>();
+            buf[*c..*c + VPCC_FOURCC.len()].copy_from_slice(&VPCC_FOURCC);
+            *c += VPCC_FOURCC.len();
             *c += self.config.serialize_into(&mut buf[*c..])?;
             Ok(())
         };

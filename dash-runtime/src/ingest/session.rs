@@ -36,6 +36,16 @@ use tracing::{debug, warn};
 
 const MAX_TS_READ: usize = 65_536;
 
+/// Cap on samples queued against one representation before ingest errors.
+const BUFFERED_SAMPLE_CAP: usize = 64;
+
+/// `styp` body offset of the first compatible brand: major brand plus minor
+/// version (ISO/IEC 14496-12:2026 §8.16.2).
+const STYP_BRANDS_OFFSET: usize = 8;
+
+/// Width of a brand Four-CC.
+const BRAND_LEN: usize = 4;
+
 /// One pushed ingest object: its classified kind (from [`crate::ingest::classify`])
 /// plus the raw body bytes. The session never re-parses paths.
 #[derive(Debug)]
@@ -449,7 +459,7 @@ impl DashifIngestSession {
                     .reps
                     .get_mut(&handle.rep_id)
                     .ok_or(SessionError::Ingest(IngestError::Internal))?;
-                if rep.buffered.len() + new_count > 64 {
+                if rep.buffered.len() + new_count > BUFFERED_SAMPLE_CAP {
                     return Err(SessionError::Ingest(IngestError::Internal));
                 }
                 for track in media.tracks {
@@ -498,17 +508,17 @@ impl DashifIngestSession {
             && boxref.header.box_type.is(b"styp")
         {
             let body = boxref.body;
-            if body.len() >= 8 {
-                let mut i = 8usize;
+            if body.len() >= STYP_BRANDS_OFFSET {
+                let mut i = STYP_BRANDS_OFFSET;
                 let mut slat_count = 0usize;
-                while i + 4 <= body.len() {
-                    let brand = &body[i..i + 4];
+                while i + BRAND_LEN <= body.len() {
+                    let brand = &body[i..i + BRAND_LEN];
                     if brand == b"lmsg" {
                         self.ingest_state.mark_last(rep_id);
                     } else if brand == b"slat" {
                         slat_count += 1;
                     }
-                    i += 4;
+                    i += BRAND_LEN;
                 }
                 if slat_count > 0 {
                     debug!("dashif-ingest: slat brand count {slat_count} for {rep_id}");

@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use crate::config::{PERMILLE, Q15_ONE, Q15_SHIFT};
+use crate::config::{PERMILLE, Q15_SHIFT, Q15_UNIT};
 use crate::time::window_micros;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -31,7 +31,7 @@ impl ForgettingHistogram {
         Self {
             w: vec![0; usize::from(buckets).max(1)],
             bucket_us: window_micros(bucket).max(1),
-            forget_q15: u64::from(forget_q15).min(Q15_ONE - 1),
+            forget_q15: u64::from(forget_q15).min(Q15_UNIT - 1),
             quantile_permille: u64::from(quantile_permille),
             intervals: 0,
         }
@@ -49,7 +49,7 @@ impl ForgettingHistogram {
         let idx = usize::try_from(value_us / self.bucket_us)
             .unwrap_or(usize::MAX)
             .min(last);
-        let gain = u32::try_from(Q15_ONE - f).unwrap_or(u32::MAX);
+        let gain = u32::try_from(Q15_UNIT - f).unwrap_or(u32::MAX);
         self.w[idx] = self.w[idx].saturating_add(gain);
         self.intervals = self.intervals.saturating_add(1);
     }

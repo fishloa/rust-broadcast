@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::frame_rate::FrameRate;
 use crate::object_definition::ObjectDefinition1;
 use crate::plex::{plex_bits, read_plex, write_plex};
+use crate::util::BITS_PER_BYTE;
 
 /// `ATMOS_FRAME` (Table 1, §5.1.1): the frame-header element.
 pub const ELEMENT_ID_ATMOS_FRAME: u32 = 0x08;
@@ -20,6 +21,9 @@ pub const ELEMENT_ID_OBJECT_DEFINITION1: u32 = 0x40;
 /// `AUDIO_DATA_DLC` (Table 1).
 pub const ELEMENT_ID_AUDIO_DATA_DLC: u32 = 0x200;
 
+/// Plex width of the `ReadElement()` `ElementID`/`ElementSize` fields
+/// (RDD 29 §5.1.1).
+const ELEMENT_HEADER_PLEX_WIDTH: u32 = 8;
 /// The `ElementID` field (Table 1, §5.1.1): identifies the kind and
 /// contents of a Dolby Atmos bitstream element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -181,10 +185,10 @@ impl<'a> AnyElement<'a> {
         frame_rate: Option<FrameRate>,
     ) -> Result<(Self, usize)> {
         let mut r = BitReader::new(bytes);
-        let element_id = read_plex(&mut r, 8, "ElementID")? as u32;
-        let element_size = read_plex(&mut r, 8, "ElementSize")?;
+        let element_id = read_plex(&mut r, ELEMENT_HEADER_PLEX_WIDTH, "ElementID")? as u32;
+        let element_size = read_plex(&mut r, ELEMENT_HEADER_PLEX_WIDTH, "ElementSize")?;
         debug_assert!(r.is_byte_aligned());
-        let header_len = r.bits_read() / 8;
+        let header_len = r.bits_read() / BITS_PER_BYTE;
         let element_size = usize::try_from(element_size).map_err(|_| {
             Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ElementSize",
@@ -227,8 +231,9 @@ impl<'a> AnyElement<'a> {
 /// Byte length of a `ReadElement()` header (`ElementID` + `ElementSize`,
 /// both `Plex(8)`) for the given `element_id`/`body_len`.
 pub(crate) fn element_header_len(element_id: u32, body_len: usize) -> usize {
-    let bits = plex_bits(u64::from(element_id), 8) + plex_bits(body_len as u64, 8);
-    (bits as usize).div_ceil(8)
+    let bits = plex_bits(u64::from(element_id), ELEMENT_HEADER_PLEX_WIDTH)
+        + plex_bits(body_len as u64, ELEMENT_HEADER_PLEX_WIDTH);
+    (bits as usize).div_ceil(BITS_PER_BYTE)
 }
 
 /// Write a `ReadElement()` header (`ElementID` + `ElementSize`) into the
@@ -236,8 +241,18 @@ pub(crate) fn element_header_len(element_id: u32, body_len: usize) -> usize {
 /// written separately by the caller).
 pub(crate) fn write_element_header(buf: &mut [u8], element_id: u32, body_len: usize) -> Result<()> {
     let mut w = BitWriter::new(buf);
-    write_plex(&mut w, u64::from(element_id), 8, "ElementID")?;
-    write_plex(&mut w, body_len as u64, 8, "ElementSize")?;
+    write_plex(
+        &mut w,
+        u64::from(element_id),
+        ELEMENT_HEADER_PLEX_WIDTH,
+        "ElementID",
+    )?;
+    write_plex(
+        &mut w,
+        body_len as u64,
+        ELEMENT_HEADER_PLEX_WIDTH,
+        "ElementSize",
+    )?;
     Ok(())
 }
 

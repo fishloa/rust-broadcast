@@ -22,11 +22,13 @@ pub enum DeviceRestrictions {
     None           = 0b11,
 }
 
+const DEVICE_RESTRICTIONS_MASK: u8 = 0b11;
+
 impl DeviceRestrictions {
     /// Decode the 2-bit field (only the low 2 bits are used).
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0b11 {
+        match v & DEVICE_RESTRICTIONS_MASK {
             0b00 => Self::RestrictGroup0,
             0b01 => Self::RestrictGroup1,
             0b10 => Self::RestrictGroup2,

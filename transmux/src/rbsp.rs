@@ -11,9 +11,9 @@
 use alloc::vec::Vec;
 
 /// `emulation_prevention_three_byte` (H.264 §7.4.1).
-const EMULATION_PREVENTION_BYTE: u8 = 0x03;
+pub(crate) const EMULATION_PREVENTION_BYTE: u8 = 0x03;
 /// Zero bytes that must precede an emulation prevention byte.
-const EMULATION_ZERO_RUN: usize = 2;
+pub(crate) const EMULATION_BYTE_RUN_LEN: usize = 2;
 
 /// Unescape an EBSP NAL into RBSP: remove every `00 00 03` → `00 00`.
 pub(crate) fn unescape(escaped: &[u8]) -> Vec<u8> {
@@ -21,14 +21,14 @@ pub(crate) fn unescape(escaped: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(n);
     let mut i = 0;
     while i < n {
-        if i + 2 < n
+        if i + EMULATION_BYTE_RUN_LEN < n
             && escaped[i] == 0
             && escaped[i + 1] == 0
-            && escaped[i + 2] == EMULATION_PREVENTION_BYTE
+            && escaped[i + EMULATION_BYTE_RUN_LEN] == EMULATION_PREVENTION_BYTE
         {
             out.push(0);
             out.push(0);
-            i += 3;
+            i += EMULATION_BYTE_RUN_LEN + 1;
         } else {
             out.push(escaped[i]);
             i += 1;
@@ -44,7 +44,7 @@ pub(crate) fn escape(unescaped: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(unescaped.len());
     let mut zero_run = 0usize;
     for &b in unescaped {
-        if zero_run >= EMULATION_ZERO_RUN && b <= EMULATION_PREVENTION_BYTE {
+        if zero_run >= EMULATION_BYTE_RUN_LEN && b <= EMULATION_PREVENTION_BYTE {
             out.push(EMULATION_PREVENTION_BYTE);
             zero_run = 0;
         }
@@ -55,7 +55,7 @@ pub(crate) fn escape(unescaped: &[u8]) -> Vec<u8> {
             zero_run = 0;
         }
     }
-    if zero_run >= EMULATION_ZERO_RUN {
+    if zero_run >= EMULATION_BYTE_RUN_LEN {
         out.push(EMULATION_PREVENTION_BYTE);
     }
     out

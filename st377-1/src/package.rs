@@ -23,7 +23,8 @@ use crate::sets::{
     get_required_raw, strong_ref_batch_bytes,
 };
 use crate::types::{
-    MxfTimestamp, PackageId, StrongRef, UidBatch, decode_utf16_be, encode_utf16_be,
+    MxfTimestamp, PACKAGE_ID_LEN, PackageId, StrongRef, UL_LEN, UidBatch, decode_utf16_be,
+    encode_utf16_be,
 };
 
 // ── Generic Package local tags (B.1) ────────────────────────────────────
@@ -128,7 +129,7 @@ impl<'a> Parse<'a> for MaterialPackage {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Material Package")?;
-        let package_uid = PackageId(get_required_fixed::<32>(
+        let package_uid = PackageId(get_required_fixed::<PACKAGE_ID_LEN>(
             items,
             TAG_PACKAGE_UID,
             "Package UID",
@@ -271,7 +272,7 @@ impl<'a> Parse<'a> for SourcePackage {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Source Package")?;
-        let package_uid = PackageId(get_required_fixed::<32>(
+        let package_uid = PackageId(get_required_fixed::<PACKAGE_ID_LEN>(
             items,
             TAG_PACKAGE_UID,
             "Package UID",
@@ -308,7 +309,7 @@ impl<'a> Parse<'a> for SourcePackage {
             .copied()
             .map(StrongRef::from)
             .collect();
-        let descriptor = StrongRef(get_required_fixed::<16>(
+        let descriptor = StrongRef(get_required_fixed::<UL_LEN>(
             items,
             TAG_DESCRIPTOR,
             "Descriptor",

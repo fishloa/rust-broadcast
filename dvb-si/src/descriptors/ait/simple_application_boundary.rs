@@ -106,7 +106,7 @@ impl Serialize for SimpleApplicationBoundaryDescriptor<'_> {
         }
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
-        buf[2] = broadcast_common::len::fit_u8(
+        buf[HEADER_LEN] = broadcast_common::len::fit_u8(
             self.boundary_extensions.len(),
             "boundary_extension_count",
         )?;

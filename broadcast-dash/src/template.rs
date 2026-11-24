@@ -14,10 +14,13 @@ const IDENT_NUMBER: &str = "Number";
 const IDENT_TIME: &str = "Time";
 const IDENT_BANDWIDTH: &str = "Bandwidth";
 const IDENT_SUB_NUMBER: &str = "SubNumber";
-const TAG_ZERO_FLAG: char = '0';
+const TAG_PADDING_FLAG: char = '0';
 const TAG_CONVERSION: char = 'd';
 const DELIMITER: char = '$';
 const TAG_START: char = '%';
+
+/// Solutions after which a template match is ambiguous and abandoned.
+const AMBIGUOUS_SOLUTIONS: usize = 2;
 
 /// Which identifiers a template contains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -122,7 +125,7 @@ fn check_tag(tag: &str) -> Result<(), TemplateFault> {
         .strip_suffix(TAG_CONVERSION)
         .ok_or(TemplateFault::BadFormatTag)?;
     let digits = inner
-        .strip_prefix(TAG_ZERO_FLAG)
+        .strip_prefix(TAG_PADDING_FLAG)
         .ok_or(TemplateFault::BadFormatTag)?;
     if !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Err(TemplateFault::BadFormatTag);
@@ -386,7 +389,7 @@ fn walk(
     let Search {
         parts, ids, url, ..
     } = *s;
-    if solutions.len() >= 2 {
+    if solutions.len() >= AMBIGUOUS_SOLUTIONS {
         return;
     }
     let Some(part) = parts.get(pi) else {
@@ -421,7 +424,7 @@ fn walk(
                 next.id = true;
                 next.matched.representation_id = (*id).to_owned();
                 walk(s, pi + 1, url.len() - after.len(), next, solutions);
-                if solutions.len() >= 2 {
+                if solutions.len() >= AMBIGUOUS_SOLUTIONS {
                     return;
                 }
             }
@@ -515,7 +518,7 @@ fn numeric(
             continue;
         }
         walk(s, pi + 1, pos + len, next, solutions);
-        if solutions.len() >= 2 {
+        if solutions.len() >= AMBIGUOUS_SOLUTIONS {
             return;
         }
     }

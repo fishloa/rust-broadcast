@@ -4,6 +4,10 @@ use broadcast_common::bits::{BitReader, BitWriter};
 
 use crate::error::{BitResultExt, Error, Result};
 
+/// Bits per byte, for bit<->byte length conversions.
+/// Bits per byte, for bit<->byte length conversions.
+pub(crate) const BITS_PER_BYTE: usize = u8::BITS as usize;
+
 /// Read and validate a "Reserved (set to `expected`)" field. RDD 29 gives an
 /// explicit literal value for every reserved field it defines (unlike, e.g.,
 /// `st337`'s "reserved for future use" `Pf`), so every one of them is
@@ -51,7 +55,7 @@ pub(crate) fn write_reserved(
 /// real producer's padding value, and byte-exact round-trip requires
 /// capturing whatever was actually there.
 pub(crate) fn read_align_bits(r: &mut BitReader<'_>, field: &'static str) -> Result<u8> {
-    let pad = (8 - r.bits_read() % 8) % 8;
+    let pad = (BITS_PER_BYTE - r.bits_read() % BITS_PER_BYTE) % BITS_PER_BYTE;
     if pad == 0 {
         return Ok(0);
     }
@@ -70,7 +74,7 @@ pub(crate) fn write_align_bits(
     align_bits: u8,
     field: &'static str,
 ) -> Result<()> {
-    let pad = (8 - w.bits_written() % 8) % 8;
+    let pad = (BITS_PER_BYTE - w.bits_written() % BITS_PER_BYTE) % BITS_PER_BYTE;
     if pad == 0 {
         return if align_bits == 0 {
             Ok(())

@@ -163,6 +163,27 @@ use crate::source::{DriverProgress, Source, Timeouts};
 /// own `max_sessions`/`max_programs` docs describe).
 pub const DEFAULT_RTMP_MAX_SESSIONS: usize = 16;
 
+/// Target duration, part target and window of the harness route a test-seams
+/// load driver runs.
+#[cfg(feature = "test-seams")]
+const HARNESS_TARGET_DURATION: Duration = Duration::from_secs(1);
+#[cfg(feature = "test-seams")]
+const HARNESS_PART_TARGET: Duration = Duration::from_millis(500);
+#[cfg(feature = "test-seams")]
+const HARNESS_WINDOW_SEGMENTS: usize = 8;
+
+/// Ring slots of the harness `Trunk`.
+#[cfg(feature = "test-seams")]
+const HARNESS_TIMED_SLOTS: usize = 64;
+#[cfg(feature = "test-seams")]
+const HARNESS_SPARSE_SLOTS: usize = 16;
+#[cfg(feature = "test-seams")]
+const HARNESS_SEGMENT_SLOTS: usize = 8;
+#[cfg(feature = "test-seams")]
+const HARNESS_EVENT_SLOTS: usize = 8;
+#[cfg(feature = "test-seams")]
+const HARNESS_PART_SLOTS: usize = 8;
+
 /// Bound on the accept-pump task's channel — see [`RtmpRoute::ensure_infra`].
 /// A publisher that completes its TCP handshake is queued here until
 /// [`RtmpListener::poll_accept`] drains it (whether or not a `max_sessions`
@@ -800,9 +821,9 @@ pub async fn serve_for_test_with_read_load() -> (
     });
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration(std::time::Duration::from_secs(1))
-            .with_part_target(std::time::Duration::from_millis(500))
-            .with_window_segments(8),
+            .with_target_duration(HARNESS_TARGET_DURATION)
+            .with_part_target(HARNESS_PART_TARGET)
+            .with_window_segments(HARNESS_WINDOW_SEGMENTS),
     ));
     // `run_rtmp`'s task owns the route (and its `OnceCell<Arc<RtmpInfra>>`),
     // keeping the accept pump alive. The cancel token aborts the run task so
@@ -830,11 +851,11 @@ fn trunk_config_for_test() -> TrunkConfig {
     use std::num::NonZeroUsize;
     let nz = |n: usize| NonZeroUsize::new(n).unwrap();
     TrunkConfig::default()
-        .with_timed_capacity(nz(64))
-        .with_sparse_capacity(nz(16))
-        .with_segment_capacity(nz(8))
-        .with_event_capacity(nz(8))
-        .with_part_capacity(nz(8))
+        .with_timed_capacity(nz(HARNESS_TIMED_SLOTS))
+        .with_sparse_capacity(nz(HARNESS_SPARSE_SLOTS))
+        .with_segment_capacity(nz(HARNESS_SEGMENT_SLOTS))
+        .with_event_capacity(nz(HARNESS_EVENT_SLOTS))
+        .with_part_capacity(nz(HARNESS_PART_SLOTS))
 }
 
 #[cfg(feature = "test-seams")]

@@ -80,6 +80,13 @@ const HEADER_LEN: usize = 3;
 const FIXED_BODY_LEN: usize = 9;
 const COMMON_DESC_LEN_FIELD: usize = 2;
 use super::CRC_LEN;
+
+/// Width of the `reserved_common_descriptor_loop_length` field.
+const UNT_RESERVED_BITS: u32 = 4;
+/// Shift of the high `OUI` byte.
+const OUI_HIGH_SHIFT: u32 = 16;
+/// Shift of the middle `OUI` byte.
+const OUI_MID_SHIFT: u32 = 8;
 const MIN_SECTION_LEN: usize = HEADER_LEN + FIXED_BODY_LEN + COMMON_DESC_LEN_FIELD + CRC_LEN;
 
 const OFFSET_ACTION_TYPE: usize = HEADER_LEN;
@@ -88,11 +95,15 @@ const OFFSET_FLAGS: usize = HEADER_LEN + 2;
 const OFFSET_SECTION_NUMBER: usize = HEADER_LEN + 3;
 const OFFSET_LAST_SECTION_NUMBER: usize = HEADER_LEN + 4;
 const OFFSET_OUI: usize = HEADER_LEN + 5;
+const OFFSET_OUI_LAST: usize = OFFSET_OUI + 2;
 const OFFSET_PROCESSING_ORDER: usize = HEADER_LEN + 8;
 const OFFSET_COMMON_DESC_LEN: usize = HEADER_LEN + FIXED_BODY_LEN;
 
 const PLATFORM_LOOP_LEN_FIELD: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
+
+/// Width of the OUI and descriptor loop lengths.
+const OUI_BITS: u32 = 24;
 
 /// A target/operational descriptor-loop pair in the UNT platform loop (Table 11),
 /// in the UNT descriptor namespace (ETSI TS 102 006 Table 19).
@@ -178,7 +189,7 @@ pub struct UntSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `common_descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_common_descriptor_loop_length: ReservedOnes<4>,
+    pub reserved_common_descriptor_loop_length: ReservedOnes<UNT_RESERVED_BITS>,
 }
 
 impl<'a> UntSection<'a> {
@@ -234,9 +245,9 @@ impl<'a> Parse<'a> for UntSection<'a> {
         let current_next_indicator = super::current_next_of(flags_byte);
         let section_number = bytes[OFFSET_SECTION_NUMBER];
         let last_section_number = bytes[OFFSET_LAST_SECTION_NUMBER];
-        let oui = ((bytes[OFFSET_OUI] as u32) << 16)
-            | ((bytes[OFFSET_OUI + 1] as u32) << 8)
-            | (bytes[OFFSET_OUI + 2] as u32);
+        let oui = ((bytes[OFFSET_OUI] as u32) << OUI_HIGH_SHIFT)
+            | ((bytes[OFFSET_OUI + 1] as u32) << OUI_MID_SHIFT)
+            | (bytes[OFFSET_OUI_LAST] as u32);
         let processing_order = bytes[OFFSET_PROCESSING_ORDER];
 
         let cdl = super::desc_loop_len_of(
@@ -268,7 +279,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
             }
             let (b2, _) = bytes
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<PLATFORM_LOOP_LEN_FIELD>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
                         need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
@@ -300,7 +311,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
             }
             let (b2, _) = bytes
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<PLATFORM_LOOP_LEN_FIELD>())
                 .ok_or(Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
                         need: pos + PLATFORM_LOOP_LEN_FIELD,
@@ -427,7 +438,7 @@ impl Serialize for UntSection<'_> {
 
         // 24-bit OUI: the top byte of a wider value used to be dropped
         // silently (audit r03-W3 class).
-        broadcast_common::len::fit_bits(u64::from(self.oui), 24, "oui")?;
+        broadcast_common::len::fit_bits(u64::from(self.oui), OUI_BITS, "oui")?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - HEADER_LEN)?;
@@ -439,18 +450,18 @@ impl Serialize for UntSection<'_> {
             .b5(self.version_number, self.current_next_indicator)?;
         buf[OFFSET_SECTION_NUMBER] = self.section_number;
         buf[OFFSET_LAST_SECTION_NUMBER] = self.last_section_number;
-        buf[OFFSET_OUI] = ((self.oui >> 16) & 0xFF) as u8;
-        buf[OFFSET_OUI + 1] = ((self.oui >> 8) & 0xFF) as u8;
-        buf[OFFSET_OUI + 2] = (self.oui & 0xFF) as u8;
+        buf[OFFSET_OUI] = ((self.oui >> OUI_HIGH_SHIFT) & u32::from(u8::MAX)) as u8;
+        buf[OFFSET_OUI + 1] = ((self.oui >> OUI_MID_SHIFT) & u32::from(u8::MAX)) as u8;
+        buf[OFFSET_OUI_LAST] = (self.oui & u32::from(u8::MAX)) as u8;
         buf[OFFSET_PROCESSING_ORDER] = self.processing_order;
 
         let cdl = broadcast_common::len::fit_bits(
             self.common_descriptors.len() as u64,
-            12,
+            super::DESC_LOOP_LEN_BITS,
             "common_descriptors_length",
         )?;
         super::write_desc_loop_len_r(
-            &mut buf[OFFSET_COMMON_DESC_LEN..OFFSET_COMMON_DESC_LEN + 2],
+            &mut buf[OFFSET_COMMON_DESC_LEN..OFFSET_COMMON_DESC_LEN + COMMON_DESC_LEN_FIELD],
             cdl as usize,
             self.reserved_common_descriptor_loop_length.get() as u8,
         )?;
@@ -480,11 +491,11 @@ impl Serialize for UntSection<'_> {
                 let operational_descriptors = &pair.operational_descriptors;
                 let tl = broadcast_common::len::fit_bits(
                     target_descriptors.len() as u64,
-                    12,
+                    super::DESC_LOOP_LEN_BITS,
                     "target_descriptors_length",
                 )?;
                 super::write_desc_loop_len_r(
-                    &mut buf[pos..pos + 2],
+                    &mut buf[pos..pos + DESC_LOOP_LEN_FIELD],
                     tl as usize,
                     pair.reserved_target_length.get() as u8,
                 )?;
@@ -494,11 +505,11 @@ impl Serialize for UntSection<'_> {
 
                 let ol = broadcast_common::len::fit_bits(
                     operational_descriptors.len() as u64,
-                    12,
+                    super::DESC_LOOP_LEN_BITS,
                     "operational_descriptors_length",
                 )?;
                 super::write_desc_loop_len_r(
-                    &mut buf[pos..pos + 2],
+                    &mut buf[pos..pos + DESC_LOOP_LEN_FIELD],
                     ol as usize,
                     pair.reserved_operational_length.get() as u8,
                 )?;

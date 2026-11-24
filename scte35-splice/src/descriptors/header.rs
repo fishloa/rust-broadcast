@@ -13,6 +13,9 @@ pub const CUEI: u32 = 0x4355_4549;
 /// Bytes of the fixed header: tag + length + 4-byte identifier.
 pub const HEADER_LEN: usize = 6;
 
+const TAG_AND_LENGTH_LEN: usize = 2;
+const IDENTIFIER_LEN: usize = core::mem::size_of::<u32>();
+
 /// Validate a splice_descriptor header and return `(identifier, body)` where
 /// `body` is the bytes after the identifier, bounded by `descriptor_length`.
 ///
@@ -23,10 +26,10 @@ pub fn descriptor_body<'a>(
     expected_tag: u8,
     what: &'static str,
 ) -> Result<(u32, &'a [u8])> {
-    if bytes.len() < 2 {
+    if bytes.len() < TAG_AND_LENGTH_LEN {
         return Err(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: 2,
+                need: TAG_AND_LENGTH_LEN,
                 have: bytes.len(),
                 what,
             },
@@ -40,18 +43,18 @@ pub fn descriptor_body<'a>(
         });
     }
     let declared = bytes[1] as usize; // bytes following descriptor_length
-    let total = 2 + declared;
+    let total = TAG_AND_LENGTH_LEN + declared;
     if bytes.len() < total {
         return Err(Error::LengthOverflow {
             declared,
-            available: bytes.len().saturating_sub(2),
+            available: bytes.len().saturating_sub(TAG_AND_LENGTH_LEN),
             what,
         });
     }
-    if declared < 4 {
+    if declared < IDENTIFIER_LEN {
         return Err(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: 6,
+                need: HEADER_LEN,
                 have: total,
                 what,
             },
@@ -59,10 +62,10 @@ pub fn descriptor_body<'a>(
     }
     // bytes[0..2] are tag + descriptor_length; bytes[2..6] are the identifier.
     let (id_bytes, _) = bytes[2..total]
-        .split_first_chunk::<4>()
+        .split_first_chunk::<IDENTIFIER_LEN>()
         .ok_or(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: 6,
+                need: HEADER_LEN,
                 have: total,
                 what,
             },
@@ -79,7 +82,10 @@ pub fn descriptor_body<'a>(
 /// check even where a caller already validates its own body length.
 pub fn write_header(buf: &mut [u8], tag: u8, identifier: u32, body_len: usize) -> Result<()> {
     buf[0] = tag;
-    buf[1] = broadcast_common::len::fit_u8(4 + body_len, "splice_descriptor.descriptor_length")?;
+    buf[1] = broadcast_common::len::fit_u8(
+        IDENTIFIER_LEN + body_len,
+        "splice_descriptor.descriptor_length",
+    )?;
     buf[2..6].copy_from_slice(&identifier.to_be_bytes());
     Ok(())
 }

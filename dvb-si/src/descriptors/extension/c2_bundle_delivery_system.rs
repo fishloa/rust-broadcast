@@ -11,13 +11,35 @@ impl ExtensionBodyDef<'_> for C2BundleDeliverySystem {
     const NAME: &'static str = "C2_BUNDLE_DELIVERY_SYSTEM";
 }
 /// Width of the `reserved_zero_future_use` after `primary_channel` (7 bits).
-const RESERVED_ZERO_FUTURE_USE_BITS: u32 = 7;
+const RESERVED_FUTURE_USE_BITS: u32 = 7;
+/// Offset of `C2_System_tuning_frequency` in an entry.
+const C2_BUNDLE_FREQUENCY_OFFSET: usize = 2;
+/// Width of `C2_System_tuning_frequency`.
+const C2_BUNDLE_FREQUENCY_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of the packed tuning byte.
+const C2_BUNDLE_PACKED_OFFSET: usize = C2_BUNDLE_FREQUENCY_OFFSET + C2_BUNDLE_FREQUENCY_LEN;
+/// Offset of the byte holding `primary_channel` and `reserved_zero_future_use`.
+const C2_BUNDLE_PRIMARY_OFFSET: usize = C2_BUNDLE_PACKED_OFFSET + 1;
+/// Mask of `C2_System_tuning_frequency_type`.
+const C2_BUNDLE_FREQUENCY_TYPE_MASK: u8 = 0x03;
+/// Shift of `C2_System_tuning_frequency_type`.
+const C2_BUNDLE_FREQUENCY_TYPE_SHIFT: u32 = 6;
+/// Mask of `active_OFDM_symbol_duration`.
+const C2_BUNDLE_OFDM_MASK: u8 = 0x07;
+/// Shift of `active_OFDM_symbol_duration`.
+const C2_BUNDLE_OFDM_SHIFT: u32 = 3;
+/// Mask of `guard_interval`.
+const C2_BUNDLE_GUARD_MASK: u8 = 0x07;
+/// Mask of `primary_channel`.
+const C2_BUNDLE_PRIMARY_MASK: u8 = 0x80;
+/// Shift of `primary_channel`.
+const C2_BUNDLE_PRIMARY_SHIFT: u32 = 7;
 
 /// Spec default of `reserved_zero_future_use(7)` after `primary_channel`: all
 /// zeros (EN 300 468 V1.16.1-V1.20.1 Table 139, audit §6.1 class B; V1.15.1
 /// printed it as `reserved_0_future_use`(7) with the same value 0).
-pub const C2_BUNDLE_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_ZERO_FUTURE_USE_BITS> =
-    ReservedZero::<RESERVED_ZERO_FUTURE_USE_BITS>::FILL;
+pub const C2_BUNDLE_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_FUTURE_USE_BITS> =
+    ReservedZero::<RESERVED_FUTURE_USE_BITS>::FILL;
 
 /// One C2 bundle entry (Table 139 inner loop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,8 +63,8 @@ pub struct C2BundleEntry {
     /// `reserved_zero_future_use(7)` after `primary_channel` (7 bits,
     /// right-aligned). Captured on parse and re-emitted verbatim;
     /// [`C2BundleEntry::new`] defaults to
-    /// [`C2_BUNDLE_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
-    pub reserved_zero_future_use: ReservedZero<RESERVED_ZERO_FUTURE_USE_BITS>,
+    /// [`C2_BUNDLE_RESERVED_FUTURE_USE_DEFAULT`] (`0`).
+    pub reserved_zero_future_use: ReservedZero<RESERVED_FUTURE_USE_BITS>,
 }
 
 impl C2BundleEntry {
@@ -65,7 +87,7 @@ impl C2BundleEntry {
             active_ofdm_symbol_duration,
             guard_interval,
             primary_channel,
-            reserved_zero_future_use: C2_BUNDLE_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use: C2_BUNDLE_RESERVED_FUTURE_USE_DEFAULT,
         }
     }
 }
@@ -88,19 +110,27 @@ impl<'a> Parse<'a> for C2BundleDeliverySystem {
         }
         let mut entries = Vec::with_capacity(sel.len() / C2_BUNDLE_ENTRY_LEN);
         for chunk in sel.chunks_exact(C2_BUNDLE_ENTRY_LEN) {
-            let packed = chunk[6];
-            let freq = crate::wire::be_u32(chunk, 2, "c2_bundle_delivery_system")?;
+            let packed = chunk[C2_BUNDLE_PACKED_OFFSET];
+            let freq = crate::wire::be_u32(
+                chunk,
+                C2_BUNDLE_FREQUENCY_OFFSET,
+                "c2_bundle_delivery_system",
+            )?;
             entries.push(C2BundleEntry {
                 plp_id: chunk[0],
                 data_slice_id: chunk[1],
                 c2_system_tuning_frequency: freq,
-                c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(packed >> 6),
-                active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8(
-                    (packed >> 3) & 0x07,
+                c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(
+                    packed >> C2_BUNDLE_FREQUENCY_TYPE_SHIFT,
                 ),
-                guard_interval: C2GuardInterval::from_u8(packed & 0x07),
-                primary_channel: (chunk[7] & 0x80) != 0,
-                reserved_zero_future_use: ReservedZero::from_bits(u64::from(chunk[7])),
+                active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8(
+                    (packed >> C2_BUNDLE_OFDM_SHIFT) & C2_BUNDLE_OFDM_MASK,
+                ),
+                guard_interval: C2GuardInterval::from_u8(packed & C2_BUNDLE_GUARD_MASK),
+                primary_channel: (chunk[C2_BUNDLE_PRIMARY_OFFSET] & C2_BUNDLE_PRIMARY_MASK) != 0,
+                reserved_zero_future_use: ReservedZero::from_bits(u64::from(
+                    chunk[C2_BUNDLE_PRIMARY_OFFSET],
+                )),
             });
         }
         Ok(C2BundleDeliverySystem { entries })
@@ -119,24 +149,27 @@ impl Serialize for C2BundleDeliverySystem {
         for e in &self.entries {
             buf[p] = e.plp_id;
             buf[p + 1] = e.data_slice_id;
-            buf[p + 2..p + 6].copy_from_slice(&e.c2_system_tuning_frequency.to_be_bytes());
-            buf[p + 6] = (broadcast_common::len::fit_mask(
+            buf[p + C2_BUNDLE_FREQUENCY_OFFSET
+                ..p + C2_BUNDLE_FREQUENCY_OFFSET + C2_BUNDLE_FREQUENCY_LEN]
+                .copy_from_slice(&e.c2_system_tuning_frequency.to_be_bytes());
+            buf[p + C2_BUNDLE_PACKED_OFFSET] = (broadcast_common::len::fit_mask(
                 e.c2_system_tuning_frequency_type.to_u8(),
-                0x03,
+                C2_BUNDLE_FREQUENCY_TYPE_MASK,
                 "c2_system_tuning_frequency_type",
-            )? << 6)
+            )? << C2_BUNDLE_FREQUENCY_TYPE_SHIFT)
                 | (broadcast_common::len::fit_mask(
                     e.active_ofdm_symbol_duration.to_u8(),
-                    0x07,
+                    C2_BUNDLE_OFDM_MASK,
                     "active_ofdm_symbol_duration",
-                )? << 3)
+                )? << C2_BUNDLE_OFDM_SHIFT)
                 | broadcast_common::len::fit_mask(
                     e.guard_interval.to_u8(),
-                    0x07,
+                    C2_BUNDLE_GUARD_MASK,
                     "guard_interval",
                 )?;
-            buf[p + 7] =
-                (u8::from(e.primary_channel) << 7) | e.reserved_zero_future_use.get() as u8;
+            buf[p + C2_BUNDLE_PRIMARY_OFFSET] = (u8::from(e.primary_channel)
+                << C2_BUNDLE_PRIMARY_SHIFT)
+                | e.reserved_zero_future_use.get() as u8;
             p += C2_BUNDLE_ENTRY_LEN;
         }
         Ok(len)

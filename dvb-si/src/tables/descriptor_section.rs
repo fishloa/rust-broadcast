@@ -62,13 +62,13 @@ pub(super) fn parse<'a>(
     )?;
     let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
     Ok(Parsed {
-        table_id_extension: crate::wire::be_u16(bytes, 3, ext_what)?,
-        version_number: super::version_number_of(bytes[5]),
-        current_next_indicator: super::current_next_of(bytes[5]),
-        section_number: bytes[6],
-        last_section_number: bytes[7],
+        table_id_extension: crate::wire::be_u16(bytes, super::TABLE_ID_EXTENSION_OFFSET, ext_what)?,
+        version_number: super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]),
+        current_next_indicator: super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]),
+        section_number: bytes[super::SECTION_NUMBER_OFFSET],
+        last_section_number: bytes[super::LAST_SECTION_NUMBER_OFFSET],
         descriptors: DescriptorLoop::new(&bytes[desc_start..total - CRC_LEN]),
-        bits: SectionBits::parse(bytes[1], Some(bytes[5])),
+        bits: SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
     })
 }
 
@@ -83,11 +83,11 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
     buf[1] = view.bits.b1()?;
     super::write_section_length(buf, len - MIN_HEADER_LEN)?;
     buf[3..5].copy_from_slice(&view.table_id_extension.to_be_bytes());
-    buf[5] = view
+    buf[super::VERSION_FLAGS_OFFSET] = view
         .bits
         .b5(view.version_number, view.current_next_indicator)?;
-    buf[6] = view.section_number;
-    buf[7] = view.last_section_number;
+    buf[super::SECTION_NUMBER_OFFSET] = view.section_number;
+    buf[super::LAST_SECTION_NUMBER_OFFSET] = view.last_section_number;
     let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
     buf[desc_start..desc_start + view.descriptors.len()].copy_from_slice(view.descriptors.raw());
     super::write_crc(buf, len - CRC_LEN);

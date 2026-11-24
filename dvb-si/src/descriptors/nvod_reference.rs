@@ -16,6 +16,10 @@ const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 6;
 /// Maximum body length expressible in the 8-bit `descriptor_length` field.
 const MAX_BODY_LEN: usize = u8::MAX as usize;
+/// Offset of `original_network_id` in an entry.
+const ORIGINAL_NETWORK_ID_OFFSET: usize = size_of::<u16>();
+/// Offset of `service_id` in an entry.
+const SERVICE_ID_OFFSET: usize = 2 * size_of::<u16>();
 
 /// One NVOD reference triple.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,8 +60,12 @@ impl<'a> Parse<'a> for NvodReferenceDescriptor {
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(NvodReferenceEntry {
                 transport_stream_id: crate::wire::be_u16(chunk, 0, "nvod_reference")?,
-                original_network_id: crate::wire::be_u16(chunk, 2, "nvod_reference")?,
-                service_id: crate::wire::be_u16(chunk, 4, "nvod_reference")?,
+                original_network_id: crate::wire::be_u16(
+                    chunk,
+                    ORIGINAL_NETWORK_ID_OFFSET,
+                    "nvod_reference",
+                )?,
+                service_id: crate::wire::be_u16(chunk, SERVICE_ID_OFFSET, "nvod_reference")?,
             });
         }
         Ok(Self { entries })
@@ -84,9 +92,12 @@ impl Serialize for NvodReferenceDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + 2].copy_from_slice(&e.transport_stream_id.to_be_bytes());
-            buf[pos + 2..pos + 4].copy_from_slice(&e.original_network_id.to_be_bytes());
-            buf[pos + 4..pos + 6].copy_from_slice(&e.service_id.to_be_bytes());
+            buf[pos..pos + ORIGINAL_NETWORK_ID_OFFSET]
+                .copy_from_slice(&e.transport_stream_id.to_be_bytes());
+            buf[pos + ORIGINAL_NETWORK_ID_OFFSET..pos + SERVICE_ID_OFFSET]
+                .copy_from_slice(&e.original_network_id.to_be_bytes());
+            buf[pos + SERVICE_ID_OFFSET..pos + ENTRY_LEN]
+                .copy_from_slice(&e.service_id.to_be_bytes());
             pos += ENTRY_LEN;
         }
         Ok(len)

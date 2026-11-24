@@ -3,6 +3,7 @@
 //! Supplemental usage. Creates a segmentation descriptor in the resulting
 //! SCTE 35 section.
 
+use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
 use broadcast_common::len::{need_in, need_out};
@@ -61,6 +62,28 @@ pub const FIXED_LEN: usize = 7;
 /// `segmentation_type_id` through `sub_segments_expected` (§9.8.7, Table 9-29).
 pub const TAIL_LEN: usize = 12;
 
+// Field byte offsets before the variable `segmentation_upid` (§9.8.7, Table 9-29).
+const SEGMENTATION_EVENT_ID_OFFSET: usize = 0;
+const SEGMENTATION_EVENT_CANCEL_INDICATOR_OFFSET: usize = 4;
+const DURATION_OFFSET: usize = 5;
+const SEGMENTATION_UPID_TYPE_OFFSET: usize = 7;
+const SEGMENTATION_UPID_LENGTH_OFFSET: usize = 8;
+const SEGMENTATION_UPID_OFFSET: usize = 9;
+
+// Offsets within the 12-byte tail, relative to `tail_off`.
+const SEGMENTATION_TYPE_ID_OFFSET: usize = 0;
+const SEGMENT_NUM_OFFSET: usize = 1;
+const SEGMENTS_EXPECTED_OFFSET: usize = 2;
+const DURATION_EXTENSION_FRAMES_OFFSET: usize = 3;
+const DELIVERY_NOT_RESTRICTED_FLAG_OFFSET: usize = 4;
+const WEB_DELIVERY_ALLOWED_FLAG_OFFSET: usize = 5;
+const NO_REGIONAL_BLACKOUT_FLAG_OFFSET: usize = 6;
+const ARCHIVE_ALLOWED_FLAG_OFFSET: usize = 7;
+const DEVICE_RESTRICTIONS_OFFSET: usize = 8;
+const INSERT_SUB_SEGMENT_INFO_OFFSET: usize = 9;
+const SUB_SEGMENT_NUM_OFFSET: usize = 10;
+const SUB_SEGMENTS_EXPECTED_OFFSET: usize = 11;
+
 impl<'a> Parse<'a> for InsertSegmentationDescriptor<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -69,33 +92,34 @@ impl<'a> Parse<'a> for InsertSegmentationDescriptor<'a> {
             FIXED_LEN + TAIL_LEN,
             "insert_segmentation_descriptor (minimum)",
         )?;
-        let segmentation_event_id = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let segmentation_event_cancel_indicator = bytes[4];
-        let duration = u16::from_be_bytes([bytes[5], bytes[6]]);
-        let segmentation_upid_type = bytes[7];
-        let upid_len = bytes[8] as usize;
-        let need = FIXED_LEN + 2 + upid_len + TAIL_LEN;
+        let segmentation_event_id =
+            u32::from_be_bytes(be::<U32_LEN>(bytes, SEGMENTATION_EVENT_ID_OFFSET)?);
+        let segmentation_event_cancel_indicator = bytes[SEGMENTATION_EVENT_CANCEL_INDICATOR_OFFSET];
+        let duration = u16::from_be_bytes(be::<U16_LEN>(bytes, DURATION_OFFSET)?);
+        let segmentation_upid_type = bytes[SEGMENTATION_UPID_TYPE_OFFSET];
+        let upid_len = bytes[SEGMENTATION_UPID_LENGTH_OFFSET] as usize;
+        let need = SEGMENTATION_UPID_OFFSET + upid_len + TAIL_LEN;
         need_in(bytes, need, "insert_segmentation_descriptor upid")?;
-        let upid = &bytes[9..9 + upid_len];
-        let tail_off = 9 + upid_len;
+        let upid = &bytes[SEGMENTATION_UPID_OFFSET..SEGMENTATION_UPID_OFFSET + upid_len];
+        let tail_off = SEGMENTATION_UPID_OFFSET + upid_len;
         Ok(Self {
             segmentation_event_id,
             segmentation_event_cancel_indicator,
             duration,
             segmentation_upid_type,
             segmentation_upid: upid,
-            segmentation_type_id: bytes[tail_off],
-            segment_num: bytes[tail_off + 1],
-            segments_expected: bytes[tail_off + 2],
-            duration_extension_frames: bytes[tail_off + 3],
-            delivery_not_restricted_flag: bytes[tail_off + 4],
-            web_delivery_allowed_flag: bytes[tail_off + 5],
-            no_regional_blackout_flag: bytes[tail_off + 6],
-            archive_allowed_flag: bytes[tail_off + 7],
-            device_restrictions: bytes[tail_off + 8],
-            insert_sub_segment_info: bytes[tail_off + 9],
-            sub_segment_num: bytes[tail_off + 10],
-            sub_segments_expected: bytes[tail_off + 11],
+            segmentation_type_id: bytes[tail_off + SEGMENTATION_TYPE_ID_OFFSET],
+            segment_num: bytes[tail_off + SEGMENT_NUM_OFFSET],
+            segments_expected: bytes[tail_off + SEGMENTS_EXPECTED_OFFSET],
+            duration_extension_frames: bytes[tail_off + DURATION_EXTENSION_FRAMES_OFFSET],
+            delivery_not_restricted_flag: bytes[tail_off + DELIVERY_NOT_RESTRICTED_FLAG_OFFSET],
+            web_delivery_allowed_flag: bytes[tail_off + WEB_DELIVERY_ALLOWED_FLAG_OFFSET],
+            no_regional_blackout_flag: bytes[tail_off + NO_REGIONAL_BLACKOUT_FLAG_OFFSET],
+            archive_allowed_flag: bytes[tail_off + ARCHIVE_ALLOWED_FLAG_OFFSET],
+            device_restrictions: bytes[tail_off + DEVICE_RESTRICTIONS_OFFSET],
+            insert_sub_segment_info: bytes[tail_off + INSERT_SUB_SEGMENT_INFO_OFFSET],
+            sub_segment_num: bytes[tail_off + SUB_SEGMENT_NUM_OFFSET],
+            sub_segments_expected: bytes[tail_off + SUB_SEGMENTS_EXPECTED_OFFSET],
         })
     }
 }
@@ -103,34 +127,35 @@ impl<'a> Parse<'a> for InsertSegmentationDescriptor<'a> {
 impl Serialize for InsertSegmentationDescriptor<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        FIXED_LEN + 2 + self.segmentation_upid.len() + TAIL_LEN
+        SEGMENTATION_UPID_OFFSET + self.segmentation_upid.len() + TAIL_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         buf[0..4].copy_from_slice(&self.segmentation_event_id.to_be_bytes());
-        buf[4] = self.segmentation_event_cancel_indicator;
+        buf[SEGMENTATION_EVENT_CANCEL_INDICATOR_OFFSET] = self.segmentation_event_cancel_indicator;
         buf[5..7].copy_from_slice(&self.duration.to_be_bytes());
-        buf[7] = self.segmentation_upid_type;
-        buf[8] = broadcast_common::len::fit_u8(
+        buf[SEGMENTATION_UPID_TYPE_OFFSET] = self.segmentation_upid_type;
+        buf[SEGMENTATION_UPID_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
             self.segmentation_upid.len(),
             "insert_segmentation_descriptor.segmentation_upid_length",
         )?;
         let upid_len = self.segmentation_upid.len();
-        buf[9..9 + upid_len].copy_from_slice(self.segmentation_upid);
-        let tail_off = 9 + upid_len;
-        buf[tail_off] = self.segmentation_type_id;
-        buf[tail_off + 1] = self.segment_num;
-        buf[tail_off + 2] = self.segments_expected;
-        buf[tail_off + 3] = self.duration_extension_frames;
-        buf[tail_off + 4] = self.delivery_not_restricted_flag;
-        buf[tail_off + 5] = self.web_delivery_allowed_flag;
-        buf[tail_off + 6] = self.no_regional_blackout_flag;
-        buf[tail_off + 7] = self.archive_allowed_flag;
-        buf[tail_off + 8] = self.device_restrictions;
-        buf[tail_off + 9] = self.insert_sub_segment_info;
-        buf[tail_off + 10] = self.sub_segment_num;
-        buf[tail_off + 11] = self.sub_segments_expected;
+        buf[SEGMENTATION_UPID_OFFSET..SEGMENTATION_UPID_OFFSET + upid_len]
+            .copy_from_slice(self.segmentation_upid);
+        let tail_off = SEGMENTATION_UPID_OFFSET + upid_len;
+        buf[tail_off + SEGMENTATION_TYPE_ID_OFFSET] = self.segmentation_type_id;
+        buf[tail_off + SEGMENT_NUM_OFFSET] = self.segment_num;
+        buf[tail_off + SEGMENTS_EXPECTED_OFFSET] = self.segments_expected;
+        buf[tail_off + DURATION_EXTENSION_FRAMES_OFFSET] = self.duration_extension_frames;
+        buf[tail_off + DELIVERY_NOT_RESTRICTED_FLAG_OFFSET] = self.delivery_not_restricted_flag;
+        buf[tail_off + WEB_DELIVERY_ALLOWED_FLAG_OFFSET] = self.web_delivery_allowed_flag;
+        buf[tail_off + NO_REGIONAL_BLACKOUT_FLAG_OFFSET] = self.no_regional_blackout_flag;
+        buf[tail_off + ARCHIVE_ALLOWED_FLAG_OFFSET] = self.archive_allowed_flag;
+        buf[tail_off + DEVICE_RESTRICTIONS_OFFSET] = self.device_restrictions;
+        buf[tail_off + INSERT_SUB_SEGMENT_INFO_OFFSET] = self.insert_sub_segment_info;
+        buf[tail_off + SUB_SEGMENT_NUM_OFFSET] = self.sub_segment_num;
+        buf[tail_off + SUB_SEGMENTS_EXPECTED_OFFSET] = self.sub_segments_expected;
         Ok(need)
     }
 }

@@ -152,7 +152,7 @@ const TSGS_S2X_MODE_VALUE_MASK: u8 = 0x03;
 /// Spec default of every `reserved_zero_future_use` region of the S2X
 /// descriptor (Table 140; `reserved_zero_future_use` since its introduction in
 /// V1.16.1, audit §6.1 class A): all zeros.
-pub const S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RZFU_1_BITS> =
+pub const S2X_RESERVED_FUTURE_USE_DEFAULT: ReservedZero<RZFU_1_BITS> =
     ReservedZero::<RZFU_1_BITS>::FILL;
 /// Width of the `reserved_zero_future_use(1)` bit.
 const RZFU_1_BITS: u32 = 1;
@@ -172,6 +172,74 @@ const RZFU_6_SHIFT: u8 = 2;
 const RZFU_7_SHIFT: u8 = 1;
 /// Shift of the packed channel byte's 1-bit reserved region.
 const PACKED_RZFU_1_SHIFT: u8 = 3;
+/// Fixed S2X header bytes before the optional scrambling index.
+const S2X_HEADER_LEN: usize = 2;
+/// Shift of `receiver_profiles`.
+const RECEIVER_PROFILES_SHIFT: u32 = 3;
+/// Shift of `s2x_mode`.
+const S2X_MODE_SHIFT: u32 = 6;
+/// Mask of `scrambling_sequence_selector`.
+const SCRAMBLING_SELECTOR_MASK: u8 = 0x20;
+/// Shift of `scrambling_sequence_selector`.
+const SCRAMBLING_SELECTOR_SHIFT: u32 = 5;
+/// Mask of the high bits of `scrambling_sequence_index`.
+const SCRAMBLING_INDEX_HIGH_MASK: u8 = 0x03;
+/// Shift of the high bits of `scrambling_sequence_index`.
+const SCRAMBLING_INDEX_HIGH_SHIFT: u32 = 16;
+/// Offset of the low 16 bits of `scrambling_sequence_index`.
+const SCRAMBLING_INDEX_LOW_OFFSET: usize = 1;
+/// Shift of a middle byte of `scrambling_sequence_index`.
+const SCRAMBLING_INDEX_BYTE_SHIFT: u32 = 8;
+/// `frequency` offset in a channel entry.
+const CHANNEL_FREQUENCY_OFFSET: usize = 0;
+/// Width of `frequency`.
+const CHANNEL_FREQUENCY_LEN: usize = core::mem::size_of::<u32>();
+/// `orbital_position` offset in a channel entry.
+const CHANNEL_ORBITAL_OFFSET: usize = CHANNEL_FREQUENCY_OFFSET + CHANNEL_FREQUENCY_LEN;
+/// Width of `orbital_position`.
+const CHANNEL_ORBITAL_LEN: usize = core::mem::size_of::<u16>();
+/// Offset of the packed flags byte in a channel entry.
+const CHANNEL_PACKED_OFFSET: usize = CHANNEL_ORBITAL_OFFSET + CHANNEL_ORBITAL_LEN;
+/// Offset of the reserved/symbol-rate byte in a channel entry.
+const CHANNEL_RESERVED_SYMBOL_OFFSET: usize = CHANNEL_PACKED_OFFSET + 1;
+/// Width of `symbol_rate` in bytes.
+const CHANNEL_SYMBOL_RATE_LEN: usize = core::mem::size_of::<u32>();
+/// Mask of the 28-bit `symbol_rate`.
+const SYMBOL_RATE_MASK: u32 = 0x0FFF_FFFF;
+/// Mask of the symbol-rate high nibble.
+const SYMBOL_RATE_HIGH_MASK: u8 = 0x0F;
+/// Offset of the low symbol-rate bytes within the `u32`.
+const SYMBOL_RATE_TAIL_OFFSET: usize = 1;
+/// Width of the low symbol-rate bytes.
+const SYMBOL_RATE_TAIL_LEN: usize = CHANNEL_SYMBOL_RATE_LEN - SYMBOL_RATE_TAIL_OFFSET;
+/// Shift of a 24-bit byte.
+const SYMBOL_RATE_HIGH_SHIFT: u32 = 24;
+/// Mask of `west_east_flag`.
+const WEST_EAST_FLAG_MASK: u8 = 0x80;
+/// Shift of `west_east_flag`.
+const WEST_EAST_FLAG_SHIFT: u32 = 7;
+/// Mask of `polarization`.
+const POLARIZATION_MASK: u8 = 0x03;
+/// Shift of `polarization`.
+const POLARIZATION_SHIFT: u32 = 5;
+/// Mask of `multiple_input_stream_flag`.
+const MULTIPLE_INPUT_STREAM_FLAG_MASK: u8 = 0x10;
+/// Shift of `multiple_input_stream_flag`.
+const MULTIPLE_INPUT_STREAM_FLAG_SHIFT: u32 = 4;
+/// Mask of `roll_off`.
+const ROLL_OFF_MASK: u8 = 0x07;
+/// BCD digits in `frequency`.
+const FREQUENCY_BCD_DIGITS: u8 = 8;
+/// `frequency` field resolution in Hz.
+const FREQUENCY_STEP_HZ: u64 = 10_000;
+/// BCD digits in `orbital_position`.
+const ORBITAL_POSITION_BCD_DIGITS: u8 = 4;
+/// Tenths of a degree per `orbital_position` unit.
+const ORBITAL_TENTHS_PER_DEGREE: f64 = 10.0;
+/// BCD digits in `symbol_rate`.
+const SYMBOL_RATE_BCD_DIGITS: u8 = 7;
+/// `symbol_rate` field resolution in symbols/second.
+const SYMBOL_RATE_STEP: u64 = 100;
 
 /// A single channel-bond entry (Table 140 inner `for` loop).
 ///
@@ -199,7 +267,7 @@ pub struct S2XChannelBond {
     pub input_stream_identifier: Option<u8>,
     /// `reserved_zero_future_use(1)` between `multiple_input_stream_flag` and
     /// `roll_off` (1 bit, right-aligned). Captured on parse, re-emitted
-    /// verbatim; `Default` is [`S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    /// verbatim; `Default` is [`S2X_RESERVED_FUTURE_USE_DEFAULT`] (`0`).
     pub reserved_zero_future_use_1: ReservedZero<RZFU_1_BITS>,
     /// `reserved_zero_future_use(4)` ahead of `symbol_rate` (4 bits). Same
     /// policy as above.
@@ -229,20 +297,25 @@ impl S2XChannelBond {
     /// EN 300 468 §6.2.13.2).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|v| v * 10_000)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency), FREQUENCY_BCD_DIGITS)
+            .map(|v| v * FREQUENCY_STEP_HZ)
     }
 
     /// Decode the 16-bit BCD `orbital_position` to degrees (tenths resolution).
     #[must_use]
     pub fn orbital_position_deg(&self) -> Option<f64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.orbital_position), 4)
-            .map(|tenths| tenths as f64 / 10.0)
+        broadcast_common::bcd::bcd_to_decimal(
+            u64::from(self.orbital_position),
+            ORBITAL_POSITION_BCD_DIGITS,
+        )
+        .map(|tenths| tenths as f64 / ORBITAL_TENTHS_PER_DEGREE)
     }
 
     /// Decode the 28-bit BCD `symbol_rate` to symbols/second (100 sym/s resolution).
     #[must_use]
     pub fn symbol_rate_sps(&self) -> Option<u64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate), 7).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate), SYMBOL_RATE_BCD_DIGITS)
+            .map(|v| v * SYMBOL_RATE_STEP)
     }
 }
 
@@ -256,7 +329,7 @@ pub struct S2XSatelliteDeliverySystem<'a> {
     pub receiver_profiles: u8,
     /// `reserved_zero_future_use(3)` after `receiver_profiles` (byte 0 low
     /// bits, right-aligned). Captured on parse, re-emitted verbatim; `Default`
-    /// is [`S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    /// is [`S2X_RESERVED_FUTURE_USE_DEFAULT`] (`0`).
     pub reserved_zero_future_use_3a: ReservedZero<RZFU_3_BITS>,
     /// S2X_mode(2) — Table 142.
     pub s2x_mode: S2XMode,
@@ -341,20 +414,25 @@ impl S2XSatelliteDeliverySystem<'_> {
     /// EN 300 468 §6.2.13.2).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|v| v * 10_000)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency), FREQUENCY_BCD_DIGITS)
+            .map(|v| v * FREQUENCY_STEP_HZ)
     }
 
     /// Decode the 16-bit BCD `orbital_position` to degrees (tenths resolution).
     #[must_use]
     pub fn orbital_position_deg(&self) -> Option<f64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.orbital_position), 4)
-            .map(|tenths| tenths as f64 / 10.0)
+        broadcast_common::bcd::bcd_to_decimal(
+            u64::from(self.orbital_position),
+            ORBITAL_POSITION_BCD_DIGITS,
+        )
+        .map(|tenths| tenths as f64 / ORBITAL_TENTHS_PER_DEGREE)
     }
 
     /// Decode the 28-bit BCD `symbol_rate` to symbols/second (100 sym/s resolution).
     #[must_use]
     pub fn symbol_rate_sps(&self) -> Option<u64> {
-        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate), 7).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate), SYMBOL_RATE_BCD_DIGITS)
+            .map(|v| v * SYMBOL_RATE_STEP)
     }
 
     // ---- Receiver profile flag accessors (additive, Table 141) ----
@@ -408,7 +486,7 @@ struct ChannelCommon {
 fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
     need_in(sel, *pos + BOND_BASE_LEN, "S2X body")?;
     let (freq_bytes, _) = sel[*pos..]
-        .split_first_chunk::<4>()
+        .split_first_chunk::<{ CHANNEL_FREQUENCY_LEN }>()
         .ok_or(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
                 need: *pos + BOND_BASE_LEN,
@@ -417,8 +495,8 @@ fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
             },
         ))?;
     let frequency = u32::from_be_bytes(*freq_bytes);
-    let (orb_bytes, _) = sel[*pos + 4..]
-        .split_first_chunk::<2>()
+    let (orb_bytes, _) = sel[*pos + CHANNEL_ORBITAL_OFFSET..]
+        .split_first_chunk::<{ CHANNEL_ORBITAL_LEN }>()
         .ok_or(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
                 need: *pos + BOND_BASE_LEN,
@@ -427,17 +505,18 @@ fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
             },
         ))?;
     let orbital_position = u16::from_be_bytes(*orb_bytes);
-    let pb = sel[*pos + 6];
-    let west_east_flag = (pb & 0x80) != 0;
-    let polarization = Polarization::from_u8((pb >> 5) & 0x03);
-    let multiple_input_stream_flag = (pb & 0x10) != 0;
-    let roll_off = RollOff::from_u8(pb & 0x07);
+    let pb = sel[*pos + CHANNEL_PACKED_OFFSET];
+    let west_east_flag = (pb & WEST_EAST_FLAG_MASK) != 0;
+    let polarization = Polarization::from_u8((pb >> POLARIZATION_SHIFT) & POLARIZATION_MASK);
+    let multiple_input_stream_flag = (pb & MULTIPLE_INPUT_STREAM_FLAG_MASK) != 0;
+    let roll_off = RollOff::from_u8(pb & ROLL_OFF_MASK);
     let reserved_zero_future_use_1 = ReservedZero::from_bits(u64::from(pb >> PACKED_RZFU_1_SHIFT));
-    let reserved_zero_future_use_4 = ReservedZero::from_bits(u64::from(sel[*pos + 7] >> 4));
-    let symbol_rate = (u32::from(sel[*pos + 7] & 0x0F) << 24)
-        | (u32::from(sel[*pos + 8]) << 16)
-        | (u32::from(sel[*pos + 9]) << 8)
-        | u32::from(sel[*pos + 10]);
+    let reserved_zero_future_use_4 = ReservedZero::from_bits(u64::from(
+        sel[*pos + CHANNEL_RESERVED_SYMBOL_OFFSET] >> RZFU_4_BITS,
+    ));
+    let symbol_rate =
+        crate::wire::be_u32(sel, *pos + CHANNEL_RESERVED_SYMBOL_OFFSET, "symbol_rate")?
+            & SYMBOL_RATE_MASK;
     *pos += BOND_BASE_LEN;
     Ok(ChannelCommon {
         frequency,
@@ -461,14 +540,18 @@ fn write_channel_common(
     reserved_zero_future_use_4: ReservedZero<RZFU_4_BITS>,
     symbol_rate: u32,
 ) -> Result<()> {
-    buf[*p..*p + 4].copy_from_slice(&frequency.to_be_bytes());
-    buf[*p + 4..*p + 6].copy_from_slice(&orbital_position.to_be_bytes());
-    buf[*p + 6] = packed;
-    let sr = broadcast_common::len::fit_mask(symbol_rate, 0x0FFF_FFFF, "symbol_rate")?;
-    buf[*p + 7] = ((reserved_zero_future_use_4.get() as u8) << 4) | ((sr >> 24) as u8 & 0x0F);
-    buf[*p + 8] = (sr >> 16) as u8;
-    buf[*p + 9] = (sr >> 8) as u8;
-    buf[*p + 10] = sr as u8;
+    buf[*p + CHANNEL_FREQUENCY_OFFSET..*p + CHANNEL_FREQUENCY_OFFSET + CHANNEL_FREQUENCY_LEN]
+        .copy_from_slice(&frequency.to_be_bytes());
+    buf[*p + CHANNEL_ORBITAL_OFFSET..*p + CHANNEL_ORBITAL_OFFSET + CHANNEL_ORBITAL_LEN]
+        .copy_from_slice(&orbital_position.to_be_bytes());
+    buf[*p + CHANNEL_PACKED_OFFSET] = packed;
+    let sr = broadcast_common::len::fit_mask(symbol_rate, SYMBOL_RATE_MASK, "symbol_rate")?;
+    buf[*p + CHANNEL_RESERVED_SYMBOL_OFFSET] = ((reserved_zero_future_use_4.get() as u8)
+        << RZFU_4_BITS)
+        | ((sr >> SYMBOL_RATE_HIGH_SHIFT) as u8 & SYMBOL_RATE_HIGH_MASK);
+    let tail_start = *p + CHANNEL_RESERVED_SYMBOL_OFFSET + SYMBOL_RATE_TAIL_OFFSET;
+    buf[tail_start..tail_start + SYMBOL_RATE_TAIL_LEN]
+        .copy_from_slice(&sr.to_be_bytes()[SYMBOL_RATE_TAIL_OFFSET..]);
     *p += BOND_BASE_LEN;
     Ok(())
 }
@@ -480,36 +563,41 @@ fn pack_we_pol_mis_ro(
     reserved_zero_future_use_1: ReservedZero<RZFU_1_BITS>,
     ro: RollOff,
 ) -> Result<u8> {
-    Ok((u8::from(we) << 7)
-        | (broadcast_common::len::fit_mask(pol.to_u8(), 0x03, "polarization")? << 5)
-        | (u8::from(mis) << 4)
+    Ok((u8::from(we) << WEST_EAST_FLAG_SHIFT)
+        | (broadcast_common::len::fit_mask(pol.to_u8(), POLARIZATION_MASK, "polarization")?
+            << POLARIZATION_SHIFT)
+        | (u8::from(mis) << MULTIPLE_INPUT_STREAM_FLAG_SHIFT)
         | ((reserved_zero_future_use_1.get() as u8) << PACKED_RZFU_1_SHIFT)
-        | broadcast_common::len::fit_mask(ro.to_u8(), 0x07, "roll_off")?)
+        | broadcast_common::len::fit_mask(ro.to_u8(), ROLL_OFF_MASK, "roll_off")?)
 }
 
 impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         // receiver_profiles byte + S2X mode/flags byte = 2 fixed bytes.
-        need_in(sel, 2, "S2X body")?;
-        let receiver_profiles = sel[0] >> 3;
+        need_in(sel, S2X_HEADER_LEN, "S2X body")?;
+        let receiver_profiles = sel[0] >> RECEIVER_PROFILES_SHIFT;
         let reserved_zero_future_use_3a = ReservedZero::from_bits(u64::from(sel[0]));
         let b1 = sel[1];
         let reserved_zero_future_use_3b = ReservedZero::from_bits(u64::from(b1 >> RZFU_3B_SHIFT));
         // Table 140 byte 1, MSB-first: S2X_mode(2) scrambling_sequence_selector(1)
         // reserved_zero_future_use(3) TS_GS_S2X_mode(2).
-        let s2x_mode = S2XMode::from_u8((b1 >> 6) & 0x03);
-        let scrambling_sequence_selector = (b1 & 0x20) != 0;
-        let ts_gs_s2x_mode = TsGsS2XMode::from_u8(b1 & 0x03);
-        let mut pos = 2;
+        let s2x_mode = S2XMode::from_u8((b1 >> S2X_MODE_SHIFT) & S2X_MODE_VALUE_MASK);
+        let scrambling_sequence_selector = (b1 & SCRAMBLING_SELECTOR_MASK) != 0;
+        let ts_gs_s2x_mode = TsGsS2XMode::from_u8(b1 & TSGS_S2X_MODE_VALUE_MASK);
+        let mut pos = S2X_HEADER_LEN;
         let mut reserved_zero_future_use_6 = ReservedZero::<RZFU_6_BITS>::default();
         let scrambling_sequence_index = if scrambling_sequence_selector {
             need_in(sel, pos + S2X_SCRAMBLING_LEN, "S2X body")?;
             reserved_zero_future_use_6 =
                 ReservedZero::from_bits(u64::from(sel[pos] >> RZFU_6_SHIFT));
-            let idx = (u32::from(sel[pos] & 0x03) << 16)
-                | (u32::from(sel[pos + 1]) << 8)
-                | u32::from(sel[pos + 2]);
+            let idx = (u32::from(sel[pos] & SCRAMBLING_INDEX_HIGH_MASK)
+                << SCRAMBLING_INDEX_HIGH_SHIFT)
+                | u32::from(crate::wire::be_u16(
+                    sel,
+                    pos + SCRAMBLING_INDEX_LOW_OFFSET,
+                    "scrambling_sequence_index",
+                )?);
             pos += S2X_SCRAMBLING_LEN;
             Some(idx)
         } else {
@@ -554,7 +642,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
             // reserved_zero_future_use(7) | num_channel_bonds_minus_one(1)
             reserved_zero_future_use_7 =
                 ReservedZero::from_bits(u64::from(bond_byte >> RZFU_7_SHIFT));
-            let num_channel_bonds = (bond_byte & 0x01) as usize + 1;
+            let num_channel_bonds = (bond_byte & 1) as usize + 1;
             let mut bonds = Vec::with_capacity(num_channel_bonds);
             for _ in 0..num_channel_bonds {
                 let ch = parse_channel_common(sel, &mut pos)?;
@@ -622,11 +710,13 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
         } else {
             0
         };
-        2 + if self.scrambling_sequence_selector {
-            S2X_SCRAMBLING_LEN
-        } else {
-            0
-        } + S2X_PRIMARY_LEN
+        S2X_HEADER_LEN
+            + if self.scrambling_sequence_selector {
+                S2X_SCRAMBLING_LEN
+            } else {
+                0
+            }
+            + S2X_PRIMARY_LEN
             + usize::from(self.input_stream_identifier.is_some())
             + usize::from(self.timeslice_number.is_some())
             + bond_len
@@ -641,21 +731,21 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
             self.receiver_profiles,
             RECEIVER_PROFILES_MASK,
             "receiver_profiles",
-        )? << 3)
+        )? << RECEIVER_PROFILES_SHIFT)
             | self.reserved_zero_future_use_3a.get() as u8;
         buf[1] = (broadcast_common::len::fit_mask(
             self.s2x_mode.to_u8(),
             S2X_MODE_VALUE_MASK,
             "s2x_mode",
-        )? << 6)
-            | (u8::from(self.scrambling_sequence_selector) << 5)
+        )? << S2X_MODE_SHIFT)
+            | (u8::from(self.scrambling_sequence_selector) << SCRAMBLING_SELECTOR_SHIFT)
             | ((self.reserved_zero_future_use_3b.get() as u8) << RZFU_3B_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.ts_gs_s2x_mode.to_u8(),
                 TSGS_S2X_MODE_VALUE_MASK,
                 "ts_gs_s2x_mode",
             )?;
-        let mut p = 2;
+        let mut p = S2X_HEADER_LEN;
         if self.scrambling_sequence_selector {
             // The selector reserves 18 wire bits; fabricating 0 would invent
             // an index (r03-W5).
@@ -671,9 +761,9 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                 "scrambling_sequence_index",
             )?;
             buf[p] = ((self.reserved_zero_future_use_6.get() as u8) << RZFU_6_SHIFT)
-                | ((idx >> 16) as u8 & 0x03);
-            buf[p + 1] = (idx >> 8) as u8;
-            buf[p + 2] = idx as u8;
+                | ((idx >> SCRAMBLING_INDEX_HIGH_SHIFT) as u8 & SCRAMBLING_INDEX_HIGH_MASK);
+            buf[p + SCRAMBLING_INDEX_LOW_OFFSET] = (idx >> SCRAMBLING_INDEX_BYTE_SHIFT) as u8;
+            buf[p + SCRAMBLING_INDEX_LOW_OFFSET + 1] = idx as u8;
             p += S2X_SCRAMBLING_LEN;
         }
         write_channel_common(

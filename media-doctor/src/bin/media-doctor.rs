@@ -52,6 +52,8 @@ fn main() {
 /// The 188-byte MPEG-2 TS packet length (ISO/IEC 13818-1 §2.4.3.2), from the
 /// workspace's owner of the constant rather than a local literal.
 const TS_PACKET_SIZE: usize = mpeg_ts::ts::TS_PACKET_SIZE;
+/// Size of one read from the input stream.
+const STREAM_CHUNK_LEN: usize = 65_536;
 
 /// Which diagnostic set the CLI runs for `bytes`.
 ///
@@ -304,7 +306,7 @@ fn ingest_loop(
     publisher: &mut MetricsPublisher,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
-    let mut buf = [0u8; 65536];
+    let mut buf = [0u8; STREAM_CHUNK_LEN];
     let mut dirty = false;
     loop {
         match socket.recv_from(&mut buf) {

@@ -133,6 +133,10 @@ impl LoudnessProfile {
 pub const MONITOR_OVER_LIMIT_LKFS: f64 = -22.0;
 /// GY/T 379-2023 Table 1: largest share of over-limit units that is *acceptable*.
 pub const ACCEPTABLE_MAX_RATIO: f64 = 0.20;
+
+/// Units needed for a qualifying run: two or more consecutive over-limit
+/// units (GY/T 282-2014 clause 10 d 2).
+const MIN_CONSECUTIVE_OVER_LIMIT: usize = 2;
 /// GY/T 379-2023 Table 1: largest share of over-limit units that is merely
 /// *over limit* (above it: severely over limit).
 pub const OVER_LIMIT_MAX_RATIO: f64 = 0.40;
@@ -235,13 +239,13 @@ pub fn consecutive_over_limit_ratio(unit_lkfs: &[f64]) -> Option<f64> {
         if is_over(l) {
             run += 1;
         } else {
-            if run >= 2 {
+            if run >= MIN_CONSECUTIVE_OVER_LIMIT {
                 counted += run;
             }
             run = 0;
         }
     }
-    if run >= 2 {
+    if run >= MIN_CONSECUTIVE_OVER_LIMIT {
         counted += run;
     }
     Some(counted as f64 / unit_lkfs.len() as f64)

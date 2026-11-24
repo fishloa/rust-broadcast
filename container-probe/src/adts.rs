@@ -32,6 +32,18 @@ const ADTS_MIN_FRAME_LEN: usize = 7;
 /// layer byte + the three frame-length bytes (through byte 5). A region shorter
 /// than this cannot even offer one header, so the prober cannot rule ADTS out.
 const ADTS_HEADER_LEN: usize = 6;
+
+/// Byte offsets of the 13-bit `frame_length` field: its top 2 bits are in
+/// the third header byte, the rest in the fourth and fifth (§2.2.2, Table 2.2).
+const ADTS_LEN_HIGH_BYTE: usize = 3;
+const ADTS_LEN_MID_BYTE: usize = 4;
+const ADTS_LEN_LOW_BYTE: usize = 5;
+/// Mask of the 2 high `frame_length` bits.
+const ADTS_LEN_HIGH_MASK: u8 = 0x03;
+/// Shift of the next 8 `frame_length` bits.
+const ADTS_LEN_MID_SHIFT: u32 = 3;
+/// Shift of the 3 low `frame_length` bits.
+const ADTS_LEN_LOW_SHIFT: u32 = 5;
 /// Minimum valid-frames-in-a-chain for a positive `LATTICE_WEAK` match.
 const ADTS_MIN_CHAIN_WEAK: usize = 4;
 /// Valid-frames-in-a-chain that lift the verdict to `LATTICE_STRONG`.
@@ -103,15 +115,16 @@ fn need_at_least(anchor: usize, frame_len: usize) -> usize {
 /// deliberately not inspected, so the check is "a header fits", not "the whole
 /// frame fits".
 fn adts_frame_len(data: &[u8], i: usize) -> Option<usize> {
-    if i + 6 > data.len() {
+    if data.len().saturating_sub(i) < ADTS_HEADER_LEN {
         return None;
     }
     if data[i] != ADTS_SYNC[0] || data[i + 1] & ADTS_LAYER_MASK != ADTS_SYNC[1] {
         return None;
     }
-    let frame_len = ((usize::from(data[i + 3]) & 0x03) << ADTS_FRAME_LENGTH_SHIFT)
-        | (usize::from(data[i + 4]) << 3)
-        | (usize::from(data[i + 5]) >> 5);
+    let frame_len = ((usize::from(data[i + ADTS_LEN_HIGH_BYTE]) & ADTS_LEN_HIGH_MASK as usize)
+        << ADTS_FRAME_LENGTH_SHIFT)
+        | (usize::from(data[i + ADTS_LEN_MID_BYTE]) << ADTS_LEN_MID_SHIFT)
+        | (usize::from(data[i + ADTS_LEN_LOW_BYTE]) >> ADTS_LEN_LOW_SHIFT);
     if frame_len < ADTS_MIN_FRAME_LEN {
         return None;
     }

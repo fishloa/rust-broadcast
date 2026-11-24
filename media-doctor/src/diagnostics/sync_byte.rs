@@ -5,6 +5,12 @@ use crate::Diagnostic;
 use crate::Report;
 use crate::report::{Finding, Location, Severity};
 
+/// Offset of the PID's high byte within a TS packet header
+/// (ISO/IEC 13818-1 §2.4.3.2).
+const TS_PID_HIGH_OFFSET: usize = 1;
+/// Offset of the PID's low byte.
+const TS_PID_LOW_OFFSET: usize = 2;
+
 /// Checks that every 188-byte TS packet starts with `0x47` (the MPEG-TS sync byte).
 ///
 /// ITU-T H.222.0 §2.4.3.3: each TS packet begins with a `sync_byte` of `0x47`.
@@ -25,7 +31,10 @@ impl Diagnostic for SyncByteCheck {
                     Severity::Error,
                     Location::at_pid(
                         i,
-                        Pid::from_wire_masked(u16::from_be_bytes([ts[offset + 1], ts[offset + 2]])),
+                        Pid::from_wire_masked(u16::from_be_bytes([
+                            ts[offset + TS_PID_HIGH_OFFSET],
+                            ts[offset + TS_PID_LOW_OFFSET],
+                        ])),
                     ),
                     "sync-byte",
                     alloc::format!(

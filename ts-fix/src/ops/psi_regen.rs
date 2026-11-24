@@ -91,6 +91,16 @@ const PAT_PID: Pid = Pid::from_const(0x0000);
 /// Null-packet PID (ISO/IEC 13818-1 §2.4.1).
 const NULL_PID: Pid = Pid::from_const(0x1FFF);
 
+/// Mask of the 5 high PID bits in a TS packet header's second byte
+/// (ISO/IEC 13818-1 §2.4.3.2).
+const TS_PID_HIGH_MASK: u8 = 0x1F;
+/// Shift of those 5 high PID bits above the low byte.
+const TS_PID_HIGH_SHIFT: u16 = 8;
+/// Byte offset of the low byte of the 13-bit PID.
+const TS_PID_LOW_OFFSET: usize = 2;
+/// `version_number` is 5 bits (ISO/IEC 13818-1 §2.4.4.9), so it wraps here.
+const VERSION_NUMBER_WRAP: u8 = 32;
+
 // ── The operation ──────────────────────────────────────────────────────────
 
 /// PAT regeneration operation.
@@ -166,7 +176,10 @@ impl PsiRegenOp {
 
     /// Extract the PID from a TS packet header (bytes 1-2).
     fn pid_from_packet(packet: &[u8]) -> Pid {
-        Pid::from_wire_masked((((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16)
+        Pid::from_wire_masked(
+            (((packet[1] & TS_PID_HIGH_MASK) as u16) << TS_PID_HIGH_SHIFT)
+                | packet[TS_PID_LOW_OFFSET] as u16,
+        )
     }
 
     /// The `table_id` a PUSI section payload begins with, if any.
@@ -286,7 +299,7 @@ impl PsiRegenOp {
 
         if self.last_entries.as_ref() != Some(&entries) {
             if self.last_entries.is_some() {
-                self.version_number = (self.version_number + 1) % 32;
+                self.version_number = (self.version_number + 1) % VERSION_NUMBER_WRAP;
             }
             self.last_entries = Some(entries.clone());
         }

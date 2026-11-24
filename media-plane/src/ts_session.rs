@@ -536,6 +536,22 @@ pub mod test_support {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
     }
 
+    /// Ring capacities small enough for a loopback test.
+    const TIMED_RING_CAPACITY: usize = 64;
+    const SPARSE_RING_CAPACITY: usize = 16;
+    const SEGMENT_RING_CAPACITY: usize = 8;
+    const EVENT_RING_CAPACITY: usize = 8;
+    const PART_RING_CAPACITY: usize = 8;
+
+    /// Frame rate of the synthetic TS stream.
+    const FRAME_RATE_FPS: u32 = 30;
+
+    /// Values one byte can hold, for a wrapping synthetic NAL byte.
+    const BYTE_RANGE: u32 = 1 << u8::BITS;
+
+    /// NAL header of an IDR slice, which marks a sync sample.
+    const IDR_NAL_HEADER: u8 = 0x65;
+
     #[cfg(test)]
     pub fn timescale(value: u32) -> Timescale {
         Timescale::try_new(value).expect("a non-zero timescale")
@@ -544,11 +560,11 @@ pub mod test_support {
     /// A small `TrunkConfig`.
     pub fn trunk_config() -> TrunkConfig {
         TrunkConfig::default()
-            .with_timed_capacity(nz(64))
-            .with_sparse_capacity(nz(16))
-            .with_segment_capacity(nz(8))
-            .with_event_capacity(nz(8))
-            .with_part_capacity(nz(8))
+            .with_timed_capacity(nz(TIMED_RING_CAPACITY))
+            .with_sparse_capacity(nz(SPARSE_RING_CAPACITY))
+            .with_segment_capacity(nz(SEGMENT_RING_CAPACITY))
+            .with_event_capacity(nz(EVENT_RING_CAPACITY))
+            .with_part_capacity(nz(PART_RING_CAPACITY))
     }
 
     /// A handshake deadline far enough out that it never fires — these
@@ -592,10 +608,12 @@ pub mod test_support {
     ) -> Vec<u8> {
         use broadcast_common::Package;
         let spec = track_spec(track_id);
-        let frame_dur = 90_000 / 30;
+        let frame_dur =
+            u32::try_from(broadcast_common::clock33::PTS_HZ / u64::from(FRAME_RATE_FPS))
+                .unwrap_or(u32::MAX);
         let samples: Vec<Sample> = (0..count)
             .map(|i| {
-                let nal = [0x65u8, nal_byte, (i % 256) as u8];
+                let nal = [IDR_NAL_HEADER, nal_byte, (i % BYTE_RANGE) as u8];
                 let mut data = (nal.len() as u32).to_be_bytes().to_vec();
                 data.extend_from_slice(&nal);
                 Sample::new(

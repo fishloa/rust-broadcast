@@ -31,6 +31,118 @@ use broadcast_common::error::InvalidValue;
 use broadcast_common::len::need_in;
 
 // ---------------------------------------------------------------------------
+// Shared bit widths and field limits
+// ---------------------------------------------------------------------------
+
+/// Bit widths of the fixed-width `u(n)` fields read below.
+const U2_BITS: usize = 2;
+const U3_BITS: usize = 3;
+const U4_BITS: usize = 4;
+const U5_BITS: usize = 5;
+const U6_BITS: usize = 6;
+const U7_BITS: usize = 7;
+const U8_BITS: usize = u8::BITS as usize;
+const U16_BITS: usize = u16::BITS as usize;
+const U32_BITS: usize = u32::BITS as usize;
+const U48_BITS: usize = 48;
+
+/// Byte width of an H.264 SPS header: NAL header + `profile_idc` +
+/// `constraint_set_flags` + `level_idc` (ITU-T H.264 §7.3.2.1.1).
+const AVC_SPS_HEADER_LEN: usize = 4;
+/// Offset of `constraint_set_flags` in an H.264 SPS NAL unit.
+const AVC_SPS_CONSTRAINT_FLAGS_OFFSET: usize = 2;
+/// Offset of `level_idc` in an H.264 SPS NAL unit.
+const AVC_SPS_LEVEL_IDC_OFFSET: usize = 3;
+/// Byte width of an HEVC NAL header (ITU-T H.265 §7.3.1.2).
+const HEVC_NAL_HEADER_LEN: usize = 2;
+/// Byte width of a VVC NAL header (ITU-T H.266 §7.3.1.2).
+const VVC_NAL_HEADER_LEN: usize = 2;
+
+/// `bit_depth_*_minus8` is offset by this to give the bit depth.
+const BIT_DEPTH_MINUS8_OFFSET: u8 = 8;
+/// Largest `chroma_format_idc` (ITU-T H.264 §7.4.2.1 / H.265 Table 6-1).
+const CHROMA_FORMAT_IDC_MAX: u8 = 3;
+/// Largest `bit_depth_luma/chroma_minus8` in an H.264 SPS (§7.4.2.1).
+const H264_BIT_DEPTH_MINUS8_MAX: u64 = 6;
+/// Largest `bit_depth_luma/chroma_minus8` in an H.265 SPS (§7.4.3.2).
+const HEVC_BIT_DEPTH_MINUS8_MAX: u64 = 8;
+/// Default `chroma_format_idc` when the high-profile branch is absent.
+const DEFAULT_CHROMA_FORMAT_IDC: u8 = 1;
+/// Default luma/chroma bit depth when the high-profile branch is absent.
+const DEFAULT_BIT_DEPTH: u8 = 8;
+
+/// Scaling lists in a 4:2:0/4:2:2 SPS (ITU-T H.264 §7.3.2.1.1).
+const SCALING_LIST_COUNT: usize = 8;
+/// Scaling lists in a separate-colour-plane (4:4:4) SPS.
+const SCALING_LIST_COUNT_SEPARATE_COLOUR_PLANE: usize = 12;
+/// First scaling-list index whose table has 64 coefficients.
+const SCALING_LIST_LARGE_START_INDEX: usize = 6;
+/// Coefficients in the first six H.264 scaling lists.
+const SCALING_LIST_SMALL_LEN: usize = 16;
+/// Coefficients in the remaining H.264 scaling lists.
+const SCALING_LIST_LEN: usize = 64;
+/// Initial `last_scale`/`next_scale` (ITU-T H.264 §7.3.2.1.1).
+const DEFAULT_SCALING_VALUE: i64 = 8;
+/// Modulus of the scaling-list delta recurrence.
+const SCALING_MODULUS: i64 = 256;
+
+/// Largest `log2_max_frame_num_minus4` (§7.4.2.1.1).
+const LOG2_MAX_FRAME_NUM_MINUS4_MAX: u64 = 12;
+/// Offset from `log2_max_frame_num_minus4` to `log2_max_frame_num`.
+const LOG2_MAX_FRAME_NUM_MINUS4_OFFSET: u8 = 4;
+/// Largest `log2_max_pic_order_cnt_lsb_minus4` (§7.4.2.1.1).
+const LOG2_MAX_POC_LSB_MINUS4_MAX: u64 = 12;
+/// Offset from `log2_max_pic_order_cnt_lsb_minus4` to
+/// `log2_max_pic_order_cnt_lsb`.
+const LOG2_MAX_POC_LSB_MINUS4_OFFSET: u64 = 4;
+
+/// `frame_mbs_only_flag` converts map units to frame MB units as
+/// `2 - frame_mbs_only_flag` (§7.4.2.1.1).
+const FRAME_MBS_ONLY_FACTOR: u64 = 2;
+/// Divisor converting `time_scale` to a frame rate (H.264 §E.2.1:
+/// `time_scale / (2 * num_units_in_tick)`).
+const AVC_TICKS_PER_FRAME: f32 = 2.0;
+
+/// Largest `vps_num_layer_sets_minus1` accepted by the VPS timing walk.
+const VPS_NUM_LAYER_SETS_MINUS1_MAX: u64 = 1023;
+/// Size-id count in HEVC `scaling_list_data()` (ITU-T H.265 §7.3.4).
+const SCALING_LIST_SIZE_ID_COUNT: u32 = 4;
+/// Largest `size_id` in HEVC `scaling_list_data()`.
+const SCALING_LIST_MAX_SIZE_ID: u32 = 3;
+/// Matrix count for `size_id` 0..=2 (H.265 §7.3.4).
+const SCALING_LIST_MATRIX_COUNT: u32 = 6;
+/// Matrix count for `size_id` 3 (H.265 §7.3.4).
+const SCALING_LIST_MATRIX_COUNT_4X4: u32 = 2;
+/// Maximum coefficient count of an HEVC scaling list.
+const SCALING_COEF_NUM_MAX: u32 = 64;
+/// Base log2 coefficient count in an HEVC scaling list.
+const SCALING_COEF_BITS_BASE: u32 = 4;
+/// Largest `num_short_term_ref_pic_sets` (H.265 §7.4.3.2).
+const NUM_SHORT_TERM_REF_PIC_SETS_MAX: u64 = 64;
+/// Exclusive limit of `abs_delta_rps_minus1` (H.265 §7.4.8: ≤ 2^15-1).
+const ABS_DELTA_RPS_MINUS1_LIMIT: u64 = 1 << 15;
+
+/// Maximum number of HEVC sub-layers (`MaxNumSubLayersMinus1` + 1).
+const HEVC_MAX_SUB_LAYERS: usize = 8;
+/// Maximum number of VVC sub-layers (`MaxNumSubLayersMinus1` + 1).
+const VVC_MAX_SUB_LAYERS: usize = 8;
+
+/// Byte length of the `general_constraint_indicator_flags` tail of the HEVC
+/// 48-bit constraint flags (H.265 §7.3.3).
+const HEVC_CONSTRAINT_BYTES_LEN: usize = 6;
+
+/// Capacity of the `avc1.PPCCLL` codec string.
+const AVC1_CODEC_STRING_CAPACITY: usize = 12;
+/// Capacity of the `vvc1.…` codec string.
+const VVC1_CODEC_STRING_CAPACITY: usize = 24;
+/// Capacity of the `mp4a.40.…` codec string.
+const MP4A_CODEC_STRING_CAPACITY: usize = 16;
+/// Decimal digits of a `u8` (0..=255).
+const U8_DECIMAL_DIGITS: usize = 3;
+/// Radix of the decimal conversion.
+const DECIMAL_RADIX: u8 = 10;
+
+// ---------------------------------------------------------------------------
 // H.264 helpers
 // ---------------------------------------------------------------------------
 
@@ -67,7 +179,7 @@ fn ue_to_u8(v: u64, spec_max: u64, field: &'static str) -> Result<u8> {
 fn ue_bit_depth(minus8: u64, spec_max: u64, field: &'static str) -> Result<u8> {
     let minus8 = ue_to_u8(minus8, spec_max, field)?;
     minus8
-        .checked_add(8)
+        .checked_add(BIT_DEPTH_MINUS8_OFFSET)
         .ok_or(Error::InvalidValue(InvalidValue {
             field,
             value: minus8 as u64,
@@ -349,16 +461,16 @@ fn decode_avc_sps_inner(
     Option<AvcVuiTiming>,
     AvcReorderDepth,
 )> {
-    need_in(sps_bytes, 4, "H.264 SPS header")?;
+    need_in(sps_bytes, AVC_SPS_HEADER_LEN, "H.264 SPS header")?;
 
     // Byte 0 is the NAL header (nal_ref_idc + nal_unit_type).
     // Byte 1 is profile_idc.
     let profile_idc = sps_bytes[1];
-    let constraint_flags = sps_bytes[2];
-    let level_idc = sps_bytes[3];
+    let constraint_flags = sps_bytes[AVC_SPS_CONSTRAINT_FLAGS_OFFSET];
+    let level_idc = sps_bytes[AVC_SPS_LEVEL_IDC_OFFSET];
 
     // Unescape the RBSP: starts after level_idc (byte index 3, i.e. sps_bytes[4]).
-    let mut r = BitReader::with_unescape(&sps_bytes[4..], "H.264 SPS")?;
+    let mut r = BitReader::with_unescape(&sps_bytes[AVC_SPS_HEADER_LEN..], "H.264 SPS")?;
 
     // seq_parameter_set_id — ue(v)
     // Saturating (not validated): `decode_avc_sps` never rejected these.
@@ -368,9 +480,12 @@ fn decode_avc_sps_inner(
     let (chroma_format_idc, separate_colour_plane, bit_depth_luma, bit_depth_chroma) =
         if is_high_profile(profile_idc) {
             // H.264 §7.4.2.1: chroma_format_idc shall be 0..=3.
-            let chroma_format_idc =
-                ue_to_u8(r.read_ue("chroma_format_idc")?, 3, "chroma_format_idc")?;
-            let separate_colour_plane = if chroma_format_idc == 3 {
+            let chroma_format_idc = ue_to_u8(
+                r.read_ue("chroma_format_idc")?,
+                u64::from(CHROMA_FORMAT_IDC_MAX),
+                "chroma_format_idc",
+            )?;
+            let separate_colour_plane = if chroma_format_idc == CHROMA_FORMAT_IDC_MAX {
                 r.read_flag("separate_colour_plane_flag")?
             } else {
                 false
@@ -379,28 +494,37 @@ fn decode_avc_sps_inner(
             // shall be 0..=6 (max bit depth 14).
             let bit_depth_luma = ue_bit_depth(
                 r.read_ue("bit_depth_luma_minus8")?,
-                6,
+                H264_BIT_DEPTH_MINUS8_MAX,
                 "bit_depth_luma_minus8",
             )?;
             let bit_depth_chroma = ue_bit_depth(
                 r.read_ue("bit_depth_chroma_minus8")?,
-                6,
+                H264_BIT_DEPTH_MINUS8_MAX,
                 "bit_depth_chroma_minus8",
             )?;
             let _ = r.read_flag("qpprime_y_zero_transform_bypass_flag")?;
             let scaling_matrix_present = r.read_flag("seq_scaling_matrix_present_flag")?;
             if scaling_matrix_present {
-                let list_count = if chroma_format_idc != 3 { 8 } else { 12 };
+                let list_count = if chroma_format_idc != CHROMA_FORMAT_IDC_MAX {
+                    SCALING_LIST_COUNT
+                } else {
+                    SCALING_LIST_COUNT_SEPARATE_COLOUR_PLANE
+                };
                 for _i in 0..list_count {
                     let list_present = r.read_flag("seq_scaling_list_present_flag[i]")?;
                     if list_present {
-                        let size: usize = if _i < 6 { 16 } else { 64 };
-                        let mut last_scale: i64 = 8;
-                        let mut next_scale: i64 = 8;
+                        let size: usize = if _i < SCALING_LIST_LARGE_START_INDEX {
+                            SCALING_LIST_SMALL_LEN
+                        } else {
+                            SCALING_LIST_LEN
+                        };
+                        let mut last_scale: i64 = DEFAULT_SCALING_VALUE;
+                        let mut next_scale: i64 = DEFAULT_SCALING_VALUE;
                         for _j in 0..size {
                             if next_scale != 0 {
                                 let delta_scale = r.read_se("delta_scale")?;
-                                next_scale = (last_scale + delta_scale + 256) % 256;
+                                next_scale =
+                                    (last_scale + delta_scale + SCALING_MODULUS) % SCALING_MODULUS;
                             }
                             if next_scale == 0 {
                                 // use default; don't change last_scale
@@ -418,19 +542,30 @@ fn decode_avc_sps_inner(
                 bit_depth_chroma,
             )
         } else {
-            (1, false, 8, 8)
+            (
+                DEFAULT_CHROMA_FORMAT_IDC,
+                false,
+                DEFAULT_BIT_DEPTH,
+                DEFAULT_BIT_DEPTH,
+            )
         };
 
     // log2_max_frame_num_minus4 — ue(v)
     // §7.4.2.1.1: log2_max_frame_num_minus4 is 0..=12 (clamped, not rejected).
-    let log2_max_frame_num = r.read_ue("log2_max_frame_num_minus4")?.min(12) as u8 + 4;
+    let log2_max_frame_num = r
+        .read_ue("log2_max_frame_num_minus4")?
+        .min(LOG2_MAX_FRAME_NUM_MINUS4_MAX) as u8
+        + LOG2_MAX_FRAME_NUM_MINUS4_OFFSET;
     // pic_order_cnt_type — ue(v)
     let pic_order_cnt_type = r.read_ue("pic_order_cnt_type")?;
     let mut log2_max_poc_lsb = 0u8;
     let mut delta_pic_order_always_zero = false;
     if pic_order_cnt_type == 0 {
         // §7.4.2.1.1: log2_max_pic_order_cnt_lsb_minus4 is 0..=12 (clamped).
-        log2_max_poc_lsb = r.read_ue("log2_max_pic_order_cnt_lsb_minus4")?.min(12) as u8 + 4;
+        log2_max_poc_lsb = r
+            .read_ue("log2_max_pic_order_cnt_lsb_minus4")?
+            .min(LOG2_MAX_POC_LSB_MINUS4_MAX) as u8
+            + LOG2_MAX_POC_LSB_MINUS4_OFFSET as u8;
     } else if pic_order_cnt_type == 1 {
         delta_pic_order_always_zero = r.read_flag("delta_pic_order_always_zero_flag")?;
         let _ = r.read_se("offset_for_non_ref_pic")?;
@@ -440,7 +575,7 @@ fn decode_avc_sps_inner(
         // 0..=255. Unbounded, this loop is the ~20-byte-SPS demux hang: a
         // hostile count spins on `read_se` (which used to return Ok(0) at
         // EOF without consuming) for billions of iterations.
-        if num_ref_frames > 255 {
+        if num_ref_frames > u64::from(u8::MAX) {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "num_ref_frames_in_pic_order_cnt_cycle",
                 value: num_ref_frames,
@@ -484,7 +619,8 @@ fn decode_avc_sps_inner(
 
     let pic_width_in_mbs = pic_width_in_mbs_minus1 + 1;
     let pic_height_in_map_units = pic_height_in_map_units_minus1 + 1;
-    let frame_height_in_mbs = (2 - frame_mbs_only as u64) * pic_height_in_map_units;
+    let frame_height_in_mbs =
+        (FRAME_MBS_ONLY_FACTOR - frame_mbs_only as u64) * pic_height_in_map_units;
 
     let chroma_array_type = if separate_colour_plane {
         0u8
@@ -492,11 +628,11 @@ fn decode_avc_sps_inner(
         chroma_format_idc
     };
     let (crop_unit_x, crop_unit_y) = if chroma_array_type == 0 {
-        (1u64, 2u64 - frame_mbs_only as u64)
+        (1u64, FRAME_MBS_ONLY_FACTOR - frame_mbs_only as u64)
     } else {
         let sw = sub_width_c(chroma_format_idc) as u64;
         let sh = sub_height_c(chroma_format_idc) as u64;
-        (sw, sh * (2u64 - frame_mbs_only as u64))
+        (sw, sh * (FRAME_MBS_ONLY_FACTOR - frame_mbs_only as u64))
     };
 
     let coded_width = pic_width_in_mbs * AVC_MB_SIZE;
@@ -622,7 +758,7 @@ fn parse_avc_vui(r: &mut BitReader) -> AvcVuiFacts {
 /// Bits of `cpb_removal_delay_length_minus1` / `dpb_output_delay_length_minus1`
 /// (H.264 §E.1.2, `u(5)`), and of the other `u(5)` HRD fields.
 const HRD_LENGTH_FIELD_BITS: usize = 5;
-/// Largest `cpb_cnt_minus1` (H.264 §E.2.2: 0..=31).
+/// Largest `cpb_cnt_minus1` (H.264 §E.2.2 and H.265 §7.4.8: 0..=31).
 const HRD_MAX_CPB_CNT_MINUS1: u64 = 31;
 
 /// Walk one H.264 `hrd_parameters()` (§E.1.2); returns
@@ -636,8 +772,8 @@ fn parse_avc_hrd(r: &mut BitReader) -> crate::error::Result<(u8, u8)> {
             reason: "out of range 0..=31 (H.264 §E.2.2)",
         }));
     }
-    let _ = r.read_bits(4, "bit_rate_scale")?;
-    let _ = r.read_bits(4, "cpb_size_scale")?;
+    let _ = r.read_bits(U4_BITS, "bit_rate_scale")?;
+    let _ = r.read_bits(U4_BITS, "cpb_size_scale")?;
     for _ in 0..=cpb_cnt_minus1 {
         let _ = r.read_ue("bit_rate_value_minus1")?;
         let _ = r.read_ue("cpb_size_value_minus1")?;
@@ -741,11 +877,11 @@ fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::err
     // timing_info_present_flag  u(1)
     let timing_present = r.read_flag("timing_info_present_flag")?;
     if timing_present {
-        let num_units = r.read_bits(32, "num_units_in_tick")? as u32;
-        let ts = r.read_bits(32, "time_scale")? as u32;
+        let num_units = r.read_bits(U32_BITS, "num_units_in_tick")? as u32;
+        let ts = r.read_bits(U32_BITS, "time_scale")? as u32;
         let fixed = r.read_flag("fixed_frame_rate_flag")?;
         let fps = if num_units > 0 {
-            Some(ts as f32 / (2.0 * num_units as f32))
+            Some(ts as f32 / (AVC_TICKS_PER_FRAME * num_units as f32))
         } else {
             None
         };
@@ -982,23 +1118,23 @@ pub fn decode_hevc_vui_timing(sps_bytes: &[u8]) -> Result<Option<HevcVuiTiming>>
 /// `vps_timing_info_present_flag` is 0 or either value is 0. Returns `Err` on
 /// truncated / hostile input (never panics).
 pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
-    need_in(vps_nal, 2, "HEVC VPS header")?;
-    let mut r = BitReader::with_unescape(&vps_nal[2..], "HEVC VPS")?;
+    need_in(vps_nal, HEVC_NAL_HEADER_LEN, "HEVC VPS header")?;
+    let mut r = BitReader::with_unescape(&vps_nal[HEVC_NAL_HEADER_LEN..], "HEVC VPS")?;
 
     // vps_video_parameter_set_id u(4)
-    let _ = r.read_bits(4, "vps_video_parameter_set_id")?;
+    let _ = r.read_bits(U4_BITS, "vps_video_parameter_set_id")?;
     // vps_base_layer_internal_flag u(1)
     let _ = r.read_flag("vps_base_layer_internal_flag")?;
     // vps_base_layer_available_flag u(1)
     let _ = r.read_flag("vps_base_layer_available_flag")?;
     // vps_max_layers_minus1 u(6)
-    let _ = r.read_bits(6, "vps_max_layers_minus1")?;
+    let _ = r.read_bits(U6_BITS, "vps_max_layers_minus1")?;
     // vps_max_sub_layers_minus1 u(3)
-    let vps_max_sub_layers_minus1 = r.read_bits(3, "vps_max_sub_layers_minus1")? as u8;
+    let vps_max_sub_layers_minus1 = r.read_bits(U3_BITS, "vps_max_sub_layers_minus1")? as u8;
     // vps_temporal_id_nesting_flag u(1)
     let _ = r.read_flag("vps_temporal_id_nesting_flag")?;
     // vps_reserved_0xffff_16bits u(16)
-    let _ = r.read_bits(16, "vps_reserved_0xffff_16bits")?;
+    let _ = r.read_bits(U16_BITS, "vps_reserved_0xffff_16bits")?;
 
     // profile_tier_level(1, vps_max_sub_layers_minus1)
     let _ = decode_ptl(&mut r, true, vps_max_sub_layers_minus1)?;
@@ -1017,10 +1153,10 @@ pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
     }
 
     // vps_max_layer_id u(6)
-    let vps_max_layer_id = r.read_bits(6, "vps_max_layer_id")? as u8;
+    let vps_max_layer_id = r.read_bits(U6_BITS, "vps_max_layer_id")? as u8;
     // vps_num_layer_sets_minus1 ue(v)
     let vps_num_layer_sets_minus1 = r.read_ue("vps_num_layer_sets_minus1")?;
-    if vps_num_layer_sets_minus1 > 1023 {
+    if vps_num_layer_sets_minus1 > VPS_NUM_LAYER_SETS_MINUS1_MAX {
         return Err(Error::InvalidValue(InvalidValue {
             field: "vps_num_layer_sets_minus1",
             value: vps_num_layer_sets_minus1,
@@ -1038,8 +1174,8 @@ pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
     if !timing_present {
         return Ok(None);
     }
-    let num_units = r.read_bits(32, "vps_num_units_in_tick")? as u32;
-    let ts = r.read_bits(32, "vps_time_scale")? as u32;
+    let num_units = r.read_bits(U32_BITS, "vps_num_units_in_tick")? as u32;
+    let ts = r.read_bits(U32_BITS, "vps_time_scale")? as u32;
     if num_units == 0 || ts == 0 {
         return Ok(None);
     }
@@ -1062,14 +1198,14 @@ const PTL_INTERLACED_SOURCE_BIT: u64 = 1 << 46;
 fn decode_hevc_sps_inner(
     sps_bytes: &[u8],
 ) -> Result<(HevcSpsInfo, HevcInterlaceSps, DisplayFacts, Option<u32>)> {
-    need_in(sps_bytes, 2, "HEVC SPS header")?;
+    need_in(sps_bytes, HEVC_NAL_HEADER_LEN, "HEVC SPS header")?;
 
-    let mut r = BitReader::with_unescape(&sps_bytes[2..], "HEVC SPS")?;
+    let mut r = BitReader::with_unescape(&sps_bytes[HEVC_NAL_HEADER_LEN..], "HEVC SPS")?;
 
     // sps_video_parameter_set_id — u(4)
-    let _ = r.read_bits(4, "sps_video_parameter_set_id")?;
+    let _ = r.read_bits(U4_BITS, "sps_video_parameter_set_id")?;
     // sps_max_sub_layers_minus1 — u(3)
-    let sps_max_sub_layers_minus1 = r.read_bits(3, "sps_max_sub_layers_minus1")? as u8;
+    let sps_max_sub_layers_minus1 = r.read_bits(U3_BITS, "sps_max_sub_layers_minus1")? as u8;
     // sps_temporal_id_nesting_flag — u(1)
     let _ = r.read_flag("sps_temporal_id_nesting_flag")?;
 
@@ -1087,8 +1223,12 @@ fn decode_hevc_sps_inner(
     let _ = r.read_ue("sps_seq_parameter_set_id")?;
     // chroma_format_idc — ue(v)
     // H.265 §7.4.3.2 / Table 6-1: chroma_format_idc shall be 0..=3.
-    let chroma_format_idc = ue_to_u8(r.read_ue("chroma_format_idc")?, 3, "chroma_format_idc")?;
-    if chroma_format_idc == 3 {
+    let chroma_format_idc = ue_to_u8(
+        r.read_ue("chroma_format_idc")?,
+        u64::from(CHROMA_FORMAT_IDC_MAX),
+        "chroma_format_idc",
+    )?;
+    if chroma_format_idc == CHROMA_FORMAT_IDC_MAX {
         let _ = r.read_flag("separate_colour_plane_flag")?;
     }
     // pic_width_in_luma_samples — ue(v)
@@ -1112,13 +1252,13 @@ fn decode_hevc_sps_inner(
     // up to 16 for Main16); checked conversion, never a raw `as u8 + 8`.
     let bit_depth_luma = ue_bit_depth(
         r.read_ue("bit_depth_luma_minus8")?,
-        8,
+        HEVC_BIT_DEPTH_MINUS8_MAX,
         "bit_depth_luma_minus8",
     )?;
     // bit_depth_chroma_minus8 — ue(v)
     let bit_depth_chroma = ue_bit_depth(
         r.read_ue("bit_depth_chroma_minus8")?,
-        8,
+        HEVC_BIT_DEPTH_MINUS8_MAX,
         "bit_depth_chroma_minus8",
     )?;
 
@@ -1249,19 +1389,19 @@ fn parse_hevc_hrd(r: &mut BitReader, max_sub_layers_minus1: u8) -> Result<Option
     if nal_hrd || vcl_hrd {
         sub_pic = r.read_flag("sub_pic_hrd_params_present_flag")?;
         if sub_pic {
-            let _ = r.read_bits(8, "tick_divisor_minus2")?;
-            let _ = r.read_bits(5, "du_cpb_removal_delay_increment_length_minus1")?;
+            let _ = r.read_bits(U8_BITS, "tick_divisor_minus2")?;
+            let _ = r.read_bits(U5_BITS, "du_cpb_removal_delay_increment_length_minus1")?;
             let _ = r.read_flag("sub_pic_cpb_params_in_pic_timing_sei_flag")?;
-            let _ = r.read_bits(5, "dpb_output_delay_du_length_minus1")?;
+            let _ = r.read_bits(U5_BITS, "dpb_output_delay_du_length_minus1")?;
         }
-        let _ = r.read_bits(4, "bit_rate_scale")?;
-        let _ = r.read_bits(4, "cpb_size_scale")?;
+        let _ = r.read_bits(U4_BITS, "bit_rate_scale")?;
+        let _ = r.read_bits(U4_BITS, "cpb_size_scale")?;
         if sub_pic {
-            let _ = r.read_bits(4, "cpb_size_du_scale")?;
+            let _ = r.read_bits(U4_BITS, "cpb_size_du_scale")?;
         }
-        let _ = r.read_bits(5, "initial_cpb_removal_delay_length_minus1")?;
-        let _ = r.read_bits(5, "au_cpb_removal_delay_length_minus1")?;
-        let _ = r.read_bits(5, "dpb_output_delay_length_minus1")?;
+        let _ = r.read_bits(U5_BITS, "initial_cpb_removal_delay_length_minus1")?;
+        let _ = r.read_bits(U5_BITS, "au_cpb_removal_delay_length_minus1")?;
+        let _ = r.read_bits(U5_BITS, "dpb_output_delay_length_minus1")?;
     }
 
     let max_idx = max_sub_layers_minus1 as usize;
@@ -1290,7 +1430,7 @@ fn parse_hevc_hrd(r: &mut BitReader, max_sub_layers_minus1: u8) -> Result<Option
         }
         if !low_delay {
             let cpb_cnt_minus1 = r.read_ue("cpb_cnt_minus1")?;
-            if cpb_cnt_minus1 > 31 {
+            if cpb_cnt_minus1 > HRD_MAX_CPB_CNT_MINUS1 {
                 return Err(Error::InvalidValue(InvalidValue {
                     field: "cpb_cnt_minus1",
                     value: cpb_cnt_minus1,
@@ -1416,14 +1556,21 @@ fn parse_hevc_sps_to_vui_timing_inner(
         let sps_scaling_list_data_present = r.read_flag("sps_scaling_list_data_present_flag")?;
         if sps_scaling_list_data_present {
             // scaling_list_data() — §7.3.4
-            for size_id in 0u32..4 {
-                let matrix_count = if size_id == 3 { 2 } else { 6 };
+            for size_id in 0u32..SCALING_LIST_SIZE_ID_COUNT {
+                let matrix_count = if size_id == SCALING_LIST_MAX_SIZE_ID {
+                    SCALING_LIST_MATRIX_COUNT_4X4
+                } else {
+                    SCALING_LIST_MATRIX_COUNT
+                };
                 for _matrix_id in 0..matrix_count {
                     let pred_mode = r.read_flag("scaling_list_pred_mode_flag")?;
                     if !pred_mode {
                         let _ = r.read_ue("scaling_list_pred_matrix_id_delta")?;
                     } else {
-                        let coef_num = core::cmp::min(64u32, 1 << (4 + (size_id << 1)));
+                        let coef_num = core::cmp::min(
+                            SCALING_COEF_NUM_MAX,
+                            1 << (SCALING_COEF_BITS_BASE + (size_id << 1)),
+                        );
                         if size_id > 1 {
                             let _ = r.read_ue("scaling_list_dc_coef_minus8")?;
                         }
@@ -1444,8 +1591,8 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // pcm_enabled_flag  u(1)
     let pcm_enabled = r.read_flag("pcm_enabled_flag")?;
     if pcm_enabled {
-        let _ = r.read_bits(4, "pcm_sample_bit_depth_luma_minus1")?;
-        let _ = r.read_bits(4, "pcm_sample_bit_depth_chroma_minus1")?;
+        let _ = r.read_bits(U4_BITS, "pcm_sample_bit_depth_luma_minus1")?;
+        let _ = r.read_bits(U4_BITS, "pcm_sample_bit_depth_chroma_minus1")?;
         let _ = r.read_ue("log2_min_pcm_luma_coding_block_size_minus3")?;
         let _ = r.read_ue("log2_diff_max_min_pcm_luma_coding_block_size")?;
         let _ = r.read_flag("pcm_loop_filter_disabled_flag")?;
@@ -1457,7 +1604,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // unbounded value here is the same CPU-hang class as the AVC POC-cycle
     // loop (the VUI walk swallows this Err, so the SPS decode still returns,
     // just without timing).
-    if num_short_term > 64 {
+    if num_short_term > NUM_SHORT_TERM_REF_PIC_SETS_MAX {
         return Err(Error::InvalidValue(InvalidValue {
             field: "num_short_term_ref_pic_sets",
             value: num_short_term,
@@ -1480,7 +1627,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
             let (ref_s0, ref_s1) = &rps_sets[rps_sets.len() - 1];
             let delta_rps_sign = r.read_flag("delta_rps_sign")?;
             let abs_delta_rps_minus1 = r.read_ue("abs_delta_rps_minus1")?;
-            if abs_delta_rps_minus1 >= 1 << 15 {
+            if abs_delta_rps_minus1 >= ABS_DELTA_RPS_MINUS1_LIMIT {
                 return Err(Error::InvalidValue(InvalidValue {
                     field: "abs_delta_rps_minus1",
                     value: abs_delta_rps_minus1,
@@ -1584,7 +1731,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
         let num_lt = r.read_ue("num_long_term_ref_pics_sps")?;
         // Each entry: lt_ref_pic_poc_lsb_sps u(log2_max_poc_lsb+4)
         //            + used_by_curr_pic_lt_sps_flag u(1)
-        let poc_bits = log2_max_poc_lsb + 4;
+        let poc_bits = log2_max_poc_lsb + LOG2_MAX_POC_LSB_MINUS4_OFFSET;
         for _i in 0..num_lt {
             let _ = r.read_bits(poc_bits as usize, "lt_ref_pic_poc_lsb_sps")?;
             let _ = r.read_flag("used_by_curr_pic_lt_sps_flag")?;
@@ -1654,8 +1801,8 @@ fn parse_hevc_sps_to_vui_timing_inner(
         return Ok(HevcWalkTiming::default());
     }
 
-    let num_units = r.read_bits(32, "vui_num_units_in_tick")? as u32;
-    let ts = r.read_bits(32, "vui_time_scale")? as u32;
+    let num_units = r.read_bits(U32_BITS, "vui_num_units_in_tick")? as u32;
+    let ts = r.read_bits(U32_BITS, "vui_time_scale")? as u32;
 
     // vui_poc_proportional_to_timing_flag  u(1) — parsed past, not used for
     // frame rate (private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md §2.7).
@@ -1722,19 +1869,19 @@ pub struct VvcSpsInfo {
 /// are not needed for the dimensions, but the block is longer than one byte so
 /// it must be skipped exactly, not merely aligned).
 pub fn decode_vvc_sps(sps_bytes: &[u8]) -> Result<VvcSpsInfo> {
-    need_in(sps_bytes, 2, "VVC SPS header")?;
+    need_in(sps_bytes, VVC_NAL_HEADER_LEN, "VVC SPS header")?;
 
-    let mut r = BitReader::with_unescape(&sps_bytes[2..], "VVC SPS")?;
+    let mut r = BitReader::with_unescape(&sps_bytes[VVC_NAL_HEADER_LEN..], "VVC SPS")?;
 
     // sps_seq_parameter_set_id u(4), sps_video_parameter_set_id u(4)
-    let _ = r.read_bits(4, "sps_seq_parameter_set_id")?;
-    let _ = r.read_bits(4, "sps_video_parameter_set_id")?;
+    let _ = r.read_bits(U4_BITS, "sps_seq_parameter_set_id")?;
+    let _ = r.read_bits(U4_BITS, "sps_video_parameter_set_id")?;
     // sps_max_sublayers_minus1 u(3)
-    let sps_max_sublayers_minus1 = r.read_bits(3, "sps_max_sublayers_minus1")? as u8;
+    let sps_max_sublayers_minus1 = r.read_bits(U3_BITS, "sps_max_sublayers_minus1")? as u8;
     // sps_chroma_format_idc u(2)
-    let chroma_format_idc = r.read_bits(2, "sps_chroma_format_idc")? as u8;
+    let chroma_format_idc = r.read_bits(U2_BITS, "sps_chroma_format_idc")? as u8;
     // sps_log2_ctu_size_minus5 u(2)
-    let _ = r.read_bits(2, "sps_log2_ctu_size_minus5")?;
+    let _ = r.read_bits(U2_BITS, "sps_log2_ctu_size_minus5")?;
     // sps_ptl_dpb_hrd_params_present_flag u(1)
     let ptl_present = r.read_flag("sps_ptl_dpb_hrd_params_present_flag")?;
 
@@ -1790,9 +1937,9 @@ fn build_vvc_sps_info(
 /// §7.3.3.1 (+ §7.3.3.2 `general_constraints_info()`).
 fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bool, u8)> {
     // general_profile_idc u(7), general_tier_flag u(1), general_level_idc u(8)
-    let general_profile_idc = r.read_bits(7, "general_profile_idc")? as u8;
+    let general_profile_idc = r.read_bits(U7_BITS, "general_profile_idc")? as u8;
     let general_tier_flag = r.read_flag("general_tier_flag")?;
-    let general_level_idc = r.read_bits(8, "general_level_idc")? as u8;
+    let general_level_idc = r.read_bits(U8_BITS, "general_level_idc")? as u8;
     // ptl_frame_only_constraint_flag u(1), ptl_multilayer_enabled_flag u(1)
     let _ = r.read_flag("ptl_frame_only_constraint_flag")?;
     let _ = r.read_flag("ptl_multilayer_enabled_flag")?;
@@ -1808,7 +1955,7 @@ fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bo
     skip_general_constraints_info(r)?;
 
     // ptl_sublayer_level_present_flag[i] for i = MaxNumSubLayersMinus1-1 .. 0.
-    let mut sublayer_present = [false; 8];
+    let mut sublayer_present = [false; VVC_MAX_SUB_LAYERS];
     for i in (0..max_sublayers_minus1).rev() {
         sublayer_present[i as usize] = r.read_flag("ptl_sublayer_level_present_flag[i]")?;
     }
@@ -1818,13 +1965,13 @@ fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bo
     }
     for i in (0..max_sublayers_minus1).rev() {
         if sublayer_present[i as usize] {
-            let _ = r.read_bits(8, "sublayer_level_idc[i]")?;
+            let _ = r.read_bits(U8_BITS, "sublayer_level_idc[i]")?;
         }
     }
     // ptl_num_sub_profiles u(8)
-    let num_sub_profiles = r.read_bits(8, "ptl_num_sub_profiles")?;
+    let num_sub_profiles = r.read_bits(U8_BITS, "ptl_num_sub_profiles")?;
     for _ in 0..num_sub_profiles {
-        let _ = r.read_bits(32, "general_sub_profile_idc[j]")?;
+        let _ = r.read_bits(U32_BITS, "general_sub_profile_idc[j]")?;
     }
 
     Ok((general_profile_idc, general_tier_flag, general_level_idc))
@@ -1854,7 +2001,7 @@ fn skip_general_constraints_info(r: &mut BitReader) -> Result<()> {
         for bits in GCI_FLAG_BLOCK_BITS {
             let _ = r.read_bits(bits, "general_constraints_info flag")?;
         }
-        let additional = r.read_bits(8, "gci_num_additional_bits")?;
+        let additional = r.read_bits(U8_BITS, "gci_num_additional_bits")?;
         // §7.3.3.2: `numAdditionalBitsUsed = 6` when the count exceeds five
         // (the six extra constraint flags), else 0; then
         // `gci_num_additional_bits - numAdditionalBitsUsed` `gci_reserved_bit`s.
@@ -1884,7 +2031,7 @@ fn skip_general_constraints_info(r: &mut BitReader) -> Result<()> {
 /// UPPERCASE hex: `avc1.<profile_idc><constraint_flags><level_idc>`,
 /// each as two hex digits (e.g. `avc1.4D400D`).
 pub fn rfc6381_avc1(profile_idc: u8, constraint_flags: u8, level_idc: u8) -> String {
-    let mut s = String::with_capacity(12);
+    let mut s = String::with_capacity(AVC1_CODEC_STRING_CAPACITY);
     s.push_str("avc1.");
     s.push_str(&broadcast_common::hex::hex_encode_upper(&[
         profile_idc,
@@ -1926,14 +2073,8 @@ pub fn rfc6381_hvc1(info: &HevcSpsInfo) -> String {
     s.push_str(&alloc::format!("{}", info.general_level_idc));
 
     let constraints = info.general_constraint_indicator_flags;
-    let bytes: [u8; 6] = [
-        ((constraints >> 40) & 0xFF) as u8,
-        ((constraints >> 32) & 0xFF) as u8,
-        ((constraints >> 24) & 0xFF) as u8,
-        ((constraints >> 16) & 0xFF) as u8,
-        ((constraints >> 8) & 0xFF) as u8,
-        (constraints & 0xFF) as u8,
-    ];
+    let be = constraints.to_be_bytes();
+    let bytes = &be[be.len() - HEVC_CONSTRAINT_BYTES_LEN..];
 
     let last_nonzero = bytes.iter().rposition(|&b| b != 0);
     if let Some(end) = last_nonzero {
@@ -1965,7 +2106,7 @@ pub fn rfc6381_vvc1(
     general_constraint_info: &[u8],
     num_bytes_constraint_info: u8,
 ) -> String {
-    let mut s = String::with_capacity(24);
+    let mut s = String::with_capacity(VVC1_CODEC_STRING_CAPACITY);
     s.push_str("vvc1.");
     write_decimal(&mut s, general_profile_idc);
     s.push('.');
@@ -1991,7 +2132,7 @@ pub fn rfc6381_vvc1(
 
 /// Build RFC 6381 `mp4a.40.<AOT>` codec string from AAC `AudioObjectType`.
 pub fn rfc6381_mp4a(aot: u8) -> String {
-    let mut s = String::with_capacity(16);
+    let mut s = String::with_capacity(MP4A_CODEC_STRING_CAPACITY);
     s.push_str("mp4a.40.");
     write_decimal(&mut s, aot);
     s
@@ -2002,11 +2143,11 @@ fn write_decimal(s: &mut String, mut n: u8) {
         s.push('0');
         return;
     }
-    let mut buf = [0u8; 4];
+    let mut buf = [0u8; U8_DECIMAL_DIGITS + 1];
     let mut len = 0;
     while n > 0 {
-        buf[len] = b'0' + (n % 10);
-        n /= 10;
+        buf[len] = b'0' + (n % DECIMAL_RADIX);
+        n /= DECIMAL_RADIX;
         len += 1;
     }
     for i in (0..len).rev() {
@@ -2025,24 +2166,24 @@ pub(crate) fn decode_ptl(
 ) -> Result<(u8, bool, u8, u32, u64, u8)> {
     let (general_profile_space, general_tier_flag, general_profile_idc) = if profile_present_flag {
         (
-            r.read_bits(2, "general_profile_space")? as u8,
+            r.read_bits(U2_BITS, "general_profile_space")? as u8,
             r.read_flag("general_tier_flag")?,
-            r.read_bits(5, "general_profile_idc")? as u8,
+            r.read_bits(U5_BITS, "general_profile_idc")? as u8,
         )
     } else {
         (0, false, 0)
     };
 
     let general_profile_compatibility_flags =
-        r.read_bits(32, "general_profile_compatibility_flags")? as u32;
+        r.read_bits(U32_BITS, "general_profile_compatibility_flags")? as u32;
 
     let general_constraint_indicator_flags =
-        r.read_bits(48, "general_constraint_indicator_flags")?;
+        r.read_bits(U48_BITS, "general_constraint_indicator_flags")?;
 
-    let general_level_idc = r.read_bits(8, "general_level_idc")? as u8;
+    let general_level_idc = r.read_bits(U8_BITS, "general_level_idc")? as u8;
 
-    let mut sub_layer_profile_present_flag = [false; 7];
-    let mut sub_layer_level_present_flag = [false; 7];
+    let mut sub_layer_profile_present_flag = [false; HEVC_MAX_SUB_LAYERS - 1];
+    let mut sub_layer_level_present_flag = [false; HEVC_MAX_SUB_LAYERS - 1];
     for i in 0..max_sub_layers_minus1 {
         sub_layer_profile_present_flag[i as usize] =
             r.read_flag("sub_layer_profile_present_flag[i]")?;
@@ -2051,21 +2192,21 @@ pub(crate) fn decode_ptl(
     }
 
     if max_sub_layers_minus1 > 0 {
-        for _i in max_sub_layers_minus1..8 {
-            let _ = r.read_bits(2, "reserved_zero_2bits")?;
+        for _i in max_sub_layers_minus1..HEVC_MAX_SUB_LAYERS as u8 {
+            let _ = r.read_bits(U2_BITS, "reserved_zero_2bits")?;
         }
     }
 
     for i in 0..max_sub_layers_minus1 {
         if sub_layer_profile_present_flag[i as usize] {
-            let _ = r.read_bits(2, "sub_layer_profile_space")?;
+            let _ = r.read_bits(U2_BITS, "sub_layer_profile_space")?;
             let _ = r.read_flag("sub_layer_tier_flag")?;
-            let _ = r.read_bits(5, "sub_layer_profile_idc")?;
-            let _ = r.read_bits(32, "sub_layer_profile_compatibility_flags")?;
-            let _ = r.read_bits(48, "sub_layer_constraint_indicator_flags")?;
+            let _ = r.read_bits(U5_BITS, "sub_layer_profile_idc")?;
+            let _ = r.read_bits(U32_BITS, "sub_layer_profile_compatibility_flags")?;
+            let _ = r.read_bits(U48_BITS, "sub_layer_constraint_indicator_flags")?;
         }
         if sub_layer_level_present_flag[i as usize] {
-            let _ = r.read_bits(8, "sub_layer_level_idc")?;
+            let _ = r.read_bits(U8_BITS, "sub_layer_level_idc")?;
         }
     }
 

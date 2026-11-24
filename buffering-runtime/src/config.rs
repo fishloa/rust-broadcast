@@ -23,7 +23,7 @@ pub const US_PER_S: u64 = 1_000_000;
 pub(crate) const TICKS_PER_US: u64 = PCR_HZ / US_PER_S;
 /// Q15 fixed point: shift, and the value of 1.0.
 pub(crate) const Q15_SHIFT: u32 = 15;
-pub(crate) const Q15_ONE: u64 = 1 << Q15_SHIFT;
+pub(crate) const Q15_UNIT: u64 = 1 << Q15_SHIFT;
 /// Q8 fixed point shift.
 pub(crate) const Q8_SHIFT: u32 = 8;
 /// Quantiles are expressed in permille.
@@ -33,6 +33,8 @@ pub(crate) const MIN_SAMPLES_CAP: u16 = 8;
 /// Over-max re-arm fraction: re-armed when `need <= max * NUM / DEN`.
 pub(crate) const REARM_NUM: u64 = 3;
 pub(crate) const REARM_DEN: u64 = 4;
+/// `min_window` must span at least this many poll intervals.
+pub(crate) const MIN_WINDOW_INTERVALS: u64 = 2;
 
 /// `value * q >> shift`, widened so it cannot overflow, saturating at `u64::MAX`.
 pub(crate) fn mul_q(value: u64, q: u16, shift: u32) -> u64 {
@@ -96,13 +98,15 @@ impl JitterConfig {
         if self.interval.is_zero() {
             return Err(Error::InvalidConfig(ConfigField::Interval));
         }
-        if window_micros(self.min_window) < window_micros(self.interval).saturating_mul(2) {
+        if window_micros(self.min_window)
+            < window_micros(self.interval).saturating_mul(MIN_WINDOW_INTERVALS)
+        {
             return Err(Error::InvalidConfig(ConfigField::MinWindow));
         }
         if self.bucket.is_zero() || self.buckets == 0 {
             return Err(Error::InvalidConfig(ConfigField::Bucket));
         }
-        if u64::from(self.forget_q15) >= Q15_ONE {
+        if u64::from(self.forget_q15) >= Q15_UNIT {
             return Err(Error::InvalidConfig(ConfigField::Forget));
         }
         if self.quantile_permille == 0 || u64::from(self.quantile_permille) > PERMILLE {

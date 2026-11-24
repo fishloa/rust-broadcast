@@ -27,6 +27,12 @@ mod ts;
 
 use alloc::vec::Vec;
 
+use crate::isobmff::BRAND_LEN;
+
+/// Divisor of the geometric growth a need estimate takes when no structural
+/// need can be named.
+const NEED_GROWTH_DIVISOR: usize = 2;
+
 /// MXF Partition Pack kind — the `PartitionKind` byte, byte 14 of the
 /// Partition Pack Key UL (SMPTE ST 377-1 §7.2-7.4).
 ///
@@ -231,7 +237,7 @@ pub enum Detail {
     #[non_exhaustive]
     Isobmff {
         /// The 4-character code from the `ftyp` major brand, if one was read.
-        major_brand: Option<[u8; 4]>,
+        major_brand: Option<[u8; BRAND_LEN]>,
         /// Number of top-level boxes that chained cleanly into the buffer.
         boxes_walked: u8,
         /// Which structural layout the top-level walk observed — the
@@ -299,7 +305,7 @@ impl Detail {
         if let Detail::Isobmff { major_brand, .. } = self {
             // `major_brand` is a reference into `self` (match ergonomics on the
             // connected `&self`), so the returned `&str` borrows from `self`.
-            let bytes: &[u8; 4] = major_brand.as_ref()?;
+            let bytes: &[u8; BRAND_LEN] = major_brand.as_ref()?;
             core::str::from_utf8(&bytes[..]).ok()
         } else {
             None
@@ -648,7 +654,9 @@ fn normalise_need(need: usize, limit: usize) -> usize {
 /// re-probes what it actually got: a file shorter than this figure is probed
 /// whole on the next turn, so nothing that was decidable becomes undecidable.
 fn geometric_floor(limit: usize) -> usize {
-    limit.saturating_add(limit / 2).saturating_add(1)
+    limit
+        .saturating_add(limit / NEED_GROWTH_DIVISOR)
+        .saturating_add(1)
 }
 
 /// A registered prober. Each prober is a pure function over a slice read no

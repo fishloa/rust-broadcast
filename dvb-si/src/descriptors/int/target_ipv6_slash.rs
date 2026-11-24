@@ -13,6 +13,8 @@ use core::net::Ipv6Addr;
 /// Descriptor tag for target_IPv6_slash_descriptor.
 pub const TAG: u8 = 0x11;
 const ENTRY_LEN: usize = 17;
+/// Wire width of `IPv6_addr`; also the offset of `IPv6_slash_mask`.
+const ADDR_LEN: usize = size_of::<u128>();
 
 /// One `IPv6_addr` / `IPv6_slash_mask` entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,16 +28,16 @@ pub struct Ipv6Slash {
 
 impl Entry<ENTRY_LEN> for Ipv6Slash {
     fn read(b: &[u8; ENTRY_LEN]) -> Self {
-        let mut a = [0u8; 16];
-        a.copy_from_slice(&b[..16]);
+        let mut a = [0u8; ADDR_LEN];
+        a.copy_from_slice(&b[..ADDR_LEN]);
         Self {
             addr: Ipv6Addr::from(a),
-            slash_mask: b[16],
+            slash_mask: b[ADDR_LEN],
         }
     }
     fn write(&self, b: &mut [u8; ENTRY_LEN]) {
-        b[..16].copy_from_slice(&self.addr.octets());
-        b[16] = self.slash_mask;
+        b[..ADDR_LEN].copy_from_slice(&self.addr.octets());
+        b[ADDR_LEN] = self.slash_mask;
     }
 }
 

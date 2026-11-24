@@ -92,6 +92,10 @@ struct SentPacket {
     payload: Vec<u8>,
 }
 
+/// Strict upper bound on retained sent packets: just below half the `u16`
+/// sequence space, so two live generations of one `seq` can never coincide.
+const MAX_BUFFERED_LIMIT: usize = (1 << 15) - 1;
+
 /// Sender-side lookup buffer for NACK-triggered retransmission (§5.3.3).
 ///
 /// Indexed by sequence number (see the module doc's "NACK-amplification
@@ -126,7 +130,7 @@ impl Sender {
         // again, and `order` gains a duplicate `u16` on every send,
         // forever. Clamped strictly below half the sequence space so two
         // live generations of the same `seq` can never coexist.
-        let max_buffered = max_buffered.clamp(1, (1 << 15) - 1);
+        let max_buffered = max_buffered.clamp(1, MAX_BUFFERED_LIMIT);
         Sender {
             by_seq: BTreeMap::new(),
             order: VecDeque::new(),

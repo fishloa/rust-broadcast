@@ -32,6 +32,21 @@ const RESERVED_PRE_DECOR: u64 = 0;
 /// `Reserved` (8 bits, final field) — always `0` (§4.4).
 const RESERVED_FINAL: u64 = 0;
 
+// Wire bit widths of the `ObjectDefinition1` fields (§4.4).
+/// Width of every 2-bit field (`Reserved(snap)`, `ZoneGain`,
+/// `ObjectSpreadMode`, `ObjectDecorCoefPrefix`).
+const SMALL_FIELD_BITS: u32 = 2;
+/// Number of `ObjectPos` components (`ObjectPosX`/`Y`/`Z`).
+const OBJECT_POSITION_COMPONENTS: u32 = 3;
+/// `ObjectSpread` width in `OneD` mode (a single linear spread pair).
+const OBJECT_SPREAD_LINEAR_BITS: u32 = 12;
+/// Width of the header reserved field.
+const HEADER_RESERVED_BITS: u32 = 11;
+/// Width of the per-pan-info reserved field.
+const PAN_INFO_RESERVED_BITS: u32 = 5;
+/// Width of the pre-decorrelation reserved field.
+const PRE_DECOR_RESERVED_BITS: u32 = 4;
+
 /// Zone identifiers — RDD 29 §5.4.5 Table 8. Informative: this is the
 /// *array position* a `ZoneGain` occupies in wire order, not a value that
 /// itself appears on the wire.
@@ -185,8 +200,8 @@ impl ObjectSpreadMode {
     /// codes — §4.4's `else { ObjectSpread[sb] = 0.0 }` branch).
     fn spread_width(self) -> Option<u32> {
         match self {
-            Self::Lowrez => Some(8),
-            Self::OneD => Some(12),
+            Self::Lowrez => Some(u8::BITS),
+            Self::OneD => Some(OBJECT_SPREAD_LINEAR_BITS),
             Self::Reserved(_) => None,
         }
     }
@@ -317,6 +332,8 @@ pub struct AudioDescription<'a> {
 }
 
 const AUDIO_DESCRIPTION_TEXT_FOLLOWS: u8 = 0x80;
+/// The NULL terminator of the optional `AudioDescription` text.
+const AUDIO_DESCRIPTION_TERMINATOR: u8 = 0x00;
 
 impl<'a> AudioDescription<'a> {
     /// Build an `AudioDescription` with no text (`flag_byte` with bit
@@ -424,11 +441,11 @@ impl<'a> ObjectDefinition1<'a> {
     pub fn parse_with_frame_rate(bytes: &'a [u8], frame_rate: FrameRate) -> Result<Self> {
         let num_pan_sub_blocks = frame_rate.num_pan_sub_blocks()?;
         let mut r = BitReader::new(bytes);
-        let meta_id = read_plex(&mut r, 8, "ObjectDefinition1.MetaID")? as u32;
-        let audio_data_id = read_plex(&mut r, 8, "ObjectDefinition1.AudioDataID")? as u32;
+        let meta_id = read_plex(&mut r, u8::BITS, "ObjectDefinition1.MetaID")? as u32;
+        let audio_data_id = read_plex(&mut r, u8::BITS, "ObjectDefinition1.AudioDataID")? as u32;
         read_reserved(
             &mut r,
-            11,
+            HEADER_RESERVED_BITS,
             RESERVED_HEADER,
             "ObjectDefinition1.Reserved(header)",
         )?;
@@ -453,7 +470,7 @@ impl<'a> ObjectDefinition1<'a> {
 
         read_reserved(
             &mut r,
-            8,
+            u8::BITS,
             RESERVED_FINAL,
             "ObjectDefinition1.Reserved(final)",
         )?;
@@ -471,45 +488,58 @@ impl<'a> ObjectDefinition1<'a> {
     fn parse_pan_info(r: &mut BitReader<'_>) -> Result<PanInfo> {
         read_reserved(
             r,
-            5,
+            PAN_INFO_RESERVED_BITS,
             RESERVED_PAN_INFO,
             "ObjectDefinition1.Reserved(pan-info)",
         )?;
-        let pos_x = r.read_bits(16).ctx("ObjectDefinition1.ObjectPosX")? as u16;
-        let pos_y = r.read_bits(16).ctx("ObjectDefinition1.ObjectPosY")? as u16;
-        let pos_z = r.read_bits(16).ctx("ObjectDefinition1.ObjectPosZ")? as u16;
+        let pos_x = r.read_bits(u16::BITS).ctx("ObjectDefinition1.ObjectPosX")? as u16;
+        let pos_y = r.read_bits(u16::BITS).ctx("ObjectDefinition1.ObjectPosY")? as u16;
+        let pos_z = r.read_bits(u16::BITS).ctx("ObjectDefinition1.ObjectPosZ")? as u16;
         let snap = r.read_bool().ctx("ObjectDefinition1.ObjectSnap")?;
         if snap {
-            read_reserved(r, 2, RESERVED_SNAP, "ObjectDefinition1.Reserved(snap)")?;
+            read_reserved(
+                r,
+                SMALL_FIELD_BITS,
+                RESERVED_SNAP,
+                "ObjectDefinition1.Reserved(snap)",
+            )?;
         }
         let zone_control = r.read_bool().ctx("ObjectDefinition1.ObjectZoneControl")?;
         let zone_gains = if zone_control {
             let mut gains = [ZoneGain::GainZero; MAX_KNOWN_ZONES];
             for g in &mut gains {
-                *g = ZoneGain::from_bits(r.read_bits(2).ctx("ObjectDefinition1.ZoneGain")?);
+                *g = ZoneGain::from_bits(
+                    r.read_bits(SMALL_FIELD_BITS)
+                        .ctx("ObjectDefinition1.ZoneGain")?,
+                );
             }
             Some(gains)
         } else {
             None
         };
-        let spread_mode =
-            ObjectSpreadMode::from_bits(r.read_bits(2).ctx("ObjectDefinition1.ObjectSpreadMode")?);
+        let spread_mode = ObjectSpreadMode::from_bits(
+            r.read_bits(SMALL_FIELD_BITS)
+                .ctx("ObjectDefinition1.ObjectSpreadMode")?,
+        );
         let spread = match spread_mode.spread_width() {
             Some(width) => r.read_bits(width).ctx("ObjectDefinition1.ObjectSpread")? as u16,
             None => 0,
         };
         read_reserved(
             r,
-            4,
+            PRE_DECOR_RESERVED_BITS,
             RESERVED_PRE_DECOR,
             "ObjectDefinition1.Reserved(pre-decor)",
         )?;
         let decor_coef_prefix = DecorCoefPrefix::from_bits(
-            r.read_bits(2)
+            r.read_bits(SMALL_FIELD_BITS)
                 .ctx("ObjectDefinition1.ObjectDecorCoefPrefix")?,
         );
         let decor_coef = if decor_coef_prefix.reads_coef() {
-            Some(r.read_bits(8).ctx("ObjectDefinition1.ObjectDecorCoef")? as u8)
+            Some(
+                r.read_bits(u8::BITS)
+                    .ctx("ObjectDefinition1.ObjectDecorCoef")? as u8,
+            )
         } else {
             None
         };
@@ -531,7 +561,7 @@ impl<'a> ObjectDefinition1<'a> {
         r: &mut BitReader<'a>,
     ) -> Result<AudioDescription<'a>> {
         debug_assert!(r.is_byte_aligned());
-        let flag_start = r.bits_read() / 8;
+        let flag_start = r.bits_read() / (u8::BITS as usize);
         let flag_byte = *bytes.get(flag_start).ok_or(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
                 need: flag_start + 1,
@@ -539,47 +569,48 @@ impl<'a> ObjectDefinition1<'a> {
                 what: "ObjectDefinition1.AudioDescription",
             },
         ))?;
-        r.skip_bits(8).ctx("ObjectDefinition1.AudioDescription")?;
-        let text =
-            if flag_byte & AUDIO_DESCRIPTION_TEXT_FOLLOWS != 0 {
-                let text_start = flag_start + 1;
-                let nul_offset = bytes[text_start..].iter().position(|&b| b == 0x00).ok_or(
-                    Error::InvalidValue(broadcast_common::error::InvalidValue {
-                        field: "ObjectDefinition1.AudioDescription",
-                        value: 0,
-                        reason: "NULL-terminated text ran past the end of the element body",
-                    }),
-                )?;
-                let text_end = text_start + nul_offset;
-                let consumed_bytes = (text_end + 1) - text_start; // text + terminator
-                r.skip_bits(consumed_bytes * 8)
-                    .ctx("ObjectDefinition1.AudioDescription(text)")?;
-                Some(&bytes[text_start..text_end])
-            } else {
-                None
-            };
+        r.skip_bits(u8::BITS as usize)
+            .ctx("ObjectDefinition1.AudioDescription")?;
+        let text = if flag_byte & AUDIO_DESCRIPTION_TEXT_FOLLOWS != 0 {
+            let text_start = flag_start + 1;
+            let nul_offset = bytes[text_start..]
+                .iter()
+                .position(|&b| b == AUDIO_DESCRIPTION_TERMINATOR)
+                .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "ObjectDefinition1.AudioDescription",
+                    value: 0,
+                    reason: "NULL-terminated text ran past the end of the element body",
+                }))?;
+            let text_end = text_start + nul_offset;
+            let consumed_bytes = (text_end + 1) - text_start; // text + terminator
+            r.skip_bits(consumed_bytes * u8::BITS as usize)
+                .ctx("ObjectDefinition1.AudioDescription(text)")?;
+            Some(&bytes[text_start..text_end])
+        } else {
+            None
+        };
         Ok(AudioDescription { flag_byte, text })
     }
 
     fn pan_info_bits(pan: Option<&PanInfo>, is_first_sub_block: bool) -> u32 {
         let mut bits = u32::from(!is_first_sub_block); // PanInfoExists, absent for sb==0
         if let Some(info) = pan {
-            bits += 5; // Reserved(pan-info)
-            bits += 16 * 3; // ObjectPosX/Y/Z
+            bits += PAN_INFO_RESERVED_BITS; // Reserved(pan-info)
+            bits += u16::BITS * OBJECT_POSITION_COMPONENTS; // ObjectPosX/Y/Z
             bits += 1; // ObjectSnap
             if info.snap {
-                bits += 2; // Reserved(snap)
+                bits += SMALL_FIELD_BITS; // Reserved(snap)
             }
             bits += 1; // ObjectZoneControl
             if info.zone_gains.is_some() {
-                bits += 2 * MAX_KNOWN_ZONES as u32; // ZoneGain * 9
+                bits += SMALL_FIELD_BITS * MAX_KNOWN_ZONES as u32; // ZoneGain * MAX_KNOWN_ZONES
             }
-            bits += 2; // ObjectSpreadMode
+            bits += SMALL_FIELD_BITS; // ObjectSpreadMode
             bits += info.spread_mode.spread_width().unwrap_or(0);
-            bits += 4; // Reserved(pre-decor)
-            bits += 2; // ObjectDecorCoefPrefix
+            bits += PRE_DECOR_RESERVED_BITS; // Reserved(pre-decor)
+            bits += SMALL_FIELD_BITS; // ObjectDecorCoefPrefix
             if info.decor_coef.is_some() {
-                bits += 8; // ObjectDecorCoef
+                bits += u8::BITS; // ObjectDecorCoef
             }
         }
         bits
@@ -627,13 +658,13 @@ impl Serialize for ObjectDefinition1<'_> {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut bits = plex_bits(u64::from(self.meta_id), 8)
-            + plex_bits(u64::from(self.audio_data_id), 8)
-            + 11;
+        let mut bits = plex_bits(u64::from(self.meta_id), u8::BITS)
+            + plex_bits(u64::from(self.audio_data_id), u8::BITS)
+            + HEADER_RESERVED_BITS;
         for (i, sb) in self.pan_sub_blocks.iter().enumerate() {
             bits += Self::pan_info_bits(sb.pan.as_ref(), i == 0);
         }
-        let mut total_bytes = (bits as usize).div_ceil(8); // AlignBits boundary
+        let mut total_bytes = (bits as usize).div_ceil(u8::BITS as usize); // AlignBits boundary
         total_bytes += 1; // AudioDescription flag byte
         if let Some(text) = self.audio_description.text {
             total_bytes += text.len() + 1; // + NUL terminator
@@ -650,18 +681,18 @@ impl Serialize for ObjectDefinition1<'_> {
         write_plex(
             &mut w,
             u64::from(self.meta_id),
-            8,
+            u8::BITS,
             "ObjectDefinition1.MetaID",
         )?;
         write_plex(
             &mut w,
             u64::from(self.audio_data_id),
-            8,
+            u8::BITS,
             "ObjectDefinition1.AudioDataID",
         )?;
         write_reserved(
             &mut w,
-            11,
+            HEADER_RESERVED_BITS,
             RESERVED_HEADER,
             "ObjectDefinition1.Reserved(header)",
         )?;
@@ -677,19 +708,19 @@ impl Serialize for ObjectDefinition1<'_> {
         }
 
         write_align_bits(&mut w, self.align_bits, "ObjectDefinition1.AlignBits")?;
-        w.write_bits(u64::from(self.audio_description.flag_byte), 8)
+        w.write_bits(u64::from(self.audio_description.flag_byte), u8::BITS)
             .ctx("ObjectDefinition1.AudioDescription")?;
         if let Some(text) = self.audio_description.text {
             for &b in text {
-                w.write_bits(u64::from(b), 8)
+                w.write_bits(u64::from(b), u8::BITS)
                     .ctx("ObjectDefinition1.AudioDescription(text)")?;
             }
-            w.write_bits(0, 8)
+            w.write_bits(0, u8::BITS)
                 .ctx("ObjectDefinition1.AudioDescription(terminator)")?;
         }
         write_reserved(
             &mut w,
-            8,
+            u8::BITS,
             RESERVED_FINAL,
             "ObjectDefinition1.Reserved(final)",
         )?;
@@ -700,30 +731,35 @@ impl Serialize for ObjectDefinition1<'_> {
 fn write_pan_info(w: &mut BitWriter<'_>, info: &PanInfo) -> Result<()> {
     write_reserved(
         w,
-        5,
+        PAN_INFO_RESERVED_BITS,
         RESERVED_PAN_INFO,
         "ObjectDefinition1.Reserved(pan-info)",
     )?;
-    w.write_bits(u64::from(info.pos_x), 16)
+    w.write_bits(u64::from(info.pos_x), u16::BITS)
         .ctx("ObjectDefinition1.ObjectPosX")?;
-    w.write_bits(u64::from(info.pos_y), 16)
+    w.write_bits(u64::from(info.pos_y), u16::BITS)
         .ctx("ObjectDefinition1.ObjectPosY")?;
-    w.write_bits(u64::from(info.pos_z), 16)
+    w.write_bits(u64::from(info.pos_z), u16::BITS)
         .ctx("ObjectDefinition1.ObjectPosZ")?;
     w.write_bool(info.snap)
         .ctx("ObjectDefinition1.ObjectSnap")?;
     if info.snap {
-        write_reserved(w, 2, RESERVED_SNAP, "ObjectDefinition1.Reserved(snap)")?;
+        write_reserved(
+            w,
+            SMALL_FIELD_BITS,
+            RESERVED_SNAP,
+            "ObjectDefinition1.Reserved(snap)",
+        )?;
     }
     w.write_bool(info.zone_gains.is_some())
         .ctx("ObjectDefinition1.ObjectZoneControl")?;
     if let Some(gains) = info.zone_gains {
         for gain in gains {
-            w.write_bits(gain.to_bits(), 2)
+            w.write_bits(gain.to_bits(), SMALL_FIELD_BITS)
                 .ctx("ObjectDefinition1.ZoneGain")?;
         }
     }
-    w.write_bits(info.spread_mode.to_bits(), 2)
+    w.write_bits(info.spread_mode.to_bits(), SMALL_FIELD_BITS)
         .ctx("ObjectDefinition1.ObjectSpreadMode")?;
     if let Some(width) = info.spread_mode.spread_width() {
         w.write_bits(u64::from(info.spread), width)
@@ -731,14 +767,14 @@ fn write_pan_info(w: &mut BitWriter<'_>, info: &PanInfo) -> Result<()> {
     }
     write_reserved(
         w,
-        4,
+        PRE_DECOR_RESERVED_BITS,
         RESERVED_PRE_DECOR,
         "ObjectDefinition1.Reserved(pre-decor)",
     )?;
-    w.write_bits(info.decor_coef_prefix.to_bits(), 2)
+    w.write_bits(info.decor_coef_prefix.to_bits(), SMALL_FIELD_BITS)
         .ctx("ObjectDefinition1.ObjectDecorCoefPrefix")?;
     if let Some(coef) = info.decor_coef {
-        w.write_bits(u64::from(coef), 8)
+        w.write_bits(u64::from(coef), u8::BITS)
             .ctx("ObjectDefinition1.ObjectDecorCoef")?;
     }
     Ok(())

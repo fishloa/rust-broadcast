@@ -23,6 +23,7 @@
 
 use crate::annexb::find_start_code_prefix;
 use crate::error::{Error, Result};
+use crate::wire_cursor::be_u32;
 use broadcast_common::len::need_in;
 
 // ── MPEG-2 video sequence header — ISO/IEC 13818-2 §6.2.2.1 ─────────────────
@@ -34,6 +35,19 @@ pub const SEQUENCE_HEADER_CODE: [u8; 4] = [0x00, 0x00, 0x01, 0xB3];
 /// Bytes of `horizontal_size_value` + `vertical_size_value` following the
 /// 4-byte start code: 12 + 12 = 24 bits = 3 bytes (§6.2.2.1).
 const SEQ_SIZE_FIELD_BYTES: usize = 3;
+
+/// Bytes in a `00 00 01` start-code prefix, before the code byte itself.
+const START_CODE_PREFIX_LEN: usize = 3;
+
+/// Half a byte: the two 12-bit sizes of `sequence_header()` straddle a byte
+/// boundary at four bits (§6.2.2.1).
+const NIBBLE_BITS: u32 = u8::BITS / 2;
+
+/// Mask selecting the low nibble of a `sequence_header()` size byte.
+const NIBBLE_MASK: u8 = 0x0F;
+
+/// Index of the third, all-`vertical_size_value` byte of the size fields.
+const SEQ_SIZE_LOW_BYTE_INDEX: usize = 2;
 
 /// The coded picture geometry read from a MPEG-2 video `sequence_header()`.
 ///
@@ -57,9 +71,10 @@ impl Mpeg2SeqHeader {
     /// size fields. Returns [`Error::InvalidInput`] if no sequence header is
     /// present, or [`Error::BufferTooShort`] if it is truncated.
     pub fn find(es: &[u8]) -> Result<Self> {
-        let start = find_start_code(es, SEQUENCE_HEADER_CODE[3]).ok_or(Error::InvalidInput(
-            "no MPEG-2 sequence_header (start code 0x000001B3) in elementary stream",
-        ))?;
+        let start = find_start_code(es, SEQUENCE_HEADER_CODE[SEQUENCE_HEADER_CODE.len() - 1])
+            .ok_or(Error::InvalidInput(
+                "no MPEG-2 sequence_header (start code 0x000001B3) in elementary stream",
+            ))?;
         // Fields begin immediately after the 4-byte start code.
         let fields_at = start + SEQUENCE_HEADER_CODE.len();
         need_in(
@@ -70,8 +85,9 @@ impl Mpeg2SeqHeader {
         let b = &es[fields_at..fields_at + SEQ_SIZE_FIELD_BYTES];
         // horizontal_size_value = b[0] << 4 | b[1] >> 4 (12 bits)
         // vertical_size_value   = (b[1] & 0x0F) << 8 | b[2] (12 bits)
-        let width = ((b[0] as u16) << 4) | ((b[1] as u16) >> 4);
-        let height = (((b[1] & 0x0F) as u16) << 8) | b[2] as u16;
+        let width = ((b[0] as u16) << NIBBLE_BITS) | ((b[1] as u16) >> NIBBLE_BITS);
+        let height =
+            (((b[1] & NIBBLE_MASK) as u16) << u8::BITS) | b[SEQ_SIZE_LOW_BYTE_INDEX] as u16;
         Ok(Self { width, height })
     }
 }
@@ -80,7 +96,7 @@ impl Mpeg2SeqHeader {
 fn find_start_code(data: &[u8], code: u8) -> Option<usize> {
     let mut from = 0usize;
     while let Some(at) = find_start_code_prefix(data, from) {
-        if data.get(at + 3) == Some(&code) {
+        if data.get(at + START_CODE_PREFIX_LEN) == Some(&code) {
             return Some(at);
         }
         from = at + 1;
@@ -204,6 +220,46 @@ const LAYER_I: u8 = 0b11;
 /// Channel `mode` value for `single_channel` (mono) — §2.4.2.3.
 const MODE_SINGLE_CHANNEL: u8 = 0b11;
 
+/// Bytes of the frame header fixed at the start of every frame (§2.4.1.3).
+const FRAME_HEADER_LEN: usize = 4;
+
+/// Bit position of `syncword` in the 32-bit frame header.
+const SYNCWORD_SHIFT: u32 = 21;
+/// Bit position of the 2-bit `ID` (MPEG version) field.
+const VERSION_ID_SHIFT: u32 = 19;
+/// Bit position of the 2-bit `layer` field.
+const LAYER_SHIFT: u32 = 17;
+/// Bit position of the 4-bit `bitrate_index` field.
+const BITRATE_INDEX_SHIFT: u32 = 12;
+/// Bit position of the 2-bit `sampling_frequency` field.
+const SAMPLE_RATE_INDEX_SHIFT: u32 = 10;
+/// Bit position of the 1-bit `padding_bit` field.
+const PADDING_SHIFT: u32 = 9;
+/// Bit position of the 2-bit `mode` field.
+const MODE_SHIFT: u32 = 6;
+/// Mask for a 2-bit field (`ID`, `layer`, `mode`).
+const BIT_PAIR_MASK: u32 = 0b11;
+/// Mask for the 4-bit `bitrate_index`.
+const BITRATE_INDEX_MASK: u32 = 0xF;
+/// Mask for the 1-bit `padding_bit`.
+const PADDING_MASK: u32 = 0x1;
+
+/// MPEG-2 sampling frequencies are half the MPEG-1 base rates (§2.4.2.3).
+const MPEG2_RATE_DIVISOR: u32 = 2;
+/// MPEG-2.5 sampling frequencies are a quarter of them.
+const MPEG25_RATE_DIVISOR: u32 = 4;
+/// Bits per kilobit, converting the table's kbit/s to bit/s.
+const BITS_PER_KILOBIT: usize = 1000;
+/// Channels in a non-`single_channel` frame (stereo, or the two-channel
+/// joint/dual modes of §2.4.2.3).
+const STEREO_CHANNELS: u16 = 2;
+
+/// Slot count term of the Layer I frame length: `12 * bitrate / sample_rate`
+/// (§2.4.3.1).
+const LAYER1_SLOTS_PER_FRAME: usize = 12;
+/// Bytes per Layer I slot.
+const LAYER1_SLOT_BYTES: usize = 4;
+
 impl MpegAudioFrameHeader {
     /// Parse the 4-byte MPEG audio frame header at the start of `data`.
     ///
@@ -212,17 +268,17 @@ impl MpegAudioFrameHeader {
     /// [`Error::InvalidInput`] (so a false sync in the middle of a payload does
     /// not masquerade as a frame boundary).
     pub fn parse(data: &[u8]) -> Result<Self> {
-        need_in(data, 4, "MPEG audio frame header")?;
-        let h = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        need_in(data, FRAME_HEADER_LEN, "MPEG audio frame header")?;
+        let h = be_u32(data, 0, "MPEG audio frame header")?;
 
-        let syncword = ((h >> 21) & 0x07FF) as u16;
+        let syncword = ((h >> SYNCWORD_SHIFT) & u32::from(MPEG_AUDIO_SYNCWORD)) as u16;
         if syncword != MPEG_AUDIO_SYNCWORD {
             return Err(Error::InvalidInput(
                 "MPEG audio frame header: bad syncword (expected 11-bit 0x7FF)",
             ));
         }
         // ID is 2 bits in MPEG-2.5: `00`=2.5, `10`=2, `11`=1 (`01` reserved).
-        let id = ((h >> 19) & 0x3) as u8;
+        let id = ((h >> VERSION_ID_SHIFT) & BIT_PAIR_MASK) as u8;
         let version = match id {
             0b11 => MpegAudioVersion::Mpeg1,
             0b10 => MpegAudioVersion::Mpeg2,
@@ -233,7 +289,7 @@ impl MpegAudioFrameHeader {
                 ));
             }
         };
-        let layer = match ((h >> 17) & 0x3) as u8 {
+        let layer = match ((h >> LAYER_SHIFT) & BIT_PAIR_MASK) as u8 {
             LAYER_I => MpegAudioLayer::LayerI,
             LAYER_II => MpegAudioLayer::LayerII,
             LAYER_III => MpegAudioLayer::LayerIII,
@@ -243,10 +299,10 @@ impl MpegAudioFrameHeader {
                 ));
             }
         };
-        let bitrate_index = ((h >> 12) & 0xF) as usize;
-        let sample_rate_index = ((h >> 10) & 0x3) as usize;
-        let padding = ((h >> 9) & 0x1) as usize;
-        let mode = ((h >> 6) & 0x3) as u8;
+        let bitrate_index = ((h >> BITRATE_INDEX_SHIFT) & BITRATE_INDEX_MASK) as usize;
+        let sample_rate_index = ((h >> SAMPLE_RATE_INDEX_SHIFT) & BIT_PAIR_MASK) as usize;
+        let padding = ((h >> PADDING_SHIFT) & PADDING_MASK) as usize;
+        let mode = ((h >> MODE_SHIFT) & BIT_PAIR_MASK) as u8;
 
         if sample_rate_index >= SAMPLE_RATE_MPEG1.len() {
             return Err(Error::InvalidInput(
@@ -256,8 +312,8 @@ impl MpegAudioFrameHeader {
         let base_rate = SAMPLE_RATE_MPEG1[sample_rate_index];
         let sample_rate = match version {
             MpegAudioVersion::Mpeg1 => base_rate,
-            MpegAudioVersion::Mpeg2 => base_rate / 2,
-            MpegAudioVersion::Mpeg25 => base_rate / 4,
+            MpegAudioVersion::Mpeg2 => base_rate / MPEG2_RATE_DIVISOR,
+            MpegAudioVersion::Mpeg25 => base_rate / MPEG25_RATE_DIVISOR,
         };
 
         let version_group = matches!(version, MpegAudioVersion::Mpeg1) as usize ^ 1; // 0=MPEG1,1=LSF
@@ -273,9 +329,13 @@ impl MpegAudioFrameHeader {
                 "MPEG audio frame header: free-format or forbidden bitrate_index",
             ));
         }
-        let bitrate = bitrate_kbps as usize * 1000;
+        let bitrate = bitrate_kbps as usize * BITS_PER_KILOBIT;
 
-        let channels: u16 = if mode == MODE_SINGLE_CHANNEL { 1 } else { 2 };
+        let channels: u16 = if mode == MODE_SINGLE_CHANNEL {
+            1
+        } else {
+            STEREO_CHANNELS
+        };
 
         // Frame length (bytes) and samples per frame — §2.4.3.1 (Layer I) /
         // §2.4.2.3.  Layer I: (12 * br / sr + pad) * 4; Layers II/III:
@@ -287,10 +347,16 @@ impl MpegAudioFrameHeader {
             (MpegAudioLayer::LayerIII, _) => 576,
         };
         let frame_length = match layer {
-            MpegAudioLayer::LayerI => (12 * bitrate / sample_rate as usize + padding) * 4,
-            _ => (samples_per_frame as usize / 8) * bitrate / sample_rate as usize + padding,
+            MpegAudioLayer::LayerI => {
+                (LAYER1_SLOTS_PER_FRAME * bitrate / sample_rate as usize + padding)
+                    * LAYER1_SLOT_BYTES
+            }
+            _ => {
+                (samples_per_frame as usize / u8::BITS as usize) * bitrate / sample_rate as usize
+                    + padding
+            }
         };
-        if frame_length < 4 {
+        if frame_length < FRAME_HEADER_LEN {
             return Err(Error::InvalidInput(
                 "MPEG audio frame header: computed frame length shorter than header",
             ));

@@ -16,6 +16,16 @@ use broadcast_common::len::need_out;
 /// (value 2 is invalid).
 pub(crate) const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
 
+/// Byte width of an HEVC NAL header (ITU-T H.265 §7.3.1.2).
+const HEVC_NAL_HEADER_LEN: usize = 2;
+/// Mask for the HEVC 6-bit `nal_unit_type` in the first header byte.
+const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
+/// One-byte `array_completeness` flag in an `hvcC` NAL-array header.
+const ARRAY_COMPLETENESS_FLAG: u8 = 0x80;
+/// Byte size of an `hvcC` NAL-array header: one packed byte plus the 16-bit
+/// `numNalus` count.
+const HEVC_NAL_ARRAY_HEADER_LEN: usize = 1 + core::mem::size_of::<u16>();
+
 /// H.265 `nal_unit_type` for a sequence parameter set (`SPS_NUT`) — ITU-T H.265
 /// Table 7-1 (type 33).
 pub const HEVC_SPS_NUT: u8 = 33;
@@ -95,10 +105,10 @@ impl HevcNalUnit {
     ///
     /// Returns `None` if the NAL unit type is not SPS.
     pub fn decode_sps(&self) -> Result<Option<HevcSpsInfo>> {
-        if self.0.len() < 2 {
+        if self.0.len() < HEVC_NAL_HEADER_LEN {
             return Ok(None);
         }
-        let nal_type = (self.0[0] >> 1) & 0x3F;
+        let nal_type = (self.0[0] >> 1) & HEVC_NAL_TYPE_MASK;
         if nal_type != HEVC_SPS_NUT {
             return Ok(None);
         }
@@ -182,7 +192,7 @@ impl Serialize for HevcNalArray {
 
     fn serialized_len(&self) -> usize {
         // header: 1 byte (array_completeness|reserved(1)|nal_unit_type(6)) + 2 bytes numNalus
-        3 + self.nalus.iter().map(|n| n.serialized_len()).sum::<usize>()
+        HEVC_NAL_ARRAY_HEADER_LEN + self.nalus.iter().map(|n| n.serialized_len()).sum::<usize>()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -191,15 +201,18 @@ impl Serialize for HevcNalArray {
 
         let mut cursor = 0usize;
         // First byte: [array_completeness(1), reserved(1)=0, NAL_unit_type(6)]
-        let first_byte =
-            (if self.array_completeness { 0x80u8 } else { 0u8 }) | (self.nal_unit_type & 0x3F);
+        let first_byte = (if self.array_completeness {
+            ARRAY_COMPLETENESS_FLAG
+        } else {
+            0u8
+        }) | (self.nal_unit_type & HEVC_NAL_TYPE_MASK);
         buf[cursor] = first_byte;
         cursor += 1;
 
         // numNalus as u16
         let count = broadcast_common::len::fit_u16(self.nalus.len(), "numNalus")?;
-        buf[cursor..cursor + 2].copy_from_slice(&count.to_be_bytes());
-        cursor += 2;
+        buf[cursor..cursor + HevcNalUnit::LENGTH_FIELD_SIZE].copy_from_slice(&count.to_be_bytes());
+        cursor += HevcNalUnit::LENGTH_FIELD_SIZE;
 
         for nalu in &self.nalus {
             cursor += nalu.serialize_into(&mut buf[cursor..])?;

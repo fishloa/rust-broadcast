@@ -25,7 +25,7 @@ pub struct AudioComponent {
     /// 8-bit `component_tag` (0xFF if not used; order then from PMT).
     pub component_tag: u8,
     /// 3-byte ISO 639-2 language code.
-    pub iso_code: [u8; 3],
+    pub iso_code: [u8; ISO_CODE_LEN],
     /// 3-bit `Bit_Stream_Mode` (ATSC A/52 Table 5.7).
     pub bit_stream_mode: u8,
     /// 4-bit `Num_Channels` (ATSC A/52 Table A4.5).
@@ -53,6 +53,20 @@ impl Default for AudioDescriptor {
     }
 }
 
+/// Byte width of an audio descriptor component's `ISO_code` field (ANSI/SCTE 35 §10.3.4.1, Table 18).
+pub const ISO_CODE_LEN: usize = 3;
+const COMPONENT_TAG_OFFSET: usize = 0;
+const ISO_CODE_OFFSET: usize = 1;
+const PACKED_OFFSET: usize = ISO_CODE_OFFSET + ISO_CODE_LEN;
+const AUDIO_COUNT_SHIFT: u32 = 4;
+const AUDIO_COUNT_MAX: usize = 15;
+const AUDIO_COUNT_RESERVED_BITS: u8 = 0x0F;
+const BIT_STREAM_MODE_SHIFT: u32 = 5;
+const BIT_STREAM_MODE_MASK: u8 = 0x07;
+const NUM_CHANNELS_SHIFT: u32 = 1;
+const NUM_CHANNELS_MASK: u8 = 0x0F;
+const FULL_SRVC_AUDIO_MASK: u8 = 0x01;
+
 impl<'a> Parse<'a> for AudioDescriptor {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -66,7 +80,7 @@ impl<'a> Parse<'a> for AudioDescriptor {
                 },
             ));
         }
-        let audio_count = (body[0] >> 4) as usize; // 4-bit count, 4 reserved
+        let audio_count = (body[0] >> AUDIO_COUNT_SHIFT) as usize; // 4-bit count, 4 reserved
         let mut pos = 1;
         let mut components = Vec::with_capacity(audio_count);
         for _ in 0..audio_count {
@@ -79,15 +93,19 @@ impl<'a> Parse<'a> for AudioDescriptor {
                     },
                 ));
             }
-            let component_tag = body[pos];
-            let iso_code = [body[pos + 1], body[pos + 2], body[pos + 3]];
-            let packed = body[pos + 4];
+            let component_tag = body[pos + COMPONENT_TAG_OFFSET];
+            let iso_code = [
+                body[pos + ISO_CODE_OFFSET],
+                body[pos + ISO_CODE_OFFSET + 1],
+                body[pos + PACKED_OFFSET - 1],
+            ];
+            let packed = body[pos + PACKED_OFFSET];
             components.push(AudioComponent {
                 component_tag,
                 iso_code,
-                bit_stream_mode: packed >> 5,        // 3 bits
-                num_channels: (packed >> 1) & 0x0F,  // 4 bits
-                full_srvc_audio: packed & 0x01 != 0, // 1 bit
+                bit_stream_mode: packed >> BIT_STREAM_MODE_SHIFT, // 3 bits
+                num_channels: (packed >> NUM_CHANNELS_SHIFT) & NUM_CHANNELS_MASK, // 4 bits
+                full_srvc_audio: packed & FULL_SRVC_AUDIO_MASK != 0, // 1 bit
             });
             pos += COMPONENT_LEN;
         }
@@ -106,31 +124,32 @@ impl Serialize for AudioDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        if self.components.len() > 15 {
+        if self.components.len() > AUDIO_COUNT_MAX {
             return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "audio_descriptor.audio_count",
                 value: self.components.len() as u64,
-                max: 15,
+                max: AUDIO_COUNT_MAX as u64,
             }));
         }
         let body_len = 1 + self.components.len() * COMPONENT_LEN;
         header::write_header(buf, TAG, self.identifier, body_len)?;
         // 4-bit audio_count, 4 reserved bits = 1.
-        buf[HEADER_LEN] = ((self.components.len() as u8) << 4) | 0x0F;
+        buf[HEADER_LEN] =
+            ((self.components.len() as u8) << AUDIO_COUNT_SHIFT) | AUDIO_COUNT_RESERVED_BITS;
         let mut pos = HEADER_LEN + 1;
         for c in &self.components {
-            buf[pos] = c.component_tag;
-            buf[pos + 1..pos + 4].copy_from_slice(&c.iso_code);
-            buf[pos + 4] = (broadcast_common::len::fit_mask(
+            buf[pos + COMPONENT_TAG_OFFSET] = c.component_tag;
+            buf[pos + ISO_CODE_OFFSET..pos + PACKED_OFFSET].copy_from_slice(&c.iso_code);
+            buf[pos + PACKED_OFFSET] = (broadcast_common::len::fit_mask(
                 c.bit_stream_mode,
-                0x07,
+                BIT_STREAM_MODE_MASK,
                 "audio_descriptor.bit_stream_mode",
-            )? << 5)
+            )? << BIT_STREAM_MODE_SHIFT)
                 | (broadcast_common::len::fit_mask(
                     c.num_channels,
-                    0x0F,
+                    NUM_CHANNELS_MASK,
                     "audio_descriptor.num_channels",
-                )? << 1)
+                )? << NUM_CHANNELS_SHIFT)
                 | u8::from(c.full_srvc_audio);
             pos += COMPONENT_LEN;
         }

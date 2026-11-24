@@ -10,6 +10,9 @@ use alloc::vec::Vec;
 use broadcast_common::len::need_out;
 use broadcast_common::reserved::ReservedOnes;
 
+/// Width of the `reserved_future_use` length fields.
+const TS_LOOP_RESERVED_BITS: u32 = 4;
+
 pub(super) const MIN_HEADER_LEN: usize = 3;
 pub(super) const EXTENSION_HEADER_LEN: usize = 5;
 pub(super) const POST_EXTENSION_LEN: usize = 2;
@@ -17,6 +20,14 @@ pub(super) const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
 pub(super) const TS_HEADER_LEN: usize = 6;
 pub(super) const LOOP_LENGTH_FIELD_LEN: usize = 2;
+
+/// Byte offsets in the section header.
+const ID_OFFSET: usize = 3;
+const DESC_LENGTH_OFFSET: usize = 8;
+
+/// Byte offsets inside one transport-stream entry.
+const TS_TSID_LEN: usize = 2;
+const TS_DESC_LENGTH_OFFSET: usize = 4;
 
 /// One transport-stream entry inside a NIT or BAT `transport_stream_loop`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +45,7 @@ pub struct TransportStreamEntry<'a> {
     /// `reserved_future_use(4)` before `transport_descriptors_length`
     /// (EN 300 468 §5.2.1 / §5.2.2, `1111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: ReservedOnes<4>,
+    pub reserved_future_use: ReservedOnes<TS_LOOP_RESERVED_BITS>,
 }
 
 impl<'a> TransportStreamEntry<'a> {
@@ -97,8 +108,9 @@ pub(super) fn parse<'a>(bytes: &'a [u8], labels: &Labels) -> Result<Parsed<'a>> 
         MIN_SECTION_LEN,
     )?;
 
-    let id = crate::wire::be_u16(bytes, 3, labels.extension)?;
-    let desc_length = super::desc_loop_len_of(bytes[8], bytes[9]);
+    let id = crate::wire::be_u16(bytes, ID_OFFSET, labels.extension)?;
+    let desc_length =
+        super::desc_loop_len_of(bytes[DESC_LENGTH_OFFSET], bytes[DESC_LENGTH_OFFSET + 1]);
     let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
     let desc_end = desc_start + desc_length;
     let body_end = total - CRC_LEN;
@@ -142,7 +154,8 @@ pub(super) fn parse<'a>(bytes: &'a [u8], labels: &Labels) -> Result<Parsed<'a>> 
             ));
         }
         let hdr = &bytes[pos..pos + TS_HEADER_LEN];
-        let transport_descriptors_length = super::desc_loop_len_of(hdr[4], hdr[5]);
+        let transport_descriptors_length =
+            super::desc_loop_len_of(hdr[TS_DESC_LENGTH_OFFSET], hdr[TS_DESC_LENGTH_OFFSET + 1]);
         let ts_desc_start = pos + TS_HEADER_LEN;
         let ts_desc_end = ts_desc_start + transport_descriptors_length;
         if ts_desc_end > loop_end {
@@ -153,23 +166,25 @@ pub(super) fn parse<'a>(bytes: &'a [u8], labels: &Labels) -> Result<Parsed<'a>> 
         }
         transport_streams.push(TransportStreamEntry {
             transport_stream_id: crate::wire::be_u16(hdr, 0, labels.extension)?,
-            original_network_id: crate::wire::be_u16(hdr, 2, labels.extension)?,
+            original_network_id: crate::wire::be_u16(hdr, TS_TSID_LEN, labels.extension)?,
             descriptors: DescriptorLoop::new(&bytes[ts_desc_start..ts_desc_end]),
-            reserved_future_use: ReservedOnes::from_bits(u64::from(super::len_reserved_of(hdr[4]))),
+            reserved_future_use: ReservedOnes::from_bits(u64::from(super::len_reserved_of(
+                hdr[TS_DESC_LENGTH_OFFSET],
+            ))),
         });
         pos = ts_desc_end;
     }
 
     Ok(Parsed {
         id,
-        version_number: super::version_number_of(bytes[5]),
-        current_next_indicator: super::current_next_of(bytes[5]),
-        section_number: bytes[6],
-        last_section_number: bytes[7],
+        version_number: super::version_number_of(bytes[super::VERSION_FLAGS_OFFSET]),
+        current_next_indicator: super::current_next_of(bytes[super::VERSION_FLAGS_OFFSET]),
+        section_number: bytes[super::SECTION_NUMBER_OFFSET],
+        last_section_number: bytes[super::LAST_SECTION_NUMBER_OFFSET],
         descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
         transport_streams,
-        bits: SectionBits::parse(bytes[1], Some(bytes[5])),
-        reserved_descriptors_length: super::len_reserved_of(bytes[8]),
+        bits: SectionBits::parse(bytes[1], Some(bytes[super::VERSION_FLAGS_OFFSET])),
+        reserved_descriptors_length: super::len_reserved_of(bytes[DESC_LENGTH_OFFSET]),
         reserved_transport_stream_loop_length: super::len_reserved_of(bytes[ts_loop_start]),
     })
 }
@@ -198,20 +213,20 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
     buf[0] = table_id;
     buf[1] = view.bits.b1()?;
     super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-    buf[3..5].copy_from_slice(&view.id.to_be_bytes());
-    buf[5] = view
+    buf[ID_OFFSET..super::VERSION_FLAGS_OFFSET].copy_from_slice(&view.id.to_be_bytes());
+    buf[super::VERSION_FLAGS_OFFSET] = view
         .bits
         .b5(view.version_number, view.current_next_indicator)?;
-    buf[6] = view.section_number;
-    buf[7] = view.last_section_number;
+    buf[super::SECTION_NUMBER_OFFSET] = view.section_number;
+    buf[super::LAST_SECTION_NUMBER_OFFSET] = view.last_section_number;
 
     let desc_length = broadcast_common::len::fit_bits(
         view.descriptors.len() as u64,
-        12,
+        super::DESC_LOOP_LEN_BITS,
         view.descriptors_length_what,
     )?;
     super::write_desc_loop_len_r(
-        &mut buf[8..10],
+        &mut buf[DESC_LENGTH_OFFSET..DESC_LENGTH_OFFSET + LOOP_LENGTH_FIELD_LEN],
         desc_length as usize,
         view.reserved_descriptors_length,
     )?;
@@ -221,7 +236,7 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
     let ts_loop_start = desc_start + view.descriptors.len();
     let ts_loop_length = broadcast_common::len::fit_bits(
         (len - ts_loop_start - LOOP_LENGTH_FIELD_LEN - CRC_LEN) as u64,
-        12,
+        super::DESC_LOOP_LEN_BITS,
         "transport_stream_loop_length",
     )?;
     super::write_desc_loop_len_r(
@@ -232,15 +247,16 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
 
     let mut pos = ts_loop_start + LOOP_LENGTH_FIELD_LEN;
     for ts in view.transport_streams {
-        buf[pos..pos + 2].copy_from_slice(&ts.transport_stream_id.to_be_bytes());
-        buf[pos + 2..pos + 4].copy_from_slice(&ts.original_network_id.to_be_bytes());
+        buf[pos..pos + TS_TSID_LEN].copy_from_slice(&ts.transport_stream_id.to_be_bytes());
+        buf[pos + TS_TSID_LEN..pos + TS_DESC_LENGTH_OFFSET]
+            .copy_from_slice(&ts.original_network_id.to_be_bytes());
         let ts_desc_length = broadcast_common::len::fit_bits(
             ts.descriptors.len() as u64,
-            12,
+            super::DESC_LOOP_LEN_BITS,
             "transport_descriptors_length",
         )?;
         super::write_desc_loop_len_r(
-            &mut buf[pos + 4..pos + 6],
+            &mut buf[pos + TS_DESC_LENGTH_OFFSET..pos + TS_HEADER_LEN],
             ts_desc_length as usize,
             ts.reserved_future_use.get() as u8,
         )?;
