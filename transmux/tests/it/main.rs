@@ -122,6 +122,7 @@ mod progressive_demux;
 mod ps_demux;
 mod ps_demux_mpeg2;
 mod ps_demux_substreams;
+mod reader_differential;
 mod rebase;
 #[path = "support/ref_mp4.rs"]
 mod ref_mp4;

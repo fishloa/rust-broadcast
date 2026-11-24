@@ -196,6 +196,15 @@ impl HlsSession {
         self.collect(now, auth);
     }
 
+    /// Hold or release new segment fetches for the read-ahead gate, in every playlist adapter this
+    /// session pulls from.
+    pub(crate) fn set_read_paused(&mut self, paused: bool) {
+        self.main.set_read_paused(paused);
+        if let Some(a) = self.audio.as_mut() {
+            a.source.set_read_paused(paused);
+        }
+    }
+
     pub(crate) fn select_variant(
         &mut self,
         index: usize,

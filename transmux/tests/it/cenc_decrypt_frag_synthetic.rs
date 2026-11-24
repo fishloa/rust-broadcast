@@ -11,8 +11,8 @@
 use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::movie_fragment::TrackFragmentRunBox;
+use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use transmux::cenc_segment::protect_init_segment;
-use transmux::fragment_build::{FragmentProtection, protect_media_segment};
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, KeyMap, Media,
     Sample, SubsamplePolicy, Track, TrackId, TrackSpec, TsDemux,
@@ -94,7 +94,7 @@ fn protect_all(media: &Media) -> Vec<u8> {
                 .as_ref()
                 .expect("track.encryption populated by CencEncryptor");
             FragmentProtection {
-                track_id: t.spec.track_id,
+                track_id: isobmff::TrackId::new(t.spec.track_id.value()),
                 entries: &enc.samples,
                 per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
             }

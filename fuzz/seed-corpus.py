@@ -84,6 +84,7 @@ WHOLE_FILE_GLOBS: dict[str, tuple[str, ...]] = {
     "timed_metadata_convert": ("fixtures/scte35/*emsg*.bin", "fixtures/hls/handbuilt/daterange*.m3u8"),
     "transmux_webm_demux": ("fixtures/mkv/*.webm", "fixtures/mkv/*.mkv"),
     "transmux_progressive_demux": ("fixtures/mp4/h264-aac-prog.mp4", "fixtures/mp4/h264-high.mp4"),
+    "isobmff_reader": ("fixtures/mp4/**/*.mp4", "fixtures/mp4/**/*.m4a"),
     "hls_client_feed": ("fixtures/hls/handbuilt/*.m3u8", "fixtures/hls/*.m3u8"),
     "rtmp_flv_tags": ("fixtures/flv/*.flv",),
 }

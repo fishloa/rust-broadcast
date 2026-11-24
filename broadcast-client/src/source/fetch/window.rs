@@ -127,14 +127,18 @@ impl<A> Lanes<A> {
         queue.push_back((seq, action));
     }
 
-    /// The oldest queued action across the lanes; the fresh lane is skipped while the window is
-    /// full.
-    pub(crate) fn next(&mut self, window_open: bool) -> Option<A> {
+    /// The oldest queued action across the lanes. The fresh lane is skipped while the window is
+    /// full; both media lanes (fresh and retry) are skipped while `media_open` is false, which is
+    /// how the read-ahead gate stops scheduling segment fetches.
+    pub(crate) fn next(&mut self, window_open: bool, media_open: bool) -> Option<A> {
         let head = |queue: &VecDeque<(u64, A)>| queue.front().map(|(seq, _)| *seq);
         let lane = [
             (head(&self.other), Lane::Other),
-            (head(&self.retry), Lane::Retry),
-            (head(&self.fresh).filter(|_| window_open), Lane::Fresh),
+            (head(&self.retry).filter(|_| media_open), Lane::Retry),
+            (
+                head(&self.fresh).filter(|_| window_open && media_open),
+                Lane::Fresh,
+            ),
         ]
         .into_iter()
         .filter_map(|(seq, lane)| seq.map(|seq| (seq, lane)))
@@ -304,7 +308,7 @@ mod tests {
     }
 
     fn drain(lanes: &mut Lanes<u32>, window_open: bool) -> Vec<u32> {
-        std::iter::from_fn(|| lanes.next(window_open)).collect()
+        std::iter::from_fn(|| lanes.next(window_open, true)).collect()
     }
 
     #[test]
@@ -337,8 +341,8 @@ mod tests {
         lanes.push(Lane::Fresh, 1);
         lanes.push(Lane::Fresh, 2);
         lanes.push(Lane::Retry, 3);
-        assert_eq!(lanes.next(false), Some(3));
-        assert_eq!(lanes.next(false), None);
+        assert_eq!(lanes.next(false, true), Some(3));
+        assert_eq!(lanes.next(false, true), None);
         assert_eq!(drain(&mut lanes, true), vec![1, 2]);
     }
 
@@ -349,7 +353,22 @@ mod tests {
         lanes.push(Lane::Other, 1);
         lanes.push(Lane::Other, 2);
         assert_eq!(lanes.seq, 1);
-        assert_eq!(lanes.next(true), Some(1));
+        assert_eq!(lanes.next(true, true), Some(1));
+    }
+
+    #[test]
+    fn a_closed_media_gate_holds_both_media_lanes_but_never_other() {
+        let mut lanes = Lanes::new();
+        lanes.push(Lane::Fresh, 1);
+        lanes.push(Lane::Retry, 2);
+        lanes.push(Lane::Other, 3);
+        assert_eq!(lanes.next(true, false), Some(3));
+        assert_eq!(lanes.next(true, false), None);
+        assert_eq!(
+            drain(&mut lanes, true),
+            vec![1, 2],
+            "released once the gate opens"
+        );
     }
 
     #[test]

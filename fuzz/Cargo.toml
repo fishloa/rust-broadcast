@@ -334,8 +334,20 @@ test = false
 doc  = false
 
 [[bin]]
+name = "isobmff_reader"
+path = "fuzz_targets/isobmff_reader.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "isobmff_cenc_boxes"
 path = "fuzz_targets/isobmff_cenc_boxes.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "isobmff_writer_roundtrip"
+path = "fuzz_targets/isobmff_writer_roundtrip.rs"
 test = false
 doc  = false
 

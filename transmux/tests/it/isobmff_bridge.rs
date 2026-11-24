@@ -116,6 +116,11 @@ fn every_isobmff_error_maps_to_its_transmux_variant() {
             "samples per track exceeds the configured limit of 5",
         ),
         (
+            I::FragmentTooLarge { limit: 7 },
+            |e| matches!(e, T::FragmentTooLarge { limit: 7 }),
+            "fragment exceeds the configured limit of 7 bytes",
+        ),
+        (
             I::FieldOverflow(FieldOverflow {
                 field: "f",
                 value: 9,
@@ -128,6 +133,37 @@ fn every_isobmff_error_maps_to_its_transmux_variant() {
             I::UnsupportedFeature("seig"),
             |e| matches!(e, T::UnsupportedFeature("seig")),
             "unsupported feature: seig",
+        ),
+        (
+            I::MoovAfterMdatForwardOnly,
+            |e| {
+                matches!(
+                    e,
+                    T::UnsupportedFeature("moov after mdat over a forward-only source")
+                )
+            },
+            "moov follows mdat and the source is forward-only",
+        ),
+        (
+            I::SupplyMismatch {
+                expected: isobmff::ByteRange { offset: 0, len: 8 },
+                got: isobmff::ByteRange { offset: 1, len: 8 },
+            },
+            |e| matches!(e, T::InvalidInput(_)),
+            "supplied bytes ByteRange { offset: 1, len: 8 } do not match the outstanding need \
+             ByteRange { offset: 0, len: 8 }",
+        ),
+        (
+            I::NoIndex {
+                track: isobmff::TrackId::new(3),
+            },
+            |e| {
+                matches!(
+                    e,
+                    T::UnsupportedFeature("no random-access index to seek on")
+                )
+            },
+            "track 3 has no random-access index to seek on",
         ),
     ];
     // A new `isobmff::Error` variant needs a case here and an arm in the
