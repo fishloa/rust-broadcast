@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
+use crate::wire::be_u16;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
@@ -43,7 +44,7 @@ const TUNE_BODY: usize = 4 * TUNE_ID_LEN;
 const NETWORK_ID_OFFSET: usize = 0;
 const ORIGINAL_NETWORK_ID_OFFSET: usize = NETWORK_ID_OFFSET + TUNE_ID_LEN;
 const TRANSPORT_STREAM_ID_OFFSET: usize = ORIGINAL_NETWORK_ID_OFFSET + TUNE_ID_LEN;
-const SERVICE_ID_OFFSET: usize = TRANSPORT_STREAM_ID_OFFSET + TUNE_ID_LEN;
+const TUNE_SERVICE_ID_OFFSET: usize = TRANSPORT_STREAM_ID_OFFSET + TUNE_ID_LEN;
 
 impl<'a> Parse<'a> for Tune {
     type Error = Error;
@@ -53,16 +54,10 @@ impl<'a> Parse<'a> for Tune {
         super::reject_trailing_body(body, TUNE_BODY, "tune")?;
         Ok(Self {
             length_form,
-            network_id: u16::from_be_bytes([body[NETWORK_ID_OFFSET], body[NETWORK_ID_OFFSET + 1]]),
-            original_network_id: u16::from_be_bytes([
-                body[ORIGINAL_NETWORK_ID_OFFSET],
-                body[ORIGINAL_NETWORK_ID_OFFSET + 1],
-            ]),
-            transport_stream_id: u16::from_be_bytes([
-                body[TRANSPORT_STREAM_ID_OFFSET],
-                body[TRANSPORT_STREAM_ID_OFFSET + 1],
-            ]),
-            service_id: u16::from_be_bytes([body[SERVICE_ID_OFFSET], body[SERVICE_ID_OFFSET + 1]]),
+            network_id: be_u16(body, NETWORK_ID_OFFSET),
+            original_network_id: be_u16(body, ORIGINAL_NETWORK_ID_OFFSET),
+            transport_stream_id: be_u16(body, TRANSPORT_STREAM_ID_OFFSET),
+            service_id: be_u16(body, TUNE_SERVICE_ID_OFFSET),
         })
     }
 }
@@ -78,9 +73,9 @@ impl Serialize for Tune {
             .copy_from_slice(&self.network_id.to_be_bytes());
         buf[pos + ORIGINAL_NETWORK_ID_OFFSET..pos + TRANSPORT_STREAM_ID_OFFSET]
             .copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[pos + TRANSPORT_STREAM_ID_OFFSET..pos + SERVICE_ID_OFFSET]
+        buf[pos + TRANSPORT_STREAM_ID_OFFSET..pos + TUNE_SERVICE_ID_OFFSET]
             .copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[pos + SERVICE_ID_OFFSET..pos + TUNE_BODY]
+        buf[pos + TUNE_SERVICE_ID_OFFSET..pos + TUNE_BODY]
             .copy_from_slice(&self.service_id.to_be_bytes());
         pos += TUNE_BODY;
         Ok(pos)
@@ -129,8 +124,6 @@ pub const REPLACE_PID_RESERVED_BITS: u32 = 3;
 const REPLACE_PID_RESERVED_SHIFT: u32 = 5;
 /// Mask of a PID's high bits.
 const PID_HIGH_MASK: u8 = 0x1F;
-/// Shift placing a PID's high bits.
-const PID_HIGH_SHIFT: u32 = 8;
 
 /// Offsets within a `replace()` body.
 const REPLACEMENT_REF_OFFSET: usize = 0;
@@ -147,11 +140,11 @@ impl<'a> Parse<'a> for Replace {
         super::reject_trailing_body(body, REPLACE_BODY, "replace")?;
         let replacement_ref = body[REPLACEMENT_REF_OFFSET];
         let replaced_pid = Pid::from_wire_masked(
-            (u16::from(body[REPLACED_PID_HIGH_OFFSET] & PID_HIGH_MASK) << PID_HIGH_SHIFT)
+            (u16::from(body[REPLACED_PID_HIGH_OFFSET] & PID_HIGH_MASK) << u8::BITS)
                 | u16::from(body[REPLACED_PID_LOW_OFFSET]),
         );
         let replacement_pid = Pid::from_wire_masked(
-            (u16::from(body[REPLACEMENT_PID_HIGH_OFFSET] & PID_HIGH_MASK) << PID_HIGH_SHIFT)
+            (u16::from(body[REPLACEMENT_PID_HIGH_OFFSET] & PID_HIGH_MASK) << u8::BITS)
                 | u16::from(body[REPLACEMENT_PID_LOW_OFFSET]),
         );
         Ok(Self {
@@ -180,13 +173,13 @@ impl Serialize for Replace {
         // reserved(3), replaced_PID(13).
         buf[pos + REPLACED_PID_HIGH_OFFSET] = ((self.replaced_reserved.get()
             << REPLACE_PID_RESERVED_SHIFT)
-            | u64::from((self.replaced_pid.value() >> PID_HIGH_SHIFT) as u8 & PID_HIGH_MASK))
+            | u64::from((self.replaced_pid.value() >> u8::BITS) as u8 & PID_HIGH_MASK))
             as u8;
         buf[pos + REPLACED_PID_LOW_OFFSET] = self.replaced_pid.value() as u8;
         // reserved(3), replacement_PID(13).
         buf[pos + REPLACEMENT_PID_HIGH_OFFSET] = ((self.replacement_reserved.get()
             << REPLACE_PID_RESERVED_SHIFT)
-            | u64::from((self.replacement_pid.value() >> PID_HIGH_SHIFT) as u8 & PID_HIGH_MASK))
+            | u64::from((self.replacement_pid.value() >> u8::BITS) as u8 & PID_HIGH_MASK))
             as u8;
         buf[pos + REPLACEMENT_PID_LOW_OFFSET] = self.replacement_pid.value() as u8;
         pos += REPLACE_BODY;

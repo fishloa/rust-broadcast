@@ -18,6 +18,7 @@ use crate::error::{Error, Result};
 use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
@@ -424,14 +425,8 @@ pub struct DisplayReply {
 impl DisplayReply {
     fn parse_graphics(b: &[u8]) -> Result<GraphicsCharacteristics> {
         need_in(b, GFX_FIXED, "display_reply graphics")?;
-        let display_horizontal_size = u16::from_be_bytes([
-            b[DISPLAY_HORIZONTAL_SIZE_OFFSET],
-            b[DISPLAY_HORIZONTAL_SIZE_OFFSET + 1],
-        ]);
-        let display_vertical_size = u16::from_be_bytes([
-            b[DISPLAY_VERTICAL_SIZE_OFFSET],
-            b[DISPLAY_VERTICAL_SIZE_OFFSET + 1],
-        ]);
+        let display_horizontal_size = be_u16(b, DISPLAY_HORIZONTAL_SIZE_OFFSET);
+        let display_vertical_size = be_u16(b, DISPLAY_VERTICAL_SIZE_OFFSET);
         let aspect_ratio_information =
             (b[GFX_FLAGS_OFFSET] >> ASPECT_RATIO_SHIFT) & ASPECT_RATIO_MASK;
         let graphics_relation_to_video =
@@ -1414,7 +1409,7 @@ impl<'a> Parse<'a> for DownloadReply {
         super::reject_trailing_body(body, DOWNLOAD_REPLY_BODY, "download_reply")?;
         Ok(Self {
             length_form,
-            object_id: u16::from_be_bytes([body[0], body[1]]),
+            object_id: be_u16(body, 0),
             reply_id: DownloadReplyId::from_u8(body[DOWNLOAD_REPLY_ID_OFFSET]),
         })
     }

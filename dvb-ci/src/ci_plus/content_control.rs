@@ -23,6 +23,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
+use crate::wire::be_u16;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
@@ -80,7 +81,7 @@ impl<'a> Parse<'a> for CcPinReply {
         crate::objects::reject_trailing_body(body, CC_PIN_REPLY_BODY, "cc_PIN_reply")?;
         let lts_bound = body[0] & LTS_BOUND_FLAG_BIT != 0;
         let lts_id = if lts_bound {
-            Some(body[LTS_ID_OFFSET])
+            Some(body[PIN_REPLY_LTS_ID_OFFSET])
         } else {
             None
         };
@@ -92,7 +93,7 @@ impl<'a> Parse<'a> for CcPinReply {
             reserved_lts: if lts_bound {
                 ReservedZero::default()
             } else {
-                ReservedZero::from_bits(u64::from(body[LTS_ID_OFFSET]))
+                ReservedZero::from_bits(u64::from(body[PIN_REPLY_LTS_ID_OFFSET]))
             },
         })
     }
@@ -113,12 +114,12 @@ impl Serialize for CcPinReply {
             Some(id) => {
                 buf[pos] =
                     ((self.reserved.get() << CC_PIN_RESERVED_SHIFT) as u8) | LTS_BOUND_FLAG_BIT;
-                buf[pos + LTS_ID_OFFSET] = id;
+                buf[pos + PIN_REPLY_LTS_ID_OFFSET] = id;
             }
             None => {
                 buf[pos] = (self.reserved.get() << CC_PIN_RESERVED_SHIFT) as u8;
                 // else branch: reserved(8).
-                buf[pos + LTS_ID_OFFSET] = self.reserved_lts.get() as u8;
+                buf[pos + PIN_REPLY_LTS_ID_OFFSET] = self.reserved_lts.get() as u8;
             }
         }
         buf[pos + PINCODE_STATUS_OFFSET] = self.pincode_status;
@@ -136,12 +137,12 @@ pub const RESERVED_BYTE_BITS: u32 = 8;
 const CC_PIN_RESERVED_SHIFT: u32 = 1;
 
 /// Offsets within a `cc_PIN_reply` body.
-const LTS_ID_OFFSET: usize = 1;
+const PIN_REPLY_LTS_ID_OFFSET: usize = 1;
 const PINCODE_STATUS_OFFSET: usize = 2;
 
 /// Offsets within a `cc_PIN_event` body.
 const EVENT_LTS_ID_OFFSET: usize = 0;
-const PROGRAM_NUMBER_OFFSET: usize = 1;
+const EVENT_PROGRAM_NUMBER_OFFSET: usize = 1;
 const EVENT_PINCODE_STATUS_OFFSET: usize = 3;
 const RATING_OFFSET: usize = 4;
 const PIN_EVENT_UTC_OFFSET: usize = 5;
@@ -229,10 +230,7 @@ impl<'a> Parse<'a> for CcPinEvent {
         Ok(Self {
             length_form,
             lts_id: body[EVENT_LTS_ID_OFFSET],
-            program_number: u16::from_be_bytes([
-                body[PROGRAM_NUMBER_OFFSET],
-                body[PROGRAM_NUMBER_OFFSET + 1],
-            ]),
+            program_number: be_u16(body, EVENT_PROGRAM_NUMBER_OFFSET),
             pincode_status: body[EVENT_PINCODE_STATUS_OFFSET],
             rating: body[RATING_OFFSET],
             pin_event_time_utc: utc,
@@ -254,7 +252,7 @@ impl Serialize for CcPinEvent {
             buf,
         )?;
         buf[pos + EVENT_LTS_ID_OFFSET] = self.lts_id;
-        buf[pos + PROGRAM_NUMBER_OFFSET..pos + EVENT_PINCODE_STATUS_OFFSET]
+        buf[pos + EVENT_PROGRAM_NUMBER_OFFSET..pos + EVENT_PINCODE_STATUS_OFFSET]
             .copy_from_slice(&self.program_number.to_be_bytes());
         buf[pos + EVENT_PINCODE_STATUS_OFFSET] = self.pincode_status;
         buf[pos + RATING_OFFSET] = self.rating;
@@ -493,7 +491,7 @@ impl<'a> SacMessage<'a> {
         while !body.is_empty() {
             need_in(body, SAC_DATATYPE_HEADER, "SAC datatype header")?;
             let datatype_id = DatatypeId::from_u8(body[0]);
-            let len = usize::from(u16::from_be_bytes([body[1], body[1 + 1]]));
+            let len = usize::from(be_u16(body, 1));
             let end = SAC_DATATYPE_HEADER + len;
             need_in(body, end, "SAC datatype value")?;
             datatypes.push(SacDatatype {
