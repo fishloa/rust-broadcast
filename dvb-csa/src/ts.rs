@@ -13,6 +13,12 @@ use mpeg_ts::ts::{SCRAMBLING_MASK, ScramblingControl, TS_PACKET_SIZE, TsHeader};
 /// adaptation field (ISO/IEC 13818-1 §2.4.3.4).
 const ADAPTATION_FIELD_LENGTH_SIZE: usize = 1;
 
+/// Byte offset of `transport_scrambling_control` in the 4-byte TS header
+/// (ISO/IEC 13818-1 §2.4.3.3, Table 2).
+const TS_SCRAMBLING_CONTROL_OFFSET: usize = 3;
+/// Bit position of `transport_scrambling_control` within that header byte.
+const TS_SCRAMBLING_CONTROL_SHIFT: u32 = 6;
+
 /// Which of DVB common scrambling's two swappable control words a
 /// [`ControlWord`] is — ETSI TS 100 289 V1.1.1 §5.1 Table 1
 /// (`transport_scrambling_control` `10`/`11`). A real head-end holds an
@@ -91,7 +97,9 @@ pub fn scramble_ts_packet(
     }
     let payload = ts_payload_mut(packet)?;
     csa::scramble(cw, payload);
-    packet[3] = (packet[3] & !SCRAMBLING_MASK) | (parity.to_scrambling_control().to_bits() << 6);
+    packet[TS_SCRAMBLING_CONTROL_OFFSET] = (packet[TS_SCRAMBLING_CONTROL_OFFSET]
+        & !SCRAMBLING_MASK)
+        | (parity.to_scrambling_control().to_bits() << TS_SCRAMBLING_CONTROL_SHIFT);
     Ok(())
 }
 
@@ -124,13 +132,15 @@ pub fn descramble_ts_packet(
     }
     let payload = ts_payload_mut(packet)?;
     csa::descramble(cw, payload);
-    packet[3] &= !SCRAMBLING_MASK;
+    packet[TS_SCRAMBLING_CONTROL_OFFSET] &= !SCRAMBLING_MASK;
     Ok(())
 }
 
 /// Typed view of `packet`'s current `transport_scrambling_control` field.
 fn current_scrambling(packet: &[u8; TS_PACKET_SIZE]) -> ScramblingControl {
-    ScramblingControl::from_bits((packet[3] & SCRAMBLING_MASK) >> 6)
+    ScramblingControl::from_bits(
+        (packet[TS_SCRAMBLING_CONTROL_OFFSET] & SCRAMBLING_MASK) >> TS_SCRAMBLING_CONTROL_SHIFT,
+    )
 }
 
 /// Get a mutable slice to the TS packet payload, skipping the header and

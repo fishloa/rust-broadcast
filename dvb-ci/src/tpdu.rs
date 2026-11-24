@@ -205,10 +205,17 @@ pub struct NewTc {
     pub length_form: LengthForm,
 }
 
+/// Bytes of the fixed `New_T_C` / `T_C_Error` body (two one-byte fields).
+const FIXED_BODY_LEN: usize = 2;
+/// Bytes of the `T_SB` status body (`t_c_id` + `SB_value`).
+const STATUS_BODY_LEN: usize = 2;
+/// Bytes of the status trailer prefix: `SB_tag` + one length byte.
+const STATUS_PREFIX_LEN: usize = 2;
+
 impl<'a> Parse<'a> for NewTc {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (length_form, body) = parse_fixed(bytes, tags::NEW_T_C, 2, "New_T_C")?;
+        let (length_form, body) = parse_fixed(bytes, tags::NEW_T_C, FIXED_BODY_LEN, "New_T_C")?;
         Ok(Self {
             t_c_id: body[0],
             new_t_c_id: body[1],
@@ -219,7 +226,7 @@ impl<'a> Parse<'a> for NewTc {
 impl Serialize for NewTc {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        1 + length::encoded_len_with(2, self.length_form) + 2
+        1 + length::encoded_len_with(FIXED_BODY_LEN, self.length_form) + FIXED_BODY_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         write_fixed(
@@ -249,7 +256,7 @@ pub struct TcError {
 impl<'a> Parse<'a> for TcError {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (length_form, body) = parse_fixed(bytes, tags::T_C_ERROR, 2, "T_C_Error")?;
+        let (length_form, body) = parse_fixed(bytes, tags::T_C_ERROR, FIXED_BODY_LEN, "T_C_Error")?;
         Ok(Self {
             t_c_id: body[0],
             error_code: body[1],
@@ -260,7 +267,7 @@ impl<'a> Parse<'a> for TcError {
 impl Serialize for TcError {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        1 + length::encoded_len_with(2, self.length_form) + 2
+        1 + length::encoded_len_with(FIXED_BODY_LEN, self.length_form) + FIXED_BODY_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         write_fixed(
@@ -385,7 +392,7 @@ impl<'a> Parse<'a> for ResponseTpdu<'a> {
         let data_end = start + len;
         // Status trailer: SB_tag + length_field(value 2) + t_c_id + SB_value.
         // Need at least the tag and one length byte to learn the field's width.
-        need_in(bytes, data_end + 2, "R_TPDU status")?;
+        need_in(bytes, data_end + STATUS_PREFIX_LEN, "R_TPDU status")?;
         if bytes[data_end] != tags::SB {
             return Err(Error::UnexpectedTpduTag {
                 got: bytes[data_end],
@@ -394,14 +401,14 @@ impl<'a> Parse<'a> for ResponseTpdu<'a> {
             });
         }
         let (sb_len, sb_hdr, status_length_form) = length::decode_form(&bytes[data_end + 1..])?;
-        if sb_len != 2 {
+        if sb_len != STATUS_BODY_LEN {
             return Err(Error::InvalidObject {
                 what: "R_TPDU status",
                 reason: "SB length_field must be 2",
             });
         }
         let sb_body = data_end + 1 + sb_hdr;
-        let status_end = sb_body + 2;
+        let status_end = sb_body + STATUS_BODY_LEN;
         need_in(bytes, status_end, "R_TPDU status")?;
         // bytes[sb_body] = t_c_id (status), bytes[sb_body+1] = SB_value.
         // The status trailer names the same transport connection as the
@@ -431,8 +438,8 @@ impl Serialize for ResponseTpdu<'_> {
         1 + length::encoded_len_with(len_value, self.length_form)
             + len_value
             + 1
-            + length::encoded_len_with(2, self.status_length_form)
-            + 2
+            + length::encoded_len_with(STATUS_BODY_LEN, self.status_length_form)
+            + STATUS_BODY_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
@@ -447,10 +454,10 @@ impl Serialize for ResponseTpdu<'_> {
         // Status trailer.
         buf[pos] = tags::SB;
         pos += 1;
-        pos += length::encode_with(2, self.status_length_form, &mut buf[pos..])?;
+        pos += length::encode_with(STATUS_BODY_LEN, self.status_length_form, &mut buf[pos..])?;
         buf[pos] = self.t_c_id;
         buf[pos + 1] = self.sb_value.0;
-        Ok(pos + 2)
+        Ok(pos + STATUS_BODY_LEN)
     }
 }
 

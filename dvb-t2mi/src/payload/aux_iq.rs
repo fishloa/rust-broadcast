@@ -12,6 +12,19 @@ const AUX_ID_MIN: u8 = 1;
 /// Maximum valid aux_id value (4-bit field).
 const AUX_ID_MAX: u8 = 0x0F;
 
+/// Bytes of the fixed AuxIqPayload header.
+const AUX_IQ_HEADER_LEN: usize = 3;
+/// Offset of the byte carrying `aux_id` and the reserved nibble.
+const AUX_ID_BYTE_OFFSET: usize = 1;
+/// Offset of the second reserved byte.
+const AUX_RFU_BYTE_OFFSET: usize = 2;
+/// Shift placing `aux_id` at the top of its byte.
+const AUX_ID_SHIFT: u32 = 4;
+/// Mask of a nibble.
+const NIBBLE_MASK: u8 = 0x0F;
+/// Shift placing the reserved nibble above its second byte.
+const AUX_RFU_HIGH_SHIFT: u32 = 8;
+
 /// Auxiliary I/Q payload (type 0x01) per ETSI TS 102 773 §5.2.2.
 ///
 /// Layout:
@@ -35,10 +48,10 @@ impl<'a> Parse<'a> for AuxIqPayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        need_in(bytes, 3, "AuxIqPayload header")?;
+        need_in(bytes, AUX_IQ_HEADER_LEN, "AuxIqPayload header")?;
 
         let frame_idx = bytes[0];
-        let aux_id = (bytes[1] >> 4) & 0x0F;
+        let aux_id = (bytes[AUX_ID_BYTE_OFFSET] >> AUX_ID_SHIFT) & NIBBLE_MASK;
 
         if !(AUX_ID_MIN..=AUX_ID_MAX).contains(&aux_id) {
             return Err(crate::Error::InvalidValue(
@@ -51,7 +64,8 @@ impl<'a> Parse<'a> for AuxIqPayload<'a> {
         }
 
         // rfu: byte 1 [3:0] + byte 2 [7:0] = 12 bits
-        let rfu = ((bytes[1] & 0x0F) as u16) << 8 | (bytes[2] as u16);
+        let rfu = ((bytes[AUX_ID_BYTE_OFFSET] & NIBBLE_MASK) as u16) << AUX_RFU_HIGH_SHIFT
+            | (bytes[AUX_RFU_BYTE_OFFSET] as u16);
         if rfu != 0 {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
@@ -79,7 +93,7 @@ impl Serialize for AuxIqPayload<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        3 + self.aux_stream_data.len()
+        AUX_IQ_HEADER_LEN + self.aux_stream_data.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
@@ -96,9 +110,10 @@ impl Serialize for AuxIqPayload<'_> {
         }
 
         buf[0] = self.frame_idx;
-        buf[1] = (self.aux_id & 0x0F) << 4; // lower 4 bits of aux_id, upper 4 of header
-        buf[2] = 0; // rfu = 0
-        buf[3..3 + self.aux_stream_data.len()].copy_from_slice(self.aux_stream_data);
+        buf[AUX_ID_BYTE_OFFSET] = (self.aux_id & NIBBLE_MASK) << AUX_ID_SHIFT;
+        buf[AUX_RFU_BYTE_OFFSET] = 0; // rfu = 0
+        buf[AUX_IQ_HEADER_LEN..AUX_IQ_HEADER_LEN + self.aux_stream_data.len()]
+            .copy_from_slice(self.aux_stream_data);
 
         Ok(self.serialized_len())
     }

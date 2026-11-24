@@ -17,7 +17,89 @@
 //! generated, so regeneration cannot regenerate its own gate — evaluates every
 //! circuit over its *entire* input domain and compares against the table it was
 //! generated from. A generator bug cannot ship.
-use super::Word;
+use super::{BITS_PER_BYTE, Word};
+
+/// Bits in a `STREAM_SBOX` row index — each row has 32 entries.
+const SBOX_INDEX_BITS: usize = 5;
+
+/// Bits in an output pair — every S-box and every keystream round yields two.
+const PAIR_BITS: usize = 2;
+
+/// Bits in a nibble — the D nibble indexes `STREAM_OUT` and `stream_b_sel`
+/// yields one.
+const NIBBLE_BITS: usize = 4;
+
+/// Index bits consumed by the `STREAM_CDEF` table.
+const CDEF_INDEX_BITS: usize = 10;
+
+/// Live output bits of the `STREAM_CDEF` table.
+const CDEF_OUT_BITS_COUNT: usize = 9;
+
+/// Bits in each of the stream cipher's two shift registers.
+const STREAM_REGISTER_BITS: usize = 40;
+
+/// Live bits of the `pqzyx` word produced by [`stream_sboxes`].
+const PQZYX_BITS: usize = 14;
+
+/// A-register bit positions selected by each stream S-box's index mask.
+const A_TAP_5: usize = 5;
+const A_TAP_6: usize = 6;
+const A_TAP_7: usize = 7;
+const A_TAP_8: usize = 8;
+const A_TAP_9: usize = 9;
+const A_TAP_10: usize = 10;
+const A_TAP_11: usize = 11;
+const A_TAP_12: usize = 12;
+const A_TAP_13: usize = 13;
+const A_TAP_14: usize = 14;
+const A_TAP_15: usize = 15;
+const A_TAP_16: usize = 16;
+const A_TAP_17: usize = 17;
+const A_TAP_18: usize = 18;
+const A_TAP_19: usize = 19;
+const A_TAP_20: usize = 20;
+const A_TAP_21: usize = 21;
+const A_TAP_22: usize = 22;
+const A_TAP_23: usize = 23;
+const A_TAP_24: usize = 24;
+const A_TAP_25: usize = 25;
+const A_TAP_26: usize = 26;
+const A_TAP_27: usize = 27;
+const A_TAP_28: usize = 28;
+const A_TAP_29: usize = 29;
+const A_TAP_30: usize = 30;
+const A_TAP_31: usize = 31;
+const A_TAP_32: usize = 32;
+const A_TAP_33: usize = 33;
+const A_TAP_34: usize = 34;
+const A_TAP_35: usize = 35;
+const A_TAP_36: usize = 36;
+const A_TAP_37: usize = 37;
+const A_TAP_38: usize = 38;
+const A_TAP_39: usize = 39;
+
+/// B-register bit positions each `stream_b_sel` output bit XOR-folds.
+const B_TAP_12: usize = 12;
+const B_TAP_13: usize = 13;
+const B_TAP_15: usize = 15;
+const B_TAP_16: usize = 16;
+const B_TAP_18: usize = 18;
+const B_TAP_21: usize = 21;
+const B_TAP_23: usize = 23;
+const B_TAP_24: usize = 24;
+const B_TAP_25: usize = 25;
+const B_TAP_27: usize = 27;
+const B_TAP_30: usize = 30;
+const B_TAP_32: usize = 32;
+const B_TAP_33: usize = 33;
+const B_TAP_34: usize = 34;
+const B_TAP_38: usize = 38;
+const B_TAP_39: usize = 39;
+
+/// High bit of the D nibble `stream_out` folds.
+const D_TAP_2: usize = 2;
+/// Low bit of the D nibble `stream_out` folds.
+const D_TAP_3: usize = 3;
 
 /// Bitsliced `SBOX[..]` — the block cipher's 8-bit substitution box.
 ///
@@ -26,7 +108,7 @@ use super::Word;
 ///
 /// Synthesis: ROBDD, order [0, 1, 5, 7, 4, 2, 3, 6] — 350 gates.
 #[inline]
-pub(super) fn block_sbox(x: &[Word; 8]) -> [Word; 8] {
+pub(super) fn block_sbox(x: &[Word; BITS_PER_BYTE]) -> [Word; BITS_PER_BYTE] {
     let [x0, x1, x2, x3, x4, x5, x6, x7] = *x;
     let t0 = x3 ^ x2;
     let t1 = !x6 ^ ((!x6 ^ !x3) & x2);
@@ -386,7 +468,7 @@ pub(super) fn block_sbox(x: &[Word; 8]) -> [Word; 8] {
 ///
 /// Synthesis: ROBDD, order [3, 1, 0, 2, 4] — 16 gates.
 #[inline]
-fn stream_sbox_0(x: &[Word; 5]) -> [Word; 2] {
+fn stream_sbox_0(x: &[Word; SBOX_INDEX_BITS]) -> [Word; PAIR_BITS] {
     let [x0, x1, x2, x3, x4] = *x;
     let t0 = x4 & !x2;
     let t1 = !x4 & !x2;
@@ -412,7 +494,7 @@ fn stream_sbox_0(x: &[Word; 5]) -> [Word; 2] {
 ///
 /// Synthesis: ROBDD, order [1, 0, 2, 3, 4] — 16 gates.
 #[inline]
-fn stream_sbox_1(x: &[Word; 5]) -> [Word; 2] {
+fn stream_sbox_1(x: &[Word; SBOX_INDEX_BITS]) -> [Word; PAIR_BITS] {
     let [x0, x1, x2, x3, x4] = *x;
     let t0 = !x4 & x3;
     let t1 = !t0 ^ x2;
@@ -438,7 +520,7 @@ fn stream_sbox_1(x: &[Word; 5]) -> [Word; 2] {
 ///
 /// Synthesis: ROBDD, order [1, 2, 3, 0, 4] — 12 gates.
 #[inline]
-fn stream_sbox_2(x: &[Word; 5]) -> [Word; 2] {
+fn stream_sbox_2(x: &[Word; SBOX_INDEX_BITS]) -> [Word; PAIR_BITS] {
     let [x0, x1, x2, x3, x4] = *x;
     let t0 = x4 & !x0;
     let t1 = !t0 ^ x3;
@@ -460,7 +542,7 @@ fn stream_sbox_2(x: &[Word; 5]) -> [Word; 2] {
 ///
 /// Synthesis: ROBDD, order [4, 1, 2, 0, 3] — 9 gates.
 #[inline]
-fn stream_sbox_3(x: &[Word; 5]) -> [Word; 2] {
+fn stream_sbox_3(x: &[Word; SBOX_INDEX_BITS]) -> [Word; PAIR_BITS] {
     let [x0, x1, x2, x3, x4] = *x;
     let t0 = !x3 | !x0;
     let t1 = !t0 ^ x2;
@@ -479,7 +561,7 @@ fn stream_sbox_3(x: &[Word; 5]) -> [Word; 2] {
 ///
 /// Synthesis: ROBDD, order [0, 1, 3, 2, 4] — 16 gates.
 #[inline]
-fn stream_sbox_4(x: &[Word; 5]) -> [Word; 2] {
+fn stream_sbox_4(x: &[Word; SBOX_INDEX_BITS]) -> [Word; PAIR_BITS] {
     let [x0, x1, x2, x3, x4] = *x;
     let t0 = !x4 & !x2;
     let t1 = !t0 ^ x3;
@@ -505,7 +587,7 @@ fn stream_sbox_4(x: &[Word; 5]) -> [Word; 2] {
 ///
 /// Synthesis: ROBDD, order [0, 3, 2, 1, 4] — 15 gates.
 #[inline]
-fn stream_sbox_5(x: &[Word; 5]) -> [Word; 2] {
+fn stream_sbox_5(x: &[Word; SBOX_INDEX_BITS]) -> [Word; PAIR_BITS] {
     let [x0, x1, x2, x3, x4] = *x;
     let t0 = !x4 & x1;
     let t1 = t0 | !x2;
@@ -530,7 +612,7 @@ fn stream_sbox_5(x: &[Word; 5]) -> [Word; 2] {
 ///
 /// Synthesis: ROBDD, order [1, 3, 2, 0, 4] — 16 gates.
 #[inline]
-fn stream_sbox_6(x: &[Word; 5]) -> [Word; 2] {
+fn stream_sbox_6(x: &[Word; SBOX_INDEX_BITS]) -> [Word; PAIR_BITS] {
     let [x0, x1, x2, x3, x4] = *x;
     let t0 = x4 & !x0;
     let t1 = !x4 ^ ((!x4 ^ t0) & x2);
@@ -557,7 +639,7 @@ fn stream_sbox_6(x: &[Word; 5]) -> [Word; 2] {
 ///
 /// Synthesis: ROBDD, order [3, 7, 9, 5, 6, 2, 1, 4, 8, 0] — 38 gates.
 #[inline]
-pub(super) fn stream_cdef(x: &[Word; 10]) -> [Word; 9] {
+pub(super) fn stream_cdef(x: &[Word; CDEF_INDEX_BITS]) -> [Word; CDEF_OUT_BITS_COUNT] {
     let [x0, x1, x2, x3, x4, x5, x6, x7, x8, x9] = *x;
     let t0 = x0 ^ x4;
     let t1 = x1 ^ x5;
@@ -605,15 +687,16 @@ pub(super) fn stream_cdef(x: &[Word; 10]) -> [Word; 9] {
 /// `PERM` is GF(2)-linear and maps each input bit to exactly one output
 /// bit, so bitsliced it is free: `PERM[s]` bit `PERM_BIT[k]` is `s` bit
 /// `k`.
-pub(super) const PERM_BIT: [usize; 8] = [1, 7, 5, 4, 2, 6, 0, 3];
+pub(super) const PERM_BIT: [usize; BITS_PER_BYTE] = [1, 7, 5, 4, 2, 6, 0, 3];
 
 /// `pqzyx` bit positions written by [`stream_sboxes`], in the order it
 /// returns them.
-pub(super) const STREAM_SBOX_OUT_BITS: [usize; 14] = [0, 10, 1, 11, 2, 4, 3, 5, 6, 8, 7, 9, 12, 13];
+pub(super) const STREAM_SBOX_OUT_BITS: [usize; PQZYX_BITS] =
+    [0, 10, 1, 11, 2, 4, 3, 5, 6, 8, 7, 9, 12, 13];
 
 /// `cfed` bit positions written by [`stream_cdef`], in the order it
 /// returns them.
-pub(super) const CDEF_OUT_BITS: [usize; 9] = [0, 1, 2, 3, 8, 9, 10, 11, 12];
+pub(super) const CDEF_OUT_BITS: [usize; CDEF_OUT_BITS_COUNT] = [0, 1, 2, 3, 8, 9, 10, 11, 12];
 
 /// Bitsliced `csa_stream_sboxes` — the A register in, the fourteen
 /// `pqzyx` bits out, ordered as [`STREAM_SBOX_OUT_BITS`].
@@ -622,42 +705,42 @@ pub(super) const CDEF_OUT_BITS: [usize; 9] = [0, 1, 2, 3, 8, 9, 10, 11, 12];
 /// (`STREAM_SBOX_SEL`'s mask-and-shift chain), so selecting it costs
 /// only XORs.
 #[inline]
-pub(super) fn stream_sboxes(a: &[Word; 40]) -> [Word; 14] {
-    let s0_0 = a[36];
-    let s0_1 = a[31];
-    let s0_2 = a[25];
-    let s0_3 = a[6];
-    let s0_4 = a[16];
-    let s1_0 = a[27] ^ a[37];
-    let s1_1 = a[28];
-    let s1_2 = a[27];
-    let s1_3 = a[14] ^ a[28];
-    let s1_4 = a[9];
-    let s2_0 = a[26];
-    let s2_1 = a[23];
-    let s2_2 = a[7] ^ a[21];
-    let s2_3 = a[8];
-    let s2_4 = a[7] ^ a[23] ^ a[26];
-    let s3_0 = a[11] ^ a[32];
-    let s3_1 = a[18];
-    let s3_2 = a[11];
-    let s3_3 = a[5];
-    let s3_4 = a[15];
-    let s4_0 = a[22] ^ a[38];
-    let s4_1 = a[19] ^ a[33];
-    let s4_2 = a[24];
-    let s4_3 = a[19];
-    let s4_4 = a[22];
-    let s5_0 = a[39];
-    let s5_1 = a[30];
-    let s5_2 = a[20];
-    let s5_3 = a[17];
-    let s5_4 = a[13];
-    let s6_0 = a[35];
-    let s6_1 = a[10] ^ a[34];
-    let s6_2 = a[29] ^ a[35];
-    let s6_3 = a[12];
-    let s6_4 = a[10];
+pub(super) fn stream_sboxes(a: &[Word; STREAM_REGISTER_BITS]) -> [Word; PQZYX_BITS] {
+    let s0_0 = a[A_TAP_36];
+    let s0_1 = a[A_TAP_31];
+    let s0_2 = a[A_TAP_25];
+    let s0_3 = a[A_TAP_6];
+    let s0_4 = a[A_TAP_16];
+    let s1_0 = a[A_TAP_27] ^ a[A_TAP_37];
+    let s1_1 = a[A_TAP_28];
+    let s1_2 = a[A_TAP_27];
+    let s1_3 = a[A_TAP_14] ^ a[A_TAP_28];
+    let s1_4 = a[A_TAP_9];
+    let s2_0 = a[A_TAP_26];
+    let s2_1 = a[A_TAP_23];
+    let s2_2 = a[A_TAP_7] ^ a[A_TAP_21];
+    let s2_3 = a[A_TAP_8];
+    let s2_4 = a[A_TAP_7] ^ a[A_TAP_23] ^ a[A_TAP_26];
+    let s3_0 = a[A_TAP_11] ^ a[A_TAP_32];
+    let s3_1 = a[A_TAP_18];
+    let s3_2 = a[A_TAP_11];
+    let s3_3 = a[A_TAP_5];
+    let s3_4 = a[A_TAP_15];
+    let s4_0 = a[A_TAP_22] ^ a[A_TAP_38];
+    let s4_1 = a[A_TAP_19] ^ a[A_TAP_33];
+    let s4_2 = a[A_TAP_24];
+    let s4_3 = a[A_TAP_19];
+    let s4_4 = a[A_TAP_22];
+    let s5_0 = a[A_TAP_39];
+    let s5_1 = a[A_TAP_30];
+    let s5_2 = a[A_TAP_20];
+    let s5_3 = a[A_TAP_17];
+    let s5_4 = a[A_TAP_13];
+    let s6_0 = a[A_TAP_35];
+    let s6_1 = a[A_TAP_10] ^ a[A_TAP_34];
+    let s6_2 = a[A_TAP_29] ^ a[A_TAP_35];
+    let s6_3 = a[A_TAP_12];
+    let s6_4 = a[A_TAP_10];
     let o0 = stream_sbox_0(&[s0_0, s0_1, s0_2, s0_3, s0_4]);
     let o1 = stream_sbox_1(&[s1_0, s1_1, s1_2, s1_3, s1_4]);
     let o2 = stream_sbox_2(&[s2_0, s2_1, s2_2, s2_3, s2_4]);
@@ -674,11 +757,11 @@ pub(super) fn stream_sboxes(a: &[Word; 40]) -> [Word; 14] {
 /// Bitsliced `csa_stream_b_sel` — four bits XOR-folded out of the B
 /// register. Linear, so it is pure XOR.
 #[inline]
-pub(super) fn stream_b_sel(b: &[Word; 40]) -> [Word; 4] {
-    let o0 = b[13] ^ b[27] ^ b[32] ^ b[38];
-    let o1 = b[16] ^ b[21] ^ b[23] ^ b[34];
-    let o2 = b[15] ^ b[18] ^ b[24] ^ b[33];
-    let o3 = b[12] ^ b[25] ^ b[30] ^ b[39];
+pub(super) fn stream_b_sel(b: &[Word; STREAM_REGISTER_BITS]) -> [Word; NIBBLE_BITS] {
+    let o0 = b[B_TAP_13] ^ b[B_TAP_27] ^ b[B_TAP_32] ^ b[B_TAP_38];
+    let o1 = b[B_TAP_16] ^ b[B_TAP_21] ^ b[B_TAP_23] ^ b[B_TAP_34];
+    let o2 = b[B_TAP_15] ^ b[B_TAP_18] ^ b[B_TAP_24] ^ b[B_TAP_33];
+    let o3 = b[B_TAP_12] ^ b[B_TAP_25] ^ b[B_TAP_30] ^ b[B_TAP_39];
     [o0, o1, o2, o3]
 }
 
@@ -688,8 +771,8 @@ pub(super) fn stream_b_sel(b: &[Word; 40]) -> [Word; 4] {
 /// byte, and each of those bits is linear in the D nibble, so a round's
 /// keystream contribution is two XORs. Returns `[high, low]`.
 #[inline]
-pub(super) fn stream_out(d: &[Word; 4]) -> [Word; 2] {
-    let hi = d[2] ^ d[3];
+pub(super) fn stream_out(d: &[Word; NIBBLE_BITS]) -> [Word; PAIR_BITS] {
+    let hi = d[D_TAP_2] ^ d[D_TAP_3];
     let lo = d[0] ^ d[1];
     [hi, lo]
 }

@@ -23,6 +23,11 @@ pub mod mmi_display;
 pub mod mmi_high;
 pub mod resource_manager;
 
+/// Bytes of the `apdu_tag` header field (EN 50221 §8.2.1).
+pub(crate) const APDU_TAG_LEN: usize = 3;
+/// Offset of `length_field` within an APDU header.
+pub(crate) const LENGTH_FIELD_OFFSET: usize = APDU_TAG_LEN;
+
 /// Reject bytes after a fixed-layout APDU body: the `length_field` declared
 /// more than the object's fixed shape holds, so the extra bytes would be
 /// silently dropped and the parse -> serialize round trip would not be
@@ -44,16 +49,16 @@ pub(crate) fn parse_apdu_header<'a>(
     expected: ApduTag,
     what: &'static str,
 ) -> Result<(LengthForm, &'a [u8])> {
-    if bytes.len() < 3 {
+    if bytes.len() < APDU_TAG_LEN {
         return Err(Error::BufferTooShort(
             broadcast_common::error::BufferTooShort {
-                need: 3,
+                need: APDU_TAG_LEN,
                 have: bytes.len(),
                 what,
             },
         ));
     }
-    let got = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
+    let got = ApduTag::from_bytes(bytes[0], bytes[1], bytes[APDU_TAG_LEN - 1]);
     if got != expected {
         return Err(Error::UnexpectedApduTag {
             got: got.as_u24(),
@@ -61,8 +66,8 @@ pub(crate) fn parse_apdu_header<'a>(
             what,
         });
     }
-    let (len_value, len_hdr, form) = length::decode_form(&bytes[3..])?;
-    let body_start = 3 + len_hdr;
+    let (len_value, len_hdr, form) = length::decode_form(&bytes[LENGTH_FIELD_OFFSET..])?;
+    let body_start = LENGTH_FIELD_OFFSET + len_hdr;
     let body_end = body_start + len_value;
     if bytes.len() < body_end {
         return Err(Error::LengthMismatch(
@@ -94,7 +99,7 @@ pub(crate) fn parse_empty_apdu(
 
 /// Serialized length of an APDU with a `body_len`-byte body.
 pub(crate) fn apdu_len(body_len: usize, form: LengthForm) -> usize {
-    3 + length::encoded_len_with(body_len, form) + body_len
+    LENGTH_FIELD_OFFSET + length::encoded_len_with(body_len, form) + body_len
 }
 
 /// Serialized length of a header-only (empty-body) APDU.
@@ -113,9 +118,9 @@ pub(crate) fn write_apdu_header(
 ) -> Result<usize> {
     let total = apdu_len(body_len, form);
     need_out(buf, total)?;
-    buf[..3].copy_from_slice(&tag.to_bytes());
-    let n = length::encode_with(body_len, form, &mut buf[3..])?;
-    Ok(3 + n)
+    buf[..APDU_TAG_LEN].copy_from_slice(&tag.to_bytes());
+    let n = length::encode_with(body_len, form, &mut buf[LENGTH_FIELD_OFFSET..])?;
+    Ok(LENGTH_FIELD_OFFSET + n)
 }
 
 /// Serialize a header-only (empty-body) APDU into `buf`.

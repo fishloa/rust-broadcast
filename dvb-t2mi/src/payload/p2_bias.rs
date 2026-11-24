@@ -18,6 +18,31 @@ pub struct P2BiasPayload {
 
 const P2_BIAS_HEADER_LEN: usize = 5;
 
+/// Offsets of the reserved bytes within the payload.
+const RFU_FIRST_OFFSET: usize = 1;
+const RFU_SECOND_OFFSET: usize = 2;
+/// Offset of the byte carrying the reserved top bit and the cell count's high
+/// bits.
+const COUNT_HIGH_OFFSET: usize = 3;
+/// Offset of the low byte of the cell count.
+const COUNT_LOW_OFFSET: usize = 4;
+
+/// Mask of the reserved top bit of the count's high byte.
+const RFU_TOP_BIT_MASK: u8 = 0x80;
+/// Shift placing the reserved top bit for the error report.
+const RFU_TOP_BIT_SHIFT: u32 = 7;
+/// Shifts assembling the 17-bit reserved value for the error report.
+const RFU_HIGH_SHIFT: u32 = 9;
+const RFU_MID_SHIFT: u32 = 1;
+
+/// Mask of the seven cell-count bits carried in its high byte.
+const COUNT_HIGH_BYTE_MASK: u16 = 0x7F;
+/// Shift placing the cell count's high bits.
+const COUNT_HIGH_SHIFT: u32 = 8;
+/// Mask of one byte.
+const BYTE_MASK: u16 = 0xFF;
+/// Max value of the 15-bit cell count.
+const COUNT_MAX: u16 = 0x7FFF;
 impl<'a> Parse<'a> for P2BiasPayload {
     type Error = crate::error::Error;
 
@@ -25,20 +50,25 @@ impl<'a> Parse<'a> for P2BiasPayload {
         need_in(bytes, P2_BIAS_HEADER_LEN, "P2BiasPayload header")?;
 
         // rfu is 17 bits: all of bytes[1], bytes[2], and the top bit of bytes[3].
-        if bytes[1] != 0 || bytes[2] != 0 || (bytes[3] & 0x80) != 0 {
+        if bytes[RFU_FIRST_OFFSET] != 0
+            || bytes[RFU_SECOND_OFFSET] != 0
+            || (bytes[COUNT_HIGH_OFFSET] & RFU_TOP_BIT_MASK) != 0
+        {
             return Err(crate::Error::ReservedBits(
                 broadcast_common::error::ReservedBits {
                     field: "17-bit RFU",
                     expected: 0,
-                    found: (u64::from(bytes[1]) << 9)
-                        | (u64::from(bytes[2]) << 1)
-                        | u64::from(bytes[3] >> 7),
+                    found: (u64::from(bytes[RFU_FIRST_OFFSET]) << RFU_HIGH_SHIFT)
+                        | (u64::from(bytes[RFU_SECOND_OFFSET]) << RFU_MID_SHIFT)
+                        | u64::from(bytes[COUNT_HIGH_OFFSET] >> RFU_TOP_BIT_SHIFT),
                 },
             ));
         }
 
         // num_active_bias_cells_per_p2 is 15 bits: bottom 7 of bytes[3] + bytes[4].
-        let num_active = ((bytes[3] as u16 & 0x7F) << 8) | (bytes[4] as u16);
+        let num_active = ((bytes[COUNT_HIGH_OFFSET] as u16 & COUNT_HIGH_BYTE_MASK)
+            << COUNT_HIGH_SHIFT)
+            | (bytes[COUNT_LOW_OFFSET] as u16);
 
         Ok(P2BiasPayload {
             frame_idx: bytes[0],
@@ -62,21 +92,22 @@ impl Serialize for P2BiasPayload {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
         need_out(buf, self.serialized_len())?;
 
-        if self.num_active_bias_cells_per_p2 > 0x7FFF {
+        if self.num_active_bias_cells_per_p2 > COUNT_MAX {
             return Err(crate::Error::FieldOverflow(
                 broadcast_common::len::FieldOverflow {
                     field: "num_active_bias_cells_per_p2",
                     value: u64::from(self.num_active_bias_cells_per_p2),
-                    max: 0x7FFF,
+                    max: u64::from(COUNT_MAX),
                 },
             ));
         }
 
         buf[0] = self.frame_idx;
-        buf[1] = 0; // rfu
-        buf[2] = 0; // rfu
-        buf[3] = ((self.num_active_bias_cells_per_p2 >> 8) as u8) & 0x7F;
-        buf[4] = (self.num_active_bias_cells_per_p2 & 0xFF) as u8;
+        buf[RFU_FIRST_OFFSET] = 0; // rfu
+        buf[RFU_SECOND_OFFSET] = 0; // rfu
+        buf[COUNT_HIGH_OFFSET] = ((self.num_active_bias_cells_per_p2 >> COUNT_HIGH_SHIFT) as u8)
+            & COUNT_HIGH_BYTE_MASK as u8;
+        buf[COUNT_LOW_OFFSET] = (self.num_active_bias_cells_per_p2 & BYTE_MASK) as u8;
 
         Ok(self.serialized_len())
     }

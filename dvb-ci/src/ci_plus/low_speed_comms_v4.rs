@@ -78,7 +78,7 @@ impl ConnectionState {
     /// Decode a 2-bit `connection_state` value (low 2 bits of `v`).
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & CONNECTION_STATE_MASK {
             0x00 => Self::Disconnected,
             0x01 => Self::Connected,
             other => Self::Reserved(other),
@@ -213,11 +213,11 @@ pub struct CommsInfoReply {
     /// The 7-bit `reserved` field in front of `status` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_status: ReservedZero<7>,
+    pub reserved_status: ReservedZero<STATUS_RESERVED_BITS>,
     /// The 3-bit `reserved` field in front of `inputDeliveryPID` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pid: ReservedZero<3>,
+    pub reserved_pid: ReservedZero<INPUT_DELIVERY_PID_RESERVED_BITS>,
 }
 
 // LTS_id(1) + reserved/status(1) + source_IPaddress(16) + source_port(2) +
@@ -226,6 +226,41 @@ const INFO_REPLY_BODY: usize = 1 + 1 + IP_ADDR_LEN + 2 + 2;
 const STATUS_BIT: u8 = 0x01;
 const INPUT_DELIVERY_PID_MASK: u16 = 0x1FFF;
 
+/// Mask of the 2-bit `connection_state`.
+const CONNECTION_STATE_MASK: u8 = 0x03;
+/// Shift placing `connection_state` at the top of its byte.
+const CONNECTION_STATE_SHIFT: u32 = 6;
+/// Reserved bits beside `connection_state`.
+pub const CONNECTION_STATE_RESERVED_BITS: u32 = 6;
+/// Reserved bits in front of `status`.
+pub const STATUS_RESERVED_BITS: u32 = 7;
+/// Shift selecting the reserved bits in front of `status`.
+const STATUS_RESERVED_SHIFT: u32 = 1;
+/// Reserved bits in front of `inputDeliveryPID`.
+pub const INPUT_DELIVERY_PID_RESERVED_BITS: u32 = 3;
+/// Shift selecting the reserved bits in front of `inputDeliveryPID`.
+const INPUT_DELIVERY_PID_RESERVED_SHIFT: u32 = 5;
+/// Shift placing the 13-bit `inputDeliveryPID` beneath its reserved bits.
+const INPUT_DELIVERY_PID_PACK_SHIFT: u32 = 13;
+/// Bytes of a port / PID field.
+const PORT_LEN: usize = core::mem::size_of::<u16>();
+
+/// Offsets within a `comms_info_reply` body.
+const LTS_ID_OFFSET: usize = 0;
+const STATUS_OFFSET: usize = 1;
+const SOURCE_IP_OFFSET: usize = 2;
+const SOURCE_PORT_OFFSET: usize = SOURCE_IP_OFFSET + IP_ADDR_LEN;
+const INPUT_DELIVERY_PID_OFFSET: usize = SOURCE_PORT_OFFSET + PORT_LEN;
+
+/// Offset of `ip_protocol_version` within a multicast descriptor body.
+const IP_PROTOCOL_VERSION_OFFSET: usize = 0;
+/// Offset of `multicast_port` within a multicast descriptor body.
+const MULTICAST_PORT_OFFSET: usize = IP_PROTOCOL_VERSION_OFFSET + 1 + IP_ADDR_LEN;
+/// Offset of the include-sources flags byte within a multicast descriptor body.
+const MULTICAST_FLAGS_OFFSET: usize = MULTICAST_PORT_OFFSET + PORT_LEN;
+/// Offset of `num_source_addresses` within a multicast descriptor body.
+const MULTICAST_COUNT_OFFSET: usize = MULTICAST_FLAGS_OFFSET + 1;
+
 impl<'a> Parse<'a> for CommsInfoReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -233,14 +268,17 @@ impl<'a> Parse<'a> for CommsInfoReply {
             objects::parse_apdu_header(bytes, tag::COMMS_INFO_REPLY, "comms_info_reply")?;
         need_in(body, INFO_REPLY_BODY, "comms_info_reply")?;
         crate::objects::reject_trailing_body(body, INFO_REPLY_BODY, "comms_info_reply")?;
-        let lts_id = body[0];
-        let status = body[1] & STATUS_BIT != 0;
+        let lts_id = body[LTS_ID_OFFSET];
+        let status = body[STATUS_OFFSET] & STATUS_BIT != 0;
         let mut source_ip_address = [0u8; IP_ADDR_LEN];
-        source_ip_address.copy_from_slice(&body[2..2 + IP_ADDR_LEN]);
-        let p = 2 + IP_ADDR_LEN;
-        let source_port = u16::from_be_bytes([body[p], body[p + 1]]);
+        source_ip_address.copy_from_slice(&body[SOURCE_IP_OFFSET..SOURCE_PORT_OFFSET]);
+        let source_port =
+            u16::from_be_bytes([body[SOURCE_PORT_OFFSET], body[SOURCE_PORT_OFFSET + 1]]);
         let input_delivery_pid = Pid::from_wire_masked(
-            u16::from_be_bytes([body[p + 2], body[p + 3]]) & INPUT_DELIVERY_PID_MASK,
+            u16::from_be_bytes([
+                body[INPUT_DELIVERY_PID_OFFSET],
+                body[INPUT_DELIVERY_PID_OFFSET + 1],
+            ]) & INPUT_DELIVERY_PID_MASK,
         );
         Ok(Self {
             length_form,
@@ -249,8 +287,12 @@ impl<'a> Parse<'a> for CommsInfoReply {
             source_ip_address,
             source_port,
             input_delivery_pid,
-            reserved_status: ReservedZero::from_bits(u64::from(body[1] >> 1)),
-            reserved_pid: ReservedZero::from_bits(u64::from(body[p + 2] >> 5)),
+            reserved_status: ReservedZero::from_bits(u64::from(
+                body[STATUS_OFFSET] >> STATUS_RESERVED_SHIFT,
+            )),
+            reserved_pid: ReservedZero::from_bits(u64::from(
+                body[INPUT_DELIVERY_PID_OFFSET] >> INPUT_DELIVERY_PID_RESERVED_SHIFT,
+            )),
         })
     }
 }
@@ -266,17 +308,21 @@ impl Serialize for CommsInfoReply {
             self.length_form,
             buf,
         )?;
-        buf[pos] = self.lts_id;
+        buf[pos + LTS_ID_OFFSET] = self.lts_id;
         // reserved(7) + status(1).
-        buf[pos + 1] = ((self.reserved_status.get() << 1) as u8) | u8::from(self.status);
-        buf[pos + 2..pos + 2 + IP_ADDR_LEN].copy_from_slice(&self.source_ip_address);
-        let p = pos + 2 + IP_ADDR_LEN;
-        buf[p..p + 2].copy_from_slice(&self.source_port.to_be_bytes());
+        buf[pos + STATUS_OFFSET] =
+            ((self.reserved_status.get() << STATUS_RESERVED_SHIFT) as u8) | u8::from(self.status);
+        buf[pos + SOURCE_IP_OFFSET..pos + SOURCE_PORT_OFFSET]
+            .copy_from_slice(&self.source_ip_address);
+        buf[pos + SOURCE_PORT_OFFSET..pos + INPUT_DELIVERY_PID_OFFSET]
+            .copy_from_slice(&self.source_port.to_be_bytes());
         // reserved(3) + inputDeliveryPID(13). Range-checked above.
-        buf[p + 2..p + 4].copy_from_slice(
-            &(((self.reserved_pid.get() << 13) as u16) | self.input_delivery_pid.value())
+        buf[pos + INPUT_DELIVERY_PID_OFFSET..pos + INPUT_DELIVERY_PID_OFFSET + PORT_LEN]
+            .copy_from_slice(
+                &(((self.reserved_pid.get() << INPUT_DELIVERY_PID_PACK_SHIFT) as u16)
+                    | self.input_delivery_pid.value())
                 .to_be_bytes(),
-        );
+            );
         Ok(pos + INFO_REPLY_BODY)
     }
 }
@@ -391,7 +437,7 @@ pub struct CommsIpConfigReply {
     /// The 6-bit `reserved` field after `connection_state` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<6>,
+    pub reserved: ReservedZero<CONNECTION_STATE_RESERVED_BITS>,
 }
 
 // connection_state/reserved(1) + physical_address(6).
@@ -423,7 +469,7 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
             objects::parse_apdu_header(bytes, tag::COMMS_IP_CONFIG_REPLY, "comms_IP_config_reply")?;
         need_in(body, IP_CONFIG_PREFIX, "comms_IP_config_reply")?;
         // connection_state(2) + reserved(6); take the high 2 bits.
-        let connection_state = ConnectionState::from_u8(body[0] >> 6);
+        let connection_state = ConnectionState::from_u8(body[0] >> CONNECTION_STATE_SHIFT);
         let mut physical_address = [0u8; MAC_LEN];
         physical_address.copy_from_slice(&body[1..1 + MAC_LEN]);
         let ip_config = if connection_state.to_u8() == CONNECTION_STATE_CONNECTED {
@@ -495,7 +541,7 @@ impl Serialize for CommsIpConfigReply {
         if let Some(c) = &self.ip_config {
             objects::fit_bits(
                 c.dns_server_addresses.len() as u64,
-                8,
+                u8::BITS,
                 "comms_IP_config_reply num_DNS_servers",
             )?;
         }
@@ -507,7 +553,8 @@ impl Serialize for CommsIpConfigReply {
             buf,
         )?;
         // connection_state(2) << 6 + reserved(6).
-        buf[pos] = (self.connection_state.to_u8() << 6) | self.reserved.get() as u8;
+        buf[pos] =
+            (self.connection_state.to_u8() << CONNECTION_STATE_SHIFT) | self.reserved.get() as u8;
         buf[pos + 1..pos + 1 + MAC_LEN].copy_from_slice(&self.physical_address);
         pos += IP_CONFIG_PREFIX;
         if let Some(c) = &self.ip_config {
@@ -673,12 +720,12 @@ impl MulticastDescriptor {
         let data =
             parse_descriptor_header(bytes, MULTICAST_DESCRIPTOR_TAG, "multicast_descriptor")?;
         need_in(data, MULTICAST_FIXED, "multicast_descriptor")?;
-        let ip_protocol_version = IpProtocolVersion::from_u8(data[0]);
+        let ip_protocol_version = IpProtocolVersion::from_u8(data[IP_PROTOCOL_VERSION_OFFSET]);
         let ip_address = read_addr(data, 1);
-        let multicast_port = u16::from_be_bytes([data[1 + IP_ADDR_LEN], data[2 + IP_ADDR_LEN]]);
-        let flags_pos = 3 + IP_ADDR_LEN;
-        let include_sources = data[flags_pos] & INCLUDE_SOURCES_BIT != 0;
-        let n = data[flags_pos + 1] as usize;
+        let multicast_port =
+            u16::from_be_bytes([data[MULTICAST_PORT_OFFSET], data[MULTICAST_PORT_OFFSET + 1]]);
+        let include_sources = data[MULTICAST_FLAGS_OFFSET] & INCLUDE_SOURCES_BIT != 0;
+        let n = data[MULTICAST_COUNT_OFFSET] as usize;
         let mut pos = MULTICAST_FIXED;
         need_in(data, pos + n * IP_ADDR_LEN, "multicast_descriptor sources")?;
         let mut source_addresses = Vec::with_capacity(n);
@@ -706,13 +753,18 @@ impl Serialize for MulticastDescriptor {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let mut pos = write_descriptor_header(MULTICAST_DESCRIPTOR_TAG, self.data_len(), buf)?;
-        buf[pos] = self.ip_protocol_version.to_u8();
-        buf[pos + 1..pos + 1 + IP_ADDR_LEN].copy_from_slice(&self.ip_address);
-        let p = pos + 1 + IP_ADDR_LEN;
-        buf[p..p + 2].copy_from_slice(&self.multicast_port.to_be_bytes());
+        buf[pos + IP_PROTOCOL_VERSION_OFFSET] = self.ip_protocol_version.to_u8();
+        buf[pos + 1..pos + MULTICAST_PORT_OFFSET].copy_from_slice(&self.ip_address);
+        buf[pos + MULTICAST_PORT_OFFSET..pos + MULTICAST_FLAGS_OFFSET]
+            .copy_from_slice(&self.multicast_port.to_be_bytes());
         // reserved(7)='0000000' + include_sources(1).
-        buf[p + 2] = u8::from(self.include_sources);
-        buf[p + 3] = self.source_addresses.len() as u8;
+        buf[pos + MULTICAST_FLAGS_OFFSET] = u8::from(self.include_sources);
+        buf[pos + MULTICAST_COUNT_OFFSET] =
+            broadcast_common::len::fit_u8(self.source_addresses.len(), "num_source_addresses")
+                .map_err(|_| Error::InvalidObject {
+                    what: "multicast_descriptor",
+                    reason: "more than 255 source addresses",
+                })?;
         pos += MULTICAST_FIXED;
         for a in &self.source_addresses {
             buf[pos..pos + IP_ADDR_LEN].copy_from_slice(a);
@@ -807,6 +859,7 @@ crate::dispatch::declare_resource_apdus! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     const IP_A: [u8; IP_ADDR_LEN] = [
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xC0, 0xA8, 0x01,
@@ -852,6 +905,35 @@ mod tests {
         other.status = false;
         assert_eq!(other.try_to_bytes().unwrap()[5], 0x00);
         assert_ne!(bytes, other.try_to_bytes().unwrap());
+    }
+
+    #[test]
+    fn multicast_source_count_over_range_is_rejected_not_wrapped() {
+        // The descriptor_length byte caps the body at 255 bytes, so a source
+        // list that would need a larger count byte must fail rather than have
+        // its count wrap to a smaller value.
+        let over = MulticastDescriptor {
+            ip_protocol_version: IpProtocolVersion::Ipv4,
+            ip_address: IP_A,
+            multicast_port: 0x1234,
+            include_sources: true,
+            source_addresses: vec![IP_B; 256],
+        };
+        assert!(matches!(over.try_to_bytes(), Err(Error::LengthTooLarge(_))));
+
+        // The largest count that still fits the descriptor body round-trips.
+        let max_fitting = (u8::MAX as usize - MULTICAST_FIXED) / IP_ADDR_LEN;
+        let fit = MulticastDescriptor {
+            ip_protocol_version: IpProtocolVersion::Ipv4,
+            ip_address: IP_A,
+            multicast_port: 0x1234,
+            include_sources: true,
+            source_addresses: vec![IP_B; max_fitting],
+        };
+        let bytes = fit.try_to_bytes().unwrap();
+        assert_eq!(usize::from(bytes[1]), fit.data_len());
+        assert_eq!(usize::from(bytes[22]), max_fitting);
+        assert_eq!(MulticastDescriptor::parse(&bytes).unwrap(), fit);
     }
 
     #[test]

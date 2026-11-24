@@ -61,7 +61,8 @@ pub(crate) fn ser<S: Serialize<Error = dvb_ci::Error>>(s: &S) -> dvb_ci::Result<
 
 /// The 3-byte `apdu_tag` at the start of an APDU, if present.
 pub(crate) fn peek_tag(apdu: &[u8]) -> Option<ApduTag> {
-    (apdu.len() >= 3).then(|| ApduTag::from_bytes(apdu[0], apdu[1], apdu[2]))
+    apdu.first_chunk::<APDU_TAG_LEN>()
+        .map(|&[a, b, c]| ApduTag::from_bytes(a, b, c))
 }
 
 /// What a resource wants done after reacting to an input.
@@ -307,11 +308,21 @@ impl Resource for ConditionalAccess {
 }
 
 const SECS_PER_DAY: u64 = 86_400;
+/// Seconds in one hour.
+const SECS_PER_HOUR: u64 = 3_600;
+/// Seconds in one minute.
+const SECS_PER_MINUTE: u64 = 60;
 /// Modified Julian Date of the Unix epoch (1970-01-01).
 const MJD_UNIX_EPOCH: u64 = 40_587;
+/// Shift placing the high byte of the 16-bit `MJD`.
+const MJD_HIGH_SHIFT: u32 = 8;
+/// Radix of a BCD digit.
+const BCD_RADIX: u64 = 10;
+/// Shift placing a BCD tens digit in its byte.
+const BCD_TENS_SHIFT: u32 = 4;
 
 fn bcd(v: u64) -> u8 {
-    (((v / 10) << 4) | (v % 10)) as u8
+    (((v / BCD_RADIX) << BCD_TENS_SHIFT) | (v % BCD_RADIX)) as u8
 }
 
 /// Encode a Unix timestamp as the 5-byte DVB `UTC_time` (MJD `[15:0]` + BCD
@@ -322,11 +333,11 @@ fn unix_to_mjd_bcd(unix_secs: u64) -> Option<[u8; UTC_TIME_LEN]> {
     let mjd = u16::try_from(MJD_UNIX_EPOCH + unix_secs / SECS_PER_DAY).ok()?;
     let sod = unix_secs % SECS_PER_DAY;
     Some([
-        (mjd >> 8) as u8,
+        (mjd >> MJD_HIGH_SHIFT) as u8,
         mjd as u8,
-        bcd(sod / 3600),
-        bcd((sod % 3600) / 60),
-        bcd(sod % 60),
+        bcd(sod / SECS_PER_HOUR),
+        bcd((sod % SECS_PER_HOUR) / SECS_PER_MINUTE),
+        bcd(sod % SECS_PER_MINUTE),
     ])
 }
 
@@ -453,7 +464,8 @@ pub struct Mmi {
 /// sends the `_last` block cannot grow host memory past this.
 pub const MAX_MMI_CHAIN_LEN: usize = 0xFFFF;
 
-const APDU_TAG_LEN: usize = 3;
+/// Bytes in an `apdu_tag` (EN 50221 §8.2.1).
+pub(crate) const APDU_TAG_LEN: usize = 3;
 
 #[derive(Debug)]
 struct MmiChain {

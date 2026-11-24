@@ -53,7 +53,7 @@ impl EitResponseCode {
     /// Decode the 2-bit `ResponseCode`.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v & 0x03 {
+        match v & RESPONSE_CODE_MASK {
             0b00 => Self::NotOnPresentDocument,
             0b01 => Self::NotAvailable,
             0b10 => Self::SectionFound,
@@ -108,7 +108,7 @@ pub struct EitSectionReq {
     /// The 7-bit `reserved` field in front of `OKToDisruptService` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<7>,
+    pub reserved: ReservedZero<DISRUPT_FLAG_RESERVED_BITS>,
 }
 
 /// One EIT event in an [`EitSectionAck`] loop — modelled on the EIT event loop in
@@ -119,9 +119,9 @@ pub struct EitEvent<'a> {
     /// `event_id` (16-bit).
     pub event_id: u16,
     /// `start_time` — 40-bit MJD+BCD UTC, carried verbatim (5 bytes).
-    pub start_time: [u8; 5],
+    pub start_time: [u8; START_TIME_LEN],
     /// `duration` — 24-bit BCD HHMMSS.
-    pub duration: [u8; 3],
+    pub duration: [u8; DURATION_LEN],
     /// `running_status` — 3-bit EIT running status.
     pub running_status: u8,
     /// `free_CA_mode` — EIT meaning.
@@ -149,7 +149,7 @@ pub struct EitSectionAck<'a> {
     /// The 2-bit `reserved` field in front of `ResponseCode` as received, preserved so the
     /// object re-serializes byte-for-byte; `0` when hand-built.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: ReservedZero<2>,
+    pub reserved: ReservedZero<ACK_RESERVED_BITS>,
 }
 
 // --- EITSectionReq ---
@@ -157,6 +157,59 @@ pub struct EitSectionAck<'a> {
 // TableID(2) + ServiceID(2) + SectionNumber(1) + OriginalNetworkID(2)
 // + Reserved(7)/OKToDisruptService(1).
 const EIT_SECTION_REQ_BODY: usize = 2 + 2 + 1 + 2 + 1;
+
+/// Mask of the 2-bit `ResponseCode`.
+const RESPONSE_CODE_MASK: u8 = 0x03;
+/// Shift placing `ResponseCode` below the reserved bits.
+const RESPONSE_CODE_SHIFT: u32 = 4;
+/// Shift selecting the reserved bits of the response byte.
+const RESPONSE_RESERVED_SHIFT: u32 = 6;
+/// Mask of a 12-bit length's high nibble.
+const LENGTH_HIGH_MASK: u8 = 0x0F;
+/// Shift placing a 12-bit length's high bits.
+const LENGTH_SHIFT: u32 = 8;
+/// Largest 12-bit length.
+const LENGTH_MAX: usize = 0x0FFF;
+
+/// Reserved bits in front of `OKToDisruptService`.
+pub const DISRUPT_FLAG_RESERVED_BITS: u32 = 7;
+/// Shift selecting the reserved bits in front of `OKToDisruptService`.
+const DISRUPT_FLAG_RESERVED_SHIFT: u32 = 1;
+/// Mask of `OKToDisruptService`.
+const OK_TO_DISRUPT_MASK: u8 = 0x01;
+/// Reserved bits in front of `ResponseCode`.
+pub const ACK_RESERVED_BITS: u32 = 2;
+
+/// Bytes of `start_time` (MJD + BCD HHMMSS).
+pub const START_TIME_LEN: usize = 5;
+/// Bytes of `duration` (BCD HHMMSS).
+pub const DURATION_LEN: usize = 3;
+/// Offset of `pending_length`'s low byte in an `EITSectionAck`.
+const ACK_LENGTH_LOW_OFFSET: usize = 1;
+
+/// Offsets within an `EITSectionReq` body.
+const TABLE_ID_OFFSET: usize = 0;
+const SERVICE_ID_OFFSET: usize = 2;
+const SECTION_NUMBER_OFFSET: usize = 4;
+const ORIGINAL_NETWORK_ID_OFFSET: usize = 5;
+const DISRUPT_FLAGS_OFFSET: usize = 7;
+
+/// Offsets within an EIT event entry.
+const EVENT_ID_OFFSET: usize = 0;
+const START_TIME_OFFSET: usize = 2;
+const DURATION_OFFSET: usize = 7;
+const EVENT_FLAGS_OFFSET: usize = 10;
+const LOOP_LENGTH_LOW_OFFSET: usize = 11;
+/// Shift placing `running_status` at the top of the event flags byte.
+const RUNNING_STATUS_SHIFT: u32 = 5;
+/// Mask of `running_status`.
+const RUNNING_STATUS_MASK: u8 = 0x07;
+/// Bit width of `running_status`.
+const RUNNING_STATUS_BITS: u32 = 3;
+/// Mask of `free_CA_mode`.
+const FREE_CA_MODE_MASK: u8 = 0x10;
+/// Shift placing `free_CA_mode`.
+const FREE_CA_MODE_SHIFT: u32 = 4;
 
 impl<'a> Parse<'a> for EitSectionReq {
     type Error = Error;
@@ -167,12 +220,17 @@ impl<'a> Parse<'a> for EitSectionReq {
         crate::objects::reject_trailing_body(body, EIT_SECTION_REQ_BODY, "EITSectionReq")?;
         Ok(Self {
             length_form,
-            table_id: u16::from_be_bytes([body[0], body[1]]),
-            service_id: u16::from_be_bytes([body[2], body[3]]),
-            section_number: body[4],
-            original_network_id: u16::from_be_bytes([body[5], body[6]]),
-            ok_to_disrupt_service: (body[7] & 0x01) != 0,
-            reserved: ReservedZero::from_bits(u64::from(body[7] >> 1)),
+            table_id: u16::from_be_bytes([body[TABLE_ID_OFFSET], body[TABLE_ID_OFFSET + 1]]),
+            service_id: u16::from_be_bytes([body[SERVICE_ID_OFFSET], body[SERVICE_ID_OFFSET + 1]]),
+            section_number: body[SECTION_NUMBER_OFFSET],
+            original_network_id: u16::from_be_bytes([
+                body[ORIGINAL_NETWORK_ID_OFFSET],
+                body[ORIGINAL_NETWORK_ID_OFFSET + 1],
+            ]),
+            ok_to_disrupt_service: (body[DISRUPT_FLAGS_OFFSET] & OK_TO_DISRUPT_MASK) != 0,
+            reserved: ReservedZero::from_bits(u64::from(
+                body[DISRUPT_FLAGS_OFFSET] >> DISRUPT_FLAG_RESERVED_SHIFT,
+            )),
         })
     }
 }
@@ -188,12 +246,17 @@ impl Serialize for EitSectionReq {
             self.length_form,
             buf,
         )?;
-        buf[pos..pos + 2].copy_from_slice(&self.table_id.to_be_bytes());
-        buf[pos + 2..pos + 4].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[pos + 4] = self.section_number;
-        buf[pos + 5..pos + 7].copy_from_slice(&self.original_network_id.to_be_bytes());
+        buf[pos + TABLE_ID_OFFSET..pos + SERVICE_ID_OFFSET]
+            .copy_from_slice(&self.table_id.to_be_bytes());
+        buf[pos + SERVICE_ID_OFFSET..pos + SECTION_NUMBER_OFFSET]
+            .copy_from_slice(&self.service_id.to_be_bytes());
+        buf[pos + SECTION_NUMBER_OFFSET] = self.section_number;
+        buf[pos + ORIGINAL_NETWORK_ID_OFFSET..pos + DISRUPT_FLAGS_OFFSET]
+            .copy_from_slice(&self.original_network_id.to_be_bytes());
         // Reserved(7), OKToDisruptService(1).
-        buf[pos + 7] = ((self.reserved.get() << 1) as u8) | u8::from(self.ok_to_disrupt_service);
+        buf[pos + DISRUPT_FLAGS_OFFSET] = ((self.reserved.get() << DISRUPT_FLAG_RESERVED_SHIFT)
+            as u8)
+            | u8::from(self.ok_to_disrupt_service);
         Ok(pos + EIT_SECTION_REQ_BODY)
     }
 }
@@ -212,8 +275,10 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
             objects::parse_apdu_header(bytes, tag::EIT_SECTION_ACK, "EITSectionAck")?;
         need_in(body, EIT_SECTION_ACK_PREFIX, "EITSectionAck")?;
         // byte0: Reserved(2) + ResponseCode(2) + Length high nibble(4 → top of 12).
-        let response_code = EitResponseCode::from_u8((body[0] >> 4) & 0x03);
-        let length = ((u16::from(body[0] & 0x0F) << 8) | u16::from(body[1])) as usize;
+        let response_code =
+            EitResponseCode::from_u8((body[0] >> RESPONSE_CODE_SHIFT) & RESPONSE_CODE_MASK);
+        let length = ((u16::from(body[0] & LENGTH_HIGH_MASK) << LENGTH_SHIFT)
+            | u16::from(body[ACK_LENGTH_LOW_OFFSET])) as usize;
         let loop_start = EIT_SECTION_ACK_PREFIX;
         let loop_end = loop_start + length;
         if body.len() < loop_end {
@@ -235,16 +300,21 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
                     reason: "truncated event header",
                 });
             }
-            let event_id = u16::from_be_bytes([body[p], body[p + 1]]);
-            let mut start_time = [0u8; 5];
-            start_time.copy_from_slice(&body[p + 2..p + 7]);
-            let mut duration = [0u8; 3];
-            duration.copy_from_slice(&body[p + 7..p + 10]);
-            let b10 = body[p + 10];
-            let b11 = body[p + 11];
-            let running_status = (b10 >> 5) & 0x07;
-            let free_ca_mode = (b10 & 0x10) != 0;
-            let dll = ((u16::from(b10 & 0x0F) << 8) | u16::from(b11)) as usize;
+            let event_id =
+                u16::from_be_bytes([body[p + EVENT_ID_OFFSET], body[p + EVENT_ID_OFFSET + 1]]);
+            let mut start_time = [0u8; START_TIME_LEN];
+            start_time.copy_from_slice(
+                &body[p + START_TIME_OFFSET..p + START_TIME_OFFSET + START_TIME_LEN],
+            );
+            let mut duration = [0u8; DURATION_LEN];
+            duration
+                .copy_from_slice(&body[p + DURATION_OFFSET..p + DURATION_OFFSET + DURATION_LEN]);
+            let b10 = body[p + EVENT_FLAGS_OFFSET];
+            let b11 = body[p + LOOP_LENGTH_LOW_OFFSET];
+            let running_status = (b10 >> RUNNING_STATUS_SHIFT) & RUNNING_STATUS_MASK;
+            let free_ca_mode = (b10 & FREE_CA_MODE_MASK) != 0;
+            let dll =
+                ((u16::from(b10 & LENGTH_HIGH_MASK) << LENGTH_SHIFT) | u16::from(b11)) as usize;
             let desc_start = p + EIT_EVENT_FIXED;
             let desc_end = desc_start + dll;
             if desc_end > loop_end {
@@ -270,7 +340,7 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
             length_form,
             response_code,
             events,
-            reserved: ReservedZero::from_bits(u64::from(body[0] >> 6)),
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> RESPONSE_RESERVED_SHIFT)),
         })
     }
 }
@@ -292,7 +362,7 @@ impl Serialize for EitSectionAck<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let length = self.loop_len();
-        if length > 0x0FFF {
+        if length > LENGTH_MAX {
             return Err(Error::InvalidObject {
                 what: "EITSectionAck",
                 reason: "event loop longer than 4095 bytes",
@@ -303,13 +373,13 @@ impl Serialize for EitSectionAck<'_> {
             objects::write_apdu_header(tag::EIT_SECTION_ACK, body_len, self.length_form, buf)?;
         let len16 = length as u16;
         // Reserved(2), ResponseCode(2), Length(12).
-        buf[pos] = ((self.reserved.get() << 6) as u8)
-            | (self.response_code.to_u8() << 4)
-            | ((len16 >> 8) as u8 & 0x0F);
+        buf[pos] = ((self.reserved.get() << RESPONSE_RESERVED_SHIFT) as u8)
+            | (self.response_code.to_u8() << RESPONSE_CODE_SHIFT)
+            | ((len16 >> LENGTH_SHIFT) as u8 & LENGTH_HIGH_MASK);
         buf[pos + 1] = len16 as u8;
         pos += EIT_SECTION_ACK_PREFIX;
         for e in &self.events {
-            if e.descriptors.len() > 0x0FFF {
+            if e.descriptors.len() > LENGTH_MAX {
                 return Err(Error::InvalidObject {
                     what: "EITSectionAck event",
                     reason: "event descriptors loop longer than 4095 bytes",
@@ -317,18 +387,19 @@ impl Serialize for EitSectionAck<'_> {
             }
             objects::fit_bits(
                 u64::from(e.running_status),
-                3,
+                RUNNING_STATUS_BITS,
                 "EITSectionAck event running_status",
             )?;
-            buf[pos..pos + 2].copy_from_slice(&e.event_id.to_be_bytes());
-            buf[pos + 2..pos + 7].copy_from_slice(&e.start_time);
-            buf[pos + 7..pos + 10].copy_from_slice(&e.duration);
+            buf[pos + EVENT_ID_OFFSET..pos + START_TIME_OFFSET]
+                .copy_from_slice(&e.event_id.to_be_bytes());
+            buf[pos + START_TIME_OFFSET..pos + DURATION_OFFSET].copy_from_slice(&e.start_time);
+            buf[pos + DURATION_OFFSET..pos + EVENT_FLAGS_OFFSET].copy_from_slice(&e.duration);
             let dll = e.descriptors.len() as u16;
             // running_status range-checked above.
-            buf[pos + 10] = (e.running_status << 5)
-                | (u8::from(e.free_ca_mode) << 4)
-                | ((dll >> 8) as u8 & 0x0F);
-            buf[pos + 11] = dll as u8;
+            buf[pos + EVENT_FLAGS_OFFSET] = (e.running_status << RUNNING_STATUS_SHIFT)
+                | (u8::from(e.free_ca_mode) << FREE_CA_MODE_SHIFT)
+                | ((dll >> LENGTH_SHIFT) as u8 & LENGTH_HIGH_MASK);
+            buf[pos + LOOP_LENGTH_LOW_OFFSET] = dll as u8;
             pos += EIT_EVENT_FIXED;
             buf[pos..pos + e.descriptors.len()].copy_from_slice(e.descriptors);
             pos += e.descriptors.len();
@@ -359,8 +430,12 @@ impl<'a> BroadcastServiceGatewayApdu<'a> {
     /// objects; any other tag is delegated to the inherited Generic Service
     /// Gateway dispatch.
     pub fn parse(body: &'a [u8]) -> Result<Self> {
-        need_in(body, 3, "broadcast_service_gateway apdu_tag")?;
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
+        need_in(
+            body,
+            crate::objects::APDU_TAG_LEN,
+            "broadcast_service_gateway apdu_tag",
+        )?;
+        let t = ApduTag::from_bytes(body[0], body[1], body[crate::objects::APDU_TAG_LEN - 1]);
         match t {
             tag::EIT_SECTION_REQ => Ok(Self::EitSectionReq(EitSectionReq::parse(body)?)),
             tag::EIT_SECTION_ACK => Ok(Self::EitSectionAck(EitSectionAck::parse(body)?)),

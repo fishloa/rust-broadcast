@@ -6,12 +6,16 @@
 //! - `sch[56]` — round keys (derived from the control word via `key::expand_block`)
 use super::tables::{PERM, SBOX};
 
+/// Rounds in the DVB-CSA2 block cipher; one round-key byte each.
+const ROUNDS: usize = 56;
+/// Bytes in one CSA block (64 bits).
+const BLOCK_BYTES: usize = 8;
 /// The DVB-CSA2 block cipher, initialized with 56 round-key bytes.
 ///
 /// Not `Copy` (holds key-derived round-key bytes; see [`Drop for
 /// BlockCipher`](BlockCipher)); the crate never derives `Copy` on this type.
 pub(crate) struct BlockCipher {
-    sch: [u8; 56],
+    sch: [u8; ROUNDS],
 }
 
 /// Zero the round-key schedule on drop — see the `zeroize` module.
@@ -23,7 +27,7 @@ impl Drop for BlockCipher {
 
 impl BlockCipher {
     /// Create a new block cipher with the given round keys.
-    pub(crate) fn new(sch: [u8; 56]) -> Self {
+    pub(crate) fn new(sch: [u8; ROUNDS]) -> Self {
         Self { sch }
     }
 
@@ -35,40 +39,60 @@ impl BlockCipher {
 
     /// Encrypt one 8-byte block in-place (rounds 0..55 forward).
     pub(crate) fn encrypt_block(&self, w: &mut [u8]) {
-        debug_assert_eq!(w.len(), 8);
-        let mut b: [u8; 8] = w.try_into().unwrap();
-        for round in 0..56 {
-            let s = SBOX[(self.sch[round] ^ b[7]) as usize];
-            let save = b[1];
-            b[1] = b[2] ^ b[0];
-            b[2] = b[3] ^ b[0];
-            b[3] = b[4] ^ b[0];
-            b[4] = b[5];
-            b[5] = b[6] ^ PERM[s as usize];
-            b[6] = b[7];
-            b[7] = b[0] ^ s;
-            b[0] = save;
+        debug_assert_eq!(w.len(), BLOCK_BYTES);
+        let state: [u8; BLOCK_BYTES] = w.try_into().unwrap();
+        let [
+            mut b0,
+            mut b1,
+            mut b2,
+            mut b3,
+            mut b4,
+            mut b5,
+            mut b6,
+            mut b7,
+        ] = state;
+        for round in 0..ROUNDS {
+            let s = SBOX[(self.sch[round] ^ b7) as usize];
+            let save = b1;
+            b1 = b2 ^ b0;
+            b2 = b3 ^ b0;
+            b3 = b4 ^ b0;
+            b4 = b5;
+            b5 = b6 ^ PERM[s as usize];
+            b6 = b7;
+            b7 = b0 ^ s;
+            b0 = save;
         }
-        w.copy_from_slice(&b);
+        w.copy_from_slice(&[b0, b1, b2, b3, b4, b5, b6, b7]);
     }
 
     /// Decrypt one 8-byte block in-place (rounds 55..0 reverse).
     pub(crate) fn decrypt_block(&self, w: &mut [u8]) {
-        debug_assert_eq!(w.len(), 8);
-        let mut b: [u8; 8] = w.try_into().unwrap();
-        for round in (0..56).rev() {
-            let s = SBOX[(self.sch[round] ^ b[6]) as usize];
-            let out = b[7] ^ s;
-            b[7] = b[6];
-            b[6] = b[5] ^ PERM[s as usize];
-            b[5] = b[4];
-            b[4] = b[3] ^ out;
-            b[3] = b[2] ^ out;
-            b[2] = b[1] ^ out;
-            b[1] = b[0];
-            b[0] = out;
+        debug_assert_eq!(w.len(), BLOCK_BYTES);
+        let state: [u8; BLOCK_BYTES] = w.try_into().unwrap();
+        let [
+            mut b0,
+            mut b1,
+            mut b2,
+            mut b3,
+            mut b4,
+            mut b5,
+            mut b6,
+            mut b7,
+        ] = state;
+        for round in (0..ROUNDS).rev() {
+            let s = SBOX[(self.sch[round] ^ b6) as usize];
+            let out = b7 ^ s;
+            b7 = b6;
+            b6 = b5 ^ PERM[s as usize];
+            b5 = b4;
+            b4 = b3 ^ out;
+            b3 = b2 ^ out;
+            b2 = b1 ^ out;
+            b1 = b0;
+            b0 = out;
         }
-        w.copy_from_slice(&b);
+        w.copy_from_slice(&[b0, b1, b2, b3, b4, b5, b6, b7]);
     }
 }
 
