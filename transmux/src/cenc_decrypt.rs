@@ -918,8 +918,8 @@ fn collect_fragment_samples(
     // Sample bytes copied so far, for the whole file and never refilled: many
     // `moof`s each claiming one `mdat` would otherwise copy it once per
     // fragment (audit 20 finding 13).
-    let mut copied_bytes: usize = 0;
-    let mut pending_moof: Option<(usize, MovieFragmentBox)> = None;
+    let mut copied_bytes: u64 = 0;
+    let mut pending_moof: Option<(u64, MovieFragmentBox)> = None;
     // Running absolute decode-time cursor (media plane step 2c), seeded from
     // the first fragment's `tfdt` for this track (mirrors
     // `crate::media::Fmp4Demux`'s `TrackBuilder`); `Track::new` below anchors
@@ -934,7 +934,7 @@ fn collect_fragment_samples(
         let (bx, consumed) = parse_box(&file[offset..])?;
         if bx.header.box_type.is(&MOOF) {
             let moof = MovieFragmentBox::parse_body(bx.body)?;
-            pending_moof = Some((offset, moof));
+            pending_moof = Some((offset as u64, moof));
         } else if bx.header.box_type.is(&MDAT)
             && let Some((moof_off, moof)) = pending_moof.take()
         {
@@ -998,30 +998,35 @@ fn collect_fragment_samples(
 fn absorb_protected_fragment(
     file: &bytes::Bytes,
     mdats: &[isobmff::frag_offsets::MdatRange],
-    moof_off: usize,
+    moof_off: u64,
     moof: &MovieFragmentBox,
     target_track_id: TrackId,
     next_dts: &mut i64,
-    copied_bytes: &mut usize,
+    copied_bytes: &mut u64,
     out: &mut Vec<crate::pipeline::Sample>,
 ) -> Result<()> {
     use crate::pipeline::Sample;
 
     // All §8.8.7/§8.8.8 addressing and bounds live in `frag_offsets`, shared
     // with `Fmp4Demux` so the two cannot drift (audit r05-W7).
+    let budget = isobmff::frag_offsets::sample_bytes_budget(file.len() as u64);
     for r in isobmff::frag_offsets::sample_ranges_in_run(
-        file,
-        mdats,
         moof_off,
         moof,
         target_track_id.into(),
+        mdats,
+        budget,
         copied_bytes,
     )? {
         let dts = *next_dts;
         let pts = isobmff::frag_offsets::add_offset(dts, r.composition_offset)?;
         let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
+        let start = usize::try_from(r.start)
+            .map_err(|_| Error::InvalidInput("sample offset does not fit the address space"))?;
+        let end = usize::try_from(r.end)
+            .map_err(|_| Error::InvalidInput("sample end does not fit the address space"))?;
         out.push(Sample {
-            data: file.slice(r.start..r.end),
+            data: file.slice(start..end),
             timing: Some(crate::ir::SampleTiming::timed_with_duration(
                 dts, pts, r.duration,
             )),

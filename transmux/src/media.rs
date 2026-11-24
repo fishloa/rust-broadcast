@@ -185,7 +185,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         // fragment before the last (audit r05-W26). Each `mdat` resolves the
         // fragment that follows it, per §8.8.4's "the `mdat` carrying a
         // fragment's data follows that fragment".
-        let mut pending_moofs: Vec<(usize, MovieFragmentBox)> = Vec::new();
+        let mut pending_moofs: Vec<(u64, MovieFragmentBox)> = Vec::new();
         // The zero-width-`trun` sample allowance is shared by every `moof`
         // queued here (and refilled once an `mdat` consumes them): a per-`trun`
         // or per-`moof` cap lets N tiny fragments held before one `mdat` cost
@@ -194,7 +194,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         // Sample bytes copied so far, for the whole file and never refilled:
         // one `mdat` followed by N `moof`s that each claim all of it would
         // otherwise copy those same bytes N times (audit 20 finding 13).
-        let mut copied_bytes: usize = 0;
+        let mut copied_bytes: u64 = 0;
         // A `moof` whose body does not parse is skipped and reported (audit
         // T16, #1144): the box framing is intact, so the next box is read from
         // a correct offset and one corrupt fragment costs only itself.
@@ -229,7 +229,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 match MovieFragmentBox::parse_body_budgeted(bx.body, &mut zero_width_budget) {
                     Ok(mut moof) => {
                         apply_trex_defaults(&mut moof, trex_defaults);
-                        pending_moofs.push((offset, moof));
+                        pending_moofs.push((offset as u64, moof));
                     }
                     Err(_) => degraded.push(InputDegradation::MalformedUnit {
                         position: offset as u64,
@@ -248,9 +248,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                         &mut builders,
                         &mut copied_bytes,
                     ) {
-                        degraded.push(InputDegradation::MalformedUnit {
-                            position: moof_off as u64,
-                        });
+                        degraded.push(InputDegradation::MalformedUnit { position: moof_off });
                     }
                 }
                 zero_width_budget = isobmff::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
@@ -262,9 +260,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         }
 
         for (moof_off, _) in pending_moofs {
-            degraded.push(InputDegradation::MalformedUnit {
-                position: moof_off as u64,
-            });
+            degraded.push(InputDegradation::MalformedUnit { position: moof_off });
         }
 
         let tracks = builders
@@ -341,10 +337,10 @@ fn apply_trex_defaults(
 fn absorb_fragment(
     file: &[u8],
     mdats: &[isobmff::frag_offsets::MdatRange],
-    moof_off: usize,
+    moof_off: u64,
     moof: &MovieFragmentBox,
     builders: &mut [TrackBuilder],
-    copied_bytes: &mut usize,
+    copied_bytes: &mut u64,
 ) -> usize {
     // A `traf` whose `trun` addressing or timing is invalid is skipped whole
     // and counted (audit T16, #1144); each `traf` is committed atomically so a
@@ -361,11 +357,11 @@ fn absorb_fragment(
 fn absorb_traf(
     file: &[u8],
     mdats: &[isobmff::frag_offsets::MdatRange],
-    moof_off: usize,
+    moof_off: u64,
     moof: &MovieFragmentBox,
     traf: &isobmff::movie_fragment::TrackFragmentBox,
     builders: &mut [TrackBuilder],
-    copied_bytes: &mut usize,
+    copied_bytes: &mut u64,
 ) -> Result<()> {
     {
         let tfhd = &traf.tfhd;
@@ -407,18 +403,22 @@ fn absorb_traf(
         }
         let mut samples = Vec::new();
         for r in isobmff::frag_offsets::sample_ranges_in_run(
-            file,
-            mdats,
             moof_off,
             moof,
             tfhd.track_id,
+            mdats,
+            isobmff::frag_offsets::sample_bytes_budget(file.len() as u64),
             copied_bytes,
         )? {
             let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
             let dts = next_dts;
             let pts = isobmff::frag_offsets::add_offset(dts, r.composition_offset)?;
+            let start = usize::try_from(r.start)
+                .map_err(|_| Error::InvalidInput("sample offset does not fit the address space"))?;
+            let end = usize::try_from(r.end)
+                .map_err(|_| Error::InvalidInput("sample end does not fit the address space"))?;
             samples.push(Sample {
-                data: file[r.start..r.end].to_vec().into(),
+                data: file[start..end].to_vec().into(),
                 timing: Some(crate::ir::SampleTiming::timed_with_duration(
                     dts, pts, r.duration,
                 )),

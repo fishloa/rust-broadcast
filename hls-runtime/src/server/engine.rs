@@ -842,11 +842,11 @@ fn channel_count_string(config: &transmux::CodecConfig) -> Option<String> {
 }
 
 /// The top-level `moof` of `segment` and its offset.
-fn first_moof(segment: &[u8]) -> Option<(usize, isobmff::movie_fragment::MovieFragmentBox)> {
+fn first_moof(segment: &[u8]) -> Option<(u64, isobmff::movie_fragment::MovieFragmentBox)> {
     let found = isobmff::BoxIter::clamped(segment)
         .filter_map(|b| b.ok())
         .find(|b| b.header.box_type.is(&isobmff::segments::MOOF))?;
-    let moof_off = found.start;
+    let moof_off = found.start as u64;
     let body = &segment[found.payload_start()..found.end];
     let moof = isobmff::movie_fragment::MovieFragmentBox::parse_body(body).ok()?;
     Some((moof_off, moof))
@@ -873,11 +873,11 @@ fn fmp4_video_rate(segment: &[u8], video_track_id: TrackId, timescale: Timescale
     let (moof_off, moof) = first_moof(segment)?;
     let mdats = isobmff::frag_offsets::mdat_ranges(segment);
     let samples = isobmff::frag_offsets::sample_ranges_in(
-        segment,
-        &mdats,
         moof_off,
         &moof,
         video_track_id.into(),
+        &mdats,
+        isobmff::frag_offsets::sample_bytes_budget(segment.len() as u64),
     )
     .ok()?;
     let ticks: u64 = samples.iter().map(|r| u64::from(r.duration)).sum();
@@ -914,11 +914,11 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
     let (moof_off, moof) = first_moof(segment)?;
     let mdats = isobmff::frag_offsets::mdat_ranges(segment);
     let samples = isobmff::frag_offsets::sample_ranges_in(
-        segment,
-        &mdats,
         moof_off,
         &moof,
         video_track_id.into(),
+        &mdats,
+        isobmff::frag_offsets::sample_bytes_budget(segment.len() as u64),
     )
     .ok()?;
     if samples.is_empty() {
@@ -931,11 +931,12 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
     }
     // The first video sample must start exactly at an mdat payload start: no
     // other track's bytes may precede it.
-    let mdat_payload_start = mdat_payload_start_for(segment, first.start)?;
+    let sample_start = usize::try_from(first.start).ok()?;
+    let mdat_payload_start = u64::try_from(mdat_payload_start_for(segment, sample_start)?).ok()?;
     if first.start != mdat_payload_start {
         return None;
     }
-    u64::try_from(first.end).ok()
+    Some(first.end)
 }
 
 /// Byte offset of the `mdat` payload that contains `sample_start`, if any.

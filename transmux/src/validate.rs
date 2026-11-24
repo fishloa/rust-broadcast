@@ -516,7 +516,7 @@ fn validate_media_inner(
 
         // Every `trun`'s resolved sample ranges must land inside the `mdat`
         // payload (§8.8.7 / §8.8.8). The ranges come from the crate's single
-        // §8.8.7 resolver, `frag_offsets::sample_ranges`, so this validator and
+        // §8.8.7 resolver, `frag_offsets::sample_ranges_in`, so this validator and
         // the demuxers cannot disagree about where a fragment's bytes live
         // (audit r05-W30a: the previous arithmetic resolved each `trun` against
         // the previous one's end and ignored `tfhd.base_data_offset`, the
@@ -529,12 +529,15 @@ fn validate_media_inner(
             else {
                 continue;
             };
+            let Some(moof_off) = u64::try_from(moof_off).ok() else {
+                continue;
+            };
             let ranges = match isobmff::frag_offsets::sample_ranges_in(
-                bytes,
-                &mdat_extents,
                 moof_off,
                 moof_box,
                 track_id.into(),
+                &mdat_extents,
+                isobmff::frag_offsets::sample_bytes_budget(bytes.len() as u64),
             ) {
                 Ok(r) => r,
                 Err(_) => {

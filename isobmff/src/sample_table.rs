@@ -667,9 +667,7 @@ impl CursorState {
         let mut pos = self.pos;
         let size = size_table.size(pos.sample)?;
         let duration = self.current_duration(stbl)?;
-        let limit = self
-            .file_len
-            .map_or(usize::MAX, |len| usize::try_from(len).unwrap_or(usize::MAX));
+        let limit = self.file_len.unwrap_or(u64::MAX);
         pos.total_bytes = pos
             .total_bytes
             .checked_add(u64::from(size))

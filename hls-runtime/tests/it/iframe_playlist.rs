@@ -170,23 +170,25 @@ fn iframe_geometry_oracle() {
         let moof = MovieFragmentBox::parse_body(body).expect("moof parse");
         let mdats = isobmff::frag_offsets::mdat_ranges(seg_bytes);
         let samples = isobmff::frag_offsets::sample_ranges_in(
-            seg_bytes,
-            &mdats,
-            moof_off,
+            moof_off as u64,
             &moof,
             TrackId::new(1).into(),
+            &mdats,
+            isobmff::frag_offsets::sample_bytes_budget(seg_bytes.len() as u64),
         )
         .expect("sample ranges");
         assert!(!samples.is_empty());
         let s0 = samples[0];
         assert_eq!(s0.flags & (1 << 16), 0, "sample 0 must be sync");
-        let mdat_start = find_mdat_payload_start(seg_bytes, s0.start).expect("mdat");
+        let start = usize::try_from(s0.start).expect("sample start");
+        let end = usize::try_from(s0.end).expect("sample end");
+        let mdat_start = find_mdat_payload_start(seg_bytes, start).expect("mdat");
         assert_eq!(
-            s0.start, mdat_start,
+            start, mdat_start,
             "sample 0 must start at mdat payload start"
         );
         assert_eq!(
-            len as usize, s0.end,
+            len as usize, end,
             "iframe_len must equal end of first video sample"
         );
 
@@ -198,7 +200,7 @@ fn iframe_geometry_oracle() {
             .iter()
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
             .expect("video track");
-        assert_eq!(video.samples[0].data.as_ref(), &seg_bytes[s0.start..s0.end]);
+        assert_eq!(video.samples[0].data.as_ref(), &seg_bytes[start..end]);
     }
 }
 
