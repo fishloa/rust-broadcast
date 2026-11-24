@@ -103,6 +103,19 @@ pub enum AbandonReason {
     /// `MAX_PROBE_BACKLOG_BYTES`) — permanently abandoned, never promoted to
     /// live.
     BudgetExceeded,
+    /// The track's sample entry names a codec transmux cannot reconstruct into
+    /// a [`CodecConfig`](crate::pipeline::CodecConfig) (a QuickTime
+    /// hint/chapter track, `c608`/`c708`, GoPro `gpmd`, …).
+    UnsupportedSampleEntry {
+        /// The rejected sample entry's four-CC, e.g. `b"tmcd"`.
+        fourcc: [u8; 4],
+    },
+    /// The `trak` was too structurally malformed to reach its sample entry
+    /// (it lacked the named box).
+    MalformedTrack {
+        /// The box the walk required and did not find.
+        expected: &'static str,
+    },
 }
 
 impl AbandonReason {
@@ -111,6 +124,8 @@ impl AbandonReason {
         match self {
             AbandonReason::ConfigUnrecoverable => "config unrecoverable",
             AbandonReason::BudgetExceeded => "budget exceeded",
+            AbandonReason::UnsupportedSampleEntry { .. } => "unsupported sample entry",
+            AbandonReason::MalformedTrack { .. } => "malformed track",
         }
     }
 }
@@ -203,6 +218,13 @@ pub enum InputDegradation {
         /// The bytes that actually followed the length field.
         available: usize,
     },
+    /// A final container unit's declared size ran past the end of the input.
+    /// Every sample fully inside the input was still delivered; nothing after
+    /// the truncated unit was read.
+    TruncatedUnit {
+        /// Absolute byte offset of the truncated unit.
+        position: u64,
+    },
 }
 
 impl InputDegradation {
@@ -217,6 +239,7 @@ impl InputDegradation {
             InputDegradation::TruncatedPacket { .. } => "truncated packet",
             InputDegradation::Scrambled => "scrambled",
             InputDegradation::PesUnitTruncated { .. } => "truncated PES unit",
+            InputDegradation::TruncatedUnit { .. } => "truncated unit",
         }
     }
 }
