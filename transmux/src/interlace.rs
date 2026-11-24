@@ -28,7 +28,11 @@ use crate::annexb::iter_length_prefixed_nals_with;
 use crate::bitreader::BitReader;
 use crate::hevc_config::HEVCDecoderConfigurationRecord;
 use crate::ir::CodecConfig;
-use crate::nal::sei_messages;
+use crate::nal::{
+    AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SEI, AVC_NAL_SPS, HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK,
+    NAL_TYPE_MASK, sei_messages,
+};
+use crate::nalu_types::HEVC_SPS_NUT;
 use crate::slice_header::{AvcParamSets, AvcSliceHeader};
 use crate::sps::{
     AvcPicTimingLayout, AvcSliceSps, decode_avc_slice_sps, decode_hevc_interlace_sps,
@@ -47,33 +51,17 @@ const PIC_STRUCT_TOP_PAIRED_NEXT_BOTTOM: u8 = 11;
 /// field.
 const PIC_STRUCT_BOTTOM_PAIRED_NEXT_TOP: u8 = 12;
 
-/// `nal_unit_type` of an SPS in H.264 (Table 7-1) and the NAL header mask.
-const AVC_NAL_TYPE_MASK: u8 = 0x1F;
 /// H.264 coded slice of a non-IDR picture.
 const AVC_NAL_SLICE: u8 = 1;
-/// H.264 coded slice of an IDR picture.
-const AVC_NAL_IDR: u8 = 5;
-/// H.264 SEI.
-const AVC_NAL_SEI: u8 = 6;
-/// H.264 SPS.
-const AVC_NAL_SPS: u8 = 7;
-/// H.264 PPS.
-const AVC_NAL_PPS: u8 = 8;
 /// Length of the H.264 NAL header.
 const AVC_NAL_HEADER_LEN: usize = 1;
 
 /// Right shift to the HEVC `nal_unit_type` in header byte 0 (§7.3.1.2).
 const HEVC_NAL_TYPE_SHIFT: u8 = 1;
-/// Mask of the HEVC `nal_unit_type` after the shift.
-const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
-/// HEVC SPS (Table 7-1).
-const HEVC_NAL_SPS: u8 = 33;
 /// HEVC prefix SEI (Table 7-1).
 const HEVC_NAL_PREFIX_SEI: u8 = 39;
 /// First HEVC non-VCL `nal_unit_type` (VCL types are 0..=31).
 const HEVC_NAL_FIRST_NON_VCL: u8 = 32;
-/// Length of the HEVC NAL header.
-const HEVC_NAL_HEADER_LEN: usize = 2;
 
 /// `payloadType` of `pic_timing` in both H.264 (§D.1.1) and H.265 (§D.2.1).
 const SEI_PAYLOAD_PIC_TIMING: u32 = 1;
@@ -315,7 +303,7 @@ impl CodecConfig {
 fn hevc_config_sps(rec: &HEVCDecoderConfigurationRecord) -> Option<&[u8]> {
     rec.arrays
         .iter()
-        .filter(|a| a.nal_unit_type == HEVC_NAL_SPS)
+        .filter(|a| a.nal_unit_type == HEVC_SPS_NUT)
         .flat_map(|a| a.nalus.iter())
         .next()
         .map(|n| n.0.as_slice())
@@ -381,7 +369,7 @@ pub fn video_picture_facts(config: &CodecConfig, sample: &[u8]) -> Option<Pictur
             }
             for nal in &nals {
                 if matches!(
-                    nal.first().map(|b| b & AVC_NAL_TYPE_MASK),
+                    nal.first().map(|b| b & NAL_TYPE_MASK),
                     Some(AVC_NAL_SPS | AVC_NAL_PPS)
                 ) {
                     ps.observe_nal(nal);
@@ -397,7 +385,7 @@ pub fn video_picture_facts(config: &CodecConfig, sample: &[u8]) -> Option<Pictur
             let mut sps_nal = hevc_config_sps(rec)?;
             // An in-band SPS supersedes the config's.
             for nal in &nals {
-                if hevc_type(nal) == Some(HEVC_NAL_SPS) {
+                if hevc_type(nal) == Some(HEVC_SPS_NUT) {
                     sps_nal = nal;
                 }
             }
@@ -428,7 +416,7 @@ pub(crate) fn avc_facts(ps: &AvcParamSets, nals: &[&[u8]]) -> Option<PictureFact
     let mut second_field = false;
     for nal in nals {
         if !matches!(
-            nal.first().map(|b| b & AVC_NAL_TYPE_MASK),
+            nal.first().map(|b| b & NAL_TYPE_MASK),
             Some(AVC_NAL_SLICE | AVC_NAL_IDR)
         ) {
             continue;
@@ -451,7 +439,7 @@ pub(crate) fn avc_facts(ps: &AvcParamSets, nals: &[&[u8]]) -> Option<PictureFact
     let (head, sps) = first?;
     let pic_struct = sps.pic_timing.and_then(|layout| {
         nals.iter()
-            .filter(|n| n.first().map(|b| b & AVC_NAL_TYPE_MASK) == Some(AVC_NAL_SEI))
+            .filter(|n| n.first().map(|b| b & NAL_TYPE_MASK) == Some(AVC_NAL_SEI))
             .flat_map(|n| sei_messages(&n[AVC_NAL_HEADER_LEN..]))
             .find(|(t, _)| *t == SEI_PAYLOAD_PIC_TIMING)
             .and_then(|(_, p)| avc_pic_struct(&p, layout))

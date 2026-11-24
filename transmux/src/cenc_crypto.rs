@@ -66,7 +66,7 @@ use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, StreamCipher};
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use bytes::{Bytes, BytesMut};
 
-use crate::cenc::{CencScheme, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
+use crate::cenc::{CencScheme, KEY_LEN, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
 use crate::error::{Error, Result};
 
 /// Rewrite one sample's [`Bytes`] in place (media plane step 2b, G12 —
@@ -195,10 +195,6 @@ type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 /// AES-128-CBC encryptor (CENC `cbcs` cipher, ISO/IEC 23001-7 §10.2).
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
-
-/// Size of a KID / content key / AES-128 key **or block**, in bytes (AES-128's
-/// key length and block length coincide).
-const KEY_LEN: usize = 16;
 
 /// Which direction [`cbcs_pattern`] / [`cbcs_sample`] runs the CBC cipher.
 ///

@@ -47,6 +47,7 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
+use crate::wire_cursor::u16_at;
 
 // ---------------------------------------------------------------------------
 // Named constants — SMPTE ST 336 / MISB ST 0601 (no magic numbers)
@@ -297,7 +298,7 @@ impl UasLocalSet {
         if item.value.len() != CHECKSUM_LEN {
             return None;
         }
-        Some(u16::from_be_bytes([item.value[0], item.value[1]]))
+        Some(u16_at(&item.value, 0))
     }
 
     /// Encode the Local Set value section (all items except any checksum, which
@@ -355,7 +356,7 @@ impl UasLocalSet {
         )?;
         let split = packet.len() - CHECKSUM_LEN;
         let expected = checksum_bcc16(&packet[..split]);
-        let actual = u16::from_be_bytes([packet[split], packet[split + 1]]);
+        let actual = u16_at(packet, split);
         Ok(expected == actual)
     }
 }

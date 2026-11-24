@@ -32,9 +32,12 @@
 //!   [`SubSampleReferenceTableBox`]).
 
 use crate::TrackId;
+use crate::box_types::{
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_MASK,
+};
 use crate::error::{Error, Result};
 use crate::init_segment::bounded_entry_count;
-use crate::wire_cursor::{be_u16, be_u32, be_u64};
+use crate::wire_cursor::{be_u16, be_u32, be_u64, i16_at};
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
@@ -45,19 +48,10 @@ use broadcast_common::{Parse, Serialize};
 // Wire-layout constants
 // ---------------------------------------------------------------------------
 
-const BOX_HEADER_SIZE: usize = 8;
-const FULLBOX_EXTRA_SIZE: usize = 4;
-const U16_LEN: usize = core::mem::size_of::<u16>();
-const U32_LEN: usize = core::mem::size_of::<u32>();
-const U64_LEN: usize = core::mem::size_of::<u64>();
-const U32_PAIR_LEN: usize = U32_LEN * 2;
-const U32_BITS: u32 = u32::BITS;
-const U8_BITS: u32 = u8::BITS;
-const BOX_TYPE_OFFSET: usize = U32_LEN;
-const FULLBOX_FLAGS_MASK: u32 = 0x00FF_FFFF;
-const SGPD_ENTRY_PREFIX_LEN: usize = U32_LEN;
-const SUBS_ENTRY_HEADER_LEN: usize = U32_LEN + U16_LEN;
-const SUBS_V2_ENTRY_HEADER_LEN: usize = U32_LEN + U16_LEN;
+const U32_PAIR_LEN: usize = core::mem::size_of::<u32>() * 2;
+const SGPD_ENTRY_PREFIX_LEN: usize = core::mem::size_of::<u32>();
+const SUBS_ENTRY_HEADER_LEN: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
+const SUBS_V2_ENTRY_HEADER_LEN: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
 
 const PRFT_TYPE: u32 = u32::from_be_bytes(*b"prft");
 const SGPD_TYPE: u32 = u32::from_be_bytes(*b"sgpd");
@@ -147,20 +141,20 @@ impl ProducerReferenceTimeBox {
     /// Parse the body of a `prft` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         // version(1) + flags(3) + ref_track_id(4) + ntp(8) = 16 minimum
-        let min = FULLBOX_EXTRA_SIZE + U32_LEN + U64_LEN;
+        let min = FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() + core::mem::size_of::<u64>();
         need_in(body, min, "prft body")?;
         let version = body[0];
         let flags = be_u32(body, 0, "full box header")? & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;
         let reference_track_id = TrackId::new(be_u32(body, c, "prft reference_track_id")?);
-        c += U32_LEN;
+        c += core::mem::size_of::<u32>();
         let ntp_timestamp = be_u64(body, c, "prft ntp_timestamp")?;
-        c += U64_LEN;
+        c += core::mem::size_of::<u64>();
         let media_time = if version == 0 {
-            need_in(body, c + U32_LEN, "prft media_time v0")?;
+            need_in(body, c + core::mem::size_of::<u32>(), "prft media_time v0")?;
             u64::from(be_u32(body, c, "prft media_time v0")?)
         } else {
-            need_in(body, c + U64_LEN, "prft media_time v1")?;
+            need_in(body, c + core::mem::size_of::<u64>(), "prft media_time v1")?;
             be_u64(body, c, "prft media_time v1")?
         };
         Ok(Self {
@@ -178,7 +172,11 @@ impl<'a> Parse<'a> for ProducerReferenceTimeBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN + U64_LEN + U32_LEN,
+            BOX_HEADER_MIN_SIZE
+                + FULLBOX_EXTRA_SIZE
+                + core::mem::size_of::<u32>()
+                + core::mem::size_of::<u64>()
+                + core::mem::size_of::<u32>(),
             "prft box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "box header")?;
@@ -196,8 +194,16 @@ impl<'a> Parse<'a> for ProducerReferenceTimeBox {
 impl Serialize for ProducerReferenceTimeBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mt_size = if self.version == 0 { U32_LEN } else { U64_LEN };
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN + U64_LEN + mt_size
+        let mt_size = if self.version == 0 {
+            core::mem::size_of::<u32>()
+        } else {
+            core::mem::size_of::<u64>()
+        };
+        BOX_HEADER_MIN_SIZE
+            + FULLBOX_EXTRA_SIZE
+            + core::mem::size_of::<u32>()
+            + core::mem::size_of::<u64>()
+            + mt_size
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -211,20 +217,21 @@ impl Serialize for ProducerReferenceTimeBox {
             self.flags,
             true,
         )?;
-        buf[c..c + U32_LEN].copy_from_slice(&self.reference_track_id.value().to_be_bytes());
-        c += U32_LEN;
-        buf[c..c + U64_LEN].copy_from_slice(&self.ntp_timestamp.to_be_bytes());
-        c += U64_LEN;
+        buf[c..c + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.reference_track_id.value().to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u64>()].copy_from_slice(&self.ntp_timestamp.to_be_bytes());
+        c += core::mem::size_of::<u64>();
         if self.version == 0 {
-            buf[c..c + U32_LEN].copy_from_slice(
-                &(broadcast_common::len::fit_bits(self.media_time, U32_BITS, "prft media_time")?
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(
+                &(broadcast_common::len::fit_bits(self.media_time, u32::BITS, "prft media_time")?
                     as u32)
                     .to_be_bytes(),
             );
-            c += U32_LEN;
+            c += core::mem::size_of::<u32>();
         } else {
-            buf[c..c + U64_LEN].copy_from_slice(&self.media_time.to_be_bytes());
-            c += U64_LEN;
+            buf[c..c + core::mem::size_of::<u64>()].copy_from_slice(&self.media_time.to_be_bytes());
+            c += core::mem::size_of::<u64>();
         }
         Ok(c)
     }
@@ -319,32 +326,40 @@ impl SampleGroupDescriptionBox {
 
     /// Parse the body of an `sgpd` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + U32_LEN + U32_LEN, "sgpd body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() + core::mem::size_of::<u32>(),
+            "sgpd body",
+        )?;
         let version = body[0];
         let flags = be_u32(body, 0, "full box header")? & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;
         let grouping_type = be_u32(body, c, "sample group field")?;
-        c += U32_LEN;
+        c += core::mem::size_of::<u32>();
         let mut default_group_description_index = None;
 
         let default_length = if version >= SGPD_VERSION_DEFAULT_LENGTH {
-            need_in(body, c + U32_LEN, "sgpd default_length")?;
+            need_in(body, c + core::mem::size_of::<u32>(), "sgpd default_length")?;
             let dl = be_u32(body, c, "sample group field")?;
-            c += U32_LEN;
+            c += core::mem::size_of::<u32>();
             dl
         } else {
             0
         };
         if version >= SGPD_VERSION_GROUP_INDEX {
-            need_in(body, c + U32_LEN, "sgpd default_group_description_index")?;
+            need_in(
+                body,
+                c + core::mem::size_of::<u32>(),
+                "sgpd default_group_description_index",
+            )?;
             let idx = be_u32(body, c, "sample group field")?;
-            c += U32_LEN;
+            c += core::mem::size_of::<u32>();
             default_group_description_index = Some(idx);
         }
 
-        need_in(body, c + U32_LEN, "sgpd entry_count")?;
+        need_in(body, c + core::mem::size_of::<u32>(), "sgpd entry_count")?;
         let entry_count = be_u32(body, c, "sample group field")? as usize;
-        c += U32_LEN;
+        c += core::mem::size_of::<u32>();
 
         // Minimum bytes each entry can possibly consume, for bounding the
         // up-front allocation against a hostile `entry_count` (#988): a v1
@@ -426,7 +441,7 @@ impl SampleGroupDescriptionBox {
             // entry list (audit r05-W15), so anything else stays opaque and
             // byte-exact.
             let entry = if grouping_type == GROUPING_TYPE_ROLL && entry_len == ROLL_ENTRY_LEN {
-                let rd = i16::from_be_bytes([entry_bytes[0], entry_bytes[1]]);
+                let rd = i16_at(entry_bytes, 0);
                 SgpdEntry::Roll { roll_distance: rd }
             } else {
                 SgpdEntry::Unknown(entry_bytes.to_vec())
@@ -451,7 +466,7 @@ impl<'a> Parse<'a> for SampleGroupDescriptionBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "sgpd box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "box header")?;
@@ -481,23 +496,23 @@ impl Serialize for SampleGroupDescriptionBox {
             .map(|e| entry_overhead + e.wire_len())
             .sum();
         let dl_field = if self.version >= SGPD_VERSION_DEFAULT_LENGTH {
-            U32_LEN
+            core::mem::size_of::<u32>()
         } else {
             0
         };
         let index_field = if self.version >= SGPD_VERSION_GROUP_INDEX {
-            U32_LEN
+            core::mem::size_of::<u32>()
         } else {
             0
         };
         let _ = use_default_len;
         crate::box_types::box_len(
-            BOX_HEADER_SIZE
+            BOX_HEADER_MIN_SIZE
                 + FULLBOX_EXTRA_SIZE
-                + U32_LEN
+                + core::mem::size_of::<u32>()
                 + dl_field
                 + index_field
-                + U32_LEN
+                + core::mem::size_of::<u32>()
                 + entries_size,
         )
     }
@@ -515,33 +530,35 @@ impl Serialize for SampleGroupDescriptionBox {
             self.flags,
             false,
         )?;
-        buf[c..c + U32_LEN].copy_from_slice(&self.grouping_type.to_be_bytes());
-        c += U32_LEN;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.grouping_type.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         if self.version >= SGPD_VERSION_DEFAULT_LENGTH {
-            buf[c..c + U32_LEN].copy_from_slice(&effective_dl.to_be_bytes());
-            c += U32_LEN;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&effective_dl.to_be_bytes());
+            c += core::mem::size_of::<u32>();
         }
         if self.version >= SGPD_VERSION_GROUP_INDEX {
             let index = self.default_group_description_index.ok_or(Error::InvalidInput(
                 "sgpd version 2 and later require default_group_description_index (ISO/IEC 14496-12:2026 §8.9.3.2)",
             ))?;
-            buf[c..c + U32_LEN].copy_from_slice(&index.to_be_bytes());
-            c += U32_LEN;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&index.to_be_bytes());
+            c += core::mem::size_of::<u32>();
         }
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + U32_LEN].copy_from_slice(&entry_count.to_be_bytes());
-        c += U32_LEN;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry_count.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         for entry in &self.entries {
             if per_entry_prefix {
                 let description_length =
                     broadcast_common::len::fit_u32(entry.wire_len(), "description_length")?;
-                buf[c..c + U32_LEN].copy_from_slice(&description_length.to_be_bytes());
-                c += U32_LEN;
+                buf[c..c + core::mem::size_of::<u32>()]
+                    .copy_from_slice(&description_length.to_be_bytes());
+                c += core::mem::size_of::<u32>();
             }
             match entry {
                 SgpdEntry::Roll { roll_distance } => {
-                    buf[c..c + U16_LEN].copy_from_slice(&roll_distance.to_be_bytes());
-                    c += U16_LEN;
+                    buf[c..c + core::mem::size_of::<u16>()]
+                        .copy_from_slice(&roll_distance.to_be_bytes());
+                    c += core::mem::size_of::<u16>();
                 }
                 SgpdEntry::Unknown(v) => {
                     buf[c..c + v.len()].copy_from_slice(v);
@@ -616,23 +633,31 @@ pub struct SampleToGroupBox {
 impl SampleToGroupBox {
     /// Parse the body of an `sbgp` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + U32_LEN + U32_LEN, "sbgp body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() + core::mem::size_of::<u32>(),
+            "sbgp body",
+        )?;
         let version = body[0];
         let flags = be_u32(body, 0, "full box header")? & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;
         let grouping_type = be_u32(body, c, "sample group field")?;
-        c += U32_LEN;
+        c += core::mem::size_of::<u32>();
         let grouping_type_parameter = if version == 1 {
-            need_in(body, c + U32_LEN, "sbgp grouping_type_parameter")?;
+            need_in(
+                body,
+                c + core::mem::size_of::<u32>(),
+                "sbgp grouping_type_parameter",
+            )?;
             let v = be_u32(body, c, "sample group field")?;
-            c += U32_LEN;
+            c += core::mem::size_of::<u32>();
             Some(v)
         } else {
             None
         };
-        need_in(body, c + U32_LEN, "sbgp entry_count")?;
+        need_in(body, c + core::mem::size_of::<u32>(), "sbgp entry_count")?;
         let entry_count = be_u32(body, c, "sample group field")? as usize;
-        c += U32_LEN;
+        c += core::mem::size_of::<u32>();
         // Each entry is a fixed 8 bytes (sample_count + group_description_index).
         let mut entries = Vec::with_capacity(bounded_entry_count(
             body.len().saturating_sub(c),
@@ -642,7 +667,8 @@ impl SampleToGroupBox {
         for _ in 0..entry_count {
             need_in(body, c + U32_PAIR_LEN, "sbgp entry")?;
             let sample_count = be_u32(body, c, "sample group field")?;
-            let group_description_index = be_u32(body, c + U32_LEN, "sample group field")?;
+            let group_description_index =
+                be_u32(body, c + core::mem::size_of::<u32>(), "sample group field")?;
             entries.push(SbgpEntry {
                 sample_count,
                 group_description_index,
@@ -664,7 +690,7 @@ impl<'a> Parse<'a> for SampleToGroupBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "sbgp box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "box header")?;
@@ -682,13 +708,17 @@ impl<'a> Parse<'a> for SampleToGroupBox {
 impl Serialize for SampleToGroupBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let gtp_size = if self.version == 1 { U32_LEN } else { 0 };
+        let gtp_size = if self.version == 1 {
+            core::mem::size_of::<u32>()
+        } else {
+            0
+        };
         crate::box_types::box_len(
-            BOX_HEADER_SIZE
+            BOX_HEADER_MIN_SIZE
                 + FULLBOX_EXTRA_SIZE
-                + U32_LEN
+                + core::mem::size_of::<u32>()
                 + gtp_size
-                + U32_LEN
+                + core::mem::size_of::<u32>()
                 + self.entries.len() * U32_PAIR_LEN,
         )
     }
@@ -704,19 +734,20 @@ impl Serialize for SampleToGroupBox {
             self.flags,
             false,
         )?;
-        buf[c..c + U32_LEN].copy_from_slice(&self.grouping_type.to_be_bytes());
-        c += U32_LEN;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.grouping_type.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         if self.version == 1 {
             let gtp = self.grouping_type_parameter.unwrap_or(0);
-            buf[c..c + U32_LEN].copy_from_slice(&gtp.to_be_bytes());
-            c += U32_LEN;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&gtp.to_be_bytes());
+            c += core::mem::size_of::<u32>();
         }
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + U32_LEN].copy_from_slice(&entry_count.to_be_bytes());
-        c += U32_LEN;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry_count.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         for entry in &self.entries {
-            buf[c..c + U32_LEN].copy_from_slice(&entry.sample_count.to_be_bytes());
-            buf[c + U32_LEN..c + U32_PAIR_LEN]
+            buf[c..c + core::mem::size_of::<u32>()]
+                .copy_from_slice(&entry.sample_count.to_be_bytes());
+            buf[c + core::mem::size_of::<u32>()..c + U32_PAIR_LEN]
                 .copy_from_slice(&entry.group_description_index.to_be_bytes());
             c += U32_PAIR_LEN;
         }
@@ -747,8 +778,12 @@ pub struct SubSampleDescriptor {
 
 impl SubSampleDescriptor {
     fn wire_len(version: u8) -> usize {
-        let size_field = if version == 1 { U32_LEN } else { U16_LEN };
-        size_field + U16_LEN + U32_LEN
+        let size_field = if version == 1 {
+            core::mem::size_of::<u32>()
+        } else {
+            core::mem::size_of::<u16>()
+        };
+        size_field + core::mem::size_of::<u16>() + core::mem::size_of::<u32>()
     }
 }
 
@@ -798,7 +833,11 @@ pub struct SubSampleInformationBox {
 impl SubSampleInformationBox {
     /// Parse the body of a `subs` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + U32_LEN, "subs body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "subs body",
+        )?;
         let version = body[0];
         if version >= SUBS_VERSION_REFERENCE {
             return Err(Error::InvalidValue(InvalidValue {
@@ -810,8 +849,12 @@ impl SubSampleInformationBox {
         let flags = be_u32(body, 0, "full box header")? & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;
         let entry_count = be_u32(body, c, "sample group field")? as usize;
-        c += U32_LEN;
-        let ss_size_field = if version == 1 { U32_LEN } else { U16_LEN };
+        c += core::mem::size_of::<u32>();
+        let ss_size_field = if version == 1 {
+            core::mem::size_of::<u32>()
+        } else {
+            core::mem::size_of::<u16>()
+        };
         // Each entry's fixed header (sample_delta + subsample_count) is 6
         // bytes; the variable-length subsample list is bounded separately
         // below, per entry.
@@ -829,10 +872,10 @@ impl SubSampleInformationBox {
                 }));
             }
             let sample_delta = be_u32(body, c, "sample group field")?;
-            c += U32_LEN;
+            c += core::mem::size_of::<u32>();
             let subsample_count = be_u16(body, c, "sample group field")? as usize;
-            c += U16_LEN;
-            let ss_wire = ss_size_field + U16_LEN + U32_LEN;
+            c += core::mem::size_of::<u16>();
+            let ss_wire = ss_size_field + core::mem::size_of::<u16>() + core::mem::size_of::<u32>();
             let mut subsamples = Vec::with_capacity(bounded_entry_count(
                 body.len().saturating_sub(c),
                 ss_wire,
@@ -842,18 +885,18 @@ impl SubSampleInformationBox {
                 need_in(body, c + ss_wire, "subs subsample")?;
                 let subsample_size = if version == 1 {
                     let v = be_u32(body, c, "sample group field")?;
-                    c += U32_LEN;
+                    c += core::mem::size_of::<u32>();
                     v
                 } else {
                     let v = be_u16(body, c, "sample group field")? as u32;
-                    c += U16_LEN;
+                    c += core::mem::size_of::<u16>();
                     v
                 };
                 let subsample_priority = body[c];
                 let discardable = body[c + 1];
-                c += U16_LEN;
+                c += core::mem::size_of::<u16>();
                 let codec_specific_parameters = be_u32(body, c, "sample group field")?;
-                c += U32_LEN;
+                c += core::mem::size_of::<u32>();
                 subsamples.push(SubSampleDescriptor {
                     subsample_size,
                     subsample_priority,
@@ -879,7 +922,7 @@ impl<'a> Parse<'a> for SubSampleInformationBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "subs box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "box header")?;
@@ -898,7 +941,9 @@ impl Serialize for SubSampleInformationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let entries_size: usize = self.entries.iter().map(|e| e.wire_len(self.version)).sum();
-        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN + entries_size)
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() + entries_size,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -913,32 +958,36 @@ impl Serialize for SubSampleInformationBox {
             false,
         )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + U32_LEN].copy_from_slice(&entry_count.to_be_bytes());
-        c += U32_LEN;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry_count.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         for entry in &self.entries {
-            buf[c..c + U32_LEN].copy_from_slice(&entry.sample_delta.to_be_bytes());
-            c += U32_LEN;
+            buf[c..c + core::mem::size_of::<u32>()]
+                .copy_from_slice(&entry.sample_delta.to_be_bytes());
+            c += core::mem::size_of::<u32>();
             let subsample_count =
                 broadcast_common::len::fit_u16(entry.subsamples.len(), "subsample_count")?;
-            buf[c..c + U16_LEN].copy_from_slice(&subsample_count.to_be_bytes());
-            c += U16_LEN;
+            buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&subsample_count.to_be_bytes());
+            c += core::mem::size_of::<u16>();
             for ss in &entry.subsamples {
                 if self.version == 1 {
-                    buf[c..c + U32_LEN].copy_from_slice(&ss.subsample_size.to_be_bytes());
-                    c += U32_LEN;
+                    buf[c..c + core::mem::size_of::<u32>()]
+                        .copy_from_slice(&ss.subsample_size.to_be_bytes());
+                    c += core::mem::size_of::<u32>();
                 } else {
                     let subsample_size = broadcast_common::len::fit_u16(
                         ss.subsample_size as usize,
                         "subsample_size",
                     )?;
-                    buf[c..c + U16_LEN].copy_from_slice(&subsample_size.to_be_bytes());
-                    c += U16_LEN;
+                    buf[c..c + core::mem::size_of::<u16>()]
+                        .copy_from_slice(&subsample_size.to_be_bytes());
+                    c += core::mem::size_of::<u16>();
                 }
                 buf[c] = ss.subsample_priority;
                 buf[c + 1] = ss.discardable;
-                c += U16_LEN;
-                buf[c..c + U32_LEN].copy_from_slice(&ss.codec_specific_parameters.to_be_bytes());
-                c += U32_LEN;
+                c += core::mem::size_of::<u16>();
+                buf[c..c + core::mem::size_of::<u32>()]
+                    .copy_from_slice(&ss.codec_specific_parameters.to_be_bytes());
+                c += core::mem::size_of::<u32>();
             }
         }
         Ok(c)
@@ -1026,7 +1075,7 @@ impl SubsampleProperties {
             let n = usize::from(csp.len);
             broadcast_common::len::fit_bits(
                 u64::from(csp.value),
-                U8_BITS * n as u32,
+                u8::BITS * n as u32,
                 "codec_specific_parameters",
             )?;
             buf[c..c + n].copy_from_slice(&csp.value.to_be_bytes()[MAX_CSP_LEN - n..]);
@@ -1141,14 +1190,18 @@ pub struct SubSampleInformationBoxV2 {
 impl SubSampleInformationBoxV2 {
     fn size_len(&self) -> usize {
         if self.is_size_16_bits {
-            U16_LEN
+            core::mem::size_of::<u16>()
         } else {
-            U32_LEN
+            core::mem::size_of::<u32>()
         }
     }
 
     fn ref_len(&self) -> usize {
-        if self.is_short_ref { 1 } else { U16_LEN }
+        if self.is_short_ref {
+            1
+        } else {
+            core::mem::size_of::<u16>()
+        }
     }
 
     fn subsample_len(&self, s: &SubsV2Subsample) -> usize {
@@ -1161,7 +1214,11 @@ impl SubSampleInformationBoxV2 {
 
     /// Parse the body of a `subs` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + U32_LEN + 1, "subs v2 body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() + 1,
+            "subs v2 body",
+        )?;
         if body[0] != SUBS_VERSION_REFERENCE {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "subs version",
@@ -1172,7 +1229,7 @@ impl SubSampleInformationBoxV2 {
         let flags = be_u32(body, 0, "full box header")? & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;
         let entry_count = be_u32(body, c, "sample group field")? as usize;
-        c += U32_LEN;
+        c += core::mem::size_of::<u32>();
         let is_size_16_bits = body[c] & SUBS_SIZE16_BIT != 0;
         let is_short_ref = body[c] & SUBS_SHORT_REF_BIT != 0;
         c += 1;
@@ -1192,7 +1249,11 @@ impl SubSampleInformationBoxV2 {
         for _ in 0..entry_count {
             need_in(body, c + SUBS_V2_ENTRY_HEADER_LEN, "subs v2 entry header")?;
             let sample_delta = be_u32(body, c, "sample group field")?;
-            let count = usize::from(be_u16(body, c + U32_LEN, "sample group field")?);
+            let count = usize::from(be_u16(
+                body,
+                c + core::mem::size_of::<u32>(),
+                "sample group field",
+            )?);
             c += SUBS_ENTRY_HEADER_LEN;
             let mut subsamples = Vec::with_capacity(bounded_entry_count(
                 body.len().saturating_sub(c),
@@ -1213,9 +1274,13 @@ impl SubSampleInformationBoxV2 {
                         c += 1;
                         u16::from(first & !HAS_REFERENCE_BIT)
                     } else {
-                        need_in(body, c + U16_LEN, "subs v2 reference_idx")?;
+                        need_in(
+                            body,
+                            c + core::mem::size_of::<u16>(),
+                            "subs v2 reference_idx",
+                        )?;
                         let v = u16::from_be_bytes([first & !HAS_REFERENCE_BIT, body[c + 1]]);
-                        c += U16_LEN;
+                        c += core::mem::size_of::<u16>();
                         v
                     };
                     SubsV2Source::Reference { reference_idx }
@@ -1247,7 +1312,7 @@ impl<'a> Parse<'a> for SubSampleInformationBoxV2 {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "subs box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "box header")?;
@@ -1276,7 +1341,9 @@ impl Serialize for SubSampleInformationBoxV2 {
                         .sum::<usize>()
             })
             .sum();
-        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN + 1 + entries)
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() + 1 + entries,
+        )
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -1291,8 +1358,8 @@ impl Serialize for SubSampleInformationBoxV2 {
             false,
         )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + U32_LEN].copy_from_slice(&entry_count.to_be_bytes());
-        c += U32_LEN;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry_count.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         let mut cfg = 0u8;
         if self.is_size_16_bits {
             cfg |= SUBS_SIZE16_BIT;
@@ -1308,9 +1375,10 @@ impl Serialize for SubSampleInformationBoxV2 {
             LONG_REF_BITS
         };
         for e in &self.entries {
-            buf[c..c + U32_LEN].copy_from_slice(&e.sample_delta.to_be_bytes());
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&e.sample_delta.to_be_bytes());
             let count = broadcast_common::len::fit_u16(e.subsamples.len(), "subsample_count")?;
-            buf[c + U32_LEN..c + SUBS_ENTRY_HEADER_LEN].copy_from_slice(&count.to_be_bytes());
+            buf[c + core::mem::size_of::<u32>()..c + SUBS_ENTRY_HEADER_LEN]
+                .copy_from_slice(&count.to_be_bytes());
             c += SUBS_ENTRY_HEADER_LEN;
             for s in &e.subsamples {
                 if self.is_size_16_bits {
@@ -1318,9 +1386,10 @@ impl Serialize for SubSampleInformationBoxV2 {
                         s.subsample_size as usize,
                         "subsample_size",
                     )?;
-                    buf[c..c + U16_LEN].copy_from_slice(&v.to_be_bytes());
+                    buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&v.to_be_bytes());
                 } else {
-                    buf[c..c + U32_LEN].copy_from_slice(&s.subsample_size.to_be_bytes());
+                    buf[c..c + core::mem::size_of::<u32>()]
+                        .copy_from_slice(&s.subsample_size.to_be_bytes());
                 }
                 c += self.size_len();
                 match s.source {
@@ -1334,7 +1403,8 @@ impl Serialize for SubSampleInformationBoxV2 {
                             buf[c] = HAS_REFERENCE_BIT | idx as u8;
                         } else {
                             let w = u16::from(HAS_REFERENCE_BIT) << u8::BITS | idx;
-                            buf[c..c + U16_LEN].copy_from_slice(&w.to_be_bytes());
+                            buf[c..c + core::mem::size_of::<u16>()]
+                                .copy_from_slice(&w.to_be_bytes());
                         }
                         c += self.ref_len();
                     }
@@ -1367,7 +1437,11 @@ pub struct SubSampleReferenceTableBox {
 impl<'a> Parse<'a> for SubSampleReferenceTableBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 1, "ssrt box")?;
+        need_in(
+            bytes,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 1,
+            "ssrt box",
+        )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "box header")?;
         if ty != SSRT_TYPE {
             return Err(Error::InvalidValue(InvalidValue {
@@ -1386,12 +1460,12 @@ impl<'a> Parse<'a> for SubSampleReferenceTableBox {
             c += 1;
             v
         } else {
-            need_in(body, c + U16_LEN, "ssrt entry_count")?;
+            need_in(body, c + core::mem::size_of::<u16>(), "ssrt entry_count")?;
             let v = usize::from(u16::from_be_bytes([
                 body[c] & !HAS_REFERENCE_BIT,
                 body[c + 1],
             ]));
-            c += U16_LEN;
+            c += core::mem::size_of::<u16>();
             v
         };
         let mut entries = Vec::with_capacity(bounded_entry_count(
@@ -1421,13 +1495,17 @@ impl<'a> Parse<'a> for SubSampleReferenceTableBox {
 impl Serialize for SubSampleReferenceTableBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let count = if self.is_short_ref { 1 } else { U16_LEN };
+        let count = if self.is_short_ref {
+            1
+        } else {
+            core::mem::size_of::<u16>()
+        };
         let entries: usize = self
             .entries
             .iter()
             .map(|p| 1 + p.wire_len_after_flags())
             .sum();
-        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + count + entries)
+        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + count + entries)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -1446,8 +1524,8 @@ impl Serialize for SubSampleReferenceTableBox {
             buf[c] = HAS_REFERENCE_BIT | count as u8;
             c += 1;
         } else {
-            buf[c..c + U16_LEN].copy_from_slice(&count.to_be_bytes());
-            c += U16_LEN;
+            buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&count.to_be_bytes());
+            c += core::mem::size_of::<u16>();
         }
         for p in &self.entries {
             buf[c] = p.flags_byte(PropertyLayout::Ssrt)?;

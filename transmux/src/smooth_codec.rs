@@ -42,7 +42,7 @@ use broadcast_smooth::{QualityLevel, StreamType};
 use crate::aac_asc::{ChannelConfiguration, SamplingFrequencyIndex};
 use crate::annexb::iter_annexb_nals;
 use crate::error::{Error as CrateError, Result as CrateResult};
-use crate::nal::{NalCodec, nal_unit_type};
+use crate::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
 use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
@@ -65,12 +65,6 @@ const TTML_NAMESPACE: &str = "http://www.w3.org/ns/ttml";
 /// The bare WebVTT file-header block a synthesised `wvtt` `vttC` carries
 /// (WebVTT §4.1 file signature; ISO/IEC 14496-30 §9.2).
 const WEBVTT_HEADER: &str = "WEBVTT";
-
-/// H.264 `nal_unit_type` for a sequence parameter set (SPS) —
-/// ITU-T H.264 §7.4.1 Table 7-1.
-const AVC_NAL_SPS: u8 = 7;
-/// H.264 `nal_unit_type` for a picture parameter set (PPS).
-const AVC_NAL_PPS: u8 = 8;
 
 /// Build a [`TrackSpec`] (feed to [`crate::pipeline::build_init_segment`]) from
 /// a `QualityLevel`'s `CodecPrivateData`, keyed by the enclosing

@@ -247,6 +247,7 @@ pub mod trickplay;
 pub mod ts_demux;
 pub mod ts_hls;
 pub mod ts_mux;
+pub(crate) mod units;
 pub mod user_data;
 pub mod validate;
 pub mod visual_ext;

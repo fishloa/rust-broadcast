@@ -16,6 +16,7 @@
 
 use crate::error::{Error, Result};
 use crate::hevc_config::HEVCDecoderConfigurationRecord;
+use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_out;
@@ -34,7 +35,6 @@ pub const MDCV_FOURCC: [u8; 4] = *b"mdcv";
 /// FourCC of the content light level box.
 pub const CLLI_FOURCC: [u8; 4] = *b"clli";
 
-const HEVC_NAL_HEADER_LEN: usize = 2;
 const CIE_PRIMARY_COUNT: usize = 3;
 const MDCV_PAYLOAD_LEN: usize = 24;
 const CLLI_PAYLOAD_LEN: usize = 4;

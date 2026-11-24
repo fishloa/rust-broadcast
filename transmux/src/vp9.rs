@@ -10,6 +10,7 @@
 //! | [`Vp9ConfigurationBox`] | `vpcC` | `FullBox` v1 VPCodecConfigurationRecord |
 //! | [`Vp9SampleEntry`] | `vp09` | VisualSampleEntry carrying `vpcC` |
 
+use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
 use crate::wire_cursor::{be_u16, be_u32};
@@ -22,10 +23,6 @@ use broadcast_common::{Parse, Serialize};
 pub const VPCC_FOURCC: [u8; 4] = *b"vpcC";
 /// FourCC of the VP9 sample entry.
 pub const VP09_FOURCC: [u8; 4] = *b"vp09";
-/// 8-byte box header.
-const BOX_HDR: usize = 8;
-/// FullBox extension: version(1) + flags(3).
-const FULL_HDR: usize = 4;
 /// Fixed length of the VPCodecConfigurationRecord (before `codecInitializationData`).
 const VPCC_RECORD_FIXED: usize = 8;
 /// The only FullBox version the binding defines. The VP Codec ISO Media File
@@ -43,8 +40,6 @@ const CHROMA_SUBSAMPLING_MASK: u8 = 0x07;
 const CHROMA_SUBSAMPLING_BITS: u32 = 3;
 /// `videoFullRangeFlag` is the low bit of the packed nibble byte.
 const VIDEO_FULL_RANGE_MASK: u8 = 0x01;
-/// Offset of the `FullBox` `flags` field, after its 1-byte `version`.
-const FULLBOX_FLAGS_OFFSET: usize = 1;
 /// Offset of `level` in the VPCodecConfigurationRecord.
 const VPCC_LEVEL_OFFSET: usize = 1;
 /// Offset of the `bitDepth`/`chromaSubsampling`/`videoFullRangeFlag` byte.
@@ -109,7 +104,7 @@ impl Vp9ConfigurationBox {
 impl<'a> Parse<'a> for Vp9ConfigurationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, FULL_HDR + VPCC_RECORD_FIXED, "vpcC body")?;
+        need_in(bytes, FULLBOX_EXTRA_SIZE + VPCC_RECORD_FIXED, "vpcC body")?;
         let version = bytes[0];
         // Only version 1 is defined by the binding; version 0 is deprecated with
         // no published syntax, so guessing at a layout for it would be
@@ -123,7 +118,7 @@ impl<'a> Parse<'a> for Vp9ConfigurationBox {
             }));
         }
         let flags = be_u32(bytes, FULLBOX_FLAGS_OFFSET, "vpcC body")?;
-        let r = &bytes[FULL_HDR..];
+        let r = &bytes[FULLBOX_EXTRA_SIZE..];
         let profile = r[0];
         let level = r[VPCC_LEVEL_OFFSET];
         // `bitDepth(4) chromaSubsampling(3) videoFullRangeFlag(1)`, then the
@@ -135,7 +130,7 @@ impl<'a> Parse<'a> for Vp9ConfigurationBox {
         let transfer_characteristics = r[VPCC_TRANSFER_CHARACTERISTICS_OFFSET];
         let matrix_coefficients = r[VPCC_MATRIX_COEFFICIENTS_OFFSET];
         let init_size = usize::from(be_u16(r, VPCC_INIT_SIZE_OFFSET, "vpcC body")?);
-        let init_start = FULL_HDR + VPCC_RECORD_FIXED;
+        let init_start = FULLBOX_EXTRA_SIZE + VPCC_RECORD_FIXED;
         // A `codecInitializationDataSize` that overruns the box is an error, not
         // a silent truncation: the size is the only length the record carries,
         // so a short read means the box is malformed.
@@ -167,7 +162,7 @@ impl<'a> Parse<'a> for Vp9ConfigurationBox {
 impl Serialize for Vp9ConfigurationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        FULL_HDR + VPCC_RECORD_FIXED + self.codec_initialization_data.len()
+        FULLBOX_EXTRA_SIZE + VPCC_RECORD_FIXED + self.codec_initialization_data.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         // Only version 1 can be written; emitting any other version with this
@@ -184,7 +179,7 @@ impl Serialize for Vp9ConfigurationBox {
         buf[0] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[1..4].copy_from_slice(&fb[1..]);
-        let r = &mut buf[FULL_HDR..];
+        let r = &mut buf[FULLBOX_EXTRA_SIZE..];
         r[0] = self.profile;
         r[1] = self.level;
         // Both 4-bit/3-bit fields are written through the checked helper:
@@ -260,9 +255,9 @@ impl Vp9SampleEntry {
 impl Serialize for Vp9SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let config_len = BOX_HDR + self.config.serialized_len();
+        let config_len = BOX_HEADER_MIN_SIZE + self.config.serialized_len();
         crate::box_types::box_len(
-            BOX_HDR
+            BOX_HEADER_MIN_SIZE
                 + VisualSampleEntryFields::serialized_len()
                 + crate::sample_entries::entry_children_len(&self.children, config_len),
         )
@@ -276,7 +271,7 @@ impl Serialize for Vp9SampleEntry {
         // The config box keeps its wire position: a real `vp09`/`av01` entry
         // often carries `pasp` *before* it (audit item 3, round 3).
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
-            let len = BOX_HDR + self.config.serialized_len();
+            let len = BOX_HEADER_MIN_SIZE + self.config.serialized_len();
             let len = broadcast_common::len::fit_u32(len, "config box size")?;
             buf[*c..*c + core::mem::size_of::<u32>()].copy_from_slice(&len.to_be_bytes());
             *c += core::mem::size_of::<u32>();

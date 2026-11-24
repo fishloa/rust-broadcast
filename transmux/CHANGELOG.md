@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `nal::NAL_TYPE_MASK` (the 5-bit H.264 `nal_unit_type` mask of ITU-T H.264 §7.3.1) and `cenc::KEY_LEN` (the AES-128 content-key width) are the one definitions of those values, exported from the modules that own them; `sample_aes::NAL_TYPE_MASK` and `sample_aes::KEY_LEN` keep their existing paths as re-exports, so no existing path or signature changes.
+
+### Changed
+- Internal: the crate keeps one definition of each shared constant instead of a per-module copy — the box/full-box header widths, four-CC length and flag mask in `box_types`, the NAL header widths, type masks and parameter-set types in `nal`/`nalu_types`, the key width in `cenc`, and a new crate-private `units` module for the kilobit and round-to-nearest divisors. Byte-width constants are now `size_of::<T>()`/`T::BITS` at the use site. No output, behaviour or public signature changes.
+
 ### Breaking
 - **BREAKING:** the optional `motion-imagery-metadata` feature builds against `motion-imagery-metadata` 0.2 (was 0.1). `LocalSetItem::value_typed()` returns that crate's `St0601Value`, so a consumer naming its types moves to 0.2 with it; 0.2 types tag 81/115/116/121/122/127/128/130/138/139/141/142 packs through new accessors and drops the `St0903VmtiItem::AlgorithmSeries`/`OntologySeries` variants.
 

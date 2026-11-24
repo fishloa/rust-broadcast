@@ -20,7 +20,9 @@
 //! inside the sample entry, but they are provided here for completeness so callers can
 //! build and parse cue sample payloads.
 
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE};
 use crate::error::{Error, Result};
+use crate::sample_entries::SAMPLE_ENTRY_RESERVED_LEN;
 use crate::wire_cursor::{be_u16, be_u32};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -28,13 +30,7 @@ use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
-const BOX_HDR: usize = 8;
-const U16_LEN: usize = core::mem::size_of::<u16>();
-const U32_LEN: usize = core::mem::size_of::<u32>();
-const FOURCC_LEN: usize = 4;
-const BOX_TYPE_OFFSET: usize = U32_LEN;
-const SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
-const SAMPLE_ENTRY_FIXED_LEN: usize = SAMPLE_ENTRY_RESERVED_LEN + U16_LEN;
+const SAMPLE_ENTRY_FIXED_LEN: usize = SAMPLE_ENTRY_RESERVED_LEN + core::mem::size_of::<u16>();
 const DATA_REFERENCE_INDEX_OFFSET: usize = SAMPLE_ENTRY_RESERVED_LEN;
 const SUBTITLE_CSTRING_COUNT: usize = 3;
 const DUPLICATE_CHILD_ORDINAL: u64 = 2;
@@ -133,15 +129,15 @@ impl XmlSubtitleSampleEntry {
         let (auxiliary_mime_types, mut pos) = parse_cstring(body, pos)?;
 
         let mut extra_boxes = Vec::new();
-        while pos + BOX_HDR <= body.len() {
+        while pos + BOX_HEADER_MIN_SIZE <= body.len() {
             let sz = be_u32(body, pos, "child box size")? as usize;
-            if sz < BOX_HDR {
+            if sz < BOX_HEADER_MIN_SIZE {
                 break;
             }
             let end = pos.saturating_add(sz).min(body.len());
-            let mut bt = [0u8; FOURCC_LEN];
-            bt.copy_from_slice(&body[pos + BOX_TYPE_OFFSET..pos + BOX_HDR]);
-            let data = body[pos + BOX_HDR..end].to_vec();
+            let mut bt = [0u8; BOX_TYPE_SIZE];
+            bt.copy_from_slice(&body[pos + BOX_TYPE_OFFSET..pos + BOX_HEADER_MIN_SIZE]);
+            let data = body[pos + BOX_HEADER_MIN_SIZE..end].to_vec();
             extra_boxes.push(crate::init_segment::OpaqueBox::new(bt, data));
             pos = pos.saturating_add(sz);
         }
@@ -169,7 +165,7 @@ impl Serialize for XmlSubtitleSampleEntry {
 
     fn serialized_len(&self) -> usize {
         // box header (8) + reserved(6) + dri(2)
-        let mut n = BOX_HDR + SAMPLE_ENTRY_FIXED_LEN;
+        let mut n = BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN;
         // three null-terminated strings
         n += cstring_len(&self.namespace);
         n += cstring_len(&self.schema_location);
@@ -192,8 +188,9 @@ impl Serialize for XmlSubtitleSampleEntry {
         // otherwise keep garbage there (r04-W45).
         buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].fill(0);
         c += SAMPLE_ENTRY_RESERVED_LEN;
-        buf[c..c + U16_LEN].copy_from_slice(&self.data_reference_index.to_be_bytes());
-        c += U16_LEN;
+        buf[c..c + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.data_reference_index.to_be_bytes());
+        c += core::mem::size_of::<u16>();
         // namespace (null-terminated)
         buf[c..c + self.namespace.len()].copy_from_slice(self.namespace.as_bytes());
         c += self.namespace.len();
@@ -248,7 +245,7 @@ macro_rules! utf8_text_box {
 
             /// Parse from full box bytes (including 8-byte header).
             pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-                need_in(bytes, BOX_HDR, $fourcc)?;
+                need_in(bytes, BOX_HEADER_MIN_SIZE, $fourcc)?;
                 let body = &bytes[crate::box_types::box_header_len(bytes)?..];
                 let text = core::str::from_utf8(body).map_err(|_| Error::InvalidValue(InvalidValue {
                     field: concat!($fourcc, " ", stringify!($field)),
@@ -272,7 +269,7 @@ macro_rules! utf8_text_box {
             type Error = Error;
 
             fn serialized_len(&self) -> usize {
-                crate::box_types::box_len(BOX_HDR + self.$field.len())
+                crate::box_types::box_len(BOX_HEADER_MIN_SIZE + self.$field.len())
             }
 
             fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -395,7 +392,7 @@ impl VttCueBox {
 
     /// Parse from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        need_in(bytes, BOX_HDR, "vttc")?;
+        need_in(bytes, BOX_HEADER_MIN_SIZE, "vttc")?;
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let mut payload: Option<CuePayloadBox> = None;
         let mut settings: Option<CueSettingsBox> = None;
@@ -403,14 +400,14 @@ impl VttCueBox {
         let mut extra_children: Vec<crate::init_segment::OpaqueBox> = Vec::new();
         let mut child_order: Vec<CueChild> = Vec::new();
         let mut pos = 0usize;
-        while pos + BOX_HDR <= body.len() {
+        while pos + BOX_HEADER_MIN_SIZE <= body.len() {
             let sz = be_u32(body, pos, "child box size")? as usize;
-            if sz < BOX_HDR {
+            if sz < BOX_HEADER_MIN_SIZE {
                 break;
             }
             let end = pos.saturating_add(sz).min(body.len());
             let child = &body[pos..end];
-            let fourcc = &child[BOX_TYPE_OFFSET..BOX_HDR];
+            let fourcc = &child[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
             // ISO/IEC 14496-30 `VTTCueBox` lists each of `iden`/`sttg`/`payl`
             // once (private/specs-verified/mpeg/transmux/codec/captions-14496-30.md): a repeat cannot be held
             // in the typed fields (the last would win while the order listed
@@ -439,12 +436,12 @@ impl VttCueBox {
                     child_order.push(CueChild::Iden);
                 }
                 other => {
-                    let mut bt = [0u8; FOURCC_LEN];
+                    let mut bt = [0u8; BOX_TYPE_SIZE];
                     bt.copy_from_slice(other);
                     child_order.push(CueChild::Extra(extra_children.len()));
                     extra_children.push(crate::init_segment::OpaqueBox::new(
                         bt,
-                        child[BOX_HDR..].to_vec(),
+                        child[BOX_HEADER_MIN_SIZE..].to_vec(),
                     ));
                 }
             }
@@ -510,7 +507,7 @@ impl Serialize for VttCueBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR + self.payload.serialized_len();
+        let mut n = BOX_HEADER_MIN_SIZE + self.payload.serialized_len();
         if let Some(s) = &self.settings {
             n += s.serialized_len();
         }
@@ -518,7 +515,7 @@ impl Serialize for VttCueBox {
             n += i.serialized_len();
         }
         for e in &self.extra_children {
-            n += BOX_HDR + e.data.len();
+            n += BOX_HEADER_MIN_SIZE + e.data.len();
         }
         crate::box_types::box_len(n)
     }
@@ -543,7 +540,7 @@ impl Serialize for VttCueBox {
                 CueChild::Payl => c += self.payload.serialize_into(&mut buf[c..])?,
                 CueChild::Extra(i) => {
                     let e = &self.extra_children[i];
-                    let len = BOX_HDR + e.data.len();
+                    let len = BOX_HEADER_MIN_SIZE + e.data.len();
                     c += crate::box_types::write_box_header(&mut buf[c..], &e.box_type, len)?;
                     buf[c..c + e.data.len()].copy_from_slice(&e.data);
                     c += e.data.len();
@@ -564,7 +561,7 @@ pub struct VttEmptyCueBox;
 impl VttEmptyCueBox {
     /// Parse from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        need_in(bytes, BOX_HDR, "vtte")?;
+        need_in(bytes, BOX_HEADER_MIN_SIZE, "vtte")?;
         Ok(Self)
     }
 }
@@ -580,15 +577,15 @@ impl Serialize for VttEmptyCueBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        BOX_HDR
+        BOX_HEADER_MIN_SIZE
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = BOX_HDR;
+        let need = BOX_HEADER_MIN_SIZE;
         need_out(buf, need)?;
-        buf[..4].copy_from_slice(&(BOX_HDR as u32).to_be_bytes());
+        buf[..4].copy_from_slice(&(BOX_HEADER_MIN_SIZE as u32).to_be_bytes());
         buf[4..8].copy_from_slice(b"vtte");
-        Ok(BOX_HDR)
+        Ok(BOX_HEADER_MIN_SIZE)
     }
 }
 
@@ -623,9 +620,9 @@ pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
     let mut pos = 0usize;
     while pos < sample.len() {
         let rest = &sample[pos..];
-        need_in(rest, BOX_HDR, "wvtt sample box header")?;
+        need_in(rest, BOX_HEADER_MIN_SIZE, "wvtt sample box header")?;
         let size = be_u32(rest, 0, "wvtt sample box header")? as usize;
-        if size < BOX_HDR || size > rest.len() {
+        if size < BOX_HEADER_MIN_SIZE || size > rest.len() {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "wvtt sample box size",
                 value: size as u64,
@@ -633,16 +630,16 @@ pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
             }));
         }
         let boxed = &rest[..size];
-        out.push(match &boxed[BOX_TYPE_OFFSET..BOX_HDR] {
+        out.push(match &boxed[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] {
             b"vttc" => WvttSampleBox::Cue(VttCueBox::bare_parse(boxed)?),
             b"vtte" => WvttSampleBox::Empty(VttEmptyCueBox::bare_parse(boxed)?),
             b"vtta" => WvttSampleBox::AdditionalText(VttAdditionalTextBox::bare_parse(boxed)?),
             other => {
-                let mut bt = [0u8; FOURCC_LEN];
+                let mut bt = [0u8; BOX_TYPE_SIZE];
                 bt.copy_from_slice(other);
                 WvttSampleBox::Other(crate::init_segment::OpaqueBox::new(
                     bt,
-                    boxed[BOX_HDR..].to_vec(),
+                    boxed[BOX_HEADER_MIN_SIZE..].to_vec(),
                 ))
             }
         });
@@ -659,7 +656,7 @@ impl Serialize for WvttSampleBox {
             WvttSampleBox::Cue(b) => b.serialized_len(),
             WvttSampleBox::Empty(b) => b.serialized_len(),
             WvttSampleBox::AdditionalText(b) => b.serialized_len(),
-            WvttSampleBox::Other(b) => BOX_HDR + b.data.len(),
+            WvttSampleBox::Other(b) => BOX_HEADER_MIN_SIZE + b.data.len(),
         }
     }
 
@@ -669,7 +666,7 @@ impl Serialize for WvttSampleBox {
             WvttSampleBox::Empty(b) => b.serialize_into(buf),
             WvttSampleBox::AdditionalText(b) => b.serialize_into(buf),
             WvttSampleBox::Other(b) => {
-                let need = BOX_HDR + b.data.len();
+                let need = BOX_HEADER_MIN_SIZE + b.data.len();
                 need_out(buf, need)?;
                 let mut c = crate::box_types::write_box_header(buf, &b.box_type, need)?;
                 buf[c..c + b.data.len()].copy_from_slice(&b.data);
@@ -722,7 +719,11 @@ impl WvttSampleEntry {
     /// Parse from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         // Minimum: box header (8) + SampleEntry reserved+dri (8) + vttC header (8) = 24
-        need_in(bytes, BOX_HDR + SAMPLE_ENTRY_FIXED_LEN + BOX_HDR, "wvtt")?;
+        need_in(
+            bytes,
+            BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN + BOX_HEADER_MIN_SIZE,
+            "wvtt",
+        )?;
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let data_reference_index = be_u16(body, DATA_REFERENCE_INDEX_OFFSET, "sample entry")?;
 
@@ -730,18 +731,18 @@ impl WvttSampleEntry {
         let mut config: Option<WebVttConfigurationBox> = None;
         let mut extra_boxes: Vec<crate::init_segment::OpaqueBox> = Vec::new();
 
-        while pos + BOX_HDR <= body.len() {
+        while pos + BOX_HEADER_MIN_SIZE <= body.len() {
             let sz = be_u32(body, pos, "child box size")? as usize;
-            if sz < BOX_HDR {
+            if sz < BOX_HEADER_MIN_SIZE {
                 break;
             }
             let end = pos.saturating_add(sz).min(body.len());
             let child = &body[pos..end];
-            let fourcc = &child[BOX_TYPE_OFFSET..BOX_HDR];
+            let fourcc = &child[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
             match fourcc {
                 b"vttC" => config = Some(WebVttConfigurationBox::bare_parse(child)?),
                 _ => {
-                    let mut bt = [0u8; FOURCC_LEN];
+                    let mut bt = [0u8; BOX_TYPE_SIZE];
                     bt.copy_from_slice(fourcc);
                     extra_boxes.push(crate::init_segment::OpaqueBox::new(
                         bt,
@@ -778,7 +779,7 @@ impl Serialize for WvttSampleEntry {
 
     fn serialized_len(&self) -> usize {
         // box header (8) + SampleEntry reserved+dri (8) + vttC + extra boxes
-        let mut n = BOX_HDR + SAMPLE_ENTRY_FIXED_LEN + self.config.serialized_len();
+        let mut n = BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN + self.config.serialized_len();
         for eb in &self.extra_boxes {
             n += eb.serialized_len();
         }
@@ -795,8 +796,9 @@ impl Serialize for WvttSampleEntry {
         // reserved bytes (r04-W45).
         buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].fill(0);
         c += SAMPLE_ENTRY_RESERVED_LEN;
-        buf[c..c + U16_LEN].copy_from_slice(&self.data_reference_index.to_be_bytes());
-        c += U16_LEN;
+        buf[c..c + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.data_reference_index.to_be_bytes());
+        c += core::mem::size_of::<u16>();
         // vttC configuration box
         c += self.config.serialize_into(&mut buf[c..])?;
         // optional extra boxes

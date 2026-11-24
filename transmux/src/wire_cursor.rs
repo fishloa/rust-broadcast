@@ -1,15 +1,25 @@
-//! Big-endian byte cursor shared by the `avcC`/`hvcC` decoder-configuration
-//! parsers (audit r04-O5): one bounds-checked `take`, so the per-width readers
-//! cannot drift apart. Every addition is checked (no wrap on a hostile cursor).
+//! Big-endian field readers shared by every parser in the crate (audit r04-O5):
+//! one bounds-checked `take`, so the per-width readers cannot drift apart. Every
+//! addition is checked (no wrap on a hostile cursor).
+//!
+//! Two families, one home:
+//!
+//! - the checked [`take`]/[`read_u8`]/[`read_u16`]/[`read_u32`]/[`read_u48`]/
+//!   [`be_u16`]/[`be_u32`]/[`be_u64`] readers, which reject an offset the
+//!   caller has not proved in range — use these on untrusted offsets;
+//! - the unchecked `*_at` readers ([`u16_at`] … [`fourcc_at`]), which decode
+//!   one field at an offset the caller's own guard (a `need_in`, a `get`, or a
+//!   box-body slice) has already covered.
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::error::BufferTooShort;
 
-const U16_LEN: usize = core::mem::size_of::<u16>();
-const U32_LEN: usize = core::mem::size_of::<u32>();
+/// Byte width of the 24-bit fields (ISO/IEC 14496-12:2026 `size` prefixes,
+/// `esds` lengths).
+pub(crate) const U24_LEN: usize = 3;
+/// Byte width of the 48-bit `hvcC` `general_constraint_indicator_flags`.
 const U48_LEN: usize = 6;
-const U64_LEN: usize = core::mem::size_of::<u64>();
 
 /// Take the next `n` bytes at `*cursor`, advancing it. `BufferTooShort` (with the
 /// byte count needed) if fewer remain.
@@ -36,13 +46,15 @@ pub(crate) fn read_u8(bytes: &[u8], cursor: &mut usize, what: &'static str) -> R
 }
 
 pub(crate) fn read_u16(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u16> {
-    let b = take(bytes, cursor, U16_LEN, what)?;
-    Ok(u16::from_be_bytes([b[0], b[1]]))
+    let b = take(bytes, cursor, core::mem::size_of::<u16>(), what)?;
+    let mut arr = [0u8; core::mem::size_of::<u16>()];
+    arr.copy_from_slice(b);
+    Ok(u16::from_be_bytes(arr))
 }
 
 pub(crate) fn read_u32(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u32> {
-    let b = take(bytes, cursor, U32_LEN, what)?;
-    let mut arr = [0u8; U32_LEN];
+    let b = take(bytes, cursor, core::mem::size_of::<u32>(), what)?;
+    let mut arr = [0u8; core::mem::size_of::<u32>()];
     arr.copy_from_slice(b);
     Ok(u32::from_be_bytes(arr))
 }
@@ -81,9 +93,69 @@ pub(crate) fn read_nalu_16(
 /// instead of a panic when fewer than 8 bytes remain at `off`.
 pub(crate) fn be_u64(bytes: &[u8], off: usize, what: &'static str) -> Result<u64> {
     let mut cursor = off;
-    let b = take(bytes, &mut cursor, U64_LEN, what)?;
+    let b = take(bytes, &mut cursor, core::mem::size_of::<u64>(), what)?;
     Ok(b.iter()
         .fold(0u64, |acc, &x| (acc << u8::BITS) | u64::from(x)))
+}
+
+// ---------------------------------------------------------------------------
+// Unchecked field readers (the caller's guard covers the offset)
+// ---------------------------------------------------------------------------
+
+/// A big-endian `u16` at `off`, the caller having already proved 2 bytes are
+/// there.
+pub(crate) fn u16_at(bytes: &[u8], off: usize) -> u16 {
+    let mut field = [0u8; core::mem::size_of::<u16>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u16>()]);
+    u16::from_be_bytes(field)
+}
+
+/// A big-endian `i16` at `off`, the caller having already proved 2 bytes are
+/// there.
+pub(crate) fn i16_at(bytes: &[u8], off: usize) -> i16 {
+    let mut field = [0u8; core::mem::size_of::<i16>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<i16>()]);
+    i16::from_be_bytes(field)
+}
+
+/// A big-endian 24-bit value at `off`, widened to `u32`, the caller having
+/// already proved 3 bytes are there.
+pub(crate) fn u24_at(bytes: &[u8], off: usize) -> u32 {
+    let mut field = [0u8; core::mem::size_of::<u32>()];
+    field[core::mem::size_of::<u32>() - U24_LEN..].copy_from_slice(&bytes[off..off + U24_LEN]);
+    u32::from_be_bytes(field)
+}
+
+/// A big-endian `u32` at `off`, the caller having already proved 4 bytes are
+/// there.
+pub(crate) fn u32_at(bytes: &[u8], off: usize) -> u32 {
+    let mut field = [0u8; core::mem::size_of::<u32>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(field)
+}
+
+/// A big-endian `i32` at `off` (a transformation-matrix coefficient), the
+/// caller having already proved 4 bytes are there.
+pub(crate) fn i32_at(bytes: &[u8], off: usize) -> i32 {
+    let mut field = [0u8; core::mem::size_of::<i32>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<i32>()]);
+    i32::from_be_bytes(field)
+}
+
+/// A big-endian `u64` at `off`, the caller having already proved 8 bytes are
+/// there.
+pub(crate) fn u64_at(bytes: &[u8], off: usize) -> u64 {
+    let mut field = [0u8; core::mem::size_of::<u64>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u64>()]);
+    u64::from_be_bytes(field)
+}
+
+/// A four-character code at `off` (the raw 4 bytes, not a number), the caller
+/// having already proved 4 bytes are there.
+pub(crate) fn fourcc_at(bytes: &[u8], off: usize) -> [u8; core::mem::size_of::<u32>()] {
+    let mut field = [0u8; core::mem::size_of::<u32>()];
+    field.copy_from_slice(&bytes[off..off + core::mem::size_of::<u32>()]);
+    field
 }
 
 #[cfg(test)]

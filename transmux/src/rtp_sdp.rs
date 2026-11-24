@@ -24,9 +24,10 @@ use crate::aac_asc::AudioSpecificConfig;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG4_AUDIO,
+    SLConfigDescriptor, STREAM_TYPE_AUDIO,
 };
-use crate::nal::{NalCodec, nal_unit_type};
+use crate::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::CodecConfig;
 use crate::rtp::{base64_decode, hex_decode};
@@ -35,16 +36,6 @@ use broadcast_common::Parse;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::len::need_in;
 
-/// Length prefix size transmux uses for coded NALs (4-byte).
-/// H.264 `nal_unit_type` for a sequence parameter set (SPS).
-const AVC_NAL_SPS: u8 = 7;
-/// H.264 `nal_unit_type` for a picture parameter set (PPS).
-const AVC_NAL_PPS: u8 = 8;
-
-/// MPEG-4 Audio object-type indication (ISO/IEC 14496-1 §7.2.6.6 Table 5).
-const OTI_AUDIO_ISO14496_3: u8 = 0x40;
-/// MPEG-4 audio stream type (ISO/IEC 14496-1 §7.2.6.6 Table 6).
-const STREAM_TYPE_AUDIO: u8 = 5;
 /// `SLConfigDescriptor` `predefined = 2` (MP4 storage) — ISO/IEC 14496-14 §3.1.2.
 /// AAC sample size is always 16 bits in the sample entry (fMP4/CMAF convention).
 const AAC_SAMPLE_SIZE_BITS: u16 = 16;
@@ -106,7 +97,7 @@ pub fn aac_config_from_asc_bytes(asc_bytes: Vec<u8>) -> Result<CodecConfig> {
         0,
         0,
         Some(DecoderConfigDescriptor::new(
-            OTI_AUDIO_ISO14496_3,
+            OTI_MPEG4_AUDIO,
             STREAM_TYPE_AUDIO,
             false,
             0,

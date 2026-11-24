@@ -2,8 +2,9 @@
 
 use super::*;
 
-/// `SampleEntry` `reserved[6]` (ISO/IEC 14496-12:2026 §8.5.2.2).
-const SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
+use crate::box_types::BOX_TYPE_SIZE;
+use crate::sample_entries::SAMPLE_ENTRY_RESERVED_LEN;
+
 /// An audio sample entry's `compression_id` + `packet_size`, two reserved
 /// `u16` fields (ISO/IEC 14496-12:2026 §12.2.3.2).
 const COMPRESSION_ID_AND_PACKET_SIZE_LEN: usize = core::mem::size_of::<u32>();
@@ -12,8 +13,8 @@ pub(super) enum MediaKind {
     Video,
     Audio,
     Subtitle {
-        media_header: [u8; FOURCC_LEN],
-        handler: [u8; FOURCC_LEN],
+        media_header: [u8; BOX_TYPE_SIZE],
+        handler: [u8; BOX_TYPE_SIZE],
         name: &'static [u8],
     },
 }
@@ -36,7 +37,7 @@ impl MediaKind {
         })
     }
 
-    pub(super) fn handler_type(&self) -> [u8; FOURCC_LEN] {
+    pub(super) fn handler_type(&self) -> [u8; BOX_TYPE_SIZE] {
         match self {
             Self::Video => *b"vide",
             Self::Audio => *b"soun",
@@ -222,7 +223,8 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
         } => {
             let mut dac3_full =
                 vec![0u8; config.serialized_len() + crate::box_types::BOX_HEADER_MIN_SIZE];
-            dac3_full[FOURCC_LEN..crate::box_types::BOX_HEADER_MIN_SIZE].copy_from_slice(b"dac3");
+            dac3_full[BOX_TYPE_SIZE..crate::box_types::BOX_HEADER_MIN_SIZE]
+                .copy_from_slice(b"dac3");
             let n = config.serialize_into(&mut dac3_full[8..])?;
             let dac3_opaque = OpaqueBox::new(*b"dac3", dac3_full[8..8 + n].to_vec());
             let rate = audio_rate_carriage(*sample_rate);
@@ -250,7 +252,8 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
         } => {
             let mut dec3_full =
                 vec![0u8; config.serialized_len() + crate::box_types::BOX_HEADER_MIN_SIZE];
-            dec3_full[FOURCC_LEN..crate::box_types::BOX_HEADER_MIN_SIZE].copy_from_slice(b"dec3");
+            dec3_full[BOX_TYPE_SIZE..crate::box_types::BOX_HEADER_MIN_SIZE]
+                .copy_from_slice(b"dec3");
             let n = config.serialize_into(&mut dec3_full[8..])?;
             let dec3_opaque = OpaqueBox::new(*b"dec3", dec3_full[8..8 + n].to_vec());
             let rate = audio_rate_carriage(*sample_rate);
@@ -515,8 +518,8 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
         } => {
             let (entry, media_header, handler, name): (
                 _,
-                &[u8; FOURCC_LEN],
-                &[u8; FOURCC_LEN],
+                &[u8; BOX_TYPE_SIZE],
+                &[u8; BOX_TYPE_SIZE],
                 &[u8],
             ) = match se {
                 SubtitleSampleEntry::Ttml(e) => (

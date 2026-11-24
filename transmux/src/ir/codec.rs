@@ -12,12 +12,14 @@ use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::ac4::Ac4SpecificBox;
 use crate::av1::Av1ConfigurationBox;
 use crate::avc_config::AVCConfigurationBox;
+use crate::box_types::BOX_TYPE_SIZE;
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;
 use crate::hevc_config::HEVCConfigurationBox;
 use crate::mp4esds::{DecoderSpecificInfo, EsdsBox};
 use crate::opus::OpusSpecificBox;
+use crate::units::BITS_PER_KILOBIT;
 use crate::vp9::Vp9ConfigurationBox;
 use crate::vvc_config::VvcConfigurationBox;
 
@@ -278,7 +280,7 @@ pub enum CodecConfig {
         /// The `ddts` DTSSpecificBox.
         config: DtsSpecificBox,
         /// Sample-entry FourCC: one of `dtsc`, `dtsh`, `dtsl`, `dtse`.
-        codec_fourcc: [u8; SAMPLE_ENTRY_CODE_LEN],
+        codec_fourcc: [u8; BOX_TYPE_SIZE],
         /// Channel count.
         channel_count: u16,
         /// Sampling rate in Hz (48000, 44100, or 32000 per §E.2.2.2).
@@ -376,15 +378,14 @@ pub enum CodecConfig {
     },
 }
 
+/// `sample_size` of the audio sample entries the IR builds: the 16-bit samples
+/// AAC, MPEG audio, AC-3/E-AC-3 and FLV audio all carry (ISO/IEC 14496-12:2026
+/// §12.2.3).
+pub(crate) const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
+
 /// Output channels of HE-AAC v2: Parametric Stereo upmixes the mono core
 /// (ISO/IEC 14496-3 §8.6.4).
 const HE_AAC_V2_OUTPUT_CHANNELS: u16 = 2;
-
-/// Bits per kilobit, converting a stated kbit/s rate to bits per second.
-const BITS_PER_KILOBIT: u32 = 1000;
-
-/// Width of a sample-entry four-character code in bytes.
-const SAMPLE_ENTRY_CODE_LEN: usize = 4;
 
 impl CodecConfig {
     /// Rewrite an AAC-LC `CodecConfig::Aac` as explicit hierarchical HE-AAC

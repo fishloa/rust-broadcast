@@ -13,6 +13,9 @@
 //! All boxes are FullBoxes. Lengths/counts are computed from fields
 //! (no `self.raw`).
 
+use crate::box_types::{
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_MASK,
+};
 use crate::error::{Error, Result};
 use crate::init_segment::{bounded_entry_count, flat_table_len, serialize_flat_table};
 use alloc::vec::Vec;
@@ -23,20 +26,12 @@ use broadcast_common::timescale::Timescale;
 use crate::wire_cursor::{be_u32, be_u64, read_u16, read_u32};
 use broadcast_common::{Parse, Serialize};
 
-const BOX_HEADER_SIZE: usize = 8;
-const FULLBOX_EXTRA_SIZE: usize = 4;
-const U16_LEN: usize = core::mem::size_of::<u16>();
-const U32_LEN: usize = core::mem::size_of::<u32>();
-const U64_LEN: usize = core::mem::size_of::<u64>();
-const U32_PAIR_LEN: usize = U32_LEN * 2;
-const U64_PAIR_LEN: usize = U64_LEN * 2;
-const U32_BITS: u32 = u32::BITS;
-const BOX_TYPE_OFFSET: usize = U32_LEN;
-const FULLBOX_FLAGS_MASK: u32 = 0x00FF_FFFF;
+const U32_PAIR_LEN: usize = core::mem::size_of::<u32>() * 2;
+const U64_PAIR_LEN: usize = core::mem::size_of::<u64>() * 2;
 const CSLG_FIELD_COUNT: usize = 5;
-const ELST_V0_ENTRY_LEN: usize = 3 * U32_LEN;
-const ELST_V1_ENTRY_LEN: usize = 2 * U64_LEN + U32_LEN;
-const SIDX_REFERENCE_ENTRY_LEN: usize = 3 * U32_LEN;
+const ELST_V0_ENTRY_LEN: usize = 3 * core::mem::size_of::<u32>();
+const ELST_V1_ENTRY_LEN: usize = 2 * core::mem::size_of::<u64>() + core::mem::size_of::<u32>();
+const SIDX_REFERENCE_ENTRY_LEN: usize = 3 * core::mem::size_of::<u32>();
 const SIDX_FIXED_FIELD_COUNT: usize = 4;
 const SIDX_REFERENCE_TYPE_SHIFT: u32 = u32::BITS - 1;
 const SIDX_REFERENCED_SIZE_MASK: u32 = 0x7FFF_FFFF;
@@ -86,11 +81,15 @@ pub struct TimeToSampleBox {
 impl TimeToSampleBox {
     /// Parse the body of an stts box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + U32_LEN, "stts body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "stts body",
+        )?;
         let version = body[0];
         let flags = be_u32(body, 0, "stts body")? & FULLBOX_FLAGS_MASK;
         let entry_count = be_u32(body, FULLBOX_EXTRA_SIZE, "stts body")? as usize;
-        let mut c = FULLBOX_EXTRA_SIZE + U32_LEN;
+        let mut c = FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
         let mut entries = Vec::with_capacity(bounded_entry_count(
             body.len().saturating_sub(c),
             U32_PAIR_LEN,
@@ -118,7 +117,7 @@ impl<'a> Parse<'a> for TimeToSampleBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "stts box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "stts box")?;
@@ -146,8 +145,10 @@ impl Serialize for TimeToSampleBox {
             &self.entries,
             U32_PAIR_LEN,
             |entry, out| {
-                out[..U32_LEN].copy_from_slice(&entry.sample_count.to_be_bytes());
-                out[U32_LEN..U32_PAIR_LEN].copy_from_slice(&entry.sample_delta.to_be_bytes());
+                out[..core::mem::size_of::<u32>()]
+                    .copy_from_slice(&entry.sample_count.to_be_bytes());
+                out[core::mem::size_of::<u32>()..U32_PAIR_LEN]
+                    .copy_from_slice(&entry.sample_delta.to_be_bytes());
                 Ok(U32_PAIR_LEN)
             },
         )
@@ -192,12 +193,16 @@ pub struct CompositionOffsetBox {
 impl CompositionOffsetBox {
     /// Parse the body of a ctts box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + U32_LEN, "ctts body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "ctts body",
+        )?;
         let version = body[0];
         let flags = be_u32(body, 0, "ctts body")? & FULLBOX_FLAGS_MASK;
         let entry_count = be_u32(body, FULLBOX_EXTRA_SIZE, "ctts body")? as usize;
         let entry_size: usize = U32_PAIR_LEN;
-        let mut c = FULLBOX_EXTRA_SIZE + U32_LEN;
+        let mut c = FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
         let mut entries = Vec::with_capacity(bounded_entry_count(
             body.len().saturating_sub(c),
             entry_size,
@@ -226,7 +231,7 @@ impl<'a> Parse<'a> for CompositionOffsetBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "ctts box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "ctts box")?;
@@ -254,8 +259,9 @@ impl Serialize for CompositionOffsetBox {
             &self.entries,
             U32_PAIR_LEN,
             |entry, out| {
-                out[..U32_LEN].copy_from_slice(&entry.sample_count.to_be_bytes());
-                out[U32_LEN..U32_PAIR_LEN]
+                out[..core::mem::size_of::<u32>()]
+                    .copy_from_slice(&entry.sample_count.to_be_bytes());
+                out[core::mem::size_of::<u32>()..U32_PAIR_LEN]
                     .copy_from_slice(&(entry.sample_offset as u32).to_be_bytes());
                 Ok(U32_PAIR_LEN)
             },
@@ -287,14 +293,18 @@ pub struct CompositionToDecodeBox {
 impl CompositionToDecodeBox {
     /// Parse the body of a cslg box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + U32_LEN, "cslg body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "cslg body",
+        )?;
         let version = body[0];
         let flags = be_u32(body, 0, "cslg body")? & FULLBOX_FLAGS_MASK;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
         let (fld_size, have): (usize, &str) = if version == 0 {
-            (U32_LEN, "cslg v0 field")
+            (core::mem::size_of::<u32>(), "cslg v0 field")
         } else {
-            (U64_LEN, "cslg v1 field")
+            (core::mem::size_of::<u64>(), "cslg v1 field")
         };
         if payload.len() < fld_size * CSLG_FIELD_COUNT {
             return Err(Error::BufferTooShort(BufferTooShort {
@@ -305,7 +315,7 @@ impl CompositionToDecodeBox {
         }
         let mut c = 0usize;
         let read_i64 = |buf: &[u8], off: usize, sz: usize| -> Result<i64> {
-            if sz == U32_LEN {
+            if sz == core::mem::size_of::<u32>() {
                 Ok(i64::from(be_u32(buf, off, "cslg field")? as i32))
             } else {
                 Ok(be_u64(buf, off, "cslg field")? as i64)
@@ -337,7 +347,7 @@ impl<'a> Parse<'a> for CompositionToDecodeBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "cslg box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "cslg box")?;
@@ -355,8 +365,12 @@ impl<'a> Parse<'a> for CompositionToDecodeBox {
 impl Serialize for CompositionToDecodeBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let fld = if self.version == 0 { U32_LEN } else { U64_LEN };
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + fld * CSLG_FIELD_COUNT
+        let fld = if self.version == 0 {
+            core::mem::size_of::<u32>()
+        } else {
+            core::mem::size_of::<u64>()
+        };
+        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + fld * CSLG_FIELD_COUNT
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -371,13 +385,18 @@ impl Serialize for CompositionToDecodeBox {
             true,
         )?;
         let write_i64 = |buf: &mut [u8], off: usize, sz: usize, v: i64| {
-            if sz == U32_LEN {
-                buf[off..off + U32_LEN].copy_from_slice(&(v as i32).to_be_bytes());
+            if sz == core::mem::size_of::<u32>() {
+                buf[off..off + core::mem::size_of::<u32>()]
+                    .copy_from_slice(&(v as i32).to_be_bytes());
             } else {
-                buf[off..off + U64_LEN].copy_from_slice(&v.to_be_bytes());
+                buf[off..off + core::mem::size_of::<u64>()].copy_from_slice(&v.to_be_bytes());
             }
         };
-        let fld = if self.version == 0 { U32_LEN } else { U64_LEN };
+        let fld = if self.version == 0 {
+            core::mem::size_of::<u32>()
+        } else {
+            core::mem::size_of::<u64>()
+        };
         write_i64(buf, c, fld, self.composition_to_dts_shift);
         c += fld;
         write_i64(buf, c, fld, self.least_decode_to_display_delta);
@@ -426,7 +445,11 @@ pub struct EditListBox {
 impl EditListBox {
     /// Parse the body of an elst box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + U32_LEN, "elst body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "elst body",
+        )?;
         let version = body[0];
         let flags = be_u32(body, 0, "elst body")? & FULLBOX_FLAGS_MASK;
         let entry_count = be_u32(body, FULLBOX_EXTRA_SIZE, "elst body")? as usize;
@@ -435,7 +458,7 @@ impl EditListBox {
         } else {
             ELST_V1_ENTRY_LEN
         };
-        let mut c = FULLBOX_EXTRA_SIZE + U32_LEN;
+        let mut c = FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
         let mut entries = Vec::with_capacity(bounded_entry_count(
             body.len().saturating_sub(c),
             entry_size,
@@ -450,9 +473,9 @@ impl EditListBox {
                 (sd, mt)
             } else {
                 let sd = be_u64(body, c, "elst entry")?;
-                c += U64_LEN;
+                c += core::mem::size_of::<u64>();
                 let mt = be_u64(body, c, "elst entry")? as i64;
-                c += U64_LEN;
+                c += core::mem::size_of::<u64>();
                 (sd, mt)
             };
             let mr_int = read_u16(body, &mut c, "elst entry")? as i16;
@@ -477,7 +500,7 @@ impl<'a> Parse<'a> for EditListBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "elst box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "elst box")?;
@@ -520,7 +543,7 @@ impl Serialize for EditListBox {
                 if version == 0 {
                     let segment_duration = broadcast_common::len::fit_bits(
                         entry.segment_duration,
-                        U32_BITS,
+                        u32::BITS,
                         "segment_duration",
                     )? as u32;
                     // `media_time` is signed (-1 = empty edit, §8.6.6): version 0
@@ -533,18 +556,23 @@ impl Serialize for EditListBox {
                             max: i64::from(i32::MAX) as u64,
                         })
                     })?;
-                    out[..U32_LEN].copy_from_slice(&segment_duration.to_be_bytes());
-                    out[U32_LEN..U32_PAIR_LEN].copy_from_slice(&(media_time as u32).to_be_bytes());
+                    out[..core::mem::size_of::<u32>()]
+                        .copy_from_slice(&segment_duration.to_be_bytes());
+                    out[core::mem::size_of::<u32>()..U32_PAIR_LEN]
+                        .copy_from_slice(&(media_time as u32).to_be_bytes());
                     c += U32_PAIR_LEN;
                 } else {
-                    out[..U64_LEN].copy_from_slice(&entry.segment_duration.to_be_bytes());
-                    out[U64_LEN..U64_PAIR_LEN].copy_from_slice(&entry.media_time.to_be_bytes());
+                    out[..core::mem::size_of::<u64>()]
+                        .copy_from_slice(&entry.segment_duration.to_be_bytes());
+                    out[core::mem::size_of::<u64>()..U64_PAIR_LEN]
+                        .copy_from_slice(&entry.media_time.to_be_bytes());
                     c += U64_PAIR_LEN;
                 }
-                out[c..c + U16_LEN].copy_from_slice(&entry.media_rate_integer.to_be_bytes());
-                out[c + U16_LEN..c + U32_LEN]
+                out[c..c + core::mem::size_of::<u16>()]
+                    .copy_from_slice(&entry.media_rate_integer.to_be_bytes());
+                out[c + core::mem::size_of::<u16>()..c + core::mem::size_of::<u32>()]
                     .copy_from_slice(&entry.media_rate_fraction.to_be_bytes());
-                Ok(c + U32_LEN)
+                Ok(c + core::mem::size_of::<u32>())
             },
         )
     }
@@ -600,7 +628,7 @@ impl SegmentIndexBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(
             body,
-            FULLBOX_EXTRA_SIZE + U32_LEN * SIDX_FIXED_FIELD_COUNT,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() * SIDX_FIXED_FIELD_COUNT,
             "sidx body",
         )?;
         let version = body[0];
@@ -614,12 +642,12 @@ impl SegmentIndexBox {
             (ept, fo)
         } else {
             let ept = be_u64(body, c, "sidx body")?;
-            c += U64_LEN;
+            c += core::mem::size_of::<u64>();
             let fo = be_u64(body, c, "sidx body")?;
-            c += U64_LEN;
+            c += core::mem::size_of::<u64>();
             (ept, fo)
         };
-        need_in(body, c + U32_LEN, "sidx reserved+count")?;
+        need_in(body, c + core::mem::size_of::<u32>(), "sidx reserved+count")?;
         // ISO/IEC 14496-12:2026 §8.14.3.2 (Table): `reserved(16) = 0` comes BEFORE
         // `reference_count(16)`, not folded into it — before this fix, parse
         // read `reference_count` from the `reserved` field's own 2 bytes,
@@ -669,7 +697,7 @@ impl<'a> Parse<'a> for SegmentIndexBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + U32_LEN,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "sidx box",
         )?;
         let ty = be_u32(bytes, BOX_TYPE_OFFSET, "sidx box")?;
@@ -687,14 +715,18 @@ impl<'a> Parse<'a> for SegmentIndexBox {
 impl Serialize for SegmentIndexBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let time_size = if self.version == 0 { U32_LEN } else { U64_LEN };
-        BOX_HEADER_SIZE
+        let time_size = if self.version == 0 {
+            core::mem::size_of::<u32>()
+        } else {
+            core::mem::size_of::<u64>()
+        };
+        BOX_HEADER_MIN_SIZE
             + FULLBOX_EXTRA_SIZE
-            + U32_LEN
-            + U32_LEN
+            + core::mem::size_of::<u32>()
+            + core::mem::size_of::<u32>()
             + time_size
             + time_size
-            + U32_LEN
+            + core::mem::size_of::<u32>()
             + self.references.len() * SIDX_REFERENCE_ENTRY_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -709,39 +741,42 @@ impl Serialize for SegmentIndexBox {
             self.flags,
             true,
         )?;
-        buf[c..c + U32_LEN].copy_from_slice(&self.reference_id.to_be_bytes());
-        c += U32_LEN;
-        buf[c..c + U32_LEN].copy_from_slice(&self.timescale.get().to_be_bytes());
-        c += U32_LEN;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.reference_id.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.timescale.get().to_be_bytes());
+        c += core::mem::size_of::<u32>();
         if self.version == 0 {
             let ept = broadcast_common::len::fit_bits(
                 self.earliest_presentation_time,
-                U32_BITS,
+                u32::BITS,
                 "earliest_presentation_time",
             )? as u32;
-            buf[c..c + U32_LEN].copy_from_slice(&ept.to_be_bytes());
-            c += U32_LEN;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&ept.to_be_bytes());
+            c += core::mem::size_of::<u32>();
             let first_offset =
-                broadcast_common::len::fit_bits(self.first_offset, U32_BITS, "first_offset")?
+                broadcast_common::len::fit_bits(self.first_offset, u32::BITS, "first_offset")?
                     as u32;
-            buf[c..c + U32_LEN].copy_from_slice(&first_offset.to_be_bytes());
-            c += U32_LEN;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&first_offset.to_be_bytes());
+            c += core::mem::size_of::<u32>();
         } else {
-            buf[c..c + U64_LEN].copy_from_slice(&self.earliest_presentation_time.to_be_bytes());
-            c += U64_LEN;
-            buf[c..c + U64_LEN].copy_from_slice(&self.first_offset.to_be_bytes());
-            c += U64_LEN;
+            buf[c..c + core::mem::size_of::<u64>()]
+                .copy_from_slice(&self.earliest_presentation_time.to_be_bytes());
+            c += core::mem::size_of::<u64>();
+            buf[c..c + core::mem::size_of::<u64>()]
+                .copy_from_slice(&self.first_offset.to_be_bytes());
+            c += core::mem::size_of::<u64>();
         }
         // reserved(16) = 0, THEN reference_count(16) (see the parse-side
         // comment) — before the fix, this wrote only `reference_count` at
         // the position a reader expects `reserved`, and never wrote
         // `reference_count`'s own bytes at all.
-        buf[c..c + U16_LEN].copy_from_slice(&0u16.to_be_bytes());
-        c += U16_LEN;
+        buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&0u16.to_be_bytes());
+        c += core::mem::size_of::<u16>();
         let reference_count =
             broadcast_common::len::fit_u16(self.references.len(), "reference_count")?;
-        buf[c..c + U16_LEN].copy_from_slice(&reference_count.to_be_bytes());
-        c += U16_LEN;
+        buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&reference_count.to_be_bytes());
+        c += core::mem::size_of::<u16>();
         for r in &self.references {
             let reference_type =
                 broadcast_common::len::fit_bits(u64::from(r.reference_type), 1, "reference_type")?
@@ -752,10 +787,11 @@ impl Serialize for SegmentIndexBox {
                 "referenced_size",
             )? as u32;
             let raw_ref = (reference_type << SIDX_REFERENCE_TYPE_SHIFT) | referenced_size;
-            buf[c..c + U32_LEN].copy_from_slice(&raw_ref.to_be_bytes());
-            c += U32_LEN;
-            buf[c..c + U32_LEN].copy_from_slice(&r.subsegment_duration.to_be_bytes());
-            c += U32_LEN;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&raw_ref.to_be_bytes());
+            c += core::mem::size_of::<u32>();
+            buf[c..c + core::mem::size_of::<u32>()]
+                .copy_from_slice(&r.subsegment_duration.to_be_bytes());
+            c += core::mem::size_of::<u32>();
             let starts_with_sap = broadcast_common::len::fit_bits(
                 u64::from(r.starts_with_sap),
                 1,
@@ -774,8 +810,8 @@ impl Serialize for SegmentIndexBox {
             let raw_sap = (starts_with_sap << SIDX_REFERENCE_TYPE_SHIFT)
                 | (sap_type << SIDX_SAP_TYPE_SHIFT)
                 | sap_delta_time;
-            buf[c..c + U32_LEN].copy_from_slice(&raw_sap.to_be_bytes());
-            c += U32_LEN;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&raw_sap.to_be_bytes());
+            c += core::mem::size_of::<u32>();
         }
         Ok(c)
     }

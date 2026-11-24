@@ -61,6 +61,8 @@
 //! `no_std` + `alloc`.
 
 use crate::TrackId;
+use crate::nal::NAL_TYPE_MASK;
+use crate::wire_cursor::u16_at;
 use alloc::collections::VecDeque;
 #[cfg(feature = "std")]
 use alloc::format;
@@ -122,13 +124,10 @@ pub const KLV_ENCODING_NAME: &str = "smpte336m";
 
 // --- H.264 NAL / packetisation (RFC 6184 §5.2, §5.6, §5.7, §5.8) -----------
 
-/// NAL unit `Type` field mask (low 5 bits of the NAL octet).
-const NAL_TYPE_MASK: u8 = 0x1F;
 /// NAL unit `F|NRI` field mask (top 3 bits of the NAL octet).
 const NAL_FNRI_MASK: u8 = 0xE0;
 const NAL_NRI_MASK: u8 = 0x60;
 const NAL_FORBIDDEN_MASK: u8 = 0x80;
-const BITS_PER_BYTE: usize = u8::BITS as usize;
 const FU_HEADER_PAIR_LEN: usize = 2;
 const PAIR_WINDOW_LEN: usize = 2;
 const DEFAULT_SSRC: u32 = 0x1234_5678;
@@ -606,7 +605,7 @@ impl RtpPacketiser {
             // AU-headers-length is in BITS: one 2-byte header = 16 bits. One
             // header per packet, and it always states the AU's full size
             // (§3.2.3.2), whether or not this packet carries all of it.
-            let au_headers_len_bits = (AAC_AU_HEADER_LEN * BITS_PER_BYTE) as u16;
+            let au_headers_len_bits = (AAC_AU_HEADER_LEN * u8::BITS as usize) as u16;
             // AU-header: AU-size(13) | AU-Index(3). AU-Index = 0 (single AU).
             let hdr = (au.len() as u16) << AAC_INDEX_LENGTH;
             // Fragmentation (§3.2.3.1): the marker is set on the last fragment
@@ -1698,7 +1697,7 @@ fn reassemble_video_impl(
                             what: "STAP-A size prefix",
                         }));
                     }
-                    let size = u16::from_be_bytes([payload[off], payload[off + 1]]) as usize;
+                    let size = u16_at(payload, off) as usize;
                     off += STAP_A_SIZE_LEN;
                     let end = off + size;
                     if end > payload.len() {
@@ -1870,9 +1869,9 @@ fn reassemble_audio_impl(
                 what: "AAC AU-headers-length",
             }));
         }
-        let au_headers_len_bits = u16::from_be_bytes([payload[0], payload[1]]) as usize;
-        let header_bytes = au_headers_len_bits.div_ceil(BITS_PER_BYTE);
-        let num_headers = au_headers_len_bits / (AAC_AU_HEADER_LEN * BITS_PER_BYTE);
+        let au_headers_len_bits = u16_at(payload, 0) as usize;
+        let header_bytes = au_headers_len_bits.div_ceil(u8::BITS as usize);
+        let num_headers = au_headers_len_bits / (AAC_AU_HEADER_LEN * u8::BITS as usize);
         let mut off = AAC_AU_HEADERS_LENGTH_LEN;
         if off + header_bytes > payload.len() {
             bad!(Error::BufferTooShort(BufferTooShort {
@@ -1886,7 +1885,7 @@ fn reassemble_audio_impl(
         let mut sizes = Vec::with_capacity(num_headers);
         for h in 0..num_headers {
             let hoff = off + h * AAC_AU_HEADER_LEN;
-            let ah = u16::from_be_bytes([payload[hoff], payload[hoff + 1]]);
+            let ah = u16_at(payload, hoff);
             sizes.push((ah >> AAC_INDEX_LENGTH) as usize);
         }
         off += header_bytes;
