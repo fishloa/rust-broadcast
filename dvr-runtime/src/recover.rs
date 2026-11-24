@@ -62,10 +62,27 @@ pub enum RecoverError {
     /// different offset or length than the one it asked for.
     #[error("the supplied bytes do not answer the pending need")]
     UnexpectedSupply,
+    /// The file declares more fragments than the scan accepts, which a real
+    /// period never does: a corrupt or crafted file is refused instead of
+    /// collected.
+    #[error("the period file holds more than {limit} fragments")]
+    TooManyFragments {
+        /// Most fragments the scan accepts.
+        limit: usize,
+    },
 }
 
 /// Bytes of a box header: 32-bit size, type, 64-bit largesize.
 pub const BOX_HEADER_MAX: usize = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
+
+/// Most fragments a scan reports unless [`Fmp4Scan::with_max_fragments`] says
+/// otherwise.
+///
+/// A period holds a bounded number of segments, hours of a few seconds each,
+/// so a million is far above any real period. Without the cap a corrupt file
+/// made of tiny `moof` boxes could grow the result list until the file's own
+/// size allowed: a 512 MiB file holds 64 million 8-byte boxes.
+pub const DEFAULT_MAX_FRAGMENTS: usize = 1 << 20;
 
 /// The span at `offset` for `len` bytes, or `None` for an empty one.
 fn span(offset: u64, len: u64) -> Option<ByteSpan> {
@@ -86,6 +103,9 @@ pub enum ScanStep {
         len: usize,
     },
     /// Every span the file holds, init first.
+    ///
+    /// The list is handed over: a later [`Fmp4Scan::step`] reports `Done`
+    /// with an empty one.
     Done(Vec<RecoveredBox>),
 }
 
@@ -104,6 +124,10 @@ pub enum ScanStep {
 /// `moof`, so a CMAF segment's span is recovered whole. A segment an LL-HLS
 /// packager split into several `moof` runs is still reported as one fragment
 /// per `moof`.
+///
+/// The scan reports at most [`DEFAULT_MAX_FRAGMENTS`] fragments, or the cap
+/// [`with_max_fragments`](Self::with_max_fragments) sets, and refuses a file
+/// that holds more with [`RecoverError::TooManyFragments`].
 pub struct Fmp4Scan {
     file_len: u64,
     next: u64,
@@ -114,7 +138,8 @@ pub struct Fmp4Scan {
     lead: Option<u64>,
     trailing: Option<(u64, u64)>,
     fragments: Vec<RecoveredBox>,
-    boxes: Option<Vec<RecoveredBox>>,
+    max_fragments: usize,
+    done: bool,
 }
 
 impl Fmp4Scan {
@@ -131,13 +156,24 @@ impl Fmp4Scan {
             lead: None,
             trailing: None,
             fragments: Vec::new(),
-            boxes: None,
+            max_fragments: DEFAULT_MAX_FRAGMENTS,
+            done: false,
         }
+    }
+
+    /// Report at most `max` fragments, then fail with
+    /// [`RecoverError::TooManyFragments`].
+    #[must_use]
+    pub fn with_max_fragments(mut self, max: usize) -> Self {
+        self.max_fragments = max;
+        self
     }
 
     /// The next header to read, or the recovered spans.
     ///
-    /// Every call after the first [`ScanStep::Done`] reports the same spans.
+    /// [`ScanStep::Done`] hands the list over, so every later call reports
+    /// `Done` with an empty list. The same holds after an error the scan
+    /// cannot resume from, which ends it.
     ///
     /// # Errors
     ///
@@ -146,8 +182,8 @@ impl Fmp4Scan {
     /// header; [`RecoverError::MissingInit`] when the scan ends without an
     /// `ftyp`/`moov` before any fragment.
     pub fn step(&mut self) -> Result<ScanStep, RecoverError> {
-        if self.boxes.is_some() {
-            return self.finish();
+        if self.done {
+            return Ok(ScanStep::Done(Vec::new()));
         }
         let remaining = self.file_len.saturating_sub(self.next);
         if remaining < BOX_HEADER_MIN_SIZE as u64 {
@@ -189,11 +225,11 @@ impl Fmp4Scan {
             if header.box_type.is(&MDAT)
                 && let Some(total) = self.extent(offset, &header)
             {
-                self.push_fragment(start, moof_len.saturating_add(total));
+                self.push_fragment(start, moof_len.saturating_add(total))?;
                 self.next = offset.saturating_add(total);
                 return Ok(());
             }
-            self.push_fragment(start, moof_len);
+            self.push_fragment(start, moof_len)?;
         }
         self.apply(offset, &header, first)
     }
@@ -215,7 +251,7 @@ impl Fmp4Scan {
                 self.trailing = Some((start, end.saturating_sub(start)));
                 self.next = end;
             } else {
-                self.push_fragment(start, end.saturating_sub(start));
+                self.push_fragment(start, end.saturating_sub(start))?;
                 self.next = self.file_len;
             }
             return Ok(());
@@ -244,32 +280,35 @@ impl Fmp4Scan {
         (total <= remaining).then_some(total)
     }
 
-    fn push_fragment(&mut self, start: u64, len: u64) {
-        if let Some(span) = span(start, len) {
-            self.fragments.push(RecoveredBox::Fragment(span));
+    fn push_fragment(&mut self, start: u64, len: u64) -> Result<(), RecoverError> {
+        let Some(span) = span(start, len) else {
+            return Ok(());
+        };
+        if self.fragments.len() >= self.max_fragments {
+            self.done = true;
+            return Err(RecoverError::TooManyFragments {
+                limit: self.max_fragments,
+            });
         }
+        self.fragments.push(RecoveredBox::Fragment(span));
+        Ok(())
     }
 
     fn finish(&mut self) -> Result<ScanStep, RecoverError> {
         if let Some((start, len)) = self.trailing.take() {
-            self.push_fragment(start, len);
+            self.push_fragment(start, len)?;
         }
-        if self.boxes.is_none() {
-            if !self.saw_init {
-                return Err(RecoverError::MissingInit);
-            }
-            let end = self.init_end.unwrap_or(self.file_len);
-            let Some(init) = span(0, end) else {
-                return Err(RecoverError::MissingInit);
-            };
-            let mut boxes = Vec::with_capacity(self.fragments.len() + 1);
-            boxes.push(RecoveredBox::Init(init));
-            boxes.extend_from_slice(&self.fragments);
-            self.boxes = Some(boxes);
+        self.done = true;
+        if !self.saw_init {
+            return Err(RecoverError::MissingInit);
         }
-        self.boxes
-            .as_ref()
-            .map(|boxes| ScanStep::Done(boxes.clone()))
-            .ok_or(RecoverError::MissingInit)
+        let end = self.init_end.unwrap_or(self.file_len);
+        let Some(init) = span(0, end) else {
+            return Err(RecoverError::MissingInit);
+        };
+        let mut boxes = Vec::with_capacity(self.fragments.len() + 1);
+        boxes.push(RecoveredBox::Init(init));
+        boxes.append(&mut self.fragments);
+        Ok(ScanStep::Done(boxes))
     }
 }

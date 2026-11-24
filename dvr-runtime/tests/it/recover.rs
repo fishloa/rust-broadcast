@@ -215,13 +215,21 @@ fn an_empty_or_broken_period_is_not_iso_bmff() {
 const MAX_STEPS: usize = 1 << 20;
 
 fn scan(data: &[u8]) -> Result<Vec<RecoveredBox>, RecoverError> {
-    drive(data).map(|(_, boxes)| boxes)
+    scan_with(Fmp4Scan::new(data.len() as u64), data)
 }
 
-/// Drive [`Fmp4Scan`] over `data`, reporting the number of bytes it asked for
-/// as well as the recovered boxes.
+fn scan_with(scan: Fmp4Scan, data: &[u8]) -> Result<Vec<RecoveredBox>, RecoverError> {
+    drive_scan(scan, data).map(|(_, boxes)| boxes)
+}
+
+/// Drive a default scan over `data`.
 fn drive(data: &[u8]) -> Result<(usize, Vec<RecoveredBox>), RecoverError> {
-    let mut scan = Fmp4Scan::new(data.len() as u64);
+    drive_scan(Fmp4Scan::new(data.len() as u64), data)
+}
+
+/// Drive `scan` over `data`, reporting the number of bytes it asked for as
+/// well as the recovered boxes.
+fn drive_scan(mut scan: Fmp4Scan, data: &[u8]) -> Result<(usize, Vec<RecoveredBox>), RecoverError> {
     let mut supplied = 0usize;
     for _ in 0..MAX_STEPS {
         match scan.step()? {
@@ -339,7 +347,7 @@ fn a_64_bit_largesize_mdat_is_skipped_by_its_size() {
 }
 
 #[test]
-fn a_stray_supply_is_typed_and_a_finished_scan_repeats_itself() {
+fn a_stray_supply_is_typed_and_a_step_after_done_reports_an_empty_list() {
     let data = init();
     let mut scan = Fmp4Scan::new(data.len() as u64);
     let mut finished = None;
@@ -364,9 +372,71 @@ fn a_stray_supply_is_typed_and_a_finished_scan_repeats_itself() {
     }
     let recovered = finished.expect("finishes");
     assert_eq!(spans(&recovered), vec![(0, data.len() as u64)]);
-    assert_eq!(scan.step().expect("steps"), ScanStep::Done(recovered));
+    assert_eq!(
+        scan.step().expect("steps"),
+        ScanStep::Done(Vec::new()),
+        "the list was handed over, so a second step reports an empty one"
+    );
     assert_eq!(
         scan.supply(0, &data[..4]),
         Err(RecoverError::UnexpectedSupply)
+    );
+}
+
+#[test]
+fn a_file_with_more_fragments_than_the_limit_is_a_typed_error() {
+    let init = init();
+    let limit = 3;
+    let mut four = init.clone();
+    for _ in 0..4 {
+        four.extend_from_slice(&pair(0xAA));
+    }
+    assert_eq!(
+        drive_scan(
+            Fmp4Scan::new(four.len() as u64).with_max_fragments(limit),
+            &four
+        ),
+        Err(RecoverError::TooManyFragments { limit })
+    );
+    let mut three = init.clone();
+    for _ in 0..3 {
+        three.extend_from_slice(&pair(0xAA));
+    }
+    let recovered = scan_with(
+        Fmp4Scan::new(three.len() as u64).with_max_fragments(limit),
+        &three,
+    )
+    .expect("three fragments fit the limit");
+    assert_eq!(recovered.len(), 4);
+}
+
+#[test]
+fn a_file_of_tiny_boxes_cannot_grow_the_result_past_the_limit() {
+    let init = init();
+    let mut data = init.clone();
+    for _ in 0..10_000 {
+        data.extend_from_slice(&boxed(b"moof", &[]));
+    }
+    let limit = 100;
+    let mut scan = Fmp4Scan::new(data.len() as u64).with_max_fragments(limit);
+    let mut needs = 0usize;
+    let outcome = loop {
+        match scan.step().expect("steps") {
+            ScanStep::Need { offset, len } => {
+                needs += 1;
+                let start = usize::try_from(offset).expect("offset fits a usize");
+                if let Err(error) = scan.supply(offset, &data[start..start + len]) {
+                    break Err(error);
+                }
+            }
+            ScanStep::Done(boxes) => break Ok(boxes),
+            _ => panic!("unknown scan step"),
+        }
+    };
+    assert_eq!(outcome, Err(RecoverError::TooManyFragments { limit }));
+    let init_boxes = 2;
+    assert!(
+        needs <= limit + init_boxes + 2,
+        "{needs} headers read for a {limit}-fragment limit"
     );
 }

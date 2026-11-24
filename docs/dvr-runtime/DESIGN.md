@@ -83,7 +83,7 @@ Non-goals:
 | `start_period` 1211-1291 | `ArchiveWriter` roll planning |
 | `append_segment` 1295-1435 | `ArchiveWriter::on_item` (`Segment` arm) |
 | `append_index_entry` 1452-1506, `flush_index` 1517-1551 | deleted; replaced by `StoreOp::CreatePlaylist` / `AppendPlaylist` |
-| `rebuild_index` 1569-1649 | `dvr_runtime::recover::scan_fmp4_data(data) -> Vec<RecoveredBox>` (pure; finds the period's single init, then its `moof`+`mdat` spans) + `FsArchive::recover_spans` |
+| `rebuild_index` 1569-1649 | `dvr_runtime::recover::Fmp4Scan` (sans-IO; `step` asks for one box header at a time and `supply` answers it, so the payloads are never read; finds the period's single init, then its `moof`+`mdat` spans, capped at `DEFAULT_MAX_FRAGMENTS`) + `FsArchive::recover_spans`, which seeks between headers |
 | path helpers 1652-1669 | `dvr_runtime::layout` |
 | `per_period_byte_budget` 1688-1693, `enforce_retention` 1695-1725, `evict_oldest_period` 1727-1771 | `ArchiveWriter` retention (eviction is a plan of `Remove` ops) |
 | `handle_terminated` 1803-1858 | `ArchiveWriter::on_item(Terminated)` returns `Step::Rearm` / `Step::Stopped`; `FsRecorder` re-pins |
@@ -499,7 +499,16 @@ pub mod layout {
 }
 pub mod recover {
     pub enum RecoveredBox { Init(ByteSpan), Fragment(ByteSpan) }
-    pub fn scan_fmp4_data(data: &[u8]) -> Result<Vec<RecoveredBox>, RecoverError>;
+    pub const BOX_HEADER_MAX: usize;            // a size, a type and a 64-bit largesize
+    pub const DEFAULT_MAX_FRAGMENTS: usize;     // the cap a scan refuses a corrupt file past
+    pub enum ScanStep { Need { offset: u64, len: usize }, Done(Vec<RecoveredBox>) }
+    pub struct Fmp4Scan { /* file length, cursor, the spans found so far */ }
+    impl Fmp4Scan {
+        pub fn new(file_len: u64) -> Self;
+        pub fn with_max_fragments(self, max: usize) -> Self;
+        pub fn step(&mut self) -> Result<ScanStep, RecoverError>;
+        pub fn supply(&mut self, offset: u64, bytes: &[u8]) -> Result<(), RecoverError>;
+    }
 }
 ```
 
@@ -772,7 +781,7 @@ the new `media_plane::push_session` module's unit tests cover every decision-tab
 | #3673 | multimux |
 | #3674 gap accounting (Gap, Lagged, Stall `(Some, Some)`) | dvr-runtime writer units |
 | #3675 roll and retention boundaries | dvr-runtime writer units at the exact limits, plus one fs it asserting files removed |
-| #3676 append and rebuild with several segments | dvr-runtime: playlist append for the first vs later records; `recover::scan_fmp4_data` with three pairs and a `moof` followed by `free` |
+| #3676 append and rebuild with several segments | dvr-runtime: playlist append for the first vs later records; `recover::Fmp4Scan` driven over three pairs and a `moof` followed by `free` |
 | #3677 repeated present event id | dvb-si tracker unit + dvr-runtime `on_programme` (no roll, no second DATERANGE) |
 | #3678 `seed_from_disk` swallows non-NotFound | dvr-runtime fs it (`chmod 000`, skipped as root) |
 | #3679, #3680 | multimux |
