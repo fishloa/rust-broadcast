@@ -23,6 +23,32 @@ const HEADER_LEN: usize = 2;
 pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// Width of the `reserved` field in the flags byte (5 bits).
 const RESERVED_BITS: u32 = 5;
+/// Minimum body: application_format(2) + format(1) + service_id(1) + flags(1).
+const MIN_BODY_LEN: usize = 5;
+/// `metadata_application_format` value that introduces an identifier.
+const METADATA_APPLICATION_FORMAT_IDENTIFIER_PRESENT: u16 = 0xFFFF;
+/// `metadata_format` value that introduces an identifier.
+const METADATA_FORMAT_IDENTIFIER_PRESENT: u8 = 0xFF;
+/// Wire width of a format identifier (32 bits).
+const IDENTIFIER_LEN: usize = size_of::<u32>();
+/// Wire width of `metadata_application_format`.
+const METADATA_APPLICATION_FORMAT_LEN: usize = size_of::<u16>();
+/// Body bytes occupied by `metadata_service_id` plus the flags byte.
+const SERVICE_ID_AND_FLAGS_LEN: usize = 2;
+/// `metadata_locator_record_flag` bit of the flags byte.
+const LOCATOR_RECORD_FLAG: u8 = 0x80;
+/// Mask of the 2-bit `MPEG_carriage_flags` field (Table 2-88).
+const MPEG_CARRIAGE_FLAGS_MASK: u8 = 0x03;
+/// Shift of `MPEG_carriage_flags` in the flags byte.
+const MPEG_CARRIAGE_FLAGS_SHIFT: u8 = 5;
+/// Highest `MPEG_carriage_flags` value that carries `program_number`.
+const PROGRAM_NUMBER_PRESENT_MAX_CARRIAGE: u8 = 2;
+/// `MPEG_carriage_flags` value that carries the TS location fields.
+const TRANSPORT_STREAM_LOCATION_CARRIAGE: u8 = 1;
+/// Wire width of `transport_stream_location` plus `transport_stream_id`.
+const TRANSPORT_STREAM_LOCATION_LEN: usize = 2 * size_of::<u16>();
+/// Shift of the high byte of `metadata_application_format`.
+const HIGH_BYTE_SHIFT: u32 = 8;
 
 /// Metadata Pointer Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,7 +129,7 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
         )?;
 
         // Minimum: metadata_application_format(2) + metadata_format(1) + metadata_service_id(1) + flags(1) = 5
-        if body.len() < 5 {
+        if body.len() < MIN_BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "metadata_pointer_descriptor too short (< 5 body bytes)",
@@ -111,21 +137,26 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
         }
 
         let metadata_application_format = u16::from_be_bytes([body[0], body[1]]);
-        let mut pos = 2;
+        let mut pos = METADATA_APPLICATION_FORMAT_LEN;
 
-        let metadata_application_format_identifier = if metadata_application_format == 0xFFFF {
-            if body.len() < pos + 4 {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "metadata_pointer_descriptor too short for metadata_application_format_identifier",
-                });
-            }
-            let id = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
-            pos += 4;
-            Some(id)
-        } else {
-            None
-        };
+        let metadata_application_format_identifier =
+            if metadata_application_format == METADATA_APPLICATION_FORMAT_IDENTIFIER_PRESENT {
+                if body.len() < pos + IDENTIFIER_LEN {
+                    return Err(Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "metadata_pointer_descriptor too short for metadata_application_format_identifier",
+                    });
+                }
+                let id = u32::from_be_bytes(
+                    body[pos..pos + IDENTIFIER_LEN]
+                        .try_into()
+                        .unwrap_or_default(),
+                );
+                pos += IDENTIFIER_LEN;
+                Some(id)
+            } else {
+                None
+            };
 
         if body.len() < pos + 1 {
             return Err(Error::InvalidDescriptor {
@@ -136,21 +167,25 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
         let metadata_format = MetadataFormat::from_u8(body[pos]);
         pos += 1;
 
-        let metadata_format_identifier = if body[pos - 1] == 0xFF {
-            if body.len() < pos + 4 {
+        let metadata_format_identifier = if body[pos - 1] == METADATA_FORMAT_IDENTIFIER_PRESENT {
+            if body.len() < pos + IDENTIFIER_LEN {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "metadata_pointer_descriptor too short for metadata_format_identifier",
                 });
             }
-            let id = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
-            pos += 4;
+            let id = u32::from_be_bytes(
+                body[pos..pos + IDENTIFIER_LEN]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            pos += IDENTIFIER_LEN;
             Some(id)
         } else {
             None
         };
 
-        if body.len() < pos + 2 {
+        if body.len() < pos + SERVICE_ID_AND_FLAGS_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "metadata_pointer_descriptor too short for service_id + flags",
@@ -160,8 +195,9 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
         pos += 1;
 
         let flags = body[pos];
-        let metadata_locator_record_flag = (flags & 0x80) != 0;
-        let mpeg_carriage_flags = MpegCarriageFlags::from_u8((flags >> 5) & 0x03);
+        let metadata_locator_record_flag = (flags & LOCATOR_RECORD_FLAG) != 0;
+        let mpeg_carriage_flags =
+            MpegCarriageFlags::from_u8((flags >> MPEG_CARRIAGE_FLAGS_SHIFT) & MPEG_CARRIAGE_FLAGS_MASK);
         let reserved = ReservedOnes::from_bits(u64::from(flags));
         pos += 1;
 
@@ -189,30 +225,34 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
 
         let carriage_val = mpeg_carriage_flags.to_u8();
 
-        let program_number = if carriage_val <= 2 {
-            if body.len() < pos + 2 {
+        let program_number = if carriage_val <= PROGRAM_NUMBER_PRESENT_MAX_CARRIAGE {
+            if body.len() < pos + size_of::<u16>() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "metadata_pointer_descriptor too short for program_number",
                 });
             }
             let pn = u16::from_be_bytes([body[pos], body[pos + 1]]);
-            pos += 2;
+            pos += size_of::<u16>();
             Some(pn)
         } else {
             None
         };
 
-        let (transport_stream_location, transport_stream_id, pos) = if carriage_val == 1 {
-            if body.len() < pos + 4 {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "metadata_pointer_descriptor too short for transport_stream_location+id",
-                });
-            }
-            let tsl = u16::from_be_bytes([body[pos], body[pos + 1]]);
-            let tsi = u16::from_be_bytes([body[pos + 2], body[pos + 3]]);
-            pos += 4;
+        let (transport_stream_location, transport_stream_id, pos) =
+            if carriage_val == TRANSPORT_STREAM_LOCATION_CARRIAGE {
+                if body.len() < pos + TRANSPORT_STREAM_LOCATION_LEN {
+                    return Err(Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "metadata_pointer_descriptor too short for transport_stream_location+id",
+                    });
+                }
+                let tsl = u16::from_be_bytes([body[pos], body[pos + 1]]);
+                let tsi = u16::from_be_bytes([
+                    body[pos + size_of::<u16>()],
+                    body[pos + size_of::<u16>() + 1],
+                ]);
+                pos += TRANSPORT_STREAM_LOCATION_LEN;
             (Some(tsl), Some(tsi), pos)
         } else {
             (None, None, pos)
@@ -242,21 +282,21 @@ impl Serialize for MetadataPointerDescriptor<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        let mut len: usize = HEADER_LEN + 5; // metadata_application_format(2) + metadata_format(1) + service_id(1) + flags(1)
+        let mut len: usize = HEADER_LEN + MIN_BODY_LEN;
         if self.metadata_application_format_identifier.is_some() {
-            len += 4;
+            len += IDENTIFIER_LEN;
         }
         if self.metadata_format_identifier.is_some() {
-            len += 4;
+            len += IDENTIFIER_LEN;
         }
         if let Some(rec) = self.metadata_locator_record {
             len += 1 + rec.len();
         }
         if self.program_number.is_some() {
-            len += 2;
+            len += size_of::<u16>();
         }
         if self.transport_stream_location.is_some() {
-            len += 4;
+            len += TRANSPORT_STREAM_LOCATION_LEN;
         }
         len += self.private_data.len();
         len
@@ -267,21 +307,21 @@ impl Serialize for MetadataPointerDescriptor<'_> {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
-        buf[HEADER_LEN] = (self.metadata_application_format >> 8) as u8;
+        buf[HEADER_LEN] = (self.metadata_application_format >> HIGH_BYTE_SHIFT) as u8;
         buf[HEADER_LEN + 1] = self.metadata_application_format as u8;
-        let mut pos = HEADER_LEN + 2;
+        let mut pos = HEADER_LEN + METADATA_APPLICATION_FORMAT_LEN;
 
         if let Some(id) = self.metadata_application_format_identifier {
-            buf[pos..pos + 4].copy_from_slice(&id.to_be_bytes());
-            pos += 4;
+            buf[pos..pos + IDENTIFIER_LEN].copy_from_slice(&id.to_be_bytes());
+            pos += IDENTIFIER_LEN;
         }
 
         buf[pos] = self.metadata_format.to_u8();
         pos += 1;
 
         if let Some(id) = self.metadata_format_identifier {
-            buf[pos..pos + 4].copy_from_slice(&id.to_be_bytes());
-            pos += 4;
+            buf[pos..pos + IDENTIFIER_LEN].copy_from_slice(&id.to_be_bytes());
+            pos += IDENTIFIER_LEN;
         }
 
         buf[pos] = self.metadata_service_id;
@@ -292,12 +332,12 @@ impl Serialize for MetadataPointerDescriptor<'_> {
         // `reserved(5)` (Table 2-86) is re-emitted as parsed.
         let mut flags = (broadcast_common::len::fit_mask(
             self.mpeg_carriage_flags.to_u8(),
-            0x03,
+            MPEG_CARRIAGE_FLAGS_MASK,
             "mpeg_carriage_flags",
-        )? << 5)
+        )? << MPEG_CARRIAGE_FLAGS_SHIFT)
             | self.reserved.get() as u8;
         if self.metadata_locator_record.is_some() {
-            flags |= 0x80;
+            flags |= LOCATOR_RECORD_FLAG;
         }
         buf[pos] = flags;
         pos += 1;
@@ -310,8 +350,8 @@ impl Serialize for MetadataPointerDescriptor<'_> {
         }
 
         if let Some(pn) = self.program_number {
-            buf[pos..pos + 2].copy_from_slice(&pn.to_be_bytes());
-            pos += 2;
+            buf[pos..pos + size_of::<u16>()].copy_from_slice(&pn.to_be_bytes());
+            pos += size_of::<u16>();
         }
         if let Some(tsl) = self.transport_stream_location {
             // `transport_stream_id` is co-present on the wire; fabricating 0
@@ -320,9 +360,10 @@ impl Serialize for MetadataPointerDescriptor<'_> {
                 field: "transport_stream_id",
                 reason: "required when transport_stream_location is present",
             })?;
-            buf[pos..pos + 2].copy_from_slice(&tsl.to_be_bytes());
-            buf[pos + 2..pos + 4].copy_from_slice(&tsi.to_be_bytes());
-            pos += 4;
+            buf[pos..pos + size_of::<u16>()].copy_from_slice(&tsl.to_be_bytes());
+            buf[pos + size_of::<u16>()..pos + TRANSPORT_STREAM_LOCATION_LEN]
+                .copy_from_slice(&tsi.to_be_bytes());
+            pos += TRANSPORT_STREAM_LOCATION_LEN;
         }
 
         buf[pos..pos + self.private_data.len()].copy_from_slice(self.private_data);

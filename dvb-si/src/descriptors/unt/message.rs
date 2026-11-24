@@ -18,6 +18,10 @@ const HEADER_LEN: usize = 2;
 const FIXED_LEN: usize = 4;
 const NIBBLE_MASK: u8 = 0x0F;
 const NUMBER_SHIFT: u8 = 4;
+/// Offset of `language_code` within the fixed fields.
+const LANGUAGE_CODE_OFFSET: usize = 1;
+/// Width of `language_code` in bytes.
+const LANGUAGE_CODE_LEN: usize = 3;
 
 /// message_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +57,11 @@ impl<'a> Parse<'a> for MessageDescriptor<'a> {
         Ok(Self {
             descriptor_number: f[0] >> NUMBER_SHIFT,
             last_descriptor_number: f[0] & NIBBLE_MASK,
-            language_code: LangCode([f[1], f[2], f[3]]),
+            language_code: LangCode(
+                f[LANGUAGE_CODE_OFFSET..LANGUAGE_CODE_OFFSET + LANGUAGE_CODE_LEN]
+                    .try_into()
+                    .unwrap_or_default(),
+            ),
             text: DvbText::new(text),
         })
     }

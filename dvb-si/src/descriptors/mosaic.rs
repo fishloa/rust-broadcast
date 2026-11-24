@@ -43,6 +43,28 @@ const CELL_RESERVED_HI_MASK: u8 = 0x03;
 const CELL_RESERVED_LO_SHIFT: u8 = 3;
 const CELL_RESERVED_HI_SHIFT: u8 = 5;
 const CELL_PRESENTATION_MASK: u8 = 0x07;
+/// Shift of `num_horizontal_cells` in the grid header byte.
+const NUM_HORIZONTAL_CELLS_SHIFT: u8 = 4;
+/// Mask of the 3-bit `num_horizontal_cells` / `num_vertical_cells`.
+const NUM_CELLS_MASK: u8 = 0x07;
+/// Shift of `logical_cell_id` in its packed byte.
+const LOGICAL_CELL_ID_SHIFT: u8 = 2;
+/// Mask of the 6-bit `logical_cell_id`.
+const LOGICAL_CELL_ID_MASK: u8 = 0x3F;
+/// Offset of `elementary_cell_field_length` in a logical-cell header.
+const ELEMENTARY_CELL_FIELD_LENGTH_OFFSET: usize = 2;
+/// Wire width of one cell identifier.
+const CELL_ID_LEN: usize = 2;
+/// Offset of `transport_stream_id` in a service linkage payload.
+const TRANSPORT_STREAM_ID_OFFSET: usize = CELL_ID_LEN;
+/// Offset of `service_id` in a service linkage payload.
+const SERVICE_ID_OFFSET: usize = 2 * CELL_ID_LEN;
+/// Offset of `event_id` in an event linkage payload.
+const EVENT_ID_OFFSET: usize = 3 * CELL_ID_LEN;
+/// Wire width of a service linkage payload.
+const SERVICE_LINKAGE_LEN: usize = 3 * CELL_ID_LEN;
+/// Wire width of an event linkage payload.
+const EVENT_LINKAGE_LEN: usize = 4 * CELL_ID_LEN;
 /// Spec default of the grid header `reserved_future_use`(1): `1` (EN 300 468
 /// V1.3.1-V1.20.1 Table 71; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`
 /// §6.1, class A: stable in every edition).
@@ -261,8 +283,8 @@ impl<'a> Parse<'a> for MosaicDescriptor {
             });
         }
         let mosaic_entry_point = body[0] & ENTRY_POINT_MASK != 0;
-        let num_horizontal_cells = (body[0] >> 4) & 0x07;
-        let num_vertical_cells = body[0] & 0x07;
+        let num_horizontal_cells = (body[0] >> NUM_HORIZONTAL_CELLS_SHIFT) & NUM_CELLS_MASK;
+        let num_vertical_cells = body[0] & NUM_CELLS_MASK;
 
         let mut logical_cells = Vec::new();
         let mut pos = GRID_HEADER_LEN;
@@ -274,13 +296,13 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                 });
             }
             // logical_cell_id(6) | reserved(7) | presentation_info(3)
-            let logical_cell_id = (body[pos] >> 2) & 0x3F;
+            let logical_cell_id = (body[pos] >> LOGICAL_CELL_ID_SHIFT) & LOGICAL_CELL_ID_MASK;
             let presentation_info = body[pos + 1] & CELL_PRESENTATION_MASK;
             let cell_reserved = ReservedOnes::from_bits(u64::from(
                 ((body[pos] & CELL_RESERVED_HI_MASK) << CELL_RESERVED_HI_SHIFT)
                     | (body[pos + 1] >> CELL_RESERVED_LO_SHIFT),
             ));
-            let elem_field_len = body[pos + 2] as usize;
+            let elem_field_len = body[pos + ELEMENTARY_CELL_FIELD_LENGTH_OFFSET] as usize;
             pos += CELL_FIXED_LEN;
             if pos + elem_field_len > body.len() {
                 return Err(Error::InvalidDescriptor {
@@ -309,7 +331,7 @@ impl<'a> Parse<'a> for MosaicDescriptor {
             let linkage = match info {
                 0x00 => CellLinkage::Undefined,
                 0x01 => {
-                    if pos + 2 > body.len() {
+                    if pos + CELL_ID_LEN > body.len() {
                         return Err(Error::InvalidDescriptor {
                             tag: TAG,
                             reason: "truncated bouquet linkage payload",
@@ -318,20 +340,20 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                     let l = CellLinkage::Bouquet {
                         bouquet_id: read_u16(body, pos)?,
                     };
-                    pos += 2;
+                    pos += CELL_ID_LEN;
                     l
                 }
                 0x02 | 0x03 => {
-                    if pos + 6 > body.len() {
+                    if pos + SERVICE_LINKAGE_LEN > body.len() {
                         return Err(Error::InvalidDescriptor {
                             tag: TAG,
                             reason: "truncated service/mosaic linkage payload",
                         });
                     }
                     let original_network_id = read_u16(body, pos)?;
-                    let transport_stream_id = read_u16(body, pos + 2)?;
-                    let service_id = read_u16(body, pos + 4)?;
-                    pos += 6;
+                    let transport_stream_id = read_u16(body, pos + TRANSPORT_STREAM_ID_OFFSET)?;
+                    let service_id = read_u16(body, pos + SERVICE_ID_OFFSET)?;
+                    pos += SERVICE_LINKAGE_LEN;
                     if info == 0x02 {
                         CellLinkage::Service {
                             original_network_id,
@@ -347,7 +369,7 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                     }
                 }
                 0x04 => {
-                    if pos + 8 > body.len() {
+                    if pos + EVENT_LINKAGE_LEN > body.len() {
                         return Err(Error::InvalidDescriptor {
                             tag: TAG,
                             reason: "truncated event linkage payload",
@@ -355,11 +377,11 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                     }
                     let l = CellLinkage::Event {
                         original_network_id: read_u16(body, pos)?,
-                        transport_stream_id: read_u16(body, pos + 2)?,
-                        service_id: read_u16(body, pos + 4)?,
-                        event_id: read_u16(body, pos + 6)?,
+                        transport_stream_id: read_u16(body, pos + TRANSPORT_STREAM_ID_OFFSET)?,
+                        service_id: read_u16(body, pos + SERVICE_ID_OFFSET)?,
+                        event_id: read_u16(body, pos + EVENT_ID_OFFSET)?,
                     };
-                    pos += 8;
+                    pos += EVENT_LINKAGE_LEN;
                     l
                 }
                 // 0x05..=0xFF reserved: no defined payload (Table 75).
@@ -409,25 +431,31 @@ impl Serialize for MosaicDescriptor {
         }
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         // grid header: reserved_future_use (bit 3) preserved from parse.
-        buf[2] = if self.mosaic_entry_point {
+        buf[HEADER_LEN] = if self.mosaic_entry_point {
             ENTRY_POINT_MASK
         } else {
             0
         } | (broadcast_common::len::fit_mask(
             self.num_horizontal_cells,
-            0x07,
+            NUM_CELLS_MASK,
             "num_horizontal_cells",
-        )? << 4)
+        )? << NUM_HORIZONTAL_CELLS_SHIFT)
             | ((self.reserved_future_use.get() as u8) << GRID_RESERVED_SHIFT)
-            | broadcast_common::len::fit_mask(self.num_vertical_cells, 0x07, "num_vertical_cells")?;
+            | broadcast_common::len::fit_mask(
+                self.num_vertical_cells,
+                NUM_CELLS_MASK,
+                "num_vertical_cells",
+            )?;
         let mut pos = HEADER_LEN + GRID_HEADER_LEN;
         for cell in &self.logical_cells {
             // byte0: logical_cell_id(6) | high 2 bits of reserved_future_use(7).
-            buf[pos] =
-                (broadcast_common::len::fit_mask(cell.logical_cell_id, 0x3F, "logical_cell_id")?
-                    << 2)
-                    | (((cell.reserved_future_use.get() as u8) >> CELL_RESERVED_HI_SHIFT)
-                        & CELL_RESERVED_HI_MASK);
+            buf[pos] = (broadcast_common::len::fit_mask(
+                cell.logical_cell_id,
+                LOGICAL_CELL_ID_MASK,
+                "logical_cell_id",
+            )? << LOGICAL_CELL_ID_SHIFT)
+                | (((cell.reserved_future_use.get() as u8) >> CELL_RESERVED_HI_SHIFT)
+                    & CELL_RESERVED_HI_MASK);
             // byte1: low 5 bits of reserved_future_use(7) | presentation_info(3).
             buf[pos + 1] = ((cell.reserved_future_use.get() as u8) << CELL_RESERVED_LO_SHIFT)
                 | broadcast_common::len::fit_mask(
@@ -435,7 +463,7 @@ impl Serialize for MosaicDescriptor {
                     CELL_PRESENTATION_MASK,
                     "presentation_info",
                 )?;
-            buf[pos + 2] = broadcast_common::len::fit_u8(
+            buf[pos + ELEMENTARY_CELL_FIELD_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
                 cell.elementary_cells.len(),
                 "elementary_cell_field_length",
             )?;
@@ -455,8 +483,8 @@ impl Serialize for MosaicDescriptor {
             match &cell.linkage {
                 CellLinkage::Undefined | CellLinkage::Reserved { .. } => {}
                 CellLinkage::Bouquet { bouquet_id } => {
-                    buf[pos..pos + 2].copy_from_slice(&bouquet_id.to_be_bytes());
-                    pos += 2;
+                    buf[pos..pos + CELL_ID_LEN].copy_from_slice(&bouquet_id.to_be_bytes());
+                    pos += CELL_ID_LEN;
                 }
                 CellLinkage::Service {
                     original_network_id,
@@ -468,10 +496,12 @@ impl Serialize for MosaicDescriptor {
                     transport_stream_id,
                     service_id,
                 } => {
-                    buf[pos..pos + 2].copy_from_slice(&original_network_id.to_be_bytes());
-                    buf[pos + 2..pos + 4].copy_from_slice(&transport_stream_id.to_be_bytes());
-                    buf[pos + 4..pos + 6].copy_from_slice(&service_id.to_be_bytes());
-                    pos += 6;
+                    buf[pos..pos + CELL_ID_LEN].copy_from_slice(&original_network_id.to_be_bytes());
+                    buf[pos + TRANSPORT_STREAM_ID_OFFSET..pos + SERVICE_ID_OFFSET]
+                        .copy_from_slice(&transport_stream_id.to_be_bytes());
+                    buf[pos + SERVICE_ID_OFFSET..pos + SERVICE_LINKAGE_LEN]
+                        .copy_from_slice(&service_id.to_be_bytes());
+                    pos += SERVICE_LINKAGE_LEN;
                 }
                 CellLinkage::Event {
                     original_network_id,
@@ -479,11 +509,14 @@ impl Serialize for MosaicDescriptor {
                     service_id,
                     event_id,
                 } => {
-                    buf[pos..pos + 2].copy_from_slice(&original_network_id.to_be_bytes());
-                    buf[pos + 2..pos + 4].copy_from_slice(&transport_stream_id.to_be_bytes());
-                    buf[pos + 4..pos + 6].copy_from_slice(&service_id.to_be_bytes());
-                    buf[pos + 6..pos + 8].copy_from_slice(&event_id.to_be_bytes());
-                    pos += 8;
+                    buf[pos..pos + CELL_ID_LEN].copy_from_slice(&original_network_id.to_be_bytes());
+                    buf[pos + TRANSPORT_STREAM_ID_OFFSET..pos + SERVICE_ID_OFFSET]
+                        .copy_from_slice(&transport_stream_id.to_be_bytes());
+                    buf[pos + SERVICE_ID_OFFSET..pos + EVENT_ID_OFFSET]
+                        .copy_from_slice(&service_id.to_be_bytes());
+                    buf[pos + EVENT_ID_OFFSET..pos + EVENT_LINKAGE_LEN]
+                        .copy_from_slice(&event_id.to_be_bytes());
+                    pos += EVENT_LINKAGE_LEN;
                 }
             }
         }

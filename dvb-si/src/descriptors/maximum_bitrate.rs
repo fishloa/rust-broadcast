@@ -17,6 +17,12 @@ const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 3;
 /// Width of the `reserved` field ahead of `maximum_bitrate` (2 bits).
 const RESERVED_BITS: u32 = 2;
+/// Mask of the 22-bit `maximum_bitrate` field.
+const MAXIMUM_BITRATE_MASK: u32 = (1 << MAXIMUM_BITRATE_BITS) - 1;
+/// Shift of the 2-bit `reserved` field in the three-byte wire value.
+const RESERVED_SHIFT: u32 = MAXIMUM_BITRATE_BITS;
+/// Body offset of the least significant wire byte.
+const LOW_BYTE_OFFSET: usize = 2;
 /// Default of the 2-bit `reserved` ahead of `maximum_bitrate` (H.222.0 Table
 /// 2-67): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023, audit
 /// §5; confirmed by the TSDuck-compiled oracle PMT).
@@ -64,11 +70,11 @@ impl<'a> Parse<'a> for MaximumBitrateDescriptor {
                 reason: "maximum_bitrate_descriptor length must equal 3",
             });
         }
-        let maximum_bitrate =
-            ((u32::from(body[0]) & 0x3F) << 16) | (u32::from(body[1]) << 8) | u32::from(body[2]);
+        let raw = u32::from_be_bytes([0, body[0], body[1], body[LOW_BYTE_OFFSET]]);
+        let maximum_bitrate = raw & MAXIMUM_BITRATE_MASK;
         Ok(Self {
             maximum_bitrate,
-            reserved: ReservedOnes::from_bits(u64::from(body[0] >> 6)),
+            reserved: ReservedOnes::from_bits(u64::from(body[0] >> RESERVED_SHIFT)),
         })
     }
 }
@@ -91,9 +97,9 @@ impl Serialize for MaximumBitrateDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         let mb = mb as u32;
-        buf[HEADER_LEN] = ((self.reserved.get() as u8) << 6) | ((mb >> 16) & 0x3F) as u8;
-        buf[HEADER_LEN + 1] = ((mb >> 8) & 0xFF) as u8;
-        buf[HEADER_LEN + 2] = (mb & 0xFF) as u8;
+        let packed = ((self.reserved.get() as u32) << RESERVED_SHIFT) | mb;
+        buf[HEADER_LEN..HEADER_LEN + usize::from(BODY_LEN)]
+            .copy_from_slice(&packed.to_be_bytes()[1..]);
         Ok(len)
     }
 }

@@ -17,6 +17,26 @@ pub const TAG: u8 = 0x26;
 const HEADER_LEN: usize = 2;
 /// `DSM-CC_flag` bit of the `decoder_config_flags` byte (Table 2-89).
 const DSMCC_FLAG_BIT: u8 = 0x10;
+/// Minimum body: application_format(2) + format(1) + service_id(1) + flags(1).
+const MIN_BODY_LEN: usize = 5;
+/// `metadata_application_format` value that introduces an identifier.
+const METADATA_APPLICATION_FORMAT_IDENTIFIER_PRESENT: u16 = 0xFFFF;
+/// `metadata_format` value that introduces an identifier.
+const METADATA_FORMAT_IDENTIFIER_PRESENT: u8 = 0xFF;
+/// Wire width of a format identifier (32 bits).
+const IDENTIFIER_LEN: usize = size_of::<u32>();
+/// Wire width of `metadata_application_format`.
+const METADATA_APPLICATION_FORMAT_LEN: usize = size_of::<u16>();
+/// Body bytes occupied by `metadata_service_id` plus the flags byte.
+const SERVICE_ID_AND_FLAGS_LEN: usize = 2;
+/// Raw mask of the 3-bit `decoder_config_flags` field (Table 2-87).
+const DECODER_CONFIG_FLAGS_RAW_MASK: u8 = 0xE0;
+/// Mask of the 3-bit `decoder_config_flags` field once shifted down.
+const DECODER_CONFIG_FLAGS_MASK: u8 = 0x07;
+/// Shift of `decoder_config_flags` in the flags byte.
+const DECODER_CONFIG_FLAGS_SHIFT: u8 = 5;
+/// Shift of the high byte of `metadata_application_format`.
+const HIGH_BYTE_SHIFT: u32 = 8;
 /// Default of the 4-bit `reserved` tail of the flags byte (H.222.0 Table
 /// 2-89): clause 2.1 "reserved" = `1` (all editions 2006-08/2023, audit §5; no
 /// fixture carries the descriptor).
@@ -158,7 +178,7 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
         )?;
 
         // Minimum: metadata_application_format(2) + metadata_format(1) + metadata_service_id(1) + flags(1) = 5
-        if body.len() < 5 {
+        if body.len() < MIN_BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "metadata_descriptor too short (< 5 body bytes)",
@@ -166,21 +186,26 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
         }
 
         let metadata_application_format = u16::from_be_bytes([body[0], body[1]]);
-        let mut pos = 2;
+        let mut pos = METADATA_APPLICATION_FORMAT_LEN;
 
-        let metadata_application_format_identifier = if metadata_application_format == 0xFFFF {
-            if body.len() < pos + 4 {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "metadata_descriptor too short for metadata_application_format_identifier",
-                });
-            }
-            let id = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
-            pos += 4;
-            Some(id)
-        } else {
-            None
-        };
+        let metadata_application_format_identifier =
+            if metadata_application_format == METADATA_APPLICATION_FORMAT_IDENTIFIER_PRESENT {
+                if body.len() < pos + IDENTIFIER_LEN {
+                    return Err(Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "metadata_descriptor too short for metadata_application_format_identifier",
+                    });
+                }
+                let id = u32::from_be_bytes(
+                    body[pos..pos + IDENTIFIER_LEN]
+                        .try_into()
+                        .unwrap_or_default(),
+                );
+                pos += IDENTIFIER_LEN;
+                Some(id)
+            } else {
+                None
+            };
 
         if body.len() < pos + 1 {
             return Err(Error::InvalidDescriptor {
@@ -191,21 +216,25 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
         let metadata_format = MetadataFormat::from_u8(body[pos]);
         pos += 1;
 
-        let metadata_format_identifier = if body[pos - 1] == 0xFF {
-            if body.len() < pos + 4 {
+        let metadata_format_identifier = if body[pos - 1] == METADATA_FORMAT_IDENTIFIER_PRESENT {
+            if body.len() < pos + IDENTIFIER_LEN {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "metadata_descriptor too short for metadata_format_identifier",
                 });
             }
-            let id = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
-            pos += 4;
+            let id = u32::from_be_bytes(
+                body[pos..pos + IDENTIFIER_LEN]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            pos += IDENTIFIER_LEN;
             Some(id)
         } else {
             None
         };
 
-        if body.len() < pos + 2 {
+        if body.len() < pos + SERVICE_ID_AND_FLAGS_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "metadata_descriptor too short for service_id + flags",
@@ -215,7 +244,7 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
         pos += 1;
 
         let flags = body[pos];
-        let decoder_config_raw = (flags & 0xE0) >> 5;
+        let decoder_config_raw = (flags & DECODER_CONFIG_FLAGS_RAW_MASK) >> DECODER_CONFIG_FLAGS_SHIFT;
         let decoder_config_flags = DecoderConfigFlags::from_u8(decoder_config_raw);
         let dsmcc_flag = (flags & 0x10) != 0;
         let reserved = ReservedOnes::from_bits(u64::from(flags));
@@ -343,12 +372,12 @@ impl Serialize for MetadataDescriptor<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        let mut len: usize = HEADER_LEN + 5; // metadata_application_format(2) + metadata_format(1) + service_id(1) + flags(1)
+        let mut len: usize = HEADER_LEN + MIN_BODY_LEN;
         if self.metadata_application_format_identifier.is_some() {
-            len += 4;
+            len += IDENTIFIER_LEN;
         }
         if self.metadata_format_identifier.is_some() {
-            len += 4;
+            len += IDENTIFIER_LEN;
         }
         if let Some(si) = self.service_identification {
             len += 1 + si.len();
@@ -369,21 +398,21 @@ impl Serialize for MetadataDescriptor<'_> {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
-        buf[HEADER_LEN] = (self.metadata_application_format >> 8) as u8;
+        buf[HEADER_LEN] = (self.metadata_application_format >> HIGH_BYTE_SHIFT) as u8;
         buf[HEADER_LEN + 1] = self.metadata_application_format as u8;
-        let mut pos = HEADER_LEN + 2;
+        let mut pos = HEADER_LEN + METADATA_APPLICATION_FORMAT_LEN;
 
         if let Some(id) = self.metadata_application_format_identifier {
-            buf[pos..pos + 4].copy_from_slice(&id.to_be_bytes());
-            pos += 4;
+            buf[pos..pos + IDENTIFIER_LEN].copy_from_slice(&id.to_be_bytes());
+            pos += IDENTIFIER_LEN;
         }
 
         buf[pos] = self.metadata_format.to_u8();
         pos += 1;
 
         if let Some(id) = self.metadata_format_identifier {
-            buf[pos..pos + 4].copy_from_slice(&id.to_be_bytes());
-            pos += 4;
+            buf[pos..pos + IDENTIFIER_LEN].copy_from_slice(&id.to_be_bytes());
+            pos += IDENTIFIER_LEN;
         }
 
         buf[pos] = self.metadata_service_id;
@@ -393,9 +422,9 @@ impl Serialize for MetadataDescriptor<'_> {
         // `dsmcc_flag`) so flag and record can never disagree (r03-W5).
         let mut flags = (broadcast_common::len::fit_mask(
             self.decoder_config_flags.to_u8(),
-            0x07,
+            DECODER_CONFIG_FLAGS_MASK,
             "decoder_config_flags",
-        )? << 5)
+        )? << DECODER_CONFIG_FLAGS_SHIFT)
             | self.reserved.get() as u8;
         if self.service_identification.is_some() {
             flags |= DSMCC_FLAG_BIT;

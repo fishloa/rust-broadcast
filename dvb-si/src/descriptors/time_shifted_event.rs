@@ -13,6 +13,10 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x4F;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: usize = 4;
+/// Offset of `reference_service_id` in the body.
+const REFERENCE_SERVICE_ID_OFFSET: usize = 0;
+/// Offset of `reference_event_id` in the body.
+const REFERENCE_EVENT_ID_OFFSET: usize = REFERENCE_SERVICE_ID_OFFSET + size_of::<u16>();
 
 /// Time Shifted Event Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,8 +50,14 @@ impl<'a> Parse<'a> for TimeShiftedEventDescriptor {
                 reason: "time_shifted_event_descriptor length must be 4",
             })?;
         Ok(Self {
-            reference_service_id: u16::from_be_bytes([hdr[0], hdr[1]]),
-            reference_event_id: u16::from_be_bytes([hdr[2], hdr[3]]),
+            reference_service_id: u16::from_be_bytes([
+                hdr[REFERENCE_SERVICE_ID_OFFSET],
+                hdr[REFERENCE_SERVICE_ID_OFFSET + 1],
+            ]),
+            reference_event_id: u16::from_be_bytes([
+                hdr[REFERENCE_EVENT_ID_OFFSET],
+                hdr[REFERENCE_EVENT_ID_OFFSET + 1],
+            ]),
         })
     }
 }

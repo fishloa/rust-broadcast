@@ -50,7 +50,7 @@ impl<'a> Parse<'a> for ServiceMoveDescriptor {
             });
         }
         let (hdr, _) = body
-            .split_first_chunk::<{ usize::from(BODY_LEN) }>()
+            .split_first_chunk::<{ BODY_LEN as usize }>()
             .ok_or(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_move_descriptor length must equal 6",
