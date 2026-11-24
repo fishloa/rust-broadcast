@@ -56,7 +56,7 @@ pub const WSS_FIELD_LEN: usize = LINE_HEADER_LEN + 2;
 pub const WSS_DATA_BLOCK_MASK: u16 = 0x3FFF;
 /// Mask for the lower 6 bits of `wss_data_block` packed into byte 2 of the WSS
 /// field (bits `[5:0]` after the 2-bit RFU tail, §4.7.1).
-const WSS_BYTE2_DATA_MASK: u8 = 0x3F;
+const WSS_LOW_BYTE_DATA_MASK: u8 = 0x3F;
 /// The trailing 2-bit `reserved_future_use` (`11`) of a WSS data field (§4.7.1).
 pub const WSS_RESERVED_TAIL: u8 = 0b11;
 /// Byte offset of the WSS field byte carrying `wss_data_block` bits `[13:6]`
@@ -348,7 +348,7 @@ impl WssDataField {
             RESERVED_FUTURE_USE_BITS,
             "reserved_future_use",
         )?;
-        out[WSS_DATA_BLOCK_LO_OFFSET] = (((self.wss_data_block as u8) & WSS_BYTE2_DATA_MASK)
+        out[WSS_DATA_BLOCK_LO_OFFSET] = (((self.wss_data_block as u8) & WSS_LOW_BYTE_DATA_MASK)
             << WSS_DATA_BLOCK_LO_SHIFT)
             | self.reserved_tail;
         Ok(WSS_FIELD_LEN)

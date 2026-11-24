@@ -42,64 +42,64 @@ const STREAM_REGISTER_BITS: usize = 40;
 const PQZYX_BITS: usize = 14;
 
 /// A-register bit positions selected by each stream S-box's index mask.
-const A_BIT_5: usize = 5;
-const A_BIT_6: usize = 6;
-const A_BIT_7: usize = 7;
-const A_BIT_8: usize = 8;
-const A_BIT_9: usize = 9;
-const A_BIT_10: usize = 10;
-const A_BIT_11: usize = 11;
-const A_BIT_12: usize = 12;
-const A_BIT_13: usize = 13;
-const A_BIT_14: usize = 14;
-const A_BIT_15: usize = 15;
-const A_BIT_16: usize = 16;
-const A_BIT_17: usize = 17;
-const A_BIT_18: usize = 18;
-const A_BIT_19: usize = 19;
-const A_BIT_20: usize = 20;
-const A_BIT_21: usize = 21;
-const A_BIT_22: usize = 22;
-const A_BIT_23: usize = 23;
-const A_BIT_24: usize = 24;
-const A_BIT_25: usize = 25;
-const A_BIT_26: usize = 26;
-const A_BIT_27: usize = 27;
-const A_BIT_28: usize = 28;
-const A_BIT_29: usize = 29;
-const A_BIT_30: usize = 30;
-const A_BIT_31: usize = 31;
-const A_BIT_32: usize = 32;
-const A_BIT_33: usize = 33;
-const A_BIT_34: usize = 34;
-const A_BIT_35: usize = 35;
-const A_BIT_36: usize = 36;
-const A_BIT_37: usize = 37;
-const A_BIT_38: usize = 38;
-const A_BIT_39: usize = 39;
+const A_TAP_5: usize = 5;
+const A_TAP_6: usize = 6;
+const A_TAP_7: usize = 7;
+const A_TAP_8: usize = 8;
+const A_TAP_9: usize = 9;
+const A_TAP_10: usize = 10;
+const A_TAP_11: usize = 11;
+const A_TAP_12: usize = 12;
+const A_TAP_13: usize = 13;
+const A_TAP_14: usize = 14;
+const A_TAP_15: usize = 15;
+const A_TAP_16: usize = 16;
+const A_TAP_17: usize = 17;
+const A_TAP_18: usize = 18;
+const A_TAP_19: usize = 19;
+const A_TAP_20: usize = 20;
+const A_TAP_21: usize = 21;
+const A_TAP_22: usize = 22;
+const A_TAP_23: usize = 23;
+const A_TAP_24: usize = 24;
+const A_TAP_25: usize = 25;
+const A_TAP_26: usize = 26;
+const A_TAP_27: usize = 27;
+const A_TAP_28: usize = 28;
+const A_TAP_29: usize = 29;
+const A_TAP_30: usize = 30;
+const A_TAP_31: usize = 31;
+const A_TAP_32: usize = 32;
+const A_TAP_33: usize = 33;
+const A_TAP_34: usize = 34;
+const A_TAP_35: usize = 35;
+const A_TAP_36: usize = 36;
+const A_TAP_37: usize = 37;
+const A_TAP_38: usize = 38;
+const A_TAP_39: usize = 39;
 
 /// B-register bit positions each `stream_b_sel` output bit XOR-folds.
-const B_BIT_12: usize = 12;
-const B_BIT_13: usize = 13;
-const B_BIT_15: usize = 15;
-const B_BIT_16: usize = 16;
-const B_BIT_18: usize = 18;
-const B_BIT_21: usize = 21;
-const B_BIT_23: usize = 23;
-const B_BIT_24: usize = 24;
-const B_BIT_25: usize = 25;
-const B_BIT_27: usize = 27;
-const B_BIT_30: usize = 30;
-const B_BIT_32: usize = 32;
-const B_BIT_33: usize = 33;
-const B_BIT_34: usize = 34;
-const B_BIT_38: usize = 38;
-const B_BIT_39: usize = 39;
+const B_TAP_12: usize = 12;
+const B_TAP_13: usize = 13;
+const B_TAP_15: usize = 15;
+const B_TAP_16: usize = 16;
+const B_TAP_18: usize = 18;
+const B_TAP_21: usize = 21;
+const B_TAP_23: usize = 23;
+const B_TAP_24: usize = 24;
+const B_TAP_25: usize = 25;
+const B_TAP_27: usize = 27;
+const B_TAP_30: usize = 30;
+const B_TAP_32: usize = 32;
+const B_TAP_33: usize = 33;
+const B_TAP_34: usize = 34;
+const B_TAP_38: usize = 38;
+const B_TAP_39: usize = 39;
 
 /// High bit of the D nibble `stream_out` folds.
-const D_BIT_2: usize = 2;
+const D_TAP_2: usize = 2;
 /// Low bit of the D nibble `stream_out` folds.
-const D_BIT_3: usize = 3;
+const D_TAP_3: usize = 3;
 
 /// Bitsliced `SBOX[..]` — the block cipher's 8-bit substitution box.
 ///
@@ -706,41 +706,41 @@ pub(super) const CDEF_OUT_BITS: [usize; CDEF_OUT_BITS_COUNT] = [0, 1, 2, 3, 8, 9
 /// only XORs.
 #[inline]
 pub(super) fn stream_sboxes(a: &[Word; STREAM_REGISTER_BITS]) -> [Word; PQZYX_BITS] {
-    let s0_0 = a[A_BIT_36];
-    let s0_1 = a[A_BIT_31];
-    let s0_2 = a[A_BIT_25];
-    let s0_3 = a[A_BIT_6];
-    let s0_4 = a[A_BIT_16];
-    let s1_0 = a[A_BIT_27] ^ a[A_BIT_37];
-    let s1_1 = a[A_BIT_28];
-    let s1_2 = a[A_BIT_27];
-    let s1_3 = a[A_BIT_14] ^ a[A_BIT_28];
-    let s1_4 = a[A_BIT_9];
-    let s2_0 = a[A_BIT_26];
-    let s2_1 = a[A_BIT_23];
-    let s2_2 = a[A_BIT_7] ^ a[A_BIT_21];
-    let s2_3 = a[A_BIT_8];
-    let s2_4 = a[A_BIT_7] ^ a[A_BIT_23] ^ a[A_BIT_26];
-    let s3_0 = a[A_BIT_11] ^ a[A_BIT_32];
-    let s3_1 = a[A_BIT_18];
-    let s3_2 = a[A_BIT_11];
-    let s3_3 = a[A_BIT_5];
-    let s3_4 = a[A_BIT_15];
-    let s4_0 = a[A_BIT_22] ^ a[A_BIT_38];
-    let s4_1 = a[A_BIT_19] ^ a[A_BIT_33];
-    let s4_2 = a[A_BIT_24];
-    let s4_3 = a[A_BIT_19];
-    let s4_4 = a[A_BIT_22];
-    let s5_0 = a[A_BIT_39];
-    let s5_1 = a[A_BIT_30];
-    let s5_2 = a[A_BIT_20];
-    let s5_3 = a[A_BIT_17];
-    let s5_4 = a[A_BIT_13];
-    let s6_0 = a[A_BIT_35];
-    let s6_1 = a[A_BIT_10] ^ a[A_BIT_34];
-    let s6_2 = a[A_BIT_29] ^ a[A_BIT_35];
-    let s6_3 = a[A_BIT_12];
-    let s6_4 = a[A_BIT_10];
+    let s0_0 = a[A_TAP_36];
+    let s0_1 = a[A_TAP_31];
+    let s0_2 = a[A_TAP_25];
+    let s0_3 = a[A_TAP_6];
+    let s0_4 = a[A_TAP_16];
+    let s1_0 = a[A_TAP_27] ^ a[A_TAP_37];
+    let s1_1 = a[A_TAP_28];
+    let s1_2 = a[A_TAP_27];
+    let s1_3 = a[A_TAP_14] ^ a[A_TAP_28];
+    let s1_4 = a[A_TAP_9];
+    let s2_0 = a[A_TAP_26];
+    let s2_1 = a[A_TAP_23];
+    let s2_2 = a[A_TAP_7] ^ a[A_TAP_21];
+    let s2_3 = a[A_TAP_8];
+    let s2_4 = a[A_TAP_7] ^ a[A_TAP_23] ^ a[A_TAP_26];
+    let s3_0 = a[A_TAP_11] ^ a[A_TAP_32];
+    let s3_1 = a[A_TAP_18];
+    let s3_2 = a[A_TAP_11];
+    let s3_3 = a[A_TAP_5];
+    let s3_4 = a[A_TAP_15];
+    let s4_0 = a[A_TAP_22] ^ a[A_TAP_38];
+    let s4_1 = a[A_TAP_19] ^ a[A_TAP_33];
+    let s4_2 = a[A_TAP_24];
+    let s4_3 = a[A_TAP_19];
+    let s4_4 = a[A_TAP_22];
+    let s5_0 = a[A_TAP_39];
+    let s5_1 = a[A_TAP_30];
+    let s5_2 = a[A_TAP_20];
+    let s5_3 = a[A_TAP_17];
+    let s5_4 = a[A_TAP_13];
+    let s6_0 = a[A_TAP_35];
+    let s6_1 = a[A_TAP_10] ^ a[A_TAP_34];
+    let s6_2 = a[A_TAP_29] ^ a[A_TAP_35];
+    let s6_3 = a[A_TAP_12];
+    let s6_4 = a[A_TAP_10];
     let o0 = stream_sbox_0(&[s0_0, s0_1, s0_2, s0_3, s0_4]);
     let o1 = stream_sbox_1(&[s1_0, s1_1, s1_2, s1_3, s1_4]);
     let o2 = stream_sbox_2(&[s2_0, s2_1, s2_2, s2_3, s2_4]);
@@ -758,10 +758,10 @@ pub(super) fn stream_sboxes(a: &[Word; STREAM_REGISTER_BITS]) -> [Word; PQZYX_BI
 /// register. Linear, so it is pure XOR.
 #[inline]
 pub(super) fn stream_b_sel(b: &[Word; STREAM_REGISTER_BITS]) -> [Word; NIBBLE_BITS] {
-    let o0 = b[B_BIT_13] ^ b[B_BIT_27] ^ b[B_BIT_32] ^ b[B_BIT_38];
-    let o1 = b[B_BIT_16] ^ b[B_BIT_21] ^ b[B_BIT_23] ^ b[B_BIT_34];
-    let o2 = b[B_BIT_15] ^ b[B_BIT_18] ^ b[B_BIT_24] ^ b[B_BIT_33];
-    let o3 = b[B_BIT_12] ^ b[B_BIT_25] ^ b[B_BIT_30] ^ b[B_BIT_39];
+    let o0 = b[B_TAP_13] ^ b[B_TAP_27] ^ b[B_TAP_32] ^ b[B_TAP_38];
+    let o1 = b[B_TAP_16] ^ b[B_TAP_21] ^ b[B_TAP_23] ^ b[B_TAP_34];
+    let o2 = b[B_TAP_15] ^ b[B_TAP_18] ^ b[B_TAP_24] ^ b[B_TAP_33];
+    let o3 = b[B_TAP_12] ^ b[B_TAP_25] ^ b[B_TAP_30] ^ b[B_TAP_39];
     [o0, o1, o2, o3]
 }
 
@@ -772,7 +772,7 @@ pub(super) fn stream_b_sel(b: &[Word; STREAM_REGISTER_BITS]) -> [Word; NIBBLE_BI
 /// keystream contribution is two XORs. Returns `[high, low]`.
 #[inline]
 pub(super) fn stream_out(d: &[Word; NIBBLE_BITS]) -> [Word; PAIR_BITS] {
-    let hi = d[D_BIT_2] ^ d[D_BIT_3];
+    let hi = d[D_TAP_2] ^ d[D_TAP_3];
     let lo = d[0] ^ d[1];
     [hi, lo]
 }

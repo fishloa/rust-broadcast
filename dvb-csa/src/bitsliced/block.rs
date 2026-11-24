@@ -13,15 +13,6 @@ use super::{BITS_PER_BYTE, BLOCK_BITS, BLOCK_BYTES, Word};
 /// Rounds in the DVB-CSA2 block cipher; one round key byte each.
 const ROUNDS: usize = 56;
 
-/// Byte positions within the rotating block state.
-const STATE_BYTE_1: usize = 1;
-const STATE_BYTE_2: usize = 2;
-const STATE_BYTE_3: usize = 3;
-const STATE_BYTE_4: usize = 4;
-const STATE_BYTE_5: usize = 5;
-const STATE_BYTE_6: usize = 6;
-const STATE_BYTE_7: usize = 7;
-
 /// One byte of block state, sliced: `[bit][lane]`.
 type ByteSlice = [Word; BITS_PER_BYTE];
 /// A whole block, sliced: `[byte][bit][lane]`.
@@ -112,43 +103,63 @@ impl BitslicedBlock {
     /// `m` is the transposed form: `m[byte * 8 + bit]` holds that bit of that
     /// byte for every lane.
     pub(super) fn encrypt(&self, m: &mut [Word; BLOCK_BITS]) {
-        let mut b = unpack(m);
+        let b = unpack(m);
+        let [
+            mut b0,
+            mut b1,
+            mut b2,
+            mut b3,
+            mut b4,
+            mut b5,
+            mut b6,
+            mut b7,
+        ] = b;
         for round in 0..ROUNDS {
-            let s = keyed_sbox(&b[STATE_BYTE_7], self.sch[round]);
+            let s = keyed_sbox(&b7, self.sch[round]);
             let ps = permute(&s);
-            // Every right-hand side below reads the pre-round value; b[0] and
-            // b[1] are the only ones overwritten before their last use.
-            let old0 = b[0];
-            let old1 = b[STATE_BYTE_1];
-            b[STATE_BYTE_1] = xor(&b[STATE_BYTE_2], &old0);
-            b[STATE_BYTE_2] = xor(&b[STATE_BYTE_3], &old0);
-            b[STATE_BYTE_3] = xor(&b[STATE_BYTE_4], &old0);
-            b[STATE_BYTE_4] = b[STATE_BYTE_5];
-            b[STATE_BYTE_5] = xor(&b[STATE_BYTE_6], &ps);
-            b[STATE_BYTE_6] = b[STATE_BYTE_7];
-            b[STATE_BYTE_7] = xor(&old0, &s);
-            b[0] = old1;
+            // Every right-hand side below reads the pre-round value; b0 and
+            // b1 are the only ones overwritten before their last use.
+            let old0 = b0;
+            let old1 = b1;
+            b1 = xor(&b2, &old0);
+            b2 = xor(&b3, &old0);
+            b3 = xor(&b4, &old0);
+            b4 = b5;
+            b5 = xor(&b6, &ps);
+            b6 = b7;
+            b7 = xor(&old0, &s);
+            b0 = old1;
         }
-        pack(&b, m);
+        pack(&[b0, b1, b2, b3, b4, b5, b6, b7], m);
     }
 
     /// Decrypt [`LANES`](super::LANES) blocks in place, rounds 55..0 in reverse.
     pub(super) fn decrypt(&self, m: &mut [Word; BLOCK_BITS]) {
-        let mut b = unpack(m);
+        let b = unpack(m);
+        let [
+            mut b0,
+            mut b1,
+            mut b2,
+            mut b3,
+            mut b4,
+            mut b5,
+            mut b6,
+            mut b7,
+        ] = b;
         for round in (0..ROUNDS).rev() {
-            let s = keyed_sbox(&b[STATE_BYTE_6], self.sch[round]);
+            let s = keyed_sbox(&b6, self.sch[round]);
             let ps = permute(&s);
-            let out = xor(&b[STATE_BYTE_7], &s);
-            b[STATE_BYTE_7] = b[STATE_BYTE_6];
-            b[STATE_BYTE_6] = xor(&b[STATE_BYTE_5], &ps);
-            b[STATE_BYTE_5] = b[STATE_BYTE_4];
-            b[STATE_BYTE_4] = xor(&b[STATE_BYTE_3], &out);
-            b[STATE_BYTE_3] = xor(&b[STATE_BYTE_2], &out);
-            b[STATE_BYTE_2] = xor(&b[STATE_BYTE_1], &out);
-            b[STATE_BYTE_1] = b[0];
-            b[0] = out;
+            let out = xor(&b7, &s);
+            b7 = b6;
+            b6 = xor(&b5, &ps);
+            b5 = b4;
+            b4 = xor(&b3, &out);
+            b3 = xor(&b2, &out);
+            b2 = xor(&b1, &out);
+            b1 = b0;
+            b0 = out;
         }
-        pack(&b, m);
+        pack(&[b0, b1, b2, b3, b4, b5, b6, b7], m);
     }
 }
 

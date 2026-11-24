@@ -434,6 +434,148 @@ const TX_SIG_FEF_SEQ_NUM_BODY_LEN: usize = 5;
 const TX_SIG_AUX_STREAM_TX_ID_BODY_LEN: usize = 4;
 const FREQUENCY_BODY_LEN: usize = 5;
 
+// ── Bit-field constants ────────────────────────────────────────────────────
+
+/// Shift placing the 24-bit `frequency_offset` in the top of an `i32`.
+const FREQUENCY_OFFSET_SHIFT: u32 = 8;
+
+/// Bytes in a big-endian `u16` field.
+const U16_LEN: usize = core::mem::size_of::<u16>();
+/// One-byte mask selecting the low (or high) byte of a 16-bit value.
+const BYTE_MASK_U16: u16 = 0xFF;
+/// One-byte mask selecting the low byte of a 32-bit value.
+const BYTE_MASK_U32: u32 = 0xFF;
+/// Mask of a single-bit flag in the low bit position.
+const ONE_BIT_MASK: u8 = 0x01;
+
+/// Offset of `wait_for_enable_flag` / `rfu` within a cell_id body.
+const CELL_ID_WAIT_FOR_ENABLE_OFFSET: usize = U16_LEN;
+/// Mask of the 7-bit `reserved_future_use` field of a cell_id body.
+const CELL_ID_RFU_MASK: u8 = 0x7F;
+/// Bit width of the cell_id body's `reserved_future_use`.
+const CELL_ID_RFU_BITS: u32 = 7;
+/// Mask of the cell_id body's `wait_for_enable_flag`.
+const CELL_ID_WAIT_FOR_ENABLE_MASK: u8 = 0x80;
+
+/// Shift placing `wait_for_enable_flag` in the bandwidth body byte.
+const CH_BANDWIDTH_SHIFT: u32 = 1;
+/// Bit width of `ch_bandwidth`.
+const CH_BANDWIDTH_BITS: u32 = 7;
+
+/// Shift placing `ace_gain` in its body byte.
+const ACE_GAIN_SHIFT: u32 = 3;
+/// Mask of `ace_gain`.
+const ACE_GAIN_MASK: u8 = 0x1F;
+/// Bit width of `ace_gain`.
+const ACE_GAIN_BITS: u32 = 5;
+/// Mask of `ace_maximal_extension`.
+const ACE_MAXIMAL_EXTENSION_MASK: u8 = 0x07;
+/// Bit width of `ace_maximal_extension`.
+const ACE_MAXIMAL_EXTENSION_BITS: u32 = 3;
+/// Shift placing `ace_clipping_threshold` in its body byte.
+const ACE_CLIPPING_THRESHOLD_SHIFT: u32 = 1;
+/// Mask of `ace_clipping_threshold`.
+const ACE_CLIPPING_THRESHOLD_MASK: u8 = 0x7F;
+/// Bit width of `ace_clipping_threshold`.
+const ACE_CLIPPING_THRESHOLD_BITS: u32 = 7;
+
+/// Mask of the `miso_group` flag bit.
+const MISO_GROUP_FLAG_MASK: u8 = 0x80;
+/// Bit width of the miso_group body's `reserved_future_use`.
+const MISO_GROUP_RFU_BITS: u32 = 7;
+
+/// Shift placing `rfu1` in the TR-PAPR body.
+const TR_PAPR_RFU1_SHIFT: u32 = 4;
+/// Mask of the TR-PAPR `rfu1` nibble.
+const TR_PAPR_RFU1_MASK: u8 = 0x0F;
+/// Bit width of the TR-PAPR `rfu1`.
+const TR_PAPR_RFU1_BITS: u32 = 4;
+/// Mask of the high nibble of `tr_clipping_threshold` within its first byte.
+const TR_CLIPPING_THRESHOLD_HI_MASK: u16 = 0x0F;
+/// Shift placing `tr_clipping_threshold`'s low byte below its high bits.
+const TR_CLIPPING_THRESHOLD_SHIFT: u32 = 8;
+/// Bit width of `tr_clipping_threshold`.
+const TR_CLIPPING_THRESHOLD_BITS: u32 = 12;
+/// Shift placing `rfu2`'s high bits in its first byte.
+const TR_PAPR_RFU2_SHIFT: u32 = 6;
+/// Mask of `rfu2`'s low six bits.
+const TR_PAPR_RFU2_MASK: u16 = 0x3F;
+/// Shift placing `rfu2`'s low bits above `number_of_iterations`.
+const TR_PAPR_RFU2_LOW_SHIFT: u32 = 2;
+/// Bit width of the TR-PAPR `rfu2`.
+const TR_PAPR_RFU2_BITS: u32 = 14;
+/// Mask of `number_of_iterations`' high bits within the TR-PAPR third byte.
+const NUMBER_OF_ITERATIONS_HI_MASK: u16 = 0x03;
+/// Shift placing `number_of_iterations`' low byte below its high bits.
+const NUMBER_OF_ITERATIONS_SHIFT: u32 = 8;
+/// Bit width of `number_of_iterations`.
+const NUMBER_OF_ITERATIONS_BITS: u32 = 10;
+
+/// Offset of `rfu` within the L1-ACE-PAPR body.
+const L1_ACE_PAPR_RFU_OFFSET: usize = U16_LEN;
+
+/// Shift placing `rfu`/`seq_num` in the TX-SIG FEF sequence-number body.
+const TX_SIG_RFU_SHIFT: u32 = 3;
+/// Mask of the TX-SIG `rfu` field.
+const TX_SIG_RFU_MASK: u8 = 0x1F;
+/// Bit width of the TX-SIG `rfu` field.
+const TX_SIG_RFU_BITS: u32 = 5;
+/// Mask of a `seq_num` field.
+const TX_SIG_SEQ_NUM_MASK: u8 = 0x07;
+/// Bit width of a `seq_num` field.
+const TX_SIG_SEQ_NUM_BITS: u32 = 3;
+/// Bit width of the TX-SIG `rfu3` field.
+const TX_SIG_RFU3_BITS: u32 = 24;
+/// Shift placing `rfu3`'s second byte.
+const TX_SIG_RFU3_SHIFT_HI: u32 = 16;
+/// Shift placing `rfu3`'s third byte.
+const TX_SIG_RFU3_SHIFT_MID: u32 = 8;
+
+/// Shift packing the two halves of `tx_sig_aux_tx_id`.
+const TX_SIG_AUX_TX_ID_SHIFT: u32 = 4;
+/// Mask of the low nibble of `tx_sig_aux_tx_id` / `rfu`.
+const TX_SIG_AUX_LOW_NIBBLE_MASK: u16 = 0x0F;
+/// Bit width of the TX-SIG aux `rfu` field.
+const TX_SIG_AUX_RFU_BITS: u32 = 20;
+/// Shift placing the second byte of the TX-SIG aux `rfu`.
+const TX_SIG_AUX_RFU_SHIFT_HI: u32 = 16;
+/// Shift placing the third byte of the TX-SIG aux `rfu`.
+const TX_SIG_AUX_RFU_SHIFT_MID: u32 = 8;
+
+/// Shift placing `rf_idx` in its body byte.
+const RF_IDX_SHIFT: u32 = 5;
+/// Mask of `rf_idx`.
+const RF_IDX_MASK: u8 = 0x07;
+/// Bit width of `rf_idx`.
+const RF_IDX_BITS: u32 = 3;
+/// Mask of the Frequency body's `reserved_future_use`.
+const FREQUENCY_RFU_MASK: u8 = 0x1F;
+/// Bit width of the Frequency body's `reserved_future_use`.
+const FREQUENCY_RFU_BITS: u32 = 5;
+/// Mask of the `frequency` bits carried in the Frequency body's first byte.
+const FREQUENCY_HI_MASK: u8 = 0x1F;
+/// Mask of the `frequency` bits carried in the Frequency body's last byte.
+const FREQUENCY_LOW_MASK: u8 = 0x07;
+/// Shift placing `frequency`'s second byte.
+const FREQUENCY_SHIFT_27: u32 = 27;
+/// Shift placing `frequency`'s third byte.
+const FREQUENCY_SHIFT_19: u32 = 19;
+/// Shift placing `frequency`'s fourth byte.
+const FREQUENCY_SHIFT_11: u32 = 11;
+/// Shift placing `frequency`'s low bits.
+const FREQUENCY_SHIFT_3: u32 = 3;
+
+/// Bytes of the `transmitter_id` prefix of a transmitter entry.
+const TRANSMITTER_ID_LEN: usize = U16_LEN;
+/// Offset of the high byte of `transmitter_id` in a transmitter entry.
+const TRANSMITTER_ID_HI_OFFSET: usize = 0;
+/// Offset of the low byte of `transmitter_id` in a transmitter entry.
+const TRANSMITTER_ID_LO_OFFSET: usize = 1;
+/// Shift placing the high byte of `transmitter_id`.
+const TRANSMITTER_ID_HI_SHIFT: u32 = 8;
+/// Offset of `function_loop_length` in a transmitter entry.
+const FUNCTION_LOOP_LENGTH_OFFSET: usize = TRANSMITTER_ID_LEN;
+
 // ── FunctionBody ───────────────────────────────────────────────────────────
 
 /// Parsed function body — typed for known tags, raw for unknown/reserved or
@@ -612,7 +754,8 @@ fn parse_frequency_offset(body: &[u8]) -> Result<FrequencyOffsetBody, crate::Err
         ))?;
     // 24-bit two's complement: place in the top of an i32, then arithmetic-shift back.
     Ok(FrequencyOffsetBody {
-        frequency_offset: i32::from_be_bytes([b[0], b[1], b[2], 0]) >> 8,
+        frequency_offset: i32::from_be_bytes([b[0], b[1], b[TRANSMITTER_ID_LEN], 0])
+            >> FREQUENCY_OFFSET_SHIFT,
     })
 }
 
@@ -642,9 +785,9 @@ fn parse_cell_id(body: &[u8]) -> Result<CellIdBody, crate::Error> {
                 },
             ))?;
     Ok(CellIdBody {
-        cell_id: u16::from_be_bytes([b[0], b[1]]),
-        wait_for_enable_flag: b[2] & 0x80 != 0,
-        rfu: b[2] & 0x7F,
+        cell_id: u16::from_be_bytes([b[0], b[TRANSMITTER_ID_LO_OFFSET]]),
+        wait_for_enable_flag: b[CELL_ID_WAIT_FOR_ENABLE_OFFSET] & CELL_ID_WAIT_FOR_ENABLE_MASK != 0,
+        rfu: b[CELL_ID_WAIT_FOR_ENABLE_OFFSET] & CELL_ID_RFU_MASK,
     })
 }
 
@@ -657,36 +800,43 @@ fn parse_bandwidth(body: &[u8]) -> Result<BandwidthBody, crate::Error> {
         },
     ))?;
     Ok(BandwidthBody {
-        ch_bandwidth: b >> 1,
-        wait_for_enable_flag: b & 0x01 != 0,
+        ch_bandwidth: b >> CH_BANDWIDTH_SHIFT,
+        wait_for_enable_flag: b & ONE_BIT_MASK != 0,
     })
 }
 
 fn parse_ace_papr(body: &[u8]) -> Result<AcePaprBody, crate::Error> {
     need_in(body, ACE_PAPR_BODY_LEN, "ACE-PAPR function body")?;
     Ok(AcePaprBody {
-        ace_gain: (body[0] >> 3) & 0x1F,
-        ace_maximal_extension: body[0] & 0x07,
-        ace_clipping_threshold: (body[1] >> 1) & 0x7F,
-        rfu: body[1] & 0x01 != 0,
+        ace_gain: (body[0] >> ACE_GAIN_SHIFT) & ACE_GAIN_MASK,
+        ace_maximal_extension: body[0] & ACE_MAXIMAL_EXTENSION_MASK,
+        ace_clipping_threshold: (body[TRANSMITTER_ID_LO_OFFSET] >> ACE_CLIPPING_THRESHOLD_SHIFT)
+            & ACE_CLIPPING_THRESHOLD_MASK,
+        rfu: body[TRANSMITTER_ID_LO_OFFSET] & ONE_BIT_MASK != 0,
     })
 }
 
 fn parse_miso_group(body: &[u8]) -> Result<MisoGroupBody, crate::Error> {
     need_in(body, MISO_GROUP_BODY_LEN, "MISO group function body")?;
     Ok(MisoGroupBody {
-        miso_group: body[0] & 0x80 != 0,
-        rfu: body[0] & 0x7F,
+        miso_group: body[0] & MISO_GROUP_FLAG_MASK != 0,
+        rfu: body[0] & CELL_ID_RFU_MASK,
     })
 }
 
 fn parse_tr_papr(body: &[u8]) -> Result<TrPaprBody, crate::Error> {
     need_in(body, TR_PAPR_BODY_LEN, "TR-PAPR function body")?;
     Ok(TrPaprBody {
-        rfu1: (body[0] >> 4) & 0x0F,
-        tr_clipping_threshold: ((body[0] as u16 & 0x0F) << 8) | body[1] as u16,
-        rfu2: ((body[2] as u16) << 6) | ((body[3] as u16) >> 2),
-        number_of_iterations: ((body[3] as u16 & 0x03) << 8) | body[4] as u16,
+        rfu1: (body[0] >> TR_PAPR_RFU1_SHIFT) & TR_PAPR_RFU1_MASK,
+        tr_clipping_threshold: ((body[0] as u16 & TR_CLIPPING_THRESHOLD_HI_MASK)
+            << TR_CLIPPING_THRESHOLD_SHIFT)
+            | body[TRANSMITTER_ID_LO_OFFSET] as u16,
+        rfu2: ((body[TRANSMITTER_ID_LEN] as u16) << TR_PAPR_RFU2_SHIFT)
+            | ((body[TRANSMITTER_ID_LEN + 1] as u16) >> TR_PAPR_RFU2_LOW_SHIFT),
+        number_of_iterations: ((body[TRANSMITTER_ID_LEN + 1] as u16
+            & NUMBER_OF_ITERATIONS_HI_MASK)
+            << NUMBER_OF_ITERATIONS_SHIFT)
+            | body[TR_PAPR_BODY_LEN - 1] as u16,
     })
 }
 
@@ -702,7 +852,10 @@ fn parse_l1_ace_papr(body: &[u8]) -> Result<L1AcePaprBody, crate::Error> {
             ))?;
     Ok(L1AcePaprBody {
         l1_ace_max_correction: u16::from_be_bytes([b[0], b[1]]),
-        rfu: u16::from_be_bytes([b[2], b[3]]),
+        rfu: u16::from_be_bytes([
+            b[L1_ACE_PAPR_RFU_OFFSET],
+            b[L1_ACE_PAPR_RFU_OFFSET + 1],
+        ]),
     })
 }
 
@@ -713,11 +866,13 @@ fn parse_tx_sig_fef_seq_num(body: &[u8]) -> Result<TxSigFefSeqNumBody, crate::Er
         "TX-SIG FEF sequence numbers function body",
     )?;
     Ok(TxSigFefSeqNumBody {
-        rfu1: (body[0] >> 3) & 0x1F,
-        seq_num_1: body[0] & 0x07,
-        rfu2: (body[1] >> 3) & 0x1F,
-        seq_num_2: body[1] & 0x07,
-        rfu3: (body[2] as u32) << 16 | (body[3] as u32) << 8 | body[4] as u32,
+        rfu1: (body[0] >> TX_SIG_RFU_SHIFT) & TX_SIG_RFU_MASK,
+        seq_num_1: body[0] & TX_SIG_SEQ_NUM_MASK,
+        rfu2: (body[TRANSMITTER_ID_LO_OFFSET] >> TX_SIG_RFU_SHIFT) & TX_SIG_RFU_MASK,
+        seq_num_2: body[TRANSMITTER_ID_LO_OFFSET] & TX_SIG_SEQ_NUM_MASK,
+        rfu3: (body[TRANSMITTER_ID_LEN] as u32) << TX_SIG_RFU3_SHIFT_HI
+            | (body[TRANSMITTER_ID_LEN + 1] as u32) << TX_SIG_RFU3_SHIFT_MID
+            | body[TX_SIG_FEF_SEQ_NUM_BODY_LEN - 1] as u32,
     })
 }
 
@@ -728,21 +883,26 @@ fn parse_tx_sig_aux_stream_tx_id(body: &[u8]) -> Result<TxSigAuxStreamTxIdBody, 
         "TX-SIG aux stream TX ID function body",
     )?;
     Ok(TxSigAuxStreamTxIdBody {
-        tx_sig_aux_tx_id: ((body[0] as u16) << 4) | ((body[1] as u16) >> 4),
-        rfu: ((body[1] as u32 & 0x0F) << 16) | (body[2] as u32) << 8 | body[3] as u32,
+        tx_sig_aux_tx_id: ((body[0] as u16) << TX_SIG_AUX_TX_ID_SHIFT)
+            | ((body[TRANSMITTER_ID_LO_OFFSET] as u16) >> TX_SIG_AUX_TX_ID_SHIFT),
+        rfu: ((body[TRANSMITTER_ID_LO_OFFSET] as u32 & u32::from(TX_SIG_AUX_LOW_NIBBLE_MASK))
+            << TX_SIG_AUX_RFU_SHIFT_HI)
+            | (body[TRANSMITTER_ID_LEN] as u32) << TX_SIG_AUX_RFU_SHIFT_MID
+            | body[TX_SIG_AUX_STREAM_TX_ID_BODY_LEN - 1] as u32,
     })
 }
 
 fn parse_frequency(body: &[u8]) -> Result<FrequencyBody, crate::Error> {
     need_in(body, FREQUENCY_BODY_LEN, "Frequency function body")?;
     Ok(FrequencyBody {
-        rf_idx: (body[0] >> 5) & 0x07,
-        frequency: ((body[0] as u32 & 0x1F) << 27)
-            | (body[1] as u32) << 19
-            | (body[2] as u32) << 11
-            | (body[3] as u32) << 3
-            | ((body[4] >> 5) as u32 & 0x07),
-        rfu: body[4] & 0x1F,
+        rf_idx: (body[0] >> RF_IDX_SHIFT) & RF_IDX_MASK,
+        frequency: ((body[0] as u32 & u32::from(FREQUENCY_HI_MASK)) << FREQUENCY_SHIFT_27)
+            | (body[TRANSMITTER_ID_LO_OFFSET] as u32) << FREQUENCY_SHIFT_19
+            | (body[TRANSMITTER_ID_LEN] as u32) << FREQUENCY_SHIFT_11
+            | (body[TRANSMITTER_ID_LEN + 1] as u32) << FREQUENCY_SHIFT_3
+            | ((body[FREQUENCY_BODY_LEN - 1] >> RF_IDX_SHIFT) as u32
+                & u32::from(FREQUENCY_LOW_MASK)),
+        rfu: body[FREQUENCY_BODY_LEN - 1] & FREQUENCY_RFU_MASK,
     })
 }
 
@@ -856,10 +1016,14 @@ fn serialize_power(body: &PowerBody, buf: &mut [u8]) {
 }
 
 fn serialize_cell_id(body: &CellIdBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
-    check_bits(u64::from(body.rfu), 7, "cell_id reserved_future_use")?;
-    buf[..2].copy_from_slice(&body.cell_id.to_be_bytes());
-    buf[2] = if body.wait_for_enable_flag {
-        0x80
+    check_bits(
+        u64::from(body.rfu),
+        CELL_ID_RFU_BITS,
+        "cell_id reserved_future_use",
+    )?;
+    buf[..U16_LEN].copy_from_slice(&body.cell_id.to_be_bytes());
+    buf[CELL_ID_WAIT_FOR_ENABLE_OFFSET] = if body.wait_for_enable_flag {
+        CELL_ID_WAIT_FOR_ENABLE_MASK
     } else {
         0x00
     } | body.rfu;
@@ -867,74 +1031,83 @@ fn serialize_cell_id(body: &CellIdBody, buf: &mut [u8]) -> Result<(), crate::err
 }
 
 fn serialize_bandwidth(body: &BandwidthBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
-    check_bits(u64::from(body.ch_bandwidth), 7, "ch_bandwidth")?;
-    buf[0] = body.ch_bandwidth << 1 | u8::from(body.wait_for_enable_flag);
+    check_bits(u64::from(body.ch_bandwidth), CH_BANDWIDTH_BITS, "ch_bandwidth")?;
+    buf[0] = body.ch_bandwidth << CH_BANDWIDTH_SHIFT | u8::from(body.wait_for_enable_flag);
     Ok(())
 }
 
 fn serialize_ace_papr(body: &AcePaprBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
-    check_bits(u64::from(body.ace_gain), 5, "ace_gain")?;
+    check_bits(u64::from(body.ace_gain), ACE_GAIN_BITS, "ace_gain")?;
     check_bits(
         u64::from(body.ace_maximal_extension),
-        3,
+        ACE_MAXIMAL_EXTENSION_BITS,
         "ace_maximal_extension",
     )?;
     check_bits(
         u64::from(body.ace_clipping_threshold),
-        7,
+        ACE_CLIPPING_THRESHOLD_BITS,
         "ace_clipping_threshold",
     )?;
-    buf[0] = body.ace_gain << 3 | body.ace_maximal_extension;
-    buf[1] = body.ace_clipping_threshold << 1 | if body.rfu { 1 } else { 0 };
+    buf[0] = body.ace_gain << ACE_GAIN_SHIFT | body.ace_maximal_extension;
+    buf[TRANSMITTER_ID_LO_OFFSET] = body.ace_clipping_threshold << ACE_CLIPPING_THRESHOLD_SHIFT
+        | if body.rfu { 1 } else { 0 };
     Ok(())
 }
 
 fn serialize_miso_group(body: &MisoGroupBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
-    check_bits(u64::from(body.rfu), 7, "miso_group rfu")?;
-    buf[0] = if body.miso_group { 0x80 } else { 0x00 } | body.rfu;
+    check_bits(u64::from(body.rfu), MISO_GROUP_RFU_BITS, "miso_group rfu")?;
+    buf[0] = if body.miso_group {
+        MISO_GROUP_FLAG_MASK
+    } else {
+        0x00
+    } | body.rfu;
     Ok(())
 }
 
 fn serialize_tr_papr(body: &TrPaprBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
-    check_bits(u64::from(body.rfu1), 4, "tr_papr rfu1")?;
+    check_bits(u64::from(body.rfu1), TR_PAPR_RFU1_BITS, "tr_papr rfu1")?;
     check_bits(
         u64::from(body.tr_clipping_threshold),
-        12,
+        TR_CLIPPING_THRESHOLD_BITS,
         "tr_clipping_threshold",
     )?;
-    check_bits(u64::from(body.rfu2), 14, "tr_papr rfu2")?;
+    check_bits(u64::from(body.rfu2), TR_PAPR_RFU2_BITS, "tr_papr rfu2")?;
     check_bits(
         u64::from(body.number_of_iterations),
-        10,
+        NUMBER_OF_ITERATIONS_BITS,
         "number_of_iterations",
     )?;
-    buf[0] = (body.rfu1 << 4) | (body.tr_clipping_threshold >> 8) as u8;
-    buf[1] = (body.tr_clipping_threshold & 0xFF) as u8;
-    buf[2] = (body.rfu2 >> 6) as u8;
-    buf[3] = ((body.rfu2 & 0x3F) as u8) << 2 | (body.number_of_iterations >> 8) as u8;
-    buf[4] = (body.number_of_iterations & 0xFF) as u8;
+    buf[0] = (body.rfu1 << TR_PAPR_RFU1_SHIFT)
+        | (body.tr_clipping_threshold >> TR_CLIPPING_THRESHOLD_SHIFT) as u8;
+    buf[TRANSMITTER_ID_LO_OFFSET] =
+        (body.tr_clipping_threshold & BYTE_MASK_U16) as u8;
+    buf[TRANSMITTER_ID_LEN] = (body.rfu2 >> TR_PAPR_RFU2_SHIFT) as u8;
+    buf[TRANSMITTER_ID_LEN + 1] = ((body.rfu2 & TR_PAPR_RFU2_MASK) as u8) << TR_PAPR_RFU2_LOW_SHIFT
+        | (body.number_of_iterations >> NUMBER_OF_ITERATIONS_SHIFT) as u8;
+    buf[TR_PAPR_BODY_LEN - 1] = (body.number_of_iterations & BYTE_MASK_U16) as u8;
     Ok(())
 }
 
 fn serialize_l1_ace_papr(body: &L1AcePaprBody, buf: &mut [u8]) {
-    buf[0..2].copy_from_slice(&body.l1_ace_max_correction.to_be_bytes());
-    buf[2..4].copy_from_slice(&body.rfu.to_be_bytes());
+    buf[..U16_LEN].copy_from_slice(&body.l1_ace_max_correction.to_be_bytes());
+    buf[L1_ACE_PAPR_RFU_OFFSET..L1_ACE_PAPR_RFU_OFFSET + U16_LEN]
+        .copy_from_slice(&body.rfu.to_be_bytes());
 }
 
 fn serialize_tx_sig_fef_seq_num(
     body: &TxSigFefSeqNumBody,
     buf: &mut [u8],
 ) -> Result<(), crate::error::Error> {
-    check_bits(u64::from(body.rfu1), 5, "tx_sig_fef_seq_num rfu1")?;
-    check_bits(u64::from(body.seq_num_1), 3, "seq_num_1")?;
-    check_bits(u64::from(body.rfu2), 5, "tx_sig_fef_seq_num rfu2")?;
-    check_bits(u64::from(body.seq_num_2), 3, "seq_num_2")?;
-    check_bits(u64::from(body.rfu3), 24, "tx_sig_fef_seq_num rfu3")?;
-    buf[0] = (body.rfu1 << 3) | body.seq_num_1;
-    buf[1] = (body.rfu2 << 3) | body.seq_num_2;
-    buf[2] = ((body.rfu3 >> 16) & 0xFF) as u8;
-    buf[3] = ((body.rfu3 >> 8) & 0xFF) as u8;
-    buf[4] = (body.rfu3 & 0xFF) as u8;
+    check_bits(u64::from(body.rfu1), TX_SIG_RFU_BITS, "tx_sig_fef_seq_num rfu1")?;
+    check_bits(u64::from(body.seq_num_1), TX_SIG_SEQ_NUM_BITS, "seq_num_1")?;
+    check_bits(u64::from(body.rfu2), TX_SIG_RFU_BITS, "tx_sig_fef_seq_num rfu2")?;
+    check_bits(u64::from(body.seq_num_2), TX_SIG_SEQ_NUM_BITS, "seq_num_2")?;
+    check_bits(u64::from(body.rfu3), TX_SIG_RFU3_BITS, "tx_sig_fef_seq_num rfu3")?;
+    buf[0] = (body.rfu1 << TX_SIG_RFU_SHIFT) | body.seq_num_1;
+    buf[TRANSMITTER_ID_LO_OFFSET] = (body.rfu2 << TX_SIG_RFU_SHIFT) | body.seq_num_2;
+    buf[TRANSMITTER_ID_LEN] = ((body.rfu3 >> TX_SIG_RFU3_SHIFT_HI) & BYTE_MASK_U32) as u8;
+    buf[TRANSMITTER_ID_LEN + 1] = ((body.rfu3 >> TX_SIG_RFU3_SHIFT_MID) & BYTE_MASK_U32) as u8;
+    buf[TX_SIG_FEF_SEQ_NUM_BODY_LEN - 1] = (body.rfu3 & BYTE_MASK_U32) as u8;
     Ok(())
 }
 
@@ -942,23 +1115,34 @@ fn serialize_tx_sig_aux_stream_tx_id(
     body: &TxSigAuxStreamTxIdBody,
     buf: &mut [u8],
 ) -> Result<(), crate::error::Error> {
-    check_bits(u64::from(body.tx_sig_aux_tx_id), 12, "tx_sig_aux_tx_id")?;
-    check_bits(u64::from(body.rfu), 20, "tx_sig_aux_stream_tx_id rfu")?;
-    buf[0] = ((body.tx_sig_aux_tx_id >> 4) & 0xFF) as u8;
-    buf[1] = ((body.tx_sig_aux_tx_id & 0x0F) as u8) << 4 | ((body.rfu >> 16) & 0x0F) as u8;
-    buf[2] = ((body.rfu >> 8) & 0xFF) as u8;
-    buf[3] = (body.rfu & 0xFF) as u8;
+    check_bits(u64::from(body.tx_sig_aux_tx_id), TX_SIG_AUX_TX_ID_BITS, "tx_sig_aux_tx_id")?;
+    check_bits(
+        u64::from(body.rfu),
+        TX_SIG_AUX_RFU_BITS,
+        "tx_sig_aux_stream_tx_id rfu",
+    )?;
+    buf[0] = ((body.tx_sig_aux_tx_id >> TX_SIG_AUX_TX_ID_SHIFT) & BYTE_MASK_U16) as u8;
+    buf[TRANSMITTER_ID_LO_OFFSET] = ((body.tx_sig_aux_tx_id & BYTE_MASK_U16 >> TX_SIG_AUX_TX_ID_SHIFT)
+        as u8)
+        << TX_SIG_AUX_TX_ID_SHIFT
+        | ((body.rfu >> TX_SIG_AUX_RFU_SHIFT_HI) as u16 & TX_SIG_AUX_LOW_NIBBLE_MASK) as u8;
+    buf[TRANSMITTER_ID_LEN] = ((body.rfu >> TX_SIG_AUX_RFU_SHIFT_MID) & BYTE_MASK_U32) as u8;
+    buf[TX_SIG_AUX_STREAM_TX_ID_BODY_LEN - 1] = (body.rfu & BYTE_MASK_U32) as u8;
     Ok(())
 }
 
 fn serialize_frequency(body: &FrequencyBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
-    check_bits(u64::from(body.rf_idx), 3, "rf_idx")?;
-    check_bits(u64::from(body.rfu), 5, "frequency rfu")?;
-    buf[0] = (body.rf_idx << 5) | ((body.frequency >> 27) & 0x1F) as u8;
-    buf[1] = ((body.frequency >> 19) & 0xFF) as u8;
-    buf[2] = ((body.frequency >> 11) & 0xFF) as u8;
-    buf[3] = ((body.frequency >> 3) & 0xFF) as u8;
-    buf[4] = ((body.frequency & 0x07) as u8) << 5 | body.rfu;
+    check_bits(u64::from(body.rf_idx), RF_IDX_BITS, "rf_idx")?;
+    check_bits(u64::from(body.rfu), FREQUENCY_RFU_BITS, "frequency rfu")?;
+    buf[0] = (body.rf_idx << RF_IDX_SHIFT)
+        | ((body.frequency >> FREQUENCY_SHIFT_27) & u32::from(FREQUENCY_HI_MASK)) as u8;
+    buf[TRANSMITTER_ID_LO_OFFSET] =
+        ((body.frequency >> FREQUENCY_SHIFT_19) & BYTE_MASK_U32) as u8;
+    buf[TRANSMITTER_ID_LEN] = ((body.frequency >> FREQUENCY_SHIFT_11) & BYTE_MASK_U32) as u8;
+    buf[TRANSMITTER_ID_LEN + 1] =
+        ((body.frequency >> FREQUENCY_SHIFT_3) & BYTE_MASK_U32) as u8;
+    buf[FREQUENCY_BODY_LEN - 1] =
+        ((body.frequency & u32::from(FREQUENCY_LOW_MASK)) as u8) << RF_IDX_SHIFT | body.rfu;
     Ok(())
 }
 
@@ -1144,16 +1328,16 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
 
             let (tx_id_bytes, _) = data
                 .get(pos..)
-                .and_then(|s| s.split_first_chunk::<2>())
+                .and_then(|s| s.split_first_chunk::<TRANSMITTER_ID_LEN>())
                 .ok_or(crate::Error::BufferTooShort(
                     broadcast_common::error::BufferTooShort {
-                        need: pos + 2,
+                        need: pos + TRANSMITTER_ID_LEN,
                         have: individual_addressing_length,
                         what: "transmitter entry header",
                     },
                 ))?;
             let transmitter_id = u16::from_be_bytes(*tx_id_bytes);
-            let function_loop_length = data[pos + 2] as usize;
+            let function_loop_length = data[pos + FUNCTION_LOOP_LENGTH_OFFSET] as usize;
             pos += TX_HEADER_LEN;
 
             let func_end = pos + function_loop_length;
@@ -1288,9 +1472,9 @@ impl Serialize for IndividualAddressingPayload<'_> {
                 ));
             }
 
-            buf[pos] = (tx.transmitter_id >> 8) as u8;
-            buf[pos + 1] = (tx.transmitter_id & 0xFF) as u8;
-            buf[pos + 2] = func_loop_len as u8;
+            buf[pos + TRANSMITTER_ID_HI_OFFSET] = (tx.transmitter_id >> TRANSMITTER_ID_HI_SHIFT) as u8;
+            buf[pos + TRANSMITTER_ID_LO_OFFSET] = (tx.transmitter_id & BYTE_MASK_U16) as u8;
+            buf[pos + FUNCTION_LOOP_LENGTH_OFFSET] = func_loop_len as u8;
             pos += TX_HEADER_LEN;
 
             for func in &tx.functions {

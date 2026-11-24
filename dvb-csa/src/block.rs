@@ -10,15 +10,6 @@ use super::tables::{PERM, SBOX};
 const ROUNDS: usize = 56;
 /// Bytes in one CSA block (64 bits).
 const BLOCK_BYTES: usize = 8;
-/// Byte positions within the rotating block state.
-const STATE_BYTE_1: usize = 1;
-const STATE_BYTE_2: usize = 2;
-const STATE_BYTE_3: usize = 3;
-const STATE_BYTE_4: usize = 4;
-const STATE_BYTE_5: usize = 5;
-const STATE_BYTE_6: usize = 6;
-const STATE_BYTE_7: usize = 7;
-
 /// The DVB-CSA2 block cipher, initialized with 56 round-key bytes.
 ///
 /// Not `Copy` (holds key-derived round-key bytes; see [`Drop for
@@ -49,39 +40,59 @@ impl BlockCipher {
     /// Encrypt one 8-byte block in-place (rounds 0..55 forward).
     pub(crate) fn encrypt_block(&self, w: &mut [u8]) {
         debug_assert_eq!(w.len(), BLOCK_BYTES);
-        let mut b: [u8; BLOCK_BYTES] = w.try_into().unwrap();
+        let state: [u8; BLOCK_BYTES] = w.try_into().unwrap();
+        let [
+            mut b0,
+            mut b1,
+            mut b2,
+            mut b3,
+            mut b4,
+            mut b5,
+            mut b6,
+            mut b7,
+        ] = state;
         for round in 0..ROUNDS {
-            let s = SBOX[(self.sch[round] ^ b[STATE_BYTE_7]) as usize];
-            let save = b[STATE_BYTE_1];
-            b[STATE_BYTE_1] = b[STATE_BYTE_2] ^ b[0];
-            b[STATE_BYTE_2] = b[STATE_BYTE_3] ^ b[0];
-            b[STATE_BYTE_3] = b[STATE_BYTE_4] ^ b[0];
-            b[STATE_BYTE_4] = b[STATE_BYTE_5];
-            b[STATE_BYTE_5] = b[STATE_BYTE_6] ^ PERM[s as usize];
-            b[STATE_BYTE_6] = b[STATE_BYTE_7];
-            b[STATE_BYTE_7] = b[0] ^ s;
-            b[0] = save;
+            let s = SBOX[(self.sch[round] ^ b7) as usize];
+            let save = b1;
+            b1 = b2 ^ b0;
+            b2 = b3 ^ b0;
+            b3 = b4 ^ b0;
+            b4 = b5;
+            b5 = b6 ^ PERM[s as usize];
+            b6 = b7;
+            b7 = b0 ^ s;
+            b0 = save;
         }
-        w.copy_from_slice(&b);
+        w.copy_from_slice(&[b0, b1, b2, b3, b4, b5, b6, b7]);
     }
 
     /// Decrypt one 8-byte block in-place (rounds 55..0 reverse).
     pub(crate) fn decrypt_block(&self, w: &mut [u8]) {
         debug_assert_eq!(w.len(), BLOCK_BYTES);
-        let mut b: [u8; BLOCK_BYTES] = w.try_into().unwrap();
+        let state: [u8; BLOCK_BYTES] = w.try_into().unwrap();
+        let [
+            mut b0,
+            mut b1,
+            mut b2,
+            mut b3,
+            mut b4,
+            mut b5,
+            mut b6,
+            mut b7,
+        ] = state;
         for round in (0..ROUNDS).rev() {
-            let s = SBOX[(self.sch[round] ^ b[STATE_BYTE_6]) as usize];
-            let out = b[STATE_BYTE_7] ^ s;
-            b[STATE_BYTE_7] = b[STATE_BYTE_6];
-            b[STATE_BYTE_6] = b[STATE_BYTE_5] ^ PERM[s as usize];
-            b[STATE_BYTE_5] = b[STATE_BYTE_4];
-            b[STATE_BYTE_4] = b[STATE_BYTE_3] ^ out;
-            b[STATE_BYTE_3] = b[STATE_BYTE_2] ^ out;
-            b[STATE_BYTE_2] = b[STATE_BYTE_1] ^ out;
-            b[STATE_BYTE_1] = b[0];
-            b[0] = out;
+            let s = SBOX[(self.sch[round] ^ b6) as usize];
+            let out = b7 ^ s;
+            b7 = b6;
+            b6 = b5 ^ PERM[s as usize];
+            b5 = b4;
+            b4 = b3 ^ out;
+            b3 = b2 ^ out;
+            b2 = b1 ^ out;
+            b1 = b0;
+            b0 = out;
         }
-        w.copy_from_slice(&b);
+        w.copy_from_slice(&[b0, b1, b2, b3, b4, b5, b6, b7]);
     }
 }
 

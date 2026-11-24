@@ -188,12 +188,6 @@ const PES_FLAGS_PREFIX_SHIFT: u32 = 6;
 /// The `'10'` marker prefix value of the PES flags byte.
 const PES_FLAGS_PREFIX: u8 = 0b10;
 
-/// Byte offset of `packet_start_code_prefix` byte 0 within a PES packet.
-const PES_PREFIX_BYTE_0_OFFSET: usize = 0;
-/// Byte offset of `packet_start_code_prefix` byte 1 within a PES packet.
-const PES_PREFIX_BYTE_1_OFFSET: usize = 1;
-/// Byte offset of `packet_start_code_prefix` byte 2 within a PES packet.
-const PES_PREFIX_BYTE_2_OFFSET: usize = 2;
 
 /// Mask for the `PTS_DTS_flags` field within the PES header byte at offset 7
 /// (bits `[7:6]` — `0b10` means PTS present, `0b11` means PTS+DTS).
@@ -2076,10 +2070,7 @@ impl ConformanceMonitor {
         if payload.len() <= PES_PTS_DTS_FLAGS_OFFSET {
             return;
         }
-        if payload[PES_PREFIX_BYTE_0_OFFSET] != PES_PREFIX_0
-            || payload[PES_PREFIX_BYTE_1_OFFSET] != PES_PREFIX_1
-            || payload[PES_PREFIX_BYTE_2_OFFSET] != PES_PREFIX_2
-        {
+        if !payload.starts_with(&[PES_PREFIX_0, PES_PREFIX_1, PES_PREFIX_2]) {
             return;
         }
 

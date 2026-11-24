@@ -19,13 +19,8 @@ const B_FEEDBACK_NIBBLE_0: u32 = 6;
 const B_FEEDBACK_NIBBLE_1: u32 = 9;
 /// Bytes in the control-word seed and the initialisation vector.
 const SEED_BYTES: usize = 8;
-/// Byte positions within the control-word seed.
-const CWS_BYTE_2: usize = 2;
-const CWS_BYTE_3: usize = 3;
-const CWS_BYTE_4: usize = 4;
-const CWS_BYTE_5: usize = 5;
-const CWS_BYTE_6: usize = 6;
-const CWS_BYTE_7: usize = 7;
+/// Bytes in each of the seed's two register halves.
+const SEED_REGISTER_BYTES: usize = core::mem::size_of::<u32>();
 /// Masks placing each round's keystream bit pair in the output byte, most
 /// significant pair first.
 const KEYSTREAM_PAIR_HI_MASK: u8 = 0xc0;
@@ -72,26 +67,30 @@ const PQZYX_INDEX_MASK: u32 = 0x2f00;
 const CFED_F_MASK: u32 = 0x0f00;
 /// B-register right shift before `csa_stream_b_sel` folds its select bits.
 const B_SEL_SHIFT: u32 = 9;
-/// Select-term masks, named for the output bits they carry.
-const B_SEL_BIT0_MASK: u32 = 0x1;
-const B_SEL_BIT1_MASK: u32 = 0x2;
-const B_SEL_BIT2_MASK: u32 = 0x4;
-const B_SEL_BIT3_MASK: u32 = 0x8;
-const B_SEL_BIT20_MASK: u32 = 0x5;
-const B_SEL_BIT30_MASK: u32 = 0x9;
-const B_SEL_BIT321_MASK: u32 = 0xe;
-/// B-register shifts each select term folds.
-const B_SEL_BIT0_SHIFT_A: u32 = 29;
-const B_SEL_BIT0_SHIFT_B: u32 = 23;
-const B_SEL_BIT1_SHIFT_A: u32 = 24;
-const B_SEL_BIT1_SHIFT_B: u32 = 6;
-const B_SEL_BIT1_SHIFT_C: u32 = 11;
-const B_SEL_BIT2_SHIFT_A: u32 = 22;
-const B_SEL_BIT2_SHIFT_B: u32 = 7;
-const B_SEL_BIT3_SHIFT: u32 = 27;
-const B_SEL_BIT20_SHIFT: u32 = 4;
-const B_SEL_BIT30_SHIFT: u32 = 18;
-const B_SEL_BIT321_SHIFT: u32 = 13;
+/// Output-bit weights of `csa_stream_b_sel`, named for the `pqzyx`-style
+/// bit each one carries.
+const B_SEL_OUT_LSB: u32 = 0x1;
+const B_SEL_OUT_SECOND: u32 = 0x2;
+const B_SEL_OUT_THIRD: u32 = 0x4;
+const B_SEL_OUT_HIGH: u32 = 0x8;
+/// B-register taps feeding the high output bit.
+const B_SEL_HIGH_TAP_PRIMARY: u32 = 27;
+/// B-register taps feeding the high and low output bits together.
+const B_SEL_HIGH_LSB_TAP: u32 = 18;
+/// B-register taps feeding the third output bit.
+const B_SEL_THIRD_TAP_PRIMARY: u32 = 22;
+const B_SEL_THIRD_TAP_SECONDARY: u32 = 7;
+/// B-register tap feeding the third and low output bits together.
+const B_SEL_LSB_THIRD_TAP: u32 = 4;
+/// B-register taps feeding the second output bit.
+const B_SEL_SECOND_TAP_PRIMARY: u32 = 24;
+const B_SEL_SECOND_TAP_SECONDARY: u32 = 6;
+const B_SEL_SECOND_TAP_TERTIARY: u32 = 11;
+/// B-register taps feeding the low output bit.
+const B_SEL_LSB_TAP_PRIMARY: u32 = 29;
+const B_SEL_LSB_TAP_SECONDARY: u32 = 23;
+/// B-register shift folding the three upper output bits together.
+const B_SEL_UPPER_TAPS_SHIFT: u32 = 13;
 
 /// Nibble from shift register at position n (nibble index)
 fn nbget(r: u64, n: u32) -> u64 {
@@ -122,18 +121,9 @@ impl Drop for StreamCipher {
 impl StreamCipher {
     /// Initialize the stream cipher with the nibble-swapped CW and an 8-byte IV.
     pub(crate) fn new(cws: &[u8; SEED_BYTES], iv: &[u8; SEED_BYTES]) -> Self {
-        let a = u64::from(u32::from_le_bytes([
-            cws[0],
-            cws[1],
-            cws[CWS_BYTE_2],
-            cws[CWS_BYTE_3],
-        ]));
-        let b = u64::from(u32::from_le_bytes([
-            cws[CWS_BYTE_4],
-            cws[CWS_BYTE_5],
-            cws[CWS_BYTE_6],
-            cws[CWS_BYTE_7],
-        ]));
+        let (a_bytes, b_bytes) = cws.split_at(SEED_REGISTER_BYTES);
+        let a = u64::from(u32::from_le_bytes(a_bytes.try_into().unwrap()));
+        let b = u64::from(u32::from_le_bytes(b_bytes.try_into().unwrap()));
 
         let mut sc = Self {
             a,
@@ -337,14 +327,16 @@ pub(crate) fn csa_stream_b_sel(b: u64) -> u32 {
     // C code: `uint32_t t = B >> 9;` — truncation to 32 bits is load-bearing.
     let t = (b >> B_SEL_SHIFT) as u32;
 
-    ((t ^ (t >> B_SEL_BIT3_SHIFT)) & B_SEL_BIT3_MASK)
-        ^ ((t >> B_SEL_BIT30_SHIFT) & B_SEL_BIT30_MASK)
-        ^ (((t >> B_SEL_BIT2_SHIFT_A) ^ (t >> B_SEL_BIT2_SHIFT_B)) & B_SEL_BIT2_MASK)
-        ^ ((t >> B_SEL_BIT20_SHIFT) & B_SEL_BIT20_MASK)
-        ^ (((t >> B_SEL_BIT1_SHIFT_A) ^ (t >> B_SEL_BIT1_SHIFT_B) ^ (t >> B_SEL_BIT1_SHIFT_C))
-            & B_SEL_BIT1_MASK)
-        ^ (((t >> B_SEL_BIT0_SHIFT_A) ^ (t >> B_SEL_BIT0_SHIFT_B)) & B_SEL_BIT0_MASK)
-        ^ ((t >> B_SEL_BIT321_SHIFT) & B_SEL_BIT321_MASK)
+    ((t ^ (t >> B_SEL_HIGH_TAP_PRIMARY)) & B_SEL_OUT_HIGH)
+        ^ ((t >> B_SEL_HIGH_LSB_TAP) & (B_SEL_OUT_HIGH | B_SEL_OUT_LSB))
+        ^ (((t >> B_SEL_THIRD_TAP_PRIMARY) ^ (t >> B_SEL_THIRD_TAP_SECONDARY)) & B_SEL_OUT_THIRD)
+        ^ ((t >> B_SEL_LSB_THIRD_TAP) & (B_SEL_OUT_THIRD | B_SEL_OUT_LSB))
+        ^ (((t >> B_SEL_SECOND_TAP_PRIMARY)
+            ^ (t >> B_SEL_SECOND_TAP_SECONDARY)
+            ^ (t >> B_SEL_SECOND_TAP_TERTIARY))
+            & B_SEL_OUT_SECOND)
+        ^ (((t >> B_SEL_LSB_TAP_PRIMARY) ^ (t >> B_SEL_LSB_TAP_SECONDARY)) & B_SEL_OUT_LSB)
+        ^ ((t >> B_SEL_UPPER_TAPS_SHIFT) & (B_SEL_OUT_SECOND | B_SEL_OUT_THIRD | B_SEL_OUT_HIGH))
 }
 
 fn csa_stream_cfed(pqzyx: u32, cfed: u32) -> u32 {

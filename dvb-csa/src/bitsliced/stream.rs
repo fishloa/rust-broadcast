@@ -36,13 +36,8 @@ const KEY_BITS: usize = 32;
 
 /// Nibbles in a byte.
 const NIBBLES_PER_BYTE: usize = 2;
-/// Byte positions within the control-word seed.
-const CWS_BYTE_2: usize = 2;
-const CWS_BYTE_3: usize = 3;
-const CWS_BYTE_4: usize = 4;
-const CWS_BYTE_5: usize = 5;
-const CWS_BYTE_6: usize = 6;
-const CWS_BYTE_7: usize = 7;
+/// Bytes in each of the seed's two register halves.
+const SEED_REGISTER_BYTES: usize = core::mem::size_of::<u32>();
 /// Position of the carried C bit in the `STREAM_CDEF` index.
 const CDEF_INDEX_C_BIT: usize = NIBBLE_BITS * NIBBLES_PER_BYTE;
 /// Position of the Q bit in the `STREAM_CDEF` index.
@@ -114,13 +109,9 @@ impl BitslicedStream {
     ///
     /// `iv` is the transposed first block: `iv[byte * 8 + bit]`.
     pub(crate) fn new(cws: &[u8; BLOCK_BYTES], iv: &[Word; BLOCK_BITS]) -> Self {
-        let a = u32::from_le_bytes([cws[0], cws[1], cws[CWS_BYTE_2], cws[CWS_BYTE_3]]);
-        let b = u32::from_le_bytes([
-            cws[CWS_BYTE_4],
-            cws[CWS_BYTE_5],
-            cws[CWS_BYTE_6],
-            cws[CWS_BYTE_7],
-        ]);
+        let (a_bytes, b_bytes) = cws.split_at(SEED_REGISTER_BYTES);
+        let a = u32::from_le_bytes(a_bytes.try_into().unwrap());
+        let b = u32::from_le_bytes(b_bytes.try_into().unwrap());
         let mut sc = Self {
             a: broadcast(a),
             b: broadcast(b),
