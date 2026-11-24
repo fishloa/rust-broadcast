@@ -13,6 +13,16 @@ pub const TAG: u8 = 0x2C;
 const HEADER_LEN: usize = 2;
 // Table 2-82: FCR_ES_ID(16) + FCRResolution(32) + FCRLength(8) + FmxRateLength(8) = 64 bits = 8 bytes.
 const BODY_LEN: u8 = 8;
+/// Offset of `FCR_ES_ID` in the descriptor body.
+const FCR_ES_ID_OFFSET: usize = 0;
+/// Offset of `FCR_resolution` in the descriptor body.
+const FCR_RESOLUTION_OFFSET: usize = FCR_ES_ID_OFFSET + core::mem::size_of::<u16>();
+/// Width of `FCR_resolution`, bytes.
+const FCR_RESOLUTION_LEN: usize = core::mem::size_of::<u32>();
+/// Offset of `FCR_length` in the descriptor body.
+const FCR_LENGTH_OFFSET: usize = FCR_RESOLUTION_OFFSET + FCR_RESOLUTION_LEN;
+/// Offset of `FMX_rate_length` in the descriptor body.
+const FMX_RATE_LENGTH_OFFSET: usize = FCR_LENGTH_OFFSET + 1;
 
 /// FlexMuxTiming Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,11 +54,14 @@ impl<'a> Parse<'a> for FlexMuxTimingDescriptor {
                 reason: "FlexMuxTiming_descriptor length must equal 8",
             });
         }
+        let mut resolution_bytes = [0u8; FCR_RESOLUTION_LEN];
+        resolution_bytes
+            .copy_from_slice(&body[FCR_RESOLUTION_OFFSET..FCR_LENGTH_OFFSET]);
         Ok(Self {
             fcr_es_id: u16::from_be_bytes([body[0], body[1]]),
-            fcr_resolution: u32::from_be_bytes([body[2], body[3], body[4], body[5]]),
-            fcr_length: body[6],
-            fmx_rate_length: body[7],
+            fcr_resolution: u32::from_be_bytes(resolution_bytes),
+            fcr_length: body[FCR_LENGTH_OFFSET],
+            fmx_rate_length: body[FMX_RATE_LENGTH_OFFSET],
         })
     }
 }
@@ -65,10 +78,12 @@ impl Serialize for FlexMuxTimingDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN..HEADER_LEN + 2].copy_from_slice(&self.fcr_es_id.to_be_bytes());
-        buf[HEADER_LEN + 2..HEADER_LEN + 6].copy_from_slice(&self.fcr_resolution.to_be_bytes());
-        buf[HEADER_LEN + 6] = self.fcr_length;
-        buf[HEADER_LEN + 7] = self.fmx_rate_length;
+        buf[HEADER_LEN + FCR_ES_ID_OFFSET..HEADER_LEN + FCR_RESOLUTION_OFFSET]
+            .copy_from_slice(&self.fcr_es_id.to_be_bytes());
+        buf[HEADER_LEN + FCR_RESOLUTION_OFFSET..HEADER_LEN + FCR_LENGTH_OFFSET]
+            .copy_from_slice(&self.fcr_resolution.to_be_bytes());
+        buf[HEADER_LEN + FCR_LENGTH_OFFSET] = self.fcr_length;
+        buf[HEADER_LEN + FMX_RATE_LENGTH_OFFSET] = self.fmx_rate_length;
         Ok(len)
     }
 }
