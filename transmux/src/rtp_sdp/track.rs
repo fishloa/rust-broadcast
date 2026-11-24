@@ -1,10 +1,7 @@
 //! One SDP media section read as a playable track (RFC 4566 §5.14/§6, RFC 3551 §3, RFC 6184 §8,
 //! RFC 3640 §4.1); `std` because the section is an `sdp_types::Media`.
 
-use super::{
-    aac_config_from_fmtp, avc_config_from_fmtp, fmtp_param,
-    rtpmap_clock_rate,
-};
+use super::{aac_config_from_fmtp, avc_config_from_fmtp, fmtp_param, rtpmap_clock_rate};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::pipeline::CodecConfig;
 use alloc::vec::Vec;
