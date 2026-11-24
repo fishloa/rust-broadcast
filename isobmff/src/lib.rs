@@ -125,6 +125,7 @@ pub mod opus;
 pub mod plan;
 pub mod quicktime;
 pub mod reader;
+pub mod registry;
 pub mod sample_entries;
 pub mod sample_groups;
 pub mod sample_table;
