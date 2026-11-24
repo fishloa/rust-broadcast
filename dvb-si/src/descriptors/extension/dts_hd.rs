@@ -338,10 +338,11 @@ impl Serialize for SubstreamInfo {
                 | ((u8::from(a.vbr_flag)) << VBR_FLAG_SHIFT)
                 | ((u8::from(a.post_encode_br_scaling_flag)) << POST_ENCODE_BR_SCALING_SHIFT)
                 | u8::from(a.component_type_flag);
+            let bit_rate = u32::from(a.bit_rate_or_scaled);
             buf[pos + 1] = (u8::from(a.language_code_flag) << LANGUAGE_CODE_FLAG_SHIFT)
-                | ((a.bit_rate_or_scaled >> BIT_RATE_HIGH_SHIFT) as u8 & BIT_RATE_HIGH_MASK as u8);
+                | ((bit_rate >> BIT_RATE_HIGH_SHIFT) as u8);
             buf[pos + ASSET_RESERVED_BYTE_OFFSET] =
-                ((a.bit_rate_or_scaled as u8 & BIT_RATE_LOW_MASK as u8) << BIT_RATE_LOW_SHIFT)
+                (((bit_rate & u32::from(BIT_RATE_LOW_MASK)) as u8) << BIT_RATE_LOW_SHIFT)
                     | a.reserved.get() as u8;
             pos += ASSET_FIXED_LEN;
             if a.component_type_flag {

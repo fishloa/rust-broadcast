@@ -137,7 +137,7 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
                     // Two 12-bit tcimsbf values packed into 3 bytes (b0..b2):
                     let b0 = sel[pos];
                     let b1 = sel[pos + 1];
-                    let b2 = sel[pos + VD_HINT_THIRD_OFFSET];
+                    let b2 = sel[pos + HINT_THIRD_OFFSET];
                     let max = sext12(
                         (u16::from(b0) << DISPARITY_HIGH_SHIFT)
                             | (u16::from(b1) >> DISPARITY_HIGH_SHIFT),
@@ -182,7 +182,9 @@ const DISPARITY_SIGN_BIT: u16 = 0x0800;
 const DISPARITY_SIGN_EXTEND: u16 = 0xF000;
 /// Mask of the 12-bit disparity field.
 const DISPARITY_FIELD_MASK: u16 = 0x0FFF;
-/// Offset of the third disparity-hint byte after `range_type`/`range_length`.
+/// Offset of the third disparity-hint byte within the hint.
+const HINT_THIRD_OFFSET: usize = 2;
+/// Offset of the second disparity-hint byte after `range_type`/`range_length`.
 const VD_HINT_SECOND_OFFSET: usize = VD_RANGE_HDR_LEN + 1;
 /// Offset of the third disparity-hint byte.
 const VD_HINT_THIRD_OFFSET: usize = VD_RANGE_HDR_LEN + 2;
