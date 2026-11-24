@@ -13,6 +13,9 @@
 //! decoder for the surfaces that must accept either case (Smooth's
 //! `CodecPrivateData` is upper-case on the wire but not universally so).
 
+/// Hex digits per encoded byte.
+const HEX_DIGITS_PER_BYTE: usize = 2;
+
 use alloc::string::String;
 
 /// Hex-encode `data` as lowercase ASCII (two characters per byte).
@@ -106,7 +109,7 @@ impl HexDecodeError {
 /// bytes; [`HexDecodeError::InvalidDigit`] for the first byte that is not an
 /// ASCII hex digit.
 pub fn hex_decode_into(text: &str, out: &mut [u8]) -> Result<(), HexDecodeError> {
-    let expected = out.len().saturating_mul(2);
+    let expected = out.len().saturating_mul(HEX_DIGITS_PER_BYTE);
     let length_error = HexDecodeError::InvalidLength {
         expected,
         actual: text.len(),

@@ -47,6 +47,60 @@ const VERSION_BITS: u32 = 5;
 /// Mask of the 5-bit `program_stream_map_version` in the flags byte.
 const VERSION_MASK: u8 = 0x1F;
 
+/// Byte width of the `packet_start_code_prefix`.
+const START_CODE_PREFIX_LEN: usize = 3;
+/// Byte offset of `map_stream_id`, right after the prefix.
+const MAP_STREAM_ID_OFFSET: usize = START_CODE_PREFIX_LEN;
+/// Byte offset of `program_stream_map_length` (Table 2-41).
+const MAP_LENGTH_OFFSET: usize = MAP_STREAM_ID_OFFSET + 1;
+/// Byte width of a 16-bit length field.
+const LENGTH_FIELD_LEN: usize = 2;
+/// Byte offset of the `flags` byte, right after the prefix.
+const FLAGS_OFFSET: usize = PREFIX_LEN;
+/// Byte offset of the reserved + `marker_bit` byte.
+const RESERVED_OFFSET: usize = FLAGS_OFFSET + 1;
+/// Byte offset of `program_stream_info_length`.
+const PROG_INFO_LEN_OFFSET: usize = RESERVED_OFFSET + 1;
+/// Byte offset of the `program_stream_info` descriptor loop.
+const PROG_INFO_OFFSET: usize = PROG_INFO_LEN_OFFSET + LENGTH_FIELD_LEN;
+/// Bytes between the prefix and `program_stream_info`: `flags`(1) +
+/// reserved(1) + `program_stream_info_length`(2).
+const PROG_INFO_PREFIX_LEN: usize = 1 + 1 + LENGTH_FIELD_LEN;
+/// Minimum PSM packet: prefix + `program_stream_map_length` + CRC-32.
+const MIN_PSM_LEN: usize = PREFIX_LEN + LENGTH_FIELD_LEN + CRC_LEN;
+/// The reserved(7) + marker(1) byte the serializer writes (`0xFF`).
+const RESERVED_AND_MARKER_BYTE: u8 = 0xFF;
+/// `elementary_stream_id` value that carries an
+/// `elementary_stream_id_extension` when `single_extension_stream_flag == 0`
+/// (Table 2-41).
+const STREAM_ID_EXTENSION_TRIGGER: u8 = 0xFD;
+
+/// Byte offsets within an elementary-stream entry (Table 2-41).
+const ES_STREAM_TYPE_OFFSET: usize = 0;
+const ES_STREAM_ID_OFFSET: usize = ES_STREAM_TYPE_OFFSET + 1;
+const ES_INFO_LENGTH_OFFSET: usize = ES_STREAM_ID_OFFSET + 1;
+/// Byte offsets within the `elementary_stream_id_extension` pseudo descriptor.
+const PSEUDO_TAG_OFFSET: usize = 0;
+const PSEUDO_LENGTH_OFFSET: usize = PSEUDO_TAG_OFFSET + 1;
+const PSEUDO_EXTENSION_OFFSET: usize = PSEUDO_LENGTH_OFFSET + 1;
+const PSEUDO_DESCRIPTORS_OFFSET: usize = PSEUDO_EXTENSION_OFFSET + 1;
+
+/// Masks of the individual bits of a header byte.
+const BIT7_MASK: u8 = 0x80;
+const BIT6_MASK: u8 = 0x40;
+const BIT0_MASK: u8 = 0x01;
+/// Bit shifts of `current_next_indicator` and `single_extension_stream_flag`
+/// within the flags byte.
+const CURRENT_NEXT_SHIFT: u32 = 7;
+const SINGLE_EXTENSION_SHIFT: u32 = 6;
+
+/// Read the big-endian `u32` at `off`.
+fn read_u32_at(b: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; core::mem::size_of::<u32>()];
+    raw.copy_from_slice(&b[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(raw)
+}
+
 /// An elementary stream descriptor entry with optional stream_id_extension.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -95,11 +149,11 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
     type Error = Error;
 
     fn parse(b: &'a [u8]) -> Result<Self> {
-        if b.len() < PREFIX_LEN + 2 + 4 {
+        if b.len() < MIN_PSM_LEN {
             // prefix + psm_length(2) + CRC(4) = minimum
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: PREFIX_LEN + 2 + 4,
+                    need: MIN_PSM_LEN,
                     have: b.len(),
                     what: "program_stream_map",
                 },
@@ -107,15 +161,16 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         }
 
         // packet_start_code_prefix (3 bytes) + map_stream_id (1 byte)
-        let start = u32::from_be_bytes([0, b[0], b[1], b[2]]);
+        let start = read_u32_at(b, 0) >> u8::BITS;
         if start != PACKET_START_CODE_PREFIX {
-            return Err(Error::BadMapStreamId(b[3]));
+            return Err(Error::BadMapStreamId(b[MAP_STREAM_ID_OFFSET]));
         }
-        if b[3] != MAP_STREAM_ID {
-            return Err(Error::BadMapStreamId(b[3]));
+        if b[MAP_STREAM_ID_OFFSET] != MAP_STREAM_ID {
+            return Err(Error::BadMapStreamId(b[MAP_STREAM_ID_OFFSET]));
         }
 
-        let map_length = u16::from_be_bytes([b[4], b[5]]) as usize;
+        let map_length =
+            u16::from_be_bytes([b[MAP_LENGTH_OFFSET], b[MAP_LENGTH_OFFSET + 1]]) as usize;
         let crc_end = PREFIX_LEN + map_length;
         // `program_stream_map_length` max 1018 (Table 2-41), the same ceiling
         // the serializer enforces, so every accepted PSM can be written back
@@ -129,12 +184,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
 
         let crc_data_end = crc_end - CRC_LEN;
         let crc_data = &b[0..crc_data_end];
-        let stored_crc = u32::from_be_bytes([
-            b[crc_data_end],
-            b[crc_data_end + 1],
-            b[crc_data_end + 2],
-            b[crc_data_end + 3],
-        ]);
+        let stored_crc = read_u32_at(b, crc_data_end);
         let computed_crc = crc32_mpeg2::compute(crc_data);
         if computed_crc != stored_crc {
             return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
@@ -145,25 +195,26 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         }
 
         // flags byte: current_next(1) | single_extension(1) | reserved(1) | version(5)
-        let flags = b[6];
-        let current_next_indicator = flags & 0x80 != 0;
-        let single_extension_stream_flag = flags & 0x40 != 0;
+        let flags = b[FLAGS_OFFSET];
+        let current_next_indicator = flags & BIT7_MASK != 0;
+        let single_extension_stream_flag = flags & BIT6_MASK != 0;
         let version = flags & VERSION_MASK;
 
         // reserved byte (7 bits reserved + marker_bit)
-        if b[7] & 0x01 == 0 {
+        if b[RESERVED_OFFSET] & BIT0_MASK == 0 {
             return Err(Error::BadMarker("program_stream_map marker_bit"));
         }
 
-        let program_stream_info_length = u16::from_be_bytes([b[8], b[9]]) as usize;
+        let program_stream_info_length =
+            u16::from_be_bytes([b[PROG_INFO_LEN_OFFSET], b[PROG_INFO_LEN_OFFSET + 1]]) as usize;
 
-        let info_start = PREFIX_LEN + 4; // after flags(1)+reserved(1)+prog_info_len(2)
+        let info_start = PREFIX_LEN + PROG_INFO_PREFIX_LEN;
         let info_end = info_start + program_stream_info_length;
 
         // Table 2-41 order: program_stream_info_length(16), descriptor()×N,
         // THEN elementary_stream_map_length(16) — the length field follows
         // the program descriptor loop, not the reverse (#1050).
-        if crc_data_end < info_end + 2 {
+        if crc_data_end < info_end + LENGTH_FIELD_LEN {
             return Err(Error::MapLengthOverflow {
                 map_length,
                 available: b.len().saturating_sub(PREFIX_LEN),
@@ -172,7 +223,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         let elementary_stream_map_length =
             u16::from_be_bytes([b[info_end], b[info_end + 1]]) as usize;
 
-        let es_start = info_end + 2; // after elementary_stream_map_length(2)
+        let es_start = info_end + LENGTH_FIELD_LEN; // after elementary_stream_map_length(2)
         let es_end = es_start + elementary_stream_map_length;
 
         if crc_data_end < es_end {
@@ -213,34 +264,37 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
 fn parse_es_loop(data: &[u8], single_flag: bool) -> Result<Vec<EsMapEntry<'_>>> {
     let mut entries = Vec::new();
     let mut pos = 0;
-    while pos + 4 <= data.len() {
-        let stream_type = data[pos];
-        let elementary_stream_id = data[pos + 1];
-        let es_info_length = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
-        let entry_hdr_end = pos + 4;
+    while pos + ES_ENTRY_HEADER_LEN <= data.len() {
+        let stream_type = data[pos + ES_STREAM_TYPE_OFFSET];
+        let elementary_stream_id = data[pos + ES_STREAM_ID_OFFSET];
+        let es_info_length = u16::from_be_bytes([
+            data[pos + ES_INFO_LENGTH_OFFSET],
+            data[pos + ES_INFO_LENGTH_OFFSET + 1],
+        ]) as usize;
+        let entry_hdr_end = pos + ES_ENTRY_HEADER_LEN;
         let entry_end = entry_hdr_end + es_info_length;
         need_in(data, entry_end, "elementary_stream_map entry descriptors")?;
 
         let (pseudo_descriptor, stream_id_extension, descriptors) =
-            if elementary_stream_id == 0xFD && !single_flag {
+            if elementary_stream_id == STREAM_ID_EXTENSION_TRIGGER && !single_flag {
                 // Extension form with pseudo descriptor
-                if es_info_length < 3 {
+                if es_info_length < PSEUDO_DESCRIPTOR_LEN {
                     return Err(Error::BufferTooShort(
                         broadcast_common::error::BufferTooShort {
-                            need: 3,
+                            need: PSEUDO_DESCRIPTOR_LEN,
                             have: es_info_length,
                             what: "pseudo descriptor for stream_id_extension",
                         },
                     ));
                 }
                 // pseudo_descriptor_tag + pseudo_descriptor_length + marker+extension
-                if data[entry_hdr_end + 2] & 0x80 == 0 {
+                if data[entry_hdr_end + PSEUDO_EXTENSION_OFFSET] & MARKER_BIT == 0 {
                     return Err(Error::BadMarker("elementary_stream_id_extension marker"));
                 }
-                let ext = data[entry_hdr_end + 2] & 0x7F;
-                let desc = &data[entry_hdr_end + 3..entry_end];
-                let tag = data[entry_hdr_end];
-                let length = data[entry_hdr_end + 1];
+                let ext = data[entry_hdr_end + PSEUDO_EXTENSION_OFFSET] & EXTENSION_MASK;
+                let desc = &data[entry_hdr_end + PSEUDO_DESCRIPTORS_OFFSET..entry_end];
+                let tag = data[entry_hdr_end + PSEUDO_TAG_OFFSET];
+                let length = data[entry_hdr_end + PSEUDO_LENGTH_OFFSET];
                 (Some((tag, length)), Some(ext), desc)
             } else {
                 let desc = &data[entry_hdr_end..entry_end];
@@ -279,7 +333,8 @@ fn es_entry_len(e: &EsMapEntry<'_>) -> usize {
 /// plus `program_stream_map_length` (ISO/IEC 13818-1 Table 2-41).
 pub(crate) fn program_stream_map_wire_len(data: &[u8]) -> Result<usize> {
     need_in(data, PREFIX_LEN, "program_stream_map prefix")?;
-    let map_length = u16::from_be_bytes([data[4], data[5]]) as usize;
+    let map_length =
+        u16::from_be_bytes([data[MAP_LENGTH_OFFSET], data[MAP_LENGTH_OFFSET + 1]]) as usize;
     Ok(PREFIX_LEN + map_length)
 }
 
@@ -291,12 +346,12 @@ fn write_es_loop(entries: &[EsMapEntry<'_>], out: &mut [u8]) -> Result<()> {
     for e in entries {
         let entry_len = es_entry_len(e);
         let dst = &mut out[at..at + entry_len];
-        dst[0] = e.stream_type;
-        dst[1] = e.elementary_stream_id;
+        dst[ES_STREAM_TYPE_OFFSET] = e.stream_type;
+        dst[ES_STREAM_ID_OFFSET] = e.elementary_stream_id;
         let info_len = entry_len - ES_ENTRY_HEADER_LEN;
         let info_len =
             broadcast_common::len::fit_u16(info_len, "elementary_stream_map.ES_info_length")?;
-        dst[2..4].copy_from_slice(&info_len.to_be_bytes());
+        dst[ES_INFO_LENGTH_OFFSET..ES_ENTRY_HEADER_LEN].copy_from_slice(&info_len.to_be_bytes());
         let mut c = ES_ENTRY_HEADER_LEN;
         if let Some(ext) = e.stream_id_extension {
             // Written back as carried (§2.5.4.2 fixes a rebuilt one to tag
@@ -305,11 +360,11 @@ fn write_es_loop(entries: &[EsMapEntry<'_>], out: &mut [u8]) -> Result<()> {
             // pseudo_descriptor_length: 8-bit field covering the marker+
             // extension byte plus the descriptors. Checked in usize before
             // narrowing — `1 + len as u8` used to overflow at 255 (#1129).
-            dst[c + 1] = broadcast_common::len::fit_u8(
+            dst[c + PSEUDO_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
                 1 + e.descriptors.len(),
                 "elementary_stream_map.pseudo_descriptor_length",
             )?;
-            dst[c + 2] = MARKER_BIT | (ext & EXTENSION_MASK);
+            dst[c + PSEUDO_EXTENSION_OFFSET] = MARKER_BIT | (ext & EXTENSION_MASK);
             c += PSEUDO_DESCRIPTOR_LEN;
         }
         dst[c..].copy_from_slice(e.descriptors.raw());
@@ -334,9 +389,9 @@ impl Serialize for ProgramStreamMap<'_> {
         need_out(buf, total)?;
 
         // packet_start_code_prefix (3 bytes)
-        buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX.to_be_bytes()[1..]);
+        buf[..START_CODE_PREFIX_LEN].copy_from_slice(&PACKET_START_CODE_PREFIX.to_be_bytes()[1..]);
         // map_stream_id
-        buf[3] = MAP_STREAM_ID;
+        buf[MAP_STREAM_ID_OFFSET] = MAP_STREAM_ID;
 
         let prog_info_len = self.program_stream_info.len();
         let es_loop_len: usize = self.elementary_stream_map.iter().map(es_entry_len).sum();
@@ -357,7 +412,7 @@ impl Serialize for ProgramStreamMap<'_> {
             map_length,
             "program_stream_map.program_stream_map_length",
         )?;
-        buf[4..6].copy_from_slice(&map_length.to_be_bytes());
+        buf[MAP_LENGTH_OFFSET..PREFIX_LEN].copy_from_slice(&map_length.to_be_bytes());
 
         // flags: current_next(1) + single_extension(1) + reserved(1, convention
         // is set) + version(5). W8 (#1119): the reserved bit (bit 5) was
@@ -367,8 +422,8 @@ impl Serialize for ProgramStreamMap<'_> {
             VERSION_BITS,
             "program_stream_map.program_stream_map_version",
         )? as u8;
-        buf[6] = (u8::from(self.current_next_indicator) << 7)
-            | (u8::from(self.single_extension_stream_flag) << 6)
+        buf[FLAGS_OFFSET] = (u8::from(self.current_next_indicator) << CURRENT_NEXT_SHIFT)
+            | (u8::from(self.single_extension_stream_flag) << SINGLE_EXTENSION_SHIFT)
             | FLAGS_RESERVED_BIT
             | version;
 
@@ -377,7 +432,7 @@ impl Serialize for ProgramStreamMap<'_> {
         // set) and leaves the MSB reserved bit `0` instead of the
         // conventional `1` — real encoders write this byte `0xFF`, so this
         // did not round-trip byte-identically against a real capture.
-        buf[7] = 0xFF;
+        buf[RESERVED_OFFSET] = RESERVED_AND_MARKER_BYTE;
 
         // program_stream_info_length and elementary_stream_map_length are
         // both 16-bit fields; `map_length <= MAP_LENGTH_MAX` above already
@@ -391,17 +446,20 @@ impl Serialize for ProgramStreamMap<'_> {
             es_loop_len,
             "program_stream_map.elementary_stream_map_length",
         )?;
-        buf[8..10].copy_from_slice(&prog_info_len_u16.to_be_bytes());
+        buf[PROG_INFO_LEN_OFFSET..PROG_INFO_OFFSET]
+            .copy_from_slice(&prog_info_len_u16.to_be_bytes());
 
         // program_stream_info descriptors (Table 2-41: the program descriptor
         // loop comes immediately after program_stream_info_length, at byte
         // 10, BEFORE elementary_stream_map_length — #1050)
-        buf[10..10 + prog_info_len].copy_from_slice(self.program_stream_info.raw());
+        buf[PROG_INFO_OFFSET..PROG_INFO_OFFSET + prog_info_len]
+            .copy_from_slice(self.program_stream_info.raw());
 
         // elementary_stream_map_length, then the elementary stream loop
-        let es_len_start = 10 + prog_info_len;
-        buf[es_len_start..es_len_start + 2].copy_from_slice(&es_loop_len_u16.to_be_bytes());
-        let es_start = es_len_start + 2;
+        let es_len_start = PROG_INFO_OFFSET + prog_info_len;
+        buf[es_len_start..es_len_start + LENGTH_FIELD_LEN]
+            .copy_from_slice(&es_loop_len_u16.to_be_bytes());
+        let es_start = es_len_start + LENGTH_FIELD_LEN;
         write_es_loop(
             &self.elementary_stream_map,
             &mut buf[es_start..es_start + es_loop_len],
@@ -410,7 +468,7 @@ impl Serialize for ProgramStreamMap<'_> {
         // CRC-32 over everything before it
         let crc_offset = es_start + es_loop_len;
         let crc = crc32_mpeg2::compute(&buf[0..crc_offset]);
-        buf[crc_offset..crc_offset + 4].copy_from_slice(&crc.to_be_bytes());
+        buf[crc_offset..crc_offset + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
 
         Ok(total)
     }

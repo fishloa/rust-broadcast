@@ -6,6 +6,14 @@
 //! the ISO 639-2/T three-letter code). Backed by the `iso-639` crate; no
 //! hand-rolled code table.
 
+/// Width of an ISO 639-2 code and the byte offsets of its second/third letters.
+const ISO_639_2_LEN: usize = 3;
+const SECOND_LETTER_OFFSET: usize = 1;
+const THIRD_LETTER_OFFSET: usize = 2;
+/// Bounds of the private-use (`qaa`..`qtz`) second letter.
+const PRIVATE_USE_SECOND_MIN: u8 = b'a';
+const PRIVATE_USE_SECOND_MAX: u8 = b't';
+
 /// Canonicalise an ISO 639-2 language code into a BCP 47 (RFC 5646) primary
 /// language subtag.
 ///
@@ -19,7 +27,7 @@
 /// unchanged. Unknown or malformed codes return `None`.
 pub fn bcp47_language(iso639_2: &str) -> Option<String> {
     let code = iso639_2.trim().to_ascii_lowercase();
-    if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_lowercase()) {
+    if code.len() != ISO_639_2_LEN || !code.bytes().all(|b| b.is_ascii_lowercase()) {
         return None;
     }
     if code == "und" || code == "mul" || code == "mis" || code == "zxx" {
@@ -27,7 +35,9 @@ pub fn bcp47_language(iso639_2: &str) -> Option<String> {
     }
     if code.starts_with('q') {
         let bytes = code.as_bytes();
-        if (b'a'..=b't').contains(&bytes[1]) && bytes[2].is_ascii_lowercase() {
+        if (PRIVATE_USE_SECOND_MIN..=PRIVATE_USE_SECOND_MAX).contains(&bytes[SECOND_LETTER_OFFSET])
+            && bytes[THIRD_LETTER_OFFSET].is_ascii_lowercase()
+        {
             return Some(code);
         }
     }

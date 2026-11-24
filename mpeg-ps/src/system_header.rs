@@ -16,11 +16,83 @@ pub const SYSTEM_HEADER_START_CODE: u32 = 0x0000_01BB;
 
 /// `stream_id` value that triggers the extension (extended_stream_id) form.
 const EXT_STREAM_ID: u8 = 0xB7;
+/// The fixed `'1011 0110'` byte that follows `stream_id_extension` (Table 2-40).
+const STREAM_ID_EXTENSION_PREFIX: u8 = 0xB6;
 
 /// Fixed bytes before the stream loop: start_code(4) + header_length(2).
 pub(crate) const PREFIX_LEN: usize = 6;
-/// Mask of the 7 `reserved_bits` below `packet_rate_restriction_flag` (Table 2-40).
+
+/// Byte offset of `system_header_start_code`.
+const START_CODE_OFFSET: usize = 0;
+/// Byte offset of the 16-bit `header_length`.
+const HEADER_LENGTH_OFFSET: usize = START_CODE_OFFSET + core::mem::size_of::<u32>();
+
+/// Byte offsets within the system-header body (ISO/IEC 13818-1 §2.5.3.5,
+/// Table 2-40).
+const RATE_BOUND_OFFSET: usize = 0;
+const RATE_BOUND_MID_OFFSET: usize = RATE_BOUND_OFFSET + 1;
+const RATE_BOUND_LO_OFFSET: usize = RATE_BOUND_MID_OFFSET + 1;
+const AUDIO_BOUND_OFFSET: usize = RATE_BOUND_LO_OFFSET + 1;
+const STREAM_FLAGS_OFFSET: usize = AUDIO_BOUND_OFFSET + 1;
+const PACKET_RATE_OFFSET: usize = STREAM_FLAGS_OFFSET + 1;
+/// Byte length of the fixed system-header body, before the stream loop.
+const FIXED_BODY_LEN: usize = PACKET_RATE_OFFSET + 1;
+
+/// Byte offsets within an extended (6-byte) stream-bound entry.
+const EXT_STREAM_ID_EXTENSION_OFFSET: usize = 2;
+const EXT_STREAM_ID_PREFIX_OFFSET: usize = 3;
+const EXT_BUFFER_FLAGS_OFFSET: usize = 4;
+const EXT_BUFFER_SIZE_LO_OFFSET: usize = 5;
+/// Byte offsets within a plain (3-byte) stream-bound entry.
+const STREAM_BUFFER_FLAGS_OFFSET: usize = 1;
+const STREAM_BUFFER_SIZE_LO_OFFSET: usize = 2;
+/// Wire lengths of the two stream-bound entry forms.
+const EXT_STREAM_ENTRY_LEN: usize = 6;
+const STREAM_ENTRY_LEN: usize = 3;
+
+/// Masks of the individual bits of a header byte.
+const BIT7_MASK: u8 = 0x80;
+const BIT6_MASK: u8 = 0x40;
+const BIT5_MASK: u8 = 0x20;
+const BIT1_MASK: u8 = 0x02;
+const BIT0_MASK: u8 = 0x01;
+/// Mask of the low 7 bits of a byte, shared by the `reserved_bits` field, the
+/// `rate_bound` high group and `stream_id_extension` (Table 2-40).
 const RESERVED_BITS_MASK: u8 = 0x7F;
+/// Mask of the low 6 bits of a byte.
+const LOW_6_BITS_MASK: u8 = 0x3F;
+/// Mask of the low 5 bits of a byte.
+const LOW_5_BITS_MASK: u8 = 0x1F;
+/// Mask of the leading `'11'` prefix of an extended stream-bound entry.
+const STREAM_ENTRY_PREFIX_MASK: u8 = 0xC0;
+
+/// Bit widths of the fixed header fields (Table 2-40).
+const RATE_BOUND_BITS: u32 = 22;
+const AUDIO_BOUND_BITS: u32 = 6;
+const VIDEO_BOUND_BITS: u32 = 5;
+const STREAM_ID_EXTENSION_BITS: u32 = 7;
+const BUFFER_SIZE_BOUND_BITS: u32 = 13;
+
+/// Bit shifts of the 22-bit `rate_bound` and the flags packed beside it.
+const RATE_BOUND_HI_SHIFT: u32 = 15;
+const RATE_BOUND_MID_SHIFT: u32 = 7;
+const RATE_BOUND_LO_SHIFT: u32 = 1;
+const AUDIO_BOUND_SHIFT: u32 = 2;
+const SYSTEM_AUDIO_LOCK_SHIFT: u32 = 7;
+const SYSTEM_VIDEO_LOCK_SHIFT: u32 = 6;
+const PACKET_RATE_RESTRICTION_SHIFT: u32 = 7;
+const BUFFER_BOUND_SCALE_SHIFT: u32 = 5;
+const BUFFER_SIZE_BOUND_HI_SHIFT: u32 = 8;
+
+/// Mask of the 22-bit `rate_bound` field.
+const RATE_BOUND_MASK: u32 = (1 << RATE_BOUND_BITS) - 1;
+
+/// Read the big-endian `u32` at `off`.
+fn read_u32_at(b: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; core::mem::size_of::<u32>()];
+    raw.copy_from_slice(&b[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(raw)
+}
 
 /// A per-stream P-STD buffer bound entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,9 +154,9 @@ fn stream_loop_len(system_header: &SystemHeader) -> usize {
     let mut len: usize = 0;
     for b in &system_header.std_buffer_bounds {
         if b.stream_id_extension.is_some() {
-            len += 6;
+            len += EXT_STREAM_ENTRY_LEN;
         } else {
-            len += 3;
+            len += STREAM_ENTRY_LEN;
         }
     }
     len + system_header.trailing_reserved.len()
@@ -96,13 +168,15 @@ impl<'a> Parse<'a> for SystemHeader {
     fn parse(b: &'a [u8]) -> Result<Self> {
         need_in(b, PREFIX_LEN, "system_header prefix")?;
 
-        if u32::from_be_bytes([b[0], b[1], b[2], b[3]]) != SYSTEM_HEADER_START_CODE {
-            return Err(Error::BadSystemHeaderStartCode(u32::from_be_bytes([
-                b[0], b[1], b[2], b[3],
-            ])));
+        if read_u32_at(b, START_CODE_OFFSET) != SYSTEM_HEADER_START_CODE {
+            return Err(Error::BadSystemHeaderStartCode(read_u32_at(
+                b,
+                START_CODE_OFFSET,
+            )));
         }
 
-        let header_length = u16::from_be_bytes([b[4], b[5]]) as usize;
+        let header_length =
+            u16::from_be_bytes([b[HEADER_LENGTH_OFFSET], b[HEADER_LENGTH_OFFSET + 1]]) as usize;
         let body_end = PREFIX_LEN + header_length;
         if b.len() < body_end {
             return Err(Error::HeaderLengthOverflow {
@@ -120,10 +194,10 @@ impl<'a> Parse<'a> for SystemHeader {
         // byte 4: system_audio_lock_flag(1) | system_video_lock_flag(1) | marker(1) | video_bound[4:0](5)
         // byte 5: packet_rate_restriction_flag(1) | reserved(7)
 
-        if body.len() < 6 {
+        if body.len() < FIXED_BODY_LEN {
             return Err(Error::BufferTooShort(
                 broadcast_common::error::BufferTooShort {
-                    need: 6 + PREFIX_LEN,
+                    need: FIXED_BODY_LEN + PREFIX_LEN,
                     have: b.len(),
                     what: "system_header fixed body",
                 },
@@ -131,92 +205,112 @@ impl<'a> Parse<'a> for SystemHeader {
         }
 
         // Marker bit checks
-        if body[0] & 0x80 == 0 {
+        if body[RATE_BOUND_OFFSET] & BIT7_MASK == 0 {
             return Err(Error::BadMarker("system_header rate_bound marker 1"));
         }
-        if body[2] & 0x01 == 0 {
+        if body[RATE_BOUND_LO_OFFSET] & BIT0_MASK == 0 {
             return Err(Error::BadMarker("system_header rate_bound marker 2"));
         }
-        if body[4] & 0x20 == 0 {
+        if body[STREAM_FLAGS_OFFSET] & BIT5_MASK == 0 {
             return Err(Error::BadMarker("system_header video_bound marker"));
         }
 
         // rate_bound: 22 bits
-        let rate_bound = ((u32::from(body[0] & 0x7F) << 15)
-            | (u32::from(body[1]) << 7)
-            | u32::from(body[2] >> 1))
-            & 0x3F_FFFF;
+        let rate_bound = ((u32::from(body[RATE_BOUND_OFFSET] & RESERVED_BITS_MASK)
+            << RATE_BOUND_HI_SHIFT)
+            | (u32::from(body[RATE_BOUND_MID_OFFSET]) << RATE_BOUND_MID_SHIFT)
+            | u32::from(body[RATE_BOUND_LO_OFFSET] >> RATE_BOUND_LO_SHIFT))
+            & RATE_BOUND_MASK;
 
         // byte 3: audio_bound(6) | fixed_flag(1) | CSPS_flag(1)
-        let audio_bound = (body[3] >> 2) & 0x3F;
-        let fixed_flag = body[3] & 0x02 != 0;
-        let csps_flag = body[3] & 0x01 != 0;
+        let audio_bound = (body[AUDIO_BOUND_OFFSET] >> AUDIO_BOUND_SHIFT) & LOW_6_BITS_MASK;
+        let fixed_flag = body[AUDIO_BOUND_OFFSET] & BIT1_MASK != 0;
+        let csps_flag = body[AUDIO_BOUND_OFFSET] & BIT0_MASK != 0;
 
         // byte 4: system_audio_lock_flag(1) | system_video_lock_flag(1) | marker(1) | video_bound[4:0](5)
-        let system_audio_lock_flag = body[4] & 0x80 != 0;
-        let system_video_lock_flag = body[4] & 0x40 != 0;
+        let system_audio_lock_flag = body[STREAM_FLAGS_OFFSET] & BIT7_MASK != 0;
+        let system_video_lock_flag = body[STREAM_FLAGS_OFFSET] & BIT6_MASK != 0;
         // W1 (#1119): `video_bound` is the low 5 bits of byte 4, not 4 —
         // `& 0x0F` dropped bit 4, so `video_bound` in 16..=31 round-tripped
-        // to `video_bound - 16` (serialize already used the correct `0x1F`,
-        // Table 2-40).
-        let video_bound = body[4] & 0x1F;
+        // to `video_bound - 16` (serialize already used the correct 5-bit
+        // mask, Table 2-40).
+        let video_bound = body[STREAM_FLAGS_OFFSET] & LOW_5_BITS_MASK;
 
         // byte 5: packet_rate_restriction_flag(1) | reserved(7)
-        let packet_rate_restriction_flag = body[5] & 0x80 != 0;
-        let reserved_bits = body[5] & RESERVED_BITS_MASK;
+        let packet_rate_restriction_flag = body[PACKET_RATE_OFFSET] & BIT7_MASK != 0;
+        let reserved_bits = body[PACKET_RATE_OFFSET] & RESERVED_BITS_MASK;
 
         // Stream loop — each entry starts with MSB=1 (nextbits()=='1')
-        let mut pos = 6;
+        let mut pos = FIXED_BODY_LEN;
         let mut std_buffer_bounds = Vec::new();
-        while pos < body.len() && body[pos] & 0x80 != 0 {
+        while pos < body.len() && body[pos] & BIT7_MASK != 0 {
             let stream_id = body[pos];
             if stream_id == EXT_STREAM_ID {
                 // Extension form (6 bytes)
-                need_in(body, pos + 6, "system_header extended stream entry")?;
+                need_in(
+                    body,
+                    pos + EXT_STREAM_ENTRY_LEN,
+                    "system_header extended stream entry",
+                )?;
                 // byte pos+1: '11' + '000000'(6 bits)
-                if body[pos + 1] & 0xC0 != 0xC0 {
-                    return Err(Error::BadStreamIdExtensionPrefix(body[pos + 1]));
+                if body[pos + STREAM_BUFFER_FLAGS_OFFSET] & STREAM_ENTRY_PREFIX_MASK
+                    != STREAM_ENTRY_PREFIX_MASK
+                {
+                    return Err(Error::BadStreamIdExtensionPrefix(
+                        body[pos + STREAM_BUFFER_FLAGS_OFFSET],
+                    ));
                 }
                 // byte pos+2: '0'(1) + stream_id_extension(7)
-                let stream_id_extension = body[pos + 2] & 0x7F;
+                let stream_id_extension =
+                    body[pos + EXT_STREAM_ID_EXTENSION_OFFSET] & RESERVED_BITS_MASK;
                 // byte pos+3: '1011 0110'
-                if body[pos + 3] != 0xB6 {
-                    return Err(Error::BadStreamIdExtensionPrefix(body[pos + 3]));
+                if body[pos + EXT_STREAM_ID_PREFIX_OFFSET] != STREAM_ID_EXTENSION_PREFIX {
+                    return Err(Error::BadStreamIdExtensionPrefix(
+                        body[pos + EXT_STREAM_ID_PREFIX_OFFSET],
+                    ));
                 }
                 // byte pos+4: '11' + scale(1) + size[12:7](5)
-                if body[pos + 4] & 0xC0 != 0xC0 {
+                if body[pos + EXT_BUFFER_FLAGS_OFFSET] & STREAM_ENTRY_PREFIX_MASK
+                    != STREAM_ENTRY_PREFIX_MASK
+                {
                     return Err(Error::BadMarker("P-STD_buffer_bound_scale prefix (ext)"));
                 }
-                let buffer_bound_scale = body[pos + 4] & 0x20 != 0;
+                let buffer_bound_scale = body[pos + EXT_BUFFER_FLAGS_OFFSET] & BIT5_MASK != 0;
                 // bytes pos+4/pos+5: '11'(2) | scale(1) | size[12:8](5), then size[7:0](8):
                 // the 13-bit size has no trailing marker bit (Table 2-40).
                 let buffer_size_bound =
-                    (u16::from(body[pos + 4] & 0x1F) << 8) | u16::from(body[pos + 5]);
+                    (u16::from(body[pos + EXT_BUFFER_FLAGS_OFFSET] & LOW_5_BITS_MASK)
+                        << BUFFER_SIZE_BOUND_HI_SHIFT)
+                        | u16::from(body[pos + EXT_BUFFER_SIZE_LO_OFFSET]);
                 std_buffer_bounds.push(StdBufferBound {
                     stream_id,
                     stream_id_extension: Some(stream_id_extension),
                     buffer_bound_scale,
                     buffer_size_bound,
                 });
-                pos += 6;
+                pos += EXT_STREAM_ENTRY_LEN;
             } else {
                 // Normal form (3 bytes)
-                need_in(body, pos + 3, "system_header stream entry")?;
+                need_in(body, pos + STREAM_ENTRY_LEN, "system_header stream entry")?;
                 // byte pos+1: '11' + scale(1) + size[12:7](5)
-                if body[pos + 1] & 0xC0 != 0xC0 {
+                if body[pos + STREAM_BUFFER_FLAGS_OFFSET] & STREAM_ENTRY_PREFIX_MASK
+                    != STREAM_ENTRY_PREFIX_MASK
+                {
                     return Err(Error::BadMarker("P-STD_buffer_bound_scale prefix"));
                 }
-                let buffer_bound_scale = body[pos + 1] & 0x20 != 0;
+                let buffer_bound_scale = body[pos + STREAM_BUFFER_FLAGS_OFFSET] & BIT5_MASK != 0;
                 // bytes pos+1/pos+2: '11'(2) | scale(1) | size[12:8](5), then size[7:0](8).
                 let buffer_size_bound =
-                    (u16::from(body[pos + 1] & 0x1F) << 8) | u16::from(body[pos + 2]);
+                    (u16::from(body[pos + STREAM_BUFFER_FLAGS_OFFSET] & LOW_5_BITS_MASK)
+                        << BUFFER_SIZE_BOUND_HI_SHIFT)
+                        | u16::from(body[pos + STREAM_BUFFER_SIZE_LO_OFFSET]);
                 std_buffer_bounds.push(StdBufferBound {
                     stream_id,
                     stream_id_extension: None,
                     buffer_bound_scale,
                     buffer_size_bound,
                 });
-                pos += 3;
+                pos += STREAM_ENTRY_LEN;
             }
         }
 
@@ -242,7 +336,7 @@ impl SystemHeader {
     /// 2-40), and `stream_id == 0xB7` selects the 6-byte extension form.
     fn validate_stream_loop(&self) -> Result<()> {
         for b in &self.std_buffer_bounds {
-            if b.stream_id & 0x80 == 0 {
+            if b.stream_id & BIT7_MASK == 0 {
                 return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                     field: "system_header.stream_id",
                     reason: "stream_id MSB is 0, so the entry would end the stream loop on parse",
@@ -258,7 +352,7 @@ impl SystemHeader {
                     }
                     broadcast_common::len::fit_bits(
                         u64::from(ext),
-                        7,
+                        STREAM_ID_EXTENSION_BITS,
                         "system_header.stream_id_extension",
                     )?;
                 }
@@ -273,14 +367,14 @@ impl SystemHeader {
             }
             broadcast_common::len::fit_bits(
                 u64::from(b.buffer_size_bound),
-                13,
+                BUFFER_SIZE_BOUND_BITS,
                 "system_header.P-STD_buffer_size_bound",
             )?;
         }
         if self
             .trailing_reserved
             .first()
-            .is_some_and(|f| f & 0x80 != 0)
+            .is_some_and(|f| f & BIT7_MASK != 0)
         {
             return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                 field: "system_header.trailing_reserved",
@@ -295,7 +389,7 @@ impl Serialize for SystemHeader {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        PREFIX_LEN + 6 + stream_loop_len(self)
+        PREFIX_LEN + FIXED_BODY_LEN + stream_loop_len(self)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -303,28 +397,29 @@ impl Serialize for SystemHeader {
         need_out(buf, total)?;
 
         // system_header_start_code
-        buf[0..4].copy_from_slice(&SYSTEM_HEADER_START_CODE.to_be_bytes());
+        buf[START_CODE_OFFSET..HEADER_LENGTH_OFFSET]
+            .copy_from_slice(&SYSTEM_HEADER_START_CODE.to_be_bytes());
 
         // header_length (bytes after this field)
         let header_length = broadcast_common::len::fit_u16(
-            6 + stream_loop_len(self),
+            FIXED_BODY_LEN + stream_loop_len(self),
             "system_header.header_length",
         )?;
-        buf[4..6].copy_from_slice(&header_length.to_be_bytes());
+        buf[HEADER_LENGTH_OFFSET..PREFIX_LEN].copy_from_slice(&header_length.to_be_bytes());
 
         let rate_bound = broadcast_common::len::fit_bits(
             u64::from(self.rate_bound),
-            22,
+            RATE_BOUND_BITS,
             "system_header.rate_bound",
         )? as u32;
         let audio_bound = broadcast_common::len::fit_bits(
             u64::from(self.audio_bound),
-            6,
+            AUDIO_BOUND_BITS,
             "system_header.audio_bound",
         )? as u8;
         let video_bound = broadcast_common::len::fit_bits(
             u64::from(self.video_bound),
-            5,
+            VIDEO_BOUND_BITS,
             "system_header.video_bound",
         )? as u8;
         let reserved_bits = broadcast_common::len::fit_mask(
@@ -333,45 +428,55 @@ impl Serialize for SystemHeader {
             "system_header.reserved_bits",
         )?;
         self.validate_stream_loop()?;
+
+        let body = &mut buf[PREFIX_LEN..total];
         // byte 6: marker(1) | rate_bound[21:15](7)
-        buf[6] = 0x80 | ((rate_bound >> 15) & 0x7F) as u8;
+        body[RATE_BOUND_OFFSET] =
+            BIT7_MASK | ((rate_bound >> RATE_BOUND_HI_SHIFT) & u32::from(RESERVED_BITS_MASK)) as u8;
         // byte 7: rate_bound[14:7]
-        buf[7] = ((rate_bound >> 7) & 0xFF) as u8;
+        body[RATE_BOUND_MID_OFFSET] =
+            ((rate_bound >> RATE_BOUND_MID_SHIFT) & u32::from(u8::MAX)) as u8;
         // byte 8: rate_bound[6:0](7) | marker(1)
-        buf[8] = (((rate_bound & 0x7F) as u8) << 1) | 0x01;
+        body[RATE_BOUND_LO_OFFSET] = (((rate_bound & u32::from(RESERVED_BITS_MASK)) as u8)
+            << RATE_BOUND_LO_SHIFT)
+            | BIT0_MASK;
         // byte 9: audio_bound[5:0](6) | fixed_flag(1) | CSPS_flag(1)
-        buf[9] = audio_bound << 2 | (u8::from(self.fixed_flag) << 1) | u8::from(self.csps_flag);
+        body[AUDIO_BOUND_OFFSET] = audio_bound << AUDIO_BOUND_SHIFT
+            | (u8::from(self.fixed_flag) << 1)
+            | u8::from(self.csps_flag);
         // byte 10: system_audio_lock_flag(1) | system_video_lock_flag(1) | marker(1) | video_bound[4:0](5)
-        buf[10] = (u8::from(self.system_audio_lock_flag) << 7)
-            | (u8::from(self.system_video_lock_flag) << 6)
-            | 0x20 // marker_bit (bit5 of byte 10)
-            | video_bound;
+        body[STREAM_FLAGS_OFFSET] = (u8::from(self.system_audio_lock_flag) << SYSTEM_AUDIO_LOCK_SHIFT)
+                | (u8::from(self.system_video_lock_flag) << SYSTEM_VIDEO_LOCK_SHIFT)
+                | BIT5_MASK // marker_bit (bit5 of byte 10)
+                | video_bound;
         // byte 11: packet_rate_restriction_flag(1) | reserved(7)
-        buf[11] = (u8::from(self.packet_rate_restriction_flag) << 7) | reserved_bits;
+        body[PACKET_RATE_OFFSET] = (u8::from(self.packet_rate_restriction_flag)
+            << PACKET_RATE_RESTRICTION_SHIFT)
+            | reserved_bits;
 
         // Stream loop
-        let mut pos = 12;
+        let mut pos = FIXED_BODY_LEN;
         for bound in &self.std_buffer_bounds {
             if let Some(ext) = bound.stream_id_extension {
-                buf[pos] = bound.stream_id;
-                buf[pos + 1] = 0xC0;
-                buf[pos + 2] = ext;
-                buf[pos + 3] = 0xB6;
-                buf[pos + 4] = 0xC0
-                    | (u8::from(bound.buffer_bound_scale) << 5)
-                    | (bound.buffer_size_bound >> 8) as u8;
-                buf[pos + 5] = (bound.buffer_size_bound & 0xFF) as u8;
-                pos += 6;
+                body[pos] = bound.stream_id;
+                body[pos + STREAM_BUFFER_FLAGS_OFFSET] = STREAM_ENTRY_PREFIX_MASK;
+                body[pos + EXT_STREAM_ID_EXTENSION_OFFSET] = ext;
+                body[pos + EXT_STREAM_ID_PREFIX_OFFSET] = STREAM_ID_EXTENSION_PREFIX;
+                body[pos + EXT_BUFFER_FLAGS_OFFSET] = STREAM_ENTRY_PREFIX_MASK
+                    | (u8::from(bound.buffer_bound_scale) << BUFFER_BOUND_SCALE_SHIFT)
+                    | (bound.buffer_size_bound >> BUFFER_SIZE_BOUND_HI_SHIFT) as u8;
+                body[pos + EXT_BUFFER_SIZE_LO_OFFSET] = bound.buffer_size_bound.to_be_bytes()[1];
+                pos += EXT_STREAM_ENTRY_LEN;
             } else {
-                buf[pos] = bound.stream_id;
-                buf[pos + 1] = 0xC0
-                    | (u8::from(bound.buffer_bound_scale) << 5)
-                    | (bound.buffer_size_bound >> 8) as u8;
-                buf[pos + 2] = (bound.buffer_size_bound & 0xFF) as u8;
-                pos += 3;
+                body[pos] = bound.stream_id;
+                body[pos + STREAM_BUFFER_FLAGS_OFFSET] = STREAM_ENTRY_PREFIX_MASK
+                    | (u8::from(bound.buffer_bound_scale) << BUFFER_BOUND_SCALE_SHIFT)
+                    | (bound.buffer_size_bound >> BUFFER_SIZE_BOUND_HI_SHIFT) as u8;
+                body[pos + STREAM_BUFFER_SIZE_LO_OFFSET] = bound.buffer_size_bound.to_be_bytes()[1];
+                pos += STREAM_ENTRY_LEN;
             }
         }
-        buf[pos..pos + self.trailing_reserved.len()].copy_from_slice(&self.trailing_reserved);
+        body[pos..pos + self.trailing_reserved.len()].copy_from_slice(&self.trailing_reserved);
 
         Ok(total)
     }

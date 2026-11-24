@@ -3,6 +3,16 @@
 //! ANSI/CTA-708-E §8.5, §8.8; `private/specs-verified/captions/cc-data/decode/cea708-conformance.md`,
 //! `cea708-decode.md`).
 
+/// Masks of the packed enum fields (47 CFR §79.102, ANSI/CTA-708-E §8.5/§8.8).
+const OPACITY_MASK: u8 = 0x03;
+const EDGE_TYPE_MASK: u8 = 0x07;
+const PEN_SIZE_MASK: u8 = 0x03;
+const PEN_OFFSET_MASK: u8 = 0x03;
+const FONT_STYLE_MASK: u8 = 0x07;
+const JUSTIFY_MASK: u8 = 0x03;
+const PRINT_DIRECTION_MASK: u8 = 0x03;
+const SCROLL_DIRECTION_MASK: u8 = 0x03;
+
 /// A CEA-708 colour: 2 bits per RGB component (R, G, B each 0–3), 64 colours
 /// total (§8.8, Tables 30/31).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,7 +81,7 @@ impl Opacity {
     /// From the 2-bit wire value.
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x03 {
+        match v & OPACITY_MASK {
             0 => Self::Solid,
             1 => Self::Flash,
             2 => Self::Translucent,
@@ -115,7 +125,7 @@ impl EdgeType {
     /// From the 3-bit wire value (values 6–7 fold to `None`).
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x07 {
+        match v & EDGE_TYPE_MASK {
             0 => Self::None,
             1 => Self::Raised,
             2 => Self::Depressed,
@@ -158,7 +168,7 @@ impl PenSize {
     /// From the 2-bit wire value (3 folds to `Standard`).
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x03 {
+        match v & PEN_SIZE_MASK {
             0 => Self::Small,
             2 => Self::Large,
             _ => Self::Standard,
@@ -194,7 +204,7 @@ impl PenOffset {
     /// From the 2-bit wire value (3 folds to `Normal`).
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x03 {
+        match v & PEN_OFFSET_MASK {
             0 => Self::Subscript,
             2 => Self::Superscript,
             _ => Self::Normal,
@@ -240,7 +250,7 @@ impl FontStyle {
     /// From the 3-bit wire value.
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x07 {
+        match v & FONT_STYLE_MASK {
             0 => Self::Default,
             1 => Self::MonospacedSerif,
             2 => Self::ProportionalSerif,
@@ -288,7 +298,7 @@ impl Justify {
     /// From the 2-bit wire value.
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x03 {
+        match v & JUSTIFY_MASK {
             0 => Self::Left,
             1 => Self::Right,
             2 => Self::Center,
@@ -328,7 +338,7 @@ impl PrintDirection {
     /// From the 2-bit wire value.
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x03 {
+        match v & PRINT_DIRECTION_MASK {
             0 => Self::LeftToRight,
             1 => Self::RightToLeft,
             2 => Self::TopToBottom,
@@ -369,7 +379,7 @@ impl ScrollDirection {
     /// From the 2-bit wire value.
     #[must_use]
     pub fn from_bits(v: u8) -> Self {
-        match v & 0x03 {
+        match v & SCROLL_DIRECTION_MASK {
             0 => Self::LeftToRight,
             1 => Self::RightToLeft,
             2 => Self::TopToBottom,

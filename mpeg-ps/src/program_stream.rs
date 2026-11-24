@@ -22,6 +22,25 @@ use crate::system_header::{
 /// `MPEG_program_end_code` — `0x000001B9`.
 const PROGRAM_END_CODE: u32 = 0x0000_01B9;
 
+/// Byte width of a start code (`0x000001` prefix + `stream_id`).
+const START_CODE_LEN: usize = core::mem::size_of::<u32>();
+/// Byte offset of `stream_id` within a start code.
+const STREAM_ID_OFFSET: usize = START_CODE_LEN - 1;
+/// Byte offset of `header_length` within a system header (right after its
+/// `start_code`; ISO/IEC 13818-1 Table 2-40).
+const SYSTEM_HEADER_LENGTH_OFFSET: usize = core::mem::size_of::<u32>();
+/// Smallest PES packet header: start-code prefix + `stream_id` +
+/// `PES_packet_length` (ISO/IEC 13818-1 §2.4.3.7).
+const PES_MIN_HEADER_LEN: usize =
+    crate::PACKET_START_CODE_PREFIX.len() + 1 + core::mem::size_of::<u16>();
+
+/// Read the big-endian `u32` at `off`.
+fn read_u32_at(b: &[u8], off: usize) -> u32 {
+    let mut raw = [0_u8; core::mem::size_of::<u32>()];
+    raw.copy_from_slice(&b[off..off + core::mem::size_of::<u32>()]);
+    u32::from_be_bytes(raw)
+}
+
 /// A single pack within a Program Stream: a `pack_header()`, optionally a
 /// `system_header()`, an optional Program Stream Map, and zero or more PES
 /// packets.
@@ -52,11 +71,11 @@ pub struct Pack<'a> {
 /// Returns `Ok((Some(pack), consumed_bytes))` on success,
 /// or `Ok((None, 4))` when `MPEG_program_end_code` `0x000001B9` is reached.
 pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
-    need_in(b, 4, "pack start_code or end_code")?;
+    need_in(b, START_CODE_LEN, "pack start_code or end_code")?;
 
-    let start = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+    let start = read_u32_at(b, 0);
     if start == PROGRAM_END_CODE {
-        return Ok((None, 4));
+        return Ok((None, START_CODE_LEN));
     }
 
     let pack_header = PackHeader::parse(b)?;
@@ -64,8 +83,8 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
     let rest = &b[hdr_len..];
 
     // Check for optional system header (before any PES)
-    let (system_header, pes_start) = if rest.len() >= 4 {
-        let maybe_sh = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
+    let (system_header, pes_start) = if rest.len() >= START_CODE_LEN {
+        let maybe_sh = read_u32_at(rest, 0);
         if maybe_sh == SYSTEM_HEADER_START_CODE {
             let sh = SystemHeader::parse(rest)?;
             // W2 (#1119): PES data starts after the *wire* `header_length`
@@ -76,7 +95,10 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
             // encoder is free to pad with reserved bytes); starting PES
             // parsing early there feeds PES data into the system-header
             // parser's leftover bytes instead.
-            let header_length = u16::from_be_bytes([rest[4], rest[5]]) as usize;
+            let header_length = u16::from_be_bytes([
+                rest[SYSTEM_HEADER_LENGTH_OFFSET],
+                rest[SYSTEM_HEADER_LENGTH_OFFSET + 1],
+            ]) as usize;
             (Some(sh), SYSTEM_HEADER_PREFIX_LEN + header_length)
         } else {
             (None, 0)
@@ -156,13 +178,16 @@ fn parse_pes_loop(
     let mut pos = 0;
 
     loop {
-        if pos + 4 <= data.len() {
-            let word = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+        if pos + START_CODE_LEN <= data.len() {
+            let word = read_u32_at(data, pos);
             if word == PACK_START_CODE || word == PROGRAM_END_CODE {
                 break;
             }
         }
-        if !(pos + 6 <= data.len() && data[pos..pos + 3] == crate::PACKET_START_CODE_PREFIX) {
+        if !(pos + PES_MIN_HEADER_LEN <= data.len()
+            && data[pos..pos + crate::PACKET_START_CODE_PREFIX.len()]
+                == crate::PACKET_START_CODE_PREFIX)
+        {
             break;
         }
         // W5 (#1119): a Program Stream Map (`stream_id 0xBC`) is a distinct
@@ -171,7 +196,7 @@ fn parse_pes_loop(
         // `ProgramStreamMap::parse` instead of `mpeg_pes::PesPacket::parse`,
         // which had no way to make sense of its layout and returned it as
         // an opaque, un-mapped PES packet.
-        if data[pos + 3] == MAP_STREAM_ID {
+        if data[pos + STREAM_ID_OFFSET] == MAP_STREAM_ID {
             let map = ProgramStreamMap::parse(&data[pos..])?;
             // Advance by the *wire* length (`6 + program_stream_map_length`,
             // Table 2-41), never by the re-serialized length of the parsed
@@ -251,7 +276,7 @@ pub fn scan_packs(b: &[u8]) -> PackScan<'_> {
     let mut packs = Vec::new();
     let mut skipped = Vec::new();
     let mut pos = 0usize;
-    while b.len() - pos >= 4 {
+    while b.len() - pos >= START_CODE_LEN {
         match parse_pack(&b[pos..]) {
             Ok((Some(pack), consumed)) => {
                 packs.push(pack);
