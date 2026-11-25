@@ -218,7 +218,7 @@ impl PsScanner {
             if self.first_error.is_none() && avail.len() >= START_CODE_LEN {
                 self.first_error = Some(crate::Error::BadPackStartCode(read_u32_at(avail, 0)));
             }
-            return match resync_skip(avail) {
+            return match resync_skip(avail, self.limits.max_pes_bytes) {
                 Some(skipped) => {
                     self.start += skipped;
                     Ok(Some(PsEvent::Resync {
@@ -280,7 +280,7 @@ impl PsScanner {
                     if self.first_error.is_none() {
                         self.first_error = Some(error);
                     }
-                    if let Some(skipped) = resync_skip(avail) {
+                    if let Some(skipped) = resync_skip(avail, self.limits.max_pes_bytes) {
                         self.start += skipped;
                         return Ok(Some(PsEvent::Resync {
                             skipped: skipped as u64,
@@ -321,7 +321,7 @@ impl PsScanner {
                     Ok(Some(PsEvent::SystemHeader(header)))
                 }
                 Err(_) => {
-                    if let Some(skipped) = resync_skip(avail) {
+                    if let Some(skipped) = resync_skip(avail, self.limits.max_pes_bytes) {
                         self.start += skipped;
                         return Ok(Some(PsEvent::Resync {
                             skipped: skipped as u64,
@@ -363,7 +363,7 @@ impl PsScanner {
                     Ok(Some(PsEvent::ProgramStreamMap(map)))
                 }
                 Err(_) => {
-                    if let Some(skipped) = resync_skip(avail) {
+                    if let Some(skipped) = resync_skip(avail, self.limits.max_pes_bytes) {
                         self.start += skipped;
                         return Ok(Some(PsEvent::Resync {
                             skipped: skipped as u64,
@@ -395,7 +395,7 @@ impl PsScanner {
                 }
                 Ok(None)
             }
-            PesStep::Truncated => match resync_skip(avail) {
+            PesStep::Truncated => match resync_skip(avail, self.limits.max_pes_bytes) {
                 Some(skipped) => {
                     self.start += skipped;
                     Ok(Some(PsEvent::Resync {
@@ -490,10 +490,14 @@ fn pes_step<'a>(avail: &'a [u8], limits: &PsLimits, finished: bool) -> Result<Pe
 
 /// Bytes to discard to reach the next `pack_start_code`, or `None` when the
 /// buffered tail may still become one.
-fn resync_skip(avail: &[u8]) -> Option<usize> {
+fn resync_skip(avail: &[u8], limit: usize) -> Option<usize> {
     match find_pack_start(&avail[1..]) {
         Some(offset) => Some(1 + offset),
-        None if avail.len() > START_CODE_PREFIX_LEN => Some(avail.len() - START_CODE_PREFIX_LEN),
+        // Wait for the next pack start while the buffered tail could still
+        // hold one; only a tail past the caller's cap is reported as lost.
+        None if avail.len() > limit.max(START_CODE_PREFIX_LEN) => {
+            Some(avail.len() - START_CODE_PREFIX_LEN)
+        }
         None => None,
     }
 }
