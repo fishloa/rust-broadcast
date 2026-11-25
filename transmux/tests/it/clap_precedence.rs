@@ -8,10 +8,7 @@
 //! eight fields in place.
 //!
 //! Spec input: `private/specs-verified/mpeg/isobmff/sample-entry-ext.md`.
-
-use broadcast_common::Unpackage;
 use transmux::ir::{CodecConfig, DisplayGeometry, PictureRect};
-use transmux::progressive_demux::ProgressiveDemux;
 
 const FIXTURE: &str = "mp4/clap-vs-crop.mp4";
 const CLAP_BODY_LEN: usize = 32;
@@ -22,10 +19,9 @@ const SPS_CROP: (u32, u32, u32, u32) = (0, 0, 1920, 1080);
 type Frac = (i32, i32);
 
 fn display_of(bytes: &[u8]) -> DisplayGeometry {
-    let media = ProgressiveDemux::new(bytes.len())
-        .expect("demux")
-        .unpackage(bytes)
-        .expect("progressive demux");
+    let media =
+        test_harness::collect::media_from_mp4(bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("progressive demux");
     let track = media
         .tracks
         .into_iter()

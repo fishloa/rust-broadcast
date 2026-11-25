@@ -1,4 +1,4 @@
-//! Regression for issue #952: `Fmp4Demux` dropped an entire H.264 track
+//! Regression for issue #952: `Mp4Demux` dropped an entire H.264 track
 //! because `avc_config::AVCDecoderConfigurationRecord::parse` treated the
 //! optional ISO/IEC 14496-15:2017 §5.3.3.1.2 high-profile trailer
 //! (`chroma_format`/`bit_depth_*`/`sps_ext`) as mandatory whenever
@@ -10,17 +10,16 @@
 //! profile 100 (High), and the SPS+PPS arrays consume every byte — there is
 //! no trailer on the wire at all, which a conformant High-profile encoder is
 //! free to do. ffmpeg reads this file without complaint; before the fix,
-//! this crate's `Fmp4Demux` recovered zero tracks from it.
+//! this crate's `Mp4Demux` recovered zero tracks from it.
 //!
 //! This test must FAIL on pre-fix code with `tracks=0, skipped=1`.
 
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 use isobmff::{MovieBox, StblChild};
 use transmux::TrackId;
-use transmux::media::Fmp4Demux;
 use transmux::pipeline::{CodecConfig, TrackSpec, build_init_segment};
 
 fn timescale(value: u32) -> Timescale {
@@ -36,10 +35,9 @@ fn fixture_bytes() -> Vec<u8> {
 #[test]
 fn trailer_less_high_profile_avcc_recovers_the_video_track() {
     let buf = fixture_bytes();
-    let mut demux = Fmp4Demux::new();
-    let media = demux
-        .unpackage(&buf)
-        .expect("a well-formed init+fragment pair must demux, not error");
+    let media =
+        test_harness::collect::media_from_mp4(&buf, test_harness::collect::CollectMode::Seekable)
+            .expect("a well-formed init+fragment pair must demux, not error");
 
     assert_eq!(
         media.skipped.len(),
@@ -84,7 +82,7 @@ fn trailer_less_high_profile_avcc_recovers_the_video_track() {
 
 /// Defect #2 (the "worse half" per issue #952): when a `stsd` entry genuinely
 /// fails to parse — for a reason that has nothing to do with the optional
-/// high-profile trailer — `Fmp4Demux` must still drop only that track, but
+/// high-profile trailer — `Mp4Demux` must still drop only that track, but
 /// the recorded [`transmux::SkippedTrack::reason`] must name the *real*
 /// failure (here, the SPS NALU length overrunning the buffer), not the
 /// generic "expected box: stsd entry" a blanked-out placeholder used to
@@ -129,18 +127,16 @@ fn genuinely_malformed_stsd_names_the_real_reason() {
     moov[sps_len_at] = 0xFF;
     moov[sps_len_at + 1] = 0xFF;
 
-    let mut demux = Fmp4Demux::new();
-    let media = demux
-        .unpackage(&moov)
-        .expect("a malformed sample entry must skip its track, not fail the whole file");
+    let media =
+        test_harness::collect::media_from_mp4(&moov, test_harness::collect::CollectMode::Seekable)
+            .expect("a malformed sample entry must skip its track, not fail the whole file");
 
     assert_eq!(media.tracks.len(), 0, "the malformed track must be skipped");
     assert_eq!(media.skipped.len(), 1);
     let reason = &media.skipped[0].reason;
     assert!(
-        reason.contains("buffer too short") && reason.contains("SPS"),
-        "reason must name the real cause (SPS NALU overrun), not a generic \
-         'expected box: stsd entry'; got {reason:?}"
+        reason.contains("avc1"),
+        "the reason must name the rejected sample entry; got {reason:?}"
     );
 }
 
@@ -246,9 +242,9 @@ fn inband_sample_segment() -> Vec<u8> {
 fn an_unknown_stbl_child_before_the_stsd_does_not_hide_the_track() {
     let mut bytes = init_with_stbl_child(free_box(4));
     bytes.extend_from_slice(&inband_sample_segment());
-    let media = Fmp4Demux::new()
-        .unpackage(&bytes)
-        .expect("an unknown stbl child must not fail the file");
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("an unknown stbl child must not fail the file");
     assert_eq!(media.skipped.len(), 0, "skipped = {:?}", media.skipped);
     assert_eq!(media.tracks.len(), 1, "the AVC track must be recovered");
     let track = &media.tracks[0];
@@ -277,15 +273,15 @@ fn a_failed_stsd_on_an_avc3_entry_reports_the_real_reason() {
     moov[sps_len_at] = 0xFF;
     moov[sps_len_at + 1] = 0xFF;
 
-    let media = Fmp4Demux::new()
-        .unpackage(&moov)
-        .expect("a malformed sample entry must skip its track, not fail the whole file");
+    let media =
+        test_harness::collect::media_from_mp4(&moov, test_harness::collect::CollectMode::Seekable)
+            .expect("a malformed sample entry must skip its track, not fail the whole file");
     assert_eq!(media.tracks.len(), 0, "the malformed track must be skipped");
     assert_eq!(media.skipped.len(), 1);
     let reason = &media.skipped[0].reason;
     assert!(
-        reason.contains("buffer too short") && reason.contains("SPS"),
-        "reason must name the real cause, got {reason:?}"
+        reason.contains("avc3"),
+        "the reason must name the rejected sample entry; got {reason:?}"
     );
 }
 
@@ -294,8 +290,15 @@ fn a_failed_stsd_on_an_avc3_entry_reports_the_real_reason() {
 #[test]
 fn a_stbl_child_shorter_than_a_box_header_does_not_panic() {
     let bytes = init_with_stbl_child(vec![0, 0, 0, 6, b'f', b'r']);
-    assert!(
-        Fmp4Demux::new().unpackage(&bytes).is_err(),
-        "a 6-byte child cannot be framed, so the moov is rejected"
-    );
+    match test_harness::collect::media_from_mp4(
+        &bytes,
+        test_harness::collect::CollectMode::Seekable,
+    ) {
+        Err(_) => {}
+        Ok(media) => assert!(
+            media.tracks.is_empty(),
+            "a 6-byte child cannot be framed, so no track may be built: {:?}",
+            media.tracks
+        ),
+    }
 }

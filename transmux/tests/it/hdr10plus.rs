@@ -702,9 +702,9 @@ fn fmp4_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
         return;
     };
     let bytes = transmux::CmafMux::default().package(&media).expect("cmaf");
-    let back = transmux::media::Fmp4Demux::default()
-        .unpackage(&bytes)
-        .expect("fmp4 demux");
+    let back =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("fmp4 demux");
     assert_eq!(seis_in_display_order(&back).len(), FRAMES);
     assert_eq!(seis_in_display_order(&back), source);
     assert!(hevc_track(&back).spec.hdr10plus);

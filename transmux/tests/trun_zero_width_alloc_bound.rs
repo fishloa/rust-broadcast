@@ -3,18 +3,15 @@
 //! A `trun` whose flags select no per-sample field has entries that are ZERO
 //! bytes wide, so the "samples must fit in the remaining bytes" bound cannot
 //! limit its `sample_count`. A 20-byte `trun` declaring `0x1000_0000` samples
-//! made `Fmp4Demux` push 268 M `TrunSample`s (a 10 GB `Vec`) from a real
+//! made `Mp4Demux` push 268 M `TrunSample`s (a 10 GB `Vec`) from a real
 //! LL-CMAF fixture with 4 bytes overwritten. Found by an offset sweep that
 //! inflated every 4-byte window of the committed fixtures.
 //!
 //! The allocator caps this thread's live bytes at 256 MiB so the pre-fix
 //! behaviour fails (aborts) instead of exhausting the host.
-
-use broadcast_common::Unpackage;
 use isobmff::movie_fragment::TrackFragmentRunBox;
 use isobmff::movie_fragment::{MAX_ZERO_WIDTH_TRUN_SAMPLES, TRUN_SAMPLE_DURATION_PRESENT};
 use test_alloc::ThreadCapped;
-use transmux::Fmp4Demux;
 
 #[global_allocator]
 static ALLOC: ThreadCapped<{ 256 << 20 }> = ThreadCapped::new();
@@ -55,8 +52,7 @@ fn trun_box(sample_count: u32, flags: u32) -> Vec<u8> {
 #[test]
 fn unmodified_fixture_still_demuxes() {
     let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("fixture");
-    Fmp4Demux::new()
-        .unpackage(&data)
+    test_harness::collect::media_from_mp4(&data, test_harness::collect::CollectMode::Seekable)
         .expect("real LL-CMAF fixture demuxes");
 }
 
@@ -90,7 +86,8 @@ fn zero_width_trun_at_the_cap_still_parses() {
 #[test]
 fn demuxing_the_hostile_fixture_stays_bounded() {
     let data = with_trun(0x1000_0000, 0);
-    let _ = Fmp4Demux::new().unpackage(&data);
+    let _ =
+        test_harness::collect::media_from_mp4(&data, test_harness::collect::CollectMode::Seekable);
 }
 
 /// A `trun` that declares a per-sample field is four bytes wide per sample, so

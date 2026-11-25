@@ -18,7 +18,7 @@ use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
 use transmux::media::CmafMux;
 use transmux::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
-use transmux::{Ec3SyncframeInfo, Error, Fmp4Demux, Media, PcrSample, Track, TsDemux};
+use transmux::{Ec3SyncframeInfo, Error, Media, PcrSample, Track, TsDemux};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -767,9 +767,9 @@ fn cmaf_mux_ac3_durations_no_longer_zero() {
         .package(&media)
         .expect("package TS-sourced AC-3 to CMAF");
 
-    let round: Media = Fmp4Demux::new()
-        .unpackage(&fmp4)
-        .expect("re-parse our own CMAF output");
+    let round: Media =
+        test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
+            .expect("re-parse our own CMAF output");
     let ac3_track = round
         .tracks
         .iter()

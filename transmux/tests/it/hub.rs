@@ -1,10 +1,10 @@
 //! Any-to-any hub gate (issue #466).
 //!
 //! Exercises the `broadcast-common` container-mux traits as implemented by
-//! transmux: [`Fmp4Demux`] ([`Unpackage`]) and [`CmafMux`] ([`Package`]).
+//! transmux: [`Mp4Demux`] ([`Unpackage`]) and [`CmafMux`] ([`Package`]).
 //!
 //! EXIT CRITERIA (all bite):
-//! 1. `Fmp4Demux.unpackage(av-frag.mp4)` → `Media` with exactly 2 tracks
+//! 1. `Mp4Demux.unpackage(av-frag.mp4)` → `Media` with exactly 2 tracks
 //!    (AVC video track_id=1, AAC audio track_id=2) with the same per-track
 //!    sample counts computed independently from the raw `moof`/`trun` boxes.
 //! 2. `CmafMux.package(&media)` → re-`unpackage` → identical track/sample
@@ -16,10 +16,10 @@ use broadcast_common::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Parse, Unpackage};
+use broadcast_common::{Package, Parse};
 use isobmff::init_segment::MovieBox;
 use isobmff::movie_fragment::MovieFragmentBox;
-use transmux::media::{CmafMux, Fmp4Demux, Media};
+use transmux::media::{CmafMux, Media};
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };
@@ -64,8 +64,9 @@ fn fmp4_demux_unpackage_two_tracks_correct_counts() {
     let expected = expected_counts(&file);
     assert_eq!(expected.len(), 2, "fixture must carry exactly 2 tracks");
 
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage av-frag.mp4");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage av-frag.mp4");
 
     assert_eq!(media.tracks.len(), 2, "Media must have 2 tracks");
 
@@ -112,14 +113,18 @@ fn fmp4_demux_unpackage_two_tracks_correct_counts() {
 #[test]
 fn cmaf_package_reunpackage_preserves_structure() {
     let file = fixture();
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage");
 
     let mut mux = CmafMux::new(1);
     let repacked = mux.package(&media).expect("package");
 
-    let mut demux2 = Fmp4Demux::new();
-    let media2 = demux2.unpackage(&repacked).expect("re-unpackage");
+    let media2 = test_harness::collect::media_from_mp4(
+        &repacked,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-unpackage");
 
     assert_eq!(
         media.tracks.len(),
@@ -167,8 +172,9 @@ fn cmaf_package_reunpackage_preserves_structure() {
 #[test]
 fn cmaf_package_is_byte_transparent_over_build_helpers() {
     let file = fixture();
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage");
 
     // Package via the hub.
     let mut mux = CmafMux::new(7);

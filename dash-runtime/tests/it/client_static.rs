@@ -1,5 +1,5 @@
 //! Every static fixture plays to completion through the loopback host, and the
-//! samples equal what `Fmp4Demux` makes of the concatenated init and segments
+//! samples equal what `Mp4Demux` makes of the concatenated init and segments
 //! (the oracle never sees the client).
 
 use crate::common;

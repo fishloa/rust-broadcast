@@ -1,4 +1,4 @@
-//! Differential: the `isobmff` fragmented reader against `Fmp4Demux`.
+//! Differential: the `isobmff` fragmented reader against `Mp4Demux`.
 //!
 //! For every fragmented fixture in the workspace, each track the demuxer keeps
 //! must agree with the reader sample by sample on decode time, duration, sync,
@@ -6,15 +6,12 @@
 //! coded bytes. CENC fixtures must also agree on every sample's IV and
 //! subsample map.
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-
-use broadcast_common::Unpackage;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::sample_table::SampleRef;
 use isobmff::{Reader, ReaderConfig, SampleOrder, Step};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use transmux::cenc_decrypt::CencDecryptor;
-use transmux::media::Fmp4Demux;
 use transmux::pipeline::CodecConfig;
 
 /// Fragmented fixtures the walk must compare: a checkout with no usable files
@@ -196,7 +193,10 @@ fn the_reader_agrees_with_the_fragmented_demuxer() {
         if !is_fragmented(&bytes) {
             continue;
         }
-        let Ok(media) = Fmp4Demux::new().unpackage(bytes.as_slice()) else {
+        let Ok(media) = test_harness::collect::media_from_mp4(
+            bytes.as_slice(),
+            test_harness::collect::CollectMode::Seekable,
+        ) else {
             continue;
         };
         if media.tracks.is_empty() {

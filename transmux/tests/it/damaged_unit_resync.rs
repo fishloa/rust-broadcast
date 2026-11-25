@@ -214,9 +214,12 @@ fn rtp_audio_malformed_packet_in_the_middle_is_skipped_and_reported() {
 
 #[test]
 fn fmp4_trailing_moof_without_its_mdat_is_reported() {
-    use transmux::media::Fmp4Demux;
     let clean_bytes = fixture("mp4/cmaf/av-frag.mp4");
-    let clean = Fmp4Demux::new().unpackage(&clean_bytes[..]).unwrap();
+    let clean = test_harness::collect::media_from_mp4(
+        &clean_bytes[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap();
     assert!(clean.degraded.is_empty());
 
     let mut last_moof = None;
@@ -232,9 +235,11 @@ fn fmp4_trailing_moof_without_its_mdat_is_reported() {
     let after_moof = last_moof
         + u32::from_be_bytes(clean_bytes[last_moof..last_moof + 4].try_into().unwrap()) as usize;
 
-    let cut = Fmp4Demux::new()
-        .unpackage(&clean_bytes[..after_moof])
-        .expect("a stream ending after a moof is not a failure");
+    let cut = test_harness::collect::media_from_mp4(
+        &clean_bytes[..after_moof],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("a stream ending after a moof is not a failure");
     assert_eq!(
         cut.degraded,
         vec![InputDegradation::MalformedUnit {
@@ -245,9 +250,12 @@ fn fmp4_trailing_moof_without_its_mdat_is_reported() {
 
 #[test]
 fn fmp4_corrupt_moof_in_the_middle_is_skipped_and_reported() {
-    use transmux::media::Fmp4Demux;
     let clean_bytes = fixture("mp4/cmaf/av-frag.mp4");
-    let clean = Fmp4Demux::new().unpackage(&clean_bytes[..]).unwrap();
+    let clean = test_harness::collect::media_from_mp4(
+        &clean_bytes[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap();
     assert!(clean.degraded.is_empty());
 
     // Walk the top-level boxes and pick the middle moof.
@@ -268,9 +276,11 @@ fn fmp4_corrupt_moof_in_the_middle_is_skipped_and_reported() {
     let mut bytes = clean_bytes.clone();
     bytes[victim + 8..victim + 12].copy_from_slice(&2u32.to_be_bytes());
 
-    let damaged = Fmp4Demux::new()
-        .unpackage(&bytes[..])
-        .expect("one corrupt fragment must not fail the file");
+    let damaged = test_harness::collect::media_from_mp4(
+        &bytes[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("one corrupt fragment must not fail the file");
     assert_eq!(
         damaged.degraded,
         vec![InputDegradation::MalformedUnit {
@@ -292,9 +302,12 @@ fn fmp4_corrupt_moof_in_the_middle_is_skipped_and_reported() {
 
 #[test]
 fn fmp4_trun_pointing_outside_the_file_skips_that_traf_and_reports() {
-    use transmux::media::Fmp4Demux;
     let clean_bytes = fixture("mp4/cmaf/av-frag.mp4");
-    let clean = Fmp4Demux::new().unpackage(&clean_bytes[..]).unwrap();
+    let clean = test_harness::collect::media_from_mp4(
+        &clean_bytes[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap();
 
     let mut moofs = Vec::new();
     let mut off = 0usize;
@@ -317,9 +330,11 @@ fn fmp4_trun_pointing_outside_the_file_skips_that_traf_and_reports() {
     let mut bytes = clean_bytes.clone();
     bytes[at + 12..at + 16].copy_from_slice(&0x7fff_fff0u32.to_be_bytes());
 
-    let damaged = Fmp4Demux::new()
-        .unpackage(&bytes[..])
-        .expect("a bad trun must not fail the file");
+    let damaged = test_harness::collect::media_from_mp4(
+        &bytes[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("a bad trun must not fail the file");
     assert_eq!(
         damaged.degraded,
         vec![InputDegradation::MalformedUnit {

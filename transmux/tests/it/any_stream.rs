@@ -51,7 +51,7 @@ use broadcast_common::{Package, Unpackage};
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
 use transmux::pipeline::{CodecConfig, DataCarriage};
-use transmux::{CmafMux, Fmp4Demux, Media, Track, TsDemux, TsHlsPackager, TsMux};
+use transmux::{CmafMux, Media, Track, TsDemux, TsHlsPackager, TsMux};
 
 const TS: usize = 188;
 
@@ -646,9 +646,9 @@ fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
         .package(&av_only)
         .expect("CmafMux must succeed once the Data track is explicitly filtered out");
 
-    let reparsed: Media = Fmp4Demux::new()
-        .unpackage(&out)
-        .expect("re-parse the fMP4 output");
+    let reparsed: Media =
+        test_harness::collect::media_from_mp4(&out, test_harness::collect::CollectMode::Seekable)
+            .expect("re-parse the fMP4 output");
     assert_eq!(
         reparsed.tracks.len(),
         2,

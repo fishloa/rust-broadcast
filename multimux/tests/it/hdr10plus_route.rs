@@ -125,9 +125,11 @@ async fn every_fmp4_sample_of_the_route_keeps_its_hdr10plus_sei_byte_identical()
     };
     assert_eq!(source.len(), FRAMES);
     let file = joined_mp4(&route_app(HDR10PLUS), &scratch("hdr10plus-passthrough")).await;
-    let served = transmux::Fmp4Demux::new()
-        .unpackage(&std::fs::read(file).unwrap())
-        .expect("demux the served segments");
+    let served = test_harness::collect::media_from_mp4(
+        &std::fs::read(file).unwrap(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux the served segments");
     let seis = hdr10plus_seis_by_pts(&served);
     assert_eq!(seis.len(), FRAMES);
     assert_eq!(seis, source);

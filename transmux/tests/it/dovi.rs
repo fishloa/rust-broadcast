@@ -15,7 +15,7 @@ use transmux::ir::{CodecConfig, TrackSpec};
 
 use isobmff::{DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord};
 use transmux::ts_demux::TsDemux;
-use transmux::{CmafMux, Fmp4Demux, Media, ProgressiveDemux, build_init_segment};
+use transmux::{CmafMux, Media, build_init_segment};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -37,7 +37,6 @@ const VISUAL_ENTRY_PREFIX: usize = 78;
 const STSD_PREFIX: usize = 8;
 const CONTAINERS: [[u8; 4]; 6] = [*b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"stsd"];
 type EntryBoxes = Vec<([u8; 4], Vec<u8>)>;
-const MAX_MP4: usize = 64 * 1024 * 1024;
 
 fn ts_media(fixture: &str) -> Option<Media> {
     let bytes = test_fixtures::require_bytes(fixture, "dovi")?;
@@ -98,10 +97,9 @@ fn payload(boxes: &[([u8; 4], Vec<u8>)], fourcc: [u8; 4]) -> Option<Vec<u8>> {
 
 fn mp4_record(fixture: &str) -> Option<DoviDecoderConfigurationRecord> {
     let bytes = test_fixtures::require_bytes(fixture, "dovi")?;
-    let media = ProgressiveDemux::new(MAX_MP4)
-        .unwrap()
-        .unpackage(&bytes)
-        .expect("demux mp4");
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("demux mp4");
     Some(
         video(&media)
             .spec
@@ -288,7 +286,11 @@ fn init_round_trips_the_record_through_the_fmp4_demuxer() {
         };
         let init =
             build_init_segment(&[video(&media).spec.clone()], timescale(1000)).expect("init");
-        let back = Fmp4Demux::new().unpackage(&init).expect("fmp4 demux");
+        let back = test_harness::collect::media_from_mp4(
+            &init,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("fmp4 demux");
         let spec: &TrackSpec = &back.tracks[0].spec;
         check(spec.dovi.expect("dovi after round trip"));
     }
@@ -307,7 +309,11 @@ fn rpu_nals_survive_the_cmaf_repackage_unchanged() {
             "{fixture}: the source has exactly one RPU per frame"
         );
         let bytes = CmafMux::new(1).package(&media).expect("package");
-        let out = Fmp4Demux::new().unpackage(&bytes).expect("re-demux");
+        let out = test_harness::collect::media_from_mp4(
+            &bytes,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("re-demux");
         let out_video = video(&out);
         assert_eq!(out_video.samples.len(), frames);
         for (a, b) in source.samples.iter().zip(&out_video.samples) {
@@ -366,7 +372,9 @@ fn record_reserved_bits_survive_an_init_segment_round_trip() {
         payload(&boxes, DVVC_FOURCC).expect("dvvC"),
         record.try_to_bytes().unwrap()
     );
-    let back = Fmp4Demux::new().unpackage(&init).expect("fmp4 demux");
+    let back =
+        test_harness::collect::media_from_mp4(&init, test_harness::collect::CollectMode::Seekable)
+            .expect("fmp4 demux");
     assert_eq!(back.tracks[0].spec.dovi, Some(record));
 }
 

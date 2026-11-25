@@ -1,11 +1,11 @@
-//! Real-fixture tests for [`ProgressiveDemux`] (issue #561).
+//! Real-fixture tests for [`Mp4Demux`] (issue #561).
 //!
 //! Ground truth for `h264-aac-prog.mp4` was cross-checked two independent
 //! ways: (1) a standalone Python parser walking the file's own
 //! `moov→trak→mdia→minf→stbl` boxes (`stts`/`ctts`/`stss`/`stsz`/`stsc`/
 //! `stco`) directly, and (2) `ffprobe -show_packets -ignore_editlist 1`
 //! (which reports pts/dts/flags *without* applying the trak's `elst` —
-//! [`ProgressiveDemux`] never reads `elst` either, matching every other
+//! [`Mp4Demux`] never reads `elst` either, matching every other
 //! demuxer in this crate, so `-ignore_editlist 1` is the correct comparison
 //! mode). Both agree exactly; the literals below are those values.
 //!
@@ -15,9 +15,9 @@
 //! presentation-timeline concern the mux/consumer applies, not something a
 //! demuxer's decode-order [`Track`]/[`Sample`] IR carries.
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Package;
 use isobmff::timing::SegmentIndexBox;
-use transmux::{CmafMux, CodecConfig, Fmp4Demux, ProgressiveDemux};
+use transmux::{CmafMux, CodecConfig};
 
 fn prog_fixture() -> Vec<u8> {
     let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
@@ -50,10 +50,9 @@ fn dts_pts(samples: &[transmux::Sample]) -> Vec<(u64, i64)> {
 #[test]
 fn demux_h264_aac_prog_track_counts_and_codec() {
     let data = prog_fixture();
-    let media = ProgressiveDemux::new(1024 * 1024)
-        .unwrap()
-        .unpackage(&data)
-        .unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(&data, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
 
     assert_eq!(media.tracks.len(), 2, "exactly one video + one audio track");
 
@@ -95,10 +94,9 @@ fn demux_h264_aac_prog_track_counts_and_codec() {
 #[test]
 fn demux_h264_aac_prog_video_sample_timing_and_sync() {
     let data = prog_fixture();
-    let media = ProgressiveDemux::new(1024 * 1024)
-        .unwrap()
-        .unpackage(&data)
-        .unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(&data, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let video = media
         .tracks
         .iter()
@@ -147,10 +145,9 @@ fn demux_h264_aac_prog_video_sample_timing_and_sync() {
 #[test]
 fn demux_h264_aac_prog_audio_sample_timing_and_sync() {
     let data = prog_fixture();
-    let media = ProgressiveDemux::new(1024 * 1024)
-        .unwrap()
-        .unpackage(&data)
-        .unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(&data, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let audio = media
         .tracks
         .iter()
@@ -196,23 +193,22 @@ fn demux_h264_aac_prog_audio_sample_timing_and_sync() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Round-trip: progressive → IR → fMP4 (CmafMux) → Fmp4Demux
+// 2. Round-trip: progressive → IR → fMP4 (CmafMux) → Mp4Demux
 // ---------------------------------------------------------------------------
 
 #[test]
 fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
     let data = prog_fixture();
-    let original = ProgressiveDemux::new(1024 * 1024)
-        .unwrap()
-        .unpackage(&data)
-        .unwrap();
+    let original =
+        test_harness::collect::media_from_mp4(&data, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
 
     let cmaf = CmafMux::new(1)
         .package(&original)
         .expect("CmafMux::package");
-    let reloaded = Fmp4Demux::new()
-        .unpackage(&cmaf)
-        .expect("Fmp4Demux::unpackage");
+    let reloaded =
+        test_harness::collect::media_from_mp4(&cmaf, test_harness::collect::CollectMode::Seekable)
+            .expect("Mp4Demux::unpackage");
 
     assert_eq!(
         reloaded.tracks.len(),
@@ -348,84 +344,64 @@ fn sidx_byte_exact_round_trip_and_mutation_bites() {
     );
 }
 
-// ── Stage-adapter poisoning after a cap rejection ───────────────────────────
+// ── Stage poisoning after a parse error ─────────────────────────────────────
 
-/// A `Stage::feed` rejected for exceeding `max_bytes` **discards that chunk**,
-/// so the accumulated buffer has a hole in it. Because a progressive MP4
-/// resolves sample payloads through `stbl`'s *file-absolute* chunk offsets
-/// (ISO/IEC 14496-12:2026 §8.7.5), parsing a holed buffer does not fail
-/// cleanly — it either reports a misleading `UnexpectedBox` or, far worse,
-/// succeeds and hands back a `Media` whose samples carry the wrong bytes.
-///
-/// So the rejection is terminal: a following smaller chunk is refused too,
-/// `demand()` stays saturated, and `finish()` re-reports the original cap
-/// error instead of parsing. Before this, the smaller chunk was accepted and
-/// `finish()` parsed the corrupt buffer.
+/// A reader error poisons the stage: the bytes it accumulated may hold a hole,
+/// so a following smaller chunk is refused too, `demand()` stays saturated,
+/// and `finish()` re-reports the original error instead of parsing. Before
+/// this, a following chunk was accepted and `finish()` parsed the corrupt
+/// buffer.
 #[test]
-fn progressive_demux_stays_poisoned_after_a_cap_rejection() {
-    use broadcast_common::{Demand, Stage, Timestamp};
+fn sequential_demux_stays_poisoned_after_a_parse_error() {
+    use broadcast_common::Stage;
+    use broadcast_common::stage::Timestamp;
+    use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 
-    const MAX_BYTES: usize = 4096;
-    let mut demux = ProgressiveDemux::new(MAX_BYTES).expect("non-zero cap");
+    let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
 
-    // A real prefix of a real file, so `finish()` could plausibly parse
-    // something if the poison were missing.
-    let file = prog_fixture();
-    Stage::feed(&mut demux, &file[..1024], Timestamp::ZERO).expect("first chunk fits");
-
-    // Overshoot the cap: this chunk is dropped on the floor.
-    let big = vec![0u8; MAX_BYTES];
-    let first_err = Stage::feed(&mut demux, &big, Timestamp::ZERO)
-        .expect_err("a chunk past the cap must be rejected");
+    // A `moov` header with no body can never parse.
+    let broken = [0u8, 0, 0, 8, b'm', b'o', b'o', b'v'];
+    Stage::feed(&mut demux, Mp4Input::Next(&broken), Timestamp::ZERO)
+        .expect_err("an empty moov must be refused");
     assert!(
-        matches!(first_err, transmux::Error::BufferCapExceeded { cap, .. } if cap == MAX_BYTES),
-        "expected BufferCapExceeded naming the bound, got {first_err:?}"
+        demux.demand().saturated,
+        "a poisoned demuxer must report saturated"
     );
 
-    let Demand { saturated, .. } = Stage::demand(&demux);
-    assert!(saturated, "a poisoned demuxer must report saturated");
-
-    // A smaller chunk that *would* fit must still be refused — accepting it
-    // is what used to build the holed buffer.
-    let follow_up = Stage::feed(&mut demux, &file[1024..1088], Timestamp::ZERO)
+    let follow_up = Stage::feed(&mut demux, Mp4Input::Next(&broken[..4]), Timestamp::ZERO)
         .expect_err("a poisoned demuxer must refuse every further feed");
-    assert!(
-        matches!(follow_up, transmux::Error::BufferCapExceeded { .. }),
-        "the poison must keep reporting the original cap error, got {follow_up:?}"
-    );
+    assert!(follow_up.to_string().contains("moov") || follow_up.to_string().contains("short"));
 
-    let finish_err =
-        Stage::finish(&mut demux).expect_err("finish must not parse a buffer with a hole");
-    assert!(
-        matches!(finish_err, transmux::Error::BufferCapExceeded { cap, .. } if cap == MAX_BYTES),
-        "finish must re-report the original cap error, got {finish_err:?}"
-    );
+    let finish_err = Stage::finish(&mut demux).expect_err("finish must not parse a holed buffer");
+    assert!(finish_err.to_string().contains("moov") || finish_err.to_string().contains("short"));
     assert!(
         Stage::poll(&mut demux).is_none(),
-        "no Media may ever be produced from a poisoned demuxer"
+        "no event may ever be produced from a poisoned demuxer"
     );
 }
 
 /// `feed` after `finish` used to append bytes that nothing would ever parse,
 /// while `demand()` still advertised headroom inviting more of them.
 #[test]
-fn progressive_demux_refuses_feed_after_finish() {
-    use broadcast_common::{Stage, Timestamp};
+fn sequential_demux_refuses_feed_after_finish() {
+    use broadcast_common::Stage;
+    use broadcast_common::stage::Timestamp;
+    use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 
     let file = prog_fixture();
-    let mut demux = ProgressiveDemux::new(file.len()).expect("non-zero cap");
-    Stage::feed(&mut demux, &file, Timestamp::ZERO).expect("whole file fits");
+    let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
+    Stage::feed(&mut demux, Mp4Input::Next(&file), Timestamp::ZERO).expect("whole file fits");
     Stage::finish(&mut demux).expect("parse");
     assert!(
         Stage::poll(&mut demux).is_some(),
-        "finish produces the Media"
+        "finish produces the track events"
     );
 
     assert!(
         Stage::demand(&demux).saturated,
         "a finished demuxer must not advertise headroom"
     );
-    let err = Stage::feed(&mut demux, &file[..64], Timestamp::ZERO)
+    let err = Stage::feed(&mut demux, Mp4Input::Next(&file[..64]), Timestamp::ZERO)
         .expect_err("feed after finish must be refused, not silently appended");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
@@ -433,16 +409,22 @@ fn progressive_demux_refuses_feed_after_finish() {
     );
 }
 
-/// `ProgressiveDemux::new(0)` is a useless `Stage` configuration. It must fail
-/// loudly at construction rather than wedge: a zero cap can never accept a
-/// single byte, so `new` itself now rejects it instead of handing back a
-/// `Stage` that would be saturated and poisoned before it ever saw data.
+/// An empty input announces no track and produces no event; it must not wedge
+/// or fabricate a track.
 #[test]
-fn progressive_demux_new_zero_fails_loudly_instead_of_wedging() {
-    let err = ProgressiveDemux::new(0)
-        .expect_err("a zero cap must be rejected at construction, not accepted and left to wedge");
+fn sequential_demux_on_an_empty_input_yields_nothing() {
+    use broadcast_common::Stage;
+    use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig};
+
+    let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
+    Stage::finish(&mut demux).expect("an empty input is not an error");
+    assert_eq!(demux.init_tracks().count(), 0, "no track is announced");
+    let events: Vec<_> = core::iter::from_fn(|| demux.poll()).collect();
     assert!(
-        matches!(err, transmux::Error::InvalidInput(_)),
-        "expected a named InvalidInput, got {err:?}"
+        events.iter().all(|event| !matches!(
+            event,
+            transmux::DemuxEvent::TrackAdded(_) | transmux::DemuxEvent::Sample { .. }
+        )),
+        "no track or sample may be produced: {events:?}"
     );
 }

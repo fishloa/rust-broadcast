@@ -20,7 +20,7 @@
 //!    recovers samples byte-identical to the pre-encryption snapshot.
 //! 2. **Golden interop**: Bento4's `mp4decrypt` — a real, independent,
 //!    third-party CENC/CBCS decryptor — decrypts the same file, and its
-//!    output (re-demuxed with this crate's plain, non-CENC `Fmp4Demux`) is
+//!    output (re-demuxed with this crate's plain, non-CENC `Mp4Demux`) is
 //!    also byte-identical to the snapshot. This is the authoritative check of
 //!    the `saio` moof-relative anchor decision made in Task 3 (see
 //!    `.superpowers/sdd/task-3-report.md`): if the anchor were wrong,
@@ -45,7 +45,7 @@ use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig,
-    Fmp4Demux, IvGen, KeyMap, Media, SubsamplePolicy, TrackEncryption,
+    IvGen, KeyMap, Media, SubsamplePolicy, TrackEncryption,
 };
 
 /// Constant `cbcs` IV — the standard real-world `cbcs` convention (confirmed
@@ -223,10 +223,11 @@ fn run_e2e(
     );
 
     let ref_bytes = std::fs::read(&out_path).expect("read mp4decrypt output");
-    let mut demux = Fmp4Demux::new();
-    let ref_media = demux
-        .unpackage(&ref_bytes)
-        .expect("demux mp4decrypt reference output");
+    let ref_media = test_harness::collect::media_from_mp4(
+        &ref_bytes,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux mp4decrypt reference output");
     let ref_video = ref_media
         .tracks
         .iter()
@@ -512,10 +513,11 @@ fn cbcs_whole_sample_constant_iv_emit_senc_round_trip_and_mp4decrypt_interop() {
          decrypted."
     );
     // Verify the decrypted samples match the original cleartext.
-    let mut demux = Fmp4Demux::new();
-    let ref_media = demux
-        .unpackage(&ref_bytes)
-        .expect("demux mp4decrypt reference output");
+    let ref_media = test_harness::collect::media_from_mp4(
+        &ref_bytes,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux mp4decrypt reference output");
     let ref_video = ref_media
         .tracks
         .iter()
@@ -591,8 +593,11 @@ fn cbcs_counter_16_byte_iv_mp4decrypt_interop() {
     assert!(status.success(), "mp4decrypt failed for {in_path:?}");
 
     let ref_bytes = std::fs::read(&out_path).expect("read mp4decrypt output");
-    let mut demux = Fmp4Demux::new();
-    let ref_media = demux.unpackage(&ref_bytes).expect("demux reference output");
+    let ref_media = test_harness::collect::media_from_mp4(
+        &ref_bytes,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux reference output");
     let ref_video = ref_media
         .tracks
         .iter()

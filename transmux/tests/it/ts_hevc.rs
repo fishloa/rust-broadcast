@@ -183,11 +183,11 @@ fn ts_to_cmaf_validates_with_hvc1_sample_entry() {
         "CMAF init must carry an hvcC config box"
     );
 
-    // Round-trip through our own Fmp4Demux: the recovered config is HEVC with the
+    // Round-trip through our own Mp4Demux: the recovered config is HEVC with the
     // same dims — proves the IR is identical whether HEVC came from TS or fMP4.
-    let round: Media = transmux::Fmp4Demux::new()
-        .unpackage(&cmaf)
-        .expect("re-parse our CMAF");
+    let round: Media =
+        test_harness::collect::media_from_mp4(&cmaf, test_harness::collect::CollectMode::Seekable)
+            .expect("re-parse our CMAF");
     let round_hevc = hevc_track(&round);
     match &round_hevc.spec.config {
         CodecConfig::Hevc { width, height, .. } => {

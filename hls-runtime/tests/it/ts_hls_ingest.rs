@@ -19,12 +19,10 @@
 //! one) and would buffer every segment forever — zero `Output::Samples` ever
 //! emitted — so the non-zero/oracle-matching assertions below would fail.
 
+use hls_runtime::client::{Action, HlsClient, Output};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use transmux::TrackId;
-
-use broadcast_common::Unpackage;
-use hls_runtime::client::{Action, HlsClient, Output};
 use transmux::{CodecConfig, TsDemux};
 use url::Url;
 
@@ -176,15 +174,17 @@ fn client_ingests_classic_ts_segment_hls_end_to_end() {
         "Output::Init must precede every Output::Samples"
     );
 
-    // The synthesized Init is a real, Fmp4Demux-decodable ftyp+moov exposing
+    // The synthesized Init is a real, Mp4Demux-decodable ftyp+moov exposing
     // the AVC video + AAC audio tracks TsDemux recovered from the fixture --
     // not just non-empty bytes.
     let Output::Init(init_bytes) = &outputs[init_positions[0]] else {
         unreachable!("checked above")
     };
-    let init_media = transmux::Fmp4Demux::new()
-        .unpackage(init_bytes.as_slice())
-        .expect("the synthesized Init segment must itself be a valid, demuxable fMP4 init");
+    let init_media = test_harness::collect::media_from_mp4(
+        init_bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("the synthesized Init segment must itself be a valid, demuxable fMP4 init");
     assert!(
         init_media
             .tracks
@@ -513,13 +513,15 @@ fn track_set_change_across_a_discontinuity_re_emits_init() {
     assert_eq!(kinds.last(), Some(&"end"));
 
     let tracks = |o: &Output| match o {
-        Output::Init(b) => transmux::Fmp4Demux::new()
-            .unpackage(b.as_slice())
-            .unwrap()
-            .tracks
-            .iter()
-            .map(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
-            .collect::<Vec<bool>>(),
+        Output::Init(b) => test_harness::collect::media_from_mp4(
+            b.as_slice(),
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap()
+        .tracks
+        .iter()
+        .map(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+        .collect::<Vec<bool>>(),
         _ => unreachable!(),
     };
     assert!(

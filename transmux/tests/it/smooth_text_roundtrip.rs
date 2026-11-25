@@ -3,11 +3,11 @@
 //! parser must read back (real artifact: ffmpeg CMAF `av-subtitle-frag.mp4`,
 //! AVC + `stpp`/TTML).
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
 use broadcast_smooth::{SmoothManifest, StreamType};
+use transmux::SmoothPackager;
 use transmux::pipeline::CodecConfig;
-use transmux::{Fmp4Demux, SmoothPackager};
 
 #[test]
 fn packager_text_stream_parses_back() {
@@ -17,7 +17,9 @@ fn packager_text_stream_parses_back() {
 
     let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-subtitle-frag.mp4");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let media = Fmp4Demux::new().unpackage(&bytes).expect("demux fixture");
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("demux fixture");
     let out = SmoothPackager::default().package(&media).expect("smooth");
 
     let parsed = SmoothManifest::parse(&out.manifest).expect("parse the packager's own manifest");

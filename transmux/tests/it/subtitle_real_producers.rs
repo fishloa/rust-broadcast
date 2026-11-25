@@ -18,11 +18,11 @@
 
 use std::collections::BTreeSet;
 
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::{Package, Serialize};
 use isobmff::box_support::OpaqueBox;
 use isobmff::{WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, parse_wvtt_sample};
 use transmux::pipeline::{CodecConfig, SubtitleSampleEntry};
-use transmux::{CmafMux, DashPackager, Fmp4Demux, Media, ProgressiveDemux, SmoothPackager, Track};
+use transmux::{CmafMux, DashPackager, Media, SmoothPackager, Track};
 
 const DIR: &str = "subtitles";
 
@@ -146,21 +146,26 @@ fn read(rel: &str) -> Vec<u8> {
 
 fn demux(layout: &Layout) -> Media {
     match layout {
-        Layout::Progressive(f) => ProgressiveDemux::new(usize::MAX)
-            .expect("demuxer")
-            .unpackage(&read(f))
-            .unwrap_or_else(|e| panic!("{f}: {e:?}")),
-        Layout::Fragmented(f) => Fmp4Demux::new()
-            .unpackage(&read(f))
-            .unwrap_or_else(|e| panic!("{f}: {e:?}")),
+        Layout::Progressive(f) => test_harness::collect::media_from_mp4(
+            &read(f),
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap_or_else(|e| panic!("{f}: {e:?}")),
+        Layout::Fragmented(f) => test_harness::collect::media_from_mp4(
+            &read(f),
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap_or_else(|e| panic!("{f}: {e:?}")),
         Layout::Dash { init, segments } => {
             let mut bytes = read(init);
             for s in *segments {
                 bytes.extend_from_slice(&read(s));
             }
-            Fmp4Demux::new()
-                .unpackage(&bytes)
-                .unwrap_or_else(|e| panic!("{init}: {e:?}"))
+            test_harness::collect::media_from_mp4(
+                &bytes,
+                test_harness::collect::CollectMode::Seekable,
+            )
+            .unwrap_or_else(|e| panic!("{init}: {e:?}"))
         }
     }
 }
@@ -253,7 +258,11 @@ fn every_real_file_remuxes_through_cmaf_unchanged() {
         let out = CmafMux::new(1)
             .package(&media)
             .unwrap_or_else(|e| panic!("{}: {e:?}", c.label));
-        let round = Fmp4Demux::new().unpackage(&out).expect("re-demux");
+        let round = test_harness::collect::media_from_mp4(
+            &out,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("re-demux");
         let after = subtitle_track(&round);
         assert_eq!(
             entry_of(after),

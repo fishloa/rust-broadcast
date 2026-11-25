@@ -4,7 +4,7 @@
 //! The aggregate review of the whole step-2 range found three defects
 //! (B5/S2/S3) that a single, precise invariant would have caught immediately
 //! — audio dts re-anchored per PES-boundary rather than advancing by the
-//! intrinsic per-frame duration (B5), and `Fmp4Demux`/`ProgressiveDemux`
+//! intrinsic per-frame duration (B5), and `Mp4Demux`/`Mp4Demux`
 //! diverging on whether one unmodelled track fails the whole file (S2/S3).
 //! Rather than one ad hoc regression test per bug, this file asserts the
 //! underlying invariant every demuxer must hold for every *timed* track it
@@ -39,7 +39,7 @@
 //! mutation that mis-scales `trun.sample_duration` (verified: halving every
 //! fMP4 duration in `media.rs`, previously line 243) leaves every assertion
 //! in `assert_timing_invariant` green. `fmp4_demux_timing_invariant_holds`
-//! therefore also checks `Fmp4Demux`'s output against an **external**
+//! therefore also checks `Mp4Demux`'s output against an **external**
 //! oracle — `ffprobe`'s own independent parse of the same file, committed as
 //! `fixtures/mp4/frag/demux-oracle/h264-high.frag.packets.csv` — which does
 //! not go anywhere near this crate's summing code and so cannot move in
@@ -51,8 +51,8 @@ use test_fixtures::ffprobe;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
 use transmux::{
-    FlvDemux, Fmp4Demux, Media, ProgressiveDemux, PsDemux, RtmpDemux, RtmpMux, RtpDepacketiser,
-    RtpPacketiser, TsDemux, WebmDemux,
+    FlvDemux, Media, PsDemux, RtmpDemux, RtmpMux, RtpDepacketiser, RtpPacketiser, TsDemux,
+    WebmDemux,
 };
 
 fn workspace_fixture(rel: &str) -> Vec<u8> {
@@ -118,7 +118,7 @@ fn ts_demux_timing_invariant_holds() {
     );
 }
 
-// ── 2. Fmp4Demux ─────────────────────────────────────────────────────────
+// ── 2. Mp4Demux ─────────────────────────────────────────────────────────
 
 /// The committed `ffprobe` oracle for `h264-high.frag.mp4`, in decode order,
 /// in the stream's own `time_base` ticks (90 kHz for its video stream, matching
@@ -134,8 +134,10 @@ fn load_fmp4_oracle() -> Vec<ffprobe::PacketRow> {
 #[test]
 fn fmp4_demux_timing_invariant_holds() {
     let file = workspace_fixture("mp4/frag/h264-high.frag.mp4");
-    let media = Fmp4Demux::new().unpackage(&file).expect("fMP4 demux");
-    let checked = assert_timing_invariant(&media, "Fmp4Demux");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("fMP4 demux");
+    let checked = assert_timing_invariant(&media, "Mp4Demux");
     assert!(checked >= 1, "expected at least one timed track checked");
 
     // Independent-oracle check (see the module doc): compare every sample's
@@ -150,7 +152,7 @@ fn fmp4_demux_timing_invariant_holds() {
     assert_eq!(
         video.samples.len(),
         oracle.len(),
-        "Fmp4Demux: sample count ({}) must match the ffprobe oracle's packet count ({})",
+        "Mp4Demux: sample count ({}) must match the ffprobe oracle's packet count ({})",
         video.samples.len(),
         oracle.len()
     );
@@ -158,37 +160,36 @@ fn fmp4_demux_timing_invariant_holds() {
         let dts = s
             .timing
             .and_then(|t| t.dts())
-            .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no dts"));
+            .unwrap_or_else(|| panic!("Mp4Demux: sample {i} has no dts"));
         assert_eq!(
             dts,
             o.dts(),
-            "Fmp4Demux: sample {i} dts ({dts}) must match the ffprobe oracle's dts ({})",
+            "Mp4Demux: sample {i} dts ({dts}) must match the ffprobe oracle's dts ({})",
             o.dts()
         );
         let duration = s
             .timing
             .and_then(|t| t.duration())
-            .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no duration"));
+            .unwrap_or_else(|| panic!("Mp4Demux: sample {i} has no duration"));
         assert_eq!(
             i64::from(duration),
             o.duration(),
-            "Fmp4Demux: sample {i} duration ({duration}) must match the ffprobe oracle's \
+            "Mp4Demux: sample {i} duration ({duration}) must match the ffprobe oracle's \
              duration ({}) — this is what catches a scaling bug invariant #2 alone cannot",
             o.duration()
         );
     }
 }
 
-// ── 3. ProgressiveDemux ──────────────────────────────────────────────────
+// ── 3. Mp4Demux ──────────────────────────────────────────────────
 
 #[test]
 fn progressive_demux_timing_invariant_holds() {
     let file = workspace_fixture("mp4/h264-aac-prog.mp4");
-    let media = ProgressiveDemux::new(1024 * 1024)
-        .expect("non-zero cap must construct")
-        .unpackage(&file)
-        .expect("progressive MP4 demux");
-    let checked = assert_timing_invariant(&media, "ProgressiveDemux");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("progressive MP4 demux");
+    let checked = assert_timing_invariant(&media, "Mp4Demux");
     assert!(
         checked >= 2,
         "expected at least video + audio tracks checked, got {checked}"

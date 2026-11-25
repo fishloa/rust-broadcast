@@ -39,7 +39,6 @@ use transmux::TrackId;
 
 use broadcast_common::{Encrypt, Serialize, Unpackage};
 use bytes::Bytes;
-use transmux::media::Fmp4Demux;
 use transmux::{
     CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy, Track,
 };
@@ -1087,9 +1086,11 @@ fn hevc_media() -> Media {
 
 fn vvc_media() -> Media {
     let bytes = test_fixtures::read("mp4/frag/vvc.frag.mp4");
-    let media = Fmp4Demux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux mp4/frag/vvc.frag.mp4");
+    let media = test_harness::collect::media_from_mp4(
+        bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux mp4/frag/vvc.frag.mp4");
     media
         .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Vvc { .. }))
         .expect("VVC video track present")

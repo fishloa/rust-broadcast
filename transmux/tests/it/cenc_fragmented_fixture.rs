@@ -16,7 +16,7 @@
 //! The golden-interop cross-check shells out to Bento4's `mp4decrypt` (the
 //! read side of the same independent tool) and demuxes ITS output — which
 //! Bento4 rewrites back to a plain (`avc1`, no `sinf`) fragmented fMP4 — with
-//! this crate's own regular, non-CENC [`Fmp4Demux`], then compares NAL
+//! this crate's own regular, non-CENC [`Mp4Demux`], then compares NAL
 //! payloads byte-for-byte against this module's own `CencDecryptor` output.
 //! `mp4decrypt` is optional at test-run time (skipped with a printed reason if
 //! absent from `PATH`), matching the established pattern for
@@ -27,10 +27,10 @@
 
 use std::process::Command;
 
-use broadcast_common::{Decrypt, Unpackage};
+use broadcast_common::Decrypt;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
-use transmux::{CodecConfig, Fmp4Demux, Sample};
+use transmux::{CodecConfig, Sample};
 
 const CENC_MP4: &str = "mp4/h264-cenc.mp4";
 const CBCS_MP4: &str = "mp4/h264-cbcs.mp4";
@@ -175,7 +175,7 @@ fn cbcs_fragmented_demux_and_decrypt_succeeds() {
 
 /// Decrypt `fixture_path` with Bento4's `mp4decrypt`, demux ITS (now plain
 /// `avc1`) output with this crate's own regular fragmented demux
-/// ([`Fmp4Demux`]), and assert our own `CencDecryptor` path reproduces the
+/// ([`Mp4Demux`]), and assert our own `CencDecryptor` path reproduces the
 /// exact same NAL payloads. Skips cleanly (printing why) if `mp4decrypt`
 /// isn't on `PATH`.
 fn assert_matches_bento4_reference(fixture_rel: &str, tag: &str) {
@@ -219,10 +219,11 @@ fn assert_matches_bento4_reference(fixture_rel: &str, tag: &str) {
     // sinf) fragmented fMP4 with the identical sample bytes our own decrypt
     // path should produce — with this crate's regular, non-CENC fMP4 demux.
     let ref_bytes = std::fs::read(&out_path).expect("read mp4decrypt output");
-    let mut demux = Fmp4Demux::new();
-    let ref_media = demux
-        .unpackage(&ref_bytes)
-        .expect("demux mp4decrypt reference output");
+    let ref_media = test_harness::collect::media_from_mp4(
+        &ref_bytes,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux mp4decrypt reference output");
     let ref_video = ref_media
         .tracks
         .iter()

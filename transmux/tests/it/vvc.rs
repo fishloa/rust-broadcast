@@ -5,13 +5,13 @@
 //! `vvcC` box. The `vvcC` box body (FullBox header + `VvcDecoderConfigurationRecord`)
 //! is the byte-exact oracle. Every test walks the box tree — no hardcoded offsets.
 
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Package, Parse, Serialize};
 use bytes::Bytes;
 use isobmff::vvc_config::{
     VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,
 };
 use transmux::codec_config_ext::VvcRecordCodecInfo;
-use transmux::media::{CmafMux, Fmp4Demux};
+use transmux::media::CmafMux;
 use transmux::pipeline::CodecConfig;
 
 const FIXTURE: &str = "mp4/frag/vvc.frag.mp4";
@@ -74,8 +74,9 @@ fn vvc_demux_yields_vvc_config_byte_exact() {
     let mp4 = read_fixture();
     let oracle = oracle_vvcc_body(&mp4);
 
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&mp4).expect("demux vvc fixture");
+    let media =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux vvc fixture");
     assert!(!media.tracks.is_empty(), "expected at least one track");
 
     let CodecConfig::Vvc { config, .. } = media.tracks[0].config() else {
@@ -104,8 +105,9 @@ fn vvc_demux_yields_vvc_config_byte_exact() {
 #[test]
 fn vvc_dimensions_from_sps() {
     let mp4 = read_fixture();
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&mp4).expect("demux");
+    let media =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux");
 
     let track = &media.tracks[0];
     let CodecConfig::Vvc {
@@ -135,8 +137,9 @@ fn vvc_dimensions_from_sps() {
 #[test]
 fn vvc_sample_round_trip_through_cmaf() {
     let mp4 = read_fixture();
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&mp4).expect("demux");
+    let media =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux");
 
     let orig_samples: Vec<Bytes> = media.tracks[0]
         .samples
@@ -148,8 +151,11 @@ fn vvc_sample_round_trip_through_cmaf() {
     let mut mux = CmafMux::default();
     let remuxed = mux.package(&media).expect("mux back to CMAF");
 
-    let mut demux2 = Fmp4Demux::new();
-    let media2 = demux2.unpackage(&remuxed).expect("re-demux");
+    let media2 = test_harness::collect::media_from_mp4(
+        &remuxed,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux");
     let round_samples: Vec<Bytes> = media2.tracks[0]
         .samples
         .iter()
@@ -176,8 +182,9 @@ fn vvc_output_init_segment_carries_vvc1_vvcc() {
     let mp4 = read_fixture();
     let oracle = oracle_vvcc_body(&mp4);
 
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&mp4).expect("demux");
+    let media =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux");
 
     let mut mux = CmafMux::default();
     let remuxed = mux.package(&media).expect("mux");

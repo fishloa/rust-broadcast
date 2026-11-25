@@ -119,7 +119,7 @@ fn mux_js_fmp4_608_survives_cmaf_remux() {
     if skip_without_private() {
         return;
     }
-    use transmux::{CmafMux, Fmp4Demux};
+    use transmux::CmafMux;
     let mut buf = read_private("captions/mux.js/dash-608-captions-init.mp4");
     buf.extend_from_slice(&read_private("captions/mux.js/dash-608-captions-seg.m4s"));
     let raw_markers = buf
@@ -127,10 +127,14 @@ fn mux_js_fmp4_608_survives_cmaf_remux() {
         .filter(|w| *w == GA94_MARKER)
         .count();
     assert_eq!(raw_markers, 3, "independent count over the raw fMP4 bytes");
-    let media = Fmp4Demux::new().unpackage(&buf).expect("demux fMP4");
+    let media =
+        test_harness::collect::media_from_mp4(&buf, test_harness::collect::CollectMode::Seekable)
+            .expect("demux fMP4");
     assert_eq!(marker_count(&media), 3);
     let out = CmafMux::new(1).package(&media).expect("CMAF re-mux");
-    let media2 = Fmp4Demux::new().unpackage(&out).expect("re-demux");
+    let media2 =
+        test_harness::collect::media_from_mp4(&out, test_harness::collect::CollectMode::Seekable)
+            .expect("re-demux");
     assert_eq!(marker_count(&media2), 3);
     assert_eq!(video_payloads(&media2), video_payloads(&media));
 }

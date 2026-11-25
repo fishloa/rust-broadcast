@@ -197,12 +197,16 @@ fn cmaf_from_round_tripped_ir_matches_cmaf_from_original() {
 
     // Re-parse both CMAF outputs and compare the video track's length-prefixed
     // sample NAL payloads (the mdat coded data), sample-for-sample.
-    let m_orig: Media = transmux::Fmp4Demux::new()
-        .unpackage(&cmaf_orig)
-        .expect("parse orig CMAF");
-    let m_round: Media = transmux::Fmp4Demux::new()
-        .unpackage(&cmaf_round)
-        .expect("parse round CMAF");
+    let m_orig: Media = test_harness::collect::media_from_mp4(
+        &cmaf_orig,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("parse orig CMAF");
+    let m_round: Media = test_harness::collect::media_from_mp4(
+        &cmaf_round,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("parse round CMAF");
 
     let vo = &m_orig.tracks[0];
     let vr = &m_round.tracks[0];
@@ -269,9 +273,9 @@ fn start_code_len(au: &[u8]) -> usize {
 fn mux_noaud_fixture(fixture: &str) -> (Vec<Vec<u8>>, u16) {
     let path = alloc_path(fixture);
     let mp4 = std::fs::read(path).expect("fixture must exist");
-    let ir = transmux::Fmp4Demux::new()
-        .unpackage(&mp4)
-        .expect("demux the AUD-less MP4");
+    let ir =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux the AUD-less MP4");
     let ts = TsMux::new().package(&ir).expect("mux to TS");
     let pmt = first_section(&ts, 0x1000).expect("PMT present");
     let streams = parse_pmt(&pmt);
@@ -351,7 +355,9 @@ fn hevc_access_units_get_a_leading_aud() {
 fn aud_insertion_preserves_coded_nals() {
     let path = alloc_path("noaud/h264-noaud.mp4");
     let mp4 = std::fs::read(path).unwrap();
-    let ir = transmux::Fmp4Demux::new().unpackage(&mp4).unwrap();
+    let ir =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let ts = TsMux::new().package(&ir).unwrap();
     let pmt = first_section(&ts, 0x1000).unwrap();
     let streams = parse_pmt(&pmt);
@@ -710,9 +716,9 @@ fn aud_output_matches_source_frame_count_and_delimits_every_au() {
         return;
     }
     let mp4 = std::fs::read(alloc_path("noaud/h264-noaud.mp4")).expect("noaud fixture");
-    let ir = transmux::Fmp4Demux::new()
-        .unpackage(&mp4)
-        .expect("demux the AUD-less MP4");
+    let ir =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux the AUD-less MP4");
     let ts2 = TsMux::new().package(&ir).expect("mux to TS");
     let src_frames = u64::try_from(ir.tracks[0].samples.len()).unwrap();
 

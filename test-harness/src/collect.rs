@@ -1,10 +1,12 @@
 //! Collect a streaming demux stage's [`DemuxEvent`]s into the per-track vectors
 //! a [`Media`] carries.
 //!
-//! Until the whole-input MP4 demuxers are deleted (streaming-first Phase 4),
-//! the tests and the CLI still need a `Media`. This module is the one place
-//! that folds the event vocabulary into it, so the differential tests compare
-//! the streaming stage against the old demuxers on the same terms.
+//! The muxers still take a `Media` (streaming-first Phase 4 will change them),
+//! so the tests drive the one streaming MP4 stage over a fixture and fold its
+//! event vocabulary into one here. The fold keeps the init's track order and
+//! its sample-owned summaries (`start_decode_time`, skipped and degraded
+//! records), so a test compares exactly what the old whole-input demuxers
+//! reported on the same terms.
 
 use std::collections::BTreeMap;
 
@@ -191,11 +193,18 @@ fn drive_sequential(
 fn media_from_stage(mut demux: transmux::mp4_demux::Mp4Demux) -> Result<Media, transmux::Error> {
     let fragmented = demux.is_fragmented();
     let movie_timescale = demux.movie_timescale();
+    let init_order: Vec<TrackId> = demux.init_tracks().map(|spec| spec.track_id).collect();
     let mut events = Vec::new();
     while let Some(event) = demux.poll() {
         events.push(event);
     }
     let mut media = media_from_events(events);
+    media.tracks.sort_by_key(|track| {
+        init_order
+            .iter()
+            .position(|id| *id == track.spec.track_id)
+            .unwrap_or(usize::MAX)
+    });
     if let Some(timescale) = movie_timescale {
         media.movie_timescale = timescale;
     }

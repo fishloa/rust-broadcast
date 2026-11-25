@@ -3,7 +3,7 @@
 //! The oracle IR is built by demuxing `fixtures/ts/h264-aac.ts` with [`TsDemux`]
 //! (deterministic: 75 video + 131 audio samples, fully characterised by the
 //! `ts_demux` gate). Every test re-demuxes the repackaged CMAF output with the
-//! crate's own [`Fmp4Demux`] and compares coded sample bytes against that oracle
+//! crate's own [`Mp4Demux`] and compares coded sample bytes against that oracle
 //! — no hardcoded offsets, no raw-passthrough shortcuts.
 
 use broadcast_common::timescale::Timescale;
@@ -16,7 +16,7 @@ use bytes::Bytes;
 use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
-use transmux::media::{Fmp4Demux, Media};
+use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::{Repackage, Sample, Track, TrackSpec, TsDemux};
 
@@ -112,9 +112,11 @@ fn identity_repackage_is_lossless() {
     let out = Repackage::new(Duration::from_secs(2))
         .run_media(&ir)
         .expect("repackage");
-    let round = Fmp4Demux::new()
-        .unpackage(&out.to_contiguous())
-        .expect("re-demux");
+    let round = test_harness::collect::media_from_mp4(
+        &out.to_contiguous(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux");
 
     assert_eq!(round.tracks.len(), 2, "identity keeps 2 tracks");
     assert_eq!(
@@ -147,9 +149,11 @@ fn track_select_video_only() {
         .select_tracks(&[0])
         .run_media(&ir)
         .expect("repackage video-only");
-    let round = Fmp4Demux::new()
-        .unpackage(&out.to_contiguous())
-        .expect("re-demux");
+    let round = test_harness::collect::media_from_mp4(
+        &out.to_contiguous(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux");
 
     assert_eq!(round.tracks.len(), 1, "exactly one track after select");
     assert!(
@@ -214,9 +218,11 @@ fn trim_selects_window_and_snaps_to_keyframe() {
         .trim(start, end)
         .run_media(&ir)
         .expect("trim repackage");
-    let round = Fmp4Demux::new()
-        .unpackage(&out.to_contiguous())
-        .expect("re-demux");
+    let round = test_harness::collect::media_from_mp4(
+        &out.to_contiguous(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux");
 
     // (a) kept count matches the oracle window (post-snap).
     assert_eq!(
@@ -236,7 +242,7 @@ fn trim_selects_window_and_snaps_to_keyframe() {
         "trimmed video coded bytes equal the corresponding originals"
     );
     // (d) output re-based to zero: first media segment's video tfdt is 0 — the
-    //     re-demuxed first sample begins the timeline (Fmp4Demux reconstructs
+    //     re-demuxed first sample begins the timeline (Mp4Demux reconstructs
     //     from base 0), verified structurally by the identity of sample[0].
     let vid_tid = round.tracks[0].spec.track_id;
     let first_seg = out.media_segments.first().expect("at least one segment");
@@ -295,9 +301,11 @@ fn resegment_preserves_full_sample_sequence() {
         .expect("resegment");
 
     // Re-demux the whole contiguous output and compare the full video sequence.
-    let round = Fmp4Demux::new()
-        .unpackage(&out.to_contiguous())
-        .expect("re-demux");
+    let round = test_harness::collect::media_from_mp4(
+        &out.to_contiguous(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux");
     assert_eq!(
         coded_bytes(&round, 0),
         coded_bytes(&ir, 0),
@@ -315,9 +323,11 @@ fn resegment_preserves_full_sample_sequence() {
     for seg in &out.media_segments {
         let mut whole = out.init_segment.clone();
         whole.extend_from_slice(seg);
-        let m = Fmp4Demux::new()
-            .unpackage(&whole)
-            .expect("re-demux segment");
+        let m = test_harness::collect::media_from_mp4(
+            &whole,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("re-demux segment");
         stitched.extend(m.tracks[0].samples.iter().map(|s| s.data.clone()));
     }
     assert_eq!(

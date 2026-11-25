@@ -2,7 +2,7 @@
 //!
 //! Step 2e found that `Stage::feed` hardcoded `&[u8]`, which genuinely fit the
 //! byte-stream demux family (`StreamingTsDemux`/`StreamingFlvDemux`/
-//! `ProgressiveDemux`/`RtpStreamDepacketiser`) but not the four segmenters
+//! `Mp4Demux`/`RtpStreamDepacketiser`) but not the four segmenters
 //! (`Segmenter`/`LlHlsSegmenter`/`LlSegmenter`/`StreamingTsHlsSegmenter`),
 //! whose real per-call input is a typed `(track_id, Sample)` — forcing bytes
 //! on them would have meant inventing a byte encoding nobody downstream
@@ -17,7 +17,7 @@
 //!    driver.** [`generic_drive_helper_unifies_ts_flv_and_progressive_demuxers`]
 //!    drives three demuxers with three different native APIs before step 2e
 //!    (`StreamingTsDemux::feed` returns `()`; `StreamingFlvDemux::feed`
-//!    returns `Result<(), FlvError>`; `ProgressiveDemux` has no incremental
+//!    returns `Result<(), FlvError>`; `Mp4Demux` has no incremental
 //!    `feed` at all) and
 //!    [`generic_drive_helper_also_spans_segmenter_stages`] drives two
 //!    segmenters with two entirely different `Out` types (`(Vec<u8>,
@@ -51,10 +51,11 @@ use transmux::TrackId;
 
 use broadcast_common::{Stage, Timestamp};
 use transmux::media::Media;
+use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::{
-    CodecConfig, DemuxEvent, LlHlsSegmenter, LlHlsStageOutput, LlSegmenter, PartInfo,
-    ProgressiveDemux, Sample, SegmentInfo, SegmentMeta, Segmenter, StreamingFlvDemux,
-    StreamingTsDemux, StreamingTsHlsSegmenter, TrackSpec, TsDemux,
+    CodecConfig, DemuxEvent, LlHlsSegmenter, LlHlsStageOutput, LlSegmenter, PartInfo, Sample,
+    SegmentInfo, SegmentMeta, Segmenter, StreamingFlvDemux, StreamingTsDemux,
+    StreamingTsHlsSegmenter, TrackSpec, TsDemux,
 };
 
 use broadcast_common::Unpackage;
@@ -271,36 +272,32 @@ fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
         assert_samples_match(samples, &oracle_track.samples, "StreamingFlvDemux");
     }
 
-    // --- ProgressiveDemux -----------------------------------------------------
-    // Whole-file parse (see the type's own docs): `Out = Media`, one value
-    // popped from `poll()` once, after `finish()` — proving `drive()` handles
-    // an `Out` type that isn't `DemuxEvent` at all just as well.
-    let oracle_prog: Media = ProgressiveDemux::new(1024 * 1024)
-        .expect("non-zero cap must construct")
-        .unpackage(PROGRESSIVE_MP4.as_slice())
-        .expect("batch progressive demux");
+    // --- Mp4Demux -----------------------------------------------------
+    // The streaming stage, driven through the same generic helper: it emits
+    // the crate's event vocabulary, so the folded events are compared with the
+    // whole-image collector's `Media`.
+    let oracle_prog: Media = test_harness::collect::media_from_mp4(
+        PROGRESSIVE_MP4.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("batch progressive demux");
 
-    let prog_chunks: Vec<&[u8]> = PROGRESSIVE_MP4.as_slice().chunks(4096).collect();
-    let mut prog_stage = ProgressiveDemux::new(1024 * 1024).expect("non-zero cap must construct");
-    let mut prog_media = drive(&mut prog_stage, prog_chunks);
-    assert_eq!(
-        prog_media.len(),
-        1,
-        "ProgressiveDemux emits exactly one Media"
-    );
-    let media = prog_media.pop().unwrap();
+    let prog_inputs: Vec<Mp4Input<'_>> = PROGRESSIVE_MP4
+        .as_slice()
+        .chunks(4096)
+        .map(Mp4Input::Next)
+        .collect();
+    let mut prog_stage = Mp4Demux::sequential(Mp4DemuxConfig::default());
+    let events = drive(&mut prog_stage, prog_inputs);
+    let media = test_harness::collect::media_from_events(events);
     assert_eq!(
         media.tracks.len(),
         oracle_prog.tracks.len(),
-        "Stage-driven ProgressiveDemux must yield the same track count as Unpackage::unpackage"
+        "Stage-driven Mp4Demux must yield the same track count as the whole-image collector"
     );
     for spec_track in &media.tracks {
         let oracle_track = find_matching_oracle_track(&spec_track.spec, &oracle_prog.tracks);
-        assert_samples_match(
-            &spec_track.samples,
-            &oracle_track.samples,
-            "ProgressiveDemux",
-        );
+        assert_samples_match(&spec_track.samples, &oracle_track.samples, "Mp4Demux");
     }
 }
 
@@ -345,42 +342,36 @@ fn demand_saturated_flips_true_at_the_unattributed_bytes_bound() {
     );
 }
 
-/// [`ProgressiveDemux::feed`]'s [`Stage`] adapter is a documented unbounded
-/// buffer before its B7 fix (media plane step 2 fix wave 3): feeding more
-/// than the `max_bytes` bound supplied at construction, in small chunks, must
-/// be rejected with a typed [`Error::BufferCapExceeded`] rather than growing
-/// `buf` past the cap — and `demand().saturated` must flip `true` before that
-/// point, so a cooperative driver never has to hit the error at all.
+/// [`Mp4Demux`]'s sequential buffer is bounded by the reader's hostile-input
+/// caps: feeding more than `max_need_bytes` in small chunks must be rejected
+/// with a typed [`Error::LimitExceeded`] rather than growing the buffer past
+/// the cap.
 #[test]
-fn progressive_demux_stage_feed_rejects_input_past_its_byte_cap() {
-    const MAX_BYTES: usize = 4096;
+fn sequential_stage_rejects_input_past_its_byte_cap() {
+    const MAX_BYTES: u64 = 4096;
     const CHUNK: usize = 64;
 
-    let mut demux = ProgressiveDemux::new(MAX_BYTES).expect("non-zero cap must construct");
-    let chunk = vec![0xABu8; CHUNK];
-    let mut saw_saturated = false;
+    let limits = isobmff::Limits::default()
+        .with_max_moov_bytes(MAX_BYTES)
+        .with_max_fragment_bytes(MAX_BYTES);
+    let config = Mp4DemuxConfig::default().with_limits(limits);
+    let mut demux = Mp4Demux::sequential(config);
+    let mut chunk = vec![0u8; CHUNK];
+    let declared = u32::try_from(1usize << 20).expect("box size");
+    chunk[..4].copy_from_slice(&declared.to_be_bytes());
+    chunk[4..8].copy_from_slice(b"free");
     let mut err = None;
-    for _ in 0..(MAX_BYTES / CHUNK + 4) {
-        if Stage::demand(&demux).saturated {
-            saw_saturated = true;
-        }
-        match Stage::feed(&mut demux, &chunk, Timestamp::ZERO) {
-            Ok(()) => {}
-            Err(e) => {
-                err = Some(e);
-                break;
-            }
+    for _ in 0..(usize::try_from(MAX_BYTES).unwrap() / CHUNK + 4) {
+        if let Err(e) = Stage::feed(&mut demux, Mp4Input::Next(&chunk), Timestamp::ZERO) {
+            err = Some(e);
+            break;
         }
     }
-    assert!(
-        saw_saturated,
-        "demand().saturated must flip true before the cap is actually exceeded"
-    );
-    match err.expect("feed must eventually reject input past max_bytes") {
-        transmux::Error::BufferCapExceeded { cap, .. } => {
-            assert_eq!(cap, MAX_BYTES, "the error must name the configured bound");
+    match err.expect("feed must eventually reject input past the byte cap") {
+        transmux::Error::LimitExceeded { limit, .. } => {
+            assert_eq!(limit, MAX_BYTES, "the error must name the configured bound");
         }
-        other => panic!("expected Error::BufferCapExceeded, got {other:?}"),
+        other => panic!("expected LimitExceeded naming the bound, got {other:?}"),
     }
 }
 

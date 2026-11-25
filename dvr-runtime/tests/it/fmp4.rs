@@ -201,10 +201,11 @@ fn a_forced_track_change_rolls_to_a_second_period() {
         for segment in &parsed.segments {
             bytes.extend_from_slice(&recording.archive.read(segment).expect("read a segment"));
         }
-        let mut demux = transmux::Fmp4Demux::new();
-        let media = demux
-            .unpackage(&bytes)
-            .unwrap_or_else(|e| panic!("period {period} must play on its own: {e}"));
+        let media = test_harness::collect::media_from_mp4(
+            &bytes,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap_or_else(|e| panic!("period {period} must play on its own: {e}"));
         assert!(!media.tracks.is_empty(), "period {period} recovers a track");
         assert!(
             media.tracks.iter().all(|track| !track.samples.is_empty()),

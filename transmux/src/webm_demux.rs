@@ -2007,9 +2007,8 @@ mod tests {
         .expect("media segment");
         let mut both = init;
         both.extend_from_slice(&frag);
-        let reparsed = crate::media::Fmp4Demux::new()
-            .unpackage(&both)
-            .expect("re-demux of the muxed normalised IR");
+        let reparsed =
+            crate::mp4_collect::media_from_mp4(&both).expect("re-demux of the muxed normalised IR");
         assert_eq!(
             reparsed.tracks[0].samples[0].data.as_ref(),
             EXPECTED,
@@ -2108,8 +2107,7 @@ mod tests {
         .expect("media segment");
         let mut both = init;
         both.extend_from_slice(&frag);
-        let reparsed = crate::media::Fmp4Demux::new()
-            .unpackage(&both)
+        let reparsed = crate::mp4_collect::media_from_mp4(&both)
             .expect("re-demux of the muxed normalised HEVC IR");
         assert_eq!(
             reparsed.tracks[0].samples[0].data.as_ref(),

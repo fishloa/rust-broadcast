@@ -14,11 +14,11 @@
 //! AVC + `stpp`/TTML). `wvtt` has no real producer available (ffmpeg
 //! cannot write it), so it is a spec-vector.
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
 use isobmff::{WvttSampleEntry, XmlSubtitleSampleEntry};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
-use transmux::{DashPackager, Fmp4Demux, Media, Sample, SmoothPackager, Track, TrackId, TrackSpec};
+use transmux::{DashPackager, Media, Sample, SmoothPackager, Track, TrackId, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -27,7 +27,8 @@ fn timescale(value: u32) -> Timescale {
 fn load_av_subtitle() -> Media {
     let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-subtitle-frag.mp4");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    Fmp4Demux::new().unpackage(&bytes).expect("demux fixture")
+    test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+        .expect("demux fixture")
 }
 
 fn is_subtitle(t: &Track) -> bool {

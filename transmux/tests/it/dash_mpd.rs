@@ -3,10 +3,10 @@
 //! (issue #464).
 //!
 //! Every assertion here is computed from what the crate itself produced
-//! (via [`Segmenter`]/[`Fmp4Demux`]/[`DashPackager`]) — never a hardcoded
+//! (via [`Segmenter`]/[`Mp4Demux`]/[`DashPackager`]) — never a hardcoded
 //! literal — and cross-checks two independent code paths against each other:
 //! the [`Segmenter`]'s own segment-cut bookkeeping vs. an independent
-//! [`Fmp4Demux`] re-parse of the produced CMAF bytes (which reads the real
+//! [`Mp4Demux`] re-parse of the produced CMAF bytes (which reads the real
 //! `tfdt`/`trun` box fields), and the [`DashPackager`]'s emitted XML vs. that
 //! re-parse.
 //!
@@ -31,8 +31,8 @@ use isobmff::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
 use transmux::pipeline::CodecConfig;
 use transmux::{
     Addressing, CencScheme, CmafMux, ConstantIvSenc, ContentProtectionSystem, DashPackager,
-    Fmp4Demux, InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, Segmenter,
-    TrackEncryption, TrackSegments, TrackSpec, TsDemux,
+    InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, Segmenter, TrackEncryption,
+    TrackSegments, TrackSpec, TsDemux,
 };
 
 // ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ fn segment_via_segmenter(media: &Media, target: Duration) -> (Vec<u8>, Vec<Vec<u
 
 /// Independently recover, for every track, the per-segment sample-duration
 /// sum and the segment's `tfdt.baseMediaDecodeTime` — by re-demuxing each
-/// produced CMAF segment with [`Fmp4Demux`] (reading the real `trun`/`tfdt`
+/// produced CMAF segment with [`Mp4Demux`] (reading the real `trun`/`tfdt`
 /// box fields), **not** by trusting [`Segmenter`]'s own bookkeeping.
 fn recover_segment_timing(
     init: &[u8],
@@ -136,7 +136,11 @@ fn recover_segment_timing(
         let mut buf = Vec::with_capacity(init.len() + seg.len());
         buf.extend_from_slice(init);
         buf.extend_from_slice(seg);
-        let media = Fmp4Demux::new().unpackage(&buf[..]).expect("demux segment");
+        let media = test_harness::collect::media_from_mp4(
+            &buf[..],
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("demux segment");
         for t in &media.tracks {
             let dur: u64 = t
                 .samples
@@ -218,7 +222,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
 
     // $Number$/duration math: `@duration` is the nominal (first-segment)
     // duration, and — the invariant the task calls out — the *real* segment
-    // durations for a track (independently recovered via Fmp4Demux) must sum
+    // durations for a track (independently recovered via Mp4Demux) must sum
     // to exactly that track's total sample-duration (the segments fully
     // partition the track; nothing dropped/duplicated by segmentation).
     for (&track_id, (durations, _)) in &recovered {
@@ -382,7 +386,7 @@ fn segment_timeline_time_addressing_matches_tfdt() {
         assert_eq!(
             flat_t, *tfdts,
             "expanded <S>@t sequence must equal the real tfdt.baseMediaDecodeTime values \
-             (independently recovered via Fmp4Demux) for track {track_id}"
+             (independently recovered via Mp4Demux) for track {track_id}"
         );
         assert_eq!(flat_t[0], 0, "first segment starts at decode time zero");
     }

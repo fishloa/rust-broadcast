@@ -713,9 +713,9 @@ fn with_cut_policy_does_not_rearm_after_samples_are_buffered() {
 
 fn vvc_spec() -> Option<TrackSpec> {
     let bytes = test_fixtures::read("mp4/frag/vvc.frag.mp4");
-    let media = transmux::media::Fmp4Demux::new()
-        .unpackage(&bytes)
-        .expect("demux vvc fixture");
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("demux vvc fixture");
     media
         .tracks
         .into_iter()

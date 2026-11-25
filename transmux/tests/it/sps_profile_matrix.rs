@@ -515,11 +515,13 @@ fn h264_matrix_ts_to_cmaf_init_segment() {
             oracle.file
         );
 
-        // Round-trip through our own Fmp4Demux: dims/profile/level survive
+        // Round-trip through our own Mp4Demux: dims/profile/level survive
         // TS → IR → fMP4 → IR unchanged.
-        let round: Media = transmux::Fmp4Demux::new()
-            .unpackage(&cmaf)
-            .unwrap_or_else(|e| panic!("{}: re-parse our CMAF: {e:?}", oracle.file));
+        let round: Media = test_harness::collect::media_from_mp4(
+            &cmaf,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap_or_else(|e| panic!("{}: re-parse our CMAF: {e:?}", oracle.file));
         let round_track = avc_track(&round);
         match &round_track.spec.config {
             CodecConfig::Avc {
@@ -589,9 +591,11 @@ fn hevc_matrix_ts_to_cmaf_init_segment() {
             oracle.file
         );
 
-        let round: Media = transmux::Fmp4Demux::new()
-            .unpackage(&cmaf)
-            .unwrap_or_else(|e| panic!("{}: re-parse our CMAF: {e:?}", oracle.file));
+        let round: Media = test_harness::collect::media_from_mp4(
+            &cmaf,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap_or_else(|e| panic!("{}: re-parse our CMAF: {e:?}", oracle.file));
         let round_track = hevc_track(&round);
         match &round_track.spec.config {
             CodecConfig::Hevc {

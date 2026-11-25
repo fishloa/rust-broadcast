@@ -70,11 +70,15 @@ impl VideoJoin {
 mod tests {
     use super::*;
     use broadcast_common::Unpackage;
-    use transmux::{Fmp4Demux, Track};
+    use transmux::Track;
 
     fn video_track(fixture: &str) -> Track {
         let data = test_fixtures::read(fixture);
-        let media = Fmp4Demux::new().unpackage(&data[..]).unwrap();
+        let media = test_harness::collect::media_from_mp4(
+            &data[..],
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap();
         media
             .tracks
             .into_iter()

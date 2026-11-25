@@ -82,10 +82,7 @@ fn decrypt_matches_cleartext_ts() {
     // Cleartext oracle.
     let ts = read(CLEAR_TS);
     let mut td = TsDemux::new();
-    let clear_media = {
-        use broadcast_common::Unpackage;
-        td.unpackage(&ts).expect("demux cleartext TS")
-    };
+    let clear_media = { td.unpackage(&ts).expect("demux cleartext TS") };
     let clear = nal_payloads(&clear_media.tracks[0].samples);
 
     assert_eq!(
@@ -128,10 +125,7 @@ fn wrong_key_does_not_match() {
     // And the wrong-key output must not match the cleartext TS.
     let ts = read(CLEAR_TS);
     let mut td = TsDemux::new();
-    let clear = {
-        use broadcast_common::Unpackage;
-        nal_payloads(&td.unpackage(&ts).unwrap().tracks[0].samples)
-    };
+    let clear = { nal_payloads(&td.unpackage(&ts).unwrap().tracks[0].samples) };
     assert_ne!(bad_nals, clear, "wrong key must not reproduce cleartext");
 }
 
@@ -382,8 +376,11 @@ fn demux_avc_track_matches_mp4decrypt() {
     let bytes = std::fs::read(&out).expect("read mp4decrypt output");
     let _ = std::fs::remove_file(&out);
 
-    let mut fd = transmux::Fmp4Demux::new();
-    let ref_media = fd.unpackage(bytes.as_slice()).expect("demux reference");
+    let ref_media = test_harness::collect::media_from_mp4(
+        bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux reference");
     let ref_video: Vec<Vec<u8>> = ref_media
         .tracks
         .iter()

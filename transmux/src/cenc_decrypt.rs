@@ -881,7 +881,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
 ///
 /// Reuses the already-typed [`MovieFragmentBox`] parser (which in turn parses
 /// `tfhd`/`tfdt`/`trun`) for the fragment structure — this mirrors
-/// [`crate::media::Fmp4Demux`]'s own `moof`/`mdat` walk, scoped to a single
+/// [`crate::mp4_demux::Mp4Demux`]'s own `moof`/`mdat` walk, scoped to a single
 /// `target_track_id` and without decrypting or resolving codec config (the
 /// caller, [`demux_protected`], already has that from `moov`).
 fn collect_fragment_samples(
@@ -899,7 +899,7 @@ fn collect_fragment_samples(
     let mut pending_moof: Option<(u64, MovieFragmentBox)> = None;
     // Running absolute decode-time cursor (media plane step 2c), seeded from
     // the first fragment's `tfdt` for this track (mirrors
-    // `crate::media::Fmp4Demux`'s `TrackBuilder`); `Track::new` below anchors
+    // `crate::mp4_demux::Mp4Demux`); `Track::new` below anchors
     // at 0 regardless (this path never fed a caller-visible anchor), so this
     // is purely to give each recovered sample a real, internally-consistent
     // `dts`/`pts` rather than `None` — the trun/tfdt here genuinely carries
@@ -985,7 +985,7 @@ fn absorb_protected_fragment(
     use crate::pipeline::Sample;
 
     // All §8.8.7/§8.8.8 addressing and bounds live in `frag_offsets`, shared
-    // with `Fmp4Demux` so the two cannot drift (audit r05-W7).
+    // with `Mp4Demux` so the two cannot drift (audit r05-W7).
     let budget = isobmff::frag_offsets::sample_bytes_budget(file.len() as u64);
     for r in isobmff::frag_offsets::sample_ranges_in_run(
         moof_off,
@@ -1334,7 +1334,6 @@ mod tests {
 
     use crate::media::Track;
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
-    use broadcast_common::Unpackage;
 
     const VIDEO_TRACK_ID: u32 = 1;
     const AUDIO_TRACK_ID: u32 = 2;
@@ -1722,7 +1721,7 @@ mod tests {
     /// for — the second traf in each moof is where `base_data_offset` /
     /// default-base-is-moof / the omit carry and the implicit-trun rule all
     /// bite. The clear reference is `clear.mp4` demuxed with the crate's own
-    /// `Fmp4Demux` (whose addressing is the shared `frag_offsets` resolver);
+    /// `Mp4Demux` (whose addressing is the shared `frag_offsets` resolver);
     /// `clear-samples.txt` is its per-sample hash manifest.
     #[test]
     fn all_layouts_decrypt_audio_to_clear() {
@@ -1731,10 +1730,10 @@ mod tests {
                 .unwrap_or_else(|e| panic!("read {name}: {e}"))
         };
         // Independent-of-this-test oracle: the clear file's own audio samples,
-        // read with the plain (unencrypted) `Fmp4Demux`.
+        // read with the plain (unencrypted) `Mp4Demux`.
         let clear_bytes = read("clear.mp4");
-        let mut fd = crate::media::Fmp4Demux::new();
-        let clear_media = fd.unpackage(clear_bytes.as_slice()).expect("demux clear");
+        let clear_media =
+            crate::mp4_collect::media_from_mp4(clear_bytes.as_slice()).expect("demux clear");
         let clear_audio: Vec<Vec<u8>> = clear_media
             .tracks
             .iter()
@@ -1770,7 +1769,7 @@ mod tests {
         for f in files {
             let bytes = read(f);
             // Ciphertext samples for track 2, resolved by the shared
-            // §8.8.7/§8.8.8 walker (the same code the decryptor and Fmp4Demux
+            // §8.8.7/§8.8.8 walker (the same code the decryptor and Mp4Demux
             // use).
             let cipher =
                 collect_fragment_samples(&bytes::Bytes::from(bytes.clone()), TrackId::new(2))

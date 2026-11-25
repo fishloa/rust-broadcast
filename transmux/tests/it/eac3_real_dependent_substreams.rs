@@ -21,9 +21,7 @@ use transmux::ac3_syncframe::{
     Ec3SyncframeInfo, ec3_specific_box_from_syncframes, split_eac3_syncframes,
 };
 use transmux::pipeline::CodecConfig;
-use transmux::{
-    CmafMux, DemuxEvent, Fmp4Demux, Media, ProgressiveDemux, StreamingTsDemux, TsDemux,
-};
+use transmux::{CmafMux, DemuxEvent, Media, StreamingTsDemux, TsDemux};
 
 const AU_COUNT: usize = 157;
 const AC3_CORE_LEN: usize = 2304;
@@ -257,10 +255,11 @@ fn mp4s_from_both_producers_demux_and_remux_unchanged() {
         .collect();
     for name in ["gw-mp4box.mp4", "gw-ffmpeg.mp4"] {
         let bytes = need!(name);
-        let media = ProgressiveDemux::new(usize::MAX)
-            .unwrap()
-            .unpackage(&bytes)
-            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let media = test_harness::collect::media_from_mp4(
+            &bytes,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap_or_else(|e| panic!("{name}: {e:?}"));
         let track = eac3_track(&media);
         let got: Vec<Vec<u8>> = track.samples.iter().map(|s| s.data.to_vec()).collect();
         assert_eq!(got, want, "{name}: samples are the access units");
@@ -273,7 +272,11 @@ fn mp4s_from_both_producers_demux_and_remux_unchanged() {
         let out = CmafMux::new(1)
             .package(&media)
             .unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        let round = Fmp4Demux::new().unpackage(&out).unwrap();
+        let round = test_harness::collect::media_from_mp4(
+            &out,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap();
         let again = eac3_track(&round);
         assert_eq!(dec3_of(again), config, "{name}: dec3 survives CMAF");
         let got2: Vec<Vec<u8>> = again.samples.iter().map(|s| s.data.to_vec()).collect();

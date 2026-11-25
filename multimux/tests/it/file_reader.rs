@@ -95,7 +95,7 @@ fn progressive_mp4_selects_progressive_demuxer() {
     assert_eq!(
         select_demuxer(format, detail).unwrap(),
         DemuxerKind::Progressive,
-        "expected ProgressiveDemux for progressive ISOBMFF"
+        "expected Mp4Demux for progressive ISOBMFF"
     );
 }
 
@@ -105,7 +105,7 @@ fn fragmented_mp4_selects_fmp4_demuxer() {
     assert_eq!(
         select_demuxer(format, detail).unwrap(),
         DemuxerKind::Fmp4,
-        "expected Fmp4Demux for fragmented ISOBMFF"
+        "expected Mp4Demux for fragmented ISOBMFF"
     );
 }
 

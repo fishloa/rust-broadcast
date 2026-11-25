@@ -17,7 +17,7 @@ use broadcast_common::{Package, Parse, Unpackage};
 use broadcast_smooth::{SmoothManifest, StreamType};
 use isobmff::box_types::parse_box;
 use transmux::aac_asc::AudioSpecificConfig;
-use transmux::media::{Fmp4Demux, Media};
+use transmux::media::Media;
 use transmux::pipeline::{CodecConfig, build_init_segment};
 use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothOutput, SmoothPackager, TFXD_UUID};
 use transmux::track_spec_from_quality_level;
@@ -375,7 +375,7 @@ fn lossless_round_trip_video() {
 
     // Build a fragmented-MP4 file: the CMAF init segment + every video
     // fragment's moof+mdat concatenated (drop the per-fragment styp so
-    // Fmp4Demux sees a clean moov + moof/mdat stream).
+    // Mp4Demux sees a clean moov + moof/mdat stream).
     // Smooth has no init segment: the client builds the track timescale from
     // the manifest `TimeScale` (10 MHz), so the fragments' `trun` values are
     // read in that timescale (issue #1022).
@@ -391,7 +391,11 @@ fn lossless_round_trip_video() {
         file.extend_from_slice(&frag.data[sc..]);
     }
 
-    let media2 = Fmp4Demux::new().unpackage(&file[..]).expect("re-demux");
+    let media2 = test_harness::collect::media_from_mp4(
+        &file[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux");
     let vid2 = media2
         .tracks
         .iter()
@@ -429,7 +433,7 @@ fn lossless_round_trip_video() {
 
 // ---------------------------------------------------------------------------
 // Test 6 — Codec glue: parsed CodecPrivateData → synthesized init segment
-// that Fmp4Demux accepts (the Smooth-pull puller's exact need, issue #759 T1).
+// that Mp4Demux accepts (the Smooth-pull puller's exact need, issue #759 T1).
 // No init segment ever comes over the wire in Smooth — this proves the
 // manifest-only codec config is enough to reconstruct one.
 // ---------------------------------------------------------------------------
@@ -526,9 +530,11 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
         file.extend_from_slice(&frag.data[sc..]);
     }
 
-    let media2 = Fmp4Demux::new()
-        .unpackage(&file[..])
-        .expect("Fmp4Demux must accept the synthesized init segment + fragments");
+    let media2 = test_harness::collect::media_from_mp4(
+        &file[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("Mp4Demux must accept the synthesized init segment + fragments");
     let vid2 = media2
         .tracks
         .iter()

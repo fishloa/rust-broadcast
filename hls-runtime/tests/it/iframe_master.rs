@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
-use broadcast_common::Unpackage;
 use broadcast_hls::MasterPlaylist;
 use bytes::Bytes;
 use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
@@ -416,9 +415,11 @@ fn iframe_variant_carries_video_range_for_hdr() {
 fn iframe_variant_codecs_stay_with_the_first_video_track() {
     let (_trunk, origin, writer) = origin_fmp4(64);
     let init = fixture_bytes("init.mp4");
-    let media = transmux::Fmp4Demux::new()
-        .unpackage(&init[..])
-        .expect("init demuxes");
+    let media = test_harness::collect::media_from_mp4(
+        &init[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("init demuxes");
     let video = media
         .tracks
         .iter()
@@ -428,14 +429,16 @@ fn iframe_variant_codecs_stay_with_the_first_video_track() {
         .clone();
     let first_codecs = transmux::rfc6381_codec_string(&video.config).expect("first video codec");
     let other = test_fixtures::read("mp4/hevc-main.mp4");
-    let mut second = transmux::Fmp4Demux::new()
-        .unpackage(&other[..])
-        .expect("HEVC fixture demuxes")
-        .tracks
-        .into_iter()
-        .find(|t| t.spec.config.is_video())
-        .expect("HEVC video track")
-        .spec;
+    let mut second = test_harness::collect::media_from_mp4(
+        &other[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("HEVC fixture demuxes")
+    .tracks
+    .into_iter()
+    .find(|t| t.spec.config.is_video())
+    .expect("HEVC video track")
+    .spec;
     second.track_id = TrackId::new(2);
     let second_codecs = transmux::rfc6381_codec_string(&second.config).expect("second video codec");
     assert_ne!(first_codecs, second_codecs, "the fixtures must differ");

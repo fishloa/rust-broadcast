@@ -17,9 +17,8 @@
 
 #![cfg(feature = "cenc")]
 
-use broadcast_common::{Parse, Unpackage};
+use broadcast_common::Parse;
 use isobmff::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, SgpdEntry};
-use transmux::ProgressiveDemux;
 use transmux::cenc_decrypt::CencDecryptor;
 
 /// Per-thread live-allocation budget. Generous versus every legitimate path
@@ -93,8 +92,10 @@ const STCO_ENTRY_COUNT_OFFSET: usize = 12;
 #[test]
 fn hostile_stts_run_count_is_rejected() {
     let file = patch_fixture(PROG_MP4, b"stts", RUN_LENGTH_ENTRY_COUNT_OFFSET, u32::MAX);
-    let mut demux = ProgressiveDemux::new(file.len() + 1024).expect("non-zero cap");
-    match demux.unpackage(&file) {
+    match test_harness::collect::media_from_mp4(
+        &file,
+        test_harness::collect::CollectMode::Sequential { chunk: 64 * 1024 },
+    ) {
         Err(_) => {}
         Ok(media) => assert!(
             media.skipped.iter().any(|s| s.reason.contains("stts")),
@@ -111,8 +112,10 @@ fn hostile_stts_run_count_is_rejected() {
 #[test]
 fn hostile_ctts_run_count_is_rejected() {
     let file = patch_fixture(PROG_MP4, b"ctts", RUN_LENGTH_ENTRY_COUNT_OFFSET, u32::MAX);
-    let mut demux = ProgressiveDemux::new(file.len() + 1024).expect("non-zero cap");
-    match demux.unpackage(&file) {
+    match test_harness::collect::media_from_mp4(
+        &file,
+        test_harness::collect::CollectMode::Sequential { chunk: 64 * 1024 },
+    ) {
         Err(_) => {}
         Ok(media) => assert!(
             media.skipped.iter().any(|s| s.reason.contains("ctts")),

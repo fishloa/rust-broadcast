@@ -1,16 +1,14 @@
 //! One `mdat` claimed by many `moof`s must be copied once, not once per
 //! fragment (audit 20 findings 13 / 57).
 //!
-//! `Fmp4Demux` bounds each `moof`'s sample total against the input length,
+//! `Mp4Demux` bounds each `moof`'s sample total against the input length,
 //! which a per-fragment check cannot see through: hundreds of tiny `moof`s that
 //! each point `tfhd.base_data_offset` at one `mdat` pass every one of those
 //! checks, and the demuxer copies that payload again for each of them. The
 //! bound that holds is the run's own total, so a fragment past it is refused
 //! (reported as a degradation, with the samples before it kept).
 #![cfg(feature = "std")]
-
-use broadcast_common::Unpackage;
-use transmux::{Fmp4Demux, Media};
+use transmux::Media;
 
 const MOOFS: usize = 1000;
 const TRACK_ID: u32 = 1;
@@ -114,9 +112,11 @@ fn hostile_file() -> Vec<u8> {
 #[test]
 fn many_moofs_over_one_mdat_are_copied_once() {
     let file = hostile_file();
-    let media: Media = Fmp4Demux::new()
-        .unpackage(file.as_slice())
-        .expect("the prefix and the first fragment are well formed");
+    let media: Media = test_harness::collect::media_from_mp4(
+        file.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("the prefix and the first fragment are well formed");
     let copied: usize = media
         .tracks
         .iter()

@@ -1,5 +1,5 @@
-//! Differential: the streaming `Mp4Demux` against the whole-input MP4
-//! demuxers, on every fixture they accept.
+//! Differential: the streaming `Mp4Demux`'s two input paths, on every fixture
+//! they accept (the seekable range path against the forward-only one).
 //!
 //! Both modes are compared with a canonical per-track dump: the track spec,
 //! then per sample its byte length, a 64-bit FNV of its bytes, decode and
@@ -15,9 +15,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use broadcast_common::Unpackage;
 use test_harness::collect::{CollectMode, media_from_mp4};
-use transmux::{Fmp4Demux, InputDegradation, Media, ProgressiveDemux, TrackId};
+use transmux::{InputDegradation, Media, TrackId};
 
 /// Fixtures the walk must compare (a checkout with no usable files fails
 /// rather than passing vacuously).
@@ -102,14 +101,15 @@ fn moov_first(bytes: &[u8]) -> bool {
     matches!((moov, mdat), (Some(m), Some(d)) if m < d)
 }
 
-/// The whole-input demuxer's view of a file, or `None` when it rejects it.
-fn old_media(bytes: &[u8]) -> Option<Media> {
-    if fragmented(bytes) {
-        Fmp4Demux::new().unpackage(bytes).ok()
+/// The reference view of a file: sequential where the forward-only reader can
+/// follow it, seekable otherwise. Each test compares the other path with it.
+fn reference_media(bytes: &[u8]) -> Option<Media> {
+    let mode = if fragmented(bytes) || moov_first(bytes) {
+        CollectMode::Sequential { chunk: 64 * 1024 }
     } else {
-        let mut demux = ProgressiveDemux::new(bytes.len().max(1)).ok()?;
-        demux.unpackage(bytes).ok()
-    }
+        CollectMode::Seekable
+    };
+    media_from_mp4(bytes, mode).ok()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -275,7 +275,7 @@ fn compare(key: &str, mode: &str, old: &Media, new: &Media, bytes: &[u8]) {
 }
 
 #[test]
-fn seekable_mode_matches_the_whole_input_demuxers() {
+fn seekable_mode_matches_the_reference_path() {
     let mut compared_fixtures = 0usize;
     let mut compared_tracks = 0usize;
     let mut compared_samples = 0usize;
@@ -283,7 +283,7 @@ fn seekable_mode_matches_the_whole_input_demuxers() {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        let Some(old) = old_media(&bytes) else {
+        let Some(old) = reference_media(&bytes) else {
             continue;
         };
         let new = match media_from_mp4(&bytes, CollectMode::Seekable) {
@@ -314,7 +314,7 @@ fn seekable_mode_matches_the_whole_input_demuxers() {
 }
 
 #[test]
-fn sequential_mode_matches_the_whole_input_demuxers() {
+fn sequential_mode_matches_the_reference_path_at_every_chunk_size() {
     let mut compared_fixtures = 0usize;
     for (key, path) in fixtures() {
         let Ok(bytes) = std::fs::read(&path) else {
@@ -323,7 +323,7 @@ fn sequential_mode_matches_the_whole_input_demuxers() {
         if !fragmented(&bytes) && !moov_first(&bytes) {
             continue;
         }
-        let Some(old) = old_media(&bytes) else {
+        let Some(old) = reference_media(&bytes) else {
             continue;
         };
         for chunk in [1usize, 7, 65_536] {

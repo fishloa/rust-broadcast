@@ -3,8 +3,8 @@
 //! For every ISO-BMFF box in every committed `.mp4`/`.m4s` fixture, overwrite
 //! each 4-byte word in the 16 bytes after the box's fourcc (the FullBox
 //! version/flags, `entry_count`, `sample_count`, `data_offset` ... region)
-//! with an inflated value, and demux the result through `Fmp4Demux` and
-//! `ProgressiveDemux`. Each parse runs under a per-thread live-byte cap, so a
+//! with an inflated value, and demux the result through `Mp4Demux` and
+//! `Mp4Demux`. Each parse runs under a per-thread live-byte cap, so a
 //! declared count that reaches the allocator as `count * size_of::<Entry>()`
 //! aborts the test binary instead of passing silently.
 //!
@@ -16,9 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use broadcast_common::Unpackage;
 use test_alloc::ThreadCapped;
-use transmux::{Fmp4Demux, ProgressiveDemux};
 
 /// 128 MiB live bytes per thread: far above anything these <= 100 KB inputs
 /// legitimately need, far below what an inflated count asks for.
@@ -105,10 +103,14 @@ fn sweep_shard(shard: usize) {
                 for pat in INFLATED {
                     let mut m = data.clone();
                     m[at..at + 4].copy_from_slice(&pat);
-                    let _ = Fmp4Demux::new().unpackage(&m);
-                    if let Ok(mut d) = ProgressiveDemux::new(1 << 30) {
-                        let _ = d.unpackage(&m);
-                    }
+                    let _ = test_harness::collect::media_from_mp4(
+                        &m,
+                        test_harness::collect::CollectMode::Seekable,
+                    );
+                    let _ = test_harness::collect::media_from_mp4(
+                        &m,
+                        test_harness::collect::CollectMode::Sequential { chunk: 64 * 1024 },
+                    );
                     parses += 1;
                 }
             }
