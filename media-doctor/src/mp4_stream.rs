@@ -62,7 +62,7 @@ fn is_moov_box(bytes: &[u8]) -> bool {
 }
 
 /// Read exactly `len` bytes at `offset`, fewer only at end of file.
-fn read_range(file: &mut File, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+pub(crate) fn read_range(file: &mut File, offset: u64, len: usize) -> io::Result<Vec<u8>> {
     file.seek(SeekFrom::Start(offset))?;
     let mut buffer = vec![0u8; len];
     let filled = read_full(file, &mut buffer)?;

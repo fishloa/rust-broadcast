@@ -83,7 +83,7 @@ fn read_fixture(name: &str) -> Vec<u8> {
 }
 
 /// A scratch file under the workspace `target/` (already gitignored).
-fn scratch(name: &str, bytes: &[u8]) -> PathBuf {
+pub(crate) fn scratch(name: &str, bytes: &[u8]) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/media-doctor-cli");
     fs::create_dir_all(&dir).expect("create scratch dir");
     // Tests run on parallel threads and several share a scratch `name` (the

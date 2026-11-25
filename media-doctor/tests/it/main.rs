@@ -14,6 +14,8 @@ mod integration;
 mod moov_compressed;
 mod mp4_report_digest;
 mod pcr_fixture;
+#[cfg(all(feature = "cli", feature = "motion-imagery-metadata"))]
+mod plugin_payload;
 mod pts_fixture;
 mod scte35_fixture;
 #[cfg(feature = "cli")]

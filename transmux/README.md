@@ -91,7 +91,7 @@ Header parse and the container box only; no encode or decode.
 | `serde` | no | `Serialize` on box types and IR types. |
 | `cenc` | yes | CENC and CBCS crypto (`aes`, `ctr`, `cbc`, with `zeroize` and constant-time key compare). DRM signalling does not need it. |
 | `sample-aes` | no | HLS Sample-AES and whole-segment AES-128; implies `cenc`. |
-| `motion-imagery-metadata` | no | Typed MISB ST 0601 values: `LocalSetItem::value_typed()` returns `motion_imagery_metadata::St0601Value`, decoded by the [`motion-imagery-metadata`](https://crates.io/crates/motion-imagery-metadata) crate (built on Matt Busel's `misb`). |
+| `motion-imagery-metadata` | no | Typed MISB ST 0601 values: `LocalSetItem::value_typed()` returns `motion_imagery_metadata::St0601Value`, decoded by the [`motion-imagery-metadata`](https://crates.io/crates/motion-imagery-metadata) crate (built on Matt Busel's `misb`). Also provides `payload::St0601Decoder`, the payload plug-in that renders a data-track sample as ST 0601 values. |
 | `cli` | no | The `transmux` binary (`clap`, `container-probe`; implies `std`). |
 
 `serde` is opt-in and off by default; enable it explicitly:
@@ -199,6 +199,7 @@ Input detection uses `container-probe`, which scores structural evidence over th
 - **Validation:** `validate_init_segment`, `validate_media_segment`, `validate_cmaf_track` yielding `ConformanceIssue`.
 - **Caption detection:** `CaptionDetector`, `DetectedCaption` (`Cea608(Cea608Channel)` / `Cea708(u8)`), `declared_caption_services` and `DetectedCaption::declared_language` for CEA-608/708 caption discovery from a video track's PMT loop and sample data (issue #1428).
 - **Smooth client helpers:** the `smooth_fragment` module (`manifest_declares_protection`, `fragment_state`, `fragment_track_id`, `fragment_tfxd`) (the client Manifest itself is `broadcast-smooth`'s `SmoothManifest`, including `StreamIndex::same_stream`).
+- **Payload plug-ins:** `payload::PayloadRegistry` holds caller-registered `PayloadDecoder`s and runs the first one that claims a data-track sample, rendering named `PayloadValue`s (`payload::PayloadScalar`). Each plug-in is a cargo feature; `payload::St0601Decoder` decodes a MISB ST 0601 UAS Datalink Local Set under `motion-imagery-metadata`.
 - **Helpers:** `frag_offsets` (the single `trun`/`tfhd` sample-offset resolver shared by demux, decrypt and validator), NAL conversion Annex B and length-prefixed, `is_keyframe_nal`.
 
 ## Design notes

@@ -48,6 +48,7 @@ in the private repo: `private/specs` set (ISO/IEC 23009-1) the edition is marked
 | `metrics` | no | `render_metrics` / `publish_metrics`: the `metrics` facade and `metrics-exporter-prometheus` (implies `std`) |
 | `net` | no | `metrics_server` (`hyper` http1 `GET /metrics`) and `udp` (`socket2` bind); implies `metrics` |
 | `cli` | no | The `media-doctor` binary (`clap`), including `watch`; implies `std`, `net` and `serde`, and pulls in `container-probe` |
+| `motion-imagery-metadata` | no | The MISB ST 0601 payload plug-in: `check --plugin motion-imagery-metadata` decodes data-track KLV samples through `transmux`'s `St0601Decoder` |
 
 `serde` and `cli` are opt-in and off by default; enable them explicitly. A
 library dependency therefore costs no `clap`/`hyper`/`tokio` unless asked for:
@@ -153,8 +154,26 @@ Usage: media-doctor check [OPTIONS] --input <INPUT>
 Options:
   -i, --input <INPUT>  Input Transport Stream file
       --json           Emit JSON report on stdout instead of human text
+      --plugin <NAME>  Decode each data-track sample through a compiled-in payload plug-in, printing the values per sample (repeatable). An unknown name is a usage error listing the plug-ins this build carries; with `--json` the decoded values go to stderr so the report on stdout stays valid JSON
   -h, --help           Print help
 ```
+
+A data track (camera telemetry, KLV metadata) reaches the tools as opaque
+bytes. `--plugin <name>` selects a compiled-in payload plug-in and prints each
+claimed sample's decoded values, e.g. the MISB ST 0601 tags of a UAS Datalink
+Local Set:
+
+```console
+$ media-doctor check --input telemetry.ts --plugin motion-imagery-metadata
+track 1 sample 0 [motion-imagery-metadata]
+  tag_2: 1231798102000000 us
+  tag_5: 159.97436484321355
+  ...
+  checksum_valid: true
+```
+
+The option is valid without a plug-in feature too: it then reports that no
+plug-ins are compiled in.
 
 Two runnable library examples (`std::fs`, committed fixtures, no network): `check_ts` runs the TS diagnostic harness over a capture and prints a per-rule tally; `check_playlists` lints the committed `fixtures/hls/*.m3u8` set with `check_playlist`.
 

@@ -67,6 +67,10 @@ std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conforman
 # #2340), which is `std`-only, so this feature implies `std`.
 dash    = ["dep:broadcast-dash", "std"]
 serde   = ["dep:serde", "dep:serde_json"]
+# Payload plug-in (Phase 4 slice 8c): `check --plugin motion-imagery-metadata`
+# decodes MISB ST 0601 data-track samples through transmux's `St0601Decoder`.
+# One feature per plug-in crate, so a build links only the decoders it names.
+motion-imagery-metadata = ["transmux/motion-imagery-metadata"]
 # STD-ONLY features (not no_std, not built by the CI thumbv7em step): `metrics`
 # (metrics facade + Prometheus exporter), `net` (tokio + hyper + socket2 HTTP
 # endpoint) and `cli` (clap binary) all imply `std`.

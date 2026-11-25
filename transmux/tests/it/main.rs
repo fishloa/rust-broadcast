@@ -129,6 +129,8 @@ mod opengop_anchor;
 #[path = "support/packagers.rs"]
 mod packagers;
 mod paff_pairing;
+#[cfg(feature = "motion-imagery-metadata")]
+mod payload_plugins;
 mod pcr_off_clock_extension;
 mod pipeline;
 mod pmt_version_diff;
