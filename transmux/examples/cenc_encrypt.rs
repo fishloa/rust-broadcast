@@ -123,12 +123,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_iv(IvGen::Constant(CONSTANT_IV))
         .with_pattern((1, 9));
     let mut stage = CencEncryptStage::new(KEY, cfg)?;
+    let mut outputs = Vec::new();
     for track in &media.tracks {
         stage.feed(
             transmux::mux_stage::MuxInput::Track(Box::new(track.spec.clone())),
             broadcast_common::stage::Timestamp::ZERO,
         )?;
-        while stage.poll().is_some() {}
+        outputs.extend(std::iter::from_fn(|| stage.poll()));
         for sample in &track.samples {
             stage.feed(
                 transmux::mux_stage::MuxInput::Sample {
@@ -137,13 +138,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 broadcast_common::stage::Timestamp::ZERO,
             )?;
-            while stage.poll().is_some() {}
+            outputs.extend(std::iter::from_fn(|| stage.poll()));
         }
     }
     stage.finish()?;
+    outputs.extend(std::iter::from_fn(|| stage.poll()));
     let mut encrypted_tracks = Vec::new();
     let mut index = std::collections::BTreeMap::new();
-    while let Some(item) = stage.poll() {
+    for item in outputs {
         match item {
             transmux::mux_stage::MuxInput::Track(spec) => {
                 index.insert(spec.track_id, encrypted_tracks.len());
