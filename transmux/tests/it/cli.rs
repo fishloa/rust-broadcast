@@ -286,7 +286,7 @@ fn real_dvb_multiplex_to_cmaf_does_not_fail_on_opaque_data_tracks() {
     // classify as opaque `CodecConfig::Data`, alongside real audio/video —
     // exactly what CmafMux rejected unfiltered before this fix, which made
     // the shipped CLI fail on every such real multiplex. `run_bytes` must
-    // filter and succeed, not propagate `Error::UnmuxableDataTrack`.
+    // filter and succeed, not propagate `Error::DataIdentityMismatch`.
     let ts = read("ts/m6-single.ts");
     let opts = Opts {
         format: OutputFormat::Cmaf,

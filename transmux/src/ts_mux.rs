@@ -1139,6 +1139,19 @@ fn plan_plans(specs: &[TrackSpec]) -> Result<(Vec<EsPlan>, Vec<usize>)> {
     let mut next_pid = ES_PID_BASE.value();
     let (mut n_video, mut n_audio) = (0u8, 0u8);
     for (idx, spec) in specs.iter().enumerate() {
+        // A data track carries the identity of the container it came from;
+        // the TS muxer places only a TS elementary-stream identity. The other
+        // identities are a named refusal, not a silent skip: an opaque track
+        // the caller meant to carry must not vanish from the output.
+        if let CodecConfig::Data { identity } = &spec.config
+            && !matches!(identity, DataIdentity::Ts { .. })
+        {
+            return Err(Error::DataIdentityMismatch {
+                track: spec.track_id,
+                have: identity.name(),
+                want: "ts",
+            });
+        }
         let Some(kind) = EsKind::from_config(&spec.config) else {
             continue; // uncarriable codec: skip, never fatal.
         };

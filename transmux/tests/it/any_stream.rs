@@ -615,12 +615,15 @@ fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
         .max()
         .map_or(TrackId::new(1), TrackId::next);
     data_track.spec.track_id = data_track_id;
-    let data_stream_type = match &data_track.spec.config {
-        CodecConfig::Data {
-            identity: DataIdentity::Ts { stream_type, .. },
-        } => *stream_type,
-        other => panic!("expected CodecConfig::Data, got {other:?}"),
-    };
+    assert!(
+        matches!(
+            &data_track.spec.config,
+            CodecConfig::Data {
+                identity: DataIdentity::Ts { .. },
+            }
+        ),
+        "the added track is a TS-identity data track"
+    );
     tracks.push(data_track);
     let mixed = Media::new(tracks, av_media.movie_timescale);
     assert_eq!(
@@ -636,17 +639,12 @@ fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
     let err = crate::cmaf::package(&mixed)
         .expect_err("CmafMux must reject a Media containing a CodecConfig::Data track");
     match err {
-        transmux::Error::UnmuxableDataTrack {
-            track_id,
-            stream_type,
-        } => {
-            assert_eq!(track_id, data_track_id, "error must name the Data track");
-            assert_eq!(
-                stream_type, data_stream_type,
-                "error must carry the Data track's stream_type"
-            );
+        transmux::Error::DataIdentityMismatch { track, have, want } => {
+            assert_eq!(track, data_track_id, "error must name the Data track");
+            assert_eq!(have, "ts", "error must name the track's container family");
+            assert_eq!(want, "mp4", "error must name the muxer's container family");
         }
-        other => panic!("expected UnmuxableDataTrack, got {other:?}"),
+        other => panic!("expected DataIdentityMismatch, got {other:?}"),
     }
 
     // The caller opts in to dropping the opaque track explicitly, rather

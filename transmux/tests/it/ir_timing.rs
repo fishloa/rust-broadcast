@@ -830,18 +830,19 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
     );
 
     // A Media of a Data track must now fail with the specific, named
-    // `UnmuxableDataTrack` error — not the generic `UnsupportedCodec`.
+    // `DataIdentityMismatch` error — not the generic `UnsupportedCodec`.
     let data_err = crate::cmaf::package(&data_only).unwrap_err();
     assert!(
         matches!(
             data_err,
-            Error::UnmuxableDataTrack {
-                track_id,
-                stream_type: 0x06
-            } if track_id.value() == 1
+            Error::DataIdentityMismatch {
+                track,
+                have: "ts",
+                want: "mp4",
+            } if track.value() == 1
         ),
-        "a Data track must fail with UnmuxableDataTrack naming track_id + \
-         stream_type, got {data_err:?}"
+        "a Data track must fail with DataIdentityMismatch naming the track \
+         and both container families, got {data_err:?}"
     );
 
     // VP8 is unrelated to this issue (a genuinely out-of-scope WebM-native
@@ -877,7 +878,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
     );
     let mixed_err = crate::cmaf::package(&media).unwrap_err();
     assert!(
-        matches!(mixed_err, Error::UnmuxableDataTrack { .. }),
+        matches!(mixed_err, Error::DataIdentityMismatch { .. }),
         "a mixed Media with a Data track must be rejected naming it, got {mixed_err:?}"
     );
 

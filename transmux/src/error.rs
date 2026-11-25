@@ -390,33 +390,31 @@ pub enum Error {
         fourcc: String,
     },
 
-    /// A fMP4/CMAF mux entry point ([`build_init_segment`](crate::pipeline::build_init_segment)
-    /// and every packager built on it — [`CmafMuxStage`](crate::media::CmafMuxStage),
-    /// [`ProgressiveMuxStage`](crate::progressive::ProgressiveMuxStage),
-    /// [`Segmenter`](crate::segmenter::Segmenter),
-    /// [`LlSegmenter`](crate::ll_dash::LlSegmenter),
-    /// [`LlHlsSegmenter`](crate::ll_hls::LlHlsSegmenter)) was given a
-    /// [`CodecConfig::Data`](crate::pipeline::CodecConfig::Data) track
-    /// (issue #557/#576: an opaque PMT-carried elementary stream with no
-    /// ISOBMFF sample entry in this crate) — CMAF/fMP4 output cannot carry
-    /// it. Names the offending track (media plane step 2d; applied uniformly
-    /// to every mux entry point in media plane step-2 fix wave 1, B2-B4) so
-    /// the caller can pre-filter it out (e.g. with
-    /// [`select_tracks_by`](crate::repackage::select_tracks_by))
-    /// rather than have it silently vanish from the output.
-    #[error(
-        "cannot CMAF-mux track {track_id} (PMT stream_type 0x{stream_type:02X}): \
-         CodecConfig::Data has no ISOBMFF sample entry in this crate"
-    )]
-    UnmuxableDataTrack {
+    /// A muxer was given a [`CodecConfig::Data`](crate::pipeline::CodecConfig::Data)
+    /// track whose [`DataIdentity`](crate::pipeline::DataIdentity) belongs to
+    /// another container family: a TS muxer places only a
+    /// [`DataIdentity::Ts`](crate::pipeline::DataIdentity::Ts), an fMP4/CMAF
+    /// muxer only a [`DataIdentity::Mp4`](crate::pipeline::DataIdentity::Mp4),
+    /// and a Matroska muxer only a
+    /// [`DataIdentity::Matroska`](crate::pipeline::DataIdentity::Matroska).
+    /// Names the offending track and both families, so the caller can either
+    /// map it with [`DataIdentityMap`](crate::DataIdentityMap) or pre-filter it
+    /// out (e.g. with
+    /// [`select_tracks_by`](crate::repackage::select_tracks_by)) rather than
+    /// have it silently vanish from the output.
+    #[error("track {track}: data identity {have} cannot be carried by a {want} muxer")]
+    DataIdentityMismatch {
         /// The offending track's [`TrackSpec::track_id`](crate::pipeline::TrackSpec::track_id).
-        track_id: TrackId,
-        /// The track's preserved PMT `stream_type` (ISO/IEC 13818-1 Table 2-34).
-        stream_type: u8,
+        track: TrackId,
+        /// The container family the track's identity belongs to.
+        have: &'static str,
+        /// The container family the muxer emits.
+        want: &'static str,
     },
 
-    /// A fMP4/CMAF mux entry point (see [`Error::UnmuxableDataTrack`] for the
-    /// full list) was given a
+    /// A fMP4/CMAF mux entry point (see
+    /// [`Error::DataIdentityMismatch`](crate::error::Error::DataIdentityMismatch)
+    /// for the full list) was given a
     /// [`CodecConfig::Subtitle`](crate::pipeline::CodecConfig::Subtitle)
     /// track (B1, media plane step-2 fix wave 1): reconstructing the `stpp`/
     /// `wvtt` sample entry needs more than the format tag this crate carries

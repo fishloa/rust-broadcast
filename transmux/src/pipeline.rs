@@ -175,18 +175,17 @@ fn mp4_data_track_setup(
 }
 
 /// Build the named, typed rejection for a track [`CodecConfig::is_muxable_in_bmff`]
-/// says `build_init_segment` cannot carry — [`Error::UnmuxableDataTrack`] for
-/// the opaque PES carriage, [`Error::UnmuxableSubtitleTrack`] for a subtitle
-/// track (B1, media plane step-2 fix wave 1).
+/// says `build_init_segment` cannot carry —
+/// [`Error::DataIdentityMismatch`] for a data track of another container
+/// family, [`Error::UnmuxableSubtitleTrack`] for a subtitle track (B1, media
+/// plane step-2 fix wave 1).
 fn unmuxable_track_error(t: &TrackSpec) -> crate::error::Error {
     match &t.config {
-        CodecConfig::Data {
-            identity: DataIdentity::Ts { stream_type, .. },
-        } => crate::error::Error::UnmuxableDataTrack {
-            track_id: t.track_id,
-            stream_type: *stream_type,
+        CodecConfig::Data { identity } => crate::error::Error::DataIdentityMismatch {
+            track: t.track_id,
+            have: identity.name(),
+            want: "mp4",
         },
-        CodecConfig::Data { .. } => crate::error::Error::UnsupportedCodec { codec: "Data" },
         CodecConfig::Subtitle { format, .. } => crate::error::Error::UnmuxableSubtitleTrack {
             track_id: t.track_id,
             format: *format,
