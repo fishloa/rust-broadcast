@@ -269,6 +269,46 @@ fn a_tfxd_time_beyond_i64_drops_the_fragment_without_panicking() {
     assert!(host.has(is_ended));
 }
 
+const SECOND_VIDEO: &str = "QualityLevels(64528)/Fragments(video=10000000)";
+const THIRD_VIDEO: &str = "QualityLevels(64528)/Fragments(video=20000000)";
+/// The av fixture fragments' `sample_count` field (the same offset in all
+/// three): a value past the fragment's sample table makes the demuxer report
+/// the `moof` as malformed.
+const SAMPLE_COUNT: std::ops::Range<usize> = 64..68;
+/// The decode-time window the second video fragment covers, in the track's
+/// 10 MHz timescale.
+const SECOND_FRAGMENT_DTS: std::ops::Range<i64> = 10_000_000..20_000_000;
+
+fn video_dts(host: &Host) -> Vec<i64> {
+    host.samples()
+        .iter()
+        .filter(|(track, _)| track.value() == 1)
+        .filter_map(|(_, sample)| sample.timing.and_then(|t| t.dts()))
+        .collect()
+}
+
+#[test]
+fn a_damaged_fragment_is_dropped_and_the_next_one_still_demuxes() {
+    let mut clean = av_host(SmoothClientConfig::default());
+    clean.run_until(|o| o.iter().any(is_ended));
+    let expected: Vec<i64> = video_dts(&clean)
+        .into_iter()
+        .filter(|dts| !SECOND_FRAGMENT_DTS.contains(dts))
+        .collect();
+    assert!(!expected.is_empty());
+
+    let mut damaged = fixture(&format!("av/{SECOND_VIDEO}"));
+    damaged[SAMPLE_COUNT].copy_from_slice(&0x00ff_ffffu32.to_be_bytes());
+    let mut host = av_host(SmoothClientConfig::default());
+    host.route(SECOND_VIDEO, vec![Reply::Body(damaged)]);
+    host.run_until(|o| o.iter().any(is_ended));
+
+    assert!(host.has(|o| matches!(o, Output::Dropped(Dropped::Fragment { status: None, .. }))));
+    assert!(host.has(is_ended), "playback continued past the damage");
+    assert_eq!(host.count_requests(THIRD_VIDEO), 1);
+    assert_eq!(video_dts(&host), expected);
+}
+
 fn av_manifest_with_audio_chunks(chunks: &str) -> Vec<u8> {
     String::from_utf8(fixture("av/Manifest"))
         .expect("utf8")
