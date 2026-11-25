@@ -175,6 +175,13 @@ const CICP_UNSPECIFIED: u8 = 2;
 /// Fewest blocks that give a sample duration from a neighbouring timestamp.
 const MIN_BLOCKS_FOR_DELTA: usize = 2;
 
+#[cfg(test)]
+thread_local! {
+    /// Work counter for the streaming demux: one tick per Block frame examined
+    /// (`on_frame`), so a per-track rescan of the queued blocks would raise it.
+    static FRAMES_VISITED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
 /// Which way the stage reaches its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceMode {
@@ -255,14 +262,16 @@ enum OwnedStep {
 struct HeldBlock {
     pts: i64,
     keyframe: bool,
+    first_frame: u64,
     frames: Vec<Bytes>,
 }
 
 impl HeldBlock {
-    fn new(pts: i64, keyframe: bool) -> Self {
+    fn new(pts: i64, keyframe: bool, first_frame: u64) -> Self {
         Self {
             pts,
             keyframe,
+            first_frame,
             frames: Vec::new(),
         }
     }
@@ -309,7 +318,8 @@ impl TrackState {
     ) -> Result<()> {
         if block.lace_index == 0 {
             let pts = block_pts(block)?;
-            self.blocks.push_back(HeldBlock::new(pts, block.keyframe));
+            self.blocks
+                .push_back(HeldBlock::new(pts, block.keyframe, self.total_frames));
         }
         let Some(held) = self.blocks.back_mut() else {
             return Err(Error::InvalidInput(
@@ -654,6 +664,8 @@ impl MatroskaDemux {
     }
 
     fn on_frame(&mut self, block: BlockStep, data: Bytes) -> Result<()> {
+        #[cfg(test)]
+        FRAMES_VISITED.with(|count| count.set(count.get() + 1));
         let Some(index) = self
             .tracks
             .iter()
@@ -993,10 +1005,10 @@ fn derive_nominal(blocks: &VecDeque<HeldBlock>) -> Option<u64> {
     let mut previous = blocks.front();
     for current in blocks.iter().skip(1) {
         if let Some(earlier) = previous {
-            let frames = earlier.frames.len();
+            let frames = current.first_frame.saturating_sub(earlier.first_frame);
             let gap = current.pts.saturating_sub(earlier.pts);
             if frames > 0 && gap > 0 {
-                return Some(u64::try_from(gap).unwrap_or(0) / u64::try_from(frames).unwrap_or(1));
+                return Some(u64::try_from(gap).unwrap_or(0) / frames);
             }
         }
         previous = Some(current);
@@ -1266,4 +1278,360 @@ fn opus_config(info: &TrackInfo) -> Result<CodecConfig> {
         sample_rate: OPUS_OUTPUT_SAMPLE_RATE,
         sample_size: AUDIO_SAMPLE_SIZE,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::media::Media;
+    use alloc::vec;
+
+    /// webm_demux's `nominal_duration_skips_a_zero_frame_pair`: a same-timestamp
+    /// pair contributes no interval, so the cadence comes from the next pair.
+    #[test]
+    fn nominal_duration_skips_a_zero_frame_pair() {
+        let block = |pts: i64, first_frame: u64, frames: usize| HeldBlock {
+            pts,
+            keyframe: true,
+            first_frame,
+            frames: (0..frames).map(|_| Bytes::new()).collect(),
+        };
+        let blocks = VecDeque::from([block(0, 0, 1), block(10, 0, 0), block(30, 1, 2)]);
+        assert_eq!(derive_nominal(&blocks), Some(20));
+    }
+
+    /// Element header: `id` + a one-octet size.
+    fn element(id: &[u8], body: &[u8]) -> Vec<u8> {
+        let mut out = id.to_vec();
+        out.extend(size(body.len()));
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// The shortest EBML size VINT for `value`.
+    fn size(mut value: usize) -> Vec<u8> {
+        let mut width = 1usize;
+        while value >= (1usize << (7 * width)) - 1 {
+            width += 1;
+        }
+        let mut out = vec![0u8; width];
+        for slot in (0..width).rev() {
+            out[slot] = (value & 0xFF) as u8;
+            value >>= 8;
+        }
+        out[0] |= 1u8 << (8 - width);
+        out
+    }
+
+    fn uint_body(value: u64) -> Vec<u8> {
+        let bytes = value.to_be_bytes();
+        let first = bytes.iter().position(|byte| *byte != 0).unwrap_or(7);
+        bytes[first..].to_vec()
+    }
+
+    fn track_entry(number: u64, track_type: u64, codec_id: &[u8]) -> Vec<u8> {
+        let mut body = element(&[0xD7], &uint_body(number));
+        body.extend(element(&[0x83], &uint_body(track_type)));
+        body.extend(element(&[0x86], codec_id));
+        element(&[0xAE], &body)
+    }
+
+    fn simple_block(track: u64, relative: i16, frame: &[u8]) -> Vec<u8> {
+        let mut payload = size(usize::try_from(track).unwrap());
+        payload.extend_from_slice(&relative.to_be_bytes());
+        payload.push(0x80);
+        payload.extend_from_slice(frame);
+        element(&[0xA3], &payload)
+    }
+
+    fn file(track_entries: &[Vec<u8>], cluster_children: &[Vec<u8>]) -> Vec<u8> {
+        let mut tracks_body = Vec::new();
+        for entry in track_entries {
+            tracks_body.extend_from_slice(entry);
+        }
+        let mut cluster_body = element(&[0xE7], &[0]);
+        for child in cluster_children {
+            cluster_body.extend_from_slice(child);
+        }
+        let mut segment_body = element(&[0x16, 0x54, 0xAE, 0x6B], &tracks_body);
+        segment_body.extend(element(&[0x1F, 0x43, 0xB6, 0x75], &cluster_body));
+        let mut out = element(&[0x1A, 0x45, 0xDF, 0xA3], &[]);
+        out.extend(element(&[0x18, 0x53, 0x80, 0x67], &segment_body));
+        out
+    }
+
+    /// Drive the stage over a whole in-memory file and fold its events.
+    fn media_of(bytes: &[u8]) -> Media {
+        let total = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let mut demux =
+            MatroskaDemux::seekable(MatroskaDemuxConfig::default().with_total_len(Some(total)));
+        loop {
+            let demand = demux.demand();
+            let Some(offset) = demand.offset else {
+                break;
+            };
+            let start = usize::try_from(offset).unwrap_or(usize::MAX);
+            let end = start.saturating_add(demand.want_bytes).min(bytes.len());
+            let slice = bytes.get(start..end).unwrap_or(&[]);
+            demux
+                .feed(
+                    MatroskaInput::At {
+                        offset,
+                        bytes: Bytes::copy_from_slice(slice),
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("feed");
+        }
+        demux.finish().expect("finish");
+        let mut events = Vec::new();
+        while let Some(event) = demux.poll() {
+            events.push(event);
+        }
+        let mut tracks: Vec<crate::ir::Track> = Vec::new();
+        let mut degraded: Vec<InputDegradation> = Vec::new();
+        for event in events {
+            match event {
+                DemuxEvent::TrackAdded(spec) => {
+                    tracks.push(crate::ir::Track::new(spec, Vec::new()));
+                }
+                DemuxEvent::Sample { track_id, sample } => {
+                    if let Some(track) = tracks.iter_mut().find(|t| t.spec.track_id == track_id) {
+                        track.samples.push(sample);
+                    }
+                }
+                DemuxEvent::InputDegraded { kind, .. } => degraded.push(kind),
+                _ => {}
+            }
+        }
+        let mut media = Media::new(tracks, IR_TIMESCALE);
+        media.degraded = degraded;
+        media
+    }
+
+    /// webm_demux's `build_media_examines_each_block_once_not_once_per_track`:
+    /// the streaming path examines every frame once, never once per track.
+    #[test]
+    fn build_media_examines_each_block_once_not_once_per_track() {
+        const TRACKS: u64 = 8;
+        const BLOCKS: usize = 1000;
+        let entries: Vec<Vec<u8>> = (1..=TRACKS)
+            .map(|number| track_entry(number, 0, b"X_UNSUPPORTED"))
+            .collect();
+        let blocks: Vec<Vec<u8>> = (0..BLOCKS)
+            .map(|i| simple_block((i as u64 % TRACKS) + 1, 0, &[0u8; 4]))
+            .collect();
+        FRAMES_VISITED.with(|count| count.set(0));
+        let media = media_of(&file(&entries, &blocks));
+        assert!(media.tracks.iter().all(|track| !track.samples.is_empty()));
+        assert_eq!(
+            FRAMES_VISITED.with(core::cell::Cell::get),
+            BLOCKS,
+            "one examination per frame, not one per track"
+        );
+    }
+
+    /// webm_demux's `declared_frame_count_cannot_exceed_the_file_length`: a
+    /// block claiming 256 one-byte frames in a 7-byte payload materialises no
+    /// sample and is reported once.
+    #[test]
+    fn declared_frame_count_cannot_exceed_the_file_length() {
+        let block_payload = [0x81u8, 0x00, 0x00, 0x04, 0xFF, 0xAA, 0xBB];
+        let mut cluster_body = vec![0xE7, 0x81, 0x00];
+        cluster_body.extend_from_slice(&[0xA3, 0x87]);
+        cluster_body.extend_from_slice(&block_payload);
+        let mut segment_body = vec![0x16, 0x54, 0xAE, 0x6B, 0x80];
+        segment_body.extend_from_slice(&[0x1F, 0x43, 0xB6, 0x75, 0x80 | cluster_body.len() as u8]);
+        segment_body.extend_from_slice(&cluster_body);
+        let mut file = vec![0x1A, 0x45, 0xDF, 0xA3, 0x80];
+        file.extend_from_slice(&[0x18, 0x53, 0x80, 0x67, 0x80 | segment_body.len() as u8]);
+        file.extend_from_slice(&segment_body);
+
+        let media = media_of(&file);
+        assert!(
+            media.tracks.iter().all(|track| track.samples.is_empty()),
+            "a block declaring more frames than the file has bytes yields no frames"
+        );
+        assert_eq!(
+            media.degraded.len(),
+            1,
+            "and is reported: {:?}",
+            media.degraded
+        );
+    }
+
+    fn avc_config(length_size_minus_one: u8) -> CodecConfig {
+        use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+        use isobmff::nalu_types::{AvcPps, AvcSps};
+        CodecConfig::Avc {
+            config: AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                profile_indication: 66,
+                profile_compatibility: 0,
+                level_indication: 0x1E,
+                length_size_minus_one,
+                sps: vec![AvcSps(vec![0x67, 0x42, 0x00, 0x1E, 0xAB, 0x40])],
+                pps: vec![AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
+                chroma_format: None,
+                bit_depth_luma_minus8: None,
+                bit_depth_chroma_minus8: None,
+                sps_ext: vec![],
+            }),
+            width: 640,
+            height: 360,
+        }
+    }
+
+    fn hevc_config(length_size_minus_one: u8) -> CodecConfig {
+        use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+        use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
+        CodecConfig::Hevc {
+            config: HEVCConfigurationBox::new(HEVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                general_profile_space: 0,
+                general_tier_flag: false,
+                general_profile_idc: 1,
+                general_profile_compatibility_flags: 0,
+                general_constraint_indicator_flags: 0,
+                general_level_idc: 93,
+                min_spatial_segmentation_idc: 0,
+                parallelism_type: 0,
+                chroma_format_idc: 1,
+                bit_depth_luma_minus8: 0,
+                bit_depth_chroma_minus8: 0,
+                avg_frame_rate: 0,
+                constant_frame_rate: 0,
+                num_temporal_layers: 1,
+                temporal_id_nested: false,
+                length_size_minus_one,
+                arrays: vec![HevcNalArray {
+                    array_completeness: true,
+                    nal_unit_type: 32,
+                    nalus: vec![HevcNalUnit(vec![0x40, 0x01, 0x0C, 0x01, 0xFF])],
+                }],
+            }),
+            width: 640,
+            height: 360,
+        }
+    }
+
+    fn one_sample_media(config: CodecConfig, data: Vec<u8>) -> Media {
+        let sample = Sample {
+            data: data.into(),
+            timing: Some(SampleTiming::timed_with_duration(0, 0, 1000)),
+            flags: SampleFlags::new(true),
+            provenance: None,
+            display: None,
+            protection: None,
+        };
+        Media::new(
+            vec![crate::ir::Track::new_at(
+                TrackSpec::new(TrackId::new(1), IR_TIMESCALE, config),
+                vec![sample],
+                0,
+            )],
+            IR_TIMESCALE,
+        )
+    }
+
+    /// webm_demux's `webm_avc_two_byte_nal_lengths_normalised_to_four`.
+    #[test]
+    fn webm_avc_two_byte_nal_lengths_normalised_to_four() {
+        use crate::ir::FragmentTrackData;
+        use crate::pipeline::{build_init_segment, build_media_segment};
+
+        let media = one_sample_media(
+            avc_config(1),
+            vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41],
+        );
+        let muxed = crate::mkv_mux::mux_for_test(&media);
+        let demuxed = media_of(&muxed);
+        let track = &demuxed.tracks[0];
+        const EXPECTED: [u8; 14] = [
+            0x00, 0x00, 0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x00, 0x00, 0x01, 0x41,
+        ];
+        assert_eq!(
+            track.samples[0].data.as_ref(),
+            EXPECTED,
+            "2-byte NAL lengths must be rewritten to 4-byte on the demux edge"
+        );
+        let CodecConfig::Avc { config, .. } = &track.spec.config else {
+            panic!("expected CodecConfig::Avc");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
+            "the emitted avcC must declare the 4-byte length size of the samples"
+        );
+
+        let init = build_init_segment(core::slice::from_ref(&track.spec), IR_TIMESCALE)
+            .expect("init segment");
+        let frag = build_media_segment(
+            1,
+            &[FragmentTrackData::new(TrackId::new(1), 0, &track.samples)],
+        )
+        .expect("media segment");
+        let mut both = init;
+        both.extend_from_slice(&frag);
+        let reparsed = crate::mp4_collect::media_from_mp4(&both).expect("re-demux");
+        assert_eq!(
+            reparsed.tracks[0].samples[0].data.as_ref(),
+            EXPECTED,
+            "the 4-byte-prefixed NALs must survive a CMAF mux/demux round-trip"
+        );
+        let CodecConfig::Avc { config, .. } = &reparsed.tracks[0].spec.config else {
+            panic!("expected CodecConfig::Avc");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one,
+            NAL_LENGTH_SIZE_MINUS_ONE
+        );
+    }
+
+    /// webm_demux's `webm_hevc_two_byte_nal_lengths_normalised_to_four`.
+    #[test]
+    fn webm_hevc_two_byte_nal_lengths_normalised_to_four() {
+        use crate::ir::FragmentTrackData;
+        use crate::pipeline::{build_init_segment, build_media_segment};
+
+        let media = one_sample_media(hevc_config(1), vec![0x00, 0x04, 0x26, 0x01, 0xAF, 0x09]);
+        let muxed = crate::mkv_mux::mux_for_test(&media);
+        let demuxed = media_of(&muxed);
+        let track = &demuxed.tracks[0];
+        let expected: [u8; 8] = [0x00, 0x00, 0x00, 0x04, 0x26, 0x01, 0xAF, 0x09];
+        assert_eq!(
+            track.samples[0].data.as_ref(),
+            expected,
+            "HEVC 2-byte NAL lengths must be rewritten to 4-byte"
+        );
+        let CodecConfig::Hevc { config, .. } = &track.spec.config else {
+            panic!("expected CodecConfig::Hevc");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
+            "the emitted hvcC must declare the 4-byte length size"
+        );
+
+        let init =
+            build_init_segment(core::slice::from_ref(&track.spec), IR_TIMESCALE).expect("init");
+        let frag = build_media_segment(
+            1,
+            &[FragmentTrackData::new(TrackId::new(1), 0, &track.samples)],
+        )
+        .expect("media segment");
+        let mut both = init;
+        both.extend_from_slice(&frag);
+        let reparsed = crate::mp4_collect::media_from_mp4(&both).expect("re-demux");
+        assert_eq!(
+            reparsed.tracks[0].samples[0].data.as_ref(),
+            expected,
+            "4-byte-prefixed HEVC NALs must survive a CMAF mux/demux round-trip"
+        );
+        let CodecConfig::Hevc { config, .. } = &reparsed.tracks[0].spec.config else {
+            panic!("expected CodecConfig::Hevc after re-demux");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one,
+            NAL_LENGTH_SIZE_MINUS_ONE
+        );
+    }
 }
