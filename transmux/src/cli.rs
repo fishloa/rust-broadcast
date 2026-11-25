@@ -34,8 +34,9 @@ use broadcast_common::timescale::{Timescale, cmp_ticks};
 use broadcast_common::{Stage, Timestamp, Unpackage};
 
 use crate::dash::DashPackager;
+use crate::data_identity::{DataIdentityMap, DataIdentityStage};
 use crate::flv_stream::StreamingFlvDemux;
-use crate::ir::{DemuxEvent, Media, Sample, TrackSpec};
+use crate::ir::{CodecConfig, DataCarriage, DataIdentity, DemuxEvent, Media, Sample, TrackSpec};
 use crate::media::{CmafMuxStage, FragmentCut};
 use crate::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, TrackPart};
@@ -174,6 +175,10 @@ mod cli_error_display_tests {
             (
                 CliError::WholeInputTooLarge { limit: 50 },
                 "input needs a whole-file read larger than 50 bytes (--max-whole-input-bytes)",
+            ),
+            (
+                CliError::BadDataIdentity("4=ts".to_string()),
+                "invalid --data-identity (4=ts): expected <track>=ts:<stream_type>[:<descriptors-hex>] | mp4:<handler>:<sample-entry-hex> | matroska:<codec_id>[:<codec-private-hex>]",
             ),
         ];
         for (error, text) in cases {
@@ -368,6 +373,14 @@ pub struct Args {
     /// the cap the run fails with a typed error naming it.
     #[arg(long = "max-whole-input-bytes", value_name = "BYTES")]
     pub max_whole_input_bytes: Option<u64>,
+
+    /// Map a data track's container identity for the output (repeatable):
+    /// `ts:<stream_type>[:<descriptors-hex>]`,
+    /// `mp4:<handler>:<sample-entry-hex>` or
+    /// `matroska:<codec_id>[:<codec-private-hex>]`. Without a mapping a data
+    /// track keeps its own identity and a muxer of another family refuses it.
+    #[arg(long = "data-identity", value_name = "TRACK=SPEC")]
+    pub data_identity: Vec<String>,
 }
 
 /// Hand-written: a derived `Debug` would print `keys` (raw `<KID>:<key>`
@@ -385,7 +398,8 @@ impl fmt::Debug for Args {
             .field("segment_duration", &self.segment_duration)
             .field("ll", &self.ll)
             .field("tracks", &self.tracks)
-            .field("max_whole_input_bytes", &self.max_whole_input_bytes);
+            .field("max_whole_input_bytes", &self.max_whole_input_bytes)
+            .field("data_identity", &self.data_identity);
         #[cfg(feature = "cenc")]
         {
             d.field("decrypt", &self.decrypt);
@@ -514,6 +528,11 @@ pub enum CliError {
         /// The cap, in bytes.
         limit: u64,
     },
+    /// A `--data-identity` argument was malformed or named a bad track.
+    #[error(
+        "invalid --data-identity ({0}): expected <track>=ts:<stream_type>[:<descriptors-hex>] | mp4:<handler>:<sample-entry-hex> | matroska:<codec_id>[:<codec-private-hex>]"
+    )]
+    BadDataIdentity(String),
 }
 
 impl From<std::io::Error> for CliError {
@@ -625,6 +644,8 @@ pub struct Opts {
     pub tracks: Vec<TrackId>,
     /// Cap on a whole-file read of an unstreamable input (MPEG-PS/WebM).
     pub max_whole_input_bytes: Option<u64>,
+    /// Data-track identity mappings applied before the muxer.
+    pub data_identity: DataIdentityMap,
 }
 
 impl Default for Opts {
@@ -636,6 +657,7 @@ impl Default for Opts {
             utc_timing_url: None,
             tracks: Vec::new(),
             max_whole_input_bytes: None,
+            data_identity: DataIdentityMap::new(),
         }
     }
 }
@@ -1054,9 +1076,18 @@ impl CliStream {
         emit: &mut dyn Emit,
         plan: Option<isobmff::plan::OwnedPlan>,
     ) -> CliResult<Self> {
+        let specs = apply_identity(&specs, &opts.data_identity)?;
         let kind = match opts.format {
             OutputFormat::Cmaf => {
-                let mut stage = CmafMuxStage::new(movie_timescale, FragmentCut::OnFlush, 1);
+                let target = Duration::from_secs(u64::from(opts.segment_duration.max(1)));
+                let cut = match choose_anchor(specs.iter().map(|spec| &spec.config)) {
+                    Ok(index) => FragmentCut::AnchorKeyframe {
+                        track: specs[index].track_id,
+                        target,
+                    },
+                    Err(_) => FragmentCut::OnFlush,
+                };
+                let mut stage = CmafMuxStage::new(movie_timescale, cut, 1);
                 for spec in &specs {
                     stage.feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)?;
                 }
@@ -1814,17 +1845,31 @@ fn apply_specs(
         }
     }
     if is_bmff_format(format) {
+        let keeps = |spec: &TrackSpec| -> bool {
+            match &spec.config {
+                // A data track crosses into ISOBMFF only when the caller maps
+                // it to an `mp4:` identity; its own identity may be another
+                // container's (the long-standing "drop opaque data from
+                // CMAF" behaviour).
+                CodecConfig::Data { .. } => matches!(
+                    opts.data_identity.get(spec.track_id),
+                    Some(DataIdentity::Mp4 { .. })
+                ),
+                _ => spec.config.is_muxable_in_bmff(),
+            }
+        };
         let dropped: Vec<TrackId> = specs
             .iter()
-            .filter(|spec| !spec.config.is_muxable_in_bmff())
+            .filter(|spec| !keeps(spec))
             .map(|spec| spec.track_id)
             .collect();
         if !dropped.is_empty() {
             eprintln!(
                 "warning: dropping track(s) {dropped:?} from CMAF/fMP4 output \
-                 (no ISOBMFF carriage in this crate for their codec)"
+                 (no ISOBMFF carriage in this crate for their codec; map one with \
+                 --data-identity <track>=mp4:<handler>:<sample-entry-hex>)"
             );
-            specs.retain(|spec| spec.config.is_muxable_in_bmff());
+            specs.retain(keeps);
             if specs.is_empty() {
                 return Err(crate::Error::InvalidInput(
                     "select_tracks_by: predicate kept no track",
@@ -1834,6 +1879,95 @@ fn apply_specs(
         }
     }
     Ok(specs)
+}
+
+/// Apply the caller's [`DataIdentityMap`] to every announcement through the
+/// one [`DataIdentityStage`], returning the track specs the muxer must use.
+fn apply_identity(specs: &[TrackSpec], map: &DataIdentityMap) -> CliResult<Vec<TrackSpec>> {
+    if map.is_empty() {
+        return Ok(specs.to_vec());
+    }
+    let mut stage = DataIdentityStage::new(map.clone());
+    let mut out = Vec::with_capacity(specs.len());
+    for spec in specs {
+        stage.feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)?;
+        match stage.poll() {
+            Some(MuxInput::Track(spec)) => out.push(*spec),
+            _ => {
+                return Err(crate::Error::InvalidInput(
+                    "data identity stage produced no track announcement",
+                )
+                .into());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Parse a `--data-identity <track>=<spec>` argument.
+fn parse_data_identity_argument(argument: &str) -> CliResult<(TrackId, DataIdentity)> {
+    let bad = || CliError::BadDataIdentity(argument.to_string());
+    let (track_text, rest) = argument.split_once('=').ok_or_else(bad)?;
+    let track: u32 = track_text.trim().parse().map_err(|_| bad())?;
+    let identity = parse_data_identity(rest).ok_or_else(bad)?;
+    Ok((TrackId::new(track), identity))
+}
+
+/// Parse the `<spec>` half of a `--data-identity` argument.
+fn parse_data_identity(spec: &str) -> Option<DataIdentity> {
+    let (family, tail) = spec.split_once(':')?;
+    match family {
+        "ts" => {
+            let (stream_type, descriptors) = match tail.split_once(':') {
+                Some((stream_type, hex)) => (
+                    stream_type.parse::<u8>().ok()?,
+                    broadcast_common::hex::hex_decode(hex)?,
+                ),
+                None => (tail.parse::<u8>().ok()?, Vec::new()),
+            };
+            Some(DataIdentity::Ts {
+                stream_type,
+                descriptors,
+                carriage: DataCarriage::Pes,
+            })
+        }
+        "mp4" => {
+            let (handler_text, entry_hex) = tail.split_once(':')?;
+            let handler_bytes = handler_text.as_bytes();
+            if handler_bytes.len() != isobmff::box_types::BOX_TYPE_SIZE {
+                return None;
+            }
+            let mut handler = [0u8; isobmff::box_types::BOX_TYPE_SIZE];
+            handler.copy_from_slice(handler_bytes);
+            let sample_entry = hex_bytes(entry_hex)?;
+            if sample_entry.is_empty() {
+                return None;
+            }
+            Some(DataIdentity::Mp4 {
+                handler,
+                sample_entry,
+            })
+        }
+        "matroska" => {
+            let (codec_id, codec_private) = match tail.split_once(':') {
+                Some((codec_id, hex)) => (codec_id, hex_bytes(hex)?),
+                None => (tail, bytes::Bytes::new()),
+            };
+            if codec_id.is_empty() {
+                return None;
+            }
+            Some(DataIdentity::Matroska {
+                codec_id: codec_id.to_string(),
+                codec_private,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Decode a hex string's bytes, or `None` when it is not hex.
+fn hex_bytes(text: &str) -> Option<bytes::Bytes> {
+    broadcast_common::hex::hex_decode(text).map(bytes::Bytes::from)
 }
 
 /// Read an unstreamable container whole, bounded by the caller's cap.
@@ -2342,6 +2476,11 @@ fn resolve_format(args: &Args) -> CliResult<OutputFormat> {
 /// Returns the detected container + chosen format for the caller to report.
 pub fn run(args: Args) -> CliResult<(Container, OutputFormat)> {
     let format = resolve_format(&args)?;
+    let mut data_identity = DataIdentityMap::new();
+    for argument in &args.data_identity {
+        let (track, identity) = parse_data_identity_argument(argument)?;
+        data_identity.insert(track, identity);
+    }
     let opts = Opts {
         format,
         segment_duration: args.segment_duration,
@@ -2349,6 +2488,7 @@ pub fn run(args: Args) -> CliResult<(Container, OutputFormat)> {
         utc_timing_url: args.utc_timing_url.clone(),
         tracks: args.tracks.iter().copied().map(TrackId::new).collect(),
         max_whole_input_bytes: args.max_whole_input_bytes,
+        data_identity,
     };
     let in_path = input_path(&args).to_path_buf();
     let from_stdin = in_path == Path::new(STDIN_INPUT);
@@ -2474,6 +2614,70 @@ fn parse_hex16(s: &str) -> Option<[u8; KEY_ID_LEN]> {
     let mut out = [0u8; KEY_ID_LEN];
     broadcast_common::hex::hex_decode_into(s.trim(), &mut out).ok()?;
     Some(out)
+}
+
+#[cfg(test)]
+mod data_identity_tests {
+    use super::{parse_data_identity, parse_data_identity_argument};
+    use crate::ir::{DataCarriage, DataIdentity};
+
+    #[test]
+    fn every_documented_form_parses() {
+        assert_eq!(
+            parse_data_identity("ts:6"),
+            Some(DataIdentity::Ts {
+                stream_type: 6,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Pes,
+            })
+        );
+        assert_eq!(
+            parse_data_identity("ts:134:0A0B"),
+            Some(DataIdentity::Ts {
+                stream_type: 134,
+                descriptors: vec![0x0A, 0x0B],
+                carriage: DataCarriage::Pes,
+            })
+        );
+        assert_eq!(
+            parse_data_identity("mp4:meta:0000001467706d64"),
+            Some(DataIdentity::Mp4 {
+                handler: *b"meta",
+                sample_entry: bytes::Bytes::from_static(&[0, 0, 0, 0x14, b'g', b'p', b'm', b'd']),
+            })
+        );
+        assert_eq!(
+            parse_data_identity("matroska:S_TEXT/UTF8:4142"),
+            Some(DataIdentity::Matroska {
+                codec_id: String::from("S_TEXT/UTF8"),
+                codec_private: bytes::Bytes::from_static(&[0x41, 0x42]),
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_forms_are_none_or_a_typed_error() {
+        assert_eq!(parse_data_identity("ts"), None);
+        assert_eq!(parse_data_identity("ts:256"), None);
+        assert_eq!(parse_data_identity("ts:6:0"), None);
+        assert_eq!(parse_data_identity("mp4:met:00"), None);
+        assert_eq!(parse_data_identity("mp4:meta:"), None);
+        assert_eq!(parse_data_identity("matroska:"), None);
+        assert_eq!(parse_data_identity("mkv:x"), None);
+        assert!(parse_data_identity_argument("not-a-track=ts:6").is_err());
+        assert!(parse_data_identity_argument("4").is_err());
+        assert_eq!(
+            parse_data_identity_argument("4=ts:6").expect("valid"),
+            (
+                crate::TrackId::new(4),
+                DataIdentity::Ts {
+                    stream_type: 6,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                }
+            )
+        );
+    }
 }
 
 #[cfg(all(test, feature = "cenc"))]

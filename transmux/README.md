@@ -181,11 +181,14 @@ Usage: transmux [OPTIONS] --output <PATH> [IN]
       --utc-timing-url <URL>  DASH only: advertise MPD/UTCTiming with this URL
       --tracks <IDS>          Restrict to these track IDs (comma-separated)
       --max-whole-input-bytes <BYTES>  Cap the whole-file read of an unstreamable input (MPEG-PS/WebM); unlimited unless given
+      --data-identity <TRACK=SPEC>  Map a data track's identity (ts:<type>[:<desc-hex>], mp4:<handler>:<entry-hex>, matroska:<id>[:<private-hex>]); repeatable
       --decrypt               Decrypt CENC input (requires the cenc feature)
       --key <KID:KEY>         Content key, repeatable, only with --decrypt
 ```
 
-Every input is streamed: the CLI drives the container's streaming demux stage and writes each muxer output unit as it is produced, so neither the source nor the output has to fit in memory. MPEG-PS and WebM are still read whole (their streaming demuxers are Phase 5), bounded by `--max-whole-input-bytes`. `-` reads standard input and `-o -` writes the single binary formats to standard output; progressive MP4 needs a seekable input and output.
+Every input is streamed: the CLI drives the container's streaming demux stage and writes each muxer output unit as it is produced, so neither the source nor the output has to fit in memory. `--format cmaf` cuts a fragment at the first anchor keyframe at or after `--segment-duration`, so a large file converts in bounded memory; an input shorter than one segment is one fragment, as before. MPEG-PS and WebM are still read whole (their streaming demuxers are Phase 5), bounded by `--max-whole-input-bytes`. `-` reads standard input and `-o -` writes the single binary formats to standard output; progressive MP4 needs a seekable input and output.
+
+An opaque data track crosses container families only when mapped: `--data-identity <track>=ts:<stream_type>[:<descriptors-hex>]` (or `mp4:<handler>:<sample-entry-hex>`, `matroska:<codec_id>[:<codec-private-hex>]`) builds the `DataIdentityMap` a `DataIdentityStage` applies before the muxer; without it, a muxer of another family refuses the track with `DataIdentityMismatch` instead of dropping it silently.
 
 Input detection uses `container-probe`, which scores structural evidence over the leading bytes (MPEG-TS including 192-byte M2TS and mid-packet captures, ISOBMFF, MPEG-PS, WebM and Matroska, FLV). A container it recognises but this CLI has no demuxer for (MXF, WAV, Ogg, ADTS, MP3, Annex B) is reported as unsupported, and an inconclusive probe asks for the format to be given explicitly.
 

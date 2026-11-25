@@ -200,7 +200,7 @@ fn file_input_matches_the_bytes_core() {
         .arg(&input)
         .arg("-o")
         .arg(&out)
-        .args(["-f", "cmaf"])
+        .args(["-f", "cmaf", "--segment-duration", "1"])
         .status()
         .expect("spawn the transmux binary");
     assert!(status.success(), "file -> cmaf failed");
@@ -213,5 +213,108 @@ fn file_input_matches_the_bytes_core() {
     assert_eq!(
         from_disk, from_core,
         "the file path and the bytes core emit the same CMAF"
+    );
+}
+
+/// The GoPro `gpmd` data track crosses into TS only when the caller maps it:
+/// without `--data-identity` the TS muxer refuses the `mp4:` identity naming
+/// the track, and with the mapping its opaque samples survive byte-for-byte.
+#[test]
+fn gopro_gpmd_maps_into_ts() {
+    use broadcast_common::Unpackage;
+    use transmux::ir::{CodecConfig, DataCarriage, DataIdentity};
+    use transmux::ts_demux::TsDemux;
+
+    let Some(path) = test_fixtures::private("mp4/camera/gopro-hero6-ble.mp4") else {
+        eprintln!("SKIP gopro_gpmd_maps_into_ts: private fixture not checked out");
+        return;
+    };
+    let input = std::fs::read(&path).expect("read the GoPro fixture");
+    let media =
+        test_harness::collect::media_from_mp4(&input, test_harness::collect::CollectMode::Seekable)
+            .expect("demux the GoPro fixture");
+    let gpmd = media
+        .tracks
+        .iter()
+        .find(|track| {
+            matches!(
+                &track.spec.config,
+                CodecConfig::Data {
+                    identity: DataIdentity::Mp4 { sample_entry, .. }
+                } if sample_entry.get(4..8) == Some(b"gpmd")
+            )
+        })
+        .expect("the fixture carries a gpmd data track");
+    let gpmd_id = gpmd.spec.track_id;
+    let gpmd_count = gpmd.samples.len();
+    let gpmd_bytes: Vec<u8> = gpmd
+        .samples
+        .iter()
+        .flat_map(|sample| sample.data.iter().copied())
+        .collect();
+    assert!(gpmd_count > 0, "the gpmd track must carry samples");
+
+    let tracks: Vec<transmux::TrackId> = media
+        .tracks
+        .iter()
+        .filter(|track| {
+            !matches!(track.spec.config, CodecConfig::Data { .. }) || track.spec.track_id == gpmd_id
+        })
+        .map(|track| track.spec.track_id)
+        .collect();
+
+    let plain = Opts {
+        format: OutputFormat::Ts,
+        tracks: tracks.clone(),
+        ..Opts::default()
+    };
+    let error = run_bytes(&input, &plain).expect_err("an unmapped gpmd track cannot reach TS");
+    assert!(
+        matches!(
+            error,
+            CliError::Transmux(Error::DataIdentityMismatch { track, .. }) if track == gpmd_id
+        ),
+        "unmapped gpmd must be refused naming the track, got {error:?}"
+    );
+
+    let mut identity = transmux::DataIdentityMap::new();
+    identity.insert(
+        gpmd_id,
+        DataIdentity::Ts {
+            stream_type: 6,
+            descriptors: Vec::new(),
+            carriage: DataCarriage::Pes,
+        },
+    );
+    let mapped = Opts {
+        format: OutputFormat::Ts,
+        tracks,
+        data_identity: identity,
+        ..Opts::default()
+    };
+    let Output::Bytes(ts) = run_bytes(&input, &mapped).expect("mapped gpmd reaches TS") else {
+        panic!("TS output must be bytes");
+    };
+    let round = TsDemux::new().unpackage(&ts).expect("demux the TS output");
+    let carried = round
+        .tracks
+        .iter()
+        .find(|track| {
+            matches!(
+                &track.spec.config,
+                CodecConfig::Data {
+                    identity: DataIdentity::Ts { .. }
+                }
+            ) && track.samples.len() == gpmd_count
+        })
+        .expect("the mapped gpmd track is carried");
+    let carried_bytes: Vec<u8> = carried
+        .samples
+        .iter()
+        .flat_map(|sample| sample.data.iter().copied())
+        .collect();
+    assert_eq!(
+        carried_bytes, gpmd_bytes,
+        "the mapped gpmd samples survive byte-for-byte"
     );
 }
