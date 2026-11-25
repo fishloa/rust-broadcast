@@ -30,7 +30,7 @@
 //!   fMP4/CMAF and progressive (non-fragmented) MP4 through the streaming MP4
 //!   stage [`mp4_demux::Mp4Demux`] (seekable byte ranges or forward-only
 //!   input), MPEG
-//!   Program Stream ([`PsDemux`]),
+//!   Program Stream ([`StreamingPsDemux`]),
 //!   WebM/Matroska ([`WebmDemux`] — Xiph/EBML/fixed-size laced blocks are
 //!   unlaced into one sample per frame, see the module docs), FLV
 //!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
@@ -334,7 +334,7 @@ pub use pipeline::{
 };
 pub use plan_pass::PlanPass;
 pub use progressive::ProgressiveMuxStage;
-pub use ps_demux::PsDemux;
+pub use ps_demux::{PsDemuxLimits, StreamingPsDemux};
 pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
 pub use repackage::{Repackage, RepackageOutput, select_tracks, select_tracks_by, trim};
 pub use rtcp::{

@@ -31,7 +31,7 @@ use transmux::TrackId;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
-use transmux::{FlvDemux, Media, PsDemux, RtmpMuxStage, TsDemux, WebmDemux};
+use transmux::{FlvDemux, Media, RtmpMuxStage, TsDemux, WebmDemux};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -697,7 +697,7 @@ fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
 #[test]
 fn ps_demux_emits_absolute_time_from_pes_timestamps() {
     let ps = std::fs::read(test_fixtures::path("ps/h264-ac3.ps")).expect("fixtures/ps/h264-ac3.ps");
-    let media = PsDemux::new().unpackage(&ps[..]).expect("PS → IR");
+    let media = test_harness::collect::media_from_ps(&ps[..], 4096).expect("PS → IR");
     assert_absolute_timeline(&media, "MPEG Program Stream");
 }
 

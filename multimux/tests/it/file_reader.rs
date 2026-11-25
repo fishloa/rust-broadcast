@@ -125,7 +125,7 @@ fn ps_fixture_selects_ps_demuxer() {
     assert_eq!(
         select_demuxer(format, detail).unwrap(),
         DemuxerKind::Ps,
-        "expected PsDemux for MPEG-PS"
+        "expected StreamingPsDemux for MPEG-PS"
     );
 }
 
@@ -744,10 +744,10 @@ async fn oversized_file_yields_file_too_large() {
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let big = dir.join("big.ps");
+    let big = dir.join("big.mkv");
     // A real, identifiable whole-file container over a 512-byte cap: the cap
-    // still applies to PS and WebM (TS, FLV and MP4 stream instead).
-    let bytes = std::fs::read(fixture("fixtures/ps/h264-ac3.ps")).unwrap();
+    // still applies to WebM (TS, FLV, MP4 and PS stream instead).
+    let bytes = std::fs::read(fixture("fixtures/mkv/h264-aac.mkv")).unwrap();
     let len = bytes.len() as u64;
     std::fs::write(&big, &bytes).unwrap();
 
@@ -860,7 +860,7 @@ async fn b_frame_fixture_publishes_decode_order_dts() {
 
 // ---------------------------------------------------------------------------
 // The streaming path (issue #4057): TS and FLV play from disk in bounded
-// memory and are not subject to `max_file_bytes`; MP4/PS/WebM keep the
+// memory and are not subject to `max_file_bytes`; WebM keeps the
 // whole-file path and its cap.
 // ---------------------------------------------------------------------------
 
@@ -1000,18 +1000,18 @@ async fn an_mp4_file_larger_than_the_cap_plays() {
 }
 
 #[tokio::test]
-async fn a_ps_file_larger_than_the_cap_is_refused() {
+async fn a_ps_file_larger_than_the_cap_plays() {
+    // A Program Stream streams through `StreamingPsDemux`, so the whole-file
+    // cap never applies.
     let trunk = trunk();
-    let config = FileReaderConfig::new(fixture("fixtures/ps/h264-ac3.ps"), false, trunk)
+    let config = FileReaderConfig::new(fixture("fixtures/ps/h264-ac3.ps"), false, trunk.clone())
         .with_pace(false)
         .with_max_retries(0)
         .with_max_file_bytes(1);
-    match FileReader::new(config).run().await {
-        Err(FileReaderError::FileTooLarge { max, .. }) => {
-            assert_eq!(max, 1, "the configured cap must be reported");
-        }
-        other => panic!("a PS over the cap must stay FileTooLarge, got {other:?}"),
-    }
+    let published = count_published(trunk, FileReader::new(config))
+        .await
+        .expect("a PS file over the cap must stream, not be refused");
+    assert!(published > 0, "the PS fixture must publish samples");
 }
 
 #[tokio::test]

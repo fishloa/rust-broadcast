@@ -43,7 +43,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use broadcast_common::Unpackage;
-use transmux::{FlvDemux, Media, PsDemux, TsDemux, WebmDemux};
+use transmux::{FlvDemux, Media, TsDemux, WebmDemux};
 
 /// Largest capture demuxed in a PR run. It keeps the `test-013` (9.4 MB) and
 /// `test-089` captures that pin #1255/#1579; the full 40 MB corpus runs when
@@ -84,7 +84,7 @@ fn demux(path: &Path, bytes: &[u8]) -> Option<Media> {
         .ok(),
         "mkv" | "webm" => WebmDemux::new().unpackage(bytes).ok(),
         "flv" => FlvDemux::new().unpackage(bytes).ok(),
-        "ps" | "mpg" | "mpeg" => PsDemux::new().unpackage(bytes).ok(),
+        "ps" | "mpg" | "mpeg" => test_harness::collect::media_from_ps(bytes, 4096).ok(),
         _ => None,
     }
 }

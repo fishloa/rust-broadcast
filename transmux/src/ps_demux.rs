@@ -1,84 +1,87 @@
-//! MPEG-2 Program Stream demuxer → hub [`Media`] IR.
+//! MPEG-2 Program Stream streaming demuxer - the PS input side of the
+//! any-to-any container hub.
 //!
-//! `PsDemux` is an **input** side of the any-to-any container hub: it consumes a
-//! raw MPEG-1/2 Program Stream (`.mpg` / `.vob`) and produces the neutral
-//! [`Media`] IR (one [`Track`] per elementary stream, coded samples in decode
-//! order), implementing the abstract [`broadcast_common::Unpackage`] trait so
-//! `{PS} → IR → {any}` composes with the existing
-//! [`CmafMuxStage`](crate::media::CmafMuxStage) / [`HlsPackager`](crate::media::HlsPackager)
-//! packagers — mirroring [`TsDemux`](crate::TsDemux).
+//! [`StreamingPsDemux`] is a [`Stage`] over [`mpeg_ps::PsScanner`]: it is fed
+//! the Program Stream in pieces and emits the hub's [`DemuxEvent`] vocabulary
+//! (track additions and one [`Sample`] per completed access unit) as each PES
+//! packet / access unit completes. It never holds the input: the scanner holds
+//! at most one incomplete PES, and each elementary stream holds one access unit
+//! of lookahead (the sample's duration is the gap to the next decode time).
 //!
-//! Pipeline: PS pack layer ([`mpeg_ps`]) → per-`stream_id` PES reassembly
-//! ([`mpeg_pes`]) → codec-config recovery (H.264 in-band SPS/PPS → `avcC`, AC-3
-//! syncframe BSI → `dac3`) → length-prefixed video / raw audio samples.
+//! Pipeline: PS pack layer ([`mpeg_ps`]) -> per-`stream_id` PES reassembly
+//! ([`mpeg_pes`]) -> codec-config recovery (H.264 in-band SPS/PPS -> `avcC`,
+//! MPEG-2 `sequence_header()`, AC-3 syncframe BSI -> `dac3`) -> length-prefixed
+//! video / raw audio samples.
 //!
 //! Unlike a Transport Stream, a Program Stream carries no PMT here: the fixture
 //! has no [`ProgramStreamMap`](mpeg_ps::ProgramStreamMap), so elementary streams
 //! are mapped by `stream_id` (ISO/IEC 13818-1 Table 2-22): video from the video
-//! range 0xE0–0xEF, audio from `private_stream_1` (0xBD). Unknown `stream_id`s
+//! range 0xE0-0xEF, audio from `private_stream_1` (0xBD). A PSM, when present,
+//! restricts the set to the elementary streams it lists. Unknown `stream_id`s
 //! are skipped, never fatal.
 //!
 //! A `private_stream_1` `stream_id` is a *container*: it multiplexes several
 //! independent substreams (AC-3, DTS, LPCM, subpictures), told apart by the
 //! `substream_id` byte at the front of each PES payload's 4-byte substream
-//! header. Elementary streams are therefore keyed by
-//! `(stream_id, substream_id)`. A substream is carried only when its own bytes
-//! identify it as AC-3: the syncword is looked for at the header's
-//! `first_access_unit_pointer` (so a packet that resumes a frame an earlier
-//! packet opened is not mistaken for a non-audio stream), and the DTS
-//! (`0x88..=0x8F`), LPCM (`0xA0..=0xA7`) and subpicture (`0x20..=0x3F`)
-//! substream ids are skipped explicitly rather than concatenated into the AC-3
-//! track beside them.
+//! header. Elementary streams are therefore keyed by `(stream_id,
+//! substream_id)`. A substream is carried only when its own bytes identify it
+//! as AC-3: the syncword is looked for at the header's
+//! `first_access_unit_pointer`, and the DTS (`0x88..=0x8F`), LPCM
+//! (`0xA0..=0xA7`) and subpicture (`0x20..=0x3F`) substream ids are skipped
+//! explicitly rather than concatenated into the AC-3 track beside them.
 //!
 //! A PS also does not stamp every frame: one PES packet concatenates several
 //! access units and carries a PTS/DTS only for the first one. Video access units
-//! are therefore recovered from the reassembled Annex B byte stream by
-//! [`crate::au::AccessUnitSplitter`], which decides a boundary from
-//! `first_mb_in_slice` as well as from an access-unit delimiter — an AUD is
-//! *optional* in H.264 and absent from most PS captures. Audio is split into
-//! AC-3 syncframes by [`crate::ac3_syncframe::split_ac3_syncframes`], which walks each
-//! frame's declared length rather than scanning for the next syncword. Timing is
-//! anchored off the PES-level PTS/DTS that are present and the constant frame
-//! duration derived from the stamped decode timestamps.
+//! are therefore recovered incrementally by
+//! [`crate::au::AccessUnitSplitter`] (a boundary is a new picture, from
+//! `first_mb_in_slice` as well as from an access-unit delimiter - an AUD is
+//! *optional* in H.264 and absent from most PS captures), and MPEG-2 pictures by
+//! their `picture_start_code` (`0x00000100`, ISO/IEC 13818-2 §6.2.3). Audio is
+//! split into AC-3 syncframes by walking each frame's declared length rather
+//! than scanning for the next syncword. Timing is anchored off the PES-level
+//! PTS/DTS that are present and the constant frame duration derived from the
+//! stamped decode timestamps.
 //!
 //! HEVC / DTS / other codecs are not carried here (skipped, never fatal).
 //!
 //! # Spec
 //!
 //! - **Program Stream framing (pack header / system header / PSM)**: ISO/IEC
-//!   13818-1 (ITU-T H.222.0) §2.5 — via [`mpeg_ps`].
+//!   13818-1 (ITU-T H.222.0) §2.5 - via [`mpeg_ps`].
 //! - **PES reassembly + PTS/DTS**: ISO/IEC 13818-1 §2.4.3.6 / §2.4.3.7 (via
 //!   [`mpeg_pes`], 33-bit @ 90 kHz).
 //! - **`stream_id` assignment**: ISO/IEC 13818-1 Table 2-22.
-//! - **AC-3 in `private_stream_1`**: ETSI TS 101 154 — the 4-byte substream
+//! - **AC-3 in `private_stream_1`**: ETSI TS 101 154 - the 4-byte substream
 //!   header (`substream_id` + `number_of_frames` + `first_access_unit_pointer`)
 //!   precedes the AC-3 syncframes.
 
-use crate::TrackId;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
-use broadcast_common::wire::u16_at;
-use core::marker::PhantomData;
 use core::num::NonZeroU32;
 
-use broadcast_common::Unpackage;
+use broadcast_common::Stage;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::timescale::Timescale;
-use mpeg_ps::program_stream::scan_packs;
+use broadcast_common::wire::u16_at;
+use mpeg_ps::{PsEvent, PsLimits, PsScanner};
 
+use crate::TrackId;
 use crate::ac3_syncframe::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use crate::annexb::iter_annexb_nals;
 use crate::au::AccessUnitSplitter;
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
-use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, DisplayGeometry};
-use crate::media::{Media, Track};
+use crate::ir::{
+    AUDIO_SAMPLE_SIZE_BITS, DemuxEvent, DisplayGeometry, EventProvenance, InputDegradation, Sample,
+    SampleFlags, TrackSpec,
+};
 use crate::mpeg_legacy::Mpeg2SeqHeader;
 use crate::mpeg2_display::Mpeg2DisplayTracker;
 use crate::nal::{
     AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, ParamKind,
     parameter_set_is_valid,
 };
-use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use crate::pipeline::CodecConfig;
 use crate::ts_demux::{
     AVC_SPS_CONFIG_MIN_LEN, AVC_SPS_CONSTRAINT_FLAGS_OFFSET, AVC_SPS_LEVEL_IDC_OFFSET,
     ESDS_VIDEO_ES_ID, MPEG2_PICTURE_START_CODE, OTI_MPEG2_VIDEO_MAIN, STREAM_TYPE_VISUAL,
@@ -88,113 +91,110 @@ use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 
-// ── stream_id → codec (ISO/IEC 13818-1 Table 2-22) ──────────────────────────
+// -- stream_id -> codec (ISO/IEC 13818-1 Table 2-22) --------------------------
 
-/// Low bound of the H.264/video `stream_id` range (`1110 xxxx`, 0xE0–0xEF).
+/// Low bound of the H.264/video `stream_id` range (`1110 xxxx`, 0xE0-0xEF).
 const STREAM_ID_VIDEO_LO: u8 = 0xE0;
 /// High bound of the video `stream_id` range.
 const STREAM_ID_VIDEO_HI: u8 = 0xEF;
-/// `private_stream_1` `stream_id` — carries user-private payloads, in practice
+/// `private_stream_1` `stream_id` - carries user-private payloads, in practice
 /// AC-3/E-AC-3/DTS/LPCM audio and subpictures (Table 2-22; H.222.0 §2.4.3.7
 /// makes its `PES_packet_data_byte`s "user definable").
 const STREAM_ID_PRIVATE_1: u8 = 0xBD;
 
-// ── private_stream_1 substream header ────────────────────────────────────────
-
 /// Length of the `private_stream_1` substream header before the substream's own
 /// payload: `substream_id`(8) + `number_of_frames`(8) +
-/// `first_access_unit_pointer`(16) — the `private_stream_1`-specific
+/// `first_access_unit_pointer`(16) - the `private_stream_1`-specific
 /// `PES_packet_data_byte` layout (H.222.0 §2.4.3.7 leaves its *contents* to the
 /// application, but this 4-byte prologue is what the DVD/ATSC private-stream
 /// profiles this demuxer targets put there).
 const PRIVATE1_HEADER_LEN: usize = 4;
 /// Offset of the `substream_id` byte within that header.
 const PRIVATE1_SUBSTREAM_ID_OFFSET: usize = 0;
-/// Offset of `number_of_frames` within the substream header: how many complete
-/// access units start in this PES packet.
+/// Offset of `number_of_frames` within the substream header.
 const PRIVATE1_NUM_FRAMES_OFFSET: usize = 1;
 /// Offset of `first_access_unit_pointer` within the substream header.
 const PRIVATE1_FIRST_ACCESS_UNIT_POINTER_OFFSET: usize = 2;
-/// Bytes of `number_of_frames`.
-const PRIVATE1_NUM_FRAMES_LEN: usize = 1;
-/// Bytes of `first_access_unit_pointer` (big-endian).
-const PRIVATE1_FIRST_ACCESS_UNIT_POINTER_LEN: usize = 2;
 
-/// The substream header's fields must tile its 4 bytes with nothing left over:
-/// `substream_id`(1) at [`PRIVATE1_SUBSTREAM_ID_OFFSET`], then
-/// `number_of_frames`(1) at [`PRIVATE1_NUM_FRAMES_OFFSET`], then
-/// `first_access_unit_pointer`(2). A mismatch would read one field out of
-/// another's bytes. Checked at compile time (`debug_assert!` would be skipped
-/// by release builds).
-const _: () = assert!(
-    PRIVATE1_SUBSTREAM_ID_OFFSET == 0
-        && PRIVATE1_NUM_FRAMES_OFFSET == PRIVATE1_SUBSTREAM_ID_OFFSET + 1
-        && PRIVATE1_NUM_FRAMES_LEN == 1
-        && PRIVATE1_FIRST_ACCESS_UNIT_POINTER_OFFSET
-            == PRIVATE1_NUM_FRAMES_OFFSET + PRIVATE1_NUM_FRAMES_LEN
-        && PRIVATE1_FIRST_ACCESS_UNIT_POINTER_LEN == 2
-        && PRIVATE1_HEADER_LEN == 4
-);
-
-// ── private_stream_1 substream_id ranges (DVD/ATSC private-stream profiles) ───
-//
-// H.222.0 §2.4.3.7 declares a `private_stream_1` PES's data bytes "user
-// definable" and specifies nothing about `substream_id`; the assignments below
-// are the de-facto DVD-Video / ATSC A/52 streaming convention that ffmpeg's
-// `mpeg` demuxer and libavformat follow. They are used only to *skip*
-// substreams this demuxer does not carry (with a comment naming what they are)
-// — never to assume a substream's codec, which is still probed from its bytes.
-
-/// DTS substream ids (DVD-Video convention): `0x88..=0x8F`. Not carried.
-const SUBSTREAM_ID_DTS_RANGE: core::ops::RangeInclusive<u8> = 0x88..=0x8F;
-/// LPCM substream ids (DVD-Video convention): `0xA0..=0xA7`. Not carried.
-const SUBSTREAM_ID_LPCM_RANGE: core::ops::RangeInclusive<u8> = 0xA0..=0xA7;
-/// Subpicture (bitmap subtitle) substream ids (DVD-Video convention):
-/// `0x20..=0x3F`. Not carried here (a subtitle track needs its own sample
-/// entry, which this demuxer does not build).
+/// DVD/ATSC subpicture substream ids (`0x20..=0x3F`), never carried.
 const SUBSTREAM_ID_SUBPICTURE_RANGE: core::ops::RangeInclusive<u8> = 0x20..=0x3F;
-
-/// `substream_id` recorded for a stream that is not a `private_stream_1`
-/// substream container, so every `(stream_id, _)` pair still has a complete key.
+/// DVD/ATSC DTS substream ids (`0x88..=0x8F`), never carried.
+const SUBSTREAM_ID_DTS_RANGE: core::ops::RangeInclusive<u8> = 0x88..=0x8F;
+/// DVD/ATSC LPCM substream ids (`0xA0..=0xA7`), never carried.
+const SUBSTREAM_ID_LPCM_RANGE: core::ops::RangeInclusive<u8> = 0xA0..=0xA7;
+/// Audio substream ids start here (`0x80`); below it nothing is AC-3.
+const SUBSTREAM_ID_AUDIO_LO: u8 = 0x80;
+/// The `substream_id` value used for a `stream_id` that is not a substream
+/// container.
 const PRIVATE1_SUBSTREAM_ID_NONE: u8 = 0;
 
-/// AC-3 syncword (`0x0B77`, ETSI TS 102 366 §4.1 "syncword"; "0x0B77" in
-/// Annex B's `syncinfo()`) — the first two bytes of every AC-3 syncframe, and
-/// the evidence [`Codec::classify_private1`] requires of an audio substream.
+/// The AC-3 syncword (`0x0B77`, ETSI TS 102 366 §4.4.1.1).
 const AC3_SYNCWORD: [u8; 2] = [0x0B, 0x77];
-/// Length of [`AC3_SYNCWORD`].
-const AC3_SYNCWORD_LEN: usize = AC3_SYNCWORD.len();
 
-/// Lowest `substream_id` in the audio block (`0x80..=0xBF`). A substream below
-/// it — a subpicture, or the unassigned `0x00..=0x1F` block — is not audio and
-/// is skipped without probing.
-const SUBSTREAM_ID_AUDIO_LO: u8 = 0x80;
+/// The three-byte start-code prefix.
+const START_CODE_PREFIX: [u8; 3] = [0x00, 0x00, 0x01];
 
-// ── H.264 NAL / config constants (ISO/IEC 14496-10 / 14496-15:2017) ───────────────
+/// Byte width of a start code: the `00 00 01` prefix plus its type byte.
+const START_CODE_LEN: usize = core::mem::size_of::<u32>();
 
-// ── MPEG-2 video picture boundaries ──────────────────────────────────────────
+/// Byte offset of a start code's type byte within `00 00 01 xx`.
+const START_CODE_BYTE_OFFSET: usize = core::mem::size_of::<u32>() - 1;
 
-/// Offset of a start code's code byte, one past its 3-byte `00 00 01` prefix.
-const START_CODE_BYTE_OFFSET: usize = 3;
+/// Samples a decode-time gap can be derived from.
+const SAMPLES_PER_DURATION: usize = 2;
 
-// ── Timestamps / timescale ───────────────────────────────────────────────────
-
-/// Video media timescale (90 kHz — the PS/PES timestamp clock).
+/// The video clock: 90 kHz, the PES/PS timestamp timescale
+/// (ISO/IEC 13818-1 §2.4.3.7).
 const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
-/// Fallback per-frame duration (90 kHz ticks) when only one stamped frame exists.
+
+/// The frame duration assumed when fewer than two decode timestamps are known.
 const DEFAULT_FRAME_DURATION: i128 = 3600;
-/// Fewest stamped decode timestamps that yield a per-frame delta.
-const MIN_FRAMES_FOR_DELTA: usize = 2;
+
+/// The caller's hostile-input bounds for [`StreamingPsDemux`].
+///
+/// Every bound is a cap on what one stream may hold while it waits for a
+/// configuration unit. They are not policy: a conformant stream resolves its
+/// config in its first access unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PsDemuxLimits {
+    /// Largest elementary-stream prefix buffered while a video codec / config is
+    /// still undecided. Default 1 MiB.
+    pub max_probe_bytes: usize,
+    /// Most samples one elementary stream may hold while an earlier stream has
+    /// not yet announced (track order is first-seen order). Default 4096.
+    pub max_held_samples: usize,
+    /// The PES scanner's own bounds.
+    pub scanner: PsLimits,
+}
+
+impl PsDemuxLimits {
+    /// The hostile-input defaults.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            max_probe_bytes: 1 << 20,
+            max_held_samples: 4096,
+            scanner: PsLimits::new(),
+        }
+    }
+}
+
+impl Default for PsDemuxLimits {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Codec class recovered from a `stream_id`. Data-carrying dispatch discriminant,
-/// not a spec label enum — hence no `name()`/`Display` (see the
+/// not a spec label enum - hence no `name()`/`Display` (see the
 /// `workspace-guards/tests/guards/label.rs` policy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Codec {
     /// A `stream_id` in the video range (Table 2-22, 0xE0-0xEF). This range
     /// carries H.264 *or* MPEG-2 video (or other video codecs this demuxer
-    /// doesn't support) indistinguishably by `stream_id` alone — the actual
-    /// codec is decided by probing the reassembled ES (C6, #1009).
+    /// doesn't support) indistinguishably by `stream_id` alone - the actual
+    /// codec is decided by probing the elementary bytes (C6, #1009).
     Video,
     /// A `private_stream_1` (0xBD) PES: a container for several substreams,
     /// each identified by the first byte of its substream header. Resolved
@@ -202,19 +202,14 @@ enum Codec {
     /// [`Codec::Skipped`].
     Private,
     Ac3,
-    /// A substream this demuxer does not carry (DTS, LPCM, a subpicture, or a
-    /// private substream whose payload is not AC-3). Skipped, never fatal —
-    /// it produces no track and accumulates no bytes.
+    /// A substream this demuxer does not carry. Skipped, never fatal - it
+    /// produces no track and accumulates no bytes.
     Skipped,
 }
 
 impl Codec {
     /// Map a PES `stream_id` to a supported [`Codec`] *without* inspecting the
     /// payload, or `None` for a `stream_id` this demuxer never carries.
-    ///
-    /// `private_stream_1` maps to [`Codec::Private`] rather than to AC-3: its
-    /// substream is only known once the substream header has been read and its
-    /// payload probed (see [`Codec::classify_private1`]).
     fn from_stream_id(stream_id: u8) -> Option<Self> {
         match stream_id {
             STREAM_ID_VIDEO_LO..=STREAM_ID_VIDEO_HI => Some(Codec::Video),
@@ -224,28 +219,7 @@ impl Codec {
     }
 
     /// Classify one `private_stream_1` substream from its header and the payload
-    /// that follows it.
-    ///
-    /// Returns the codec to carry the substream as, or `None` to skip it.
-    ///
-    /// The syncword probe runs at the header's `first_access_unit_pointer`, not
-    /// at the start of the payload (r04-W19 review). The pointer is the offset,
-    /// from the byte after the pointer field, of the first access unit that
-    /// *begins* in this packet — so a packet that merely continues a frame an
-    /// earlier packet opened has the syncword somewhere later, or not at all
-    /// (pointer 0). Probing at the payload start therefore dropped any substream
-    /// whose first surviving packet begins mid-frame, which is routine. A
-    /// pointer of 0 means no access unit starts here, so there is no syncword to
-    /// find and the substream is classified from what the pointer points at only
-    /// when it is non-zero — with nothing to point at, the payload is left for
-    /// accumulation and classified on a later packet.
-    ///
-    /// A substream with no audio `substream_id` is skipped by identity: the
-    /// DVD/ATSC convention puts subpictures at `0x20..=0x3F`, DTS at
-    /// `0x88..=0x8F` and LPCM at `0xA0..=0xA7`, none of which this demuxer
-    /// carries. Those are named ranges rather than a silent fall-through so the
-    /// intent is visible, and the AC-3 range is still *probed* rather than
-    /// assumed.
+    /// that follows it, or `None` to skip it.
     fn classify_private1(
         substream_id: u8,
         header: &Private1Header,
@@ -260,17 +234,10 @@ impl Codec {
         if substream_id < SUBSTREAM_ID_AUDIO_LO {
             return None;
         }
-        // The pointer is 1-based over the bytes that follow the pointer field:
-        // 1 addresses the first of them, so the access unit's first byte is at
-        // `pointer - 1`. A pointer of 0 means "no access unit starts in this
-        // packet" — which is what a muxer that splits purely by its own frame
-        // boundaries writes, so it is a normal variant rather than a corrupt
-        // one. Fall back to probing the payload's own start there: the first
-        // packet of such a stream carries a frame from its very first byte.
         let pointer = usize::from(header.first_access_unit_pointer);
         let offset = pointer.saturating_sub(1);
         let probe = payload.get(offset..)?;
-        if probe.len() < AC3_SYNCWORD_LEN || !probe.starts_with(&AC3_SYNCWORD) {
+        if probe.len() < AC3_SYNCWORD.len() || !probe.starts_with(&AC3_SYNCWORD) {
             return None;
         }
         Some(Codec::Ac3)
@@ -278,19 +245,16 @@ impl Codec {
 }
 
 /// The 4-byte `private_stream_1` substream header that precedes each substream's
-/// own bytes ([`PRIVATE1_HEADER_LEN`]).
+/// own bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Private1Header {
-    /// `substream_id` — distinguishes the substreams sharing one 0xBD
+    /// `substream_id` - distinguishes the substreams sharing one 0xBD
     /// `stream_id`.
     substream_id: u8,
-    /// `number_of_frames` — how many complete access units start in this PES
-    /// packet. Unused beyond validation: this demuxer splits frames by their own
-    /// length ([`crate::ac3_syncframe::split_ac3_syncframes`]) rather than by the count,
-    /// but a header claiming frames in a payload too short to hold them is
-    /// malformed.
+    /// `number_of_frames` - how many complete access units start in this PES
+    /// packet (used only for header consistency).
     number_of_frames: u8,
-    /// `first_access_unit_pointer` — byte offset, from the byte after this
+    /// `first_access_unit_pointer` - byte offset, from the byte after this
     /// field, of the first access unit that begins in this packet; 0 when none
     /// does.
     first_access_unit_pointer: u16,
@@ -299,35 +263,19 @@ struct Private1Header {
 impl Private1Header {
     /// Parse the 4-byte substream header at the front of a `private_stream_1`
     /// PES payload, returning it and the substream's own bytes.
-    ///
-    /// `None` when the payload is too short to hold the header.
     fn parse(payload: &[u8]) -> Option<(Self, &[u8])> {
         if payload.len() < PRIVATE1_HEADER_LEN {
             return None;
         }
-        let ptr = PRIVATE1_FIRST_ACCESS_UNIT_POINTER_OFFSET;
         let header = Private1Header {
             substream_id: payload[PRIVATE1_SUBSTREAM_ID_OFFSET],
             number_of_frames: payload[PRIVATE1_NUM_FRAMES_OFFSET],
-            first_access_unit_pointer: u16_at(payload, ptr),
+            first_access_unit_pointer: u16_at(payload, PRIVATE1_FIRST_ACCESS_UNIT_POINTER_OFFSET),
         };
         Some((header, &payload[PRIVATE1_HEADER_LEN..]))
     }
 
-    /// True if the payload can hold the access units this header claims: a
-    /// header that says frames start here must point at one.
-    ///
-    /// The pointer is 1-based over the body and may address one past its last
-    /// byte (an access unit that begins at the very end of the packet, with no
-    /// bytes of its own in it), so the valid non-zero range is `1..=body_len + 1`.
-    /// Only a pointer beyond that names a position the packet does not carry.
-    ///
-    /// This is consulted only while a substream is **undecided** — it says
-    /// whether there is anything in this packet to identify the substream by.
-    /// Once the substream is known, every byte it carries is frame data and is
-    /// kept regardless, so a muxer writing `pointer = 0` on every packet (a
-    /// normal variant: the pointer only marks where an access unit *starts*)
-    /// loses nothing.
+    /// True if the payload can hold the access units this header claims.
     fn is_consistent(&self, payload_len: usize) -> bool {
         let body_len = payload_len.saturating_sub(PRIVATE1_HEADER_LEN);
         let pointer = usize::from(self.first_access_unit_pointer);
@@ -342,11 +290,6 @@ impl Private1Header {
 }
 
 /// Identifies one elementary stream inside the program stream.
-///
-/// `stream_id` alone is not unique for a program stream: `private_stream_1`
-/// (0xBD) is a container whose payloads belong to independent *substreams*,
-/// told apart by the `substream_id` byte at the front of each PES payload's
-/// substream header. Keying the ES map by both keeps them separate (r04-W19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct StreamKey {
     stream_id: u8,
@@ -356,580 +299,1224 @@ struct StreamKey {
     substream_id: u8,
 }
 
-/// One elementary stream discovered by [`StreamKey`], its reassembled elementary
-/// byte stream, and the PES-level timestamps captured at each fragment boundary.
-struct ElementaryStream {
-    codec: Codec,
-    /// Concatenated elementary bytes across every PES fragment (Annex B for
-    /// video; raw AC-3 syncframes for audio, substream header already stripped).
-    es_bytes: Vec<u8>,
-    /// PES-level `(byte_offset, pts, dts)` captured at the start of each PES
-    /// fragment that carried a PTS. `byte_offset` is the offset into `es_bytes`
-    /// at which that fragment's payload begins.
-    stamps: Vec<Stamp>,
-}
-
-/// A PES-level timestamp anchored at a byte offset within the reassembled ES.
+/// A PES-level timestamp anchored at a byte offset within a reassembled
+/// elementary stream, already wrap-unrolled (90 kHz).
 #[derive(Debug, Clone, Copy)]
 struct Stamp {
-    offset: usize,
-    pts: Option<u64>,
-    dts: Option<u64>,
+    offset: u64,
+    pts: Option<i128>,
+    dts: Option<i128>,
 }
 
-/// A recovered access unit's (optional) presentation/decode timestamps. The
-/// unit's bytes are not held here: they stay in the elementary stream and are
-/// addressed by the `(start, end)` range the unit was split at (r04-O6 — a
-/// per-unit `Vec` copy of the whole stream was kept alive through the build).
-struct AccessUnit {
-    pts: Option<u64>,
-    dts: Option<u64>,
-}
-
-/// Demux an MPEG-1/2 Program Stream byte slice into a [`Media`].
+/// A streaming MPEG-1/2 Program Stream demuxer.
 ///
-/// Walks the packs, reassembles per-`stream_id` PES into elementary byte
-/// streams, splits them into access units (video: Annex B AUD boundaries; audio:
-/// AC-3 syncframes), recovers codec config from the in-band headers, and emits
-/// length-prefixed video / raw audio samples in decode order.
-///
-/// The `'a` parameter ties the demuxer to the byte-slice lifetime it consumes via
-/// [`Unpackage::Input`]; construct one per call with [`PsDemux::new`].
-#[derive(Debug, Default, Clone)]
-pub struct PsDemux<'a> {
-    _marker: PhantomData<&'a [u8]>,
+/// Feed it bytes with [`Stage::feed`]; drain [`DemuxEvent`]s with
+/// [`Stage::poll`]; call [`Stage::finish`] at end of input so the trailing
+/// access unit and any pending samples are released.
+pub struct StreamingPsDemux {
+    scanner: PsScanner,
+    state: DemuxState,
+    finished: bool,
+    /// Total bytes fed, for absolute degradation positions.
+    fed: u64,
 }
 
-impl<'a> PsDemux<'a> {
-    /// Create a new demuxer.
+impl Default for StreamingPsDemux {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StreamingPsDemux {
+    /// A demuxer with the default [`PsDemuxLimits`].
+    #[must_use]
     pub fn new() -> Self {
+        Self::with_limits(PsDemuxLimits::default())
+    }
+
+    /// A demuxer bounded by `limits`.
+    #[must_use]
+    pub fn with_limits(limits: PsDemuxLimits) -> Self {
         Self {
-            _marker: PhantomData,
+            scanner: PsScanner::new(limits.scanner),
+            state: DemuxState::new(limits),
+            finished: false,
+            fed: 0,
         }
     }
 
-    /// Demux `input` (a whole MPEG-1/2 Program Stream) into a [`Media`].
-    ///
-    /// This is the inherent form of [`Unpackage::unpackage`]; both produce the
-    /// same result. See the type-level docs for the pipeline.
-    pub fn demux(&mut self, input: &'a [u8]) -> Result<Media> {
-        // Resynchronise past a damaged pack instead of failing the whole
-        // stream (audit T16, #1144): the failed span is reported in
-        // `Media::degraded`, scanning resumes at the next pack_start_code.
-        // Only input with *no* recoverable pack at all is an error.
-        let scan = scan_packs(input);
-        if scan.packs.is_empty()
-            && let Some(first) = scan.skipped.first()
-        {
-            return Err(Error::Ps(first.error.clone()));
-        }
-        let degraded: Vec<crate::ir::InputDegradation> = scan
-            .skipped
-            .iter()
-            .map(|r| crate::ir::InputDegradation::MalformedUnit {
-                position: r.offset as u64,
-            })
-            .collect();
-        let packs = scan.packs;
-
-        // ── Pass 1: per-elementary-stream PES reassembly ──────────────────
-        // A stream is keyed by `(stream_id, substream_id)`: a
-        // `private_stream_1` (0xBD) PES multiplexes several independent
-        // substreams — AC-3, DTS, LPCM, subpictures — distinguished by the
-        // first byte of its substream header, so keying by `stream_id` alone
-        // would concatenate them into one incoherent "AC-3" track (r04-W19).
-        // Insertion order is preserved so tracks come out in the order the
-        // streams first appear (video before audio, as stored).
-        let mut order: Vec<StreamKey> = Vec::new();
-        let mut streams: BTreeMap<StreamKey, ElementaryStream> = BTreeMap::new();
-
-        for pack in &packs {
-            for pes in &pack.pes_packets {
-                let sid = pes.stream_id.get();
-                let Some(codec) = Codec::from_stream_id(sid) else {
-                    continue;
-                };
-                // A video payload is the Annex B bytes verbatim; a
-                // private_stream_1 payload needs its substream header read and
-                // stripped before the substream's own bytes are known.
-                let (substream_id, header, payload): (u8, Option<Private1Header>, &[u8]) =
-                    match codec {
-                        Codec::Video => (PRIVATE1_SUBSTREAM_ID_NONE, None, pes.payload),
-                        Codec::Private => {
-                            let Some((header, body)) = Private1Header::parse(pes.payload) else {
-                                continue;
-                            };
-                            (header.substream_id, Some(header), body)
-                        }
-                        // `from_stream_id` never returns these: AC-3 is only
-                        // reached via `Codec::Private`, and `Skipped` is only
-                        // assigned inside the loop below.
-                        Codec::Ac3 | Codec::Skipped => continue,
-                    };
-                if payload.is_empty() {
-                    continue;
-                }
-                let (pts, dts) = pes
-                    .header
-                    .as_ref()
-                    .map(|h| (h.pts.map(|p| p.ticks()), h.dts.map(|d| d.ticks())))
-                    .unwrap_or((None, None));
-
-                let key = StreamKey {
-                    stream_id: sid,
-                    substream_id,
-                };
-                let es = streams.entry(key).or_insert_with(|| {
-                    order.push(key);
-                    ElementaryStream {
-                        codec,
-                        es_bytes: Vec::new(),
-                        stamps: Vec::new(),
-                    }
-                });
-                if es.codec == Codec::Private {
-                    // Still undecided: decide it from this packet's substream
-                    // header. The classification probes the syncword at the
-                    // header's `first_access_unit_pointer`, so a packet that
-                    // merely continues a frame (`pointer == 0`, or a tail that
-                    // does not begin with a syncword) leaves the substream
-                    // undecided and the bytes are *not* accumulated — the
-                    // packets before the first real access-unit start carry no
-                    // frame this demuxer could emit anyway, and dropping them
-                    // keeps the ES starting on a syncframe.
-                    if let Some(c) =
-                        header.and_then(|h| Codec::classify_private1(substream_id, &h, payload))
-                    {
-                        es.codec = c;
-                    } else {
-                        // A header naming an access unit the payload does not
-                        // carry, or claiming frames while pointing nowhere, is
-                        // malformed *for classification purposes* — there is
-                        // nothing here to identify the substream by. Skipping
-                        // the packet keeps a partial frame tail from being
-                        // spliced onto an ES that has not started yet.
-                        //
-                        // This check applies only while the substream is
-                        // undecided. Once it is known to be AC-3, every byte it
-                        // carries is frame data and must be kept: the pointer
-                        // only says where the next access unit starts, and a
-                        // bogus or zero one on a mid-stream packet is no reason
-                        // to discard real audio (a muxer writing pointer 0
-                        // everywhere is a normal variant, not a corrupt file).
-                        if !header.is_some_and(|h| h.is_consistent(pes.payload.len())) {
-                            continue;
-                        }
-                    }
-                }
-                if es.codec == Codec::Private || es.codec == Codec::Skipped {
-                    continue;
-                }
-                // Drop the leading bytes that precede the first access unit in
-                // this packet: a packet may open mid-frame (its
-                // `first_access_unit_pointer` naming where the next frame
-                // starts), and those prefix bytes are the tail of a frame the
-                // demuxer never saw the start of. Accumulating them would leave
-                // the reassembled ES beginning mid-frame, which no syncword
-                // scan can recover from — the AC-3 splitter stops at the first
-                // non-syncword byte.
-                let payload = match header {
-                    Some(header)
-                        if es.es_bytes.is_empty() && header.is_consistent(pes.payload.len()) =>
-                    {
-                        let prefix = usize::from(header.first_access_unit_pointer)
-                            .saturating_sub(1)
-                            .min(payload.len());
-                        &payload[prefix..]
-                    }
-                    _ => payload,
-                };
-                if payload.is_empty() {
-                    continue;
-                }
-                let offset = es.es_bytes.len();
-                if pts.is_some() || dts.is_some() {
-                    es.stamps.push(Stamp { offset, pts, dts });
-                }
-                es.es_bytes.extend_from_slice(payload);
-            }
-        }
-
-        // ── Pass 2: build one track per elementary stream, in first-seen order ──
-        let mut tracks: Vec<Track> = Vec::new();
-        let mut track_id = TrackId::new(1);
-        for key in &order {
-            let es = &streams[key];
-            let built = match es.codec {
-                // C6 (#1009): probe the reassembled ES rather than assuming
-                // every 0xE0-0xEF `stream_id` is H.264 — a MPEG-2 sequence
-                // header (`0x000001B3`, ISO/IEC 13818-2 §6.2.2.1) is
-                // structural evidence no H.264 NAL stream can produce by
-                // chance, so it is checked first.
-                Codec::Video if Mpeg2SeqHeader::find(&es.es_bytes).is_ok() => {
-                    build_mpeg2_track(es, track_id)?
-                }
-                // The H.264 path can fail on a resource limit (a NAL past the
-                // splitter's cap); that must surface as an error rather than
-                // "no video track" (r04-W21 review).
-                Codec::Video => build_h264_track(es, track_id)?,
-                Codec::Ac3 => build_ac3_track(es, track_id)?,
-                // A private substream that is not AC-3, and the placeholder an
-                // undecided substream is parked at, both produce no track.
-                Codec::Private | Codec::Skipped => None,
+    /// Drain every unit the scanner has ready.
+    fn drain(&mut self) -> Result<()> {
+        loop {
+            let buffered = self.scanner.buffered_len();
+            let position = self.fed.saturating_sub(buffered as u64);
+            let Some(event) = self.scanner.poll()? else {
+                break;
             };
-            if let Some(track) = built {
-                tracks.push(track);
-                track_id = track_id.next();
+            match event {
+                PsEvent::Pack(header) => {
+                    self.state.packs_seen += 1;
+                    let _ = header;
+                }
+                PsEvent::SystemHeader(_) => {}
+                PsEvent::ProgramStreamMap(map) => self.state.on_psm(&map),
+                PsEvent::Pes { stream_id, packet } => {
+                    self.state.on_pes(stream_id, packet, position)?;
+                }
+                PsEvent::Resync { skipped } => {
+                    self.state.on_resync(position, skipped);
+                }
+                PsEvent::End => {}
+                _ => {}
             }
         }
-
-        let mut media = Media::new(tracks, VIDEO_TIMESCALE);
-        media.degraded = degraded;
-        Ok(media)
+        Ok(())
     }
 }
 
-impl<'a> Unpackage for PsDemux<'a> {
-    type Input = &'a [u8];
-    type Media = Media;
+impl Stage for StreamingPsDemux {
+    type In<'a> = &'a [u8];
+    type Out = DemuxEvent;
     type Error = Error;
 
-    fn unpackage(&mut self, input: &'a [u8]) -> Result<Media> {
-        self.demux(input)
+    fn feed(&mut self, input: &'_ [u8], _now: Timestamp) -> Result<()> {
+        if self.finished {
+            return Ok(());
+        }
+        self.fed += input.len() as u64;
+        self.scanner.feed(input);
+        self.drain()
+    }
+
+    fn poll(&mut self) -> Option<DemuxEvent> {
+        self.state.events.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        if self.finished {
+            return Ok(());
+        }
+        self.scanner.finish();
+        self.drain()?;
+        if self.state.packs_seen == 0
+            && let Some(error) = self.scanner.first_error()
+        {
+            return Err(Error::Ps(error.clone()));
+        }
+        self.state.finish_streams()?;
+        self.finished = true;
+        Ok(())
     }
 }
 
-/// The access units recovered from a reassembled Annex B byte stream, as each
-/// unit's `(start, end)` byte range in the input — the ranges
-/// [`assign_stamps`] needs to place a PES-level stamp on the unit that begins
-/// inside its fragment.
-type SplitUnits = Vec<(usize, usize)>;
+/// Everything the demuxer owns except the byte scanner.
+struct DemuxState {
+    events: VecDeque<DemuxEvent>,
+    streams: Vec<Stream>,
+    by_key: BTreeMap<StreamKey, usize>,
+    next_track: TrackId,
+    /// Streams below this index have announced (or can never announce): the
+    /// track order is first-seen order, as the whole-buffer demuxer's was.
+    announce_cursor: usize,
+    limits: PsDemuxLimits,
+    packs_seen: u64,
+    /// When a Program Stream Map is present, the elementary streams it lists.
+    psm_ids: Option<BTreeSet<u8>>,
+}
 
-/// A `Result<Option<_>>` whose `Ok(None)` means "this stream has nothing this
-/// demuxer can carry" (skip, never fatal) and whose `Err` means the stream was
-/// rejected (a resource limit, not a format the demuxer declines). The
-/// distinction matters: the two used to be the same value, so a rejection
-/// looked like an unsupported stream and the video track vanished silently.
-type MaybeTrack = Result<Option<Track>>;
-
-/// Split a reassembled H.264 Annex B byte stream into access units, returning
-/// the unit bytes together with their `(start, end)` ranges **into `data`** —
-/// the ranges [`assign_stamps`] needs to place each PES-level stamp on the unit
-/// that begins inside its fragment.
-///
-/// The boundaries come from [`crate::au::AccessUnitSplitter`] (r04-W21): a new
-/// access unit starts at an access-unit delimiter *or* at the first slice whose
-/// `first_mb_in_slice` is 0 (H.264 §7.4.3 — the first VCL NAL of a primary
-/// coded picture). Requiring an AUD made every PS capture without one collapse
-/// into a single sample.
-///
-/// Returns `None` if the stream yields no access units at all.
-fn split_h264_access_units(data: &[u8]) -> Result<Option<SplitUnits>> {
-    let mut splitter = AccessUnitSplitter::new(NalCodec::Avc);
-    // The splitter drops everything before the first start code (leading junk,
-    // and the zero byte of a 4-byte start code), so the units it returns do not
-    // begin at offset 0 of `data`. Starting the offset walk at 0 therefore
-    // mismatched on the first unit and the old code returned "no units",
-    // silently discarding the whole video track for any stream that does not
-    // open exactly on a start code (r04-W21 review). Anchor the walk at the
-    // first start code instead.
-    let Some(mut cursor) = crate::au::first_nal_start(data) else {
-        return Ok(None);
-    };
-    // A push past the splitter's buffered-NAL cap is a resource-limit
-    // rejection, not an unparseable stream; propagating it keeps the caller
-    // from emitting a `Media` whose video track is silently missing.
-    splitter.push(data)?;
-    splitter.finish();
-
-    let mut ranges = Vec::new();
-    while let Some(unit) = splitter.pop() {
-        // The splitter hands back verbatim, in-order slices of what was pushed,
-        // so each unit must sit exactly at the running cursor. This is checked
-        // rather than assumed: a mismatch means the offsets are wrong and every
-        // unit's timestamps would be mis-stamped, so it is an error — a
-        // `debug_assert!` here let release builds emit the wrong samples
-        // silently.
-        let end = cursor.checked_add(unit.len()).ok_or(Error::InvalidInput(
-            "ps: H.264 access-unit offset overflowed",
-        ))?;
-        if data.get(cursor..end) != Some(unit.as_slice()) {
-            return Err(Error::InvalidInput(
-                "ps: H.264 access-unit splitter returned bytes that are not a                  slice of its input",
-            ));
+impl DemuxState {
+    fn new(limits: PsDemuxLimits) -> Self {
+        Self {
+            events: VecDeque::new(),
+            streams: Vec::new(),
+            by_key: BTreeMap::new(),
+            next_track: TrackId::new(1),
+            announce_cursor: 0,
+            limits,
+            packs_seen: 0,
+            psm_ids: None,
         }
-        ranges.push((cursor, end));
-        cursor = end;
     }
-    Ok(if ranges.is_empty() {
-        None
+
+    fn on_psm(&mut self, map: &mpeg_ps::ProgramStreamMap<'_>) {
+        self.psm_ids = Some(
+            map.elementary_stream_map
+                .iter()
+                .map(|entry| entry.elementary_stream_id)
+                .collect(),
+        );
+    }
+
+    fn on_resync(&mut self, position: u64, skipped: u64) {
+        let _ = skipped;
+        self.events.push_back(DemuxEvent::input_degraded(
+            None,
+            InputDegradation::MalformedUnit { position },
+            EventProvenance::default(),
+        ));
+    }
+
+    fn stream_index(&mut self, key: StreamKey) -> usize {
+        if let Some(&index) = self.by_key.get(&key) {
+            return index;
+        }
+        let index = self.streams.len();
+        let (codec, body) = if key.stream_id == STREAM_ID_PRIVATE_1 {
+            (Codec::Private, Body::Ac3(Ac3State::new()))
+        } else {
+            (Codec::Video, Body::VideoProbe(Vec::new()))
+        };
+        self.streams.push(Stream::new(codec, body));
+        self.by_key.insert(key, index);
+        index
+    }
+
+    fn on_pes(&mut self, stream_id: u8, packet: &[u8], position: u64) -> Result<()> {
+        let Some(codec) = Codec::from_stream_id(stream_id) else {
+            return Ok(());
+        };
+        if let Some(ids) = &self.psm_ids
+            && !ids.contains(&stream_id)
+        {
+            return Ok(());
+        }
+        let pes = match mpeg_pes::PesPacket::parse(packet) {
+            Ok(pes) => pes,
+            Err(_) => {
+                self.events.push_back(DemuxEvent::input_degraded(
+                    None,
+                    InputDegradation::MalformedUnit { position },
+                    EventProvenance::default(),
+                ));
+                return Ok(());
+            }
+        };
+        let (pts, dts) = pes
+            .header
+            .as_ref()
+            .map(|header| {
+                (
+                    header.pts.map(|pts| pts.ticks()),
+                    header.dts.map(|dts| dts.ticks()),
+                )
+            })
+            .unwrap_or((None, None));
+        match codec {
+            Codec::Video => {
+                if pes.payload.is_empty() {
+                    return Ok(());
+                }
+                let key = StreamKey {
+                    stream_id,
+                    substream_id: PRIVATE1_SUBSTREAM_ID_NONE,
+                };
+                let index = self.stream_index(key);
+                self.streams[index].push_video(pes.payload, pts, dts, &self.limits)?;
+                self.try_announce();
+                Ok(())
+            }
+            Codec::Private => self.on_private_pes(stream_id, &pes, pts, dts),
+            Codec::Ac3 | Codec::Skipped => Ok(()),
+        }
+    }
+
+    fn on_private_pes(
+        &mut self,
+        stream_id: u8,
+        pes: &mpeg_pes::PesPacket<'_>,
+        pts: Option<u64>,
+        dts: Option<u64>,
+    ) -> Result<()> {
+        let Some((header, body)) = Private1Header::parse(pes.payload) else {
+            return Ok(());
+        };
+        let key = StreamKey {
+            stream_id,
+            substream_id: header.substream_id,
+        };
+        let index = self.stream_index(key);
+        let stream = &mut self.streams[index];
+        if stream.codec == Codec::Private {
+            let named_skip = SUBSTREAM_ID_SUBPICTURE_RANGE.contains(&header.substream_id)
+                || SUBSTREAM_ID_DTS_RANGE.contains(&header.substream_id)
+                || SUBSTREAM_ID_LPCM_RANGE.contains(&header.substream_id)
+                || header.substream_id < SUBSTREAM_ID_AUDIO_LO;
+            if named_skip {
+                stream.codec = Codec::Skipped;
+                stream.resolved = true;
+                self.try_announce();
+                return Ok(());
+            }
+            match Codec::classify_private1(header.substream_id, &header, body) {
+                Some(codec) => stream.codec = codec,
+                None if header.is_consistent(pes.payload.len()) => {}
+                None => {
+                    self.try_announce();
+                    return Ok(());
+                }
+            }
+        }
+        if stream.codec != Codec::Ac3 {
+            self.try_announce();
+            return Ok(());
+        }
+        let body = if stream.es_len == 0 && header.is_consistent(pes.payload.len()) {
+            let prefix = usize::from(header.first_access_unit_pointer)
+                .saturating_sub(1)
+                .min(body.len());
+            &body[prefix..]
+        } else {
+            body
+        };
+        if !body.is_empty() {
+            let stream = &mut self.streams[index];
+            stream.push_ac3(body, pts, dts, &self.limits)?;
+        }
+        self.try_announce();
+        Ok(())
+    }
+
+    /// Announce every stream whose config has resolved, in first-seen order.
+    fn try_announce(&mut self) {
+        loop {
+            let index = self.announce_cursor;
+            let Some(stream) = self.streams.get_mut(index) else {
+                break;
+            };
+            if stream.announced {
+                self.announce_cursor += 1;
+                continue;
+            }
+            if stream.resolved && stream.track_id.is_none() {
+                self.announce_cursor += 1;
+                continue;
+            }
+            if !stream.config_ready() {
+                break;
+            }
+            let track_id = self.next_track;
+            self.next_track = track_id.next();
+            let Some(spec) = stream.build_spec(track_id) else {
+                break;
+            };
+            stream.track_id = Some(track_id);
+            stream.announced = true;
+            self.events.push_back(DemuxEvent::TrackAdded(spec));
+            while let Some(sample) = stream.pending.pop_front() {
+                self.events.push_back(DemuxEvent::sample(track_id, sample));
+            }
+            self.announce_cursor += 1;
+        }
+        self.flush_announced();
+    }
+
+    /// Move every announced stream's pending samples into the event queue.
+    fn flush_announced(&mut self) {
+        for stream in &mut self.streams {
+            let Some(track_id) = stream.track_id else {
+                continue;
+            };
+            if !stream.announced {
+                continue;
+            }
+            while let Some(sample) = stream.pending.pop_front() {
+                self.events.push_back(DemuxEvent::sample(track_id, sample));
+            }
+        }
+    }
+
+    fn finish_streams(&mut self) -> Result<()> {
+        for stream in &mut self.streams {
+            stream.finish(&self.limits)?;
+        }
+        self.try_announce();
+        for stream in &mut self.streams {
+            if !stream.announced && !stream.config_ready() {
+                stream.resolved = true;
+            }
+        }
+        self.try_announce();
+        // Samples of a track that never resolved cannot be emitted; the
+        // whole-buffer demuxer dropped them too.
+        Ok(())
+    }
+}
+
+/// One elementary stream discovered by its [`StreamKey`].
+struct Stream {
+    codec: Codec,
+    body: Body,
+    /// Bytes of the reassembled elementary stream appended so far.
+    es_len: u64,
+    /// PES-level stamps not yet applied, ordered by stream offset.
+    stamps: VecDeque<Stamp>,
+    prev_pts_raw: Option<u64>,
+    prev_pts_uw: i128,
+    prev_dts_raw: Option<u64>,
+    prev_dts_uw: i128,
+    track_id: Option<TrackId>,
+    announced: bool,
+    /// No track will ever be produced for this stream.
+    resolved: bool,
+    pending: VecDeque<Sample>,
+    video: VideoTiming,
+    ac3_info: Option<Ac3SyncframeInfo>,
+    ac3_timescale: Timescale,
+    ac3_next_dts: Option<i64>,
+    ac3_anchor_wire90: i128,
+    ac3_ticks_since_anchor: i64,
+}
+
+impl Stream {
+    fn new(codec: Codec, body: Body) -> Self {
+        Self {
+            codec,
+            body,
+            es_len: 0,
+            stamps: VecDeque::new(),
+            prev_pts_raw: None,
+            prev_pts_uw: 0,
+            prev_dts_raw: None,
+            prev_dts_uw: 0,
+            track_id: None,
+            announced: false,
+            resolved: false,
+            pending: VecDeque::new(),
+            video: VideoTiming::new(),
+            ac3_info: None,
+            ac3_timescale: VIDEO_TIMESCALE,
+            ac3_next_dts: None,
+            ac3_anchor_wire90: 0,
+            ac3_ticks_since_anchor: 0,
+        }
+    }
+
+    fn push_stamp(&mut self, offset: u64, pts: Option<u64>, dts: Option<u64>) {
+        if pts.is_none() && dts.is_none() {
+            return;
+        }
+        let pts = unwrap_stamp(&mut self.prev_pts_raw, &mut self.prev_pts_uw, pts);
+        let dts = unwrap_stamp(&mut self.prev_dts_raw, &mut self.prev_dts_uw, dts);
+        self.stamps.push_back(Stamp { offset, pts, dts });
+    }
+
+    /// The stamp the access unit starting at `offset` carries: the first pending
+    /// stamp at or before it, with every later stamp in the same fragment
+    /// consumed too (the whole-buffer `assign_stamps` semantics).
+    fn take_stamp(&mut self, offset: u64) -> (Option<i128>, Option<i128>) {
+        let mut applied: Option<Stamp> = None;
+        while let Some(front) = self.stamps.front() {
+            if front.offset > offset {
+                break;
+            }
+            let Some(stamp) = self.stamps.pop_front() else {
+                break;
+            };
+            if applied.is_none() {
+                applied = Some(stamp);
+            }
+        }
+        applied.map_or((None, None), |stamp| (stamp.pts, stamp.dts))
+    }
+
+    fn config_ready(&self) -> bool {
+        match &self.body {
+            Body::H264(_) => self.video.sps.is_some() && self.video.pps.is_some(),
+            Body::Mpeg2(_) => true,
+            Body::Ac3(_) => self.ac3_info.is_some(),
+            Body::VideoProbe(_) | Body::Skipped => false,
+        }
+    }
+
+    fn build_spec(&self, track_id: TrackId) -> Option<TrackSpec> {
+        match &self.body {
+            Body::H264(_) => {
+                let config = self.video.avc_config()?;
+                Some(TrackSpec::new(
+                    track_id,
+                    VIDEO_TIMESCALE,
+                    CodecConfig::Avc {
+                        config,
+                        width: 0,
+                        height: 0,
+                    },
+                ))
+            }
+            Body::Mpeg2(state) => Some(TrackSpec::new(
+                track_id,
+                VIDEO_TIMESCALE,
+                CodecConfig::Mpeg2Video {
+                    esds: mpeg2_esds(),
+                    width: state.width,
+                    height: state.height,
+                },
+            )),
+            Body::Ac3(_) => {
+                let info = self.ac3_info?;
+                Some(TrackSpec::new(
+                    track_id,
+                    self.ac3_timescale,
+                    CodecConfig::Ac3 {
+                        config: info.into_dac3(),
+                        channel_count: info.channel_count() as u16,
+                        sample_rate: info.sample_rate,
+                        sample_size: AUDIO_SAMPLE_SIZE_BITS,
+                    },
+                ))
+            }
+            Body::VideoProbe(_) | Body::Skipped => None,
+        }
+    }
+
+    // -- video ---------------------------------------------------------------
+
+    fn push_video(
+        &mut self,
+        payload: &[u8],
+        pts: Option<u64>,
+        dts: Option<u64>,
+        limits: &PsDemuxLimits,
+    ) -> Result<()> {
+        let offset = self.es_len;
+        self.push_stamp(offset, pts, dts);
+        self.es_len += payload.len() as u64;
+        if let Body::VideoProbe(probe) = &mut self.body {
+            probe.extend_from_slice(payload);
+            let decision = classify_video(probe, limits.max_probe_bytes);
+            match decision {
+                Some(VideoKind::H264) => {
+                    let Body::VideoProbe(probe) = core::mem::replace(&mut self.body, Body::Skipped)
+                    else {
+                        return Ok(());
+                    };
+                    self.body = Body::H264(H264State::new(&probe)?);
+                }
+                Some(VideoKind::Mpeg2) => {
+                    let Body::VideoProbe(probe) = core::mem::replace(&mut self.body, Body::Skipped)
+                    else {
+                        return Ok(());
+                    };
+                    self.body = Body::Mpeg2(Mpeg2State::new(&probe)?);
+                }
+                None => return Ok(()),
+            }
+            return self.collect_video_units(limits);
+        }
+        match &mut self.body {
+            Body::H264(state) => state.push(payload)?,
+            Body::Mpeg2(state) => state.push(payload),
+            _ => return Ok(()),
+        }
+        self.collect_video_units(limits)
+    }
+
+    fn is_h264(&self) -> bool {
+        matches!(self.body, Body::H264(_))
+    }
+
+    fn collect_video_units(&mut self, limits: &PsDemuxLimits) -> Result<()> {
+        loop {
+            let unit = match &mut self.body {
+                Body::H264(state) => state.pop(),
+                Body::Mpeg2(state) => state.pop(),
+                _ => None,
+            };
+            let Some((start, data)) = unit else {
+                break;
+            };
+            let index = self.video.next_index;
+            self.video.next_index += 1;
+            let (pts, dts) = self.take_stamp(start);
+            let h264 = matches!(self.body, Body::H264(_));
+            if h264 {
+                self.video.scan_parameter_sets(&data);
+            }
+            let display = match &mut self.body {
+                Body::Mpeg2(state) => {
+                    state.tracker.observe(&data);
+                    state.tracker.state().cloned()
+                }
+                _ => None,
+            };
+            let is_sync = if h264 {
+                au_is_idr(&data)
+            } else {
+                mpeg2_is_sync(&data)
+            };
+            self.video.note_stamp(index, dts);
+            self.video.units.push_back(PendingAu {
+                index,
+                data,
+                pts,
+                dts,
+                is_sync,
+                display,
+            });
+        }
+        let h264 = self.is_h264();
+        self.video.finalize(h264, false, limits.max_held_samples);
+        self.video.drain_samples(h264, &mut self.pending)
+    }
+
+    // -- AC-3 ----------------------------------------------------------------
+
+    fn push_ac3(
+        &mut self,
+        payload: &[u8],
+        pts: Option<u64>,
+        dts: Option<u64>,
+        limits: &PsDemuxLimits,
+    ) -> Result<()> {
+        let offset = self.es_len;
+        self.push_stamp(offset, pts, dts);
+        self.es_len += payload.len() as u64;
+        let decision = {
+            let Body::Ac3(state) = &mut self.body else {
+                return Ok(());
+            };
+            state.push(payload);
+            if self.ac3_info.is_none() {
+                state.decide()
+            } else {
+                Decision::Pending
+            }
+        };
+        match decision {
+            Decision::Failed => {
+                self.resolved = true;
+                self.body = Body::Skipped;
+                return Ok(());
+            }
+            Decision::Decided(info) if self.ac3_info.is_none() => {
+                self.ac3_info = Some(info);
+                self.ac3_timescale = Timescale::try_new(info.sample_rate)?;
+            }
+            Decision::Pending if self.ac3_info.is_none() => return Ok(()),
+            _ => {}
+        }
+        let mut frames = Vec::new();
+        if let Body::Ac3(state) = &mut self.body {
+            while let Some(frame) = state.pop_frame() {
+                frames.push(frame);
+            }
+        }
+        for (frame_offset, frame) in frames {
+            let sample = self.build_ac3_sample(frame_offset, frame);
+            if self.pending.len() >= limits.max_held_samples {
+                return Err(limit_error("AC-3 samples held before track announcement"));
+            }
+            self.pending.push_back(sample);
+        }
+        Ok(())
+    }
+
+    fn build_ac3_sample(&mut self, offset: u64, frame: Vec<u8>) -> Sample {
+        let (pts, dts) = self.take_stamp(offset);
+        let sample_rate = self.ac3_timescale.get();
+        let rescale = |ticks_90k: i128| -> i64 {
+            ((ticks_90k * i128::from(sample_rate)) / i128::from(VIDEO_TIMESCALE.get())) as i64
+        };
+        let stamp90 = dts.or(pts);
+        let dts = match (stamp90, self.ac3_next_dts) {
+            (Some(stamp), Some(running)) => {
+                let expected_wire90 = self.ac3_anchor_wire90
+                    + (i128::from(self.ac3_ticks_since_anchor) * i128::from(VIDEO_TIMESCALE.get()))
+                        / i128::from(sample_rate.max(1));
+                let drift = (stamp - expected_wire90).abs();
+                if drift > crate::ts_demux::audio_discontinuity_threshold_90k(self.ac3_timescale) {
+                    self.ac3_anchor_wire90 = stamp;
+                    self.ac3_ticks_since_anchor = 0;
+                    rescale(stamp)
+                } else {
+                    running
+                }
+            }
+            (Some(stamp), None) => {
+                self.ac3_anchor_wire90 = stamp;
+                self.ac3_ticks_since_anchor = 0;
+                rescale(stamp)
+            }
+            (None, Some(running)) => running,
+            (None, None) => {
+                let data = bytes::Bytes::from(frame);
+                return match Sample::from_raw(
+                    data.clone(),
+                    None,
+                    None,
+                    Some(AC3_SAMPLES_PER_SYNCFRAME),
+                ) {
+                    Ok(sample) => sample,
+                    Err(_) => {
+                        Sample::timed_raw(data, 0, 0, NonZeroU32::new(AC3_SAMPLES_PER_SYNCFRAME))
+                    }
+                };
+            }
+        };
+        self.ac3_next_dts = Some(dts + i64::from(AC3_SAMPLES_PER_SYNCFRAME));
+        self.ac3_ticks_since_anchor += i64::from(AC3_SAMPLES_PER_SYNCFRAME);
+        Sample::timed_raw(frame, dts, dts, NonZeroU32::new(AC3_SAMPLES_PER_SYNCFRAME))
+    }
+
+    fn finish(&mut self, limits: &PsDemuxLimits) -> Result<()> {
+        match &mut self.body {
+            Body::H264(state) => state.finish(),
+            Body::Mpeg2(state) => state.finish(),
+            _ => {}
+        }
+        if matches!(self.body, Body::H264(_) | Body::Mpeg2(_)) {
+            self.collect_video_units(limits)?;
+            if self.config_ready() {
+                let h264 = self.is_h264();
+                self.video.finalize(h264, true, limits.max_held_samples);
+                self.video.drain_samples(h264, &mut self.pending)?;
+                self.video.emit_tail(h264, &mut self.pending)?;
+            }
+        }
+        if matches!(self.body, Body::Ac3(_)) && self.ac3_info.is_none() {
+            self.resolved = true;
+        }
+        if !self.config_ready() {
+            self.resolved = true;
+            self.video.units.clear();
+            self.video.ready.clear();
+        }
+        Ok(())
+    }
+}
+
+/// One video access unit waiting for its decode time (which needs the frame
+/// duration, derived from the first two PES stamps).
+struct PendingAu {
+    index: u64,
+    data: Vec<u8>,
+    pts: Option<i128>,
+    dts: Option<i128>,
+    is_sync: bool,
+    display: Option<alloc::sync::Arc<crate::ir::DisplayInfo>>,
+}
+
+/// One access unit with its decode/presentation times resolved.
+struct ReadyAu {
+    data: Vec<u8>,
+    dts: i128,
+    pts: i128,
+    is_sync: bool,
+    display: Option<alloc::sync::Arc<crate::ir::DisplayInfo>>,
+}
+
+/// The incremental video timing and display state of one elementary stream.
+struct VideoTiming {
+    sps: Option<Vec<u8>>,
+    pps: Option<Vec<u8>>,
+    tracker: Option<SpsTracker>,
+    units: VecDeque<PendingAu>,
+    ready: VecDeque<ReadyAu>,
+    next_index: u64,
+    first_stamp: Option<(u64, i128)>,
+    frame_dur: Option<i128>,
+    last_dts: Option<i128>,
+}
+
+impl VideoTiming {
+    fn new() -> Self {
+        Self {
+            sps: None,
+            pps: None,
+            tracker: None,
+            units: VecDeque::new(),
+            ready: VecDeque::new(),
+            next_index: 0,
+            first_stamp: None,
+            frame_dur: None,
+            last_dts: None,
+        }
+    }
+
+    fn scan_parameter_sets(&mut self, data: &[u8]) {
+        for nal in iter_annexb_nals(data) {
+            let Some(&header) = nal.first() else {
+                continue;
+            };
+            match header & NAL_TYPE_MASK {
+                AVC_NAL_SPS
+                    if self.sps.is_none()
+                        && parameter_set_is_valid(NalCodec::Avc, ParamKind::Sps, nal) =>
+                {
+                    self.sps = Some(nal.to_vec());
+                }
+                AVC_NAL_PPS
+                    if self.pps.is_none()
+                        && parameter_set_is_valid(NalCodec::Avc, ParamKind::Pps, nal) =>
+                {
+                    self.pps = Some(nal.to_vec());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn avc_config(&self) -> Option<AVCConfigurationBox> {
+        let sps = self.sps.as_ref()?;
+        let pps = self.pps.as_ref()?;
+        if sps.len() < AVC_SPS_CONFIG_MIN_LEN {
+            return None;
+        }
+        let record = AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: sps[1],
+            profile_compatibility: sps[AVC_SPS_CONSTRAINT_FLAGS_OFFSET],
+            level_indication: sps[AVC_SPS_LEVEL_IDC_OFFSET],
+            length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
+            sps: alloc::vec![AvcSps(sps.clone())],
+            pps: alloc::vec![AvcPps(pps.clone())],
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: alloc::vec::Vec::new(),
+        };
+        Some(AVCConfigurationBox::new(record))
+    }
+
+    /// Derive the constant frame duration from the first two stamped access
+    /// units, exactly the span the whole-buffer demuxer averaged.
+    fn note_stamp(&mut self, index: u64, dts: Option<i128>) {
+        let Some(dts) = dts else {
+            return;
+        };
+        match self.first_stamp {
+            None => self.first_stamp = Some((index, dts)),
+            Some((first_index, first_dts)) if self.frame_dur.is_none() && index > first_index => {
+                let span_index = (index - first_index) as i128;
+                let span_dts = dts - first_dts;
+                if span_index > 0 && span_dts > 0 {
+                    self.frame_dur = Some((span_dts / span_index).max(1));
+                }
+            }
+            Some(_) => {}
+        }
+    }
+
+    fn seed_tracker(&mut self) {
+        if self.tracker.is_some() {
+            return;
+        }
+        let Some(config) = self.avc_config() else {
+            return;
+        };
+        let mut tracker = SpsTracker::new(TrackCodec::Avc);
+        tracker.seed_state(DisplayGeometry::from_codec_config(&CodecConfig::Avc {
+            config,
+            width: 0,
+            height: 0,
+        }));
+        self.tracker = Some(tracker);
+    }
+
+    /// Resolve every held access unit's timing once it is knowable, then (when
+    /// `force`) everything that is left.
+    fn finalize(&mut self, h264: bool, force: bool, held_limit: usize) {
+        if self.units.is_empty() {
+            return;
+        }
+        let timing_ready = self.first_stamp.is_some() && self.frame_dur.is_some();
+        if !force && !timing_ready && self.units.len() < held_limit {
+            return;
+        }
+        if h264 {
+            self.seed_tracker();
+            if self.tracker.is_none() {
+                return;
+            }
+        }
+        let anchor = self.first_stamp.unwrap_or((0, 0));
+        let duration = self.frame_dur.unwrap_or(DEFAULT_FRAME_DURATION);
+        while let Some(au) = self.units.pop_front() {
+            let dts = au.dts.unwrap_or_else(|| {
+                anchor.1 + (i128::from(au.index) - i128::from(anchor.0)) * duration
+            });
+            let pts = au.pts.unwrap_or(dts);
+            let display = if h264 {
+                let Some(tracker) = self.tracker.as_mut() else {
+                    continue;
+                };
+                tracker.observe(&au.data);
+                tracker.state().cloned()
+            } else {
+                au.display
+            };
+            self.ready.push_back(ReadyAu {
+                data: au.data,
+                dts,
+                pts,
+                is_sync: au.is_sync,
+                display,
+            });
+        }
+    }
+
+    /// Emit every sample whose duration (the gap to the next decode time) is
+    /// now known.
+    fn drain_samples(&mut self, h264: bool, out: &mut VecDeque<Sample>) -> Result<()> {
+        while self.ready.len() >= SAMPLES_PER_DURATION {
+            let Some(front) = self.ready.pop_front() else {
+                break;
+            };
+            let next_dts = self.ready.front().map_or(front.dts, |next| next.dts);
+            let duration = (next_dts - front.dts).max(0) as u32;
+            self.last_dts = Some(front.dts);
+            out.push_back(make_video_sample(front, duration, h264)?);
+        }
+        Ok(())
+    }
+
+    /// Emit the final sample: its duration is the previous decode gap, as the
+    /// whole-buffer `frame_duration` did.
+    fn emit_tail(&mut self, h264: bool, out: &mut VecDeque<Sample>) -> Result<()> {
+        let Some(front) = self.ready.pop_front() else {
+            return Ok(());
+        };
+        let duration = match self.last_dts {
+            Some(previous) => (front.dts - previous).max(0) as u32,
+            None => DEFAULT_FRAME_DURATION as u32,
+        };
+        out.push_back(make_video_sample(front, duration, h264)?);
+        Ok(())
+    }
+}
+
+fn make_video_sample(au: ReadyAu, duration: u32, h264: bool) -> Result<Sample> {
+    let dts = to_ticks(au.dts);
+    let pts = to_ticks(au.pts);
+    let duration = NonZeroU32::new(duration);
+    if h264 {
+        let mut sample = Sample::timed_annexb(&au.data, dts, pts, duration, au.is_sync)?;
+        sample.display = au.display;
+        Ok(sample)
     } else {
-        Some(ranges)
+        let mut sample = Sample::timed(au.data, dts, pts, duration);
+        sample.flags = SampleFlags::new(au.is_sync);
+        sample.display = au.display;
+        Ok(sample)
+    }
+}
+
+/// The elementary-stream splitter in force for one stream.
+enum Body {
+    /// Video bytes accumulated until the codec (H.264 or MPEG-2) is decided.
+    VideoProbe(Vec<u8>),
+    H264(H264State),
+    Mpeg2(Mpeg2State),
+    Ac3(Ac3State),
+    Skipped,
+}
+
+/// Which video codec an elementary stream carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VideoKind {
+    H264,
+    Mpeg2,
+}
+
+/// Decide a video stream's codec from its buffered prefix.
+///
+/// A valid MPEG-2 `sequence_header()` (`0x000001B3`, ISO/IEC 13818-2 §6.2.2.1)
+/// is structural evidence no H.264 NAL stream produces by chance, and is
+/// checked first (C6, #1009). Otherwise a valid in-band H.264 SPS decides it.
+/// A stream that shows neither stays undecided until the bound is reached, when
+/// it takes the H.264 path (which then recovers no config and produces no
+/// track, as the whole-buffer demuxer did).
+fn classify_video(probe: &[u8], cap: usize) -> Option<VideoKind> {
+    if Mpeg2SeqHeader::find(probe).is_ok() {
+        return Some(VideoKind::Mpeg2);
+    }
+    if has_valid_avc_sps(probe) {
+        return Some(VideoKind::H264);
+    }
+    (probe.len() >= cap).then_some(VideoKind::H264)
+}
+
+fn has_valid_avc_sps(data: &[u8]) -> bool {
+    iter_annexb_nals(data).any(|nal| {
+        nal.first().is_some_and(|header| {
+            header & NAL_TYPE_MASK == AVC_NAL_SPS
+                && parameter_set_is_valid(NalCodec::Avc, ParamKind::Sps, nal)
+        })
     })
 }
 
-/// Split a reassembled MPEG-2 video byte stream into access units at every
-/// `picture_start_code` (ISO/IEC 13818-2 §6.2.3, `0x00000100`) — MPEG-2 has no
-/// AUD equivalent, so a new picture is the only reliable per-AU boundary (C6,
-/// #1009). Bytes before the first picture (the `sequence_header()` and any
-/// `extension`/`user_data`) are attached to the first AU, same convention as
-/// [`split_access_units`].
-fn split_mpeg2_pictures(data: &[u8]) -> Vec<(usize, usize)> {
-    let codes = crate::annexb::start_code_positions(data);
-    let mut starts: Vec<usize> = Vec::new();
-    for &pos in &codes {
-        if pos + START_CODE_BYTE_OFFSET < data.len()
-            && data[pos + START_CODE_BYTE_OFFSET] == MPEG2_PICTURE_START_CODE
-        {
-            starts.push(pos);
+/// Incremental H.264 Annex B access-unit splitter plus the absolute elementary
+/// stream offset of the next unit.
+struct H264State {
+    splitter: AccessUnitSplitter,
+    cursor: Option<u64>,
+    /// Bytes from the ES start kept until the first start code is found.
+    pre_scan: Vec<u8>,
+}
+
+impl H264State {
+    fn new(probe: &[u8]) -> Result<Self> {
+        let mut splitter = AccessUnitSplitter::new(NalCodec::Avc);
+        splitter.push(probe)?;
+        let cursor = crate::au::first_nal_start(probe).map(|offset| offset as u64);
+        let mut pre_scan = Vec::new();
+        if cursor.is_none() {
+            pre_scan.extend_from_slice(probe);
         }
+        Ok(Self {
+            splitter,
+            cursor,
+            pre_scan,
+        })
     }
-    if starts.is_empty() {
-        return if data.is_empty() {
-            Vec::new()
-        } else {
-            alloc::vec![(0, data.len())]
+
+    fn push(&mut self, payload: &[u8]) -> Result<()> {
+        self.splitter.push(payload)?;
+        if self.cursor.is_none() {
+            self.pre_scan.extend_from_slice(payload);
+            if let Some(offset) = crate::au::first_nal_start(&self.pre_scan) {
+                self.cursor = Some(offset as u64);
+                self.pre_scan.clear();
+            }
+        }
+        Ok(())
+    }
+
+    fn pop(&mut self) -> Option<(u64, Vec<u8>)> {
+        let unit = self.splitter.pop()?;
+        let start = self.cursor.unwrap_or(0);
+        self.cursor = Some(start.saturating_add(unit.len() as u64));
+        Some((start, unit))
+    }
+
+    fn finish(&mut self) {
+        self.splitter.finish();
+    }
+}
+
+/// Incremental MPEG-2 picture splitter.
+struct Mpeg2State {
+    width: u16,
+    height: u16,
+    tracker: Mpeg2DisplayTracker,
+    buf: Vec<u8>,
+    /// Absolute ES offset of `buf[0]`.
+    base: u64,
+    /// Whether a `picture_start_code` has passed: the prologue before the first
+    /// picture belongs to the first unit.
+    first_picture: bool,
+    search_from: usize,
+    flushing: bool,
+}
+
+impl Mpeg2State {
+    fn new(probe: &[u8]) -> Result<Self> {
+        let Ok(seq) = Mpeg2SeqHeader::find(probe) else {
+            return Err(Error::InvalidInput("ps: MPEG-2 sequence header not found"));
         };
+        let mut tracker = Mpeg2DisplayTracker::new();
+        if let Ok(geometry) = DisplayGeometry::from_mpeg2_es(probe) {
+            tracker.seed_state(Some(geometry));
+        }
+        Ok(Self {
+            width: seq.width,
+            height: seq.height,
+            tracker,
+            buf: probe.to_vec(),
+            base: 0,
+            first_picture: false,
+            search_from: 0,
+            flushing: false,
+        })
     }
-    let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(starts.len());
-    let n = starts.len();
-    for i in 0..n {
-        let start = if i == 0 { 0 } else { starts[i] };
-        let end = if i + 1 < n { starts[i + 1] } else { data.len() };
-        ranges.push((start, end));
+
+    fn push(&mut self, payload: &[u8]) {
+        self.buf.extend_from_slice(payload);
     }
-    ranges
-}
 
-/// Extend a running unwrapped timestamp by the delta to the next raw 33-bit
-/// value, correcting for a single 90 kHz wrap in either direction (§2.4.3.7).
-///
-/// Delegates to [`broadcast_common::clock33::unwrap_delta`], the workspace's
-/// single owner of 33-bit wrap arithmetic.
-fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
-    broadcast_common::clock33::unwrap_delta(prev_unwrapped, prev_raw, raw)
-}
-
-/// Assign each access unit its (optional) PTS/DTS from the PES-level stamps.
-///
-/// A stamp applies to the first access unit whose byte range begins at or after
-/// the stamp's offset — i.e. the first AU that starts in that PES fragment.
-/// Timestamps are unwrapped across the 33-bit wrap using stamp (stream) order.
-fn assign_stamps(ranges: &[(usize, usize)], stamps: &[Stamp]) -> Vec<(Option<u64>, Option<u64>)> {
-    let mut out = alloc::vec![(None, None); ranges.len()];
-    // Unwrap the stamp timestamps across the 33-bit wrap, in stamp order.
-    let mut si = 0usize;
-    let (mut prev_pts_raw, mut prev_pts_uw): (Option<u64>, i128) = (None, 0);
-    let (mut prev_dts_raw, mut prev_dts_uw): (Option<u64>, i128) = (None, 0);
-    for (ai, &(start, _end)) in ranges.iter().enumerate() {
-        // Consume the last stamp whose offset falls at/before this AU's start,
-        // preferring the earliest AU that begins in the fragment.
-        while si < stamps.len() && stamps[si].offset <= start {
-            let s = stamps[si];
-            let pts_uw = s.pts.map(|p| match prev_pts_raw {
-                Some(pr) => {
-                    let uw = unwrap_ts(prev_pts_uw, pr, p);
-                    prev_pts_uw = uw;
-                    prev_pts_raw = Some(p);
-                    uw
-                }
-                None => {
-                    prev_pts_uw = p as i128;
-                    prev_pts_raw = Some(p);
-                    p as i128
-                }
-            });
-            let dts_uw = s.dts.map(|d| match prev_dts_raw {
-                Some(pr) => {
-                    let uw = unwrap_ts(prev_dts_uw, pr, d);
-                    prev_dts_uw = uw;
-                    prev_dts_raw = Some(d);
-                    uw
-                }
-                None => {
-                    prev_dts_uw = d as i128;
-                    prev_dts_raw = Some(d);
-                    d as i128
-                }
-            });
-            // Stamp applies to the AU that begins this fragment (this AU), only
-            // if not already stamped (first AU wins for the fragment).
-            if out[ai].0.is_none() && out[ai].1.is_none() {
-                out[ai] = (pts_uw.map(|v| v as u64), dts_uw.map(|v| v as u64));
+    fn pop(&mut self) -> Option<(u64, Vec<u8>)> {
+        if self.flushing {
+            if self.buf.is_empty() {
+                return None;
             }
-            si += 1;
+            let data = core::mem::take(&mut self.buf);
+            let start = self.base;
+            self.base = self.base.saturating_add(data.len() as u64);
+            return Some((start, data));
+        }
+        loop {
+            let position = find_picture_start(&self.buf, self.search_from)?;
+            if !self.first_picture {
+                self.first_picture = true;
+                self.search_from = position.saturating_add(START_CODE_LEN);
+                continue;
+            }
+            if position == 0 {
+                self.search_from = START_CODE_LEN;
+                continue;
+            }
+            let rest = self.buf.split_off(position);
+            let data = core::mem::replace(&mut self.buf, rest);
+            self.search_from = START_CODE_LEN;
+            let start = self.base;
+            self.base = self.base.saturating_add(data.len() as u64);
+            return Some((start, data));
         }
     }
-    out
+
+    fn finish(&mut self) {
+        self.flushing = true;
+    }
 }
 
-/// Recover H.264 config + build video samples (Annex B → length-prefixed).
-///
-/// Splits the reassembled Annex B stream into access units with
-/// [`crate::au::AccessUnitSplitter`] — the crate's single H.264 AU-boundary
-/// implementation, which decides a boundary from `first_mb_in_slice`
-/// (H.264 §7.4.3) rather than requiring an access-unit delimiter. An AUD is
-/// *optional* in H.264 and is absent from most PS/MPEG-2-programme captures, so
-/// an AUD-only split left such a stream as a single "access unit" spanning the
-/// whole file — one sample, one IDR flag (r04-W21). Each unit is then stamped
-/// with the PES-level PTS/DTS at its fragment start and emitted in decode
-/// order. Returns `None` if in-band SPS/PPS cannot be found (skip, never fatal).
-fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
-    let Some(ranges) = split_h264_access_units(&es.es_bytes)? else {
-        return Ok(None);
-    };
-    let stamped = assign_stamps(&ranges, &es.stamps);
-
-    // Recover SPS/PPS (first of each) and attach each AU's PES-level stamps.
-    let mut sps: Option<Vec<u8>> = None;
-    let mut pps: Option<Vec<u8>> = None;
-    let units: Vec<AccessUnit> = ranges
-        .iter()
-        .enumerate()
-        .map(|(i, &(start, end))| {
-            for nal in iter_annexb_nals(&es.es_bytes[start..end]) {
-                match nal[0] & NAL_TYPE_MASK {
-                    // Only valid parameter sets (issue #1171): a damaged
-                    // "SPS" of garbage must not reach the avcC.
-                    AVC_NAL_SPS
-                        if sps.is_none()
-                            && parameter_set_is_valid(NalCodec::Avc, ParamKind::Sps, nal) =>
-                    {
-                        sps = Some(nal.to_vec())
-                    }
-                    AVC_NAL_PPS
-                        if pps.is_none()
-                            && parameter_set_is_valid(NalCodec::Avc, ParamKind::Pps, nal) =>
-                    {
-                        pps = Some(nal.to_vec())
-                    }
-                    _ => {}
-                }
-            }
-            AccessUnit {
-                pts: stamped[i].0,
-                dts: stamped[i].1,
-            }
+fn find_picture_start(buf: &[u8], from: usize) -> Option<usize> {
+    let start = from.min(buf.len());
+    buf[start..]
+        .windows(START_CODE_LEN)
+        .position(|window| {
+            window[..START_CODE_BYTE_OFFSET] == START_CODE_PREFIX
+                && window[START_CODE_BYTE_OFFSET] == MPEG2_PICTURE_START_CODE
         })
-        .collect();
-    let (Some(sps), Some(pps)) = (sps, pps) else {
-        return Ok(None);
-    };
-    if sps.len() < AVC_SPS_CONFIG_MIN_LEN {
-        return Ok(None);
-    }
-
-    let record = AVCDecoderConfigurationRecord {
-        configuration_version: 1,
-        // profile_idc / constraint_flags / level_idc live at SPS bytes 1..=3
-        // (after the 1-byte NAL header) — ISO/IEC 14496-15:2017 §5.3.3.1.
-        profile_indication: sps[1],
-        profile_compatibility: sps[AVC_SPS_CONSTRAINT_FLAGS_OFFSET],
-        level_indication: sps[AVC_SPS_LEVEL_IDC_OFFSET],
-        length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
-        sps: alloc::vec![AvcSps(sps)],
-        pps: alloc::vec![AvcPps(pps)],
-        chroma_format: None,
-        bit_depth_luma_minus8: None,
-        bit_depth_chroma_minus8: None,
-        sps_ext: alloc::vec![],
-    };
-    let config = AVCConfigurationBox::new(record);
-
-    let dts = interpolate_dts(&units);
-    let pts = interpolate_pts(&units, &dts);
-
-    // Display tracking: seed from the TrackSpec's auto-derived geometry, then
-    // fold each access unit through the tracker in decode order so every
-    // sample carries the state in force for it (Arc-shared across runs).
-    let mut sps_tracker = SpsTracker::new(TrackCodec::Avc);
-    sps_tracker.seed_state(DisplayGeometry::from_codec_config(&CodecConfig::Avc {
-        config: config.clone(),
-        width: 0,
-        height: 0,
-    }));
-    // Activation (SPS/PPS by id) follows the BITSTREAM order of the access
-    // units, not the DTS-sorted output order: observe in `ranges` order and
-    // keep the state per access unit, attached to the sample below.
-    let displays: Vec<_> = ranges
-        .iter()
-        .map(|&(start, end)| {
-            let _ = sps_tracker.observe(&es.es_bytes[start..end]);
-            sps_tracker.state().cloned()
-        })
-        .collect();
-    // Decode order = ascending DTS (stable — preserves stream order for ties).
-    let mut order: Vec<usize> = (0..units.len()).collect();
-    order.sort_by_key(|&i| dts[i]);
-
-    // Absolute dts/pts (media plane step 2c): `interpolate_dts`/
-    // `interpolate_pts` already yield **unwrapped absolute** 90 kHz values
-    // (the PES-level stamps are wrap-unrolled once in `assign_stamps` via
-    // `unwrap_ts`, and unstamped AUs are anchored off them), so MPEG Program
-    // Stream genuinely recovers an absolute clock rather than leaving the
-    // anchor at 0. `composition_offset` folds into the pts/dts pair.
-    let samples: Vec<Sample> = order
-        .iter()
-        .enumerate()
-        .map(|(pos, &i)| -> crate::error::Result<Sample> {
-            let dur = frame_duration(&order, &dts, pos);
-            let (start, end) = ranges[i];
-            let au = &es.es_bytes[start..end];
-            let is_idr = au_is_idr(au);
-            let display = displays[i].clone();
-            let mut sample = Sample::timed_annexb(
-                au,
-                to_ticks(dts[i]),
-                to_ticks(pts[i]),
-                NonZeroU32::new(dur),
-                is_idr,
-            )?;
-            sample.display = display;
-            Ok(sample)
-        })
-        .collect::<crate::error::Result<Vec<Sample>>>()?;
-
-    // Anchor = the first decode-ordered sample's absolute DTS, kept in
-    // lockstep with `samples[0].timing.map(|t| t.dts)` per the crate-wide IR invariant.
-    let anchor = order.first().map(|&i| dts[i].max(0) as u64).unwrap_or(0);
-    Ok(Some(Track::new_at(
-        TrackSpec::new(
-            track_id,
-            VIDEO_TIMESCALE,
-            CodecConfig::Avc {
-                config,
-                width: 0,
-                height: 0,
-            },
-        ),
-        samples,
-        anchor,
-    )))
+        .map(|position| start + position)
 }
 
-/// Recover MPEG-2 video config (picture geometry from `sequence_header()`) and
-/// build one raw sample per picture (C6, #1009). Returns `None` if no
-/// `picture_start_code` is found (skip, never fatal) — the sequence header
-/// itself was already confirmed present by the caller.
-fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Result<Option<Track>> {
-    let Ok(seq) = Mpeg2SeqHeader::find(&es.es_bytes) else {
-        return Ok(None);
-    };
-    let ranges = split_mpeg2_pictures(&es.es_bytes);
-    if ranges.is_empty() {
-        return Ok(None);
+/// The result of trying to recover an AC-3 substream's configuration.
+enum Decision {
+    Decided(Ac3SyncframeInfo),
+    Pending,
+    Failed,
+}
+
+/// Incremental AC-3 syncframe splitter.
+struct Ac3State {
+    buf: Vec<u8>,
+    /// Absolute ES offset of `buf[0]`.
+    base: u64,
+    info: Option<Ac3SyncframeInfo>,
+    checked: bool,
+}
+
+impl Ac3State {
+    fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            base: 0,
+            info: None,
+            checked: false,
+        }
     }
-    let stamped = assign_stamps(&ranges, &es.stamps);
 
-    let units: Vec<AccessUnit> = stamped
-        .iter()
-        .map(|&(pts, dts)| AccessUnit { pts, dts })
-        .collect();
+    fn push(&mut self, payload: &[u8]) {
+        self.buf.extend_from_slice(payload);
+    }
 
-    // `esds` carrying the MPEG-2 Main Visual object type (ISO/IEC 14496-1
-    // Table 5, `OTI_MPEG2_VIDEO_MAIN` = 0x61) — the same construction
-    // `ts_demux`'s `ConfigProbe::Mpeg2Video` uses for the TS input side.
-    let esds = EsdsBox::new(ESDescriptor::new(
+    /// Recover the substream's config from the first syncword, exactly as
+    /// `Ac3SyncframeInfo::from_es` did over the whole buffer.
+    fn decide(&mut self) -> Decision {
+        if self.checked {
+            return self.info.map_or(Decision::Failed, Decision::Decided);
+        }
+        let Some(offset) = find_ac3_syncword(&self.buf) else {
+            return Decision::Pending;
+        };
+        match Ac3SyncframeInfo::from_es(&self.buf[offset..]) {
+            Ok(info) => {
+                self.info = Some(info);
+                self.checked = true;
+                Decision::Decided(info)
+            }
+            Err(Error::BufferTooShort(_)) => Decision::Pending,
+            Err(_) => {
+                self.checked = true;
+                Decision::Failed
+            }
+        }
+    }
+
+    fn pop_frame(&mut self) -> Option<(u64, Vec<u8>)> {
+        loop {
+            if self.buf.len() < AC3_SYNCWORD.len() {
+                return None;
+            }
+            if !self.buf.starts_with(&AC3_SYNCWORD) {
+                self.drop_byte();
+                continue;
+            }
+            match Ac3SyncframeInfo::parse_at(&self.buf, 0) {
+                Ok(info) => match info.frame_len_bytes() {
+                    Some(len) if len > 0 => {
+                        if self.buf.len() < len {
+                            return None;
+                        }
+                        let frame: Vec<u8> = self.buf.drain(..len).collect();
+                        let start = self.base;
+                        self.base = self.base.saturating_add(len as u64);
+                        return Some((start, frame));
+                    }
+                    _ => self.drop_byte(),
+                },
+                Err(Error::BufferTooShort(_)) => return None,
+                Err(_) => self.drop_byte(),
+            }
+        }
+    }
+
+    fn drop_byte(&mut self) {
+        if !self.buf.is_empty() {
+            self.buf.drain(..1);
+            self.base = self.base.saturating_add(1);
+        }
+    }
+}
+
+fn find_ac3_syncword(buf: &[u8]) -> Option<usize> {
+    buf.windows(AC3_SYNCWORD.len())
+        .position(|window| window == AC3_SYNCWORD)
+}
+
+/// Unwrap one 33-bit timestamp against the stream's previous raw value
+/// (delegating to the workspace's one 33-bit wrap implementation).
+fn unwrap_ts(previous_unwrapped: i128, previous_raw: u64, raw: u64) -> i128 {
+    broadcast_common::clock33::unwrap_delta(previous_unwrapped, previous_raw, raw)
+}
+
+/// Unwrap one 33-bit timestamp against the stream's previous raw value.
+fn unwrap_stamp(
+    previous_raw: &mut Option<u64>,
+    previous_unwrapped: &mut i128,
+    raw: Option<u64>,
+) -> Option<i128> {
+    raw.map(|value| match *previous_raw {
+        Some(previous) => {
+            let unwrapped = unwrap_ts(*previous_unwrapped, previous, value);
+            *previous_unwrapped = unwrapped;
+            *previous_raw = Some(value);
+            unwrapped
+        }
+        None => {
+            *previous_unwrapped = i128::from(value);
+            *previous_raw = Some(value);
+            i128::from(value)
+        }
+    })
+}
+
+/// Clamp an unwrapped 33-bit-derived timestamp into `Sample::timing`'s range.
+fn to_ticks(unwrapped: i128) -> i64 {
+    unwrapped.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+}
+
+/// True if an Annex B access unit contains an IDR slice NAL (type 5).
+fn au_is_idr(access_unit: &[u8]) -> bool {
+    iter_annexb_nals(access_unit).any(|nal| {
+        nal.first()
+            .is_some_and(|header| header & NAL_TYPE_MASK == AVC_NAL_IDR)
+    })
+}
+
+/// The `esds` carrying the MPEG-2 Main Visual object type (ISO/IEC 14496-1
+/// Table 5, `OTI_MPEG2_VIDEO_MAIN` = 0x61).
+fn mpeg2_esds() -> EsdsBox {
+    EsdsBox::new(ESDescriptor::new(
         ESDS_VIDEO_ES_ID,
         0,
         Some(DecoderConfigDescriptor::new(
@@ -942,809 +1529,9 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Result<Option<
             None,
         )),
         Some(SLConfigDescriptor::predefined_two()),
-    ));
-
-    let dts = interpolate_dts(&units);
-    let pts = interpolate_pts(&units, &dts);
-    let mut order: Vec<usize> = (0..units.len()).collect();
-    order.sort_by_key(|&i| dts[i]);
-
-    // Display tracking (MPEG-2): seed geometry from the elementary stream's
-    // first sequence header, then fold each picture through the tracker in
-    // decode order.
-    let mut mpeg2_tracker = Mpeg2DisplayTracker::new();
-    if let Ok(geom) = DisplayGeometry::from_mpeg2_es(&es.es_bytes) {
-        mpeg2_tracker.seed_state(Some(geom));
-    }
-
-    // Bitstream order (`ranges`), not DTS-sorted output order, drives the
-    // tracker (sequence headers / AFD persist along the stream).
-    let displays: Vec<_> = ranges
-        .iter()
-        .map(|&(start, end)| {
-            let _ = mpeg2_tracker.observe(&es.es_bytes[start..end]);
-            mpeg2_tracker.state().cloned()
-        })
-        .collect();
-
-    let samples: Vec<Sample> = order
-        .iter()
-        .enumerate()
-        .map(|(pos, &i)| {
-            let dur = frame_duration(&order, &dts, pos);
-            let (start, end) = ranges[i];
-            let au = &es.es_bytes[start..end];
-            let is_sync = mpeg2_is_sync(au);
-            let display = displays[i].clone();
-            let mut sample = Sample::timed(
-                au.to_vec(),
-                to_ticks(dts[i]),
-                to_ticks(pts[i]),
-                NonZeroU32::new(dur),
-            );
-            sample.flags = crate::ir::SampleFlags::new(is_sync);
-            sample.display = display;
-            sample
-        })
-        .collect();
-
-    let anchor = order.first().map(|&i| dts[i].max(0) as u64).unwrap_or(0);
-    Ok(Some(Track::new_at(
-        TrackSpec::new(
-            track_id,
-            VIDEO_TIMESCALE,
-            CodecConfig::Mpeg2Video {
-                esds,
-                width: seq.width,
-                height: seq.height,
-            },
-        ),
-        samples,
-        anchor,
-    )))
+    ))
 }
 
-/// Clamp an unwrapped 33-bit-derived `i128` timestamp into the `i64` range
-/// `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) carry (mirrors `ts_demux`'s own
-/// `to_ticks`): `i128` is used internally purely for wrap-arithmetic
-/// headroom, and every real value is a small multiple of the 33-bit range
-/// that fits `i64` with centuries of 90 kHz headroom — so this never clamps
-/// in practice, it just makes the narrowing checked instead of silent.
-fn to_ticks(uw: i128) -> i64 {
-    uw.clamp(i64::MIN as i128, i64::MAX as i128) as i64
-}
-
-/// True if an Annex B access unit contains an IDR slice NAL (type 5).
-fn au_is_idr(au: &[u8]) -> bool {
-    iter_annexb_nals(au).any(|nal| (nal[0] & NAL_TYPE_MASK) == AVC_NAL_IDR)
-}
-
-/// Derive the constant per-frame duration (90 kHz ticks) from the stamped DTS
-/// deltas, falling back to [`DEFAULT_FRAME_DURATION`] when fewer than two are
-/// known.
-fn stamped_frame_duration(units: &[AccessUnit]) -> i128 {
-    let stamped: Vec<(usize, i128)> = units
-        .iter()
-        .enumerate()
-        .filter_map(|(i, u)| u.dts.map(|d| (i, d as i128)))
-        .collect();
-    if stamped.len() < MIN_FRAMES_FOR_DELTA {
-        return DEFAULT_FRAME_DURATION;
-    }
-    let (i0, d0) = stamped[0];
-    let (i1, d1) = *stamped.last().unwrap();
-    let span_idx = (i1 - i0) as i128;
-    let span_dts = d1 - d0;
-    if span_idx > 0 && span_dts > 0 {
-        (span_dts / span_idx).max(1)
-    } else {
-        DEFAULT_FRAME_DURATION
-    }
-}
-
-/// Per-AU decode timestamp: the explicit PES DTS where present, else anchored off
-/// the nearest known DTS by the constant frame duration (index distance).
-fn interpolate_dts(units: &[AccessUnit]) -> Vec<i128> {
-    let dur = stamped_frame_duration(units);
-    let n = units.len();
-    let mut dts = alloc::vec![0i128; n];
-    let anchor = units
-        .iter()
-        .enumerate()
-        .find_map(|(i, u)| u.dts.map(|d| (i, d as i128)));
-    let (anchor_idx, anchor_dts) = anchor.unwrap_or((0, 0));
-    for (i, slot) in dts.iter_mut().enumerate() {
-        *slot = match units[i].dts {
-            Some(d) => d as i128,
-            None => anchor_dts + (i as i128 - anchor_idx as i128) * dur,
-        };
-    }
-    dts
-}
-
-/// Per-AU presentation timestamp: the explicit PES PTS where present, else the
-/// AU's decode time (no reordering information available for unstamped frames).
-fn interpolate_pts(units: &[AccessUnit], dts: &[i128]) -> Vec<i128> {
-    units
-        .iter()
-        .enumerate()
-        .map(|(i, u)| u.pts.map(|p| p as i128).unwrap_or(dts[i]))
-        .collect()
-}
-
-/// Duration of the sample at decode position `pos`: the gap to the next
-/// decode-ordered DTS; the final sample reuses the previous gap.
-fn frame_duration(order: &[usize], dts: &[i128], pos: usize) -> u32 {
-    let n = order.len();
-    let dur = if pos + 1 < n {
-        (dts[order[pos + 1]] - dts[order[pos]]).max(0)
-    } else if pos > 0 {
-        (dts[order[pos]] - dts[order[pos - 1]]).max(0)
-    } else {
-        DEFAULT_FRAME_DURATION
-    };
-    dur as u32
-}
-
-/// Split a reassembled AC-3 byte stream into individual syncframes and return
-/// their `(start, end)` byte ranges.
-///
-/// The frames are located by [`crate::ac3_syncframe::split_ac3_syncframes_resyncing`],
-/// which walks each syncframe's own `frmsizecod`-derived length (ETSI TS 102 366
-/// Table 4.13) instead of hunting for the next `0x0B77`, and resynchronises
-/// after a frame that does not parse so a single corrupted frame does not
-/// discard the rest of the stream. That distinction is
-/// load-bearing: the 16-bit syncword occurs *inside* AC-3 payload by chance
-/// (roughly one position in 65 536, so a few percent of 1792-byte frames), and
-/// splitting on those false syncs cuts real frames in half and stamps each half
-/// with a full 1536-sample duration — corrupt access units and A/V drift
-/// against the PES stamps (r04-W20).
-fn split_ac3_frames(data: &[u8]) -> Vec<(usize, usize)> {
-    // Resyncing: one corrupted frame must not discard every frame after it. The
-    // ranges come from the splitter directly — they are *not* contiguous from
-    // offset 0 once a resync has skipped bytes, so reconstructing them by
-    // summing frame lengths (as this used to) slices mid-frame and emits a
-    // sample beginning at the corrupted byte.
-    crate::ac3_syncframe::split_ac3_syncframe_ranges(data, true)
-}
-
-/// Recover AC-3 config (syncframe BSI → `dac3`) + one raw sample per syncframe.
-/// Returns `None` if no valid AC-3 syncframe is found (skip, never fatal).
-fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Result<Option<Track>> {
-    let Ok(info) = Ac3SyncframeInfo::from_es(&es.es_bytes) else {
-        return Ok(None);
-    };
-    let sample_rate = info.sample_rate;
-    let Ok(timescale) = Timescale::try_new(sample_rate) else {
-        return Ok(None);
-    };
-    let channel_count = info.channel_count() as u16;
-    let config = info.into_dac3();
-
-    let frames = split_ac3_frames(&es.es_bytes);
-    if frames.is_empty() {
-        return Ok(None);
-    }
-
-    // Absolute dts/pts (media plane step 2c). The PES-level stamps are 90 kHz
-    // (ISO/IEC 13818-1 §2.4.3.7) while this track's timescale is
-    // `sample_rate`, so a stamp needs rescaling into the track clock — but
-    // (issue B5 sibling, found via the FIX C invariant test, media plane
-    // step-2 fix wave 1) 90000 does not evenly divide a typical sample rate,
-    // so re-deriving the dts from EVERY stamped frame's own rescale (as this
-    // used to) injects up to ±1 track tick of jitter wherever a stamp
-    // happens to be present — exactly the bug `ts_demux::emit_audio_au` was
-    // fixed for. The anchor is established once (or re-established on a
-    // genuine gap — a stamp drifting from the frame-exact accumulator's
-    // predicted position by more than
-    // [`crate::ts_demux::audio_discontinuity_threshold_90k`]) and otherwise
-    // simply advances by the **intrinsic** AC-3 syncframe duration (1536
-    // samples — ETSI TS 102 366 §4.1, `AC3_SAMPLES_PER_SYNCFRAME`), which is
-    // exactly the value `ts_demux` uses for the same split and also the
-    // per-sample `duration` (previously left at `0`, which made the AC-3
-    // timeline uninterpretable).
-    let rescale_90k = |t90: u64| -> i64 {
-        ((t90 as u128 * sample_rate as u128) / u128::from(VIDEO_TIMESCALE.get())) as i64
-    };
-    let stamped = assign_stamps(&frames, &es.stamps);
-    let mut samples: Vec<Sample> = Vec::with_capacity(frames.len());
-    let mut next_dts: Option<i64> = None;
-    // The unwrapped 90 kHz stamp the anchor was last (re-)established from,
-    // and how many track ticks have elapsed since — used only to predict the
-    // expected wire position for drift detection, never to derive a dts.
-    let mut anchor_wire90: i128 = 0;
-    let mut ticks_since_anchor: i64 = 0;
-    for (i, &(s, e)) in frames.iter().enumerate() {
-        // Prefer this frame's own stamp (DTS, else PTS — AC-3 is never
-        // reordered, so they coincide) ONLY to (re-)anchor; otherwise
-        // continue the running, frame-exact clock.
-        let stamp90 = stamped[i].1.or(stamped[i].0);
-        let dts = match (stamp90, next_dts) {
-            (Some(t90), Some(running)) => {
-                let expected_wire90 = anchor_wire90
-                    + (ticks_since_anchor as i128 * i128::from(VIDEO_TIMESCALE))
-                        / sample_rate.max(1) as i128;
-                let drift = (t90 as i128 - expected_wire90).abs();
-                if drift > crate::ts_demux::audio_discontinuity_threshold_90k(timescale) {
-                    // A genuine gap: re-anchor from the wire stamp.
-                    anchor_wire90 = t90 as i128;
-                    ticks_since_anchor = 0;
-                    rescale_90k(t90)
-                } else {
-                    running
-                }
-            }
-            (Some(t90), None) => {
-                anchor_wire90 = t90 as i128;
-                ticks_since_anchor = 0;
-                rescale_90k(t90)
-            }
-            (None, Some(running)) => running,
-            // No stamp has been seen yet at all: this leading frame precedes
-            // the stream's first PES timestamp, so its absolute time is
-            // genuinely unknown — `None`, never fabricated.
-            (None, None) => {
-                samples.push(
-                    Sample::from_raw(
-                        es.es_bytes[s..e].to_vec(),
-                        None,
-                        None,
-                        Some(AC3_SAMPLES_PER_SYNCFRAME),
-                    )
-                    .or_else(|_| {
-                        Sample::from_duration(
-                            es.es_bytes[s..e].to_vec(),
-                            NonZeroU32::new(AC3_SAMPLES_PER_SYNCFRAME).unwrap_or(NonZeroU32::MIN),
-                            true,
-                        )
-                    })?,
-                );
-                continue;
-            }
-        };
-        next_dts = Some(dts + AC3_SAMPLES_PER_SYNCFRAME as i64);
-        ticks_since_anchor += AC3_SAMPLES_PER_SYNCFRAME as i64;
-        samples.push(Sample::timed_raw(
-            es.es_bytes[s..e].to_vec(),
-            dts,
-            dts,
-            NonZeroU32::new(AC3_SAMPLES_PER_SYNCFRAME),
-        ));
-    }
-
-    // Anchor = the first sample's absolute DTS when known (lockstep with
-    // `samples[0].timing.map(|t| t.dts)`), else 0.
-    let anchor = samples
-        .first()
-        .and_then(|s| s.timing.and_then(|t| t.dts()))
-        .map(|d| d.max(0) as u64)
-        .unwrap_or(0);
-    Ok(Some(Track::new_at(
-        TrackSpec::new(
-            track_id,
-            timescale,
-            CodecConfig::Ac3 {
-                config,
-                channel_count,
-                sample_rate,
-                sample_size: AUDIO_SAMPLE_SIZE_BITS,
-            },
-        ),
-        samples,
-        anchor,
-    )))
-}
-
-#[cfg(test)]
-mod wrap_tests {
-    use super::*;
-
-    const WRAP: u64 = broadcast_common::clock33::WRAP_33BIT;
-
-    /// PS stamps straddling 2^33 (ISO/IEC 13818-1 §2.4.3.7): PTS 2^33-90000,
-    /// then 90000 (one wrap, +180000 ticks), then a B-frame style backward
-    /// dip back across the wrap (2^33-45000) must unroll monotonically /
-    /// bidirectionally, never jump by ~2^33.
-    #[test]
-    fn assign_stamps_unrolls_across_the_33bit_wrap() {
-        let ranges = [(0usize, 10usize), (10, 20), (20, 30)];
-        let stamps = [
-            Stamp {
-                offset: 0,
-                pts: Some(WRAP - 90_000),
-                dts: Some(WRAP - 90_000),
-            },
-            Stamp {
-                offset: 10,
-                pts: Some(90_000),
-                dts: Some(90_000),
-            },
-            Stamp {
-                offset: 20,
-                pts: Some(WRAP - 45_000),
-                dts: Some(WRAP - 45_000),
-            },
-        ];
-        let out = assign_stamps(&ranges, &stamps);
-        assert_eq!(out[0].0, Some(WRAP - 90_000));
-        assert_eq!(out[1].0, Some(WRAP + 90_000));
-        assert_eq!(out[2].0, Some(WRAP - 45_000));
-        assert_eq!(out[1].1, Some(WRAP + 90_000));
-    }
-
-    /// When a second PES stamp falls in the same access unit only the first
-    /// applies. A PTS-only first stamp makes the `&&` visible: the second
-    /// stamp's PTS must not replace it just because the DTS is still unknown.
-    #[test]
-    fn assign_stamps_keeps_the_first_stamp_of_an_access_unit() {
-        let ranges = [(0usize, 10usize), (10, 20)];
-        let stamps = [
-            Stamp {
-                offset: 0,
-                pts: Some(180_000),
-                dts: None,
-            },
-            Stamp {
-                offset: 0,
-                pts: Some(270_000),
-                dts: Some(270_000),
-            },
-        ];
-        let out = assign_stamps(&ranges, &stamps);
-        assert_eq!(
-            out[0],
-            (Some(180_000), None),
-            "the first stamp of the access unit wins"
-        );
-
-        let stamps = [
-            Stamp {
-                offset: 0,
-                pts: Some(1_000),
-                dts: Some(900),
-            },
-            Stamp {
-                offset: 0,
-                pts: Some(2_000),
-                dts: Some(1_900),
-            },
-        ];
-        assert_eq!(
-            assign_stamps(&ranges, &stamps)[0],
-            (Some(1_000), Some(900)),
-            "a fully stamped access unit keeps its first stamp"
-        );
-    }
-}
-
-#[cfg(test)]
-mod h264_config_tests {
-    use super::*;
-    use broadcast_common::Unpackage;
-
-    fn annexb(nals: &[&[u8]]) -> Vec<u8> {
-        let mut out = Vec::new();
-        for nal in nals {
-            out.extend_from_slice(&[0, 0, 1]);
-            out.extend_from_slice(nal);
-        }
-        out
-    }
-
-    /// The real SPS, PPS and first coded slice of the committed PS fixture.
-    fn fixture_parts() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-        let data = test_fixtures::read("ps/h264-ac3.ps");
-        let media = PsDemux::new()
-            .unpackage(&data[..])
-            .expect("the real PS fixture demuxes");
-        let track = &media.tracks[0];
-        let CodecConfig::Avc { config, .. } = &track.spec.config else {
-            panic!("track 0 must be AVC");
-        };
-        let sps = config.config.sps[0].0.clone();
-        let pps = config.config.pps[0].0.clone();
-
-        let sample = &track.samples[0].data;
-        let mut off = 0usize;
-        let mut slice = Vec::new();
-        while off + 4 <= sample.len() {
-            let n = u32::from_be_bytes([
-                sample[off],
-                sample[off + 1],
-                sample[off + 2],
-                sample[off + 3],
-            ]) as usize;
-            off += 4;
-            if off + n > sample.len() {
-                break;
-            }
-            let nal = &sample[off..off + n];
-            off += n;
-            let nal_type = nal[0] & NAL_TYPE_MASK;
-            if nal_type == 1 || nal_type == 5 {
-                slice = nal.to_vec();
-                break;
-            }
-        }
-        assert!(
-            !slice.is_empty(),
-            "the fixture's first sample carries a coded slice"
-        );
-        (sps, pps, slice)
-    }
-
-    fn h264_es(nals: &[&[u8]]) -> ElementaryStream {
-        ElementaryStream {
-            codec: Codec::Video,
-            es_bytes: annexb(nals),
-            stamps: alloc::vec![Stamp {
-                offset: 0,
-                pts: Some(90_000),
-                dts: Some(90_000),
-            }],
-        }
-    }
-
-    fn built_config(es: &ElementaryStream) -> Option<(Vec<u8>, Vec<u8>)> {
-        let track = build_h264_track(es, TrackId::new(1)).expect("no resource-limit error")?;
-        let CodecConfig::Avc { config, .. } = track.spec.config else {
-            panic!("a built track must be AVC");
-        };
-        Some((
-            config.config.sps[0].0.clone(),
-            config.config.pps[0].0.clone(),
-        ))
-    }
-
-    /// A damaged parameter set (a set `forbidden_zero_bit`) must never reach
-    /// the `avcC`, in either position, and a stream with only damaged sets is
-    /// declined rather than built from garbage (issue #1171).
-    #[test]
-    fn damaged_parameter_sets_are_skipped() {
-        let (sps, pps, slice) = fixture_parts();
-        let garbage_sps = [0xE7u8, 0x01, 0x02, 0x03, 0xFF];
-        let garbage_pps = [0xE8u8, 0x01, 0x02, 0x03, 0xFF];
-
-        let es = h264_es(&[&garbage_sps, &sps, &garbage_pps, &pps, &slice]);
-        let (got_sps, got_pps) = built_config(&es).expect("the real SPS/PPS are present");
-        assert_eq!(
-            got_sps, sps,
-            "the damaged SPS before the real one is skipped"
-        );
-        assert_eq!(
-            got_pps, pps,
-            "the damaged PPS before the real one is skipped"
-        );
-        assert_eq!(got_sps[0], 0x67, "the real SPS NAL header");
-
-        let es = h264_es(&[&sps, &garbage_sps, &pps, &garbage_pps, &slice]);
-        let (got_sps, got_pps) = built_config(&es).expect("the real SPS/PPS are present");
-        assert_eq!(
-            got_sps, sps,
-            "a damaged SPS after the real one must not replace it"
-        );
-        assert_eq!(
-            got_pps, pps,
-            "a damaged PPS after the real one must not replace it"
-        );
-
-        let es = h264_es(&[&garbage_sps, &garbage_pps, &slice]);
-        assert!(
-            built_config(&es).is_none(),
-            "a stream with only damaged parameter sets must not build a track"
-        );
-    }
-
-    /// The first valid SPS/PPS is kept: a later valid set must not replace it.
-    #[test]
-    fn the_first_valid_parameter_set_wins() {
-        let (sps, pps, slice) = fixture_parts();
-
-        let mut other_sps = sps.clone();
-        other_sps[3] = if sps[3] == 0x1E { 0x1F } else { 0x1E };
-        let mut other_pps = pps.clone();
-        let last = other_pps.len() - 1;
-        other_pps[last] = if other_pps[last] == 0x7F { 0x7E } else { 0x7F };
-        assert!(parameter_set_is_valid(
-            NalCodec::Avc,
-            ParamKind::Sps,
-            &other_sps
-        ));
-        assert!(parameter_set_is_valid(
-            NalCodec::Avc,
-            ParamKind::Pps,
-            &other_pps
-        ));
-        assert_ne!(other_sps, sps);
-        assert_ne!(other_pps, pps);
-
-        let es = h264_es(&[&sps, &other_sps, &pps, &other_pps, &slice]);
-        let (got_sps, got_pps) = built_config(&es).expect("a valid SPS/PPS is present");
-        assert_eq!(got_sps, sps, "the first valid SPS is kept");
-        assert_eq!(got_pps, pps, "the first valid PPS is kept");
-    }
-}
-
-#[cfg(test)]
-mod interpolate_tests {
-    use super::*;
-
-    fn units(dts: &[Option<u64>]) -> Vec<AccessUnit> {
-        dts.iter().map(|&d| AccessUnit { pts: d, dts: d }).collect()
-    }
-
-    /// Audit #3570: the constant frame duration divides the stamp span by the
-    /// **index** span, and the interpolation walks from the anchor by index
-    /// distance. Stamps on access units 2 and 6 (not 0) make both signs visible:
-    /// `i1 - i0` is 4 (not 8) and `i - anchor_idx` is negative before the anchor.
-    #[test]
-    fn stamped_frame_duration_uses_the_index_span_from_the_first_stamp() {
-        let mut u = units(&[None; 7]);
-        u[2].dts = Some(90_000);
-        u[6].dts = Some(90_000 + 4 * 3_600);
-        assert_eq!(stamped_frame_duration(&u), 3_600);
-
-        let d = interpolate_dts(&u);
-        assert_eq!(d[0], 90_000 - 2 * 3_600);
-        assert_eq!(d[1], 90_000 - 3_600);
-        assert_eq!(d[2], 90_000);
-        assert_eq!(d[4], 90_000 + 2 * 3_600);
-        assert_eq!(d[6], 90_000 + 4 * 3_600);
-    }
-
-    /// Audit #3570: a backwards or repeated stamp pair yields no usable frame
-    /// period and must fall back to the 3 600-tick default (25 fps at 90 kHz).
-    #[test]
-    fn non_increasing_stamps_fall_back_to_the_default_frame_duration() {
-        let mut descending = units(&[None; 3]);
-        descending[0].dts = Some(90_000);
-        descending[2].dts = Some(90_000 - 7_200);
-        assert_eq!(stamped_frame_duration(&descending), 3_600);
-
-        let mut repeated = units(&[None; 3]);
-        repeated[0].dts = Some(90_000);
-        repeated[2].dts = Some(90_000);
-        assert_eq!(stamped_frame_duration(&repeated), 3_600);
-    }
-
-    const AC3_FIXTURE: &str = "ps/ffmpeg-mpeg2video-2xac3.a0.ac3";
-
-    /// A real AC-3 elementary stream whose second syncframe carries `stamp90`,
-    /// the first carrying 90 000. The fixture is 44.1 kHz mono, so one 1 536-
-    /// sample syncframe is 3 134.7 ticks and the frame-exact running clock sits
-    /// 1 536 track ticks per frame after the anchor.
-    fn ac3_es_with_second_stamp(stamp90: u64) -> ElementaryStream {
-        let data = std::fs::read(test_fixtures::path(AC3_FIXTURE))
-            .expect("real AC-3 elementary stream fixture");
-        let frames = split_ac3_frames(&data);
-        assert!(frames.len() >= 3, "fixture carries several syncframes");
-        ElementaryStream {
-            codec: Codec::Ac3,
-            es_bytes: data,
-            stamps: alloc::vec![
-                Stamp {
-                    offset: frames[0].0,
-                    pts: Some(90_000),
-                    dts: Some(90_000),
-                },
-                Stamp {
-                    offset: frames[1].0,
-                    pts: Some(stamp90),
-                    dts: Some(stamp90),
-                },
-            ],
-        }
-    }
-
-    fn ac3_dts(stamp90: u64) -> Vec<i64> {
-        let es = ac3_es_with_second_stamp(stamp90);
-        let track = build_ac3_track(&es, TrackId::new(1))
-            .expect("AC-3 track build")
-            .expect("the fixture is a valid AC-3 stream");
-        track
-            .samples
-            .iter()
-            .map(|s| s.timing.and_then(|t| t.dts()).expect("timed AC-3 sample"))
-            .collect()
-    }
-
-    /// The first stamp anchors at 44 100 track ticks (90 000/2 at 44.1 kHz);
-    /// each following syncframe advances by its intrinsic 1 536 samples.
-    #[test]
-    fn ac3_stamp_exactly_on_the_frame_grid_keeps_the_running_clock() {
-        let dts = ac3_dts(93_134);
-        assert_eq!(dts[0], 44_100);
-        assert_eq!(dts[1], 45_636);
-        assert_eq!(dts[2], 47_172);
-    }
-
-    /// Audit #3571: a stamp exactly `audio_discontinuity_threshold_90k` (1 800
-    /// ticks) off the predicted wire position is *not* a discontinuity.
-    #[test]
-    fn ac3_stamp_at_the_threshold_is_not_a_discontinuity() {
-        let dts = ac3_dts(93_134 + 1_800);
-        assert_eq!(
-            dts[1], 45_636,
-            "within the threshold the running clock wins"
-        );
-        assert_eq!(dts[2], 47_172);
-    }
-
-    /// One tick past the threshold re-anchors from the wire stamp: 94 935 ticks
-    /// rescales to 46 518 at 44.1 kHz, and the clock continues from there.
-    #[test]
-    fn ac3_stamp_one_tick_past_the_threshold_reanchors() {
-        let dts = ac3_dts(93_134 + 1_801);
-        assert_eq!(dts[1], 46_518);
-        assert_eq!(dts[2], 48_054);
-    }
-
-    /// The same drift with the opposite sign must also re-anchor (the drift is
-    /// an absolute distance): 91 333 ticks rescale to 44 753.
-    #[test]
-    fn ac3_negative_drift_past_the_threshold_reanchors() {
-        let dts = ac3_dts(93_134 - 1_801);
-        assert_eq!(dts[1], 44_753);
-        assert_eq!(dts[2], 46_289);
-    }
-}
-
-#[cfg(test)]
-mod private1_tests {
-    use super::*;
-
-    fn header(substream_id: u8, number_of_frames: u8, pointer: u16) -> Private1Header {
-        Private1Header {
-            substream_id,
-            number_of_frames,
-            first_access_unit_pointer: pointer,
-        }
-    }
-
-    /// The header's four bytes are `substream_id`, `number_of_frames` and a
-    /// **big-endian** 16-bit pointer: reading the pointer's high byte twice
-    /// equals the right value only while it is zero.
-    #[test]
-    fn parse_reads_the_pointer_big_endian() {
-        let (parsed, rest) = Private1Header::parse(&[0x80, 1, 0x01, 0x23]).expect("header");
-        assert_eq!(parsed.substream_id, 0x80);
-        assert_eq!(parsed.number_of_frames, 1);
-        assert_eq!(parsed.first_access_unit_pointer, 0x0123);
-        assert!(rest.is_empty(), "a header-only payload has no body");
-    }
-
-    /// A payload that cannot hold the whole header is refused, never indexed
-    /// past its end.
-    #[test]
-    fn a_payload_shorter_than_the_header_is_refused() {
-        assert!(Private1Header::parse(&[]).is_none());
-        assert!(Private1Header::parse(&[0x80]).is_none());
-        assert!(Private1Header::parse(&[0x80, 1]).is_none());
-        assert!(Private1Header::parse(&[0x80, 1, 2]).is_none());
-    }
-
-    /// The consistency rule (ISO/IEC 13818-1 §2.4.3.7 as the DVD/ATSC private
-    /// profiles use it): a header that claims frames must point at one, and a
-    /// pointer may address one byte past the body (an access unit that starts
-    /// at its very end) but no further.
-    #[test]
-    fn is_consistent_truth_table() {
-        // Body length for a 4-byte-header payload.
-        for (frames, pointer, body_len, want) in [
-            (1u8, 0u16, 0usize, false), // claims a frame, points nowhere
-            (0, 0, 0, true),            // no frame claimed, no pointer
-            (1, 1, 0, true),            // points at the only byte
-            (1, 2, 0, false),           // one past the last byte
-            (0, 1, 0, true),            // pointer 1 of a 0-byte body
-            (0, 0, 5, true),
-            (1, 6, 5, true),  // body_len + 1 is legal
-            (1, 7, 5, false), // body_len + 2 is not
-            (0, 6, 5, true),  // body_len + 1, no frame claimed
-            (0, 7, 5, false), // body_len + 2
-        ] {
-            assert_eq!(
-                header(0x80, frames, pointer).is_consistent(body_len + PRIVATE1_HEADER_LEN),
-                want,
-                "frames={frames} pointer={pointer} body_len={body_len}"
-            );
-        }
-    }
-
-    /// A payload shorter than the header does not underflow the body length.
-    #[test]
-    fn is_consistent_does_not_underflow_a_short_payload() {
-        assert!(header(0x80, 0, 0).is_consistent(0));
-        assert!(header(0x80, 0, 0).is_consistent(3));
-        assert!(!header(0x80, 1, 0).is_consistent(3));
-    }
-
-    /// The AC-3 probe: a payload whose probed bytes are not the 2-byte
-    /// syncword is not AC-3, whatever its length, and a payload that is
-    /// exactly the syncword is.
-    #[test]
-    fn classify_private1_probes_the_ac3_syncword() {
-        // Pointer 1 addresses the payload's first byte: no syncword there.
-        assert_eq!(
-            Codec::classify_private1(0x80, &header(0x80, 1, 1), &[0x12, 0x34, 0x56]),
-            None
-        );
-        // Exactly the 2-byte syncword: a real (if minimal) AC-3 start.
-        assert_eq!(
-            Codec::classify_private1(0x80, &header(0x80, 1, 1), &AC3_SYNCWORD),
-            Some(Codec::Ac3)
-        );
-        // A single 0x0B byte is not the syncword.
-        assert_eq!(
-            Codec::classify_private1(0x80, &header(0x80, 1, 1), &[0x0B]),
-            None
-        );
-    }
-
-    /// A `picture_start_code` in the final three bytes is not a picture: the
-    /// scan must not index past the end of the stream.
-    #[test]
-    fn split_mpeg2_pictures_handles_a_start_code_at_the_tail() {
-        // Sequence header, a picture, then a bare `00 00 01` at the very end.
-        let data = [0u8, 0, 1, 0xB3, 1, 2, 0, 0, 1];
-        assert_eq!(split_mpeg2_pictures(&data), alloc::vec![(0, data.len())]);
-
-        // Two picture start codes, the second opening the final four bytes: a
-        // new access unit begins there.
-        let data = [0u8, 0, 1, 0x00, 1, 2, 0, 0, 1, 0x00];
-        assert_eq!(
-            split_mpeg2_pictures(&data),
-            alloc::vec![(0, 6), (6, data.len())]
-        );
-    }
-
-    /// A complete, valid-looking AC-3 frame in the prefix the pointer skips
-    /// past is *not* part of the track: the first packet of a substream
-    /// starts the elementary stream at the access unit the pointer names.
-    #[test]
-    fn a_complete_frame_before_the_first_access_unit_is_not_emitted() {
-        let es = std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.a0.ac3"))
-            .expect("real AC-3 elementary stream fixture");
-        let frames = crate::ac3_syncframe::split_ac3_syncframes(&es);
-        assert!(frames.len() >= 2, "fixture carries several syncframes");
-        let (first, second) = (frames[0], frames[1]);
-
-        // Body = first frame (skipped) then the second one, which the pointer
-        // names: pointer is 1-based from the first body byte.
-        let mut body = first.to_vec();
-        body.extend_from_slice(second);
-        let pointer = u16::try_from(first.len() + 1).expect("a small frame");
-        let mut payload = alloc::vec![0x80u8, 1];
-        payload.extend_from_slice(&pointer.to_be_bytes());
-        payload.extend_from_slice(&body);
-
-        let pack_header = &std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.ps"))
-            .expect("real PS fixture")[..14];
-        let mut ps = pack_header.to_vec();
-        ps.extend_from_slice(&[0, 0, 1, STREAM_ID_PRIVATE_1]);
-        let pes_data_len = 3 + payload.len();
-        ps.extend_from_slice(
-            &u16::try_from(pes_data_len)
-                .expect("a small PES")
-                .to_be_bytes(),
-        );
-        ps.extend_from_slice(&[0x80, 0x00, 0x00]);
-        ps.extend_from_slice(&payload);
-
-        let media = PsDemux::new().demux(&ps).expect("demux a one-packet PS");
-        let track = media
-            .tracks
-            .iter()
-            .find(|t| matches!(t.spec.config, crate::pipeline::CodecConfig::Ac3 { .. }))
-            .expect("the AC-3 substream");
-        assert_eq!(
-            track.samples.len(),
-            1,
-            "only the access unit the pointer names is emitted"
-        );
-        assert_eq!(
-            track.samples[0].data.as_ref(),
-            second,
-            "the sample is the second frame, not the prefix frame"
-        );
-    }
+fn limit_error(what: &'static str) -> Error {
+    Error::InvalidInput(what)
 }

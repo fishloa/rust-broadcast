@@ -369,7 +369,7 @@ pub enum Error {
     },
 
     /// The MPEG-1/2 Program Stream framing could not be parsed
-    /// ([`PsDemux`](crate::PsDemux) input — ISO/IEC 13818-1 §2.5, via `mpeg_ps`).
+    /// ([`StreamingPsDemux`](crate::StreamingPsDemux) input — ISO/IEC 13818-1 §2.5, via `mpeg_ps`).
     #[error("program stream: {0}")]
     Ps(#[from] mpeg_ps::Error),
 

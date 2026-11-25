@@ -18,8 +18,8 @@ use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
 use container_probe::{Format, IsobmffLayout, Probe};
 use thiserror::Error;
 use transmux::{
-    DemuxEvent, Media, PsDemux, Sample, StreamingFlvDemux, StreamingTsDemux, Track, TrackId,
-    TrackSpec, WebmDemux,
+    DemuxEvent, Media, Sample, StreamingFlvDemux, StreamingTsDemux, Track, TrackId, TrackSpec,
+    WebmDemux,
 };
 
 use crate::ingress::{IngestSession, ProgramId, SessionEvent};
@@ -200,7 +200,7 @@ pub enum DemuxerKind {
     Mp4,
     /// Matroska / WebM → [`WebmDemux`].
     Webm,
-    /// MPEG-1/2 Program Stream → [`PsDemux`].
+    /// MPEG-1/2 Program Stream → [`StreamingPsDemux`](transmux::StreamingPsDemux).
     Ps,
     /// FLV → [`StreamingFlvDemux`].
     StreamingFlv,
@@ -585,12 +585,11 @@ pub fn demux_identified(
                 tracks: d.unpackage(bytes)?.tracks,
             })
         }
-        DemuxerKind::Ps => {
-            let mut d = PsDemux::new();
-            Ok(ParsedFile {
-                tracks: d.unpackage(bytes)?.tracks,
-            })
-        }
+        // A Program Stream streams through `StreamingPsDemux` in
+        // `StreamingFileSession`; this whole-buffer path has no arm for it.
+        DemuxerKind::Ps => Err(FileReaderError::UnsupportedFormat {
+            format: Format::MpegPs.name(),
+        }),
         DemuxerKind::StreamingFlv => demux_streaming_flv(bytes)
             .and_then(media_into_parsed)
             .map_err(map_demux_error),

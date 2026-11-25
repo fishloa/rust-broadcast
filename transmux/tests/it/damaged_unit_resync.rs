@@ -6,7 +6,7 @@
 use broadcast_common::Unpackage;
 use transmux::ir::InputDegradation;
 use transmux::media::Media;
-use transmux::{PsDemux, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind};
+use transmux::{RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind};
 
 const PACK_START_CODE: [u8; 4] = [0x00, 0x00, 0x01, 0xBA];
 
@@ -26,7 +26,7 @@ fn total_bytes(m: &Media) -> usize {
 #[test]
 fn ps_damaged_pack_header_in_the_middle_is_skipped_and_reported() {
     let clean_bytes = fixture("ps/h264-ac3.ps");
-    let clean = PsDemux::new().unpackage(&clean_bytes).unwrap();
+    let clean = test_harness::collect::media_from_ps(&clean_bytes, 4096).unwrap();
     assert!(clean.degraded.is_empty(), "a clean stream reports nothing");
 
     let packs: Vec<usize> = clean_bytes
@@ -54,7 +54,7 @@ fn ps_damaged_pack_header_in_the_middle_is_skipped_and_reported() {
     let mut bytes = clean_bytes.clone();
     bytes[victim + 4] = 0x00;
 
-    let damaged = PsDemux::new().unpackage(&bytes).expect("must not abort");
+    let damaged = test_harness::collect::media_from_ps(&bytes, 4096).expect("must not abort");
     assert_eq!(
         damaged.degraded,
         vec![InputDegradation::MalformedUnit {
@@ -82,7 +82,7 @@ fn ps_damaged_pack_header_in_the_middle_is_skipped_and_reported() {
 #[test]
 fn ps_with_no_recoverable_pack_is_still_an_error() {
     assert!(matches!(
-        PsDemux::new().unpackage(&[0xAB; 64][..]),
+        test_harness::collect::media_from_ps(&[0xAB; 64][..], 4096),
         Err(transmux::error::Error::Ps(..))
     ));
 }

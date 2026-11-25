@@ -17,7 +17,9 @@ use broadcast_common::clock33::{WRAP_33BIT, unwrap_delta};
 use broadcast_common::{Demand, Stage, Timestamp};
 use bytes::Bytes;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use transmux::{DemuxEvent, Sample, StreamingFlvDemux, StreamingTsDemux, TrackId, TrackSpec};
+use transmux::{
+    DemuxEvent, Sample, StreamingFlvDemux, StreamingPsDemux, StreamingTsDemux, TrackId, TrackSpec,
+};
 
 use crate::file_source::{
     ADJACENT_PAIR_LEN, FileReaderError, MAX_SAMPLES_PER_DRAIN, PassRange, advance_offsets,
@@ -66,6 +68,8 @@ pub enum StreamContainer {
     /// ISO base media file format, progressive or fragmented
     /// ([`Mp4Demux`]).
     Mp4,
+    /// MPEG-1/2 Program Stream ([`StreamingPsDemux`]).
+    MpegPs,
 }
 
 impl StreamContainer {
@@ -75,6 +79,7 @@ impl StreamContainer {
             StreamContainer::MpegTs => "mpeg-ts",
             StreamContainer::Flv => "flv",
             StreamContainer::Mp4 => "mp4",
+            StreamContainer::MpegPs => "mpeg-ps",
         }
     }
 }
@@ -199,6 +204,8 @@ enum Demux {
     Flv(StreamingFlvDemux),
     /// ISO base media file format (seekable byte ranges).
     Mp4(Box<Mp4Demux>),
+    /// MPEG-1/2 Program Stream.
+    Ps(StreamingPsDemux),
 }
 
 impl Demux {
@@ -207,6 +214,7 @@ impl Demux {
             StreamContainer::MpegTs => Demux::Ts(StreamingTsDemux::new()),
             StreamContainer::Flv => Demux::Flv(StreamingFlvDemux::new()),
             StreamContainer::Mp4 => Demux::Mp4(Box::new(Mp4Demux::seekable(mp4.clone()))),
+            StreamContainer::MpegPs => Demux::Ps(StreamingPsDemux::new()),
         }
     }
 
@@ -218,6 +226,9 @@ impl Demux {
             (Demux::Flv(demux), FileInput::Bytes(bytes)) => {
                 demux.feed(bytes).map_err(FileReaderError::Flv)
             }
+            (Demux::Ps(demux), FileInput::Bytes(bytes)) => demux
+                .feed(bytes, Timestamp::ZERO)
+                .map_err(FileReaderError::Demux),
             (Demux::Mp4(demux), FileInput::At { offset, bytes }) => demux
                 .feed(Mp4Input::At { offset, bytes }, Timestamp::ZERO)
                 .map_err(FileReaderError::Demux),
@@ -233,6 +244,7 @@ impl Demux {
             Demux::Ts(demux) => demux.poll_event(),
             Demux::Flv(demux) => demux.poll_event(),
             Demux::Mp4(demux) => demux.poll(),
+            Demux::Ps(demux) => demux.poll(),
         }
     }
 
@@ -244,6 +256,7 @@ impl Demux {
                 Ok(())
             }
             Demux::Mp4(demux) => demux.finish().map_err(FileReaderError::Demux),
+            Demux::Ps(demux) => demux.finish().map_err(FileReaderError::Demux),
         }
     }
 
@@ -263,6 +276,7 @@ impl Demux {
             Demux::Ts(_) => StreamContainer::MpegTs.name(),
             Demux::Flv(_) => StreamContainer::Flv.name(),
             Demux::Mp4(_) => StreamContainer::Mp4.name(),
+            Demux::Ps(_) => StreamContainer::MpegPs.name(),
         }
     }
 }

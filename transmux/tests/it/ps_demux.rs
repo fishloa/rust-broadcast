@@ -1,4 +1,4 @@
-//! `PsDemux` gate — MPEG-2 Program Stream → hub `Media` IR, verified against
+//! `StreamingPsDemux` gate — MPEG-2 Program Stream → hub `Media` IR, verified against
 //! ffprobe / ffmpeg oracles for `fixtures/ps/h264-ac3.ps` (issue #470).
 //!
 //! Oracles (committed):
@@ -17,9 +17,7 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::Unpackage;
 use test_fixtures::ffprobe;
-use transmux::PsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
@@ -74,7 +72,7 @@ fn ref_avcc_body(mp4: &[u8]) -> Vec<u8> {
 #[test]
 fn enumerates_two_tracks_h264_then_ac3() {
     let ps = load_ps();
-    let media: Media = PsDemux::new().unpackage(&ps).expect("demux must succeed");
+    let media: Media = test_harness::collect::media_from_ps(&ps, 4096).expect("demux must succeed");
 
     assert_eq!(media.tracks.len(), 2, "must demux exactly 2 tracks");
     assert!(
@@ -97,7 +95,7 @@ fn enumerates_two_tracks_h264_then_ac3() {
 #[test]
 fn sample_counts_and_oracle_timing() {
     let ps = load_ps();
-    let media: Media = PsDemux::new().unpackage(&ps).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&ps, 4096).expect("demux");
     let rows = ffprobe::packets("ps/h264-ac3.packets.csv");
     let video_rows = ffprobe::of_type(&rows, "video");
     let audio_rows = ffprobe::of_type(&rows, "audio");
@@ -191,7 +189,7 @@ fn config_byte_oracle() {
     use broadcast_common::Serialize;
 
     let ps = load_ps();
-    let media: Media = PsDemux::new().unpackage(&ps).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&ps, 4096).expect("demux");
 
     // Serialize the demuxed avcC box and strip its 8-byte box header → body.
     let CodecConfig::Avc { ref config, .. } = media.tracks[0].spec.config else {
@@ -259,7 +257,7 @@ fn config_byte_oracle() {
 #[test]
 fn video_sample_fidelity() {
     let ps = load_ps();
-    let media: Media = PsDemux::new().unpackage(&ps).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&ps, 4096).expect("demux");
 
     let mp4 = ref_mp4();
     let tracks = ref_tracks(&mp4);
@@ -327,7 +325,7 @@ fn video_sample_fidelity() {
 #[test]
 fn audio_frame_validity() {
     let ps = load_ps();
-    let media: Media = PsDemux::new().unpackage(&ps).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&ps, 4096).expect("demux");
     let atrack = &media.tracks[1];
     assert_eq!(atrack.samples.len(), 88, "88 AC-3 frames");
     for (i, s) in atrack.samples.iter().enumerate() {
