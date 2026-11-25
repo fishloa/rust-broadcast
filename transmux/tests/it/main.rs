@@ -117,6 +117,9 @@ mod mpegh;
 mod mpegh_ts;
 mod nal_keyframe;
 mod opengop_anchor;
+#[cfg(feature = "std")]
+#[path = "support/packagers.rs"]
+mod packagers;
 mod paff_pairing;
 mod pcr_off_clock_extension;
 mod pipeline;
@@ -156,6 +159,8 @@ mod sample_table_digest;
 mod sdp_session;
 mod segment_cut_policy;
 mod segment_emsg;
+#[cfg(feature = "std")]
+mod segment_log;
 mod segmenter;
 mod segmenter_progress_bounds;
 #[path = "support/segmenter_stage.rs"]

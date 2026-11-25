@@ -11,13 +11,12 @@
 use std::path::PathBuf;
 use transmux::TrackId;
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Stage, Unpackage};
 use std::time::Duration;
 use transmux::Sample;
-use transmux::ll_dash::{Chunk, LlSegmenter};
-use transmux::media::{Media, Track};
+use transmux::ll_dash::LlSegmenter;
+use transmux::media::Media;
 use transmux::pipeline::{FragmentTrackData, TrackSpec};
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::ts_demux::TsDemux;
@@ -119,7 +118,16 @@ fn child_boxes<'a>(body: &'a [u8], four_cc: &[u8; 4]) -> Vec<&'a [u8]> {
 // Helpers to run the packagers and reconstruct samples.
 // ---------------------------------------------------------------------------
 
-fn chunks_for(media: &Media, chunk_samples: usize) -> Vec<Chunk> {
+/// One emitted chunk, reconstructed from its bytes: the `styp` that opens a
+/// segment names its number, and the `moof`'s `mfhd` carries the sequence.
+struct ChunkView {
+    data: Vec<u8>,
+    segment_number: u64,
+    is_segment_start: bool,
+    sequence_number: u32,
+}
+
+fn chunks_for(media: &Media, chunk_samples: usize) -> Vec<ChunkView> {
     let mut seg = LlSegmenter::new(
         specs(media),
         media.movie_timescale,
@@ -127,7 +135,67 @@ fn chunks_for(media: &Media, chunk_samples: usize) -> Vec<Chunk> {
         chunk_samples,
     )
     .expect("LlSegmenter");
-    seg.package(media).expect("package chunks")
+    let outputs = crate::packagers::drive_samples(&mut seg, media).expect("drive chunks");
+    view_chunks(outputs)
+}
+
+/// Group a segmenter's [`MuxOutput`](transmux::mux_stage::MuxOutput)s the way
+/// the chunk metadata `Chunk` used to carry them: a chunk that opens with
+/// `styp` starts a new segment, and `mfhd.sequence_number` reads back out of
+/// its `moof`.
+fn view_chunks(outputs: Vec<transmux::mux_stage::MuxOutput>) -> Vec<ChunkView> {
+    let mut segment_number = 0u64;
+    let mut out = Vec::new();
+    for output in outputs {
+        let transmux::mux_stage::MuxOutput::Bytes(bytes) = output else {
+            continue;
+        };
+        let data = bytes.to_vec();
+        let is_segment_start = data.get(4..8) == Some(b"styp");
+        if is_segment_start {
+            segment_number += 1;
+        }
+        out.push(ChunkView {
+            sequence_number: mfhd_sequence(&data),
+            data,
+            segment_number,
+            is_segment_start,
+        });
+    }
+    out
+}
+
+/// Drain a segmenter's finished chunks.
+fn drain(seg: &mut LlSegmenter) -> Vec<transmux::mux_stage::MuxOutput> {
+    use broadcast_common::Stage;
+    let mut out = Vec::new();
+    while let Some(item) = seg.poll() {
+        out.push(item);
+    }
+    out
+}
+
+/// `mfhd.sequence_number` of the first `moof` in `data`.
+fn mfhd_sequence(data: &[u8]) -> u32 {
+    let mut off = 0usize;
+    while off + 8 <= data.len() {
+        let size = u32::from_be_bytes(data[off..off + 4].try_into().expect("4 bytes")) as usize;
+        let ty = &data[off + 4..off + 8];
+        if ty == b"moof" && off + 24 <= data.len() {
+            // moof header (8) + mfhd header (8) + fullbox version/flags (4) +
+            // sequence_number (4).
+            return u32::from_be_bytes(
+                data[off + 20..off + 24]
+                    .try_into()
+                    .expect("a mfhd sequence number"),
+            );
+        }
+        if size < 8 {
+            break;
+        }
+        off += size;
+    }
+    0
 }
 
 /// Demux (init + concatenated fragment bytes) back into a Media.
@@ -176,7 +244,7 @@ fn chunked_structure_multiple_chunks_contiguous_tfdt_and_seq() {
     );
 
     // Group by segment and assert N>1 chunks in the first full segment.
-    let seg1: Vec<&Chunk> = chunks.iter().filter(|c| c.segment_number == 1).collect();
+    let seg1: Vec<&ChunkView> = chunks.iter().filter(|c| c.segment_number == 1).collect();
     assert!(
         seg1.len() > 1,
         "segment 1 must split into >1 chunks, got {}",
@@ -256,7 +324,7 @@ fn chunk_concat_equals_whole_segment_samples() {
     };
 
     // Take segment 1's chunks and concatenate their bytes.
-    let seg1: Vec<&Chunk> = chunks.iter().filter(|c| c.segment_number == 1).collect();
+    let seg1: Vec<&ChunkView> = chunks.iter().filter(|c| c.segment_number == 1).collect();
     assert!(seg1.len() > 1);
     let mut concat = Vec::new();
     for c in &seg1 {
@@ -345,13 +413,13 @@ fn full_stream_video_nal_sequence_preserved() {
 #[test]
 fn ll_mpd_carries_availability_and_service_description() {
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(
+    let pkg = crate::ll_packager::ll_packager(
         Duration::from_secs(2),
         Duration::from_millis(500),
         Duration::from_secs(3),
     )
     .with_playback_rate(0.9, 1.1);
-    let xml = pkg.package(&media).expect("LL MPD");
+    let xml = crate::packagers::ll_dash(&pkg, &media).expect("LL MPD");
 
     let root = xml::parse(&xml);
     assert_eq!(root.name, "MPD");
@@ -405,6 +473,7 @@ fn ll_mpd_carries_availability_for_timeline_addressing() {
     // (see `dash_mpd.rs`'s `timeline_addressing_without_segments_is_rejected`
     // for what it rejects) — the durations' real values don't matter to this
     // string-injection fix, only the resulting element shape does.
+    let log = crate::packagers::log(&media);
     let segments: Vec<transmux::TrackSegments> = media
         .tracks
         .iter()
@@ -421,7 +490,8 @@ fn ll_mpd_carries_availability_for_timeline_addressing() {
     );
     pkg.base.addressing = transmux::Addressing::Timeline;
     pkg.base.segments = segments;
-    let xml = pkg.package(&media).expect("LL MPD (Timeline addressing)");
+    let xml =
+        crate::packagers::ll_dash_with(&pkg, &media, &log).expect("LL MPD (Timeline addressing)");
 
     let root = xml::parse(&xml);
     let templates = descendants(&root, "SegmentTemplate");
@@ -651,7 +721,7 @@ mod xml {
 #[test]
 fn ll_mpd_carries_utc_timing() {
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(
+    let pkg = crate::ll_packager::ll_packager(
         Duration::from_secs(2),
         Duration::from_millis(500),
         Duration::from_secs(3),
@@ -660,7 +730,7 @@ fn ll_mpd_carries_utc_timing() {
         transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014,
         "https://time.example/x?a=1&b=2",
     );
-    let xml = pkg.package(&media).expect("LL MPD");
+    let xml = crate::packagers::ll_dash(&pkg, &media).expect("LL MPD");
 
     let root = xml::parse(&xml);
     let utc = root.find("UTCTiming").expect("UTCTiming element");
@@ -688,12 +758,12 @@ fn ll_mpd_carries_utc_timing() {
 #[test]
 fn ll_mpd_omits_utc_timing_by_default() {
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(
+    let pkg = crate::ll_packager::ll_packager(
         Duration::from_secs(2),
         Duration::from_millis(500),
         Duration::from_secs(3),
     );
-    let xml = pkg.package(&media).expect("LL MPD");
+    let xml = crate::packagers::ll_dash(&pkg, &media).expect("LL MPD");
     assert!(
         !xml.contains("<UTCTiming"),
         "no UTCTiming unless requested: {xml}"
@@ -749,13 +819,13 @@ fn ll_mpd_emits_each_registered_utc_timing_scheme() {
     ];
     for (constant, uri) in schemes {
         assert_eq!(constant, uri);
-        let mut pkg = crate::ll_packager::ll_packager(
+        let pkg = crate::ll_packager::ll_packager(
             Duration::from_secs(2),
             Duration::from_millis(500),
             Duration::from_secs(3),
         )
         .with_utc_timing(constant, "time.example");
-        let xml = pkg.package(&media).expect("LL MPD");
+        let xml = crate::packagers::ll_dash(&pkg, &media).expect("LL MPD");
         let root = xml::parse(&xml);
         let utc = root.find("UTCTiming").expect("UTCTiming element");
         assert_eq!(utc.attr("schemeIdUri"), Some(uri));
@@ -834,7 +904,7 @@ fn chunk_takes_the_sample_that_lands_exactly_on_its_target() {
     seg.push(other, av_sample(10, 3600)).unwrap();
     seg.push(other, av_sample(11, 3600)).unwrap();
     seg.push(video, av_sample(1, 3600)).unwrap();
-    let first = seg.take_ready();
+    let first = view_chunks(drain(&mut seg));
     assert_eq!(first.len(), 1, "one chunk after the second anchor sample");
     assert_eq!(
         samples_for(&first[0].data, 3),
@@ -848,7 +918,7 @@ fn chunk_takes_the_sample_that_lands_exactly_on_its_target() {
     seg.push(other, av_sample(13, 3600)).unwrap();
     seg.push(other, av_sample(14, 3600)).unwrap();
     seg.push(video, av_sample(3, 3600)).unwrap();
-    let second = seg.take_ready();
+    let second = view_chunks(drain(&mut seg));
     assert_eq!(
         second.len(),
         1,
@@ -877,7 +947,7 @@ fn chunk_target_one_tick_past_the_fit_still_takes_two_samples() {
     seg.push(other, av_sample(10, 3600)).unwrap();
     seg.push(other, av_sample(11, 3600)).unwrap();
     seg.push(video, av_sample(1, 3601)).unwrap();
-    let chunks = seg.take_ready();
+    let chunks = view_chunks(drain(&mut seg));
     assert_eq!(samples_for(&chunks[0].data, 3), 2);
 }
 
@@ -897,7 +967,7 @@ fn chunk_target_one_tick_short_of_the_fit_takes_one_sample() {
     seg.push(other, av_sample(10, 3600)).unwrap();
     seg.push(other, av_sample(11, 3600)).unwrap();
     seg.push(video, av_sample(1, 3599)).unwrap();
-    let chunks = seg.take_ready();
+    let chunks = view_chunks(drain(&mut seg));
     assert_eq!(samples_for(&chunks[0].data, 3), 1);
 }
 
@@ -964,67 +1034,3 @@ fn ll_dash_demand_is_saturated_exactly_at_the_pending_bound() {
 // ===========================================================================
 // Package::package — equal decode time merges the non-anchor track first
 // ===========================================================================
-
-fn merge_media(order: [TrackId; 2]) -> Media {
-    let video = Track::new(
-        crate::hub_fixtures::video_track(),
-        (0..6).map(|i| av_sample(i as u8, 3600)).collect::<Vec<_>>(),
-    );
-    let audio = Track::new(
-        crate::hub_fixtures::audio_track(),
-        (0..6)
-            .map(|i| {
-                Sample::new(vec![100 + i as u8; 8], None, None, Some(1920), true)
-                    .expect("valid timing")
-            })
-            .collect::<Vec<_>>(),
-    );
-    let tracks = order
-        .into_iter()
-        .map(|id| {
-            if id == TrackId::new(1) {
-                video.clone()
-            } else {
-                audio.clone()
-            }
-        })
-        .collect();
-    Media::new(tracks, ninety_k(1000))
-}
-
-fn first_chunk_counts(order: [TrackId; 2]) -> Vec<(u32, usize)> {
-    let media = merge_media(order);
-    let mut seg = LlSegmenter::new(
-        vec![
-            crate::hub_fixtures::video_track(),
-            crate::hub_fixtures::audio_track(),
-        ],
-        ninety_k(1000),
-        Duration::from_secs(2),
-        1,
-    )
-    .expect("LlSegmenter constructor");
-    let chunks = seg.package(&media).expect("package");
-    chunk_traf_counts(&chunks[0].data)
-}
-
-#[test]
-fn equal_decode_times_merge_audio_before_video() {
-    // Video listed first in the media: the tie-break still pushes the audio
-    // sample before the video one, so the first chunk carries both.
-    let counts = first_chunk_counts([TrackId::new(1), TrackId::new(2)]);
-    assert_eq!(
-        counts.iter().find(|(id, _)| *id == 2).map(|(_, n)| *n),
-        Some(1),
-        "the audio sample at the shared dts rides the first chunk: {counts:?}"
-    );
-
-    // Audio listed first: the earlier cursor must still win, so the merge does
-    // not depend on declaration order.
-    let counts = first_chunk_counts([TrackId::new(2), TrackId::new(1)]);
-    assert_eq!(
-        counts.iter().find(|(id, _)| *id == 2).map(|(_, n)| *n),
-        Some(1),
-        "equal decode times merge audio first regardless of track order: {counts:?}"
-    );
-}

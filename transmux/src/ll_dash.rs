@@ -62,47 +62,16 @@ use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
-use crate::media::Media;
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_chunk, build_init_segment};
 use crate::segmenter::{MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor};
-use broadcast_common::Package;
 
 // ===========================================================================
 // LlSegmenter — chunked-CMAF output packager
 // ===========================================================================
-
-/// One finished CMAF chunk: its bytes plus the metadata a caller needs to place
-/// it (which segment it belongs to, whether it opens that segment).
-#[derive(Debug, Clone)]
-pub struct Chunk {
-    /// The chunk bytes: `styp`+`moof`+`mdat` for the first chunk of a segment,
-    /// or a bare `moof`+`mdat` for a continuation chunk.
-    pub data: Vec<u8>,
-    /// 1-based index of the segment this chunk belongs to.
-    pub segment_number: u64,
-    /// `true` if this is the first chunk of its segment (carries `styp`, and its
-    /// anchor-track first sample is a keyframe).
-    pub is_segment_start: bool,
-    /// `mfhd.sequence_number` of this chunk's `moof`.
-    pub sequence_number: u32,
-}
-
-/// The [`MuxInput`]/[`MuxOutput`] mapping of one chunk: its bytes are appended
-/// to the output stream. The chunk's segment placement
-/// ([`Chunk::segment_number`], [`Chunk::sequence_number`],
-/// [`Chunk::is_segment_start`]) stays on the [`Chunk`] itself — a chunk is a
-/// fragment, not a whole segment, so no [`SegmentSummary`](crate::mux_stage::SegmentSummary)
-/// describes it.
-impl From<Chunk> for MuxOutput {
-    fn from(chunk: Chunk) -> Self {
-        MuxOutput::Bytes(bytes::Bytes::from(chunk.data))
-    }
-}
 
 /// Per-track accumulation state for the segment currently being built.
 struct TrackState {
@@ -125,12 +94,14 @@ struct TrackState {
 ///
 /// Same segmentation state machine as [`crate::segmenter::Segmenter`] — segments
 /// are cut on the anchor track's sync samples once the target duration is reached
-/// — but each segment is emitted as an ordered list of [`Chunk`]s: one
+/// — but each segment is emitted as an ordered list of chunks: one
 /// `moof`+`mdat` per `chunk_samples` anchor-track samples (e.g. `1` for per-frame
 /// LL). Concatenating a segment's chunks reproduces the whole-segment
 /// [`crate::build_media_segment`] coded-sample stream (see the module docs).
 ///
 /// ```
+/// use broadcast_common::Stage;
+/// use transmux::mux_stage::MuxOutput;
 /// use transmux::{CodecConfig, LlSegmenter, Sample, TrackSpec};
 /// # use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
 /// # fn spec() -> TrackSpec {
@@ -166,9 +137,11 @@ struct TrackState {
 /// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(transmux::TrackId::new(1), au(true)).unwrap();               // keyframe
 /// seg.push(transmux::TrackId::new(1), au(false)).unwrap();
-/// let chunks = seg.take_ready();                // write chunk.data over HTTP
-/// assert_eq!(chunks.len(), 2);                  // one chunk per pushed frame
-/// assert!(chunks[0].is_segment_start);
+/// let mut chunks = 0;
+/// while seg.poll().is_some() {                  // write each chunk over HTTP
+///     chunks += 1;
+/// }
+/// assert_eq!(chunks, 2);                        // one chunk per pushed frame
 /// seg.flush().unwrap();                         // trailing chunks (none pending here)
 /// ```
 pub struct LlSegmenter {
@@ -192,12 +165,10 @@ pub struct LlSegmenter {
     current_segment: u64,
     /// `true` until the first chunk of the current segment has been emitted.
     segment_open: bool,
-    /// Chunks finished but not yet taken by the caller. The single source of
-    /// truth for both the inherent [`take_ready`](Self::take_ready) drain and
-    /// [`Stage::poll`] — whichever API the caller uses pops from this same
-    /// queue, so a chunk is delivered exactly once no matter which (or both)
-    /// APIs drive this segmenter.
-    ready: VecDeque<Chunk>,
+    /// Chunks finished but not yet polled, as [`MuxOutput::Bytes`] — a chunk is
+    /// a fragment, not a whole segment, so it carries no
+    /// [`SegmentSummary`](crate::mux_stage::SegmentSummary).
+    ready: VecDeque<MuxOutput>,
 }
 
 impl LlSegmenter {
@@ -357,11 +328,6 @@ impl LlSegmenter {
         Ok(())
     }
 
-    /// Remove and return every chunk finished since the last call, in order.
-    pub fn take_ready(&mut self) -> Vec<Chunk> {
-        self.ready.drain(..).collect()
-    }
-
     /// Flush the whole current segment: emit all remaining buffered anchor
     /// samples (and every non-anchor sample) as chunks, then open the next
     /// segment. The final chunk of a segment carries any trailing samples.
@@ -463,12 +429,8 @@ impl LlSegmenter {
 
         self.next_seq += 1;
         self.segment_open = true;
-        self.ready.push_back(Chunk {
-            data: chunk_bytes,
-            segment_number: self.current_segment,
-            is_segment_start: is_start,
-            sequence_number: seq,
-        });
+        self.ready
+            .push_back(MuxOutput::Bytes(bytes::Bytes::from(chunk_bytes)));
         Ok(())
     }
 }
@@ -499,21 +461,13 @@ fn take_span(t: &TrackState, target_ticks: u64) -> usize {
     end.max(1).min(t.pending.len())
 }
 
-/// [`Stage`] adoption (media plane step 2e-2): `In = (u32, Sample)`, same
-/// reasoning as [`crate::segmenter::Segmenter`]'s impl. `Out = Chunk` —
-/// [`take_ready`](Self::take_ready)'s own item type, not unified with any
-/// other segmenter's `Out`.
-///
-/// Every inherent method — [`push`](Self::push), [`take_ready`](Self::take_ready),
-/// [`flush`](Self::flush) — keeps working unchanged; this impl is an
-/// additional, uniform way to drive the same engine. [`Stage::poll`] and the
-/// inherent [`take_ready`](Self::take_ready) drain both read from the *same*
-/// `ready` queue (there is no separate staging copy), so a chunk is
-/// delivered exactly once no matter which API — inherent, `Stage`, or a mix
-/// of both on the same instance — the caller uses to retrieve it.
+/// [`Stage`] adoption: `In = MuxInput`, `Out = MuxOutput` — the same muxer
+/// vocabulary every other muxer stage speaks. Each finished chunk is one
+/// [`MuxOutput::Bytes`]; the inherent [`push`](Self::push) /
+/// [`flush`](Self::flush) keep working unchanged.
 impl Stage for LlSegmenter {
     type In<'a> = MuxInput;
-    type Out = Chunk;
+    type Out = MuxOutput;
     type Error = Error;
 
     fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
@@ -549,99 +503,6 @@ impl Stage for LlSegmenter {
                 .iter()
                 .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK),
         )
-    }
-}
-
-impl Package for LlSegmenter {
-    type Media = Media;
-    /// The ordered chunk list for the whole media (drained via the state machine
-    /// in one shot). Streaming callers use [`LlSegmenter::push`] /
-    /// [`LlSegmenter::take_ready`] instead.
-    type Output = Vec<Chunk>;
-    type Error = Error;
-
-    /// Package a complete [`Media`] into its full ordered chunk list.
-    ///
-    /// Samples are pushed **interleaved by decode time** across tracks so each
-    /// segment carries the audio temporally aligned to its video (a per-track
-    /// batch push would dump all audio into segment 1). At equal decode times the
-    /// non-anchor tracks are pushed *before* the anchor, so a segment-boundary
-    /// keyframe cut sees that segment's audio already buffered. Then flush.
-    ///
-    /// # Errors
-    /// [`Error::InvalidInput`] on an empty track list, or a chunk-build failure.
-    fn package(&mut self, media: &Media) -> Result<Vec<Chunk>> {
-        if media.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
-        }
-        let anchor_id = self.tracks[self.anchor].spec.track_id;
-
-        // A cursor per input track: next-sample index + its decode time in
-        // *seconds* (cross-track comparable despite differing timescales),
-        // accumulated from sample durations.
-        struct Cursor<'a> {
-            track_id: TrackId,
-            timescale: Timescale,
-            samples: &'a [Sample],
-            idx: usize,
-            dts_ticks: u64,
-            /// Same duration-then-dts-delta rule the push path uses, so the
-            /// merge order does not collapse for samples carrying
-            /// `duration: Some(0)`.
-            clock: MediaClock,
-            is_anchor: bool,
-        }
-        let mut cursors: Vec<Cursor<'_>> = media
-            .tracks
-            .iter()
-            .map(|t| Cursor {
-                track_id: t.spec.track_id,
-                timescale: t.spec.timescale,
-                samples: &t.samples,
-                idx: 0,
-                dts_ticks: 0,
-                clock: MediaClock::new(),
-                is_anchor: t.spec.track_id == anchor_id,
-            })
-            .collect();
-
-        // Merge: repeatedly push the track whose next sample has the smallest
-        // decode time (seconds = dts_ticks / timescale, compared cross-multiplied
-        // to stay integer). Anchor loses ties so audio at the same instant is
-        // buffered first.
-        loop {
-            let mut best: Option<usize> = None;
-            for (i, c) in cursors.iter().enumerate() {
-                if c.idx >= c.samples.len() {
-                    continue;
-                }
-                best = Some(match best {
-                    None => i,
-                    Some(b) => {
-                        // c.timing.map(|t| t.dts) (sec) < best.dts (sec)  ⇔  c.ticks*best.ts < best.ticks*c.ts
-                        let lhs = c.dts_ticks as u128 * u128::from(cursors[b].timescale.get());
-                        let rhs = cursors[b].dts_ticks as u128 * u128::from(c.timescale.get());
-                        if lhs < rhs || (lhs == rhs && !c.is_anchor && cursors[b].is_anchor) {
-                            i
-                        } else {
-                            b
-                        }
-                    }
-                });
-            }
-            let Some(i) = best else { break };
-            let (track_id, sample) = {
-                let c = &mut cursors[i];
-                let s = c.samples[c.idx].clone();
-                c.dts_ticks += c.clock.tick(&s);
-                c.idx += 1;
-                (c.track_id, s)
-            };
-            self.push(track_id, sample)?;
-        }
-
-        self.flush()?;
-        Ok(self.take_ready())
     }
 }
 

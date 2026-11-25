@@ -12,8 +12,9 @@
 //!   writing through [`isobmff::writer::FragmentedWriter`] (the same boxes
 //!   [`build_init_segment`] and
 //!   [`build_media_segment`](crate::pipeline::build_media_segment) emit).
-//! - [`HlsPackager`] : [`Package`] `<Output = String>` — render an RFC 8216
-//!   media playlist describing a [`Media`].
+//! - [`HlsPackager`] — render an RFC 8216 media playlist from a track-spec
+//!   list and a [`SegmentSummaryLog`];
+//!   it never sees a sample.
 //!
 //! The [`Track`] IR is a thin wrapper over the existing public
 //! [`TrackSpec`] (codec config + timescale + track_id) and [`Sample`] (coded
@@ -33,7 +34,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
-use broadcast_common::{Package, Parse, Stage, Timestamp};
+use broadcast_common::{Parse, Stage, Timestamp};
 
 use crate::codec_config_ext::VvcRecordCodecInfo;
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
@@ -49,6 +50,7 @@ use crate::ir::{
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::pipeline::build_init_segment;
+use crate::segment_log::{SegmentSummaryLog, TrackSummary};
 use crate::segmenter::{MediaClock, choose_anchor};
 use alloc::sync::Arc;
 use bytes::Bytes;
@@ -133,6 +135,12 @@ pub struct CmafMuxStage {
     anchor_independent: bool,
     pending_discontinuity: bool,
     buffered: bool,
+    /// Per-track bytes accumulated since the fragment opened.
+    part_bytes: Vec<u64>,
+    /// Per-track sample counts accumulated since the fragment opened.
+    part_samples: Vec<u32>,
+    /// Per-track decode time of the fragment's first sample, once seen.
+    part_start: Vec<Option<u64>>,
     next_segment_sequence: u64,
     ready: alloc::collections::VecDeque<MuxOutput>,
 }
@@ -176,6 +184,9 @@ impl CmafMuxStage {
             anchor_independent: true,
             pending_discontinuity: false,
             buffered: false,
+            part_bytes: Vec::new(),
+            part_samples: Vec::new(),
+            part_start: Vec::new(),
             next_segment_sequence: 0,
             ready: alloc::collections::VecDeque::new(),
         }
@@ -214,6 +225,9 @@ impl CmafMuxStage {
             Some(existing) => *existing = spec,
             None => self.tracks.push(spec),
         }
+        self.part_bytes.resize(self.tracks.len(), 0);
+        self.part_samples.resize(self.tracks.len(), 0);
+        self.part_start.resize(self.tracks.len(), None);
         Ok(())
     }
 
@@ -303,6 +317,17 @@ impl CmafMuxStage {
         writer.push(isobmff::TrackId::new(track.value()), meta, &sample.data)?;
         let increment = self.track_clock[index].tick(&sample);
         self.track_next_decode[index] = self.track_next_decode[index].saturating_add(increment);
+        if self.part_start.get(index).copied().flatten().is_none()
+            && let Some(slot) = self.part_start.get_mut(index)
+        {
+            *slot = Some(dts);
+        }
+        if let Some(bytes) = self.part_bytes.get_mut(index) {
+            *bytes = bytes.saturating_add(sample.data.len() as u64);
+        }
+        if let Some(count) = self.part_samples.get_mut(index) {
+            *count = count.saturating_add(1);
+        }
         self.buffered = true;
         Ok(())
     }
@@ -344,6 +369,27 @@ impl CmafMuxStage {
             .iter()
             .find(|t| t.track_id == track)
             .map_or(self.movie_timescale.get(), |t| t.timescale.get());
+        let tracks: Vec<crate::mux_stage::TrackPart> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, spec)| {
+                let start = self.part_start.get(index).copied().flatten()?;
+                Some(crate::mux_stage::TrackPart {
+                    track: spec.track_id,
+                    start,
+                    duration: self
+                        .track_next_decode
+                        .get(index)
+                        .copied()
+                        .unwrap_or(start)
+                        .saturating_sub(start),
+                    timescale: spec.timescale.get(),
+                    bytes: self.part_bytes.get(index).copied().unwrap_or(0),
+                    samples: self.part_samples.get(index).copied().unwrap_or(0),
+                })
+            })
+            .collect();
         let summary = SegmentSummary {
             track,
             sequence: self.next_segment_sequence,
@@ -361,9 +407,13 @@ impl CmafMuxStage {
         self.anchor_independent = true;
         self.pending_discontinuity = false;
         self.buffered = false;
+        self.part_bytes.iter_mut().for_each(|b| *b = 0);
+        self.part_samples.iter_mut().for_each(|c| *c = 0);
+        self.part_start.iter_mut().for_each(|s| *s = None);
         self.ready.push_back(MuxOutput::Segment(SegmentOut {
             bytes: Bytes::from(fragment.bytes),
             summary,
+            tracks,
         }));
         Ok(())
     }
@@ -489,39 +539,47 @@ pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> R
     Ok(out)
 }
 
-/// Presentation span of `tracks` in seconds: from the earliest sample
-/// presentation time to the latest presentation end, over one common origin.
+/// Presentation span in seconds of the segments `tracks` recorded: from the
+/// earliest segment start to the latest segment end, each in its own track's
+/// timescale.
 ///
-/// A sample whose presentation time (`dts` plus composition offset) does not
-/// fit `i64`, or a span whose extent is not a finite number of seconds, is
-/// [`Error::InvalidInput`] rather than a wrapped instant or an infinite
-/// `EXTINF`.
-pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> Result<f64> {
-    let origin = TimelineOrigin::of(tracks.iter().copied());
+/// A summary's times are decode times, so a uniform composition offset (which
+/// every sample of a track carries through the summary) cancels in the span
+/// exactly as it did when the span was measured per sample. A span is
+/// non-negative by construction (`u64` ticks end no earlier than they start),
+/// and `u64` ticks over a non-zero timescale are always a finite number of
+/// seconds, so the only unrepresentable value is one the
+/// [`DecimalSeconds`] constructor refuses.
+pub(crate) fn presentation_span_secs_from_log(
+    kept: &[(&TrackSpec, TrackSummary<'_>)],
+) -> Result<f64> {
     let mut span: Option<(f64, f64)> = None;
-    for t in tracks {
-        let ts = f64::from(t.spec.timescale.get());
-        for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)?) {
-            let offset = i64::from(s.composition_offset()?.unwrap_or(0));
-            let pts = isobmff::frag_offsets::add_offset(dts, offset)? as f64 / ts;
-            let end = pts + f64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)) / ts;
-            span = Some(match span {
-                None => (pts, end),
-                Some((lo, hi)) => (lo.min(pts), hi.max(end)),
-            });
+    for (spec, summary) in kept {
+        let Some(first) = summary.runs().next() else {
+            continue;
+        };
+        if summary.timescale == 0 || spec.timescale.get() == 0 {
+            return Err(Error::InvalidInput(
+                "a segment summary names a zero timescale",
+            ));
         }
+        let timescale = f64::from(summary.timescale.max(spec.timescale.get()));
+        let lo = first.start as f64 / timescale;
+        let hi = summary.end() as f64 / timescale;
+        span = Some(match span {
+            None => (lo, hi),
+            Some((low, high)) => (low.min(lo), high.max(hi)),
+        });
     }
-    match span {
-        None => Ok(0.0),
-        Some((lo, hi)) if hi < lo => Ok(0.0),
-        Some((lo, hi)) => {
-            let secs = hi - lo;
-            if secs.is_finite() {
-                Ok(secs)
-            } else {
-                Err(Error::InvalidInput("presentation span is not finite"))
-            }
-        }
+    let secs = match span {
+        None => 0.0,
+        Some((lo, hi)) if hi < lo => 0.0,
+        Some((lo, hi)) => hi - lo,
+    };
+    if secs.is_finite() {
+        Ok(secs)
+    } else {
+        Err(Error::InvalidInput("presentation span is not finite"))
     }
 }
 
@@ -539,14 +597,15 @@ fn ceil_secs(secs: f64) -> u32 {
 // HlsPackager — Package<Output = String>
 // ---------------------------------------------------------------------------
 
-/// Render an RFC 8216 media playlist describing a [`Media`].
+/// Render an RFC 8216 media playlist from the segments a muxer produced.
 ///
-/// The whole `Media` is one multi-track CMAF segment (the [`CmafMuxStage`] output),
-/// so the playlist carries a single `#EXTINF` entry whose duration is the
-/// presentation span across every timed track, pointing at
-/// `{uri_prefix}{track_id}.m4s` named after the first timed track. Segments in
-/// a media playlist play one after another (RFC 8216 §3), so one entry per
-/// track would play the content once per track.
+/// The playlist never sees a sample: `tracks` is the track set, and `log` the
+/// [`SegmentSummary`]s [`CmafMuxStage`] emitted for it. What those describe is
+/// one multi-track CMAF artifact, so the playlist carries a single `#EXTINF`
+/// entry whose duration is the presentation span across every timed track,
+/// pointing at `{uri_prefix}{track_id}.m4s` named after the first timed track.
+/// Segments in a media playlist play one after another (RFC 8216 §3), so one
+/// entry per track would play the content once per track.
 #[derive(Debug, Clone)]
 pub struct HlsPackager {
     /// `#EXT-X-VERSION`.
@@ -567,30 +626,32 @@ impl Default for HlsPackager {
     }
 }
 
-impl Package for HlsPackager {
-    type Media = Media;
-    type Output = String;
-    type Error = Error;
-
-    fn package(&mut self, media: &Media) -> Result<String> {
-        if media.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+impl HlsPackager {
+    /// Render the media playlist for `tracks` from the segments `log` recorded.
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] when `tracks` is empty, when every track is
+    /// timestamp-less (a section-carried track records no duration, so it has
+    /// no `#EXTINF`), when the presentation span is not a representable
+    /// decimal seconds value, or when the shared init segment cannot be built.
+    pub fn render(&self, tracks: &[TrackSpec], log: &SegmentSummaryLog) -> Result<String> {
+        if tracks.is_empty() {
+            return Err(Error::InvalidInput(
+                "cannot render a playlist with no tracks",
+            ));
         }
         // A section-carried track (SCTE-35 `stream_type` 0x86, DSM-CC, private
         // sections) has no timestamps at all (`Sample::duration` is `None` for
-        // every sample, deliberately) — see the per-track skip below for why
-        // it is omitted from the playlist. Such a track is also frequently
-        // not BMFF-muxable at all (an opaque `CodecConfig::Data` track), so it
-        // must be excluded here too: only tracks that will actually become a
-        // `#EXTINF` segment below feed the shared init segment's track list.
-        let kept: Vec<&Track> = media
-            .tracks
+        // every sample, deliberately, so its summaries record a zero duration)
+        // — see the per-track skip below for why it is omitted from the
+        // playlist. Such a track is also frequently not BMFF-muxable at all (an
+        // opaque `CodecConfig::Data` track), so it must be excluded here too:
+        // only tracks that will actually become a `#EXTINF` segment below feed
+        // the shared init segment's track list.
+        let kept: Vec<(&TrackSpec, TrackSummary<'_>)> = tracks
             .iter()
-            .filter(|t| {
-                t.samples
-                    .iter()
-                    .any(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) != 0)
-            })
+            .filter_map(|spec| log.track(spec.track_id).map(|summary| (spec, summary)))
+            .filter(|(_, summary)| summary.duration != 0)
             .collect();
 
         // Every segment this packager names (`{prefix}{track_id}.m4s`) is
@@ -611,17 +672,20 @@ impl Package for HlsPackager {
         // leading span; `build_init_segment` is a pure function of (specs,
         // movie_timescale), the same inputs `CmafMux` uses, so this computes
         // the true offset without needing the actual segment bytes in hand.
-        let specs: Vec<TrackSpec> = kept.iter().map(|t| t.spec.clone()).collect();
-        let movie_timescale = media.movie_timescale;
+        let specs: Vec<TrackSpec> = kept.iter().map(|(spec, _)| (*spec).clone()).collect();
+        // The init segment's length is what `#EXT-X-MAP` needs, and every box
+        // in it is a fixed-size header, so the movie timescale (a four-byte
+        // value inside `mvhd`) cannot change it: the first kept track's
+        // timescale is a fine probe.
         let init_len = if specs.is_empty() {
             0
         } else {
-            build_init_segment(&specs, movie_timescale)?.len() as u64
+            build_init_segment(&specs, specs[0].timescale)?.len() as u64
         };
 
-        let Some(first) = kept.first() else {
+        let Some((first, _)) = kept.first() else {
             return Err(Error::InvalidInput(
-                "cannot package a Media whose every track is timestamp-less \
+                "cannot render a playlist whose every track is timestamp-less \
                  (section-carried): an HLS media playlist needs at least one \
                  segment with a real EXTINF duration",
             ));
@@ -629,11 +693,11 @@ impl Package for HlsPackager {
         // One segment for the one multi-track CMAF artifact: RFC 8216 §3 plays
         // a media playlist's segments one after another, so a per-track entry
         // would repeat the content once per track.
-        let duration = presentation_span_secs(&kept)?;
+        let duration = presentation_span_secs_from_log(&kept)?;
         // EXTINF rounded to the nearest integer must not exceed the target
         // duration (RFC 8216 §4.3.3.1); the ceiling always satisfies that.
         let target_secs = ceil_secs(duration);
-        let uri = format!("{}{}.m4s", self.uri_prefix, first.spec.track_id);
+        let uri = format!("{}{}.m4s", self.uri_prefix, first.track_id);
         let segments = vec![MediaSegment {
             map: Some(MapTag {
                 uri: uri.clone(),
@@ -1378,6 +1442,35 @@ mod tests {
     /// sample entry with the crate's own builder (already covered by
     /// `subtitle_entries::tests::wvtt_sample_entry_round_trip`) and feed it
     /// through the same reconstruction path the `stpp` fixture exercises.
+    /// A summary log for a whole [`Media`] as one segment per track.
+    fn one_segment_log(media: &Media) -> crate::segment_log::SegmentSummaryLog {
+        let mut log = crate::segment_log::SegmentSummaryLog::new();
+        for track in &media.tracks {
+            if track.samples.is_empty() {
+                continue;
+            }
+            let duration: u64 = track
+                .samples
+                .iter()
+                .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
+                .sum();
+            let bytes: u64 = track.samples.iter().map(|s| s.data.len() as u64).sum();
+            log.push_part(
+                &crate::mux_stage::TrackPart {
+                    track: track.spec.track_id,
+                    start: 0,
+                    duration,
+                    timescale: track.spec.timescale.get(),
+                    bytes,
+                    samples: u32::try_from(track.samples.len()).unwrap_or(u32::MAX),
+                },
+                track.samples.first().is_some_and(|s| s.flags.is_sync),
+            )
+            .expect("one part per track");
+        }
+        log
+    }
+
     #[test]
     fn wvtt_sample_entry_demuxes_to_subtitle_webvtt() {
         let wvtt = WvttSampleEntry::new("WEBVTT\n");
@@ -1654,8 +1747,10 @@ mod tests {
             vec![Sample::new(vec![0xFCu8; 8], None, None, None, true).expect("valid timing")],
         );
 
+        let media = Media::new(vec![timed, sections], TIMESCALE);
+        let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let playlist = HlsPackager::default()
-            .package(&Media::new(vec![timed, sections], TIMESCALE))
+            .render(&specs, &one_segment_log(&media))
             .expect("a Media with one timed track still packages");
         let zero_extinf = playlist.lines().any(|l| {
             l.strip_prefix("#EXTINF:")
@@ -1690,9 +1785,11 @@ mod tests {
             ),
             vec![Sample::new(vec![0xFCu8; 8], None, None, None, true).expect("valid timing")],
         );
+        let only = Media::new(vec![only_sections], TIMESCALE);
+        let only_specs: Vec<TrackSpec> = only.tracks.iter().map(|t| t.spec.clone()).collect();
         assert!(
             HlsPackager::default()
-                .package(&Media::new(vec![only_sections], TIMESCALE))
+                .render(&only_specs, &one_segment_log(&only))
                 .is_err(),
             "an all-timestamp-less Media must error, not render an empty playlist"
         );

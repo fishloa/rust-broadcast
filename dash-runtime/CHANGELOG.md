@@ -3,8 +3,11 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+
 ### Changed
 
+- The ingest session's test MPDs render from a summary log, matching the
+  packager's new sample-free shape.
 - The client demuxes each Representation through one long-lived streaming MP4 stage (`transmux::mp4_demux::Mp4Demux`) that is fed the Initialization Segment once and then each media segment in turn, instead of a fresh whole-input demux of `init ++ segment` per segment. The init is parsed once and no init-plus-segment buffer is allocated per segment; a damaged segment costs only itself, and a segment the reader refuses leaves the following segments playable. The `ingest` session (`DashifIngestSession`) demuxes through the same per-Representation stage. Outputs are unchanged.
 
 ## [0.7.0] - 2026-11-22

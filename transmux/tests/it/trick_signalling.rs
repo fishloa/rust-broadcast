@@ -23,7 +23,6 @@
 //!    track, not hardcoded.
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
@@ -252,14 +251,14 @@ fn dash_trick_mode_adaptation_set() {
         },
     };
 
-    let mut packager = DashPackager {
+    let packager = DashPackager {
         trick_mode: Some(trick),
         ..Default::default()
     };
 
     // Build a minimal Media to drive the packager.
     let media = minimal_video_media();
-    let mpd = packager.package(&media).unwrap();
+    let mpd = crate::packagers::dash(&packager, &media).unwrap();
 
     // SupplementalProperty with the scheme URI must be present.
     assert!(
@@ -297,11 +296,11 @@ fn dash_trick_mode_adaptation_set() {
     );
 
     // --- Negative: plain packager has neither ---
-    let mut plain = DashPackager {
+    let plain = DashPackager {
         trick_mode: None,
         ..Default::default()
     };
-    let plain_mpd = plain.package(&media).unwrap();
+    let plain_mpd = crate::packagers::dash(&plain, &media).unwrap();
     assert!(
         !plain_mpd.contains(TRICKMODE_SCHEME),
         "plain MPD must not contain trick-mode schemeIdUri:\n{plain_mpd}"
@@ -491,12 +490,12 @@ fn dash_trick_mode_naming_a_missing_main_adaptation_set_is_rejected() {
             total_duration: 900000,
         },
     };
-    let mut packager = DashPackager {
+    let packager = DashPackager {
         trick_mode: Some(trick),
         ..Default::default()
     };
     assert_eq!(
-        packager.package(&minimal_video_media()).unwrap_err(),
+        crate::packagers::dash(&packager, &minimal_video_media()).unwrap_err(),
         transmux::Error::TrickModeMainAdaptationSetNotFound {
             main_adaptation_set_id: 99,
             trick_adaptation_set_id: 7,

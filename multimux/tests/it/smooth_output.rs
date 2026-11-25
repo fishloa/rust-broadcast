@@ -877,7 +877,7 @@ fn read_one_trun(body: &[u8], out: &mut Vec<u64>) {
 }
 
 /// W13a: a >= 4 s segment is a **single** fragment carrying every sample —
-/// the pre-fix `SmoothPackager::default()` (2 s target) split it and returned
+/// the pre-fix `SmoothPackager` (2 s target) split it and returned
 /// only the first fragment, dropping the rest.
 #[tokio::test]
 async fn w13_one_segment_is_one_fragment() {

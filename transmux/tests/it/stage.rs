@@ -494,11 +494,18 @@ fn audio_samples(n: usize) -> Vec<(TrackId, Sample)> {
         .collect()
 }
 
+/// Drain an [`LlSegmenter`] through the one delivery API it has left.
+fn drain_ll(seg: &mut LlSegmenter, out: &mut Vec<transmux::mux_stage::MuxOutput>) {
+    while let Some(item) = seg.poll() {
+        out.push(item);
+    }
+}
+
 /// The second half of the acceptance evidence this step's brief asks for:
 /// [`drive`] genuinely spans the segmenter family too, not just the
 /// byte-stream demux family above. Drives `Segmenter` and `LlSegmenter` —
-/// two segmenters with entirely different `Out` types (`(Vec<u8>,
-/// SegmentMeta)` vs `Chunk`) — through the *same* generic `drive::<S: Stage>`
+/// two segmenters with entirely different `Out` types (a segment list vs
+/// `MuxOutput`) — through the *same* generic `drive::<S: Stage>`
 /// function used for the demuxers, and checks the result against each type's
 /// own trusted inherent `push`/`take_ready*`/`flush` API run over the exact
 /// same samples — not just "it compiles".
@@ -540,15 +547,15 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
         4,
     )
     .unwrap();
-    let mut oracle_ll_out: Vec<transmux::Chunk> = Vec::new();
+    let mut oracle_ll_out: Vec<transmux::mux_stage::MuxOutput> = Vec::new();
     for (track_id, sample) in samples.clone() {
         oracle_ll
             .push(TrackId::new(track_id.value()), sample)
             .unwrap();
-        oracle_ll_out.extend(oracle_ll.take_ready());
+        drain_ll(&mut oracle_ll, &mut oracle_ll_out);
     }
     oracle_ll.flush().unwrap();
-    oracle_ll_out.extend(oracle_ll.take_ready());
+    drain_ll(&mut oracle_ll, &mut oracle_ll_out);
     assert!(
         !oracle_ll_out.is_empty(),
         "fixture must actually exercise at least one chunk emission"
@@ -567,14 +574,10 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
         oracle_ll_out.len(),
         "Stage-driven LlSegmenter must yield the same chunk count as the inherent push/take_ready/flush API"
     );
-    for (stage_chunk, oracle_chunk) in stage_ll_out.iter().zip(oracle_ll_out.iter()) {
-        // `Chunk` isn't `PartialEq` (it isn't a wire-comparable spec type in
-        // its own right), so compare the fields that matter field-by-field.
-        assert_eq!(stage_chunk.data, oracle_chunk.data);
-        assert_eq!(stage_chunk.segment_number, oracle_chunk.segment_number);
-        assert_eq!(stage_chunk.is_segment_start, oracle_chunk.is_segment_start);
-        assert_eq!(stage_chunk.sequence_number, oracle_chunk.sequence_number);
-    }
+    assert_eq!(
+        stage_ll_out, oracle_ll_out,
+        "Stage-driven LlSegmenter must yield the same chunks as the inherent push/flush API"
+    );
 
     // --- LlHlsSegmenter: inherent API (oracle) vs Stage-driven ---------------
     // Previously zero `Stage` coverage of any kind for this type; this also
@@ -675,10 +678,14 @@ fn ts_hls_segmenter_stage_matches_inline_push() {
         inline_seg
             .push(TrackId::new(track_id.value()), sample)
             .unwrap();
-        inline_out.extend(inline_seg.take_ready());
+        while let Some(item) = inline_seg.poll() {
+            inline_out.push(item);
+        }
     }
     inline_seg.finish().unwrap();
-    inline_out.extend(inline_seg.take_ready());
+    while let Some(item) = inline_seg.poll() {
+        inline_out.push(item);
+    }
     assert!(
         !inline_out.is_empty(),
         "fixture must actually exercise at least one segment cut"
@@ -789,7 +796,7 @@ fn segmenter_feeds_and_polls_in_lockstep_with_an_undrained_batch() {
 
 /// `LlSegmenter`: same mixed-API proof as
 /// [`segmenter_mixed_api_delivers_each_output_exactly_once`], for the chunk
-/// output (`Chunk` isn't `PartialEq`, so compared field-by-field).
+/// output.
 #[test]
 fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
     let track = audio_track_spec();
@@ -802,13 +809,13 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
         4,
     )
     .unwrap();
-    let mut oracle_out: Vec<transmux::Chunk> = Vec::new();
+    let mut oracle_out: Vec<transmux::mux_stage::MuxOutput> = Vec::new();
     for (track_id, sample) in samples.clone() {
         oracle.push(TrackId::new(track_id.value()), sample).unwrap();
-        oracle_out.extend(oracle.take_ready());
+        drain_ll(&mut oracle, &mut oracle_out);
     }
     oracle.flush().unwrap();
-    oracle_out.extend(oracle.take_ready());
+    drain_ll(&mut oracle, &mut oracle_out);
     assert!(
         oracle_out.len() >= 4,
         "fixture must cut several chunks so an un-drained batch has more \
@@ -817,7 +824,7 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
 
     let mut mixed =
         LlSegmenter::new(vec![track], timescale(1000), Duration::from_millis(100), 4).unwrap();
-    let mut mixed_out: Vec<transmux::Chunk> = Vec::new();
+    let mut mixed_out: Vec<transmux::mux_stage::MuxOutput> = Vec::new();
     let mut samples = samples.into_iter();
     let batch = 30;
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
@@ -836,17 +843,17 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
             mixed_out.push(c);
         }
     }
-    mixed_out.extend(mixed.take_ready());
+    drain_ll(&mut mixed, &mut mixed_out);
 
     for (track_id, sample) in samples {
         mixed.push(TrackId::new(track_id.value()), sample).unwrap();
-        mixed_out.extend(mixed.take_ready());
+        drain_ll(&mut mixed, &mut mixed_out);
     }
     mixed.finish().unwrap();
     while let Some(c) = mixed.poll() {
         mixed_out.push(c);
     }
-    mixed_out.extend(mixed.take_ready());
+    drain_ll(&mut mixed, &mut mixed_out);
 
     assert_eq!(
         mixed_out.len(),
@@ -854,12 +861,11 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
         "mixing Stage::feed/poll with the inherent push/take_ready on ONE LlSegmenter instance \
          must deliver the same chunk count as a purely-inherent run — nothing lost, nothing duplicated"
     );
-    for (m, o) in mixed_out.iter().zip(oracle_out.iter()) {
-        assert_eq!(m.data, o.data);
-        assert_eq!(m.segment_number, o.segment_number);
-        assert_eq!(m.is_segment_start, o.is_segment_start);
-        assert_eq!(m.sequence_number, o.sequence_number);
-    }
+    assert_eq!(
+        mixed_out, oracle_out,
+        "mixing Stage::feed/poll with the inherent push on ONE LlSegmenter instance \
+         must deliver the same chunks, in the same order"
+    );
 }
 
 /// `LlHlsSegmenter`: same mixed-API proof, across *both* its output channels

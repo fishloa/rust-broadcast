@@ -18,7 +18,6 @@
 
 use std::collections::BTreeSet;
 
-use broadcast_common::Package;
 use broadcast_common::Serialize;
 use isobmff::box_support::OpaqueBox;
 use isobmff::{WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, parse_wvtt_sample};
@@ -387,8 +386,7 @@ fn dash_mpd_and_smooth_manifest_carry_the_real_tracks() {
     for c in cases() {
         let media = demux(&c.layout);
         let codec = if c.webvtt { "wvtt" } else { "stpp" };
-        let mpd = DashPackager::default()
-            .package(&media)
+        let mpd = crate::packagers::dash(&DashPackager::default(), &media)
             .unwrap_or_else(|e| panic!("{}: {e:?}", c.label));
         assert!(mpd.contains("contentType=\"text\""), "{}: {mpd}", c.label);
         assert!(
@@ -396,17 +394,19 @@ fn dash_mpd_and_smooth_manifest_carry_the_real_tracks() {
             "{}: {mpd}",
             c.label
         );
-        let smooth = SmoothPackager::default()
-            .package(&media)
+        let manifest = crate::packagers::smooth(&SmoothPackager, &media)
             .unwrap_or_else(|e| panic!("{}: {e:?}", c.label));
-        assert!(smooth.manifest.contains("Type=\"text\""), "{}", c.label);
+        assert!(manifest.contains("Type=\"text\""), "{}", c.label);
         assert!(
-            smooth.manifest.contains(&format!("FourCC=\"{codec}\"")),
+            manifest.contains(&format!("FourCC=\"{codec}\"")),
             "{}",
             c.label
         );
+        let (_, segments) =
+            crate::packagers::smooth_parts(&media, core::time::Duration::from_secs(2))
+                .unwrap_or_else(|e| panic!("{}: {e:?}", c.label));
         let track = subtitle_track(&media);
-        let frag_bytes: usize = smooth.fragments.iter().map(|f| f.data.len()).sum();
+        let frag_bytes: usize = segments.iter().map(|f| f.bytes.len()).sum();
         let sample_bytes: usize = track.samples.iter().map(|s| s.data.len()).sum();
         assert!(
             frag_bytes > sample_bytes,

@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use isobmff::cenc::TrackEncryptionBox;
 use transmux::pipeline::CodecConfig;
 use transmux::{
@@ -184,6 +184,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
     );
     let recovered = recover_segment_timing(&init, &raw_segments);
 
+    let log = crate::packagers::log(&media);
     let segments: Vec<TrackSegments> = recovered
         .iter()
         .map(|(&track_id, (durations, _tfdt))| TrackSegments {
@@ -192,11 +193,11 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
         })
         .collect();
 
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         segments,
         ..DashPackager::default()
     };
-    let xml = pkg.package(&media).expect("package static MPD");
+    let xml = crate::packagers::dash_with(&pkg, &media, &log).expect("package static MPD");
     let root = parse_xml(&xml);
 
     assert_eq!(root.name, "MPD");
@@ -315,6 +316,7 @@ fn segment_timeline_time_addressing_matches_tfdt() {
     assert!(raw_segments.len() >= 2);
     let recovered = recover_segment_timing(&init, &raw_segments);
 
+    let log = crate::packagers::log(&media);
     let segments: Vec<TrackSegments> = recovered
         .iter()
         .map(|(&track_id, (durations, _tfdt))| TrackSegments {
@@ -322,13 +324,12 @@ fn segment_timeline_time_addressing_matches_tfdt() {
             durations: durations.clone(),
         })
         .collect();
-
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         addressing: Addressing::Timeline,
         segments,
         ..DashPackager::default()
     };
-    let xml = pkg.package(&media).expect("package timeline MPD");
+    let xml = crate::packagers::dash_with(&pkg, &media, &log).expect("package timeline MPD");
     let root = parse_xml(&xml);
     let period = root.find("Period").unwrap();
     let sets = period.find_all("AdaptationSet");
@@ -395,16 +396,16 @@ fn segment_timeline_time_addressing_matches_tfdt() {
 #[test]
 fn timeline_addressing_without_segments_is_rejected() {
     let media = demux_media();
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         addressing: Addressing::Timeline,
         ..DashPackager::default()
     };
     assert!(
         matches!(
-            pkg.package(&media),
+            crate::packagers::dash(&pkg, &media),
             Err(transmux::error::Error::InvalidInput(..))
         ),
-        "Addressing::Timeline with no DashPackager::segments must error, not silently \
+        "Addressing::Timeline with no SegmentSummaryLog must error, not silently \
          fall back to a whole-track SegmentTimeline"
     );
 }
@@ -416,7 +417,7 @@ fn timeline_addressing_without_segments_is_rejected() {
 #[test]
 fn dynamic_mpd_carries_live_attributes() {
     let media = demux_media();
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         dynamic: true,
         availability_start_time: Some("2024-01-01T00:00:00Z".to_string()),
         publish_time: Some("2024-01-01T00:05:00Z".to_string()),
@@ -425,7 +426,7 @@ fn dynamic_mpd_carries_live_attributes() {
         suggested_presentation_delay: Some("PT4S".to_string()),
         ..DashPackager::default()
     };
-    let xml = pkg.package(&media).expect("package dynamic MPD");
+    let xml = crate::packagers::dash(&pkg, &media).expect("package dynamic MPD");
     let root = parse_xml(&xml);
 
     assert_eq!(root.attr("type"), Some("dynamic"));
@@ -450,13 +451,13 @@ fn dynamic_mpd_carries_live_attributes() {
 #[test]
 fn dynamic_mpd_omits_absent_live_attributes() {
     let media = demux_media();
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         dynamic: true,
         availability_start_time: Some("2024-01-01T00:00:00Z".to_string()),
         publish_time: Some("2024-01-01T00:00:00Z".to_string()),
         ..DashPackager::default()
     };
-    let xml = pkg.package(&media).expect("package dynamic MPD");
+    let xml = crate::packagers::dash(&pkg, &media).expect("package dynamic MPD");
     let root = parse_xml(&xml);
     assert!(root.has_attr("publishTime"));
     assert!(!root.has_attr("timeShiftBufferDepth"));
@@ -466,12 +467,12 @@ fn dynamic_mpd_omits_absent_live_attributes() {
 #[test]
 fn dynamic_mpd_without_publish_time_is_rejected() {
     let media = demux_media();
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         dynamic: true,
         availability_start_time: Some("2024-01-01T00:00:00Z".to_string()),
         ..DashPackager::default()
     };
-    let err = pkg.package(&media).unwrap_err();
+    let err = crate::packagers::dash(&pkg, &media).unwrap_err();
     assert!(
         matches!(
             err,
@@ -491,22 +492,21 @@ fn dynamic_mpd_without_publish_time_is_rejected() {
 #[test]
 fn static_mpd_needs_no_publish_time() {
     let media = demux_media();
-    let xml = DashPackager::default().package(&media).expect("static MPD");
+    let xml = crate::packagers::dash(&DashPackager::default(), &media).expect("static MPD");
     assert!(!parse_xml(&xml).has_attr("publishTime"));
 }
 
 #[test]
 fn ll_dash_without_publish_time_is_rejected() {
     let media = demux_media();
-    let err = transmux::ll_dash::LlDashPackager::new(
+    let pkg = transmux::ll_dash::LlDashPackager::new(
         Duration::from_secs(2),
         Duration::from_millis(500),
         Duration::from_secs(3),
         "2024-01-01T00:00:00Z",
     )
-    .expect("packager")
-    .package(&media)
-    .unwrap_err();
+    .expect("packager");
+    let err = crate::packagers::ll_dash(&pkg, &media).unwrap_err();
     assert!(
         matches!(
             err,
@@ -530,7 +530,7 @@ fn ll_dash_with_publish_time_carries_it() {
     )
     .expect("packager");
     pkg.base.publish_time = Some("2024-01-01T00:05:00Z".to_string());
-    let xml = pkg.package(&media).expect("LL-DASH MPD");
+    let xml = crate::packagers::ll_dash(&pkg, &media).expect("LL-DASH MPD");
     assert_eq!(
         parse_xml(&xml).attr("publishTime"),
         Some("2024-01-01T00:05:00Z")
@@ -548,7 +548,7 @@ fn content_protection_and_inband_event_stream_hooks() {
         0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd,
         0xef,
     ];
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         content_protection: vec![ContentProtectionSystem {
             scheme_id_uri: "urn:mpeg:dash:mp4protection:2011".to_string(),
             value: Some("cenc".to_string()),
@@ -561,7 +561,7 @@ fn content_protection_and_inband_event_stream_hooks() {
         }],
         ..DashPackager::default()
     };
-    let xml = pkg.package(&media).expect("package MPD");
+    let xml = crate::packagers::dash(&pkg, &media).expect("package MPD");
     let root = parse_xml(&xml);
 
     // xmlns:cenc only appears because a default_kid was supplied.
@@ -642,8 +642,8 @@ fn track_encryption_auto_derives_common_content_protection() {
         t.spec.protection = Some(track_protection(CencScheme::Cbcs, kid));
     }
 
-    let mut pkg = DashPackager::default();
-    let xml = pkg.package(&media).expect("package MPD");
+    let pkg = DashPackager::default();
+    let xml = crate::packagers::dash(&pkg, &media).expect("package MPD");
 
     assert_eq!(
         xml.matches("xmlns:cenc=\"urn:mpeg:cenc:2013\"").count(),
@@ -664,8 +664,8 @@ fn track_encryption_auto_derives_common_content_protection() {
 #[test]
 fn cleartext_track_emits_no_content_protection() {
     let media = demux_media();
-    let mut pkg = DashPackager::default();
-    let xml = pkg.package(&media).expect("package MPD");
+    let pkg = DashPackager::default();
+    let xml = crate::packagers::dash(&pkg, &media).expect("package MPD");
     assert!(
         !xml.contains("ContentProtection"),
         "a cleartext Media must not emit any ContentProtection element"
@@ -686,7 +686,7 @@ fn caller_supplied_pssh_renders_base64_cenc_pssh_child() {
     ];
     let expected_b64 = broadcast_common::base64::base64_encode(&pssh_bytes);
 
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         content_protection: vec![ContentProtectionSystem {
             scheme_id_uri: "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed".to_string(),
             value: None,
@@ -695,7 +695,7 @@ fn caller_supplied_pssh_renders_base64_cenc_pssh_child() {
         }],
         ..DashPackager::default()
     };
-    let xml = pkg.package(&media).expect("package MPD");
+    let xml = crate::packagers::dash(&pkg, &media).expect("package MPD");
 
     assert!(
         xml.contains("xmlns:cenc=\"urn:mpeg:cenc:2013\""),
@@ -740,8 +740,8 @@ fn ffprobe_reads_the_static_mpd_if_available() {
     }
 
     let media = demux_media();
-    let mut dash = DashPackager::default();
-    let xml = dash.package(&media).expect("package MPD");
+    let dash = DashPackager::default();
+    let xml = crate::packagers::dash(&dash, &media).expect("package MPD");
 
     let dir = std::env::temp_dir().join(format!("transmux-dash-mpd-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");

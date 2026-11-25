@@ -11,7 +11,6 @@
 //! the crate itself computes, not hardcoded literals.
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
@@ -47,8 +46,8 @@ fn demux_media() -> transmux::media::Media {
 
 fn build_mpd() -> String {
     let media = demux_media();
-    let mut pkg = DashPackager::default();
-    pkg.package(&media).expect("package DASH MPD")
+    let pkg = DashPackager::default();
+    crate::packagers::dash(&pkg, &media).expect("package DASH MPD")
 }
 
 fn ref_mpd() -> String {
@@ -360,10 +359,10 @@ fn bandwidth_present_and_positive() {
 #[test]
 fn empty_media_rejected() {
     let media = transmux::media::Media::new(vec![], timescale(90_000));
-    let mut pkg = DashPackager::default();
+    let pkg = DashPackager::default();
     assert!(
         matches!(
-            pkg.package(&media),
+            crate::packagers::dash(&pkg, &media),
             Err(transmux::error::Error::InvalidInput(..))
         ),
         "empty Media must not package"
@@ -406,8 +405,8 @@ fn adaptation_sets_split_by_language_and_codec() {
     fra.spec.es_info_descriptors = lang_es_info(b"fra");
 
     let media = transmux::media::Media::new(vec![video, eng, fra], timescale(90_000));
-    let mut pkg = DashPackager::default();
-    let xml = pkg.package(&media).expect("MPD");
+    let pkg = DashPackager::default();
+    let xml = crate::packagers::dash(&pkg, &media).expect("MPD");
 
     let root = parse_xml(&xml);
     let period = root.find("Period").expect("Period");
@@ -473,8 +472,8 @@ fn bibliographic_and_terminology_codes_share_one_adaptation_set() {
     a2.spec.es_info_descriptors = lang_es_info(b"fra");
 
     let media = transmux::media::Media::new(vec![video, a1, a2], timescale(90_000));
-    let mut pkg = DashPackager::default();
-    let xml = pkg.package(&media).expect("MPD");
+    let pkg = DashPackager::default();
+    let xml = crate::packagers::dash(&pkg, &media).expect("MPD");
 
     let root = parse_xml(&xml);
     let period = root.find("Period").expect("Period");
@@ -512,8 +511,8 @@ fn adaptation_sets_merge_same_language_and_codec() {
     a2.spec.es_info_descriptors = lang_es_info(b"eng");
 
     let media = transmux::media::Media::new(vec![video, a1, a2], timescale(90_000));
-    let mut pkg = DashPackager::default();
-    let xml = pkg.package(&media).expect("MPD");
+    let pkg = DashPackager::default();
+    let xml = crate::packagers::dash(&pkg, &media).expect("MPD");
 
     let root = parse_xml(&xml);
     let period = root.find("Period").expect("Period");
@@ -566,8 +565,8 @@ fn adaptation_sets_have_unique_ids_and_split_by_codec_family() {
     ac3.spec.es_info_descriptors = lang_es_info(b"eng");
 
     let media = transmux::media::Media::new(vec![video, aac, ac3], timescale(90_000));
-    let mut pkg = DashPackager::default();
-    let xml = pkg.package(&media).expect("MPD");
+    let pkg = DashPackager::default();
+    let xml = crate::packagers::dash(&pkg, &media).expect("MPD");
 
     let root = parse_xml(&xml);
     let period = root.find("Period").expect("Period");

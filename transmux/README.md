@@ -126,7 +126,14 @@ let cmaf: usize = outputs
     .sum();
 assert!(cmaf > 1000);
 
-let mpd: String = DashPackager::default().package(&media).unwrap();
+let mut log = transmux::segment_log::SegmentSummaryLog::new();
+for output in &outputs {
+    if let transmux::mux_stage::MuxOutput::Segment(segment) = output {
+        log.push(segment).unwrap();
+    }
+}
+let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+let mpd: String = DashPackager::default().render(&specs, &log).unwrap();
 assert!(mpd.contains("<MPD"));
 
 // And back: TsMux is the byte-level inverse of TsDemux.

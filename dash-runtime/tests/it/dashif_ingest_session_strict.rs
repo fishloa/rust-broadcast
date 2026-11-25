@@ -3,7 +3,7 @@
 //! error variants, duplicate/regression handling. Real data: the committed
 //! `h264-aac.ts` fixture packaged by transmux's own DASH writer.
 
-use broadcast_common::{Package, Stage, Timestamp, Unpackage};
+use broadcast_common::{Stage, Timestamp, Unpackage};
 use dash_runtime::ingest::{
     DashifIngestSession, IngestError, IngestObject, ManifestFormat, ObjectKind, SessionError,
 };
@@ -25,7 +25,16 @@ struct Presentation {
 fn presentation() -> Presentation {
     let ts = test_fixtures::read("ts/h264-aac.ts");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
-    let mpd = DashPackager::default().package(&media).expect("mpd");
+    let mpd = DashPackager::default()
+        .render(
+            &media
+                .tracks
+                .iter()
+                .map(|t| t.spec.clone())
+                .collect::<Vec<_>>(),
+            &test_harness::collect::segment_log(&media),
+        )
+        .expect("mpd");
     let mut reps = Vec::new();
     for (i, t) in media.tracks.iter().enumerate() {
         let init =

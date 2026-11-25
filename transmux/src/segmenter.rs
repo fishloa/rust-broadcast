@@ -550,6 +550,26 @@ impl Segmenter {
         self.pending_discontinuity = false;
 
         let sequence = u64::from(self.next_seq.saturating_sub(1));
+        // Per-track parts before the buffers are cleared: each track's own
+        // start, duration, bytes and sample count in this segment.
+        let tracks: Vec<crate::mux_stage::TrackPart> = self
+            .tracks
+            .iter()
+            .filter(|t| !t.pending.is_empty())
+            .map(|t| {
+                let mut clock =
+                    MediaClock::resumed_at(Some(i64::try_from(t.base_decode).unwrap_or(i64::MAX)));
+                let duration: u64 = t.pending.iter().map(|s| clock.tick(s)).sum();
+                crate::mux_stage::TrackPart {
+                    track: t.spec.track_id,
+                    start: t.base_decode,
+                    duration,
+                    timescale: t.spec.timescale.get(),
+                    bytes: t.pending.iter().map(|s| s.data.len() as u64).sum(),
+                    samples: u32::try_from(t.pending.len()).unwrap_or(u32::MAX),
+                }
+            })
+            .collect();
         let track = self.tracks[self.anchor].spec.track_id;
         let timescale = self.tracks[self.anchor].spec.timescale.get();
         let start = self.tracks[self.anchor].base_decode;
@@ -582,6 +602,7 @@ impl Segmenter {
                 discontinuous,
             },
             bytes: bytes::Bytes::from(seg),
+            tracks,
         });
         Ok(())
     }

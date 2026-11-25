@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use broadcast_common::mux::{Package, Unpackage};
+use broadcast_common::mux::Unpackage;
 use bytes::Bytes;
 use multimux::config::{Config, InputSpec, OutputAuthSpec, Route};
 use multimux::dvr::DvrConfig;
@@ -28,8 +28,10 @@ fn presentation() -> Presentation {
     let ts = test_fixtures::read("ts/h264-aac.ts");
     let mut demux = TsDemux::new();
     let media = demux.unpackage(&ts[..]).expect("demux");
-    let mut packager = DashPackager::default();
-    let mpd = packager.package(&media).expect("mpd");
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mpd = DashPackager::default()
+        .render(&specs, &test_harness::collect::segment_log(&media))
+        .expect("mpd");
     let mut reps = Vec::new();
     let mut video_chunks: Vec<Vec<Vec<u8>>> = Vec::new();
     for (i, t) in media.tracks.iter().enumerate() {

@@ -72,11 +72,12 @@ use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use broadcast_common::Package;
 use broadcast_dash::duration::xs_duration;
 use hls_runtime::server::DEFAULT_TRACK_ID;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
-use transmux::{Addressing, DashPackager, Media, Track, TrackSegments, TrackSpec};
+use transmux::mux_stage::TrackPart;
+use transmux::segment_log::SegmentSummaryLog;
+use transmux::{Addressing, DashPackager, TrackSegments, TrackSpec};
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::origin::resource::cors_preflight;
@@ -250,8 +251,11 @@ pub(crate) fn select_representable_track(specs: &[TrackSpec]) -> Option<TrackSpe
 /// DSM-CC, SCTE-35) fails this — the exact case issue #776 exists to skip
 /// over rather than reject the whole route for.
 fn track_is_representable(spec: &TrackSpec) -> bool {
-    let media = Media::new(vec![Track::new(spec.clone(), Vec::new())], spec.timescale);
-    DashPackager::default().package(&media).is_ok()
+    // A trial render from the spec alone: no samples, so the MPD it produces
+    // is the live shape this origin actually serves.
+    DashPackager::default()
+        .render(core::slice::from_ref(spec), &SegmentSummaryLog::new())
+        .is_ok()
 }
 
 /// The live MPD of `flavour`, served from the program's cache when nothing it
@@ -615,14 +619,24 @@ fn render_period_document(
     let nominal_ticks = ((route.target_duration().as_secs_f64() * f64::from(timescale.get()))
         .round() as u64)
         .max(1);
-    let segments = if has_segments || flavour == DashFlavour::LowLatency {
-        vec![TrackSegments {
-            track_id: DEFAULT_TRACK_ID,
-            durations: vec![nominal_ticks],
-        }]
-    } else {
-        Vec::new()
-    };
+    // What the window's segments say: the nominal duration for the template,
+    // and per-track totals for the bandwidth (a live window carries no byte
+    // counts here, so the MPD's `@bandwidth` keeps its one-bit floor).
+    let mut log = SegmentSummaryLog::new();
+    if has_segments || flavour == DashFlavour::LowLatency {
+        log.push_part(
+            &TrackPart {
+                track: DEFAULT_TRACK_ID,
+                start: 0,
+                duration: nominal_ticks,
+                timescale: timescale.get(),
+                bytes: 0,
+                samples: 0,
+            },
+            true,
+        )
+        .ok()?;
+    }
 
     // timeShiftBufferDepth: the window's total buffered duration — the
     // configured target times the number of full segments retained
@@ -633,8 +647,6 @@ fn render_period_document(
     // seek, never exactly.
     let target_duration_secs = route.target_duration().as_secs_f64();
     let time_shift_buffer_depth_secs = target_duration_secs * (window.len().max(1) as f64);
-
-    let media = Media::new(vec![Track::new(spec, Vec::new())], timescale);
 
     let init_template = format!(
         "init-$RepresentationID$-{}-{}.mp4",
@@ -665,7 +677,16 @@ fn render_period_document(
             "time_shift_buffer_depth",
             time_shift_buffer_depth_secs,
         )),
-        segments,
+        segments: log
+            .track(DEFAULT_TRACK_ID)
+            .filter(|_| has_segments || flavour == DashFlavour::LowLatency)
+            .map(|_| {
+                vec![TrackSegments {
+                    track_id: DEFAULT_TRACK_ID,
+                    durations: vec![nominal_ticks],
+                }]
+            })
+            .unwrap_or_default(),
         ..DashPackager::default()
     };
 
@@ -680,7 +701,7 @@ fn render_period_document(
             value: None,
         });
 
-    let xml = packager.package(&media).ok()?;
+    let xml = packager.render(core::slice::from_ref(&spec), &log).ok()?;
     if flavour == DashFlavour::LowLatency {
         let part_target_ms =
             u32::try_from(route.part_target().as_millis().max(1)).unwrap_or(u32::MAX);

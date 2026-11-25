@@ -11,7 +11,6 @@
 
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
@@ -60,11 +59,7 @@ fn video_geometry_attrs(mpd: &str) -> (Option<String>, Vec<Option<String>>) {
 fn mpd_for(fixture: &str) -> Option<String> {
     let data = test_fixtures::require_bytes(fixture, "display_dash")?;
     let media = TsDemux::new().unpackage(&data).expect("demux fixture");
-    Some(
-        DashPackager::default()
-            .package(&media)
-            .expect("package DASH"),
-    )
+    Some(crate::packagers::dash(&DashPackager::default(), &media).expect("package DASH"))
 }
 
 #[test]

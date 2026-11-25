@@ -189,6 +189,7 @@ pub mod ll_hls;
 pub mod media;
 pub mod mhas;
 pub mod mkv_mux;
+#[cfg(any(feature = "cli", test))]
 pub(crate) mod mp4_collect;
 pub mod mp4_demux;
 pub mod mpeg2_display;
@@ -202,6 +203,7 @@ pub mod ps_demux;
 pub mod rbsp;
 pub mod rebase;
 pub mod repackage;
+pub mod segment_log;
 pub mod stitch;
 #[cfg(test)]
 pub(crate) mod test_bits;
@@ -293,7 +295,7 @@ pub use klv::{
 pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, RapKind};
 #[cfg(feature = "std")]
 pub use ll_dash::LlDashPackager;
-pub use ll_dash::{Chunk, LlSegmenter};
+pub use ll_dash::LlSegmenter;
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
 pub use media::{
     CmafMuxStage, FragmentCut, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackProtection,
@@ -354,7 +356,7 @@ pub use segmenter::Segmenter;
 #[cfg(feature = "std")]
 pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_DEFAULT_TIMESCALE, SMOOTH_TIMESCALE, SmoothCodec,
-    SmoothFragment, SmoothOutput, SmoothPackager, SmoothStreamType, TFXD_UUID, TfxdBox,
+    SmoothOrigin, SmoothPackager, SmoothSegmenter, SmoothStreamType, TFXD_UUID, TfxdBox,
     resolve_codec, to_smooth_ticks,
 };
 pub use timeline::{

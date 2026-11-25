@@ -1,46 +1,235 @@
-//! fMP4/CMAF repackaging — IR transforms + a driver (ISO/IEC 14496-12:2026; CMAF
-//! ISO/IEC 23000-19).
+//! fMP4/CMAF repackaging — a demux stage, an optional track filter and time
+//! window, and a segmenter, driven in one pass
+//! (ISO/IEC 14496-12:2026; CMAF ISO/IEC 23000-19).
 //!
-//! `transmux` is an any-to-any container hub: [`Mp4Demux`](crate::mp4_demux::Mp4Demux)
-//! parses fragmented ISOBMFF/CMAF into the neutral [`Media`] IR, and
-//! [`Segmenter`] / [`CmafMuxStage`](crate::media::CmafMuxStage) mux the IR back into CMAF.
-//! *Repackaging* composes those two ends with pure transforms on the IR in the
-//! middle — no new box parsing:
+//! `transmux` is an any-to-any container hub: [`Mp4Demux`]
+//! parses fragmented ISOBMFF/CMAF and emits [`DemuxEvent`]s, and
+//! [`Segmenter`] muxes them back into CMAF media segments. *Repackaging*
+//! composes those two ends with two optional filters in between — no new box
+//! parsing, and no whole [`Media`] held anywhere:
 //!
-//! - **track-select** — [`select_tracks`] keeps a chosen subset of tracks,
-//!   preserving their source order and [`TrackSpec`]s.
-//! - **trim** — [`trim`] keeps only the samples whose *presentation time*
-//!   (composition time = decode time + `composition_offset`) falls in the
-//!   half-open window `[start, end)`, expressed in the **movie timescale**
-//!   ([`Media::movie_timescale`]). The first kept video sample is guaranteed to
-//!   be a sync sample: the window's lower edge is snapped **back** to the
-//!   preceding random-access point on the segmentation anchor track (see
-//!   [`trim`] for the exact rule), so the output opens on a keyframe as
-//!   CMAF requires (ISO/IEC 23000-19 §7.3.2.3: a CMAF Track's first media
+//! - **track-select** — [`Repackage::select_tracks`] keeps a chosen subset of
+//!   tracks (by announcement position), preserving the source order and
+//!   [`TrackSpec`]s. It works on either input.
+//! - **trim** — [`Repackage::trim`] keeps only the samples whose *presentation
+//!   time* (composition time = decode time + `composition_offset`) falls in the
+//!   half-open window `[start, end)`, expressed in the **movie timescale**.
+//!   The window's lower edge is snapped **back** to the preceding random-access
+//!   point on the segmentation anchor track, so the output opens on a keyframe
+//!   as CMAF requires (ISO/IEC 23000-19 §7.3.2.3: a CMAF Track's first media
 //!   sample must be an IDR/SAP); every other track then starts from that same
 //!   snapped instant, so audio and video stay aligned. Window times are on one
 //!   decode-time origin common to every track (the earliest first-sample
 //!   `dts`), and the resegmented output keeps each track's offset from that
-//!   origin in its first `tfdt`.
-//! - **resegment** — feed the (optionally selected/trimmed) IR through
-//!   [`Segmenter`] at a new target segment duration to produce fresh CMAF init +
-//!   media segments cut on the anchor track's keyframes.
+//!   origin in its first `tfdt`. A window needs the whole input (it needs that
+//!   origin), so it is honoured only by [`Repackage::run_media`]; the
+//!   streaming [`Repackage::run`] refuses it with
+//!   [`Error::RepackageWindowNeedsWholeInput`].
+//! - **resegment** — [`Segmenter`] at a new target segment duration produces
+//!   fresh CMAF init + media segments cut on the anchor track's keyframes.
 //!
-//! [`Repackage`] is the convenience driver: it demuxes fMP4 bytes, applies an
-//! optional track selection + trim window, and resegments at a target duration,
-//! returning the CMAF init segment plus the media segments.
+//! [`Repackage`] is the driver: it demuxes fMP4 bytes ([`Repackage::run`]) or
+//! takes an already-demuxed [`Media`] ([`Repackage::run_media`]) and returns the
+//! CMAF init segment plus the media segments. Neither path builds a [`Media`].
 //!
 //! `no_std` + `alloc`.
 
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-use broadcast_common::Stage;
 use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
+use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
-use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
-use crate::pipeline::TrackSpec;
+use crate::ir::{DemuxEvent, Media, Sample, Track, TrackId, TrackSpec};
+use crate::media::{TimelineOrigin, relative_decode_times};
+use crate::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
+use crate::mux_stage::{MuxInput, MuxOutput, drive_media};
 use crate::segmenter::{Segmenter, choose_anchor};
+
+/// A repackaging driver: demux fragmented MP4 → optional track-select → optional
+/// trim → resegment at a new target duration → CMAF segments.
+///
+/// Compose it fluently; a time window is honoured by [`Repackage::run_media`]
+/// (a whole input), never by the streaming [`Repackage::run`]:
+///
+/// ```no_run
+/// use transmux::Repackage;
+/// # fn f(fmp4: &[u8]) -> transmux::Result<()> {
+/// let out = Repackage::new(core::time::Duration::from_secs(2)) // 2-second target segments
+///     .select_tracks(&[0])               // keep only track 0 (video)
+///     .run(fmp4)?;
+/// let _init = out.init_segment;
+/// let _media = out.media_segments;       // Vec<Vec<u8>>
+/// # Ok(()) }
+/// ```
+#[derive(Debug, Clone)]
+pub struct Repackage {
+    target_duration: core::time::Duration,
+    select: Option<Vec<usize>>,
+    trim: Option<(u64, u64)>,
+}
+
+impl Repackage {
+    /// Create a repackager that resegments at `target_duration`, keeping all
+    /// tracks and the full timeline unless [`Repackage::select_tracks`] /
+    /// [`Repackage::trim`] are set.
+    pub fn new(target_duration: core::time::Duration) -> Self {
+        Self {
+            target_duration,
+            select: None,
+            trim: None,
+        }
+    }
+
+    /// Restrict the output to the given track indices (positions in the
+    /// demuxer's announcement order), preserving their order.
+    pub fn select_tracks(mut self, indices: &[usize]) -> Self {
+        self.select = Some(indices.to_vec());
+        self
+    }
+
+    /// Trim to the half-open presentation-time window `[start, end)` in the movie
+    /// timescale (see the module docs for the snapping rule).
+    ///
+    /// A window needs the whole input, so it is honoured by
+    /// [`Repackage::run_media`] only: [`Repackage::run`] returns
+    /// [`Error::RepackageWindowNeedsWholeInput`].
+    pub fn trim(mut self, start: u64, end: u64) -> Self {
+        self.trim = Some((start, end));
+        self
+    }
+
+    /// Demux fragmented MP4 `fmp4`, apply the configured track selection, and
+    /// resegment.
+    ///
+    /// # Errors
+    /// [`Error::RepackageWindowNeedsWholeInput`] if [`Repackage::trim`] was
+    /// set — a streaming byte stream has no timeline origin to place a window
+    /// on. Propagates [`Mp4Demux`] errors and
+    /// [`Segmenter`] errors.
+    pub fn run(&self, fmp4: &[u8]) -> Result<RepackageOutput> {
+        if self.trim.is_some() {
+            return Err(Error::RepackageWindowNeedsWholeInput);
+        }
+        let total_len = u64::try_from(fmp4.len()).unwrap_or(u64::MAX);
+        let mut demux =
+            Mp4Demux::seekable(Mp4DemuxConfig::default().with_total_len(Some(total_len)));
+        let mut sink = RepackageSink::new(self);
+        loop {
+            let demand = demux.demand();
+            let Some(offset) = demand.offset else {
+                break;
+            };
+            let start = usize::try_from(offset).unwrap_or(usize::MAX);
+            let end = start.saturating_add(demand.want_bytes).min(fmp4.len());
+            let slice = fmp4.get(start..end).unwrap_or(&[]);
+            demux.feed(
+                Mp4Input::At {
+                    offset,
+                    bytes: slice.to_vec().into(),
+                },
+                Timestamp::ZERO,
+            )?;
+            sink.set_movie_timescale(demux.movie_timescale());
+            sink.announce_init(&demux);
+            sink.absorb(&mut demux)?;
+        }
+        demux.finish()?;
+        sink.set_movie_timescale(demux.movie_timescale());
+        sink.announce_init(&demux);
+        sink.absorb(&mut demux)?;
+        sink.finish()?;
+        sink.outputs()
+    }
+
+    /// Apply the configured filters to an already-demuxed [`Media`] and
+    /// resegment, returning the CMAF init + media segments.
+    ///
+    /// # Errors
+    /// A window that selects no sample, or any [`Segmenter`] error.
+    pub fn run_media(&self, media: &Media) -> Result<RepackageOutput> {
+        // The caller already holds the whole `Media`, so the filters run as the
+        // one shared whole-input pass over it — the window's presentation-time
+        // boundary rule is subtle enough (origin, inclusive start, exclusive
+        // end, the snap back to the preceding sync sample) that it lives in one
+        // place rather than being re-derived by a streaming look-alike.
+        let filtered;
+        let input = if self.select.is_none() && self.trim.is_none() {
+            media
+        } else {
+            let selected = match &self.select {
+                Some(indices) => select_tracks(media, indices)?,
+                None => media.clone(),
+            };
+            filtered = match self.trim {
+                Some((start, end)) => trim(&selected, start, end)?,
+                None => selected,
+            };
+            &filtered
+        };
+        let mut sink = RepackageSink::plain(self.target_duration);
+        sink.set_movie_timescale(Some(input.movie_timescale));
+        let outputs = drive_media(&mut sink, input, Timestamp::ZERO)?;
+        Ok(collect(&outputs))
+    }
+}
+
+/// Split a demux stage's queued events into the repackaging stage.
+fn drain_demux(demux: &mut Mp4Demux, sink: &mut RepackageSink) -> Result<()> {
+    while let Some(event) = demux.poll() {
+        sink.event(event)?;
+    }
+    Ok(())
+}
+
+/// Fold a stage's outputs into the CMAF init segment and its media segments.
+fn collect(outputs: &[MuxOutput]) -> RepackageOutput {
+    let mut init_segment = Vec::new();
+    let mut media_segments = Vec::new();
+    for output in outputs {
+        match output {
+            MuxOutput::Init(bytes) => init_segment = bytes.to_vec(),
+            MuxOutput::Segment(segment) => media_segments.push(segment.bytes.to_vec()),
+            _ => {}
+        }
+    }
+    RepackageOutput {
+        init_segment,
+        media_segments,
+    }
+}
+
+/// The result of a [`Repackage`] run: the CMAF initialization segment and the
+/// resegmented media segments, in order.
+#[derive(Debug, Clone)]
+pub struct RepackageOutput {
+    /// The `ftyp` + fragmented-init `moov` initialization segment.
+    pub init_segment: Vec<u8>,
+    /// The `styp`/`moof`/`mdat` media segments, in output order.
+    pub media_segments: Vec<Vec<u8>>,
+}
+
+impl RepackageOutput {
+    /// Concatenate the init segment and every media segment into one contiguous
+    /// fragmented-MP4 byte stream — the form the streaming MP4 stage re-parses.
+    pub fn to_contiguous(&self) -> Vec<u8> {
+        let total =
+            self.init_segment.len() + self.media_segments.iter().map(Vec::len).sum::<usize>();
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(&self.init_segment);
+        for seg in &self.media_segments {
+            out.extend_from_slice(seg);
+        }
+        out
+    }
+
+    /// Number of emitted media segments.
+    pub fn segment_count(&self) -> usize {
+        self.media_segments.len()
+    }
+}
 
 /// The segmentation anchor track within a [`Media`]: the first video track
 /// (any [`CodecConfig::is_video`](crate::pipeline::CodecConfig::is_video)
@@ -114,6 +303,7 @@ fn rescale_floor(ticks: u64, from_timescale: Timescale, to_timescale: Timescale)
 /// reaches this comparison. Ties go to the **lowest track index**, so the
 /// order is deterministic. Returns `None` when every track's samples have been
 /// consumed.
+#[cfg(test)]
 fn earliest_decode_time_track(media: &Media, dts: &[u128], cursors: &[usize]) -> Option<usize> {
     let mut best: Option<usize> = None;
     for (ti, track) in media.tracks.iter().enumerate() {
@@ -276,175 +466,261 @@ impl Media {
     }
 }
 
-/// A repackaging driver: demux fragmented MP4 → optional track-select → optional
-/// trim → resegment at a new target duration → CMAF segments.
-///
-/// Compose it fluently:
-///
-/// ```no_run
-/// use transmux::Repackage;
-/// # fn f(fmp4: &[u8]) -> transmux::Result<()> {
-/// let out = Repackage::new(core::time::Duration::from_secs(2)) // 2-second target segments
-///     .select_tracks(&[0])               // keep only track 0 (video)
-///     .trim(0, 90_000)                    // first second (movie timescale)
-///     .run(fmp4)?;
-/// let _init = out.init_segment;
-/// let _media = out.media_segments;       // Vec<Vec<u8>>
-/// # Ok(()) }
-/// ```
-#[derive(Debug, Clone)]
-pub struct Repackage {
+// ---------------------------------------------------------------------------
+// The repackaging stage
+// ---------------------------------------------------------------------------
+
+/// The one stage between the demuxer and the segmenter: it resolves the kept
+/// track set and feeds each kept sample on to the segmenter.
+struct RepackageSink {
     target_duration: core::time::Duration,
     select: Option<Vec<usize>>,
-    trim: Option<(u64, u64)>,
+    movie_timescale: Option<Timescale>,
+    /// Kept announcements, in announcement order.
+    announced: Vec<TrackSpec>,
+    /// Announcements seen so far (the position `select` names).
+    seen: usize,
+    /// `true` once the `moov`'s track list has been announced.
+    init_announced: bool,
+    /// The tracks the segmenter was built for.
+    kept: Vec<TrackId>,
+    /// The decode-time origin every track's first `tfdt` is anchored on: the
+    /// first sample fed, which a decode-time ordered feed guarantees is the
+    /// earliest first sample there is.
+    origin: Option<(i64, Timescale)>,
+    /// Tracks whose first `tfdt` has been anchored on the shared origin.
+    started: Vec<TrackId>,
+    segmenter: Option<Segmenter>,
+    pending: VecDeque<MuxOutput>,
 }
 
-impl Repackage {
-    /// Create a repackager that resegments at `target_duration`, keeping all
-    /// tracks and the full timeline unless [`Repackage::select_tracks`] /
-    /// [`Repackage::trim`] are set.
-    pub fn new(target_duration: core::time::Duration) -> Self {
+impl RepackageSink {
+    fn new(repackage: &Repackage) -> Self {
+        Self {
+            target_duration: repackage.target_duration,
+            select: repackage.select.clone(),
+            movie_timescale: None,
+            announced: Vec::new(),
+            seen: 0,
+            init_announced: false,
+            kept: Vec::new(),
+            origin: None,
+            started: Vec::new(),
+            segmenter: None,
+            pending: VecDeque::new(),
+        }
+    }
+
+    /// A sink with no track filter: every announced track's samples are muxed.
+    fn plain(target_duration: core::time::Duration) -> Self {
         Self {
             target_duration,
             select: None,
-            trim: None,
+            movie_timescale: None,
+            announced: Vec::new(),
+            seen: 0,
+            init_announced: false,
+            kept: Vec::new(),
+            origin: None,
+            started: Vec::new(),
+            segmenter: None,
+            pending: VecDeque::new(),
         }
     }
 
-    /// Restrict the output to the given track indices (positions in the demuxed
-    /// [`Media::tracks`]), preserving their order.
-    pub fn select_tracks(mut self, indices: &[usize]) -> Self {
-        self.select = Some(indices.to_vec());
-        self
+    /// The movie timescale the init segment must be built with.
+    fn set_movie_timescale(&mut self, timescale: Option<Timescale>) {
+        if self.movie_timescale.is_none() {
+            self.movie_timescale = timescale;
+        }
     }
 
-    /// Trim to the half-open presentation-time window `[start, end)` in the movie
-    /// timescale (see [`trim`]).
-    pub fn trim(mut self, start: u64, end: u64) -> Self {
-        self.trim = Some((start, end));
-        self
+    /// Drain the demux stage's queued events into this stage.
+    fn absorb(&mut self, demux: &mut Mp4Demux) -> Result<()> {
+        drain_demux(demux, self)
     }
 
-    /// Apply the configured transforms to an already-demuxed [`Media`] and
-    /// resegment, returning the CMAF init + media segments.
-    ///
-    /// # Errors
-    /// Propagates [`select_tracks`] / [`trim`] / [`Segmenter`] errors.
-    pub fn run_media(&self, media: &Media) -> Result<RepackageOutput> {
-        let mut work = media.clone();
-        if let Some(indices) = &self.select {
-            work = select_tracks(&work, indices)?;
-        }
-        if let Some((start, end)) = self.trim {
-            work = trim(&work, start, end)?;
-        }
-        self.segment(&work)
+    /// Take what [`Stage::poll`] left queued as a [`RepackageOutput`].
+    fn outputs(&mut self) -> Result<RepackageOutput> {
+        let outputs: Vec<MuxOutput> = self.pending.drain(..).collect();
+        Ok(collect(&outputs))
     }
 
-    /// Demux fragmented MP4 `fmp4` bytes into the IR, apply the configured
-    /// transforms, and resegment.
-    ///
-    /// # Errors
-    /// Propagates [`Mp4Demux`](crate::mp4_demux::Mp4Demux) / transform /
-    /// [`Segmenter`] errors.
-    pub fn run(&self, fmp4: &[u8]) -> Result<RepackageOutput> {
-        let media = crate::mp4_collect::media_from_mp4(fmp4)?;
-        self.run_media(&media)
-    }
-
-    /// Push a [`Media`] through a fresh [`Segmenter`] at the target duration.
-    fn segment(&self, media: &Media) -> Result<RepackageOutput> {
-        if media.tracks.is_empty() {
-            return Err(Error::InvalidInput("repackage: media has no tracks"));
-        }
-        let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-        let movie_timescale = media.movie_timescale;
-        let mut seg = Segmenter::new(specs, movie_timescale, self.target_duration)?;
-        // Each track's first `tfdt` is its first decode time on the origin
-        // common to all tracks, so a track starting later keeps that offset
-        // (issue #1021) instead of every track restarting at 0.
-        let origin = TimelineOrigin::of(&media.tracks);
-        let mut dts = alloc::vec![0u128; media.tracks.len()];
-        for (ti, track) in media.tracks.iter().enumerate() {
-            let first = relative_decode_times(track, &origin)?
-                .first()
-                .map_or(0, |&t| t.max(0) as u64);
-            seg.set_start_decode_time(track.spec.track_id, first)?;
-            dts[ti] = u128::from(first);
-        }
-        let init_segment = seg.init_segment()?;
-        let mut seg_ready: Vec<Vec<u8>> = Vec::new();
-
-        // Feed samples interleaved in global decode-time order (each track's
-        // own timescale, normalised to a common rate). The [`Segmenter`] cuts on
-        // the anchor's keyframe once the target is reached and emits *all*
-        // tracks' buffered samples for that segment, so audio must arrive
-        // alongside the video it is coincident with — feeding a whole track at a
-        // time would strand all of one track in the final segment. The merge is
-        // a k-way step over per-track cursors, picking the track whose next
-        // sample has the earliest normalised decode time.
-        let mut cursors = alloc::vec![0usize; media.tracks.len()];
-        // The pick is [`earliest_decode_time_track`] — see its docs for why the
-        // comparison is a cross-multiplied rational rather than an LCM scale.
-        while let Some(ti) = earliest_decode_time_track(media, &dts, &cursors) {
-            let track = &media.tracks[ti];
-            let sample = &track.samples[cursors[ti]];
-            seg.feed(
-                crate::mux_stage::MuxInput::Sample {
-                    track: track.spec.track_id,
-                    sample: sample.clone(),
+    /// Translate one demux event into the muxer vocabulary.
+    fn event(&mut self, event: DemuxEvent) -> Result<()> {
+        match event {
+            DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
+                self.feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO)
+            }
+            DemuxEvent::Sample { track_id, sample } => self.feed(
+                MuxInput::Sample {
+                    track: track_id,
+                    sample,
                 },
-                broadcast_common::Timestamp::ZERO,
-            )?;
-            dts[ti] += sample.timing.and_then(|t| t.duration()).unwrap_or(0) as u128;
-            cursors[ti] += 1;
-            drain_segments(&mut seg, &mut seg_ready);
+                Timestamp::ZERO,
+            ),
+            DemuxEvent::Discontinuity { .. } => {
+                self.feed(MuxInput::Discontinuity { track: None }, Timestamp::ZERO)
+            }
+            _ => Ok(()),
         }
-        seg.finish()?;
-        drain_segments(&mut seg, &mut seg_ready);
-        Ok(RepackageOutput {
-            init_segment,
-            media_segments: seg_ready,
-        })
+    }
+
+    /// Announce every track the `moov` already names, so the segmenter is
+    /// built for the whole track set even though [`Mp4Demux`] emits a track's
+    /// [`TrackAdded`](DemuxEvent::TrackAdded) only alongside its first sample.
+    fn announce_init(&mut self, demux: &Mp4Demux) {
+        if self.init_announced || self.segmenter.is_some() || demux.movie_timescale().is_none() {
+            return;
+        }
+        let specs: Vec<TrackSpec> = demux.init_tracks().cloned().collect();
+        if specs.is_empty() {
+            return;
+        }
+        self.init_announced = true;
+        for spec in specs {
+            let index = self.seen;
+            self.seen += 1;
+            let keep = self
+                .select
+                .as_ref()
+                .is_none_or(|select| select.contains(&index));
+            if keep {
+                self.kept.push(spec.track_id);
+                self.announced.push(spec);
+            }
+        }
+    }
+
+    /// Build the segmenter once the first kept sample proves the track set
+    /// settled.
+    fn start(&mut self) -> Result<()> {
+        if self.announced.is_empty() {
+            return Err(Error::InvalidInput(
+                "repackage: no track survives the track selection",
+            ));
+        }
+        let movie_timescale = self.movie_timescale.ok_or(Error::InvalidInput(
+            "repackage: no movie timescale announced before the first sample",
+        ))?;
+        choose_anchor(self.announced.iter().map(|s| &s.config))?;
+        let segmenter = Segmenter::new(
+            self.announced.clone(),
+            movie_timescale,
+            self.target_duration,
+        )?;
+        let init = segmenter.init_segment()?;
+        self.pending
+            .push_back(MuxOutput::Init(bytes::Bytes::from(init)));
+        self.segmenter = Some(segmenter);
+        Ok(())
+    }
+
+    /// `track`'s timescale, from its announcement.
+    fn timescale(&self, track: TrackId) -> Option<Timescale> {
+        self.announced
+            .iter()
+            .find(|s| s.track_id == track)
+            .map(|s| s.timescale)
+    }
+
+    /// The origin expressed in `timescale` ticks, rounded down.
+    fn origin_in(&self, timescale: Timescale) -> i64 {
+        match self.origin {
+            Some((ticks, from)) => rescale_i64(ticks, from, timescale, Rounding::Floor),
+            None => 0,
+        }
+    }
+
+    /// Feed one sample into the segmenter, anchoring the track's first `tfdt`
+    /// on the shared origin (issue #1021) so a track that starts later keeps
+    /// that offset instead of restarting at 0.
+    fn emit(&mut self, track: TrackId, sample: Sample) -> Result<()> {
+        let timescale = self
+            .timescale(track)
+            .ok_or(Error::InvalidInput("repackage: unknown track"))?;
+        let first = sample.timing.and_then(|t| t.dts()).map_or(0, |dts| {
+            dts.saturating_sub(self.origin_in(timescale)).max(0)
+        }) as u64;
+        let segmenter = self
+            .segmenter
+            .as_mut()
+            .ok_or(Error::InvalidInput("repackage: sample before any track"))?;
+        if !self.started.contains(&track) {
+            segmenter.set_start_decode_time(track, first)?;
+            self.started.push(track);
+        }
+        segmenter.feed(MuxInput::Sample { track, sample }, Timestamp::ZERO)
     }
 }
 
-/// Drain a segmenter stage's finished segments into `out`.
-fn drain_segments(seg: &mut Segmenter, out: &mut Vec<Vec<u8>>) {
-    while let Some(output) = seg.poll() {
-        if let crate::mux_stage::MuxOutput::Segment(segment) = output {
-            out.push(segment.bytes.to_vec());
+impl Stage for RepackageSink {
+    type In<'a> = MuxInput;
+    type Out = MuxOutput;
+    type Error = Error;
+
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
+        match input {
+            MuxInput::Track(spec) => {
+                // A track the `moov` already named was announced by
+                // `announce_init`; its `TrackAdded` carries the first sample's
+                // refinement and replaces that provisional spec.
+                if let Some(existing) = self
+                    .announced
+                    .iter_mut()
+                    .find(|announced| announced.track_id == spec.track_id)
+                {
+                    *existing = *spec;
+                    return Ok(());
+                }
+                let index = self.seen;
+                self.seen += 1;
+                let keep = self
+                    .select
+                    .as_ref()
+                    .is_none_or(|select| select.contains(&index));
+                if keep {
+                    self.kept.push(spec.track_id);
+                    self.announced.push(*spec);
+                }
+                Ok(())
+            }
+            MuxInput::Sample { track, sample } => {
+                if !self.kept.contains(&track) {
+                    return Ok(());
+                }
+                if self.origin.is_none()
+                    && let Some(dts) = sample.timing.and_then(|t| t.dts())
+                    && let Some(timescale) = self.timescale(track)
+                {
+                    self.origin = Some((dts, timescale));
+                }
+                if self.segmenter.is_none() {
+                    self.start()?;
+                }
+                self.emit(track, sample)
+            }
+            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Flush => self.finish(),
         }
     }
-}
 
-/// The result of a [`Repackage`] run: the CMAF initialization segment and the
-/// resegmented media segments, in order.
-#[derive(Debug, Clone)]
-pub struct RepackageOutput {
-    /// The `ftyp` + fragmented-init `moov` initialization segment.
-    pub init_segment: Vec<u8>,
-    /// The `styp`/`moof`/`mdat` media segments, in output order.
-    pub media_segments: Vec<Vec<u8>>,
-}
-
-impl RepackageOutput {
-    /// Concatenate the init segment and every media segment into one contiguous
-    /// fragmented-MP4 byte stream — the form the streaming MP4 stage re-parses.
-    pub fn to_contiguous(&self) -> Vec<u8> {
-        let total =
-            self.init_segment.len() + self.media_segments.iter().map(Vec::len).sum::<usize>();
-        let mut out = Vec::with_capacity(total);
-        out.extend_from_slice(&self.init_segment);
-        for seg in &self.media_segments {
-            out.extend_from_slice(seg);
-        }
-        out
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.pending.pop_front()
     }
 
-    /// Number of emitted media segments.
-    pub fn segment_count(&self) -> usize {
-        self.media_segments.len()
+    fn finish(&mut self) -> Result<()> {
+        if let Some(segmenter) = self.segmenter.as_mut() {
+            segmenter.finish()?;
+            while let Some(output) = segmenter.poll() {
+                self.pending.push_back(output);
+            }
+        }
+        Ok(())
+    }
+
+    fn demand(&self) -> Demand {
+        Demand::default()
     }
 }
 

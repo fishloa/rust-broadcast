@@ -4,7 +4,6 @@
 //! explicitly as `Ok`. The MPD reader is dash-runtime's.
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use broadcast_smooth::SmoothManifest;
 use transmux::SmoothPackager;
@@ -42,10 +41,6 @@ fn assert_every_truncation_errors<T, E: std::fmt::Debug>(
 fn smooth_manifest_truncations_all_error() {
     let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts fixture");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
-    let smooth = SmoothPackager::default().package(&media).expect("smooth");
-    assert_every_truncation_errors(
-        "SmoothPackager manifest",
-        &smooth.manifest,
-        SmoothManifest::parse,
-    );
+    let manifest = crate::packagers::smooth(&SmoothPackager, &media).expect("smooth");
+    assert_every_truncation_errors("SmoothPackager manifest", &manifest, SmoothManifest::parse);
 }

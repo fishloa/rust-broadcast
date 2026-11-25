@@ -77,7 +77,7 @@ use timed_metadata::convert::{EmsgConfig, SCTE35_SCHEME};
 use timed_metadata::{DateRange, TimeAnchor, Timeline};
 use transmux::{
     Addressing, CodecConfig, DashPackager, FragmentTrackData, InbandEventStream, Media, Sample,
-    SplicePoint, Track, TrackSegments, TsDemux, build_init_segment, build_media_segment,
+    SplicePoint, Track, TsDemux, build_init_segment, build_media_segment,
     build_media_segment_with_events,
 };
 
@@ -523,14 +523,37 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         .map(|&(lo, hi)| range_duration(&spliced_audio.samples, lo, hi))
         .collect();
 
-    let mut dash = DashPackager {
+    // One summary per track (the whole presentation) plus the caller's own
+    // per-segment duration list for the `SegmentTemplate`, exactly as `main`'s
+    // example declared them.
+    let mut log = transmux::segment_log::SegmentSummaryLog::new();
+    for track in &result.media.tracks {
+        let duration: u64 = track
+            .samples
+            .iter()
+            .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
+            .sum();
+        let bytes: u64 = track.samples.iter().map(|s| s.data.len() as u64).sum();
+        log.push_part(
+            &transmux::mux_stage::TrackPart {
+                track: track.spec.track_id,
+                start: 0,
+                duration,
+                timescale: track.spec.timescale.get(),
+                bytes,
+                samples: u32::try_from(track.samples.len()).unwrap_or(u32::MAX),
+            },
+            track.samples.first().is_some_and(|s| s.flags.is_sync),
+        )?;
+    }
+    let dash = DashPackager {
         addressing: Addressing::Number,
         segments: vec![
-            TrackSegments {
+            transmux::TrackSegments {
                 track_id: spliced_video.spec.track_id,
                 durations: video_seg_ticks,
             },
-            TrackSegments {
+            transmux::TrackSegments {
                 track_id: spliced_audio.spec.track_id,
                 durations: audio_seg_ticks,
             },
@@ -543,7 +566,9 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         }],
         ..DashPackager::default()
     };
-    let mpd = broadcast_common::Package::package(&mut dash, &result.media)?;
+    let specs: Vec<transmux::TrackSpec> =
+        result.media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mpd = dash.render(&specs, &log)?;
 
     // ------------------------------------------------------------------
     // 10. Write everything to disk.

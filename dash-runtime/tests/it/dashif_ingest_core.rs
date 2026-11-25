@@ -1,4 +1,4 @@
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use dash_runtime::address::template::substitute;
 use dash_runtime::ingest::classify;
 use dash_runtime::ingest::{
@@ -16,8 +16,10 @@ fn demux_media() -> transmux::media::Media {
 
 fn build_mpd() -> String {
     let media = demux_media();
-    let mut pkg = DashPackager::default();
-    pkg.package(&media).expect("package")
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    DashPackager::default()
+        .render(&specs, &test_harness::collect::segment_log(&media))
+        .expect("package")
 }
 
 fn meta<'a>(

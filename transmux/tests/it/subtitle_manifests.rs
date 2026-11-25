@@ -14,7 +14,6 @@
 //! AVC + `stpp`/TTML). `wvtt` has no real producer available (ffmpeg
 //! cannot write it), so it is a spec-vector.
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use isobmff::{WvttSampleEntry, XmlSubtitleSampleEntry};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
@@ -77,7 +76,7 @@ fn wvtt_media() -> Media {
 fn dash_mpd_carries_a_stpp_adaptation_set_for_the_real_ttml_track() {
     let media = load_av_subtitle();
     assert!(media.tracks.iter().any(is_subtitle), "fixture has stpp");
-    let mpd = DashPackager::default().package(&media).expect("MPD");
+    let mpd = crate::packagers::dash(&DashPackager::default(), &media).expect("MPD");
 
     let set = start_tag_containing(&mpd, "AdaptationSet", "contentType=\"text\"");
     assert!(set.contains("mimeType=\"application/mp4\""), "{set}");
@@ -99,7 +98,7 @@ fn dash_mpd_carries_a_stpp_adaptation_set_for_the_real_ttml_track() {
 
 #[test]
 fn dash_mpd_carries_a_wvtt_adaptation_set() {
-    let mpd = DashPackager::default().package(&wvtt_media()).expect("MPD");
+    let mpd = crate::packagers::dash(&DashPackager::default(), &wvtt_media()).expect("MPD");
     start_tag_containing(&mpd, "AdaptationSet", "contentType=\"text\"");
     let rep = start_tag_containing(&mpd, "Representation", "codecs=\"wvtt\"");
     assert!(rep.contains("mimeType=\"application/mp4\""), "{rep}");
@@ -116,7 +115,7 @@ fn dash_still_rejects_a_subtitle_track_with_no_isobmff_sample_entry() {
         },
     );
     let media = Media::new(vec![Track::new(spec, vec![])], timescale(1000));
-    let err = DashPackager::default().package(&media).unwrap_err();
+    let err = crate::packagers::dash(&DashPackager::default(), &media).unwrap_err();
     assert!(
         matches!(err, transmux::Error::UnsupportedCodec { codec: "Subtitle" }),
         "{err:?}"
@@ -127,11 +126,13 @@ fn dash_still_rejects_a_subtitle_track_with_no_isobmff_sample_entry() {
 fn smooth_manifest_carries_a_text_stream_and_its_fragments() {
     let media = load_av_subtitle();
     let sub = media.tracks.iter().find(|t| is_subtitle(t)).unwrap();
-    let out = SmoothPackager::default().package(&media).expect("smooth");
+    let (_, segments) = crate::packagers::smooth_parts(&media, core::time::Duration::from_secs(2))
+        .expect("smooth fragments");
+    let manifest = crate::packagers::smooth(&SmoothPackager, &media).expect("smooth");
 
-    let stream = start_tag_containing(&out.manifest, "StreamIndex", "Type=\"text\"");
+    let stream = start_tag_containing(&manifest, "StreamIndex", "Type=\"text\"");
     assert!(stream.contains("Subtype=\"SUBT\""), "{stream}");
-    let ql = start_tag_containing(&out.manifest, "QualityLevel", "FourCC=\"stpp\"");
+    let ql = start_tag_containing(&manifest, "QualityLevel", "FourCC=\"stpp\"");
     for video_or_audio in ["MaxWidth", "SamplingRate", "Channels", "CodecPrivateData"] {
         assert!(
             !ql.contains(video_or_audio),
@@ -141,16 +142,15 @@ fn smooth_manifest_carries_a_text_stream_and_its_fragments() {
 
     // The text track's fragments are present and carry the original TTML
     // sample bytes unchanged.
-    let frags: Vec<_> = out
-        .fragments
+    let frags: Vec<_> = segments
         .iter()
-        .filter(|f| f.track_id == sub.spec.track_id)
+        .filter(|f| f.summary.track == sub.spec.track_id)
         .collect();
     assert!(!frags.is_empty(), "no fragments for the subtitle track");
     let first_sample = &sub.samples[0].data[..];
     assert!(
         frags.iter().any(|f| f
-            .data
+            .bytes
             .windows(first_sample.len())
             .any(|w| w == first_sample)),
         "the first TTML document is not inside any text fragment"
@@ -159,11 +159,9 @@ fn smooth_manifest_carries_a_text_stream_and_its_fragments() {
 
 #[test]
 fn smooth_wvtt_text_stream_uses_the_wvtt_fourcc() {
-    let out = SmoothPackager::default()
-        .package(&wvtt_media())
-        .expect("smooth");
-    start_tag_containing(&out.manifest, "StreamIndex", "Type=\"text\"");
-    start_tag_containing(&out.manifest, "QualityLevel", "FourCC=\"wvtt\"");
+    let manifest = crate::packagers::smooth(&SmoothPackager, &wvtt_media()).expect("smooth");
+    start_tag_containing(&manifest, "StreamIndex", "Type=\"text\"");
+    start_tag_containing(&manifest, "QualityLevel", "FourCC=\"wvtt\"");
 }
 
 #[test]
@@ -178,7 +176,7 @@ fn smooth_rejects_a_subtitle_track_with_no_isobmff_sample_entry() {
     );
     let media = Media::new(vec![Track::new(spec, vec![])], timescale(1000));
     assert!(matches!(
-        SmoothPackager::default().package(&media),
+        crate::packagers::smooth(&SmoothPackager, &media),
         Err(transmux::error::Error::InvalidInput(..))
     ));
 }

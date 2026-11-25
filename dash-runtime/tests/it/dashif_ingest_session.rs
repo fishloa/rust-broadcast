@@ -1,4 +1,4 @@
-use broadcast_common::{Package, Serialize, Stage, Timestamp, Unpackage};
+use broadcast_common::{Serialize, Stage, Timestamp, Unpackage};
 use dash_runtime::ingest::{DashifIngestSession, IngestObject, ObjectKind};
 use media_plane::ingress::SessionEvent;
 use transmux::FragmentTrackData;
@@ -15,8 +15,10 @@ fn demux_media() -> transmux::media::Media {
 #[test]
 fn session_basic_flow() {
     let media = demux_media();
-    let mut pkg = DashPackager::default();
-    let mpd = pkg.package(&media).expect("package");
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mpd = DashPackager::default()
+        .render(&specs, &test_harness::collect::segment_log(&media))
+        .expect("package");
     let grouping_check = dash_runtime::ingest::ManifestGrouping::from_mpd(mpd.as_bytes()).unwrap();
     let rep_order: Vec<String> = grouping_check
         .switching_sets
@@ -280,8 +282,10 @@ fn session_basic_flow() {
 #[test]
 fn session_lmsg() {
     let media = demux_media();
-    let mut pkg = DashPackager::default();
-    let mpd = pkg.package(&media).expect("package");
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mpd = DashPackager::default()
+        .render(&specs, &test_harness::collect::segment_log(&media))
+        .expect("package");
 
     let t = &media.tracks[0];
     let init =

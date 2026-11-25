@@ -1,7 +1,7 @@
 //! DASH `.mpd` Media Presentation Description generation — ISO/IEC 23009-1.
 //!
 //! The DASH sibling of [`crate::media::HlsPackager`]: [`DashPackager`] renders a
-//! [`Media`] as an MPEG-DASH Media Presentation Description
+//! [`Media`](crate::media::Media) as an MPEG-DASH Media Presentation Description
 //! (MPD) XML document. One CMAF segment set therefore yields both an HLS media
 //! playlist and a DASH manifest describing the same tracks.
 //!
@@ -13,7 +13,7 @@
 //! - **Period** (§5.3.2) — a single period covering the presentation.
 //! - **`AdaptationSet`** (§5.3.3) — one per media kind (video / audio), carrying
 //!   the common `mimeType` (`video/mp4` / `audio/mp4`).
-//! - **`Representation`** (§5.3.5) — one per [`Track`], with
+//! - **`Representation`** (§5.3.5) — one per [`Track`](crate::media::Track), with
 //!   `@id`, `@bandwidth`, RFC 6381 `@codecs`, and per-kind geometry / audio
 //!   parameters.
 //! - **`SegmentTemplate`** (§5.3.9.4) — two mutually-exclusive addressing modes
@@ -92,7 +92,6 @@
 //! [`Error::InvalidField`]. Reading an MPD back is not this crate's job:
 //! `dash-runtime` owns the one MPD reader (issue #2340).
 
-use crate::TrackId;
 use crate::units::ROUNDING_DIVISOR;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -102,9 +101,10 @@ use core::time::Duration;
 use crate::aac_asc::AudioSpecificConfig;
 use crate::codec_config_ext::{EsdsBoxCodecInfo, HevcRecordCodecInfo, VvcRecordCodecInfo};
 use crate::error::{Error, Result};
-use crate::media::{Media, Track};
+use crate::ir::{TrackId, TrackSpec};
 use crate::nalu_ext::AvcSpsCodecInfo;
-use crate::pipeline::{CodecConfig, TrackSpec};
+use crate::pipeline::CodecConfig;
+use crate::segment_log::{SegmentSummaryLog, TrackSummary};
 use crate::sps::rfc6381_avc1;
 use broadcast_common::error::InvalidField;
 use broadcast_common::timescale::Timescale;
@@ -236,21 +236,17 @@ impl Addressing {
 broadcast_common::impl_spec_display!(Addressing);
 
 /// Per-`Representation` segment durations for `$Time$`/`SegmentTimeline`
-/// addressing, and/or the `$Number$` nominal `@duration` — supplied by the
-/// caller from its own segmentation (e.g. [`crate::segmenter::Segmenter`]):
-/// one duration per emitted media segment, **in the representation's own
-/// media `@timescale` ticks** (`TrackSpec::timescale`), in segment order.
+/// addressing — supplied by the caller from its own segmentation: one duration
+/// per emitted media segment, **in the representation's own media `@timescale`
+/// ticks** (`TrackSpec::timescale`), in segment order.
 ///
-/// A segment's `SegmentTimeline` start time (`S@t`, and the `$Time$`
-/// substitution) is the cumulative sum of the *preceding* entries in this
-/// list — exactly a segment's `tfdt.baseMediaDecodeTime`
-/// (ISO/IEC 14496-12:2026 §8.8.12) whenever the representation's decode
-/// timeline starts at zero, which every segmenter in this crate
-/// ([`crate::segmenter::Segmenter`], [`crate::ll_dash::LlSegmenter`])
-/// guarantees.
+/// Only the `SegmentTimeline` (and the `$Time$` substitution it implies) comes
+/// from this list: a representation's `@bandwidth` and the Period's
+/// `mediaPresentationDuration` come from the [`SegmentSummaryLog`]'s totals,
+/// which are what the muxer actually produced.
 #[derive(Debug, Clone)]
 pub struct TrackSegments {
-    /// The [`crate::pipeline::TrackSpec::track_id`] these durations belong to.
+    /// The [`TrackSpec::track_id`] these durations belong to.
     pub track_id: TrackId,
     /// Segment durations, in decode/segment order, in this track's timescale.
     pub durations: Vec<u64>,
@@ -418,7 +414,7 @@ pub struct TrickModeRepr {
     pub total_duration: u64,
 }
 
-/// Render an MPEG-DASH MPD (ISO/IEC 23009-1) describing a [`Media`].
+/// Render an MPEG-DASH MPD (ISO/IEC 23009-1) describing a [`Media`](crate::media::Media).
 ///
 /// Groups the media's tracks into one video and one audio
 /// `AdaptationSet` (only kinds that have tracks are emitted) and emits a
@@ -445,14 +441,14 @@ pub struct DashPackager {
     /// If `true`, emit `type="dynamic"` (live); otherwise `type="static"` (VOD).
     pub dynamic: bool,
     /// Segment addressing mode (ISO/IEC 23009-1 §5.3.9.4.4 / §5.3.9.6). Default
-    /// [`Addressing::Number`] — unchanged single-nominal-duration behaviour.
-    /// [`Addressing::Timeline`] requires a matching, non-empty
-    /// [`TrackSegments`] entry in [`Self::segments`] for every track.
+    /// [`Addressing::Number`] — one nominal duration per representation.
+    /// [`Addressing::Timeline`] requires the [`SegmentSummaryLog`] to hold at
+    /// least one segment for every track.
     pub addressing: Addressing,
-    /// Per-track segment durations (see [`TrackSegments`]). Used for
-    /// `SegmentTimeline` generation under [`Addressing::Timeline`]; also
-    /// overrides the [`Addressing::Number`] nominal `@duration` (the first
-    /// entry) when present, instead of the whole-track total.
+    /// Per-track segment durations for [`Addressing::Timeline`] (see
+    /// [`TrackSegments`]). Required — and used only — for the timeline; the
+    /// totals a bandwidth and a presentation duration need come from the
+    /// summaries.
     pub segments: Vec<TrackSegments>,
     /// `SegmentTemplate@startNumber` (1-based, ISO/IEC 23009-1 §5.3.9.4.4).
     pub start_number: u64,
@@ -516,18 +512,22 @@ impl Default for DashPackager {
     }
 }
 
-/// Derived per-track presentation parameters resolved from a [`CodecConfig`].
+/// Derived per-track presentation parameters resolved from a [`TrackSpec`] and
+/// its [`TrackSummary`].
 #[derive(Clone)]
-struct ReprInfo {
+struct ReprInfo<'a> {
     id: String,
     kind: MediaKind,
     codecs: String,
     bandwidth: u64,
     timescale: Timescale,
-    /// Sum of sample durations, in the track's timescale (SegmentTemplate@duration).
+    /// The track's summed segment durations, in its timescale
+    /// (SegmentTemplate@duration).
     total_duration: u64,
-    /// Per-segment durations for this track, if the caller supplied a matching
-    /// [`TrackSegments`] entry (see [`DashPackager::segments`]).
+    /// This track's segments, oldest first, when the log holds any.
+    segments: Option<TrackSummary<'a>>,
+    /// Per-segment durations for `$Time$` addressing, from the caller's
+    /// [`TrackSegments`] entry.
     segment_durations: Option<Vec<u64>>,
     /// `@lang` resolved from the track's `ISO_639_language_descriptor`
     /// (audio only — see [`lang_from_es_info`]).
@@ -665,16 +665,18 @@ impl DashPackager {
         }
     }
 
-    /// Resolve every presentation parameter for one track.
-    fn repr_info(&self, track: &Track) -> Result<ReprInfo> {
-        let config = &track.spec.config;
-        let timescale = track.spec.timescale;
-        let total_duration: u64 = track
-            .samples
-            .iter()
-            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
-            .sum();
-        let total_bytes: u64 = track.samples.iter().map(|s| s.data.len() as u64).sum();
+    /// Resolve every presentation parameter for one track: its identity from
+    /// `spec`, its durations and bytes from the segment summaries the log
+    /// holds for it.
+    fn repr_info<'a>(
+        &self,
+        spec: &TrackSpec,
+        segments: Option<TrackSummary<'a>>,
+    ) -> Result<ReprInfo<'a>> {
+        let config = &spec.config;
+        let timescale = spec.timescale;
+        let total_duration = segments.map_or(0, |s| s.duration);
+        let total_bytes = segments.map_or(0, |s| s.bytes);
 
         // bandwidth = total coded bits / duration in seconds, ISO/IEC 23009-1
         // §5.3.5.2 (@bandwidth). Computed with integer round-to-nearest so no
@@ -692,36 +694,35 @@ impl DashPackager {
         .max(1);
 
         let kind = MediaKind::of(config);
-        let codecs = rfc6381_track_codec_string(&track.spec)?;
-
-        let segment_durations = self
-            .segments
-            .iter()
-            .find(|s| s.track_id == track.spec.track_id)
-            .map(|s| s.durations.clone());
+        let codecs = rfc6381_track_codec_string(spec)?;
 
         // `@lang` (ISO/IEC 23009-1 §5.3.3.2 inherited attribute) — resolved from
         // the TS PMT ES_info descriptor loop (issue #582) for audio tracks only;
         // `transmux` does not otherwise decode SI descriptors.
         let lang = if kind == MediaKind::Audio {
-            lang_from_es_info(&track.spec.es_info_descriptors)
+            lang_from_es_info(&spec.es_info_descriptors)
         } else {
             None
         };
 
-        let (encryption_scheme, encryption_kid) = match &track.spec.protection {
+        let (encryption_scheme, encryption_kid) = match &spec.protection {
             Some(enc) => (Some(enc.scheme), Some(enc.tenc.default_kid)),
             None => (None, None),
         };
 
         let mut info = ReprInfo {
-            id: track.spec.track_id.to_string(),
+            id: spec.track_id.to_string(),
             kind,
             codecs,
             bandwidth,
             timescale,
             total_duration,
-            segment_durations,
+            segments,
+            segment_durations: self
+                .segments
+                .iter()
+                .find(|s| s.track_id == spec.track_id)
+                .map(|s| s.durations.clone()),
             lang,
             encryption_scheme,
             encryption_kid,
@@ -729,8 +730,8 @@ impl DashPackager {
             height: None,
             sar: None,
             frame_rate: None,
-            hdr10plus: track.spec.hdr10plus && matches!(config, CodecConfig::Hevc { .. }),
-            dolby_vision_codecs: dolby_vision_companion_codecs(&track.spec),
+            hdr10plus: spec.hdr10plus && matches!(config, CodecConfig::Hevc { .. }),
+            dolby_vision_codecs: dolby_vision_companion_codecs(spec),
             audio_sampling_rate: None,
             audio_channels: None,
         };
@@ -738,8 +739,7 @@ impl DashPackager {
         // Sample (pixel) aspect ratio from the track's display geometry (Phase 4c).
         // `DisplayGeometry::sample_aspect_ratio()` derives it from the avcC/hvcC
         // SPS VUI (Phase 1a); unknown / unspecified stays `None` => no `@sar`.
-        info.sar = track
-            .spec
+        info.sar = spec
             .display
             .as_ref()
             .and_then(|d| d.typed_sample_aspect_ratio())
@@ -765,7 +765,7 @@ impl DashPackager {
                     .unwrap_or((*width as u32, *height as u32));
                 info.width = Some(w);
                 info.height = Some(h);
-                info.frame_rate = frame_rate_from_samples(&track.samples, info.timescale);
+                info.frame_rate = frame_rate_from_segments(segments, info.timescale);
             }
             CodecConfig::Hevc { width, height, .. }
             | CodecConfig::Vvc { width, height, .. }
@@ -775,7 +775,7 @@ impl DashPackager {
             | CodecConfig::Mpeg2Video { width, height, .. } => {
                 info.width = Some(*width as u32);
                 info.height = Some(*height as u32);
-                info.frame_rate = frame_rate_from_samples(&track.samples, info.timescale);
+                info.frame_rate = frame_rate_from_segments(segments, info.timescale);
             }
             CodecConfig::Aac {
                 sample_rate,
@@ -855,7 +855,7 @@ impl DashPackager {
     }
 
     /// Build the MPD model for the resolved representations.
-    fn render(&self, reprs: &[ReprInfo]) -> Result<Mpd> {
+    fn render_reprs(&self, reprs: &[ReprInfo<'_>]) -> Result<Mpd> {
         if self.dynamic && self.publish_time.is_none() {
             return Err(Error::InvalidField(InvalidField {
                 field: "MPD@publishTime",
@@ -934,7 +934,7 @@ impl DashPackager {
                 period
                     .adaptation_sets
                     .push(self.adaptation_set(kind, &group, id));
-                let dolby: Vec<ReprInfo> = group
+                let dolby: Vec<ReprInfo<'_>> = group
                     .iter()
                     .filter_map(|r| {
                         r.dolby_vision_codecs.as_ref().map(|codecs| ReprInfo {
@@ -981,7 +981,7 @@ impl DashPackager {
         }
     }
 
-    fn adaptation_set(&self, kind: MediaKind, set: &[&ReprInfo], id: u32) -> AdaptationSet {
+    fn adaptation_set(&self, kind: MediaKind, set: &[&ReprInfo<'_>], id: u32) -> AdaptationSet {
         let mut a = AdaptationSet::default();
         a.id = Some(u64::from(id));
         a.content_type = Some(kind.name().to_string());
@@ -1057,7 +1057,7 @@ impl DashPackager {
         a
     }
 
-    fn representation(&self, kind: MediaKind, r: &ReprInfo) -> Representation {
+    fn representation(&self, kind: MediaKind, r: &ReprInfo<'_>) -> Representation {
         let mut rep = Representation::default();
         rep.id = r.id.clone();
         rep.bandwidth = r.bandwidth;
@@ -1093,12 +1093,19 @@ impl DashPackager {
     ///   A multi-segment Representation carries `@duration` XOR
     ///   `SegmentTimeline`, never both (§5.3.9.2.2 L1381), so `@duration` is
     ///   omitted here.
-    fn segment_template(&self, r: &ReprInfo) -> SegmentTemplate {
+    fn segment_template(&self, r: &ReprInfo<'_>) -> SegmentTemplate {
         match self.addressing {
             Addressing::Number => {
+                // The caller's own segmentation wins when it supplied one
+                // (the nominal `@duration` must match the files it wrote);
+                // otherwise the log's first segment stands in, and a track
+                // with no summary falls back to its whole-span total.
                 let duration = match &r.segment_durations {
-                    Some(durs) if !durs.is_empty() => durs[0],
-                    _ => r.total_duration,
+                    Some(durations) if !durations.is_empty() => durations[0],
+                    _ => r
+                        .segments
+                        .and_then(|s| s.runs().next().map(|run| run.duration))
+                        .unwrap_or(r.total_duration),
                 };
                 self.number_template(r.timescale, duration)
             }
@@ -1159,29 +1166,34 @@ impl DashPackager {
     }
 }
 
-impl broadcast_common::Package for DashPackager {
-    type Media = Media;
-    type Output = String;
-    type Error = Error;
-
-    fn package(&mut self, media: &Media) -> Result<String> {
-        self.build_mpd(media)?
+impl DashPackager {
+    /// Render the MPD for `tracks` from the segments `log` recorded.
+    ///
+    /// The manifest never sees a sample: every duration, byte count and frame
+    /// rate comes from the summaries. `tracks` is the track set the segments
+    /// were muxed for, in presentation order.
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] when `tracks` is empty, when a dynamic MPD has
+    /// no `publish_time`, or when [`Addressing::Timeline`] is selected and a
+    /// track has no segment in the log; [`Error::TrickModeMainAdaptationSetNotFound`]
+    /// for a trick-mode set naming an absent main set.
+    pub fn render(&self, tracks: &[TrackSpec], log: &SegmentSummaryLog) -> Result<String> {
+        self.build_mpd(tracks, log)?
             .to_xml()
             .map_err(|_| Error::InvalidInput("MPD serialisation failed"))
     }
-}
 
-impl DashPackager {
-    /// Resolve `media` into the MPD model [`Package::package`](broadcast_common::Package::package)
+    /// Resolve `tracks` and `log` into the MPD model [`Self::render`]
     /// serialises; [`crate::LlDashPackager`] adds its low-latency fields to it
     /// before serialising.
-    pub(crate) fn build_mpd(&self, media: &Media) -> Result<Mpd> {
-        if media.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+    pub(crate) fn build_mpd(&self, tracks: &[TrackSpec], log: &SegmentSummaryLog) -> Result<Mpd> {
+        if tracks.is_empty() {
+            return Err(Error::InvalidInput("cannot render an MPD with no tracks"));
         }
-        let mut reprs = Vec::with_capacity(media.tracks.len());
-        for t in &media.tracks {
-            reprs.push(self.repr_info(t)?);
+        let mut reprs = Vec::with_capacity(tracks.len());
+        for spec in tracks {
+            reprs.push(self.repr_info(spec, log.track(spec.track_id))?);
         }
         // Addressing::Timeline needs an explicit, non-empty duration list per
         // track (ISO/IEC 23009-1 §5.3.9.6) — there is no whole-track fallback
@@ -1190,13 +1202,13 @@ impl DashPackager {
             for r in &reprs {
                 if r.segment_durations.as_ref().is_none_or(Vec::is_empty) {
                     return Err(Error::InvalidInput(
-                        "Addressing::Timeline requires a non-empty TrackSegments entry \
-                         in DashPackager::segments for every track",
+                        "Addressing::Timeline requires a non-empty TrackSegments entry in \
+                         DashPackager::segments for every track",
                     ));
                 }
             }
         }
-        self.render(&reprs)
+        self.render_reprs(&reprs)
     }
 }
 
@@ -1213,26 +1225,22 @@ fn oti_of(esds: &isobmff::mp4esds::EsdsBox) -> u8 {
         .map_or(0, |dc| dc.object_type_indication.0)
 }
 
-/// Derive a DASH `@frameRate` (`num/den`) from the video samples' durations.
+/// Derive a DASH `@frameRate` (`num/den`) from what the segment summaries
+/// record about a track.
 ///
 /// Uses the (integer) average sample duration in the media timescale; returns
-/// `timescale/avg_duration` reduced by the GCD. `None` if there is not enough
-/// timing to compute a rate.
-fn frame_rate_from_samples(
-    samples: &[crate::pipeline::Sample],
+/// `timescale/avg_duration` reduced by the GCD. `None` when the log holds no
+/// sample count ([`SegmentSummaryLog::push`] counts bytes, not samples) or no
+/// timing to compute a rate from.
+fn frame_rate_from_segments(
+    segments: Option<TrackSummary<'_>>,
     timescale: Timescale,
 ) -> Option<String> {
-    if samples.is_empty() {
+    let summary = segments?;
+    if summary.samples == 0 || summary.duration == 0 {
         return None;
     }
-    let total: u64 = samples
-        .iter()
-        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
-        .sum();
-    if total == 0 {
-        return None;
-    }
-    let avg = total / samples.len() as u64;
+    let avg = summary.duration / summary.samples;
     if avg == 0 {
         return None;
     }
@@ -1279,7 +1287,10 @@ fn lang_from_es_info(descriptors: &[u8]) -> Option<String> {
 /// Order is deterministic: video before audio (the caller's outer loop), then
 /// by first appearance within `reprs`, so an MPD is stable across runs and a
 /// single-audio-codec stream yields exactly the one set it did before.
-fn adaption_set_groups<'a>(reprs: &'a [ReprInfo], kind: MediaKind) -> Vec<Vec<&'a ReprInfo>> {
+fn adaption_set_groups<'a, 's>(
+    reprs: &'a [ReprInfo<'s>],
+    kind: MediaKind,
+) -> Vec<Vec<&'a ReprInfo<'s>>> {
     let mut groups: Vec<(Option<String>, String, Vec<&'a ReprInfo>)> = Vec::new();
     for r in reprs.iter().filter(|r| r.kind == kind) {
         let family = codec_family(&r.codecs).to_string();
@@ -1412,7 +1423,7 @@ fn format_kid(kid: &[u8; KEY_ID_LEN]) -> String {
 /// A `SegmentTimeline` (ISO/IEC 23009-1 §5.3.9.6) from a flat list of
 /// per-segment durations (in the representation's own `@timescale`), in
 /// segment order, starting at `t=0` (the packager's decode timelines all
-/// start at zero — see [`TrackSegments`]).
+/// start at zero — see [`crate::segment_log`]).
 ///
 /// Consecutive equal durations are run-length-encoded into a single `S`
 /// with `@r` = repeat count minus one (§5.3.9.6 L1746: "`S` = a run of

@@ -93,12 +93,10 @@ fn large_fragment(manifest: &SmoothManifest) -> (Vec<u8>, Vec<u8>) {
         start,
         core::num::NonZeroU32::new(CHUNK_DURATION),
     );
-    let fragment = SmoothPackager {
-        target_duration: std::time::Duration::from_secs(1),
-    }
-    .package_track_fragment(&Track::new(spec, vec![sample]), 1, CHUNK_START)
-    .expect("the large fragment packages");
-    (init, fragment.data)
+    let fragment = SmoothPackager
+        .package_track_fragment(&Track::new(spec, vec![sample]), 1, CHUNK_START)
+        .expect("the large fragment packages");
+    (init, fragment.bytes.to_vec())
 }
 
 #[test]

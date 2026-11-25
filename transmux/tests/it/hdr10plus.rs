@@ -748,7 +748,7 @@ fn mpd(media: &Media, profiles: Option<&str>) -> String {
     if let Some(p) = profiles {
         packager.profiles = p.to_string();
     }
-    packager.package(media).expect("dash")
+    crate::packagers::dash(&packager, media).expect("dash")
 }
 
 #[test]
